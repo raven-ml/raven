@@ -126,6 +126,14 @@ let kernels =
     "store_load";
   ]
 
+let gather_programs =
+  [
+    "index_sharded_trailing";
+    "index_sharded_rows";
+    "index_sharded_index";
+    "index_sharded_both";
+  ]
+
 (* The settings a program was recorded under. *)
 let settings = function
   | "allreduce_no_cast" -> [ Helpers.B (Helpers.allreduce_cast, false) ]
@@ -140,6 +148,7 @@ let recorded =
     [
       group "programs" (List.map rewritten programs);
       group "kernels" (List.map rewritten kernels);
+      group "gathers" (List.map rewritten gather_programs);
     ]
 
 (* Values
@@ -970,6 +979,80 @@ let selections =
                   (Shrink [ (Sym d, Int 2) ]))));
     ]
 
+(* A gather's rows hold [-0.], whose sign a sum across devices would lose, and
+   its index reads past both ends of the rows before its clamp. *)
+let gathers =
+  let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
+  let clamp n i =
+    Ops.cast (Ops.maximum (Ops.minimum i (i32 (n - 1))) (i32 0)) Weak_int
+  in
+  let rows = sharded 1 [ 2; 8 ] 0 and columns = sharded 1 [ 4; 4 ] 1 in
+  let l = clamp 4 (storage ~dtype:Int32 2 [ 3 ]) in
+  let memory =
+    [
+      ( 1,
+        Array.init 32 (fun j ->
+            `Float (if j mod 5 = 2 then -0. else float_of_int j)) );
+      (2, Array.map (fun k -> `Int (Bigint.of_int k)) [| 3; -2; 9; 3; -2; 9 |]);
+      (3, Array.init 64 (fun j -> `Float (float_of_int (100 + (j mod 32)))));
+    ]
+  in
+  let bits =
+    Array.map (function
+      | `Float f -> `Int (Bigint.of_int64 (Int64.bits_of_float f))
+      | v -> v)
+  in
+  let reads_whole v =
+    let whole = bits (List.hd (Tensors.eval ~buffers:memory v)) in
+    List.iteri
+      (fun k got ->
+        equal
+          ~msg:(Printf.sprintf "device %d" k)
+          (array Dtypes.const) whole (bits got))
+      (Tensors.eval ~buffers:memory (multi v))
+  in
+  group "multi_pm › gathers"
+    [
+      test "a gather of a value sharded on trailing axes gathers each shard"
+        (fun () ->
+          equal uop
+            (unshard (Ops.index (shard columns) [ l ]) [ 1 ] columns)
+            (multi (Ops.index columns [ l ])));
+      test "a gather of a value sharded on trailing axes reads the whole's rows"
+        (fun () -> reads_whole (Ops.index columns [ l ]));
+      test
+        "a gather of sharded rows reads each row's bits from the device \
+         holding it" (fun () -> reads_whole (Ops.index rows [ l ]));
+      test "a gather of sharded rows joins the shards across devices" (fun () ->
+          is_true (has Allreduce (multi (Ops.index rows [ l ]))));
+      test "a gather by a sharded index gathers each part of the index"
+        (fun () ->
+          let index = Ops.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let u = multi (Ops.index whole [ clamp 4 index ]) in
+          equal (list int) [ 0 ] (List.map fst (Ops.sharding u));
+          reads_whole (Ops.index whole [ clamp 4 index ]));
+      test
+        "a gather of sharded rows by a sharded index reads the whole's rows, \
+         sharded as the index" (fun () ->
+          let index = Ops.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let u = multi (Ops.index rows [ clamp 4 index ]) in
+          equal (list int) [ 0 ] (List.map fst (Ops.sharding u));
+          reads_whole (Ops.index rows [ clamp 4 index ]));
+      test "a gather of a value sharded on its rows and another axis is refused"
+        (fun () ->
+          let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
+          let grid =
+            Ops.unshard
+              ~ranges:Ops.O.[ r // int 2; r % int 2 ]
+              (storage ~devices:four 1 [ 2; 4 ])
+              [ 0; 1 ]
+          in
+          let l = clamp 4 (storage ~devices:four ~dtype:Int32 2 [ 3 ]) in
+          refused ~because:"another axis" (Ops.index grid [ l ]));
+      test "a gather of a sharded value by two indices is refused" (fun () ->
+          refused ~because:"one index" (Ops.index rows [ l; l ]));
+    ]
+
 let effects =
   let dest = sharded 5 [ 2; 8 ] 0 in
   group "multi_pm › stores and calls"
@@ -1046,6 +1129,7 @@ let () =
          tiles;
          copies;
          selections;
+         gathers;
          effects;
          passthrough;
        ])

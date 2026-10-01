@@ -14,6 +14,11 @@
     read of a tensor names its element: movements become arithmetic on indices,
     and the values that must be stored whole are marked for storage. *)
 
+val is_gather : Ops.t -> bool
+(** [is_gather u] is whether [u] is a gather: an {!Op.Index} of a tensor by a
+    value with axes, which reads the tensor at the row each element of the value
+    names. *)
+
 val apply_movement_op :
   Ops.sint list -> Ops.movement -> Ops.t list -> Ops.t list
 (** [apply_movement_op in_shape m idxs] is the index, into a source of shape
@@ -36,7 +41,11 @@ val apply_movement_op :
     constant on an axis drops it: a [Reshape] to an axis of one element, an
     [Expand] that drops the leading index, a [Shrink] onto an axis of one
     element. A caller that reads through the index masks the padded values
-    itself, as {!run_rangeify} turns each [Pad] into a selection. *)
+    itself, as {!run_rangeify} turns each [Pad] into a selection.
+
+    A load in [idxs] from a storage state ({!Op.After}), as a gather's index is,
+    is left as it is: the rewrites of the index do not reach the stores the
+    state is ordered after. *)
 
 val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
 (** [run_rangeify ~debug sink] is the tensor graph [sink] with its elements
@@ -54,6 +63,8 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
       whole: an {!Op.Expand} whose sizes are not ranges, or an operation that
       broadcasts a source. An elementwise node that an operation broadcasts
       directly is not below it, a reduction is;
+    - the index source of a gather, an {!Op.Index} whose index has axes, takes
+      the gather's leading ranges, one per axis of the index;
     - any other node takes the ranges of its consumers, the validity of an index
       being the disjunction of theirs; a node without indexed consumers gets
       none.
@@ -62,8 +73,8 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     are {!Ops.Axis_type.Weak}, and those of the axes a reduction reduces are
     {!Ops.Axis_type.Reduce}. A node is stored whole when it is a {!Op.Store}, a
     source of an {!Op.Mselect} or an {!Op.Mstack} that is not storage, a source
-    of a call to a kernel given as code that is not storage, or a value stored
-    into a destination it reads.
+    of a call to a kernel given as code that is not storage, a gathered source
+    that is not storage, or a value stored into a destination it reads.
 
     The graph is then rewritten from the bottom up:
 
@@ -73,6 +84,8 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
       or feeds a kernel given as code. A stored {!Op.Store} is instead closed by
       an {!Op.End} over its ranges;
     - storage read by an indexed node is indexed by that node's ranges;
+    - a gather reads its gathered source at the element its index holds,
+      followed by the gather's trailing ranges;
     - a reduction of leading axes becomes a reduction over its ranges;
     - a {!Op.Pad} becomes a selection of its source where its index is valid,
       and of [0] elsewhere;
@@ -89,4 +102,5 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     [false]), each node's ranges are printed on standard output as they are
     assigned.
 
-    Raises [Invalid_argument] if a reduction of leading axes gets no ranges. *)
+    Raises [Invalid_argument] if a reduction of leading axes gets no ranges, or
+    if a gather has more than one index. *)

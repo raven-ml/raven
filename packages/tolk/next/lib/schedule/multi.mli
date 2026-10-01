@@ -41,6 +41,14 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
     - an {!Op.Index} of a sharded value takes, on each sharded axis, the index
       into the shard the range owns: [r * n + i] for a block of [n] elements, or
       [r + i * n] for every [n]th element from [r];
+    - a gather, an {!Op.Index} by a value with axes, of a value sharded on axes
+      after the gathered one gathers each shard. Of a value sharded on the
+      gathered axis, each shard reads the rows it holds and [0] elsewhere, and
+      the shards' element bits are joined across the devices by a bitwise or,
+      which keeps each element's exact bits. A gather of a whole value by a
+      sharded index gathers each part of the index; of a sharded value, it
+      gathers by the whole index, joined on each device, and its result is
+      sharded as the index;
     - a copy to one device joins the shards along their axes; a copy to several
       devices places each shard at its offset in zeros and sums them across the
       devices;
@@ -73,4 +81,6 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
     Raises [Invalid_argument] on what has no shard of its own: a reshape that
     moves elements between shards, a pad, flip or shrink of a sharded axis other
     than those above, a reduction of some sharded axes but not all, an index
-    that crosses shards, or values on different devices resharded together. *)
+    that crosses shards, a gather by more than one index or of a value sharded
+    on the gathered axis and another, or values on different devices resharded
+    together. *)

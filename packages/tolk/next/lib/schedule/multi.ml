@@ -528,6 +528,61 @@ let index_multi root multi =
   in
   index x (List.fold_left resolve_axis (List.tl (src root)) (sharding multi))
 
+(* A gather of a sharded value by a whole index. Sharded along trailing axes,
+   each shard gathers its own part. Sharded along the gathered rows, each shard
+   reads the rows it holds, zero elsewhere, and the shards' element bits are
+   joined by a bitwise or: every element is read on one shard, so the or is its
+   exact bits, where a sum would turn [-0.] into [+0.] and quiet a NaN. *)
+let gather_shards multi l =
+  let x = nth multi 0 and n = ndim l in
+  match sharding multi with
+  | sharding when List.for_all (fun (ax, _) -> ax >= 1) sharding ->
+      unshard_as
+        (List.map (fun (ax, r) -> (ax - 1 + n, r)) sharding)
+        (index x [ l ])
+  | [ (0, rng) ] ->
+      let rows = sint_to_uop (List.hd (shape x)) in
+      let local = sub l (mul rng rows) in
+      let inside = bitwise_and (ge local (int 0)) (lt local rows) in
+      let read =
+        index x [ maximum (minimum local (sub rows (int 1))) (int 0) ]
+      in
+      let trailing = List.map (fun _ -> Int 1) (List.drop 1 (shape x)) in
+      let inside = reshape inside (shape l @ trailing) in
+      let value = where inside read (const_like read (`Int Bigint.zero)) in
+      let dt = dtype value in
+      let bits_dtype =
+        match Dtype.itemsize dt with
+        | 1 -> Dtype.Uint8
+        | 2 -> Dtype.Uint16
+        | 4 -> Dtype.Uint32
+        | _ -> Dtype.Uint64
+      in
+      let bits =
+        if Dtype.equal dt Dtype.Bool then cast value Dtype.Uint8
+        else bitcast value bits_dtype
+      in
+      let joined = allreduce bits Op.Or (Multi (devices multi)) in
+      if Dtype.equal dt Dtype.Bool then cast joined Dtype.Bool
+      else bitcast joined dt
+  | _ -> invalid_arg "a gather of a value sharded on its rows and another axis"
+
+(* A sharded index is joined whole on each device, in [int64] since an index
+   type has no width to cross devices in. A gather of the whole rows then takes
+   the index's sharding back. *)
+let gather_multi root multi =
+  match src root with
+  | [ _; l ] when is_unshard l ->
+      let wide = unshard_as (sharding l) (cast (nth l 0) Dtype.Int64) in
+      let whole = cast (copy_multi wide (Multi (devices l))) (dtype l) in
+      let g = gather_shards multi whole in
+      if is_unshard g then g
+      else
+        unshard_as (sharding l)
+          (List.fold_left (fun g (ax, r) -> shard_slice g ax r) g (sharding l))
+  | [ _; l ] -> gather_shards multi l
+  | _ -> invalid_arg "a gather takes one index"
+
 let store_after_multi dest src =
   reshard src (after dest [ store dest (nth src 0) ])
 
@@ -605,7 +660,18 @@ and multi_pm =
             rule
               (Upat.op Op.Index ~name:"root" ~allow_any_len:true
                  ~src:[ Upat.op Op.Unshard ~name:"multi" ])
-              (fun m -> Some (index_multi (m "root") (m "multi")));
+              (fun m ->
+                let root = m "root" in
+                if Indexing.is_gather root then
+                  Some (gather_multi root (m "multi"))
+                else Some (index_multi root (m "multi")));
+            (* A gather by a sharded index gathers each part of the index. *)
+            rule
+              (Upat.op Op.Index ~name:"root"
+                 ~src:[ Upat.var "x"; Upat.op Op.Unshard ~name:"multi" ])
+              (fun m ->
+                let multi = m "multi" in
+                Some (reshard multi (index (m "x") [ nth multi 0 ])));
             rule
               (Upat.op Op.After
                  ~src:

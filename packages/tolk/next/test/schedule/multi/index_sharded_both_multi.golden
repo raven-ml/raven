@@ -1,0 +1,68 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=4, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.MAX dtypes.int [0, 1]
+3 Ops.CONST dtypes.weakint [] -1
+4 Ops.XOR dtypes.int [2, 3]
+5 Ops.CONST dtypes.weakint [] 7
+6 Ops.XOR dtypes.weakint [5, 3]
+7 Ops.MAX dtypes.int [4, 6]
+8 Ops.XOR dtypes.int [7, 3]
+9 Ops.CONST dtypes.weakint [] 2
+10 Ops.SHRINK dtypes.int [8, 1, 9]
+11 Ops.COPY dtypes.int [10] "CPU:0"
+12 Ops.SHRINK dtypes.int [8, 9, 9]
+13 Ops.COPY dtypes.int [12] "CPU:1"
+14 Ops.MSTACK dtypes.int [11, 13]
+15 Ops.CAST dtypes.weakint [14] dtypes.weakint
+16 Ops.CAST dtypes.long [15] dtypes.long
+17 Ops.RANGE dtypes.weakint [9] (-1, AxisType.DEVICE)
+18 Ops.MUL dtypes.weakint [17, 9]
+19 Ops.CONST dtypes.weakint [] 4
+20 Ops.PAD dtypes.long [16, 18, 19]
+21 Ops.ALLREDUCE dtypes.long [20] (Ops.ADD, ("CPU:0", "CPU:1"))
+22 Ops.CAST dtypes.weakint [21] dtypes.weakint
+23 Ops.MUL dtypes.weakint [17, 19]
+24 Ops.MUL dtypes.weakint [23, 3]
+25 Ops.ADD dtypes.weakint [22, 24]
+26 Ops.CMPLT dtypes.bool [25, 1]
+27 Ops.CONST dtypes.bool [] True
+28 Ops.CMPNE dtypes.bool [26, 27]
+29 Ops.CMPLT dtypes.bool [25, 19]
+30 Ops.AND dtypes.bool [28, 29]
+31 Ops.CONST dtypes.weakint [] 1
+32 Ops.STACK dtypes.weakint [19, 31]
+33 Ops.RESHAPE dtypes.bool [30, 32]
+34 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
+35 Ops.CONST dtypes.weakint [] 8
+36 Ops.STACK dtypes.weakint [35, 19]
+37 Ops.RESHAPE dtypes.float [34, 36]
+38 Ops.STACK dtypes.weakint [1, 1]
+39 Ops.STACK dtypes.weakint [19, 19]
+40 Ops.SHRINK dtypes.float [37, 38, 39]
+41 Ops.COPY dtypes.float [40] "CPU:0"
+42 Ops.STACK dtypes.weakint [19, 1]
+43 Ops.SHRINK dtypes.float [37, 42, 39]
+44 Ops.COPY dtypes.float [43] "CPU:1"
+45 Ops.MSTACK dtypes.float [41, 44]
+46 Ops.XOR dtypes.weakint [25, 3]
+47 Ops.MUL dtypes.weakint [31, 3]
+48 Ops.ADD dtypes.weakint [19, 47]
+49 Ops.XOR dtypes.weakint [48, 3]
+50 Ops.MAX dtypes.weakint [46, 49]
+51 Ops.XOR dtypes.weakint [50, 3]
+52 Ops.MAX dtypes.weakint [51, 1]
+53 Ops.INDEX dtypes.float [45, 52]
+54 Ops.CONST dtypes.weakfloat [] 0.0
+55 Ops.CAST dtypes.float [54] dtypes.float
+56 Ops.EXPAND dtypes.float [55, 39]
+57 Ops.WHERE dtypes.float [33, 53, 56]
+58 Ops.BITCAST dtypes.uint [57] dtypes.uint
+59 Ops.ALLREDUCE dtypes.uint [58] (Ops.OR, ("CPU:0", "CPU:1"))
+60 Ops.BITCAST dtypes.float [59] dtypes.float
+61 Ops.STACK dtypes.weakint [18, 1]
+62 Ops.STACK dtypes.weakint [9, 19]
+63 Ops.SHRINK dtypes.float [60, 61, 62]
+64 Ops.UNSHARD dtypes.float [63, 17] (0,)
+65 Ops.SINK dtypes.void [64]
+

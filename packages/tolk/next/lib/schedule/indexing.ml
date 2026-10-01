@@ -44,6 +44,18 @@ let always_contiguous =
   ops Op.[ After; Buffer; Alloc; Const; Mselect; Mstack; Param; Load; Call ]
 
 let realize ctx u = Tbl.replace ctx.realize_map u None
+let storage = ops Op.[ Param; Buffer; Alloc; Mstack; Mselect; After ]
+
+(* A gather is an index by an integer value with axes: its source is read at
+   loaded positions, so it is stored whole unless it is storage. A view of
+   storage is stored too, and the stage, which reads one buffer, is inlined
+   back. *)
+let is_gather_src src = List.exists (fun i -> ndim i > 0) (List.tl src)
+let is_gather u = op u = Op.Index && is_gather_src (src u)
+
+let realize_gathered ctx g =
+  let x = nth g 0 in
+  if is_gather g && not (Op.Set.mem (op x) storage) then realize ctx x
 
 let realize_srcs ctx rb =
   List.iter
@@ -132,6 +144,9 @@ let pm_generate_realize_map =
           (Upat.v ~op:(ops [ Op.Mselect; Op.Mstack ]) ~name:"rb" ())
           (mark (fun ctx m -> realize_srcs ctx (m "rb")));
         rule_ctx
+          (Upat.op Op.Index ~name:"g" ~allow_any_len:true)
+          (mark (fun ctx m -> realize_gathered ctx (m "g")));
+        rule_ctx
           (Upat.op Op.Store ~src:[ Upat.var "dest"; Upat.var "src" ])
           (mark (fun ctx m ->
                realize_store_after_src ctx (m "dest") (m "src");
@@ -141,9 +156,11 @@ let pm_generate_realize_map =
 (* Applying ranges *)
 
 (* The ranges of [x] as its source [s] sees them: without the axes [s] lacks,
-   and [0] on the axes [x] broadcasts it over. *)
+   and [0] on the axes [x] broadcasts it over. A gather's index sees the
+   gather's leading axes, which it shapes. *)
 let broadcast_rngs x s rngs =
-  if not (Op.Set.mem (op x) Op.Set.broadcastable) then rngs
+  if is_gather x && s != nth x 0 then List.take (ndim s) rngs
+  else if not (Op.Set.mem (op x) Op.Set.broadcastable) then rngs
   else
     let baxes = broadcast_axes (shape s) (shape x)
     and nleft = ndim x - ndim s in
@@ -159,6 +176,7 @@ let broadcast_rngs x s rngs =
 let data_srcs op src =
   let first = match src with s :: _ -> [ s ] | [] -> [] in
   if Op.Set.mem op (ops Op.[ Param; Buffer; Alloc; Range; Special ]) then []
+  else if op = Op.Index && is_gather_src src then src
   else if
     Op.Set.mem op
       (Op.Set.union Op.Set.movement
@@ -166,7 +184,30 @@ let data_srcs op src =
   then first
   else src
 
-let storage = ops Op.[ Param; Buffer; Alloc; Mstack; Mselect; After ]
+(* [s], a source of an indexed node read at [src_rngs] if [indexed]: storage
+   indexed, a source stored whole staged over its own ranges and indexed, and
+   any other source as it is. *)
+let bufferize_and_index ctx ~indexed s src_rngs =
+  if Op.Set.mem (op s) storage then if indexed then index s src_rngs else s
+  else
+    match Tbl.find_opt ctx.realize_map s with
+    | None -> s
+    | Some None -> invalid_arg "the realize map holds no ranges"
+    | Some (Some _) when op s = Op.Store ->
+        let closed = snd (Tbl.find ctx.range_map s) in
+        Tbl.remove ctx.realize_map s;
+        end_ s (List.filter (fun r -> op r = Op.Range) closed)
+    | Some (Some _) ->
+        let closed = snd (Tbl.find ctx.range_map s) in
+        let removable =
+          (not (Op.Set.mem (op s) always_contiguous))
+          && not (Tbl.mem ctx.non_removable s)
+        in
+        let opts : bufferize_opts =
+          { device = device s; addrspace = Dtype.Global; removable }
+        in
+        let staged = bufferize ~opts s closed in
+        if indexed then index staged src_rngs else staged
 
 let create_bufferize_and_index_srcs ctx x =
   let data_src_count = List.length (data_srcs (op x) (src x)) in
@@ -176,29 +217,23 @@ let create_bufferize_and_index_srcs ctx x =
       let src_rngs =
         match rngs with Some r -> broadcast_rngs x s r | None -> []
       in
-      if Op.Set.mem (op s) storage then
-        if Option.is_some rngs && i < data_src_count then index s src_rngs
-        else s
-      else
-        match Tbl.find_opt ctx.realize_map s with
-        | None -> s
-        | Some None -> invalid_arg "the realize map holds no ranges"
-        | Some (Some _) when op s = Op.Store ->
-            let closed = snd (Tbl.find ctx.range_map s) in
-            Tbl.remove ctx.realize_map s;
-            end_ s (List.filter (fun r -> op r = Op.Range) closed)
-        | Some (Some _) ->
-            let closed = snd (Tbl.find ctx.range_map s) in
-            let removable =
-              (not (Op.Set.mem (op s) always_contiguous))
-              && not (Tbl.mem ctx.non_removable s)
-            in
-            let opts : bufferize_opts =
-              { device = device s; addrspace = Dtype.Global; removable }
-            in
-            let staged = bufferize ~opts s closed in
-            if Option.is_some rngs then index staged src_rngs else staged)
+      let indexed =
+        Option.is_some rngs
+        && (i < data_src_count || not (Op.Set.mem (op s) storage))
+      in
+      bufferize_and_index ctx ~indexed s src_rngs)
     (src x)
+
+(* A gather reads its source at the loaded index, then at its own trailing
+   ranges. *)
+let convert_gather ctx x =
+  match (Tbl.find_opt ctx.range_map x, src x) with
+  | Some (rngs, _), [ g; l ] when is_gather x ->
+      let n = ndim l in
+      let l = bufferize_and_index ctx ~indexed:true l (List.take n rngs) in
+      Some (bufferize_and_index ctx ~indexed:true g (l :: List.drop n rngs))
+  | Some _, _ when is_gather x -> invalid_arg "a gather takes one index"
+  | _ -> None
 
 let create_bufferize_and_index_based_on_ranges ctx x =
   if op x = Op.Stage || op x = Op.Index then None
@@ -283,6 +318,7 @@ let pm_apply_rangeify =
         on (ops [ Op.Reduce ]) convert_reduce_to_reduce_with_ranges;
         on (ops [ Op.Pad ]) convert_pad_to_where_to_keep_behavior_local;
         on (ops [ Op.Stack ]) convert_stack_to_where;
+        on (ops [ Op.Index ]) convert_gather;
         on Op.Set.all create_bufferize_and_index_based_on_ranges;
         on Op.Set.movement remove_movement_op_after_rangeify;
       ])
@@ -320,7 +356,7 @@ let apply_reshape in_shape out_shape urngs =
 
 let pad_valid = Pattern_matcher.concat Symbolic.[ symbolic; pm_simplify_valid ]
 
-let apply_movement_op in_shape m rngs =
+let move in_shape m rngs =
   match m with
   | Shrink b ->
       List.map2
@@ -365,6 +401,31 @@ let apply_movement_op in_shape m rngs =
         apply_reshape in_shape out_shape (substitute sink sub_array)
       in
       src (substitute reshaped (List.map (fun (r, p) -> (p, r)) sub_array))
+
+(* A gather's index loads from storage states, which the index's rewrites would
+   otherwise rewrite too, giving the storage a second definition: each load is a
+   variable of its bounds while the index moves. *)
+let apply_movement_op in_shape m rngs =
+  let load u =
+    op u = Op.Index && shape_opt u = Some [] && op (base (nth u 0)) = Op.After
+  in
+  match
+    List.filter load
+      (toposort ~gate:(fun u -> op u <> Op.After) (Ops.sink rngs))
+  with
+  | [] -> move in_shape m rngs
+  | loads ->
+      let vars =
+        List.mapi
+          (fun i u ->
+            ( u,
+              variable ~dtype:(dtype u)
+                (Printf.sprintf "load %d" i)
+                (vmin u) (vmax u) ))
+          loads
+      in
+      let moved = move in_shape m (src (substitute (Ops.sink rngs) vars)) in
+      src (substitute (Ops.sink moved) (List.map (fun (u, x) -> (x, u)) vars))
 
 (* Rangeify *)
 

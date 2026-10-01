@@ -72,6 +72,28 @@ let gather ?fill shape t f =
   in
   { shape; cells = Array.init (size shape) cell }
 
+(* [index u t idxs] is the gather [u] of [t]: each index tensor of [idxs] reads
+   one leading axis of [t] at the position it holds, where its own axes are the
+   result's, and the rest of [t] follows. *)
+let index u t idxs =
+  let position c =
+    match c.value with
+    | `Int n -> Bigint.to_int n
+    | v -> fail "a gather's index is %a" Dtype.pp_const v
+  in
+  gather (concrete u) t (fun c ->
+      let rec read c = function
+        | [] -> c
+        | it :: rest ->
+            let k = List.length it.shape in
+            let here = List.filteri (fun i _ -> i < k) c in
+            let i = position it.cells.(offset it.shape here) in
+            i :: read (List.filteri (fun i _ -> i >= k) c) rest
+      in
+      let at = read c idxs in
+      if List.for_all2 (fun i n -> 0 <= i && i < n) at t.shape then Some at
+      else fail "a gather reads outside its source")
+
 let broadcast shape t =
   let lead = List.length shape - List.length t.shape in
   gather shape t (fun idx ->
@@ -361,6 +383,12 @@ let rec run m params u =
     match (Ops.op u, Ops.arg u) with
     | Const, Const c ->
         [ { shape = []; cells = [| { value = c; at = None } |] } ]
+    | Range, Range { axis_type = Device; _ } ->
+        List.init (count u) (fun k ->
+            {
+              shape = [];
+              cells = [| { value = `Int (Bigint.of_int k); at = None } |];
+            })
     | Param, Param { slot; _ } when List.mem_assoc slot params ->
         let shape = concrete u in
         List.map (fun t -> { t with shape }) (List.assoc slot params)
@@ -378,6 +406,12 @@ let rec run m params u =
     | Reduce, Reduce { op; num_axes } ->
         List.map (reduce u op num_axes) (value (List.hd src))
     | Stack, _ -> across (stack u) (List.map value src)
+    | Index, _ ->
+        across
+          (function
+            | t :: idxs -> index u t idxs
+            | [] -> fail "a gather has a source")
+          (List.map value src)
     | Mselect, Shard i -> [ List.nth (value (List.hd src)) i ]
     | Mstack, _ -> List.concat_map value src
     | Copy, Device d ->
@@ -387,9 +421,15 @@ let rec run m params u =
     | Allreduce, Allreduce { op; device } ->
         let shards = value (List.hd src) in
         let t = List.hd shards in
+        (* Devices are never none, so the fold starts from the first, and an
+           operation without an identity, such as [Or], folds too. *)
+        let dt = Ops.dtype u in
         let cell k =
           let values = List.map (fun s -> s.cells.(k).value) shards in
-          { value = fold op (Ops.dtype u) values; at = None }
+          let combine acc v =
+            held dt (Ops.exec_alu ~truncate_output:false op dt [ acc; v ])
+          in
+          { value = List.fold_left combine (List.hd values) (List.tl values); at = None }
         in
         let reduced = { t with cells = Array.init (size t.shape) cell } in
         List.init (devices (Some device)) (fun _ -> reduced)

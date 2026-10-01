@@ -38,15 +38,17 @@ val prepare_rangeify : Ops.t -> Ops.t
         the output is the store itself rather than storage ordered after it;
      }
      {- sharded values compute on shards ({!Multi.multi_pm}); }
-     {- movements move towards storage ({!pm_mops}); each call to a function
-        without its own compilation ({!Ops.is_inline_call}) is replaced by its
-        body, its parameters bound to its arguments viewed as flat storage and
-        its local storage renamed; a value ordered after a call's stores into
-        one of its outputs is that output's value
+     {- movements move towards storage ({!pm_mops}), except that a gather, an
+        index by a value with axes ({!Indexing.is_gather}), is left whole; each
+        call to a function without its own compilation ({!Ops.is_inline_call})
+        is replaced by its body, its parameters bound to its arguments viewed as
+        flat storage and its local storage renamed; a value ordered after a
+        call's stores into one of its outputs is that output's value
         ({!Ops.resolve_returned_after}); and the movements of a copy from a disk
         move to the copy's result;
      }
-     {- from the leaves up, with {!Movement.mop_cleanup} and {!pm_mops}:
+     {- from the leaves up, with {!Movement.mop_cleanup} and {!pm_mops}, gathers
+        left whole:
         - an {!Op.Allreduce} is a call of its own
           ({!Allreduce.create_allreduce_function});
         - a large reduction over few outputs is split in two, when the setting
@@ -68,11 +70,11 @@ val prepare_rangeify : Ops.t -> Ops.t
         - a store of a reshape into a reshape of the same shape stores the
           sources; a store across devices first materialises its value on its
           own device; a store whose value reads its destination through a
-          permutation, a flip or, when the destination is itself shrunk, a
-          shrink materialises the value first; the second of two equal stores
-          into the same storage is dropped, and so is a store of a storage's
-          contents into itself; a store into a bitcast of storage stores the
-          value bitcast to the storage's type;
+          permutation, a flip, a gather's gathered source or, when the
+          destination is itself shrunk, a shrink materialises the value first;
+          the second of two equal stores into the same storage is dropped, and
+          so is a store of a storage's contents into itself; a store into a
+          bitcast of storage stores the value bitcast to the storage's type;
         - a bitcast between types of different sizes is shifts and masks on
           unsigned integers, except on a disk;
         - a reduction of an empty axis to a non-empty result is the operation's

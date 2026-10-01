@@ -330,3 +330,32 @@ def declare_kernel(name, kernel):
 
 for name, kernel in KERNELS.items():
     declare_kernel(name, kernel)
+
+
+# Gathers of sharded values: an INDEX by an integer value with axes, clamped
+# into range, reads rows of its source. Each graph is the gather alone.
+
+def param(slot, *shape, dtype=dtypes.float):
+    return UOp.param(slot, dtype, shape_size(shape), "CPU").reshape(shape)
+
+
+def index_on_devices(n, i):
+    # the index commits its type to cross devices, and is weak again after
+    return i.maximum(0).minimum(n - 1).copy_to_device(D2).cast(dtypes.weakint)
+
+
+GATHERS = {
+    "index_sharded_trailing": lambda: UOp.sink(
+        param(1, 8, 4).shard(D2, 1).index(index_on_devices(8, param(2, 3, dtype=dtypes.int32)))),
+    "index_sharded_rows": lambda: UOp.sink(
+        param(1, 8, 4).shard(D2, 0).index(index_on_devices(8, param(2, 3, dtype=dtypes.int32)))),
+    "index_sharded_index": lambda: UOp.sink(
+        param(1, 8, 4).copy_to_device(D2).index(
+            param(2, 4, dtype=dtypes.int32).maximum(0).minimum(7).shard(D2, 0).cast(dtypes.weakint))),
+    "index_sharded_both": lambda: UOp.sink(
+        param(1, 8, 4).shard(D2, 0).index(
+            param(2, 4, dtype=dtypes.int32).maximum(0).minimum(7).shard(D2, 0).cast(dtypes.weakint))),
+}
+
+for name, kernel in GATHERS.items():
+    declare_kernel(name, kernel)

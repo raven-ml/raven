@@ -20,6 +20,22 @@ let kernel_graph name =
 
 (* Recorded graphs *)
 
+(* Gathers: tensor graphs of UOps in which an index by an integer value with a
+   shape, clamped into range, reads rows of its source (D73). *)
+let gathers =
+  [
+    "index_rows";
+    "index_rows_computed";
+    "index_read_twice";
+    "index_under_reduce";
+    "index_broadcast";
+    "index_view_source";
+    "index_zip";
+    "index_of_index";
+    "index_zero_fill";
+    "index_assign_self";
+  ]
+
 let programs =
   [
     "add";
@@ -155,6 +171,7 @@ let programs =
     "where";
     "zero_size_children";
   ]
+  @ gathers
 
 let recorded =
   group "get_kernel_graph › recorded"
@@ -170,6 +187,12 @@ let kernels u =
 
 let counts =
   Golden.cases "kernel_counts.golden" (fun cell ->
+      equal int
+        (int_of_string (cell "kernels"))
+        (kernels (kernel_graph (cell "program"))))
+
+let gather_counts =
+  Golden.cases "gather_kernel_counts.golden" (fun cell ->
       equal int
         (int_of_string (cell "kernels"))
         (kernels (kernel_graph (cell "program"))))
@@ -752,4 +775,15 @@ let loops =
 let () =
   exit
     (run "Tolk_next.Rangeify"
-       [ recorded; counts; values; structure; laws; debug; spec; rules; loops ])
+       [
+         recorded;
+         counts;
+         gather_counts;
+         values;
+         structure;
+         laws;
+         debug;
+         spec;
+         rules;
+         loops;
+       ])

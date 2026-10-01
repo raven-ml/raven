@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+program	kernels
+index_rows	1
+index_rows_computed	1
+index_read_twice	1
+index_under_reduce	1
+index_broadcast	2
+index_view_source	1
+index_zip	1
+index_of_index	1
+index_zero_fill	1
+index_assign_self	2

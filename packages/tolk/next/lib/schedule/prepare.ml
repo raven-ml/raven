@@ -102,12 +102,14 @@ let mop_index r idx =
       in
       if equal_shape (shape ret) (shape idx) then Some ret else None
 
-let pm_mops =
+let mops ~gathers =
   let movement = Upat.v ~op:Op.Set.movement ~name:"r" () in
   Pattern_matcher.v
     (fun () -> [
       rule (Upat.f movement Op.Index ~allow_any_len:true ~name:"idx") (fun m ->
-          mop_index (m "r") (m "idx"));
+          let idx = m "idx" in
+          if (not gathers) && Indexing.is_gather idx then None
+          else mop_index (m "r") idx);
       (* Movements and indices move after the effects they are ordered after. *)
       rule
         (Upat.after ~name:"a" ~allow_any_len:true
@@ -123,6 +125,12 @@ let pm_mops =
           let a = m "a" in
           Some (replace a ~src:(nth (m "r") 0 :: List.tl (src a))));
     ])
+
+let pm_mops = mops ~gathers:true
+
+(* In a tensor graph, an index with a shape is a gather's, which would multiply
+   its shape if it moved through the movement: the gather is left whole. *)
+let pm_tensor_mops = mops ~gathers:false
 
 (* Cleanups *)
 
@@ -156,7 +164,12 @@ let fix_store_hazard target src =
         s == base || List.exists (fun c -> Tbl.mem reaches_base c) (Ops.src s)
       in
       if r then Tbl.replace reaches_base s ();
-      r && List.mem (op s) unsafe && not (s == target && op s = Op.Shrink)
+      (* A gather reorders through its source; its index reads in place. *)
+      let reorders =
+        List.mem (op s) unsafe
+        || (Indexing.is_gather s && Tbl.mem reaches_base (nth s 0))
+      in
+      r && reorders && not (s == target && op s = Op.Shrink)
     in
     if List.exists hazard (toposort ~gate:store_hazard_boundary src) then
       Some (store target (contiguous src))
@@ -212,7 +225,7 @@ let split_reduceop reduce x =
             (Nodes.to_list
                (ranges
                   (substitute
-                     ~extra_pm:(Pattern_matcher.with_ctx pm_mops)
+                     ~extra_pm:(Pattern_matcher.with_ctx pm_tensor_mops)
                      indexed
                      [ (base x, v Op.Noop) ])))
         in
@@ -592,10 +605,10 @@ let prepare_rangeify sink =
   in
   let tsink =
     graph_rewrite ~ctx:() tsink
-      (Pattern_matcher.concat [ pm_mops; pm_inline_calls; pm_disk_copy ])
+      (Pattern_matcher.concat [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ])
   in
   graph_rewrite ~bottom_up:true ~ctx:() tsink
-    (Pattern_matcher.append pm_mops earliest_rewrites)
+    (Pattern_matcher.append pm_tensor_mops earliest_rewrites)
 
 (* Contiguous views *)
 

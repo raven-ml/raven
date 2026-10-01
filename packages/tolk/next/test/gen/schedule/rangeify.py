@@ -22,6 +22,7 @@ from tinygrad.helpers import DEBUG_RANGEIFY, DEV, MAX_KERNEL_BUFFERS, SPLIT_REDU
 from tinygrad.dtype import Invalid
 from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
 import tinygrad.schedule
+import tinygrad.schedule.prepare
 import tinygrad.schedule.rangeify
 
 DEV.value = "CPU"
@@ -368,3 +369,77 @@ def declare_debug(name, program):
 
 for name in DEBUG:
     declare_debug(name, PROGRAMS[name])
+
+
+# Gathers: tensor graphs built of UOps, since a Tensor program gathers with a
+# one-hot sum. Before ranges an INDEX by an integer value of a shape is a
+# gather; its index is clamped into range, as rune lowers one. `<name>.golden`
+# is what `get_kernel_graph` receives, `<name>_kernels.golden` what it returns.
+
+
+def param(slot, *shape, dtype=dtypes.float):
+    size = 1
+    for n in shape: size *= n
+    return UOp.param(slot, dtype, size, "CPU").reshape(shape)
+
+
+def clamp(n, i): return i.maximum(0).minimum(n - 1).cast(dtypes.weakint)
+
+
+def stores(value):
+    out = param(0, *value.shape, dtype=value.dtype)
+    return UOp.sink(out.after(out.store(value)))
+
+
+def rows_x(): return param(1, 8, 4)
+def rows_l(): return clamp(8, param(2, 3, dtype=dtypes.int32))
+
+
+def zip_gather():
+    x, i = param(1, 2, 8), param(2, 2, 3, dtype=dtypes.int32)
+    row = UOp.arange(2).cast(dtypes.weakint).reshape((2, 1)).expand((2, 3))
+    return stores(x.reshape((16,)).index(row * 8 + clamp(8, i)))
+
+
+def zero_fill():
+    i = param(2, 3, dtype=dtypes.int32)
+    inside = ((i >= 0) & (i < 8)).reshape((3, 1)).expand((3, 4))
+    return stores(inside.where(rows_x().index(rows_l()), 0.0))
+
+
+def assign_gathered_self():
+    xp = UOp.param(1, dtypes.float, 32, "CPU")
+    x, i = xp.reshape((8, 4)), param(2, 6, dtype=dtypes.int32)
+    l = clamp(8, i).cat(clamp(8, i.shrink(((0, 2),))))
+    return UOp.sink(xp.after(x.store(x.index(l))))
+
+
+GATHERS = {
+    "index_rows": lambda: stores(rows_x().index(rows_l())),
+    "index_rows_computed": lambda: stores((rows_x() * rows_x() + rows_x()).index(rows_l())),
+    "index_read_twice": lambda: (lambda g: stores(g + g))(rows_x().index(rows_l())),
+    "index_under_reduce": lambda: stores((rows_x().index(rows_l()) * param(3, 3, 4))._rop(Ops.ADD, (0,))),
+    "index_broadcast": lambda: (lambda g: stores(g._rop(Ops.ADD, (1,)).reshape((3, 1)).expand((3, 4)) * g))(rows_x().index(rows_l())),
+    "index_view_source": lambda: stores(param(1, 4, 8).permute((1, 0)).index(rows_l())),
+    "index_zip": zip_gather,
+    "index_of_index": lambda: stores(rows_x().index(clamp(8, param(2, 6, dtype=dtypes.int32).index(clamp(6, param(2, 3, dtype=dtypes.int32)))))),
+    "index_zero_fill": zero_fill,
+    "index_assign_self": assign_gathered_self,
+}
+
+
+def declare_gather(name, program):
+    def given(): return tinygrad.schedule.prepare.prepare_rangeify(program())
+    def made(): return tinygrad.schedule.rangeify.get_kernel_graph(given())
+    given.__name__, made.__name__ = name, f"{name}_kernels"
+    graph(given)
+    graph(made)
+    return (name, forked(lambda: kernel_count(made())))
+
+
+GATHER_COUNTS = [declare_gather(name, program) for name, program in GATHERS.items()]
+
+
+@table
+def gather_kernel_counts():
+    return ["program", "kernels"], GATHER_COUNTS

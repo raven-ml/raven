@@ -68,6 +68,9 @@ let programs =
     "disk_staged_view";
     "embedding";
     "flip_of_other";
+    "gather_by_self";
+    "gather_of_reshape";
+    "gather_of_self";
     "gpt_oss_decode";
     "gpt_oss_decode_1";
     "gpt_oss_prefill";

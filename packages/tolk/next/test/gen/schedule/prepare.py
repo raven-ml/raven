@@ -338,6 +338,27 @@ def flip_of_other():
     return UOp.sink(out.after(out.store(param(1, 16).flip((0,)) + out)))
 
 
+def clamped(n, i): return i.maximum(0).minimum(n-1).cast(dtypes.weakint)
+
+
+def gather_of_self():
+    # the value gathers rows of its destination, in another order
+    out = param(0, 8, 4)
+    return UOp.sink(out.after(out.store(out.index(clamped(8, param(1, 8, dtype=dtypes.int32).flip((0,)))))))
+
+
+def gather_by_self():
+    # the value gathers other storage by its destination's elements, in place
+    out = param(0, 8)
+    return UOp.sink(out.after(out.store(param(1, 8).index(clamped(8, out.cast(dtypes.int32))))))
+
+
+def gather_of_reshape():
+    # the index has a shape, which the reshape's index would take
+    out = param(0, 2, 3, 4)
+    return UOp.sink(out.after(out.store(param(1, 16).reshape((4, 4)).index(clamped(4, param(2, 2, 3, dtype=dtypes.int32))))))
+
+
 GRAPHS = {
     "alias_of_placed": alias_of_placed,
     "placed_through_view": placed_through_view,
@@ -347,6 +368,9 @@ GRAPHS = {
     "hazard_behind_other_after": hazard_behind_other_after,
     "flip_of_other": flip_of_other,
     "disk_staged_view": disk_staged_view,
+    "gather_of_self": gather_of_self,
+    "gather_by_self": gather_by_self,
+    "gather_of_reshape": gather_of_reshape,
 }
 
 
