@@ -320,15 +320,27 @@ let program_data props (obj : Device.Tiny_elf.t) =
       max_threads;
     } )
 
-(* The local memory word of kernels that need [bytes] per thread. *)
+(* The local memory word of kernels that need [bytes] per thread on [devs]: one
+   placeholder for every launch, which the engine binds to one word of the
+   device. Distinct placeholders of one tag would become views of one buffer
+   (Hcq2), which the word does not hold. Built by [build_program], under its
+   lock. *)
+let local_words = Hashtbl.create 4
+
 let local_word devs bytes =
-  load
-    (index
-       (placeholder ~device:(Multi devs)
-          ~tag:(Tag.Tuple [ String "nv_local"; Int bytes ])
-          [ 1 ] Dtype.Uint32)
-       [ int 0 ])
-    []
+  let word =
+    match Hashtbl.find_opt local_words (devs, bytes) with
+    | Some w -> w
+    | None ->
+        let w =
+          placeholder ~device:(Multi devs)
+            ~tag:(Tag.Tuple [ String "nv_local"; Int bytes ])
+            [ 1 ] Dtype.Uint32
+        in
+        Hashtbl.replace local_words (devs, bytes) w;
+        w
+  in
+  load (index word [ int 0 ]) []
 
 (* Each program's launch template is built once for its devices. Its cubin is
    the engine's to load, relocated by the device that runs it (DIVERGENCES D38):

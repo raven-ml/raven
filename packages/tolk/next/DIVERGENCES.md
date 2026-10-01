@@ -1500,12 +1500,14 @@ the Exclusions of `README.md`.
   `shader_local_memory_high_size`), `:688-697`
   (`NVDevice._ensure_has_local_memory` grows the device's local memory when
   it builds a program).
-- **tolk.next:** `lib/runtime/ops_nv.ml:324` (`local_word`), `:340`
+- **tolk.next:** `lib/runtime/ops_nv.ml:330` (`local_word`), `:352`
   (`build_program`); `engine/nv.ml` (`local`).
 - **Differs:** a launch template's local memory size reads a 32-bit word,
   a placeholder of the device tagged `("nv_local", bytes)` for kernels that
-  need `bytes` per thread, which the host program loads when it runs. The
-  engine binds every such placeholder of a device to one word of the device,
+  need `bytes` per thread, which the host program loads when it runs. Every
+  launch on the devices that needs `bytes` reads one such placeholder, since
+  placeholders of one tag in a batch become views of one buffer. The engine
+  binds it to one word of the device,
   grows the device's local memory to `bytes` when it links the batch
   (`Nx_nv_device.local_memory`) and writes the bytes per thread the memory
   then provides into the word. A batch linked before a later one grew the
@@ -1516,7 +1518,9 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Ops_nv suite: every `recorded cases` golden, from
   tinygrad with D51 applied by its generator, and `storage › a compute queue
   names its program's cubin, its channel's words, and the local memory its
-  launches need`; the Ops_nv execution suite on an NVIDIA GPU.
+  launches need` and `› the launches of two programs in one batch read one
+  local memory word, whatever the engine binds to it (D51)`; the Ops_nv
+  execution suite on an NVIDIA GPU.
 
 ## D52. A selection of -0. stays off a gated load
 

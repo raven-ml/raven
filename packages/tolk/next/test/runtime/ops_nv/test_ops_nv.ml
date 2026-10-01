@@ -585,6 +585,46 @@ let storages =
             ]
             words;
           equal int 1 (List.length local));
+      test
+        "the launches of two programs in one batch read one local memory \
+         word, whatever the engine binds to it (D51)" (fun () ->
+          let call = simple_add (buf ()) (buf ()) (buf ()) in
+          let prg = Ops.nth call 0 in
+          let binary = Ops.nth prg 3 in
+          (* Another program: the same image, a word longer. *)
+          let other =
+            match Ops.arg binary with
+            | Bytes b ->
+                Ops.replace call
+                  ~src:
+                    (Ops.replace prg
+                       ~src:
+                         (List.mapi
+                            (fun i s ->
+                              if i = 3 then
+                                Ops.replace binary ~arg:(Bytes (b ^ "\000\000\000\000"))
+                              else s)
+                            (Ops.src prg))
+                    :: List.tl (Ops.src call))
+            | _ -> fail "a program holds its binary"
+          in
+          let compiled =
+            plain (fun () ->
+                Hcq2.compile_linear ~devices:(recorded_devices ~blackwell:false)
+                  (Ops.v Linear ~src:[ call; other ]))
+          in
+          let tagged name =
+            List.filter
+              (fun u ->
+                match Ops.tag u with
+                | Some (Tuple (String n :: _)) -> n = name
+                | _ -> false)
+              (Ops.toposort ~enter_calls:true compiled)
+          in
+          equal ~msg:"programs" int 2 (List.length (tagged "program"));
+          let words = tagged "nv_local" in
+          is_true ~msg:"a local memory word" (words <> []);
+          List.iter (fun u -> equal int 1 (Ops.max_numel u)) words);
       test "a copy queue names its channel's words" (fun () ->
           equal (list storage)
             [ Ring "COPY:0"; Gp_put "COPY:0"; Put "COPY:0"; Doorbell "COPY:0" ]

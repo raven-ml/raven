@@ -173,13 +173,19 @@ ops_nv.NVQueue.end_chain = lambda self: None
 
 build_program = ops_nv.nv_build_program
 
+# one placeholder for every launch that needs the same local memory on the same devices: placeholders of one tag in a
+# batch would become views of one buffer, which the device's word does not hold
+local_words = {}
+
 
 def nv_build_program(dev, prg, devs):
     if (cached := ops_nv._nv_program_cache.get((prg.src[3].arg, devs))) is not None: return cached
     required = []
     dev._ensure_has_local_memory = required.append
     data, _ = build_program(dev, prg, devs)
-    local = UOp.placeholder((1,), dtypes.uint32, device=devs, tag=("nv_local", required[0])).index(0).load()
+    if (devs, required[0]) not in local_words:
+        local_words[(devs, required[0])] = UOp.placeholder((1,), dtypes.uint32, device=devs, tag=("nv_local", required[0]))
+    local = local_words[(devs, required[0])].index(0).load()
     if data.qmd.ver >= 4: data.qmd.write(shader_local_memory_high_size_shifted4=local >> 4)
     else: data.qmd.write(shader_local_memory_high_size=local)
     # DIVERGENCES D38: the placeholder names the cubin and its kernel, which the engine loads
