@@ -46,9 +46,9 @@ exception Not_staged
 val fold : request -> result
 (** [fold r] runs [r]'s steps one after the other in the caller's
     interpretation, so every installation around the caller sees each step's
-    operations. Each step's carry is made contiguous ({!Nx.contiguous}) before
-    the next step reads it. An exception of [r.req_step] propagates unchanged.
-*)
+    operations. A traced step's carry is copied ({!Nx.copy}), so that a compiled
+    call stores it before the next step reads it. An exception of [r.req_step]
+    propagates unchanged. *)
 
 (** {1:transformed Transformed scans}
 

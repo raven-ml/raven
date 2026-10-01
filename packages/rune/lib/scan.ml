@@ -24,6 +24,14 @@ let rec stack = function
       let column = List.map (fun y -> Nx.unpack dtype (List.hd y)) steps in
       Nx.P (Nx.stack ~axis:0 column) :: stack (List.map List.tl steps)
 
+(* A carry of its own per step: a compiled call that writes the loop out stores
+   each step's carry, so the next step reads its storage and no kernel nests as
+   deep as the loop is long. An eager carry is already stored. *)
+let own (Nx.P c) =
+  match Nx.Repr.v c with
+  | Traced _ -> Nx.P (Nx.copy c)
+  | Host _ | Placed _ -> Nx.P c
+
 let fold r =
   let (Nx.P x) = List.hd r.req_xs in
   let n = (Nx.shape x).(0) in
@@ -35,9 +43,7 @@ let fold r =
       List.map (fun (Nx.P x) -> Nx.P (Nx.slice [ Nx.I i ] x)) r.req_xs
     in
     let c, y = r.req_step !carry row in
-    (* A carry of its own per step: a compiled call that writes the loop out
-       computes each step from the last one's storage, whatever the length. *)
-    carry := List.map (fun (Nx.P c) -> Nx.P (Nx.contiguous c)) c;
+    carry := List.map own c;
     ys.(i) <- y
   done;
   { r_carry = !carry; r_ys = stack (Array.to_list ys) }
