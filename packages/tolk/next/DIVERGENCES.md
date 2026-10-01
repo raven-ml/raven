@@ -1616,7 +1616,7 @@ the Exclusions of `README.md`.
   has phase 4`, `a capture of storage 4 bytes past a 16-byte boundary has
   phase 4` and `a program over an argument 4 bytes past a 16-byte boundary
   computes nx's values`, and the `Compiled` suite's `edges › an operand whose
-  buffer starts 2 bytes into its memory is read where it is (D54)`, on the
+  buffer starts 2 bytes into its memory is read where it is`, on the
   host and on Metal, whose sweeps draw buffers that start at any byte; the
   slow `Ops_metal (execution)` suite's `phase (D54) › a float16 buffer 2 or 6
   bytes into its memory is read where it lies with its phase`.

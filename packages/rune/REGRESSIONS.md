@@ -28,40 +28,37 @@ of, so their rows name those kernels' laws or drop with that reason.
 
 ### Old rune tests
 
+Rows here map the old tests that the eager compiled kernels own. The rest of
+these files belong to the compiled call, in its own section.
+
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_jit_metal.ml element-wise chain matches eager | elementwise kernels on Metal give eager's values | Compiled › host › elementwise › exact unary; › exact binary (and their Metal runs) |
-| old: test_jit_metal.ml duplicate scatter updates land in order | the last duplicate wins under `Set` | Compiled › host › indexed › scatter exactly |
-| old: test_jit_metal.ml gathers keep -0 on the GPU | a gather keeps bits | Compiled › host › indexed › gather |
-| old: test_jit_metal.ml concatenation keeps every bit on the GPU | cat keeps NaN payloads and -0 | Compiled › host › edges › a concatenation of 17 pieces, a kernel of 18 arguments, keeps every bit; › indexed › cat |
-| old: test_jit_metal.ml an index outside the axis beside unit axes on the GPU | an out-of-range index reads zero | Compiled › host › indexed › gather (indices drawn from -2 to n+1 and the int32 extremes, unit axes drawn) |
-| old: test_jit_metal.ml sorted values are the input's elements on the GPU; sort matches eager | a sort permutes its elements | Compiled › host › reductions › sort; › argsort |
-| old: test_jit_metal.ml sort keeps subnormals | a sort moves subnormals unflushed on Metal | Compiled › metal › reductions › sort (operands of kernels that move values are not flushed) |
-| old: test_jit_metal.ml scans keep subnormals | cummax and cummin keep subnormals on Metal | Compiled › metal › reductions › scan exactly |
-| old: test_jit_metal.ml top_k over a row of 2^20 entries; top_k selects what it selects eagerly | top_k | dropped: `Nx.top_k` is nx's composition of `sort` and `argsort` |
-| old: test_jit_metal.ml empty values have no storage | empty outputs, inputs and sums over empty slices | Compiled › host › * (every law draws dims of 0; an empty destination runs nothing) |
-| old: test_jit_metal.ml float sums and products keep their grouping; float constants keep their grouping; float identities hold only where IEEE keeps them | tolk keeps IEEE float rewrites | Compiled › host › reductions › reduce floats; › scan floats (a zero result has eager's sign); the rewrites across operations belong to the compiled call's suite |
-| old: test_jit_metal.ml ordered comparisons are false at NaN | comparisons at NaN | Compiled › host › elementwise › comparisons |
-| old: test_jit_metal.ml max propagates NaN | maximum and max of NaN | Compiled › host › elementwise › exact binary; › reductions › reduce exactly |
-| old: test_jit_metal.ml zeros keep their sign | signed zeros through arithmetic | Compiled › host › elementwise › exact unary; › exact binary; › edges |
-| old: test_jit_metal.ml integer comparisons read wrapped values; folded integer constants wrap | integers wrap | Compiled › host › elementwise › exact binary; › comparisons |
-| old: test_jit_metal.ml pow of a tensor base matches eager | pow | Compiled › host, swept › elementwise › transcendental binary; › exact binary (integer power) |
-| old: test_jit_metal.ml a 17-argument kernel between queued work matches eager | a kernel of many arguments | Compiled › host › edges › a concatenation of 17 pieces, a kernel of 18 arguments, keeps every bit |
-| old: test_jit_metal.ml a read after a call waits for it | a read waits for queued work | Compiled › host › domains › runs of one key queued with no read between them each give their own result |
-| old: test_jit_metal.ml placed views bind at any offset | operands at any offset | Compiled › host › * (layouts drawn at offsets 0 to 7 in buffers that start 0 to 3 elements into their memory); › edges › an operand whose buffer starts 2 bytes into its memory is read where it is |
-| old: test_jit_metal.ml a dtype Metal cannot hold raises at placement; a dtype Metal cannot hold raises before a compiled call | float64 on Metal | Compiled › metal › refusals of Metal › float64 is refused |
-| old: test_jit_metal.ml Metal has one device | the device count | dropped: nx.metal.device's suite |
-| old: test_jit_metal.ml bitcast reads on the GPU the bits eager reads; bitcast outputs retain their own dtype; float8 bitcasts preserve raw bytes through movements | bitcast | dropped: a bitcast is a view in nx, no kernel |
-| old: test_jit_metal.ml grad inside jit, rematerialized second derivatives, custom backward, multi-kernel traces, staged scan body, command storage, arenas, two programs on one consumed state (8 tests) | the compiled call | dropped: `Rune.jit`'s suite, not the eager backend |
-| old: test_jit_metal.ml placed weights, reads and moves (16 tests) | placement, binding, consumption, moves | dropped: placement and the compiled call's suites |
-| old: test_jit_cuda.ml element-wise chain matches eager; float16 and bfloat16 matmul equal eager | kernels on CUDA | dropped until a CUDA device joins the suite's devices: the laws take any device, and the Metal runs cover a queued GPU |
-| old: test_jit_cuda.ml (24 other tests) | the compiled call, placement, randomness and consumption on CUDA | dropped: `Rune.jit`'s and placement's suites |
-| old: test_jit_alignment.ml an input at an address that is 4 modulo 16; the CPU device declares no vector alignment | a kernel reads an operand at any address | Compiled › host › * (buffers starting 0 to 3 elements into their memory); › edges › an operand whose buffer starts 2 bytes into its memory is read where it is |
-| old: test_jit_alignment.ml a capture at an address that is 4 modulo 16 | captures | dropped: the compiled call's captures |
-| old: test_jit_cache.ml (7 tests) | the persistent compile cache | dropped: the process-wide table is `Compiled › host › cache › *`; the disk cache is the compiled call's |
-| old: test_jit.ml half-precision sums accumulate wide | a float16 or bfloat16 sum runs at float32 and rounds once | Compiled › host › narrow floats accumulate at float32 › a float16 sum of 4096 ones is 4096; › a bfloat16 sum of 512 ones is 512; › a float16 running sum of 4096 ones rounds each count once; › a float16 contraction of 4096 ones is 4096 (the compiled call's case is the Jit suite's) |
-| old: test_jit.ml half-precision products multiply wide | a float16 product runs at float32 and rounds once | Compiled › host › narrow floats accumulate at float32 › a float16 product past the float16 range and back is exact; › a float16 running product overflows only where its value does |
-| old: test_half.ml eager vs jit (4 tests) | half softmax and layernorm | dropped: compositions; their kernels run at float16 and bfloat16 in every law |
+| old: test_jit_metal.ml metal device › element-wise chain matches eager | elementwise kernels on Metal give eager's values | Compiled › metal › elementwise › exact unary; › exact binary |
+| old: test_jit_metal.ml metal device › duplicate scatter updates land in order | the last duplicate wins under `Set` | Compiled › metal › indexed › scatter exactly |
+| old: test_jit_metal.ml metal device › gathers keep -0 on the GPU | a gather keeps bits | Compiled › metal › indexed › gather |
+| old: test_jit_metal.ml metal device › concatenation keeps every bit on the GPU | cat keeps NaN payloads and -0 | Compiled › metal › edges › a concatenation of 17 pieces, a kernel of 18 arguments, keeps every bit; › indexed › cat |
+| old: test_jit_metal.ml metal device › an index outside the axis beside unit axes on the GPU | an out-of-range index reads zero | Compiled › metal › indexed › gather (indices from -2 to n+1 and the int32 extremes, unit axes drawn) |
+| old: test_jit_metal.ml metal device › sorted values are the input's elements on the GPU; metal device › sort matches eager | a sort permutes its elements | Compiled › metal › reductions › sort; › argsort |
+| old: test_jit_metal.ml metal device › sort keeps subnormals | a sort moves subnormals unflushed on Metal | Compiled › metal › reductions › sort (operands of kernels that move values are not flushed) |
+| old: test_jit_metal.ml metal device › scans keep subnormals | cummax and cummin keep subnormals on Metal | Compiled › metal › reductions › scan exactly |
+| old: test_jit_metal.ml metal device › top_k over a row of 2^20 entries on the GPU; metal device › top_k selects on the GPU what it selects eagerly | top_k | dropped: `Nx.top_k` is nx's composition of `sort` and `argsort`, whose kernels Compiled › metal › reductions › sort; › argsort check |
+| old: test_jit_metal.ml metal device › empty values have no storage | empty outputs, inputs and sums over empty slices | Compiled › metal › reductions › reduce floats (every law draws dims of 0; an empty destination runs nothing) |
+| old: test_jit_metal.ml metal device › float sums and products keep their grouping; metal device › float constants keep their grouping; metal device › float identities hold only where IEEE keeps them | IEEE float arithmetic in a kernel | Compiled › metal › reductions › reduce floats; › scan floats; › elementwise › exact binary |
+| old: test_jit_metal.ml metal device › ordered comparisons are false at NaN | comparisons at NaN | Compiled › metal › elementwise › comparisons |
+| old: test_jit_metal.ml metal device › max propagates NaN | maximum and max of NaN | Compiled › metal › elementwise › exact binary; › reductions › reduce exactly |
+| old: test_jit_metal.ml metal device › zeros keep their sign | signed zeros through arithmetic | Compiled › metal › elementwise › exact unary; › exact binary |
+| old: test_jit_metal.ml metal device › integer comparisons read wrapped values; metal device › folded integer constants wrap | integers wrap | Compiled › metal › elementwise › exact binary; › comparisons |
+| old: test_jit_metal.ml metal device › pow of a tensor base matches eager | pow | Compiled › metal › elementwise › transcendental binary; › exact binary |
+| old: test_jit_metal.ml metal device › a 17-argument kernel between queued work matches eager | a kernel of many arguments | Compiled › metal › edges › a concatenation of 17 pieces, a kernel of 18 arguments, keeps every bit |
+| old: test_jit_metal.ml placed weights › a dtype Metal cannot hold raises at placement; placed weights › a dtype Metal cannot hold raises before a compiled call | float64 on Metal | Compiled › metal › Metal › float64 is refused |
+| old: test_jit_metal.ml metal device › Metal has one device | the device count | dropped: nx.metal.device's suite counts its devices |
+| old: test_jit_metal.ml metal device › bitcast reads on the GPU the bits eager reads; metal device › bitcast outputs retain their own dtype; metal device › float8 bitcasts preserve raw bytes through movements | bitcast | dropped: a bitcast is a view in nx and reaches no kernel |
+| old: test_jit_cuda.ml cuda device › element-wise chain matches eager; cuda half › float16 matmul equals eager; cuda half › bfloat16 matmul equals eager | kernels on CUDA | dropped: no CUDA device in the suite's devices yet; the laws take any device, and Compiled › metal › * runs them on a queued GPU |
+| old: test_jit_alignment.ml host memory in place › an input at an address that is 4 modulo 16; host memory in place › the CPU device declares no vector alignment | a kernel reads an operand at any address | Compiled › host › edges › an operand whose buffer starts 2 bytes into its memory is read where it is |
+| old: test_jit_cache.ml persistent compile cache › * | the persistent compile cache | dropped: the cache on disk is tolk's (its Diskcache suite); the compiled call keys on the settings it documents |
+| old: test_jit.ml reductions › half-precision sums accumulate wide | a float16 or bfloat16 sum runs at float32 and rounds once | Compiled › host › narrow floats accumulate at float32 › a float16 sum of 4096 ones is 4096; › a bfloat16 sum of 512 ones is 512; › a float16 running sum of 4096 ones rounds each count once; › a float16 contraction of 4096 ones is 4096 |
+| old: test_jit.ml reductions › half-precision products multiply wide | a float16 product runs at float32 and rounds once | Compiled › host › narrow floats accumulate at float32 › a float16 product past the float16 range and back is exact; › a float16 running product overflows only where its value does |
+| old: test_half.ml eager vs jit › * | half softmax and layernorm | dropped: compositions of kernels that every Compiled law runs at float16 and bfloat16 |
 
 ### tinygrad test_ops.py
 

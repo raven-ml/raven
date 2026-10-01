@@ -2101,7 +2101,7 @@ let edges d =
         exact_of (both d (fold w x)));
     test
       "an operand whose buffer starts 2 bytes into its memory is read where it \
-       is (D54)" (fun () ->
+       is" (fun () ->
         let x =
           of_bits Nx.float16 [| 3; 4 |]
             { strides = [| 1; 3 |]; offset = 0; length = 12; inner = 1 }
