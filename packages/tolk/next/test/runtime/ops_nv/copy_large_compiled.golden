@@ -1,0 +1,175 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.uint [] ParamArg(slot=0, dtype=dtypes.uint, size=1, name="doorbell_copy_0_0", device="CPU", volatile=True)
+1 Ops.PARAM dtypes.ulong [] ParamArg(slot=1, dtype=dtypes.ulong, size=2, name="slots_1", device="CPU", volatile=True)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.int [2] dtypes.int
+4 Ops.INDEX dtypes.ulong [1, 3]
+5 Ops.CAST dtypes.ulong [2] dtypes.ulong
+6 Ops.STORE dtypes.void [4, 5]
+7 Ops.BARRIER dtypes.void [6]
+8 Ops.AFTER dtypes.uint [0, 7]
+9 Ops.PARAM dtypes.uint [] ParamArg(slot=2, dtype=dtypes.uint, size=1, name="gpput_copy_0_2", device="CPU", volatile=True)
+10 Ops.AFTER dtypes.uint [9, 7]
+11 Ops.PARAM dtypes.ulong [] ParamArg(slot=3, dtype=dtypes.ulong, size=65536, name="ring_copy_0_3", device="CPU", volatile=True)
+12 Ops.AFTER dtypes.ulong [11, 7]
+13 Ops.PARAM dtypes.uchar [] ParamArg(slot=4, dtype=dtypes.uchar, size=144, name="cmdbuf_copy_0_4", device="CPU")
+14 Ops.AFTER dtypes.uchar [13, 7]
+15 Ops.CONST dtypes.weakint [] 4
+16 Ops.CAST dtypes.int [15] dtypes.int
+17 Ops.CONST dtypes.weakint [] 136
+18 Ops.CAST dtypes.int [17] dtypes.int
+19 Ops.SHRINK dtypes.uchar [14, 16, 18]
+20 Ops.BITCAST dtypes.ulong [19] dtypes.ulong
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CAST dtypes.int [21] dtypes.int
+23 Ops.INDEX dtypes.ulong [20, 22]
+24 Ops.PARAM dtypes.ulong [] ParamArg(slot=8, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="submitted_nv", addrspace=AddrSpace.ALU)
+25 Ops.STORE dtypes.void [23, 24]
+26 Ops.BITCAST dtypes.uint [14] dtypes.uint
+27 Ops.CONST dtypes.weakint [] 27
+28 Ops.CAST dtypes.int [27] dtypes.int
+29 Ops.INDEX dtypes.uint [26, 28]
+30 Ops.PARAM dtypes.ulong [] ParamArg(slot=9, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="value_nv", addrspace=AddrSpace.ALU)
+31 Ops.CAST dtypes.uint [30] dtypes.uint
+32 Ops.STORE dtypes.void [29, 31]
+33 Ops.CONST dtypes.weakint [] 31
+34 Ops.CAST dtypes.int [33] dtypes.int
+35 Ops.INDEX dtypes.uint [26, 34]
+36 Ops.CAST dtypes.uint [2] dtypes.uint
+37 Ops.CMPNE dtypes.bool [31, 36]
+38 Ops.PARAM dtypes.ulong [] ParamArg(slot=5, dtype=dtypes.ulong, size=2, name="inputs_5", device="CPU")
+39 Ops.INDEX dtypes.ulong [38, 22]
+40 Ops.LOAD dtypes.ulong [39]
+41 Ops.INDEX dtypes.ulong [38, 3]
+42 Ops.LOAD dtypes.ulong [41]
+43 Ops.CAST dtypes.ulong [15] dtypes.ulong
+44 Ops.ADD dtypes.ulong [42, 43]
+45 Ops.WHERE dtypes.ulong [37, 40, 44]
+46 Ops.CONST dtypes.weakint [] 32
+47 Ops.CAST dtypes.ulong [46] dtypes.ulong
+48 Ops.SHR dtypes.ulong [45, 47]
+49 Ops.CAST dtypes.uint [48] dtypes.uint
+50 Ops.STORE dtypes.void [35, 49]
+51 Ops.CAST dtypes.int [46] dtypes.int
+52 Ops.CONST dtypes.weakint [] 2
+53 Ops.CAST dtypes.int [52] dtypes.int
+54 Ops.SHRINK dtypes.uint [26, 51, 53]
+55 Ops.CAST dtypes.uint [45] dtypes.uint
+56 Ops.SHR dtypes.ulong [30, 47]
+57 Ops.CAST dtypes.uint [56] dtypes.uint
+58 Ops.STACK dtypes.uint [55, 57]
+59 Ops.STORE dtypes.void [54, 58]
+60 Ops.AFTER dtypes.ulong [12, 7, 25, 32, 50, 59]
+61 Ops.PARAM dtypes.ulong [] ParamArg(slot=6, dtype=dtypes.ulong, size=1, name="put_value_copy_0_6", device="CPU", volatile=True)
+62 Ops.AFTER dtypes.ulong [61, 7]
+63 Ops.INDEX dtypes.ulong [62, 3]
+64 Ops.LOAD dtypes.ulong [63]
+65 Ops.CONST dtypes.weakint [] 65535
+66 Ops.CAST dtypes.ulong [65] dtypes.ulong
+67 Ops.AND dtypes.ulong [64, 66]
+68 Ops.CAST dtypes.int [67] dtypes.int
+69 Ops.INDEX dtypes.ulong [60, 68]
+70 Ops.PARAM dtypes.ulong [] ParamArg(slot=7, dtype=dtypes.ulong, size=1, name="gpentry_copy_0_7", device="CPU", volatile=True)
+71 Ops.INDEX dtypes.ulong [70, 3]
+72 Ops.LOAD dtypes.ulong [71]
+73 Ops.STORE dtypes.void [69, 72]
+74 Ops.CAST dtypes.ulong [21] dtypes.ulong
+75 Ops.ADD dtypes.ulong [64, 74]
+76 Ops.STORE dtypes.void [63, 75]
+77 Ops.BARRIER dtypes.void [73, 76]
+78 Ops.AFTER dtypes.uint [10, 77]
+79 Ops.INDEX dtypes.uint [78, 3]
+80 Ops.AND dtypes.ulong [75, 66]
+81 Ops.CAST dtypes.uint [80] dtypes.uint
+82 Ops.STORE dtypes.void [79, 81]
+83 Ops.BARRIER dtypes.void [82]
+84 Ops.AFTER dtypes.uint [8, 83]
+85 Ops.INDEX dtypes.uint [84, 3]
+86 Ops.CONST dtypes.weakint [] 34
+87 Ops.CAST dtypes.uint [86] dtypes.uint
+88 Ops.STORE dtypes.void [85, 87]
+89 Ops.SINK dtypes.void [88] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
+90 Ops.LINEAR dtypes.void [0, 1, 9, 11, 13, 38, 61, 70, 24, 30, 2, 3, 41, 42, 21, 22, 39, 40, 71, 72, 4, 5, 6, 7, 62, 63, 64, 14, 8, 10, 12, 31, 46, 47, 56, 57, 36, 15, 43, 44, 37, 45, 55, 58, 27, 28, 26, 29, 33, 34, 35, 17, 18, 16, 19, 20, 23, 52, 53, 51, 54, 48, 49, 32, 50, 25, 59, 60, 65, 66, 67, 68, 69, 74, 75, 76, 73, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
+91 Ops.SOURCE dtypes.void [] "typedef unsigned int unsigned_int2 __attribute__((aligned(8),ext_vector_type(2)));\nvoid hcq_submit(volatile unsigned int* restrict doorbell_copy_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned int* restrict gpput_copy_0_2_1, volatile unsigned long* restrict ring_copy_0_3_65536, unsigned char* restrict cmdbuf_copy_0_4_144, unsigned long* restrict inputs_5_2, volatile unsigned long* restrict put_value_copy_0_6_1, volatile unsigned long* restrict gpentry_copy_0_7_1, const unsigned long submitted_nv_, const unsigned long value_nv_) {\n  unsigned long val0 = (*(inputs_5_2+0));\n  unsigned long val1 = (*(inputs_5_2+1));\n  unsigned long val2 = (*(gpentry_copy_0_7_1+0));\n  *(slots_1_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  unsigned long val3 = (*(put_value_copy_0_6_1+0));\n  unsigned int cast0 = ((unsigned int)(value_nv_));\n  unsigned long alu2 = ((cast0!=0u)?val1:(val0+4ul));\n  *(((unsigned int*)(cmdbuf_copy_0_4_144))+27) = cast0;\n  *(((unsigned int*)(cmdbuf_copy_0_4_144))+31) = ((unsigned int)((alu2>>32ul)));\n  *(((unsigned long*)((cmdbuf_copy_0_4_144+4)))+1) = submitted_nv_;\n  *((unsigned_int2*)((((unsigned int*)(cmdbuf_copy_0_4_144))+32))) = (unsigned_int2){((unsigned int)(alu2)),((unsigned int)((value_nv_>>32ul)))};\n  unsigned long alu7 = (val3+1ul);\n  *(put_value_copy_0_6_1+0) = alu7;\n  *(ring_copy_0_3_65536+((int)((val3&65535ul)))) = val2;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(gpput_copy_0_2_1+0) = ((unsigned int)((alu7&65535ul)));\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(doorbell_copy_0_0_1+0) = 34u;\n}\n"
+92 Ops.BINARY dtypes.uchar [] b"typedef unsigned int unsigned_int2 __attribute__((aligned(8),ext_vector_type(2)));\nvoid hcq_submit(volatile unsigned int* restrict doorbell_copy_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned int* restrict gpput_copy_0_2_1, volatile unsigned long* restrict ring_copy_0_3_65536, unsigned char* restrict cmdbuf_copy_0_4_144, unsigned long* restrict inputs_5_2, volatile unsigned long* restrict put_value_copy_0_6_1, volatile unsigned long* restrict gpentry_copy_0_7_1, const unsigned long submitted_nv_, const unsigned long value_nv_) {\n  unsigned long val0 = (*(inputs_5_2+0));\n  unsigned long val1 = (*(inputs_5_2+1));\n  unsigned long val2 = (*(gpentry_copy_0_7_1+0));\n  *(slots_1_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  unsigned long val3 = (*(put_value_copy_0_6_1+0));\n  unsigned int cast0 = ((unsigned int)(value_nv_));\n  unsigned long alu2 = ((cast0!=0u)?val1:(val0+4ul));\n  *(((unsigned int*)(cmdbuf_copy_0_4_144))+27) = cast0;\n  *(((unsigned int*)(cmdbuf_copy_0_4_144))+31) = ((unsigned int)((alu2>>32ul)));\n  *(((unsigned long*)((cmdbuf_copy_0_4_144+4)))+1) = submitted_nv_;\n  *((unsigned_int2*)((((unsigned int*)(cmdbuf_copy_0_4_144))+32))) = (unsigned_int2){((unsigned int)(alu2)),((unsigned int)((value_nv_>>32ul)))};\n  unsigned long alu7 = (val3+1ul);\n  *(put_value_copy_0_6_1+0) = alu7;\n  *(ring_copy_0_3_65536+((int)((val3&65535ul)))) = val2;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(gpput_copy_0_2_1+0) = ((unsigned int)((alu7&65535ul)));\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(doorbell_copy_0_0_1+0) = 34u;\n}\n"
+93 Ops.PROGRAM dtypes.void [89, 90, 91, 92] ProgramInfo(vars=(%24, %30), globals=(0, 1, 2, 3, 4, 5, 6, 7), outs=(0, 1, 2, 3, 4, 6), ins=(5, 6, 7), target=Target(device="CPU", arch="x86_64,x86-64"))
+94 Ops.PARAM dtypes.uint [] ParamArg(slot=8, dtype=dtypes.uint, size=1, name="doorbell_copy_0", device=("NV",), volatile=True) tag="doorbell_copy_0"
+95 Ops.PARAM dtypes.ulong [] ParamArg(slot=3, dtype=dtypes.ulong, size=2, name="slots", device=("NV",), volatile=True) tag="slots"
+96 Ops.PARAM dtypes.uint [] ParamArg(slot=7, dtype=dtypes.uint, size=1, name="gpput_copy_0", device=("NV",), volatile=True) tag="gpput_copy_0"
+97 Ops.PARAM dtypes.ulong [] ParamArg(slot=6, dtype=dtypes.ulong, size=65536, name="ring_copy_0", device=("NV",), volatile=True) tag="ring_copy_0"
+98 Ops.PARAM dtypes.uchar [] ParamArg(slot=5, dtype=dtypes.uchar, size=144, name="cmdbuf_copy_0", device=("NV",)) tag="cmdbuf_copy_0"
+99 Ops.PARAM dtypes.ulong [] ParamArg(slot=11, dtype=dtypes.ulong, size=2, name="inputs", device="CPU") tag="inputs"
+100 Ops.PARAM dtypes.ulong [] ParamArg(slot=9, dtype=dtypes.ulong, size=1, name="put_value_copy_0", device=("NV",), volatile=True) tag="put_value_copy_0"
+101 Ops.PARAM dtypes.ulong [] ParamArg(slot=10, dtype=dtypes.ulong, size=1, name="gpentry_copy_0", device=("NV",), volatile=True) tag="gpentry_copy_0"
+102 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=536870916, device="NV")
+103 Ops.CALL dtypes.void [93, 94, 95, 96, 97, 98, 99, 100, 101] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "copy    2.00 GB,      NV <- CPU    ", Estimates(lds=2147483664, mem=2147483664), (), None, (), ((0,), (1,))),), estimates=Estimates(lds=2147483664, mem=2147483664), nargs=8, table=5, slots=(("NV", 1),), written_bufs=(%102,)))
+104 Ops.BINARY dtypes.uchar [] b"\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\x00\x81\x04 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x06\x81\x01 \x00\x00\x00\x80\xc0\x80\x01 \x82\x01\x00\x00\x00\x81\x04 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x06\x81\x01 \x10\x00\x00\x00\xc0\x80\x01 \x82\x01\x00\x00\x90\x80\x03 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x80\x01 \x0c\x00\x00\x00\x90\x80\x03 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x80\x01 \x0c\x00\x00\x00"
+105 Ops.STORE dtypes.void [98, 104]
+106 Ops.SHRINK dtypes.ulong [101, 2, 2]
+107 Ops.STACK dtypes.weakint [2]
+108 Ops.INDEX dtypes.ulong [106, 107]
+109 Ops.GETADDR dtypes.ulong [98] "NV"
+110 Ops.CONST dtypes.weakint [] 160528697655296
+111 Ops.CAST dtypes.ulong [110] dtypes.ulong
+112 Ops.ADD dtypes.ulong [109, 111]
+113 Ops.STACK dtypes.ulong [112]
+114 Ops.STORE dtypes.void [108, 113]
+115 Ops.SHRINK dtypes.uchar [98, 15, 17]
+116 Ops.BITCAST dtypes.ulong [115] dtypes.ulong
+117 Ops.INDEX dtypes.ulong [116, 107]
+118 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, name="timeline", device=("NV",), volatile=True) tag="timeline"
+119 Ops.GETADDR dtypes.ulong [118] "NV"
+120 Ops.STACK dtypes.ulong [119]
+121 Ops.STORE dtypes.void [117, 120]
+122 Ops.BITCAST dtypes.uint [98] dtypes.uint
+123 Ops.CONST dtypes.weakint [] 7
+124 Ops.CONST dtypes.weakint [] 8
+125 Ops.CONST dtypes.weakint [] 9
+126 Ops.CONST dtypes.weakint [] 10
+127 Ops.CONST dtypes.weakint [] 16
+128 Ops.CONST dtypes.weakint [] 17
+129 Ops.CONST dtypes.weakint [] 18
+130 Ops.CONST dtypes.weakint [] 19
+131 Ops.CONST dtypes.weakint [] 25
+132 Ops.CONST dtypes.weakint [] 26
+133 Ops.STACK dtypes.weakint [123, 124, 125, 126, 127, 128, 129, 130, 131, 132]
+134 Ops.INDEX dtypes.uint [122, 133]
+135 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=536870916, device="CPU")
+136 Ops.GETADDR dtypes.ulong [135] "NV"
+137 Ops.ADD dtypes.ulong [136, 5]
+138 Ops.SHR dtypes.ulong [137, 46]
+139 Ops.CAST dtypes.uint [138] dtypes.uint
+140 Ops.CAST dtypes.uint [137] dtypes.uint
+141 Ops.GETADDR dtypes.ulong [102] "NV"
+142 Ops.ADD dtypes.ulong [141, 5]
+143 Ops.SHR dtypes.ulong [142, 46]
+144 Ops.CAST dtypes.uint [143] dtypes.uint
+145 Ops.CAST dtypes.uint [142] dtypes.uint
+146 Ops.CONST dtypes.weakint [] 2147483648
+147 Ops.CAST dtypes.ulong [146] dtypes.ulong
+148 Ops.ADD dtypes.ulong [136, 147]
+149 Ops.SHR dtypes.ulong [148, 46]
+150 Ops.CAST dtypes.uint [149] dtypes.uint
+151 Ops.CAST dtypes.uint [148] dtypes.uint
+152 Ops.ADD dtypes.ulong [141, 147]
+153 Ops.SHR dtypes.ulong [152, 46]
+154 Ops.CAST dtypes.uint [153] dtypes.uint
+155 Ops.CAST dtypes.uint [152] dtypes.uint
+156 Ops.SHR dtypes.ulong [119, 46]
+157 Ops.CAST dtypes.uint [156] dtypes.uint
+158 Ops.CAST dtypes.uint [119] dtypes.uint
+159 Ops.STACK dtypes.uint [139, 140, 144, 145, 150, 151, 154, 155, 157, 158]
+160 Ops.STORE dtypes.void [134, 159]
+161 Ops.SHRINK dtypes.ulong [99, 2, 2]
+162 Ops.STACK dtypes.weakint [2, 21]
+163 Ops.INDEX dtypes.ulong [161, 162]
+164 Ops.BITCAST dtypes.uchar [118] dtypes.uchar
+165 Ops.GETADDR dtypes.ulong [164] "NV"
+166 Ops.PARAM dtypes.uint [] ParamArg(slot=4, dtype=dtypes.uint, size=1, name="nv_sink", device=("NV",), volatile=True) tag="nv_sink"
+167 Ops.BITCAST dtypes.uchar [166] dtypes.uchar
+168 Ops.GETADDR dtypes.ulong [167] "NV"
+169 Ops.STACK dtypes.ulong [165, 168]
+170 Ops.STORE dtypes.void [163, 169]
+171 Ops.AFTER dtypes.void [103, 105, 114, 121, 160, 170]
+172 Ops.LINEAR dtypes.void [171]
+

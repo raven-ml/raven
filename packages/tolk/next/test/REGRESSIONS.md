@@ -2887,6 +2887,59 @@ No CI machine has one: it runs on hardware by hand.
 | old: `unit/test_runtime_cuda.ml` buffer views, LRU reuse, pinned storage, "cached functions survive independent link collection", "concurrent first links share one timeline and context descriptor" | | dropped: buffers, programs and timelines are nx.device's |
 | old: `unit/test_runtime_cuda.ml` "f16 tensor-core matmul" | | dropped here: kernels are the codegen suites'; their execution is L9's graph parity |
 
+## Ops_nv
+
+`N` is the `Ops_nv` suite (`test/runtime/ops_nv`). Its goldens come from
+tinygrad's `NVComputeQueue` and `NVCopyQueue` on an NV device described without
+a GPU, an Ada one (sm_89) or a Blackwell one, which reaches the host's memory,
+with D1, D38, D40, D43 and D51 applied in the generator: for each of sixteen
+cases, the schedule `sched_batches` receives, the schedule `compile_linear`
+returns and its host programs' source. A program's binary is the NVRTC cubin
+of `simple_add.cu` for sm_89 (`simple_add_sm89.cubin`), followed by the
+program's source, so each program has a binary of its own, or, for the
+`crafted` cases, a cubin the generator builds with 128 registers, shared
+memory, a stack, a parameter bank of its own size, constant bank 3 and every
+attribute format. It needs no GPU and no driver.
+
+There is no Blackwell cubin: the Blackwell cases take an sm_89-shaped cubin
+under a Blackwell compute class, which covers the version-5 launch
+descriptor, and no test reads a Blackwell cubin's attributes. The refusal of
+more than 100 KiB of shared memory is unread.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/ops_nv.py` `QMD` (no test) | a launch descriptor's fields, written and read by name, per version | `N › recorded cases › simple_add`, `simple_add_blackwell`, `simple_add_grid` (a grid of several blocks) |
+| tinygrad: `runtime/ops_nv.py` `NVProgramData`, `nv_build_program` (no test) | a cubin's registers, shared memory, stack, constant banks and launch template, at the offsets of its image | `N › recorded cases › simple_add*` (the real cubin), `crafted*`; the image's layout is `Nx_device_elf`'s, and its upload and relocation nx.nv.device's (D38) |
+| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.exec` (no test) | a launch chains onto the previous launch's descriptor, and the channel schedules the first | `N › recorded cases › simple_add_chain`, `simple_add_chain_blackwell`, `chain`, `chain_blackwell`; `N › chains › a launch after a launch chains onto its descriptor` |
+| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.wait`, `.memory_barrier` (no test) | a wait or a barrier ends a chain | `N › chains › a wait between two launches ends their chain`, `› a barrier between two launches ends their chain`; `N › recorded cases › host_split`, `variable` |
+| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.release`, `QMD.set_release` (no test) | a signal after a launch is one of its descriptor's two releases, and a semaphore release of the channel past them | `N › chains › a signal the descriptor releases keeps the chain`, `› a signal past the descriptor's two releases ends the chain`, `› a signal before any launch is the channel's`; `N › recorded cases › simple_add_profile` (timestamps past the two releases) |
+| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.exec`, its refusals | too many threads a block, a grid or a block beyond the hardware's limits | `N › refusals` (9 tests, with a copy queue's launch, a compute queue's copy, a program that is no cubin, and a command buffer longer than a ring entry holds, D43) |
+| tinygrad: `runtime/ops_nv.py` `NVCopyQueue.copy` (no test) | copies in lines of at most 2 GiB | `N › recorded cases › copy_in`, `copy_out_profile`, `copy_large` (more than 2 GiB) |
+| tinygrad: `runtime/ops_nv.py` `NVCopyQueue.signal`, `.timestamp`, `NVQueue.sem` (no test) | the copy engine's one-word release and four-word timestamp; 64-bit acquires | `N › command words` (15 tests: the compute channel's, the copy engine's and a wait's words for 2^32 - 1, 2^32, 2^32 + 1, 2^33 - 1 and 2^33); D40 |
+| DIVERGENCES D40 | the copy engine writes the high word of a value too, so the word never passes a waiter early and never takes a landed value back | `N › the 32-bit carry law` (every order of three works' writes on the compute channel, this copy queue and nx.nv.device's copies, from four starts across 2^32 and 2^33, and the two encodings the law refuses) |
+| tinygrad: `runtime/ops_nv.py` `NVQueue.submit` (no test) | the host program writes the channel's entry, put, gp_put and doorbell | `N › recorded cases › *_host.golden`; `N › storage` (the placeholders the engine binds to the channel's words) |
+| DIVERGENCES D30, D43 | a launch in a loop runs on descriptors of its trip, and the channel schedules each trip's chain | `N › loops (D30) › each trip's two launches chain on descriptors of the trip's own, and the channel schedules each trip's chain`; `Hcq2 › patch and bufferize_cmdbuf › a region addressed through another region is laid out once, in the buffer of its name` |
+| tinygrad: `runtime/ops_nv.py` `NVDevice._ensure_has_local_memory` | the local memory a descriptor states | the engine's word of the device's local memory (`Tolk_next_engine.device`), which nx.nv.device grows (`Nx_nv_device.local_memory`, its suite) |
+| tinygrad: external/external_test_hcq.py::TestHCQ::test_timeline_signal_rollover | a timeline across a wrap of its low word | `N › the 32-bit carry law`; NV's timeline values are 64 bits |
+| tinygrad: external/external_test_hcq.py::TestHCQ (the other tests) | queues built and run by hand, through the `HWQueue` of before hcq2 (`bind`, `update_exec`) | dropped: that API is gone at the pinned tinygrad; runs, copies and signals are `NX`'s |
+| tinygrad: test/mockgpu/nv | an NV driver in Python | dropped: no mock drivers (plan §10) |
+| old: `golden/nvqueue` `exec`, `exec_qmd`, `qmd_init` (Ada, Blackwell) | a launch's words and descriptor from the recorded cubin | `N › recorded cases › simple_add`, `simple_add_blackwell` |
+| old: `golden/nvqueue` `exec_chained`, `exec_chained_qmd0`, `exec_chained_qmd1` (Ada, Blackwell) | | `N › recorded cases › simple_add_chain`, `simple_add_chain_blackwell` |
+| old: `golden/nvqueue` `exec_wait_exec*`, `exec_barrier_exec*` (Ada, Blackwell) | | `N › chains › a wait between two launches ...`, `› a barrier between two launches ...` |
+| old: `golden/nvqueue` `exec_release_overflow*`, `signal_after_exec*`, `signal_no_qmd` (Ada, Blackwell) | | `N › chains › a signal the descriptor releases ...`, `› a signal past the descriptor's two releases ...`, `› a signal before any launch ...`; `N › recorded cases › simple_add_profile` |
+| old: `golden/nvqueue` `wait`, `timestamp`, `memory_barrier`, `dma_wait`, `dma_signal`, `dma_timestamp` (Ada, Blackwell) | | `N › command words`; `N › recorded cases › chain_profile`, `copy_out_profile` |
+| old: `golden/nvqueue` `dma_copy_small`, `dma_copy_large` (Ada, Blackwell) | | `N › recorded cases › copy_in`, `copy_large` |
+| old: `golden/nvqueue` `setup`, `setup_local_mem`, `dma_setup` (Ada, Blackwell) | a channel's setup and its local memory | dropped here: nx.nv.device sets up its channels and local memory (`Nx_nv_device.local_memory`) |
+| old: `unit/test_runtime_nv.ml` "Ada descriptors chain launches and release only the tail", "Blackwell descriptors chain ..." | | `N › recorded cases › simple_add_chain`, `simple_add_chain_blackwell` |
+| old: `unit/test_runtime_nv.ml` "compiled launches patch 3D geometry and profiling releases" | | `N › recorded cases › simple_add_grid`, `simple_add_profile` |
+| old: `unit/test_runtime_nv.ml` "launch limits fail before linking command storage" | | `N › refusals` |
+| old: `unit/test_runtime_nv.ml` "channel completion survives low-dword rollover" | | `N › the 32-bit carry law` |
+| old: `unit/test_runtime_nv.ml` qmd group (8 tests) | field writes by name, per version, and their refusals | `N › recorded cases` (every field the encoder writes, in both versions); the tables are generated (`lib/runtime/autogen/gen.py --check`) |
+| old: `unit/test_runtime_nv.ml` program image group, cubin fixture group | | `N › recorded cases › simple_add*`, `crafted*`; relocation and upload are nx.nv.device's (D38) |
+| old: `unit/test_runtime_nv.ml` "independent retained batches cannot overfill the FIFO", "compute and copy FIFOs resume when the GPU retires work" | a writer of a channel waits for room | nx.device: `Nx_device.submit` waits for each NV channel to be at most half full (`Driver.device`'s `room`) |
+| old: `unit/test_runtime_nv.ml` the other compiled queue tests, local memory, iface wire formats, driver version, va allocator, device info, device hang, Pci_iface and device groups | the old runtime's submissions, memory and driver | dropped here: nx.nv.device's suite |
+| old: `unit/test_nv_tables.ml`, `unit/test_nv_ip.ml`, `unit/test_nv_nvdev.ml` | the driver's tables, GSP boot and the driver-less device | dropped here: nx.nv.device's suite; the constants the encoder reads are `lib/runtime/autogen/nv_gpu.ml`'s |
+
 ## Jit
 
 `J` is the `Jit` suite (`test/engine/jit`), `JB` its JITBEAM suite

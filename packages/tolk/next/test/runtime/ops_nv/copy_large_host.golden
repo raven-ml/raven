@@ -1,0 +1,24 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int unsigned_int2 __attribute__((aligned(8),ext_vector_type(2)));
+void hcq_submit(volatile unsigned int* restrict doorbell_copy_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned int* restrict gpput_copy_0_2_1, volatile unsigned long* restrict ring_copy_0_3_65536, unsigned char* restrict cmdbuf_copy_0_4_144, unsigned long* restrict inputs_5_2, volatile unsigned long* restrict put_value_copy_0_6_1, volatile unsigned long* restrict gpentry_copy_0_7_1, const unsigned long submitted_nv_, const unsigned long value_nv_) {
+  unsigned long val0 = (*(inputs_5_2+0));
+  unsigned long val1 = (*(inputs_5_2+1));
+  unsigned long val2 = (*(gpentry_copy_0_7_1+0));
+  *(slots_1_2+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  unsigned long val3 = (*(put_value_copy_0_6_1+0));
+  unsigned int cast0 = ((unsigned int)(value_nv_));
+  unsigned long alu2 = ((cast0!=0u)?val1:(val0+4ul));
+  *(((unsigned int*)(cmdbuf_copy_0_4_144))+27) = cast0;
+  *(((unsigned int*)(cmdbuf_copy_0_4_144))+31) = ((unsigned int)((alu2>>32ul)));
+  *(((unsigned long*)((cmdbuf_copy_0_4_144+4)))+1) = submitted_nv_;
+  *((unsigned_int2*)((((unsigned int*)(cmdbuf_copy_0_4_144))+32))) = (unsigned_int2){((unsigned int)(alu2)),((unsigned int)((value_nv_>>32ul)))};
+  unsigned long alu7 = (val3+1ul);
+  *(put_value_copy_0_6_1+0) = alu7;
+  *(ring_copy_0_3_65536+((int)((val3&65535ul)))) = val2;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(gpput_copy_0_2_1+0) = ((unsigned int)((alu7&65535ul)));
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(doorbell_copy_0_0_1+0) = 34u;
+}
+

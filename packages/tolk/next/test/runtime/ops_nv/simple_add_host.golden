@@ -1,0 +1,20 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int unsigned_int2 __attribute__((aligned(8),ext_vector_type(2)));
+void hcq_submit(volatile unsigned int* restrict doorbell_compute_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned int* restrict gpput_compute_0_2_1, volatile unsigned long* restrict ring_compute_0_3_65536, unsigned char* restrict cmdbuf_compute_0_4_48, unsigned char* restrict qmd_compute_0_6_256, unsigned int* restrict None_7_1, volatile unsigned long* restrict put_value_compute_0_8_1, volatile unsigned long* restrict gpentry_compute_0_9_1, const unsigned long submitted_nv_, const unsigned long value_nv_) {
+  unsigned int val0 = (*(None_7_1+0));
+  unsigned long val1 = (*(gpentry_compute_0_9_1+0));
+  *(slots_1_2+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  unsigned long val2 = (*(put_value_compute_0_8_1+0));
+  *(((unsigned short*)(qmd_compute_0_6_256))+100) = ((unsigned short)(val0));
+  *(((unsigned long*)((cmdbuf_compute_0_4_48+4)))+2) = submitted_nv_;
+  *((unsigned_int2*)((((unsigned int*)(qmd_compute_0_6_256))+26))) = (unsigned_int2){((unsigned int)(value_nv_)),((unsigned int)((value_nv_>>32ul)))};
+  unsigned long alu5 = (val2+1ul);
+  *(put_value_compute_0_8_1+0) = alu5;
+  *(ring_compute_0_3_65536+((int)((val2&65535ul)))) = val1;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(gpput_compute_0_2_1+0) = ((unsigned int)((alu5&65535ul)));
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(doorbell_compute_0_0_1+0) = 17u;
+}
+

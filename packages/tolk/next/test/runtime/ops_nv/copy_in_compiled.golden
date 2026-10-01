@@ -1,0 +1,280 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.uint [] ParamArg(slot=0, dtype=dtypes.uint, size=1, name="doorbell_copy_0_0", device="CPU", volatile=True)
+1 Ops.PARAM dtypes.ulong [] ParamArg(slot=1, dtype=dtypes.ulong, size=4, name="slots_1", device="CPU", volatile=True)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.int [2] dtypes.int
+4 Ops.INDEX dtypes.ulong [1, 3]
+5 Ops.CAST dtypes.ulong [2] dtypes.ulong
+6 Ops.STORE dtypes.void [4, 5]
+7 Ops.AFTER dtypes.ulong [1, 6]
+8 Ops.CONST dtypes.weakint [] 2
+9 Ops.CAST dtypes.int [8] dtypes.int
+10 Ops.INDEX dtypes.ulong [7, 9]
+11 Ops.STORE dtypes.void [10, 5]
+12 Ops.BARRIER dtypes.void [11]
+13 Ops.AFTER dtypes.uint [0, 12]
+14 Ops.PARAM dtypes.uint [] ParamArg(slot=2, dtype=dtypes.uint, size=1, name="gpput_copy_0_2", device="CPU", volatile=True)
+15 Ops.AFTER dtypes.uint [14, 12]
+16 Ops.PARAM dtypes.ulong [] ParamArg(slot=3, dtype=dtypes.ulong, size=65536, name="ring_copy_0_3", device="CPU", volatile=True)
+17 Ops.AFTER dtypes.ulong [16, 12]
+18 Ops.PARAM dtypes.uchar [] ParamArg(slot=4, dtype=dtypes.uchar, size=108, name="cmdbuf_copy_0_4", device="CPU")
+19 Ops.AFTER dtypes.uchar [18, 12]
+20 Ops.CONST dtypes.weakint [] 4
+21 Ops.CAST dtypes.int [20] dtypes.int
+22 Ops.CONST dtypes.weakint [] 104
+23 Ops.CAST dtypes.int [22] dtypes.int
+24 Ops.SHRINK dtypes.uchar [19, 21, 23]
+25 Ops.BITCAST dtypes.ulong [24] dtypes.ulong
+26 Ops.CONST dtypes.weakint [] 1
+27 Ops.CAST dtypes.int [26] dtypes.int
+28 Ops.INDEX dtypes.ulong [25, 27]
+29 Ops.PARAM dtypes.ulong [] ParamArg(slot=16, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="submitted_nv", addrspace=AddrSpace.ALU)
+30 Ops.STORE dtypes.void [28, 29]
+31 Ops.AFTER dtypes.ulong [17, 12, 30]
+32 Ops.PARAM dtypes.ulong [] ParamArg(slot=5, dtype=dtypes.ulong, size=1, name="put_value_copy_0_5", device="CPU", volatile=True)
+33 Ops.AFTER dtypes.ulong [32, 12]
+34 Ops.INDEX dtypes.ulong [33, 3]
+35 Ops.LOAD dtypes.ulong [34]
+36 Ops.CONST dtypes.weakint [] 65535
+37 Ops.CAST dtypes.ulong [36] dtypes.ulong
+38 Ops.AND dtypes.ulong [35, 37]
+39 Ops.CAST dtypes.int [38] dtypes.int
+40 Ops.INDEX dtypes.ulong [31, 39]
+41 Ops.PARAM dtypes.ulong [] ParamArg(slot=6, dtype=dtypes.ulong, size=1, name="gpentry_copy_0_6", device="CPU", volatile=True)
+42 Ops.INDEX dtypes.ulong [41, 3]
+43 Ops.LOAD dtypes.ulong [42]
+44 Ops.STORE dtypes.void [40, 43]
+45 Ops.CAST dtypes.ulong [26] dtypes.ulong
+46 Ops.ADD dtypes.ulong [35, 45]
+47 Ops.STORE dtypes.void [34, 46]
+48 Ops.BARRIER dtypes.void [44, 47]
+49 Ops.AFTER dtypes.uint [15, 48]
+50 Ops.INDEX dtypes.uint [49, 3]
+51 Ops.AND dtypes.ulong [46, 37]
+52 Ops.CAST dtypes.uint [51] dtypes.uint
+53 Ops.STORE dtypes.void [50, 52]
+54 Ops.BARRIER dtypes.void [53]
+55 Ops.AFTER dtypes.uint [13, 54]
+56 Ops.INDEX dtypes.uint [55, 3]
+57 Ops.CONST dtypes.weakint [] 34
+58 Ops.CAST dtypes.uint [57] dtypes.uint
+59 Ops.STORE dtypes.void [56, 58]
+60 Ops.PARAM dtypes.uint [] ParamArg(slot=7, dtype=dtypes.uint, size=1, name="doorbell_compute_0_7", device="CPU", volatile=True)
+61 Ops.AFTER dtypes.uint [60, 12, 59]
+62 Ops.PARAM dtypes.uint [] ParamArg(slot=8, dtype=dtypes.uint, size=1, name="gpput_compute_0_8", device="CPU", volatile=True)
+63 Ops.AFTER dtypes.uint [62, 12, 59]
+64 Ops.PARAM dtypes.ulong [] ParamArg(slot=9, dtype=dtypes.ulong, size=65536, name="ring_compute_0_9", device="CPU", volatile=True)
+65 Ops.AFTER dtypes.ulong [64, 12, 59]
+66 Ops.PARAM dtypes.uchar [] ParamArg(slot=10, dtype=dtypes.uchar, size=128, name="cmdbuf_compute_0_10", device="CPU")
+67 Ops.AFTER dtypes.uchar [66, 12, 59]
+68 Ops.CONST dtypes.weakint [] 120
+69 Ops.CAST dtypes.int [68] dtypes.int
+70 Ops.SHRINK dtypes.uchar [67, 21, 69]
+71 Ops.BITCAST dtypes.ulong [70] dtypes.ulong
+72 Ops.INDEX dtypes.ulong [71, 9]
+73 Ops.STORE dtypes.void [72, 29]
+74 Ops.CONST dtypes.weakint [] 13
+75 Ops.CAST dtypes.int [74] dtypes.int
+76 Ops.INDEX dtypes.ulong [71, 75]
+77 Ops.PARAM dtypes.ulong [] ParamArg(slot=17, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="value_nv", addrspace=AddrSpace.ALU)
+78 Ops.STORE dtypes.void [76, 77]
+79 Ops.PARAM dtypes.uchar [] ParamArg(slot=12, dtype=dtypes.uchar, size=256, name="qmd_compute_0_12", device="CPU")
+80 Ops.AFTER dtypes.uchar [79, 12, 59]
+81 Ops.BITCAST dtypes.ushort [80] dtypes.ushort
+82 Ops.CONST dtypes.weakint [] 100
+83 Ops.CAST dtypes.int [82] dtypes.int
+84 Ops.INDEX dtypes.ushort [81, 83]
+85 Ops.PARAM dtypes.uint [] ParamArg(slot=13, dtype=dtypes.uint, size=1, name="None_13", device="CPU")
+86 Ops.INDEX dtypes.uint [85, 3]
+87 Ops.LOAD dtypes.uint [86]
+88 Ops.CAST dtypes.ushort [87] dtypes.ushort
+89 Ops.STORE dtypes.void [84, 88]
+90 Ops.AFTER dtypes.ulong [65, 12, 59, 73, 78, 89]
+91 Ops.PARAM dtypes.ulong [] ParamArg(slot=14, dtype=dtypes.ulong, size=1, name="put_value_compute_0_14", device="CPU", volatile=True)
+92 Ops.AFTER dtypes.ulong [91, 12, 59]
+93 Ops.INDEX dtypes.ulong [92, 3]
+94 Ops.LOAD dtypes.ulong [93]
+95 Ops.AND dtypes.ulong [94, 37]
+96 Ops.CAST dtypes.int [95] dtypes.int
+97 Ops.INDEX dtypes.ulong [90, 96]
+98 Ops.PARAM dtypes.ulong [] ParamArg(slot=15, dtype=dtypes.ulong, size=1, name="gpentry_compute_0_15", device="CPU", volatile=True)
+99 Ops.INDEX dtypes.ulong [98, 3]
+100 Ops.LOAD dtypes.ulong [99]
+101 Ops.STORE dtypes.void [97, 100]
+102 Ops.ADD dtypes.ulong [94, 45]
+103 Ops.STORE dtypes.void [93, 102]
+104 Ops.BARRIER dtypes.void [101, 103]
+105 Ops.AFTER dtypes.uint [63, 104]
+106 Ops.INDEX dtypes.uint [105, 3]
+107 Ops.AND dtypes.ulong [102, 37]
+108 Ops.CAST dtypes.uint [107] dtypes.uint
+109 Ops.STORE dtypes.void [106, 108]
+110 Ops.BARRIER dtypes.void [109]
+111 Ops.AFTER dtypes.uint [61, 110]
+112 Ops.INDEX dtypes.uint [111, 3]
+113 Ops.CONST dtypes.weakint [] 17
+114 Ops.CAST dtypes.uint [113] dtypes.uint
+115 Ops.STORE dtypes.void [112, 114]
+116 Ops.SINK dtypes.void [59, 115] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
+117 Ops.LINEAR dtypes.void [0, 1, 14, 16, 18, 32, 41, 60, 62, 64, 66, 79, 85, 91, 98, 29, 77, 2, 3, 86, 87, 99, 100, 42, 43, 4, 5, 6, 7, 8, 9, 10, 11, 12, 33, 34, 35, 19, 13, 15, 17, 22, 23, 20, 21, 24, 26, 27, 25, 28, 30, 31, 36, 37, 38, 39, 40, 45, 46, 47, 44, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 92, 93, 94, 67, 80, 61, 63, 65, 82, 83, 81, 84, 68, 69, 70, 74, 75, 71, 76, 72, 88, 89, 78, 73, 90, 95, 96, 97, 102, 103, 101, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116]
+118 Ops.SOURCE dtypes.void [] "\nvoid hcq_submit(volatile unsigned int* restrict doorbell_copy_0_0_1, volatile unsigned long* restrict slots_1_4, volatile unsigned int* restrict gpput_copy_0_2_1, volatile unsigned long* restrict ring_copy_0_3_65536, unsigned char* restrict cmdbuf_copy_0_4_108, volatile unsigned long* restrict put_value_copy_0_5_1, volatile unsigned long* restrict gpentry_copy_0_6_1, volatile unsigned int* restrict doorbell_compute_0_7_1, volatile unsigned int* restrict gpput_compute_0_8_1, volatile unsigned long* restrict ring_compute_0_9_65536, unsigned char* restrict cmdbuf_compute_0_10_128, unsigned char* restrict qmd_compute_0_12_256, unsigned int* restrict None_13_1, volatile unsigned long* restrict put_value_compute_0_14_1, volatile unsigned long* restrict gpentry_compute_0_15_1, const unsigned long submitted_nv_, const unsigned long value_nv_) {\n  unsigned int val0 = (*(None_13_1+0));\n  unsigned long val1 = (*(gpentry_compute_0_15_1+0));\n  unsigned long val2 = (*(gpentry_copy_0_6_1+0));\n  *(slots_1_4+0) = 0ul;\n  *(slots_1_4+2) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  unsigned long val3 = (*(put_value_copy_0_5_1+0));\n  *(((unsigned long*)((cmdbuf_copy_0_4_108+4)))+1) = submitted_nv_;\n  unsigned long alu4 = (val3+1ul);\n  *(put_value_copy_0_5_1+0) = alu4;\n  *(ring_copy_0_3_65536+((int)((val3&65535ul)))) = val2;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(gpput_copy_0_2_1+0) = ((unsigned int)((alu4&65535ul)));\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(doorbell_copy_0_0_1+0) = 34u;\n  unsigned long val4 = (*(put_value_compute_0_14_1+0));\n  *(((unsigned short*)(qmd_compute_0_12_256))+100) = ((unsigned short)(val0));\n  *(((unsigned long*)((cmdbuf_compute_0_10_128+4)))+13) = value_nv_;\n  *(((unsigned long*)((cmdbuf_compute_0_10_128+4)))+2) = submitted_nv_;\n  unsigned long alu14 = (val4+1ul);\n  *(put_value_compute_0_14_1+0) = alu14;\n  *(ring_compute_0_9_65536+((int)((val4&65535ul)))) = val1;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(gpput_compute_0_8_1+0) = ((unsigned int)((alu14&65535ul)));\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(doorbell_compute_0_7_1+0) = 17u;\n}\n"
+119 Ops.BINARY dtypes.uchar [] b"\nvoid hcq_submit(volatile unsigned int* restrict doorbell_copy_0_0_1, volatile unsigned long* restrict slots_1_4, volatile unsigned int* restrict gpput_copy_0_2_1, volatile unsigned long* restrict ring_copy_0_3_65536, unsigned char* restrict cmdbuf_copy_0_4_108, volatile unsigned long* restrict put_value_copy_0_5_1, volatile unsigned long* restrict gpentry_copy_0_6_1, volatile unsigned int* restrict doorbell_compute_0_7_1, volatile unsigned int* restrict gpput_compute_0_8_1, volatile unsigned long* restrict ring_compute_0_9_65536, unsigned char* restrict cmdbuf_compute_0_10_128, unsigned char* restrict qmd_compute_0_12_256, unsigned int* restrict None_13_1, volatile unsigned long* restrict put_value_compute_0_14_1, volatile unsigned long* restrict gpentry_compute_0_15_1, const unsigned long submitted_nv_, const unsigned long value_nv_) {\n  unsigned int val0 = (*(None_13_1+0));\n  unsigned long val1 = (*(gpentry_compute_0_15_1+0));\n  unsigned long val2 = (*(gpentry_copy_0_6_1+0));\n  *(slots_1_4+0) = 0ul;\n  *(slots_1_4+2) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  unsigned long val3 = (*(put_value_copy_0_5_1+0));\n  *(((unsigned long*)((cmdbuf_copy_0_4_108+4)))+1) = submitted_nv_;\n  unsigned long alu4 = (val3+1ul);\n  *(put_value_copy_0_5_1+0) = alu4;\n  *(ring_copy_0_3_65536+((int)((val3&65535ul)))) = val2;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(gpput_copy_0_2_1+0) = ((unsigned int)((alu4&65535ul)));\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(doorbell_copy_0_0_1+0) = 34u;\n  unsigned long val4 = (*(put_value_compute_0_14_1+0));\n  *(((unsigned short*)(qmd_compute_0_12_256))+100) = ((unsigned short)(val0));\n  *(((unsigned long*)((cmdbuf_compute_0_10_128+4)))+13) = value_nv_;\n  *(((unsigned long*)((cmdbuf_compute_0_10_128+4)))+2) = submitted_nv_;\n  unsigned long alu14 = (val4+1ul);\n  *(put_value_compute_0_14_1+0) = alu14;\n  *(ring_compute_0_9_65536+((int)((val4&65535ul)))) = val1;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(gpput_compute_0_8_1+0) = ((unsigned int)((alu14&65535ul)));\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(doorbell_compute_0_7_1+0) = 17u;\n}\n"
+120 Ops.PROGRAM dtypes.void [116, 117, 118, 119] ProgramInfo(vars=(%29, %77), globals=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15), outs=(0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 12, 14), ins=(5, 6, 13, 14, 15), target=Target(device="CPU", arch="x86_64,x86-64"))
+121 Ops.PARAM dtypes.uint [] ParamArg(slot=11, dtype=dtypes.uint, size=1, name="doorbell_copy_0", device=("NV",), volatile=True) tag="doorbell_copy_0"
+122 Ops.PARAM dtypes.ulong [] ParamArg(slot=6, dtype=dtypes.ulong, size=4, name="slots", device=("NV",), volatile=True) tag="slots"
+123 Ops.PARAM dtypes.uint [] ParamArg(slot=10, dtype=dtypes.uint, size=1, name="gpput_copy_0", device=("NV",), volatile=True) tag="gpput_copy_0"
+124 Ops.PARAM dtypes.ulong [] ParamArg(slot=9, dtype=dtypes.ulong, size=65536, name="ring_copy_0", device=("NV",), volatile=True) tag="ring_copy_0"
+125 Ops.PARAM dtypes.uchar [] ParamArg(slot=8, dtype=dtypes.uchar, size=108, name="cmdbuf_copy_0", device=("NV",)) tag="cmdbuf_copy_0"
+126 Ops.PARAM dtypes.ulong [] ParamArg(slot=12, dtype=dtypes.ulong, size=1, name="put_value_copy_0", device=("NV",), volatile=True) tag="put_value_copy_0"
+127 Ops.PARAM dtypes.ulong [] ParamArg(slot=13, dtype=dtypes.ulong, size=1, name="gpentry_copy_0", device=("NV",), volatile=True) tag="gpentry_copy_0"
+128 Ops.PARAM dtypes.uint [] ParamArg(slot=21, dtype=dtypes.uint, size=1, name="doorbell_compute_0", device=("NV",), volatile=True) tag="doorbell_compute_0"
+129 Ops.PARAM dtypes.uint [] ParamArg(slot=20, dtype=dtypes.uint, size=1, name="gpput_compute_0", device=("NV",), volatile=True) tag="gpput_compute_0"
+130 Ops.PARAM dtypes.ulong [] ParamArg(slot=19, dtype=dtypes.ulong, size=65536, name="ring_compute_0", device=("NV",), volatile=True) tag="ring_compute_0"
+131 Ops.PARAM dtypes.uchar [] ParamArg(slot=18, dtype=dtypes.uchar, size=128, name="cmdbuf_compute_0", device=("NV",)) tag="cmdbuf_compute_0"
+132 Ops.PARAM dtypes.uchar [] ParamArg(slot=16, dtype=dtypes.uchar, size=512, name="cbuf_compute_0", device=("NV",)) tag="cbuf_compute_0"
+133 Ops.PARAM dtypes.uchar [] ParamArg(slot=17, dtype=dtypes.uchar, size=256, name="qmd_compute_0", device=("NV",)) tag="qmd_compute_0"
+134 Ops.PARAM dtypes.uint [] ParamArg(slot=15, dtype=dtypes.uint, size=1, device=("NV",)) tag=("nv_local", 576)
+135 Ops.PARAM dtypes.ulong [] ParamArg(slot=22, dtype=dtypes.ulong, size=1, name="put_value_compute_0", device=("NV",), volatile=True) tag="put_value_compute_0"
+136 Ops.PARAM dtypes.ulong [] ParamArg(slot=23, dtype=dtypes.ulong, size=1, name="gpentry_compute_0", device=("NV",), volatile=True) tag="gpentry_compute_0"
+137 Ops.BUFFER dtypes.char [] ParamArg(slot=5, dtype=dtypes.char, size=256, device="NV")
+138 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="NV")
+139 Ops.CALL dtypes.void [120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "copy       16 B,      NV <- CPU    ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,))), (("NV",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"\xb0\xe9s\x99\\oA\xf0\xc0\xc3qf\x86\x99LY<\xb3#\xc05\xb6\xdf\xd6N^~-\t\xa4\xd1\x8a", (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), nargs=16, slots=(("NV", 1),), written_bufs=(%137, %138)))
+140 Ops.BINARY dtypes.uchar [] b"\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\x00\x81\x04 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x06\x81\x01 \x10\x00\x00\x00\xc0\x80\x01 \x82\x01\x00\x00\x90\x80\x03 \x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\xc0\x80\x01 \x0c\x00\x00\x00\x90\x80\x03 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x80\x01 \x0c\x00\x00\x00"
+141 Ops.STORE dtypes.void [125, 140]
+142 Ops.SHRINK dtypes.uchar [125, 20, 22]
+143 Ops.BITCAST dtypes.ulong [142] dtypes.ulong
+144 Ops.STACK dtypes.weakint [2]
+145 Ops.INDEX dtypes.ulong [143, 144]
+146 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, name="timeline", device=("NV",), volatile=True) tag="timeline"
+147 Ops.GETADDR dtypes.ulong [146] "NV"
+148 Ops.STACK dtypes.ulong [147]
+149 Ops.STORE dtypes.void [145, 148]
+150 Ops.BITCAST dtypes.uint [125] dtypes.uint
+151 Ops.CONST dtypes.weakint [] 7
+152 Ops.CONST dtypes.weakint [] 8
+153 Ops.CONST dtypes.weakint [] 9
+154 Ops.CONST dtypes.weakint [] 10
+155 Ops.CONST dtypes.weakint [] 16
+156 Ops.CONST dtypes.weakint [] 22
+157 Ops.CONST dtypes.weakint [] 23
+158 Ops.CONST dtypes.weakint [] 24
+159 Ops.STACK dtypes.weakint [151, 152, 153, 154, 155, 113, 156, 157, 158]
+160 Ops.INDEX dtypes.uint [150, 159]
+161 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+162 Ops.GETADDR dtypes.ulong [161] "NV"
+163 Ops.ADD dtypes.ulong [162, 5]
+164 Ops.CONST dtypes.weakint [] 32
+165 Ops.SHR dtypes.ulong [163, 164]
+166 Ops.CAST dtypes.uint [165] dtypes.uint
+167 Ops.CAST dtypes.uint [163] dtypes.uint
+168 Ops.SHRINK dtypes.char [137, 2, 155]
+169 Ops.BITCAST dtypes.float [168] dtypes.float
+170 Ops.GETADDR dtypes.ulong [169] "NV"
+171 Ops.ADD dtypes.ulong [170, 5]
+172 Ops.SHR dtypes.ulong [171, 164]
+173 Ops.CAST dtypes.uint [172] dtypes.uint
+174 Ops.CAST dtypes.uint [171] dtypes.uint
+175 Ops.SHRINK dtypes.ulong [122, 2, 8]
+176 Ops.GETADDR dtypes.ulong [175] "NV"
+177 Ops.SHR dtypes.ulong [176, 164]
+178 Ops.CAST dtypes.uint [177] dtypes.uint
+179 Ops.CAST dtypes.uint [176] dtypes.uint
+180 Ops.CAST dtypes.uint [45] dtypes.uint
+181 Ops.CAST dtypes.uint [2] dtypes.uint
+182 Ops.CMPNE dtypes.bool [180, 181]
+183 Ops.CONST dtypes.bool [] True
+184 Ops.CMPNE dtypes.bool [182, 183]
+185 Ops.CAST dtypes.ulong [20] dtypes.ulong
+186 Ops.ADD dtypes.ulong [176, 185]
+187 Ops.PARAM dtypes.uint [] ParamArg(slot=7, dtype=dtypes.uint, size=1, name="nv_sink", device=("NV",), volatile=True) tag="nv_sink"
+188 Ops.GETADDR dtypes.ulong [187] "NV"
+189 Ops.WHERE dtypes.ulong [184, 186, 188]
+190 Ops.SHR dtypes.ulong [189, 164]
+191 Ops.CAST dtypes.uint [190] dtypes.uint
+192 Ops.CAST dtypes.uint [189] dtypes.uint
+193 Ops.SHR dtypes.ulong [45, 164]
+194 Ops.CAST dtypes.uint [193] dtypes.uint
+195 Ops.STACK dtypes.uint [166, 167, 173, 174, 178, 179, 191, 192, 194]
+196 Ops.STORE dtypes.void [160, 195]
+197 Ops.SHRINK dtypes.ulong [127, 2, 2]
+198 Ops.INDEX dtypes.ulong [197, 144]
+199 Ops.GETADDR dtypes.ulong [125] "NV"
+200 Ops.CONST dtypes.weakint [] 120946279055360
+201 Ops.CAST dtypes.ulong [200] dtypes.ulong
+202 Ops.ADD dtypes.ulong [199, 201]
+203 Ops.STACK dtypes.ulong [202]
+204 Ops.STORE dtypes.void [198, 203]
+205 Ops.BINARY dtypes.uchar [] b"\xa6%\x01 \x11\x10\x00\x00\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\xad \x01 \x00\x00\x00\x00\xb0 \x01 \t\x00\x00\x00\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x10\x01\x08\x00\x01 \x00\x00\x00\x00"
+206 Ops.STORE dtypes.void [131, 205]
+207 Ops.SHRINK dtypes.uchar [131, 20, 68]
+208 Ops.BITCAST dtypes.ulong [207] dtypes.ulong
+209 Ops.CONST dtypes.weakint [] 12
+210 Ops.STACK dtypes.weakint [26, 20, 153, 209]
+211 Ops.INDEX dtypes.ulong [208, 210]
+212 Ops.STACK dtypes.ulong [147, 176, 176, 147]
+213 Ops.STORE dtypes.void [211, 212]
+214 Ops.BITCAST dtypes.uint [131] dtypes.uint
+215 Ops.CONST dtypes.weakint [] 15
+216 Ops.STACK dtypes.weakint [215]
+217 Ops.INDEX dtypes.uint [214, 216]
+218 Ops.GETADDR dtypes.ulong [133] "NV"
+219 Ops.SHR dtypes.ulong [218, 152]
+220 Ops.CAST dtypes.uint [219] dtypes.uint
+221 Ops.STACK dtypes.uint [220]
+222 Ops.STORE dtypes.void [217, 221]
+223 Ops.BINARY dtypes.uchar [] b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x94r\x00\x00\x00\x00\x00\x00\x93r\x00\x00\xc0\xfd\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+224 Ops.STORE dtypes.void [132, 223]
+225 Ops.BITCAST dtypes.ulong [132] dtypes.ulong
+226 Ops.CONST dtypes.weakint [] 6
+227 Ops.STACK dtypes.weakint [226, 151]
+228 Ops.INDEX dtypes.ulong [225, 227]
+229 Ops.GETADDR dtypes.ulong [138] "NV"
+230 Ops.STACK dtypes.ulong [229, 170]
+231 Ops.STORE dtypes.void [228, 230]
+232 Ops.BINARY dtypes.uchar [] b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x00\x00\x00\x00\x00\x00<\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01D\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04$40\x00\x01\x00\x01\x00\x01\x00\x01\x0c\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xe4\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x89\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+233 Ops.STORE dtypes.void [133, 232]
+234 Ops.BITCAST dtypes.uint [133] dtypes.uint
+235 Ops.CONST dtypes.weakint [] 48
+236 Ops.STACK dtypes.weakint [152, 164, 235]
+237 Ops.INDEX dtypes.uint [234, 236]
+238 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=8192, device=("NV",)) tag=("program", b"\x7fELF\x02\x01\x013\x07\x00\x00\x00\x00\x00\x00\x00\x02\x00\xbe\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00Y\x05Y\x00@\x008\x00\x03\x00@\x00\x0c\x00\x01\x00\x00.shstrtab\x00.strtab\x00.symtab\x00.symtab_shndx\x00.nv.info\x00.text.simple_add\x00.nv.info.simple_add\x00.nv.shared.simple_add\x00.nv.constant0.simple_add\x00.rel.nv.constant0.simple_add\x00.debug_frame\x00.rel.debug_frame\x00.rela.debug_frame\x00.nv.callgraph\x00.nv.prototype\x00.nv.rel.action\x00\x00.shstrtab\x00.strtab\x00.symtab\x00.symtab_shndx\x00.nv.info\x00.text.simple_add\x00.nv.info.simple_add\x00.nv.shared.simple_add\x00.rel.nv.constant0.simple_add\x00.nv.constant0.simple_add\x00.debug_frame\x00.rel.debug_frame\x00.rela.debug_frame\x00.nv.callgraph\x00.nv.prototype\x00.nv.rel.action\x00simple_add\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x002\x00\x00\x00\x03\x00\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8a\x00\x00\x00\x03\x00\n\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa3\x00\x00\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd3\x00\x00\x00\x03\x00\x07\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xef\x00\x00\x00\x03\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xfe\x00\x00\x00\x12\x10\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff$\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\x03\x00\x04|\xff\xff\xff\xff\x0f\x0c\x81\x80\x80(\x00\x08\xff\x81\x80(\x08\x81\x80\x80(\x00\x00\x00\xff\xff\xff\xff4\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x04\x04\x00\x00\x00\x04\x14\x00\x00\x00\x0c\x81\x80\x80(\x00\x04$\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04/\x08\x00\x06\x00\x00\x00\x0c\x00\x00\x00\x04\x11\x08\x00\x06\x00\x00\x00\x00\x00\x00\x00\x04\x12\x08\x00\x06\x00\x00\x00\x00\x00\x00\x00\x047\x04\x00\x80\x00\x00\x00\x04\n\x08\x00\x02\x00\x00\x00`\x01\x1c\x00\x03\x19\x1c\x00\x04\x17\x0c\x00\x00\x00\x00\x00\x03\x00\x18\x00\x00\xf0\x11\x00\x04\x17\x0c\x00\x00\x00\x00\x00\x02\x00\x10\x00\x00\xf0!\x00\x04\x17\x0c\x00\x00\x00\x00\x00\x01\x00\x08\x00\x00\xf0!\x00\x04\x17\x0c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0!\x00\x03\x1b\xff\x00\x04\x1c\x08\x00P\x00\x00\x00\xf0\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\xfe\xff\xff\xff\x00\x00\x00\x00\xfd\xff\xff\xff\x00\x00\x00\x00\xfc\xff\xff\xff\x00\x00\x00\x00s\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x11%\x00\x056D\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02z\x01\x00\x00\n\x00\x00\x00\x0f\x00\x00\x00\xe4\x0f\x00\x19y\x06\x00\x00\x00\x00\x00\x00%\x00\x00\x00(\x0e\x00\x19y\x03\x00\x00\x00\x00\x00\x00!\x00\x00\x00$\x0e\x00$z\x06\x06\x00\x00\x00\x00\x03\x02\x8e\x07\x00\xca\x1f\x00\x0cz\x00\x06\x00^\x00\x00pb\xf0\x03\x00\xda\x0f\x00M\t\x00\x00\x00\x00\x00\x00\x00\x00\x80\x03\x00\xea\x0f\x00\x02x\x07\x00\x04\x00\x00\x00\x00\x0f\x00\x00\x00\xe2\x0f\x00\xb9z\x04\x00\x00F\x00\x00\x00\n\x00\x00\x00\xc8\x0f\x00%v\x04\x06\x00\\\x00\x00\x07\x02\x8e\x07\x00\xc8\x0f\x00%v\x02\x06\x00Z\x00\x00\x07\x02\x8e\x07\x00\xe4\x0f\x0c\x81y\x04\x04\x04\x00\x00\x00\x00\x19\x1e\x0c\x00\xa8\x0e\x00\x81y\x03\x02\x04\x00\x00\x00\x00\x19\x1e\x0c\x00\xa2\x0e\x00%v\x06\x06\x00X\x00\x00\x07\x02\x8e\x07\x00\xe2\x0f\x00\x10r\t\x04\x03\x00\x00\x00\xff\xe0\xff\x07\x00\xcaO\x00\x86y\x00\x06\t\x00\x00\x00\x04\x19\x10\x0c\x00\xe2\x0f\x00My\x00\x00\x00\x00\x00\x00\x00\x00\x80\x03\x00\xea\x0f\x00Gy\x00\x00\xf0\xff\xff\xff\xff\xff\x83\x03\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x18y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc0\x0f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00@\x00\x00\x00\x00\x00\x00\x00\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00>\x01\x00\x00\x00\x00\x00\x00\t\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x13\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00H\x02\x00\x00\x00\x00\x00\x00\xa8\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x06\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x18\x00\x00\x00\x00\x00\x00\x00\xa3\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0\x02\x00\x00\x00\x00\x00\x00p\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00)\x00\x00\x00\x00\x00\x00p\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00`\x03\x00\x00\x00\x00\x00\x00$\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00C\x00\x00\x00\x00\x00\x00p@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x84\x03\x00\x00\x00\x00\x00\x00h\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x0b\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd3\x00\x00\x00\x01\x00\x00p\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xec\x03\x00\x00\x00\x00\x00\x00 \x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\xef\x00\x00\x00\x0b\x00\x00p\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x04\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\xb0\x00\x00\x00\t\x00\x00\x00@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x04\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x04\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00m\x00\x00\x00\x01\x00\x00\x00B\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x04\x00\x00\x00\x00\x00\x00|\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x002\x00\x00\x00\x01\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x06\x00\x00\x0c\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x06\x00\x00\x00\x05\x00\x00\x00\x00\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa8\x00\x00\x00\x00\x00\x00\x00\xa8\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x05\x00\x00\x000\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd0\x03\x00\x00\x00\x00\x00\x00\xd0\x03\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x05\x00\x00\x00\x00\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa8\x00\x00\x00\x00\x00\x00\x00\xa8\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_4(float* data0_4, float* data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = make_float4((val0.x+1.0f),(val0.y+1.0f),(val0.z+1.0f),(val0.w+1.0f));\n}", "E_4")
+239 Ops.GETADDR dtypes.ulong [238] "NV"
+240 Ops.ADD dtypes.ulong [239, 2]
+241 Ops.SHR dtypes.ulong [240, 152]
+242 Ops.CAST dtypes.uint [241] dtypes.uint
+243 Ops.GETADDR dtypes.ulong [132] "NV"
+244 Ops.SHR dtypes.ulong [243, 2]
+245 Ops.CAST dtypes.uint [244] dtypes.uint
+246 Ops.SHR dtypes.ulong [240, 2]
+247 Ops.CAST dtypes.uint [246] dtypes.uint
+248 Ops.STACK dtypes.uint [242, 245, 247]
+249 Ops.STORE dtypes.void [237, 248]
+250 Ops.BITCAST dtypes.ushort [133] dtypes.ushort
+251 Ops.CONST dtypes.weakint [] 66
+252 Ops.CONST dtypes.weakint [] 98
+253 Ops.STACK dtypes.weakint [251, 252]
+254 Ops.INDEX dtypes.ushort [250, 253]
+255 Ops.SHR dtypes.ulong [244, 164]
+256 Ops.CAST dtypes.ushort [255] dtypes.ushort
+257 Ops.SHR dtypes.ulong [246, 164]
+258 Ops.CAST dtypes.ushort [257] dtypes.ushort
+259 Ops.STACK dtypes.ushort [256, 258]
+260 Ops.STORE dtypes.void [254, 259]
+261 Ops.CONST dtypes.weakint [] 204
+262 Ops.STACK dtypes.weakint [261]
+263 Ops.INDEX dtypes.uchar [133, 262]
+264 Ops.SHR dtypes.ulong [241, 164]
+265 Ops.CAST dtypes.uchar [264] dtypes.uchar
+266 Ops.STACK dtypes.uchar [265]
+267 Ops.STORE dtypes.void [263, 266]
+268 Ops.SHRINK dtypes.ulong [136, 2, 2]
+269 Ops.INDEX dtypes.ulong [268, 144]
+270 Ops.GETADDR dtypes.ulong [131] "NV"
+271 Ops.CONST dtypes.weakint [] 142936511610880
+272 Ops.CAST dtypes.ulong [271] dtypes.ulong
+273 Ops.ADD dtypes.ulong [270, 272]
+274 Ops.STACK dtypes.ulong [273]
+275 Ops.STORE dtypes.void [269, 274]
+276 Ops.AFTER dtypes.void [139, 141, 149, 196, 204, 206, 213, 222, 224, 231, 233, 249, 260, 267, 275]
+277 Ops.LINEAR dtypes.void [276]
+
