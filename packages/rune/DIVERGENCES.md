@@ -616,41 +616,44 @@ target's run lands.
 ### L2. QR by Householder reflections, R triangular
 
 - **Reference:** `mixin/op.py:1799` (`qr`).
-- **Raven:** `lower_linalg.ml:75` (`householder`), `:102` (`triu`), `:106`
+- **Raven:** `lower_linalg.ml:75` (`householder`), `:107` (`triu`), `:111`
   (`qr`).
-- **Differs:** tinygrad's reflections, with `r`'s elements below the diagonal
-  selected as `+0.`: tinygrad leaves there the rounding error of the zeros the
+- **Differs:** tinygrad's reflections, with LAPACK's choice of which columns
+  to reflect: a column already zero below the diagonal takes no reflection
+  and keeps its diagonal element's sign, where tinygrad reflects every column
+  that is not all zero, flipping it. A reflected column's diagonal element has
+  the opposite sign of the element it replaces, as in both. The factors are
+  then nx.cpu's, signs included. `r`'s elements below the diagonal are selected
+  as `+0.`: tinygrad leaves there the rounding error of the zeros the
   reflections make. Each quotient is `Ops.FDIV`, rounded once, where tinygrad
   multiplies by the reciprocal and rounds twice: IEEE division is the rule of
-  every rune composition, as of tolk's arithmetic (D9, D24), and it takes the
-  measured maxima from 6.9 and 13.5 to 2.4 and 3.7. `float16` computes at `float32`, and the reduced factors
-  are the leading columns of `q` and rows of `r`. The signs agree in meaning
-  only: a column with no element below the diagonal is still reflected, where
-  nx.cpu, as LAPACK, takes no reflection, so a diagonal element of `r` may
-  have eager's opposite sign. A norm is the square root of a sum of squares,
-  unscaled, so elements whose squares overflow or leave the normal range lose
-  accuracy. Compiled code never raises `No_convergence`.
-- **nx:** `nx_backend.mli`, `qr`: `q` orthonormal, `r` upper triangular; nx
-  pins no factor's signs.
+  every rune composition, as of tolk's arithmetic (D9, D24). `float16` computes
+  at `float32`, and the reduced factors are the leading columns of `q` and
+  rows of `r`. A norm is the square root of a sum of squares, unscaled, so
+  elements whose squares overflow or leave the normal range lose accuracy.
+  Compiled code never raises `No_convergence`.
+- **nx:** `nx_backend.mli`, `qr`: `q` orthonormal, `r` upper triangular, the
+  factors nx.cpu's LAPACK reflectors give.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest element of
-  eager's factors, up to the signs of the diagonal of `r`, for well-conditioned
-  matrices of up to 5 x 5; measured maxima over 300 such matrices, in units of
-  `max(m, n) u`: 2.4 (`float32`), 3.7 (`float64`), 0.5 (`float16`, `u` its
-  own).
+  eager's factors, signs included, for well-conditioned matrices of up to
+  5 x 5; measured maxima over 300 such matrices, in units of `max(m, n) u`:
+  2.0 (`float32`), 2.0 (`float64`), 0.04 (`float16`, `u` its own).
 - **Reason:** (b).
 - **Pinned by:** `qr › matrices › *`, `qr › a zero column takes no
   reflection`, `› one element`, `› no column: q is the identity`, `› batch
-  axes`; the construction, its single-rounding quotients included, by `graph
-  parity › qr_q`, `› qr_r`, whose generator builds tinygrad's reflections with
-  `Ops.FDIV`.
+  axes`, `› the factors take eager's signs`; `Compiled › linear algebra › qr`
+  and `› edges › QR's factors take eager's signs`; the construction, its
+  single-rounding quotients included, by `graph parity › qr_q`, `› qr_r`,
+  whose generator builds tinygrad's reflections with `Ops.FDIV` and LAPACK's
+  choice of columns.
 
 ### L3. SVD sweeps to the roundoff and completes its vectors
 
 - **Reference:** `mixin/op.py:1817` (`svd`: `4 num` rounds of one-sided Jacobi
   rotations over a round-robin pairing, the singular values sorted by
   `sort`, `U`'s columns divided by them).
-- **Raven:** `lower_linalg.ml:127` (`pairs`), `:134` (`next_pairs`), `:146`
-  (`rounds`), `:150` (`rotate`), `:198` (`svd`).
+- **Raven:** `lower_linalg.ml:132` (`pairs`), `:139` (`next_pairs`), `:151`
+  (`rounds`), `:155` (`rotate`), `:203` (`svd`).
 - **Differs:**
   - the rotations run `ceil (log2 num) + 3` sweeps of `num - 1` rounds (`num`
     for an odd `num`). tinygrad's `4 num` rounds are about four sweeps, which
@@ -683,7 +686,7 @@ target's run lands.
 ### L4. Cholesky
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:324` (`cholesky`).
+- **Raven:** `lower_linalg.ml:329` (`cholesky`).
 - **No source:** a right-looking composition, one column per step: the
   column's diagonal element's square root heads it, the rest is divided by
   that root, and the working matrix loses the column's product with itself.
@@ -705,7 +708,7 @@ target's run lands.
 ### L5. Triangular solve
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:359` (`solve_triangular`).
+- **Raven:** `lower_linalg.ml:364` (`solve_triangular`).
 - **No source:** the system is made lower triangular, transposed under
   `transpose` and reversed along both axes when the triangle read is the upper
   one, and solved by substitution, one row a step, from the strictly lower
@@ -726,7 +729,7 @@ target's run lands.
 ### L6. LU with partial pivoting
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:261` (`lu`).
+- **Raven:** `lower_linalg.ml:266` (`lu`).
 - **No source:** one column a step. The pivot is the first element of largest
   magnitude on or below the diagonal, found by `Lower_reduce.arg_reduce` over
   magnitudes in which a NaN on the diagonal is the greatest and one below it

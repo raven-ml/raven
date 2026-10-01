@@ -82,7 +82,12 @@ let householder a =
     let norm = Ops.sqrt (sum_last (Ops.mul x x)) in
     let x0 = sum_last (Ops.where at_i x (zero x)) in
     let sgn = direction x0 in
-    let active = Ops.ne norm (zero norm) in
+    (* A column already zero below the diagonal takes no reflection, and keeps
+       its diagonal element's sign. *)
+    let below =
+      sum_last (Ops.where (Ops.gt idx (Ops.int i)) (Ops.mul x x) (zero x))
+    in
+    let active = Ops.ne below (zero below) in
     let u0 = Ops.O.(x0 + (sgn * norm)) in
     let v = fdiv (Ops.where at_i u0 x) (Ops.where active u0 (float u0 1.)) in
     let v = Ops.unsqueeze v (-1) in

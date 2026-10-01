@@ -164,16 +164,6 @@ let orthonormal ~bound q =
        (Nx.eye Nx.float64 k))
     (Nx.matmul (Nx.matrix_transpose (f64 q)) (f64 q))
 
-(* The signs that the diagonal of the first matrix of [r] and [r'] differ by, as
-   a row: one where either is zero. *)
-let signs r r' =
-  let diagonal r = Nx.diagonal (f64 r) in
-  let s = Nx.mul (diagonal r) (diagonal r') in
-  let s =
-    Nx.where (Nx.less_s s 0.) (Nx.full_like s (-1.)) (Nx.full_like s 1.)
-  in
-  Nx.unsqueeze ~axes:[ 0 ] s
-
 (* Products *)
 
 let product_shapes =
@@ -509,16 +499,15 @@ let lu =
 
 (* QR *)
 
+(* QR takes LAPACK's reflectors, as nx.cpu does: a column already zero below the
+   diagonal is not reflected, and a reflected one's diagonal element has the
+   opposite sign of the element it replaces. The factors are then eager's, signs
+   included. *)
 let qr_agrees ~bound ~mode a =
   let q, r = Nx.qr ~mode a in
   let q', r' = traced2 (fun () -> Nx.qr ~mode a) in
-  let k = Int.min (Nx.dim (-2) a) (Nx.dim (-1) a) in
-  let s = signs r r' in
-  let leading q = Nx.slice [ Nx.A; Nx.R (0, k) ] q in
-  near ~bound (leading q) (Nx.mul (leading (f64 q')) s);
-  near ~bound
-    (Nx.slice [ Nx.R (0, k); Nx.A ] r)
-    (Nx.mul (Nx.slice [ Nx.R (0, k); Nx.A ] (f64 r')) (Nx.matrix_transpose s));
+  near ~bound q (f64 q');
+  near ~bound r (f64 r');
   orthonormal ~bound q';
   exact (Nx.triu r') r';
   near ~bound a (Nx.matmul q' r')
@@ -546,10 +535,21 @@ let qr =
         };
       test "batch axes" (fun () ->
           let a = Nx.reshape [| 2; 3; 2 |] (Nx.arange Nx.float32 1 13 1) in
-          let q, r = Nx.qr a and q', r' = traced2 (fun () -> Nx.qr a) in
-          ignore (q, r);
-          orthonormal ~bound:0x1p-18 q';
-          near ~bound:0x1p-18 a (Nx.matmul q' r'));
+          qr_agrees ~bound:0x1p-18 ~mode:`Reduced a);
+      test "the factors take eager's signs" (fun () ->
+          let f32 r c xs = Nx.create Nx.float32 [| r; c |] xs in
+          List.iter
+            (fun a ->
+              qr_agrees ~bound:0x1p-18 ~mode:`Reduced a;
+              qr_agrees ~bound:0x1p-18 ~mode:`Complete a)
+            [
+              f32 2 2 [| 2.; 1.; 0.5; 3. |];
+              f32 3 3 [| -2.; 0.; 0.; 0.; 3.; 0.; 0.; 0.; -0.5 |];
+              f32 1 1 [| 0.5 |];
+              f32 1 3 [| 0.5; -1.; 2. |];
+              f32 3 1 [| -1.; 2.; 0.5 |];
+              f32 3 2 [| 0.; 1.; 0.; 2.; 0.; 3. |];
+            ]);
       test "a zero column takes no reflection" (fun () ->
           let a = Nx.zeros Nx.float32 [| 3; 2 |] in
           let q, r = traced2 (fun () -> Nx.qr ~mode:`Complete a) in

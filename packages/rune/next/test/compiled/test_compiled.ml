@@ -1471,28 +1471,18 @@ let linalg d ~count =
                    in
                    let qe = to64 (value qe) and re = to64 (value re) in
                    let qa = to64 (back qa) and ra = to64 (back ra) in
-                   (* The signs that eager's and the compiled diagonal of [r]
-                      differ by, one where either is zero or past [k]. *)
-                   let s =
-                     let diagonal r = Nx.diagonal ~axis1:(-2) ~axis2:(-1) r in
-                     let s = Nx.mul (diagonal re) (diagonal ra) in
-                     let s =
-                       Nx.where (Nx.less_s s 0.) (Nx.full_like s (-1.))
-                         (Nx.full_like s 1.)
-                     in
-                     Nx.pad
-                       (Array.init (Nx.ndim s) (fun i ->
-                            if i = Nx.ndim s - 1 then (0, rows - k) else (0, 0)))
-                       1. s
-                   in
                    let bound =
                      32. *. float_of_int (Int.max m n) *. roundoff dt
                    in
                    let limit = bound *. Float.max (largest qe) (largest re) in
-                   near ~limit (first k (-1) qe)
-                     (Nx.mul (first k (-1) qa)
-                        (Nx.unsqueeze ~axes:[ -2 ] (first k (-1) s)));
-                   near ~limit re (Nx.mul ra (Nx.unsqueeze ~axes:[ -1 ] s));
+                   (* The reflectors are LAPACK's, as nx.cpu's are: the factors
+                      are eager's, signs included. *)
+                   near ~limit qe qa;
+                   near ~limit re ra;
+                   let signs r =
+                     Nx.sign (Nx.diagonal ~axis1:(-2) ~axis2:(-1) r)
+                   in
+                   near ~limit:0. (signs re) (signs ra);
                    orthonormal ~limit:bound qa));
          })
   and lu =
@@ -2025,6 +2015,28 @@ let edges d =
         in
         exact_of (both d (unfold w (host_array gapped)));
         exact_of (both d (unfold w (array_of gapped))));
+    test "QR's factors take eager's signs" (fun () ->
+        let factors a =
+          let m = Nx.dim 0 a and n = Nx.dim 1 a in
+          let (qe, re), (qa, ra) =
+            both d (fun (module K : Nx_backend.S) env ->
+                let q = env.dst Nx.float32 [| m; m |] in
+                let r = env.dst Nx.float32 [| m; n |] in
+                K.qr ~reduced:false (env.on (array_of a)) ~q ~r;
+                (q, r))
+          in
+          near ~limit:0x1p-18 (value qe) (back qa);
+          near ~limit:0x1p-18 (value re) (back ra)
+        in
+        let f32 r c xs = Nx.create Nx.float32 [| r; c |] xs in
+        List.iter factors
+          [
+            f32 2 2 [| 2.; 1.; 0.5; 3. |];
+            f32 3 3 [| -2.; 0.; 0.; 0.; 3.; 0.; 0.; 0.; -0.5 |];
+            f32 1 1 [| 0.5 |];
+            f32 1 3 [| 0.5; -1.; 2. |];
+            f32 3 1 [| -1.; 2.; 0.5 |];
+          ]);
     test "a fold and an unfold with no window are zeros and empty" (fun () ->
         let w =
           {

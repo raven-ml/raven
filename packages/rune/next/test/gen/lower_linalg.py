@@ -1,7 +1,8 @@
 """The kernels tinygrad schedules for the linear algebra whose lowering agrees
 with it: a float32 matrix product with the +0 the lowering adds to every float
 sum, and the factors of tinygrad's Householder QR as the lowering builds them,
-R with the zeros below its diagonal that it selects. Each operand is a buffer
+with LAPACK's reflectors and R with the zeros below its diagonal that it
+selects. Each operand is a buffer
 on the CPU."""
 
 from tinygrad import Tensor, dtypes
@@ -29,9 +30,10 @@ def fdiv(a, b):
 
 def qr(a):
     """tinygrad's `qr` (`mixin/op.py:1799`) as the lowering builds it: each
-    quotient rounded once (`fdiv`), and the sign of the first element written
-    -1 below zero and 1 elsewhere, which is `x0.ne(0).where(x0.sign(), 1)` at
-    every value, NaN included."""
+    quotient rounded once (`fdiv`), the sign of the first element written -1
+    below zero and 1 elsewhere, which is `x0.ne(0).where(x0.sign(), 1)` at every
+    value, NaN included, and a column already zero below the diagonal not
+    reflected, as LAPACK's reflectors are not."""
     m, n = a.shape[-2:]
     R, Q = a, Tensor.eye(m, dtype=a.dtype)
     idx = Tensor.arange(m)
@@ -39,7 +41,8 @@ def qr(a):
         at_i, x = idx.eq(i), (idx >= i).where(R[..., :, i], 0)
         norm = x.square().sum(-1, keepdim=True).sqrt()
         x0 = at_i.where(x, 0).sum(-1, keepdim=True)
-        sgn, active = (x0 < 0).where(x0.const_like(-1), x0.const_like(1)), norm.ne(0)
+        below = (idx > i).where(x * x, 0).sum(-1, keepdim=True)
+        sgn, active = (x0 < 0).where(x0.const_like(-1), x0.const_like(1)), below.ne(0)
         u0 = x0 + sgn * norm
         v = fdiv(at_i.where(u0, x), active.where(u0, 1)).unsqueeze(-1)
         w = active.where(fdiv(sgn * u0, active.where(norm, 1)), 0).unsqueeze(-1) * v
