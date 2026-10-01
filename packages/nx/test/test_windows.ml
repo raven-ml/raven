@@ -230,6 +230,50 @@ let empty_windows =
                      padding = none;
                      x = Nx.zeros Nx.float32 [| 2; 1 |];
                    })));
+      test
+        "the kernels refuse a geometry whose sizes do not fit in 64 bits below \
+         the frontend" (fun () ->
+          let huge = 1 lsl 61 in
+          let fold ?(padding = none) ~output_size kernel_size dilation =
+            Nx.Op.eval
+              (Fold
+                 {
+                   output_size;
+                   kernel_size;
+                   stride = Array.map (fun _ -> 1) kernel_size;
+                   dilation;
+                   padding;
+                   x = Nx.zeros Nx.float32 [| 2; 0 |];
+                 })
+          in
+          List.iter
+            (fun (msg, f) ->
+              raises_match ~msg
+                (Exn.invalid_arg ~substring:"invalid window geometry")
+                f)
+            [
+              ( "a dilated kernel",
+                fun () -> fold ~output_size:[| 2 |] [| huge |] [| huge |] );
+              ( "a kernel's elements",
+                fun () ->
+                  fold ~output_size:[| 2; 2 |] [| huge; huge |] [| 1; 1 |] );
+              ( "a padded axis",
+                fun () ->
+                  fold ~output_size:[| 2 |]
+                    ~padding:[| (max_int, max_int) |]
+                    [| 1 |] [| 1 |] );
+              ( "an unfold's dilated kernel",
+                fun () ->
+                  Nx.Op.eval
+                    (Unfold
+                       {
+                         kernel_size = [| huge |];
+                         stride = one;
+                         dilation = [| huge |];
+                         padding = none;
+                         x = Nx.zeros Nx.float32 [| 4 |];
+                       }) );
+            ]);
     ]
 
 let correlation =

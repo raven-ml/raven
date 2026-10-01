@@ -2919,7 +2919,8 @@ thread.
   `Invalid_argument` for a geometry with a non-positive size, stride or
   dilation, a negative padding or mismatched lengths, and `combine_patches`
   for patches whose shape the geometry does not give, where invalid input
-  could read or write out of bounds.
+  could read or write out of bounds. A geometry whose sizes do not fit in 64 bits is
+  refused too, below the frontend as well.
 - `Nx_amd_device` allocates mapped memory (`Buffer.create ~memory:Mapped`) in
   the GPU's own memory, which the host writes through its memory BAR, and
   flushes the host data path before each copy of its own so that the copy

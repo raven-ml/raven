@@ -644,11 +644,25 @@ static nx_c_status nx_c_window_params(nx_c_window *w, value vkernel,
     w->pad_before[d] = Long_val(Field(vpadding, 2 * d));
     w->pad_after[d] = Long_val(Field(vpadding, 2 * d + 1));
     if (w->kernel[d] < 1 || w->stride[d] < 1 || w->dilation[d] < 1 ||
-        w->pad_before[d] < 0 || w->pad_after[d] < 0)
+        w->pad_before[d] < 0 || w->pad_after[d] < 0 ||
+        __builtin_mul_overflow(w->kernel_prod, w->kernel[d], &w->kernel_prod))
       return NX_C_ERR_WINDOW;
-    w->kernel_prod *= w->kernel[d];
   }
   return NX_C_OK;
+}
+
+/* [*r] is the product of the [n] extents [a], [0] if one is, or [false] if it
+   does not fit: a geometry no operand can hold. */
+static bool nx_c_window_prod(int n, const int64_t *a, int64_t *r) {
+  *r = 1;
+  for (int i = 0; i < n; i++)
+    if (a[i] == 0) {
+      *r = 0;
+      return true;
+    }
+  for (int i = 0; i < n; i++)
+    if (__builtin_mul_overflow(*r, a[i], r)) return false;
+  return true;
 }
 
 /* Per-dim window count from the (unpadded) spatial extents, plus the row-major
@@ -656,22 +670,33 @@ static nx_c_status nx_c_window_params(nx_c_window *w, value vkernel,
    win[d] is how many strided placements of the effective (dilated) kernel fit
    in the padded extent: none when the kernel is longer than it.
    spatial_extent is the input extent for unfold and the output extent for
-   fold. */
-static void nx_c_window_counts(nx_c_window *w, const int64_t *spatial_extent) {
+   fold. A geometry whose extents or counts do not fit in 64 bits is refused:
+   no operand can hold it. */
+static nx_c_status nx_c_window_counts(nx_c_window *w,
+                                      const int64_t *spatial_extent) {
   int K = w->K;
   w->L = 1;
   for (int d = 0; d < K; d++) {
-    int64_t eff = w->dilation[d] * (w->kernel[d] - 1) + 1;
-    int64_t padded = spatial_extent[d] + w->pad_before[d] + w->pad_after[d];
+    int64_t eff, padded;
+    if (__builtin_mul_overflow(w->dilation[d], w->kernel[d] - 1, &eff) ||
+        __builtin_add_overflow(eff, 1, &eff) ||
+        __builtin_add_overflow(spatial_extent[d], w->pad_before[d], &padded) ||
+        __builtin_add_overflow(padded, w->pad_after[d], &padded))
+      return NX_C_ERR_WINDOW;
     w->win[d] = padded < eff ? 0 : (padded - eff) / w->stride[d] + 1;
-    w->L *= w->win[d];
+    if (__builtin_mul_overflow(w->L, w->win[d], &w->L)) return NX_C_ERR_WINDOW;
   }
+  /* Partial products of the counts are checked apart from L, which a zero
+     count makes 0 whatever the others. The kernel's are at most kernel_prod. */
   w->win_cumprod[K - 1] = 1;
   for (int d = K - 2; d >= 0; d--)
-    w->win_cumprod[d] = w->win_cumprod[d + 1] * w->win[d + 1];
+    if (__builtin_mul_overflow(w->win_cumprod[d + 1], w->win[d + 1],
+                               &w->win_cumprod[d]))
+      return NX_C_ERR_WINDOW;
   w->kernel_cumprod[K - 1] = 1;
   for (int d = K - 2; d >= 0; d--)
     w->kernel_cumprod[d] = w->kernel_cumprod[d + 1] * w->kernel[d + 1];
+  return NX_C_OK;
 }
 
 /* ── unfold ──────────────────────────────────────────────────────────────────
@@ -1062,8 +1087,10 @@ CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
   s = nx_c_window_params(&w, vkernel, vstride, vdilation, vpadding, K, ld,
                          nx_c_elem_size(dt));
   if (s != NX_C_OK) nx_c_raise_invalid("unfold", s);
-  w.leading_size = nx_c_prod(ld, in.shape);
-  nx_c_window_counts(&w, &in.shape[ld]); /* windows per input spatial dim */
+  /* windows per input spatial dim */
+  if (!nx_c_window_prod(ld, in.shape, &w.leading_size) ||
+      nx_c_window_counts(&w, &in.shape[ld]) != NX_C_OK)
+    nx_c_raise_invalid("unfold", NX_C_ERR_WINDOW);
   /* The kernel walks the destination by the geometry: its shape must be the
      one the geometry gives. */
   if (out.ndim != ld + 2 || out.shape[ld] != w.kernel_prod ||
@@ -1072,13 +1099,16 @@ CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
   for (int i = 0; i < ld; i++)
     if (out.shape[i] != in.shape[i]) nx_c_raise_invalid("unfold", NX_C_ERR_SHAPE);
 
-  int64_t total = w.leading_size * w.kernel_prod * w.L;
+  int64_t total;
+  if (!nx_c_window_prod(out.ndim, out.shape, &total))
+    nx_c_raise_invalid("unfold", NX_C_ERR_WINDOW);
   if (total > 0) {
     nx_c_unfold_ctx u = {&w, &in, &out};
     if (w.esize == 0) {
       nx_c_parallel_for(1, total, total, nx_c_unfold_packed_body, &u, NULL);
     } else {
-      int64_t bytes = 2 * total * w.esize;
+      int64_t bytes;
+      if (__builtin_mul_overflow(total, 2 * w.esize, &bytes)) bytes = INT64_MAX;
       nx_c_move_dispatch(NX_C_COST_BANDWIDTH, total, 1, bytes, nx_c_unfold_body,
                          &u);
     }
@@ -1115,12 +1145,14 @@ CAMLprim value caml_nx_c_fold(value vout, value vin, value voutput_size,
   s = nx_c_window_params(&w, vkernel, vstride, vdilation, vpadding, K, ld,
                          nx_c_elem_size(dt));
   if (s != NX_C_OK) nx_c_raise_invalid("fold", s);
-  w.leading_size = nx_c_prod(ld, in.shape);
   for (int d = 0; d < K; d++) {
     w.output_size[d] = Long_val(Field(voutput_size, d));
     if (w.output_size[d] < 0) nx_c_raise_invalid("fold", NX_C_ERR_WINDOW);
   }
-  nx_c_window_counts(&w, w.output_size); /* windows per output spatial dim */
+  /* windows per output spatial dim */
+  if (!nx_c_window_prod(ld, in.shape, &w.leading_size) ||
+      nx_c_window_counts(&w, w.output_size) != NX_C_OK)
+    nx_c_raise_invalid("fold", NX_C_ERR_WINDOW);
   /* The kernel reads the source by the geometry: its shape must be the one an
      unfold to the output gives, and the destination's the output's. */
   if (in.shape[ld] != w.kernel_prod || in.shape[ld + 1] != w.L ||
@@ -1132,11 +1164,16 @@ CAMLprim value caml_nx_c_fold(value vout, value vin, value voutput_size,
     if (out.shape[ld + d] != w.output_size[d])
       nx_c_raise_invalid("fold", NX_C_ERR_SHAPE);
 
-  int64_t out_spatial = nx_c_prod(K, w.output_size);
-  int64_t total = w.leading_size * out_spatial;
+  /* The bytes read only guide the dispatch, and saturate. */
+  int64_t total;
+  if (!nx_c_window_prod(out.ndim, out.shape, &total))
+    nx_c_raise_invalid("fold", NX_C_ERR_WINDOW);
   if (total > 0) {
     nx_c_fold_ctx f = {&w, ops, &in, &out};
-    int64_t bytes = total * w.kernel_prod * w.esize;
+    int64_t bytes;
+    if (__builtin_mul_overflow(total, w.kernel_prod, &bytes) ||
+        __builtin_mul_overflow(bytes, w.esize, &bytes))
+      bytes = INT64_MAX;
     nx_c_move_dispatch(NX_C_COST_COMPUTE, total, w.kernel_prod, bytes,
                       nx_c_fold_body, &f);
   }
