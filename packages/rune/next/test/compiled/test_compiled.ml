@@ -2036,7 +2036,7 @@ let edges d =
           ~padding:[| (0, 0) |]
           (on x) ~dst:y;
         exact (array_of (Nx.zeros Nx.float32 [| 1 |])) y);
-    test "a fold whose windows along an axis read only padding is zeros"
+    slow "a fold whose windows along an axis read only padding is zeros"
       (fun () ->
         let geometry ~kernel_size ~stride ~dilation ~padding ~spatial x =
           let w =
@@ -2211,8 +2211,57 @@ let kernels d ~count ~heavy =
   ]
   @ if heavy then [ group "linear algebra" (linalg d ~count) ] else []
 
+(* Narrow floats accumulate at float32 *)
+
+(* Sums, running sums, products and contractions of float16 and bfloat16 run at
+   float32 and round once. Each case has an exact answer that accumulating at
+   the narrow width misses: float16 stops counting ones at 2048, bfloat16 at
+   256, and a float16 product overflows at 256 * 256. *)
+let wide d =
+  let check expected (e, a) =
+    Traces.exact expected (value e);
+    Traces.exact expected (back a)
+  in
+  let ones dt shape = array_of (Nx.ones dt shape) in
+  [
+    test "a float16 sum of 4096 ones is 4096" (fun () ->
+        check
+          (Nx.scalar Nx.float16 4096.)
+          (both d (reduce Sum [| 0 |] (ones Nx.float16 [| 4096 |]))));
+    test "a bfloat16 sum of 512 ones is 512" (fun () ->
+        check
+          (Nx.scalar Nx.bfloat16 512.)
+          (both d (reduce Sum [| 0 |] (ones Nx.bfloat16 [| 512 |]))));
+    test "a float16 running sum of 4096 ones rounds each count once" (fun () ->
+        let counts = Array.init 4096 (fun i -> float_of_int (i + 1)) in
+        check
+          (Nx.cast Nx.float16 (Nx.create Nx.float32 [| 4096 |] counts))
+          (both d (scan Sum 0 (ones Nx.float16 [| 4096 |]))));
+    test "a float16 product past the float16 range and back is exact" (fun () ->
+        let x =
+          array_of (Nx.create Nx.float16 [| 3 |] [| 256.; 256.; 0x1p-8 |])
+        in
+        check (Nx.scalar Nx.float16 256.) (both d (reduce Prod [| 0 |] x)));
+    test "a float16 running product overflows only where its value does"
+      (fun () ->
+        let x =
+          array_of (Nx.create Nx.float16 [| 3 |] [| 256.; 256.; 0x1p-8 |])
+        in
+        check
+          (Nx.create Nx.float16 [| 3 |] [| 256.; Float.infinity; 256. |])
+          (both d (scan Prod 0 x)));
+    test "a float16 contraction of 4096 ones is 4096" (fun () ->
+        check
+          (Nx.full Nx.float16 [| 1; 1 |] 4096.)
+          (both d
+             (matmul [| 1; 1 |]
+                (ones Nx.float16 [| 1; 4096 |])
+                (ones Nx.float16 [| 4096; 1 |]))));
+  ]
+
 let contracts d =
   [
+    group "narrow floats accumulate at float32" (wide d);
     group "refusals" (refusals d);
     group "linear algebra where nx.cpu raises" (where_eager_raises d);
     group "cache" (cache d);

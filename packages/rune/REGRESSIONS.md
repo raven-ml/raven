@@ -59,6 +59,8 @@ of, so their rows name those kernels' laws or drop with that reason.
 | old: test_jit_alignment.ml an input at an address that is 4 modulo 16; the CPU device declares no vector alignment | a kernel reads an operand at any address | Compiled › host › * (buffers starting 0 to 3 elements into their memory); › edges › an operand whose buffer starts 2 bytes into its memory is read where it is |
 | old: test_jit_alignment.ml a capture at an address that is 4 modulo 16 | captures | dropped: the compiled call's captures |
 | old: test_jit_cache.ml (7 tests) | the persistent compile cache | dropped: the process-wide table is `Compiled › host › cache › *`; the disk cache is the compiled call's |
+| old: test_jit.ml half-precision sums accumulate wide | a float16 or bfloat16 sum runs at float32 and rounds once | Compiled › host › narrow floats accumulate at float32 › a float16 sum of 4096 ones is 4096; › a bfloat16 sum of 512 ones is 512; › a float16 running sum of 4096 ones rounds each count once; › a float16 contraction of 4096 ones is 4096 (the compiled call's case is the Jit suite's) |
+| old: test_jit.ml half-precision products multiply wide | a float16 product runs at float32 and rounds once | Compiled › host › narrow floats accumulate at float32 › a float16 product past the float16 range and back is exact; › a float16 running product overflows only where its value does |
 | old: test_half.ml eager vs jit (4 tests) | half softmax and layernorm | dropped: compositions; their kernels run at float16 and bfloat16 in every law |
 
 ### tinygrad test_ops.py
