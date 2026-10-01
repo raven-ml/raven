@@ -10,9 +10,17 @@
     that cells read as, {!Schema}s name and type a table's columns, and {!Tz}
     reads the time zone database that zoned operations take.
 
-    {!Expr}essions compute over a frame's columns, read through {!Col} handles
-    and {!Ext} declarations; {!Sel} chooses columns, {!Order} sorts and
-    {!Window} cuts the rows that {!Expr.rolling} reduces. *)
+    A {!Query} is the centre: a plan over a table or a {!Source}, transformed by
+    verbs, whose schema is known before any data is read. Its verbs take
+    {!Expr}essions, read through {!Col} handles and {!Ext} declarations; {!Sel}
+    chooses columns, {!Order} sorts, {!Window} cuts the rows that
+    {!Expr.rolling} reduces, and {!Join} conditions pair rows. Plan problems
+    raise [Invalid_argument]; failures in data are {!Error} values. *)
+
+type t
+(** The type for tables: named, typed columns of equal length. *)
+
+type table := t
 
 module Binary = Binary
 module Decimal = Decimal
@@ -452,8 +460,8 @@ module Type : sig
       non-empty and holds no ASCII space, comma, bracket, double quote,
       backslash or ASCII control byte. Otherwise it is quoted, as categories and
       metadata always are: between double quotes, with double quotes and
-      backslashes preceded by a backslash and control bytes written as [\x] and
-      two hexadecimal digits. *)
+      backslashes preceded by a backslash, and control bytes and bytes that are
+      not part of valid UTF-8 written as [\x] and two hexadecimal digits. *)
 end
 
 module Schema : sig
@@ -699,7 +707,9 @@ module Expr : sig
   (** [name := e] outputs [e] as the column [name]. It binds more loosely than
       every operator, so ["late" := delay > float 15.] needs no parentheses. [e]
       needs a column type: a {!const} or {!( $ )} result needs {!store}, and an
-      {!option} result is never one. *)
+      {!option} result is never one.
+
+      Raises [Invalid_argument] if [name] is not valid UTF-8. *)
 
   val keep : Sel.t -> row out
   (** [keep sel] outputs the columns that [sel] selects, unchanged and under
@@ -986,8 +996,9 @@ module Expr : sig
       and returns its values to their rows. [by] defaults to no columns, one
       partition; [order] to none, the frame's order. At the top of [derive] or
       [filter], [over (mean x)] is the mean of the whole input, and it blocks
-      the pipeline. Its type is [e]'s. An [order] key of an extension type is a
-      problem: sort by its storage, derived first. *)
+      the pipeline. Its type is [e]'s. A column named twice in [by] or in
+      [order] is a problem, and so is an [order] key on a column whose type is
+      or holds an extension type: order by its storage, derived first. *)
 
   val rolling : Window.t -> ('a, agg) t -> ('a, row) t
   (** [rolling w e] is, for each row, [e] over the row's window [w], as if the
@@ -1367,4 +1378,540 @@ module Ext : sig
   (** [wrap e x] is [x]'s values as values of [e]'s type: [x] meets [e]'s
       storage type, which must contain [x]'s type. [wrap e (storage e x)] has
       [x]'s values. *)
+end
+
+module Source : sig
+  (** Sources: tables read in batches.
+
+      A source is data that a query reads when it runs, such as a file: its
+      schema is known when it is built, and its rows arrive in batches. Formats
+      build sources with {!v}, and a program's own format is a peer of the
+      shipped ones. [Query.of_source] makes a query of one.
+
+      A source is a contract between talon and its author:
+      - {b Pushdown.} Before reading, talon asks the source about each conjunct
+        of the filters on it, translated into a {!Pred.t}, and the source
+        answers with no IO whether it can apply it ({!answer}).
+      - {b Request.} Talon then asks for the source's parts with a {!request}:
+        the columns it reads, the conjuncts the source can use, and a limit.
+        Each place in a plan that reads the source is a read of its own, with
+        its own request.
+      - {b Pull.} Talon opens a part's {!reader}, pulls batches with [next], and
+        calls [close] once it has no more use for the reader.
+
+      The rows of a source are those of its parts in part order, then batch
+      order. They are fixed by the data and the request, never by the machine's
+      core count. *)
+
+  (** {1:pushdown Pushdown} *)
+
+  (** The type for a source's answers about a conjunct. *)
+  type answer =
+    | Exact
+        (** The source applies the conjunct exactly: it yields no row that fails
+            it, so talon removes the conjunct from the plan. *)
+    | Inexact
+        (** The source may use the conjunct to skip rows that fail it, as row
+            group statistics do, and never skips a row that passes it. Talon
+            applies the conjunct again. *)
+    | Unsupported  (** The source ignores the conjunct. Talon applies it. *)
+
+  (** Predicates on one row: the filters that sources apply.
+
+      A predicate compares columns of the source against values. It means what
+      its filter means in talon: a comparison uses talon's total order
+      ({!Type.compare_value}) and is null when the column's value is null, and
+      {!Not}, {!And} and {!Or} are Kleene's, so a row passes a predicate iff the
+      predicate is [true] on it. A source answers {!Exact} only for a predicate
+      whose meaning it honours entirely: for example, a float column's minimum
+      and maximum prune a row group only when the source knows the group holds
+      no NaN, since NaN passes [>], [>=] and [<>]. *)
+  module Pred : sig
+    type value =
+      | Value : 'a Type.t * 'a -> value
+          (** The type for values. [Value (ty, v)] is [v] at the type [ty] that
+              the comparison is made in, which holds [v] ({!Type.holds}). It is
+              the column's type, or a type that contains it ({!Type.common}),
+              such as [string] for a categorical column, which then compares by
+              text rather than by dictionary position. For an extension column
+              it is the storage type, and [v] is the value's storage. *)
+
+    (** The type for predicates. *)
+    type t =
+      | Cmp of string * [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ] * value
+          (** [Cmp (c, op, v)] compares the column [c] to [v] with [op]: [`Eq]
+              is [=], [`Ne] is [<>], [`Lt] is [<], [`Le] is [<=], [`Gt] is [>]
+              and [`Ge] is [>=]. It is null where [c] is null. *)
+      | In of string * value list
+          (** [In (c, vs)] is [true] iff the column [c] is the same key as one
+              of [vs], which have one type, and [false] elsewhere, null [c]
+              included. [In (c, [])] is [false]. *)
+      | Null of string  (** [Null c] is [true] iff the column [c] is null. *)
+      | Valid of string
+          (** [Valid c] is [true] iff the column [c] is not null. *)
+      | And of t list
+          (** [And ps] is [false] if one of [ps] is, else null if one is null,
+              else [true]. [And []] is [true]. *)
+      | Or of t list
+          (** [Or ps] is [true] if one of [ps] is, else null if one is null,
+              else [false]. [Or []] is [false]. *)
+      | Not of t  (** [Not p] is the negation of [p], null where [p] is. *)
+  end
+
+  (** {1:reading Reading} *)
+
+  type request = {
+    columns : string list;
+        (** The columns talon reads, distinct, in schema order. It may be empty,
+            as when a query only counts rows. *)
+    filters : Pred.t list;
+        (** The conjuncts that the source answered {!Exact} or {!Inexact}, in
+            plan order. The source applies each it answered {!Exact}. *)
+    limit : int option;
+        (** [Some n] when talon reads no more than the first [n] rows that the
+            request yields, so the source may stop after them. It is [None]
+            unless every conjunct of the filters on the source is {!Exact}. *)
+  }
+  (** The type for what talon asks of a source when it runs. *)
+
+  type reader = {
+    next : unit -> (table option, Error.t) result;
+        (** [next ()] is [Ok (Some b)] with the next batch [b] of the part,
+            whose columns are the request's, in its order, with the source's
+            types; [Ok None] at the end of the part; or [Error e]. A batch may
+            have no rows. A batch with other columns or types raises
+            [Invalid_argument] when talon reads it. *)
+    close : unit -> unit;
+        (** [close ()] releases the reader. Talon calls it once, when [next] has
+            returned [Ok None] or [Error _], when it needs no more of the part's
+            rows, or when the run fails, and calls [next] no more afterwards. *)
+  }
+  (** The type for readers of a part's batches. *)
+
+  type part = {
+    rows : int option;
+        (** [Some n] promises that the part yields exactly [n] rows for the
+            request, and talon trusts it to skip the part without reading it;
+            [None] if unknown. *)
+    open_ : unit -> (reader, Error.t) result;
+        (** [open_ ()] opens a reader on the part. Talon opens a part at most
+            once, and parts must not depend on one another. *)
+  }
+  (** The type for parts: the units a source reads, such as files or row groups.
+  *)
+
+  (** {1:sources Sources} *)
+
+  type t
+  (** The type for sources. Two sources are the same iff they are one value. *)
+
+  val v :
+    name:string ->
+    schema:Schema.t ->
+    ?rows:int ->
+    ?sorted:Order.t list ->
+    ?pushdown:(Pred.t -> answer) ->
+    (request -> (part list, Error.t) result) ->
+    t
+  (** [v ~name ~schema ?rows ?sorted ?pushdown parts] is the source called
+      [name] that yields rows of the columns [schema], with:
+      - [rows], the number of rows the source yields for a request without
+        filters, which plans print, and which turns a slice from the end into
+        one from the start. Defaults to unknown.
+      - [sorted], the order the rows come in, by talon's total order, which lets
+        an ordered join skip a sort. Talon checks it as rows arrive, and a row
+        out of order fails the run. Defaults to no order.
+      - [pushdown], which answers for one conjunct whether the source applies
+        it. Talon calls it when it plans a run, any number of times: it must be
+        pure and do no IO. Defaults to {!Unsupported} for every conjunct.
+
+      Talon calls [parts] once for each place in the optimized plan that reads
+      the source, with that place's request, and [parts] gives the source's
+      parts in order, or the [Error] that fails the run. A source that can be
+      read only once, such as a stream, documents that it reads once, and its
+      [parts] is an [Error] after its first call: a plan that needs it in
+      several places reads a table that [run] makes of it first.
+
+      Plans print a source as [name] followed by its number of columns, and by
+      [rows] when given, as in [parquet "carriers.parquet" (2 columns)], so
+      [name] says what the source reads: [csv "flights.csv"].
+
+      Raises [Invalid_argument] if [name] is empty, is not valid UTF-8 or holds
+      a control character, if [rows] is negative, or if a key of [sorted] names
+      no column of [schema], names a column twice, or names a column whose type
+      is or contains an extension type, which has no order of its own. *)
+end
+
+module Join : sig
+  (** Joins: conditions, kinds and counts.
+
+      [left |> Query.join ~on right] pairs the rows of [left] and [right] that
+      the condition [on] matches. A condition is a value, a conjunction of
+      {e atoms} built with {!( && )} inside [Join.( … )]:
+      [Join.(keys [ "ticker" ] && closest (ge "ts" "quote_ts"))]. Atoms name a
+      left column, then a right column.
+
+      {b Algorithms.} Each condition runs as one algorithm, with the cost that
+      [Query.join] states, and a conjunction that no algorithm runs raises when
+      it is built. The conditions are:
+      - {e equality}: one or more equality atoms ({!keys}, {!eq});
+      - {e inequality}: equality atoms and one or more inequality atoms ({!lt},
+        {!le}, {!gt}, {!ge}), which all compare to one right column. A range on
+        two right columns is a join on one of them, then a [filter];
+      - {e closest} and {e nearest}: equality atoms and one {!closest} or
+        {!nearest} atom;
+      - {!position}, alone;
+      - {!all}, every pair, which is also the condition with no atom: [all && c]
+        is [c].
+
+      {b Keys.} Equality atoms match by key identity ({!Type.compare_value},
+      null being one key), so null keys match. The columns of an inequality,
+      {!closest} or {!nearest} atom order by talon's total order, and a null in
+      one of them fails the run.
+
+      {b Columns.} A {!Semi} or {!Anti} join has the left columns. Another join
+      has the left columns, then the right columns but those of equality atoms,
+      in order: the key of [eq l r] appears once, as [l]. In a {!Full} join that
+      key has the common type of [l] and [r] ({!Type.common}), since an
+      unmatched right row gives it [r]'s value; every other column keeps its
+      type. A name on both sides is a problem, and talon adds no suffixes:
+      rename one side first. *)
+
+  (** {1:conditions Conditions} *)
+
+  type cond
+  (** The type for conditions: conjunctions of atoms that an algorithm runs. *)
+
+  val keys : string list -> cond
+  (** [keys ns] matches the rows whose columns [ns] are the same keys on both
+      sides: it is [eq n n] for each [n] of [ns].
+
+      Raises [Invalid_argument] if [ns] is empty, since a join on no key is
+      {!all}, written so, or if [ns] names a column twice. *)
+
+  val eq : string -> string -> cond
+  (** [eq l r] matches the rows whose left column [l] and right column [r] are
+      the same key. [l] and [r] must meet ({!Type.common}). *)
+
+  val lt : string -> string -> cond
+  (** [lt l r] matches the rows whose left column [l] is less than the right
+      column [r]. [l] and [r] must meet, at a type that orders: one that neither
+      is nor contains an extension type. *)
+
+  val le : string -> string -> cond
+  (** [le l r] matches where [l] is at most [r], like {!lt}. *)
+
+  val gt : string -> string -> cond
+  (** [gt l r] matches where [l] is greater than [r], like {!lt}. *)
+
+  val ge : string -> string -> cond
+  (** [ge l r] matches where [l] is at least [r], like {!lt}. *)
+
+  val closest : ?within:('a, Expr.row) Expr.t -> cond -> cond
+  (** [closest ?within c] matches each left row with the right row that best
+      satisfies the inequality [c]: [closest (ge "ts" "quote_ts")] is the latest
+      quote at or before [ts]. Under {!ge} and {!gt} that is the right row with
+      the greatest right column, and under {!le} and {!lt} the one with the
+      least. Among right rows tied on it, the last in right order wins. [within]
+      keeps the match only if the two columns differ by at most [within], a
+      literal of the columns' difference:
+      - the columns' common type for integer, float and decimal columns,
+        [Expr.int 5], [Expr.float 0.5];
+      - a span of the columns' unit for datetimes, durations and clocks, and of
+        whole days for dates, [Expr.span (Time.Span.s 5)].
+
+      [within] defaults to no bound. Over other types there is no difference, so
+      [within] is a problem. A [within] that is not a literal, or that is
+      negative, is a problem.
+
+      Raises [Invalid_argument] if [c] is not one inequality atom. *)
+
+  val nearest : ?within:('a, Expr.row) Expr.t -> string -> string -> cond
+  (** [nearest ?within l r] matches each left row with the right row whose
+      column [r] is nearest to its column [l], in either direction. A tie in
+      distance goes to the smaller key, and among right rows tied on the key the
+      last in right order wins. [within] bounds the distance as for {!closest}.
+      [l] and [r] must have a difference, as for {!closest}'s [within]. *)
+
+  val position : cond
+  (** [position] matches row i of the left with row i of the right. *)
+
+  val all : cond
+  (** [all] matches every pair of rows. *)
+
+  val ( && ) : cond -> cond -> cond
+  (** [c0 && c1] matches the pairs that both [c0] and [c1] match.
+
+      Raises [Invalid_argument] if no algorithm runs the conjunction: one that
+      holds {!position} and another atom, two {!closest} or {!nearest} atoms,
+      one of them and an inequality atom, or inequality atoms on two right
+      columns; or if it holds one equality atom twice. *)
+
+  (** {1:kinds Kinds and counts} *)
+
+  (** The type for join kinds: which rows a join keeps. *)
+  type kind =
+    | Inner  (** The matched pairs. *)
+    | Left
+        (** The matched pairs, and each left row without a match, the right
+            columns null. *)
+    | Full
+        (** As {!Left}, then each right row without a match, the left columns
+            null except the keys, which take the right row's. *)
+    | Semi  (** Each left row with a match, once, with the left columns only. *)
+    | Anti  (** Each left row without a match, with the left columns only. *)
+
+  (** The type for the number of matches each row of a side must have. A row
+      with another number fails the run, naming the side, the key and the count.
+  *)
+  type count =
+    | Any  (** No constraint. *)
+    | At_most_one  (** Zero or one. *)
+    | One  (** Exactly one. *)
+    | At_least_one  (** One or more. *)
+end
+
+module Query : sig
+  (** Queries: descriptions of tables to compute.
+
+      A query is a plan: a table or a {!Source.t}, transformed by verbs.
+      Building one reads no data. A pipeline is written inside [Query.( … )],
+      and the expressions of its verbs inside [Expr.( … )]:
+      {[
+      Query.(
+        of_source flights
+        |> filter Expr.(delay > float 15.)
+        |> aggregate ~by:[ "carrier" ] Expr.[ "mean_delay" := mean delay ]
+        |> join
+             ~on:(Join.keys [ "carrier" ])
+             ~each_left:One (of_source carriers)
+        |> sort [ Order.desc "mean_delay" ])
+      ]}
+
+      {b Order is contract.} Each verb states the order of its rows, and no verb
+      has an ordering flag. Where a verb states a cost, n is the number of rows
+      of its input and m that of a join's right input. A verb that {e streams}
+      transforms its input batch by batch; one that {e blocks} holds the columns
+      it reads until its input ends.
+
+      {b Problems.} A verb checks its arguments against its input's schema when
+      it is applied: it binds its expressions ({!Expr} says how), resolves its
+      names and selectors, and infers its schema, which {!schema} then returns.
+      It collects every problem it finds and raises one [Invalid_argument] whose
+      message reports them all:
+      {v
+      aggregate: 3 problems
+        ~by: no column "carier". Did you mean "carrier"?
+        "mean_delay" := mean dep_dly
+          no column "dep_dly". Did you mean "dep_delay"?
+        "late" := mean carrier
+          Col.float reads float16, float32 or float64, but "carrier" is string.
+        input (19 columns): year int16, month int8, day int8, dep_time int32, sched_dep_time int32, dep_delay float64, arr_time int32, sched_arr_time int32, …
+      v}
+      - The first line names the verb and counts its problems.
+      - An output or a predicate with problems follows, as it was written, with
+        its problems below it.
+      - A problem of another argument starts with that argument, as [~by:] does.
+      - A problem between arguments, such as two outputs of one name, stands
+        alone.
+      - Problems come in the order of the verb's arguments.
+      - The last lines give each input's schema: its number of columns and its
+        first eight columns, as {!Schema.pp} formats them, then […] if there are
+        more. A join's inputs are [left] and [right], and [append]'s are [input]
+        and [rest].
+
+      A name that the input lacks comes with the input's names nearest to it,
+      within edit distance 2, or else with all of them.
+
+      {b User functions.} The functions inside a verb's expressions and
+      selectors ([Expr.across], [Expr.each], [Sel.where], [Expr.nx],
+      [Expr.batch]) run when the verb is applied. They must be pure, and an
+      exception they raise propagates from the verb. *)
+
+  type t
+  (** The type for queries. *)
+
+  (** {1:leaves Tables and sources} *)
+
+  val of_table : table -> t
+  (** [of_table t] is the query of the rows of the table [t]. It costs O(1). *)
+
+  val of_source : Source.t -> t
+  (** [of_source s] is the query of the rows of the source [s], which it reads
+      when it runs. It costs O(1). *)
+
+  val schema : t -> Schema.t
+  (** [schema q] is the names and types of the columns of [q]'s rows. The verb
+      that made [q] resolved it, so it costs O(1) and reads no data. *)
+
+  (** {1:verbs Verbs} *)
+
+  val select : Expr.row Expr.out list -> t -> t
+  (** [select os q] is [q]'s rows with exactly the columns [os], in order:
+      {[
+      select
+        Expr.[ keep Sel.(names [ "carrier" ]); "late" := delay > float 15. ]
+      ]}
+      It keeps [q]'s row count and order. Each output reads [q]'s columns, never
+      another output. It streams in O(n), except that {!Expr.over},
+      {!Expr.rolling} and {!Expr.rank} over the input's rows need the whole
+      input: the verb then blocks.
+
+      Its problems are those of binding [os], and two outputs of one name. *)
+
+  val derive : Expr.row Expr.out list -> t -> t
+  (** [derive os q] is [q]'s rows with each of [q]'s columns and the outputs
+      [os]: an output replaces the column of its name in place, with the
+      output's type, and the others follow [q]'s columns, in order. It keeps
+      [q]'s row count and order. Each output reads [q]'s columns, never another
+      output. It streams in O(n), except that {!Expr.over}, {!Expr.rolling} and
+      {!Expr.rank} over the input's rows need the whole input: the verb then
+      blocks.
+
+      Its problems are those of binding [os], and two outputs of one name. *)
+
+  val filter : (bool, Expr.row) Expr.t -> t -> t
+  (** [filter p q] is the rows of [q] on which [p] is [true], in order, so a row
+      on which [p] is null is dropped. Its schema is [q]'s. [p] is a [bool]
+      column: an OCaml value, as [const f $ x] is, takes that type. It streams
+      in O(n), except that {!Expr.over}, {!Expr.rolling} and {!Expr.rank} over
+      the input's rows need the whole input: the verb then blocks.
+
+      Its problems are those of binding [p], and an extension's values, even
+      when they read as [bool]: compute [p] from [Ext.storage]. *)
+
+  val sort : Order.t list -> t -> t
+  (** [sort ks q] is [q]'s rows ordered by the keys [ks] in turn, each by
+      talon's total order in its direction, nulls last unless
+      {!Order.nulls_first} (see {!Order}). It is stable: rows equal on every key
+      keep [q]'s order. Its schema is [q]'s. It blocks, in O(n log n).
+
+      Its problems are a key that names no column, a key that names the column
+      of an earlier key, a key on a column whose type holds an extension type,
+      which has no order, and a key on an extension column, which orders only
+      through its declaration: sort its storage, derived first, as the problem's
+      message shows:
+      {[
+      derive Expr.[ "k" := Ext.storage e (Ext.col e "t") ]
+      |> sort [ Order.asc "k" ]
+      |> select Expr.[ keep Sel.(all - names [ "k" ]) ]
+      ]} *)
+
+  val slice : offset:int -> length:int -> t -> t
+  (** [slice ~offset ~length q] is [q]'s rows at the positions [offset] to
+      [offset + length - 1] that [q] has, in order, a negative [offset] counting
+      from the end: [slice ~offset:0 ~length:10 q] is [q]'s first ten rows, and
+      [slice ~offset:(-10) ~length:10 q] its last ten. Its schema is [q]'s. With
+      [offset >= 0] it stops reading at the last row it keeps; with a negative
+      [offset] it holds [q]'s last [-offset] rows.
+
+      Its problem is a negative [length]. *)
+
+  val aggregate : by:string list -> Expr.agg Expr.out list -> t -> t
+  (** [aggregate ~by os q] is one row per group of [q]'s rows that have the same
+      keys in the columns [by], by key identity (null is one key, and NaN is
+      one), in order of first appearance. Each row holds the columns [by], then
+      the outputs [os] reduced over the group's rows in [q]'s order. [~by:[]]
+      makes one group of every row, so one row, even when [q] has none. It
+      blocks, in O(n) expected time, holding the columns [by] and those that
+      [os] read.
+
+      Its problems are a key that names no column or is named twice, those of
+      binding [os], two outputs of one name, and an output of a key's name. *)
+
+  val join :
+    ?kind:Join.kind ->
+    ?each_left:Join.count ->
+    ?each_right:Join.count ->
+    on:Join.cond ->
+    t ->
+    t ->
+    t
+  (** [join ?kind ?each_left ?each_right ~on right left] pairs [left]'s rows
+      with the rows of [right] that [on] matches, written
+      [left |> join ~on right], with:
+      - [kind], the rows kept ({!Join.kind}). Defaults to {!Join.Inner}. A right
+        join is a left join with the arguments swapped.
+      - [each_left] and [each_right], the number of matches each row of [left]
+        and of [right] must have; another number fails the run. Both default to
+        {!Join.Any}.
+
+      The rows come in [left]'s order, each left row followed by its matches in
+      [right]'s order; a {!Join.Full} join then appends [right]'s unmatched rows
+      in order. Over {!Join.position}, {!Join.Inner} and {!Join.Semi} keep
+      min(n, m) rows, {!Join.Left} keeps n, {!Join.Full} max(n, m), and
+      {!Join.Anti} [left]'s rows past m. Its columns are those {!Join}
+      describes. It blocks on [right], which it holds, in:
+      - O(n + m + matches) for an equality join;
+      - O((n + m) log m + matches log matches) for an inequality join;
+      - O((n + m) log m) for {!Join.closest} and {!Join.nearest}.
+
+      Its problems are, for each atom of [on] in order: a column missing on its
+      side; columns that do not meet, or, outside equality, do not order; a
+      [within] or a {!Join.nearest} over columns without a difference; and a
+      [within] that is not a literal, is negative, is not of the difference's
+      kind, or that the difference's type does not hold. Then, in a {!Join.Full}
+      join, a left column that is the left of two equality atoms, and, except in
+      a {!Join.Semi} or {!Join.Anti} join, the joined columns that have one
+      name. *)
+
+  val append : t -> t -> t
+  (** [append rest q] is [q]'s rows, then [rest]'s, written [q |> append rest].
+      The two have the same columns, matched by name, of equal types, and the
+      schema is [q]'s. Appending other columns is [Kit.union], which derives the
+      missing ones as nulls. It costs O(1) over tables and streams over sources.
+
+      Its problems are a column that only [q] has, one that only [rest] has, and
+      a column whose types differ. *)
+
+  val unnest : string list -> t -> t
+  (** [unnest cs q] is one row per element of the list columns [cs], in order,
+      each column of [cs] replaced in place by its elements, of the list's
+      element type, and [q]'s other columns repeated. Several columns zip: their
+      lists have one length in each row, a null list counting as empty, and
+      unequal lengths fail the run. A row whose lists are null or empty gives no
+      row. It streams in O(n + elements).
+
+      Its problems are an empty [cs], a name that names no column or is named
+      twice, and a column that is not a list. *)
+
+  (** {1:comparing Comparing and formatting} *)
+
+  val equal : t -> t -> bool
+  (** [equal q0 q1] is [true] iff [q0] and [q1] are the same plan: the same
+      steps with equal arguments, expressions compared by their identity
+      ({!Expr.id}), tables by key identity row by row, and sources physically.
+      Equal queries have equal schemas. *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf q] formats [q]'s plan, which reads no data: the line [query →] and
+      [q]'s schema as {!Schema.pp} formats it, then [q]'s last step, with the
+      steps it reads below it in a tree:
+      {v
+      query → carrier string, mean_delay float64, flights int64, name string
+      sort [desc "mean_delay"]
+      └ join ~on:(keys ["carrier"]) ~each_left:One
+        ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
+        │                            "flights" := rows]
+        │ └ filter (dep_delay > 15.)
+        │   └ csv "flights.csv" (19 columns)
+        └ parquet "carriers.parquet" (2 columns)
+      v}
+      A step formats as the call of the verb that made it, without its input or
+      module paths, its expressions as {!Expr.pp} formats them, its keys as they
+      are written inside [Order.( … )] and its condition as it is written inside
+      [Join.( … )]:
+      - outputs as ["name" := e], with selectors resolved and a run of columns
+        kept unchanged under their names as one [keep (names ["a"; "b"])];
+      - [~kind], [~each_left] and [~each_right] after [~on], when they are not
+        their defaults;
+      - a table as [table (4 columns, 16 rows)], and a source as its name and
+        its number of columns, then its number of rows when it states one:
+        [parquet "carriers.parquet" (2 columns, 1491 rows)].
+
+      A join's left input comes before its right, and [append]'s [q] before
+      [rest]. A step too long for the margin continues on the next lines,
+      indented under it. Lines fit the formatter's margin counted from column 0,
+      since a formatter does not tell its current indentation: inside an
+      indented box they overrun the margin by that indentation. *)
 end

@@ -73,8 +73,19 @@ val pp : Format.formatter -> 'a t -> unit
 
 (** {1:internal Internal} *)
 
+val has_ext : 'a t -> bool
+(** [has_ext t] is [true] iff [t] is or contains an extension type, as a list
+    element or a record field at any depth. An extension type orders only
+    through its declaration, and a type that holds one has no order, so sort
+    keys and ordering reductions refuse both. *)
+
 val pp_name : Format.formatter -> string -> unit
 (** [pp_name ppf n] formats the field name [n] as {!pp} does. *)
+
+val pp_quoted : Format.formatter -> string -> unit
+(** [pp_quoted ppf s] formats [s] quoted, as {!pp} quotes a category. Plans and
+    their reports quote column names with it, so that a name in UTF-8 prints as
+    it reads. *)
 
 val pp_list :
   (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a list -> unit

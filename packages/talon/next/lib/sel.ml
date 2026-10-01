@@ -92,11 +92,11 @@ let rec pp_at level ppf s =
           Format.fprintf ppf "%a -@ %a" (pp_at 0) s0 (pp_at 1) s1)
   | Names ns ->
       parens 2 ppf (fun ppf ->
-          Format.fprintf ppf "names %a"
-            (Type.pp_list (fun ppf -> Format.fprintf ppf "%S"))
-            ns)
-  | Prefix p -> parens 2 ppf (fun ppf -> Format.fprintf ppf "prefix %S" p)
-  | Suffix x -> parens 2 ppf (fun ppf -> Format.fprintf ppf "suffix %S" x)
+          Format.fprintf ppf "names %a" (Type.pp_list Type.pp_quoted) ns)
+  | Prefix p ->
+      parens 2 ppf (fun ppf -> Format.fprintf ppf "prefix %a" Type.pp_quoted p)
+  | Suffix x ->
+      parens 2 ppf (fun ppf -> Format.fprintf ppf "suffix %a" Type.pp_quoted x)
   | Of_kind k ->
       parens 2 ppf (fun ppf -> Format.fprintf ppf "of_kind %a" Kind.pp k)
   | Where _ -> parens 2 ppf (fun ppf -> Format.pp_print_string ppf "where <fn>")

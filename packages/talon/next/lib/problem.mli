@@ -25,9 +25,10 @@ val v : ('a, Format.formatter, unit, t) format4 -> 'a
 
 val missing : string -> Schema.t -> t
 (** [missing name s] is the problem that [s] has no column [name]. Its message
-    suggests the names of [s] within edit distance 2 of [name], closest first,
-    as in [no column "carier". Did you mean "carrier"?], and lists [s]'s names
-    when none is that close. *)
+    suggests the names of [s] nearest to [name] by edit distance, in schema
+    order, when that distance is at most 2, as in
+    [no column "carier". Did you mean "carrier"?], and lists [s]'s names when
+    none is that close. *)
 
 val repeated : string list -> string list
 (** [repeated ns] is the names that [ns] holds more than once, each once, in the

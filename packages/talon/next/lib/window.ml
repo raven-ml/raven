@@ -47,7 +47,8 @@ let pp ppf = function
       Format.fprintf ppf "rows ~before:%a ~after:%a" pp_int before pp_int after
   | Times { on; before; after } ->
       if Int64.equal (Time.Span.to_ns after) 0L then
-        Format.fprintf ppf "time ~before:%a %S" Time.Span.pp before on
+        Format.fprintf ppf "time ~before:%a %a" Time.Span.pp before
+          Type.pp_quoted on
       else
-        Format.fprintf ppf "time ~after:%a ~before:%a %S" Time.Span.pp after
-          Time.Span.pp before on
+        Format.fprintf ppf "time ~after:%a ~before:%a %a" Time.Span.pp after
+          Time.Span.pp before Type.pp_quoted on

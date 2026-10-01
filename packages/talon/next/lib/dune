@@ -11,7 +11,11 @@
   sel
   order
   window
-  expr)
+  expr
+  table
+  source
+  join
+  query)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

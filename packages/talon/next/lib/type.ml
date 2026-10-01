@@ -144,6 +144,12 @@ let rec kind : type a. a t -> a Kind.t = function
   | Tensor (dt, _) -> Kind.Tensor dt
   | Ext _ -> Kind.Ext
 
+let rec has_ext : type a. a t -> bool = function
+  | Ext _ -> true
+  | List e -> has_ext e
+  | Record fields -> List.exists (fun (_, Any t) -> has_ext t) fields
+  | _ -> false
+
 (* [storage t] is [t] with every extension it is or holds as list elements
    replaced by its storage type: the type of the values a record field of type
    [t] holds. *)
@@ -164,14 +170,26 @@ let is_bare_byte c =
     || c = ',' || c = '[' || c = ']' || c = '"' || c = '\\')
 
 let pp_quoted ppf s =
-  let byte = function
-    | ('"' | '\\') as c -> Format.fprintf ppf "\\%c" c
-    | c when Char.code c < 0x20 || Char.code c = 0x7f ->
-        Format.fprintf ppf "\\x%02x" (Char.code c)
-    | c -> Format.pp_print_char ppf c
+  let hex c = Format.fprintf ppf "\\x%02x" (Char.code c) in
+  let rec loop i =
+    if i < String.length s then
+      let d = String.get_utf_8_uchar s i in
+      if not (Uchar.utf_decode_is_valid d) then begin
+        hex s.[i];
+        loop (i + 1)
+      end
+      else begin
+        (match s.[i] with
+        | ('"' | '\\') as c -> Format.fprintf ppf "\\%c" c
+        | c when Char.code c < 0x20 || Char.code c = 0x7f -> hex c
+        | _ ->
+            Format.pp_print_string ppf
+              (String.sub s i (Uchar.utf_decode_length d)));
+        loop (i + Uchar.utf_decode_length d)
+      end
   in
   Format.pp_print_char ppf '"';
-  String.iter byte s;
+  loop 0;
   Format.pp_print_char ppf '"'
 
 let pp_name ppf n =

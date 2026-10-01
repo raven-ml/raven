@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+type t = Table.t
+
 module Binary = Binary
 module Decimal = Decimal
 module Time = Time
@@ -40,3 +42,7 @@ module Ext = struct
   let storage e x = Expr.make (Expr.Storage (e, x))
   let wrap e x = Expr.make (Expr.Wrap (e, x))
 end
+
+module Source = Source
+module Join = Join
+module Query = Query

@@ -530,7 +530,7 @@ let rec pp_lit : type a. a Kind.t -> Format.formatter -> a -> unit =
   | Int -> Format.pp_print_int ppf v
   | Float -> pp_float ppf v
   | Bool -> Format.pp_print_bool ppf v
-  | String -> Format.fprintf ppf "%S" v
+  | String -> Type.pp_quoted ppf v
   | Binary -> Binary.pp ppf v
   | Decimal -> Decimal.pp ppf v
   | Date -> Time.Date.pp ppf v
@@ -572,18 +572,15 @@ let is_lowercase_ident n =
 let pp_name ppf n =
   if is_lowercase_ident n && not (List.mem n keywords || List.mem n values) then
     Format.pp_print_string ppf n
-  else Format.fprintf ppf "%S" n
+  else Type.pp_quoted ppf n
 
 let pp_pattern ppf = function
-  | Literal s -> Format.fprintf ppf "literal %S" s
-  | Prefix s -> Format.fprintf ppf "prefix %S" s
-  | Suffix s -> Format.fprintf ppf "suffix %S" s
-  | Pieces ss ->
-      Format.fprintf ppf "pieces %a"
-        (Type.pp_list (fun ppf -> Format.fprintf ppf "%S"))
-        ss
+  | Literal s -> Format.fprintf ppf "literal %a" Type.pp_quoted s
+  | Prefix s -> Format.fprintf ppf "prefix %a" Type.pp_quoted s
+  | Suffix s -> Format.fprintf ppf "suffix %a" Type.pp_quoted s
+  | Pieces ss -> Format.fprintf ppf "pieces %a" (Type.pp_list Type.pp_quoted) ss
 
-let pp_zone ppf z = Format.fprintf ppf "%S" (Tz.name z)
+let pp_zone ppf z = Type.pp_quoted ppf (Tz.name z)
 
 let pp_policy ppf = function
   | `Earlier -> Format.pp_print_string ppf "`Earlier"
@@ -751,7 +748,7 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
             ]
       in
       app "over"
-        (labelled "by" (fun ppf -> Format.fprintf ppf "%S") by
+        (labelled "by" Type.pp_quoted by
         @ labelled "order" Order.pp order
         @ [ arg e ])
   | Rolling (w, e) ->
@@ -767,14 +764,14 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | Record_outs os -> app "record" [ (fun ppf -> Type.pp_list pp_out ppf os) ]
   | Fields fs ->
       let pp_field ppf (n, Packed e) =
-        Format.fprintf ppf "@[<hov 2>%S :=@ %a@]" n (pp_at 0) e
+        Format.fprintf ppf "@[<hov 2>%a :=@ %a@]" Type.pp_quoted n (pp_at 0) e
       in
       app "record" [ (fun ppf -> Type.pp_list pp_field ppf fs) ]
   | Field (k, name, r) ->
       app "field"
         [
           (fun ppf -> Kind.pp ppf k);
-          (fun ppf -> Format.fprintf ppf "%S" name);
+          (fun ppf -> Type.pp_quoted ppf name);
           arg r;
         ]
   | Storage (d, a) ->
@@ -831,16 +828,15 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
               ]
         | Parse_with (fmt, ty, a) ->
             [
-              (fun ppf -> Format.fprintf ppf "%S" fmt);
+              (fun ppf -> Type.pp_quoted ppf fmt);
               (fun ppf -> Type.pp ppf ty);
               arg a;
             ]
-        | Format_with (fmt, a) ->
-            [ (fun ppf -> Format.fprintf ppf "%S" fmt); arg a ])
+        | Format_with (fmt, a) -> [ (fun ppf -> Type.pp_quoted ppf fmt); arg a ])
 
 and pp_out ppf = function
   | Named (n, Packed e) ->
-      Format.fprintf ppf "@[<hov 2>%S :=@ %a@]" n (pp_at 0) e
+      Format.fprintf ppf "@[<hov 2>%a :=@ %a@]" Type.pp_quoted n (pp_at 0) e
   | Keep sel -> Format.fprintf ppf "@[<hov 2>keep@ %a@]" Sel.pp_arg sel
   | Across (k, sel, _) ->
       Format.fprintf ppf "@[<hov 2>across@ %a@ %a@ <fn>@]" Kind.pp k Sel.pp_arg
@@ -850,6 +846,7 @@ and pp_out ppf = function
   | Unpack r -> Format.fprintf ppf "@[<hov 2>unpack@ %a@]" (pp_at 8) r
 
 let pp ppf e = pp_at 0 ppf e
+let pp_arg ppf e = pp_at 8 ppf e
 
 (* Binding *)
 
@@ -1048,10 +1045,14 @@ let expect : type a s.
 
 let ordered : type a. env -> string -> a typing -> unit =
  fun env what -> function
-  | Column ty when Kind.has_ext (Type.kind ty) ->
+  | Column (Ext _ as ty) ->
       report env
-        "%s orders values, and %a holds an extension read without its \
+        "%s orders values, and %a is an extension read without its \
          declaration: read it with an Ext.t declared ~ordered:true."
+        what Type.pp ty
+  | Column ty when Type.has_ext ty ->
+      report env
+        "%s orders values, and %a holds an extension type and has no order."
         what Type.pp ty
   | Extension d when not d.ordered ->
       report env
@@ -1238,9 +1239,9 @@ let zone_rule env what zone ty_zone =
   match (zone, ty_zone) with
   | None, Some z ->
       report env
-        "%s reads a datetime with the zone %S on a wall clock, which needs \
+        "%s reads a datetime with the zone %a on a wall clock, which needs \
          ~zone."
-        what z
+        what Type.pp_quoted z
   | Some _, None ->
       report env
         "%s reads a wall-clock value, which takes no ~zone: only a datetime \
@@ -1505,8 +1506,8 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
           match Kind.provably_equal k (Type.kind ty) with
           | Some Equal -> known (Column ty) e.node
           | None ->
-              report env "%s reads %s, but %S is %a." (handle_name k)
-                (kind_types k) n Type.pp ty;
+              report env "%s reads %s, but %a is %a." (handle_name k)
+                (kind_types k) Type.pp_quoted n Type.pp ty;
               Broken))
   | Ext_handle (d, n) -> (
       match Schema.find env.schema n with
@@ -1515,8 +1516,8 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
           Broken
       | Some (Any ty) when Type.equal ty d.type_ -> known (Extension d) e.node
       | Some (Any ty) ->
-          report env "Ext.col binds %a, but %S is %a." Type.pp d.type_ n Type.pp
-            ty;
+          report env "Ext.col binds %a, but %a is %a." Type.pp d.type_
+            Type.pp_quoted n Type.pp ty;
           Broken)
   | Read (ty, n) -> (
       match Schema.find env.schema n with
@@ -1525,8 +1526,8 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
           Broken
       | Some (Any ty') when Type.equal ty ty' -> known (Column ty) e.node
       | Some (Any ty') ->
-          report env "%S was read as %a, but it is %a here." n Type.pp ty
-            Type.pp ty';
+          report env "%a was read as %a, but it is %a here." Type.pp_quoted n
+            Type.pp ty Type.pp ty';
           Broken)
   | Lit (k, v) ->
       let default = Option.map (fun ty -> Column ty) (default_type k) in
@@ -1674,11 +1675,18 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
           | Some rt -> known rt (Reduce (r, a))
           | None -> Broken)
   | Over { by; order; e = x } ->
-      List.iter
-        (fun n ->
-          if Option.is_none (Schema.find env.schema n) then missing env n)
-        by;
-      List.iter (sort_key env) order;
+      let rec keys seen = function
+        | [] -> ()
+        | n :: ns ->
+            if not (List.mem n seen) then begin
+              if Option.is_none (Schema.find env.schema n) then missing env n;
+              if List.mem n ns then
+                report env "over ~by: %a is named twice." Type.pp_quoted n
+            end;
+            keys (n :: seen) ns
+      in
+      keys [] by;
+      List.iter (fun (_, p) -> problem env p) (Order.check order env.schema);
       on_operand env x (fun t x -> known t (Over { by; order; e = x }))
   | Rolling (w, x) ->
       (match w with
@@ -1690,8 +1698,8 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
           | Some (Any ty) ->
               report env
                 "a time window reads datetime, date, clock or duration keys, \
-                 but %S is %a."
-                on Type.pp ty));
+                 but %a is %a."
+                Type.pp_quoted on Type.pp ty));
       on_operand env x (fun t x -> known t (Rolling (w, x)))
   | Shift (n, x) -> on_operand env x (fun t x -> known t (Shift (n, x)))
   | Rank x ->
@@ -1739,17 +1747,16 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
           | Column (Record fields) -> (
               match List.assoc_opt name fields with
               | None ->
-                  report env "the record has no field %S: its fields are %a."
-                    name
-                    (pp_and (fun ppf -> Format.fprintf ppf "%S"))
+                  report env "the record has no field %a: its fields are %a."
+                    Type.pp_quoted name (pp_and Type.pp_quoted)
                     (List.map fst fields);
                   Broken
               | Some (Any fty) -> (
                   match Kind.provably_equal k (Type.kind fty) with
                   | Some Equal -> known (Column fty) (Field (k, name, r))
                   | None ->
-                      report env "field %a reads %s, but the field %S is %a."
-                        Kind.pp k (kind_types k) name Type.pp fty;
+                      report env "field %a reads %s, but the field %a is %a."
+                        Kind.pp k (kind_types k) Type.pp_quoted name Type.pp fty;
                       Broken))
           | t ->
               report env "field reads a record, not %a." pp_typing t;
@@ -1782,16 +1789,6 @@ and sorted_edges : type a. a typing -> a array -> a array =
         (List.sort_uniq (Type.compare_value ty) (Array.to_list edges))
   | Extension _ | Value -> edges
 
-and sort_key env (k : Order.t) =
-  match Schema.find env.schema k.name with
-  | None -> missing env k.name
-  | Some (Any ty) when Kind.has_ext (Type.kind ty) ->
-      report env
-        "%S cannot be a sort key: it holds an extension. Sort by its storage, \
-         derived first."
-        k.name
-  | Some _ -> ()
-
 and batch_type : type a b c d.
     env ->
     ((a, b) Nx.t -> (c, d) Nx.t) ->
@@ -1818,20 +1815,20 @@ and batch_type : type a b c d.
 
 and record : env -> (string * packed) list -> Record.t elab =
  fun env fields ->
-  let names = List.map fst fields in
-  let twice = Problem.repeated names in
-  let invalid = List.filter (fun n -> not (String.is_valid_utf_8 n)) names in
-  List.iter (report env "record: the output %S appears twice.") twice;
-  List.iter (report env "record: the name %S is not valid UTF-8.") invalid;
-  if not (List.is_empty twice && List.is_empty invalid) then Broken
-  else
-    let field_type (n, Packed b) =
-      match b.typing with
-      | Some (Column ty) -> (n, Type.Any ty)
-      | Some (Extension d) -> (n, Type.Any d.type_)
-      | Some Value | None -> assert false
-    in
-    known (Column (Type.record (List.map field_type fields))) (Fields fields)
+  match Problem.repeated (List.map fst fields) with
+  | _ :: _ as twice ->
+      List.iter
+        (report env "record: the output %a appears twice." Type.pp_quoted)
+        twice;
+      Broken
+  | [] ->
+      let field_type (n, Packed b) =
+        match b.typing with
+        | Some (Column ty) -> (n, Type.Any ty)
+        | Some (Extension d) -> (n, Type.Any d.type_)
+        | Some Value | None -> assert false
+      in
+      known (Column (Type.record (List.map field_type fields))) (Fields fields)
 
 (* [outs env o] is the named, bound outputs of [o]. *)
 and outs : env -> out_repr -> (string * packed) list =
@@ -1859,9 +1856,9 @@ and outs : env -> out_repr -> (string * packed) list =
           | Some Equal -> outs env (f n (make (Handle (k, n))))
           | None ->
               report env
-                "across %a: %S is %a, which %a does not read: narrow the \
+                "across %a: %a is %a, which %a does not read: narrow the \
                  selector with Sel.of_kind."
-                Kind.pp k n Type.pp ty Kind.pp k;
+                Kind.pp k Type.pp_quoted n Type.pp ty Kind.pp k;
               [])
         (select sel)
   | Each (sel, { column }) ->
@@ -2105,15 +2102,19 @@ let bind_out schema o =
 
 (* Outputs *)
 
-let ( := ) name e = Named (name, Packed e)
+let check_utf_8 fn s =
+  if not (String.is_valid_utf_8 s) then err "%s: %S is not valid UTF-8" fn s
+
+let ( := ) name e =
+  check_utf_8 "Expr.( := )" name;
+  Named (name, Packed e)
+
+let out_name = function Named (n, _) -> Some n | _ -> None
 let keep sel = Keep sel
 let across k sel f = Across (k, sel, f)
 let each sel column = Each (sel, column)
 
 (* Literals *)
-
-let check_utf_8 fn s =
-  if not (String.is_valid_utf_8 s) then err "%s: %S is not valid UTF-8" fn s
 
 let int n = make (Lit (Kind.int, n))
 let float x = make (Lit (Kind.float, x))

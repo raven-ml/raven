@@ -26,30 +26,27 @@ let distance a b =
 let pp_names conj ppf names =
   let rec loop ppf = function
     | [] -> ()
-    | [ n ] -> Format.fprintf ppf "%S" n
-    | [ n; last ] -> Format.fprintf ppf "%S %s %S" n conj last
-    | n :: ns -> Format.fprintf ppf "%S, %a" n loop ns
+    | [ n ] -> Type.pp_quoted ppf n
+    | [ n; last ] ->
+        Format.fprintf ppf "%a %s %a" Type.pp_quoted n conj Type.pp_quoted last
+    | n :: ns -> Format.fprintf ppf "%a, %a" Type.pp_quoted n loop ns
   in
   loop ppf names
 
 let missing name schema =
   let names = Schema.names schema in
-  let close =
-    List.filter_map
-      (fun n ->
-        let d = distance name n in
-        if d <= 2 then Some (d, n) else None)
-      names
+  let nearest (d, ns) n =
+    let dn = distance name n in
+    if dn < d then (dn, [ n ]) else if dn = d then (d, n :: ns) else (d, ns)
   in
-  match
-    (List.stable_sort (fun (d0, _) (d1, _) -> Int.compare d0 d1) close, names)
-  with
-  | [], [] -> v "no column %S. There are no columns." name
-  | [], names ->
-      v "no column %S. The columns are %a." name (pp_names "and") names
-  | close, _ ->
-      v "no column %S. Did you mean %a?" name (pp_names "or")
-        (List.map snd close)
+  match (names, List.fold_left nearest (2, []) names) with
+  | [], _ -> v "no column %a. There are no columns." Type.pp_quoted name
+  | _, (_, []) ->
+      v "no column %a. The columns are %a." Type.pp_quoted name (pp_names "and")
+        names
+  | _, (_, near) ->
+      v "no column %a. Did you mean %a?" Type.pp_quoted name (pp_names "or")
+        (List.rev near)
 
 let repeated ns =
   let add (seen, dups) n =

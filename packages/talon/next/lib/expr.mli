@@ -161,6 +161,11 @@ val pp : Format.formatter -> ('a, 's) t -> unit
     format sorted, and a traced lift formats as the nx operations it records, by
     their names: [exp x]. *)
 
+val pp_arg : Format.formatter -> ('a, 's) t -> unit
+(** [pp_arg ppf e] formats [e] as a function's argument: as {!pp} does, in
+    parentheses unless it is atomic: a handle, a literal that is not negative,
+    {!null} or {!rows}. [filter (dep_delay > 15.)] prints its predicate so. *)
+
 val pp_out : Format.formatter -> 's out -> unit
 (** [pp_out ppf o] formats [o] as written: ["z" := …], [keep (prefix "wk")],
     [across float (prefix "wk") <fn>], [each all <fn>]. *)
@@ -322,8 +327,8 @@ val typed : 'a typing -> 'a node -> ('a, 's) t
 (** [typed t n] is the bound expression of node [n] and typing [t], with the
     identity of every live bound expression structurally equal to it. It checks
     nothing: the caller states [n]'s shape and keeps the invariants of
-    {{!binding}binding}. Binding and the lift tracer build bound expressions
-    with it. *)
+    {{!binding}binding}. Binding, the lift tracer and join conditions build
+    bound expressions with it. *)
 
 val same : ('a, 's0) t -> ('b, 's1) t -> bool
 (** [same e0 e1] is [true] iff [e0] and [e1] are one expression: for bound
@@ -383,3 +388,7 @@ val bind_out :
     the missing names of its selectors, a column of {!across} that its kind does
     not bind, and an output without a column type. Collisions between the
     outputs of one verb are the verb's to report. *)
+
+val out_name : 's out -> string option
+(** [out_name o] is [Some n] if [o] is [n := e], and [None] otherwise: the name
+    an output has as written, before binding. *)

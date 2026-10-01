@@ -1,0 +1,8 @@
+(test
+ (name test_query)
+ (package talon)
+ (libraries windtrap talon.next nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_query.ml test_query.ml.corrected))))

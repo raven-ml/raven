@@ -110,7 +110,10 @@ let names =
           ("rows", {|"rows"|});
           ("sum", {|"sum"|});
           ("ewm", {|"ewm"|});
-          ("délai", {|"d\195\169lai"|});
+          ("délai", {|"délai"|});
+          ({|a"b\c|}, {|"a\"b\\c"|});
+          ("a\nb", {|"a\x0ab"|});
+          ("a\xffb", {|"a\xffb"|});
         ]
         (fun (name, expected) ->
           equal Windtrap.string expected (str Expr.pp (Col.float name)));
