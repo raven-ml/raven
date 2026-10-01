@@ -7,8 +7,6 @@
   (names nx_array_stubs)
   (flags :standard -std=c11 -O2 -Wall -Wextra))
  (instrumentation
-  (backend landmarks))
- (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
