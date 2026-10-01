@@ -1517,7 +1517,12 @@ the Exclusions of `README.md`.
 - **tinygrad:** `uop/ops.py:23-37` (`ParamArg`, which has no such field) and
   `codegen/late/coalesce.py:152` (`memory_coalescing` merges a run of `l`
   elements where `l` divides its element offset, taking every buffer to start
-  on a 16-byte boundary).
+  on a 16-byte boundary). tinygrad folds a view's offset into a kernel's
+  index, except for a contiguous slice that it stages without a copy
+  (`schedule/__init__.py:199`, `contiguous_mops_to_view`): a later kernel
+  reads that view with vector loads that take it to start aligned, as
+  `x[1:].contiguous() + 1` loads `float4`s from 4 bytes past a boundary on
+  Metal.
 - **tolk.next:** `lib/uop/ops.ml:241` (`phase`), `:3220` (`param_arg`, which
   checks it) and `:3368` (`storage_phase`, which `param_like` gives a
   parameter); `lib/schedule/rangeify.ml:480` (`debuf`, which gives it a
@@ -1535,9 +1540,12 @@ the Exclusions of `README.md`.
 - **Reason:** (b). rune's `Compiled` runs an operation over the storage it is
   given, and mapped weights put a tensor at any byte offset of its file: a
   vector access from an address that is not a multiple of its width is
-  undefined in Clang's `aligned(16)` vector types and faults on CUDA, and on
-  Metal (an M1 Max) a `half4` read 2 bytes past a boundary reads the wrong
-  elements.
+  undefined in Clang's `aligned(16)` vector types, faults on CUDA, and is
+  undefined in Metal, which requires device pointers aligned to their type:
+  there it reads the wrong elements once Metal merges adjacent vector loads
+  at constant offsets into one wider load, which drops the low bits of the
+  address. Single loads at computed indices are not merged, and read
+  correctly.
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase
   (D54) › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
@@ -1556,7 +1564,10 @@ the Exclusions of `README.md`.
   phase 4` and `a program over an argument 4 bytes past a 16-byte boundary
   computes nx's values`, and the `Compiled` suite's `edges › an operand whose
   buffer starts 2 bytes into its memory is read where it is (D54)`, on the
-  host and on Metal, whose sweeps draw buffers that start at any byte.
+  host and on Metal, whose sweeps draw buffers that start at any byte; the
+  slow `Ops_metal (execution)` suite's `phase (D54) › a float16 buffer 2 or 6
+  bytes into its memory is read where it lies with its phase` and its
+  counterpart with phase 0, which Metal misreads.
 
 ## D55. Metal names a vector after its element's one-word name
 

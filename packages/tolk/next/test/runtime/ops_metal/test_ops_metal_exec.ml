@@ -102,6 +102,73 @@ let windows n () =
     (Array.init (4 * n) (fun i -> float_of_int (i + 1)))
     (floats_of (List.hd (List.assq dst bound)))
 
+(* Phase (D54) *)
+
+(* The floor of a float16 [3; 4] of strides [1; 3] over the twelve halves of a
+   buffer whose first lies [offset] bytes into its memory, as a kernel that
+   takes it to lie [phase] bytes past a 16-byte boundary. Code generation reads
+   the twelve halves as three vectors of four. *)
+let floor_of_strided ~offset ~phase =
+  let half ?phase slot =
+    Ops.param ~shape:[ Int 12 ] ~device:(Single "METAL") ?phase slot Float16
+  in
+  let out = half 0 and inp = half ~phase 1 in
+  let i = Ops.range (Int 3) [ 0 ] and j = Ops.range (Int 4) [ 1 ] in
+  let x = Ops.cast (Ops.index inp [ Ops.O.((j * int 3) + i) ]) Float32 in
+  let y = Ops.cast (Ops.floor x) Float16 in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"floor" ())
+      [
+        Ops.end_
+          (Ops.store (Ops.index out [ Ops.O.((i * int 4) + j) ]) y)
+          [ i; j ];
+      ]
+  in
+  let memory = B.create (nx "METAL") Float16 20 in
+  let halves b = B.bigarray Bigarray.float16 (host_view b) in
+  let m = halves memory in
+  for k = 0 to 19 do
+    m.{k} <- 100.5
+  done;
+  let input = B.view memory ~offset Float16 12 in
+  let v = halves input in
+  for k = 0 to 11 do
+    v.{k} <- float_of_int k +. 0.5
+  done;
+  let result = B.create (nx "METAL") Float16 12 in
+  let o = Ops.new_buffer (Single "METAL") 12 Float16
+  and x = Ops.new_buffer ~phase (Single "METAL") 12 Float16 in
+  ignore
+    (run_calls
+       ~bound:[ (o, [ result ]); (x, [ input ]) ]
+       [ Ops.call kernel [ o; x ] ]);
+  let r = halves result in
+  Array.init 12 (fun k -> r.{k})
+
+(* The floor of each element the view reaches, in the view's order. *)
+let floors = Array.init 12 (fun k -> float_of_int ((k / 4) + (3 * (k mod 4))))
+
+let phases =
+  [
+    slow
+      "a float16 buffer 2 or 6 bytes into its memory is read where it lies \
+       with its phase" (fun () ->
+        List.iter
+          (fun offset ->
+            equal ~msg:(string_of_int offset) floats floors
+              (floor_of_strided ~offset ~phase:offset))
+          [ 2; 6 ]);
+    slow
+      "a float16 buffer 2 or 6 bytes into its memory is misread with phase 0, \
+       as Metal merges its misaligned vector loads" (fun () ->
+        List.iter
+          (fun offset ->
+            is_false ~msg:(string_of_int offset)
+              (floors = floor_of_strided ~offset ~phase:0))
+          [ 2; 6 ]);
+  ]
+
 let execution =
   group "execution"
     [
@@ -383,4 +450,7 @@ let execution =
           equal int 3 (List.length spans));
     ]
 
-let () = exit (run "Tolk_next.Ops_metal (execution)" [ execution ])
+let () =
+  exit
+    (run "Tolk_next.Ops_metal (execution)"
+       [ execution; group "phase (D54)" phases ])
