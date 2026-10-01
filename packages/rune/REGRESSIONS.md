@@ -667,8 +667,46 @@ them.
 | old: test_device_lists.ml errors › * | errors of placements | dropped: nx's placement suite (`nx placement`) |
 | old: test_device_lists.ml consumption › consumed storage is lent on every device | lending on every device | J › placement › a consumed split state is lent on every device |
 
+### test_jit_metal.ml
+
+The kernel rows of this file are the Compiled section's.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit_metal.ml metal device › grad inside jit matches eager | a gradient inside a compiled call | J › transformations › under a transformation a compiled function runs its function (the Metal cells are the composition suite's) |
+| old: test_jit_metal.ml metal device › rematerialized second derivatives replay correctly; metal device › custom backward replays indexed scatter | rules under a compiled call | dropped: the compiled-rules suite's (`next/test/rules/jit`) |
+| old: test_jit_metal.ml metal device › multi-kernel traces replay as compiled queues; metal device › a read after a call waits for it | a call queued on Metal, and its results read | J › metal › metal › a call runs where its arguments lie, and leaves its results there |
+| old: test_jit_metal.ml metal device › command storage is released with its function; metal device › programs own their arenas | a program's storage | dropped: tolk.engine's linked storage (its suite) |
+| old: test_jit_metal.ml metal device › two programs alternate on one consumed state | alternating programs | J › lending › two programs alternating on one consumed state keep its storage |
+| old: test_jit_metal.ml placed weights › a placed view is read bit for bit | a placed view on Metal | J › metal › metal › a placed view is read where it lies |
+| old: test_jit_metal.ml placed weights › placed weights bind and replay as compiled queues | bound weights on Metal | J › metal › metal › a capture placed where the call computes is bound, not uploaded |
+| old: test_jit_metal.ml placed weights › consuming a bound storage | consuming a captured storage | J › captures › a host capture another call consumes makes the program raise, naming its path |
+| old: test_jit_metal.ml placed weights › a step reads its weights and consumes its state | a step on Metal | J › metal › metal › a consumed placed argument lends its storage |
+| old: test_jit_metal.ml placed weights › a capture resident on another device raises | a capture on another device | J › errors › operands on two devices raise nx's message |
+| old: test_jit_metal.ml placed weights › placed views bind at any offset | views at any offset on Metal | J › metal › metal › a float16 argument starting 2 bytes further retraces once, and is read where it lies |
+| old: test_jit_metal.ml reads, moves and loops › item on resident logits reads one element; reads, moves and loops › a move to the host keeps its source; reads, moves and loops › mixed placements raise; reads, moves and loops › a value moves between backends | reads and moves of placed values | dropped: nx's placement suite (`nx placement`) |
+| old: test_jit_metal.ml reads, moves and loops › a loop whose state starts on the host compiles once | a state that moves to the device | J › keys › another device retraces once |
+
+### test_jit_scratch.ml, continued
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit_scratch.ml jit rejects overlapping cold calls; jit rejects reentrant replay; jit over devices rejects overlapping cold calls; jit over devices rejects reentrant replay | overlapping and reentrant calls | dropped: a compiled function now runs from several domains at once and traces through inside its own function, J › domains › two domains meeting one new key trace it once; J › transformations › a compiled function called inside another one's trace traces through |
+| old: test_jit_scratch.ml destructive failure consumes old aliases | a call failing after its first kernel | dropped: no failure after a call's first kernel is observable on the suite's devices |
+| old: test_jit_scratch.ml reads keep their resident owner alive; failed release preserves all owners | storage lifetime across reads | dropped: nx's storage claims (`nx placement`) |
+
+### test_half.ml
+
+The eager-against-compiled rows of this file are the Compiled section's.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_half.ml astype sandwich › * | gradients through casts to and from narrow floats | dropped: the cast rows of the rule suites, and their compiled forms in the compiled-rules suite (`next/test/rules/jit`) |
+| old: test_half.ml two devices › * | narrow floats over two devices | J › placement › a split argument computes on each device, and stays split |
+| old: test_half.ml vmap › * | narrow floats under a map | dropped: the batching suite's rows at every dtype |
+
 ### test_remat_memory.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_remat_memory.ml jit (grad) under remat keeps under half the activations | a remat under a compiled gradient | J › scans › a remat under a compiled gradient equals eager's (the memory figure comes with the Metal suite) |
+| old: test_remat_memory.ml jit (grad) under remat keeps under half the activations | a compiled gradient through remats keeps few activations | J › one device › a compiled gradient through remats keeps under half the activations |
