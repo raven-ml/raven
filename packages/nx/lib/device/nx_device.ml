@@ -96,6 +96,8 @@ type t = {
   sleep : (int -> unit) option;
   timeout_ms : int Atomic.t;
   synchronized : unit -> unit;
+  report : (unit -> event list) option;
+      (* the counters of its work done since the last report *)
   room : unit -> bool;
       (* whether each of its queues has room for a submission *)
   finalize : failed:bool -> unit;
@@ -272,8 +274,14 @@ and event =
     }
   | Allocation of { device : t; time : int; allocated : int }
   | Load of { program : program; binary : string; time : int }
+  | Counters of {
+      device : t;
+      name : string;
+      time : int;
+      counters : (string * int array) list;
+    }
 
-and collector = { events : event list Atomic.t }
+and collector = { events : event list Atomic.t; counters : string list }
 
 (* A span whose stamps are in the two 16-byte slots at [address], which [stamps]
    keeps. *)
@@ -557,7 +565,7 @@ let default_timeout = 30_000
 
 let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
     ~mapped ~mapping ~queue ~peer ~reaches_peer ~load ~call ~link ~dma
-    ~completion ~synchronized ~room ~finalize ~resolve =
+    ~completion ~synchronized ~report ~room ~finalize ~resolve =
   (* A host of another machine keeps its timeline in its own memory. *)
   let host_alloc =
     match (machine, io) with
@@ -602,6 +610,7 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       sleep;
       timeout_ms = Atomic.make default_timeout;
       synchronized;
+      report;
       room;
       finalize;
       clock = (match copy_queue with Some q -> q.clock | None -> Host_clock);
@@ -664,6 +673,7 @@ let host =
     ~mapping:(Some Identity) ~queue:None ~peer:None
     ~reaches_peer:(fun _ -> false)
     ~load ~call:None ~link:None ~dma:None ~completion:Poll ~synchronized:ignore
+    ~report:None
     ~room:(fun () -> true)
     ~finalize:(fun ~failed:_ -> ())
     ~resolve:ignore
@@ -677,7 +687,7 @@ let disk =
     ~mapping:None ~queue:None ~peer:None
     ~reaches_peer:(fun _ -> false)
     ~load:None ~call:None ~link:None ~dma:None ~completion:Poll
-    ~synchronized:ignore
+    ~synchronized:ignore ~report:None
     ~room:(fun () -> true)
     ~finalize:(fun ~failed:_ -> ())
     ~resolve:ignore
@@ -858,10 +868,18 @@ let read_spans d =
           end)
         (Atomic.exchange d.spans [])
 
+(* The counters of [d]'s work done since its last report, into the profile [c]
+   if it asks for counters. [d] is taken. *)
+let read_counters c d =
+  match (c, d.report) with
+  | { counters = _ :: _; _ }, Some report ->
+      List.iter (push c.events) (driver d report)
+  | _ -> ()
+
 (* Waits for [d]'s work and for the work that touched [d]'s memory, then reads
-   the stamps of the spans recorded on [d]. [d] is taken. A failed device will
-   never signal, so its work is not waited for: the memory it can reach raises
-   its error instead. *)
+   the stamps of the spans recorded on [d] and the counters of its work. [d] is
+   taken. A failed device will never signal, so its work is not waited for: the
+   memory it can reach raises its error instead. *)
 let sync d =
   wait_signal d (submitted d);
   Hashtbl.iter
@@ -869,6 +887,7 @@ let sync d =
       if failed d' = None then try wait_signal d' v with Lost _ -> ())
     d.pending;
   read_spans d;
+  Option.iter (fun c -> read_counters c d) (Atomic.get profile);
   try d.synchronized () with Failure why -> fail d why
 
 (* Every memory's generation until its first consumption: buffers made then
@@ -2886,17 +2905,35 @@ module Profile = struct
       }
     | Allocation of { device : t; time : int; allocated : int }
     | Load of { program : program; binary : string; time : int }
+    | Counters of {
+        device : t;
+        name : string;
+        time : int;
+        counters : (string * int array) list;
+      }
 
   type t = collector
 
   let now = now_ns
   let enabled () = Option.is_some (Atomic.get profile)
 
-  let start () =
-    let c = { events = Atomic.make [] } in
+  let start ?(counters = []) () =
+    let rec once = function
+      | [] -> ()
+      | n :: rest when List.mem n rest ->
+          invalid_arg
+            (Printf.sprintf
+               "Nx_device.Profile.start: the counter %s is asked twice" n)
+      | _ :: rest -> once rest
+    in
+    once counters;
+    let c = { events = Atomic.make []; counters } in
     if not (Atomic.compare_and_set profile None (Some c)) then
       invalid_arg "Nx_device.Profile.start: already profiling";
     c
+
+  let counters () =
+    match Atomic.get profile with Some c -> c.counters | None -> []
 
   let span name f =
     match Atomic.get profile with
@@ -2941,10 +2978,11 @@ module Profile = struct
     | Span s -> s.start
     | Allocation m -> m.time
     | Load p -> p.time
+    | Counters c -> c.time
 
   let length = function
     | Span s -> s.stop - s.start
-    | Allocation _ | Load _ -> 0
+    | Allocation _ | Load _ | Counters _ -> 0
 
   (* By time, and at equal times longest first, so that nested spans follow the
      spans they are in. *)
@@ -2959,8 +2997,13 @@ module Profile = struct
     | Some c when c == p && Atomic.compare_and_set profile taken None ->
         List.iter
           (fun d ->
-            if Atomic.get d.spans <> [] && failed d = None then
-              try synchronize d with Lost _ -> ())
+            let counted = c.counters <> [] && Option.is_some d.report in
+            if (Atomic.get d.spans <> [] || counted) && failed d = None then
+              try
+                with_devices [ d ] (fun () ->
+                    sync d;
+                    read_counters c d)
+              with Lost _ -> ())
           (Atomic.get opened);
         let clocks = Hashtbl.create 4 in
         let calibrated d hz =
@@ -2971,7 +3014,7 @@ module Profile = struct
               Hashtbl.add clocks d.id f;
               f
         in
-        Atomic.get c.events
+        List.rev (Atomic.get c.events)
         |> List.filter_map (function
           | Span ({ device = { clock = Device_clock { hz }; _ } as d; _ } as s)
             ->
@@ -2988,6 +3031,7 @@ module Profile = struct
     | Span s -> s.device
     | Allocation m -> m.device
     | Load p -> p.program.p_device
+    | Counters c -> c.device
 
   (* [s] as a JSON string. Malformed UTF-8 becomes U+FFFD. *)
   let string oc s =
@@ -3018,9 +3062,53 @@ module Profile = struct
     if ns < 0 then output_char oc '-';
     Printf.fprintf oc "%d.%03d" (abs ns / 1000) (abs ns mod 1000)
 
+  (* The counters of each span: the [k]th counters of a program on a device are
+     those of the [k]th span of its name there. *)
+  let counted events =
+    let n = Array.length events in
+    let of_span = Array.make n None and attached = Array.make n false in
+    let runs = Hashtbl.create 8 in
+    let add key i =
+      let spans, counts =
+        Option.value ~default:([], []) (Hashtbl.find_opt runs key)
+      in
+      Hashtbl.replace runs key
+        (match events.(i) with
+        | Span _ -> (i :: spans, counts)
+        | _ -> (spans, i :: counts))
+    in
+    Array.iteri
+      (fun i -> function
+        | Span s -> add (s.device.id, s.name) i
+        | Counters c -> add (c.device.id, c.name) i
+        | Allocation _ | Load _ -> ())
+      events;
+    let rec pair = function
+      | s :: spans, c :: counts ->
+          of_span.(s) <- Some events.(c);
+          attached.(c) <- true;
+          pair (spans, counts)
+      | _ -> ()
+    in
+    Hashtbl.iter
+      (fun _ (spans, counts) -> pair (List.rev spans, List.rev counts))
+      runs;
+    (of_span, attached)
+
+  let counter_args oc counters =
+    output_string oc ",\"args\":{";
+    List.iteri
+      (fun i (name, values) ->
+        if i > 0 then output_char oc ',';
+        string oc name;
+        Printf.fprintf oc ":%d" (Array.fold_left ( + ) 0 values))
+      counters;
+    output_char oc '}'
+
   let output_chrome_trace oc events =
-    let events = List.stable_sort order events in
-    let origin = match events with [] -> 0 | e :: _ -> time e in
+    let events = Array.of_list (List.stable_sort order events) in
+    let of_span, attached = counted events in
+    let origin = if Array.length events = 0 then 0 else time events.(0) in
     let pids = Hashtbl.create 8 and tids = Hashtbl.create 8 in
     let first = ref true in
     let next () = if !first then first := false else output_string oc ",\n" in
@@ -3051,32 +3139,44 @@ module Profile = struct
           tid
     in
     output_string oc "{\"traceEvents\":[\n";
-    List.iter
-      (fun e ->
-        let pid = pid (device_of e) in
-        let tid = match e with Span s -> tid s.device pid s.lane | _ -> 0 in
-        next ();
-        let ph =
-          match e with Span _ -> "X" | Allocation _ -> "C" | Load _ -> "i"
-        in
-        Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph pid
-          tid;
-        micros oc (time e - origin);
-        (match e with
-        | Span s ->
-            output_string oc ",\"dur\":";
-            micros oc (s.stop - s.start);
-            output_string oc ",\"name\":";
-            string oc s.name
-        | Allocation m ->
-            Printf.fprintf oc ",\"name\":\"memory\",\"args\":{\"allocated\":%d}"
-              m.allocated
-        | Load p ->
-            output_string oc ",\"s\":\"p\",\"name\":";
-            string oc p.program.p_name;
-            Printf.fprintf oc ",\"args\":{\"handle\":\"0x%nx\"}"
-              p.program.p_handle);
-        output_char oc '}')
+    Array.iteri
+      (fun i e ->
+        if not attached.(i) then begin
+          let pid = pid (device_of e) in
+          let tid = match e with Span s -> tid s.device pid s.lane | _ -> 0 in
+          next ();
+          let ph =
+            match e with
+            | Span _ -> "X"
+            | Allocation _ -> "C"
+            | Load _ | Counters _ -> "i"
+          in
+          Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph
+            pid tid;
+          micros oc (time e - origin);
+          (match e with
+          | Span s -> (
+              output_string oc ",\"dur\":";
+              micros oc (s.stop - s.start);
+              output_string oc ",\"name\":";
+              string oc s.name;
+              match of_span.(i) with
+              | Some (Counters c) -> counter_args oc c.counters
+              | _ -> ())
+          | Counters c ->
+              output_string oc ",\"s\":\"p\",\"name\":";
+              string oc c.name;
+              counter_args oc c.counters
+          | Allocation m ->
+              Printf.fprintf oc
+                ",\"name\":\"memory\",\"args\":{\"allocated\":%d}" m.allocated
+          | Load p ->
+              output_string oc ",\"s\":\"p\",\"name\":";
+              string oc p.program.p_name;
+              Printf.fprintf oc ",\"args\":{\"handle\":\"0x%nx\"}"
+                p.program.p_handle);
+          output_char oc '}'
+        end)
       events;
     output_string oc "\n]}\n"
 end
@@ -3197,7 +3297,7 @@ module Driver = struct
 
   let device ~name ~arch ~budget ?(host = host) ?(completion = Poll) ?load ?peer
       ?(reaches = fun _ -> false) ?link ?dma ?(resolve = ignore)
-      ?(synchronized = ignore) ?(room = fun () -> true)
+      ?(synchronized = ignore) ?report ?(room = fun () -> true)
       ?(finalize = fun ~failed:_ -> ()) memory =
     if budget < 0 then refuse "device" "budget %d < 0" budget;
     if Option.is_some host.machine then
@@ -3228,7 +3328,7 @@ module Driver = struct
     create ~name:(compose ~host name) ~arch ~machine:(Some host) ~remote:None
       ~io:None ~budget ~alloc:(owned memory) ~free:memory.free ~host_memory
       ~mapped ~mapping ~queue ~peer ~reaches_peer:reaches ~load ~call:None ~link
-      ~dma ~completion ~synchronized ~room ~finalize ~resolve
+      ~dma ~completion ~synchronized ~report ~room ~finalize ~resolve
 
   let buffer d (r : region) s n =
     if d == disk then Buffer.not_files "Driver.buffer";
@@ -3267,7 +3367,7 @@ module Driver = struct
       ~reaches_peer:(fun _ -> false)
       ~load
       ~call:(Option.map (fun p -> p.call) programs)
-      ~link:None ~dma:None ~completion:Poll ~synchronized
+      ~link:None ~dma:None ~completion:Poll ~synchronized ~report:None
       ~room:(fun () -> true)
       ~finalize ~resolve:ignore
 end

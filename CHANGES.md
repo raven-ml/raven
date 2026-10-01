@@ -2934,6 +2934,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.Profile.start ~counters` asks the devices that count to count those
+  hardware counters during each run of a program: a `Profile.Counters` event
+  holds a run's values, and `Profile.output_chrome_trace` adds their sums to the
+  run's span. `Driver.device ~report` is how a device hands them over.
 - `Nx.of_buffer` makes the value of a shape over a runtime buffer's elements
   without a copy, on the buffer's device, and `Nx.to_buffer` gives a buffer of
   exactly a value's elements in C order on its device: its own storage when the

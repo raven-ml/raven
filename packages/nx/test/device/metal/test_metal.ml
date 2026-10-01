@@ -405,7 +405,9 @@ let dispatch_profile =
       in
       let ours =
         List.filter
-          (function P.Allocation _ -> false | P.Span _ | P.Load _ -> true)
+          (function
+            | P.Allocation _ | P.Counters _ -> false
+            | P.Span _ | P.Load _ -> true)
           events
       in
       match ours with

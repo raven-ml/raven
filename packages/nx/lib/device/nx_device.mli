@@ -773,14 +773,14 @@ val stats : t -> Stats.t
 
     One profile of every device is taken at a time, between {!start} and
     {!stop}. While it is taken, the devices record {!event}s: {e spans} of work
-    on a device, changes of its allocated memory, and the programs it loads.
-    Spans come from the host ({!span}), from the runtime's own copies and calls
-    of host programs, and from the libraries that submit work
-    ({!Submission.record}). Every time is on the host's clock, {!now}: the times
-    a device stamps on its own clock are calibrated against it when the profile
-    is stopped. {!output_chrome_trace} writes the events in Chrome's trace event
-    format, which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
-    [chrome://tracing] load.
+    on a device, changes of its allocated memory, the programs it loads and, on
+    request, the {e counters} of its programs' runs. Spans come from the host
+    ({!span}), from the runtime's own copies and calls of host programs, and
+    from the libraries that submit work ({!Submission.record}). Every time is on
+    the host's clock, {!now}: the times a device stamps on its own clock are
+    calibrated against it when the profile is stopped. {!output_chrome_trace}
+    writes the events in Chrome's trace event format, which Perfetto
+    ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and [chrome://tracing] load.
 
     When no profile is taken, recording costs a read of one atomic value and
     allocates nothing. *)
@@ -816,22 +816,46 @@ module Profile : sig
         binary : string;  (** The binary it was loaded from. *)
         time : int;  (** When it was loaded. *)
       }  (** A program loaded on its device. *)
+    | Counters of {
+        device : device;  (** The device the program ran on. *)
+        name : string;  (** The name of the program's function. *)
+        time : int;  (** When the counters were read. *)
+        counters : (string * int array) list;
+            (** Each counter the profile asks for ({!start}) and its count
+                during the run, one count per unit of the device's hardware that
+                counts it, in the order the device's library states. *)
+      }
+        (** The counters of a run of a program, read once the run completed: the
+            [k]th counters of a function's runs on a device are those of the
+            [k]th span of its name there, as the libraries that submit work
+            record it. *)
 
   type t
   (** The type for profiles being taken. *)
 
-  val start : unit -> t
+  val start : ?counters:string list -> unit -> t
   (** [start ()] starts taking a profile of every device, which only its holder
-      stops.
+      stops. Each run of a program on a device that counts [counters] (defaults
+      to none) has a {!Counters} event: their names are the device's, as its
+      library lists them, and work on a device that has no counter of such a
+      name raises [Invalid_argument] naming it when its library encodes the
+      work. A device that counts nothing, such as the {!host}, has no
+      [Counters].
 
-      Raises [Invalid_argument] if a profile is being taken. *)
+      Raises [Invalid_argument] if a profile is being taken or if [counters]
+      names a counter twice. *)
+
+  val counters : unit -> string list
+  (** [counters ()] is the counters the profile being taken asks for, if any.
+      The libraries that encode work read it to count them. *)
 
   val stop : t -> event list
   (** [stop p] stops taking [p], and is its events, in time order and, at equal
-      times, longest first. It first synchronizes the devices whose recorded
-      spans are still to be read, and calibrates the clocks of the devices that
-      stamp times on their own. The unread spans of a device lost meanwhile are
-      left out; its next operation raises {!Lost}.
+      times, longest first, then in the order they were recorded. It first
+      synchronizes the devices whose recorded spans are still to be read and, if
+      [p] asks for counters, those that count, and calibrates the clocks of the
+      devices that stamp times on their own. The unread spans of a device lost
+      meanwhile are left out; its next operation raises {!Lost}.
 
       Raises [Invalid_argument] if [p] is not being taken: it was stopped
       already. *)
@@ -854,11 +878,12 @@ module Profile : sig
   val output_chrome_trace : out_channel -> event list -> unit
   (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's trace
       event format, JSON: a process for each device, named after it, with a
-      thread for each of its lanes; a complete event for each span, a counter
-      [memory] for each change of memory, and an instant event for each program
-      load, with the program's handle. Times are microseconds from the earliest
-      event. Malformed UTF-8 in names becomes U+FFFD. [oc] is neither flushed
-      nor closed. *)
+      thread for each of its lanes; a complete event for each span, with the sum
+      of each of its counters ({!Counters}) as arguments; a counter [memory] for
+      each change of memory; an instant event for each program load, with the
+      program's handle; and an instant event for counters of no span. Times are
+      microseconds from the earliest event. Malformed UTF-8 in names becomes
+      U+FFFD. [oc] is neither flushed nor closed. *)
 end
 
 (** {1:submitting Submitting work}
@@ -1260,6 +1285,7 @@ module Driver : sig
     ?dma:(Region.t -> (dma, string) result) ->
     ?resolve:(nativeint -> unit) ->
     ?synchronized:(unit -> unit) ->
+    ?report:(unit -> Profile.event list) ->
     ?room:(unit -> bool) ->
     ?finalize:(failed:bool -> unit) ->
     memory ->
@@ -1301,6 +1327,12 @@ module Driver : sig
         [synchronized]. Defaults to doing nothing.
       - [synchronized ()] runs at the end of each synchronization of the device.
         Defaults to doing nothing.
+      - [report ()] is the {!Profile.Counters} of the runs of programs on the
+        device that completed since its last report, in the order they ran, each
+        with the counters {!Profile.counters} asks for. It runs at each
+        synchronization of the device while a profile that asks for counters is
+        taken, after [resolve] and before [synchronized], and when that profile
+        stops. Without it, the device counts nothing.
       - [room ()] is [true] iff each queue that submitted work writes has room
         for what one submission writes, as the device's library bounds it (its
         low-level section). {!submit} waits for it on each of its devices before
