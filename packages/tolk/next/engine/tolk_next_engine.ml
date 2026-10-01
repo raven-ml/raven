@@ -79,15 +79,19 @@ let device devices name =
   let target =
     if d == Nx_device.disk then Helpers.target "DISK" else target d
   in
-  (* Any name of the host names it: the first one serves. *)
+  (* Any name of the host names it: the first one serves. The host is missing
+     only when another device has its name. *)
   let host =
     lazy
-      (match List.find_opt (fun (_, h) -> h == Nx_device.host_of d) devices with
-      | Some (host, _) -> host
-      | None ->
-          invalid_arg
-            (Printf.sprintf "Tolk_next_engine.device: no device is %s's host"
-               name))
+      (let h = Nx_device.host_of d in
+       match List.find_opt (fun (_, h') -> h' == h) devices with
+       | Some (host, _) -> host
+       | None ->
+           invalid_arg
+             (Printf.sprintf
+                "Tolk_next_engine.device: %s names another device than %s's \
+                 host"
+                (Nx_device.name h) name))
   in
   match List.find_map (fun queues -> queues ~host devices name d) vendors with
   | Some (queues, placeholder, submitting) ->

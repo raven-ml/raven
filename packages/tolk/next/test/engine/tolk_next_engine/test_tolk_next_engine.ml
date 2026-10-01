@@ -148,6 +148,19 @@ let describing =
                (Engine.device [ ("X", d) ] "CPU").device);
           raises_match ~msg:"named H" Exn.invalid_arg (fun () ->
               Engine.device [ ("X", d); ("H", host) ] "CPU"));
+      test
+        "a Metal device whose host's name the map gives to another device is \
+         refused" (fun () ->
+          match Metal.device with
+          | None -> skip ~reason:"no Metal device" ()
+          | Some m ->
+              raises
+                (Invalid_argument
+                   "Tolk_next_engine.device: CPU names another device than \
+                    METAL's host") (fun () ->
+                  Engine.device
+                    [ ("METAL", m); ("CPU", device "CPU:1") ]
+                    "METAL"));
     ]
 
 (* Host programs
