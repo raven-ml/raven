@@ -712,7 +712,8 @@ module Coord : sig
   (** [invert p pt] is [Some (x, y)], the normalised position that [p] puts at
       the point [pt] of the page, possibly outside the unit square, or [None] if
       [p] puts no position there. Under {!cartesian} it is [Some _] for every
-      finite [pt]. *)
+      finite [pt] if the panel's box has a positive width and height, and [None]
+      otherwise. *)
 end
 
 (** {1:views Views} *)
@@ -1057,11 +1058,14 @@ module Theme : sig
       Every other length a figure needs is a multiple of the base size, so a
       theme of size [8.] sets a figure for a paper column: tick labels, legend
       entries and facet headers at [0.9] em, and the titles of channels and
-      figures at [1] em; ticks [0.35] em long and [0.25] em from their labels;
-      axis lines, ticks and the outlines of marks [0.08] em wide, and grid lines
-      [0.06] em wide in the ink at a fifth of its opacity; lines and rules
-      [0.15] em wide; dots of the area of a circle [0.5] em across; and [1] em
-      added to the largest protrusion that meets a gap between grid cells.
+      figures at [1] em; ticks [0.35] em long and [0.25] em from their labels,
+      the labels of one axis or legend at least [0.5] em apart, and titles
+      [0.25] em from what they title; legend swatches [1] em square and [0.25]
+      em from their labels, and colour bars [1] em wide; axis lines, ticks and
+      the outlines of marks [0.08] em wide, and grid lines [0.06] em wide in the
+      ink at a fifth of its opacity; lines and rules [0.15] em wide; dots of the
+      area of a circle [0.5] em across; and [1] em added to the protrusions that
+      meet a gap between grid cells.
 
       {1:ranges Ranges}
 
@@ -1541,8 +1545,15 @@ val layout :
     never widens a protrusion.
 
     The grid sizes fixed and aspect tracks first, makes each gap the largest
-    protrusion that meets it plus the theme's gap ({!Theme.section-lengths}),
-    and shares what remains among flexible tracks by weight, never below zero.
+    protrusions that meet it from either side plus the theme's gap
+    ({!Theme.section-lengths}), and shares what remains among flexible tracks by
+    weight, never below zero. A panel protrudes by its guides, and by half its
+    longest tick label past the ends of each labelled axis, where a label
+    centred on an end tick reaches; the titles and headers of its axes need its
+    track to be as long as they are. A legend stands beside the panels of its
+    scope, as long as their data areas, and a title above the figure it titles.
+    A panel with an aspect that its cell cannot hold is drawn in the largest box
+    of its aspect, centred in its cell.
 
     With [prev], the measurements of labels of equal text in an equal theme are
     reused and the grid is solved again: the result is {!Layout.equal} to

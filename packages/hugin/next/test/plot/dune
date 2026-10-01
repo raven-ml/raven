@@ -26,3 +26,13 @@
   (progn
    (run %{test} --corrected)
    (diff? test_resolve.ml test_resolve.ml.corrected))))
+
+(test
+ (name test_layout)
+ (modules test_layout)
+ (package hugin)
+ (libraries hugin.next nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_layout.ml test_layout.ml.corrected))))
