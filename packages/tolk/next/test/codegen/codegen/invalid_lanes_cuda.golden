@@ -18,38 +18,42 @@
 16 Ops.CAST dtypes.int [15] dtypes.int
 17 Ops.CMPLT dtypes.bool [11, 16]
 18 Ops.WHERE dtypes.float [17, 7, 7]
-19 Ops.CONST dtypes.weakfloat [] 2.0
-20 Ops.CAST dtypes.float [19] dtypes.float
-21 Ops.MUL dtypes.float [18, 20]
-22 Ops.ADD dtypes.float [21, 18]
-23 Ops.ADD dtypes.float [22, 18]
-24 Ops.ADD dtypes.float [14, 23]
-25 Ops.STORE dtypes.void [13, 24]
-26 Ops.END dtypes.void [25, 11]
-27 Ops.AFTER dtypes.float [4, 26]
-28 Ops.INDEX dtypes.float [27, 2]
-29 Ops.LOAD dtypes.float [28]
-30 Ops.ADD dtypes.float [29, 7]
-31 Ops.STORE dtypes.void [3, 30]
-32 Ops.SINK dtypes.void [31] KernelInfo(name="r_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
-33 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
-34 Ops.INDEX dtypes.float [33, 2]
-35 Ops.STORE dtypes.void [34, 7]
-36 Ops.AFTER dtypes.float [33, 35, 11]
-37 Ops.INDEX dtypes.float [36, 2]
-38 Ops.LOAD dtypes.float [37]
-39 Ops.ADD dtypes.float [38, 23]
-40 Ops.STORE dtypes.void [37, 39]
-41 Ops.END dtypes.void [40, 11]
-42 Ops.AFTER dtypes.float [33, 41]
-43 Ops.INDEX dtypes.float [42, 2]
-44 Ops.LOAD dtypes.float [43]
-45 Ops.ADD dtypes.float [44, 7]
-46 Ops.STORE dtypes.void [3, 45]
-47 Ops.SINK dtypes.void [46] KernelInfo(name="r_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=13, lds=4, mem=4)) tag=1
-48 Ops.SINK dtypes.void [46] KernelInfo(name="r_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
-49 Ops.LINEAR dtypes.void [0, 33, 1, 2, 34, 6, 7, 19, 20, 15, 16, 9, 10, 35, 11, 36, 37, 38, 17, 18, 21, 22, 23, 39, 40, 41, 42, 43, 44, 3, 45, 46, 48]
-50 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) r_2_4(float* data0_1) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {\n    float alu1 = ((Ridx0<1)?0.0f:0.0f);\n    *(buf0+0) = ((*(buf0+0))+(alu1*2.0f)+alu1+alu1);\n  }\n  *(data0_1+0) = ((*(buf0+0))+0.0f);\n}"
-51 Ops.PROGRAM dtypes.void [47, 49, 50] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-52 Ops.SINK dtypes.void [32, 51]
+19 Ops.INDEX dtypes.float [18, 2]
+20 Ops.INDEX dtypes.float [18, 16]
+21 Ops.ADD dtypes.float [19, 20]
+22 Ops.INDEX dtypes.float [18, 10]
+23 Ops.ADD dtypes.float [21, 22]
+24 Ops.CONST dtypes.weakint [] 3
+25 Ops.CAST dtypes.int [24] dtypes.int
+26 Ops.INDEX dtypes.float [18, 25]
+27 Ops.ADD dtypes.float [23, 26]
+28 Ops.ADD dtypes.float [14, 27]
+29 Ops.STORE dtypes.void [13, 28]
+30 Ops.END dtypes.void [29, 11]
+31 Ops.AFTER dtypes.float [4, 30]
+32 Ops.INDEX dtypes.float [31, 2]
+33 Ops.LOAD dtypes.float [32]
+34 Ops.ADD dtypes.float [33, 7]
+35 Ops.STORE dtypes.void [3, 34]
+36 Ops.SINK dtypes.void [35] KernelInfo(name="r_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+37 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+38 Ops.INDEX dtypes.float [37, 2]
+39 Ops.STORE dtypes.void [38, 7]
+40 Ops.AFTER dtypes.float [37, 39, 11]
+41 Ops.INDEX dtypes.float [40, 2]
+42 Ops.LOAD dtypes.float [41]
+43 Ops.ADD dtypes.float [42, 27]
+44 Ops.STORE dtypes.void [41, 43]
+45 Ops.END dtypes.void [44, 11]
+46 Ops.AFTER dtypes.float [37, 45]
+47 Ops.INDEX dtypes.float [46, 2]
+48 Ops.LOAD dtypes.float [47]
+49 Ops.ADD dtypes.float [48, 7]
+50 Ops.STORE dtypes.void [3, 49]
+51 Ops.SINK dtypes.void [50] KernelInfo(name="r_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=13, lds=4, mem=4)) tag=1
+52 Ops.SINK dtypes.void [50] KernelInfo(name="r_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+53 Ops.LINEAR dtypes.void [0, 37, 1, 2, 38, 6, 7, 15, 16, 9, 10, 24, 25, 39, 11, 40, 41, 42, 17, 18, 19, 20, 22, 26, 21, 23, 27, 43, 44, 45, 46, 47, 48, 3, 49, 50, 52]
+54 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) r_2_4(float* data0_1) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {\n    float alu1 = ((Ridx0<1)?0.0f:0.0f);\n    *(buf0+0) = ((*(buf0+0))+alu1.x+alu1.y+alu1.z+alu1.w);\n  }\n  *(data0_1+0) = ((*(buf0+0))+0.0f);\n}"
+55 Ops.PROGRAM dtypes.void [51, 53, 54] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+56 Ops.SINK dtypes.void [36, 55]
 

@@ -404,7 +404,8 @@ def sqrt_of_int():
 def invalid_lanes():
     """rune's fold of a float32 [2; 1] with output size [1; 1], kernel [1; 2], stride [1; 1], dilation [1; 2] and
     padding [(0, 0); (1, 1)]: every window lies in the padding, so each lane of the unrolled reduce reads Invalid and
-    the vector folds to a scalar that the reduce's lanes still index (D53)."""
+    the vector folds to a scalar that the reduce's lanes still index, which the renderers write as components of a
+    scalar that no compiler takes. rune now lowers such a fold to zeros."""
     out, x = UOp.param(0, dtypes.float, 1, device="CPU"), UOp.param(1, dtypes.float, 2, device="CPU")
     r1, r0 = UOp.range(4, 1, AxisType.REDUCE), UOp.range(2, 0, AxisType.REDUCE)
     j = r1 * 3 + 1
@@ -415,7 +416,8 @@ def invalid_lanes():
 
 def invalid_lanes_int8():
     """rune's fold of an int8 [2; 1] with output size [1], kernel [2], dilation [2] and padding [(1, 1)], summed in
-    uint: every window lies in the padding, so the unrolled sum folds to a constant that its lanes still index (D53)."""
+    uint: every window lies in the padding, so the unrolled sum folds to a constant that its lanes still index, as the
+    float32 fold's lanes do."""
     out, x = UOp.param(0, dtypes.char, 1, device="CPU"), UOp.param(1, dtypes.char, 2, device="CPU")
     r = UOp.range(4, 0, AxisType.REDUCE)
     j = r * 3 + 1

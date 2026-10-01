@@ -270,16 +270,6 @@ let devectorizer2 =
            (fun m -> do_devectorize (m "b"));
          (* INDEX without src is nothing *)
          rule (Upat.op Op.Index ~src:[ Upat.var "x" ]) (fun m -> Some (m "x"));
-         (* a scalar value stands for every lane: its lane is itself, since a
-            fold may drop a value's width, as a stack of invalids folds to one
-            (D53) *)
-         rule
-           (Upat.op Op.Index ~src:[ Upat.var "x"; Upat.cvar "c" ])
-           (fun m ->
-             let x = m "x" in
-             match (shape_opt x, addrspace x) with
-             | Some [], Some Dtype.Alu -> Some x
-             | _ -> None);
          (* unpack WMMA *)
          rule (Upat.op Op.Wmma ~name:"u") (fun m -> do_stack_wmma (m "u"));
          (* stacked INDEX is many INDEX *)

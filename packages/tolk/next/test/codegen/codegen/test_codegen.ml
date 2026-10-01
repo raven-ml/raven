@@ -1595,42 +1595,35 @@ let accumulators =
         keeps_a_zero_accumulator_value;
     ]
 
-(* Lanes of a scalar (D53) *)
+(* Lanes of a scalar
 
-(* A read of a lane by a constant, from a value without lanes: a scalar, or a
-   constant. *)
-let reads_a_lane_of_a_scalar u =
-  let constant c = is Const c || (is Cast c && is Const (Ops.nth c 0)) in
-  is Index u
-  &&
-  match Ops.src u with
-  | [ x; c ] ->
-      constant c
-      && Ops.shape_opt x = Some []
-      && Ops.addrspace x = Some Dtype.Alu
-  | _ -> false
+   When every lane of an unrolled reduce reads an Invalid index, the stack of
+   lanes folds to one Invalid and the value to a scalar, which the reduce's
+   lanes still index. The renderers write those reads as components of a
+   scalar, as tinygrad's do, and the host's C compiler refuses them. rune
+   lowers the folds that made such kernels to zeros. *)
 
-let reads_no_lane_of_a_scalar row =
-  equal (list Uops.uop) []
-    (List.filter reads_a_lane_of_a_scalar (instructions row))
+let refused_by_the_host name () =
+  let row = row_named (name ^ "_clang") in
+  let prg =
+    under row (fun () ->
+        Codegen.to_program (kernel row) (Lazy.force host_uncompiled))
+  in
+  match Renderer.Compiler.compile (Lazy.force host).compiler (source prg) with
+  | _ -> failf "the host compiled the program of %s" name
+  | exception Renderer.Compiler.Compile_error _ -> ()
 
 let lanes =
-  group "lanes of a scalar (D53)"
+  group "lanes of a scalar"
     [
-      test "a vector folded to a scalar is rendered as that scalar on Metal"
+      test "a vector folded to a scalar is rendered as tinygrad renders it"
         (fun () -> writes_as_tinygrad (row_named "invalid_lanes_metal"));
-      test
-        "on the host, the program of a vector folded to a scalar writes what \
-         its kernel writes"
-        (runs_as_interpreted "invalid_lanes");
-      test "a sum folded to a constant is rendered as that constant on Metal"
+      test "the host refuses the program of a vector folded to a scalar"
+        (refused_by_the_host "invalid_lanes");
+      test "a sum folded to a constant is rendered as tinygrad renders it"
         (fun () -> writes_as_tinygrad (row_named "invalid_lanes_int8_metal"));
-      test
-        "on the host, the program of a sum folded to a constant writes what \
-         its kernel writes"
-        (runs_as_interpreted "invalid_lanes_int8");
-      group "no program reads a lane of a scalar or a constant"
-        (per_row ~only:compiles reads_no_lane_of_a_scalar);
+      test "the host refuses the program of a sum folded to a constant"
+        (refused_by_the_host "invalid_lanes_int8");
     ]
 
 (* Vectors in programs (D58) *)

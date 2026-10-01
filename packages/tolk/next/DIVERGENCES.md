@@ -118,7 +118,7 @@ the Exclusions of `README.md`.
   `:262` (`Calls`); `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:665`
   (`contiguous_view`); `lib/schedule/schedule.ml:164` (`pm_flatten_linear`);
-  `lib/codegen/codegen.ml:631` (`apply_opts`); `lib/engine/realize.ml:117`
+  `lib/codegen/codegen.ml:621` (`apply_opts`); `lib/engine/realize.ml:117`
   (`lower_and_compile`); `lib/runtime/support/hcq2.ml:416` (`device`),
   `:1875` (`pm_beam`), `:1892` (`compile_linear`); and
   `lib/runtime/support/compiler_metal.ml` (`Compiler_metal`).
@@ -204,7 +204,7 @@ the Exclusions of `README.md`.
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk.next:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
   `lib/helpers.ml:106` (`Context_var`) and `:133` (`context`);
-  `lib/codegen/codegen.ml:1018` (`to_program`'s cache);
+  `lib/codegen/codegen.ml:1008` (`to_program`'s cache);
   `lib/runtime/support/compiler_metal.ml:38` (`build`).
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
   spawns its domains for the call and joins them before it returns, where
@@ -1536,37 +1536,6 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros
   (D52) › a pad with -0. fill renders and computes -0.` and `› a pad and a
   selection of signed zeros keep the interpreter's bits`.
-
-## D53. A lane of a scalar value is that value
-
-- **tinygrad:** `codegen/__init__.py:137-158` (`devectorizer2`, whose rules
-  read a lane of a value through an `INDEX` by a constant); `uop/symbolic.py:104`
-  (a stack of `Invalid` folds to one `Invalid`, without its width).
-- **tolk.next:** `lib/codegen/codegen.ml:273` (the rule of `devectorizer2`),
-  and `test/gen/tinygrad.patch`, which adds the same rule to the goldens'
-  tinygrad.
-- **Differs:** an `INDEX` by a constant of a value of shape `()` is that
-  value: a scalar stands for every lane. A reduce unrolled into lanes indexes
-  each lane of its source, and a fold may leave that source a scalar: when
-  every lane of an index is `Invalid`, the stack folds to one `Invalid`, the
-  gated load to a scalar `0`, and the value to a scalar, or a whole sum to a
-  constant. tinygrad keeps the lane accesses, and renders a scalar's
-  component: Metal reads `alu1.x` of a `float`, and C writes `alu1[0]` and
-  `0u[0]`, which no compiler takes.
-- **Reason:** (b). rune lowers `Nx.combine_patches` to such a kernel when
-  every window lies in the padding (output `[1; 1]`, kernel `[1; 2]`,
-  dilation `[1; 2]`, padding `[(0, 0); (1, 1)]` of a float32 `[2; 1]`, or
-  output `[1]`, kernel `[2]`, dilation `[2]`, padding `[(1, 1)]` of an int8
-  `[2; 1]`), and compiles it for the host and Metal.
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `lanes of a
-  scalar (D53) › a vector folded to a scalar is rendered as that scalar on
-  Metal`, `› on the host, the program of a vector folded to a scalar writes
-  what its kernel writes`, `› a sum folded to a constant is rendered as that
-  constant on Metal`, `› on the host, the program of a sum folded to a
-  constant writes what its kernel writes` and, on every case, `› no program
-  reads a lane of a scalar or a constant`; and the cases `invalid_lanes` and
-  `invalid_lanes_int8` of every target in `stages`, from the patched
-  tinygrad.
 
 ## D54. Storage says where it starts within 16 bytes
 
