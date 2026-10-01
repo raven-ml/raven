@@ -213,6 +213,49 @@ let kinks =
         equal ~msg:"the shares" (float 1e-15) 1. (g.(0) +. g.(2)));
   ]
 
+(* Kinks of the elementwise operations *)
+
+let pair = Nx.Ptree.(pair tensor tensor)
+
+let elementwise_kinks =
+  [
+    cases ~name:fst "an elementwise extreme at a tie gives half to each operand"
+      [ ("maximum", Nx.maximum); ("minimum", Nx.minimum) ]
+      (fun (_, extreme) ->
+        let ga, gb =
+          Rune.grad pair
+            (fun (a, b) -> Nx.sum (extreme a b))
+            (vec [| 2.; 1.; -3. |], vec [| 2.; 5.; -3. |])
+        in
+        (* The middle elements do not tie: 1. is the first operand's. *)
+        let first = if extreme == Nx.maximum then 0. else 1. in
+        equal ~msg:"first" (exact ()) (vec [| 0.5; first; 0.5 |]) ga;
+        equal ~msg:"second" (exact ()) (vec [| 0.5; 1. -. first; 0.5 |]) gb);
+    test "hypot's gradient where its operands' magnitudes tie is x / h, y / h"
+      (fun () ->
+        let gx, gy =
+          Rune.grad pair
+            (fun (x, y) -> Nx.sum (Nx.hypot x y))
+            (vec [| 1.; -2. |], vec [| 1.; 2. |])
+        in
+        let r = 1. /. Float.sqrt 2. in
+        equal ~msg:"x" (Oracle.tensor ~rel:1e-15 ()) (vec [| r; -.r |]) gx;
+        equal ~msg:"y" (Oracle.tensor ~rel:1e-15 ()) (vec [| r; r |]) gy);
+    test "relu has derivative 0 at 0" (fun () ->
+        equal (exact ())
+          (vec [| 0.; 0.; 1. |])
+          (Rune.grad' (fun x -> Nx.sum (Nx.relu x)) (vec [| -1.; 0.; 2. |])));
+    test "abs has derivative 0 at 0" (fun () ->
+        equal (exact ())
+          (vec [| -1.; 0.; 1. |])
+          (Rune.grad' (fun x -> Nx.sum (Nx.abs x)) (vec [| -1.; 0.; 2. |])));
+    test "relu propagates NaN and maps -0. to 0." (fun () ->
+        let y = Nx.to_array (Nx.relu (vec [| Float.nan; -0.; 0.; -2. |])) in
+        is_true ~msg:"NaN" (Float.is_nan y.(0));
+        equal ~msg:"-0., 0. and -2." (list float_exact) [ 0.; 0.; 0. ]
+          [ y.(1); y.(2); y.(3) ]);
+  ]
+
 let () =
   exit
     (run "Rune laws"
@@ -220,5 +263,5 @@ let () =
          group "derivatives" [ central_difference; adjoint; linear ];
          group "maps" [ mapped; mapped_gradient ];
          group ~tags:[ "slow" ] "compilation" [ compiled_gradient ];
-         group "kinks" kinks;
+         group "kinks" (kinks @ elementwise_kinks);
        ])

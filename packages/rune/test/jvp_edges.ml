@@ -28,7 +28,7 @@ let at ?(v = 1.) f x expected =
    line: the shares of the first and second operand of [maximum] and [minimum]
    at a tie, the share of each of [n] tied elements of a reduced extremum, and
    whether a running extremum takes the first of equal elements. *)
-let binary_tie = (0., 1.)
+let binary_tie = (0.5, 0.5)
 let reduce_tie n = 1. /. float_of_int n
 let running_takes_first = true
 

@@ -174,6 +174,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** where the operands of `Nx.maximum` or `Nx.minimum` tie, each
+  takes half of the derivative, as tied elements share it along the axes of
+  `Nx.max` and `Nx.min`; the second operand took all of it. `Nx.relu` and
+  `Nx.abs` keep derivative 0 at 0, and the `Rune` interface states all three.
+
 - `jit` compiles `Nx.take`, `Nx.take_along_axis` and the sorts as loads at
   the indices, which fuse into the operations that read them, where a one-hot
   sum cost a reduction over the axis per element and a kernel of its own.

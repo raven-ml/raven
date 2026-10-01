@@ -278,12 +278,16 @@ let unary_tangent k x y dx =
   | Sign -> sign_push x y dx
   | Trunc | Ceil | Floor | Round -> assert false (* A plain result. *)
 
-(* The tangent of a selection of [a] where [first] holds and [b] elsewhere. *)
-let selected y first da db =
-  let mask = Nx.cast (Nx.dtype y) first in
+(* The tangent of an extreme of [a] and [b], [first] where [a] is it: [a]'s
+   where [first] holds or [a] is NaN, [b]'s elsewhere, and half of each at a
+   tie, so that the extreme, symmetric in its operands, has a symmetric
+   derivative. *)
+let extreme y first a b da db =
+  let first = Nx.cast (Nx.dtype y) (Nx.bitwise_or first (Nx.isnan a)) in
+  let share = Nx.where (Nx.equal a b) (scalar y 0.5) first in
   terms
-    (Option.map (fun da -> mul da mask) da)
-    (Option.map (fun db -> mul db (Nx.rsub_s (one y) mask)) db)
+    (Option.map (fun da -> mul da share) da)
+    (Option.map (fun db -> mul db (Nx.rsub_s (one y) share)) db)
 
 (* [zero_where c x] is [x] with zeros where [c] holds. *)
 let zero_where c x = Nx.where c (Nx.zeros_like x) x
@@ -311,8 +315,8 @@ let binary_tangent k a b y da db =
              mul da (zero_where both (Nx.mul b (Nx.pow a (Nx.sub_s b (one b))))))
            da)
         (term (fun db -> mul db (zero_where (zero a) (Nx.mul y (Nx.log a)))) db)
-  | Maximum -> selected y (Nx.bitwise_or (Nx.less b a) (Nx.isnan a)) da db
-  | Minimum -> selected y (Nx.bitwise_or (Nx.less a b) (Nx.isnan a)) da db
+  | Maximum -> extreme y (Nx.less b a) a b da db
+  | Minimum -> extreme y (Nx.less a b) a b da db
   | Atan2 ->
       let denom = Nx.add (Nx.mul a a) (Nx.mul b b) in
       terms
