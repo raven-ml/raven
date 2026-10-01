@@ -2427,7 +2427,9 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     {!mean} sums the same way, as do the contraction of {!matmul} and the
     products built on it, except where {!matmul} hands a product to Accelerate.
     At [float16], [bfloat16] and the float8 dtypes, the terms are summed at
-    [float32] and the sum is rounded once to the dtype.
+    [float32] and the sum is rounded once to the dtype. On the host, a NaN sum
+    is its first NaN term in index order along [axes], whatever the layout: bit
+    for bit at [float32] and [float64], and its sign at the narrower floats.
 
     {@ocaml[
       # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
@@ -2469,7 +2471,8 @@ val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     [false]. A float product multiplies its factors in an unspecified
     association, so the same values in another layout, or under a compiled
     function, can differ in rounding, and at overflow or underflow in whether a
-    partial product overflows or underflows.
+    partial product overflows or underflows. On the host, a NaN product is its
+    first NaN term, as for {!sum}.
 
     {@ocaml[
       # create int32 [| 3 |] [| 2l; 3l; 4l |]
@@ -2484,16 +2487,18 @@ val cumsum : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
     of a prefix of [t] along [axis] are the first running sums of [t], bit for
     bit. Two running sums are rounded in different associations, so the running
     sums of non-negative terms can decrease by a rounding: a search over them
-    must not assume them sorted. When [axis] is omitted, it accumulates the
-    flattened tensor and keeps [t]'s shape.
+    must not assume them sorted. On the host, from the first NaN term on every
+    running sum is that term, as for {!sum}. When [axis] is omitted, it
+    accumulates the flattened tensor and keeps [t]'s shape.
 
     See also {!cumprod}. *)
 
 val cumprod : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cumprod ?axis t] is the inclusive cumulative product along [axis]. On the
     host, the running products of a prefix of [t] along [axis] are the first
-    running products of [t], bit for bit. When [axis] is omitted, it accumulates
-    the flattened tensor and keeps [t]'s shape.
+    running products of [t], bit for bit, and from the first NaN term on every
+    running product is that term, as for {!sum}. When [axis] is omitted, it
+    accumulates the flattened tensor and keeps [t]'s shape.
 
     See also {!cumsum}. *)
 

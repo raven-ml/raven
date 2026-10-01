@@ -1116,6 +1116,239 @@ let associations =
         running_sums_round;
     ]
 
+(* NaN terms. A float sum, product, running sum or running product that is NaN
+   holds the first NaN term in index order along its axes, whatever the layout
+   of its operand and however long its axes. *)
+
+(* A float dtype seen through its bits: [e] exponent and [m] fraction bits,
+   stored as [word], whose NaNs have a fraction of at least [least]. *)
+type nan_format =
+  | N : {
+      name : string;
+      dtype : ('a, 'b) Nx.dtype;
+      word : ('c, 'd) Nx.dtype;
+      e : int;
+      m : int;
+      least : int;
+    }
+      -> nan_format
+
+let nan_formats =
+  let f name dtype word ~e ~m ?(least = 1) () =
+    N { name; dtype; word; e; m; least }
+  in
+  [
+    f "float16" Nx.float16 Nx.int16 ~e:5 ~m:10 ();
+    f "bfloat16" Nx.bfloat16 Nx.int16 ~e:8 ~m:7 ();
+    f "float8_e4m3" Nx.float8_e4m3 Nx.int8 ~e:4 ~m:3 ~least:7 ();
+    f "float8_e5m2" Nx.float8_e5m2 Nx.int8 ~e:5 ~m:2 ();
+    f "float32" Nx.float32 Nx.int32 ~e:8 ~m:23 ();
+    f "float64" Nx.float64 Nx.int64 ~e:11 ~m:52 ();
+  ]
+
+(* How the logical [r; c] array lies in memory. *)
+type nan_layout = Rows | Columns | Every_other | Flipped
+
+let pp_nan_layout ppf l =
+  Format.pp_print_string ppf
+    (match l with
+    | Rows -> "rows"
+    | Columns -> "columns"
+    | Every_other -> "every other column"
+    | Flipped -> "rows reversed")
+
+let pp_word ppf w = Format.fprintf ppf "0x%Lx" w
+
+(* [r], [c] and the words of an [r; c] array, row by row: NaNs of any payload
+   and sign among 1s and -1s, so that only a NaN term makes a NaN result. A long
+   axis crosses the blocks of a reduction and the chunks of a scan. *)
+let nan_terms (N f) =
+  let open Gen in
+  let pp ppf (r, c, words) =
+    Format.fprintf ppf "[%d; %d]: [%a]" r c
+      (Format.pp_print_seq ~pp_sep:Format.pp_print_space pp_word)
+      (Array.to_seq words)
+  in
+  with_pp pp
+  @@
+  let width = 1 + f.e + f.m in
+  let ones = Int64.shift_left (Int64.pred (Int64.shift_left 1L f.e)) f.m in
+  let sign = Int64.shift_left 1L (width - 1) in
+  let nan =
+    let+ negative = bool
+    and+ fraction =
+      int64_range (Int64.of_int f.least) (Int64.pred (Int64.shift_left 1L f.m))
+    in
+    let w = Int64.logor ones fraction in
+    if negative then Int64.logor sign w else w
+  in
+  let number =
+    (* 1 and -1: the exponent field holds the bias, all ones bar its top. *)
+    let one =
+      Int64.shift_left (Int64.pred (Int64.shift_left 1L (f.e - 1))) f.m
+    in
+    let+ negative = bool in
+    if negative then Int64.logor sign one else one
+  in
+  let* r, c =
+    frequency
+      [
+        (6, pair (int_range 0 6) (int_range 0 6));
+        (1, pair (int_range 1000 1500) (int_range 1 3));
+        (1, pair (int_range 1 2) (int_range 1000 5000));
+      ]
+  in
+  (* NaNs per thousand terms: a long axis with few holds its first NaN past the
+     first block or chunk. *)
+  let* nans = of_list [ 1; 100; 500 ] in
+  let+ words =
+    array
+      ~size:(constant (r * c))
+      (frequency [ (nans, nan); (1000 - nans, number) ])
+  in
+  (r, c, words)
+
+let first_nan_terms (type a b c d) (dtype : (a, b) Nx.dtype)
+    (word : (c, d) Nx.dtype) ~e ~m ~least (r, c, ws) =
+  let width = 1 + e + m in
+  let mask =
+    if width = 64 then -1L else Int64.pred (Int64.shift_left 1L width)
+  in
+  let is_nan w =
+    let fraction = Int64.logand w (Int64.pred (Int64.shift_left 1L m)) in
+    let exponent =
+      Int64.logand
+        (Int64.shift_right_logical w m)
+        (Int64.pred (Int64.shift_left 1L e))
+    in
+    exponent = Int64.pred (Int64.shift_left 1L e)
+    && Int64.compare fraction (Int64.of_int least) >= 0
+  in
+  let signed v =
+    if width < 64 && Int64.compare v (Int64.shift_left 1L (width - 1)) >= 0 then
+      Int64.sub v (Int64.shift_left 1L width)
+    else v
+  in
+  let of_words shape ws =
+    Nx.create Nx.int64 shape (Array.map signed ws)
+    |> Nx.cast word |> Nx.bitcast dtype
+  in
+  let to_words t =
+    Array.map (Int64.logand mask)
+      (Nx.to_array (Nx.cast Nx.int64 (Nx.bitcast word t)))
+  in
+  (* A result holds a NaN term as its dtype stores it: narrow floats widen to
+     float32 and back, which quiets a signaling NaN. *)
+  let held =
+    let memo = Hashtbl.create 16 in
+    fun w ->
+      if width >= 32 then w
+      else
+        match Hashtbl.find_opt memo w with
+        | Some h -> h
+        | None ->
+            let h =
+              (to_words
+                 (Nx.cast dtype (Nx.cast Nx.float32 (of_words [||] [| w |])))).(0)
+            in
+            Hashtbl.add memo w h;
+            h
+  in
+  let at i j = ws.((i * c) + j) in
+  let laid = function
+    | Rows -> of_words [| r; c |] ws
+    | Columns ->
+        Nx.transpose
+          (of_words [| c; r |]
+             (Array.init (r * c) (fun k -> at (k mod r) (k / r))))
+    | Every_other ->
+        let base =
+          Array.init
+            (r * 2 * c)
+            (fun k ->
+              let j = k mod (2 * c) in
+              if j mod 2 = 0 then at (k / (2 * c)) (j / 2) else 0L)
+        in
+        Nx.slice [ A; Rs (0, 2 * c, 2) ] (of_words [| r; 2 * c |] base)
+    | Flipped ->
+        Nx.flip ~axes:[ 1 ]
+          (of_words [| r; c |]
+             (Array.init (r * c) (fun k -> at (k / c) (c - 1 - (k mod c)))))
+  in
+  (* The first NaN of [n] terms [term 0], ..., [term (n - 1)], and the first NaN
+     of each of their prefixes. *)
+  let first n term =
+    let rec go k =
+      if k = n then None
+      else if is_nan (term k) then Some (term k)
+      else go (k + 1)
+    in
+    go 0
+  in
+  let running n term =
+    let found = ref None in
+    Array.init n (fun k ->
+        if !found = None && is_nan (term k) then found := Some (term k);
+        !found)
+  in
+  let along_rows = Array.init r (fun i -> first c (at i)) in
+  let along_columns = Array.init c (fun j -> first r (fun i -> at i j)) in
+  let along_both = [| first (r * c) (Array.get ws) |] in
+  let running_rows = Array.concat (List.init r (fun i -> running c (at i))) in
+  let running_columns =
+    let cols = Array.init c (fun j -> running r (fun i -> at i j)) in
+    Array.init (r * c) (fun k -> cols.(k mod c).(k / c))
+  in
+  let word = Testable.make ~pp:pp_word ~equal:Int64.equal in
+  (* Output [o] holds the term [expected.(o)] names, or is no NaN. *)
+  let expect msg expected got =
+    Array.iteri
+      (fun o first ->
+        let msg = Printf.sprintf "%s, output %d" msg o in
+        match first with
+        | Some w -> equal ~msg word (held w) got.(o)
+        | None -> is_false ~msg (is_nan got.(o)))
+      expected
+  in
+  List.iter
+    (fun layout ->
+      let x = laid layout in
+      let name op = Format.asprintf "%s, %a" op pp_nan_layout layout in
+      List.iter
+        (fun (op, fold) ->
+          expect (name (op ^ " along 1")) along_rows (to_words (fold [ 1 ] x));
+          expect
+            (name (op ^ " along 0"))
+            along_columns
+            (to_words (fold [ 0 ] x));
+          expect
+            (name (op ^ " along both"))
+            along_both
+            (to_words (fold [ 0; 1 ] x)))
+        [
+          ("sum", fun axes x -> Nx.sum ~axes x);
+          ("prod", fun axes x -> Nx.prod ~axes x);
+        ];
+      List.iter
+        (fun (op, scan) ->
+          expect (name (op ^ " along 1")) running_rows (to_words (scan 1 x));
+          expect (name (op ^ " along 0")) running_columns (to_words (scan 0 x)))
+        [
+          ("cumsum", fun axis x -> Nx.cumsum ~axis x);
+          ("cumprod", fun axis x -> Nx.cumprod ~axis x);
+        ])
+    [ Rows; Columns; Every_other; Flipped ]
+
+let nan_terms_group =
+  group "NaN terms"
+    (List.map
+       (fun (N f as format) ->
+         prop ~count:30
+           (f.name ^ " sum, prod, cumsum and cumprod hold the first NaN term")
+           (nan_terms format)
+           (first_nan_terms f.dtype f.word ~e:f.e ~m:f.m ~least:f.least))
+       nan_formats)
+
 (* Segment reductions, against a loop that starts each segment at its identity
    and combines its rows into it in row order. Under Max and Min a row replaces
    the segment's value when it wins: it is the greater (Max) or the lesser
@@ -1634,6 +1867,7 @@ let () =
          signed_zeros;
          normalisations;
          associations;
+         nan_terms_group;
          segment_reductions;
          range_reductions;
          structure_scans;

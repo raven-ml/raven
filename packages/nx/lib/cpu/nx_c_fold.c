@@ -710,6 +710,35 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMMIN_STEP_ROW)
 #undef NX_C_CUMMIN_STEP_NX_C_CAT_BOOL
 #undef NX_C_CUMMIN_STEP_NX_C_CAT_COMPLEX
 
+/* The first NaN of a run, for a float sum or product that is NaN (nx_c.h fold
+   ABI, nan). */
+#define NX_C_NAN_NX_C_CAT_FLOAT(sfx, storage, compute)                           \
+  static int64_t nx_c_nan_##sfx(void *acc, const char *in, int64_t in_step,     \
+                               int64_t n, void *ctx) {                         \
+    (void)ctx;                                                                 \
+    for (int64_t k = 0; k < n; k++) {                                          \
+      compute v = nx_c_ld_##sfx(in + k * in_step);                             \
+      if (v != v) {                                                            \
+        *(compute *)acc = v;                                                   \
+        return k;                                                              \
+      }                                                                        \
+    }                                                                          \
+    return -1;                                                                 \
+  }
+#define NX_C_NAN_NX_C_CAT_SINT(sfx, storage, compute)
+#define NX_C_NAN_NX_C_CAT_UINT(sfx, storage, compute)
+#define NX_C_NAN_NX_C_CAT_COMPLEX(sfx, storage, compute)
+#define NX_C_NAN_NX_C_CAT_BOOL(sfx, storage, compute)
+#define NX_C_NAN_ROW(sfx, storage, compute, ld, st, cat)                        \
+  NX_C_NAN_##cat(sfx, storage, compute)
+NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_NAN_ROW)
+#undef NX_C_NAN_ROW
+#undef NX_C_NAN_NX_C_CAT_FLOAT
+#undef NX_C_NAN_NX_C_CAT_SINT
+#undef NX_C_NAN_NX_C_CAT_UINT
+#undef NX_C_NAN_NX_C_CAT_COMPLEX
+#undef NX_C_NAN_NX_C_CAT_BOOL
+
 /* ── Dispatch tables ─────────────────────────────────────────────────────────
    A slot is filled only for the categories an op supports (arith = numeric
    except bool; ord = float/int/bool, i.e. no complex); the rest stay NULL and
@@ -732,6 +761,11 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMMIN_STEP_ROW)
 #define NX_C_SUP_ORD_NX_C_CAT_UINT 1
 #define NX_C_SUP_ORD_NX_C_CAT_COMPLEX 0
 #define NX_C_SUP_ORD_NX_C_CAT_BOOL 1
+#define NX_C_SUP_FLOAT_NX_C_CAT_FLOAT 1
+#define NX_C_SUP_FLOAT_NX_C_CAT_SINT 0
+#define NX_C_SUP_FLOAT_NX_C_CAT_UINT 0
+#define NX_C_SUP_FLOAT_NX_C_CAT_COMPLEX 0
+#define NX_C_SUP_FLOAT_NX_C_CAT_BOOL 0
 
 static const nx_c_fold_table nx_c_sum_table = {
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
@@ -753,6 +787,10 @@ static const nx_c_fold_table nx_c_sum_table = {
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_sum_stream)
     .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_FLOAT_##cat, sfx, nx_c_nan)
+    .nan = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
@@ -776,6 +814,10 @@ static const nx_c_fold_table nx_c_prod_table = {
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_prod_stream)
     .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_FLOAT_##cat, sfx, nx_c_nan)
+    .nan = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 

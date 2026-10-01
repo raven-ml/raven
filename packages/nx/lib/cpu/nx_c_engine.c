@@ -475,6 +475,37 @@ static void nx_c_next1(int n, const int64_t *shape, const int64_t *stride,
   }
 }
 
+/* The reduced axes in index order, for the first NaN term (nx_c.h,
+   Associations). */
+typedef struct {
+  nx_c_fold_nan *nan; /* NULL when the op needs no second walk */
+  nx_c_dtype dt;
+  int n;
+  int64_t shape[NX_C_MAX_NDIM];
+  int64_t in_stride[NX_C_MAX_NDIM]; /* byte */
+} nx_c_fold_terms;
+
+/* If the result at acc is NaN, replace it by the first NaN term of the output
+   whose terms start at ip, if it has one. */
+static void nx_c_fold_first_nan(const nx_c_fold_terms *t, const char *ip,
+                                void *acc, void *ctx) {
+  if (t->nan == NULL || !nx_c_compute_isnan(t->dt, acc)) return;
+  if (t->n == 0) { /* one term */
+    t->nan(acc, ip, 0, 1, ctx);
+    return;
+  }
+  int rod = t->n - 1;
+  int64_t outer = 1;
+  for (int d = 0; d < rod; d++) outer *= t->shape[d];
+  int64_t coord[NX_C_MAX_NDIM];
+  for (int d = 0; d < rod; d++) coord[d] = 0;
+  char *p = (char *)ip;
+  for (int64_t o = 0; o < outer; o++) {
+    if (t->nan(acc, p, t->in_stride[rod], t->shape[rod], ctx) >= 0) return;
+    nx_c_next1(rod, t->shape, t->in_stride, coord, &p);
+  }
+}
+
 typedef struct {
   nx_c_fold_init *init;
   nx_c_fold_step *step;
@@ -483,6 +514,7 @@ typedef struct {
   void *ctx;
   char *in_base;
   char *out_base;
+  nx_c_fold_terms terms;
   int nk; /* kept (non-reduced) dims */
   int64_t kshape[NX_C_MAX_NDIM];
   int64_t k_in_stride[NX_C_MAX_NDIM];  /* byte */
@@ -551,12 +583,14 @@ static void nx_c_fold_reduce_one(const nx_c_fold_exec *e, char *ip, char *op) {
     }
   }
   if (top == 0) { /* one block: no tree */
+    nx_c_fold_first_nan(&e->terms, ip, &acc, ctx);
     fini(op, 0, &acc, 1, ctx);
     return;
   }
   /* Closing over the open block combines it as pushing it would. */
   if (room < NX_C_FOLD_BLOCK) st[top++] = acc;
   nx_c_tree_close(combine, slot, pitch, 1, top, ctx);
+  nx_c_fold_first_nan(&e->terms, ip, &st[0], ctx);
   fini(op, 0, &st[0], 1, ctx);
 }
 
@@ -596,6 +630,8 @@ typedef struct {
   void *ctx;
   char *in_base;
   char *out_base;
+  const nx_c_fold_terms *terms;
+  int64_t acc_size; /* bytes of one accumulator in a row */
   int64_t lane_len;        /* the vectorized inner (most contiguous kept) axis */
   int64_t lane_in_stride;  /* byte */
   int64_t lane_out_stride; /* byte */
@@ -646,6 +682,10 @@ static void nx_c_fold_stream_body(int64_t lo, int64_t hi, int worker,
       top = nx_c_tree_push(e->combine, slot, e->pitch, tn, top, ++done, e->ctx);
     }
     nx_c_tree_close(e->combine, slot, e->pitch, tn, top, e->ctx);
+    if (e->terms->nan != NULL)
+      for (int64_t j = 0; j < tn; j++)
+        nx_c_fold_first_nan(e->terms, ip + j * e->lane_in_stride,
+                            slot + j * e->acc_size, e->ctx);
     e->fini(op, e->lane_out_stride, slot, tn, e->ctx);
   }
 }
@@ -663,6 +703,8 @@ static nx_c_status nx_c_fold_stream_run(const nx_c_fold_table *tbl,
   e.ctx = fe->ctx;
   e.in_base = fe->in_base;
   e.out_base = fe->out_base;
+  e.terms = &fe->terms;
+  e.acc_size = nx_c_compute_size(dt);
   e.lane_len = fe->kshape[lane];
   e.lane_in_stride = fe->k_in_stride[lane];
   e.lane_out_stride = fe->k_out_stride[lane];
@@ -722,6 +764,8 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, nx_c_dtype dt,
   e.ctx = ctx;
   e.in_base = (char *)in->data + in->offset * in_elem;
   e.out_base = (char *)out->data + out->offset * out_elem;
+  e.terms.nan = tbl->nan[dt];
+  e.terms.dt = dt;
 
   /* Split input axes into kept (output-indexing) and reduced. reduce_axes is
      strictly increasing, so a single merge pass classifies each axis. */
@@ -767,6 +811,11 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, nx_c_dtype dt,
     e.rshape[e.nr] = e.rshape[d];
     e.r_in_stride[e.nr] = e.r_in_stride[d];
     e.nr++;
+  }
+  e.terms.n = e.nr;
+  for (int d = 0; d < e.nr; d++) {
+    e.terms.shape[d] = e.rshape[d];
+    e.terms.in_stride[d] = e.r_in_stride[d];
   }
 
   int64_t out_total = 1;
@@ -915,6 +964,9 @@ typedef struct {
   nx_c_fold_init *init;
   nx_c_fold_combine *combine;
   nx_c_scan_step *step;
+  nx_c_fold_nan *nan;
+  nx_c_fold_fini *fini;
+  nx_c_dtype dt;
   void *ctx;
   char *in_base;
   char *out_base;
@@ -950,6 +1002,14 @@ static void nx_c_scan_slice(const nx_c_scan_exec *e, char *ip, char *op) {
       e->step(op + lo * os, os, ip + lo * is, is, m, &state, NULL, e->ctx);
     }
   }
+  /* A running sum or product stays NaN from its first NaN on, so the slice
+     has a NaN output exactly when it ends NaN; from the first NaN term on,
+     the outputs hold that term (nx_c.h, Associations). */
+  if (e->nan == NULL || !nx_c_compute_isnan(e->dt, &state)) return;
+  nx_c_acc term;
+  int64_t k = e->nan(&term, ip, is, len, e->ctx);
+  if (k < 0) return;
+  for (; k < len; k++) e->fini(op + k * os, 0, &term, 1, e->ctx);
 }
 
 static void nx_c_scan_body(int64_t lo, int64_t hi, int worker, void *vctx) {
@@ -984,6 +1044,9 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
   e.init = tbl->op->init[dt];
   e.combine = tbl->op->combine[dt];
   e.step = tbl->step[dt];
+  e.nan = tbl->op->nan[dt];
+  e.fini = tbl->op->fini[dt];
+  e.dt = dt;
   e.ctx = ctx;
   e.in_base = (char *)in->data + in->offset * in_elem;
   e.out_base = (char *)out->data + out->offset * out_elem;

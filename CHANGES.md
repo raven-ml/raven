@@ -3019,6 +3019,9 @@ thread.
 
 ### Nx
 
+- A NaN result of `Nx.sum`, `Nx.prod`, `Nx.cumsum` or `Nx.cumprod` on the host
+  is the first NaN term in index order along the reduced axes. Which NaN
+  survived depended on the layout, the length and the path the reduction took.
 - A NaN result of `Nx.add`, `Nx.sub`, `Nx.mul`, `Nx.div` or `Nx.fma` on the
   host is the first NaN operand, or for complex numbers the first NaN part.
   Given two NaNs, float `add`, `mul` and `fma` and complex `add` and `div`

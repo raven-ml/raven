@@ -362,6 +362,46 @@ static inline int64_t nx_c_elem_size(nx_c_dtype dt) {
   return ((unsigned)dt < NX_C_DTYPE_COUNT) ? sizes[dt] : 0;
 }
 
+/* Bytes of one value of the compute type, the size of a fold's accumulator in
+   a row of them. Packed dtypes report 0. */
+static inline int64_t nx_c_compute_size(nx_c_dtype dt) {
+  static const int64_t sizes[NX_C_DTYPE_COUNT] = {
+#define NX_C_CSIZE_ROW(sfx, storage, compute, ld, st, cat)                     \
+  [NX_C_DTYPE_##sfx] = (int64_t)sizeof(compute),
+      NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CSIZE_ROW)
+#undef NX_C_CSIZE_ROW
+  };
+  return ((unsigned)dt < NX_C_DTYPE_COUNT) ? sizes[dt] : 0;
+}
+
+/* Whether the compute value at p is a float NaN; false for every dtype that is
+   not a float. */
+static inline bool nx_c_compute_isnan(nx_c_dtype dt, const void *p) {
+  switch (dt) {
+#define NX_C_ISNAN_NX_C_CAT_FLOAT(sfx, compute)                                 \
+  case NX_C_DTYPE_##sfx: {                                                     \
+    compute v;                                                                 \
+    memcpy(&v, p, sizeof v);                                                   \
+    return v != v;                                                             \
+  }
+#define NX_C_ISNAN_NX_C_CAT_SINT(sfx, compute)
+#define NX_C_ISNAN_NX_C_CAT_UINT(sfx, compute)
+#define NX_C_ISNAN_NX_C_CAT_COMPLEX(sfx, compute)
+#define NX_C_ISNAN_NX_C_CAT_BOOL(sfx, compute)
+#define NX_C_ISNAN_ROW(sfx, storage, compute, ld, st, cat)                     \
+  NX_C_ISNAN_##cat(sfx, compute)
+    NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ISNAN_ROW)
+#undef NX_C_ISNAN_ROW
+#undef NX_C_ISNAN_NX_C_CAT_FLOAT
+#undef NX_C_ISNAN_NX_C_CAT_SINT
+#undef NX_C_ISNAN_NX_C_CAT_UINT
+#undef NX_C_ISNAN_NX_C_CAT_COMPLEX
+#undef NX_C_ISNAN_NX_C_CAT_BOOL
+  default:
+    return false;
+  }
+}
+
 /* Byte extent of `count` contiguous elements — the one place packed nibble
    arithmetic lives (two elements per byte, rounded up). */
 static inline int64_t nx_c_dtype_bytes(nx_c_dtype dt, int64_t count) {
@@ -476,6 +516,16 @@ NX_C_DEFINE_FEXTREMES(double, uint64_t)
      folds each output's terms in row order.
    A block's sum starts from +0 and is never -0, so a float sum that is exactly
    zero is +0 on both paths.
+
+   NaN. Which NaN an addition or a multiplication keeps when both operands are
+   NaN depends on the order the compiler gives them, which differs between a
+   vector loop and a scalar one, and the paths and blocks above combine terms
+   in different orders. So a float sum or product, reduced or running, that is
+   NaN holds its first NaN term, in index order along the reduced axes (the
+   axes in their order, the last varying fastest), whatever the layout: the
+   drivers find it in a second walk over the terms, taken only when the result
+   is NaN. With no NaN term the result is the operations' own NaN. Float max
+   and min keep the first NaN of their own walk.
 
    Scans (nx_c_scan_run). A slice is cut into chunks of NX_C_SCAN_CHUNK
    elements counted from its start. Its first chunk is scanned in order from
@@ -695,7 +745,15 @@ typedef union {
    fini converts `n` accumulators of the compute type to storage and writes
    them (out[j*out_step] = accs[j]): one output on the per-output path, a
    tile's row on the streaming path. It depends only on the dtype, so all four
-   reduction tables share one instance per dtype. */
+   reduction tables share one instance per dtype.
+
+   nan gives a float sum or product its NaN (Associations). For an output whose
+   result is NaN, the driver passes the output's terms run by run in index
+   order; nan stores the first NaN among the n terms of one strided run in
+   *acc, a value of the compute type, and returns its position in the run, or
+   returns -1 and leaves *acc. A scan's driver does the same for a slice that
+   ends NaN. The slot is NULL where no term is a float, and for max and min,
+   whose steps keep the first NaN themselves. */
 typedef void nx_c_fold_init(nx_c_acc *acc, void *ctx);
 typedef void nx_c_fold_step(nx_c_acc *acc, const char *in, int64_t in_step,
                            int64_t n, void *ctx);
@@ -705,6 +763,8 @@ typedef void nx_c_fold_fini(char *out, int64_t out_step, const void *accs,
                            int64_t n, void *ctx);
 typedef void nx_c_fold_stream(void *accs, const char *in_row, int64_t lane_step,
                              int64_t n, int first, void *ctx);
+typedef int64_t nx_c_fold_nan(void *acc, const char *in, int64_t in_step,
+                              int64_t n, void *ctx);
 
 /* argreduce — argmax/argmin over exactly one axis (backend_intf: single axis,
    int64 result). The accumulator carries the running extreme value and its
@@ -760,6 +820,7 @@ typedef struct {
   nx_c_fold_combine *combine[NX_C_DTYPE_COUNT];
   nx_c_fold_fini *fini[NX_C_DTYPE_COUNT];
   nx_c_fold_stream *stream[NX_C_DTYPE_COUNT];
+  nx_c_fold_nan *nan[NX_C_DTYPE_COUNT];
 } nx_c_fold_table;
 typedef struct {
   nx_c_arg_step *step[NX_C_DTYPE_COUNT];
