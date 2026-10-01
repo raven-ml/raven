@@ -18,8 +18,8 @@ external png_encode : Unix.file_descr -> bytes -> int -> int -> int -> unit
 external jpeg_encode : Unix.file_descr -> bytes -> int -> int -> int -> unit
   = "caml_nx_io_jpeg_encode"
 
-external png_encode_string : bytes -> int -> int -> int -> string
-  = "caml_nx_io_png_encode_string"
+external png_encode_string : bytes -> int -> int -> int -> int -> bool -> string
+  = "caml_nx_io_png_encode_string_bytecode" "caml_nx_io_png_encode_string"
 
 let map_file fd size =
   if size = 0 then Array1.create int8_unsigned c_layout 0
@@ -98,9 +98,9 @@ let save_png ~overwrite path data ~width ~height ~channels =
         Temp_file.remove_if_exists temp;
         raise exn
 
-let encode_png data ~width ~height ~channels =
+let encode_png data ~width ~height ~channels ~ppm ~srgb =
   ignore (checked_pixels width height channels);
-  png_encode_string data width height channels
+  png_encode_string data width height channels ppm srgb
 
 let save_jpeg ~overwrite path data ~width ~height ~channels =
   ignore (checked_pixels width height channels);

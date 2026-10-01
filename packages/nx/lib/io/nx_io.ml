@@ -54,10 +54,18 @@ let save_image ?(overwrite = true) path img =
       Image_io.save_jpeg ~overwrite path data ~width:w ~height:h ~channels:c
   | _ -> failwith (err_unsupported_ext ext)
 
-let encode_png img =
+(* The pHYs chunk holds a positive four-byte PNG integer, at most 2^31 - 1. *)
+let pixels_per_metre dpi =
+  let ppm = Float.round (dpi /. 0.0254) in
+  if not (1. <= ppm && ppm <= 2147483647.) then
+    invalid_arg (Printf.sprintf "Nx_io.encode_png: invalid dpi %g" dpi);
+  int_of_float ppm
+
+let encode_png ?dpi ?(srgb = false) img =
+  let ppm = match dpi with None -> 0 | Some dpi -> pixels_per_metre dpi in
   let h, w, c, data = uint8_pixels ~by:"Nx_io.encode_png" img in
   png_channels c;
-  Image_io.encode_png data ~width:w ~height:h ~channels:c
+  Image_io.encode_png data ~width:w ~height:h ~channels:c ~ppm ~srgb
 
 (* NumPy *)
 

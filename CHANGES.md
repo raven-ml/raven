@@ -2922,6 +2922,10 @@ thread.
 
 ### Nx
 
+- `Nx_io.encode_png` takes `?dpi`, written as a `pHYs` chunk so that viewers
+  and printers show the image at its physical size, and `?srgb`, an `sRGB`
+  chunk stating that the samples are sRGB. Without them the file is the same
+  as before.
 - On Linux, nx's thread pool has as many workers as CPUs the process may run
   on, its affinity mask bounded by its cgroup's CPU quota, where it counted
   every online CPU: under `taskset`, a cpuset or a container's CPU limit the

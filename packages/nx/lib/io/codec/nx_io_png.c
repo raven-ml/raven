@@ -674,10 +674,12 @@ static void put_chunk(uint8_t **cursor, const char type[4],
   *cursor = p + 12 + len;
 }
 
-/* Assembles the whole PNG file for [src] into a malloc'd buffer. */
+/* Assembles the whole PNG file for [src] into a malloc'd buffer. A [ppm] other
+   than 0 is written as a pHYs chunk of [ppm] pixels per metre on both axes, and
+   a non-zero [srgb] as an sRGB chunk with the perceptual rendering intent. */
 static png_status build_png(const uint8_t *src, size_t src_len, size_t width,
-                            size_t height, unsigned channels, uint8_t **out,
-                            size_t *out_len) {
+                            size_t height, unsigned channels, uint32_t ppm,
+                            int srgb, uint8_t **out, size_t *out_len) {
   if (width == 0 || height == 0 ||
       (channels != 1 && channels != 3 && channels != 4) ||
       width > SIZE_MAX / height || width * height > SIZE_MAX / channels ||
@@ -719,8 +721,8 @@ static png_status build_png(const uint8_t *src, size_t src_len, size_t width,
     free(zlib);
     return PNG_SIZE;
   }
-  size_t total = sizeof(png_signature) + 12 + 13 + zlib_len +
-                 (idat_chunks * 12) + 12;
+  size_t total = sizeof(png_signature) + 12 + 13 + (srgb ? 12 + 1 : 0) +
+                 (ppm != 0 ? 12 + 9 : 0) + zlib_len + (idat_chunks * 12) + 12;
   uint8_t *file = malloc(total);
   if (file == NULL) {
     free(zlib);
@@ -738,6 +740,17 @@ static png_status build_png(const uint8_t *src, size_t src_len, size_t width,
   ihdr[11] = 0;
   ihdr[12] = 0;
   put_chunk(&cursor, "IHDR", ihdr, sizeof(ihdr));
+  if (srgb) {
+    const uint8_t perceptual = 0;
+    put_chunk(&cursor, "sRGB", &perceptual, 1);
+  }
+  if (ppm != 0) {
+    uint8_t phys[9];
+    write_be32(phys, ppm);
+    write_be32(phys + 4, ppm);
+    phys[8] = 1;
+    put_chunk(&cursor, "pHYs", phys, sizeof(phys));
+  }
   size_t off = 0;
   while (off < zlib_len) {
     size_t chunk = zlib_len - off;
@@ -758,7 +771,7 @@ static png_status encode_png(nx_io_fd fd, const uint8_t *src, size_t src_len,
   uint8_t *file = NULL;
   size_t file_len = 0;
   png_status status =
-      build_png(src, src_len, width, height, channels, &file, &file_len);
+      build_png(src, src_len, width, height, channels, 0, 0, &file, &file_len);
   if (status != PNG_OK)
     return status;
   status = write_all(fd, file, file_len);
@@ -837,8 +850,10 @@ CAMLprim value caml_nx_io_png_encode(value vfd, value vsrc, value vwidth,
   CAMLreturn(Val_unit);
 }
 CAMLprim value caml_nx_io_png_encode_string(value vsrc, value vwidth,
-                                            value vheight, value vchannels) {
-  CAMLparam4(vsrc, vwidth, vheight, vchannels);
+                                            value vheight, value vchannels,
+                                            value vppm, value vsrgb) {
+  CAMLparam5(vsrc, vwidth, vheight, vchannels, vppm);
+  CAMLxparam1(vsrgb);
   CAMLlocal1(vresult);
   const uint8_t *src;
   size_t src_len;
@@ -846,20 +861,30 @@ CAMLprim value caml_nx_io_png_encode_string(value vsrc, value vwidth,
   intnat width_i = Long_val(vwidth);
   intnat height_i = Long_val(vheight);
   intnat channels_i = Long_val(vchannels);
+  intnat ppm_i = Long_val(vppm);
   if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
     caml_invalid_argument("Nx_io PNG: invalid image dimensions");
+  if (ppm_i < 0 || ppm_i > 0x7fffffff)
+    caml_invalid_argument("Nx_io PNG: invalid pixels per metre");
+  int srgb = Bool_val(vsrgb);
   uint8_t *file = NULL;
   size_t file_len = 0;
   caml_release_runtime_system();
   png_status status = build_png(src, src_len, (size_t)width_i,
-                                (size_t)height_i, (unsigned)channels_i, &file,
-                                &file_len);
+                                (size_t)height_i, (unsigned)channels_i,
+                                (uint32_t)ppm_i, srgb, &file, &file_len);
   caml_acquire_runtime_system();
   if (status != PNG_OK)
     caml_failwith(png_message(status));
   vresult = caml_alloc_initialized_string(file_len, (const char *)file);
   free(file);
   CAMLreturn(vresult);
+}
+
+CAMLprim value caml_nx_io_png_encode_string_bytecode(value *argv, int argn) {
+  (void)argn;
+  return caml_nx_io_png_encode_string(argv[0], argv[1], argv[2], argv[3],
+                                      argv[4], argv[5]);
 }
 #endif
 

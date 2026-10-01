@@ -36,8 +36,8 @@ val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
     [.jpeg]). Accepted shapes are [[|height; width|]], [[|height; width; 1|]],
     [[|height; width; 3|]], and, for PNG only, [[|height; width; 4|]]. JPEG is
     written baseline at quality 90 (the standard IJG tables scaled to 20%),
-    colour with its chroma subsampled 4:2:0. [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
-    exist.
+    colour with its chroma subsampled 4:2:0. [overwrite] defaults to [true]. If
+    [overwrite] is [false], [path] must not exist.
 
     @raise Failure
       if the shape or extension is unsupported, the image has no pixels, or
@@ -46,12 +46,24 @@ val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
       if [path] cannot be written or already exists when [overwrite] is [false].
 *)
 
-val encode_png : (int, Nx.uint8_elt) Nx.t -> string
-(** [encode_png t] is the contents of the PNG file {!save_image} would write for
-    [t], without touching the file system. Accepted shapes are
-    [[|height; width|]], [[|height; width; 1|]], [[|height; width; 3|]] and
-    [[|height; width; 4|]].
+val encode_png : ?dpi:float -> ?srgb:bool -> (int, Nx.uint8_elt) Nx.t -> string
+(** [encode_png ?dpi ?srgb t] is the contents of a PNG file of [t], without
+    touching the file system, with:
+    - [dpi], the image's physical resolution in pixels per inch, written as a
+      [pHYs] chunk of [Float.round (dpi /. 0.0254)] pixels per metre on both
+      axes, so that viewers and printers show the image at its physical size.
+      Without it the file states no physical size.
+    - [srgb], whether to write an [sRGB] chunk with the perceptual rendering
+      intent, which states that the samples are sRGB. Defaults to [false].
 
+    Without [dpi] and [srgb] it is the file {!save_image} writes for [t].
+    Accepted shapes are [[|height; width|]], [[|height; width; 1|]],
+    [[|height; width; 3|]] and [[|height; width; 4|]].
+
+    @raise Invalid_argument
+      if [Float.round (dpi /. 0.0254)] is not in \[[1];[2{^31} - 1]\], the range
+      of a PNG integer: [dpi] is below about [0.0127], above about [5.45e7], or
+      not a number.
     @raise Failure
       if the shape is unsupported, the image has no pixels, or encoding fails.
 *)

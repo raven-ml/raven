@@ -60,8 +60,7 @@ let round_trips ~save ~load cases =
           cover "an empty tensor" (Nx.numel t = 0);
           cover "a scalar" (Nx.ndim t = 0);
           cover "a view"
-            ((not (Nx.is_c_contiguous t))
-            || Nx_array.View.offset (view t) <> 0);
+            ((not (Nx.is_c_contiguous t)) || Nx_array.View.offset (view t) <> 0);
           Law.round_trip packed string (saved "" save) load (Nx.P t)))
     cases
 
@@ -688,6 +687,96 @@ let pillow name =
 let refuse_image name shape =
   fails (fun () -> Nx_io.save_image (missing name) (Nx.zeros Nx.uint8 shape))
 
+(* The chunks of the PNG file [png], as their types and data, in order. *)
+let chunks png =
+  let rec loop i acc =
+    if i >= String.length png then List.rev acc
+    else
+      let n = Int32.to_int (String.get_int32_be png i) in
+      let chunk = (String.sub png (i + 4) 4, String.sub png (i + 8) n) in
+      loop (i + 12 + n) (chunk :: acc)
+  in
+  loop 8 []
+
+let chunk_data ty png =
+  List.filter_map
+    (fun (ty', data) -> if ty = ty' then Some data else None)
+    (chunks png)
+
+(* [png] without its chunks of type [ty]. *)
+let without ty png =
+  let b = Buffer.create (String.length png) in
+  Buffer.add_string b (String.sub png 0 8);
+  let rec loop i =
+    if i < String.length png then begin
+      let n = Int32.to_int (String.get_int32_be png i) in
+      if String.sub png (i + 4) 4 <> ty then
+        Buffer.add_string b (String.sub png i (12 + n));
+      loop (i + 12 + n)
+    end
+  in
+  loop 8;
+  Buffer.contents b
+
+let be32 n = String.init 4 (fun i -> Char.chr ((n lsr (8 * (3 - i))) land 0xff))
+let tiny = Nx.full Nx.uint8 [| 2; 3; 3 |] 9
+
+let png_chunks_group =
+  group "PNG chunks"
+    [
+      test "encode_png writes neither pHYs nor sRGB by default" (fun () ->
+          let png = Nx_io.encode_png tiny in
+          equal (list string) [] (chunk_data "pHYs" png);
+          equal (list string) [] (chunk_data "sRGB" png));
+      cases ~name:fst "~dpi writes the pixels per metre on both axes, in metres"
+        [
+          ("72 dpi is 2835 pixels per metre", (72., 2835));
+          ("144 dpi is 5669 pixels per metre", (144., 5669));
+          ("0.0127 dpi rounds up to 1", (0.0127, 1));
+          ("the largest PNG integer", (2147483647. *. 0.0254, 2147483647));
+        ]
+        (fun (_, (dpi, ppm)) ->
+          equal (list string)
+            [ be32 ppm ^ be32 ppm ^ "\001" ]
+            (chunk_data "pHYs" (Nx_io.encode_png ~dpi tiny)));
+      test "~srgb writes one sRGB chunk with the perceptual intent" (fun () ->
+          equal (list string) [ "\000" ]
+            (chunk_data "sRGB" (Nx_io.encode_png ~srgb:true tiny)));
+      test "the chunks precede the image data" (fun () ->
+          let png = Nx_io.encode_png ~dpi:72. ~srgb:true tiny in
+          let rec before_idat = function
+            | [] | ("IDAT", _) :: _ -> []
+            | (ty, _) :: rest -> ty :: before_idat rest
+          in
+          equal
+            (slist string String.compare)
+            [ "IHDR"; "pHYs"; "sRGB" ]
+            (before_idat (chunks png)));
+      prop
+        "with ~dpi and ~srgb the file is that of encode_png with the two \
+         chunks added, and loads back the same"
+        (Gen.pair (images [ 0; 1; 3; 4 ]) (Gen.float_range 1. 1000.))
+        (fun (t, dpi) ->
+          let plain = Nx_io.encode_png t in
+          let png = Nx_io.encode_png ~dpi ~srgb:true t in
+          equal string plain (without "sRGB" (without "pHYs" png));
+          equal (tensor int)
+            (Nx_io.load_image (file ".png" plain))
+            (Nx_io.load_image (file ".png" png)));
+      cases ~name:fst "~dpi outside the range of a PNG integer is refused"
+        [
+          ("zero", 0.);
+          ("a negative", -72.);
+          ("one rounding to zero pixels per metre", 0.0126);
+          ("one rounding past the largest PNG integer", 2147483648. *. 0.0254);
+          ("an infinity", infinity);
+          ("nan", nan);
+        ]
+        (fun (_, dpi) ->
+          raises_match (Exn.invalid_arg ~substring:"dpi") (fun () ->
+              ignore (Nx_io.encode_png ~dpi tiny)));
+    ]
+
 let images_group =
   group "images"
     [
@@ -1021,6 +1110,7 @@ let () =
          safetensors;
          txt;
          images_group;
+         png_chunks_group;
          every_format;
          malformed;
        ])
