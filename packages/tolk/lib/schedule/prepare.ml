@@ -628,7 +628,8 @@ let earliest_rewrites =
 
 let prepare_rangeify sink =
   let tsink =
-    graph_rewrite ~ctx:() (forward_call_outputs sink) Multi.multi_pm
+    graph_rewrite ~bpm:Multi.scatter_dests ~ctx:() (forward_call_outputs sink)
+      Multi.multi_pm
   in
   let tsink =
     graph_rewrite ~ctx:() tsink

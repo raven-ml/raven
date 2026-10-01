@@ -18,6 +18,14 @@
     {!Op.Unshard} moves towards the graph's outputs, and each device's program
     names only its own part. *)
 
+val scatter_dests : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [scatter_dests] marks a gather of a sharded value that a {!Op.Store} writes
+    through as a scatter. It rewrites before a node's sources, as the [bpm] of
+    the rewrite by {!multi_pm}, so that the gather is marked before {!multi_pm}
+    reaches it.
+
+    Raises [Invalid_argument] if that gather carries a tag already. *)
+
 val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [multi_pm] rewrites an operation whose sources are sharded into the
     operation on their shards, sharded as the result is:
@@ -50,6 +58,12 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
       weights by rows routes its activations to them instead. A gather of a
       whole value by a sharded index gathers each part of the index; of a
       sharded value, it gathers by the whole index, joined on each device;
+    - a gather that {!scatter_dests} marks takes its index whole on each
+      device, a sharded one joined. Of a value sharded on axes after the
+      gathered one, each shard stores its part; of a value sharded on the
+      gathered axis, each shard stores the rows it holds, at their index within
+      it, and every other row's index is Invalid, which drops its store. The
+      value stored is whole on each device, a sharded one joined;
     - a copy to one device joins the shards along their axes; a copy to several
       devices places each shard at its offset in zeros and sums them across the
       devices;
@@ -82,7 +96,8 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
     Raises [Invalid_argument] on what has no shard of its own: a reshape that
     moves elements between shards, a pad, flip or shrink of a sharded axis other
     than those above, a reduction of some sharded axes but not all, an index
-    that crosses shards, a gather by more than one index, by an index on other
+    that crosses shards, a scatter into a value sharded on the gathered axis
+    and another, a gather by more than one index, by an index on other
     devices than its value, of a value sharded on the gathered axis and another,
     or of elements of a width without an unsigned integer type, a store of a
     sharded value into a whole destination on several devices, whose copies

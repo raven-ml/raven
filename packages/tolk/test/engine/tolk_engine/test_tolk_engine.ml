@@ -976,6 +976,54 @@ let stores_through_a_pad ?(devices = devices) ?fill ?(read = false) ?tag device
       (Array.init 8 (fun r -> `Float (sum r)))
       (contents (of_size 8)))
 
+(* A store of [rows], [4; 8], into [pool], [8; 8], at the rows the loaded
+   [slots] give, an index that is Invalid where a slot lies outside [pool]: a
+   scatter of rows, one kernel ranging over them. *)
+let gathered_store device =
+  let buffer n dt shape =
+    Ops.reshape
+      (Ops.new_buffer (Single device) n dt)
+      (List.map (fun d -> Ops.Int d) shape)
+  in
+  let pool = buffer 64 Float32 [ 8; 8 ] in
+  let slots = buffer 4 Int32 [ 4 ] and rows = buffer 32 Float32 [ 4; 8 ] in
+  let inside =
+    Ops.bitwise_and (Ops.ge slots (Ops.int 0)) (Ops.lt slots (Ops.int 8))
+  in
+  let at = Ops.valid (Ops.cast slots Weak_int) inside in
+  let dest = Ops.index pool [ at ] in
+  Ops.sink [ Ops.after pool [ Ops.store dest (Ops.add rows (Ops.float 0.5)) ] ]
+
+(* [stores_through_a_gather targets] runs [gathered_store] with [slots] at
+   [targets]: [pool] holds each row at its slot within it, and is otherwise
+   untouched. *)
+let stores_through_a_gather targets () =
+  let big = gathered_store "CPU" in
+  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
+  equal ~msg:"kernels" int 1 (List.length calls);
+  let s, vars, storage = linked ~devices big in
+  let of_size n = List.find (fun st -> per_device st.arg = n) storage in
+  let pool = of_size 64 and slot = of_size 4 and rows = of_size 32 in
+  List.iter
+    (fun dst ->
+      Buffer.copy
+        ~src:
+          (Run.buffer host Int32
+             (Array.map (fun i -> `Int (Bigint.of_int i)) targets))
+        ~dst)
+    slot.buffers;
+  Engine.run ~vars s (slots storage);
+  let num v = match v with `Float f -> f | _ -> fail "a float" in
+  let expected =
+    Array.mapi
+      (fun i v ->
+        match Array.find_index (Int.equal (i / 8)) targets with
+        | Some r -> `Float (num rows.before.((r * 8) + (i mod 8)) +. 0.5)
+        | None -> v)
+      pool.before
+  in
+  equal values expected (contents pool)
+
 (* A store of a row of [x @ w] into [pool], [8; 8], through a shrink whose
    bounds are the loaded [slot] carrying its validity: the shrink's size is 1
    where [slot] lies within [pool], and Invalid elsewhere. *)
@@ -1022,6 +1070,17 @@ let padded_stores =
         [ 3; -1 ] (fun at ->
           stores_through_a_pad ~fill:7. ~read:true ~tag:(Ops.Tag.Int 1) "CPU" at
             ());
+    ]
+
+let gathered_stores =
+  group "a store through a gather"
+    [
+      cases
+        ~name:(fun t ->
+          String.concat ", " (Array.to_list (Array.map string_of_int t)))
+        "writes each row at its loaded index and drops an invalid one"
+        [ [| 0; 3; 7; 5 |]; [| 6; -1; 8; 2 |] ]
+        (fun targets -> stores_through_a_gather targets ());
     ]
 
 let schedules =
@@ -2249,6 +2308,7 @@ let () =
          in_blocks;
          schedules;
          padded_stores;
+         gathered_stores;
          group "a store through a shrink" [ valid_slot_store ];
          refusals;
          runs;

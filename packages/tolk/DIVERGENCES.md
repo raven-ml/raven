@@ -116,7 +116,7 @@ the Exclusions of `README.md`.
   (`construction_check`), `:1685` (`simplify_hook`), `:4614` (`Private`),
   `:1190` (`Make_elementwise`), `:816` (`repr`), `:244` (`bufferize_opts`),
   `:262` (`Calls`); `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
-  `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:665`
+  `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:709`
   (`contiguous_view`); `lib/schedule/schedule.ml:164` (`pm_flatten_linear`);
   `lib/codegen/codegen.ml:621` (`apply_opts`); `lib/engine/realize.ml:117`
   (`lower_and_compile`); `lib/runtime/support/hcq2.ml:416` (`device`),
@@ -2139,7 +2139,7 @@ tolk lowers as one, replaces it.
   in graph_rewrite", in tinygrad and in the patched tinygrad of
   `test/gen/tinygrad.patch`. tinygrad's own caller asks only about views of
   buffers (`schedule/__init__.py:210`).
-- **tolk:** `lib/schedule/prepare.ml:668` (`contiguous_view`).
+- **tolk:** `lib/schedule/prepare.ml:709` (`contiguous_view`).
 - **Differs:** a value whose storage base (`Ops.storage_base`) is not storage
   (`Op.Buffer`, `Op.Alloc` or `Op.Param`) has no contiguous view, without a
   rewrite: a constant, and a computed value, which tinygrad would mark and
@@ -2171,7 +2171,7 @@ tolk lowers as one, replaces it.
   (`move_index`), `:133` (`mops`), `:159` (`pm_tensor_mops`) and `:195`
   (`fix_store_hazard`'s `reorders`); `lib/schedule/multi.ml:558`
   (`same_devices`), `:569` (`gather_shards`), `:592` (`gather_multi`) and
-  `:694`; the same rules in `test/gen/tinygrad.patch`, which the goldens are
+  `:790`; the same rules in `test/gen/tinygrad.patch`, which the goldens are
   recorded with.
 - **Differs:** an `INDEX` whose one index source has axes, `INDEX(x, L)`,
   reads `x` at the row each element of `L` holds, and its shape is `L`'s
@@ -2543,7 +2543,7 @@ tolk lowers as one, replaces it.
 - **tinygrad:** `schedule/multi.py:256` (`store_value_multi`), which stores
   each shard of a sharded value into its own part of an unsharded
   destination.
-- **tolk:** `lib/schedule/multi.ml:609` (`store_value_multi`);
+- **tolk:** `lib/schedule/multi.ml:697` (`store_value_multi`);
   `test/gen/tinygrad.patch`.
 - **Differs:** a store of a sharded value into a destination that is whole
   and lives on several devices raises `Invalid_argument`. Each device would
@@ -2637,3 +2637,25 @@ tolk lowers as one, replaces it.
   a program reads a lane of a vector at a constant (D86)`; the Cstyle suite's
   `every GPU kernel compiles with its target's toolchain › cuda_dynamic_lane`,
   tinygrad's source, which NVRTC rejects (slow, an expected failure).
+
+## D87. A store through a gather of a sharded value stores each shard's rows
+
+- **tinygrad:** `schedule/multi.py:291` (`index_multi`, for every `INDEX` of
+  a sharded value); a store reads its destination's `INDEX` as any other, so
+  a store through a gather of a sharded value has no rule of its own.
+- **tolk:** `lib/schedule/multi.ml:617` (`scatter_dests`, run as the `bpm` of
+  the rewrite in `lib/schedule/prepare.ml:631`), `:637` (`whole_index`),
+  `:650` (`scatter_shards`), `:683` (`store_scattered`) and `:778`.
+- **Differs:** a gather that a store writes through, of a sharded value, is
+  marked before the rewrite reaches it and becomes a scatter: its index is
+  whole on each device, a sharded one joined with its validity beside it. Of
+  a value sharded on trailing axes, each shard stores its part; of a value
+  sharded on its rows, each shard stores the rows it holds at their index
+  within it, and every other row's index is Invalid, which drops its store.
+  The stored value is whole on each device. Read as a gather instead, each
+  device stored into a joined copy of the rows.
+- **Reason:** (b): rune writes a lent value at loaded indices with one indexed
+  store (`Lower_index.scatter`'s region), a key-value cache's rows among them,
+  and a cache split over devices along its rows: `Jit › a lent write of rows ›
+  a pool split along the written axis is written whole`.
+- **Pinned by:** the `Multi` suite: `multi_pm › scatters › *`.

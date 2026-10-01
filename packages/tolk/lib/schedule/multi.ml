@@ -600,6 +600,94 @@ let gather_multi root multi =
       gather_shards multi l
   | _ -> invalid_arg "a gather takes one index"
 
+(* Scatters
+
+   A store through a gather of a sharded value is a scatter: each device stores
+   the elements its shards hold. Such a gather is marked as the rewrite enters
+   its store, before it reaches the gather, so that the gather is not read, and
+   the store it becomes loses the mark. *)
+
+let scattered = Tag.String "scattered"
+
+let is_scattered u =
+  match tag u with
+  | Some t -> Tag.equal t scattered
+  | None -> false
+
+let scatter_dests =
+  Pattern_matcher.v (fun () ->
+      [
+        rule (Upat.op Op.Store ~name:"st") (fun m ->
+            let st = m "st" in
+            match src st with
+            | dest :: rest
+              when Indexing.is_gather dest
+                   && (not (is_scattered dest))
+                   && op_in_backward_slice_with_self (nth dest 0) [ Op.Unshard ]
+              ->
+                if Option.is_some (tag dest) then
+                  invalid_arg "a store through a gather that carries a tag";
+                Some (replace st ~src:(replace dest ~tag:(Some scattered) :: rest))
+            | _ -> None);
+      ])
+
+(* [whole_index l] is the sharded index [l] whole on each of its devices: its
+   positions joined in [int64], since an index type has no width to cross
+   devices in, and its validity joined beside them. *)
+let whole_index l =
+  let s = sharding l and ds = Multi (devices l) in
+  let join u = copy_multi (unshard_as s u) ds in
+  let shard = nth l 0 in
+  let idx = cast (join (cast (get_idx shard) Dtype.Int64)) (dtype l) in
+  match get_valid shard with
+  | v when op v = Op.Const -> idx
+  | v -> valid idx (join v)
+
+(* A scatter into a sharded value: its index whole on each device. Sharded along
+   trailing axes, each shard stores into its own part. Sharded along the
+   gathered rows, each shard stores the rows it holds, at their index within
+   it, and the index of every other row is Invalid, which drops its store. *)
+let scatter_shards root multi =
+  let x = nth multi 0 in
+  let l =
+    match src root with
+    | [ _; l ] when is_unshard l ->
+        same_devices multi l;
+        whole_index l
+    | [ _; l ] ->
+        same_devices multi l;
+        l
+    | _ -> invalid_arg "a scatter takes one index"
+  in
+  let n = ndim l in
+  let scattered u = replace u ~tag:(Some scattered) in
+  match sharding multi with
+  | sharding when List.for_all (fun (ax, _) -> ax >= 1) sharding ->
+      unshard_as
+        (List.map (fun (ax, r) -> (ax - 1 + n, r)) sharding)
+        (scattered (index x [ l ]))
+  | [ (0, rng) ] ->
+      let rows = sint_to_uop (List.hd (shape x)) in
+      let local = sub (get_idx l) (mul rng rows) in
+      let inside =
+        bitwise_and (get_valid l)
+          (bitwise_and (ge local (int 0)) (lt local rows))
+      in
+      scattered (index x [ valid local inside ])
+  | _ ->
+      invalid_arg "a scatter into a value sharded on its rows and another axis"
+
+(* The value stored by a scatter: whole on each device, as its index is, and
+   each shard of a destination sharded along trailing axes stores its part.
+   The store's destination loses its mark. *)
+let store_scattered dest v =
+  let v =
+    if is_unshard v then copy_multi v (Option.get (device v)) else v
+  in
+  let plain u = replace u ~tag:None in
+  if is_unshard dest then store (plain (nth dest 0)) (shard_subview v dest)
+  else store (plain dest) v
+
 let store_after_multi dest src =
   reshard src (after dest [ store dest (nth src 0) ])
 
@@ -684,11 +772,19 @@ and multi_pm =
             rule (Upat.op Op.Stack ~name:"root" ~early_reject:[ Op.Unshard ])
               (fun m -> stack_multi (m "root"));
             rule
+              (Upat.op Op.Store ~src:[ Upat.var "dest"; Upat.var "v" ])
+              (fun m ->
+                let dest = m "dest" in
+                if is_scattered (peel dest) then
+                  Some (store_scattered dest (m "v"))
+                else None);
+            rule
               (Upat.op Op.Index ~name:"root" ~allow_any_len:true
                  ~src:[ Upat.op Op.Unshard ~name:"multi" ])
               (fun m ->
                 let root = m "root" in
-                if Indexing.is_gather root then
+                if is_scattered root then Some (scatter_shards root (m "multi"))
+                else if Indexing.is_gather root then
                   Some (gather_multi root (m "multi"))
                 else Some (index_multi root (m "multi")));
             (* A gather by a sharded index gathers each part of the index. *)

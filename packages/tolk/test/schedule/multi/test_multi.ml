@@ -6,7 +6,8 @@ open Windtrap
 open Tolk
 
 let uop = Uops.uop
-let multi u = Ops.graph_rewrite ~ctx:() u Multi.multi_pm
+let multi u =
+  Ops.graph_rewrite ~bpm:Multi.scatter_dests ~ctx:() u Multi.multi_pm
 let program name = Golden.sink (name ^ ".golden")
 
 (* Recorded graphs *)
@@ -1082,6 +1083,62 @@ let gathers =
           refused ~because:"one index" (Ops.index rows [ l; l ]));
     ]
 
+(* A scatter of three rows at indices loaded from memory, two of them within
+   the destination's four rows and one past them, which its index makes Invalid:
+   each device stores the rows it holds and no other. *)
+let scatters =
+  let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
+  let at i =
+    Ops.valid (Ops.cast i Weak_int)
+      (Ops.bitwise_and (Ops.ge i (i32 0)) (Ops.lt i (i32 4)))
+  in
+  let memory =
+    [
+      (1, Array.init 32 (fun j -> `Float (float_of_int j)));
+      (2, Array.map (fun k -> `Int (Bigint.of_int k)) [| 3; 7; 0; 3; 7; 0 |]);
+      (3, Array.init 48 (fun j -> `Float (float_of_int (100 + (j mod 24)))));
+    ]
+  in
+  let l = at (storage ~dtype:Int32 2 [ 3 ]) in
+  let writes_whole dest v =
+    let u = Ops.after dest [ Ops.store (Ops.index dest [ l ]) v ] in
+    let whole = List.hd (Tensors.eval ~buffers:memory u) in
+    List.iteri
+      (fun k got ->
+        equal ~msg:(Printf.sprintf "device %d" k) (array Dtypes.const) whole got)
+      (Tensors.eval ~buffers:memory (multi u))
+  in
+  group "multi_pm › scatters"
+    [
+      test "a scatter into sharded rows stores each row on the device holding it"
+        (fun () -> writes_whole (sharded 1 [ 2; 8 ] 0) (storage 3 [ 3; 8 ]));
+      test "a scatter into a value sharded on trailing axes stores each part"
+        (fun () -> writes_whole (sharded 1 [ 4; 4 ] 1) (storage 3 [ 3; 8 ]));
+      test "a scatter of a sharded value stores the whole value" (fun () ->
+          writes_whole (sharded 1 [ 2; 8 ] 0)
+            (Ops.unshard (storage 3 [ 3; 4 ]) [ 1 ]));
+      test "a scatter by a sharded index joins the index" (fun () ->
+          let l = at (Ops.unshard (storage ~dtype:Int32 2 [ 1 ]) [ 0 ]) in
+          let dest = sharded 1 [ 2; 8 ] 0 and v = storage 3 [ 2; 8 ] in
+          let u = Ops.after dest [ Ops.store (Ops.index dest [ l ]) v ] in
+          let whole = List.hd (Tensors.eval ~buffers:memory u) in
+          List.iter
+            (fun got -> equal (array Dtypes.const) whole got)
+            (Tensors.eval ~buffers:memory (multi u)));
+      test "a scatter into a value sharded on its rows and another axis is \
+            refused" (fun () ->
+          let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
+          let grid =
+            Ops.unshard
+              ~ranges:Ops.O.[ r // int 2; r % int 2 ]
+              (storage ~devices:four 1 [ 2; 4 ])
+              [ 0; 1 ]
+          in
+          let l = at (storage ~devices:four ~dtype:Int32 2 [ 3 ]) in
+          refused ~because:"another axis"
+            (Ops.store (Ops.index grid [ l ]) (storage ~devices:four 3 [ 3; 8 ])));
+    ]
+
 let effects =
   let dest = sharded 5 [ 2; 8 ] 0 in
   group "multi_pm › stores and calls"
@@ -1159,6 +1216,7 @@ let () =
          copies;
          selections;
          gathers;
+         scatters;
          effects;
          passthrough;
        ])

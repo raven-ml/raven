@@ -74,25 +74,32 @@ let gather ?fill shape t f =
 
 (* [index u t idxs] is the gather [u] of [t]: each index tensor of [idxs] reads
    one leading axis of [t] at the position it holds, where its own axes are the
-   result's, and the rest of [t] follows. *)
+   result's, and the rest of [t] follows. An element at an Invalid index is
+   Invalid and views no memory: a store through it is dropped. *)
 let index u t idxs =
   let position c =
     match c.value with
-    | `Int n -> Bigint.to_int n
+    | `Int n -> Some (Bigint.to_int n)
+    | `Invalid -> None
     | v -> fail "a gather's index is %a" Dtype.pp_const v
   in
-  gather (concrete u) t (fun c ->
+  gather ~fill:`Invalid (concrete u) t (fun c ->
       let rec read c = function
-        | [] -> c
-        | it :: rest ->
+        | [] -> Some c
+        | it :: rest -> (
             let k = List.length it.shape in
             let here = List.filteri (fun i _ -> i < k) c in
-            let i = position it.cells.(offset it.shape here) in
-            i :: read (List.filteri (fun i _ -> i >= k) c) rest
+            match position it.cells.(offset it.shape here) with
+            | None -> None
+            | Some i ->
+                Option.map (List.cons i)
+                  (read (List.filteri (fun i _ -> i >= k) c) rest))
       in
-      let at = read c idxs in
-      if List.for_all2 (fun i n -> 0 <= i && i < n) at t.shape then Some at
-      else fail "a gather reads outside its source")
+      match read c idxs with
+      | None -> None
+      | Some at when List.for_all2 (fun i n -> 0 <= i && i < n) at t.shape ->
+          Some at
+      | Some _ -> fail "a gather reads outside its source")
 
 let broadcast shape t =
   let lead = List.length shape - List.length t.shape in
@@ -345,10 +352,11 @@ let store m dst value =
       in
       Array.iteri
         (fun k c ->
-          match c.at with
-          | Some at ->
+          match (c.at, c.value) with
+          | Some at, _ ->
               Hashtbl.replace m.written (key at) (source at).cells.(k).value
-          | None -> fail "a store's destination is not storage")
+          | None, `Invalid -> ()
+          | None, _ -> fail "a store's destination is not storage")
         d.cells)
     dst
 
