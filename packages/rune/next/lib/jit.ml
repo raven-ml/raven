@@ -411,6 +411,59 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
   let assigned = ref []
   and stores = ref []
   and outs = Array.make (Array.length ys) Empty in
+  (* A fresh result that is all of a buffer the program makes, in order, and
+     that no call reads whole, has the program write it in its storage in place
+     of that buffer, and no copy. *)
+  let taken = ref [] in
+  let whole =
+    lazy
+      (List.concat_map
+         (fun u ->
+           if Ops.op u = Op.Call then
+             List.filter_map
+               (fun a ->
+                 match Tolk_next.Prepare.contiguous_view a with
+                 | Some (b, 0) when Ops.max_numel b = Ops.max_numel a ->
+                     Some
+                       (if Ops.op b = Op.After then List.hd (Ops.src b) else b)
+                 | _ -> None)
+               (Ops.src_without_body u)
+           else [])
+         (Ops.toposort (Ops.sink (Array.to_list nodes))))
+  in
+  let made b =
+    Ops.op b = Op.Buffer
+    && (match Ops.arg b with
+      | Ops.Param p -> not (Array.mem p.slot slots)
+      | _ -> false)
+    && (not (List.exists (fun (c, _) -> c == b) (Lower.captures s)))
+    && not (List.mem_assq b !taken)
+  in
+  let take j target =
+    let (Nx.P y) = ys.(j) in
+    let n = numel (Nx.shape y) in
+    match
+      ( Tolk_next.Prepare.contiguous_view nodes.(j),
+        Tolk_next.Prepare.contiguous_view target )
+    with
+    | Some (a, 0), Some (t, 0) when Ops.op a = Op.After && Ops.op t = Op.Buffer
+      ->
+        let b = List.hd (Ops.src a) in
+        if
+          made b
+          && (not (List.memq b (Lazy.force whole)))
+          && Ops.max_numel b = n
+          && Ops.max_numel t = n
+          && Tolk_next.Dtype.equal (Ops.dtype b) (Ops.dtype t)
+          && Ops.device b = Ops.device t
+        then begin
+          taken := (b, t) :: !taken;
+          stores := a :: !stores;
+          true
+        end
+        else false
+    | _ -> false
+  in
   List.iter
     (fun j ->
       let (Nx.P y) = ys.(j) in
@@ -452,7 +505,10 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
       end
       else
         let k = Ops.unique_num () in
-        store k;
+        let target =
+          Lower.output s ~slot:k (Nx.placement y) (Nx.dtype y) (Nx.shape y)
+        in
+        if not (Option.is_none (regions j) && take j target) then store k;
         outs.(j) <- Fresh k)
     order;
   let results =
@@ -471,7 +527,7 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
         { like; shape; at; out; name })
       ys
   in
-  let sink = Ops.sink (List.rev !stores) in
+  let sink = Ops.substitute (Ops.sink (List.rev !stores)) !taken in
   let buffers = Hashtbl.create 16 in
   List.iter
     (fun u ->
