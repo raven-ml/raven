@@ -136,8 +136,9 @@ type param_arg = {
   phase : int;
       (** The bytes by which the storage's first element lies past a 16-byte
           boundary, the width of the widest vector access: from [0] to [15], a
-          multiple of the element's size. Vector accesses start only where they
-          are aligned to their width. *)
+          multiple of the element's size, which a copy that changes the element
+          type must keep. Vector accesses start only where they are aligned to
+          their width. *)
 }
 (** The type for the arguments of {!Op.Param}, {!Op.Buffer} and {!Op.Alloc}:
     storage, or a scalar variable. *)
@@ -1249,19 +1250,18 @@ val param :
 val param_like : t -> int -> t
 (** [param_like u slot] is a parameter in [slot] that [u] can be passed to: a
     scalar variable without its name and value, one shard of a sharded value, or
-    storage of [u]'s shape. Storage keeps the phase of the storage [u] views
-    ({!param_arg}), moved by the bytes a shrink of one axis by a constant skips;
-    a shrink by a symbolic start keeps its storage's phase.
+    storage of [u]'s shape. Storage has the phase of the storage [u] views
+    ({!storage_phase}).
 
     Raises [Invalid_argument] if the phase does not fit [u]'s type. *)
 
 val storage_phase : t -> int
 (** [storage_phase u] is the phase ({!param_arg}) of the storage [u] views: its
-    storage's, moved by the bytes a shrink of one axis by a constant skips,
-    through bitcasts, reshapes, orderings and shard selections. A shrink by a
-    symbolic start keeps its storage's phase. Storage on a disk, which is read
-    at any byte, and anything that is not storage or a view of it have phase
-    [0]. *)
+    storage's, moved by the bytes a shrink by constants skips when it shrinks
+    the storage seen whole, in row-major order. Any other view keeps its
+    storage's phase: a shrink by a symbolic start, a reordering, a bitcast, an
+    ordering or a shard selection. Storage on a disk, which is read at any byte,
+    and anything that is not storage or a view of it have phase [0]. *)
 
 val view_as : ?axis:int -> t -> sint list -> t
 (** [view_as ~axis u shape] views the flat storage [u] as [shape], sharded on

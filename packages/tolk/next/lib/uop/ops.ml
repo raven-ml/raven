@@ -3367,19 +3367,36 @@ let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
   | Some s -> view_as (make (Some (size_of (to_max_shape s)))) s
 
 (* The phase of the storage [u] views: its storage's, moved by the bytes a
-   shrink of one axis by a constant skips. A shrink by a symbolic start, which
-   no phase describes, is taken to keep its storage's, as views are taken to
-   start aligned; storage the graph allocates starts on a boundary. *)
+   shrink by constants of storage seen whole skips. Any other view keeps its
+   storage's phase, as views are taken to start aligned; storage the graph
+   allocates starts on a boundary. *)
 let rec storage_phase u =
+  let rec whole v =
+    match (v.op, v.src) with
+    | (Op.Buffer | Op.Param | Op.Alloc), _ -> true
+    | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), v :: _ -> whole v
+    | _ -> false
+  in
+  let ints l = List.for_all (function Int _ -> true | Sym _ -> false) l in
+  let int = function Int n -> n | Sym _ -> 0 in
   match (u.op, u.src) with
   | _ when on_disk u -> 0
   | (Op.Buffer | Op.Param | Op.Alloc), _ -> (param_arg_of u).phase
-  | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), x :: _ -> storage_phase x
   | Op.Shrink, x :: _ -> (
       match marg u with
-      | Shrink [ (Int start, _) ] ->
-          (storage_phase x + (start * element_size x)) mod 16
+      | Shrink bounds
+        when whole x && ints (List.map fst bounds) && ints (shape x) ->
+          (* The element the shrink starts at, by the row-major strides of [x]'s
+             shape. *)
+          let offset =
+            List.fold_left2
+              (fun acc (start, _) size -> (acc * int size) + int start)
+              0 bounds (shape x)
+          in
+          (storage_phase x + (offset * element_size x)) mod 16
       | _ -> storage_phase x)
+  | (Op.Bitcast | Op.After | Op.Mselect), x :: _ -> storage_phase x
+  | o, x :: _ when Op.Set.mem o Op.Set.movement -> storage_phase x
   | _ -> 0
 
 let param_like u slot =

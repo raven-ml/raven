@@ -1531,11 +1531,13 @@ the Exclusions of `README.md`.
   first element lies past a 16-byte boundary, a multiple of its element's
   size; it defaults to `0`, tinygrad's assumption, so no graph of tinygrad's
   changes. A run of `l` elements merges where `l` divides the element's count
-  from that boundary, so every vector access is aligned to its width. A
-  parameter made from storage keeps the storage's phase, moved by the bytes a
-  shrink of one axis by a constant skips; a shrink by a symbolic start keeps
-  its storage's, as tinygrad takes every view to start aligned, and storage on
-  a disk, read at any byte, has none. The phase is part of the graph, so of a
+  from that boundary, so every vector access is aligned to its width; an
+  access through a bitcast to elements of a size the phase is not a multiple
+  of merges nothing. A parameter made from storage keeps the storage's phase,
+  moved by the bytes a shrink by constants of the storage seen whole skips; a
+  shrink by a symbolic start, or of a view that reorders the storage, keeps
+  its storage's, as tinygrad takes every view to start aligned, and storage
+  on a disk, read at any byte, has none. The phase is part of the graph, so of a
   program's cache key.
 - **Reason:** (b). rune's `Compiled` runs an operation over the storage it is
   given, and mapped weights put a tensor at any byte offset of its file: a

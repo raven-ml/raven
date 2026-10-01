@@ -176,6 +176,16 @@ let arguments =
           equal int 8 (phase (shrunk 1));
           equal int 0 (phase (shrunk 3));
           equal int 8 (phase (Ops.reshape (shrunk 1) [ Int 2; Int 2 ]));
+          let square = Ops.reshape b [ Int 4; Int 4 ] in
+          equal int 4 (phase (Ops.shrink square [ Some (Int 1, Int 3); None ]));
+          equal int 8
+            (phase
+               (Ops.shrink square [ Some (Int 1, Int 3); Some (Int 1, Int 3) ]));
+          equal int 4
+            (phase
+               (Ops.shrink
+                  (Ops.permute square [ 1; 0 ])
+                  [ Some (Int 1, Int 3); None ]));
           equal int 4
             (phase
                (Ops.shrink b

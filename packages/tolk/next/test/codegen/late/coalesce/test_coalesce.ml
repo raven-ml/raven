@@ -230,6 +230,13 @@ let phases =
             [ (0, 1); (1, 2); (3, 4); (7, 1) ]
             (accesses Op.Store
                (coalesce (stores (phased 4) (List.init 8 Fun.id)))));
+      test
+        "floats read through a bitcast of halves one half past a boundary are \
+         not merged" (fun () ->
+          let floats = Ops.bitcast (phased ~dtype:Float16 2) Float32 in
+          equal runs
+            (List.init 8 (fun k -> (k, 1)))
+            (accesses Op.Load (coalesce (loads floats (List.init 8 Fun.id)))));
       test "two halves past a boundary, a load of four starts at element 2"
         (fun () ->
           equal runs
