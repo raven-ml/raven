@@ -8,10 +8,6 @@ module Ptree = Nx.Ptree
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let not_yet name = invalid_arg ("Rune." ^ name ^ ": not implemented yet")
 
-let differentiable x =
-  let dt = Nx.dtype x in
-  Nx_dtype.is_float dt || Nx_dtype.is_complex dt
-
 (* Reverse mode *)
 
 (* [linearize fn p f params] is [f] applied to [params] under a recorder and a
@@ -25,7 +21,7 @@ let linearize fn p f params =
   let seeded =
     Ptree.map p
       (fun _ x ->
-        if differentiable x then begin
+        if Linear.differentiable x then begin
           any := true;
           Jvp.dual i x (Linear.input tape x)
         end
@@ -52,7 +48,7 @@ let pull p tape i seeded params seed =
   Ptree.map2 p gradient params seeded
 
 let objective fn y =
-  if Nx.numel y <> 1 || not (differentiable y) then
+  if Nx.numel y <> 1 || not (Linear.differentiable y) then
     invalid_arg
       (Format.asprintf
          "%s: the objective must return a real or complex scalar, got %a %a" fn
@@ -109,7 +105,7 @@ let jvp_of fn p q f params tangents =
   let duals =
     Structure.map2 fn p ~this:"the parameters" ~that:"the tangents"
       (fun _ x dx ->
-        if differentiable x then begin
+        if Linear.differentiable x then begin
           any := true;
           Jvp.dual i x dx
         end
@@ -144,7 +140,7 @@ let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
   (* A direction moves the real and complex leaves; the others are carried. *)
   let direction { move } =
     Ptree.map p
-      (fun _ x -> if differentiable x then move x else Nx.zeros_like x)
+      (fun _ x -> if Linear.differentiable x then move x else Nx.zeros_like x)
       params
   in
   let directions =

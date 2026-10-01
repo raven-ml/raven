@@ -558,10 +558,6 @@ let run : type r. t -> r Nx.Op.t -> r =
 
 (* Custom rules *)
 
-let differentiable x =
-  let dt = Nx.dtype x in
-  Nx_dtype.is_float dt || Nx_dtype.is_complex dt
-
 let holds_tensor q y = Nx.Ptree.fold q (fun _ _ _ -> true) y false
 
 let holds_own i p args =
@@ -619,7 +615,7 @@ let custom_jvp i p q rule args ~again =
       guarded i ~entry ~loops:(Option.is_none i.slots) (fun () -> map da)
     in
     Structure.map2 entry q ~this:"the result" ~that:"the tangent map's result"
-      (fun _ y dy -> if differentiable y then dual i y dy else y)
+      (fun _ y dy -> if Linear.differentiable y then dual i y dy else y)
       y dy
 
 (* A custom_vjp call: its result is the rule's at the primals, and under reverse
@@ -644,12 +640,12 @@ let custom_vjp i p q rule args =
           leaves
       in
       let ys, _ = Nx.Ptree.flatten q y in
-      let outputs = List.filter (fun (Nx.P y) -> differentiable y) ys in
+      let outputs = List.filter (fun (Nx.P y) -> Linear.differentiable y) ys in
       let conj (Nx.P c) = Nx.P (Nx.conjugate c) in
       let transpose cts =
         let rec fill ys cts =
           match (ys, cts) with
-          | Nx.P y :: ys, ct :: rest when differentiable y ->
+          | Nx.P y :: ys, ct :: rest when Linear.differentiable y ->
               conj ct :: fill ys rest
           | Nx.P y :: ys, cts -> Nx.P (Nx.zeros_like y) :: fill ys cts
           | [], _ -> []
@@ -667,7 +663,7 @@ let custom_vjp i p q rule args =
       let slots = ref (Linear.call tape tangents transpose outputs) in
       let attach _ y =
         match !slots with
-        | s :: rest when differentiable y ->
+        | s :: rest when Linear.differentiable y ->
             slots := rest;
             dual i y (Nx.unpack (Nx.dtype y) s)
         | _ -> y

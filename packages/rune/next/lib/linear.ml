@@ -27,6 +27,8 @@ type tape = {
 type (_, _) Repr.node +=
   | Slot : { tape : tape; index : int } -> ('a, 'b) Repr.node
 
+let real_or_complex dt = Nx_dtype.is_float dt || Nx_dtype.is_complex dt
+let differentiable x = real_or_complex (Nx.dtype x)
 let create entry = { entry; entries = Array.make 64 Input; length = 0 }
 
 let owns t x =
@@ -97,8 +99,6 @@ let claims : type r. tape -> r Nx.Op.t -> bool =
   | Fold _ | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _
   | Svd _ | Eig _ | Eigh _ | Solve_triangular _ | Place _ | Read _ ->
       List.exists (fun (Nx.P x) -> owns t x) (operands op)
-
-let real_or_complex dt = Nx_dtype.is_float dt || Nx_dtype.is_complex dt
 
 (* [record_any t op] is [record t op x] for the first slot operand [x]. *)
 let record_any t op =

@@ -15,6 +15,10 @@
 type tape
 (** The type for tapes. *)
 
+val differentiable : ('a, 'b) Nx.t -> bool
+(** [differentiable x] is [true] iff [x] is real or complex: a tangent of [x] is
+    a value of its dtype. *)
+
 val create : string -> tape
 (** [create entry] is a fresh tape for the entry point named [entry], which its
     errors name. *)
