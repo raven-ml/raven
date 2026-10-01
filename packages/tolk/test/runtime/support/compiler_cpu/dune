@@ -1,0 +1,30 @@
+; Settings are read when the program starts, so CACHEDB is set here, to a
+; directory of the sandbox, and the tests tagged no-clang run in a second
+; process, where CC names a program that does not exist.
+
+(test
+ (name test_compiler_cpu)
+ (package tolk)
+ (libraries windtrap tolk tolk_test tolk_run tolk.engine nx.device)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (run %{test} --exclude-tag slow --exclude-tag no-clang)
+    (setenv
+     CC
+     /nonexistent/clang
+     (run %{test} --tag no-clang))))))
+
+; The system and machine the suite runs on, whose processor it compiles for.
+
+(rule
+ (target platform.ml)
+ (action
+  (write-file
+   %{target}
+   "let system = \"%{ocaml-config:system}\"\nlet architecture = \"%{ocaml-config:architecture}\"\n")))

@@ -1,0 +1,26 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=16, device="CPU") tag=()
+1 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=16, device="CPU")
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.INDEX dtypes.uchar [1, 3]
+5 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=16, device="DISK:/tmp/tolk-schedule")
+6 Ops.INDEX dtypes.uchar [5, 3]
+7 Ops.STORE dtypes.void [4, 6]
+8 Ops.END dtypes.void [7, 3]
+9 Ops.SINK dtypes.void [8] KernelInfo()
+10 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=16, device="DISK:/tmp/tolk-schedule") tag=()
+11 Ops.CALL dtypes.void [9, 0, 10] CallInfo()
+12 Ops.AFTER dtypes.uchar [0, 11]
+13 Ops.PARAM dtypes.uchar [] ParamArg(slot=2, dtype=dtypes.uchar, size=16, device="CPU") tag=()
+14 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=16, device="CPU")
+15 Ops.INDEX dtypes.uchar [14, 3]
+16 Ops.CONST dtypes.weakint [] 1
+17 Ops.ADD dtypes.uchar [15, 16]
+18 Ops.STORE dtypes.void [4, 17]
+19 Ops.END dtypes.void [18, 3]
+20 Ops.SINK dtypes.void [19] KernelInfo()
+21 Ops.CALL dtypes.void [20, 13, 12] CallInfo()
+22 Ops.AFTER dtypes.uchar [13, 21]
+23 Ops.SINK dtypes.void [12, 22]
+

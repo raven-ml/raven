@@ -1,5 +1,0 @@
-(library
- (name tolk_parity_helpers)
- (wrapped false)
- (modules helpers program_spec_builder)
- (libraries tolk tolk.uop))

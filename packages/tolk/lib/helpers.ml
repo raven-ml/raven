@@ -7,480 +7,788 @@
 
 (* Environment *)
 
-let getenv name default =
-  match Sys.getenv_opt name with
-  | Some s -> (try int_of_string s with Failure _ -> default)
+(* Numbers are read with Python's number grammar, restricted to ASCII. *)
+
+let is_space c = (c >= '\t' && c <= '\r') || c = ' '
+let is_digit c = c >= '0' && c <= '9'
+
+let strip s =
+  let i = ref 0 and j = ref (String.length s) in
+  while !i < !j && is_space s.[!i] do
+    incr i
+  done;
+  while !j > !i && is_space s.[!j - 1] do
+    decr j
+  done;
+  String.sub s !i (!j - !i)
+
+let sign s i =
+  if i < String.length s && (s.[i] = '+' || s.[i] = '-') then i + 1 else i
+
+(* The end of the digits starting at [i], an underscore being allowed between
+   two digits; [i] if no digit starts there. OCaml's parsers accept an
+   underscore anywhere after the first digit, Python only between two. *)
+let digits s i =
+  let n = String.length s in
+  let rec after_digit j =
+    if j < n && is_digit s.[j] then after_digit (j + 1)
+    else if j + 1 < n && s.[j] = '_' && is_digit s.[j + 1] then
+      after_digit (j + 2)
+    else j
+  in
+  if i < n && is_digit s.[i] then after_digit (i + 1) else i
+
+(* [is_int] and [is_float] refuse what OCaml's parsers accept and Python does
+   not: misplaced underscores, base prefixes, hexadecimal floats and [nan(...)].
+   A missing digit run is left to the parsers, which refuse it. *)
+
+let is_int t = digits t (sign t 0) = String.length t
+
+let is_float t =
+  let n = String.length t in
+  let i = sign t 0 in
+  let j = digits t i in
+  let k = if j < n && t.[j] = '.' then digits t (j + 1) else j in
+  let exponent_end =
+    if k < n && (t.[k] = 'e' || t.[k] = 'E') then digits t (sign t (k + 1))
+    else k
+  in
+  List.mem
+    (String.lowercase_ascii (String.sub t i (n - i)))
+    [ "inf"; "infinity"; "nan" ]
+  || exponent_end = n
+
+let parse_int s =
+  let t = strip s in
+  match if is_int t then int_of_string_opt t else None with
+  | Some n -> Ok n
+  | None -> Error (Printf.sprintf "%S is not an integer" s)
+
+let parse_float s =
+  let t = strip s in
+  match if is_float t then float_of_string_opt t else None with
+  | Some x -> Ok x
+  | None -> Error (Printf.sprintf "%S is not a number" s)
+
+let read key parse default =
+  match Sys.getenv_opt key with
   | None -> default
+  | Some s -> (
+      match parse s with
+      | Ok x -> x
+      | Error e -> invalid_arg (Printf.sprintf "%s: %s" key e))
 
-let getenv_str name default =
-  match Sys.getenv_opt name with
-  | Some s when s <> "" -> s
-  | _ -> default
+(* [read] remembered per key and default, so that a program sees one value of
+   each variable however its environment changes. Entries are published
+   atomically; racing first reads publish once, and all get that value. *)
+let memoize parse =
+  let memo = Atomic.make [] in
+  let rec publish k v =
+    let m = Atomic.get memo in
+    match List.assoc_opt k m with
+    | Some v -> v
+    | None ->
+        if Atomic.compare_and_set memo m ((k, v) :: m) then v else publish k v
+  in
+  fun key default ->
+    match List.assoc_opt (key, default) (Atomic.get memo) with
+    | Some v -> v
+    | None -> publish (key, default) (read key parse default)
 
-let select_first_inited ~message candidates =
+let getenv = memoize parse_int
+let getenv_float = memoize parse_float
+let getenv_string = memoize Result.ok
+
+(* Settings *)
+
+module Context_var = struct
+  (* A domain starts with the values of the domain that spawns it. *)
+  type 'a t = { key : string; value : 'a Domain.DLS.key }
+
+  module Keys = Set.Make (String)
+
+  let declared = Atomic.make Keys.empty
+
+  let rec declare key =
+    let keys = Atomic.get declared in
+    if Keys.mem key keys then
+      invalid_arg (Printf.sprintf "setting %s is already declared" key);
+    if not (Atomic.compare_and_set declared keys (Keys.add key keys)) then
+      declare key
+
+  let v key x =
+    declare key;
+    { key; value = Domain.DLS.new_key ~split_from_parent:Fun.id (fun () -> x) }
+
+  let int key default = v key (getenv key default)
+  let bool key default = v key (getenv key (Bool.to_int default) <> 0)
+  let string key default = v key (getenv_string key default)
+  let key v = v.key
+  let value v = Domain.DLS.get v.value
+  let set v x = Domain.DLS.set v.value x
+end
+
+type binding = B : 'a Context_var.t * 'a -> binding
+
+let context bindings f =
+  let swap saved (B (v, x)) =
+    let previous = Context_var.value v in
+    Context_var.set v x;
+    B (v, previous) :: saved
+  in
+  let saved = List.fold_left swap [] bindings in
+  let restore () = List.iter (fun (B (v, x)) -> Context_var.set v x) saved in
+  Fun.protect ~finally:restore f
+
+module Target = struct
+  type t = {
+    device : string;
+    renderer : string;
+    arch : string;
+    interface : string;
+    indices : string;
+  }
+
+  let empty =
+    { device = ""; renderer = ""; arch = ""; interface = ""; indices = "" }
+
+  let of_string s =
+    let too_many sep s =
+      Error (Printf.sprintf "too many '%c' in target string: '%s'" sep s)
+    in
+    let split =
+      match String.split_on_char '+' s with
+      | [ prefix; rest ] -> (
+          match String.rindex_opt prefix ':' with
+          | Some i ->
+              Ok
+                ( String.sub prefix 0 i,
+                  String.sub prefix (i + 1) (String.length prefix - i - 1),
+                  rest )
+          | None -> Ok (prefix, "", rest))
+      | [ _ ] -> Ok ("", "", s)
+      | _ -> too_many '+' s
+    in
+    Result.bind split (fun (interface, indices, s) ->
+        let t = { empty with interface; indices }
+        and up = String.uppercase_ascii in
+        match String.split_on_char ':' s with
+        | [ device ] -> Ok { t with device = up device }
+        | [ device; renderer ] ->
+            Ok { t with device = up device; renderer = up renderer }
+        | [ device; renderer; arch ] ->
+            Ok { t with device = up device; renderer = up renderer; arch }
+        | _ -> too_many ':' s)
+
+  let join fields =
+    let s = String.concat ":" fields in
+    let n = ref (String.length s) in
+    while !n > 0 && s.[!n - 1] = ':' do
+      decr n
+    done;
+    String.sub s 0 !n
+
+  let pp ppf t =
+    let fst = join [ t.interface; t.indices ] in
+    if fst <> "" then Format.fprintf ppf "%s+" fst;
+    Format.pp_print_string ppf (join [ t.device; t.renderer; t.arch ])
+end
+
+let parse_targets s =
+  let add t acc =
+    Result.bind acc (fun ts ->
+        Result.map (fun t -> t :: ts) (Target.of_string t))
+  in
+  List.fold_right add (String.split_on_char ';' s) (Ok [])
+
+let dev =
+  match getenv_string "DEV" "" |> parse_targets with
+  | Ok targets -> Context_var.v "DEV" targets
+  | Error e -> invalid_arg ("DEV: " ^ e)
+
+let target ?(arch = "") device =
+  let matches (t : Target.t) = t.device = "" || t.device = device in
+  let t =
+    Option.value
+      (List.find_opt matches (Context_var.value dev))
+      ~default:Target.empty
+  in
+  { t with device; arch = (if t.arch = "" then arch else t.arch) }
+
+let debug = Context_var.int "DEBUG" 0
+let beam = Context_var.int "BEAM" 0
+let noopt = Context_var.bool "NOOPT" false
+let no_color = Context_var.bool "NO_COLOR" false
+let use_tc = Context_var.int "TC" 1
+let tc_select = Context_var.int "TC_SELECT" (-1)
+let tc_opt = Context_var.int "TC_OPT" 0
+let tc_min_globals = Context_var.int "TC_MIN_GLOBALS" 0
+let transcendental = Context_var.int "TRANSCENDENTAL" 1
+let split_reduceop = Context_var.bool "SPLIT_REDUCEOP" true
+let no_memory_planner = Context_var.bool "NO_MEMORY_PLANNER" false
+let ring = Context_var.int "RING" 1
+let all2all = Context_var.int "ALL2ALL" 0
+let allreduce_cast = Context_var.bool "ALLREDUCE_CAST" true
+let allreduce_node_ndevs = Context_var.int "ALLREDUCE_NODE_NDEVS" 0
+let cachelevel = Context_var.int "CACHELEVEL" 2
+let ignore_beam_cache = Context_var.bool "IGNORE_BEAM_CACHE" false
+let disable_fast_idiv = Context_var.bool "DISABLE_FAST_IDIV" true
+let max_kernel_buffers = Context_var.int "MAX_KERNEL_BUFFERS" 0
+
+let emulated_dtypes =
+  let names = String.split_on_char ',' (getenv_string "EMULATED_DTYPES" "") in
+  Context_var.v "EMULATED_DTYPES" (List.filter (fun x -> x <> "") names)
+
+let default_float = Context_var.string "DEFAULT_FLOAT" "float32"
+let default_int = Context_var.string "DEFAULT_INT" "int32"
+
+(* A container's CPU quota lives in the cgroup v2 file as "QUOTA PERIOD", or
+   "max PERIOD" when unlimited. *)
+let cpu_count =
+  let count = Domain.recommended_domain_count () in
+  match
+    In_channel.with_open_text "/sys/fs/cgroup/cpu.max" In_channel.input_all
+  with
+  | exception Sys_error _ -> count
+  | contents -> (
+      match String.split_on_char ' ' (String.trim contents) with
+      | [ quota; period ] when quota <> "max" -> (
+          match (parse_int quota, parse_int period) with
+          | Ok quota, Ok period when period <> 0 ->
+              min count (max 1 (quota / period))
+          | _ -> count)
+      | _ -> count)
+
+let parallel = Context_var.int "PARALLEL" cpu_count
+let spec = Context_var.int "SPEC" 1
+let check_oob = Context_var.bool "CHECK_OOB" false
+let debug_rangeify = Context_var.bool "DEBUG_RANGEIFY" false
+let tuple_order = Context_var.bool "TUPLE_ORDER" true
+let ccache = Context_var.bool "CCACHE" true
+let allow_tf32 = Context_var.bool "ALLOW_TF32" false
+let scache = Context_var.int "SCACHE" 1
+let disallow_broadcast = Context_var.bool "DISALLOW_BROADCAST" false
+
+(* Integers and lists *)
+
+let prod l = List.fold_left ( * ) 1 l
+
+let dedup (type a) (module H : Hashtbl.HashedType with type t = a) l =
+  let module Seen = Hashtbl.Make (H) in
+  let seen = Seen.create 16 in
+  let first x =
+    let before = Seen.mem seen x in
+    Seen.replace seen x ();
+    not before
+  in
+  List.filter first l
+
+let argsort l =
+  List.mapi (fun i x -> (x, i)) l
+  |> List.stable_sort (fun (x, _) (y, _) -> Int.compare x y)
+  |> List.map snd
+
+let all_same equal = function
+  | [] -> true
+  | first :: _ as l -> List.for_all (fun x -> equal x first) l
+
+let get_single_element = function
+  | [ x ] -> x
+  | l ->
+      invalid_arg
+        (Printf.sprintf "get_single_element: %d elements, expected 1"
+           (List.length l))
+
+(* Division rounded down; OCaml's [/] rounds towards zero. *)
+let fdiv x y =
+  let q = x / y in
+  if x mod y <> 0 && x < 0 <> (y < 0) then q - 1 else q
+
+let ceildiv num amt = -fdiv num (-amt)
+let round_up num amt = fdiv (num + amt - 1) amt * amt
+let floordiv x y = if y = 0 then 0 else fdiv x y
+let floormod x y = x - (floordiv x y * y)
+let lo32 x = x land 0xFFFF_FFFF
+let hi32 x = x asr 32
+let data64 x = (hi32 x, lo32 x)
+let data64_le x = (lo32 x, hi32 x)
+
+(* Selection *)
+
+(* The similarity of [a] and [b], in [0;1]: twice the length of their matching
+   blocks over their total length. A block is the longest common substring, then
+   recursively the blocks left and right of it. When [b] has 200 characters or
+   more, its characters occurring in more than 1% of it cannot start a block. *)
+let similarity a b =
+  let la = String.length a and lb = String.length b in
+  let positions = Array.make 256 [] in
+  for j = lb - 1 downto 0 do
+    let c = Char.code b.[j] in
+    positions.(c) <- j :: positions.(c)
+  done;
+  if lb >= 200 then
+    Array.iteri
+      (fun c js -> if List.length js > (lb / 100) + 1 then positions.(c) <- [])
+      positions;
+  let longest alo ahi blo bhi =
+    let besti = ref alo and bestj = ref blo and size = ref 0 in
+    let lengths = ref (Hashtbl.create 8) in
+    for i = alo to ahi - 1 do
+      let next = Hashtbl.create 8 in
+      List.iter
+        (fun j ->
+          if j >= blo && j < bhi then begin
+            let k =
+              1 + Option.value (Hashtbl.find_opt !lengths (j - 1)) ~default:0
+            in
+            Hashtbl.replace next j k;
+            if k > !size then (
+              besti := i - k + 1;
+              bestj := j - k + 1;
+              size := k)
+          end)
+        positions.(Char.code a.[i]);
+      lengths := next
+    done;
+    while !besti > alo && !bestj > blo && a.[!besti - 1] = b.[!bestj - 1] do
+      decr besti;
+      decr bestj;
+      incr size
+    done;
+    while
+      !besti + !size < ahi
+      && !bestj + !size < bhi
+      && a.[!besti + !size] = b.[!bestj + !size]
+    do
+      incr size
+    done;
+    (!besti, !bestj, !size)
+  in
+  let rec matched alo ahi blo bhi =
+    let i, j, k = longest alo ahi blo bhi in
+    if k = 0 then 0
+    else
+      k
+      + (if alo < i && blo < j then matched alo i blo j else 0)
+      +
+      if i + k < ahi && j + k < bhi then matched (i + k) ahi (j + k) bhi else 0
+  in
+  if la + lb = 0 then 1. else 2. *. float (matched 0 la 0 lb) /. float (la + lb)
+
+(* The most similar of [names] to [query], at least 0.6 similar; the greater
+   name wins a tie. *)
+let close_match query names =
+  let best acc name =
+    let score = similarity name query in
+    match acc with
+    | Some (s, n) when compare (s, n) (score, name) >= 0 -> acc
+    | _ when score >= 0.6 -> Some (score, name)
+    | _ -> acc
+  in
+  Option.map snd (List.fold_left best None names)
+
+let select_by_name ~error name query candidates =
+  match
+    List.filter (fun c -> query = "" || String.equal (name c) query) candidates
+  with
+  | [] ->
+      let hint =
+        match close_match query (List.map name candidates) with
+        | Some m -> Printf.sprintf ", did you mean: '%s'?" m
+        | None -> ""
+      in
+      Error (error ^ hint)
+  | selected -> Ok selected
+
+let select_first_inited ~error candidates =
   let rec select errors = function
     | [] ->
-        (match errors with
-         | [ exn, backtrace ] -> Printexc.raise_with_backtrace exn backtrace
-         | _ ->
-             let reasons = List.rev_map (fun (exn, _) -> Printexc.to_string exn) errors in
-             failwith (String.concat "\n" (message :: reasons)))
-    | create :: rest ->
-        match create () with
-        | value -> value
-        | exception (Out_of_memory | Stack_overflow | Sys.Break as exn) -> raise exn
-        | exception exn ->
-            let backtrace = Printexc.get_raw_backtrace () in
-            select ((exn, backtrace) :: errors) rest
+        Error
+          (match List.rev errors with
+          | [ e ] -> e
+          | es -> String.concat "\n" (error :: es))
+    | init :: rest -> (
+        match init () with
+        | Ok _ as ok -> ok
+        | Error e -> select (e :: errors) rest)
   in
   select [] candidates
 
-let allow_half8 = getenv "ALLOW_HALF8" 0 <> 0
+(* Terminal text *)
 
-(* Canonical device name: uppercase the backend part and strip a ":0"
-   suffix, e.g. "cpu:0" -> "CPU". *)
-let canonicalize_device_name device =
-  let device =
-    match String.index_opt device ':' with
-    | Some i ->
-        String.uppercase_ascii (String.sub device 0 i)
-        ^ String.sub device i (String.length device - i)
-    | None -> String.uppercase_ascii device
-  in
-  let len = String.length device in
-  if len >= 2 && String.equal (String.sub device (len - 2) 2) ":0" then
-    String.sub device 0 (len - 2)
-  else device
+type color =
+  | Black
+  | Red
+  | Green
+  | Yellow
+  | Blue
+  | Magenta
+  | Cyan
+  | White
+  | Bright_black
+  | Bright_red
+  | Bright_green
+  | Bright_yellow
+  | Bright_blue
+  | Bright_magenta
+  | Bright_cyan
+  | Bright_white
 
-(* Context variables *)
+let color_code = function
+  | Black -> 30
+  | Red -> 31
+  | Green -> 32
+  | Yellow -> 33
+  | Blue -> 34
+  | Magenta -> 35
+  | Cyan -> 36
+  | White -> 37
+  | Bright_black -> 90
+  | Bright_red -> 91
+  | Bright_green -> 92
+  | Bright_yellow -> 93
+  | Bright_blue -> 94
+  | Bright_magenta -> 95
+  | Bright_cyan -> 96
+  | Bright_white -> 97
 
-module Context_var : sig
-  type 'a t
-  type binding = B : 'a t * 'a -> binding
-  type snapshot
+let colored ?(background = false) color st =
+  if Context_var.value no_color then st
+  else
+    Printf.sprintf "\027[%dm%s\027[0m"
+      (color_code color + if background then 10 else 0)
+      st
 
-  val make : key:string -> default:'a -> parse:(string -> 'a) -> 'a t
-  val int : key:string -> default:int -> int t
-  val string : key:string -> default:string -> string t
-  val key : 'a t -> string
-  val get : 'a t -> 'a
-  val with_context : binding list -> (unit -> 'a) -> 'a
-  val snapshot : unit -> snapshot
-  val with_snapshot : snapshot -> (unit -> 'a) -> 'a
-end = struct
-  type value = ..
-  type 'a t = {
-    key : string;
-    default : 'a;
-    pack : 'a -> value;
-    unpack : value -> 'a option;
-  }
+let time_to_str ?(w = 8) t =
+  if t > 10. then Printf.sprintf "%*.2fs " w t
+  else if t > 10. /. 1e3 then Printf.sprintf "%*.2fms" w (t *. 1e3)
+  else Printf.sprintf "%*.2fus" w (t *. 1e6)
 
-  module Values = Map.Make (String)
-  module Threads = Map.Make (Int)
-  type snapshot = value Values.t
-  type binding = B : 'a t * 'a -> binding
+let size_to_str s =
+  let in_unit d unit = Printf.sprintf "%.2f %s" (float s /. float d) unit in
+  if s >= 1 lsl 30 then in_unit (1 lsl 30) "GB"
+  else if s >= 1 lsl 20 then in_unit (1 lsl 20) "MB"
+  else if s >= 1 lsl 10 then in_unit (1 lsl 10) "KB"
+  else Printf.sprintf "%d B" s
 
-  let declared : (string, unit) Hashtbl.t = Hashtbl.create 64
-  let declaration_lock = Mutex.create ()
-
-  let declare key =
-    Mutex.lock declaration_lock;
-    Fun.protect ~finally:(fun () -> Mutex.unlock declaration_lock) (fun () ->
-        if Hashtbl.mem declared key then
-          invalid_arg (Printf.sprintf "Context_var: %s is already declared" key);
-        Hashtbl.add declared key ())
-
-  let make (type a) ~key ~(default : a) ~parse =
-    let default = match Sys.getenv_opt key with
-      | None -> default
-      | Some s -> parse s in
-    declare key;
-    let module Box = struct type value += Value of a end in
-    { key; default; pack = (fun value -> Box.Value value);
-      unpack = (function Box.Value value -> Some value | _ -> None) }
-
-  let int ~key ~default =
-    make ~key ~default
-      ~parse:(fun s -> try int_of_string s with Failure _ -> default)
-
-  let string ~key ~default =
-    make ~key ~default ~parse:(fun s ->
-        let s = String.trim s in
-        if s = "" then default else s)
-
-  (* Systhreads share DLS, so each active scope is keyed by thread within its
-     domain. Persistent maps make reads and worker snapshots immutable; CAS
-     preserves other threads' entries when a scope enters or unwinds. *)
-  let scopes : snapshot Threads.t Atomic.t Domain.DLS.key =
-    Domain.DLS.new_key (fun () -> Atomic.make Threads.empty)
-
-  let snapshot () =
-    let active = Atomic.get (Domain.DLS.get scopes) in
-    if Threads.is_empty active then Values.empty
-    else Option.value (Threads.find_opt (Thread.id (Thread.self ())) active)
-        ~default:Values.empty
-
-  let key v = v.key
-  let get v =
-    match Values.find_opt v.key (snapshot ()) with
-    | None -> v.default
-    | Some value ->
-        (match v.unpack value with
-         | Some value -> value
-         | None -> invalid_arg ("Context_var: invalid binding for " ^ v.key))
-
-  let with_snapshot context f =
-    let scopes = Domain.DLS.get scopes and thread = Thread.id (Thread.self ()) in
-    let saved = Option.value (Threads.find_opt thread (Atomic.get scopes))
-        ~default:Values.empty in
-    let rec install context =
-      let before = Atomic.get scopes in
-      let after = if Values.is_empty context then Threads.remove thread before
-        else Threads.add thread context before in
-      if not (Atomic.compare_and_set scopes before after) then install context
-    in
-    install context;
-    Fun.protect ~finally:(fun () -> install saved) f
-
-  let with_context overrides f =
-    let context = List.fold_left (fun context (B (v, value)) ->
-        Values.add v.key (v.pack value) context) (snapshot ()) overrides in
-    with_snapshot context f
-end
-
-let dev =
-  Context_var.make ~key:"DEV" ~default:[ Tolk_uop.Target.of_string "" ]
-    ~parse:(fun s -> List.map Tolk_uop.Target.of_string (String.split_on_char ';' s))
-
-let target ?(arch = "") device =
-  let open Tolk_uop.Target in
-  let device = String.uppercase_ascii (List.hd (String.split_on_char ':' device)) in
-  let targets = Context_var.get dev in
-  let t = match List.find_opt (fun t -> t.device = "" || t.device = device) targets with
-    | Some t -> t
-    | None -> of_string device
-  in
-  let key = device ^ "_CC" in
-  let old = getenv_str key "" in
-  if old <> "" then
-    invalid_arg (Printf.sprintf "%s=%s is deprecated, use DEV=%s instead"
-      key old (to_string { t with device; renderer = old }));
-  { t with device; arch = (if t.arch = "" then arch else t.arch) }
-
-let select_interface ~device candidates =
-  let t = target device in
-  let key = t.device ^ "_IFACE" in
-  let old = getenv_str key "" in
-  if old <> "" then
-    invalid_arg (Printf.sprintf "%s=%s is deprecated, use DEV=%s instead"
-      key old (Tolk_uop.Target.to_string { t with interface = old }));
-  let candidates = List.filter (fun (name, _) ->
-      (t.interface = "" || name = t.interface)
-      && (String.starts_with ~prefix:"MOCK" t.interface
-          || not (String.starts_with ~prefix:"MOCK" name))) candidates in
-  if candidates = [] then
-    invalid_arg (Printf.sprintf "%s has no interface %S" t.device t.interface);
-  select_first_inited ~message:(Printf.sprintf "No interface for %s is available" device)
-    (List.map snd candidates)
-
-(* Variables have one immutable default; scoped overrides are local to the
-   calling thread and are explicitly transported to compilation workers. *)
-
-let cpu_count_from_quota ~available contents =
-  let fields = String.map (function '\t' | '\r' | '\n' -> ' ' | c -> c) contents
-      |> String.split_on_char ' ' |> List.filter (fun part -> part <> "") in
-  try match fields with
-    | [quota; period] when quota <> "max" ->
-        let quota = int_of_string quota and period = int_of_string period in
-        if quota < 0 || period <= 0 then available
-        else min available (max 1 (quota / period))
-    | _ -> available
-  with Failure _ -> available
-
-let cpu_count =
-  let available = Domain.recommended_domain_count () in
-  try
-    In_channel.with_open_text "/sys/fs/cgroup/cpu.max" In_channel.input_all
-    |> cpu_count_from_quota ~available
-  with Sys_error _ -> available
-
-let parallel = Context_var.int ~key:"PARALLEL" ~default:cpu_count
-
-let debug = Context_var.int ~key:"DEBUG" ~default:0
-let beam = Context_var.int ~key:"BEAM" ~default:0
-let noopt = Context_var.int ~key:"NOOPT" ~default:0
-let ccache = Context_var.int ~key:"CCACHE" ~default:1
-let cachelevel = Context_var.int ~key:"CACHELEVEL" ~default:2
-let ignore_beam_cache = Context_var.int ~key:"IGNORE_BEAM_CACHE" ~default:0
-let image = Context_var.int ~key:"IMAGE" ~default:0
-let float16 = Context_var.int ~key:"FLOAT16" ~default:0
-let openpilot_hacks = Context_var.int ~key:"OPENPILOT_HACKS" ~default:0
-
-(* Whether training-mode behaviour (e.g. dropout) is active. *)
-let training = Context_var.int ~key:"TRAINING" ~default:0
-let use_tc = Context_var.int ~key:"TC" ~default:1
-let tc_select = Context_var.int ~key:"TC_SELECT" ~default:(-1)
-let tc_opt = Context_var.int ~key:"TC_OPT" ~default:0
-let tc_min_globals = Context_var.int ~key:"TC_MIN_GLOBALS" ~default:0
-let transcendental = Context_var.int ~key:"TRANSCENDENTAL" ~default:1
-let split_reduceop = Context_var.int ~key:"SPLIT_REDUCEOP" ~default:1
-
-let reduceop_split_threshold =
-  Context_var.int ~key:"REDUCEOP_SPLIT_THRESHOLD" ~default:32768
-
-let reduceop_split_size = Context_var.int ~key:"REDUCEOP_SPLIT_SIZE" ~default:22
-let lru = Context_var.int ~key:"LRU" ~default:1
-let ring = Context_var.int ~key:"RING" ~default:1
-let all2all = Context_var.int ~key:"ALL2ALL" ~default:0
-let allreduce_node_ndevs = Context_var.int ~key:"ALLREDUCE_NODE_NDEVS" ~default:0
-let hcq_cache_thresh = Context_var.int ~key:"HCQ_CACHE_THRESH" ~default:64
-
-let ring_allreduce_threshold =
-  Context_var.int ~key:"RING_ALLREDUCE_THRESHOLD" ~default:256_000
-
-let allreduce_cast = Context_var.int ~key:"ALLREDUCE_CAST" ~default:1
-let disable_fast_idiv = Context_var.int ~key:"DISABLE_FAST_IDIV" ~default:1
-let max_kernel_buffers = Context_var.int ~key:"MAX_KERNEL_BUFFERS" ~default:0
-
-(* Partial contiguous in rangeify. *)
-let pcontig = Context_var.int ~key:"PCONTIG" ~default:0
-
-(* Allow TF32 on NVIDIA GPUs. *)
-let allow_tf32 = Context_var.int ~key:"ALLOW_TF32" ~default:0
-
-(* Terminal output *)
-
-let no_color = Context_var.int ~key:"NO_COLOR" ~default:0
-
-let colors =
-  [ "black"; "red"; "green"; "yellow"; "blue"; "magenta"; "cyan"; "white" ]
-
-(* An uppercase [color] is the bright variant. *)
-let colored ?(background = false) st color =
-  match color with
-  | None -> st
-  | Some _ when Context_var.get no_color <> 0 -> st
-  | Some color ->
-      let index =
-        let lower = String.lowercase_ascii color in
-        let rec find i = function
-          | [] -> invalid_arg ("colored: unknown color " ^ color)
-          | c :: rest -> if String.equal c lower then i else find (i + 1) rest
-        in
-        find 0 colors
-      in
-      let bright = String.equal (String.uppercase_ascii color) color in
-      Printf.sprintf "\027[%dm%s\027[0m"
-        ((if background then 10 else 0) + (if bright then 60 else 0) + 30 + index)
-        st
-
-(* Drops the escape sequences ESC [ K and ESC [ ... m. *)
 let ansistrip s =
   let n = String.length s in
   let b = Buffer.create n in
+  (* The end of the escape sequence starting at [i], if one does. *)
+  let escape_end i =
+    if i + 2 >= n || s.[i] <> '\027' || s.[i + 1] <> '[' then None
+    else if s.[i + 2] = 'K' then Some (i + 3)
+    else
+      let rec find j =
+        if j >= n || s.[j] = '\n' then None
+        else if s.[j] = 'm' then Some (j + 1)
+        else find (j + 1)
+      in
+      find (i + 2)
+  in
   let rec go i =
     if i < n then
-      if s.[i] = '\027' && i + 1 < n && s.[i + 1] = '[' then
-        if i + 2 < n && s.[i + 2] = 'K' then go (i + 3)
-        else
-          match String.index_from_opt s (i + 2) 'm' with
-          | Some m -> go (m + 1)
-          | None ->
-              Buffer.add_char b s.[i];
-              go (i + 1)
-      else begin
-        Buffer.add_char b s.[i];
-        go (i + 1)
-      end
+      match escape_end i with
+      | Some j -> go j
+      | None ->
+          Buffer.add_char b s.[i];
+          go (i + 1)
   in
   go 0;
   Buffer.contents b
 
-let ansilen s = String.length (ansistrip s)
+let fold_uchars f acc s =
+  let rec go i acc =
+    if i >= String.length s then acc
+    else
+      let d = String.get_utf_8_uchar s i in
+      go (i + Uchar.utf_decode_length d) (f acc (Uchar.utf_decode_uchar d))
+  in
+  go 0 acc
 
-let time_to_str ?(w = 8) t =
-  if t > 10.0 then Printf.sprintf "%*.2fs " w t
-  else if t > 10.0 /. 1e3 then Printf.sprintf "%*.2fms" w (t *. 1e3)
-  else Printf.sprintf "%*.2fus" w (t *. 1e6)
+let ansilen s = fold_uchars (fun n _ -> n + 1) 0 (ansistrip s)
+let ansipad s w = s ^ String.make (max (w - ansilen s) 0) ' '
 
-let size_to_str s =
-  let f = float_of_int s in
-  if s >= 1 lsl 30 then Printf.sprintf "%.2f GB" (f /. float_of_int (1 lsl 30))
-  else if s >= 1 lsl 20 then
-    Printf.sprintf "%.2f MB" (f /. float_of_int (1 lsl 20))
-  else if s >= 1 lsl 10 then
-    Printf.sprintf "%.2f KB" (f /. float_of_int (1 lsl 10))
-  else Printf.sprintf "%d B" s
+let is_balanced s =
+  let depth = ref 0 in
+  String.for_all
+    (fun c ->
+      if c = '(' then incr depth else if c = ')' then decr depth;
+      !depth >= 0)
+    s
+  && !depth = 0
 
-(* Execution totals are one coherent snapshot. [mem_used] follows live
-   allocations and is not reset. *)
-module Global_counters : sig
-  type t = {
-    global_ops : Tolk_uop.Bigint.t;
-    global_mem : Tolk_uop.Bigint.t;
-    time_sum_s : float;
-    kernel_count : int;
-  }
+let strip_parens s =
+  let n = String.length s in
+  if n >= 2 && s.[0] = '(' && s.[n - 1] = ')' then
+    let inner = String.sub s 1 (n - 2) in
+    if is_balanced inner then inner else s
+  else s
 
-  val snapshot : unit -> t
-  val add : kernels:int -> ops:Tolk_uop.Bigint.t -> mem:Tolk_uop.Bigint.t -> time:float option -> t
-  val reset : unit -> unit
-  val mem_used : ?device:string -> unit -> int
-end = struct
-  type t = {
-    global_ops : Tolk_uop.Bigint.t;
-    global_mem : Tolk_uop.Bigint.t;
-    time_sum_s : float;
-    kernel_count : int;
-  }
+let pluralize st cnt =
+  Printf.sprintf "%d %s%s" cnt st (if cnt = 1 then "" else "s")
 
-  let empty = { global_ops = Tolk_uop.Bigint.zero; global_mem = Tolk_uop.Bigint.zero;
-                time_sum_s = 0.; kernel_count = 0 }
-  let state = Atomic.make empty
-  let snapshot () = Atomic.get state
+let is_identifier_char = function
+  | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+  | _ -> false
 
-  let rec add ~kernels ~ops ~mem ~time =
-    let previous = snapshot () in
-    let next = {
-      global_ops = Tolk_uop.Bigint.add previous.global_ops ops;
-      global_mem = Tolk_uop.Bigint.add previous.global_mem mem;
-      time_sum_s = previous.time_sum_s +. Option.value time ~default:0.;
-      kernel_count = previous.kernel_count + kernels;
-    } in
-    if Atomic.compare_and_set state previous next then next
-    else add ~kernels ~ops ~mem ~time
+let to_function_name s =
+  let b = Buffer.create (String.length s) in
+  let add () u =
+    match Uchar.to_int u with
+    | c when c < 128 && is_identifier_char (Char.chr c) ->
+        Buffer.add_char b (Char.chr c)
+    | c -> Buffer.add_string b (Printf.sprintf "%02X" c)
+  in
+  fold_uchars add () (ansistrip s);
+  Buffer.contents b
 
-  let reset () = Atomic.set state empty
-  let mem_used = Tolk_uop.Storage.mem_used
+(* Disk cache *)
+
+(* [~/path] expanded as a shell does, and left as is without a home. *)
+let expanduser path =
+  let home =
+    if Sys.win32 then
+      match (Sys.getenv_opt "USERPROFILE", Sys.getenv_opt "HOMEPATH") with
+      | Some home, _ -> Some home
+      | None, Some p ->
+          Some (Option.value (Sys.getenv_opt "HOMEDRIVE") ~default:"" ^ p)
+      | None, None -> None
+    else
+      match Sys.getenv_opt "HOME" with
+      | Some home -> Some home
+      | None -> (
+          try Some (Unix.getpwuid (Unix.getuid ())).pw_dir
+          with Not_found -> None)
+  in
+  match home with
+  | Some home -> Filename.concat home path
+  | None -> Filename.concat "~" path
+
+let cache_dir =
+  let base =
+    match Sys.getenv_opt "XDG_CACHE_HOME" with
+    | Some dir -> dir
+    | None ->
+        expanduser
+          (if Host_config.system = "macosx" then "Library/Caches" else ".cache")
+  in
+  Filename.concat base "tolk"
+
+let cachedb =
+  match Sys.getenv_opt "CACHEDB" with
+  | Some dir -> dir
+  | None ->
+      let dir = Filename.concat cache_dir "cache" in
+      if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir
+      else dir
+
+module Diskcache = struct
+  (* Bump whenever what an entry means changes without its key changing: the old
+     entries would otherwise answer a different question. *)
+  let version = 2
+  let digest s = Digest.to_hex (Digest.string s)
+  let is_hex c = is_digit c || (c >= 'a' && c <= 'f')
+
+  let starts_with_digest name =
+    String.length name >= 32 && String.for_all is_hex (String.sub name 0 32)
+
+  (* A table's directory is named by the digest of its name, so that any name
+     makes a valid, bounded file name on every file system, followed by the
+     version. *)
+  let table_dir table =
+    Filename.concat cachedb (Printf.sprintf "%s_%d" (digest table) version)
+
+  let is_table_dir name =
+    let n = String.length name in
+    starts_with_digest name && n > 33
+    && name.[32] = '_'
+    && String.for_all is_digit (String.sub name 33 (n - 33))
+
+  (* An entry's file is named by the digest of its key; a write in progress adds
+     a suffix to that name. *)
+  let is_entry name =
+    starts_with_digest name && (String.length name = 32 || name.[32] = '.')
+
+  let entry_path table key = Filename.concat (table_dir table) (digest key)
+  let enabled () = Context_var.value cachelevel >= 1
+
+  (* An entry is the lengths of its key and value, a newline, the key and the
+     value. Keeping the key tells a digest collision from a hit, and the lengths
+     tell a damaged entry from a whole one. *)
+  let encode key value =
+    Printf.sprintf "%d %d\n%s%s" (String.length key) (String.length value) key
+      value
+
+  let decode path key contents =
+    match
+      Scanf.sscanf_opt contents "%u %u\n%n" (fun klen vlen start ->
+          (klen, vlen, start))
+    with
+    | Some (klen, vlen, start) when start + klen + vlen = String.length contents
+      ->
+        if String.sub contents start klen <> key then None
+        else Some (String.sub contents (start + klen) vlen)
+    | _ -> failwith (path ^ ": malformed cache entry")
+
+  let get ~table key =
+    if not (enabled ()) then None
+    else
+      let path = entry_path table key in
+      match In_channel.with_open_bin path In_channel.input_all with
+      | contents -> decode path key contents
+      | exception (Sys_error _ as e) ->
+          if Sys.file_exists path then raise e else None
+
+  let rec mkdir_p dir =
+    if not (Sys.file_exists dir) then begin
+      mkdir_p (Filename.dirname dir);
+      try Sys.mkdir dir 0o755 with Sys_error _ when Sys.file_exists dir -> ()
+    end
+
+  (* The entry is written aside and renamed into place, so readers never see it
+     half written. On Windows the rename fails while another process holds the
+     entry open; that entry is complete, so it stays. *)
+  let put ~table key value =
+    if enabled () then begin
+      let path = entry_path table key in
+      let dir = Filename.dirname path in
+      mkdir_p dir;
+      let tmp, oc =
+        Filename.open_temp_file ~mode:[ Open_binary ] ~temp_dir:dir
+          (Filename.basename path ^ ".")
+          ".tmp"
+      in
+      match
+        output_string oc (encode key value);
+        close_out oc
+      with
+      | exception e ->
+          close_out_noerr oc;
+          (try Sys.remove tmp with Sys_error _ -> ());
+          raise e
+      | () -> (
+          try Sys.rename tmp path
+          with Sys_error _ when Sys.file_exists path -> Sys.remove tmp)
+    end
+
+  (* Only files named like entries are removed, so a [CACHEDB] pointing at a
+     directory holding other files keeps them. Entries and tables may vanish
+     meanwhile, cleared by another process. *)
+  let clear () =
+    let remove file =
+      try Sys.remove file
+      with Sys_error _ when not (Sys.file_exists file) -> ()
+    in
+    let clear_table dir =
+      Array.iter
+        (fun f -> if is_entry f then remove (Filename.concat dir f))
+        (Sys.readdir dir);
+      if Sys.readdir dir = [||] then
+        try Sys.rmdir dir
+        with Sys_error _ when not (Sys.file_exists dir) -> ()
+    in
+    if Sys.file_exists cachedb then
+      Array.iter
+        (fun name ->
+          let dir = Filename.concat cachedb name in
+          if is_table_dir name && Sys.is_directory dir then clear_table dir)
+        (Sys.readdir cachedb)
 end
 
-(* Hashing *)
+(* Programs *)
 
-let sha256_k =
-  [|
-    0x428a2f98; 0x71374491; 0xb5c0fbcf; 0xe9b5dba5; 0x3956c25b; 0x59f111f1;
-    0x923f82a4; 0xab1c5ed5; 0xd807aa98; 0x12835b01; 0x243185be; 0x550c7dc3;
-    0x72be5d74; 0x80deb1fe; 0x9bdc06a7; 0xc19bf174; 0xe49b69c1; 0xefbe4786;
-    0x0fc19dc6; 0x240ca1cc; 0x2de92c6f; 0x4a7484aa; 0x5cb0a9dc; 0x76f988da;
-    0x983e5152; 0xa831c66d; 0xb00327c8; 0xbf597fc7; 0xc6e00bf3; 0xd5a79147;
-    0x06ca6351; 0x14292967; 0x27b70a85; 0x2e1b2138; 0x4d2c6dfc; 0x53380d13;
-    0x650a7354; 0x766a0abb; 0x81c2c92e; 0x92722c85; 0xa2bfe8a1; 0xa81a664b;
-    0xc24b8b70; 0xc76c51a3; 0xd192e819; 0xd6990624; 0xf40e3585; 0x106aa070;
-    0x19a4c116; 0x1e376c08; 0x2748774c; 0x34b0bcb5; 0x391c0cb3; 0x4ed8aa4a;
-    0x5b9cca4f; 0x682e6ff3; 0x748f82ee; 0x78a5636f; 0x84c87814; 0x8cc70208;
-    0x90befffa; 0xa4506ceb; 0xbef9a3f7; 0xc67178f2;
-  |]
+let with_temp_file contents f =
+  let path = Filename.temp_file "tolk" "" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Out_channel.with_open_bin path (fun oc -> output_string oc contents);
+      f path)
 
-(* SHA-256 of a message of any length. Returns the 32-byte digest. *)
-let sha256 msg =
-  let len = Bytes.length msg in
-  let mask = 0xFFFFFFFF in
-  let rotr x n = ((x lsr n) lor (x lsl (32 - n))) land mask in
-  let h = [| 0x6a09e667; 0xbb67ae85; 0x3c6ef372; 0xa54ff53a;
-             0x510e527f; 0x9b05688c; 0x1f83d9ab; 0x5be0cd19 |] in
-  let w = Array.make 64 0 in
-  let compress block pos =
-    for i = 0 to 15 do
-      w.(i) <- Int32.to_int (Bytes.get_int32_be block (pos + (i * 4))) land mask
-    done;
-    for i = 16 to 63 do
-      let s0 =
-        rotr w.(i - 15) 7 lxor rotr w.(i - 15) 18 lxor (w.(i - 15) lsr 3)
-      in
-      let s1 =
-        rotr w.(i - 2) 17 lxor rotr w.(i - 2) 19 lxor (w.(i - 2) lsr 10)
-      in
-      w.(i) <- (w.(i - 16) + s0 + w.(i - 7) + s1) land mask
-    done;
-    let a = ref h.(0) and b = ref h.(1) and c = ref h.(2) and d = ref h.(3) in
-    let e = ref h.(4) and f = ref h.(5) and g = ref h.(6) and hh = ref h.(7) in
-    for i = 0 to 63 do
-      let s1 = rotr !e 6 lxor rotr !e 11 lxor rotr !e 25 in
-      let ch = !e land !f lxor (lnot !e land !g) in
-      let t1 = (!hh + s1 + ch + sha256_k.(i) + w.(i)) land mask in
-      let s0 = rotr !a 2 lxor rotr !a 13 lxor rotr !a 22 in
-      let maj = !a land !b lxor (!a land !c) lxor (!b land !c) in
-      let t2 = (s0 + maj) land mask in
-      hh := !g; g := !f; f := !e; e := (!d + t1) land mask;
-      d := !c; c := !b; b := !a; a := (t1 + t2) land mask
-    done;
-    h.(0) <- (h.(0) + !a) land mask; h.(1) <- (h.(1) + !b) land mask;
-    h.(2) <- (h.(2) + !c) land mask; h.(3) <- (h.(3) + !d) land mask;
-    h.(4) <- (h.(4) + !e) land mask; h.(5) <- (h.(5) + !f) land mask;
-    h.(6) <- (h.(6) + !g) land mask; h.(7) <- (h.(7) + !hh) land mask
+let read_file path = In_channel.with_open_bin path In_channel.input_all
+
+let system ?input cmd =
+  let start = Unix.gettimeofday () in
+  let prog, args =
+    match
+      String.split_on_char ' '
+        (String.map (fun c -> if is_space c then ' ' else c) cmd)
+      |> List.filter (( <> ) "")
+    with
+    | [] -> ("", [])
+    | prog :: args -> (prog, args)
   in
-  for blk = 0 to (len / 64) - 1 do
-    compress msg (blk * 64)
-  done;
-  let rem = len land 63 in
-  let tail = Bytes.make (if rem < 56 then 64 else 128) '\000' in
-  Bytes.blit msg (len - rem) tail 0 rem;
-  Bytes.set tail rem '\x80';
-  Bytes.set_int64_be tail (Bytes.length tail - 8) (Int64.of_int (len * 8));
-  compress tail 0;
-  if Bytes.length tail = 128 then compress tail 64;
-  let digest = Bytes.create 32 in
-  Array.iteri
-    (fun i x -> Bytes.set_int32_be digest (i * 4) (Int32.of_int x))
-    h;
-  digest
-
-(* Collections *)
-
-(* Preserves first occurrence, removes duplicates. *)
-let dedup_by eq lst =
-  let rec loop acc = function
-    | [] -> List.rev acc
-    | x :: rest ->
-        if List.exists (eq x) acc then loop acc rest
-        else loop (x :: acc) rest
+  let status, output =
+    with_temp_file "" @@ fun out ->
+    let run stdin =
+      Sys.command
+        (Filename.quote_command prog args ?stdin ~stdout:out ~stderr:out)
+    in
+    let status =
+      match input with
+      | None -> run None
+      | Some input -> with_temp_file input (fun path -> run (Some path))
+    in
+    (status, strip (read_file out))
   in
-  loop [] lst
+  if status <> 0 then
+    failwith
+      (Printf.sprintf "system: '%s' failed with exit code %d\n%s" cmd status
+         output);
+  if Context_var.value debug >= 1 then
+    Printf.printf "system: '%s' returned %d bytes in %.2f ms\n%!" cmd
+      (String.length output)
+      ((Unix.gettimeofday () -. start) *. 1e3);
+  output
 
-(* Partitions old_shape indices into contiguous groups whose cumulative products
-   match the corresponding new_shape elements, returning None if no valid
-   partition exists. Used to determine whether a reshape is a simple view
-   (contraction of contiguous axes) or requires a copy. *)
-let get_contraction old_shape new_shape =
-  let n_old = Array.length old_shape in
-  let n_new = Array.length new_shape in
-  let acc_old = Array.make n_old 1 in
-  let acc_new = Array.make n_new 1 in
-  if n_old > 0 then acc_old.(0) <- old_shape.(0);
-  for i = 1 to n_old - 1 do
-    acc_old.(i) <- acc_old.(i - 1) * old_shape.(i)
-  done;
-  if n_new > 0 then acc_new.(0) <- new_shape.(0);
-  for i = 1 to n_new - 1 do
-    acc_new.(i) <- acc_new.(i - 1) * new_shape.(i)
-  done;
-  let split = Array.make n_new 0 in
-  let ok = ref true in
-  for i = 0 to n_new - 1 do
-    if !ok then begin
-      if acc_new.(i) = 1 then split.(i) <- 0
-      else
-        match
-          let found = ref (-1) in
-          for j = 0 to n_old - 1 do
-            if !found = -1 && acc_old.(j) = acc_new.(i) then found := j + 1
-          done;
-          !found
-        with
-        | -1 -> ok := false
-        | idx -> split.(i) <- idx
-    end
-  done;
-  if not !ok then None
+let cpu_objdump lib =
+  with_temp_file lib (fun path -> print_endline (system ("objdump -d " ^ path)))
+
+let which program =
+  let executable p =
+    Sys.file_exists p
+    && (not (Sys.is_directory p))
+    &&
+      try
+        Unix.access p [ X_OK ];
+        true
+      with Unix.Unix_error _ -> false
+  in
+  if Filename.is_implicit program then
+    let path = Option.value (Sys.getenv_opt "PATH") ~default:"" in
+    String.split_on_char (if Sys.win32 then ';' else ':') path
+    |> List.exists (fun dir -> executable (Filename.concat dir program))
+  else executable program
+
+let find_llvm_objdump () =
+  if Host_config.system = "macosx" then
+    "/opt/homebrew/opt/llvm/bin/llvm-objdump"
   else
-    let starts = Array.make n_new 0 in
-    let ends = Array.make n_new 0 in
-    for i = 0 to n_new - 1 do
-      starts.(i) <- (if i = 0 then 0 else split.(i - 1));
-      ends.(i) <- (if i = n_new - 1 then n_old else split.(i))
-    done;
-    Some
-      (Array.to_list
-         (Array.init n_new (fun i ->
-              List.init (ends.(i) - starts.(i)) (fun j -> starts.(i) + j))))
+    match
+      List.find_opt which
+        [
+          "/opt/rocm/llvm/bin/llvm-objdump";
+          "llvm-objdump-21";
+          "llvm-objdump-20";
+          "llvm-objdump";
+        ]
+    with
+    | Some p -> p
+    | None -> failwith "llvm-objdump not found"
+
+let amdgpu_disassemble lib =
+  let contains line pad =
+    let n = String.length pad in
+    let rec at i =
+      i + n <= String.length line && (String.sub line i n = pad || at (i + 1))
+    in
+    at 0
+  in
+  let is_padding line = contains line "s_nop 0" || contains line "s_code_end" in
+  let rec drop_padding = function
+    | l :: rest when is_padding l -> drop_padding rest
+    | asm -> asm
+  in
+  String.split_on_char '\n' (system ~input:lib (find_llvm_objdump () ^ " -d -"))
+  |> List.rev |> drop_padding |> List.rev |> String.concat "\n" |> print_endline

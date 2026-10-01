@@ -11,9 +11,9 @@ open Windtrap
 open Nx_test
 open Traces
 open Rune_internals
-module Ops = Tolk_next.Ops
-module Dtype = Tolk_next.Dtype
-module Op = Tolk_next.Op
+module Ops = Tolk.Ops
+module Dtype = Tolk.Dtype
+module Op = Tolk.Op
 
 let pp_float ppf x = Format.fprintf ppf "%.17g" x
 let floats = viewed ~pp:pp_float Nx.float32 Gen.any_float
@@ -378,7 +378,7 @@ let kernel_buffers y =
   in
   let view = Ops.reshape out [ Ops.Int n ] in
   let linear, _ =
-    Tolk_next.Schedule.create_linear_with_vars
+    Tolk.Schedule.create_linear_with_vars
       (Ops.sink
          [
            Ops.after view
@@ -425,9 +425,7 @@ let staged_scans =
 (* Refusals *)
 
 let metal _ =
-  match Tolk_next.Device.renderer "METAL" with
-  | Ok r -> r
-  | Error e -> failwith e
+  match Tolk.Device.renderer "METAL" with Ok r -> r | Error e -> failwith e
 
 let refusals =
   group "refusals"
@@ -440,11 +438,10 @@ let refusals =
             (fun () ->
               trace ~renderer:metal (fun () ->
                   Nx.copy (Nx.create Nx.float64 [| 2 |] [| 1.; 2. |]))));
-      test "an 8-bit float the host's renderer lacks is traced, tolk emulating it"
+      test
+        "an 8-bit float the host's renderer lacks is traced, tolk emulating it"
         (fun () ->
-          let x =
-            Nx.create Nx.float8_e4m3 [| 2; 2 |] [| 1.; 2.; 3.; -1. |]
-          in
+          let x = Nx.create Nx.float8_e4m3 [| 2; 2 |] [| 1.; 2.; 3.; -1. |] in
           let s, y = trace (fun () -> Nx.matmul x x) in
           Traces.exact (Nx.matmul x x) (Traces.value s y));
       test "a dtype with no counterpart is refused" (fun () ->

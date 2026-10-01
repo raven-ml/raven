@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Rune_internals
-open Tolk_next
+open Tolk
 
 (* The schedule that stores [y] into a new buffer on the host, and that
    buffer. *)

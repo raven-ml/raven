@@ -1,0 +1,24 @@
+; Settings are read when the program starts, so CACHEDB is set here, to a
+; directory of the sandbox, and the tests tagged assert-compile run in a second
+; process with ASSERT_COMPILE set.
+
+(test
+ (name test_renderer)
+ (package tolk)
+ (libraries windtrap tolk tolk_test unix)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (setenv
+     ASSERT_COMPILE
+     0
+     (run %{test} --exclude-tag slow --exclude-tag assert-compile))
+    (setenv
+     ASSERT_COMPILE
+     1
+     (run %{test} --tag assert-compile))))))

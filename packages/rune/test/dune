@@ -105,12 +105,12 @@
   windtrap
   rune_internals
   rune_lowering_test
-  tolk_next_test
+  tolk_test
   nx_test
   nx
   nx.dtype
   nx.device
-  tolk.next)
+  tolk)
  (deps
   (glob_files golden/lower_arith/*.golden)
   (glob_files golden/lower_index/*.golden)
@@ -165,7 +165,7 @@
   nx.cpu
   nx.device
   nx.dtype
-  tolk.next)
+  tolk)
  (action
   (run %{test} --exclude-tag slow)))
 
@@ -185,7 +185,7 @@
   nx.cpu
   nx.device
   nx.dtype
-  tolk.next)
+  tolk)
  (action
   (run %{test} --exclude-tag slow)))
 
@@ -230,7 +230,7 @@
   nx.array
   nx.device
   nx.dtype
-  tolk.next)
+  tolk)
  (action
   (run %{test} --exclude-tag slow)))
 
@@ -260,7 +260,7 @@
 (executable
  (name reports)
  (modules reports)
- (libraries rune nx tolk.next))
+ (libraries rune nx tolk))
 
 (cram
  (applies_to reports)

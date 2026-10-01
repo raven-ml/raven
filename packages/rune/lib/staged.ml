@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_next
+open Tolk
 
 (* Whether [x] is a value of the trace: traced by its lowering, or one it
    captures. *)
@@ -132,7 +132,7 @@ let cut ~own next args body =
     memo storing (fun u ->
         match Ops.op u with
         | Op.Buffer | Op.After -> true
-        | Op.Param -> Ops.addrspace u = Some Tolk_next.Dtype.Global
+        | Op.Param -> Ops.addrspace u = Some Tolk.Dtype.Global
         | _ -> false)
   in
   let rec storage u =
@@ -417,7 +417,7 @@ let stage trace s (r : Scan.request) =
       !args
   in
   let linear, _ =
-    Tolk_next.Schedule.create_linear_with_vars ~capturing:true
+    Tolk.Schedule.create_linear_with_vars ~capturing:true
       (Ops.sink [ Ops.after (snd (List.hd probe)) [ call probe ] ])
   in
   if

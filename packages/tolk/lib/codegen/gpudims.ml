@@ -5,355 +5,282 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Port of tinygrad/codegen/gpudims.py to the tolk_uop IR. *)
+open Ops
 
-open Tolk_uop
-module U = Uop
+let dim_max = function
+  | Int d -> Bigint.of_int d
+  | Sym u -> Dtype.Value.to_z (vmax u)
 
-let strf = Printf.sprintf
+let cannot_limit dims max_sizes =
+  invalid_arg
+    (Format.asprintf "cannot limit dim dims=(%a), max_sizes=(%a)"
+       (Format.pp_print_list
+          ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+          Sint.pp)
+       dims
+       (Format.pp_print_list
+          ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+          Format.pp_print_int)
+       max_sizes)
 
-(* Helpers *)
-
-let pp_ints a =
-  String.concat "; " (Array.to_list (Array.map string_of_int a))
-
-let err_limit dims max_sizes =
-  strf "cannot limit dim [%s], max_sizes=[%s]"
-    (pp_ints dims) (pp_ints max_sizes)
-
-let dim_max (d : U.t) : int = Bound.to_int (U.vmax d)
-
-type dim_kind =
-  | Group_id
-  | Local_id
-  | Global_idx
-
-let special_name_of_kind kind i =
-  let dim =
-    match kind with
-    | Group_id -> Gpu_dim.Group_id i
-    | Local_id -> Gpu_dim.Local_id i
-    | Global_idx -> Gpu_dim.Global_idx i
+(* Merge the leftmost adjacent pair whose product fits its axis, until the dims
+   fit. *)
+let rec group_dims dims max_sizes =
+  let rec fit ds ms =
+    match (ds, ms) with
+    | d :: ds, m :: ms -> Bigint.leq (dim_max d) (Bigint.of_int m) && fit ds ms
+    | [], _ -> true
+    | _ :: _, [] -> false
   in
-  Gpu_dim.to_special_name dim
-
-let smallest_factor n =
-  let root = Bigint.sqrt n in
-  let limit = if Bigint.equal (Bigint.mul root root) n then root else Bigint.succ root in
-  let rec loop f =
-    if Bigint.gt f limit then Bigint.one
-    else if Bigint.equal (Bigint.rem n f) Bigint.zero then f
-    else loop (Bigint.succ f)
+  let rec merge ds ms =
+    match (ds, ms) with
+    | d0 :: (d1 :: rest as ds), m :: ms ->
+        if Bigint.leq Bigint.(dim_max d0 * dim_max d1) (Bigint.of_int m) then
+          Some (Sint.(d0 * d1) :: rest)
+        else Option.map (List.cons d0) (merge ds ms)
+    | _ -> None
   in
-  loop (Bigint.of_int 2)
+  if fit dims max_sizes then Some dims
+  else
+    Option.bind (merge dims max_sizes) (fun dims -> group_dims dims max_sizes)
 
-let array_rev a =
-  let n = Array.length a in
-  Array.init n (fun i -> a.(n - 1 - i))
+(* Sizes as the grouping computes them: exact integers, whose intermediate
+   products may pass [int], or nodes. *)
+type size = N of Bigint.t | U of t
 
-let product_uops_from a start =
-  let open U.Promoting in
-  let acc = ref (U.const_int 1) in
-  for i = start to Stdlib.(Array.length a - 1) do
-    acc := !acc * a.(i)
-  done;
-  !acc
+let size = function Int n -> N (Bigint.of_int n) | Sym u -> U u
+let node = function N z -> const (`Int z) | U u -> u
 
-let group_dim_values dims max_sizes =
-  let dims = ref (Array.copy dims) in
-  let rec loop () =
-    let d = !dims in
-    let n = Array.length d in
-    let nm = Array.length max_sizes in
-    if n <= nm
-       && not
-            (Array.exists2
-               (fun d m -> dim_max d > m)
-               d (Array.sub max_sizes 0 (min n nm)))
-    then Some d
-    else
-      let rec try_merge i =
-        if i >= nm || i >= n - 1 then None
-        else if Bound.le (Bound.mul (U.vmax d.(i)) (U.vmax d.(i + 1)))
-            (Bound.int max_sizes.(i)) then begin
-          dims := Array.init (n - 1) (fun j ->
-            if j < i then d.(j)
-            else if j = i then Symbolic.simplify U.Promoting.(d.(i) * d.(Stdlib.(i + 1)))
-            else d.(j + 1));
-          loop ()
-        end else try_merge (i + 1)
-      in
-      try_merge 0
-  in
-  loop ()
+let ( *! ) a b =
+  match (a, b) with N x, N y -> N Bigint.(x * y) | _ -> U O.(node a * node b)
 
-(* Split dims that exceed max_sizes by factoring into adjacent slots. *)
+let prod = List.fold_left ( *! ) (N Bigint.one)
+
+(* Split each dim that exceeds its axis by its least divisor, moving the divisor
+   to the next axis. *)
 let split_dims dims max_sizes =
-  if Array.for_all2 (fun d m -> d <= m)
-       dims (Array.sub max_sizes 0 (Array.length dims))
-  then dims
-  else begin
-    let d = Array.make 3 Bigint.one in
-    for i = 0 to min (Array.length dims) 3 - 1 do d.(i) <- Bigint.of_int dims.(i) done;
-    for i = 0 to 2 do
-      while Bigint.gt d.(i) (Bigint.of_int max_sizes.(i)) do
-        let div = smallest_factor d.(i) in
-        if Bigint.equal div Bigint.one then failwith (err_limit dims max_sizes);
-        let next = (i + 1) mod 3 in
-        d.(next) <- Bigint.mul d.(next) div;
-        d.(i) <- Bigint.div d.(i) div
-      done
+  let fits d m =
+    match d with
+    | N d -> Bigint.leq d (Bigint.of_int m)
+    | U u -> Bigint.leq (Dtype.Value.to_z (vmax (simplify u))) (Bigint.of_int m)
+  in
+  let rec fit ds ms =
+    match (ds, ms) with d :: ds, m :: ms -> fits d m && fit ds ms | _ -> true
+  in
+  let sizes = List.map size dims in
+  if fit sizes max_sizes then sizes
+  else
+    let a =
+      Array.of_list (sizes @ List.init (3 - List.length dims) (fun _ -> N Bigint.one))
+    in
+    let n = Array.length a in
+    for i = 0 to n - 1 do
+      let m =
+        match List.nth_opt max_sizes i with
+        | Some m -> m
+        | None -> cannot_limit dims max_sizes
+      in
+      let rec limit () =
+        match a.(i) with
+        | N d when Bigint.gt d (Bigint.of_int m) ->
+            let last = Bigint.of_float (Float.ceil (Float.sqrt (Bigint.to_float d))) in
+            let rec least k =
+              if Bigint.gt k last then Bigint.one
+              else if Bigint.(equal (rem d k) zero) then k
+              else least (Bigint.succ k)
+            in
+            let div = least (Bigint.of_int 2) in
+            if Bigint.equal div Bigint.one then cannot_limit dims max_sizes;
+            a.(i) <- N (Bigint.div d div);
+            let next = (i + 1) mod n in
+            a.(next) <- a.(next) *! N div;
+            limit ()
+        | N _ -> ()
+        (* A symbolic size that may exceed its bound cannot be split. *)
+        | U _ as d -> if not (fits d m) then cannot_limit dims max_sizes
+      in
+      limit ()
     done;
-    Array.map Bigint.to_int (if Bigint.equal d.(2) Bigint.one then Array.sub d 0 2 else d)
-  end
+    let sizes = Array.to_list a in
+    match a.(2) with
+    | N z when Bigint.equal z Bigint.one -> List.filteri (fun i _ -> i < 2) sizes
+    | _ -> sizes
 
-let flat_index raw limited =
-  if Array.length raw = 1 then raw.(0)
+(* The product of the sizes after each size. *)
+let rec suffix_prods = function
+  | [] -> []
+  | _ :: rest -> prod rest :: suffix_prods rest
+
+let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
+  if reverse then List.rev (grouped_dims prefix (List.rev dims) max_sizes)
   else
-  let open U.Promoting in
-  let acc = ref (U.const_int 0) in
-  for i = 0 to Stdlib.(Array.length raw - 1) do
-    acc := !acc + (raw.(i) * product_uops_from limited Stdlib.(i + 1))
-  done;
-  Symbolic.simplify !acc
-
-let decompose_flat flat dims =
-  let open U.Promoting in
-  Array.to_list
-    (Array.mapi
-       (fun i dim ->
-         let tail = product_uops_from dims Stdlib.(i + 1) in
-         let idx =
-           if U.const_int_value tail = Some 1 then Symbolic.simplify flat
-           else Symbolic.simplify (flat // tail)
-         in
-         if i = 0 then idx else Symbolic.simplify (idx mod dim))
-       dims)
-
-let same_uop_array a b =
-  Array.length a = Array.length b && Array.for_all2 U.equal a b
-
-(* Map logical range sizes to physical GPU dimensions (SPECIAL nodes). *)
-let rec get_grouped_dims kind dims max_sizes ~reverse =
-  if reverse then
-    List.rev (get_grouped_dims kind (array_rev dims) max_sizes ~reverse:false)
-  else
-    let idims = Array.map dim_max dims in
-    let limited_dims =
+    let limited =
       match max_sizes with
-      | None -> dims
+      | None -> List.map size dims
       | Some max_sizes ->
-          let max_sizes = Array.of_list max_sizes in
-          let limited = group_dim_values dims max_sizes in
-          if Option.is_none limited
-             && Array.length idims > Array.length max_sizes
-          then
-            failwith (err_limit idims max_sizes);
-          (match limited with
-           | Some limited when not (same_uop_array limited dims) ->
-               limited
-           | Some _ | None ->
-               (* [split_dims] returns its argument physically unchanged when
-                  every dim fits; keep the original (possibly symbolic) dims
-                  in that case. *)
-               let needs_split = Array.exists2 (fun d m -> d > m)
-                   idims (Array.sub max_sizes 0 (Array.length idims)) in
-               if needs_split
-                  && Array.exists (fun d -> Option.is_none (U.const_int_value d)) dims then
-                 failwith "cannot split symbolic GPU dimensions";
-               let split = split_dims idims max_sizes in
-               if split == idims then dims else Array.map U.const_int split)
-    in
-    let raw =
-      Array.mapi (fun i s ->
-        U.special ~name:(special_name_of_kind kind i) ~size:s ())
-        limited_dims
-    in
-    decompose_flat (flat_index raw limited_dims) dims
-
-(* Complete range identity, excluding the kind. *)
-module Range_key = struct
-  type t = int list
-
-  let compare = Stdlib.compare
-  let of_range = U.axis_id
-end
-
-module Rkmap = Map.Make (Range_key)
-
-(* Build a gated index when local ranges are missing from a global store. *)
-let gate_missing_locals (idx : U.t) (idx_view : U.index_view)
-    (missing : U.t list) : U.t =
-  if List.length idx_view.idxs <> 1 then
-    invalid_arg "index has 2 sources";
-  let open U.Promoting in
-  let eq lhs rhs = not_ (ne lhs rhs) in
-  let mask =
-    List.fold_left
-      (fun acc x -> and_ acc (eq x (U.const_int 0)))
-      (eq (List.hd missing) (U.const_int 0))
-      (List.tl missing)
-  in
-  U.replace idx
-    ~src:
-      (Array.of_list
-         (idx_view.ptr
-         :: List.map (fun v -> U.valid ~src:v ~cond:mask) idx_view.idxs))
-    ()
-
-(* Per-device compute grid for a kernel. *)
-let compute_idxs (ctx : Renderer.t) ~global_shape ~local_shape ~local_max =
-  let local_idxs =
-    get_grouped_dims Local_id local_shape local_max
-      ~reverse:false
-  in
-  let hw_local =
-    List.filter_map
-      (fun u -> Option.map (fun v -> dim_max v.U.size) (U.as_special u))
-      local_idxs
-  in
-  let global_max =
-    match Renderer.global_prod_max ctx with
-    | None -> Renderer.global_max ctx
-    | Some pm ->
-        let gm = Option.value (Renderer.global_max ctx) ~default:pm in
-        let rec zip3 gs ps ls = match gs, ps, ls with
-          | g :: gs, p :: ps, l :: ls -> min g (p / l) :: zip3 gs ps ls
-          | g :: gs, p :: ps, [] -> min g p :: zip3 gs ps []
-          | _ -> []
-        in
-        Some (zip3 gm pm (hw_local @ [ 1; 1; 1 ]))
-  in
-  get_grouped_dims Group_id global_shape global_max ~reverse:true
-  @ local_idxs
-
-(* Substitute ranges with SPECIAL-based GPU dimension indices. *)
-let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
-  match U.op s, U.as_kernel_info s with
-  | Ops.Sink, Some _ ->
-      let s_topo = U.toposort s in
-      if List.exists (fun x -> U.op x = Ops.Special) s_topo then None
-      else
-        let all_ranges =
-          List.fold_left
-            (fun acc x ->
-              if U.op x = Ops.Range
-              then Rkmap.add (Range_key.of_range x) x acc
-              else acc)
-            Rkmap.empty s_topo
-        in
-        let range_kind r = (Option.get (U.as_range r)).U.kind in
-        let extract_keys pred =
-          Rkmap.fold
-            (fun key x acc -> if pred (range_kind x) then key :: acc else acc)
-            all_ranges []
-          |> List.sort Range_key.compare
-        in
-        let global_dims =
-          extract_keys (function
-            | Axis_type.Global -> true
-            | _ -> false)
-        in
-        let local_dims =
-          extract_keys (function
-            | Axis_type.Warp | Local -> true
-            | _ -> false)
-        in
-        if global_dims = [] && local_dims = [] then None
-        else
-          let shape_of keys =
-            Array.of_list (List.map (fun k ->
-              Symbolic.simplify (Option.get (U.as_range (Rkmap.find k all_ranges))).size)
-              keys)
+          let limited =
+            match group_dims dims max_sizes with
+            | Some (_ :: _ as grouped) -> grouped
+            | _ -> dims
           in
-          let global_shape = shape_of global_dims in
-          let local_shape = shape_of local_dims in
+          if List.compare_lengths limited max_sizes > 0 then
+            cannot_limit dims max_sizes;
+          if List.equal Sint.equal limited dims then split_dims dims max_sizes
+          else List.map size limited
+    in
+    let raw_idxs =
+      List.mapi
+        (fun i s -> special (Sym (node s)) (prefix ^ string_of_int i))
+        limited
+    in
+    let flat =
+      List.fold_left2
+        (fun acc idx p -> O.(acc + (idx * node p)))
+        (int 0) raw_idxs (suffix_prods limited)
+    in
+    let sizes = List.map size dims in
+    List.mapi
+      (fun i (d, p) ->
+        let q = O.(flat // node p) in
+        simplify (if i = 0 then q else O.(q % node d)))
+      (List.combine sizes (suffix_prods sizes))
+
+let add_gpudims (r : Renderer.t) s =
+  let s_topo = toposort s in
+  match arg s with
+  | Kernel _ when not (List.exists (fun x -> op x = Op.Special) s_topo) -> (
+      let all_ranges = Hashtbl.create 8 in
+      List.iter
+        (fun x ->
+          if op x = Op.Range then Hashtbl.replace all_ranges (axis_id x) x)
+        s_topo;
+      let range id = Hashtbl.find all_ranges id in
+      let dims_of types =
+        Hashtbl.fold
+          (fun id x acc ->
+            if List.mem (axis_type x) types then id :: acc else acc)
+          all_ranges []
+        |> List.sort (List.compare Int.compare)
+      in
+      let global_dims = dims_of [ Axis_type.Global ] in
+      let local_dims = dims_of [ Axis_type.Warp; Axis_type.Local ] in
+      match (global_dims, local_dims) with
+      | [], [] -> None
+      | _ ->
+          let shape dims =
+            List.map (fun id -> ssimplify (nth (range id) 0)) dims
+          in
+          let global_shape = shape global_dims
+          and local_shape = shape local_dims in
+          (* A warp keeps its own axis, so no other dim folds into it. *)
           let local_max =
-            match Renderer.local_max ctx, local_dims with
-            | Some (_ :: rest), first :: _
-              when range_kind (Rkmap.find first all_ranges) = Axis_type.Warp ->
-                Some (dim_max local_shape.(0) :: rest)
-            | limits, _ -> limits
+            match (local_dims, local_shape, r.local_max) with
+            | l0 :: _, w :: _, _ :: rest
+              when axis_type (range l0) = Axis_type.Warp ->
+                Bigint.to_int (dim_max w) :: rest
+            | _ -> r.local_max
+          in
+          let local_idxs = grouped_dims "lidx" local_shape (Some local_max) in
+          let hw_local =
+            List.filter_map
+              (fun u ->
+                if op u = Op.Special then
+                  Some (Bigint.to_int (dim_max (Sym (nth u 0))))
+                else None)
+              local_idxs
+          in
+          let global_max =
+            match r.global_prod_max with
+            | None -> r.global_max
+            | Some prod_max ->
+                let rec mins gs ps ls =
+                  match (gs, ps, ls) with
+                  | g :: gs, p :: ps, l :: ls -> min g (p / l) :: mins gs ps ls
+                  | _ -> []
+                in
+                mins
+                  (if r.global_max = [] then prod_max else r.global_max)
+                  prod_max
+                  (hw_local @ [ 1; 1; 1 ])
           in
           let idxs =
-            compute_idxs ctx ~global_shape ~local_shape ~local_max
+            grouped_dims ~reverse:true "gidx" global_shape (Some global_max)
+            @ local_idxs
           in
-          let all_dim_keys = global_dims @ local_dims in
-          let dim_idx, _ =
-            List.fold_left
-              (fun (acc, i) k -> (Rkmap.add k i acc, i + 1))
-              (Rkmap.empty, 0) all_dim_keys
-          in
-          (* Two substitution passes. The gated index built below references
-             the original local/global ranges; a single combined substitution
-             would see its children rewritten to SPECIAL before the
-             (old_idx -> gated_idx) mapping gets a chance to apply, silently
-             dropping the Invalid sentinel. Pass 1 installs the gated
-             indices; pass 2 maps non-reduce ranges to their SPECIAL idxs. *)
-          let gate_subs = ref [] in
-          let range_subs = ref [] in
-          let gate_store r =
-            match U.as_store r with
-            | None -> ()
-            | Some { dst = idx; _ } ->
-                match U.as_index idx with
-                | Some ({ ptr; _ } as idx_view)
-                  when U.addrspace ptr = Some Dtype.Global ->
-                    let idx_ranges = U.ranges idx in
-                    let missing =
-                      List.filter_map
-                        (fun rk ->
-                          let rng = Rkmap.find rk all_ranges in
-                          if List.exists (U.equal rng) idx_ranges
-                          then None else Some rng)
-                        local_dims
-                    in
-                    if missing <> [] then
-                      gate_subs :=
-                        (idx, gate_missing_locals idx idx_view missing)
-                        :: !gate_subs
-                | _ -> ()
-          in
-          let sub_range r =
-            if U.op r <> Ops.Range then ()
-            else match Rkmap.find_opt (Range_key.of_range r) dim_idx with
-              | Some ii when range_kind r <> Axis_type.Reduce ->
-                  range_subs := (r, List.nth idxs ii) :: !range_subs
-              | _ -> ()
-          in
-          List.iter (fun r -> gate_store r; sub_range r) s_topo;
-          if !gate_subs = [] && !range_subs = [] then None
-          else
-            let s =
-              if !gate_subs = [] then s else U.substitute !gate_subs s
-            in
-            Some (if !range_subs = [] then s else U.substitute !range_subs s)
+          let subs = Tbl.create 16 in
+          let axes = global_dims @ local_dims in
+          List.iter
+            (fun x ->
+              (* A global store that does not use every thread index is masked
+                 to the threads whose unused indices are 0. *)
+              (if op x = Op.Store then
+                 let idx = nth x 0 in
+                 match src idx with
+                 | buf :: _ when addrspace buf = Some Dtype.Global -> (
+                     let missing =
+                       List.filter_map
+                         (fun id ->
+                           let rng = range id in
+                           if Nodes.mem rng (ranges idx) then None else Some rng)
+                         local_dims
+                     in
+                     match missing with
+                     | [] -> ()
+                     | m :: ms ->
+                         if List.length (src idx) <> 2 then
+                           invalid_arg
+                             "a global store's index misses a thread index but \
+                              has more than one index";
+                         let mask =
+                           uprod
+                             (eq m (int 0))
+                             (List.map (fun x -> eq x (int 0)) ms)
+                         in
+                         Tbl.replace subs idx
+                           (replace idx ~src:[ buf; valid (nth idx 1) mask ]))
+                 | _ -> ());
+              if op x = Op.Range then
+                match
+                  List.find_index (List.equal Int.equal (axis_id x)) axes
+                with
+                | Some i -> Tbl.replace subs x (List.nth idxs i)
+                | None -> ())
+            s_topo;
+          Some (substitute s (Tbl.fold (fun k v acc -> (k, v) :: acc) subs [])))
   | _ -> None
 
-(* The device axis is not a program axis: it is bound per device at launch.
-   Lower it to the [_device_num] variable, and drop it from the ENDs that
-   closed it. *)
-let device_to_var (node : U.t) : U.t option =
-  let is_device_num s =
-    match U.as_param s with
-    | Some { param = { name = Some "_device_num"; _ }; _ } -> true
-    | _ -> false
-  in
-  match U.as_range node, U.as_end node with
-  | Some { kind = Axis_type.Device; _ }, _ ->
-      Some
-        (U.variable ~name:"_device_num" ~min_val:0 ~max_val:(Bound.to_int (U.vmax node))
-           ~dtype:(U.dtype node) ~param:true ())
-  | _, Some { value; ranges } when List.exists is_device_num ranges ->
-      Some
-        (U.replace node
-           ~src:
-             (Array.of_list
-                (value :: List.filter (fun s -> U.op s <> Ops.Param) ranges))
-           ())
-  | _ -> None
+let pm_device_to_var =
+  Pattern_matcher.v
+    (fun () -> [
+      Pattern_matcher.rule (Upat.op Op.Range ~name:"r") (fun m ->
+          let r = m "r" in
+          if axis_type r = Axis_type.Device then
+            Some
+              (variable ~dtype:(dtype r) "_device_num" (Dtype.Value.of_int 0)
+                 (vmax r))
+          else None);
+      Pattern_matcher.rule (Upat.op Op.End ~name:"e") (fun m ->
+          let e = m "e" in
+          let device_num s =
+            op s = Op.Param
+            &&
+            match arg s with
+            | Param p -> p.name = Some "_device_num"
+            | _ -> false
+          in
+          match src e with
+          | body :: ends when List.exists device_num ends ->
+              Some
+                (replace e
+                   ~src:(body :: List.filter (fun s -> op s <> Op.Param) ends))
+          | _ -> None);
+    ])
 
-let pm_add_gpudims (ctx : Renderer.t) (root : U.t) : U.t =
-  U.graph_rewrite ~name:"add gpudims"
-    (U.first_match [ add_gpudims ctx; device_to_var ])
-    root
+let pm_add_gpudims =
+  Pattern_matcher.append
+    (Pattern_matcher.v
+       (fun () -> [
+         Pattern_matcher.rule_ctx (Upat.op Op.Sink ~name:"s") (fun r m ->
+             add_gpudims r (m "s"));
+       ]))
+    (Pattern_matcher.with_ctx pm_device_to_var)

@@ -1,3 +1,0 @@
-(executable
- (name main)
- (libraries tolk tolk.nn tolk.frontend tolk.uop brot unix))

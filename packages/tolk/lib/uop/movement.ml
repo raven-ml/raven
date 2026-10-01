@@ -5,111 +5,104 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-let mop_cleanup : Upat.Pattern_matcher.t =
-  let open Upat in
-  Pattern_matcher.make
-    [
-      (* A slice of a slice adds offsets and keeps the outer extents. *)
-      (op ~name:"outer" ~src:[ op ~name:"inner" Ops.Shrink; any; any ] Ops.Shrink
-      => fun bs ->
-        let outer = bs $ "outer" and inner = bs $ "inner" in
-        let offsets = List.map2 (fun a b -> Uop.simplify Uop.Promoting.(a + b))
-            (Uop.as_shape (Uop.src inner).(1))
-            (Uop.as_shape (Uop.src outer).(1)) in
-        match offsets with
-        | [] -> Some (Uop.src inner).(0)
-        | _ ->
-            let offset = match offsets with [offset] -> offset | _ -> Uop.stack offsets in
-            Some (Uop.shrink ~src:(Uop.src inner).(0) ~offset
-                    ~size:(Uop.src outer).(2)));
-      (* Merge adjacent reshapes: the outer reshape keeps its own target
-         shape but reads through the inner reshape's input. *)
-      (op ~name:"x" ~src:[ op ~name:"x2" Ops.Reshape; any ] Ops.Reshape
-      => fun bs ->
-        let x = bs $ "x" and x2 = bs $ "x2" in
-        Some (Uop.replace x ~src:[| (Uop.src x2).(0); (Uop.src x).(1) |] ()));
-      (* Drop a reshape that does not change the shape. *)
-      (op ~name:"x" ~src:[ var "x2"; any ] Ops.Reshape
-      => fun bs ->
-        let x = bs $ "x" and x2 = bs $ "x2" in
-        match Uop.shape_opt x2 with
-        | Some s2 when List.equal Uop.equal s2 (Uop.shape x) -> Some x2
-        | _ -> None);
-      (* Merge permutes: compose the two orderings. *)
-      (op ~name:"x" ~src:[ op ~name:"x2" Ops.Permute ] Ops.Permute
-      => fun bs ->
-        let x = bs $ "x" and x2 = bs $ "x2" in
-        match Uop.Arg.as_ints (Uop.arg x2), Uop.Arg.as_ints (Uop.arg x) with
-        | Some a2, Some a ->
+open Ops
+
+let is_int_const i c =
+  match value c with
+  | #Dtype.value as v -> Dtype.Value.(v = of_int i)
+  | `Invalid -> false
+
+let shrink_arg u =
+  match marg u with Shrink arg -> arg | _ -> invalid_arg "not a shrink"
+
+let permute_arg u =
+  match marg u with Permute arg -> arg | _ -> invalid_arg "not a permute"
+
+let mop_cleanup =
+  Pattern_matcher.(
+    v
+      (fun () -> [
+        (* Merge adjacent shrinks. *)
+        rule
+          (Upat.f
+             (Upat.op Op.Shrink ~name:"x")
+             Op.Shrink ~allow_any_len:true ~name:"s")
+          (fun m ->
+            let x = m "x" and s = m "s" in
+            let merge (o, _) (p, n) = (Sint.(o + p), n) in
             Some
-              (Uop.replace x2 ~arg:(Uop.Arg.Ints (List.map (List.nth a2) a)) ())
-        | _ -> None);
-      (* Drop an identity permute. *)
-      (op ~name:"x" Ops.Permute
-      => fun bs ->
-        let x = bs $ "x" in
-        match Uop.Arg.as_ints (Uop.arg x) with
-        | Some order when order = List.init (List.length order) Fun.id ->
-            Some (Uop.src x).(0)
-        | _ -> None);
-      (* A stack whose lanes read the sequential elements of one source is
-         that source. *)
-      (op_src ~name:"stk"
-         ~src:(repeat (op ~src:[ var "src"; op Ops.Const ] Ops.Index))
-         Ops.Stack
-      => fun bs ->
-        let stk = bs $ "stk" and src = bs $ "src" in
-        let lanes = Uop.src stk in
-        let sequential =
-          Array.to_list lanes
-          |> List.mapi (fun i lane ->
-                 Uop.const_int_value (Uop.src lane).(1) = Some i)
-          |> List.for_all Fun.id
-        in
-        if sequential && List.equal Uop.equal (Uop.shape stk) (Uop.shape src)
-        then Some src
-        else None);
-      (* A constant index into a stack selects that lane, carrying any
-         remaining indices into the selected lane. *)
-      (op ~name:"idx" ~allow_any_len:true
-         ~src:[ op ~name:"a" Ops.Stack; cvar ~name:"i" () ]
-         Ops.Index
-      => fun bs ->
-        let a = bs $ "a" and i = bs $ "i" and idx = bs $ "idx" in
-        match Uop.const_int_value i with
-        | Some iv when iv >= 0 && iv < Array.length (Uop.src a) ->
-            let lane = (Uop.src a).(iv) in
-            let idx_srcs = Uop.src idx in
-            if Array.length idx_srcs <= 2 then Some lane
-            else
-              let extra =
-                Array.to_list (Array.sub idx_srcs 2 (Array.length idx_srcs - 2))
-              in
-              Some (Uop.index ~ptr:lane ~idxs:extra ())
-        | _ -> None);
-      (* Scalar indices chain: indexing an index just appends coordinates. *)
-      (op ~name:"idx2" ~allow_any_len:true
-         ~src:[ op ~name:"idx1" ~allow_any_len:true Ops.Index ]
-         Ops.Index
-      => fun bs ->
-        let idx1 = bs $ "idx1" and idx2 = bs $ "idx2" in
-        let tail u = Array.to_list (Uop.src u) |> List.tl in
-        let inner = tail idx1 and outer = tail idx2 in
-        if List.for_all (fun u -> Uop.shape_opt u = Some []) (inner @ outer)
-        then Some (Uop.index ~ptr:(Uop.src idx1).(0) ~idxs:(inner @ outer) ())
-        else None);
-      (* A shaped index used as the pointer of another index composes: the
-         outer coordinates select within the inner index's own shape. *)
-      (op ~name:"idx2" ~allow_any_len:true
-         ~src:[ op ~src:[ var "buf"; var "inner" ] Ops.Index ]
-         Ops.Index
-      => fun bs ->
-        let buf = bs $ "buf" and inner = bs $ "inner" and idx2 = bs $ "idx2" in
-        let outer = Array.to_list (Uop.src idx2) |> List.tl in
-        match Uop.shape_opt inner with
-        | Some shape when List.length shape = List.length outer ->
-            Some
-              (Uop.index ~ptr:buf ~idxs:[ Uop.index ~ptr:inner ~idxs:outer () ]
-                 ())
-        | _ -> None);
-    ]
+              (mop (nth x 0)
+                 (Shrink (List.map2 merge (shrink_arg x) (shrink_arg s)))));
+        (* Merge adjacent reshapes. *)
+        rule
+          (Upat.op Op.Reshape ~name:"x"
+             ~src:[ Upat.op Op.Reshape ~name:"x2"; Upat.wild ])
+          (fun m ->
+            let x = m "x" in
+            Some (replace ~src:[ nth (m "x2") 0; nth x 1 ] x));
+        (* Remove no-op reshapes. *)
+        rule
+          (Upat.op Op.Reshape ~name:"x" ~src:[ Upat.var "x2"; Upat.wild ])
+          (fun m ->
+            let x2 = m "x2" in
+            match shape_opt x2 with
+            | Some s when List.equal Sint.equal s (shape (m "x")) -> Some x2
+            | _ -> None);
+        (* Merge permutes. *)
+        rule
+          (Upat.op Op.Permute ~name:"x" ~src:[ Upat.op Op.Permute ~name:"x2" ])
+          (fun m ->
+            let x2 = m "x2" in
+            let order =
+              List.map (List.nth (permute_arg x2)) (permute_arg (m "x"))
+            in
+            Some (replace ~arg:(Axes order) x2));
+        (* Remove no-op permutes. *)
+        rule (Upat.op Op.Permute ~name:"x") (fun m ->
+            let x = m "x" in
+            let order = permute_arg x in
+            let identity = List.init (List.length order) Fun.id in
+            if List.equal Int.equal order identity then Some (nth x 0) else None);
+        (* A stack of indexes by constants. *)
+        rule
+          (Upat.op Op.Stack ~name:"stk"
+             ~each:(Upat.op Op.Index ~src:[ Upat.var "src"; Upat.op Op.Const ]))
+          (fun m ->
+            let stk = m "stk" and src = m "src" in
+            let in_order i x = is_int_const i (nth x 1) in
+            if
+              List.equal Sint.equal (shape stk) (shape src)
+              && List.for_all Fun.id (List.mapi in_order (Ops.src stk))
+            then Some src
+            else None);
+        (* A constant index into a stack is that stack's source. *)
+        rule
+          (Upat.op Op.Index ~name:"idx" ~allow_any_len:true
+             ~src:[ Upat.op Op.Stack ~name:"a"; Upat.cvar "i" ])
+          (fun m ->
+            let x = index (m "a") [ m "i" ] in
+            match List.drop 2 (src (m "idx")) with
+            | [] -> Some x
+            | rest -> Some (index x rest));
+        (* An index of an index is one index. *)
+        rule
+          (Upat.op Op.Index ~name:"idx2" ~allow_any_len:true
+             ~src:[ Upat.op Op.Index ~name:"idx1" ~allow_any_len:true ])
+          (fun m ->
+            let idx1 = m "idx1" in
+            let idxs = List.tl (src idx1) @ List.tl (src (m "idx2")) in
+            if List.for_all (fun x -> List.is_empty (shape x)) idxs then
+              Some (index (nth idx1 0) idxs)
+            else None);
+        (* An index of a shaped index. *)
+        rule
+          (Upat.op Op.Index ~name:"idx2" ~allow_any_len:true
+             ~src:
+               [ Upat.op Op.Index ~src:[ Upat.var "buf"; Upat.var "idx1_arg" ] ])
+          (fun m ->
+            let idx1_arg = m "idx1_arg"
+            and idxs = List.drop 1 (src (m "idx2")) in
+            if List.compare_length_with idxs (ndim idx1_arg) = 0 then
+              Some (index (m "buf") [ index idx1_arg idxs ])
+            else None);
+      ]))

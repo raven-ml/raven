@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_next
+open Tolk
 module B = Nx_device.Buffer
 module View = Nx_array.View
-module Engine = Tolk_next_engine
+module Engine = Tolk_engine
 
 let name = "compiled"
 

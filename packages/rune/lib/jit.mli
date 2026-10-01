@@ -12,11 +12,10 @@
     its parameter binds: where the run starts below the view's first element
     ({!Lower.span}) and where it starts within 16 bytes of memory
     ({!Lower.phase}), on every device, the host included; and the settings of
-    tolk that a caller may change around a call ({!Tolk_next.Helpers.context})
-    and that change the program: [BEAM], [NOOPT] and whether batches are
-    profiled ([DEBUG] at 2 or more). tolk's other settings are read when a key
-    is first compiled, and overriding them around a compiled call is not
-    supported.
+    tolk that a caller may change around a call ({!Tolk.Helpers.context}) and
+    that change the program: [BEAM], [NOOPT] and whether batches are profiled
+    ([DEBUG] at 2 or more). tolk's other settings are read when a key is first
+    compiled, and overriding them around a compiled call is not supported.
 
     A key being compiled makes the other calls with that key wait. A compile
     that raises installs nothing: its waiters, and later calls, trace again. A
@@ -36,7 +35,7 @@
       cannot lend on this call: borrowed memory, memory that does not span its
       buffer, or storage another program binds;
     + it consumes the consumed leaves, binds every parameter and queues the
-      program ({!Tolk_next_engine.run});
+      program ({!Tolk_engine.run});
     + it wraps each result's storage as a value at the result's placement.
 
     {b Lending.} A result takes the storage of a consumed leaf of equal dtype,

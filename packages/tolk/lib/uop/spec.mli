@@ -5,161 +5,97 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Structural validators for {!Uop} DAGs.
+(** Specifications: the nodes each stage of compilation may hold.
 
-    A spec is an ordered list of [(pattern, predicate)] rules that
-    characterises the well-formed nodes at a given compilation stage. A
-    node [u] is accepted iff the first rule whose {!Upat} pattern matches
-    [u] has a predicate that returns [true] on some binding produced by
-    the match. Later rules are not consulted once a pattern has matched,
-    so specific rules must come before permissive ones.
+    A specification is a matcher from nodes to verdicts. A node passes when the
+    first rule that decides it gives [true]: a rule decides with [Some b] and
+    declines with [None], and a node that no rule decides fails. A specification
+    judges one node at a time, from its operation, type, argument and sources;
+    {!type_verify} judges a graph.
 
-    Predicates only inspect a node; they never rewrite it. This keeps
-    specs cheap and callable from the inside of passes as an integrity
-    check, distinct from the rewrite machinery in {!Upat.Pattern_matcher}.
+    {!shared} holds at every stage. {!tensor} and {!program} add the operations
+    of tensor graphs and of programs, and {!hcq} those of command-queue
+    programs. {!full} accepts the nodes of every stage and of the forms passes
+    produce in between; linking this module makes it the check that {!Ops.v}
+    runs on the nodes it builds when {!Helpers.spec} is 2 or more.
+    {!kernel_graph} is the graph of kernel calls that scheduling produces. *)
 
-    {1:example Example}
+type t = (unit, bool) Ops.Pattern_matcher.t
+(** The type for specifications. *)
 
-    {[
-      let open Upat in
-      let shared_spec = Spec.make [
-        (* SINK has void dtype. *)
-        Spec.(op ~dtype:Dtype.void Ops.Sink
-              =?> fun _ _ -> true);
+(** {1:specs Specifications} *)
 
-        (* INDEX offsets are integer-valued. *)
-        Spec.(op ~allow_any_len:true ~src:[any] Ops.Index
-              =?> fun u _ ->
-                Array.for_all Dtype.is_int
-                  (Array.map Uop.dtype (Uop.src u)));
-      ]
-    ]} *)
+val shared : t
+(** [shared] accepts the operations of every stage:
+    - sinks, and constants and stacks of constants;
+    - arithmetic whose operands have its type: a {!Op.Where}'s condition is
+      boolean and comparisons compare operands of one type; a shift's count may
+      also be [uint32]; bitwise operations take no floats, and divisions and
+      remainders only integers;
+    - casts, ranges, indexes with integer indexes, ends of bounded loops, and
+      loop back-edges on a scalar boolean condition;
+    - parameters, local and register buffers, binaries, groups of effects,
+      orderings of storage, custom code, calls of opaque bodies, barriers and
+      instructions;
+    - loads and stores through an index or a shrink, a gated load's alternative
+      being of the load's type, and stores into storage;
+    - matrix multiply-accumulates.
 
-(** {1:types Types} *)
+    A weak type ({!Dtype.weaks}) and {!Ops.invalid} match any type.
 
-type rule
-(** A pair of a {!Upat} pattern and a [bool]-returning predicate over the
-    matched node and its capture bindings. *)
+    When {!Helpers.check_oob} holds, a load or store through an index into
+    storage must be proved in bounds: the bounds of the index ({!Ops.vmin},
+    {!Ops.vmax}) must lie within the storage's {!Ops.max_numel}. An index they
+    do not prove fails, whatever its gate, and its bounds, the index and the
+    gate are printed on standard error, saying that the bound cannot be proven
+    without a solver. *)
 
-type t
-(** An ordered list of rules. Matching semantics are first-match: see the
-    module preamble. *)
+val tensor : t
+(** [tensor] is {!shared} with the operations of tensor graphs: float-only unary
+    math; global buffers with a size and a device, and storage declared without
+    a buffer ({!Op.Alloc}); variables without a device; unlowered
+    {!Op.Special}s; movement; reductions; copies to a device other than a disk
+    and all-reductions; sharding ({!Op.Unshard}, {!Op.Mselect}, {!Op.Mstack});
+    {!Op.Detach}, {!Op.Contiguous_backward} and {!Op.Stage}; and programs as
+    compilation fills them in: a sink, then its linear form, its source and its
+    binary. A multi-device buffer or copy carries one {!Ops.Axis_type.Device}
+    range over its devices. *)
 
-(** {1:ctors Constructors} *)
+val program : t
+(** [program] is {!shared} as programs restrict it: every width is stated, so a
+    constant appears only under the cast that types it and nothing else is weak;
+    there is no movement but a shrink of storage by a constant length, no global
+    buffer and no {!Ops.invalid}; no elementwise operation on values has a
+    vector shape, a bitcast of memory aside. It adds conditionals ({!Op.If},
+    {!Op.Endif}) and lowered, [int32] {!Op.Special}s. *)
 
-val ( =?> ) : Upat.t -> (Uop.t -> Upat.bindings -> bool) -> rule
-(** [pat =?> pred] is the rule "whenever [pat] matches a node [u] with
-    bindings [bs], accept [u] iff [pred u bs]". Several bindings may be
-    produced by a single match (e.g. through commutative permutation in
-    {!Upat.alu}); the rule accepts if [pred] returns [true] for at least
-    one of them.
+val hcq : t
+(** [hcq] is {!shared} with the operations of command-queue programs: the
+    address of storage on a device ({!Op.Getaddr}), and programs over a buffer
+    or parameter. *)
 
-    The [?] in the operator signals the predicate (boolean-returning)
-    nature of the callback, distinguishing it from {!Upat.(=>)} which
-    binds a rewrite (option-returning) callback. The distinction matters
-    because [Upat] is typically opened locally. *)
+val full : t
+(** [full] is the rules of the forms between stages (ends of loops over any
+    integers, any ordering, any load or store), then {!tensor}'s, {!program}'s
+    and {!hcq}'s rules, in that order. *)
 
-val ( =??> ) : Upat.t -> (Uop.t -> Upat.bindings -> bool option) -> rule
-(** [pat =??> pred] is like {!(=?>)} but uses a three-valued predicate.
+val kernel_graph : t
+(** [kernel_graph] accepts the graph of kernel calls: a sink of calls of opaque
+    bodies over storage and parameters, with the constants, stacks, casts and
+    bitcasts that make their arguments, sharding ({!Op.Mstack}, {!Op.Mselect}),
+    {!Ops.Axis_type.Device} ranges, and orderings of storage. A call may run in
+    a loop, an {!Op.End} of {!Ops.Axis_type.Loop} ranges around it, and read
+    views of storage ({!Op.Shrink}) that move with those ranges, their bounds
+    constants, loop ranges, and weak integer sums and products of them. *)
 
-    On a match, [pred u bs] returns [Some true] to accept, [Some false]
-    to reject, or [None] to defer to the next matching rule.
+(** {1:verify Verifying} *)
 
-    Typical use: an invariant that rejects a subset of nodes without
-    deciding the rest. For example, "no tag on tensor-graph ops" rejects
-    tagged nodes ([Some false]) and defers for untagged ones ([None]). *)
+val type_verify : ?enter_calls:bool -> t -> Ops.t -> unit
+(** [type_verify ~enter_calls spec u] checks every node of [u]'s graph against
+    [spec], sources first ({!Ops.toposort}[ ~enter_calls u]; [enter_calls]
+    defaults to [true]). When {!Helpers.debug} is 3 or more, a failure first
+    prints the graph's nodes on standard error ({!Render.pp_uops}).
 
-val make : rule list -> t
-(** [make rs] is the spec consisting of rules [rs] in order. *)
-
-val ( ++ ) : t -> t -> t
-(** [a ++ b] concatenates [a] and [b], preserving order. Rules of [a] are
-    tried first. *)
-
-(** {1:specs Stage specs}
-
-    Predefined specs for each compilation stage. Each stage's spec is
-    the concatenation of stage-specific rules and the shared rules
-    valid across stages. *)
-
-val shared_spec : t
-(** Rules that hold at every stage: {!Ops.Sink}, {!Ops.Noop},
-    {!Ops.Const}, local/register {!Ops.Buffer}, {!Ops.Stack}, ALU and casts,
-    {!Ops.Range}, {!Ops.Index}, {!Ops.End}, grouped side effects, ordering
-    {!Ops.After}, backend escapes, pattern literals,
-    machine instructions, memory access, and {!Ops.Wmma}.
-
-    An ALU result and each of its operands share a dtype, except that a
-    weakly-typed operand ([weakint] or [weakfloat]) matches any result dtype;
-    {!Ops.Where} and the comparison ops follow the same weak-operand rule, and
-    shift distances may additionally be [uint32]. Integer division and modulo
-    are accepted only for integer results. {!Ops.Stack} requires every element
-    to share the stack's dtype. {!Ops.Cast} and {!Ops.Bitcast} carry their
-    target dtype in the node argument.
-
-    {!Ops.Load} and {!Ops.Store} use the gate layout where loads are [(idx)] or
-    [(idx, alt, gate)] and stores are [(idx, value)] or [(idx, value, gate)].
-    Gates must be bool values on the load/store, not on {!Ops.Index}. With
-    [CHECK_OOB] set in the process environment, memory access validation is
-    delegated to the UOp validation layer: it uses deterministic
-    {!Uop.vmin}/{!Uop.vmax} bounds, explicit shape-derived buffer sizes, image
-    accesses and hard-to-model bypasses, invalid-index sentinels, statically
-    false gates, and simple boolean gate refinements. Memory sources may be
-    {!Ops.Index}, {!Ops.Shrink}, or one {!Ops.Cast} over those sources;
-    bitcasts over indexes are not memory sources. There is no general solver
-    fallback in this layer, so masked accesses that need solver-strength
-    arithmetic reasoning remain unproven. *)
-
-val tensor_spec : t
-(** Tensor-graph spec. Accepts, on top of {!shared_spec}, float-only unary
-    math ({!Ops.Sin}, {!Ops.Log2}, {!Ops.Exp2}, {!Ops.Sqrt},
-    {!Ops.Reciprocal}), tensor-level devices, global buffers whose shape source
-    is [weakint]-typed, scalar binding effects and calls,
-    [weakint]-typed {!Ops.Special},
-    movement ops, reductions over an integer tail, copy/allreduce/multi-device
-    ops, staging, and program packaging. Concrete device
-    payloads reject positional selectors and empty multi-device groups;
-    sharding axes must point into the source shape of a multi-device value. *)
-
-val program_spec : t
-(** Linearized-program spec. Accepts {!shared_spec} plus program-only
-    rejection rules: no [weakint] or [weakfloat] values, movement ops
-    only for the special index-like {!Ops.Shrink} form, only local/register
-    {!Ops.Buffer} nodes, no invalid constants, and {!Ops.If}/{!Ops.Endif} with
-    bool conditions and {!Ops.Cast}, {!Ops.Index}, or {!Ops.Shrink} dedup
-    sources. {!Ops.Special} is [int32]-typed at this stage. Two-source
-    alternate loads are rejected before shared memory rules so gated loads must
-    use [(idx, alt, gate)]. *)
-
-val full_spec : t
-(** [full_spec] is the explicit intermediate validator formed from the
-    transitional full-spec forms plus {!tensor_spec} and {!program_spec}. It
-    accepts rewrite-error markers, loose {!Ops.After}/{!Ops.End}, expander raw
-    memory access, and scalar binding effects. It has no catch-all rule. *)
-
-(** {1:verify Verification} *)
-
-exception Verification_failed of Uop.t
-(** Raised by {!type_verify} on the first node rejected by the spec. The
-    registered printer reports the op name and dtype. *)
-
-val type_verify : t -> Uop.t -> unit
-(** [type_verify spec root] validates every node in [root]'s DAG against
-    [spec], walking {!Uop.toposort}[ root] in dependency order.
-
-    Raises [Verification_failed] on the first node that no rule of [spec]
-    accepts. *)
-
-val verify_list : t -> Uop.t list -> unit
-(** [verify_list spec program] validates [program] exactly in the supplied
-    order. This is intended for already-linearized programs where callers
-    should not synthesize a root just to run program-stage validation.
-
-    Raises [Verification_failed] on the first node that no rule of [spec]
-    accepts. *)
-
-val accepts : t -> Uop.t -> bool
-(** [accepts spec u] is [true] iff the first rule of [spec] whose
-    pattern matches [u] has a predicate returning [true] on some binding
-    of that match. First-match semantics: a specific rule that rejects
-    [u] is not overridden by a later catch-all. *)
+    Raises [Invalid_argument] on the first node that fails, naming its position
+    in that order, its operation, type and number of sources, each source's
+    operation, type and argument, and its own argument. *)

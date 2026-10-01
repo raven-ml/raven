@@ -1,0 +1,8 @@
+(test
+ (name test_decomp_op)
+ (package tolk)
+ (libraries windtrap tolk tolk_test)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{test} --exclude-tag slow)))

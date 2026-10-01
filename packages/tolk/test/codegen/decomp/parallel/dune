@@ -1,0 +1,15 @@
+; The compilers' domains force the emulation's rules on their first rewrite, so
+; the kernels compile in a process of their own, with nothing compiled before.
+
+(test
+ (name test_decomp_parallel)
+ (package tolk)
+ (libraries windtrap tolk)
+ (action
+  (setenv
+   PARALLEL
+   8
+   (setenv
+    EMULATED_DTYPES
+    half,bfloat16,long
+    (run %{test})))))

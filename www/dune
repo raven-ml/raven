@@ -18,7 +18,6 @@
   (source_tree ../packages/quill/doc)
   (source_tree ../packages/munin/doc)
   (source_tree ../packages/nx/examples)
-  (source_tree ../packages/tolk/examples)
   (source_tree ../packages/rune/examples)
   (source_tree ../packages/kaun/examples)
   (source_tree ../packages/vega/examples)

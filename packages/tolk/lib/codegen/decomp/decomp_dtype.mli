@@ -5,40 +5,87 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_uop
+(** Emulated data types.
 
-(** Dtype decomposition matchers matching tinygrad [codegen/decomp/dtype.py].
+    A target that lacks a data type computes with another one.
 
-    This module owns the long-as-two-int matcher and float storage emulation
-    matcher. Graph-level dtype detection and scheduling are still performed by
-    codegen lowering and renderer hooks. *)
+    - A 64-bit integer ({!Dtype.Int64}, {!Dtype.Uint64}) is two 32-bit words,
+      low first, of {!Dtype.Int32} or {!Dtype.Uint32}. Its storage holds twice
+      as many words, and its operations are built from 32-bit ones.
+    - A narrow float ({!Dtype.Float16}, {!Dtype.Bfloat16} and the 8-bit floats)
+      is stored in its own format, as the unsigned integer of its width, and
+      computed with as a {!Dtype.Float32} that holds a value of the narrow
+      float: a load converts it up, a store converts it down ({!f2f}), and a
+      cast to it or an operation on it computes in {!Dtype.Float32} and rounds
+      its result to it, once, so that the store's conversion is exact. A cast
+      clamps its operand to the narrow float's range first ({!f2f_clamp}), and
+      a source more precise than a {!Dtype.Float32} reaches one rounded to
+      odd. A copy or a selection keeps the stored bits.
 
-val pm_long_decomp : unit -> Upat.Pattern_matcher.t
-(** [pm_long_decomp ()] rewrites int64 and uint64 values as pairs of 32-bit
-    values. Create one matcher per {!Uop.graph_rewrite} call and use
-    [~bottom_up:true]. The matcher retains shared word splits for that pass. *)
+    The conversions are IEEE's: one rounding, to nearest with ties to even,
+    gradual underflow, and infinities and NaNs kept where the format has them.
 
-type float_decomp_ctx = {
-  from_dtype : Tolk_uop.Dtype.t;
-  (** Source storage dtype to emulate. *)
+    A type is emulated when the target does not support it
+    ({!Renderer.supported_dtypes}) or the setting {!Helpers.emulated_dtypes}
+    names it. *)
 
-  to_dtype : Tolk_uop.Dtype.t;
-  (** Arithmetic dtype used for emulation. *)
-}
-(** The type for one float decomposition direction. *)
+(** {1:floats Float conversion} *)
 
-val pm_float_decomp : float_decomp_ctx -> Upat.Pattern_matcher.t
-(** [pm_float_decomp ctx] rewrites loads, stores, casts, bitcasts, and float
-    operations from [ctx.from_dtype] storage through [ctx.to_dtype]
-    arithmetic. *)
+val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
+(** [f2f ~sat v fr to_] converts between a narrow float and {!Dtype.Float32},
+    [v] being the bits of a float of type [fr], as the unsigned integer of its
+    width:
+    - widening to {!Dtype.Float32}, it is the value [v] encodes, subnormals
+      included;
+    - narrowing from {!Dtype.Float32}, it is the bits, as the unsigned integer
+      of [to_]'s width, of the value [v] encodes clamped ({!f2f_clamp} [~sat])
+      and rounded to [to_]'s precision, to nearest with ties to even, into a
+      subnormal below [to_]'s least normal.
 
-val is_dtype_supported : Renderer.t -> Tolk_uop.Dtype.t -> bool
-(** [is_dtype_supported renderer dt] is [true] iff programs rendered by
-    [renderer] can load, store and compute the scalar dtype [dt]: the renderer
-    supports it natively, or {!do_dtype_decomps} emulates it (compact floats and
-    64-bit integers). [float64] on Metal is neither. *)
+    A NaN stays a NaN of its sign, quiet, with its payload's top bits where the
+    formats have room for them; an [fnuz] format has one NaN, and no negative
+    zero. [sat] defaults to [true].
 
-val do_dtype_decomps : Renderer.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [do_dtype_decomps renderer sink] detects unsupported long and compact
-    float dtypes reachable from [sink], then applies the minimal matching
-    decomposition passes required by [renderer]. *)
+    Raises [Invalid_argument] unless one of [fr] and [to_] is {!Dtype.Float32}
+    and the other a narrower float. *)
+
+val f2f_clamp : ?sat:bool -> Ops.t -> Dtype.t -> Ops.t
+(** [f2f_clamp ~sat x dt] is the float [x] limited to what the narrow float [dt]
+    holds. If [dt] is an 8-bit float and [sat] (default [true]), a finite
+    magnitude above [dt]'s greatest finite value is that value. Otherwise a
+    magnitude from [dt]'s greatest finite value plus half an ulp up is an
+    infinity: rounding it to nearest even would give one. An infinity stays an
+    infinity, which a format without one stores as its NaN, and a NaN a NaN. *)
+
+val narrow : Ops.t -> Dtype.t -> Ops.t
+(** [narrow x dt] is [x] cast to [dt], but for a {!Dtype.Float32} from a
+    {!Dtype.Float64} or an integer of 32 or 64 bits, more precise than a
+    float32: then it is [x] rounded to odd, towards zero with the last bit set
+    if bits were dropped, so that a narrow float rounded to nearest from it is
+    [x] rounded to nearest once (D9, D64). *)
+
+(** {1:passes Passes} *)
+
+val computes : Renderer.t -> Dtype.t list
+(** [computes r] is the data types of {!Dtype.all}, in order, that [r]'s target
+    computes: those it supports ({!Renderer.supported_dtypes}), and those
+    {!pm_dtype_decomps} emulates where it lacks them, the 8-bit floats,
+    {!Dtype.Bfloat16}, {!Dtype.Float16}, {!Dtype.Int64} and
+    {!Dtype.Uint64}. *)
+
+type ctx
+(** The type for the context of {!pm_dtype_decomps}: the types a kernel uses
+    that may need emulation, and the target's renderer. *)
+
+val ctx : Renderer.t -> ctx
+(** [ctx r] is the context for emulating on [r]'s target, with no type found
+    yet. *)
+
+val pm_dtype_decomps : (ctx, Ops.t) Ops.Pattern_matcher.t
+(** [pm_dtype_decomps] notes the narrow floats and 64-bit integers a kernel
+    uses, and at the kernel's {!Op.Sink} rewrites it to emulate those that the
+    target lacks, in the promotion order of their types ({!Dtype.compare}).
+    Unsigned 64-bit integers are emulated with signed ones.
+
+    Raises [Invalid_argument] if a 64-bit integer variable must be emulated, or
+    if {!Helpers.emulated_dtypes} names no data type. *)

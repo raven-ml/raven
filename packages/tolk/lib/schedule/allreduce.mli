@@ -5,78 +5,52 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Multi-device collective reduction.
+(** Reductions across devices.
 
-    Builds allreduce computation graphs using naive, hierarchical, ring, or all-to-all
-    strategies depending on device count, element count, and the [RING],
-    [ALL2ALL], and [RING_ALLREDUCE_THRESHOLD] context variables. *)
+    An {!Op.Allreduce} combines, element by element, the shards that a value
+    holds on each of its devices, and places the result on a device or on
+    several. This module expresses it with what devices can run: copies between
+    devices ({!Ops.copy_to_device}), elementwise operations and multi-device
+    values ({!Ops.mstack}). *)
 
-val handle_allreduce :
-  Tolk_uop.Uop.t ->
-  op:Tolk_uop.Ops.t ->
-  device:Tolk_uop.Uop.device ->
-  Tolk_uop.Uop.t option
-(** [handle_allreduce buf ~op ~device] builds a reduction graph that
-    combines every shard of [buf] with [op] and places the result
-    on [device].
+val handle_allreduce : Ops.t -> Ops.t option
+(** [handle_allreduce red] is the value of the allreduce [red] of a source [x]
+    across [n] devices with the operation [op], built from copies and [op], or
+    [None] if [x] is not on several devices. [x] is padded to its greatest shape
+    ({!Ops.max_shape}) and made contiguous first. The algorithm is the first
+    that applies:
 
-    Returns [None] if [buf] is not on multiple devices. Symbolic shapes use
-    padded maximum-size transfers and retain their logical extents. Ring and
-    all-to-all strategies require concrete shapes. When [ALLREDUCE_NODE_NDEVS]
-    divides the device count, hierarchical reduction first combines chunks
-    within each node, then across corresponding ranks, and gathers locally.
+    - {e hierarchical}, when [x]'s shape is known and
+      {!Helpers.allreduce_node_ndevs} is some [h > 0] dividing [n]: the devices
+      form nodes of [h] consecutive devices, and the flattened value [h] chunks.
+      Each device reduces one chunk within its node, then with the devices of
+      the same rank in the other nodes, and each node gathers the chunks;
+    - {e naive}, unless all-to-all or ring applies: each shard is copied to
+      [red]'s devices, the copies are combined in device order, and the result
+      is shrunk back to [x]'s shape;
+    - {e all-to-all}, when [x]'s shape is known and {!Helpers.all2all} is [2],
+      or [1] with more than two devices and more elements than
+      [RING_ALLREDUCE_THRESHOLD] (default [256000]): the flattened value is cut
+      into [n] chunks, of sizes multiples of the largest of [32], [16], [8], [4]
+      and [2] that divides its size; device [i] gathers and reduces chunk [i]
+      from every device, then sends it to every device;
+    - {e ring}, when all-to-all does not apply and {!Helpers.ring} is [2], or
+      [1] under the same conditions: the same chunks each travel around the ring
+      of devices, reduced at each step, and the reduced chunks travel around it
+      again to reach every device.
 
-    The strategy is selected automatically:
-    {ul
-    {- {e Naive} when the device count is [<= 2] or the element
-       count is below [RING_ALLREDUCE_THRESHOLD] (default 256k).}
-    {- {e All-to-all} when [ALL2ALL >= 2], or [ALL2ALL >= 1] and
-       the size exceeds the threshold with [> 2] devices.}
-    {- {e Ring} when [RING >= 2], or [RING >= 1] and the size
-       exceeds the threshold with [> 2] devices.}} *)
+    When [red] places its result on one device, each reduced chunk is copied
+    there. With {!Helpers.debug} at [2] or more, the algorithm and the size are
+    printed on standard output. *)
 
-val box_size : like:Tolk_uop.Uop.t -> int -> int option
-(** [box_size ~like ndev] is [Some hdev] when [ALLREDUCE_NODE_NDEVS] is
-    [hdev] and splits [ndev] devices into several boxes of several devices
-    each, for a collective whose value has [like]'s shape: device [i] sits in
-    box [i / hdev] at rail [i mod hdev]. It is [None] when the setting is 0,
-    1, [ndev] or does not divide [ndev], or when [like] has a symbolic
-    dimension: the cases in which {!handle_allreduce} is not hierarchical or
-    folds in the flat order, so the flat collectives keep its order. *)
+val create_allreduce_function : Ops.t -> Ops.t
+(** [create_allreduce_function red] is the value of the allreduce [red],
+    computed by a call to a function of its own, compiled on its own and named
+    ["allreduce"]. The call stores {!handle_allreduce}'s value into new storage
+    ({!Op.Alloc}) of [red]'s type and greatest size on [red]'s devices; its
+    arguments are that storage, then [red]'s source made contiguous
+    ({!Ops.contiguous}). The value is the storage viewed at [red]'s shape,
+    ordered after the call.
 
-val copy_to_device : Tolk_uop.Uop.t -> string -> Tolk_uop.Uop.t
-(** [copy_to_device u d] is [u] when it is on device [d], and a copy of it to
-    [d] otherwise. *)
-
-val fold_reduce : Tolk_uop.Ops.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
-(** [fold_reduce op xs] combines [xs] with [op] from the left, in list
-    order. Raises [Failure] on an empty list. *)
-
-val collective :
-  Tolk_uop.Uop.collective ->
-  device:Tolk_uop.Uop.device ->
-  like:Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t ->
-  (src:Tolk_uop.Uop.t -> (Tolk_uop.Uop.t -> Tolk_uop.Uop.t list) list) ->
-  Tolk_uop.Uop.t
-(** [collective kind ~device ~like src phases] is the value, of [like]'s
-    shape and dtype on [device], that a precompiled [CALL] implementing
-    [kind] computes from [src]. The call's two arguments are storage: a fresh
-    allocation for the result, and the storage [src] views, or [src] made
-    contiguous when it is not a view of storage. [phases ~src] fill the
-    result from [src], the same view of the call's input parameter, in
-    order: each maps the result as the earlier phases left it (first [dst],
-    a view of the allocation at [like]'s shape) to its stores into it, and
-    may read what they wrote through it. Every collective has this
-    (dst, src) contract, so a backend can replace a body with a library
-    call. *)
-
-val create_allreduce_function :
-  Tolk_uop.Uop.t ->
-  op:Tolk_uop.Ops.t ->
-  device:Tolk_uop.Uop.device ->
-  Tolk_uop.Uop.t option
-(** [create_allreduce_function buf ~op ~device] is the {!collective}
-    [Allreduce op] whose body is {!handle_allreduce} over [buf].
-
-    Returns [None] if [buf] is not on a multi-device. *)
+    Raises [Invalid_argument] if [red] is not an {!Op.Allreduce}, or its source
+    is not on several devices. *)

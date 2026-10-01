@@ -1,5 +1,0 @@
-void test(float* restrict data0_1) {
-  if (1) {
-    *(data0_1+0) = 1.0f;
-  }
-}

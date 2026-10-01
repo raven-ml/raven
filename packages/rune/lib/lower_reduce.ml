@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_next
+open Tolk
 
 let dtype = Ops.dtype
 let is_float u = Dtype.is_float (dtype u)

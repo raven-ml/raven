@@ -19,7 +19,7 @@
     result that nx.cpu gives for the same operands, to the operation's class:
     exactly, or within a bound its tests state. *)
 
-open Tolk_next
+open Tolk
 
 exception Jit_error of string
 (** [Jit_error why] is raised when a traced function cannot be compiled. [why]
@@ -63,8 +63,8 @@ val run : Dtype.t -> Nx_array.View.t -> Nx_device.Buffer.t -> Nx_device.Buffer.t
 val phase : Dtype.t -> Nx_device.Buffer.t -> int -> int
 (** [phase dt b start] is the bytes by which element [start] of [dt] in [b] lies
     past a 16-byte boundary of [b]'s memory: the phase of storage that starts
-    there ({!Tolk_next.Ops.param_arg}). It is [0] on the disk, whose files are
-    read at any byte.
+    there ({!Tolk.Ops.param_arg}). It is [0] on the disk, whose files are read
+    at any byte.
 
     Raises [Invalid_argument] if [b] is dead. *)
 
@@ -118,12 +118,12 @@ val op : scope -> 'r Nx.Op.t -> 'r
 val param : scope -> slot:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [param s ~slot x] is the traced value that stands for [x] in [s]: at [x]'s
     placement, of its dtype and shape, whose node views the storage of slot
-    [slot] ({!Tolk_next.Ops.new_buffer}) as [x]'s view views its storage. The
-    storage is the run of [x]'s storage that {!captures} describes for a
-    capture; a program binds it to that run of each argument it is called with.
-    Its phase is where that run of [x]'s storage starts within 16 bytes
-    ({!Tolk_next.Ops.param_arg}), and the program accesses memory as aligned to
-    it: an argument whose run starts elsewhere within 16 bytes needs a program
+    [slot] ({!Tolk.Ops.new_buffer}) as [x]'s view views its storage. The storage
+    is the run of [x]'s storage that {!captures} describes for a capture; a
+    program binds it to that run of each argument it is called with. Its phase
+    is where that run of [x]'s storage starts within 16 bytes
+    ({!Tolk.Ops.param_arg}), and the program accesses memory as aligned to it:
+    an argument whose run starts elsewhere within 16 bytes needs a program
     traced from it.
 
     Raises [Jit_error] if a device of [x]'s placement cannot compute its dtype
@@ -152,14 +152,14 @@ val parameter :
   int array ->
   ('a, 'b) Nx.t
 (** [parameter s ~slot p dt shape] is the traced value of [dt] and [shape] at
-    [p] that the parameter [slot] of a called body ({!Tolk_next.Ops.call}) holds
-    in C order: each device's window, starting on 16 bytes.
+    [p] that the parameter [slot] of a called body ({!Tolk.Ops.call}) holds in C
+    order: each device's window, starting on 16 bytes.
 
     Raises as {!param} does. *)
 
-val engine : scope -> string -> Tolk_next_engine.device
+val engine : scope -> string -> Tolk_engine.device
 (** [engine s] is the engine's device of each name [s]'s nodes carry, and of the
-    host of each, which submits its work ({!Tolk_next_engine.device}). *)
+    host of each, which submits its work ({!Tolk_engine.device}). *)
 
 val value : scope -> ('a, 'b) Nx.t -> Ops.t
 (** [value s x] is the node of [x] in [s] at [x]'s placement: its own if [x] is
@@ -184,7 +184,7 @@ val captures : scope -> (Ops.t * Nx_device.Buffer.t list) list
     holds the run of its capture's storage from the element at or below the
     first element its view reaches whose offset is a multiple of 16 bytes,
     through the last one it reaches; its phase is where that run starts within
-    16 bytes ({!Tolk_next.Ops.param_arg}). *)
+    16 bytes ({!Tolk.Ops.param_arg}). *)
 
 type write = {
   result : Ops.t;  (** The node of the write's result. *)

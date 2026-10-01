@@ -112,8 +112,8 @@ let extremes =
           and y = Nx.ones Nx.float32 [| 4 |] in
           let reads_sign f =
             List.exists
-              (fun u -> Tolk_next.Ops.op u = Tolk_next.Op.Bitcast)
-              (Tolk_next.Ops.toposort (Programs.kernels (snd (trace f))))
+              (fun u -> Tolk.Ops.op u = Tolk.Op.Bitcast)
+              (Tolk.Ops.toposort (Programs.kernels (snd (trace f))))
           in
           is_false ~msg:"relu" (reads_sign (fun () -> Nx.relu x));
           is_false ~msg:"maximum" (reads_sign (fun () -> Nx.maximum x y));
@@ -549,12 +549,11 @@ let random_bits =
 
 (* The first nonzero word of the bits of [1/(2 pi)], which only the long
    (Payne-Hanek) reduction reads. *)
-let payne_hanek_word : Tolk_next.Dtype.const =
-  `Int (Tolk_next.Bigint.of_int 0x28be60db)
+let payne_hanek_word : Tolk.Dtype.const = `Int (Tolk.Bigint.of_int 0x28be60db)
 
 (* The magnitude at which tolk's sine switches to the long reduction, which it
    compares with only where it cannot bound its angle. *)
-let switch_over : Tolk_next.Dtype.const = `Float 30.
+let switch_over : Tolk.Dtype.const = `Float 30.
 
 (* [kernels_reading c y] is the number of [y]'s kernels, lowered for the host,
    that read the constant [c]. *)
@@ -562,13 +561,11 @@ let kernels_reading c y =
   let reads k =
     List.exists
       (fun u ->
-        match Tolk_next.Ops.arg u with
-        | Tolk_next.Ops.Const v -> v = c
-        | _ -> false)
-      (Tolk_next.Ops.toposort
-         (Tolk_next.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+        match Tolk.Ops.arg u with Tolk.Ops.Const v -> v = c | _ -> false)
+      (Tolk.Ops.toposort
+         (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
   in
-  List.length (List.filter reads (Tolk_next.Ops.src (Programs.kernels y)))
+  List.length (List.filter reads (Tolk.Ops.src (Programs.kernels y)))
 
 (* [drawn s f dt] is the draw [f] traced in [s] from a key argument. *)
 let drawn s f dt =
@@ -583,18 +580,22 @@ let long_reductions_group =
   in
   group "long reductions"
     [
-      cases ~name:(fun (F (name, _)) -> name)
-        "a normal draw takes none" wide (fun (F (_, dt)) ->
+      cases
+        ~name:(fun (F (name, _)) -> name)
+        "a normal draw takes none" wide
+        (fun (F (_, dt)) ->
           let s = scope () in
           equal int 0
             (kernels_reading payne_hanek_word (drawn s Nx.Rng.normal dt)));
-      cases ~name:(fun (F (name, _)) -> name)
+      cases
+        ~name:(fun (F (name, _)) -> name)
         "the sine of an angle read from a buffer takes its own only" wide
         (fun (F (_, dt)) ->
           let y = read Nx.sin dt in
           equal int 1 (kernels_reading payne_hanek_word y);
           equal int 0 (kernels_reading switch_over y));
-      cases ~name:(fun (F (name, _)) -> name)
+      cases
+        ~name:(fun (F (name, _)) -> name)
         "the cosine of an angle read from a buffer takes its own only" wide
         (fun (F (_, dt)) ->
           let y = read Nx.cos dt in
@@ -611,18 +612,24 @@ let random_draws =
     let key = Nx.Rng.key 7 in
     let draw k = f k dt [| 256 |] in
     let y =
-      Rune_internals.Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) draw key
+      Rune_internals.Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+        draw key
     in
     (draw key, Nx.place Nx.Placement.host y)
   in
   group "random draws"
     [
-      cases ~name:(fun (F (name, _)) -> name)
-        "a uniform draw is eager's" wide (fun (F (_, dt)) ->
+      cases
+        ~name:(fun (F (name, _)) -> name)
+        "a uniform draw is eager's" wide
+        (fun (F (_, dt)) ->
           let eager, y = compiled Nx.Rng.uniform dt in
           exact eager y);
-      cases ~name:(fun (F (name, _)) -> name)
-        "a normal draw is within 4 ulps of eager's" wide (fun (F (_, dt)) ->
+      cases
+        ~name:(fun (F (name, _)) -> name)
+        "a normal draw is within 4 ulps of eager's" wide
+        (fun (F (_, dt)) ->
           let eager, y = compiled Nx.Rng.normal dt in
           ulps ~budget:4 ~expected:eager [||] y);
     ]
@@ -811,7 +818,9 @@ let parity =
   let x () = Nx.zeros Nx.float32 [| 4; 4 |] in
   let i () = Nx.zeros Nx.int32 [| 4; 4 |] in
   let case file f =
-    Golden.graph ("golden/lower_arith/" ^ file ^ ".golden") (fun () ->
+    Golden.graph
+      ("golden/lower_arith/" ^ file ^ ".golden")
+      (fun () ->
         let args = f () in
         Programs.kernels (snd (trace (fun () -> args ()))))
   in

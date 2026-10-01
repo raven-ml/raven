@@ -4,14 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 open Rune_internals
-open Tolk_next
+open Tolk
 
 let host =
   let clang =
     lazy
       (match
-         Device.renderer ~arch:(Tolk_next_engine.target Nx_device.host).arch
-           "CPU"
+         Device.renderer ~arch:(Tolk_engine.target Nx_device.host).arch "CPU"
        with
       | Ok r -> r
       | Error e -> failwith e)

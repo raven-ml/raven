@@ -5,543 +5,148 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_uop
+let strf = Printf.sprintf
 
-(* Buffer + Allocators *)
+(* Compiled programs *)
 
-module Buffer_spec = Storage.Buffer_spec
-module Allocator = Storage.Allocator
-
-module Lru_allocator = struct
-  (* Buffers are freed by GC finalisers, which can run inside any allocation,
-     including one that [alloc] makes while it searches the cache, so the cache
-     only changes by compare-and-set: an update that raced with a free is
-     retried rather than overwriting it. *)
-  let wrap (inner : 'buf Allocator.t) : 'buf Allocator.t =
-    let cache : (int * Buffer_spec.t * 'buf) list Atomic.t = Atomic.make [] in
-    let rec take size spec =
-      let entries = Atomic.get cache in
-      let rec find acc = function
-        | (s, sp, buf) :: rest when s = size && sp = spec ->
-            Some (buf, List.rev_append acc rest)
-        | entry :: rest -> find (entry :: acc) rest
-        | [] -> None
-      in
-      match find [] entries with
-      | None -> None
-      | Some (buf, rest) ->
-          if Atomic.compare_and_set cache entries rest then Some buf
-          else take size spec
-    in
-    let rec cache_buf entry =
-      let entries = Atomic.get cache in
-      if not (Atomic.compare_and_set cache entries (entry :: entries)) then
-        cache_buf entry
-    in
-    let free_cache () =
-      let rec restore entries =
-        let current = Atomic.get cache in
-        if not (Atomic.compare_and_set cache current (current @ entries)) then
-          restore entries
-      in
-      let rec free = function
-        | [] -> ()
-        | (size, spec, buf) :: rest ->
-            (match Storage.release (fun () -> inner.free buf size spec) with
-             | () -> free rest
-             | exception exn ->
-                 let backtrace = Printexc.get_raw_backtrace () in
-                 (* Only untouched entries may be reused. Concurrent additions
-                    stay in the cache, and the uncertain owner stays retained. *)
-                 restore rest;
-                 Printexc.raise_with_backtrace exn backtrace)
-      in
-      free (Atomic.exchange cache [])
-    in
-    {
-      inner with
-      alloc =
-        (fun size spec ->
-          match take size spec with
-          | Some buf -> buf
-          | None -> (
-              try inner.alloc size spec
-              with exn -> (
-                free_cache ();
-                try inner.alloc size spec with _ -> raise exn)));
-      free =
-        (fun buf size spec ->
-          if Helpers.Context_var.get Helpers.lru <> 0
-             && (not spec.Buffer_spec.nolru)
-             && Option.is_none spec.external_ptr
-          then cache_buf (size, spec, buf)
-          else inner.free buf size spec);
-    }
-end
-
-module Buffer = Storage
-
-(* Compiled devices *)
-
-type prog = {
-  call :
-    Buffer.t array -> global:int array -> local:int array option ->
-    vals:int64 array -> wait:bool -> timeout:int option -> float option;
-  free : unit -> unit;
-  handle : nativeint;
-}
-
-type runtime = Tolk_uop.Tiny_elf.t -> prog
-
-type queue = {
-  timestamp_divider : float;
-  profile_offset : unit -> float;
-  completion : unit -> (int option -> unit);
-  prepare : unit -> unit;
-  host : string;
-  max_kernel_bindings : int option;
-  copy : Tolk_uop.Uop.t -> string option;
-  encode : Uop.t -> Uop.t option;
-  lower : Uop.t -> Uop.t option;
-  compile : Uop.t -> Uop.t;
-  config : unit -> string;
-}
-
-module Renderer_set = struct
-  type t = {
-    device : string;
-    arch : string;
-    entries : (string * (Target.t -> Renderer.t)) list;
-    cache : (Target.t, Renderer.t) Hashtbl.t;
-    mutex : Mutex.t;
+module Tiny_elf = struct
+  type param = {
+    name : string option;
+    slot : int;
+    dtype : Dtype.t;
+    shape : int list;
   }
 
-  let make ?(arch = "") ~device entries =
-    { device; arch; entries; cache = Hashtbl.create 4; mutex = Mutex.create () }
+  type t = {
+    lib : string;
+    name : string;
+    target : Helpers.Target.t;
+    signature : param list;
+    profile_key : string option;
+  }
 
-  let target set = Helpers.target ~arch:set.arch set.device
+  let of_program prg =
+    let invalid () =
+      invalid_arg
+        (Format.asprintf "%a of %d sources is not a compiled program" Op.pp
+           (Ops.op prg)
+           (List.length (Ops.src prg)))
+    in
+    let param_arg u =
+      match (Ops.op u, Ops.arg u) with
+      | Op.Param, Ops.Param p -> p
+      | _ -> invalid ()
+    in
+    let param slot u =
+      let p = param_arg u in
+      {
+        name = p.name;
+        slot;
+        dtype = Ops.dtype u;
+        shape = Option.to_list p.size;
+      }
+    in
+    match (Ops.op prg, Ops.arg prg, Ops.src prg) with
+    | Op.Program, Ops.Program info, [ kernel; linear; _; binary ] ->
+        let lib =
+          match Ops.arg binary with Ops.Bytes b -> b | _ -> invalid ()
+        in
+        let name =
+          match Ops.arg kernel with
+          | Ops.Kernel k -> Ops.function_name k
+          | _ -> invalid ()
+        in
+        (* Slots are compact, the buffers in the order of the program's globals,
+           in which runtimes launch them: a kernel may use a sparse subset of
+           its call's buffers. *)
+        let buffer u =
+          let slot = (param_arg u).slot in
+          match List.find_index (Int.equal slot) info.globals with
+          | Some j -> param j u
+          | None ->
+              invalid_arg (strf "buffer slot %d is not among the globals" slot)
+        in
+        let is_buffer u =
+          Ops.op u = Op.Param && Ops.addrspace u <> Some Dtype.Alu
+        in
+        let nglobals = List.length info.globals in
+        {
+          lib;
+          name;
+          target = info.target;
+          signature =
+            List.map buffer (List.filter is_buffer (Ops.src linear))
+            @ List.mapi (fun j v -> param (nglobals + j) v) info.vars;
+          profile_key = Some (Ops.key prg);
+        }
+    | _ -> invalid ()
 
-  let select set = Mutex.protect set.mutex (fun () ->
-    let target = target set in
-    List.iter (fun (name, _) ->
-        let key = set.device ^ "_" ^ name in
-        if Helpers.getenv key 0 <> 0 then
-          invalid_arg (Printf.sprintf "%s is deprecated, use DEV=%s instead"
-            key (Target.to_string { target with renderer = name }))) set.entries;
-    match Hashtbl.find_opt set.cache target with
-    | Some renderer -> renderer
-    | None ->
-        let entries = List.filter (fun (name, _) ->
-            target.renderer = "" || target.renderer = name) set.entries in
-        if entries = [] then
-          invalid_arg (Printf.sprintf "%s has no renderer %S" set.device target.renderer);
-        let renderer = Helpers.select_first_inited
-            ~message:(Printf.sprintf "No renderer for %s is available" set.device)
-            (List.map (fun (name, create) () ->
-                 let target = { target with renderer = name } in
-                 Renderer.with_target target (create target)) entries) in
-        Hashtbl.add set.cache target renderer;
-        renderer)
+  (* Python's tuples: one element keeps its trailing comma. *)
+  let pp_tuple pp_x ppf = function
+    | [ x ] -> Format.fprintf ppf "(%a,)" pp_x x
+    | xs ->
+        let sep ppf () = Format.pp_print_string ppf ", " in
+        Format.fprintf ppf "(%a)" (Format.pp_print_list ~pp_sep:sep pp_x) xs
+
+  (* Arguments print as Python literals, and No_arg as None. *)
+  let pp_literal f ppf x =
+    Ops.pp_arg ppf (Option.fold ~none:Ops.No_arg ~some:f x)
+
+  let string s = Ops.String s
+  let bytes b = Ops.Bytes b
+
+  let pp_param ppf (p : param) =
+    Format.fprintf ppf "(%a, %d, %a, %a)" (pp_literal string) p.name p.slot
+      Dtype.pp p.dtype
+      (pp_tuple Format.pp_print_int)
+      p.shape
+
+  let pp ppf e =
+    Format.fprintf ppf
+      "TinyELF(lib=%a, name=%a, target=%a, signature=%a, profile_key=%a)"
+      Ops.pp_arg (bytes e.lib) Ops.pp_arg (string e.name) Helpers.Target.pp
+      e.target (pp_tuple pp_param) e.signature (pp_literal bytes) e.profile_key
+
+  let iter_sig ?(offset = 0) signature =
+    let place offset p =
+      let size = Dtype.itemsize p.dtype in
+      let offset = Helpers.round_up offset size in
+      (offset + size, (offset, p.dtype))
+    in
+    snd (List.fold_left_map place offset signature)
 end
 
-type pending_timing = { buffer : Buffer.t; first : int; last : int; label : string; queue_name : string }
+(* Renderers *)
 
-type t = {
-  id : int;
-  name : string;
-  peer_group : string;
-  shares_host_memory : bool;
-  allocator : Allocator.packed;
-  renderer_set : Renderer_set.t;
-  runtime : runtime option;
-  synchronize : int option -> unit;
-  invalidate_caches_fn : (unit -> unit) option;
-  queue : queue option;
-  bufferize : Uop.t -> Buffer.t option;
-  program_buffers : Buffer.t Uop.Tbl.t;
-  program_lock : Mutex.t;
-  pending_lock : Mutex.t;
-  pending_accesses : (int * Storage.Owner.t * (int option -> unit)) list Atomic.t;
-  pending_timings : (int * int, pending_timing) Hashtbl.t;
-  mutable profile_events : Profile.event list;
-}
+let renderers = function
+  | "CPU" -> [ ("CLANG", Cstyle.clang) ]
+  | "METAL" -> [ ("METAL", Cstyle.metal) ]
+  | "CUDA" | "NV" -> [ ("CUDA", Cstyle.cuda) ]
+  | "AMD" -> [ ("HIP", Cstyle.hip) ]
+  | device -> invalid_arg (strf "no device named '%s'" device)
 
-type device = t
+(* A renderer is a function of its name and target, which also key the programs
+   it compiles, so each pair makes one. Domains compile concurrently. *)
+let cache = Hashtbl.create 8
+let lock = Mutex.create ()
 
-let canonicalize device =
-  let device =
-    match String.index_opt device ':' with
-    | Some i ->
-        String.uppercase_ascii (String.sub device 0 i)
-        ^ String.sub device i (String.length device - i)
-    | None -> String.uppercase_ascii device
-  in
-  let len = String.length device in
-  if len >= 2 && String.equal (String.sub device (len - 2) 2) ":0" then
-    String.sub device 0 (len - 2)
-  else device
+let cached name make target () =
+  Mutex.protect lock @@ fun () ->
+  match Hashtbl.find_opt cache (name, target) with
+  | Some r -> Ok r
+  | None -> (
+      match make target with
+      | r ->
+          Hashtbl.add cache (name, target) r;
+          Ok r
+      | exception Invalid_argument e -> Error e)
 
-let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
-let opened : (string, t) Hashtbl.t = Hashtbl.create 8
-let registry_lock = Mutex.create ()
-let registry_changed = Condition.create ()
-type initialization = {
-  owner : int;
-  mutable depth : int;
-  mutable first_registration : t option;
-}
-let initializing : (string, initialization) Hashtbl.t = Hashtbl.create 4
-let next_id = Atomic.make 0
-
-(* Called with registry_lock held. A bootstrap may resolve its own provisional
-   device, but other threads wait for the entire opener/initializer to finish. *)
-let rec wait_for_initialization name owner =
-  match Hashtbl.find_opt initializing name with
-  | Some current when current.owner <> owner ->
-      Condition.wait registry_changed registry_lock;
-      wait_for_initialization name owner
-  | _ -> ()
-
-let with_initialization name f =
-  let owner = Thread.id (Thread.self ()) in
-  let current = Mutex.protect registry_lock (fun () ->
-      wait_for_initialization name owner;
-      match Hashtbl.find_opt initializing name with
-      | Some current -> current.depth <- current.depth + 1; current
-      | None ->
-          let current = {owner; depth = 1; first_registration = None} in
-          Hashtbl.add initializing name current;
-          current) in
-  Fun.protect (fun () -> f current) ~finally:(fun () ->
-      Mutex.protect registry_lock (fun () ->
-          current.depth <- current.depth - 1;
-          if current.depth = 0 then begin
-            Hashtbl.remove initializing name;
-            Condition.broadcast registry_changed
-          end))
-
-let make ~name ~allocator ~renderer_set ?runtime ~synchronize
-    ?invalidate_caches ?peer_group ?(shares_host_memory = false) ?queue
-    ?(bufferize = fun _ -> None)
-    ?(initialize = fun _ -> ()) () =
-  let Allocator.Pack raw_allocator = allocator in
-  let run f = Storage.Owner.run [raw_allocator.owner] f in
-  let queue = Option.map (fun (q : queue) -> {q with
-      prepare = (fun () -> run q.prepare);
-      profile_offset = (fun () -> Storage.with_operation q.profile_offset);
-      completion = (fun () ->
-        let wait = run q.completion in
-        fun timeout -> run (fun () -> wait timeout));
-    }) queue in
-  let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
-  let device = { id = Atomic.fetch_and_add next_id 1;
-    name; peer_group; shares_host_memory; allocator; renderer_set; runtime; synchronize;
-    invalidate_caches_fn = invalidate_caches; queue; bufferize;
-    program_buffers = Uop.Tbl.create 16; program_lock = Mutex.create ();
-    pending_lock = Mutex.create ();
-    pending_accesses = Atomic.make []; pending_timings = Hashtbl.create 0;
-    profile_events = [] } in
-  let key = canonicalize name in
-  with_initialization key (fun opening ->
-      let previous = Mutex.protect registry_lock (fun () ->
-          let previous = Hashtbl.find_opt opened key in
-          Hashtbl.replace opened key device;
-          if opening.first_registration = None then
-            opening.first_registration <- Some device;
-          previous) in
-      match initialize device with
-      | () -> device
-      | exception exn ->
-          let backtrace = Printexc.get_raw_backtrace () in
-          Mutex.protect registry_lock (fun () ->
-              match Hashtbl.find_opt opened key with
-              | Some current when current == device ->
-                  (match previous with
-                   | Some previous -> Hashtbl.replace opened key previous
-                   | None -> Hashtbl.remove opened key);
-                  (match opening.first_registration with
-                   | Some first when first == device -> opening.first_registration <- None
-                   | _ -> ())
-              | _ -> ());
-          Printexc.raise_with_backtrace exn backtrace)
-
-let id d = d.id
-let name d = d.name
-let peer_group d = d.peer_group
-(* No tinygrad counterpart: the reference copies every placement. rune borrows
-   a mapped file's pages on a device whose memory is the host's. *)
-let shares_host_memory d = d.shares_host_memory
-let renderer d = Renderer_set.select d.renderer_set
-let allocator d = d.allocator
-let owner d = let Allocator.Pack allocator = d.allocator in allocator.owner
-
-let rec with_operation ?(buffers = []) devices f =
-  Storage.with_operation (fun () ->
-    let pending = List.map (fun device ->
-        let timings = Mutex.protect device.pending_lock (fun () ->
-            Hashtbl.to_seq device.pending_timings |> List.of_seq) in
-        device, Atomic.get device.pending_accesses, timings) devices in
-    let owners = List.concat_map (fun (device, accesses, _) ->
-        owner device :: List.map (fun (_, owner, _) -> owner) accesses) pending in
-    let guarded_buffers = buffers @ List.concat_map (fun (_, _, timings) ->
-        List.map (fun (_, timing) -> timing.buffer) timings) pending in
-    let unchanged (device, accesses, timings) =
-      Atomic.get device.pending_accesses == accesses &&
-      Mutex.protect device.pending_lock (fun () ->
-          Hashtbl.length device.pending_timings = List.length timings &&
-          List.for_all (fun (key, timing) -> match Hashtbl.find_opt device.pending_timings key with
-              | Some current -> current == timing | None -> false) timings) in
-    match Storage.with_buffers ~owners guarded_buffers (fun () ->
-        if List.for_all unchanged pending then Some (f ()) else None) with
-    | Some result -> result
-    | None -> with_operation ~buffers devices f)
-
-let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
-  Storage.with_operation (fun () ->
-    let nbufs = List.fold_left (fun n (a : Tolk_uop.Tiny_elf.argument) ->
-        if a.addrspace = Tolk_uop.Dtype.Alu then n else n + 1) 0 obj.signature in
-    let nvals = List.length obj.signature - nbufs in
-    let seen = Array.make (nbufs + nvals) false in
-    List.iter (fun (a : Tolk_uop.Tiny_elf.argument) ->
-        if a.slot < 0 || a.slot >= Array.length seen || seen.(a.slot)
-           || ((a.addrspace = Tolk_uop.Dtype.Alu) <> (a.slot >= nbufs)) then
-          invalid_arg (Printf.sprintf "program %S: invalid argument slot %d" obj.name a.slot);
-        seen.(a.slot) <- true) obj.signature;
-    let runtime = match d.runtime with
-      | Some runtime -> runtime
-      | None -> invalid_arg (Printf.sprintf "%s requires compiled queue submission" d.name) in
-    let prg = runtime obj in
-    let name = obj.name in
-    let call bufs ~global ~local ~vals ~wait ~timeout =
-      with_operation ~buffers:(Array.to_list bufs) [d] (fun () ->
-        if Array.length bufs <> nbufs || Array.length vals <> nvals then
-          invalid_arg (Printf.sprintf
-              "program %S: expected %d buffers and %d scalars, received %d and %d"
-              name nbufs nvals (Array.length bufs) (Array.length vals));
-        if not ordered then Array.iter (Buffer.synchronize ~target:d.allocator) bufs;
-        prg.call bufs ~global ~local ~vals ~wait ~timeout)
-    in
-    { prg with call; free = (fun () -> with_operation [d] prg.free) })
-
-let runtime d = load_runtime ~ordered:false d
-let queue_runtime d = load_runtime ~ordered:true d
-
-let with_pending_lock d f =
-  Storage.with_operation (fun () ->
-    Mutex.lock d.pending_lock;
-    Fun.protect ~finally:(fun () -> Mutex.unlock d.pending_lock) f)
-
-let depend_on d source =
-  if d != source then with_operation [d; source] (fun () ->
-    let queue = match source.queue with
-      | Some queue -> queue
-      | None -> invalid_arg "Device.depend_on: source has no queue" in
-    let wait = queue.completion () in
-    let accesses = Atomic.get d.pending_accesses in
-    Atomic.set d.pending_accesses
-      ((source.id, owner source, wait) ::
-       List.filter (fun (id, _, _) -> id <> source.id) accesses))
-
-let record_timing d ~name ~queue ~buffer ~first ~last =
-  if first < 0 || last < 0 || max first last >= Buffer.nbytes buffer / 8 then
-    invalid_arg "Device.record_timing: timestamp outside storage";
-  if Option.is_none d.queue then invalid_arg "Device.record_timing: device has no queue";
-  with_operation ~buffers:[buffer] [d] (fun () -> with_pending_lock d (fun () ->
-      Hashtbl.replace d.pending_timings (Buffer.id buffer, first)
-        {buffer; first; last; label = name; queue_name = queue}))
-
-let wait_dependencies d ~ordered = with_operation [d] (fun () ->
-  let accesses, retained = List.partition (fun (source, _, _) ->
-      not (List.exists (fun device -> device.id = source) ordered)) (Atomic.get d.pending_accesses) in
-  Atomic.set d.pending_accesses retained;
-  try List.iter (fun (_, _, wait) -> wait None) accesses
-  with exn ->
-    let backtrace = Printexc.get_raw_backtrace () in
-    let current = Atomic.get d.pending_accesses in
-    Atomic.set d.pending_accesses (current @ List.filter (fun (id, _, _) ->
-        not (List.exists (fun (existing, _, _) -> existing = id) current)) accesses);
-    Printexc.raise_with_backtrace exn backtrace)
-
-let synchronize ?timeout d = with_operation [d] (fun () ->
-  let pending, accesses = with_pending_lock d (fun () ->
-      let pending = Hashtbl.to_seq_values d.pending_timings |> List.of_seq in
-      Hashtbl.clear d.pending_timings;
-      let accesses = Atomic.exchange d.pending_accesses [] in
-      pending, accesses) in
-  let events = try
-    d.synchronize timeout;
-    List.iter (fun (_, _, wait) -> wait timeout) accesses;
-    match pending with
-    | [] -> []
-    | _ ->
-        let snapshots = Hashtbl.create 4 in
-        let divider = (Option.get d.queue).timestamp_divider in
-        List.map (fun entry ->
-            let id = Buffer.id entry.buffer in
-            let bytes = match Hashtbl.find_opt snapshots id with
-              | Some bytes -> bytes
-              | None -> let bytes = Buffer.as_bytes entry.buffer in
-                  Hashtbl.add snapshots id bytes; bytes in
-            let start = Bytes.get_int64_le bytes (8 * entry.first)
-            and finish = Bytes.get_int64_le bytes (8 * entry.last) in
-            Profile.{device = d.name; queue = entry.queue_name; name = entry.label;
-              start_us = Int64.to_float start /. divider;
-              duration_us = Int64.to_float (Int64.sub finish start) /. divider}) pending
-  with exn ->
-    let backtrace = Printexc.get_raw_backtrace () in
-    with_pending_lock d (fun () ->
-      let current = Atomic.get d.pending_accesses in
-      Atomic.set d.pending_accesses (current @ List.filter (fun (id, _, _) ->
-          not (List.exists (fun (existing, _, _) -> existing = id) current)) accesses);
-      List.iter (fun entry ->
-        let key = Buffer.id entry.buffer, entry.first in
-        if not (Hashtbl.mem d.pending_timings key) then
-          Hashtbl.add d.pending_timings key entry) pending);
-    Printexc.raise_with_backtrace exn backtrace in
-  if events <> [] then
-    with_pending_lock d (fun () -> d.profile_events <- List.rev_append events d.profile_events))
-
-let profile d =
-  synchronize d;
-  if with_pending_lock d (fun () -> d.profile_events = []) then [] else
-    let offset = (Option.get d.queue).profile_offset () in
-    if not (Float.is_finite offset) then invalid_arg "Device.profile: invalid clock offset";
-    with_pending_lock d (fun () ->
-        let events = List.rev_map (fun event ->
-            {event with Profile.start_us = event.Profile.start_us +. offset}) d.profile_events in
-        d.profile_events <- [];
-        events)
-
-let queue d = d.queue
-
-let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
-  let module U = Tolk_uop.Uop in
-  (* TinyELF and dispatch share a buffer-first signature. Hand-built linear
-     programs need the same formal order as the codegen linearizer. *)
-  let params, body = List.partition (fun u -> U.op u = Tolk_uop.Ops.Param) program in
-  let buffers, scalars = List.partition
-      (fun u -> U.addrspace u <> Some Tolk_uop.Dtype.Alu) params in
-  let program = buffers @ scalars @ body in
-  let ren = Renderer_set.select d.renderer_set in
-  let comp = match Renderer.compiler ren with
-    | Some c -> c
-    | None -> invalid_arg "device has no compiler"
-  in
-  let name = Option.value name ~default:"kern" in
-  let src = Renderer.render ren ~name program in
-  let lib = Compiler.compile_cached comp src in
-  Program_spec.of_program ~name ~src ~device:d.name ~target:(Renderer.target ren)
-    ~lib ~applied_opts ~estimates program
-
-let create_buffer ~size ~dtype ?spec d =
-  Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
-
-let invalidate_caches d =
-  Option.map (fun invalidate () -> with_operation [d] invalidate)
-    d.invalidate_caches_fn
-
-(* Device registry
-
-   Canonical-name lookup opening and caching device runtimes, with backend
-   openers registered by prefix. The engine resolves the device names carried
-   by a scheduled graph through [get], so multi-device schedules can span
-   device instances the caller never opened itself. *)
-
-let register prefix opener =
-  Mutex.protect registry_lock (fun () ->
-      Hashtbl.replace openers (String.uppercase_ascii prefix) opener)
-
-let device_prefix device =
-  match String.index_opt device ':' with
-  | Some i -> String.sub device 0 i
-  | None -> device
-
-let get device =
-  Storage.with_operation (fun () ->
-    let device = canonicalize device in
-    let owner = Thread.id (Thread.self ()) in
-    let ready = Mutex.protect registry_lock (fun () ->
-        wait_for_initialization device owner;
-        match Hashtbl.find_opt opened device with
-        | Some current -> Some current
-        | None when Hashtbl.mem initializing device ->
-            failwith (Printf.sprintf "device %S recursively opened before registration" device)
-        | None -> None) in
-    match ready with
-    | Some current -> current
-    | None -> with_initialization device (fun opening ->
-        let action = Mutex.protect registry_lock (fun () ->
-            match Hashtbl.find_opt opened device with
-            | Some current -> `Ready current
-            | None ->
-                match Hashtbl.find_opt openers (device_prefix device) with
-                | Some create -> `Open create
-                | None -> failwith (Printf.sprintf "unknown device %S" device)) in
-        match action with
-        | `Ready current -> current
-        | `Open create ->
-            match create device with
-            | current ->
-                Mutex.protect registry_lock (fun () ->
-                    match Hashtbl.find_opt opened device with
-                    | Some latest -> latest
-                    | None -> Hashtbl.add opened device current; current)
-            | exception exn ->
-                let backtrace = Printexc.get_raw_backtrace () in
-                Mutex.protect registry_lock (fun () ->
-                    match opening.first_registration, Hashtbl.find_opt opened device with
-                    | Some provisional, Some current when current == provisional ->
-                        Hashtbl.remove opened device
-                    | _ -> ());
-                Printexc.raise_with_backtrace exn backtrace))
-
-let () = Storage.install_allocator_resolver (fun name -> (get name).allocator)
-
-let bufferize d u =
-  let devices = d :: (match d.queue with None -> [] | Some queue -> [get queue.host]) in
-  with_operation devices (fun () ->
-    if Uop.node_tag u <> Some "program" then d.bufferize u
-    else Mutex.protect d.program_lock (fun () ->
-        match Uop.Tbl.find_opt d.program_buffers u with
-        | Some buffer -> Some buffer
-        | None ->
-            let buffer = d.bufferize u in
-            Option.iter (Uop.Tbl.add d.program_buffers u) buffer;
-            buffer))
-
-
-module Multi_buffer = struct
-  type t = { bufs : Buffer.t list }
-
-  let create ~devices ~size ~dtype ?spec () =
-    if devices = [] then invalid_arg "multi buffer requires at least one device";
-    let bufs =
-      List.map
-        (fun device -> create_buffer ~size ~dtype ?spec (get device))
-        devices
-    in
-    { bufs }
-
-  let of_bufs bufs =
-    match bufs with
-    | [] -> invalid_arg "multi buffer requires at least one buffer"
-    | first :: rest ->
-        if
-          not
-            (List.for_all
-               (fun b ->
-                 Buffer.size b = Buffer.size first
-                 && Dtype.equal (Buffer.dtype b) (Buffer.dtype first))
-               rest)
-        then invalid_arg "multi buffer requires matching sizes and dtypes";
-        { bufs }
-
-  let bufs t = t.bufs
-  let size t = Buffer.size (List.hd t.bufs)
-  let dtype t = Buffer.dtype (List.hd t.bufs)
-
-  let is_allocated t = List.for_all Buffer.is_allocated t.bufs
-
-  let view t ~size ~dtype ~offset =
-    { bufs = List.map (fun b -> Buffer.view b ~size ~dtype ~offset) t.bufs }
-end
+let renderer ?arch device =
+  let candidates = renderers device in
+  let t = Helpers.target ?arch device in
+  let error = strf "%s has no renderer '%s'" device t.renderer in
+  Result.bind (Helpers.select_by_name ~error fst t.renderer candidates)
+  @@ fun named ->
+  Helpers.select_first_inited
+    ~error:(strf "No renderer for %s is available" device)
+    (List.map (fun (name, make) -> cached name make t) named)

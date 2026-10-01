@@ -1,4 +1,0 @@
-(tests
- (names test_bump test_memory)
- (package tolk)
- (libraries tolk tolk.uop unix windtrap))

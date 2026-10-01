@@ -14,10 +14,10 @@
  (libraries
   windtrap
   rune_internals
-  tolk.next
-  tolk_next_test
-  tolk_next_run
-  tolk.next.engine
+  tolk
+  tolk_test
+  tolk_run
+  tolk.engine
   nx
   nx.array
   nx.device

@@ -5,534 +5,578 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Types *)
+open Ops
 
-type rule =
-  | Strict of Upat.t * (Uop.t -> Upat.bindings -> bool)
-  | Tentative of Upat.t * (Uop.t -> Upat.bindings -> bool option)
+type t = (unit, bool) Pattern_matcher.t
 
-type t = rule list
+(* Rules *)
 
-let ( =?> ) pat pred : rule = Strict (pat, pred)
-let ( =??> ) pat pred : rule = Tentative (pat, pred)
-let make rules : t = rules
-let ( ++ ) = List.append
+let ops l = Op.Set.of_list l
 
-(* Dtype helpers *)
+let pat ?dtype ?src ?each ?allow_any_len ?arg ?name o =
+  Upat.v ~op:(ops o) ?dtype ?src ?each ?allow_any_len ?arg ?name ()
 
-let is_void u = Dtype.equal (Uop.dtype u) Dtype.void
-let is_bool u = Dtype.equal (Uop.dtype u) Dtype.bool
-let is_weakint u = Dtype.equal (Uop.dtype u) Dtype.weakint
-let is_weak u = Dtype.is_weak (Uop.dtype u)
-let is_int u = Dtype.is_int (Uop.dtype u)
+let accept p = Pattern_matcher.rule p (fun _ -> Some true)
+let reject p = Pattern_matcher.rule p (fun _ -> Some false)
+let check p name f = Pattern_matcher.rule p (fun m -> Some (f (m name)))
+let decide p name f = Pattern_matcher.rule p (fun m -> f (m name))
 
-(* Invalid is the bottom of the promotion lattice, so it satisfies whichever
-   dtype the position demands. *)
-let is_invalid u = Uop.is_invalid_const (Uop.base u)
+(* Helpers *)
 
-let same_dtype a b =
-  Dtype.equal (Uop.dtype a) (Uop.dtype b) || is_invalid a || is_invalid b
+let validate_index ?(gate = bool true) uidx =
+  match src uidx with
+  | [ buf; idx ]
+    when (not (is_invalid idx)) && Helpers.Context_var.value Helpers.check_oob
+    ->
+      (* Without an SMT solver, the bounds of the index are the proof: an index
+         they do not prove fails, as the solver's unknown verdict does. *)
+      let sz = max_numel buf in
+      Dtype.Value.(of_int 0 <= vmin idx && vmax idx < of_int sz)
+      || begin
+        Format.eprintf
+          "# INDEX NOT PROVEN IN BOUNDS: [%a, %a] is not within 0 - %d, and \
+           the bound cannot be proven without a solver@.idx=%s@.mask=%s@."
+          Dtype.pp_const (vmin idx) Dtype.pp_const (vmax idx) sz
+          (Render.render ~simplify:false idx)
+          (Render.render ~simplify:false gate);
+        false
+      end
+  | _ -> true
 
-let matches_or_weak u s = same_dtype u s || is_weak s
+let valid_device_range device src =
+  match (device, src) with
+  | Some (Multi devices), [ rng ] ->
+      op rng = Op.Range
+      && Axis_type.equal (axis_type rng) Axis_type.Device
+      && Dtype.Value.to_int (vmax rng) + 1 = List.length devices
+  | Some (Multi _), _ -> false
+  | _, src -> List.is_empty src
 
-let arg_empty u = match Uop.arg u with Uop.Arg.Empty -> true | _ -> false
+(* The failure message writes the node's own argument as text, with names and
+   float values bare, and its sources' arguments as literals. *)
+let pp_arg_text ppf = function
+  | String s | Device (Single s) -> Format.pp_print_string ppf s
+  | Const c -> Dtype.pp_const ppf c
+  | a -> pp_arg ppf a
 
-let option_for_all p = function
-  | None -> true
-  | Some x -> p x
+let type_verify ?enter_calls spec ast =
+  let lst = toposort ?enter_calls ast in
+  List.iteri
+    (fun i u ->
+      if Pattern_matcher.rewrite spec () u <> Some true then begin
+        if Helpers.Context_var.value Helpers.debug >= 3 then
+          Format.eprintf "%a@." Render.pp_uops lst;
+        let pp_src ppf x =
+          Format.fprintf ppf "(%a, %a, %a)" Op.pp (op x) Dtype.pp (dtype x)
+            pp_arg (arg x)
+        in
+        invalid_arg
+          (Format.asprintf "UOp verification failed at %d on %a %a %d [%a] %a" i
+             Op.pp (op u) Dtype.pp (dtype u)
+             (List.length (src u))
+             (Format.pp_print_list
+                ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+                pp_src)
+             (src u) pp_arg_text (arg u))
+      end)
+    lst
 
-let valid_device_payload = function
-  | Uop.Single _ -> true
-  | Uop.Multi devs -> devs <> [] && List.for_all Option.is_some devs
-  | Uop.Index _ -> false
+(* Specifications *)
 
-let valid_shape_child u =
-  is_int u
-  || (Uop.op u = Ops.Stack && is_void u && Array.length (Uop.src u) = 0)
-  || (Uop.op u = Ops.Noop && is_void u && Array.length (Uop.src u) = 0)
+let no_arg u = match arg u with No_arg -> true | _ -> false
+let matches_dtype x dt = Dtype.equal (dtype x) dt || is_invalid (base x)
+let is_weak x = List.mem (dtype x) Dtype.weaks
+let all_same eq = function [] -> true | x :: r -> List.for_all (eq x) r
+let shape_equal s0 s1 = List.equal Sint.equal s0 s1
 
-let valid_param u =
-  match Uop.arg u with Uop.Arg.Param_arg _ -> true | _ -> false
+let param_of u =
+  match arg u with Param p -> p | _ -> invalid_arg "not a parameter"
 
-let valid_buffer u =
-  match Uop.arg u with
-  | Uop.Arg.Param_arg { addrspace = Dtype.Local | Dtype.Reg; _ } -> true
+(* Construction gives CONST, CAST, BITCAST, PARAM, BUFFER, ALLOC, CUSTOM,
+   CUSTOMI and INS the argument their type comes from, and a CONST the type of
+   its value, so the rules check only the arguments construction leaves free. *)
+
+let mselect_fits x =
+  match (device (nth x 0), arg x) with
+  | Some (Multi devices), Shard i -> i < List.length devices
   | _ -> false
 
-let valid_global_buffer u =
-  match Uop.as_buffer u with
-  | None -> false
-  | Some { Uop.buffer; shape } ->
-      (buffer.slot >= 0 || Option.is_some buffer.buffer)
-      && buffer.addrspace = Dtype.Global
-      && option_for_all valid_device_payload buffer.device
-      && valid_shape_child shape
-      && is_weakint shape
+let mstack_fits x =
+  List.for_all
+    (fun s -> match device s with Some (Single _) -> true | _ -> false)
+    (src x)
+  || (all_same ( == ) (src x) && Option.is_none (device (nth x 0)))
 
-let is_const_invalid u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c -> Const.view c = Const.Invalid
+let memory = Upat.or_casted (pat [ Op.Index; Op.Shrink ] ~name:"uidx")
+
+(* Each argument of storage starts where its parameter in the body takes it to:
+   what is known of the argument's start implies what the parameter assumes,
+   which its vector accesses were merged for. *)
+let args_fit c =
+  let args = Array.of_list (src_without_body c) in
+  List.for_all
+    (fun u ->
+      match (op u, arg u) with
+      | Op.Param, Param p
+        when p.addrspace = Some Dtype.Global
+             && p.slot >= 0
+             && p.slot < Array.length args ->
+          let align, phase = storage_phase args.(p.slot) in
+          align >= p.align && phase mod p.align = p.phase
+      | _ -> true)
+    (toposort ~enter_calls:false (body c))
+
+let shared : t =
+  Pattern_matcher.fold
+    (fun () -> [
+      accept (pat [ Op.Sink ] ~dtype:[ Dtype.Void ]);
+      accept (pat [ Op.Noop ]);
+      accept (pat [ Op.Const ] ~src:[]);
+      accept (pat [ Op.Stack ] ~dtype:[ Dtype.Void ] ~src:[]);
+      check (pat [ Op.Stack ] ~src:[ Upat.wild ] ~allow_any_len:true ~name:"s")
+        "s" (fun s ->
+          all_same shape_equal (List.map shape (src s))
+          && List.for_all
+               (fun x -> matches_dtype x (dtype s) || is_weak x)
+               (src s));
+      check
+        (pat [ Op.Where ] ~name:"w"
+           ~src:[ Upat.v ~dtype:[ Dtype.Bool ] (); Upat.wild; Upat.wild ])
+        "w"
+        (fun w ->
+          List.for_all
+            (fun s -> matches_dtype s (dtype w) || is_weak s)
+            (List.tl (src w)));
+      Pattern_matcher.rule
+        (Upat.v ~op:Op.Set.comparison ~dtype:[ Dtype.Bool ]
+           ~src:[ Upat.var "x"; Upat.var "y" ]
+           ())
+        (fun m ->
+          let x = m "x" and y = m "y" in
+          Some
+            (matches_dtype x (dtype y)
+            || matches_dtype y (dtype x)
+            || is_weak x || is_weak y));
+      decide
+        (pat [ Op.And; Op.Or; Op.Xor; Op.Shl; Op.Shr ] ~name:"x")
+        "x"
+        (fun x ->
+          if List.exists (fun s -> Dtype.is_float (dtype s)) (src x) then
+            Some false
+          else None);
+      Pattern_matcher.rule
+        (pat [ Op.Shl; Op.Shr ] ~src:[ Upat.var "x"; Upat.var "c" ] ~name:"a")
+        (fun m ->
+          let a = m "a" and x = m "x" and c = m "c" in
+          Some
+            (matches_dtype c (dtype a)
+            || List.mem (dtype c) Dtype.[ Uint32; Weak_int ]
+            || is_invalid (base x)));
+      decide
+        (pat [ Op.Cdiv; Op.Cmod; Op.Floordiv; Op.Floormod ] ~name:"x")
+        "x"
+        (fun x ->
+          if
+            Dtype.is_int (dtype x)
+            || List.exists (fun s -> is_invalid (base s)) (src x)
+          then None
+          else Some false);
+      check (Upat.v ~op:Op.Set.alu ~name:"x" ()) "x" (fun x ->
+          List.for_all (fun y -> matches_dtype y (dtype x) || is_weak y) (src x));
+      accept (pat [ Op.Bitcast; Op.Cast ] ~src:[ Upat.wild ]);
+      check
+        (pat [ Op.Range ] ~src:[ Upat.wild ] ~allow_any_len:true ~name:"rng")
+        "rng" (fun rng ->
+          match arg rng with
+          | Range { axis_id; _ } -> axis_id <> []
+          | _ -> false);
+      decide (pat [ Op.Index ] ~name:"x") "x" (fun x ->
+          match src x with
+          | _ :: idxs
+            when List.for_all
+                   (fun y -> Dtype.is_int (dtype y) || is_invalid (base y))
+                   idxs ->
+              Some true
+          | _ -> None);
+      check
+        (pat [ Op.End ]
+           ~src:[ Upat.v ~dtype:[ Dtype.Void ] () ]
+           ~allow_any_len:true ~name:"x")
+        "x"
+        (fun x ->
+          no_arg x
+          && List.for_all
+               (fun u -> op u = Op.Range && Dtype.is_int (dtype u))
+               (List.tl (src x)));
+      check
+        (pat [ Op.Backedge ] ~dtype:[ Dtype.Void ] ~name:"x"
+           ~src:
+             [
+               Upat.wild;
+               pat [ Op.Range ] ~dtype:[ Dtype.Void ];
+               Upat.v ~dtype:[ Dtype.Bool ] ();
+             ])
+        "x"
+        (fun x ->
+          let cond = nth x 2 in
+          no_arg x && shape cond = [] && not (is_invalid (base cond)));
+      accept (pat [ Op.Param ] ~src:[]);
+      check (pat [ Op.Buffer ] ~src:[] ~name:"x") "x" (fun x ->
+          List.mem (addrspace x) [ Some Dtype.Reg; Some Dtype.Local ]);
+      check (pat [ Op.Binary ] ~dtype:[ Dtype.Uint8 ] ~src:[] ~name:"x") "x"
+        (fun x -> match arg x with Bytes _ -> true | _ -> false);
+      accept
+        (pat [ Op.Group ] ~dtype:[ Dtype.Void ]
+           ~each:(Upat.v ~dtype:[ Dtype.Void ] ()));
+      accept
+        (pat [ Op.After ] ~allow_any_len:true
+           ~src:
+             [
+               Upat.v
+                 ~op:
+                   (Op.Set.union Op.Set.movement
+                      (ops
+                         Op.
+                           [
+                             Param;
+                             Buffer;
+                             Alloc;
+                             Stage;
+                             Index;
+                             After;
+                             Unshard;
+                             Bitcast;
+                             Ins;
+                           ]))
+                 ();
+             ]);
+      accept (pat [ Op.Customi; Op.Custom ]);
+      check (pat [ Op.Custom_function ] ~allow_any_len:true ~name:"x") "x"
+        (fun x -> match arg x with String _ -> true | _ -> false);
+      check
+        (pat [ Op.Call ]
+           ~src:[ Upat.v ~op:opaque_call_bodies () ]
+           ~allow_any_len:true ~name:"x")
+        "x"
+        (fun x -> match arg x with Call _ -> args_fit x | _ -> false);
+      accept (pat [ Op.Barrier ] ~dtype:[ Dtype.Void ]);
+      accept (pat [ Op.Ins ]);
+      check (Upat.load memory []) "uidx" validate_index;
+      Pattern_matcher.rule
+        (Upat.load ~name:"load" memory
+           [ Upat.var "alt"; Upat.var ~dtype:[ Dtype.Bool ] "gate" ])
+        (fun m ->
+          Some
+            (matches_dtype (m "alt") (dtype (m "load"))
+            && validate_index ~gate:(m "gate") (m "uidx")));
+      check (Upat.store memory [ Upat.wild ]) "uidx" validate_index;
+      Pattern_matcher.rule
+        (Upat.store memory [ Upat.wild; Upat.var ~dtype:[ Dtype.Bool ] "gate" ])
+        (fun m -> Some (validate_index ~gate:(m "gate") (m "uidx")));
+      decide
+        (pat [ Op.Store ] ~dtype:[ Dtype.Void ]
+           ~src:[ Upat.var "x"; Upat.wild ])
+        "x"
+        (fun x ->
+          let b = storage_base x in
+          if List.mem (op b) Op.[ Buffer; Alloc; Param; Stage ] then Some true
+          else if op b = Op.Index then None
+          else Some false);
+      check
+        (pat [ Op.Wmma ] ~src:[ Upat.wild; Upat.wild; Upat.wild ] ~name:"x")
+        "x"
+        (fun x -> match arg x with Wmma _ -> true | _ -> false);
+    ])
+
+let is_device = Option.is_some
+
+let tensor : t =
+  Pattern_matcher.append
+    (Pattern_matcher.fold
+       (fun () -> [
+         check
+           (pat
+              [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Reciprocal ]
+              ~src:[ Upat.wild ] ~name:"u")
+           "u"
+           (fun u -> Dtype.is_float (dtype u) || is_invalid (base (nth u 0)));
+         decide (pat [ Op.Buffer ] ~name:"buf") "buf" (fun buf ->
+             let p = param_of buf in
+             if addrspace buf = Some Dtype.Global then
+               Some
+                 (Option.is_some p.size && is_device p.device
+                 && valid_device_range p.device (src buf))
+             else None);
+         check (pat [ Op.Alloc ] ~name:"buf") "buf" (fun buf ->
+             let p = param_of buf in
+             List.mem (addrspace buf)
+               Dtype.[ Some Global; Some Local; Some Reg ]
+             && (Option.is_none p.device
+                || (addrspace buf = Some Dtype.Global && is_device p.device))
+             && valid_device_range p.device (src buf));
+         decide (pat [ Op.Param ] ~src:[] ~name:"buf") "buf" (fun buf ->
+             if is_variable buf then Some (Option.is_none (param_of buf).device)
+             else None);
+         check (pat [ Op.Custom_function ] ~name:"x") "x" (fun x ->
+             match arg x with String _ -> true | _ -> false);
+         check
+           (pat [ Op.Special ]
+              ~src:[ Upat.v ~dtype:[ Dtype.Weak_int ] () ]
+              ~name:"s")
+           "s"
+           (fun s -> match arg s with String _ -> true | _ -> false);
+         accept (pat [ Op.Reshape; Op.Expand ] ~src:[ Upat.wild; Upat.wild ]);
+         check
+           (pat [ Op.Pad; Op.Shrink ]
+              ~src:[ Upat.wild; Upat.wild; Upat.wild ]
+              ~name:"x")
+           "x"
+           (fun x -> shape_equal (shape (nth x 1)) (shape (nth x 2)));
+         check
+           (pat [ Op.Permute; Op.Flip ] ~name:"mv" ~src:[ Upat.wild ])
+           "mv"
+           (fun mv ->
+             match (op mv, arg mv) with
+             | Op.Permute, Axes _ | Op.Flip, Flips _ -> true
+             | _ -> false);
+         check
+           (pat [ Op.Reduce ] ~src:[ Upat.wild ] ~allow_any_len:true ~name:"x")
+           "x" (fun x ->
+             match arg x with
+             | Reduce { op; _ } ->
+                 Op.Set.mem op Op.Set.reduce
+                 && List.for_all
+                      (fun y -> List.mem (dtype y) Dtype.[ Weak_int; Int32 ])
+                      (List.tl (src x))
+             | _ -> false);
+         check
+           (pat [ Op.Copy ] ~name:"copy" ~src:[ Upat.wild ] ~allow_any_len:true)
+           "copy" (fun copy ->
+             match arg copy with
+             | Device d ->
+                 (not (is_disk_device d))
+                 && valid_device_range (Some d) (List.tl (src copy))
+             | _ -> false);
+         check (pat [ Op.Allreduce ] ~name:"red" ~src:[ Upat.wild ]) "red"
+           (fun red ->
+             match arg red with
+             | Allreduce { op; _ } -> Op.Set.mem op Op.Set.reduce
+             | _ -> false);
+         check (pat [ Op.Unshard ] ~name:"multi") "multi" (fun multi ->
+             match arg multi with
+             | Axes axes ->
+                 List.length (src multi) = 1 + List.length axes
+                 && List.for_all is_weak (List.tl (src multi))
+             | _ -> false);
+         check (pat [ Op.Mselect ] ~name:"x") "x" mselect_fits;
+         check (pat [ Op.Mstack ] ~name:"x") "x" mstack_fits;
+         accept
+           (pat
+              [ Op.Detach; Op.Contiguous_backward ]
+              ~src:[ Upat.wild ] ~arg:No_arg);
+         accept (pat [ Op.Stage ] ~src:[ Upat.wild ] ~allow_any_len:true);
+         accept (pat [ Op.Linear ] ~dtype:[ Dtype.Void ]);
+         accept (pat [ Op.Source ] ~dtype:[ Dtype.Void ] ~src:[]);
+         accept
+           (pat [ Op.Program ] ~dtype:[ Dtype.Void ] ~src:[ pat [ Op.Sink ] ]);
+         accept
+           (pat [ Op.Program ] ~dtype:[ Dtype.Void ]
+              ~src:[ pat [ Op.Sink ]; pat [ Op.Linear ] ]);
+         accept
+           (pat [ Op.Program ] ~dtype:[ Dtype.Void ]
+              ~src:[ pat [ Op.Sink ]; pat [ Op.Linear ]; pat [ Op.Source ] ]);
+         accept
+           (pat [ Op.Program ] ~dtype:[ Dtype.Void ]
+              ~src:
+                [
+                  pat [ Op.Sink ];
+                  pat [ Op.Linear ];
+                  pat [ Op.Source ];
+                  pat [ Op.Binary ];
+                ]);
+       ]))
+    shared
+
+let program : t =
+  Pattern_matcher.append
+    (Pattern_matcher.fold
+       (fun () -> [
+         (* Every elementwise operation on values is on scalars: renderers whose
+            vectors are structs without arithmetic cannot write one on a vector
+            (D58). A bitcast of memory views it, and a node without a shape is
+            judged by the other rules. *)
+         decide (Upat.v ~op:Op.Set.elementwise ~name:"x" ()) "x" (fun x ->
+             match (addrspace x, shape_opt x) with
+             | Some Dtype.Alu, Some (_ :: _) -> Some false
+             | _ | (exception Invalid_argument _) -> None);
+         decide (Upat.v ~op:Op.Set.all ~name:"x" ()) "x" (fun x ->
+             if
+               op x <> Op.Cast && List.exists (fun s -> op s = Op.Const) (src x)
+             then Some false
+             else None);
+         reject
+           (Upat.v
+              ~op:(Op.Set.diff Op.Set.all (ops [ Op.Const ]))
+              ~dtype:Dtype.weaks ());
+         accept
+           (pat [ Op.Shrink ]
+              ~src:
+                [
+                  Upat.or_bitcasted
+                    (pat [ Op.Param; Op.Buffer; Op.Alloc; Op.After ]);
+                  Upat.wild;
+                  Upat.or_casted (pat [ Op.Const ]);
+                ]);
+         reject (Upat.v ~op:Op.Set.movement ());
+         check
+           (pat [ Op.Buffer; Op.Alloc ] ~name:"x")
+           "x"
+           (fun x -> List.mem (addrspace x) Dtype.[ Some Reg; Some Local ]);
+         reject (Upat.const `Invalid);
+         accept
+           (pat [ Op.If ] ~dtype:[ Dtype.Void ]
+              ~src:
+                [
+                  Upat.v ~dtype:[ Dtype.Bool ] ();
+                  pat [ Op.Cast; Op.Index; Op.Shrink ];
+                ]);
+         accept (pat [ Op.Endif ] ~dtype:[ Dtype.Void ] ~src:[ pat [ Op.If ] ]);
+         check
+           (pat [ Op.Special ]
+              ~src:[ Upat.v ~dtype:[ Dtype.Int32 ] () ]
+              ~name:"s")
+           "s"
+           (fun s -> match arg s with String _ -> true | _ -> false);
+       ]))
+    shared
+
+let hcq : t =
+  Pattern_matcher.append
+    (Pattern_matcher.fold
+       (fun () -> [
+         check
+           (pat [ Op.Getaddr ] ~dtype:[ Dtype.Uint64 ] ~name:"x"
+              ~src:
+                [
+                  Upat.or_after
+                    (pat
+                       Op.
+                         [
+                           Buffer;
+                           Alloc;
+                           Param;
+                           Shrink;
+                           Bitcast;
+                           Mstack;
+                           Mselect;
+                           Linear;
+                         ]);
+                ])
+           "x"
+           (fun x -> match arg x with Device _ -> true | _ -> false);
+         accept
+           (pat [ Op.Program ] ~dtype:[ Dtype.Void ]
+              ~src:[ Upat.or_after (pat [ Op.Buffer; Op.Param ]) ]);
+       ]))
+    shared
+
+let full : t =
+  Pattern_matcher.concat
+    [
+      Pattern_matcher.fold
+        (fun () -> [
+          check
+            (pat [ Op.End ]
+               ~src:[ Upat.v ~dtype:[ Dtype.Void ] (); Upat.wild ]
+               ~allow_any_len:true ~name:"x")
+            "x"
+            (fun x ->
+              no_arg x
+              && List.for_all
+                   (fun u -> Dtype.is_int (dtype u))
+                   (List.tl (src x)));
+          accept (pat [ Op.After ] ~src:[ Upat.wild ] ~allow_any_len:true);
+          accept (pat [ Op.Load; Op.Store ]);
+        ]);
+      tensor;
+      program;
+      hcq;
+    ]
+
+let loop r = Axis_type.equal (axis_type r) Axis_type.Loop
+
+(* A bound of a view that moves with loops: constants, loop ranges, and weak
+   integer sums and products of them. *)
+let rec loop_bound u =
+  match op u with
+  | Op.Const -> true
+  | Op.Range -> loop u
+  | Op.Add | Op.Mul ->
+      Dtype.equal (dtype u) Dtype.Weak_int && List.for_all loop_bound (src u)
   | _ -> false
 
-let tail_srcs p u =
-  let srcs = Uop.src u in
-  let n = Array.length srcs in
-  let rec loop i = i = n || (p srcs.(i) && loop (i + 1)) in
-  loop 1
-
-let shape_equal a b =
-  try
-    let sa = Uop.shape a and sb = Uop.shape b in
-    List.length sa = List.length sb && List.for_all2 Uop.equal sa sb
-  with Invalid_argument _ -> false
-
-let stack_ok u =
-  let srcs = Uop.src u in
-  Array.length srcs = 0
-  || (Array.for_all (shape_equal srcs.(0)) srcs
-      && Array.for_all (matches_or_weak u) srcs)
-
-let movement_shape_ok u =
-  try ignore (Uop.shape u); true with Invalid_argument _ -> false
-
-let end_effect_ok u =
-  is_void u && arg_empty u
-  && Array.length (Uop.src u) > 0 && is_void (Uop.src u).(0)
-
-let end_ok u =
-  end_effect_ok u
-  && tail_srcs (fun s -> Uop.op s = Ops.Range && is_int s) u
-
-let call_info_arg u =
-  match Uop.arg u with
-  | Uop.Arg.Call_info info -> Dtype.equal (Uop.dtype u) info.dtype
-  | _ -> false
-
-let opaque_call_body = function
-  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store
-  | Ops.Custom_function -> true
-  | _ -> false
-
-let call_ok u body =
-  call_info_arg u
-  && opaque_call_body (Uop.op body)
-  && List.for_all
-       (fun r -> match Uop.as_range r with
-        | Some { kind = Axis_type.Device; _ } -> true
-        | _ -> false)
-       (Uop.ranges body)
-
-let stage_ok u =
-  (arg_empty u && Array.length (Uop.src u) = 1)
-  || (Option.is_some (Uop.as_stage u) && tail_srcs is_int u)
-
-let valid_reduce_op op = Ops.Group.mem op Ops.Group.reduce
-
-let reduce_tail_ok s = is_weakint s || Dtype.equal (Uop.dtype s) Dtype.int32
-
-let reduce_arg_ok u =
-  match Uop.Arg.as_reduce_arg (Uop.arg u) with
-  | Some { op; _ } -> valid_reduce_op op && tail_srcs reduce_tail_ok u
-  | None -> false
-
-let copy_arg_device u =
-  match Uop.arg u with
-  | Uop.Arg.Device device ->
-      valid_device_payload device
-      && not (match device with
-          | Uop.Single d -> String.starts_with ~prefix:"DISK" d
-          | Uop.Multi ds -> List.exists (Option.fold ~none:false ~some:(String.starts_with ~prefix:"DISK")) ds
-          | Uop.Index _ -> false)
-  | _ -> false
-
-let copy_ok u x = same_dtype u x && copy_arg_device u
-
-let allreduce_ok u x =
-  match Uop.as_allreduce u with
-  | Some { src; op; device } ->
-      Uop.equal src x
-      && same_dtype u x
-      && valid_reduce_op op
-      && valid_device_payload device
-  | None -> false
-
-
-let mselect_ok u =
-  match Uop.Arg.as_int (Uop.arg u), Uop.src u with
-  | Some i, [| src |] ->
-      i >= 0
-      && same_dtype u src
-      &&
-      (match Uop.device_of src with
-       | Some (Uop.Multi devs) -> i < List.length devs
-       | _ -> false)
-  | _ -> false
-
-let mstack_ok u =
-  let srcs = Uop.src u in
-  Array.length srcs > 0
-  && Array.for_all (same_dtype u) srcs
-  &&
-  let all_single =
-    Array.for_all
-      (fun s ->
-        match Uop.device_of s with
-        | Some (Uop.Single _) -> true
-        | _ -> false)
-      srcs
-  in
-  let all_same_none =
-    match Uop.device_of srcs.(0) with
-    | None ->
-        let first = srcs.(0) in
-        Array.for_all (Uop.equal first) srcs
-    | Some _ -> false
-  in
-  all_single || all_same_none
-
-let multi_ok u =
-  match Uop.arg u, Uop.src u with
-  | Uop.Arg.Ints axes, srcs when Array.length srcs = List.length axes + 1 ->
-      axes <> [] && axes = List.sort_uniq Int.compare axes
-      && same_dtype u srcs.(0)
-      && (try List.for_all (fun axis -> axis >= 0 && axis < List.length (Uop.shape srcs.(0))) axes
-          with Invalid_argument _ -> false)
-      && tail_srcs (fun rng -> Dtype.is_weak (Uop.dtype rng)) u
-  | _ -> false
-
-(* Shared spec — rules valid at every stage. *)
-
-let shared_spec : t =
-  let open Upat in
-  make [
-    op ~dtype:Dtype.void Ops.Sink =?> (fun _ _ -> true);
-
-    op Ops.Noop =?> (fun _ _ -> true);
-
-    op ~dtype:Dtype.void Ops.Custom_function
-    =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
-
-    op ~allow_any_len:true
-      ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Store;
-                   Ops.Custom_function ] ] Ops.Call
-    =?> (fun u _ -> call_ok u (Uop.src u).(0));
-
-    (* Invalid is the lattice bottom and lives at bool. *)
-    op ~src:[] Ops.Const
-    =?> (fun u _ -> match Uop.arg u with
-      | Uop.Arg.Value c when Const.view c = Const.Invalid -> is_bool u
-      | Uop.Arg.Value c -> Dtype.equal (Const.dtype c) (Uop.dtype u)
-      | _ -> false);
-
-    op Ops.Param =?> (fun u _ -> valid_param u);
-
-    op Ops.Buffer =?> (fun u _ -> valid_buffer u);
-
-    op ~dtype:Dtype.void ~src:[] Ops.Stack =?> (fun _ _ -> true);
-
-    op ~allow_any_len:true ~src:[ any ] Ops.Stack
-    =?> (fun u _ -> stack_ok u);
-
-    op ~src:[ var "c"; var "t"; var "e" ] Ops.Where
-    =?> (fun u bs ->
-      is_bool (bs $ "c")
-      && matches_or_weak u (bs $ "t")
-      && matches_or_weak u (bs $ "e"));
-
-    ops ~dtype:Dtype.bool ~src:[ var "x"; var "y" ]
-      Ops.Group.comparison
-    =?> (fun _ bs ->
-      let x = bs $ "x" and y = bs $ "y" in
-      same_dtype x y || is_weak x || is_weak y);
-
-    (* Bitwise and shift operands are integral. *)
-    ops [ Ops.And; Ops.Or; Ops.Xor; Ops.Shl; Ops.Shr ]
-    =??> (fun u _ ->
-      if Array.exists (fun s -> Dtype.is_float (Uop.dtype s)) (Uop.src u)
-      then Some false
-      else None);
-
-    (* A renderer-lowered shift may carry a uint32 count; every other
-       shape of shift is left to the generic ALU rule. *)
-    ops ~src:[ var "x"; var_dtype "count" (exact_dtype Dtype.uint32) ]
-      [ Ops.Shl; Ops.Shr ]
-    =??> (fun u bs -> if same_dtype u (bs $ "x") then Some true else None);
-
-    ops [ Ops.Cdiv; Ops.Cmod; Ops.Floordiv; Ops.Floormod ]
-    =??> (fun u _ -> if is_int u then None else Some false);
-
-    ops Ops.Group.alu
-    =?> (fun u _ -> Array.for_all (matches_or_weak u) (Uop.src u));
-
-    ops ~src:[ any ] [ Ops.Cast; Ops.Bitcast ]
-    =?> (fun u _ -> match Uop.arg u with
-      | Uop.Arg.Dtype dtype -> Dtype.equal dtype (Uop.dtype u)
-      | _ -> false);
-
-    op ~allow_any_len:true ~src:[ var "size" ] Ops.Range
-    =?> (fun u bs ->
-      same_dtype u (bs $ "size")
-      && Option.is_some (Uop.as_range u));
-
-    op ~allow_any_len:true ~src:[ any ] Ops.Index
-    =?> (fun u _ -> tail_srcs (fun s -> is_int s || is_invalid s) u);
-
-    op ~allow_any_len:true ~src:[ any ] Ops.End
-    =?> (fun u _ -> end_ok u);
-
-    op ~dtype:Dtype.void
-      ~src:[ any; op ~dtype:Dtype.void Ops.Range;
-             var_dtype "cond" (exact_dtype Dtype.bool) ] Ops.Backedge
-    =?> (fun u bs ->
-      let cond = bs $ "cond" in
-      arg_empty u && Uop.shape cond = [] && not (is_invalid cond));
-
-    op_src ~dtype:(exact_dtype Dtype.void)
-      ~src:(repeat (ops [ Ops.Group; Ops.Store; Ops.Noop; Ops.Ins; Ops.End; Ops.Backedge ]))
-      Ops.Group
-    =?> (fun _ _ -> true);
-
-    op ~allow_any_len:true
-      ~src:[
-        ops (Ops.Group.movement @
-             [ Ops.Param; Ops.Buffer; Ops.Alloc; Ops.Stage; Ops.Index; Ops.After;
-               Ops.Unshard; Ops.Bitcast; Ops.Ins ])
-      ]
-      Ops.After
-    =?> (fun u _ -> same_dtype u (Uop.src u).(0));
-
-    op Ops.Custom =?> (fun _ _ -> true);
-    op Ops.Customi =?> (fun _ _ -> true);
-
-    op Ops.Pyliteral =?> (fun _ _ -> true);
-
-    op ~allow_any_len:true ~dtype:Dtype.void Ops.Barrier
-    =?> (fun _ _ -> true);
-
-    op Ops.Ins =?> (fun _ _ -> true);
-
-    op ~src:[ var "idx" ] Ops.Load
-    =?> (fun _ bs -> Validate.validate_index_source (bs $ "idx"));
-
-    op ~src:[ var "idx"; var "alt"; var "gate" ] Ops.Load
-    =?> (fun u bs ->
-      is_bool (bs $ "gate")
-      && same_dtype u (bs $ "alt")
-      && Validate.validate_index_source ~gate:(bs $ "gate") (bs $ "idx"));
-
-    op ~dtype:Dtype.void ~src:[ var "idx"; any ] Ops.Store
-    =??> (fun _ bs ->
-      if Validate.is_index_source (bs $ "idx")
-      then Some (Validate.validate_index_source (bs $ "idx"))
-      else None);
-
-    op ~dtype:Dtype.void ~src:[ var "idx"; any; var "gate" ] Ops.Store
-    =?> (fun _ bs ->
-      is_bool (bs $ "gate")
-      && Validate.validate_index_source ~gate:(bs $ "gate") (bs $ "idx"));
-
-    op ~dtype:Dtype.void ~src:[ var "dst"; any ] Ops.Store =?> (fun _ bs ->
-      match Uop.op (Uop.storage_base (bs $ "dst")) with
-      | Ops.Buffer | Ops.Alloc | Ops.Param | Ops.Stage -> true
-      | _ -> false);
-
-    op ~src:[ any; any; any ] Ops.Wmma
-    =?> (fun u _ -> Option.is_some (Uop.as_wmma u));
-  ]
-
-(* Tensor spec. *)
-
-let tensor_spec : t =
-  let open Upat in
-  let tensor_only = make [
-    ops ~src:[ any ] [ Ops.Sin; Ops.Log2; Ops.Exp2; Ops.Sqrt; Ops.Reciprocal ]
-    =?> (fun u _ -> Dtype.is_float (Uop.dtype u));
-
-    op Ops.Alloc =?> (fun u _ ->
-      match Uop.Arg.as_param_arg (Uop.arg u) with
-      | Some { addrspace; buffer = None; size; device; _ } ->
-          Array.length (Uop.src u) = 0 && not (is_weak u)
-          && List.mem addrspace [Dtype.Global; Dtype.Local; Dtype.Reg]
-          && option_for_all (fun n -> n >= 0) size
-          && option_for_all (fun device -> addrspace = Dtype.Global && valid_device_payload device) device
-      | _ -> false);
-
-    op Ops.Buffer =??> (fun u _ ->
-      if valid_global_buffer u || Uop.is_variable u then Some true else None);
-
-    op ~src:[ var "x" ] Ops.Special
-    =?> (fun u bs ->
-      let x = bs $ "x" in
-      Option.is_some (Uop.as_special u) && same_dtype u x && is_weakint x);
-
-    ops ~src:[ any; any ] [ Ops.Reshape; Ops.Expand ]
-    =?> (fun u _ -> movement_shape_ok u);
-
-    ops ~src:[ any; any; any ] [ Ops.Pad; Ops.Shrink ]
-    =?> (fun u _ ->
-      let srcs = Uop.src u in
-      shape_equal srcs.(1) srcs.(2) && movement_shape_ok u);
-
-    op ~src:[ any ] Ops.Permute
-    =?> (fun u _ ->
-      Option.is_some (Uop.Arg.as_ints (Uop.arg u))
-      && movement_shape_ok u);
-
-    op ~src:[ any ] Ops.Flip
-    =?> (fun u _ ->
-      Option.is_some (Uop.Arg.as_bools (Uop.arg u))
-      && movement_shape_ok u);
-
-    op ~allow_any_len:true ~src:[ any ] Ops.Reduce
-    =?> (fun u _ -> reduce_arg_ok u);
-
-    op ~src:[ var "x" ] Ops.Copy
-    =?> (fun u bs -> copy_ok u (bs $ "x"));
-
-    op ~src:[ var "x" ] Ops.Allreduce
-    =?> (fun u bs -> allreduce_ok u (bs $ "x"));
-
-    op Ops.Unshard =?> (fun u _ -> multi_ok u);
-
-    op Ops.Mselect =?> (fun u _ -> mselect_ok u);
-
-    op Ops.Mstack =?> (fun u _ -> mstack_ok u);
-
-    ops ~allow_any_len:true ~src:[ var "x" ]
-      [ Ops.Detach; Ops.Contiguous_backward ]
-    =?> (fun u bs -> same_dtype u (bs $ "x"));
-
-    op ~allow_any_len:true ~src:[ var "x" ] Ops.Stage
-    =?> (fun u _ -> stage_ok u);
-
-    op ~dtype:Dtype.void Ops.Linear =?> (fun _ _ -> true);
-
-    op ~dtype:Dtype.void ~src:[] Ops.Source =?> (fun _ _ -> true);
-
-    op ~dtype:Dtype.uint8 ~src:[] Ops.Binary
-    =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
-
-    op ~dtype:Dtype.void ~src:[ op Ops.Sink ] Ops.Program
-    =?> (fun _ _ -> true);
-    op ~dtype:Dtype.void ~src:[ op Ops.Sink; op Ops.Linear ] Ops.Program
-    =?> (fun _ _ -> true);
-    op ~dtype:Dtype.void
-      ~src:[ op Ops.Sink; op Ops.Linear; op Ops.Source ] Ops.Program
-    =?> (fun _ _ -> true);
-    op ~dtype:Dtype.void
-      ~src:[ op Ops.Sink; op Ops.Linear; op Ops.Source; op Ops.Binary ]
-      Ops.Program
-    =?> (fun _ _ -> true);
-  ] in
-  tensor_only ++ shared_spec
-
-(* Program spec. *)
-
-let program_spec : t =
-  let open Upat in
-  let program_only = make [
-    ops Ops.Group.all =??> (fun u _ ->
-      if is_weak u && Uop.op u <> Ops.Const then Some false else None);
-
-    op ~src:[ var "buffer"; any; var "size" ] Ops.Shrink
-    =?> (fun _ bs ->
-      let buffer = bs $ "buffer" in
-      let buffer = if Uop.op buffer = Ops.Bitcast then (Uop.src buffer).(0) else buffer in
-      List.mem (Uop.op buffer) [Ops.Param; Ops.Buffer; Ops.Alloc; Ops.After]
-      && Option.is_some (Uop.const_int_value (bs $ "size")));
-
-    ops Ops.Group.movement =?> (fun _ _ -> false);
-
-    ops [Ops.Buffer; Ops.Alloc] =?> (fun u _ -> valid_buffer u);
-
-    op Ops.Const =??> (fun u _ ->
-      if is_const_invalid u then Some false else None);
-
-    op ~src:[ any; any ] Ops.Load =?> (fun _ _ -> false);
-
-    op ~allow_any_len:true ~src:[ any ] Ops.End
-    =?> (fun u _ -> end_ok u);
-
-    op ~dtype:Dtype.void
-      ~src:[ var "cond"; ops [ Ops.Cast; Ops.Index; Ops.Shrink ] ] Ops.If
-    =?> (fun _ bs -> is_bool (bs $ "cond"));
-
-    op ~dtype:Dtype.void ~src:[ op Ops.If ] Ops.Endif
-    =?> (fun _ _ -> true);
-
-    op ~src:[ var "x" ] Ops.Special
-    =?> (fun u bs ->
-      let x = bs $ "x" in
-      Option.is_some (Uop.as_special u) && same_dtype u x
-      && Dtype.equal (Uop.dtype x) Dtype.int32);
-  ] in
-  program_only ++ shared_spec
-
-(* Full spec — explicit intermediate forms plus tensor and program specs. *)
-
-let full_only_spec : t =
-  let open Upat in
-  make [
-    op ~dtype:Dtype.void Ops.Rewrite_error
-    =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
-
-    op ~allow_any_len:true ~src:[ any; any ] Ops.End
-    =?> (fun u _ -> end_effect_ok u && tail_srcs is_int u);
-
-    op ~allow_any_len:true ~src:[ any ] Ops.After
-    =?> (fun _ _ -> true);
-
-    ops [ Ops.Load; Ops.Store ] =?> (fun _ _ -> true);
-
-  ]
-
-let full_spec : t =
-  full_only_spec ++ tensor_spec ++ program_spec
-
-(* Verification *)
-
-(* First-match semantics: a [Strict] rule whose pattern matches decides
-   the node (accept on [true], reject on [false]). A [Tentative] rule
-   that returns [None] instead defers to the next matching rule; a
-   [Tentative] rule returning [Some b] behaves like [Strict]. *)
-let accepts (spec : t) u =
-  let rec try_rules = function
-    | [] -> false
-    | Strict (pat, pred) :: rest -> (
-        match Upat.match_ pat u with
-        | [] -> try_rules rest
-        (* First matching binding decides, like tinygrad's PatternMatcher
-           taking the first non-None callback result. *)
-        | bs :: _ -> pred u bs)
-    | Tentative (pat, pred) :: rest -> (
-        match Upat.match_ pat u with
-        | [] -> try_rules rest
-        | matches ->
-            (* First binding with a decision ([Some]) wins; all-[None]
-               defers to the next rule. *)
-            let rec first = function
-              | [] -> try_rules rest
-              | bs :: more -> (
-                  match pred u bs with Some b -> b | None -> first more)
-            in
-            first matches)
-  in
-  try_rules spec
-
-exception Verification_failed of Uop.t
-
-let () =
-  Printexc.register_printer (function
-    | Verification_failed u ->
-        Some (Printf.sprintf "Spec.Verification_failed: op=%s dtype=%s"
-          (Ops.name (Uop.op u))
-          (Dtype.to_string (Uop.dtype u)))
-    | _ -> None)
-
-let verify_list spec program =
-  List.iter (fun u ->
-    if not (accepts spec u) then raise (Verification_failed u))
-    program
-
-let type_verify spec root =
-  verify_list spec (Uop.toposort root)
+let kernel_graph : t =
+  Pattern_matcher.fold
+    (fun () -> [
+      accept (pat [ Op.Sink ] ~dtype:[ Dtype.Void ]);
+      accept (pat [ Op.Const ] ~src:[]);
+      accept (pat [ Op.Cast ] ~src:[ pat [ Op.Const ] ~src:[] ]);
+      decide (pat [ Op.Stack ] ~name:"s") "s" (fun s ->
+          if List.for_all (fun x -> op x = Op.Param || loop_bound x) (src s)
+          then Some true
+          else None);
+      accept (pat [ Op.Param ] ~src:[]);
+      check (pat [ Op.Buffer ] ~name:"x") "x" (fun x ->
+          valid_device_range (param_of x).device (src x)
+          && List.mem (addrspace x) Dtype.[ Some Global; Some Local; Some Reg ]);
+      check (pat [ Op.Alloc ] ~name:"x") "x" (fun x ->
+          addrspace x = Some Dtype.Global
+          && valid_device_range (param_of x).device (src x));
+      accept (pat [ Op.Bitcast ]);
+      check (pat [ Op.Mstack ] ~name:"x") "x" mstack_fits;
+      check (pat [ Op.Mselect ] ~name:"x") "x" mselect_fits;
+      (* An open device range is bound per device at launch; a loop range runs
+         the calls an end closes it around. *)
+      check (pat [ Op.Range ] ~name:"r") "r" (fun r ->
+          Axis_type.equal (axis_type r) Axis_type.Device || loop r);
+      check (pat [ Op.End ] ~name:"e") "e" (fun e ->
+          op (nth e 0) = Op.Call
+          && List.for_all (fun r -> op r = Op.Range && loop r) (List.tl (src e)));
+      (* A call in a loop reads a view of storage that moves with the loop's
+         ranges, its bounds weak integer arithmetic on them. *)
+      check (pat [ Op.Shrink ] ~allow_any_len:true ~name:"v") "v" (fun v ->
+          let rs = Nodes.to_list (ranges v) in
+          rs <> [] && List.for_all loop rs);
+      check
+        (pat [ Op.Add; Op.Mul ] ~dtype:[ Dtype.Weak_int ] ~name:"x")
+        "x"
+        (fun x -> List.for_all loop_bound (src x));
+      check
+        (pat [ Op.Call ]
+           ~src:[ Upat.v ~op:opaque_call_bodies () ]
+           ~allow_any_len:true ~name:"x")
+        "x" args_fit;
+      accept
+        (pat [ Op.After ] ~allow_any_len:true
+           ~src:
+             [
+               Upat.v
+                 ~op:
+                   (Op.Set.union Op.Set.movement
+                      (ops
+                         Op.
+                           [
+                             Param;
+                             After;
+                             Buffer;
+                             Alloc;
+                             Mstack;
+                             Mselect;
+                             Bitcast;
+                             Reshape;
+                           ]))
+                 ();
+             ]);
+    ])
+
+let () = Private.set_spec full

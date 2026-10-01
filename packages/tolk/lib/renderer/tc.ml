@@ -5,15 +5,27 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Port of tinygrad/renderer/tc.py. *)
+type bit = N of int | M of int | K of int
 
-open Tolk_uop
+let equal_bit (b0 : bit) b1 = b0 = b1
+let dim = function N _ -> 'n' | M _ -> 'm' | K _ -> 'k'
+let index = function N i | M i | K i -> i
+let of_dim d i = match d with 'n' -> N i | 'm' -> M i | _ -> K i
+let pp_bit ppf b = Format.fprintf ppf "%c%d" (dim b) (index b)
 
-let strf = Printf.sprintf
-let pow2 n = 1 lsl n
-let take n xs = List.filteri (fun i _ -> i < n) xs
+type fragment = { lanes : bit list; elements : bit list }
 
-type fragment = string list * string list
+let frag lanes elements = { lanes; elements }
+
+let pp_tuple pp_elt ppf = function
+  | [ x ] -> Format.fprintf ppf "(%a,)" pp_elt x
+  | xs ->
+      let sep ppf () = Format.pp_print_string ppf ", " in
+      Format.fprintf ppf "(%a)" (Format.pp_print_list ~pp_sep:sep pp_elt) xs
+
+let pp_fragment ppf f =
+  let pp_quoted ppf b = Format.fprintf ppf "'%a'" pp_bit b in
+  pp_tuple (pp_tuple pp_quoted) ppf [ f.lanes; f.elements ]
 
 type t = {
   dtype_in : Dtype.t;
@@ -21,142 +33,226 @@ type t = {
   frag_a : fragment;
   frag_b : fragment;
   frag_c : fragment;
-  dims : int * int * int;
-  threads : int;
 }
 
-let bit_index c =
-  if String.length c < 2 || not (String.contains "nmk" c.[0]) then
-    invalid_arg ("Tc.create: invalid tile coordinate " ^ c);
-  match int_of_string_opt (String.sub c 1 (String.length c - 1)) with
-  | Some n when n >= 0 && n < Sys.int_size - 2 && c = strf "%c%d" c.[0] n -> n
-  | _ -> invalid_arg ("Tc.create: invalid tile coordinate " ^ c)
+let bits f = f.lanes @ f.elements
+let of_dims ds = List.filter (fun b -> String.contains ds (dim b))
 
-let coords frag_a frag_c =
-  let al, ae = frag_a and cl, ce = frag_c in
-  let used = al @ ae @ cl @ ce in
-  List.concat_map (fun dim ->
-      let last = List.fold_left (fun last c ->
-          if c.[0] = dim then max last (bit_index c) else last) (-1) used in
-      List.init (last + 1) (fun i -> strf "%c%d" dim i)) [ 'n'; 'm'; 'k' ]
+let axis_coords tc =
+  let used = bits tc.frag_a @ bits tc.frag_c in
+  let top d =
+    List.fold_left
+      (fun m b -> if dim b = d then max m (index b) else m)
+      (-1) used
+  in
+  List.concat_map (fun d -> List.init (top d + 1) (of_dim d)) [ 'n'; 'm'; 'k' ]
 
-let axis_coords t = coords t.frag_a t.frag_c
+let base_upcast_axes tc =
+  List.rev (of_dims "k" (axis_coords tc) @ tc.frag_c.elements)
 
-let base_upcast_axes t =
-  List.rev (List.filter (fun c -> c.[0] = 'k') (axis_coords t) @ snd t.frag_c)
+let relabel tc =
+  let pairs f =
+    let slots = List.take (List.length f.elements) (base_upcast_axes tc) in
+    let rec zip ys cs =
+      match (ys, cs) with y :: ys, c :: cs -> (c, y) :: zip ys cs | _ -> []
+    in
+    zip (tc.frag_c.lanes @ List.rev slots) (bits f)
+  in
+  (pairs tc.frag_a, pairs tc.frag_b)
 
-let relabel t =
-  List.map (fun (lanes, elements) ->
-      let slots = fst t.frag_c @ List.rev (take (List.length elements) (base_upcast_axes t)) in
-      List.combine (lanes @ elements) slots) [ t.frag_a; t.frag_b ]
+let frag_coords tc =
+  let coord f ax lane elem =
+    let part d =
+      let sum bs v =
+        let bit j b = if dim b = d then ((v lsr j) land 1) lsl index b else 0 in
+        List.fold_left ( + ) 0 (List.mapi bit bs)
+      in
+      sum f.lanes lane + sum f.elements elem
+    in
+    (part ax.[0], part ax.[1])
+  in
+  let coords f ax =
+    Array.init
+      (1 lsl List.length f.lanes)
+      (fun lane -> Array.init (1 lsl List.length f.elements) (coord f ax lane))
+  in
+  (coords tc.frag_a "mk", coords tc.frag_b "kn", coords tc.frag_c "mn")
 
-let create ~dtype_in ~dtype_out ~frag_a ~frag_b ~frag_c =
-  let check condition message = if not condition then invalid_arg ("Tc.create: " ^ message) in
-  List.iter (fun (lanes, elements) -> List.iter (fun c -> ignore (bit_index c)) (lanes @ elements))
-    [ frag_a; frag_b; frag_c ];
-  check (List.length (fst frag_c) < Sys.int_size - 1) "lane count exceeds host integer range";
-  let coordinates = coords frag_a frag_c in
-  List.iter (fun ((lanes, elements), dimensions) ->
-      let all = lanes @ elements in
-      let own = List.filter (fun c -> String.contains dimensions c.[0]) coordinates in
-      check (List.length lanes = List.length (fst frag_c)) "fragment has the wrong lane count";
-      check (List.length (List.sort_uniq String.compare all) = List.length all
-             && List.for_all (fun c -> List.mem c own) elements
-             && List.for_all (fun c -> List.mem c all) own
-             && List.for_all (fun c -> List.mem c own
-                  || (List.mem c coordinates && String.contains "mn" c.[0])) all)
-        "fragment must cover its tile bits exactly, with broadcasts only in lanes")
-    [ frag_a, "mk"; frag_b, "kn"; frag_c, "mn" ];
-  let k_bits (lanes, elements) = List.filter (fun c -> c.[0] = 'k') (elements @ lanes) in
-  check (k_bits frag_a = k_bits frag_b) "input fragments must relabel K identically";
-  let extent dim = pow2 (List.length (List.filter (fun c -> c.[0] = dim) coordinates)) in
-  { dtype_in; dtype_out; frag_a; frag_b; frag_c;
-    dims = extent 'n', extent 'm', extent 'k'; threads = pow2 (List.length (fst frag_c)) }
+let dims tc =
+  let size d = 1 lsl List.length (of_dims d (axis_coords tc)) in
+  (size "n", size "m", size "k")
 
-(* Hardware fragment descriptions. Bits are ordered least significant first. *)
+let threads tc = 1 lsl List.length tc.frag_c.lanes
 
-let labels dim count = List.init count (fun i -> strf "%c%d" dim i)
-let drop count xs = List.filteri (fun i _ -> i >= count) xs
-let rec log2 n = if n <= 1 then 0 else 1 + log2 (n lsr 1)
+let check tc =
+  let coords = axis_coords tc in
+  let subset bs0 bs1 = List.for_all (fun b -> List.mem b bs1) bs0 in
+  let check_fragment f ds =
+    let own = of_dims ds coords and all = bits f in
+    let distinct = List.length (List.sort_uniq compare all) = List.length all in
+    if List.length f.lanes <> List.length tc.frag_c.lanes then
+      invalid_arg
+        (Format.asprintf "fragment %a has the wrong lane count" pp_fragment f);
+    if
+      not
+        (distinct && subset f.elements own && subset own all
+        && subset all (own @ of_dims "mn" coords))
+    then
+      invalid_arg
+        (Format.asprintf "fragment %a isn't distinct bits covering %s"
+           pp_fragment f ds)
+  in
+  check_fragment tc.frag_a "mk";
+  check_fragment tc.frag_b "kn";
+  check_fragment tc.frag_c "mn";
+  let ks f = of_dims "k" (f.elements @ f.lanes) in
+  if ks tc.frag_a <> ks tc.frag_b then
+    invalid_arg
+      (Format.asprintf "A holds its k bits as %a and B as %a" (pp_tuple pp_bit)
+         (ks tc.frag_a) (pp_tuple pp_bit) (ks tc.frag_b))
 
-let mk ~frag_a ~frag_b ~frag_c dtypes =
-  List.map (fun (dtype_in, dtype_out) ->
-      create ~dtype_in ~dtype_out ~frag_a ~frag_b ~frag_c) dtypes
+let v ~dtype_in ~dtype_out ~frag_a ~frag_b ~frag_c =
+  let tc = { dtype_in; dtype_out; frag_a; frag_b; frag_c } in
+  check tc;
+  tc
 
-let mma k dtype_in dtype_out =
-  let k = labels 'k' (log2 k) and g = log2 (4 / Dtype.itemsize dtype_in) in
-  let lanes = take 2 (drop g k) in
-  let elements = take g k @ drop (g + 2) k in
-  create ~dtype_in ~dtype_out
-    ~frag_a:(lanes @ [ "m0"; "m1"; "m2" ], take g elements @ [ "m3" ] @ drop g elements)
-    ~frag_b:(lanes @ [ "n0"; "n1"; "n2" ], elements)
-    ~frag_c:([ "n1"; "n2"; "m0"; "m1"; "m2" ], [ "n0"; "m3" ])
+let equal (tc0 : t) tc1 = tc0 = tc1
 
-let cuda_81616 = List.map (fun (di, do_) -> mma 16 di do_)
-    Dtype.[ Float16, Float32; Bfloat16, Float32; Float16, Float16 ]
-let cuda_81632_f8 = List.map (fun di -> mma 32 di Dtype.float32) Dtype.[ Fp8e4m3; Fp8e5m2 ]
-let cuda_8168_f16 = List.map (fun do_ -> mma 8 Dtype.float16 do_) Dtype.[ Float32; Float16 ]
-let cuda_8168_tf32 = [ mma 8 Dtype.float32 Dtype.float32 ]
+let pp ppf tc =
+  Format.fprintf ppf
+    "TensorCore(dtype_in=%a, dtype_out=%a, frag_a=%a, frag_b=%a, frag_c=%a)"
+    Dtype.pp tc.dtype_in Dtype.pp tc.dtype_out pp_fragment tc.frag_a pp_fragment
+    tc.frag_b pp_fragment tc.frag_c
+
+let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2)
+let ks n = List.init (log2 n) (fun i -> K i)
+
+(* The k bits from i to j, excluded, are the lane's; the others the
+   elements'. *)
+let split_k k i j =
+  (List.take (j - i) (List.drop i k), List.take i k @ List.drop j k)
+
+(* NVIDIA *)
+
+(* mma.m16n8kK: a lane is a thread in its group (two k bits), then its group (m0
+   to m2); the elements, least significant first, are the 2^g k bits packed in a
+   32-bit register, m3 (A's row + 8), then the other k bits. *)
+let mma k_size dtype_in dtype_out =
+  let g = log2 (4 / Dtype.itemsize dtype_in) in
+  let lane, elem = split_k (ks k_size) g (g + 2) in
+  v ~dtype_in ~dtype_out
+    ~frag_a:
+      (frag
+         (lane @ [ M 0; M 1; M 2 ])
+         (List.take g elem @ (M 3 :: List.drop g elem)))
+    ~frag_b:(frag (lane @ [ N 0; N 1; N 2 ]) elem)
+    ~frag_c:(frag [ N 1; N 2; M 0; M 1; M 2 ] [ N 0; M 3 ])
+
+let cuda_81616 =
+  List.map
+    (fun (di, dout) -> mma 16 di dout)
+    Dtype.[ (Float16, Float32); (Bfloat16, Float32); (Float16, Float16) ]
+
+let cuda_81632_f8 =
+  List.map (fun di -> mma 32 di Float32) Dtype.[ Fp8e4m3; Fp8e5m2 ]
+
+let cuda_8168_f16 =
+  List.map (fun dout -> mma 8 Float16 dout) Dtype.[ Float32; Float16 ]
+
+let cuda_8168_tf32 = [ mma 8 Float32 Float32 ]
 let cuda_sm75 = cuda_8168_f16
 let cuda_sm80 = cuda_81616 @ cuda_8168_f16 @ cuda_8168_tf32
 let cuda_sm89 = cuda_sm80 @ cuda_81632_f8
 
-let amd_rdna3 = mk
-    ~frag_a:([ "m0"; "m1"; "m2"; "m3"; "n0" ], [ "k0"; "k1"; "k2"; "k3" ])
-    ~frag_b:([ "n0"; "n1"; "n2"; "n3"; "m0" ], [ "k0"; "k1"; "k2"; "k3" ])
-    ~frag_c:([ "n0"; "n1"; "n2"; "n3"; "m0" ], [ "m1"; "m2"; "m3" ])
-    Dtype.[ Float16, Float32; Float16, Float16; Bfloat16, Float32; Int8, Int32 ]
+let cuda arch =
+  let n = String.length arch - 3 in
+  let is_digit c = c >= '0' && c <= '9' in
+  if n <= 0 || not (String.for_all is_digit (String.sub arch 3 n)) then
+    invalid_arg (Printf.sprintf "%S has no compute capability" arch);
+  let ver = int_of_string (String.sub arch 3 n) in
+  if ver >= 89 then cuda_sm89
+  else if ver >= 80 then cuda_sm80
+  else if ver >= 75 then cuda_sm75
+  else []
 
-let amd_rdna4 = mk
-    ~frag_a:([ "m0"; "m1"; "m2"; "m3"; "k2" ], [ "k0"; "k1"; "k3" ])
-    ~frag_b:([ "n0"; "n1"; "n2"; "n3"; "k2" ], [ "k0"; "k1"; "k3" ])
-    ~frag_c:([ "n0"; "n1"; "n2"; "n3"; "m3" ], [ "m0"; "m1"; "m2" ])
-    Dtype.[ Float16, Float32; Float16, Float16; Bfloat16, Float32; Bfloat16, Bfloat16 ]
+(* AMD *)
 
-let mfma k dtype_in dtype_out =
-  let kl = log2 (min k 64 / 4) in
-  let k = labels 'k' (log2 k) in
-  let lanes = take 2 (drop kl k) and elements = take kl k @ drop (kl + 2) k in
-  create ~dtype_in ~dtype_out
-    ~frag_a:([ "m0"; "m1"; "m2"; "m3" ] @ lanes, elements)
-    ~frag_b:([ "n0"; "n1"; "n2"; "n3" ] @ lanes, elements)
-    ~frag_c:([ "n0"; "n1"; "n2"; "n3"; "m2"; "m3" ], [ "m0"; "m1" ])
+let cores ~frag_a ~frag_b ~frag_c =
+  List.map (fun (dtype_in, dtype_out) ->
+      v ~dtype_in ~dtype_out ~frag_a ~frag_b ~frag_c)
 
-let amd_cdna_161616 = List.map (fun di -> mfma 16 di Dtype.float32) Dtype.[ Float16; Bfloat16 ]
-let amd_cdna_161632 = List.map (fun di -> mfma 32 di Dtype.float32)
+let amd_rdna3 =
+  cores
+    ~frag_a:(frag [ M 0; M 1; M 2; M 3; N 0 ] [ K 0; K 1; K 2; K 3 ])
+    ~frag_b:(frag [ N 0; N 1; N 2; N 3; M 0 ] [ K 0; K 1; K 2; K 3 ])
+    ~frag_c:(frag [ N 0; N 1; N 2; N 3; M 0 ] [ M 1; M 2; M 3 ])
+    Dtype.
+      [
+        (Float16, Float32);
+        (Float16, Float16);
+        (Bfloat16, Float32);
+        (Int8, Int32);
+      ]
+
+let amd_rdna4 =
+  cores
+    ~frag_a:(frag [ M 0; M 1; M 2; M 3; K 2 ] [ K 0; K 1; K 3 ])
+    ~frag_b:(frag [ N 0; N 1; N 2; N 3; K 2 ] [ K 0; K 1; K 3 ])
+    ~frag_c:(frag [ N 0; N 1; N 2; N 3; M 3 ] [ M 0; M 1; M 2 ])
+    Dtype.
+      [
+        (Float16, Float32);
+        (Float16, Float16);
+        (Bfloat16, Float32);
+        (Bfloat16, Bfloat16);
+      ]
+
+(* 16x16xK: A[i,k] is element k mod K_L of lane i + 16 * (k / K_L), with K_L =
+   K/4; the 8-bit floats' K = 128 is two halves of K = 64, k / 64 the high
+   element. *)
+let mfma k_size dtype_in dtype_out =
+  let kl = log2 (min k_size 64 / 4) in
+  let lane, elem = split_k (ks k_size) kl (kl + 2) in
+  v ~dtype_in ~dtype_out
+    ~frag_a:(frag ([ M 0; M 1; M 2; M 3 ] @ lane) elem)
+    ~frag_b:(frag ([ N 0; N 1; N 2; N 3 ] @ lane) elem)
+    ~frag_c:(frag [ N 0; N 1; N 2; N 3; M 2; M 3 ] [ M 0; M 1 ])
+
+let amd_cdna_161616 =
+  List.map (fun di -> mfma 16 di Float32) Dtype.[ Float16; Bfloat16 ]
+
+let amd_cdna_161632 =
+  List.map
+    (fun di -> mfma 32 di Float32)
     Dtype.[ Fp8e5m2; Fp8e4m3; Float16; Bfloat16 ]
-let amd_cdna_1616128 = List.map (fun di -> mfma 128 di Dtype.float32) Dtype.[ Fp8e5m2; Fp8e4m3 ]
-let amd_cdna3 = List.map (fun di -> mfma 32 di Dtype.float32)
-    Dtype.[ Fp8e5m2fnuz; Fp8e4m3fnuz ] @ amd_cdna_161616
+
+let amd_cdna_1616128 =
+  List.map (fun di -> mfma 128 di Float32) Dtype.[ Fp8e5m2; Fp8e4m3 ]
+
+let amd_cdna3_161632 =
+  List.map (fun di -> mfma 32 di Float32) Dtype.[ Fp8e5m2fnuz; Fp8e4m3fnuz ]
+
+let amd_cdna3 = amd_cdna3_161632 @ amd_cdna_161616
 let amd_cdna4 = amd_cdna_1616128 @ amd_cdna_161632 @ amd_cdna_161616
 
-let metal = mk
-    ~frag_a:([ "k1"; "m0"; "m1"; "k2"; "m2" ], [ "k0" ])
-    ~frag_b:([ "n1"; "k0"; "k1"; "n2"; "k2" ], [ "n0" ])
-    ~frag_c:([ "n1"; "m0"; "m1"; "n2"; "m2" ], [ "n0" ])
-    Dtype.[ Float32, Float32; Float16, Float32; Float16, Float16;
-            Bfloat16, Float32; Bfloat16, Bfloat16 ]
+let amd = function
+  | "gfx942" -> amd_cdna3
+  | "gfx950" -> amd_cdna4
+  | "gfx1200" | "gfx1201" -> amd_rdna4
+  | _ -> amd_rdna3
 
-(* Operand type names go verbatim into the emitted tensor-core function
-   name, so they are the target's spelling of the type rather than tolk's
-   short dtype tag. A dtype with no spelling here has no place in a
-   tensor-core table. *)
-let dtype_name = function
-  | Dtype.Float16 -> "half"
-  | Dtype.Bfloat16 -> "__bf16"
-  | Dtype.Float32 -> "float"
-  | Dtype.Float64 -> "double"
-  | Dtype.Int8 -> "signed_char"
-  | Dtype.Int32 -> "int"
-  | Dtype.Fp8e4m3 -> "float8_e4m3"
-  | Dtype.Fp8e5m2 -> "float8_e5m2"
-  | Dtype.Fp8e4m3fnuz -> "float8_e4m3fnuz"
-  | Dtype.Fp8e5m2fnuz -> "float8_e5m2fnuz"
-  | dt ->
-      invalid_arg
-        (strf "Tc.dtype_name: no tensor-core name for %s" (Dtype.to_string dt))
+(* Apple Metal *)
 
-let to_string (tc : t) =
-  let n, m, k = tc.dims in
-  strf "WMMA_%d_%d_%d_%s_%s" n m k (dtype_name tc.dtype_in)
-    (dtype_name tc.dtype_out)
+let metal =
+  cores
+    ~frag_a:(frag [ K 1; M 0; M 1; K 2; M 2 ] [ K 0 ])
+    ~frag_b:(frag [ N 1; K 0; K 1; N 2; K 2 ] [ N 0 ])
+    ~frag_c:(frag [ N 1; M 0; M 1; N 2; M 2 ] [ N 0 ])
+    Dtype.
+      [
+        (Float32, Float32);
+        (Float16, Float32);
+        (Float16, Float16);
+        (Bfloat16, Float32);
+        (Bfloat16, Bfloat16);
+      ]

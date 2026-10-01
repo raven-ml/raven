@@ -5,20 +5,19 @@
 
 (** Traced functions and the values their graphs compute.
 
-    A function is traced under a scope of {!Rune_internals.Lower}, as a compiled call
-    traces it. The value of a traced result is its graph evaluated by tolk's
-    reference interpreter ([Tensors]), each capture's storage holding the bytes
-    the scope binds to it: what the lowering means, before any compiler sees it.
-*)
+    A function is traced under a scope of {!Rune_internals.Lower}, as a compiled
+    call traces it. The value of a traced result is its graph evaluated by
+    tolk's reference interpreter ([Tensors]), each capture's storage holding the
+    bytes the scope binds to it: what the lowering means, before any compiler
+    sees it. *)
 
 open Rune_internals
 
-val host : Nx_device.t -> Tolk_next.Renderer.t
+val host : Nx_device.t -> Tolk.Renderer.t
 (** [host d] is the host's renderer, whatever [d]: the programs of every device
     of a test are rendered for the host. *)
 
-val scope :
-  ?renderer:(Nx_device.t -> Tolk_next.Renderer.t) -> unit -> Lower.scope
+val scope : ?renderer:(Nx_device.t -> Tolk.Renderer.t) -> unit -> Lower.scope
 (** [scope ~renderer ()] is a new scope with [renderer] (defaults to {!host}).
 *)
 
@@ -26,9 +25,7 @@ val within : Lower.scope -> (unit -> 'a) -> 'a
 (** [within s f] is [f ()] traced under [s]. *)
 
 val trace :
-  ?renderer:(Nx_device.t -> Tolk_next.Renderer.t) ->
-  (unit -> 'a) ->
-  Lower.scope * 'a
+  ?renderer:(Nx_device.t -> Tolk.Renderer.t) -> (unit -> 'a) -> Lower.scope * 'a
 (** [trace ~renderer f] is [f ()] traced under a new scope, and that scope. *)
 
 val argument : Lower.scope -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
@@ -68,11 +65,11 @@ val ulps :
     rounded result. NaNs and infinities must be equal. The failure names the
     worst element and the elements of [inputs] it was computed from. *)
 
-val contents : Rune_internals.Lower.scope -> (int * Tolk_next.Dtype.value array) list
+val contents : Rune_internals.Lower.scope -> (int * Tolk.Dtype.value array) list
 (** [contents s] is the elements of each storage and each argument [s] binds, by
     slot. *)
 
-val of_const : ('a, 'b) Nx_dtype.t -> Tolk_next.Dtype.const -> 'a
+val of_const : ('a, 'b) Nx_dtype.t -> Tolk.Dtype.const -> 'a
 (** [of_const dt c] is the element [c] of [dt].
 
     Raises [Invalid_argument] if [c] is not of [dt]'s kind. *)

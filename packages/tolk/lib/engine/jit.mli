@@ -5,106 +5,31 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** JIT compilation and replay.
+(** Captured schedules.
 
-    A {e JIT} ({!type:tiny_jit}) wraps a function and transparently captures
-    its computation as a {!Tolk_uop.Ops.Linear} on the second call, then
-    replays that linear on all subsequent calls. Three phases:
+    A captured schedule is every call a function makes, in order, over the
+    buffers it was given. Lowering it once gives a schedule that runs again on
+    other buffers: its inputs become parameters, which each run binds, its
+    intermediates share a few arenas, and its kernels and batches are compiled.
+    The engine links the result once and runs it on each call. *)
 
-    {ul
-    {- {e Warmup} (cnt=0): execute eagerly.}
-    {- {e Capture} (cnt=1): run within {!Realize.with_capture} so
-       every schedule the function creates is recorded instead of executed,
-       then lower the combined record for replay: substitute each input
-       buffer node with a slotted {!Tolk_uop.Ops.Param}, plan intermediate
-       buffer memory once over the combined linear, compile every kernel,
-       including host submission programs on devices with queue support.}
-    {- {e Exec} (cnt>=2): validate the inputs against the capture and replay
-       the compiled linear through {!Realize.run_linear}, passing the current
-       input buffer nodes as [input_uops] and the per-call variable values as
-       [var_vals].}}
+val jit_lower :
+  ?beam:int ->
+  ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  devices:(string -> Hcq2.device) ->
+  held_bufs:Ops.t list ->
+  inputs:Ops.t list ->
+  Ops.t ->
+  Ops.t
+(** [jit_lower ~beam ~search ~devices ~held_bufs ~inputs linear] is the captured
+    schedule [linear], an {!Op.Linear} of calls, ready to link:
+    + the [i]th buffer of [inputs] is replaced wherever [linear] reaches it by
+      the parameter of slot [i] ({!Ops.param}), of its type, device and size;
+    + its buffers are placed in arenas ({!Memory.memory_plan_rewrite}), except
+      [held_bufs], whose contents outlive a run, such as the buffers a caller
+      keeps or that hold constants;
+    + it is compiled ({!Hcq2.compile_linear}, with [search] and [devices]), with
+      the beam width [beam], or else that of the [JITBEAM] environment variable,
+      or else {!Helpers.beam}.
 
-    Non-input buffers (weights, outputs, held buffers) retain their storage
-    directly in the captured graph. Planned intermediates live in arena
-    buffers owned by that graph. *)
-
-(** {1:exceptions Exceptions} *)
-
-exception Jit_error of string
-(** Raised for JIT-specific errors: nested capture, empty capture, or an
-    input mismatch on replay. *)
-
-(** {1:captured Captured schedule} *)
-
-type 'a captured_jit
-(** A compiled linear owning its retained storage. *)
-
-(** {1:tiny_jit TinyJit} *)
-
-type 'a tiny_jit
-(** The JIT wrapper. *)
-
-val captured : 'a tiny_jit -> 'a captured_jit option
-(** [captured t] is [t]'s captured schedule, or [None] before capture. *)
-
-val create :
-  device:Device.t ->
-  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  ?fxn:(Tolk_uop.Uop.t array -> (string * int64) list -> 'a) ->
-  ?captured:'a captured_jit ->
-  ?prune:bool ->
-  unit ->
-  'a tiny_jit
-(** [create ~device ~to_program ?fxn ?captured ?prune ()] is a JIT wrapper.
-
-    [to_program execution_device sink] compiles a kernel {!Tolk_uop.Ops.Sink}
-    for its argument placement into an on-graph
-    {!Tolk_uop.Ops.Program}; the captured linear is compiled with it once,
-    then replayed.
-
-    Provide either [fxn] (the function to JIT, taking the input buffer nodes
-    and the variable values of the call) or [captured] (a pre-captured
-    schedule); when [captured] is given, execution starts at the replay
-    phase. [prune] is accepted for compatibility and currently ignored.
-
-    Raises [Invalid_argument] if neither [fxn] nor [captured] is provided. *)
-
-val reset : 'a tiny_jit -> unit
-(** [reset t] returns [t] to the warmup phase, discarding any captured
-    schedule.
-
-    Raises [Invalid_argument] if [t] was created without a function. *)
-
-val call :
-  ?wait:bool ->
-  ?held_buffers:(unit -> Tolk_uop.Uop.t list) ->
-  'a tiny_jit ->
-  Tolk_uop.Uop.t array ->
-  (string * int64) list ->
-  'a
-(** [call ?wait ?held_buffers t input_uops var_vals] runs [t] with
-    the input buffer nodes [input_uops] and variable values [var_vals].
-
-    {ul
-    {- {e Warmup} (cnt=0): calls the wrapped function eagerly.}
-    {- {e Capture} (cnt=1): calls the function under the capture handler,
-       lowers the combined recorded schedule for replay and replays.}
-    {- {e Exec} (cnt>=2): validates inputs against the capture and replays
-       with the current [input_uops] and [var_vals].}}
-
-    Input nodes and captured buffers must own their concrete storage.
-
-    [held_buffers], evaluated once when capture completes, lists the buffer
-    nodes that outlive the jitted computation — external outputs, and any
-    buffer assigned inside the jit but read outside it (for example a cache
-    updated in place across calls). Held buffers keep their identity and
-    their own allocation; all other intermediate buffers are folded into
-    per-device arenas by the memory planner and their contents do not survive
-    the call. Defaults to holding nothing.
-
-    Replay validates each input's element count, dtype, and device against
-    the capture and raises {!Jit_error} on mismatch. A fuller check would
-    also compare each input's movement view and its set of bound symbolic
-    variables, catching inputs that alias the same buffer through a different
-    layout or binding; inputs here are whole buffer nodes, so those checks
-    have nothing further to compare today. *)
+    Raises as {!Hcq2.compile_linear} does. *)

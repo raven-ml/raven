@@ -3,13 +3,46 @@
 (library
  (name tolk)
  (public_name tolk)
- (private_modules host_config worker)
- (libraries nx.dtype unix threads tolk_uop))
+ (private_modules host_config)
+ (libraries unix nx.device.elf)
+ ; The compilers that run in the process find their vendor's library at run
+ ; time, so that the library builds and runs without CUDA, ROCm or Metal.
+ (foreign_stubs
+  (language c)
+  (names compiler_cuda_stubs compiler_amd_stubs compiler_metal_stubs))
+ (c_library_flags
+  (:include dl_flags.sexp))
+ ; Modules install the rules that earlier modules apply (Ops' simplify
+ ; reads Symbolic's) when they are initialised: every program links them all.
+ (library_flags (-linkall))
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))
 
-; Use the configured executable target, including cross-compilation, rather
-; than probing the build machine or starting shell tools at runtime.
+; The system the library is compiled for, cross-compilation included, without
+; probing the machine at run time.
+
 (rule
  (target host_config.ml)
  (action
-  (write-file %{target}
+  (write-file
+   %{target}
    "let system = \"%{ocaml-config:system}\"\nlet architecture = \"%{ocaml-config:architecture}\"\n")))
+
+; dlopen is a library of its own on Linux; elsewhere it is part of the C
+; library (macOS) or of kernel32 (Windows).
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (= %{system} linux))
+ (action
+  (write-file %{target} "(-ldl)")))
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (<> %{system} linux))
+ (action
+  (write-file %{target} "()")))

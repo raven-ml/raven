@@ -1,4 +1,0 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.BUFFER dtypes.uchar [] ParamArg(slot=3, dtype=dtypes.uchar, size=16, device="DISK:/tmp/tolk-next-schedule")
-1 Ops.SINK dtypes.void [0]
-

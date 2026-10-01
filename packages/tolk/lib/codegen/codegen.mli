@@ -5,70 +5,108 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Codegen entry point — optimization dispatch, lowering, and compilation.
+(** Code generation: from a kernel to a program.
 
-    {!to_program} is the main entry point: it optimizes a kernel AST
-    (load collapse, range splitting/simplification, beam search or
-    hand-coded optimizations), lowers it (expansion, devectorization,
-    GPU dims, decompositions), linearizes, renders, and compiles it into an
-    on-graph {!Tolk_uop.Ops.Program} node carrying the rendered source and
-    compiled binary.
+    A kernel is the sink of a graph of loads, stores and arithmetic over ranges,
+    with its {!Ops.kernel_info} as argument. Code generation turns it into a
+    program for a renderer ({!Renderer.t}) in three steps:
+    - {!full_rewrite_to_sink} optimises the kernel's loops, then lowers it to
+      the nodes the renderer writes: vector axes are expanded into lanes,
+      reductions into accumulators, loops into launch dimensions, vectors into
+      scalars and merged accesses, and the operations and types the target lacks
+      into ones it has;
+    - {!Linearizer.linearize} orders those nodes into a list of instructions;
+    - the renderer writes the list as source, and its compiler turns the source
+      into a binary ({!Renderer.Compiler}).
 
-    This boundary is intentionally sink-only: it accepts a kernel {!Ops.Sink}
-    and produces the compiled program. The engine caches the compiled programs
-    it dispatches, and {!Compiler.compile_cached} caches the render/compile
-    results.
+    {!to_program} runs the three and returns an {!Op.Program} that holds each
+    step's result. Nothing here runs a program or opens a device. *)
 
-    Tolk keeps post-optimization lowering in {!Codegen_lower}. The split is
-    smaller than tinygrad's single [codegen/__init__.py] file, but it avoids a
-    cycle with beam search: candidate schedules need lowering and
-    linearization without depending on this optimization entry point. *)
+(** {1:lowering Lowering} *)
 
 val full_rewrite_to_sink :
   ?optimize:bool ->
-  ?beam_device:Device.t ->
+  ?beam:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  Ops.t ->
   Renderer.t ->
-  Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t
-(** [full_rewrite_to_sink ?optimize ?beam_device ren sink] optimizes and
-    lowers kernel [sink] to a linearize-ready form.
+  Ops.t
+(** [full_rewrite_to_sink ~optimize ~beam ast ren] is the kernel [ast] lowered
+    for [ren], ready to be linearized.
 
-    When [optimize] is [true] (default) and [sink] is untagged, runs
-    load collapse, range splitting, symbolic simplification, range
-    tightening, and dispatches to beam search or hand-coded optimizations.
-    This block requires [sink] to carry {!Tolk_uop.Uop.kernel_info}.
-    Tagged sinks skip this optimization block. When [false], skips
-    directly to lowering. Post-optimization lowering parity lives in
-    {!Codegen_lower}.
+    If [optimize] (default [true]), its loops are first simplified and optimised
+    ({!Postrange.apply_opts}): with the optimisations its argument lists, or
+    else, if its argument asks for a beam search of width [w] greater than [0],
+    with [beam w], or else with {!Heuristic.hand_coded_optimizations} unless the
+    setting {!Helpers.noopt} holds. The settings {!Helpers.disable_fast_idiv}
+    and {!Helpers.transcendental} choose how divisions by constants and
+    transcendental functions are decomposed ({!Decomp_op.late_patterns},
+    {!Transcendental.patterns}). When the setting {!Helpers.spec} is [1] or
+    more, [ast] is checked against {!Spec.tensor} and the result against
+    {!Spec.program}; when the environment variable [DBGTV] is set, a result that
+    fails is first printed on standard output ({!Render.pp_uops}).
 
-    [beam_device] supplies the runtime for beam search when the kernel's
-    beam setting is positive. {!Realize.compile_linear} resolves the [BEAM]
-    context before calling codegen. [SPEC=1] output program validation is handled by
-    {!Codegen_lower}; this module does not run an input spec check because
-    Tolk has no exact tinygrad [spec_tensor] equivalent for this sink stage. *)
+    Raises [Invalid_argument] if [optimize] holds and [ast]'s argument is not a
+    {!Ops.kernel_info}, if its beam search is asked for without [beam], if an
+    optimisation its argument lists does not apply, with the reason, if a check
+    fails, or if a pass does. *)
+
+(** {1:linearizing Linearizing} *)
+
+val line_rewrite :
+  Ops.t list ->
+  ('ctx, Ops.t * Ops.t list) Ops.Pattern_matcher.t ->
+  'ctx ->
+  Ops.t list
+(** [line_rewrite l m ctx] rewrites the instruction list [l], each node after
+    its sources: each node is rebuilt on the results of its sources, and a rule
+    of [m] that matches the rebuilt node gives its result, the node its users
+    see, and the instructions that replace it; a node no rule matches stays. [l]
+    must list each node after its sources. *)
+
+val pm_linearize_cleanups : (unit, Ops.t * Ops.t list) Ops.Pattern_matcher.t
+(** [pm_linearize_cleanups] makes a gated {!Op.Store} a store inside an {!Op.If}
+    on its gate, closed by an {!Op.Endif}. It raises [Invalid_argument] on an
+    {!Op.If} or {!Op.Endif} already in the list. *)
+
+(** {1:programs Programs} *)
 
 val to_program :
-  ?optimize:bool ->
-  ?beam_device:Device.t ->
+  ?beam:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  Ops.t ->
   Renderer.t ->
-  Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t
-(** [to_program ?optimize ?beam_device ren input] completes a kernel into an
-    on-graph {!Tolk_uop.Ops.Program} node [PROGRAM(SINK, LINEAR, SOURCE, BINARY)].
+  Ops.t
+(** [to_program ~beam ast ren] is the program of [ast] for [ren]: an
+    {!Op.Program} whose argument is its {!Ops.program_info} for [ren]'s target,
+    and whose sources are:
+    + the lowered sink ({!full_rewrite_to_sink}, optimised unless [ast] is
+      tagged), whose kernel information holds the program's cost estimates
+      ({!Renderer.Estimates.of_uops}, not counting index arithmetic);
+    + an {!Op.Linear} of the instructions: the sink linearized
+      ({!Linearizer.linearize}), gated stores made conditional
+      ({!pm_linearize_cleanups}), and each {!Op.Alloc} made a {!Op.Buffer};
+    + an {!Op.Source} of the source [ren] writes for them;
+    + an {!Op.Binary} of that source compiled by [ren]'s compiler
+      ({!Renderer.Compiler.compile_cached}).
 
-    A [SINK] input must carry {!Tolk_uop.Uop.kernel_info}. It is optimized and
-    lowered through {!full_rewrite_to_sink}, and its argument and launch
-    metadata are captured before linearization. [optimize] defaults to [true];
-    tagged sinks skip optimization. [beam_device] supplies the runtime when
-    an optimized sink requests beam search.
+    [ast] is a kernel's sink, or a program whose sources are the first of these,
+    from a sink already lowered; the missing ones are then added, and the
+    argument if it is not a {!Ops.program_info}.
 
-    A [PROGRAM] input is already prepared: supplied stages are retained without
-    repeating optimization or lowering. Missing [LINEAR], [SOURCE], and [BINARY]
-    stages are produced in order. Existing program metadata is preserved; absent
-    metadata is derived from its sink and the renderer target. Missing estimates
-    are computed when rendering a [LINEAR] stage. A complete program is returned
-    unchanged and does not require a compiler.
+    Programs are kept: a second call with an equal [ast], a renderer of the same
+    name and target, and the same values of the settings that shape the program
+    ({!Helpers.noopt}, {!Helpers.emulated_dtypes}, {!Helpers.use_tc},
+    {!Helpers.disable_fast_idiv}, {!Helpers.transcendental},
+    {!Helpers.allow_tf32}, {!Helpers.default_float}, {!Helpers.default_int},
+    {!Helpers.tc_select}, {!Helpers.tc_opt} and {!Helpers.tc_min_globals})
+    returns the program the first made. [to_program] may be called from several
+    domains at once, and makes each program once: a call that asks for a program
+    another domain is making waits for it. A call that raises keeps nothing, and
+    the next call makes the program anew.
 
-    Raises [Invalid_argument] for malformed stages, when compilation is needed
-    but the renderer has no compiler, or when an optimized sink requests beam
-    search without [beam_device]. *)
+    When the setting {!Helpers.debug} is [3] or more, the optimisations applied
+    are printed on standard output, from [4] the source too, and from [7] the
+    binary is disassembled ({!Renderer.Compiler.disassemble}).
+
+    Raises [Invalid_argument] if [ast] is neither an {!Op.Sink} with kernel
+    information nor an {!Op.Program}, or as {!full_rewrite_to_sink} does. Raises
+    {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)

@@ -16,7 +16,7 @@
 open Windtrap
 open Nx_test
 open Traces
-open Tolk_next
+open Tolk
 
 let pp_float ppf x = Format.fprintf ppf "%h" x
 
@@ -724,7 +724,9 @@ let on_the_host =
 let parity =
   let x shape = Nx.zeros Nx.float32 shape in
   let case file f =
-    Golden.graph ("golden/lower_linalg/" ^ file ^ ".golden") (fun () ->
+    Golden.graph
+      ("golden/lower_linalg/" ^ file ^ ".golden")
+      (fun () ->
         let args = f () in
         Programs.kernels (snd (trace (fun () -> args ()))))
   in

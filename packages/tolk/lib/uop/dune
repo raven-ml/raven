@@ -1,9 +1,0 @@
-(include_subdirs no)
-
-(library
- (name tolk_uop)
- (public_name tolk.uop)
- (libraries nx.dtype threads)
- (foreign_stubs
-  (language c)
-  (names tolk_storage_stubs)))

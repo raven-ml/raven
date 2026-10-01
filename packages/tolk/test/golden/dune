@@ -1,4 +1,0 @@
-(library
- (name queue_fixture)
- (modules queue_fixture)
- (libraries tolk tolk.uop))

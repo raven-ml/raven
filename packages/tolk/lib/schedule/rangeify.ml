@@ -5,1072 +5,657 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Port of tinygrad/schedule/rangeify.py to the tolk_uop IR.
-   Transforms a tensor-level SINK into a kernel graph with CALL nodes
-   wrapping kernel ASTs.
+open Ops
 
-   [find_bufs] keeps precompiled call bodies opaque: Rune's staged scan embeds
-   a compiled sub-linear in CUSTOM_FUNCTION "loop", outside the caller's
-   kernel scope. This loop extension has no tinygrad counterpart. Its output
-   buffers depend directly on the call effect. *)
+let rule = Pattern_matcher.rule
+let rule_ctx = Pattern_matcher.rule_ctx
+let with_ctx = Pattern_matcher.with_ctx
+let ops = Op.Set.of_list
+let var = Upat.var
+let is_range_of_size u = op u = Op.Range && op (nth u 0) <> Op.Const
 
-open Tolk_uop
-module U = Uop
+let opts u =
+  match arg u with
+  | Bufferize o -> o
+  | _ -> invalid_arg "a stage needs its buffer's options"
 
-let symbolic =
-  Upat.Pattern_matcher.(Symbolic.symbolic ++ Symbolic.index_pushing)
+let compare_range r0 r1 =
+  match List.compare Int.compare (axis_id r0) (axis_id r1) with
+  | 0 -> Axis_type.compare (axis_type r0) (axis_type r1)
+  | c -> c
 
-let getv = Helpers.Context_var.get
+let sorted_ranges rs = List.sort_uniq compare_range rs
+let is_tagged u = Option.equal Tag.equal (tag u) (Some (Tag.Tuple []))
 
-(* Helpers *)
+let rec zip l0 l1 =
+  match (l0, l1) with x :: r0, y :: r1 -> (x, y) :: zip r0 r1 | _ -> []
 
-let int_ n = U.const_int n
+(* Cleanups *)
 
-let src0 u = (U.src u).(0)
-let src_tail u =
-  let s = U.src u in
-  Array.to_list (Array.sub s 1 (Array.length s - 1))
+let always_run u = op u = Op.Noop
 
-let shape_arg = function [ d ] -> d | ds -> U.stack ds
-let shape_node dims = shape_arg (List.map int_ dims)
+(* Whether an axis dies is only known once an expand to its left is seen. *)
+let cleanup_dead_axes b =
+  let value = nth b 0 in
+  (* An after is storage: its ranges say how consumers read it. *)
+  if (not (opts b).removable) || always_run value || op value = Op.After then
+    None
+  else
+    let axes = zip (shape b) (List.tl (src b)) in
+    let dead rng =
+      op rng = Op.Const
+      || (op rng = Op.Range && not (Nodes.mem rng (ranges value)))
+    in
+    if List.exists (fun (_, r) -> is_range_of_size r) axes then None
+    else if not (List.exists (fun (_, r) -> dead r) axes) then None
+    else
+      let live = List.filter (fun (_, r) -> not (dead r)) axes in
+      let reshape = List.map (fun (s, r) -> if dead r then Int 1 else s) axes in
+      Some
+        (expand
+           (Ops.reshape (replace b ~src:(value :: List.map snd live)) reshape)
+           (shape b))
 
-let movement_src u =
-  match U.op u with
-  | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute | Ops.Flip ->
-      Some (src0 u)
-  | _ -> None
+let pm_gate_substitute =
+  Pattern_matcher.v
+    (fun () -> [
+      rule_ctx (Upat.v ~op:Op.Set.all ~name:"b" ()) (fun ctx m ->
+          let rs = ranges (m "b") in
+          if Tbl.to_seq_keys ctx |> Seq.exists (fun r -> Nodes.mem r rs) then
+            None
+          else raise Bottom_up_gate);
+    ])
 
-let device_max_bufs =
-  function "WEBGPU" -> 8 | _ -> 0
-
-let base n = U.base n
-
-let pm_early_rangeify n =
-  match U.as_index n with
-  | Some { ptr; _ } when
-      (let op = U.op ptr in Ops.Group.is_elementwise op || op = Ops.Const) ->
-      let tail = src_tail n in
-      let push s = U.replace n ~src:(Array.of_list (s :: tail)) () in
-      let new_children = List.map push (U.children ptr) in
-      Some (U.replace ptr ~src:(Array.of_list new_children) ())
-  | _ -> None
-
-let shape_for_store u =
-  try Some (U.shape u) with Invalid_argument _ -> None
-
-let same_shape a b =
-  List.length a = List.length b && List.for_all2 U.equal a b
-
-let pm_add_ranges_to_store ctr n =
-  match U.as_store n with
-  | Some { dst; value; _ } ->
-      (match shape_for_store dst, shape_for_store value with
-       | Some [], _ | _, Some [] -> None
-       | Some _, Some _ when U.max_numel dst = 1 && U.max_numel value = 1
-         ->
-           None
-       | Some d_sh, Some v_sh ->
-           if not (same_shape d_sh v_sh) then
-             invalid_arg "Rangeify.add_ranges_to_store: bad store shape";
-           let idxs =
-             List.map (fun size ->
-                 let axis = !ctr in
-                 incr ctr;
-                 U.range ~size ~axis ~kind:Axis_type.Weak ())
-               d_sh
-           in
-           let mk s = U.index ~ptr:s ~idxs () in
-           Some (U.end_
-                   ~value:(U.store ~dst:(mk dst) ~value:(mk value) ())
-                   ~ranges:idxs)
-       | _ -> None)
-  | _ -> None
-
-let early_movement_pass sink =
-  let ctr = ref 1000 in
-  let rules =
-    [
-      Prepare.movement_ops;
-      pm_early_rangeify;
-      pm_add_ranges_to_store ctr;
-    ]
-  in
-  U.graph_rewrite ~bottom_up:true ~name:"early movement ops"
-    (U.first_match rules)
-    sink
-
-let is_invalid = U.is_invalid_const
-
-(* Post-rangeify *)
-
-let is_always_run op = op = Ops.Noop
-
-let remove_noop_stage n =
-  match U.as_stage n with
-  | Some { src; ranges; _ } ->
-      (match U.as_index src with
-       | Some _ when Array.length (U.src src) - 1 = List.length ranges ->
-           let idxs = src_tail src in
-           if not (List.equal ( == ) idxs ranges) then None
-           else
-             let ptr = src0 src in
-             (match U.shape n with
-              | [] -> Some ptr
-              | sh ->
-                  let zeros = shape_node (List.map (fun _ -> 0) sh) in
-                  Some (U.shrink ~src:ptr ~offset:zeros ~size:(shape_arg sh)))
-       | _ -> None)
-  | _ -> None
-
-let cleanup_dead_axes n =
-  match U.as_stage n with
-  | Some { src; ranges; opts; _ } when opts.removable
-                                       && (not (is_always_run (U.op src)))
-                                       && U.op src <> Ops.After ->
-      let sh = U.shape n in
-      if List.length sh <> List.length ranges then None
-      else if List.exists (fun r -> match U.as_range r with
-          | Some v -> U.op v.size <> Ops.Const | None -> false) ranges
+(* A buffer stored only to be read through movements is removed: the indices of
+   the read are expressed in terms of the stored value's. *)
+let remove_bufferize src buf idx =
+  if List.compare_lengths (Ops.src buf) (Ops.src idx) <> 0 then
+    invalid_arg "an index of a stage has one index per range";
+  if
+    not
+      (List.for_all
+         (fun x -> List.mem (op x) Op.[ Range; Const ])
+         (List.tl (Ops.src buf)))
+  then invalid_arg "a stage's ranges are ranges or constants";
+  (* A user's materialisation is never removed. *)
+  if always_run src || not (opts buf).removable then None
+  else
+    (* The cost: the buffers the value reads, and whether a reduction reads
+       one. *)
+    let accessed = Tbl.create 8 in
+    let access u = Tbl.replace accessed u () in
+    let red_gate x =
+      match op x with
+      | Op.After ->
+          access (buf_uop x);
+          false
+      | Op.Stage when (opts x).addrspace = Dtype.Global ->
+          access x;
+          false
+      | Op.Mstack ->
+          access x;
+          false
+      (* Stores do not count as buffer accesses. *)
+      | Op.Store -> false
+      | Op.Param ->
+          access x;
+          true
+      | _ -> true
+    in
+    let reduces =
+      List.filter (fun x -> op x = Op.Reduce) (toposort ~gate:red_gate src)
+    in
+    if Tbl.length accessed > 3 then None
+    else
+      let reads_buffer x = List.mem (op x) Op.[ Param; Stage; After ] in
+      if
+        List.exists reads_buffer
+          (toposort (sink (List.map (fun r -> nth r 0) reduces)))
       then None
       else
-        let src_ranges = U.ranges src in
-        let hit = ref false and new_ranges = ref [] and new_sh = ref [] in
-        List.iter2 (fun s rng ->
-            let dead = match U.op rng with
-              | Ops.Const -> true
-              | Ops.Range -> not (List.exists (U.equal rng) src_ranges)
-              | _ -> false
-            in
-            if dead then begin new_sh := int_ 1 :: !new_sh; hit := true end
-            else begin
-              new_sh := s :: !new_sh;
-              new_ranges := rng :: !new_ranges
-            end) sh ranges;
-        if not !hit then None
-        else
-          let new_ranges = List.rev !new_ranges in
-          let new_sh = List.rev !new_sh in
-          let b = U.stage ~src ~ranges:new_ranges ~opts in
-          let r = U.reshape ~src:b ~shape:(shape_arg new_sh) in
-          Some (U.broadcast_to ~src:r ~shape:(shape_arg sh))
-  | _ -> None
+        (* A constant range is not replaced, nor is a range read by a dead
+           load. *)
+        let replaced =
+          List.filter
+            (fun (k, v) ->
+              op k <> Op.Const && not (op v = Op.Const && is_invalid v))
+            (zip (List.tl (Ops.src buf)) (List.tl (Ops.src idx)))
+        in
+        Some (substitute ~extra_pm:pm_gate_substitute src replaced)
 
-let is_reduce_range r =
-  match U.as_range r with
-  | Some v -> v.kind = Axis_type.Reduce | None -> false
+let remove_noop_bufferize idx b2 =
+  if not (List.equal ( == ) (List.tl (src idx)) (List.tl (src b2))) then None
+  else
+    match shape b2 with
+    | [] -> Some (nth idx 0)
+    | s -> Some (shrink (nth idx 0) (List.map (fun s -> Some (Int 0, s)) s))
 
-(* Removing a stage substitutes one index for each closed coordinate. A flat
-   access must first be expressed by an explicit reshape. *)
-let stage_index_sources buf idx =
-  let srcs = src_tail idx in
-  let ranges = buf.U.ranges in
-  let removable_range r =
-    match U.op r with Ops.Range | Ops.Const -> true | _ -> false
+let after_all_invalid after =
+  let buf = buf_uop (nth after 0) in
+  let all_invalid s =
+    op s = Op.End
+    &&
+    let st = nth s 0 in
+    let ended = ended_ranges s in
+    op st = Op.Store
+    && is_invalid (base (nth st 1))
+    && buf_uop (nth st 0) == buf
+    && List.for_all (fun r -> Nodes.mem r (ranges (nth st 0))) ended
+    && resolve ~default:false
+         (eq
+            (List.fold_left (fun p r -> mul p (nth r 0)) (int 1) ended)
+            (sint_to_uop (numel buf)))
   in
-  if not (List.for_all removable_range ranges) then None
-  else if List.length ranges = List.length srcs then Some srcs
-  else
-    invalid_arg
-      (Printf.sprintf "Rangeify: index on wrong stage, %d ranges vs %d \
-                       index sources" (List.length ranges)
-         (List.length srcs))
+  List.for_all all_invalid (List.tl (src after))
 
-let substitute_stage_ranges mappings src =
-  let mappings = List.filter (fun (k, v) -> not (U.equal k v)) mappings in
-  if mappings = [] then src
+let pm_const_buffer_folding =
+  Pattern_matcher.append (with_ctx Prepare.pm_mops)
+    (Pattern_matcher.v
+       (fun () -> [
+         rule (Upat.op Op.Stage ~name:"b") (fun m -> cleanup_dead_axes (m "b"));
+         (* A stage of an index by the stage's own ranges is the storage. *)
+         rule
+           (Upat.f
+              (Upat.op Op.Index ~name:"idx")
+              Op.Stage ~allow_any_len:true ~name:"b2")
+           (fun m -> remove_noop_bufferize (m "idx") (m "b2"));
+         (* A constant needs no buffer, in either spelling. *)
+         rule
+           (Upat.f
+              (Upat.or_casted (Upat.cvar "c"))
+              Op.Stage ~allow_any_len:true ~name:"b")
+           (fun m -> Some (const_like (m "b") (value (m "c"))));
+         (* An index of a constant is the constant. *)
+         rule
+           (Upat.op Op.Index ~src:[ Upat.or_casted ~name:"c" (Upat.cvar "k") ])
+           (fun m -> Some (m "c"));
+         (* An index of storage whose every store is invalid is invalid. *)
+         rule
+           (Upat.op Op.Index ~name:"idx" ~allow_any_len:true
+              ~src:[ Upat.op Op.After ~name:"after" ])
+           (fun m ->
+             if after_all_invalid (m "after") then
+               Some (const_like (m "idx") `Invalid)
+             else None);
+         (* A stack's source without a device is the same value on every device,
+            so an index of the stack is an index of that value. *)
+         rule
+           (Upat.f
+              (Upat.op Op.Mstack ~allow_any_len:true ~src:[ var "s" ])
+              Op.Index ~allow_any_len:true ~name:"idx")
+           (fun m ->
+             let s = m "s" and idx = m "idx" in
+             if Option.is_none (device s) then
+               Some (replace idx ~src:(s :: List.tl (src idx)))
+             else None);
+       ]))
+
+let pm_remove_bufferize =
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.f
+           (Upat.f (var "src") Op.Stage ~allow_any_len:true ~name:"buf")
+           Op.Index ~allow_any_len:true ~name:"idx")
+        (fun m -> remove_bufferize (m "src") (m "buf") (m "idx"));
+      (* A store of a value into itself does nothing. *)
+      rule (Upat.store (var "x") [ var "x" ]) (fun _ -> Some (v Op.Noop));
+      rule
+        (Upat.op Op.End ~allow_any_len:true ~src:[ Upat.op Op.Noop ~name:"x" ])
+        (fun m -> Some (m "x"));
+    ])
+
+let strip_zero_offset_shrink x =
+  match op x with
+  | Op.Shrink -> (
+      match marg x with
+      | Shrink b when List.for_all (fun (s, _) -> Sint.equal s (Int 0)) b ->
+          nth x 0
+      | _ -> x)
+  | _ -> x
+
+(* A call's arguments that have consumers can be indexed; the call reads its
+   storage. *)
+let no_indexing_calls u =
+  let arg x =
+    match op x with
+    | Op.Index -> nth x 0
+    | Op.Shrink -> strip_zero_offset_shrink x
+    | Op.Mstack -> replace x ~src:(List.map strip_zero_offset_shrink (src x))
+    | _ -> x
+  in
+  replace u ~src:(List.map arg (src u))
+
+let pm_no_indexing_calls =
+  Pattern_matcher.v
+    (fun () -> [
+      rule (Upat.op Op.Call ~name:"u") (fun m ->
+          Some (no_indexing_calls (m "u")));
+    ])
+
+let loop_range r = Axis_type.equal (axis_type r) Axis_type.Loop
+
+(* The kernel graph is what runs: it has no views, and a value's storage is the
+   storage. A view that moves with a range is what a call in that range reads on
+   each trip, and stays. *)
+let pm_no_views =
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v
+           ~op:(ops Op.[ Reshape; Shrink ])
+           ~name:"v" ~allow_any_len:true
+           ~src:
+             [
+               Upat.v
+                 ~op:(ops Op.[ After; Param; Unshard; Mstack; Buffer; Alloc ])
+                 ();
+             ]
+           ())
+        (fun m ->
+          let v = m "v" in
+          if List.exists loop_range (Nodes.to_list (ranges v)) then None
+          else Some (nth v 0));
+      (* A loop's range, outside every kernel, loses the tag that kernels
+         renumber their ranges by. *)
+      rule (Upat.op Op.Range ~name:"r") (fun m ->
+          let r = m "r" in
+          if is_tagged r && loop_range r then Some (replace r ~tag:None)
+          else None);
+    ])
+
+module Bufs = Set.Make (struct
+  type t = Ops.t
+
+  let compare = Ops.compare
+end)
+
+type limit_bufs_ctx = { buf_cache : Bufs.t Tbl.t; mutable range_idx : int }
+
+let limit_bufs ctx root =
+  let max_bufs = Helpers.Context_var.value Helpers.max_kernel_buffers in
+  (* Without a device, the node computes indices. *)
+  if Option.is_none (device root) || max_bufs = 0 then None
   else
-    let keys = List.map fst mappings in
-    let rewrite u =
-      match
-        List.find_map
-          (fun (k, v) -> if U.equal u k then Some v else None)
-          mappings
-      with
-      | Some _ as r -> r
-      | None ->
-          if List.exists
-               (fun key -> List.exists (U.equal key) (U.ranges u))
-               keys
-          then None
-          else raise U.Bottom_up_gate
+    let visitor u =
+      match (op u, src u) with
+      | (Op.Stage | Op.After | Op.Param | Op.Mselect | Op.Mstack), _ ->
+          Bufs.singleton u
+      | _, [ s ] -> Tbl.find ctx.buf_cache s
+      | _, srcs ->
+          List.fold_left
+            (fun acc s -> Bufs.union acc (Tbl.find ctx.buf_cache s))
+            Bufs.empty srcs
     in
-    U.graph_rewrite ~bottom_up:true rewrite src
-
-let remove_stage src (buf : U.stage_view) idx =
-  if is_always_run (U.op src) || not buf.opts.removable then None
-  else
-    let accessed = U.Ref_tbl.create 8 in
-    let indexes = ref [] and reduces = ref [] in
-    ignore
-      (U.toposort src ~gate:(fun x ->
-           match U.op x with
-           | Ops.Stage ->
-               (match U.as_stage x with
-                | Some { opts = { addrspace = Dtype.Global; _ }; _ } ->
-                    U.Ref_tbl.replace accessed x (); false
-                | _ -> true)
-           | Ops.Mstack -> U.Ref_tbl.replace accessed x (); false
-           | Ops.After -> U.Ref_tbl.replace accessed (U.buf_uop x) (); false
-           | Ops.Store -> false
-           | Ops.Param -> U.Ref_tbl.replace accessed x (); true
-           | Ops.Index -> indexes := x :: !indexes; true
-           | Ops.Reduce -> reduces := x :: !reduces; true
-           | _ -> true));
-    let pc = getv Helpers.pcontig in
-    if U.Ref_tbl.length accessed > 3 && pc <= 2 then None
+    (* One buffer is the output. *)
+    if Bufs.cardinal (topovisit root visitor ctx.buf_cache) <= max_bufs - 1 then
+      None
     else
-      let buffer_in_reduce =
-        !reduces <> [] &&
-        let found = ref false in
-        let srcs = List.map src0 !reduces in
-        ignore
-          (U.toposort (U.sink srcs) ~gate:(fun x ->
-               if !found then false
-               else match U.op x with
-                 | Ops.Param | Ops.Stage | Ops.After -> found := true; false
-                 | _ -> true));
-        !found
-      in
-      match stage_index_sources buf idx with
-      | None -> None
-      | Some buf_src ->
-      if buffer_in_reduce then begin
-        if pc <= 2 then None
+      let each s =
+        if
+          not (Op.Set.mem (op s) Op.Set.elementwise && Option.is_some (device s))
+        then s
         else
-          let local_indexes =
-            List.filter (fun x ->
-                match U.as_index x with
-                | Some { ptr; _ } ->
-                    (match U.as_stage ptr with
-                     | Some { opts = { addrspace = Dtype.Local; _ }; _ } -> true
-                     | _ -> false)
-                | _ -> false) !indexes
+          (* The value is stored first: its reductions are weak ranges of the
+             stage, and the device range stays a launched axis. *)
+          let orig = Nodes.to_list (ranges s) in
+          let fresh r =
+            if
+              op r = Op.Range
+              && not (Axis_type.equal (axis_type r) Axis_type.Device)
+            then begin
+              let n = ctx.range_idx in
+              ctx.range_idx <- n + 1;
+              replace r
+                ~arg:(Range { axis_id = [ n ]; axis_type = Axis_type.Weak })
+            end
+            else r
           in
-          let exclude_ranges =
-            List.concat_map (fun x -> U.ranges (U.sink (src_tail x)))
-              local_indexes
+          let ends = List.map fresh orig in
+          let opts =
+            { device = device s; addrspace = Dtype.Global; removable = true }
           in
-          let subs =
-            List.filter_map (fun (k, v) ->
-                if U.op k = Ops.Const then None else Some (k, v))
-              (List.combine buf.ranges buf_src)
-          in
-          let is_pcontig, is_subs =
-            List.partition (fun (k, v) ->
-                List.exists (U.equal k) exclude_ranges
-                || List.exists is_reduce_range (U.ranges v))
-              subs
-          in
-          if is_subs = [] then None
-          else
-            let ret = substitute_stage_ranges is_subs src in
-            if is_pcontig = [] then Some ret
-            else
-              let pc_rngs = List.map fst is_pcontig in
-              let pc_idxs = List.map snd is_pcontig in
-              let b =
-                U.stage ~src:ret ~ranges:pc_rngs
-                  ~opts:{ device = None; addrspace = Dtype.Local;
-                          removable = true }
-              in
-              Some
-                (U.replace idx ~src:(Array.of_list (b :: pc_idxs)) ())
-      end else
-        let mappings =
-          List.filter_map (fun (k, v) ->
-              if U.op k = Ops.Const then None
-              else match U.arg v with
-                | U.Arg.Value c when Const.view c = Const.Invalid -> None
-                | _ -> Some (k, v))
-            (List.combine buf.ranges buf_src)
-        in
-        Some (substitute_stage_ranges mappings src)
+          index
+            (bufferize ~opts (substitute s (List.combine orig ends)) ends)
+            orig
+      in
+      Some (replace root ~src:(List.map each (src root)))
 
-let remove_stage_index n =
-  match U.as_index n with
-  | Some { ptr; _ } -> (
-      match U.as_stage ptr with
-      | Some buf -> remove_stage buf.src buf n
-      | None -> None)
-  | None -> None
+let pm_limit_bufs =
+  Pattern_matcher.v
+    (fun () -> [
+      rule_ctx
+        (Upat.v ~op:(Op.Set.union Op.Set.binary Op.Set.ternary) ~name:"root" ())
+        (fun ctx m -> limit_bufs ctx (m "root"));
+    ])
 
-let is_buf_boundary u =
-  match U.op u with
-  | Ops.Stage | Ops.After | Ops.Param | Ops.Mselect | Ops.Mstack -> true
-  | _ -> false
+(* Buffers *)
 
-(* Buffer-boundary nodes reachable from [root], stopping at the first boundary
-   on each path. A boundary is itself; any other node is the deduped union of
-   its sources' sets. Memoised into [ctx.buf_cache] (persistent across matches,
-   keyed by tag) so each subtree is walked once rather than re-toposorted per
-   match. *)
-let reachable_bufs (ctx : Indexing.indexing_context) root =
-  let visitor u =
-    if is_buf_boundary u then [ u ]
+let bufferize_to_store ctx x idx =
+  let dtype = commit_dtype x in
+  let rngs = sorted_ranges (Nodes.to_list (ranges idx)) in
+  (match numel x with
+  | Int n when (n > 0) [@mutate off "Prepare removes empty values"] -> ()
+  | _ -> invalid_arg "a stage has no elements or a symbolic size");
+  let value = nth x 0 in
+  if op value = Op.After then
+    (* The stores of the storage end over the stage's ranges, and the storage is
+       read after them. *)
+    let buf = base (buf_uop (nth value 0)) in
+    let stores =
+      List.filter
+        (fun s -> op s = Op.Store && op (nth s 0) = Op.Index)
+        (List.tl (src value))
+    in
+    if stores = [] then Some buf
     else
-      let srcs = U.src u in
-      if Array.length srcs = 1 then
-        Option.value (Hashtbl.find_opt ctx.buf_cache (U.tag srcs.(0)))
-          ~default:[]
-      else begin
-        let seen = U.Ref_tbl.create 16 in
-        let acc = ref [] in
-        Array.iter
-          (fun s ->
-            match Hashtbl.find_opt ctx.buf_cache (U.tag s) with
-            | Some lst ->
-                List.iter
-                  (fun b ->
-                    if not (U.Ref_tbl.mem seen b) then begin
-                      U.Ref_tbl.replace seen b ();
-                      acc := b :: !acc
-                    end)
-                  lst
-            | None -> ())
-          srcs;
-        List.rev !acc
-      end
-  in
-  U.topovisit visitor ctx.buf_cache root
-
-let limit_bufs (ctx : Indexing.indexing_context) n =
-  match U.op n with
-  | op when Ops.Group.is_binary op || Ops.Group.is_ternary op ->
-      let dname = match U.device_of n with
-        | Some (Single d) -> Some (List.hd (String.split_on_char ':' d))
-        | Some (Multi (Some name :: _)) -> Some (List.hd (String.split_on_char ':' name))
-        | _ -> None
-      in
-      Option.bind dname (fun d ->
-          let max_bufs = match getv Helpers.max_kernel_buffers with
-            | 0 -> device_max_bufs d | n -> n
-          in
-          if max_bufs = 0 then None
-          else
-            let bufs = reachable_bufs ctx n in
-            if List.length bufs <= max_bufs - 1 then None
-            else
-              let children = U.children n in
-              let new_children =
-                List.map (fun s ->
-                    if Ops.Group.is_elementwise (U.op s)
-                       && U.device_of s <> None then
-                      let orig = U.ranges s in
-                      let renum =
-                        List.map (fun x -> match U.as_range x with
-                            | Some v ->
-                                let axis = ctx.range_idx in
-                                ctx.range_idx <- ctx.range_idx + 1;
-                                U.range ~size:v.size ~axis ~sub:v.sub
-                                  ~kind:Axis_type.Weak
-                                  ~dtype:(U.dtype x)
-                                  ~parents:v.parents ()
-                            | None -> x) orig
-                      in
-                      let subst = U.substitute (List.combine orig renum) s in
-                      let opts : U.stage_opts =
-                        { device = U.device_of s; addrspace = Dtype.Global;
-                          removable = true }
-                      in
-                      let b =
-                        U.stage ~src:subst ~ranges:renum ~opts
-                      in
-                      U.replace s ~op:Ops.Index
-                        ~src:(Array.of_list (b :: orig)) ()
-                    else s) children
-              in
-              if List.for_all2 ( == ) children new_children then None
-              else Some (U.replace n ~src:(Array.of_list new_children) ()))
-  | _ -> None
-
-(* Add buffers *)
-
-let flat_index_of_ranges ~dims ranges =
-  match ranges with
-  | [] -> int_ 0
-  | [ r ] -> r
-  | ranges ->
-      let dims = Array.of_list dims in
-      let ranges = Array.of_list ranges in
-      let n_axes = Array.length ranges in
-      let acc = ref ranges.(n_axes - 1) in
-      let stride = ref 1 in
-      for i = n_axes - 2 downto 0 do
-        stride := Bound.to_int (Bound.mul (Bound.int !stride) (Bound.int dims.(i + 1)));
-        let open U.O in
-        let term =
-          if !stride = 0 then int_ 0
-          else if !stride = 1 then ranges.(i)
-          else ranges.(i) * int_ !stride
+      let end_store st =
+        let target = nth st 0 in
+        (* A stage of an index stores through the underlying index. *)
+        let target =
+          if
+            op (nth target 0) = Op.Stage && op (nth (nth target 0) 0) = Op.Index
+          then nth (nth target 0) 0
+          else target
         in
-        acc := !acc + term
-      done;
-      !acc
-
-let flatten_stage n =
-  match U.as_stage n with
-  | Some { src; ranges; opts; _ }
-    (* Every stage flattens to exactly one index: multiple ranges collapse
-       into a flat expression, and a rank-0 stage indexes its single element
-       at zero. *)
-    when List.length ranges <> 1 ->
-      (* Only the coordinate dimensions flatten into the index. The source's
-         trailing dimensions remain part of the stage's storage capacity. *)
-      let shape = U.max_shape n in
-      let range_dims = List.take (List.length ranges) shape in
-      let flat_idx = flat_index_of_ranges ~dims:range_dims ranges in
-      let flat = U.stage ~src ~ranges:[ flat_idx ] ~opts in
-      let ret = U.reshape ~src:flat ~shape:(shape_node shape) in
-      let has_symbolic_range =
-        List.exists
-          (fun r ->
-            match U.as_range r with
-            | Some range -> U.op range.size <> Ops.Const
-            | None -> false)
-          ranges
+        if nth st 1 == target then None
+        else
+          let ends = sorted_ranges (Nodes.to_list (ranges target) @ rngs) in
+          Some (end_ (store target (nth st 1)) ends)
       in
-      if not has_symbolic_range then Some ret
-      else
-        let active_shape = List.map (fun r ->
-            match U.as_range r with
-            | Some range -> range.size
-            | None when U.op r = Ops.Const -> int_ 1
-            | None -> invalid_arg
-                "Rangeify.flatten_stage: symbolic stage coordinates must be ranges or constants") ranges in
-        let size = match active_shape with [dim] -> dim | dims -> U.stack dims in
-        let zeros = shape_node (List.map (fun _ -> 0) ranges) in
-        Some (U.shrink ~src:ret ~offset:zeros ~size)
-  | _ -> None
+      Some (after buf (List.filter_map end_store stores))
+  else
+    match opts x with
+    | { addrspace = Dtype.Global; device; _ } ->
+        let slot = !ctx in
+        incr ctx;
+        let buf =
+          v Op.Alloc ~src:(device_range_src device)
+            ~arg:(Param (param_arg ~slot ~size:(max_numel x) ?device dtype))
+        in
+        let do_store =
+          end_ (store (index buf [ idx ]) (cast (nth x 0) dtype)) rngs
+        in
+        Some (cast (after buf [ do_store ]) (Ops.dtype x))
+    | _ -> None
 
-let range_axis_cmp a b = compare (U.axis_id a) (U.axis_id b)
+(* A stage over several ranges is a stage over their flat index, reshaped. *)
+let flatten_bufferize x =
+  match src x with
+  | [ _; _ ] -> None
+  | value :: rngs ->
+      let flat =
+        Helpers.get_single_element
+          (Indexing.apply_movement_op [ numel x ] (Reshape (shape x)) rngs)
+      in
+      let ret = reshape (replace x ~src:[ value; flat ]) (shape x) in
+      if List.exists is_range_of_size rngs then
+        let size r = if op r = Op.Const then Int 1 else Sym (nth r 0) in
+        Some (shrink ret (List.map (fun r -> Some (Int 0, size r)) rngs))
+      else Some ret
+  | [] -> None
 
-let stage_to_store counter n =
-  match U.as_stage n with
-  | Some { src; ranges = [idx_expr]; opts } ->
-      (* A buffer is never weak: store at a committed width and cast the
-         result back, so readers see the dtype the stage had. *)
-      let buf_dtype = U.commit_dtype n in
-      let read_back u = U.cast ~src:u ~dtype:(U.dtype n) in
-      let idx_ranges = List.sort range_axis_cmp (U.ranges idx_expr) in
-      let size = U.max_numel n in
-      if size <= 0 then
-        invalid_arg "Rangeify.stage_to_store: nonpositive stage capacity";
-      (match U.op src with
-        | Ops.After ->
-            let stores =
-              List.filter (fun d -> match U.as_store d with
-                  | Some { dst; _ } -> U.op dst = Ops.Index
-                  | _ -> false) (src_tail src)
-            in
-            let buf = U.buf_uop (src0 src) in
-            let cmp a b =
-              let c = range_axis_cmp a b in
-              if c = 0 then compare (U.tag a) (U.tag b) else c
-            in
-            let ended_stores =
-              List.filter_map
-                (fun store ->
-                   let { U.dst; value; gate } =
-                     Option.get (U.as_store store)
-                   in
-                   let target =
-                     match U.as_index dst with
-                     | Some { ptr = p; _ } ->
-                         (match U.as_stage p with
-                          | Some { src = inner; _ } when U.op inner = Ops.Index ->
-                              inner
-                          | _ -> dst)
-                     | None -> dst
-                   in
-                   if value == target then None
-                   else
-                     let ranges =
-                       List.sort_uniq cmp (U.ranges target @ idx_ranges)
-                     in
-                     Some
-                       (U.end_
-                          ~value:(U.store ~dst:target ~value ?gate ())
-                          ~ranges))
-                stores
-            in
-            if ended_stores = [] then Some buf
-            else Some (U.after ~src:buf ~deps:ended_stores)
-        | _ when opts.addrspace = Dtype.Global ->
-            let id = !counter in
-            incr counter;
-            let buf =
-              U.alloc ~slot:id ?device:opts.device ~shape:(shape_node [ size ])
-                ~dtype:buf_dtype ()
-            in
-            let idx = U.index ~ptr:buf ~idxs:[ idx_expr ] () in
-            let ended =
-              U.end_
-                ~value:(U.store ~dst:idx ~value:(U.cast ~src ~dtype:buf_dtype) ())
-                ~ranges:idx_ranges
-            in
-            Some (read_back (U.after ~src:buf ~deps:[ ended ]))
-        | _ -> None)
-  | _ -> None
+let rec is_noop_after_dep x =
+  (op x = Op.Noop && src x = []) [@mutate off "a noop has no sources"]
+  || (op x = Op.End && is_noop_after_dep (nth x 0))
 
-(* Split kernels *)
+let remove_noop_afters x =
+  match src x with
+  | first :: deps ->
+      let kept = List.filter (fun s -> not (is_noop_after_dep s)) deps in
+      if List.compare_lengths kept deps = 0 then None
+      else if kept = [] then Some first
+      else Some (replace x ~src:(first :: kept))
+  | [] -> None
 
-type split_context = {
-  mutable slot : int;
-  buf_map : U.t U.Ref_tbl.t;
-  mutable formals : (int * U.t) list;
-  (* Scalar bindings unbound inside the kernel, most recent first. *)
-  mutable vars : U.t list;
+let pm_add_buffers =
+  Pattern_matcher.concat
+    [
+      with_ctx Prepare.pm_mops;
+      Pattern_matcher.v
+        (fun () -> [
+          rule (Upat.op Op.Stage ~name:"x") (fun m -> flatten_bufferize (m "x"));
+        ]);
+      Pattern_matcher.v
+        (fun () -> [
+          rule_ctx
+            (Upat.op Op.Stage ~name:"x" ~src:[ Upat.wild; Upat.var "idx" ])
+            (fun ctx m -> bufferize_to_store ctx (m "x") (m "idx"));
+          (* An index of a buffer through the weak cast added above indexes the
+             buffer and casts the value read. This must run in the rewrite that
+             adds the cast, or the expander expands the whole cast buffer into
+             one vector. *)
+          rule
+            (Upat.op Op.Index ~name:"u" ~allow_any_len:true
+               ~src:[ Upat.op Op.Cast ~dtype:Dtype.weaks ~src:[ var "buf" ] ])
+            (fun m ->
+              let u = m "u" in
+              Some
+                (cast (replace u ~src:(m "buf" :: List.tl (src u))) (dtype u)));
+          (* Reshapes move through shard selections and stacks. *)
+          rule
+            (Upat.v
+               ~op:(ops Op.[ Mselect; Mstack ])
+               ~name:"m" ~each:(Upat.op Op.Reshape) ())
+            (fun m ->
+              let m = m "m" in
+              Some
+                (reshape
+                   (replace m ~src:(List.map (fun x -> base (nth x 0)) (src m)))
+                   (shape m)));
+          (* A kernel's arguments lose their reshapes. *)
+          rule (Upat.op Op.Call ~name:"k") (fun m ->
+              let k = m "k" in
+              Some
+                (replace k
+                   ~src:
+                     (List.map
+                        (fun x -> if op x = Op.Reshape then nth x 0 else x)
+                        (src k))));
+          (* Invalid writes are dropped. *)
+          rule
+            (Upat.op Op.Store
+               ~src:[ Upat.wild; Upat.op Op.Const ~arg:(Const `Invalid) ])
+            (fun _ -> Some (v Op.Noop));
+          rule (Upat.op Op.After ~name:"x") (fun m ->
+              remove_noop_afters (m "x"));
+        ]);
+    ]
+
+(* Scalar parameters keep their identity across the call boundary. *)
+let pm_add_param_range_tags =
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v ~op:(ops Op.[ Param; Range ]) ~name:"x" ())
+        (fun m ->
+          let x = m "x" in
+          if op x = Op.Param && addrspace x = Some Dtype.Alu then None
+          else Some (rtag ~tag:(Tag.Tuple []) x));
+    ])
+
+(* Kernels *)
+
+type local_ctx = {
+  mutable dg : int;
+  map : t Tbl.t;
+  mutable order : t list; (* The keys of [map], last first. *)
+  mutable range : int;
 }
 
-let create_split_context () =
-  { slot = 0; buf_map = U.Ref_tbl.create 16; formals = [];
-    vars = [] }
+let add_arg ctx buf value =
+  if not (Tbl.mem ctx.map buf) then begin
+    Tbl.replace ctx.map buf value;
+    ctx.order <- buf :: ctx.order
+  end
 
-let same_split_buffer a b =
-  if a == b then true
-  else
-    let identity n =
-      let b = U.buf_uop n in
-      match U.op b, U.Arg.as_param_arg (U.arg b) with
-      | (Ops.Buffer | Ops.Alloc | Ops.Param), Some p -> Some (U.op b, p.slot, p.addrspace)
-      | _ -> None
-    in
-    match identity a, identity b with
-    | Some ia, Some ib -> ia = ib
-    | _ -> false
-
-let find_buf_arg ctx key =
-  U.Ref_tbl.find_opt ctx.buf_map key
-
-let replace_formal_arg ctx old_arg new_arg =
-  let same_arg arg =
-    same_split_buffer arg old_arg
+let debuf ctx buf =
+  let align, phase = storage_phase buf in
+  let param =
+    v Op.Param
+      ~arg:
+        (Param
+           (param_arg ~slot:ctx.dg ~size:(max_numel buf)
+              ~addrspace:(addrspace buf) ?device:(device buf) ~phase ~align
+              (dtype buf)))
   in
-  ctx.formals <-
-    List.map
-      (fun (slot, arg) -> (slot, if same_arg arg then new_arg else arg))
-      ctx.formals
-
-let debuf ctx n =
-  let dtype = U.dtype n in
-  let shape = U.shape n in
-  let max_shape = U.max_shape n in
-  let size = U.max_numel n in
-  let addrspace =
-    match U.addrspace n with Some a -> a | None -> Dtype.Global
-  in
-  let slot = ctx.slot in
-  ctx.slot <- ctx.slot + 1;
+  let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in
+  (* A buffer of symbolic shape is its greatest view, shrunk. *)
   let ret =
-    let device = U.device_of n in
-    let volatile =
-      match U.Arg.as_param_arg (U.arg (U.buf_uop n)) with
-      | Some param -> param.volatile
-      | None -> false
-    in
-    let param =
-      U.param ~slot ~dtype ~shape:(shape_node [ size ]) ?device ~addrspace ~volatile ()
-    in
-    let reshaped = U.reshape ~src:param ~shape:(shape_node max_shape) in
-    (* Symbolic buffers: the param is sized for [max_shape]; shrink the
-       max-sized view down to the actual [shape] when they differ. *)
-    if not (List.equal U.equal (U.shape reshaped) shape) then
-      U.shrink ~src:reshaped
-        ~offset:(shape_node (List.map (fun _ -> 0) shape))
-        ~size:(match shape with [d] -> d | dims -> U.stack dims)
-    else reshaped
+    if
+      List.equal Sint.equal
+        (List.map (fun n -> Int n) (max_shape buf))
+        (shape buf)
+    then ret
+    else shrink ret (List.map (fun s -> Some (Int 0, s)) (shape buf))
   in
-  let arg = match find_buf_arg ctx n with
-    | Some arg -> arg
-    | None ->
-        U.Ref_tbl.replace ctx.buf_map n n;
-        n
-  in
-  ctx.formals <- (slot, arg) :: ctx.formals;
-  Some ret
+  add_arg ctx buf buf;
+  ctx.dg <- ctx.dg + 1;
+  ret
 
-let handle_after ctx n =
-  let op = U.op n in
-  let is_local = U.addrspace n = Some Dtype.Local in
-  if is_local then None
+let handle_after ctx after =
+  if addrspace after = Some Dtype.Local then None
   else
-    let buf = match op with
-      | Ops.After | Ops.Mstack | Ops.Mselect -> U.buf_uop n
-      | _ -> n
-    in
-  (match find_buf_arg ctx buf with
-     | None -> U.Ref_tbl.replace ctx.buf_map buf n
-     | Some existing
-       when same_split_buffer existing buf && op = Ops.After && src_tail n <> [] ->
-         U.Ref_tbl.replace ctx.buf_map buf n;
-         replace_formal_arg ctx existing n
-     | Some _ -> ());
+    let buf = buf_uop after in
+    (* Bottom up, so it is added once. *)
+    add_arg ctx buf after;
     Some buf
 
-let unbind_kernel ctx n =
-  if not (List.exists (( == ) n) ctx.vars) then ctx.vars <- n :: ctx.vars;
-  Option.map (fun (v : U.bind_view) -> v.var) (U.as_bind n)
-
-(* Ranges are numbered in the order a depth-first walk first pops them,
-   where a node's sources are pushed in order and a node already waiting on
-   the stack is never pushed again. A range closed by an END or a REDUCE is
-   pushed next to the body it closes and so is numbered after every range
-   first met inside that body; a range nothing closes, such as the device
-   range, is numbered where it is first read. Call bodies are not entered. *)
-let renumber_kernel_ranges root =
-  let on_stack = U.Ref_tbl.create 64 in
-  let stack = ref [ root ] in
-  U.Ref_tbl.replace on_stack root ();
-  let ranges = ref [] in
-  let rec run () =
-    match !stack with
-    | [] -> ()
-    | n :: rest ->
-        stack := rest;
-        if U.op n = Ops.Range then ranges := n :: !ranges;
-        let srcs = U.src n in
-        let first =
-          match U.op n with Ops.Call -> 1 | _ -> 0
-        in
-        for i = Array.length srcs - 1 downto first do
-          let s = srcs.(i) in
-          if not (U.Ref_tbl.mem on_stack s) then begin
-            U.Ref_tbl.replace on_stack s ();
-            stack := s :: !stack
-          end
-        done;
-        run ()
-  in
-  run ();
-  let all_ranges = List.rev !ranges in
-  let mappings =
-    List.mapi
-      (fun axis r ->
-        match U.as_range r with
-        | Some v ->
-            let r' =
-              U.range ~size:v.size ~axis ~sub:v.sub ~kind:v.kind
-                ~dtype:(U.dtype r) ~parents:v.parents ()
-            in
-            (r, r')
-        | None -> assert false)
-      all_ranges
-  in
-  U.substitute mappings root
-
-let find_bufs n =
-  (* A kernel cannot read two different states of the same storage, including
-     two distinct AFTER nodes over it. *)
-  let read_from : U.t U.Ref_tbl.t = U.Ref_tbl.create 8 in
-  List.iter (fun s ->
-      match U.as_index s with
-      | Some { ptr; _ } ->
-          let b = U.buf_uop ptr in
-          (match U.op b with
-           | Ops.Buffer | Ops.Alloc | Ops.Param ->
-               (match U.Ref_tbl.find_opt read_from b with
-                | Some prev when not (U.equal prev ptr) ->
-                    failwith "cycle detected while indexing buffer"
-                | _ -> U.Ref_tbl.replace read_from b ptr)
-           | _ -> ())
-      | None -> ())
-    (* [enter_calls:false]: a precompiled call's payload (e.g. a staged
-       loop's body linear) is a separate program, not part of this kernel;
-       its INDEX/LOAD structure must not be read as this kernel's buffer
-       accesses. *)
-    (U.toposort n ~enter_calls:false ~gate:(fun x -> U.op x <> Ops.After));
-  None
-
-let to_define_global ctx n =
-  match U.op n with
-  | Ops.Store -> find_bufs n
-  | Ops.Buffer when U.is_variable n -> Some (U.replace n ~op:Ops.Param ())
-  | Ops.Buffer | Ops.Alloc | Ops.Mstack | Ops.Mselect -> debuf ctx n
-  | Ops.Param -> (
-      match U.as_param n with
-      (* A named, ranged PARAM normalises to the canonical variable so
-         binding identity survives the kernel split. *)
-      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); multiple_of; volatile; _ }; _ } ->
-          Some
-            (U.param ~slot:(-1) ~name ~dtype:(U.dtype n) ~shape:(U.stack [])
-               ~vmin_vmax:(lo, hi) ?multiple_of ~addrspace:Dtype.Alu ~volatile ())
-      (* A scalar storage formal also needs the flat size-one kernel view.
-         The tag prevents freshly created kernel parameters from being
-         renumbered again. *)
-      | Some { param = { name = None; _ }; _ }
-        when U.node_tag n = Some "" ->
-          debuf ctx n
-      | _ -> None)
-  | Ops.After when U.is_bound_var n -> unbind_kernel ctx n
-  | Ops.After -> handle_after ctx n
-  (* ALU params are scalar symbolic values, not buffers. *)
-  | Ops.Index
-    when Array.length (U.src n) = 1
-         && (match U.as_param (src0 n) with
-            | Some { param = { addrspace = Dtype.Alu; _ }; _ } -> true
-            | _ -> false) ->
-      Some (src0 n)
-  | Ops.Stage ->
-      (match U.as_stage n with
-       | Some { opts; _ } when opts.device <> None ->
-           Some
-             (U.replace n
-                ~arg:(U.Arg.Stage_info { opts with device = None }) ())
-       | _ -> None)
-  | Ops.Const when Array.length (U.src n) > 0 ->
-      Some (U.replace n ~src:[||] ())
-  | Ops.Range -> None
-  | Ops.Noop when Array.length (U.src n) > 0 -> Some (src0 n)
-  | _ -> None
-
-let compact_kernel_params ctx body =
-  let add_unique xs x = if List.exists (( == ) x) xs then xs else xs @ [ x ] in
-  let topo = U.toposort body in
-  let params =
-    List.fold_left
-      (fun acc n ->
-         match U.as_param n with
-         | Some { param = { slot; addrspace; _ }; _ }
-           when slot >= 0 && addrspace <> Dtype.Alu ->
-             add_unique acc n
-         | _ -> acc)
-      [] topo
-  in
-  (* [debuf] hands out slots in the order the kernel rewrite meets the
-     buffers, and that order is the numbering: the rewrite reaches an operand
-     shared by two consumers at the later of them, a toposort at the earlier. *)
-  let slot_of n =
-    match U.as_param n with Some { param; _ } -> param.slot | None -> -1
-  in
-  let params =
-    List.stable_sort (fun a b -> Int.compare (slot_of a) (slot_of b)) params
-  in
-  let buffer_slot_map = List.mapi (fun slot param -> param, slot) params in
-  let find_buffer_slot old =
-    List.find_map
-      (fun (param, slot) -> if param == old then Some slot else None)
-      buffer_slot_map
-  in
-  let body =
-    U.graph_rewrite ~name:"compact kernel params" ~walk:true
-      (fun n ->
-         match U.as_param n with
-         | Some { param; _ }
-           when param.slot >= 0 && param.addrspace <> Dtype.Alu -> (
-             match find_buffer_slot n with
-             | Some slot when slot <> param.slot ->
-                 Some
-                   (U.replace n
-                      ~arg:(U.Arg.Param_arg { param with slot })
-                      ())
-             | _ -> None)
-         | _ -> None)
-      body
-  in
-  let bufs =
-    List.map
-      (fun param_node ->
-         let old_slot =
-           match U.as_param param_node with
-           | Some { param; _ } -> param.slot
-           | None -> assert false
-         in
-         match
-           List.find_map
-             (fun (slot, arg) -> if slot = old_slot then Some arg else None)
-             ctx.formals
-         with
-         | Some arg -> arg
-         | None -> param_node)
-      params
-  in
-  body, bufs @ List.rev ctx.vars
-
-let is_device_range r =
-  match U.as_range r with
-  | Some { kind = Axis_type.Device; _ } -> true
-  | _ -> false
-
-let split_store n =
-  match U.op n with
-  | Ops.Store | Ops.End ->
-      (* An open loop range means the store belongs to an enclosing kernel.
-         An open device range is fine: it is bound per device at launch. *)
-      if List.exists (fun r -> not (is_device_range r)) (U.ranges n) then None
-      else
-        let ctx = create_split_context () in
-        (* Stop at [After]: nodes behind a buffer boundary belong to already
-           split upstream kernels, which the kernel rewrite prunes anyway.
-           Walking into them would rescan the whole graph history per kernel. *)
-        let nodes =
-          U.toposort ~enter_calls:false ~gate:(fun x -> U.op x <> Ops.After) n
-        in
-        ctx.slot <-
-          List.fold_left
-            (fun acc nd ->
-               match U.as_param nd with
-               | Some { param = { slot; _ }; _ } when slot >= 0 ->
-                   max acc (slot + 1)
-               | _ -> acc)
-            ctx.slot nodes;
-        let rewrite =
-          U.first_match
-            [ to_define_global ctx; Simplify.flatten_range; Prepare.movement_ops ]
-        in
-        let ret =
-          U.graph_rewrite ~bottom_up:true ~name:"kernel_split" rewrite n
-        in
-        let ret = renumber_kernel_ranges ret in
-        let info : U.call_info =
-          {
-            grad_fxn = None;
-            name = None;
-            precompile = false;
-            precompile_backward = false;
-            dtype = Dtype.void;
-            aux = None;
-          }
-        in
-        (* Buffers can be on different devices here: the scheduler
-           turns a kernel that is a copy into a transfer. *)
-        let body, args =
-          compact_kernel_params ctx
-            (U.sink ~kernel_info:{
-               name = "";
-               applied_opts = []; opts_to_apply = None;
-               estimates = None; beam = 0 } [ ret ])
-        in
-        Some (U.call ~body ~args ~info)
-  | _ -> None
-
-(* WAR deps *)
-
-let fix_war_deps root =
-  let afters =
-    List.filter (fun n -> U.op n = Ops.After) (U.toposort root)
-  in
-  if afters = [] then root
+(* Ranges are renumbered from 0, so equal kernels dedupe. *)
+let renumber_range ctx r =
+  if not (is_tagged r) then None
   else
-    let buf_of n = match U.op n with
-      | Ops.After -> U.buf_uop n | _ -> n
+    let ret =
+      replace r ~tag:None
+        ~arg:(Range { axis_id = [ ctx.range ]; axis_type = axis_type r })
     in
-    let kernel_assign : U.t U.Ref_tbl.t = U.Ref_tbl.create 16 in
-    List.iter (fun u -> U.Ref_tbl.replace kernel_assign (buf_of u) u) afters;
-    let call_of u = match U.op u with
-      | Ops.After -> List.find_opt (fun d -> U.op d = Ops.Call) (src_tail u)
-      | _ -> None
+    ctx.range <- ctx.range + 1;
+    Some ret
+
+let check_buf_states x =
+  let idxs =
+    List.filter
+      (fun s -> op s = Op.Index)
+      (toposort ~gate:(fun x -> op x <> Op.After) x)
+  in
+  let read_from = Tbl.create 8 in
+  List.iter
+    (fun idx ->
+      let buf = buf_uop idx and state = nth idx 0 in
+      if List.mem (op buf) Op.[ Buffer; Alloc; Param ] then
+        match Tbl.find_opt read_from buf with
+        | Some s when s != state ->
+            invalid_arg
+              (Format.asprintf "cycle detected while indexing %a" pp buf)
+        | Some _ -> ()
+        | None -> Tbl.replace read_from buf state)
+    idxs
+
+let to_define_global =
+  Pattern_matcher.v
+    (fun () -> [
+      rule_ctx (Upat.op Op.Store ~name:"x") (fun _ m ->
+          check_buf_states (m "x");
+          None);
+      rule_ctx
+        (Upat.v ~op:(ops Op.[ Buffer; Alloc; Mstack; Mselect ]) ~name:"buf" ())
+        (fun ctx m -> Some (debuf ctx (m "buf")));
+      (* Only storage parameters get kernel-local slots; scalar parameters keep
+         the slots of their enclosing call. *)
+      rule_ctx (Upat.op Op.Param ~name:"buf") (fun ctx m ->
+          let buf = m "buf" in
+          if
+            (not (is_tagged buf))
+            || (addrspace buf = Some Dtype.Alu
+               || shape_opt buf = None)
+               [@mutate off "a scalar parameter has no shape"]
+          then None
+          else Some (debuf ctx buf));
+      (* Scalar parameters are values, not buffers. *)
+      rule_ctx
+        (Upat.op Op.Index ~src:[ Upat.op Op.Param ~name:"v" ])
+        (fun _ m ->
+          if addrspace (m "v") = Some Dtype.Alu then Some (m "v") else None);
+      rule_ctx (Upat.op Op.After ~name:"after") (fun ctx m ->
+          handle_after ctx (m "after"));
+      (* A local stage has no device. *)
+      rule_ctx (Upat.op Op.Stage ~name:"b") (fun _ m ->
+          let b = m "b" in
+          Some (replace b ~arg:(Bufferize { (opts b) with device = None })));
+      rule_ctx (Upat.op Op.Range ~name:"r") (fun ctx m ->
+          renumber_range ctx (m "r"));
+    ])
+
+let split_store x =
+  (* Open device ranges are bound per device at launch. A loop around a call
+     runs that call, and is no kernel. *)
+  if
+    List.exists
+      (fun r -> not (Axis_type.equal (axis_type r) Axis_type.Device))
+      (Nodes.to_list (ranges x))
+    || op x = Op.End
+       && op (nth x 0) = Op.Call
+       && List.exists loop_range (List.tl (src x))
+  then None
+  else
+    let lctx = { dg = 0; map = Tbl.create 8; order = []; range = 0 } in
+    let ret =
+      graph_rewrite ~bottom_up:true ~ctx:lctx x
+        (Pattern_matcher.append to_define_global
+           (with_ctx Simplify.pm_flatten_range))
     in
-    let assign_rep : U.t list U.Ref_tbl.t = U.Ref_tbl.create 16 in
-    List.iter (fun u ->
-        let u_buf = buf_of u in
-        let reads = match call_of u with
-          | Some c ->
-              List.filter (fun a -> Ops.Group.is_define (U.op a))
-                (src_tail c)
-          | None -> []
-        in
-        List.iter (fun s ->
-            if s != u_buf then
-              match U.Ref_tbl.find_opt kernel_assign s with
-              | Some a -> (
-                  (* A WAR dep between two AFTERs is only needed across
-                     different calls: within one call the ordering is the
-                     call's own business. Calls are unique graph nodes, so
-                     identity is the test — structural equality walks both
-                     calls' whole payload DAGs (a staged loop call carries
-                     its entire body program), which is pathologically slow
-                     and compares nodes that should simply be [==]. *)
-                  match (call_of a, call_of u) with
-                  | Some ca, Some cu when ca == cu -> ()
-                  | _ ->
-                      let prev =
-                        Option.value
-                          (U.Ref_tbl.find_opt assign_rep a)
-                          ~default:[]
-                      in
-                      if not (List.exists (( == ) u) prev) then
-                        U.Ref_tbl.replace assign_rep a (u :: prev))
-              | _ -> ()) reads) afters;
-    if U.Ref_tbl.length assign_rep = 0 then root
-    else
-      U.graph_rewrite ~name:"fix_war_deps" (fun n ->
-          match U.Ref_tbl.find_opt assign_rep n with
-          | Some extra when U.op n = Ops.After ->
-              Some (U.after ~src:(src0 n) ~deps:(src_tail n @ extra))
-          | _ -> None) root
+    (* Buffers can be on different devices here: the schedule compiles such
+       kernels to copies. *)
+    let args = List.rev_map (Tbl.find lctx.map) lctx.order in
+    Some (call (sink ~kernel:(kernel_info ()) [ ret ]) args)
 
-(* Main pipeline *)
+let split_kernels =
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v ~op:(ops Op.[ Store; End ]) ~name:"x" ())
+        (fun m -> split_store (m "x"));
+    ])
 
-let post_rangeify_rules =
-  U.first_match [
-    Prepare.movement_ops;
-    (* The constant fold runs here and not in every symbolic rewrite: it
-       commits a cast of a constant to a concrete width, which is only safe
-       once the ranges are built and nothing downstream still gets to choose
-       that width. *)
-    Upat.Pattern_matcher.rewrite symbolic;
-    Upat.Pattern_matcher.rewrite Simplify.pm_reduce_simplify;
-    cleanup_dead_axes;
-    remove_noop_stage;
-    remove_stage_index;
-    (fun n -> match U.as_stage n with
-       | Some { src; _ } when U.op src = Ops.Const ->
-           (match U.arg src with
-            | U.Arg.Value v -> Some (U.const v)
-            | _ -> None)
-       | _ -> None);
-    (fun n -> match U.as_index n with
-       | Some { ptr; _ } when U.op ptr = Ops.Const -> Some ptr
-       | _ -> None);
-    (fun n -> match U.op n with
-       | Ops.Noop when Array.length (U.src n) > 0
-                       && U.op (src0 n) = Ops.Const ->
-           Some (src0 n)
-       | _ -> None);
-    (fun n -> match U.as_index n with
-       | Some { ptr; _ } when U.op ptr = Ops.Mstack ->
-           (match U.children ptr with
-            | s :: _ ->
-                let b = base s in
-                (match U.arg b with
-                 | U.Arg.Value v when U.op b = Ops.Const -> Some (U.const v)
-                 | _ -> None)
-            | [] -> None)
-       | _ -> None);
-  ]
-
-let add_buffers_rules counter =
-  U.first_match [
-    Prepare.movement_ops;
-    flatten_stage;
-    stage_to_store counter;
-    (* Index the buffer under the read-back cast the rule above adds, and cast
-       the loaded value instead. Without this the expander widens the whole
-       cast buffer into one vector. *)
-    (fun n -> match U.as_index n with
-       | Some { ptr; _ } when U.op ptr = Ops.Cast && Dtype.is_weak (U.dtype ptr)
-         ->
-           let idxs = src_tail n in
-           Some
-             (U.cast ~dtype:(U.dtype n)
-                ~src:(U.index ~ptr:(src0 ptr) ~idxs ()))
-       | _ -> None);
-    (* Tag PARAMs and RANGEs so later passes can tell an original node from
-       one freshly created during the kernel split. *)
-    (fun n -> match U.op n, U.node_tag n with
-       | (Ops.Param | Ops.Range), None -> Some (U.with_tag "" n)
-       | _ -> None);
-    (* RESHAPEs through MSELECT/MSTACK *)
-    (fun n -> match U.op n with
-       | Ops.Mselect | Ops.Mstack ->
-           let children = U.children n in
-           if children <> []
-              && List.for_all (fun c -> U.op c = Ops.Reshape) children
-           then
-             let unwrapped = List.map (fun c -> base (src0 c)) children in
-             let inner = U.replace n ~src:(Array.of_list unwrapped) () in
-             (* Always restore the shape view, including the rank-0 one: a
-                scalar read acquires its flat 0 index by moving through the
-                reshape. *)
-             Some (U.reshape ~src:inner ~shape:(shape_arg (U.shape n)))
-           else None
-       | _ -> None);
-    (* Strip RESHAPE on CALL args *)
-    (fun n -> match U.op n with
-       | Ops.Call ->
-           let args = src_tail n in
-           let new_args =
-             List.map (fun a -> if U.op a = Ops.Reshape then src0 a else a) args
-           in
-           if List.for_all2 ( == ) args new_args then None
-           else
-             Some
-               (U.replace n
-                  ~src:(Array.of_list (src0 n :: new_args)) ())
-       | _ -> None);
-    (* Strip MOP on AFTER deps; flatten nested AFTERs *)
-    (fun n -> match U.op n with
-       | Ops.After ->
-           let deps = src_tail n in
-           let new_deps =
-             List.map (fun d ->
-                 Option.value (movement_src d) ~default:d) deps
-           in
-           let flat =
-             List.concat_map (fun d -> match U.op d with
-                 | Ops.After -> src_tail d | _ -> [ d ]) new_deps
-           in
-           if List.length flat = List.length deps
-              && List.for_all2 ( == ) flat deps then None
-           else Some (U.after ~src:(src0 n) ~deps:flat)
-       | _ -> None);
-    (* Remove invalid writes: a STORE of an Invalid constant (possibly
-       through STAGE) is a NOOP. *)
-    (fun n -> match U.as_store n with
-       | Some { value; gate = None; _ } ->
-           let value =
-             match U.op value with
-             | Ops.Stage when Array.length (U.src value) > 0 ->
-                 src0 value
-             | _ -> value
-           in
-           if is_invalid value then Some (U.noop ())
-           else None
-       | _ -> None);
-    (fun n -> match U.op n with
-       | Ops.After ->
-           let deps = src_tail n in
-           let real =
-             List.filter (fun d -> match U.op d with
-                 | Ops.Noop when Array.length (U.src d) = 0 -> false
-                 | Ops.End ->
-                     let v = src0 d in
-                     not (U.op v = Ops.Noop && Array.length (U.src v) = 0)
-                 | _ -> true) deps
-           in
-           if List.length real < List.length deps then
-             match real with
-             | [] -> Some (src0 n)
-             | _ -> Some (U.after ~src:(src0 n) ~deps:real)
-           else None
-      | _ -> None);
-  ]
-
-let get_kernel_graph root =
-  let root = Prepare.prepare_rangeify root in
-  let rctx =
-    Indexing.run_rangeify root
+let get_kernel_graph tsink =
+  let setting = Helpers.Context_var.value in
+  let tsink =
+    Indexing.run_rangeify ~debug:(setting Helpers.debug_rangeify) tsink
   in
-  let root = Indexing.apply_rangeify_pass rctx root in
-  let root =
-    U.graph_rewrite ~name:"post_rangeify" post_rangeify_rules root
+  (* Cleanups for speed and runnability. *)
+  let tsink =
+    graph_rewrite ~ctx:() tsink
+      (Pattern_matcher.concat
+         [
+           Symbolic.symbolic;
+           Simplify.pm_reduce_simplify;
+           pm_const_buffer_folding;
+           pm_remove_bufferize;
+         ])
   in
-  let root =
-    U.graph_rewrite ~name:"limit_bufs" (limit_bufs rctx) root
+  let ranges = List.filter (fun x -> op x = Op.Range) (toposort tsink) in
+  let next_range =
+    1 + List.fold_left (fun m r -> max m (List.hd (axis_id r))) (-1) ranges
   in
-  let buffer_slot_start =
-    List.fold_left (fun acc x ->
-        let slot =
-          match U.Arg.as_param_arg (U.arg x) with
-          | Some { slot; _ } -> Some slot
-          | None -> None
-        in
-        match slot with
-        | Some slot when slot >= 0 -> max acc (slot + 1)
-        | Some _ | None -> acc)
-      0 (U.toposort root)
+  let tsink =
+    graph_rewrite
+      ~ctx:{ buf_cache = Tbl.create 64; range_idx = next_range }
+      tsink pm_limit_bufs
   in
-  let counter = ref buffer_slot_start in
-  let root =
-    U.graph_rewrite ~name:"add_buffers" ~bottom_up:true
-      (add_buffers_rules counter) root
+  let slots =
+    List.filter_map
+      (fun x ->
+        match (op x, arg x) with Op.Alloc, Param p -> Some p.slot | _ -> None)
+      (toposort tsink)
   in
-  let root =
-    U.graph_rewrite ~enter_calls:false ~bottom_up:true
-      ~name:"split_kernels" split_store root
+  let next_slot = ref (1 + List.fold_left max (-1) slots) in
+  let tsink =
+    graph_rewrite ~bottom_up:true ~ctx:next_slot tsink
+      (Pattern_matcher.append pm_add_buffers (with_ctx pm_add_param_range_tags))
   in
-  let root =
-    U.graph_rewrite ~enter_calls:false ~bottom_up:true
-      ~name:"split_kernels_fixpoint" split_store root
-  in
-  fix_war_deps root
+  let tsink = graph_rewrite ~bottom_up:true ~ctx:() tsink split_kernels in
+  let tsink = graph_rewrite ~ctx:() tsink pm_no_indexing_calls in
+  let tsink = graph_rewrite ~ctx:() tsink pm_no_views in
+  if setting Helpers.spec <> 0 then
+    Spec.type_verify ~enter_calls:false Spec.kernel_graph tsink;
+  tsink

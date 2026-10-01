@@ -47,8 +47,8 @@ let () =
   let neg = Rune.jit' Nx.neg in
   let a = Nx.ones Nx.float32 [| 4 |] in
   ignore (neg a);
-  Tolk_next.Helpers.context
-    [ B (Tolk_next.Helpers.noopt, true) ]
+  Tolk.Helpers.context
+    [ B (Tolk.Helpers.noopt, true) ]
     (fun () -> ignore (neg a))
 
 (* A function compiled with a search reports each kernel it searches; another
@@ -60,8 +60,7 @@ let () =
   ignore (Rune.jit' g (Nx.ones Nx.float32 [| 4 |]));
   (* An explicit width overrides BEAM, [0] searching nothing; another width
      searches again. *)
-  Tolk_next.Helpers.context
-    [ B (Tolk_next.Helpers.beam, 1) ]
-    (fun () ->
-      ignore (Rune.jit' ~beam:0 g (Nx.ones Nx.float32 [| 4 |])));
+  Tolk.Helpers.context
+    [ B (Tolk.Helpers.beam, 1) ]
+    (fun () -> ignore (Rune.jit' ~beam:0 g (Nx.ones Nx.float32 [| 4 |])));
   ignore (Rune.jit' ~beam:2 f (Nx.ones Nx.float32 [| 4 |]))

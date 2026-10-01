@@ -21,16 +21,7 @@ let libraries =
         ("nx.dtype", "Nx_dtype");
         ("nx.io", "Nx_io");
       ] );
-    ( "tolk",
-      [
-        ("tolk", "Tolk");
-        ("tolk.uop", "Tolk_uop");
-        ("tolk.frontend", "Tolk_frontend");
-        ("tolk.nn", "Tolk_nn");
-        ("tolk.cpu", "Tolk_cpu");
-        ("tolk.cuda", "Tolk_cuda");
-        ("tolk.metal", "Tolk_metal");
-      ] );
+    ("tolk", [ ("tolk", "Tolk"); ("tolk.engine", "Tolk_engine") ]);
     ("rune", [ ("rune", "Rune") ]);
     ( "kaun",
       [

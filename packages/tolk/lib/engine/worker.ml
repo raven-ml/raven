@@ -1,79 +1,70 @@
 (*---------------------------------------------------------------------------
+  Copyright (c) 2024 the tiny corp. MIT License (see LICENSE-tinygrad).
   Copyright (c) 2026 The Raven authors. ISC License.
-  SPDX-License-Identifier: ISC
+
+  SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Admission is shared; domains and task ownership belong to one synchronous
-   batch. A nested batch runs inline rather than waiting on its own permits. *)
-let running = Domain.DLS.new_key (fun () -> false)
-let lock = Mutex.create ()
-let changed = Condition.create ()
-let capacity = ref None
-let available = ref 0
+(* Domains live for one call: an idle domain would still join every minor
+   collection. A new domain starts with its spawner's settings. *)
+let spawned = Atomic.make 0
 
-let reserve ~limit requested =
-  Mutex.protect lock (fun () ->
-      (match !capacity with
-       | None -> capacity := Some limit; available := limit
-       | Some _ -> ());
-      while !available = 0 do Condition.wait changed lock done;
-      let count = min requested !available in
-      available := !available - count;
-      count)
+let rec reserve wanted =
+  let n = Atomic.get spawned in
+  let free = Helpers.Context_var.value Helpers.parallel - 1 - n in
+  let k = max 0 (min wanted free) in
+  if k = 0 || Atomic.compare_and_set spawned n (n + k) then k
+  else reserve wanted
 
-let release count =
-  Mutex.protect lock (fun () ->
-      available := !available + count;
-      Condition.broadcast changed)
+let release k = ignore (Atomic.fetch_and_add spawned (-k))
 
-let map f tasks =
-  let requested = Helpers.Context_var.get Helpers.parallel in
-  let tasks = Array.of_list tasks in
+let map f l =
+  let tasks = Array.of_list l in
   let count = Array.length tasks in
-  if requested <= 0 || count < 2 || Domain.DLS.get running then
-    Array.map f tasks
-  else
-    let workers = reserve ~limit:requested count in
-    Fun.protect ~finally:(fun () -> release workers) (fun () ->
-        let context = Helpers.Context_var.snapshot () in
-        let next = Atomic.make 0 in
-        let failure = Atomic.make None in
-        let results = Array.make count None in
-        let record_failure exn =
-          let backtrace = Printexc.get_raw_backtrace () in
-          ignore (Atomic.compare_and_set failure None (Some (exn, backtrace)))
-        in
-        let work () =
-          Domain.DLS.set running true;
-          try Helpers.Context_var.with_snapshot context (fun () ->
-              let rec run () =
-                if Option.is_none (Atomic.get failure) then begin
-                  let index = Atomic.fetch_and_add next 1 in
-                  if index < count then begin
-                    results.(index) <- Some (f tasks.(index));
-                    run ()
-                  end
-                end
-              in
-              run ())
-          with exn -> record_failure exn
-        in
-        let started = ref [] in
-        (try
-           for _ = 1 to workers do
-             let domain = Domain.spawn work in
-             started := domain :: !started
-           done
-         with exn -> record_failure exn);
-        (* Keep draining even if a join is interrupted: started workers must
-           finish before their inputs or admission permits can be released. *)
-        List.iter (fun domain ->
-            let rec join () =
-              try Domain.join domain with
-              | Sys.Break as exn -> record_failure exn; join ()
-              | exn -> record_failure exn
-            in
-            join ()) (List.rev !started);
-        match Atomic.get failure with
-        | Some (exn, backtrace) -> Printexc.raise_with_backtrace exn backtrace
-        | None -> Array.map Option.get results)
+  let results = Array.make count None and next = Atomic.make 0 in
+  (* The raising application of least index. Indices are claimed in order, so
+     every one below it has been claimed and runs to its end. *)
+  let failure = Atomic.make None in
+  let rec fail i e bt =
+    match Atomic.get failure with
+    | Some (j, _, _) when (j < i) [@mutate off "an index fails at most once"] ->
+        ()
+    | seen ->
+        if not (Atomic.compare_and_set failure seen (Some (i, e, bt))) then
+          fail i e bt
+  in
+  let rec work () =
+    let i = Atomic.fetch_and_add next 1 in
+    let runs =
+      match Atomic.get failure with
+      | Some (j, _, _) -> i < j
+      | None -> i < count
+    in
+    if runs then begin
+      (match f tasks.(i) with
+      | y -> results.(i) <- Some y
+      | exception e -> fail i e (Printexc.get_raw_backtrace ()));
+      work ()
+    end
+  in
+  (* The runtime refuses a domain past its limit, which other domains of the
+     program may have reached: the call then does with fewer. *)
+  let domains = ref [] in
+  let rec spawn k =
+    if k > 0 then
+      match Domain.spawn work with
+      | d ->
+          domains := d :: !domains;
+          spawn (k - 1)
+      | exception Failure _ -> release k
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter Domain.join !domains;
+      release (List.length !domains))
+    (fun () ->
+      spawn (reserve (count - 1));
+      work ());
+  match Atomic.get failure with
+  | Some (_, e, bt) -> Printexc.raise_with_backtrace e bt
+  | None -> List.init count (fun i -> Option.get results.(i))

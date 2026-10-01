@@ -7,10 +7,10 @@
     uv run packages/rune/test/gen/generate.py [--check] [MODULE...]
 
 Each generator `gen/<module>.py` declares its goldens with the decorators of
-tolk.next's `gen/golden.py`, and each golden is written to
-`test/golden/<module>/<name>.golden` in tolk.next's graph format
+tolk's `gen/golden.py`, and each golden is written to
+`test/golden/<module>/<name>.golden` in tolk's graph format
 (`gen/graph.py`), so that both trees read and write graphs one way. The goldens are made as
-tolk.next's are: in a copy of the checkout at TINYGRAD with tolk.next's patch
+tolk's are: in a copy of the checkout at TINYGRAD with tolk's patch
 applied, each in a process of its own.
 Without --check they are written, with the manifest; with it, nothing is
 written and the run fails if a golden would change.
@@ -27,7 +27,7 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 TEST = HERE.parent
-TOLK_GEN = HERE.parents[2] / "tolk" / "next" / "test" / "gen"
+TOLK_GEN = HERE.parents[2] / "tolk" / "test" / "gen"
 
 sys.path.insert(0, str(TOLK_GEN))
 from generate import CHILD, HEADER, TINYGRAD, check_checkout, default_tinygrad, patched, read, write  # noqa: E402

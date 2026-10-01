@@ -20,7 +20,7 @@
     index outside the axis is sent to [-1], so that no truncation brings one
     inside it. A window's starts lie within [x] and are cast exactly. *)
 
-open Tolk_next
+open Tolk
 
 val pad : (int * int) array -> Dtype.const -> Ops.t -> Ops.t
 (** [pad padding fill x] is [x] with [fst padding.(i)] elements [fill] before it

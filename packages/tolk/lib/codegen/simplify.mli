@@ -5,51 +5,81 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Range simplification passes.
+(** Range and reduction simplification.
 
-    Each pass takes a Uop root and returns the transformed root after
-    running its rewrite rules to fixpoint via {!Tolk_uop.Uop.graph_rewrite}.
+    Rewrites of a kernel's loops ({!Op.Range}) and of the reductions and ends
+    that close them: listing the ranges a reduction or end closes, merging and
+    splitting ranges when that simplifies their indices, shrinking ranges to the
+    bound every access guards them with, and computing reductions whose value
+    has a closed form. *)
 
-    Passes are composed in the codegen pipeline in this order:
-    {!load_collapse_all}, {!split_ranges}, initial symbolic +
-    {!flatten_range}, {!simplify_ranges}. *)
+(** {1:ranges Ranges} *)
 
-val flatten_range : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
-(** [flatten_range node] rebuilds a Reduce or End node with its range
-    children replaced by the deduplicated set of ranges the children are
-    nested within, in scope order. Returns [None] for other nodes or when
-    the children are already in that order. *)
+val pm_flatten_range : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [pm_flatten_range] replaces the sources of an {!Op.Reduce} or {!Op.End}
+    after its value by the ranges they are or run inside, in order, each once.
+*)
 
-val split_ranges : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [split_ranges root] splits ranges where [range floormod C] appears
-    and [C] divides the range size. Each qualifying range with divisor
-    [C] becomes [outer(size//C) * C + inner(C)]. C-style modulo is not a
-    split trigger. *)
+val pm_simplify_ranges : (Ops.t Ops.Tbl.t, Ops.t) Ops.Pattern_matcher.t
+(** [pm_simplify_ranges] simplifies a kernel's ranges, with a context that
+    starts empty:
+    - two ranges that an {!Op.End} closes one after the other, or any two that
+      an {!Op.Reduce} closes, of one axis type and in the same reductions, are
+      merged into one of the product of their sizes, when that leaves no more
+      floor divisions and remainders than before;
+    - a range that every index guards with [r < c] for constants [c], and no
+      reduction closes, is shrunk to the greatest such [c] when the kernel's
+      {!Op.Sink} is reached. Only a sink carrying kernel information is
+      rewritten.
 
-val simplify_ranges : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [simplify_ranges root] merges adjacent ranges with the same kind
-    into a single range when it does not increase the divmod count, and
-    shrinks gated ranges based on [r < C] guards extracted from Index
-    nodes. Reduce ranges are never shrunk. *)
+    The guards must be simplified first ({!Symbolic.symbolic}): a guard [r < c]
+    with [c] at least the range's size sets the size to [c]. *)
 
-val pm_reduce_unparented : Tolk_uop.Upat.Pattern_matcher.t
-(** [pm_reduce_unparented] removes reduce ranges not referenced in the
-    reduce source. For ADD reduces the removed range size is multiplied into
-    the result; for MUL it is exponentiated. *)
+val pm_split_ranges : (Ops.t Ops.Tbl.t, Ops.t) Ops.Pattern_matcher.t
+(** [pm_split_ranges] splits a range of constant size [n] whose remainder by a
+    constant [c] dividing [n] is taken, and that is neither a warp nor a device
+    axis, into an outer range of size [n / c] and an inner one of size [c], with
+    a context that starts empty. The split is applied, and the result
+    simplified, when the kernel's {!Op.Sink} is reached; only a sink carrying
+    kernel information is rewritten. *)
 
-val reduce_unparented_all : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [reduce_unparented_all root] applies {!pm_reduce_unparented} over the
-    whole graph. *)
+(** {1:reductions Reductions} *)
 
-val reduce_simplify_all : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [reduce_simplify_all root] removes unparented reduce ranges and
-    algebraically collapses ADD reduces when possible. *)
+val pm_reduce_unparented : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [pm_reduce_unparented] removes from a sum, product or maximum ({!Op.Reduce})
+    the ranges its value does not run inside: a sum over such a range is
+    multiplied by its size, and a product raised to it.
 
-val pm_reduce_simplify : Tolk_uop.Upat.Pattern_matcher.t
-(** [pm_reduce_simplify] is the node-level matcher used by
-    {!reduce_simplify_all}. *)
+    Raises [Invalid_argument] if a source of the reduction after its value is
+    not a range. *)
 
-val load_collapse_all : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [load_collapse_all root] collapses reduces over gated loads and includes
-    an undo rule to prevent arithmetic on loaded index values that could
-    overflow. *)
+val pm_reduce_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [pm_reduce_collapse] is the rewrites that compute a sum over a range in
+    closed form: {!pm_reduce_unparented}; integer comparisons [x + y < c] and
+    [x * y < c] solved for [x] when [y] and [c] do not depend on a range and no
+    value wraps ({!Ops.exact}); the sum of a value over the part of a range
+    where it is selected by bounds on the range, as the size of that part times
+    the value, and [+0.] for a float over an empty part; sums distributed over
+    additions; an integer product by a boolean cast as a selection; and
+    {!Symbolic.symbolic}. A float sum so computed is its terms added in another
+    order, which rounds differently.
+
+    Raises [Invalid_argument] on a sum over a range of size [1]: the range folds
+    to [0], which {!pm_reduce_unparented} refuses. *)
+
+val pm_reduce_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [pm_reduce_simplify] is {!pm_reduce_unparented}, and replaces a sum over
+    ranges ({!Op.Reduce} of {!Op.Add}) that {!pm_reduce_collapse} computes
+    without any range by its closed form. Each range is collapsed in turn, with
+    the values its part of the graph reads from outside standing for variables
+    bounded as those values are; a sum whose part holds a store or another
+    reduction is left as it is.
+
+    Raises [Invalid_argument] as {!pm_reduce_collapse} does. *)
+
+val pm_load_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [pm_load_collapse] replaces a sum over one range of a value selected where
+    an index equals the range, as when indexing a tensor with another one, by
+    the value at that index where it is within the range, and [0] elsewhere; and
+    solves [x + y < c] for [x] when [x] is a {!Dtype.Weak_int} that reads memory
+    and [y] and [c] do not. *)

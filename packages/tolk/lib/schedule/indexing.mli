@@ -5,136 +5,102 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Rangeify: tensor graph to indexed representation.
+(** Ranges: from whole tensors to indexed elements.
 
-    Converts the high-level graph (movement ops, REDUCE, etc.)
-    into an indexed representation with explicit RANGE loops,
-    STAGE nodes, and INDEX operations.
+    A tensor graph computes whole tensors: an operation reads every element of
+    its sources. Scheduling needs the element each operation reads, as an index
+    built from loop variables ({!Op.Range}). This module assigns to each node
+    the ranges that index its elements, and rewrites the graph so that every
+    read of a tensor names its element: movements become arithmetic on indices,
+    and the values that must be stored whole are marked for storage. *)
 
-    The algorithm runs in three phases:
-
-    {ol
-    {- {b Realize map.}  Decide which nodes need their own buffer
-       (realization boundary).  See {!generate_realize_map}.}
-    {- {b Range propagation.}  Walk the graph root-to-leaf, assigning
-       one range expression per axis to every node.  Realized nodes get
-       fresh ranges; others inherit or merge from consumers.  Movement
-       ops transform ranges instead of persisting as nodes.
-       See {!run_rangeify}.}
-    {- {b Apply.}  Bottom-up graph rewrite: REDUCE keeps explicit ranges,
-       PAD becomes WHERE, realized sources are wrapped in
-       STAGE + INDEX or END, and movement ops are removed.
-       See {!apply_rangeify_pass}.}} *)
-
-(** {1:predicates Predicates} *)
-
-val always_contiguous : Tolk_uop.Ops.t -> bool
-(** [always_contiguous op] is [true] for ops whose output is
-    contiguous by definition (Stage, After, Copy, Buffer,
-    Const, Mselect, Mstack, Param, Alloc, Load, Call).  Their consumers can index directly without
-    realization. *)
-
-(** {1:context Indexing context} *)
-
-type realize_state =
-  | Marked
-      (** Pending realization — set during realize-map construction,
-          before axis resolution. *)
-  | Realized of int list
-      (** Resolved — records which output axes were realized. *)
-(** Realization state for a single node. *)
-
-type indexing_context = {
-  realize_map : (int, realize_state) Hashtbl.t;
-  non_removable : (int, unit) Hashtbl.t;
-      (** Sources of a custom kernel call: their stage must stay a buffer,
-          since the kernel addresses it by slot. *)
-  range_map : (int, Tolk_uop.Uop.t list * Tolk_uop.Uop.t list) Hashtbl.t;
-      (** Maps {!Tolk_uop.Uop.tag} to [(input_ranges, output_ranges)].
-          Only nodes of the graph {!run_rangeify} walked are present; a node
-          rebuilt by {!apply_rangeify_pass} is deliberately absent. *)
-  buf_cache : (int, Tolk_uop.Uop.t list) Hashtbl.t;
-      (** Memoised reachable buffer-boundary nodes per node tag.  Shared
-          across buffer-limiting rewrites so a subtree's reachable set is
-          computed once. *)
-  mutable range_idx : int;
-      (** Monotonic counter for fresh range axis indices. *)
-}
-(** Per-node state populated by {!run_rangeify}.  All maps are keyed
-    by {!Tolk_uop.Uop.tag}. *)
-
-val create_context : unit -> indexing_context
-(** [create_context ()] is a fresh, empty context. *)
-
-val new_range :
-  indexing_context -> int -> ?kind:Tolk_uop.Axis_type.t -> unit ->
-  Tolk_uop.Uop.t
-(** [new_range ctx size ?kind ()] is a fresh RANGE node over
-    \[[0];[size-1]\] with axis kind [kind] (default {!Tolk_uop.Axis_type.Weak}).
-    Returns a constant [0] when [size] is [1]. *)
-
-val new_range_expr :
-  indexing_context ->
-  Tolk_uop.Uop.t ->
-  ?kind:Tolk_uop.Axis_type.t ->
-  unit ->
-  Tolk_uop.Uop.t
-(** [new_range_expr ctx size ?kind ()] is like {!new_range}, but [size]
-    is a symbolic integer expression. Returns [size] unchanged if it is
-    already a {!Tolk_uop.Ops.Range}, and returns a constant [0] when [size]
-    simplifies to the constant [1]. *)
-
-(** {1:simplify Symbolic simplification} *)
-
-val simplify_expr : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [simplify_expr e] applies {!Tolk_uop.Symbolic.sym} to [e] through a
-    graph rewrite. *)
-
-(** {1:movement Movement ops} *)
+val is_gather : Ops.t -> bool
+(** [is_gather u] is whether [u] is a gather: an {!Op.Index} of a tensor by a
+    value with axes, which reads the tensor at the row each element of the value
+    names. *)
 
 val apply_movement_op :
-  Tolk_uop.Uop.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t list
-(** [apply_movement_op node rngs] transforms output ranges [rngs] through
-    [node], using its symbolic shape to produce input ranges. Handles Shrink,
-    Permute, Flip, Expand, Pad, and Reshape.
+  Ops.sint list -> Ops.movement -> Ops.t list -> Ops.t list
+(** [apply_movement_op in_shape m idxs] is the index, into a source of shape
+    [in_shape], of the element that the movement [m] of that source places at
+    the index [idxs]: one node per axis of the source, from one per axis of the
+    result.
 
-    Raises [Invalid_argument] if [node] is not a movement operation. *)
+    - [Shrink] adds each axis' start;
+    - [Permute] puts each index back on its source axis;
+    - [Flip] counts a reversed axis of size [s] from its end, [s - 1 - i];
+    - [Expand] drops the indices of the axes it adds in front;
+    - [Pad] subtracts each padded axis' start, and the index is valid
+      ({!Ops.valid}) only where it falls within the source;
+    - [Reshape] flattens the index in row-major order and splits it along
+      [in_shape], simplified with the symbolic rules and the validity rules
+      ({!Symbolic.symbolic}, {!Symbolic.pm_simplify_valid}).
 
-(** {1:rangeify Rangeify passes} *)
+    The validity a [Pad] gives an index lasts only as long as the index
+    expression carries it. A later movement whose simplification makes the index
+    constant on an axis drops it: a [Reshape] to an axis of one element, an
+    [Expand] that drops the leading index, a [Shrink] onto an axis of one
+    element. A caller that reads through the index masks the padded values
+    itself, as {!run_rangeify} turns each [Pad] into a selection.
 
-val run_rangeify : Tolk_uop.Uop.t -> indexing_context
-(** [run_rangeify root] builds the realize map, then walks the graph from roots
-    to leaves assigning ranges from each node's symbolic shape. Returns a
-    context ready for {!apply_rangeify_pass}. *)
+    A load in [idxs] from a storage state ({!Op.After}), as a gather's index is,
+    is left as it is: the rewrites of the index do not reach the stores the
+    state is ordered after. *)
 
-val apply_rangeify_pass :
-  indexing_context -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [apply_rangeify_pass ctx root] rewrites [root] bottom-up using the ranges
-    recorded in [ctx] by {!run_rangeify}:
+val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
+(** [run_rangeify ~debug sink] is the tensor graph [sink] with its elements
+    indexed by ranges. Walking from [sink] to its leaves, each node gets the
+    ranges that index its output:
 
-    {ul
-    {- REDUCE keeps explicit range children.}
-    {- PAD → WHERE guarded by the input ranges' validity.}
-    {- STACK → nested WHERE selecting a source on the leading range.}
-    {- Realized sources → STAGE + INDEX (or END for stores).}
-    {- Direct buffer sources (Param, Buffer, Alloc, …) → INDEX.}
-    {- Movement ops → removed (their effect is in the range map).}} *)
+    - a node that is stored whole gets new ranges, one per axis of size other
+      than [1], where an axis of size [1] is indexed by [0] and an axis whose
+      size is a range by that range;
+    - so does every axis of a node whose consumers index it differently on some
+      axis, validity aside;
+    - so does every axis of a reduction or elementwise node below a broadcast,
+      which would otherwise be recomputed for each element the broadcast adds. A
+      node is below a broadcast when it reaches one through consumers not stored
+      whole: an {!Op.Expand} whose sizes are not ranges, or an operation that
+      broadcasts a source. An elementwise node that an operation broadcasts
+      directly is not below it, a reduction is;
+    - the index source of a gather, an {!Op.Index} whose index has axes, takes
+      the gather's leading ranges, one per axis of the index;
+    - any other node takes the ranges of its consumers, the validity of an index
+      being the disjunction of theirs; a node without indexed consumers gets
+      none.
 
-(** {1:helpers Range helpers} *)
+    New ranges are numbered from [0] in the order the walk creates them; they
+    are {!Ops.Axis_type.Weak}, and those of the axes a reduction reduces are
+    {!Ops.Axis_type.Reduce}. A node is stored whole when it is a {!Op.Store}, a
+    source of an {!Op.Mselect} or an {!Op.Mstack} that is not storage, a source
+    of a call to a kernel given as code that is not storage, a gathered source
+    that is not storage, or a value stored into a destination it reads.
 
-val movement_ops : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
-(** [movement_ops u] pushes movement through INDEX, AFTER and END. *)
+    The graph is then rewritten from the bottom up:
 
-val contiguous_view : Tolk_uop.Uop.t -> (Tolk_uop.Uop.t * int) option
-(** [contiguous_view u] is the graph anchor and byte offset of a proven
-    contiguous view. The anchor retains pending effects and may be a bitcast.
-    It need not own allocated storage. Returns [None] when a constant offset
-    cannot be proved, or the device does not support views.
+    - a source stored whole is read through an {!Op.Stage} of it over its
+      ranges, indexed by its consumer's ranges; the stage lives on the source's
+      device, and later passes may inline it back unless the source is storage
+      or feeds a kernel given as code. A stored {!Op.Store} is instead closed by
+      an {!Op.End} over its ranges;
+    - storage read by an indexed node is indexed by that node's ranges;
+    - a gather reads its gathered source at the element its index holds,
+      followed by the gather's trailing ranges;
+    - a reduction of leading axes becomes a reduction over its ranges;
+    - a {!Op.Pad} becomes a selection of its source where its index is valid,
+      and of [0] elsewhere;
+    - a {!Op.Stack} becomes a selection of its sources by its leading range: a
+      chain of comparisons with each index for at most [8] sources, and above
+      that a comparison with the middle index choosing between the selections of
+      each half, the whole guarded so that a negative index selects the last
+      source. Its depth is logarithmic in the number of sources;
+    - movements are removed;
+    - a stage without a device gets [sink]'s.
 
-    Raises [Invalid_argument] if the byte offset does not fit a host integer. *)
+    Calls, {!Op.After}s, {!Op.Mselect}s and {!Op.Mstack}s get no ranges, and the
+    walk does not enter kernels ({!Ops.gate_kernel_sink}). With [debug] (default
+    [false]), each node's ranges are printed on standard output as they are
+    assigned.
 
-val storage_window : Tolk_uop.Uop.t -> (Tolk_uop.Uop.t * int) option
-(** [storage_window u] is [contiguous_view u] when its anchor names storage:
-    a BUFFER, ALLOC, PARAM, MSELECT, MSTACK or zero-coordinate STAGE, possibly
-    through bitcasts and pending effects. A STAGE names its own future
-    allocation. Arithmetic alone does not name storage. *)
+    Raises [Invalid_argument] if a reduction of leading axes gets no ranges, or
+    if a gather has more than one index. *)

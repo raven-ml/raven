@@ -45,4 +45,4 @@
 val backend : Nx_backend.t
 (** [backend] is the backend of compiled programs, named ["compiled"]. It runs
     on the host, on devices that share its memory, and on devices whose command
-    queues tolk encodes: Metal and CUDA ({!Tolk_next_engine.device}). *)
+    queues tolk encodes: Metal and CUDA ({!Tolk_engine.device}). *)

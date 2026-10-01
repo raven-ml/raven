@@ -1,65 +1,61 @@
 # Target: tolk
 
-Compile pipeline that turns a tensor graph into runnable kernels — the
-tinygrad-analog lowering stack. A tensor-level `Sink` is lowered in stages:
-range analysis and kernel splitting (rangeify), kernel scheduling and memory
-planning (schedule), per-kernel optimization and lowering (codegen),
-linearization to an SSA program (linearize), and backend source emission
-(render). The benchmark times each stage in isolation on fixed-size workloads,
-so a regression localizes to one stage.
+tolk's compiler, which turns a tensor graph into kernels' source: preparing
+the graph (prepare), ranges and kernel splitting (kernel_graph), the order of
+the kernels (schedule), per-kernel optimization and lowering (codegen),
+linearization to instructions (linearize), and source emission (render). The
+benchmark times each stage on its own over graphs recorded from tinygrad,
+among them a block of gpt-oss prefilling and decoding, so a regression
+localizes to one stage of one program. A model's first compiled call spends
+most of its time in these stages.
 
 ## Commands
 
-- **Build:** `dune build packages/tolk/bench/bench_tolk.exe` — building the
-  bench exe pulls in `packages/tolk/lib` transitively.
-- **Test (correctness gate):** `dune build @packages/tolk/test/runtest` —
-  scoped to the test dir. This is the ruler: the parity goldens diff emitted
-  source byte-for-byte against the reference (~70 cases through stage 5 and
-  stage 7), plus the unit battery. The whole point of this target is to speed
-  the pipeline up *without changing its output*, so a change that alters
-  emitted source **must fail parity** — that is the guard, not a nuisance. It
-  does not run the benches.
-- **Baseline:** `packages/tolk/bench/tolk.thumper` — the committed baseline,
-  partitioned per machine; the session refreshes it at setup and ratchets on
-  keeps.
+- **Build:** `dune build packages/tolk/bench/bench_tolk.exe`.
+- **Test (correctness gate):** `dune build @packages/tolk/runtest`. This is
+  the ruler: the goldens recorded from tinygrad pin every stage's output, the
+  kernel graphs, schedules, lowered sinks and rendered sources included, so a
+  change that alters what a stage emits **must fail** it. That is the guard,
+  not a nuisance. It does not run the benchmark.
+- **Baseline:** `packages/tolk/bench/tolk.thumper`, partitioned per machine;
+  the session refreshes it at setup and ratchets on keeps.
 - **BENCH:** the built executable, run **directly**, never through `dune exec`:
-  `<WT>/_build/default/packages/tolk/bench/bench_tolk.exe`
-  Suite name is `tolk`; lab subset is `--tag lab`. Run it with `SCACHE=0` in
-  the environment (see Perf context). Running the exe directly is
-  simplest and what this program assumes: the corrected-file contract is
-  identical everywhere (a check or bless only ever writes `PATH.corrected`;
-  acceptance is the `mv`), and `dune exec` would need a `--` separator
-  before thumper's flags while adding nothing. On kimchi (x86 Linux, 6
-  performance and 8 efficiency cores) the committed section was recorded
-  pinned to the performance cores: prefix every gate there with
-  `taskset -c 0-5`. Example gate run:
+  `<WT>/_build/default/packages/tolk/bench/bench_tolk.exe`.
+  The suite is `tolk`; the lab subset is `--tag lab`, every case. Example gate
+  run:
 
   ```
   rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected
-  SCACHE=0 <BENCH> --tag lab \
+  <BENCH> --tag lab \
     --baseline <WT>/<BASELINE> \
     --json <RESULTS>/verdict.json
   ```
 
 ## In scope (may edit)
 
-- `packages/tolk/lib/**` — chiefly the compile-pipeline hot paths:
-  - `schedule/rangeify.ml` — range analysis and kernel splitting (the heaviest
-    stage; see the O(n²) suspects below).
-  - `engine/schedule.ml` — kernel scheduling and buffer memory planning.
-  - `callify.ml` — call resolution feeding rangeify.
-  - `codegen/**` — the optimize + lower passes (`codegen/codegen.ml`,
-    `codegen/opt/**`, `codegen/simplify.ml`, `codegen/decomp/**`).
-  - `codegen/late/linearizer.ml` — linearization to an SSA program.
-  - `renderer/**`, `renderer.ml` — backend source emission.
+- `packages/tolk/lib/**`, chiefly the stages the benchmark times:
+  - `schedule/prepare.ml`, `schedule/indexing.ml` and `schedule/rangeify.ml`:
+    preparing and the kernel graph, the second costliest stage;
+  - `schedule/schedule.ml`: the order of the kernels;
+  - `codegen/**`: optimization and lowering (`codegen/codegen.ml`,
+    `codegen/opt/**`, `codegen/simplify.ml`, `codegen/decomp/**`,
+    `codegen/late/**`), the costliest stage;
+  - `uop/ops.ml`, `uop/symbolic.ml`: graph rewriting and the symbolic rules
+    every stage runs;
+  - `renderer/**`: source emission.
+
+tolk is a port of tinygrad, file for file. A speedup keeps each function the
+port of its tinygrad function: it may change how the OCaml computes a result,
+never which result, nor do something tinygrad does not. A change that would
+needs an entry in `packages/tolk/DIVERGENCES.md`, whose reasons a speedup is
+not, so it is out of scope.
 
 ## Read-only / never touch
 
-- `packages/tolk/bench/**` (sources, `graphs/`, and every `*.thumper`) and
-  `packages/tolk/test/**` (parity goldens *and* any scaling assertion). They
-  are the ruler. Optimizing the ruler is cheating; such a change is void.
-- The uop op set and backend interfaces — `packages/tolk/lib/uop/**`. Adding or
-  changing a uop op is off-limits per house rule.
+- `packages/tolk/bench/**` (sources and `tolk.thumper`) and
+  `packages/tolk/test/**` (the goldens, their generators and every suite).
+  They are the ruler. Optimizing the ruler is cheating; such a change is void.
+- The op set, `packages/tolk/lib/uop/op.ml`.
 - Anything outside `packages/tolk/lib/`.
 
 ## Keep rule
@@ -70,74 +66,43 @@ The standard lab pair-based rule from `lab/program.md` applies verbatim:
 - no case has a `wall_time` `regressed` relation in **both** runs (a real
   regression reproduces on the same case; a one-run blip on a case the change
   cannot affect is noise); and
-- no case has an `alloc_words` `regressed` relation in **either** run —
-  allocation is deterministic; one alloc regression discards immediately; and
+- no case has an `alloc_words` `regressed` relation in **either** run;
+  allocation is deterministic, so one alloc regression discards immediately;
+  and
 - at least one case is `improved` (`wall_time` or `alloc_words`) in **both**
   runs, *or* the change is a strict-LOC-decrease simplification with no
   reproduced wall regression and no alloc regression.
 
-`alloc_words` is the sharpest tool here: every stage is a pure graph transform,
-so its allocation is exactly reproducible, and an O(n²) list copy shows up as a
-super-linear allocation jump before wall-time noise matters.
+`alloc_words` is the sharpest tool here: every stage is a pure graph rewrite,
+so its allocation reproduces exactly, and an O(n²) list copy shows up as an
+allocation jump before wall-time noise matters.
 
 ## Perf context
 
 ### Stage seam map
 
-The bench times these functions, each fed its stage input built in `setup`:
+The benchmark times these functions, each fed its input built in `setup`:
 
 | Stage | Function | Owner | In → out |
 |---|---|---|---|
-| rangeify | `Rangeify.get_kernel_graph` | `schedule/rangeify.ml` | tensor `Sink` → kernel graph |
-| schedule | `Schedule.create_schedule` then `Schedule.memory_plan_rewrite` | `engine/schedule.ml` | kernel graph → planned `Linear` |
-| codegen | `Codegen.full_rewrite_to_sink ~optimize ren k` | `codegen/codegen.ml` (+ `opt/`, `simplify.ml`) | per-kernel AST → lowered sink |
-| linearize | `Linearizer.linearize` | `codegen/late/linearizer.ml` | lowered sink → program |
-| render | `Renderer.render ren ~name program` | `renderer.ml`, `renderer/cstyle.ml` | program → backend source |
+| prepare | `Prepare.prepare_rangeify` | `schedule/prepare.ml` | tensor graph → prepared graph |
+| kernel_graph | `Rangeify.get_kernel_graph` | `schedule/rangeify.ml`, `schedule/indexing.ml` | prepared graph → kernel graph |
+| schedule | `Schedule.create_schedule` | `schedule/schedule.ml` | kernel graph → `Linear` of calls |
+| codegen | `Codegen.full_rewrite_to_sink` | `codegen/**` | each kernel → lowered sink |
+| linearize | `Linearizer.linearize`, then `Codegen.pm_linearize_cleanups` | `codegen/late/linearizer.ml`, `codegen/codegen.ml` | lowered sink → instructions |
+| render | the renderer's `render` | `renderer/cstyle.ml` | instructions → C source |
 
-The bench uses the CPU (clang) renderer (`Cstyle.clang_no_abi`) — the
-same renderer the parity `cpu` goldens bless through, so the render stage stays
-on a proven path. Stage 7 (device compile) is out of scope: it shells out to
-the toolchain, is disk-cached and noisy, and does not belong in the tight gate.
+Kernels are lowered and rendered for the CPU's C renderer
+(`Cstyle.clang`), on a fixed architecture, so every machine times the same
+work; nothing is compiled. Codegen dominates: gpt-oss's block spends about
+130-210 ms there and 30-37 ms in kernel_graph on an M1 Max, and every other
+stage is at most a few milliseconds.
 
-The current lab subset (15 cases) shows codegen as the dominant cost —
-`matmul_small/codegen` is ~14 ms and ~6.9 Mw, an order of magnitude above every
-other case — and rangeify second (~80–170 µs). Schedule/linearize/render are
-µs-scale. Optimization effort is best aimed at codegen and rangeify.
+### Caches
 
-### Byte-identical output invariant
-
-Emitted source must not change. The correctness gate diffs stage-5 and stage-7
-output against goldens byte-for-byte; a pipeline speedup that alters the uop
-dump or the rendered source fails the gate. Treat any output diff as a bug in
-the change, not a golden to update.
-
-### O(n²) rangeify suspects
-
-`schedule/rangeify.ml` has two range-accumulation helpers that append to a list
-inside a per-node fold, giving O(n²) behavior on straight-line graphs:
-
-- `add_unique acc r = ... else acc @ [ r ]` (~line 1372), folded over kernel
-  ranges (~lines 1381/1389/1394).
-- `add_unique xs x = if List.exists ((==) x) xs then xs else xs @ [ x ]`
-  (~line 1482), folded over graph nodes (~line 1490).
-
-Both are `xs @ [x]` (append-copies the whole list) plus a linear membership
-scan. On a large straight-line graph (e.g. a long fold) this is the leading
-superlinearity suspect. The Phase-1 workloads are small and fixed-size, so they
-do not exercise this — but it is the known hot spot a scaling workload would hit,
-and the natural first target. (Line numbers drift as the file is edited; match
-on the `add_unique` / `@ [` pattern.)
-
-### Caches to keep disabled during measurement
-
-- **`SCACHE=0`** — the schedule engine's semantic-key cache
-  (`engine/schedule.ml`, read once at module init). The Phase-1 stage benches
-  call `create_schedule` directly and never consult it, but keep it disabled so
-  later comparative runs (which go through `lower_sink_to_linear`) measure cold
-  work.
-- **`CCACHE=0`** — the compiler disk cache. Only relevant to the out-of-scope
-  compile stage.
-- The in-process compiled-program cache and the global uop hash-cons table are
-  process-global. The benches sidestep them by timing the *passes* (input built
-  in `setup`), never graph construction — repeating an identical graph build
-  would be cheapened by hash-consing and would not measure a cold pass.
+The benchmark calls each stage directly, so neither the schedule cache of
+`Schedule.create_linear_with_vars` (`SCACHE`) nor the program cache of
+`Codegen.to_program` serves a timed case. The hash-consing of nodes is
+process-wide: a case's setup builds its input once, and the timed closure
+runs only the stage, so repeated batches time the stage, not graph
+construction.

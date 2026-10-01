@@ -27,7 +27,7 @@ Breaking one causes real damage.
 |---|---|
 | `packages/nx` | n-dimensional arrays. Libraries: `nx.dtype`, `nx.device` (host, Metal, CUDA, AMD, NV, remote, disk runtimes), `nx.array`, `nx.cpu` (C kernels), `nx`, `nx.io`, `nx.quant` |
 | `packages/rune` | autodiff, vmap and compilation over nx |
-| `packages/tolk` | the compiler, a port of tinygrad. `tolk/next` is current; `tolk/lib` is frozen. Departures from tinygrad are recorded in `packages/tolk/next/DIVERGENCES.md` |
+| `packages/tolk` | the compiler, a port of tinygrad. Departures from tinygrad are recorded in `packages/tolk/DIVERGENCES.md` |
 | `packages/kaun` | layers, optimizers and training on rune. Models live in `examples/`, never in the library |
 | `packages/vega` | optimizers as values |
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
@@ -48,7 +48,7 @@ own worktree and never changes the maintainer checkout's working tree (no
   wait for the machine to be quiet; only timing needs that.
 - Rerun a cached test: run its executable from `_build/default/…`, from the
   directory holding its goldens, with `CACHEDB=cache`. Never use `--force`.
-- tolk goldens: `uv run packages/tolk/next/test/gen/generate.py --check`.
+- tolk goldens: `uv run packages/tolk/test/gen/generate.py --check`.
   Regenerate goldens with the generator; never edit them by hand.
 - Python: always through `uv run`.
 

@@ -5,771 +5,449 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Port of tinygrad/codegen/simplify.py to the tolk_uop IR. *)
+open Ops
+open Divandmod
+module V = Dtype.Value
 
-open Tolk_uop
-module U = Uop
+let rule_ctx = Pattern_matcher.rule_ctx
 
-(* Helpers *)
+let dedup l =
+  Helpers.dedup
+    (module struct
+      type t = Ops.t
 
-(* Child index at which this pass's range-closing ops carry ranges. *)
-let range_start_of_op = function
-  | Ops.Reduce | Ops.End -> Some 1
-  | _ -> None
+      let equal = ( == )
+      let hash = hash
+    end)
+    l
 
-let is_range u = U.op u = Ops.Range
-let is_const u = Option.is_some (U.as_const u)
-let is_load u = U.op u = Ops.Index
-
-let const_int_value = U.const_int_value
-
-let is_zero_const u =
-  match U.as_const u with
-  | Some c ->
-      (match Const.view c with
-       | Const.Int n -> Bigint.equal n Bigint.zero
-       | Const.Float f -> Float.equal f 0.0
-       | Const.Bool b -> not b
-       | Const.Invalid -> false)
-  | _ -> false
-
-let mem_phys x xs = List.exists (fun y -> y == x) xs
-
-let split_and c = U.split_uop c Ops.And
-
-let count_divmod x =
-  List.fold_left (fun n u ->
-    match U.op u with
-    | Ops.Floordiv | Ops.Floormod -> n + 1
-    | _ -> n) 0 (U.backward_slice x)
-
-let no_range u =
-  not (is_range u || List.exists is_range (U.backward_slice u))
-
-let no_load u =
-  not (is_load u || List.exists is_load (U.backward_slice u))
-
-let symbolic = Symbolic.symbolic
-
-(* [ended_ranges u] are the children [u] closes around its body. *)
-let ended_ranges u =
-  match range_start_of_op (U.op u) with
-  | None -> []
-  | Some k ->
-      let s = U.src u in
-      let n = Array.length s in
-      if k >= n then [] else Array.to_list (Array.sub s k (n - k))
-
-let range_size r = (U.src r).(0)
-
-let range_kind r =
-  match U.as_range r with
-  | Some v -> v.kind
-  | None -> invalid_arg "range_kind: not a Range"
-
-(* Rebuild [r] with a new [size], preserving axis/sub/kind/dtype. *)
-let range_with_size r size =
-  match U.as_range r with
-  | Some v ->
-      U.replace r ~src:(Array.of_list (size :: v.parents)) ()
-  | None -> invalid_arg "range_with_size: not a Range"
-
-let range_split r ~outer_size ~inner_size =
-  match U.as_range r with
-  | Some v ->
-      let make sub size =
-        U.replace r
-          ~src:(Array.of_list (size :: v.parents))
-          ~arg:
-            (U.Arg.Range_info
-               { axis = v.axis; sub = v.sub @ [ sub ]; kind = v.kind })
-          ()
-      in
-      (make 0 outer_size, make 1 inner_size)
-  | None -> invalid_arg "range_split: not a Range"
-
-(* Flatten range *)
-
-(* Reattach the range children of a Reduce/End in toposort order. *)
 let flatten_range r =
-  match range_start_of_op (U.op r) with
-  | None -> None
-  | Some off ->
-      let s = U.src r in
-      let n = Array.length s in
-      let rngs =
-        if off >= n then [] else Array.to_list (Array.sub s off (n - off))
+  let off = Option.get (range_start (op r)) in
+  match List.drop off (src r) with
+  | [] -> None
+  | rngs ->
+      let flat =
+        List.concat_map
+          (fun s -> if op s = Op.Range then [ s ] else Nodes.to_list (ranges s))
+          rngs
       in
-      if rngs = [] then None
-      else
-        let new_rngs = U.ranges (U.sink rngs) in
-        let head = Array.sub s 0 off in
-        let src = Array.append head (Array.of_list new_rngs) in
-        let r' = U.replace r ~src () in
-        if U.equal r r' then None else Some r'
+      Some (replace r ~src:(List.take off (src r) @ dedup flat))
 
 let pm_flatten_range =
-  let open Upat in
-  Pattern_matcher.make [
-    ops [ Ops.Reduce; Ops.End ] ~name:"r"
-    => (fun bs -> flatten_range (bs $ "r"));
-  ]
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v ~op:(Op.Set.of_list [ Op.Reduce; Op.End ]) ~name:"r" ())
+        (fun m -> flatten_range (m "r"));
+    ])
 
-(* Merge adjacent ranges *)
+(* Index and range arithmetic uses floor division and remainder until the late
+   rewrites. *)
+let count_divmod x =
+  Nodes.fold
+    (fun u n -> if op u = Op.Floordiv || op u = Op.Floormod then n + 1 else n)
+    (backward_slice x) 0
 
-(* Merge pairs of ranges of the same kind into a single [merged] of size
-   [s0 * s1], provided doing so does not increase the divmod count. *)
+let merge_rewrite =
+  Pattern_matcher.concat
+    [
+      pm_substitute;
+      Pattern_matcher.with_ctx Symbolic.symbolic;
+      Pattern_matcher.with_ctx pm_flatten_range;
+    ]
+
 let simplify_merge_adjacent u =
-  let u_ended = ended_ranges u in
-  if u_ended = [] then None
-  else
-    let reduce_ranges =
-      List.filter_map
-        (fun x -> if U.op x = Ops.Reduce then Some (U.ranges x) else None)
-        (u :: U.backward_slice u)
-    in
-    let pairs = match U.op u with
-      | Ops.End ->
-          let rec adj = function
-            | a :: (b :: _ as rest) -> (a, b) :: adj rest
-            | _ -> []
-          in
-          adj u_ended
-      | _ ->
-          List.concat_map (fun r0 ->
-            List.filter_map (fun r1 ->
-              if r0 == r1 then None else Some (r0, r1)) u_ended) u_ended
-    in
-    List.find_map (fun (r0, r1) ->
-      if range_kind r0 = range_kind r1
-         && List.for_all (fun rngs ->
-              mem_phys r0 rngs = mem_phys r1 rngs) reduce_ranges
-      then begin
-        let open U.Promoting in
-        let s0 = range_size r0 and s1 = range_size r1 in
-        let merged = range_with_size r0 (s0 * s1) in
-        let nidx =
-          U.substitute [ (r0, merged // s1); (r1, merged mod s1) ] u
-        in
-        let nidx =
-          U.graph_rewrite ~name:"check_merge"
-            (U.first_match
-               [
-                 Upat.Pattern_matcher.rewrite symbolic;
-                 Upat.Pattern_matcher.rewrite pm_flatten_range;
-               ])
-            nidx
-        in
-        if count_divmod nidx <= count_divmod u then Some nidx else None
-      end else None) pairs
-
-(* Simplify ranges *)
-
-(* Flush [ctx] by substituting each captured range with [sub k v], then
-   simplify the result with the symbolic rewriter. *)
-let do_substitute ctx x ~sub =
-  if Option.is_none (U.as_kernel_info x) then None else
-  let mappings =
-    U.Ref_tbl.fold (fun k v acc ->
-      match v with Some v -> (k, sub k v) :: acc | None -> acc) ctx []
+  let reduce_ranges =
+    Nodes.fold
+      (fun x acc -> if op x = Op.Reduce then ranges x :: acc else acc)
+      (backward_slice_with_self u)
+      []
   in
-  U.Ref_tbl.reset ctx;
-  if mappings = [] then None
-  else
-    let ret =
-      U.graph_rewrite
-        (Upat.Pattern_matcher.rewrite symbolic)
-        (U.substitute mappings x)
-    in
-    if U.equal ret x then None else Some ret
-
-(* True iff [ctx]'s recorded bound for [r] already dominates [c]. *)
-let dominated_by ctx r c =
-  match U.Ref_tbl.find_opt ctx r with
-  | Some (Some existing) ->
-      (match const_int_value existing, const_int_value c with
-       | Some ei, Some ci -> ci <= ei
-       | _ -> true)
-  | Some None -> true
-  | None -> false
-
-let is_invalid u =
-  match U.op u, U.arg u with
-  | Ops.Const, U.Arg.Value c -> Const.view c = Const.Invalid
-  | _ -> false
-
-(* [(idx, valid)] from scalar [WHERE(valid, idx, Invalid)], matching
-   tinygrad's direct INDEX-child matcher path. *)
-let get_idx_valid u =
-  match U.op u with
-  | Ops.Where ->
-      let s = U.src u in
-      if Array.length s = 3 && is_invalid s.(2) then (s.(1), s.(0))
-      else (u, U.const_bool true)
-  | _ -> (u, U.const_bool true)
-
-let replace_guard guards r c =
-  match U.Ref_tbl.find_opt guards r with
-  | Some existing ->
-      (match const_int_value existing, const_int_value c with
-       | Some ei, Some ci when ci <= ei -> ()
-       | _ -> U.Ref_tbl.replace guards r c)
-  | None -> U.Ref_tbl.replace guards r c
-
-let collect_guards guards cond =
-  match U.op cond with
-  | _ ->
-      List.iter (fun v ->
-        match U.op v with
-        | Ops.Cmplt ->
-            let r = (U.src v).(0) and c = (U.src v).(1) in
-            if is_range r && is_const c then replace_guard guards r c
-        | _ -> ()) (split_and cond)
-
-let apply_lane_guards ctx x cond =
-  let guards = U.Ref_tbl.create 8 in
-  collect_guards guards cond;
-  (* Keep the largest c_i for each guarded range r. *)
-  U.Ref_tbl.iter
-    (fun r c ->
-      if not (dominated_by ctx r c) then U.Ref_tbl.replace ctx r (Some c))
-    guards;
-  (* Any range that is ever ungated cannot be shrunk. *)
-  List.iter
-    (fun r ->
-      if not (U.Ref_tbl.mem guards r) then
-        U.Ref_tbl.replace ctx r (Some (range_size r)))
-    (U.ranges x)
-
-let mark_gated_value ctx idx_value =
-  let x, cond = get_idx_valid idx_value in
-  apply_lane_guards ctx x cond
+  let ended = ended_ranges u in
+  (* An end merges only adjacent ranges; a reduction tries every pair. *)
+  let pairs =
+    if op u = Op.End then
+      let rec adjacent = function
+        | r0 :: (r1 :: _ as rest) -> (r0, r1) :: adjacent rest
+        | _ -> []
+      in
+      adjacent ended
+    else
+      List.concat
+        (List.mapi
+           (fun i r0 ->
+             List.filteri (fun j _ -> j <> i) ended
+             |> List.map (fun r1 -> (r0, r1)))
+           ended)
+  in
+  List.find_map
+    (fun (r0, r1) ->
+      if
+        Axis_type.equal (axis_type r0) (axis_type r1)
+        && List.for_all
+             (fun rngs -> Nodes.mem r0 rngs = Nodes.mem r1 rngs)
+             reduce_ranges
+      then begin
+        let s0 = nth r0 0 and s1 = nth r1 0 in
+        let new_range = replace r0 ~src:[ O.(s0 * s1) ] in
+        let subs = Tbl.create 2 in
+        Tbl.replace subs r0 O.(new_range // s1);
+        Tbl.replace subs r1 O.(new_range % s1);
+        let nidx = graph_rewrite ~ctx:subs u merge_rewrite in
+        (* Return after one merge, so that the next rewrite merges the new
+           ranges, not stale pairs of the old ones. *)
+        if count_divmod nidx <= count_divmod u then Some nidx else None
+      end
+      else None)
+    pairs
 
 let mark_gated ctx idx =
-  match U.as_index idx with
-  | None -> ()
-  | Some { idxs = first :: _; _ } when U.op first = Ops.Where ->
-      mark_gated_value ctx first
-  | Some _ -> mark_gated_value ctx idx
-
-let mark_unshrinkable ctx r =
-  U.Ref_tbl.replace ctx r (Some (range_size r))
-
-let simplify_ranges_rule ctx node =
-  match U.op node with
-  | Ops.End | Ops.Reduce ->
-      (match simplify_merge_adjacent node with
-       | Some _ as merged -> merged
-       | None ->
-           Option.iter (fun (v : U.reduce_view) ->
-             List.iter (mark_unshrinkable ctx) v.ranges)
-             (U.as_reduce node);
-           None)
-  | Ops.Index -> mark_gated ctx node; None
-  | Ops.Sink ->
-      do_substitute ctx node ~sub:(fun r c -> range_with_size r c)
-  | _ -> None
-
-(* Drive [simplify_ranges_rule] + [flatten_range] to a fixed point. *)
-let simplify_ranges root =
-  let rec loop u =
-    let ctx : U.t option U.Ref_tbl.t = U.Ref_tbl.create 16 in
-    let u' =
-      U.graph_rewrite ~name:"simplify ranges"
-        (fun n ->
-          match flatten_range n with
-          | Some _ as r -> r
-          | None -> simplify_ranges_rule ctx n)
-        u
-    in
-    if U.equal u u' then u else loop u'
+  let guards = Tbl.create 4 in
+  let x =
+    match src idx with
+    | _ :: v :: _ when op v = Op.Where ->
+        List.iter
+          (fun g ->
+            match src g with
+            | [ r; c ]
+              when op g = Op.Cmplt && op r = Op.Range && op c = Op.Const ->
+                Tbl.replace guards r c
+            | _ -> ())
+          (split_uop (get_valid v) Op.And);
+        get_idx v
+    | _ -> idx
   in
-  loop root
+  (* The greatest bound [c] over the guards [r < c]... *)
+  Tbl.iter
+    (fun r c ->
+      match Tbl.find_opt ctx r with
+      | Some b when not V.(vmax b < vmax c) -> ()
+      | _ -> Tbl.replace ctx r c)
+    guards;
+  (* ...but a range that is ever unguarded cannot shrink. *)
+  List.iter
+    (fun r -> if not (Tbl.mem guards r) then Tbl.replace ctx r (nth r 0))
+    (Nodes.to_list (ranges x))
 
-(* Split ranges *)
-
-(* Split [range(N) floormod C] into [outer(N//C) * C + inner(C)] whenever
-   [C] divides [range_size]. *)
-
-(* Ranges that are not looped over (warp lanes, the device axis) cannot be
-   split. *)
-let can_split_range r c =
-  is_range r && is_const c
-  && range_kind r <> Axis_type.Warp
-  && range_kind r <> Axis_type.Device
-  && is_const (range_size r)
-  &&
-  match const_int_value c with
-  | Some n -> U.divides (range_size r) n <> None
-  | None -> false
-
-let split_ranges_rule ctx node =
-  match U.op node with
-  | Ops.Floormod ->
-      let r = (U.src node).(0) and c = (U.src node).(1) in
-      if not (U.Ref_tbl.mem ctx r) && can_split_range r c then
-        U.Ref_tbl.replace ctx r (Some c);
-      None
-  | Ops.Sink ->
-      do_substitute ctx node ~sub:(fun r c ->
-        let open U.Promoting in
-        let outer_size = range_size r // c in
-        let (outer, inner) = range_split r ~outer_size ~inner_size:c in
-        (outer * c) + inner)
-  | _ -> None
-
-let split_ranges root =
-  let rec loop u =
-    let ctx : U.t option U.Ref_tbl.t = U.Ref_tbl.create 16 in
-    let u' =
-      U.graph_rewrite ~name:"split ranges"
-        (fun n ->
-          match split_ranges_rule ctx n with
-          | Some _ as r -> r
-          | None -> flatten_range n)
-        u
-    in
-    if U.equal u u' then u else loop u'
-  in
-  loop root
-
-(* Reduce unparented *)
-
-(* Remove ranges from a REDUCE that aren't referenced in the reduce
-   source. ADD: compensate with a multiplication by the range size.
-   MUL: compensate by exponentiating. MAX: no compensation. *)
-let reduce_unparented node =
-  match U.as_reduce node with
-  | Some { op; src; ranges; _ }
-    when (op = Ops.Add || op = Ops.Max || op = Ops.Mul)
-         && List.for_all is_range ranges ->
-      let src_ranges = U.ranges src in
-      let parented, unparented =
-        List.partition (fun r -> mem_phys r src_ranges) ranges
+let do_substitute ctx x sub =
+  match arg x with
+  (* Only the kernel's root: rewriting a nested sink would leave the binders of
+     its enclosing end unchanged. *)
+  | No_arg -> None
+  | _ ->
+      let ret =
+        substitute x (Tbl.fold (fun k v acc -> (k, sub k v) :: acc) ctx [])
       in
-      if unparented = [] then None
-      else
-        let ret =
-          if parented <> [] then U.reduce ~op ~src ~ranges:parented
-          else src
-        in
-        let compensate binop acc r = binop acc (range_size r) in
-        let ret = match op with
-          | Ops.Add ->
-              List.fold_left (compensate U.Promoting.( * )) ret unparented
-          | Ops.Mul ->
-              List.fold_left (compensate U.Promoting.pow) ret unparented
-          | _ -> ret
-        in
-        Some ret
+      Tbl.reset ctx;
+      if ret == x then None else Some (simplify ret)
+
+let pm_simplify_ranges =
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v ~op:(Op.Set.of_list [ Op.End; Op.Reduce ]) ~name:"u" ())
+        (fun m -> simplify_merge_adjacent (m "u"));
+      rule_ctx (Upat.op Op.Index ~name:"idx") (fun ctx m ->
+          mark_gated ctx (m "idx");
+          None);
+      (* Reduction ranges cannot shrink. *)
+      rule_ctx (Upat.op Op.Reduce ~name:"red") (fun ctx m ->
+          List.iter
+            (fun r -> Tbl.replace ctx r (nth r 0))
+            (List.tl (src (m "red")));
+          None);
+      rule_ctx (Upat.op Op.Sink ~name:"x") (fun ctx m ->
+          do_substitute ctx (m "x") (fun r c -> replace r ~src:[ c ]));
+    ])
+
+let mark_range_mod ctx r c =
+  (* A range that is not looped over cannot be split. *)
+  match value c with
+  | `Int n
+    when (not (Tbl.mem ctx r))
+         && (not (List.mem (axis_type r) Axis_type.[ Warp; Device ]))
+         && op (nth r 0) = Op.Const
+         && Option.is_some (divides (nth r 0) n) ->
+      Tbl.replace ctx r c
+  | _ -> ()
+
+let split k v =
+  let axis_id = axis_id k and axis_type = axis_type k in
+  let part i size =
+    replace k ~src:[ size ]
+      ~arg:(Range { axis_id = axis_id @ [ i ]; axis_type })
+  in
+  O.((part 0 (nth k 0 // v) * v) + part 1 v)
+
+let pm_split_ranges =
+  Pattern_matcher.v
+    (fun () -> [
+      rule_ctx
+        Upat.O.(Upat.op Op.Range ~name:"r" % Upat.cvar "c")
+        (fun ctx m ->
+          mark_range_mod ctx (m "r") (m "c");
+          None);
+      rule_ctx (Upat.op Op.Sink ~name:"x") (fun ctx m ->
+          do_substitute ctx (m "x") split);
+    ])
+
+(* Reductions *)
+
+let no_range u = not (op_in_backward_slice_with_self u [ Op.Range ])
+
+let reduce_unparented red =
+  match arg red with
+  | Reduce { op = (Op.Add | Op.Max | Op.Mul) as rop; _ } -> (
+      let value, rngs = (nth red 0, List.tl (src red)) in
+      if not (List.for_all (fun x -> op x = Op.Range) rngs) then
+        invalid_arg "some reduce srcs aren't ranges";
+      let within = ranges value in
+      match List.partition (fun x -> Nodes.mem x within) rngs with
+      | _, [] -> None
+      | parented, unparented ->
+          let ret =
+            if List.is_empty parented then value
+            else replace red ~src:(value :: parented)
+          in
+          Some
+            (List.fold_left
+               (fun ret r ->
+                 match rop with
+                 | Op.Add -> O.(ret * nth r 0)
+                 | Op.Mul -> pow ret (nth r 0)
+                 | _ -> ret)
+               ret unparented))
   | _ -> None
 
 let pm_reduce_unparented =
-  let open Upat in
-  Pattern_matcher.make [
-    op ~name:"red" Ops.Reduce => (fun bs -> reduce_unparented (bs $ "red"));
-  ]
-
-(* Reduce collapse *)
-
-(* Toposort of [root]'s DAG restricted to nodes satisfying [gate]. *)
-let toposort_gated gate root =
-  let visited = U.Ref_tbl.create 64 in
-  let order = ref [] in
-  let rec visit node =
-    if not (U.Ref_tbl.mem visited node) && gate node then begin
-      U.Ref_tbl.replace visited node ();
-      Array.iter visit (U.src node);
-      order := node :: !order
-    end
-  in
-  visit root;
-  List.rev !order
-
-let as_lowered_add_reduce u =
-  match U.as_reduce u with
-  | Some ({ op = Ops.Add; num_axes = 0; _ } as v) -> Some v
-  | _ -> None
-
-(* sum over r in [0,N) of [lower <= r < upper] * val collapses to
-   [max(min(upper,N) - max(lower,0), 0) * val]. *)
-let clamp_count ?lower ?upper r =
-  let open U.Promoting in
-  let n = range_size r in
-  let zero = U.const_int 0 in
-  let hi = match upper with Some u -> minimum u n | None -> n in
-  let lo =
-    match lower with Some l -> maximum l zero | None -> U.const_like r 0
-  in
-  maximum (hi - lo) zero
-
-(* [x + y < c -> x < (c - y)] when [y] and [c] carry no ranges. *)
-let rule_lift_add_lt =
-  let open Upat in
-  let x = var "x" and y = var "y" and c = var "c" in
-  O.(x + y < c) => fun bs ->
-    let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-    if no_range y && no_range c then Some U.Promoting.(x < c - y) else None
-
-(* [x * y < c -> x < (c + y - 1) // y] when [y] and [c] carry no ranges,
-   [y]'s dtype is integral, and [y.vmin > 0]. *)
-let rule_lift_mul_lt =
-  let open Upat in
-  let x = var "x" and y = var "y" and c = var "c" in
-  O.(x * y < c) => fun bs ->
-    let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-    if no_range y && no_range c && Dtype.is_int (U.dtype y) && Bound.lt (Bound.int 0) (U.vmin y)
-    then
-      Some U.Promoting.(x < (c + y - U.const_int 1) // y)
-    else None
-
-(* [(r < cut).where(0, val)].reduce(r, Add) *)
-let rule_reduce_fold_lower =
-  let open Upat in
-  let r = op ~name:"r" Ops.Range
-  and cut = var "cut" and z = var "zero" and v = var "val" in
-  let w = where O.(r < cut) z v in
-  op ~src:[ w; var "r" ] ~name:"red" Ops.Reduce
-  => fun bs ->
-    let red = bs $ "red" and r = bs $ "r"
-    and cut = bs $ "cut" and v = bs $ "val" and z = bs $ "zero" in
-    if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
-       || not (is_zero_const z) then None
-    else
-      Some U.Promoting.(clamp_count ~lower:cut r * v)
-
-(* [((r < lower).not & (r < upper)).where(val, 0)].reduce(r, Add) *)
-let rule_reduce_fold_between =
-  let open Upat in
-  let r = op ~name:"r" Ops.Range in
-  let lower = var "lower" and upper = var "upper" and v = var "val"
-  and z = var "zero" in
-  let not_lt = op ~src:[ O.(r < lower); true_ ] Ops.Cmpne in
-  let cond = alu [ not_lt; O.(r < upper) ] Ops.And in
-  let w = where cond v z in
-  op ~src:[ w; var "r" ] ~name:"red" Ops.Reduce
-  => fun bs ->
-    let red = bs $ "red" and r = bs $ "r" and lower = bs $ "lower"
-    and upper = bs $ "upper" and v = bs $ "val" and z = bs $ "zero" in
-    if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
-       || not (is_zero_const z) then None
-    else
-      Some U.Promoting.(clamp_count ~lower ~upper r * v)
-
-(* [(r < cut).where(val, 0)].reduce(r, Add) *)
-let rule_reduce_fold_upper =
-  let open Upat in
-  let r = op ~name:"r" Ops.Range
-  and cut = var "cut" and v = var "val" and z = var "zero" in
-  let w = where O.(r < cut) v z in
-  op ~src:[ w; var "r" ] ~name:"red" Ops.Reduce
-  => fun bs ->
-    let red = bs $ "red" and r = bs $ "r"
-    and cut = bs $ "cut" and v = bs $ "val" and z = bs $ "zero" in
-    if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
-       || not (is_zero_const z) then None
-    else
-      Some U.Promoting.(clamp_count ~upper:cut r * v)
-
-(* [WHERE(cond, x, Invalid)].reduce(r, Add) lifts the gate out of the
-   reduce when [cond] does not depend on the reduced ranges: every lane
-   agrees on it, so it can be tested once around the whole sum. *)
-let rule_reduce_invalid_gate =
-  let open Upat in
-  let cond = var "cond" and x = var "x" and i = var "i" in
-  op ~src:[ where cond x i ] ~name:"red" ~allow_any_len:true Ops.Reduce
-  => fun bs ->
-    let red = bs $ "red" and cond = bs $ "cond" and x = bs $ "x"
-    and i = bs $ "i" in
-    match as_lowered_add_reduce red with
-    | Some { ranges; _ } when is_invalid i && no_range cond ->
-        Some
-          (U.alu_ternary ~op:Ops.Where ~a:cond
-             ~b:(U.reduce ~op:Ops.Add ~src:x ~ranges)
-             ~c:i)
-    | _ -> None
-
-(* [(x + y).reduce(r, Add) -> x.reduce(r) + y.reduce(r)]. *)
-let rule_reduce_split_add =
-  let open Upat in
-  let x = var "x" and y = var "y" in
-  op ~src:[ O.(x + y) ] ~name:"red" ~allow_any_len:true Ops.Reduce
-  => fun bs ->
-    let red = bs $ "red" and x = bs $ "x" and y = bs $ "y" in
-    match as_lowered_add_reduce red with
-    | None -> None
-    | Some { ranges; _ } ->
-        Some
-          (U.alu_binary ~op:Ops.Add
-             ~lhs:(U.reduce ~op:Ops.Add ~src:x ~ranges)
-             ~rhs:(U.reduce ~op:Ops.Add ~src:y ~ranges))
-
-(* [(x & y).where(c, 0)].reduce(Add) -> y.where(c, 0).reduce * x.
-
-   [x] stays bool rather than being cast to the reduce's dtype: the product
-   takes its dtype from the promotion, and a cast here would be re-consumed by
-   [rule_mul_casted_bool], which turns [v * gate.cast] straight back into a
-   WHERE. *)
-let rule_reduce_and_where =
-  let open Upat in
-  let x = ops ~name:"x" [ Ops.Param; Ops.Buffer ]
-  and y = var "y" and c = var "c" and z = var "zero" in
-  let w = where (alu [ x; y ] Ops.And) c z in
-  op ~src:[ w ] ~name:"red" ~allow_any_len:true Ops.Reduce
-  => fun bs ->
-    let red = bs $ "red" and x = bs $ "x"
-    and y = bs $ "y" and c = bs $ "c" and z = bs $ "zero" in
-    match as_lowered_add_reduce red with
-    | None -> None
-    | Some { ranges; _ } ->
-        if not (is_zero_const z) then None
-        else
-          let body =
-            U.alu_ternary ~op:Ops.Where ~a:y ~b:c ~c:(U.zero_like c)
-          in
-          Some
-            (U.alu_binary ~op:Ops.Mul
-               ~lhs:(U.reduce ~op:Ops.Add ~src:body ~ranges)
-               ~rhs:x)
-
-(* [x * gate.cast] with [gate:bool] -> [gate.where(x, 0)]. *)
-let rule_mul_casted_bool =
-  let open Upat in
-  let x = var "x" and gate = var_dtype "gate" (exact_dtype Dtype.bool) in
-  let body bs =
-    let x = bs $ "x" and gate = bs $ "gate" in
-    Some (U.alu_ternary ~op:Ops.Where ~a:gate ~b:x ~c:(U.zero_like x))
-  in
-  [ O.(x * cast gate) => body; O.(cast gate * x) => body ]
-
-let pm_reduce_collapse =
-  Upat.Pattern_matcher.(
-    pm_reduce_unparented
-    ++ make
-         ([
-             rule_lift_add_lt;
-             rule_lift_mul_lt;
-             rule_reduce_fold_lower;
-             rule_reduce_fold_between;
-             rule_reduce_fold_upper;
-             rule_reduce_invalid_gate;
-             rule_reduce_split_add;
-             rule_reduce_and_where;
-           ]
-         @ rule_mul_casted_bool)
-    ++ symbolic)
-
-(* Reduce load collapse *)
-
-(* [(x + y).or_casted != c -> x != (c.cast(y.dtype) - y)]. *)
-let rule_lift_add_ne =
-  let open Upat in
-  let x = var "x" and y = var "y" and c = var "c" in
-  let add = O.(x + y) in
-  let body bs =
-    let y = bs $ "y" and c = bs $ "c" in
-    if no_range y && no_range c then
-      let x = bs $ "x" in
-      Some U.Promoting.(ne x (U.cast ~src:c ~dtype:(U.dtype y) - y))
-    else None
-  in
-  [ O.(ne add c) => body; O.(ne (cast add) c) => body ]
-
-(* [(idx != r.or_casted).where(0, expr)].reduce(r, Add) lifts a gated
-   tensor load: replace [r] in [expr] with [idx.valid(cond)]. *)
-let rule_reduce_gated_load_ne =
-  let open Upat in
-  let r = op ~name:"r" Ops.Range in
-  let idx = var "idx" and expr = var "expr" in
-  let body bs =
-    let r = bs $ "r" and idx = bs $ "idx" and expr = bs $ "expr" in
-    let r_dt = U.dtype r in
-    let idx_cast = U.cast ~src:idx ~dtype:r_dt in
-    let zero_cast = U.cast ~src:(U.const_int 0) ~dtype:r_dt in
-    let lo =
-      U.alu_binary ~op:Ops.Cmpne
-        ~lhs:(U.alu_binary ~op:Ops.Cmplt ~lhs:idx_cast ~rhs:zero_cast)
-        ~rhs:(U.const_bool true)
-    in
-    let hi =
-      U.alu_binary ~op:Ops.Cmplt ~lhs:idx_cast ~rhs:(range_size r)
-    in
-    let v = U.alu_binary ~op:Ops.And ~lhs:lo ~rhs:hi in
-    let valid_idx =
-      U.alu_ternary ~op:Ops.Where ~a:v ~b:idx_cast ~c:(U.invalid ())
-    in
-    Some
-      (U.alu_ternary ~op:Ops.Where ~a:v
-         ~b:(U.substitute [ (r, valid_idx) ] expr)
-         ~c:(U.zero_like expr))
-  in
-  [
-    op ~src:[ where O.(ne idx r) (var "zero") expr; var "r" ]
-      ~name:"red" Ops.Reduce
-    => (fun bs ->
-         match as_lowered_add_reduce (bs $ "red") with
-         | Some _ when is_zero_const (bs $ "zero") -> body bs
-         | _ -> None);
-    op ~src:[ where O.(ne idx (cast r)) (var "zero") expr; var "r" ]
-      ~name:"red" Ops.Reduce
-    => (fun bs ->
-         match as_lowered_add_reduce (bs $ "red") with
-         | Some _ when is_zero_const (bs $ "zero") -> body bs
-         | _ -> None);
-    op ~src:[ where (alu [ idx; r ] Ops.Cmpeq) expr (var "zero"); var "r" ]
-      ~name:"red" Ops.Reduce
-    => (fun bs ->
-         match as_lowered_add_reduce (bs $ "red") with
-         | Some _ when is_zero_const (bs $ "zero") -> body bs
-         | _ -> None);
-    op ~src:[ where (alu [ idx; cast r ] Ops.Cmpeq) expr (var "zero"); var "r" ]
-      ~name:"red" Ops.Reduce
-    => (fun bs ->
-         match as_lowered_add_reduce (bs $ "red") with
-         | Some _ when is_zero_const (bs $ "zero") -> body bs
-         | _ -> None);
-  ]
-
-let pm_reduce_load_collapse =
-  Upat.Pattern_matcher.(
-    pm_reduce_collapse
-    ++ make (rule_lift_add_ne @ rule_reduce_gated_load_ne))
-
-(* Reduce collapse driver *)
-
-(* For each range in a REDUCE: isolate the range-dependent subgraph,
-   replace externals with PARAM proxies, rebuild a standalone Reduce,
-   simplify with [pm], and substitute back. *)
-
-let is_leaf n =
-  is_const n || match U.op n with
-  | Ops.Const | Ops.Param | Ops.Buffer | Ops.Alloc -> true
-  | _ -> false
-
-let has_store_or_reduce nodes =
-  List.exists (fun x ->
-    match U.op x with Ops.Store | Ops.Reduce -> true | _ -> false) nodes
-
-let collect_proxies ~included ~in_set =
-  let proxies = U.Ref_tbl.create 16 in
-  let n = ref 0 in
-  List.iter (fun u_node ->
-    Array.iter (fun s ->
-      if not (U.Ref_tbl.mem in_set s
-              || U.Ref_tbl.mem proxies s
-              || is_leaf s) then begin
-        let dv =
-          U.param ~slot:(-1) ~name:(Printf.sprintf "in%d" !n)
-            ~vmin_vmax:(U.vmin s, U.vmax s) ~shape:(U.stack [])
-            ~multiple_of:1 ~addrspace:Dtype.Alu ~dtype:(U.dtype s) ()
-        in
-        U.Ref_tbl.replace proxies s dv;
-        incr n
-      end) (U.src u_node)) included;
-  proxies
-
-let rewrite_fixpoint ~name pm root =
-  let rewrite_once u =
-    U.graph_rewrite ~name (Upat.Pattern_matcher.rewrite pm) u
-  in
-  let rec loop fuel u =
-    if fuel = 0 then u
-    else
-      let u' = rewrite_once u in
-      if U.equal u u' then u else loop (fuel - 1) u'
-  in
-  loop 16 root
-
-let reduce_collapse_inner ~pm red u =
-  match U.as_reduce red with
-  | Some { op = Ops.Add; ranges; _ } ->
-      let result = ref u in
-      let failed = ref false in
-      List.iter (fun r ->
-        if not !failed then begin
-          let included =
-            toposort_gated (fun x -> mem_phys r (U.ranges x)) !result
-          in
-          if has_store_or_reduce included then failed := true
-          else begin
-            let in_set = U.Ref_tbl.create 32 in
-            List.iter (fun x -> U.Ref_tbl.replace in_set x ()) included;
-            let proxies = collect_proxies ~included ~in_set in
-            let fwd =
-              U.Ref_tbl.fold (fun k v acc -> (k, v) :: acc) proxies []
-            in
-            let collapse_fxn =
-              U.reduce ~op:Ops.Add ~ranges:[ r ]
-                ~src:(U.substitute fwd !result)
-            in
-            let sink =
-              rewrite_fixpoint ~name:"reduce_collapse" pm collapse_fxn
-            in
-            if not (no_range sink) then failed := true
-            else
-              let rev =
-                U.Ref_tbl.fold (fun k v acc -> (v, k) :: acc) proxies []
-              in
-              result := U.substitute rev sink
-          end
-        end) ranges;
-      if !failed || !result == u then None else Some !result
-  | _ -> None
-
-let reduce_collapse red u = reduce_collapse_inner ~pm:pm_reduce_collapse red u
-
-let reduce_load_collapse red u =
-  reduce_collapse_inner ~pm:pm_reduce_load_collapse red u
-
-(* Reduce simplify *)
-
-let pm_reduce_simplify =
-  let open Upat in
-  Upat.Pattern_matcher.(
-    pm_reduce_unparented
-    ++ make [
-      op ~src:[ var "u" ] ~allow_any_len:true ~name:"red" Ops.Reduce
-      => (fun bs ->
-           let red = bs $ "red" in
-           match as_lowered_add_reduce red with
-           | Some _ -> reduce_collapse red (bs $ "u")
-           | None -> None);
+  Pattern_matcher.v
+    (fun () -> [
+      rule (Upat.op Op.Reduce ~name:"red") (fun m ->
+          reduce_unparented (m "red"));
     ])
 
-(* Load collapse *)
+(* The sum of [value] over the part of [r] within [lower, upper). A float sum of
+   no terms is 0 whatever the value, where 0 times an infinity is NaN. *)
+let sum_between ?lower ?upper r value =
+  if not (no_range value) then None
+  else
+    let size = nth r 0 in
+    let hi = match upper with Some u -> minimum u size | None -> size in
+    let lo =
+      match lower with
+      | Some l -> maximum l (int 0)
+      | None -> const_like r (`Int Bigint.zero)
+    in
+    let count = maximum O.(hi - lo) (int 0) in
+    if Dtype.is_float (dtype value) then
+      Some
+        (where
+           O.(int 0 < count)
+           O.(count * value)
+           (const_like value (`Float 0.)))
+    else Some O.(count * value)
 
-(* Undo the inner-lift rule on index expressions that carry a load:
-   math on a loaded index can overflow. *)
-let rule_undo_add_lt_on_load =
-  let open Upat in
-  let x = var_dtype "x" (exact_dtype Dtype.weakint)
-  and y = var "y"
-  and c = var "c" in
-  O.(x + y < c) => fun bs ->
-    let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-    if no_load y && no_load c && not (no_load x) then
-      Some U.Promoting.(x < c - y)
-    else None
+(* Solving [x + y] against [c] for [x] computes [x + y] and [c - y], which is
+   exact for integers where neither wraps. *)
+let solves_sum x y c =
+  Dtype.is_int (dtype y)
+  && exact (dtype y)
+       V.[ vmin x + vmin y; vmax x + vmax y; vmin c - vmax y; vmax c - vmin y ]
 
+let pm_reduce_collapse =
+  let var = Upat.var and zero = Upat.O.int 0 in
+  let range = Upat.op Op.Range ~name:"r" in
+  let sum p = Upat.reduce ~op:Op.Add p [ var "r" ] in
+  let sum_any p = Upat.reduce ~name:"r" ~op:Op.Add ~allow_any_len:true p [] in
+  let over r x = reduce x Op.Add (List.tl (src r)) in
+  Pattern_matcher.concat
+    [
+      pm_reduce_unparented;
+      Pattern_matcher.v
+        (fun () -> [
+          (* Lift x + y out of a reduction on a comparison. *)
+          rule
+            Upat.O.(var "x" + var "y" < var "c")
+            (fun m ->
+              let x = m "x" and y = m "y" and c = m "c" in
+              if no_range y && no_range c && solves_sum x y c then
+                Some O.(x < c - y)
+              else None);
+          (* Lift x * y out of a reduction, where nothing wraps. *)
+          rule
+            Upat.O.(var "x" * var "y" < var "c")
+            (fun m ->
+              let x = m "x" and y = m "y" and c = m "c" in
+              let products =
+                List.concat_map
+                  (fun a -> V.[ a * vmin y; a * vmax y ])
+                  [ vmin x; vmax x ]
+              and ceilings =
+                V.[ vmin c + vmin y - of_int 1; vmax c + vmax y - of_int 1 ]
+              in
+              if
+                no_range y && no_range c
+                && Dtype.is_int (dtype y)
+                && V.(vmin y > of_int 0)
+                && exact (dtype y) (products @ ceilings)
+              then Some O.(x < (c + y - int 1) // y)
+              else None);
+          (* The sum over r in [0, n) of [lower <= r < upper] * value is max
+             (min upper n - max lower 0) 0 * value. *)
+          rule
+            (sum (Upat.where Upat.O.(range < var "upper") (var "val") zero))
+            (fun m -> sum_between ~upper:(m "upper") (m "r") (m "val"));
+          rule
+            (sum (Upat.where Upat.O.(range < var "lower") zero (var "val")))
+            (fun m -> sum_between ~lower:(m "lower") (m "r") (m "val"));
+          rule
+            (sum
+               (Upat.where
+                  Upat.O.(
+                    Upat.logical_not (var "r" < var "lower")
+                    land (range < var "upper"))
+                  (var "val") zero))
+            (fun m ->
+              sum_between ~lower:(m "lower") ~upper:(m "upper") (m "r")
+                (m "val"));
+          rule
+            (sum_any Upat.O.(var "x" + var "y"))
+            (fun m ->
+              let r = m "r" in
+              Some O.(over r (m "x") + over r (m "y")));
+          (* AND on a selection. *)
+          rule
+            (sum_any
+               (Upat.where
+                  Upat.O.(Upat.op Op.Param ~name:"x" land var "y")
+                  (var "c") zero))
+            (fun m ->
+              Some O.(over (m "r") (where (m "y") (m "c") (int 0)) * m "x"));
+          (* A multiplication by a boolean cast, for integers: a float product
+             by 0 is NaN at an infinity and -0. at a negative x. *)
+          rule
+            Upat.O.(
+              var ~dtype:(Dtype.Bool :: Dtype.Weak_int :: Dtype.ints) "x"
+              * Upat.f (var ~dtype:[ Dtype.Bool ] "gate") Op.Cast)
+            (fun m -> Some (where (m "gate") (m "x") (int 0)));
+        ]);
+      Symbolic.symbolic;
+    ]
+
+let pm_reduce_load_collapse =
+  let var = Upat.var in
+  Pattern_matcher.concat
+    [
+      pm_reduce_collapse;
+      Pattern_matcher.v
+        (fun () -> [
+          (* Lift x + y out of a reduction on an inequality, where no cast
+             narrows. *)
+          rule
+            Upat.O.(Upat.or_casted ~name:"s" (var "x" + var "y") <> var "c")
+            (fun m ->
+              let x = m "x" and y = m "y" and c = m "c" in
+              let dt = dtype y in
+              if
+                no_range y && no_range c && solves_sum x y c
+                && Dtype.can_lossless_cast dt (dtype (m "s"))
+                && exact dt [ vmin c; vmax c ]
+              then Some O.(x <> cast c dt - y)
+              else None);
+          (* A sum of a load gated on its index equal to the range is the load
+             at that index. *)
+          rule
+            (Upat.reduce ~op:Op.Add
+               (Upat.where
+                  Upat.O.(
+                    var "idx" <> Upat.or_casted (Upat.op Op.Range ~name:"r"))
+                  (Upat.O.int 0) (var "expr"))
+               [ var "r" ])
+            (fun m ->
+              let r = m "r" and expr = m "expr" in
+              let idx = cast (m "idx") (dtype r) in
+              let v = O.((idx >= int 0) land (idx < nth r 0)) in
+              Some (where v (substitute expr [ (r, valid idx v) ]) (int 0)));
+        ]);
+    ]
+
+let reduce_collapse ?(pm = pm_reduce_collapse) red u =
+  let rec collapse u = function
+    | [] -> Some u
+    | r :: rest ->
+        let included = toposort ~gate:(fun x -> Nodes.mem r (ranges x)) u in
+        if List.exists (fun x -> op x = Op.Store || op x = Op.Reduce) included
+        then None
+        else
+          let inside = Tbl.create 64 in
+          List.iter (fun x -> Tbl.replace inside x ()) included;
+          let replaces = Tbl.create 16 and order = ref [] in
+          List.iter
+            (fun x ->
+              List.iter
+                (fun s ->
+                  if
+                    not
+                      (Tbl.mem inside s
+                      || (Tbl.mem replaces s
+                         || List.mem (op s) Op.[ Const; Param; Buffer; Alloc ]
+                         )
+                         [@mutate
+                           off
+                             "a constant, parameter or replaced node folds \
+                              back unchanged"])
+                  then begin
+                    let name = Printf.sprintf "in%d" (Tbl.length replaces) in
+                    let v = variable ~dtype:(dtype s) name (vmin s) (vmax s) in
+                    Tbl.replace replaces s v;
+                    order := (s, v) :: !order
+                  end)
+                (src x))
+            included;
+          let sink =
+            graph_rewrite ~ctx:() (reduce (substitute u !order) Op.Add [ r ]) pm
+          in
+          if not (no_range sink) then None
+          else
+            collapse
+              (substitute sink (List.map (fun (k, v) -> (v, k)) !order))
+              rest
+  in
+  collapse u (List.tl (src red))
+
+(* Remove a reduction without loads: arange and indexing. *)
+let pm_reduce_simplify =
+  Pattern_matcher.concat
+    [
+      pm_reduce_unparented;
+      Pattern_matcher.v
+        (fun () -> [
+          rule
+            (Upat.op Op.Reduce ~name:"red" ~allow_any_len:true
+               ~arg:(Reduce { op = Op.Add; num_axes = 0 })
+               ~src:[ Upat.var "u" ])
+            (fun m -> reduce_collapse (m "red") (m "u"));
+        ]);
+    ]
+
+let no_load u = not (op_in_backward_slice_with_self u [ Op.Index ])
+
+(* Remove a reduction on a load, from indexing a tensor with another. *)
 let pm_load_collapse =
-  let open Upat in
-  Upat.Pattern_matcher.make [
-    (op ~src:[ var "u"; any ] ~name:"red" Ops.Reduce
-     => (fun bs ->
-          let red = bs $ "red" in
-          match as_lowered_add_reduce red with
-          | Some _ -> reduce_load_collapse red (bs $ "u")
-          | None -> None));
-    rule_undo_add_lt_on_load;
-  ]
-
-(* Drivers *)
-
-(* Whole-tree rewriter for a single pattern matcher. *)
-let apply pm root = U.graph_rewrite (Upat.Pattern_matcher.rewrite pm) root
-
-let reduce_unparented_all root = apply pm_reduce_unparented root
-
-let reduce_simplify_all root = apply pm_reduce_simplify root
-
-let load_collapse_all root = apply pm_load_collapse root
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.op Op.Reduce ~name:"red"
+           ~arg:(Reduce { op = Op.Add; num_axes = 0 })
+           ~src:[ Upat.var "u"; Upat.wild ])
+        (fun m -> reduce_collapse ~pm:pm_reduce_load_collapse (m "red") (m "u"));
+      (* No arithmetic on a loaded index, since it can overflow: this undoes the
+         lifting of pm_reduce_load_collapse. *)
+      rule
+        Upat.O.(
+          Upat.var ~dtype:[ Dtype.Weak_int ] "x" + Upat.var "y" < Upat.var "c")
+        (fun m ->
+          let x = m "x" and y = m "y" and c = m "c" in
+          if no_load y && no_load c && not (no_load x) then Some O.(x < c - y)
+          else None);
+    ])

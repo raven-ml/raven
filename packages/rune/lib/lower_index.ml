@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_next
+open Tolk
 
 let dtype = Ops.dtype
 let ints l = List.map (fun n -> Ops.Int n) l

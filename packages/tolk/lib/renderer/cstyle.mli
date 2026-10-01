@@ -5,156 +5,82 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** C-family language renderers.
+(** Renderers of the C family: kernels as C, Metal, CUDA and HIP source.
 
-    {!Renderer.t} values for C-style GPU and CPU backends: CUDA, HIP, Metal,
-    OpenCL, and Clang. Each renderer converts a {!Program_spec.program} into
-    backend-specific source code via {!Renderer.render}.
+    Each renderer writes a linearized kernel as one function of its language.
+    The function takes the kernel's parameters in order, each named after its
+    name, or [data] and its slot, followed by its shape: [data0_16]. Each loop
+    is a [for] loop, and each value is a local variable, unless it is used once
+    and cheap to repeat, in which case it is written into its user.
 
-    GPU renderers map canonical SPECIAL names ([gidxN], [lidxN], [idxN]) to
-    backend-specific workitem expressions (e.g., [blockIdx]/[threadIdx] for
-    CUDA, [get_global_id] for OpenCL, [gid]/[lid] for Metal). The CPU renderer
-    ({!clang}) has no GPU thread support.
+    A renderer's {!Renderer.t.render} raises [Invalid_argument] on a kernel that
+    holds a node its language cannot write, such as an operation the target
+    lacks natively ({!Renderer.t.code_for_op}): code generation decomposes those
+    before rendering.
 
-    See {!Renderer} for the renderer interface. *)
+    A floating-point division ({!Op.Fdiv}) is the language's [/] on every
+    target, whether or not the target lists it among its native operations: that
+    list only decides whether code generation turns a reciprocal into a
+    division.
 
-(** {1:cpu CPU} *)
+    Two settings are read once, when they are first needed:
+    - [EXPAND_SSA] (default [0]): when nonzero, every value is a local variable;
+    - [ALIGNED] (default [1]): when zero, {!clang}'s vector types are aligned to
+      one byte, so that buffers at any address can be passed. *)
 
-val clang : ?aligned:bool -> Gpu_target.cpu -> Renderer.t
-(** [clang arch] is a Clang/CPU renderer with SIMD support.
+val clang : Helpers.Target.t -> Renderer.t
+(** [clang target] renders C for Clang, for a CPU. [target]'s architecture is
+    written [ARCH,CPU[,FEATURES]], as ["x86_64,znver2"] or
+    ["arm64,apple-m1,-neon"], and chooses the compiler's flags.
 
-    Generates C code for host CPU execution using Clang extensions:
-    - [__builtin_convertvector] for vector casts.
-    - [__builtin_sqrtf], [__builtin_truncf], etc. for math.
+    The kernel is one thread with no workgroups. Vectors are Clang's vector
+    extension. Half floats are [__fp16], and bfloat16 values are converted to
+    and from floats with integer operations. The data types are those of
+    {!Dtype.all} without the 8-bit floats, and without {!Dtype.Bfloat16} unless
+    the architecture starts with [x86] or [arm]. On Windows the kernel uses
+    Microsoft's calling convention.
 
-    Emits a fixed-ABI wrapper
-    ([void name(const unsigned long long *bufs, const long long *vals)]) around
-    the kernel to avoid a libffi dependency at JIT time.
+    Raises [Invalid_argument] if the architecture has fewer than two fields or
+    is not [x86_64], [arm64] or [riscv64]. *)
 
-    Device is ["CPU"]. No GPU thread support ({!Renderer.has_local} is [false]).
-    No shared memory. [arch] selects the entry's calling convention: the
-    Microsoft one for x86-64 on a Windows host.
+val metal : Helpers.Target.t -> Renderer.t
+(** [metal target] renders Metal Shading Language for an Apple GPU. [target]'s
+    architecture is the GPU family, as ["Apple9"] or ["Mac2"].
 
-    bfloat16 is held as its bits, an [unsigned short], on every target, and
-    converted to and from float32 by integer operations: no C compiler
-    support for [__bf16] is needed, and a value moves bit for bit, NaN
-    payloads and subnormals included, where LLVM would widen and narrow a
-    [__bf16].
+    The kernel's parameters are the fields of one argument buffer. Families
+    [Apple7] and later have 8x8 tensor cores ({!Tc.metal}), and families
+    [Apple6] and later have {!Dtype.Bfloat16}. There is no 8-bit float and no
+    {!Dtype.Float64}.
 
-    [aligned] states whether vector types are declared aligned to their size
-    ([true]) or to one byte ([false]). A kernel whose vector types are aligned
-    may only be given buffers at addresses that are multiples of the widest
-    one; pass [false] for a device that binds memory it did not allocate. When
-    absent, the [ALIGNED] environment variable decides at each render: [0]
-    selects unaligned types, anything else aligned ones (the default).
+    Raises [Invalid_argument] if the architecture starts with [Apple] and is not
+    followed by an integer. *)
 
-    See also {!clang_no_abi} for tests and runtimes that intentionally bypass
-    the fixed ABI wrapper. *)
+val cuda : Helpers.Target.t -> Renderer.t
+(** [cuda target] renders CUDA C++ for an NVIDIA GPU, compiled with NVRTC.
+    [target]'s architecture is the compute capability, as ["sm_89"]. The
+    compiler produces PTX if [target]'s device is ["CUDA"], and a cubin
+    otherwise. Its cache table is named after the device.
 
-val clang_no_abi : Renderer.t
-(** [clang_no_abi] is {!clang} without the fixed-ABI wrapper.
+    A workgroup has at most 1024 by 1024 by 64 threads, a launch at most
+    [2^31 - 1] by 65535 by 65535 workgroups, and a workgroup shares 48 KiB of
+    memory. The tensor cores are those of the compute capability ({!Tc.cuda}).
+    {!Dtype.Float16} needs capability 53, {!Dtype.Bfloat16} 80, and the 8-bit
+    floats {!Dtype.fp8_ocp} 89. The [fnuz] floats are not supported. A
+    conversion to an 8-bit float keeps an infinity special: it stays an infinity
+    in {!Dtype.Fp8e5m2}, and becomes a NaN of its sign in {!Dtype.Fp8e4m3},
+    which has no infinity. A finite value too large for the format becomes its
+    greatest finite value of the same sign.
 
-    Generates a plain [void name(...)] signature with individual typed
-    parameters. This is a low-level renderer used by tests, golden generators,
-    and integrations that provide their own native calling convention.
+    Raises [Invalid_argument] if the architecture has no compute capability
+    after its first three characters. *)
 
-    See also {!clang}. *)
+val hip : Helpers.Target.t -> Renderer.t
+(** [hip target] renders HIP C++ for an AMD GPU, compiled with comgr. [target]'s
+    architecture is the gfx target, as ["gfx1100"] or
+    ["gfx942:sramecc+:xnack-"]; its part before the first [:] names the GPU.
 
-(** {1:opencl OpenCL} *)
-
-val opencl : Gpu_target.opencl -> Renderer.t
-(** [opencl arch] is an OpenCL renderer.
-
-    Generates OpenCL C code using [get_group_id], [get_local_id],
-    [get_global_id] for thread indexing. Kernel functions are annotated with
-    [__kernel], buffers with [__global], and shared memory with [__local].
-
-    Device is ["CL"]. Shared memory limit is 32KB.
-
-    [arch] is tinygrad's comma-separated OpenCL target architecture string. It
-    selects dtype capabilities: [cl_khr_fp16] enables float16, [cl_khr_fp64]
-    enables float64, fp8 is unsupported, and bfloat16 is represented through
-    the OpenCL bfloat16 rewrite path.
-
-    See also {!intel} and {!qcom}. *)
-
-val intel : Gpu_target.opencl -> Renderer.t
-(** [intel arch] is an Intel OpenCL renderer.
-
-    {!opencl} variant with [intel_reqd_sub_group_size(8)] for sub-group WMMA
-    operations. Uses Intel-specific bf16 conversion intrinsics
-    ([intel_convert_bfloat16_as_ushort], [intel_convert_as_bfloat16_float])
-    instead of manual bit manipulation.
-
-    Device is ["CL"]. Shared memory limit is 32KB. Tensor cores use 8x8x16 tiles
-    with 8 threads. [arch] follows {!opencl}'s extension-based dtype policy.
-
-    See also {!opencl}. *)
-
-val qcom : Renderer.t
-(** [qcom] is a Qualcomm OpenCL renderer for Adreno GPUs.
-
-    Identical to {!opencl} in code generation. The separate renderer allows
-    device-specific scheduling in codegen passes and carries a stricter dtype
-    capability policy: no fp8, bfloat16, or float64. Float16 is enabled only
-    when both [IMAGE] and [FLOAT16] are set, matching tinygrad's QCOM policy.
-
-    Device is ["QCOM"]. Shared memory limit is 32KB. *)
-
-(** {1:metal Metal} *)
-
-val metal : Gpu_target.metal -> Renderer.t
-(** [metal arch] is a Metal Shading Language renderer.
-
-    Generates MSL code with [threadgroup_position_in_grid] and
-    [thread_position_in_threadgroup] attributes for thread indexing. Uses
-    [threadgroup] storage for shared memory and [threadgroup_barrier] for
-    synchronization.
-
-    Device is ["METAL"]. Shared memory limit is 32KB.
-
-    [arch] selects tensor core capabilities, matching tinygrad's Metal target
-    policy: Apple GPU family 7 and newer expose simdgroup matrix operations;
-    older Apple families and Mac families do not. *)
-
-(** {1:cuda CUDA} *)
-
-val cuda : ?device:string -> Gpu_target.cuda -> Renderer.t
-(** [cuda arch] is a CUDA renderer for NVIDIA GPUs.
-
-    Generates CUDA C code using [blockIdx]/[threadIdx] for thread indexing. Uses
-    [extern "C" __global__] with [__launch_bounds__] when local dimensions are
-    known. Half-precision intrinsics ([hexp2], [hlog2], [hsqrt], etc.) are used
-    for float16 and bfloat16 transcendentals.
-
-    Device is [device] (default ["CUDA"]): the identifier a backend sharing
-    this renderer reports to codegen passes and caches. It does not affect the
-    emitted source. Shared memory limit is 48KB. Global grid max is
-    \[2{^ 31}-1, 65535, 65535\]. Local block max is \[1024, 1024, 64\].
-
-    [arch] selects tensor core and dtype capabilities:
-    - {!Gpu_target.SM75}: 8x16x8 tiles, f16 input.
-    - {!Gpu_target.SM80}: 8x16x16 tiles (f16, bf16) + 8x16x8 (f16, tf32).
-    - {!Gpu_target.SM89}: {!Gpu_target.SM80} + 8x16x32 tiles for fp8.
-    - {!Gpu_target.SM90}: same tiles as {!Gpu_target.SM89}. *)
-
-(** {1:amd AMD} *)
-
-val amd : Gpu_target.amd -> Renderer.t
-(** [amd arch] is an AMD HIP renderer.
-
-    Generates HIP code using OCKL work item functions ([__ockl_get_group_id],
-    [__ockl_get_local_id]) for thread indexing and OCML transcendentals
-    ([__ocml_*_f\{16,32,64\}]) for math. Uses [__builtin_amdgcn_fence] for
-    release-acquire barriers (unlike CUDA's [__syncthreads], AMD barriers do not
-    imply a fence). Bfloat16 is emulated via software bit manipulation. Fp8 uses
-    [__builtin_amdgcn_cvt_*] intrinsics.
-
-    Device is ["AMD"]. Shared memory limit is 64KB. Global grid max is
-    \[2{^ 31}-1, 65535, 65535\].
-
-    [arch] selects tensor core and dtype capabilities:
-    - {!Gpu_target.RDNA3}: WMMA 16x16x16, 32-thread wavefront.
-    - {!Gpu_target.RDNA4}: WMMA 16x16x16, gfx12 builtins.
-    - {!Gpu_target.CDNA3}: MFMA bf16, 16x16x16, 64-thread wavefront.
-    - {!Gpu_target.CDNA4}: MFMA fp8/bf16/f16, 16x16x128/32/16. *)
+    A launch has at most [2^31 - 1] by 65535 by 65535 workgroups and [2^32 - 1]
+    threads on each axis, and a workgroup shares 64 KiB of memory. The tensor
+    cores are those of the GPU ({!Tc.amd}). The 8-bit floats are the [fnuz] ones
+    on ["gfx942"] and {!Dtype.fp8_ocp} on ["gfx950"], and none elsewhere. A load
+    marked ["nontemporal"] bypasses the caches. *)

@@ -5,329 +5,76 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Linear execution and kernel dispatch.
+(** The calls of a schedule, and the compilation of their kernels.
 
-    {!run_linear} executes a {!Tolk_uop.Ops.Linear} node, resolving each
-    call's buffer arguments through owned storage and parameter slots.
+    A schedule is an {!Op.Linear} of calls ({!Schedule}). This module reads what
+    a call does (its buffers, its variables, what it writes, its name and its
+    cost) and compiles every kernel a schedule calls, in parallel. Encoding the
+    calls into the command queues of their devices is {!Hcq2}'s; running them is
+    the engine's. *)
 
-    See also {!Device.prog} for the low-level device dispatch
-    handle. *)
+(** {1:calls Calls} *)
 
-(** {1:runners Runners} *)
+val get_call_arg_uops : Ops.t -> Ops.t list
+(** [get_call_arg_uops call] is the buffer arguments of [call]: its arguments
+    without the bound variables. *)
 
-(** Common dispatch interface.
+val get_call_var_uops : Ops.t -> Ops.t -> Ops.t list
+(** [get_call_var_uops call prg] is the value of each variable of the program
+    [prg] ({!Ops.program_info.vars}), in order: the constant [call] binds it to,
+    or the variable itself when [call] leaves it free. *)
 
-    A runner wraps a single dispatchable operation (compiled kernel,
-    buffer copy, view). Dispatch takes a list of buffers and
-    name-keyed variable bindings and optionally returns execution
-    time. *)
-module Runner : sig
-  type t
-  (** The type for runners. *)
+val get_call_outs_ins : Ops.t -> int list * int list
+(** [get_call_outs_ins call] is the positions among {!get_call_arg_uops} of the
+    buffers [call] writes and of those it reads: a program's
+    ({!Ops.program_info.outs} and {!Ops.program_info.ins}), [([0], [1])] for a
+    copy, and [([], [])] for a call that submits command queues and for any
+    other call. *)
 
-  val make :
-    display_name:string ->
-    device:Device.t ->
-    ?estimates:Program_spec.Estimates.t ->
-    (Device.Buffer.t list -> (string * int64) list ->
-     wait:bool -> timeout:int option -> float option) ->
-    t
-  (** [make ~display_name ~device ?estimates call] is a runner that
-      dispatches via [call].
+val get_call_written_bufs : Ops.t -> Ops.t list
+(** [get_call_written_bufs call] is the storage ({!Op.Buffer}) [call] writes and
+    does not read, each once: for a call that submits command queues, its
+    {!Ops.hcq_info.written_bufs}; for another call, the storage of the outputs
+    that are not also inputs ({!get_call_outs_ins}), a shard selection standing
+    for the storage it selects from. *)
 
-      [estimates] defaults to {!Program_spec.Estimates.zero}. *)
+val get_call_name :
+  ?var_vals:(string * int) list -> Ops.t -> Ops.t list -> string
+(** [get_call_name ~var_vals call bufs] is how diagnostics name [call], whose
+    buffers are [bufs]: a program's kernel name, as its kernel gives it, or, for
+    a copy, ["copy S, D <- E"] in yellow, where [S] is the size copied with the
+    variables of [var_vals] (default [[]]) replaced by their values, and [D] and
+    [E] the first seven characters of each device of the destination and the
+    source.
 
-  val dev : t -> Device.t
-  (** [dev t] is [t]'s device. *)
+    Raises [Invalid_argument] for any other call. *)
 
-  val display_name : t -> string
-  (** [display_name t] is [t]'s human-readable name for debug
-      output. *)
+val estimate_uop : Ops.t -> Ops.estimates
+(** [estimate_uop call] is the cost of [call], seen through its {!Op.After}s: a
+    program's kernel estimates, the total of the kernels a call that submits
+    command queues enqueues, and, for a copy, its bytes as both memory touched
+    and bytes loaded and stored. Any other call costs nothing. *)
 
-  val estimates : t -> Program_spec.Estimates.t
-  (** [estimates t] is [t]'s cost estimates. *)
+(** {1:compiling Compiling} *)
 
-  val call :
-    t -> Device.Buffer.t list -> (string * int64) list ->
-    wait:bool -> timeout:int option -> float option
-  (** [call t bufs var_vals ~wait ~timeout] dispatches the operation
-      on [bufs] with variable bindings [var_vals].
+val lower_and_compile :
+  ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  targets:(string -> Helpers.Target.t) ->
+  Ops.t ->
+  Ops.t
+(** [lower_and_compile ~search ~targets linear] is [linear] with the body of
+    each call that is a kernel ({!Op.Sink} with {!Ops.kernel_info}) or a program
+    not yet compiled replaced by its compiled program ({!Codegen.to_program}),
+    for the renderer {!Device.renderer} picks for the device kind and
+    architecture of the target [targets d] of the call's device [d] (its first,
+    on several). The target's other fields are not read: the renderer is the one
+    the setting {!Helpers.dev} names for that kind, as for any device.
 
-      Returns [Some time] when [wait] is [true] and the backend
-      supports timing, [None] otherwise. *)
+    Each kernel is compiled once, the kernels in parallel on {!Worker.map},
+    except when there is only one, or when one asks for a beam search: the
+    search times candidates ([search]), which a concurrent compilation would
+    disturb, so the kernels are then compiled in order. [search] is
+    {!Codegen.to_program}'s [beam].
 
-  val exec :
-    t -> Device.Buffer.t list -> ?var_vals:(string * int64) list ->
-    unit -> float option
-  (** [exec t bufs ?var_vals ()] is {!call} with [~wait:false] and
-      [~timeout:None]. Always returns [None].
-
-      [var_vals] defaults to [[]]. *)
-end
-
-
-
-(** {1:buffer_copy Buffer copy} *)
-
-val buffer_copy :
-  device:Device.t ->
-  total_sz:int ->
-  dest_device:string ->
-  src_device:string ->
-  Runner.t
-(** [buffer_copy ~device ~total_sz ~dest_device ~src_device] is a
-    runner that copies data between buffers. It uses the destination
-    allocator's native transfer hook when {!Device.Buffer.supports_transfer}
-    holds, otherwise it falls back to a host-memory bounce. Allocators with
-    offset views stream large copies through 64 MiB chunks and synchronize
-    each upload to bound native staging memory, preserving overlapping-view
-    copy semantics. [dest_device]
-    and [src_device] are device names used in the display string.
-
-    Raises [Invalid_argument] if the two buffers differ in size or
-    dtype, or if the argument list does not contain exactly two
-    buffers. *)
-
-(** {1:compile Kernel compilation} *)
-
-val program_config : unit -> string
-(** [program_config ()] renders the current values of the settings that change
-    the program compiled from a fixed kernel: [NOOPT], [TC], [TC_SELECT],
-    [TC_OPT], [IMAGE], [DISABLE_FAST_IDIV], [TRANSCENDENTAL], [ALLOW_TF32],
-    [FLOAT16], the default float and int dtypes, the heuristic's [MV],
-    [MV_BLOCKSIZE], [MV_THREADS_PER_ROW], [MV_ROWS_PER_THREAD] and
-    [OCCUPANCY_FLOOR], memory coalescing's [DMC] and the startup value of
-    [ALLOW_HALF8], and the C renderer's [EXPAND_SSA] and [ALIGNED]. Two
-    compilations of one kernel on one renderer and compiler (whose cache key
-    records the CPU's [CC]) are interchangeable exactly when their
-    configurations are equal, so any cache of compiled programs must key on
-    it. *)
-
-val queue_config : ?profile:bool -> Device.t -> string
-(** [queue_config ?profile d] renders the settings a queue compilation for [d]
-    reads, as [KEY=value] pairs: [profile] (defaults to [DEBUG >= 2] or
-    [PROFILE=1]), which adds queue timestamps, [ALL2ALL] and [HCQ_NUM_SDMA],
-    which pick the copy queues, and [d]'s queue {!Device.queue.config}. Two
-    compilations of one schedule for [d] are interchangeable when their configs
-    are equal, so any cache of compiled schedules must key on it, with
-    {!program_config} for its kernels. *)
-
-val compile_linear :
-  device:Device.t ->
-  ?beam:int ->
-  ?profile:bool ->
-  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t
-(** [compile_linear ~device ?beam ?profile ~to_program linear] rewrites every kernel
-    {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink} or an
-    unfinished {!Tolk_uop.Ops.Program} into a call with the complete program
-    returned by [to_program execution_device body]. Programs already carrying
-    metadata and a final binary are retained unchanged. The execution device comes from the
-    call arguments, falling back to [device] for a kernel without placed
-    arguments. The program cache uses that device and its selected renderer.
-    {!Tolk_uop.Ops.Store} calls are left unchanged.
-
-    Independent uncached kernels compile in parallel under the [PARALLEL]
-    context. [to_program execution_device] is applied in the caller; the
-    resulting compiler must support concurrent calls. Workers inherit the
-    caller's context, and every started compilation finishes before a failure
-    propagates. Kernels requesting beam search compile in the caller, with
-    only their candidate compilation delegated to workers. [PARALLEL=0]
-    disables worker compilation.
-
-    [profile] adds queue timestamps and defaults to [true] when [DEBUG >= 2]
-    or [PROFILE=1]. [wait] uses them for elapsed time; [PROFILE=1] also retains
-    asynchronous timestamp records for {!Device.profile}.
-
-    When [beam] is [b >= 1], every kernel sink that does not already carry a
-    beam width (its {!Tolk_uop.Uop.kernel_info} has [beam = 0]) is stamped with [b]
-    before compilation. Omitted [beam] uses the current [BEAM] context;
-    explicit [0] leaves default-zero kernels on heuristic optimization.
-    Kernels that already carry a positive beam width retain it.
-
-    Compiled programs are cached by the kernel's semantic key, the device instance, and
-    {!program_config}, so kernels that differ only by diagnostic tags share one
-    compilation; the stamped beam width is part of the key. *)
-
-(** {1:capture Schedule capture} *)
-
-val current_capture :
-  unit -> (Tolk_uop.Uop.t -> (string * int64) list -> unit) option
-(** [current_capture ()] is the callback of the innermost {!with_capture}
-    scope, or [None] outside capture. *)
-
-val with_capture :
-  (Tolk_uop.Uop.t -> (string * int64) list -> unit) -> (unit -> 'a) -> 'a
-(** [with_capture callback f] is [f ()] with [callback] receiving schedules
-    created by {!Schedule.create_linear_with_vars}. Nested scopes shadow the
-    outer callback, which is restored on return or exception.
-
-    Capture follows the dynamic continuation scope. Fresh domains and system
-    threads do not inherit it. *)
-
-(** {1:binding Buffer binding} *)
-
-type buffer =
-  | Single of Device.Buffer.t  (** A buffer on one device. *)
-  | Multi of Device.Multi_buffer.t
-      (** One buffer per device of a multi-device placement. *)
-(** The type for concrete buffers named by call arguments. *)
-
-type exec_context = {
-  var_vals : (string * int64) list;
-  input_uops : Tolk_uop.Uop.t array;
-  update_stats : bool;
-  jit : bool;
-  wait : bool;
-  timeout : int option;
-  cache : bool;
-}
-(** Execution context threaded through a LINEAR run: symbolic variable values,
-    the input buffer nodes that {!Tolk_uop.Ops.Param} slots index into, whether
-    calls are counted and reported, and the JIT and wait flags. *)
-
-val exec_context :
-  ?var_vals:(string * int64) list ->
-  ?input_uops:Tolk_uop.Uop.t array ->
-  ?update_stats:bool ->
-  ?jit:bool ->
-  ?wait:bool ->
-  ?timeout:int ->
-  ?cache:bool ->
-  unit ->
-  exec_context
-(** [exec_context ?var_vals ?input_uops ?update_stats ?jit ?wait ?timeout ?cache ()] builds a
-    context. [update_stats] and [cache] default to [true]; the other fields
-    default to empty or [false]. [timeout] is the device wait budget in
-    milliseconds. [cache=false] releases each dispatch handle after its
-    synchronous sample; failed drains retain the handle. *)
-
-val resolve_buffer : exec_context -> Tolk_uop.Uop.t -> buffer
-(** [resolve_buffer ctx node] is the concrete buffer named by call
-    argument [node]: a {!Tolk_uop.Ops.Param} resolves through
-    [ctx.input_uops]; contiguous movement and bitcast views alias their
-    resolved storage at the byte offset from {!Prepare.contiguous_view} (per underlying device when the source is multi-device);
-    a {!Tolk_uop.Ops.Buffer} supplies its owned storage; a
-    {!Tolk_uop.Ops.Mselect} indexes one shard of its multi-device source; a
-    {!Tolk_uop.Ops.Mstack} joins its per-device sources into a multi-device
-    buffer.
-
-    Raises [Invalid_argument] on an unbound parameter, a symbolic slice offset,
-    or a node that does not name a buffer. *)
-
-val resolve : exec_context -> Tolk_uop.Uop.t -> Device.Buffer.t
-(** [resolve ctx node] is {!resolve_buffer} for a node that names a
-    single-device buffer.
-
-    Raises [Invalid_argument] if [node] names a multi-device buffer, and in
-    the {!resolve_buffer} failure cases. *)
-
-val link_linear :
-  ?ctx:exec_context -> ?allow_cache:bool ->
-  Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [link_linear ?ctx ?allow_cache linear] binds a compiled
-    schedule's tagged storage placeholders and static address patches, retaining
-    their storage in the returned schedule. Call bodies remain compiled and
-    untagged parameters remain runtime-bound. See {!Link.run} for cache rules. *)
-
-(** {1:run_linear Linear execution} *)
-
-val run_linear :
-  device:Device.t ->
-  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  ?var_vals:(string * int64) list ->
-  ?input_uops:Tolk_uop.Uop.t array ->
-  ?update_stats:bool ->
-  ?jit:bool ->
-  ?wait:bool ->
-  Tolk_uop.Uop.t ->
-  unit
-(** [run_linear ~device ~to_program ?var_vals ?input_uops ?update_stats
-    ?jit ?wait linear] executes each {!Tolk_uop.Ops.Call} in the {!Tolk_uop.Ops.Linear}
-    [linear] in order.
-
-    When [jit] is [false] (default), [linear] is first compiled with
-    {!compile_linear}, turning each kernel {!Tolk_uop.Ops.Sink} body into a
-    {!Tolk_uop.Ops.Program}, then linked with {!link_linear}; when [jit] is
-    [true], [linear] is assumed already compiled and linked. Eager queue
-    templates preserve buffer aliases and byte offsets without retaining input
-    storage. Below [HCQ_CACHE_THRESH] calls (default [64]), linked command
-    storage is reused with runtime address patches; larger schedules resolve
-    their inputs at each link.
-
-    Each call is then dispatched on its body: a
-    {!Tolk_uop.Ops.Program} is launched with launch dimensions and scalar
-    arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
-    built from its compiled binary. A program carrying queue metadata refreshes
-    its address table and submits through its host device; [wait] also waits for
-    the submitted devices. Before updating that table, replay rejects writable
-    overlaps between unordered calls, including independently wrapped external
-    pointers. FIFO order and transitive queue waits permit buffer donation;
-    new read-only aliases and disjoint views are also allowed.
-    Represent writable aliases through a shared root in the graph before
-    compiling their queue dependencies. Unsupported copy imports prepare a
-    cached schedule with two alternating 64 MiB host slots and queue fences
-    before slot reuse. Staging memory belongs to that prepared schedule;
-    runtime input buffers are not retained. If staging cannot be imported,
-    the original calls execute in order. Preparation happens before the
-    address table is updated or queue work is published. Allocation and device
-    faults propagate. Queue submission serializes address-table updates and
-    timeline reservation across participating device owners. Prepared fallback
-    legs share that scope; nested transport may reuse its owners but cannot
-    introduce another owner after submission starts. The scope ends after
-    publication and any requested wait, so asynchronous device work may remain
-    in flight. Execution statistics and arbitrary recursive replay of the same
-    graph are not covered by this guarantee. A
-    {!Tolk_uop.Ops.Store} transfers between its
-    resolved buffers. Buffer arguments are resolved with
-    {!resolve_buffer}, so {!Tolk_uop.Ops.Param} slots index into
-    [input_uops].
-
-    Linked queue submissions retain the device instance IDs whose addresses
-    they embed. Replacing any of those devices makes replay raise
-    [Invalid_argument] before address-table updates or dispatch. Compile and
-    link a fresh schedule for the replacement device.
-
-    A call whose arguments resolve to multi-device buffers executes once per
-    device position: a kernel launches its one compiled program on each
-    device with the device index bound to the [_device_num] variable, and a
-    copy transfers each per-device pair (natively when the devices share a
-    backend, through a host bounce otherwise).
-
-    Unless [update_stats] is [false], every dispatched kernel, view, copy and
-    queue submission is counted in {!Helpers.Global_counters} with its estimated
-    operations and memory traffic. When [DEBUG >= 2] each also prints one line
-    on standard error: device, running call count, name, argument count, device
-    memory in use, and its time over the running total with the rates the
-    estimates give. A call that measured no time of its own is timed by
-    synchronizing the device after it. The header is magenta under [jit] and
-    green the first time a program runs.
-
-    [wait] is forced to [true] when [DEBUG >= 2]. *)
-
-val queue_submissions : unit -> int
-(** [queue_submissions ()] counts compiled host submissions dispatched through
-    {!run_linear}. A cumulative observability counter for tests and debugging. *)
-
-
-val time_call :
-  device:Device.t ->
-  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  ?var_vals:(string * int64) list ->
-  ?timeout:int ->
-  ?clear_l2:bool ->
-  Tolk_uop.Uop.t ->
-  ((unit -> float) -> 'a) ->
-  'a
-(** [time_call ~device ~to_program ?var_vals ?timeout ?clear_l2 call f] compiles
-    and links [call] with device timestamps, then calls [f sample]. Each
-    [sample ()] executes the linked call synchronously and returns its longest
-    host or device duration in seconds. [clear_l2] invalidates the device
-    caches before each sample and defaults to [false]. [timeout] is forwarded
-    to runtimes and recoverable device waits in milliseconds.
-
-    Linked storage is shared between samples. Transient dispatch handles are
-    released after successful draining, including when execution raises.
-    [sample] must only be used within [f]; the device is drained when [f]
-    returns or raises. Timing does not update execution statistics. *)
+    Raises as {!Codegen.to_program} does, and [Invalid_argument] if
+    {!Device.renderer} finds no renderer for a target. *)

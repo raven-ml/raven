@@ -5,16 +5,27 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Late gate relocation.
+(** Moving gates from indices to memory accesses.
 
-    Port of tinygrad [codegen/late/gater.py].
+    An index [where g i invalid] ({!Ops.invalid}) addresses [i] where [g] holds
+    and nothing elsewhere. No target renders {!Ops.invalid}, so before rendering
+    the condition moves onto the access: a load reads only where its gate holds,
+    and gives an alternate value elsewhere; a store writes only where its gate
+    holds. *)
 
-    This pass moves invalid-index gates onto memory operations after late
-    decompositions, and folds a [where] around an already-gated load into the
-    load's alternate value. *)
+val pm_move_gates_from_index : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [pm_move_gates_from_index] moves gates onto loads and stores, with [g] a
+    boolean node:
 
-val pm_move_gates_from_index : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [pm_move_gates_from_index root] rewrites load/store indexes of the form
-    [where gate idx Invalid] to an ungated index plus an explicit load/store
-    gate. Gated loads selected by the same surrounding [where] are rebuilt
-    with the other [where] branch as their alternate value. *)
+    - a load or a store through the {!Op.Index} of a storage by two indices
+      [where g y invalid] and [where g x invalid] becomes the same access
+      through the index by [y] and [x], gated by [g];
+    - otherwise, a load or a store through an {!Op.Index} or {!Op.Shrink} whose
+      first index is [where g i invalid] becomes the same access with [i] in its
+      place, gated by [g];
+    - a load gated this way reads [0] where its gate fails;
+    - [where g l a], with [l] a load gated by [g] or a cast of one, is [l]
+      reading [a] where [g] fails, cast to the type of the [where]: [0] if [a]
+      is {!Ops.invalid}, [a]'s value if [a] is a constant, the source of [a] if
+      [a] is a cast of a node of [l]'s type, and [a] cast to [l]'s type
+      otherwise. [where g a l], with [l] gated by [not g], is the same. *)

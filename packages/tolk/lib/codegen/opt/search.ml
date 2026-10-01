@@ -5,521 +5,377 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Beam search kernel optimizer. Port of tinygrad/codegen/opt/search.py to
-   the tolk_uop IR. *)
+open Ops
+module K = Postrange.Scheduler
 
-open Tolk_uop
-module U = Uop
-module P = Postrange
+let debug () = Helpers.Context_var.value Helpers.debug
+let log_surpass_max () = Helpers.getenv "BEAM_LOG_SURPASS_MAX" 0 <> 0
+let upto n = List.init n Fun.id
 
-(* Environment *)
-
-let beam_padto = Helpers.getenv "BEAM_PADTO" 0 <> 0
-let tc = Helpers.getenv "TC" 1
-let tc_opt = Helpers.getenv "TC_OPT" 2
-let debug = Helpers.getenv "DEBUG" 0
-let beam_debug = Helpers.getenv "BEAM_DEBUG" 0
-
-let beam_log_surpass_max () = Helpers.getenv "BEAM_LOG_SURPASS_MAX" 0 <> 0
-let beam_upcast_max () = Helpers.getenv "BEAM_UPCAST_MAX" 256
-let beam_local_max () = Helpers.getenv "BEAM_LOCAL_MAX" 1024
-let beam_uops_max () = Helpers.getenv "BEAM_UOPS_MAX" 3000
-let beam_timeout_sec () = Helpers.getenv "BEAM_TIMEOUT_SEC" 10
-let beam_strict_mode () = Helpers.getenv "BEAM_STRICT_MODE" 0 <> 0
-let beam_dev_timeout () = Helpers.getenv "BEAM_DEV_TIMEOUT" 1 <> 0
-let cachelevel () = Helpers.Context_var.get Helpers.cachelevel
-let ignore_beam_cache () = Helpers.Context_var.get Helpers.ignore_beam_cache <> 0
-
-(* Minimum progress per beam step, in microseconds. *)
-let beam_min_progress () =
-  (match Sys.getenv_opt "BEAM_MIN_PROGRESS" with
-   | Some s when s <> "" -> Float.of_string s
-   | _ -> 0.01) /. 1e6
-
-(* Actions *)
-
-(* All candidate optimizations tried during beam search. *)
 let actions =
-  let open U.Opt in
-  let acc = ref [] in
-  let add opt = acc := opt :: !acc in
-  let gen mk max_axis amounts =
-    List.iter (fun amount ->
-      for axis = 0 to max_axis do add (mk axis amount) done) amounts
+  let split ?(top = false) target amounts axes =
+    List.concat_map
+      (fun amount ->
+        List.map (fun axis -> Opt.Split { axis; amount; target; top }) axes)
+      amounts
   in
-  List.iter (fun kind ->
-      gen (fun axis amount -> Split { axis; amount; kind; top = false })
-        9 [0; 2; 3; 4; 5; 7]) [ Axis_type.Upcast; Axis_type.Unroll ];
-  gen (fun axis amount -> Split { axis; amount; kind = Axis_type.Local; top = false })
-    7 [0; 2; 3; 4; 8; 13; 16; 29];
-  gen (fun axis amount -> Split { axis; amount; kind = Axis_type.Local; top = true })
-    7 [13; 16; 28; 29; 32; 49; 64; 256];
-  if beam_padto then
-    gen (fun axis amount -> Padto { axis; amount }) 6 [32];
-  add (Split { axis = 0; amount = 32; kind = Axis_type.Local; top = false });
-  add (Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = tc });
-  for axis = 0 to 8 do
-    add (Tc { axis; tc_select = -1; tc_opt; use_tc = tc })
-  done;
-  for axis_0 = 0 to 4 do
-    for axis_1 = axis_0 + 1 to 4 do
-      add (Swap { axis = axis_0; with_axis = axis_1 })
-    done
-  done;
-  List.rev !acc
-
-let is_tc = function U.Opt.Tc _ -> true | _ -> false
-
-(* Action filtering *)
-
-(* Skip actions that are equivalent to the zero-variant already in the list. *)
-let is_noop a ax full_shape =
-  ax < List.length full_shape
-  && (match U.Opt.amount a, U.const_int_value (List.nth full_shape ax) with
-      | Some amt, Some sz when sz = amt ->
-          List.mem (U.Opt.with_amount a 0) actions
-      | _ -> false)
-
-(* Return valid actions for a scheduler state as (index, scheduler) pairs. *)
-let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
-  let max_up = Option.value max_up ~default:(beam_upcast_max ()) in
-  let max_lcl = beam_local_max () in
-  let dominated a =
-    let axis = U.Opt.axis a in
-    not (is_tc a) && (axis >= P.shape_len s || is_noop a axis (P.full_shape s))
+  let tc tc_opt axis =
+    Opt.Tc { axis; tc_select = -1; tc_opt; use_tc = Helpers.getenv "TC" 1 }
   in
-  let upcast_and_local s2 =
-    let up = ref Bigint.one and lcl = ref Bigint.one in
-    List.iter2 (fun x t ->
-      let sz = U.sym_infer_z x var_vals in
-      if t = Axis_type.Upcast || t = Axis_type.Unroll then
-        up := Bigint.mul !up sz
-      else if t = Axis_type.Warp || t = Axis_type.Local then
-        lcl := Bigint.mul !lcl sz)
-      (P.full_shape s2) (P.axis_types s2);
-    let tc_up = match P.tensor_core s2 with
-      | Some (tc : Tc.t) ->
-          let m, n, k = tc.dims in
-          Bigint.div (Bigint.mul (Bigint.of_int m) (Bigint.mul (Bigint.of_int n) (Bigint.of_int k))) (Bigint.of_int tc.threads)
-      | None -> Bigint.one
-    in
-    (Bigint.div !up tc_up, !lcl)
-  in
-  let acted = ref (if include_0 then [(0, s)] else []) in
-  List.iteri (fun i a ->
-    if not (dominated a) then
-      let s2 = P.copy s in
-      match P.apply_opt s2 a with
-      | exception P.Opt_error _ -> ()
-      | _ ->
-          let up, lcl = upcast_and_local s2 in
-          if Bigint.gt up (Bigint.of_int max_up) || Bigint.gt lcl (Bigint.of_int max_lcl) then begin
-            if beam_log_surpass_max () then
-              Printf.eprintf
-                "too many upcast/local. up/tc_up=%s, max_up=%d, lcl=%s, \
-                 max_lcl=%d\n%!"
-                (Bigint.to_string up) max_up (Bigint.to_string lcl) max_lcl
-          end else
-            acted := (i + 1, s2) :: !acted)
-    actions;
-  List.rev !acted
-
-(* Shrink global dims until they fit max_global_size by halving dims > 16
-   from the end. Returns (scaled_size, factor). *)
-let get_test_global_size global_size max_global_size =
-  let test = Array.copy global_size in
-  let product dims = Array.fold_left (fun acc n -> Bigint.mul acc (Bigint.of_int n)) Bigint.one dims in
-  let input_size = product test in
-  let limit = Bigint.of_int max_global_size in
-  let cont = ref true in
-  while !cont && Bigint.gt (product test) limit do
-    cont := false;
-    for j = Array.length test - 1 downto 0 do
-      if not !cont && test.(j) > 16 then begin
-        test.(j) <- test.(j) / 2;
-        cont := true
-      end
-    done
-  done;
-  let scaled = product test in
-  (test, Bigint.to_float input_size /. Bigint.to_float (Bigint.max scaled Bigint.one))
-
-(* Compilation *)
-
-type compiled = { program : U.t; compile_time : float }
-
-(* Compile a single candidate through the shared PROGRAM constructor and reject
-   oversized linear programs, as the reference search does.
-   Returns (index, result) so callers can dispatch candidates in parallel and
-   match results back. *)
-let try_compile ~compile_program ((idx, s) : int * P.t)
-    : int * compiled option =
-  let compile () =
-    let st = Unix.gettimeofday () in
-    let ast = P.get_optimized_ast ~name_override:"test" (P.copy s) in
-    let program = compile_program ast in
-    let uop_count = Array.length (U.src (U.src program).(1)) in
-    let beam_uops_max = beam_uops_max () in
-    if beam_uops_max > 0 && uop_count >= beam_uops_max then begin
-      if beam_log_surpass_max () then
-        Printf.eprintf "too many uops. uop_count=%d, uops_max=%d\n%!"
-          uop_count beam_uops_max;
-      None
-    end else
-      let compile_time = max 0. (Unix.gettimeofday () -. st) in
-      let budget = beam_timeout_sec () in
-      if budget > 0 && compile_time >= float_of_int budget then begin
-        if debug >= 2 then
-          Printf.eprintf "*** BEAM COMPILE BUDGET EXCEEDED (completed in %.2fs)\n%!" compile_time;
-        None
-      end else Some { program; compile_time }
-  in
-  let result =
-    try compile () with
-    | (Sys.Break | Out_of_memory | Stack_overflow) as exn -> raise exn
-    | Failure _ | Invalid_argument _ ->
-        if debug >= 4 then
-          Printf.eprintf "%s\n%!" (Printexc.get_backtrace ());
-        None
-    | _ when not (beam_strict_mode ()) -> None
-  in
-  (idx, result)
-
-(* Device selection is completed by the caller; workers only compile. Timing
-   starts after the batch has drained, so candidates cannot contend for it. *)
-let compile_candidates ~to_program ~device candidates =
-  let compile_program = to_program device in
-  candidates |> List.mapi (fun i candidate -> i, candidate)
-  |> Worker.map (fun candidate -> snd (try_compile ~compile_program candidate))
-
-(* Timing *)
-
-type buffer_req = { slot : int; size : int; dtype : Dtype.t }
-
-let buffer_reqs ast =
-  let req_of_param u =
-    match U.as_param u with
-    | Some { param; _ } when param.slot >= 0 ->
-        (match param.size with
-         | Some size when size >= 0 ->
-             Some { slot = param.slot; size; dtype = U.dtype u }
-         | Some _ | None ->
-             invalid_arg
-               (Printf.sprintf
-                  "beam_search: cannot allocate raw buffer for slot %d"
-                  param.slot))
-    | _ -> None
-  in
-  let sorted =
-    P.bufs_from_ast ast
-    |> List.filter_map req_of_param
-    |> List.sort (fun a b -> Int.compare a.slot b.slot)
-  in
-  let rec dedup = function
-    | [] -> []
-    | r :: rest ->
-        let same, rest =
-          List.partition (fun r2 -> r2.slot = r.slot) rest
-        in
-        let size =
-          List.fold_left (fun acc r2 -> max acc r2.size) r.size same
-        in
-        let dtype =
-          List.fold_left
-            (fun dtype r2 ->
-              if Dtype.equal dtype r2.dtype then dtype
-              else
-                invalid_arg
-                  (Printf.sprintf
-                     "beam_search: conflicting dtypes for raw buffer slot %d"
-                     r.slot))
-            r.dtype same
-        in
-        { r with size; dtype } :: dedup rest
-  in
-  dedup sorted
-
-let normalize_buffer_req device req buf =
-  if Device.Buffer.size buf < req.size
-     || not (Dtype.equal (Device.Buffer.dtype buf) req.dtype)
-  then
-    (* A beam timing buffer: bypass the LRU cache so a GC-collected
-       replacement returns its memory to the driver instead of piling up
-       in the allocator cache. *)
-    Device.create_buffer ~size:req.size ~dtype:req.dtype
-      ~spec:{ Device.Buffer_spec.default with nolru = true } device
-  else buf
-
-let indexed_rawbufs ~device ast rawbufs =
-  let reqs = buffer_reqs ast in
-  let raw_count = List.length rawbufs in
-  let req_count = List.length reqs in
-  let max_slot =
-    List.fold_left (fun acc req -> max acc req.slot) (-1) reqs
-  in
-  let pair_compact () =
-    try List.combine reqs rawbufs with
-    | Invalid_argument _ ->
-        invalid_arg
-          (Printf.sprintf
-             "beam_search: expected %d raw buffers, got %d"
-             req_count raw_count)
-  in
-  let pairs =
-    if raw_count = req_count then pair_compact ()
-    else if raw_count > max_slot then
-      List.map
-        (fun req ->
-          match List.nth_opt rawbufs req.slot with
-          | Some buf -> (req, buf)
-          | None ->
-              invalid_arg
-                (Printf.sprintf
-                   "beam_search: raw buffer slot %d missing (%d buffers supplied)"
-                   req.slot raw_count))
-        reqs
-    else pair_compact ()
-  in
-  List.map
-    (fun (req, buf) -> (req.slot, normalize_buffer_req device req buf))
-    pairs
-
-(* Time a compiled program on device. Returns a list of timing samples. *)
-let time_program ~device ~to_program p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
-    ~allow_test_size ~dev_timeout =
-  let timeout =
-    if dev_timeout && Float.is_finite early_stop then
-      Some (Float.to_int (early_stop *. 1e3))
-    else None
-  in
-  let factor = ref 1.0 in
-  let info = Option.get (U.as_program_info p) in
-  let p =
-    if not allow_test_size then p
-    else
-      let global, _ = U.program_launch_dims info ~var_vals in
-      let global = Array.of_list (List.map (function
-          | U.Launch_value_int n -> n
-          | U.Launch_value_float f -> int_of_float f) global) in
-      let scaled_global, f = get_test_global_size global 65536 in
-      factor := f;
-      U.replace p ~arg:(U.Arg.Program_info {info with
-        global_size = List.map (fun n -> U.Launch_int n) (Array.to_list scaled_global)}) ()
-  in
-  let args = List.init (List.fold_left max (-1) info.globals + 1) (fun slot ->
-      match List.assoc_opt slot rawbufs_by_slot with
-      | Some buf -> U.from_buffer buf
-      | None when not (List.mem slot info.globals) -> U.noop ()
-      | None -> invalid_arg (Printf.sprintf
-          "beam_search: raw buffer slot %d missing (%d slots supplied)"
-          slot (List.length rawbufs_by_slot))) in
-  let call = U.call ~body:p ~args
-      ~info:U.{grad_fxn = None; name = None; precompile = false;
-        precompile_backward = false; dtype = Dtype.void; aux = None} in
-  Realize.time_call ~device ~to_program ~var_vals ?timeout ~clear_l2 call
-    (fun sample ->
-      let tms = ref [] and stopped = ref false in
-      for _ = 1 to cnt do
-        if not !stopped then begin
-          let tm = try sample () *. !factor with Assert_failure _ -> infinity in
-          tms := tm :: !tms;
-          if early_stop < List.fold_left min infinity !tms then stopped := true
-        end
-      done;
-      List.rev !tms)
-
-(* Beam search *)
-
-let cache_key_of s amt allow_test_size ren =
-  let ast_key = U.semantic_key (P.ast s) in
-  let key =
+  List.concat
     [
-      ("ast", ast_key);
-      ("amt", string_of_int amt);
-      ("allow_test_size", string_of_bool allow_test_size);
-      ("device", Renderer.device ren);
-      ("target", Target.to_string (Renderer.target ren));
-      ("suffix", Renderer.name ren);
+      split Upcast [ 0; 2; 3; 4; 5; 7 ] (upto 10);
+      split Unroll [ 0; 2; 3; 4; 5; 7 ] (upto 10);
+      split Local [ 0; 2; 3; 4; 8; 13; 16; 29 ] (upto 8);
+      split ~top:true Local [ 13; 16; 28; 29; 32; 49; 64; 256 ] (upto 8);
+      (if Helpers.getenv "BEAM_PADTO" 0 <> 0 then
+         List.map (fun axis -> Opt.Padto { axis; amount = 32 }) (upto 7)
+       else []);
+      split Local [ 32 ] [ 0 ];
+      [ tc 0 0 ];
+      (* covers resnet kernels (3 global * 3 reduce) *)
+      List.map (tc (Helpers.getenv "TC_OPT" 2)) (upto 9);
+      List.concat_map
+        (fun axis ->
+          List.map
+            (fun with_axis -> Opt.Swap { axis; with_axis })
+            (List.init (4 - axis) (fun i -> axis + 1 + i)))
+        (upto 5);
     ]
+
+(* Products in integers of any size, as Python's: the sizes of a launch, and the
+   lanes and threads of a kernel, can multiply past an int. *)
+let zprod l = List.fold_left (fun z n -> Bigint.(z * of_int n)) Bigint.one l
+
+let get_test_global_size global_size max_global_size vars =
+  let input = List.map (fun s -> sym_infer s vars) global_size in
+  let rec halve_last_above_16 = function
+    | [] -> []
+    | n :: rest when n > 16 -> (n / 2) :: rest
+    | n :: rest -> n :: halve_last_above_16 rest
   in
-  String.concat "|"
-    (List.map
-       (fun (name, value) ->
-         Printf.sprintf "%s:%d:%s" name (String.length value) value)
-       key)
-
-let apply_cached_opts s cached_opts =
-  let ret = P.copy s in
-  let skip = List.length (P.applied_opts s) in
-  List.iteri
-    (fun i opt -> if i >= skip then ignore (P.apply_opt ret opt))
-    cached_opts;
-  ret
-
-let program_ops program var_vals =
-  let kernel = Option.get (U.as_kernel_info (U.src program).(0)) in
-  match kernel.estimates with
-  | None -> 0.
-  | Some {ops = U.Int n; _} -> Float.of_int n
-  | Some {ops = U.Sym node; _} -> Bigint.to_float (U.sym_infer_z node var_vals)
-
-let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
-    (s : P.t) (rawbufs : Device.Buffer.t list) ~var_vals (amt : int)
-    (device : Device.t) : P.t =
-  List.iter (fun (_, name, lo, hi) ->
-      match List.assoc_opt name var_vals with
-      | None -> invalid_arg (Printf.sprintf "beam_search: missing variable %S" name)
-      | Some value ->
-          let value = `Int (Bigint.of_int64 value) in
-          if Bound.lt value lo || Bound.lt hi value then
-            invalid_arg (Printf.sprintf "beam_search: variable %S is outside its bounds" name))
-    (U.symbolic_vars (P.ast s));
-  let ren = P.ren s in
-  let cache_key = cache_key_of s amt allow_test_size ren in
-  let disable_cache =
-    Option.value disable_cache ~default:(ignore_beam_cache ())
+  let rec shrink size =
+    if Bigint.leq (zprod size) (Bigint.of_int max_global_size) then size
+    else shrink (List.rev (halve_last_above_16 (List.rev size)))
   in
-  let cachelevel = cachelevel () in
-  let cache_read_enabled = not disable_cache && cachelevel >= 1 in
-  let cache_write_enabled = cachelevel >= 1 in
+  let size = shrink input in
+  (size, Bigint.to_float (zprod input) /. Bigint.to_float (zprod size))
+
+(* Measured up to [cnt] times, stopping once slower than [early_stop]: the least
+   time. *)
+let time_program ~measure ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
+  let prg, factor =
+    match arg prg with
+    | Program info when allow_test_size ->
+        let global_size, factor =
+          get_test_global_size info.global_size 65536 vars
+        in
+        let global_size = List.map (fun n -> Int n) global_size in
+        (replace prg ~arg:(Program { info with global_size }), factor)
+    | _ -> (prg, 1.)
+  in
+  let rec go least cnt =
+    let least = Float.min least (measure ~cold:true ~vars prg *. factor) in
+    if cnt = 1 || early_stop < least then least else go least (cnt - 1)
+  in
+  go infinity cnt
+
+(* A candidate's program and its compile time, if it compiles. *)
+let try_compile k =
+  let st = Unix.gettimeofday () in
+  let ren = K.ren k in
+  let on_device p =
+    match arg p with
+    | Param a when op p = Op.Param && addrspace p <> Some Dtype.Alu ->
+        let device = Single ren.target.device in
+        [ (p, replace p ~arg:(Param { a with device = Some device })) ]
+    | _ -> []
+  in
+  match
+    let ast = K.get_optimized_ast ~name_override:"test" (K.copy k) in
+    let prg =
+      Codegen.to_program
+        (substitute ast (List.concat_map on_device (toposort ast)))
+        ren
+    in
+    let uops = List.length (src (nth prg 1)) in
+    let uops_max = Helpers.getenv "BEAM_UOPS_MAX" 3000 in
+    if uops_max > 0 && uops >= uops_max then (
+      if log_surpass_max () then
+        Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
+          uops_max;
+      None)
+    else Some (prg, Unix.gettimeofday () -. st)
+  with
+  | compiled -> compiled
+  | exception (Sys.Break as e) -> raise e
+  | exception (Failure _ as e) ->
+      if debug () >= 4 then print_endline (Printexc.to_string e);
+      None
+  | exception e when Helpers.getenv "BEAM_STRICT_MODE" 0 <> 0 -> raise e
+  | exception _ -> None
+
+(* The least and greatest product of [sizes] over their variables' values. *)
+let product_bounds sizes =
+  let bound f = function
+    | Int n -> Bigint.of_int n
+    | Sym u -> (
+        match f u with `Int z -> z | _ -> invalid_arg "a size is no integer")
+  in
+  List.fold_left
+    (fun (lo, hi) s -> Bigint.(lo * bound vmin s, hi * bound vmax s))
+    (Bigint.one, Bigint.one) sizes
+
+(* Whether a product of bounds [(lo, hi)] exceeds [limit], which its variables'
+   values must decide. *)
+let exceeds (lo, hi) limit =
+  if Bigint.gt lo (Bigint.of_int limit) then true
+  else if Bigint.leq hi (Bigint.of_int limit) then false
+  else invalid_arg "the lanes or threads of a candidate depend on a variable"
+
+let too_many ~max_up ~max_lcl k =
+  let shape = K.full_shape k in
+  let size types =
+    product_bounds (List.map (List.nth shape) (K.axes_of k types))
+  in
+  let tc_up =
+    let tc u =
+      match arg u with
+      | Wmma { dims = n, m, depth; threads; _ } -> Some (n * m * depth / threads)
+      | _ -> None
+    in
+    Option.value ~default:1
+      (List.find_map tc (Nodes.to_list (backward_slice (K.ast k))))
+  in
+  let up =
+    let lo, hi = size [ Upcast; Unroll ] in
+    Bigint.(fdiv lo (of_int tc_up), fdiv hi (of_int tc_up))
+  and lcl = size [ Warp; Local ] in
+  let too_many = exceeds up max_up || exceeds lcl max_lcl in
+  if too_many && log_surpass_max () then
+    Printf.printf
+      "too many upcast/local. up//tc_up=%s, max_up=%d, lcl=%s, max_lcl=%d\n%!"
+      (Bigint.to_string (snd up))
+      max_up
+      (Bigint.to_string (snd lcl))
+      max_lcl;
+  too_many
+
+let redundant k = function
+  | Opt.Tc _ -> false
+  | a when Opt.axis a >= K.shape_len k -> true
+  | Opt.Split s ->
+      Sint.equal (List.nth (K.full_shape k) s.axis) (Int s.amount)
+      && List.exists (Opt.equal (Opt.Split { s with amount = 0 })) actions
+  | _ -> false
+
+let get_kernel_actions ?(include_0 = true) ?max_up k =
+  let max_up =
+    match max_up with
+    | Some max_up -> max_up
+    | None -> Helpers.getenv "BEAM_UPCAST_MAX" 256
+  in
+  let max_lcl = Helpers.getenv "BEAM_LOCAL_MAX" 1024 in
+  let act i a =
+    if redundant k a then None
+    else
+      let k' = K.copy k in
+      match K.apply_opt k' a with
+      | Ok _ when not (too_many ~max_up ~max_lcl k') -> Some (i + 1, k')
+      | _ -> None
+  in
+  (if include_0 then [ (0, k) ] else [])
+  @ List.filter_map Fun.id (List.mapi act actions)
+
+(* The cache keeps each optimisation as five integers: its kind, axis and
+   arguments. *)
+let opt_ints = function
+  | Opt.Tc t -> [ 0; t.axis; t.tc_select; t.tc_opt; t.use_tc ]
+  | Split s ->
+      let target =
+        match s.target with Upcast -> 0 | Unroll -> 1 | Local -> 2
+      in
+      [ 1; s.axis; s.amount; target; Bool.to_int s.top ]
+  | Padto p -> [ 2; p.axis; p.amount; 0; 0 ]
+  | Swap s -> [ 3; s.axis; s.with_axis; 0; 0 ]
+
+let encode_opts opts =
+  String.concat " " (List.map string_of_int (List.concat_map opt_ints opts))
+
+let decode_opts s =
+  let malformed () =
+    failwith ("malformed optimisations in the beam cache: " ^ s)
+  in
+  let int w =
+    match int_of_string_opt w with Some n -> n | None -> malformed ()
+  in
+  let rec opts = function
+    | [] -> []
+    | 0 :: axis :: tc_select :: tc_opt :: use_tc :: rest ->
+        Opt.Tc { axis; tc_select; tc_opt; use_tc } :: opts rest
+    | 1 :: axis :: amount :: target :: top :: rest
+      when 0 <= target && target <= 2 ->
+        let target = List.nth Opt.[ Upcast; Unroll; Local ] target in
+        Opt.Split { axis; amount; target; top = top <> 0 } :: opts rest
+    | 2 :: axis :: amount :: _ :: _ :: rest ->
+        Opt.Padto { axis; amount } :: opts rest
+    | 3 :: axis :: with_axis :: _ :: _ :: rest ->
+        Opt.Swap { axis; with_axis } :: opts rest
+    | _ -> malformed ()
+  in
+  if s = "" then [] else opts (List.map int (String.split_on_char ' ' s))
+
+let pp_opts =
+  Format.(pp_print_list ~pp_sep:(fun ppf () -> pp_print_string ppf ", ") Opt.pp)
+
+let binary prg =
+  match arg (nth prg 3) with
+  | Bytes lib -> lib
+  | _ -> invalid_arg "a program without its binary"
+
+let midpoint v =
+  match (vmin v, vmax v) with
+  | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
+  | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
+
+let beam_search ~measure ?allow_test_size amt s =
+  if amt < 1 then
+    invalid_arg
+      (Printf.sprintf "a beam search needs a positive width, not %d" amt);
+  let allow_test_size =
+    match allow_test_size with
+    | Some allow -> allow
+    | None -> Helpers.getenv "BEAM_ESTIMATE" 1 <> 0
+  in
+  let beam_debug = Helpers.getenv "BEAM_DEBUG" 0 in
+  let ren = K.ren s in
+  let key =
+    String.concat "\x00"
+      [
+        key (K.ast s);
+        string_of_int amt;
+        string_of_bool allow_test_size;
+        ren.target.device;
+        ren.suffix;
+      ]
+  in
   let cached =
-    if cache_read_enabled then
-      (try Diskcache.get ~table:"beam_search" ~key:cache_key with _ -> None)
-    else None
+    if Helpers.Context_var.value Helpers.ignore_beam_cache then None
+    else Helpers.Diskcache.get ~table:"beam_search" key
   in
   match cached with
-  | Some cached_opts -> apply_cached_opts s cached_opts
+  | Some opts ->
+      let ret = K.copy s in
+      let apply i o =
+        if i >= List.length (K.applied_opts s) then
+          match K.apply_opt ret o with Ok _ -> () | Error msg -> failwith msg
+      in
+      List.iteri apply (decode_opts opts);
+      ret
   | None ->
-      let beam = ref [(s, infinity)] in
-      let seen_libs : (string, unit) Hashtbl.t = Hashtbl.create 256 in
-      (* Compilation is reusable; eligibility is reconsidered each round.
-         Only a binary accepted for timing enters [seen_libs]. *)
-      let compiled_asts : compiled option U.Ref_tbl.t = U.Ref_tbl.create 256 in
-      if beam_debug > 0 then
-        Format.eprintf "BEAM_SEARCH:@\n%a@." U.pp (P.ast s);
-      if debug >= 2 then
-        Printf.eprintf
-          "   0.00s:                from   1 ->   1 actions %s\n%!"
-          (P.colored_shape s);
-      let rawbufs_by_slot =
-        indexed_rawbufs ~device (P.ast s) rawbufs
+      let vars =
+        List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
-      List.iter (fun (_, buf) -> Device.Buffer.ensure_allocated buf)
-        rawbufs_by_slot;
+      let min_progress = Helpers.getenv_float "BEAM_MIN_PROGRESS" 0.01 /. 1e6 in
+      let seen_libs = Hashtbl.create 256 in
       let st = Unix.gettimeofday () in
-      let exiting = ref false in
-      let time_one timed n_candidates i cand program compile_time =
-        let early_stop = match !beam with
-          | (_, best) :: _ -> best *. 3.0
-          | [] -> 1.0
-        in
-        match
-          time_program ~device ~to_program program rawbufs_by_slot var_vals ~early_stop
-            ~cnt:3
-            ~clear_l2:(Option.is_some (Device.invalidate_caches device)) ~allow_test_size
-            ~dev_timeout:(beam_dev_timeout ())
-        with
-        | tms ->
-            let best_tm = List.fold_left min infinity tms in
-            timed := (cand, best_tm) :: !timed;
-            if beam_debug > 1 then
-              Printf.eprintf
-                "%7.2fs: %5d %12e compile/%12e run      %4d/%4d   %s\n%!"
-                (Unix.gettimeofday () -. st) i compile_time best_tm
-                (List.length !timed) n_candidates (P.colored_shape cand)
-            else if debug >= 2 then
-              Printf.eprintf
-                "\r%7.2fs: %12e      %4d/%4d         %s%!"
-                (Unix.gettimeofday () -. st) best_tm (List.length !timed)
-                n_candidates (P.colored_shape cand)
-        | exception exn ->
-            if beam_debug > 0 then
-              Printf.eprintf "BEAM failed for opts: %s\n%s\n%!"
-                (String.concat ", "
-                   (List.map U.Opt.to_string (P.applied_opts cand)))
-                (Printexc.to_string exn);
-            (match exn with
-             | Failure _ | Invalid_argument _ -> ()
-             | _ -> raise exn)
-      in
-      let consume_one timed least_compute_ops n_candidates i cand compiled =
-        match compiled with
-        | None -> ()
-        | Some { program; compile_time } ->
-            let lib = Option.get (U.Arg.as_string (U.arg (U.src program).(3))) in
-            if not (Hashtbl.mem seen_libs lib) then
-              let this_ops = program_ops program var_vals in
-              least_compute_ops := Float.min this_ops !least_compute_ops;
-              if !least_compute_ops *. 1000.0 < this_ops then begin
-                if beam_log_surpass_max () then
-                  Printf.eprintf "too much compute. this=%e, least=%e\n%!"
-                    this_ops !least_compute_ops
-              end else begin
-                Hashtbl.replace seen_libs lib ();
-                time_one timed n_candidates i cand program compile_time
-              end
-      in
-      while not !exiting do
+      let elapsed () = Unix.gettimeofday () -. st in
+      if beam_debug > 0 then Format.printf "BEAM_SEARCH:@.%a@." pp (K.ast s);
+      if debug () >= 2 then
+        Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
+          (K.colored_shape s);
+      let rec search beam =
+        let best = snd (List.hd beam) in
         let candidates =
           List.concat_map
-            (fun (si, _) ->
-              List.map snd (get_kernel_actions ~include_0:false ~var_vals si))
-            !beam
+            (fun (k, _) -> List.map snd (get_kernel_actions ~include_0:false k))
+            beam
         in
-        let pending = U.Ref_tbl.create (List.length candidates) in
-        let uncompiled =
-          List.filter
-            (fun cand ->
-              let ast = P.ast cand in
-              if U.Ref_tbl.mem compiled_asts ast || U.Ref_tbl.mem pending ast then false
-              else begin
-                U.Ref_tbl.add pending ast ();
-                true
-              end)
-            candidates
+        let n = List.length candidates in
+        let timed = ref [] and least_compute_ops = ref infinity in
+        let consider i (cand, compiled) =
+          match compiled with
+          | Some (prg, compile_et) when not (Hashtbl.mem seen_libs (binary prg))
+            ->
+              let this_compute_ops =
+                match arg (nth prg 0) with
+                | Kernel { estimates = Some e; _ } ->
+                    Float.of_int (sym_infer e.ops vars)
+                | _ -> 0.
+              in
+              least_compute_ops := Float.min this_compute_ops !least_compute_ops;
+              (* filter out kernels that use 1000x more compute than the
+                 smallest *)
+              if !least_compute_ops *. 1000. < this_compute_ops then (
+                if log_surpass_max () then
+                  Printf.printf "too much compute. %g when least is %g\n%!"
+                    this_compute_ops !least_compute_ops)
+              else (
+                Hashtbl.add seen_libs (binary prg) ();
+                match
+                  time_program ~measure ~vars ~early_stop:(best *. 3.)
+                    ~allow_test_size prg
+                with
+                | tm ->
+                    timed := (cand, tm) :: !timed;
+                    let tm = Helpers.time_to_str ~w:12 tm in
+                    let progress = List.length !timed in
+                    if beam_debug > 1 then
+                      Printf.printf
+                        "%7.2fs: %5d %5d uops %s compile/%s run       \
+                         %4d/%4d         %s\n\
+                         %!"
+                        (elapsed ()) i
+                        (List.length (src (nth prg 1)))
+                        (Helpers.time_to_str ~w:12 compile_et)
+                        tm progress n (K.colored_shape cand)
+                    else if debug () >= 2 then
+                      Printf.printf
+                        "\r%7.2fs: %s       %4d/%4d         %s\027[K%!"
+                        (elapsed ()) tm progress n (K.colored_shape cand)
+                | exception e -> (
+                    let bt = Printexc.get_raw_backtrace () in
+                    if beam_debug > 0 then
+                      Format.printf "BEAM failed for opts: [%a]@.%s@." pp_opts
+                        (K.applied_opts cand) (Printexc.to_string e);
+                    match e with
+                    | Failure _ -> ()
+                    | e -> Printexc.raise_with_backtrace e bt))
+          | _ -> ()
         in
-        let timed = ref [] in
-        let least_compute_ops = ref infinity in
-        let n_candidates = List.length candidates in
-        let compiled = compile_candidates ~to_program ~device uncompiled in
-        List.iteri (fun i cand -> U.Ref_tbl.add compiled_asts (P.ast cand) compiled.(i)) uncompiled;
-        List.iteri
-          (fun i cand ->
-            consume_one timed least_compute_ops n_candidates i cand
-              (U.Ref_tbl.find compiled_asts (P.ast cand)))
-          candidates;
+        List.iteri consider
+          (List.combine candidates (Worker.map try_compile candidates));
         let opts =
-          List.sort (fun (_, t1) (_, t2) -> Float.compare t1 t2) !timed
+          List.stable_sort
+            (fun (_, t0) (_, t1) -> Float.compare t0 t1)
+            (List.rev !timed)
         in
-        let should_exit =
-          match opts, !beam with
-          | [], _ -> true
-          | (_, t) :: _, _ when t < beam_min_progress () -> true
-          | (_, ot) :: _, (_, bt) :: _ when bt -. ot < beam_min_progress () ->
-              true
-          | _ -> false
+        let exiting =
+          match opts with
+          | [] -> true
+          | (_, tm) :: _ -> tm < min_progress || best -. tm < min_progress
         in
-        exiting := should_exit;
-        if not should_exit then
-          beam := List.filteri (fun i _ -> i < amt) opts
-        else
-          (match opts, !beam with
-           | (s_best, t_best) :: _, (_, t_beam) :: _ when t_best < t_beam ->
-               beam := [(s_best, t_best)]
-           | _ -> ());
-        if debug >= 2 then
-          Printf.eprintf "\r%7.2fs: %12e from %3d -> %3d actions %s\n%!"
-            (Unix.gettimeofday () -. st) (snd (List.hd !beam))
-            n_candidates (List.length opts)
-            (P.colored_shape (fst (List.hd !beam)))
-      done;
-      let result = fst (List.hd !beam) in
-      if cache_write_enabled then
-        Diskcache.put ~table:"beam_search" ~key:cache_key
-          (P.applied_opts result);
+        let beam =
+          match opts with
+          | _ when not exiting -> List.filteri (fun i _ -> i < amt) opts
+          | ((_, tm) as fastest) :: _ when tm < best -> [ fastest ]
+          | _ -> beam
+        in
+        (if debug () >= 2 then
+           let tm = Helpers.time_to_str ~w:12 (snd (List.hd beam)) in
+           Printf.printf "\r%7.2fs: %s from %3d -> %3d actions\027[K %s\n%!"
+             (elapsed ())
+             (if exiting then Helpers.colored Green tm else tm)
+             n (List.length opts)
+             (K.colored_shape (fst (List.hd beam))));
+        if exiting then beam else search beam
+      in
+      let beam = search [ (s, infinity) ] in
+      let k, tm = List.hd beam in
+      Helpers.Diskcache.put ~table:"beam_search" key
+        (encode_opts (K.applied_opts k));
       if beam_debug > 0 then
-        Printf.eprintf "BEAM_SEARCH: final tm=%e, applied_opts=%s\n%!"
-          (snd (List.hd !beam))
-          (String.concat ", "
-             (List.map U.Opt.to_string (P.applied_opts result)));
-      result
+        Format.printf "BEAM_SEARCH: final tm=%s, applied_opts=[%a]@."
+          (Helpers.time_to_str ~w:0 tm)
+          pp_opts (K.applied_opts k);
+      k

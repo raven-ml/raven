@@ -26,10 +26,10 @@
     step is written out inside the body.
 
     A scan stages when its leaves lie on one device, host leaves joining it, and
-    its loop runs ({!Tolk_next.Hcq2.runs}): on a device whose work runs from
-    command queues (Metal, CUDA, AMD, NV), as one batch of the body's calls; on
-    the host, or a device without queues, its calls once per trip. It is
-    declined ({!Scan.Not_staged}), and folds where it is written:
+    its loop runs ({!Tolk.Hcq2.runs}): on a device whose work runs from command
+    queues (Metal, CUDA, AMD, NV), as one batch of the body's calls; on the
+    host, or a device without queues, its calls once per trip. It is declined
+    ({!Scan.Not_staged}), and folds where it is written:
     - before its step runs, when its leaves lie on several devices;
     - after its step ran once, in a trace whose values nothing keeps, when the
       step's next carry differs from its carry in a shape or a placement, when
@@ -50,7 +50,7 @@
     width of their elements, reshapes and contiguous markers), or otherwise. *)
 type reach = Apart | Own | Other
 
-val reach : from:Tolk_next.Ops.t -> Tolk_next.Ops.t -> reach
+val reach : from:Tolk.Ops.t -> Tolk.Ops.t -> reach
 (** [reach ~from u] is how [u] reads [from]. The partial application
     [reach ~from] walks each node once. *)
 

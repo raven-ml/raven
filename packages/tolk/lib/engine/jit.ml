@@ -5,183 +5,20 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* JIT compilation.
-
-   Three-phase execution: warmup (cnt=0) runs eagerly, capture (cnt=1)
-   records the computation as a LINEAR, exec (cnt>=2) replays that LINEAR
-   with fresh input buffers.
-
-   Capture runs within {!Realize.with_capture}, so every schedule the
-   function creates is recorded instead of executed. The recorded schedules
-   are combined and lowered for replay: each input buffer node is substituted
-   with a slotted PARAM, intermediate buffer memory is planned once over the
-   combined LINEAR (buffers the caller holds keep their identity), and every
-   kernel is compiled. Replay passes the current input buffer nodes to
-   {!Realize.run_linear} as [input_uops], so PARAM slots resolve to the
-   buffers backing the current inputs, and threads the per-call [var_vals]
-   through to kernel launches. *)
-
-open Tolk_uop
-module U = Uop
-
-let debug = Helpers.getenv "DEBUG" 0
-
-let jit_level = Helpers.getenv "JIT" 1
-let is_op op n = Ops.equal (U.op n) op
-
-exception Jit_error of string
-
-(* Validation token: inputs must keep their size, dtype, and device across
-   replays. *)
-type input_info = {
-  ii_size : int;
-  ii_dtype : Dtype.t;
-  ii_device : U.device option;
-}
-
-let input_info_of_uop u =
-  {
-    ii_size = U.max_numel u;
-    ii_dtype = U.dtype u;
-    ii_device = U.device_of u;
-  }
-
-(* Lower a captured LINEAR for replay: substitute each input buffer node with
-   a PARAM carrying its slot index, plan intermediate buffer memory once over
-   the combined schedule with [held_bufs] kept intact, compile every kernel,
-   including queue submission on supported devices. *)
-let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
-  let mappings =
-    List.mapi
-      (fun i u ->
-        let param =
-          match U.as_buffer u with
-          | Some { buffer; _ } ->
-              U.replace u ~op:Ops.Param
-                ~arg:(U.Arg.Param_arg { buffer with slot = i; buffer = None }) ()
-          | None ->
-              U.param ~slot:i ~dtype:(U.dtype u) ?device:(U.device_of u) ()
-        in
-        (u, param))
-      (Array.to_list input_uops)
+let jit_lower ?beam ?search ~devices ~held_bufs ~inputs linear =
+  let param i u =
+    ( u,
+      Ops.param
+        ~shape:[ Int (Ops.max_numel u) ]
+        ?device:(Ops.device u) i (Ops.dtype u) )
   in
-  let linear = U.substitute ~walk:true mappings linear in
-  let linear = Schedule.memory_plan_rewrite linear held_bufs in
-  Realize.compile_linear ~device ~to_program linear
-
-(* Captured schedule *)
-
-type 'a captured_jit = {
-  ret : 'a;
-  linear : U.t;
-  device : Device.t;
-  to_program : Device.t -> U.t -> U.t;
-  expected_input_info : input_info array;
-}
-
-let validate_inputs t (input_uops : U.t array) =
-  let n = Array.length t.expected_input_info in
-  if Array.length input_uops <> n then
-    raise
-      (Jit_error
-         (Printf.sprintf "input count mismatch: expected %d, got %d" n
-            (Array.length input_uops)));
-  Array.iteri
-    (fun i info ->
-      let got = input_info_of_uop input_uops.(i) in
-      if
-        got.ii_size <> info.ii_size
-        || not (Dtype.equal got.ii_dtype info.ii_dtype)
-        || got.ii_device <> info.ii_device
-      then
-        raise
-          (Jit_error
-             (Printf.sprintf "input %d mismatch: expected (%d, %s)" i
-                info.ii_size
-                (Dtype.to_string info.ii_dtype))))
-    t.expected_input_info
-
-(* Inputs are explicit PARAM arguments; the captured graph owns other storage. *)
-let exec_captured ?(wait = false) t (input_uops : U.t array) var_vals =
-  validate_inputs t input_uops;
-  Realize.run_linear ~device:t.device ~to_program:t.to_program
-    ~var_vals ~input_uops ~jit:true ~wait t.linear;
-  t.ret
-
-(* TinyJit *)
-
-type 'a tiny_jit = {
-  fxn : (U.t array -> (string * int64) list -> 'a) option;
-  device : Device.t;
-  to_program : Device.t -> U.t -> U.t;
-  mutable captured : 'a captured_jit option;
-  mutable cnt : int;
-}
-
-let captured t = t.captured
-
-let create ~device ~to_program ?fxn ?captured ?prune:_ () =
-  if Option.is_none fxn && Option.is_none captured then
-    invalid_arg "need either a function or a CapturedJit";
-  let cnt = if fxn = None then 2 else 0 in
-  { fxn; device; to_program; captured; cnt }
-
-let reset t =
-  if t.fxn = None then invalid_arg "can't reset without function";
-  t.cnt <- 0;
-  t.captured <- None
-
-(* Flatten the captured linears into one, inlining nested LINEAR nodes. *)
-let combine_linears linears =
-  U.linear
-    (List.concat_map
-       (fun l -> if is_op Ops.Linear l then U.children l else [ l ])
-       linears)
-
-let call ?wait ?held_buffers t (input_uops : U.t array)
-    (var_vals : (string * int64) list) =
-  let ret =
-    if jit_level = 0 || t.cnt = 0 then
-      (* Warmup: execute eagerly. *)
-      (Option.get t.fxn) input_uops var_vals
-    else if t.cnt = 1 then begin
-      (* Capture: record the linears the function schedules. *)
-      let fxn = Option.get t.fxn in
-      if Option.is_some (Realize.current_capture ()) then
-        raise (Jit_error "nested TinyJit is not supported");
-      let linears = ref [] in
-      let ret =
-        Realize.with_capture
-          (fun linear var_vals -> ignore var_vals; linears := linear :: !linears)
-          (fun () -> fxn input_uops var_vals)
-      in
-      let linears = List.rev !linears in
-      if linears = [] then raise (Jit_error "didn't JIT anything!");
-      if debug >= 1 then
-        Printf.eprintf "JIT captured %d linears with %d inputs\n%!"
-          (List.length linears) (Array.length input_uops);
-      let held_bufs = match held_buffers with Some f -> f () | None -> [] in
-      let linear =
-        jit_lower ~device:t.device ~to_program:t.to_program
-          (combine_linears linears) held_bufs input_uops
-      in
-      let linear = Realize.link_linear
-          ~ctx:(Realize.exec_context ~input_uops ()) ~allow_cache:false linear in
-      let captured =
-        {
-          ret;
-          linear;
-          device = t.device;
-          to_program = t.to_program;
-          expected_input_info = Array.map input_info_of_uop input_uops;
-        }
-      in
-      t.captured <- Some captured;
-      exec_captured ?wait captured input_uops var_vals
-    end
-    else
-      (* Exec: replay the captured schedule. *)
-      exec_captured ?wait (Option.get t.captured) input_uops var_vals
+  let linear = Ops.substitute ~walk:true linear (List.mapi param inputs) in
+  let linear = Memory.memory_plan_rewrite ~held_bufs linear in
+  let beam =
+    match beam with
+    | Some beam -> beam
+    | None -> Helpers.getenv "JITBEAM" (Helpers.Context_var.value Helpers.beam)
   in
-  t.cnt <- t.cnt + 1;
-  ret
+  Helpers.context
+    [ B (Helpers.beam, beam) ]
+    (fun () -> Hcq2.compile_linear ?search ~devices linear)

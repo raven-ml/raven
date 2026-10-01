@@ -5,476 +5,742 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_uop
-module U = Uop
+open Ops
 
-let late_allreduce = Helpers.getenv "LATE_ALLREDUCE" 1
-let int_ = U.const_int
-let zero = int_ 0
-let emit = function [x] -> x | xs -> U.stack xs
-let simp = Symbolic.simplify
-let bin op lhs rhs = simp (U.alu_binary ~op ~lhs ~rhs)
-let mul = bin Ops.Mul
-let div = bin Ops.Floordiv
-let sub lhs rhs = bin Ops.Add lhs (mul rhs (int_ (-1)))
-let eq a b = U.equal (simp a) (simp b)
-let prod = List.fold_left mul (int_ 1)
-let count rng = Bound.to_int (U.vmax rng) + 1
-let is_multi u = U.op u = Ops.Unshard
-let inner u = (U.src u).(0)
-let unwrap u = if is_multi u then inner u else u
-let wrap src sharding =
-  match sharding with
-  | [] -> src
-  | _ -> U.unshard ~src ~axes:(List.map fst sharding) ~ranges:(List.map snd sharding) ()
-let rewrap src multi = wrap src (U.sharding multi)
-let same_shape a b = List.length a = List.length b && List.for_all2 eq a b
-let same_sharding a b = List.length a = List.length b
-  && List.for_all2 (fun (a, r) (b, s) -> a = b && U.equal r s) a b
-let device_exn u = match U.device_of u with
-  | Some d -> d | None -> invalid_arg "multi: device required"
-let index_of x xs =
-  let rec loop i = function
-    | [] -> invalid_arg "multi: axis not found"
-    | y :: _ when x = y -> i
-    | _ :: rest -> loop (i + 1) rest in
-  loop 0 xs
-let subst_device_num node i =
-  let mappings = U.ranges node |> List.filter_map (fun r ->
-      match U.as_range r with
-      | Some {kind = Axis_type.Device; _} -> Some (r, int_ i)
-      | _ -> None) in
-  simp (U.substitute mappings node)
+let rule = Pattern_matcher.rule
+let ops = Op.Set.of_list
+let is_unshard u = op u = Op.Unshard
+let peel u = if is_unshard u then nth u 0 else u
+let count rng = Dtype.Value.to_int (vmax rng) + 1
+let equal_shape s0 s1 = List.equal Sint.equal s0 s1
+let truth = function Sint.Known b -> b | Sint.Cond u -> to_bool u
 
-let shard src axis rng =
-  let shape = U.shape src in
-  let dim = List.nth shape axis in
-  let n = int_ (count rng) in
-  if not (eq (bin Ops.Floormod dim n) zero) then invalid_arg "multi: uneven shard";
-  let size = div dim n in
-  U.shrink ~src
-    ~offset:(emit (List.mapi (fun i _ -> if i = axis then mul rng size else zero) shape))
-    ~size:(emit (List.mapi (fun i d -> if i = axis then size else d) shape))
+let unshard_as pairs x =
+  unshard ~ranges:(List.map snd pairs) x (List.map fst pairs)
 
-let shard_subview full multi =
-  if not (same_shape (U.shape full) (U.shape multi)) then
-    invalid_arg "multi: shard subview shape mismatch";
-  if U.op full = Ops.Expand && U.shape (inner full) = [] then
-    U.expand ~src:(inner full) ~dims:(emit (U.shape (inner multi)))
-  else List.fold_left (fun value (axis, rng) -> shard value axis rng) full (U.sharding multi)
+let reshard multi x = unshard_as (sharding multi) x
 
-(* All-gather: [multi], split over its devices, whole on [device], one device
-   or several. Each target gets one buffer holding the whole value, and each
-   shard is written once into its window of that buffer: a copy from another
-   device, or a store on the device that holds it. The collective is a
-   precompiled call implementing [Allgather] over (dst, src), so the scheduler
-   and a backend see one unit.
+let equal_sharding s0 s1 =
+  List.equal (fun (a0, r0) (a1, r1) -> a0 = a1 && r0 == r1) s0 s1
 
-   When the targets are the sources and ALLREDUCE_NODE_NDEVS puts them in
-   several boxes ([Allreduce.box_size]), shards cross boxes only along rails.
-   Shard j reaches device k directly when they share a box or a rail. Any
-   other shard reaches k from the device of k's box on j's rail, read back
-   from the window that device stored it in. Each device receives (n-1)/n of
-   the value, as flat, of which (b-1)/n crosses a box for b boxes, against
-   (n-h)/n flat for boxes of h.
+let sharded_axis u =
+  match axis u with
+  | Some a -> a
+  | None -> invalid_arg "resharding needs a value sharded on one axis"
 
-   The tinygrad counterpart concatenates padded shards with a sum kernel for
-   one device, and for several it allreduces the padded shards, which moves
-   2(n-1)/n of the value per device under ring and n-1 full buffers under
-   naive, against (n-1)/n here. *)
-let allgather multi device =
-  let sources = match device_exn multi with
-    | U.Multi ds -> ds | _ -> invalid_arg "multi: gather requires multiple devices" in
-  let targets = match device with
-    | U.Single d -> [Some d] | U.Multi ds -> ds
-    | U.Index _ -> invalid_arg "multi: gather to an indexed device" in
-  let sharding = U.sharding multi in
-  let coordinates j = List.map (fun (_, rng) ->
-      match U.const_int_value (subst_device_num rng j) with
-      | Some c -> c
-      | None -> invalid_arg "multi: gather shard index is not concrete") sharding in
-  (* Unplaced shards are values, not collective buffer arguments. Reconstruct
-     their tiles on the destination before asking for any storage. *)
-  if List.exists Option.is_none sources && (match device with U.Single _ -> true | _ -> false) then
-    let pieces = List.init (List.length sources) (fun i ->
-        coordinates i, U.copy ~src:(U.mselect ~src:(inner multi) ~index:i) ~device ()) in
-    let pieces = List.fold_right (fun (j, (axis, _)) pieces ->
-        let without_axis coords = List.filteri (fun i _ -> i <> j) coords in
-        let keys = List.sort_uniq Stdlib.compare (List.map (fun (coords, _) -> without_axis coords) pieces) in
-        List.map (fun key ->
-            let group = List.filter_map (fun (coords, value) ->
-                if without_axis coords = key then Some (List.nth coords j, value) else None) pieces
-              |> List.sort (fun (a, _) (b, _) -> Int.compare a b) in
-            let values = List.map snd group in
-            let shape = U.shape (List.hd values) in
-            let order = List.init axis (fun i -> i + 1) @ [0]
-              @ List.init (List.length shape - axis) (fun i -> axis + i + 1) in
-            let stacked = U.permute ~src:(U.stack values) ~order in
-            let shape = List.mapi (fun i dim ->
-                if i = axis then mul (int_ (List.length values)) dim else dim) shape in
-            key, U.reshape ~src:stacked ~shape:(emit shape)) keys)
-      (List.mapi (fun j shard -> j, shard) sharding) pieces in
-    (match pieces with [_, value] -> value
-     | _ -> invalid_arg "multi: gather did not reconstruct one value")
-  else
-  let local = U.shape (inner multi) in
-  let window j =
-    let coords = List.combine (List.map fst sharding) (coordinates j) in
-    emit (List.mapi (fun axis size -> match List.assoc_opt axis coords with
-        | Some c -> mul (int_ c) size | None -> zero) local) in
-  let relay = match Allreduce.box_size ~like:multi (List.length sources) with
-    | Some hdev when targets = sources -> fun k j ->
-        if k / hdev = j / hdev || k mod hdev = j mod hdev then None
-        else Some (k / hdev * hdev + j mod hdev)
-    | _ -> fun _ _ -> None in
-  Allreduce.collective (U.Allgather (List.map fst (U.sharding multi))) ~device ~like:multi
-    (inner multi) (fun ~src ->
-      let slot state k j =
-        let replica = match device with U.Multi _ -> U.mselect ~src:state ~index:k | _ -> state in
-        U.shrink ~src:replica ~offset:(window j) ~size:(emit local) in
-      let pairs = List.concat (List.mapi (fun k _ -> List.mapi (fun j _ -> k, j) sources) targets) in
-      let deliver state (k, j) value =
-        U.store ~dst:(slot state k j) ~value:(Allreduce.copy_to_device value (Option.get (List.nth targets k))) () in
-      (* The relayed shards are a second phase: it reads them back from the
-         relays' windows the first phase wrote. *)
-      [ (fun dst -> List.filter_map (fun (k, j) ->
-            if Option.is_some (relay k j) then None
-            else Some (deliver dst (k, j) (U.mselect ~src ~index:j))) pairs);
-        (fun first -> List.filter_map (fun (k, j) ->
-            Option.map (fun r -> deliver first (k, j) (slot first r j)) (relay k j)) pairs) ])
+let is_multi u = match device u with Some (Multi _) -> true | _ -> false
 
-(* Reduce-scatter: [shrink], keeping each device's own block of an
-   allreduce along one axis and the allreduce's only consumer, becomes the
-   reduction of just that block. [only_consumer c u] says [c] is all that
-   consumes [u]. Device k receives block k of every other device's partial
-   and folds the partials in device order, the order the naive allreduce
-   folds them in, so the result equals the naive allreduce's block bit for
-   bit. The allreduce may sit between the casts [reduce_multi] adds under
-   ALLREDUCE_CAST. The collective is a precompiled call implementing
-   [Reducescatter] over (dst, src).
+let devices u =
+  match device u with
+  | Some (Multi ds) -> ds
+  | _ -> invalid_arg "the value is not on several devices"
 
-   When the targets are the sources and ALLREDUCE_NODE_NDEVS puts them in
-   several boxes ([Allreduce.box_size]), the reduction runs in two phases,
-   and only the second crosses boxes. First each box folds its members'
-   partials of block k, in device order, on its member at k's rail, which
-   for k's own box is k's destination. Then device k folds the boxes'
-   partials of block k in box order, in place. That is the hierarchical
-   allreduce's order, so the blocks equal its rows bit for bit. Each device
-   still sends (n-1)/n of its partial, of which (b-1)/n crosses a box for b
-   boxes, against (n-h)/n flat for boxes of h. The partials a device holds
-   for the other boxes add (b-1)/n of the partial to its peak.
+let not_movement () = invalid_arg "the node is not the movement matched"
 
-   No tinygrad counterpart: the reference allreduces the whole value and
-   each device keeps its rows, which sends 2(n-1)/n of the value per device
-   under ring and n-1 whole partials under naive, and holds a whole replica,
-   against (n-1)/n sent and one block held here. *)
-let reducescatter ~only_consumer shrink =
-  let value = (U.src shrink).(0) in
-  let reduced, cast =
-    match U.op value with
-    | Ops.Cast when U.op (U.src value).(0) = Ops.Allreduce ->
-        (U.src value).(0), Some (U.dtype value)
-    | _ -> value, None
+let shape_arg u =
+  match marg u with Reshape s | Expand s -> s | _ -> not_movement ()
+
+let bounds_arg u =
+  match marg u with Pad b | Shrink b -> b | _ -> not_movement ()
+
+let device_ranges x =
+  List.filter
+    (fun r -> Axis_type.equal (axis_type r) Axis_type.Device)
+    (Nodes.to_list (ranges x))
+
+(* Copies and shard selections across devices *)
+
+(* [x] on the [i]th device: its device range is [i]. *)
+let at_device i x =
+  match device_ranges x with
+  | r :: _ -> substitute x [ (r, const_like r (`Int (Bigint.of_int i))) ]
+  | [] -> x
+
+let apply_shrink marg s i =
+  let at_device = function Sym x -> Sym (at_device i x) | n -> n in
+  mop s (Shrink (List.map (fun (a, b) -> (at_device a, at_device b)) marg))
+
+let mstack_early_shrink ms shrink =
+  let marg = bounds_arg shrink in
+  let each i x =
+    if op x = Op.Copy then
+      let s = apply_shrink marg (nth x 0) i in
+      if Option.equal equal_device (device s) (device x) then contiguous s
+      else copy_to_device s (Option.get (device x))
+    else contiguous (apply_shrink marg x i)
   in
-  match U.as_allreduce reduced with
-  | Some { op; device = U.Multi targets as device; src }
-    when only_consumer shrink value
-         && (U.equal value reduced || only_consumer value reduced) ->
-      let sources = match U.device_of src with
-        | Some (U.Multi ds) -> ds | _ -> [] in
-      let offsets = U.as_shape (U.src shrink).(1)
-      and sizes = U.as_shape (U.src shrink).(2) in
-      let split = List.filter (fun (_, offset) -> not (eq offset zero))
-          (List.mapi (fun i offset -> i, offset) offsets) in
-      let device_ranges = List.filter (fun r ->
-          match U.as_range r with
-          | Some { kind = Axis_type.Device; _ } -> true | _ -> false)
-          (U.toposort (U.src shrink).(1)) in
-      (match split, device_ranges with
-       | [ (axis, offset) ], [ rng ]
-         when count rng = List.length targets && sources <> []
-              && eq offset (mul rng (List.nth sizes axis))
-              && List.for_all Fun.id (List.mapi (fun i (size, dim) ->
-                  i = axis || eq size dim) (List.combine sizes (U.shape value))) ->
-           let block_of k u =
-             U.shrink ~src:u ~offset:(subst_device_num (U.src shrink).(1) k)
-               ~size:(subst_device_num (U.src shrink).(2) k) in
-           let like = U.shrink ~src:reduced ~offset:(U.src shrink).(1)
-               ~size:(U.src shrink).(2) in
-           (* The sources of each box, the box holding target k, and the
-              device of box b at k's rail, which folds b's partials of block k. *)
-           let boxes, own, at = match Allreduce.box_size ~like (List.length targets) with
-             | Some hdev when sources = targets ->
-                 List.init (List.length targets / hdev) (fun b -> List.init hdev (fun j -> b * hdev + j)),
-                 (fun k -> k / hdev), (fun b k -> b * hdev + k mod hdev)
-             | _ -> [ List.init (List.length sources) Fun.id ], (fun _ -> 0), (fun _ k -> k) in
-           let blocks =
-             Allreduce.collective (U.Reducescatter (op, axis)) ~device ~like src
-               (fun ~src ->
-                 let box_sum k members h =
-                   Allreduce.fold_reduce op (List.map (fun j ->
-                       Allreduce.copy_to_device (block_of k (U.mselect ~src ~index:j))
-                         (Option.get (List.nth targets h))) members) in
-                 (* Each device folds its own box's partials of its block into
-                    its destination. Under boxes, a second phase folds that in
-                    place with the other boxes' partials, which their devices
-                    at its rail store and copy, in box order. *)
-                 [ (fun dst -> List.mapi (fun k _ ->
-                       U.store ~dst:(U.mselect ~src:dst ~index:k)
-                         ~value:(box_sum k (List.nth boxes (own k)) k) ()) targets);
-                   (fun first -> match boxes with
-                     | [ _ ] -> []
-                     | _ -> List.mapi (fun k target ->
-                         let term b members =
-                           if b = own k then U.mselect ~src:first ~index:k
-                           else Allreduce.copy_to_device
-                               (U.contiguous ~src:(box_sum k members (at b k)) ()) (Option.get target) in
-                         U.store ~dst:(U.mselect ~src:first ~index:k)
-                           ~value:(Allreduce.fold_reduce op (List.mapi term boxes)) ()) targets) ])
-           in
-           Some (match cast with
-               | Some dtype -> U.cast ~src:blocks ~dtype | None -> blocks)
-       | _ -> None)
+  replace ms ~src:(List.mapi each (src ms))
+
+(* A selection of a value on no device is that value (D35). *)
+let pm_unselect_deviceless =
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.op Op.Mselect ~src:[ Upat.var "x" ])
+        (fun m ->
+          if Option.is_none (device (m "x")) then Some (m "x") else None);
+    ])
+
+let lower_broadcast_copy c x =
+  match (device c, device x) with
+  | Some (Multi ds), Some (Single _) ->
+      let sx = graph_rewrite ~ctx:() (simplify x) pm_unselect_deviceless in
+      if Option.is_none (device sx) then
+        Some (v Op.Mstack ~src:(List.map (fun _ -> sx) ds))
+      else
+        Some
+          (v Op.Mstack
+             ~src:(List.map (fun d -> copy_to_device x (Single d)) ds))
   | _ -> None
 
-(* The allreduces multi_pm leaves become calls, once every consumer is
-   known: a reduce-scatter when a reshard is all that consumes one, else an
-   allreduce whose consumers slice or use its replica. A shared allreduce
-   is reduced once. multi_pm alone cannot decide this: it meets the
-   reshard's UNSHARD without the allreduce's other consumers.
+let copy_to_one c x =
+  match (device c, device x) with
+  | Some (Single _ as d), Some (Multi _) ->
+      let m = mselect x 0 in
+      Some
+        (if Option.equal equal_device (device m) (Some d) then m
+         else copy_to_device m d)
+  | _ -> None
 
-   Only allreduces outside call bodies become calls. Custom-kernel bodies
-   see single-device placeholders and a store's body is a bare STORE, so
-   no ALLREDUCE reaches a call body today; one that does raises rather than
-   reaching the kernels unlowered. *)
-let lower_allreduces root =
-  let consumers = Hashtbl.create 256 in
-  List.iter (fun u -> Array.iter (fun s -> Hashtbl.add consumers (U.tag s) u) (U.src u))
-    (U.toposort ~enter_calls:false root);
-  let only_consumer c u = List.for_all (U.equal c) (Hashtbl.find_all consumers (U.tag u)) in
-  let lower node =
-    match U.op node with
-    | Ops.Allreduce ->
-        let {U.op; device; src} = Option.get (U.as_allreduce node) in
-        Allreduce.create_allreduce_function src ~device ~op
-    | Ops.Call ->
-        let {U.body; info; _} = Option.get (U.as_call node) in
-        if not info.precompile && U.op body = Ops.Sink && Option.is_none (U.as_kernel_info body)
-           && List.exists (fun u -> U.op u = Ops.Allreduce) (U.toposort body) then
-          let name = match info.name with
-            | Some (U.Label name) -> name
-            | Some (U.Collective c) -> U.collective_name c
-            | None -> "(unnamed)" in
-          invalid_arg (Printf.sprintf "multi: ALLREDUCE in the body of call %s; \
-              collectives in call bodies are not lowered" name)
-        else None
-    | _ -> None
+let shard_index u =
+  match arg u with
+  | Shard i -> i
+  | _ -> invalid_arg "a shard selection needs its shard"
+
+let replace_allreduce =
+  let copy =
+    Upat.op Op.Copy ~name:"c" ~src:[ Upat.var "x" ] ~allow_any_len:true
   in
-  U.graph_rewrite ~name:"allreduce calls"
-    ~bpm:(fun n -> if U.op n = Ops.Shrink then reducescatter ~only_consumer n else None)
-    lower root
+  Pattern_matcher.v
+    (fun () -> [
+      (* A copy to several devices is a copy to each. *)
+      rule copy (fun m -> lower_broadcast_copy (m "c") (m "x"));
+      (* A copy from several devices to one copies the first shard. *)
+      rule copy (fun m -> copy_to_one (m "c") (m "x"));
+      (* A shard of a stack of shards is that shard. *)
+      rule
+        (Upat.op Op.Mselect ~name:"ms"
+           ~src:[ Upat.op Op.Mstack ~name:"mstack" ])
+        (fun m -> Some (nth (m "mstack") (shard_index (m "ms"))));
+      (* Shrinks move before stacks of shards. *)
+      rule
+        (Upat.op Op.Shrink ~name:"shrink" ~allow_any_len:true
+           ~src:[ Upat.op Op.Mstack ~name:"ms" ])
+        (fun m -> Some (mstack_early_shrink (m "ms") (m "shrink")));
+      (* Shard selections move before movements and arithmetic. *)
+      rule
+        (Upat.op Op.Mselect ~name:"ms"
+           ~src:
+             [
+               Upat.v ~op:Op.Set.movement ~name:"v" ~allow_any_len:true
+                 ~src:[ Upat.var "s" ]
+                 ();
+             ])
+        (fun m ->
+          let v = m "v" and i = shard_index (m "ms") in
+          let arg x =
+            let y = at_device i x in
+            if y == x then x else simplify y
+          in
+          Some
+            (replace v
+               ~src:(mselect (m "s") i :: List.map arg (List.tl (src v)))));
+      rule
+        (Upat.op Op.Mselect ~name:"ms"
+           ~src:[ Upat.v ~op:Op.Set.alu ~name:"a" () ])
+        (fun m ->
+          let i = shard_index (m "ms") in
+          let a = m "a" in
+          Some
+            (replace a
+               ~src:
+                 (List.map
+                    (fun s -> if is_multi s then mselect s i else s)
+                    (src a))));
+    ])
 
-let shard_srcs children axis rng =
-  let shape = U.broadcast_shape (List.map U.shape children) in
-  let rank = List.length shape in
-  List.map (fun src ->
-      let src_shape = U.shape src in
-      let src_axis = axis - (rank - List.length src_shape) in
-      match U.sharding src with
-      | [a, r] when a = src_axis && U.equal r rng -> inner src
-      | sharding ->
-          let full = if sharding = [] then src else allgather src (device_exn src) in
-          if src_axis < 0 || eq (List.nth src_shape src_axis) (int_ 1) then full
-          else shard full src_axis rng) children
+let replace_allreduce =
+  if Helpers.getenv "LATE_ALLREDUCE" 1 <> 0 then replace_allreduce
+  else
+    Pattern_matcher.append
+      (Pattern_matcher.v
+         (fun () -> [
+           rule
+             (Upat.op Op.Allreduce ~name:"red" ~src:[ Upat.var "buf" ])
+             (fun m -> Allreduce.handle_allreduce (m "red"));
+         ]))
+      replace_allreduce
+
+(* Sharded operations *)
+
+let rec shard_srcs msrcs axis =
+  let devices = List.filter_map device msrcs in
+  if not (Helpers.all_same equal_device devices) then
+    invalid_arg "resharded values must be on the same devices";
+  (* Without devices the sharding range comes from the unshard itself, such as a
+     thread's range; device shards range over the devices. *)
+  let sharding_rng =
+    match devices with
+    | Multi ds :: _ ->
+        range ~axis_type:Axis_type.Device (Int (List.length ds)) [ -1 ]
+    | _ -> (
+        match List.find_opt is_unshard msrcs with
+        | Some m -> nth m 1
+        | None -> invalid_arg "resharding needs a device or a sharding range")
+  in
+  let out_shape = broadcast_shape (List.map shape msrcs) in
+  let each mlb =
+    let src_axis = axis - (List.length out_shape - ndim mlb) in
+    if Option.equal Int.equal (Ops.axis mlb) (Some src_axis) then nth mlb 0
+    else
+      (* Every shard gets the whole copy, sharded iff this source has the axis:
+         broadcast sources stay whole. *)
+      let full =
+        if Ops.axis mlb = None then mlb
+        else copy_multi mlb (Option.get (device mlb))
+      in
+      if List.mem axis (broadcast_axes (shape mlb) out_shape) then full
+      else shard_slice full src_axis sharding_rng
+  in
+  List.map each msrcs
+
+(* The part of [full], a whole value of [multi]'s shape, that belongs to this
+   shard, as the device path takes it. *)
+and shard_subview full multi =
+  if not (equal_shape (shape full) (shape multi)) then
+    invalid_arg "a shard's sub-view needs the value's whole shape";
+  if op full = Op.Expand && shape (nth full 0) = [] then
+    expand (nth full 0) (shape (nth multi 0))
+  else
+    List.fold_left
+      (fun f (ax, rng) -> shard_slice f ax rng)
+      full (sharding multi)
+
+and shard_idx rng dev_idx =
+  match device_ranges rng with
+  | [] -> 0
+  | r :: _ -> (
+      match
+        ssimplify
+          (substitute rng [ (r, const_like r (`Int (Bigint.of_int dev_idx))) ])
+      with
+      | Int n -> n
+      | Sym _ -> invalid_arg "a shard's position is not a constant")
+
+and copy_multi multi device =
+  let sharding = sharding multi in
+  match device with
+  | Single _ ->
+      (* Reconstruct by concatenating along each axis from last to first. *)
+      let pieces =
+        List.init
+          (List.length (devices multi))
+          (fun i ->
+            ( List.map (fun (_, r) -> shard_idx r i) sharding,
+              copy_to_device (mselect (nth multi 0) i) device ))
+      in
+      let join pieces j =
+        let ax = fst (List.nth sharding j) in
+        let key idxs = List.filteri (fun k _ -> k <> j) idxs in
+        let keys =
+          List.sort_uniq (List.compare Int.compare)
+            (List.map (fun (i, _) -> key i) pieces)
+        in
+        List.map
+          (fun k ->
+            let grp =
+              List.stable_sort
+                (fun (a, _) (b, _) -> Int.compare a b)
+                (List.filter_map
+                   (fun (i, p) ->
+                     if key i = k then Some (List.nth i j, p) else None)
+                   pieces)
+            in
+            (k, cat ~axis:ax (snd (List.hd grp)) (List.map snd (List.tl grp))))
+          keys
+      in
+      snd
+        (List.hd
+           (List.fold_left join pieces
+              (List.rev (List.init (List.length sharding) Fun.id))))
+  | Multi _ ->
+      (* Unshard every axis and allreduce. *)
+      let pad_axis v (ax, rng) =
+        let bsz = List.nth (shape v) ax in
+        let r = Sym rng and last = Int (count rng - 1) in
+        pad v
+          (List.init (ndim v) (fun a ->
+               if a <> ax then Some (Int 0, Int 0)
+               else Some Sint.(bsz * r, (bsz * last) - (bsz * r))))
+      in
+      allreduce (List.fold_left pad_axis (nth multi 0) sharding) Op.Add device
 
 let alu_multi root =
-  let children = U.children root in
-  let target = List.find is_multi children in
-  let sharding = U.sharding target in
-  let can_handle src = match U.sharding src with
-    | [] -> U.shape src = [] || same_shape (U.shape src) (U.shape target)
-    | s -> same_sharding s sharding in
-  if List.for_all can_handle children then
-    let src = Array.of_list (List.map (fun x ->
-        if is_multi x then inner x else if U.shape x = [] then x else shard_subview x target) children) in
-    rewrap (U.replace root ~src ()) target
-  else
-    let axis = Option.get (U.axis root) in
-    let rng = snd (List.hd sharding) in
-    let src = Array.of_list (shard_srcs children axis rng) in
-    wrap (U.replace root ~src ()) [axis, rng]
-
-let stack_multi root =
-  let children = U.children root in
-  let target = List.find is_multi children in
-  let sharding = U.sharding target in
-  let sources, sharding =
-    if List.for_all (fun x -> not (is_multi x) || same_sharding (U.sharding x) sharding) children then
-      List.map (fun x -> if is_multi x then inner x else shard_subview x target) children,
-      List.map (fun (axis, rng) -> axis + 1, rng) sharding
-    else
-      let axis = Option.get (U.axis root) in
-      let rng = snd (List.hd sharding) in
-      shard_srcs children (axis - 1) rng, [axis, rng] in
-  wrap (U.stack sources) sharding
+  match List.filter is_unshard (src root) with
+  | [] -> None
+  | target :: _ -> (
+      let sharding = sharding target in
+      (* Same sharding (peel the unshard), a whole value of the full shape (take
+         its per-shard sub-view), or a broadcast scalar. *)
+      let can_handle m =
+        match Ops.sharding m with
+        | [] -> shape m = [] || equal_shape (shape m) (shape target)
+        | s -> equal_sharding s sharding
+      in
+      if List.for_all can_handle (src root) then
+        let each m =
+          if is_unshard m then nth m 0
+          else if shape m = [] then m
+          else shard_subview m target
+        in
+        match List.map each (src root) with
+        | x :: rest -> Some (reshard target (alu x (op root) rest))
+        | [] -> None
+      else
+        (* Resharding: the single-axis fallback. *)
+        let axis = sharded_axis root in
+        match shard_srcs (src root) axis with
+        | x :: rest ->
+            Some
+              (unshard ~ranges:[ nth target 1 ] (alu x (op root) rest) [ axis ])
+        | [] -> None)
 
 let reduce_multi root multi =
-  let {U.op; num_axes; _} = Option.get (U.as_reduce root) in
-  let reduced, remaining = List.partition (fun (axis, _) -> axis < num_axes) (U.sharding multi) in
-  let src = inner multi in
-  let local = U.reduce_axis ~src ~op ~axes:(List.init num_axes Fun.id) in
-  if reduced = [] then wrap local (List.map (fun (axis, rng) -> axis - num_axes, rng) remaining)
-  else (
-    if remaining <> [] then invalid_arg "multi: partial multi-axis allreduce is unsupported";
-    let device = device_exn multi in
-    if Helpers.Context_var.get Helpers.allreduce_cast <> 0 && U.op src = Ops.Cast
-       && (Dtype.equal (U.dtype (inner src)) Dtype.float16 || Dtype.equal (U.dtype (inner src)) Dtype.bfloat16) then
-      U.cast ~src:(U.allreduce ~src:(U.cast ~src:local ~dtype:(U.dtype (inner src))) ~device ~op) ~dtype:(U.dtype local)
-    else U.allreduce ~src:local ~device ~op)
+  match arg root with
+  | Reduce { op = rop; num_axes } ->
+      let sharding = sharding multi in
+      let reduced, remaining =
+        List.partition (fun (ax, _) -> ax < num_axes) sharding
+      in
+      let x = nth multi 0 in
+      let local = Ops.rop x rop (List.init num_axes Fun.id) in
+      if reduced <> [] then begin
+        if remaining <> [] then
+          invalid_arg "a partial allreduce of a value sharded on several axes";
+        let device = Multi (devices multi) in
+        (* All sharded axes are reduced: a full allreduce. *)
+        match (op x, src x) with
+        | Op.Cast, inner :: _
+          when Helpers.Context_var.value Helpers.allreduce_cast
+               && List.mem (dtype inner) Dtype.[ Bfloat16; Float16 ] ->
+            Some
+              (cast
+                 (allreduce (cast local (dtype inner)) rop device)
+                 (dtype local))
+        | _ -> Some (allreduce local rop device)
+      end
+      else
+        (* No sharded axis is reduced: piecewise, keeping the sharding. *)
+        Some
+          (unshard_as
+             (List.map (fun (ax, r) -> (ax - num_axes, r)) remaining)
+             local)
+  | _ -> None
 
 let reshape_multi root multi =
-  let shape = U.as_shape (U.src root).(1) in
-  let old = U.shape multi in
-  if not (eq (prod old) (prod shape)) then invalid_arg "multi: reshape must maintain shape product";
-  let prefixes = ref [] and acc = ref (int_ 1) in
-  List.iteri (fun i dim -> prefixes := (i, !acc) :: !prefixes; acc := mul !acc dim) shape;
-  let sharding = List.map (fun (axis, rng) ->
-      let target = prod (List.filteri (fun i _ -> i < axis) old) in
-      let new_axis = match List.find_opt (fun (_, prefix) -> eq prefix target) !prefixes with
-        | Some (i, _) -> i | None -> invalid_arg "multi: reshape moved items between shards" in
-      if not (eq (bin Ops.Floormod (List.nth shape new_axis) (int_ (count rng))) zero) then
-        invalid_arg "multi: reshape moved items between shards";
-      new_axis, rng) (U.sharding multi) in
-  let local = List.mapi (fun i dim -> match List.assoc_opt i sharding with
-      | None -> dim | Some rng -> div dim (int_ (count rng))) shape in
-  wrap (U.reshape ~src:(inner multi) ~shape:(emit local)) sharding
+  let new_shape = shape_arg root in
+  if truth Sint.(prod (shape multi) <> prod new_shape) then
+    invalid_arg "a reshape must keep the number of elements";
+  let moved () = invalid_arg "a reshape moves elements between shards" in
+  let sint_simplify = function Sym u -> ssimplify u | n -> n in
+  (* Map every sharded axis through the reshape: its boundary must survive and
+     stay divisible by its shard count. *)
+  let arg_acc =
+    List.rev
+      (List.fold_left
+         (fun acc s -> sint_simplify Sint.(List.hd acc * s) :: acc)
+         [ Int 1 ] new_shape)
+  in
+  let new_sharding =
+    List.map
+      (fun (ax, rng) ->
+        let target = sint_simplify (Sint.prod (List.take ax (shape multi))) in
+        let new_ax =
+          match List.find_index (Sint.equal target) (List.rev arg_acc) with
+          | Some i -> List.length arg_acc - i - 1
+          | None -> moved ()
+        in
+        if truth Sint.(List.nth new_shape new_ax % Int (count rng) <> Int 0)
+        then moved ();
+        (new_ax, rng))
+      (sharding multi)
+  in
+  let shard_shape =
+    List.mapi
+      (fun a s ->
+        match List.assoc_opt a new_sharding with
+        | Some rng -> Sint.(s // Int (count rng))
+        | None -> s)
+      new_shape
+  in
+  unshard_as new_sharding (reshape (nth multi 0) shard_shape)
 
+let expand_multi root multi =
+  let added = shape_arg root in
+  let shift = List.length added in
+  unshard_as
+    (List.map (fun (ax, r) -> (ax + shift, r)) (sharding multi))
+    (mop (nth multi 0) (Expand added))
+
+let pad_multi root multi =
+  let marg = bounds_arg root in
+  let x = nth multi 0 in
+  List.iter
+    (fun (ax, _) ->
+      let s, e = List.nth marg ax in
+      if not (Sint.equal s (Int 0) && Sint.equal e (List.nth (shape multi) ax))
+      then invalid_arg "cannot pad a sharded axis")
+    (sharding multi);
+  let local_pad =
+    List.mapi
+      (fun a s ->
+        if List.mem_assoc a (sharding multi) then (Int 0, List.nth (shape x) a)
+        else s)
+      marg
+  in
+  reshard multi (mop x (Pad local_pad))
+
+let permute_multi root multi =
+  let order = match marg root with Permute p -> p | _ -> not_movement () in
+  let index ax = Option.get (List.find_index (Int.equal ax) order) in
+  unshard_as
+    (List.map (fun (ax, r) -> (index ax, r)) (sharding multi))
+    (permute (nth multi 0) order)
+
+(* Each sharded axis resolves on its own: a shrink to exactly its range's own
+   shard removes the sharding along that axis, as a fragment indexed by its
+   thread's range is that thread's shard, with no copy. *)
 let shrink_multi root multi =
-  let offsets = Array.of_list (U.as_shape (U.src root).(1)) in
-  let sizes = Array.of_list (U.as_shape (U.src root).(2)) in
-  let local = U.shape (inner multi) and full = U.shape multi in
-  let selected = ref None in
-  let remaining = List.filter (fun (axis, rng) ->
-      let size = List.nth local axis in
-      let own = eq sizes.(axis) size && eq offsets.(axis) (mul rng size) in
-      let whole = eq offsets.(axis) zero && eq sizes.(axis) (List.nth full axis) in
-      if not own && not whole then (
-        if List.length (U.sharding multi) <> 1 then invalid_arg "multi: unsupported partial shard slice";
-        let index = List.find_opt (fun i -> eq offsets.(axis) (mul (int_ i) size) && eq sizes.(axis) size)
-            (List.init (count rng) Fun.id) in
-        match index, U.device_of multi with
-        | Some i, Some (U.Multi _ as device) ->
-            selected := Some (U.copy ~src:(U.mselect ~src:(inner multi) ~index:i) ~device ())
-        | _ -> invalid_arg "multi: unsupported shard slice");
-      offsets.(axis) <- zero; sizes.(axis) <- size;
-      whole) (U.sharding multi) in
-  let value = U.shrink ~src:(Option.value !selected ~default:(inner multi))
-      ~offset:(emit (Array.to_list offsets)) ~size:(emit (Array.to_list sizes)) in
-  wrap value remaining
+  let marg = bounds_arg root in
+  let x = nth multi 0 in
+  let sharding = sharding multi in
+  let local_marg = Array.of_list marg in
+  let rec go remaining = function
+    | [] ->
+        let v = mop x (Shrink (Array.to_list local_marg)) in
+        if remaining = [] then v else unshard_as remaining v
+    | (ax, rng) :: rest -> (
+        let shard_sz = List.nth (shape x) ax in
+        let s, l = List.nth marg ax in
+        let sz = sint_to_uop shard_sz in
+        if
+          Sint.equal (ssimplify (sint_to_uop l)) shard_sz
+          && Sint.equal (ssimplify (sub (sint_to_uop s) (mul rng sz))) (Int 0)
+        then begin
+          local_marg.(ax) <- (Int 0, shard_sz);
+          go (List.filter (fun (a, _) -> a <> ax) remaining) rest
+        end
+        else
+          let part_bounds =
+            List.init (count rng) (fun i -> (Sint.(Int i * shard_sz), shard_sz))
+          in
+          let is s' (a, b) = Sint.equal (fst s') a && Sint.equal (snd s') b in
+          if is (s, l) (Int 0, List.nth (shape multi) ax) then begin
+            (* A whole axis stays sharded, and the other axes shrink locally. *)
+            local_marg.(ax) <- (Int 0, shard_sz);
+            go remaining rest
+          end
+          else
+            (* Otherwise a shrink of the shard axis selects one partition,
+               copied to every device, only when a single axis is sharded across
+               devices. *)
+            match List.find_index (is (s, l)) part_bounds with
+            | Some part when List.length sharding = 1 && is_multi multi ->
+                let non_shard =
+                  List.mapi
+                    (fun i t -> if i = ax then (Int 0, shard_sz) else t)
+                    marg
+                in
+                mop
+                  (copy_to_device ~shard:part x (Multi (devices multi)))
+                  (Shrink non_shard)
+            | _ -> invalid_arg "cannot shrink a sharded axis")
+  in
+  go sharding sharding
 
-let index_multi root multi =
-  let idxs = Array.of_list (List.tl (U.children root)) in
-  List.iter (fun (axis, rng) ->
-      let size = List.nth (U.shape (inner multi)) axis in
-      let in_bounds idx = Bound.compare (U.vmin idx) Bound.zero >= 0
-        && Bound.compare (U.vmax idx) (U.vmin size) < 0 in
-      let local = sub idxs.(axis) (mul rng size) in
-      if in_bounds local then idxs.(axis) <- local
+let flip_multi root multi =
+  let flips = match marg root with Flip f -> f | _ -> not_movement () in
+  List.iter
+    (fun (ax, _) ->
+      if List.nth flips ax then invalid_arg "cannot flip a sharded axis")
+    (sharding multi);
+  let axes =
+    List.concat (List.mapi (fun i f -> if f then [ i ] else []) flips)
+  in
+  reshard multi (flip (nth multi 0) axes)
+
+(* A stack adds a leading axis: its sources are sharded one axis below. A whole
+   source takes its per-shard sub-view, as an elementwise operation's does. *)
+let stack_multi root =
+  match List.filter is_unshard (src root) with
+  | [] -> None
+  | first :: _ as multis ->
+      let sharding = sharding first in
+      if List.for_all (fun m -> equal_sharding (Ops.sharding m) sharding) multis
+      then
+        let each m = if is_unshard m then nth m 0 else shard_subview m first in
+        Some
+          (unshard_as
+             (List.map (fun (ax, r) -> (ax + 1, r)) sharding)
+             (v Op.Stack ~src:(List.map each (src root))))
       else
-        let diff = sub idxs.(axis) rng in
-        let local = div diff size in
-        if eq (bin Ops.Floormod diff size) zero && in_bounds local then idxs.(axis) <- local
-        else invalid_arg "multi: index is not owned by this shard") (U.sharding multi);
-  U.index ~ptr:(inner multi) ~idxs:(Array.to_list idxs) ()
+        (* Resharding: the single-axis fallback. *)
+        let axis = sharded_axis root in
+        Some
+          (unshard
+             ~ranges:[ nth first 1 ]
+             (v Op.Stack ~src:(shard_srcs (src root) (axis - 1)))
+             [ axis ])
 
-let passthrough root multi =
-  let src = Array.map unwrap (U.src root) in
-  rewrap (U.replace root ~src ()) multi
+(* Each sharded axis of an index resolves into its range's own shard, in one of
+   two ownerships: contiguous, [idx = rng * shard_sz + local], where the range
+   owns a block; or strided, [idx = rng + local * shard_sz], where it owns every
+   [shard_sz]th element. *)
+let index_multi root multi =
+  let x = nth multi 0 in
+  let resolve_axis idxs (ax, rng) =
+    let shard_sz = List.nth (shape x) ax in
+    let sz = sint_to_uop shard_sz in
+    let idx = List.nth idxs ax in
+    let within local =
+      Dtype.Value.(vmin local >= of_int 0)
+      && truth Sint.(Int (Dtype.Value.to_int (vmax local)) < shard_sz)
+    in
+    let local = simplify (sub idx (mul rng sz)) in
+    let diff = simplify (sub idx rng) in
+    let crosses () =
+      invalid_arg "an index crosses the shards of a sharded axis"
+    in
+    let local =
+      if within local then local
+      else
+        let md = simplify (mod_ diff sz) in
+        let is_zero =
+          op md = Op.Const
+          && match Ops.value md with `Int z -> Bigint.equal z Bigint.zero | _ -> false
+        in
+        if not is_zero then crosses ()
+        else
+          let strided = simplify (div ~rounding:`Floor diff sz) in
+          if within strided then strided else crosses ()
+    in
+    List.mapi (fun i u -> if i = ax then local else u) idxs
+  in
+  index x (List.fold_left resolve_axis (List.tl (src root)) (sharding multi))
 
-let mstack_shrink root ms =
-  U.mstack (List.mapi (fun i x ->
-      let shrink src = U.shrink ~src ~offset:(subst_device_num (U.src root).(1) i)
-          ~size:(subst_device_num (U.src root).(2) i) in
-      if U.op x = Ops.Copy then
-        let src = shrink (inner x) in
-        let device = device_exn x in
-        if U.device_of src = Some device then U.contiguous ~src () else U.copy ~src ~device ()
-      else U.contiguous ~src:(shrink x) ()) (U.children ms))
+(* A gather of a sharded value by a whole index. Sharded along trailing axes,
+   each shard gathers its own part. Sharded along the gathered rows, each shard
+   reads the rows it holds, zero elsewhere, and the shards' element bits are
+   joined by a bitwise or: every element is read on one shard, so the or is its
+   exact bits, where a sum would turn [-0.] into [+0.] and quiet a NaN. *)
+let gather_shards multi l =
+  let x = nth multi 0 and n = ndim l in
+  match sharding multi with
+  | sharding when List.for_all (fun (ax, _) -> ax >= 1) sharding ->
+      unshard_as
+        (List.map (fun (ax, r) -> (ax - 1 + n, r)) sharding)
+        (index x [ l ])
+  | [ (0, rng) ] ->
+      let rows = sint_to_uop (List.hd (shape x)) in
+      let local = sub l (mul rng rows) in
+      let inside = bitwise_and (ge local (int 0)) (lt local rows) in
+      let read =
+        index x [ maximum (minimum local (sub rows (int 1))) (int 0) ]
+      in
+      let trailing = List.map (fun _ -> Int 1) (List.drop 1 (shape x)) in
+      let inside = reshape inside (shape l @ trailing) in
+      let value = where inside read (const_like read (`Int Bigint.zero)) in
+      let dt = dtype value in
+      let bits_dtype =
+        match Dtype.itemsize dt with
+        | 1 -> Dtype.Uint8
+        | 2 -> Dtype.Uint16
+        | 4 -> Dtype.Uint32
+        | _ -> Dtype.Uint64
+      in
+      let bits =
+        if Dtype.equal dt Dtype.Bool then cast value Dtype.Uint8
+        else bitcast value bits_dtype
+      in
+      let joined = allreduce bits Op.Or (Multi (devices multi)) in
+      if Dtype.equal dt Dtype.Bool then cast joined Dtype.Bool
+      else bitcast joined dt
+  | _ -> invalid_arg "a gather of a value sharded on its rows and another axis"
 
-let rec multi_pm node =
-  let srcs = U.src node in
-  let first_multi = Array.length srcs > 0 && is_multi srcs.(0) in
-  match U.op node with
-  | op when Ops.Group.is_alu op && List.exists is_multi (U.children node) -> Some (alu_multi node)
-  | Ops.Stack when List.exists is_multi (U.children node) -> Some (stack_multi node)
-  | Ops.Reduce when first_multi -> Some (reduce_multi node srcs.(0))
-  | Ops.Reshape when first_multi -> Some (reshape_multi node srcs.(0))
-  | Ops.Expand when first_multi ->
-      let shift = List.length (U.as_shape srcs.(1)) in
-      Some (wrap (U.expand ~src:(inner srcs.(0)) ~dims:srcs.(1))
-          (List.map (fun (a, r) -> a + shift, r) (U.sharding srcs.(0))))
-  | Ops.Pad when first_multi ->
-      let multi = srcs.(0) in
-      let offsets = U.as_shape srcs.(1) and sizes = U.as_shape srcs.(2) in
-      List.iter (fun (axis, _) ->
-          if not (eq (List.nth offsets axis) zero && eq (List.nth sizes axis) (List.nth (U.shape multi) axis)) then
-            invalid_arg "multi: padding a sharded axis") (U.sharding multi);
-      let sizes = List.mapi (fun i d -> if List.mem_assoc i (U.sharding multi) then List.nth (U.shape (inner multi)) i else d) sizes in
-      Some (rewrap (U.pad ~src:(inner multi) ~offset:srcs.(1) ~size:(emit sizes)) multi)
-  | Ops.Permute when first_multi ->
-      let order = Option.get (U.Arg.as_ints (U.arg node)) in
-      Some (wrap (U.permute ~src:(inner srcs.(0)) ~order)
-          (List.map (fun (a, r) -> index_of a order, r) (U.sharding srcs.(0))))
-  | Ops.Flip when first_multi ->
-      let dims = Option.get (U.Arg.as_bools (U.arg node)) in
-      if List.exists (fun (axis, _) -> List.nth dims axis) (U.sharding srcs.(0)) then
-        invalid_arg "multi: flipping a sharded axis";
-      Some (rewrap (U.flip ~src:(inner srcs.(0)) ~dims) srcs.(0))
-  | Ops.Shrink when first_multi -> Some (shrink_multi node srcs.(0))
-  | Ops.Shrink when U.op srcs.(0) = Ops.Mstack -> Some (mstack_shrink node srcs.(0))
-  | Ops.Index when first_multi -> Some (index_multi node srcs.(0))
-  | Ops.Copy when first_multi -> Some (allgather srcs.(0) (device_exn node))
-  | Ops.Copy -> (match U.device_of srcs.(0), U.device_of node with
-      | Some (U.Single _), Some (U.Multi devices) ->
-          let simple = simp srcs.(0) in
-          Some (U.mstack (List.map (fun d -> if U.device_of simple = None then simple
-              else U.copy ~src:srcs.(0) ~device:(U.Single (Option.get d)) ()) devices))
-      | Some (U.Multi _), Some (U.Single _ as device) ->
-          let value = U.mselect ~src:srcs.(0) ~index:0 in
-          Some (if U.device_of value = Some device then value else U.copy ~src:value ~device ())
-      | _ -> None)
-  | Ops.Allreduce ->
-      let {U.op; device; src} = Option.get (U.as_allreduce node) in
-      if first_multi then Some (rewrap (U.allreduce ~src:(inner src) ~device ~op) src)
-      else if late_allreduce = 0 then Allreduce.handle_allreduce src ~op ~device
-      else None
-  | Ops.Call ->
-      let {U.body; args; info} = Option.get (U.as_call node) in
-      if not info.precompile && U.op body = Ops.Sink && Option.is_none (U.as_kernel_info body) then
-        Some (U.call ~body:(U.graph_rewrite multi_pm body) ~args:(List.map unwrap args) ~info)
-      else if first_multi then Some (passthrough node body)
-      else if Dtype.equal (U.dtype node) Dtype.void && List.exists is_multi args then
-        Some (U.replace node ~src:(Array.map unwrap srcs) ())
-      else None
-  | (Ops.After | Ops.Cast | Ops.Bitcast | Ops.Stage | Ops.Detach | Ops.Contiguous_backward) when first_multi ->
-      Some (passthrough node srcs.(0))
-  | Ops.Store when first_multi ->
-      let multi = srcs.(0) in
-      Some (U.replace node ~src:(Array.mapi (fun i x ->
-          if i = 0 || is_multi x then unwrap x
-          else if same_shape (U.shape x) (U.shape multi) then shard_subview x multi else x) srcs) ())
-  | Ops.Store when is_multi srcs.(1) ->
-      Some (U.store ~dst:(shard_subview srcs.(0) srcs.(1)) ~value:(inner srcs.(1)) ?gate:(Option.get (U.as_store node)).gate ())
-  | Ops.Mselect ->
-      let index = Option.get (U.Arg.as_int (U.arg node)) in
-      let value = srcs.(0) in
-      if U.op value = Ops.Mstack then Some (U.src value).(index)
-      else if Ops.Group.is_movement (U.op value) then
-        let src = Array.copy (U.src value) in
-        src.(0) <- U.mselect ~src:src.(0) ~index;
-        Some (U.replace value ~src ())
-      else if Ops.Group.is_alu (U.op value) then
-        Some (U.replace value ~src:(Array.map (fun x -> match U.device_of x with
-            | Some (U.Multi _) -> U.mselect ~src:x ~index | _ -> x) (U.src value)) ())
-      else None
-  | _ -> None
+(* A sharded index is joined whole on each device, in [int64] since an index
+   type has no width to cross devices in. A gather of the whole rows then takes
+   the index's sharding back. *)
+let gather_multi root multi =
+  match src root with
+  | [ _; l ] when is_unshard l ->
+      let wide = unshard_as (sharding l) (cast (nth l 0) Dtype.Int64) in
+      let whole = cast (copy_multi wide (Multi (devices l))) (dtype l) in
+      let g = gather_shards multi whole in
+      if is_unshard g then g
+      else
+        unshard_as (sharding l)
+          (List.fold_left (fun g (ax, r) -> shard_slice g ax r) g (sharding l))
+  | [ _; l ] -> gather_shards multi l
+  | _ -> invalid_arg "a gather takes one index"
+
+let store_after_multi dest src =
+  reshard src (after dest [ store dest (nth src 0) ])
+
+(* A sharded value stored into a whole destination: each shard stores into its
+   own sub-view of it. *)
+let store_value_multi dest multi =
+  store (shard_subview dest multi) (nth multi 0)
+
+(* A store into a sharded destination: each shard stores into its own shard of
+   it, and the value is taken as an arithmetic operation takes it. Scalars
+   arrive expanded to the whole shape, so they take their sub-view too. *)
+let store_dest_multi root multi =
+  let each x =
+    if is_unshard x then nth x 0
+    else if equal_shape (shape x) (shape multi) then shard_subview x multi
+    else x
+  in
+  v (op root)
+    ~src:(nth multi 0 :: List.map each (List.tl (src root)))
+    ~arg:(arg root)
+
+let passthrough_multi root multi =
+  reshard multi
+    (v (op root)
+       ~src:(nth multi 0 :: List.map peel (List.tl (src root)))
+       ~arg:(arg root))
+
+(* A call's body is a plain parametric program: it is rewritten like anything
+   else, its outputs taking their per-shard views through the store rules, and
+   its arguments become their shards. *)
+let rec rewrite_into_function call =
+  if not (is_inline_call call) then None
+  else
+    let new_body = graph_rewrite ~ctx:() (body call) (Lazy.force multi_pm) in
+    if op new_body <> Op.Sink then invalid_arg "a call's body must stay a sink";
+    Some (replace call ~src:(new_body :: List.map peel (List.tl (src call))))
+
+and multi_pm =
+  lazy
+    (let with_multi o f =
+       rule
+         (Upat.op o ~name:"root"
+            ~src:[ Upat.op Op.Unshard ~name:"multi"; Upat.wild; Upat.wild ])
+         (fun m -> Some (f (m "root") (m "multi")))
+     in
+     let unary o f =
+       rule
+         (Upat.op o ~name:"root" ~src:[ Upat.op Op.Unshard ~name:"multi" ])
+         (fun m -> Some (f (m "root") (m "multi")))
+     in
+     let shaped o f =
+       rule
+         (Upat.op o ~name:"root"
+            ~src:[ Upat.op Op.Unshard ~name:"multi"; Upat.wild ])
+         (fun m -> Some (f (m "root") (m "multi")))
+     in
+     Pattern_matcher.append
+       (Pattern_matcher.v
+          (fun () -> [
+            rule
+              (Upat.v ~op:Op.Set.alu ~name:"root" ~early_reject:[ Op.Unshard ]
+                 ()) (fun m -> alu_multi (m "root"));
+            rule
+              (Upat.op Op.Reduce ~name:"root"
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ])
+              (fun m -> reduce_multi (m "root") (m "multi"));
+            shaped Op.Reshape reshape_multi;
+            shaped Op.Expand expand_multi;
+            with_multi Op.Pad pad_multi;
+            with_multi Op.Shrink shrink_multi;
+            unary Op.Permute permute_multi;
+            unary Op.Flip flip_multi;
+            rule (Upat.op Op.Stack ~name:"root" ~early_reject:[ Op.Unshard ])
+              (fun m -> stack_multi (m "root"));
+            rule
+              (Upat.op Op.Index ~name:"root" ~allow_any_len:true
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ])
+              (fun m ->
+                let root = m "root" in
+                if Indexing.is_gather root then
+                  Some (gather_multi root (m "multi"))
+                else Some (index_multi root (m "multi")));
+            (* A gather by a sharded index gathers each part of the index. *)
+            rule
+              (Upat.op Op.Index ~name:"root"
+                 ~src:[ Upat.var "x"; Upat.op Op.Unshard ~name:"multi" ])
+              (fun m ->
+                let multi = m "multi" in
+                Some (reshard multi (index (m "x") [ nth multi 0 ])));
+            rule
+              (Upat.op Op.After
+                 ~src:
+                   [
+                     Upat.op Op.Unshard;
+                     Upat.op Op.Store
+                       ~src:
+                         [
+                           Upat.op Op.Unshard ~name:"dest";
+                           Upat.op Op.Unshard ~name:"src";
+                         ];
+                   ])
+              (fun m -> Some (store_after_multi (m "dest") (m "src")));
+            (* A copy of a sharded value copies every shard to the target. *)
+            rule
+              (Upat.op Op.Copy ~name:"copy" ~allow_any_len:true
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ])
+              (fun m ->
+                match arg (m "copy") with
+                | Device d -> Some (copy_multi (m "multi") d)
+                | _ -> None);
+            rule
+              (Upat.op Op.Allreduce ~name:"red"
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ])
+              (fun m ->
+                let multi = m "multi" in
+                match arg (m "red") with
+                | Allreduce { op; device } ->
+                    Some (reshard multi (allreduce (nth multi 0) op device))
+                | _ -> None);
+            (* Calls that produce values are rewritten through their body. *)
+            rule (Upat.op Op.Call ~name:"call") (fun m ->
+                rewrite_into_function (m "call"));
+            rule
+              (Upat.v
+                 ~op:(ops Op.[ Call; After ])
+                 ~name:"root" ~allow_any_len:true
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ]
+                 ())
+              (fun m -> Some (passthrough_multi (m "root") (m "multi")));
+            (* Other calls, custom kernels among them, just lose their
+               unshards. *)
+            rule
+              (Upat.op Op.Call ~dtype:[ Dtype.Void ] ~name:"root"
+                 ~early_reject:[ Op.Unshard ]) (fun m ->
+                let root = m "root" in
+                Some (v Op.Call ~src:(List.map peel (src root)) ~arg:(arg root)));
+            rule
+              (Upat.v
+                 ~op:
+                   (ops
+                      Op.[ Cast; Bitcast; Stage; Detach; Contiguous_backward ])
+                 ~name:"root"
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ]
+                 ())
+              (fun m -> Some (passthrough_multi (m "root") (m "multi")));
+            (* A sharded value stored into a whole destination, as a fragment
+               into a full output tile. *)
+            rule
+              (Upat.op Op.Store
+                 ~src:[ Upat.var "dest"; Upat.op Op.Unshard ~name:"multi" ])
+              (fun m -> Some (store_value_multi (m "dest") (m "multi")));
+            (* A store into a sharded destination, as a fragment's initial
+               value: each shard stores into its own. *)
+            rule
+              (Upat.op Op.Store ~name:"root" ~allow_any_len:true
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ])
+              (fun m -> Some (store_dest_multi (m "root") (m "multi")));
+          ]))
+       replace_allreduce)
+
+let multi_pm = Lazy.force multi_pm

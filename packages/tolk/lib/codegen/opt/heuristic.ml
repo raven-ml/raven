@@ -5,474 +5,378 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Port of tinygrad/codegen/opt/heuristic.py to the tolk_uop IR. *)
+open Ops
+module K = Postrange.Scheduler
 
-open Tolk_uop
-module U = Uop
-module P = Postrange
+let setting = Helpers.Context_var.value
+let debug () = setting Helpers.debug
 
-(* Environment *)
+(* A split the heuristic has checked applies. *)
+let split ?(top = false) k axis amount target =
+  match K.apply_opt k (Opt.Split { axis; amount; target; top }) with
+  | Ok axes -> axes
+  | Error msg -> invalid_arg msg
 
-let getenv key default = Helpers.getenv key default
-let use_tc () = Helpers.Context_var.get Helpers.use_tc
-let tc_select () = Helpers.Context_var.get Helpers.tc_select
-let tc_opt () = Helpers.Context_var.get Helpers.tc_opt
-let image () = Helpers.Context_var.get Helpers.image <> 0
-let occupancy_floor () = getenv "OCCUPANCY_FLOOR" 4096
-let mv_blocksize () = getenv "MV_BLOCKSIZE" 4
-let mv_threads_per_row () = getenv "MV_THREADS_PER_ROW" 8
-let mv_rows_per_thread () = getenv "MV_ROWS_PER_THREAD" 4
-let mv () = getenv "MV" 1
+(* A split that may not apply: whether it did. *)
+let try_split ?(top = false) k axis amount target =
+  Result.is_ok (K.apply_opt k (Opt.Split { axis; amount; target; top }))
 
-(* Helpers *)
+(* A size is known when it is an integer, which a constant beyond an int also
+   is. *)
+let known_size = function
+  | Int n -> Some (Bigint.of_int n)
+  | Sym u when op u = Op.Const -> (
+      match value u with `Int n -> Some n | _ -> None)
+  | Sym _ -> None
 
-let const_int_or default u =
-  match U.const_int_value u with Some n -> n | None -> default
+let divisible s n =
+  match known_size s with
+  | Some s -> Bigint.(equal (rem s (of_int n)) zero)
+  | None -> false
 
-let last lst = List.nth lst (List.length lst - 1)
+let shape_at k i = List.nth (K.full_shape k) i
+let prod_at k axes = Sint.prod (List.map (shape_at k) axes)
+let holds = function Sint.Known b -> b | Sint.Cond u -> to_bool u
+let size_at k i = Option.get (known_size (shape_at k i))
 
-let nth_size k axis = List.nth (P.full_shape k) axis
-let nth_rng k axis = List.nth (P.rngs k) axis
+let first_dividing r sizes =
+  List.find_opt
+    (fun sz -> Option.is_some (divides (nth r 0) (Bigint.of_int sz)))
+    sizes
 
-let prod_at shape axes =
-  List.fold_left (fun acc a -> U.Promoting.(acc * List.nth shape a)) (U.const_int 1) axes
-  |> U.simplify
+let last l = List.nth l (List.length l - 1)
 
-let is_range u = Option.is_some (U.as_range u)
+let index_of x l =
+  let rec go i = function
+    | [] -> invalid_arg "the node is not an axis of the kernel"
+    | y :: _ when y == x -> i
+    | _ :: r -> go (i + 1) r
+  in
+  go 0 l
 
-let range_size u = match U.as_range u with
-  | Some r -> r.size
-  | None -> invalid_arg "range_size: not a range"
+let idx b = get_idx (nth b 1)
+let indexes r b = Nodes.mem r (backward_slice (idx b))
 
-let is_const u = U.op u = Ops.Const
-
-let divides_by rng n = U.divides (range_size rng) n <> None
-
-let index_of_rng rngs rng =
-  match List.find_index (fun r -> r == rng) rngs with
-  | Some i -> i
-  | None -> -1
-
-(* Unwrap a Where/Invalid guard [Where (_, b, Invalid)] -> [b]. Acts as an
-   identity on any other node. *)
-let strip_where_invalid u =
-  match U.op u, U.src u with
-  | Ops.Where, [| _; b; c |] when
-      (match U.op c, U.arg c with
-       | Ops.Const, U.Arg.Value v ->
-           (match Const.view v with Invalid -> true | _ -> false)
-       | _ -> false) -> b
-  | _ -> u
-
-(* Kernel-stage buffer [buf] is an INDEX node; extract its idx expression,
-   stripping any Where/Invalid guard. *)
-let get_idx buf = match U.as_index buf with
-  | Some { idxs = [ idx ]; _ } -> Some (strip_where_invalid idx)
-  | Some _ -> None
-  | None -> None
-
-(* The validity predicate guarding [buf]'s index, if it carries one. *)
-let get_valid buf = match U.as_index buf with
-  | Some { idxs = [ idx ]; _ } when U.op idx = Ops.Where
-                                    && strip_where_invalid idx != idx ->
-      Some (U.src idx).(0)
-  | Some _ | None -> None
-
-(* [u] is [rng * c] or [c * rng] for an integer constant [c]; return [c]. *)
-let mul_by_rng_const rng u = match U.op u, U.src u with
-  | Ops.Mul, [| a; b |] when a == rng && is_const b -> U.const_int_value b
-  | Ops.Mul, [| a; b |] when b == rng && is_const a -> U.const_int_value a
-  | _ -> None
-
-let try_apply k opt =
-  try ignore (P.apply_opt k opt : _ option) with P.Opt_error _ -> ()
-
-(* Find the first size in [sizes] that divides [rng], apply [mk_opt] at that
-   axis, and return the apply_opt result. *)
-let try_opt_on_rng tk rng sizes mk_opt =
-  match List.find_opt (divides_by rng) sizes with
-  | None -> None
-  | Some sz ->
-      let axis = index_of_rng (P.rngs tk) rng in
-      if axis < 0 then None else P.apply_opt tk (mk_opt axis sz)
-
-(* Try tensor core optimization. Returns [Some k] on success.
-
-   The X/Y/reduce axis triple is drawn from an ordered list of candidates
-   and the leading ones can be rejected (a padded axis that will not fit, an
-   X or Y axis that is itself reduced), so each candidate is tried in turn
-   on a fresh copy. *)
-let try_tensor_cores k =
-  let reduce_axes = P.reduce_axes k in
-  let use_tc = use_tc () in
-  let tc_opt = tc_opt () in
-  if use_tc <= 0 || (List.length reduce_axes <> 1 && tc_opt < 1) then None
-  else
-    let rec try_axis axis =
-      if axis > 2 then None
-      else
-        let tk = P.copy k in
-        let tc_result =
-          try
-            P.apply_opt tk
-              (U.Opt.Tc { axis; tc_select = tc_select (); tc_opt; use_tc })
-          with P.Opt_error _ -> None
-        in
-        match tc_result with
-        | None -> try_axis (axis + 1)
-        | Some (n_rng, m_rng) ->
-            let rngs = [| n_rng; m_rng |] in
-            let split d sizes kind =
-              let opt axis amount = U.Opt.Split { kind; top = false; axis; amount } in
-              match try_opt_on_rng tk rngs.(d) sizes opt with
-              | Some (replaced, _) -> rngs.(d) <- replaced
-              | None -> () in
-            split 1 [ 5; 4; 3; 2 ] Axis_type.Upcast;
-            let min_globals = Helpers.Context_var.get Helpers.tc_min_globals in
-            if min_globals = 0 then begin
-              split 0 [ 5; 4; 3; 2 ] Axis_type.Upcast;
-              split 0 [ 4; 2 ] Axis_type.Local
-            end else begin
-              split 0 [ 4; 2 ] Axis_type.Local;
-              match List.find_opt (divides_by rngs.(0)) [ 5; 4; 3; 2 ] with
-              | None -> ()
-              | Some size ->
-                  let shape = P.full_shape tk in
-                  let globals = List.fold_left (fun acc axis ->
-                      U.Promoting.(acc * List.nth shape axis)) (U.const_int 1)
-                      (P.axes_of tk [Axis_type.Global]) in
-                  let enough = U.Promoting.(not_ (globals < (U.const_int size * U.const_int min_globals))) in
-                  if U.resolve ~default:false enough then
-                    split 0 [size] Axis_type.Upcast
+(* first try the tensor cores *)
+let tensor_cores k =
+  let use_tc = setting Helpers.use_tc and tc_opt = setting Helpers.tc_opt in
+  let tc_select = setting Helpers.tc_select in
+  let min_globals = setting Helpers.tc_min_globals in
+  if use_tc > 0 && (List.length (K.reduce_axes k) = 1 || tc_opt >= 1) then
+    List.find_map
+      (fun axis ->
+        let tk = K.copy k in
+        match K.apply_opt tk (Opt.Tc { axis; tc_select; tc_opt; use_tc }) with
+        | Error _ -> None
+        | Ok rngs ->
+            let rngs = Array.of_list rngs in
+            let split i size target =
+              let axis = index_of rngs.(i) (K.rngs tk) in
+              rngs.(i) <- List.hd (split tk axis size target)
+            in
+            let upcast i sizes target =
+              Option.iter
+                (fun sz -> split i sz target)
+                (first_dividing rngs.(i) sizes)
+            in
+            if min_globals <> 0 then begin
+              (* attempt to upcast M, local N, upcast N, skipping upcast N if
+                 we'd end up with too few globals *)
+              upcast 1 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast 0 [ 4; 2 ] Opt.Local;
+              match first_dividing rngs.(0) [ 5; 4; 3; 2 ] with
+              | Some size
+                when Sint.resolve ~default:false
+                       Sint.(
+                         prod_at tk (K.axes_of tk [ Global ])
+                         >= Int size * Int min_globals) ->
+                  split 0 size Opt.Upcast
+              | _ -> ()
+            end
+            else begin
+              (* attempt to upcast M, N, local N *)
+              upcast 1 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast 0 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast 0 [ 4; 2 ] Opt.Local
             end;
-            Some tk
-    in
-    try_axis 0
+            Some tk)
+      [ 0; 1; 2 ]
+  else None
 
-let is_valid_image_buf k buf = match U.as_index buf with
-  | Some { ptr; _ } ->
-      Coalesce.image_valid_dims
-        ~image_pitch_alignment:(Renderer.image_pitch_alignment (P.ren k))
-        ~base:(U.dtype ptr)
-        ~size:(List.fold_left ( * ) 1 (U.max_shape ptr))
-        ()
-      <> []
-  | None -> false
-
-let upcast_image_buf k buf =
-  match get_idx buf with
-  | None -> ()
-  | Some idx ->
-      (* An image upcast is only worth taking when all four unit-stride
-         lanes share one validity, so that coalescing can merge them into a
-         single vector read; an axis the guard depends on splits them. *)
-      let gating =
-        match get_valid buf with
-        | None -> []
-        | Some valid -> U.backward_slice valid
-      in
-      let axes = List.filter_map (fun c ->
-        if is_range c && (Bound.to_int (Bound.succ (U.vmax c))) mod 4 = 0
-           && not (List.exists (fun g -> g == c) gating)
-        then
-          let i = index_of_rng (P.rngs k) c in
-          if i >= 0 then Some i else None
-        else None) (U.split_uop idx Ops.Add) in
-      match axes with
-      | [] -> ()
-      | axis :: _ when List.mem axis (P.upcastable_dims k) ->
-          ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount = 4 }))
-      | axis :: _ ->
-          if List.mem axis (P.unrollable_dims k) then
-            ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis; amount = 4 }))
-
-let upcast_images k =
-  if image () then
-    List.iter (fun b -> if is_valid_image_buf k b then upcast_image_buf k b)
-      (P.bufs k)
-
-let index_operand u =
-  match U.as_index u with
-  | Some _ -> Some u
-  | None -> None
-
-(* Detect matrix-vector pattern: reduce(add, mul(INDEX, INDEX)) where the
-   first reduce range appears as an addend in idx0, and all idx0 ranges
-   appear in idx1. Returns the first reduce range on match. *)
-let detect_matvec k =
-  let ( let* ) = Option.bind in
-  let* red = P.reduceop k in
-  let* rv = U.as_reduce red in
-  if rv.op <> Ops.Add then None
-  else match U.op rv.src, U.src rv.src with
-  | Ops.Mul, [| in0_raw; in1_raw |] ->
-      let* in0 = index_operand in0_raw in
-      let* in1 = index_operand in1_raw in
-      let* idx0 = get_idx in0 in
-      let* idx1 = get_idx in1 in
-      (match P.ranges_of k [ Axis_type.Reduce ] with
-       | [] -> None
-       | first_red :: _ ->
-           let idx0_rngs = U.ranges idx0 in
-           let idx1_rngs = U.ranges idx1 in
-           let first_red_in_addends =
-             List.exists (fun u -> u == first_red) (U.split_uop idx0 Ops.Add)
-           in
-           let idx0_ranges_covered =
-             List.for_all (fun r -> List.memq r idx1_rngs) idx0_rngs
-           in
-           if first_red_in_addends && idx0_ranges_covered then Some first_red
-           else None)
+(* should use matvec - TODO: adjust/tune based on the wide vs tall/large vs
+   small mat *)
+let matvec k =
+  let blocksize = Helpers.getenv "MV_BLOCKSIZE" 4
+  and threads_per_row = Helpers.getenv "MV_THREADS_PER_ROW" 8
+  and rows_per_thread = Helpers.getenv "MV_ROWS_PER_THREAD" 4 in
+  let ren = K.ren k in
+  let mulop =
+    match K.reduceop k with
+    | Some r
+      when match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false ->
+        Some (nth r 0)
+    | _ -> None
+  in
+  match mulop with
+  | Some mulop
+    when ren.has_local
+         && Helpers.getenv "MV" 1 <> 0
+         && (blocksize > 1 || threads_per_row > 1 || rows_per_thread > 1)
+         && List.length (K.full_shape k) >= 2
+         && ren.has_shared
+         && op mulop = Op.Mul
+         && op (nth mulop 0) = Op.Index
+         && op (nth mulop 1) = Op.Index -> (
+      let idx0 = idx (nth mulop 0) and idx1 = idx (nth mulop 1) in
+      match K.ranges_of k [ Reduce ] with
+      | first_reduce_rng :: _
+        when List.exists (( == ) first_reduce_rng) (split_uop idx0 Op.Add)
+             && List.for_all
+                  (fun r -> Nodes.mem r (ranges idx1))
+                  (Nodes.to_list (ranges idx0)) ->
+          K.axes_of k [ Global ]
+          |> List.find_map (fun global_idx ->
+              if
+                Option.is_some
+                  (divides (nth first_reduce_rng 0)
+                     (Bigint.of_int threads_per_row))
+                && divisible (shape_at k global_idx)
+                     (blocksize * rows_per_thread)
+              then begin
+                if debug () >= 3 then
+                  Format.eprintf
+                    "MATVEC: full_shape=%a %s MV_BLOCKSIZE=%d \
+                     MV_THREADS_PER_ROW=%d MV_ROWS_PER_THREAD=%d@."
+                    (Format.pp_print_list Sint.pp)
+                    (K.full_shape k)
+                    (Render.render first_reduce_rng)
+                    blocksize threads_per_row rows_per_thread;
+                if threads_per_row > 1 then
+                  ignore
+                    (try_split k
+                       (List.hd (K.axes_of k [ Reduce ]))
+                       threads_per_row Opt.Local);
+                if blocksize > 1 then
+                  ignore (split k global_idx blocksize Opt.Local);
+                if rows_per_thread > 1 then
+                  ignore (split k global_idx rows_per_thread Opt.Upcast);
+                Some k
+              end
+              else None)
+      | _ -> None)
   | _ -> None
 
-(* Split matvec reduction, workgroup and vector lanes if the pattern matches. *)
-let try_matvec k =
-  let mv = mv () in
-  let mv_blocksize = mv_blocksize () in
-  let mv_threads_per_row = mv_threads_per_row () in
-  let mv_rows_per_thread = mv_rows_per_thread () in
-  let mv_off =
-    mv = 0
-    || (mv_blocksize <= 1 && mv_threads_per_row <= 1 && mv_rows_per_thread <= 1)
-  in
-  if not (Renderer.has_local (P.ren k)) || mv_off
-     || List.length (P.full_shape k) < 2
-     || not (Renderer.has_shared (P.ren k))
-  then None
-  else
-    let ( let* ) = Option.bind in
-    let* first_red = detect_matvec k in
-    let tile = mv_blocksize * mv_rows_per_thread in
-    let* gi = List.find_opt (fun gi ->
-      divides_by first_red mv_threads_per_row
-      && U.divides (nth_size k gi) tile <> None)
-      (P.axes_of k [ Axis_type.Global ]) in
-    if mv_threads_per_row > 1 then
-      try_apply k (U.Opt.Split { kind = Axis_type.Local; top = false; axis = index_of_rng (P.rngs k) first_red; amount = mv_threads_per_row });
-    if mv_blocksize > 1 then
-      ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Local; top = false; axis = gi; amount = mv_blocksize }));
-    if mv_rows_per_thread > 1 then
-      ignore
-        (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = gi; amount = mv_rows_per_thread }));
-    Some k
+(* are we grouping? (requires local shape support) *)
+let group k =
+  if
+    Sint.resolve ~default:false
+      Sint.(prod_at k (K.upcastable_dims k) <= Int 2048)
+  then
+    ignore
+      (List.find_opt
+         (fun axis -> try_split ~top:true k axis 16 Opt.Local)
+         (List.filteri (fun i _ -> i < 3) (K.axes_of k [ Reduce ])))
 
-(* Split outer reduction lanes into locals for small output shapes. *)
-let try_grouping k =
-  let threshold =
-    if Renderer.device (P.ren k) = "QCOM" then 240 else 2048
-  in
-  if U.resolve ~default:false
-      U.Promoting.(not_ (U.const_int threshold < prod_at (P.full_shape k) (P.upcastable_dims k))) then
-    (try List.iter (fun axis ->
-      try
-        ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Local; top = true; axis; amount = 16 }));
-        raise_notrace Exit
-      with P.Opt_error _ -> ())
-        (List.filteri (fun i _ -> i < 3) (P.axes_of k [ Axis_type.Reduce ]))
-     with Exit -> ());
-  P.group_for_reduces k > 0
-
-(* Upcast small masked dims. *)
+(* if there are small dims with lots of valid masks, upcast them (they might be
+   from Tensor.stack) *)
 let upcast_masked k =
-  let ast_slice = U.backward_slice (P.ast k) in
-  let is_masked rng =
-    List.exists (fun u -> match U.op u, U.src u with
-      | Ops.Where, [| cond; _; _ |] ->
-          List.exists (fun n -> n == rng) (U.backward_slice cond)
-      | _ -> false) ast_slice
+  let where_gate_rngs =
+    List.concat_map
+      (fun u ->
+        if op u = Op.Where then Nodes.to_list (ranges (nth u 0)) else [])
+      (Nodes.to_list (backward_slice (K.ast k)))
   in
-  (* Walk upcastable dims; collect small masked axes whose cumulative product
-     stays under 7*7. Built reversed so iterating applies the leading axes
-     last, matching the original [to_upcast[::-1]] order. *)
+  (* upcast leading axes first (hack-ish for winograd; we actually want to
+     upcast masked axes with low stride first) *)
   let to_upcast =
-    List.fold_left (fun acc axis ->
-      let sz = const_int_or 0 (nth_size k axis) in
-      let image_occupancy_ok =
-        if not (image ()) then true
-        else
-          match List.nth (P.axis_types k) axis with
-          | Axis_type.Global ->
-              let global_upcast =
-                U.Promoting.(prod_at (P.full_shape k)
-                  (List.filter
-                     (fun a -> List.nth (P.axis_types k) a = Axis_type.Global)
-                     acc)
-                * U.const_int sz)
-              in
-              let global_prod =
-                prod_at (P.full_shape k) (P.axes_of k [ Axis_type.Global ])
-              in
-              U.resolve ~default:false
-                U.Promoting.(not_ (global_prod // global_upcast < U.const_int (occupancy_floor ())))
-          | _ -> true
-      in
-      if sz <= 0 || sz > 7 || not image_occupancy_ok then acc
-      else if is_masked (nth_rng k axis)
-              && U.resolve ~default:false
-                   U.Promoting.(not_ (U.const_int 49 < prod_at (P.full_shape k) acc * U.const_int sz))
-      then axis :: acc
-      else acc) [] (P.upcastable_dims k)
+    List.fold_left
+      (fun to_upcast axis ->
+        let is_masked = List.memq (List.nth (K.rngs k) axis) where_gate_rngs in
+        let upcast =
+          List.fold_left
+            (fun p a -> Bigint.mul p (size_at k a))
+            Bigint.one to_upcast
+        in
+        let n = size_at k axis in
+        if
+          Bigint.(leq n (of_int 7))
+          && is_masked
+          && Bigint.(leq (upcast * n) (of_int 49))
+        then begin
+          if debug () >= 4 then
+            Format.eprintf "upcasting masked axis : %d@." axis;
+          to_upcast @ [ axis ]
+        end
+        else to_upcast)
+      [] (K.upcastable_dims k)
   in
-  List.iter (fun axis ->
-    ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount = 0 })))
-    to_upcast
+  List.iter
+    (fun axis -> ignore (split k axis 0 Opt.Upcast))
+    (List.rev to_upcast)
 
-(* Sum of stride-like contributions of [rng] to [idx]: [rng] itself counts as
-   1, [rng * const] or [const * rng] counts as [const], everything else 0. *)
-let stride_contribution rng idx =
-  List.fold_left (fun acc c ->
-    if c == rng then acc + 1
-    else match mul_by_rng_const rng c with
-    | Some n -> acc + n
-    | None -> acc) 0 (U.split_uop idx Ops.Add)
-
-(* A buffer broadcasts on [rng] iff [rng] does not appear in its index but
-   every upcast/unroll range does. *)
-let buf_broadcasts_on rng upcast_unroll b = match get_idx b with
-  | None -> false
-  | Some idx ->
-      let bslice = U.backward_slice idx in
-      not (List.memq rng bslice)
-      && List.for_all (fun r2 -> List.memq r2 bslice) upcast_unroll
-
-let axis_choice k axis amt =
-  if const_int_or 0 (nth_size k axis) mod amt <> 0 then None
-  else
-    let rng = nth_rng k axis in
-    let upcast_unroll = P.ranges_of k [ Axis_type.Upcast; Axis_type.Unroll ] in
-    if not (List.exists (buf_broadcasts_on rng upcast_unroll) (P.bufs k)) then
-      None
-    else
-      let num_strides = ref 0 in
-      let sum_strides = ref 0 in
-      List.iter (fun b -> match get_idx b with
-        | None -> ()
-        | Some idx ->
-            if List.memq rng (U.backward_slice idx) then incr num_strides;
-            sum_strides := !sum_strides + stride_contribution rng idx)
-        (P.bufs k);
-      Some (!num_strides, !sum_strides, axis, amt)
-
-(* Upcast non-reduce axes based on stride analysis: prefer axes where some
-   buffer broadcasts (stride 0) while all upcast/unroll axes have nonzero
-   stride. Pick the axis with fewest strides first. *)
-let upcast_heuristic k =
-  let is_dsp = Renderer.device (P.ren k) = "DSP" in
-  let upcasted = Hashtbl.create 8 in
-  let continue_ = ref true in
-  while
-    !continue_
-    && U.resolve ~default:false
-         U.Promoting.(not_ (prod_at (P.full_shape k) (P.upcastable_dims k) < U.const_int 1024))
-    && U.resolve ~default:false U.Promoting.(P.upcast_size k < U.const_int 32)
-  do
-    let upcast_amounts =
-      if is_dsp then (if Hashtbl.length upcasted = 0 then [ 128 ] else [])
-      else [ 3; 4 ]
-    in
-    let choices = List.concat_map (fun axis ->
-      if Hashtbl.mem upcasted axis then []
-      else List.filter_map (fun amt -> axis_choice k axis amt) upcast_amounts)
-      (P.upcastable_dims k)
-      |> List.sort compare
-    in
-    match choices with
-    | [] -> continue_ := false
-    | (_, _, axis, amt) :: _ ->
-        ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount = amt }));
-        Hashtbl.replace upcasted axis ()
-  done
-
-(* Unroll last reduce dim if small. *)
-let unroll_reduce k =
-  try
-    let ud = P.unrollable_dims k in
-    if ud <> []
-       && (U.resolve ~default:false U.Promoting.(not_ (U.const_int 4 < P.upcast_size k))
-           || P.axes_of k [ Axis_type.Unroll ] = [])
-       && U.resolve ~default:false U.Promoting.(P.upcast_size k < U.const_int 64)
+(* potentially do more upcasts of non reduce axes based on a heuristic *)
+let upcast_more k =
+  let rec loop upcasted_axis =
+    if
+      Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
+      && holds Sint.(K.upcast_size k < Int 32)
     then begin
-      let s = const_int_or 0 (nth_size k (last ud)) in
-      if s <= 32 then begin
-        ignore (P.apply_opt k
-          (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = last ud; amount = 0 }));
-        let ud2 = P.unrollable_dims k in
-        if ud2 <> [] && s <= 3 && const_int_or 0 (nth_size k (last ud2)) <= 3
-        then
-          ignore (P.apply_opt k
-            (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = last ud2; amount = 0 }))
-      end
-      else if const_int_or 0 (nth_size k (last ud)) mod 4 = 0 then
-        ignore (P.apply_opt k
-          (U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = last ud; amount = 4 }))
+      (* consider all upcastable axes with 3 or 4 upcast *)
+      let amounts = [ 3; 4 ] in
+      let choice axis upcast_amount =
+        (* if we haven't upcasted it, it mods, and buffer has stride 0 on axis
+           while having no stride 0 in the upcasted axis already *)
+        let rng = List.nth (K.rngs k) axis in
+        let upcast = K.ranges_of k [ Upcast; Unroll ] in
+        let bufs = K.bufs k in
+        if
+          List.mem axis upcasted_axis
+          || (not (divisible (shape_at k axis) upcast_amount))
+          || not
+               (List.exists
+                  (fun b ->
+                    (not (indexes rng b))
+                    && List.for_all (fun r2 -> indexes r2 b) upcast)
+                  bufs)
+        then None
+        else
+          let stride c =
+            let const_val c =
+              match value c with
+              | #Dtype.value as v -> Dtype.Value.to_int v
+              | `Invalid -> 0
+            in
+            if c == rng then 1
+            else if op c = Op.Mul && nth c 0 == rng && op (nth c 1) = Op.Const
+            then const_val (nth c 1)
+            else if op c = Op.Mul && nth c 1 == rng && op (nth c 0) = Op.Const
+            then const_val (nth c 0)
+            else 0
+          in
+          let num_strides = List.length (List.filter (indexes rng) bufs) in
+          let sum_strides =
+            List.fold_left
+              (fun s b ->
+                List.fold_left
+                  (fun s c -> s + stride c)
+                  s
+                  (split_uop (idx b) Op.Add))
+              0 bufs
+          in
+          Some (num_strides, sum_strides, axis, upcast_amount)
+      in
+      let xb_choices =
+        List.concat_map
+          (fun axis -> List.filter_map (choice axis) amounts)
+          (K.upcastable_dims k)
+      in
+      match List.sort Stdlib.compare xb_choices with
+      | (_, _, axis, amount) :: _ ->
+          if debug () >= 4 then
+            Format.eprintf "more upcast axis : %d by %d@." axis amount;
+          ignore (split k axis amount Opt.Upcast);
+          loop (axis :: upcasted_axis)
+      | [] -> ()
     end
-  with P.Opt_error _ -> ()
+  in
+  loop []
 
-(* Upcast by 4 if nothing is upcasted yet. *)
-let upcast_default k =
-  let ud = P.upcastable_dims k in
-  if P.upcasted k = 0 && ud <> []
-     && const_int_or 0 (nth_size k (last ud)) mod 4 = 0
-  then ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = last ud; amount = 4 }))
+(* if last reduce dim is small(ish), loop unroll the reduce. NOTE: this can fail
+   on multireduce with mismatching dimensions, this is okay *)
+let unroll k =
+  let small n = holds Sint.(K.upcast_size k <= Int n) in
+  if
+    K.unrollable_dims k <> []
+    && (small 4 || K.axes_of k [ Unroll ] = [])
+    && holds Sint.(K.upcast_size k < Int 64)
+  then
+    let s = size_at k (last (K.unrollable_dims k)) in
+    let at_most n x = Bigint.(leq x (of_int n)) in
+    if at_most 32 s then
+      begin if try_split k (last (K.unrollable_dims k)) 0 Opt.Unroll then
+        (* if it's small, upcast a second reduce dimension too *)
+        match K.unrollable_dims k with
+        | [] -> ()
+        | dims ->
+            if at_most 3 s && at_most 3 (size_at k (last dims)) then
+              ignore (try_split k (last dims) 0 Opt.Unroll)
+      end
+    else
+      let axis = last (K.unrollable_dims k) in
+      if divisible (shape_at k axis) 4 then
+        ignore (try_split k axis 4 Opt.Unroll)
 
-(* Pick a local size for [axis] given the budget already used by [taken]. *)
-let local_size_for k taken axis =
-  let used = List.fold_left (fun p (_, sz) -> p * sz) 1 taken in
-  let ax_sz = const_int_or 0 (nth_size k axis) in
-  let candidates = (if axis = 0 then [ 32 ] else []) @ [ 16; 8; 4; 3; 2 ] in
-  List.find_opt (fun x -> ax_sz mod x = 0 && used * x <= 128) candidates
+(* if nothing at all is upcasted and it's easy to, do an upcast *)
+let upcast_one k =
+  match K.upcastable_dims k with
+  | [] -> ()
+  | dims ->
+      let axis = last dims in
+      if K.upcasted k = 0 && divisible (shape_at k axis) 4 then
+        ignore (split k axis 4 Opt.Upcast)
 
-(* Choose local sizes for global/loop axes, prioritising expand axes. *)
-let apply_locals k =
-  if not (Renderer.has_local (P.ren k)) then ()
-  else
-    (* Rank axes: expand axes (broadcast in some buffer) sort first. *)
-    let ranking = List.filter_map (fun axis ->
-      let rng = nth_rng k axis in
-      if not (is_const (range_size rng)) then None
-      else
-        let is_expand = List.exists (fun b -> match get_idx b with
-          | Some idx -> not (List.memq rng (U.backward_slice idx))
-          | None -> false) (P.bufs k) in
-        Some (is_expand, axis))
-      (P.axes_of k [ Axis_type.Global; Axis_type.Weak ])
-    in
-    let sorted_ranking = List.sort (fun (e1, a1) (e2, a2) ->
-      let c = compare e2 e1 in if c <> 0 then c else compare a2 a1) ranking
-    in
-    (* Pick a local size for each axis, respecting the 128-thread budget. *)
-    let to_local = List.fold_left (fun acc (_, axis) ->
-      match local_size_for k acc axis with
-      | Some sz -> (axis, sz) :: acc
-      | None -> acc) [] sorted_ranking
-    in
-    (* Apply at most 3 locals, sorted by axis, adjusting for deleted shapes. *)
-    let to_apply = to_local |> List.rev
-      |> List.filteri (fun i _ -> i < 3)
-      |> List.sort (fun (a1, _) (a2, _) -> compare a1 a2)
-    in
-    let deleted = ref 0 in
-    List.iter (fun (axis, local_sz) ->
-      let axis = axis - !deleted in
-      let will_delete = const_int_or 0 (nth_size k axis) = local_sz in
-      ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Local; top = false; axis; amount = local_sz }));
-      if will_delete then incr deleted) to_apply
+(* prioritize making expand axes local *)
+let locals k =
+  let ranking =
+    List.filter_map
+      (fun axis ->
+        let r = List.nth (K.rngs k) axis in
+        if op (nth r 0) = Op.Const then
+          Some (List.exists (fun b -> not (indexes r b)) (K.bufs k), axis)
+        else None)
+      (K.axes_of k [ Global; Weak ])
+  in
+  let order (e0, a0) (e1, a1) =
+    match Bool.compare e1 e0 with 0 -> Int.compare a1 a0 | c -> c
+  in
+  let to_local =
+    List.fold_left
+      (fun to_local (_, axis) ->
+        let local_size = Helpers.prod (List.map snd to_local) in
+        let candidates =
+          (if axis = 0 then [ 32 ] else []) @ [ 16; 8; 4; 3; 2 ]
+        in
+        match
+          List.find_opt
+            (fun x -> divisible (shape_at k axis) x && local_size * x <= 128)
+            candidates
+        with
+        | Some sz -> to_local @ [ (axis, sz) ]
+        | None -> to_local)
+      []
+      (List.stable_sort order ranking)
+  in
+  let first_three = List.filteri (fun i _ -> i < 3) to_local in
+  ignore
+    (List.fold_left
+       (fun deleted_shape (axis, local_sz) ->
+         let axis = axis - deleted_shape in
+         let will_delete_shape =
+           Option.equal Bigint.equal
+             (known_size (shape_at k axis))
+             (Some (Bigint.of_int local_sz))
+         in
+         ignore (split k axis local_sz Opt.Local);
+         if will_delete_shape then deleted_shape + 1 else deleted_shape)
+       0
+       (List.sort Stdlib.compare first_three))
 
 let hand_coded_optimizations k =
-  match try_tensor_cores k with
-  | Some k -> k
-  | None ->
-      let k = P.copy k in
-      upcast_images k;
-      match try_matvec k with
+  match tensor_cores k with
+  | Some tk -> tk
+  | None -> (
+      (* make a copy so it does not mutate the input *)
+      let k = K.copy k in
+      match matvec k with
       | Some k -> k
       | None ->
-          if try_grouping k then k
-          else begin
+          group k;
+          (* no more opt if we are grouping *)
+          if K.group_for_reduces k = 0 then begin
             upcast_masked k;
-            upcast_heuristic k;
-            unroll_reduce k;
-            upcast_default k;
-            apply_locals k;
-            k
-          end
+            upcast_more k;
+            unroll k;
+            upcast_one k;
+            if (K.ren k).has_local then locals k
+          end;
+          k)

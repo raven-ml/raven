@@ -5,46 +5,33 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Late memory coalescing and image selection.
+(** Late index simplification and memory coalescing.
 
-    This module owns coalesced memory access construction, buffer-to-image
-    selection, and the small post-image simplifications that keep image
-    memory float-typed.
+    After devectorization, an access's index is simplified under the condition
+    that gates it, and accesses to consecutive elements of one buffer are merged
+    into vector accesses the target can make. *)
 
-    Final [read_imagef]/[write_imagef] emission belongs to the renderer,
-    which owns all backend syntax. *)
+val indexing_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
+(** [indexing_simplify] rewrites an index [where cond x invalid] into a buffer
+    to [where cond x' invalid], with [x'] the simplification of [x] given that
+    [cond] holds ({!Symbolic.uop_given_valid}), when the condition simplifies
+    [x] further than {!Ops.simplify} does alone. *)
 
-val image_valid_dims :
-  ?osx:bool ->
-  image_pitch_alignment:int option ->
-  base:Tolk_uop.Dtype.t ->
-  size:int ->
-  unit ->
-  (int * int) list
-(** [image_valid_dims ~image_pitch_alignment ~base ~size] returns
-    [(height, width)] candidates for lowering a flat half/float buffer of
-    [size] scalar elements to an image whose pitch satisfies
-    [image_pitch_alignment]. The optional [osx] flag selects tinygrad's
-    macOS byte-alignment exception for one-row images. *)
+val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
+(** [memory_coalescing sink r] merges the loads, and the stores, of [sink] that
+    access consecutive elements of one buffer, under one gate and with one
+    argument, into loads and stores of [4] or [2] elements, if the buffer's
+    elements are {!Dtype.Float32}, {!Dtype.Float16}, {!Dtype.Int32},
+    {!Dtype.Uint32} or 8-bit floats and [r] supports such accesses
+    ([supports_float4]); [8], [4] or [2] for {!Dtype.Float16} when the variable
+    [ALLOW_HALF8] is nonzero. A group starts at an element whose count from the
+    boundary behind the buffer's first element, a multiple of its alignment (its
+    phase and alignment, {!Ops.param_arg}), the group's length divides, and is
+    no wider than that alignment, so that every vector access is aligned to its
+    width. A merged load is a {!Op.Shrink} of the buffer, whose
+    elements each former load reads by index; a merged store stores the stack of
+    the former values. Register memory and volatile parameters are left as they
+    are, and so is everything when the variable [DMC] is nonzero.
 
-val drop_valid_stmts :
-  Tolk_uop.Uop.t -> Tolk_uop.Uop.t -> int -> int -> Tolk_uop.Uop.t list
-(** [drop_valid_stmts valid idx height width] returns validity clauses
-    that are redundant for image coordinates [idx] with bounds [height]
-    and [width]. *)
-
-val indexing_simplify : Tolk_uop.Upat.Pattern_matcher.t
-(** [indexing_simplify] simplifies invalid-gated memory indexes under their
-    validity predicate. For image pointers, it also drops valid clauses that
-    are already implied by out-of-bounds image coordinates. *)
-
-val pm_simplify_add_image :
-  Renderer.t -> Tolk_uop.Upat.Pattern_matcher.t
-(** [pm_simplify_add_image ren] selects eligible buffer indexes for image
-    storage and applies the image-specific cleanup rules. It is a matcher so
-    it can run in a graph rewrite immediately after {!memory_coalescing}. *)
-
-val memory_coalescing : Renderer.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [memory_coalescing ren root] folds adjacent scalar loads and stores into
-    vector accesses over {!Tolk_uop.Ops.Shrink}, using the renderer's
-    vector-width capabilities. Setting [DMC] disables the pass. *)
+    Raises [Invalid_argument] if a load or store is gated, is not through an
+    {!Op.Index} of one index, or two stores write one element. *)

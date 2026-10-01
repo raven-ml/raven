@@ -1,4 +1,0 @@
-void test(float* restrict data0_2) {
-  *(data0_2+0) = ((float)(__builtin_inff()));
-  *(data0_2+1) = ((float)(__builtin_nanf("")));
-}

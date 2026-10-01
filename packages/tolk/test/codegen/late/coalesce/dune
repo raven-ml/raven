@@ -1,0 +1,27 @@
+; DMC and ALLOW_HALF8 are read once per process, so their groups run in
+; processes of their own, with the variable set.
+
+(test
+ (name test_coalesce)
+ (package tolk)
+ (libraries windtrap tolk tolk_test)
+ (deps
+  (glob_files *.golden))
+ (action
+  (progn
+   (run
+    %{test}
+    --exclude-tag
+    slow
+    --exclude-tag
+    allow_half8
+    --exclude-tag
+    dmc)
+   (setenv
+    ALLOW_HALF8
+    1
+    (run %{test} --tag allow_half8))
+   (setenv
+    DMC
+    1
+    (run %{test} --tag dmc)))))

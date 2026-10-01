@@ -5,47 +5,65 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Tinygrad-shaped UOp graph rendering.
+(** Nodes as text: expressions and program listings.
 
-    This module mirrors tinygrad's [tinygrad/uop/render.py] organization for
-    stable graph listings. The output is intended for debugging and golden
-    tests, not for parsing. *)
+    {!render} writes the value a node computes as a one-line expression, which
+    diagnostics and kernel names print for indices and sizes. {!pp_uops} lists
+    the nodes of a linear program, one per line. {!Ops.pp} prints a node as the
+    calls that build it. *)
 
-val compare_uops : Uop.t -> Uop.t -> int
-(** [compare_uops a b] orders nodes by operation, lexical argument
-    representation, dtype and recursively by their sources. This is tinygrad's
-    tuple order, used for weak-index canonicalization and instruction
-    scheduling. Tags and side metadata do not affect the order. Argument
-    representations are cached weakly within each domain. *)
+val render : ?simplify:bool -> Ops.t -> string
+(** [render ~simplify u] is [u] written as an expression, after {!Ops.simplify}
+    if [simplify] (default [true]). Each node is written from its sources:
+    - a {!Op.Param}, {!Op.Buffer} or {!Op.Alloc} is its name, or [p], [b] or [a]
+      followed by its slot if it has none;
+    - an {!Op.After} is its first source, and an {!Op.Special} its name;
+    - a {!Op.Range} is [r] followed by {!Ops.range_str}, and an unbounded loop,
+      of type {!Dtype.Void}, is [loop] followed by the first part of its
+      identity;
+    - a constant, or a cast of one, is its value as {!Dtype.pp_const} writes it:
+      [3], [1.5], [True], [Invalid];
+    - any other cast is the type's name in parentheses before its operand:
+      [(float)(x)];
+    - {!Op.Neg}, {!Op.Reciprocal}, {!Op.Max}, {!Op.Mulacc}, {!Op.Where},
+      {!Op.Cdiv} and {!Op.Cmod} are [(-x)], [(1/x)], [max(x, y)], [(x*y+z)],
+      [(x if c else y)], [cdiv(x, y)] and [cmod(x, y)];
+    - a movement is its source followed by [.reshape], [.expand], [.pad],
+      [.shrink], [.permute] or [.flip] and its argument as a tuple: [(4,8)],
+      [((0, 2),(1, 3))], [(1, 0)], and for a flip the axes reversed;
+    - {!Op.Add}, {!Op.Sub}, {!Op.Mul}, {!Op.Floordiv}, {!Op.Floormod},
+      {!Op.Shl}, {!Op.Shr}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Cmplt} and
+      {!Op.Cmpne} are [+], [-], [*], [//], [%], [<<], [>>], [&], [|], [^], [<]
+      and [!=] between their operands, in parentheses. An operand loses its own
+      parentheses where precedence makes them redundant: from the tightest,
+      [* // %], then [+ -], [<< >>], [&], [^] and [|]. Operations of equal
+      precedence associate to the left, so [(a+b)+c] is [(a+b+c)] and [a-(b+c)]
+      keeps its parentheses. A comparison keeps its operands' parentheses, and
+      its own within any operation;
+    - an {!Op.Index} or an {!Op.Stage} is each source after the first between
+      brackets, without their outer parentheses: [[i][j]];
+    - a load through an index is the indexed storage followed by the index:
+      [buf[i]], and [(buf[i] if g else alt)] when guarded by [g];
+    - a stack is its sources between braces, separated by commas: [{a,b}];
+    - any other node is written as {!Ops.pp} prints it.
 
-val uops_list_to_string : Uop.t list -> string
-(** [uops_list_to_string uops] is a tinygrad-shaped debug listing of [uops] in
-    the supplied order. Rows contain the row index, operation, live range
-    column, dtype, sources, and payload. Sources that refer to constants in
-    [uops] are printed as quoted constant values; other sources in [uops] are
-    printed as row indexes. The output is deterministic and intended for golden
-    tests. Side {!Uop.metadata} is not printed. *)
+    Raises [Invalid_argument] if [simplify] and the symbolic rules are not
+    installed, as {!Ops.simplify}; so does writing a movement whose argument
+    sizes are nodes. *)
 
-val pp_uops : Format.formatter -> Uop.t list -> unit
-(** [pp_uops ppf uops] formats {!uops_list_to_string} [uops] on [ppf]. *)
+val srender : Ops.sint -> string
+(** [srender s] is an integer [s] in decimal, and a node [s] as {!render} writes
+    it. *)
 
-val uops_to_string : ?label:string -> Uop.t -> string
-(** [uops_to_string ?label root] is {!uops_list_to_string} over
-    {!Uop.toposort}[ root]. When supplied, [label] is printed as a
-    ["=== label ==="] header before the rows. *)
-
-val expr_to_string : ?simplify:bool -> Uop.t -> string
-(** [expr_to_string ?simplify u] is a compact one-line rendering of the
-    scalar expression [u]: named parameters print as their name, constants
-    as their value, and arithmetic with the usual infix operators (redundant
-    parentheses stripped by precedence). Used for kernel names and debug
-    shape displays. [simplify] (default [true]) canonicalises [u] first. *)
-
-val python_float_string : float -> string
-(** [python_float_string f] is CPython's [repr f]: the shortest decimal that
-    round-trips to [f], in fixed notation when the decimal point falls in
-    \[-4, 16\] and scientific notation otherwise, with a signed exponent of at
-    least two digits. It always carries a decimal point or an exponent, and it
-    is the same on every platform: the digits come from the C runtime, which
-    every platform rounds correctly at this length, and the layout does not. *)
-
+val pp_uops : Format.formatter -> Ops.t list -> unit
+(** [pp_uops] formats a list of nodes, a linear program, one line per node, in
+    columns: its position, from [0], right-aligned on 4 columns; its operation
+    as {!Op.pp} prints it, on 20; the ranges it runs inside ({!Ops.ranges}) as
+    {!Ops.multirange_str} writes them in colour ({!Helpers.colored}), on 10; its
+    type as {!Dtype.pp} prints it, on 40; its sources as a list, on 32; and its
+    argument. A source is its position in the list, the value of a constant as a
+    quoted literal ([['1.5']]), or ['--'] if it is not in the list. The argument
+    prints as {!Ops.pp_arg} does, except a string, such as a name, source text
+    or a single device, which prints without quotes, and a float constant, which
+    prints as {!Dtype.pp_const} does. A column is padded with spaces and never
+    cut. Lines are separated by newlines; the last is not ended. *)

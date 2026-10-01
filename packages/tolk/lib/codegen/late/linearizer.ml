@@ -5,316 +5,170 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Port of tinygrad/codegen/late/linearizer.py to the tolk_uop IR. *)
+open Ops
+module Ready = Set.Make (Int)
 
-open Tolk_uop
-module U = Uop
+(* Linearizing *)
 
-(* Priority *)
-
-(* Priority triple [(run_count, op_priority, extra)], lexicographic, lower
-   first.  High [run_count] nodes land later; within a run count, the op tag
-   tunes placement (LOADs early, STOREs late, RANGE late, END early). *)
-
-type extra = No_extra | Idx of int
-
-let range_size r =
-  match U.as_range r with
-  | Some _ when not (Dtype.equal (U.dtype r) Dtype.void) ->
-      Bound.to_int (Bound.succ (U.vmax r))
-  | Some _ | None -> 1
-
-let run_count u = List.fold_left (fun acc r -> acc * range_size r) 1 (U.ranges u)
-
-let priority_of u =
-  let op_pri, extra = match U.op u with
-  | Ops.Param ->
-      let idx =
-        match U.Arg.as_param_arg (U.arg u) with
-        | Some param -> param.slot
-        | None -> invalid_arg "Linearizer: PARAM without a parameter argument"
-      in
-      -20, Idx idx
-  | Ops.Buffer | Ops.Alloc ->
-      let pri =
-        match U.addrspace u with
-        | Some Dtype.Local -> -17
-        | _ -> -18
-      in
-      pri, No_extra
-  | Ops.Load         ->  -1, No_extra
-  | Ops.Store        ->   1, No_extra
-  | Ops.Range        ->   5, No_extra
-  | Ops.End | Ops.Backedge ->  -5, No_extra
-  | _                ->   0, No_extra
+let priority u =
+  (* Nodes with higher run counts are placed later. *)
+  let run_count =
+    Nodes.fold (fun r n -> n * (Dtype.Value.to_int (vmax r) + 1)) (ranges u) 1
   in
-  run_count u, op_pri, extra
-
-(* Heap *)
-
-(* Min-heap of [(-nkey, node)]: extracting the minimum picks the node with
-   the highest ideal-order index, matching tinygrad's [-nkey] trick. *)
-module Heap = Set.Make (struct
-  type t = int * U.t
-  let compare (a, ua) (b, ub) =
-    let c = Int.compare a b in
-    if c <> 0 then c else U.compare ua ub
-end)
-
-(* Linearize *)
-
-let out_degree_of tbl u =
-  match U.Ref_tbl.find_opt tbl u with Some n -> n | None -> 0
-
-let remap_sources replacements u =
-  let src = U.src u in
-  let changed = ref false in
-  let src =
-    Array.map
-      (fun s ->
-        match U.Ref_tbl.find_opt replacements s with
-        | None -> s
-        | Some s' ->
-            changed := true;
-            s')
-      src
+  (* Smaller numbers are placed closer to the top. *)
+  let priority, extra =
+    match (op u, arg u) with
+    | Op.Param, Param p -> (-20, Some p.slot)
+    | (Op.Buffer | Op.Alloc), _ ->
+        ((if addrspace u = Some Dtype.Local then -17 else -18), None)
+    | Op.Load, _ -> (-1, None)
+    | Op.Store, _ -> (1, None)
+    | Op.Range, _ -> (5, None)
+    | (Op.End | Op.Backedge), _ -> (-5, None)
+    | _ -> (0, None)
   in
-  if !changed then U.replace u ~src () else u
+  (run_count, priority, extra)
 
-let gated_store_dst u =
-  match U.op u, U.src u with
-  | (Ops.Index | Ops.Shrink), _ -> true
-  | Ops.Cast, [| inner |] -> U.op inner = Ops.Index || U.op inner = Ops.Shrink
-  | _ -> false
-
-let linearize_cleanups (program : U.t list) : U.t list =
-  let replacements = U.Ref_tbl.create 16 in
-  let rec loop acc = function
-    | [] -> List.rev acc
-    | u :: rest ->
-        let original = u in
-        let u = remap_sources replacements original in
-        if not (U.equal original u) then U.Ref_tbl.replace replacements original u;
-        (match U.op u with
-        | Ops.If | Ops.Endif ->
-            failwith "IF/ENDIF must be inserted by linearize cleanups"
-        | Ops.Store -> (
-            match U.as_store u with
-            | Some { dst; value; gate = Some gate }
-              when Dtype.equal (U.dtype gate) Dtype.bool
-                   && gated_store_dst dst ->
-                let if_ = U.if_ ~cond:gate ~idx_for_dedup:dst in
-                let store = U.store ~dst ~value () in
-                let endif = U.endif ~if_ in
-                U.Ref_tbl.replace replacements original store;
-                U.Ref_tbl.replace replacements u store;
-                loop (endif :: store :: if_ :: acc) rest
-            | _ -> loop (u :: acc) rest)
-        | Ops.Alloc ->
-            let buffer = U.replace u ~op:Ops.Buffer () in
-            U.Ref_tbl.replace replacements original buffer;
-            U.Ref_tbl.replace replacements u buffer;
-            loop (buffer :: acc) rest
-        | Ops.After -> loop (u :: acc) rest
-        | _ -> loop (u :: acc) rest)
+let pp_priority ppf (run_count, priority, extra) =
+  let pp_extra ppf = function
+    | None -> Format.pp_print_string ppf "None"
+    | Some slot -> Format.pp_print_int ppf slot
   in
-  loop [] program
+  Format.fprintf ppf "(%d, %d, %a)" run_count priority pp_extra extra
 
-let validate_linearize_ready sink =
-  U.toposort sink
-  |> List.iter (fun u ->
-         match U.op u with
-         | Ops.Reduce -> failwith "Reduce must be lowered before linearize"
-         | Ops.Stage -> failwith "Stage must be lowered before linearize"
-         | Ops.If | Ops.Endif ->
-             failwith "IF/ENDIF must be inserted by linearize cleanups"
-         | Ops.Load when Array.length (U.src u) = 2 ->
-             failwith "gated loads require an alt value before linearize"
-         | _ -> ())
-
-let linearize_raw (sink : U.t) : U.t list =
-  let lst = U.toposort sink in
-  let n = List.length lst in
-
-  (* Out-degrees and priorities. *)
-  let out_degree = U.Ref_tbl.create n in
-  let priorities = U.Ref_tbl.create n in
-  List.iter (fun u ->
-    Array.iter (fun s ->
-      U.Ref_tbl.replace out_degree s (out_degree_of out_degree s + 1))
-      (U.src u);
-    U.Ref_tbl.replace priorities u (priority_of u))
+let linearize sink =
+  let lst = toposort sink in
+  let out_degree = Tbl.create 256 and priorities = Tbl.create 256 in
+  let degree u = Option.value ~default:0 (Tbl.find_opt out_degree u) in
+  List.iter
+    (fun u ->
+      List.iter (fun s -> Tbl.replace out_degree s (degree s + 1)) (src u);
+      Tbl.replace priorities u (priority u))
     lst;
+  (* Number the nodes in the ideal order. *)
+  let tuple_order = Helpers.Context_var.value Helpers.tuple_order in
+  let ideal u0 u1 =
+    match Stdlib.compare (Tbl.find priorities u0) (Tbl.find priorities u1) with
+    | 0 when tuple_order -> compare_structure u0 u1
+    | c -> c
+  in
+  let by_nkey = Array.of_list (List.stable_sort ideal lst) in
+  let nkey = Tbl.create (Array.length by_nkey) in
+  Array.iteri (fun i u -> Tbl.replace nkey u i) by_nkey;
+  (* Then place them in the topological order closest to it, from the end. *)
+  let rec place ready placed =
+    match Ready.max_elt_opt ready with
+    | None -> placed
+    | Some k ->
+        let u = by_nkey.(k) in
+        let release ready v =
+          let d = degree v - 1 in
+          Tbl.replace out_degree v d;
+          if d = 0 then Ready.add (Tbl.find nkey v) ready else ready
+        in
+        place
+          (List.fold_left release (Ready.remove k ready) (src u))
+          (u :: placed)
+  in
+  let lst = place (Ready.singleton (Tbl.find nkey sink)) [] in
+  if Helpers.getenv "DEBUG_LINEARIZE" 0 <> 0 then
+    List.iteri
+      (fun i u ->
+        Format.printf "%4d %-20s %s %a@." i
+          (Format.asprintf "%a" Op.pp (op u))
+          (multirange_str ~color:true ~pad:10 (Nodes.to_list (ranges u)))
+          pp_priority (Tbl.find priorities u))
+      lst;
+  lst
 
-  (* Assign ideal order by sorting on (priority, structure). *)
-  let nkey = U.Ref_tbl.create n in
-  let order_cmp a b =
-    let c =
-      compare (U.Ref_tbl.find priorities a) (U.Ref_tbl.find priorities b)
+(* Chaining loops *)
+
+(* There are three relationships between the ranges x and y: nested, when ending
+   y depends on ending x and x depends on ending y; dependent, when ending y
+   depends on ending x and x does not depend on ending y; independent, when
+   ending y does not depend on ending x. Everything is nested inside the
+   sink. *)
+
+type cfg_context = t Tbl.t
+
+let is_loop u = match op u with Op.End | Op.Backedge -> true | _ -> false
+let union d0 d1 = d0 @ List.filter (fun x -> not (List.memq x d0)) d1
+
+let rec chain = function
+  | x :: (y :: _ as rest) -> (x, y) :: chain rest
+  | _ -> []
+
+let cfg_context sink =
+  let deps = Tbl.create 256 and nesting = ref [] in
+  let nest u x =
+    let inside = op u = Op.Sink || List.memq (nth u 1) (Tbl.find deps x) in
+    if is_loop x && inside && not (List.mem_assq x !nesting) then
+      nesting := (x, u) :: !nesting
+  in
+  List.iter
+    (fun u ->
+      let d =
+        List.fold_left (fun d s -> union d (Tbl.find deps s)) [] (src u)
+      in
+      if is_loop u || op u = Op.Sink then List.iter (nest u) d;
+      let self = match op u with Op.Range -> true | _ -> is_loop u in
+      Tbl.replace deps u (if self then d @ [ u ] else d))
+    (toposort sink);
+  let nesting = List.rev !nesting and edges = Tbl.create 16 in
+  let add_edges k =
+    let v =
+      List.filter_map (fun (x, p) -> if p == k then Some x else None) nesting
     in
-    if c <> 0 then c else Render.compare_uops a b
-  in
-  List.iteri (fun i u -> U.Ref_tbl.replace nkey u i)
-    (List.stable_sort order_cmp lst);
-  let nkey_of u = U.Ref_tbl.find nkey u in
-  (* Heap-driven toposort: release a node when all its consumers are placed,
-     preferring nodes closest to their ideal position. *)
-  let heap = ref (Heap.singleton (-nkey_of sink, sink)) in
-  let ret = ref [] in
-  while not (Heap.is_empty !heap) do
-    let ((_, u) as elt) = Heap.min_elt !heap in
-    heap := Heap.remove elt !heap;
-    ret := u :: !ret;
-    Array.iter (fun v ->
-      let d = out_degree_of out_degree v - 1 in
-      U.Ref_tbl.replace out_degree v d;
-      if d = 0 then heap := Heap.add (-nkey_of v, v) !heap)
-      (U.src u)
-  done;
-  !ret
-
-let linearize (sink : U.t) : U.t list =
-  validate_linearize_ready sink;
-  linearize_cleanups (linearize_raw sink)
-
-(* CFGContext
-
-   Three relationships between ranges: nested, dependent, independent.
-   Everything is nested inside the sink.  Build a parent map for END nodes
-   from their enclosing END/SINK, then for each sibling set emit ordering
-   edges that sequence them. *)
-
-type cfg_context = { edges : U.t U.Ref_tbl.t }
-
-(* [end_range e] is the single range closed by [e].  After [pm_split_ends],
-   every END has exactly one range. *)
-let end_range e =
-  if U.op e = Ops.Backedge then Some (U.src e).(1)
-  else match U.as_end e with
-  | Some { ranges = [ r ]; _ } when U.op r = Ops.Range -> Some r
-  | _ -> None
-
-let build_cfg_context (sink : U.t) : cfg_context =
-  let topo = U.toposort sink in
-  let n = List.length topo in
-  let topo_index = U.Ref_tbl.create n in
-  List.iteri (fun i u -> U.Ref_tbl.replace topo_index u i) topo;
-
-  (* Phase 1: transitive deps per node, and nesting parent for each END. *)
-  let deps = U.Ref_tbl.create n in
-  let nesting = U.Ref_tbl.create 32 in
-  let record_nesting u d =
-    U.Ref_tbl.iter (fun x () ->
-      match U.op x with
-      | Ops.End | Ops.Backedge when not (U.Ref_tbl.mem nesting x) ->
-          let is_nested = match U.op u with
-          | Ops.Sink -> true
-          | _ ->
-              (match end_range u, U.Ref_tbl.find_opt deps x with
-               | Some rr, Some xd -> U.Ref_tbl.mem xd rr
-               | _ -> false)
-          in
-          if is_nested then U.Ref_tbl.replace nesting x u
-      | _ -> ())
-      d
-  in
-  List.iter (fun u ->
-    let d = U.Ref_tbl.create 8 in
-    Array.iter (fun s ->
-      match U.Ref_tbl.find_opt deps s with
-      | Some sd -> U.Ref_tbl.iter (fun k () -> U.Ref_tbl.replace d k ()) sd
-      | None -> ())
-      (U.src u);
-    (match U.op u with Ops.End | Ops.Backedge | Ops.Sink -> record_nesting u d | _ -> ());
-    (match U.op u with
-     | Ops.Range | Ops.End | Ops.Backedge -> U.Ref_tbl.replace d u ()
-     | _ -> ());
-    U.Ref_tbl.replace deps u d)
-    topo;
-
-  (* Phase 2: group siblings by parent and emit ordering edges. *)
-  let siblings = U.Ref_tbl.create 32 in
-  U.Ref_tbl.iter (fun child parent ->
-    let cur = match U.Ref_tbl.find_opt siblings parent with
-    | Some l -> l | None -> []
-    in
-    U.Ref_tbl.replace siblings parent (child :: cur))
-    nesting;
-
-  let edges = U.Ref_tbl.create 16 in
-  let add_edge rn pred =
-    if pred == rn || U.in_backward_slice rn pred then
-      failwith "linearizer control-flow cycle";
-    U.Ref_tbl.replace edges rn pred
-  in
-  let rec chain prev = function
-  | [] -> ()
-  | y :: ys ->
-      (match end_range y with
-       | Some rr -> add_edge rr prev; chain y ys
-       | None -> chain prev ys)
-  in
-  U.Ref_tbl.iter (fun parent ends ->
-    let dep_count node =
-      match U.Ref_tbl.find_opt deps node with
-      | Some nd ->
-          List.fold_left (fun acc u ->
-            if U.Ref_tbl.mem nd u then acc + 1 else acc) 0 ends
-      | None -> 0
+    (* Ranges that depend on other siblings are scheduled after them. *)
+    let depended x =
+      List.length (List.filter (fun u -> List.memq u (Tbl.find deps x)) v)
     in
     let order =
-      List.stable_sort
-        (fun a b ->
-          let c = compare (dep_count a) (dep_count b) in
-          if c <> 0 then c
-          else
-            compare (U.Ref_tbl.find topo_index a) (U.Ref_tbl.find topo_index b))
-        ends
+      List.stable_sort (fun x0 x1 -> Int.compare (depended x0) (depended x1)) v
     in
-    match U.op parent, order with
-    | Ops.Sink, x :: rest -> chain x rest
-    | Ops.Sink, [] -> ()
-    | _, _ ->
-        (match end_range parent with
-         | Some rr -> chain rr order
-         | None -> ()))
-    siblings;
-  { edges }
-
-(* Split multi-range END into nested single-range ENDs, innermost first
-   by full range argument (descending). *)
-
-let range_key r =
-  match U.as_range r with
-  | Some v -> (U.axis_id r, v.kind)
-  | None -> invalid_arg "Linearizer.range_key: expected RANGE"
-
-let do_split_ends (e : U.t) : U.t option =
-  match U.as_end e with
-  | None -> None
-  | Some { value; ranges } ->
-      let nested =
-        U.ranges (U.sink ranges)
-        |> List.stable_sort (fun a b -> compare (range_key b) (range_key a))
-      in
-      let result =
-        List.fold_left (fun v r -> U.end_ ~value:v ~ranges:[ r ]) value nested
-      in
-      if result == e then None else Some result
-
-let pm_split_ends (root : U.t) : U.t = U.graph_rewrite do_split_ends root
-
-(* Rewrite pass: attach each RANGE to its predecessor END/RANGE. *)
-let pm_add_control_flow (sink : U.t) : U.t =
-  let cfg = build_cfg_context sink in
-  let rule node =
-    match U.op node with
-    | Ops.Range -> (
-        match U.Ref_tbl.find_opt cfg.edges node with
-        | Some pred ->
-            let srcs = Array.to_list (U.src node) in
-            Some (U.replace node ~src:(Array.of_list (srcs @ [ pred ])) ())
-        | None -> None)
-    | _ -> None
+    let add (x, y) =
+      let r = nth y 1 in
+      if Nodes.mem r (backward_slice_with_self x) then
+        invalid_arg
+          (Printf.sprintf "range %s would run after a loop that depends on it"
+             (range_str r));
+      Tbl.replace edges r x
+    in
+    List.iter add (chain (if op k = Op.Sink then order else nth k 1 :: order))
   in
-  U.graph_rewrite ~name:"add control flow" ~bottom_up:true rule sink
+  List.iter add_edges (Helpers.dedup (module Ops) (List.map snd nesting));
+  edges
+
+let pm_add_control_flow =
+  Pattern_matcher.(
+    v
+      (fun () -> [
+        rule_ctx (Upat.op Op.Range ~name:"x") (fun edges m ->
+            let x = m "x" in
+            Option.map
+              (fun y -> replace ~src:(src x @ [ y ]) x)
+              (Tbl.find_opt edges x));
+      ]))
+
+(* Splitting ends *)
+
+let compare_range_arg r0 r1 =
+  match Stdlib.compare (axis_id r0) (axis_id r1) with
+  | 0 -> Axis_type.compare (axis_type r0) (axis_type r1)
+  | c -> c
+
+let do_split_ends e =
+  let ranges_of s =
+    if op s = Op.Range then [ s ] else Nodes.to_list (ranges s)
+  in
+  let rngs =
+    Helpers.dedup (module Ops) (List.concat_map ranges_of (List.tl (src e)))
+  in
+  let innermost_first =
+    List.stable_sort (fun r0 r1 -> compare_range_arg r1 r0) rngs
+  in
+  Some (List.fold_left (fun ret r -> end_ ret [ r ]) (nth e 0) innermost_first)
+
+let pm_split_ends =
+  Pattern_matcher.(
+    v (fun () -> [ rule (Upat.op Op.End ~name:"e") (fun m -> do_split_ends (m "e")) ]))

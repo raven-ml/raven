@@ -9,17 +9,17 @@
     dtype nx gives it, and is the node that computes its result as nx documents
     it:
 
-    - {b sums and products} accumulate in the type {!Tolk_next.Dtype.sum_acc}
-      gives, unsigned for the signed integers, and are converted once to the
-      operand's dtype: integers wrap, and floats round once. A float sum is
-      [+0.] plus its terms in an unspecified association, so a sum that is
-      exactly zero is [+0.];
+    - {b sums and products} accumulate in the type {!Tolk.Dtype.sum_acc} gives,
+      unsigned for the signed integers, and are converted once to the operand's
+      dtype: integers wrap, and floats round once. A float sum is [+0.] plus its
+      terms in an unspecified association, so a sum that is exactly zero is
+      [+0.];
     - {b extremes} follow IEEE 754-2019: NaN propagates, and [-0.] is less than
       [+0.];
     - {b positions} are [int64], as nx's indices are: of the first element equal
       to the extreme, or of the elements in their sorted order. *)
 
-open Tolk_next
+open Tolk
 
 val accumulator : Dtype.t -> Dtype.t
 (** [accumulator dt] is the type in which sums and products of [dt] elements

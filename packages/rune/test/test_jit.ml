@@ -104,10 +104,10 @@ let bytes_in d = Nx_device.Stats.bytes_in (stats d)
 let allocated d = Nx_device.Stats.allocated (stats d)
 
 (* [allocated d] once the memory of what was dropped has returned to [d]. A
-   device buffer returns one major cycle after the last value holding it
-   dies, and a value that a finaliser closure keeps, as a compiled call keeps
-   the storages it binds, dies only once that finaliser has run, a cycle after
-   the call: a chain of such holders takes a cycle per link. A fixed number of
+   device buffer returns one major cycle after the last value holding it dies,
+   and a value that a finaliser closure keeps, as a compiled call keeps the
+   storages it binds, dies only once that finaliser has run, a cycle after the
+   call: a chain of such holders takes a cycle per link. A fixed number of
    rounds covers the chains these tests build; [allocated] alone cannot tell
    when they are done, since a round may return nothing yet free a holder. *)
 let settled d =
@@ -117,10 +117,10 @@ let settled d =
   done;
   allocated d
 
-(* [warmed measure] is [measure ()] after a first, uncounted run of it. A
-   device keeps some memory for its life from the first work that needs it,
-   such as an NV device's local memory, which a measure of what one call holds
-   leaves out. *)
+(* [warmed measure] is [measure ()] after a first, uncounted run of it. A device
+   keeps some memory for its life from the first work that needs it, such as an
+   NV device's local memory, which a measure of what one call holds leaves
+   out. *)
 let warmed measure =
   ignore (measure ());
   measure ()
@@ -578,7 +578,7 @@ let keys =
       test "a change of NOOPT around a call retraces once" (fun () ->
           let g = g () in
           let noopt f =
-            Tolk_next.Helpers.context [ B (Tolk_next.Helpers.noopt, true) ] f
+            Tolk.Helpers.context [ B (Tolk.Helpers.noopt, true) ] f
           in
           retraces
             (checked g poly (x ()))
@@ -589,8 +589,8 @@ let keys =
         (fun () ->
           let f a = Nx.add_s (poly a) 0.375 in
           let r =
-            Tolk_next.Helpers.context
-              [ B (Tolk_next.Helpers.beam, 1) ]
+            Tolk.Helpers.context
+              [ B (Tolk.Helpers.beam, 1) ]
               (fun () -> Rune.jit' f (x ()))
           in
           equal close (f (x ())) r);
@@ -1066,8 +1066,8 @@ let rows_written ?at name =
           equal ~msg:"reductions" int 1
             (List.length (List.filter (fun n -> n.[0] = 'r') names)));
       test
-        "a row made contiguous is stored by the kernel that computes it, as \
-         a key-value cache writes its rows" (fun () ->
+        "a row made contiguous is stored by the kernel that computes it, as a \
+         key-value cache writes its rows" (fun () ->
           let x = projections 1 and i = indices [ 5L ] in
           let rows_as = Nx.contiguous in
           let r, names =
@@ -1407,7 +1407,8 @@ let captures =
           let w = y () in
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           ignore (g (x ()));
-          equal ~msg:"the consuming call" floats (Nx.neg (y ()))
+          equal ~msg:"the consuming call" floats
+            (Nx.neg (y ()))
             (Rune.jit consumes Nx.neg w);
           equal ~msg:"the program" close (Nx.mul (x ()) (y ())) (g (x ()));
           equal ~msg:"the capture" floats (y ()) w);
@@ -2101,7 +2102,7 @@ let held_by_steps at ~than a b =
         memory of one of %d"
        b than a) (fun () ->
       let held k =
-        let n = k * Tolk_next.Hcq2.chunk_calls in
+        let n = k * Tolk.Hcq2.chunk_calls in
         let xs = Nx.place at (rows n 4) in
         let g =
           Rune.jit' (fun xs -> Rune.scan' ~f:sum ~init:(zeros 4) xs |> snd)
@@ -2448,8 +2449,8 @@ let staged_scans d =
             let before = settled d in
             let r = g xs in
             (* What the call holds once its temporaries are collected, with its
-               program and result alive: a temporary may or may not be
-               collected by the end of the call. *)
+               program and result alive: a temporary may or may not be collected
+               by the end of the call. *)
             let held = settled d - before in
             ignore (Sys.opaque_identity (g, xs));
             ignore (host r);
@@ -2484,7 +2485,8 @@ let staged_scans d =
           let wide = warmed (fun () -> held 1024) in
           let narrow = held 4 in
           less ~msg:"bytes held for rows 1,024 values wide against 4" int
-            ~than:(64 * 1020 * 4) (wide - narrow));
+            ~than:(64 * 1020 * 4)
+            (wide - narrow));
       staged at "stage a step whose output is a constant" ~steps:once
         ~init:(zeros 4)
         (fun c x -> (Nx.add (Nx.mul_s c 0.5) x, Nx.zeros Nx.float32 [||]))
@@ -3198,7 +3200,8 @@ let on_one_device ~name d =
       test "a call searched on several domains computes eager's values"
         (fun () ->
           let f a = Nx.add_s (poly a) 0.8125 in
-          equal close (f (x ()))
+          equal close
+            (f (x ()))
             (host (Rune.jit' ~beam:1 ~parallel:2 f (placed d (x ())))));
       (* The gather broadcasts its indices to the rows it reads: the copy moves
          the indices, and the broadcast is taken on the device. *)
@@ -3212,12 +3215,9 @@ let on_one_device ~name d =
           ignore (g ids);
           let before = bytes_in d in
           let r = g ids in
-          equal ~msg:"bytes received" int (Nx.nbytes ids)
-            (bytes_in d - before);
+          equal ~msg:"bytes received" int (Nx.nbytes ids) (bytes_in d - before);
           equal close
-            (Nx.take ~axis:0
-               ~indices:(Nx.reshape [| -1 |] ids)
-               (grid 16 4))
+            (Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] ids) (grid 16 4))
             (host r));
       test "a placed argument feeds a call with no transfer" (fun () ->
           let g = Rune.jit' poly in
@@ -3250,8 +3250,7 @@ let on_one_device ~name d =
               (Nx.cast Nx.float32 (host (g v)))
           in
           retraces (read 0) (read 1));
-      test
-        "a chain of 8-bit float operations rounds after each, as eager does"
+      test "a chain of 8-bit float operations rounds after each, as eager does"
         (fun () ->
           let chain (type b) (dt : (float, b) Nx.dtype) =
             let x =
@@ -3347,9 +3346,7 @@ let on_one_device ~name d =
             (host r);
           (* A device that shares the host's memory borrows the file's pages,
              which it must not lend; another copies them into its own. *)
-          let copied =
-            not (Nx_device.shares_host_memory d)
-          in
+          let copied = not (Nx_device.shares_host_memory d) in
           equal bool ~msg:"lent" copied
             (List.equal Nativeint.equal before (Witness.addresses r));
           raises_invalid_arg (fun () -> Nx.to_array pool);
@@ -3402,9 +3399,7 @@ let constants_where_used d =
     (fun () ->
       let f p = Nx.add (Nx.arange Nx.int64 0 8 1) p in
       let p = Nx.scalar Nx.int64 4L in
-      let r, loaded =
-        loaded_on d (fun () -> Rune.jit' f (placed d p))
-      in
+      let r, loaded = loaded_on d (fun () -> Rune.jit' f (placed d p)) in
       equal ~msg:"programs" int 1 loaded;
       equal (tensor int64) (f p) (host r))
 

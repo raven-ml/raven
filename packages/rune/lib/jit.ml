@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Ops = Tolk_next.Ops
-module Op = Tolk_next.Op
-module Engine = Tolk_next_engine
+module Ops = Tolk.Ops
+module Op = Tolk.Op
+module Engine = Tolk_engine
 module Ptree = Nx.Ptree
 module Repr = Nx.Repr
 module Placement = Nx.Placement
@@ -105,7 +105,7 @@ type settings = { beam : int; noopt : bool; profiled : bool }
 (* [settings ~beam ()] are the settings a call compiles with: [beam], or else
    the width tolk's lowering reads, [JITBEAM]'s or else [BEAM]'s. *)
 let settings ?beam () =
-  let module H = Tolk_next.Helpers in
+  let module H = Tolk.Helpers in
   {
     beam =
       (match beam with
@@ -474,8 +474,8 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
     let (Nx.P y) = ys.(j) in
     let n = numel (Nx.shape y) in
     match
-      ( Tolk_next.Prepare.contiguous_view nodes.(j),
-        Tolk_next.Prepare.contiguous_view target )
+      ( Tolk.Prepare.contiguous_view nodes.(j),
+        Tolk.Prepare.contiguous_view target )
     with
     | Some (a, 0), Some (t, 0) when Ops.op a = Op.After && Ops.op t = Op.Buffer
       -> (
@@ -494,7 +494,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
                && made b
                && Ops.max_numel b = n
                && Ops.max_numel t = n
-               && Tolk_next.Dtype.equal (Ops.dtype b) (Ops.dtype t)
+               && Tolk.Dtype.equal (Ops.dtype b) (Ops.dtype t)
                && Ops.device b = Ops.device t ->
             taken := (b, t) :: !taken;
             stores := value a :: !stores;
@@ -592,31 +592,27 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
       let devices = Lower.engine s in
       let linear =
         span "schedule" (fun () ->
-            fst
-              (Tolk_next.Schedule.create_linear_with_vars ~capturing:true sink))
+            fst (Tolk.Schedule.create_linear_with_vars ~capturing:true sink))
       in
       (* Each kernel asks for a search of width [beam], and one of at least 1 is
          searched, each candidate timed on the device its renderer targets, on
          as many domains as [parallel] gives or the [PARALLEL] setting. *)
       let search width k =
         report "searched a kernel at width %d" width;
-        let name = (Tolk_next.Postrange.Scheduler.ren k).target.device in
+        let name = (Tolk.Postrange.Scheduler.ren k).target.device in
         let search () =
-          Tolk_next.Search.beam_search
+          Tolk.Search.beam_search
             ~measure:(fun ~cold ~vars prg ->
               Engine.measure ~cold ~vars ~devices name prg)
             width k
         in
         match parallel with
         | None -> search ()
-        | Some p ->
-            Tolk_next.Helpers.context
-              [ B (Tolk_next.Helpers.parallel, p) ]
-              search
+        | Some p -> Tolk.Helpers.context [ B (Tolk.Helpers.parallel, p) ] search
       in
       let linear =
         span "compile" (fun () ->
-            Tolk_next.Jit.jit_lower ~beam ~search
+            Tolk.Jit.jit_lower ~beam ~search
               ~devices:(fun n -> (devices n).compiler)
               ~held_bufs:(List.map fst bound)
               ~inputs:(List.map (Hashtbl.find buffers) order)

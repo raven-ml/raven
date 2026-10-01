@@ -15,6 +15,6 @@ val compiled : Lower.scope -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     Raises [Invalid_argument] if it schedules to several, and as the compiler
     does. *)
 
-val kernels : ('a, 'b) Nx.t -> Tolk_next.Ops.t
+val kernels : ('a, 'b) Nx.t -> Tolk.Ops.t
 (** [kernels y] is the sink of the kernels, in order, that the schedule storing
     the traced [y] into a new buffer on the host runs. *)

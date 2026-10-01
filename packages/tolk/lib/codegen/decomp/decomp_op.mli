@@ -5,52 +5,70 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_uop
+(** Operations as the operations a target has.
 
-(** Operation decompositions matching tinygrad [codegen/decomp/op.py].
+    Code generation lowers the operations a target lacks, and some it has, to
+    cheaper ones: floor divisions to truncating ones, divisions by constants to
+    multiplications and shifts, the {!Op.Threefry} hash to integer arithmetic,
+    and comparisons, negations and fused multiply-adds to the forms renderers
+    expect. A target states its operations as a set of {!Op.t}, the keys of its
+    renderer's [code_for_op]. *)
 
-    This module owns the non-dtype operation rewrite families: Threefry,
-    floor div/mod lowering, integer division by constants, late algebraic
-    rewrites, and backend capability flags. *)
+(** {1:idiv Integer division} *)
 
-val threefry2x32 : Uop.t -> Uop.t -> Uop.t
-(** [threefry2x32 x key] is the software Threefry2x32 expansion of the
-    64-bit counter [x] and 64-bit [key]. *)
+val fast_idiv : Renderer.t -> Ops.t -> Bigint.t -> Ops.t option
+(** [fast_idiv r x d] is [x] divided by the positive constant [d], rounding
+    towards zero, as a multiplication and a right shift: [(x * m) >> s], for
+    [x]'s values from [0] to its upper bound. It shifts the powers of two out of
+    [d] first when the product would overflow [x]'s type, and otherwise computes
+    in the next wider integer type if [r] supports it
+    ({!Renderer.supported_dtypes}). It is [const_like x 0] if [x]'s upper bound
+    is below [d], and [None] if [d] is not positive, [x] can be negative, or no
+    such computation fits. *)
 
-val magicgu : int -> int -> int * int
-(** [magicgu vmax d] is [(m, s)] such that unsigned [x / d] is
-    [(x * m) >> s] for all [0 <= x <= vmax].
+(** {1:threefry Threefry} *)
 
-    Raises [Invalid_argument] if [d <= 0] or no multiplier exists in the
-    host integer range. *)
+val threefry2x32 : Ops.t -> Ops.t -> Ops.t
+(** [threefry2x32 x key] is the Threefry-2x32 hash of the {!Dtype.Uint64}
+    counter [x] under [key], with 20 rounds, as 32-bit additions, rotations and
+    exclusive ors: the two 32-bit words of the result, high word second, in a
+    {!Dtype.Uint64}. *)
 
-type supported_ops = {
-  has_exp2 : bool;
-  has_log2 : bool;
-  has_sin : bool;
-  has_sqrt : bool;
-  has_neg : bool;
-  has_sub : bool;
-  has_max : bool;
-  has_shl : bool;
-  has_shr : bool;
-  has_and : bool;
-  has_or : bool;
-  has_cmplt : bool;
-  has_cmpeq : bool;
-  has_fdiv : bool;
-  has_threefry : bool;
-  has_mulacc : bool;
-  supports_dtype : Dtype.t -> bool;
-  disable_fast_idiv : bool;
-  force_transcendental : bool;
-}
-(** The type for backend operation capabilities used by decomp rewrites. *)
+(** {1:patterns Patterns} *)
 
-val get_simplifying_rewrite_patterns : supported_ops -> Uop.t -> Uop.t option
-(** [get_simplifying_rewrite_patterns ops u] is the early rewrite for [u],
-    if one applies under [ops]. *)
+val simplifying_patterns : Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
+(** [simplifying_patterns ops] lowers, for a target with the operations [ops]:
+    - a floor division ({!Op.Floordiv}) of an integer by a power of two to a
+      right shift if [ops] has {!Op.Shr}, and any other to a truncating division
+      ({!Op.Cdiv}), corrected where the operands' signs can differ;
+    - a floor remainder ({!Op.Floormod}) of an integer by a power of two to a
+      mask if [ops] has {!Op.And}, and any other to a truncating remainder
+      ({!Op.Cmod}), corrected where the operands' signs can differ;
+    - {!Op.Threefry} to {!threefry2x32} if [ops] lacks it. *)
 
-val get_late_rewrite_patterns : supported_ops -> Uop.t -> Uop.t option
-(** [get_late_rewrite_patterns ops u] is the late non-dtype rewrite for [u],
-    if one applies under [ops]. *)
+val late_patterns :
+  disable_fast_idiv:bool ->
+  Op.Set.t ->
+  (Renderer.t, Ops.t) Ops.Pattern_matcher.t
+(** [late_patterns ~disable_fast_idiv ops] rewrites, for a target with the
+    operations [ops] and rendered by the context:
+    - {!Op.Max} to a comparison and a selection if [ops] lacks it and has
+      {!Op.Cmplt};
+    - the conjunction of two negated booleans to the negated disjunction if
+      [ops] has {!Op.Or};
+    - a multiplication of an integer by a power of two to a left shift if [ops]
+      has {!Op.Shl};
+    - if [ops] has {!Op.Shr}, a truncating division of an integer by a power of
+      two to a right shift, rounding negative dividends up first; and, unless
+      [disable_fast_idiv], a truncating division or remainder by any other
+      constant with {!fast_idiv} where it applies;
+    - multiplications by [-1] to {!Op.Neg}, and additions of a negation to
+      {!Op.Sub}, if [ops] has them;
+    - if [ops] has {!Op.Cmplt}, negated comparisons of signed integers with
+      constants to comparisons, [x * -1 < y * c] to [y * -c < x], [x * -1 < c]
+      to [-c < x], and [c1 < x && x < c2] to [x == c1 + 1] when it is the one
+      integer between;
+    - negated {!Op.Cmpne} to {!Op.Cmpeq} if [ops] has it;
+    - [a * b + c], and [(x << n) + c], to {!Op.Mulacc} if [ops] has it;
+    - if [ops] has {!Op.Fdiv}, reciprocals to a division of [1.0], and a float's
+      multiplication by such a division to a division. *)

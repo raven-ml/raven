@@ -1,0 +1,34 @@
+; Settings are read when the program starts, and MTLCompiler is loaded once per
+; process, so CACHEDB is set here, to a directory of the sandbox, and the tests
+; tagged no-library run in a second process, where MTLCOMPILER_PATH names a file
+; that is no library.
+
+(test
+ (name test_compiler_metal)
+ (package tolk)
+ (libraries windtrap tolk)
+ (deps
+  (sandbox always)
+  not_a_library)
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (run %{test} --exclude-tag slow --exclude-tag no-library)
+    (setenv
+     MTLCOMPILER_PATH
+     ./not_a_library
+     (run %{test} --tag no-library))))))
+
+(rule
+ (target not_a_library)
+ (action
+  (write-file %{target} "This file is no library.\n")))
+
+; The system the suite runs on: only macOS loads MTLCompiler.
+
+(rule
+ (target platform.ml)
+ (action
+  (write-file %{target} "let system = \"%{ocaml-config:system}\"\n")))

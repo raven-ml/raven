@@ -15,7 +15,7 @@
     steps produce, as each function states. [float16] computes at [float32] and
     rounds each result once. *)
 
-open Tolk_next
+open Tolk
 
 val matmul : Ops.t -> Ops.t -> Ops.t
 (** [matmul a b] is the product of the matrices of [a] and [b], their batch axes

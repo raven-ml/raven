@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_next
+open Tolk
 module View = Nx_array.View
 module Repr = Nx.Repr
 module Placement = Nx.Placement
@@ -469,8 +469,7 @@ let parameter s ~slot p dt shape =
 
 (* The engine's devices *)
 
-let engine s =
-  Tolk_next_engine.device (devices s)
+let engine s = Tolk_engine.device (devices s)
 
 (* Captures *)
 

@@ -21,7 +21,7 @@
     - {b a float converted to an integer} saturates at the integer's range, and
       NaN is 0. *)
 
-open Tolk_next
+open Tolk
 
 val widen : Ops.t -> Ops.t
 (** [widen x] is [x] converted to [float32] if it is a narrow float, and [x]

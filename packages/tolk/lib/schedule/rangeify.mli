@@ -5,38 +5,58 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Schedule pipeline: tensor graph to kernel graph.
+(** From tensor graphs to kernel graphs.
 
-    Transforms a tensor-level SINK into a graph of CALL nodes wrapping
-    kernel ASTs ready for codegen.  Preparation precedes range assignment. The indexing pipeline runs:
+    A kernel graph is what runs: storage, and calls to kernels that read and
+    write it. Each kernel is a {!Op.Sink} carrying {!Ops.kernel_info}, whose
+    loops are ranges ({!Op.Range}) and whose storage is its parameters. The
+    graph holds no movements: a value is its storage. *)
+
+val get_kernel_graph : Ops.t -> Ops.t
+(** [get_kernel_graph sink] is the kernel graph of the prepared tensor graph
+    [sink] ({!Prepare.prepare_rangeify}). In turn:
 
     {ol
-    {- {e run_rangeify} — core range analysis (in {!Indexing}).}
-    {- {e apply_rangeify} — bottom-up rewrite with rangeify context.}
-    {- {e post-rangeify} — dead-axis cleanup, buffer folding, const
-       folding, cost-based buffer removal.}
-    {- {e limit_bufs} — insert STAGE when a kernel exceeds the
-       device buffer limit.}
-    {- {e add_buffers} — lower STAGE to STORE + ALLOC or local BUFFER.}
-    {- {e split_kernels} — convert STORE/END subtrees into
-       CALL(kernel SINK).}
-    {- {e WAR deps} — write-after-read dependency fixup.}} *)
+     {- ranges index the graph ({!Indexing.run_rangeify}), which prints them
+        when the setting {!Helpers.debug_rangeify} is on;
+     }
+     {- the graph is simplified ({!Symbolic.symbolic},
+        {!Simplify.pm_reduce_simplify}), and storage that need not exist is
+        removed:
+        - a stage ({!Op.Stage}) that a later pass may inline drops the axes its
+          value does not vary along, and a stage of a constant is the constant;
+        - an index of a stage by the stage's own ranges is the stage's value;
+        - an index of a stage that a later pass may inline back is the staged
+          value, recomputed at the index, unless it reads more than three
+          storages or a reduction in it reads one;
+        - an index of storage whose every write is invalid is invalid;
+        - a store of a value into itself does nothing;
+     }
+     {- when a kernel may access at most [n] buffers (the setting
+        {!Helpers.max_kernel_buffers}, if not [0]), an operation that reads [n]
+        buffers or more stores its elementwise sources first;
+     }
+     {- each stage becomes a store into new storage ({!Op.Alloc}) of its
+        committed type ({!Ops.commit_dtype}), closed by an {!Op.End} over its
+        ranges and read after it; a stage of storage that effects write ends
+        those writes instead. Invalid writes are dropped;
+     }
+     {- each store or end whose ranges are all closed, but for device ranges,
+        becomes a call to a kernel of its own: its storage becomes parameters,
+        numbered from [0] in the order the kernel reaches them, its ranges are
+        renumbered from [0], and the call's arguments are that storage, after
+        the kernels that write it. An end of a call over {!Ops.Axis_type.Loop}
+        ranges is a loop that runs the call once per trip, and no kernel;
+     }
+     {- the calls' arguments and the storage lose their indices and their views,
+        but for the views a loop's call reads that move with the loop's ranges,
+        and the loops' ranges lose the tags of kernel ranges.
+     }
+    }
 
-val get_kernel_graph : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [get_kernel_graph sink] is the kernel graph for [sink].
+    With the setting {!Helpers.spec} at [1] or more, the result is checked
+    against {!Spec.kernel_graph}.
 
-    [sink] is a tensor-level SINK node.  The returned graph contains
-    AFTER nodes whose deps are CALL nodes wrapping kernel ASTs,
-    connected by WAR dependency edges. *)
-
-val early_movement_pass : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [early_movement_pass sink] runs the cleanup rewrites that the reference
-    applies at the very top of codegen on a just-split kernel body: strip
-    movement ops on [INDEX], push movement ops past [AFTER]/[END], merge
-    nested [INDEX]es, and add explicit [RANGE] loops to any shaped [STORE].
-
-    This must run before [full_rewrite_to_sink]'s optimize stage so a
-    scalar [STORE(reshape(param)(1,))] is lifted into
-    [STORE(param.index(r), value.index(r)).end(r)] and later passes see
-    plain pointer-indexed form. *)
-
+    Raises [Invalid_argument] if a kernel reads one storage in two different
+    states, which is a cycle, if a stage has no elements, which a prepared graph
+    does not have, or if the check fails. *)
