@@ -1,5 +1,22 @@
 (library
  (name hugin_next_font)
  (public_name hugin.next.font)
+ (private_modules font_data)
  (libraries hugin.next.gg)
- (modules_without_implementation font run))
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))
+
+(rule
+ (target font_data.ml)
+ (deps fonts/Inter-Regular.ttf fonts/Inter-Bold.ttf)
+ (action
+  (with-stdout-to
+   %{target}
+   (run
+    %{exe:embed/embed.exe}
+    inter_regular
+    fonts/Inter-Regular.ttf
+    inter_bold
+    fonts/Inter-Bold.ttf))))
