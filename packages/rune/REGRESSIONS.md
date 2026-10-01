@@ -262,6 +262,10 @@ are the loops of its tangent and its pullback. `B › edges › …` holds the
 operands a row's draws never batch (conditions, indices, starts, keys),
 reads inside a map, and nx's functions made of several rows.
 
+`Rune.vmap` as a whole is `next/test/vmap/test_vmap.ml`, written `V`
+below: the structures it maps, its captures, its refusals that name a
+leaf's path, the randomness of its lanes, and `lanes`.
+
 ### Old rune tests
 
 | Source | Behaviour | Outcome |
@@ -354,3 +358,14 @@ reads inside a map, and nx's functions made of several rows.
 | old: test_fft.ml vmap › fft; ifft; rfft; irfft; fft along a non-last axis; rfft along a non-last axis; non-leading batch axis | the transforms against the loop | B › fft, rfft, irfft › a map is its loop (axes drawn); › a map through a moved axis is its loop |
 | old: test_fft.ml vmap › vmap of grad | per-sample spectral gradients | B › edges › compositions › per-sample gradients of a spectral round trip |
 | old: test_vmap.ml lanes › raises under grad inside the named map | reverse mode over lanes inside their named map | T › edges › lanes › a lane's gradient is its row of every lane's cotangent; a map of lanes has its tangent's adjoint for a pullback (the refusal became a value) |
+| old: test_vmap.ml axes and structure › maps all leaves of a structure; maps leaves of different leading ranks | structures | V › structures › every leaf of a structure is mapped; every argument of a curried function is mapped; leaves of different ranks are mapped along their own axis 0 |
+| old: test_vmap.ml axes and structure › a captured value is a constant; a capture of the argument is a constant | captures | V › captures › a captured value is a constant of the map; a capture that is also the argument is a constant |
+| old: test_vmap.ml axes and structure › rejects arguments with no leaf; rejects a consumed argument | refusals at the signature and the call | St › preconditions › vmap of arguments with no tensor is refused; St › signatures › vmap refuses a consumed argument when given its signature |
+| old: test_vmap.ml axes and structure › rejects mismatched batch sizes; rejects scalar leaves | refusals naming a leaf's path | V › refusals › leaves of two leading lengths are refused, naming both; a scalar leaf is refused, naming it; St › preconditions › vmap of a scalar is refused |
+| old: test_vmap.ml structured outputs › batches every output leaf | structured results | V › structures › every leaf of a structured result gains the batch axis |
+| old: test_vmap.ml randomness › implicit RNG draws are identical per lane | randomness a lane captures | V › randomness › an implicit draw is a constant of the map: every lane draws the same; a key folded with the lane index draws per lane |
+| old: test_vmap.ml lanes › the named map answers; a shared value is broadcast; another map keeps its lanes; one lane without the map | lanes | V › lanes › (same claims) |
+| old: test_vmap.ml lanes › a named map passes the lane index on | lane_index through a named map | V › randomness › a named map passes the lane index of the anonymous map around it on |
+| old: test_vmap.ml lanes › linear under jvp; grad outside the named map | lanes under differentiation | V › lanes › a gather's tangent is the gather of its tangent; outside its named map, reverse mode differentiates through the gather |
+| old: test_vmap.ml lanes › one lane without the map (compiled) | lanes under jit | dropped until the compiled call lands (step 4): the composition suite's jit cells |
+| old: test_vmap.ml composition › vmap of grad; grad of vmap; jvp of vmap | maps composed with differentiation | M › pairs (grad, vmap), (vmap, grad), (jvp, vmap) |
