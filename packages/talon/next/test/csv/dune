@@ -1,0 +1,8 @@
+(test
+ (name test_csv)
+ (package talon)
+ (libraries windtrap talon.next talon.next.csv nx bytesrw)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_csv.ml test_csv.ml.corrected))))

@@ -131,6 +131,7 @@
    (= :version))
   (compress
    (= :version))
+  bytesrw
   (windtrap
    (and
     :with-test
