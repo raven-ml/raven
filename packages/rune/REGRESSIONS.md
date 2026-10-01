@@ -51,7 +51,7 @@ these files belong to the compiled call, in its own section.
 | old: test_jit_metal.ml metal device › duplicate scatter updates land in order | the last duplicate wins under `Set` | Compiled › metal › indexed › scatter exactly |
 | old: test_jit_metal.ml metal device › gathers keep -0 on the GPU | a gather keeps bits | Compiled › metal › indexed › gather |
 | old: test_jit_metal.ml metal device › concatenation keeps every bit on the GPU | cat keeps NaN payloads and -0 | Compiled › metal › edges › a concatenation of 17 pieces, a kernel of 18 arguments, keeps every bit; › indexed › cat |
-| old: test_jit_metal.ml metal device › an index outside the axis beside unit axes on the GPU | an out-of-range index reads zero | Compiled › metal › indexed › gather (indices from -2 to n+1 and the int32 extremes, unit axes drawn) |
+| old: test_jit_metal.ml metal device › an index outside the axis beside unit axes on the GPU | an out-of-range index reads zero | Compiled › metal › indexed › gather (indices from -2 to n+1, 2^32 past a position and the int64 extremes, unit axes drawn) |
 | old: test_jit_metal.ml metal device › sorted values are the input's elements on the GPU; metal device › sort matches eager | a sort permutes its elements | Compiled › metal › reductions › sort; › argsort |
 | old: test_jit_metal.ml metal device › sort keeps subnormals | a sort moves subnormals unflushed on Metal | Compiled › metal › reductions › sort (operands of kernels that move values are not flushed) |
 | old: test_jit_metal.ml metal device › scans keep subnormals | cummax and cummin keep subnormals on Metal | Compiled › metal › reductions › scan exactly |
