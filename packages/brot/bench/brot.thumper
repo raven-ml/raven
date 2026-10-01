@@ -1,6 +1,71 @@
 # thumper baseline v1
 # suite: brot
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+BERT-base/Decode-long	alloc_words	exact	4687666
+BERT-base/Decode-long	wall_time	batch=1	n=20	2.404e-03	2.264e-03 2.291e-03 2.340e-03 2.347e-03 2.355e-03 2.358e-03 2.363e-03 2.365e-03 2.394e-03 2.403e-03 2.404e-03 2.410e-03 2.434e-03 2.508e-03 2.527e-03 2.580e-03 2.615e-03 2.627e-03 3.094e-03 3.377e-03
+BERT-base/Encode-batch_32	alloc_words	exact	127402
+BERT-base/Encode-batch_32	wall_time	batch=1	n=20	1.025e-03	7.795e-04 8.501e-04 8.941e-04 9.114e-04 1.011e-03 1.011e-03 1.018e-03 1.019e-03 1.019e-03 1.024e-03 1.025e-03 1.027e-03 1.096e-03 1.127e-03 1.179e-03 1.182e-03 1.275e-03 1.319e-03 1.389e-03 1.619e-03
+BERT-base/Encode-batch_ids_32	alloc_words	exact	20767
+BERT-base/Encode-batch_ids_32	wall_time	batch=8	n=20	5.636e-04	5.499e-04 5.535e-04 5.541e-04 5.547e-04 5.577e-04 5.601e-04 5.607e-04 5.621e-04 5.623e-04 5.635e-04 5.636e-04 5.637e-04 5.639e-04 5.639e-04 5.640e-04 5.657e-04 5.684e-04 5.737e-04 5.865e-04 6.205e-04
+BERT-base/Encode-ids_long	alloc_words	exact	36896
+BERT-base/Encode-ids_long	wall_time	batch=4	n=20	9.483e-04	9.120e-04 9.154e-04 9.184e-04 9.191e-04 9.222e-04 9.319e-04 9.324e-04 9.365e-04 9.418e-04 9.477e-04 9.489e-04 9.530e-04 9.611e-04 9.637e-04 9.708e-04 9.771e-04 9.998e-04 1.061e-03 1.115e-03 1.160e-03
+BERT-base/Encode-single_long	alloc_words	exact	168700
+BERT-base/Encode-single_long	wall_time	batch=1	n=20	1.246e-03	1.039e-03 1.040e-03 1.044e-03 1.047e-03 1.048e-03 1.050e-03 1.086e-03 1.090e-03 1.094e-03 1.190e-03 1.302e-03 1.426e-03 1.438e-03 1.450e-03 1.488e-03 1.530e-03 1.545e-03 1.644e-03 2.192e-03 2.513e-03
+BERT-base/Encode-single_short	alloc_words	exact	3974
+BERT-base/Encode-single_short	wall_time	batch=64	n=20	2.788e-05	2.139e-05 2.145e-05 2.148e-05 2.155e-05 2.168e-05 2.307e-05 2.538e-05 2.548e-05 2.550e-05 2.665e-05 2.911e-05 3.168e-05 3.173e-05 3.184e-05 3.194e-05 3.204e-05 3.254e-05 3.302e-05 4.032e-05 4.546e-05
+GPT-2/Decode-long	alloc_words	exact	216476
+GPT-2/Decode-long	wall_time	batch=2	n=20	6.099e-04	5.402e-04 5.750e-04 5.762e-04 5.762e-04 5.780e-04 5.800e-04 5.846e-04 5.904e-04 5.938e-04 6.075e-04 6.124e-04 6.446e-04 6.449e-04 6.497e-04 6.521e-04 6.570e-04 6.617e-04 7.060e-04 8.606e-04 9.130e-04
+GPT-2/Encode-batch_32	alloc_words	exact	66858
+GPT-2/Encode-batch_32	wall_time	batch=4	n=20	2.049e-04	1.831e-04 1.857e-04 1.874e-04 1.876e-04 1.886e-04 1.915e-04 2.033e-04 2.037e-04 2.047e-04 2.047e-04 2.052e-04 2.093e-04 2.106e-04 2.226e-04 2.255e-04 2.349e-04 2.349e-04 3.093e-04 3.199e-04 3.561e-04
+GPT-2/Encode-batch_ids_32	alloc_words	exact	6143
+GPT-2/Encode-batch_ids_32	wall_time	batch=64	n=20	7.395e-05	7.266e-05 7.268e-05 7.285e-05 7.297e-05 7.306e-05 7.343e-05 7.345e-05 7.358e-05 7.375e-05 7.378e-05 7.412e-05 7.423e-05 7.455e-05 7.479e-05 7.495e-05 7.537e-05 7.649e-05 7.652e-05 7.775e-05 8.274e-05
+GPT-2/Encode-ids_long	alloc_words	exact	14578
+GPT-2/Encode-ids_long	wall_time	batch=16	n=20	1.406e-04	1.120e-04 1.148e-04 1.153e-04 1.161e-04 1.170e-04 1.179e-04 1.181e-04 1.186e-04 1.327e-04 1.367e-04 1.446e-04 1.451e-04 1.502e-04 1.507e-04 1.596e-04 1.636e-04 1.740e-04 1.745e-04 1.778e-04 2.045e-04
+GPT-2/Encode-single_long	alloc_words	exact	91434
+GPT-2/Encode-single_long	wall_time	batch=1	n=20	4.316e-04	2.967e-04 3.696e-04 3.703e-04 3.740e-04 3.774e-04 4.220e-04 4.249e-04 4.249e-04 4.266e-04 4.307e-04 4.324e-04 4.355e-04 4.420e-04 4.432e-04 4.477e-04 5.078e-04 6.324e-04 6.553e-04 7.786e-04 1.009e-03
+GPT-2/Encode-single_short	alloc_words	exact	2082
+GPT-2/Encode-single_short	wall_time	batch=128	n=20	6.030e-06	5.787e-06 5.808e-06 5.815e-06 5.819e-06 5.822e-06 5.829e-06 5.830e-06 5.833e-06 5.871e-06 6.028e-06 6.031e-06 6.410e-06 6.440e-06 6.485e-06 6.496e-06 6.536e-06 6.962e-06 9.004e-06 1.002e-05 1.139e-05
+LLaMA/Decode-long	alloc_words	exact	846900
+LLaMA/Decode-long	wall_time	batch=1	n=20	1.328e-03	1.149e-03 1.150e-03 1.196e-03 1.196e-03 1.225e-03 1.231e-03 1.235e-03 1.259e-03 1.294e-03 1.313e-03 1.342e-03 1.426e-03 1.428e-03 1.475e-03 1.488e-03 1.542e-03 1.542e-03 1.583e-03 1.990e-03 2.287e-03
+LLaMA/Encode-batch_32	alloc_words	exact	244618
+LLaMA/Encode-batch_32	wall_time	batch=1	n=20	7.267e-04	4.873e-04 4.877e-04 5.160e-04 5.186e-04 5.205e-04 5.547e-04 6.834e-04 7.083e-04 7.149e-04 7.161e-04 7.374e-04 7.468e-04 7.495e-04 7.666e-04 7.844e-04 8.714e-04 9.110e-04 1.040e-03 1.056e-03 1.270e-03
+LLaMA/Encode-batch_ids_32	alloc_words	exact	141980
+LLaMA/Encode-batch_ids_32	wall_time	batch=8	n=20	2.674e-04	2.631e-04 2.633e-04 2.641e-04 2.644e-04 2.645e-04 2.648e-04 2.659e-04 2.661e-04 2.664e-04 2.673e-04 2.675e-04 2.682e-04 2.690e-04 2.697e-04 2.713e-04 2.813e-04 2.902e-04 2.940e-04 3.645e-04 3.773e-04
+LLaMA/Encode-ids_long	alloc_words	exact	238291
+LLaMA/Encode-ids_long	wall_time	batch=1	n=20	6.053e-04	5.151e-04 5.181e-04 5.284e-04 5.314e-04 5.330e-04 5.351e-04 5.548e-04 5.627e-04 5.851e-04 6.038e-04 6.068e-04 6.111e-04 6.145e-04 6.220e-04 6.718e-04 7.018e-04 7.340e-04 7.902e-04 8.965e-04 9.181e-04
+LLaMA/Encode-single_long	alloc_words	exact	363325
+LLaMA/Encode-single_long	wall_time	batch=1	n=20	8.246e-04	8.112e-04 8.113e-04 8.116e-04 8.121e-04 8.138e-04 8.167e-04 8.176e-04 8.178e-04 8.184e-04 8.243e-04 8.248e-04 8.724e-04 9.179e-04 9.261e-04 9.270e-04 9.342e-04 9.437e-04 9.679e-04 1.663e-03 1.775e-03
+LLaMA/Encode-single_short	alloc_words	exact	7637
+LLaMA/Encode-single_short	wall_time	batch=64	n=20	1.781e-05	1.534e-05 1.535e-05 1.539e-05 1.542e-05 1.546e-05 1.546e-05 1.552e-05 1.553e-05 1.567e-05 1.711e-05 1.852e-05 1.889e-05 1.977e-05 2.221e-05 2.224e-05 2.239e-05 2.241e-05 2.564e-05 3.291e-05 3.509e-05
+Llama-3/Decode-long	alloc_words	exact	208550
+Llama-3/Decode-long	wall_time	batch=2	n=20	7.531e-04	6.864e-04 6.913e-04 6.972e-04 7.102e-04 7.119e-04 7.205e-04 7.220e-04 7.251e-04 7.378e-04 7.391e-04 7.671e-04 7.735e-04 7.748e-04 7.839e-04 7.978e-04 8.539e-04 8.785e-04 9.126e-04 9.987e-04 1.003e-03
+Llama-3/Encode-batch_32	alloc_words	exact	108426
+Llama-3/Encode-batch_32	wall_time	batch=8	n=20	2.452e-04	1.795e-04 1.806e-04 2.059e-04 2.070e-04 2.159e-04 2.222e-04 2.290e-04 2.319e-04 2.427e-04 2.440e-04 2.463e-04 2.802e-04 2.892e-04 3.052e-04 3.089e-04 3.151e-04 3.307e-04 3.454e-04 4.527e-04 4.763e-04
+Llama-3/Encode-batch_ids_32	alloc_words	exact	6273
+Llama-3/Encode-batch_ids_32	wall_time	batch=64	n=20	7.080e-05	6.741e-05 6.777e-05 6.792e-05 6.820e-05 6.850e-05 6.917e-05 6.929e-05 6.949e-05 6.968e-05 7.038e-05 7.123e-05 7.149e-05 7.158e-05 7.186e-05 7.206e-05 7.270e-05 7.307e-05 7.386e-05 7.437e-05 8.308e-05
+Llama-3/Encode-ids_long	alloc_words	exact	27419
+Llama-3/Encode-ids_long	wall_time	batch=8	n=20	1.730e-04	1.592e-04 1.614e-04 1.615e-04 1.621e-04 1.621e-04 1.629e-04 1.636e-04 1.649e-04 1.659e-04 1.709e-04 1.751e-04 1.774e-04 1.787e-04 1.910e-04 2.015e-04 2.078e-04 2.088e-04 2.155e-04 2.647e-04 2.889e-04
+Llama-3/Encode-single_long	alloc_words	exact	154145
+Llama-3/Encode-single_long	wall_time	batch=1	n=20	5.554e-04	5.181e-04 5.410e-04 5.466e-04 5.477e-04 5.493e-04 5.495e-04 5.521e-04 5.521e-04 5.533e-04 5.545e-04 5.563e-04 6.308e-04 6.314e-04 6.328e-04 6.328e-04 6.331e-04 7.319e-04 8.839e-04 1.123e-03 1.557e-03
+Llama-3/Encode-single_short	alloc_words	exact	3381
+Llama-3/Encode-single_short	wall_time	batch=1024	n=20	3.870e-06	3.772e-06 3.788e-06 3.791e-06 3.793e-06 3.802e-06 3.804e-06 3.832e-06 3.843e-06 3.864e-06 3.866e-06 3.875e-06 3.879e-06 3.907e-06 3.907e-06 3.918e-06 3.930e-06 3.932e-06 3.966e-06 3.993e-06 4.087e-06
+Pre-tokenize/bert	alloc_words	exact	164180
+Pre-tokenize/bert	wall_time	batch=4	n=20	6.933e-04	5.872e-04 5.901e-04 6.086e-04 6.669e-04 6.672e-04 6.711e-04 6.741e-04 6.756e-04 6.852e-04 6.907e-04 6.958e-04 6.974e-04 7.150e-04 7.190e-04 7.241e-04 7.242e-04 7.303e-04 8.019e-04 8.762e-04 9.694e-04
+Pre-tokenize/byte_level	alloc_words	exact	209334
+Pre-tokenize/byte_level	wall_time	batch=4	n=20	6.677e-04	5.532e-04 5.643e-04 5.751e-04 5.911e-04 6.057e-04 6.070e-04 6.071e-04 6.117e-04 6.451e-04 6.661e-04 6.694e-04 6.712e-04 6.947e-04 7.506e-04 8.592e-04 8.816e-04 8.880e-04 9.154e-04 9.328e-04 1.061e-03
+Pre-tokenize/byte_level-short	alloc_words	exact	4656
+Pre-tokenize/byte_level-short	wall_time	batch=512	n=20	7.709e-06	7.573e-06 7.585e-06 7.619e-06 7.624e-06 7.625e-06 7.628e-06 7.629e-06 7.668e-06 7.699e-06 7.708e-06 7.710e-06 7.715e-06 7.729e-06 7.736e-06 7.736e-06 7.747e-06 7.771e-06 7.804e-06 7.809e-06 7.815e-06
+Pre-tokenize/metaspace	alloc_words	exact	257905
+Pre-tokenize/metaspace	wall_time	batch=1	n=20	8.940e-04	5.103e-04 5.181e-04 5.247e-04 5.603e-04 6.760e-04 6.935e-04 7.043e-04 7.645e-04 8.293e-04 8.659e-04 9.221e-04 9.657e-04 9.885e-04 1.043e-03 1.057e-03 1.151e-03 1.183e-03 1.228e-03 1.250e-03 1.314e-03
+Pre-tokenize/split_cl100k	alloc_words	exact	170010
+Pre-tokenize/split_cl100k	wall_time	batch=4	n=20	6.145e-04	4.607e-04 5.169e-04 5.184e-04 5.283e-04 5.371e-04 5.735e-04 5.756e-04 5.839e-04 5.871e-04 6.086e-04 6.204e-04 6.272e-04 6.308e-04 6.332e-04 6.375e-04 7.079e-04 7.437e-04 7.452e-04 8.409e-04 8.705e-04
+Pre-tokenize/whitespace	alloc_words	exact	156914
+Pre-tokenize/whitespace	wall_time	batch=4	n=20	6.980e-04	5.692e-04 5.751e-04 6.186e-04 6.211e-04 6.215e-04 6.470e-04 6.479e-04 6.690e-04 6.779e-04 6.945e-04 7.016e-04 7.019e-04 7.192e-04 7.277e-04 7.397e-04 7.514e-04 7.529e-04 7.904e-04 7.946e-04 8.547e-04
+
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
