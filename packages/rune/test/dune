@@ -1,184 +1,275 @@
-; The generic suites assert CPU jit semantics; pin the process-wide default
-; device so they do not auto-select a GPU backend.
-
-(env
- (_
-  (env-vars
-   (DEV CPU))))
+; Each suite's default run excludes its slow tests; the slow alias runs them.
 
 (tests
  (names
-  test_grad
-  test_ops
-  test_complex
-  test_engine
-  test_jvp
-  test_vmap
+  test_derivatives
+  test_structure
+  test_nesting
+  test_composition
+  test_constructs
   test_custom
-  test_fft
-  test_jacobian
-  test_control
-  test_jit
-  test_device_lists
-  test_rng
-  test_total
-  test_half
-  test_composition)
+  test_total)
  (modules
-  test_grad
-  test_ops
-  test_complex
-  test_engine
-  test_jvp
-  test_vmap
+  test_derivatives
+  test_structure
+  test_nesting
+  test_composition
+  test_constructs
   test_custom
-  test_fft
-  test_jacobian
-  test_control
-  test_jit
-  test_device_lists
-  test_rng
-  test_total
-  test_half
-  test_composition)
+  test_total)
+ (package rune)
+ (libraries windtrap rune rune_test nx nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(test
+ (name test_scan)
+ (modules test_scan)
+ (package rune)
+ (libraries windtrap rune_internals rune_test nx nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (progn
+   (run %{exe:test_composition.exe} --tag slow)
+   (run %{exe:test_total.exe} --tag slow))))
+
+(test
+ (name test_vmap)
+ (modules test_vmap)
+ (package rune)
+ (libraries windtrap rune nx nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+; The rule suites: each constructor's tangent, transpose and batching. The
+; swept laws run in the slow alias.
+
+(tests
+ (names test_jvp_rules test_transposes test_batching)
+ (modules
+  test_jvp_rules
+  jvp_cumulative
+  jvp_edges
+  jvp_factorisations
+  test_transposes
+  transpose_compositions
+  transpose_edges
+  test_batching
+  batching_edges)
+ (package rune)
+ (libraries windtrap rune rune_rules nx nx.backend nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_jvp_rules.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_transposes.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_batching.exe} --tag slow)))
+
+; The lowering's suites compare its graphs with tinygrad's goldens
+; (golden/<suite>/, written by gen/generate.py).
+
+(tests
+ (names
+  test_lower
+  test_lower_arith
+  test_lower_index
+  test_lower_linalg
+  test_lower_reduce)
+ (modules
+  test_lower
+  test_lower_arith
+  test_lower_index
+  test_lower_linalg
+  test_lower_reduce)
  (package rune)
  (libraries
-  rune
+  windtrap
+  rune_internals
+  rune_lowering_test
+  tolk_next_test
+  nx_test
   nx
   nx.dtype
-  nx.array
   nx.device
+  tolk.next)
+ (deps
+  (glob_files golden/lower_arith/*.golden)
+  (glob_files golden/lower_index/*.golden)
+  (glob_files golden/lower_linalg/*.golden)
+  (glob_files golden/lower_reduce/*.golden))
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (glob_files golden/lower_arith/*.golden))
+ (action
+  (run %{exe:test_lower_arith.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (glob_files golden/lower_reduce/*.golden))
+ (action
+  (run %{exe:test_lower_reduce.exe} --tag slow)))
+
+; The compiled backend, and the rules under the compiled call, run on the host
+; by default, their programs from the compile cache; their Metal, CUDA and NV
+; tests, the rules' rows and the backend's cost figures are slow. The slow alias
+; sets CACHEDB to a directory of the sandbox, so that it compiles every program:
+; it is the check of compilation from a cold cache.
+
+(test
+ (name test_compiled_rules)
+ (modules test_compiled_rules)
+ (package rune)
+ (libraries
+  windtrap
+  rune
+  rune_test_devices
+  rune_rules
+  nx_test
+  nx
+  nx.array
   nx.backend
   nx.cpu
-  tolk
-  tolk.uop
-  unix
-  threads
-  windtrap
-  rune_test_support))
+  nx.device
+  nx.dtype
+  tolk.next)
+ (action
+  (run %{test} --exclude-tag slow)))
 
-(executable
- (name repro_jit_beam)
- (modules repro_jit_beam)
- (libraries rune nx nx.array unix))
+(test
+ (name test_compiled)
+ (modules test_compiled)
+ (package rune)
+ (libraries
+  windtrap
+  rune_internals
+  rune_test_devices
+  rune_lowering_test
+  nx_test
+  nx
+  nx.array
+  nx.backend
+  nx.cpu
+  nx.device
+  nx.dtype
+  tolk.next)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_compiled.exe} --tag slow))))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_compiled_rules.exe} --tag slow))))
+
+; The compiled call runs on the host and on test devices by default, and on
+; Metal, CUDA and NV in the slow alias, its programs from the compile cache.
+; reports.t pins the lines RUNE_JIT_DEBUG prints, which the call reads once.
+
+(test
+ (name test_jit)
+ (modules test_jit)
+ (package rune)
+ (libraries
+  windtrap
+  rune_internals
+  rune_test
+  rune_test_devices
+  rune_lowering_test
+  nx_test
+  nx
+  nx.array
+  nx.device
+  nx.dtype
+  tolk.next)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_jit.exe} --tag slow)))
+
+; Quantised products under the compiled call and the transformations, on the
+; host and test devices by default and on Metal in the slow alias.
 
 (test
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries unix rune nx nx.quant tolk tolk.uop windtrap))
-
-(tests
- (names test_jit_alignment)
- (modules test_jit_alignment)
- (package rune)
- (libraries
-  rune
-  nx
-  nx.array
-  nx.device
-  tolk
-  tolk.uop
-  windtrap
-  rune_test_support))
-
-; Alone in its executable so memory accounting excludes other compiled
-; programs. It runs on the CPU device and, on macOS, on Metal.
-
-(tests
- (names test_remat_memory)
- (modules test_remat_memory)
- (package rune)
- (libraries rune nx tolk windtrap))
+ (libraries windtrap rune rune_test_devices nx_test nx nx.quant nx.device)
+ (action
+  (run %{test} --exclude-tag slow)))
 
 (rule
- (alias runtest)
- (package rune)
- (enabled_if
-  (= %{system} macosx))
- (action
-  (setenv
-   DEV
-   METAL
-   (run %{dep:test_remat_memory.exe}))))
-
-; Alone in its executable: it replaces the CPU opener with one that counts the
-; bytes each transfer moves between devices.
-
-(tests
- (names test_tensor_parallel)
- (modules test_tensor_parallel)
- (package rune)
- (libraries
-  rune
-  nx
-  nx.quant
-  tolk
-  tolk.uop
-  tolk.cpu
-  windtrap
-  rune_test_support))
-
-; A plain executable: whether a temporary is dead at the copy it checks
-; depends on how its caller is compiled.
-
-(test
- (name test_read_lifetime)
- (modules test_read_lifetime)
+ (alias slow)
  (package rune)
  (action
-  (setenv
-   DEV
-   CPU
-   (run %{test})))
- (libraries rune nx nx.array nx.device nx.dtype))
+  (run %{exe:test_quant.exe} --tag slow)))
 
-(test
- (name test_jit_scratch)
- (modules test_jit_scratch)
+(executable
+ (name reports)
+ (modules reports)
+ (libraries rune nx tolk.next))
+
+(cram
+ (applies_to reports)
  (package rune)
- (libraries rune nx tolk tolk.uop windtrap threads))
-
-(tests
- (names test_jit_cache)
- (modules test_jit_cache)
- (package rune)
- (libraries rune nx nx.array unix windtrap rune_test_support))
-
-; Metal is the default device here, so a function with no placed value runs
-; on it.
-
-(tests
- (names test_jit_metal)
- (modules test_jit_metal)
- (package rune)
- (enabled_if
-  (= %{system} macosx))
- (action
-  (setenv
-   DEV
-   METAL
-   (run %{test})))
- (libraries
-  rune
-  nx
-  nx.array
-  nx.device
-  nx.dtype
-  tolk
-  windtrap
-  rune_test_support))
-
-(tests
- (names test_jit_cuda)
- (modules test_jit_cuda)
- (package rune)
- (libraries rune nx nx.array windtrap rune_test_support tolk tolk.cuda))
-
-; An interpreter that forgets an operation does not compile.
+ (deps reports.exe))
 
 (cram
  (applies_to exhaustive)
  (package rune)
  (deps
-  (package nx)))
+  (package nx)
+  (glob_files internals/.rune_internals.objs/byte/*.cmi)))

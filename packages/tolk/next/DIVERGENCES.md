@@ -1000,7 +1000,7 @@ the Exclusions of `README.md`.
   `› tc_{cuda,amd}_widened_{half,bfloat}_shaped.golden`, with `optimising
   keeps a kernel's writes › small kernels › tc_*_widened_*_shaped` (shaped for
   the core, the kernel keeps its values); rune's
-  `Rune_next.Lower_linalg › tensor cores › cuda › *`. The core's exact product
+  `lower_linalg › tensor cores › cuda › *`. The core's exact product
   is README's hardware check.
 
 ## D30. A range around calls is a loop in its batch
@@ -1639,7 +1639,7 @@ the Exclusions of `README.md`.
   float at a time, and windows four floats apart four at a time` and `› a
   trip reads its window past what a float offset holds`, on x86; the graph format's round trip of `a buffer past
   a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
-  a view 8 bytes into a disk file whose parameter has no phase. In rune.next,
+  a view 8 bytes into a disk file whose parameter has no phase. In rune,
   the `Lower` suite's `a parameter of storage 4 bytes past a 16-byte boundary
   has phase 4`, `a capture of storage 4 bytes past a 16-byte boundary has
   phase 4` and `a program over an argument 4 bytes past a 16-byte boundary
@@ -1787,7 +1787,7 @@ the Exclusions of `README.md`.
   `Tensor.stack(a.shard(devices, axis=0), b.shard(devices))` gives wrong
   values, or fails at a later operation on the shard sub-view's shape check
   when the whole source comes first.
-- **Reason:** (b). rune.next's compiled `Nx.stack` of a value sharded on an
+- **Reason:** (b). rune's compiled `Nx.stack` of a value sharded on an
   axis and a replicated one gives other values than eagerly. The same stack
   is how rune lowers a concatenation, and a scatter-add, of such values.
 - **Pinned by:** the `Multi` suite (`test/schedule/multi`): `multi_pm ›
@@ -1812,11 +1812,11 @@ the Exclusions of `README.md`.
   `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e01` or `0x7fc1`.
   Arithmetic still converts, and quiets a signalling NaN (D9).
 - **Reason:** (b). nx's moves preserve bits: an eager copy, movement or
-  `where` keeps a signalling NaN, and rune.next compiles the 8-bit floats on
+  `where` keeps a signalling NaN, and rune compiles the 8-bit floats on
   the host and on Metal, where tolk emulates them, so a compiled function
   computes what it computes eagerly only if the emulated moves keep the bits
   too.
-- **Pinned by:** rune.next's `Compiled` suite: `host › 8-bit floats › a copy
+- **Pinned by:** rune's `Compiled` suite: `host › 8-bit floats › a copy
   of every 8-bit float code keeps its bits (D62)` and `› a selection of
   every 8-bit float code keeps its bits (D62)`, and the same under `metal ›`
   (slow), against eager on all 256 codes of e4m3 and e5m2; the
@@ -1842,12 +1842,12 @@ the Exclusions of `README.md`.
   the int64 `2^40 + 2^32 + 1` is `2^40` there, where its correctly rounded
   value, which Metal's native conversion gives, is `2^40 + 2^33`. No golden
   holds such a cast.
-- **Reason:** (b). nx casts with one rounding, and rune.next compiles its
+- **Reason:** (b). nx casts with one rounding, and rune compiles its
   casts to bfloat16 for the host: an int64 arange of bfloat16 from 2^40
   computes a cast of each integer.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `casts to
   bfloat16 (D64) › an integer or a double rounds once on the host`, for
-  int64, int32, uint32, uint64 and float64 sources; rune.next's `Jit` suite:
+  int64, int32, uint32, uint64 and float64 sources; rune's `Jit` suite:
   `values › a bfloat16 arange from 2^40 inside a compiled call equals
   eager's`.
 
@@ -1869,7 +1869,7 @@ the Exclusions of `README.md`.
   feeds the next unrounded. A lane, a stack and a selection move values
   already rounded, and stay as they are.
 - **Reason:** (b). nx rounds each operation's result to its dtype, and
-  rune.next compiles chains of operations on the 8-bit floats into one
+  rune compiles chains of operations on the 8-bit floats into one
   kernel on the host and on Metal, which emulate them: `(y + y) * y` of an
   e5m2 `y` computed eagerly differs from the kernel that rounds only once.
 - **Pinned by:** the `Decomp_dtype` suite
@@ -1877,7 +1877,7 @@ the Exclusions of `README.md`.
   cast to an emulated float and back is the value rounded once` and `› an
   operation on an emulated float rounds its result to it`, on every emulated
   float, and the goldens of every kernel that casts to or computes in an
-  emulated float, from the patched tinygrad; rune.next's `Jit` suite: `one
+  emulated float, from the patched tinygrad; rune's `Jit` suite: `one
   device › a chain of 8-bit float operations rounds after each, as eager
   does`, and the same on Metal.
 
@@ -1933,7 +1933,7 @@ the Exclusions of `README.md`.
   per chunk` (a batch of 1,024 trips around which the engine loops twice, a
   batch of the 5 trips left, three submissions, and every trip's window
   written); the Ops_amd suite's `splits (D39) › a range of 10,000 trips on
-  AQL …` (a chunk over half its ring halves, the trips left fit); rune.next's
+  AQL …` (a chunk over half its ring halves, the trips left fit); rune's
   Jit suite on Metal, `staged scans › stage a thousand steps` and `› stage
   more steps than a batch holds, in chunks and the rest` (3,001 steps), each
   against the eager scan.
@@ -1983,7 +1983,7 @@ tolk lowers as one, replaces it.
   carries a tag keeps the read's fill`, on the host; `Metal › a store through
   a padded view writes the row within the source, and nothing outside it
   (D69)` and `› a read of a padded node stored through reads its fill in the
-  padding (D69)` (slow); rune.next's Jit suite, `a lent write of rows › *`.
+  padding (D69)` (slow); rune's Jit suite, `a lent write of rows › *`.
 
 ## D70. A batch stages host memory its device cannot map
 
@@ -2035,12 +2035,12 @@ tolk lowers as one, replaces it.
   bank of 8 KiB or more, a parameter bank of about a thousand arguments, and
   states a smaller bank 16 times its size.
 - **Reason:** (b). tinygrad writes a byte count into a field that counts
-  16-byte units. rune.next's staged scan `write out four hundred steps, each
+  16-byte units. rune's staged scan `write out four hundred steps, each
   carry stored` launches a kernel whose parameter bank holds 13,192 bytes,
   which NV refused (`constant_buffer_size_shifted4_0=0x3388 does not fit`)
   and CUDA runs.
 - **Pinned by:** the Ops_nv suite: every `recorded cases` golden, from
-  tinygrad with D71 applied by its generator; rune.next's Jit suite on an
+  tinygrad with D71 applied by its generator; rune's Jit suite on an
   NVIDIA GPU: `nv › staged scans › write out four hundred steps, each carry
   stored`.
 
@@ -2114,11 +2114,11 @@ tolk lowers as one, replaces it.
     taking its sharding; a gather by several indices, and one of a value
     sharded on the gathered axis and another, are refused.
   The index is in range: rune clamps it and selects `0` where it was not.
-- **Reason:** (b): rune.next lowers `Nx.take` and `Nx.take_along_axis` to a
+- **Reason:** (b): rune lowers `Nx.take` and `Nx.take_along_axis` to a
   one-hot sum over the whole axis, which costs a reduction per element and
   made gpt-oss's decode step schedule embedding and cache reads as their own
   kernels; D68, which recognised the sum in the scheduler, was withdrawn.
-  rune.next's `Lower_index.gather` emits this INDEX instead.
+  rune's `Lower_index.gather` emits this INDEX instead.
 - **Pinned by:** the Rangeify suite's `gathers` programs (`index_rows`,
   `index_rows_computed`, `index_read_twice`, `index_under_reduce`,
   `index_broadcast`, `index_view_source`, `index_zip`, `index_of_index`,
@@ -2127,7 +2127,7 @@ tolk lowers as one, replaces it.
   `gather_by_self` and `gather_of_reshape`; the Multi suite's `gathers`
   programs and `multi_pm › gathers`; the Indexing suite's
   `apply_movement_op › a reshape leaves the storage a gather's index loads
-  from as it is (D73)`; rune.next's Jit suite brings the consumer's tests.
+  from as it is (D73)`; rune's Jit suite brings the consumer's tests.
 
 ## D74. Float arithmetic has bounds, and a bounded sine takes the short reduction
 
@@ -2159,7 +2159,7 @@ tolk lowers as one, replaces it.
 - **Reason:** (b): the sine or cosine of a bounded value on the CPU, such as
   sofo's and symo's Gaussian draws (`Nx.Rng.normal`), whose angle is `2 pi u`
   for a uniform `u` in `[0, 1)` fused into the draw. rune's `sin` and `cos`
-  (`packages/rune/next/lib/lower_arith.ml`, `by_quadrant`) skip their own long
+  (`packages/rune/lib/lower_arith.ml`, `by_quadrant`) skip their own long
   reduction for an angle bounded below their limit, and clamp their remainder,
   at most about a quarter turn, to `[-pi/2, pi/2]` by two such selections
   (`within_quarter_turn`), since the cancellation in `a - q pi/2` hides that
@@ -2184,6 +2184,6 @@ tolk lowers as one, replaces it.
   bounds (D74)` and the float rows of `binary_bounds.golden`, from the
   equally patched tinygrad; the Transcendental suite: `graphs › a sine of an
   angle bounded below the switch-over is its fast form (D74)`; and
-  rune.next's `lower_arith` suite: `long reductions › a normal draw takes
+  rune's `lower_arith` suite: `long reductions › a normal draw takes
   none`, `› the sine of an angle read from a buffer takes its own only` and
   `› the cosine of an angle read from a buffer takes its own only`.

@@ -26,7 +26,7 @@ Breaking one causes real damage.
 | Package | Role |
 |---|---|
 | `packages/nx` | n-dimensional arrays. Libraries: `nx.dtype`, `nx.device` (host, Metal, CUDA, AMD, NV, remote, disk runtimes), `nx.array`, `nx.cpu` (C kernels), `nx`, `nx.io`, `nx.quant` |
-| `packages/rune` | autodiff, vmap and compilation over nx. `rune/next` is the new implementation; `rune/lib` is frozen until it is deleted |
+| `packages/rune` | autodiff, vmap and compilation over nx |
 | `packages/tolk` | the compiler, a port of tinygrad. `tolk/next` is current; `tolk/lib` is frozen. Departures from tinygrad are recorded in `packages/tolk/next/DIVERGENCES.md` |
 | `packages/kaun` | layers, optimizers and training on rune. Models live in `examples/`, never in the library |
 | `packages/vega` | optimizers as values |

@@ -3,244 +3,46 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Quantised products under rune: Law 2 of RFC 0004 for the compiled form on
-   every device the machine has, eagerly and compiled, and the rules of reverse
-   mode, forward mode, vmap and debug. *)
+(* Quantised products under rune. Compiled, Nx_quant.apply and dequant
+   compute eager's values, which nx's suite checks against the format: on the
+   host, on test devices over the host's memory with the weight, its routes and
+   its rows placed, and on Metal (slow). The derivatives of apply in its rows,
+   and its maps, are those of the product with the dequantised weight. *)
 
 open Windtrap
+open Nx_test
 
 let rng = Random.State.make [| 7 |]
-let bytes shape f = Nx.init Nx.uint8 shape f
 
-(* Scale bytes of finite values, 0 and 1 (subnormal on a device that keeps them)
-   and 255 (NaN groups) included. *)
-let scale_byte _ =
+(* Scale bytes of finite values, with 0 and 1 (subnormal values) and 255 (NaN
+   groups) among them. *)
+let any_scale _ =
   match Random.State.int rng 16 with
   | 0 -> 255
   | 1 -> 0
   | 2 -> 1
   | _ -> 100 + Random.State.int rng 51
 
-let weight ?(scale = scale_byte) shape =
+(* Scale bytes of normal float32 values, for Metal, which flushes subnormals,
+   and for derivatives. *)
+let moderate _ = 120 + Random.State.int rng 15
+
+(* A weight of logical shape [shape] with random codes. *)
+let weight ?(scale = any_scale) shape =
   let r = Array.length shape in
   let part last = Array.append (Array.sub shape 0 (r - 1)) [| last |] in
   let k = shape.(r - 1) in
   Nx_quant.mxfp4
-    ~scales:(bytes (part (k / 32)) scale)
-    (bytes (part (k / 2)) (fun _ -> Random.State.int rng 256))
+    ~scales:(Nx.init Nx.uint8 (part (k / 32)) scale)
+    (Nx.init Nx.uint8 (part (k / 2)) (fun _ -> Random.State.int rng 256))
 
 let floats shape =
-  Nx.init Nx.float32 shape (fun _ -> Random.State.float rng 2.0 -. 1.0)
+  Nx.init Nx.float32 shape (fun _ -> Random.State.float rng 2. -. 1.)
 
-let ints shape values = Nx.create Nx.int64 shape (Array.map Int64.of_int values)
+let ints shape v = Nx.create Nx.int64 shape (Array.map Int64.of_int v)
 
-(* The reference: Law 2's function, decoded from the format's definition and
-   summed at float64. *)
-
-let values (Nx_quant.Mxfp4 { codes; scales } as w) =
-  let codes = Nx.to_array codes and scales = Nx.to_array scales in
-  let e2m1 = [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. |] in
-  Nx.create Nx.float64 (Nx_quant.shape w)
-    (Array.init
-       (2 * Array.length codes)
-       (fun i ->
-         let byte = codes.(i / 2) in
-         let code = if i mod 2 = 0 then byte land 15 else byte lsr 4 in
-         let s = scales.(i / 32) in
-         let v = e2m1.(code land 7) *. Float.ldexp 1.0 (s - 127) in
-         if s = 255 then Float.nan else if code land 8 = 0 then v else -.v))
-
-(* [selected ~lanes dq ids] is [w'] of the decoded weight [dq] whose [lanes]
-   leading axes precede its experts, and whether each matrix is an expert: an id
-   outside the experts selects a zero matrix. *)
-let selected ~lanes dq ids =
-  let ds = Nx.shape dq and is = Nx.shape ids in
-  let e = ds.(lanes) in
-  let lane = Array.sub ds 0 lanes in
-  let wb =
-    Array.append
-      (Array.init lanes (fun a -> max lane.(a) is.(a)))
-      (Array.sub is lanes (Array.length is - lanes))
-  in
-  let ids = Nx.to_array (Nx.broadcast_to wb (Nx.contiguous ids)) in
-  let positions = Array.length ids in
-  let trailing =
-    positions / max 1 (Array.fold_left ( * ) 1 (Array.sub wb 0 lanes))
-  in
-  let valid =
-    Array.map
-      (fun id ->
-        Int64.compare id 0L >= 0 && Int64.compare id (Int64.of_int e) < 0)
-      ids
-  in
-  (* Position [p]'s matrix among the weight's, lanes flattened. *)
-  let index p id =
-    let rest = ref (p / max 1 trailing) and l = ref 0 and stride = ref 1 in
-    for a = lanes - 1 downto 0 do
-      let i = !rest mod wb.(a) in
-      rest := !rest / wb.(a);
-      if lane.(a) > 1 then l := !l + (i * !stride);
-      stride := !stride * lane.(a)
-    done;
-    if valid.(p) then Int64.of_int ((!l * e) + Int64.to_int id) else 0L
-  in
-  let flat =
-    Nx.reshape (Array.append [| -1 |] (Array.sub ds (lanes + 1) 2)) dq
-  in
-  let matrices =
-    Nx.take ~axis:0
-      ~indices:(Nx.create Nx.int64 [| positions |] (Array.mapi index ids))
-      flat
-  in
-  let mask = Nx.create Nx.bool [| positions; 1; 1 |] valid in
-  ( Nx.reshape
-      (Array.concat [ wb; Array.sub ds (lanes + 1) 2 ])
-      (Nx.where mask matrices (Nx.zeros_like matrices)),
-    Nx.create Nx.bool wb valid )
-
-type case = {
-  w : Nx_quant.t;
-  lanes : int;  (** Leading axes of [w] before its experts, with [ids]. *)
-  ids : Nx.int64_t option;
-  x : Nx.float32_t;
-  transpose : bool;
-}
-
-(* [reference c x] is the expected product at float64 for the [x] the product
-   receives, the sum of the absolute terms of each value, and whether each value
-   is a product (not a position that selects no expert). *)
-let reference c x =
-  let dq = values c.w in
-  let w, valid =
-    match c.ids with
-    | None -> (dq, None)
-    | Some ids ->
-        let w, valid = selected ~lanes:c.lanes dq ids in
-        (w, Some valid)
-  in
-  let side w = if c.transpose then w else Nx.matrix_transpose w in
-  let x = Nx.cast Nx.float64 x in
-  let y = Nx.matmul x (side w) in
-  let bound = Nx.matmul (Nx.abs x) (side (Nx.abs w)) in
-  let valid =
-    match valid with
-    | None -> Nx.full Nx.bool (Nx.shape y) true
-    | Some v ->
-        let tail = if Nx.ndim c.x = 1 then [| 1 |] else [| 1; 1 |] in
-        Nx.broadcast_to (Nx.shape y)
-          (Nx.reshape (Array.append (Nx.shape v) tail) v)
-  in
-  (y, bound, valid)
-
-let product (type b) c (x : (float, b) Nx.t) : (float, b) Nx.t =
-  Nx_quant.Effect.perform c.w
-    (Apply { ids = c.ids; x; transpose = c.transpose })
-
-(* Law 2, for the [x] the product receives, at a dtype whose unit roundoff is
-   [u]: within a float32 sum of [k] terms, each product and decoded weight
-   possibly rounded to [x]'s dtype, and the result rounded to it once (an
-   absolute [tiny] for each of those [k + 1] roundings that lands on a float16
-   subnormal); NaN exactly where the reference is; exact zeros where no expert
-   is selected. A device that flushes subnormal float32 loses, per term, a scale
-   byte 0's whole group (values up to 6 * 2^-127 = 3 * 2^-126, each times |x|),
-   a product below 2^-126 and a running sum below 2^-126: [k * 2^-126 * (3 * max
-   |x| + 2)] for an [x] with no subnormal values. *)
-let law2 ~msg ~u ~tiny ~flush c x actual =
-  let expected, bound, valid = reference c x in
-  equal ~msg:(msg ^ ", shape") (array int) (Nx.shape expected) (Nx.shape actual);
-  let s = Nx.shape x in
-  let k = float_of_int s.(Array.length s - 1) in
-  let largest =
-    Array.fold_left
-      (fun m v -> if Float.is_finite v then Float.max m (Float.abs v) else m)
-      0.0
-      (Nx.to_array (Nx.cast Nx.float32 x))
-  in
-  let expected = Nx.to_array expected and bound = Nx.to_array bound in
-  let valid = Nx.to_array valid in
-  let actual = Nx.to_array (Nx.cast Nx.float32 actual) in
-  let eps = Float.ldexp 1.0 (-24) and least = Float.ldexp 1.0 (-126) in
-  Array.iteri
-    (fun i e ->
-      let a = actual.(i) in
-      let wrong () =
-        fail (Printf.sprintf "%s: at %d, expected %h, got %h" msg i e a)
-      in
-      if not valid.(i) then
-        begin if Int64.bits_of_float a <> 0L then wrong ()
-        end
-      else if Float.is_nan e || Float.is_nan a then
-        begin if not (Float.is_nan e && Float.is_nan a) then wrong ()
-        end
-      else
-        let b = bound.(i) in
-        let tol =
-          (2.0 *. k *. eps *. b)
-          +. (u *. b)
-          +. (u *. Float.abs e)
-          +. ((k +. 1.0) *. tiny)
-          +. if flush then k *. least *. ((3.0 *. largest) +. 2.0) else 0.0
-        in
-        if not (Float.abs (a -. e) <= tol) then wrong ())
-    expected
-
-(* Devices: the CPU, and Metal where the machine has it. *)
-let devices =
-  "CPU"
-  ::
-  (match Tolk.Device.get "METAL" with
-  | _ -> [ "METAL" ]
-  | exception Invalid_argument _ -> [])
-
-(* The ids and x of a case are the compiled function's inputs; the weight is
-   captured, as a model captures its parameters. *)
-let inputs () = Nx.Ptree.(pair tensor tensor)
-
-(* The compiled product, [x] an input at its own dtype. [x] is rounded once
-   outside: rune's jit, as tinygrad, folds a float32 -> float16 -> float32 round
-   trip to the identity, so a cast inside the compiled function would hand the
-   product an unrounded [x]. *)
-let compiled (type b) ~device c (x : (float, b) Nx.t) : (float, b) Nx.t =
-  match c.ids with
-  | None -> Rune.jit' ~devices:[ Rune.device device ] (product c) x
-  | Some ids ->
-      Rune.jit
-        ~devices:[ Rune.device device ]
-        Nx.Ptree.(inputs () @-> returns tensor)
-        (fun (ids, x) -> product { c with ids = Some ids } x)
-        (ids, x)
-
-(* The dtypes of [x]: float32, and bfloat16 and float16 with their unit
-   roundoffs. float16 decodes at float32, and its results must stay in its
-   range. *)
-type dtype = Dt : string * (float, 'b) Nx.dtype * float * float -> dtype
-
-let float32 = Dt ("float32", Nx.float32, 0.0, 0.0)
-let bfloat16 = Dt ("bfloat16", Nx.bfloat16, Float.ldexp 1.0 (-8), 0.0)
-
-let float16 =
-  Dt ("float16", Nx.float16, Float.ldexp 1.0 (-11), Float.ldexp 1.0 (-25))
-
-let battery ?(dtypes = [ float32; bfloat16 ]) c =
-  List.iter
-    (fun (Dt (name, dt, u, tiny)) ->
-      let x = Nx.cast dt c.x in
-      law2 ~msg:("eager, " ^ name) ~u ~tiny ~flush:false c x (product c x);
-      List.iter
-        (fun device ->
-          law2
-            ~msg:(Printf.sprintf "%s, %s" device name)
-            ~u ~tiny ~flush:(device = "METAL") c x (compiled ~device c x))
-        devices)
-    dtypes
-
-(* Law 2 *)
-
-let case ?(lanes = 0) ?ids ?(transpose = false) w x =
-  { w; lanes; ids; x; transpose }
-
-(* [poison ~at x] is [x] with NaN and an infinity in the rows of [x] at the
-   batch indices [at], positions where no expert is selected. *)
+(* [poison ~at x] is [x] with a NaN and an infinity in its rows at the batch
+   indices [at], positions that select no expert. *)
 let poison ~at x =
   List.fold_left
     (fun x index ->
@@ -248,882 +50,476 @@ let poison ~at x =
       let row =
         Array.sub s (List.length index) (Array.length s - List.length index)
       in
-      let bad = Nx.reshape [| -1 |] (Nx.full Nx.float32 row Float.nan) in
-      let bad = Nx.set [ I 0 ] (Nx.scalar Nx.float32 Float.infinity) bad in
+      let bad =
+        Nx.set [ I 0 ]
+          (Nx.scalar Nx.float32 Float.infinity)
+          (Nx.full Nx.float32 [| Array.fold_left ( * ) 1 row |] Float.nan)
+      in
       Nx.set (List.map (fun i -> Nx.I i) index) (Nx.reshape row bad) x)
     x at
 
-let test_without_ids () =
-  battery (case (weight [| 5; 64 |]) (floats [| 3; 4; 64 |]));
-  battery (case (weight [| 2; 5; 64 |]) (floats [| 4; 1; 3; 64 |]));
-  battery (case (weight [| 2; 5; 64 |]) (floats [| 64 |]))
+(* Agreement *)
 
-(* Fewer positions than experts: the selected experts' rows are gathered. *)
-let test_gathered () =
-  let w = weight [| 6; 8; 64 |] in
-  let ids = ints [| 2; 2 |] [| 3; -1; 6; 3 |] in
-  battery
-    (case ~ids w (poison ~at:[ [ 0; 1 ]; [ 1; 0 ] ] (floats [| 2; 2; 1; 64 |])));
-  battery (case ~ids:(ints [| 3 |] [| 5; -5; 0 |]) w (floats [| 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
-       (weight [| 2; 3; 8; 64 |])
-       (floats [| 2; 2; 1; 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:(ints [| 1; 2 |] [| 2; 0 |])
-       (weight [| 2; 3; 8; 64 |])
-       (floats [| 3; 2; 2; 1; 64 |]))
+(* [magnitudes w] is [w] with every code's sign cleared: the absolute values of
+   [w]'s values. *)
+let magnitudes (Nx_quant.Mxfp4 { codes; scales }) =
+  Nx_quant.mxfp4 ~scales
+    (Nx.bitwise_and codes (Nx.full Nx.uint8 (Nx.shape codes) 0x77))
 
-(* As many positions as experts or more, and several rows per position or too
-   few routes of one row to group (rule 2: 3 routes over 3 experts): every
-   expert is decoded once and each position is its own block of rows. *)
-let test_instances () =
-  let w = weight [| 3; 8; 64 |] in
-  let ids = ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |] in
-  battery (case ~ids w (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 3; 64 |])));
-  battery (case ~ids w (floats [| 3; 1; 8; 64 |]));
-  battery
-    (case ~transpose:true ~ids w
-       (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 2; 8 |])));
-  let few = ints [| 3; 1 |] [| 2; -1; 0 |] in
-  battery (case ~ids:few w (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 1; 1; 64 |])));
-  battery (case ~ids:(ints [| 3 |] [| 1; 7; 1 |]) w (floats [| 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:(ints [| 2; 3 |] [| 0; 2; -1; 2; 1; 1 |])
-       (weight [| 2; 3; 8; 64 |])
-       (floats [| 2; 3; 1; 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:(ints [| 2; 3 |] [| 2; 0; -1; 1; 1; 5 |])
-       (weight [| 1; 3; 8; 64 |])
-       (floats [| 3; 2; 64 |]))
+type case = {
+  name : string;
+  w : Nx_quant.t;
+  ids : Nx.int64_t option;
+  x : Nx.float32_t;
+  transpose : bool;
+}
 
-(* Enough routes of one row each that grouping pays (rule 2, with 4 experts from
-   5 routes on Metal): routes ranked by expert fill blocks that read their
-   expert once. Within the kernel's row bound the blocks take the kernel, past
-   it the block kernel (rule 3). On the CPU (τ = 140) the 48 routes over 4
-   experts, the 64 over 4 and the 40 over 2 group on the kernel, the 160 over 2
-   on the block kernel, and the other cases take rule 1. *)
-let test_grouped () =
-  let w = weight [| 4; 8; 64 |] in
-  let ids =
-    ints [| 8; 2 |] [| 0; 3; -1; 2; 4; 3; 1; 1; 3; -5; 0; 2; 2; 2; 1; 0 |]
+let case ?ids ?(transpose = false) name w x = { name; w; ids; x; transpose }
+
+(* [product c w x] is [c]'s product of [w] and [x]. *)
+let product c w x =
+  Nx_quant.Effect.perform w
+    (Nx_quant.Effect.Apply { ids = c.ids; x; transpose = c.transpose })
+
+(* [agrees c expected actual] checks [actual] against eager's [expected] within
+   the error of a float32 sum of [c]'s terms, each rounded once to [x]'s dtype:
+   at a value whose terms' magnitudes sum to [b], within [2 k u b] plus [k]
+   least normals, and one unit of [x]'s dtype in the last place of the value. A
+   NaN is a NaN and an infinity itself; a position that selects no expert is
+   exactly zero, as its bound is. *)
+let agrees (type b) c (expected : (float, b) Nx.t) (actual : (float, b) Nx.t) =
+  equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape actual);
+  let s = Nx.shape c.x in
+  let k = float_of_int s.(Array.length s - 1) in
+  let bound =
+    Nx.to_array (product c (magnitudes c.w) (Nx.abs (Nx.cast Nx.float32 c.x)))
   in
-  battery (case ~ids w (floats [| 8; 1; 1; 64 |]));
-  battery
-    (case ~ids w
-       (poison ~at:[ [ 1; 0 ]; [ 2; 0 ]; [ 4; 1 ] ] (floats [| 8; 2; 1; 64 |])));
-  battery (case ~ids:(Nx.reshape [| 16 |] ids) w (floats [| 64 |]));
-  battery (case ~ids w (floats [| 3; 8; 2; 1; 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:
-         (ints [| 2; 12 |]
-            (Array.init 24 (fun i -> if i mod 7 = 3 then -1 else i * 5 mod 3)))
-       (weight [| 2; 3; 8; 64 |])
-       (floats [| 2; 12; 1; 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:(ints [| 2; 12 |] (Array.init 24 (fun i -> i * 7 mod 4)))
-       (weight [| 1; 3; 8; 64 |])
-       (floats [| 12; 1; 64 |]));
-  (* Past the kernel's row bound on every device, the blocks are decoded and
-     take the block kernel, 64 rows each. *)
-  battery
-    (case
-       ~ids:(ints [| 160 |] (Array.init 160 (fun i -> (i * 7 mod 5) - 1)))
-       (weight [| 2; 8; 64 |])
-       (floats [| 160; 1; 64 |]));
-  (* Many rows per expert take blocks of more than 8 rows, and a skewed routing
-     gives one expert most of the blocks. *)
-  battery
-    (case
-       ~ids:
-         (ints [| 40 |] (Array.init 40 (fun i -> if i mod 9 = 4 then 1 else 0)))
-       (weight [| 2; 8; 64 |])
-       (floats [| 40; 1; 64 |]));
-  (* One lane of eight: the lane holds 4 of 32 experts, and the routes of the
-     other 28 are -1. *)
-  battery
-    (case
-       ~ids:
-         (ints [| 64 |]
-            (Array.init 64 (fun i ->
-                 let expert = i * 11 mod 32 in
-                 if expert < 4 then expert else -1)))
-       w
-       (floats [| 64; 1; 64 |]))
-
-(* Tolk's kernel, which a product takes while its matrix meets at most the
-   device's row bound of rows (64 on the CPU, 8 on Metal): one group per row,
-   where an id selecting no matrix reads matrix 0 and is zeroed; rows that no
-   row tile divides, and two full tiles of 8; an [x] shared by the positions of
-   a token, and one broadcast along another axis; a stack against one shared
-   row; and no id selecting an expert. On Metal the 16 rows take the block
-   kernel. *)
-let test_kernel () =
-  let dtypes = [ float32; bfloat16; float16 ] in
-  let scale _ =
-    match Random.State.int rng 16 with
-    | 0 -> 255
-    | 1 -> 0
-    | 2 -> 1
-    | _ -> 110 + Random.State.int rng 21
+  let unit =
+    match Nx.dtype expected with
+    | Nx.Float16 -> Float.ldexp 1. (-11)
+    | Nx.BFloat16 -> Float.ldexp 1. (-8)
+    | _ -> 0.
   in
-  let battery = battery ~dtypes in
-  battery (case (weight ~scale [| 48; 32 |]) (floats [| 1; 32 |]));
-  battery
-    (case
-       ~ids:(ints [| 3 |] [| 1; -1; 1 |])
-       (weight ~scale [| 2; 40; 32 |])
-       (poison ~at:[ [ 1 ] ] (floats [| 3; 1; 32 |])));
-  battery (case (weight ~scale [| 48; 128 |]) (floats [| 6; 128 |]));
-  battery (case (weight ~scale [| 40; 64 |]) (floats [| 16; 64 |]));
-  (* A stack of matrices against one shared row. *)
-  battery (case (weight ~scale [| 2; 8; 32 |]) (floats [| 32 |]));
-  battery (case (weight ~scale [| 2; 8; 32 |]) (floats [| 1; 1; 32 |]));
-  battery (case (weight ~scale [| 3; 20; 96 |]) (floats [| 3; 3; 96 |]));
-  let w = weight ~scale [| 6; 48; 128 |] in
-  battery
-    (case
-       ~ids:(ints [| 3; 4 |] [| 5; 0; -1; 2; 7; 3; 3; 1; 0; 0; 4; -2 |])
-       w
-       (poison ~at:[ [ 0; 0 ] ] (floats [| 3; 1; 1; 128 |])));
-  battery
-    (case
-       ~ids:(ints [| 3; 2 |] [| 5; 0; 2; 2; 1; 4 |])
-       w
-       (floats [| 1; 2; 5; 128 |]));
-  battery (case ~ids:(ints [| 2 |] [| -1; 6 |]) w (floats [| 2; 1; 128 |]))
+  let e = Nx.to_array (Nx.cast Nx.float32 expected)
+  and a = Nx.to_array (Nx.cast Nx.float32 actual) in
+  Array.iteri
+    (fun i e ->
+      let a = a.(i) in
+      let tol =
+        (2. *. k *. Float.ldexp 1. (-24) *. bound.(i))
+        +. (k *. Float.ldexp 1. (-126))
+        +. (2. *. unit *. Float.abs e)
+      in
+      if
+        not
+          ((Float.is_nan e && Float.is_nan a)
+          || e = a
+          || (Float.is_finite e && Float.abs (a -. e) <= tol))
+      then failf "%s: at %d, expected %h, got %h (within %h)" c.name i e a tol)
+    e
 
-(* Past the row bound, decoding then multiplying: without ids, with fewer
-   positions than experts, with as many or more, and with lanes. On Metal the 65
-   rows are padded to 72, a multiple of the block kernel's tile. *)
-let test_past_the_bound () =
-  let rows = 65 in
-  battery (case (weight [| 8; 64 |]) (floats [| rows; 64 |]));
-  let w = weight [| 3; 8; 64 |] in
-  battery
-    (case
-       ~ids:(ints [| 2 |] [| 2; -1 |])
-       w
-       (poison ~at:[ [ 1 ] ] (floats [| 2; rows; 64 |])));
-  battery
-    (case ~ids:(ints [| 4 |] [| 0; 2; 2; 5 |]) w (floats [| 4; rows; 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
-       (weight [| 2; 3; 8; 64 |])
-       (floats [| 2; 2; rows; 64 |]))
+(* The products, from the old suite's Law 2 *)
 
-let test_transposed () =
-  let w = weight [| 4; 8; 64 |] in
-  battery (case ~transpose:true w (floats [| 4; 3; 8 |]));
-  battery
-    (case ~transpose:true
-       ~ids:(ints [| 2; 1 |] [| 3; -1 |])
-       w
-       (poison ~at:[ [ 1; 0 ] ] (floats [| 2; 1; 1; 8 |])));
-  battery
-    (case ~transpose:true
-       ~ids:(ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |])
-       w
-       (floats [| 3; 2; 1; 8 |]));
-  battery
-    (case ~transpose:true
-       ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 3 mod 6) - 1)))
-       w
-       (poison ~at:[ [ 0; 0 ] ] (floats [| 8; 2; 1; 8 |])))
+let products ~scale =
+  let w68 = weight ~scale [| 6; 8; 64 |]
+  and w38 = weight ~scale [| 3; 8; 64 |] in
+  let w48 = weight ~scale [| 4; 8; 64 |] in
+  [
+    case "without ids, matrices"
+      (weight ~scale [| 5; 64 |])
+      (floats [| 3; 4; 64 |]);
+    case "without ids, batch axes broadcast"
+      (weight ~scale [| 2; 5; 64 |])
+      (floats [| 4; 1; 3; 64 |]);
+    case "without ids, a vector"
+      (weight ~scale [| 2; 5; 64 |])
+      (floats [| 64 |]);
+    case "fewer positions than experts"
+      ~ids:(ints [| 2; 2 |] [| 3; -1; 6; 3 |])
+      w68
+      (poison ~at:[ [ 0; 1 ]; [ 1; 0 ] ] (floats [| 2; 2; 1; 64 |]));
+    case "ids outside the experts, over a vector"
+      ~ids:(ints [| 3 |] [| 5; -5; 0 |])
+      w68 (floats [| 64 |]);
+    case "ids 2^32 from an expert"
+      ~ids:(ints [| 6; 1 |] [| 0; (1 lsl 32) + 2; 1; 3; 5 - (1 lsl 32); 4 |])
+      w68
+      (floats [| 6; 1; 2; 64 |]);
+    case "a lane of experts per batch row"
+      ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
+      (weight ~scale [| 2; 3; 8; 64 |])
+      (floats [| 2; 2; 1; 64 |]);
+    case "as many positions as experts or more"
+      ~ids:(ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |])
+      w38
+      (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 3; 64 |]));
+    case "many routes of one row"
+      ~ids:
+        (ints [| 8; 2 |] [| 0; 3; -1; 2; 4; 3; 1; 1; 3; -5; 0; 2; 2; 2; 1; 0 |])
+      w48
+      (floats [| 8; 1; 1; 64 |]);
+    case "transposed" ~transpose:true
+      ~ids:(ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |])
+      w38
+      (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 2; 8 |]));
+  ]
 
-(* An id 2^32 from an expert, which a truncation to tolk's int32 ids would bring
-   to that expert, selects none, on each form: the kernel, gathered rows, a
-   block per position, past the row bound, and with lanes. *)
-let test_far_ids () =
-  let far = 1 lsl 32 in
-  battery
-    (case
-       ~ids:(ints [| 3 |] [| far + 1; 0; 1 - far |])
-       (weight [| 2; 40; 32 |])
-       (floats [| 3; 1; 32 |]));
-  let w = weight [| 6; 8; 64 |] in
-  battery (case ~ids:(ints [| 3 |] [| far + 5; 0; -far |]) w (floats [| 64 |]));
-  battery
-    (case
-       ~ids:(ints [| 6; 1 |] [| 0; far + 2; 1; 3; 5 - far; 4 |])
-       w
-       (floats [| 6; 1; 2; 64 |]));
-  battery (case ~ids:(ints [| 2 |] [| far + 1; 2 |]) w (floats [| 2; 65; 64 |]));
-  battery
-    (case ~lanes:1
-       ~ids:(ints [| 2; 2 |] [| far + 2; 0; 1; far |])
-       (weight [| 2; 3; 8; 64 |])
-       (floats [| 2; 2; 1; 64 |]))
+(* The largest scales: codes of magnitude 4 or more at scale byte 253, and of 2
+   or more at 254, are infinite. *)
+let largest =
+  case "the largest scales"
+    (weight ~scale:(fun i -> 253 + (i.(0) mod 2)) [| 4; 64 |])
+    (floats [| 2; 64 |])
 
-(* The largest finite scale bytes, on inputs small enough that no float32 sum
-   overflows. *)
-let test_large_scales () =
-  let w =
-    weight ~scale:(fun _ -> 240 + Random.State.int rng 13) [| 3; 4; 32 |]
-  in
-  let x = Nx.mul_s (floats [| 2; 2; 1; 32 |]) (Float.ldexp 1.0 (-6)) in
-  battery (case ~ids:(ints [| 2; 2 |] [| 2; 0; 1; 1 |]) w x);
-  battery (case ~ids:(ints [| 1; 2 |] [| 2; 0 |]) w x)
-
-(* Empty inputs give empty results, on every device. *)
-let test_empty () =
-  let w = weight [| 4; 8; 64 |] in
-  let check msg c shape =
-    equal ~msg:(msg ^ ", eager") (array int) shape (Nx.shape (product c c.x));
-    List.iter
-      (fun device ->
-        equal
-          ~msg:(msg ^ ", " ^ device)
-          (array int) shape
-          (Nx.shape (compiled ~device c c.x)))
-      devices
-  in
-  check "no tokens"
-    (case ~ids:(ints [| 0; 4 |] [||]) w (floats [| 0; 1; 1; 64 |]))
-    [| 0; 4; 1; 8 |];
-  check "no experts per token"
-    (case ~ids:(ints [| 3; 0 |] [||]) w (floats [| 3; 1; 1; 64 |]))
-    [| 3; 0; 1; 8 |];
-  check "no rows" (case (weight [| 8; 64 |]) (floats [| 0; 64 |])) [| 0; 8 |];
-  let c = case (weight [| 8; 0 |]) (floats [| 2; 0 |]) in
-  check "no inputs" c [| 2; 8 |];
-  List.iter
-    (fun device ->
-      law2 ~msg:("no inputs, " ^ device) ~u:0.0 ~tiny:0.0 ~flush:false c c.x
-        (compiled ~device c c.x))
-    devices
-
-(* float16 [x], with scales that keep every result inside float16's range. *)
-let test_float16 () =
-  let scale _ =
-    match Random.State.int rng 16 with
-    | 0 -> 255
-    | 1 -> 0
-    | 2 -> 1
-    | _ -> 110 + Random.State.int rng 21
-  in
-  let battery = battery ~dtypes:[ float32; bfloat16; float16 ] in
-  let w = weight ~scale [| 4; 8; 64 |] in
-  battery (case (weight ~scale [| 2; 5; 64 |]) (floats [| 4; 1; 3; 64 |]));
-  battery (case ~ids:(ints [| 1; 2 |] [| 3; -1 |]) w (floats [| 1; 2; 1; 64 |]));
-  battery
-    (case
-       ~ids:(ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |])
-       w
-       (floats [| 3; 1; 1; 64 |]));
-  battery
-    (case ~transpose:true
-       ~ids:(ints [| 2; 1 |] [| 3; -1 |])
-       w
-       (floats [| 2; 1; 1; 8 |]));
-  battery
-    (case
-       ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)))
-       w
-       (floats [| 8; 1; 1; 64 |]));
-  (* Decoded values beyond float16's range, on an [x] small enough that the
-     results are inside it: the decode must run at float32. *)
-  let large =
-    weight ~scale:(fun _ -> 140 + Random.State.int rng 6) [| 3; 4; 32 |]
-  in
-  let x = Nx.mul_s (floats [| 2; 2; 1; 32 |]) (Float.ldexp 1.0 (-12)) in
-  battery (case large (Nx.reshape [| 4; 32 |] x));
-  battery (case ~ids:(ints [| 2; 2 |] [| 2; 0; 1; -1 |]) large x);
-  (* The forms that decode at float32 for a float16 [x]: grouped blocks past the
-     row bound, the grouped transposed product, and a block per position. *)
-  battery
-    (case
-       ~ids:(ints [| 160 |] (Array.init 160 (fun i -> (i * 7 mod 5) - 1)))
-       (weight ~scale [| 2; 8; 64 |])
-       (floats [| 160; 1; 64 |]));
-  battery
-    (case ~transpose:true
-       ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 3 mod 6) - 1)))
-       w
-       (poison ~at:[ [ 0; 0 ] ] (floats [| 8; 2; 1; 8 |])));
-  battery
-    (case
-       ~ids:(ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |])
-       w
-       (floats [| 3; 2; 65; 64 |]))
-
-(* Compiled [dequant] gives the format's values bit for bit at float32 and
-   bfloat16, where every value is exact, except that a flushing device zeroes a
-   scale byte 0's group and a subnormal value. *)
-let test_dequant () =
-  let w = weight [| 3; 8; 64 |] in
-  let expected = Nx.to_array (values w) in
-  let (Nx_quant.Mxfp4 { scales; _ }) = w in
-  let bytes = Nx.to_array scales in
-  List.iter
-    (fun (Dt (name, dt, _, _)) ->
-      List.iter
-        (fun device ->
-          let actual =
-            Nx.to_array
-              (Nx.cast Nx.float32
-                 (Rune.jit
-                    ~devices:[ Rune.device device ]
-                    Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
-                    (Nx_quant.dequant dt) w))
-          in
-          Array.iteri
-            (fun i e ->
-              let a = actual.(i) in
-              let flushed =
-                device = "METAL" && a = 0.0
-                && (bytes.(i / 32) = 0 || Float.abs e < Float.ldexp 1.0 (-126))
-              in
-              if
-                not
-                  (flushed
-                  || Int64.bits_of_float a = Int64.bits_of_float e
-                  || (Float.is_nan a && Float.is_nan e))
-              then
-                fail
-                  (Printf.sprintf "%s, %s: at %d, expected %h, got %h" device
-                     name i e a))
-            expected)
-        devices)
-    [ float32; bfloat16 ]
-
-(* The form rule: one token's four experts of 32 decode four matrices, as the
-   gathered form does, not all 32. Its arithmetic is counted on a replay against
-   four experts of four, which every form decodes whole. *)
-let test_one_token_gathers () =
-  let x = floats [| 1; 1; 65; 256 |] in
-  let ops e =
-    let w = weight ~scale:(fun _ -> 127) [| e; 64; 256 |] in
-    let ids = ints [| 1; 4 |] [| 3; 0; 2; 1 |] in
-    let f =
+(* [compiled c] is [c]'s product compiled, its routes and rows arguments. *)
+let compiled c =
+  match c.ids with
+  | None -> Rune.jit' (product c c.w) c.x
+  | Some ids ->
       Rune.jit
-        ~devices:[ Rune.device "CPU" ]
-        Nx.Ptree.(inputs () @-> returns tensor)
-        (fun (ids, x) -> Nx_quant.apply ~ids w x)
-    in
-    ignore (Nx.to_array (f (ids, x)));
-    let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
-    ignore (Nx.to_array (f (ids, x)));
-    Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
-  in
-  let gathered = ops 32 and every = ops 4 in
-  is_true
-    ~msg:(Printf.sprintf "%d operations against %d" gathered every)
-    (gathered < 2 * every)
+        Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+        (fun ids x -> product { c with ids = Some ids } c.w x)
+        ids c.x
 
-(* Rule 1 on every device: within the row bound the product reads its packed
-   bytes, under one byte per weight; past it, decoding writes at least two. *)
-let test_rule () =
-  let n = 256 and k = 256 in
-  let w = weight [| n; k |] in
-  let bytes device rows =
-    let f = Rune.jit' ~devices:[ Rune.device device ] (Nx_quant.apply w) in
-    let x = Nx.cast Nx.bfloat16 (floats [| rows; k |]) in
-    ignore (Nx.to_array (f x));
-    let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
-    ignore (Nx.to_array (f x));
-    Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before)
-  in
-  List.iter
-    (fun device ->
-      let one = bytes device 1 and past = bytes device 65 in
-      is_true
-        ~msg:(Printf.sprintf "%s, one row: %d bytes" device one)
-        (one < n * k);
-      is_true
-        ~msg:(Printf.sprintf "%s, 65 rows: %d bytes" device past)
-        (past > 2 * n * k))
-    devices
+let values =
+  group "values"
+    [
+      cases
+        ~name:(fun c -> c.name)
+        "compiled, a product is eager's"
+        (largest :: products ~scale:any_scale)
+        (fun c -> agrees c (product c c.w c.x) (compiled c));
+      test "compiled, a product of a float16 x is eager's" (fun () ->
+          let c =
+            case "float16 x"
+              ~ids:(ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |])
+              (weight [| 3; 8; 64 |])
+              (floats [| 3; 2; 3; 64 |])
+          in
+          let x = Nx.cast Nx.float16 c.x in
+          let ids = Option.get c.ids in
+          agrees c
+            (Nx_quant.apply ~ids c.w x)
+            (Rune.jit
+               Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+               (fun ids x -> Nx_quant.apply ~ids c.w x)
+               ids x));
+      cases ~name:fst "compiled, dequant is eager's bit for bit"
+        [
+          ("float32", fun w -> Nx_quant.dequant Nx.float32 w);
+          ( "bfloat16",
+            fun w -> Nx.cast Nx.float32 (Nx_quant.dequant Nx.bfloat16 w) );
+        ]
+        (fun (_, f) ->
+          let w = weight [| 3; 8; 64 |] in
+          equal (tensor float_exact) (f w)
+            (Rune.jit Nx.Ptree.(Nx_quant.ptree @-> returns tensor) f w));
+      test "compiled, one token's four experts among 32 are its product"
+        (fun () ->
+          let c =
+            case "one token"
+              ~ids:(ints [| 1; 4 |] [| 3; 0; 2; 1 |])
+              (weight ~scale:moderate [| 32; 64; 256 |])
+              (floats [| 1; 1; 65; 256 |])
+          in
+          agrees c (product c c.w c.x) (compiled c));
+    ]
 
-(* Placement *)
+(* Placements *)
 
-(* A weight placed on a device holds its parts there and decodes to the same
-   values. A split along the inputs that cuts a group raises before anything
-   moves. (Splits themselves wait for RFC 0005's next stage.) *)
-let test_place () =
-  let w = weight ~scale:(fun _ -> 120) [| 2; 4; 128 |] in
-  let expected = Nx.to_array (Nx_quant.dequant Nx.float32 w) in
-  List.iter
-    (fun device ->
-      let p = Nx.Placement.device (Rune.device device) in
-      let (Nx_quant.Mxfp4 { codes; scales } as placed) = Nx_quant.place p w in
-      is_true ~msg:(device ^ ", codes")
-        (Nx.Placement.equal p (Nx.placement codes));
-      is_true ~msg:(device ^ ", scales")
-        (Nx.Placement.equal p (Nx.placement scales));
-      equal ~msg:device (array float_exact) expected
-        (Nx.to_array (Nx_quant.dequant Nx.float32 placed)))
-    ("CPU:1" :: List.filter (( = ) "METAL") devices);
-  (* 48 code bytes split evenly over two devices; 3 groups do not. *)
-  let two = [ Rune.device "CPU:1"; Rune.device "CPU:2" ] in
-  raises
-    (Invalid_argument
-       "Nx_quant.place: splitting codes and scales along axis 1 in 2 cuts a \
-        32-value group (3 groups)") (fun () ->
-      ignore
-        (Nx_quant.place (Nx.Placement.sharded ~axis:1 two) (weight [| 4; 96 |])))
+let driver name =
+  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+    (Host_visible
+       {
+         memory = Nx_device.Driver.host_memory;
+         mapping = Some Nx_device.Driver.Identity;
+       })
 
-(* Reverse and forward mode *)
+let devices =
+  List.map (fun n -> Nx.Device.of_runtime (driver n)) [ "Q1"; "Q2"; "Q3"; "Q4" ]
 
-(* [dense c] is the product of [c] as an ordinary matmul over [w'] decoded at
-   float32, zero where no expert is selected: the function whose derivatives the
-   rules must give. *)
-let dense c =
-  let dq = Nx.cast Nx.float64 (Nx_quant.dequant Nx.float32 c.w) in
-  let w, valid =
-    match c.ids with
-    | None -> (dq, None)
+let pair = [ List.nth devices 0; List.nth devices 1 ]
+let split ?(axis = 0) ds = Nx.Placement.sharded ~backend:Rune.compiled ~axis ds
+let host t = Nx.place Nx.Placement.host t
+let routed w ids x = Nx_quant.apply ~ids w x
+
+let routed_compiled w =
+  Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (routed w)
+
+let placements =
+  let w = weight ~scale:moderate [| 4; 8; 64 |] in
+  group "placements"
+    [
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "routes and rows split over two devices give eager's product"
+        [
+          ("gathered", ints [| 2; 1 |] [| 3; -1 |], floats [| 2; 1; 1; 64 |]);
+          ( "several rows per position",
+            ints [| 2; 2 |] [| 3; -1; 0; 1 |],
+            floats [| 2; 2; 2; 64 |] );
+          ( "many routes",
+            ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)),
+            floats [| 8; 2; 1; 64 |] );
+        ]
+        (fun (name, ids, x) ->
+          agrees (case ~ids name w x) (routed w ids x)
+            (host
+               (routed_compiled w
+                  (Nx.place (split pair) ids)
+                  (Nx.place (split pair) x))));
+      test "experts split over two devices give eager's product" (fun () ->
+          let ids = ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1))
+          and x = floats [| 8; 1; 1; 64 |] in
+          agrees
+            (case ~ids "split experts" w x)
+            (routed w ids x)
+            (host
+               (Rune.jit
+                  Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
+                  (fun w -> routed w ids x)
+                  (Nx_quant.place (split pair) w))));
+      test
+        "experts split under routes split over two devices give eager's product"
+        (fun () ->
+          let ids = ints [| 4; 1 |] [| 3; 0; 1; 2 |]
+          and x = floats [| 4; 1; 1; 64 |] in
+          agrees
+            (case ~ids "split experts and routes" w x)
+            (routed w ids x)
+            (host
+               (Rune.jit
+                  Nx.Ptree.(
+                    Nx_quant.ptree @-> tensor @-> tensor @-> returns tensor)
+                  routed
+                  (Nx_quant.place (split pair) w)
+                  (Nx.place (split pair) ids)
+                  (Nx.place (split pair) x))));
+      slow "sixteen experts over four devices, four each, give eager's product"
+        (fun () ->
+          let w = weight ~scale:moderate [| 16; 8; 64 |] in
+          let ids =
+            ints [| 8; 2 |]
+              (Array.init 16 (fun i -> ((i * 7) + (i / 2)) mod 16))
+          and x = floats [| 8; 1; 1; 64 |] in
+          agrees
+            (case ~ids "expert parallel" w x)
+            (routed w ids x)
+            (host
+               (Rune.jit
+                  Nx.Ptree.(
+                    Nx_quant.ptree @-> tensor @-> tensor @-> returns tensor)
+                  routed
+                  (Nx_quant.place (split devices) w)
+                  (Nx.place
+                     (Nx.Placement.replicated ~backend:Rune.compiled devices)
+                     ids)
+                  (Nx.place
+                     (Nx.Placement.replicated ~backend:Rune.compiled devices)
+                     x))));
+      test "dequant of a weight placed on a device is eager's bit for bit"
+        (fun () ->
+          let w = weight [| 2; 4; 128 |] in
+          let p =
+            Nx.Placement.device ~backend:Rune.compiled (List.hd devices)
+          in
+          equal (tensor float_exact)
+            (Nx_quant.dequant Nx.float32 w)
+            (host
+               (Rune.jit
+                  Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
+                  (Nx_quant.dequant Nx.float32)
+                  (Nx_quant.place p w))));
+    ]
+
+(* Rules *)
+
+(* [dense ?ids w x] is the product as an ordinary matmul by the dequantised
+   weight, its experts taken by [ids] and zero where an id names none: the
+   function whose derivatives the rules must give. [w] has no lane axes. *)
+let dense ?ids w x =
+  let dq = Nx_quant.dequant Nx.float32 w in
+  let w' =
+    match ids with
+    | None -> dq
     | Some ids ->
-        let w, valid = selected ~lanes:c.lanes dq ids in
-        (w, Some valid)
+        let e = Nx.dim 0 dq in
+        let named =
+          Nx.logical_and
+            (Nx.greater_equal ids (Nx.zeros_like ids))
+            (Nx.less ids (Nx.full Nx.int64 (Nx.shape ids) (Int64.of_int e)))
+        in
+        let taken =
+          Nx.reshape
+            (Array.append (Nx.shape ids) (Array.sub (Nx.shape dq) 1 2))
+            (Nx.take ~axis:0
+               ~indices:(Nx.flatten (Nx.where named ids (Nx.zeros_like ids)))
+               dq)
+        in
+        let mask = Nx.reshape (Array.append (Nx.shape ids) [| 1; 1 |]) named in
+        Nx.where mask taken (Nx.zeros_like taken)
   in
-  let w = Nx.cast Nx.float32 w in
-  fun x ->
-    let y = Nx.matmul x (if c.transpose then w else Nx.matrix_transpose w) in
-    match valid with
-    | None -> y
-    | Some v ->
-        let tail = if Nx.ndim x = 1 then [| 1 |] else [| 1; 1 |] in
-        Nx.where
-          (Nx.broadcast_to (Nx.shape y)
-             (Nx.reshape (Array.append (Nx.shape v) tail) v))
-          y (Nx.zeros_like y)
+  Nx.matmul x (Nx.matrix_transpose w')
 
-(* A fixed, non-uniform cotangent. *)
+(* [near expected actual] checks [actual] against [expected] within float32 sums
+   in another order: each value within 2^-14 of [expected]'s largest magnitude,
+   which bounds the terms of these products' sums. *)
+let near ?msg expected actual =
+  let largest = Nx.item [] (Nx.max (Nx.abs expected)) in
+  equal ?msg
+    (tensor (Nx_test.close ~abs:(Float.ldexp largest (-14)) ~rel:0. ()))
+    expected actual
+
+(* A loss weighting each value of a product differently, so that a gradient
+   tells its positions apart. *)
 let weighted y =
   let n = Nx.numel y in
   Nx.sum
     (Nx.mul y
-       (Nx.create Nx.float32 (Nx.shape y)
-          (Array.init n (fun i -> float_of_int ((i mod 5) + 1) /. 2.0))))
-
-let close ~msg expected actual =
-  let expected = Nx.to_array expected and actual = Nx.to_array actual in
-  equal ~msg:(msg ^ ", length") int (Array.length expected)
-    (Array.length actual);
-  let scale =
-    Array.fold_left (fun m v -> Float.max m (Float.abs v)) 1e-30 expected
-  in
-  Array.iteri
-    (fun i e ->
-      if not (Float.abs (actual.(i) -. e) <= 1e-4 *. scale) then
-        fail
-          (Printf.sprintf "%s: at %d, expected %g, got %g" msg i e actual.(i)))
-    expected
-
-(* Scales near 1, so that a tolerance relative to the largest value holds. *)
-let moderate _ = 124 + Random.State.int rng 7
+       (Nx.reshape (Nx.shape y)
+          (Nx.sin (Nx.arange_f Nx.float32 0. (float_of_int n) 1.))))
 
 let rule_cases () =
-  let weight = weight ~scale:moderate in
-  let w = weight [| 4; 8; 64 |] in
+  let w = weight ~scale:moderate [| 4; 8; 64 |] in
   [
-    ( "without ids, broadcast",
-      case (weight [| 2; 5; 64 |]) (floats [| 4; 1; 3; 64 |]) );
-    ("vector", case (weight [| 2; 5; 64 |]) (floats [| 64 |]));
-    ( "gathered ids",
-      case ~ids:(ints [| 2; 1 |] [| 3; -1 |]) w (floats [| 2; 1; 1; 64 |]) );
-    ( "every expert, x broadcast over positions",
-      case
-        ~ids:(ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |])
-        w
-        (floats [| 3; 1; 1; 64 |]) );
-    ( "grouped",
-      case
-        ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)))
-        w
-        (floats [| 8; 1; 1; 64 |]) );
-    ( "lanes",
-      case ~lanes:1
-        ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
-        (weight [| 2; 3; 8; 64 |])
-        (floats [| 2; 2; 1; 64 |]) );
+    ("without ids", None, weight ~scale:moderate [| 5; 64 |], floats [| 3; 64 |]);
+    ( "with ids",
+      Some (ints [| 3; 2 |] [| 0; 3; -1; 2; 1; 1 |]),
+      w,
+      floats [| 3; 2; 1; 64 |] );
   ]
 
-let test_grad () =
-  List.iter
-    (fun (name, c) ->
-      let f x = weighted (product c x) in
-      let expected = Rune.grad' (fun x -> weighted (dense c x)) c.x in
-      close ~msg:(name ^ ", eager") expected (Rune.grad' f c.x);
-      List.iter
-        (fun device ->
-          close
-            ~msg:(name ^ ", " ^ device)
-            expected
-            (Rune.jit' ~devices:[ Rune.device device ] (Rune.grad' f) c.x))
-        devices)
-    (rule_cases ())
-
-(* The mixing pattern: a sum over the positions hands the transposed product a
-   cotangent broadcast along them, a view whose batch axes do not merge. *)
-let test_grad_through_a_sum () =
-  let w = weight ~scale:moderate [| 4; 8; 64 |] in
-  let x = floats [| 3; 1; 1; 64 |] in
-  List.iter
-    (fun ids ->
-      let c = case ~ids w x in
-      let mixed f x = weighted (Nx.sum ~axes:[ 1 ] (f x)) in
-      let expected = Rune.grad' (mixed (dense c)) x in
-      close ~msg:"eager" expected (Rune.grad' (mixed (product c)) x);
-      close ~msg:"compiled" expected
-        (Rune.jit'
-           ~devices:[ Rune.device "CPU" ]
-           (Rune.grad' (mixed (product c)))
-           x))
+let rules =
+  group "rules"
     [
-      ints [| 3; 1 |] [| 3; -1; 1 |];
-      ints [| 3; 4 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |];
+      cases ~tags:[ "slow" ]
+        ~name:(fun (n, _, _, _) -> n)
+        "the gradient in x is the dense product's, eager and compiled"
+        (rule_cases ())
+        (fun (_, ids, w, x) ->
+          let expected = Rune.grad' (fun x -> weighted (dense ?ids w x)) x in
+          let f x = weighted (Nx_quant.apply ?ids w x) in
+          near ~msg:"eager" expected (Rune.grad' f x);
+          near ~msg:"compiled" expected (Rune.jit' (Rune.grad' f) x));
+      test
+        "the gradient through a sum over the positions is the dense product's"
+        (fun () ->
+          let w = weight ~scale:moderate [| 4; 8; 64 |] in
+          let ids = ints [| 3; 4 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |] in
+          let x = floats [| 3; 1; 1; 64 |] in
+          let mixed p x = weighted (Nx.sum ~axes:[ 1 ] (p x)) in
+          let expected = Rune.grad' (mixed (dense ~ids w)) x in
+          near ~msg:"eager" expected
+            (Rune.grad' (mixed (Nx_quant.apply ~ids w)) x);
+          near ~msg:"compiled" expected
+            (Rune.jit' (Rune.grad' (mixed (Nx_quant.apply ~ids w))) x));
+      cases
+        ~name:(fun (n, _, _, _) -> n)
+        "the tangent in x is the dense product's, eager and compiled"
+        (rule_cases ())
+        (fun (_, ids, w, x) ->
+          let t = floats (Nx.shape x) in
+          let y, dy = Rune.jvp' (Nx_quant.apply ?ids w) x t in
+          let y', dy' = Rune.jvp' (dense ?ids w) x t in
+          near ~msg:"primal" y' y;
+          near ~msg:"tangent" dy' dy;
+          near ~msg:"compiled tangent" dy'
+            (Rune.jit' (fun x -> snd (Rune.jvp' (Nx_quant.apply ?ids w) x t)) x));
+      test "a map over x is each row's product, eager and compiled" (fun () ->
+          let w = weight ~scale:moderate [| 4; 8; 64 |] in
+          let ids = ints [| 2; 2 |] [| 0; 3; -1; 2 |] in
+          let xs = floats [| 3; 2; 1; 1; 64 |] in
+          let f = Nx_quant.apply ~ids w in
+          let expected =
+            Nx.stack (List.init 3 (fun i -> f (Nx.slice [ I i ] xs)))
+          in
+          near ~msg:"eager" expected (Rune.vmap' f xs);
+          near ~msg:"compiled" expected (Rune.jit' (Rune.vmap' f) xs));
+      test "a map over routes and rows is each one's product, compiled"
+        (fun () ->
+          let w = weight ~scale:moderate [| 4; 8; 64 |] in
+          let ids =
+            ints [| 3; 2; 2 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |]
+          in
+          let xs = floats [| 3; 2; 1; 1; 64 |] in
+          let f (ids, x) = Nx_quant.apply ~ids w x in
+          let s = Nx.Ptree.(pair tensor tensor @-> returns tensor) in
+          let expected =
+            Nx.stack
+              (List.init 3 (fun i ->
+                   f (Nx.slice [ I i ] ids, Nx.slice [ I i ] xs)))
+          in
+          near expected (Rune.jit s (Rune.vmap s f) (ids, xs)));
+      test "a map over weights is each weight's product, compiled" (fun () ->
+          let ws = weight ~scale:moderate [| 3; 4; 8; 64 |] in
+          let ids = ints [| 2 |] [| 0; 3 |] and x = floats [| 2; 1; 64 |] in
+          let lane i =
+            Nx.Ptree.map Nx_quant.ptree (fun _ t -> Nx.slice [ I i ] t) ws
+          in
+          let f w = Nx_quant.apply ~ids w x in
+          let s = Nx.Ptree.(Nx_quant.ptree @-> returns tensor) in
+          let expected = Nx.stack (List.init 3 (fun i -> f (lane i))) in
+          near ~msg:"eager" expected (Rune.vmap s f ws);
+          near ~msg:"compiled" expected (Rune.jit s (Rune.vmap s f) ws));
     ]
 
-let test_jvp () =
-  List.iter
-    (fun (name, c) ->
-      let tangent = floats (Nx.shape c.x) in
-      let y, dy = Rune.jvp' (product c) c.x tangent in
-      let y', dy' = Rune.jvp' (dense c) c.x tangent in
-      close ~msg:(name ^ ", primal") y' y;
-      close ~msg:(name ^ ", tangent") dy' dy;
-      List.iter
-        (fun device ->
-          close
-            ~msg:(name ^ ", tangent, " ^ device)
-            dy'
-            (Rune.jit'
-               ~devices:[ Rune.device device ]
-               (fun x -> snd (Rune.jvp' (product c) x tangent))
-               c.x))
-        devices)
-    (rule_cases ())
-
-(* A part computed from a differentiated value is refused, for [apply] and
-   [dequant] and in both modes. *)
-let test_weight_not_differentiated () =
-  let x = floats [| 2; 64 |] in
-  let scales = bytes [| 5; 2 |] (fun _ -> 127) in
-  let built v = Nx_quant.mxfp4 ~scales (Nx.cast Nx.uint8 v) in
-  let v = Nx.full Nx.float32 [| 5; 32 |] 17.0 in
-  let refused msg f =
-    raises ~msg
-      (Invalid_argument
-         "Rune: a part of a quantised weight is differentiated; capture the \
-          weight, or build it from Rune.detached tensors") (fun () ->
-        ignore (f ()))
-  in
-  refused "grad, apply" (fun () ->
-      Rune.grad' (fun v -> Nx.sum (Nx_quant.apply (built v) x)) v);
-  refused "grad, dequant" (fun () ->
-      Rune.grad' (fun v -> Nx.sum (Nx_quant.dequant Nx.float32 (built v))) v);
-  refused "jvp, apply" (fun () ->
-      Rune.jvp' (fun v -> Nx_quant.apply (built v) x) v v);
-  refused "jvp, dequant" (fun () ->
-      Rune.jvp' (fun v -> Nx_quant.dequant Nx.float32 (built v)) v v);
-  let detached =
-    Rune.grad' (fun v -> Nx.sum (Nx_quant.apply (built (Rune.detach v)) x)) v
-  in
-  close ~msg:"a detached part" (Nx.zeros Nx.float32 [| 5; 32 |]) detached
-
-(* vmap *)
-
-(* [per_lane f n] is [f 0 ... f (n - 1)] stacked. *)
-let per_lane f n = Nx.stack ~axis:0 (List.init n f)
-let row i t = Nx.slice [ I i ] t
-
-let test_vmap () =
-  let weight = weight ~scale:moderate in
-  let w = weight [| 4; 8; 64 |] in
-  let xs = floats [| 3; 2; 1; 1; 64 |] in
-  let ids = ints [| 3; 2; 2 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |] in
-  close ~msg:"over x"
-    (per_lane (fun i -> Nx_quant.apply ~ids:(row 0 ids) w (row i xs)) 3)
-    (Rune.vmap' (fun x -> Nx_quant.apply ~ids:(row 0 ids) w x) xs);
-  let vs = floats [| 3; 64 |] in
-  close ~msg:"over x, a vector"
-    (per_lane (fun i -> Nx_quant.apply w (row i vs)) 3)
-    (Rune.vmap' (Nx_quant.apply w) vs);
-  let xt = Nx.transpose ~axes:[ 1; 0; 2; 3; 4 ] (floats [| 3; 3; 1; 1; 64 |]) in
-  List.iter
-    (fun ids ->
-      close ~msg:"over x's axis 1"
-        (per_lane
-           (fun i -> Nx_quant.apply ~ids w (Nx.slice [ A; I i ] xt))
-           (Nx.dim 1 xt))
-        (Rune.vmap' (Nx_quant.apply ~ids w) (Nx.moveaxis 1 0 xt)))
-    [
-      ints [| 3; 1 |] [| 0; 3; -1 |];
-      ints [| 3; 4 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |];
-    ];
-  let routed (ids, x) = Nx_quant.apply ~ids w x in
-  close ~msg:"over ids and x"
-    (per_lane (fun i -> routed (row i ids, row i xs)) 3)
-    (Rune.vmap Nx.Ptree.(inputs () @-> returns tensor) routed (ids, xs));
-  close ~msg:"over ids and x, compiled"
-    (per_lane (fun i -> routed (row i ids, row i xs)) 3)
-    (Rune.jit
-       Nx.Ptree.(inputs () @-> returns tensor)
-       (Rune.vmap Nx.Ptree.(inputs () @-> returns tensor) routed)
-       (ids, xs));
-  let ws = weight [| 3; 4; 8; 64 |] in
-  let lane i = Nx.Ptree.map Nx_quant.ptree (fun _ t -> row i t) ws in
-  let x = row 0 xs and one = row 0 ids in
-  close ~msg:"over the weight"
-    (per_lane (fun i -> Nx_quant.apply ~ids:one (lane i) x) 3)
-    (Rune.vmap
-       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
-       (fun w -> Nx_quant.apply ~ids:one w x)
-       ws);
-  let (Nx_quant.Mxfp4 { codes; scales }) = ws in
-  let scales = row 0 scales in
-  let with_codes i = Nx_quant.mxfp4 ~scales (row i codes) in
-  let one_part codes =
-    Nx_quant.apply ~ids:one (Nx_quant.mxfp4 ~scales codes) x
-  in
-  close ~msg:"over the codes only"
-    (per_lane (fun i -> Nx_quant.apply ~ids:one (with_codes i) x) 3)
-    (Rune.vmap' one_part codes);
-  close ~msg:"over the codes only, compiled"
-    (per_lane (fun i -> Nx_quant.apply ~ids:one (with_codes i) x) 3)
-    (Rune.jit' (Rune.vmap' one_part) codes);
-  close ~msg:"over the weight, dequant"
-    (per_lane (fun i -> Nx_quant.dequant Nx.float32 (lane i)) 3)
-    (Rune.vmap
-       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
-       (Nx_quant.dequant Nx.float32)
-       ws);
-  close ~msg:"over the weight, compiled"
-    (per_lane (fun i -> Nx_quant.apply ~ids:one (lane i) x) 3)
-    (Rune.jit
-       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
-       (Rune.vmap
-          Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
-          (fun w -> Nx_quant.apply ~ids:one w x))
-       ws)
-
-(* Routes and rows split by rows over CPU:1 and CPU:2. *)
-let split_rows (ids, x) =
-  let rows =
-    Nx.Placement.sharded ~axis:0 [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
-  in
-  (Nx.place rows ids, Nx.place rows x)
-
-(* A program over several devices multiplies each device's routes and rows with
-   the kernels one device uses. *)
-let test_over_devices () =
-  let w = weight ~scale:moderate [| 4; 8; 64 |] in
-  let routed (ids, x) = Nx_quant.apply ~ids w x in
-  List.iter
-    (fun (msg, ids, x) ->
-      close ~msg
-        (routed (ids, x))
-        (Rune.jit
-           Nx.Ptree.(inputs () @-> returns tensor)
-           routed
-           (split_rows (ids, x))))
-    [
-      ("gathered", ints [| 2; 1 |] [| 3; -1 |], floats [| 2; 1; 1; 64 |]);
-      ( "several rows per position",
-        ints [| 2; 2 |] [| 3; -1; 0; 1 |],
-        floats [| 2; 2; 2; 64 |] );
-      ( "many routes",
-        ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)),
-        floats [| 8; 2; 1; 64 |] );
-    ];
-  (* Experts split across the devices under whole routes: each device multiplies
-     the routes to its own experts, and the products sum. *)
-  let two = [ Rune.device "CPU:1"; Rune.device "CPU:2" ] in
-  let ids = ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1))
-  and x = floats [| 8; 1; 1; 64 |] in
-  close ~msg:"split experts"
-    (routed (ids, x))
-    (Rune.jit
-       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
-       (fun w -> Nx_quant.apply ~ids w x)
-       (Nx_quant.place (Nx.Placement.sharded ~axis:0 two) w));
-  close ~msg:"split experts, eagerly, over rows copied on both devices"
-    (routed (ids, x))
-    (Nx_quant.apply ~ids
-       (Nx_quant.place (Nx.Placement.sharded ~axis:0 two) w)
-       (Nx.place (Nx.Placement.replicated two) x));
-  (* Routes and rows split as well: a route may name an expert on the other
-     device, which multiplies it. *)
-  let ids = ints [| 4; 1 |] [| 3; 0; 1; 2 |] and x = floats [| 4; 1; 1; 64 |] in
-  close ~msg:"split experts under split routes"
-    (routed (ids, x))
-    (Rune.jit
-       Nx.Ptree.(Nx_quant.ptree @-> inputs () @-> returns tensor)
-       (fun w (ids, x) -> Nx_quant.apply ~ids w x)
-       (Nx_quant.place (Nx.Placement.sharded ~axis:0 two) w)
-       (split_rows (ids, x)))
-
-(* The form each product takes, as [RUNE_JIT_DEBUG=1] logs it, in a child
-   process that reads the variable fresh. On Metal, 16 routes over 4 experts
-   group, forward and transposed; 40 routes over 40 experts do not, as each
-   block would be one row. The CPU groups none of them (τ = 1024), and a program
-   over several devices takes the form one device takes, per device. *)
-let form_role = "RUNE_QUANT_FORM_ROLE"
-
-let form_cases () =
-  let device = if List.mem "METAL" devices then "METAL" else "CPU" in
-  let w = weight ~scale:moderate [| 4; 8; 64 |] in
-  let ids = ints [| 8; 2 |] (Array.init 16 (fun i -> i mod 4)) in
-  let wide = weight ~scale:moderate [| 40; 8; 64 |] in
-  let distinct = ints [| 40 |] (Array.init 40 Fun.id) in
-  let apply ?(transpose = false) w ids x =
-    Rune.jit'
-      ~devices:[ Rune.device device ]
-      (fun x ->
-        Nx_quant.Effect.perform w (Apply { ids = Some ids; x; transpose }))
-      x
-  in
-  [
-    ("sixteen routes", fun () -> apply w ids (floats [| 8; 1; 1; 64 |]));
-    ( "sixteen routes, transposed",
-      fun () -> apply ~transpose:true w ids (floats [| 8; 2; 1; 8 |]) );
-    ( "one route per expert",
-      fun () -> apply wide distinct (floats [| 40; 1; 64 |]) );
-    ( "a hundred rows",
-      fun () ->
-        Rune.jit'
-          ~devices:[ Rune.device device ]
-          (Nx_quant.apply (weight ~scale:moderate [| 8; 64 |]))
-          (floats [| 100; 64 |]) );
-    ( "sixteen routes over two devices",
-      fun () ->
+let empty =
+  test "compiled, a product over no positions is empty" (fun () ->
+      let w = weight [| 4; 8; 64 |] in
+      let ids = ints [| 0; 2 |] [||] and x = floats [| 0; 1; 1; 64 |] in
+      let r =
         Rune.jit
-          Nx.Ptree.(inputs () @-> returns tensor)
-          (fun (ids, x) -> Nx_quant.apply ~ids w x)
-          (split_rows (ids, floats [| 8; 2; 1; 64 |])) );
-  ]
+          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+          (fun ids x -> Nx_quant.apply ~ids w x)
+          ids x
+      in
+      equal (array int) [| 0; 2; 1; 8 |] (Nx.shape r))
 
-let run_form_role () =
-  List.iter
-    (fun (name, f) ->
-      Printf.eprintf "case %s\n%!" name;
-      ignore (Nx.to_array (f ())))
-    (form_cases ());
-  exit 0
+(* A weight built from a differentiated value takes no derivative: its parts are
+   integers, whose casts carry none. *)
+let undifferentiated =
+  test "a weight built from a differentiated value contributes no derivative"
+    (fun () ->
+      let x = floats [| 2; 64 |] in
+      let scales = Nx.full Nx.uint8 [| 5; 2 |] 127 in
+      let built v = Nx_quant.mxfp4 ~scales (Nx.cast Nx.uint8 v) in
+      let v = Nx.full Nx.float32 [| 5; 32 |] 17. in
+      equal (tensor float_exact)
+        (Nx.zeros Nx.float32 [| 5; 32 |])
+        (Rune.grad' (fun v -> Nx.sum (Nx_quant.apply (built v) x)) v))
 
-let drain fd =
-  let buf = Buffer.create 256 and chunk = Bytes.create 4096 in
-  let rec loop () =
-    let n = Unix.read fd chunk 0 (Bytes.length chunk) in
-    if n > 0 then begin
-      Buffer.add_subbytes buf chunk 0 n;
-      loop ()
-    end
-  in
-  loop ();
-  Unix.close fd;
-  Buffer.contents buf
+(* Metal *)
 
-let test_forms () =
-  let env =
-    Array.append
-      (Array.of_list
-         (List.filter
-            (fun b ->
-              not
-                (String.starts_with ~prefix:"RUNE_JIT_DEBUG=" b
-                || String.starts_with ~prefix:(form_role ^ "=") b))
-            (Array.to_list (Unix.environment ()))))
-      [| "RUNE_JIT_DEBUG=1"; form_role ^ "=1" |]
-  in
-  let err_read, err_write = Unix.pipe ~cloexec:false () in
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process_env exe [| exe |] env Unix.stdin Unix.stdout err_write
-  in
-  Unix.close err_write;
-  (* On Windows the child's standard error is a text channel: its lines end
-     in "\r\n". *)
-  let lines =
-    List.map String.trim (String.split_on_char '\n' (drain err_read))
-  in
-  (match Unix.waitpid [] pid with
-  | _, Unix.WEXITED 0 -> ()
-  | _ -> fail ("child failed:\n" ^ String.concat "\n" lines));
-  let forms = Hashtbl.create 4 and case = ref "" in
-  let prefix = "rune.jit: quantised product: " in
-  List.iter
-    (fun line ->
-      if String.starts_with ~prefix:"case " line then
-        case := String.sub line 5 (String.length line - 5)
-      else if String.starts_with ~prefix line then
-        Hashtbl.add forms !case
-          (String.sub line (String.length prefix)
-             (String.length line - String.length prefix)))
-    lines;
-  let grouped name =
-    List.exists
-      (String.starts_with ~prefix:"grouped")
-      (Hashtbl.find_all forms name)
-  in
-  let metal = List.mem "METAL" devices in
-  equal ~msg:"sixteen routes group on Metal" bool metal
-    (grouped "sixteen routes");
-  equal ~msg:"transposed, they group on Metal" bool metal
-    (grouped "sixteen routes, transposed");
-  is_false ~msg:"one route per expert does not group"
-    (grouped "one route per expert");
-  equal ~msg:"over two devices, the kernel on each" (list string) [ "kernel" ]
-    (Hashtbl.find_all forms "sixteen routes over two devices");
-  (* Past the row bound; where the block kernel has row tiles, on a Metal GPU
-     with tensor cores, the rows are padded to its smallest tile, so that its
-     pinned options apply. *)
-  let tiles =
-    metal
-    && Tolk.Renderer.tensor_cores
-         (Tolk.Device.renderer (Tolk.Device.get "METAL"))
-       <> []
-  in
-  equal ~msg:"a hundred rows decode, padded on Metal's tensor cores"
-    (list string)
-    [
-      Printf.sprintf "decoded, blocks of %d rows on the block kernel"
-        (if tiles then 104 else 100);
-    ]
-    (Hashtbl.find_all forms "a hundred rows")
+let metal =
+  match Metal.device with
+  | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
+  | Some m ->
+      let p =
+        Nx.Placement.device ~backend:Rune.compiled (Nx.Device.of_runtime m)
+      in
+      cases
+        ~name:(fun c -> c.name)
+        "on Metal, a product is eager's" (products ~scale:moderate)
+        (fun c ->
+          let r =
+            match c.ids with
+            | None -> Rune.jit' (product c c.w) (Nx.place p c.x)
+            | Some ids ->
+                Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                  (fun ids x -> product { c with ids = Some ids } c.w x)
+                  (Nx.place p ids) (Nx.place p c.x)
+          in
+          agrees c (product c c.w c.x) (host r))
 
 let () =
-  if Sys.getenv_opt form_role <> None then run_form_role ();
-  exit (run "rune quant"
-    [
-      group "Law 2"
-        [
-          slow "without ids" test_without_ids;
-          slow "fewer positions than experts" test_gathered;
-          slow "as many positions as experts or more" test_instances;
-          slow "grouped" test_grouped;
-          slow "transposed" test_transposed;
-          slow "the largest scales" test_large_scales;
-          slow "ids 2^32 from an expert select none, on every form"
-            test_far_ids;
-          test "empty" test_empty;
-          slow "float16 x" test_float16;
-          test "compiled dequant" test_dequant;
-          test "one token's experts are gathered" test_one_token_gathers;
-          slow "the kernel" test_kernel;
-          slow "past the row bound" test_past_the_bound;
-          test "the row bound chooses the kernel" test_rule;
-          test "each product takes its form" test_forms;
-        ];
-      group "placement"
-        [ test "place splits at the format's blocks" test_place ];
-      group "rules"
-        [
-          slow "grad with respect to x" test_grad;
-          test "grad through a sum over the positions" test_grad_through_a_sum;
-          test "jvp" test_jvp;
-          test "the weight is never differentiated"
-            test_weight_not_differentiated;
-          test "vmap" test_vmap;
-          test "over two devices" test_over_devices;
-        ];
-    ])
+  exit
+    (run "Rune.quant"
+       [
+         values;
+         placements;
+         rules;
+         empty;
+         undifferentiated;
+         group ~tags:[ "slow" ] "metal" [ metal ];
+       ])

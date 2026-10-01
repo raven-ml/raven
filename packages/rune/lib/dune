@@ -1,46 +1,35 @@
+; ../test/internals/dune builds a copy of these sources for the white-box
+; suites; keep its libraries and instrumentation the same as these.
+
 (library
  (name rune)
  (public_name rune)
  (private_modules
-  custom
-  axis
-  total
-  remat
-  tape
-  reverse
-  forward
-  vmap
-  tensor_map
-  answer
-  prim
-  pause
-  derivs
+  compiled
+  construct
   jit
-  jit_cache
-  jit_device
+  jvp
+  linear
+  lower_arith
+  lower_index
+  lower_linalg
+  lower_reduce
+  lower
+  memo
   scan
-  quant
-  structure)
+  staged
+  structure
+  total
+  vmap)
  (libraries
+  nx
   nx.dtype
   nx.array
-  nx
-  nx.quant
-  nx.effect
   nx.backend
-  nx.cpu
   nx.device
-  unix
-  threads
-  tolk.uop
-  tolk
-  tolk.frontend
-  tolk.cpu
-  tolk.amd
-  tolk.nv
-  tolk.cuda
-  (select
-   jit_device.ml
-   from
-   (tolk.metal -> jit_device.metal.ml)
-   (-> jit_device.cpu.ml))))
+  tolk.next
+  tolk.next.engine)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

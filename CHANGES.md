@@ -172,6 +172,24 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** rune is rewritten. A transformation is an interpreter that owns
+  its values, reverse mode transposes forward mode, and `jit` compiles through
+  tolk on the devices its arguments are placed on. For callers:
+  - `vjp p q f x` returns the result and its pullback; `vjp_fun` and
+    `vjp_fun'` go.
+  - `custom_jvp p q (fun x -> (y, tangent))` and
+    `custom_vjp p q (fun x -> (y, pullback))` take one function. A rule that
+    reads a value its own differentiation tracks raises; pass it as an
+    argument.
+  - `value_and_grad_aux p a f` takes the structure `a` of the auxiliary value.
+  - `jit` takes no `~devices`: a call runs where its arguments and captures
+    are placed. `device`, `devices`, `default_device`, `jit_stats` and
+    `reset_jit_stats` go. A device is an `Nx_device.t`
+    (`Nx_metal_device.v 0`), and `Nx_device.stats` counts its transfers and
+    allocations.
+  - `Rune.compiled` is a backend: a placement with `~backend:Rune.compiled`
+    computes eager operations on a GPU value as compiled programs.
+  - Gradients and tangents are fresh, contiguous values.
 - `Rune.jit` refuses `Nx.scatter ~mode:`Max` and `` `Min `` (and so
   `Nx.reduce_segments` by them), and `Rune.grad` and `Rune.jvp` refuse to
   differentiate through them; `Rune.vmap` maps them.
@@ -226,26 +244,17 @@ All notable changes to this project will be documented in this file.
   the unbatched shape that hold the batched tensor, instead of batched tensors
   whose shape queries answered unbatched. `Nx.placement` of a lane of a map
   over an axis split across devices is a copy on each device; it raised.
-- **Breaking:** `Rune.no_grad` and `Rune.detach` pause the differentiations
-  around the calling code, found through its handlers instead of a domain- and
-  thread-local flag. A `grad` or `jvp` started inside `no_grad` differentiates;
-  it gave zero gradients.
-- `Rune.with_debug` prints every operation with its operands' dtypes and
-  shapes (`mul float32[3] float32[3]`); it printed the output shape of some
-  operations and skipped others, such as the Fourier transforms and linear
-  algebra.
 - New `Rune.lane_index ?axis ()`: the calling lane's index in the map named
   `axis`, or in the innermost anonymous map, as `Rune.lanes` addresses maps;
   `0` outside any. It replaces `Nx.Rng.fold_in_axis`.
 - **Breaking:** on a complex tensor, `Rune.grad` returns the gradient
   `dL/dre + i*dL/dim`, the direction in which the objective grows fastest, so
   `z - lr * g` descends as returned. It returned the conjugate, which had to be
-  conjugated again before a step; code that did so must stop. `vjp`, `vjp'`,
-  `vjp_fun` and `vjp_fun'` take and return cotangents in the same sense (the
-  pullback is the adjoint of `jvp` under `Re (sum (conj u * v))`), and a
-  `custom_vjp` rule's `bwd` receives and returns them too. `jacrev'` still
-  equals `jacfwd'` on complex-differentiable functions, `hvp` is now the
-  derivative of the gradient, and `check_grads` pairs a complex gradient with
+  conjugated again before a step; code that did so must stop. `vjp` and `vjp'`
+  take and return cotangents in the same sense (the pullback is the adjoint of
+  `jvp` under `Re (sum (conj u * v))`), and so does a `custom_vjp` rule's
+  pullback. `jacrev'` still equals `jacfwd'` on complex-differentiable
+  functions, and `check_grads` pairs a complex gradient with
   its direction through the conjugate. Real tensors are unaffected.
 - Gradients through `Nx.qr` are right on complex matrices. The reverse rule
   used plain transposes where the unitary factor needs conjugate transposes.
@@ -402,7 +411,7 @@ All notable changes to this project will be documented in this file.
   validation. Written residuals get a separate checkpoint after their cotangents
   are ready, retaining the activation-memory bound without ambiguous reads.
 
-- Overlapping or reentrant calls to the same `jit` or `pmap` closure now raise
+- Overlapping or reentrant calls to the same `jit` closure now raise
   `Invalid_argument` before accessing shared compilation or replay state.
   Sequential calls can move between domains and threads.
 
@@ -411,23 +420,20 @@ All notable changes to this project will be documented in this file.
   so large reductions do not overflow their gradient normalization.
 
 - Independent `jit` callers can share read-only captures without losing their
-  ownership counts or racing first-time cache initialization. `no_grad` and
-  transformation scopes no longer leak across domains or system threads.
+  ownership counts or racing first-time cache initialization. Transformation
+  scopes no longer leak across domains or system threads.
 
 - Keep placed storage alive until a read of it (`Nx.to_array`, `Nx.pp`)
   finishes.
   Collected values now hand ownership to one deferred-release path; failed
   allocator cleanup retains its backing without losing other queued releases.
-- Preserve `Rune.jit_stats` transfer counts and live-byte totals across
-  concurrent callers, and give concurrent traces distinct identities.
 
 - Give each compiled function its own planned intermediate buffers, preventing
   interleaved JIT calls from corrupting one another. Dropping a compiled graph
   releases its arena without retaining the largest allocation process-wide.
 
 - Prevent independent uploads of 64 MiB or more from overwriting each other's
-  staging bytes. Concurrent `Rune.device` lookups now return one canonical
-  device identity.
+  staging bytes.
 
 - Support compiled `Nx.bitcast` to and from float8, preserving all byte
   encodings through direct outputs, transposes and slices on CPU and Metal.
@@ -595,8 +601,7 @@ All notable changes to this project will be documented in this file.
   (`consumes ... @@`) and a result of any structure. `jit2`, `jit_step`,
   `pmap2` and `?donate` go: `jit p f` is `jit Nx.Ptree.(p @-> returns tensor)
   f`, `jit2 p q f` is `jit Nx.Ptree.(p @-> returns q) f`, and `jit_step r s f`
-  is `jit Nx.Ptree.(r @-> consumes s @@ returns s) f`. `?device:string` is
-  `?devices:Nx.Device.t list`, of one device.
+  is `jit Nx.Ptree.(r @-> consumes s @@ returns s) f`.
 - **Breaking:** a compiled call marks what it consumes before its first kernel,
   and a value over consumed storage raises on use, naming where it was consumed
   ("this value was consumed at 1.keys in a compiled call's arguments"): a
@@ -609,9 +614,6 @@ All notable changes to this project will be documented in this file.
 - A result takes the storage of the consumed leaf it derives from, or of one no
   kernel reads after it is written, where it took only the state leaf at its
   own position: a state returned in another order reuses its storage.
-- **Breaking:** `Rune.pmap` takes the signature of the function it compiles,
-  `~devices` as `Nx.Device.t list` and one `in_axes` entry per argument; a
-  consumed argument's shards are released after the call.
 - **Breaking:** a compiled function that returns one value at two leaves of
   its result returns two values, each with storage of its own; they were one
   value, which a call consuming one of them ended for the other.
@@ -621,8 +623,8 @@ All notable changes to this project will be documented in this file.
   compiles its own program, where it replayed the old one. `RUNE_JIT_DEBUG=1`
   reports each retrace with the first difference from the previous call.
 - **Breaking:** transformations take structures as `'s Nx.Ptree.t` values in
-  place of modules. `vjp`, `vjp_fun`, `jvp`, `jvp_aux`, `custom_vjp` and
-  `custom_jvp` also take the result's structure, so `vjp2` and `jvp2` go; so
+  place of modules. `vjp`, `jvp`, `custom_vjp` and `custom_jvp` also
+  take the result's structure, so `vjp2` and `jvp2` go; so
   do `Rune.Ptree` and `while_loop`'s module.
 - **Breaking:** `Rune.vmap` and `Rune.remat` take the signature of the function
   they transform, such as `Nx.Ptree.(tensor @-> tensor @-> returns tensor)`,
@@ -697,18 +699,14 @@ All notable changes to this project will be documented in this file.
 - Compiled `Nx.cummax` and `Nx.cummin` are NaN from the first NaN on, as
   eager ones are. They kept the running maximum or minimum past a NaN.
 - **Breaking:** Remove `Rune.to_device`. Place values with
-  `Nx.place (Nx.Placement.device (Rune.device "METAL")) x`; on the host,
+  `Nx.place (Nx.Placement.device (Nx_metal_device.v 0)) x`; on the host,
   `Nx.place` returns its argument where `to_device` made it contiguous.
 - A placed leaf or capture that views part of its storage (a slice, a
   transpose, a flip, a broadcast) is read in place by a compiled function on its
   device, where it was copied through the host on every call.
 - A compiled function runs where its placed inputs and captures live, else on
-  `Rune.default_device`. A leaf or capture elsewhere, or a `pmap` output, raises
+  the host. A leaf or capture elsewhere, or a `pmap` output, raises
   instead of going through the host; so does `float64` on Metal.
-- Add `Rune.device`, `Rune.devices` and `Rune.default_device`: one
-  `Nx.Device.t` per name (`"METAL"`, `"CUDA:3"`). `"CPU"` is `Nx.Device.host`,
-  so placing on the host inside a host program is the identity; `"CPU:1"`,
-  `"CPU:2"`... have storage of their own.
 - **Breaking:** Remove `RUNE_JIT_FORCE_COPY`; compile for `"CPU:1"` to run the
   device path without a GPU. `Rune.pmap` over `"CPU"` raises.
 - Reading a compiled function's output no longer moves it to the host:

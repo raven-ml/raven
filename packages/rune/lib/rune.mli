@@ -10,14 +10,14 @@
     and takes the structure of each such value, an {!Nx.Ptree.t}; everything
     else the function uses is captured and is a constant of the transformation.
     - {!grad}, {!vjp}, {!jvp} and the forms they extend take the structure of
-      the value they differentiate and, where they rebuild one, of the result.
-    - {!val-vmap} and {!remat} take the signature ({!Nx.Ptree.type-fn}) of the
-      function they transform and return a function of the same type.
+      the value they differentiate and of the result they rebuild.
+    - {!val-vmap}, {!remat} and {!val-jit} take the signature
+      ({!Nx.Ptree.type-fn}) of the function they transform and return a function
+      of the same type.
     - {!scan} takes the structures of its carry, rows and outputs.
-    - {!val-jit} takes the signature of the function it compiles, whose
-      arguments are read or consumed ({!Nx.Ptree.consumes}).
-    - A function of one tensor has its own form of most of them: {!grad'},
-      {!vmap'}, {!jit'}, {!scan'}, ...
+    - A function of one tensor has its own form of the transformations that take
+      one structure or signature: {!grad'}, {!vjp'}, {!jvp'}, {!vmap'},
+      {!scan'}, {!jit'}, ...
 
     Tensors of a structure may have different dtypes: one forward and backward
     pass produces gradients for all of them.
@@ -39,20 +39,45 @@
     let grads = Rune.grad linear loss params
     ]}
 
-    {b Arguments are positions.} A transformation replaces each tensor of its
-    arguments by a fresh alias, a new value over the same storage with no copy,
-    before it differentiates, maps or compiles it. A tensor behind two positions
-    is two arguments, each with its own gradient, and a tensor the function
-    captures is a constant even when it is also an argument:
-    [grad' (fun x -> Nx.mul x w) w] is [w]. Tie weights by structure, one
-    position used twice by the function. *)
+    {b Arguments are positions.} A transformation tracks each tensor of its
+    arguments at its position. A tensor behind two positions is two arguments,
+    each with its own derivative, and a tensor the function captures is a
+    constant even when it is also an argument: [grad' (fun x -> Nx.mul x w) w]
+    is [w]. Tie weights by structure, one position used twice by the function.
+
+    {b Values stay inside.} A value a transformation computes inside its
+    function leaves it through the function's result. Kept in a reference, used
+    on another fiber, thread or domain, or held by a closure that runs after the
+    transformation returns, it has no bytes: using it raises
+    [Invalid_argument "a traced tensor has no bytes; it was used outside the
+     trace that made it"]. Inside the function {!Nx.item} and {!Nx.print} read
+    it, so an OCaml [if] on a value differentiates, except inside {!val-vmap} on
+    a value that depends on the lanes and inside {!val-jit} on one that depends
+    on the arguments.
+
+    {b Derivatives are fresh.} A gradient, a pullback's result and a tangent are
+    values of their own, in C order from the start of their storage, never a
+    view such as the transpose or the broadcast their computation ends with:
+    [Nx.reshape [| -1 |]] takes each as it is. Under another transformation they
+    are its values, and their layout is its own.
+
+    {b Nesting.} Transformations nest in any order, and each differentiates,
+    maps or compiles only the values of its own function: in
+    [grad' (fun x -> Nx.mul x (grad' (fun y -> Nx.add x y) one)) one], the inner
+    gradient is a constant to the outer {!grad'}, and the result is [1]. Code
+    outside the function a transformation receives is never transformed.
+
+    {b Errors.} Every message starts with the entry point the caller applied,
+    such as ["Rune.grad'"] for {!grad'} and ["Rune.jacrev'"] for {!jacrev'}. A
+    scalar is a tensor with exactly one element, of any shape: [[||]], [[|1|]]
+    and [[|1; 1|]] all are. *)
 
 (** {1:reverse Reverse-mode differentiation} *)
 
 val grad : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
 (** [grad p f params] is the gradient of [f] at [params], a value of structure
-    [p] with [params]' dtypes. Tensors of [params] that do not contribute to the
-    result have all-zero gradients.
+    [p] with [params]' dtypes and shapes. Tensors of [params] that do not
+    contribute to the result have all-zero gradients.
 
     To differentiate with respect to several values, pass them as one:
     [grad Nx.Ptree.(pair p q) (fun (a, b) -> loss a b x) (a0, b0)] is the pair
@@ -63,47 +88,58 @@ val grad : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
     threaded through a compiled step, a counter, a batch of indices), and they
     are {e carried}: nothing accumulates into them and their gradient is zero.
     One structure then serves both [grad] and {!val-jit}, which needs such
-    values as inputs, and Vega's optimizers leave them alone in turn.
+    values as arguments.
 
-    Raises [Invalid_argument] if [f params] is not a scalar (a tensor with
-    exactly one element); use {!vjp} to differentiate non-scalar results against
-    an explicit cotangent. *)
+    A gradient is the sum of the contributions its tensor receives, with no zero
+    added: a single [-0.] contribution keeps its sign, so
+    [grad' (fun x -> Nx.sum (Nx.mul x x))] at [-0.] is [-0.]. A tensor that
+    receives none has a gradient of [+0.].
+
+    Raises [Invalid_argument] if [params] holds no real or complex tensor
+    (["Rune.grad: the parameters hold no real or complex tensor"]), or if
+    [f params] is not a real or complex scalar, naming its dtype and shape
+    (["Rune.grad: the objective must return a real or complex scalar, got
+      float64 [2]"], ["... got int32 []"]); use {!vjp} to differentiate a result
+    that is not a scalar. *)
 
 val value_and_grad :
   'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t * 'p
 (** [value_and_grad p f params] is [(f params, grad p f params)], computed in
-    one forward and one backward pass. *)
+    one forward and one backward pass. It raises as {!grad} does. *)
 
 val value_and_grad_aux :
   'p Nx.Ptree.t ->
-  ('p -> ('c, 'd) Nx.t * 'aux) ->
+  'x Nx.Ptree.t ->
+  ('p -> ('c, 'd) Nx.t * 'x) ->
   'p ->
-  ('c, 'd) Nx.t * 'p * 'aux
-(** [value_and_grad_aux p f params] is like {!value_and_grad} for an objective
-    that returns auxiliary data beside its result. The auxiliary value is
-    returned as it is and does not contribute to the gradient. *)
+  ('c, 'd) Nx.t * 'p * 'x
+(** [value_and_grad_aux p x f params] is [(y, grad, aux)], where
+    [(y, aux) = f params] and [grad] is the gradient of [y] at [params]. [aux],
+    of structure [x], leaves the differentiation as its values: it contributes
+    nothing to the gradient. It raises as {!grad} does. *)
 
-val vjp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q -> 'q * 'p
-(** [vjp p q f params cts] is [(f params, g)], where [g], of structure [p], is
-    the vector-Jacobian product of [f] at [params] against [cts], the adjoint of
-    {!jvp} (see {!section-complex}). [cts] has the result's structure [q]: one
-    cotangent per tensor of the result, of that tensor's dtype and shape.
+val vjp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q * ('q -> 'p)
+(** [vjp p q f params] is [(f params, pullback)]. [pullback cts] is the
+    vector-Jacobian product of [f] at [params] against [cts], a value of
+    structure [p], the adjoint of {!jvp} (see {!section-complex}). [cts] has the
+    result's structure [q]: one cotangent per tensor of the result, of that
+    tensor's dtype and shape.
 
-    Raises [Invalid_argument] if [cts] and the result differ in their visits
-    ({!Nx.Ptree.visits}), naming the first path where they differ and what each
-    holds there, as in
-    ["Rune.vjp: the root: length 2 in the result, length 1 in the cotangents"];
+    The cotangent of an integer or boolean tensor of the result is checked like
+    the others and ignored.
+
+    [pullback] runs no part of [f] again, except the functions [f] passes to
+    {!remat}. When [vjp] runs outside every transformation, [pullback] may be
+    applied any number of times, from any domain, several at once. Under another
+    transformation it is transformed: under {!val-vmap} the backward pass is
+    batched, under {!jvp} differentiated.
+
+    Raises [Invalid_argument] if [params] holds no real or complex tensor.
+    [pullback] raises [Invalid_argument] if [cts] and the result differ in their
+    visits ({!Nx.Ptree.visits}), naming the first path where they differ and
+    what each holds there, as in
+    ["Rune.vjp: the root: length 2 in the result, length 1 in the cotangents"],
     or if a cotangent differs from its result tensor in dtype or shape. *)
-
-val vjp_fun :
-  'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q * ('q -> 'p)
-(** [vjp_fun p q f params] is [(f params, pullback)]. [pullback cts] is
-    [snd (vjp p q f params cts)], and may be called any number of times: each
-    call runs one backward pass over the recorded computation without running
-    [f] again. Calling the pullback under another transformation (for example
-    {!val-vmap}) transforms the backward pass. Pullbacks are not thread-safe.
-
-    [pullback] raises [Invalid_argument] as {!vjp} does for its cotangents. *)
 
 (** {1:forward Forward-mode differentiation} *)
 
@@ -112,9 +148,16 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     Jacobian-vector product of [f] at [params] against [tangents], the
     directional derivative (see {!section-complex}), computed in one forward
     pass. [tangents] has [params]' structure, dtypes and shapes; [dy] has the
-    result's structure [q], one tangent per tensor of the result.
+    result's structure [q], one tangent per tensor of the result: zeros of its
+    dtype and shape for an integer or boolean tensor and for one that does not
+    depend on [params]. The tangent of an integer or boolean parameter is
+    ignored.
 
-    Raises [Invalid_argument] if [tangents] and [params] differ in their visits
+    A tangent dies with the value it belongs to, so a fold that [f] runs holds
+    the tangents of one step at a time.
+
+    Raises [Invalid_argument] if [params] holds no real or complex tensor, if
+    [tangents] and [params] differ in their visits
     (["Rune.jvp: b: None in the parameters, Some in the tangents"]), or if a
     tangent differs from its parameter in dtype or shape. *)
 
@@ -136,77 +179,242 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     of [|z|] is [z / |z|], that of [|z|^2] is [2 z], and that of [Re (c * z)] is
     [conj c].
 
-    {!vjp} is the adjoint of {!jvp} under that inner product: if {!jvp} maps a
-    tangent [v] to [dy] and {!vjp} maps a cotangent [w] to [g], then
-    [Re (sum (conj w * dy)) = Re (sum (conj g * v))]. Equivalently, [g] is the
-    gradient of the real objective [Re (sum (conj w * f params))]. A
+    {!vjp}'s pullback is the adjoint of {!jvp} under that inner product: if
+    {!jvp} maps a tangent [v] to [dy] and the pullback maps a cotangent [w] to
+    [g], then [Re (sum (conj w * dy)) = Re (sum (conj g * v))]. Equivalently,
+    [g] is the gradient of the real objective [Re (sum (conj w * f params))]. A
     complex-differentiable [f] with derivative [f'] pulls [w] back to
     [conj (f' z) * w]. {!grad} seeds the result with [1], so a complex-valued
     objective is differentiated through its real part. A {!custom_vjp} rule's
-    [bwd] receives cotangents and returns gradients in this sense.
+    pullback receives cotangents and returns gradients in this sense.
 
     On real tensors the imaginary parts are zero and none of this changes the
     derivatives. *)
 
+(** {1:factorisations Derivatives of factorisations}
+
+    The tangents of {!Nx.cholesky}, {!Nx.qr}, {!Nx.lu}, {!Nx.svd}, {!Nx.eigh}
+    and {!Nx.eig} are the derivatives of the factors nx computes, where those
+    are differentiable:
+    - [Nx.qr ~mode:`Complete] of a tall matrix and [Nx.svd ~full_matrices:true]
+      of a non-square one have none: their tangents raise [Invalid_argument].
+    - The tangents of singular vectors and eigenvectors are non-finite where two
+      singular values or eigenvalues are equal; the tangents of the values are
+      finite there and depend on the vectors nx chose.
+    - A vector is defined up to its sign, or on complex values its phase, which
+      nx does not fix; the tangent does. The tangent of each eigenvector that
+      {!Nx.eigh} and {!Nx.eig} give is orthogonal to it ([Qᴴ dQ] has a zero
+      diagonal), so an eigenvector of [eig] keeps its unit norm. The tangent of
+      each right singular vector that {!Nx.svd} gives is orthogonal to it, and
+      the left one carries the change of phase that keeps [a = u diag(s) vh].
+
+    {!Nx.mod_}'s tangent is [da - trunc (a / b) db], one-sided at a multiple of
+    [b]. *)
+
+(** {1:jacobians Jacobians} *)
+
+val jacfwd' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
+(** [jacfwd' f x] is the Jacobian of [f] at [x], with shape
+    [shape (f x) @ shape x], computed column by column in forward mode (one
+    vectorized pass). Its dtype is the dtype of [f x]. Prefer it when the input
+    is smaller than the output.
+
+    A Hessian is [jacfwd' (grad' f) x], and a Hessian-vector product
+    [snd (jvp p p (grad p f) params v)].
+
+    Raises [Invalid_argument] as {!jvp'} does. *)
+
+val jacrev' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [jacrev' f x] is the Jacobian of [f] at [x], with shape
+    [shape (f x) @ shape x], computed row by row in reverse mode (one forward
+    pass, one vectorized backward pass). Its dtype is the dtype of [x]. Prefer
+    it when the output is smaller than the input. For a complex-differentiable
+    [f] it is the complex derivative, as {!jacfwd'} computes it: row [k] is the
+    conjugate of the gradient of [Re y_k].
+
+    Raises [Invalid_argument] as {!vjp'} does. *)
+
+(** {1:control Controlling differentiation} *)
+
+val detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [detach x] is [x] with a zero derivative under every differentiation around
+    the call. It copies nothing: outside every transformation, [detach x] is [x]
+    itself. Use it to hold a value constant inside a differentiated function,
+    such as the running statistics of a batch normalization or the input of an
+    operation whose derivative has no definition. *)
+
+val check_grads :
+  ?eps:float ->
+  ?tol:float ->
+  'p Nx.Ptree.t ->
+  ('p -> ('c, 'd) Nx.t) ->
+  'p ->
+  (unit, string) result
+(** [check_grads p f params] compares the reverse-mode gradient of the scalar
+    objective [f] at [params] against central-difference directional derivatives
+    along two deterministic directions. It is [Ok ()] if they agree within [tol]
+    (relative, default [1e-2]) and [Error msg] otherwise, where [msg] names the
+    direction and both derivatives. [eps] is the finite-difference step (default
+    [1e-4]).
+
+    The check is directional, not per element: it validates a gradient cheaply
+    rather than exhaustively. Use float64 parameters for reliable results;
+    float32 may need a looser [tol].
+
+    Raises [Invalid_argument] as {!grad} does. *)
+
+(** {1:custom Custom differentiation rules}
+
+    A custom rule gives a function the derivative a transformation would compute
+    for it, in the form of that transformation's answer: a tangent map for
+    forward mode, a pullback for reverse mode. Each rule receives the arguments'
+    values, with no derivative attached, and must not use a value its own
+    differentiation tracks other than through them: pass such a value as an
+    argument.
+
+    An exception of a rule, of its tangent map or of its pullback is raised at
+    the call or application that ran it. *)
+
+val custom_jvp :
+  'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q * ('p -> 'q)) -> 'p -> 'q
+(** [custom_jvp p q rule args] is [fst (rule args)], a value of structure [q],
+    whose derivative is the tangent map [snd (rule args)]: [map dargs] is the
+    result's tangent for the arguments' tangents [dargs], of structure [p], and
+    must be linear in them. [map] receives zeros for an argument the
+    differentiation does not track, and its result is checked against [q].
+
+    {[
+    let softplus =
+      Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+          (stable x, fun dx -> Nx.mul (Nx.sigmoid x) dx))
+    ]}
+
+    The rule serves both modes at every order. Forward mode applies [map];
+    reverse mode transposes the operations [map] issues; and every
+    differentiation around the call that tracks one of [args] applies the rule
+    too, differentiating [map]'s code for the second-order terms. A Hessian
+    through [softplus] is the rule's derivative. Under reverse mode, when the
+    result holds no tensor, [map] is not applied: such a rule observes the
+    arguments' tangents in forward mode and is inert under {!grad}. {!val-vmap}
+    batches the rule.
+
+    Under reverse mode, a loop in [map] ({!scan}) runs written out, even under
+    {!val-jit}, and a value that [map] selects with {!Nx.where}, concatenates,
+    scatters or writes beside a tangent is taken as zero: [map] must give such a
+    value only as a tangent's zero fill.
+
+    Raises [Invalid_argument] if [map]'s result differs from the result in its
+    visits, or a tangent from its result tensor in dtype or shape; and if [rule]
+    uses a value its own differentiation tracks
+    (["Rune.custom_jvp: the rule uses a value its own differentiation tracks;
+      pass it as an argument"]). Under reverse mode it raises at the operation,
+    naming the entry point that differentiates, if [map] applies an operation
+    that is not linear in the tangents
+    (["Rune.grad: a custom_jvp tangent map applies exp to a tangent; a tangent
+      map must be linear in its tangents"]), adds a value to a tangent or pads
+    one with a nonzero fill, which are affine, adds a tangent to a {!Total}, or
+    reads a tangent's value
+    (["Rune.grad: a custom_jvp tangent map reads a tangent's value with Nx.item;
+      under reverse mode a tangent has none"]). *)
+
+val custom_vjp :
+  'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q * ('q -> 'p)) -> 'p -> 'q
+(** [custom_vjp p q rule args] is [fst (rule args)], a value of structure [q],
+    whose reverse-mode derivative is the pullback [snd (rule args)]: [pb cts] is
+    the gradient for the result's cotangents [cts], as {!vjp}'s pullback
+    computes one (see {!section-complex}). [cts] holds zeros for a tensor of the
+    result that nothing used, and [pb]'s result is checked against [p].
+
+    {[
+    let clip_grad c =
+      Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+          (x, fun g -> Nx.clamp ~min:(-.c) ~max:c g))
+    ]}
+
+    Differentiations around the call differentiate the rule's code and its
+    pullback's. {!val-vmap} batches the rule, and the gradient of an argument
+    that is not batched is summed over the lanes.
+
+    Raises [Invalid_argument] if [pb]'s result differs from [args] in its visits
+    or a gradient from its argument in dtype or shape; under forward mode, if
+    the result holds a tensor
+    (["Rune.jvp: a custom_vjp rule has no forward derivative; give the function
+      a custom_jvp rule"]); and if [rule] uses a value its own differentiation
+    tracks, as {!custom_jvp} does. *)
+
+(** {1:remat Gradient checkpointing} *)
+
+val remat : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [remat s f] is [f], recomputed during the backward pass instead of having
+    its intermediate results retained: reverse-mode differentiation of
+    [remat s f] keeps [f]'s arguments and runs [f] again at them when the
+    backward pass reaches it, trading compute for memory. [s] is [f]'s
+    signature, as for {!val-vmap}. Every transformation sees [remat s f] as it
+    sees [f]: its derivatives in either mode, including those with respect to
+    tensors [f] captures, and its batched form under {!val-vmap} are [f]'s. An
+    addition to a {!Total} that [f] makes counts once, however often [f] runs.
+
+    Under {!val-jit}, the backward pass reads the arguments again only once the
+    cotangents of [f]'s result exist, so [f]'s intermediates are live for one
+    run at a time. A remat whose arguments are all arguments or constants of the
+    compiled function reads them directly, and so does one inside the body of a
+    compiled {!scan}, whose backward loop recomputes each step already.
+
+    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
+    ({!Nx.Ptree.consumes}). *)
+
 (** {1:vmap Vectorizing maps} *)
 
 type axis
-(** The name of a map. *)
+(** The type for names of maps. *)
 
 val axis : unit -> axis
 (** [axis ()] is a fresh name, distinct from every other. *)
 
 val vmap : ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [vmap ?axis s f] is [f] mapped over axis 0 of every tensor of its
-    arguments. [axis] names the map for {!lanes}; a map without one is
-    anonymous. [s]
-    is [f]'s signature, one structure per argument and one for the result:
+(** [vmap ?axis s f] is [f] mapped over axis 0 of every tensor of its arguments:
+    a function of [f]'s type whose result is the loop of [f] over the rows,
+    stacked. [axis] names the map for {!lanes} and {!lane_index}; a map without
+    one is anonymous. [s] is [f]'s signature, one structure per argument and one
+    for the result:
 
     {[
-    let per_example =
+    let per_example params =
       Rune.vmap
-        Nx.Ptree.(tensor @-> tensor @-> returns linear)
-        (fun x y -> Rune.grad linear (loss x y) params)
+        Nx.Ptree.(tensor @-> tensor @-> returns mlp)
+        (fun x y -> Rune.grad mlp (fun p -> Loss.mse (Mlp.apply p x) y) params)
     ]}
 
     [f] is written for unbatched values: it sees each argument tensor without
-    its axis 0, and each tensor of its result gains a batch axis 0. A value [f]
-    captures is a constant of the map, and a result tensor that does not depend
-    on the arguments is broadcast along the batch axis. To map another axis,
-    move it to the front with {!Nx.moveaxis}, a view; to keep a value whole,
-    capture it.
+    its axis 0, its {e lane}, and each tensor of its result gains a batch axis
+    0. A value [f] captures is a constant of the map, and a result tensor that
+    does not depend on the arguments is broadcast along the batch axis. To map
+    another axis, move it to the front with {!Nx.moveaxis}, a view; to keep a
+    value whole, capture it.
 
-    Composes with the other transformations: [vmap] of {!grad} computes
-    per-example gradients, and {!grad} of [vmap] differentiates through the map.
+    Randomness a lane captures (an {!Nx.Rng.t}, or [Nx.rand] under a scope the
+    map captures) draws {e identical} values for every lane: it is a constant of
+    the map. Decorrelate them either by folding the lane index into one key,
+    [Nx.Rng.fold_in_tensor k (Rune.lane_index ())], or by mapping over a batch
+    of keys from {!Nx.Rng.split_batch}, walked with {!Nx.Rng.ptree}: each lane
+    sees one key.
 
-    {b Note.} Randomness a lane captures (an {!Nx.Rng.t}, or [Nx.rand] under a
-    scope the map captures) draws {e identical} values for every lane: it is a
-    constant of the map. Decorrelate them either by folding the lane index into
-    one key, [Nx.Rng.fold_in_tensor k (Rune.lane_index ())] ({!lane_index}), or
-    by mapping over a batch of keys from {!Nx.Rng.split_batch}, walked with
-    {!Nx.Rng.ptree}: each lane sees one key. Reading a batched tensor's value
-    inside the mapped function raises.
+    Reading a lane's value inside [f] raises [Invalid_argument] with a message
+    that starts with the name of the function that read, as in
+    ["Nx.item: cannot read the value of a batched tensor inside vmap; return it
+     from the mapped function instead"]: an OCaml [if] on a value that depends
+    on the lanes raises, and {!Nx.where} selects per lane.
 
-    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
-    ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
-    tensor, if a tensor is a scalar, or if two tensors differ in the length of
-    their axis 0, naming each tensor by its path, as {!val-jit}'s messages do:
+    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument;
+    and when applied to its arguments if they have no tensor, if a tensor is a
+    scalar, or if two tensors differ in the length of their axis 0, naming each
+    tensor by its path ({!val-jit}):
     ["Rune.vmap: 1: 3 rows along axis 0, 0: 2"]. *)
-
-val vmap' :
-  ?axis:axis ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t
-(** [vmap' ?axis f x] is [vmap ?axis Nx.Ptree.(tensor @-> returns tensor) f x]:
-    [f] mapped over axis 0 of [x], its result stacked along a new axis 0.
-
-    Raises [Invalid_argument] if [x] is a scalar. *)
 
 val lanes : axis -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [lanes a x], inside the map named [a] of [n] lanes, is every lane's [x]
-    stacked on a new leading axis of length [n]: the same value in every lane,
-    a constant of that map. [x] of shape [s] gives shape [n :: s]; an [x] every
+    stacked on a new leading axis of length [n]: the same value in every lane, a
+    constant of that map. [x] of shape [s] gives shape [n :: s]; an [x] every
     lane shares gives [n] copies of it.
 
     Maps between the call and the map named [a] keep their own lanes: under an
@@ -214,87 +422,20 @@ val lanes : axis -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     gathers its own [x] across [a]. With no map named [a] around the call there
     is one lane, and [lanes a x] is [Nx.unsqueeze ~axes:[0] x].
 
-    [lanes a] is linear, and forward mode differentiates it as such:
-    the tangent of [lanes a x] is [lanes a dx].
-
-    {!Nx.sum}[ ~axes:[0] (lanes a x)] is the sum of [x] over the lanes of [a].
-
-    Raises [Invalid_argument] when a reverse-mode transformation inside the
-    map named [a] differentiates [x]. *)
+    [lanes a] is linear, and both modes differentiate it as such: the tangent of
+    [lanes a x] is [lanes a dx], and under reverse mode inside the map named [a]
+    the cotangent of [x] is the calling lane's row of the sum over the lanes of
+    their cotangents, so a lane's gradient collects every lane's use of its [x].
+    [Nx.sum ~axes:[0] (lanes a x)] is the sum of [x] over the lanes of [a]. *)
 
 val lane_index : ?axis:axis -> unit -> (int32, Nx.int32_elt) Nx.t
 (** [lane_index ?axis ()] is the calling lane's index in the map named [axis],
     or in the innermost anonymous map when [axis] is absent: an [int32] scalar,
     from [0] to the map's number of lanes minus one. With no such map around the
-    call there is one lane, and it is [0], in a compiled program over several
-    devices too: it sees whole values.
+    call there is one lane, and it is [0].
 
-    [Nx.Rng.fold_in_tensor k (lane_index ())] gives each lane its own key from
-    a key [k] the map captures. *)
-
-(** {1:custom Custom differentiation rules} *)
-
-val custom_vjp :
-  'p Nx.Ptree.t ->
-  'q Nx.Ptree.t ->
-  fwd:('p -> 'q * 'res) ->
-  bwd:('res -> 'q -> 'p) ->
-  'p ->
-  'q
-(** [custom_vjp p q ~fwd ~bwd params] is [fst (fwd params)], a value of
-    structure [q], with a user-defined reverse rule. Under the innermost
-    reverse-mode transformation, [fwd]'s operations are not differentiated;
-    [bwd residual cts] gives the gradients instead, as {!vjp} would for [cts]
-    (see {!section-complex} for complex tensors). [cts] holds the result's
-    cotangents, of structure [q], zero for a tensor of the result that nothing
-    used; the gradients have structure [p], and each tensor its parameter's
-    dtype and shape. [residual] is what [fwd] returned beside its result.
-    Enclosing transformations (an outer {!grad}) see the forward computation
-    itself.
-
-    A tensor of the result that is one of [params] is a new value there: its
-    cotangent is the result's alone.
-
-    {!val-vmap} passes the call on as the call of its batched [fwd] and batched
-    [bwd], so a reverse-mode transformation outside the map applies the rule to
-    the map's lanes, and forward mode outside it raises as it does without the
-    map.
-
-    Forward mode has no rule to apply: a call whose result holds no tensor has
-    nothing to differentiate, and [fwd] runs.
-
-    Raises [Invalid_argument] if forward mode differentiates a call whose
-    result holds a tensor (define a {!custom_jvp} rule for that), or if [bwd]'s
-    gradients differ from [params] in their visits or in a tensor's dtype. *)
-
-val custom_jvp :
-  'p Nx.Ptree.t ->
-  'q Nx.Ptree.t ->
-  f:('p -> 'q) ->
-  jvp:('p -> 'p -> 'q * 'q) ->
-  'p ->
-  'q
-(** [custom_jvp p q ~f ~jvp params] is [f params], a value of structure [q],
-    with a user-defined forward rule. Under the innermost forward-mode
-    transformation, [jvp params tangents] gives both the result and its
-    tangents, of structure [q], in place of [f]'s operations. A tensor of the
-    result that is one of [params] is a new value there: the parameter keeps its
-    own tangent.
-
-    Reverse mode has no rule to apply: a call whose result holds no tensor has
-    nothing to differentiate, and [f] runs. A [custom_jvp] with a unit result
-    therefore observes the tangents of its parameters in forward mode and is
-    inert under {!grad}.
-
-    {!val-vmap} passes the call on as the call of its batched [f] and batched
-    [jvp], so a forward-mode transformation outside the map applies the rule
-    to the map's lanes, and reverse mode outside it raises as it does without
-    the map.
-
-    Raises [Invalid_argument] if reverse mode differentiates a call whose
-    result holds a tensor (define a {!custom_vjp} rule for that), or if [jvp]'s
-    tangents differ from its result in their visits, or a tangent from its
-    result tensor in dtype or shape. *)
+    [Nx.Rng.fold_in_tensor k (lane_index ())] gives each lane its own key from a
+    key [k] the map captures. *)
 
 (** {1:totals Totals} *)
 
@@ -304,7 +445,9 @@ val custom_jvp :
     caller reads when the function returns: {!Total.collect}[ t ~zero f] is
     [f ()] with [zero] plus everything [f] added to [t]. Nothing reads a total
     before its [collect] returns, so an addition never changes a value the
-    function computes, and with no [collect] open it does nothing.
+    function computes, and with no [collect] open it does nothing. Totals let
+    code deep inside a function report to its caller across the transformations
+    between them without threading a value through every function in between.
 
     {[
     let saturated = Rune.Total.make ()
@@ -327,27 +470,26 @@ val custom_jvp :
 
     An addition counts once per execution of the code that makes it, whatever
     the transformations between it and the scope:
-    - {!jvp} passes it on; it has no tangent.
+    - {!jvp} passes on its value; it has no tangent.
     - {!val-vmap} passes on the sum of its lanes' additions: a value batched
       across the lanes summed over them, one every lane shares times their
-      number. A transformation built on a map counts per lane: {!jacfwd'}
-      counts an addition once per column, and {!jacrev'} once.
+      number. A transformation built on a map counts per lane: {!jacfwd'} counts
+      an addition once per column, and {!jacrev'} once.
     - {!grad} and the other reverse-mode transformations pass it on when they
       first run the code that makes it, and drop it when they run that code
       again: the backward pass of a compiled {!scan} and a {!remat}
       recomputation.
-    - A {!scan} a compiled function stages, and a {!remat}, carry the sum of
-      their additions out as a value, so a staged loop stays one loop, a
-      replay computes the total again, and a trace that is restarted discards
-      its additions.
+    - A {!scan} that a compiled function stages, and a {!remat}, carry the sum
+      of their additions out as a value, so a staged loop stays one loop and a
+      replay computes the total again.
 
     A scope inside a transformation is ordinary arithmetic to it: the collected
-    total is differentiated under {!jvp}, taped under {!grad}, computed per
-    lane under {!val-vmap} (the map returns the totals stacked) and returned by
-    a compiled function like any value. *)
+    total is differentiated under {!jvp}, under {!grad}, computed per lane under
+    {!val-vmap} (the map returns the totals stacked) and returned by a compiled
+    function like any value. *)
 module Total : sig
   type ('a, 'b) t
-  (** A total of [('a, 'b) Nx.t] values. *)
+  (** The type for totals of [('a, 'b) Nx.t] values. *)
 
   val make : unit -> ('a, 'b) t
   (** [make ()] is a fresh total, distinct from every other. *)
@@ -356,497 +498,33 @@ module Total : sig
   (** [add t v] adds [v] to the innermost open {!collect} of [t], and does
       nothing if none is open.
 
-      Raises [Invalid_argument] if [v]'s shape, as the scope sees it, is not
-      its [zero]'s. *)
+      Raises [Invalid_argument] if [v]'s shape, as the scope sees it, is not its
+      [zero]'s, and if [v] is a tangent under reverse mode, which only a
+      {!custom_jvp} tangent map holds
+      (["Rune.Total.add: a custom_jvp tangent map adds a tangent under reverse
+        mode; a total takes values"]). *)
 
   val collect :
     ('a, 'b) t -> zero:('a, 'b) Nx.t -> (unit -> 'r) -> 'r * ('a, 'b) Nx.t
-  (** [collect t ~zero f] is [(f (), total)], where [total] is [zero] plus
-      every addition [f] made to [t]. [zero] gives the total's dtype, shape and
+  (** [collect t ~zero f] is [(f (), total)], where [total] is [zero] plus every
+      addition [f] made to [t]. [zero] gives the total's dtype, shape and
       placement.
 
-      [f] runs as a transformation, as under {!grad} or {!val-vmap}: a
-      {!val-jit} inside it runs its function eagerly. To compile, open the
-      scope inside the function {!val-jit} compiles and return the total.
+      A {!scan} inside [f] that no compiled function stages folds inside the
+      scope. A {!val-jit} inside [f] runs its function eagerly: to compile, open
+      the scope inside the function {!val-jit} compiles and return the total.
 
-      The scope checks each addition's shape against [zero]'s when it
-      receives it, where every map inside the scope has summed its lanes.
+      The scope checks each addition's shape against [zero]'s when it receives
+      it, where every map inside the scope has summed its lanes.
 
-      An addition in a custom rule's function ({!custom_vjp}'s [fwd], or
-      {!custom_jvp}'s [f] or [jvp]) reaches the scopes around the
-      transformation that runs it, and skips a scope opened between the call
-      and that transformation.
+      An addition a custom rule's function makes ({!custom_jvp}'s and
+      {!custom_vjp}'s [rule], a tangent map, a pullback) reaches the scopes
+      around the transformation that runs it, and skips a scope opened between
+      the call and that transformation.
 
       If [f] raises, [collect] raises the same exception; an addition made
       before an exception [f] itself catches counts. *)
 end
-
-(** {1:tensor Single-tensor variants} *)
-
-val grad' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [grad' f x] is [grad Nx.Ptree.tensor f x].
-
-    Raises [Invalid_argument] if [x] is neither real nor complex, or if [f x] is
-    not a scalar. *)
-
-val value_and_grad' :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * ('a, 'b) Nx.t
-(** [value_and_grad' f x] is [value_and_grad Nx.Ptree.tensor f x]. It raises as
-    {!grad'} does. *)
-
-val vjp' :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t ->
-  ('c, 'd) Nx.t * ('a, 'b) Nx.t
-(** [vjp' f x ct] is [vjp Nx.Ptree.tensor Nx.Ptree.tensor f x ct]. *)
-
-val vjp_fun' :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * (('c, 'd) Nx.t -> ('a, 'b) Nx.t)
-(** [vjp_fun' f x] is [vjp_fun Nx.Ptree.tensor Nx.Ptree.tensor f x]. *)
-
-val jvp' :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * ('c, 'd) Nx.t
-(** [jvp' f x tangent] is [jvp Nx.Ptree.tensor Nx.Ptree.tensor f x tangent]. *)
-
-(** {1:remat Gradient checkpointing} *)
-
-val remat : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [remat s f] is [f], recomputed during the backward pass instead of having
-    its intermediate results retained: reverse-mode differentiation of
-    [remat s f] keeps [f]'s arguments and runs [f] again when the backward pass
-    reaches it, trading compute for memory. [s] is [f]'s signature, as for
-    {!val-vmap}. Every transformation sees [remat s f] as it sees [f]: its
-    derivatives in either mode, including those with respect to tensors [f]
-    captures, and its batched form under {!val-vmap} are [f]'s.
-
-    Under {!val-jit}, reverse mode materialises the arguments and reads them
-    again only once the cotangents of [f]'s result exist, so [f] runs again in
-    the backward pass and its intermediates are live for one run at a time. A
-    remat whose arguments are all inputs or constants of the compiled function
-    is not recomputed, nor is one whose cotangents are, as for a {!val-vjp}
-    given its cotangents as arguments: nothing is saved. A derivative that
-    combines both modes, such as a Hessian-vector product, saves less under jit
-    today: the compiled program keeps the forward-mode values of every layer.
-    Inside the body of a compiled {!scan}, remat changes nothing: the backward
-    loop recomputes each step already.
-
-    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument.
-*)
-
-(** {1:jacobians Jacobians} *)
-
-val jacfwd' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
-(** [jacfwd' f x] is the Jacobian of [f] at [x], with shape
-    [shape (f x) @ shape x], computed column by column in forward mode (one
-    vectorized pass). Its dtype is the dtype of [f x]. Prefer it when the input
-    is smaller than the output.
-
-    A Hessian is [jacfwd' (grad' f) x], and a Hessian-vector product
-    [snd (jvp p p (grad p f) params v)]. *)
-
-val jacrev' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [jacrev' f x] is the Jacobian of [f] at [x], with shape
-    [shape (f x) @ shape x], computed row by row in reverse mode (one forward
-    pass, one vectorized backward pass). Its dtype is the dtype of [x]. Prefer
-    it when the output is smaller than the input. For a complex-differentiable
-    [f] it is the complex derivative, as {!jacfwd'} computes it: row [k] is the
-    conjugate of the gradient of [Re y_k]. *)
-
-(** {1:checks Gradient checking} *)
-
-val check_grads :
-  ?eps:float ->
-  ?tol:float ->
-  'p Nx.Ptree.t ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  (unit, string) result
-(** [check_grads p f params] compares the reverse-mode gradient of the scalar
-    objective [f] at [params] against central-difference directional derivatives
-    along deterministic directions. [Ok ()] means they agree within [tol]
-    (relative, default [1e-2]); [Error msg] describes the disagreement. [eps] is
-    the finite-difference step (default [1e-4]).
-
-    The check is directional, not per-element: it validates gradients cheaply
-    rather than exhaustively. Use float64 parameters for reliable results;
-    float32 may need a looser [tol]. *)
-
-(** {1:rng Random number generation}
-
-    Random number generation lives entirely in {!Nx.Rng}: keys, the keyed
-    samplers ({!Nx.Rng.uniform}, {!Nx.Rng.normal}, …) and the scope
-    ({!Nx.Rng.with_key}). A key is an [[|2|]] int32 tensor that only {!Nx.Rng}
-    builds, walked with {!Nx.Rng.ptree}, so it traces, batches and shards like
-    any tensor — thread it as an input of a jitted function and derive per-call
-    keys with {!Nx.Rng.split} or {!Nx.Rng.fold_in}. The transforms answer the
-    generator's effects but add no RNG vocabulary of their own. A sampler's
-    distribution parameters are tensors too ({!Nx.Rng.bernoulli}'s probability,
-    {!Nx.Rng.poisson}'s rate), so a parameter that is a jitted function's input
-    or a mapped axis traces or batches the draw with it, where a host float
-    would have been frozen into the program.
-
-    Under a transform, what matters is where the key comes from, not which
-    front-end draws from it. A traced or mapped key works either way: passed to
-    a keyed sampler, or as the root of a {!Nx.Rng.with_key} scope that the
-    keyless [Nx.rand] draws from. A key the transform closes over is a constant
-    of that transform, whichever front-end reads it. *)
-
-(** {1:devices Devices}
-
-    A device is a {!Nx.Device.t}: rune opens it by name, and it carries the
-    engine that holds values on it ({!Nx.place}). A device has one name:
-    ["METAL"], ["CUDA:3"], never an index [0] (["CUDA:0"] is ["CUDA"]). ["CPU"]
-    is the host, {!Nx.Device.host}; ["CPU:1"], ["CPU:2"], ... are devices that
-    own the storage they allocate and whose memory is the host's, for testing
-    placement without a GPU.
-
-    {!Nx.place} of a value on the disk (a checkpoint entry of
-    [Nx_io.load_safetensors]) on a device whose memory is the host's (["METAL"]
-    on Apple silicon, the ["CPU:k"] devices) borrows the file's pages: nothing
-    is copied, the weights stay pages the system can drop and read again, and
-    the placed value keeps the value's view (a transposed weight stays a
-    transpose). Borrowed storage is never written or lent to a compiled call's
-    output: a call that consumes it gives the result storage of its own. It
-    counts nothing in [resident_bytes] or the collection budget. A value on the
-    disk placed on any other device is read from its file 64 MiB at a time, and
-    its buffer is returned to the system when the value is released, not kept
-    for reuse. A host value, or a value placed on another device, is copied 64
-    MiB at a time into one device buffer. The result is resident like an output
-    of a compiled call (see {!val-jit}): metadata reads are free, a read copies
-    the elements it reads and leaves the storage, a compiled function that takes
-    it as an input leaf reads the storage with no transfer, and a call that
-    consumes the argument it is a leaf of ends it ({!val-jit}). Use it to put a
-    model's weights on the device once, as they are imported, instead of once
-    per compiled function at its first call. *)
-
-val device : string -> Nx.Device.t
-(** [device name] is the device [name] names, opened at the first call. Every
-    call with the same name returns the same value, and the backend part of the
-    name is case-insensitive.
-
-    Raises [Invalid_argument] if the backend is unknown or the device cannot be
-    opened. *)
-
-val devices : string -> Nx.Device.t list
-(** [devices backend] is every device of [backend] in index order: ["CUDA"],
-    ["CUDA:1"], ... for as long as they open. [devices "CPU"] is
-    [[Nx.Device.host]], and [devices "METAL"] is the one Metal device.
-
-    Raises [Invalid_argument] if [backend] names one device (["CUDA:1"]), is
-    unknown, or its first device cannot be opened. *)
-
-val default_device : unit -> Nx.Device.t
-(** [default_device ()] is the device that compiled functions run on unless they
-    are told otherwise: the backend that the [DEV] environment variable names,
-    or else the first of METAL, AMD, NV and CUDA that opens, or else the host.
-    It is resolved once per process, at the first call. *)
-
-(** {1:jit Just-in-time compilation} *)
-
-exception Jit_error of string
-(** Raised when a function cannot be compiled, because:
-    - it read the value of a traced tensor, as [Nx.item] on a value that depends
-      on the inputs, or a branch on such a value, does; the message starts with
-      the name of the function that read, such as ["Nx.item: ..."];
-    - it drew random values from a key that does not depend on the inputs (a
-      captured {!Nx.Rng.t}, or a scope opened with [Nx.Rng.with_key] on a
-      constant key — the draw would be a compile-time constant replayed on every
-      call; pass the key as an input instead);
-    - it used an operation the compiler does not support (FFT, the SVD and
-      eigensolvers, complex, int4 and uint4 tensors, a bitcast between widths or
-      to or from float8, a scatter by maxima or minima, and so
-      [Nx.reduce_segments] by [`Max] or [`Min]).
-
-    QR, triangular solves, Cholesky, [solve], and [inv] do compile: they unroll
-    at trace time into the fixed number of steps their shapes imply. *)
-
-val jit :
-  ?devices:Nx.Device.t list ->
-  ?beam:int ->
-  ?parallel:int ->
-  ('a -> 'b) Nx.Ptree.fn ->
-  ('a -> 'b) ->
-  'a ->
-  'b
-(** [jit s f] is [f] compiled, a function of [f]'s type whose arguments and
-    result have the structures of the signature [s]:
-
-    {[
-    let step =
-      Rune.jit
-        Nx.Ptree.(
-          tensor @-> Cache_index.ptree @-> consumes caches
-          @@ returns (pair tensor caches))
-        (fun tokens index caches -> decode params tokens index caches)
-    ]}
-
-    An argument built with {!Nx.Ptree.( @-> )} is read; one built with
-    {!Nx.Ptree.consumes} is given up by each call, which may write the result
-    over its storage. Tensors [f] closes over ([params] above) are constants of
-    the compiled function.
-
-    The first application traces [f], compiles the traced computation into fused
-    kernels, and runs them. Later applications replay a compiled program on the
-    new tensors when their key equals the program's.
-
-    {b Paths.} A leaf of the arguments is named by its path: the argument's
-    position counted from 0, then the leaf's path inside that argument. The
-    window of the second argument is [1.window], and a first argument that is
-    one tensor is [0]. Keys, errors and [RUNE_JIT_DEBUG] reports use these
-    paths.
-
-    {b Keys.} A key is the devices, every tensor's path, dtype, shape, placement
-    and layout, a host tensor counting as a copy on each device, and every
-    report of the arguments' walks (an integer, a case, an option's presence, a
-    list's length), compared by path segments. An argument with another window,
-    or a list that gained an element with no tensor, traces and compiles its own
-    program. An integer that changes on every call compiles a program per value;
-    a value that varies belongs in a tensor. [RUNE_JIT_DEBUG=1] reports each
-    retrace with the first difference from the previous call's key, such as
-    ["rune.jit: retrace: 1.window: int 3 here, int 2 in the previous key"].
-
-    {b Numerics.} A sum over an axis ({!Nx.sum}, {!Nx.mean}, the contraction
-    of {!Nx.matmul}) is the sum of its terms in an unspecified association: the
-    compiled program may add them in another order than eager and move factors
-    that do not vary along the summed axis out of the sum. Results then differ
-    from eager's in rounding, and at overflow in whether a term overflows. A
-    maximum over an axis is exact. Beyond that, compiled float results can
-    differ from eager's in the last bits where the kernel compiler fuses a
-    multiply and an add, where a division by a constant becomes a
-    multiplication by its rounded reciprocal, and in transcendental functions,
-    which are approximations within a few units in the last place ({!Nx.pow}
-    about 70); Metal flushes float32 subnormals to zero, a [float16] program on
-    the CPU is not rounded after
-    each operation, and signed integer overflow is undefined in the generated
-    C.
-
-    {b Results.} Every result leaf is a value with storage of its own. A result
-    that returns a read argument or a capture unchanged is a copy, and a value
-    [f] returns at two leaves comes back as two values, the second a copy of the
-    first. So a result can be read, or consumed by a later call, whatever
-    happens to the arguments and to the other results.
-
-    {b Consumption.} Before its first kernel, a call marks every storage that a
-    leaf of a consumed argument reaches as consumed; nothing unmarks it. From
-    then on a read of any value over that storage, or its use as an operand or
-    an argument, raises [Invalid_argument]
-    ["this value was consumed at 2.0.keys in a compiled call's arguments; use
-     the value the call returned"]; its shape and dtype stay readable. A
-    consumed leaf must hold its storage alone: the call raises
-    [Invalid_argument], before anything runs and without consuming anything, if
-    a consumed leaf views part of its storage (a slice, a transpose, a
-    broadcast: pass [Nx.copy] of it), or if another leaf of the call or a
-    capture of the function, bound or copied, reaches that storage, naming both
-    paths. Consumption also raises [Invalid_argument] if another read,
-    placement, or compiled call is using the same storage, including through
-    another view or compiled function. Once a call has exclusive use of a
-    consumed storage, overlapping reads, placements and calls reaching it
-    raise. Unrelated storage remains independent, and sequential calls may use
-    different domains. A host leaf has no storage to consume: it is uploaded,
-    stays usable, and lends nothing. A call that fails while preparing arguments
-    consumes nothing. Once execution begins, consumed arguments stay consumed
-    even if the call raises and returns nothing.
-
-    {b Lending.} A result may take the storage of a consumed leaf, so a loop
-    that consumes its state holds one generation of it on the device. It does
-    when their dtypes, sizes and devices are equal, the storage is bound by no
-    compiled function, and writing the result there cannot change it: no kernel
-    reads the leaf after the first kernel that writes the result, and that
-    kernel reads it only when the result derives from it at its own index
-    (elementwise operations, equal-width casts and reshapes: an optimizer
-    update, a window write into a cache). Partners are chosen once per program:
-    first the results of an indexed write into a consumed leaf, then the results
-    that derive from one at their own index, a consumed leaf returned unchanged
-    included, then the rest, in the order the program writes them. Each storage
-    lends at most once; a result without a partner gets fresh storage, and the
-    consumed storage goes back to the device's allocator. [RUNE_JIT_DEBUG=1]
-    reports each consumed leaf:
-    ["rune.jit: 2.0.keys -> result 1.0.keys reused"], or what became of its
-    storage. On the host, results are host tensors and nothing is lent.
-
-    {b Devices.} A call runs on the devices where its placed input leaves and
-    captures live ({!Nx.placement}), and on {!default_device} when none is
-    placed. Captures are found by tracing: when the inputs are on the host, the
-    first trace that meets a placed capture runs again on its devices, and later
-    calls run there. [devices] names the devices instead ({!val-device},
-    {!val-devices}): at least one, distinct, of one backend. Host values join
-    the devices a call runs on, a full copy on each, and so do values on the
-    disk, which are read from their files. A placed input leaf on other devices
-    raises [Invalid_argument] naming its path and both placements, before
-    anything runs, and so does a placed capture, at the trace that meets it:
-    move it with {!Nx.place} first. So does a dtype the device cannot hold, such
-    as [float64] on Metal, in an input leaf; in a value the function computes or
-    captures it raises {!Jit_error}. On the host, contiguous inputs and captured
-    tensors are read in place and outputs are computed directly into the
-    returned tensors' storage; non-contiguous tensors are copied.
-
-    On other devices, results are bit-identical. Host inputs are copied to the
-    device on every call; a placed input, an output of an earlier call included,
-    seeds the program with no transfer. Outputs are values on the device, and a
-    read copies the elements it reads. A view of part of a storage is read in
-    place; only views whose windows overlap ({!Nx.sliding_window}) are copied.
-    Device memory backing an output is held until the output is
-    garbage-collected or consumed; an allocation that fails, after a major
-    collection, raises {!Nx.Device.Out_of_memory} before the call consumes
-    anything, and a transfer failure raises at the first read of the affected
-    output. doc/05-compilation.md describes the memory budget and the scratch
-    memory compiled functions share.
-
-    {b Several devices.} Over several devices the function sees global shapes,
-    and each leaf stays where it lives: a split leaf is one slice on each device
-    ({!Nx.Placement.sharded}), a copy or a host leaf the whole value on each.
-    Every value the function computes lives where nx's rules put it, decided as
-    it traces ({!Nx.placement} answers), and results come back there: an
-    elementwise operation keeps its operands' split, and a reduction over a
-    split axis is an allreduce whose result is a copy on each device, so the
-    gradient of a loss over a batch split across devices is summed across them.
-    Operands split differently (a row-split matrix times a column-split one
-    included), an operation along a split axis, and a movement that would move
-    elements between devices raise [Invalid_argument] as the function traces,
-    with nx's message: nothing moves between devices unless the function places
-    it with {!Nx.place}, which gathers a split value to a copy on each device or
-    splits a copy, over the program's devices. A cut of one whole slice of a
-    split axis is copied to every device, and one strictly inside a slice
-    raises. A consumed leaf's placement goes to the result paired with it, the
-    first in walk order that derives from it at its own index, each leaf to one
-    result (as for storage, under Lending): where nx's rules put that result
-    elsewhere, the program reshards it at its end, which [RUNE_JIT_DEBUG=1]
-    reports, so a carry keeps its placement from call to call and one that
-    starts on the host stays a copy on each device. Only a split value orders
-    the devices, which decides the slice each holds: the first split leaf, else
-    a split capture, while copies list them as a set, and [devices] fixes the
-    order; a split leaf or capture in another order raises. A call returns once
-    its work is queued on every device, and a read waits for it. Storage reuse,
-    staged scans and in-place indexed writes apply on one device only, for now:
-    a consumed carry keeps two generations.
-
-    {b Captures.} The compilation cache lives in the partial application
-    [jit s f]: apply [jit] once and reuse the returned function. Tensors [f]
-    closes over are compile-time constants, bound once when the trace first
-    compiles: on the host contiguous captures are read in place, and every other
-    capture is copied to the device once per closure, and signatures share the
-    copy. A capture placed on the program's devices, a split one or a view of it
-    included, is bound instead: the program uses its buffers as the constant
-    from its first compilation on, no bytes move, and every compiled function
-    that captures the value shares them. A compiled function keeps the values it
-    binds reachable, and their buffers stay while it is reachable: a call that
-    consumes a bound storage ends it for its values, and the programs that bind
-    it keep replaying with it. This ownership starts when tracing first
-    encounters the resident capture, so a concurrent consuming call cannot lend
-    its bytes while compilation is in progress. A failed trace releases its
-    bindings. A closure whose capture was consumed raises
-    [Invalid_argument] at its next trace. Mutating a captured tensor between
-    calls is not supported and has unspecified visibility (the host may observe
-    the mutation through its in-place binding; other devices never do): pass
-    values that change between calls as arguments rather than capturing them.
-
-    {b Tuning.} [beam] searches kernel schedules with a beam of that width,
-    compiling and timing candidates on the device; compilation is much slower
-    and the kernels usually faster. When [beam] is omitted, the [BEAM] context
-    gives the width, initially set by the environment variable. Explicit [0]
-    disables search for kernels without their own positive beam width.
-    [parallel] bounds domains compiling independent kernels and beam candidates.
-    It is not part of any cache key and defaults to the [PARALLEL] context,
-    initially sized from available CPUs. The first parallel compilation fixes
-    the shared worker limit; later positive settings reuse it. [0] compiles
-    sequentially. Candidate timing remains sequential.
-
-    {b Persistence.} Compiled programs are also written to a disk cache and
-    loaded by later processes that compile the same trace; [JITCACHE=0] disables
-    it, and results are identical either way. Programs over several devices are
-    never persisted. doc/05-compilation.md gives the cache's location and when
-    entries are invalidated.
-
-    {b Transformations.} Under an enclosing transformation ({!grad},
-    {!val-vmap}, an outer [jit]), the wrapped function runs
-    directly so the transformation observes its operations, and it checks and
-    consumes nothing: [jit] never changes results, only speed. Compose the other
-    way, differentiating {e inside} the compiled function, to compile the
-    forward and backward passes together:
-
-    {[
-    let state = Nx.Ptree.pair linear (Vega.adam_ptree linear)
-
-    let step =
-      Rune.jit
-        Nx.Ptree.(
-          tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
-        (fun inputs targets (params, opt) ->
-          let loss, grads =
-            Rune.value_and_grad linear (objective inputs targets) params
-          in
-          let params, opt = Vega.adamw_step linear ~lr opt ~params ~grads in
-          (loss, (params, opt)))
-    ]}
-
-    Tensors are values, so state threads through the arguments: the function
-    returns its updated parameters, optimizer state or cache, and the caller
-    feeds them to the next call. Structured values read during tracing must not
-    depend on traced tensors: a branch on a traced value ({!Nx.item}) raises
-    {!Jit_error}. Overlapping or reentrant calls to one
-    compiled function raise [Invalid_argument] before accessing its compiled
-    state. Sequential calls may run on different domains. Calls under an
-    enclosing transformation execute [f] directly and do not claim that state.
-
-    Randomness inside a compiled function comes from a {!Nx.Rng} key passed as
-    an argument: samplers are pure functions of their key, so the compiled
-    program recomputes each draw from the current key on every call; feed a
-    fresh key ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for fresh values. Either
-    front-end works. Pass the key to each sampler ({!Nx.Rng.uniform} and
-    friends), or wrap the body in {!Nx.Rng.with_key} on that key and keep
-    writing the keyless [Nx.rand]: the scope derives every draw from its root,
-    so a traced root makes the whole scope traced. What raises {!Jit_error} is a
-    root that does not depend on the arguments (a captured key, or
-    [Nx.Rng.with_key] on a constant key), since the draw would be a compile-time
-    constant replayed on every call.
-
-    Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
-    [Invalid_argument] if [s] has no argument, if [devices] is empty, repeats a
-    device or mixes backends, for a leaf or capture placed on other devices, and
-    as consumption above says. *)
-
-val jit' :
-  ?devices:Nx.Device.t list ->
-  ?beam:int ->
-  ?parallel:int ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t
-(** [jit' f] is [jit Nx.Ptree.(tensor @-> returns tensor) f]: {!val-jit} for a
-    function of one tensor that reads it. *)
-
-type jit_stats = {
-  bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
-  bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
-  resident_bytes : int;
-      (** Device bytes held by outputs and placed values that are still
-          reachable, owned storage only: a file's borrowed pages count nothing.
-      *)
-  reused_bytes : int;
-      (** Cumulative bytes of consumed inputs whose storage an output took
-          instead of a fresh buffer. *)
-}
-(** Transfer accounting for compiled functions. The zero-copy CPU path moves no
-    bytes and counts nothing. *)
-
-val jit_stats : unit -> jit_stats
-(** [jit_stats ()] is the current transfer counters, cumulative over the whole
-    program. An output dropped releases its device buffers once it is collected,
-    at the next read, placement or compiled call, or at this query, whichever
-    comes first. Set the [RUNE_JIT_DEBUG] environment variable to [1] to also
-    log a per-call summary to stderr. *)
-
-val reset_jit_stats : unit -> unit
-(** [reset_jit_stats ()] zeroes the cumulative transfer counters.
-    [resident_bytes] tracks live state and is not reset. *)
 
 (** {1:flow Loops and branches}
 
@@ -866,57 +544,255 @@ val scan :
   'c * 'y
 (** [scan c x y ~f ~init xs] folds [f] over the rows of [xs], a value of
     structure [x]: every tensor of [xs] has the same leading length [n], and
-    step [i] passes [f] the value of row [i] of every tensor. [f carry row]
-    returns the next carry, of structure [c], and the step's outputs, of
-    structure [y]; the result is the final carry and the outputs, every tensor
-    stacked along a new axis 0. A fold with nothing to emit passes
-    {!Nx.Ptree.unit} for [y] and returns [()].
+    step [i] passes [f] row [i] of every tensor. [f carry row] returns the next
+    carry, of structure [c], and the step's outputs, of structure [y]; the
+    result is the final carry and the outputs, every tensor stacked along a new
+    axis 0. A fold with nothing to emit passes {!Nx.Ptree.unit} for [y] and
+    returns [()].
 
     Every carry the body returns has the visits ({!Nx.Ptree.visits}) of the one
     it received, and every step's outputs have the first step's: a list keeps
     its length, an option its presence, a case and an integer their value.
 
-    Under {!val-jit} the fold step compiles once and runs as a loop in the
-    compiled program, and differentiating compiles a reversed loop over the
-    step's pullback. The loop reads row [i] of each tensor of [xs] in place, so
+    Under {!val-jit} the body compiles once and runs as a loop in the compiled
+    program, and differentiating compiles a reversed loop that runs each step
+    again at its carry. {!jvp}, {!val-vmap} and {!grad} of a scan compile as one
+    loop too, whose carry gains a tangent or a lane only for the carry tensors
+    that have one. The loop reads row [i] of each tensor of [xs] in place, so
     data that differs per step, such as the weights of stacked layers, belongs
-    in [xs]: reading it from a tensor [f] captures, for instance with
-    {!Nx.index.D} at a step counter, is a gather. The cotangent of [xs] is
-    stacked like the outputs, row [i] coming from step [i], while a captured
-    tensor's cotangent is the sum over the steps, accumulated on every one. A
-    carry tensor the step updates with {!Nx.set}, or reads only at the index it
-    writes, is updated in place: a step that writes one row of a cache in the
-    carry moves that row, not the cache. {!val-jvp} and {!val-vmap} of a scan
-    compile as one loop too, whose carry gains a tangent or a lane only for the
-    carry tensors that have one: under [vmap] over tangents around [jvp], the
-    primal state is computed once for every lane. The reversed loop is a scan
-    itself, so [jvp], [vmap] and {!val-grad} of a gradient through a scan
-    compile as loops as well. Staging needs the carry to keep its shapes across
-    steps; a fold that changes them, or one in a program over several devices,
-    unrolls into the compiled program instead. Everywhere else the scan folds
-    eagerly, tracing every step.
+    in [xs]; the cotangent of [xs] is stacked like the outputs, while a captured
+    tensor's cotangent is the sum over the steps. A carry tensor the step
+    updates with {!Nx.set}, or reads only at the index it writes, is updated in
+    place. A compiled function writes the loop out instead, step by step, each
+    step's carry stored before the next step reads it, when the carry changes
+    its shapes across steps, when the body runs on a device with command queues
+    and on the host, or on devices of two kinds, inside the body of a loop it
+    compiles (an inner scan runs step by step within each step of the outer
+    loop), and inside a {!custom_jvp} tangent map under reverse mode.
 
-    Raises [Invalid_argument] if [xs] has no tensor, a scalar tensor or tensors
-    of different leading lengths, or if [n] is [0]; and, eagerly and under
-    {!val-jit}, if the body returns a carry whose visits or dtypes differ from
-    the carry it received, or outputs whose visits or dtypes differ from the
+    Everywhere else the scan is its loop, run where it is written, inside every
+    transformation, {!Total.collect} and {!Nx.Rng.with_key} around it.
+
+    Raises [Invalid_argument], before any step, if [xs] has no tensor
+    (["Rune.scan: xs has no leaf"]), a scalar tensor
+    (["Rune.scan: an xs leaf is a scalar"]), tensors of different leading
+    lengths (["Rune.scan: the xs leaves differ in their leading length"]), or if
+    [n] is [0] (["Rune.scan: xs is empty along the scan axis"]); and, at the
+    step, if the body returns a carry whose visits or dtypes differ from the
+    carry it received, or outputs whose visits, dtypes or shapes differ from the
     first step's, naming the first path where they differ and what each holds
     there, as in
     ["Rune.scan: 1: length 3 in the carry the body returned, length 2 in the
      carry it received"]. *)
+
+(** {1:jit Compilation} *)
+
+exception Jit_error of string
+(** Raised when a function cannot be compiled, while it is traced: it reads the
+    value of a traced tensor ({!Nx.item} on a value that depends on the
+    arguments, or a branch on one), draws random values that do not depend on
+    the arguments (from a captured {!Nx.Rng.t}, or {!Nx.Rng.with_key} on a
+    constant key, at counters that do not either: the draw would be one constant
+    replayed on every call), or uses an operation or dtype the target of its
+    devices cannot compute. Nothing is consumed. *)
+
+val jit :
+  ?beam:int -> ?parallel:int -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [jit ~beam ~parallel s f] is [f] compiled, a function of [f]'s type whose
+    arguments and result have the structures of the signature [s]:
+
+    {[
+    let step =
+      Rune.jit
+        Nx.Ptree.(
+          tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
+        (fun ids targets (params, opt) ->
+          let loss, grads =
+            Rune.value_and_grad mlp (objective ids targets) params
+          in
+          let params, opt = Vega.adamw_step mlp ~lr opt ~params ~grads in
+          (loss, (params, opt)))
+    ]}
+
+    An argument built with {!Nx.Ptree.( @-> )} is read; one built with
+    {!Nx.Ptree.consumes} is given up by each call, which may write the result
+    over its storage. Tensors [f] closes over are constants of the compiled
+    function.
+
+    The first application traces [f], compiles the traced computation into
+    kernels and runs them. Later applications replay the program of their key.
+    Apply [jit s f] once and reuse the result: its programs live in it.
+
+    {b Paths.} A leaf of the arguments is named by its path: the argument's
+    position counted from 0, then the leaf's path inside that argument. The
+    window of the second argument is [1.window], and a first argument that is
+    one tensor is [0]. Keys, errors and [RUNE_JIT_DEBUG] reports use these
+    paths.
+
+    {b Keys.} Two calls share a program when their arguments have the same
+    leaves at the same paths, each of the same dtype, shape and placement, and
+    of the same layout (its strides when its view is not C order over its whole
+    storage, and where the run of storage it reaches starts within 16 bytes of
+    memory), and make the same reports (an integer, a case, an option's
+    presence, a list's length) at the same paths. An integer that changes on
+    every call compiles a program per value; a value that varies belongs in a
+    tensor. [RUNE_JIT_DEBUG=1] reports each retrace with the first difference
+    from the previous call's key, such as
+    ["rune.jit: retrace: 1.window: int 3 here, int 2 in the previous key"].
+
+    {b Search.} With [beam], each kernel of the compiled function is searched
+    for the optimisations that run it fastest, keeping the [beam] fastest
+    candidates of each round and timing them on its device, which makes the
+    first call of a key much longer; [parallel] compiles the candidates on that
+    many domains. An explicit [beam], [0] (no search) included, overrides the
+    [BEAM] and [JITBEAM] settings, and [parallel] the [PARALLEL] setting, which
+    decide otherwise. The width is part of a call's key, so functions searched
+    at different widths never share a program.
+
+    {b Placement.} A call runs on the devices of its placed arguments and
+    captures, and on the host when there are none, whatever the placements'
+    backends. Every value the function computes lives where nx would place it,
+    decided as it traces: a misplaced operand raises [Invalid_argument] with
+    nx's message, and nothing moves between devices unless the function places
+    it with {!Nx.place}. A host argument is uploaded on each call, as an eager
+    operation would move it. A view is read in place, its strides expressed in
+    the program.
+
+    {b Results.} Every result leaf is a value with storage of its own. A result
+    that returns a read argument or a capture unchanged is a copy, and a value
+    [f] returns at two leaves comes back as two values, the second a copy of the
+    first.
+
+    {b Consumption.} Before its first kernel, a call marks every storage that a
+    leaf of a consumed argument reaches as consumed; nothing unmarks it. From
+    then on a read of any value over that storage, or its use as an operand or
+    an argument, raises [Invalid_argument] naming the argument and the leaf's
+    path; its shape and dtype stay readable. A consumed leaf must cover its
+    whole storage, and no other leaf of the call nor a capture of its program
+    may reach that storage: the call raises [Invalid_argument] before anything
+    runs, naming both paths, as in
+    ["Rune.jit: 0 is consumed and 1 reaches its storage"], and consumes nothing.
+    A call that raises before its first kernel consumes nothing; once execution
+    begins, consumed arguments stay consumed even if the call raises.
+
+    {b Lending.} A result may take the storage of a consumed leaf, so a loop
+    that consumes its state holds one generation of it. It does when their
+    dtypes, sizes and placements are equal, the leaf's storage starts on 16
+    bytes of memory, as fresh storage does, and writing the result there cannot
+    change what the program still reads: the result reads the leaf only where it
+    derives from it at its own index (elementwise operations, equal-width casts
+    and reshapes: an optimizer update, a window written into a cache), or does
+    not read it at all. Partners are chosen once per program: first the results
+    of an indexed write, then the other results that derive from a consumed leaf
+    at their own index, then the results that do not read one, in the order the
+    function computes them. Each storage lends at most once. On a call, storage
+    that cannot lend (memory the value borrows, or storage a compiled function
+    binds) is copied first, and the argument is still consumed.
+    [RUNE_JIT_DEBUG=1] reports each consumed leaf:
+    ["rune.jit: 2.0.keys -> result 1.0.keys reused"], [copied] when its storage
+    was copied.
+
+    {b Captures.} A capture is bound once per compiled function, at the trace
+    that meets it: one element becomes a constant of the program; a value placed
+    where the operation computes is bound in place, with no copy; any other
+    value is placed there once. The compiled function keeps what it binds
+    reachable. A closure whose capture was consumed raises at its next trace.
+    Mutating a captured tensor between calls has unspecified visibility: pass
+    values that change between calls as arguments.
+
+    {b Numerics.} A sum over an axis ({!Nx.sum}, {!Nx.mean}, the contraction of
+    {!Nx.matmul}) is the sum of its terms in an unspecified association, so
+    results differ from eager's in rounding, and at overflow in whether a term
+    overflows. A maximum over an axis is exact. Compiled float results can also
+    differ from eager's in the last bits where the compiler fuses a multiply and
+    an add or turns a division by a constant into a multiplication, and in
+    transcendental functions, which are approximations within a few units in the
+    last place; Metal flushes float32 subnormals to zero. A failed factorisation
+    gives non-finite values where eager raises {!Nx_backend.Linalg_error}.
+
+    {b Domains.} A compiled function may be called from any domain, several at
+    once, and from inside its own function. A key being compiled makes the other
+    calls with that key wait, blocking their domain, so [f] must not suspend its
+    fiber. A call returns once its work is queued, and a read of a result waits
+    for it.
+
+    {b Transformations.} Under an enclosing transformation ({!grad},
+    {!val-vmap}, an outer [jit]), [jit s f] is [f]: it runs the function, so the
+    transformation sees its operations, and checks and consumes nothing. Compile
+    outermost, differentiating {e inside} the compiled function, as [step] above
+    does, to compile the forward and backward passes together.
+
+    Raises {!Jit_error} when tracing fails, and [Invalid_argument] if [s] has no
+    argument, for a misplaced leaf or capture, for a name met with two devices,
+    and as consumption above says. *)
+
+val compiled : Nx_backend.t
+(** [compiled] is the backend that computes each operation as a program compiled
+    for the target of its operands' device, once per operation, dtypes, shapes
+    and layouts. It runs on the host and on every device that rune's compiler
+    has a target for, such as Metal and CUDA. A placement on a GPU computes
+    there with it:
+
+    {[
+    let gpu = Nx.Placement.device ~backend:Rune.compiled metal
+    let y = Nx.tanh (Nx.matmul x x) (* x placed at gpu: two programs *)
+    ]}
+
+    An operation it cannot compile raises {!Nx_backend.Refused} before any work:
+    a Fourier transform, an eigendecomposition, a complex or 4-bit dtype, or a
+    dtype the device does not compute, such as [float64] on Metal. *)
+
+(** {1:tensor Functions of one tensor}
+
+    Each is its structured form at {!Nx.Ptree.tensor}. *)
+
+val grad' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [grad' f x] is [grad Nx.Ptree.tensor f x].
+
+    Raises [Invalid_argument] if [x] is neither real nor complex, or if [f x] is
+    not a scalar. *)
+
+val value_and_grad' :
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t * ('a, 'b) Nx.t
+(** [value_and_grad' f x] is [value_and_grad Nx.Ptree.tensor f x]. It raises as
+    {!grad'} does. *)
+
+val vjp' :
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t * (('c, 'd) Nx.t -> ('a, 'b) Nx.t)
+(** [vjp' f x] is [vjp Nx.Ptree.tensor Nx.Ptree.tensor f x]. *)
+
+val jvp' :
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t * ('c, 'd) Nx.t
+(** [jvp' f x tangent] is [jvp Nx.Ptree.tensor Nx.Ptree.tensor f x tangent]. *)
+
+val vmap' :
+  ?axis:axis ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
+(** [vmap' ?axis f x] is [vmap ?axis Nx.Ptree.(tensor @-> returns tensor) f x]:
+    [f] mapped over axis 0 of [x], its result stacked along a new axis 0. *)
 
 val scan' :
   f:(('a, 'b) Nx.t -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t * ('e, 'f) Nx.t) ->
   init:('a, 'b) Nx.t ->
   ('c, 'd) Nx.t ->
   ('a, 'b) Nx.t * ('e, 'f) Nx.t
-(** [scan' ~f ~init xs] is {!scan} for a carry, rows and outputs that are single
-    tensors: it folds [f] over the slices of [xs] along axis 0 and returns the
-    final carry and the outputs stacked along a new axis 0. *)
+(** [scan' ~f ~init xs] is
+    [scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor ~f ~init xs]. *)
 
-(** {1:control Autodiff control} *)
-
-val detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [detach t] is a copy of [t] through which gradients do not flow. Use it to
-    hold a value constant inside a differentiated function, including as input
-    to an operation whose gradient is not implemented. *)
+val jit' :
+  ?beam:int ->
+  ?parallel:int ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
+(** [jit' ~beam ~parallel f] is
+    [jit ~beam ~parallel Nx.Ptree.(tensor @-> returns tensor) f]. *)

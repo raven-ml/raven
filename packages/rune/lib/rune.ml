@@ -3,379 +3,349 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let require_scalar name y =
-  if Nx.numel y <> 1 then
-    invalid_arg
-      (Printf.sprintf
-         "%s: the objective must return a scalar tensor, got shape [%s]; use \
-          vjp for non-scalar outputs"
-         name
-         (Structure.shape_string (Nx.shape y)))
+module Ptree = Nx.Ptree
 
-(* Gradients are defined with respect to real and complex leaves. A parameter
-   structure may hold others — an RNG key threaded through a compiled step, a
-   step counter, a batch of indices — and they ride along rather than being
-   differentiated: untracked, so nothing accumulates into them, and zero in the
-   gradient structure they return. An optimizer is then responsible for leaving
-   them alone; see Vega. *)
-let differentiable_leaf leaf =
-  let dt = Nx.dtype leaf in
-  Nx_dtype.is_float dt || Nx_dtype.is_complex dt
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-(* The single-tensor forms have no structure to carry a non-differentiable value
-   in, so there the dtype is simply wrong. *)
-let require_float_leaf name leaf =
-  if not (differentiable_leaf leaf) then
-    invalid_arg
-      (Printf.sprintf
-         "%s: cannot differentiate a %s tensor; gradients are defined for real \
-          and complex dtypes"
-         name
-         (Nx_dtype.to_string (Nx.dtype leaf)))
+(* [fresh x] is [x] in storage of its own, in C order from its start, when [x]
+   is an eager view: a gradient or a tangent is a computation's result, and its
+   layout is not the caller's to inherit. A traced value's layout is its
+   interpretation's. *)
+let fresh x =
+  match Nx.Repr.v x with Traced _ -> x | Host _ | Placed _ -> Nx.contiguous x
 
 (* Reverse mode *)
 
-(* The leaves of [params], aliased and tracked on a fresh tape: an alias per
-   leaf makes a tensor behind two leaves two parameters, and a capture that is
-   the same value as a leaf a constant. *)
-let tracked_params p params =
-  let params = Structure.aliases p params in
-  let tape = Tape.create () in
-  Nx.Ptree.fold p
-    (fun _ leaf () -> if differentiable_leaf leaf then Tape.track tape leaf)
-    params ();
-  (tape, params)
+(* [linearize fn p f params] is [f] applied to [params] under a recorder and a
+   forward mode whose tangents are the recorder's slots: each real or complex
+   leaf of [params] becomes a dual whose tangent is an input slot. It is the
+   tape, the forward mode, the leaves as [f] received them, and [f]'s result. *)
+let linearize fn p f params =
+  let tape = Linear.create fn in
+  let i = Jvp.create ~slots:tape fn in
+  let any = ref false in
+  let seeded =
+    Ptree.map p
+      (fun _ x ->
+        if Linear.differentiable x then begin
+          any := true;
+          Jvp.dual i x (Linear.input tape x)
+        end
+        else x)
+      params
+  in
+  if not !any then
+    invalid_argf "%s: the parameters hold no real or complex tensor" fn;
+  let y = Linear.install tape (fun () -> Jvp.install i (fun () -> f seeded)) in
+  (tape, i, seeded, y)
 
-(* The tape holds the conjugate of a gradient: a cotangent [c] of [z] pairs with
-   a tangent [v] as [Re (c * v)], which lets every complex-differentiable rule
-   multiply by its derivative and conjugate nothing. The gradient is the vector
-   that pairs as [Re (conj g * v)], so the cotangents a caller gives and the
-   gradients it gets back are conjugated at this boundary. On real dtypes
-   [Nx.conjugate] is the identity. *)
+(* [pull p tape i seeded params seed] is the gradient of [params] once [seed]
+   has added the result's cotangents: the conjugated cotangent of each leaf's
+   input slot, and zeros for a leaf with none. *)
+let pull p tape i seeded params seed =
+  let cts = Linear.cotangents tape in
+  seed cts;
+  Linear.transpose cts;
+  let gradient _ x s =
+    match Option.bind (snd (Jvp.split i s)) (Linear.cotangent cts) with
+    | Some g -> fresh (Nx.conjugate g)
+    | None -> Nx.zeros_like x
+  in
+  Ptree.map2 p gradient params seeded
 
-let cotangents tape p params =
-  Nx.Ptree.map p (fun _ leaf -> Nx.conjugate (Tape.cotangent tape leaf)) params
+let objective fn y =
+  if Nx.numel y <> 1 || not (Linear.differentiable y) then
+    invalid_arg
+      (Format.asprintf
+         "%s: the objective must return a real or complex scalar, got %a %a" fn
+         Nx.pp_dtype (Nx.dtype y) Nx.pp_shape (Nx.shape y))
+
+let value_and_grad_aux_of fn p x f params =
+  let tape, i, seeded, (y, aux) = linearize fn p f params in
+  let y, dy = Jvp.split i y in
+  objective fn y;
+  let seed cts =
+    Option.iter (fun dy -> Linear.add cts dy (Nx.ones_like y)) dy
+  in
+  let aux = Ptree.map x (fun _ v -> fst (Jvp.split i v)) aux in
+  (y, pull p tape i seeded params seed, aux)
+
+let value_and_grad_of fn p f params =
+  let y, g, () =
+    value_and_grad_aux_of fn p Ptree.unit (fun x -> (f x, ())) params
+  in
+  (y, g)
 
 let value_and_grad p f params =
-  let tape, params = tracked_params p params in
-  let y = Reverse.install tape (fun () -> f params) in
-  require_scalar "Rune.value_and_grad" y;
-  Tape.accumulate tape y (Nx.ones_like y);
-  Tape.backward tape;
-  (y, cotangents tape p params)
+  value_and_grad_of "Rune.value_and_grad" p f params
 
-let grad p f params = snd (value_and_grad p f params)
+let grad p f params = snd (value_and_grad_of "Rune.grad" p f params)
 
-let value_and_grad_aux p f params =
-  let aux = ref None in
-  let f' ps =
-    let y, a = f ps in
-    aux := Some a;
-    y
+let value_and_grad_aux p x f params =
+  value_and_grad_aux_of "Rune.value_and_grad_aux" p x f params
+
+let vjp_of fn p q f params =
+  let tape, i, seeded, y = linearize fn p f params in
+  let seed cts ct =
+    let add _ v ct =
+      Option.iter
+        (fun slot -> Linear.add cts slot (Nx.conjugate ct))
+        (snd (Jvp.split i v));
+      v
+    in
+    ignore
+      (Structure.map2 fn q ~this:"the result" ~that:"the cotangents" add y ct)
   in
-  let y, grads = value_and_grad p f' params in
-  match !aux with
-  | Some a -> (y, grads, a)
-  | None -> assert false (* [f'] completed, so [aux] was set. *)
+  let pullback ct = pull p tape i seeded params (fun cts -> seed cts ct) in
+  (Ptree.map q (fun _ v -> fst (Jvp.split i v)) y, pullback)
 
-(* Seed each result leaf with its cotangent, checking the cotangents against the
-   result. *)
-let seed fn tape q y cts =
-  ignore
-    (Structure.map2 fn q ~this:"the result" ~that:"the cotangents"
-       (fun path yl ct ->
-         if Nx.shape yl <> Nx.shape ct then
-           invalid_arg
-             (Printf.sprintf
-                "%s: %s: cotangent shape [%s] does not match result shape [%s]"
-                fn (Structure.describe path)
-                (Structure.shape_string (Nx.shape ct))
-                (Structure.shape_string (Nx.shape yl)));
-         Tape.accumulate tape yl (Nx.conjugate ct);
-         yl)
-       y cts)
-
-let vjp p q f params cts =
-  let tape, params = tracked_params p params in
-  let y = Reverse.install tape (fun () -> f params) in
-  seed "Rune.vjp" tape q y cts;
-  Tape.backward tape;
-  (y, cotangents tape p params)
-
-let vjp_fun p q f params =
-  let tape, params = tracked_params p params in
-  let y = Reverse.install tape (fun () -> f params) in
-  let pullback cts =
-    Tape.reset_cotangents tape;
-    seed "Rune.vjp_fun" tape q y cts;
-    Tape.backward tape;
-    cotangents tape p params
-  in
-  (y, pullback)
+let vjp p q f params = vjp_of "Rune.vjp" p q f params
 
 (* Forward mode *)
 
-let output_tangent store y =
-  match Tensor_map.find store y with Some dy -> dy | None -> Nx.zeros_like y
-
-(* [f params] under the forward handler, with each leaf of [params] aliased and
-   seeded with its tangent. *)
-let run_forward fn p f params tangents =
-  let params = Structure.aliases p params in
-  let store = Tensor_map.create () in
-  ignore
-    (Structure.map2 fn p ~this:"the parameters" ~that:"the tangents"
-       (fun path leaf tangent ->
-         if Nx.shape leaf <> Nx.shape tangent then
-           invalid_arg
-             (Printf.sprintf
-                "%s: %s: tangent shape [%s] does not match parameter shape [%s]"
-                fn (Structure.describe path)
-                (Structure.shape_string (Nx.shape tangent))
-                (Structure.shape_string (Nx.shape leaf)));
-         Tensor_map.set store leaf tangent;
-         leaf)
-       params tangents);
-  (store, Forward.install store (fun () -> f params))
-
-let jvp p q f params tangents =
-  let store, y = run_forward "Rune.jvp" p f params tangents in
-  (y, Nx.Ptree.map q (fun _ yl -> output_tangent store yl) y)
-
-(* Custom differentiation rules *)
-
-let custom_vjp = Custom.custom_vjp
-let custom_jvp = Custom.custom_jvp
-
-(* Vectorizing maps *)
-
-(* A result of the mapped function outside the map: a lane's batched tensor,
-   or a constant broadcast along the batch axis. *)
-let broadcast_output st y = Vmap.ensure_batched st y
-
-type axis = Axis.t
-
-let axis = Axis.make
-let lanes = Axis.lanes
-let lane_index = Axis.lane_index
-
-let vmap ?axis fn =
-  let (Structure.Uncurried u) = Structure.uncurry "Rune.vmap" fn in
-  fun f ->
-    u.curry (fun args ->
-        let batch = ref None in
-        Nx.Ptree.fold u.args
-          (fun path leaf () ->
-            let at () = Nx.Ptree.Path.to_string path in
-            match (Nx.shape leaf, !batch) with
-            | [||], _ ->
-                invalid_arg
-                  (Printf.sprintf
-                     "Rune.vmap: %s: a scalar; vmap maps axis 0 of every leaf"
-                     (at ()))
-            | shape, None -> batch := Some (shape.(0), at ())
-            | shape, Some (n, first) ->
-                if shape.(0) <> n then
-                  invalid_arg
-                    (Printf.sprintf
-                       "Rune.vmap: %s: %d rows along axis 0, %s: %d" (at ())
-                       shape.(0) first n))
-          args ();
-        let batch_size =
-          match !batch with
-          | Some (n, _) -> n
-          | None -> invalid_arg "Rune.vmap: the arguments have no leaf to map"
-        in
-        let st = Vmap.create ?axis ~batch_size () in
-        let args = Nx.Ptree.map u.args (fun _ leaf -> Vmap.lane st leaf) args in
-        let y = Vmap.install st (fun () -> u.apply f args) in
-        Nx.Ptree.map u.result (fun _ yl -> broadcast_output st yl) y)
-
-let vmap' ?axis f x =
-  if Array.length (Nx.shape x) = 0 then
-    invalid_arg "Rune.vmap': cannot map a scalar";
-  let st = Vmap.create ?axis ~batch_size:(Nx.shape x).(0) () in
-  let x = Vmap.lane st x in
-  broadcast_output st (Vmap.install st (fun () -> f x))
-
-(* Totals *)
-
-module Total = Total
-
-(* Single-tensor variants *)
-
-let tracked_tensor x =
-  let x = Structure.alias x in
-  let tape = Tape.create () in
-  Tape.track tape x;
-  (tape, x)
-
-let run_reverse' f x ~seed =
-  let tape, x = tracked_tensor x in
-  let y = Reverse.install tape (fun () -> f x) in
-  Tape.accumulate tape y (Nx.conjugate (seed y));
-  Tape.backward tape;
-  (y, Nx.conjugate (Tape.cotangent tape x))
-
-let value_and_grad' f x =
-  require_float_leaf "Rune.value_and_grad'" x;
-  run_reverse' f x ~seed:(fun y ->
-      require_scalar "Rune.value_and_grad'" y;
-      Nx.ones_like y)
-
-let grad' f x = snd (value_and_grad' f x)
-let vjp' f x cotangent = run_reverse' f x ~seed:(fun _ -> cotangent)
-
-let vjp_fun' f x =
-  let tape, x = tracked_tensor x in
-  let y = Reverse.install tape (fun () -> f x) in
-  let pullback ct =
-    Tape.reset_cotangents tape;
-    Tape.accumulate tape y (Nx.conjugate ct);
-    Tape.backward tape;
-    Nx.conjugate (Tape.cotangent tape x)
+let jvp_of fn p q f params tangents =
+  let i = Jvp.create fn in
+  let any = ref false in
+  let duals =
+    Structure.map2 fn p ~this:"the parameters" ~that:"the tangents"
+      (fun _ x dx ->
+        if Linear.differentiable x then begin
+          any := true;
+          Jvp.dual i x dx
+        end
+        else x)
+      params tangents
   in
-  (y, pullback)
+  if not !any then
+    invalid_argf "%s: the parameters hold no real or complex tensor" fn;
+  let y = Jvp.install i (fun () -> f duals) in
+  ( Ptree.map q (fun _ v -> fst (Jvp.split i v)) y,
+    Ptree.map q (fun _ v -> fresh (Jvp.tangent i v)) y )
 
-let jvp' f x tangent =
-  if Nx.shape x <> Nx.shape tangent then
-    invalid_arg
-      (Printf.sprintf
-         "Rune.jvp': tangent shape [%s] does not match parameter shape [%s]"
-         (Structure.shape_string (Nx.shape tangent))
-         (Structure.shape_string (Nx.shape x)));
-  let x = Structure.alias x in
-  let store = Tensor_map.create () in
-  Tensor_map.set store x tangent;
-  let y = Forward.install store (fun () -> f x) in
-  (y, output_tangent store y)
+let jvp p q f params tangents = jvp_of "Rune.jvp" p q f params tangents
 
-(* Gradient checkpointing *)
+(* Controlling differentiation *)
 
-let remat fn =
-  let (Structure.Uncurried u) = Structure.uncurry "Rune.remat" fn in
-  fun f ->
-    u.curry (fun params ->
-        Remat.run
-          (Remat.Call
-             {
-               params_s = u.args;
-               result_s = u.result;
-               params;
-               f = u.apply f;
-               residuals = false;
-             }))
+let detach x = Construct.perform (Detach x)
 
-(* Jacobians *)
-
-(* [basis_like y] is a [numel y; shape y...] tensor whose k-th slice is the k-th
-   standard basis element of [y]'s space. *)
-let basis_like (type a b) (y : (a, b) Nx.t) : (a, b) Nx.t =
-  let n = Nx.numel y in
-  Nx.reshape (Array.append [| n |] (Nx.shape y)) (Nx.eye (Nx.dtype y) n)
-
-let jacrev' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
-    (a, b) Nx.t =
-  (* [vjp_fun'] returns the primal output and records its reusable pullback in
-     the same forward pass. Derive the row basis from that output rather than
-     evaluating [f] separately for its shape. *)
-  let y, pullback = vjp_fun' f x in
-  (* Row k of the pullback is the gradient of [Re y_k], the conjugate of row k
-     of the Jacobian of a complex-differentiable [f]. *)
-  let rows = vmap' (fun e -> Nx.conjugate (pullback e)) (basis_like y) in
-  Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) (Nx.contiguous rows)
-
-let jacfwd' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
-    (c, d) Nx.t =
-  let cols = vmap' (fun v -> snd (jvp' f x v)) (basis_like x) in
-  (* [cols] is [numel x; shape y...], so it supplies the output shape without a
-     separate evaluation of [f]. Move its input axis last. *)
-  let cols_shape = Nx.shape cols in
-  let rank = Array.length cols_shape in
-  let cols = Nx.moveaxis 0 (rank - 1) cols in
-  let y_shape = Array.sub cols_shape 1 (rank - 1) in
-  Nx.reshape (Array.append y_shape (Nx.shape x)) (Nx.contiguous cols)
-
-(* Gradient checking *)
+type move = { move : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 
 let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
-  let scalar_f64 t = Nx.item [] (Nx.reshape [||] (Nx.cast Nx.float64 t)) in
-  let g = grad p f params in
-  (* Two deterministic directions: all-ones, and a params-derived direction so
-     the two are independent for non-constant params. *)
+  let scalar t = Nx.item [] (Nx.reshape [||] (Nx.cast Nx.float64 t)) in
+  let like x v = Nx.full (Nx.dtype x) [||] (Nx_dtype.of_float (Nx.dtype x) v) in
+  let g = snd (value_and_grad_of "Rune.check_grads" p f params) in
+  (* A direction moves the real and complex leaves; the others are carried. *)
+  let direction { move } =
+    Ptree.map p
+      (fun _ x -> if Linear.differentiable x then move x else Nx.zeros_like x)
+      params
+  in
   let directions =
     [
-      ("ones", Nx.Ptree.map p (fun _ leaf -> Nx.ones_like leaf) params);
+      ("ones", direction { move = Nx.ones_like });
       ( "params-derived",
-        Nx.Ptree.map p
-          (fun _ leaf ->
-            Nx.add (Nx.sin leaf) (Derivs.float_scalar_like leaf 1.1))
-          params );
+        direction { move = (fun x -> Nx.add (Nx.sin x) (like x 1.1)) } );
     ]
   in
   let check (name, v) =
     let bump s =
-      Nx.Ptree.map2 p
-        (fun _ leaf vl ->
-          Nx.add leaf (Nx.mul vl (Derivs.float_scalar_like vl s)))
-        params v
+      Ptree.map2 p (fun _ x v -> Nx.add x (Nx.mul v (like v s))) params v
     in
     let numeric =
-      (scalar_f64 (f (bump eps)) -. scalar_f64 (f (bump (-.eps))))
-      /. (2.0 *. eps)
+      (scalar (f (bump eps)) -. scalar (f (bump (-.eps)))) /. (2. *. eps)
     in
-    let analytic = ref 0.0 in
+    let analytic = ref 0. in
     ignore
-      (Nx.Ptree.map2 p
-         (fun _ gl vl ->
-           analytic :=
-             !analytic +. scalar_f64 (Nx.sum (Nx.mul (Nx.conjugate gl) vl));
-           gl)
+      (Ptree.map2 p
+         (fun _ g v ->
+           analytic := !analytic +. scalar (Nx.sum (Nx.mul (Nx.conjugate g) v));
+           g)
          g v);
     if
       Float.abs (!analytic -. numeric)
-      <= tol *. Float.max 1.0 (Float.abs numeric)
+      <= tol *. Float.max 1. (Float.abs numeric)
     then Ok ()
     else
       Error
         (Printf.sprintf
-           "check_grads: directional derivative along %s is %g but the \
-            gradient predicts %g"
+           "Rune.check_grads: the directional derivative along %s is %g, and \
+            the gradient predicts %g"
            name numeric !analytic)
   in
   List.fold_left
-    (fun acc d -> match acc with Ok () -> check d | e -> e)
+    (fun acc d -> match acc with Ok () -> check d | Error _ -> acc)
     (Ok ()) directions
 
-(* Control flow. [scan] attempts the staged [Scan.E_scan] effect, which jit
-   compiles as a loop; when no handler claims it, the eager fold runs, observed
-   by whatever transformation handlers are installed. *)
+(* Custom differentiation rules *)
 
-let scan = Scan.scan
+let custom_jvp p q rule args =
+  Construct.perform (Custom (Jvp_rule { p; q; rule; args; value = None }))
 
-let scan' ~f ~init xs =
-  Scan.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor ~f ~init xs
+let custom_vjp p q rule args =
+  Construct.perform (Custom (Vjp_rule { p; q; rule; args }))
 
-(* Just-in-time compilation *)
+(* Gradient checkpointing *)
 
-exception Jit_error = Jit.Jit_error
+let remat s =
+  let (Structure.Signature u) = Structure.uncurry "Rune.remat" s in
+  fun f ->
+    u.curry (fun args ->
+        Construct.perform
+          (Remat
+             {
+               p = u.args;
+               q = u.result;
+               f = u.apply f;
+               args;
+               recomputed = false;
+             }))
 
-let device = Jit.device
-let devices = Jit.devices
-let default_device = Jit.default_device
-let jit = Jit.jit
-let jit' = Jit.jit'
+(* Vectorizing maps *)
 
-type jit_stats = Jit.stats = {
-  bytes_to_device : int;
-  bytes_from_device : int;
-  resident_bytes : int;
-  reused_bytes : int;
-}
+type axis = Construct.axis
 
-let jit_stats = Jit.stats
-let reset_jit_stats = Jit.reset_stats
+let axis () = Type.Id.make ()
 
-(* Autodiff control *)
+(* [length fn s args] is the common length of the first axis of [args]' tensors,
+   which a map maps over. *)
+let length fn s args =
+  let first = ref None in
+  Ptree.fold s
+    (fun path x () ->
+      let at = Ptree.Path.to_string path in
+      match (Nx.shape x, !first) with
+      | [||], _ -> invalid_argf "%s: %s: a scalar; a map maps axis 0" fn at
+      | shape, None -> first := Some (shape.(0), at)
+      | shape, Some (n, first) ->
+          if shape.(0) <> n then
+            invalid_argf "%s: %s: %d rows along axis 0, %s: %d" fn at shape.(0)
+              first n)
+    args ();
+  match !first with
+  | Some (n, _) -> n
+  | None -> invalid_arg (fn ^ ": the arguments have no tensor to map")
 
-let detach t = Pause.during (fun () -> Nx.copy t)
+let vmap_of fn ?axis s =
+  let (Structure.Signature u) = Structure.uncurry fn s in
+  fun f ->
+    u.curry (fun args ->
+        let m = Vmap.create ?axis fn (length fn u.args args) in
+        let args = Ptree.map u.args (fun _ x -> Vmap.lane m x) args in
+        let y = Vmap.install m (fun () -> u.apply f args) in
+        Ptree.map u.result (fun _ y -> Vmap.batched m y) y)
+
+let vmap ?axis s = vmap_of "Rune.vmap" ?axis s
+
+(* Jacobians *)
+
+(* A [numel x; shape x...] tensor whose [k]-th row is the [k]-th standard basis
+   element of [x]'s space. *)
+let basis x =
+  let n = Nx.numel x in
+  Nx.reshape (Array.append [| n |] (Nx.shape x)) (Nx.eye (Nx.dtype x) n)
+
+let jacfwd' f x =
+  let fn = "Rune.jacfwd'" in
+  let one = Ptree.tensor in
+  let cols =
+    vmap_of fn
+      Ptree.(one @-> returns one)
+      (fun v -> snd (jvp_of fn one one f x v))
+      (basis x)
+  in
+  let r = Nx.ndim cols in
+  let y_shape = Array.sub (Nx.shape cols) 1 (r - 1) in
+  Nx.reshape
+    (Array.append y_shape (Nx.shape x))
+    (Nx.contiguous (Nx.moveaxis 0 (r - 1) cols))
+
+let jacrev' f x =
+  let fn = "Rune.jacrev'" in
+  let one = Ptree.tensor in
+  let y, pullback = vjp_of fn one one f x in
+  (* Row [k] of the pullback is the gradient of [Re y_k], the conjugate of row
+     [k] of the Jacobian. *)
+  let rows =
+    vmap_of fn
+      Ptree.(one @-> returns one)
+      (fun e -> Nx.conjugate (pullback e))
+      (basis y)
+  in
+  Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) (Nx.contiguous rows)
+
+let lanes a x = Construct.perform (Lanes (a, x))
+let lane_index ?axis () = Construct.perform (Lane_index axis)
+
+(* Totals *)
+
+module Total = struct
+  type ('a, 'b) t = ('a, 'b) Construct.total
+
+  let make () = Type.Id.make ()
+  let add t v = Construct.perform (Add (t, v))
+  let collect = Total.collect
+end
+
+(* Loops *)
+
+let steps fn xs =
+  let lead (Nx.P x) =
+    match Nx.shape x with
+    | [||] -> invalid_arg (fn ^ ": an xs leaf is a scalar")
+    | shape -> shape.(0)
+  in
+  match xs with
+  | [] -> invalid_arg (fn ^ ": xs has no leaf")
+  | x :: rest ->
+      let n = lead x in
+      if List.exists (fun x -> lead x <> n) rest then
+        invalid_arg (fn ^ ": the xs leaves differ in their leading length");
+      if n = 0 then invalid_arg (fn ^ ": xs is empty along the scan axis")
+
+let scan_of fn cs xs_s ys_s ~f ~init xs =
+  let req_xs, _ = Ptree.flatten xs_s xs in
+  steps fn req_xs;
+  let first = ref None in
+  let req_step c_leaves x_leaves =
+    let c = Ptree.rebuild cs ~like:init c_leaves in
+    let c', y = f c (Ptree.rebuild xs_s ~like:xs x_leaves) in
+    Structure.check fn cs ~this:"the carry the body returned" c'
+      ~that:"the carry it received" c;
+    (match !first with
+    | None -> first := Some y
+    | Some y0 ->
+        ignore
+          (Structure.map2 fn ys_s ~this:"a step's outputs"
+             ~that:"the first step's outputs"
+             (fun _ y _ -> y)
+             y y0));
+    (fst (Ptree.flatten cs c'), fst (Ptree.flatten ys_s y))
+  in
+  let req_carry, _ = Ptree.flatten cs init in
+  let r = Construct.scan { req_carry; req_xs; req_step; req_reverse = false } in
+  match !first with
+  | Some y0 ->
+      (Ptree.rebuild cs ~like:init r.r_carry, Ptree.rebuild ys_s ~like:y0 r.r_ys)
+  | None -> assert false (* Every answer runs the body at least once. *)
+
+let scan cs xs_s ys_s ~f ~init xs = scan_of "Rune.scan" cs xs_s ys_s ~f ~init xs
+
+(* Compilation *)
+
+exception Jit_error = Lower.Jit_error
+
+let jit ?beam ?parallel s f = Jit.jit ?beam ?parallel "Rune.jit" s f
+let compiled = Compiled.backend
+
+(* Functions of one tensor *)
+
+let t = Ptree.tensor
+let grad' f x = snd (value_and_grad_of "Rune.grad'" t f x)
+let value_and_grad' f x = value_and_grad_of "Rune.value_and_grad'" t f x
+let vjp' f x = vjp_of "Rune.vjp'" t t f x
+let jvp' f x dx = jvp_of "Rune.jvp'" t t f x dx
+let vmap' ?axis f x = vmap_of "Rune.vmap'" ?axis Ptree.(t @-> returns t) f x
+let scan' ~f ~init xs = scan_of "Rune.scan'" t t t ~f ~init xs
+
+let jit' ?beam ?parallel f =
+  Jit.jit ?beam ?parallel "Rune.jit'" Ptree.(tensor @-> returns tensor) f

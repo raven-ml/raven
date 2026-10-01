@@ -1,0 +1,23 @@
+; rune exposes only [Rune]. The suites that reach its other modules, and the
+; constructs' exhaustiveness check, link this copy of the library's sources,
+; whose every module is reachable as [Rune_internals.M].
+; A test links rune or rune_internals, never both. Keep the libraries and
+; instrumentation the same as ../../lib/dune's.
+
+(copy_files#
+ (files ../../lib/*.{ml,mli}))
+
+(library
+ (name rune_internals)
+ (libraries
+  nx
+  nx.dtype
+  nx.array
+  nx.backend
+  nx.device
+  tolk.next
+  tolk.next.engine)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

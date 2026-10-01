@@ -1,3 +1,48 @@
 (library
- (name rune_test_support)
- (libraries rune nx nx.dtype nx.array nx.device windtrap))
+ (name rune_test)
+ (wrapped false)
+ (modules expr oracle witness)
+ (libraries windtrap nx nx.dtype nx.device))
+
+; The lowering suites' support: traced functions and the values their graphs
+; compute. It links rune_internals, so a suite that links it links no rune.
+
+(library
+ (name rune_lowering_test)
+ (wrapped false)
+ (modules programs traces)
+ (libraries
+  windtrap
+  rune_internals
+  tolk.next
+  tolk_next_test
+  tolk_next_run
+  tolk.next.engine
+  nx
+  nx.array
+  nx.device
+  nx.dtype))
+
+; The Metal and NVIDIA devices, where they build.
+
+(library
+ (name rune_test_devices)
+ (wrapped false)
+ (modules metal nvidia)
+ (libraries
+  nx.device
+  nx.cuda.device
+  nx.nv.device
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))
+
+; The rule suites' cases, rows and references.
+
+(library
+ (name rune_rules)
+ (wrapped false)
+ (modules case reference row)
+ (libraries windtrap rune nx nx.backend nx.device nx.dtype))

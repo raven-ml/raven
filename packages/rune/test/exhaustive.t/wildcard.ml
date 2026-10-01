@@ -1,6 +1,6 @@
 (* An interpreter that covers what it forgets with a wildcard. *)
 
-open Nx.Op
+open Rune_internals
 
-let run : type r. r t -> r =
- fun op -> match[@warning "@4@8"] op with Read _ -> eval op | _ -> eval op
+let call : type r. r Construct.t -> (unit -> r) option =
+ fun c -> match[@warning "@4@8"] c with Detach _ -> None | _ -> None

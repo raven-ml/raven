@@ -3,120 +3,93 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Totals: write-only sums that code anywhere inside a function adds to, read by
-   the scope that collects them once the function returns.
+let shape_mismatch v zero =
+  invalid_arg
+    (Format.asprintf "Rune.Total.add: shape %a does not match the total's %a"
+       Nx.pp_shape (Nx.shape v) Nx.pp_shape (Nx.shape zero))
 
-   [add t v] performs [E_add]; unhandled, no scope of [t] is open and the
-   addition is dropped. A transformation passes an addition on in the context of
-   its own: vmap sums its lanes, reverse drops one it makes again while
-   rerunning code, the others pass it as it is.
-
-   The scope discharges its total itself. Code a handler runs away from its call
-   site, a staged scan's step or a remat's function, runs under a nested scope
-   started at zero whose sum leaves as a value: an extra carry leaf of the scan,
-   an extra result of the remat. The scope adds it. A trace that another claimer
-   restarts discards its additions with its carry, and a replay computes them
-   again. *)
-
-type ('a, 'b) t = ('a, 'b) Nx.t Type.Id.t
-
-let make () = Type.Id.make ()
-
-type _ Effect.t += E_add : ('a, 'b) t * ('a, 'b) Nx.t -> unit Effect.t
-
-let add t v = try Effect.perform (E_add (t, v)) with Effect.Unhandled _ -> ()
-
-(* [dropping f] is [f ()] with every addition it makes dropped. *)
-let dropping f =
-  let rule : type c. c Effect.t -> (unit -> c) option = function
-    | E_add _ -> Some (fun () -> ())
-    | _ -> None
+(* [threaded t ~zero r] is the scan [r] with one more carry leaf, the sum of
+   each run of the step's additions to [t] from the carried sum, performed
+   outward; it is the result and the final sum. *)
+let rec threaded : type a b.
+    (a, b) Construct.total ->
+    zero:(a, b) Nx.t ->
+    Scan.request ->
+    Scan.result * (a, b) Nx.t =
+ fun t ~zero r ->
+  let n = List.length r.req_carry in
+  let split l = (List.filteri (fun i _ -> i < n) l, List.nth l n) in
+  let req_step c x =
+    let c, s = split c in
+    let (c', y), s' =
+      collect t ~zero:(Nx.unpack (Nx.dtype zero) s) (fun () -> r.req_step c x)
+    in
+    (c' @ [ Nx.P s' ], y)
   in
-  let effc : type c. c Effect.t -> ((c, _) Effect.Deep.continuation -> _) option
-      =
-   fun eff -> Option.map Answer.deliver (rule eff)
+  let result =
+    Construct.perform
+      (Scan
+         {
+           r with
+           req_carry = r.req_carry @ [ Nx.P (Nx.zeros_like zero) ];
+           req_step;
+         })
   in
-  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
+  let carry, s = split result.r_carry in
+  ({ result with r_carry = carry }, Nx.unpack (Nx.dtype zero) s)
 
-let rec collect : type a b r.
-    (a, b) t -> zero:(a, b) Nx.t -> (unit -> r) -> r * (a, b) Nx.t =
+and collect : type a b r.
+    (a, b) Construct.total -> zero:(a, b) Nx.t -> (unit -> r) -> r * (a, b) Nx.t
+    =
  fun t ~zero f ->
-  let open Effect.Deep in
-  let dtype = Nx.dtype zero and shape = Nx.shape zero in
   let total = ref zero in
   let receive v =
-    if Nx.shape v <> shape then
-      invalid_arg
-        (Printf.sprintf
-           "Rune.Total.add: shape [%s] does not match the total's [%s]"
-           (Structure.shape_string (Nx.shape v))
-           (Structure.shape_string shape));
+    if Nx.shape v <> Nx.shape zero then shape_mismatch v zero;
     total := Nx.add !total v
   in
-  (* The step passes on with one more carry leaf, the sum of the received step's
-     additions, started at zero every time the scan runs. *)
-  let stage (req : Scan.scan_req) =
-    let nc = List.length req.req_carry in
-    let run c x =
-      let c, s = Scan.split nc c in
-      let s = Nx.unpack dtype (List.hd s) in
-      let (c', y), s' = collect t ~zero:s (fun () -> req.req_step.run c x) in
-      (c' @ [ Nx.P s' ], y)
-    in
-    let res =
-      Effect.perform
-        (Scan.E_scan
-           {
-             req with
-             req_carry = req.req_carry @ [ Nx.P (Nx.zeros_like zero) ];
-             req_step = { run };
-           })
-    in
-    let c, s = Scan.split nc res.r_carry in
-    receive (Nx.unpack dtype (List.hd s));
-    { res with r_carry = c }
-  in
-  let rule : type c. c Effect.t -> (unit -> c) option = function
-    | E_add (t', v) -> (
+  let answer : type c. c Construct.t -> (unit -> c) option =
+   fun c ->
+    match[@warning "@4@8"] c with
+    | Add (t', v) -> (
         match Type.Id.provably_equal t t' with
-        | Some Type.Equal -> Some (fun () -> receive v)
+        | Some Equal -> Some (fun () -> receive v)
         | None -> None)
-    (* A scan no stager lies beyond is declined: its performer folds it where it
-       performed it, inside this scope, past no handler. *)
-    | Scan.E_scan_probe -> Some Scan.probe
-    | Scan.E_scan req ->
+    | Scan r ->
         Some
           (fun () ->
-            Scan.pass_on
-              ~fold:(fun () -> raise Scan.Not_staged)
-              (fun () -> stage req))
-    | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals }) ->
+            let result, s = threaded t ~zero r in
+            receive s;
+            result)
+    | Remat { p; q; f; args; recomputed } ->
+        let f args = collect t ~zero:(Nx.zeros_like zero) (fun () -> f args) in
+        let q = Nx.Ptree.pair q Nx.Ptree.tensor in
         Some
           (fun () ->
-            let f params =
-              collect t ~zero:(Nx.zeros_like zero) (fun () -> f params)
-            in
             let y, s =
-              Remat.run
-                (Remat.Call
-                   {
-                     params_s;
-                     result_s = Nx.Ptree.pair result_s Nx.Ptree.tensor;
-                     params;
-                     f;
-                     residuals;
-                   })
+              Construct.perform (Remat { p; q; f; args; recomputed })
             in
             receive s;
             y)
-    | _ -> None
+    | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
+        None
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
-   fun eff -> Option.map Answer.deliver (rule eff)
+  let marker = { Nx.Op.run = Nx.Op.eval; claims = (fun _ -> false) } in
+  let r = Construct.install { op = Some marker; call = answer } f in
+  (r, !total)
+
+let rec discarding : type r. (unit -> r) -> r =
+ fun f ->
+  let answer : type c. c Construct.t -> (unit -> c) option =
+   fun c ->
+    match[@warning "@4@8"] c with
+    | Add _ -> Some ignore
+    | Scan r ->
+        let req_step c x = discarding (fun () -> r.req_step c x) in
+        Some (fun () -> Construct.perform (Scan { r with req_step }))
+    | Remat ({ f; _ } as r) ->
+        let f args = discarding (fun () -> f args) in
+        Some (fun () -> Construct.perform (Remat { r with f }))
+    | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
+        None
   in
-  (* The scope interprets its operations as they are, so that a compiled
-     function called inside it runs as code whose additions reach it. *)
-  match_with
-    (fun () -> Nx.Op.intercept { run = Nx.Op.eval; claims = (fun _ -> true) } f)
-    ()
-    { retc = (fun r -> (r, !total)); exnc = raise; effc }
+  Construct.install { op = None; call = answer } f

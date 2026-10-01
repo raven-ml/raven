@@ -4,21 +4,27 @@
   ---------------------------------------------------------------------------*)
 
 (* Totals. The oracle is the plain program: an addition counts once per
-   execution of the code that makes it, eagerly, staged, replayed, under a map
-   (as the loop over its lanes) and under reverse mode, which reruns code. *)
+   execution of the code that makes it, under a scope, a scan, a remat, a map
+   (as the loop over its lanes) and reverse mode, which runs code again. The
+   compiled cases that compile most are slow. *)
 
 open Windtrap
-open Rune_test_support.Support
+
+let f64 = Nx.float64
+let vec a = Nx.create f64 [| Array.length a |] a
+let scalar x = Nx.scalar f64 x
+let exact () = Oracle.tensor ()
+let close () = Oracle.tensor ~rel:1e-12 ~abs:1e-12 ()
 
 let series seed shape =
   let n = Array.fold_left ( * ) 1 shape in
   Nx.create f64 shape
-    (Array.init n (fun i -> Float.sin (Float.of_int ((7 * i) + seed)) /. 2.0))
+    (Array.init n (fun i -> Float.sin (Float.of_int ((7 * i) + seed)) /. 2.))
 
-let w0 = series 1 [| 3; 3 |]
-let h0 = vec64 [| 0.1; -0.2; 0.3 |]
-let lane i x = Nx.slice [ Nx.I i ] x
-let stack n f = Nx.stack ~axis:0 (List.init n f)
+let w0 () = series 1 [| 3; 3 |]
+let h0 () = vec [| 0.1; -0.2; 0.3 |]
+let lane i x = Nx.get [ i ] x
+let stack n f = Nx.stack (List.init n f)
 let zero () = Nx.zeros f64 [||]
 let cell w h x = Nx.tanh (Nx.add (Nx.matmul w h) x)
 
@@ -33,117 +39,76 @@ let rollout ?(runs = ref 0) ?(add = Rune.Total.add) t w h xs =
          (h, h))
        ~init:h xs)
 
-(* [staged ~runs f] runs the checks [f count n] at lengths 4 and 8, and checks
-   that the body counted [runs] runs in [count] at both. *)
-let staged ~runs f =
-  List.iter
-    (fun n ->
-      let count = ref 0 in
-      f count n;
-      equal ~msg:(Printf.sprintf "body runs, length %d" n) int runs !count)
-    [ 4; 8 ]
+let expected_total xs =
+  Nx.sum (rollout ~add:(fun _ _ -> ()) (Rune.Total.make ()) (w0 ()) (h0 ()) xs)
 
 (* Scopes *)
 
-let test_no_scope_is_inert () =
-  let t = Rune.Total.make () in
-  let xs = series 2 [| 4; 3 |] in
-  let ys = rollout t w0 h0 xs in
-  let _, total = Rune.Total.collect t ~zero:(zero ()) (fun () -> ()) in
-  check_arr ~msg:"no addition" [| 0.0 |] total;
-  check_arr ~msg:"outside a scope" (to_arr (Rune.jit' (rollout t w0 h0) xs)) ys
-
-let test_innermost_scope () =
-  let t = Rune.Total.make () and u = Rune.Total.make () in
-  let (inner, u_total), outer =
-    Rune.Total.collect t ~zero:(Nx.scalar f64 10.0) (fun () ->
-        Rune.Total.add t (Nx.scalar f64 1.0);
-        let inner =
+let scope_tests =
+  [
+    test "with no scope an addition does nothing" (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
+        let ys = rollout t (w0 ()) (h0 ()) xs in
+        let _, total = Rune.Total.collect t ~zero:(zero ()) (fun () -> ()) in
+        equal ~msg:"no addition" (exact ()) (zero ()) total;
+        equal ~msg:"the result" (exact ())
+          (rollout ~add:(fun _ _ -> ()) t (w0 ()) (h0 ()) xs)
+          ys);
+    test "the innermost scope of a total collects" (fun () ->
+        let t = Rune.Total.make () and u = Rune.Total.make () in
+        let (inner, u_total), outer =
+          Rune.Total.collect t ~zero:(scalar 10.) (fun () ->
+              Rune.Total.add t (scalar 1.);
+              let _, inner =
+                Rune.Total.collect t ~zero:(zero ()) (fun () ->
+                    Rune.Total.add t (scalar 2.))
+              in
+              let _, u_total =
+                Rune.Total.collect u ~zero:(zero ()) (fun () ->
+                    Rune.Total.add t (scalar 4.);
+                    Rune.Total.add u (scalar 8.))
+              in
+              (inner, u_total))
+        in
+        equal ~msg:"inner" (exact ()) (scalar 2.) inner;
+        equal ~msg:"another total" (exact ()) (scalar 8.) u_total;
+        equal ~msg:"outer, from its zero" (exact ()) (scalar 15.) outer);
+    test "an addition of another shape is refused where it is made" (fun () ->
+        let t = Rune.Total.make () in
+        let _, total =
           Rune.Total.collect t ~zero:(zero ()) (fun () ->
-              Rune.Total.add t (Nx.scalar f64 2.0))
+              Rune.Total.add t (scalar 1.);
+              raises_match (Exn.invalid_arg ~substring:"Rune.Total.add")
+                (fun () -> Rune.Total.add t (h0 ())))
         in
-        let u_total =
-          snd
-            (Rune.Total.collect u ~zero:(zero ()) (fun () ->
-                 Rune.Total.add t (Nx.scalar f64 4.0);
-                 Rune.Total.add u (Nx.scalar f64 8.0)))
+        equal ~msg:"an addition before the caught refusal counts" (exact ())
+          (scalar 1.) total);
+    test "an exception leaves the scope" (fun () ->
+        let t = Rune.Total.make () in
+        raises Exit (fun () ->
+            Rune.Total.collect t ~zero:(zero ()) (fun () ->
+                Rune.Total.add t (scalar 1.);
+                raise Exit)));
+    test "a caught exception keeps its additions" (fun () ->
+        let t = Rune.Total.make () in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.Total.add t (scalar 1.);
+              (try
+                 Rune.Total.add t (scalar 2.);
+                 raise Exit
+               with Exit -> ());
+              Rune.Total.add t (scalar 4.))
         in
-        (snd inner, u_total))
-  in
-  check_arr ~msg:"inner" [| 2.0 |] inner;
-  check_arr ~msg:"another total" [| 8.0 |] u_total;
-  check_arr ~msg:"outer, from its zero" [| 15.0 |] outer
-
-let test_shape_mismatch_raises () =
-  let t = Rune.Total.make () in
-  let _, total =
-    Rune.Total.collect t ~zero:(zero ()) (fun () ->
-        Rune.Total.add t (Nx.scalar f64 1.0);
-        raises
-          (Invalid_argument
-             "Rune.Total.add: shape [3] does not match the total's []")
-          (fun () -> Rune.Total.add t h0))
-  in
-  check_arr ~msg:"an addition before the caught exception counts" [| 1.0 |]
-    total
-
-let test_an_exception_leaves_the_scope () =
-  let t = Rune.Total.make () in
-  raises Exit (fun () ->
-      ignore
-        (Rune.Total.collect t ~zero:(zero ()) (fun () ->
-             Rune.Total.add t (Nx.scalar f64 1.0);
-             raise Exit)))
-
-let test_a_caught_exception_keeps_its_additions () =
-  let t = Rune.Total.make () in
-  let _, total =
-    Rune.Total.collect t ~zero:(zero ()) (fun () ->
-        Rune.Total.add t (Nx.scalar f64 1.0);
-        (try
-           Rune.Total.add t (Nx.scalar f64 2.0);
-           raise Exit
-         with Exit -> ());
-        Rune.Total.add t (Nx.scalar f64 4.0))
-  in
-  check_arr ~msg:"all three count" [| 7.0 |] total
+        equal (exact ()) (scalar 7.) total);
+    test "a jit inside a scope runs eagerly and its additions count" (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
+        let f = Rune.jit' (rollout t (w0 ()) (h0 ())) in
+        let _, total = Rune.Total.collect t ~zero:(zero ()) (fun () -> f xs) in
+        equal (close ()) (expected_total xs) total);
+  ]
 
 (* Scans and remats *)
-
-let expected_total xs = Nx.sum (rollout (Rune.Total.make ()) w0 h0 xs)
-
-let test_eager_scan () =
-  let t = Rune.Total.make () and xs = series 2 [| 5; 3 |] in
-  let runs = ref 0 in
-  let _, total =
-    Rune.Total.collect t ~zero:(zero ()) (fun () -> rollout ~runs t w0 h0 xs)
-  in
-  check_arr ~msg:"once per step" (to_arr (expected_total xs)) total;
-  equal ~msg:"body runs" int 5 !runs
-
-let collected_rollout ?runs t w xs =
-  let ys, total =
-    Rune.Total.collect t ~zero:(zero ()) (fun () -> rollout ?runs t w h0 xs)
-  in
-  (ys, total)
-
-let test_staged_scan () =
-  let t = Rune.Total.make () in
-  staged ~runs:1 (fun runs n ->
-      let f =
-        Rune.jit
-          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-          (collected_rollout ~runs t w0)
-      in
-      List.iter
-        (fun seed ->
-          let xs = series seed [| n; 3 |] in
-          let ys, total = f xs in
-          check_arr ~eps:1e-9 ~msg:"outputs" (to_arr (rollout t w0 h0 xs)) ys;
-          check_arr ~eps:1e-9 ~msg:"once per step, replayed"
-            (to_arr (expected_total xs))
-            total)
-        [ 2; 3 ])
 
 let remat_adding t =
   Rune.remat
@@ -152,204 +117,174 @@ let remat_adding t =
       Rune.Total.add t (Nx.sum (Nx.mul x x));
       Nx.sin x)
 
-let test_remat () =
-  let t = Rune.Total.make () and x = series 3 [| 4 |] in
-  let f x =
-    Rune.Total.collect t ~zero:(zero ()) (fun () -> (remat_adding t) x)
-  in
-  let expected = to_arr (Nx.sum (Nx.mul x x)) in
-  check_arr ~msg:"eager" expected (snd (f x));
-  let y, total =
-    Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f x
-  in
-  check_arr ~msg:"compiled result" (to_arr (Nx.sin x)) y;
-  check_arr ~msg:"compiled" expected total
-
-(* A scope around a staged scan whose body adds nothing costs the loop nothing:
-   the carry of its sum comes out of the body unchanged and is no loop state. *)
-let test_a_scope_with_no_additions () =
-  let t = Rune.Total.make () in
-  let plain w xs = Nx.sum (rollout ~add:(fun _ _ -> ()) t w h0 xs) in
-  let scoped w xs =
-    let y, total =
-      Rune.Total.collect t ~zero:(zero ()) (fun () -> plain w xs)
-    in
-    Nx.add y total
-  in
-  let kernels_per_step f =
-    let per_replay n =
-      let xs = series 2 [| n; 3 |] in
-      let g = Rune.jit' (fun w -> f w xs) in
-      ignore (g w0);
-      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
-      ignore (g w0);
-      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
-    in
-    (per_replay 8 - per_replay 4) / 4
-  in
-  equal ~msg:"kernels per step" int (kernels_per_step plain)
-    (kernels_per_step scoped);
-  let xs = series 2 [| 5; 3 |] in
-  check_arr ~eps:1e-9 ~msg:"value"
-    (to_arr (plain w0 xs))
-    (Rune.jit' (fun w -> scoped w xs) w0)
-
-(* An exception raised while the scope runs a scan or a remat reaches the code
-   that called it, which may catch it inside the scope. *)
-let test_exceptions_reach_the_performer () =
-  let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
-  let caught f = match f () with _ -> 1.0 | exception Exit -> 2.0 in
-  let within f =
-    Rune.Total.collect t ~zero:(zero ()) (fun () ->
-        Rune.Total.add t (Nx.scalar f64 1.0);
-        let r = caught f in
-        Rune.Total.add t (Nx.scalar f64 r);
-        Nx.scalar f64 r)
-  in
-  let scan xs =
-    within (fun () -> Rune.scan' ~f:(fun _ _ -> raise Exit) ~init:h0 xs)
-  in
-  let check ~msg (r, total) =
-    check_arr ~msg:(msg ^ ": caught") [| 2.0 |] r;
-    check_arr ~msg:(msg ^ ": total") [| 3.0 |] total
-  in
-  check ~msg:"scan" (scan xs);
-  check ~msg:"compiled scan"
-    (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) scan xs);
-  let remat xs =
-    within (fun () ->
-        Rune.remat
-          Nx.Ptree.(tensor @-> returns tensor)
-          (fun _ -> raise Exit)
-          (lane 0 xs))
-  in
-  check ~msg:"remat" (remat xs);
-  check ~msg:"compiled remat"
-    (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) remat xs)
-
-(* A jit inside a scope runs its function eagerly and its additions count. *)
-let test_jit_inside_a_scope () =
-  let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
-  let f = Rune.jit' (rollout t w0 h0) in
-  let ys, total = Rune.Total.collect t ~zero:(zero ()) (fun () -> f xs) in
-  check_arr ~msg:"result" (to_arr (rollout t w0 h0 xs)) ys;
-  check_arr ~msg:"counted" (to_arr (expected_total xs)) total
+let scan_tests =
+  [
+    test "a scan counts each step once" (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 5; 3 |] in
+        let runs = ref 0 in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              rollout ~runs t (w0 ()) (h0 ()) xs)
+        in
+        equal ~msg:"total" (close ()) (expected_total xs) total;
+        equal ~msg:"body runs" int 5 !runs);
+    slow "a staged scan counts each step, replayed" (fun () ->
+        let t = Rune.Total.make () in
+        let f =
+          Rune.jit
+            Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+            (fun xs ->
+              Rune.Total.collect t ~zero:(zero ()) (fun () ->
+                  rollout t (w0 ()) (h0 ()) xs))
+        in
+        List.iter
+          (fun seed ->
+            let xs = series seed [| 4; 3 |] in
+            equal (close ()) (expected_total xs) (snd (f xs)))
+          [ 2; 3 ]);
+    test "a remat counts its addition once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let y, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () -> remat_adding t x)
+        in
+        equal ~msg:"result" (exact ()) (Nx.sin x) y;
+        equal ~msg:"total" (close ()) (Nx.sum (Nx.mul x x)) total);
+    test "a key scope inside a scope keeps a scan's draws" (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
+        let draws () =
+          Nx.Rng.with_key (Nx.Rng.key 3) (fun () ->
+              snd
+                (Rune.scan'
+                   ~f:(fun c x ->
+                     let r = Nx.add x (Nx.rand f64 [| 3 |]) in
+                     Rune.Total.add t (Nx.sum r);
+                     (c, r))
+                   ~init:(h0 ()) xs))
+        in
+        let expected = draws () in
+        let ys, total = Rune.Total.collect t ~zero:(zero ()) draws in
+        equal ~msg:"draws" (exact ()) expected ys;
+        equal ~msg:"total" (close ()) (Nx.sum expected) total);
+    test "an exception of a scan or a remat reaches its call inside the scope"
+      (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
+        let within f =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.Total.add t (scalar 1.);
+              let r = match f () with _ -> 1. | exception Exit -> 2. in
+              Rune.Total.add t (scalar r);
+              r)
+        in
+        let check ~msg (r, total) =
+          equal ~msg:(msg ^ ": caught") float_exact 2. r;
+          equal ~msg:(msg ^ ": total") (exact ()) (scalar 3.) total
+        in
+        check ~msg:"scan"
+          (within (fun () ->
+               Rune.scan' ~f:(fun _ _ -> raise Exit) ~init:(h0 ()) xs));
+        check ~msg:"remat"
+          (within (fun () ->
+               Rune.remat
+                 Nx.Ptree.(tensor @-> returns tensor)
+                 (fun _ -> raise Exit)
+                 (lane 0 xs))));
+    test "restarted traces discard their additions" (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
+        let dirs = series 6 [| 3; 3; 3 |] in
+        let f dirs =
+          Rune.vmap
+            Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+            (fun d ->
+              let (_, dy), total =
+                Rune.Total.collect t ~zero:(zero ()) (fun () ->
+                    Rune.jvp' (fun w -> rollout t w (h0 ()) xs) (w0 ()) d)
+              in
+              (dy, total))
+            dirs
+        in
+        let dy, total = f dirs in
+        let dy', total' =
+          Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f dirs
+        in
+        equal ~msg:"tangents" (close ()) dy dy';
+        equal ~msg:"totals" (close ()) total total');
+  ]
 
 (* Maps *)
 
-(* An addition crossing a map is the sum of its lanes' additions. *)
-let test_addition_crossing_a_map () =
-  let t = Rune.Total.make () and xs = series 4 [| 4; 3 |] in
-  let _, total =
-    Rune.Total.collect t ~zero:(Nx.zeros f64 [| 3 |]) (fun () ->
-        Rune.vmap'
-          (fun x ->
-            Rune.Total.add t (Nx.mul x x);
-            Rune.Total.add t h0;
-            x)
-          xs)
-  in
-  let loop =
-    List.fold_left
-      (fun acc i -> Nx.add acc (Nx.add (Nx.mul (lane i xs) (lane i xs)) h0))
-      (Nx.zeros f64 [| 3 |]) [ 0; 1; 2; 3 ]
-  in
-  check_arr ~msg:"the loop" (to_arr loop) total;
-  let xss = series 5 [| 4; 6; 3 |] in
-  let _, total =
-    Rune.Total.collect t ~zero:(zero ()) (fun () ->
-        Rune.vmap' (fun xs -> rollout t w0 h0 xs) xss)
-  in
-  let loop =
-    List.fold_left
-      (fun acc i -> Nx.add acc (expected_total (lane i xss)))
-      (zero ()) [ 0; 1; 2; 3 ]
-  in
-  check_arr ~msg:"a map over a scan" (to_arr loop) total;
-  let compiled =
-    Rune.jit
-      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-      (fun xss ->
-        Rune.Total.collect t ~zero:(zero ()) (fun () ->
-            Rune.vmap' (fun xs -> rollout t w0 h0 xs) xss))
-  in
-  check_arr ~eps:1e-9 ~msg:"compiled" (to_arr loop) (snd (compiled xss))
-
-(* A scope inside a map collects per lane. *)
-let test_scope_inside_a_map () =
-  let t = Rune.Total.make () and xss = series 5 [| 3; 6; 3 |] in
-  let totals =
-    Rune.vmap' (fun xs ->
-        snd
-          (Rune.Total.collect t ~zero:(zero ()) (fun () -> rollout t w0 h0 xs)))
-  in
-  let expected = to_arr (stack 3 (fun i -> expected_total (lane i xss))) in
-  check_arr ~msg:"per lane" expected (totals xss);
-  check_arr ~eps:1e-9 ~msg:"compiled" expected (Rune.jit' totals xss)
+let map_tests =
+  [
+    test "an addition crossing a map is the loop's" (fun () ->
+        let t = Rune.Total.make () and xs = series 4 [| 4; 3 |] in
+        let _, total =
+          Rune.Total.collect t ~zero:(Nx.zeros f64 [| 3 |]) (fun () ->
+              Rune.vmap'
+                (fun x ->
+                  Rune.Total.add t (Nx.mul x x);
+                  Rune.Total.add t (h0 ());
+                  x)
+                xs)
+        in
+        let loop =
+          List.fold_left
+            (fun acc i ->
+              Nx.add acc (Nx.add (Nx.mul (lane i xs) (lane i xs)) (h0 ())))
+            (Nx.zeros f64 [| 3 |]) [ 0; 1; 2; 3 ]
+        in
+        equal (close ()) loop total);
+    test "an addition crossing a map over a scan is the loop's" (fun () ->
+        let t = Rune.Total.make () and xss = series 5 [| 4; 6; 3 |] in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.vmap' (fun xs -> rollout t (w0 ()) (h0 ()) xs) xss)
+        in
+        let loop =
+          List.fold_left
+            (fun acc i -> Nx.add acc (expected_total (lane i xss)))
+            (zero ()) [ 0; 1; 2; 3 ]
+        in
+        equal (close ()) loop total);
+    test "a scope inside a map collects per lane" (fun () ->
+        let t = Rune.Total.make () and xss = series 5 [| 3; 6; 3 |] in
+        let totals =
+          Rune.vmap'
+            (fun xs ->
+              snd
+                (Rune.Total.collect t ~zero:(zero ()) (fun () ->
+                     rollout t (w0 ()) (h0 ()) xs)))
+            xss
+        in
+        equal (close ()) (stack 3 (fun i -> expected_total (lane i xss))) totals);
+  ]
 
 (* Differentiation *)
 
-(* A collected total is a value like any other: jvp differentiates it and grad
-   tapes it, eagerly and staged. *)
-let test_a_total_is_differentiated () =
-  let t = Rune.Total.make () in
-  let xs = series 2 [| 6; 3 |] and dw = series 4 [| 3; 3 |] in
-  let collected w =
-    snd (Rune.Total.collect t ~zero:(zero ()) (fun () -> rollout t w h0 xs))
-  in
-  let explicit w = Nx.sum (rollout (Rune.Total.make ()) w h0 xs) in
-  let jvp f w dw = Rune.jvp' f w dw in
-  let compiled_jvp f =
-    Rune.jit
-      Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
-      (jvp f)
-  in
-  let v, d = jvp explicit w0 dw in
-  let check ~msg (v', d') =
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": value") (to_arr v) v';
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": tangent") (to_arr d) d'
-  in
-  check ~msg:"jvp" (jvp collected w0 dw);
-  check ~msg:"compiled jvp" (compiled_jvp collected w0 dw);
-  let g = to_arr (Rune.grad' explicit w0) in
-  check_arr ~eps:1e-9 ~msg:"grad" g (Rune.grad' collected w0);
-  check_arr ~eps:1e-9 ~msg:"compiled grad" g
-    (Rune.jit' (Rune.grad' collected) w0)
+let collected t xs w =
+  snd (Rune.Total.collect t ~zero:(zero ()) (fun () -> rollout t w (h0 ()) xs))
 
-(* Reverse mode reruns code; its additions count once. *)
+let explicit xs w =
+  Nx.sum (rollout ~add:(fun _ _ -> ()) (Rune.Total.make ()) w (h0 ()) xs)
 
-let test_grad_outside_scope () =
-  let t = Rune.Total.make () and xs = series 2 [| 5; 3 |] in
-  let loss ?add w = Nx.sum (rollout ?add t w h0 xs) in
-  let expected = to_arr (expected_total xs) in
-  let run f w =
-    Rune.Total.collect t ~zero:(zero ()) (fun () -> Rune.grad' f w)
-  in
-  let g = Rune.grad' (loss ~add:(fun _ _ -> ())) w0 in
-  let g', total = run loss w0 in
-  check_arr ~msg:"eager gradient" (to_arr g) g';
-  check_arr ~msg:"eager" expected total;
-  let compiled f =
-    Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) (run f)
-  in
-  let g', total = compiled loss w0 in
-  check_arr ~eps:1e-9 ~msg:"staged gradient" (to_arr g) g';
-  check_arr ~eps:1e-9 ~msg:"staged" expected total;
-  let x = series 3 [| 4 |] in
-  let expected = to_arr (Nx.sum (Nx.mul x x)) in
-  let remat_loss x = Nx.sum (remat_adding t x) in
-  check_arr ~msg:"remat" expected (snd (run remat_loss x));
-  check_arr ~msg:"compiled remat" expected (snd (compiled remat_loss x))
+let differentiation_tests =
+  [
+    test "a collected total is differentiated as a value" (fun () ->
+        let t = Rune.Total.make () in
+        let xs = series 2 [| 6; 3 |] and dw = series 4 [| 3; 3 |] in
+        let v, d = Rune.jvp' (explicit xs) (w0 ()) dw in
+        let v', d' = Rune.jvp' (collected t xs) (w0 ()) dw in
+        equal ~msg:"value" (close ()) v v';
+        equal ~msg:"tangent" (close ()) d d';
+        equal ~msg:"gradient" (close ())
+          (Rune.grad' (explicit xs) (w0 ()))
+          (Rune.grad' (collected t xs) (w0 ())));
+    slow "a collected total is differentiated as a value, compiled" (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 6; 3 |] in
+        equal (close ())
+          (Rune.grad' (explicit xs) (w0 ()))
+          (Rune.jit' (Rune.grad' (collected t xs)) (w0 ())));
+  ]
 
-(* [counts_once ~msg t expected loss x] checks that a scope of [t] outside
-   [grad] of [loss] at [x] collects [expected], eagerly and compiled. *)
-let counts_once ~msg t expected loss x =
-  let run x =
-    Rune.Total.collect t ~zero:(zero ()) (fun () -> Rune.grad' loss x)
-  in
-  check_arr ~eps:1e-9 ~msg:(msg ^ ", eager") expected (snd (run x));
-  check_arr ~eps:1e-9 ~msg:(msg ^ ", compiled") expected
-    (snd (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) run x))
+(* Code that runs again *)
 
 let remat f = Rune.remat Nx.Ptree.(tensor @-> returns tensor) f
 let rows x = Nx.reshape [| Nx.numel x; 1 |] x
@@ -363,199 +298,162 @@ let adding_scan t x =
          (c, r))
        ~init:(zero ()) (rows x))
 
-(* Code that reverse mode reruns inside rerun code, under a tape of its own, is
-   rerun too. *)
-let test_rerun_inside_rerun_code () =
-  let t = Rune.Total.make () and x = series 3 [| 4 |] in
-  let expected = to_arr (Nx.sum (Nx.mul x x)) in
-  counts_once ~msg:"a remat in a remat" t expected
-    (fun x -> Nx.sum (remat (fun x -> Nx.sin (remat_adding t x)) x))
-    x;
-  counts_once ~msg:"a scan in a remat" t expected
-    (fun x -> Nx.sum (remat (fun x -> Nx.sin (adding_scan t x)) x))
-    x
+(* The total a scope of [t] outside [grad] of [loss] at [x] collects. *)
+let around_grad t loss x =
+  snd (Rune.Total.collect t ~zero:(zero ()) (fun () -> Rune.grad' loss x))
 
-let test_custom_call_in_rerun_code () =
-  let t = Rune.Total.make () and x = series 3 [| 4 |] in
-  let tap x =
-    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
-      ~fwd:(fun x ->
-        Rune.Total.add t (Nx.sum (Nx.mul x x));
-        (Nx.sin x, x))
-      ~bwd:(fun x g -> Nx.mul g (Nx.cos x))
-      x
-  in
-  counts_once ~msg:"fwd in a remat" t
-    (to_arr (Nx.sum (Nx.mul x x)))
-    (fun x -> Nx.sum (remat tap x))
-    x;
-  let tap x =
-    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit
-      ~f:(fun x -> Rune.Total.add t (Nx.sum (Nx.mul x x)))
-      ~jvp:(fun _ _ -> ((), ()))
-      x
-  in
-  counts_once ~msg:"a unit result's f in a remat" t
-    (to_arr (Nx.sum (Nx.mul x x)))
-    (fun x ->
-      Nx.sum
-        (remat
-           (fun x ->
-             tap x;
-             Nx.sin x)
-           x))
-    x
+let squares x = Nx.sum (Nx.mul x x)
 
-(* Forward over reverse, reverse over reverse and a pullback run twice rerun
-   code; each addition still counts once. *)
-let test_higher_order () =
-  let t = Rune.Total.make () and x = series 3 [| 4 |] in
-  let expected = to_arr (Nx.sum (Nx.mul x x)) in
-  let inner x = Nx.sum (remat_adding t x) in
-  let collect f = snd (Rune.Total.collect t ~zero:(zero ()) f) in
-  check_arr ~msg:"jvp of grad" expected
-    (collect (fun () -> Rune.jvp' (Rune.grad' inner) x (Nx.ones_like x)));
-  check_arr ~msg:"grad of grad" expected
-    (collect (fun () ->
-         Rune.grad' (fun x -> Nx.sum (Nx.mul (Rune.grad' inner x) x)) x));
-  check_arr ~msg:"a pullback run twice" expected
-    (collect (fun () ->
-         let _, pullback = Rune.vjp_fun' (remat_adding t) x in
-         ignore (pullback (Nx.ones_like x));
-         ignore (pullback (Nx.ones_like x))));
-  check_arr ~msg:"jacrev" expected
-    (collect (fun () -> Rune.jacrev' (remat_adding t) x));
-  check_arr ~msg:"jacfwd, a map over the columns"
-    (to_arr (Nx.mul_s (Nx.sum (Nx.mul x x)) 4.0))
-    (collect (fun () -> Rune.jacfwd' (remat_adding t) x))
-
-(* The scope declines a scan no stager lies beyond: the scan folds where it was
-   performed, under the key scope between them. *)
-let test_key_scope_inside_a_scope () =
-  let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
-  let draws () =
-    Nx.Rng.with_key (Nx.Rng.key 3) (fun () ->
-        snd
-          (Rune.scan'
-             ~f:(fun c x ->
-               let r = Nx.add x (Nx.rand f64 [| 3 |]) in
-               Rune.Total.add t (Nx.sum r);
-               (c, r))
-             ~init:h0 xs))
-  in
-  let expected = draws () in
-  let ys, total = Rune.Total.collect t ~zero:(zero ()) draws in
-  check_arr ~msg:"seeded draws" (to_arr expected) ys;
-  check_arr ~msg:"total" (to_arr (Nx.sum expected)) total
-
-(* vmap over tangents around a scope around jvp of a scan, compiled: forward and
-   vmap restart the step's trace to carry a tangent and a lane, and the
-   restarted traces' additions are discarded. *)
-let test_restarts_through_a_scope () =
-  let t = Rune.Total.make () and k = 3 in
-  let f runs xs dirs =
-    Rune.vmap
-      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-      (fun d ->
-        let (_, dy), total =
+let again_tests =
+  [
+    test "a scope outside grad counts a scan's additions once" (fun () ->
+        let t = Rune.Total.make () and xs = series 2 [| 5; 3 |] in
+        let loss ?add w = Nx.sum (rollout ?add t w (h0 ()) xs) in
+        let g, total =
           Rune.Total.collect t ~zero:(zero ()) (fun () ->
-              Rune.jvp' (fun w -> rollout ~runs t w h0 xs) w0 d)
+              Rune.grad' loss (w0 ()))
         in
-        (dy, total))
-      dirs
-  in
-  staged ~runs:3 (fun runs n ->
-      let xs = series 2 [| n; 3 |] and dirs = series 6 [| k; 3; 3 |] in
-      let dy, total =
-        Rune.jit
-          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-          (f runs xs) dirs
-      in
-      let dy', total' = f (ref 0) xs dirs in
-      check_arr ~eps:1e-9 ~msg:"tangents" (to_arr dy') dy;
-      check_arr ~eps:1e-9 ~msg:"eager totals"
-        (to_arr (stack k (fun _ -> expected_total xs)))
-        total';
-      check_arr ~eps:1e-9 ~msg:"compiled totals" (to_arr total') total)
-
-(* jit restarts a trace to place a scan's carry across the devices; the
-   restarted traces' additions are discarded. *)
-let test_placement_restarts () =
-  let t = Rune.Total.make () in
-  let devices = List.map Rune.device [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ] in
-  let traces = ref 0 in
-  let step (a, b) x =
-    incr traces;
-    let a' = Nx.add (Nx.mul_s a 0.5) x in
-    let b' = Nx.add (Nx.mul_s b 0.5) a in
-    Rune.Total.add t (Nx.cast f64 (Nx.sum (Nx.mul a' b')));
-    ((a', b'), Nx.mul a' b')
-  in
-  let f xs =
-    Rune.Total.collect t ~zero:(zero ()) (fun () ->
-        let (a, b), ys =
-          Rune.scan
-            Nx.Ptree.(pair tensor tensor)
-            Nx.Ptree.tensor Nx.Ptree.tensor ~f:step
-            ~init:(Nx.zeros f32 [| 16 |], Nx.zeros f32 [| 16 |])
-            xs
+        equal ~msg:"gradient" (close ())
+          (Rune.grad' (loss ~add:(fun _ _ -> ())) (w0 ()))
+          g;
+        equal ~msg:"total" (close ()) (expected_total xs) total);
+    test "a scope outside grad counts a remat's addition once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        equal (close ()) (squares x)
+          (around_grad t (fun x -> Nx.sum (remat_adding t x)) x));
+    test "a remat in a remat counts once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        equal (close ()) (squares x)
+          (around_grad t
+             (fun x -> Nx.sum (remat (fun x -> Nx.sin (remat_adding t x)) x))
+             x));
+    test "a scan in a remat counts once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        equal (close ()) (squares x)
+          (around_grad t
+             (fun x -> Nx.sum (remat (fun x -> Nx.sin (adding_scan t x)) x))
+             x));
+    test "a custom_vjp rule in a remat counts once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let tap =
+          Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+              Rune.Total.add t (squares x);
+              (Nx.sin x, fun g -> Nx.mul g (Nx.cos x)))
         in
-        Nx.add (Nx.sum a) (Nx.add (Nx.sum b) (Nx.sum ys)))
-  in
-  let xs = Nx.cast f32 (series 2 [| 6; 16 |]) in
-  let y, total = f xs in
-  traces := 0;
-  let y', total' =
-    Rune.jit ~devices
-      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-      f
-      (Nx.place (Nx.Placement.sharded ~axis:1 devices) xs)
-  in
-  equal ~msg:"the trace restarted" bool true (!traces > 1);
-  check_arr ~eps:1e-5 ~msg:"value" (to_arr y) y';
-  check_arr ~eps:1e-5 ~msg:"total" (to_arr total) total'
+        equal (close ()) (squares x)
+          (around_grad t (fun x -> Nx.sum (remat tap x)) x));
+    test "a custom_jvp rule with no tensor result in a remat counts once"
+      (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let tap =
+          Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit (fun x ->
+              Rune.Total.add t (squares x);
+              ((), fun _ -> ()))
+        in
+        equal (close ()) (squares x)
+          (around_grad t
+             (fun x ->
+               Nx.sum
+                 (remat
+                    (fun x ->
+                      tap x;
+                      Nx.sin x)
+                    x))
+             x));
+    test "forward over reverse counts once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let inner x = Nx.sum (remat_adding t x) in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.jvp' (Rune.grad' inner) x (Nx.ones_like x))
+        in
+        equal (close ()) (squares x) total);
+    test "reverse over reverse counts once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let inner x = Nx.sum (remat_adding t x) in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.grad' (fun x -> Nx.sum (Nx.mul (Rune.grad' inner x) x)) x)
+        in
+        equal (close ()) (squares x) total);
+    test "a pullback applied twice counts once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              let _, pullback = Rune.vjp' (remat_adding t) x in
+              ignore (pullback (Nx.ones_like x));
+              ignore (pullback (Nx.ones_like x)))
+        in
+        equal (close ()) (squares x) total);
+    test "jacrev' counts once" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.jacrev' (remat_adding t) x)
+        in
+        equal (close ()) (squares x) total);
+    test "jacfwd', a map over the columns, counts once per column" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let _, total =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.jacfwd' (remat_adding t) x)
+        in
+        equal (close ()) (Nx.mul_s (squares x) 4.) total);
+    slow "a scope outside grad counts once, compiled" (fun () ->
+        let t = Rune.Total.make () and x = series 3 [| 4 |] in
+        let run x =
+          Rune.Total.collect t ~zero:(zero ()) (fun () ->
+              Rune.grad' (fun x -> Nx.sum (remat_adding t x)) x)
+        in
+        equal (close ()) (squares x)
+          (snd
+             (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) run x)));
+  ]
 
-(* Sketches. A second-order forward-mode optimizer measures a model along k
-   directions: the loss, its tangents [C] and the Gauss-Newton matrix [Σ Yᵀ H
-   Y], where [Y] holds the k tangents of a prediction and [H] the curvature of
-   the little loss it feeds. The directions are lanes of a named map around jvp;
-   a little loss marks its prediction with a unit-result custom_jvp whose rule
-   gathers the lanes of the tangent and adds the block to a total the sketch
-   collects inside the map. *)
+(* Sketches. A second-order forward-mode optimiser measures a model along k
+   directions: the loss, its tangents C and the Gauss-Newton matrix Σ Yᵀ H Y,
+   where Y holds the k tangents of a prediction and H the curvature of the
+   little loss it feeds. The directions are lanes of a named map around jvp; a
+   little loss marks its prediction with a custom_jvp with no tensor result,
+   whose tangent map gathers the lanes of the tangent and adds the block to a
+   total the sketch collects inside the map. *)
 
 let directions = Rune.axis ()
 let curvature : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make ()
 
 let mark scale y =
-  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit ~f:ignore
-    ~jvp:(fun _ dy ->
-      let ys = Rune.lanes directions dy in
-      let rows t = Nx.reshape [| (Nx.shape t).(0); -1 |] t in
-      let b = Nx.matmul (rows ys) (Nx.transpose (rows (Nx.mul_s ys scale))) in
-      Rune.Total.add curvature (Nx.mul_s (Nx.add b (Nx.transpose b)) 0.5);
-      ((), ()))
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit
+    (fun _ ->
+      ( (),
+        fun dy ->
+          let ys = Rune.lanes directions dy in
+          let rows t = Nx.reshape [| (Nx.shape t).(0); -1 |] t in
+          let b =
+            Nx.matmul (rows ys) (Nx.transpose (rows (Nx.mul_s ys scale)))
+          in
+          Rune.Total.add curvature (Nx.mul_s (Nx.add b (Nx.transpose b)) 0.5) ))
     y
 
 let mse ~target y =
-  mark (2.0 /. Float.of_int (Nx.numel y)) y;
+  mark (2. /. Float.of_int (Nx.numel y)) y;
   Nx.mean (Nx.square (Nx.sub y target))
 
-let readout = series 9 [| 2; 3 |]
+let plain_mse ~target y = Nx.mean (Nx.square (Nx.sub y target))
+let readout () = series 9 [| 2; 3 |]
 
-let model_loss ?(runs = ref 0) ?(loss = mse) xs targets w =
+let model_loss ?(loss = mse) xs targets w =
   let _, ls =
     Rune.scan Nx.Ptree.tensor
       Nx.Ptree.(pair tensor tensor)
       Nx.Ptree.tensor
       ~f:(fun h (x, target) ->
-        incr runs;
         let h = cell w h x in
-        (h, loss ~target (Nx.matmul readout h)))
-      ~init:h0 (xs, targets)
+        (h, loss ~target (Nx.matmul (readout ()) h)))
+      ~init:(h0 ()) (xs, targets)
   in
   Nx.sum ls
 
-let sketch ?runs xs targets w dirs =
+let sketch loss w dirs =
   let k = (Nx.shape dirs).(0) in
   let (l, c), ggn =
     Rune.vmap ~axis:directions
@@ -563,177 +461,106 @@ let sketch ?runs xs targets w dirs =
       (fun d ->
         Rune.Total.collect curvature
           ~zero:(Nx.zeros f64 [| k; k |])
-          (fun () -> Rune.jvp' (model_loss ?runs xs targets) w d))
+          (fun () -> Rune.jvp' loss w d))
       dirs
   in
   (lane 0 l, c, lane 0 ggn)
 
-(* The explicit reference: one jvp per direction of the stacked predictions,
-   [Σ_t (2/m) Y_tᵢ · Y_tⱼ]. *)
-let reference xs targets w dirs =
-  let k = (Nx.shape dirs).(0) in
-  let predictions w =
-    snd
-      (Rune.scan'
-         ~f:(fun h x ->
-           let h = cell w h x in
-           (h, Nx.matmul readout h))
-         ~init:h0 xs)
-  in
-  let plain ~target y = Nx.mean (Nx.square (Nx.sub y target)) in
-  let ys = List.init k (fun i -> snd (Rune.jvp' predictions w (lane i dirs))) in
-  let ggn =
-    Nx.init f64 [| k; k |] (fun ij ->
-        let yi = List.nth ys ij.(0) and yj = List.nth ys ij.(1) in
-        Nx.item [] (Nx.mul_s (Nx.sum (Nx.mul yi yj)) (2.0 /. 2.0)))
-  in
-  let c =
-    stack k (fun i ->
-        snd (Rune.jvp' (model_loss ~loss:plain xs targets) w (lane i dirs)))
-  in
-  (model_loss ~loss:plain xs targets w, c, ggn)
+let check_sketch (l, c, ggn) (l', c', ggn') =
+  equal ~msg:"loss" (close ()) l l';
+  equal ~msg:"C" (close ()) c c';
+  equal ~msg:"GGN" (close ()) ggn ggn'
 
-let test_sketch () =
+let sketch_tests =
   let k = 4 in
-  let check ~msg (l, c, ggn) (l', c', ggn') =
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": loss") (to_arr l) l';
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": C") (to_arr c) c';
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": GGN") (to_arr ggn) ggn'
-  in
-  staged ~runs:3 (fun runs n ->
-      let compiled =
-        Rune.jit
-          Nx.Ptree.(
-            tensor @-> tensor @-> tensor @-> tensor
-            @-> returns (pair (pair tensor tensor) tensor))
-          (fun xs targets w dirs ->
-            let l, c, ggn = sketch ~runs xs targets w dirs in
-            ((l, c), ggn))
-      in
-      List.iter
-        (fun seed ->
-          let xs = series seed [| n; 3 |]
-          and targets = series (seed + 1) [| n; 2 |]
-          and w = series (seed + 2) [| 3; 3 |]
-          and dirs = series (seed + 3) [| k; 3; 3 |] in
-          let expected = reference xs targets w dirs in
-          check ~msg:"eager" expected (sketch xs targets w dirs);
-          let (l, c), ggn = compiled xs targets w dirs in
-          check ~msg:"compiled" expected (l, c, ggn))
-        [ 2; 5 ])
-
-(* The mark is inert under grad: the model trains with any optimizer. *)
-let test_marked_model_under_grad () =
-  let xs = series 2 [| 5; 3 |] and targets = series 3 [| 5; 2 |] in
-  let plain ~target y = Nx.mean (Nx.square (Nx.sub y target)) in
-  let l, g = Rune.value_and_grad' (model_loss xs targets) w0 in
-  let l', g' = Rune.value_and_grad' (model_loss ~loss:plain xs targets) w0 in
-  check_arr ~msg:"loss" (to_arr l') l;
-  check_arr ~msg:"gradient" (to_arr g') g;
-  check_arr ~eps:1e-9 ~msg:"compiled gradient" (to_arr g')
-    (Rune.jit' (Rune.grad' (model_loss xs targets)) w0)
-
-(* A little loss inside the model's own map over examples: the map passes the
-   mark on, its rule gathers the direction lanes per example, and the map adds
-   the sum of its examples' blocks. *)
-let batch_loss xs targets w =
-  Nx.sum
-    (Rune.vmap
-       Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-       (fun x target -> mse ~target (Nx.matmul readout (cell w h0 x)))
-       xs targets)
-
-let test_sketch_through_a_map () =
-  let k = 3 and b = 5 in
-  let xs = series 2 [| b; 3 |] and targets = series 3 [| b; 2 |] in
-  let w = series 4 [| 3; 3 |] and dirs = series 5 [| k; 3; 3 |] in
-  let sketch w dirs =
-    let (l, c), ggn =
-      Rune.vmap ~axis:directions
-        Nx.Ptree.(tensor @-> returns (pair (pair tensor tensor) tensor))
-        (fun d ->
-          Rune.Total.collect curvature
-            ~zero:(Nx.zeros f64 [| k; k |])
-            (fun () -> Rune.jvp' (batch_loss xs targets) w d))
-        dirs
-    in
-    ((lane 0 l, c), lane 0 ggn)
-  in
-  let predictions w =
-    Rune.vmap' (fun x -> Nx.matmul readout (cell w h0 x)) xs
-  in
-  let ys = List.init k (fun i -> snd (Rune.jvp' predictions w (lane i dirs))) in
-  let ggn =
-    Nx.init f64 [| k; k |] (fun ij ->
-        Nx.item [] (Nx.sum (Nx.mul (List.nth ys ij.(0)) (List.nth ys ij.(1)))))
-  in
-  let c =
-    stack k (fun i -> snd (Rune.jvp' (batch_loss xs targets) w (lane i dirs)))
-  in
-  let check ~msg ((l, c'), ggn') =
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": loss")
-      (to_arr (batch_loss xs targets w))
-      l;
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": C") (to_arr c) c';
-    check_arr ~eps:1e-9 ~msg:(msg ^ ": GGN") (to_arr ggn) ggn'
-  in
-  check ~msg:"eager" (sketch w dirs);
-  check ~msg:"compiled"
-    (Rune.jit
-       Nx.Ptree.(
-         tensor @-> tensor @-> returns (pair (pair tensor tensor) tensor))
-       sketch w dirs)
-
-let tests =
+  let xs () = series 2 [| 5; 3 |] and targets () = series 3 [| 5; 2 |] in
+  let w () = series 4 [| 3; 3 |] and dirs () = series 5 [| k; 3; 3 |] in
   [
-    group "scopes"
-      [
-        test "no scope is inert" test_no_scope_is_inert;
-        test "the innermost scope of a total collects" test_innermost_scope;
-        test "a shape mismatch raises at the addition"
-          test_shape_mismatch_raises;
-        test "an exception leaves the scope" test_an_exception_leaves_the_scope;
-        test "a caught exception keeps its additions"
-          test_a_caught_exception_keeps_its_additions;
-        test "a jit inside a scope runs eagerly" test_jit_inside_a_scope;
-      ];
-    group "scans and remats"
-      [
-        test "an eager scan counts each step" test_eager_scan;
-        test "a staged scan counts each step, replayed" test_staged_scan;
-        test "a remat" test_remat;
-        test "a key scope inside a scope keeps its draws"
-          test_key_scope_inside_a_scope;
-        test "restarted traces discard their additions"
-          test_restarts_through_a_scope;
-        test "a scope with no additions costs a staged scan nothing"
-          test_a_scope_with_no_additions;
-        test "an exception reaches the performer"
-          test_exceptions_reach_the_performer;
-        test "placement restarts discard their additions"
-          test_placement_restarts;
-      ];
-    group "maps"
-      [
-        test "an addition crossing a map is the loop's"
-          test_addition_crossing_a_map;
-        test "a scope inside a map collects per lane" test_scope_inside_a_map;
-      ];
-    group "differentiation"
-      [ test "a total is differentiated" test_a_total_is_differentiated ];
-    group "sketch"
-      [
-        test "a marked loss's Gauss-Newton sketch" test_sketch;
-        test "a marked model trains under grad" test_marked_model_under_grad;
-        test "a mark inside the model's own map" test_sketch_through_a_map;
-      ];
-    group "reverse mode"
-      [
-        test "a scope outside grad counts once" test_grad_outside_scope;
-        test "rerun code inside rerun code" test_rerun_inside_rerun_code;
-        test "a custom call in rerun code" test_custom_call_in_rerun_code;
-        test "higher order" test_higher_order;
-      ];
+    test "a marked loss's Gauss-Newton sketch" (fun () ->
+        let predictions w =
+          snd
+            (Rune.scan'
+               ~f:(fun h x ->
+                 let h = cell w h x in
+                 (h, Nx.matmul (readout ()) h))
+               ~init:(h0 ()) (xs ()))
+        in
+        let ys =
+          List.init k (fun i ->
+              snd (Rune.jvp' predictions (w ()) (lane i (dirs ()))))
+        in
+        (* Σ_t (2/m) Y_tᵢ · Y_tⱼ, with m = 2 outputs per step. *)
+        let ggn =
+          Nx.init f64 [| k; k |] (fun ij ->
+              Nx.item []
+                (Nx.sum (Nx.mul (List.nth ys ij.(0)) (List.nth ys ij.(1)))))
+        in
+        let plain = model_loss ~loss:plain_mse (xs ()) (targets ()) in
+        let c =
+          stack k (fun i -> snd (Rune.jvp' plain (w ()) (lane i (dirs ()))))
+        in
+        check_sketch
+          (plain (w ()), c, ggn)
+          (sketch (model_loss (xs ()) (targets ())) (w ()) (dirs ())));
+    test "a marked model trains under grad" (fun () ->
+        let l, g =
+          Rune.value_and_grad' (model_loss (xs ()) (targets ())) (w ())
+        in
+        let l', g' =
+          Rune.value_and_grad'
+            (model_loss ~loss:plain_mse (xs ()) (targets ()))
+            (w ())
+        in
+        equal ~msg:"loss" (exact ()) l' l;
+        equal ~msg:"gradient" (exact ()) g' g);
+    test "a mark inside the model's own map" (fun () ->
+        let k = 3 and b = 5 in
+        let xs = series 2 [| b; 3 |] and targets = series 3 [| b; 2 |] in
+        let w = series 4 [| 3; 3 |] and dirs = series 5 [| k; 3; 3 |] in
+        let batch_loss w =
+          Nx.sum
+            (Rune.vmap
+               Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+               (fun x target ->
+                 mse ~target (Nx.matmul (readout ()) (cell w (h0 ()) x)))
+               xs targets)
+        in
+        let predictions w =
+          Rune.vmap' (fun x -> Nx.matmul (readout ()) (cell w (h0 ()) x)) xs
+        in
+        let ys =
+          List.init k (fun i -> snd (Rune.jvp' predictions w (lane i dirs)))
+        in
+        let ggn =
+          Nx.init f64 [| k; k |] (fun ij ->
+              Nx.item []
+                (Nx.sum (Nx.mul (List.nth ys ij.(0)) (List.nth ys ij.(1)))))
+        in
+        let c = stack k (fun i -> snd (Rune.jvp' batch_loss w (lane i dirs))) in
+        check_sketch (batch_loss w, c, ggn) (sketch batch_loss w dirs));
+    slow "a marked loss's sketch, compiled" (fun () ->
+        let f =
+          Rune.jit
+            Nx.Ptree.(
+              tensor @-> tensor @-> returns (pair (pair tensor tensor) tensor))
+            (fun w dirs ->
+              let l, c, ggn = sketch (model_loss (xs ()) (targets ())) w dirs in
+              ((l, c), ggn))
+        in
+        let (l, c), ggn = f (w ()) (dirs ()) in
+        check_sketch
+          (sketch (model_loss (xs ()) (targets ())) (w ()) (dirs ()))
+          (l, c, ggn));
   ]
 
-let () = exit (run "rune total" tests)
+let () =
+  exit
+    (run "Rune totals"
+       [
+         group "scopes" scope_tests;
+         group "scans and remats" scan_tests;
+         group "maps" map_tests;
+         group "differentiation" differentiation_tests;
+         group "code that runs again" again_tests;
+         group "sketches" sketch_tests;
+       ])

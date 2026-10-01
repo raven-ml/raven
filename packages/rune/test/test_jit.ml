@@ -3,5787 +3,3472 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Just-in-time compilation: trace/compile/replay correctness, signature
-   retracing, composition with the other transformations, in-place state, and
-   trace-time failure modes. *)
+(* Compiled calls. A call computes eager's values over every layout of its
+   arguments; traces once per key, and once more for each part of the key that
+   changes; gives each result storage of its own; consumes and lends storage as
+   its signature says, refusing before any work what it cannot consume; binds
+   its captures once; raises before consuming anything; runs from several
+   domains; runs where its arguments and captures lie, on the host and on
+   devices over the host's memory; and folds a scan inside its trace. *)
 
 open Windtrap
-open Rune_test_support.Support
+open Nx_test
+module Rune = Rune_internals.Rune
 
-(* loss p = sum (w * w) + 3 * sum b. d/dw = 2w, d/db = 3, d/dscale = 0. *)
-let quadratic p = Nx.add (Nx.sum (Nx.mul p.w p.w)) (Nx.mul_s (Nx.sum p.b) 3.0)
+let floats = tensor float_exact
+let close = Oracle.tensor ~rel:1e-5 ~abs:1e-30 ()
+let x () = Nx.create Nx.float32 [| 4 |] [| 1.; -2.; 3.; 0.5 |]
+let y () = Nx.create Nx.float32 [| 4 |] [| 2.; 0.; -1.; 4. |]
+let poly x = Nx.add (Nx.mul x x) x
+let host t = Nx.place Nx.Placement.host t
+let address t = List.hd (Witness.addresses t)
+let consumes = Nx.Ptree.(consumes tensor @@ returns tensor)
+let two = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
 
-(* Basics *)
+(* Observing a call *)
 
-(* A 64-bit constant keeps every bit under jit, though OCaml's int holds 63: the
-   sign bit, the bit below it, and a uint64 above 2^63. *)
-let test_64_bit_constants () =
-  let check (type b) name (x : (int64, b) Nx.t) constants =
-    List.iter
-      (fun c ->
-        let f x = Nx.bitwise_xor x (Nx.full_like x c) in
-        equal
-          ~msg:(Printf.sprintf "%s %Lx" name c)
-          (array int64)
-          (Nx.to_array (f x))
-          (Nx.to_array (Rune.jit' f x)))
-      constants
+(* [profiled f] is [f ()] and the host spans the compiled call recorded
+   meanwhile, in order. *)
+let profiled f =
+  let p = Nx_device.Profile.start () in
+  match f () with
+  | y ->
+      let spans =
+        List.filter_map
+          (function
+            | Nx_device.Profile.Span s
+              when String.starts_with ~prefix:"rune.jit: " s.name ->
+                Some s.name
+            | _ -> None)
+          (Nx_device.Profile.stop p)
+      in
+      (y, spans)
+  | exception e ->
+      ignore (Nx_device.Profile.stop p);
+      raise e
+
+(* [traces f] is the number of traces while [f ()] runs. *)
+let traces f =
+  let (), spans = profiled f in
+  List.length (List.filter (String.equal "rune.jit: trace") spans)
+
+(* [loaded_on d f] is [f ()] and the number of programs loaded on [d]
+   meanwhile. *)
+let loaded_on d f =
+  let p = Nx_device.Profile.start () in
+  match f () with
+  | y ->
+      let loads =
+        List.filter
+          (function
+            | Nx_device.Profile.Load l ->
+                Nx_device.equal d (Nx_device.Program.device l.program)
+            | _ -> false)
+          (Nx_device.Profile.stop p)
+      in
+      (y, List.length loads)
+  | exception e ->
+      ignore (Nx_device.Profile.stop p);
+      raise e
+
+(* [counted f] is [f] and the number of times it ran. *)
+let counted f =
+  let n = ref 0 in
+  ( (fun x ->
+      incr n;
+      f x),
+    n )
+
+let raises_jit_error f =
+  raises_match
+    (function Rune.Jit_error _ -> true | _ -> false)
+    (fun () -> ignore (f ()))
+
+let message f = Oracle.message (fun () -> ignore (f ()))
+
+(* Devices over the host's memory, whose programs are the host's *)
+
+let driver ?(mapping = Some Nx_device.Driver.Identity) name =
+  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+    (Host_visible { memory = Nx_device.Driver.host_memory; mapping })
+
+let d1, d2, d3, d4 =
+  match
+    List.map
+      (fun n -> Nx.Device.of_runtime (driver n))
+      [ "J1"; "J2"; "J3"; "J4" ]
+  with
+  | [ a; b; c; d ] -> (a, b, c, d)
+  | _ -> assert false
+
+let on d = Nx.Placement.device ~backend:Rune.compiled d
+let placed d t = Nx.place (on d) t
+let stats d = Nx_device.stats (Nx.Device.runtime d)
+let bytes_in d = Nx_device.Stats.bytes_in (stats d)
+let allocated d = Nx_device.Stats.allocated (stats d)
+
+(* [allocated d] once the memory of what was dropped has returned to [d]. A
+   device buffer returns one major cycle after the last value holding it
+   dies, and a value that a finaliser closure keeps, as a compiled call keeps
+   the storages it binds, dies only once that finaliser has run, a cycle after
+   the call: a chain of such holders takes a cycle per link. A fixed number of
+   rounds covers the chains these tests build; [allocated] alone cannot tell
+   when they are done, since a round may return nothing yet free a holder. *)
+let settled d =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Nx_device.synchronize (Nx.Device.runtime d)
+  done;
+  allocated d
+
+(* [warmed measure] is [measure ()] after a first, uncounted run of it. A
+   device keeps some memory for its life from the first work that needs it,
+   such as an NV device's local memory, which a measure of what one call holds
+   leaves out. *)
+let warmed measure =
+  ignore (measure ());
+  measure ()
+
+(* Values *)
+
+(* How a compiled value agrees with eager's: bit for bit; bit for bit but for
+   the sign of a zero, which a compiled extreme leaves to its target; or as a
+   value computed in another order. *)
+type agreement = Exact | Exact_up_to_zero | Rounded
+
+(* An operation of one family, by name, over two float32 arguments of one shape,
+   and how its compiled value agrees with eager's. *)
+type family = {
+  name : string;
+  agreement : agreement;
+  light : bool;  (** Whether the default run takes it. *)
+  apply : Nx.float32_t -> Nx.float32_t -> Nx.float32_t;
+}
+
+let families =
+  let f ?(agreement = Exact) ?(light = false) name apply =
+    { name; agreement; light; apply }
   in
-  let bits = [ Int64.min_int; Int64.max_int; 0x4000000000000000L; -1L ] in
-  check "int64" (Nx.create Nx.int64 [| 3 |] [| 1L; 2L; -3L |]) bits;
-  check "uint64"
-    (Nx.create Nx.uint64 [| 2 |] [| 1L; 0xC000000000000000L |])
-    (0x8000000000000001L :: bits);
-  let u32 = Nx.create Nx.uint32 [| 2 |] [| 1l; 0xC0000000l |] in
-  List.iter
-    (fun c ->
-      let f x = Nx.bitwise_xor x (Nx.full_like x c) in
-      equal
-        ~msg:(Printf.sprintf "uint32 %lx" c)
-        (array int32)
-        (Nx.to_array (f u32))
-        (Nx.to_array (Rune.jit' f u32)))
-    [ Int32.min_int; -1l; 0x80000001l ]
+  [
+    f ~agreement:Exact_up_to_zero ~light:true "neg, abs, max" (fun a b ->
+        Nx.maximum (Nx.neg a) (Nx.abs b));
+    f "where a less than b" (fun a b -> Nx.where (Nx.less a b) a b);
+    f ~agreement:Rounded "exp and sin" (fun a b -> Nx.add (Nx.exp a) (Nx.sin b));
+    f ~agreement:Rounded ~light:true "a sum over the last axis" (fun a b ->
+        Nx.add a (Nx.sum ~axes:[ -1 ] ~keepdims:true b));
+    f ~agreement:Exact_up_to_zero "a maximum over every axis" (fun a b ->
+        Nx.mul a (Nx.max b));
+    f ~agreement:Rounded "a running sum" (fun a b ->
+        Nx.add a (Nx.cumsum ~axis:0 b));
+    f "a transpose made contiguous" (fun a b ->
+        Nx.add a (Nx.transpose (Nx.contiguous (Nx.transpose b))));
+    f ~light:true "a flip and a pad" (fun a b ->
+        Nx.add a
+          (Nx.shrink
+             (Array.map (fun n -> (1, n + 1)) (Nx.shape b))
+             (Nx.pad (Array.map (fun _ -> (1, 1)) (Nx.shape b)) 0. (Nx.flip b))));
+    f "a concatenation sliced back" (fun a b ->
+        Nx.add a
+          (Nx.shrink
+             (Array.mapi
+                (fun i n -> if i = 0 then (n, 2 * n) else (0, n))
+                (Nx.shape b))
+             (Nx.concatenate ~axis:0 [ a; b ])));
+    f "a cast to int32 and back" (fun a b ->
+        Nx.add a (Nx.cast Nx.float32 (Nx.cast Nx.int32 b)));
+    f ~agreement:Rounded "a product with the transpose" (fun a b ->
+        Nx.add a (Nx.matmul (Nx.matmul a (Nx.matrix_transpose b)) b));
+  ]
 
-(* A constant outside a narrow dtype's range, a scalar or a pad value, is the
-   wrapped value eager stores: 256 is 0 in uint8, 257 is 1, 200 is -56 in int8.
-   A subtraction that does not underflow compares as it reads: x - 1 adds Tolk's
-   own -1, which is not a stored value. *)
-let test_narrow_constants_wrap () =
-  let check (type a b) name (x : (a, b) Nx.t) f =
-    equal ~msg:name (array bool)
-      (Nx.to_array (f x))
-      (Nx.to_array (Rune.jit' f x))
+(* Two arguments of one shape under one drawn layout: transposed, flipped, every
+   other row, offset, broadcast, in windows. *)
+let operands =
+  let open Gen in
+  let* rows = int_range 1 4 in
+  let* cols = int_range 1 4 in
+  let value = float_range (-2.) 2. in
+  let* a = array ~size:(constant (rows * cols)) value in
+  let* b = array ~size:(constant (rows * cols)) value in
+  let+ steps = layout in
+  let make xs = lay_out steps (Nx.create Nx.float32 [| rows; cols |] xs) in
+  (make a, make b)
+
+let laid =
+  Gen.with_pp
+    (fun ppf (a, b) -> Format.fprintf ppf "%a@ %a" Nx.pp a Nx.pp b)
+    operands
+
+(* A triangular solve of 80 right-hand sides, wide enough to be solved in
+   blocks, with each flag: the residual of the system each flag states. *)
+let wide_solve =
+  cases ~name:fst "a triangular solve of 80 right-hand sides solves its system"
+    [
+      ("lower", (false, false, false));
+      ("upper, transposed, unit diagonal", (true, true, true));
+    ]
+    (fun (_, (upper, transpose, unit_diag)) ->
+      let n = 80 in
+      let a =
+        Nx.init Nx.float64 [| n; n |] (fun i ->
+            if i.(0) = i.(1) then 2.
+            else
+              float_of_int ((((i.(0) * 37) + (i.(1) * 11)) mod 13) - 6) /. 64.)
+      in
+      let b =
+        Nx.init Nx.float64 [| n; n |] (fun i ->
+            float_of_int ((((i.(0) * 5) + i.(1)) mod 7) - 3))
+      in
+      let system m =
+        let t = if upper then Nx.triu ~k:1 m else Nx.tril ~k:(-1) m in
+        let d =
+          if unit_diag then Nx.eye Nx.float64 n else Nx.diag (Nx.diagonal m)
+        in
+        let m = Nx.add t d in
+        if transpose then Nx.matrix_transpose m else m
+      in
+      let residual m =
+        let x = Nx.solve_triangular ~upper ~transpose ~unit_diag m b in
+        Nx.max (Nx.abs (Nx.sub (Nx.matmul (system m) x) b))
+      in
+      at_most float_exact ~than:1e-9 (Nx.item [] (Rune.jit' residual a)))
+
+(* Values computed in another order than eager's: within a relative 1e-5, or
+   within 2^-20 of the largest magnitude their terms reach, so that a sum that
+   cancels to a value far below its terms is compared at its terms' scale. *)
+let rounded a b =
+  let largest t =
+    Array.fold_left
+      (fun m v -> if Float.is_finite v then Float.max m (Float.abs v) else m)
+      0. (Nx.to_array t)
   in
-  let x = Nx.create Nx.uint8 [| 3 |] [| 1; 2; 3 |] in
-  check "x + 256 < 5" x (fun x -> Nx.less (Nx.add_s x 256) (Nx.full_like x 5));
-  check "256 < 5" x (fun x -> Nx.less (Nx.full_like x 256) (Nx.full_like x 5));
-  check "x / 257 = x" x (fun x -> Nx.equal (Nx.div x (Nx.full_like x 257)) x);
-  check "int8 y + 200 < 0"
-    (Nx.create Nx.int8 [| 3 |] [| 1; 2; 3 |])
-    (fun y -> Nx.less (Nx.add_s y 200) (Nx.zeros_like y));
-  check "uint8 pad 256 < 5" x (fun x ->
-      Nx.less (Nx.pad [| (1, 1) |] 256 x) (Nx.full Nx.uint8 [| 5 |] 5));
-  check "int8 pad 200 < 0"
-    (Nx.create Nx.int8 [| 3 |] [| 1; 2; 3 |])
-    (fun y -> Nx.less (Nx.pad [| (1, 1) |] 200 y) (Nx.zeros Nx.int8 [| 5 |]));
-  let u8 = Nx.create Nx.uint8 [| 3 |] [| 1; 2; 200 |] in
-  check "uint8 x - 1 < 5" u8 (fun x ->
-      Nx.less (Nx.sub_s x 1) (Nx.full_like x 5));
-  let u32 = Nx.create Nx.uint32 [| 3 |] [| 1l; 2l; 200l |] in
-  check "uint32 x - 1 < x" u32 (fun x -> Nx.less (Nx.sub_s x 1l) x);
-  check "uint32 x - 1 < 5" u32 (fun x ->
-      Nx.less (Nx.sub_s x 1l) (Nx.full_like x 5l))
+  let n = Array.fold_left max 1 (Nx.shape b) in
+  Oracle.tensor ~rel:1e-5
+    ~abs:(Float.ldexp (largest a +. (float_of_int n *. largest b)) (-20))
+    ()
 
-(* A subnormal base to a negative power above -1 has a finite power, though its
-   reciprocal overflows: 1e-40 ** -0.5 is 1e20. On the CPU: Metal flushes
-   subnormals. *)
-let test_pow_of_subnormal () =
-  let x = vec32 [| 1e-40; 3e-39; 1e-45 |] in
-  List.iter
-    (fun e ->
-      let f x = Nx.pow_s x e in
-      check_arr ~eps:2e-5
-        ~msg:(Printf.sprintf "compiled / eager x ** %g" e)
-        [| 1.; 1.; 1. |]
-        (Nx.div (Rune.jit' ~devices:[ Rune.device "CPU" ] f x) (f x)))
-    [ -0.8; -0.5; -0.3 ]
+(* Indices along an axis of 4, some 2^32 from one of its positions, which a
+   truncation to 32 bits would bring back to it. *)
+let far = 1 lsl 32
 
-let test_elementwise_matches_eager () =
-  let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
-  let g = Rune.jit' f in
-  let x = vec32 [| 1.0; -2.0; 0.5 |] in
-  check_arr ~msg:"first call" (to_arr (f x)) (g x);
-  check_arr ~msg:"replay" (to_arr (f x)) (g x)
+let far_index =
+  Gen.frequency
+    [
+      (2, Gen.int_range (-2) 5);
+      ( 1,
+        let open Gen in
+        let+ i = int_range 0 3
+        and+ k = of_list ~pp:Format.pp_print_int [ -2; -1; 1; 2 ] in
+        i + (k * far) );
+    ]
 
-let test_replay_reads_fresh_inputs () =
-  let g = Rune.jit' (fun x -> Nx.mul x x) in
-  ignore (g (vec32 [| 1.0; 2.0; 3.0 |]));
-  check_arr ~msg:"fresh data" [| 4.0; 9.0; 16.0 |]
-    (g (vec32 [| 2.0; 3.0; 4.0 |]))
-
-let test_retrace_on_new_shape () =
-  let g = Rune.jit' (fun x -> Nx.sum x) in
-  check_arr ~msg:"vector" [| 6.0 |] (g (vec32 [| 1.0; 2.0; 3.0 |]));
-  check_arr ~msg:"matrix" [| 10.0 |]
-    (g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]))
-
-(* An output with no elements has no buffer to schedule; every call returns an
-   empty tensor of its dtype and shape. *)
-let test_zero_size_outputs () =
-  let check name f x =
-    let g = Rune.jit' f in
-    for call = 1 to 2 do
-      let msg = Printf.sprintf "%s, call %d" name call in
-      let y = g x in
-      equal ~msg (array int) (Nx.shape (f x)) (Nx.shape y);
-      let dtype t = Format.asprintf "%a" Nx.pp_dtype (Nx.dtype t) in
-      equal ~msg string (dtype (f x)) (dtype y)
-    done
+(* The laws of values, [count] cases each; [heavy] adds the families the default
+   run leaves out, and the tests whose programs take longest to compile. *)
+let values ~count ~heavy =
+  let law { name; agreement; apply; _ } =
+    prop ~count name laid (fun (a, b) ->
+        match apply a b with
+        | expected -> (
+            let actual = Rune.jit two apply a b in
+            match agreement with
+            | Exact -> equal floats expected actual
+            | Exact_up_to_zero -> Traces.exact_up_to_zero expected actual
+            | Rounded -> equal (rounded a b) expected actual)
+        | exception Invalid_argument m ->
+            (* An empty extreme raises eagerly; compiled, it raises too. *)
+            raises_match ~msg:m Exn.invalid_arg (fun () ->
+                Rune.jit two apply a b))
   in
-  check "int8 cumsum" (Nx.cumsum ~axis:1) (Nx.zeros Nx.int8 [| 2; 0 |]);
-  check "float32 add of a cumsum"
-    (fun x -> Nx.add (Nx.cumsum x) x)
-    (Nx.zeros f32 [| 0 |])
+  group "values"
+    ([
+       group "one operation per family equals eager"
+         (List.map law (List.filter (fun f -> heavy || f.light) families));
+       test "a replay reads its new arguments, and an earlier call's again"
+         (fun () ->
+           let g = Rune.jit' poly in
+           equal floats (poly (x ())) (g (x ()));
+           equal floats (poly (y ())) (g (y ()));
+           equal floats (poly (x ())) (g (x ())));
+       test "a structured result equals eager's leaf by leaf" (fun () ->
+           let s = Nx.Ptree.(pair tensor (list (option tensor))) in
+           let f a = (Nx.neg a, [ Some (poly a); None; Some a ]) in
+           equal (Oracle.structure s)
+             (f (x ()))
+             (Rune.jit Nx.Ptree.(tensor @-> returns s) f (x ())));
+       test "64-bit integer constants keep every bit" (fun () ->
+           let a = Nx.create Nx.int64 [| 2 |] [| 1L; -1L |] in
+           let f a =
+             Nx.add a
+               (Nx.create Nx.int64 [| 2 |] [| Int64.max_int; Int64.min_int |])
+           in
+           equal (tensor int64) (f a) (Rune.jit' f a));
+       test "integer constants wrap at the operand's width" (fun () ->
+           let a = Nx.create Nx.int8 [| 3 |] [| 127; -128; 100 |] in
+           let f a = Nx.add (Nx.mul_s a 3) (Nx.full Nx.int8 [| 3 |] 100) in
+           equal (tensor int) (f a) (Rune.jit' f a));
+       test "float identities hold only where IEEE keeps them" (fun () ->
+           let a =
+             Nx.create Nx.float32 [| 4 |]
+               [| -0.; 0.; Float.infinity; Float.nan |]
+           in
+           let f a =
+             Nx.stack ~axis:0
+               [
+                 Nx.add a (Nx.zeros_like a);
+                 Nx.div a a;
+                 Nx.mul a (Nx.zeros_like a);
+               ]
+           in
+           equal floats (f a) (Rune.jit' f a));
+       test "a bitcast's result has its dtype and its argument's bits"
+         (fun () ->
+           let a = Nx.create Nx.float32 [| 3 |] [| 1.; -0.; Float.nan |] in
+           let r = Rune.jit' (Nx.bitcast Nx.int32) a in
+           equal (tensor int32)
+             (Nx.create Nx.int32 [| 3 |]
+                [| 0x3f800000l; Int32.min_int; Int32.bits_of_float Float.nan |])
+             r);
+       test "a bitcast between widths reads the bytes eager reads" (fun () ->
+           let bytes =
+             Nx.init Nx.uint8 [| 2; 8 |] (fun i ->
+                 ((i.(0) * 8) + i.(1)) * 29 mod 256)
+           in
+           let words = Nx.bitcast Nx.uint64 bytes in
+           equal (tensor int64)
+             (Nx.bitcast Nx.int64 words)
+             (Nx.bitcast Nx.int64 (Rune.jit' (Nx.bitcast Nx.uint64) bytes));
+           equal (tensor int) bytes (Rune.jit' (Nx.bitcast Nx.uint8) words));
+       cases ~name:fst "an arange inside a compiled call equals eager's"
+         [
+           ("1 element", (0, 1, 1));
+           ("257 elements", (0, 257, 1));
+           ("513 elements", (0, 513, 1));
+           ("2^20 elements", (0, 1 lsl 20, 1));
+           ("down by 2 from 1000", (1000, -26, -2));
+           ( "from 2^40 by more than 2^34",
+             ( 1 lsl 40,
+               (1 lsl 40) + (8 * ((1 lsl 34) + 12345)),
+               (1 lsl 34) + 12345 ) );
+         ]
+         (fun (_, (start, stop, step)) ->
+           let arange () = Nx.arange Nx.int64 start stop step in
+           let eager = arange () in
+           equal (tensor int64) eager
+             (Rune.jit' (fun z -> Nx.add z (arange ())) (Nx.zeros_like eager)));
+       test "an int32 and a float32 arange inside a compiled call equal eager's"
+         (fun () ->
+           let i () = Nx.arange Nx.int32 0 513 1 in
+           equal (tensor int32) (i ())
+             (Rune.jit' (fun z -> Nx.add z (i ())) (Nx.zeros_like (i ())));
+           let f () = Nx.arange Nx.float32 0 513 1 in
+           equal floats (f ())
+             (Rune.jit' (fun z -> Nx.add z (f ())) (Nx.zeros_like (f ()))));
+       test "a bfloat16 arange from 2^40 inside a compiled call equals eager's"
+         (fun () ->
+           let a () =
+             Nx.arange Nx.bfloat16 (1 lsl 40)
+               ((1 lsl 40) + (8 * ((1 lsl 31) + 12345)))
+               ((1 lsl 31) + 12345)
+           in
+           equal floats
+             (Nx.cast Nx.float32 (a ()))
+             (Nx.cast Nx.float32
+                (Rune.jit' (fun z -> Nx.add z (a ())) (Nx.zeros_like (a ())))));
+       test "top_k puts NaN first, as eager does" (fun () ->
+           let scores =
+             Nx.init Nx.float32 [| 2; 24 |] (fun i ->
+                 let i = (i.(0) * 24) + i.(1) in
+                 if i mod 5 = 3 then Float.nan else float_of_int (i * 7 mod 11))
+           in
+           List.iter
+             (fun k ->
+               let indices x = snd (Nx.top_k ~k x) in
+               let eager = indices scores in
+               equal ~msg:"the first NaN first" (tensor int64)
+                 (Nx.scalar Nx.int64 3L)
+                 (Nx.slice [ I 0; I 0 ] eager);
+               equal
+                 ~msg:(Printf.sprintf "top %d" k)
+                 (tensor int64) eager (Rune.jit' indices scores))
+             [ 2; 17 ]);
+       test "top_k of a short row ranked by counting is eager's" (fun () ->
+           let x =
+             Nx.create Nx.float32 [| 2; 6 |]
+               [|
+                 1.; -0.; Float.nan; 0.; 1.; -1.; 2.; 2.; -0.; Float.nan; 0.; 2.;
+               |]
+           in
+           List.iter
+             (fun k ->
+               let top x = Nx.top_k ~k ~axis:1 x in
+               let v, i = top x in
+               let v', i' =
+                 Rune.jit
+                   Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+                   top x
+               in
+               equal ~msg:(Printf.sprintf "values, top %d" k) floats v v';
+               equal
+                 ~msg:(Printf.sprintf "indices, top %d" k)
+                 (tensor int64) i i')
+             [ 1; 3; 6 ]);
+       prop "gather and scatter at indices 2^32 from a position equal eager's"
+         ~examples:[ [| far + 1; 1 - far; 2; -1; 4; far |] ]
+         (Gen.array ~size:(Gen.constant 6) far_index)
+         (fun idx ->
+           let indices =
+             Nx.create Nx.int64 [| 6 |] (Array.map Int64.of_int idx)
+           in
+           let t = Nx.reshape [| 4; 2 |] (Nx.arange_f Nx.float32 1. 9. 1.) in
+           let scatter mode indices t =
+             Nx.scatter ~mode ~axis:0
+               ~indices:
+                 (Nx.broadcast_to [| 6; 2 |] (Nx.reshape [| 6; 1 |] indices))
+               ~values:
+                 (Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 10. 22. 1.))
+               t
+           in
+           List.iter
+             (fun (msg, f) ->
+               equal ~msg floats (f indices t)
+                 (Rune.jit
+                    Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                    f indices t))
+             [
+               ("take", fun indices t -> Nx.take ~axis:0 ~indices t);
+               ("scatter set", scatter `Set);
+               ("scatter add", scatter `Add);
+             ]);
+       test "a zero-size result is an empty tensor" (fun () ->
+           let a = Nx.zeros Nx.float32 [| 0; 3 |] in
+           let r = Rune.jit' poly a in
+           equal (array int) [| 0; 3 |] (Nx.shape r));
+     ]
+    @ if heavy then [ wide_solve ] else [])
 
-let test_closure_matmul () =
-  let w = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let f x = Nx.matmul x w in
-  let g = Rune.jit' f in
-  let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
-  check_arr ~msg:"matmul" (to_arr (f x)) (g x)
+(* Keys *)
 
-(* Keys. Two calls share a program exactly when their arguments visit the same
-   leaves at the same paths, with the same dtypes and shapes, and make the same
-   reports. *)
+(* A structure that reports an integer. *)
+module Windowed = struct
+  type 'a t = { n : int; x : 'a }
 
-module Windowed_input = struct
-  type input = { x : Nx.float32_t; window : int; bias : Nx.float32_t option }
-  type _ t = input
-
-  let walk c { x; window; bias } =
+  let walk c { n; x } =
     let open Nx.Ptree.Walk in
-    let x = field c "x" tensor x in
-    let window = field c "window" int window in
-    let bias = field c "bias" (option tensor) bias in
-    { x; window; bias }
+    let n = field c "n" int n in
+    let x = field c "x" leaf x in
+    { n; x }
 end
 
-let windowed_input = Nx.Ptree.instantiate (module Windowed_input)
+let windowed : (float, Nx.float32_elt) Nx.t Windowed.t Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Windowed)
 
-let test_reports_key_programs () =
-  let traces = ref 0 in
-  let g =
-    Rune.jit
-      Nx.Ptree.(windowed_input @-> returns tensor)
-      (fun { Windowed_input.x; window; bias } ->
-        incr traces;
-        let y = Nx.slice [ Nx.R (0, window) ] x in
-        match bias with Some b -> Nx.sum (Nx.add y b) | None -> Nx.sum y)
-  in
-  let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-  let call window bias = scalar (g { Windowed_input.x; window; bias }) in
-  equal ~msg:"window 2" float_exact 3.0 (call 2 None);
-  equal ~msg:"an equal key replays" float_exact 3.0 (call 2 None);
-  equal ~msg:"one program" int 1 !traces;
-  equal ~msg:"window 3" float_exact 6.0 (call 3 None);
-  equal ~msg:"a changed int compiles a second program" int 2 !traces;
-  equal ~msg:"window 2 again" float_exact 3.0 (call 2 None);
-  equal ~msg:"and replays the first" int 2 !traces;
-  equal ~msg:"a bias" float_exact 5.0 (call 2 (Some (vec32 [| 1.0 |])));
-  equal ~msg:"presence compiles a third" int 3 !traces
-
-let test_a_leafless_element_keys_programs () =
-  let traces = ref 0 in
-  let s = Nx.Ptree.(pair tensor (list (option tensor))) in
-  let g =
-    Rune.jit
-      Nx.Ptree.(s @-> returns tensor)
-      (fun (x, extras) ->
-        incr traces;
-        Nx.mul_s x (float_of_int (List.length extras)))
-  in
-  let x = vec32 [| 1.0; 2.0 |] in
-  check_arr ~msg:"one element" [| 1.0; 2.0 |] (g (x, [ None ]));
-  check_arr ~msg:"two elements" [| 2.0; 4.0 |] (g (x, [ None; None ]));
-  equal ~msg:"a list gaining a leafless element compiles again" int 2 !traces;
-  check_arr ~msg:"one element again" [| 1.0; 2.0 |] (g (x, [ None ]));
-  equal ~msg:"and replays" int 2 !traces
-
-type shaped = Square of Nx.float32_t | Circle of Nx.float32_t
-
-module Shaped = struct
-  type _ t = shaped
+(* A structure with two cases. *)
+module Choice = struct
+  type 'a t = Left of 'a | Right of 'a
 
   let walk c =
     let open Nx.Ptree.Walk in
     function
-    | Square x ->
-        case c "square";
-        Square (field c "side" tensor x)
-    | Circle x ->
-        case c "circle";
-        Circle (field c "radius" tensor x)
+    | Left x ->
+        case c "left";
+        Left (leaf c x)
+    | Right x ->
+        case c "right";
+        Right (leaf c x)
 end
 
-let test_cases_key_programs () =
-  let traces = ref 0 in
-  let g =
-    Rune.jit
-      Nx.Ptree.(Nx.Ptree.instantiate (module Shaped) @-> returns tensor)
-      (fun s ->
-        incr traces;
-        match s with
-        | Square x -> Nx.mul x x
-        | Circle x -> Nx.mul_s (Nx.mul x x) 3.0)
-  in
-  let x = vec32 [| 2.0 |] in
-  check_arr ~msg:"square" [| 4.0 |] (g (Square x));
-  check_arr ~msg:"circle" [| 12.0 |] (g (Circle x));
-  equal ~msg:"a case with equal leaves compiles again" int 2 !traces;
-  check_arr ~msg:"square again" [| 4.0 |] (g (Square x));
-  equal ~msg:"and replays" int 2 !traces
+let choice : (float, Nx.float32_elt) Nx.t Choice.t Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Choice)
 
-let test_structured_output () =
-  let f p =
-    { w = Nx.mul p.w p.w; b = Nx.add p.b p.b; scale = Nx.mul_s p.scale 2.0 }
-  in
-  let g = Rune.jit Nx.Ptree.(params_ptree @-> returns params_ptree) f in
-  let p = params () in
-  let r = g p in
-  let e = f p in
-  check_arr ~msg:"w" (to_arr e.w) r.w;
-  check_arr ~msg:"b" (to_arr e.b) r.b;
-  check_arr ~msg:"scale (float64)" (to_arr e.scale) r.scale
+(* [retraces first other] asserts that [first ()] traces once, [other ()] once
+   more, and [other ()] again not at all. *)
+let retraces first other =
+  equal ~msg:"the first call" int 1 (traces first);
+  equal ~msg:"the other key" int 1 (traces other);
+  equal ~msg:"the other key again" int 0 (traces other)
 
-(* Composition *)
+(* [shares first other] asserts that [other ()] replays the program of [first
+   ()]. *)
+let shares first other =
+  first ();
+  equal ~msg:"traces" int 0 (traces other)
 
-let test_grad_inside_jit () =
-  let step =
-    Rune.jit
-      Nx.Ptree.(params_ptree @-> returns params_ptree)
-      (fun p -> Rune.grad params_ptree quadratic p)
-  in
-  let g = step (params ()) in
-  check_arr ~msg:"dw" [| 2.0; -4.0; 6.0 |] g.w;
-  check_arr ~msg:"db" [| 3.0 |] g.b;
-  check_arr ~msg:"dscale" [| 0.0 |] g.scale;
-  (* Replay computes gradients at the new point. *)
-  let p2 = { (params ()) with w = vec32 [| 4.0; 5.0; 6.0 |] } in
-  let g2 = step p2 in
-  check_arr ~msg:"dw at new point" [| 8.0; 10.0; 12.0 |] g2.w
+(* [checked g f a] is [g a], checked against eager's [f a]. *)
+let checked g f a () = equal close (f a) (g a)
+let arange n = Nx.arange_f Nx.float32 0. (float_of_int n) 1.
+let grid r c = Nx.reshape [| r; c |] (arange (r * c))
 
-let test_jit_under_grad_is_transparent () =
-  let g = Rune.jit' (fun x -> Nx.mul x x) in
-  let dx = Rune.grad' (fun x -> Nx.sum (g x)) (vec32 [| 1.0; 2.0; 3.0 |]) in
-  check_arr ~msg:"d(sum x^2)" [| 2.0; 4.0; 6.0 |] dx
+(* Every other element of [t] along its first axis, as a view. *)
+let every_other t =
+  Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~axis:0 ~window:1 ~step:2 t)
 
-let test_jit_under_vmap_is_transparent () =
-  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-  let y = Rune.vmap' g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
-  check_arr ~msg:"vmap over jit" [| 2.0; 4.0; 6.0; 8.0 |] y
-
-(* Linear algebra
-
-   QR and triangular solves compile through trace-time unrolling: the tracer
-   writes them as ordinary Tolk compositions (one Householder reflector or
-   substitution step per matrix dimension), and the lowering compiles the whole
-   factorization. Every case compares against the eager C kernels, which fixes
-   the LAPACK conventions: the reflector sign, and a column with a zero tail
-   taking no reflector at all. *)
-
-let test_qr_reduced_matches_eager () =
-  let a =
-    Nx.create f32 [| 4; 4 |]
-      [|
-        2.0;
-        1.0;
-        1.0;
-        0.5;
-        1.0;
-        3.0;
-        2.0;
-        1.0;
-        1.5;
-        2.0;
-        4.0;
-        0.25;
-        0.5;
-        1.0;
-        0.5;
-        5.0;
-      |]
-  in
-  let jq, jr =
-    Rune.jit
-      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-      (fun m -> Nx.qr ~mode:`Reduced m)
-      a
-  in
-  let q, r = Nx.qr ~mode:`Reduced a in
-  check_arr ~msg:"Q" (to_arr q) jq;
-  check_arr ~msg:"R" (to_arr r) jr
-
-(* The second column's tail is zero, so it takes no reflector (tau = 0, R[1][1]
-   keeps alpha); the third is full. Both paths must match eager. *)
-let test_qr_zero_tail_matches_eager () =
-  let a =
-    Nx.create f32 [| 3; 3 |] [| 1.0; 0.0; 2.0; 0.0; 2.0; 3.0; 0.0; 0.0; 4.0 |]
-  in
-  let jq, jr =
-    Rune.jit
-      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-      (fun m -> Nx.qr ~mode:`Reduced m)
-      a
-  in
-  let q, r = Nx.qr ~mode:`Reduced a in
-  check_arr ~msg:"Q" (to_arr q) jq;
-  check_arr ~msg:"R" (to_arr r) jr
-
-let test_solve_triangular_flags_match_eager () =
-  let a =
-    Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
-  in
-  let b = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  List.iter
-    (fun (upper, transpose, unit_diag) ->
-      let msg =
-        Printf.sprintf "upper %b transpose %b unit_diag %b" upper transpose
-          unit_diag
-      in
-      let x =
-        Rune.jit
-          Nx.Ptree.(pair tensor tensor @-> returns tensor)
-          (fun (a, b) -> Nx.solve_triangular ~upper ~transpose ~unit_diag a b)
-          (a, b)
-      in
-      check_arr ~msg
-        (to_arr (Nx.solve_triangular ~upper ~transpose ~unit_diag a b))
-        x)
+let keys =
+  let g () = Rune.jit' poly in
+  group "keys"
     [
-      (false, false, false);
-      (true, false, false);
-      (false, true, false);
-      (true, true, false);
-      (false, false, true);
-      (true, false, true);
-      (false, true, true);
-      (true, true, true);
+      test "a call with the key of an earlier one replays its program"
+        (fun () ->
+          let f, ran = counted poly in
+          let g = Rune.jit' f in
+          ignore (g (x ()));
+          equal int 0 (traces (fun () -> ignore (g (y ()))));
+          equal int 1 !ran);
+      test "another extent retraces once" (fun () ->
+          let g = g () in
+          retraces (checked g poly (x ())) (checked g poly (arange 5)));
+      test "another rank retraces once" (fun () ->
+          let g = g () in
+          retraces (checked g poly (arange 4)) (checked g poly (grid 2 2)));
+      test "strides out of C order retrace once" (fun () ->
+          let g = g () in
+          retraces
+            (checked g poly (grid 2 3))
+            (checked g poly (Nx.transpose (grid 3 2))));
+      test
+        "an argument starting 4 bytes further within 16 bytes of memory \
+         retraces once" (fun () ->
+          let g = g () in
+          let a = arange 12 in
+          retraces
+            (checked g poly (Nx.slice [ R (0, 4) ] a))
+            (checked g poly (Nx.slice [ R (1, 5) ] a)));
+      test "an argument starting 16 bytes further shares the program" (fun () ->
+          let g = g () in
+          let a = arange 12 in
+          shares
+            (checked g poly (Nx.slice [ R (0, 4) ] a))
+            (checked g poly (Nx.slice [ R (4, 8) ] a)));
+      test
+        "strides out of C order only on axes of one element share the program"
+        (fun () ->
+          let g = g () in
+          shares
+            (checked g poly (grid 4 1))
+            (checked g poly (Nx.transpose (grid 1 4))));
+      test "another reported integer retraces once" (fun () ->
+          let f { Windowed.n; x } = Nx.mul_s x (float_of_int n) in
+          let g = Rune.jit Nx.Ptree.(windowed @-> returns tensor) f in
+          let w n () = { Windowed.n; x = x () } in
+          retraces
+            (fun () -> equal close (f (w 1 ())) (g (w 1 ())))
+            (fun () -> equal close (f (w 2 ())) (g (w 2 ()))));
+      slow "another case retraces once" (fun () ->
+          let f = function Choice.Left x -> Nx.neg x | Right x -> poly x in
+          let g = Rune.jit Nx.Ptree.(choice @-> returns tensor) f in
+          retraces
+            (fun () -> equal close (f (Left (x ()))) (g (Left (x ()))))
+            (fun () -> equal close (f (Right (x ()))) (g (Right (x ())))));
+      slow "another list length retraces once" (fun () ->
+          let f l = List.fold_left Nx.add (x ()) l in
+          let g = Rune.jit Nx.Ptree.(list tensor @-> returns tensor) f in
+          retraces
+            (fun () -> equal close (f [ y () ]) (g [ y () ]))
+            (fun () -> equal close (f [ y (); y () ]) (g [ y (); y () ])));
+      slow "an option's presence retraces once" (fun () ->
+          let f = function None -> x () | Some a -> poly a in
+          let g = Rune.jit Nx.Ptree.(option tensor @-> returns tensor) f in
+          retraces
+            (fun () -> equal close (f None) (g None))
+            (fun () -> equal close (f (Some (y ()))) (g (Some (y ())))));
+      slow "a key met again after another replays its first program" (fun () ->
+          let g = g () in
+          ignore (g (x ()));
+          ignore (g (arange 5));
+          equal int 0 (traces (fun () -> ignore (g (y ())))));
+      slow "two compiled functions of one function keep their own programs"
+        (fun () ->
+          let g1 = Rune.jit' poly and g2 = Rune.jit' poly in
+          equal int 1 (traces (fun () -> ignore (g1 (x ()))));
+          equal int 1 (traces (fun () -> ignore (g2 (x ())))));
+      test "a change of NOOPT around a call retraces once" (fun () ->
+          let g = g () in
+          let noopt f =
+            Tolk_next.Helpers.context [ B (Tolk_next.Helpers.noopt, true) ] f
+          in
+          retraces
+            (checked g poly (x ()))
+            (fun () -> noopt (checked g poly (x ()))));
+      (* A program of its own, whose kernel no earlier search chose: BEAM asks
+         for a search, which times candidates on the host. *)
+      test "a call under BEAM=1 searches its kernel and computes eager's values"
+        (fun () ->
+          let f a = Nx.add_s (poly a) 0.375 in
+          let r =
+            Tolk_next.Helpers.context
+              [ B (Tolk_next.Helpers.beam, 1) ]
+              (fun () -> Rune.jit' f (x ()))
+          in
+          equal close (f (x ())) r);
+      test "a call compiled with ~beam:1 computes eager's values" (fun () ->
+          let f a = Nx.add_s (poly a) 0.6875 in
+          equal close (f (x ())) (Rune.jit' ~beam:1 ~parallel:2 f (x ())));
+      slow "a flipped view retraces once" (fun () ->
+          let g = g () in
+          retraces
+            (checked g poly (grid 2 3))
+            (checked g poly (Nx.flip (grid 2 3))));
+      slow "a broadcast view retraces once" (fun () ->
+          let g = g () in
+          retraces
+            (checked g poly (grid 2 3))
+            (checked g poly (Nx.broadcast_to [| 2; 3 |] (grid 1 3))));
+      slow "a view skipping elements retraces once" (fun () ->
+          let g = g () in
+          retraces
+            (checked g poly (arange 3))
+            (checked g poly (every_other (arange 6))));
+      slow "overlapping windows retrace once" (fun () ->
+          let g = g () in
+          retraces
+            (checked g poly (grid 4 2))
+            (checked g poly (Nx.sliding_window ~window:2 (arange 5))));
+      slow "another device retraces once" (fun () ->
+          let g = g () in
+          retraces
+            (fun () -> equal close (poly (x ())) (host (g (placed d1 (x ())))))
+            (fun () -> equal close (poly (x ())) (host (g (placed d2 (x ()))))));
+      slow "another backend on one device retraces once" (fun () ->
+          let g = g () in
+          retraces
+            (fun () -> equal close (poly (x ())) (host (g (placed d1 (x ())))))
+            (fun () ->
+              equal close
+                (poly (x ()))
+                (host (g (Nx.place (Nx.Placement.device d1) (x ()))))));
+      slow "a split value after a replicated one retraces once" (fun () ->
+          let g = g () in
+          let on p () =
+            equal close (poly (x ())) (host (g (Nx.place p (x ()))))
+          in
+          retraces
+            (on (Nx.Placement.replicated ~backend:Rune.compiled [ d1; d2 ]))
+            (on
+               (Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d1; d2 ])));
     ]
 
-let test_solve_triangular_vector_rhs () =
-  let a =
-    Nx.create f32 [| 3; 3 |] [| 2.0; 1.0; 0.0; 1.0; 3.0; 1.0; 0.0; 1.0; 4.0 |]
-  in
-  let b = Nx.create f32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  let x =
-    Rune.jit
-      Nx.Ptree.(pair tensor tensor @-> returns tensor)
-      (fun (a, b) ->
-        Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false a b)
-      (a, b)
-  in
-  check_arr ~msg:"vector right-hand side"
-    (to_arr
-       (Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false a b))
-    x
+(* Results *)
 
-let test_solve_triangular_batched () =
-  let a =
-    Nx.create f32 [| 2; 3; 3 |]
-      [|
-        4.0;
-        1.0;
-        2.0;
-        0.0;
-        5.0;
-        3.0;
-        0.0;
-        0.0;
-        6.0;
-        2.0;
-        1.0;
-        0.0;
-        0.0;
-        3.0;
-        1.0;
-        0.0;
-        0.0;
-        4.0;
-      |]
-  in
-  let b = Nx.create f32 [| 2; 3; 1 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let x =
-    Rune.jit
-      Nx.Ptree.(pair tensor tensor @-> returns tensor)
-      (fun (a, b) ->
-        Nx.solve_triangular ~upper:true ~transpose:false ~unit_diag:false a b)
-      (a, b)
-  in
-  check_arr ~msg:"batched upper"
-    (to_arr
-       (Nx.solve_triangular ~upper:true ~transpose:false ~unit_diag:false a b))
-    x
+let distinct a b =
+  is_false ~msg:"distinct storage"
+    (List.exists2 Nativeint.equal (Witness.addresses a) (Witness.addresses b))
 
-(* Wide right-hand sides take the blocked path: rows are partitioned into 32-row
-   blocks, each solved with one GEMM against the rows solved so far after its
-   diagonal block has been inverted once. This size spans several blocks plus a
-   partial trailing block; check the residual, which is independent of the
-   solver. *)
-let test_solve_triangular_blocked () =
-  let n = 80 in
-  let a =
-    Nx.init Nx.float64 [| n; n |] (fun idx ->
-        let i, j = (idx.(0), idx.(1)) in
-        if i > j then Float.of_int ((((i * 37) + (j * 11)) mod 13) - 6) /. 8.0
-        else if i = j then 2.0
-        else 0.0)
-  in
-  let b =
-    Nx.init Nx.float64 [| n; n |] (fun idx ->
-        Float.of_int ((((idx.(0) * 5) + idx.(1)) mod 7) - 3))
-  in
-  let resid =
-    Rune.jit'
-      (fun m ->
-        let x =
-          Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false m b
-        in
-        Nx.max (Nx.abs (Nx.sub (Nx.matmul m x) b)))
-      a
-  in
-  check_close ~tol:1e-9 ~msg:"blocked triangular solve residual" [| 0.0 |]
-    (to_arr resid);
-  (* The flags compose with blocking. ~upper reads the strict upper triangle of
-     a matrix whose stored diagonal is garbage (never read under ~unit_diag),
-     and ~transpose solves the transposed system — so the effective system is [I
-     + strict_upper(m)]ᵀ. *)
-  let au =
-    Nx.add
-      (Nx.mul_s (Nx.triu ~k:1 (Nx.transpose ~axes:[ 1; 0 ] a)) 0.125)
-      (Nx.mul_s (Nx.eye Nx.float64 n) 7.0)
-  in
-  let resid_flags =
-    Rune.jit'
-      (fun m ->
-        let x =
-          Nx.solve_triangular ~upper:true ~transpose:true ~unit_diag:true m b
-        in
-        let e =
-          Nx.add (Nx.eye Nx.float64 n)
-            (Nx.transpose ~axes:[ 1; 0 ] (Nx.triu ~k:1 m))
-        in
-        Nx.max (Nx.abs (Nx.sub (Nx.matmul e x) b)))
-      au
-  in
-  check_close ~tol:1e-9 ~msg:"blocked flags residual" [| 0.0 |]
-    (to_arr resid_flags)
-
-(* Differentiating a QR-using loss inside jit: the forward factorization
-   compiles via [Tolk_frontend.Linalg], and the reverse pullback (recorded on
-   the tape by the nested grad) traces too — its matmuls and triangular solve
-   are ordinary graph ops, so the whole backward pass ends up in the compiled
-   program. Compare against the eager gradient. *)
-let test_qr_gradient_compiles () =
-  let loss m =
-    let q, r = Nx.qr ~mode:`Reduced m in
-    let lq = Nx.mul q (Nx.tril ~k:0 (Nx.full Nx.float64 (Nx.shape q) 1.0)) in
-    let lr = Nx.mul r (Nx.triu ~k:0 (Nx.full Nx.float64 (Nx.shape r) 1.0)) in
-    Nx.add (Nx.sum (Nx.mul lq lq)) (Nx.sum (Nx.mul lr lr))
-  in
-  let a =
-    mat64 4 4
-      [|
-        12.0;
-        1.0;
-        3.0;
-        0.5;
-        1.0;
-        13.0;
-        2.0;
-        1.0;
-        3.0;
-        2.0;
-        14.0;
-        0.25;
-        0.5;
-        1.0;
-        0.5;
-        15.0;
-      |]
-  in
-  let compiled = Rune.jit' (fun m -> Rune.grad' loss m) a in
-  check_close ~tol:1e-10 ~msg:"grad through compiled QR"
-    (to_arr (Rune.grad' loss a))
-    (to_arr compiled)
-
-(* Only the lower triangle is read, in both triangles' factors: the upper
-   triangle holds garbage here, and the compiled program must ignore it as the
-   eager kernel does. *)
-let test_cholesky_matches_eager () =
-  let a =
-    Nx.create f32 [| 3; 3 |] [| 4.0; 9.0; 9.0; 1.0; 5.0; 9.0; 2.0; 3.0; 6.0 |]
-  in
-  let l = Rune.jit' (fun m -> Nx.cholesky m) a in
-  check_arr ~msg:"lower" (to_arr (Nx.cholesky a)) l;
-  let u = Rune.jit' (fun m -> Nx.cholesky ~upper:true m) a in
-  check_arr ~msg:"upper" (to_arr (Nx.cholesky ~upper:true a)) u
-
-(* The Cholesky pullback is jit-safe (its diagonal terms and triangular solves
-   are graph ops), so differentiating a Cholesky-using loss inside jit compiles
-   the whole backward pass. *)
-let test_cholesky_gradient_compiles () =
-  let loss m = Nx.sum (Nx.mul (Nx.cholesky m) (Nx.cholesky m)) in
-  let a = mat64 3 3 [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |] in
-  let compiled = Rune.jit' (fun m -> Rune.grad' loss m) a in
-  check_close ~tol:1e-10 ~msg:"grad through compiled Cholesky"
-    (to_arr (Rune.grad' loss a))
-    (to_arr compiled)
-
-(* Both matrices exchange rows while factoring; the compiled factors must match
-   eager. *)
-let test_lu_matches_eager () =
-  let a =
-    Nx.cast f32
-      (Nx.stack
-         [
-           mat64 3 3 [| 0.3; 1.2; -0.4; 2.1; 0.5; 0.9; -0.7; 1.6; 3.2 |];
-           mat64 3 3 [| 1.0; 0.0; 2.0; 0.0; 0.0; 3.0; 4.0; 1.0; 1.0 |];
-         ])
-  in
-  let factors m =
-    let _, l, u = Nx.lu m in
-    Nx.stack [ l; u ]
-  in
-  check_arr ~msg:"L and U" (to_arr (factors a)) (Rune.jit' factors a);
-  let order m =
-    let perm, _, _ = Nx.lu m in
-    perm
-  in
-  equal ~msg:"row order" (array int64)
-    (Nx.to_array (order a))
-    (Nx.to_array (Rune.jit' order a));
-  check_arr ~msg:"det" (to_arr (Nx.det a)) (Rune.jit' Nx.det a)
-
-(* The LU pullback is made of graph ops (triangular solves, matmuls and a gather
-   through the inverse permutation), so the gradient of det compiles. *)
-let test_det_gradient_compiles () =
-  let a = mat64 3 3 [| 0.3; 1.2; -0.4; 2.1; 0.5; 0.9; -0.7; 1.6; 3.2 |] in
-  let compiled = Rune.jit' (fun m -> Rune.grad' Nx.det m) a in
-  check_close ~tol:1e-10 ~msg:"grad through compiled LU"
-    (to_arr (Rune.grad' Nx.det a))
-    (to_arr compiled)
-
-(* [Nx.solve] compiles: its singularity check lives in the graph, so the LU and
-   the triangular solves trace as one program, and [Nx.inv] follows. *)
-let test_solve_matches_eager () =
-  let solve (a, b) = Nx.solve a b in
-  let a =
-    Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
-  in
-  let b = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let g = Rune.jit Nx.Ptree.(pair tensor tensor @-> returns tensor) solve in
-  check_arr ~msg:"first call" (to_arr (Nx.solve a b)) (g (a, b));
-  (* Replay solves a different system with the same compiled program. *)
-  let a2 = Nx.mul_s a 1.5 in
-  let b2 = Nx.add_s b 2.0 in
-  check_arr ~msg:"replay" (to_arr (Nx.solve a2 b2)) (g (a2, b2));
-  check_arr ~msg:"inv" (to_arr (Nx.inv a)) (Rune.jit' (fun m -> Nx.inv m) a)
-
-(* Staged scans: under jit a [Rune.scan] compiles the fold step once and runs it
-   as a loop in the compiled program, and [grad] through it compiles a reversed
-   loop over the body's pullback. Every case compares against the eager
-   (unrolled) scan and the eager gradient. *)
-
-let cumsum xs =
-  Rune.scan'
-    ~f:(fun c x ->
-      let c = Nx.add c x in
-      (c, c))
-    ~init:(Nx.scalar f32 0.0) xs
-
-(* A two-tensor carry. *)
-module Pair = struct
-  type pair = { u : Nx.float32_t; v : Nx.float32_t }
-  type _ t = pair
-
-  let walk c { u; v } =
-    let open Nx.Ptree.Walk in
-    let u = field c "u" tensor u in
-    let v = field c "v" tensor v in
-    { u; v }
-end
-
-let pair_ptree = Nx.Ptree.instantiate (module Pair)
-
-type pair = Pair.pair
-
-let test_scan_matches_eager () =
-  let g = Rune.jit' (fun xs -> snd (cumsum xs)) in
-  let xs = vec32 [| 1.0; 2.0; 3.0 |] in
-  check_arr ~msg:"cumulative sum" (to_arr (snd (cumsum xs))) (g xs);
-  (* Replay computes on fresh data. *)
-  check_arr ~msg:"replay" [| 0.5; 2.5; 5.5 |] (g (vec32 [| 0.5; 2.0; 3.0 |]))
-
-let test_grad_through_scan_matches_eager () =
-  (* c' = tanh (c + x): the pullback reads the carry stack the forward loop
-     records. *)
-  let loss xs =
-    let c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let c = Nx.tanh (Nx.add c x) in
-          (c, c))
-        ~init:(Nx.scalar f32 0.0) xs
-    in
-    Nx.add (Nx.reshape [||] c) (Nx.sum ys)
-  in
-  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  let g = Rune.jit' (fun xs -> Rune.grad' loss xs) in
-  check_arr ~msg:"tanh recurrence" (to_arr (Rune.grad' loss xs)) (g xs);
-  check_arr ~msg:"replay with fresh data"
-    (to_arr (Rune.grad' loss (vec32 [| 0.25; -1.0; 1.5; 0.75 |])))
-    (g (vec32 [| 0.25; -1.0; 1.5; 0.75 |]));
-  (* n = 1 *)
-  check_arr ~msg:"single step"
-    (to_arr (Rune.grad' loss (vec32 [| 2.0 |])))
-    (g (vec32 [| 2.0 |]))
-
-let test_grad_through_scan_ys_only () =
-  (* The loss reads only the stacked outputs: the final carry's cotangent is
-     zero. *)
-  let loss xs =
-    let _c, ys = cumsum xs in
-    Nx.sum ys
-  in
-  let xs = vec32 [| 1.0; 2.0; 3.0 |] in
-  check_arr ~msg:"ys only"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
-
-let test_grad_through_scan_carry_only () =
-  (* The loss reads only the final carry: the stacked outputs' cotangent is
-     zero. *)
-  let loss xs =
-    let c, _ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let c = Nx.mul c x in
-          (c, c))
-        ~init:(Nx.scalar f32 1.0) xs
-    in
-    Nx.reshape [||] c
-  in
-  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"final carry only"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
-
-let test_grad_through_scan_multi_leaf () =
-  let loss xs =
-    let p, ys =
-      Rune.scan pair_ptree Nx.Ptree.tensor Nx.Ptree.tensor
-        ~f:(fun p x ->
-          let u = Nx.add p.u x and v = Nx.mul p.v x in
-          ({ u; v }, Nx.mul u v))
-        ~init:{ u = Nx.scalar f32 0.0; v = Nx.scalar f32 1.0 }
-        xs
-    in
-    Nx.add (Nx.add (Nx.reshape [||] p.u) (Nx.reshape [||] p.v)) (Nx.sum ys)
-  in
-  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"pair carry"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
-
-let test_grad_through_scan_asymmetric_pair () =
-  (* Same-shaped leaves entering the loss with different weights: pairing a
-     final-carry buffer (or an init-carry cotangent) with the wrong leaf changes
-     the result instead of cancelling out. *)
-  let loss xs =
-    let p, ys =
-      Rune.scan pair_ptree Nx.Ptree.tensor Nx.Ptree.tensor
-        ~f:(fun p x ->
-          let u = Nx.tanh (Nx.add p.u x) and v = Nx.mul p.v (Nx.add_s x 0.5) in
-          ({ u; v }, Nx.add (Nx.mul_s u 2.0) v))
-        ~init:{ u = Nx.scalar f32 0.1; v = Nx.scalar f32 1.0 }
-        xs
-    in
-    Nx.add
-      (Nx.add (Nx.mul_s (Nx.reshape [||] p.u) 3.0) (Nx.reshape [||] p.v))
-      (Nx.sum ys)
-  in
-  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"asymmetric pair forward"
-    (to_arr (loss xs))
-    (Rune.jit' loss xs);
-  check_arr ~msg:"asymmetric pair grad"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
-
-let test_scan_shape_unstable_carry_unrolls () =
-  (* The carry grows a slot per step, so no single compiled body can stand for
-     every iteration: the jit declines staging and the fold unrolls into the
-     trace, forward and under grad. *)
-  let loss xs =
-    let c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          (Nx.concatenate ~axis:0 [ c; Nx.reshape [| 1 |] x ], Nx.sum c))
-        ~init:(Nx.zeros f32 [| 1 |]) xs
-    in
-    Nx.add (Nx.sum c) (Nx.sum ys)
-  in
-  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"unstable forward" (to_arr (loss xs)) (Rune.jit' loss xs);
-  check_arr ~msg:"unstable grad"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
-
-let test_grad_through_scan_nested () =
-  (* The body itself scans (over the elements of a vector x). *)
-  let loss xs =
-    let c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let ci, inner =
-            Rune.scan'
-              ~f:(fun ci xi ->
-                let ci = Nx.add ci xi in
-                (ci, Nx.mul ci xi))
-              ~init:c x
+let results =
+  group "results"
+    [
+      test "every result leaf has storage of its own" (fun () ->
+          let a, b =
+            Rune.jit
+              Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+              (fun a -> (Nx.neg a, poly a))
+              (x ())
           in
-          let c = Nx.add ci (Nx.sum inner) in
-          (c, c))
-        ~init:(Nx.zeros f32 [| 2 |]) xs
-    in
-    Nx.add (Nx.sum c) (Nx.sum ys)
-  in
-  let xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |] in
-  check_arr ~msg:"forward" (to_arr (loss xs)) (Rune.jit' loss xs);
-  check_arr ~msg:"grad"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+          distinct a b);
+      test "a result that returns a read argument is a copy" (fun () ->
+          let a = x () in
+          let r = Rune.jit' Fun.id a in
+          equal floats a r;
+          distinct a r);
+      test "a result that returns a capture is a copy" (fun () ->
+          let w = y () in
+          let r = Rune.jit' (fun _ -> w) (x ()) in
+          equal floats w r;
+          distinct w r);
+      test "a value at two result leaves comes back as two values" (fun () ->
+          let a, b =
+            Rune.jit
+              Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+              (fun a ->
+                let r = poly a in
+                (r, r))
+              (x ())
+          in
+          equal floats a b;
+          distinct a b);
+      test "one value passed at two read leaves is read at both" (fun () ->
+          let a = x () in
+          equal floats (Nx.add a a) (Rune.jit two Nx.add a a));
+      test "a result can be a structure that checks its leaves' shapes"
+        (fun () ->
+          let next =
+            Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
+          in
+          let step k = (Nx.Rng.split k).(0) in
+          let k = Nx.Rng.key 42 in
+          equal (tensor int32)
+            (step k :> (int32, Nx.int32_elt) Nx.t)
+            (next step k :> (int32, Nx.int32_elt) Nx.t));
+    ]
 
-let test_grad_through_scan_captured_weight () =
-  (* The body reads a closure capture (a compile-time constant). *)
-  let w = vec32 [| 2.0 |] in
-  let loss xs =
-    let _c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let c = Nx.add c (Nx.mul x (Nx.reshape [||] w)) in
-          (c, Nx.mul c c))
-        ~init:(Nx.scalar f32 0.0) xs
-    in
-    Nx.sum ys
-  in
-  let xs = vec32 [| 1.0; 2.0; 3.0; 0.5 |] in
-  check_arr ~msg:"captured weight"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+(* Consumption *)
 
-let test_nested_scans_rebind_inputs () =
-  let weight = Nx.scalar f32 0.5 in
-  let f xs =
-    let bias = Nx.sum xs in
-    let carry, ys = Rune.scan'
-        ~f:(fun carry row ->
-          let carry, inner = Rune.scan'
-              ~f:(fun carry x ->
-                let carry = Nx.add carry (Nx.add (Nx.mul x weight) bias) in
-                carry, Nx.mul carry x)
-              ~init:carry row in
-          let carry = Nx.add carry (Nx.sum inner) in
-          carry, carry)
-        ~init:(Nx.scalar f32 0.) xs in
-    (* The outer input remains valid after both loop scopes finish. *)
-    Nx.add (Nx.add carry (Nx.sum ys)) (Nx.sum xs)
-  in
-  List.iter (fun device ->
-      let compiled = Rune.jit' ~devices:[Rune.device device] f in
-      for replay = 1 to 3 do
-        let xs = Nx.create f32 [| 3; 2 |]
-            (Array.init 6 (fun i -> float_of_int (i + replay) /. 8.)) in
-        Gc.full_major ();
-        check_arr ~eps:1e-3
-          ~msg:(Printf.sprintf "%s nested replay %d" device replay)
-          (to_arr (f xs)) (compiled xs)
-      done)
-    ["CPU"; "CPU:1"]
+let consumed_message a = message (fun () -> Nx.to_array a)
 
-let test_grad_through_scan_vector_carry () =
-  let loss xs =
-    let c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let c = Nx.tanh (Nx.add c x) in
-          (c, Nx.mul c c))
-        ~init:(Nx.zeros f32 [| 2 |]) xs
-    in
-    Nx.add (Nx.sum c) (Nx.sum ys)
-  in
-  let xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |] in
-  check_arr ~msg:"vector carry"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
-
-(* A loop steps through its stacked rows at a stride padded to 16 bytes, so rows
-   that fall short of it (five halves, three floats) read and write only their
-   own elements, forward and backward. *)
-(* Rows and outputs are structures: a stack of per-step weights and a mixed
-   float/int row, and two outputs. The cotangent of the rows is stacked like
-   them, row i from step i; the integer row gets none. *)
-module Rows = struct
-  type rows = { w : Nx.float32_t; b : Nx.float32_t; step : Nx.int32_t }
-  type _ t = rows
-
-  let walk c { w; b; step } =
-    let open Nx.Ptree.Walk in
-    let w = field c "w" tensor w in
-    let b = field c "b" tensor b in
-    let step = field c "step" tensor step in
-    { w; b; step }
-end
-
-let rows_ptree = Nx.Ptree.instantiate (module Rows)
-
-let layers xs =
-  Rune.scan Nx.Ptree.tensor rows_ptree pair_ptree
-    ~f:(fun h { Rows.w; b; step } ->
-      let h =
-        Nx.tanh
-          (Nx.add
-             (Nx.reshape [| 3 |] (Nx.matmul (Nx.reshape [| 1; 3 |] h) w))
-             b)
-      in
-      (h, { Pair.u = h; v = Nx.mul_s (Nx.cast f32 step) 2.0 }))
-    ~init:(vec32 [| 0.5; -0.25; 1.0 |])
-    xs
-
-let rows () =
-  {
-    Rows.w =
-      Nx.create f32 [| 4; 3; 3 |]
-        (Array.init 36 (fun i -> (Float.of_int (i * 5 mod 7) /. 7.0) -. 0.4));
-    b =
-      Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> Float.of_int i /. 12.0));
-    step = Nx.arange Nx.int32 0 4 1;
-  }
-
-let test_scan_over_structured_rows () =
-  let xs = rows () in
-  let h, ys = layers xs in
-  let g =
-    Rune.jit
-      Nx.Ptree.(rows_ptree @-> returns pair_ptree)
-      (fun xs -> snd (layers xs))
-  in
-  let ys' = g xs in
-  check_arr ~msg:"first output" (to_arr ys.Pair.u) ys'.Pair.u;
-  check_arr ~msg:"second output" (to_arr ys.Pair.v) ys'.Pair.v;
-  check_arr ~msg:"final carry" (to_arr h)
-    (Rune.jit
-       Nx.Ptree.(rows_ptree @-> returns tensor)
-       (fun xs -> fst (layers xs))
-       xs);
-  let loss xs =
-    let h, ys = layers xs in
-    Nx.add (Nx.sum h) (Nx.sum (Nx.mul ys.Pair.u ys.Pair.u))
-  in
-  let expected = Rune.grad rows_ptree loss xs in
-  let actual =
-    Rune.jit
-      Nx.Ptree.(rows_ptree @-> returns rows_ptree)
-      (fun xs -> Rune.grad rows_ptree loss xs)
-      xs
-  in
-  check_arr ~msg:"stacked weights' cotangent" (to_arr expected.Rows.w)
-    actual.Rows.w;
-  check_arr ~msg:"stacked biases' cotangent" (to_arr expected.Rows.b)
-    actual.Rows.b;
-  equal ~msg:"the integer row gets a zero cotangent" (array int32)
-    [| 0l; 0l; 0l; 0l |]
-    (Nx.to_array actual.Rows.step)
-
-let test_scan_rejects_ragged_rows () =
-  let bad xs =
-    ignore
-      (Rune.scan Nx.Ptree.tensor rows_ptree Nx.Ptree.tensor
-         ~f:(fun c _ -> (c, c))
-         ~init:(vec32 [| 0.0 |]) xs)
-  in
-  raises_match
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> bad { (rows ()) with Rows.step = Nx.arange Nx.int32 0 3 1 });
-  raises_match
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> bad { (rows ()) with Rows.step = Nx.scalar Nx.int32 0l })
-
-(* A carry updated in place: a body that writes one row of a stacked cache per
-   step moves that row, not the cache. A body that reads the old cache after
-   writing the new one still sees the old values: the write lands in a copy. *)
-module Cache_carry = struct
-  type cache_carry = { h : Nx.float32_t; cache : Nx.float32_t }
-  type _ t = cache_carry
-
-  let walk c { h; cache } =
-    let open Nx.Ptree.Walk in
-    let h = field c "h" tensor h in
-    let cache = field c "cache" tensor cache in
-    { h; cache }
-end
-
-let cache_carry_ptree = Nx.Ptree.instantiate (module Cache_carry)
-
-let test_scan_carry_written_in_place () =
-  let layers = 4 and slots = 64 and d = 16 in
-  let fold ~read_old (c : Cache_carry.cache_carry) =
-    Rune.scan cache_carry_ptree Nx.Ptree.tensor Nx.Ptree.tensor
-      ~f:(fun (c : Cache_carry.cache_carry) l ->
-        let h = Nx.tanh (Nx.add_s c.h 0.25) in
-        let cache =
-          Nx.set
-            [ D (l, 1); D (Nx.mul_s l 3L, 1) ]
-            (Nx.reshape [| 1; 1; d |] h)
-            c.cache
-        in
-        let y = if read_old then Nx.sum c.cache else Nx.sum h in
-        ({ Cache_carry.h; cache }, y))
-      ~init:c
-      (Nx.arange Nx.int64 0 layers 1)
-  in
-  let c0 =
+(* The host value of the [n] floats of [b] from its [first]. *)
+let window b first n =
+  Nx.Repr.host
     {
-      Cache_carry.h =
-        Nx.create f32 [| d |] (Array.init d (fun i -> Float.of_int i /. 16.0));
-      cache = Nx.zeros f32 [| layers; slots; d |];
+      Nx_array.dtype = Nx.float32;
+      view = Nx_array.View.create [| n |];
+      buffer = Nx_device.Buffer.view b ~offset:(4 * first) Float32 n;
     }
-  in
-  List.iter
-    (fun read_old ->
-      let expected_c, expected_ys = fold ~read_old c0 in
-      let g =
-        Rune.jit
-          Nx.Ptree.(
-            cache_carry_ptree @-> returns (pair cache_carry_ptree tensor))
-          (fold ~read_old)
-      in
-      ignore (g c0);
-      let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
-      let c, ys = g c0 in
-      let bytes = Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before) in
-      let msg what = Printf.sprintf "%s (read_old %b)" what read_old in
-      check_arr ~msg:(msg "cache") (to_arr expected_c.cache) c.cache;
-      check_arr ~msg:(msg "state") (to_arr expected_c.h) c.h;
-      check_arr ~msg:(msg "outputs") (to_arr expected_ys) ys;
-      if not read_old then
-        is_true ~msg:"a replay moves less than three caches' worth of bytes"
-          (bytes < 3 * layers * slots * d * 4))
-    [ false; true ]
 
-(* Rows computed from constants alone have no device until the program places
-   them. Padded to the loop's row stride, of 4 or 20 bytes here, they are read
-   as eager computes them. *)
-let test_scan_reads_constant_rows () =
-  let check rows ~carry ~ys =
-    let f c =
-      Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor
-        ~f:(fun c l -> (Nx.add c (Nx.sum l), Nx.mul_s l 10l))
-        ~init:c (rows ())
-    in
-    let c, y =
-      Rune.jit
-        Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-        f (Nx.zeros Nx.int32 [||])
-    in
-    equal (array int32) [| carry |] (Nx.to_array (Nx.reshape [| 1 |] c));
-    equal (array int32) ys (Nx.to_array y)
-  in
-  check
-    (fun () -> Nx.cumsum (Nx.ones Nx.int32 [| 8 |]))
-    ~carry:36l
-    ~ys:(Array.init 8 (fun i -> Int32.of_int (10 * (i + 1))));
-  check
-    (fun () -> Nx.cumsum ~axis:0 (Nx.ones Nx.int32 [| 8; 5 |]))
-    ~carry:180l
-    ~ys:(Array.init 40 (fun k -> Int32.of_int (10 * ((k / 5) + 1))))
+let floats_buffer v =
+  let b = Nx_device.Buffer.create Nx_device.host Float32 (Array.length v) in
+  let ba = Nx_device.Buffer.bigarray Bigarray.float32 b in
+  Array.iteri (Bigarray.Array1.set ba) v;
+  b
 
-(* The layers of a stack passed as rows are read in place: a replay launches the
-   kernels of the same body reading one captured layer, and nothing copies the
-   row the step reads. The body gathers two of the layer's eight rows and
-   broadcasts them into a matrix product. *)
-let test_scan_reads_rows_in_place () =
-  let stack =
-    Nx.create f32 [| 4; 8; 4; 4 |]
-      (Array.init 512 (fun i -> Float.of_int (i * 7 mod 13) /. 13.0))
-  in
-  let rows = Nx.create Nx.int64 [| 2 |] [| 1L; 5L |] in
-  let step x w =
-    let w = Nx.take ~axis:0 ~indices:rows w in
-    let y = Nx.sum ~axes:[ 0 ] (Nx.matmul w (Nx.reshape [| 4; 1 |] x)) in
-    (Nx.tanh (Nx.reshape [| 4 |] y), Nx.zeros f32 [||])
-  in
-  let over_rows x0 = fst (Rune.scan' ~f:step ~init:x0 stack) in
-  let layer = Nx.slice [ I 2 ] stack in
-  let over_capture x0 =
-    fst (Rune.scan' ~f:(fun x _ -> step x layer) ~init:x0 stack)
-  in
-  let x0 = vec32 [| 0.5; -1.0; 0.25; 2.0 |] in
-  let kernels_per_replay f =
-    let g = Rune.jit' f in
-    ignore (g x0);
-    let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
-    let y = g x0 in
-    (y, (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before)
-  in
-  let y, from_rows = kernels_per_replay over_rows in
-  let _, from_capture = kernels_per_replay over_capture in
-  check_arr ~msg:"matches the eager fold" (to_arr (over_rows x0)) y;
-  equal ~msg:"no copy of the row" int from_capture from_rows
+let test_consumed_window () =
+  let b = floats_buffer [| 1.; -2.; 3.; 0.5; 2.; 0.; -1.; 4. |] in
+  let first = window b 0 4 and second = window b 4 4 in
+  let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) second in
+  equal floats (Nx.add_s (y ()) 1.) r;
+  equal ~msg:"the window" floats (y ()) second;
+  equal ~msg:"its sibling" floats (x ()) first
 
-(* A scan over the rows another scan wrote reads them where the first loop wrote
-   them. A loop keeps rows of 6 floats 8 apart: alone, the first scan packs its
-   rows into the stack it returns and the second pads the rows of its argument,
-   a copy each; chained, neither copies. *)
-let test_scan_reads_rows_of_a_scan_in_place () =
-  let w =
-    Nx.create f32 [| 3; 3 |]
-      (Array.init 9 (fun i -> Float.sin (Float.of_int i) /. 3.0))
+(* A call consuming a slice of [n] elements at [offset] of a longer value at
+   [at], whose storage it consumes. *)
+let consumed_slice ~at offset n =
+  let parent =
+    Nx.place at
+      (Nx.init Nx.float32 [| offset + n + 3 |] (fun i -> Float.of_int i.(0)))
   in
-  let rows h0 xs =
-    snd
-      (Rune.scan'
-         ~f:(fun h x ->
-           let h = Nx.tanh (Nx.add (Nx.matmul h w) x) in
-           (h, h))
-         ~init:h0 xs)
+  let a = Nx.slice [ R (offset, offset + n) ] parent in
+  let f a = Nx.add_s (Nx.mul_s a 2.) 1. in
+  let expected =
+    f (Nx.init Nx.float32 [| n |] (fun i -> Float.of_int (offset + i.(0))))
   in
-  let series seed shape =
-    let n = Array.fold_left ( * ) 1 shape in
-    Nx.create f32 shape
-      (Array.init n (fun i -> Float.sin (Float.of_int ((7 * i) + seed)) /. 2.0))
-  in
-  let first h0 = rows h0 (series 3 [| 8; 2; 3 |]) in
-  let second ys = rows (series 5 [| 2; 3 |]) ys in
-  let kernels_per_replay f x =
-    let g = Rune.jit' f in
-    ignore (g x);
-    let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
-    let y = g x in
-    (y, (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before)
-  in
-  let h0 = series 2 [| 2; 3 |] in
-  let _, alone_first = kernels_per_replay first h0 in
-  let _, alone_second = kernels_per_replay second (series 4 [| 8; 2; 3 |]) in
-  let y, chained = kernels_per_replay (fun h0 -> second (first h0)) h0 in
-  check_arr ~eps:1e-6 ~msg:"matches the eager folds"
-    (to_arr (second (first h0)))
-    y;
-  equal ~msg:"no copy of the rows" int (alone_first + alone_second - 2) chained
+  let r = Rune.jit consumes f a in
+  equal ~msg:"the result" floats expected (Nx.place Nx.Placement.host r);
+  raises_match ~msg:"the parent" (Exn.invalid_arg ~substring:"consumed at 0")
+    (fun () -> Nx.to_array parent)
 
-(* A value the function computes before a scan is computed once, before the
-   loop, when the body reads it: each step launches the kernels it launches when
-   the value is an argument of the function. The values are a draw and the
-   result of another scan. *)
-let test_scan_computes_captures_once () =
-  let x0 =
-    Nx.create f32 [| 4; 3 |]
-      (Array.init 12 (fun i -> Float.of_int (i - 5) /. 6.0))
-  in
-  let fold n d =
-    fst
-      (Rune.scan'
-         ~f:(fun z _ -> (Nx.tanh (Nx.matmul z d), z))
-         ~init:x0
-         (Nx.zeros f32 [| n; 1 |]))
-  in
-  let settle d =
-    fst
-      (Rune.scan'
-         ~f:(fun d _ -> (Nx.tanh (Nx.matmul d d), d))
-         ~init:d
-         (Nx.zeros f32 [| 4; 1 |]))
-  in
-  let draw key = Nx.Rng.with_key key (fun () -> Nx.randn f32 [| 3; 3 |]) in
-  let kernels_per_step g x =
-    let per_replay n =
-      let g = g n in
-      ignore (g x);
-      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
-      ignore (g x);
-      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
-    in
-    (per_replay 8 - per_replay 4) / 4
-  in
-  let key = Nx.Rng.key 7 in
-  let d = draw key in
-  let over_argument = kernels_per_step (fun n -> Rune.jit' (fold n)) d in
-  let over_draw =
-    kernels_per_step
-      (fun n ->
-        Rune.jit
-          Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
-          (fun key -> fold n (draw key)))
-      key
-  in
-  let over_scan =
-    kernels_per_step (fun n -> Rune.jit' (fun d -> fold n (settle d))) d
-  in
-  equal ~msg:"a draw" int over_argument over_draw;
-  equal ~msg:"another scan" int over_argument over_scan;
-  check_arr ~msg:"matches the eager fold"
-    (to_arr (fold 8 (settle d)))
-    (Rune.jit' (fun d -> fold 8 (settle d)) d)
+(* The memory of host value [a]. *)
+let memory a =
+  match Nx.Repr.v a with
+  | Host h -> h.buffer
+  | Placed _ | Traced _ -> fail "expected a host value"
 
-let test_scan_rows_short_of_16_bytes () =
-  let fold xs =
+(* Another domain's read of [a], in flight while a call consumes it, is a read
+   claim on its memory: the call cannot have it exclusive, so it computes from a
+   copy, and the read sees the elements it started with. *)
+let test_consumed_while_read () =
+  let a = x () in
+  let m = memory a in
+  let address = Nx_device.Buffer.address m in
+  let elements = Nx_device.Buffer.bigarray Bigarray.float32 m in
+  Nx_device.Buffer.Claim.read m;
+  let r =
+    Fun.protect ~finally:(fun () -> Nx_device.Buffer.Claim.release m)
+    @@ fun () ->
+    let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+    equal ~msg:"the read's elements" (array float_exact) [| 1.; -2.; 3.; 0.5 |]
+      (Array.init 4 (Bigarray.Array1.get elements));
+    r
+  in
+  is_false ~msg:"lent" (Witness.addresses r = [ address ]);
+  equal floats (Nx.add_s (x ()) 1.) r;
+  raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+      Nx.to_array a)
+
+(* A call that lends [a] holds its memory exclusive while it runs; another
+   domain's read of [a] then raises at once and never sees the write. *)
+let test_read_while_lent () =
+  let a = x () in
+  let m = memory a in
+  Nx_device.Buffer.Claim.read m;
+  is_true ~msg:"exclusive" (Nx_device.Buffer.Claim.try_exclusive m);
+  Fun.protect
+    ~finally:(fun () ->
+      Nx_device.Buffer.Claim.finish m;
+      Nx_device.Buffer.Claim.release m)
+    (fun () ->
+      raises_match (Exn.invalid_arg ~substring:"in use") (fun () -> Nx.neg a);
+      raises_match (Exn.invalid_arg ~substring:"in use") (fun () ->
+          Nx.to_array a));
+  equal floats (x ()) a
+
+let consumption =
+  group "consumption"
+    [
+      test "a consumed argument raises on read, naming its path" (fun () ->
+          let a = x () in
+          ignore (Rune.jit consumes (fun a -> Nx.add_s a 1.) a);
+          let m = consumed_message a in
+          is_true ~msg:m (String.length m > 0);
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              ignore (Nx.to_array a)));
+      test "a consumed argument keeps its shape and dtype" (fun () ->
+          let a = Nx.zeros Nx.float32 [| 2; 3 |] in
+          ignore (Rune.jit consumes Nx.neg a);
+          equal (array int) [| 2; 3 |] (Nx.shape a);
+          is_true (Nx_dtype.equal Nx.float32 (Nx.dtype a)));
+      test "a consumed argument raises as an operand and as an argument"
+        (fun () ->
+          let a = x () in
+          ignore (Rune.jit consumes Nx.neg a);
+          raises_invalid_arg (fun () -> Nx.add a a);
+          raises_invalid_arg (fun () -> Rune.jit' Nx.neg a);
+          raises_invalid_arg (fun () -> Rune.jit consumes Nx.neg a));
+      test "a view of consumed storage taken before the call raises on read"
+        (fun () ->
+          let a = x () in
+          let v = Nx.slice [ R (0, 2) ] a in
+          ignore (Rune.jit consumes Nx.neg a);
+          raises_invalid_arg (fun () -> Nx.to_array v));
+      test
+        "a consumed slice is computed from a copy, and its storage dies with it"
+        (fun () ->
+          let whole = x () in
+          let a = Nx.slice [ R (0, 2) ] whole in
+          let r = Rune.jit consumes Nx.neg a in
+          equal floats (Nx.neg (Nx.slice [ R (0, 2) ] (x ()))) r;
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array a);
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array whole));
+      test
+        "a consumed broadcast of one element of its storage is computed from a \
+         copy, and dies" (fun () ->
+          let a = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+          let v = Nx.broadcast_to [| 2 |] (Nx.slice [ R (0, 1) ] a) in
+          equal floats
+            (Nx.create Nx.float32 [| 2 |] [| -1.; -1. |])
+            (Rune.jit consumes Nx.neg v);
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array v));
+      cases "a consumed slice at an offset is computed into storage of its own"
+        ~name:(fun (o, n) -> Printf.sprintf "%d elements at %d" n o)
+        [ (1, 1); (1, 7); (5, 7); (5, 1027) ]
+        (fun (offset, n) -> consumed_slice ~at:Nx.Placement.host offset n);
+      test "a call that consumes zeros as its state runs, and the state dies"
+        (fun () ->
+          let state = Nx.zeros Nx.float32 [| 4 |] in
+          let r = Rune.jit consumes (fun s -> Nx.add s (x ())) state in
+          equal floats (x ()) r;
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array state));
+      test
+        "a consumed window of a larger memory is computed from a copy, and it \
+         and its siblings stay live"
+        test_consumed_window;
+      test "a consumed value another domain reads is copied, not lent"
+        test_consumed_while_read;
+      test "a value read while a call holds its memory exclusive raises busy"
+        test_read_while_lent;
+      test
+        "a consumed leaf that another leaf reaches raises before any work, \
+         naming both paths" (fun () ->
+          let a = x () in
+          let g =
+            Rune.jit
+              Nx.Ptree.(consumes tensor @@ tensor @-> returns tensor)
+              Nx.add
+          in
+          raises_match
+            (Exn.invalid_arg
+               ~substring:"0 is consumed and 1 reaches its storage") (fun () ->
+              g a a);
+          equal floats (x ()) a);
+      test "two consumed leaves over one storage raise before any work"
+        (fun () ->
+          let a = x () in
+          let g =
+            Rune.jit
+              Nx.Ptree.(consumes (pair tensor tensor) @@ returns tensor)
+              (fun (a, b) -> Nx.add a b)
+          in
+          raises_invalid_arg (fun () -> g (a, a));
+          equal floats (x ()) a);
+      test "a consumed leaf whose storage the function captures raises"
+        (fun () ->
+          let w = y () in
+          let g = Rune.jit consumes (fun a -> Nx.add a w) in
+          raises_match
+            (Exn.invalid_arg
+               ~substring:"0 is consumed and the function captures its storage")
+            (fun () -> g w);
+          equal floats (y ()) w);
+      test "a call that raises while tracing consumes nothing" (fun () ->
+          let a = x () in
+          raises_jit_error (fun () ->
+              Rune.jit consumes
+                (fun a -> if Nx.item [ 0 ] a > 0. then a else Nx.neg a)
+                a);
+          equal floats (x ()) a);
+      test "read arguments stay readable after any number of calls" (fun () ->
+          let a = x () in
+          let g = Rune.jit' poly in
+          for _ = 1 to 3 do
+            ignore (g a)
+          done;
+          equal floats (x ()) a);
+    ]
+
+(* Lending *)
+
+let state =
+  Nx.Ptree.(consumes (pair tensor tensor) @@ returns (pair tensor tensor))
+
+(* A write of rows into a pool of [n] rows of [2; 3] (64 by default), at one
+   index per row: a projection of [x], one row of [x] per index, of integers, so
+   that every sum is exact. *)
+let pool ?(n = 64) () =
+  Nx.reshape [| n; 2; 3 |] (Nx.arange_f Nx.float32 0. (Float.of_int (6 * n)) 1.)
+
+let write_rows ?(rows_as = Fun.id) pool x indices =
+  let k = Nx.dim 0 indices in
+  let rows =
+    Nx.reshape [| k; 2; 3 |]
+      (Nx.matmul x (Nx.reshape [| 6; 6 |] (Nx.arange_f Nx.float32 0. 36. 1.)))
+  in
+  Nx.scatter ~unique_indices:true ~axis:0
+    ~indices:(Nx.broadcast_to [| k; 2; 3 |] (Nx.reshape [| k; 1; 1 |] indices))
+    ~values:(rows_as rows) pool
+
+let projections k =
+  Nx.reshape [| k; 6 |]
+    (Nx.arange_f Nx.float32 1. (Float.of_int ((6 * k) + 1)) 1.)
+
+let indices l = Nx.create Nx.int64 [| List.length l |] (Array.of_list l)
+
+(* [kernels f] is [f ()] and the names of the kernels it ran, in order. *)
+let kernels f =
+  let p = Nx_device.Profile.start () in
+  let y = f () in
+  let kernel name =
+    String.length name >= 1
+    && (name.[0] = 'E' || name.[0] = 'r')
+    && (String.length name = 1 || name.[1] = '_')
+  in
+  ( y,
+    List.filter_map
+      (function
+        | Nx_device.Profile.Span { name; _ } when kernel name -> Some name
+        | _ -> None)
+      (Nx_device.Profile.stop p) )
+
+(* The elements a kernel ranges over, read from its name: [E_2_4], 8. *)
+let ranged name =
+  List.fold_left
+    (fun n part ->
+      match int_of_string_opt part with Some d -> n * d | None -> n)
+    1
+    (List.tl (String.split_on_char '_' name))
+
+(* A decode step as gpt-oss's attention takes it: the token's slot looked up in
+   a table at its position, its key and value rows written there into two pools,
+   and an attention of its query over the pools' rows read back through the
+   table. *)
+let decode_step (keys, values) x pos table =
+  let slot = Nx.take_along_axis ~axis:1 ~indices:pos table in
+  let indices = Nx.broadcast_to [| 1; 2; 3 |] (Nx.reshape [| 1; 1; 1 |] slot) in
+  let weight k =
+    Nx.reshape [| 6; 6 |] (Nx.arange_f Nx.float32 k (k +. 36.) 1.)
+  in
+  let row k = Nx.reshape [| 1; 2; 3 |] (Nx.matmul x (weight k)) in
+  let write pool k =
+    Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values:(row k) pool
+  in
+  let keys = write keys 0. and values = write values 36. in
+  let read pool = Nx.take ~axis:0 ~indices:(Nx.reshape [| 16 |] table) pool in
+  let q = Nx.contiguous (Nx.reshape [| 2; 3 |] (row 72.)) in
+  let scores = Nx.sum ~axes:[ 2 ] (Nx.mul (read keys) q) in
+  let weights = Nx.softmax ~axes:[ 0 ] (Nx.div_s scores 1e4) in
+  let out =
+    Nx.sum ~axes:[ 0 ] (Nx.mul (Nx.unsqueeze ~axes:[ 2 ] weights) (read values))
+  in
+  (out, (keys, values))
+
+(* [rows_written ?at name] is the tests of a lent write of rows whose values are
+   placed at [at], on the host by default. *)
+let rows_written ?at name =
+  let write =
+    Nx.Ptree.(consumes tensor @@ tensor @-> tensor @-> returns tensor)
+  in
+  let on t = match at with None -> t | Some p -> Nx.place p t in
+  let agrees ?n x i =
+    equal floats
+      (write_rows (pool ?n ()) x i)
+      (host (Rune.jit write write_rows (on (pool ?n ())) (on x) (on i)))
+  in
+  let everywhere =
+    [
+      cases
+        ~name:(fun (n, l) ->
+          Printf.sprintf "%d rows: %s" n
+            (String.concat ", " (List.map Int64.to_string l)))
+        "a dropped row changes no other row"
+        [
+          (8, [ 2L; -1L ]);
+          (8, [ -1L; 2L; 3L ]);
+          (8, [ 5L; -1L; 6L ]);
+          (8, [ 6L; 0L; -1L; 8L ]);
+          (64, [ -1L; 0L ]);
+          (64, [ 0L; -1L ]);
+          (64, [ -1L; -5L ]);
+        ]
+        (fun (n, l) -> agrees ~n (projections (List.length l)) (indices l));
+      test
+        "decode steps write their cache rows and attend over them, as eager \
+         does" (fun () ->
+          let pools () = (pool ~n:16 (), pool ~n:16 ()) in
+          let eager = ref (pools ()) in
+          let compiled =
+            let k, v = pools () in
+            ref (on k, on v)
+          in
+          let table =
+            Nx.create Nx.int64 [| 1; 16 |]
+              (Array.init 16 (fun j -> Int64.of_int (15 - j)))
+          in
+          let both = Nx.Ptree.(pair tensor tensor) in
+          let step =
+            Rune.jit
+              Nx.Ptree.(
+                consumes both @@ tensor @-> tensor @-> tensor
+                @-> returns (pair tensor both))
+              decode_step
+          in
+          List.iteri
+            (fun i p ->
+              let x = Nx.mul_s (projections 1) (Float.of_int (i + 1))
+              and pos = Nx.create Nx.int64 [| 1; 1 |] [| p |] in
+              let out, (keys, values) = decode_step !eager x pos table in
+              let out', (keys', values') =
+                step !compiled (on x) (on pos) (on table)
+              in
+              eager := (keys, values);
+              compiled := (keys', values');
+              equal close out (host out');
+              equal floats keys (host keys');
+              equal floats values (host values'))
+            [ 0L; 7L; 15L; 7L ]);
+      test "an unlent write of rows leaves the pool it writes into" (fun () ->
+          let a = on (pool ())
+          and x = projections 2
+          and i = indices [ 3L; 5L ] in
+          let r =
+            Rune.jit
+              Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+              write_rows a (on x) (on i)
+          in
+          equal floats (write_rows (pool ()) x i) (host r);
+          equal floats (pool ()) (host a));
+    ]
+  in
+  let on_the_host =
+    [
+      cases ~name:Int64.to_string
+        "a row is stored by the kernel that computes it, beside its offset"
+        [ 0L; 63L; -1L; 64L ] (fun at ->
+          let x = projections 1 and i = indices [ at ] in
+          let r, names =
+            kernels (fun () -> Rune.jit write write_rows (pool ()) x i)
+          in
+          equal floats (write_rows (pool ()) x i) r;
+          equal ~msg:"kernels" int 2 (List.length names);
+          equal ~msg:"reductions" int 1
+            (List.length (List.filter (fun n -> n.[0] = 'r') names)));
+      test
+        "a row made contiguous is stored by the kernel that computes it, as \
+         a key-value cache writes its rows" (fun () ->
+          let x = projections 1 and i = indices [ 5L ] in
+          let rows_as = Nx.contiguous in
+          let r, names =
+            kernels (fun () ->
+                Rune.jit write (write_rows ~rows_as) (pool ()) x i)
+          in
+          equal floats (write_rows ~rows_as (pool ()) x i) r;
+          equal ~msg:"kernels" int 2 (List.length names));
+      test
+        "stores only its rows, at the pool's first and last rows, and drops \
+         the rows outside it" (fun () ->
+          let x = projections 4 and i = indices [ 0L; 63L; -1L; 64L ] in
+          let r, names =
+            kernels (fun () -> Rune.jit write write_rows (pool ()) x i)
+          in
+          equal floats (write_rows (pool ()) x i) r;
+          greater ~msg:"kernels recorded" int ~than:0 (List.length names);
+          List.iter
+            (fun name ->
+              less ~msg:"elements a kernel ranges over" int ~than:384
+                (ranged name))
+            names);
+      cases
+        ~name:(fun l -> String.concat ", " (List.map Int64.to_string l))
+        "a pool split along the written axis is written whole"
+        [ [ 0L; 63L ]; [ 31L; 32L ]; [ 63L; 0L; -1L; 64L ]; [ -1L; -2L ] ]
+        (fun l ->
+          let both =
+            Nx.Placement.replicated ~backend:Rune.compiled [ d1; d2 ]
+          in
+          let x = projections (List.length l) and i = indices l in
+          equal floats
+            (write_rows (pool ()) x i)
+            (host
+               (Rune.jit write write_rows
+                  (Nx.place
+                     (Nx.Placement.sharded ~backend:Rune.compiled ~axis:0
+                        [ d1; d2 ])
+                     (pool ()))
+                  (Nx.place both x) (Nx.place both i))));
+    ]
+  in
+  group name (everywhere @ if at = None then on_the_host else [])
+
+let lending =
+  group "lending"
+    [
+      test "a consumed host argument lends its storage to the result" (fun () ->
+          let a = x () in
+          let before = address a in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+          equal floats (Nx.add_s (x ()) 1.) r;
+          equal nativeint before (address r));
+      test "a result takes the consumed leaf it derives from at its own index"
+        (fun () ->
+          let a = x () and b = y () in
+          let ab = (address a, address b) in
+          let r1, r2 =
+            Rune.jit state (fun (a, b) -> (Nx.add_s b 1., Nx.mul_s a 2.)) (a, b)
+          in
+          equal (pair nativeint nativeint) ab (address r2, address r1));
+      test
+        "a result read through a flip of a leaf takes a leaf it does not read, \
+         and the leaf goes to a result derived at its own index" (fun () ->
+          let a = x () and b = y () in
+          let ab = (address a, address b) in
+          let flipped, own =
+            Rune.jit state
+              (fun (a, _) ->
+                let flipped = Nx.add_s (Nx.flip a) 1. in
+                let own = Nx.mul_s a 2. in
+                (flipped, own))
+              (a, b)
+          in
+          equal floats (Nx.add_s (Nx.flip (x ())) 1.) flipped;
+          equal floats (Nx.mul_s (x ()) 2.) own;
+          equal (pair nativeint nativeint) ab (address own, address flipped));
+      test "an indexed write takes the leaf it writes before any other result"
+        (fun () ->
+          let a = x () and b = y () in
+          let ab = (address a, address b) in
+          let r1, r2 =
+            Rune.jit state
+              (fun (a, _) ->
+                ( Nx.full Nx.float32 [| 4 |] 7.,
+                  Nx.set [ I 0 ] (Nx.scalar Nx.float32 9.) a ))
+              (a, b)
+          in
+          equal floats (Nx.set [ I 0 ] (Nx.scalar Nx.float32 9.) (x ())) r2;
+          equal (pair nativeint nativeint) ab (address r2, address r1));
+      test "the other results take the free leaves in walk order" (fun () ->
+          let a = x () and b = y () in
+          let ab = (address a, address b) in
+          let r1, r2 =
+            Rune.jit state
+              (fun _ ->
+                let r1 = Nx.full Nx.float32 [| 4 |] 1. in
+                let r2 = Nx.full Nx.float32 [| 4 |] 2. in
+                (r1, r2))
+              (a, b)
+          in
+          equal (pair nativeint nativeint) ab (address r1, address r2));
+      test "a storage lends to one result" (fun () ->
+          let a = x () in
+          let before = address a in
+          let r1, r2 =
+            Rune.jit
+              Nx.Ptree.(consumes tensor @@ returns (pair tensor tensor))
+              (fun a -> (Nx.add_s a 1., Nx.mul_s a 2.))
+              a
+          in
+          equal nativeint before (address r1);
+          distinct r1 r2;
+          equal floats (Nx.mul_s (x ()) 2.) r2);
+      cases ~name:fst
+        "a result that reads its consumed leaf at other indices takes fresh \
+         storage"
+        [
+          ( "left rotation",
+            ( (fun a ->
+                Nx.concatenate ~axis:0
+                  [ Nx.slice [ R (1, 8) ] a; Nx.slice [ R (0, 1) ] a ]),
+              [| 2.; 3.; 4.; 5.; 6.; 7.; 8.; 1. |] ) );
+          ( "right rotation",
+            ( (fun a ->
+                Nx.concatenate ~axis:0
+                  [ Nx.slice [ R (7, 8) ] a; Nx.slice [ R (0, 7) ] a ]),
+              [| 8.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] ) );
+          ( "flip",
+            ( (fun a -> Nx.add_s (Nx.flip a) 1.),
+              [| 9.; 8.; 7.; 6.; 5.; 4.; 3.; 2. |] ) );
+        ]
+        (fun (_, (f, expected)) ->
+          let a = Nx.arange_f Nx.float32 1. 9. 1. in
+          let before = address a in
+          let r = Rune.jit consumes f a in
+          equal floats (Nx.create Nx.float32 [| 8 |] expected) r;
+          is_false (Nativeint.equal before (address r));
+          raises_invalid_arg (fun () -> Nx.to_array a));
+      test "a result derived through an equal-width bitcast takes the leaf"
+        (fun () ->
+          let a = x () in
+          let before = address a in
+          let f a =
+            Nx.bitcast Nx.float32 (Nx.add_s (Nx.bitcast Nx.int32 a) 1l)
+          in
+          let r = Rune.jit consumes f a in
+          equal floats (f (x ())) r;
+          equal nativeint before (address r));
+      test "a result of another dtype does not take the leaf" (fun () ->
+          let a = x () in
+          let before = address a in
+          let r =
+            Rune.jit
+              Nx.Ptree.(consumes tensor @@ returns tensor)
+              (fun a -> Nx.cast Nx.float64 a)
+              a
+          in
+          equal (tensor float_exact) (Nx.cast Nx.float64 (x ())) r;
+          is_false (Nativeint.equal before (address r)));
+      test "a consumed leaf returned unchanged is lent with no store" (fun () ->
+          let a = x () in
+          let before = address a in
+          let r = Rune.jit consumes Fun.id a in
+          equal floats (x ()) r;
+          equal nativeint before (address r));
+      test "a borrowed consumed argument is copied, and still consumed"
+        (fun () ->
+          let ba =
+            Bigarray.Array1.of_array Bigarray.float32 Bigarray.c_layout
+              [| 1.; 2.; 3.; 4. |]
+          in
+          let a = Nx.of_bigarray (Bigarray.genarray_of_array1 ba) in
+          let before = address a in
+          let r = Rune.jit consumes (fun a -> Nx.mul_s a 2.) a in
+          equal floats (Nx.create Nx.float32 [| 4 |] [| 2.; 4.; 6.; 8. |]) r;
+          is_false (Nativeint.equal before (address r));
+          raises_invalid_arg (fun () -> Nx.to_array a));
+      test
+        "a window written at a position read when the call runs reuses the \
+         cache" (fun () ->
+          let cache = Nx.zeros Nx.float32 [| 4; 3 |] in
+          let before = address cache in
+          let step =
+            Rune.jit
+              Nx.Ptree.(consumes tensor @@ tensor @-> tensor @-> returns tensor)
+              (fun cache pos row -> Nx.set [ D (pos, 1) ] row cache)
+          in
+          let row = Nx.ones Nx.float32 [| 1; 3 |] in
+          let r = step cache (Nx.scalar Nx.int64 2L) row in
+          let expected =
+            Nx.set
+              [ R (2, 3) ]
+              (Nx.ones Nx.float32 [| 1; 3 |])
+              (Nx.zeros Nx.float32 [| 4; 3 |])
+          in
+          equal floats expected r;
+          equal nativeint before (address r));
+      test "two programs alternating on one consumed state keep its storage"
+        (fun () ->
+          let a = x () in
+          let before = address a in
+          let inc = Rune.jit consumes (fun a -> Nx.add_s a 1.)
+          and dbl = Rune.jit consumes (fun a -> Nx.mul_s a 2.) in
+          let r = ref a in
+          for _ = 1 to 3 do
+            r := dbl (inc !r)
+          done;
+          let expected =
+            List.fold_left
+              (fun a _ -> Nx.mul_s (Nx.add_s a 1.) 2.)
+              (x ()) [ 1; 2; 3 ]
+          in
+          equal floats expected !r;
+          equal nativeint before (address !r));
+      test "every leaf of a consumed state derived at its own index is lent"
+        (fun () ->
+          let s = Nx.Ptree.(list tensor) in
+          let leaves () =
+            List.init 4 (fun i -> Nx.full Nx.float32 [| 3 |] (float_of_int i))
+          in
+          let ls = leaves () in
+          let before = List.map address ls in
+          let r =
+            Rune.jit
+              Nx.Ptree.(consumes s @@ returns s)
+              (List.map (fun l -> Nx.add_s l 1.))
+              ls
+          in
+          equal (list nativeint) before (List.map address r));
+      (* A momentum step: the parameters read the new velocity, which reads the
+         parameters. Each result is written over its own state, the velocity
+         first, and the parameters read it from there. *)
+      test "a step whose results read each other's state lends both" (fun () ->
+          let step (w, v) =
+            let v = Nx.add (Nx.mul_s v 0.9) (Nx.mul_s (Nx.sub w (x ())) 2.) in
+            (Nx.sub w (Nx.mul_s v 0.1), v)
+          in
+          let g = Rune.jit state step in
+          let zeros () =
+            (Nx.zeros Nx.float32 [| 4 |], Nx.zeros Nx.float32 [| 4 |])
+          in
+          let compiled = ref (zeros ()) and eager = ref (zeros ()) in
+          for _ = 1 to 3 do
+            let before = (address (fst !compiled), address (snd !compiled)) in
+            compiled := g !compiled;
+            eager := step !eager;
+            equal (pair nativeint nativeint) before
+              (address (fst !compiled), address (snd !compiled))
+          done;
+          equal floats (fst !eager) (fst !compiled);
+          equal floats (snd !eager) (snd !compiled));
+      (* Each result reads the other's state before its store: no order exists,
+         and the latest result takes storage of its own. *)
+      test "results that read each other's state in a cycle lend the earliest"
+        (fun () ->
+          let step (a, b) = (Nx.add a b, Nx.sub b a) in
+          let g = Rune.jit state step in
+          let compiled = ref (x (), y ()) and eager = ref (x (), y ()) in
+          for _ = 1 to 3 do
+            let a = address (fst !compiled) and b = address (snd !compiled) in
+            compiled := g !compiled;
+            eager := step !eager;
+            equal nativeint a (address (fst !compiled));
+            is_false (Nativeint.equal b (address (snd !compiled)))
+          done;
+          equal floats (fst !eager) (fst !compiled);
+          equal floats (snd !eager) (snd !compiled));
+      test "a consumed leaf returned as it is keeps its value" (fun () ->
+          let both = Nx.Ptree.(pair tensor tensor) in
+          let step (a, b) = (Nx.add_s a 1., b) in
+          let g = Rune.jit Nx.Ptree.(consumes both @@ returns both) step in
+          let a, b = g (g (x (), Nx.ones Nx.float32 [| 4 |])) in
+          equal floats (Nx.add_s (x ()) 2.) a;
+          equal floats (Nx.ones Nx.float32 [| 4 |]) b);
+    ]
+
+(* [together fs] runs each of [fs] on a domain of its own, all released at once,
+   and is their results. *)
+let together fs =
+  let go = Atomic.make false in
+  let ds =
+    List.map
+      (fun f ->
+        Domain.spawn (fun () ->
+            while not (Atomic.get go) do
+              Domain.cpu_relax ()
+            done;
+            f ()))
+      fs
+  in
+  Atomic.set go true;
+  List.map Domain.join ds
+
+(* Captures *)
+
+(* Whether a call that consumes [w] lends its storage to its result, which it
+   does unless a program pins it. It consumes [w]. *)
+let lends w =
+  let before = Witness.addresses w in
+  let r = Rune.jit consumes (fun a -> Nx.add_s a 0.) w in
+  Witness.addresses r = before
+
+let captures =
+  group "captures"
+    [
+      test "a captured tensor is a constant of the program" (fun () ->
+          let w = y () in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          equal floats (Nx.mul (x ()) w) (g (x ()));
+          equal floats (Nx.mul (y ()) w) (g (y ())));
+      test "a capture of one element on a device is bound as a constant"
+        (fun () ->
+          let w = placed d1 (Nx.scalar Nx.float32 3.) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          equal close (Nx.mul_s (x ()) 3.) (host (g (placed d1 (x ()))));
+          is_true ~msg:"not pinned" (lends w));
+      test "a host capture of a call on a device is placed there once"
+        (fun () ->
+          let w = y () in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = placed d2 (x ()) in
+          ignore (g a);
+          let before = bytes_in d2 in
+          for _ = 1 to 3 do
+            ignore (g a)
+          done;
+          equal ~msg:"bytes received by later calls" int before (bytes_in d2));
+      test "a capture decides the device of a call of host arguments" (fun () ->
+          let w = placed d1 (y ()) in
+          let r = Rune.jit' (fun a -> Nx.mul a w) (x ()) in
+          is_true (Nx.Placement.equal (on d1) (Nx.placement r));
+          equal close (Nx.mul (x ()) (y ())) (host r));
+      test
+        "a capture another call consumes is computed from a copy and stays \
+         live for the program" (fun () ->
+          let w = y () in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          ignore (g (x ()));
+          equal ~msg:"the consuming call" floats (Nx.neg (y ()))
+            (Rune.jit consumes Nx.neg w);
+          equal ~msg:"the program" close (Nx.mul (x ()) (y ())) (g (x ()));
+          equal ~msg:"the capture" floats (y ()) w);
+      test "two compiled functions share one captured buffer" (fun () ->
+          let w = placed d1 (y ()) in
+          let g1 = Rune.jit' (fun a -> Nx.mul a w)
+          and g2 = Rune.jit' (fun a -> Nx.add a w) in
+          let a = placed d1 (x ()) in
+          equal close (Nx.mul (x ()) (y ())) (host (g1 a));
+          equal close (Nx.add (x ()) (y ())) (host (g2 a));
+          is_false ~msg:"pinned" (lends w);
+          equal ~msg:"the program after" close
+            (Nx.mul (x ()) (y ()))
+            (host (g1 a)));
+      test "a bound capture read between calls stays bound" (fun () ->
+          let w = placed d1 (y ()) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = placed d1 (x ()) in
+          ignore (g a);
+          equal floats (y ()) (host w);
+          equal close (Nx.mul (x ()) (y ())) (host (g a));
+          is_false ~msg:"pinned" (lends w);
+          equal ~msg:"the program after" close
+            (Nx.mul (x ()) (y ()))
+            (host (g a)));
+      test "a capture is released with the compiled function that binds it"
+        (fun () ->
+          let w = placed d1 (y ()) in
+          let run () =
+            let g = Rune.jit' (fun a -> Nx.mul a w) in
+            ignore (g (placed d1 (x ())))
+          in
+          run ();
+          Gc.full_major ();
+          is_true ~msg:"unpinned" (lends w));
+      test
+        "a dropped compiled function's captures are back in allocated after \
+         one collection and one operation of their device" (fun () ->
+          Gc.full_major ();
+          let before = allocated d4 in
+          let run () =
+            let w = placed d4 (y ()) in
+            let g = Rune.jit' (fun a -> Nx.mul a w) in
+            ignore (host (g (placed d4 (x ()))))
+          in
+          run ();
+          Gc.full_major ();
+          Nx_device.synchronize (Nx.Device.runtime d4);
+          equal int before (allocated d4));
+      test "two compiled functions binding one capture run from two domains"
+        (fun () ->
+          let w = placed d1 (y ()) in
+          let g1 = Rune.jit' (fun a -> Nx.mul a w)
+          and g2 = Rune.jit' (fun a -> Nx.add a w) in
+          let a = placed d1 (x ()) in
+          match
+            together [ (fun () -> host (g1 a)); (fun () -> host (g2 a)) ]
+          with
+          | [ r1; r2 ] ->
+              equal close (Nx.mul (x ()) (y ())) r1;
+              equal close (Nx.add (x ()) (y ())) r2
+          | _ -> fail "two results");
+      test "a draw from a key the function captures raises Jit_error" (fun () ->
+          raises_jit_error (fun () ->
+              Rune.jit'
+                (fun a ->
+                  Nx.add a
+                    (Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
+                         Nx.rand Nx.float32 [| 4 |])))
+                (x ())));
+      test "a draw from a captured key at counters of the arguments computes"
+        (fun () ->
+          let key =
+            Nx.create Nx.int32 [| 4; 2 |]
+              (Array.init 8 (fun i -> Int32.of_int (7 + (i mod 2))))
+          in
+          let draw c = Nx.Op.eval (Nx.Op.Threefry (key, c)) in
+          let c = Nx.create Nx.int32 [| 4; 2 |] (Array.init 8 Int32.of_int) in
+          equal (tensor int32) (draw c) (Rune.jit' draw c));
+      test "an empty draw from a captured key computes" (fun () ->
+          let key = Nx.zeros Nx.int32 [| 0; 2 |] in
+          let draw x = Nx.Op.eval (Nx.Op.Threefry (key, Nx.cast Nx.int32 x)) in
+          let x = Nx.zeros Nx.float64 [| 0; 2 |] in
+          equal (tensor int32) (draw x) (Rune.jit' draw x));
+      slow "a draw from a key the function takes draws again at each call"
+        (fun () ->
+          let g =
+            Rune.jit
+              Nx.Ptree.(tensor @-> returns tensor)
+              (fun k ->
+                Nx.Rng.with_key (Nx.Rng.of_tensor k) (fun () ->
+                    Nx.rand Nx.float32 [| 4 |]))
+          in
+          let draw k =
+            Nx.Rng.with_key k (fun () -> Nx.rand Nx.float32 [| 4 |])
+          in
+          let k1 = Nx.Rng.key 1 and k2 = Nx.Rng.key 2 in
+          equal floats (draw k1) (g (k1 :> Nx.int32_t));
+          equal floats (draw k2) (g (k2 :> Nx.int32_t)));
+    ]
+
+(* Errors *)
+
+let twin1 = Nx.Device.of_runtime (driver "TWIN")
+let twin2 = Nx.Device.of_runtime (driver "TWIN")
+
+let errors =
+  let leaked = ref None in
+  let messages =
+    [
+      ( "operands on two devices",
+        fun () ->
+          Rune.jit two Nx.add (placed d1 (x ())) (placed d2 (y ())) |> ignore );
+      ( "a name met with two devices",
+        fun () ->
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+            (fun a b -> (Nx.neg a, Nx.neg b))
+            (placed twin1 (x ()))
+            (placed twin2 (y ()))
+          |> ignore );
+      ( "a consumed leaf another leaf reaches",
+        fun () ->
+          let a = x () in
+          Rune.jit
+            Nx.Ptree.(consumes tensor @@ tensor @-> returns tensor)
+            Nx.add a a
+          |> ignore );
+    ]
+  in
+  group "errors"
+    [
+      test "reading a traced value raises Jit_error" (fun () ->
+          raises_jit_error (fun () ->
+              Rune.jit'
+                (fun a -> if Nx.item [ 0 ] a > 0. then a else Nx.neg a)
+                (x ())));
+      test "an operation no target computes raises Jit_error" (fun () ->
+          raises_jit_error (fun () ->
+              Rune.jit'
+                (fun a -> Nx.real Nx.float32 (Nx.fft (Nx.cast Nx.complex64 a)))
+                (x ())));
+      test "operands on two devices raise nx's message" (fun () ->
+          raises_invalid_arg (List.assoc "operands on two devices" messages));
+      test "a name met with two devices raises" (fun () ->
+          raises_invalid_arg (List.assoc "a name met with two devices" messages));
+      test "a traced value kept after the call raises on read" (fun () ->
+          let r =
+            Rune.jit'
+              (fun a ->
+                let t = poly a in
+                leaked := Some t;
+                t)
+              (x ())
+          in
+          equal close (poly (x ())) r;
+          match !leaked with
+          | Some t -> raises_invalid_arg (fun () -> Nx.to_array t)
+          | None -> fail "the function did not run");
+      test
+        "a traced value kept after its call raises as another call's argument"
+        (fun () ->
+          let kept = ref None in
+          ignore
+            (Rune.jit'
+               (fun a ->
+                 kept := Some (poly a);
+                 a)
+               (x ()));
+          match !kept with
+          | Some t ->
+              raises_match
+                (Exn.invalid_arg ~substring:"a traced tensor has no bytes")
+                (fun () -> Rune.jit' Nx.neg t)
+          | None -> fail "the function did not run");
+      test "a call that raised traces again at the next call" (fun () ->
+          let g = Rune.jit' (fun a -> if Nx.item [ 0 ] a > 0. then a else a) in
+          equal int 1 (traces (fun () -> raises_jit_error (fun () -> g (x ()))));
+          equal int 1 (traces (fun () -> raises_jit_error (fun () -> g (x ())))));
+      test "no message names the compiled call's internals" (fun () ->
+          List.iter
+            (fun (name, f) ->
+              let m = message f in
+              List.iter
+                (fun word -> not_contains ~msg:name ~sub:word m)
+                [ "PARAM"; "UOp"; "slot"; "latch"; "Lower"; "Staged" ])
+            messages);
+    ]
+
+(* Reports *)
+
+let reports =
+  group "reports"
+    [
+      test "a first call records its phases in order, and a replay none"
+        (fun () ->
+          let g = Rune.jit' poly in
+          let _, first = profiled (fun () -> g (x ())) in
+          equal (list string)
+            [
+              "rune.jit: trace";
+              "rune.jit: schedule";
+              "rune.jit: compile";
+              "rune.jit: link";
+            ]
+            first;
+          let _, again = profiled (fun () -> g (y ())) in
+          equal (list string) [] again);
+    ]
+
+(* Domains *)
+
+let domains =
+  group "domains"
+    [
+      test
+        "a call that reads a storage and one that consumes it, from two \
+         domains, each read it whole or refuse" (fun () ->
+          let a = x () in
+          let reader = Rune.jit' poly in
+          let consumer = Rune.jit consumes (fun v -> Nx.add_s v 1.) in
+          let outcome f () =
+            match f () with
+            | r -> Some (Nx.to_array r)
+            | exception Invalid_argument _ -> None
+          in
+          match
+            together
+              [ outcome (fun () -> reader a); outcome (fun () -> consumer a) ]
+          with
+          | [ read; consumed ] ->
+              is_true ~msg:"one of them ran"
+                (Option.is_some read || Option.is_some consumed);
+              Option.iter
+                (equal ~msg:"the reader" (array float_exact)
+                   (Nx.to_array (poly (x ()))))
+                read;
+              Option.iter
+                (equal ~msg:"the consumer" (array float_exact)
+                   (Nx.to_array (Nx.add_s (x ()) 1.)))
+                consumed
+          | _ -> fail "two outcomes");
+      test "two domains meeting one new key trace it once" (fun () ->
+          let g = Rune.jit' poly in
+          let rs, spans =
+            profiled (fun () ->
+                together [ (fun () -> g (x ())); (fun () -> g (x ())) ])
+          in
+          List.iter (equal close (poly (x ()))) rs;
+          equal int 1
+            (List.length (List.filter (String.equal "rune.jit: trace") spans)));
+      test "two domains replay one program, each reading its own arguments"
+        (fun () ->
+          let g = Rune.jit' poly in
+          ignore (g (x ()));
+          let run k () =
+            List.init 20 (fun i ->
+                let v =
+                  Nx.full Nx.float32 [| 4 |] (float_of_int ((k * 100) + i))
+                in
+                (poly v, g v))
+          in
+          List.iter
+            (List.iter (fun (e, a) -> equal close e a))
+            (together [ run 1; run 2 ]));
+    ]
+
+(* Transformations *)
+
+let transformations =
+  group "transformations"
+    [
+      test "under grad a compiled function consumes nothing" (fun () ->
+          let a = x () in
+          let f a = Nx.sum (Rune.jit consumes poly a) in
+          ignore (Rune.grad' f a);
+          equal floats (x ()) a);
+      test "a detached value inside a compiled call is its value" (fun () ->
+          let f a = Nx.add a (Rune.detach (poly a)) in
+          equal close (f (x ())) (Rune.jit' f (x ())));
+      test "under a transformation a compiled function runs its function"
+        (fun () ->
+          let f a = Nx.sum (poly a) in
+          equal floats (Rune.grad' f (x ())) (Rune.grad' (Rune.jit' f) (x ())));
+      test
+        "a compiled function called inside another one's trace traces through"
+        (fun () ->
+          let inner = Rune.jit' Nx.neg in
+          let g = Rune.jit' (fun a -> inner (inner a)) in
+          equal int 1 (traces (fun () -> equal floats (x ()) (g (x ())))));
+      test "a remat's gradient under jit is its function's" (fun () ->
+          let g =
+            Rune.remat
+              Nx.Ptree.(tensor @-> returns tensor)
+              (fun x -> Nx.tanh (Nx.mul x x))
+          in
+          let f x = Nx.sum (g (Nx.mul_s x 2.)) in
+          let x = Nx.create Nx.float64 [| 4 |] [| 0.5; -1.; 0.25; 2. |] in
+          equal
+            (Oracle.tensor ~abs:1e-12 ~rel:1e-9 ())
+            (Rune.grad'
+               (fun x ->
+                 Nx.sum (Nx.tanh (Nx.mul (Nx.mul_s x 2.) (Nx.mul_s x 2.))))
+               x)
+            (Rune.jit' (Rune.grad' f) x));
+    ]
+
+(* Placement and views *)
+
+let placement =
+  group "placement"
+    [
+      test "a host argument of a call on a device is uploaded at each call"
+        (fun () ->
+          let g = Rune.jit two Nx.mul in
+          let a = placed d2 (x ()) in
+          ignore (g a (y ()));
+          let before = bytes_in d2 in
+          ignore (g a (y ()));
+          equal ~msg:"bytes received" int (before + 16) (bytes_in d2));
+      slow
+        "a state starting on the host retraces once on a device, then replays"
+        (fun () ->
+          let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
+          let s = ref (x ()) in
+          equal int 1 (traces (fun () -> s := step !s));
+          equal int 1 (traces (fun () -> s := step (placed d2 (host !s))));
+          equal int 0 (traces (fun () -> s := step !s));
+          equal floats (Nx.add_s (x ()) 3.) (host !s));
+      test
+        "a value placed on another device inside the function meets its source \
+         and raises" (fun () ->
+          raises_invalid_arg (fun () ->
+              Rune.jit'
+                (fun a -> Nx.add a (Nx.place (on d2) a))
+                (placed d1 (x ()))));
+      test "a split argument computes on each device, and stays split"
+        (fun () ->
+          let p =
+            Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d1; d2 ]
+          in
+          let r = Rune.jit' poly (Nx.place p (x ())) in
+          is_true (Nx.Placement.equal p (Nx.placement r));
+          equal close (poly (x ())) (host r));
+      test "a consumed split state is lent on every device" (fun () ->
+          let p =
+            Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d3; d4 ]
+          in
+          let a = Nx.place p (x ()) in
+          let before = Witness.addresses a in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+          equal (list nativeint) before (Witness.addresses r);
+          is_true (Nx.Placement.equal p (Nx.placement r)));
+      slow "a product and a sum over four devices equal one device" (fun () ->
+          let p =
+            Nx.Placement.sharded ~backend:Rune.compiled ~axis:0
+              [ d1; d2; d3; d4 ]
+          in
+          let w =
+            Nx.place
+              (Nx.Placement.replicated ~backend:Rune.compiled [ d1; d2; d3; d4 ])
+              (grid 3 3)
+          in
+          let f a = Nx.sum ~axes:[ 1 ] (Nx.matmul a w) in
+          let a = grid 4 3 in
+          let eager = host (f (Nx.place p a)) in
+          equal close (Nx.sum ~axes:[ 1 ] (Nx.matmul a (grid 3 3))) eager;
+          equal close eager (host (Rune.jit' f (Nx.place p a))));
+    ]
+
+(* Staged scans *)
+
+(* [scanned ~init f] is the scan of [f] from [init], and how many times its step
+   ran. *)
+let scanned ~init f =
+  let steps = ref 0 in
+  let step c x =
+    incr steps;
+    f c x
+  in
+  ((fun xs -> Rune.scan' ~f:step ~init xs), steps)
+
+let rows n k = Nx.mul_s (grid n k) 0.01
+let zeros k = Nx.zeros Nx.float32 [| k |]
+let ones k = Nx.ones Nx.float32 [| k |]
+let near = Oracle.tensor ~rel:1e-4 ~abs:1e-5 ()
+
+let decay c x =
+  let c = Nx.add (Nx.mul_s c 0.5) x in
+  (c, Nx.sin c)
+
+let sum c x =
+  let c = Nx.add c x in
+  (c, c)
+
+(* A step that scans the four rows of four its row holds. *)
+let nested c x =
+  let c, _ = Rune.scan' ~f:sum ~init:c (Nx.reshape [| 4; 4 |] x) in
+  (c, Nx.reshape [| 1 |] (Nx.sum c))
+
+(* A scan of rows [m * 4] wide whose step scans its row as [m] rows of four,
+   from its carry [c], the inner step reading [c] beside its own carry and row:
+   its final carry and the sums of its inner outputs. *)
+let reading_outer m xs =
+  let c, ys =
     Rune.scan'
       ~f:(fun c x ->
-        let c = Nx.add (Nx.mul_s c 0.5) x in
-        (c, Nx.mul c x))
-      ~init:(Nx.zeros Nx.float16 [| 5 |])
+        let ic, iys =
+          Rune.scan'
+            ~f:(fun d y ->
+              let d = Nx.add (Nx.mul_s d 0.9) (Nx.mul y c) in
+              (d, Nx.sin d))
+            ~init:c
+            (Nx.reshape [| m; 4 |] x)
+        in
+        (Nx.add ic (Nx.sum ~axes:[ 0 ] iys), Nx.reshape [| 1 |] (Nx.sum iys)))
+      ~init:(Nx.ones Nx.float32 [| 4 |])
       xs
   in
-  let xs =
-    Nx.cast Nx.float16
-      (Nx.create f32 [| 4; 5 |]
-         (Array.init 20 (fun i -> Float.of_int (i - 7) /. 8.0)))
+  Nx.concatenate ~axis:0 [ c; Nx.flatten ys ]
+
+(* [reads_outer at] checks a scan staged in a staged scan's step that reads the
+   enclosing step's carry, placed at [at], against eager: its values, its
+   gradient and its batch. *)
+let reads_outer at =
+  let xs = Nx.mul_s (Nx.sin (Nx.reshape [| 5; 12 |] (arange 60))) 0.5 in
+  let loss xs = Nx.sum (Nx.mul (reading_outer 3 xs) (reading_outer 3 xs)) in
+  let batch = Nx.stack ~axis:0 [ xs; Nx.mul_s xs 2. ] in
+  group "a scan in a staged scan's step that reads the step's carry"
+    [
+      test "computes eager's values" (fun () ->
+          equal near (reading_outer 3 xs)
+            (host (Rune.jit' (reading_outer 3) (Nx.place at xs))));
+      test "differentiates as eager" (fun () ->
+          equal near (Rune.grad' loss xs)
+            (host (Rune.jit' (Rune.grad' loss) (Nx.place at xs))));
+      test "batches as eager" (fun () ->
+          let f = Rune.vmap' (reading_outer 3) in
+          equal near (f batch) (host (Rune.jit' f (Nx.place at batch))));
+    ]
+
+let product c x =
+  let w = Nx.mul_s (grid 3 3) 0.1 in
+  let c =
+    Nx.add (Nx.reshape [| 3 |] (Nx.matmul w (Nx.reshape [| 3; 1 |] c))) x
   in
-  let to_f32 t = to_arr (Nx.cast f32 t) in
-  let c, ys = fold xs in
-  check_arr ~msg:"half carry" (to_f32 c)
-    (Nx.cast f32 (Rune.jit' (fun xs -> fst (fold xs)) xs));
-  check_arr ~msg:"half rows" (to_f32 ys)
-    (Nx.cast f32 (Rune.jit' (fun xs -> snd (fold xs)) xs));
-  let loss xs =
-    let c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let c = Nx.tanh (Nx.add c x) in
-          (c, Nx.mul c x))
-        ~init:(Nx.zeros f32 [| 3 |]) xs
-    in
-    Nx.add (Nx.sum c) (Nx.sum ys)
+  (c, c)
+
+let rotated c x =
+  let c =
+    Nx.add
+      (Nx.concatenate ~axis:0
+         [ Nx.slice [ R (1, 3) ] c; Nx.slice [ R (0, 1) ] c ])
+      x
   in
-  let xs =
-    Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> Float.of_int i /. 6.0))
+  (c, c)
+
+let flipped c x =
+  let c = Nx.add (Nx.flip c) x in
+  (c, Nx.mul_s c 2.)
+
+(* [staged at name ~steps ~init f xs] checks that the scan of [f] over [xs],
+   compiled with [xs] at [at], computes the eager scan's values, its step
+   running [steps n] times for [n] rows. *)
+let staged at name ~steps ~init f xs =
+  test name (fun () ->
+      let scan, ran = scanned ~init f in
+      let c, ys = scan xs in
+      ran := 0;
+      let g =
+        Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) scan
+      in
+      let c', ys' = g (Nx.place at xs) in
+      equal near c (host c');
+      equal near ys (host ys');
+      equal int (steps (Nx.shape xs).(0)) !ran)
+
+(* [carried at name ~steps ~init f xs] is [staged] for a list of carries. *)
+let carried at name ~steps ~init f xs =
+  test name (fun () ->
+      let ran = ref 0 in
+      let scan xs =
+        let cs, ys =
+          Rune.scan
+            Nx.Ptree.(list tensor)
+            Nx.Ptree.tensor Nx.Ptree.tensor
+            ~f:(fun c x ->
+              incr ran;
+              f c x)
+            ~init xs
+        in
+        ys :: cs
+      in
+      let eager = scan xs in
+      ran := 0;
+      let g = Rune.jit Nx.Ptree.(tensor @-> returns (list tensor)) scan in
+      List.iter2 (fun e c -> equal near e (host c)) eager (g (Nx.place at xs));
+      equal int steps !ran)
+
+(* [summed ran xs] is the sum of the outputs of a scan over [xs], counting its
+   steps in [ran]: the transpose's rows of output cotangents are a broadcast
+   constant. *)
+let summed ran xs =
+  let step c x =
+    incr ran;
+    decay c x
   in
-  check_arr ~msg:"three-float rows, gradient"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
+  Nx.sum (snd (Rune.scan' ~f:step ~init:(zeros 4) xs))
 
-let test_grad_through_scan_external_input () =
-  (* The body closes over a *differentiated* input that is neither the carry nor
-     the scanned sequence: an external co-tangent the backward loop must total
-     across the steps. *)
-  let loss (p : pair) =
-    let w = p.Pair.u and xs = p.Pair.v in
-    let c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let c = Nx.tanh (Nx.add (Nx.mul c (Nx.reshape [||] w)) x) in
-          (c, c))
-        ~init:(Nx.scalar f32 0.0) xs
-    in
-    Nx.add (Nx.reshape [||] c) (Nx.sum ys)
+(* [transformed at name ~steps f] checks that [f ran] over nine rows at [at]
+   computes under a compiled call what it computes eagerly, its scans' steps
+   running [steps] times. *)
+let transformed at name ~steps f =
+  test name (fun () ->
+      let ran = ref 0 in
+      let r = f ran (rows 9 4) in
+      ran := 0;
+      equal near r (host (Rune.jit' (f ran) (Nx.place at (rows 9 4))));
+      equal int steps !ran)
+
+(* [weighted ran w xs] is a loss over a scan of [xs] whose step reads [w] and
+   whose carry becomes tracked after its first step, counting its steps in
+   [ran]; [weights] and [row_weights] weigh the final carry and the outputs, so
+   no cotangent row is a constant. *)
+let weights = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |]
+
+let row_weights =
+  Nx.create Nx.float32 [| 9; 4 |]
+    (Array.init 36 (fun i -> 1. +. (Float.of_int i /. 36.)))
+
+let weighted ran w xs =
+  let step c x =
+    incr ran;
+    decay (Nx.add c w) (Nx.mul x c)
   in
-  let p = { Pair.u = Nx.scalar f32 0.5; v = vec32 [| 1.0; 2.0; 3.0; 0.5 |] } in
-  let expected = Rune.grad pair_ptree loss p in
-  let g =
-    Rune.jit
-      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
-      (fun p -> Rune.grad pair_ptree loss p)
-  in
-  let actual = g p in
-  check_arr ~msg:"external weight" (to_arr expected.Pair.u) actual.Pair.u;
-  check_arr ~msg:"scanned input" (to_arr expected.Pair.v) actual.Pair.v;
-  (* Replay computes the totals on fresh data. *)
-  let p2 =
-    { Pair.u = Nx.scalar f32 (-0.25); v = vec32 [| 0.25; -1.0; 1.5; 0.75 |] }
-  in
-  let expected2 = Rune.grad pair_ptree loss p2 in
-  let actual2 = g p2 in
-  check_arr ~msg:"external weight, replay" (to_arr expected2.Pair.u)
-    actual2.Pair.u;
-  check_arr ~msg:"scanned input, replay" (to_arr expected2.Pair.v)
-    actual2.Pair.v
+  let c, ys = Rune.scan' ~f:step ~init:(ones 4) xs in
+  Nx.add (Nx.sum (Nx.mul c weights)) (Nx.sum (Nx.mul ys row_weights))
 
-(* A three-leaf input structure. *)
-(* A tensor with a run-time window start: the shape of every decode step. *)
-type windowed = { x : Nx.float32_t; pos : Nx.int64_t }
+let w0 = Nx.full Nx.float32 [| 4 |] 0.3
+let ws = Nx.stack ~axis:0 [ w0; Nx.mul_s w0 2.; Nx.mul_s w0 0.5 ]
 
-module Windowed = struct
-  type _ t = windowed
+(* [stages at name f] checks that [f ran xs], over 9 and over 17 rows of three
+   at [at], computes under a compiled call what it computes eagerly, its scans'
+   steps running as many times for either length: the scans stage. *)
+let stages at name f =
+  test name (fun () ->
+      let runs n =
+        let ran = ref 0 in
+        let xs = Nx.mul_s (grid n 3) 0.01 in
+        let expected = f ran xs in
+        ran := 0;
+        let r = Rune.jit' (f ran) (Nx.place at xs) in
+        equal ~msg:(Printf.sprintf "%d rows" n) near expected (host r);
+        !ran
+      in
+      let nine = runs 9 in
+      equal ~msg:"steps for 17 rows against 9" int nine (runs 17))
 
-  let walk c { x; pos } =
-    let open Nx.Ptree.Walk in
-    let x = field c "x" tensor x in
-    let pos = field c "pos" tensor pos in
-    { x; pos }
-end
+(* A recurrent cell of weight [wr], and a scan of it over rows of three from
+   [h]. *)
+let wr = Nx.mul_s (Nx.sub_s (grid 3 3) 4.) 0.1
+let hr = Nx.create Nx.float32 [| 3 |] [| 0.5; -0.25; 0.1 |]
 
-let windowed_ptree = Nx.Ptree.instantiate (module Windowed)
-let pos_at i = Nx.scalar Nx.int64 (Int64.of_int i)
+let cell w h x =
+  Nx.tanh
+    (Nx.add (Nx.reshape [| 3 |] (Nx.matmul w (Nx.reshape [| 3; 1 |] h))) x)
 
-(* One compiled program serves every window position: the start is read on every
-   call, so the second call must write where its own [pos] says, not where the
-   trace was taken. *)
-let test_set_traced_window_replays_position () =
-  let v = vec32 [| 9.0; 8.0 |] in
-  let f { x; pos } = Nx.set [ Nx.D (pos, 2) ] v x in
-  let g = Rune.jit Nx.Ptree.(windowed_ptree @-> returns tensor) f in
-  let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
-  let at i = { x; pos = pos_at i } in
-  check_arr ~msg:"first position" (to_arr (f (at 1))) (g (at 1));
-  check_arr ~msg:"second position, same program" (to_arr (f (at 3))) (g (at 3));
-  check_arr ~msg:"clamped start" (to_arr (f (at 9))) (g (at 9));
-  check_arr ~msg:"the input is a value" [| 0.0; 1.0; 2.0; 3.0; 4.0 |] x
-
-(* A window over two axes: the compiled write addresses the window's elements at
-   their flat positions in [x]. *)
-let test_set_traced_window_over_two_axes () =
-  let v = Nx.create f32 [| 2; 3 |] [| 9.0; 8.0; 7.0; 6.0; 5.0; 4.0 |] in
-  let f { x; pos } = Nx.set [ Nx.D (pos, 2); Nx.D (pos, 3) ] v x in
-  let g = Rune.jit Nx.Ptree.(windowed_ptree @-> returns tensor) f in
-  let x = Nx.create f32 [| 4; 6 |] (Array.init 24 float_of_int) in
-  let at i = { x; pos = pos_at i } in
-  List.iter
-    (fun i ->
-      let msg = Printf.sprintf "corner %d" i in
-      check_arr ~msg (to_arr (f (at i))) (g (at i)))
-    [ 0; 1; 2; 7 ]
-
-let test_set_static_window_matches_eager () =
-  let v = vec32 [| 9.0; 8.0 |] in
-  let f x = Nx.set [ Nx.R (1, 3) ] v x in
-  let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
-  check_arr ~msg:"window" (to_arr (f x)) (Rune.jit' f x);
-  let h x = Nx.set [ Nx.L [ 0; 3 ] ] v x in
-  check_arr ~msg:"gather" (to_arr (h x)) (Rune.jit' h x);
-  let m = Nx.create Nx.bool [| 5 |] [| true; false; true; false; false |] in
-  let k x = Nx.set [ Nx.M m ] (Nx.scalar f32 7.0) x in
-  check_arr ~msg:"mask" (to_arr (k x)) (Rune.jit' k x)
-
-let test_slice_traced_window_replays_position () =
-  let f { x; pos } = Nx.slice [ Nx.D (pos, 2) ] x in
-  let g = Rune.jit Nx.Ptree.(windowed_ptree @-> returns tensor) f in
-  let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
-  let at i = { x; pos = pos_at i } in
-  check_arr ~msg:"first position" [| 1.0; 2.0 |] (g (at 1));
-  check_arr ~msg:"second position, same program" [| 3.0; 4.0 |] (g (at 3))
-
-module Trio = struct
-  type trio = { a : Nx.float32_t; b : Nx.float32_t; xs : Nx.float32_t }
-  type _ t = trio
-
-  let walk c { a; b; xs } =
-    let open Nx.Ptree.Walk in
-    let a = field c "a" tensor a in
-    let b = field c "b" tensor b in
-    let xs = field c "xs" tensor xs in
-    { a; b; xs }
-end
-
-let trio_ptree = Nx.Ptree.instantiate (module Trio)
-
-let test_grad_through_scan_external_matrices () =
-  (* An RNN step: the recurrence and input matrices are external inputs of the
-     loop, each earning a cotangent contribution per step. *)
-  let loss (p : Trio.trio) =
-    let step x ut =
-      let x = Nx.tanh (Nx.add (Nx.matmul x p.Trio.a) (Nx.matmul ut p.Trio.b)) in
-      (x, x)
-    in
-    let _, ys = Rune.scan' ~f:step ~init:(Nx.zeros f32 [| 2 |]) p.Trio.xs in
-    Nx.sum ys
-  in
-  let p =
-    Trio.
-      {
-        a = Nx.create f32 [| 2; 2 |] [| 0.5; 0.25; 0.0; 0.75 |];
-        b = Nx.create f32 [| 2; 2 |] [| 1.0; -0.5; 0.25; 0.5 |];
-        xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |];
-      }
-  in
-  let expected = Rune.grad trio_ptree loss p in
-  let g =
-    Rune.jit
-      Nx.Ptree.(trio_ptree @-> returns trio_ptree)
-      (fun p -> Rune.grad trio_ptree loss p)
-  in
-  let actual = g p in
-  check_arr ~msg:"recurrence matrix" (to_arr expected.Trio.a) actual.Trio.a;
-  check_arr ~msg:"input matrix" (to_arr expected.Trio.b) actual.Trio.b;
-  check_arr ~msg:"scanned input" (to_arr expected.Trio.xs) actual.Trio.xs
-
-let test_grad_through_scan_matrix_carry () =
-  (* A 2-D carry and per-step output: the loop's flat slot buffers store them
-     flattened. *)
-  let loss xs =
-    let c, ys =
-      Rune.scan'
-        ~f:(fun c x ->
-          let c = Nx.tanh (Nx.add c x) in
-          (c, Nx.mul c c))
-        ~init:(Nx.zeros f32 [| 2; 2 |])
-        xs
-    in
-    Nx.add (Nx.sum c) (Nx.sum ys)
-  in
-  let xs =
-    Nx.create f32 [| 3; 2; 2 |]
-      [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0; 0.75; -0.5; -0.25; 0.0; 1.5; 0.5 |]
-  in
-  check_arr ~msg:"matrix carry forward" (to_arr (loss xs)) (Rune.jit' loss xs);
-  check_arr ~msg:"matrix carry grad"
-    (to_arr (Rune.grad' loss xs))
-    (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
-
-(* Staged scan rules: under jit, jvp and vmap of a scan compile one loop, the
-   scan of their transformation. [runs] counts the body's runs while the scan is
-   traced: a staged scan runs its body a fixed number of times, whatever its
-   length, where an unrolled one runs it once per step. *)
-
-let cell w h x = Nx.tanh (Nx.add (Nx.matmul w h) x)
-
-let rollout ?(runs = ref 0) w h0 xs =
+let rollout ran w h xs =
   snd
     (Rune.scan'
        ~f:(fun h x ->
-         incr runs;
+         incr ran;
          let h = cell w h x in
          (h, h))
-       ~init:h0 xs)
+       ~init:h xs)
 
-let series seed shape =
-  let n = Array.fold_left ( * ) 1 shape in
-  Nx.create f32 shape
-    (Array.init n (fun i -> Float.sin (Float.of_int ((7 * i) + seed)) /. 2.0))
-
-let w0 = series 1 [| 3; 3 |]
-let h0 = vec32 [| 0.1; -0.2; 0.3 |]
-let lane i x = Nx.slice [ Nx.I i ] x
-let lanes k f = Nx.stack ~axis:0 (List.init k f)
-
-(* [staged ~runs f] runs the checks [f count n] at lengths [n] 4 and 8, and
-   checks that the body counted [runs] runs in [count] at both. *)
-let staged ~runs f =
-  List.iter
-    (fun n ->
-      let count = ref 0 in
-      f count n;
-      equal ~msg:(Printf.sprintf "body runs, length %d" n) int runs !count)
-    [ 4; 8 ]
-
-(* A tangent on the captured weight makes the carry active after one step: the
-   step's first run discovers it, and the scan is staged carrying its
-   tangent. *)
-let test_jvp_of_scan_is_staged () =
-  staged ~runs:2 (fun runs n ->
-      let xs = series 2 [| n; 3 |] in
-      let g =
-        Rune.jit
-          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-          (fun w dw -> snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
-      in
-      List.iter
-        (fun seed ->
-          let dw = series seed [| 3; 3 |] in
-          check_arr ~eps:1e-4 ~msg:"tangent"
-            (to_arr (snd (Rune.jvp' (fun w -> rollout w h0 xs) w0 dw)))
-            (g w0 dw))
-        [ 3; 4 ])
-
-(* An active init carries its tangent from the start; a float carry no tangent
-   reaches stays without one, and its outputs' tangents are zero. *)
-let test_jvp_of_scan_with_an_inactive_carry () =
-  staged ~runs:1 (fun runs n ->
-      let xs = series 2 [| n; 3 |] in
-      let f h =
-        let c, ys =
-          Rune.scan pair_ptree Nx.Ptree.tensor Nx.Ptree.tensor
-            ~f:(fun c x ->
-              incr runs;
-              let u = cell w0 c.Pair.u x in
-              ({ Pair.u; v = Nx.add_s c.Pair.v 1.0 }, Nx.mul_s u 2.0))
-            ~init:{ Pair.u = h; v = Nx.scalar f32 0.0 }
-            xs
-        in
-        Nx.concatenate ~axis:0
-          [ c.Pair.u; Nx.reshape [| 1 |] c.Pair.v; Nx.flatten ys ]
-      in
-      let dh = vec32 [| 1.0; -0.5; 0.25 |] in
-      let expected = Rune.jvp' f h0 dh in
-      runs := 0;
-      let g =
-        Rune.jit
-          Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
-          (fun h dh -> Rune.jvp' f h dh)
-      in
-      let y, dy = g h0 dh in
-      check_arr ~eps:1e-4 ~msg:"primal" (to_arr (fst expected)) y;
-      check_arr ~eps:1e-4 ~msg:"tangent" (to_arr (snd expected)) dy;
-      equal ~msg:"the counter's tangent" float_exact 0.0 (Nx.item [ 3 ] dy))
-
-let test_jvp_of_jvp_of_scan_is_staged () =
-  let dw = series 3 [| 3; 3 |] and dw2 = series 5 [| 3; 3 |] in
-  let second runs xs w =
-    snd
-      (Rune.jvp'
-         (fun w -> snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
-         w dw2)
-  in
-  staged ~runs:3 (fun runs n ->
-      let xs = series 2 [| n; 3 |] in
-      check_arr ~eps:1e-4 ~msg:"second-order tangent"
-        (to_arr (second (ref 0) xs w0))
-        (Rune.jit' (second runs xs) w0))
-
-(* Batched rows batch the carry after one step; a batched capture does too. *)
-let test_vmap_of_scan_is_staged () =
-  let b = 3 in
-  staged ~runs:2 (fun runs n ->
-      let xs = series 2 [| b; n; 3 |] in
-      check_arr ~eps:1e-4 ~msg:"batched rows"
-        (to_arr (lanes b (fun i -> rollout w0 h0 (lane i xs))))
-        (Rune.jit' (Rune.vmap' (fun xs -> rollout ~runs w0 h0 xs)) xs));
-  staged ~runs:2 (fun runs n ->
-      let xs = series 2 [| n; 3 |] and ws = series 6 [| b; 3; 3 |] in
-      check_arr ~eps:1e-4 ~msg:"batched capture"
-        (to_arr (lanes b (fun i -> rollout (lane i ws) h0 xs)))
-        (Rune.jit' (Rune.vmap' (fun w -> rollout ~runs w h0 xs)) ws))
-
-(* vmap over the tangents around jvp of a scan: one loop whose carry holds the
-   state once and its tangent per lane. The carry becomes active after one step,
-   and its tangent batched after another: two runs discover them, a third stages
-   the scan. *)
-let sofo ?(runs = ref 0) xs w dirs =
-  Rune.vmap'
-    (fun dw -> snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
-    dirs
-
-let sofo_lanes xs w dirs =
-  lanes
-    (Nx.shape dirs).(0)
-    (fun i -> snd (Rune.jvp' (fun w -> rollout w h0 xs) w (lane i dirs)))
-
-let test_vmap_over_jvp_of_scan_is_staged () =
-  let k = 4 in
-  staged ~runs:3 (fun runs n ->
-      let xs = series 2 [| n; 3 |] in
-      let g =
-        Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (sofo ~runs xs)
-      in
-      List.iter
-        (fun (w, dirs) ->
-          check_arr ~eps:1e-4 ~msg:"per-lane tangents"
-            (to_arr (sofo_lanes xs w dirs))
-            (g w dirs))
-        [
-          (w0, series 3 [| k; 3; 3 |]);
-          (series 8 [| 3; 3 |], series 9 [| k; 3; 3 |]);
-        ])
-
-(* With the init active and its tangent batched, the first run stages. *)
-let test_vmap_over_jvp_of_scan_from_an_active_init () =
-  let k = 4 in
-  let f runs xs w dws dhs =
-    Rune.vmap
-      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-      (fun dw dh ->
-        snd
-          (Rune.jvp
-             Nx.Ptree.(pair tensor tensor)
-             Nx.Ptree.tensor
-             (fun (w, h) -> rollout ~runs w h xs)
-             (w, h0) (dw, dh)))
-      dws dhs
-  in
-  staged ~runs:1 (fun runs n ->
-      let xs = series 2 [| n; 3 |] in
-      let dws = series 3 [| k; 3; 3 |] and dhs = series 4 [| k; 3 |] in
-      check_arr ~eps:1e-4 ~msg:"per-lane tangents"
-        (to_arr (f (ref 0) xs w0 dws dhs))
-        (Rune.jit
-           Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
-           (f runs xs) w0 dws dhs))
-
-(* The state is not batched: every lane adds the same work, its tangent's, and
-   the work no lane adds covers the primal's, done once whatever the number of
-   lanes. A batched state would leave no such work. *)
-let test_vmap_over_jvp_of_scan_keeps_the_primal_once () =
-  let xs = series 2 [| 8; 3 |] in
-  let ops f =
-    ignore (f ());
-    let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
-    ignore (f ());
-    Tolk_uop.Bigint.to_int
-      (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
-  in
-  let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (sofo xs) in
-  let lanes k = ops (fun () -> g w0 (series 3 [| k; 3; 3 |])) in
-  let two = lanes 2 and four = lanes 4 and six = lanes 6 in
-  let primal = ops (fun () -> Rune.jit' (fun w -> rollout w h0 xs) w0) in
-  equal ~msg:"every lane adds the same work" int (four - two) (six - four);
-  is_true ~msg:"the shared work covers the primal" (two - (four - two) >= primal)
-
-(* Reverse mode over a staged jvp or vmap of a scan stages its transpose. *)
-let test_grad_of_jvp_of_scan_is_staged () =
-  let dw = series 3 [| 3; 3 |] in
-  let loss runs xs w =
-    Nx.sum (snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
-  in
-  let counts = ref [] in
-  List.iter
-    (fun n ->
-      let xs = series 2 [| n; 3 |] and runs = ref 0 in
-      check_arr ~eps:1e-4 ~msg:"gradient"
-        (to_arr (Rune.grad' (loss (ref 0) xs) w0))
-        (Rune.jit' (Rune.grad' (loss runs xs)) w0);
-      counts := !runs :: !counts)
-    [ 4; 8 ];
-  equal ~msg:"body runs" (list int) [ List.hd !counts; List.hd !counts ] !counts
-
-let test_grad_of_vmap_of_scan_is_staged () =
-  let loss runs xs w =
-    Nx.sum (Rune.vmap' (fun xs -> rollout ~runs w h0 xs) xs)
-  in
-  let counts = ref [] in
-  List.iter
-    (fun n ->
-      let xs = series 2 [| 3; n; 3 |] and runs = ref 0 in
-      check_arr ~eps:1e-4 ~msg:"gradient"
-        (to_arr (Rune.grad' (loss (ref 0) xs) w0))
-        (Rune.jit' (Rune.grad' (loss runs xs)) w0);
-      counts := !runs :: !counts)
-    [ 4; 8 ];
-  equal ~msg:"body runs" (list int) [ List.hd !counts; List.hd !counts ] !counts
-
-(* The transpose of a scan is a scan, so jvp and vmap of a gradient through a
-   scan stage it like any other. The forward and the backward scans each gain a
-   carry that becomes active or batched after one step: two runs of the body
-   each. *)
-let test_jvp_and_vmap_of_grad_through_scan_are_staged () =
-  let dw = series 3 [| 3; 3 |] in
-  let grad ?runs xs w =
-    Rune.grad' (fun w -> Nx.sum (rollout ?runs w h0 xs)) w
-  in
-  staged ~runs:4 (fun runs n ->
-      let xs = series 2 [| n; 3 |] in
-      check_arr ~eps:1e-4 ~msg:"jvp of grad"
-        (to_arr (snd (Rune.jvp' (grad xs) w0 dw)))
-        (Rune.jit' (fun w -> snd (Rune.jvp' (grad ~runs xs) w dw)) w0));
-  staged ~runs:4 (fun runs n ->
-      let xss = series 5 [| 3; n; 3 |] in
-      check_arr ~eps:1e-4 ~msg:"vmap of grad"
-        (to_arr (lanes 3 (fun i -> grad (lane i xss) w0)))
-        (Rune.jit' (fun w -> Rune.vmap' (fun xs -> grad ~runs xs w) xss) w0))
-
-(* grad of a gradient: the outer grad transposes the scan and its transpose,
-   each staged, and runs the body once for each of the four loops. *)
-let test_grad_of_grad_through_scan_is_staged () =
-  let grad ?runs xs w =
-    Rune.grad' (fun w -> Nx.sum (rollout ?runs w h0 xs)) w
-  in
-  staged ~runs:4 (fun runs n ->
-      let xs = series 2 [| n; 3 |] in
-      let second ?runs w = Rune.grad' (fun w -> Nx.sum (grad ?runs xs w)) w in
-      check_arr ~eps:1e-4 ~msg:"second-order gradient"
-        (to_arr (second w0))
-        (Rune.jit' (second ~runs) w0))
-
-(* The transpose sums the cotangents of the tensors the body captures that are
-   differentiated, and only those: an argument of the compiled function that
-   the body captures and nothing differentiates costs a step what a constant
-   made in the body does. *)
-let test_grad_of_scan_ignores_undifferentiated_captures () =
-  let d = series 4 [| 3; 3 |] in
-  let values = Nx.to_array d in
-  let rollout_with d w xs =
+(* [constant_rows at] checks scans over rows computed from constants alone, of 4
+   and 20 bytes, with a carry at [at]: the rows have no device until the program
+   places them, padded to the loop's row stride. *)
+(* [both_gradients at] checks compiled gradients of a scan in its initial carry
+   and its rows, at [at], by grad and by a pullback, for rows of 16 bytes, which
+   the transpose's loop writes in the result's storage, and of 8, which it
+   copies: the two results share the loop, which runs once. *)
+let both_gradients at =
+  let scan (c, xs) =
     snd
       (Rune.scan'
-         ~f:(fun h x ->
-           let h = cell w (Nx.matmul (d ()) h) x in
-           (h, h))
-         ~init:h0 xs)
+         ~f:(fun d y ->
+           let d = Nx.add (Nx.mul_s d 0.9) y in
+           (d, Nx.sin d))
+         ~init:c xs)
   in
-  let grad ~captured xs (w, d) =
-    let d () = if captured then d else Nx.create f32 [| 3; 3 |] values in
-    Rune.grad' (fun w -> Nx.sum (rollout_with d w xs)) w
-  in
-  let compiled ~captured xs =
-    Rune.jit
-      Nx.Ptree.(pair tensor tensor @-> returns tensor)
-      (grad ~captured xs)
-  in
-  let kernels_per_step ~captured =
-    let per_replay n =
-      let g = compiled ~captured (series 2 [| n; 3 |]) in
-      ignore (g (w0, d));
-      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
-      ignore (g (w0, d));
-      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
-    in
-    (per_replay 8 - per_replay 4) / 4
-  in
-  equal ~msg:"kernels per step" int
-    (kernels_per_step ~captured:false)
-    (kernels_per_step ~captured:true);
-  let xs = series 2 [| 4; 3 |] in
-  check_arr ~eps:1e-4 ~msg:"gradient"
-    (to_arr (grad ~captured:true xs (w0, d)))
-    (compiled ~captured:true xs (w0, d))
-
-(* The backward loop recomputes each step, so a body that reads another
-   differentiated tensor there than in the forward loop raises, where its
-   cotangent would be lost. *)
-let test_grad_of_scan_refuses_a_capture_the_forward_did_not_read () =
-  let w1 = series 6 [| 3; 3 |] in
-  let runs = ref 0 in
-  let loss (w, w') =
-    let xs = series 2 [| 4; 3 |] in
-    Nx.sum
-      (snd
-         (Rune.scan'
-            ~f:(fun h x ->
-              incr runs;
-              let h = cell (if !runs = 1 then w else w') h x in
-              (h, h))
-            ~init:h0 xs))
-  in
-  let p = Nx.Ptree.(pair tensor tensor) in
-  raises_match
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () ->
-      ignore (Rune.jit Nx.Ptree.(p @-> returns p) (Rune.grad p loss) (w0, w1)))
-
-(* A carry the body returns unchanged is not loop state: each step launches the
-   kernels of the scan that reads it as a capture, and the scan returns its
-   initial value. Its gradient, taken by the backward loop, and a trace
-   restarted to place the other carries keep their values. *)
-let test_scan_drops_an_unchanged_carry () =
-  let as_carry (w, c) xs =
-    let (h, c), ys =
-      Rune.scan
-        Nx.Ptree.(pair tensor tensor)
-        Nx.Ptree.tensor Nx.Ptree.tensor
-        ~f:(fun (h, c) x ->
-          let h = cell w h (Nx.add x c) in
-          ((h, c), h))
-        ~init:(h0, c) xs
-    in
-    Nx.add (Nx.sum ys) (Nx.add (Nx.sum h) (Nx.sum c))
-  in
-  let as_capture (w, c) xs =
-    let h, ys =
-      Rune.scan'
-        ~f:(fun h x ->
-          let h = cell w h (Nx.add x c) in
-          (h, h))
-        ~init:h0 xs
-    in
-    Nx.add (Nx.sum ys) (Nx.add (Nx.sum h) (Nx.sum c))
-  in
-  let p = Nx.Ptree.(pair tensor tensor) in
-  let c0 = series 3 [| 3 |] in
-  let kernels_per_step f =
-    let per_replay n =
-      let xs = series 2 [| n; 3 |] in
-      let g = Rune.jit Nx.Ptree.(p @-> returns tensor) (fun wc -> f wc xs) in
-      ignore (g (w0, c0));
-      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
-      ignore (g (w0, c0));
-      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
-    in
-    (per_replay 8 - per_replay 4) / 4
-  in
-  equal ~msg:"kernels per step" int
-    (kernels_per_step as_capture)
-    (kernels_per_step as_carry);
-  let xs = series 2 [| 5; 3 |] in
-  check_arr ~eps:1e-5 ~msg:"value"
-    (to_arr (as_carry (w0, c0) xs))
-    (Rune.jit
-       Nx.Ptree.(p @-> returns tensor)
-       (fun wc -> as_carry wc xs)
-       (w0, c0));
-  let gw, gc = Rune.grad p (fun wc -> as_carry wc xs) (w0, c0) in
-  let gw', gc' =
-    Rune.jit
-      Nx.Ptree.(p @-> returns p)
-      (Rune.grad p (fun wc -> as_carry wc xs))
-      (w0, c0)
-  in
-  check_arr ~eps:1e-4 ~msg:"gradient of w" (to_arr gw) gw';
-  check_arr ~eps:1e-4 ~msg:"gradient of the carry" (to_arr gc) gc';
-  let devices = List.map Rune.device [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ] in
-  let traces = ref 0 in
-  let placed xs =
-    let (a, c), ys =
-      Rune.scan
-        Nx.Ptree.(pair tensor tensor)
-        Nx.Ptree.tensor Nx.Ptree.tensor
-        ~f:(fun (a, c) x ->
-          incr traces;
-          let a = Nx.add (Nx.mul_s a 0.5) (Nx.add x c) in
-          ((a, c), a))
-        ~init:(Nx.zeros f32 [| 16 |], series 4 [| 16 |])
-        xs
-    in
-    Nx.add (Nx.sum a) (Nx.add (Nx.sum c) (Nx.sum ys))
-  in
-  let xs = series 5 [| 6; 16 |] in
-  let expected = placed xs in
-  traces := 0;
-  let y =
-    Rune.jit' ~devices placed
-      (Nx.place (Nx.Placement.sharded ~axis:1 devices) xs)
-  in
-  equal ~msg:"the trace restarted" bool true (!traces > 1);
-  check_arr ~eps:1e-4 ~msg:"placed" (to_arr expected) y
-
-(* Buffer sharing: strided leaves must fall back to copies, views with an offset
-   must read the right span, and each call must return tensors with their own
-   storage. *)
-
-let test_non_contiguous_input_matches_eager () =
-  let f x = Nx.add (Nx.mul x x) x in
-  let g = Rune.jit' f in
-  let x =
-    Nx.transpose (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |])
-  in
-  check_arr ~msg:"transposed input" (to_arr (f x)) (g x)
-
-let test_offset_view_input_matches_eager () =
-  let f x = Nx.mul_s x 3.0 in
-  let g = Rune.jit' f in
-  let x =
-    Nx.get [ 1 ] (Nx.create f32 [| 3; 4 |] (Array.init 12 float_of_int))
-  in
-  check_arr ~msg:"offset row view" (to_arr (f x)) (g x)
-
-let test_outputs_have_their_own_storage () =
-  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-  let y1 = g (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let _y2 = g (vec32 [| 10.0; 20.0; 30.0 |]) in
-  check_arr ~msg:"first result unchanged by the second call" [| 2.0; 4.0; 6.0 |]
-    y1
-
-(* Sliding windows *)
-
-(* An asymmetric configuration so any axis-ordering mistake shows up: distinct
-   kernel, stride, dilation, and padding per spatial dimension. *)
-let window_config =
-  ( [| 2; 3 |] (* kernel *),
-    [| 2; 1 |] (* stride *),
-    [| 1; 2 |] (* dilation *),
-    [| (1, 0); (2, 1) |] (* padding *) )
-
-let window_input () =
-  Nx.create f32 [| 2; 3; 5; 6 |]
-    (Array.init (2 * 3 * 5 * 6) (fun i -> float_of_int (i mod 17) -. 8.0))
-
-let test_unfold_matches_eager () =
-  let kernel_size, stride, dilation, padding = window_config in
-  let f x = Nx.extract_patches ~kernel_size ~stride ~dilation ~padding x in
-  let g = Rune.jit' f in
-  let x = window_input () in
-  equal ~msg:"shape" (array int) (Nx.shape (f x)) (Nx.shape (g x));
-  check_arr ~msg:"unfold" (to_arr (f x)) (g x)
-
-let test_fold_matches_eager () =
-  let kernel_size, stride, dilation, padding = window_config in
-  let output_size = [| 5; 6 |] in
-  let f x =
-    Nx.combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding
-      (Nx.extract_patches ~kernel_size ~stride ~dilation ~padding x)
-  in
-  let g = Rune.jit' f in
-  let x = window_input () in
-  check_arr ~msg:"fold of unfold" (to_arr (f x)) (g x)
-
-let test_sliding_window_matches_eager () =
-  let f x = sliding_window ~axis:1 ~window:3 ~step:2 x in
-  let g = Rune.jit' f in
-  let x =
-    Nx.create f32 [| 2; 8 |] (Array.init 16 (fun i -> float_of_int i -. 7.5))
-  in
-  equal ~msg:"shape" (array int) (Nx.shape (f x)) (Nx.shape (g x));
-  check_arr ~msg:"sliding windows" (to_arr (f x)) (g x)
-
-let test_correlate_matches_eager () =
-  let kernel =
-    Nx.create f32 [| 3; 3 |]
-      [| 1.0; 0.0; -1.0; 2.0; 0.5; -2.0; 1.0; 0.0; -1.0 |]
-  in
-  let f x = Nx.correlate ~padding:`Same x kernel in
-  let g = Rune.jit' f in
-  let x = Nx.create f32 [| 6; 7 |] (Array.init 42 (fun i -> float_of_int i)) in
-  check_arr ~msg:"correlate same" (to_arr (f x)) (g x)
-
-(* Reductions *)
-
-(* The devices a compiled reduction is checked on: the CPU, and Metal where the
-   machine has it. *)
-let devices =
-  "CPU"
-  ::
-  (match Tolk.Device.get "METAL" with
-  | _ -> [ "METAL" ]
-  | exception Invalid_argument _ -> [])
-
-(* A half-precision sum accumulates at float32, as the eager one does. A
-   half-precision accumulator stops growing: 16384 bfloat16 ones summed to 1024
-   on the CPU and 4096 on Metal, and values near 1.05 drifted on both. *)
-let test_half_sums_accumulate_wide () =
-  let check (type b) name (dtype : (float, b) Nx.dtype) =
-    let ones = Nx.ones dtype [| 16384 |] in
-    let near =
-      Nx.create dtype [| 4096 |]
-        (Array.init 4096 (fun i -> 1.0 +. (float_of_int (i mod 7) /. 64.0)))
-    in
-    List.iter
-      (fun device ->
-        List.iter
-          (fun (input, x) ->
-            List.iter
-              (fun (what, f) ->
-                let value t = Nx.item [] (Nx.cast f32 t) in
-                equal
-                  ~msg:(Printf.sprintf "%s %s of %s, %s" name what input device)
-                  float_exact
-                  (value (f x))
-                  (value (Rune.jit' ~devices:[ Rune.device device ] f x)))
-              [ ("sum", fun x -> Nx.sum x); ("mean", fun x -> Nx.mean x) ])
-          [ ("ones", ones); ("values near 1.05", near) ])
-      devices
-  in
-  check "bfloat16" Nx.bfloat16;
-  check "float16" Nx.float16
-
-(* A half-precision product multiplies at float32 and rounds once, as the eager
-   one does. Rounding after every factor drifted: 256 values just under 1
-   multiplied to 0.3633 at bfloat16 on the CPU and 0.3594 on Metal, against
-   0.3672 eager. *)
-let test_half_products_multiply_wide () =
-  let check (type b) name (dtype : (float, b) Nx.dtype) =
-    let x =
-      Nx.create dtype [| 256 |]
-        (Array.init 256 (fun i -> 1.0 -. (float_of_int (i mod 5) /. 512.0)))
-    in
-    let value t = Nx.item [] (Nx.cast f32 t) in
-    List.iter
-      (fun device ->
-        equal
-          ~msg:(Printf.sprintf "%s prod, %s" name device)
-          float_exact
-          (value (Nx.prod x))
-          (value
-             (Rune.jit' ~devices:[ Rune.device device ] (fun x -> Nx.prod x) x)))
-      devices
-  in
-  check "bfloat16" Nx.bfloat16;
-  check "float16" Nx.float16
-
-(* Operands of a narrow product whose every partial sum is exact in float32
-   whatever the order: [step] times integers of magnitude below [1 / step]. A
-   product computed at float32 and rounded once is then the exact sum rounded
-   once. *)
-let exact_operand (type b) (dtype : (float, b) Nx.dtype) ~step seed shape =
-  let span = int_of_float (1.0 /. step) in
-  Nx.create dtype shape
-    (Array.init (Array.fold_left ( * ) 1 shape) (fun i ->
-         let v = ((i * 37) + seed) mod ((2 * span) - 1) in
-         float_of_int (v - span + 1) *. step))
-
-(* A narrow matrix product widens its operands to float32, multiplies and sums
-   there, and rounds once, as the eager one does, with and without tensor cores.
-   Rounding each product to the operands' dtype changed 1781 of 3072 elements at
-   64 x 256 x 48 bfloat16 on the CPU. *)
-let test_narrow_matmuls_multiply_exactly () =
-  let check (type b) name (dtype : (float, b) Nx.dtype) ~step =
-    let values t = Nx.to_array (Nx.cast f32 t) in
-    List.iter
-      (fun device ->
-        List.iter
-          (fun (m, k, n) ->
-            let a = exact_operand dtype ~step 11 [| m; k |]
-            and b = exact_operand dtype ~step 5 [| k; n |] in
-            equal
-              ~msg:(Printf.sprintf "%s %dx%dx%d, %s" name m k n device)
-              (array float_exact)
-              (values (Nx.matmul a b))
-              (values
-                 (Rune.jit' ~devices:[ Rune.device device ] (Nx.matmul a) b)))
-          [ (3, 12, 5); (1, 64, 40); (16, 32, 24); (64, 256, 48) ])
-      devices
-  in
-  check "bfloat16" Nx.bfloat16 ~step:(1.0 /. 256.0);
-  check "float16" Nx.float16 ~step:(1.0 /. 256.0);
-  check "float8_e4m3" Nx.float8_e4m3 ~step:(1.0 /. 8.0);
-  check "float8_e5m2" Nx.float8_e5m2 ~step:(1.0 /. 8.0)
-
-(* Every product of vectors is a matrix product: [dot], [vdot], [inner],
-   [vecdot] and einsum's ["i,i->"] compute at [matmul]'s precision, eager and
-   compiled. With [p] fraction bits, [(1 + 2^-p)^2] rounds to [1 + 2^(1-p)] in
-   the dtype, and adding [2^-(p+1)] lands a rounded sum on a tie that goes down
-   to even, while the exact sum, [2^-2p] above it, rounds up to [1 + 3 * 2^-p].
-   [dot] of two vectors rounded each product and gave [1 + 2^(1-p)]. *)
-let test_vector_products_are_matmuls () =
-  let check (type b) name (dtype : (float, b) Nx.dtype) ~p =
-    let ulp = Float.ldexp 1.0 (-p) in
-    let x = Nx.create dtype [| 2 |] [| 1.0 +. ulp; ulp /. 2.0 |]
-    and w = Nx.create dtype [| 2 |] [| 1.0 +. ulp; 1.0 |] in
-    let values t = Nx.to_array (Nx.cast f32 t) in
-    let agree what expected f x w =
-      equal
-        ~msg:(Printf.sprintf "%s %s, eager" name what)
-        (array float_exact) expected
-        (values (f x w));
-      List.iter
-        (fun device ->
-          equal
-            ~msg:(Printf.sprintf "%s %s, %s" name what device)
-            (array float_exact) expected
-            (values (Rune.jit' ~devices:[ Rune.device device ] (f x) w)))
-        devices
-    in
-    let exact = 1.0 +. (3.0 *. ulp) in
-    List.iter
-      (fun (what, f) -> agree what [| exact |] f x w)
-      [
-        ("matmul", Nx.matmul);
-        ("dot", Nx.dot);
-        ("vdot", Nx.vdot);
-        ("inner", Nx.inner);
-        ("vecdot", fun x w -> Nx.vecdot x w);
-        ("einsum", fun x w -> Nx.einsum "i,i->" [| x; w |]);
-      ];
-    let rows = Nx.broadcast_to [| 3; 2 |] x
-    and cols = Nx.broadcast_to [| 3; 2 |] w in
-    agree "inner of rows" (Array.make 9 exact) Nx.inner rows cols;
-    let exact = Array.make 3 exact in
-    agree "rows of vecdot" exact (fun x w -> Nx.vecdot x w) rows cols;
-    agree "columns of vecdot" exact
-      (fun x w -> Nx.vecdot ~axis:0 x w)
-      (Nx.transpose rows) (Nx.transpose cols)
-  in
-  check "bfloat16" Nx.bfloat16 ~p:7;
-  check "float16" Nx.float16 ~p:10;
-  check "float8_e4m3" Nx.float8_e4m3 ~p:3;
-  check "float8_e5m2" Nx.float8_e5m2 ~p:2
-
-(* Compiled max and min are NaN when any element is NaN, as eager's, and of -0
-   and +0 give the greater for a maximum and the lesser for a minimum, as IEEE
-   orders them and eager computes; [ieee] is that reference. Compiled argmax
-   and argmin agree with eager: the first NaN, else the first element with the
-   extreme's bits. The compiled comparison ignored a NaN unless it came first:
-   max [1; nan; 0; 2] was 2 and its argmax 3, and Metal's flushed subnormals.
-   Each row of [short] is one case, reduced along its row and, transposed,
-   along a column; [long] reduces rows of 4096, which the reduction splits
-   across threads; [grid] reduces both axes. *)
-let test_extremes () =
-  let nan = Float.nan in
-  let short =
-    [|
-      [| nan; 1.; 0.; 2.; -1. |];
-      [| 1.; 0.; nan; 2.; -1. |];
-      [| 1.; 0.; 2.; -1.; nan |];
-      [| nan; nan; nan; nan; nan |];
-      [| 2.; -2.; 2.; -2.; 1. |];
-      [| -0.; 0.; -1.; 0.; -0. |];
-      [| 0.; -0.; -1.; -0.; 0. |];
-      [| -0.; -0.; -0.; -1.; 1. |];
-      [| 0.; 0.; 0.; -1.; 1. |];
-      [| -1.; -2.; -3.; -4.; -0. |];
-      [| -1e-40; 1e-40; -2e-40; -3e-40; -1. |];
-    |]
-  in
-  let long =
-    Array.init 4 (fun row ->
-        Array.init 4096 (fun i ->
-            match (row, i) with
-            | 0, 3000 | 1, 4000 | 2, 3000 -> -0.
-            | 0, 3500 | 1, 100 | 2, 3500 -> 0.
-            | 3, 4095 -> nan
-            | 2, _ -> float_of_int (1 + (i mod 7))
-            | _ -> -.float_of_int (1 + (i mod 7))))
-  in
-  let grid =
-    [|
-      [| -1.; -2.; -3.; -4. |];
-      [| -5.; -0.; 0.; -1. |];
-      [| -0.; -1.; -2.; -3. |];
-    |]
-  in
-  let matrix dtype rows =
-    Nx.cast dtype
-      (Nx.create f32
-         [| Array.length rows; Array.length rows.(0) |]
-         (Array.concat (Array.to_list rows)))
-  in
-  let ieee op values =
-    let pick a b =
-      if Float.is_nan a || Float.is_nan b then nan
-      else if a > b then if op = `Max then a else b
-      else if b > a then if op = `Max then b else a
-      else if Float.sign_bit a = (op = `Max) then b
-      else a
-    in
-    Array.fold_left pick values.(0) values
-  in
-  let rows x =
-    let cols = (Nx.shape x).(1) in
-    let flat = to_arr (Nx.cast f32 x) in
-    Array.init
-      (Array.length flat / cols)
-      (fun r -> Array.sub flat (r * cols) cols)
-  in
-  let both reduce x =
-    Nx.concatenate ~axis:0 [ reduce 1 x; reduce 0 (Nx.transpose x) ]
-  in
-  let values t = to_arr (Nx.cast f32 t) in
-  let check (type b) name (dtype : (float, b) Nx.dtype) devices =
-    List.iter
-      (fun device ->
-        let compiled f x =
-          values (Rune.jit' ~devices:[ Rune.device device ] f x)
+  let both = Nx.Ptree.(pair tensor tensor) in
+  let check name g k =
+    test
+      (Printf.sprintf "%s in a scan's carry and rows of %d bytes" name (4 * k))
+      (fun () ->
+        let c = Nx.full Nx.float32 [| k |] 0.7 and xs = rows 6 k in
+        let ec, ex = g (c, xs) in
+        let jc, jx =
+          Rune.jit
+            Nx.Ptree.(both @-> returns both)
+            g
+            (Nx.place at c, Nx.place at xs)
         in
-        let msg what = Printf.sprintf "%s %s, %s" name what device in
-        List.iter
-          (fun (input, x) ->
-            List.iter
-              (fun (what, op, reduce) ->
-                let expected = Array.map (ieee op) (rows x) in
-                equal
-                  ~msg:(msg (what ^ " of " ^ input))
-                  (array float_exact)
-                  (Array.append expected expected)
-                  (compiled (both reduce) x))
-              [
-                ("max", `Max, fun a x -> Nx.max ~axes:[ a ] x);
-                ("min", `Min, fun a x -> Nx.min ~axes:[ a ] x);
-              ];
-            List.iter
-              (fun (what, reduce) ->
-                equal
-                  ~msg:(msg (what ^ " of " ^ input))
-                  (array float_exact)
-                  (values (both reduce x))
-                  (compiled (both reduce) x))
-              [
-                ("argmax", fun a x -> Nx.argmax ~axis:a x);
-                ("argmin", fun a x -> Nx.argmin ~axis:a x);
-              ])
-          [ ("short", matrix dtype short); ("long", matrix dtype long) ];
-        let x = matrix dtype grid in
-        let all = Array.concat (Array.to_list (rows x)) in
-        equal ~msg:(msg "max of grid") (array float_exact)
-          [| ieee `Max all |]
-          (compiled (fun x -> Nx.reshape [| 1 |] (Nx.max x)) x);
-        equal ~msg:(msg "min of grid") (array float_exact)
-          [| ieee `Min (Array.map Float.neg all) |]
-          (compiled (fun x -> Nx.reshape [| 1 |] (Nx.min (Nx.neg x))) x))
-      devices
+        equal near ec (host jc);
+        equal near ex (host jx))
   in
-  check "float32" f32 devices;
-  check "float16" Nx.float16 devices;
-  check "bfloat16" Nx.bfloat16 devices;
-  check "float8_e4m3" Nx.float8_e4m3 devices;
-  check "float8_e5m2" Nx.float8_e5m2 devices;
-  check "float64" f64 [ "CPU" ]
-
-(* Cumulative reductions *)
-
-(* A sum over int8 or int16 accumulates in int32; the compiled scan hands back
-   the input's dtype, so its values wrap as eager's do. Compacting between calls
-   exposes a result written past a buffer sized for the input dtype. *)
-let test_small_int_scans_keep_dtype () =
-  let check (type b) name (dtype : (int, b) Nx.dtype) values =
-    let x = Nx.create dtype [| Array.length values |] values in
-    let g = Rune.jit' (Nx.cumsum ~axis:0) in
-    let expected = Nx.to_array (Nx.cumsum ~axis:0 x) in
-    for call = 1 to 20 do
-      equal
-        ~msg:(Printf.sprintf "%s, call %d" name call)
-        (array int) expected
-        (Nx.to_array (g x));
-      Gc.compact ()
-    done
+  let grad = Rune.grad both (fun a -> Nx.sum (scan a)) in
+  let pullback a =
+    let ys, back = Rune.vjp both Nx.Ptree.tensor scan a in
+    back (Nx.cos ys)
   in
-  check "int8" Nx.int8 [| 100; 100; 100; 1 |];
-  check "int8, 64" Nx.int8 (Array.make 64 1);
-  check "int8, 600" Nx.int8 (Array.make 600 1);
-  check "int16" Nx.int16 [| 1; 2; 3 |];
-  check "int16, 600" Nx.int16 (Array.init 600 (fun i -> i * 50))
+  List.concat_map
+    (fun k -> [ check "a gradient" grad k; check "a pullback" pullback k ])
+    [ 4; 2 ]
 
-(* An axis longer than 512 scans in chunks; 1000 leaves a partial chunk. *)
-let test_long_scans_match_eager () =
-  let input f = Nx.create f32 [| 1000; 2 |] (Array.init 2000 f) in
-  let values = input (fun i -> float_of_int ((i * 7 mod 11) - 5)) in
-  let signs = input (fun i -> if i mod 97 = 0 then -1.0 else 1.0) in
-  let check name f x =
-    let g = Rune.jit' f in
-    check_arr ~msg:name (to_arr (f x)) (g x)
+(* [lent_beside_taken at] checks a compiled call at [at] that consumes its
+   state, writes it updated over it, and starts a scan from the update: the
+   scan's carry and rows are written in the results' storage, and read the
+   update, not what its store overwrote. *)
+let lent_beside_taken at =
+  test "a scan from a consumed state's update takes its carry and rows"
+    (fun () ->
+      let f (a, xs) =
+        let a = Nx.add_s a 1. in
+        let c, ys =
+          Rune.scan'
+            ~f:(fun d y ->
+              let d = Nx.add (Nx.mul_s d 0.9) y in
+              (d, d))
+            ~init:a xs
+        in
+        (a, (c, ys))
+      in
+      let g =
+        Rune.jit
+          Nx.Ptree.(
+            consumes (pair tensor tensor)
+            @@ returns (pair tensor (pair tensor tensor)))
+          f
+      in
+      let a = Nx.full Nx.float32 [| 4 |] 0.5 and xs = rows 6 4 in
+      let ea, (ec, ey) = f (a, xs) in
+      let ja, (jc, jy) = g (Nx.place at a, Nx.place at xs) in
+      equal near ea (host ja);
+      equal near ec (host jc);
+      equal near ey (host jy))
+
+let constant_rows at =
+  let check name rows ~carry ~ys =
+    test name (fun () ->
+        let f c =
+          Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor
+            ~f:(fun c l -> (Nx.add c (Nx.sum l), Nx.mul_s l 10l))
+            ~init:c (rows ())
+        in
+        let c, y =
+          Rune.jit
+            Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+            f
+            (Nx.place at (Nx.zeros Nx.int32 [||]))
+        in
+        equal (array int32) [| carry |]
+          (Nx.to_array (Nx.reshape [| 1 |] (host c)));
+        equal (array int32) ys (Nx.to_array (host y)))
   in
-  check "cumsum" (Nx.cumsum ~axis:0) values;
-  check "cummax" (Nx.cummax ~axis:0) values;
-  check "cumprod" (Nx.cumprod ~axis:0) signs
-
-type arange = Arange : ('a, 'b) Nx.dtype * int * int * int -> arange
-
-(* An arange is a running sum: its lengths straddle the compiled scan's split of
-   256 elements and its two stages above 512. *)
-let arange_cases =
   [
-    Arange (Nx.int64, 0, 1, 1);
-    Arange (Nx.int64, 0, 257, 1);
-    Arange (Nx.int64, 0, 513, 1);
-    Arange (Nx.int64, 0, 1 lsl 20, 1);
-    Arange (Nx.int32, 0, 513, 1);
-    Arange (f32, 0, 513, 1);
-    Arange (Nx.int64, 1000, -26, -2);
+    check "a scan over rows of 4 bytes computed from constants sums as eager"
+      (fun () -> Nx.cumsum (Nx.ones Nx.int32 [| 8 |]))
+      ~carry:36l
+      ~ys:(Array.init 8 (fun i -> Int32.of_int (10 * (i + 1))));
+    check "a scan over rows of 20 bytes computed from constants sums as eager"
+      (fun () -> Nx.cumsum ~axis:0 (Nx.ones Nx.int32 [| 8; 5 |]))
+      ~carry:180l
+      ~ys:(Array.init 40 (fun k -> Int32.of_int (10 * ((k / 5) + 1))));
   ]
 
-let pp_arange ppf (Arange (dtype, start, stop, step)) =
-  Format.fprintf ppf "%a %d %d %d" Nx.pp_dtype dtype start stop step
-
-let test_arange_matches_eager (Arange (dtype, start, stop, step)) =
-  let arange () = Nx.arange dtype start stop step in
-  let eager = arange () in
-  let compiled =
-    Rune.jit' (fun x -> Nx.add x (arange ())) (Nx.zeros_like eager)
-  in
-  let values t = Nx.to_array (Nx.cast Nx.int64 t) in
-  equal (array int64) (values eager) (values compiled)
-
-(* A running maximum or minimum orders -0 below +0, compiled as eager. *)
-let test_scans_order_zeros () =
-  List.iter
-    (fun device ->
-      List.iter
-        (fun (name, f, input, expected) ->
-          let x = vec32 input in
-          let msg = Printf.sprintf "%s, %s" name device in
-          equal ~msg:(msg ^ ", eager") (array float_exact) expected
-            (to_arr (f x));
-          equal ~msg (array float_exact) expected
-            (to_arr (Rune.jit' ~devices:[ Rune.device device ] f x)))
-        [
-          ( "cummax [-0; 0]",
-            Nx.cummax ~axis:0,
-            [| -0.0; 0.0 |],
-            [| -0.0; 0.0 |] );
-          ( "cummax [0; -0]",
-            Nx.cummax ~axis:0,
-            [| 0.0; -0.0 |],
-            [| 0.0; 0.0 |] );
-          ( "cummin [0; -0]",
-            Nx.cummin ~axis:0,
-            [| 0.0; -0.0 |],
-            [| 0.0; -0.0 |] );
-          ( "cummin [-0; 0]",
-            Nx.cummin ~axis:0,
-            [| -0.0; 0.0 |],
-            [| -0.0; -0.0 |] );
-          ( "cummax [-1; -0; 0; -0]",
-            Nx.cummax ~axis:0,
-            [| -1.0; -0.0; 0.0; -0.0 |],
-            [| -1.0; -0.0; 0.0; 0.0 |] );
-        ])
-    devices
-
-(* A running maximum or minimum is NaN from the first NaN on, on the direct scan
-   and on the chunked one. *)
-let test_scans_propagate_nan () =
-  let check name f x =
-    check_arr ~eps:0. ~msg:name (to_arr (f x)) (Rune.jit' f x)
-  in
-  let short = vec32 [| 1.0; Float.nan; 0.0; 2.0 |] in
-  let long =
-    Nx.create f32 [| 1000; 2 |]
-      (Array.init 2000 (fun i ->
-           if i = 601 then Float.nan else float_of_int ((i * 7 mod 11) - 5)))
-  in
-  check "cummax" (Nx.cummax ~axis:0) short;
-  check "cummin" (Nx.cummin ~axis:0) short;
-  check "long cummax" (Nx.cummax ~axis:0) long;
-  check "long cummin" (Nx.cummin ~axis:0) long
-
-(* A running product of 8-bit floats along an axis longer than 512 takes the
-   chunked scan, which failed in the C and Metal compilers. The running sum is
-   checked alongside. *)
-let test_fp8_long_scans () =
-  let signs = Array.init 600 (fun i -> if i mod 97 = 0 then -1.0 else 1.0) in
-  let steps = Array.init 600 (fun i -> if i mod 2 = 0 then 1.0 else -1.0) in
-  let check (type b) name (dtype : (float, b) Nx.dtype) =
-    List.iter
-      (fun device ->
-        List.iter
-          (fun (op, f, values) ->
-            let x = Nx.cast dtype (vec32 values) in
-            equal
-              ~msg:(Printf.sprintf "%s %s, %s" name op device)
-              (array float_exact)
-              (to_arr (Nx.cast f32 (f x)))
-              (to_arr
-                 (Nx.cast f32 (Rune.jit' ~devices:[ Rune.device device ] f x))))
-          [
-            ("cumprod", Nx.cumprod ~axis:0, signs);
-            ("cumsum", Nx.cumsum ~axis:0, steps);
-          ])
-      devices
-  in
-  check "float8_e4m3" Nx.float8_e4m3;
-  check "float8_e5m2" Nx.float8_e5m2
-
-(* Indexed access *)
-
-(* An int32 narrowed from an int64 minus one, compared with a constant, then
-   gathered. Reduce collapse lifted the subtraction out of the comparison and
-   back in until it detected a rewrite cycle. *)
-let test_gather_of_narrowed_comparison () =
-  let at = Nx.create Nx.int64 [| 1 |] [| 1L |] in
-  let narrowed x = Nx.cast Nx.int32 (Nx.sub x (Nx.scalar Nx.int64 1L)) in
-  let largest k = Nx.equal k (Nx.scalar Nx.int32 Int32.max_int) in
-  let f x =
-    let k = narrowed x in
-    Nx.take_along_axis ~axis:0 ~indices:at
-      (Nx.where (largest k) (Nx.scalar f32 Float.nan) (Nx.cast f32 k))
-  in
-  let x = Nx.create Nx.int64 [| 2 |] [| 6L; 3L |] in
-  List.iter
-    (fun device ->
-      equal ~msg:device (array float_exact)
-        (to_arr (f x))
-        (to_arr (Rune.jit' ~devices:[ Rune.device device ] f x)))
-    devices
-
-(* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
-   keeps the last update, [`Add] accumulates both on top of [x]'s value. *)
-let test_scatter_matches_eager () =
-  let idx = Nx.create Nx.int64 [| 2; 2 |] [| 2L; 0L; 1L; 1L |] in
-  let f mode x =
-    Nx.scatter ~mode ~axis:1 ~indices:idx
-      ~values:(Nx.slice [ Nx.A; Nx.R (0, 2) ] x)
-      x
-  in
-  let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let g_set = Rune.jit' (f `Set) and g_add = Rune.jit' (f `Add) in
-  check_arr ~msg:"set" (to_arr (f `Set x)) (g_set x);
-  check_arr ~msg:"set replay" (to_arr (f `Set x)) (g_set x);
-  check_arr ~msg:"add" (to_arr (f `Add x)) (g_add x)
-
-(* The compiled scatter ranges over the updates, not over the destination. Each
-   case is held to the eager result. *)
-
-let i64 shape xs = Nx.create Nx.int64 shape (Array.map Int64.of_int xs)
-
-let iota shape =
-  let n = Array.fold_left ( * ) 1 shape in
-  Nx.create f32 shape (Array.init n (fun i -> float_of_int (i + 1)))
-
-let check_scatter ~msg ?unique_indices ~axis ~indices ~values t =
-  List.iter
-    (fun (name, mode) ->
-      let f t = Nx.scatter ~mode ?unique_indices ~axis ~indices ~values t in
-      let g = Rune.jit' f in
-      check_arr ~msg:(msg ^ ", " ^ name) (to_arr (f t)) (g t);
-      check_arr ~msg:(msg ^ ", " ^ name ^ ", replay") (to_arr (f t)) (g t))
-    [ ("set", `Set); ("add", `Add) ]
-
-let test_scatter_duplicates () =
-  check_scatter ~msg:"rows aimed at one row twice" ~axis:0
-    ~indices:(i64 [| 3; 3 |] [| 2; 0; 1; 2; 3; 1; 0; 0; 1 |])
-    ~values:(iota [| 3; 3 |])
-    (iota [| 4; 3 |]);
-  check_scatter ~msg:"every update of a lane aims at one cell" ~axis:1
-    ~indices:(i64 [| 2; 3 |] [| 1; 1; 1; 3; 3; 3 |])
-    ~values:(iota [| 2; 3 |])
-    (iota [| 2; 4 |])
-
-(* Without the promise of unique indices, thousands of updates aimed at one row
-   land in index order, as eagerly: the last [`Set] wins, and [`Add] sums in the
-   order that fixes its rounding. *)
-let test_scatter_many_duplicates_in_order () =
-  let updates = 4096 and width = 8 in
-  check_scatter ~msg:"4096 updates aimed at one row" ~axis:0
-    ~indices:(i64 [| updates; width |] (Array.make (updates * width) 1))
-    ~values:(iota [| updates; width |])
-    (Nx.zeros f32 [| 2; width |])
-
-let test_scatter_middle_axis () =
-  check_scatter ~msg:"middle axis" ~axis:1
-    ~indices:(i64 [| 2; 2; 3 |] [| 3; 0; 1; 3; 2; 1; 0; 0; 0; 1; 2; 3 |])
-    ~values:(iota [| 2; 2; 3 |])
-    (iota [| 2; 4; 3 |])
-
-let test_scatter_unique_indices () =
-  check_scatter ~msg:"unique" ~unique_indices:true ~axis:0
-    ~indices:(i64 [| 2; 2 |] [| 3; 0; 1; 2 |])
-    ~values:(iota [| 2; 2 |])
-    (iota [| 4; 2 |])
-
-(* The promise of unique indices broken at one row, as two tokens a cache table
-   aims at one slot break it: eager and compiled, every other row is exact and
-   each element of the repeated row is one of the updates aimed at it. *)
-let test_scatter_unique_indices_broken_at_one_row () =
-  let rows = 6 and width = 8 and repeated = 5 in
-  let targets = [| 2; repeated; 0; repeated; repeated; 3 |] in
-  let indices = Nx.broadcast_to [| rows; width |] (i64 [| rows; 1 |] targets) in
-  let values = iota [| rows; width |] in
-  let f t = Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values t in
-  let t = Nx.zeros f32 [| rows; width |] in
-  let check name got =
-    Array.iteri
-      (fun k target ->
-        if target <> repeated then
-          for j = 0 to width - 1 do
-            equal
-              ~msg:(Printf.sprintf "%s, row %d, element %d" name target j)
-              float_exact
-              (float_of_int ((k * width) + j + 1))
-              got.((target * width) + j)
-          done)
-      targets;
-    for j = 0 to width - 1 do
-      let v = got.((repeated * width) + j) in
-      let aimed k = v = float_of_int ((k * width) + j + 1) in
-      is_true
-        ~msg:
-          (Printf.sprintf "%s, the repeated row holds an update at %d" name j)
-        (aimed 1 || aimed 3 || aimed 4)
-    done;
-    for j = 0 to width - 1 do
-      equal
-        ~msg:(name ^ ", an untouched row")
-        float_exact 0.0
-        got.((1 * width) + j)
-    done
-  in
-  check "eager" (to_arr (f t));
-  let g = Rune.jit' f in
-  check "compiled" (to_arr (g t));
-  check "replay" (to_arr (g t))
-
-(* An index outside the axis drops the update and reads zero, eagerly and
-   compiled alike. -1 is the address a slot map gives a token that is not
-   written. *)
-let check_eager_and_compiled ~msg expected f x =
-  check_arr ~msg:(msg ^ ", eager") expected (f x);
-  check_arr ~msg:(msg ^ ", compiled") expected (Rune.jit' f x)
-
-let test_scatter_out_of_range_dropped () =
-  let indices = i64 [| 4; 2 |] [| -1; 4; 1; -7; 2; 1; 5; -1 |] in
-  let values = iota [| 4; 2 |] in
-  let f mode t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
-  check_eager_and_compiled ~msg:"set"
-    [| 0.0; 0.0; 3.0; 6.0; 5.0; 0.0; 0.0; 0.0 |]
-    (f `Set)
-    (Nx.zeros f32 [| 4; 2 |]);
-  check_eager_and_compiled ~msg:"add"
-    [| 1.0; 2.0; 6.0; 10.0; 10.0; 6.0; 7.0; 8.0 |]
-    (f `Add)
-    (iota [| 4; 2 |])
-
-let test_gather_out_of_range_reads_zero () =
-  let table = iota [| 4; 2 |] in
-  check_eager_and_compiled ~msg:"take rows"
-    [| 5.0; 6.0; 0.0; 0.0; 0.0; 0.0 |]
-    (Nx.take ~axis:0 ~indices:(i64 [| 3 |] [| 2; -1; 4 |]))
-    table;
-  check_eager_and_compiled ~msg:"take_along_axis"
-    [| 2.0; 0.0; 0.0; 4.0; 0.0; 5.0; 0.0; 0.0 |]
-    (Nx.take_along_axis ~axis:1
-       ~indices:(i64 [| 4; 2 |] [| 1; 2; -1; 1; 9; 0; -3; 5 |]))
-    table
-
-(* Indices along an axis of 4, some 2^32 from one of its positions, which a
-   truncation to 32 bits would bring back to it. The indices are an argument, so
-   one compiled program serves every case. *)
-let far_indices =
-  let far = 1 lsl 32 in
-  let index =
-    Gen.frequency
-      [
-        (2, Gen.int_range (-2) 5);
-        ( 1,
-          let open Gen in
-          let+ i = int_range 0 3
-          and+ k = of_list ~pp:Format.pp_print_int [ -2; -1; 1; 2 ] in
-          i + (k * far) );
-      ]
-  in
-  let scatter mode indices t =
-    Nx.scatter ~mode ~axis:0
-      ~indices:(Nx.broadcast_to [| 6; 2 |] (Nx.reshape [| 6; 1 |] indices))
-      ~values:(iota [| 6; 2 |])
-      t
-  in
-  let both name f =
-    (name, f, lazy (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f))
-  in
-  let ops =
-    [
-      both "take" (fun indices t -> Nx.take ~axis:0 ~indices t);
-      both "scatter set" (scatter `Set);
-      both "scatter add" (scatter `Add);
-    ]
-  in
-  prop "gather and scatter under jit agree with eager at indices beyond ±2^32"
-    ~examples:[ [| far + 1; 1 - far; 2; -1; 4; far |] ]
-    (Gen.array ~size:(Gen.constant 6) index)
-    (fun idx ->
-      cover "an index 2^32 from a position"
-        (Array.exists (fun k -> Int.abs k >= far / 2) idx);
-      let indices = i64 [| 6 |] idx and t = iota [| 4; 2 |] in
-      List.iter
-        (fun (msg, f, compiled) ->
-          equal ~msg (array float_exact)
-            (to_arr (f indices t))
-            (to_arr (Lazy.force compiled indices t)))
-        ops)
-
-(* A dropped update's gradient is zero, the template's is zero only where an
-   update landed, and a read of zero passes nothing back to the table. *)
-let test_grad_out_of_range_indices () =
-  let indices = i64 [| 4 |] [| -1; 2; 4; 0 |] in
-  let weights = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-  let through ~values t =
-    Nx.sum (Nx.mul weights (Nx.scatter ~axis:0 ~indices ~values t))
-  in
-  let t = Nx.zeros f32 [| 4 |] and values = vec32 [| 10.; 20.; 30.; 40. |] in
-  check_eager_and_compiled ~msg:"d/dvalues" [| 0.0; 3.0; 0.0; 1.0 |]
-    (Rune.grad' (fun values -> through ~values t))
-    values;
-  check_eager_and_compiled ~msg:"d/dtemplate" [| 0.0; 2.0; 0.0; 4.0 |]
-    (Rune.grad' (fun t -> through ~values t))
-    t;
-  check_eager_and_compiled ~msg:"d/dtable" [| 4.0; 0.0; 2.0; 0.0 |]
-    (Rune.grad' (fun table -> Nx.sum (Nx.mul weights (Nx.take ~indices table))))
-    (vec32 [| 1.0; 1.0; 1.0; 1.0 |])
-
-let test_scatter_payload_dtypes () =
-  let indices = i64 [| 4 |] [| 2; 0; 2; 1 |] in
-  List.iter
-    (fun mode ->
-      let values = Nx.create Nx.int32 [| 4 |] [| 5l; 7l; 9l; 11l |] in
-      let ints t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
-      let t = Nx.create Nx.int32 [| 3 |] [| 100l; 200l; 300l |] in
-      check_arr ~msg:"int32"
-        (to_arr (Nx.cast f32 (ints t)))
-        (Nx.cast f32 (Rune.jit' ints t));
-      let halves t =
-        Nx.scatter ~mode ~axis:0 ~indices
-          ~values:(Nx.cast Nx.bfloat16 (vec32 [| 0.5; 1.5; 2.5; 4.0 |]))
-          t
+(* [held_by_steps at ~than a b] checks that a staged scan of [b * chunk_calls]
+   steps at [at] holds less than [than] times the memory one of [a *
+   chunk_calls] steps holds, beyond the one it holds at [a]: the memory a
+   program holds for its loop does not grow with its steps. A step makes at
+   least one call, so either count runs several of the batches the engine
+   reruns; [b] above 16 is slow. The scan's outputs are rows of 16 bytes, which
+   the program writes in its result: the measure leaves the result out. *)
+let held_by_steps at ~than a b =
+  let d = match Nx.Placement.devices at with [ d ] -> d | _ -> assert false in
+  (if b > 16 then slow else test)
+    (Printf.sprintf
+       "a staged scan of %d chunks of calls holds less than %d times the loop \
+        memory of one of %d"
+       b than a) (fun () ->
+      let held k =
+        let n = k * Tolk_next.Hcq2.chunk_calls in
+        let xs = Nx.place at (rows n 4) in
+        let g =
+          Rune.jit' (fun xs -> Rune.scan' ~f:sum ~init:(zeros 4) xs |> snd)
+        in
+        let before = settled d in
+        let r = g xs in
+        let held = settled d - before - Nx.nbytes r in
+        ignore (Sys.opaque_identity (g, xs));
+        ignore (host r);
+        held
       in
-      let t = Nx.cast Nx.bfloat16 (vec32 [| 8.0; 16.0; 32.0 |]) in
-      check_arr ~msg:"bfloat16"
-        (to_arr (Nx.cast f32 (halves t)))
-        (Nx.cast f32 (Rune.jit' halves t)))
-    [ `Set; `Add ]
+      let ha = warmed (fun () -> held a) in
+      let hb = held b in
+      less
+        ~msg:(Printf.sprintf "%d bytes, against %d for %d chunks" hb ha a)
+        int ~than:(than * ha) (hb - ha))
 
-let test_scatter_under_vmap () =
-  let indices = i64 [| 3; 2 |] [| 1; 0; 1; 2; 0; 0 |] in
-  let values = iota [| 3; 2 |] and t = iota [| 3; 2 |] in
-  let batch x = Nx.stack ~axis:0 [ x; Nx.add x x ] in
-  let check ~msg f x =
-    check_arr ~msg (to_arr (Rune.vmap' f x)) (Rune.jit' (Rune.vmap' f) x)
+(* Scans on a device whose work runs from command queues. *)
+let staged_scans d =
+  let at = on d and once _ = 1 in
+  group "staged scans"
+    [
+      group "constant rows" (constant_rows at);
+      group "gradients" (both_gradients at);
+      lent_beside_taken at;
+      staged at "stage, their step once, over rows 16 bytes apart" ~steps:once
+        ~init:(zeros 4) decay (rows 7 4);
+      staged at "stage over rows that are not, through a padded copy"
+        ~steps:once ~init:(zeros 3) decay (rows 5 3);
+      staged at "stage a thousand steps" ~steps:once ~init:(zeros 4) decay
+        (rows 1000 4);
+      (* More steps than one batch holds: they run as several chunks of steps
+         and the steps left. *)
+      staged at "stage more steps than a batch holds, in chunks and the rest"
+        ~steps:once ~init:(zeros 4) decay (rows 3001 4);
+      held_by_steps at ~than:1 4 16;
+      held_by_steps at ~than:2 4 64;
+      (* A loop's calls run on devices with queues or all on the host: a step
+         that computes on the host between steps on the device is written
+         out. *)
+      staged at
+        "write out a step that computes on the host between device steps"
+        ~steps:(fun n -> n + 1)
+        ~init:(ones 4)
+        (fun c x ->
+          let h = Nx.sqrt (Nx.place Nx.Placement.host c) in
+          let c = Nx.add (Nx.place at h) x in
+          (c, c))
+        (rows 5 4);
+      staged at "update a carry its next value reads through a product"
+        ~steps:once ~init:(ones 3) product (rows 6 3);
+      staged at "stage a scan whose step stages a scan of its own" ~steps:once
+        ~init:(zeros 4) nested (rows 6 16);
+      reads_outer at;
+      staged at "update a carry its next value reads rotated" ~steps:once
+        ~init:(ones 3) rotated (rows 5 3);
+      staged at "update a carry its next value reads reversed" ~steps:once
+        ~init:(ones 3) flipped (rows 5 3);
+      carried at "swap two carries" ~steps:1
+        ~init:[ ones 4; Nx.full Nx.float32 [| 4 |] 3. ]
+        (fun cs x ->
+          match cs with
+          | [ a; b ] -> ([ b; a ], Nx.add (Nx.mul_s a 2.) x)
+          | _ -> assert false)
+        (rows 5 4);
+      carried at "update two carries that read each other" ~steps:1
+        ~init:[ ones 4; Nx.full Nx.float32 [| 4 |] 3. ]
+        (fun cs x ->
+          match cs with
+          | [ a; b ] -> ([ Nx.add b x; a ], Nx.add a b)
+          | _ -> assert false)
+        (rows 6 4);
+      carried at "update carries as a Fibonacci sequence" ~steps:1
+        ~init:[ ones 4; ones 4 ]
+        (fun cs x ->
+          match cs with
+          | [ a; b ] -> ([ b; Nx.add (Nx.add a b) x ], a)
+          | _ -> assert false)
+        (rows 6 4);
+      carried at "rotate three carries" ~steps:1
+        ~init:[ ones 4; Nx.full Nx.float32 [| 4 |] 2.; zeros 4 ]
+        (fun cs x ->
+          match cs with
+          | [ a; b; c ] -> ([ b; Nx.add c x; a ], Nx.add a c)
+          | _ -> assert false)
+        (rows 6 4);
+      (* Each carry's next value reads every earlier carry: checking each for a
+         cycle walks the carries once, where following every path would take
+         minutes. *)
+      carried at "update forty carries that each read the earlier ones" ~steps:1
+        ~init:(List.init 40 (fun _ -> ones 4))
+        (fun cs x ->
+          let next, _ =
+            List.fold_left
+              (fun (next, sum) c ->
+                (Nx.add (Nx.add c x) (Nx.mul_s sum 0.001) :: next, Nx.add sum c))
+              ([], zeros 4)
+              cs
+          in
+          (List.rev next, Nx.sum (List.hd next)))
+        (rows 3 4);
+      transformed at "stage grad of a sum over a scan's outputs" ~steps:3
+        (fun ran -> Rune.grad' (summed ran));
+      transformed at "stage grad of grad of a sum over a scan's outputs"
+        ~steps:7 (fun ran ->
+          Rune.grad' (fun xs -> Nx.sum (Rune.grad' (summed ran) xs)));
+      transformed at "stage jvp of a loss reading a host capture after the scan"
+        ~steps:2 (fun ran xs ->
+          let k = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+          let loss xs =
+            let step c x =
+              incr ran;
+              decay c x
+            in
+            let c, ys = Rune.scan' ~f:step ~init:(zeros 4) xs in
+            Nx.add (Nx.sum ys) (Nx.sum (Nx.mul c k))
+          in
+          snd (Rune.jvp' loss xs (Nx.ones_like xs)));
+      transformed at
+        "stage grad in a weight the step reads, the forward step twice as the \
+         carry becomes tracked"
+        ~steps:3 (fun ran xs -> Rune.grad' (fun w -> weighted ran w xs) w0);
+      transformed at "stage jvp in the rows, the scan of their tangents"
+        ~steps:2 (fun ran xs ->
+          snd (Rune.jvp' (weighted ran w0) xs (Nx.mul_s xs 2.)));
+      transformed at "stage vmap over weights, the scan of their lanes" ~steps:2
+        (fun ran xs -> Rune.vmap' (fun w -> weighted ran w xs) ws);
+      transformed at "stage vmap of grad, both scans batched" ~steps:5
+        (fun ran xs -> Rune.vmap' (Rune.grad' (fun w -> weighted ran w xs)) ws);
+      transformed at "stage jvp of grad, the scans of the tangents" ~steps:5
+        (fun ran xs ->
+          snd (Rune.jvp' (Rune.grad' (fun w -> weighted ran w xs)) w0 weights));
+      test
+        "raise at the transpose for a step whose rerun reads a tracked value \
+         its first run did not" (fun () ->
+          let again = ref false in
+          let loss w =
+            let step c x =
+              let c = if !again then Nx.mul (Nx.add c x) w else Nx.add c x in
+              (c, c)
+            in
+            let xs = Nx.mul (Nx.place at (rows 9 4)) w in
+            let _, ys = Rune.scan' ~f:step ~init:(zeros 4) xs in
+            again := true;
+            Nx.sum (Nx.mul ys row_weights)
+          in
+          raises
+            (Invalid_argument
+               "Rune.grad': a function run again for its transpose reads a \
+                value the differentiation tracks that its first run did not")
+            (fun () -> Rune.jit' (Rune.grad' loss) (Nx.place at w0)));
+      stages at "stage jvp of a scan" (fun ran xs ->
+          snd (Rune.jvp' (fun h -> rollout ran wr h xs) hr (Nx.ones_like hr)));
+      test "stage jvp of a scan whose counter carry takes no tangent" (fun () ->
+          let f ran xs h =
+            let (h, v), ys =
+              Rune.scan
+                Nx.Ptree.(pair tensor tensor)
+                Nx.Ptree.tensor Nx.Ptree.tensor
+                ~f:(fun (h, v) x ->
+                  incr ran;
+                  let h = cell wr h x in
+                  ((h, Nx.add_s v 1.), Nx.mul_s h 2.))
+                ~init:(h, Nx.scalar Nx.float32 0.)
+                xs
+            in
+            Nx.concatenate ~axis:0 [ h; Nx.reshape [| 1 |] v; Nx.flatten ys ]
+          in
+          let ran = ref 0 in
+          let xs = Nx.mul_s (grid 9 3) 0.01 in
+          let dh = Nx.create Nx.float32 [| 3 |] [| 1.; -0.5; 0.25 |] in
+          let expected = Rune.jvp' (f ran xs) hr dh in
+          ran := 0;
+          let y, dy =
+            Rune.jit
+              Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+              (fun xs dh -> Rune.jvp' (f ran xs) hr dh)
+              (Nx.place at xs) dh
+          in
+          equal ~msg:"primal" near (fst expected) (host y);
+          equal ~msg:"tangent" near (snd expected) (host dy);
+          equal ~msg:"the counter's tangent" float_exact 0.
+            (Nx.item [ 3 ] (host dy));
+          less ~msg:"steps" int ~than:9 !ran);
+      stages at "stage jvp of jvp of a scan" (fun ran xs ->
+          let f h = rollout ran wr h xs in
+          snd
+            (Rune.jvp'
+               (fun h -> snd (Rune.jvp' f h (Nx.ones_like h)))
+               hr (Nx.ones_like hr)));
+      stages at "stage vmap of a scan" (fun ran xs ->
+          Rune.vmap' (fun h -> rollout ran wr h xs) (Nx.stack [ hr; Nx.neg hr ]));
+      stages at "stage vmap over jvp of a scan" (fun ran xs ->
+          Rune.vmap'
+            (fun dh -> snd (Rune.jvp' (fun h -> rollout ran wr h xs) hr dh))
+            (Nx.stack [ Nx.ones_like hr; hr ]));
+      stages at "stage vmap over jvp of a scan from an active initial carry"
+        (fun ran xs ->
+          let dws = Nx.stack [ wr; Nx.ones_like wr ] in
+          let dhs = Nx.stack [ hr; Nx.ones_like hr ] in
+          Rune.vmap
+            Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+            (fun dw dh ->
+              snd
+                (Rune.jvp
+                   Nx.Ptree.(pair tensor tensor)
+                   Nx.Ptree.tensor
+                   (fun (w, h) -> rollout ran w h xs)
+                   (wr, hr) (dw, dh)))
+            dws dhs);
+      stages at "stage grad of jvp of a scan" (fun ran xs ->
+          Rune.grad'
+            (fun w ->
+              Nx.sum
+                (snd
+                   (Rune.jvp'
+                      (fun h -> rollout ran w h xs)
+                      hr (Nx.ones_like hr))))
+            wr);
+      stages at "stage grad of vmap of a scan" (fun ran xs ->
+          Rune.grad'
+            (fun w ->
+              Nx.sum
+                (Rune.vmap'
+                   (fun h -> rollout ran w h xs)
+                   (Nx.stack [ hr; Nx.neg hr ])))
+            wr);
+      stages at "stage jvp and vmap of a gradient through a scan" (fun ran xs ->
+          let g w = Rune.grad' (fun w -> Nx.sum (rollout ran w hr xs)) w in
+          Nx.concatenate ~axis:0
+            [
+              Nx.flatten (snd (Rune.jvp' g wr (Nx.ones_like wr)));
+              Nx.flatten (Rune.vmap' g (Nx.stack [ wr; Nx.neg wr ]));
+            ]);
+      stages at "stage grad of a scan reading an undifferentiated capture"
+        (fun ran xs ->
+          let d = Nx.mul_s (grid 3 3) 0.05 in
+          Rune.grad'
+            (fun w ->
+              Nx.sum
+                (snd
+                   (Rune.scan'
+                      ~f:(fun h x ->
+                        incr ran;
+                        let h =
+                          cell w
+                            (Nx.reshape [| 3 |]
+                               (Nx.matmul d (Nx.reshape [| 3; 1 |] h)))
+                            x
+                        in
+                        (h, h))
+                      ~init:hr xs)))
+            wr);
+      stages at "stage a carry the step returns unchanged, and its gradient"
+        (fun ran xs ->
+          let c0 = Nx.create Nx.float32 [| 3 |] [| 0.1; 0.2; -0.3 |] in
+          let f (w, c) =
+            let (h, c), ys =
+              Rune.scan
+                Nx.Ptree.(pair tensor tensor)
+                Nx.Ptree.tensor Nx.Ptree.tensor
+                ~f:(fun (h, c) x ->
+                  incr ran;
+                  let h = cell w h (Nx.add x c) in
+                  ((h, c), h))
+                ~init:(hr, c) xs
+            in
+            Nx.add (Nx.sum ys) (Nx.add (Nx.sum h) (Nx.sum c))
+          in
+          let p = Nx.Ptree.(pair tensor tensor) in
+          let gw, gc = Rune.grad p f (wr, c0) in
+          Nx.concatenate ~axis:0
+            [ Nx.reshape [| 1 |] (f (wr, c0)); Nx.flatten gw; gc ]);
+      stages at "stage a scan over the rows of three another scan wrote"
+        (fun ran xs ->
+          let ys = rollout ran wr hr xs in
+          rollout ran (Nx.neg wr) (Nx.neg hr) ys);
+      test
+        "stage a scan whose step reads a draw and another scan's result made \
+         before it" (fun () ->
+          let settle d =
+            fst
+              (Rune.scan'
+                 ~f:(fun d _ -> (Nx.tanh (Nx.matmul d d), d))
+                 ~init:d
+                 (zeros 4 |> Nx.reshape [| 4; 1 |]))
+          in
+          let f ran (k, xs) =
+            let d =
+              settle
+                (Nx.mul_s
+                   (Nx.Rng.with_key k (fun () -> Nx.randn Nx.float32 [| 3; 3 |]))
+                   0.3)
+            in
+            fst
+              (Rune.scan'
+                 ~f:(fun h x ->
+                   incr ran;
+                   (cell d h x, h))
+                 ~init:hr xs)
+          in
+          let k = Nx.Rng.key 7 in
+          let runs n =
+            let ran = ref 0 in
+            let xs = Nx.mul_s (grid n 3) 0.01 in
+            let expected = f ran (k, xs) in
+            ran := 0;
+            let g =
+              Rune.jit
+                Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns tensor)
+                (f ran)
+            in
+            equal near expected (host (g (k, Nx.place at xs)));
+            !ran
+          in
+          equal ~msg:"steps for 17 rows against 9" int (runs 9) (runs 17));
+      test "a consumed leaf beside a staged scan is lent" (fun () ->
+          let both = Nx.Ptree.(pair tensor tensor) in
+          let step (u, v) =
+            (Nx.add_s u 1., fst (Rune.scan' ~f:sum ~init:(zeros 4) v))
+          in
+          let g = Rune.jit Nx.Ptree.(consumes both @@ returns both) step in
+          let u = Nx.place at (x ()) and v = Nx.place at (rows 6 4) in
+          let before = address u in
+          let u', v' = g (u, v) in
+          equal ~msg:"lent" nativeint before (address u');
+          equal near (Nx.add_s (x ()) 1.) (host u');
+          equal near
+            (fst (Rune.scan' ~f:sum ~init:(zeros 4) (rows 6 4)))
+            (host v'));
+      test "a staged carry is one buffer, whatever the number of steps"
+        (fun () ->
+          let held n k =
+            let xs = Nx.place at (rows n 4) in
+            let g =
+              Rune.jit' (fun xs ->
+                  fst
+                    (Rune.scan'
+                       ~f:(fun c x ->
+                         let c = Nx.add (Nx.mul_s c 0.5) (Nx.sum x) in
+                         (c, Nx.sum c))
+                       ~init:(zeros k) xs))
+            in
+            let before = settled d in
+            let r = g xs in
+            (* What the call holds once its temporaries are collected, with its
+               program and result alive: a temporary may or may not be
+               collected by the end of the call. *)
+            let held = settled d - before in
+            ignore (Sys.opaque_identity (g, xs));
+            ignore (host r);
+            held
+          in
+          let larger n =
+            let wide = held n 4096 in
+            wide - held n 4
+          in
+          let few = warmed (fun () -> larger 64) in
+          let many = larger 512 in
+          equal ~msg:"for 64 and 512 steps" int few many);
+      test "a staged scan reads its rows in place" (fun () ->
+          let held w =
+            let xs =
+              Nx.place at (Nx.mul_s (Nx.ones Nx.float32 [| 64; w |]) 0.01)
+            in
+            let g =
+              Rune.jit' (fun xs ->
+                  fst
+                    (Rune.scan'
+                       ~f:(fun c x ->
+                         (Nx.add (Nx.mul_s c 0.5) (Nx.sum x), Nx.sum c))
+                       ~init:(zeros 4) xs))
+            in
+            let before = settled d in
+            let r = g xs in
+            let held = allocated d - before in
+            ignore (host r);
+            held
+          in
+          let wide = warmed (fun () -> held 1024) in
+          let narrow = held 4 in
+          less ~msg:"bytes held for rows 1,024 values wide against 4" int
+            ~than:(64 * 1020 * 4) (wide - narrow));
+      staged at "stage a step whose output is a constant" ~steps:once
+        ~init:(zeros 4)
+        (fun c x -> (Nx.add (Nx.mul_s c 0.5) x, Nx.zeros Nx.float32 [||]))
+        (rows 300 4);
+      staged at "stage a step whose output is empty" ~steps:once ~init:(zeros 4)
+        (fun c x ->
+          let c = Nx.add (Nx.mul_s c 0.5) x in
+          (c, Nx.slice [ R (0, 0) ] c))
+        (rows 300 4);
+      (* Written out, each step's carry is stored before the next reads it: four
+         hundred steps, past the 256 levels Metal nests, compile as kernels of
+         one step each. *)
+      test "write out four hundred steps, each carry stored" (fun () ->
+          let ran = ref 0 in
+          let f (k, xs) =
+            Nx.Rng.with_key k (fun () ->
+                Rune.scan'
+                  ~f:(fun c x ->
+                    incr ran;
+                    let c = Nx.add (Nx.mul_s c 0.5) x in
+                    (c, Nx.add c (Nx.rand Nx.float32 [| 4 |])))
+                  ~init:(zeros 4) xs)
+          in
+          let k = Nx.Rng.key 7 in
+          let c, ys = f (k, rows 400 4) in
+          ran := 0;
+          let c', ys' =
+            Rune.jit
+              Nx.Ptree.(
+                pair Nx.Rng.ptree tensor @-> returns (pair tensor tensor))
+              f
+              (k, Nx.place at (rows 400 4))
+          in
+          equal near c (host c');
+          equal near ys (host ys');
+          equal ~msg:"a probe, then a step per row" int 401 !ran);
+      test
+        "write out a step that draws under a key scope, drawing as eager does \
+         before, inside and after the scan" (fun () ->
+          let ran = ref 0 in
+          let f (k, xs) =
+            Nx.Rng.with_key k (fun () ->
+                let before = Nx.rand Nx.float32 [| 2 |] in
+                let c, ys =
+                  Rune.scan'
+                    ~f:(fun c x ->
+                      incr ran;
+                      (Nx.add c x, Nx.add x (Nx.rand Nx.float32 [| 4 |])))
+                    ~init:(zeros 4) xs
+                in
+                [ before; c; ys; Nx.rand Nx.float32 [| 3 |] ])
+          in
+          let k = Nx.Rng.key 42 in
+          let eager = f (k, rows 5 4) in
+          ran := 0;
+          let g =
+            Rune.jit
+              Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns (list tensor))
+              f
+          in
+          List.iter2
+            (fun e c -> equal near e (host c))
+            eager
+            (g (k, Nx.place at (rows 5 4)));
+          equal ~msg:"a probe, then a step per row" int 6 !ran);
+    ]
+
+(* Scans and remats *)
+
+let scans =
+  let cumulative xs =
+    Rune.scan'
+      ~f:(fun c x -> (Nx.add c x, Nx.mul c x))
+      ~init:(Nx.zeros Nx.float32 [| 2 |])
+      xs
   in
-  List.iter
-    (fun (name, mode) ->
-      check
-        ~msg:("over the destination, " ^ name)
-        (fun t -> Nx.scatter ~mode ~axis:0 ~indices ~values t)
-        (batch t);
-      check
-        ~msg:("over the values, " ^ name)
-        (fun values -> Nx.scatter ~mode ~axis:0 ~indices ~values t)
-        (batch values))
-    [ ("set", `Set); ("add", `Add) ];
-  let rows = i64 [| 2; 3; 2 |] [| 1; 0; 1; 2; 0; 0; 2; 2; 2; 1; 0; 1 |] in
-  let f indices = Nx.scatter ~mode:`Add ~axis:0 ~indices ~values t in
-  check_arr ~msg:"over the indices"
-    (to_arr (Rune.vmap' f rows))
-    (Rune.jit' (Rune.vmap' f) rows)
+  group "scans"
+    [
+      group "constant rows" (constant_rows Nx.Placement.host);
+      group "gradients" (both_gradients Nx.Placement.host);
+      lent_beside_taken Nx.Placement.host;
+      test "a scan folds inside the trace and equals eager" (fun () ->
+          let f xs = snd (cumulative xs) in
+          equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
+      staged Nx.Placement.host
+        "a scan on the host stages, its step running once"
+        ~steps:(fun _ -> 1)
+        ~init:(zeros 3) sum (rows 5 3);
+      staged Nx.Placement.host "a scan of four hundred steps on the host stages"
+        ~steps:(fun _ -> 1)
+        ~init:(zeros 4) decay (rows 400 4);
+      test "a scan over rows computed from constants alone equals eager"
+        (fun () ->
+          List.iter
+            (fun rows ->
+              let f c =
+                Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor
+                  ~f:(fun c l -> (Nx.add c (Nx.sum l), Nx.mul_s l 10l))
+                  ~init:c (rows ())
+              in
+              let g =
+                Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f
+              in
+              equal
+                (pair (tensor int32) (tensor int32))
+                (f (Nx.zeros Nx.int32 [||]))
+                (g (Nx.zeros Nx.int32 [||])))
+            [
+              (fun () -> Nx.cumsum (Nx.ones Nx.int32 [| 8 |]));
+              (fun () -> Nx.cumsum ~axis:0 (Nx.ones Nx.int32 [| 8; 5 |]));
+            ]);
+      test "a gradient through a scan equals eager's" (fun () ->
+          let f xs = Nx.sum (snd (cumulative xs)) in
+          equal close
+            (Rune.grad' f (grid 3 2))
+            (Rune.jit' (Rune.grad' f) (grid 3 2)));
+      test "a scan over float16 rows short of 16 bytes equals eager" (fun () ->
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x -> (Nx.add c x, Nx.mul c x))
+                 ~init:(Nx.zeros Nx.float16 [| 3 |])
+                 xs)
+          in
+          let xs = Nx.cast Nx.float16 (Nx.mul_s (grid 4 3) 0.25) in
+          equal floats
+            (Nx.cast Nx.float32 (f xs))
+            (Nx.cast Nx.float32 (Rune.jit' f xs)));
+      test "nested scans inside a compiled call equal eager" (fun () ->
+          let inner c row =
+            fst (Rune.scan' ~f:(fun c x -> (Nx.add c x, x)) ~init:c row)
+          in
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   let c = inner c (Nx.reshape [| 3; 1 |] x) in
+                   (c, c))
+                 ~init:(Nx.zeros Nx.float32 [| 1 |])
+                 xs)
+          in
+          equal close (f (grid 2 3)) (Rune.jit' f (grid 2 3)));
+      test
+        "a scan in a staged scan's step is a loop of its own, its step traced \
+         as often whatever its rows" (fun () ->
+          let ran = ref 0 in
+          let f m xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   let c, _ =
+                     Rune.scan'
+                       ~f:(fun c x ->
+                         incr ran;
+                         (Nx.add c x, x))
+                       ~init:c
+                       (Nx.reshape [| m; 1 |] x)
+                   in
+                   (c, c))
+                 ~init:(Nx.zeros Nx.float32 [| 1 |])
+                 xs)
+          in
+          let traced m =
+            let xs = grid 2 m in
+            let expected = f m xs in
+            ran := 0;
+            let r = Rune.jit' (f m) xs in
+            equal close expected r;
+            !ran
+          in
+          equal int (traced 3) (traced 7));
+      reads_outer Nx.Placement.host;
+      test "a carry that changes its shape across steps is written out"
+        (fun () ->
+          let f xs =
+            fst
+              (Rune.scan'
+                 ~f:(fun c x -> (Nx.concatenate ~axis:0 [ c; x ], x))
+                 ~init:(Nx.zeros Nx.float32 [| 1 |])
+                 xs)
+          in
+          let xs = Nx.reshape [| 3; 1 |] (arange 3) in
+          equal close (f xs) (Rune.jit' f xs));
+      test "an empty scan axis raises Rune.scan's message" (fun () ->
+          let f xs = snd (cumulative xs) in
+          let xs = Nx.zeros Nx.float32 [| 0; 2 |] in
+          equal string
+            (message (fun () -> f xs))
+            (message (fun () -> Rune.jit' f xs)));
+      test "a remat under a compiled gradient equals eager's" (fun () ->
+          let block a = Nx.tanh (Nx.mul a a) in
+          let f a =
+            Nx.sum (Rune.remat Nx.Ptree.(tensor @-> returns tensor) block a)
+          in
+          (* Away from tanh's saturation, where 1 - tanh² is a difference of
+             nearly equal numbers. *)
+          let a = Nx.create Nx.float32 [| 4 |] [| 0.5; -0.3; 0.8; 0.1 |] in
+          equal close (Rune.grad' f a) (Rune.jit' (Rune.grad' f) a));
+    ]
 
-(* The pullback of [take] accumulates a row's cotangent once per occurrence of
-   its token. *)
-let test_grad_of_take_with_repeated_tokens () =
-  let indices = i64 [| 6 |] [| 3; 1; 3; 3; 0; 1 |] in
-  let weights = iota [| 6; 2 |] in
-  let loss table = Nx.sum (Nx.mul weights (Nx.take ~axis:0 ~indices table)) in
-  let table = iota [| 5; 2 |] in
-  check_arr ~msg:"embedding gradient"
-    (to_arr (Rune.grad' loss table))
-    (Rune.jit' (Rune.grad' loss) table)
+(* Device lists *)
 
-(* A table past the reduce-split threshold: the row count is where a split
-   one-hot reduce used to cost a pass over the table. *)
-let test_take_large_table_matches_eager () =
-  let rows = 65_536 in
-  let table =
-    Nx.create f32 [| rows; 2 |]
-      (Array.init (rows * 2) (fun i -> float_of_int (i mod 1000)))
+let split ?(axis = 0) ds = Nx.Placement.sharded ~backend:Rune.compiled ~axis ds
+let copies ds = Nx.Placement.replicated ~backend:Rune.compiled ds
+
+let device_lists =
+  let pair = [ d1; d2 ] in
+  group "device lists"
+    [
+      test "elementwise operations and a sum over two devices equal one device"
+        (fun () ->
+          let f a = Nx.sum ~axes:[ 1 ] (Nx.mul (Nx.exp a) a) in
+          let a = grid 4 3 in
+          equal close (f a) (host (Rune.jit' f (Nx.place (split pair) a))));
+      slow "an elementwise chain over two devices has one device's bits"
+        (fun () ->
+          let a = grid 4 3 in
+          equal floats (poly a)
+            (host (Rune.jit' poly (Nx.place (split pair) a))));
+      slow "a value split along its second axis computes" (fun () ->
+          let a = grid 3 4 in
+          let r = Rune.jit' poly (Nx.place (split ~axis:1 pair) a) in
+          is_true (Nx.Placement.equal (split ~axis:1 pair) (Nx.placement r));
+          equal floats (poly a) (host r));
+      (* [zeros_like] of a split value is split alike, so the scatter is too and
+         stores each device's rows. *)
+      test "a scatter-add into zeros like a split value equals eager" (fun () ->
+          let f x t =
+            Nx.Op.eval
+              (Nx.Op.Scatter
+                 {
+                   mode = `Add;
+                   unique = false;
+                   axis = 1;
+                   indices = Nx.unsqueeze ~axes:[ -1 ] t;
+                   updates = Nx.ones Nx.float32 [| 4; 1 |];
+                   into = Nx.zeros_like x;
+                 })
+          in
+          let x = grid 4 3
+          and t = Nx.create Nx.int64 [| 4 |] [| 2L; 0L; 1L; 2L |] in
+          let at a = Nx.place (split pair) a in
+          equal close
+            (host (f (at x) (at t)))
+            (host
+               (Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                  f (at x) (at t))));
+      test "the gradient of a mean over a split batch equals one device's"
+        (fun () ->
+          let f a = Nx.mean (Nx.mul a a) in
+          let a = grid 4 3 in
+          equal close (Rune.grad' f a)
+            (host (Rune.jit' (Rune.grad' f) (Nx.place (split pair) a))));
+      slow "two collectively reduced results equal one device's" (fun () ->
+          let a = grid 4 3 in
+          let s, m =
+            Rune.jit
+              Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+              (fun a -> (Nx.sum a, Nx.max a))
+              (Nx.place (split pair) a)
+          in
+          equal close (Nx.sum a) (host s);
+          equal close (Nx.max a) (host m));
+      test "arguments placed with another backend bind, and results keep it"
+        (fun () ->
+          let p = Nx.Placement.sharded ~axis:0 pair in
+          let r = Rune.jit' poly (Nx.place p (grid 4 3)) in
+          is_true (Nx.Placement.equal p (Nx.placement r));
+          equal floats (poly (grid 4 3)) (host r));
+      slow "a result fed back to the call moves no bytes" (fun () ->
+          let g = Rune.jit' (fun a -> Nx.mul_s a 0.5) in
+          let r = ref (g (Nx.place (split pair) (grid 4 3))) in
+          let before = bytes_in d1 + bytes_in d2 in
+          for _ = 1 to 3 do
+            r := g !r
+          done;
+          equal int before (bytes_in d1 + bytes_in d2));
+      test "a capture copied to every device is bound on each" (fun () ->
+          let w = Nx.place (copies pair) (y ()) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = Nx.place (copies pair) (x ()) in
+          ignore (g a);
+          let before = bytes_in d1 + bytes_in d2 in
+          equal close (Nx.mul (x ()) (y ())) (host (g a));
+          equal int before (bytes_in d1 + bytes_in d2));
+      slow "one shard's slice of a split value computes on its device alone"
+        (fun () ->
+          let a = Nx.place (split pair) (grid 4 3) in
+          let row = Nx.slice [ I 3 ] a in
+          let r = Rune.jit' poly row in
+          is_true (Nx.Placement.equal (on d2) (Nx.placement r));
+          equal floats (poly (Nx.slice [ I 3 ] (grid 4 3))) (host r));
+      test "a loop consuming a split state holds two generations on each device"
+        (fun () ->
+          let n = 1 lsl 15 in
+          let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
+          let s =
+            ref (Nx.place (split [ d3; d4 ]) (Nx.zeros Nx.float32 [| 2 * n |]))
+          in
+          s := step !s;
+          let b3 = allocated d3 and b4 = allocated d4 in
+          for _ = 1 to 10 do
+            s := step !s
+          done;
+          at_most ~msg:"on the first device" int ~than:(4 * n)
+            (allocated d3 - b3);
+          at_most ~msg:"on the second device" int ~than:(4 * n)
+            (allocated d4 - b4);
+          equal floats (Nx.full Nx.float32 [| 2 * n |] 11.) (host !s));
+      slow
+        "gradients through max, sum and mean keeping their axes equal one \
+         device's" (fun () ->
+          let a = grid 4 3 in
+          List.iter
+            (fun (name, f) ->
+              equal ~msg:name close (Rune.grad' f a)
+                (host (Rune.jit' (Rune.grad' f) (Nx.place (split pair) a))))
+            [
+              ( "max",
+                fun a -> Nx.sum (Nx.mul a (Nx.max ~axes:[ 0 ] ~keepdims:true a))
+              );
+              ( "sum",
+                fun a -> Nx.sum (Nx.mul a (Nx.sum ~axes:[ 0 ] ~keepdims:true a))
+              );
+              ( "mean",
+                fun a ->
+                  Nx.sum (Nx.mul a (Nx.mean ~axes:[ 0 ] ~keepdims:true a)) );
+            ]);
+      slow "a remat over a split batch equals one device's gradient" (fun () ->
+          let block a = Nx.tanh (Nx.mul_s a 0.5) in
+          let f a =
+            Nx.sum (Rune.remat Nx.Ptree.(tensor @-> returns tensor) block a)
+          in
+          let a = Nx.mul_s (grid 4 3) 0.1 in
+          equal close (Rune.grad' f a)
+            (host (Rune.jit' (Rune.grad' f) (Nx.place (split pair) a))));
+      slow "a gradient through a scan over split rows equals one device's"
+        (fun () ->
+          let f xs =
+            Nx.sum
+              (snd
+                 (Rune.scan'
+                    ~f:(fun c x -> (Nx.add c x, Nx.mul c x))
+                    ~init:(Nx.zeros Nx.float32 [| 4 |])
+                    xs))
+          in
+          let xs = Nx.mul_s (grid 3 4) 0.1 in
+          equal close (Rune.grad' f xs)
+            (host (Rune.jit' (Rune.grad' f) (Nx.place (split ~axis:1 pair) xs))));
+      slow "a scan over split rows equals one device's" (fun () ->
+          let ran = ref 0 in
+          let f xs = rollout ran wr hr xs in
+          let xs = Nx.mul_s (grid 6 3) 0.01 in
+          equal near (f xs)
+            (host (Rune.jit' f (Nx.place (split ~axis:1 [ d1; d2; d3 ]) xs))));
+      slow "a scan over the split rows another scan wrote equals one device's"
+        (fun () ->
+          let ran = ref 0 in
+          let f xs = rollout ran (Nx.neg wr) hr (rollout ran wr hr xs) in
+          let xs = Nx.mul_s (grid 6 3) 0.01 in
+          equal near (f xs)
+            (host (Rune.jit' f (Nx.place (split ~axis:1 [ d1; d2; d3 ]) xs))));
+      slow "a carry the step places on the rows' devices equals one device's"
+        (fun () ->
+          let ran = ref 0 in
+          let f xs =
+            let (a, b), ys =
+              Rune.scan
+                Nx.Ptree.(pair tensor tensor)
+                Nx.Ptree.tensor Nx.Ptree.tensor
+                ~f:(fun (a, b) x ->
+                  incr ran;
+                  let a' = Nx.add (Nx.mul_s a 0.5) x in
+                  let b' = Nx.add (Nx.mul_s b 0.5) a in
+                  ((a', b'), Nx.mul a' b'))
+                ~init:
+                  (Nx.zeros Nx.float32 [| 16 |], Nx.zeros Nx.float32 [| 16 |])
+                xs
+            in
+            Nx.add (Nx.sum a) (Nx.add (Nx.sum b) (Nx.sum ys))
+          in
+          let xs = Nx.mul_s (grid 6 16) 0.01 in
+          equal near (f xs)
+            (host
+               (Rune.jit' f (Nx.place (split ~axis:1 [ d1; d2; d3; d4 ]) xs))));
+      slow "a column-then-row split MLP equals one device" (fun () ->
+          let w1 = Nx.mul_s (grid 3 4) 0.1 and w2 = Nx.mul_s (grid 4 3) 0.1 in
+          let f (a, (w1, w2)) = Nx.matmul (Nx.relu (Nx.matmul a w1)) w2 in
+          let s = Nx.Ptree.(pair tensor (pair tensor tensor)) in
+          let a = Nx.mul_s (grid 2 3) 0.1 in
+          let r =
+            Rune.jit
+              Nx.Ptree.(s @-> returns tensor)
+              f
+              ( Nx.place (copies pair) a,
+                ( Nx.place (split ~axis:1 pair) w1,
+                  Nx.place (split ~axis:0 pair) w2 ) )
+          in
+          equal close (f (a, (w1, w2))) (host r));
+      slow "host arguments beside a split one enter as copies" (fun () ->
+          let a = grid 4 3 and h = Nx.mul_s (grid 4 3) 2. in
+          let r = Rune.jit two Nx.add (Nx.place (split pair) a) h in
+          is_true (Nx.Placement.equal (split pair) (Nx.placement r));
+          equal floats (Nx.add a h) (host r));
+      slow "a split capture is bound on its devices, moving no bytes" (fun () ->
+          let w = Nx.place (split pair) (Nx.mul_s (grid 4 3) 2.) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = Nx.place (split pair) (grid 4 3) in
+          ignore (g a);
+          let before = bytes_in d1 + bytes_in d2 in
+          equal floats (Nx.mul (grid 4 3) (Nx.mul_s (grid 4 3) 2.)) (host (g a));
+          equal int before (bytes_in d1 + bytes_in d2));
+      slow "a value placed inside the function is split as it says" (fun () ->
+          let r =
+            Rune.jit' (fun a -> Nx.place (split pair) (poly a)) (grid 4 3)
+          in
+          is_true (Nx.Placement.equal (split pair) (Nx.placement r));
+          equal floats (poly (grid 4 3)) (host r));
+      slow "an indexed write into a split value equals eager" (fun () ->
+          let f a = Nx.set [ A; I 1 ] (Nx.zeros Nx.float32 [| 4 |]) a in
+          let a = grid 4 3 in
+          equal floats (f a) (host (Rune.jit' f (Nx.place (split pair) a))));
+      cases ~name:fst "a window written across the split axis equals eager"
+        [
+          ("at a start the program holds", fun (_ : Nx.int64_t) -> Nx.R (1, 3));
+          ("at a start read when the call runs", fun pos -> Nx.D (pos, 2));
+        ]
+        (fun (_, at) ->
+          let f x pos =
+            Nx.set [ at pos; A ] (Nx.full Nx.float32 [| 2; 3 |] 9.) x
+          in
+          let pos = Nx.scalar Nx.int64 1L in
+          let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
+          equal floats
+            (f (grid 4 3) pos)
+            (host (g (Nx.place (split pair) (grid 4 3)) pos)));
+      slow "a map over a split axis computes each lane" (fun () ->
+          let f = Rune.vmap' (fun a -> Nx.add_s (Nx.mul a a) 1.) in
+          let a = grid 4 3 in
+          let expected = Nx.add_s (Nx.mul a a) 1. in
+          equal floats expected (host (f (Nx.place (split pair) a)));
+          equal floats expected (host (Rune.jit' f (Nx.place (split pair) a))));
+      slow
+        "a mask drawn from a key folded with each lane's index is that lane's, \
+         over split lanes" (fun () ->
+          let key = Nx.Rng.key 7 in
+          let draw k =
+            Nx.cast Nx.float32
+              (Nx.Rng.bernoulli k
+                 (Nx.broadcast_to [| 16 |] (Nx.scalar Nx.float32 0.5)))
+          in
+          let masks a key =
+            Rune.vmap'
+              (fun a ->
+                Rune.grad'
+                  (fun a ->
+                    let m =
+                      draw (Nx.Rng.fold_in_tensor key (Rune.lane_index ()))
+                    in
+                    Nx.mul_s (Nx.sum (Nx.mul (Nx.mul a a) m)) 0.5)
+                  a)
+              a
+          in
+          let masks =
+            Rune.jit
+              Nx.Ptree.(tensor @-> Nx.Rng.ptree @-> returns tensor)
+              masks
+              (Nx.place (split pair) (Nx.ones Nx.float32 [| 2; 16 |]))
+              key
+          in
+          let lane i = draw (Nx.Rng.fold_in key i) in
+          equal floats (Nx.stack [ lane 0; lane 1 ]) (host masks);
+          is_false (Nx.array_equal (lane 0) (lane 1) |> Nx.item []));
+      slow
+        "a sum over an axis split over four devices replays each call's values"
+        (fun () ->
+          let reduce = Rune.jit' (Nx.sum ~axes:[ 0 ]) in
+          List.iter
+            (fun call ->
+              let a =
+                Nx.init Nx.float32 [| 4; 16 |] (fun i ->
+                    float_of_int ((1000 * call) + (100 * i.(0)) + i.(1)))
+              in
+              let expected =
+                Nx.init Nx.float32 [| 16 |] (fun i ->
+                    float_of_int ((4000 * call) + 600 + (4 * i.(0))))
+              in
+              equal
+                ~msg:(Printf.sprintf "call %d" call)
+                floats expected
+                (host (reduce (Nx.place (split [ d1; d2; d3; d4 ]) a))))
+            [ 0; 1; 2 ]);
+      slow "data-parallel training follows one device" (fun () ->
+          let loss w a = Nx.mean (Nx.square (Nx.matmul a w)) in
+          let step =
+            Rune.jit
+              Nx.Ptree.(consumes tensor @@ tensor @-> returns tensor)
+              (fun w a ->
+                Nx.sub w (Nx.mul_s (Rune.grad' (fun w -> loss w a) w) 0.1))
+          in
+          let eager w a =
+            Nx.sub w (Nx.mul_s (Rune.grad' (fun w -> loss w a) w) 0.1)
+          in
+          let a = Nx.mul_s (grid 4 3) 0.1 in
+          let w0 = Nx.mul_s (grid 3 2) 0.1 in
+          let we = ref w0 and wc = ref (Nx.place (copies pair) w0) in
+          for _ = 1 to 5 do
+            we := eager !we a;
+            wc := step !wc (Nx.place (split pair) a)
+          done;
+          equal close !we (host !wc));
+    ]
+
+(* Values on the disk *)
+
+(* The float32 values of the file at [path], four of them, as a value on the
+   disk. *)
+let on_disk_at_read path =
+  let module B = Nx_device.Buffer in
+  let pp = Format.pp_print_string in
+  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  Nx.Repr.Placed.v p Nx.float32
+    (Nx_array.View.create [| 4 |])
+    (Nx.Repr.Storage.v p
+       [
+         B.view
+           (require_ok ~pp (B.of_file path))
+           ~offset:0 Nx_dtype.Scalar.Float32 4;
+       ])
+
+(* [x] written to the file at [path], as a value on the disk over it. *)
+let on_disk_at path x =
+  let module B = Nx_device.Buffer in
+  let src = elements x in
+  let pp = Format.pp_print_string in
+  B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
+  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  Nx.Repr.Placed.v p (Nx.dtype x)
+    (Nx_array.View.create (Nx.shape x))
+    (Nx.Repr.Storage.v p
+       [
+         B.view
+           (require_ok ~pp (B.of_file path))
+           ~offset:0 (B.dtype src) (B.length src);
+       ])
+
+(* The int32 values [v] in a file, two bytes after its start, as a value on the
+   disk whose elements are not aligned to their width. *)
+let unaligned_on_disk v =
+  let module B = Nx_device.Buffer in
+  let n = Array.length v in
+  let path = temp_file () in
+  let bytes =
+    Nx.init Nx.uint8
+      [| 2 + (4 * n) |]
+      (fun i ->
+        let i = i.(0) - 2 in
+        if i < 0 then 0
+        else
+          Int32.to_int (Int32.shift_right_logical v.(i / 4) (8 * (i mod 4)))
+          land 255)
+  in
+  ignore (on_disk_at path bytes);
+  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  Nx.Repr.Placed.v p Nx.int32
+    (Nx_array.View.create [| n |])
+    (Nx.Repr.Storage.v p
+       [
+         B.view
+           (require_ok ~pp:Format.pp_print_string (B.of_file path))
+           ~offset:2 Nx_dtype.Scalar.Int32 n;
+       ])
+
+let disk =
+  group "values on the disk"
+    [
+      test "a value on the disk not aligned to its elements is read" (fun () ->
+          let v = [| 1l; -2l; 70000l; Int32.min_int; Int32.max_int; 0l |] in
+          let a = unaligned_on_disk v in
+          equal (tensor int32)
+            (Nx.mul_s (Nx.create Nx.int32 [| 6 |] v) 3l)
+            (Rune.jit' (fun a -> Nx.mul_s a 3l) a));
+      test "a leaf and a capture on the disk are read as host values" (fun () ->
+          let a = on_disk_at (temp_file ()) (x ()) in
+          let w = on_disk_at (temp_file ()) (y ()) in
+          equal close
+            (Nx.mul (poly (x ())) (y ()))
+            (Rune.jit' (fun a -> Nx.mul (poly a) w) a));
+      test "a consumed value on the disk is copied, and its file unchanged"
+        (fun () ->
+          let path = temp_file () in
+          let a = on_disk_at path (x ()) in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+          equal floats (Nx.add_s (x ()) 1.) (host r);
+          equal floats (x ()) (host (on_disk_at_read path)));
+      test
+        "a consumed weight that is a window of its file is computed from a \
+         copy and stays readable, as its sibling does" (fun () ->
+          let module B = Nx_device.Buffer in
+          let path = temp_file () in
+          ignore (on_disk_at path (Nx.concatenate ~axis:0 [ x (); y () ]));
+          let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+          let file = require_ok ~pp:Format.pp_print_string (B.of_file path) in
+          let weight first =
+            Nx.Repr.Placed.v p Nx.float32
+              (Nx_array.View.create [| 4 |])
+              (Nx.Repr.Storage.v p
+                 [ B.view file ~offset:(4 * first) Float32 4 ])
+          in
+          let sibling = weight 0 and w = weight 4 in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) w in
+          equal floats (Nx.add_s (y ()) 1.) (host r);
+          equal ~msg:"the weight" floats (y ()) (host w);
+          equal ~msg:"its sibling" floats (x ()) (host sibling));
+      test "the file opened is read, not the one at its path now" (fun () ->
+          let path = temp_file () in
+          let a = on_disk_at path (x ()) in
+          let replacement = temp_file () in
+          ignore (on_disk_at replacement (y ()));
+          Sys.rename replacement path;
+          equal close (poly (x ())) (host (Rune.jit' poly a)));
+    ]
+
+(* Gathers *)
+
+(* Rows read at indices from memory, by calls whose arguments are placed at
+   [at], computing on [d]: a gather that its reader broadcasts or reads twice is
+   stored by a kernel of its own and read back, and so is a sum masked by a
+   bound from memory. A device loads a program once however many calls run it,
+   so each test's rows have a width of their own, and no kernel of one test is
+   loaded by another. *)
+let gathers ~at d =
+  let rows n w scale =
+    Nx.init Nx.float32 [| n; w |] (fun i ->
+        Float.of_int ((i.(0) * w) + i.(1) + 1) *. scale)
+  in
+  let scores w c =
+    Nx.matmul
+      (Nx.mul (rows 8 w 0.01) c)
+      (Nx.transpose (Nx.mul (rows 8 w 0.02) c))
+  in
+  let kernels name n f x =
+    test name (fun () ->
+        let r, loaded = loaded_on d (fun () -> Rune.jit' f (Nx.place at x)) in
+        equal ~msg:"kernels" int n loaded;
+        equal close (f x) (host r))
   in
   let indices =
-    Nx.create Nx.int64 [| 4 |] [| 0L; 65_535L; 40_000L; 32_768L |]
+    Nx.create Nx.int64 [| 8 |] [| 3L; 5L; 7L; 0L; 47L; 12L; 12L; 40L |]
   in
-  let f table = Nx.take ~axis:0 ~indices table in
-  check_arr ~msg:"take" (to_arr (f table)) (Rune.jit' f table)
-
-(* NaN sorts after every number ascending and before every number descending,
-   and equal values keep their order, infinities included. The long axis runs through ten network stages.
-   Each result stacks the sorted values over the indices. *)
-let test_sort_matches_eager () =
-  let nan = Float.nan and inf = Float.infinity in
-  let short = vec32 [| 2.; nan; -.inf; 1.; inf; nan; 1.; -0.5; inf; 2. |] in
-  let columns =
-    Nx.create f32 [| 4; 3 |]
-      [| 3.; nan; 1.; nan; 2.; 1.; 3.; nan; -.inf; 0.; 2.; 1. |]
-  in
-  let long =
-    Nx.create f32 [| 2; 600 |]
-      (Array.init 1200 (fun i ->
-           if i mod 97 = 5 then nan
-           else if i mod 131 = 0 then inf
-           else float_of_int (i * 7 mod 13)))
-  in
-  List.iter
-    (fun descending ->
-      List.iter
-        (fun (name, axis, x) ->
-          let msg =
-            Printf.sprintf "%s, %s" name
-              (if descending then "descending" else "ascending")
-          in
-          let sort x =
-            let values, indices = Nx.sort ~descending ~axis x in
-            Nx.stack [ values; Nx.cast f32 indices ]
-          in
-          check_arr ~eps:0. ~msg (to_arr (sort x)) (Rune.jit' sort x))
-        [ ("short", 0, short); ("columns", 0, columns); ("long", 1, long) ])
-    [ false; true ];
-  (* Positions only: a compiled 8-bit float store saturates infinities. *)
-  let e5m2 =
-    Nx.create Nx.float8_e5m2 [| 8 |]
-      [| inf; 2.; -.inf; 57344.; -3.; -57344.; 0.; nan |]
-  in
-  List.iter
-    (fun descending ->
-      let positions x = Nx.cast f32 (Nx.argsort ~descending x) in
-      check_arr ~eps:0.
-        ~msg:(Printf.sprintf "float8_e5m2 positions, descending %b" descending)
-        (to_arr (positions e5m2))
-        (Rune.jit' positions e5m2))
-    [ false; true ]
-
-let test_bitcast_matches_eager () =
-  check_bitcast_matches_eager ();
-  let doubles =
-    Nx.create Nx.int64 [| 2; 3 |]
-      [| 0L; Int64.min_int; 0x7FF0000000000001L; 0xFFF8000000000123L; 1L; -1L |]
-  in
-  let to_bits x = Nx.bitcast Nx.int64 (Nx.transpose x) in
-  equal ~msg:"float64 to bits" bool true
-    (Nx.to_array (Rune.jit' to_bits (Nx.bitcast f64 doubles))
-    = Nx.to_array (Nx.transpose doubles))
-
-(* Every sortable dtype in both directions, over axes of 1, 2 and 33, the last
-   batched around it; float32 and bfloat16 also over axes of 513 and 32768.
-   Dtypes of up to 32 bits sort key and position packed in one int64; 64-bit
-   dtypes sort their two 32-bit halves that way. A compiled fp8 store saturates
-   an infinity, so fp8 inputs have none here; [test_sort_matches_eager] checks
-   the positions of float8_e5m2 infinities. *)
-let test_sort_dtypes_match_eager () =
-  let pieces = [ ([| 1 |], 0); ([| 2 |], 0); ([| 2; 33; 3 |], 1) ] in
-  let long = pieces @ [ ([| 2; 513; 3 |], 1); ([| 32_768 |], 0) ] in
-  check_sort_pieces f64 long Nx.float32;
-  check_sort_pieces f64 long Nx.bfloat16;
-  check_sort_pieces f64 pieces Nx.float16;
-  check_sort_pieces ~infinities:false f64 pieces Nx.float8_e4m3;
-  check_sort_pieces ~infinities:false f64 pieces Nx.float8_e5m2;
-  check_sort_pieces f64 pieces Nx.int8;
-  check_sort_pieces f64 pieces Nx.uint8;
-  check_sort_pieces f64 pieces Nx.int16;
-  check_sort_pieces f64 pieces Nx.uint16;
-  check_sort_pieces f64 pieces Nx.int32;
-  check_sort_pieces f64 pieces Nx.uint32;
-  check_sort_pieces f64 pieces Nx.bool;
-  check_sort_pieces f64 pieces Nx.float64;
-  check_sort_pieces f64 pieces Nx.int64;
-  check_sort_pieces f64 pieces Nx.uint64
-
-(* A compiled argsort sorts key and position together: matching each sorted
-   value back to its position would cost n^2 operations. The axis is padded to a
-   power of two, where positions computed behind the padding would cost n^2
-   too. *)
-let test_argsort_is_not_quadratic () =
-  let n = 3000 in
-  let g = Rune.jit' (Nx.argsort ~axis:0) in
-  let x = sort_input f32 n in
-  ignore (g x);
-  let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
-  ignore (g x);
-  let ops = Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before) in
-  satisfies
-    ~msg:(Printf.sprintf "%d operations for %d entries" ops n)
-    ~claim:"fewer than n^2" int
-    (fun ops -> ops < n * n)
-    ops
-
-(* Either side of [Nx.top_k]'s switch from selection rounds to a sort, with
-   repeated scores in every row. *)
-let test_top_k_matches_eager () =
-  let scores =
-    Nx.create f32 [| 3; 24 |]
-      (Array.init 72 (fun i -> float_of_int (i * 7 mod 11)))
-  in
-  List.iter
-    (fun k ->
-      let values x = fst (Nx.top_k ~k x) in
-      let indices x = Nx.cast f32 (snd (Nx.top_k ~k x)) in
-      check_arr
-        ~msg:(Printf.sprintf "top %d values" k)
-        (to_arr (values scores))
-        (Rune.jit' values scores);
-      check_arr
-        ~msg:(Printf.sprintf "top %d indices" k)
-        (to_arr (indices scores))
-        (Rune.jit' indices scores))
-    [ 2; 17 ];
-  let along_rows x = Nx.cast f32 (snd (Nx.top_k ~k:2 ~axis:0 x)) in
-  check_arr ~msg:"top 2 along axis 0"
-    (to_arr (along_rows scores))
-    (Rune.jit' along_rows scores)
-
-(* A descending selection puts NaN first, compiled as eagerly, through the
-   passes of a small k and the sort of a larger one. *)
-let test_top_k_puts_nan_first () =
-  let scores =
-    Nx.create f32 [| 2; 24 |]
-      (Array.init 48 (fun i ->
-           if i mod 5 = 3 then Float.nan else float_of_int (i * 7 mod 11)))
-  in
-  List.iter
-    (fun k ->
-      let indices x = Nx.cast f32 (snd (Nx.top_k ~k x)) in
-      let eager = indices scores in
-      equal
-        ~msg:(Printf.sprintf "top %d starts at the first NaN" k)
-        float_exact 3.
-        (Nx.item [ 0; 0 ] eager);
-      check_arr ~eps:0.
-        ~msg:(Printf.sprintf "top %d indices" k)
-        (to_arr eager) (Rune.jit' indices scores))
-    [ 2; 17 ]
-
-(* Selection compiles to the positions eager computes: rows of repeated values,
-   NaN, both zeros and both infinities, in every dtype family, cut at [k]
-   through a run of ties, along either axis; rows long enough to select by
-   radix, and a short one sorted on the same keys. *)
-let test_top_k_radix_matches_eager () =
-  let st = Random.State.make [| 5 |] in
-  let pool = [| Float.nan; -0.; 0.; Float.infinity; Float.neg_infinity; 1. |] in
-  let data =
-    Nx.init f64 [| 3; 2100 |] (fun _ ->
-        match Random.State.int st 4 with
-        | 0 -> pool.(Random.State.int st (Array.length pool))
-        | 1 -> float_of_int (Random.State.int st 5)
-        | _ -> Random.State.float st 8. -. 4.)
-  in
-  let check (type a b) ?(ks = [ 17; 512 ]) name (x : (a, b) Nx.t) =
-    List.iter
-      (fun k ->
-        let indices x = Nx.cast f32 (snd (Nx.top_k ~k x)) in
-        check_arr
-          ~msg:(Printf.sprintf "%s top %d" name k)
-          (to_arr (indices x))
-          (Rune.jit' indices x))
-      ks
-  in
-  check ~ks:[ 17; 512; 2100 ] "float32" (Nx.cast f32 data);
-  check "float32, short rows"
-    (Nx.contiguous (Nx.slice [ Nx.A; Nx.R (0, 1000) ] (Nx.cast f32 data)));
-  check "bfloat16" (Nx.cast Nx.bfloat16 data);
-  check "float16" (Nx.cast Nx.float16 data);
-  let ints =
-    Nx.init Nx.int32 [| 3; 2100 |] (fun _ ->
-        Int32.of_int (Random.State.int st 256 - 128))
-  in
-  check "int32" ints;
-  check "int8" (Nx.cast Nx.int8 ints);
-  check "uint8" (Nx.cast Nx.uint8 ints);
-  let short x = Nx.contiguous (Nx.slice [ Nx.A; Nx.R (0, 1000) ] x) in
-  let both name x =
-    check name x;
-    check (name ^ ", short rows") (short x)
-  in
-  both "float64" data;
-  (* 64-bit keys need 64-bit constants: every int64 below zero, and uint64 at
-     and above 2^63, whose top bit a signed reading takes for a sign. *)
-  let int64s f =
-    Nx.init Nx.int64 [| 3; 2100 |] (fun _ ->
-        match Random.State.int st 5 with
-        | 0 -> f Int64.min_int
-        | 1 -> f (Int64.of_int (Random.State.int st 3))
-        | _ -> f (Random.State.int64 st Int64.max_int))
-  in
-  both "int64, all negative" (int64s (fun v -> Int64.sub (-1L) v));
-  both "uint64 at and above 2^63"
-    (Nx.cast Nx.uint64 (int64s (fun v -> Int64.logor Int64.min_int v)));
-  (* The compiler reads float8 through float16 and flushes its subnormals, so
-     every other pattern is drawn. *)
-  let float8 (type b) (dt : (float, b) Nx.dtype) ~subnormal =
-    let patterns =
-      Array.of_list
-        (List.filter (fun p -> not (subnormal p)) (List.init 256 Fun.id))
-    in
-    Nx.bitcast dt
-      (Nx.init Nx.uint8 [| 3; 2100 |] (fun _ ->
-           patterns.(Random.State.int st (Array.length patterns))))
-  in
-  both "float8_e4m3"
-    (float8 Nx.float8_e4m3 ~subnormal:(fun p ->
-         p land 0x78 = 0 && p land 7 <> 0));
-  both "float8_e5m2"
-    (float8 Nx.float8_e5m2 ~subnormal:(fun p ->
-         p land 0x7c = 0 && p land 3 <> 0));
-  let columns = Nx.transpose (Nx.cast f32 data) in
-  let along_rows x = Nx.cast f32 (snd (Nx.top_k ~k:40 ~axis:0 x)) in
-  check_arr ~msg:"top 40 along axis 0"
-    (to_arr (along_rows columns))
-    (Rune.jit' along_rows columns)
-
-let test_grad_of_top_k () =
-  let scores =
-    Nx.create f32 [| 2; 5 |] [| 3.; 9.; 1.; 7.; 5.; 4.; 2.; 8.; 6.; 0. |]
-  in
-  let weights = Nx.create f32 [| 1; 2 |] [| 1.; 2. |] in
-  let loss x = Nx.sum (Nx.mul weights (fst (Nx.top_k ~k:2 x))) in
-  check_arr ~msg:"the gradient lands on the chosen entries"
-    [| 0.; 1.; 0.; 2.; 0.; 0.; 0.; 1.; 2.; 0. |]
-    (Rune.grad' loss scores);
-  check_arr ~msg:"compiled gradient"
-    (to_arr (Rune.grad' loss scores))
-    (Rune.jit' (Rune.grad' loss) scores)
-
-(* [Nx.diag] is traceable in both directions: extraction gathers, construction
-   scatters into a zero template. *)
-let test_diag_matches_eager () =
-  let m =
-    Nx.create f32 [| 3; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0 |]
-  in
-  let g = Rune.jit' (Nx.diag ~k:(-1)) in
-  check_arr ~msg:"extract" (to_arr (Nx.diag ~k:(-1) m)) (g m);
-  let v = vec32 [| 2.0; 3.0; 4.0 |] in
-  let g2 = Rune.jit' (Nx.diag ~k:1) in
-  check_arr ~msg:"construct" (to_arr (Nx.diag ~k:1 v)) (g2 v);
-  check_arr ~msg:"construct replay" (to_arr (Nx.diag ~k:1 v)) (g2 v)
-
-(* Training-step integration: a two-layer MLP trained by a jitted step must
-   follow the eager trajectory exactly. *)
-
-type mlp = { w1 : Nx.float32_t; b1 : Nx.float32_t; w2 : Nx.float32_t }
-
-module Mlp = struct
-  type _ t = mlp
-
-  let walk c { w1; b1; w2 } =
-    let open Nx.Ptree.Walk in
-    let w1 = field c "w1" tensor w1 in
-    let b1 = field c "b1" tensor b1 in
-    let w2 = field c "w2" tensor w2 in
-    { w1; b1; w2 }
-end
-
-let mlp_ptree = Nx.Ptree.instantiate (module Mlp)
-
-let test_jitted_training_matches_eager () =
-  let xs =
-    Nx.create f32 [| 8; 4 |]
-      (Array.init 32 (fun i -> float_of_int (i mod 7) /. 7.0))
-  in
-  let ys =
-    Nx.create f32 [| 8; 1 |]
-      (Array.init 8 (fun i -> float_of_int (i mod 3) -. 1.0))
-  in
-  let init () =
-    {
-      w1 =
-        Nx.create f32 [| 4; 5 |]
-          (Array.init 20 (fun i -> (0.1 *. float_of_int (i mod 5)) -. 0.2));
-      b1 = Nx.zeros f32 [| 5 |];
-      w2 =
-        Nx.create f32 [| 5; 1 |]
-          (Array.init 5 (fun i -> 0.3 -. (0.1 *. float_of_int i)));
-    }
-  in
-  let loss p =
-    let h = Nx.tanh (Nx.add (Nx.matmul xs p.w1) p.b1) in
-    let d = Nx.sub (Nx.matmul h p.w2) ys in
-    Nx.mean (Nx.mul d d)
-  in
-  let update p =
-    let g = Rune.grad mlp_ptree loss p in
-    Nx.Ptree.map2 mlp_ptree
-      (fun _ w dw -> Nx.sub w (Nx.mul (scalar_like dw 0.1) dw))
-      p g
-  in
-  let step = Rune.jit Nx.Ptree.(mlp_ptree @-> returns mlp_ptree) update in
-  let rec train f p n = if n = 0 then p else train f (f p) (n - 1) in
-  let jitted = train step (init ()) 5 in
-  let eager = train update (init ()) 5 in
-  check_arr ~msg:"w1" (to_arr eager.w1) jitted.w1;
-  check_arr ~msg:"b1" (to_arr eager.b1) jitted.b1;
-  check_arr ~msg:"w2" (to_arr eager.w2) jitted.w2;
-  let l0 = scalar (loss (init ())) and l5 = scalar (loss jitted) in
-  is_true ~msg:"loss decreased" (l5 < l0)
-
-(* Device residency. CPU:1 is a device with storage of its own, which takes the
-   staged-copy path used by CUDA and Metal: outputs are placed values that stay
-   on the device until read, and a placed value fed back into a compiled call
-   seeds its input buffer directly. The transfer counters make the no-copy
-   claims observable. *)
-
-let cpu1 = Rune.device "CPU:1"
-let place x = Nx.place (Nx.Placement.device cpu1) x
-
-(* Run [f] and return its result with the bytes moved to and from the device
-   during the run. *)
-let delta f =
-  let s0 = Rune.jit_stats () in
-  let r = f () in
-  let s1 = Rune.jit_stats () in
-  ( r,
-    s1.bytes_to_device - s0.bytes_to_device,
-    s1.bytes_from_device - s0.bytes_from_device )
-
-(* Placement. [Nx.place] makes a value resident without a compiled call. *)
-
-let resident () = (Rune.jit_stats ()).resident_bytes
-
-let test_place_equals_its_argument () =
-  let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let base = resident () in
-  let p, up, down = delta (fun () -> place x) in
-  equal ~msg:"placing uploads the value once" int 24 up;
-  equal ~msg:"placing reads nothing back" int 0 down;
-  equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape p);
-  is_true ~msg:"dtype" (Nx.dtype p = f32);
-  equal ~msg:"the placed value is resident" int 24 (resident () - base);
-  let (), up, down = delta (fun () -> check_arr ~msg:"value" (to_arr x) p) in
-  equal ~msg:"the first read copies it back" int 24 down;
-  equal ~msg:"and uploads nothing" int 0 up;
-  equal ~msg:"a read leaves the value placed" int 24 (resident () - base);
-  check_arr ~msg:"the argument is untouched"
-    [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-    x
-
-let test_place_strided_and_offset () =
-  let m = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let t = Nx.matrix_transpose m in
-  check_arr ~msg:"strided" (to_arr t) (place t);
-  let s = Nx.slice [ Nx.R (1, 2) ] m in
-  check_arr ~msg:"offset" [| 4.0; 5.0; 6.0 |] (place s)
-
-let test_place_feeds_inputs_without_transfer () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  ignore (g (vec32 [| 0.0; 0.0 |]));
-  let p = place (vec32 [| 1.0; 2.0 |]) in
-  let y, up, down = delta (fun () -> g p) in
-  equal ~msg:"no upload" int 0 up;
-  equal ~msg:"no read-back" int 0 down;
-  check_arr ~msg:"result" [| 2.0; 4.0 |] y;
-  check_arr ~msg:"the input is still readable" [| 1.0; 2.0 |] p
-
-let test_place_resident_value_is_returned () =
-  let p = place (vec32 [| 1.0; 2.0 |]) in
-  let q, up, _ = delta (fun () -> place p) in
-  is_true ~msg:"the same value" (p == q);
-  equal ~msg:"no upload" int 0 up;
-  let h = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) p in
-  is_true ~msg:"an unread output too" (place h == h)
-
-let test_place_on_the_host_device () =
-  let host = Nx.Placement.device (Rune.device "CPU") in
-  let x = vec32 [| 1.0; 2.0; 3.0 |] in
-  is_true ~msg:"a host value placed on the host is itself" (Nx.place host x == x);
-  let t =
-    Nx.matrix_transpose (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |])
-  in
-  is_true ~msg:"a strided one too" (Nx.place host t == t)
-
-let test_place_is_the_identity_under_transformations () =
-  let x = vec32 [| 1.0; -2.0; 0.5 |] in
-  let loss place x =
-    let x = place x in
-    Nx.sum (Nx.mul x (Nx.mul x x))
-  in
-  let plain = loss Fun.id and placed = loss (fun x -> place x) in
-  let g = Rune.grad' placed x in
-  check_arr ~msg:"grad, eagerly" (to_arr (Rune.grad' plain x)) g;
-  is_true ~msg:"the cotangent comes back to its primal's placement"
-    (Nx.Placement.equal Nx.Placement.host (Nx.placement g));
-  check_arr ~msg:"grad, compiled"
-    (to_arr (Rune.grad' plain x))
-    (Rune.jit' ~devices:[ cpu1 ] (Rune.grad' placed) x);
-  let tangent = vec32 [| 1.0; 1.0; 1.0 |] in
-  check_arr ~msg:"jvp"
-    (to_arr (snd (Rune.jvp' plain x tangent)))
-    (snd (Rune.jvp' placed x tangent));
-  let rows = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let double place x = Nx.mul_s (place x) 2.0 in
-  check_arr ~msg:"vmap"
-    (to_arr (Rune.vmap' (double Fun.id) rows))
-    (Rune.vmap' (double (fun x -> place x)) rows);
-  let (_ : Nx.float32_t), up, _ =
-    delta (fun () ->
-        Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s (place x) 2.0) x)
-  in
-  equal ~msg:"inside jit, placing where the program runs moves nothing" int 12
-    up
-
-(* Devices have one name and one value each; CPU is the host. *)
-let test_one_device_per_name () =
-  is_true ~msg:"CPU is the host" (Rune.device "CPU" == Nx.Device.host);
-  is_true ~msg:"index 0 is the device itself"
-    (Rune.device "cpu:0" == Nx.Device.host);
-  let d = Rune.device "CPU:1" in
-  is_true ~msg:"one value per name" (Rune.device "cpu:1" == d);
-  is_true ~msg:"whatever the index's spelling" (Rune.device "CPU:01" == d);
-  equal ~msg:"its name" string "CPU:1" (Nx.Device.name d);
-  is_true ~msg:"the host backend's devices"
-    (List.equal ( == ) [ Nx.Device.host ] (Rune.devices "CPU"));
-  is_true ~msg:"DEV=CPU makes the host the default"
-    (Rune.default_device () == Nx.Device.host);
-  let invalid f =
-    raises_match (function Invalid_argument _ -> true | _ -> false) f
-  in
-  invalid (fun () -> Rune.device "TPU");
-  invalid (fun () -> Rune.device "CPU:-1");
-  invalid (fun () -> Rune.devices "CPU:1")
-
-(* A program on the host computes on host values: placing on the host inside it
-   is the identity, and its outputs are on the host. *)
-let test_host_program_is_on_the_host () =
-  let x = vec32 [| 1.0; 2.0 |] in
-  let f x = Nx.mul_s (Nx.place Nx.Placement.host x) 2.0 in
-  let y = Rune.jit' ~devices:[ Rune.device "CPU" ] f x in
-  check_arr ~msg:"placing on the host is the identity" [| 2.0; 4.0 |] y;
-  is_true ~msg:"the output is on the host"
-    (Nx.Placement.equal Nx.Placement.host (Nx.placement y));
-  check_arr ~msg:"and so is its gradient's" [| 2.0; 2.0 |]
-    (Rune.jit'
-       ~devices:[ Rune.device "CPU" ]
-       (Rune.grad' (fun x -> Nx.sum (f x)))
-       x)
-
-(* A compiled function runs where its placed inputs and captures live, and
-   refuses a value placed elsewhere before it runs. *)
-let invalid_starting prefix f =
-  raises_match
-    (function
-      | Invalid_argument msg -> String.starts_with ~prefix msg | _ -> false)
-    f
-
-let test_runs_where_its_inputs_live () =
-  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-  let x = place (vec32 [| 1.0; 2.0 |]) in
-  let y, up, _ = delta (fun () -> g x) in
-  is_true ~msg:"the output is on the input's device"
-    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement y));
-  equal ~msg:"nothing is uploaded" int 0 up;
-  check_arr ~msg:"value" [| 2.0; 4.0 |] y;
-  is_true ~msg:"a host input runs on the default device"
-    (Nx.Placement.equal Nx.Placement.host
-       (Nx.placement (g (vec32 [| 1.0; 2.0 |]))))
-
-let test_leaves_elsewhere_raise () =
-  let x = place (vec32 [| 1.0; 2.0 |]) in
-  let y = Nx.place (Nx.Placement.device (Rune.device "CPU:2")) x in
-  let (), up, _ =
-    delta (fun () ->
-        invalid_starting
-          "Rune.jit: the argument at 0 is on CPU:1 and ~devices names CPU:2"
-          (fun () ->
-            Rune.jit'
-              ~devices:[ Rune.device "CPU:2" ]
-              (fun x -> Nx.mul_s x 2.0)
-              x);
-        invalid_starting
-          "Rune.jit: the argument at 0 is on CPU:1 and ~devices names CPU"
-          (fun () ->
-            Rune.jit' ~devices:[ Rune.device "CPU" ] (fun x -> Nx.mul_s x 2.0) x);
-        invalid_starting
-          "Rune.jit: the arguments at 0.u and 0.v are on CPU:1 and CPU:2"
-          (fun () ->
-            Rune.jit
-              Nx.Ptree.(pair_ptree @-> returns tensor)
-              (fun p -> Nx.add p.Pair.u p.v)
-              { Pair.u = x; v = y }))
-  in
-  equal ~msg:"nothing is uploaded" int 0 up
-
-(* A capture decides where a function whose inputs are on the host runs, at the
-   first trace that meets it; later calls run there without tracing. *)
-let test_capture_decides_the_device () =
-  let w = place (vec32 [| 1.0; 2.0 |]) in
-  let traces = ref 0 in
-  let g =
-    Rune.jit' (fun x ->
-        incr traces;
-        Nx.mul x w)
-  in
-  let y = g (vec32 [| 3.0; 4.0 |]) in
-  is_true ~msg:"the output is on the capture's device"
-    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement y));
-  check_arr ~msg:"value" [| 3.0; 8.0 |] y;
-  let traced = !traces in
-  let y, up, _ = delta (fun () -> g (vec32 [| 1.0; 1.0 |])) in
-  equal ~msg:"a later call does not trace" int traced !traces;
-  equal ~msg:"and uploads only its input" int 8 up;
-  check_arr ~msg:"value" [| 1.0; 2.0 |] y;
-  invalid_starting
-    "Rune.jit: a captured value is on CPU:1 and the program runs on CPU:2"
-    (fun () ->
-      Rune.jit'
-        ~devices:[ Rune.device "CPU:2" ]
-        (fun x -> Nx.mul x w)
-        (vec32 [| 1.0; 1.0 |]))
-
-(* A program that binds a capture makes its device the closure's: a later call
-   from the host runs there with no new trace. *)
-let test_capture_device_is_remembered () =
-  let w = place (vec32 [| 1.0; 2.0 |]) in
-  let traces = ref 0 in
-  let g =
-    Rune.jit' (fun x ->
-        incr traces;
-        Nx.mul x w)
-  in
-  check_arr ~msg:"a placed input" [| 3.0; 8.0 |]
-    (g (place (vec32 [| 3.0; 4.0 |])));
-  let traced = !traces in
-  let y = g (vec32 [| 1.0; 1.0 |]) in
-  check_arr ~msg:"a host input" [| 1.0; 2.0 |] y;
-  equal ~msg:"shares the program" int traced !traces;
-  is_true ~msg:"on the capture's device"
-    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement y))
-
-(* Placed views. A view of part of a placed storage binds the storage it
-   reaches, with no copy; a strided view is movement in the program. *)
-let m34 () = place (Nx.create f32 [| 3; 4 |] (Array.init 12 float_of_int))
-
-let check_bound ~msg f x =
-  let expected = to_arr (f (Nx.place Nx.Placement.host x)) in
-  let y, up, _ = delta (fun () -> Rune.jit' f x) in
-  check_arr ~msg expected y;
-  equal ~msg:(msg ^ ": nothing is uploaded") int 0 up
-
-let test_views_bind_without_a_copy () =
-  let p = m34 () in
-  let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
-  check_bound ~msg:"a C-order window" f (Nx.slice [ Nx.R (1, 3) ] p);
-  check_bound ~msg:"a transpose" f (Nx.matrix_transpose p);
-  check_bound ~msg:"a column cut" f (Nx.slice [ Nx.A; Nx.R (1, 3) ] p);
-  check_bound ~msg:"a flip" f (Nx.flip ~axes:[ 1 ] p);
-  check_bound ~msg:"a broadcast" f
-    (Nx.broadcast_to [| 3; 2; 4 |] (Nx.slice [ Nx.R (1, 3) ] p));
-  check_bound ~msg:"a reduction over a cut" Nx.sum
-    (Nx.slice [ Nx.Rs (0, 3, 2); Nx.R (1, 4) ] p)
-
-(* A C-order window shares the program of a value covering its storage, and two
-   strided views whose offsets differ by a multiple of 16 bytes share one. *)
-let test_views_share_programs () =
-  let traces = ref 0 in
-  let g =
-    Rune.jit' (fun x ->
-        incr traces;
-        Nx.mul_s x 2.0)
-  in
-  let p = m34 () in
-  let covering = place (Nx.zeros f32 [| 2; 4 |]) in
-  let (_ : Nx.float32_t), up, _ = delta (fun () -> g covering) in
-  equal ~msg:"a covering value uploads nothing" int 0 up;
-  let n = !traces in
-  let y, up, _ = delta (fun () -> g (Nx.slice [ Nx.R (1, 3) ] p)) in
-  check_arr ~msg:"a window" [| 8.; 10.; 12.; 14.; 16.; 18.; 20.; 22. |] y;
-  equal ~msg:"a window uploads nothing" int 0 up;
-  equal ~msg:"shares the covering value's program" int n !traces;
-  let wide = place (Nx.create f32 [| 3; 8 |] (Array.init 24 float_of_int)) in
-  ignore (g (Nx.slice [ Nx.A; Nx.R (0, 2) ] wide));
-  let n = !traces in
-  let y, up, _ = delta (fun () -> g (Nx.slice [ Nx.A; Nx.R (4, 6) ] wide)) in
-  check_arr ~msg:"another offset" [| 8.; 10.; 24.; 26.; 40.; 42. |] y;
-  equal ~msg:"a strided view uploads nothing" int 0 up;
-  equal ~msg:"shares the strided program" int n !traces
-
-(* A range is bound from a 16-byte boundary and the program skips the elements
-   before it, so windows whose offsets differ by four float32 share a program,
-   and the others each have one. *)
-let test_windows_bind_from_aligned_offsets () =
-  let n = 1024 in
-  let x = place (Nx.create f32 [| n + 4 |] (Array.init (n + 4) float_of_int)) in
-  let traces = ref 0 in
-  let g =
-    Rune.jit' (fun x ->
-        incr traces;
-        Nx.add_s x 1.0)
-  in
-  for k = 0 to 4 do
-    let y, up, _ = delta (fun () -> g (Nx.slice [ Nx.R (k, k + n) ] x)) in
-    let msg = Printf.sprintf "offset %d" k in
-    check_arr ~msg (Array.init n (fun i -> float_of_int (k + i + 1))) y;
-    equal ~msg:(msg ^ ": nothing is uploaded") int 0 up
-  done;
-  equal ~msg:"offsets 0 and 4 share a program" int 4 !traces
-
-(* An output that is a movement of an input is copied out of it: an unaligned
-   window returned as it is, a slice of an input. *)
-let test_views_of_inputs_as_outputs () =
-  let x = place (Nx.create f32 [| 8 |] (Array.init 8 float_of_int)) in
-  let w = Nx.slice [ Nx.R (1, 5) ] x in
-  check_arr ~msg:"an unaligned window returned" [| 1.; 2.; 3.; 4. |]
-    (Rune.jit' (fun v -> v) w);
-  check_arr ~msg:"the window is still readable" [| 1.; 2.; 3.; 4. |] w;
-  let slice v = Nx.slice [ Nx.R (1, 3) ] v in
-  check_arr ~msg:"a slice of a host input" [| 1.; 2. |]
-    (Rune.jit' slice (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]));
-  check_arr ~msg:"on the host" [| 1.; 2. |]
-    (Rune.jit'
-       ~devices:[ Rune.device "CPU" ]
-       slice
-       (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]))
-
-(* Views of one shape with other strides are other programs. *)
-let test_strides_key_programs () =
-  let traces = ref 0 in
-  let g =
-    Rune.jit' (fun x ->
-        incr traces;
-        Nx.mul_s x 1.0)
-  in
-  let a = place (Nx.create f32 [| 3; 4 |] (Array.init 12 float_of_int)) in
-  let b = place (Nx.create f32 [| 4; 6 |] (Array.init 24 float_of_int)) in
-  let cut = Nx.slice [ Nx.A; Nx.R (1, 4) ] b in
-  List.iter
-    (fun (msg, v) ->
-      check_arr ~msg (to_arr (Nx.place Nx.Placement.host v)) (g v))
+  group "gathers"
     [
-      ("a transpose", Nx.matrix_transpose a);
-      ("a column cut", cut);
-      ("its flip", Nx.flip ~axes:[ 1 ] cut);
-      ("a stepped cut", Nx.slice [ Nx.A; Nx.Rs (0, 6, 2) ] b);
-    ];
-  equal ~msg:"four programs" int 4 !traces
-
-(* Overlapping windows do not nest: they are copied, and read correctly. *)
-let test_overlapping_views_are_copied () =
-  let p = place (Nx.create f32 [| 6 |] (Array.init 6 float_of_int)) in
-  let w = Nx.sliding_window ~window:3 p in
-  let y, up, _ = delta (fun () -> Rune.jit' (fun x -> Nx.mul_s x 2.0) w) in
-  check_arr ~msg:"value"
-    (to_arr
-       (Nx.mul_s
-          (Nx.sliding_window ~window:3 (Nx.place Nx.Placement.host p))
-          2.0))
-    y;
-  is_true ~msg:"uploaded" (up > 0)
-
-let test_captured_views_bind () =
-  let p = m34 () in
-  let w = Nx.matrix_transpose (Nx.slice [ Nx.R (1, 3) ] p) in
-  let g = Rune.jit' (fun x -> Nx.matmul x w) in
-  let x = Nx.ones f32 [| 1; 4 |] in
-  let y, up, _ = delta (fun () -> g x) in
-  check_arr ~msg:"value" (to_arr (Nx.matmul x (Nx.place Nx.Placement.host w))) y;
-  equal ~msg:"only the input is uploaded" int (Nx.nbytes x) up;
-  let (_ : Nx.float32_t), up, _ = delta (fun () -> g x) in
-  equal ~msg:"again" int (Nx.nbytes x) up
-
-let test_read_of_traced_value_names_its_function () =
-  raises
-    (Rune.Jit_error
-       "Nx.item: cannot read the value of a traced tensor inside jit; return \
-        it from the compiled function instead") (fun () ->
-      Rune.jit' (fun x -> Nx.scalar f32 (Nx.item [ 0 ] x)) (vec32 [| 1.0 |]))
-
-let test_bitcast_between_widths_is_refused () =
-  let refused f x =
-    raises
-      (Rune.Jit_error
-         "Rune.jit: a bitcast between widths is not supported inside jit; move \
-          it outside the jitted function") (fun () -> Rune.jit' f x)
-  in
-  refused (fun x -> Nx.bitcast Nx.uint64 x) (Nx.zeros Nx.uint8 [| 2; 8 |]);
-  refused (fun x -> Nx.bitcast Nx.uint8 x) (Nx.zeros Nx.uint64 [| 2 |])
-
-let test_scatter_by_extremes_is_refused () =
-  List.iter
-    (fun mode ->
-      raises
-        (Rune.Jit_error
-           "Rune.jit: a scatter by maxima or minima is not supported inside \
-            jit; move it outside the jitted function") (fun () ->
-          Rune.jit'
-            (fun x ->
-              Nx.scatter ~mode ~axis:0
-                ~indices:(Nx.zeros Nx.int64 [| 2 |])
-                ~values:x (Nx.zeros f32 [| 3 |]))
-            (vec32 [| 1.0; 2.0 |])))
-    [ `Max; `Min ]
-
-(* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
-let test_item_reads_one_element () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  let y = g (Nx.create f32 [| 64; 64 |] (Array.init 4096 float_of_int)) in
-  let v, up, down = delta (fun () -> Nx.item [ 1; 2 ] y) in
-  equal ~msg:"the element" float_exact 132.0 v;
-  equal ~msg:"one element moves" int 4 down;
-  equal ~msg:"nothing is uploaded" int 0 up;
-  is_true ~msg:"the value stays resident" (bound_by 0 y);
-  let (_ : Nx.float32_t), up, _ = delta (fun () -> g y) in
-  equal ~msg:"and feeds a call with no upload" int 0 up
-
-let test_move_to_host_keeps_its_source () =
-  let p = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let h = Nx.place Nx.Placement.host p in
-  is_true ~msg:"a host copy"
-    (Nx.Placement.equal Nx.Placement.host (Nx.placement h));
-  check_arr ~msg:"its elements" [| 1.0; 2.0; 3.0 |] h;
-  check_arr ~msg:"the source is still readable" [| 1.0; 2.0; 3.0 |] p;
-  is_true ~msg:"and resident" (bound_by 0 p)
-
-let test_mixed_placements_raise () =
-  let p = place (vec32 [| 1.0; 2.0 |]) in
-  let q =
-    Rune.jit'
-      ~devices:[ Rune.device "CPU:2" ]
-      (fun x -> Nx.mul_s x 1.0)
-      (vec32 [| 3.0; 4.0 |])
-  in
-  raises_match
-    (function
-      | Invalid_argument msg -> String.ends_with ~suffix:"place one of them" msg
-      | _ -> false)
-    (fun () -> Nx.add p q);
-  check_arr ~msg:"a host operand joins" [| 2.0; 3.0 |]
-    (Nx.add p (vec32 [| 1.0; 1.0 |]))
-
-(* A host value and the placed value a call returns for it share a program. *)
-let test_host_started_loop_compiles_once () =
-  let traces = ref 0 in
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(consumes tensor @@ returns tensor)
-      (fun x ->
-        incr traces;
-        Nx.add_s (Nx.mul_s x 0.5) 1.0)
-  in
-  let x = ref (vec32 (Array.make 8 0.0)) in
-  for _ = 1 to 4 do
-    x := step !x
-  done;
-  equal ~msg:"one trace" int 1 !traces;
-  is_true ~msg:"the state is on CPU:1"
-    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement !x));
-  check_arr ~msg:"four steps" (Array.make 8 (2.0 -. (2.0 *. (0.5 ** 4.0)))) !x
-
-let test_placing_elsewhere_inside_jit_raises () =
-  let other = Nx.Placement.device (Rune.device "CPU:2") in
-  raises_jit_error (fun () ->
-      Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.place other x) (vec32 [| 1.0 |]))
-
-(* Chunked transfers. A copy between host and device moves 64 MiB at a time, so
-   these values are larger than that, with a last chunk shorter than the
-   others. *)
-
-let chunk = 64 * 1024 * 1024
-
-(* [f] on CPU:1 against [f] eagerly: every element uploaded, computed and read
-   back in its place. *)
-let check_transfers ~msg f x =
-  let (y : Nx.int32_t), up, _ =
-    delta (fun () -> Rune.jit' ~devices:[ cpu1 ] f x)
-  in
-  let worst, _, down =
-    delta (fun () ->
-        let y = Nx.place Nx.Placement.host y in
-        Nx.item [] (Nx.max (Nx.abs (Nx.sub y (f x)))))
-  in
-  equal ~msg:(msg ^ ": difference from eager") int32 0l worst;
-  is_true ~msg:(msg ^ ": larger than a chunk") (Nx.nbytes x > chunk);
-  equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
-  equal ~msg:(msg ^ ": bytes read back") int (Nx.nbytes x) down
-
-let test_chunked_contiguous () =
-  let n = (chunk / 4) + 4099 in
-  check_transfers ~msg:"contiguous"
-    (fun x -> Nx.add_s x 1l)
-    (Nx.arange Nx.int32 0 n 1)
-
-let test_chunked_offset () =
-  let n = (chunk / 4) + 4099 in
-  let x = Nx.slice [ Nx.R (3, n + 3) ] (Nx.arange Nx.int32 0 (n + 5) 1) in
-  is_true ~msg:"contiguous at an offset"
-    (Nx.is_c_contiguous x && Nx_array.View.offset (view x) = 3);
-  check_transfers ~msg:"offset" (fun x -> Nx.add_s x 1l) x
-
-let test_chunked_strided () =
-  let rows = 4100 and cols = 4099 in
-  let x =
-    Nx.matrix_transpose
-      (Nx.reshape [| rows; cols |] (Nx.arange Nx.int32 0 (rows * cols) 1))
-  in
-  is_true ~msg:"strided" (not (Nx.is_c_contiguous x));
-  check_transfers ~msg:"strided" (fun x -> Nx.add_s x 1l) x
-
-(* A strided value whose rows are themselves larger than a chunk. *)
-let test_chunked_strided_rows () =
-  let cols = (chunk / 4) + 4099 in
-  let x =
-    Nx.flip ~axes:[ 1 ]
-      (Nx.reshape [| 2; cols |] (Nx.arange Nx.int32 0 (2 * cols) 1))
-  in
-  is_true ~msg:"strided" (not (Nx.is_c_contiguous x));
-  check_transfers ~msg:"strided rows" (fun x -> Nx.add_s x 1l) x
-
-let test_chunked_capture () =
-  let n = (chunk / 4) + 4099 in
-  let w =
-    Nx.matrix_transpose (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1))
-  in
-  let f s = Nx.add (Nx.reshape [| n |] w) s in
-  let s = Nx.create Nx.int32 [| 1 |] [| 5l |] in
-  let worst =
-    Nx.max (Nx.abs (Nx.sub (Rune.jit' ~devices:[ cpu1 ] f s) (f s)))
-  in
-  equal ~msg:"capture: difference from eager" int32 0l (Nx.item [] worst)
-
-let test_feedback_chain_moves_no_bytes () =
-  let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
-  let g = Rune.jit' ~devices:[ cpu1 ] f in
-  let x = vec32 [| 1.0; 2.0; 3.0 |] in
-  let h1 = g x in
-  let h2, up2, down2 = delta (fun () -> g h1) in
-  let h3, up3, down3 = delta (fun () -> g h2) in
-  equal ~msg:"feeding h1 back uploads nothing" int 0 up2;
-  equal ~msg:"producing h2 downloads nothing" int 0 down2;
-  equal ~msg:"feeding h2 back uploads nothing" int 0 up3;
-  equal ~msg:"producing h3 downloads nothing" int 0 down3;
-  check_arr ~msg:"h3 matches the eager composition" (to_arr (f (f (f x)))) h3;
-  (* Handles from earlier calls keep their own storage (R3). *)
-  check_arr ~msg:"h1 still readable" (to_arr (f x)) h1;
-  check_arr ~msg:"h2 still readable" (to_arr (f (f x))) h2
-
-let test_forced_handle_feeds_current_bytes () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
-  check_arr ~msg:"a read leaves the value placed" [| 2.0; 4.0; 6.0 |] h;
-  (* A value an eager operation derives from it lives with it, and feeds a call
-     with no upload. *)
-  let h = Nx.set [ I 0 ] (Nx.scalar f32 10.0) h in
-  let h2, up, _ = delta (fun () -> g h) in
-  equal ~msg:"a derived value feeds with no upload" int 0 up;
-  check_arr ~msg:"the new value is observed" [| 20.0; 8.0; 12.0 |] h2
-
-let test_same_handle_as_two_leaves () =
-  let g =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
-      (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
-  in
-  let h =
-    Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
-  in
-  let r, up, _ = delta (fun () -> g { u = h; v = h }) in
-  equal ~msg:"resident duplicate leaves upload nothing" int 0 up;
-  check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
-  check_arr ~msg:"v" [| 9.0; 36.0 |] r.v
-
-(* A value returned at two leaves is two values, each with storage of its own:
-   the first takes the output's storage and the second is a copy. *)
-let test_duplicate_outputs_are_two_values () =
-  let g =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
-      (fun p ->
-        let y = Nx.add p.u p.v in
-        { u = y; v = y })
-  in
-  let r = g { u = vec32 [| 1.0 |]; v = vec32 [| 2.0 |] } in
-  is_true ~msg:"two values" (r.u != r.v);
-  is_true ~msg:"with storage of their own" (storage_of r.u != storage_of r.v);
-  check_arr ~msg:"readable" [| 3.0 |] r.u;
-  check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v;
-  let x = place (vec32 [| 4.0; 5.0 |]) in
-  let twice =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> returns pair_ptree)
-      (fun x -> { u = x; v = x })
-  in
-  let r = twice x in
-  is_true ~msg:"a read input returned twice is two copies"
-    (storage_of r.u != storage_of r.v
-    && storage_of r.u != storage_of x
-    && storage_of r.v != storage_of x);
-  check_arr ~msg:"first copy" [| 4.0; 5.0 |] r.u;
-  check_arr ~msg:"second copy" [| 4.0; 5.0 |] r.v;
-  let host =
-    Rune.jit
-      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
-      (fun p ->
-        let y = Nx.mul p.u p.v in
-        { u = y; v = y })
-  in
-  let r = host { u = vec32 [| 2.0 |]; v = vec32 [| 3.0 |] } in
-  let address x = Nx_device.Buffer.address (storage x) in
-  is_false ~msg:"on the host too" (Nativeint.equal (address r.u) (address r.v));
-  check_arr ~msg:"host value" [| 6.0 |] r.u;
-  check_arr ~msg:"host copy" [| 6.0 |] r.v
-
-let test_cross_jit_feedback () =
-  let g1 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  let g2 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add_s x 1.0) in
-  let h = g1 (vec32 [| 1.0; 2.0 |]) in
-  let r, up, _ = delta (fun () -> g2 h) in
-  equal ~msg:"a distinct jitted closure seeds the handle too" int 0 up;
-  check_arr ~msg:"value" [| 3.0; 5.0 |] r
-
-let test_cross_signature_feedback () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.sum ~axes:[ 0 ] x) in
-  let h1 = g (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]) in
-  (* h1 has a new shape: feeding it back compiles a second signature, still
-     without forcing the handle. *)
-  let h2, up, down = delta (fun () -> g h1) in
-  equal ~msg:"the retrace uploads nothing" int 0 up;
-  equal ~msg:"the retrace downloads nothing" int 0 down;
-  check_arr ~msg:"value" [| 21.0 |] h2;
-  check_arr ~msg:"h1 still readable" [| 5.0; 7.0; 9.0 |] h1
-
-let test_pass_through_output_survives () =
-  let g =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
-      (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
-  in
-  let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
-  let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
-  check_arr ~msg:"pass-through survives a later call" [| 1.0; 2.0 |] r1.u;
-  check_arr ~msg:"first call's computed output" [| 6.0; 8.0 |] r1.v;
-  check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
-  check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v
-
-let test_grad_over_jit_with_deferred_arg () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x x) in
-  let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
-  (* Under grad the jitted function runs eagerly; the handle forces on its first
-     operation. *)
-  let dx = Rune.grad' (fun x -> Nx.sum (g x)) h in
-  check_arr ~msg:"gradient at the deferred point" [| 2.0; 8.0; 18.0 |] dx
-
-let test_vmap_over_jit_with_deferred_arg () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  let h = g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
-  let y = Rune.vmap' g h in
-  check_arr ~msg:"vmap over jit at a deferred point" [| 4.0; 8.0; 12.0; 16.0 |]
-    y
-
-let test_dispatch_on_handle_reads_no_bytes () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  let h = g (vec32 [| 1.0; 2.0 |]) in
-  (* Signature dispatch uses only metadata: replaying on a handle must not force
-     it. *)
-  let _h2, _, down = delta (fun () -> g h) in
-  equal ~msg:"dispatching on a handle downloads nothing" int 0 down
-
-let test_capture_uploaded_once_across_signatures () =
-  let n = 256 in
-  let c = vec32 (Array.init n float_of_int) in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x c) in
-  let _, up1, _ = delta (fun () -> g (vec32 (Array.make n 0.0))) in
-  (* A new input shape compiles a second signature; the capture's device copy is
-     shared, so only the input is uploaded. *)
-  let _, up2, _ =
-    delta (fun () -> g (Nx.create f32 [| 1; n |] (Array.make n 1.0)))
-  in
-  equal ~msg:"first compile uploads input and capture" int (2 * n * 4) up1;
-  equal ~msg:"second signature re-uploads only the input" int (n * 4) up2
-
-let test_dropped_handles_are_reclaimed () =
-  let n = 1024 in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  let x = vec32 (Array.make n 1.0) in
-  let base = (Rune.jit_stats ()).resident_bytes in
-  let _, _, down =
-    delta (fun () ->
-        for _ = 1 to 50 do
-          ignore (g x)
-        done)
-  in
-  equal ~msg:"unread outputs download nothing" int 0 down;
-  (* Collect the dropped handles; the next calls drain their buffers. *)
-  full_major ();
-  ignore (g x);
-  full_major ();
-  ignore (g x);
-  let s = Rune.jit_stats () in
-  is_true ~msg:"resident bytes are bounded after gc"
-    (s.resident_bytes - base <= 3 * n * 4)
-
-(* A call returns while its kernels may still run. A read waits for them: right
-   after one call, and after a chain of unread calls. *)
-let test_read_after_call_waits () =
-  let n = 256 in
-  let f x = Nx.add_s (Nx.matmul (Nx.tanh x) (Nx.transpose x)) 1.0 in
-  let g = Rune.jit' ~devices:[ cpu1 ] f in
-  let x =
-    Nx.create f32 [| n; n |]
-      (Array.init (n * n) (fun i -> float_of_int (i mod 13) /. 13.0))
-  in
-  check_arr ~eps:1e-3 ~msg:"right after one call" (to_arr (f x)) (g x);
-  let step =
-    Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add_s (Nx.mul_s x 0.5) 1.0)
-  in
-  let h = ref (place (vec32 (Array.make 4096 0.0))) in
-  for _ = 1 to 50 do
-    h := step !h
-  done;
-  let expected = 2.0 -. (2.0 *. (0.5 ** 50.0)) in
-  check_arr ~eps:1e-6 ~msg:"after fifty unread calls" (Array.make 4096 expected)
-    !h
-
-(* Arenas. Each compiled program owns its planned intermediate storage;
-   independent retained programs cannot overwrite one another's working set. *)
-
-let device_bytes name =
-  Tolk.Helpers.Global_counters.mem_used ~device:name ()
-
-(* Not inlined: once it returns, the caller no longer holds the window or its
-   storage, while [g] itself remains alive. *)
-let[@inline never] read_a_window g n =
-  let x = place (Nx.create f32 [| n + 1 |] (Array.make (n + 1) 1.0)) in
-  check_arr ~msg:"the window" (Array.make n 2.0)
-    (g (Nx.slice [ Nx.R (1, n + 1) ] x))
-
-(* A call releases the buffer views of its ranges once it has run, so a dropped
-   value's storage returns to the device while the program that read a window of
-   it lives. *)
-let test_a_window's_view_is_released () =
-  let n = 1 lsl 18 in
-  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-  read_a_window g n;
-  let before = device_bytes "CPU:1" in
-  full_major ();
-  is_true ~msg:"the window's storage is freed"
-    (device_bytes "CPU:1" <= before - (n * 4));
-  check_arr ~msg:"the program still runs" [| 2.0 |]
-    (g (place (vec32 [| 1.0 |])))
-
-(* An [n x n] intermediate from an [n x 8] input: its arena outweighs the input
-   and output storage the program also allocates. *)
-let arena_program ~n act =
-  let f x =
-    let a = act (Nx.matmul x (Nx.transpose x)) in
-    Nx.sum ~axes:[ 1 ] (Nx.matmul a a)
-  in
-  let x k =
-    Nx.create f32 [| n; 8 |]
-      (Array.init (n * 8) (fun i -> sin (float_of_int ((k * i) + 1)) /. 4.0))
-  in
-  (f, Rune.jit' ~devices:[ cpu1 ] f, x)
-
-let test_programs_own_their_arenas () =
-  let n = 512 in
-  let f, f', x = arena_program ~n Nx.tanh in
-  let g, g', _ = arena_program ~n Nx.sin in
-  check_arr ~eps:1e-2 ~msg:"first program" (to_arr (f (x 1))) (f' (x 1));
-  (* Retiring the storage earlier tests dropped keeps its release out of the
-     measured window. *)
-  full_major ();
-  let before = device_bytes "CPU:1" in
-  check_arr ~eps:1e-2 ~msg:"second program" (to_arr (g (x 2))) (g' (x 2));
-  is_true ~msg:"the second program owns independent intermediate storage"
-    (device_bytes "CPU:1" - before >= n * n * 4);
-  for k = 3 to 5 do
-    check_arr ~eps:1e-2 ~msg:"the first after the second"
-      (to_arr (f (x k)))
-      (f' (x k));
-    check_arr ~eps:1e-2 ~msg:"the second after the first"
-      (to_arr (g (x (k + 3))))
-      (g' (x (k + 3)))
-  done
-
-(* Return while the large program is still reachable, then let its complete
-   compiled graph go. The small program must retain only its own arena. *)
-let[@inline never] run_independent_large_arena n =
-  let g, g', y = arena_program ~n Nx.sin in
-  check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
-  let used = device_bytes "CPU:1" in
-  ignore (Sys.opaque_identity (Some g'));
-  used
-
-let test_dropping_a_program_releases_its_arena () =
-  let f, f', x = arena_program ~n:256 Nx.tanh in
-  check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
-  full_major ();
-  let n = 1024 in
-  let retained = run_independent_large_arena n in
-  full_major ();
-  is_true ~msg:"the dropped program releases its intermediate storage"
-    (device_bytes "CPU:1" <= retained - (n * n * 4));
-  check_arr ~eps:1e-2 ~msg:"the retained program keeps its own arena"
-    (to_arr (f (x 2)))
-    (f' (x 2))
-
-(* Not inlined: once it returns, only the queued kernels use the placed
-   input. *)
-let[@inline never] run_on_a_dropped_input g data n =
-  g (place (Nx.create f32 [| n; n |] data))
-
-(* A placed input dropped while the kernels that read it are queued returns to
-   the system only once they have run: the first result is intact after a value
-   of the same size is placed, which may take the dropped input's memory. *)
-let test_buffer_freed_under_a_running_kernel () =
-  let n = 384 in
-  let data = Array.init (n * n) (fun i -> float_of_int (i mod 7) /. 7.0) in
-  let f x = Nx.matmul (Nx.tanh (Nx.matmul x x)) x in
-  let expected = to_arr (f (Nx.create f32 [| n; n |] data)) in
-  let g = Rune.jit' ~devices:[ cpu1 ] f in
-  ignore (to_arr (g (Nx.create f32 [| n; n |] data)));
-  let noise = Nx.create f32 [| n; n |] (Array.make (n * n) 1e9) in
-  for _ = 1 to 4 do
-    let y = run_on_a_dropped_input g data n in
-    full_major ();
-    let z = place noise in
-    check_arr ~eps:1e-2 ~msg:"the first result" expected y;
-    ignore (to_arr z)
-  done
-
-(* Traced values carry no storage. OCaml counts a bigarray's bytes towards the
-   major collector's pace even when its pages are never touched, so a
-   placeholder with a buffer costs a slice of major collection per traced
-   operation: the first call of a 20b-parameter decoder step spent 35 s of its
-   47 s there. *)
-let test_traced_values_have_no_storage () =
-  let is_traced (type a b) (x : (a, b) Nx.t) =
-    match Nx.Repr.v x with Traced _ -> true | Host _ | Placed _ -> false
-  in
-  let seen = ref [] in
-  let f x =
-    let y = Nx.add_s (Nx.reshape [| 2; 2 |] x) 1.0 in
-    let q, r = Nx.qr y in
-    seen := List.map is_traced [ x; y; q; r ];
-    Nx.matmul q r
-  in
-  let x = vec32 [| 1.0; 2.0; 3.0; 5.0 |] in
-  let compiled = Rune.jit' f x in
-  let traced = !seen in
-  check_arr ~eps:1e-4 ~msg:"value" (to_arr (f x)) compiled;
-  equal ~msg:"input, result, and both results of a two-result operation"
-    (list bool) [ true; true; true; true ] traced
-
-(* A traced value exists only inside its trace: leaked out of it, it neither
-   runs eagerly nor enters another trace. *)
-let test_leaked_traced_value_raises () =
-  let leaked = ref None in
-  let f x =
-    let y = Nx.mul_s x 2.0 in
-    leaked := Some y;
-    y
-  in
-  ignore (Rune.jit' f (vec32 [| 1.0; 2.0 |]));
-  let y = Option.get !leaked in
-  raises_match
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> Nx.add y y);
-  raises_jit_error (fun () ->
-      Rune.jit' (fun x -> Nx.add x y) (vec32 [| 1.0; 2.0 |]))
-
-(* Consumption. A compiled call consumes the resident leaves of the arguments
-   its signature marks with [consumes]: their device buffers return to the
-   allocator once the call completes, or back a result, so a state-to-state loop
-   holds at most two generations of device memory, without any GC. A consumed
-   handle raises on read, a host one included; read arguments are
-   unaffected. *)
-
-let raises_consumed f =
-  raises_match
-    (fun exn ->
-      match exn with
-      | Invalid_argument msg ->
-          String.starts_with ~prefix:"this value was consumed at " msg
-          && String.ends_with
-               ~suffix:
-                 " in a compiled call's arguments; use the value the call \
-                  returned"
-               msg
-      | _ -> false)
-    (fun () -> ignore (f ()))
-
-(* [f] compiled as a step that consumes its state. *)
-let consume state f =
-  Rune.jit ~devices:[ cpu1 ] Nx.Ptree.(consumes state @@ returns state) f
-
-let consume' f = consume Nx.Ptree.tensor f
-
-(* A value with no elements has no device storage. Consuming one, returning one
-   at two leaves and returning an empty argument unchanged allocate nothing and
-   keep the rules for results and consumption. *)
-let test_empty_values_are_consumed_and_fresh () =
-  let empty () = place (Nx.zeros f32 [| 0 |]) in
-  let x = empty () in
-  let y = consume' (fun x -> Nx.mul_s x 2.0) x in
-  equal ~msg:"an empty consumed argument gives an empty result" (array int)
-    [| 0 |] (Nx.shape y);
-  check_arr ~msg:"the result reads as empty" [||] y;
-  equal ~msg:"the consumed argument's shape stays readable" (array int) [| 0 |]
-    (Nx.shape x);
-  raises_consumed (fun () -> Nx.to_array x);
-  raises_consumed (fun () -> consume' (fun x -> Nx.mul_s x 2.0) x);
-  let twice =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> returns pair_ptree)
-      (fun x ->
-        let y = Nx.mul_s x 2.0 in
-        { u = y; v = y })
-  in
-  List.iter
-    (fun (msg, x) ->
-      let r = twice x in
-      is_true ~msg:(msg ^ ": two values") (r.u != r.v);
-      check_arr ~msg:(msg ^ ": first") [||] r.u;
-      check_arr ~msg:(msg ^ ": second") [||] r.v)
-    [ ("placed", empty ()); ("host", Nx.zeros f32 [| 0 |]) ];
-  let pass =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> returns pair_ptree)
-      (fun x -> { u = x; v = x })
-  in
-  let x = empty () in
-  let r = pass x in
-  is_true ~msg:"an empty read argument returned twice is two copies"
-    (r.u != r.v && r.u != x && r.v != x);
-  check_arr ~msg:"the argument stays readable" [||] x;
-  check_arr ~msg:"its copies read as empty" [||] r.v
-
-let test_consume_bounds_resident_memory () =
-  let n = 4096 in
-  let step d =
-    let f x = Nx.add_s x 1.0 in
-    if d then consume' f else Rune.jit' ~devices:[ cpu1 ] f
-  in
-  (* Every handle created here stays reachable; retiring the handles earlier
-     tests dropped unread keeps their release out of the measured window. *)
-  let hold = Array.make 10 (vec32 [||]) in
-  let run g =
-    let x = vec32 (Array.make n 0.0) in
-    full_major ();
-    let base = (Rune.jit_stats ()).resident_bytes in
-    let h = ref (g x) in
-    for i = 0 to 9 do
-      hold.(i) <- !h;
-      h := g !h
-    done;
-    let r = (Rune.jit_stats ()).resident_bytes - base in
-    (!h, r)
-  in
-  let h, grew = run (step true) in
-  is_true ~msg:"consumption holds at most two generations" (grew <= 2 * n * 4);
-  check_arr ~msg:"consumed chain computes the right value" (Array.make n 11.0) h;
-  let h', grew' = run (step false) in
-  is_true ~msg:"without consumption every generation stays resident"
-    (grew' >= 10 * n * 4);
-  check_arr ~msg:"unconsumed chain still correct" (Array.make n 11.0) h'
-
-(* Elision: a consumed input whose output reads it at the same index hands its
-   storage to the output, so a carry loop holds one generation, not two. *)
-let test_consume_reuses_storage () =
-  let n = 4096 in
-  let step = consume' (fun x -> Nx.add_s x 1.0) in
-  let x = vec32 (Array.make n 0.0) in
-  full_major ();
-  let base = (Rune.jit_stats ()).resident_bytes in
-  let h = ref (step x) in
-  let hold = Array.make 10 !h in
-  for i = 0 to 9 do
-    hold.(i) <- !h;
-    h := step !h
-  done;
-  let grew = (Rune.jit_stats ()).resident_bytes - base in
-  is_true ~msg:"one generation stays resident" (grew <= n * 4);
-  check_arr ~msg:"the chain computes the right value" (Array.make n 11.0) !h
-
-(* A path through a movement op reads the input at another index, so the output
-   must not take its storage; a chain stays correct. *)
-let test_consume_refuses_movement_path () =
-  let f x = Nx.add x (Nx.transpose x) in
-  let step = consume' f in
-  let x = Nx.create f32 [| 3; 3 |] (Array.init 9 float_of_int) in
-  let e = ref x and h = ref x in
-  for _ = 1 to 3 do
-    e := f !e;
-    h := step !h
-  done;
-  check_arr ~msg:"transposed chain" (to_arr (f !e)) (step !h)
-
-(* An input read by a kernel that runs after the output's store keeps its own
-   storage: here the reduction over [u] must see the old value. *)
-let test_consume_refuses_later_reader () =
-  let f (p : Pair.pair) =
-    {
-      Pair.u = Nx.add_s p.u 1.0;
-      v = Nx.add p.v (Nx.broadcast_to (Nx.shape p.v) (Nx.sum p.u));
-    }
-  in
-  let step = consume pair_ptree f in
-  let p =
-    { Pair.u = vec32 [| 1.0; 2.0; 3.0 |]; v = vec32 [| 0.0; 0.0; 0.0 |] }
-  in
-  let e = ref p and h = ref p in
-  for _ = 1 to 3 do
-    e := f !e;
-    h := step !h
-  done;
-  let e = f !e and h = step !h in
-  check_arr ~msg:"u" (to_arr e.Pair.u) h.Pair.u;
-  check_arr ~msg:"v sums the pre-update values" (to_arr e.Pair.v) h.Pair.v
-
-(* A consumed input returned unchanged moves its storage to the output. *)
-let test_consume_moves_pass_through () =
-  let step =
-    consume pair_ptree (fun (p : Pair.pair) ->
-        { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
-  in
-  let p =
-    { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } |> step |> step
-  in
-  let base = (Rune.jit_stats ()).resident_bytes in
-  let r, up, _ = delta (fun () -> step p) in
-  equal ~msg:"resident leaves upload nothing" int 0 up;
-  is_true ~msg:"no fresh buffer for the pass-through"
-    ((Rune.jit_stats ()).resident_bytes - base <= 0);
-  check_arr ~msg:"pass-through value" [| 1.0; 2.0 |] r.Pair.u;
-  check_arr ~msg:"updated value" [| 6.0; 7.0 |] r.Pair.v;
-  raises_consumed (fun () -> to_arr p.Pair.u)
-
-(* An input both updated and returned unchanged keeps its storage for the
-   pass-through: the update must not write over the value the pass-through
-   copies out after the kernels ran. *)
-let test_consume_keeps_pass_through_readable () =
-  let step =
-    consume pair_ptree (fun (p : Pair.pair) ->
-        { Pair.u = Nx.add_s p.u 1.0; v = p.u })
-  in
-  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 0.0; 0.0 |] } in
-  let r = step (step p) in
-  check_arr ~msg:"updated" [| 3.0; 4.0 |] r.Pair.u;
-  check_arr ~msg:"pass-through holds the value before the update" [| 2.0; 3.0 |]
-    r.Pair.v
-
-(* Every leaf an output derives from is reused, whatever its position among the
-   inputs. *)
-let test_consume_reuses_every_leaf () =
-  let step =
-    consume pair_ptree (fun (p : Pair.pair) ->
-        { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
-  in
-  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
-  let r1 = step p in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let r2 = step r1 in
-  equal ~msg:"both leaves reused" int 16
-    ((Rune.jit_stats ()).reused_bytes - before);
-  check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
-  check_arr ~msg:"v" [| 7.0; 8.0 |] r2.Pair.v
-
-(* A staged loop refuses reuse only for the leaves it touches. *)
-let test_consume_reuses_beside_a_scan () =
-  let step =
-    consume pair_ptree (fun (p : Pair.pair) ->
-        { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
-  in
-  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 1.0; 2.0 |] } in
-  let r1 = step p in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let r2 = step r1 in
-  is_true ~msg:"the leaf beside the loop is reused"
-    ((Rune.jit_stats ()).reused_bytes - before >= 8);
-  check_arr ~msg:"u" [| 3.0; 4.0 |] r2.Pair.u;
-  check_arr ~msg:"v" [| 1.0; 4.0 |] r2.Pair.v
-
-(* A fresh output never takes an input's buffer node: a resident input fed to a
-   later call keeps its bytes whatever the outputs are. *)
-let test_outputs_never_write_into_inputs () =
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
-      (fun (p : Pair.pair) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
-  in
-  let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 5.0; 6.0 |] } in
-  let r1 = step p in
-  let r2 = step r1 in
-  check_arr ~msg:"second call's output" [| 3.0; 4.0 |] r2.Pair.u;
-  check_arr ~msg:"the first call's pass-through is intact" [| 1.0; 2.0 |]
-    r1.Pair.v;
-  check_arr ~msg:"the first call's output is intact" [| 2.0; 3.0 |] r1.Pair.u
-
-(* The decode shape: a window write at a run-time position reuses the cache's
-   storage across steps. *)
-let test_consume_reuses_window_write () =
-  let v = vec32 [| 9.0; 8.0 |] in
-  let f { x; pos } =
-    { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2L }
-  in
-  let step = consume windowed_ptree f in
-  let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
-  let s = ref (step s0) in
-  full_major ();
-  let base = (Rune.jit_stats ()).resident_bytes in
-  for _ = 1 to 3 do
-    s := step !s
-  done;
-  let grew = (Rune.jit_stats ()).resident_bytes - base in
-  is_true ~msg:"the cache holds one generation" (grew <= 0);
-  check_arr ~msg:"every window written"
-    [| 9.0; 8.0; 9.0; 8.0; 9.0; 8.0; 9.0; 8.0 |]
-    !s.x
-
-(* The slot-pool write of a key-value cache: every slot takes a new row or keeps
-   its old one, and the same program reads the written pool back through an
-   index. The read follows the store, so the pool still reuses its storage. *)
-type pool = { slots : Nx.float32_t; writer : Nx.int64_t; read : Nx.float32_t }
-
-module Pool = struct
-  type _ t = pool
-
-  let walk c { slots; writer; read } =
-    let open Nx.Ptree.Walk in
-    let slots = field c "slots" tensor slots in
-    let writer = field c "writer" tensor writer in
-    let read = field c "read" tensor read in
-    { slots; writer; read }
-end
-
-let pool_ptree = Nx.Ptree.instantiate (module Pool)
-
-let test_consume_reuses_pool_read_after_write () =
-  let n = 1024 in
-  let rows = vec32 [| 10.0; 20.0; 30.0 |] in
-  let window = Nx.create Nx.int64 [| 4 |] [| 5L; 2L; 7L; 0L |] in
-  let f { slots; writer; read = _ } =
-    let fresh = Nx.take ~axis:0 ~indices:(Nx.maximum_s writer 0L) rows in
-    let slots = Nx.where (Nx.greater_equal_s writer 0L) fresh slots in
-    { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
-  in
-  let step = consume pool_ptree f in
-  let writer =
-    Nx.create Nx.int64 [| n |]
-      (Array.init n (fun i ->
-           match i with 2 -> 0L | 5 -> 1L | 7 -> 2L | _ -> -1L))
-  in
-  let s =
-    ref
-      (step { slots = vec32 (Array.make n 1.0); writer; read = vec32 [| 0. |] })
-  in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  s := step !s;
-  is_true ~msg:"the pool is written over its consumed input"
-    ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
-  check_arr ~msg:"the read sees the written pool"
-    [| 20.0; 10.0; 30.0; 1.0 |]
-    !s.read
-
-(* Two compiled programs take turns on one consumed state. Each keeps its own
-   planned intermediates, so a program that parked an intermediate in storage
-   the other still owns would corrupt the state here. *)
-let test_consume_alternates_two_programs () =
-  let n = 8 in
-  let mix (p : Pair.pair) =
-    let a = Nx.tanh (Nx.matmul p.u p.v) in
-    let scale = Nx.add_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.abs a)) 1.0 in
-    {
-      Pair.u = Nx.add p.u (Nx.div a scale);
-      v = Nx.sub p.v (Nx.mul_s (Nx.transpose a) 0.1);
-    }
-  in
-  let fold (p : Pair.pair) =
-    let m = Nx.mean ~axes:[ 0 ] ~keepdims:true (Nx.matmul p.v p.u) in
-    let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
-    { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
-  in
-  let mix' = consume pair_ptree mix in
-  let fold' = consume pair_ptree fold in
-  let init k =
-    Nx.create f32 [| n; n |]
-      (Array.init (n * n) (fun i -> sin (float_of_int ((k * i) + 1))))
-  in
-  let p = { Pair.u = init 3; v = init 7 } in
-  let e = ref p and h = ref p in
-  for i = 1 to 8 do
-    let f, f' = if i mod 2 = 0 then (fold, fold') else (mix, mix') in
-    e := f !e;
-    h := f' !h
-  done;
-  check_arr ~eps:1e-4 ~msg:"u" (to_arr !e.Pair.u) !h.Pair.u;
-  check_arr ~eps:1e-4 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v
-
-(* The same pool written through the token-to-slot map: a scatter over the
-   tokens. The output is a copy of the pool plus a store at loaded indices, and
-   it takes the consumed pool's storage, so the copy has nothing to move. *)
-let scatter_pool ~consumes =
-  let n = 1024 in
-  let rows = Nx.create f32 [| 4; 1 |] [| 10.0; 20.0; 30.0; 40.0 |] in
-  let window = Nx.create Nx.int64 [| 4 |] [| 5L; 2L; 7L; 0L |] in
-  let f { slots; writer; read = _ } =
-    let slots =
-      Nx.scatter ~axis:0
-        ~indices:(Nx.reshape [| 4; 1 |] writer)
-        ~values:rows
-        (Nx.reshape [| n; 1 |] slots)
-    in
-    let slots = Nx.reshape [| n |] slots in
-    { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
-  in
-  let step =
-    if consumes then consume pool_ptree f
-    else
-      Rune.jit ~devices:[ cpu1 ] Nx.Ptree.(pool_ptree @-> returns pool_ptree) f
-  in
-  (* Tokens 1 and 3 aim at slot 5: the later one wins. Token 2 has no slot. *)
-  let writer = Nx.create Nx.int64 [| 4 |] [| 2L; 5L; -1L; 5L |] in
-  let first =
-    { slots = vec32 (Array.make n 1.0); writer; read = vec32 [| 0. |] }
-  in
-  (n, step, first)
-
-let test_consume_reuses_pool_scatter () =
-  let n, step, first = scatter_pool ~consumes:true in
-  let s = ref (step first) in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  s := step !s;
-  is_true ~msg:"the pool is written over its consumed input"
-    ((Rune.jit_stats ()).reused_bytes - before >= n * 4);
-  check_arr ~msg:"the read sees the written pool" [| 40.0; 10.0; 1.0; 1.0 |]
-    !s.read;
-  let slots = to_arr !s.slots in
-  equal ~msg:"an unwritten slot keeps its row" float_exact 1.0 slots.(9)
-
-let test_scatter_without_consumption_keeps_the_input () =
-  let _, step, first = scatter_pool ~consumes:false in
-  let s1 = step first in
-  let s2 = step s1 in
-  check_arr ~msg:"second call" [| 40.0; 10.0; 1.0; 1.0 |] s2.read;
-  equal ~msg:"the first call's pool is intact" float_exact 40.0
-    (to_arr s1.slots).(5)
-
-(* Bytes of consumed storage the second of two consumed steps reuses. *)
-let reused_by_second_step step x =
-  let y = step x in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let z = step y in
-  (z, (Rune.jit_stats ()).reused_bytes - before)
-
-(* Lending pairs a result with a consumed leaf by what the program computes, not
-   by position: a state returned in another order takes the storage it derives
-   from, and a result that reads no consumed leaf takes one that no kernel reads
-   after it is written. *)
-let test_lending_follows_derivation () =
-  let swap =
-    consume pair_ptree (fun (p : Pair.pair) ->
-        { Pair.u = Nx.add_s p.v 1.0; v = Nx.mul_s p.u 2.0 })
-  in
-  let r, reused =
-    reused_by_second_step swap
-      {
-        Pair.u = place (vec32 [| 1.0; 2.0 |]);
-        v = place (vec32 [| 3.0; 4.0 |]);
-      }
-  in
-  equal ~msg:"a swapped state reuses both storages" int 16 reused;
-  check_arr ~msg:"u" [| 3.0; 5.0 |] r.Pair.u;
-  check_arr ~msg:"v" [| 8.0; 10.0 |] r.Pair.v;
-  let fresh =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(consumes tensor @@ tensor @-> returns tensor)
-      (fun _ y -> Nx.mul_s y 2.0)
-  in
-  let y = place (vec32 [| 5.0; 6.0 |]) in
-  let x = place (vec32 [| 1.0; 2.0 |]) in
-  ignore (fresh (place (vec32 [| 0.0; 0.0 |])) y);
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let z = fresh x y in
-  equal ~msg:"a result that reads no consumed leaf takes one" int 8
-    ((Rune.jit_stats ()).reused_bytes - before);
-  check_arr ~msg:"its value" [| 10.0; 12.0 |] z;
-  raises_consumed (fun () -> to_arr x);
-  check_arr ~msg:"the read argument stays" [| 5.0; 6.0 |] y
-
-(* A signature of several arguments, the consumed one between two read ones:
-   errors and consumption name the argument. *)
-let test_a_consumed_argument_between_read_ones () =
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> consumes pair_ptree @@ tensor @-> returns tensor)
-      (fun a (p : Pair.pair) b -> Nx.add (Nx.mul a p.u) (Nx.mul b p.v))
-  in
-  let p =
-    { Pair.u = place (vec32 [| 1.0; 2.0 |]); v = place (vec32 [| 3.0 |]) }
-  in
-  let r = step (vec32 [| 2.0; 2.0 |]) p (vec32 [| 1.0; 1.0 |]) in
-  check_arr ~msg:"result" [| 5.0; 7.0 |] r;
-  raises_match
-    (function
-      | Invalid_argument msg ->
-          msg
-          = "this value was consumed at 1.u in a compiled call's arguments; \
-             use the value the call returned"
-      | _ -> false)
-    (fun () -> to_arr p.Pair.u);
-  equal ~msg:"its shape stays readable" (array int) [| 2 |] (Nx.shape p.Pair.u);
-  invalid_starting "Rune.jit: ~devices: " (fun () ->
-      ignore (Rune.jit' ~devices:[ cpu1; cpu1 ] (fun x -> x) (vec32 [| 1.0 |])));
-  invalid_starting "Rune.jit: ~devices: " (fun () ->
-      ignore
-        (Rune.jit' ~devices:[ cpu1; Nx.Device.host ]
-           (fun x -> x)
-           (vec32 [| 1.0 |])));
-  invalid_starting "Rune.jit: ~devices: " (fun () ->
-      ignore (Rune.jit' ~devices:[] (fun x -> x) (vec32 [| 1.0 |])))
-
-(* The values written are read from the consumed pool by a kernel that runs
-   before the write: a reader of the old value in time, so the output still
-   takes the pool's storage. *)
-let test_scatter_of_values_read_from_the_pool () =
-  let n = 8 in
-  let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
-  let f x =
-    let values = Nx.mul_s (Nx.slice [ Nx.R (6, 8) ] (Nx.flip x)) 10.0 in
-    Nx.scatter ~axis:0 ~indices ~values x
-  in
-  let step = consume' f in
-  let x = vec32 (Array.init n float_of_int) in
-  let expected = to_arr (f (f x)) in
-  let z, reused = reused_by_second_step step x in
-  check_arr ~msg:"two consumed steps" expected z;
-  equal ~msg:"the pool's storage is reused" int (n * 4) reused
-
-(* The consumed pool is itself the values: the kernel would read through the
-   storage it writes, so the output must not take it. *)
-let test_scatter_of_the_pool_into_itself () =
-  let indices = Nx.create Nx.int64 [| 4 |] [| 3L; 2L; 1L; 0L |] in
-  let f x = Nx.scatter ~axis:0 ~indices ~values:x x in
-  let step = consume' f in
-  let x () = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-  check_arr ~msg:"reversed" [| 4.0; 3.0; 2.0; 1.0 |] (step (step (step (x ()))));
-  let _, reused = reused_by_second_step step (x ()) in
-  equal ~msg:"the pool's storage is not reused" int 0 reused
-
-(* A kernel reads the old pool and the written one together, so it runs after
-   the write: the output must not take the pool's storage, and the reader still
-   sees the old value. *)
-let test_scatter_refuses_a_later_reader_of_the_pool () =
-  let indices = Nx.create Nx.int64 [| 2 |] [| 1L; 3L |] in
-  let values = vec32 [| 50.0; 70.0 |] in
-  let f (p : Pair.pair) =
-    let u = Nx.scatter ~axis:0 ~indices ~values p.u in
-    { Pair.u; v = Nx.add (Nx.flip p.u) u }
-  in
-  let step = consume pair_ptree f in
-  let p =
-    { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
-  in
-  let e = f (f p) in
-  let r1 = step p in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let r2 = step r1 in
-  equal ~msg:"only the leaf the step never reads lends its storage" int 16
-    ((Rune.jit_stats ()).reused_bytes - before);
-  check_arr ~msg:"written" (to_arr e.Pair.u) r2.Pair.u;
-  check_arr ~msg:"old value read" (to_arr e.Pair.v) r2.Pair.v
-
-(* A reader of the old pool scheduled with the write: the output keeps the new
-   value and the reader the old one, whether or not storage was reused. *)
-let test_scatter_beside_a_reader_of_the_old_value () =
-  let indices = Nx.create Nx.int64 [| 2 |] [| 1L; 3L |] in
-  let values = vec32 [| 50.0; 70.0 |] in
-  let f (p : Pair.pair) =
-    {
-      Pair.u = Nx.scatter ~axis:0 ~indices ~values p.u;
-      v = Nx.add (Nx.flip p.u) p.v;
-    }
-  in
-  let step = consume pair_ptree f in
-  let p () =
-    { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
-  in
-  let e = f (f (p ())) in
-  let r = step (step (p ())) in
-  check_arr ~msg:"written" (to_arr e.Pair.u) r.Pair.u;
-  check_arr ~msg:"old value read" (to_arr e.Pair.v) r.Pair.v
-
-let test_place_then_consume () =
-  let g = consume' (fun x -> Nx.mul_s x 2.0) in
-  ignore (g (vec32 [| 0.0; 0.0 |]));
-  let p = place (vec32 [| 1.0; 2.0 |]) in
-  check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
-  raises_consumed (fun () -> to_arr p)
-
-(* Values on the disk. CPU:1 addresses host memory, so a value on the disk
-   placed there is the file's pages, borrowed: no bytes move, the view is kept,
-   and the storage is never lent, written or counted. A program reads it as it
-   reads a host value. *)
-
-(* An int32 tensor of [n] elements on the disk, over a fresh file whose bytes
-   are [byte i] at offset [i], with the file's path. *)
-let disk_int32 ~byte n =
-  let path = Filename.temp_file "rune_disk_" ".bin" in
-  let oc = open_out_bin path in
-  let piece = 1 lsl 20 in
-  let bytes = Bytes.create piece in
-  let written = ref 0 in
-  while !written < 4 * n do
-    let len = Int.min piece ((4 * n) - !written) in
-    for i = 0 to len - 1 do
-      Bytes.unsafe_set bytes i (byte (!written + i))
-    done;
-    Stdlib.output oc bytes 0 len;
-    written := !written + len
-  done;
-  close_out oc;
-  let file = Result.get_ok (Nx_device.Buffer.of_file path) in
-  ( on_disk Nx_dtype.int32 [| n |]
-      (Nx_device.Buffer.view file ~offset:0 Nx_dtype.Scalar.Int32 n),
-    path )
-
-let first_byte i = Char.chr (i * 7 land 0xff)
-let other_byte i = Char.chr (i * 13 land 0xff)
-
-let remove_file path =
-  full_major ();
-  try Sys.remove path with Sys_error _ when Sys.win32 -> ()
-
-let read_from_disk () =
-  Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk)
-
-let strides x = Nx_array.View.strides (view x)
-
-(* [x] placed from the disk on CPU:1, whose memory is the host's, is its view of
-   the file's pages, bit for bit [x]: nothing is uploaded or counted, and the
-   file is read once ahead. *)
-let check_placed_from_disk ~msg x =
-  let base = resident () and read = read_from_disk () in
-  let placed, up, _ = delta (fun () -> place x) in
-  equal ~msg:(msg ^ ": bytes uploaded") int 0 up;
-  equal ~msg:(msg ^ ": bytes read ahead") int (Nx.nbytes x)
-    (read_from_disk () - read);
-  equal ~msg:(msg ^ ": bytes counted") int 0 (resident () - base);
-  equal ~msg:(msg ^ ": the view") (array int) (strides x) (strides placed);
-  equal ~msg:(msg ^ ": elements") (array int32)
-    (Nx.to_array (Nx.copy x))
-    (Nx.to_array placed)
-
-let test_disk_placement () =
-  let n = (chunk / 4) + 4099 in
-  let x, path = disk_int32 ~byte:first_byte n in
-  Fun.protect
-    ~finally:(fun () -> remove_file path)
-    (fun () ->
-      check_placed_from_disk ~msg:"contiguous" x;
-      check_placed_from_disk ~msg:"offset" (Nx.slice [ Nx.R (3, n - 5) ] x);
-      let rows = 4100 in
-      let cols = n / rows in
-      let m =
-        Nx.reshape [| rows; cols |] (Nx.slice [ Nx.R (0, rows * cols) ] x)
-      in
-      check_placed_from_disk ~msg:"transposed" (Nx.matrix_transpose m))
-
-(* The path names another file by now: the upload reads the one opened. *)
-let test_disk_upload_after_replace () =
-  let n = 1 lsl 16 in
-  let x, path = disk_int32 ~byte:first_byte n in
-  Fun.protect
-    ~finally:(fun () -> remove_file path)
-    (fun () ->
-      let expected = Nx.copy x in
-      let _, replacement = disk_int32 ~byte:other_byte n in
-      Unix.rename replacement path;
-      let differing placed =
-        Nx.item [] (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal placed expected)))
-      in
-      equal ~msg:"contiguous: the file opened" int32 0l (differing (place x));
-      let m = Nx.matrix_transpose (Nx.reshape [| 256; 256 |] x) in
-      equal ~msg:"transposed: the file opened" int32 0l
-        (Nx.item []
-           (Nx.sum
-              (Nx.cast Nx.int32
-                 (Nx.not_equal (place m)
-                    (Nx.matrix_transpose (Nx.reshape [| 256; 256 |] expected)))))))
-
-(* A value whose first byte is not aligned to its elements is not borrowed: its
-   elements cannot be read in place. It is read from its file. *)
-let test_disk_unaligned () =
-  let n = 4096 in
-  let _, path = disk_int32 ~byte:first_byte n in
-  Fun.protect
-    ~finally:(fun () -> remove_file path)
-    (fun () ->
-      let x =
-        on_disk Nx_dtype.int32
-          [| n - 1 |]
-          (Nx_device.Buffer.view
-             (Result.get_ok (Nx_device.Buffer.of_file path))
-             ~offset:2 Nx_dtype.Scalar.Int32 (n - 1))
-      in
-      let read = read_from_disk () in
-      let placed, up, _ = delta (fun () -> place x) in
-      equal ~msg:"bytes uploaded" int (4 * (n - 1)) up;
-      equal ~msg:"bytes read" int (4 * (n - 1)) (read_from_disk () - read);
-      equal ~msg:"elements" (array int32)
-        (Nx.to_array (Nx.copy x))
-        (Nx.to_array placed))
-
-(* A leaf and a capture on the disk are read as host values are. *)
-let test_disk_leaf_and_capture () =
-  let n = 4096 in
-  let x, path = disk_int32 ~byte:first_byte n in
-  Fun.protect
-    ~finally:(fun () -> remove_file path)
-    (fun () ->
-      let host = Nx.copy x in
-      let twice = Nx.to_array (Nx.add host host) in
-      equal ~msg:"a leaf on CPU:1" (array int32) twice
-        (Nx.to_array (Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x x) x));
-      equal ~msg:"a leaf on the host" (array int32) twice
-        (Nx.to_array (Rune.jit' (fun x -> Nx.add x x) x));
-      equal ~msg:"a capture" (array int32) twice
-        (Nx.to_array (Rune.jit' ~devices:[ cpu1 ] (fun y -> Nx.add y x) host)))
-
-(* Device lists. CPU:1..CPU:4 each hold storage of their own, so a value placed
-   over them has one buffer per device and a move between them goes through
-   tolk's copies. *)
-
-let cpus = List.init 4 (fun i -> Rune.device (Printf.sprintf "CPU:%d" (i + 1)))
-let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
-
-(* Copies and slices along every axis of a [12; 12; 12] value, over one to four
-   of CPU:1..CPU:4 in several orders. *)
-let placements () =
-  let on ks = List.map (List.nth cpus) ks in
-  List.concat_map
-    (fun ds ->
-      Nx.Placement.replicated ds
-      :: List.init 3 (fun axis -> Nx.Placement.sharded ~axis ds))
-    [
-      on [ 0 ];
-      on [ 1; 0 ];
-      on [ 0; 1; 2 ];
-      on [ 3; 2; 1; 0 ];
-      on [ 0; 1; 2; 3 ];
+      kernels "a cache's rows read by a product are a kernel of their own" 2
+        (fun slots ->
+          Nx.matmul (rows 8 32 0.01)
+            (Nx.transpose (Nx.take ~axis:0 (rows 20 32 0.001) ~indices:slots)))
+        (Nx.create Nx.int64 [| 12 |]
+           (Array.init 12 (fun i -> Int64.of_int (19 - i))));
+      kernels
+        "rows at positions from an offset, read twice, are a kernel of their \
+         own"
+        2
+        (fun p ->
+          scores 16
+            (Nx.take ~axis:0 (rows 64 16 0.001)
+               ~indices:(Nx.add (Nx.arange Nx.int64 0 8 1) p)))
+        (Nx.scalar Nx.int64 4L);
+      kernels "rows read by two sums are a kernel of their own" 2
+        (fun indices ->
+          let g = Nx.take ~axis:0 (rows 64 40 0.001) ~indices in
+          Nx.add
+            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 0 ] (rows 8 40 0.01))))
+            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 1 ] (rows 8 40 0.02)))))
+        indices;
+      kernels
+        "rows summed below a bound from memory, read twice, are a kernel of \
+         their own"
+        2
+        (fun bound ->
+          let below =
+            Nx.less
+              (Nx.reshape [| 1; 48; 1 |] (Nx.arange Nx.int64 0 48 1))
+              bound
+          in
+          scores 24
+            (Nx.sum ~axes:[ 1 ]
+               (Nx.where below
+                  (Nx.reshape [| 1; 48; 24 |] (rows 48 24 0.001))
+                  (Nx.scalar Nx.float32 0.))))
+        (Nx.reshape [| 8; 1; 1 |] indices);
     ]
 
-let cube () = Nx.reshape [| 12; 12; 12 |] (Nx.arange Nx.int32 0 1728 1)
-let pp_placement = Format.asprintf "%a" Nx.Placement.pp
+(* One device *)
 
-let test_place_on_device_lists () =
-  let x = cube () in
-  let expected = Nx.to_array x in
-  List.iter
-    (fun p ->
-      let y = Nx.place p x in
-      equal ~msg:(pp_placement p ^ ": placement") placement p (Nx.placement y);
-      equal ~msg:(pp_placement p) (array int32) expected (Nx.to_array y))
-    (placements ());
-  equal ~msg:"the source stays" (array int32) expected (Nx.to_array x)
-
-(* A signalling NaN of a dtype OCaml has no bigarray for keeps its bits through
-   a split read and a strided move. *)
-let test_split_nan_bits () =
-  let bits = Nx.create Nx.int16 [| 4; 4 |] (Array.make 16 0x7F81) in
-  let x = Nx.bitcast Nx.bfloat16 bits in
-  let by_columns = Nx.place (Nx.Placement.sharded ~axis:1 cpus) x in
-  let read v = Nx.to_array (Nx.bitcast Nx.int16 v) in
-  equal ~msg:"a split read" (array int) (Nx.to_array bits) (read by_columns);
-  equal ~msg:"a strided move" (array int) (Nx.to_array bits)
-    (read (Nx.place (Nx.Placement.sharded ~axis:0 cpus) by_columns))
-
-let test_move_between_device_lists () =
-  let x = cube () in
-  let expected = Nx.to_array x in
-  let ps = placements () in
-  List.iter
-    (fun p ->
-      let y = Nx.place p x in
-      List.iter
-        (fun q ->
-          let msg = pp_placement p ^ " to " ^ pp_placement q in
-          let z = Nx.place q y in
-          equal ~msg:(msg ^ ": placement") placement q (Nx.placement z);
-          equal ~msg (array int32) expected (Nx.to_array z))
-        ps;
-      equal
-        ~msg:(pp_placement p ^ ": the source stays")
-        (array int32) expected (Nx.to_array y))
-    ps
-
-(* Views of placed values move their elements only. *)
-let test_move_views_between_device_lists () =
-  let x = cube () in
-  let split = Nx.place (Nx.Placement.sharded ~axis:0 cpus) x in
-  let copies = Nx.Placement.replicated cpus in
-  let moved v = Nx.to_array (Nx.place copies v) in
-  let host v = Nx.to_array (Nx.copy v) in
-  equal ~msg:"a transposed split value" (array int32)
-    (host (Nx.transpose ~axes:[ 2; 0; 1 ] x))
-    (moved (Nx.transpose ~axes:[ 2; 0; 1 ] split));
-  equal ~msg:"a window of every shard" (array int32)
-    (host (Nx.slice [ Nx.A; Nx.R (2, 7) ] x))
-    (moved (Nx.slice [ Nx.A; Nx.R (2, 7) ] split));
-  equal ~msg:"one shard" (array int32)
-    (host (Nx.slice [ Nx.R (3, 6) ] x))
-    (moved (Nx.slice [ Nx.R (3, 6) ] split));
-  equal ~msg:"an empty value" (array int32) [||]
-    (Nx.to_array
-       (Nx.place
-          (Nx.Placement.sharded ~axis:1 cpus)
-          (Nx.zeros Nx.int32 [| 0; 4 |])))
-
-(* A move between CPU:k devices never gathers the whole value on the host: a
-   contiguous window goes buffer to buffer through tolk, and a strided one is
-   read and uploaded once, window by window. *)
-let test_moves_do_not_gather_on_the_host () =
-  let x = cube () in
-  let n = Nx.nbytes x in
-  let by_rows = Nx.place (Nx.Placement.sharded ~axis:0 cpus) x in
-  let _, up, down =
-    delta (fun () -> Nx.place (Nx.Placement.replicated cpus) by_rows)
-  in
-  equal ~msg:"rows to copies: no upload" int 0 up;
-  equal ~msg:"rows to copies: no read" int 0 down;
-  let by_columns = Nx.place (Nx.Placement.sharded ~axis:1 cpus) x in
-  let y, up, down =
-    delta (fun () -> Nx.place (Nx.Placement.sharded ~axis:0 cpus) by_columns)
-  in
-  equal ~msg:"columns to rows: each element uploaded once" int n up;
-  equal ~msg:"columns to rows: each element read once" int n down;
-  equal ~msg:"columns to rows" (array int32) (Nx.to_array x) (Nx.to_array y)
-
-(* Eager operations over split values keep their results on the devices, as
-   tolk's rewrite places them. *)
-let test_eager_results_on_device_lists () =
-  let x = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1) in
-  let rows = Nx.Placement.sharded ~axis:0 cpus in
-  let s = Nx.place rows x in
-  let check msg p expected y =
-    equal ~msg:(msg ^ ": placement") placement p (Nx.placement y);
-    equal ~msg (array float_exact) (Nx.to_array expected) (Nx.to_array y)
-  in
-  check "elementwise" rows (Nx.mul x (Nx.exp x)) (Nx.mul s (Nx.exp s));
-  check "a reduction over the split axis"
-    (Nx.Placement.replicated cpus)
-    (Nx.sum ~axes:[ 0 ] x) (Nx.sum ~axes:[ 0 ] s);
-  check "a reduction over the other axis" rows (Nx.sum ~axes:[ 1 ] x)
-    (Nx.sum ~axes:[ 1 ] s)
-
-(* Compiled over device lists. A function runs where its placed leaves and
-   captures live: a split leaf is one slice per device, a host leaf a copy on
-   each, and results come back placed over the same devices. *)
-
-let rows86 () = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1)
-
-(* A program over split values equals the same program on one device, bit for
-   bit. *)
-let test_jit_over_a_split_input () =
-  let x = rows86 () in
-  let rows = Nx.Placement.sharded ~axis:0 cpus in
-  let f x = (Nx.tanh (Nx.add_s (Nx.mul_s x 0.1) 1.0), Nx.sum ~axes:[ 1 ] x) in
-  let sg = Nx.Ptree.(tensor @-> returns (pair tensor tensor)) in
-  let e, r = Rune.jit ~devices:[ List.hd cpus ] sg f x in
-  let g = Rune.jit sg f in
-  let y, t = g (Nx.place rows x) in
-  equal ~msg:"elementwise: placement" placement rows (Nx.placement y);
-  equal ~msg:"elementwise" (array float_exact) (Nx.to_array e) (Nx.to_array y);
-  equal ~msg:"a reduction along the other axis: placement" placement rows
-    (Nx.placement t);
-  equal ~msg:"a reduction along the other axis" (array float_exact)
-    (Nx.to_array r) (Nx.to_array t);
-  let (y', _), up, _ = delta (fun () -> g y) in
-  equal ~msg:"an output fed back uploads nothing" int 0 up;
-  equal ~msg:"and stays split" placement rows (Nx.placement y');
-  let total = Rune.jit' (Nx.sum ~axes:[ 0 ]) (Nx.place rows x) in
-  equal ~msg:"a reduction over the split axis: placement" placement
-    (Nx.Placement.replicated cpus)
-    (Nx.placement total);
-  check_arr ~msg:"a reduction over the split axis"
-    (Nx.to_array (Nx.sum ~axes:[ 0 ] x))
-    total
-
-let test_host_leaves_enter_replicated () =
-  let traces = ref 0 in
-  let g =
-    Rune.jit' ~devices:cpus (fun x ->
-        incr traces;
-        Nx.mul_s x 2.0)
-  in
-  let x = rows86 () in
-  let y = g x in
-  equal ~msg:"a copy on each device" placement
-    (Nx.Placement.replicated cpus)
-    (Nx.placement y);
-  equal ~msg:"value" (array float_exact)
-    (Nx.to_array (Nx.mul_s x 2.0))
-    (Nx.to_array y);
-  let z, up, _ = delta (fun () -> g y) in
-  equal ~msg:"the placed result seeds the same program" int 1 !traces;
-  equal ~msg:"and uploads nothing" int 0 up;
-  equal ~msg:"value" (array float_exact)
-    (Nx.to_array (Nx.mul_s x 4.0))
-    (Nx.to_array z)
-
-let test_leaves_on_other_devices_raise () =
-  let x = Nx.place (Nx.Placement.sharded ~axis:0 cpus) (rows86 ()) in
-  let w = Nx.place (Nx.Placement.device (List.hd cpus)) (rows86 ()) in
-  let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.add in
-  raises_match
-    (function
-      | Invalid_argument msg ->
-          String.starts_with
-            ~prefix:
-              "Rune.jit: the arguments at 0 and 1 are on sharded ~axis:0 \
-               [CPU:1; CPU:2; CPU:3; CPU:4] and CPU:1"
-            msg
-      | _ -> false)
-    (fun () -> g x w);
-  let reversed =
-    Nx.place (Nx.Placement.sharded ~axis:0 (List.rev cpus)) (rows86 ())
-  in
-  raises_match
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> g x reversed);
-  raises_match
-    (function
-      | Invalid_argument msg ->
-          String.starts_with
-            ~prefix:"Rune.jit: the argument at 0 is on sharded ~axis:0" msg
-      | _ -> false)
-    (fun () -> Rune.jit' ~devices:(List.tl cpus) (fun x -> Nx.mul_s x 2.0) x)
-
-(* Only a split value orders the devices. Copies list them as a set: a split
-   capture over the same devices in another order decides the order, and copies
-   listed in two orders share a program. A [?devices] list fixes the order. *)
-let test_a_split_capture_orders_copies () =
-  let a = List.nth cpus 0 and b = List.nth cpus 1 in
-  let x = rows86 () in
-  let split = Nx.place (Nx.Placement.sharded ~axis:0 [ a; b ]) x in
-  let copies_ba = Nx.place (Nx.Placement.replicated [ b; a ]) x in
-  let y = Rune.jit' (fun c -> Nx.add c split) copies_ba in
-  equal ~msg:"a copied leaf meets a split capture" placement
-    (Nx.Placement.sharded ~axis:0 [ a; b ])
-    (Nx.placement y);
-  equal ~msg:"value" (array float_exact)
-    (Nx.to_array (Nx.mul_s x 2.0))
-    (Nx.to_array y);
-  let copied_capture = Nx.place (Nx.Placement.replicated [ b; a ]) x in
-  let z = Rune.jit' (fun h -> Nx.add (Nx.add h copied_capture) split) x in
-  equal ~msg:"a host leaf, a copied and a split capture" (array float_exact)
-    (Nx.to_array (Nx.mul_s x 3.0))
-    (Nx.to_array z);
-  let split_ba = Nx.place (Nx.Placement.sharded ~axis:0 [ b; a ]) x in
-  let copied_ab = Nx.place (Nx.Placement.replicated [ a; b ]) x in
-  let w = Rune.jit' (fun h -> Nx.add (Nx.add h copied_ab) split_ba) x in
-  equal ~msg:"copies, then a split capture in the other order" placement
-    (Nx.Placement.sharded ~axis:0 [ b; a ])
-    (Nx.placement w);
-  equal ~msg:"value" (array float_exact)
-    (Nx.to_array (Nx.mul_s x 3.0))
-    (Nx.to_array w);
-  raises_match
-    (function
-      | Invalid_argument msg ->
-          String.starts_with ~prefix:"Rune.jit: a captured value is on" msg
-      | _ -> false)
-    (fun () -> Rune.jit' ~devices:[ b; a ] (fun c -> Nx.add c split) x);
-  let traces = ref 0 in
-  let g =
-    Rune.jit' (fun c ->
-        incr traces;
-        Nx.mul_s c 2.0)
-  in
-  ignore (g (Nx.place (Nx.Placement.replicated [ a; b ]) x));
-  ignore (g copies_ba);
-  equal ~msg:"copies in two orders share a program" int 1 !traces
-
-let test_split_capture_is_bound () =
-  let rows = Nx.Placement.sharded ~axis:0 cpus in
-  let w = Nx.place rows (Nx.mul_s (rows86 ()) 0.5) in
-  let g = Rune.jit' (fun x -> Nx.add x w) in
-  let x = Nx.place rows (rows86 ()) in
-  let y, up, _ = delta (fun () -> g x) in
-  equal ~msg:"binding a split capture uploads nothing" int 0 up;
-  equal ~msg:"the program counts the binding" int 1
-    (Nx.Repr.Storage.pins (storage_of w));
-  equal ~msg:"value" (array float_exact)
-    (Nx.to_array (Nx.mul_s (rows86 ()) 1.5))
-    (Nx.to_array y);
-  equal ~msg:"split" placement rows (Nx.placement y);
-  let h = Rune.jit' (fun x -> Nx.mul_s x 3.0) in
-  let z, up, _ =
-    delta (fun () ->
-        h (Rune.jit' ~devices:cpus (fun x -> Nx.add x w) (rows86 ())))
-  in
-  equal ~msg:"a host input is uploaded to each device" int (4 * 48 * 4) up;
-  equal ~msg:"value" (array float_exact)
-    (Nx.to_array (Nx.mul_s (rows86 ()) 4.5))
-    (Nx.to_array z)
-
-let test_views_of_split_values_are_read_in_place () =
-  let s = Nx.place (Nx.Placement.sharded ~axis:0 cpus) (rows86 ()) in
-  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
-  List.iter
-    (fun (msg, view) ->
-      let y, up, _ = delta (fun () -> g (view s)) in
-      equal ~msg:(msg ^ ": uploads nothing") int 0 up;
-      equal ~msg (array float_exact)
-        (Nx.to_array (Nx.mul_s (view (rows86 ())) 2.0))
-        (Nx.to_array y))
+(* The calls whose bytes and memory a device counts, on [d]: the test devices by
+   default, Metal in the slow run. *)
+let on_one_device ~name d =
+  let block (w1, w2) a = Nx.add a (Nx.matmul (Nx.relu (Nx.matmul a w1)) w2) in
+  group name
     [
-      ("columns", Nx.slice [ Nx.A; Nx.R (1, 4) ]);
-      ( "flipped columns",
-        fun x -> Nx.flip ~axes:[ 1 ] (Nx.slice [ Nx.A; Nx.R (1, 4) ] x) );
-      ("the rows of one shard", Nx.slice [ Nx.R (4, 6) ]);
-    ]
-
-(* Operands on placements that cannot meet raise as the function traces, with
-   nx's message, instead of the compiler moving one of them. *)
-let test_split_operands_raise () =
-  let rows = Nx.Placement.sharded ~axis:0 cpus
-  and cols = Nx.Placement.sharded ~axis:1 cpus in
-  let x = Nx.reshape [| 8; 8 |] (Nx.arange Nx.float32 0 64 1) in
-  let pair = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
-  let raises_with suffix f =
-    raises_match
-      (function
-        | Invalid_argument msg -> String.ends_with ~suffix msg | _ -> false)
-      f
-  in
-  raises_with "are split differently; place them alike first" (fun () ->
-      Rune.jit pair Nx.add (Nx.place rows x) (Nx.place cols x));
-  let w = Nx.reshape [| 8; 4 |] (Nx.arange Nx.float32 0 32 1) in
-  raises_with "are split differently; place them alike first" (fun () ->
-      Rune.jit pair Nx.matmul (Nx.place rows x) (Nx.place cols w));
-  equal ~msg:"a copy meets a split" (array float_exact)
-    (Nx.to_array (Nx.add x x))
-    (Nx.to_array
-       (Rune.jit pair Nx.add (Nx.place rows x)
-          (Nx.place (Nx.Placement.replicated cpus) x)));
-  raises_with "place the value replicated or on one device first" (fun () ->
-      Rune.jit' (Nx.cumsum ~axis:0) (Nx.place rows x));
-  raises_with "place the value replicated or on one device first" (fun () ->
-      Rune.jit'
-        (fun x -> Nx.reshape [| 64 |] (Nx.transpose x))
-        (Nx.place rows x));
-  raises_with "place the value on one device first" (fun () ->
-      Rune.jit' (Nx.slice [ Nx.I 5 ]) (Nx.place rows x));
-  let shard = Rune.jit' (Nx.slice [ Nx.R (4, 6) ]) (Nx.place rows x) in
-  equal ~msg:"a whole slice is copied to every device" placement
-    (Nx.Placement.replicated cpus)
-    (Nx.placement shard);
-  equal ~msg:"its elements" (array float_exact)
-    (Nx.to_array (Nx.slice [ Nx.R (4, 6) ] x))
-    (Nx.to_array shard)
-
-(* Inside a program over several devices, a value is placed as the program says:
-   gathered to a copy on each device, or split from one, and its placement is
-   where its operation put it. *)
-let test_place_inside_a_program () =
-  let rows = Nx.Placement.sharded ~axis:0 cpus
-  and cols = Nx.Placement.sharded ~axis:1 cpus
-  and copies = Nx.Placement.replicated cpus in
-  let x = Nx.reshape [| 8; 8 |] (Nx.arange Nx.float32 0 64 1) in
-  let seen = ref [] in
-  let f target x =
-    let y = Nx.place target (Nx.mul_s x 2.0) in
-    seen := Nx.placement y :: !seen;
-    Nx.add_s y 1.0
-  in
-  List.iter
-    (fun (msg, source, target) ->
-      let y = Rune.jit' (f target) (Nx.place source x) in
-      equal ~msg:(msg ^ ": inside") placement target (List.hd !seen);
-      equal ~msg:(msg ^ ": placement") placement target (Nx.placement y);
-      equal ~msg (array float_exact)
-        (Nx.to_array (Nx.add_s (Nx.mul_s x 2.0) 1.0))
-        (Nx.to_array y))
-    [
-      ("rows gathered", rows, copies);
-      ("copies split", copies, cols);
-      ("rows to columns", rows, cols);
-    ];
-  raises_match
-    (function Rune.Jit_error _ -> true | _ -> false)
-    (fun () ->
-      Rune.jit'
-        (Nx.place (Nx.Placement.device (List.hd cpus)))
-        (Nx.place rows x));
-  let loss w = Nx.sum (Nx.mul (Nx.place copies w) (Nx.place copies w)) in
-  let g = Rune.jit' (Rune.grad Nx.Ptree.tensor loss) (Nx.place rows x) in
-  equal ~msg:"a cotangent goes back to its primal's placement" placement rows
-    (Nx.placement g);
-  check_arr ~msg:"gradient" (Nx.to_array (Nx.mul_s x 2.0)) g
-
-(* A consumed carry keeps its placement: one that starts on the host enters as a
-   copy on each device and comes back there, though its update meets a split
-   batch, so the next call runs the same program. *)
-let test_a_consumed_carry_keeps_its_placement () =
-  let rows = Nx.Placement.sharded ~axis:0 cpus in
-  let traces = ref 0 in
-  let step =
-    Rune.jit
-      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
-      (fun x s ->
-        incr traces;
-        Nx.add s x)
-  in
-  let x = Nx.place rows (rows86 ()) in
-  let s = step x (Nx.zeros Nx.float32 [| 8; 6 |]) in
-  equal ~msg:"a host carry comes back a copy on each device" placement
-    (Nx.Placement.replicated cpus)
-    (Nx.placement s);
-  let s = step x s in
-  equal ~msg:"the second call runs the first program" int 1 !traces;
-  equal ~msg:"value" (array float_exact)
-    (Nx.to_array (Nx.mul_s (rows86 ()) 2.0))
-    (Nx.to_array s);
-  let s = step x (Nx.place rows (Nx.zeros Nx.float32 [| 8; 6 |])) in
-  equal ~msg:"a split carry stays split" placement rows (Nx.placement s);
-  (* Two carries feed both results: each keeps its own placement. *)
-  let traces = ref 0 in
-  let both =
-    Rune.jit
-      Nx.Ptree.(consumes (pair tensor tensor) @@ returns (pair tensor tensor))
-      (fun (s, r) ->
-        incr traces;
-        (Nx.add s r, Nx.add r s))
-  in
-  let copies = Nx.Placement.replicated cpus in
-  let s, r = both (Nx.place copies (rows86 ()), Nx.place rows (rows86 ())) in
-  equal ~msg:"the copy stays a copy" placement copies (Nx.placement s);
-  equal ~msg:"the split stays split" placement rows (Nx.placement r);
-  let s, r = both (s, r) in
-  equal ~msg:"one program" int 1 !traces;
-  equal ~msg:"values" (array float_exact)
-    (Nx.to_array (Nx.mul_s (rows86 ()) 8.0))
-    (Nx.to_array (Nx.add s r))
-
-(* A split placement of a value on the disk borrows each device's window of the
-   file's pages. *)
-let test_split_upload_from_the_disk () =
-  let n = 1 lsl 16 in
-  let x, path = disk_int32 ~byte:first_byte n in
-  Fun.protect
-    ~finally:(fun () -> remove_file path)
-    (fun () ->
-      let y, up, _ =
-        delta (fun () -> Nx.place (Nx.Placement.sharded ~axis:0 cpus) x)
-      in
-      equal ~msg:"no window is copied" int 0 up;
-      equal ~msg:"elements" (array int32)
-        (Nx.to_array (Nx.copy x))
-        (Nx.to_array y))
-
-(* Bound captures. A compiled function that captures a resident value on its own
-   device reads that value's buffer as its constant. *)
-
-let test_bound_capture_moves_no_bytes () =
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
-  let x = place (vec32 [| 2.0; 2.0; 2.0 |]) in
-  let y, up, down = delta (fun () -> g x) in
-  equal ~msg:"compiling and calling uploads nothing" int 0 up;
-  equal ~msg:"and reads nothing back" int 0 down;
-  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
-  (* A second signature of the same closure binds the same buffer. *)
-  let m = place (Nx.create f32 [| 2; 3 |] (Array.make 6 3.0)) in
-  let y2, up, _ = delta (fun () -> g m) in
-  equal ~msg:"a second signature uploads nothing" int 0 up;
-  check_arr ~msg:"second signature" [| 3.0; 6.0; 9.0; 3.0; 6.0; 9.0 |] y2
-
-let test_bound_capture_is_shared () =
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g1 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
-  let g2 = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x w) in
-  let x = vec32 [| 2.0; 2.0; 2.0 |] in
-  let (), up, _ =
-    delta (fun () ->
-        check_arr ~msg:"first function" [| 2.0; 4.0; 6.0 |] (g1 x);
-        check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x))
-  in
-  equal ~msg:"only the inputs are uploaded" int 24 up;
-  equal ~msg:"one storage, bound by both functions" int 2
-    (Nx.Repr.Storage.pins (storage_of w));
-  ignore (Sys.opaque_identity (g1, g2, w))
-
-(* Each worker owns its compiled functions; only the immutable capture's cell
-   is shared. Return one owner so the others can be finalized on another domain. *)
-let[@inline never] compile_independent_shared_captures w =
-  let ready = Atomic.make 0 in
-  let domains = 4 and programs = 8 in
-  let workers =
-    Array.init domains (fun worker ->
-        Domain.spawn (fun () ->
-            let first = 4 * worker in
-            let capture = Nx.slice [ Nx.R (first, first + 8) ] w in
-            let input = vec32 (Array.make 8 2.) in
-            ignore (Atomic.fetch_and_add ready 1);
-            while Atomic.get ready <> domains do Domain.cpu_relax () done;
-            Array.init programs (fun i ->
-                let scale = float_of_int (i + 1) in
-                let compiled =
-                  Rune.jit' ~devices:[ cpu1 ] (fun x ->
-                      Nx.add (Nx.mul_s x scale) capture)
-                in
-                check_arr ~msg:"each graph reads its own captured slice"
-                  (Array.init 8 (fun j -> float_of_int (first + j) +. (2. *. scale)))
-                  (compiled input);
-                compiled)))
-  in
-  let owners = Array.map Domain.join workers in
-  equal ~msg:"all independent program bindings are counted" int
-    (domains * programs) (Nx.Repr.Storage.pins (storage_of w));
-  ignore (Sys.opaque_identity owners);
-  owners.(0).(0)
-
-let test_independent_shared_captures () =
-  let w = place (vec32 (Array.init 32 float_of_int)) in
-  let surviving = compile_independent_shared_captures w in
-  Domain.join (Domain.spawn full_major);
-  equal ~msg:"collected bindings retire while the surviving graph stays bound"
-    int 1 (Nx.Repr.Storage.pins (storage_of w));
-  check_arr ~msg:"the surviving graph still reads its captured view"
-    (Array.init 8 (fun i -> float_of_int i +. 3.))
-    (surviving (vec32 (Array.make 8 3.)));
-  check_arr ~msg:"sharing captures leaves the original storage readable"
-    (Array.init 32 float_of_int) w;
-  ignore (Sys.opaque_identity (surviving, w))
-
-let test_bound_value_survives_a_read () =
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
-  let x = vec32 [| 2.0; 2.0; 2.0 |] in
-  check_arr ~msg:"before the read" [| 2.0; 4.0; 6.0 |] (g x);
-  let (), _, down =
-    delta (fun () -> check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w)
-  in
-  equal ~msg:"the read copies the value out" int 12 down;
-  is_true ~msg:"and leaves the storage bound" (bound_by 1 w);
-  let (), _, down =
-    delta (fun () -> check_arr ~msg:"value again" [| 1.0; 2.0; 3.0 |] w)
-  in
-  equal ~msg:"a second read copies again: nothing is memoised" int 12 down;
-  check_arr ~msg:"after the read" [| 2.0; 4.0; 6.0 |] (g x);
-  (* As an input leaf it still seeds from its buffer. *)
-  let double = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  ignore (double x);
-  let y, up, _ = delta (fun () -> double w) in
-  equal ~msg:"a read bound value feeds an input with no transfer" int 0 up;
-  check_arr ~msg:"as an input" [| 2.0; 4.0; 6.0 |] y
-
-let test_unbound_value_stays_after_a_read () =
-  full_major ();
-  let base = resident () in
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  check_arr ~msg:"value" [| 1.0; 2.0; 3.0 |] w;
-  equal ~msg:"the read left the buffer" int 12 (resident () - base);
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
-  let x = place (vec32 [| 2.0; 2.0; 2.0 |]) in
-  let y, up, _ = delta (fun () -> g x) in
-  equal ~msg:"captured afterwards it is bound" int 0 up;
-  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y
-
-(* A call that consumes a bound storage ends it for its values; the program that
-   binds it keeps its buffer and replays with it, and the storage lends
-   nothing. *)
-let test_consuming_a_bound_storage () =
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
-  ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
-  let pass = consume' (fun x -> x) in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let z, up, _ = delta (fun () -> pass w) in
-  equal ~msg:"the bound input seeds with no transfer" int 0 up;
-  equal ~msg:"and lends nothing" int 0
-    ((Rune.jit_stats ()).reused_bytes - before);
-  is_true ~msg:"the result has storage of its own"
-    (storage_of z != storage_of w);
-  check_arr ~msg:"the result" [| 1.0; 2.0; 3.0 |] z;
-  raises_consumed (fun () -> to_arr w);
-  check_arr ~msg:"the program that binds it replays with it" [| 2.0; 4.0; 6.0 |]
-    (g (vec32 [| 2.0; 2.0; 2.0 |]))
-
-(* Not inlined: once it returns, only the collector refers to the program that
-   bound the consumed storage. *)
-let[@inline never] bind_and_consume () =
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
-  ignore (to_arr (g (vec32 [| 1.0; 1.0; 1.0 |])));
-  ignore (to_arr (consume' (fun x -> Nx.mul_s x 2.0) w))
-
-let test_consumed_bound_storage_goes_with_its_owners () =
-  full_major ();
-  let before = resident () in
-  bind_and_consume ();
-  full_major ();
-  is_true ~msg:"the consumed storage goes with the program that bound it"
-    (resident () <= before)
-
-let test_bound_capture_returned_is_a_copy () =
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = consume' (fun (_ : Nx.float32_t) -> w) in
-  let y = g (vec32 [| 0.0 |]) in
-  is_true ~msg:"another value" (y != w);
-  check_arr ~msg:"the copy" [| 1.0; 2.0; 3.0 |] y;
-  check_arr ~msg:"a second call" [| 1.0; 2.0; 3.0 |] (g (vec32 [| 0.0 |]))
-
-(* Not inlined: once it returns, nothing but the collector's own bookkeeping
-   refers to the placed value or to the function that bound it. It returns a
-   weak pointer to the value's storage, whose finaliser releases it. *)
-let[@inline never] bind_and_drop () =
-  let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
-  check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]));
-  let storage = Weak.create 1 in
-  Weak.set storage 0 (Some (storage_of w));
-  storage
-
-let test_bound_buffer_is_released_with_its_owners () =
-  let storage = bind_and_drop () in
-  let before = resident () in
-  full_major ();
-  is_true ~msg:"the storage is collected once its owners are"
-    (Option.is_none (Weak.get storage 0));
-  is_true ~msg:"and its storage released" (resident () <= before - 12)
-
-let with_budget bytes f =
-  Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" (string_of_int bytes);
-  Fun.protect ~finally:(fun () -> Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "") f
-
-let majors () = (Gc.quick_stat ()).major_collections
-
-(* A consumed value borrowed from a file lends its storage to no result: a
-   result that continues it, or an indexed write into it, gets storage of its
-   own, and the file's pages keep their elements. So does an entry 8 bytes past
-   a 16-byte boundary, where a checkpoint's entries sit, which is a window of
-   its borrowed storage; a compiled copy of it is its elements. Placing it
-   counts nothing against the collection budget. The same value copied into
-   owned storage is lent, as a control. *)
-let test_borrowed_storage_is_never_lent () =
-  let n = 4096 in
-  let x, path = disk_int32 ~byte:first_byte n in
-  Fun.protect
-    ~finally:(fun () -> remove_file path)
-    (fun () ->
-      let reused () = (Rune.jit_stats ()).reused_bytes in
-      let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
-      let values = Nx.create Nx.int32 [| 2 |] [| 7l; 9l |] in
-      let step = consume' (fun x -> Nx.add x x) in
-      let write =
-        consume' (fun pool -> Nx.scatter ~axis:0 ~indices ~values pool)
-      in
-      let copy = Rune.jit' ~devices:[ cpu1 ] Nx.copy in
-      let check ~msg e =
-        let msg s = msg ^ ": " ^ s in
-        let expected = Nx.to_array (Nx.copy e) in
-        ignore (step (place (Nx.copy e)));
-        let p = place e in
-        let before = reused () in
-        let y = step p in
-        equal
-          ~msg:(msg "a borrowed argument lends nothing")
-          int 0
-          (reused () - before);
-        equal ~msg:(msg "the result") (array int32)
-          (Nx.to_array (Nx.add (Nx.copy e) (Nx.copy e)))
-          (Nx.to_array y);
-        raises_consumed (fun () -> to_arr p);
-        ignore (write (place (Nx.copy e)));
-        let before = reused () in
-        let y = write (place e) in
-        equal
-          ~msg:(msg "a borrowed pool lends nothing")
-          int 0
-          (reused () - before);
-        let written = Array.copy expected in
-        written.(0) <- 7l;
-        written.(2) <- 9l;
-        equal ~msg:(msg "the written pool") (array int32) written
-          (Nx.to_array y);
-        equal ~msg:(msg "the file's pages") (array int32) expected
-          (Nx.to_array e);
-        equal ~msg:(msg "a compiled copy") (array int32) expected
-          (Nx.to_array (copy (place e)));
-        let before = reused () in
-        ignore (write (place (Nx.copy e)));
-        equal
-          ~msg:(msg "an owned pool is lent")
-          int (Nx.nbytes e)
-          (reused () - before)
-      in
-      check ~msg:"at 0 mod 16" x;
-      check ~msg:"at 8 mod 16" (Nx.slice [ Nx.R (2, n) ] x);
-      with_budget 1024 (fun () ->
-          let before = majors () in
+      test "a call runs where its arguments lie, and leaves its results there"
+        (fun () ->
+          let r = Rune.jit' poly (placed d (x ())) in
+          is_true (Nx.Placement.equal (on d) (Nx.placement r));
+          equal close (poly (x ())) (host r));
+      test "a consumed slice at an offset is computed into storage of its own"
+        (fun () ->
+          consumed_slice ~at:(on d) 1 7;
+          consumed_slice ~at:(on d) 5 1027);
+      test "a call searched on several domains computes eager's values"
+        (fun () ->
+          let f a = Nx.add_s (poly a) 0.8125 in
+          equal close (f (x ()))
+            (host (Rune.jit' ~beam:1 ~parallel:2 f (placed d (x ())))));
+      (* The gather broadcasts its indices to the rows it reads: the copy moves
+         the indices, and the broadcast is taken on the device. *)
+      test "a host index a gather reads uploads its own bytes" (fun () ->
+          let table = placed d (grid 16 4) in
+          let g =
+            Rune.jit' (fun ids ->
+                Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] ids) table)
+          in
+          let ids = Nx.create Nx.int64 [| 1; 4 |] [| 3L; 1L; 2L; 0L |] in
+          ignore (g ids);
+          let before = bytes_in d in
+          let r = g ids in
+          equal ~msg:"bytes received" int (Nx.nbytes ids)
+            (bytes_in d - before);
+          equal close
+            (Nx.take ~axis:0
+               ~indices:(Nx.reshape [| -1 |] ids)
+               (grid 16 4))
+            (host r));
+      test "a placed argument feeds a call with no transfer" (fun () ->
+          let g = Rune.jit' poly in
+          let a = placed d (x ()) in
+          ignore (g a);
+          let before = bytes_in d in
+          ignore (g a);
+          equal int before (bytes_in d));
+      test "a placed view is read where it lies" (fun () ->
+          let g = Rune.jit' poly in
+          let a = Nx.transpose (placed d (grid 2 3)) in
+          ignore (g a);
+          let before = bytes_in d in
+          let r = g a in
+          equal ~msg:"bytes received" int before (bytes_in d);
+          equal close (poly (Nx.transpose (grid 2 3))) (host r));
+      test
+        "a float16 argument starting 2 bytes further retraces once, and is \
+         read where it lies" (fun () ->
+          let g = Rune.jit' poly in
+          let a = placed d (Nx.cast Nx.float16 (arange 12)) in
+          let read lo () =
+            let v = Nx.slice [ R (lo, lo + 4) ] a in
+            equal close
+              (Nx.cast Nx.float32
+                 (poly
+                    (Nx.slice
+                       [ R (lo, lo + 4) ]
+                       (Nx.cast Nx.float16 (arange 12)))))
+              (Nx.cast Nx.float32 (host (g v)))
+          in
+          retraces (read 0) (read 1));
+      test
+        "a chain of 8-bit float operations rounds after each, as eager does"
+        (fun () ->
+          let chain (type b) (dt : (float, b) Nx.dtype) =
+            let x =
+              Nx.create Nx.float32 [| 6 |]
+                [| 13.7; 1.3; 0.1; 3.3; -2.7; 0.0123 |]
+            in
+            let f x =
+              let y = Nx.cast dt x in
+              Nx.cast Nx.float32 (Nx.mul (Nx.add y y) y)
+            in
+            equal floats (f x) (host (Rune.jit' f (placed d x)))
+          in
+          chain Nx.float8_e4m3;
+          chain Nx.float8_e5m2);
+      test "a call whose trace raises allocates nothing" (fun () ->
+          let a = placed d (x ()) in
+          let before = allocated d in
+          raises_jit_error (fun () ->
+              Rune.jit' (fun a -> if Nx.item [ 0 ] a > 0. then poly a else a) a);
+          equal ~msg:"bytes allocated" int before (allocated d));
+      test "a consumed placed argument lends its storage" (fun () ->
+          let a = placed d (x ()) in
+          let before = Witness.addresses a in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+          equal (list nativeint) before (Witness.addresses r);
+          equal close (Nx.add_s (x ()) 1.) (host r));
+      test "a capture placed where the call computes is bound, not uploaded"
+        (fun () ->
+          let w = placed d (y ()) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = placed d (x ()) in
+          ignore (g a);
+          let before = bytes_in d in
+          let r = g a in
+          equal ~msg:"bytes received" int before (bytes_in d);
+          equal close (Nx.mul (x ()) (y ())) (host r);
+          is_false ~msg:"pinned" (lends w);
+          equal ~msg:"the program after" close
+            (Nx.mul (x ()) (y ()))
+            (host (g a)));
+      test "a value the call computes from host captures is uploaded once"
+        (fun () ->
+          let limit = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
+          let f a =
+            let mask = Nx.less_s limit 2l in
+            let scale = Nx.mul_s (Nx.cast Nx.float32 limit) 0.5 in
+            Nx.where
+              (Nx.place (on d) mask)
+              (Nx.mul a (Nx.place (on d) scale))
+              (Nx.zeros_like a)
+          in
+          let g = Rune.jit' f in
+          let a = placed d (x ()) in
+          ignore (g a);
+          let before = bytes_in d in
+          let r = g a in
+          equal ~msg:"bytes received" int before (bytes_in d);
+          equal close (host (f (x ()))) (host r));
+      test "a loop consuming its state holds two generations of it" (fun () ->
+          let n = 1 lsl 16 in
+          let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
+          let s = ref (placed d (Nx.zeros Nx.float32 [| n |])) in
+          s := step !s;
+          let base = allocated d in
           for _ = 1 to 20 do
-            ignore (place x)
+            s := step !s
           done;
-          equal ~msg:"placing it collects nothing" int 0 (majors () - before)))
+          at_most ~msg:"bytes allocated across 20 steps" int ~than:(4 * n)
+            (allocated d - base);
+          equal floats (Nx.full Nx.float32 [| n |] 21.) (host !s));
+      test "a view of a weight on the disk placed on the device is captured"
+        (fun () ->
+          let w = on_disk_at (temp_file ()) (grid 4 4) in
+          let p = Nx.place (on d) (Nx.matrix_transpose w) in
+          let g = Rune.jit' (fun a -> Nx.matmul a p) in
+          equal close
+            (Nx.matmul (grid 2 4) (Nx.matrix_transpose (grid 4 4)))
+            (host (g (placed d (grid 2 4)))));
+      test
+        "a consumed value placed from a file lends its storage only where the \
+         file was copied, and the file keeps its elements" (fun () ->
+          let path = temp_file () in
+          let elements = Nx.create Nx.float32 [| 4 |] [| 5.; 6.; 1.; 2. |] in
+          let pool = Nx.place (on d) (on_disk_at path elements) in
+          let before = Witness.addresses pool in
+          let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
+          let values = Nx.create Nx.float32 [| 2 |] [| 10.; 30. |] in
+          let r =
+            Rune.jit consumes (Nx.scatter ~axis:0 ~indices ~values) pool
+          in
+          equal floats
+            (Nx.create Nx.float32 [| 4 |] [| 10.; 6.; 30.; 2. |])
+            (host r);
+          (* A device that shares the host's memory borrows the file's pages,
+             which it must not lend; another copies them into its own. *)
+          let copied =
+            not (Nx_device.shares_host_memory (Nx.Device.runtime d))
+          in
+          equal bool ~msg:"lent" copied
+            (List.equal Nativeint.equal before (Witness.addresses r));
+          raises_invalid_arg (fun () -> Nx.to_array pool);
+          equal floats elements (host (on_disk_at_read path)));
+      slow "a compiled gradient through remats keeps under half the activations"
+        (fun () ->
+          let layers = 8 and batch = 256 and dim = 32 in
+          let hidden = 8 * dim in
+          let weights =
+            List.init layers (fun i ->
+                let w r c =
+                  placed d
+                    (Nx.mul_s
+                       (Nx.Rng.with_key (Nx.Rng.key i) (fun () ->
+                            Nx.randn Nx.float32 [| r; c |]))
+                       0.05)
+                in
+                (w dim hidden, w hidden dim))
+          in
+          let a = placed d (Nx.ones Nx.float32 [| batch; dim |]) in
+          let loss remat a =
+            Nx.sum
+              (List.fold_left
+                 (fun a w ->
+                   if remat then
+                     Rune.remat Nx.Ptree.(tensor @-> returns tensor) (block w) a
+                   else block w a)
+                 a weights)
+          in
+          let peak remat =
+            let g = Rune.jit' (Rune.grad' (loss remat)) in
+            let base = settled d in
+            let r = g a in
+            let used = allocated d - base in
+            ignore (host r);
+            used
+          in
+          let plain = warmed (fun () -> peak false) in
+          let recomputed = peak true in
+          less
+            ~msg:
+              (Printf.sprintf "%d bytes with remat, %d without" recomputed plain)
+            int ~than:(plain / 2) recomputed);
+    ]
 
-(* The collection budget counts every device allocation since the last major
-   collection: eager results count as outputs do, and weights placed before a
-   collection weigh on none after it. *)
-let test_budget_counts_every_allocation () =
-  let w = place (Nx.create f32 [| 1024 |] (Array.make 1024 1.0)) in
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  ignore (g (vec32 [| 1.0 |]));
-  with_budget 1024 (fun () ->
-      let before = majors () in
-      for _ = 1 to 20 do
-        ignore (Nx.mul_s w 2.0)
-      done;
-      is_true ~msg:"each 4 KiB eager result past a 1 KiB budget collects"
-        (majors () - before >= 20);
-      let before = majors () in
-      for _ = 1 to 100 do
-        ignore (to_arr (g (vec32 [| 1.0 |])))
-      done;
-      is_true ~msg:"4-byte outputs collect about every 256 calls"
-        (majors () - before < 50));
-  ignore (Sys.opaque_identity w)
+(* A value computed from constants alone, used on [d], whose programs load
+   there, is computed in the kernel that reads it. *)
+let constants_where_used d =
+  test "a value computed from no capture is computed where it is used"
+    (fun () ->
+      let f p = Nx.add (Nx.arange Nx.int64 0 8 1) p in
+      let p = Nx.scalar Nx.int64 4L in
+      let r, loaded =
+        loaded_on (Nx.Device.runtime d) (fun () -> Rune.jit' f (placed d p))
+      in
+      equal ~msg:"programs" int 1 loaded;
+      equal (tensor int64) (f p) (host r))
 
-let test_out_of_memory () =
-  let huge = Nx.broadcast_to [| 1 lsl 48 |] (Nx.scalar f32 1.0) in
-  raises_match
-    (function Nx.Device.Out_of_memory (_, n) -> n = 4 lsl 48 | _ -> false)
-    (fun () -> place huge)
+(* A compiled sum adds each product into its running sum rounded once: the
+   products -(1 + 2^-11) and (1 + 2^-12)^2 = 1 + 2^-11 + 2^-24 sum to 2^-24,
+   where rounding the second product first gives 0. Both are in the class of a
+   rounded sum. *)
+let sums_fuse_products d =
+  test "a compiled sum adds each product into its running sum rounded once"
+    (fun () ->
+      let x = 1. +. 0x1p-12 in
+      let a = Nx.create Nx.float32 [| 1; 2 |] [| -.(1. +. 0x1p-11); x |] in
+      let b = placed d (Nx.create Nx.float32 [| 2; 1 |] [| 1.; x |]) in
+      let f a = Nx.matmul a b in
+      equal floats
+        (Nx.create Nx.float32 [| 1; 1 |] [| 0x1p-24 |])
+        (host (Rune.jit' f (placed d a))))
 
-let test_consumed_handle_raises_on_read () =
-  let g = consume' (fun x -> Nx.mul_s x 2.0) in
-  let h1 = g (vec32 [| 1.0; 2.0 |]) in
-  let h2 = g h1 in
-  (* The second call consumed h1: its storage is gone. *)
-  raises_consumed (fun () -> to_arr h1);
-  check_arr ~msg:"the consuming call's output is fine" [| 4.0; 8.0 |] h2
-
-let test_consumed_handle_refeed_raises () =
-  let g = consume' (fun x -> Nx.mul_s x 2.0) in
-  let h1 = g (vec32 [| 1.0; 2.0 |]) in
-  ignore (g h1);
-  (* Seeding a consumed handle forces it, which raises the same error. *)
-  raises_consumed (fun () -> g h1)
-
-(* A storage that two leaves of a consumed argument reach raises before the
-   call, naming both, and nothing is consumed. *)
-let test_consumed_storage_reached_twice_raises () =
-  let g =
-    consume pair_ptree (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
-  in
-  let h = place (vec32 [| 3.0; 6.0 |]) in
-  let (), up, _ =
-    delta (fun () ->
-        invalid_starting
-          "Rune.jit: the arguments at 0.u and 0.v reach one storage, which a \
-           consumed argument must hold alone" (fun () -> g { u = h; v = h }))
-  in
-  equal ~msg:"nothing moves" int 0 up;
-  check_arr ~msg:"the value is not consumed" [| 3.0; 6.0 |] h;
-  let r = g { u = h; v = Nx.copy h } in
-  check_arr ~msg:"a copy holds its own storage" [| 6.0; 12.0 |] r.u
-
-(* A capture of the function that reaches a consumed leaf's storage raises
-   before the call; a capture consumed by another call raises at the next trace
-   of the function that captures it. *)
-let test_consumed_captures_raise () =
-  let w = place (vec32 [| 1.0; 2.0 |]) in
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(consumes tensor @@ returns tensor)
-      (fun x -> Nx.add x w)
-  in
-  invalid_starting
-    "Rune.jit: the argument at 0 and a capture of the function reach one \
-     storage" (fun () -> step w);
-  check_arr ~msg:"the value is not consumed" [| 1.0; 2.0 |] w;
-  let h = place (vec32 [| 1.0; 2.0 |]) in
-  let later = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x h) in
-  ignore (to_arr (consume' (fun x -> Nx.mul_s x 2.0) h));
-  invalid_starting
-    "Rune.jit: a captured value was consumed at 0 in a compiled call's \
-     arguments" (fun () -> later (vec32 [| 0.0; 0.0 |]))
-
-(* A capture the program copies (an overlapping window) reaches the consumed
-   storage as a bound one does. *)
-let test_a_copied_capture_of_consumed_storage_raises () =
-  let w = place (vec32 (Array.init 8 float_of_int)) in
-  let windows = Nx.sliding_window ~window:3 w in
-  let step = consume' (fun x -> Nx.add x (Nx.sum windows)) in
-  invalid_starting
-    "Rune.jit: the argument at 0 and a capture of the function reach one \
-     storage" (fun () -> step w);
-  check_arr ~msg:"the value is not consumed" (Array.init 8 float_of_int) w
-
-let test_read_value_is_still_consumed () =
-  let g = consume' (fun x -> Nx.mul_s x 2.0) in
-  let h = g (vec32 [| 1.0; 2.0 |]) in
-  check_arr ~msg:"a read before the call" [| 2.0; 4.0 |] h;
-  let y = g h in
-  (* A read moved nothing, so the value is still resident and consumed. *)
-  raises_consumed (fun () -> to_arr h);
-  check_arr ~msg:"the result" [| 4.0; 8.0 |] y
-
-(* A host argument is consumed as a placed one: every handle to its buffer
-   dies, and on the host its memory holds the result that derives from it. *)
-let test_host_input_is_consumed () =
-  let g = consume' (fun x -> Nx.mul_s x 2.0) in
-  let x = vec32 [| 1.0; 2.0 |] in
-  let alias = Nx.reshape [| 2; 1 |] x in
-  check_arr ~msg:"result" [| 2.0; 4.0 |] (g x);
-  raises_consumed (fun () -> to_arr x);
-  raises_consumed (fun () -> Nx.add alias alias);
-  equal ~msg:"its shape stays readable" (array int) [| 2 |] (Nx.shape x);
-  let h =
-    Rune.jit ~devices:[ Nx.Device.host ]
-      Nx.Ptree.(consumes tensor @@ returns tensor)
-      (fun x -> Nx.add_s x 1.0)
-  in
-  let x = vec32 [| 1.0; 2.0; 3.0 |] in
-  let before = (Rune.jit_stats ()).reused_bytes in
-  let y = h x in
-  equal ~msg:"on the host its memory holds the result" int 12
-    ((Rune.jit_stats ()).reused_bytes - before);
-  check_arr ~msg:"in place" [| 2.0; 3.0; 4.0 |] y;
-  raises_consumed (fun () -> to_arr x)
-
-(* A consumed host argument spans its buffer, alone. *)
-let test_host_input_must_hold_its_storage () =
-  let g = consume' (fun x -> Nx.mul_s x 2.0) in
-  let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-  invalid_starting "Rune.jit: the argument at 0 views part of its storage"
-    (fun () -> ignore (g (Nx.slice [ Nx.R (0, 2) ] x)));
-  let two =
-    Rune.jit
-      Nx.Ptree.(consumes (pair tensor tensor) @@ returns tensor)
-      (fun (a, b) -> Nx.add a b)
-  in
-  invalid_starting "Rune.jit: the arguments at 0.0 and 0.1 reach one storage"
-    (fun () -> ignore (two (x, x)));
-  check_arr ~msg:"a refused call consumes nothing" [| 1.0; 2.0; 3.0; 4.0 |] x;
-  let captured =
-    Rune.jit Nx.Ptree.(consumes tensor @@ returns tensor) (fun y -> Nx.add y x)
-  in
-  invalid_starting "Rune.jit: the argument at 0 and a capture of the function"
-    (fun () -> ignore (captured x))
-
-let test_jit_leaves_handle_readable () =
-  let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
-  let h1 = g (vec32 [| 1.0; 2.0 |]) in
-  ignore (g h1);
-  check_arr ~msg:"jit keeps the input handle alive" [| 2.0; 4.0 |] h1
-
-(* A step reads its first argument: a resident leaf there is used in place, call
-   after call, and stays readable. *)
-let test_step_reads_its_first_argument () =
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
-      (fun w x -> Nx.add (Nx.mul w x) w)
-  in
-  let w = place (vec32 [| 1.0; 2.0 |]) in
-  let x = place (vec32 [| 3.0; 4.0 |]) in
-  let y = step w x in
-  let z, up, _ = delta (fun () -> step w y) in
-  equal ~msg:"resident leaves upload nothing" int 0 up;
-  check_arr ~msg:"two steps" [| 5.0; 22.0 |] z;
-  raises_consumed (fun () -> to_arr x);
-  raises_consumed (fun () -> to_arr y);
-  check_arr ~msg:"the read leaf is readable" [| 1.0; 2.0 |] w
-
-(* The next state takes the storage of the state leaf at its own position; a
-   read leaf lends none, even to an output that derives from it alone. *)
-let test_step_reuses_only_the_state () =
-  let w = place (vec32 [| 1.0; 2.0 |]) in
-  let add =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
-      (fun w x -> Nx.add x w)
-  in
-  let x, reused =
-    reused_by_second_step (add w) (place (vec32 [| 0.0; 0.0 |]))
-  in
-  equal ~msg:"the state's storage is reused" int 8 reused;
-  check_arr ~msg:"value" [| 2.0; 4.0 |] x;
-  let double =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
-      (fun w _ -> Nx.mul_s w 2.0)
-  in
-  let y, reused =
-    reused_by_second_step (double w) (place (vec32 [| 0.0; 0.0 |]))
-  in
-  equal ~msg:"the state lends its storage, the read leaf none" int 8 reused;
-  check_arr ~msg:"value" [| 2.0; 4.0 |] y;
-  check_arr ~msg:"the read leaf is intact" [| 1.0; 2.0 |] w
-
-(* A handle passed as both a read and a consumed argument raises before the
-   call, and stays usable. *)
-let test_step_refuses_a_handle_in_both_arguments () =
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
-      (fun w x -> Nx.add w x)
-  in
-  let h = place (vec32 [| 1.0; 2.0 |]) in
-  invalid_starting
-    "Rune.jit: the arguments at 0 and 1 reach one storage, which a consumed \
-     argument must hold alone; pass Nx.copy of one of them" (fun () -> step h h);
-  check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h;
-  check_arr ~msg:"a copy runs" [| 2.0; 4.0 |] (step h (Nx.copy h))
-
-(* Only a value whose view covers its storage can be consumed: a consumed leaf
-   that is a view of part of one raises before the call, and the value stays. *)
-let test_step_refuses_a_partial_view () =
-  let step = consume' (fun x -> Nx.mul_s x 2.0) in
-  let w = place (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
-  let part = Nx.slice [ Nx.R (0, 2) ] w in
-  raises_match
-    (function
-      | Invalid_argument msg ->
-          msg
-          = "Rune.jit: the argument at 0 views part of its storage (a slice, a \
-             transpose or a broadcast), so it cannot be consumed; pass Nx.copy \
-             of it"
-      | _ -> false)
-    (fun () -> step part);
-  check_arr ~msg:"the value stays" [| 1.0; 2.0 |] part;
-  check_arr ~msg:"and so does its storage" [| 1.0; 2.0; 3.0; 4.0 |] w
-
-(* A storage a read argument reaches through a view of part of it cannot be
-   consumed by another argument: the call raises before it runs. *)
-let test_step_refuses_a_storage_both_arguments_reach () =
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
-      (fun r s -> Nx.add s (Nx.sum r))
-  in
-  let w = place (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
-  let view = Nx.slice [ Nx.R (0, 2) ] w in
-  invalid_starting "Rune.jit: the arguments at 0 and 1 reach one storage"
-    (fun () -> step view w);
-  check_arr ~msg:"the read view is readable" [| 1.0; 2.0 |] view;
-  check_arr ~msg:"and so is the state" [| 1.0; 2.0; 3.0; 4.0 |] w
-
-(* An indexed write into a read leaf lands in fresh storage: the leaf keeps its
-   value. *)
-let test_step_write_into_a_read_leaf () =
-  let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
-  let step =
-    Rune.jit ~devices:[ cpu1 ]
-      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
-      (fun pool x -> Nx.scatter ~axis:0 ~indices ~values:x pool)
-  in
-  let pool = place (vec32 [| 1.0; 2.0; 3.0 |]) in
-  let a = step pool (vec32 [| 10.0; 30.0 |]) in
-  let b = step pool (vec32 [| 40.0; 60.0 |]) in
-  check_arr ~msg:"first write" [| 10.0; 2.0; 30.0 |] a;
-  check_arr ~msg:"second write" [| 40.0; 2.0; 60.0 |] b;
-  check_arr ~msg:"the pool keeps its value" [| 1.0; 2.0; 3.0 |] pool
-
-(* One tensor behind both leaves on the tracing call: two inputs that happen to
-   be equal, each bound to its own position, so a later call may pass distinct
-   tensors to them. *)
-let test_aliased_input_leaves () =
-  let f (p : pair) = Nx.sub p.u (Nx.mul_s p.v 2.0) in
-  let g = Rune.jit Nx.Ptree.(pair_ptree @-> returns tensor) f in
-  let x = vec32 [| 1.0; 2.0; 3.0 |] in
-  check_arr ~msg:"aliased call" [| -1.0; -2.0; -3.0 |] (g { u = x; v = x });
-  check_arr ~msg:"distinct call" [| -7.0; -8.0; -9.0 |]
-    (g { u = x; v = vec32 [| 4.0; 5.0; 6.0 |] });
-  (* Under grad inside jit the two leaves are separate parameters, as
-     eagerly. *)
-  let dg =
-    Rune.jit
-      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
-      (fun p -> Rune.grad pair_ptree (fun p -> Nx.sum (f p)) p)
-      { u = x; v = x }
-  in
-  check_arr ~msg:"d/du" [| 1.0; 1.0; 1.0 |] dg.u;
-  check_arr ~msg:"d/dv" [| -2.0; -2.0; -2.0 |] dg.v
-
-(* Failure modes *)
-
-let test_data_dependent_read_raises () =
-  let g = Rune.jit' (fun x -> if Nx.item [ 0 ] x > 0.0 then x else Nx.neg x) in
-  raises_jit_error (fun () -> g (vec32 [| 1.0; 2.0 |]))
-
-let test_unsupported_op_raises () =
-  let g = Rune.jit' (fun x -> Nx.eigvals x) in
-  raises_jit_error (fun () ->
-      g (Nx.create f32 [| 2; 2 |] [| 4.0; 2.0; 2.0; 3.0 |]))
-
-let tests =
-  [
-    group "jit basics"
+(* The calls on a GPU of [kind], if this machine has one. *)
+let on_gpu kind = function
+  | Some m ->
+      let d = Nx.Device.of_runtime m in
       [
-        test "64-bit constants keep every bit" test_64_bit_constants;
-        test "narrow constants wrap" test_narrow_constants_wrap;
-        test "integer comparisons read wrapped values"
-          (check_wrapping_comparisons ?devices:None);
-        test "folded integer constants wrap"
-          (check_wrapped_constants ?devices:None);
-        test "pow of a tensor base matches eager" (check_pow ?devices:None);
-        test "pow of a subnormal base" test_pow_of_subnormal;
-        test "float sums and products keep their grouping"
-          (check_float_association ?devices:None);
-        test "float constants keep their grouping"
-          (check_float_constant_association ?devices:None);
-        test "float identities hold only where IEEE keeps them"
-          (check_float_identities ?devices:None);
-        test "ordered comparisons are false at NaN"
-          (check_nan_comparisons ?devices:None);
-        test "max propagates NaN" (check_max_nan ?devices:None);
-        test "zeros keep their sign" (check_signed_zeros ?devices:None);
-        test "element-wise chain matches eager" test_elementwise_matches_eager;
-        test "bitcast matches eager" test_bitcast_matches_eager;
-        test "a bitcast between widths is refused"
-          test_bitcast_between_widths_is_refused;
-        test "a scatter by maxima or minima is refused"
-          test_scatter_by_extremes_is_refused;
-        test "bitcast outputs retain their own dtype"
-          (check_bitcast_output_ownership ~devices:[ Nx.Device.host ]);
-        test "float8 bitcasts preserve raw bytes through movements"
-          check_float8_bitcast_matches_eager;
-        test "replay reads fresh input data" test_replay_reads_fresh_inputs;
-        test "a new shape retraces" test_retrace_on_new_shape;
-        test "zero-size outputs are empty tensors" test_zero_size_outputs;
-        test "closure-captured weights (matmul)" test_closure_matmul;
-        test "a structured result" test_structured_output;
-        test "aliased input leaves are separate inputs"
-          test_aliased_input_leaves;
-      ];
-    group "keys"
-      [
-        test "reports key programs" test_reports_key_programs;
-        test "a leafless element keys programs"
-          test_a_leafless_element_keys_programs;
-        test "cases key programs" test_cases_key_programs;
-      ];
-    group "composition"
-      [
-        test "grad inside jit matches eager grad" test_grad_inside_jit;
-        test "jit under grad runs eagerly" test_jit_under_grad_is_transparent;
-        test "jit under vmap runs eagerly" test_jit_under_vmap_is_transparent;
-        test "scan matches eager" test_scan_matches_eager;
-        test "grad through a scan matches eager"
-          test_grad_through_scan_matches_eager;
-        test "grad through a scan, stacked outputs only"
-          test_grad_through_scan_ys_only;
-        test "grad through a scan, final carry only"
-          test_grad_through_scan_carry_only;
-        test "grad through a scan with a multi-leaf carry"
-          test_grad_through_scan_multi_leaf;
-        test "grad through a scan with an asymmetric pair carry"
-          test_grad_through_scan_asymmetric_pair;
-        test "shape-unstable carry unrolls instead of staging"
-          test_scan_shape_unstable_carry_unrolls;
-        test "grad through nested scans" test_grad_through_scan_nested;
-        test "nested scans rebind inputs without changing the outer scope"
-          test_nested_scans_rebind_inputs;
-        test "grad through a scan with a captured weight"
-          test_grad_through_scan_captured_weight;
-        test "grad through a scan with a vector carry"
-          test_grad_through_scan_vector_carry;
-        test "grad through a scan with an external input"
-          test_grad_through_scan_external_input;
-        test "grad through a scan with external matrices"
-          test_grad_through_scan_external_matrices;
-        test "grad through a scan with a matrix carry"
-          test_grad_through_scan_matrix_carry;
-        test "scan rows short of 16 bytes" test_scan_rows_short_of_16_bytes;
-        test "a scan over structured rows" test_scan_over_structured_rows;
-        test "a scan rejects ragged or scalar rows"
-          test_scan_rejects_ragged_rows;
-        test "a scan carry is written in place" test_scan_carry_written_in_place;
-        test "a scan reads rows computed from constants alone"
-          test_scan_reads_constant_rows;
-        test "a scan reads its rows in place" test_scan_reads_rows_in_place;
-        test "a scan reads the rows of a scan in place"
-          test_scan_reads_rows_of_a_scan_in_place;
-        test "a scan computes the values it captures once"
-          test_scan_computes_captures_once;
-      ];
-    group "staged scan rules"
-      [
-        test "jvp of a scan is staged" test_jvp_of_scan_is_staged;
-        test "jvp of a scan with an inactive carry"
-          test_jvp_of_scan_with_an_inactive_carry;
-        test "jvp of jvp of a scan is staged" test_jvp_of_jvp_of_scan_is_staged;
-        test "vmap of a scan is staged" test_vmap_of_scan_is_staged;
-        test "vmap over jvp of a scan is staged"
-          test_vmap_over_jvp_of_scan_is_staged;
-        test "vmap over jvp of a scan from an active init"
-          test_vmap_over_jvp_of_scan_from_an_active_init;
-        test "vmap over jvp of a scan keeps the primal once"
-          test_vmap_over_jvp_of_scan_keeps_the_primal_once;
-        test "grad of jvp of a scan is staged"
-          test_grad_of_jvp_of_scan_is_staged;
-        test "grad of vmap of a scan is staged"
-          test_grad_of_vmap_of_scan_is_staged;
-        test "jvp and vmap of a gradient through a scan are staged"
-          test_jvp_and_vmap_of_grad_through_scan_are_staged;
-        test "grad of a gradient through a scan is staged"
-          test_grad_of_grad_through_scan_is_staged;
-        test "grad of a scan ignores undifferentiated captures"
-          test_grad_of_scan_ignores_undifferentiated_captures;
-        test "grad of a scan refuses a capture the forward did not read"
-          test_grad_of_scan_refuses_a_capture_the_forward_did_not_read;
-        test "a scan drops a carry its body returns unchanged"
-          test_scan_drops_an_unchanged_carry;
-      ];
-    group "sliding windows"
-      [
-        test "unfold matches eager" test_unfold_matches_eager;
-        test "fold of unfold matches eager" test_fold_matches_eager;
-        test "sliding window matches eager" test_sliding_window_matches_eager;
-        test "correlate matches eager" test_correlate_matches_eager;
-      ];
-    group "reductions"
-      [
-        test "half-precision sums accumulate wide"
-          test_half_sums_accumulate_wide;
-        test "half-precision products multiply wide"
-          test_half_products_multiply_wide;
-        test "narrow matrix products multiply exactly"
-          test_narrow_matmuls_multiply_exactly;
-        test "vector products are matrix products"
-          test_vector_products_are_matmuls;
-        slow "extremes" test_extremes;
-      ];
-    group "cumulative reductions"
-      [
-        slow "small integer scans keep their dtype"
-          test_small_int_scans_keep_dtype;
-        test "long scans match eager" test_long_scans_match_eager;
-        cases "arange inside a compiled function equals eager arange"
-          ~name:(Format.asprintf "%a" pp_arange)
-          arange_cases test_arange_matches_eager;
-        xfail ~reason:"compiled int64 -> bfloat16 cast rounds through float32"
-          (test "a bfloat16 arange inside a compiled function equals eager"
-             (fun () ->
-               test_arange_matches_eager
-                 (Arange
-                    ( Nx.bfloat16,
-                      1 lsl 40,
-                      (1 lsl 40) + (8 * ((1 lsl 31) + 12345)),
-                      (1 lsl 31) + 12345 ))));
-        test "scans propagate NaN" test_scans_propagate_nan;
-        test "scans order -0 below +0" test_scans_order_zeros;
-        test "8-bit float scans along a long axis" test_fp8_long_scans;
-      ];
-    group "indexed access"
-      [
-        test "scatter matches eager" test_scatter_matches_eager;
-        test "gather of a narrowed comparison"
-          test_gather_of_narrowed_comparison;
-        test "scatter orders duplicate updates" test_scatter_duplicates;
-        test "scatter orders thousands of duplicate updates"
-          test_scatter_many_duplicates_in_order;
-        test "scatter along a middle axis" test_scatter_middle_axis;
-        test "scatter with unique indices" test_scatter_unique_indices;
-        test "scatter with unique indices broken at one row"
-          test_scatter_unique_indices_broken_at_one_row;
-        test "scatter drops an update outside the axis"
-          test_scatter_out_of_range_dropped;
-        test "gathers read zero outside the axis"
-          test_gather_out_of_range_reads_zero;
-        far_indices;
-        test "gradients through indices outside the axis"
-          test_grad_out_of_range_indices;
-        test "scatter carries int and bfloat16 payloads"
-          test_scatter_payload_dtypes;
-        test "scatter under vmap" test_scatter_under_vmap;
-        test "gradient of take with repeated tokens"
-          test_grad_of_take_with_repeated_tokens;
-        test "take over a large table matches eager"
-          test_take_large_table_matches_eager;
-        test "gathers keep -0" (check_gathers_keep_negative_zero ?devices:None);
-        test "concatenation keeps every bit"
-          (check_concatenate_keeps_bits ?devices:None);
-        test "an index outside the axis beside unit axes"
-          (check_out_of_range_beside_unit_axes ?devices:None);
-        slow "sorted values are the input's elements"
-          (check_sort_values_are_elements ?devices:None);
-        slow "sort matches eager" test_sort_matches_eager;
-        slow "top_k matches eager" test_top_k_matches_eager;
-        slow "top_k puts NaN first, as eager does" test_top_k_puts_nan_first;
-        slow "top_k radix select matches eager" test_top_k_radix_matches_eager;
-        slow "top_k over a row of 2^20 entries"
-          (check_top_k_long_row ?devices:None);
-        slow "sort of every dtype matches eager" test_sort_dtypes_match_eager;
-        slow "compiled argsort is not quadratic" test_argsort_is_not_quadratic;
-        test "gradient of top_k" test_grad_of_top_k;
-        test "diag matches eager" test_diag_matches_eager;
-      ];
-    group "training"
-      [
-        test "jitted training follows the eager trajectory"
-          test_jitted_training_matches_eager;
-      ];
-    group "state"
-      [
-        test "non-contiguous inputs fall back to copies"
-          test_non_contiguous_input_matches_eager;
-        test "offset views read the right span"
-          test_offset_view_input_matches_eager;
-        test "outputs have their own storage"
-          test_outputs_have_their_own_storage;
-      ];
-    group "placement"
-      [
-        test "a placed value equals its argument" test_place_equals_its_argument;
-        test "strided and offset values" test_place_strided_and_offset;
-        test "a placed value feeds an input with no transfer"
-          test_place_feeds_inputs_without_transfer;
-        test "a resident value is returned as it is"
-          test_place_resident_value_is_returned;
-        test "on the host device" test_place_on_the_host_device;
-        test "placement under grad, jvp, vmap and jit"
-          test_place_is_the_identity_under_transformations;
-        test "an unbound placed value is consumed" test_place_then_consume;
-        test "item reads one element" test_item_reads_one_element;
-        test "a read of a traced value names its function"
-          test_read_of_traced_value_names_its_function;
-        test "a move to the host keeps its source"
-          test_move_to_host_keeps_its_source;
-        test "mixed placements raise" test_mixed_placements_raise;
-        test "a loop whose state starts on the host compiles once"
-          test_host_started_loop_compiles_once;
-        test "placing elsewhere inside jit raises"
-          test_placing_elsewhere_inside_jit_raises;
-        test "one device per name" test_one_device_per_name;
-        test "a compiled function runs where its inputs live"
-          test_runs_where_its_inputs_live;
-        test "an input on another device raises" test_leaves_elsewhere_raise;
-        test "a capture decides the device" test_capture_decides_the_device;
-        test "a capture's device is remembered"
-          test_capture_device_is_remembered;
-        test "placed views bind without a copy" test_views_bind_without_a_copy;
-        test "placed views share programs" test_views_share_programs;
-        test "windows bind from aligned offsets"
-          test_windows_bind_from_aligned_offsets;
-        test "strides key programs" test_strides_key_programs;
-        test "views of inputs as outputs" test_views_of_inputs_as_outputs;
-        test "a window's view is released" test_a_window's_view_is_released;
-        test "overlapping views are copied" test_overlapping_views_are_copied;
-        test "captured views bind" test_captured_views_bind;
-        test "a program on the host is on the host"
-          test_host_program_is_on_the_host;
-      ];
-    group "values on the disk"
-      [
-        slow "a value larger than a chunk is borrowed"
-          test_disk_placement;
-        test "the file opened is read, not the one at its path now"
-          test_disk_upload_after_replace;
-        test "a leaf and a capture are read as host values"
-          test_disk_leaf_and_capture;
-        test "borrowed storage is never lent or written"
-          test_borrowed_storage_is_never_lent;
-        test "a value not aligned to its elements is read into the device"
-          test_disk_unaligned;
-      ];
-    group "device lists"
-      [
-        test "a value placed on device lists reads back"
-          test_place_on_device_lists;
-        test "a signalling NaN keeps its bits" test_split_nan_bits;
-        test "a value moves between device lists" test_move_between_device_lists;
-        test "views move between device lists"
-          test_move_views_between_device_lists;
-        test "moves do not gather on the host"
-          test_moves_do_not_gather_on_the_host;
-        test "a split upload from the disk" test_split_upload_from_the_disk;
-        test "eager results stay on the devices"
-          test_eager_results_on_device_lists;
-      ];
-    group "compiled over device lists"
-      [
-        test "a split input" test_jit_over_a_split_input;
-        test "host leaves enter as copies" test_host_leaves_enter_replicated;
-        test "leaves on other devices raise" test_leaves_on_other_devices_raise;
-        test "a split capture orders copies" test_a_split_capture_orders_copies;
-        test "a split capture is bound" test_split_capture_is_bound;
-        test "views of split values are read in place"
-          test_views_of_split_values_are_read_in_place;
-        test "operands that cannot meet raise" test_split_operands_raise;
-        test "placing inside a program" test_place_inside_a_program;
-        test "a consumed carry keeps its placement"
-          test_a_consumed_carry_keeps_its_placement;
-      ];
-    group "bound captures"
-      [
-        test "binding a placed capture moves no bytes"
-          test_bound_capture_moves_no_bytes;
-        test "two compiled functions share one buffer"
-          test_bound_capture_is_shared;
-        test "independent graphs share capture ownership across domains"
-          test_independent_shared_captures;
-        test "a bound value keeps its buffer across a read"
-          test_bound_value_survives_a_read;
-        test "a read leaves an unbound value placed"
-          test_unbound_value_stays_after_a_read;
-        test "consuming a bound storage" test_consuming_a_bound_storage;
-        test "a consumed bound storage goes with its owners"
-          test_consumed_bound_storage_goes_with_its_owners;
-        test "a bound capture returned unchanged is a copy"
-          test_bound_capture_returned_is_a_copy;
-        test "a bound buffer is released with its owners"
-          test_bound_buffer_is_released_with_its_owners;
-        test "the collection budget counts every allocation"
-          test_budget_counts_every_allocation;
-        test "a device that cannot allocate raises Out_of_memory"
-          test_out_of_memory;
-      ];
-    group "chunked transfers"
-      [
-        slow "a contiguous value larger than a chunk" test_chunked_contiguous;
-        slow "a contiguous value at an offset" test_chunked_offset;
-        slow "a strided value" test_chunked_strided;
-        slow "a strided value with rows larger than a chunk"
-          test_chunked_strided_rows;
-        slow "a capture larger than a chunk" test_chunked_capture;
-      ];
-    group "residency"
-      [
-        test "feedback chain moves no bytes" test_feedback_chain_moves_no_bytes;
-        test "forced handles feed current bytes"
-          test_forced_handle_feeds_current_bytes;
-        test "the same handle can seed two leaves"
-          test_same_handle_as_two_leaves;
-        test "duplicate output leaves are two values"
-          test_duplicate_outputs_are_two_values;
-        test "empty values are consumed and returned fresh"
-          test_empty_values_are_consumed_and_fresh;
-        test "handles feed other jitted closures" test_cross_jit_feedback;
-        test "handles feed new signatures without forcing"
-          test_cross_signature_feedback;
-        test "pass-through outputs survive later calls"
-          test_pass_through_output_survives;
-        test "grad over jit forces deferred arguments"
-          test_grad_over_jit_with_deferred_arg;
-        test "vmap over jit forces deferred arguments"
-          test_vmap_over_jit_with_deferred_arg;
-        test "signature dispatch never forces"
-          test_dispatch_on_handle_reads_no_bytes;
-        test "captures upload once across signatures"
-          test_capture_uploaded_once_across_signatures;
-        test "dropped handles are reclaimed" test_dropped_handles_are_reclaimed;
-        test "a read after a call waits for it" test_read_after_call_waits;
-        test "programs own their arenas" test_programs_own_their_arenas;
-        test "dropping a program releases its arena"
-          test_dropping_a_program_releases_its_arena;
-        test "a buffer freed under a running kernel is not reused"
-          test_buffer_freed_under_a_running_kernel;
-      ];
-    group "consumption"
-      [
-        test "lending follows derivation" test_lending_follows_derivation;
-        test "a consumed argument between read ones"
-          test_a_consumed_argument_between_read_ones;
-        test "consumption bounds resident memory at two generations"
-          test_consume_bounds_resident_memory;
-        test "a consumed input hands its storage to the output"
-          test_consume_reuses_storage;
-        test "a movement path refuses reuse and stays correct"
-          test_consume_refuses_movement_path;
-        test "a later reader refuses reuse and stays correct"
-          test_consume_refuses_later_reader;
-        test "a consumed pass-through moves its storage"
-          test_consume_moves_pass_through;
-        test "a run-time window write reuses the cache"
-          test_consume_reuses_window_write;
-        test "a pool read after its write still reuses storage"
-          test_consume_reuses_pool_read_after_write;
-        test "two programs alternate on one consumed state"
-          test_consume_alternates_two_programs;
-        test "consumption reuses a pool written by scatter"
-          test_consume_reuses_pool_scatter;
-        test "a partial view of a storage is not consumed"
-          test_step_refuses_a_partial_view;
-        test "a storage both arguments reach raises"
-          test_step_refuses_a_storage_both_arguments_reach;
-        test "scatter without consumption keeps its input"
-          test_scatter_without_consumption_keeps_the_input;
-        test "scatter of values read from the consumed pool"
-          test_scatter_of_values_read_from_the_pool;
-        test "scatter of the consumed pool into itself"
-          test_scatter_of_the_pool_into_itself;
-        test "scatter refuses a later reader of the consumed pool"
-          test_scatter_refuses_a_later_reader_of_the_pool;
-        test "scatter beside a reader of the old value"
-          test_scatter_beside_a_reader_of_the_old_value;
-        test "an updated input returned unchanged stays readable"
-          test_consume_keeps_pass_through_readable;
-        test "outputs never write into an input's buffer"
-          test_outputs_never_write_into_inputs;
-        test "every derived leaf is reused" test_consume_reuses_every_leaf;
-        test "a staged loop refuses only the leaves it touches"
-          test_consume_reuses_beside_a_scan;
-        test "a consumed handle raises on read"
-          test_consumed_handle_raises_on_read;
-        test "re-feeding a consumed handle raises"
-          test_consumed_handle_refeed_raises;
-        test "a storage two leaves reach raises"
-          test_consumed_storage_reached_twice_raises;
-        test "captures that reach consumed storage raise"
-          test_consumed_captures_raise;
-        test "a copied capture of consumed storage raises"
-          test_a_copied_capture_of_consumed_storage_raises;
-        test "a value read before the call is still consumed"
-          test_read_value_is_still_consumed;
-        test "a host input is consumed" test_host_input_is_consumed;
-        test "a consumed host input holds its storage alone"
-          test_host_input_must_hold_its_storage;
-        test "jit never consumes its inputs" test_jit_leaves_handle_readable;
-        test "a step reads its first argument"
-          test_step_reads_its_first_argument;
-        test "a step reuses only its state's storage"
-          test_step_reuses_only_the_state;
-        test "a handle in both arguments raises"
-          test_step_refuses_a_handle_in_both_arguments;
-        test "an indexed write into a read leaf keeps it"
-          test_step_write_into_a_read_leaf;
-      ];
-    group "values"
-      [
-        test "set with a traced window start replays the position"
-          test_set_traced_window_replays_position;
-        test "set at a traced corner over two axes"
-          test_set_traced_window_over_two_axes;
-        test "set with static specs matches eager"
-          test_set_static_window_matches_eager;
-        test "slice with a traced window start replays the position"
-          test_slice_traced_window_replays_position;
-      ];
-    group "linear algebra"
-      [
-        test "reduced QR matches eager" test_qr_reduced_matches_eager;
-        test "a zero-tail column takes no reflector"
-          test_qr_zero_tail_matches_eager;
-        test "cholesky matches eager in both triangles"
-          test_cholesky_matches_eager;
-        test "the gradient of a Cholesky-using loss compiles"
-          test_cholesky_gradient_compiles;
-        test "triangular solve matches eager for every flag combination"
-          test_solve_triangular_flags_match_eager;
-        test "triangular solve takes a vector right-hand side"
-          test_solve_triangular_vector_rhs;
-        test "triangular solve is batched" test_solve_triangular_batched;
-        slow "a wide triangular solve takes the blocked path"
-          test_solve_triangular_blocked;
-        test "LU matches eager" test_lu_matches_eager;
-        test "the gradient of det compiles" test_det_gradient_compiles;
-        test "solve and inv match eager" test_solve_matches_eager;
-        test "the gradient of a QR-using loss compiles"
-          test_qr_gradient_compiles;
-      ];
-    group "errors"
-      [
-        test "reading a traced value raises" test_data_dependent_read_raises;
-        test "traced values have no storage" test_traced_values_have_no_storage;
-        test "a leaked traced value raises" test_leaked_traced_value_raises;
-        test "unsupported operations raise" test_unsupported_op_raises;
-      ];
-  ]
+        on_one_device ~name:"one device" d;
+        constants_where_used d;
+        sums_fuse_products d;
+        staged_scans d;
+        rows_written
+          ~at:(Nx.Placement.device ~backend:Rune.compiled d)
+          "a lent write of rows";
+        gathers ~at:(on d) m;
+      ]
+  | None ->
+      let why = "no " ^ kind ^ " device" in
+      [ slow why (fun () -> skip ~reason:why ()) ]
 
-let () = exit (run "rune jit" tests)
+let () =
+  exit
+    (run "Rune_internals.Jit"
+       [
+         values ~count:1 ~heavy:false;
+         keys;
+         results;
+         consumption;
+         lending;
+         rows_written "a lent write of rows";
+         captures;
+         errors;
+         reports;
+         domains;
+         transformations;
+         placement;
+         scans;
+         gathers ~at:Nx.Placement.host Nx_device.host;
+         device_lists;
+         disk;
+         on_one_device ~name:"one device" d4;
+         sums_fuse_products (Nx.Device.of_runtime Nx_device.host);
+         group ~tags:[ "slow" ] "metal" (on_gpu "Metal" Metal.device);
+         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" Nvidia.cuda);
+         group ~tags:[ "slow" ] "nv" (on_gpu "NV" Nvidia.nv);
+         group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
+       ])
