@@ -856,9 +856,14 @@ let rows_written ?at name =
         ]
         (fun (n, l) -> agrees ~n (projections (List.length l)) (indices l));
       test
-        "a decode step writes its cache rows and attends over them, as eager \
+        "decode steps write their cache rows and attend over them, as eager \
          does" (fun () ->
           let pools () = (pool ~n:16 (), pool ~n:16 ()) in
+          let eager = ref (pools ()) in
+          let compiled =
+            let k, v = pools () in
+            ref (on k, on v)
+          in
           let table =
             Nx.create Nx.int64 [| 1; 16 |]
               (Array.init 16 (fun j -> Int64.of_int (15 - j)))
@@ -875,15 +880,16 @@ let rows_written ?at name =
             (fun p ->
               let x = projections 1
               and pos = Nx.create Nx.int64 [| 1; 1 |] [| p |] in
-              let out, (keys, values) = decode_step (pools ()) x pos table in
-              let k, v = pools () in
+              let out, (keys, values) = decode_step !eager x pos table in
               let out', (keys', values') =
-                step (on k, on v) (on x) (on pos) (on table)
+                step !compiled (on x) (on pos) (on table)
               in
+              eager := (keys, values);
+              compiled := (keys', values');
               equal close out (host out');
               equal floats keys (host keys');
               equal floats values (host values'))
-            [ 0L; 7L; 15L ]);
+            [ 0L; 7L; 15L; 7L ]);
       test "an unlent write of rows leaves the pool it writes into" (fun () ->
           let a = on (pool ())
           and x = projections 2
