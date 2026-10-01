@@ -1525,11 +1525,44 @@ let rollout ran w h xs =
          (h, h))
        ~init:h xs)
 
+(* [constant_rows at] checks scans over rows computed from constants alone, of 4
+   and 20 bytes, with a carry at [at]: the rows have no device until the program
+   places them, padded to the loop's row stride. *)
+let constant_rows at =
+  let check name rows ~carry ~ys =
+    test name (fun () ->
+        let f c =
+          Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor
+            ~f:(fun c l -> (Nx.add c (Nx.sum l), Nx.mul_s l 10l))
+            ~init:c (rows ())
+        in
+        let c, y =
+          Rune.jit
+            Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+            f
+            (Nx.place at (Nx.zeros Nx.int32 [||]))
+        in
+        equal (array int32) [| carry |]
+          (Nx.to_array (Nx.reshape [| 1 |] (host c)));
+        equal (array int32) ys (Nx.to_array (host y)))
+  in
+  [
+    check "a scan over rows of 4 bytes computed from constants sums as eager"
+      (fun () -> Nx.cumsum (Nx.ones Nx.int32 [| 8 |]))
+      ~carry:36l
+      ~ys:(Array.init 8 (fun i -> Int32.of_int (10 * (i + 1))));
+    check "a scan over rows of 20 bytes computed from constants sums as eager"
+      (fun () -> Nx.cumsum ~axis:0 (Nx.ones Nx.int32 [| 8; 5 |]))
+      ~carry:180l
+      ~ys:(Array.init 40 (fun k -> Int32.of_int (10 * ((k / 5) + 1))));
+  ]
+
 (* Scans on a device whose work runs from command queues. *)
 let staged_scans d =
   let at = on d and once _ = 1 in
   group "staged scans"
     [
+      group "constant rows" (constant_rows at);
       staged at "stage, their step once, over rows 16 bytes apart" ~steps:once
         ~init:(zeros 4) decay (rows 7 4);
       staged at "stage over rows that are not, through a padded copy"
@@ -1862,11 +1895,12 @@ let staged_scans d =
             ~than:(64 * 1020 * 4)
             (held 1024 - held 4));
       test
-        "write out a step that draws under a key scope, drawing as eager does"
-        (fun () ->
+        "write out a step that draws under a key scope, drawing as eager does \
+         before, inside and after the scan" (fun () ->
           let ran = ref 0 in
           let f (k, xs) =
             Nx.Rng.with_key k (fun () ->
+                let before = Nx.rand Nx.float32 [| 2 |] in
                 let c, ys =
                   Rune.scan'
                     ~f:(fun c x ->
@@ -1874,7 +1908,7 @@ let staged_scans d =
                       (Nx.add c x, Nx.add x (Nx.rand Nx.float32 [| 4 |])))
                     ~init:(zeros 4) xs
                 in
-                [ c; ys; Nx.rand Nx.float32 [| 3 |] ])
+                [ before; c; ys; Nx.rand Nx.float32 [| 3 |] ])
           in
           let k = Nx.Rng.key 42 in
           let eager = f (k, rows 5 4) in
@@ -1902,6 +1936,7 @@ let scans =
   in
   group "scans"
     [
+      group "constant rows" (constant_rows Nx.Placement.host);
       test "a scan folds inside the trace and equals eager" (fun () ->
           let f xs = snd (cumulative xs) in
           equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
