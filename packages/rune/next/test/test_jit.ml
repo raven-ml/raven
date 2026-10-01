@@ -1894,6 +1894,10 @@ let staged_scans d =
           less ~msg:"bytes held for rows 1,024 values wide against 4" int
             ~than:(64 * 1020 * 4)
             (held 1024 - held 4));
+      staged at "stage a step whose output is a constant" ~steps:once
+        ~init:(zeros 4)
+        (fun c x -> (Nx.add (Nx.mul_s c 0.5) x, Nx.zeros Nx.float32 [||]))
+        (rows 300 4);
       (* Written out, each step's carry is stored before the next reads it: a
          thousand steps compile as kernels of one step each. *)
       test "write out a thousand steps, each carry stored" (fun () ->

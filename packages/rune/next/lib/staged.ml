@@ -210,7 +210,10 @@ let stage trace s (r : Scan.request) =
   if
     List.compare_lengths carry carry' <> 0
     || (not (List.for_all2 same_shape carry carry'))
-    || not (List.for_all (fun y -> Nx.Placement.equal (at y) p) ys)
+    || not
+         (List.for_all
+            (fun y -> Nx.Placement.(equal (at y) p || equal (at y) host))
+            ys)
   then raise Scan.Not_staged;
   let (Nx.P x) = List.hd r.req_xs in
   let n = (Nx.shape x).(0) in
@@ -298,7 +301,7 @@ let stage trace s (r : Scan.request) =
         let u = node packed and m = numel (Nx.shape y) in
         let k = stride u m in
         let b = Ops.new_buffer device (n * k) (Ops.dtype u) in
-        let slot, w = parameter (Nx.placement y) (Nx.dtype y) (Nx.shape y) in
+        let slot, w = parameter p (Nx.dtype y) (Nx.shape y) in
         pass slot (window b Ops.O.(trip * int k) m);
         stores := Ops.store (Lower.uop w) u :: !stores;
         fun e ->
@@ -344,12 +347,21 @@ let stage trace s (r : Scan.request) =
         (fun (Nx.P c) final -> Nx.P (Lower.traced p (Nx.dtype c) (final e)))
         r.req_carry carries;
     r_ys =
+      (* An output on the host is written on the loop's device, and its rows
+         copied to the host once the loop ran. *)
       List.map2
         (fun (Nx.P y) final ->
-          Nx.P
-            (Lower.traced
-               (Nx.Placement.with_leading_axis (Nx.placement y))
-               (Nx.dtype y) (final e)))
+          let stacked =
+            Lower.traced
+              (Nx.Placement.with_leading_axis p)
+              (Nx.dtype y) (final e)
+          in
+          if Nx.Placement.equal (Nx.placement y) p then Nx.P stacked
+          else
+            Nx.P
+              (Lower.op s
+                 (Nx.Op.Place
+                    (Nx.Placement.with_leading_axis (Nx.placement y), stacked))))
         ys outputs;
   }
 

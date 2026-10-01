@@ -32,11 +32,14 @@
     - before its step runs, when no leaf lies on such a device, as on the host;
     - after its step ran once, in a trace whose values nothing keeps, when the
       step's next carry differs from its carry in a shape or a placement, when
-      an output lies elsewhere than the loop, when the step draws from a key the
-      body does not vary (a key scope's draw: the step runs outside the scopes
-      the function opened, and a traced draw would repeat on every trip), when
-      the scan has one step, or when the body runs a host program, a copy the
-      host makes, or calls devices of two kinds.
+      an output lies elsewhere than the loop's device or the host, when the step
+      draws from a key the body does not vary (a key scope's draw: the step runs
+      outside the scopes the function opened, and a traced draw would repeat on
+      every trip), when the scan has one step, or when the body runs a host
+      program, a copy the host makes, or calls devices of two kinds.
+
+    An output the step computes on the host, such as a constant, is written on
+    the loop's device, and its rows are copied to the host once per call.
 
     So a staged scan runs its step once per trace, and a declined one once per
     row, plus once before on a device with queues. *)
