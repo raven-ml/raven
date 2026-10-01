@@ -122,11 +122,6 @@ let jvp_of fn p q f params tangents =
 
 let jvp p q f params tangents = jvp_of "Rune.jvp" p q f params tangents
 
-(* Jacobians *)
-
-let jacfwd' _ _ = not_yet "jacfwd'"
-let jacrev' _ _ = not_yet "jacrev'"
-
 (* Controlling differentiation *)
 
 let detach x = Construct.perform (Detach x)
@@ -208,7 +203,74 @@ let remat s =
 type axis = Construct.axis
 
 let axis () = Type.Id.make ()
-let vmap ?axis:_ _ _ _ = not_yet "vmap"
+
+(* [length fn s args] is the common length of the first axis of [args]' tensors,
+   which a map maps over. *)
+let length fn s args =
+  let first = ref None in
+  Ptree.fold s
+    (fun path x () ->
+      let at = Ptree.Path.to_string path in
+      match (Nx.shape x, !first) with
+      | [||], _ -> invalid_argf "%s: %s: a scalar; a map maps axis 0" fn at
+      | shape, None -> first := Some (shape.(0), at)
+      | shape, Some (n, first) ->
+          if shape.(0) <> n then
+            invalid_argf "%s: %s: %d rows along axis 0, %s: %d" fn at shape.(0)
+              first n)
+    args ();
+  match !first with
+  | Some (n, _) -> n
+  | None -> invalid_arg (fn ^ ": the arguments have no tensor to map")
+
+let vmap_of fn ?axis s =
+  let (Structure.Signature u) = Structure.uncurry fn s in
+  fun f ->
+    u.curry (fun args ->
+        let m = Vmap.create ?axis fn (length fn u.args args) in
+        let args = Ptree.map u.args (fun _ x -> Vmap.lane m x) args in
+        let y = Vmap.install m (fun () -> u.apply f args) in
+        Ptree.map u.result (fun _ y -> Vmap.batched m y) y)
+
+let vmap ?axis s = vmap_of "Rune.vmap" ?axis s
+
+(* Jacobians *)
+
+(* A [numel x; shape x...] tensor whose [k]-th row is the [k]-th standard basis
+   element of [x]'s space. *)
+let basis x =
+  let n = Nx.numel x in
+  Nx.reshape (Array.append [| n |] (Nx.shape x)) (Nx.eye (Nx.dtype x) n)
+
+let jacfwd' f x =
+  let fn = "Rune.jacfwd'" in
+  let one = Ptree.tensor in
+  let cols =
+    vmap_of fn
+      Ptree.(one @-> returns one)
+      (fun v -> snd (jvp_of fn one one f x v))
+      (basis x)
+  in
+  let r = Nx.ndim cols in
+  let y_shape = Array.sub (Nx.shape cols) 1 (r - 1) in
+  Nx.reshape
+    (Array.append y_shape (Nx.shape x))
+    (Nx.contiguous (Nx.moveaxis 0 (r - 1) cols))
+
+let jacrev' f x =
+  let fn = "Rune.jacrev'" in
+  let one = Ptree.tensor in
+  let y, pullback = vjp_of fn one one f x in
+  (* Row [k] of the pullback is the gradient of [Re y_k], the conjugate of row
+     [k] of the Jacobian. *)
+  let rows =
+    vmap_of fn
+      Ptree.(one @-> returns one)
+      (fun e -> Nx.conjugate (pullback e))
+      (basis y)
+  in
+  Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) (Nx.contiguous rows)
+
 let lanes a x = Construct.perform (Lanes (a, x))
 let lane_index ?axis () = Construct.perform (Lane_index axis)
 
@@ -285,6 +347,6 @@ let grad' f x = snd (value_and_grad_of "Rune.grad'" t f x)
 let value_and_grad' f x = value_and_grad_of "Rune.value_and_grad'" t f x
 let vjp' f x = vjp_of "Rune.vjp'" t t f x
 let jvp' f x dx = jvp_of "Rune.jvp'" t t f x dx
-let vmap' ?axis:_ _ _ = not_yet "vmap'"
+let vmap' ?axis f x = vmap_of "Rune.vmap'" ?axis Ptree.(t @-> returns t) f x
 let scan' ~f ~init xs = scan_of "Rune.scan'" t t t ~f ~init xs
 let jit' _ _ = not_yet "jit'"
