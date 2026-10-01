@@ -11,7 +11,7 @@ An entry is admitted for one of three reasons only:
 
 - **(a) an OCaml constraint;**
 - **(b) nx's documented meaning:** the operation's contract in `nx.mli` or
-  `nx_backend.mli`, which nx.cpu computes;
+  `nx_backend_intf.mli`, which nx.cpu computes;
 - **(c) the engine's contract:** nx.device's submission protocol.
 
 Each entry gives the reference (tinygrad `79af1ca70`, or none), the raven
@@ -51,7 +51,7 @@ target's run lands.
   type of the width otherwise. tinygrad computes in the signed type, whose
   overflow C leaves undefined. Integer `Pow` squares over the exponent's bits;
   tinygrad refuses an exponent that is not a constant.
-- **nx:** modular arithmetic (`nx_backend.mli`; nx.cpu computes in the unsigned
+- **nx:** modular arithmetic (`nx_backend_intf.mli`; nx.cpu computes in the unsigned
   width); a negative integer exponent gives the integer quotient of 1.
 - **Class:** exact.
 - **Reason:** (b).
@@ -87,7 +87,7 @@ target's run lands.
 - **Reference:** `mixin/elementwise.py:901` (`sign`).
 - **Raven:** `lower_arith.ml:84` (`sign`).
 - **Differs:** `sign nan` is NaN; tinygrad gives 1.
-- **nx:** `nx_backend.mli`, `Sign`: NaN for a NaN.
+- **nx:** `nx_backend_intf.mli`, `Sign`: NaN for a NaN.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `exact unary floats › sign › *`.
@@ -98,7 +98,7 @@ target's run lands.
 - **Raven:** `lower_arith.ml:101` (`round`).
 - **Differs:** a half rounds away from zero, decided on the exact rest
   `x - trunc x`.
-- **nx:** `nx_backend.mli`, `Round`: C's `round`.
+- **nx:** `nx_backend_intf.mli`, `Round`: C's `round`.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `exact unary floats › round › *`.
@@ -221,7 +221,7 @@ target's run lands.
 - **Raven:** `lower_arith.ml:133` (`( /: )`).
 - **Differs:** one rounding: `Ops.FDIV`, which tolk renders as `a / b`
   (tolk's ledger). tinygrad multiplies by the reciprocal, two roundings.
-- **nx:** `nx_backend.mli`, `Fdiv`: the IEEE 754 quotient.
+- **nx:** `nx_backend_intf.mli`, `Fdiv`: the IEEE 754 quotient.
 - **Class:** exact where the target's division is correctly rounded.
 - **Reason:** (b).
 - **Pinned by:** `exact binary floats › div › *`,
@@ -316,7 +316,7 @@ target's run lands.
 - **Raven:** `lower_arith.ml:878` (`threefry`).
 - **Differs:** nx's words are `int32` pairs along the last axis, the low word
   first; the lowering packs each pair into a `uint64`, hashes, and unpacks.
-- **nx:** `nx_backend.mli`, `threefry`: Threefry-2x32-20, bit-identical under
+- **nx:** `nx_backend_intf.mli`, `threefry`: Threefry-2x32-20, bit-identical under
   every lowering.
 - **Class:** exact.
 - **Reason:** (b).
@@ -386,7 +386,7 @@ target's run lands.
   tinygrad accumulates signed integers in a signed type, whose overflow C,
   Metal and CUDA leave undefined; returns an integer sum in its accumulator's
   dtype; and multiplies narrow floats and narrow integers at their own width.
-- **nx:** `nx_backend.mli`, `reduce` and `scan`: the result has the operand's
+- **nx:** `nx_backend_intf.mli`, `reduce` and `scan`: the result has the operand's
   dtype; integers wrap; `nx.mli`, Arithmetic: narrow floats compute at
   `float32` and round once.
 - **Class:** exact on integers, rounded sum on floats.
@@ -445,7 +445,7 @@ target's run lands.
   such passes, its low half first. The sorted values are the operand's
   elements at those positions, a one-hot sum over their bits. tinygrad's
   recovery never matches a NaN, and its network compares floats.
-- **nx:** `nx_backend.mli`, `sort`, `argsort`: stable, NaN last in either
+- **nx:** `nx_backend_intf.mli`, `sort`, `argsort`: stable, NaN last in either
   direction, `-0.` before `0.` ascending, and `sort` is the operand taken
   along `argsort`, bit for bit.
 - **Class:** exact.
@@ -461,7 +461,7 @@ target's run lands.
 - **Differs:** a fill of `-0.` is selected on the padding with `where`, as the
   reference fills any other value; the reference takes `-0.` for 0 and pads
   `+0.`.
-- **nx:** `nx_backend.mli`, `pad`: the padding holds the value given.
+- **nx:** `nx_backend_intf.mli`, `pad`: the padding holds the value given.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `assembly › a pad of -0. keeps its sign`.
@@ -475,7 +475,7 @@ target's run lands.
   reference's sum turns a `-0.` into `+0.` and quiets a signalling NaN. Empty
   pieces are dropped first, and pieces of one length are stacked as the
   reference stacks them.
-- **nx:** `nx_backend.mli`, `cat`: the arrays' elements, one after the other.
+- **nx:** `nx_backend_intf.mli`, `cat`: the arrays' elements, one after the other.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `assembly › pieces of different lengths keep -0.`,
@@ -490,7 +490,7 @@ target's run lands.
   as unsigned integers of their width (booleans as `uint8`) and read back; the
   reference sums the values, which turns a gathered `-0.` into `+0.`. An index
   out of range selects nothing and reads the bits 0, `+0.`.
-- **nx:** `nx_backend.mli`, `gather`: the element at the index; an index
+- **nx:** `nx_backend_intf.mli`, `gather`: the element at the index; an index
   outside the axis reads zero.
 - **Class:** exact.
 - **Reason:** (b).
@@ -516,7 +516,7 @@ target's run lands.
     meaning agrees with the reference's `_masked_merge`, which also keeps the
     last update; its construction, a chain of one `where` per update along the
     axis, grows the graph with the number of updates.
-- **nx:** `nx_backend.mli`, `scatter`: `x` where no update lands, the last
+- **nx:** `nx_backend_intf.mli`, `scatter`: `x` where no update lands, the last
   duplicate wins under `Set`, every update adds under `Add`.
 - **Class:** exact; rounded sum for float `Add`.
 - **Reason:** (b); for `Set`'s construction, the consumer is `Nx.set`, whose
@@ -537,7 +537,7 @@ target's run lands.
 - **Differs:** along each axis `v` does not fill, `v` is moved to its start by a
   one-hot selection over bit patterns (I3), and the moved `v` is selected on
   the window's mask; along an axis `v` fills, the start is 0.
-- **nx:** `nx_backend.mli`, `update`: `starts` is read when the kernel runs,
+- **nx:** `nx_backend_intf.mli`, `update`: `starts` is read when the kernel runs,
   already clamped so that the window fits.
 - **Class:** exact.
 - **Reason:** (b); the consumer is kaun's decode, whose `Cache_index` (RFC
@@ -559,7 +559,7 @@ target's run lands.
   read only padding, is zeros, a constant: no element of its input lands in
   the output, and the kernel that sums nothing is one whose every lane reads
   an `Invalid` index, which tolk cannot lower.
-- **nx:** `nx_backend.mli`, `fold`: the windows put back, summed where they
+- **nx:** `nx_backend_intf.mli`, `fold`: the windows put back, summed where they
   overlap.
 - **Class:** rounded sum.
 - **Reason:** (b).
@@ -581,7 +581,7 @@ target's run lands.
   lowering of the kernel fails (a `float16` unfold of a gapped operand,
   kernel `[2; 1]`, stride `[1; 2]`, padding `[(0, 0); (1, 0)]`, raised a
   `CAST` of a vector `STACK` at verification).
-- **nx:** `nx_backend.mli`, `unfold`: the windows of the operand padded with
+- **nx:** `nx_backend_intf.mli`, `unfold`: the windows of the operand padded with
   zeros.
 - **Class:** exact.
 - **Reason:** (b).
@@ -635,7 +635,7 @@ target's run lands.
   column is reflected when any element below its diagonal is nonzero: one
   more reduction per column than tinygrad's. Compiled code never raises
   `No_convergence`.
-- **nx:** `nx_backend.mli`, `qr`: `q` orthonormal, `r` upper triangular, the
+- **nx:** `nx_backend_intf.mli`, `qr`: `q` orthonormal, `r` upper triangular, the
   factors nx.cpu's LAPACK reflectors give.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest element of
   eager's factors, signs included, for well-conditioned matrices of up to
@@ -675,7 +675,7 @@ target's run lands.
     such as Metal. Compiled code never raises `No_convergence`: it runs its
     fixed sweeps, and NaN in `a` gives NaN values, as eager does.
 - **nx:** `nx.mli`, `svd`: `a = U diag(S) Vh`, `S` descending, non-negative,
-  a zero one `+0`; `nx_backend.mli`: `u` and `vt` orthonormal.
+  a zero one `+0`; `nx_backend_intf.mli`: `u` and `vt` orthonormal.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest singular
   value for the values, and of one for the orthonormality of the vectors and
   the reconstruction, for well-conditioned matrices of up to 4 x 4; measured
@@ -742,7 +742,7 @@ target's run lands.
   The column below a nonzero pivot is divided by it, and the trailing rows take
   the rank-one update. It raises in neither eager nor compiled code: a zero
   pivot leaves its column unscaled, as eager does.
-- **nx:** `nx_backend.mli`, `lu`.
+- **nx:** `nx_backend_intf.mli`, `lu`.
 - **Class:** measured bound, with eager's pivots and row order: within
   `4 max(m, n) u` of the largest element of eager's factors for
   well-conditioned matrices of up to 5 x 5 with shuffled rows; measured maxima,
@@ -772,7 +772,7 @@ differs, nx's meaning, and the test that pins it.
   is `-0.`, where nx.cpu gives `-0x1p-128`, and `atan2 (-4) 0x1.fffffep127`
   is `-0.`. A kernel that moves or orders values without computing on them,
   a copy, a gather or a sort, keeps every bit.
-- **nx:** `nx_backend.mli`: IEEE 754 binary arithmetic, with gradual
+- **nx:** `nx_backend_intf.mli`: IEEE 754 binary arithmetic, with gradual
   underflow.
 - **Pinned by:** `Compiled › metal › elementwise › exact unary`, `› exact
   binary`, `› transcendental unary`, `› transcendental binary` and `› cast`
