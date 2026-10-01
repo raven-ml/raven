@@ -1725,17 +1725,10 @@ let is_storage tt =
   go (F.Tensor.uop tt)
 
 (* A loop-call argument must resolve to a buffer. Buffer-identity nodes pass
-   through; a computed value is realized; a device-less constant (e.g. a scalar
-   carry init) is stored into a fresh buffer once, before the loop. *)
-let realize_arg st (tt : F.Tensor.t) : U.t =
+   through, and a computed value is realized, a device-less one included. *)
+let realize_arg (tt : F.Tensor.t) : U.t =
   let u = F.Tensor.uop tt in
-  if U.has_buffer_identity u then u
-  else if Option.is_none (U.device_of u) then
-    let dt = F.Tensor.val_dtype tt in
-    let n = numel (Array.of_list (F.Tensor.shape tt)) in
-    let buf = make_node st dt n in
-    U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:u () ]
-  else U.contiguous ~force:true ~src:u ()
+  if U.has_buffer_identity u then u else U.contiguous ~force:true ~src:u ()
 
 let in_scan_body st body f =
   st.scan_bodies <- body :: st.scan_bodies;
@@ -1776,9 +1769,9 @@ let add_rows_in_value st l ~slot ~numel ~n tt =
   let node =
     match rows_storage tt ~n ~numel ~stride with
     | Some u -> u
-    | None when stride = numel -> realize_arg st tt
+    | None when stride = numel -> realize_arg tt
     | None ->
-        realize_arg st
+        realize_arg
           (F.Movement.pad
              (F.Movement.reshape tt [ n; numel ])
              [ (0, 0); (0, stride - numel) ])

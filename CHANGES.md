@@ -172,6 +172,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.scan` compiled by `Rune.jit` reads rows computed from constants
+  alone, such as `Nx.arange`'s running sum, as eager computes them. Such rows,
+  when their size was not a multiple of 16 bytes, were padded through a store
+  that tolk scheduled wrongly: the loop read wrong values from 4-byte rows, and
+  compiling failed with `Failure "nth"` on 20-byte rows.
 - **Breaking:** `Rune.cond`, `Rune.while_loop`, `Rune.no_grad`,
   `Rune.hessian'`, `Rune.hvp`, `Rune.hvp'`, `Rune.jvp_aux` and
   `Rune.with_debug` are removed. Each is a line of ordinary code:

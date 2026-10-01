@@ -962,6 +962,33 @@ let test_scan_carry_written_in_place () =
           (bytes < 3 * layers * slots * d * 4))
     [ false; true ]
 
+(* Rows computed from constants alone have no device until the program places
+   them. Padded to the loop's row stride, of 4 or 20 bytes here, they are read
+   as eager computes them. *)
+let test_scan_reads_constant_rows () =
+  let check rows ~carry ~ys =
+    let f c =
+      Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor
+        ~f:(fun c l -> (Nx.add c (Nx.sum l), Nx.mul_s l 10l))
+        ~init:c (rows ())
+    in
+    let c, y =
+      Rune.jit
+        Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+        f (Nx.zeros Nx.int32 [||])
+    in
+    equal (array int32) [| carry |] (Nx.to_array (Nx.reshape [| 1 |] c));
+    equal (array int32) ys (Nx.to_array y)
+  in
+  check
+    (fun () -> Nx.cumsum (Nx.ones Nx.int32 [| 8 |]))
+    ~carry:36l
+    ~ys:(Array.init 8 (fun i -> Int32.of_int (10 * (i + 1))));
+  check
+    (fun () -> Nx.cumsum ~axis:0 (Nx.ones Nx.int32 [| 8; 5 |]))
+    ~carry:180l
+    ~ys:(Array.init 40 (fun k -> Int32.of_int (10 * ((k / 5) + 1))))
+
 (* The layers of a stack passed as rows are read in place: a replay launches the
    kernels of the same body reading one captured layer, and nothing copies the
    row the step reads. The body gathers two of the layer's eight rows and
@@ -5237,6 +5264,8 @@ let tests =
         test "a scan rejects ragged or scalar rows"
           test_scan_rejects_ragged_rows;
         test "a scan carry is written in place" test_scan_carry_written_in_place;
+        test "a scan reads rows computed from constants alone"
+          test_scan_reads_constant_rows;
         test "a scan reads its rows in place" test_scan_reads_rows_in_place;
         test "a scan reads the rows of a scan in place"
           test_scan_reads_rows_of_a_scan_in_place;
