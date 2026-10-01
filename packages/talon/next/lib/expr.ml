@@ -882,6 +882,8 @@ let report env fmt =
 let int64 = Column Type.int64
 let bool_typing = Column Type.bool
 let known t n = Known (t, typed t n)
+let read ty n = typed (Column ty) (Read (ty, n))
+let conj a b = typed bool_typing (Logic (And, a, b))
 
 let pp_typing : type a. Format.formatter -> a typing -> unit =
  fun ppf -> function
@@ -1846,9 +1848,7 @@ and outs : env -> out_repr -> (string * packed) list =
       | Some (_, b) -> [ (n, Packed b) ]
       | None -> [])
   | Keep sel ->
-      List.map
-        (fun (n, Type.Any ty) -> (n, Packed (typed (Column ty) (Read (ty, n)))))
-        (select sel)
+      List.map (fun (n, Type.Any ty) -> (n, Packed (read ty n))) (select sel)
   | Across (k, sel, f) ->
       List.concat_map
         (fun (n, Type.Any ty) ->
@@ -2099,6 +2099,303 @@ let typing e =
 let bind_out schema o =
   let env = env schema in
   finish env (outs env o)
+
+(* Analyses *)
+
+let check_bound fn e =
+  if Option.is_none e.typing then err "Expr.%s: the expression is not bound" fn
+
+let reads e =
+  check_bound "reads" e;
+  let add acc n = if List.mem n acc then acc else n :: acc in
+  let rec walk : type a s. string list -> (a, s) t -> string list =
+   fun acc e ->
+    match e.node with
+    | Handle (_, n) | Ext_handle (_, n) | Read (_, n) -> add acc n
+    | Over { by; order; e } ->
+        let acc = List.fold_left add acc by in
+        walk
+          (List.fold_left (fun acc (k : Order.t) -> add acc k.name) acc order)
+          e
+    | Rolling (Window.Times { on; _ }, a) -> walk (add acc on) a
+    | n -> List.fold_left (fun acc (Packed e) -> walk acc e) acc (operands n)
+  in
+  List.rev (walk [] e)
+
+let row_local e =
+  check_bound "row_local" e;
+  let rec local : type a s. (a, s) t -> bool =
+   fun e ->
+    match e.node with
+    | Over _ | Rolling _ | Shift _ | Rank _ -> false
+    | n -> List.for_all (fun (Packed e) -> local e) (operands n)
+  in
+  local e
+
+(* [widens a ty] is [true] iff [ty] contains the column type of [a], so that a
+   cast of [a] to [ty] keeps every value. *)
+let widens : type a b s. (a, s) t -> b Type.t -> bool =
+ fun a ty ->
+  match a.typing with
+  | Some (Column ta) -> (
+      match Kind.equal_witness (Type.kind ta) (Type.kind ty) with
+      | Some Equal -> (
+          match Type.common [ ta; ty ] with
+          | Some c -> Type.equal c ty
+          | None -> false)
+      | None -> false)
+  | _ -> false
+
+let can_fail e =
+  check_bound "can_fail" e;
+  let rec fails : type a s. (a, s) t -> bool =
+   fun e ->
+    match e.node with
+    | Cast (ty, a) when not (widens a ty) -> true
+    | Text (Parse _, _)
+    | Calendar
+        ( Add_span _ | Diff _ | Floor _ | Offset _ | Localize _ | Windows _
+        | Parse_with _ )
+    | Of_option _ | App _ | Batch _ ->
+        true
+    | n -> List.exists (fun (Packed e) -> fails e) (operands n)
+  in
+  fails e
+
+type mapper = { map : 'a 's. ('a, 's) t -> ('a, 's) t }
+
+(* [map_node m n] is the bound node [n] with [m] applied to each of its
+   operands. *)
+let map_node : type a. mapper -> a node -> a node =
+ fun { map } n ->
+  match n with
+  | Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Const _ -> n
+  (* An unbound node, which no bound expression holds. *)
+  | Record_outs _ -> n
+  | Int (op, a, b) -> Int (op, map a, map b)
+  | Float (op, a, b) -> Float (op, map a, map b)
+  | Compare (op, a, b) -> Compare (op, map a, map b)
+  | Logic (op, a, b) -> Logic (op, map a, map b)
+  | Not a -> Not (map a)
+  | If (c, a, b) -> If (map c, map a, map b)
+  | Is_null a -> Is_null (map a)
+  | Coalesce es -> Coalesce (List.map map es)
+  | Is_in (vs, a) -> Is_in (vs, map a)
+  | Cut (edges, a) -> Cut (edges, map a)
+  | Cast (ty, a) -> Cast (ty, map a)
+  | Lift (fn, a) -> Lift (fn, map a)
+  | Lift2 (fn, a, b) -> Lift2 (fn, map a, map b)
+  | Nx_unary (op, a) -> Nx_unary (op, map a)
+  | Nx_binary (op, a, b) -> Nx_binary (op, map a, map b)
+  | Nx_compare (op, a, b) -> Nx_compare (op, map a, map b)
+  | Nx_where (c, a, b) -> Nx_where (map c, map a, map b)
+  | Nx_cast (ty, a) -> Nx_cast (ty, map a)
+  | Reduce (r, a) -> Reduce (r, map a)
+  | Over { by; order; e } -> Over { by; order; e = map e }
+  | Rolling (w, a) -> Rolling (w, map a)
+  | Shift (k, a) -> Shift (k, map a)
+  | Rank a -> Rank (map a)
+  | App (f, a) -> App (map f, map a)
+  | Option a -> Option (map a)
+  | Of_option a -> Of_option (map a)
+  | Store (ty, a) -> Store (ty, map a)
+  | Batch (f, a) -> Batch (f, map a)
+  | Fields fs -> Fields (List.map (fun (n, Packed e) -> (n, Packed (map e))) fs)
+  | Field (k, name, r) -> Field (k, name, map r)
+  | Storage (d, a) -> Storage (d, map a)
+  | Wrap (d, a) -> Wrap (d, map a)
+  | Text (op, a) -> Text (op, map a)
+  | Calendar op ->
+      Calendar
+        (match op with
+        | Add_span (a, d) -> Add_span (map a, map d)
+        | Diff (a, b) -> Diff (map a, map b)
+        | Part (f, z, a) -> Part (f, z, map a)
+        | Floor (z, s, a) -> Floor (z, s, map a)
+        | Offset (z, s, a) -> Offset (z, s, map a)
+        | Localize { zone; ambiguous; gap; a } ->
+            Localize { zone; ambiguous; gap; a = map a }
+        | Windows { zone; every; period; a } ->
+            Windows { zone; every; period; a = map a }
+        | Parse_with (fmt, ty, a) -> Parse_with (fmt, ty, map a)
+        | Format_with (fmt, a) -> Format_with (fmt, map a))
+
+let rename f e =
+  check_bound "rename" e;
+  let key (k : Order.t) =
+    let k' = if k.desc then Order.desc (f k.name) else Order.asc (f k.name) in
+    if k.nulls_first then Order.nulls_first k' else k'
+  in
+  let rec go : type a s. (a, s) t -> (a, s) t =
+   fun e ->
+    typed (typing e)
+      (match e.node with
+      | Handle (k, n) -> Handle (k, f n)
+      | Ext_handle (d, n) -> Ext_handle (d, f n)
+      | Read (ty, n) -> Read (ty, f n)
+      | Over { by; order; e } ->
+          Over { by = List.map f by; order = List.map key order; e = go e }
+      | Rolling (Window.Times { on; before; after }, a) ->
+          Rolling (Window.time ~after ~before (f on), go a)
+      | n -> map_node { map = go } n)
+  in
+  go e
+
+(* Constants *)
+
+(* [literal e] is [Some (ty, Some v)] if [e] is a literal of value [v] at its
+   column type [ty], and [Some (ty, None)] if it is null. *)
+let literal : type a s. (a, s) t -> (a Type.t * a option) option =
+ fun e ->
+  match (e.node, e.typing) with
+  | Null, Some (Column ty) -> Some (ty, None)
+  | Lit (_, v), Some (Column ty) ->
+      Option.map (fun v -> (ty, Some v)) (Type.value ty v)
+  | _ -> None
+
+let is_lit e = match e.node with Lit _ -> true | _ -> false
+let is_null_lit e = match e.node with Null -> true | _ -> false
+
+(* [at_typing t v] is the literal [v] typed [t], null if [v] is [None]. *)
+let at_typing : type a s. a typing -> a option -> (a, s) t =
+ fun t v ->
+  match (t, v) with
+  | Column ty, Some v -> typed t (Lit (Type.kind ty, v))
+  | _ -> typed t Null
+
+(* [with_typing t e] is [e] if its typing is [t]. *)
+let with_typing : type a s0 s1. a typing -> (a, s0) t -> (a, s1) t option =
+ fun t e ->
+  match e.typing with
+  | Some t' when typing_equal t t' -> Some (typed t' e.node)
+  | _ -> None
+
+(* [exact op x y] is [Some r] with [r] the exact value of [op] on [x] and [y],
+   [None] for null, or [None] if the value overflows OCaml's [int]. *)
+let exact op x y =
+  match op with
+  | Add ->
+      let r = x + y in
+      if Bool.equal (x >= 0) (y >= 0) && not (Bool.equal (r >= 0) (x >= 0)) then
+        None
+      else Some (Some r)
+  | Sub ->
+      let r = x - y in
+      if
+        (not (Bool.equal (x >= 0) (y >= 0)))
+        && not (Bool.equal (r >= 0) (x >= 0))
+      then None
+      else Some (Some r)
+  | Mul ->
+      let r = x * y in
+      if x <> 0 && (r / x <> y || (x = -1 && y = min_int)) then None
+      else Some (Some r)
+  | Div when y = 0 -> Some None
+  | Div -> if x = min_int && y = -1 then None else Some (Some (x / y))
+  | Mod when y = 0 -> Some None
+  | Mod -> Some (Some (x mod y))
+  | Pow -> None
+
+let float_value op x y =
+  match op with
+  | Add -> Some (x +. y)
+  | Sub -> Some (x -. y)
+  | Mul -> Some (x *. y)
+  | Div -> Some (x /. y)
+  | Mod | Pow -> None
+
+let compares (op : compare) n =
+  match op with
+  | `Eq -> n = 0
+  | `Ne -> n <> 0
+  | `Lt -> n < 0
+  | `Le -> n <= 0
+  | `Gt -> n > 0
+  | `Ge -> n >= 0
+
+(* [folded e] is the literal or the operand that the bound operation [e] is, if
+   it is one, with [e]'s typing. *)
+let folded : type a s0 s. (a, s0) t -> (a, s) t option =
+ fun e ->
+  let t = typing e in
+  let null () = Some (at_typing t None) in
+  match e.node with
+  | Int (o, a, b) -> (
+      match (t, literal a, literal b) with
+      | _, Some (_, None), Some _ | _, Some _, Some (_, None) -> null ()
+      | Column ty, Some (_, Some x), Some (_, Some y) -> (
+          match exact o x y with
+          | Some None -> null ()
+          | Some (Some r) when Type.holds ty r -> Some (at_typing t (Some r))
+          | Some (Some _) | None -> None)
+      | _ -> None)
+  | Float (o, a, b) -> (
+      match (t, literal a, literal b) with
+      | _, Some (_, None), Some _ | _, Some _, Some (_, None) -> null ()
+      | Column ty, Some (_, Some x), Some (_, Some y) -> (
+          match Option.bind (float_value o x y) (Type.value ty) with
+          | Some r when not (Float.is_nan r) -> Some (at_typing t (Some r))
+          | Some _ | None -> None)
+      | _ -> None)
+  | Compare (o, a, b) -> (
+      match (literal a, literal b) with
+      | Some (_, None), Some _ | Some _, Some (_, None) -> null ()
+      | Some (ta, Some x), Some (tb, Some y) ->
+          Option.map
+            (fun c ->
+              at_typing t (Some (compares o (Type.compare_value c x y))))
+            (Type.common [ ta; tb ])
+      | _ -> None)
+  | Logic (o, a, b) -> (
+      let truth e = Option.map snd (literal e) in
+      match (o, truth a, truth b) with
+      | And, Some (Some false), _ | And, _, Some (Some false) ->
+          Some (at_typing t (Some false))
+      | Or, Some (Some true), _ | Or, _, Some (Some true) ->
+          Some (at_typing t (Some true))
+      | And, Some (Some true), _ | Or, Some (Some false), _ -> with_typing t b
+      | And, _, Some (Some true) | Or, _, Some (Some false) -> with_typing t a
+      | _, Some None, Some None -> null ()
+      | _ -> None)
+  | Not a -> (
+      match literal a with
+      | Some (_, Some v) -> Some (at_typing t (Some (not v)))
+      | Some (_, None) -> null ()
+      | None -> None)
+  | Is_null a ->
+      if is_lit a then Some (at_typing t (Some false))
+      else if is_null_lit a then Some (at_typing t (Some true))
+      else None
+  | If (c, a, b) -> (
+      match literal c with
+      | Some (_, Some true) -> with_typing t a
+      | Some (_, (Some false | None)) -> with_typing t b
+      | None -> None)
+  | Store (_, a) when is_lit a || is_null_lit a -> with_typing t a
+  | Coalesce es -> (
+      let rec live = function
+        | [] -> []
+        | e :: es ->
+            if is_null_lit e then live es
+            else if is_lit e then [ e ]
+            else e :: live es
+      in
+      match live es with
+      | [] -> null ()
+      | [ e ] when Option.is_some (with_typing t e) -> with_typing t e
+      | es' when List.compare_lengths es' es < 0 ->
+          Some (typed t (Coalesce es'))
+      | _ -> None)
+  | _ -> None
+
+let fold_constants e =
+  check_bound "fold_constants" e;
+  let rec fold : type a s. (a, s) t -> (a, s) t =
+   fun e ->
+    let e = typed (typing e) (map_node { map = fold } e.node) in
+    Option.value ~default:e (folded e)
+  in
+  fold e
 
 (* Outputs *)
 

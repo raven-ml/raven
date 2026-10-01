@@ -15,7 +15,8 @@
   table
   source
   join
-  query)
+  query
+  optimize)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

@@ -9,7 +9,12 @@
    optimizer builds is a step like any other. *)
 type node =
   | Of_table of Table.t
-  | Of_source of Source.t
+  | Of_source of {
+      source : Source.t;
+      columns : string list;
+      filters : (bool, Expr.row) Expr.t list;
+      limit : int option;
+    }
   | Select of { outputs : (string * Expr.packed) list; input : t }
   | Derive of { outputs : (string * Expr.packed) list; input : t }
   | Filter of { predicate : (bool, Expr.row) Expr.t; input : t }
@@ -34,8 +39,72 @@ type node =
 and t = { node : node; schema : Schema.t }
 
 let schema q = q.schema
-let of_table t = { node = Of_table t; schema = Table.schema t }
-let of_source (s : Source.t) = { node = Of_source s; schema = s.schema }
+let node q = q.node
+
+let column_type (Expr.Packed e) =
+  match Expr.typing e with
+  | Column ty -> Type.Any ty
+  | Extension d -> Type.Any d.type_
+  | Value ->
+      assert false (* [Expr.bind_out] gives every output a column type. *)
+
+let columns outputs = List.map (fun (n, e) -> (n, column_type e)) outputs
+
+(* [derived s outputs] is the columns of [s] with [outputs] in place of the
+   columns of their names, then the others. *)
+let derived s outputs =
+  let replaced (n, t) =
+    match List.assoc_opt n outputs with
+    | Some e -> (n, column_type e)
+    | None -> (n, t)
+  in
+  let added =
+    List.filter (fun (n, _) -> Option.is_none (Schema.find s n)) outputs
+  in
+  List.map replaced (Schema.columns s) @ columns added
+
+let make node =
+  let schema =
+    match node with
+    | Of_table t -> Table.schema t
+    | Of_source { source; columns; _ } ->
+        Schema.v
+          (List.filter
+             (fun (n, _) -> List.mem n columns)
+             (Schema.columns source.schema))
+    | Select { outputs; _ } -> Schema.v (columns outputs)
+    | Derive { outputs; input } -> Schema.v (derived input.schema outputs)
+    | Filter { input; _ }
+    | Sort { input; _ }
+    | Slice { input; _ }
+    | Append { input; _ } ->
+        input.schema
+    | Aggregate { by; outputs; input } ->
+        let key n = (n, Option.get (Schema.find input.schema n)) in
+        Schema.v (List.map key by @ columns outputs)
+    | Join { kind; on; left; right; _ } ->
+        Join.columns kind left.schema right.schema on
+    | Unnest { columns; input } ->
+        let element (n, (Type.Any t as a)) =
+          match t with
+          | List e when List.mem n columns -> (n, Type.Any e)
+          | _ -> (n, a)
+        in
+        Schema.v (List.map element (Schema.columns input.schema))
+  in
+  { node; schema }
+
+let of_table t = make (Of_table t)
+
+let of_source (source : Source.t) =
+  make
+    (Of_source
+       {
+         source;
+         columns = Schema.names source.schema;
+         filters = [];
+         limit = None;
+       })
 
 (* Formatting *)
 
@@ -49,14 +118,48 @@ let kept (n, Expr.Packed e) =
   | Read (_, n') when String.equal n n' -> Some n
   | _ -> None
 
-(* [pp_outputs] formats bound outputs, each run of kept columns as one
-   [keep]. *)
+(* [field_of (n, e)] is [Some r] iff [e] reads the field [n] of the record
+   [r]. *)
+let field_of (n, Expr.Packed e) =
+  match Expr.node e with
+  | Field (_, n', r) when String.equal n n' -> Some (Expr.Packed r)
+  | _ -> None
+
+(* [unpacked outputs] is [Some (r, rest)] iff [outputs] starts with every field
+   of the record [r], in order, under their names, as [unpack r] binds. *)
+let unpacked outputs =
+  match outputs with
+  | [] -> None
+  | o :: _ -> (
+      match field_of o with
+      | None -> None
+      | Some (Expr.Packed r as packed) ->
+          let fields =
+            match Expr.typing r with
+            | Column (Record fields) -> List.map fst fields
+            | _ -> []
+          in
+          let of_r o =
+            match field_of o with
+            | Some (Expr.Packed r') -> Expr.same r r'
+            | None -> false
+          in
+          let n = List.length fields in
+          let run = List.filteri (fun i _ -> i < n) outputs in
+          if
+            n > 0 && List.for_all of_r run
+            && List.equal String.equal (List.map fst run) fields
+          then Some (packed, List.filteri (fun i _ -> i >= n) outputs)
+          else None)
+
+(* [pp_outputs] formats bound outputs, each run of kept columns as one [keep],
+   and each run of a record's fields as the [unpack] that binds them. *)
 let pp_outputs ppf outputs =
   let rec groups = function
     | [] -> []
-    | o :: os -> (
-        match kept o with
-        | Some n ->
+    | o :: os as outputs -> (
+        match (kept o, unpacked outputs) with
+        | Some n, _ ->
             let rec run ns = function
               | o :: os when Option.is_some (kept o) -> run (fst o :: ns) os
               | os -> (List.rev ns, os)
@@ -66,7 +169,11 @@ let pp_outputs ppf outputs =
               Format.fprintf ppf "@[<hov 2>keep@ (names@ %a)@]"
                 (Type.pp_list pp_name) ns)
             :: groups os
-        | None ->
+        | None, Some (Expr.Packed r, os) ->
+            (fun ppf ->
+              Format.fprintf ppf "@[<hov 2>unpack@ %a@]" Expr.pp_arg r)
+            :: groups os
+        | None, None ->
             let n, Expr.Packed e = o in
             (fun ppf ->
               Format.fprintf ppf "@[<hov 2>%a :=@ %a@]" pp_name n Expr.pp e)
@@ -99,11 +206,17 @@ let pp_step ppf q =
       pf "table (%s, %s)"
         (plural (List.length (Schema.columns q.schema)) "column")
         (plural (Table.rows t) "row")
-  | Of_source s -> (
-      let columns = plural (List.length (Schema.columns q.schema)) "column" in
-      match s.rows with
-      | None -> pf "%s (%s)" s.name columns
-      | Some n -> pf "%s (%s, %s)" s.name columns (plural n "row"))
+  | Of_source { source = s; columns; filters; limit } ->
+      let all = Schema.names s.schema in
+      pf "@[<hov 2>%s (%s" s.name (plural (List.length all) "column");
+      Option.iter (fun n -> pf ", %s" (plural n "row")) s.rows;
+      pf ")";
+      if not (List.equal String.equal columns all) then
+        pf "@ ~columns:%a" (Type.pp_list pp_name) columns;
+      if not (List.is_empty filters) then
+        pf "@ ~filters:%a" (Type.pp_list Expr.pp) filters;
+      Option.iter (pf "@ ~limit:%d") limit;
+      pf "@]"
   | Select { outputs; _ } -> pf "@[<hov 2>select %a@]" pp_outputs outputs
   | Derive { outputs; _ } -> pf "@[<hov 2>derive %a@]" pp_outputs outputs
   | Filter { predicate; _ } -> pf "@[<hov 2>filter %a@]" Expr.pp_arg predicate
@@ -141,6 +254,18 @@ let inputs q =
   | Join { left; right; _ } -> [ left; right ]
   | Append { input; rest } -> [ input; rest ]
 
+let map_inputs f = function
+  | (Of_table _ | Of_source _) as n -> n
+  | Select r -> Select { r with input = f r.input }
+  | Derive r -> Derive { r with input = f r.input }
+  | Filter r -> Filter { r with input = f r.input }
+  | Sort r -> Sort { r with input = f r.input }
+  | Slice r -> Slice { r with input = f r.input }
+  | Aggregate r -> Aggregate { r with input = f r.input }
+  | Join r -> Join { r with left = f r.left; right = f r.right }
+  | Append { input; rest } -> Append { input = f input; rest = f rest }
+  | Unnest r -> Unnest { r with input = f r.input }
+
 (* [lines width pp] is what [pp] formats at the margin [width], line by line.
    Below 40 columns, as deep in a tree, Format would break a step at every
    argument, so a step overruns the margin there instead. *)
@@ -152,28 +277,62 @@ let lines width pp =
   Format.pp_print_flush ppf ();
   String.split_on_char '\n' (Buffer.contents b)
 
+(* [shared q] is the steps that [q] reaches more than once. *)
+let shared q =
+  let seen = ref [] and twice = ref [] in
+  let rec visit q =
+    if List.memq q !seen then
+      begin if not (List.memq q !twice) then twice := q :: !twice
+      end
+    else begin
+      seen := q :: !seen;
+      List.iter visit (inputs q)
+    end
+  in
+  visit q;
+  !twice
+
 (* Format draws no tree, so each step is formatted alone, at the margin that its
    prefix leaves, and its lines are prefixed by hand: the first by [first], the
-   others, and the step's inputs, by [prefix]. Both are [width] columns wide. *)
+   others, and the step's inputs, by [prefix]. Both are [width] columns wide. A
+   shared step's label precedes its first line, and stands alone the next
+   times. *)
 let pp ppf q =
   let margin = Format.pp_get_margin ppf () in
+  let shared = shared q and labels = ref [] in
   let rec step ~first ~prefix ~width q =
-    match lines (margin - width) (fun ppf -> pp_step ppf q) with
-    | [] -> assert false
-    | line :: rest ->
-        Format.fprintf ppf "@,%s%s" first line;
-        List.iter (fun l -> Format.fprintf ppf "@,%s%s" prefix l) rest;
-        let rec children = function
-          | [] -> ()
-          | [ q ] -> child "└ " "  " q
-          | q :: qs ->
-              child "├ " "│ " q;
-              children qs
-        and child lead below q =
-          step ~first:(prefix ^ lead) ~prefix:(prefix ^ below)
-            ~width:(width + 2) q
+    match List.assq_opt q !labels with
+    | Some k -> Format.fprintf ppf "@,%s#%d" first k
+    | None -> (
+        let label =
+          if not (List.memq q shared) then ""
+          else begin
+            let k = List.length !labels + 1 in
+            labels := (q, k) :: !labels;
+            Printf.sprintf "#%d " k
+          end
         in
-        children (inputs q)
+        let pad = String.make (String.length label) ' ' in
+        match
+          lines
+            (margin - width - String.length label)
+            (fun ppf -> pp_step ppf q)
+        with
+        | [] -> assert false
+        | line :: rest ->
+            Format.fprintf ppf "@,%s%s%s" first label line;
+            List.iter (fun l -> Format.fprintf ppf "@,%s%s%s" prefix pad l) rest;
+            let rec children = function
+              | [] -> ()
+              | [ q ] -> child "└ " "  " q
+              | q :: qs ->
+                  child "├ " "│ " q;
+                  children qs
+            and child lead below q =
+              step ~first:(prefix ^ lead) ~prefix:(prefix ^ below)
+                ~width:(width + 2) q
+            in
+            children (inputs q))
   in
   Format.fprintf ppf "@[<v>query →";
   if not (List.is_empty (Schema.columns q.schema)) then
@@ -227,15 +386,6 @@ let check verb inputs entries =
 
 let arg fmt = Format.kasprintf (fun s -> Arg (Problem.v "%s" s)) fmt
 
-let column_type (Expr.Packed e) =
-  match Expr.typing e with
-  | Column ty -> Type.Any ty
-  | Extension d -> Type.Any d.type_
-  | Value ->
-      assert false (* [Expr.bind_out] gives every output a column type. *)
-
-let columns outputs = List.map (fun (n, e) -> (n, column_type e)) outputs
-
 (* [bind_outs s os] is the bound outputs of [os] over [s], the names of the
    outputs, and the entries of their problems, then of two outputs of one name.
    An output [n := e] that fails to bind still has the name [n], so that its
@@ -276,29 +426,16 @@ let first ns =
 let select os q =
   let outputs, _, entries = bind_outs q.schema os in
   check "select" (input q) entries;
-  { node = Select { outputs; input = q }; schema = Schema.v (columns outputs) }
+  make (Select { outputs; input = q })
 
 let derive os q =
   let outputs, _, entries = bind_outs q.schema os in
   check "derive" (input q) entries;
-  let replaced (n, t) =
-    match List.assoc_opt n outputs with
-    | Some e -> (n, column_type e)
-    | None -> (n, t)
-  in
-  let added =
-    List.filter (fun (n, _) -> Option.is_none (Schema.find q.schema n)) outputs
-  in
-  {
-    node = Derive { outputs; input = q };
-    schema =
-      Schema.v (List.map replaced (Schema.columns q.schema) @ columns added);
-  }
+  make (Derive { outputs; input = q })
 
 let filter p q =
   match Expr.bind_predicate q.schema p with
-  | Ok predicate ->
-      { node = Filter { predicate; input = q }; schema = q.schema }
+  | Ok predicate -> make (Filter { predicate; input = q })
   | Error ps ->
       fail "filter" (input q) [ Written ((fun ppf -> Expr.pp ppf p), ps) ]
 
@@ -320,12 +457,12 @@ let sort keys q =
   in
   check "sort" (input q)
     (snd (List.fold_left_map entry [] (Order.check keys q.schema)));
-  { node = Sort { keys; input = q }; schema = q.schema }
+  make (Sort { keys; input = q })
 
 let slice ~offset ~length q =
   if length < 0 then
     fail "slice" (input q) [ arg "the length %d is negative." length ];
-  { node = Slice { offset; length; input = q }; schema = q.schema }
+  make (Slice { offset; length; input = q })
 
 let aggregate ~by os q =
   let keys =
@@ -342,18 +479,13 @@ let aggregate ~by os q =
       names
   in
   check "aggregate" (input q) (keys @ entries @ shadows);
-  let key n = (n, Option.get (Schema.find q.schema n)) in
-  {
-    node = Aggregate { by; outputs; input = q };
-    schema = Schema.v (List.map key by @ columns outputs);
-  }
+  make (Aggregate { by; outputs; input = q })
 
 let join ?(kind = Join.Inner) ?(each_left = Join.Any) ?(each_right = Join.Any)
     ~on right left =
   let inputs = [ ("left", left.schema); ("right", right.schema) ] in
   match Join.check kind left.schema right.schema on with
-  | Ok (on, schema) ->
-      { node = Join { kind; each_left; each_right; on; left; right }; schema }
+  | Ok on -> make (Join { kind; each_left; each_right; on; left; right })
   | Error ps -> fail "join" inputs (List.map (fun p -> Arg p) ps)
 
 let append rest q =
@@ -367,7 +499,7 @@ let append rest q =
   check "append"
     [ ("input", q.schema); ("rest", rest.schema) ]
     (List.map change (Schema.diff q.schema rest.schema));
-  { node = Append { input = q; rest }; schema = q.schema }
+  make (Append { input = q; rest })
 
 let unnest columns q =
   let column n =
@@ -380,15 +512,7 @@ let unnest columns q =
     ((if List.is_empty columns then [ arg "no column to unnest." ] else [])
     @ List.concat_map column (first columns)
     @ List.map (arg "%a is named twice." pp_name) (Problem.repeated columns));
-  let element (n, (Type.Any t as a)) =
-    match t with
-    | List e when List.mem n columns -> (n, Type.Any e)
-    | _ -> (n, a)
-  in
-  {
-    node = Unnest { columns; input = q };
-    schema = Schema.v (List.map element (Schema.columns q.schema));
-  }
+  make (Unnest { columns; input = q })
 
 (* Comparing *)
 
@@ -398,30 +522,41 @@ let outputs_equal o0 o1 =
       String.equal n0 n1 && Expr.same e0 e1)
     o0 o1
 
+(* [step_equal ~input ~table q0 q1] is [true] iff [q0] and [q1] are the same
+   step with equal arguments, inputs compared with [input] and tables with
+   [table]. *)
+let step_equal ~input ~table q0 q1 =
+  (match (q0.node, q1.node) with
+    | Of_table t0, Of_table t1 -> table t0 t1
+    | Of_source s0, Of_source s1 ->
+        s0.source == s1.source
+        && List.equal String.equal s0.columns s1.columns
+        && List.equal Expr.same s0.filters s1.filters
+        && Option.equal Int.equal s0.limit s1.limit
+    | Select { outputs = o0; _ }, Select { outputs = o1; _ }
+    | Derive { outputs = o0; _ }, Derive { outputs = o1; _ } ->
+        outputs_equal o0 o1
+    | Filter f0, Filter f1 -> Expr.same f0.predicate f1.predicate
+    | Sort s0, Sort s1 -> List.equal Order.equal s0.keys s1.keys
+    | Slice s0, Slice s1 ->
+        Int.equal s0.offset s1.offset && Int.equal s0.length s1.length
+    | Aggregate a0, Aggregate a1 ->
+        List.equal String.equal a0.by a1.by
+        && outputs_equal a0.outputs a1.outputs
+    | Join j0, Join j1 ->
+        j0.kind = j1.kind
+        && j0.each_left = j1.each_left
+        && j0.each_right = j1.each_right
+        && Join.equal j0.on j1.on
+    | Append _, Append _ -> true
+    | Unnest u0, Unnest u1 -> List.equal String.equal u0.columns u1.columns
+    | ( ( Of_table _ | Of_source _ | Select _ | Derive _ | Filter _ | Sort _
+        | Slice _ | Aggregate _ | Join _ | Append _ | Unnest _ ),
+        _ ) ->
+        false)
+  && List.equal input (inputs q0) (inputs q1)
+
 let rec equal q0 q1 =
-  q0 == q1
-  || (match (q0.node, q1.node) with
-       | Of_table t0, Of_table t1 -> Table.equal t0 t1
-       | Of_source s0, Of_source s1 -> s0 == s1
-       | Select { outputs = o0; _ }, Select { outputs = o1; _ }
-       | Derive { outputs = o0; _ }, Derive { outputs = o1; _ } ->
-           outputs_equal o0 o1
-       | Filter f0, Filter f1 -> Expr.same f0.predicate f1.predicate
-       | Sort s0, Sort s1 -> List.equal Order.equal s0.keys s1.keys
-       | Slice s0, Slice s1 ->
-           Int.equal s0.offset s1.offset && Int.equal s0.length s1.length
-       | Aggregate a0, Aggregate a1 ->
-           List.equal String.equal a0.by a1.by
-           && outputs_equal a0.outputs a1.outputs
-       | Join j0, Join j1 ->
-           j0.kind = j1.kind
-           && j0.each_left = j1.each_left
-           && j0.each_right = j1.each_right
-           && Join.equal j0.on j1.on
-       | Append _, Append _ -> true
-       | Unnest u0, Unnest u1 -> List.equal String.equal u0.columns u1.columns
-       | ( ( Of_table _ | Of_source _ | Select _ | Derive _ | Filter _ | Sort _
-           | Slice _ | Aggregate _ | Join _ | Append _ | Unnest _ ),
-           _ ) ->
-           false)
-     && List.equal equal (inputs q0) (inputs q1)
+  q0 == q1 || step_equal ~input:equal ~table:Table.equal q0 q1
+
+let rec same q0 q1 = q0 == q1 || step_equal ~input:same ~table:( == ) q0 q1

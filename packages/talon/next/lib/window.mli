@@ -28,5 +28,7 @@ val equal : t -> t -> bool
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf w] formats [w] as it is written: [rows ~before:6 ~after:0],
-    [time ~before:168h "ts"], with [~after] when it is not zero. Spans format
-    with {!Time.Span.pp}. *)
+    [time ~before:168h "ts"], with [~after] when it is not zero. A bound of
+    [max_int] formats as [max_int], as a window that grows from the frame's
+    first row is written: [rows ~before:max_int ~after:0]. Spans format with
+    {!Time.Span.pp}. *)

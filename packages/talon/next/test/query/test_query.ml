@@ -1327,9 +1327,9 @@ let steps () =
     query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64]
     append
     ├ append
-    │ ├ small (5 columns)
-    │ └ small (5 columns)
-    └ small (5 columns)
+    │ ├ #1 small (5 columns)
+    │ └ #1
+    └ #1
     |}
 
 let wrapping () =

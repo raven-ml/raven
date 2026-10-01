@@ -6,8 +6,9 @@
 (** Expressions: typed computations over the columns of a frame.
 
     [Talon_next.Expr] documents the expressions that users write. This interface
-    adds their {{!repr}representation} and their {{!binding}binding} to a
-    schema, which serve the verbs and the evaluator. *)
+    adds their {{!repr}representation}, their {{!binding}binding} to a schema
+    and the {{!analyses}analyses} that serve the verbs, the optimizer and the
+    evaluator. *)
 
 (** {1:exprs Expressions} *)
 
@@ -327,8 +328,8 @@ val typed : 'a typing -> 'a node -> ('a, 's) t
 (** [typed t n] is the bound expression of node [n] and typing [t], with the
     identity of every live bound expression structurally equal to it. It checks
     nothing: the caller states [n]'s shape and keeps the invariants of
-    {{!binding}binding}. Binding, the lift tracer and join conditions build
-    bound expressions with it. *)
+    {{!binding}binding}. Binding, the lift tracer and the optimizer build bound
+    expressions with it. *)
 
 val same : ('a, 's0) t -> ('b, 's1) t -> bool
 (** [same e0 e1] is [true] iff [e0] and [e1] are one expression: for bound
@@ -380,6 +381,13 @@ val typing : ('a, 's) t -> 'a typing
 
     Raises [Invalid_argument] if [b] is not bound. *)
 
+val read : 'a Type.t -> string -> ('a, 's) t
+(** [read ty n] is the bound expression that reads the column [n] of type [ty],
+    as {!keep} binds it. *)
+
+val conj : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
+(** [conj a b] is the bound [a && b] of the bound predicates [a] and [b]. *)
+
 val bind_out :
   Schema.t -> 's out -> ((string * packed) list, Problem.t list) result
 (** [bind_out s o] is [Ok outs] with [outs] the named, bound outputs of [o] over
@@ -392,3 +400,54 @@ val bind_out :
 val out_name : 's out -> string option
 (** [out_name o] is [Some n] if [o] is [n := e], and [None] otherwise: the name
     an output has as written, before binding. *)
+
+(** {1:analyses Bound expressions}
+
+    These functions take bound expressions and serve the optimizer: each raises
+    [Invalid_argument] on an expression that is not bound. *)
+
+val reads : ('a, 's) t -> string list
+(** [reads b] is the columns that [b] reads, distinct, in order of first
+    appearance: the columns of its handles and reads, of {!over}'s [~by] and
+    [~order] keys, and of its time windows' keys. *)
+
+val row_local : ('a, 's) t -> bool
+(** [row_local b] is [true] iff [b]'s value at a row depends on that row alone:
+    [b] has no {!over}, {!rolling}, {!shift} or {!rank}. A filter, a slice or a
+    reordering of the frame therefore does not change the values of a row-local
+    expression on the rows it keeps. *)
+
+val can_fail : ('a, 's) t -> bool
+(** [can_fail b] is [true] iff evaluating the {{!row_local}row-local} [b] can
+    fail a run or call a user function: [b] holds a {!cast} that does not widen
+    its operand to a type that contains it, {!Str.parse}, a {!Temporal}
+    operation other than {!Temporal.field} and {!Temporal.format}, {!of_option},
+    {!( $ )} or {!batch}. *)
+
+val rename : (string -> string) -> ('a, 's) t -> ('a, 's) t
+(** [rename f b] is [b] reading the column [f n] wherever it reads the column
+    [n]: handles, reads, {!over}'s keys and time windows' keys. Typings are
+    kept, so [f] maps each column that [b] reads to one of the same type. *)
+
+val fold_constants : ('a, 's) t -> ('a, 's) t
+(** [fold_constants b] is [b] with each operation of literals replaced by the
+    literal it computes, with the same typing, where that literal is exactly the
+    value that evaluating the operation gives:
+    - [+], [-], [*], [/] and [mod] of integers whose result the type holds
+      without wrapping, a division by zero being null;
+    - [+.], [-.], [*.] and [/.] of [float32] and [float64] values, rounded once
+      to their type, unless the result is NaN, whose bits nx's kernels define
+      (as they define [**] and nx lifts, which are kept);
+    - comparisons, by talon's total order at their operands' common type;
+    - [&&], [||] and [not], [is_null], [if_] and [coalesce];
+    - {!store} of a literal of its type.
+
+    A literal is read as the value it has at its type ({!Type.value}), so an
+    operation of [float16] literals, arithmetic or comparison, is kept.
+
+    Besides, with one operand a literal: [a && false] and [a || true] become the
+    literal, [a && true] and [a || false] become [a], [if_] with a literal
+    condition becomes its branch, and [coalesce] drops its null literals and
+    ends at its first literal that is not null. A branch or an operand replaces
+    its operation only where it has the operation's typing. Each rewrite gives
+    the same value on every row, null included. *)

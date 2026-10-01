@@ -146,13 +146,40 @@ let all = []
 
 let has_ext (Type.Any t) = Type.has_ext t
 
-(* [left_then_right left right eqs] is the columns of [left], then those of
-   [right] that are not the right of an equality atom of [eqs]. *)
-let left_then_right left right eqs =
-  Schema.columns left
-  @ List.filter
+(* [common_type a0 a1] is the type at which a column of type [a0] meets one of
+   type [a1]: their common type, or their one type if either holds an extension
+   type. *)
+let common_type (Type.Any t0 as a0) (Type.Any t1 as a1) =
+  if has_ext a0 || has_ext a1 then if Type.equal t0 t1 then Some a0 else None
+  else
+    match Kind.equal_witness (Type.kind t0) (Type.kind t1) with
+    | Some Equal -> Option.map (fun t -> Type.Any t) (Type.common [ t0; t1 ])
+    | None -> None
+
+(* [joined kind left right c] is the columns of the [kind] join on [c] of rows
+   of the columns [left] and [right], two of which may have one name: [left]'s,
+   then, for a join that keeps them, [right]'s but the right of an equality
+   atom. A [Full] join's key takes the type at which its two columns meet. *)
+let joined kind left right c =
+  let eqs =
+    List.filter_map (function Eq (l, r) -> Some (l, r) | _ -> None) c
+  in
+  let rights =
+    List.filter
       (fun (n, _) -> not (List.exists (fun (_, r) -> String.equal n r) eqs))
       (Schema.columns right)
+  in
+  let key (n, t) =
+    match Option.bind (List.assoc_opt n eqs) (Schema.find right) with
+    | Some rt -> (n, Option.value ~default:t (common_type t rt))
+    | None -> (n, t)
+  in
+  match kind with
+  | Semi | Anti -> Schema.columns left
+  | Inner | Left -> Schema.columns left @ rights
+  | Full -> List.map key (Schema.columns left) @ rights
+
+let columns kind left right c = Schema.v (joined kind left right c)
 
 (* [difference t] is the type of the differences of values of [t], and whether
    they are whole days, or [None] if [t] has no difference. *)
@@ -202,15 +229,7 @@ let check kind left right c =
   let meet l r =
     match (find "left" left l, find "right" right r) with
     | Some (Type.Any tl as al), Some (Type.Any tr as ar) ->
-        let common =
-          if has_ext al || has_ext ar then
-            if Type.equal tl tr then Some al else None
-          else
-            match Kind.equal_witness (Type.kind tl) (Type.kind tr) with
-            | Some Equal ->
-                Option.map (fun t -> Type.Any t) (Type.common [ tl; tr ])
-            | None -> None
-        in
+        let common = common_type al ar in
         if Option.is_none common then
           report "%a is %a and %a is %a, which do not meet: cast one first."
             pp_name l Type.pp tl pp_name r Type.pp tr;
@@ -273,10 +292,9 @@ let check kind left right c =
                     Some (Expr.Packed (Expr.typed (Column dt) (Expr.node w)))))
         | _ -> None)
   in
-  let keys = ref [] in
   let bind = function
     | Eq (l, r) as a ->
-        Option.iter (fun t -> keys := (l, t) :: !keys) (meet l r);
+        ignore (meet l r);
         a
     | Compare (_, l, r) as a ->
         ignore (ordered l r);
@@ -296,26 +314,15 @@ let check kind left right c =
     | Position -> Position
   in
   let bound = List.map bind c in
-  let eqs =
-    List.filter_map (function Eq (l, r) -> Some (l, r) | _ -> None) c
-  in
-  let columns =
-    match kind with
-    | Semi | Anti -> Schema.columns left
-    | Inner | Left -> left_then_right left right eqs
-    | Full ->
-        List.iter
-          (report
-             "%a is the left of two equality atoms, so a Full join cannot \
-              coalesce it."
-             pp_name)
-          (Problem.repeated (List.map fst eqs));
-        let coalesced (l, t) =
-          (l, Option.value ~default:t (List.assoc_opt l !keys))
-        in
-        List.map coalesced (left_then_right left right eqs)
-  in
-  (match (kind, Problem.repeated (List.map fst columns)) with
+  if kind = Full then
+    List.iter
+      (report
+         "%a is the left of two equality atoms, so a Full join cannot coalesce \
+          it."
+         pp_name)
+      (Problem.repeated
+         (List.filter_map (function Eq (l, _) -> Some l | _ -> None) c));
+  (match (kind, Problem.repeated (List.map fst (joined kind left right c))) with
   | (Semi | Anti), _ | _, [] -> ()
   | _, [ n ] -> report "%a is on both sides: rename one side first." pp_name n
   | _, ns ->
@@ -324,9 +331,7 @@ let check kind left right c =
            ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
            pp_name)
         ns);
-  match !problems with
-  | [] -> Ok (bound, Schema.v columns)
-  | ps -> Error (List.rev ps)
+  match !problems with [] -> Ok bound | ps -> Error (List.rev ps)
 
 (* Comparing *)
 

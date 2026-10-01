@@ -42,7 +42,9 @@ let equal w0 w1 =
 let pp ppf = function
   | Rows { before; after } ->
       let pp_int ppf n =
-        if n < 0 then Format.fprintf ppf "(%d)" n else Format.pp_print_int ppf n
+        if n = max_int then Format.pp_print_string ppf "max_int"
+        else if n < 0 then Format.fprintf ppf "(%d)" n
+        else Format.pp_print_int ppf n
       in
       Format.fprintf ppf "rows ~before:%a ~after:%a" pp_int before pp_int after
   | Times { on; before; after } ->

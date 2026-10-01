@@ -79,6 +79,21 @@ val has_ext : 'a t -> bool
     through its declaration, and a type that holds one has no order, so sort
     keys and ordering reductions refuse both. *)
 
+val has_float : 'a t -> bool
+(** [has_float t] is [true] iff [t] is or contains a float type, as a list
+    element, a record field, a tensor's element dtype (complex dtypes included)
+    or an extension's storage, at any depth. A key of such a type has distinct
+    values that are one key, such as [-0.] and [0.]. *)
+
+val value : 'a t -> 'a -> 'a option
+(** [value t v] is [Some w] with [w] the value that [v], which [t] holds, has
+    once stored as [t]: a [float32] value is [v] rounded to the nearest
+    [float32], ties to even, a list's elements are each their element type's
+    value, and any other value is [v] itself. It is [None] where talon cannot
+    compute that value: at [float16], whose correct rounding from a double OCaml
+    lacks, and for a record whose type contains a float type. The optimizer
+    folds and hands sources such values only. *)
+
 val pp_name : Format.formatter -> string -> unit
 (** [pp_name ppf n] formats the field name [n] as {!pp} does. *)
 

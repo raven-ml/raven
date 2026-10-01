@@ -1434,7 +1434,9 @@ module Source : sig
               the column's type, or a type that contains it ({!Type.common}),
               such as [string] for a categorical column, which then compares by
               text rather than by dictionary position. For an extension column
-              it is the storage type, and [v] is the value's storage. *)
+              it is the storage type, and [v] is the value's storage. [v] is a
+              value of [ty] exactly, as [ty] stores it: a [float32] value is
+              rounded to [float32]. *)
 
     (** The type for predicates. *)
     type t =
@@ -1875,13 +1877,125 @@ module Query : sig
       Its problems are an empty [cs], a name that names no column or is named
       twice, and a column that is not a list. *)
 
+  (** {1:optimizing Optimizing} *)
+
+  val optimize : t -> t
+  (** [optimize q] is the plan that running [q] runs: [q] with the same schema
+      and the same rows, rewritten to read and compute less. Running a query
+      optimizes it first, so [optimize] serves to print the plan that runs and
+      to compare plans. It reads no data, it calls the sources' [pushdown], and
+      [optimize (optimize q)] is [optimize q].
+
+      {b Results.} The rewrites change no byte of a result, including those
+      under its nulls, and add no failure: an operation that can fail meets only
+      rows that [q] shows it. They may remove failures: a value that no row and
+      no column of the result reads is not computed, so a failure, or an
+      exception from a user function, that only such a value meets does not
+      happen. Of the failures that remain, a run reports the one at the earliest
+      row of the optimized plan.
+
+      {b Constants.} An operation of literals becomes the literal it computes,
+      where that is exactly the value its evaluation gives: integer arithmetic
+      that does not wrap; [+.], [-.], [*.] and [/.] of [float32] and [float64]
+      values, rounded to their type, unless the result is NaN; comparisons;
+      [&&], [||], [not], [is_null], [if_], [coalesce], and [store] of a literal.
+      [a && false], [a || true], [a && true], [a || false], an [if_] on a
+      literal and a [coalesce] with literals simplify alike. A filter whose
+      predicate is [true] goes, and one whose predicate is [false] or null
+      becomes [slice ~offset:0 ~length:0].
+
+      {b Predicates.} A filter's predicate splits into its {e conjuncts}, the
+      operands of its [&&]s. A conjunct moves toward the sources when it is
+      {e row-local}, its value at a row depending on that row alone: it has no
+      {!Expr.over}, {!Expr.rolling}, {!Expr.shift} or {!Expr.rank}. It moves
+      past each step that keeps the rows it sees and the values it reads:
+      - a [sort];
+      - a [filter] whose predicate is row-local, with which it merges;
+      - a [select] or a [derive] whose outputs are row-local, when each column
+        the conjunct reads is a column of the step's input kept unchanged, under
+        its name or another ([select ["y" := x]]);
+      - an [aggregate] with keys, when the conjunct reads only keys and none of
+        their types holds floats, since [-0.] and [0.] are one key with two
+        values;
+      - an [unnest], when the conjunct reads no unnested column;
+      - an [append], into both inputs;
+      - a [join] whose [~each_left] and [~each_right] are [Any], on a condition
+        other than {!Join.position}: into the left input when the conjunct reads
+        only left columns and the join is [Inner], [Left], [Semi] or [Anti], and
+        into the right input when it reads only right columns, the join is
+        [Inner] and the condition has no {!Join.closest} or {!Join.nearest}
+        atom.
+
+      It stops at a [slice], at a [Full] join, at a join with an assertion, at a
+      step with an output or predicate that is not row-local, and at a table.
+      Pushdown never crosses a join with an assertion: a conjunct entering one
+      input changes the matches of the other input's rows, and so could make
+      that side's assertion fail on rows the plan shows it. A conjunct that can
+      fail, one with a [cast] that narrows, [Str.parse], temporal arithmetic or
+      parsing, [of_option], [$] or [batch], passes only the steps that show it
+      the rows they receive: a [sort], a [select] or a [derive], an
+      [aggregate]'s keys and an [append]. Below a [filter], a [join] or an
+      [unnest] it would meet rows that [q] never shows it.
+
+      When it reaches a source, a conjunct that compares a column with a
+      literal, tests it with {!Expr.is_in} or {!Expr.is_null}, or combines such
+      tests with [&&], [||] and [not], is a {!Source.Pred.t}, and it is offered
+      to the source's [pushdown]: an [Exact] conjunct leaves the plan and goes
+      into the source's request, an [Inexact] one goes into the request and
+      stays, and an [Unsupported] one stays. The conjuncts that stay at one
+      place form filters in plan order, a conjunct that can fail in a filter
+      above those it must not pass.
+
+      {b Slices.} A slice moves below a [select] or a [derive] whose outputs are
+      row-local, and above the conjuncts that move. Two slices from the start,
+      [offset >= 0], merge into one. A slice from the start of an [append]
+      limits both its inputs to [offset + length] rows. A slice from the start
+      directly above a source gives it a limit of [offset + length] rows. A
+      conjunct that stays is a filter between them, so a source with an
+      [Inexact] or [Unsupported] conjunct gets no limit. A slice from the end
+      gets one too when the source states its rows and is handed no conjunct,
+      the slice then counting from the start. A slice from the start directly
+      above a [sort] runs as a selection of its first [offset + length] rows, in
+      O(n log k) for k such rows: [sort] then [slice] is a top-k.
+
+      {b Projections.} Each source reads only the columns that a step reads or
+      that the result has, and each [select], [derive] and [aggregate] drops the
+      outputs that nothing reads. A [select] that keeps its input's columns
+      unchanged, in order, goes, and so does a [derive] left without outputs,
+      and a [select] that only keeps columns below a [select] or an [aggregate],
+      which read their input by name. Where an input of an [append] has columns
+      that the [append] does not take, [select [keep (names …)]] keeps those it
+      takes.
+
+      {b Sharing.} Subplans that are the same steps with equal arguments over
+      physically the same tables and sources become one value, which a run runs
+      once; equal subexpressions of one step are one expression, which it
+      computes once. Each place that reads a source is a read of its own, with
+      the columns and the conjuncts of that place, so places with equal requests
+      are one read. A step that a plan reaches more than once blocks: a run
+      holds its rows, of the columns its readers read, until its last reader has
+      them.
+
+      The guide's pipeline, optimized, reads two of the CSV file's columns,
+      which answers [Unsupported] to every conjunct:
+      {v
+      query → carrier string, mean_delay float64, flights int64, name string
+      sort [desc "mean_delay"]
+      └ join ~on:(keys ["carrier"]) ~each_left:One
+        ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
+        │                            "flights" := rows]
+        │ └ filter (dep_delay > 15.)
+        │   └ csv "flights.csv" (19 columns) ~columns:["dep_delay"; "carrier"]
+        └ parquet "carriers.parquet" (2 columns)
+      v} *)
+
   (** {1:comparing Comparing and formatting} *)
 
   val equal : t -> t -> bool
   (** [equal q0 q1] is [true] iff [q0] and [q1] are the same plan: the same
-      steps with equal arguments, expressions compared by their identity
-      ({!Expr.id}), tables by key identity row by row, and sources physically.
-      Equal queries have equal schemas. *)
+      steps with equal arguments, expressions compared by their identity, tables
+      by key identity row by row, and sources physically, with equal requests
+      (see {!pp}). Equal queries have equal schemas. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf q] formats [q]'s plan, which reads no data: the line [query →] and
@@ -1901,17 +2015,268 @@ module Query : sig
       module paths, its expressions as {!Expr.pp} formats them, its keys as they
       are written inside [Order.( … )] and its condition as it is written inside
       [Join.( … )]:
-      - outputs as ["name" := e], with selectors resolved and a run of columns
-        kept unchanged under their names as one [keep (names ["a"; "b"])];
+      - outputs as ["name" := e], with selectors resolved, a run of columns kept
+        unchanged under their names as one [keep (names ["a"; "b"])], and a run
+        of every field of a record [r], in order, as [unpack r];
       - [~kind], [~each_left] and [~each_right] after [~on], when they are not
         their defaults;
       - a table as [table (4 columns, 16 rows)], and a source as its name and
         its number of columns, then its number of rows when it states one:
-        [parquet "carriers.parquet" (2 columns, 1491 rows)].
+        [parquet "carriers.parquet" (2 columns, 1491 rows)];
+      - a source that is asked for less than all of it, as an optimized plan
+        asks ({!optimize}), then as its request: [~columns] when it reads fewer
+        than all its columns, [~filters] when it is handed conjuncts, and
+        [~limit] when it has one:
+        [parquet "f.parquet" (19 columns) ~columns:["dep_delay"; "carrier"]
+         ~filters:[dep_delay > 15.] ~limit:10].
 
       A join's left input comes before its right, and [append]'s [q] before
-      [rest]. A step too long for the margin continues on the next lines,
-      indented under it. Lines fit the formatter's margin counted from column 0,
-      since a formatter does not tell its current indentation: inside an
-      indented box they overrun the margin by that indentation. *)
+      [rest]. A step that the plan reaches more than once, as equal subplans are
+      after {!optimize}, is labelled [#1], [#2], … in the order the printer
+      first meets them: the first time as [#1] followed by the step and its
+      inputs, and each later time as [#1] alone:
+      {v
+      query → k string, n int64, m int64
+      join ~on:(keys ["k"])
+      ├ #1 aggregate ~by:["k"] ["n" := rows]
+      │ └ csv "x.csv" (3 columns) ~columns:["k"]
+      └ select [keep (names ["k"]); "m" := n]
+        └ #1
+      v}
+      A step too long for the margin continues on the next lines, indented under
+      it. Lines fit the formatter's margin counted from column 0, since a
+      formatter does not tell its current indentation: inside an indented box
+      they overrun the margin by that indentation. *)
+end
+
+module Kit : sig
+  (** Compositions of the verbs and expressions.
+
+      Each value of [Kit] is a composition written against talon's public
+      signature alone, and its documentation shows the definition. A plan built
+      with [Kit] prints as the verbs that make it, and its problems are those of
+      its verbs, which report them as they report any other plan's. A function
+      raises [Invalid_argument] itself only for an argument that is wrong
+      whatever the schema, or for a requirement that no verb states. *)
+
+  (** {1:queries Queries} *)
+
+  val head : int -> Query.t -> Query.t
+  (** [head n q] is the first [n] rows of [q]:
+      {[
+      Query.slice ~offset:0 ~length:n q
+      ]} *)
+
+  val tail : int -> Query.t -> Query.t
+  (** [tail n q] is the last [n] rows of [q]:
+      {[
+      Query.slice ~offset:(-n) ~length:n q
+      ]} *)
+
+  val top_k : int -> Order.t list -> Query.t -> Query.t
+  (** [top_k k keys q] is the first [k] rows of [q] in the order of [keys]:
+      {[
+      Query.(q |> sort keys |> slice ~offset:0 ~length:k)
+      ]}
+      A slice from the start of a sort runs as a selection of its first rows, in
+      O(n log k), holding k rows. *)
+
+  val distinct : Query.t -> Query.t
+  (** [distinct q] is the first of each set of [q]'s rows that are the same on
+      every column, by key identity (null is one key, and NaN is one), in order:
+      {[
+      match List.map fst (Schema.columns (Query.schema q)) with
+      | [] -> head 1 q
+      | names -> Query.aggregate ~by:names [] q
+      ]}
+      A query without columns has one distinct row if it has rows. The first of
+      each set of rows that are the same on the columns [ks] alone is
+      [Query.filter Expr.(over ~by:ks Kit.index = int 0) q]. *)
+
+  val count_by : string list -> Query.t -> Query.t
+  (** [count_by ks q] is one row per group of [q]'s rows that have the same keys
+      in the columns [ks], in order of first appearance: the columns [ks], then
+      ["count"], the group's number of rows as [int64]:
+      {[
+      Query.aggregate ~by:ks Expr.[ "count" := rows ] q
+      ]} *)
+
+  val value_counts : string -> Query.t -> Query.t
+  (** [value_counts c q] is each distinct value of [q]'s column [c], null
+      included, with its number of rows, most frequent first and ties in order
+      of first appearance:
+      {[
+      count_by [ c ] q |> Query.sort [ Order.desc "count" ]
+      ]} *)
+
+  val describe : Query.t -> Query.t
+  (** [describe q] summarizes each integer or float column of [q], in order, as
+      one row of the columns ["column"], its name; ["count"], its number of
+      values that are not null; ["nulls"], its number of nulls; ["mean"];
+      ["std"]; ["min"]; ["q25"], ["median"] and ["q75"], its quartiles; and
+      ["max"]. ["count"] and ["nulls"] are [int64] and the others [float64]. The
+      statistics are {!Expr}'s reductions, which skip nulls:
+      {[
+      let stats name x =
+        Query.aggregate ~by:[]
+          Expr.
+            [
+              "column" := string name;
+              "count" := count x;
+              "nulls" := rows - count x;
+              "mean" := mean x;
+              "std" := std x;
+              "min" := cast Type.float64 (min x);
+              "q25" := quantile 0.25 x;
+              "median" := median x;
+              "q75" := quantile 0.75 x;
+              "max" := cast Type.float64 (max x);
+            ]
+          q
+      in
+      s0 |> Query.append s1 |> … |> Query.append sk
+      ]}
+      where [s0] to [sk] are [stats n (Col.int n)] or [stats n (Col.float n)]
+      for each integer or float column [n]. Without such a column, [describe q]
+      is [head 0 (stats "" Expr.(store Type.float64 null))], which has no rows.
+      It reads [q] once per integer or float column. *)
+
+  val null_count : Query.t -> Query.t
+  (** [null_count q] is one row with, for each column of [q], in order and under
+      its name, its number of nulls as [int64]:
+      {[
+      Query.aggregate ~by:[]
+        Expr.[ each Sel.all { column = (fun n x -> n := rows - count x) } ]
+        q
+      ]} *)
+
+  val drop : Sel.t -> Query.t -> Query.t
+  (** [drop sel q] is [q] without the columns that [sel] selects:
+      {[
+      Query.select Expr.[ keep Sel.(all - sel) ] q
+      ]} *)
+
+  val rename : (string * string) list -> Query.t -> Query.t
+  (** [rename pairs q] is [q] with each column [old] of [pairs] renamed to the
+      [name] it pairs with, in place:
+      {[
+      let name n = Option.value ~default:n (List.assoc_opt n pairs) in
+      Query.select
+        Expr.
+          [
+            each
+              Sel.(all + names (List.map fst pairs))
+              { column = (fun n x -> name n := x) };
+          ]
+        q
+      ]}
+      An [old] that [q] lacks is a problem of the [select], through
+      {!Sel.names}, and so is a name that two columns would take.
+
+      Raises [Invalid_argument] if [pairs] renames a column twice. *)
+
+  val complete : string list -> Query.t -> Query.t
+  (** [complete ks q] is [q] with a row for each combination of the values of
+      the columns [ks] that [q] lacks, its other columns null. Each column's
+      values come in order of first appearance, combinations vary the last
+      column fastest, and each combination is followed by its rows of [q], in
+      order:
+      {[
+      let values k = Query.select Expr.[ keep Sel.(names [ k ]) ] q |> distinct in
+      let combos =
+        List.fold_left
+          (fun acc k -> acc |> Query.join ~on:Join.all (values k))
+          (values k0) ks'                               (* ks = k0 :: ks' *)
+      in
+      combos
+      |> Query.join ~kind:Left ~on:(Join.keys ks) q
+      |> Query.select Expr.[ keep (Sel.names (columns of q)) ]
+      ]}
+      It has [q]'s schema. Its key columns hold the combinations' values, so
+      where a key holds floats, a row of [q] holds the first of its equal values
+      to appear in [q]: [-0.] or [0.].
+
+      Raises [Invalid_argument] if [ks] is empty or names a column twice. *)
+
+  val one_hot : string -> Query.t -> Query.t
+  (** [one_hot c q] is [q] with its categorical column [c] replaced, in place,
+      by one [bool] column per category, in dictionary order, named
+      [c ^ "_" ^ category]: [true] where [c] is that category, [false] where it
+      is another, and null where [c] is null:
+      {[
+      Query.select
+        Expr.(
+          [ keep (Sel.names before) ]
+          @ List.map
+              (fun cat -> c ^ "_" ^ cat := Col.string c = string cat)
+              categories
+          @ [ keep (Sel.names after) ])
+        q
+      ]}
+      The categories are in [c]'s type, so the columns are known before any data
+      is read; a string column is cast to a categorical type first.
+
+      If [q] lacks [c], it is [Query.select Expr.[ keep Sel.(names [ c ]) ] q]'s
+      problem, reported with the nearest names.
+
+      Raises [Invalid_argument] if [c] is not categorical. *)
+
+  val union : Query.t -> Query.t -> Query.t
+  (** [union rest q] is [q]'s rows, then [rest]'s, written
+      [q |> Kit.union rest], with [q]'s columns, then those that only [rest]
+      has, in order; a column is null on the side that lacks it:
+      {[
+      let nulls from into =
+        List.filter_map
+          (fun (n, Type.Any t) ->
+            match Schema.find into n with
+            | Some _ -> None
+            | None -> Some Expr.(n := store t null))
+          (Schema.columns from)
+      in
+      let pad os q = if os = [] then q else Query.derive os q in
+      let s = Query.schema q and r = Query.schema rest in
+      pad (nulls r s) q |> Query.append (pad (nulls s r) rest)
+      ]}
+      A column that both have, of two types, is a problem of the [append]. *)
+
+  (** {1:expressions Expressions} *)
+
+  val cumulative : ('a, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t
+  (** [cumulative r] is, at each row of the frame, the reduction [r] over the
+      frame's rows from the first to that one: [cumulative (sum x)] is a running
+      sum. It takes [r]'s type and null rules: a null row adds nothing to a
+      reduction that skips nulls, and a row before the frame's first value has
+      [r] over no values, [0] for a sum and null for a maximum. Inside
+      [Expr.over ~by ~order] the frame is each partition, in its order.
+      {[
+      Expr.rolling (Window.rows ~before:max_int ~after:0) r
+      ]}
+      A growing [rows], [count], [sum], [min], [max], [first], [last] or [ewm]
+      costs one pass over the frame; over the input's rows it blocks, as
+      [Expr.rolling] does. *)
+
+  val index : (int, Expr.row) Expr.t
+  (** [index] is each row's position in its frame, from [0], as [int64]: the
+      position that [Expr.arg_min] and [Expr.arg_max] give.
+      {[
+      Expr.(cumulative rows - int 1)
+      ]} *)
+
+  val arg :
+    (int, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t -> ('a, Expr.agg) Expr.t
+  (** [arg p v] is [v] at the position [p] of the frame, and null where [p] or
+      that value is null: [arg (arg_max score) name] is the name with the best
+      score.
+      {[
+      Expr.(first (if_ (index = over p) v null))
+      ]} *)
+
+  val fill_forward : ('a, Expr.row) Expr.t -> ('a, Expr.row) Expr.t
+  (** [fill_forward x] is [x] with each null replaced by the last value before
+      it in the frame, and null before the first value. It applies to every
+      type, an extension read with [Expr.each] included.
+      {[
+      cumulative (Expr.last x)
+      ]} *)
 end

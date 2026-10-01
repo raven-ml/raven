@@ -150,6 +150,21 @@ let rec has_ext : type a. a t -> bool = function
   | Record fields -> List.exists (fun (_, Any t) -> has_ext t) fields
   | _ -> false
 
+let rec has_float : type a. a t -> bool = function
+  | Float16 | Float32 | Float64 -> true
+  | List e -> has_float e
+  | Record fields -> List.exists (fun (_, Any t) -> has_float t) fields
+  | Tensor (dt, _) -> (
+      match dt with
+      | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2
+      | Complex64 | Complex128 ->
+          true
+      | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
+      | UInt64 | Bool ->
+          false)
+  | Ext { storage; _ } -> has_float storage
+  | _ -> false
+
 (* [storage t] is [t] with every extension it is or holds as list elements
    replaced by its storage type: the type of the values a record field of type
    [t] holds. *)
@@ -307,6 +322,20 @@ and holds_stored : type a. ext:bool -> a t -> Kind.field -> bool =
   | Value (_, None) | Storage (_, None) -> true
   | Value (k', Some v) -> (not ext) && read k' v
   | Storage (k', Some v) -> ext && read k' v
+
+(* OCaml rounds a double to binary32 to nearest, ties to even, but has no
+   binary16 conversion that does: one through binary32 rounds twice. *)
+let rec value : type a. a t -> a -> a option = function
+  | Float16 -> Fun.const None
+  | Float32 -> fun v -> Some (Int32.float_of_bits (Int32.bits_of_float v))
+  | List e ->
+      let value = value e in
+      fun vs ->
+        let vs = Array.map value vs in
+        if Array.for_all Option.is_some vs then Some (Array.map Option.get vs)
+        else None
+  | Record _ as t -> if has_float t then Fun.const None else Option.some
+  | _ -> Option.some
 
 (* Order *)
 

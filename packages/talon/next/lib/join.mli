@@ -58,16 +58,11 @@ type count = Any | At_most_one | One | At_least_one
 (** {1:checking Checking} *)
 
 val check :
-  kind ->
-  Schema.t ->
-  Schema.t ->
-  cond ->
-  (cond * Schema.t, Problem.t list) result
-(** [check kind left right c] is [Ok (b, s)] with [b] the condition [c] with
-    each [within] bound, and [s] the columns of the [kind] join on [c] of rows
-    of the columns [left] and [right], or [Error ps] with every problem, those
-    of [c] in the order of its atoms, then the names on both sides. The problems
-    are:
+  kind -> Schema.t -> Schema.t -> cond -> (cond, Problem.t list) result
+(** [check kind left right c] is [Ok b] with [b] the condition [c] with each
+    [within] bound, or [Error ps] with every problem of the [kind] join on [c]
+    of rows of the columns [left] and [right], those of [c] in the order of its
+    atoms, then the names on both sides. The problems are:
     - a column missing on its side, with suggestions from that side's names;
     - the columns of an equality atom that do not meet, and extension columns
       that are not of one type;
@@ -79,6 +74,14 @@ val check :
       which makes its coalesced value ambiguous;
     - except for {!Semi} and {!Anti}, the joined columns that have the same
       name, all listed in one problem. *)
+
+val columns : kind -> Schema.t -> Schema.t -> cond -> Schema.t
+(** [columns kind left right c] is the columns of the [kind] join on [c] of rows
+    of the columns [left] and [right], as [Talon_next.Join] describes them. [c]
+    has passed {!check} against [left] and [right], or against schemas of which
+    they hold the columns that [c] names, with the same types. [Query.make]
+    computes with it the columns of a join, whose inputs the optimizer may
+    narrow. *)
 
 val equal : cond -> cond -> bool
 (** [equal c0 c1] is [true] iff [c0] and [c1] have equal atoms in the same

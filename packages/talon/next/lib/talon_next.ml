@@ -45,4 +45,149 @@ end
 
 module Source = Source
 module Join = Join
-module Query = Query
+
+module Query = struct
+  include Query
+
+  let optimize = Optimize.query
+end
+
+module Kit = struct
+  (* Every composition builds its query with the verbs that [Talon_next]
+     exports, so that its problems are its verbs'. *)
+
+  let err fmt = Format.kasprintf invalid_arg fmt
+  let column_names q = List.map fst (Schema.columns (Query.schema q))
+
+  (* [repeated ns] is a name that [ns] holds twice, if any. *)
+  let rec repeated = function
+    | [] -> None
+    | n :: ns -> if List.mem n ns then Some n else repeated ns
+
+  (* Queries *)
+
+  let head n q = Query.slice ~offset:0 ~length:n q
+  let tail n q = Query.slice ~offset:(-n) ~length:n q
+  let top_k k keys q = Query.slice ~offset:0 ~length:k (Query.sort keys q)
+
+  let distinct q =
+    match column_names q with
+    | [] -> head 1 q
+    | names -> Query.aggregate ~by:names [] q
+
+  let count_by ks q = Query.aggregate ~by:ks Expr.[ "count" := rows ] q
+  let value_counts c q = Query.sort [ Order.desc "count" ] (count_by [ c ] q)
+
+  let describe q =
+    let stats name x =
+      Query.aggregate ~by:[]
+        Expr.
+          [
+            "column" := string name;
+            "count" := count x;
+            "nulls" := rows - count x;
+            "mean" := mean x;
+            "std" := std x;
+            "min" := cast Type.float64 (min x);
+            "q25" := quantile 0.25 x;
+            "median" := median x;
+            "q75" := quantile 0.75 x;
+            "max" := cast Type.float64 (max x);
+          ]
+        q
+    in
+    let numeric (n, Type.Any t) =
+      let k = Type.kind t in
+      match
+        (Kind.provably_equal k Kind.int, Kind.provably_equal k Kind.float)
+      with
+      | Some Stdlib.Type.Equal, _ -> Some (stats n (Col.int n))
+      | _, Some Stdlib.Type.Equal -> Some (stats n (Col.float n))
+      | None, None -> None
+    in
+    match List.filter_map numeric (Schema.columns (Query.schema q)) with
+    | [] -> head 0 (stats "" Expr.(store Type.float64 null))
+    | s :: ss -> List.fold_left (fun acc s -> Query.append s acc) s ss
+
+  let null_count q =
+    Query.aggregate ~by:[]
+      Expr.[ each Sel.all { column = (fun n x -> n := rows - count x) } ]
+      q
+
+  let drop sel q = Query.select Expr.[ keep Sel.(all - sel) ] q
+
+  let rename pairs q =
+    let olds = List.map fst pairs in
+    Option.iter
+      (err "Kit.rename: %a is renamed twice" Type.pp_quoted)
+      (repeated olds);
+    let name n = Option.value ~default:n (List.assoc_opt n pairs) in
+    Query.select
+      Expr.[ each Sel.(all + names olds) { column = (fun n x -> name n := x) } ]
+      q
+
+  let complete ks q =
+    Option.iter
+      (err "Kit.complete: %a is named twice" Type.pp_quoted)
+      (repeated ks);
+    match ks with
+    | [] -> invalid_arg "Kit.complete: no column"
+    | k :: ks' ->
+        let values k =
+          distinct (Query.select Expr.[ keep Sel.(names [ k ]) ] q)
+        in
+        let combos =
+          List.fold_left
+            (fun acc k -> Query.join ~on:Join.all (values k) acc)
+            (values k) ks'
+        in
+        combos
+        |> Query.join ~kind:Left ~on:(Join.keys ks) q
+        |> Query.select Expr.[ keep (Sel.names (column_names q)) ]
+
+  let one_hot c q =
+    let s = Query.schema q in
+    match Schema.find s c with
+    | None ->
+        (* [q] lacks [c], so the select raises its report. *)
+        Query.select Expr.[ keep Sel.(names [ c ]) ] q
+    | Some (Type.Any (Categorical categories)) ->
+        let rec split before = function
+          | (n, _) :: after when String.equal n c ->
+              (List.rev before, List.map fst after)
+          | (n, _) :: rest -> split (n :: before) rest
+          | [] -> assert false (* [Schema.find] found [c]. *)
+        in
+        let before, after = split [] (Schema.columns s) in
+        let indicator cat = Expr.(c ^ "_" ^ cat := Col.string c = string cat) in
+        Query.select
+          (Expr.keep (Sel.names before)
+           :: List.map indicator (Iarray.to_list categories)
+          @ [ Expr.keep (Sel.names after) ])
+          q
+    | Some (Type.Any t) ->
+        err
+          "Kit.one_hot: %a is %a, not categorical: cast it to a categorical \
+           type first"
+          Type.pp_quoted c Type.pp t
+
+  let union rest q =
+    let nulls from into =
+      List.filter_map
+        (fun (n, Type.Any t) ->
+          match Schema.find into n with
+          | Some _ -> None
+          | None -> Some Expr.(n := store t null))
+        (Schema.columns from)
+    in
+    let pad os q = if List.is_empty os then q else Query.derive os q in
+    let s = Query.schema q and r = Query.schema rest in
+    Query.append (pad (nulls s r) rest) (pad (nulls r s) q)
+
+  (* Expressions *)
+
+  let cumulative r = Expr.rolling (Window.rows ~before:max_int ~after:0) r
+  let index = Expr.(cumulative rows - int 1)
+  let arg p v = Expr.(first (if_ (index = over p) v null))
+  let fill_forward x = cumulative (Expr.last x)
+end
