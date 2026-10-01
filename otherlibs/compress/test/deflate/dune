@@ -1,6 +1,6 @@
 (test
  (name test_deflate)
  (package compress)
- (libraries windtrap bytesrw compress.deflate compress_fixtures)
+ (libraries windtrap compress.deflate compress_fixtures)
  (deps
   (glob_files ../fixtures/*)))

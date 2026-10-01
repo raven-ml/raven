@@ -17,8 +17,8 @@ let decompress_with f src n =
     (fun () -> F.string_of_bigbytes dst)
     (f (F.bigbytes_of_string src) dst)
 
-let block = decompress_with L.Block.decompress
-let frame = decompress_with L.Frame.decompress
+let block = decompress_with L.Block.decompress_into
+let frame = decompress_with L.Frame.decompress_into
 
 (* XXH32 with seed 0, from its specification. *)
 let xxh32 s =
@@ -301,9 +301,9 @@ let malformed =
           let src = Bigarray.Array1.sub b 0 40
           and dst = Bigarray.Array1.sub b 30 34 in
           raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
-              L.Block.decompress src dst);
+              L.Block.decompress_into src dst);
           raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
-              L.Frame.decompress src dst));
+              L.Frame.decompress_into src dst));
     ]
 
 let checksums =

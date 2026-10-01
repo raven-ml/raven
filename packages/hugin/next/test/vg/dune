@@ -70,7 +70,6 @@
   hugin.next.vg.pdf
   vg_corpus
   nx
-  bytesrw
   compress.deflate
   windtrap)
  (deps

@@ -51,6 +51,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `hugin` no longer depends on `bytesrw`: the PDF writers deflate their
+  streams with `Compress_deflate.Zlib.compress`.
 - Marks and `Hugin_vg.Picture.image` read a placed value to the host once, as
   they are made. A placed image raised in the raster and PDF backends.
 - Hugin no longer depends on cairo or SDL2. Plots render through
@@ -2960,12 +2962,17 @@ thread.
 - Add the `compress` package: deflate with its zlib and gzip framings
   (`Compress_deflate`, moved out of `nx.io`), Snappy blocks
   (`Compress_snappy`), and LZ4 and Zstandard decompression (`Compress_lz4`,
-  `Compress_zstd`), with no system library. Deflate streams are bytesrw
-  filters, and data held in memory, such as a page of a mapped Parquet file,
-  decompresses directly between byte arrays.
+  `Compress_zstd`), with no dependencies. A string compresses whole with
+  `Compress_deflate.Zlib.compress ?level` and back with `decompress`; streams
+  go through `Compress_deflate.Encoder` and `Decoder`, state machines that are
+  given input and return output in bounded memory; and data held in memory,
+  such as a page of a mapped Parquet file, decompresses directly between byte
+  arrays with `decompress_into`.
 
 ### Nx
 
+- `nx` no longer depends on `bytesrw`. `Nx_io.gunzip` still decompresses in
+  bounded memory, through a `Compress_deflate.Decoder`.
 - Add `Nx.check ok msg`, which raises `Invalid_argument (msg i)` at the index
   of `ok`'s first false element. Inside a compiled function it reads nothing:
   the call raises when it returns, also from a staged scan or under `vmap`.

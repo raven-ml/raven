@@ -1,7 +1,6 @@
 (library
  (name compress_deflate)
  (public_name compress.deflate)
- (libraries bytesrw)
  (foreign_stubs
   (language c)
   (names

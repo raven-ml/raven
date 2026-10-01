@@ -3,7 +3,6 @@
 (executable
  (name bench_compress)
  (libraries
-  bytesrw
   compress.deflate
   compress.snappy
   compress.lz4

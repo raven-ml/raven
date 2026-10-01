@@ -26,5 +26,4 @@
   nx.io
   str
   windtrap
-  bytesrw
   compress.deflate))

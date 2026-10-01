@@ -3,18 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Bytesrw
-
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 type level = int
-type Bytes.Stream.error += Error of string
-
-let format_error format =
-  let case msg = Error msg in
-  let message = function Error msg -> msg | _ -> assert false in
-  Bytes.Stream.make_format_error ~format ~case ~message
 
 external init : unit -> unit = "caml_compress_deflate_init"
 
@@ -23,6 +15,12 @@ let () = init ()
 external overlap : bigbytes -> bigbytes -> bool
   = "caml_compress_deflate_overlap"
 [@@noalloc]
+
+let check_range fn b first length =
+  if first < 0 || length < 0 || first > Bytes.length b - length then
+    invalid_arg
+      (Printf.sprintf "%s: range %d+%d is not in a buffer of %d bytes" fn first
+         length (Bytes.length b))
 
 (* Checksums *)
 
@@ -52,10 +50,119 @@ module Crc32 = struct
 
   let bigbytes ?(crc = 0) b = crc32_bigbytes crc b 0 (Bigarray.Array1.dim b)
 
-  let slice ?(crc = 0) s =
-    crc32_bytes crc (Bytes.Slice.bytes s) (Bytes.Slice.first s)
-      (Bytes.Slice.length s)
+  let string ?(crc = 0) ?(first = 0) ?length s =
+    let b = Bytes.unsafe_of_string s in
+    let length = Option.value length ~default:(String.length s - first) in
+    check_range "Compress_deflate.Crc32.string" b first length;
+    crc32_bytes crc b first length
 end
+
+(* Framings. Headers and trailers are parsers that take their bytes one at a
+   time, with each byte's position, so that a decoder suspends them wherever its
+   input runs out. Malformed data raises [Malformed] at the position where
+   decoding failed. *)
+
+exception Malformed of int * string
+
+type framing = Raw | Zlib | Gzip
+type parser = Done | Byte of (int -> int -> parser)
+
+let module_name = function
+  | Raw -> "Compress_deflate.Deflate"
+  | Zlib -> "Compress_deflate.Zlib"
+  | Gzip -> "Compress_deflate.Gzip"
+
+let malformed pos msg = raise (Malformed (pos, msg))
+let initial_check = function Zlib -> 1 | Raw | Gzip -> 0
+
+let zlib_header =
+  Byte
+    (fun at cmf ->
+      Byte
+        (fun _ flg ->
+          if
+            cmf land 0x0F <> 8
+            || cmf lsr 4 > 7
+            || (cmf lsl 8) lor flg mod 31 <> 0
+          then malformed at "invalid zlib header";
+          if flg land 0x20 <> 0 then malformed at "preset dictionary needed";
+          Done))
+
+let gzip_header () =
+  let crc = ref 0 in
+  let byte k =
+    Byte
+      (fun pos b ->
+        crc := crc32_byte !crc b;
+        k pos b)
+  in
+  let rec skip n k = if n = 0 then k () else byte (fun _ _ -> skip (n - 1) k) in
+  let rec zero_terminated k =
+    byte (fun _ b -> if b = 0 then k () else zero_terminated k)
+  in
+  byte @@ fun at id1 ->
+  byte @@ fun _ id2 ->
+  if id1 <> 0x1F || id2 <> 0x8B then malformed at "not a gzip member";
+  byte @@ fun _ cm ->
+  if cm <> 8 then malformed at "unknown compression method";
+  byte @@ fun _ flags ->
+  if flags land 0xE0 <> 0 then malformed at "reserved flags set";
+  let extra k =
+    if flags land 0x04 = 0 then k ()
+    else byte (fun _ lo -> byte (fun _ hi -> skip (lo lor (hi lsl 8)) k))
+  in
+  let text flag k = if flags land flag = 0 then k () else zero_terminated k in
+  skip 6 @@ fun () ->
+  extra @@ fun () ->
+  text 0x08 @@ fun () ->
+  text 0x10 @@ fun () ->
+  if flags land 0x02 = 0 then Done
+  else
+    let expected = !crc land 0xFFFF in
+    Byte
+      (fun at lo ->
+        Byte
+          (fun _ hi ->
+            if lo lor (hi lsl 8) <> expected then
+              malformed at "header checksum mismatch";
+            Done))
+
+let header = function
+  | Raw -> Done
+  | Zlib -> zlib_header
+  | Gzip -> gzip_header ()
+
+(* [word ~big k] reads a 32-bit word, big-endian iff [big], and continues with
+   [k] applied to the position of its first byte and its value. *)
+let word ~big k =
+  Byte
+    (fun at b0 ->
+      Byte
+        (fun _ b1 ->
+          Byte
+            (fun _ b2 ->
+              Byte
+                (fun _ b3 ->
+                  k at
+                    (if big then
+                       (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor b3
+                     else b0 lor (b1 lsl 8) lor (b2 lsl 16) lor (b3 lsl 24))))))
+
+(* [trailer framing ~check ~size] reads the trailer of a stream whose data has
+   checksum [check] and [size] bytes. *)
+let trailer framing ~check ~size =
+  match framing with
+  | Raw -> Done
+  | Zlib ->
+      word ~big:true @@ fun at adler ->
+      if adler <> check then malformed at "Adler-32 mismatch";
+      Done
+  | Gzip ->
+      word ~big:false @@ fun at crc ->
+      if crc <> check then malformed at "CRC-32 mismatch";
+      word ~big:false @@ fun at length ->
+      if length <> size land 0xFFFFFFFF then malformed at "length mismatch";
+      Done
 
 (* Inflaters. Positions travel in an int array, [| src_pos; src_end; dst_hist;
    dst_pos; dst_end |], that the C code advances. *)
@@ -91,110 +198,27 @@ let inflate_message = function
   | 11 -> "distance beyond the data"
   | _ -> assert false
 
-(* Framings. Headers and trailers are read through [next], which returns the
-   next byte, and [pos], the position of that byte. Malformed data raises
-   [Malformed] at the position where decoding failed. *)
+let error_message pos msg = Printf.sprintf "%s at byte %d" msg pos
 
-exception Malformed of int * string
+(* Between byte arrays *)
 
-type framing = Raw | Zlib | Gzip
-type cursor = { next : unit -> int; pos : unit -> int }
-
-let malformed pos msg = raise (Malformed (pos, msg))
-
-let zlib_header c =
-  let at = c.pos () in
-  let cmf = c.next () in
-  let flg = c.next () in
-  if cmf land 0x0F <> 8 || cmf lsr 4 > 7 || (cmf lsl 8) lor flg mod 31 <> 0 then
-    malformed at "invalid zlib header";
-  if flg land 0x20 <> 0 then malformed at "preset dictionary needed"
-
-let gzip_header c =
-  let at = c.pos () in
-  let crc = ref 0 in
-  let byte () =
-    let b = c.next () in
-    crc := crc32_byte !crc b;
-    b
-  in
-  if byte () <> 0x1F || byte () <> 0x8B then malformed at "not a gzip member";
-  if byte () <> 8 then malformed at "unknown compression method";
-  let flags = byte () in
-  if flags land 0xE0 <> 0 then malformed at "reserved flags set";
-  for _ = 1 to 6 do
-    ignore (byte ())
-  done;
-  if flags land 0x04 <> 0 then begin
-    let n = byte () in
-    for _ = 1 to n lor (byte () lsl 8) do
-      ignore (byte ())
-    done
-  end;
-  if flags land 0x08 <> 0 then
-    while byte () <> 0 do
-      ()
-    done;
-  if flags land 0x10 <> 0 then
-    while byte () <> 0 do
-      ()
-    done;
-  if flags land 0x02 <> 0 then begin
-    let expected = !crc land 0xFFFF in
-    let at = c.pos () in
-    let b0 = c.next () in
-    if b0 lor (c.next () lsl 8) <> expected then
-      malformed at "header checksum mismatch"
-  end
-
-let le32 c =
-  let b0 = c.next () in
-  let b1 = c.next () in
-  let b2 = c.next () in
-  b0 lor (b1 lsl 8) lor (b2 lsl 16) lor (c.next () lsl 24)
-
-let header framing c =
-  match framing with Raw -> () | Zlib -> zlib_header c | Gzip -> gzip_header c
-
-(* [trailer framing c ~check ~size] reads the trailer of a stream whose data has
-   checksum [check] and [size] bytes. *)
-let trailer framing c ~check ~size =
-  match framing with
-  | Raw -> ()
-  | Zlib ->
-      let at = c.pos () in
-      let b0 = c.next () in
-      let b1 = c.next () in
-      let b2 = c.next () in
-      let adler = (b0 lsl 24) lor (b1 lsl 16) lor (b2 lsl 8) lor c.next () in
-      if adler <> check then malformed at "Adler-32 mismatch"
-  | Gzip ->
-      let at = c.pos () in
-      if le32 c <> check then malformed at "CRC-32 mismatch";
-      let at = c.pos () in
-      if le32 c <> size land 0xFFFFFFFF then malformed at "length mismatch"
-
-let initial_check = function Zlib -> 1 | Raw | Gzip -> 0
-
-(* In memory *)
-
-let decompress framing ~fn src dst =
-  if overlap src dst then invalid_arg (fn ^ ": src and dst overlap");
+let decompress_into framing src dst =
+  if overlap src dst then
+    invalid_arg (module_name framing ^ ".decompress_into: src and dst overlap");
   let src_len = Bigarray.Array1.dim src in
   let dst_len = Bigarray.Array1.dim dst in
   let io = [| 0; src_len; 0; 0; dst_len |] in
-  let c =
-    let next () =
-      let p = io.(0) in
-      if p >= src_len then malformed p "truncated data";
-      io.(0) <- p + 1;
-      Bigarray.Array1.unsafe_get src p
-    in
-    { next; pos = (fun () -> io.(0)) }
+  let rec parse = function
+    | Done -> ()
+    | Byte k ->
+        let p = io.(0) in
+        if p >= src_len then malformed p "truncated data";
+        io.(0) <- p + 1;
+        parse (k p (Bigarray.Array1.unsafe_get src p))
   in
   let state = inflate_create () in
   let rec stream () =
-    header framing c;
+    parse (header framing);
     let start = io.(3) in
     io.(2) <- start;
     let status = inflate_bigbytes state src dst io true in
@@ -208,7 +232,7 @@ let decompress framing ~fn src dst =
       | Zlib -> adler32_bigbytes 1 dst start size
       | Gzip -> crc32_bigbytes 0 dst start size
     in
-    trailer framing c ~check ~size;
+    parse (trailer framing ~check ~size);
     if framing = Gzip && io.(0) < src_len then begin
       inflate_reset state;
       stream ()
@@ -222,122 +246,190 @@ let decompress framing ~fn src dst =
         (Printf.sprintf "data is %d bytes, not %d" io.(3) dst_len)
   with
   | () -> Ok ()
-  | exception Malformed (pos, msg) ->
-      Result.Error (Printf.sprintf "%s at byte %d" msg pos)
+  | exception Malformed (pos, msg) -> Error (error_message pos msg)
 
-(* Readers. Compressed input is copied into [input]; [base] is the position in
-   [r] of its first byte. The output buffer holds the 32 KiB history that
-   matches refer to, followed by the room for one slice. *)
+(* Encoders and decoders take their input from a [pending], which holds what
+   they were given and have not taken yet. *)
+
+type pending = {
+  mutable bytes : bytes;
+  mutable first : int;
+  mutable length : int;
+  mutable ended : bool;
+  mutable awaiting : bool;
+}
+
+let pending () =
+  { bytes = Bytes.empty; first = 0; length = 0; ended = false; awaiting = true }
+
+let give fn p s first length =
+  check_range fn s first length;
+  if not p.awaiting then invalid_arg (fn ^ ": input is not awaited");
+  p.awaiting <- false;
+  if length = 0 then p.ended <- true
+  else begin
+    p.bytes <- s;
+    p.first <- first;
+    p.length <- length
+  end
+
+let take p n =
+  p.first <- p.first + n;
+  p.length <- p.length - n
+
+let await p =
+  p.awaiting <- true;
+  `Await
+
+(* Decoders. The pending input is copied into [input] as room frees up; [base]
+   is the stream position of [input]'s first byte. [output] holds the 32 KiB
+   history that matches refer to, followed by the room for one slice. *)
 
 let window = 32768
 let input_length = 65536
+let slice_length = 65536
 
-type phase = Header | Data | Trailer | Done
+module Decoder = struct
+  type phase =
+    | Header of parser
+    | Data
+    | Trailer of parser
+    | Next
+    | Ended
+    | Failed of string
 
-let reads framing format ?pos ?(slice_length = Bytes.Slice.io_buffer_size) r =
-  let input = Bytes.create input_length in
-  let output = Bytes.create (window + slice_length) in
-  let io = [| 0; 0; 0; 0; 0 |] in
-  let base = ref (Bytes.Reader.pos r) in
-  let pending = ref Bytes.Slice.eod in
-  let ended = ref false in
-  let final () = !ended && Bytes.Slice.is_eod !pending in
-  (* Moves the unread input to the front and appends to it. Returns [false] if
-     no byte could be added. *)
-  let refill () =
+  type t = {
+    framing : framing;
+    inflate : inflate;
+    pending : pending;
+    input : bytes;
+    output : bytes;
+    io : int array;
+    mutable base : int;
+    mutable phase : phase;
+    mutable check : int;
+    mutable size : int;
+  }
+
+  let make framing =
+    {
+      framing;
+      inflate = inflate_create ();
+      pending = pending ();
+      input = Bytes.create input_length;
+      output = Bytes.create (window + slice_length);
+      io = [| 0; 0; 0; 0; 0 |];
+      base = 0;
+      phase = Header (header framing);
+      check = 0;
+      size = 0;
+    }
+
+  let src d = give "Compress_deflate.Decoder.src" d.pending
+
+  (* Moves the unread input to the front of [input] and appends pending input to
+     it. Returns [false] if no byte could be added. *)
+  let refill d =
+    let io = d.io and p = d.pending in
     let unread = io.(1) - io.(0) in
-    Bytes.blit input io.(0) input 0 unread;
-    base := !base + io.(0);
+    Bytes.blit d.input io.(0) d.input 0 unread;
+    d.base <- d.base + io.(0);
     io.(0) <- 0;
-    io.(1) <- unread;
-    let rec fill () =
-      if io.(1) < input_length && not (final ()) then begin
-        if Bytes.Slice.is_eod !pending then begin
-          pending := Bytes.Reader.read r;
-          if Bytes.Slice.is_eod !pending then ended := true
-        end;
-        let s = !pending in
-        let n = Int.min (Bytes.Slice.length s) (input_length - io.(1)) in
-        Bytes.blit (Bytes.Slice.bytes s) (Bytes.Slice.first s) input io.(1) n;
-        io.(1) <- io.(1) + n;
-        pending := Bytes.Slice.drop_first_or_eod n s;
-        fill ()
-      end
-    in
-    fill ();
-    io.(1) > unread
-  in
-  let c =
-    let next () =
-      if io.(0) = io.(1) && not (refill ()) then
-        malformed (!base + io.(0)) "truncated data";
-      let b = Bytes.get_uint8 input io.(0) in
-      io.(0) <- io.(0) + 1;
-      b
-    in
-    { next; pos = (fun () -> !base + io.(0)) }
-  in
-  let state = inflate_create () in
-  let phase = ref Header in
-  let check = ref (initial_check framing) in
-  let size = ref 0 in
-  let update first length =
-    size := !size + length;
-    match framing with
-    | Raw -> ()
-    | Zlib -> check := adler32_bytes !check output first length
-    | Gzip -> check := crc32_bytes !check output first length
-  in
-  let rec read () =
-    match !phase with
-    | Done -> Bytes.Slice.eod
-    | Header ->
-        header framing c;
-        io.(2) <- io.(3);
-        check := initial_check framing;
-        size := 0;
-        phase := Data;
-        read ()
+    let n = Int.min p.length (input_length - unread) in
+    Bytes.blit p.bytes p.first d.input unread n;
+    take p n;
+    io.(1) <- unread + n;
+    n > 0
+
+  let pos d = d.base + d.io.(0)
+  let available d = d.io.(0) < d.io.(1) || refill d
+
+  (* [feed d p] runs [p] on the input. It is [None] once [p] is done and [Some
+     p'] if [p'] needs input not given yet. *)
+  let rec feed d = function
+    | Done -> None
+    | Byte k as p ->
+        if available d then begin
+          let at = pos d in
+          let b = Bytes.get_uint8 d.input d.io.(0) in
+          d.io.(0) <- d.io.(0) + 1;
+          feed d (k at b)
+        end
+        else if d.pending.ended then malformed (pos d) "truncated data"
+        else Some p
+
+  let rec step d =
+    let io = d.io in
+    match d.phase with
+    | Ended -> `End
+    | Failed msg -> `Error msg
+    | Header p -> (
+        match feed d p with
+        | Some p ->
+            d.phase <- Header p;
+            await d.pending
+        | None ->
+            io.(2) <- io.(3);
+            d.check <- initial_check d.framing;
+            d.size <- 0;
+            d.phase <- Data;
+            step d)
     | Data ->
         if io.(3) > window then begin
           let shift = io.(3) - window in
-          Bytes.blit output shift output 0 window;
+          Bytes.blit d.output shift d.output 0 window;
           io.(2) <- Int.max 0 (io.(2) - shift);
           io.(3) <- window
         end;
         let first = io.(3) in
         io.(4) <- first + slice_length;
-        let status = inflate_bytes state input output io (final ()) in
-        if status = inflate_end then phase := Trailer
-        else if status = inflate_input then ignore (refill ())
-        else if status <> inflate_output then
-          malformed (!base + io.(0)) (inflate_message status);
+        let status =
+          inflate_bytes d.inflate d.input d.output io d.pending.ended
+        in
+        if status > inflate_output then
+          malformed (pos d) (inflate_message status);
         let length = io.(3) - first in
-        if length = 0 then read ()
-        else begin
-          update first length;
-          Bytes.Slice.make output ~first ~length
+        d.size <- d.size + length;
+        (match d.framing with
+        | Raw -> ()
+        | Zlib -> d.check <- adler32_bytes d.check d.output first length
+        | Gzip -> d.check <- crc32_bytes d.check d.output first length);
+        if status = inflate_end then
+          d.phase <- Trailer (trailer d.framing ~check:d.check ~size:d.size);
+        if length > 0 then `Data (d.output, first, length)
+        else if status <> inflate_input || refill d then step d
+        else await d.pending
+    | Trailer p -> (
+        match feed d p with
+        | Some p ->
+            d.phase <- Trailer p;
+            await d.pending
+        | None ->
+            d.phase <- Next;
+            step d)
+    | Next ->
+        if available d then begin
+          if d.framing <> Gzip then malformed (pos d) "data after the stream";
+          inflate_reset d.inflate;
+          d.phase <- Header (header Gzip);
+          step d
         end
-    | Trailer ->
-        trailer framing c ~check:!check ~size:!size;
-        let more = io.(0) < io.(1) || refill () in
-        if not more then phase := Done
-        else if framing = Gzip then begin
-          inflate_reset state;
-          phase := Header
+        else if d.pending.ended then begin
+          d.phase <- Ended;
+          `End
         end
-        else malformed (!base + io.(0)) "data after the stream";
-        read ()
-  in
-  let read () =
-    try read ()
-    with Malformed (pos, msg) ->
-      phase := Done;
-      Bytes.Reader.error format r ~pos msg
-  in
-  Bytes.Reader.make ?pos ~slice_length read
+        else await d.pending
 
-(* Writers *)
+  let decode d =
+    try step d
+    with Malformed (pos, msg) ->
+      let msg = error_message pos msg in
+      d.phase <- Failed msg;
+      `Error msg
+end
+
+(* Encoders. The C encoder copies the pending input as it has room for it and
+   writes at most one block to [output] per call. *)
 
 type deflate
 
@@ -357,119 +449,148 @@ external deflate_encode : deflate -> bytes -> bool -> int
 
 let out_max = deflate_out_max ()
 
-let zlib_header_of_level level =
-  let flevel =
+module Encoder = struct
+  type phase = Header | Data | Trailer | Ended
+
+  type t = {
+    framing : framing;
+    level : level;
+    deflate : deflate;
+    pending : pending;
+    output : bytes;
+    mutable phase : phase;
+    mutable check : int;
+    mutable size : int;
+  }
+
+  let make framing ?(level = 6) () =
+    if level < 0 || level > 9 then
+      invalid_arg
+        (Printf.sprintf "%s: level %d is not in [0;9]" (module_name framing)
+           level);
+    {
+      framing;
+      level;
+      deflate = deflate_create level;
+      pending = pending ();
+      output = Bytes.create out_max;
+      phase = Header;
+      check = initial_check framing;
+      size = 0;
+    }
+
+  let src e s first length =
+    give "Compress_deflate.Encoder.src" e.pending s first length;
+    (match e.framing with
+    | Raw -> ()
+    | Zlib -> e.check <- adler32_bytes e.check s first length
+    | Gzip -> e.check <- crc32_bytes e.check s first length);
+    e.size <- e.size + length
+
+  let zlib_flevel level =
     if level < 2 then 0x01
     else if level < 6 then 0x5E
     else if level = 6 then 0x9C
     else 0xDA
-  in
-  Printf.sprintf "\x78%c" (Char.chr flevel)
 
-let gzip_header_bytes = "\x1F\x8B\x08\x00\x00\x00\x00\x00\x00\xFF"
-
-let writes framing ~fn ?(level = 6) () =
-  if level < 0 || level > 9 then
-    invalid_arg (Printf.sprintf "%s: level %d is not in [0;9]" fn level);
-  fun ?pos ?slice_length ~eod w ->
-    let slice_length =
-      match slice_length with
-      | Some length -> length
-      | None -> Bytes.Writer.slice_length w
-    in
-    let encoder = deflate_create level in
-    let out = Bytes.create out_max in
-    let check = ref (initial_check framing) in
-    let size = ref 0 in
-    let started = ref false in
-    let emit n =
-      let max = Bytes.Writer.slice_length w in
-      let rec loop first =
-        if first < n then begin
-          let length = Int.min max (n - first) in
-          Bytes.Writer.write w (Bytes.Slice.make out ~first ~length);
-          loop (first + length)
-        end
-      in
-      loop 0
-    in
-    let rec drain ~eod =
-      let n = deflate_encode encoder out eod in
-      if n > 0 then begin
-        emit n;
-        drain ~eod
-      end
-    in
-    let rec push bytes first length =
-      let n = deflate_input encoder bytes first length in
-      drain ~eod:false;
-      if n < length then push bytes (first + n) (length - n)
-    in
-    let write s =
-      if not !started then begin
-        started := true;
-        match framing with
-        | Raw -> ()
-        | Zlib -> Bytes.Writer.write_string w (zlib_header_of_level level)
-        | Gzip -> Bytes.Writer.write_string w gzip_header_bytes
-      end;
-      if Bytes.Slice.is_eod s then begin
-        drain ~eod:true;
-        deflate_free encoder;
-        let trailer = Bytes.create 8 in
-        (match framing with
-        | Raw -> ()
+  let rec encode e =
+    let p = e.pending in
+    match e.phase with
+    | Ended -> `End
+    | Header -> (
+        e.phase <- Data;
+        match e.framing with
+        | Raw -> encode e
         | Zlib ->
-            Bytes.set_int32_be trailer 0 (Int32.of_int !check);
-            Bytes.Writer.write w (Bytes.Slice.make trailer ~first:0 ~length:4)
+            Bytes.set_uint8 e.output 0 0x78;
+            Bytes.set_uint8 e.output 1 (zlib_flevel e.level);
+            `Data (e.output, 0, 2)
         | Gzip ->
-            Bytes.set_int32_le trailer 0 (Int32.of_int !check);
-            Bytes.set_int32_le trailer 4 (Int32.of_int !size);
-            Bytes.Writer.write w (Bytes.Slice.make trailer ~first:0 ~length:8));
-        if eod then Bytes.Writer.write_eod w
-      end
-      else begin
-        let bytes = Bytes.Slice.bytes s in
-        let first = Bytes.Slice.first s in
-        let length = Bytes.Slice.length s in
-        (match framing with
-        | Raw -> ()
-        | Zlib -> check := adler32_bytes !check bytes first length
-        | Gzip -> check := crc32_bytes !check bytes first length);
-        size := !size + length;
-        push bytes first length
-      end
-    in
-    Bytes.Writer.make ?pos ~slice_length write
+            Bytes.blit_string "\x1F\x8B\x08\x00\x00\x00\x00\x00\x00\xFF" 0
+              e.output 0 10;
+            `Data (e.output, 0, 10))
+    | Data ->
+        if p.length > 0 then
+          take p (deflate_input e.deflate p.bytes p.first p.length);
+        let n = deflate_encode e.deflate e.output p.ended in
+        if n > 0 then `Data (e.output, 0, n)
+        else if p.length > 0 then encode e
+        else if p.ended then begin
+          deflate_free e.deflate;
+          e.phase <- Trailer;
+          encode e
+        end
+        else await p
+    | Trailer -> (
+        e.phase <- Ended;
+        match e.framing with
+        | Raw -> `End
+        | Zlib ->
+            Bytes.set_int32_be e.output 0 (Int32.of_int e.check);
+            `Data (e.output, 0, 4)
+        | Gzip ->
+            Bytes.set_int32_le e.output 0 (Int32.of_int e.check);
+            Bytes.set_int32_le e.output 4 (Int32.of_int e.size);
+            `Data (e.output, 0, 8))
+end
+
+(* Whole buffers *)
+
+let compress framing ?level s =
+  let e = Encoder.make framing ?level () in
+  let b = Buffer.create (64 + (String.length s / 2)) in
+  let rec loop () =
+    match Encoder.encode e with
+    | `Data (bytes, first, length) ->
+        Buffer.add_subbytes b bytes first length;
+        loop ()
+    | `Await ->
+        Encoder.src e Bytes.empty 0 0;
+        loop ()
+    | `End -> Buffer.contents b
+  in
+  Encoder.src e (Bytes.unsafe_of_string s) 0 (String.length s);
+  loop ()
+
+let decompress framing s =
+  let d = Decoder.make framing in
+  let b = Buffer.create (64 + (2 * String.length s)) in
+  let rec loop () =
+    match Decoder.decode d with
+    | `Data (bytes, first, length) ->
+        Buffer.add_subbytes b bytes first length;
+        loop ()
+    | `Await ->
+        Decoder.src d Bytes.empty 0 0;
+        loop ()
+    | `End -> Ok (Buffer.contents b)
+    | `Error msg -> Error msg
+  in
+  Decoder.src d (Bytes.unsafe_of_string s) 0 (String.length s);
+  loop ()
 
 (* Formats *)
 
 module Deflate = struct
-  let format = format_error "deflate"
-  let decompress_reads () = reads Raw format
-
-  let compress_writes ?level () =
-    writes Raw ~fn:"Compress_deflate.Deflate.compress_writes" ?level ()
-
-  let decompress = decompress Raw ~fn:"Compress_deflate.Deflate.decompress"
+  let compress ?level s = compress Raw ?level s
+  let decompress s = decompress Raw s
+  let encoder ?level () = Encoder.make Raw ?level ()
+  let decoder () = Decoder.make Raw
+  let decompress_into src dst = decompress_into Raw src dst
 end
 
 module Zlib = struct
-  let format = format_error "zlib"
-  let decompress_reads () = reads Zlib format
-
-  let compress_writes ?level () =
-    writes Zlib ~fn:"Compress_deflate.Zlib.compress_writes" ?level ()
-
-  let decompress = decompress Zlib ~fn:"Compress_deflate.Zlib.decompress"
+  let compress ?level s = compress Zlib ?level s
+  let decompress s = decompress Zlib s
+  let encoder ?level () = Encoder.make Zlib ?level ()
+  let decoder () = Decoder.make Zlib
+  let decompress_into src dst = decompress_into Zlib src dst
 end
 
 module Gzip = struct
-  let format = format_error "gzip"
-  let decompress_reads () = reads Gzip format
-
-  let compress_writes ?level () =
-    writes Gzip ~fn:"Compress_deflate.Gzip.compress_writes" ?level ()
-
-  let decompress = decompress Gzip ~fn:"Compress_deflate.Gzip.decompress"
+  let compress ?level s = compress Gzip ?level s
+  let decompress s = decompress Gzip s
+  let encoder ?level () = Encoder.make Gzip ?level ()
+  let decoder () = Decoder.make Gzip
+  let decompress_into src dst = decompress_into Gzip src dst
 end

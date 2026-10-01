@@ -23,8 +23,8 @@ type bigbytes =
 
 (** {1:decompress Decompressing} *)
 
-val decompress : bigbytes -> bigbytes -> (unit, string) result
-(** [decompress src dst] decompresses the block [src] into [dst]. It is
+val decompress_into : bigbytes -> bigbytes -> (unit, string) result
+(** [decompress_into src dst] decompresses the block [src] into [dst]. It is
     [Error msg] if [src] is malformed or truncated, if its data is not as long
     as the length it declares, or if that length is not
     [Bigarray.Array1.dim dst]. [msg] states the offset in [src] at which
@@ -35,15 +35,15 @@ val decompress : bigbytes -> bigbytes -> (unit, string) result
 (** {1:compress Compressing} *)
 
 val max_compressed_length : int -> int
-(** [max_compressed_length n] is the length of the longest block {!compress}
-    writes for [n] bytes, [32 + n + n / 6].
+(** [max_compressed_length n] is the length of the longest block
+    {!compress_into} writes for [n] bytes, [32 + n + n / 6].
 
     Raises [Invalid_argument] if [n] is negative or larger than [0xFFFFFFFF],
     the longest sequence a block holds. *)
 
-val compress : bigbytes -> bigbytes -> int
-(** [compress src dst] writes the block of the bytes of [src] at the start of
-    [dst] and is the block's length. The block depends only on the bytes of
+val compress_into : bigbytes -> bigbytes -> int
+(** [compress_into src dst] writes the block of the bytes of [src] at the start
+    of [dst] and is the block's length. The block depends only on the bytes of
     [src].
 
     Raises [Invalid_argument] if [Bigarray.Array1.dim dst] is less than

@@ -42,10 +42,7 @@ let set doc n body =
 let stream ?(compress = true) dict data =
   let dict, data =
     if compress then
-      ( "/Filter /FlateDecode " ^ dict,
-        Bytesrw.Bytes.Writer.filter_string
-          [ Compress_deflate.Zlib.compress_writes () ]
-          data )
+      ("/Filter /FlateDecode " ^ dict, Compress_deflate.Zlib.compress data)
     else (dict, data)
   in
   Printf.sprintf "<< /Length %d %s>>\nstream\n%s\nendstream"

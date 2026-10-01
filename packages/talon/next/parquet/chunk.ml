@@ -467,10 +467,10 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
       let src = A1.sub src pos len in
       let r =
         match cm.codec with
-        | Snappy -> Compress_snappy.decompress src dst
-        | Gzip -> Compress_deflate.Gzip.decompress src dst
-        | Zstd -> Compress_zstd.decompress src dst
-        | Lz4_raw -> Compress_lz4.Block.decompress src dst
+        | Snappy -> Compress_snappy.decompress_into src dst
+        | Gzip -> Compress_deflate.Gzip.decompress_into src dst
+        | Zstd -> Compress_zstd.decompress_into src dst
+        | Lz4_raw -> Compress_lz4.Block.decompress_into src dst
         | _ -> invalid_arg "Chunk.read: a chunk that did not pass Chunk.check"
       in
       match r with

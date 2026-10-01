@@ -29,11 +29,7 @@ let streams pdf =
         let start = Str.match_end () in
         let data = String.sub pdf start len in
         let data =
-          try
-            Bytesrw.Bytes.Reader.filter_string
-              [ Compress_deflate.Zlib.decompress_reads () ]
-              data
-          with Bytesrw.Bytes.Stream.Error _ -> data
+          Result.value ~default:data (Compress_deflate.Zlib.decompress data)
         in
         go (start + len) (data :: acc)
   in

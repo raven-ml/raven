@@ -54,82 +54,58 @@ let png_probe src =
 let png_decode src dst grayscale =
   let idat, length = png_idat src in
   let filtered = Array1.create int8_unsigned c_layout length in
-  (match Compress_deflate.Zlib.decompress idat filtered with
+  (match Compress_deflate.Zlib.decompress_into idat filtered with
   | Ok () -> ()
   | Error e -> failwith ("invalid PNG zlib stream: " ^ e));
   png_unfilter src filtered dst grayscale
 
-(* [png_chunk w kind data length] writes the chunk [kind] of the first [length]
-   bytes of [data] on [w]. *)
-let png_chunk w kind data length =
-  let open Bytesrw in
-  let header = Bytes.create 8 in
-  Bytes.set_int32_be header 0 (Int32.of_int length);
-  Bytes.blit_string kind 0 header 4 4;
-  let data = Bytes.Slice.make_or_eod data ~first:0 ~length in
-  let crc = Crc32.slice (Bytes.Slice.make header ~first:4 ~length:4) in
-  let crc = Crc32.slice ~crc data in
-  Bytes.Writer.write w (Bytes.Slice.make header ~first:0 ~length:8);
-  if not (Bytes.Slice.is_eod data) then Bytes.Writer.write w data;
-  Bytes.set_int32_be header 0 (Int32.of_int crc);
-  Bytes.Writer.write w (Bytes.Slice.make header ~first:0 ~length:4)
+(* [png_chunk b kind data first length] adds the chunk [kind] of the [length]
+   bytes of [data] at [first] to [b]. *)
+let png_chunk b kind data first length =
+  Buffer.add_int32_be b (Int32.of_int length);
+  Buffer.add_string b kind;
+  Buffer.add_substring b data first length;
+  let crc = Crc32.string ~crc:(Crc32.string kind) ~first ~length data in
+  Buffer.add_int32_be b (Int32.of_int crc)
 
 let idat_length = 1 lsl 20
 
-(* [idat_writer w n] cuts the zlib stream written to it, of [n] bytes of data,
-   into IDAT chunks of [idat_length] bytes, the last one shorter, on [w]. Such a
-   stream is at most [n + 5 * (n / 65535 + 1) + 6] bytes long. *)
-let idat_writer w n =
-  let open Bytesrw in
-  let capacity = Int.min idat_length (n + (5 * ((n / 65535) + 1)) + 6) in
-  let chunk = Bytes.create capacity and length = ref 0 in
-  let flush () =
-    if !length > 0 then begin
-      png_chunk w "IDAT" chunk !length;
-      length := 0
-    end
+(* Adds the PNG image [data] to [b]. Its zlib stream is cut into IDAT chunks of
+   [idat_length] bytes, the last one shorter. A [ppm] other than 0 is written as
+   a pHYs chunk of [ppm] pixels per metre on both axes, and [srgb] as an sRGB
+   chunk with the perceptual rendering intent. *)
+let png_encode ~ppm ~srgb b data width height channels =
+  let z =
+    Compress_deflate.Zlib.compress (png_filter data width height channels)
   in
-  let rec write s =
-    if Bytes.Slice.is_eod s then flush ()
-    else begin
-      let n = Int.min (Bytes.Slice.length s) (capacity - !length) in
-      Bytes.blit (Bytes.Slice.bytes s) (Bytes.Slice.first s) chunk !length n;
-      length := !length + n;
-      if !length = capacity then flush ();
-      if n < Bytes.Slice.length s then write (Bytes.Slice.drop_first_or_eod n s)
-    end
-  in
-  Bytes.Writer.make write
-
-(* Writes the PNG image [data] on [w], without ending [w]. A [ppm] other than 0
-   is written as a pHYs chunk of [ppm] pixels per metre on both axes, and [srgb]
-   as an sRGB chunk with the perceptual rendering intent. *)
-let png_encode ~ppm ~srgb w data width height channels =
-  let filtered = png_filter data width height channels in
-  Bytesrw.Bytes.Writer.write_string w "\137PNG\r\n\026\n";
+  Buffer.add_string b "\137PNG\r\n\026\n";
   let header = Bytes.make 13 '\000' in
   Bytes.set_int32_be header 0 (Int32.of_int width);
   Bytes.set_int32_be header 4 (Int32.of_int height);
   Bytes.set_uint8 header 8 8;
   Bytes.set_uint8 header 9 (match channels with 1 -> 0 | 3 -> 2 | _ -> 6);
-  png_chunk w "IHDR" header 13;
-  if srgb then png_chunk w "sRGB" (Bytes.make 1 '\000') 1;
+  png_chunk b "IHDR" (Bytes.to_string header) 0 13;
+  if srgb then png_chunk b "sRGB" "\000" 0 1;
   if ppm <> 0 then begin
     let phys = Bytes.make 9 '\001' in
     Bytes.set_int32_be phys 0 (Int32.of_int ppm);
     Bytes.set_int32_be phys 4 (Int32.of_int ppm);
-    png_chunk w "pHYs" phys 9
+    png_chunk b "pHYs" (Bytes.to_string phys) 0 9
   end;
-  let idat = idat_writer w (String.length filtered) in
-  let z = Compress_deflate.Zlib.compress_writes () ~eod:true idat in
-  Bytesrw.Bytes.Writer.write_string z filtered;
-  Bytesrw.Bytes.Writer.write_eod z;
-  png_chunk w "IEND" Bytes.empty 0
+  let rec idat first =
+    if first < String.length z then begin
+      let length = Int.min idat_length (String.length z - first) in
+      png_chunk b "IDAT" z first length;
+      idat (first + length)
+    end
+  in
+  idat 0;
+  png_chunk b "IEND" "" 0 0
 
 let write_png fd data width height channels =
-  png_encode ~ppm:0 ~srgb:false
-    (Bytesrw_unix.bytes_writer_of_fd fd)
-    data width height channels
+  let b = Buffer.create 1024 in
+  png_encode ~ppm:0 ~srgb:false b data width height channels;
+  ignore (Unix.write_substring fd (Buffer.contents b) 0 (Buffer.length b))
 
 let map_file fd size =
   if size = 0 then Array1.create int8_unsigned c_layout 0
@@ -211,9 +187,7 @@ let save_png ~overwrite path data ~width ~height ~channels =
 let encode_png data ~width ~height ~channels ~ppm ~srgb =
   ignore (checked_pixels width height channels);
   let b = Buffer.create 1024 in
-  png_encode ~ppm ~srgb
-    (Bytesrw.Bytes.Writer.of_buffer b)
-    data width height channels;
+  png_encode ~ppm ~srgb b data width height channels;
   Buffer.contents b
 
 let save_jpeg ~overwrite path data ~width ~height ~channels =

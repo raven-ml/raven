@@ -10,7 +10,6 @@
   nx_test
   unix
   windtrap
-  bytesrw
   compress.deflate)
  (deps
   (glob_files fixtures/*)))

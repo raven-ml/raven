@@ -26,9 +26,9 @@ let message = function
   | 8 -> "data shorter than the destination"
   | _ -> assert false
 
-let decompress src dst =
+let decompress_into src dst =
   if overlap src dst then
-    invalid_arg "Compress_snappy.decompress: src and dst overlap";
+    invalid_arg "Compress_snappy.decompress_into: src and dst overlap";
   let at = [| 0 |] in
   match decode src dst at with
   | 0 -> Ok ()
@@ -45,10 +45,10 @@ let max_compressed_length n =
          "Compress_snappy.max_compressed_length: %d is not in [0;0xFFFFFFFF]" n);
   32 + n + (n / 6)
 
-let compress src dst =
+let compress_into src dst =
   if Array1.dim dst < max_compressed_length (Array1.dim src) then
     invalid_arg
-      "Compress_snappy.compress: dst is shorter than max_compressed_length";
+      "Compress_snappy.compress_into: dst is shorter than max_compressed_length";
   if overlap src dst then
-    invalid_arg "Compress_snappy.compress: src and dst overlap";
+    invalid_arg "Compress_snappy.compress_into: src and dst overlap";
   encode src dst

@@ -14,14 +14,14 @@ module F = Compress_fixtures
 let compress s =
   let src = F.bigbytes_of_string s in
   let dst = F.zeros (S.max_compressed_length (String.length s)) in
-  let n = S.compress src dst in
+  let n = S.compress_into src dst in
   F.string_of_bigbytes (Bigarray.Array1.sub dst 0 n)
 
 let decompress block n =
   let dst = F.zeros n in
   Result.map
     (fun () -> F.string_of_bigbytes dst)
-    (S.decompress (F.bigbytes_of_string block) dst)
+    (S.decompress_into (F.bigbytes_of_string block) dst)
 
 let strings =
   Gen.frequency
@@ -67,7 +67,7 @@ let round_trips =
           let b = F.bigbytes_of_string (String.make at 'x' ^ s ^ "tail") in
           let dst = F.zeros (S.max_compressed_length n + 8) in
           let length =
-            S.compress
+            S.compress_into
               (Bigarray.Array1.sub b at n)
               (Bigarray.Array1.sub dst 8 (S.max_compressed_length n))
           in
@@ -166,17 +166,17 @@ let arguments =
       test "compress refuses a destination shorter than max_compressed_length"
         (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              S.compress
+              S.compress_into
                 (F.bigbytes_of_string "abc")
                 (F.zeros (S.max_compressed_length 3 - 1))));
       test "compress and decompress refuse overlapping arrays" (fun () ->
           let b = F.zeros 200 in
           raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
-              S.compress
+              S.compress_into
                 (Bigarray.Array1.sub b 0 50)
                 (Bigarray.Array1.sub b 40 160));
           raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
-              S.decompress
+              S.decompress_into
                 (Bigarray.Array1.sub b 0 50)
                 (Bigarray.Array1.sub b 40 160)));
     ]

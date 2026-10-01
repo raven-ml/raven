@@ -52,7 +52,7 @@ let objects doc =
       let body = String.sub doc start (find "\nendobj\n" start - start) in
       match find_from body 0 "\nstream\n" with
       | None -> (n, body, None)
-      | Some i ->
+      | Some i -> (
           let dict = String.sub body 0 i in
           let length =
             let j = Option.get (find_from dict 0 "/Length ") + 8 in
@@ -63,12 +63,9 @@ let objects doc =
             int_of_string (String.sub dict j (!k - j))
           in
           let data = String.sub body (i + 8) length in
-          ( n,
-            dict,
-            Some
-              (Bytesrw.Bytes.Reader.filter_string
-                 [ Compress_deflate.Zlib.decompress_reads () ]
-                 data) ))
+          match Compress_deflate.Zlib.decompress data with
+          | Ok data -> (n, dict, Some data)
+          | Error e -> failf "object %d: %s" n e))
 
 (* [content doc] is the page's content stream, object 4. *)
 let content doc =

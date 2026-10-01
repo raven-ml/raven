@@ -15,7 +15,7 @@ let decompress src n =
   let dst = F.zeros n in
   Result.map
     (fun () -> F.string_of_bigbytes dst)
-    (Z.decompress (F.bigbytes_of_string src) dst)
+    (Z.decompress_into (F.bigbytes_of_string src) dst)
 
 let le n bytes =
   String.init bytes (fun i -> Char.chr ((n lsr (8 * i)) land 0xFF))
@@ -216,7 +216,7 @@ let malformed =
       test "overlapping arrays are refused" (fun () ->
           let b = F.zeros 64 in
           raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
-              Z.decompress
+              Z.decompress_into
                 (Bigarray.Array1.sub b 0 40)
                 (Bigarray.Array1.sub b 30 34)));
     ]

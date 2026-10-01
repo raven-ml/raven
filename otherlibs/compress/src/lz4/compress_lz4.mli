@@ -27,8 +27,8 @@ type bigbytes =
 
 (** LZ4 blocks. *)
 module Block : sig
-  val decompress : bigbytes -> bigbytes -> (unit, string) result
-  (** [decompress src dst] decompresses the block [src] into [dst]. It is
+  val decompress_into : bigbytes -> bigbytes -> (unit, string) result
+  (** [decompress_into src dst] decompresses the block [src] into [dst]. It is
       [Error msg] if [src] is malformed or truncated, or if its data is not
       exactly [Bigarray.Array1.dim dst] bytes long. [msg] states the offset in
       [src] at which decoding failed; [dst] is then partly written.
@@ -41,9 +41,9 @@ end
     frame format, are refused. Block and content checksums are checked when a
     frame has them. *)
 module Frame : sig
-  val decompress : bigbytes -> bigbytes -> (unit, string) result
-  (** [decompress src dst] decompresses the frames of [src], concatenated, into
-      [dst]. It is [Error msg] if [src] is empty, if a frame is malformed,
+  val decompress_into : bigbytes -> bigbytes -> (unit, string) result
+  (** [decompress_into src dst] decompresses the frames of [src], concatenated,
+      into [dst]. It is [Error msg] if [src] is empty, if a frame is malformed,
       truncated, needs a dictionary or fails a checksum, if [src] has data that
       is not a frame, or if the data is not exactly [Bigarray.Array1.dim dst]
       bytes long. [msg] states the offset in [src] at which decoding failed;

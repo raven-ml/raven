@@ -3,15 +3,7 @@
 (library
  (name nx_io)
  (public_name nx.io)
- (libraries
-  nx_dtype
-  nx_device
-  nx
-  nx_array
-  unix
-  bytesrw
-  bytesrw.unix
-  compress.deflate)
+ (libraries nx_dtype nx_device nx nx_array unix compress.deflate)
  (foreign_stubs
   (language c)
   (names nx_io_bytes nx_io_png nx_io_jpeg)

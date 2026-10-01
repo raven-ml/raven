@@ -3,7 +3,25 @@
   SPDX-License-Identifier: ISC
   --------------------------------------------------------------------------*)
 
-open Bytesrw
+module Decoder = Compress_deflate.Decoder
+
+(* Reads [input] into one buffer and writes the data to [output] as the decoder
+   returns it, so memory stays bounded whatever the file sizes. *)
+let decompress input output =
+  let d = Compress_deflate.Gzip.decoder () in
+  let buf = Bytes.create 65536 in
+  let rec loop () =
+    match Decoder.decode d with
+    | `Await ->
+        Decoder.src d buf 0 (Unix.read input buf 0 (Bytes.length buf));
+        loop ()
+    | `Data (b, first, length) ->
+        ignore (Unix.write output b first length);
+        loop ()
+    | `End -> ()
+    | `Error msg -> failwith ("invalid gzip file: " ^ msg)
+  in
+  loop ()
 
 let gunzip ~src ~dst =
   let input = Unix.openfile src [ Unix.O_RDONLY ] 0 in
@@ -13,13 +31,7 @@ let gunzip ~src ~dst =
     let output = Unix.openfile temp [ Unix.O_WRONLY; Unix.O_TRUNC ] 0 in
     Fun.protect
       ~finally:(fun () -> Unix.close output)
-      (fun () ->
-        let r = Bytesrw_unix.bytes_reader_of_fd input in
-        let w = Bytesrw_unix.bytes_writer_of_fd output in
-        try
-          Bytes.Writer.write_reader ~eod:true w
-            (Compress_deflate.Gzip.decompress_reads () r)
-        with Bytes.Stream.Error e -> failwith (Bytes.Stream.error_message e))
+      (fun () -> decompress input output)
   with
   | () -> Temp_file.replace temp dst
   | exception exn ->

@@ -43,14 +43,13 @@
 (package
  (name compress)
  (dir otherlibs/compress)
- (synopsis "Deflate, gzip, zlib, Snappy, LZ4 and Zstandard for bytesrw")
+ (synopsis "Deflate, gzip, zlib, Snappy, LZ4 and Zstandard codecs")
  (description
-  "Compression codecs with no system library: deflate and its zlib and gzip framings, Snappy blocks, and LZ4 and Zstandard decompression. Streams are bytesrw readers and writers; data held in memory, such as a page of a mapped Parquet file, decompresses directly between byte arrays.")
+  "Compression codecs with no dependencies: deflate and its zlib and gzip framings, Snappy blocks, and LZ4 and Zstandard decompression. Strings compress and decompress whole; streams go through incremental encoders and decoders in bounded memory; data held in memory, such as a page of a mapped Parquet file, decompresses directly between byte arrays.")
  (depends
   (ocaml
    (>= 5.5.0))
   dune
-  bytesrw
   ; tests
   (windtrap
    (and
@@ -62,7 +61,7 @@
     (>= 0.2.0)))
   (thumper :with-test))
  (tags
-  (compression deflate gzip zlib snappy lz4 zstd bytesrw)))
+  (compression deflate gzip zlib snappy lz4 zstd)))
 
 (package
  (name nx)
@@ -75,7 +74,6 @@
   (ocaml
    (>= 5.5.0))
   dune
-  bytesrw
   (compress
    (= :version))
   ; tests
@@ -304,7 +302,6 @@
   (ocaml
    (>= 5.2.0))
   dune
-  bytesrw
   (nx
    (= :version))
   (compress

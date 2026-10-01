@@ -14,9 +14,8 @@ repository root in `dune utop otherlibs/compress`:
 
     Out_channel.with_open_bin
       "otherlibs/compress/test/fixtures/golden_text_level6.z" (fun oc ->
-        output_string oc (Bytesrw.Bytes.Writer.filter_string
-          [ Compress_deflate.Zlib.compress_writes ~level:6 () ]
-          Compress_fixtures.text))
+        output_string oc
+          (Compress_deflate.Zlib.compress ~level:6 Compress_fixtures.text))
 
 then run `generate.py --check`.
 

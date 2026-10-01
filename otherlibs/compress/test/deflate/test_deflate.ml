@@ -3,13 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Deflate, zlib and gzip. Each format reads back what it writes through both
-   decoders, which agree on the streams Python's zlib and gzip wrote, whatever
-   the slicing of their input. Malformed streams are refused with an error,
-   never another exception. *)
+(* Deflate, zlib and gzip. Each format reads back what it writes through its
+   three decoders, which agree on the streams Python's zlib and gzip wrote,
+   whatever the slicing of their input. Malformed streams are refused with an
+   error, never an exception. *)
 
 open Windtrap
-open Bytesrw
 module C = Compress_deflate
 module F = Compress_fixtures
 
@@ -17,78 +16,113 @@ module F = Compress_fixtures
 
 type format = {
   name : string;
-  reads : unit -> Bytes.Reader.filter;
-  writes : ?level:int -> unit -> Bytes.Writer.filter;
-  decompress : F.bigbytes -> F.bigbytes -> (unit, string) result;
+  compress : ?level:int -> string -> string;
+  decompress : string -> (string, string) result;
+  encoder : ?level:int -> unit -> C.Encoder.t;
+  decoder : unit -> C.Decoder.t;
+  decompress_into : F.bigbytes -> F.bigbytes -> (unit, string) result;
 }
 
 let deflate =
   {
     name = "deflate";
-    reads = C.Deflate.decompress_reads;
-    writes = C.Deflate.compress_writes;
+    compress = C.Deflate.compress;
     decompress = C.Deflate.decompress;
+    encoder = C.Deflate.encoder;
+    decoder = C.Deflate.decoder;
+    decompress_into = C.Deflate.decompress_into;
   }
 
 let zlib =
   {
     name = "zlib";
-    reads = C.Zlib.decompress_reads;
-    writes = C.Zlib.compress_writes;
+    compress = C.Zlib.compress;
     decompress = C.Zlib.decompress;
+    encoder = C.Zlib.encoder;
+    decoder = C.Zlib.decoder;
+    decompress_into = C.Zlib.decompress_into;
   }
 
 let gzip =
   {
     name = "gzip";
-    reads = C.Gzip.decompress_reads;
-    writes = C.Gzip.compress_writes;
+    compress = C.Gzip.compress;
     decompress = C.Gzip.decompress;
+    encoder = C.Gzip.encoder;
+    decoder = C.Gzip.decoder;
+    decompress_into = C.Gzip.decompress_into;
   }
 
 let formats = [ deflate; zlib; gzip ]
-let compress ?level f s = Bytes.Writer.filter_string [ f.writes ?level () ] s
+let compress ?level f s = f.compress ?level s
 
-(* [compress_sliced f k s] writes [s] in slices of [k] bytes. *)
+(* [compress_sliced f k s] gives [s] to an encoder [k] bytes at a time. *)
 let compress_sliced ?level f k s =
+  let e = f.encoder ?level () in
+  let src = Bytes.of_string s in
   let b = Buffer.create 256 in
-  let w = f.writes ?level () ~eod:true (Bytes.Writer.of_buffer b) in
   let rec loop first =
-    if first < String.length s then begin
-      let last = Int.min (String.length s) (first + k) - 1 in
-      Bytes.Writer.write w (Bytes.Slice.of_string ~first ~last s);
-      loop (last + 1)
-    end
+    match C.Encoder.encode e with
+    | `Data (bytes, j, l) ->
+        Buffer.add_subbytes b bytes j l;
+        loop first
+    | `Await ->
+        let n = Int.min k (String.length s - first) in
+        C.Encoder.src e src first n;
+        loop (first + n)
+    | `End -> Buffer.contents b
   in
-  loop 0;
-  Bytes.Writer.write_eod w;
-  Buffer.contents b
+  loop 0
 
-let reads ?(slice_length = Bytes.Slice.io_buffer_size) f s =
-  Bytes.Reader.to_string (f.reads () (Bytes.Reader.of_string ~slice_length s))
+(* [decode ~k f s] gives [s] to a decoder [k] bytes at a time. *)
+let decode ?(k = 65536) f s =
+  let d = f.decoder () in
+  let src = Bytes.of_string s in
+  let b = Buffer.create 256 in
+  let rec loop first =
+    match C.Decoder.decode d with
+    | `Data (bytes, j, l) ->
+        Buffer.add_subbytes b bytes j l;
+        loop first
+    | `Await ->
+        let n = Int.min k (String.length s - first) in
+        C.Decoder.src d src first n;
+        loop (first + n)
+    | `End -> Ok (Buffer.contents b)
+    | `Error e -> Error e
+  in
+  loop 0
 
-(* [decompress f s n] decompresses [s] in memory into [n] bytes. *)
-let decompress f s n =
+(* [decompress_into f s n] decompresses [s] between byte arrays into [n]
+   bytes. *)
+let decompress_into f s n =
   let dst = F.zeros n in
   Result.map
     (fun () -> F.string_of_bigbytes dst)
-    (f.decompress (F.bigbytes_of_string s) dst)
+    (f.decompress_into (F.bigbytes_of_string s) dst)
 
-(* [refused f s error] asserts that both decoders refuse [s] with a message that
-   contains [error]. *)
+(* [decodes f data z] asserts that the three decoders decode [z] to [data]. *)
+let decodes f data z =
+  equal ~msg:"decompress" string data (require_ok (f.decompress z));
+  equal ~msg:"decoder" string data (require_ok (decode f z));
+  equal ~msg:"decompress_into" string data
+    (require_ok (decompress_into f z (String.length data)))
+
+(* [refused f s error] asserts that the three decoders refuse [s] with a message
+   that contains [error]. *)
 let refused ?(length = 64) f s error =
   contains ~msg:"decompress" ~sub:error
-    (require_error ~msg:"decompress" (decompress f s length));
-  match reads f s with
-  | _ -> fail "decompress_reads: no error"
-  | exception Bytes.Stream.Error e ->
-      contains ~msg:"decompress_reads" ~sub:error (Bytes.Stream.error_message e)
+    (require_error ~msg:"decompress" (f.decompress s));
+  contains ~msg:"decoder" ~sub:error (require_error ~msg:"decoder" (decode f s));
+  contains ~msg:"decompress_into" ~sub:error
+    (require_error ~msg:"decompress_into" (decompress_into f s length))
 
-(* [returns_or_errors f s] asserts that both decoders return or error on [s], as
-   they promise for any bytes: never another exception or a crash. *)
+(* [returns_or_errors f s] asserts that the decoders return or error on [s], as
+   they promise for any bytes: never an exception or a crash. *)
 let returns_or_errors f s n =
-  ignore (decompress f s n);
-  match reads f s with _ -> () | exception Bytes.Stream.Error _ -> ()
+  ignore (f.decompress s);
+  ignore (decode ~k:7 f s);
+  ignore (decompress_into f s n)
 
 let strings =
   let long = Gen.int_range 60_000 200_000 in
@@ -104,11 +138,8 @@ let strings =
 let inverts f =
   prop ~tags:[ "slow" ]
     (f.name
-   ^ " decompression inverts compress_writes on short strings and on long ones \
-      past the window and block sizes") strings (fun s ->
-      let z = compress f s in
-      equal string s (reads f z);
-      equal string s (require_ok (decompress f z (String.length s))))
+   ^ " decompression inverts compress on short strings and on long ones past \
+      the window and block sizes") strings (fun s -> decodes f s (compress f s))
 
 let levels =
   prop ~tags:[ "slow" ]
@@ -125,12 +156,12 @@ let levels =
        (Gen.int_range 1 70_000))
     (fun (level, s, k) ->
       let z = compress ~level zlib s in
-      equal string s (reads zlib z);
+      equal string s (require_ok (decode zlib z));
       equal string z (compress_sliced ~level zlib k s))
 
 (* [letters seed] is 200 to 400 thousand pseudo-random letters from [a] to [p]:
-   about 4 bits each once compressed, so the stream outgrows a reader's input
-   buffer and the reader resumes inside dynamic Huffman blocks. *)
+   about 4 bits each once compressed, so the stream outgrows a decoder's input
+   buffer and the decoder resumes inside dynamic Huffman blocks. *)
 let letters seed =
   let r = Random.State.make [| seed |] in
   String.init (Random.State.int_in_range r ~min:200_000 ~max:400_000) (fun _ ->
@@ -138,7 +169,7 @@ let letters seed =
 
 let resumes =
   prop ~tags:[ "slow" ] ~count:20
-    "a reader resumes decoding wherever its input buffer ends in a dynamic \
+    "a decoder resumes decoding wherever its input buffer ends in a dynamic \
      block"
     (Gen.triple
        (Gen.of_list
@@ -148,9 +179,8 @@ let resumes =
     (fun (f, level, seed) ->
       let s = letters seed in
       let z = compress ~level f s in
-      greater int (String.length z) ~than:Bytes.Slice.io_buffer_size;
-      equal string s (reads f z);
-      equal string s (require_ok (decompress f z (String.length s))))
+      greater int (String.length z) ~than:65536;
+      decodes f s z)
 
 let round_trips =
   group "round trips"
@@ -161,8 +191,7 @@ let round_trips =
         cases ~name:Fun.id "the empty string round trips"
           [ "deflate"; "zlib"; "gzip" ] (fun name ->
             let f = List.find (fun f -> f.name = name) formats in
-            equal string "" (reads f (compress f ""));
-            equal string "" (require_ok (decompress f (compress f "") 0)));
+            decodes f "" (compress f ""));
       ])
 
 (* Streams other tools wrote *)
@@ -192,24 +221,25 @@ let fixtures =
     [
       cases
         ~name:(fun (file, _, _) -> file)
-        "decode in memory and through readers sliced every way" python_streams
+        "decode whole and through decoders given every slicing" python_streams
         (fun (file, f, data) ->
           let z = F.read file in
-          equal string data (require_ok (decompress f z (String.length data)));
+          decodes f data z;
           List.iter
-            (fun slice_length ->
+            (fun k ->
               equal
-                ~msg:(Printf.sprintf "slice length %d" slice_length)
-                string data (reads ~slice_length f z))
+                ~msg:(Printf.sprintf "slices of %d bytes" k)
+                string data
+                (require_ok (decode ~k f z)))
             slice_lengths);
-      prop "a reader's output does not depend on how its input is sliced"
+      prop "a decoder's output does not depend on how its input is sliced"
         (Gen.pair
            (Gen.of_list
               ~pp:(fun ppf (file, _, _) -> Format.pp_print_string ppf file)
               python_streams)
            (Gen.int_range 1 4096))
-        (fun ((file, f, data), slice_length) ->
-          equal string data (reads ~slice_length f (F.read file)));
+        (fun ((file, f, data), k) ->
+          equal string data (require_ok (decode ~k f (F.read file))));
     ]
 
 (* Golden streams: what the encoder writes, pinned. generate.py checks that
@@ -430,15 +460,15 @@ let malformed =
         (fun f ->
           let z = compress f hello in
           let n = String.length hello in
-          ignore (require_error (decompress f z (n - 1)));
-          ignore (require_error (decompress f z (n + 1))));
+          ignore (require_error (decompress_into f z (n - 1)));
+          ignore (require_error (decompress_into f z (n + 1))));
       cases
         ~name:(fun f -> f.name)
         "overlapping arrays are refused" formats
         (fun f ->
           let b = F.zeros 64 in
           raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
-              f.decompress
+              f.decompress_into
                 (Bigarray.Array1.sub b 0 40)
                 (Bigarray.Array1.sub b 30 34)));
     ]
@@ -452,45 +482,68 @@ let members =
         (Gen.list ~size:(Gen.int_range 1 4) Gen.string)
         (fun l ->
           let z = String.concat "" (List.map (compress gzip) l) in
-          let data = String.concat "" l in
-          equal string data (reads gzip z);
-          equal string data
-            (require_ok (decompress gzip z (String.length data))));
+          decodes gzip (String.concat "" l) z);
       test "a member's header is fixed" (fun () ->
           equal string "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff"
             (String.sub (compress gzip F.text) 0 10));
     ]
 
-(* Writers *)
+(* Encoders *)
 
-let writers =
-  group "compress_writes"
+(* [outputs step] is the lengths of the slices [step] returns before it awaits
+   input or ends, and whether it ended. *)
+let outputs step =
+  let rec loop acc =
+    match step () with
+    | `Data (_, _, l) -> loop (l :: acc)
+    | `Await -> (List.rev acc, false)
+    | `End -> (List.rev acc, true)
+    | `Error e -> failf "%s" e
+  in
+  loop []
+
+let encode e () =
+  (C.Encoder.encode e
+    :> [ `Await | `Data of bytes * int * int | `End | `Error of string ])
+
+let not_awaiting f = raises_match (Exn.invalid_arg ~substring:"await") f
+let out_of_range f = raises_match (Exn.invalid_arg ~substring:"range") f
+
+let encoders =
+  group "encoders"
     [
-      cases ~name:string_of_int "refuses a level outside 0 to 9" [ -1; 10 ]
+      cases ~name:string_of_int "refuse a level outside 0 to 9" [ -1; 10 ]
         (fun level ->
           raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
-              C.Zlib.compress_writes ~level ()));
-      test "defaults to level 6" (fun () ->
+              C.Zlib.encoder ~level ());
+          raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
+              C.Zlib.compress ~level ""));
+      test "default to level 6" (fun () ->
           equal string (compress ~level:6 zlib F.text) (compress zlib F.text));
-      test "without eod leaves the writer open for other writes" (fun () ->
-          let b = Buffer.create 64 in
-          let w = Bytes.Writer.of_buffer b in
-          let z = C.Gzip.compress_writes () ~eod:false w in
-          Bytes.Writer.write_string z hello;
-          Bytes.Writer.write_eod z;
-          Bytes.Writer.write_string w "tail";
-          Bytes.Writer.write_eod w;
-          equal string (compress gzip hello ^ "tail") (Buffer.contents b));
-      test "writes slices no longer than the writer's slice length" (fun () ->
-          let longest = ref 0 in
-          let w =
-            Bytes.Writer.make ~slice_length:7 (fun s ->
-                longest := Int.max !longest (Bytes.Slice.length s))
-          in
-          let z = C.Zlib.compress_writes () ~eod:true w in
-          Bytes.Writer.write_string z F.random;
-          Bytes.Writer.write_eod z;
-          equal int 7 !longest);
+      test "await input until it ends, then stay ended" (fun () ->
+          let e = C.Zlib.encoder () in
+          let _, ended = outputs (encode e) in
+          is_false ended;
+          C.Encoder.src e (Bytes.of_string hello) 0 (String.length hello);
+          let _, ended = outputs (encode e) in
+          is_false ended;
+          C.Encoder.src e Bytes.empty 0 0;
+          let _, ended = outputs (encode e) in
+          is_true ended;
+          let _, ended = outputs (encode e) in
+          is_true ended);
+      test "refuse input when they do not await it" (fun () ->
+          let e = C.Zlib.encoder () in
+          let b = Bytes.of_string hello in
+          C.Encoder.src e b 0 5;
+          not_awaiting (fun () -> C.Encoder.src e b 5 5));
+      cases
+        ~name:(fun (j, l) -> Printf.sprintf "%d+%d" j l)
+        "refuse a range outside the bytes"
+        [ (-1, 1); (0, -1); (3, 3); (6, 0) ]
+        (fun (j, l) ->
+          out_of_range (fun () ->
+              C.Encoder.src (C.Zlib.encoder ()) (Bytes.create 5) j l));
       prop ~tags:[ "slow" ]
         "a deflate stream of n bytes is at most n + 5 * (n / 65535 + 1) bytes \
          long"
@@ -507,47 +560,59 @@ let writers =
             ~than:(n + (5 * ((n / 65535) + 1))));
     ]
 
-(* Positions and errors *)
+(* Decoders and errors *)
 
-let positions =
-  group "positions"
+let decode_step d () = C.Decoder.decode d
+
+let decoders =
+  group "decoders"
     [
-      cases ~name:string_of_int
-        "a reader's slices are no longer than its slice length"
-        [ 1; 7; 1000; 65536 ] (fun slice_length ->
-          let r = Bytes.Reader.of_string (compress zlib F.text) in
-          let r = C.Zlib.decompress_reads () ~slice_length r in
-          let rec longest acc =
-            let s = Bytes.Reader.read r in
-            if Bytes.Slice.is_eod s then acc
-            else longest (Int.max acc (Bytes.Slice.length s))
-          in
-          equal int slice_length (longest 0));
-      test "a reader starts at position 0 or the given one" (fun () ->
-          let r = Bytes.Reader.of_string (compress zlib hello) in
-          equal int 0 (Bytes.Reader.pos (C.Zlib.decompress_reads () r));
-          equal int 42 (Bytes.Reader.pos (C.Zlib.decompress_reads () ~pos:42 r)));
-      cases ~name:fst "an error names the byte where decoding failed"
-        [ ("in memory", `Memory); ("on a reader", `Reader) ]
-        (fun (_, path) ->
+      test "return slices of at most 64 KiB" (fun () ->
+          let d = C.Zlib.decoder () in
+          let z = Bytes.of_string (compress zlib F.runs) in
+          C.Decoder.src d z 0 (Bytes.length z);
+          let lengths, _ = outputs (decode_step d) in
+          equal int (String.length F.runs) (List.fold_left ( + ) 0 lengths);
+          at_most int (List.fold_left Int.max 0 lengths) ~than:65536);
+      test "await the end of the input after a whole stream, then stay ended"
+        (fun () ->
+          let d = C.Zlib.decoder () in
+          let z = Bytes.of_string (compress zlib hello) in
+          C.Decoder.src d z 0 (Bytes.length z);
+          let _, ended = outputs (decode_step d) in
+          is_false ended;
+          C.Decoder.src d z 0 0;
+          let _, ended = outputs (decode_step d) in
+          is_true ended;
+          let _, ended = outputs (decode_step d) in
+          is_true ended);
+      test "stay failed after an error" (fun () ->
+          let d = C.Zlib.decoder () in
+          C.Decoder.src d (Bytes.of_string "\x00\x00") 0 2;
+          let first = C.Decoder.decode d in
+          let again = C.Decoder.decode d in
+          match (first, again) with
+          | `Error a, `Error b -> equal string a b
+          | _ -> fail "no error");
+      test "refuse input when they do not await it" (fun () ->
+          let d = C.Gzip.decoder () in
+          let b = Bytes.of_string hello in
+          C.Decoder.src d b 0 5;
+          not_awaiting (fun () -> C.Decoder.src d b 5 5));
+      cases
+        ~name:(fun (j, l) -> Printf.sprintf "%d+%d" j l)
+        "refuse a range outside the bytes"
+        [ (-1, 1); (0, -1); (3, 3); (6, 0) ]
+        (fun (j, l) ->
+          out_of_range (fun () ->
+              C.Decoder.src (C.Zlib.decoder ()) (Bytes.create 5) j l));
+      test "an error names the byte where decoding failed" (fun () ->
           let z = compress zlib hello in
-          let at = String.length z in
-          let msg =
-            match path with
-            | `Memory -> require_error (decompress zlib (z ^ "!") 17)
-            | `Reader -> (
-                match reads zlib (z ^ "!") with
-                | _ -> fail "no error"
-                | exception Bytes.Stream.Error e -> Bytes.Stream.error_message e
-                )
-          in
-          contains ~sub:(string_of_int at) msg);
-      test "a reader's error is a zlib error" (fun () ->
-          match reads zlib "" with
-          | _ -> fail "no error"
-          | exception Bytes.Stream.Error (C.Error _, _) -> ()
-          | exception Bytes.Stream.Error e ->
-              failf "%s" (Bytes.Stream.error_message e));
+          let at = string_of_int (String.length z) in
+          let z = z ^ "!" in
+          contains ~sub:at (require_error (zlib.decompress z));
+          contains ~sub:at (require_error (decode ~k:3 zlib z));
+          contains ~sub:at (require_error (decompress_into zlib z 17)));
     ]
 
 (* CRC-32 *)
@@ -572,11 +637,27 @@ let crc32 =
             (C.Crc32.bigbytes (F.bigbytes_of_string "123456789")));
       prop "agrees with the bit-by-bit definition" Gen.string (fun s ->
           equal int (crc32_spec s) (C.Crc32.bigbytes (F.bigbytes_of_string s));
-          equal int (crc32_spec s)
-            (C.Crc32.slice (Bytes.Slice.of_string_or_eod s)));
+          equal int (crc32_spec s) (C.Crc32.string s));
+      prop "checks the range of a string it is given"
+        (Gen.triple Gen.string Gen.nat Gen.nat) (fun (s, a, b) ->
+          let n = String.length s in
+          let first = if n = 0 then 0 else a mod (n + 1) in
+          let length = if n - first = 0 then 0 else b mod (n - first + 1) in
+          equal int
+            (crc32_spec (String.sub s first length))
+            (C.Crc32.string ~first ~length s);
+          equal int
+            (crc32_spec (String.sub s first (n - first)))
+            (C.Crc32.string ~first s));
+      cases
+        ~name:(fun (j, l) -> Printf.sprintf "%d+%d" j l)
+        "refuses a range outside the string"
+        [ (-1, 1); (0, -1); (3, 3); (6, 0) ]
+        (fun (first, length) ->
+          out_of_range (fun () -> C.Crc32.string ~first ~length "12345"));
       prop "continues a checksum with ~crc" (Gen.pair Gen.string Gen.string)
         (fun (a, b) ->
-          let crc = C.Crc32.slice (Bytes.Slice.of_string_or_eod a) in
+          let crc = C.Crc32.string a in
           equal int
             (crc32_spec (a ^ b))
             (C.Crc32.bigbytes ~crc (F.bigbytes_of_string b)));
@@ -591,7 +672,7 @@ let () =
          golden;
          malformed;
          members;
-         writers;
-         positions;
+         encoders;
+         decoders;
          crc32;
        ])

@@ -21,14 +21,14 @@ let data name =
 
 let decoders =
   [
-    ("zlib6", Compress_deflate.Zlib.decompress);
-    ("deflate6", Compress_deflate.Deflate.decompress);
-    ("gz", Compress_deflate.Gzip.decompress);
-    ("snappy", Compress_snappy.decompress);
-    ("lz4b", Compress_lz4.Block.decompress);
-    ("lz4f", Compress_lz4.Frame.decompress);
-    ("zst3", Compress_zstd.decompress);
-    ("zst19", Compress_zstd.decompress);
+    ("zlib6", Compress_deflate.Zlib.decompress_into);
+    ("deflate6", Compress_deflate.Deflate.decompress_into);
+    ("gz", Compress_deflate.Gzip.decompress_into);
+    ("snappy", Compress_snappy.decompress_into);
+    ("lz4b", Compress_lz4.Block.decompress_into);
+    ("lz4f", Compress_lz4.Frame.decompress_into);
+    ("zst3", Compress_zstd.decompress_into);
+    ("zst19", Compress_zstd.decompress_into);
   ]
 
 let corpus name =
@@ -44,25 +44,15 @@ let corpus name =
     Array1.create int8_unsigned c_layout
       (Compress_snappy.max_compressed_length n)
   in
-  let bytes = Bytes.create n in
-  for i = 0 to n - 1 do
-    Bytes.unsafe_set bytes i (Char.unsafe_chr (Array1.unsafe_get raw i))
-  done;
-  let deflate level () =
-    let w =
-      Compress_deflate.Zlib.compress_writes ~level () ~eod:true
-        (Bytesrw.Bytes.Writer.ignore ())
-    in
-    Bytesrw.Bytes.Writer.write_bytes w bytes;
-    Bytesrw.Bytes.Writer.write_eod w
-  in
+  let s = String.init n (fun i -> Char.unsafe_chr (Array1.unsafe_get raw i)) in
+  let deflate level () = ignore (Compress_deflate.Zlib.compress ~level s) in
   Thumper.group name
     (List.map decode decoders
     @ [
         Thumper.bench "Compress zlib level 1" (deflate 1);
         Thumper.bench "Compress zlib level 6" (deflate 6);
         Thumper.bench "Compress snappy" (fun () ->
-            Compress_snappy.compress raw snappy);
+            Compress_snappy.compress_into raw snappy);
       ])
 
 let () =

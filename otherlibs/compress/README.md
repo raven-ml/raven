@@ -1,6 +1,6 @@
 # compress
 
-Compression codecs with no system library, one library per codec:
+Compression codecs with no dependencies, one library per codec:
 
 | Library | Module | Formats |
 |---|---|---|
@@ -9,21 +9,35 @@ Compression codecs with no system library, one library per codec:
 | `compress.lz4` | `Compress_lz4` | LZ4 blocks and frames, read |
 | `compress.zstd` | `Compress_zstd` | Zstandard frames, read |
 
-Data held in memory with a known decompressed length, such as a Parquet page
-of a mapped file, decompresses between byte arrays with `decompress`. Deflate,
-zlib and gzip streams are also [bytesrw](https://erratique.ch/software/bytesrw)
-filters: `decompress_reads` reads a stream and `compress_writes` writes one.
+A deflate, zlib or gzip string compresses whole with `compress` and back with
+`decompress`. A stream too long to hold, such as a `.gz` file, goes through an
+`Encoder` or a `Decoder`: a state machine that is given input with `src` and
+returns output from `encode` or `decode` until it awaits more, in bounded
+memory. Data held in memory with a known decompressed length, such as a
+Parquet page of a mapped file, decompresses between byte arrays with
+`decompress_into`, in every codec.
 
 ```ocaml
-open Bytesrw
-
 (* A string, compressed and back. *)
-let z = Bytes.Writer.filter_string [ Compress_deflate.Zlib.compress_writes () ] s
-let s' = Bytes.Reader.filter_string [ Compress_deflate.Zlib.decompress_reads () ] z
+let z = Compress_deflate.Zlib.compress ~level:9 s
+let s' = Compress_deflate.Zlib.decompress z (* Ok s *)
+
+(* A .gz file, read through [buf] and written as it decodes. *)
+let gunzip ic oc =
+  let module D = Compress_deflate.Decoder in
+  let d = Compress_deflate.Gzip.decoder () and buf = Bytes.create 65536 in
+  let rec loop () =
+    match D.decode d with
+    | `Await -> D.src d buf 0 (In_channel.input ic buf 0 65536); loop ()
+    | `Data (b, first, length) -> Out_channel.output oc b first length; loop ()
+    | `End -> Ok ()
+    | `Error e -> Error e
+  in
+  loop ()
 
 (* A Snappy page of [file], into [scratch], which holds [size] bytes. *)
 let page = Bigarray.Array1.sub scratch 0 size
-let result = Compress_snappy.decompress (Bigarray.Array1.sub file first length) page
+let result = Compress_snappy.decompress_into (Bigarray.Array1.sub file first length) page
 ```
 
 ## Normative sources
@@ -46,7 +60,7 @@ the reference libraries.
   with `compress_` or `caml_compress_`.
 - Entry points over bigarrays release the runtime lock for large spans, and
   touch only bigarray and C memory while it is released. Entry points over
-  `bytes`, which the filters use, never release it.
+  `bytes`, which encoders and decoders use, never release it.
 - Decoders check every element against both ends of their input and output
   before copying it. Wide copies write at most 16 bytes past what they copy,
   inside the room they were given and before data not yet produced.

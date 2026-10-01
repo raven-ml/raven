@@ -50,12 +50,12 @@ let run ~fn decode src dst =
       Error (Printf.sprintf "%s at byte %d" msg at)
 
 module Block = struct
-  let decompress src dst =
+  let decompress_into src dst =
     let decode src dst io =
       if Array1.dim src = 0 then malformed 0 "truncated data";
       decode_block src 0 (Array1.dim src) dst ~hist:0 io
     in
-    run ~fn:"Compress_lz4.Block.decompress" decode src dst
+    run ~fn:"Compress_lz4.Block.decompress_into" decode src dst
 end
 
 module Frame = struct
@@ -138,7 +138,7 @@ module Frame = struct
     end
     else after
 
-  let decompress src dst =
+  let decompress_into src dst =
     let decode src dst io =
       let n = Array1.dim src in
       if n = 0 then malformed 0 "no frame";
@@ -155,5 +155,5 @@ module Frame = struct
       in
       frames 0
     in
-    run ~fn:"Compress_lz4.Frame.decompress" decode src dst
+    run ~fn:"Compress_lz4.Frame.decompress_into" decode src dst
 end

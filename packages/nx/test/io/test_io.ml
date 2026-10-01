@@ -212,10 +212,7 @@ let npz =
 
 (* Compression *)
 
-let gzip s =
-  Bytesrw.Bytes.Writer.filter_string
-    [ Compress_deflate.Gzip.compress_writes () ]
-    s
+let gzip s = Compress_deflate.Gzip.compress s
 
 let gunzipped src =
   let dst = temp_file () in
@@ -231,6 +228,19 @@ let compression =
         (fun l ->
           let members = String.concat "" (List.map gzip l) in
           equal string (String.concat "" l) (gunzipped (file "" members)));
+      test "gunzip streams data many times longer than its buffers" (fun () ->
+          let r = Random.State.make [| 7 |] in
+          let data =
+            String.init
+              (3 * 1024 * 1024)
+              (fun _ -> Char.chr (Char.code 'a' + Random.State.int r 16))
+          in
+          let half = String.length data / 2 in
+          let members =
+            gzip (String.sub data 0 half)
+            ^ gzip (String.sub data half (String.length data - half))
+          in
+          equal string data (gunzipped (file "" members)));
       test "gunzip decompresses a file written by Python's gzip" (fun () ->
           equal string "hello, nx gzip!\n" (gunzipped (fixture "hello.gz")));
       cases ~name:fst

@@ -112,9 +112,9 @@ let frame z src dst io at =
     after + 4
   end
 
-let decompress src dst =
+let decompress_into src dst =
   if overlap src dst then
-    invalid_arg "Compress_zstd.decompress: src and dst overlap";
+    invalid_arg "Compress_zstd.decompress_into: src and dst overlap";
   let n = Array1.dim src in
   let io = [| 0; 0; 0; 0; Array1.dim dst |] in
   let z = create () in

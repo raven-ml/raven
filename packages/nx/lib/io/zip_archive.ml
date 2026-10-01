@@ -9,6 +9,7 @@
 
 open Bigarray
 module Crc32 = Compress_deflate.Crc32
+module Encoder = Compress_deflate.Encoder
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
 type method_ = Store | Deflate
@@ -489,7 +490,7 @@ let read_npy (archive : in_file) name =
           entry.name;
       let data = Array1.create int8_unsigned c_layout entry.uncompressed_size in
       (match
-         Compress_deflate.Deflate.decompress
+         Compress_deflate.Deflate.decompress_into
            (Array1.sub archive.data src_off src_len)
            data
        with
@@ -570,47 +571,44 @@ let prefix (encoded : Npy.encoded) n =
 let choose_method (encoded : Npy.encoded) =
   let size = String.length encoded.header + Array1.dim encoded.data in
   let sample = prefix encoded (Int.min sample_size size) in
-  let compressed =
-    Bytesrw.Bytes.Writer.filter_string
-      [ Compress_deflate.Deflate.compress_writes () ]
-      sample
-  in
+  let compressed = Compress_deflate.Deflate.compress sample in
   if String.length compressed < String.length sample then Deflate else Store
 
 (* Writes [encoded] to the archive with [method_]. Returns its CRC-32 and its
    size as written. *)
 let write_entry archive method_ (encoded : Npy.encoded) =
   let size = Array1.dim encoded.data in
+  let crc = Crc32.bigbytes ~crc:(Crc32.string encoded.header) encoded.data in
   match method_ with
   | Store ->
       write_string archive.fd encoded.header;
       Nx_io_codec.write_all archive.fd encoded.data ~off:0 ~len:size;
-      let crc =
-        Crc32.slice (Bytesrw.Bytes.Slice.of_string_or_eod encoded.header)
-      in
-      (Crc32.bigbytes ~crc encoded.data, String.length encoded.header + size)
+      (crc, String.length encoded.header + size)
   | Deflate ->
-      let open Bytesrw in
-      let w = Bytesrw_unix.bytes_writer_of_fd ~pos:0 archive.fd in
-      let crc = ref 0 in
-      let z = Compress_deflate.Deflate.compress_writes () ~eod:false w in
-      let z = Bytes.Writer.tap (fun s -> crc := Crc32.slice ~crc:!crc s) z in
-      Bytes.Writer.write_string z encoded.header;
+      let e = Compress_deflate.Deflate.encoder () in
       let chunk = Bytes.create sample_size in
-      let rec copy first =
-        if first < size then begin
-          let n = Int.min sample_size (size - first) in
-          for i = 0 to n - 1 do
-            Bytes.unsafe_set chunk i
-              (Char.unsafe_chr (Array1.unsafe_get encoded.data (first + i)))
-          done;
-          Bytes.Writer.write z (Bytes.Slice.make chunk ~first:0 ~length:n);
-          copy (first + n)
-        end
+      (* Gives [e] the data from [first], at most a chunk, and the end of the
+         input once the data is given. *)
+      let give first =
+        let n = Int.min sample_size (size - first) in
+        for i = 0 to n - 1 do
+          Bytes.unsafe_set chunk i
+            (Char.unsafe_chr (Array1.unsafe_get encoded.data (first + i)))
+        done;
+        Encoder.src e chunk 0 n;
+        first + n
       in
-      copy 0;
-      Bytes.Writer.write_eod z;
-      (!crc, Bytes.Writer.pos w)
+      let rec loop first written =
+        match Encoder.encode e with
+        | `Await -> loop (give first) written
+        | `Data (b, off, len) ->
+            ignore (Unix.write archive.fd b off len);
+            loop first (written + len)
+        | `End -> (crc, written)
+      in
+      let header = Bytes.of_string encoded.header in
+      Encoder.src e header 0 (Bytes.length header);
+      loop 0 0
 
 let add_npy archive name packed =
   if archive.closed then invalid_arg "Zip_archive.add_npy: archive is closed";
