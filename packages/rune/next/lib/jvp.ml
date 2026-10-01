@@ -559,10 +559,11 @@ let guarded i ~entry ~loops f =
 (* A custom_jvp call: its result is the answer of the differentiations around
    [i] to the rule at the primals, and its tangent the rule's tangent map at
    [i]'s tangents. *)
-let custom_jvp i p q rule args =
+let custom_jvp i p q rule args ~again =
   let entry = "Rune.custom_jvp" in
   let a = Nx.Ptree.map p (fun _ x -> primal i x) args in
-  let value, map = guarded i ~entry ~loops:true (fun () -> rule a) in
+  let run () = guarded i ~entry ~loops:true (fun () -> rule a) in
+  let value, map = if again then Total.discarding run else run () in
   let y =
     Construct.perform
       (Custom (Jvp_rule { p; q; rule; args = a; value = Some value }))
@@ -637,8 +638,10 @@ let custom_vjp i p q rule args =
 let custom : type q. t -> q Construct.rule -> (unit -> q) option =
  fun i r ->
   match r with
-  | Jvp_rule { p; q; rule; args; _ } ->
-      if holds_own i p args then Some (fun () -> custom_jvp i p q rule args)
+  | Jvp_rule { p; q; rule; args; value } ->
+      if holds_own i p args then
+        Some
+          (fun () -> custom_jvp i p q rule args ~again:(Option.is_some value))
       else None
   | Vjp_rule { p; q; rule; args } ->
       if holds_own i p args then Some (fun () -> custom_vjp i p q rule args)
@@ -650,9 +653,9 @@ let answer : type r. t -> r Construct.t -> (unit -> r) option =
   | Detach x ->
       Option.map (fun (x, _) () -> Construct.perform (Detach x)) (own i x)
   | Custom r -> custom i r
-  | Scan _ | Remat _ | Barrier _ | Lanes _ | Lane_index _ | Lane_count _ | Add _
-    ->
-      None
+  | Add (t, v) ->
+      Option.map (fun (v, _) () -> Construct.perform (Add (t, v))) (own i v)
+  | Scan _ | Remat _ | Barrier _ | Lanes _ | Lane_index _ | Lane_count _ -> None
 
 let install i f =
   Construct.install

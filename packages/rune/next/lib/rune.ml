@@ -211,7 +211,7 @@ module Total = struct
 
   let make () = Type.Id.make ()
   let add t v = Construct.perform (Add (t, v))
-  let collect _ ~zero:_ _ = not_yet "Total.collect"
+  let collect = Total.collect
 end
 
 (* Loops *)
