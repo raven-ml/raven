@@ -33,8 +33,10 @@ tinygrad is changed as tolk differs from it:
   which the engine loads, instead of holding the image a link patch writes;
 - the grid of a dispatch packet in a kernel's arguments is
   words, 32-bit constants when it is known;
-- a counted run's entry in the profile log is its kernel
-  descriptor's address;
+- a counted run's entry in the profile log is three words: its kernel
+  descriptor's address, which the device maps to the kernel's name, and the
+  GPU's clock before and after the run, so that its counters are timed by the
+  run itself;
 - an address is taken on the queue's first device, as tolk names one
   device.
 """
@@ -194,21 +196,37 @@ ops_amd.amd_build_program = amd_build_program
 
 # The profile buffers, which only their placeholders' shapes need.
 
-ops_amd.AMDDevice.prof_log = property(lambda self: SimpleNamespace(size=1 + self.prof_slots, dtype=dtypes.uint64))
+ops_amd.AMDDevice.prof_log = property(lambda self: SimpleNamespace(size=1 + 3 * self.prof_slots, dtype=dtypes.uint64))
 ops_amd.AMDDevice.pmc_buf = property(lambda self: SimpleNamespace(size=self.pmc_size * self.prof_slots, dtype=dtypes.uint8))
 
 
 # Counted runs in the profile log
 
+def clock_into(q, slot, i):
+    address = q.prof_buf("prof_log").getaddr(q.devs) + (1 + 3 * slot + i) * 8
+    with q.pred_exec(xcc_mask=0b1):
+        q.release_mem(address, 0, q.pm4.data_sel__mec_release_mem__send_gpu_clock_counter,
+                      q.pm4.int_sel__mec_release_mem__none)
+
+
 def prof_start(self, data, info, lib):
     if not (self.dev.pmc_enabled or self.dev.sqtt_enabled): return None
     slot = (self.prof_buf("prof_log").index(0).load() + len(self.profiled)) % self.dev.prof_slots
     tag = lib.getaddr(self.devs) + data.desc_offset
-    self.profiled.append(self.prof_buf("prof_log").index(1 + slot.cast(dtypes.int)).store(tag))
+    self.profiled.append(self.prof_buf("prof_log").index(1 + 3 * slot.cast(dtypes.int)).store(tag))
+    clock_into(self, slot, 1)
     return slot
 
 
-ops_amd.AMDComputeQueue.prof_start = prof_start
+prof_stop = ops_amd.AMDComputeQueue.prof_stop
+
+
+def timed_prof_stop(self, slot):
+    if slot is not None: clock_into(self, slot, 2)
+    prof_stop(self, slot)
+
+
+ops_amd.AMDComputeQueue.prof_start, ops_amd.AMDComputeQueue.prof_stop = prof_start, timed_prof_stop
 
 
 # Dispatch grids as words

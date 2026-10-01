@@ -869,16 +869,24 @@ module Profile : sig
     | Counters of {
         device : device;  (** The device the program ran on. *)
         name : string;  (** The name of the program's function. *)
-        time : int;  (** When the counters were read. *)
+        start : int;  (** When the counted run started. *)
+        stop : int;  (** When it stopped. *)
         counters : (string * int array) list;
             (** Each counter the profile asks for ({!start}) and its count
                 during the run, one count per unit of the device's hardware that
                 counts it, in the order the device's library states. *)
       }
-        (** The counters of a run of a program, read once the run completed: the
-            [k]th counters of a function's runs on a device are those of the
-            [k]th span of its name there, as the libraries that submit work
-            record it. *)
+        (** The counters of a run of a program, read once the run completed. The
+            run is timed by the device, within the span the libraries that
+            submit work record for it, if they record one. *)
+    | Overwritten of {
+        device : device;
+        time : int;  (** When the device found them overwritten. *)
+        runs : int;  (** The runs whose counters are lost. *)
+      }
+        (** Runs whose counters the device overwrote before it could read them:
+            a device keeps a bounded number of runs between two of its
+            synchronizations. *)
 
   type t
   (** The type for profiles being taken. *)
@@ -897,7 +905,10 @@ module Profile : sig
 
   val counters : unit -> string list
   (** [counters ()] is the counters the profile being taken asks for, if any.
-      The libraries that encode work read it to count them. *)
+      The libraries that encode work read it when they encode work, which then
+      counts these counters on every run: work encoded under one profile does
+      not count those of another, so a library that keeps encoded work keeps it
+      for each value of [counters ()]. *)
 
   val stop : t -> event list
   (** [stop p] stops taking [p], and is its events, in time order and, at equal
@@ -928,10 +939,11 @@ module Profile : sig
   val output_chrome_trace : out_channel -> event list -> unit
   (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's trace
       event format, JSON: a process for each device, named after it, with a
-      thread for each of its lanes; a complete event for each span, with the sum
-      of each of its counters ({!Counters}) as arguments; a counter [memory] for
-      each change of memory; an instant event for each program load, with the
-      program's handle; and an instant event for counters of no span. Times are
+      thread for each of its lanes; a complete event for each span; a counter
+      [memory] for each change of memory; an instant event for each program
+      load, with the program's handle; a complete event for each run's counters
+      ({!Counters}), with the sum of each counter as arguments, on the device's
+      lane [counters]; and an instant event for overwritten runs. Times are
       microseconds from the earliest event. Malformed UTF-8 in names becomes
       U+FFFD. [oc] is neither flushed nor closed. *)
 end
@@ -1411,7 +1423,8 @@ module Driver : sig
         Defaults to doing nothing.
       - [report ()] is the {!Profile.Counters} of the runs of programs on the
         device that completed since its last report, in the order they ran, each
-        with the counters {!Profile.counters} asks for. It runs at each
+        with the counters {!Profile.counters} asks for and timed on the device's
+        clock, and the {!Profile.Overwritten} runs it lost. It runs at each
         synchronization of the device while a profile that asks for counters is
         taken, after [resolve] and before [synchronized], and when that profile
         stops. Without it, the device counts nothing.

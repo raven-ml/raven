@@ -296,9 +296,11 @@ and event =
   | Counters of {
       device : t;
       name : string;
-      time : int;
+      start : int;
+      stop : int;
       counters : (string * int array) list;
     }
+  | Overwritten of { device : t; time : int; runs : int }
 
 and collector = { events : event list Atomic.t; counters : string list }
 
@@ -3115,9 +3117,11 @@ module Profile = struct
     | Counters of {
         device : t;
         name : string;
-        time : int;
+        start : int;
+        stop : int;
         counters : (string * int array) list;
       }
+    | Overwritten of { device : t; time : int; runs : int }
 
   type t = collector
 
@@ -3185,11 +3189,13 @@ module Profile = struct
     | Span s -> s.start
     | Allocation m -> m.time
     | Load p -> p.time
-    | Counters c -> c.time
+    | Counters c -> c.start
+    | Overwritten o -> o.time
 
   let length = function
     | Span s -> s.stop - s.start
-    | Allocation _ | Load _ | Counters _ -> 0
+    | Counters c -> c.stop - c.start
+    | Allocation _ | Load _ | Overwritten _ -> 0
 
   (* By time, and at equal times longest first, so that nested spans follow the
      spans they are in. *)
@@ -3228,6 +3234,12 @@ module Profile = struct
               Option.map
                 (fun f -> Span { s with start = f s.start; stop = f s.stop })
                 (calibrated d hz)
+          | Counters
+              ({ device = { clock = Device_clock { hz }; _ } as d; _ } as c) ->
+              Option.map
+                (fun f ->
+                  Counters { c with start = f c.start; stop = f c.stop })
+                (calibrated d hz)
           | e -> Some e)
         |> List.stable_sort order
     | _ -> invalid_arg "Nx_device.Profile.stop: the profile is not being taken"
@@ -3239,6 +3251,7 @@ module Profile = struct
     | Allocation m -> m.device
     | Load p -> p.program.p_device
     | Counters c -> c.device
+    | Overwritten o -> o.device
 
   (* [s] as a JSON string. Malformed UTF-8 becomes U+FFFD. *)
   let string oc s =
@@ -3269,39 +3282,6 @@ module Profile = struct
     if ns < 0 then output_char oc '-';
     Printf.fprintf oc "%d.%03d" (abs ns / 1000) (abs ns mod 1000)
 
-  (* The counters of each span: the [k]th counters of a program on a device are
-     those of the [k]th span of its name there. *)
-  let counted events =
-    let n = Array.length events in
-    let of_span = Array.make n None and attached = Array.make n false in
-    let runs = Hashtbl.create 8 in
-    let add key i =
-      let spans, counts =
-        Option.value ~default:([], []) (Hashtbl.find_opt runs key)
-      in
-      Hashtbl.replace runs key
-        (match events.(i) with
-        | Span _ -> (i :: spans, counts)
-        | _ -> (spans, i :: counts))
-    in
-    Array.iteri
-      (fun i -> function
-        | Span s -> add (s.device.id, s.name) i
-        | Counters c -> add (c.device.id, c.name) i
-        | Allocation _ | Load _ -> ())
-      events;
-    let rec pair = function
-      | s :: spans, c :: counts ->
-          of_span.(s) <- Some events.(c);
-          attached.(c) <- true;
-          pair (spans, counts)
-      | _ -> ()
-    in
-    Hashtbl.iter
-      (fun _ (spans, counts) -> pair (List.rev spans, List.rev counts))
-      runs;
-    (of_span, attached)
-
   let counter_args oc counters =
     output_string oc ",\"args\":{";
     List.iteri
@@ -3312,10 +3292,12 @@ module Profile = struct
       counters;
     output_char oc '}'
 
+  (* The lane of a device on which its runs' counters show. *)
+  let counters_lane = "counters"
+
   let output_chrome_trace oc events =
-    let events = Array.of_list (List.stable_sort order events) in
-    let of_span, attached = counted events in
-    let origin = if Array.length events = 0 then 0 else time events.(0) in
+    let events = List.stable_sort order events in
+    let origin = match events with [] -> 0 | e :: _ -> time e in
     let pids = Hashtbl.create 8 and tids = Hashtbl.create 8 in
     let first = ref true in
     let next () = if !first then first := false else output_string oc ",\n" in
@@ -3346,44 +3328,50 @@ module Profile = struct
           tid
     in
     output_string oc "{\"traceEvents\":[\n";
-    Array.iteri
-      (fun i e ->
-        if not attached.(i) then begin
-          let pid = pid (device_of e) in
-          let tid = match e with Span s -> tid s.device pid s.lane | _ -> 0 in
-          next ();
-          let ph =
-            match e with
-            | Span _ -> "X"
-            | Allocation _ -> "C"
-            | Load _ | Counters _ -> "i"
-          in
-          Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph
-            pid tid;
-          micros oc (time e - origin);
-          (match e with
-          | Span s -> (
-              output_string oc ",\"dur\":";
-              micros oc (s.stop - s.start);
-              output_string oc ",\"name\":";
-              string oc s.name;
-              match of_span.(i) with
-              | Some (Counters c) -> counter_args oc c.counters
-              | _ -> ())
-          | Counters c ->
-              output_string oc ",\"s\":\"p\",\"name\":";
-              string oc c.name;
-              counter_args oc c.counters
-          | Allocation m ->
-              Printf.fprintf oc
-                ",\"name\":\"memory\",\"args\":{\"allocated\":%d}" m.allocated
-          | Load p ->
-              output_string oc ",\"s\":\"p\",\"name\":";
-              string oc p.program.p_name;
-              Printf.fprintf oc ",\"args\":{\"handle\":\"0x%nx\"}"
-                p.program.p_handle);
-          output_char oc '}'
-        end)
+    List.iter
+      (fun e ->
+        let pid = pid (device_of e) in
+        let tid =
+          match e with
+          | Span s -> tid s.device pid s.lane
+          | Counters c -> tid c.device pid counters_lane
+          | Allocation _ | Load _ | Overwritten _ -> 0
+        in
+        next ();
+        let ph =
+          match e with
+          | Span _ | Counters _ -> "X"
+          | Allocation _ -> "C"
+          | Load _ | Overwritten _ -> "i"
+        in
+        Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph pid
+          tid;
+        micros oc (time e - origin);
+        (match e with
+        | Span s ->
+            output_string oc ",\"dur\":";
+            micros oc (s.stop - s.start);
+            output_string oc ",\"name\":";
+            string oc s.name
+        | Counters c ->
+            output_string oc ",\"dur\":";
+            micros oc (c.stop - c.start);
+            output_string oc ",\"name\":";
+            string oc c.name;
+            counter_args oc c.counters
+        | Overwritten o ->
+            Printf.fprintf oc
+              ",\"s\":\"p\",\"name\":\"overwritten\",\"args\":{\"runs\":%d}"
+              o.runs
+        | Allocation m ->
+            Printf.fprintf oc ",\"name\":\"memory\",\"args\":{\"allocated\":%d}"
+              m.allocated
+        | Load p ->
+            output_string oc ",\"s\":\"p\",\"name\":";
+            string oc p.program.p_name;
+            Printf.fprintf oc ",\"args\":{\"handle\":\"0x%nx\"}"
+              p.program.p_handle);
+        output_char oc '}')
       events;
     output_string oc "\n]}\n"
 end

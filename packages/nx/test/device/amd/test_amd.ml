@@ -48,65 +48,6 @@ let test_other_machine () =
       raises_match ~msg:"get, the machine gone" lost (fun () ->
           Nx_amd_device.get ~host 1)
 
-(* Counters *)
-
-let props ?(xccs = 1) ?(shader_engines = 6) target =
-  {
-    Nx_amd_device.target;
-    gc = target;
-    sdma = (6, 0, 0);
-    nbio = (0, 0, 0);
-    xccs;
-    shader_engines;
-    compute_units = 48;
-    compute_units_per_array = 4;
-    waves_per_cu = 32;
-    lds_bytes = 65536;
-    scratch_slots_per_cu = 32;
-  }
-
-let layout (c : Nx_amd_device.counter) =
-  ( c.block,
-    c.event,
-    c.register,
-    (c.instances, c.engines, c.arrays, c.wgps),
-    c.offset )
-
-let layouts =
-  list
-    (Testable.make
-       ~pp:(fun ppf (b, e, r, (i, s, a, w), o) ->
-         Format.fprintf ppf "%s %d r%d (%d, %d, %d, %d) @@%d" b e r i s a w o)
-       ~equal:( = ))
-
-let test_counters () =
-  equal ~msg:"gfx1100: the SQ is counted per engine, array and WGP" layouts
-    [
-      ("SQ", 3, 0, (1, 6, 2, 2), 0);
-      ("GRBM", 2, 0, (1, 1, 1, 1), 192);
-      ("SQ", 62, 1, (1, 6, 2, 2), 200);
-      ("GL2C", 42, 0, (32, 1, 1, 1), 392);
-    ]
-    (List.map layout
-       (Nx_amd_device.counters
-          (props (11, 0, 0))
-          [ "SQ_BUSY_CYCLES"; "GRBM_GUI_ACTIVE"; "SQ_INSTS_VALU"; "GL2C_HIT" ]));
-  equal ~msg:"gfx1201's events" layouts
-    [ ("SQ", 50, 0, (1, 4, 2, 2), 0) ]
-    (List.map layout
-       (Nx_amd_device.counters
-          (props ~shader_engines:4 (12, 0, 1))
-          [ "SQ_INSTS_VALU" ]));
-  equal ~msg:"gfx942: the SQ per engine, every block per die" layouts
-    [ ("SQ", 26, 0, (1, 4, 1, 1), 0); ("TCC", 17, 0, (16, 1, 1, 1), 256) ]
-    (List.map layout
-       (Nx_amd_device.counters
-          (props ~xccs:8 ~shader_engines:4 (9, 4, 2))
-          [ "SQ_INSTS_VALU"; "TCC_HIT" ]));
-  raises_match
-    (Exn.invalid_arg ~substring:"gfx1100 counts no TCC_HIT; it counts ")
-    (fun () -> Nx_amd_device.counters (props (11, 0, 0)) [ "TCC_HIT" ])
-
 let () =
   exit
     (run "nx.amd.device"
@@ -129,10 +70,6 @@ let () =
          test "a negative index is refused" (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->
                  Nx_amd_device.get (-1)));
-         test
-           "counters follow each other in a run's samples, each block's taking \
-            its registers in turn"
-           test_counters;
          test "a device of another vendor has no AMD queues" (fun () ->
              is_true (Option.is_none (Nx_amd_device.of_device Nx_device.host)));
        ])

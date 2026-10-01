@@ -3379,7 +3379,7 @@ let spans =
             t0 = s.start;
             t1 = s.stop;
           }
-    | P.Allocation _ | P.Load _ | P.Counters _ -> None)
+    | P.Allocation _ | P.Load _ | P.Counters _ | P.Overwritten _ -> None)
 
 let span_ =
   Testable.make
@@ -3898,53 +3898,79 @@ let test_output () =
 
 (* A device whose runs of [k] count [i] and [i + 1] in two units of the [i]th
    counter the profile asked for when they ran, reported at each synchronization
-   and logged in [log]. *)
+   with the times each run was given, after the runs it lost, and logged in
+   [log]. *)
 let counting log =
-  let runs = ref [] and d = ref None in
+  let runs = ref [] and lost = ref 0 and d = ref None in
   let report () =
     log := "report" :: !log;
-    let done_ = List.rev !runs in
+    let device = Option.get !d in
+    let overwritten =
+      if !lost = 0 then []
+      else [ P.Overwritten { device; time = P.now (); runs = !lost } ]
+    in
+    let counted =
+      List.rev_map
+        (fun ((start, stop), counters) ->
+          P.Counters
+            {
+              device;
+              name = "k";
+              start;
+              stop;
+              counters = List.mapi (fun i c -> (c, [| i; i + 1 |])) counters;
+            })
+        !runs
+    in
     runs := [];
-    List.map
-      (fun counters ->
-        P.Counters
-          {
-            device = Option.get !d;
-            name = "k";
-            time = P.now ();
-            counters = List.mapi (fun i c -> (c, [| i; i + 1 |])) counters;
-          })
-      done_
+    lost := 0;
+    overwritten @ counted
   in
   let dev = (fake ~name:"COUNTING" ~report ()).dev in
   d := Some dev;
-  (dev, fun n -> runs := List.init n (fun _ -> P.counters ()) @ !runs)
+  let run times =
+    runs := List.rev_map (fun t -> (t, P.counters ())) times @ !runs
+  in
+  (dev, run, fun n -> lost := !lost + n)
 
 let counted =
   List.filter_map (function
-    | P.Counters c -> Some (Nx_device.name c.device, c.name, c.counters)
-    | P.Span _ | P.Allocation _ | P.Load _ -> None)
+    | P.Counters c ->
+        Some (Nx_device.name c.device, c.name, (c.start, c.stop), c.counters)
+    | P.Span _ | P.Allocation _ | P.Load _ | P.Overwritten _ -> None)
 
-let counts = list (triple string string (list (pair string (array int))))
+let counts =
+  list
+    (Testable.make
+       ~pp:(fun ppf (on, name, (t0, t1), _) ->
+         Format.fprintf ppf "%s %s %d-%d" on name t0 t1)
+       ~equal:( = ))
 
 let test_counters () =
   let log = ref [] in
-  let d, run = counting log in
+  let d, run, _ = counting log in
   raises_match ~msg:"a counter asked twice" Exn.invalid_arg (fun () ->
       P.start ~counters:[ "A"; "B"; "A" ] ());
   is_false ~msg:"no profile taken" (P.enabled ());
   equal ~msg:"no profile" (list string) [] (P.counters ());
   let p = P.start ~counters:[ "A"; "B" ] () in
   equal ~msg:"asked" (list string) [ "A"; "B" ] (P.counters ());
-  run 2;
+  run [ (10, 20); (30, 40) ];
   Nx_device.synchronize d;
-  run 1;
+  run [ (50, 60) ];
   let events = P.stop p in
   equal ~msg:"no profile after" (list string) [] (P.counters ());
   let ab = [ ("A", [| 0; 1 |]); ("B", [| 1; 2 |]) ] in
-  equal ~msg:"each run, read at a synchronization and when the profile stops"
+  equal
+    ~msg:
+      "each run, timed by itself, read at a synchronization and when the \
+       profile stops"
     counts
-    [ ("COUNTING", "k", ab); ("COUNTING", "k", ab); ("COUNTING", "k", ab) ]
+    [
+      ("COUNTING", "k", (10, 20), ab);
+      ("COUNTING", "k", (30, 40), ab);
+      ("COUNTING", "k", (50, 60), ab);
+    ]
     (counted events);
   equal ~msg:"reported twice" (list string) [ "report"; "report" ] !log;
   log := [];
@@ -3952,30 +3978,63 @@ let test_counters () =
   equal ~msg:"none without counters asked" counts [] (counted events);
   equal ~msg:"not asked" (list string) [] !log
 
-let test_counted_spans () =
+(* Counters are their run's, whatever runs are not counted between them, and
+   runs lost before they were read are an event of their own. *)
+let test_counted_runs () =
   let log = ref [] in
-  let d, run = counting log in
-  let stamps = B.create host S.UInt64 4 and again = B.create host S.UInt64 4 in
+  let d, run, lose = counting log in
+  let stamps = B.create host S.UInt64 4 in
   let p = P.start ~counters:[ "A" ] () in
-  let first = stamped d stamps [ ("compute", "k") ] (100, 200) in
-  let second = stamped d again [ ("compute", "k") ] (300, 450) in
-  run 3;
+  run [ (1_000, 2_000) ];
+  let uncounted = stamped d stamps [ ("compute", "k") ] (3_000, 4_500) in
+  run [ (5_000, 6_500) ];
+  lose 2;
   Nx_device.synchronize d;
-  List.iter Domain.join [ first; second ];
+  Domain.join uncounted;
   let trace =
     match field "traceEvents" (written (P.stop p)) with
     | Arr l -> l
     | _ -> fail "no array"
   in
   let ph p = List.filter (fun e -> str "ph" e = p) trace in
-  equal ~msg:"each span of k has the sums of its run's counters"
-    (list (pair string float_exact))
-    [ ("k", 1.); ("k", 1.) ]
-    (List.map (fun e -> (str "name" e, num "A" (field "args" e))) (ph "X"));
-  equal ~msg:"the run of no span is an instant"
-    (list (pair string float_exact))
-    [ ("k", 1.) ]
-    (List.map (fun e -> (str "name" e, num "A" (field "args" e))) (ph "i"))
+  let lane e =
+    let pid = num "pid" e and tid = num "tid" e in
+    List.find_map
+      (fun m ->
+        if
+          str "name" m = "thread_name" && num "pid" m = pid && num "tid" m = tid
+        then Some (str "name" (field "args" m))
+        else None)
+      (ph "M")
+  in
+  let complete =
+    List.map
+      (fun e ->
+        ( Option.value ~default:"" (lane e),
+          num "ts" e,
+          num "dur" e,
+          match field "args" e with
+          | exception Failure _ -> None
+          | args -> Some (num "A" args) ))
+      (ph "X")
+  in
+  equal ~msg:"the counted runs at their own times, the span uncounted"
+    (list
+       (Testable.make
+          ~pp:(fun ppf (l, t, d, a) ->
+            Format.fprintf ppf "%s %g+%g %s" l t d
+              (Option.fold ~none:"-" ~some:string_of_float a))
+          ~equal:( = )))
+    [
+      ("counters", 0., 1., Some 1.);
+      ("compute", 2., 1.5, None);
+      ("counters", 4., 1.5, Some 1.);
+    ]
+    complete;
+  equal ~msg:"the runs lost" (list float_exact) [ 2. ]
+    (List.map
+       (fun e -> num "runs" (field "args" e))
+       (List.filter (fun e -> str "name" e = "overwritten") (ph "i")))
 
 let test_record () =
   let a = (fake ~name:"A" ()).dev and b = (fake ~name:"B" ()).dev in
@@ -4039,10 +4098,8 @@ let profiles =
         "write Chrome's trace event format: named processes and threads, \
          escaped names, time order, nesting"
         test_output;
-      test
-        "give each span the sums of the counters of the run of its name, in \
-         order"
-        test_counted_spans;
+      test "show each run's counters at the run's own times, and the runs lost"
+        test_counted_runs;
     ]
 
 (* Machines *)

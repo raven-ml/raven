@@ -1927,22 +1927,28 @@ the Exclusions of `README.md`.
   device › a chain of 8-bit float operations rounds after each, as eager
   does`, and the same on Metal.
 
-## D66. A counted run's log entry is its kernel descriptor's address
+## D66. A counted run's log entry is its kernel descriptor's address and its times
 
 - **tinygrad:** `runtime/ops_amd.py:157-165` (`prof_start` writes the program
-  placeholder's slot, a constant, into the run's entry of `prof_log`),
-  `:1056-1068` (`collect_prof` hands that slot to its profile event, which
-  `viz/serve.py:353` maps to the program).
-- **tolk:** `lib/runtime/ops_amd.ml:533` (`start_run` writes the address of
-  the kernel descriptor, `getaddr lib + desc_offset`).
-- **Differs:** the entry is the address of the run's kernel descriptor, which
-  the host program computes from the code object's address at link, where
-  tinygrad writes a constant that names the program's placeholder in its
-  compiler.
+  placeholder's slot, a constant, into the run's entry of `prof_log`, one word
+  a run), `:1056-1068` (`collect_prof` hands that slot to its profile event,
+  which `viz/serve.py:353` maps to the program, and pairs the event with the
+  program's runs in order).
+- **tolk:** `lib/runtime/ops_amd.ml:547` (`start_run` writes the address of
+  the kernel descriptor, `getaddr lib + desc_offset`, and the GPU's clock
+  before the kernel; `stop_run` the clock after it).
+- **Differs:** a run's entry is three words: the address of its kernel
+  descriptor, which the host program computes from the code object's address
+  at link, where tinygrad writes a constant that names the program's
+  placeholder in its compiler; then the GPU's clock before and after the run,
+  which the compute queue writes with two more packets a counted run.
 - **Reason:** (c). nx.amd.device reads the log at each synchronization and
-  names each run's counters after its kernel (`Nx_device.Profile.Counters`):
-  it knows its kernels by their descriptor addresses, the programs' handles,
-  and nothing of a compiler's placeholders.
+  reports each run's counters as an event of the run
+  (`Nx_device.Profile.Counters`): named after its kernel, which it knows by
+  its descriptor address, the program's handle, and nothing of a compiler's
+  placeholders; and timed by the run itself, so that counters belong to their
+  run whatever runs between them go uncounted or are lost, where pairing them
+  with spans in order would give a run another run's counts.
 - **Pinned by:** the Ops_amd suite: `recorded cases › counters`,
   `counters_gfx1201` and `counters_gfx942`, from the generator patched as
   `test/gen/runtime/ops_amd.py` says.

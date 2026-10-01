@@ -42,7 +42,6 @@ type props = {
   xccs : int;
   shader_engines : int;
   compute_units : int;
-  compute_units_per_array : int;
   waves_per_cu : int;
   lds_bytes : int;
   scratch_slots_per_cu : int;
@@ -82,10 +81,9 @@ type counting = {
 
 type u64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-(* The counting of the counters [names], with the host's views of its log and
+(* The counting of a set of counters, with the host's views of its log and
    samples, and the runs of the log read so far. *)
 type count = {
-  names : string list;
   counting : counting;
   log_words : u64s;
   sample_words : u64s;
@@ -111,10 +109,12 @@ type t = {
   reach : (int, bool) Hashtbl.t; (* whether it reaches a peer, by index *)
   kernels : (nativeint, entry) Hashtbl.t; (* by descriptor address, under hw *)
   props : props;
+  cu_per_array : int; (* the compute units of a shader array *)
   scratch_lock : Mutex.t;
   mutable scratch : (Nx_device.Buffer.t * int) option;
   count_lock : Mutex.t;
-  mutable count : count option;
+  counts : (string list, count) Hashtbl.t;
+      (* by the counters asked for: work encoded for them writes there *)
   mutable aql_desc : Mmio.t option; (* the AQL queue's descriptor *)
   mutable queues : (queue * bool * queue list) option;
       (* the compute queue, whether it takes AQL packets, the SDMA queues *)
@@ -495,8 +495,8 @@ let supported ((major, _, _) as t) =
   if not (List.mem t [ (9, 4, 2); (9, 5, 0) ] || major = 11 || major = 12) then
     failwith (Printf.sprintf "%s GPUs are not supported" (arch t))
 
-let props ~target ~ip ~xccs ~shader_engines ~compute_units
-    ~compute_units_per_array ~waves_per_cu ~lds_kib ~slots =
+let props ~target ~ip ~xccs ~shader_engines ~compute_units ~waves_per_cu
+    ~lds_kib ~slots =
   let v hwip = Option.value ~default:(0, 0, 0) (List.assoc_opt hwip ip) in
   {
     target;
@@ -506,7 +506,6 @@ let props ~target ~ip ~xccs ~shader_engines ~compute_units
     xccs;
     shader_engines;
     compute_units;
-    compute_units_per_array;
     waves_per_cu;
     lds_bytes = lds_kib * 1024;
     scratch_slots_per_cu = slots;
@@ -677,7 +676,8 @@ let room a () =
 (* The runs whose counters a device keeps until it reads them. *)
 let count_slots = 32
 
-let counters (p : props) names =
+let counters a names =
+  let p = a.props in
   let major, _, _ = p.target in
   let table =
     D.counters
@@ -701,7 +701,7 @@ let counters (p : props) names =
           | "GL2C" -> (32, 1, 1, 1)
           | "TCC" -> (16, 1, 1, 1)
           | _ when major = 9 -> (1, p.shader_engines, 1, 1)
-          | _ -> (1, p.shader_engines, 2, p.compute_units_per_array / 2)
+          | _ -> (1, p.shader_engines, 2, a.cu_per_array / 2)
         in
         let c =
           {
@@ -753,15 +753,19 @@ let wgp_active a =
         (bitmap.(engine mod 4).(array + (engine / 4 * 2)) lsr (2 * wgp)) land 3
         = 3
 
+(* A run's entry in the log: its kernel descriptor's address, then when the run
+   started and when it stopped, on the GPU's clock. *)
+let entry_words = 3
+
 let counting a =
   match Nx_device.Profile.counters () with
   | [] -> None
   | names ->
       Mutex.protect a.count_lock (fun () ->
-          match a.count with
-          | Some c when c.names = names -> Some c.counting
-          | _ ->
-              let counters = counters a.props names in
+          match Hashtbl.find_opt a.counts names with
+          | Some c -> Some c.counting
+          | None ->
+              let counters = counters a names in
               check_power a;
               let size =
                 List.fold_left
@@ -781,7 +785,7 @@ let counting a =
                     Bigarray.Array1.fill w 0L;
                     (b, w)
               in
-              let log, log_words = words (1 + count_slots)
+              let log, log_words = words (1 + (entry_words * count_slots))
               and samples, sample_words = words (count_slots * size / 8) in
               let counting =
                 {
@@ -793,56 +797,52 @@ let counting a =
                   wgp_active = wgp_active a;
                 }
               in
-              a.count <-
-                Some { names; counting; log_words; sample_words; read = 0 };
+              Hashtbl.replace a.counts names
+                { counting; log_words; sample_words; read = 0 };
               Some counting)
 
-(* The counters of the runs the log took since the last report. *)
+(* The counters of the runs a log took since its last report, timed on the GPU's
+   clock, and the runs it took over before they were read. *)
+let counted a c =
+  let device = Option.get a.dev in
+  let n = Int64.to_int c.log_words.{0} and slots = c.counting.slots in
+  let first = Int.max c.read (n - slots) in
+  let lost =
+    if first > c.read then
+      [
+        Nx_device.Profile.Overwritten
+          { device; time = Nx_device.Profile.now (); runs = first - c.read };
+      ]
+    else []
+  in
+  let run k =
+    let slot = k mod slots in
+    let word i = Int64.to_int c.log_words.{1 + (entry_words * slot) + i} in
+    let handle = Nativeint.of_int (word 0) in
+    let name =
+      match with_hw a (fun () -> Hashtbl.find_opt a.kernels handle) with
+      | Some e -> e.name
+      | None -> Printf.sprintf "0x%nx" handle
+    in
+    let base = slot * c.counting.size / 8 in
+    let counters =
+      List.map
+        (fun ct ->
+          ( ct.name,
+            Array.init (values a.props ct) (fun j ->
+                Int64.to_int c.sample_words.{base + (ct.offset / 8) + j}) ))
+        c.counting.counters
+    in
+    Nx_device.Profile.Counters
+      { device; name; start = word 1; stop = word 2; counters }
+  in
+  let events = List.init (Int.max 0 (n - first)) (fun i -> run (first + i)) in
+  c.read <- n;
+  lost @ events
+
 let report a () =
   Mutex.protect a.count_lock (fun () ->
-      match a.count with
-      | None -> []
-      | Some c ->
-          let n = Int64.to_int c.log_words.{0} and slots = c.counting.slots in
-          if n - c.read > slots then
-            Printf.eprintf
-              "%s: the counters of %d kernel runs were overwritten: \
-               synchronize more often\n\
-               %!"
-              (name a.index)
-              (n - c.read - slots);
-          let first = Int.max c.read (n - slots) in
-          let run k =
-            let slot = k mod slots in
-            let handle = Int64.to_nativeint c.log_words.{1 + slot} in
-            let name =
-              match with_hw a (fun () -> Hashtbl.find_opt a.kernels handle) with
-              | Some e -> e.name
-              | None -> Printf.sprintf "0x%nx" handle
-            in
-            let base = slot * c.counting.size / 8 in
-            let counters =
-              List.map
-                (fun ct ->
-                  ( ct.name,
-                    Array.init (values a.props ct) (fun j ->
-                        Int64.to_int c.sample_words.{base + (ct.offset / 8) + j})
-                  ))
-                c.counting.counters
-            in
-            Nx_device.Profile.Counters
-              {
-                device = Option.get a.dev;
-                name;
-                time = Nx_device.Profile.now ();
-                counters;
-              }
-          in
-          let events =
-            List.init (Int.max 0 (n - first)) (fun i -> run (first + i))
-          in
-          c.read <- n;
-          events)
+      Hashtbl.fold (fun _ c events -> events @ counted a c) a.counts [])
 
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
@@ -885,7 +885,7 @@ let setup a ~saves ~sdma_queues =
   a.aql_desc <- desc;
   (compute, aql, sdma)
 
-let record ~machine ~index ~gpu ~props =
+let record ~machine ~index ~gpu ~props ~cu_per_array =
   {
     index;
     machine;
@@ -896,10 +896,11 @@ let record ~machine ~index ~gpu ~props =
     reach = Hashtbl.create 4;
     kernels = Hashtbl.create 16;
     props;
+    cu_per_array;
     scratch_lock = Mutex.create ();
     scratch = None;
     count_lock = Mutex.create ();
-    count = None;
+    counts = Hashtbl.create 2;
     aql_desc = None;
     queues = None;
     dev = None;
@@ -937,12 +938,14 @@ let open_kfd index =
     props ~target ~ip:k.ip_ver ~xccs
       ~shader_engines:(pr "array_count" / pr "simd_arrays_per_engine" / xccs)
       ~compute_units:(pr "simd_count" / pr "simd_per_cu" / xccs)
-      ~compute_units_per_array:(pr "cu_per_simd_array")
       ~waves_per_cu:(pr "max_waves_per_simd" * pr "simd_per_cu")
       ~lds_kib:(pr "lds_size_in_kb")
       ~slots:(pr "max_slots_scratch_cu")
   in
-  let a = record ~machine:Nx_device.host ~index ~gpu:(Kfd_gpu k) ~props in
+  let a =
+    record ~machine:Nx_device.host ~index ~gpu:(Kfd_gpu k) ~props
+      ~cu_per_array:(pr "cu_per_simd_array")
+  in
   let compute, aql, sdma = setup a ~saves:true ~sdma_queues:1 in
   let dev = make_device a ~budget:k.vram ~sleep:(fun ms -> Kfd.sleep k ms) () in
   finish a dev (compute, aql, sdma);
@@ -967,12 +970,15 @@ let open_booted ~machine ~buses ~index pci (am : Am.t) =
       ~target:(target_of ((a * 10000) + (b * 100) + c))
       ~ip:d.ip_ver ~xccs:d.xccs ~shader_engines:g.num_se
       ~compute_units:(g.cu_per_sa * g.sh_per_se * g.num_se)
-      ~compute_units_per_array:g.cu_per_sa
       ~waves_per_cu:(g.max_waves_per_simd * 2) ~lds_kib:g.lds_size
       ~slots:g.max_scratch_slots_per_cu
   in
   supported props.target;
-  let a = record ~machine ~index ~gpu:(Am_gpu { am; memory; pci }) ~props in
+  let a =
+    record ~machine ~index
+      ~gpu:(Am_gpu { am; memory; pci })
+      ~props ~cu_per_array:g.cu_per_sa
+  in
   let compute, aql, sdma =
     setup a ~saves:false ~sdma_queues:(if d.is_vf then Int.min buses 8 else 1)
   in

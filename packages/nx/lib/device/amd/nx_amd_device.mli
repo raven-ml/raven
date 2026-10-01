@@ -210,8 +210,6 @@ type props = {
   xccs : int;  (** The number of compute dies (XCCs). *)
   shader_engines : int;  (** The number of shader engines of one XCC. *)
   compute_units : int;  (** The number of compute units of one XCC. *)
-  compute_units_per_array : int;
-      (** The number of compute units of one shader array. *)
   waves_per_cu : int;  (** The most waves a compute unit runs at once. *)
   lds_bytes : int;  (** The local data share of a work-group, in bytes. *)
   scratch_slots_per_cu : int;  (** The scratch wave slots of a compute unit. *)
@@ -289,18 +287,12 @@ type counter = {
     words, one per XCC, instance, engine, array and work-group processor, the
     last varying fastest. *)
 
-val counters : props -> string list -> counter list
-(** [counters p names] is how a GPU of properties [p] counts the counters
-    [names], whose values follow each other in a run's samples in that order.
-
-    Raises [Invalid_argument] if the GPU does not count one of [names], naming
-    it and the counters it has. *)
-
 type counting = {
   slots : int;  (** The runs it keeps until a synchronization reads them. *)
   log : Nx_device.Buffer.t;
-      (** [1 + slots] [UInt64]: the runs taken so far, then the kernel
-          descriptor address of each slot's run. *)
+      (** [1 + 3 * slots] [UInt64]: the runs taken so far, then for each slot
+          the kernel descriptor address of its run, and when the run started and
+          when it stopped, on the GPU's clock. *)
   samples : Nx_device.Buffer.t;
       (** [slots] runs of [size] bytes, the values of [counters]. *)
   counters : counter list;  (** The counters, in the profile's order. *)
@@ -314,20 +306,23 @@ type counting = {
     takes the slot [(r + k) mod slots], where [r] is the first word of [log]
     when the submission's host program runs and [k] the runs the submission took
     before it: the host program writes the kernel's descriptor address into the
-    word [1 + slot] of [log], and adds the submission's runs to the first word
-    once it wrote the command buffer. The run writes the values of [counters]
-    into the [slot]th [size] bytes of [samples] once it completes. The device
-    reads the runs at each synchronization while the profile is taken, and when
-    it stops: their {!Nx_device.Profile.Counters} are named after the kernel's
-    function. It warns on the standard error when runs were taken over before it
-    read them. *)
+    word [1 + 3 * slot] of [log], and adds the submission's runs to the first
+    word once it wrote the command buffer. The queue writes the time into the
+    next word before the kernel and into the one after once the kernel
+    completed, then the values of [counters] into the [slot]th [size] bytes of
+    [samples]. The device reads the runs at each synchronization while the
+    profile is taken, and when it stops: their {!Nx_device.Profile.Counters} are
+    named after the kernel's function and timed by the run, and runs taken over
+    before the device read them are {!Nx_device.Profile.Overwritten}. *)
 
 val counting : t -> counting option
 (** [counting a] is the counting of the counters of the profile being taken
     ({!Nx_device.Profile.counters}), or [None] if it asks for none. The device
-    keeps it while the profile's counters stay the same.
+    keeps the counting of each set of counters it was asked for, for its life:
+    work encoded for a set writes that set's log and samples whenever it runs,
+    and the device reads them all.
 
-    Raises [Invalid_argument] if the GPU does not count a counter, as
-    {!counters} does, and [Failure] if, under {!Kernel}, a GPU other than a GFX9
-    one is not in its stable power state, which counts need: the message says to
-    run [amd-smi set -l stable_std]. *)
+    Raises [Invalid_argument] if the GPU does not count a counter, naming it and
+    the counters it has, and [Failure] if, under {!Kernel}, a GPU other than a
+    GFX9 one is not in its stable power state, which counts need: the message
+    says to run [amd-smi set -l stable_std]. *)

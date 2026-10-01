@@ -80,61 +80,80 @@ let rec gpu = function
       { g with counting = Some (counting g) }
   | name -> fail ("no GPU " ^ name)
 
-(* The counting of tinygrad's default counters on [g], laid out as nx.amd.device
-   lays them out, the work-group processor 2 of the shader engine 1 inactive, as
-   the generator's cases describe it. *)
+(* The counting of tinygrad's default counters on [g], laid out as tinygrad's
+   pmc_start lays them out, with 4 compute units to a shader array and the
+   work-group processor 2 of the shader engine 1 inactive, as the generator's
+   cases describe it: each block's counters take its registers in turn, and an
+   SQ counter is counted in each engine, and from GFX11 in each array and
+   work-group processor. *)
 and counting (g : Ops_amd.gpu) =
   let major, _, _ = g.target in
-  let l2, lds = if major = 9 then ("TCC", "SQ") else ("GL2C", "SQC") in
-  let props =
+  let defaults =
+    match major with
+    | 9 ->
+        [
+          ("SQ", 3);
+          ("SQ", 26);
+          ("SQ", 60);
+          ("SQ", 131);
+          ("SQ", 126);
+          ("GRBM", 2);
+          ("TCC", 17);
+          ("TCC", 19);
+        ]
+    | 11 ->
+        [
+          ("SQ", 3);
+          ("SQ", 62);
+          ("SQ", 58);
+          ("SQ", 261);
+          ("SQ", 256);
+          ("GRBM", 2);
+          ("GL2C", 42);
+          ("GL2C", 43);
+        ]
+    | _ ->
+        [
+          ("SQ", 3);
+          ("SQ", 50);
+          ("SQ", 46);
+          ("SQ", 293);
+          ("SQ", 288);
+          ("GRBM", 2);
+          ("GL2C", 41);
+          ("GL2C", 42);
+        ]
+  in
+  let registers = Hashtbl.create 4 and offset = ref 0 in
+  let counter (block, event) =
+    let register = Option.value ~default:0 (Hashtbl.find_opt registers block) in
+    Hashtbl.replace registers block (register + 1);
+    let instances, engines, arrays, wgps =
+      match block with
+      | "GRBM" -> (1, 1, 1, 1)
+      | "GL2C" -> (32, 1, 1, 1)
+      | "TCC" -> (16, 1, 1, 1)
+      | _ when major = 9 -> (1, g.shader_engines, 1, 1)
+      | _ -> (1, g.shader_engines, 2, 2)
+    in
+    let at = !offset in
+    offset := at + (g.xccs * instances * engines * arrays * wgps * 8);
     {
-      Nx_amd_device.target = g.target;
-      gc = g.gc;
-      sdma = g.sdma;
-      nbio = (0, 0, 0);
-      xccs = g.xccs;
-      shader_engines = g.shader_engines;
-      compute_units = g.compute_units;
-      compute_units_per_array = 4;
-      waves_per_cu = 32;
-      lds_bytes = 65536;
-      scratch_slots_per_cu = g.scratch_slots_per_cu;
+      Ops_amd.block;
+      event;
+      register;
+      instances;
+      engines;
+      arrays;
+      wgps;
+      offset = at;
     }
   in
-  let counters =
-    Nx_amd_device.counters props
-      [
-        "SQ_BUSY_CYCLES";
-        "SQ_INSTS_VALU";
-        "SQ_INSTS_SALU";
-        lds ^ "_LDS_IDX_ACTIVE";
-        lds ^ "_LDS_BANK_CONFLICT";
-        "GRBM_GUI_ACTIVE";
-        l2 ^ "_HIT";
-        l2 ^ "_MISS";
-      ]
-  in
+  let counters = List.map counter defaults in
   {
     Ops_amd.slots = 32;
-    counters =
-      List.map
-        (fun (c : Nx_amd_device.counter) ->
-          {
-            Ops_amd.block = c.block;
-            event = c.event;
-            register = c.register;
-            instances = c.instances;
-            engines = c.engines;
-            arrays = c.arrays;
-            wgps = c.wgps;
-            offset = c.offset;
-          })
-        counters;
-    size =
-      List.fold_left
-        (fun n (c : Nx_amd_device.counter) ->
-          n + (g.xccs * c.instances * c.engines * c.arrays * c.wgps * 8))
-        0 counters;
+    counters;
+    size = !offset;
     wgp_active = (fun ~engine ~array:_ ~wgp -> (engine, wgp) <> (1, 2));
   }
 

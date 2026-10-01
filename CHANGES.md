@@ -2948,6 +2948,15 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Profile.Counters` carries the counted run's
+  `start` and `stop` in place of the time they were read, and
+  `Profile.output_chrome_trace` shows each run's counters on its device's
+  `counters` lane. Counters were matched to spans of the same name in order, so
+  a run that went uncounted or was lost gave every later span another run's
+  counts. Runs lost before a device read them are a `Profile.Overwritten` event.
+- **Breaking:** `Nx_amd_device.counters` and `props.compute_units_per_array`
+  are gone, and `Nx_amd_device.counting` keeps the counting of each set of
+  counters, so that work encoded for one set is read whenever it runs.
 - `Nx_device.Stats.bytes_in` and `bytes_out` count the copies that compiled
   work makes on CUDA, NV and AMD queues, which they missed: a compiled call
   reading a host value reported no upload. Submitters count such copies with

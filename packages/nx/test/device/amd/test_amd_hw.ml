@@ -461,12 +461,14 @@ let test_mapped () =
     check ~msg:(at "the GPU's writes, read by the host") (40 + round) host_view
   done
 
-(* A profile that counts gives the device its counting, the same while its
-   counters stay the same; a GPU without a counter refuses it by name. *)
+(* A profile that counts gives the device the counting of its counters, the same
+   for the same counters in any later profile, laid out as the counters' blocks
+   count them; a GPU without a counter refuses it by name. *)
 let test_counting () =
   let a = low (device ()) in
+  let props = Nx_amd_device.props a in
   is_true ~msg:"no profile" (Option.is_none (Nx_amd_device.counting a));
-  let counting names f =
+  let counting names =
     let p = Nx_device.Profile.start ~counters:names () in
     Fun.protect
       ~finally:(fun () -> ignore (Nx_device.Profile.stop p))
@@ -475,16 +477,24 @@ let test_counting () =
         | exception Failure why
           when String.ends_with ~suffix:"set -l stable_std`" why ->
             skip ~reason:why ()
-        | c -> f c)
+        | c -> Option.get c)
   in
-  counting [ "GRBM_GUI_ACTIVE" ] (fun c ->
-      let c = Option.get c in
-      equal int ~msg:"the log" (8 * (1 + c.slots)) (B.nbytes c.log);
-      equal int ~msg:"the samples" (c.slots * c.size) (B.nbytes c.samples);
-      equal int ~msg:"one GRBM value per die"
-        (8 * (Nx_amd_device.props a).xccs)
-        c.size;
-      is_true ~msg:"kept" (Option.get (Nx_amd_device.counting a) == c));
+  let c = counting [ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ] in
+  equal int ~msg:"the log" (8 * (1 + (3 * c.slots))) (B.nbytes c.log);
+  equal int ~msg:"the samples" (c.slots * c.size) (B.nbytes c.samples);
+  (match c.counters with
+  | [ grbm; sq ] ->
+      equal int ~msg:"one GRBM value per die" 0 grbm.offset;
+      equal int ~msg:"the SQ's after" (8 * props.xccs) sq.offset;
+      equal int ~msg:"an SQ value per engine" props.shader_engines sq.engines;
+      equal int ~msg:"the samples' bytes"
+        (8 * props.xccs * (1 + (sq.engines * sq.arrays * sq.wgps)))
+        c.size
+  | _ -> fail "two counters");
+  let other = counting [ "GRBM_GUI_ACTIVE" ] in
+  is_true ~msg:"another set, another counting" (other != c);
+  is_true ~msg:"kept for later profiles"
+    (counting [ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ] == c);
   let p = Nx_device.Profile.start ~counters:[ "NO_SUCH_COUNTER" ] () in
   Fun.protect
     ~finally:(fun () -> ignore (Nx_device.Profile.stop p))

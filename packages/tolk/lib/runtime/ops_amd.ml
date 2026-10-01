@@ -431,9 +431,12 @@ let compute_queue ~host gpu q : Hcq2.commands =
     if enable then set perfmon [ ("perfmon_state", 1) ]
   in
   let log_slots = Option.fold ~none:0 ~some:(fun c -> c.slots) gpu.counting in
+  (* After the count of runs, a slot of the log per run: its kernel's descriptor
+     address, then when it started and when it stopped. *)
+  let entry = 3 in
   let log =
     placeholder ~slot:0 ~device:(Multi devs) ~tag:(Tag.String "prof_log")
-      [ 1 + log_slots ]
+      [ 1 + (entry * log_slots) ]
       Dtype.Uint64
   in
   let samples c =
@@ -527,6 +530,18 @@ let compute_queue ~host gpu q : Hcq2.commands =
   in
   Option.iter start_counting gpu.counting;
   let runs = ref [] in
+  (* The [i]th word of [slot]'s entry, and the GPU's clock written there once
+     the work before it completed, so that a run is timed by itself. *)
+  let word slot i =
+    let base = O.(u64 1 + (u64 entry * slot) + u64 i) in
+    O.(getaddr log + (base * u64 8))
+  in
+  let clock_into address =
+    pred_exec 1 (fun () ->
+        release_mem ~address ~value:(u64 0)
+          ~data_sel:G.data_sel__mec_release_mem__send_gpu_clock_counter
+          ~int_sel:G.int_sel__mec_release_mem__none ())
+  in
   (* A counted run takes the next slot of the log, which the host program
      writes. *)
   let start_run lib (data : program) =
@@ -537,17 +552,19 @@ let compute_queue ~host gpu q : Hcq2.commands =
             (load (index log [ int 0 ]) [] + u64 (List.length !runs))
             % u64 c.slots)
         in
+        let at = O.(int 1 + (int entry * cast slot Dtype.Int32)) in
         runs :=
           !runs
-          @ [
-              store
-                (index log [ O.(int 1 + cast slot Dtype.Int32) ])
-                O.(getaddr lib + u64 data.desc_offset);
-            ];
+          @ [ store (index log [ at ]) O.(getaddr lib + u64 data.desc_offset) ];
+        clock_into (word slot 1);
         (c, slot))
       gpu.counting
   in
-  let stop_run = Option.iter (fun (c, slot) -> read_counters c slot) in
+  let stop_run =
+    Option.iter (fun (c, slot) ->
+        clock_into (word slot 2);
+        read_counters c slot)
+  in
   (* Once its command buffer is written, the host program adds the submission's
      runs to the log's count. *)
   let count_runs cmdbuf =
