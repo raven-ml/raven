@@ -13,7 +13,8 @@ Breaking one causes real damage.
 - NEVER pass `--force` to git or dune. Never run `dune clean`, never pass
   `--build-dir` or `DUNE_CACHE=disabled`, never delete or relock `dune.lock`
   without being asked.
-- NEVER kill a dune build, dune may be running in watch mode.
+- NEVER kill a dune you didn't start, unless its session has ended: the
+  maintainer and other agents run dune in watch mode.
 - NEVER silence a warning or prefix a variable with `_` to hide it. A warning
   is a bug in the change.
 - NEVER add an nx backend operation without being asked.
@@ -37,10 +38,27 @@ Accepted designs live in `doc/rfc/`.
 
 ## Parallel agents
 
-When several agents work several streams on one machine, each works in its
-own worktree and never changes the maintainer checkout's working tree (no
-`git stash`, `checkout`, `reset`, `restore` or `clean` there). Use
+Agents work in a shared pool of worktrees, `../raven-pool/<n>` next to the
+main checkout, and never change the main checkout's working tree (no
+`git stash`, `checkout`, `reset`, `restore` or `clean` there). Worktrees
+are reused, never removed: their warm `_build` is the point. Use
 `git -C <path>`, never `cd <path> && git …`.
+
+- **Claim.** A worktree is taken while a dune watch server holds its
+  `_build/.lock`, which then contains the server's pid; the server's parent
+  processes lead to the Claude session that holds it. To claim one, start
+  `dune build --passive-watch-mode` in the background and check that the
+  lock holds your server's pid (a second server forwards to the first and
+  exits). If none is free, add the next number with
+  `git worktree add --detach`. Work on a branch named for the task.
+- **Keep.** The claimant keeps its branch rebased on main and copies the
+  checkout's `dune.lock` when it changes.
+- **Build.** `dune build` and `dune runtest` forward to your server. Before
+  each, run `timeout 5 dune rpc ping`: no answer means the server is stuck,
+  so kill its pid and start another at once.
+- **Release.** When your task is done, kill your server and leave the tree
+  clean and detached at main. A server whose session has ended (parent
+  pid 1) is stale; anyone may stop it.
 
 ## Commands
 
@@ -113,14 +131,30 @@ answer, decide it and say why; ask only for the maintainer's own calls.
 
 ## Tests
 
-- Write a test where a user would get a wrong answer or a crash.
-- Fixing a bug: write the test first, watch it fail, then fix and watch it
-  pass.
+Tests use windtrap, whose `.mli` (under `_build/_private/default/.pkg/`) is
+the contract, and cram tests for executables. A test states what the `.mli`
+promises, through the public interface, never what the code does today.
+
+- Use the strongest tool the claim allows: `prop` for a law (agreement with
+  a simpler reference, a round trip, an identity, `jit` equal to eager,
+  `grad` against finite differences), with a `Law` verb when one names it;
+  `stateful` against a model for state across calls (pools, caches,
+  stores); `cases` for values the spec states; `expect` for long text.
+- Expected values come from the spec. One learned by running the code is a
+  baseline, written as `expect`.
+- Draw inputs that break the code: zero-size and one-element shapes, bounds
+  and their neighbours, every dtype, strided and broadcast views, NaN,
+  `-0.`, infinities, int extremes. `cover` the cases a law needs.
+- Assert with verbs that print the data (`equal`, `less ~than`, `raises`)
+  and floats with a stated tolerance, never `is_true`.
+- Write a test where a user would get a wrong answer or a crash. Fixing a
+  bug: write the test first, watch it fail, then fix and watch it pass.
 - Layout: `test/test_*.ml` in one `dune` file; only `support/`, `golden/` and
   `gen/` subdirectories.
-- Laws and invariants get property tests. Concurrency tests are deterministic:
-  hold the interleaving, don't loop and hope.
-- No mutation runs, no after-the-fact fail-without proofs, no race loops.
+- A structure shared between domains gets `stateful ~domains:2`, which
+  explains every result by some order of the calls. A known interleaving is
+  held deterministically: don't loop and hope. No mutation runs, no
+  after-the-fact fail-without proofs.
 - Memory tests warm the device with one uncounted run, then collect and
   synchronise a fixed number of rounds before reading the allocated count:
   a chain of finalisers frees its memory one round late, so the count can
