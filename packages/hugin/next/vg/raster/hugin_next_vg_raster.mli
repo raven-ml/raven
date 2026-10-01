@@ -21,7 +21,13 @@
     - A stroke's outline is covered as the union of the pieces it is made of,
       one per segment, join and cap, with round ones flattened likewise. A pixel
       that the edges of two overlapping pieces cross takes the sum of their
-      coverages, up to the whole pixel.
+      coverages, up to the whole pixel. A point of a subpath within a twentieth
+      of a pixel, along both axes, of the point kept before it is dropped, so an
+      open subpath or a dash shorter than that is drawn as its caps alone. A
+      closed subpath that would keep fewer than three points keeps all of them
+      but exact repeats instead, so that it has the extent of its pen at any
+      size. A dash pattern whose period is below a thousandth of a pixel is
+      drawn solid.
     - Primitives are composited one after another, each against what the
       previous left. Two shapes that abut along an edge thus each cover part of
       the pixels on the edge, and let a little of the backdrop through there, as
@@ -34,11 +40,12 @@
       evenly over its square, [k] being the ratio of image pixels to device
       pixels rounded up, at most [4].
     - An {{!Hugin_next_vg.Picture.opacity}opacity} is drawn into a layer of its
-      own, then composited as one primitive, and so is each instance of a
-      {{!Hugin_next_vg.Picture.stamp}stamp}.
-    - The instances of a stamp are placed at their positions rounded to the
-      nearest quarter of a pixel in each direction, an error of at most an
-      eighth of a pixel.
+      own, then composited as one primitive.
+    - The instances of a {{!Hugin_next_vg.Picture.stamp}stamp} are placed at
+      their positions rounded to the nearest quarter of a pixel in each
+      direction, an error of at most an eighth of a pixel.
+    - A picture under transforms whose composition, with the density, has no
+      inverse or overflows the range of floats paints nothing.
     - Tags are ignored. *)
 
 (** {1:render Rendering} *)
@@ -63,5 +70,5 @@ val png : density:float -> Hugin_next_vg.Renderable.t -> string
     page of [r], and an [sRGB] chunk with the perceptual rendering intent.
 
     Raises [Invalid_argument] as {!render} does, and if that number of pixels
-    per metre exceeds [2{^31} - 1], the largest a PNG holds, which takes a
-    density above about [758,000]. *)
+    per metre is not in \[[1];[2{^31} - 1]\], the range of a PNG integer, which
+    takes a density below about [0.00018] or above about [758,000]. *)

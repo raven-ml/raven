@@ -2,7 +2,7 @@
  (name hugin_next_vg_raster)
  (public_name hugin.next.vg.raster)
  (libraries hugin.next.vg hugin.next.gg hugin.next.font nx nx.io)
- (modules_without_implementation hugin_next_vg_raster)
+ (private_modules surface cover pen)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

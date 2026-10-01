@@ -1,0 +1,15 @@
+# thumper baseline v1
+# suite: hugin_next_vg
+
+# machine: ca352e279bc47cb1
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+
+raster/100k-coloured-stamps	alloc_words	exact	3426033
+raster/100k-coloured-stamps	wall_time	batch=1	n=20	5.028e-02	4.988e-02 4.992e-02 4.995e-02 4.997e-02 4.997e-02 5.009e-02 5.011e-02 5.012e-02 5.016e-02 5.027e-02 5.029e-02 5.037e-02 5.040e-02 5.049e-02 5.061e-02 5.073e-02 5.079e-02 5.083e-02 5.096e-02 5.131e-02
+raster/100k-dot-scatter-to-PNG	alloc_words	exact	2457061
+raster/100k-dot-scatter-to-PNG	wall_time	batch=1	n=20	4.195e-02	4.122e-02 4.127e-02 4.139e-02 4.143e-02 4.144e-02 4.172e-02 4.179e-02 4.183e-02 4.192e-02 4.193e-02 4.197e-02 4.201e-02 4.205e-02 4.211e-02 4.213e-02 4.223e-02 4.241e-02 4.244e-02 4.257e-02 4.368e-02
+raster/100k-stamps	alloc_words	exact	2126273
+raster/100k-stamps	wall_time	batch=1	n=20	5.013e-02	4.959e-02 4.975e-02 4.981e-02 4.982e-02 4.984e-02 4.986e-02 4.987e-02 4.988e-02 5.001e-02 5.002e-02 5.024e-02 5.027e-02 5.037e-02 5.050e-02 5.062e-02 5.081e-02 5.084e-02 5.116e-02 5.169e-02 5.191e-02
+raster/1M-point-polyline	alloc_words	exact	18789262
+raster/1M-point-polyline	wall_time	batch=1	n=20	1.911e-01	1.866e-01 1.866e-01 1.870e-01 1.873e-01 1.874e-01 1.875e-01 1.888e-01 1.903e-01 1.904e-01 1.911e-01 1.911e-01 1.914e-01 1.916e-01 1.918e-01 1.918e-01 1.924e-01 1.927e-01 1.933e-01 1.934e-01 1.938e-01
