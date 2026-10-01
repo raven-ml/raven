@@ -1077,6 +1077,225 @@ let scans =
           equal close (Rune.grad' f a) (Rune.jit' (Rune.grad' f) a));
     ]
 
+(* Device lists *)
+
+let split ?(axis = 0) ds = Nx.Placement.sharded ~backend:Rune.compiled ~axis ds
+let copies ds = Nx.Placement.replicated ~backend:Rune.compiled ds
+
+let device_lists =
+  let pair = [ d1; d2 ] in
+  group "device lists"
+    [
+      test "elementwise operations and a sum over two devices equal one device"
+        (fun () ->
+          let f a = Nx.sum ~axes:[ 1 ] (Nx.mul (Nx.exp a) a) in
+          let a = grid 4 3 in
+          equal close (f a) (host (Rune.jit' f (Nx.place (split pair) a))));
+      slow "an elementwise chain over two devices has one device's bits"
+        (fun () ->
+          let a = grid 4 3 in
+          equal floats (poly a)
+            (host (Rune.jit' poly (Nx.place (split pair) a))));
+      slow "a value split along its second axis computes" (fun () ->
+          let a = grid 3 4 in
+          let r = Rune.jit' poly (Nx.place (split ~axis:1 pair) a) in
+          is_true (Nx.Placement.equal (split ~axis:1 pair) (Nx.placement r));
+          equal floats (poly a) (host r));
+      test "the gradient of a mean over a split batch equals one device's"
+        (fun () ->
+          let f a = Nx.mean (Nx.mul a a) in
+          let a = grid 4 3 in
+          equal close (Rune.grad' f a)
+            (host (Rune.jit' (Rune.grad' f) (Nx.place (split pair) a))));
+      slow "two collectively reduced results equal one device's" (fun () ->
+          let a = grid 4 3 in
+          let s, m =
+            Rune.jit
+              Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+              (fun a -> (Nx.sum a, Nx.max a))
+              (Nx.place (split pair) a)
+          in
+          equal close (Nx.sum a) (host s);
+          equal close (Nx.max a) (host m));
+      test "arguments placed with another backend bind, and results keep it"
+        (fun () ->
+          let p = Nx.Placement.sharded ~axis:0 pair in
+          let r = Rune.jit' poly (Nx.place p (grid 4 3)) in
+          is_true (Nx.Placement.equal p (Nx.placement r));
+          equal floats (poly (grid 4 3)) (host r));
+      slow "a result fed back to the call moves no bytes" (fun () ->
+          let g = Rune.jit' (fun a -> Nx.mul_s a 0.5) in
+          let r = ref (g (Nx.place (split pair) (grid 4 3))) in
+          let before = bytes_in d1 + bytes_in d2 in
+          for _ = 1 to 3 do
+            r := g !r
+          done;
+          equal int before (bytes_in d1 + bytes_in d2));
+      test "a capture copied to every device is bound on each" (fun () ->
+          let w = Nx.place (copies pair) (y ()) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = Nx.place (copies pair) (x ()) in
+          ignore (g a);
+          let before = bytes_in d1 + bytes_in d2 in
+          equal close (Nx.mul (x ()) (y ())) (host (g a));
+          equal int before (bytes_in d1 + bytes_in d2));
+      slow "one shard's slice of a split value computes on its device alone"
+        (fun () ->
+          let a = Nx.place (split pair) (grid 4 3) in
+          let row = Nx.slice [ I 3 ] a in
+          let r = Rune.jit' poly row in
+          is_true (Nx.Placement.equal (on d2) (Nx.placement r));
+          equal floats (poly (Nx.slice [ I 3 ] (grid 4 3))) (host r));
+      test "a loop consuming a split state holds two generations on each device"
+        (fun () ->
+          let n = 1 lsl 15 in
+          let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
+          let s =
+            ref (Nx.place (split [ d3; d4 ]) (Nx.zeros Nx.float32 [| 2 * n |]))
+          in
+          s := step !s;
+          let b3 = allocated d3 and b4 = allocated d4 in
+          for _ = 1 to 10 do
+            s := step !s
+          done;
+          at_most ~msg:"on the first device" int ~than:(4 * n)
+            (allocated d3 - b3);
+          at_most ~msg:"on the second device" int ~than:(4 * n)
+            (allocated d4 - b4);
+          equal floats (Nx.full Nx.float32 [| 2 * n |] 11.) (host !s));
+      slow
+        "gradients through max, sum and mean keeping their axes equal one \
+         device's" (fun () ->
+          let a = grid 4 3 in
+          List.iter
+            (fun (name, f) ->
+              equal ~msg:name close (Rune.grad' f a)
+                (host (Rune.jit' (Rune.grad' f) (Nx.place (split pair) a))))
+            [
+              ( "max",
+                fun a -> Nx.sum (Nx.mul a (Nx.max ~axes:[ 0 ] ~keepdims:true a))
+              );
+              ( "sum",
+                fun a -> Nx.sum (Nx.mul a (Nx.sum ~axes:[ 0 ] ~keepdims:true a))
+              );
+              ( "mean",
+                fun a ->
+                  Nx.sum (Nx.mul a (Nx.mean ~axes:[ 0 ] ~keepdims:true a)) );
+            ]);
+      slow "a remat over a split batch equals one device's gradient" (fun () ->
+          let block a = Nx.tanh (Nx.mul_s a 0.5) in
+          let f a =
+            Nx.sum (Rune.remat Nx.Ptree.(tensor @-> returns tensor) block a)
+          in
+          let a = Nx.mul_s (grid 4 3) 0.1 in
+          equal close (Rune.grad' f a)
+            (host (Rune.jit' (Rune.grad' f) (Nx.place (split pair) a))));
+      slow "a gradient through a scan over split rows equals one device's"
+        (fun () ->
+          let f xs =
+            Nx.sum
+              (snd
+                 (Rune.scan'
+                    ~f:(fun c x -> (Nx.add c x, Nx.mul c x))
+                    ~init:(Nx.zeros Nx.float32 [| 4 |])
+                    xs))
+          in
+          let xs = Nx.mul_s (grid 3 4) 0.1 in
+          equal close (Rune.grad' f xs)
+            (host (Rune.jit' (Rune.grad' f) (Nx.place (split ~axis:1 pair) xs))));
+      slow "a column-then-row split MLP equals one device" (fun () ->
+          let w1 = Nx.mul_s (grid 3 4) 0.1 and w2 = Nx.mul_s (grid 4 3) 0.1 in
+          let f (a, (w1, w2)) = Nx.matmul (Nx.relu (Nx.matmul a w1)) w2 in
+          let s = Nx.Ptree.(pair tensor (pair tensor tensor)) in
+          let a = Nx.mul_s (grid 2 3) 0.1 in
+          let r =
+            Rune.jit
+              Nx.Ptree.(s @-> returns tensor)
+              f
+              ( Nx.place (copies pair) a,
+                ( Nx.place (split ~axis:1 pair) w1,
+                  Nx.place (split ~axis:0 pair) w2 ) )
+          in
+          equal close (f (a, (w1, w2))) (host r));
+      slow "data-parallel training follows one device" (fun () ->
+          let loss w a = Nx.mean (Nx.square (Nx.matmul a w)) in
+          let step =
+            Rune.jit
+              Nx.Ptree.(consumes tensor @@ tensor @-> returns tensor)
+              (fun w a ->
+                Nx.sub w (Nx.mul_s (Rune.grad' (fun w -> loss w a) w) 0.1))
+          in
+          let eager w a =
+            Nx.sub w (Nx.mul_s (Rune.grad' (fun w -> loss w a) w) 0.1)
+          in
+          let a = Nx.mul_s (grid 4 3) 0.1 in
+          let w0 = Nx.mul_s (grid 3 2) 0.1 in
+          let we = ref w0 and wc = ref (Nx.place (copies pair) w0) in
+          for _ = 1 to 5 do
+            we := eager !we a;
+            wc := step !wc (Nx.place (split pair) a)
+          done;
+          equal close !we (host !wc));
+    ]
+
+(* Values on the disk *)
+
+(* The float32 values of the file at [path], four of them, as a value on the
+   disk. *)
+let on_disk_at_read path =
+  let module B = Nx_device.Buffer in
+  let pp = Format.pp_print_string in
+  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  Nx.Repr.Placed.v p Nx.float32
+    (Nx_array.View.create [| 4 |])
+    (Nx.Repr.Storage.v p
+       [
+         B.view
+           (require_ok ~pp (B.of_file path))
+           ~offset:0 Nx_dtype.Scalar.Float32 4;
+       ])
+
+(* [x] written to the file at [path], as a value on the disk over it. *)
+let on_disk_at path x =
+  let module B = Nx_device.Buffer in
+  let src = elements x in
+  let pp = Format.pp_print_string in
+  B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
+  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  Nx.Repr.Placed.v p (Nx.dtype x)
+    (Nx_array.View.create (Nx.shape x))
+    (Nx.Repr.Storage.v p
+       [
+         B.view
+           (require_ok ~pp (B.of_file path))
+           ~offset:0 (B.dtype src) (B.length src);
+       ])
+
+let disk =
+  group "values on the disk"
+    [
+      test "a leaf and a capture on the disk are read as host values" (fun () ->
+          let a = on_disk_at (temp_file ()) (x ()) in
+          let w = on_disk_at (temp_file ()) (y ()) in
+          equal close
+            (Nx.mul (poly (x ())) (y ()))
+            (Rune.jit' (fun a -> Nx.mul (poly a) w) a));
+      test "a consumed value on the disk is copied, and its file unchanged"
+        (fun () ->
+          let path = temp_file () in
+          let a = on_disk_at path (x ()) in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+          equal floats (Nx.add_s (x ()) 1.) (host r);
+          equal floats (x ()) (host (on_disk_at_read path)));
+      test "the file opened is read, not the one at its path now" (fun () ->
+          let path = temp_file () in
+          let a = on_disk_at path (x ()) in
+          let replacement = temp_file () in
+          ignore (on_disk_at replacement (y ()));
+          Sys.rename replacement path;
+          equal close (poly (x ())) (host (Rune.jit' poly a)));
+    ]
+
 (* One device *)
 
 (* The calls whose bytes and memory a device counts, on [d]: the test devices by
@@ -1205,6 +1424,8 @@ let () =
          transformations;
          placement;
          scans;
+         device_lists;
+         disk;
          on_one_device ~name:"one device" d4;
          group ~tags:[ "slow" ] "metal" [ metal ];
          group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];

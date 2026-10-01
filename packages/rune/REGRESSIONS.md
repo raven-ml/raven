@@ -666,6 +666,39 @@ them.
 | old: test_device_lists.ml residency › a split output in eager code; residency › operations over a batch split; residency › rows of a split table; residency › a roll by one slice | eager placement over a split | dropped: nx's placement suite (`nx placement`) |
 | old: test_device_lists.ml errors › * | errors of placements | dropped: nx's placement suite (`nx placement`) |
 | old: test_device_lists.ml consumption › consumed storage is lent on every device | lending on every device | J › placement › a consumed split state is lent on every device |
+| old: test_device_lists.ml numerics › elementwise+matmul+reduce matches one device on 2 | operations over two devices | J › device lists › elementwise operations and a sum over two devices equal one device |
+| old: test_device_lists.ml numerics › elementwise+matmul+reduce matches one device on 4 | operations over four devices | J › placement › a product and a sum over four devices equal one device |
+| old: test_device_lists.ml numerics › an elementwise chain is byte-equal to one device | bits over two devices | J › device lists › an elementwise chain over two devices has one device's bits |
+| old: test_device_lists.ml numerics › split along axis 1 | a split along the second axis | J › device lists › a value split along its second axis computes |
+| old: test_device_lists.ml placement › a mean loss over a split batch matches one device; placement › grad over a split batch allreduces | a gradient over a split batch | J › device lists › the gradient of a mean over a split batch equals one device's |
+| old: test_device_lists.ml placement › grad through max keepdims matches one device; placement › grad through sum keepdims matches one device; placement › grad through mean keepdims matches one device | gradients through reductions keeping their axes | J › device lists › gradients through max, sum and mean keeping their axes equal one device's |
+| old: test_device_lists.ml residency › another backend's arguments bind and its results keep it | another backend's arguments | J › device lists › arguments placed with another backend bind, and results keep it |
+| old: test_device_lists.ml residency › a feedback call moves no bytes; residency › copies feed back without transfer; residency › a moved output feeds a call; residency › moved inputs are returned; residency › a moved split output; residency › pass-through outputs gather on read | results fed back | J › device lists › a result fed back to the call moves no bytes |
+| old: test_device_lists.ml residency › a placed capture is bound on the devices | a capture on every device | J › device lists › a capture copied to every device is bound on each |
+| old: test_device_lists.ml residency › one slice of a split storage | one shard of a split value | J › device lists › one shard's slice of a split value computes on its device alone |
+| old: test_device_lists.ml consumption › a split state loop is bounded at two generations; consumption › consuming copies releases every copy | a split state loop | J › device lists › a loop consuming a split state holds two generations on each device |
+| old: test_device_lists.ml consumption › programs over devices own arenas | arenas | dropped: tolk.engine's linked storage (its suite) |
+| old: test_device_lists.ml consumption › a capture of consumed storage raises | a consumed capture | J › captures › a host capture another call consumes makes the program raise, naming its path |
+| old: test_device_lists.ml composition › grad over a program runs eagerly | a gradient around a compiled call | J › transformations › under a transformation a compiled function runs its function |
+| old: test_device_lists.ml composition › two collectively reduced outputs | two reductions over a split | J › device lists › two collectively reduced results equal one device's |
+| old: test_device_lists.ml composition › remat over a split batch | remat over a split batch | J › device lists › a remat over a split batch equals one device's gradient |
+| old: test_device_lists.ml composition › grad through a scan over split rows | a scan over split rows | J › device lists › a gradient through a scan over split rows equals one device's |
+| old: test_device_lists.ml training › data-parallel MLP training follows one device | data-parallel training | J › device lists › data-parallel training follows one device |
+
+### test_tensor_parallel.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_tensor_parallel.ml tensor parallelism › a column-then-row MLP | a column-then-row split MLP | J › device lists › a column-then-row split MLP equals one device |
+
+### test_jit.ml, values on the disk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit.ml values on the disk › a leaf and a capture are read as host values | disk leaves and captures | J › values on the disk › a leaf and a capture on the disk are read as host values |
+| old: test_jit.ml values on the disk › borrowed storage is never lent or written | a consumed disk value | J › values on the disk › a consumed value on the disk is copied, and its file unchanged |
+| old: test_jit.ml values on the disk › the file opened is read, not the one at its path now | the file opened | J › values on the disk › the file opened is read, not the one at its path now |
+| old: test_jit.ml values on the disk › a value larger than a chunk is borrowed | a large mapped value | dropped: `Nx_device.Buffer` borrowing (`nx runtime devices`) |
 
 ### test_jit_metal.ml
 
