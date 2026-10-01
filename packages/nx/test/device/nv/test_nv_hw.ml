@@ -60,17 +60,30 @@ let device ?(i = 0) () =
       else Nx_nv_device.v ~interface:Kernel i
 
 (* The GPUs nx's runtime laws run on: over PCI, the one the suite may take and
-   the next, if there is one. *)
+   the next, if there is one. Under the kernel driver, a GPU that does not open
+   is the reason the suites that need it fail, such as a driver of an
+   unsupported release. *)
 let gpus =
   match pci_first () with
   | Some first ->
-      List.filter_map
-        (fun i -> Result.to_option (Nx_nv_device.get ~interface:Pci i))
-        [ first; first + 1 ]
-  | None ->
-      List.init
-        (Nx_nv_device.count ~interface:Kernel ())
-        (Nx_nv_device.v ~interface:Kernel)
+      Ok
+        (List.filter_map
+           (fun i -> Result.to_option (Nx_nv_device.get ~interface:Pci i))
+           [ first; first + 1 ])
+  | None -> (
+      try
+        Ok
+          (List.init
+             (Nx_nv_device.count ~interface:Kernel ())
+             (Nx_nv_device.v ~interface:Kernel))
+      with Failure why -> Error why)
+
+(* The tests [suites gpus] makes, or one that fails with why a GPU did not
+   open. *)
+let on_gpus suites =
+  match gpus with
+  | Ok ds -> suites ds
+  | Error why -> [ test "the GPUs open" (fun () -> fail why) ]
 
 let fill_host n f =
   let b = B.create Nx_device.host S.UInt8 n in
@@ -578,8 +591,8 @@ let () =
            [
              test "cubins" test_programs; test "local memory" test_local_memory;
            ];
-         group "profiles" (Nx_test.Profiles.copies ~slack:1_000_000 gpus);
-         group "nx" (Nx_test.Runtimes.laws gpus);
+         group "profiles" (on_gpus (Nx_test.Profiles.copies ~slack:1_000_000));
+         group "nx" (on_gpus Nx_test.Runtimes.laws);
          group "failures"
            [
              test "allocations up to the budget's end" test_exhaustion;
