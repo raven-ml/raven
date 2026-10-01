@@ -458,18 +458,18 @@ void E(double* restrict data0_1, double* restrict data1_1) {
   double alu444 = (1.0/val0);
   double alu445 = (alu2?((((((((((((((0.22119417504560815*alu436)+0.22007686931522777)*alu436)+0.26237080574885147)*alu436)+0.32059774779444955)*alu436)+0.41219859454853247)*alu436)+0.5770780162997059)*alu436)+0.9617966939260809)*alu435*alu436)+alu437+(alu435*2.8853900817779268)):((double)(__builtin_inff())));
   double alu446 = ((val0!=0.0)?alu445:((double)(-__builtin_inff())));
-  double alu447 = ((val0<-0.0)?((double)(__builtin_nanf(""))):alu446);
-  double alu448 = (((val0<1024.0)!=1)?((double)(__builtin_inff())):(((((((((((((((((((((((4.4343590829265295e-10*alu443)+7.0731645980857074e-09)*alu443)+1.0178192609217605e-07)*alu443)+1.3215438725113276e-06)*alu443)+1.5252733535175847e-05)*alu443)+0.00015403530451011478)*alu443)+0.001333355814670499)*alu443)+0.0096181291075976)*alu443)+0.055504108664820466)*alu443)+0.24022650695910122)*alu443)+0.6931471805599453)*alu443)+1.0)*__builtin_bit_cast(double, (long)(((alu433+1023l)<<52l)))*__builtin_bit_cast(double, (long)((((cast2-alu433)+1023l)<<52l)))));
-  double alu449 = ((val0<-2000.0)?0.0:alu448);
-  double alu450 = (alu0?((double)(__builtin_nanf(""))):alu447);
-  double alu451 = (alu0?((double)(__builtin_nanf(""))):alu449);
-  double alu452 = ((alu444!=((double)(-__builtin_inff())))?alu450:((double)(-__builtin_inff())));
+  double alu447 = ((alu444!=((double)(-__builtin_inff())))?alu446:((double)(-__builtin_inff())));
+  double alu448 = ((val0<-0.0)?((double)(__builtin_nanf(""))):alu447);
+  double alu449 = (((val0<1024.0)!=1)?((double)(__builtin_inff())):(((((((((((((((((((((((4.4343590829265295e-10*alu443)+7.0731645980857074e-09)*alu443)+1.0178192609217605e-07)*alu443)+1.3215438725113276e-06)*alu443)+1.5252733535175847e-05)*alu443)+0.00015403530451011478)*alu443)+0.001333355814670499)*alu443)+0.0096181291075976)*alu443)+0.055504108664820466)*alu443)+0.24022650695910122)*alu443)+0.6931471805599453)*alu443)+1.0)*__builtin_bit_cast(double, (long)(((alu433+1023l)<<52l)))*__builtin_bit_cast(double, (long)((((cast2-alu433)+1023l)<<52l)))));
+  double alu450 = ((val0<-2000.0)?0.0:alu449);
+  double alu451 = (alu0?((double)(__builtin_nanf(""))):alu448);
+  double alu452 = (alu0?((double)(__builtin_nanf(""))):alu450);
   double alu453 = (((((int)(cast0))&1)!=0)?-1.0:1.0);
   double alu454 = (((cast7&2)!=0)?-1.0:1.0);
   double alu455 = ((alu9<30.0)?(alu438*((((((((((((((((((-7.972559550090379e-18*alu439)+2.810099727108632e-15)*alu439)+-7.647122191181588e-13)*alu439)+1.605904306056645e-10)*alu439)+-2.5052108376350205e-08)*alu439)+2.7557319223919875e-06)*alu439)+-0.00019841269841269616)*alu439)+0.00833333333333333)*alu439)+-0.16666666666666666)*alu439)+1.0)*alu453):(alu441*((((((((((((((((((-7.972559550090379e-18*alu442)+2.810099727108632e-15)*alu442)+-7.647122191181588e-13)*alu442)+1.605904306056645e-10)*alu442)+-2.5052108376350205e-08)*alu442)+2.7557319223919875e-06)*alu442)+-0.00019841269841269616)*alu442)+0.00833333333333333)*alu442)+-0.16666666666666666)*alu442)+1.0)*alu454));
   double alu456 = (alu1?(alu455*alu8):((double)(__builtin_nanf(""))));
   double alu457 = (alu0?((double)(__builtin_nanf(""))):alu456);
   double alu458 = (alu2?alu457:((double)(__builtin_nanf(""))));
-  *(data0_1+0) = (alu451+alu452+alu458+__builtin_sqrt(val0)+alu444+__builtin_trunc(val0));
+  *(data0_1+0) = (alu452+alu451+alu458+__builtin_sqrt(val0)+alu444+__builtin_trunc(val0));
 }
 

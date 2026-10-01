@@ -430,10 +430,14 @@ let xlog2 d =
   in
   let r = where O.(d <> float infinity) r (float_like r infinity) in
   let r = where O.(d <> float 0.0) r (float_like r neg_infinity) in
+  (* Some targets do not find -0.0 equal to 0.0; its reciprocal is -inf. So is
+     that of a negative number too small for its reciprocal to be finite, which
+     the next select makes NaN (D56). *)
+  let r =
+    where O.(reciprocal d <> float neg_infinity) r (float_like r neg_infinity)
+  in
   let r = where O.(d < float (-0.0)) (float_like r Dtype.nan) r in
-  let r = where O.(d <> d) (float_like r Dtype.nan) r in
-  (* Some targets do not find -0.0 equal to 0.0; its reciprocal is -inf. *)
-  where O.(reciprocal d <> float neg_infinity) r (float_like r neg_infinity)
+  where O.(d <> d) (float_like r Dtype.nan) r
 
 let xpow base exponent =
   let ret =

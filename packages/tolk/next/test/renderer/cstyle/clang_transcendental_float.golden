@@ -155,18 +155,18 @@ void E(float* restrict data0_1, float* restrict data1_1) {
   float alu142 = (1.0f/val0);
   float alu143 = (alu2?((((((0.43745502829551697f*alu134)+0.5764790177345276f)*alu134)+0.961801290512085f)*alu133*alu134)+alu135+(alu133*2.885390043258667f)+(alu133*3.2734472910078694e-08f)):((float)(__builtin_inff())));
   float alu144 = ((val0!=0.0f)?alu143:((float)(-__builtin_inff())));
-  float alu145 = ((val0<-0.0f)?((float)(__builtin_nanf(""))):alu144);
-  float alu146 = (((val0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu137)+0.0013392627006396651f)*alu137)+0.009618384763598442f)*alu137)+0.055503472685813904f)*alu137)+0.24022644758224487f)*alu137)+0.6931471824645996f)*alu137)+1.0f)*__builtin_bit_cast(float, (int)(((alu131+127)<<23)))*__builtin_bit_cast(float, (int)((((cast2-alu131)+127)<<23)))));
-  float alu147 = ((val0<-150.0f)?0.0f:alu146);
-  float alu148 = (alu0?((float)(__builtin_nanf(""))):alu145);
-  float alu149 = (alu0?((float)(__builtin_nanf(""))):alu147);
-  float alu150 = ((alu142!=((float)(-__builtin_inff())))?alu148:((float)(-__builtin_inff())));
+  float alu145 = ((alu142!=((float)(-__builtin_inff())))?alu144:((float)(-__builtin_inff())));
+  float alu146 = ((val0<-0.0f)?((float)(__builtin_nanf(""))):alu145);
+  float alu147 = (((val0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu137)+0.0013392627006396651f)*alu137)+0.009618384763598442f)*alu137)+0.055503472685813904f)*alu137)+0.24022644758224487f)*alu137)+0.6931471824645996f)*alu137)+1.0f)*__builtin_bit_cast(float, (int)(((alu131+127)<<23)))*__builtin_bit_cast(float, (int)((((cast2-alu131)+127)<<23)))));
+  float alu148 = ((val0<-150.0f)?0.0f:alu147);
+  float alu149 = (alu0?((float)(__builtin_nanf(""))):alu146);
+  float alu150 = (alu0?((float)(__builtin_nanf(""))):alu148);
   float alu151 = (((cast0&1)!=0)?-1.0f:1.0f);
   float alu152 = (((cast6&2)!=0)?-1.0f:1.0f);
   float alu153 = ((alu9<30.0f)?(alu136*((((((((2.6083159809786594e-06f*alu138)+-0.00019810690719168633f)*alu138)+0.00833307858556509f)*alu138)+-0.16666659712791443f)*alu138)+1.0f)*alu151):(alu140*((((((((2.6083159809786594e-06f*alu141)+-0.00019810690719168633f)*alu141)+0.00833307858556509f)*alu141)+-0.16666659712791443f)*alu141)+1.0f)*alu152));
   float alu154 = (alu1?(alu153*alu8):((float)(__builtin_nanf(""))));
   float alu155 = (alu0?((float)(__builtin_nanf(""))):alu154);
   float alu156 = (alu2?alu155:((float)(__builtin_nanf(""))));
-  *(data0_1+0) = (alu149+alu150+alu156+__builtin_sqrtf(val0)+alu142+__builtin_truncf(val0));
+  *(data0_1+0) = (alu150+alu149+alu156+__builtin_sqrtf(val0)+alu142+__builtin_truncf(val0));
 }
 

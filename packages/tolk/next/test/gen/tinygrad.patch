@@ -45,7 +45,7 @@ index efb2e82..aaf6999 100644
    (UPat(Ops.WMMA, name="u"), do_stack_wmma),
    # stacked INDEX is many INDEX
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
-index 62c3191..e7c789e 100644
+index 62c3191..5925e6a 100644
 --- a/tinygrad/codegen/decomp/transcendental.py
 +++ b/tinygrad/codegen/decomp/transcendental.py
 @@ -63,6 +63,13 @@ def frexp(v:UOp) -> tuple[UOp, UOp]:
@@ -159,7 +159,7 @@ index 62c3191..e7c789e 100644
    return r * _ifand(q, 2).where(r.const_like(-1), r.const_like(1))
  
  # *** toplevel functions for xsin/xlog2/xexp2 ***
-@@ -241,7 +251,8 @@ def xlog2(d:UOp) -> UOp:
+@@ -241,18 +251,20 @@ def xlog2(d:UOp) -> UOp:
    else:
      t = polyN(x2, [0.4374550283e+0, 0.5764790177e+0, 0.9618012905120])
      # s_lo term (x*3.27e-08) only for float32 - underflows in float16
@@ -169,6 +169,21 @@ index 62c3191..e7c789e 100644
  
    # log2(Inf) = Inf
    r = d.ne(math.inf).where(r, r.const_like(math.inf))
+   # log2(0) = -Inf (handle both +0.0 and -0.0)
+   r = d.ne(0.0).where(r, r.const_like(-math.inf))
++  # log2(-0.0) = -Inf. In certain devices like PTX, x == -0.0 won't be true. so making reciprocal.
++  # a negative number too small for its reciprocal to be finite has one of -inf too: the NaN select comes after
++  r = d.reciprocal().ne(-math.inf).where(r, r.const_like(-math.inf))
+   # log2(x) = NaN for x < 0
+   r = (d<-0.0).where(r.const_like(math.nan), r)
+   # log2(NaN) = NaN
+-  r = d.ne(d).where(r.const_like(math.nan), r)
+-  # log2(-0.0) = -Inf. In certain devices like PTX, x == -0.0 won't be true. so making reciprocal.
+-  return d.reciprocal().ne(-math.inf).where(r, r.const_like(-math.inf))
++  return d.ne(d).where(r.const_like(math.nan), r)
+ 
+ def xpow(base:UOp, exponent:UOp) -> UOp:
+   # start with b ** e = exp2(e * log2(b))
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
 index f80c800..060072f 100644
 --- a/tinygrad/codegen/opt/postrange.py

@@ -70,10 +70,10 @@
 68 Ops.WHERE dtypes.float [6, 8, 67]
 69 Ops.WHERE dtypes.float [2, 4, 68]
 70 Ops.CAST dtypes.fp8e5m2fnuz [69] dtypes.fp8e5m2fnuz
-71 Ops.RECIPROCAL dtypes.float [1]
-72 Ops.CMPNE dtypes.bool [71, 17]
-73 Ops.CONST dtypes.weakfloat [] -0.0
-74 Ops.CMPLT dtypes.bool [1, 73]
+71 Ops.CONST dtypes.weakfloat [] -0.0
+72 Ops.CMPLT dtypes.bool [1, 71]
+73 Ops.RECIPROCAL dtypes.float [1]
+74 Ops.CMPNE dtypes.bool [73, 17]
 75 Ops.CMPNE dtypes.bool [1, 7]
 76 Ops.CONST dtypes.weakfloat [] 0.4374550283
 77 Ops.CONST dtypes.weakfloat [] 9.999999747378752e-05
@@ -125,9 +125,9 @@
 123 Ops.WHERE dtypes.float [16, 122, 14]
 124 Ops.CAST dtypes.float [17] dtypes.float
 125 Ops.WHERE dtypes.float [75, 123, 124]
-126 Ops.WHERE dtypes.float [74, 4, 125]
-127 Ops.WHERE dtypes.float [2, 4, 126]
-128 Ops.WHERE dtypes.float [72, 127, 124]
+126 Ops.WHERE dtypes.float [74, 125, 124]
+127 Ops.WHERE dtypes.float [72, 4, 126]
+128 Ops.WHERE dtypes.float [2, 4, 127]
 129 Ops.CAST dtypes.fp8e5m2fnuz [128] dtypes.fp8e5m2fnuz
 130 Ops.CMPNE dtypes.bool [21, 7]
 131 Ops.CAST dtypes.float [31] dtypes.float
@@ -476,10 +476,10 @@
 474 Ops.MUL dtypes.fp8e5m2fnuz [0, 31]
 475 Ops.WHERE dtypes.fp8e5m2fnuz [468, 474, 0]
 476 Ops.CAST dtypes.float [475] dtypes.float
-477 Ops.RECIPROCAL dtypes.float [476]
-478 Ops.CMPNE dtypes.bool [477, 17]
-479 Ops.CMPNE dtypes.bool [476, 476]
-480 Ops.CMPLT dtypes.bool [476, 73]
+477 Ops.CMPNE dtypes.bool [476, 476]
+478 Ops.CMPLT dtypes.bool [476, 71]
+479 Ops.RECIPROCAL dtypes.float [476]
+480 Ops.CMPNE dtypes.bool [479, 17]
 481 Ops.CMPNE dtypes.bool [476, 7]
 482 Ops.CMPNE dtypes.bool [476, 13]
 483 Ops.CMPLT dtypes.bool [476, 78]
@@ -517,9 +517,9 @@
 515 Ops.ADD dtypes.float [513, 514]
 516 Ops.WHERE dtypes.float [482, 515, 14]
 517 Ops.WHERE dtypes.float [481, 516, 124]
-518 Ops.WHERE dtypes.float [480, 4, 517]
-519 Ops.WHERE dtypes.float [479, 4, 518]
-520 Ops.WHERE dtypes.float [478, 519, 124]
+518 Ops.WHERE dtypes.float [480, 517, 124]
+519 Ops.WHERE dtypes.float [478, 4, 518]
+520 Ops.WHERE dtypes.float [477, 4, 519]
 521 Ops.CAST dtypes.fp8e5m2fnuz [520] dtypes.fp8e5m2fnuz
 522 Ops.MUL dtypes.fp8e5m2fnuz [521, 464]
 523 Ops.CAST dtypes.float [522] dtypes.float

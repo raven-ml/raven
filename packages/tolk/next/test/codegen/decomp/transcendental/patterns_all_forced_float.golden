@@ -68,10 +68,10 @@
 66 Ops.WHERE dtypes.float [11, 13, 65]
 67 Ops.WHERE dtypes.float [5, 7, 66]
 68 Ops.WHERE dtypes.float [1, 3, 67]
-69 Ops.RECIPROCAL dtypes.float [0]
-70 Ops.CMPNE dtypes.bool [69, 16]
-71 Ops.CONST dtypes.weakfloat [] -0.0
-72 Ops.CMPLT dtypes.bool [0, 71]
+69 Ops.CONST dtypes.weakfloat [] -0.0
+70 Ops.CMPLT dtypes.bool [0, 69]
+71 Ops.RECIPROCAL dtypes.float [0]
+72 Ops.CMPNE dtypes.bool [71, 16]
 73 Ops.CMPNE dtypes.bool [0, 6]
 74 Ops.CONST dtypes.weakfloat [] 0.4374550283
 75 Ops.CONST dtypes.weakfloat [] 9.999999747378752e-05
@@ -123,9 +123,9 @@
 121 Ops.WHERE dtypes.float [15, 120, 13]
 122 Ops.CAST dtypes.float [16] dtypes.float
 123 Ops.WHERE dtypes.float [73, 121, 122]
-124 Ops.WHERE dtypes.float [72, 3, 123]
-125 Ops.WHERE dtypes.float [1, 3, 124]
-126 Ops.WHERE dtypes.float [70, 125, 122]
+124 Ops.WHERE dtypes.float [72, 123, 122]
+125 Ops.WHERE dtypes.float [70, 3, 124]
+126 Ops.WHERE dtypes.float [1, 3, 125]
 127 Ops.CMPNE dtypes.bool [20, 6]
 128 Ops.CAST dtypes.float [30] dtypes.float
 129 Ops.CAST dtypes.float [49] dtypes.float
@@ -467,10 +467,10 @@
 465 Ops.CMPNE dtypes.bool [25, 464]
 466 Ops.MUL dtypes.float [0, 30]
 467 Ops.WHERE dtypes.float [462, 466, 0]
-468 Ops.RECIPROCAL dtypes.float [467]
-469 Ops.CMPNE dtypes.bool [468, 16]
-470 Ops.CMPNE dtypes.bool [467, 467]
-471 Ops.CMPLT dtypes.bool [467, 71]
+468 Ops.CMPNE dtypes.bool [467, 467]
+469 Ops.CMPLT dtypes.bool [467, 69]
+470 Ops.RECIPROCAL dtypes.float [467]
+471 Ops.CMPNE dtypes.bool [470, 16]
 472 Ops.CMPNE dtypes.bool [467, 6]
 473 Ops.CMPNE dtypes.bool [467, 12]
 474 Ops.CMPLT dtypes.bool [467, 76]
@@ -508,9 +508,9 @@
 506 Ops.ADD dtypes.float [504, 505]
 507 Ops.WHERE dtypes.float [473, 506, 13]
 508 Ops.WHERE dtypes.float [472, 507, 122]
-509 Ops.WHERE dtypes.float [471, 3, 508]
-510 Ops.WHERE dtypes.float [470, 3, 509]
-511 Ops.WHERE dtypes.float [469, 510, 122]
+509 Ops.WHERE dtypes.float [471, 508, 122]
+510 Ops.WHERE dtypes.float [469, 3, 509]
+511 Ops.WHERE dtypes.float [468, 3, 510]
 512 Ops.MUL dtypes.float [511, 25]
 513 Ops.CMPNE dtypes.bool [512, 512]
 514 Ops.CMPLT dtypes.bool [512, 4]

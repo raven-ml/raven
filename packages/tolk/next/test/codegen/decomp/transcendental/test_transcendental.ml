@@ -373,6 +373,15 @@ let specials =
         test "xlog2 of the least subnormal float is -149" (fun () ->
             equal const (`Float (-149.))
               (at Dtype.Float32 T.xlog2 (Float.ldexp 1. (-149))));
+        test
+          "xlog2 of a negative number whose reciprocal overflows is NaN, and \
+           of -0. is -inf (D56)" (fun () ->
+            equal const (`Float nan)
+              (at Dtype.Float32 T.xlog2 (-.Float.ldexp 1. (-130)));
+            equal const (`Float nan)
+              (at Dtype.Float64 T.xlog2 (-.Float.ldexp 1. (-1030)));
+            equal const (`Float (-.inf)) (at Dtype.Float32 T.xlog2 (-0.));
+            equal const (`Float (-.inf)) (at Dtype.Float64 T.xlog2 (-0.)));
       ])
 
 let pow_specials =

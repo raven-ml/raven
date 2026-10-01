@@ -1590,3 +1590,26 @@ the Exclusions of `README.md`.
   names, for each element and 2, 3 and 4 lanes, and `metal_vector_cast_char`;
   and the slow `every GPU kernel compiles with its target's toolchain ›
   metal_vector_*`, which compiles each with MTLCompiler.
+
+## D56. The logarithm of a negative subnormal is NaN
+
+- **tinygrad:** `codegen/decomp/transcendental.py:250-255` (`xlog2` selects
+  NaN where `d < -0.0`, then `-inf` where the reciprocal of `d` is `-inf`,
+  which it means for `-0.0`).
+- **tolk.next:** `lib/codegen/decomp/transcendental.ml:433-439` (`xlog2`),
+  and `test/gen/tinygrad.patch`, which reorders tinygrad's selects the same
+  way.
+- **Differs:** the reciprocal of a negative number of magnitude below
+  `2^-128` in float32 (`2^-1024` in float64, about `2^-16` in float16)
+  overflows to `-inf` too, so
+  tinygrad's last select turned the NaN of such a number's logarithm into
+  `-inf`. The `-inf` select now comes first and the NaN select after it:
+  `-0.0` still gives `-inf`, and every negative number gives NaN.
+- **Reason:** (b). rune's lowering computes nx's logarithms with `xlog2`,
+  and nx gives NaN for the logarithm of every negative number, subnormals
+  included.
+- **Pinned by:** the `Transcendental` suite
+  (`test/codegen/decomp/transcendental`): `special values › xlog2 of a
+  negative number whose reciprocal overflows is NaN, and of -0. is -inf
+  (D56)`, and the negative float16 rows of `values.golden` of magnitude below
+  `2^-16`, from the patched tinygrad.
