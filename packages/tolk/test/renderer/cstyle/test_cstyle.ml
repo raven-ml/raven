@@ -540,6 +540,18 @@ let compilation =
   group ~tags:[ "slow" ] "every GPU kernel compiles with its target's toolchain"
     (List.map compiles_with_its_toolchain gpu_rows)
 
+(* CUDA's binaries *)
+
+let compiles_to_a_cubin () =
+  match Renderer.Compiler.compile cuda.compiler (source_of_case "cuda_add") with
+  | binary -> starts_with ~affix:"\x7fELF" binary
+  | exception Renderer.Compiler.Compile_error why when lacks_toolchain why ->
+      skip ~reason:why ()
+
+let cuda_binaries =
+  group "CUDA's binaries"
+    [ slow "the CUDA device's kernels compile to a cubin" compiles_to_a_cubin ]
+
 (* bfloat16 truncation on Metal *)
 
 (* Metal has no trunc of a bfloat: it truncates a float, so the extra matcher
@@ -1144,6 +1156,7 @@ let () =
          fp8_infinities;
          rendering;
          compilation;
+         cuda_binaries;
          bf16_truncation;
          execution;
          division_group;

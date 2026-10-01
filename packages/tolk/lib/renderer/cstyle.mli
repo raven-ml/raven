@@ -58,8 +58,9 @@ val metal : Helpers.Target.t -> Renderer.t
 val cuda : Helpers.Target.t -> Renderer.t
 (** [cuda target] renders CUDA C++ for an NVIDIA GPU, compiled with NVRTC.
     [target]'s architecture is the compute capability, as ["sm_89"]. The
-    compiler produces PTX if [target]'s device is ["CUDA"], and a cubin
-    otherwise. Its cache table is named after the device.
+    compiler produces a cubin, the binary of that architecture, which the
+    driver loads without translating it. Its cache table is named after the
+    device.
 
     A workgroup has at most 1024 by 1024 by 64 threads, a launch at most
     [2^31 - 1] by 65535 by 65535 workgroups, and a workgroup shares 48 KiB of

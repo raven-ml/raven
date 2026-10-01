@@ -2420,6 +2420,27 @@ tolk lowers as one, replaces it.
   `renderer/cstyle`, `runtime/support/hcq2` and `engine/jit` goldens, from the
   equally patched tinygrad.
 
+## D78. The CUDA device's kernels compile to a cubin
+
+- **tinygrad:** `renderer/cstyle.py:409` (`CUDARenderer`'s compiler, which
+  makes PTX when the device is `CUDA` and a cubin otherwise).
+- **tolk:** `lib/renderer/cstyle.ml:1214` (`cuda`'s compiler).
+- **Differs:** the CUDA device's kernels compile to a cubin, as the NV
+  device's do. NVRTC is given the GPU's architecture either way, so PTX
+  bought no portability: a GPU newer than NVRTC is refused at compile time
+  in both forms. The cubin's code is that of NVRTC's assembler rather than
+  the driver's. PTX that a disk cache kept from before still loads, since
+  the driver takes either form.
+- **Reason:** (b). The driver translates PTX at every load, and only its
+  own cache, bounded in size and per user, saves that work between
+  processes. On an RTX 5000 Ada (driver 615, CUDA 13.4), loading 200
+  kernels of 48 unrolled sines each took 137 ms a kernel with the driver's
+  cache cold, 0.23 ms warm, and 0.09 ms as cubins, whose compile costs what
+  the PTX's does (about 350 ms a kernel) and whose bytes are half the PTX's
+  (98 KB against 209 KB).
+- **Pinned by:** the Cstyle suite: `CUDA's binaries › the CUDA device's
+  kernels compile to a cubin` (slow, skipped without NVRTC).
+
 ## D80. A host program runs its output loop in blocks on the host's cores
 
 - **tinygrad:** `runtime/ops_cpu.py:58-72` (`CPUProgram.__call__`), which

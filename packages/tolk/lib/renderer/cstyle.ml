@@ -1212,8 +1212,11 @@ let cuda (target : Helpers.Target.t) =
     && ((not (List.mem dt Dtype.fp8_ocp)) || ver >= 89)
     && not (List.mem dt Dtype.fp8_fnuz)
   in
+  (* A cubin on every device: the driver loads it as it is, where it would
+     translate PTX to the same architecture at every load. NVRTC is given the
+     architecture either way, so PTX would make nothing more portable. *)
   let compiler =
-    Compiler_cuda.nvrtc ~ptx:(target.device = "CUDA")
+    Compiler_cuda.nvrtc ~ptx:false
       ~cache_key:(String.lowercase_ascii target.device)
       arch
   in
