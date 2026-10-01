@@ -524,6 +524,9 @@ val create : string -> Tolk.Device.t
     [DEV=NVK+NV] or [DEV=PCI+NV] selects only that interface. A later
     runtime initialization failure does not trigger fallback.
 
+    The kernel-driver interface opens only under the releases 570, 580 and
+    610 of NVIDIA's kernel driver, whose layouts it describes.
+
     Raises [Failure] when no requested interface can open the device, and
     [Invalid_argument] for an unknown interface, malformed device index,
     or the deprecated [NV_IFACE] environment variable. *)

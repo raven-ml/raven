@@ -517,7 +517,17 @@ module Nvk_iface = struct
         let vb = Nv_tables.create_blob V.sizeof in
         rm_control' ~fd_ctl ~defs:boot ~root ~obj:root
           ~cmd:Defs.nv0000_ctrl_cmd_system_get_build_version_v2 ~params:vb ();
-        let defs = Nv_tables.defs_for_driver ~major:(driver_version_major vb) in
+        (* A release whose layouts are not described may differ from its
+           neighbours': 615 grew a channel group's parameters to 28 bytes, and
+           the driver copies them back over the 20 that 610's layouts give. *)
+        let major = driver_version_major vb in
+        if not (List.mem major [ 570; 580; 610 ]) then
+          failwith
+            (Printf.sprintf
+               "NVIDIA's kernel driver %d is not supported; the supported \
+                releases are 570, 580 and 610"
+               major);
+        let defs = Nv_tables.defs_for_driver ~major in
         let module I = Defs.Uvm_initialize_params in
         let ib = Nv_tables.create_blob I.sizeof in
         uvm' ~defs ~fd:fd_uvm ~cmd:Defs.uvm_initialize ~rmstatus:I.rmstatus ib;

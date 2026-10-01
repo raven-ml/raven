@@ -898,6 +898,11 @@ thread.
 
 ### Tolk (new)
 
+- The NV device refuses a release of NVIDIA's kernel driver it does not
+  describe (any but 570, 580 and 610), so the default device moves on to CUDA.
+  Under 615 it used 610's layouts, and the driver wrote a channel group's
+  parameters past their buffer: the process aborted with glibc's
+  `munmap_chunk(): invalid pointer`.
 - A buffer over an external pointer (`Device.Buffer.borrow`) takes no
   allocator owner: its memory is the caller's. Borrowing host memory, or
   copying from or to it, inside an operation of another device, such as from a
