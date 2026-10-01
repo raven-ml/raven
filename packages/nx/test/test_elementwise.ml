@@ -708,6 +708,33 @@ let component_pair =
 (* [components z] is [z]'s components as floats, along a last axis of two. *)
 let components z = Nx.bitcast Nx.float64 z
 
+(* [complex] of the parts [real] and [imag] take apart is [z], whatever the bits
+   of its components. *)
+let reassembles (type c e) name (dt : (Complex.t, c) Nx.dtype)
+    (part : (float, e) Nx.dtype) zs =
+  prop
+    ("complex gives back a " ^ name ^ " from its parts, bit for bit")
+    zs
+    (fun z ->
+      equal Stored.packed (Nx.P z)
+        (Nx.P (Nx.complex dt ~re:(Nx.real part z) ~im:(Nx.imag part z))))
+
+(* [conjugate] keeps the real part, negates the imaginary one, and undoes itself
+   bit for bit. *)
+let conjugates name zs =
+  prop ("conjugate negates the imaginary part of a " ^ name) zs (fun z ->
+      let r = Ref.of_nx z in
+      let map f = { r with data = Array.map f r.data } in
+      let floats = Ref.witness float_exact in
+      let w = Nx.conjugate z in
+      equal ~msg:"real" floats
+        (map (fun z -> z.Complex.re))
+        (Ref.of_nx (Nx.real Nx.float64 w));
+      equal ~msg:"imag" floats
+        (map (fun z -> Float.neg z.Complex.im))
+        (Ref.of_nx (Nx.imag Nx.float64 w));
+      equal ~msg:"twice" Stored.packed (Nx.P z) (Nx.P (Nx.conjugate w)))
+
 let complex_numbers =
   let agree name rel nx ocaml =
     prop (name ^ " agrees with Stdlib.Complex") complex_pair (fun (a, b) ->
@@ -846,16 +873,64 @@ let complex_numbers =
           refuses (fun () -> Nx.mod_ z z);
           refuses (fun () -> Nx.round z));
       test
-        "imag, angle and conjugate of a non-finite real part are NaN, as \
-         documented" (fun () ->
-          let z =
-            Nx.create Nx.complex128 [| 2 |]
-              [| { re = infinity; im = 1. }; { re = nan; im = 1. } |]
+        "real, imag, angle and conjugate keep infinities, NaN and signed zeros"
+        (fun () ->
+          let parts =
+            [|
+              (1., infinity);
+              (infinity, 1.);
+              (nan, -0.);
+              (-0., nan);
+              (neg_infinity, -0.);
+              (-1., -0.);
+            |]
           in
-          equal floats64 (Nx.full Nx.float64 [| 2 |] nan) (Nx.imag Nx.float64 z);
-          equal floats64
-            (Nx.full Nx.float64 [| 2 |] nan)
-            (Nx.angle Nx.float64 z));
+          let n = Array.length parts in
+          let floats f = Nx.create Nx.float64 [| n |] (Array.map f parts) in
+          let check (type c) (dt : (Complex.t, c) Nx.dtype) =
+            let msg = Nx_dtype.to_string dt in
+            let z =
+              Nx.create dt [| n |]
+                (Array.map (fun (re, im) -> { Complex.re; im }) parts)
+            in
+            equal ~msg (tensor float_exact) (floats fst) (Nx.real Nx.float64 z);
+            equal ~msg (tensor float_exact) (floats snd) (Nx.imag Nx.float64 z);
+            equal ~msg floats64
+              (floats (fun (re, im) -> Float.atan2 im re))
+              (Nx.angle Nx.float64 z);
+            equal ~msg (tensor float_exact) (floats fst)
+              (Nx.real Nx.float64 (Nx.conjugate z));
+            equal ~msg (tensor float_exact)
+              (floats (fun (_, im) -> Float.neg im))
+              (Nx.imag Nx.float64 (Nx.conjugate z))
+          in
+          check Nx.complex64;
+          check Nx.complex128);
+      test "imag and conjugate read a broadcast view" (fun () ->
+          let row =
+            Nx.create Nx.complex128 [| 3 |]
+              [|
+                { re = 1.; im = infinity };
+                { re = nan; im = -0. };
+                { re = -0.; im = 2. };
+              |]
+          in
+          let z = Nx.broadcast_to [| 2; 3 |] row in
+          equal (tensor float_exact)
+            (Nx.create Nx.float64 [| 2; 3 |]
+               [| infinity; -0.; 2.; infinity; -0.; 2. |])
+            (Nx.imag Nx.float64 z);
+          let pairs =
+            Nx.create Nx.float64 [| 3; 2 |]
+              [| 1.; neg_infinity; nan; 0.; -0.; -2. |]
+          in
+          equal (tensor float_exact)
+            (Nx.broadcast_to [| 2; 3; 2 |] pairs)
+            (components (Nx.conjugate z)));
+      reassembles "complex64" Nx.complex64 Nx.float32 Stored.complex64s;
+      reassembles "complex128" Nx.complex128 Nx.float64 Stored.complex128s;
+      conjugates "complex64" Stored.complex64s;
+      conjugates "complex128" Stored.complex128s;
     ]
 
 (* float16 and bfloat16 compute as float32 and round once, which gives the

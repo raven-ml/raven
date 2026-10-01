@@ -3011,6 +3011,9 @@ thread.
 
 ### Nx
 
+- `Nx.imag`, `Nx.angle` and `Nx.conjugate` keep non-finite components and
+  signed zeros: `imag` of `1 + ∞i` was NaN, and `conjugate` of `1 + 0i` had an
+  imaginary part of `0.`. Components are now read through `Nx.bitcast`.
 - Add `Nx_io.load_gguf`, which loads a GGUF file (versions 2 and 3): its
   metadata as `Nx_io.Gguf.value`s and its tensors as values on the disk, as
   `load_safetensors` does. A block-quantized tensor loads as its bytes.

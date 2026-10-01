@@ -1158,6 +1158,39 @@ let complex_tests =
           (snd (Rune.jvp' (Rune.grad' modulus2) (z3 ()) v)));
     test "check_grads accepts a complex parameter" (fun () ->
         is_ok (Rune.check_grads Nx.Ptree.tensor modulus2 (z3 ())));
+    test "the gradient of Im (c z) is i conj c" (fun () ->
+        let c = c3 () in
+        equal (close ())
+          (Nx.mul (cvec [| (0., 1.) |]) (Nx.conjugate c))
+          (Rune.grad' (fun z -> Nx.sum (Nx.imag f64 (Nx.mul c z))) (z3 ())));
+    test "the gradient of arg z is i / conj z" (fun () ->
+        let z = z3 () in
+        equal (close ())
+          (Nx.div (cvec [| (0., 1.) |]) (Nx.conjugate z))
+          (Rune.grad' (fun z -> Nx.sum (Nx.angle f64 z)) z));
+    test "the gradient of Re (c conj z) is c" (fun () ->
+        let c = c3 () in
+        equal (close ()) c
+          (Rune.grad'
+             (fun z -> Nx.sum (Nx.real f64 (Nx.mul c (Nx.conjugate z))))
+             (z3 ())));
+    test "the tangents of the parts are the parts of the tangent" (fun () ->
+        let z = z3 () and v = c3 () in
+        let tangent f = snd (Rune.jvp' f z v) in
+        equal ~msg:"real" (exact ()) (Nx.real f64 v) (tangent (Nx.real f64));
+        equal ~msg:"imag" (exact ()) (Nx.imag f64 v) (tangent (Nx.imag f64));
+        equal ~msg:"conjugate" (exact ()) (Nx.conjugate v)
+          (tangent Nx.conjugate));
+    test "check_grads accepts a loss through imag, angle and conjugate"
+      (fun () ->
+        is_ok
+          (Rune.check_grads Nx.Ptree.tensor
+             (fun z ->
+               Nx.sum
+                 (Nx.mul
+                    (Nx.imag f64 (Nx.mul z z))
+                    (Nx.angle f64 (Nx.conjugate z))))
+             (z3 ())));
   ]
 
 (* Complex numbers assembled from real parameters *)

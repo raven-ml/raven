@@ -1042,21 +1042,22 @@ module Stored = struct
       (pair float_exact float_exact)
 
   (* A complex64 element is two float32 bit patterns, real part first. *)
-  let complex64 =
+  let complex64s =
     let f32 = float_bits ~e:8 ~m:23 in
     let word (re, im) = Int64.logor (Int64.shift_left im 32) re in
-    let tensors =
-      from_bits "int64" Nx.complex64 (Gen.map word (Gen.pair f32 f32))
-    in
-    case "complex64" Nx.complex64 tensors (tensor complex_exact)
+    from_bits "int64" Nx.complex64 (Gen.map word (Gen.pair f32 f32))
 
-  let complex128 =
+  let complex64 =
+    case "complex64" Nx.complex64 complex64s (tensor complex_exact)
+
+  let complex128s =
     let pp ppf (c : Complex.t) = Format.fprintf ppf "%h%+hi" c.re c.im in
     let value (re, im) = { Complex.re; im } in
     let values = Gen.map value (Gen.pair Gen.any_float Gen.any_float) in
-    case "complex128" Nx.complex128
-      (viewed ~pp Nx.complex128 values)
-      (tensor complex_exact)
+    viewed ~pp Nx.complex128 values
+
+  let complex128 =
+    case "complex128" Nx.complex128 complex128s (tensor complex_exact)
 
   let every =
     (bool :: ints)

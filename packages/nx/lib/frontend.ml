@@ -4186,21 +4186,36 @@ let matrix_transpose x =
 
 (* These compose element-wise operations rather than reading elements back to
    the host, so effectful backends can trace them and no intermediate boxes a
-   [Complex.t]. Two cast rules carry the component work: complex-to-float
-   keeps the real part, float-to-complex sets a zero imaginary part.
+   [Complex.t].
 
-   [complex] writes both lanes directly: it stacks the components along a last
-   axis of two and reads each pair as one complex element with a bitcast.
-   Reaching the imaginary lane from a complex value means rotating it into the
-   real one, which is a complex multiply: it is exact for finite components,
-   but a non-finite component contaminates the product through [inf * 0], so
-   [imag], [angle], and [conjugate] yield NaN there. *)
+   [real], [imag], [complex] and [conjugate] do no arithmetic on a component, so
+   infinities, NaN and signed zeros survive: a bitcast reads a complex tensor's
+   storage as the floats of its components along a last axis of two, real part
+   first, and [complex] stacks two float tensors along such an axis and bitcasts
+   the pairs back. Rotating the imaginary part into the real one with a complex
+   multiply would poison a finite component with a non-finite one, as [inf * 0]
+   is NaN. *)
 
-let real dt (z : (Complex.t, _) t) = cast dt z
+(* [component k dt z] is component [k] of each element of [z], 0 for the real
+   part and 1 for the imaginary one, cast to [dt]. At the float of [z]'s
+   components it is a view of [z]'s storage. *)
+let component (type b c) k (dt : (float, b) Nx_dtype.t) (z : (Complex.t, c) t) :
+    (float, b) t =
+  let lane (type e) (part : (float, e) Nx_dtype.t) =
+    let pairs = bitcast part z in
+    let s = shape pairs in
+    let last = Array.length s - 1 in
+    let one =
+      Array.mapi (fun d n -> if d = last then (k, k + 1) else (0, n)) s
+    in
+    cast dt (reshape (Array.sub s 0 last) (shrink one pairs))
+  in
+  match dtype z with
+  | Complex64 -> lane Nx_dtype.float32
+  | Complex128 -> lane Nx_dtype.float64
 
-let imag dt (z : (Complex.t, _) t) =
-  cast dt (mul_s z Complex.{ re = 0.; im = -1. })
-
+let real dt z = component 0 dt z
+let imag dt z = component 1 dt z
 let magnitude dt (z : (Complex.t, _) t) = cast dt (abs z)
 let angle dt (z : (Complex.t, _) t) = atan2 (imag dt z) (real dt z)
 
@@ -4214,16 +4229,13 @@ let complex (type c) (dt : (Complex.t, c) Nx_dtype.t) ~re ~im =
   | Complex128 -> pairs Nx_dtype.float64
 
 let conjugate (type a b) (x : (a, b) t) : (a, b) t =
-  let negate_imag (type c) (z : (Complex.t, c) t) : (Complex.t, c) t =
-    (* [re - (z - re)] rather than [2·re - z]: the doubling would overflow for
-       components above half the dtype maximum. The float64 hop is exact for
-       both complex dtypes. *)
-    let re = cast (dtype z) (cast Nx_dtype.float64 z) in
-    sub re (sub z re)
+  let negate_imag (type c e) (part : (float, e) Nx_dtype.t)
+      (z : (Complex.t, c) t) : (Complex.t, c) t =
+    complex (dtype z) ~re:(real part z) ~im:(neg (imag part z))
   in
   match dtype x with
-  | Complex64 -> negate_imag x
-  | Complex128 -> negate_imag x
+  | Complex64 -> negate_imag Nx_dtype.float32 x
+  | Complex128 -> negate_imag Nx_dtype.float64 x
   | _ -> x
 
 (* ───── Dot Products and Tensor Contractions ───── *)

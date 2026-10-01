@@ -1861,7 +1861,7 @@ val fma : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     A complex tensor stores an interleaved real and imaginary component. These
     functions move between such a tensor and the float tensors holding its
-    components. All are element-wise and return a fresh tensor, never a view.
+    components. All are element-wise.
 
     The ones producing a float tensor take that dtype first. It selects the
     result's storage precision independently of the input's, so the arithmetic
@@ -1871,14 +1871,12 @@ val fma : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     {2:complex_nonfinite Non-finite components}
 
-    {!real} and {!magnitude} read a component directly, and {!val-complex}
-    writes both directly. The others reach the imaginary component by rotating
-    it into the real one, which multiplies the two components together, so a
-    non-finite component poisons the other: {!imag}, {!angle}, and {!conjugate}
-    produce NaN components wherever an input component is infinite or NaN.
-    Finite inputs are unaffected, including components near the dtype maximum.
-    {!bitcast} to the float of the components reads both exactly, as a last
-    axis of two. *)
+    {!real}, {!imag} and {!conjugate} read each component without arithmetic,
+    and {!val-complex} writes each one so: infinities, NaN and signed zeros
+    survive, and one component never affects the other.
+    [complex dt ~re:(real f z) ~im:(imag f z)] is [z] bit for bit when [f] is
+    the float of [dt]'s components. {!bitcast} to that float reads both
+    components at once, as a last axis of two. *)
 
 val real : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
 (** [real dt z] is the real component of each element of [z].
@@ -1893,6 +1891,13 @@ val real : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
 
 val imag : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
 (** [imag dt z] is the imaginary component of each element of [z].
+
+    {@ocaml[
+      # create complex64 [| 2 |]
+          [| Complex.{ re = 1.; im = infinity }; Complex.{ re = nan; im = -2. } |]
+        |> imag float32
+      - : (float, float32_elt) t = [inf, -2]
+    ]}
 
     See also {!real}, {!val-complex}. *)
 
@@ -1940,8 +1945,8 @@ val complex :
     See also {!real}, {!imag}. *)
 
 val conjugate : ('a, 'b) t -> ('a, 'b) t
-(** [conjugate t] negates the imaginary component of each element. Real dtypes
-    are returned unchanged. *)
+(** [conjugate t] negates the imaginary component of each element, [0.] to [-0.]
+    included, and keeps the real one. Real dtypes are returned unchanged. *)
 
 (** {1:math Mathematical functions} *)
 
