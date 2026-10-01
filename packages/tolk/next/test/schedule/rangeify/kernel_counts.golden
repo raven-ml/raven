@@ -20,9 +20,9 @@ cumsum	1
 sort	8
 embedding	2
 argmax	2
-gather_broadcast	1
-gather_read_twice	1
-gather_rotary	1
+gather_broadcast	2
+gather_read_twice	2
+gather_rotary	2
 prefix_sum_broadcast	2
 elementwise_three	1
 mulacc	1

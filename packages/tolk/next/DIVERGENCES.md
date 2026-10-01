@@ -1890,34 +1890,13 @@ the Exclusions of `README.md`.
   more steps than a batch holds, in chunks and the rest` (3,001 steps), each
   against the eager scan.
 
-## D68. A gather is a load in the kernel that reads it
+## D68. Withdrawn
 
-- **tinygrad:** `schedule/rangeify.py:50-97` (`remove_bufferize`, which keeps
-  the stage of a value whose reductions read a buffer).
-- **tolk.next:** `lib/schedule/rangeify.ml:71` (`cheap`) and `:103`
-  (`remove_bufferize`), and `test/gen/tinygrad.patch`, which gives tinygrad the
-  same rule.
-- **Differs:** a staged value that the cost check keeps is first rewritten
-  with codegen's `pm_load_collapse`, and the stage is removed when the
-  rewritten value passes the same check. A sum over a range of a value selected
-  where an index read from memory equals the range, a one-hot gather, is the
-  load at that index, as codegen folds it. Its stage goes, and the gated load
-  is computed in each kernel that reads it. Only the rewritten value is
-  inlined, so a reduction that the fold leaves keeps its stage. tinygrad keeps
-  every gather that its reader broadcasts or reads twice in a kernel of its
-  own, and stores the gathered rows to read them back.
-- **Reason:** (b). rune lowers `Nx.take` to a one-hot sum. A decode step's
-  scores over the cache's rows at its slots, rotary tables read at positions,
-  and rows read by two sums each ran as two kernels with the gathered rows
-  stored between them. Each is now one kernel.
-- **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
-  `get_kernel_graph › recorded › gather_broadcast_kernels.golden`,
-  `› gather_read_twice_kernels.golden` and `› gather_rotary_kernels.golden`,
-  one kernel each in `kernel_counts.golden`, and the masked sum
-  `prefix_sum_broadcast`, which is no gather and keeps two kernels, each with
-  its `values` law, from the patched tinygrad. rune.next's Jit suite:
-  `gathers`, on the host and on Metal, counts the programs a first call loads
-  and checks its values against eager.
+The scheduler recognised a one-hot sum, rune's lowering of a gather, and
+inlined it as a load where it was read. Inlining values that read state
+written elsewhere in the graph left buffers with two definitions, and it
+was withdrawn; an explicit gather, which rune emits as an indexed load and
+tolk lowers as one, replaces it.
 
 ## D69. A store through a padded view writes only within the pad's source
 

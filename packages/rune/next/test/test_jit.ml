@@ -2806,15 +2806,20 @@ let disk =
 
 (* Rows read at indices from memory, by calls whose arguments are placed at
    [at], computing on [d]: a gather that its reader broadcasts or reads twice is
-   a load in the reader's kernel, and a masked sum that is no gather is a kernel
-   of its own. *)
+   stored by a kernel of its own and read back, and so is a sum masked by a
+   bound from memory. A device loads a program once however many calls run it,
+   so each test's rows have a width of their own, and no kernel of one test is
+   loaded by another. *)
 let gathers ~at d =
-  let rows n scale =
-    Nx.init Nx.float32 [| n; 32 |] (fun i ->
-        Float.of_int ((i.(0) * 32) + i.(1) + 1) *. scale)
+  let rows n w scale =
+    Nx.init Nx.float32 [| n; w |] (fun i ->
+        Float.of_int ((i.(0) * w) + i.(1) + 1) *. scale)
   in
-  let table = rows 64 0.001 and q = rows 8 0.01 and k = rows 8 0.02 in
-  let scores c = Nx.matmul (Nx.mul q c) (Nx.transpose (Nx.mul k c)) in
+  let scores w c =
+    Nx.matmul
+      (Nx.mul (rows 8 w 0.01) c)
+      (Nx.transpose (Nx.mul (rows 8 w 0.02) c))
+  in
   let kernels name n f x =
     test name (fun () ->
         let r, loaded = loaded_on d (fun () -> Rune.jit' f (Nx.place at x)) in
@@ -2822,36 +2827,46 @@ let gathers ~at d =
         equal close (f x) (host r))
   in
   let indices =
-    Nx.create Nx.int64 [| 8 |] [| 3L; 5L; 7L; 0L; 63L; 12L; 12L; 40L |]
+    Nx.create Nx.int64 [| 8 |] [| 3L; 5L; 7L; 0L; 47L; 12L; 12L; 40L |]
   in
   group "gathers"
     [
-      kernels "a cache's rows read by a product are one kernel" 1
+      kernels "a cache's rows read by a product are a kernel of their own" 2
         (fun slots ->
-          Nx.matmul q
-            (Nx.transpose (Nx.take ~axis:0 (rows 20 0.001) ~indices:slots)))
-        (Nx.create Nx.int64 [| 12 |] (Array.init 12 (fun i -> Int64.of_int (19 - i))));
-      kernels "rows at positions from an offset, read twice, are one kernel" 1
+          Nx.matmul (rows 8 32 0.01)
+            (Nx.transpose (Nx.take ~axis:0 (rows 20 32 0.001) ~indices:slots)))
+        (Nx.create Nx.int64 [| 12 |]
+           (Array.init 12 (fun i -> Int64.of_int (19 - i))));
+      kernels
+        "rows at positions from an offset, read twice, are a kernel of their \
+         own"
+        2
         (fun p ->
-          scores (Nx.take ~axis:0 table ~indices:(Nx.add (Nx.arange Nx.int64 0 8 1) p)))
+          scores 16
+            (Nx.take ~axis:0 (rows 64 16 0.001)
+               ~indices:(Nx.add (Nx.arange Nx.int64 0 8 1) p)))
         (Nx.scalar Nx.int64 4L);
-      kernels "rows read by two sums are one kernel" 1
+      kernels "rows read by two sums are a kernel of their own" 2
         (fun indices ->
-          let g = Nx.take ~axis:0 table ~indices in
+          let g = Nx.take ~axis:0 (rows 64 40 0.001) ~indices in
           Nx.add
-            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 0 ] q)))
-            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 1 ] k))))
+            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 0 ] (rows 8 40 0.01))))
+            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 1 ] (rows 8 40 0.02)))))
         indices;
-      kernels "rows summed below a bound from memory, read twice, are a kernel \
-               of their own" 2
+      kernels
+        "rows summed below a bound from memory, read twice, are a kernel of \
+         their own"
+        2
         (fun bound ->
           let below =
-            Nx.less (Nx.reshape [| 1; 64; 1 |] (Nx.arange Nx.int64 0 64 1)) bound
+            Nx.less
+              (Nx.reshape [| 1; 48; 1 |] (Nx.arange Nx.int64 0 48 1))
+              bound
           in
-          scores
+          scores 24
             (Nx.sum ~axes:[ 1 ]
                (Nx.where below
-                  (Nx.reshape [| 1; 64; 32 |] table)
+                  (Nx.reshape [| 1; 48; 24 |] (rows 48 24 0.001))
                   (Nx.scalar Nx.float32 0.))))
         (Nx.reshape [| 8; 1; 1 |] indices);
     ]

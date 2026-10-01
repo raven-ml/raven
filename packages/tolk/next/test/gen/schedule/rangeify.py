@@ -181,8 +181,8 @@ PROGRAMS = {
     "sort": lambda: empty(8).sort()[0],
     "embedding": lambda: empty(10, 4)[Tensor([1, 2, 3], dtype="int")],
     "argmax": lambda: empty(4, 8).argmax(1),
-    # gathers at loaded indices, read where they are broadcast or twice, are
-    # loads in their consumers' kernel; a masked sum that is no gather is not
+    # gathers at loaded indices, read where they are broadcast or twice, and a
+    # masked sum that is no gather
     "gather_broadcast": lambda: empty(8, 32) @ empty(20, 32)[empty(12, dtype=dtypes.int)].T,
     "gather_read_twice": lambda: (lambda g: (g * empty(32)).sum(1) + (g * empty(32)).sum(1))(
         empty(64, 32)[empty(8, dtype=dtypes.int)]),

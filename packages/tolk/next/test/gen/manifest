@@ -2128,7 +2128,8 @@ renderer/cstyle/clang_inf_nan_double.golden
 renderer/cstyle/clang_inf_nan_float.golden
 renderer/cstyle/clang_inf_nan_half.golden
 renderer/cstyle/clang_inline_const_alu.golden
-renderer/cstyle/clang_interpolate_atari.golden
+renderer/cstyle/clang_interpolate_atari_0.golden
+renderer/cstyle/clang_interpolate_atari_1.golden
 renderer/cstyle/clang_matmul.golden
 renderer/cstyle/clang_matmul_upcasted.golden
 renderer/cstyle/clang_matmul_upcasted_expand_ssa.golden

@@ -66,38 +66,6 @@ let pm_gate_substitute =
           else raise Bottom_up_gate);
     ])
 
-(* The cost of computing [src] where it is read: the buffers it reads, at most
-   three, and no reduction reading one. *)
-let cheap src =
-  let accessed = Tbl.create 8 in
-  let access u = Tbl.replace accessed u () in
-  let red_gate x =
-    match op x with
-    | Op.After ->
-        access (buf_uop x);
-        false
-    | Op.Stage when (opts x).addrspace = Dtype.Global ->
-        access x;
-        false
-    | Op.Mstack ->
-        access x;
-        false
-    (* Stores do not count as buffer accesses. *)
-    | Op.Store -> false
-    | Op.Param ->
-        access x;
-        true
-    | _ -> true
-  in
-  let reduces =
-    List.filter (fun x -> op x = Op.Reduce) (toposort ~gate:red_gate src)
-  in
-  let reads_buffer x = List.mem (op x) Op.[ Param; Stage; After ] in
-  Tbl.length accessed <= 3
-  && not
-       (List.exists reads_buffer
-          (toposort (sink (List.map (fun r -> nth r 0) reduces))))
-
 (* A buffer stored only to be read through movements is removed: the indices of
    the read are expressed in terms of the stored value's. *)
 let remove_bufferize src buf idx =
@@ -112,16 +80,39 @@ let remove_bufferize src buf idx =
   (* A user's materialisation is never removed. *)
   if always_run src || not (opts buf).removable then None
   else
-    (* A sum selecting one element at an index read from memory is that
-       element's load, as kernels fold it. *)
-    let src =
-      if cheap src then Some src
-      else
-        let folded = graph_rewrite ~ctx:() src Simplify.pm_load_collapse in
-        if folded != src && cheap folded then Some folded else None
+    (* The cost: the buffers the value reads, and whether a reduction reads
+       one. *)
+    let accessed = Tbl.create 8 in
+    let access u = Tbl.replace accessed u () in
+    let red_gate x =
+      match op x with
+      | Op.After ->
+          access (buf_uop x);
+          false
+      | Op.Stage when (opts x).addrspace = Dtype.Global ->
+          access x;
+          false
+      | Op.Mstack ->
+          access x;
+          false
+      (* Stores do not count as buffer accesses. *)
+      | Op.Store -> false
+      | Op.Param ->
+          access x;
+          true
+      | _ -> true
     in
-    Option.map
-      (fun src ->
+    let reduces =
+      List.filter (fun x -> op x = Op.Reduce) (toposort ~gate:red_gate src)
+    in
+    if Tbl.length accessed > 3 then None
+    else
+      let reads_buffer x = List.mem (op x) Op.[ Param; Stage; After ] in
+      if
+        List.exists reads_buffer
+          (toposort (sink (List.map (fun r -> nth r 0) reduces)))
+      then None
+      else
         (* A constant range is not replaced, nor is a range read by a dead
            load. *)
         let replaced =
@@ -130,8 +121,7 @@ let remove_bufferize src buf idx =
               op k <> Op.Const && not (op v = Op.Const && is_invalid v))
             (zip (List.tl (Ops.src buf)) (List.tl (Ops.src idx)))
         in
-        substitute ~extra_pm:pm_gate_substitute src replaced)
-      src
+        Some (substitute ~extra_pm:pm_gate_substitute src replaced)
 
 let remove_noop_bufferize idx b2 =
   if not (List.equal ( == ) (List.tl (src idx)) (List.tl (src b2))) then None
