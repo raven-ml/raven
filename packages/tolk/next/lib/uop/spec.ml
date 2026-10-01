@@ -486,6 +486,18 @@ let full : t =
       hcq;
     ]
 
+let loop r = Axis_type.equal (axis_type r) Axis_type.Loop
+
+(* A bound of a view that moves with loops: constants, loop ranges, and weak
+   integer sums and products of them. *)
+let rec loop_bound u =
+  match op u with
+  | Op.Const -> true
+  | Op.Range -> loop u
+  | Op.Add | Op.Mul ->
+      Dtype.equal (dtype u) Dtype.Weak_int && List.for_all loop_bound (src u)
+  | _ -> false
+
 let kernel_graph : t =
   Pattern_matcher.fold
     [
@@ -493,7 +505,7 @@ let kernel_graph : t =
       accept (pat [ Op.Const ] ~src:[]);
       accept (pat [ Op.Cast ] ~src:[ pat [ Op.Const ] ~src:[] ]);
       decide (pat [ Op.Stack ] ~name:"s") "s" (fun s ->
-          if List.for_all (fun x -> List.mem (op x) Op.[ Const; Param ]) (src s)
+          if List.for_all (fun x -> op x = Op.Param || loop_bound x) (src s)
           then Some true
           else None);
       accept (pat [ Op.Param ] ~src:[]);
@@ -506,8 +518,22 @@ let kernel_graph : t =
       accept (pat [ Op.Bitcast ]);
       check (pat [ Op.Mstack ] ~name:"x") "x" mstack_fits;
       check (pat [ Op.Mselect ] ~name:"x") "x" mselect_fits;
+      (* An open device range is bound per device at launch; a loop range runs
+         the calls an end closes it around. *)
       check (pat [ Op.Range ] ~name:"r") "r" (fun r ->
-          Axis_type.equal (axis_type r) Axis_type.Device);
+          Axis_type.equal (axis_type r) Axis_type.Device || loop r);
+      check (pat [ Op.End ] ~name:"e") "e" (fun e ->
+          op (nth e 0) = Op.Call
+          && List.for_all (fun r -> op r = Op.Range && loop r) (List.tl (src e)));
+      (* A call in a loop reads a view of storage that moves with the loop's
+         ranges, its bounds weak integer arithmetic on them. *)
+      check (pat [ Op.Shrink ] ~allow_any_len:true ~name:"v") "v" (fun v ->
+          let rs = Nodes.to_list (ranges v) in
+          rs <> [] && List.for_all loop rs);
+      check
+        (pat [ Op.Add; Op.Mul ] ~dtype:[ Dtype.Weak_int ] ~name:"x")
+        "x"
+        (fun x -> List.for_all loop_bound (src x));
       accept
         (pat [ Op.Call ]
            ~src:[ Upat.v ~op:opaque_call_bodies () ]

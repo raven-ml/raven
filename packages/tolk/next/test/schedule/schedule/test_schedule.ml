@@ -679,7 +679,34 @@ let loop = Ops.range ~axis_type:Loop (Int 4) [ 0 ]
 let ended () =
   let a = copies ~into:x ~from:y in
   let kg = Ops.sink [ Ops.after x [ Ops.end_ a [ loop ] ] ] in
+  equal (list uop)
+    [ Ops.end_ a [ loop ] ]
+    (Ops.src (Schedule.create_schedule kg))
+
+let device_range = Ops.range ~axis_type:Device (Int 2) [ -1 ]
+
+let ended_on_devices () =
+  let a = copies ~into:x ~from:y in
+  let kg = Ops.sink [ Ops.after x [ Ops.end_ a [ device_range ] ] ] in
   equal (list uop) [ a ] (Ops.src (Schedule.create_schedule kg))
+
+(* A loop runs after the call that writes what it reads, and before the call
+   that overwrites what it reads. *)
+let loop_after_writer () =
+  let w = copies ~into:y ~from:x in
+  let l = Ops.end_ (copies ~into:x ~from:(Ops.after y [ w ])) [ loop ] in
+  let kg = Ops.sink [ Ops.after x [ l ] ] in
+  equal (list uop)
+    [ w; Ops.end_ (copies ~into:x ~from:y) [ loop ] ]
+    (Ops.src (Schedule.create_schedule kg))
+
+let loop_before_overwriter () =
+  let l = Ops.end_ (copies ~into:x ~from:y) [ loop ] in
+  let o = copies ~into:y ~from:(Ops.after x [ l ]) in
+  let kg = Ops.sink [ Ops.after x [ l ]; Ops.after y [ o ] ] in
+  equal (list uop)
+    [ l; copies ~into:y ~from:x ]
+    (Ops.src (Schedule.create_schedule kg))
 
 let ended_store () =
   let kg =
@@ -704,7 +731,14 @@ let ordering =
   group "create_schedule › rules"
     [
       test "a kernel's argument that is no storage is refused" not_storage;
-      test "an end of a call schedules the call" ended;
+      test "an end of a call over a loop schedules the call in its loop (D60)"
+        ended;
+      test "an end of a call over device ranges schedules the call"
+        ended_on_devices;
+      test "a loop runs after the call that writes what it reads (D60)"
+        loop_after_writer;
+      test "a loop runs before the call that overwrites what it reads (D60)"
+        loop_before_overwriter;
       test "a kernel reading storage before and after a write runs after it"
         read_across;
       test "a kernel overwriting a state runs after the kernel that made it"
@@ -953,6 +987,114 @@ let variables =
       test "a kernel on buffers of two devices is refused" several_devices;
     ]
 
+(* Loops of calls (D60) *)
+
+(* A scan of three trips: a carry [c] of four floats, updated in place, and rows
+   of four of [xs] and [ys]. Each trip stores [c * 2] into its row of [ys], then
+   adds its row of [xs] to [c]. *)
+let scan_loop () =
+  let k = 4 and n = 3 in
+  let p slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p 0) Ops.O.(p 0 + p 1);
+        Ops.store (p 2) Ops.O.(p 0 * float 2.);
+      ]
+  in
+  let c = Ops.new_buffer cpu k Float32
+  and xs = Ops.new_buffer cpu (n * k) Float32
+  and ys = Ops.new_buffer cpu (n * k) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let row b =
+    Ops.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let e =
+    Ops.end_ (Ops.call ~precompile:true body [ c; row xs; row ys ]) [ r ]
+  in
+  (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ], r, (c, xs, ys))
+
+let ops_of us = List.map (fun u -> Op.name (Ops.op u)) us
+
+(* [moving r a] is whether the argument [a] is a view that moves with [r]. *)
+let moving r a = Ops.Nodes.mem r (Ops.ranges a)
+
+let scan_linear () =
+  let big, r, (c, xs, ys) = scan_loop () in
+  let linear, _ = Schedule.create_linear_with_vars ~capturing:true big in
+  match Ops.src linear with
+  | [ e ] -> (
+      equal (list string) ~msg:"a loop" [ "END" ] (ops_of [ e ]);
+      equal (list uop) ~msg:"over the range" [ r ] (List.tl (Ops.src e));
+      let body = Ops.nth e 0 in
+      equal (list string) ~msg:"of a linear" [ "LINEAR" ] (ops_of [ body ]);
+      match Ops.src body with
+      | [ y; c' ] ->
+          let storage a = Ops.buf_uop (Ops.base a) in
+          equal (list uop) ~msg:"the first call stores the row of ys" [ ys ]
+            (List.filter_map
+               (fun a -> if moving r a then Some (storage a) else None)
+               (Ops.src_without_body y));
+          equal (list uop) ~msg:"the second adds the row of xs to c" [ c; xs ]
+            (List.map storage (Ops.src_without_body c'));
+          equal (list bool) ~msg:"whose row moves" [ false; true ]
+            (List.map (moving r) (Ops.src_without_body c'))
+      | calls -> failf "%d calls in the loop" (List.length calls))
+  | entries -> failf "%d entries" (List.length entries)
+
+(* The scan's body holds a loop of its own: each row of xs, of eight floats, is
+   added to the carry in two halves, one inner trip each. *)
+let nested_linear () =
+  let k = 4 and n = 3 in
+  let q slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let inner = Ops.sink [ Ops.store (q 0) Ops.O.(q 0 + q 1) ] in
+  let p0 = Ops.param ~shape:[ Int k ] ~device:cpu 0 Float32
+  and p1 = Ops.param ~shape:[ Int (2 * k) ] ~device:cpu 1 Float32 in
+  let r' = Ops.range ~axis_type:Loop (Int 2) [ 101 ]
+  and r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let row r w b =
+    Ops.shrink b
+      [ Some (Sym Ops.O.(r * int w), Sym Ops.O.((r * int w) + int w)) ]
+  in
+  let outer =
+    Ops.sink
+      [
+        Ops.after p0
+          [
+            Ops.end_
+              (Ops.call ~precompile:true inner [ p0; row r' k p1 ])
+              [ r' ];
+          ];
+      ]
+  in
+  let c = Ops.new_buffer cpu k Float32
+  and xs = Ops.new_buffer cpu (n * 2 * k) Float32 in
+  let e =
+    Ops.end_ (Ops.call ~precompile:true outer [ c; row r (2 * k) xs ]) [ r ]
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars ~capturing:true
+      (Ops.sink [ Ops.after c [ e ] ])
+  in
+  match Ops.src linear with
+  | [ e ] -> (
+      equal (list uop) ~msg:"the outer loop" [ r ] (List.tl (Ops.src e));
+      match Ops.src (Ops.nth e 0) with
+      | [ e' ] ->
+          equal (list string) ~msg:"holds a loop" [ "END" ] (ops_of [ e' ]);
+          equal (list uop) ~msg:"the inner loop" [ r' ] (List.tl (Ops.src e'))
+      | entries -> failf "%d entries in the outer loop" (List.length entries))
+  | entries -> failf "%d entries" (List.length entries)
+
+let loops =
+  group "create_linear_with_vars › loops of calls (D60)"
+    [
+      test "a loop of a precompiled call is a loop of its body's calls"
+        scan_linear;
+      test "a loop inside a loop's body keeps its own end" nested_linear;
+    ]
+
 let () =
   exit
     (run "Tolk_next.Schedule"
@@ -970,4 +1112,5 @@ let () =
          store_after;
          views;
          variables;
+         loops;
        ])

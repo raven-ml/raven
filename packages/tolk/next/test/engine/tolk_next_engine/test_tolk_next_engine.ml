@@ -602,6 +602,62 @@ let runs_once_per_trip () =
     (floats (Array.map (fun x -> x +. 1.) xs))
     (Run.values Float32 out_buffer)
 
+(* A scan of three trips, scheduled from its program: a carry [c] of four
+   floats, updated in place, and rows of four of [xs] and [ys]. Each trip stores
+   [c * 2] into its row of [ys], then adds its row of [xs] to [c]. *)
+let scans_with_a_carry () =
+  let k = 4 and n = 3 in
+  let cpu = Ops.Single "CPU" in
+  let p slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p 0) Ops.O.(p 0 + p 1);
+        Ops.store (p 2) Ops.O.(p 0 * float 2.);
+      ]
+  in
+  let c = Ops.new_buffer cpu k Float32
+  and xs = Ops.new_buffer cpu (n * k) Float32
+  and ys = Ops.new_buffer cpu (n * k) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let row b =
+    Ops.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let e =
+    Ops.end_ (Ops.call ~precompile:true body [ c; row xs; row ys ]) [ r ]
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars
+      (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ])
+  in
+  let compiled =
+    Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) linear
+  in
+  let c0 = [| 1.; 2.; 3.; 4. |] and x = Array.init (n * k) Float.of_int in
+  let c_buffer = Run.buffer host Float32 (floats c0)
+  and ys_buffer = Run.buffer host Float32 (floats (Array.make (n * k) 0.)) in
+  let s =
+    Engine.link ~devices
+      ~bound:
+        [
+          (c, [ c_buffer ]);
+          (xs, [ Run.buffer host Float32 (floats x) ]);
+          (ys, [ ys_buffer ]);
+        ]
+      compiled
+  in
+  Engine.run s [||];
+  let carry = Array.copy c0 and y = Array.make (n * k) 0. in
+  for t = 0 to n - 1 do
+    for j = 0 to k - 1 do
+      y.((t * k) + j) <- carry.(j) *. 2.;
+      carry.(j) <- carry.(j) +. x.((t * k) + j)
+    done
+  done;
+  equal values ~msg:"the carry" (floats carry) (Run.values Float32 c_buffer);
+  equal values ~msg:"the rows" (floats y) (Run.values Float32 ys_buffer)
+
 (* A memory-planned schedule: z = a + 1; in a range, y = b + 1, into [y] or into
    a view of its first half; then z + 1 and y + 1 into outputs, each kernel on
    the first four elements of its buffers. The range writes y before the call
@@ -694,6 +750,8 @@ let schedules =
         [ "contiguous"; "copy_view"; "shard_add" ] (fun name ->
           runs_on_its_slots name ());
       test "a range around a call runs it once per trip" runs_once_per_trip;
+      test "a scan runs its body once per trip, carrying in place (D60)"
+        scans_with_a_carry;
       test "a planned buffer a range writes is not placed over one it leaves"
         (plans_the_buffers_of_a_range ~through_a_view:false);
       test "a buffer a range writes through a view is not placed over another"

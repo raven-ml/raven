@@ -1716,3 +1716,54 @@ the Exclusions of `README.md`.
   tinygrad. In rune.next, the `Compiled` suite's `edges › a fold of int8
   overlapping windows compiles` and its integer fold law, int8
   included, on the host.
+
+## D60. A loop of a call stays in the schedule
+
+- **tinygrad:** `schedule/rangeify.py:165-168` (`pm_no_views`, which strips
+  every view of storage), `:335-337` (`split_store`, which makes a kernel of
+  an end of a call), `schedule/__init__.py:72-75` (`create_schedule`, which
+  schedules the call of an end and drops the end), and `uop/spec.py:254-280`
+  (`spec_kernel_graph`, which admits device ranges only, and no end).
+- **tolk.next:** `lib/schedule/rangeify.ml:236` (`loop_range`), `:241`
+  (`pm_no_views`, which keeps a view that moves with a loop's range and
+  untags the range), `:588` (`split_store`), `lib/schedule/schedule.ml:141`
+  (`create_schedule`: `loops`, `argument` and the kept end),
+  `lib/uop/spec.ml:489` (`loop`, `loop_bound` and `kernel_graph`), and
+  `test/gen/tinygrad.patch`, which gives tinygrad's `spec_kernel_graph` the
+  same rules.
+- **Differs:** an end of a precompiled call over loop ranges
+  (`Axis_type.Loop`), `AFTER(buf, END(CALL(fn, args), r))`, is an effect of
+  the kernel graph and no kernel. The arguments that move with `r` stay
+  views, the range loses the tag of kernel ranges, and `create_schedule`
+  keeps the end around the call, ordered by the call's reads and writes.
+  Once the call's body is scheduled and resolved, the schedule is `LINEAR
+  [END(LINEAR [CALL k1; CALL k2; ...], r)]`, the form that ranges of calls
+  on HCQ devices (D30), the memory plan of a range (D41) and `Engine.run`
+  already run. An end over device ranges is still the call, bound at launch.
+  The kernel graph spec admits loop ranges, ends of calls over them, and
+  views that move with them, whose bounds are constants, loop ranges, and
+  weak integer sums and products of them; a range of any other kind outside
+  a kernel is still refused, so a range rangeify leaks never runs as a loop.
+  tinygrad has no such loop: its `split_store` wraps the end in a kernel of
+  its own, and its `create_schedule` drops the end.
+- **Reason:** (b). rune's `Rune.scan` compiles its body once and runs it
+  once per trip, in place over its carry and over rows of its inputs and
+  outputs, as such a loop.
+- **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
+  `get_kernel_graph › loops of calls (D60) › a loop of a precompiled call is
+  no kernel` and `› a loop's call reads views that move with its range`; the
+  `Schedule` suite (`test/schedule/schedule`): `create_schedule › rules ›
+  an end of a call over a loop schedules the call in its loop (D60)`, `› an
+  end of a call over device ranges schedules the call`, `› a loop runs
+  after the call that writes what it reads (D60)`, `› a loop runs before
+  the call that overwrites what it reads (D60)`, and
+  `create_linear_with_vars › loops of calls (D60) › a loop of a precompiled
+  call is a loop of its body's calls` and `› a loop inside a loop's body
+  keeps its own end`; and the `Tolk_next_engine` suite
+  (`test/engine/tolk_next_engine`): `link and run › a scan runs its body
+  once per trip, carrying in place (D60)`, against the unrolled loop on the
+  host. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls
+  (D60) › accepts a loop of a call over a loop range`, `› refuses a loop of
+  a call over a range of any other kind`, `› accepts an open device range`
+  and `› refuses a weak sum of a weak integer variable`; its
+  `verdicts.golden` records the patched spec on ends and shrinks.

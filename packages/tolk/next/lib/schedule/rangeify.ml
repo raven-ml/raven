@@ -233,8 +233,11 @@ let pm_no_indexing_calls =
           Some (no_indexing_calls (m "u")));
     ]
 
+let loop_range r = Axis_type.equal (axis_type r) Axis_type.Loop
+
 (* The kernel graph is what runs: it has no views, and a value's storage is the
-   storage. *)
+   storage. A view that moves with a range is what a call in that range reads on
+   each trip, and stays. *)
 let pm_no_views =
   Pattern_matcher.v
     [
@@ -249,7 +252,16 @@ let pm_no_views =
                  ();
              ]
            ())
-        (fun m -> Some (nth (m "v") 0));
+        (fun m ->
+          let v = m "v" in
+          if List.exists loop_range (Nodes.to_list (ranges v)) then None
+          else Some (nth v 0));
+      (* A loop's range, outside every kernel, loses the tag that kernels
+         renumber their ranges by. *)
+      rule (Upat.op Op.Range ~name:"r") (fun m ->
+          let r = m "r" in
+          if is_tagged r && loop_range r then Some (replace r ~tag:None)
+          else None);
     ]
 
 module Bufs = Set.Make (struct
@@ -574,11 +586,15 @@ let to_define_global =
     ]
 
 let split_store x =
-  (* Open device ranges are bound per device at launch. *)
+  (* Open device ranges are bound per device at launch. A loop around a call
+     runs that call, and is no kernel. *)
   if
     List.exists
       (fun r -> not (Axis_type.equal (axis_type r) Axis_type.Device))
       (Nodes.to_list (ranges x))
+    || op x = Op.End
+       && op (nth x 0) = Op.Call
+       && List.exists loop_range (List.tl (src x))
   then None
   else
     let lctx = { dg = 0; map = Tbl.create 8; order = []; range = 0 } in

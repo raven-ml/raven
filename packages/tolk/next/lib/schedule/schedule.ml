@@ -138,17 +138,33 @@ let create_schedule sched_sink =
     (fun (k, d) -> if d = 0 then Queue.push k queue)
     (Ordered.bindings in_degree);
   let linearized = ref [] in
+  let loops r = Axis_type.equal (axis_type r) Axis_type.Loop in
+  (* A call's argument is the storage it reads, or a view of it that moves with
+     the loops the call runs in. *)
+  let rec argument s =
+    if
+      Op.Set.mem (op s) Op.Set.movement
+      && List.exists loops (Nodes.to_list (ranges s))
+    then replace s ~src:(argument (nth s 0) :: List.tl (src s))
+    else buf_uop (unwrap_src s)
+  in
   while not (Queue.is_empty queue) do
     let rk = Queue.pop queue in
     let k = if op rk = Op.End then nth rk 0 else rk in
     if op k <> Op.Call then invalid_arg "a scheduled kernel is a call";
-    let buf_uops =
+    let args =
       List.filter_map
-        (fun s ->
-          if is_bound_var s then None else Some (buf_uop (unwrap_src s)))
+        (fun s -> if is_bound_var s then None else Some (argument s))
         (List.tl (src k))
     in
-    linearized := replace k ~src:(body k :: buf_uops) :: !linearized;
+    let call = replace k ~src:(body k :: args) in
+    (* A loop around a call stays. *)
+    let entry =
+      if op rk = Op.End && List.exists loops (List.tl (src rk)) then
+        replace rk ~src:(call :: List.tl (src rk))
+      else call
+    in
+    linearized := entry :: !linearized;
     List.iter
       (fun x ->
         let d = Option.get (Ordered.find_opt in_degree x) - 1 in

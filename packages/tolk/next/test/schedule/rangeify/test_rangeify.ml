@@ -686,7 +686,64 @@ let laws =
         schedules_what_it_computes;
     ]
 
+(* Loops of calls (D60) *)
+
+(* A scan of three trips over parameters: a carry [c] of four floats, updated in
+   place, and rows of four of [xs] and [ys]. Each trip's call stores [c * 2]
+   into its row of [ys] and adds its row of [xs] to [c]. The call's body is
+   already scheduled, as calls inside a program are scheduled before it. *)
+let scan_loop () =
+  let k = 4 and n = 3 in
+  let p slot = Ops.param ~device:cpu ~shape:[ Int k ] slot Float32 in
+  let body =
+    Schedule.create_schedule
+      (schedule
+         (Ops.sink
+            [
+              Ops.store (p 0) Ops.O.(p 0 + p 1);
+              Ops.store (p 2) Ops.O.(p 0 * float 2.);
+            ]))
+  in
+  let c = Ops.param ~device:cpu ~shape:[ Int k ] 0 Float32
+  and xs = Ops.param ~device:cpu ~shape:[ Int (n * k) ] 1 Float32
+  and ys = Ops.param ~device:cpu ~shape:[ Int (n * k) ] 2 Float32 in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let row b =
+    Ops.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let e =
+    Ops.end_ (Ops.call ~precompile:true body [ c; row xs; row ys ]) [ r ]
+  in
+  (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ], r)
+
+let loops =
+  group "get_kernel_graph › loops of calls (D60)"
+    [
+      test "a loop of a precompiled call is no kernel" (fun () ->
+          let sink, _ = scan_loop () in
+          equal int 0 (kernels_of sink));
+      test "a loop's call reads views that move with its range" (fun () ->
+          let sink, r = scan_loop () in
+          let ends =
+            List.filter
+              (fun u -> Ops.op u = End)
+              (Ops.toposort ~enter_calls:false (schedule sink))
+          in
+          match ends with
+          | [ e ] ->
+              let call = Ops.nth e 0 in
+              equal bool ~msg:"the end closes the range" true
+                (List.memq r (List.tl (Ops.src e)));
+              equal (list bool) ~msg:"which arguments move"
+                [ false; true; true ]
+                (List.map
+                   (fun a -> Ops.Nodes.mem r (Ops.ranges a))
+                   (Ops.src_without_body call))
+          | ends -> failf "%d ends of calls" (List.length ends));
+    ]
+
 let () =
   exit
     (run "Tolk_next.Rangeify"
-       [ recorded; counts; values; structure; laws; debug; spec; rules ])
+       [ recorded; counts; values; structure; laws; debug; spec; rules; loops ])

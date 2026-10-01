@@ -22,7 +22,10 @@ val create_schedule : Ops.t -> Ops.t
     runs each kernel after those that write the storage it reads, and before
     those that overwrite the storage it reads. Ready kernels run in the order
     the graph reaches them. Each call's arguments are the storage of its reads
-    and writes.
+    and writes, or the views of it that move with the loops the call runs in. A
+    loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
+    stays such an end around the call; the end of a call over device ranges is
+    the call, its ranges bound at launch.
 
     Raises [Invalid_argument] if the kernels' dependencies form a cycle, or if
     an effect is not a call, an end of a call, a store or an {!Op.After}. *)

@@ -65,7 +65,7 @@ a sum of float16 and float32	False	False	False	False	False	None
 a sum of float32 and a weak float	True	True	False	True	True	None
 a sum of int32 and a weak integer	True	True	False	True	True	None
 a sum of float32 and the invalid constant	True	True	False	True	True	None
-a sum of weak integers	True	True	False	True	True	None
+a sum of weak integers	True	True	False	True	True	False
 a product of float64	True	True	True	True	True	None
 a maximum of uint8 and int8	False	False	False	False	False	None
 a subtraction of bfloat16	True	True	True	True	True	None
@@ -95,7 +95,7 @@ a cast of two sources	None	None	None	None	None	None
 a range	True	True	False	True	True	False
 a range with a nested axis	True	True	False	True	True	False
 a global int32 range	True	True	True	True	True	False
-a range with extra sources	True	True	False	True	True	False
+a range with extra sources	True	True	False	True	True	True
 a loop header	True	True	True	True	True	False
 a device range	True	True	False	True	True	True
 an index by a weak integer	True	True	False	True	True	None
@@ -106,14 +106,14 @@ an index by a boolean	None	None	None	None	None	None
 an index by the invalid constant	True	True	False	True	True	None
 an index by a guarded range	True	True	True	True	True	None
 an index of a stack	True	True	False	True	True	None
-an end of a store over a range	True	True	True	True	True	None
-an end of a store over two ranges	True	True	True	True	True	None
-an end of a store over an int32 range	True	True	True	True	True	None
-an end of a store over a constant	False	False	False	False	True	None
-an end of a store over a launch dimension	False	False	False	False	True	None
-an end of a store over a loop header	False	False	False	False	False	None
-an end of a value over a range	None	None	None	None	None	None
-an end of a store alone	True	True	True	True	True	None
+an end of a store over a range	True	True	True	True	True	False
+an end of a store over two ranges	True	True	True	True	True	False
+an end of a store over an int32 range	True	True	True	True	True	False
+an end of a store over a constant	False	False	False	False	True	False
+an end of a store over a launch dimension	False	False	False	False	True	False
+an end of a store over a loop header	False	False	False	False	False	False
+an end of a value over a range	None	None	None	None	None	False
+an end of a store alone	True	True	True	True	True	False
 a backedge on a boolean	True	True	True	True	True	None
 a backedge on the invalid constant	False	False	False	False	False	None
 a backedge on a vector of booleans	False	False	False	False	False	None
@@ -202,7 +202,7 @@ a reshape	None	True	False	None	True	None
 an expand	None	True	False	None	True	None
 a pad	None	True	False	None	True	None
 a pad by a shorter end	None	False	False	None	False	None
-a shrink	None	True	False	None	True	None
+a shrink	None	True	False	None	True	False
 a permute	None	True	False	None	True	None
 a flip	None	True	False	None	True	None
 a reduce	None	True	None	None	True	None
@@ -242,10 +242,10 @@ a program of a parameter	None	None	None	True	True	None
 a program of a global buffer after a store	None	None	None	True	True	None
 a sum under a constant	True	True	False	True	True	None
 an int32 constant	True	True	True	True	True	True
-a shrink of a parameter by cast constants	None	True	True	None	True	None
-a shrink of a bitcast parameter by cast constants	None	True	True	None	True	None
-a shrink of a parameter by a variable	None	True	False	None	True	None
-a shrink of a load by cast constants	None	True	False	None	True	None
+a shrink of a parameter by cast constants	None	True	True	None	True	False
+a shrink of a bitcast parameter by cast constants	None	True	True	None	True	False
+a shrink of a parameter by a variable	None	True	False	None	True	False
+a shrink of a load by cast constants	None	True	False	None	True	False
 an if on an index	None	None	True	None	True	None
 an if on a cast	None	None	True	None	True	None
 an if on a shrink	None	None	True	None	True	None

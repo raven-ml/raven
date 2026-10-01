@@ -333,7 +333,54 @@ let construction =
               else rejects (fun () -> with_spec 2 rebuild));
     ]
 
+(* Loops of calls in the kernel graph (D60) *)
+
+(* [row axis_type] is a row of four of twelve floats that moves with a range of
+   three trips of [axis_type], with the range. *)
+let row axis_type =
+  let r = Ops.range ~axis_type (Int 3) [ 100 ] in
+  let rows = Ops.param ~shape:[ Int 12 ] 1 Float32 in
+  ( Ops.shrink rows
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ],
+    r )
+
+let looped axis_type =
+  let v, r = row axis_type in
+  let body = Ops.v Op.Linear ~src:[] in
+  (Ops.end_ (Ops.call ~precompile:true body [ v ]) [ r ], v, r)
+
+(* [kernel_graph_judges axis_type] is the kernel graph spec's verdicts on a loop
+   of a call over a range of [axis_type], on its view and the view's offset, and
+   on the range. *)
+let kernel_graph_judges axis_type =
+  let e, v, r = looped axis_type in
+  List.map (judge Spec.kernel_graph) [ e; v; Ops.nth v 1; r ]
+
+let loops =
+  group "kernel_graph › loops of calls (D60)"
+    [
+      test "accepts a loop of a call over a loop range" (fun () ->
+          equal (list verdict)
+            [ Some true; Some true; Some true; Some true ]
+            (kernel_graph_judges Loop));
+      test "refuses a loop of a call over a range of any other kind" (fun () ->
+          List.iter
+            (fun axis_type ->
+              equal (list verdict)
+                [ Some false; Some false; Some false; Some false ]
+                (kernel_graph_judges axis_type))
+            Ops.Axis_type.[ Weak; Global; Reduce; Upcast ]);
+      test "accepts an open device range" (fun () ->
+          equal verdict (Some true)
+            (judge Spec.kernel_graph
+               (Ops.range ~axis_type:Device (Int 2) [ -1 ])));
+      test "refuses a weak sum of a weak integer variable" (fun () ->
+          equal verdict (Some false)
+            (judge Spec.kernel_graph
+               Ops.O.(var ~dtype:Weak_int "n" 0 8 + int 1)));
+    ]
+
 let () =
   exit
     (run "Tolk_next.Spec"
-       [ verdicts; bounds; type_verify; vectors; construction ])
+       [ verdicts; bounds; type_verify; vectors; construction; loops ])

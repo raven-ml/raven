@@ -45,9 +45,12 @@ val get_kernel_graph : Ops.t -> Ops.t
         becomes a call to a kernel of its own: its storage becomes parameters,
         numbered from [0] in the order the kernel reaches them, its ranges are
         renumbered from [0], and the call's arguments are that storage, after
-        the kernels that write it;
+        the kernels that write it. An end of a call over {!Ops.Axis_type.Loop}
+        ranges is a loop that runs the call once per trip, and no kernel;
      }
-     {- the calls' arguments and the storage lose their indices and their views.
+     {- the calls' arguments and the storage lose their indices and their views,
+        but for the views a loop's call reads that move with the loop's ranges,
+        and the loops' ranges lose the tags of kernel ranges.
      }
     }
 

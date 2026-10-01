@@ -584,6 +584,46 @@ index 2842d7e..c6bdbf0 100644
    if truncate_output and (truncate_fxn:=truncate.get(dtype)) is not None: return truncate_fxn(alu)
    return alu
  
+diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
+index 72a08ff..0c24083 100644
+--- a/tinygrad/uop/spec.py
++++ b/tinygrad/uop/spec.py
+@@ -251,13 +251,18 @@ spec_full = PatternMatcher([
+ 
+ # ***** kernel graph spec *****
+ 
++def _loop(r:UOp) -> bool: return r.op is Ops.RANGE and r.axis_type is AxisType.LOOP
++# a bound of a view that moves with loops: constants, LOOP ranges, and weakint sums and products of them
++def _loop_bound(u:UOp) -> bool:
++  return u.op is Ops.CONST or _loop(u) or (u.op in (Ops.ADD, Ops.MUL) and u.dtype is dtypes.weakint and all(_loop_bound(s) for s in u.src))
++
+ spec_kernel_graph = PatternMatcher([
+   # sink
+   (UPat(Ops.SINK, dtypes.void), lambda: True),
+   # const + stack to make vconsts and shape args. a 0-size/bound reduce keeps its const casted
+   (UPat(Ops.CONST, src=()), lambda: True),
+   (UPat(Ops.CAST, src=(UPat(Ops.CONST, src=()),)), lambda: True),
+-  (UPat(Ops.STACK, name="s"), lambda s: all(x.op in (Ops.CONST, Ops.PARAM) for x in s.src) or None),
++  (UPat(Ops.STACK, name="s"), lambda s: all(x.op is Ops.PARAM or _loop_bound(x) for x in s.src) or None),
+   # linear for more kernels (TODO: we should enter non sink calls)
+   #(UPat(Ops.LINEAR), lambda: True),
+   # PARAM is caller-provided storage (or a Variable in the ALU addrspace), ALLOC is call-local storage; size is in the arg, no shape input
+@@ -270,8 +275,13 @@ spec_kernel_graph = PatternMatcher([
+   # mstack/mselect
+   (UPat(Ops.MSTACK, name="x"), lambda x: all(isinstance(s.device, str) for s in x.src) or (all_same(x.src) and x.src[0].device is None)),
+   (UPat(Ops.MSELECT, name="x"), lambda x: isinstance(x.src[0].device, tuple) and x.arg < len(x.src[0].device)),
+-  # open DEVICE ranges are bound per device at launch (e.g. the range on a multi-device BUFFER/ALLOC)
+-  (UPat(Ops.RANGE, name="r"), lambda r: r.axis_type is AxisType.DEVICE),
++  # open DEVICE ranges are bound per device at launch (e.g. the range on a multi-device BUFFER/ALLOC); a LOOP range runs
++  # the calls an END closes it around
++  (UPat(Ops.RANGE, name="r"), lambda r: r.axis_type in (AxisType.DEVICE, AxisType.LOOP)),
++  (UPat(Ops.END, name="e"), lambda e: e.src[0].op is Ops.CALL and all(_loop(r) for r in e.src[1:])),
++  # a call in a loop reads a view of storage that moves with the loop's ranges, its bounds weakint arithmetic on them
++  (UPat(Ops.SHRINK, name="v"), lambda v: len(v.ranges) > 0 and all(_loop(r) for r in v.ranges)),
++  (UPat((Ops.ADD, Ops.MUL), dtype=dtypes.weakint, name="x"), lambda x: all(_loop_bound(s) for s in x.src)),
+   # all calls are on opaque bodies
+   (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
+   # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
 index 2eb2e96..5cd0671 100644
 --- a/tinygrad/uop/symbolic.py

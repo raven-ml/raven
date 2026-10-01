@@ -83,7 +83,10 @@ val kernel_graph : t
 (** [kernel_graph] accepts the graph of kernel calls: a sink of calls of opaque
     bodies over storage and parameters, with the constants, stacks, casts and
     bitcasts that make their arguments, sharding ({!Op.Mstack}, {!Op.Mselect}),
-    {!Ops.Axis_type.Device} ranges, and orderings of storage. *)
+    {!Ops.Axis_type.Device} ranges, and orderings of storage. A call may run in
+    a loop, an {!Op.End} of {!Ops.Axis_type.Loop} ranges around it, and read
+    views of storage ({!Op.Shrink}) that move with those ranges, their bounds
+    constants, loop ranges, and weak integer sums and products of them. *)
 
 (** {1:verify Verifying} *)
 
