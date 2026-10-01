@@ -533,6 +533,9 @@ let used p =
 let pool_cached p =
   match p.in_use with Count _ -> p.cached | Heap_bytes -> heap_cached ()
 
+(* Loaded code is counted after its driver allocated it, so [room] can be
+   negative: allocations of that memory are then refused, and the last resort
+   collects until unloaded code makes room again. *)
 let room p = p.ceiling - used p - pool_cached p - p.retained
 
 (* Applies [f] to each pool an allocation of [d]'s memory [kind] counts in:
