@@ -635,11 +635,9 @@ let equal = ( == )
 let budget d = d.budget
 let host_of d = match d.machine with Some h -> h | None -> d
 
-let shares_host_memory d =
-  d == host
-  || host_of d == host
-     && Option.is_none d.copy_queue
-     && Option.is_some d.mapping
+(* Memory the host addresses, as the host's own and a device's over it are. *)
+let host_addressed d = Option.is_none d.copy_queue && Option.is_some d.mapping
+let shares_host_memory d = host_of d == host && host_addressed d
 
 let runs_on_host d =
   d == host
@@ -647,9 +645,6 @@ let runs_on_host d =
      && host_of d == host
      && Option.is_none d.host_memory
      && Option.is_none d.load
-
-(* Memory the host addresses, as the host's own and a device's over it are. *)
-let host_addressed d = Option.is_none d.copy_queue && Option.is_some d.mapping
 
 let reaches d d' =
   d == d'
