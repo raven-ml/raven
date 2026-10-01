@@ -44,6 +44,13 @@ type host_programs = {
   call : nativeint -> (nativeint * int) array -> int array -> unit;
 }
 
+(* A binary as its driver loaded it. *)
+type image = {
+  code : region option;
+  entry : string -> (nativeint, string) result;
+  unload : unit -> unit;
+}
+
 (* What must stay reachable for as long as a base does. Host memory is the
    bigarray that holds it from its first byte: views of it join that bigarray's
    storage, which outlives the base. *)
@@ -82,12 +89,7 @@ type t = {
   copy_queue : queue option;
   peer : (t -> region -> (region, string) result) option;
   reaches_peer : t -> bool; (* whether its driver maps a device's memory *)
-  load :
-    (binary:string ->
-    entry:string ->
-    (nativeint * (unit -> unit) option, string) result)
-    option;
-      (* a program's handle, and how it is released if it can be *)
+  load : (binary:string -> (image, string) result) option;
   call : (nativeint -> (nativeint * int) array -> int array -> unit) option;
       (* how a host calls its programs *)
   link : (src:buffer -> dst:buffer -> link option) option;
@@ -121,8 +123,9 @@ type t = {
   pending : (int, t * int) Hashtbl.t;
       (* the devices whose work touched this one's memory, and the value that
          work signals *)
-  programs : (string * string, cached) Hashtbl.t;
-  dropped : dropped list Atomic.t;
+  images : (Digest.t, loaded Weak.t) Hashtbl.t;
+      (* the loaded binaries, by digest, while they are reachable *)
+  mutable indexed : int; (* how many [images] held when last swept *)
   spans : pending list Atomic.t;
       (* the spans recorded on the device whose stamps are still to read, latest
          first *)
@@ -233,7 +236,12 @@ and mapped = {
       (* its last borrow was released, and its unmap waits for [work] *)
 }
 
-and program = { p_device : t; p_name : string; p_handle : nativeint }
+and program = {
+  p_device : t;
+  p_name : string;
+  p_handle : nativeint;
+  p_loaded : loaded;
+}
 
 (* A file a disk buffer is over, which it names by its path and identity: its
    device, its number there and when it last changed, which the buffer's own
@@ -252,16 +260,18 @@ and file = {
 
 and identity = { dev : int; ino : int; changed : int }
 
-(* A program that its device can release is cached weakly, and released once
-   unreachable; the others are kept for the device's life. *)
-and cached = Kept of program | Collectable of program Weak.t
-
-(* An unreachable program, to release. *)
-and dropped = {
-  key : string * string;
-  cell : program Weak.t;
-  unload : unit -> unit;
+(* A binary loaded on a device, with the functions found in it. Its programs and
+   the buffers of its code keep it, and its token releases it once none does. *)
+and loaded = {
+  binary : string;
+  image : image;
+  entries : (string, nativeint) Hashtbl.t; (* with the device taken *)
+  kept : keep; (* what its programs and its code keep: its token and itself *)
 }
+
+(* What a token puts on its device's release list once it is collected: owned
+   memory, or the image of a loaded binary. *)
+and release = Memory of base | Code of image
 
 (* A span of [Device_clock] device holds its ticks until its profile is taken,
    which calibrates them. *)
@@ -345,10 +355,10 @@ external wait_u64 :
 external page_size : unit -> int = "caml_nx_device_page_size" [@@noalloc]
 external release_list : unit -> nativeint = "caml_nx_device_release_list"
 
-external make_token : nativeint -> base -> int -> int -> int -> token
+external make_token : nativeint -> release -> int -> int -> int -> token
   = "caml_nx_device_token"
 
-external released : nativeint -> base list = "caml_nx_device_released"
+external released : nativeint -> release list = "caml_nx_device_released"
 
 external heap_bytes : unit -> (int[@untagged])
   = "caml_nx_device_heap_bytes_byte" "caml_nx_device_heap_bytes"
@@ -628,8 +638,8 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       cache = Hashtbl.create 16;
       retiring = [];
       pending = Hashtbl.create 4;
-      programs = Hashtbl.create 16;
-      dropped = Atomic.make [];
+      images = Hashtbl.create 16;
+      indexed = 8;
       spans = Atomic.make [];
       held = [];
       budget;
@@ -661,15 +671,28 @@ let host_programs =
   in
   { load; call = call_addresses }
 
+(* A host's image of [binary]: each function is linked at its first load, and
+   unlinked with the image. *)
+let host_image load ~binary =
+  let unloads = ref [] in
+  let entry entry =
+    Result.map
+      (fun (h, unload) ->
+        unloads := unload :: !unloads;
+        h)
+      (load ~binary ~entry)
+  in
+  Ok
+    {
+      code = None;
+      entry;
+      unload = (fun () -> List.iter (fun f -> f ()) !unloads);
+    }
+
 let host =
   (* Buffer.create takes host memory from the heap, never from [alloc]. *)
   let alloc _ = assert false in
-  let load =
-    Option.map
-      (fun load ~binary ~entry ->
-        Result.map (fun (h, free) -> (h, Some free)) (load ~binary ~entry))
-      Host_program.load
-  in
+  let load = Option.map host_image Host_program.load in
   create ~name:"CPU" ~arch:host_arch ~machine:None ~remote:None ~io:None
     ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapped:None
     ~mapping:(Some Identity) ~queue:None ~peer:None
@@ -1092,17 +1115,22 @@ let cached d =
 
 let fits d n = n <= d.budget - allocated d - cached d - d.retained
 
+(* A token that puts [r] on [d]'s release list once it is collected. Its [bytes]
+   pace the collector by the room left in [d]'s budget (see the stubs). *)
+let release_token d r bytes =
+  let room = d.budget - allocated d - cached d - d.retained in
+  let live = if shares_host_memory d then allocated d else -1 in
+  make_token d.released r bytes (Int.max 0 room) live
+
 (* [base], whose memory [d] releases once the base returned and every base made
    from it are unreachable: they keep a token that puts [base], which keeps
    none, on [d]'s release list once it is collected. A base has no mutable
-   field, so [base] sees the links and claims that its copies change. The
-   token's owned bytes pace the collector by the room left in [d]'s budget (see
-   the stubs). *)
+   field, so [base] sees the links and claims that its copies change. *)
 let owned d base =
-  let room = d.budget - allocated d - cached d - d.retained in
-  let live = if shares_host_memory d then allocated d else -1 in
-  let token = make_token d.released base base.bytes (Int.max 0 room) live in
-  { base with keep = Keep (base.keep, token) }
+  {
+    base with
+    keep = Keep (base.keep, release_token d (Memory base) base.bytes);
+  }
 
 (* Frees cached memory, of the memory [only] if given, to the system until [d]
    fits [n] more bytes, or its cache is empty. With [~wait:false], only memory
@@ -1141,18 +1169,6 @@ let release_cache ?only ~wait d n =
           keys;
         free_all d ~owned:true ~keep:() ~wait !last !freed
       end
-
-(* An unreachable program leaves the cache, unless a load replaced it there, and
-   is released at once: only the host releases programs, and it runs them in the
-   domains that call them, which keep them reachable. *)
-let unload d =
-  List.iter
-    (fun { key; cell; unload } ->
-      (match Hashtbl.find_opt d.programs key with
-      | Some (Collectable c) when c == cell -> Hashtbl.remove d.programs key
-      | _ -> ());
-      unload ())
-    (Atomic.exchange d.dropped [])
 
 (* The latest value of [d]'s own work in [stamps], and the others. *)
 let own_stamp d stamps =
@@ -1280,11 +1296,32 @@ let release d b =
         }
         :: d.retiring
 
-let reclaim d =
-  unload d;
-  (match released d.released with
+(* An unreachable image of [d] is unloaded once all work [d] submitted is done:
+   only [d]'s queues run its code, and a launch may run it without listing its
+   memory. The host's programs return before the image can be unreachable. *)
+let unload d (i : image) =
+  let v = submitted d in
+  d.retiring <-
+    {
+      until = (fun () -> [ (d, v) ]);
+      bytes = 0;
+      key = None;
+      kept = Keep i;
+      retire = (fun () -> driver d i.unload);
+    }
+    :: d.retiring
+
+let rec release_all d = function
   | [] -> ()
-  | bases -> List.iter (release d) bases);
+  | Memory b :: rs ->
+      release d b;
+      release_all d rs
+  | Code i :: rs ->
+      unload d i;
+      release_all d rs
+
+let reclaim d =
+  release_all d (released d.released);
   retire d;
   release_cache ~wait:false d 0
 
@@ -2605,42 +2642,101 @@ end
 module Program = struct
   type t = program
 
-  let cached d key =
-    match Hashtbl.find_opt d.programs key with
-    | Some (Kept p) -> Some p
-    | Some (Collectable cell) -> Weak.get cell 0
+  (* [d]'s reachable image of [binary]. A digest is no proof: another binary of
+     the same digest is no hit, and is left out of the index. *)
+  let indexed d key binary =
+    match Hashtbl.find_opt d.images key with
     | None -> None
+    | Some cell -> (
+        match Weak.get cell 0 with
+        | Some l when String.equal l.binary binary -> Some l
+        | Some _ | None -> None)
 
-  (* Caches [d]'s new program. The finaliser runs once the weak pointer is
-     erased: no lookup can find a program whose release is queued. *)
-  let add d ~binary ~name (handle, unload) =
-    let key = (binary, name) in
-    let p = { p_device = d; p_name = name; p_handle = handle } in
-    (match unload with
-    | None -> Hashtbl.replace d.programs key (Kept p)
-    | Some unload ->
-        let cell = Weak.create 1 in
-        Weak.set cell 0 (Some p);
-        Hashtbl.replace d.programs key (Collectable cell);
-        Gc.finalise_last (fun () -> push d.dropped { key; cell; unload }) p);
-    (match Atomic.get profile with
-    | None -> ()
-    | Some c -> push c.events (Load { program = p; binary; time = now_ns () }));
-    p
+  (* Indexes [l] at [key]. The entries of collected images go once they are as
+     many as those that were live at the last sweep. *)
+  let index d key l =
+    if Hashtbl.length d.images >= 2 * d.indexed then begin
+      Hashtbl.filter_map_inplace
+        (fun _ cell -> if Weak.check cell 0 then Some cell else None)
+        d.images;
+      d.indexed <- Int.max 8 (Hashtbl.length d.images)
+    end;
+    let cell = Weak.create 1 in
+    Weak.set cell 0 (Some l);
+    Hashtbl.replace d.images key cell
 
-  (* A loader that raises [Failure] loses its device. *)
+  (* [d]'s image of [binary], loaded unless one is reachable. A loader that
+     raises [Failure] loses its device. *)
+  let loaded d load binary =
+    let key = Digest.string binary in
+    match indexed d key binary with
+    | Some l -> Ok l
+    | None -> (
+        match load ~binary with
+        | Ok image ->
+            let bytes =
+              match image.code with
+              | Some r -> r.nbytes
+              | None -> String.length binary
+            in
+            let token = release_token d (Code image) bytes
+            and entries = Hashtbl.create 4 in
+            let rec l = { binary; image; entries; kept = Keep (token, l) } in
+            index d key l;
+            Ok l
+        | Error why -> Error why
+        | exception Failure why -> fail d why)
+
+  (* The function [name] of [l], found once per image. *)
+  let entry d l name =
+    match Hashtbl.find_opt l.entries name with
+    | Some h -> Ok (h, false)
+    | None -> (
+        match l.image.entry name with
+        | Ok h ->
+            Hashtbl.replace l.entries name h;
+            Ok (h, true)
+        | Error why -> Error why
+        | exception Failure why -> fail d why)
+
+  let find d load ~binary ~name =
+    match
+      Result.bind (loaded d load binary) (fun l ->
+          Result.map (fun e -> (l, e)) (entry d l name))
+    with
+    | Error why -> Error (d.name ^ ": " ^ why)
+    | Ok (l, (h, found)) ->
+        let p = { p_device = d; p_name = name; p_handle = h; p_loaded = l } in
+        (match Atomic.get profile with
+        | Some c when found ->
+            push c.events (Load { program = p; binary; time = now_ns () })
+        | Some _ | None -> ());
+        Ok p
+
+  (* A driver with no memory for the code raises [Out_of_memory] having changed
+     nothing, and the load runs the last resort of an allocation (see
+     [last_resort_rounds]). *)
   let load d ~binary ~name =
     match d.load with
     | None -> Error (d.name ^ ": the device loads no programs")
     | Some load ->
-        with_devices [ d ] (fun () ->
-            match cached d (binary, name) with
-            | Some p -> Ok p
-            | None -> (
-                match load ~binary ~entry:name with
-                | Ok loaded -> Ok (add d ~binary ~name loaded)
-                | Error why -> Error (d.name ^ ": " ^ why)
-                | exception Failure why -> fail d why))
+        let rec take round =
+          match with_devices [ d ] (fun () -> find d load ~binary ~name) with
+          | r -> r
+          | exception Out_of_memory (d', _)
+            when d' == d && round < last_resort_rounds ->
+              exhausted d;
+              take (round + 1)
+        in
+        take 0
+
+  let code p =
+    Option.map
+      (fun (r : region) ->
+        Buffer.first
+          (Buffer.base ~borrowed:true ~keep:p.p_loaded.kept p.p_device r)
+          Nx_dtype.Scalar.UInt8 r.nbytes)
+      p.p_loaded.image.code
 
   let device p = p.p_device
   let name p = p.p_name
@@ -3275,6 +3371,12 @@ module Driver = struct
     call : nativeint -> (nativeint * int) array -> int array -> unit;
   }
 
+  type nonrec image = image = {
+    code : region option;
+    entry : string -> (nativeint, string) result;
+    unload : unit -> unit;
+  }
+
   let default_timeout = default_timeout
 
   (* The host's heap: its regions keep their bigarrays until they are freed. *)
@@ -3331,12 +3433,6 @@ module Driver = struct
           q)
         queue
     in
-    let load =
-      Option.map
-        (fun load ~binary ~entry ->
-          Result.map (fun handle -> (handle, None)) (load ~binary ~entry))
-        load
-    in
     create ~name:(compose ~host name) ~arch ~machine:(Some host) ~remote:None
       ~io:None ~budget ~alloc:(owned memory) ~free:memory.free ~host_memory
       ~mapped ~mapping ~queue ~peer ~reaches_peer:reaches ~load ~call:None ~link
@@ -3365,14 +3461,7 @@ module Driver = struct
   (* Last: it shadows the host. *)
   let host ~address ~arch ?programs ?(synchronized = ignore)
       ?(finalize = fun ~failed:_ -> ()) ~memory io =
-    let load =
-      Option.map
-        (fun p ~binary ~entry ->
-          Result.map
-            (fun (handle, unload) -> (handle, Some unload))
-            (p.load ~binary ~entry))
-        programs
-    in
+    let load = Option.map (fun p -> host_image p.load) programs in
     create ~name:("CPU@" ^ address) ~arch ~machine:None ~remote:(Some address)
       ~io:(Some io) ~budget:max_int ~alloc:(owned memory) ~free:memory.free
       ~host_memory:None ~mapped:None ~mapping:None ~queue:None ~peer:None

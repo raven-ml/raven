@@ -55,8 +55,11 @@
 
     {b Programs} are functions of AMD GPU code objects, ELF objects compiled for
     the device's {!Nx_device.arch}: the function [name] is the kernel whose
-    descriptor is the symbol [name ^ ".kd"]. A code object is uploaded once per
-    device and kept.
+    descriptor is the symbol [name ^ ".kd"]. A code object is uploaded once
+    while a program of it or its {!kernel}'s code is reachable
+    ({!Nx_device.Program.load}). Under {!Pci} its memory lies in the BAR: a load
+    that raises {!Nx_device.Out_of_memory} may need Resizable BAR enabled in the
+    firmware settings.
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault, loses
     the device ({!Nx_device.Lost}) with the driver's report when a wait finds
@@ -239,8 +242,9 @@ val flush_hdp : t -> unit
 type kernel = {
   code : Nx_device.Buffer.t;
       (** The uploaded code object: its image, as the ELF object lays it out
-          ({!Nx_device_elf.load}), relocated, in memory of the device that the
-          device keeps for as long as it lives. *)
+          ({!Nx_device_elf.load}), relocated, in memory of the device the host
+          writes, which keeps the code object loaded while it is reachable
+          ({!Nx_device.Program.code}). *)
   descriptor : nativeint;  (** The address of the kernel descriptor. *)
   private_segment : int;
       (** Scratch bytes per lane, which {!scratch} must provide. *)

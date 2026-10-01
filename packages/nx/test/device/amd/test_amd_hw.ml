@@ -253,7 +253,9 @@ let test_programs () =
   | None -> skip ~reason:"no compiler for the GPU's target" ()
   | Some binary -> (
       let p = program d ~binary ~name:"fill" in
-      is_true ~msg:"cached" (p == program d ~binary ~name:"fill");
+      equal ~msg:"loaded once" nativeint
+        (Nx_device.Program.handle p)
+        (Nx_device.Program.handle (program d ~binary ~name:"fill"));
       let k = Option.get (Nx_amd_device.kernel p) in
       equal ~msg:"the handle is the descriptor" nativeint k.descriptor
         (Nx_device.Program.handle p);

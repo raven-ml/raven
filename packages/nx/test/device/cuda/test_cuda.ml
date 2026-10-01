@@ -375,7 +375,10 @@ let programs =
          module or a missing function" (fun () ->
           let d = cuda () in
           let f = program d ~binary:ptx ~name:"double_index" in
-          is_true (program d ~binary:ptx ~name:"double_index" == f);
+          equal nativeint
+            (Nx_device.Program.handle f)
+            (Nx_device.Program.handle
+               (program d ~binary:ptx ~name:"double_index"));
           refused ~sub:"CUDA: CUDA_ERROR_" (fun () ->
               Nx_device.Program.load d ~binary:"not a module" ~name:"f");
           refused ~sub:"CUDA_ERROR_NOT_FOUND" (fun () ->

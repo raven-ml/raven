@@ -240,7 +240,8 @@ let test_builtins () =
 let test_cache () =
   let binary = Lazy.force affine in
   let p = load ~binary ~name:"affine" in
-  is_true ~msg:"loaded again" (load ~binary ~name:"affine" == p);
+  equal ~msg:"loaded again" nativeint (P.handle p)
+    (P.handle (load ~binary ~name:"affine"));
   equal (triple string bool bool) ("affine", true, true)
     (P.name p, Nx_device.equal host (P.device p), P.handle p <> 0n)
 
@@ -313,7 +314,13 @@ ABI void f(void **b, const long long *v) { nx_no_such_symbol(); }|});
 ABI void f(void **b, const long long *v) { *(int *)b[0] = ++calls; }|});
   let fake =
     Nx_device.Driver.device ~name:"FAKE" ~arch:"fake" ~budget:0
-      ~load:(fun ~binary:_ ~entry:_ -> Ok 1n)
+      ~load:(fun ~binary:_ ->
+        Ok
+          {
+            Nx_device.Driver.code = None;
+            entry = (fun _ -> Ok 1n);
+            unload = ignore;
+          })
       (Host_visible
          { memory = { alloc = (fun _ -> None); free = ignore }; mapping = None })
   in

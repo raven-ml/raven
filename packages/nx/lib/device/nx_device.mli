@@ -208,7 +208,9 @@ exception Out_of_memory of t * int
       if the budget or the driver refuses them after [d]'s cache was released
       and unreachable buffers collected;
     - by {!Buffer.copy}, when the host [d] of a machine cannot allocate the
-      staging memory the copy goes through. *)
+      staging memory the copy goes through;
+    - by {!Program.load}, when [d]'s driver cannot allocate the memory of a
+      program's code after unreachable programs were collected. *)
 
 (** {1:memory Memory} *)
 
@@ -657,8 +659,13 @@ module Program : sig
   (** [load d ~binary ~name] is the function [name] of [binary], a compiled
       library in [d]'s format: a metallib for Metal, a CUDA module (cubin,
       fatbin, or PTX, which the driver compiles) for CUDA, a code object for
-      AMD, a cubin for NV. Loading the same binary and name on [d] again returns
-      the same program.
+      AMD, a cubin for NV.
+
+      [d] loads [binary] once while it is reachable: while a program of it, or a
+      buffer of its code ({!code}), is. Loading the same binary on [d] again
+      until then finds the functions of that load, with the same {!handle}s.
+      Once none is reachable, the binary is unloaded after the work [d]
+      submitted until then is done, and loading it again loads it anew.
 
       For the {!host}, [binary] is a 64-bit little-endian ELF relocatable object
       for the machine's instruction set, as
@@ -670,16 +677,15 @@ module Program : sig
       [__truncsfhf2] and [__truncsfbf2], which compilers call where the machine
       has no instruction for them, even in code that converts nothing. The code
       has no writable data, such as [.data] or [.bss]: the host loads it into
-      memory that is executable and never writable. That memory is freed once
-      the program is unreachable, so loading the same binary and name again
-      returns the same program only while it is reachable.
+      memory that is executable and never writable.
 
       [Error why] if [d] loads no programs, or if its driver rejects [binary] or
       finds no function [name] in it, with the driver's reason (on the host, the
       reason it cannot load [binary], such as a symbol that no library defines).
       [why] starts with [d]'s {!name}. [d] stays usable.
 
-      Raises {!Lost} if [d] is lost, or is lost by the load. *)
+      Raises {!Out_of_memory} if [d]'s driver has no memory for the code, and
+      {!Lost} if [d] is lost, or is lost by the load. *)
 
   val device : t -> device
   (** [device p] is the device [p] is loaded on. *)
@@ -692,6 +698,14 @@ module Program : sig
       [MTLComputePipelineState], a [CUfunction], the address of an AMD kernel
       descriptor, or the address of an NV function's first instruction. On the
       host, it is the address of the function's first instruction. *)
+
+  val code : t -> Buffer.t option
+  (** [code p] is a buffer of the device memory [p]'s binary lies in, for a
+      device whose driver loads code into its memory, such as AMD's and NV's.
+      Work that launches [p] lists it among the buffers it touches, and what
+      keeps the work, such as a compiled schedule, keeps the buffer: the binary
+      stays loaded while the buffer is reachable, and its memory until that work
+      is done. *)
 
   val call : t -> Buffer.t array -> int array -> unit
   (** [call p buffers values] runs the host program [p] in the calling domain
@@ -1254,6 +1268,23 @@ module Driver : sig
   }
   (** The type for how a host loads and calls programs. *)
 
+  type image = {
+    code : Region.t option;
+        (** The device memory the binary lies in, if the driver loaded it there:
+            {!Program.code} gives it to the libraries that launch its functions.
+        *)
+    entry : string -> (nativeint, string) result;
+        (** [entry name] is the handle of the function [name]
+            ({!Program.handle}), or [Error why] if the binary has none. It runs
+            once per name, with the device taken. *)
+    unload : unit -> unit;
+        (** [unload ()] releases what the driver holds for the binary, its
+            memory and the objects [entry] made, once nothing reaches the binary
+            and the work the device submitted until then is done. It runs with
+            the device taken. *)
+  }
+  (** The type for a binary as a driver loaded it. *)
+
   val default_timeout : int
   (** [default_timeout] is [30_000], the {!timeout} in milliseconds every device
       starts at. *)
@@ -1285,7 +1316,7 @@ module Driver : sig
     budget:int ->
     ?host:device ->
     ?completion:completion ->
-    ?load:(binary:string -> entry:string -> (nativeint, string) result) ->
+    ?load:(binary:string -> (image, string) result) ->
     ?peer:(device -> Region.t -> (Region.t, string) result) ->
     ?reaches:(device -> bool) ->
     ?link:(src:Buffer.t -> dst:Buffer.t -> link option) ->
@@ -1306,9 +1337,11 @@ module Driver : sig
         {!host} made. The host below is that host, and addresses are those of
         that machine.
       - [completion] is how its work completes. Defaults to [Poll].
-      - [load ~binary ~entry] loads the function [entry] of a program, or is
-        [Error why] if the driver rejects it. The device keeps the programs it
-        loads for its life. Without [load], it loads no programs.
+      - [load ~binary] loads a binary of programs ({!Program.load}), or is
+        [Error why] if the driver rejects it. It runs with the device taken. A
+        driver that has no memory for the code raises {!Nx_device.Out_of_memory}
+        with nothing changed, and the load is tried again once unreachable
+        programs are collected. Without [load], the device loads no programs.
       - [peer d' r] maps the region [r] of the device [d'] of the same machine
         for the device, for {!Buffer.borrow}: the region as the device's work
         addresses it, with the host address [r] has, if any, or [Error why] if

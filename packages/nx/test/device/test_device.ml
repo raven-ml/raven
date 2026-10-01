@@ -69,6 +69,10 @@ let program d ~binary ~name =
   | Ok p -> p
   | Error why -> failwith why
 
+(* A driver's load of binaries whose every function has the handle [h]. *)
+let loads h ~binary:_ =
+  Ok { Driver.code = None; entry = (fun _ -> Ok h); unload = ignore }
+
 let pattern seed n =
   String.init n (fun i ->
       Char.chr (((seed * 31) + (i * 7) + (i / 5)) land 0xff))
@@ -2188,9 +2192,7 @@ let refusals =
     in
     make (Host_visible { memory; mapping = Some mapping })
   in
-  let rejecting () =
-    (fake ~load:(fun ~binary:_ ~entry:_ -> Error "rejected") ()).dev
-  in
+  let rejecting () = (fake ~load:(fun ~binary:_ -> Error "rejected") ()).dev in
   let raise_ ?(exn = Exn.invalid_arg ?substring:None) name f =
     (name, fun () -> raises_match exn (fun () -> ignore (f ())))
   in
@@ -2282,39 +2284,161 @@ let refusals =
     ]
     (fun (_, check) -> check ())
 
+(* A driver that counts its loads and unloads, whose binaries' code lies in
+   [code] bytes at a fake address, and which refuses memory for the code of
+   [device] while [room ()] is [false]. A function's handle is the binary's load
+   count times 100, plus its name's length. *)
+type loader = {
+  loaded : (string * string) list ref; (* (binary, function), latest first *)
+  unloaded : string list ref;
+  refused : int ref;
+  device : Nx_device.t ref;
+}
+
+let loader ?(code = 0) ?(room = fun () -> true) () =
+  let l =
+    { loaded = ref []; unloaded = ref []; refused = ref 0; device = ref host }
+  in
+  let images = ref 0 in
+  let load ~binary =
+    if not (room ()) then begin
+      incr l.refused;
+      raise (Nx_device.Out_of_memory (!(l.device), code))
+    end;
+    incr images;
+    let image = !images in
+    let entry name =
+      l.loaded := (binary, name) :: !(l.loaded);
+      Ok (Nativeint.of_int ((image * 100) + String.length name))
+    in
+    Ok
+      {
+        Driver.code =
+          (if code = 0 then None
+           else Some (Region.v (Nativeint.of_int (0x10000 * image)) code));
+        entry;
+        unload = (fun () -> l.unloaded := binary :: !(l.unloaded));
+      }
+  in
+  (l, load)
+
+(* [d]'s unreachable programs, collected and released. *)
+let collected d =
+  Gc.full_major ();
+  ignore (stats d)
+
+let test_loaded_once () =
+  let l, load = loader () in
+  let d = (fake ~load ()).dev in
+  let p = program d ~binary:"lib" ~name:"f" in
+  let again = program d ~binary:"lib" ~name:"f" in
+  let g = program d ~binary:"lib" ~name:"g" in
+  equal (list (pair string string)) [ ("lib", "g"); ("lib", "f") ] !(l.loaded);
+  equal ~msg:"the same function" nativeint
+    (Nx_device.Program.handle p)
+    (Nx_device.Program.handle again);
+  equal ~msg:"of the same image" (pair nativeint nativeint) (101n, 101n)
+    (Nx_device.Program.handle p, Nx_device.Program.handle g);
+  equal (pair string bool) ("f", true)
+    Nx_device.Program.(name p, Nx_device.equal d (device p));
+  ignore (Sys.opaque_identity (p, again, g))
+
+let test_unloaded () =
+  let opened = ref false in
+  let l, load = loader () in
+  let d = (fake ~load ~signal:(gate opened) ()).dev in
+  ignore (Sys.opaque_identity (program d ~binary:"lib" ~name:"f"));
+  ignore (submit d Fun.id);
+  collected d;
+  equal ~msg:"kept while its device's work runs" (list string) [] !(l.unloaded);
+  opened := true;
+  collected d;
+  equal ~msg:"unloaded once that work is done" (list string) [ "lib" ]
+    !(l.unloaded);
+  equal ~msg:"loaded anew" nativeint 201n
+    (Nx_device.Program.handle (program d ~binary:"lib" ~name:"f"))
+
+let test_code_keeps () =
+  let l, load = loader ~code:64 () in
+  let d = (fake ~load ()).dev in
+  let code =
+    Option.get (Nx_device.Program.code (program d ~binary:"lib" ~name:"f"))
+  in
+  equal ~msg:"the code" (pair nativeint int) (0x10000n, 64)
+    (B.address code, B.nbytes code);
+  collected d;
+  equal ~msg:"kept by its code" (list string) [] !(l.unloaded);
+  equal ~msg:"found again" nativeint 101n
+    (Nx_device.Program.handle (program d ~binary:"lib" ~name:"f"));
+  ignore (Sys.opaque_identity code);
+  collected d;
+  equal ~msg:"unloaded once the code is unreachable" (list string) [ "lib" ]
+    !(l.unloaded);
+  equal ~msg:"no code without its driver's" (option nativeint) None
+    (Option.map B.address
+       (Nx_device.Program.code
+          (program (fake ~load:(loads 1n) ()).dev ~binary:"lib" ~name:"f")))
+
+let test_load_collects () =
+  let live = ref 0 in
+  let l, load = loader ~room:(fun () -> !live = 0) () in
+  let load ~binary =
+    Result.map
+      (fun (i : Driver.image) ->
+        incr live;
+        {
+          i with
+          unload =
+            (fun () ->
+              decr live;
+              i.unload ());
+        })
+      (load ~binary)
+  in
+  let d = (fake ~load ()).dev in
+  l.device := d;
+  let first = ref (Some (program d ~binary:"a" ~name:"f")) in
+  Gc.full_major ();
+  first := None;
+  let p = program d ~binary:"b" ~name:"f" in
+  equal ~msg:"refused, then loaded"
+    (pair bool (list string))
+    (true, [ "a" ])
+    (!(l.refused) > 0, !(l.unloaded));
+  let before = !(l.refused) in
+  raises_match
+    (function Nx_device.Out_of_memory (d', _) -> d' == d | _ -> false)
+    (fun () -> Nx_device.Program.load d ~binary:"c" ~name:"f");
+  equal ~msg:"tried again four times" int 5 (!(l.refused) - before);
+  ignore (Sys.opaque_identity (first, p))
+
 let programs =
   group "programs"
     [
       test
         "a device runs on the host when the host addresses its memory and it \
          loads no programs" (fun () ->
-          let load ~binary:_ ~entry:_ = Ok 1n in
           is_true ~msg:"host" (Nx_device.runs_on_host host);
           is_true ~msg:"near" (Nx_device.runs_on_host (fake ()).dev);
           is_false ~msg:"near, loading"
-            (Nx_device.runs_on_host (fake ~load ()).dev);
+            (Nx_device.runs_on_host (fake ~load:(loads 1n) ()).dev);
           is_false ~msg:"far" (Nx_device.runs_on_host (fake ~far:true ()).dev);
           is_false ~msg:"disk" (Nx_device.runs_on_host Nx_device.disk));
-      test "a function of a binary loads once, on its device" (fun () ->
-          let loads = ref [] in
-          let load ~binary ~entry =
-            loads := (binary, entry) :: !loads;
-            Ok (Nativeint.of_int (List.length !loads))
-          in
-          let d = (fake ~load ()).dev in
-          let p = program d ~binary:"lib" ~name:"f" in
-          is_true ~msg:"loaded again" (program d ~binary:"lib" ~name:"f" == p);
-          ignore (program d ~binary:"lib" ~name:"g");
-          equal
-            (list (pair string string))
-            [ ("lib", "g"); ("lib", "f") ]
-            !loads;
-          equal
-            (triple string bool nativeint)
-            ("f", true, 1n)
-            Nx_device.Program.(name p, Nx_device.equal d (device p), handle p));
+      test
+        "a binary loads once while a program of it is reachable, and each of \
+         its functions once"
+        test_loaded_once;
+      test
+        "an unreachable binary is unloaded once its device's work is done, and \
+         loads anew"
+        test_unloaded;
+      test "a buffer of a binary's code keeps it loaded" test_code_keeps;
+      test
+        "a load refused memory collects unreachable binaries and tries again, \
+         then raises Out_of_memory"
+        test_load_collects;
       test "a loader that faults loses its device" (fun () ->
-          let load ~binary:_ ~entry:_ = failwith "context lost" in
+          let load ~binary:_ = failwith "context lost" in
           let d = (fake ~name:"LOADER" ~load ()).dev in
           let faulted = lost d "context lost" in
           raises_match faulted (fun () ->
@@ -3353,7 +3477,7 @@ let test_memory_events () =
   equal (list int) [ 100; 0 ] (samples events)
 
 let test_program_events () =
-  let d = (fake ~load:(fun ~binary:_ ~entry:_ -> Ok 42n) ()).dev in
+  let d = (fake ~load:(loads 42n) ()).dev in
   let events =
     profiled (fun () ->
         ignore (program d ~binary:"lib" ~name:"k");
@@ -3541,9 +3665,7 @@ let written events =
 let test_output () =
   let odd = "a \"quote\", a \\, a\nnewline, \001, \xff and \xc3\xa9" in
   let f = far () in
-  let d =
-    (fake ~name:"P" ~load:(fun ~binary:_ ~entry:_ -> Ok 0x1234n) ()).dev
-  in
+  let d = (fake ~name:"P" ~load:(loads 0x1234n) ()).dev in
   let events =
     profiled (fun () ->
         P.span "outer" (fun () ->

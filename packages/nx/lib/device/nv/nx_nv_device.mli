@@ -69,8 +69,9 @@
     make for the device's {!Nx_device.arch}: the function [name] is the code of
     the section [.text.name], and a cubin may hold several, each with its own
     registers, stack and constant bank 0. PTX is not loaded: compile it to a
-    cubin first. A cubin is uploaded once per device and kept, with its
-    relocations applied.
+    cubin first. A cubin is uploaded with its relocations applied, once while a
+    program of it or its {!kernel}'s image is reachable
+    ({!Nx_device.Program.load}).
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault or an
     error of a streaming multiprocessor, loses the device ({!Nx_device.Lost})
@@ -243,8 +244,9 @@ type kernel = {
       (** The uploaded cubin: its image, as the ELF object lays it out with
           sections aligned to 128 bytes ({!Nx_device_elf.load}), relocated, then
           zeros up to the next multiple of 4 KiB and 4 KiB more, which the GPU's
-          instruction prefetch may read past the code. It is in memory of the
-          device that the device keeps for as long as it lives. *)
+          instruction prefetch may read past the code. It is memory of the
+          device the host writes, which keeps the cubin loaded while it is
+          reachable ({!Nx_device.Program.code}). *)
   entry : nativeint;  (** The address of the function's first instruction. *)
 }
 (** The type for kernels: a function of an uploaded cubin. A launch reads the

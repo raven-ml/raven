@@ -195,24 +195,28 @@ let count () =
 
 let name i = if i = 0 then "CUDA" else Printf.sprintf "CUDA:%d" i
 
-(* Programs are functions of modules, each image loaded once. The driver's
-   refusal of an image or a name leaves the context usable. *)
+(* Programs are functions of modules, each image loaded once and kept for the
+   context's life. The driver's refusal of an image or a name leaves the context
+   usable. *)
 let loader ctx =
   let modules = Hashtbl.create 8 in
-  fun ~binary ~entry ->
+  fun ~binary ->
     match
-      let m =
-        match Hashtbl.find_opt modules binary with
-        | Some m -> m
-        | None ->
-            let m = load_module ctx binary in
-            Hashtbl.add modules binary m;
-            m
-      in
-      get_function ctx m entry
+      match Hashtbl.find_opt modules binary with
+      | Some m -> m
+      | None ->
+          let m = load_module ctx binary in
+          Hashtbl.add modules binary m;
+          m
     with
-    | f -> Ok f
     | exception Failure why -> Error why
+    | m ->
+        let entry name =
+          match get_function ctx m name with
+          | f -> Ok f
+          | exception Failure why -> Error why
+        in
+        Ok { Driver.code = None; entry; unload = ignore }
 
 let open_cuda i ~arch ~budget ctx =
   let compute = stream ctx in

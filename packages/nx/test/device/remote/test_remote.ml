@@ -144,7 +144,8 @@ let test_programs () =
     match P.load d ~binary ~name with Ok p -> p | Error why -> failwith why
   in
   let p = load ~binary ~name:"fill" in
-  is_true ~msg:"the same program" (load ~binary ~name:"fill" == p);
+  equal ~msg:"the same function" nativeint (P.handle p)
+    (P.handle (load ~binary ~name:"fill"));
   (match P.load d ~binary:"not an object" ~name:"fill" with
   | Ok _ -> fail "loaded a refused binary"
   | Error why -> contains ~msg:"the host's name" ~sub:(Nx_device.name d) why);

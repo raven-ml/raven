@@ -78,6 +78,9 @@ let open_metal mtl =
   in
   let event = new_event mtl and fence = new_fence mtl in
   let resources = Hashtbl.create 64 in
+  (* The pipelines of the device's programs, built once and kept for its
+     life. *)
+  let pipelines = Hashtbl.create 16 in
   let resident buffer add =
     match residency_set with
     | Some set -> residency set buffer add
@@ -117,10 +120,18 @@ let open_metal mtl =
   let dev =
     Driver.device ~name:(name 0) ~arch:(arch mtl) ~budget:(working_set mtl)
       ~completion:(Signal (fun ~timeline:_ -> signal))
-      ~load:(fun ~binary ~entry ->
-        match pipeline mtl binary entry with
-        | p -> Ok p
-        | exception Failure why -> Error why)
+      ~load:(fun ~binary ->
+        let entry name =
+          match Hashtbl.find_opt pipelines (binary, name) with
+          | Some p -> Ok p
+          | None -> (
+              match pipeline mtl binary name with
+              | p ->
+                  Hashtbl.add pipelines (binary, name) p;
+                  Ok p
+              | exception Failure why -> Error why)
+        in
+        Ok { Driver.code = None; entry; unload = ignore })
       ~synchronized:cycle_pool ~resolve
       (Host_visible
          { memory = { alloc = (fun n -> region (alloc mtl n)); free }; mapping })

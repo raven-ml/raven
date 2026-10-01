@@ -2932,6 +2932,17 @@ thread.
 
 ### Nx
 
+- **Breaking:** A device unloads a binary once no program of it and no buffer
+  of its code (`Nx_device.Program.code`) is reachable, after the work it
+  submitted until then. Devices kept every program they loaded for their life,
+  so a long run that compiled many kernels never freed their code.
+  `Program.load` finds a loaded binary's functions again with the same handles,
+  in a new program record.
+- **Breaking:** A driver's `load` takes a binary and returns a
+  `Nx_device.Driver.image`: the region of its code, how it finds a function, and
+  how it unloads. A driver with no memory for the code raises `Out_of_memory`,
+  and `Program.load` collects unreachable programs and tries again, as
+  `Buffer.create` does.
 - **Breaking:** a placed value computes on its devices. `Nx_cpu.backend` runs
   where the host does the work (`Nx_device.runs_on_host`): a value on a GPU
   computes with `Rune.compiled`. Placements accept a backend that does not

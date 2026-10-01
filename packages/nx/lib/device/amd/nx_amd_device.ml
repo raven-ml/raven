@@ -54,6 +54,11 @@ type kernel = {
   private_segment : int;
 }
 
+(* A kernel of a loaded code object, by its descriptor's address: its name and
+   scratch bytes per lane, and the load it belongs to, whose unload removes it
+   and nothing a later load put at the same address. *)
+type entry = { name : string; scratch : int; image : unit ref }
+
 type counter = {
   name : string;
   block : string;
@@ -104,9 +109,7 @@ type t = {
   mutable allocs : alloc Int_map.t; (* the device's own memory, by address *)
   borrows : (int, mem) Hashtbl.t; (* host memory mapped for borrows *)
   reach : (int, bool) Hashtbl.t; (* whether it reaches a peer, by index *)
-  kernels : (nativeint, kernel) Hashtbl.t; (* by descriptor address, under hw *)
-  names : (nativeint, string) Hashtbl.t; (* kernel names, likewise *)
-  images : (string, Nx_device.Buffer.t) Hashtbl.t; (* uploaded code objects *)
+  kernels : (nativeint, entry) Hashtbl.t; (* by descriptor address, under hw *)
   props : props;
   scratch_lock : Mutex.t;
   mutable scratch : (Nx_device.Buffer.t * int) option;
@@ -407,53 +410,46 @@ let dma a r =
 
 (* Programs *)
 
-(* The code object [binary], uploaded once, as a buffer of the device. *)
-let upload a binary img =
-  match Hashtbl.find_opt a.images binary with
-  | Some code -> Some code
-  | None ->
-      Option.map
-        (fun mem ->
+(* The code object [binary], relocated and uploaded to memory of the device the
+   host writes, which it frees once unloaded. A code object the device cannot
+   run is refused, and the device stays usable. *)
+let load a ~binary =
+  match Code_object.image binary with
+  | exception Failure why -> Error why
+  | obj, img -> (
+      let bytes = String.length img in
+      match alloc_mem a Visible bytes with
+      | None -> raise (Nx_device.Out_of_memory (Option.get a.dev, bytes))
+      | Some mem ->
           register a mem;
           Mmio.write (Option.get (host_view mem)) 0 img;
           Mmio.barrier ();
-          let n = String.length img in
-          let code =
-            Driver.buffer (Option.get a.dev) (region_of mem n)
-              Nx_dtype.Scalar.UInt8 n
+          let image = ref () and found = ref [] in
+          let entry name =
+            match
+              Code_object.kernel obj img ~name
+                ~lds_kib:(a.props.lds_bytes / 1024)
+            with
+            | exception Failure why -> Error why
+            | k ->
+                let descriptor = Nativeint.of_int (va mem + k.descriptor) in
+                with_hw a (fun () ->
+                    Hashtbl.replace a.kernels descriptor
+                      { name; scratch = k.private_segment; image });
+                found := descriptor :: !found;
+                Ok descriptor
           in
-          Hashtbl.replace a.images binary code;
-          code)
-        (alloc_mem a Visible (String.length img))
-
-(* A code object the device cannot run, or has no memory for, is refused, and
-   the device stays usable. *)
-let load a ~binary ~entry:name =
-  match
-    let obj, img = Code_object.image binary in
-    (img, Code_object.kernel obj img ~name ~lds_kib:(a.props.lds_bytes / 1024))
-  with
-  | exception Failure why -> Error why
-  | img, k -> (
-      match upload a binary img with
-      | None ->
-          Error
-            "no GPU memory the host addresses for the program: the memory is \
-             full, or the BAR is too small to map it (enable Resizable BAR in \
-             the firmware settings)"
-      | Some code ->
-          let descriptor =
-            Nativeint.add
-              (Nx_device.Buffer.address code)
-              (Nativeint.of_int k.descriptor)
+          let unload () =
+            with_hw a (fun () ->
+                List.iter
+                  (fun d ->
+                    match Hashtbl.find_opt a.kernels d with
+                    | Some e when e.image == image -> Hashtbl.remove a.kernels d
+                    | Some _ | None -> ())
+                  !found);
+            release a mem
           in
-          let kernel =
-            { code; descriptor; private_segment = k.private_segment }
-          in
-          with_hw a (fun () ->
-              Hashtbl.replace a.kernels kernel.descriptor kernel;
-              Hashtbl.replace a.names kernel.descriptor name);
-          Ok kernel.descriptor)
+          Ok { Driver.code = Some (region_of mem bytes); entry; unload })
 
 (* Scratch *)
 
@@ -829,8 +825,8 @@ let report a () =
             let slot = k mod slots in
             let handle = Int64.to_nativeint c.log_words.{1 + slot} in
             let name =
-              match with_hw a (fun () -> Hashtbl.find_opt a.names handle) with
-              | Some name -> name
+              match with_hw a (fun () -> Hashtbl.find_opt a.kernels handle) with
+              | Some e -> e.name
               | None -> Printf.sprintf "0x%nx" handle
             in
             let base = slot * c.counting.size / 8 in
@@ -908,8 +904,6 @@ let record ~machine ~index ~gpu ~props =
     borrows = Hashtbl.create 16;
     reach = Hashtbl.create 4;
     kernels = Hashtbl.create 16;
-    names = Hashtbl.create 16;
-    images = Hashtbl.create 8;
     props;
     scratch_lock = Mutex.create ();
     scratch = None;
@@ -1127,9 +1121,15 @@ let aql a = match queues a with _, aql, _ -> aql
 let sdma a = match queues a with _, _, sdma -> sdma
 let props a = a.props
 
+(* While [p] is reachable, so is its code object, and the entry at its handle is
+   its own. *)
 let kernel p =
-  Option.bind
-    (amd_of (Nx_device.Program.device p))
-    (fun a ->
-      with_hw a (fun () ->
-          Hashtbl.find_opt a.kernels (Nx_device.Program.handle p)))
+  match amd_of (Nx_device.Program.device p) with
+  | None -> None
+  | Some a ->
+      let descriptor = Nx_device.Program.handle p in
+      Option.map
+        (fun code ->
+          let e = with_hw a (fun () -> Hashtbl.find a.kernels descriptor) in
+          { code; descriptor; private_segment = e.scratch })
+        (Nx_device.Program.code p)

@@ -278,7 +278,9 @@ let work =
           let binary = Lazy.force library in
           let p = program ~binary ~name:"fill" in
           not_equal nativeint 0n (Nx_device.Program.handle p);
-          is_true (program ~binary ~name:"fill" == p));
+          equal nativeint
+            (Nx_device.Program.handle p)
+            (Nx_device.Program.handle (program ~binary ~name:"fill")));
       cases
         ~name:(fun (name, _, _) -> name)
         "a program load is the driver's Error, after the device's name, for"

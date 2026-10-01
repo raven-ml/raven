@@ -298,8 +298,9 @@ let test_two_borrows () =
   is_true ~msg:"the second once the first let go" (same_bytes host (read d1));
   is_true ~msg:"the first again" (same_bytes host (read d0))
 
-(* A kernel compiled at test time, when NVIDIA's compiler is at hand: [fill]
-   writes through a local array, so that it uses local memory. *)
+(* Kernels compiled at test time, when NVIDIA's compiler is at hand: [fill]
+   writes through a local array, so that it uses local memory, and [small] is a
+   second function of the same cubin. *)
 let compile arch =
   match
     List.find_opt Sys.file_exists
@@ -313,7 +314,8 @@ let compile arch =
       Out_channel.with_open_text src (fun oc ->
           output_string oc
             "extern \"C\" __global__ void fill(int *p) { volatile int s[64]; \
-             s[threadIdx.x % 64] = 42; p[threadIdx.x] = s[threadIdx.x % 64]; }\n");
+             s[threadIdx.x % 64] = 42; p[threadIdx.x] = s[threadIdx.x % 64]; }\n\
+             extern \"C\" __global__ void small(int *p) { p[threadIdx.x] = 1; }\n");
       let cmd =
         Printf.sprintf "%s -cubin -arch=%s -O2 %s -o %s 2>/dev/null" nvcc arch
           src out
@@ -328,7 +330,9 @@ let test_programs () =
   | None -> skip ~reason:"no compiler for the GPU's architecture" ()
   | Some binary -> (
       let p = program d ~binary ~name:"fill" in
-      is_true ~msg:"cached" (p == program d ~binary ~name:"fill");
+      equal ~msg:"loaded once" nativeint
+        (Nx_device.Program.handle p)
+        (Nx_device.Program.handle (program d ~binary ~name:"fill"));
       let k = Option.get (Nx_nv_device.kernel p) in
       equal ~msg:"the handle is the entry" nativeint k.entry
         (Nx_device.Program.handle p);
@@ -340,6 +344,11 @@ let test_programs () =
         (Nx_device.equal d (B.device k.image));
       is_true ~msg:"a page past the image's last 4 KiB"
         (B.nbytes k.image mod 0x1000 = 0 && B.nbytes k.image >= 0x2000);
+      let small =
+        Option.get (Nx_nv_device.kernel (program d ~binary ~name:"small"))
+      in
+      equal ~msg:"another function of the same upload" nativeint image
+        (B.address small.image);
       match Nx_device.Program.load d ~binary ~name:"absent" with
       | Ok _ -> fail "loaded an absent function"
       | Error why -> contains ~msg:"refused" ~sub:"no function" why)

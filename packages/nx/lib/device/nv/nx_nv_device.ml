@@ -40,7 +40,6 @@ type props = {
 }
 
 type kernel = { image : Nx_device.Buffer.t; entry : nativeint }
-
 type local_memory = { address : nativeint; bytes : int; per_thread : int }
 
 (* The GPU behind a device, through its interface. *)
@@ -78,8 +77,6 @@ type t = {
       (* by address, host memory mapped for a copy or a borrow: under [Pci] the
          mapping, under [Kernel] another device's memory (the driver keeps
          borrows) *)
-  images : (string, Nx_device.Buffer.t) Hashtbl.t; (* uploaded cubins *)
-  kernels : (nativeint, kernel) Hashtbl.t; (* by entry, under [hw] *)
   unreachable : int list; (* the GPUs peer access was refused with at open *)
   obj : objects;
   props : props;
@@ -432,46 +429,34 @@ let dma n r =
 
 (* Programs *)
 
-(* The cubin [binary], relocated and uploaded once, as a buffer of the
-   device. *)
-let upload n binary (c : Cubin.t) =
-  match Hashtbl.find_opt n.images binary with
-  | Some image -> Some image
-  | None ->
-      Option.map
-        (fun mem ->
+(* The cubin [binary], relocated and uploaded to memory of the device the host
+   writes, which it frees once unloaded. A cubin the device cannot run is
+   refused, and the device stays usable. *)
+let load n ~binary =
+  match Cubin.load binary with
+  | exception Failure why -> Error why
+  | c -> (
+      let bytes = String.length c.image in
+      match alloc_mem n Visible bytes with
+      | None -> raise (Nx_device.Out_of_memory (Option.get n.dev, bytes))
+      | Some mem ->
           register n mem;
           Mmio.write
             (Option.get (host_view mem))
             0
             (Cubin.relocate c ~base:(va mem));
           Mmio.barrier ();
-          let bytes = String.length c.image in
-          let image =
-            Driver.buffer (Option.get n.dev) (region_of mem bytes)
-              Nx_dtype.Scalar.UInt8 bytes
+          let entry name =
+            match List.assoc_opt name c.entries with
+            | Some off -> Ok (Nativeint.of_int (va mem + off))
+            | None -> Error ("the cubin has no function " ^ name)
           in
-          Hashtbl.replace n.images binary image;
-          image)
-        (alloc_mem n Visible (String.length c.image))
-
-(* A cubin the device cannot run, or has no memory for, is refused, and the
-   device stays usable. *)
-let load n ~binary ~entry:name =
-  match Cubin.load binary ~name with
-  | exception Failure why -> Error why
-  | c -> (
-      match upload n binary c with
-      | None -> Error "no GPU memory for the program"
-      | Some image ->
-          let entry =
-            Nativeint.add
-              (Nx_device.Buffer.address image)
-              (Nativeint.of_int c.entry)
-          in
-          let k = { image; entry } in
-          with_hw n (fun () -> Hashtbl.replace n.kernels k.entry k);
-          Ok k.entry)
+          Ok
+            {
+              Driver.code = Some (region_of mem bytes);
+              entry;
+              unload = (fun () -> release n mem);
+            })
 
 (* Faults *)
 
@@ -817,8 +802,6 @@ let setup ~taken ~machine ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes
       hw = Mutex.create ();
       allocs = Int_map.empty;
       borrows = Hashtbl.create 16;
-      images = Hashtbl.create 8;
-      kernels = Hashtbl.create 16;
       unreachable;
       obj =
         {
@@ -1163,11 +1146,12 @@ let local_window _ = Nativeint.of_int local_window
 let props n = n.props
 
 let kernel p =
-  Option.bind
-    (nv_of (Nx_device.Program.device p))
-    (fun n ->
-      with_hw n (fun () ->
-          Hashtbl.find_opt n.kernels (Nx_device.Program.handle p)))
+  match nv_of (Nx_device.Program.device p) with
+  | None -> None
+  | Some _ ->
+      Option.map
+        (fun image -> { image; entry = Nx_device.Program.handle p })
+        (Nx_device.Program.code p)
 
 let local_memory n bytes =
   let d = Option.get n.dev in

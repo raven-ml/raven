@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Cubins: the ELF objects of NVIDIA's compilers, laid out as the GPU runs them,
-   with the address of each function's code. *)
+   and where their functions start. *)
 
 module Elf = Nx_device_elf
 
@@ -12,22 +12,13 @@ type t = {
   image : string; (* laid out, with room after it for the GPU's prefetch *)
   relocations : (int * int * int) list;
       (* (image offset to patch, target offset plus addend, type) *)
-  entry : int; (* offsets are in the image *)
+  entries : (string * int) list; (* each function's first instruction *)
 }
 
 let round_up n a = (n + a - 1) / a * a
 
-let load binary ~name =
+let load binary =
   let o = Elf.load ~align:128 binary in
-  let text =
-    match
-      List.find_opt
-        (fun (s : Elf.section) -> s.name = ".text." ^ name)
-        o.sections
-    with
-    | Some s -> s
-    | None -> failwith (Printf.sprintf "the cubin has no function %s" name)
-  in
   let relocations =
     List.map
       (fun (r : Elf.relocation) ->
@@ -49,7 +40,17 @@ let load binary ~name =
         + 0x1000 - String.length o.image)
         '\000'
   in
-  { image; relocations; entry = text.offset }
+  let entries =
+    let text = ".text." in
+    let n = String.length text in
+    List.filter_map
+      (fun (s : Elf.section) ->
+        if String.starts_with ~prefix:text s.name then
+          Some (String.sub s.name n (String.length s.name - n), s.offset)
+        else None)
+      o.sections
+  in
+  { image; relocations; entries }
 
 (* [c]'s image with its relocations applied for its upload at [base]: the 64-bit
    address of a symbol, or its low or high 32 bits in the word after. *)
