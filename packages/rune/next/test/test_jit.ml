@@ -2187,8 +2187,13 @@ let scans =
       test "a scan folds inside the trace and equals eager" (fun () ->
           let f xs = snd (cumulative xs) in
           equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
-      staged Nx.Placement.host "a scan on the host runs its step once per row"
-        ~steps:Fun.id ~init:(zeros 3) sum (rows 5 3);
+      staged Nx.Placement.host
+        "a scan on the host stages, its step running once"
+        ~steps:(fun _ -> 1)
+        ~init:(zeros 3) sum (rows 5 3);
+      staged Nx.Placement.host "a scan of four hundred steps on the host stages"
+        ~steps:(fun _ -> 1)
+        ~init:(zeros 4) decay (rows 400 4);
       test "a scan over rows computed from constants alone equals eager"
         (fun () ->
           List.iter

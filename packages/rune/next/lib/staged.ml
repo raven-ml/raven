@@ -91,18 +91,6 @@ let reach ~from =
 let numel shape = Array.fold_left ( * ) 1 shape
 let ints l = List.map (fun n -> Ops.Int n) l
 
-(* Whether [p] is one device whose work runs from command queues, as a loop of
-   one batch needs. *)
-let queued p =
-  match Nx.Placement.devices p with
-  | [ d ] -> (
-      let rd = Nx.Device.runtime d in
-      let n = Nx_device.name rd in
-      match Tolk_next_engine.device [ (n, rd) ] n with
-      | device -> Option.is_some device.compiler.queues
-      | exception Invalid_argument _ -> false)
-  | _ -> false
-
 (* The elements of [u]'s dtype that rows of [m] of them take, apart enough that
    each starts on 16 bytes of memory, as the body's vector accesses take it. *)
 let stride u m =
@@ -154,16 +142,21 @@ let cut next args body =
 let stage trace s (r : Scan.request) =
   let leaves = r.req_carry @ r.req_xs in
   let at (Nx.P x) = Nx.placement x in
-  (* The loop runs where its leaves lie, host leaves joining it. *)
+  (* The loop runs where its leaves lie, on one device, host leaves joining
+     it. *)
   let p =
-    match List.find_opt queued (List.map at leaves) with
-    | Some p
-      when List.for_all
-             (fun l -> Nx.Placement.(equal (at l) p || equal (at l) host))
-             leaves ->
-        p
-    | Some _ | None -> raise Scan.Not_staged
+    Option.value ~default:Nx.Placement.host
+      (List.find_opt
+         (fun p -> not Nx.Placement.(equal p host))
+         (List.map at leaves))
   in
+  if
+    List.compare_length_with (Nx.Placement.devices p) 1 <> 0
+    || not
+         (List.for_all
+            (fun l -> Nx.Placement.(equal (at l) p || equal (at l) host))
+            leaves)
+  then raise Scan.Not_staged;
   let device = Ops.Single (Nx.Device.name (List.hd (Nx.Placement.devices p))) in
   (* The node of [x] on the loop's device: placed there, and a constant held
      there, since a call reads storage. *)
@@ -323,28 +316,6 @@ let stage trace s (r : Scan.request) =
       (Ops.call ~precompile:true body (List.map snd (List.sort compare args)))
       [ range ]
   in
-  (* Before answering, the loop of its calls must run as one batch. *)
-  let probe =
-    List.map
-      (fun (slot, u) ->
-        ( slot,
-          Ops.new_buffer
-            (Option.get (Ops.device u))
-            (Ops.max_numel u) (Ops.dtype u) ))
-      !args
-  in
-  let linear, _ =
-    Tolk_next.Schedule.create_linear_with_vars ~capturing:true
-      (Ops.sink [ Ops.after (snd (List.hd probe)) [ call probe ] ])
-  in
-  let staged =
-    List.exists
-      (fun e ->
-        Ops.op e = Op.End
-        && Hcq2.stages ~devices:(fun d -> (Lower.engine s d).compiler) e)
-      (Ops.src linear)
-  in
-  if not staged then raise Scan.Not_staged;
   let e = call !args in
   {
     Scan.r_carry =

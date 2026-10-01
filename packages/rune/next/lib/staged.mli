@@ -25,24 +25,24 @@
     read each other in a cycle, such as two carries that swap. A scan inside the
     step is written out inside the body.
 
-    A scan stages when its leaves lie on one device whose work runs from command
-    queues (Metal, CUDA, AMD, NV), host leaves joining it, and when its body
-    runs there as one loop of one batch ({!Tolk_next.Hcq2.stages}). It is
-    declined ({!Scan.Not_staged}), and folds where it is written:
-    - before its step runs, when no leaf lies on such a device, as on the host;
+    A scan stages when its leaves lie on one device, host leaves joining it. On
+    a device whose work runs from command queues (Metal, CUDA, AMD, NV) the loop
+    runs as one batch where its body allows; elsewhere, and where it does not,
+    the program runs the body's calls once per trip. It is declined
+    ({!Scan.Not_staged}), and folds where it is written:
+    - before its step runs, when its leaves lie on several devices;
     - after its step ran once, in a trace whose values nothing keeps, when the
       step's next carry differs from its carry in a shape or a placement, when
-      an output lies elsewhere than the loop's device or the host, when the step
-      draws from a key the body does not vary (a key scope's draw: the step runs
-      outside the scopes the function opened, and a traced draw would repeat on
-      every trip), when the scan has one step, or when the body runs a host
-      program, a copy the host makes, or calls devices of two kinds.
+      an output lies elsewhere than the loop's device or the host, or when the
+      step draws from a key the body does not vary (a key scope's draw: the step
+      runs outside the scopes the function opened, and a traced draw would
+      repeat on every trip).
 
     An output the step computes on the host, such as a constant, is written on
     the loop's device, and its rows are copied to the host once per call.
 
     So a staged scan runs its step once per trace, and a declined one once per
-    row, plus once before on a device with queues. *)
+    row, plus once before when it declined after its step ran. *)
 
 (** The type for how a node reads a value: not at all, at each element's own
     index only (through elementwise operations, casts and bitcasts that keep the
