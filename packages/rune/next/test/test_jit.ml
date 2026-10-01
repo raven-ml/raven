@@ -183,6 +183,20 @@ let wide_solve =
       in
       at_most float_exact ~than:1e-9 (Nx.item [] (Rune.jit' residual a)))
 
+(* Values computed in another order than eager's: within a relative 1e-5, or
+   within 2^-20 of the largest magnitude their terms reach, so that a sum that
+   cancels to a value far below its terms is compared at its terms' scale. *)
+let rounded a b =
+  let largest t =
+    Array.fold_left
+      (fun m v -> if Float.is_finite v then Float.max m (Float.abs v) else m)
+      0. (Nx.to_array t)
+  in
+  let n = Array.fold_left max 1 (Nx.shape b) in
+  Oracle.tensor ~rel:1e-5
+    ~abs:(Float.ldexp (largest a +. (float_of_int n *. largest b)) (-20))
+    ()
+
 (* The laws of values, [count] cases each; [heavy] adds the families the default
    run leaves out, and the tests whose programs take longest to compile. *)
 let values ~count ~heavy =
@@ -191,7 +205,7 @@ let values ~count ~heavy =
         match apply a b with
         | expected ->
             equal
-              (if exact then floats else close)
+              (if exact then floats else rounded a b)
               expected (Rune.jit two apply a b)
         | exception Invalid_argument m ->
             (* An empty extreme raises eagerly; compiled, it raises too. *)
