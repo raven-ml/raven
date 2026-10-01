@@ -1,0 +1,4 @@
+(library
+ (name hugin_next_gg)
+ (public_name hugin.next.gg)
+ (modules_without_implementation affine p2 box2 path stroke color))
