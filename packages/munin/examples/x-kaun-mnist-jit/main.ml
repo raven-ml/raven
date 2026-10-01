@@ -89,14 +89,15 @@ let () =
       }
   in
   (* The parameters start on the device, so the compiled step runs there and
-     keeps them there. *)
+     keeps them there. On a GPU, Rune.compiled computes the evaluation's eager
+     operations there too. *)
   let on_device =
-    Nx.Placement.device
-      (match String.uppercase_ascii !device with
-      | "METAL" -> Metal.device ()
-      | "CUDA" -> Nx_cuda_device.v 0
-      | "CPU" -> Nx_device.host
-      | d -> failwith (d ^ ": not METAL, CPU or CUDA"))
+    let gpu d = Nx.Placement.device ~backend:Rune.compiled d in
+    match String.uppercase_ascii !device with
+    | "METAL" -> gpu (Metal.device ())
+    | "CUDA" -> gpu (Nx_cuda_device.v 0)
+    | "CPU" -> Nx.Placement.host
+    | d -> failwith (d ^ ": not METAL, CPU or CUDA")
   in
   params := Nx.Ptree.map cnn (fun _ t -> Nx.place on_device t) !params;
   let state = Vega.sgd_init cnn !params in

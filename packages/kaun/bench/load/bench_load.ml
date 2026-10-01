@@ -48,7 +48,7 @@ let () =
           (Nx.slice [ A; I 7 ] (Llama.hidden cfg params ids))
       in
       let logits = Rune.jit' forward ids in
-      ignore (Nx.item [ 0; 0 ] (Nx.cast Nx.float32 logits));
+      ignore (Nx.item [ 0; 0 ] logits : float);
       Printf.printf ", first compiled call %.3f s" (since ()))
     device;
   print_newline ()
