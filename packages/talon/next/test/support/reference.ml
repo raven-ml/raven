@@ -80,6 +80,8 @@ type plan =
       left : plan;
       right : plan;
     }
+  | Sort of key list * plan
+  | Source of Source.t * Talon_next.t
 
 let literal : type a s. a Type.t -> (a -> (a, s) Expr.t) option =
  fun ty ->
@@ -244,6 +246,8 @@ let rec query = function
   | Join { kind; each_left; each_right; on; left; right } ->
       Query.join ~kind ~each_left ~each_right ~on:(cond on) (query right)
         (query left)
+  | Sort (ks, p) -> Query.sort (List.map order ks) (query p)
+  | Source (s, _) -> Query.of_source s
 
 (* [derived cs outs] is the columns [cs] with [outs] in place of those of their
    names, then the others. *)
@@ -269,12 +273,13 @@ let unkeyed on rs =
     rs
 
 let rec schema = function
-  | Table t -> Schema.columns (Talon_next.schema t)
+  | Table t | Source (_, t) -> Schema.columns (Talon_next.schema t)
   | Select (os, p) -> List.concat_map (out_schema (schema p)) os
   | Derive (os, p) ->
       let s = schema p in
       derived s (List.concat_map (out_schema s) os)
-  | Filter (_, p) | Slice { plan = p; _ } | Append (p, _) -> schema p
+  | Filter (_, p) | Slice { plan = p; _ } | Append (p, _) | Sort (_, p) ->
+      schema p
   | Aggregate (by, os, p) ->
       let s = schema p in
       List.map (fun n -> (n, List.assoc n s)) by
@@ -858,21 +863,37 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
         l @ List.map (fun (n, _) -> (n, List.assoc n r)) (unkeyed on rschema)
     | None -> l @ List.map null (unkeyed on rschema)
   in
+  (* A Full join's keys are at the type their two columns meet at. *)
+  let widen row =
+    List.map
+      (fun (n, c) ->
+        match List.assoc_opt n ks with
+        | Some rn ->
+            let (Type.Any t) =
+              meet (List.assoc n lschema) (List.assoc rn rschema)
+            in
+            (n, Cell (t, read t c))
+        | None -> (n, c))
+      row
+  in
   (* A right row without a match, its keys in the left's. *)
   let unmatched r =
-    pair
-      (List.map
-         (fun ((n, _) as c) ->
-           match List.assoc_opt n ks with
-           | Some rn -> (n, List.assoc rn r)
-           | None -> null c)
-         lschema)
-      (Some r)
+    widen
+    @@ pair
+         (List.map
+            (fun ((n, _) as c) ->
+              match List.assoc_opt n ks with
+              | Some rn -> (n, List.assoc rn r)
+              | None -> null c)
+            lschema)
+         (Some r)
   in
   let out l js =
     match ((kind : Join.kind), js) with
-    | (Inner | Left | Full), _ :: _ -> List.map (fun r -> pair l (Some r)) js
-    | (Left | Full), [] -> [ pair l None ]
+    | (Inner | Left), _ :: _ -> List.map (fun r -> pair l (Some r)) js
+    | Full, _ :: _ -> List.map (fun r -> widen (pair l (Some r))) js
+    | Left, [] -> [ pair l None ]
+    | Full, [] -> [ widen (pair l None) ]
     | Inner, [] -> []
     | Semi, js -> if js = [] then [] else [ l ]
     | Anti, js -> if js = [] then [ l ] else []
@@ -944,7 +965,7 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
       List.to_seq (pairs @ rest) ()
 
 let rec rows : plan -> row Seq.t = function
-  | Table t -> List.to_seq (table_rows t)
+  | Table t | Source (_, t) -> List.to_seq (table_rows t)
   | Select (os, p) -> step (local_outs os) (fun fr -> outs fr os) (rows p)
   | Derive (os, p) ->
       step (local_outs os)
@@ -973,6 +994,11 @@ let rec rows : plan -> row Seq.t = function
       join kind (each_left, each_right) on
         (schema left, schema right)
         (rows left) (rows right)
+  | Sort (ks, p) ->
+      fun () ->
+        List.to_seq
+          (List.stable_sort (compare_keys ks) (List.of_seq (rows p)))
+          ()
 
 let run p =
   match List.of_seq (rows p) with

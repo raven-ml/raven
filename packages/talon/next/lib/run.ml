@@ -53,6 +53,53 @@ let of_table t =
   in
   { next; close = ignore }
 
+(* [of_source q source request] is the rows of [source]'s parts for [request],
+   [q]'s step: each part opened when the one before ends, its reader closed at
+   its end, at an error, or when the stream closes. *)
+let of_source q (source : Source.t) request =
+  let ok = function Ok x -> x | Error e -> raise (Failed e) in
+  let parts = ref None and reader = ref None and held = ref [] in
+  let close () =
+    Option.iter
+      (fun (r : Source.reader) ->
+        reader := None;
+        r.close ())
+      !reader
+  in
+  let check t =
+    if not (Schema.equal (Table.schema t) (Query.schema q)) then
+      Format.kasprintf invalid_arg
+        "Query.run: %s yields a batch of the columns %a, not %a" source.name
+        Schema.pp (Table.schema t) Schema.pp (Query.schema q);
+    Table.batches t
+  in
+  let rec next () =
+    match (!held, !reader, !parts) with
+    | b :: bs, _, _ ->
+        held := bs;
+        Some b
+    | [], Some r, _ -> (
+        match r.next () with
+        | Ok (Some t) ->
+            held := check t;
+            next ()
+        | Ok None ->
+            close ();
+            next ()
+        | Error e ->
+            close ();
+            raise (Failed e))
+    | [], None, None ->
+        parts := Some (ok (source.parts request));
+        next ()
+    | [], None, Some ((p : Source.part) :: ps) ->
+        parts := Some ps;
+        if p.rows <> Some 0 then reader := Some (ok (p.open_ ()));
+        next ()
+    | [], None, Some [] -> None
+  in
+  { next; close }
+
 (* [streaming q s step] is [step] applied to each batch of [s], the input of
    [q]'s step. [step b] is [b]'s output and the failure, if any, at whose row
    the output stops; the next pull raises the failure. *)
@@ -315,37 +362,116 @@ let join q left right l r =
       in
       { next; close }
 
+(* [ordered q keys s] is [s], the rows of [q]'s source, failing at the first row
+   out of the order of [keys]. *)
+let ordered q keys s =
+  let prev = ref None in
+  streaming q s (fun b ->
+      let r = Order_run.unordered keys !prev b in
+      if Table.rows b > 0 then prev := Some b;
+      match r with
+      | None -> (b, None)
+      | Some row ->
+          let why =
+            Format.asprintf "the row is out of the source's order %a."
+              (Type.pp_list Order.pp) keys
+          in
+          ( sub b ~offset:0 ~length:row,
+            Some { Eval.row; cause = Data (Error.v why) } ))
+
+(* [source q source r] reads [q]'s source with its request, and checks the
+   source's order on the longest prefix of it that the request reads. *)
+let source q (source : Source.t) (request : Source.request) =
+  let rec read = function
+    | (k : Order.t) :: ks when List.mem k.name request.columns -> k :: read ks
+    | _ -> []
+  in
+  let s = of_source q source request in
+  match read source.sorted with [] -> s | keys -> ordered q keys s
+
+(* [readers q] is the number of reads of each step of [q] by the steps above it,
+   [q] itself being read once. *)
+let readers q =
+  let counts = ref [] in
+  let rec visit q =
+    match List.assq_opt q !counts with
+    | Some n -> incr n
+    | None ->
+        counts := (q, ref 1) :: !counts;
+        List.iter visit (Query.inputs q)
+  in
+  visit q;
+  fun q -> !(List.assq q !counts)
+
 (* A step whose expressions read other rows than their own blocks. *)
 let local outputs =
   List.for_all (fun (_, Expr.Packed e) -> Expr.row_local e) outputs
 
-let rec stream q =
-  let step input local f =
-    if local then streaming q (stream input) f
-    else blocking q input (stream input) f
+(* [compile q] is the stream of [q]'s rows. A step that several steps read is
+   one stream, read through a tee. A slice from the start of a sort read once is
+   a top-k. *)
+let compile q =
+  let readers = readers q and tees = ref [] in
+  let rec stream q =
+    if readers q = 1 then step q
+    else
+      let rest =
+        match List.assq_opt q !tees with
+        | Some rest -> rest
+        | None ->
+            let s = step q in
+            let tee = Tee.v (readers q) s.next s.close in
+            let rest =
+              ref (List.map (fun (next, close) -> { next; close }) tee)
+            in
+            tees := (q, rest) :: !tees;
+            rest
+      in
+      match !rest with
+      | s :: ss ->
+          rest := ss;
+          s
+      | [] -> assert false
+  and step q =
+    let step input local f =
+      if local then streaming q (stream input) f
+      else blocking q input (stream input) f
+    in
+    match Query.node q with
+    | Of_table t -> of_table t
+    | Of_source { source = src; columns; filters; limit } ->
+        let filters =
+          List.map (fun c -> Option.get (Optimize.pred c)) filters
+        in
+        source q src { columns; filters; limit }
+    | Select { outputs; input } ->
+        step input (local outputs) (select q outputs input)
+    | Derive { outputs; input } ->
+        step input (local outputs) (derive q outputs input)
+    | Filter { predicate; input } ->
+        step input (Expr.row_local predicate) (filter q predicate input)
+    | Aggregate { by; outputs; input } ->
+        step input false (aggregate q by outputs input)
+    | Sort { keys; input } ->
+        step input false (fun b -> (Order_run.sort keys b, None))
+    | Slice { offset; length; input } when offset >= 0 -> (
+        match Query.node input with
+        | Sort { keys; input = sorted } when readers input = 1 ->
+            step sorted false (fun b ->
+                (Order_run.top_k ~offset ~length keys b, None))
+        | _ -> head ~offset ~length (stream input))
+    | Slice { offset; length; input } -> tail ~offset ~length (stream input)
+    | Append { input; rest } ->
+        append q (stream input) (stream rest) (Query.schema rest)
+    | Join { left; right; _ } -> join q left right (stream left) (stream right)
+    | Unnest _ -> Eval.not_lowered (line Query.pp_step q)
   in
-  match Query.node q with
-  | Of_table t -> of_table t
-  | Select { outputs; input } ->
-      step input (local outputs) (select q outputs input)
-  | Derive { outputs; input } ->
-      step input (local outputs) (derive q outputs input)
-  | Filter { predicate; input } ->
-      step input (Expr.row_local predicate) (filter q predicate input)
-  | Aggregate { by; outputs; input } ->
-      step input false (aggregate q by outputs input)
-  | Slice { offset; length; input } ->
-      if offset >= 0 then head ~offset ~length (stream input)
-      else tail ~offset ~length (stream input)
-  | Append { input; rest } ->
-      append q (stream input) (stream rest) (Query.schema rest)
-  | Join { left; right; _ } -> join q left right (stream left) (stream right)
-  | Of_source _ | Sort _ | Unnest _ -> Eval.not_lowered (line Query.pp_step q)
+  stream q
 
 (* Running *)
 
 let fold q ~init f =
-  let s = stream (Optimize.query q) in
+  let s = compile (Optimize.query q) in
   let rec loop acc =
     match s.next () with
     | None -> acc

@@ -2348,8 +2348,9 @@ module Query : sig
       [Inexact] or [Unsupported] conjunct gets no limit. A slice from the end
       gets one too when the source states its rows and is handed no conjunct,
       the slice then counting from the start. A slice from the start directly
-      above a [sort] runs as a selection of its first [offset + length] rows, in
-      O(n log k) for k such rows: [sort] then [slice] is a top-k.
+      above a [sort] runs as a selection of its first [offset + length] rows,
+      which sorts only the rows whose first key is at most the
+      [offset + length]th row's: [sort] then [slice] is a top-k.
 
       {b Projections.} Each source reads only the columns that a step reads or
       that the result has, and each [select], [derive] and [aggregate] drops the
@@ -2365,9 +2366,9 @@ module Query : sig
       once; equal subexpressions of one step are one expression, which it
       computes once. Each place that reads a source is a read of its own, with
       the columns and the conjuncts of that place, so places with equal requests
-      are one read. A step that a plan reaches more than once blocks: a run
-      holds its rows, of the columns its readers read, until its last reader has
-      them.
+      are one read. A step that a plan reaches more than once runs once: a run
+      computes it as far as its furthest reader reads, and holds its rows, of
+      the columns its readers read, from its slowest reader to its furthest.
 
       The guide's pipeline, optimized, reads two of the CSV file's columns,
       which answers [Unsupported] to every conjunct:
@@ -2471,8 +2472,9 @@ module Kit : sig
       {[
       Query.(q |> sort keys |> slice ~offset:0 ~length:k)
       ]}
-      A slice from the start of a sort runs as a selection of its first rows, in
-      O(n log k), holding k rows. *)
+      A slice from the start of a sort runs as a selection of its first rows,
+      which sorts only the rows that precede or tie with the [k]th on the first
+      key. *)
 
   val distinct : Query.t -> Query.t
   (** [distinct q] is the first of each set of [q]'s rows that are the same on

@@ -23,6 +23,8 @@
   join_run
   query
   optimize
+  order_run
+  tee
   eval
   run)
  (instrumentation

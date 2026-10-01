@@ -508,17 +508,162 @@ let step level p =
       (fun i (n, t) -> (n, Printf.sprintf "j%d_%d" level i, t))
       (expressible s)
   in
+  let sort = Gen.map (fun ks -> R.Sort (ks, p)) (keys s) in
+  let shared = Gen.constant (R.Append (p, p)) in
   Gen.one_of
-    ([ select; derive; filter; slice; append; aggregate ]
+    ([ select; derive; filter; slice; append; aggregate; sort; shared ]
     @ if columns = [] then [] else [ join columns ])
 
 let rec plan level =
   if level = 0 then Gen.map (fun t -> R.Table t) (Gen.bind schemas table)
   else Gen.bind (plan (level - 1)) (step level)
 
-(* [split p] is [p] with each table cut into batches. *)
-let rec split : R.plan -> R.plan Gen.t = function
-  | Table t -> Gen.map (fun t -> R.Table t) (G.split t)
+(* Sources
+
+   A source over a table's batches, cut into parts that state their rows or not.
+   It gives one answer to every conjunct and applies each conjunct of its
+   request, which [Exact] needs and [Inexact] allows. *)
+
+let cmp op c =
+  match op with
+  | `Eq -> c = 0
+  | `Ne -> c <> 0
+  | `Lt -> c < 0
+  | `Le -> c <= 0
+  | `Gt -> c > 0
+  | `Ge -> c >= 0
+
+type 'r cell = { cell : 'a. 'a Type.t -> 'a option -> 'r }
+
+(* [holds t p] is [p] on each row of [t], as Kleene's logic computes it. *)
+let rec holds t (p : Source.Pred.t) =
+  let each n { cell } =
+    let (R.Column (ty, vs)) = R.decode (column t n) in
+    Array.map (cell ty) vs
+  in
+  let same : type a. a Type.t -> a -> Source.Pred.value -> (int -> bool) -> bool
+      =
+   fun ty x (Value (ty', y)) test ->
+    match Kind.provably_equal (Type.kind ty) (Type.kind ty') with
+    | Some Equal -> test (Type.compare_value ty' x y)
+    | None -> invalid_arg "holds: a value of another kind"
+  in
+  match p with
+  | Null n -> each n { cell = (fun _ v -> Some (Option.is_none v)) }
+  | Valid n -> each n { cell = (fun _ v -> Some (Option.is_some v)) }
+  | Cmp (n, op, v) ->
+      each n { cell = (fun ty -> Option.map (fun x -> same ty x v (cmp op))) }
+  | In (n, vs) ->
+      let is_in ty x = List.exists (fun v -> same ty x v (cmp `Eq)) vs in
+      each n
+        {
+          cell = (fun ty x -> Some (Option.fold ~none:false ~some:(is_in ty) x));
+        }
+  | Not p -> Array.map (Option.map not) (holds t p)
+  | And ps ->
+      let f a b =
+        match (a, b) with
+        | Some false, _ | _, Some false -> Some false
+        | None, _ | _, None -> None
+        | _ -> Some true
+      in
+      List.fold_left (Array.map2 f)
+        (Array.make (rows t) (Some true))
+        (List.map (holds t) ps)
+  | Or ps ->
+      let f a b =
+        match (a, b) with
+        | Some true, _ | _, Some true -> Some true
+        | None, _ | _, None -> None
+        | _ -> Some false
+      in
+      List.fold_left (Array.map2 f)
+        (Array.make (rows t) (Some false))
+        (List.map (holds t) ps)
+
+(* [answer r b] is the batch [b] read with the request [r]. *)
+let answer (r : Source.request) b =
+  let keep =
+    List.fold_left
+      (fun keep p ->
+        Array.map2 (fun k v -> k && v = Some true) keep (holds b p))
+      (Array.make (rows b) true)
+      r.filters
+  in
+  let idx = List.filter (fun i -> keep.(i)) (List.init (rows b) Fun.id) in
+  let idx = Array.of_list (List.map Int64.of_int idx) in
+  let b = take (Nx.create Nx.int64 [| Array.length idx |] idx) b in
+  let keep =
+    if r.columns = [] then [] else Expr.[ keep (Sel.names r.columns) ]
+  in
+  run_ok (Query.select keep (Query.of_table b))
+
+(* How a plan reads its tables. Two runs of one plan read alike, since the
+   answers and the stated rows change the optimized plan, and so its
+   failures. *)
+type read = Tables | Sources of { answer : Source.answer; stated : bool }
+
+let reads =
+  Gen.frequency
+    [
+      (2, Gen.constant Tables);
+      ( 1,
+        map2
+          (fun answer stated -> Sources { answer; stated })
+          (Gen.of_list Source.[ Exact; Inexact; Unsupported ])
+          Gen.bool );
+    ]
+
+let source ~answer:answer_ ~stated t =
+  let bs = batches t in
+  Gen.map
+    (fun cuts ->
+      let parts =
+        List.fold_left2
+          (fun parts b cut ->
+            match parts with
+            | p :: ps when not cut -> (b :: p) :: ps
+            | ps -> [ b ] :: ps)
+          [] bs cuts
+        |> List.rev_map List.rev
+      in
+      let part r bs =
+        let bs = List.map (answer r) bs in
+        let rest = ref bs in
+        let next () =
+          match !rest with
+          | [] -> Ok None
+          | b :: bs ->
+              rest := bs;
+              Ok (Some b)
+        in
+        {
+          Source.rows =
+            (if stated then Some (List.fold_left (fun n b -> n + rows b) 0 bs)
+             else None);
+          open_ = (fun () -> Ok { Source.next; close = ignore });
+        }
+      in
+      Source.v ~name:"source" ~schema:(schema t)
+        ?rows:(if stated then Some (rows t) else None)
+        ~pushdown:(fun _ -> answer_)
+        (fun r -> Ok (List.map (part r) parts)))
+    (Gen.list ~size:(Gen.constant (List.length bs)) Gen.bool)
+
+(* [split read p] is [p] with each table cut into batches, read as [read]
+   says. *)
+let rec split read (p : R.plan) : R.plan Gen.t =
+  let split = split read in
+  match p with
+  | Table t -> (
+      Gen.bind (G.split t) @@ fun t ->
+      match read with
+      | Tables -> Gen.constant (R.Table t)
+      | Sources { answer; stated } ->
+          Gen.map (fun s -> R.Source (s, t)) (source ~answer ~stated t))
+  | Source _ as p -> Gen.constant p
+  | Sort (ks, p) -> Gen.map (fun p -> R.Sort (ks, p)) (split p)
+  | Append (p, r) when p == r -> Gen.map (fun p -> R.Append (p, p)) (split p)
   | Select (os, p) -> Gen.map (fun p -> R.Select (os, p)) (split p)
   | Derive (os, p) -> Gen.map (fun p -> R.Derive (os, p)) (split p)
   | Filter (e, p) -> Gen.map (fun p -> R.Filter (e, p)) (split p)
@@ -533,7 +678,10 @@ let rec split : R.plan -> R.plan Gen.t = function
 
 let pp_plan ppf p = Query.pp ppf (R.query p)
 let plans = Gen.bind (Gen.int_range 0 3) plan
-let split_plans = Gen.with_pp pp_plan (Gen.bind plans split)
+
+let split_plans =
+  Gen.with_pp pp_plan
+    (Gen.bind (Gen.pair plans reads) (fun (p, r) -> split r p))
 
 (* The run against the reference
 
@@ -586,6 +734,8 @@ let agrees p =
   cover "an aggregate" (mentions "aggregate" p);
   cover "a join" (mentions "join" p);
   cover "an expression reads other rows" framed;
+  cover "a sort" (mentions "sort" p);
+  cover "a source" (mentions "source" p);
   match (attempt (fun () -> R.run p), attempt (fun () -> Query.run q)) with
   | Ok (Ok cs), Ok (Ok t) ->
       cover "rows in the result" (rows t > 0);
@@ -641,21 +791,30 @@ let rec buffers c =
 let two_splits =
   Gen.with_pp
     (fun ppf (p, _) -> pp_plan ppf p)
-    (Gen.bind plans (fun p -> Gen.pair (split p) (split p)))
+    (Gen.bind (Gen.pair plans reads) (fun (p, r) ->
+         Gen.pair (split r p) (split r p)))
 
-let same_layouts (p0, p1) =
-  let run p () = Query.run (R.query p) in
-  match (attempt (run p0), attempt (run p1)) with
+(* [same_outcome q0 q1] checks that [q0] and [q1] run to the same buffers, or
+   end alike. *)
+let same_outcome q0 q1 =
+  let run q () = Query.run q in
+  match (attempt (run q0), attempt (run q1)) with
   | Ok (Ok t0), Ok (Ok t1) ->
       List.iter
         (fun (n, _) ->
           equal ~msg:n (list string)
             (buffers (column t0 n))
             (buffers (column t1 n)))
-        (R.schema p0)
+        (Schema.columns (Query.schema q0))
   | Ok (Error e0), Ok (Error e1) -> equal string (error e0) (error e1)
   | Error b0, Error b1 -> equal (Windtrap.pair int int) b0 b1
-  | _ -> fail "the two splits end differently"
+  | _ -> fail "the two runs end differently"
+
+let same_layouts (p0, p1) = same_outcome (R.query p0) (R.query p1)
+
+let optimized p =
+  let q = R.query p in
+  same_outcome (Query.optimize q) q
 
 (* Values *)
 
@@ -776,12 +935,13 @@ let laws =
         failing emits_before;
       prop "a slice from the start never meets a failure past its rows" sliced
         slice_stops;
-      prop ~count:500 "run gives the reference's rows, whatever the batches"
+      prop ~count:1000 "run gives the reference's rows, whatever the batches"
         split_plans agrees;
       prop "run's layouts are the same bytes whatever the batches" two_splits
         same_layouts;
       prop "values gives the reference's values, or fails where it does"
         values_cases values_agree;
+      prop "run (optimize q) is run q" split_plans optimized;
     ]
 
 (* Cases from the specification *)
@@ -1629,11 +1789,12 @@ let refusals =
           let r = v [ ("b", Column.v Type.int64 [| 1 |]) ] in
           expect (message (fun () -> Query.run (join (Join.lt "a" "b") t r)))
           @@ __POS_OF__ {| join ~on:(lt "a" "b") is not implemented yet |});
-      test "a sort is refused, naming the step" (fun () ->
+      test "an unnest is refused, naming the step" (fun () ->
+          let t = v [ ("l", Column.v Type.(list int64) [| [| 1 |]; [||] |]) ] in
           expect
             (message (fun () ->
-                 Query.run (Query.sort [ Order.asc "a" ] (Query.of_table t))))
-          @@ __POS_OF__ {| sort [asc "a"] is not implemented yet |});
+                 Query.run (Query.unnest [ "l" ] (Query.of_table t))))
+          @@ __POS_OF__ {| unnest ["l"] is not implemented yet |});
       test "an ewm is refused, naming the expression" (fun () ->
           expect
             (message (fun () ->
@@ -1642,6 +1803,271 @@ let refusals =
                       Expr.[ "e" := ewm ~alpha:0.5 (Col.int "a") ]
                       (Query.of_table t))))
           @@ __POS_OF__ {| ewm ~alpha:0.5 a is not implemented yet |});
+    ]
+
+(* Sorts and top-k *)
+
+let pp_key ppf (k : R.key) =
+  Format.fprintf ppf "%s %S%s"
+    (if k.desc then "desc" else "asc")
+    k.name
+    (if k.nulls_first then " nulls first" else "")
+
+let order (k : R.key) =
+  let o = if k.desc then Order.desc k.name else Order.asc k.name in
+  if k.nulls_first then Order.nulls_first o else o
+
+(* [sorted ty k vs] is [vs] sorted stably by [k], as [Type.compare_value] orders
+   the values. *)
+let sorted ty (k : R.key) vs =
+  let compare a b =
+    match (a, b) with
+    | None, None -> 0
+    | None, Some _ -> if k.nulls_first then -1 else 1
+    | Some _, None -> if k.nulls_first then 1 else -1
+    | Some x, Some y ->
+        let c = Type.compare_value ty x y in
+        if k.desc then -c else c
+  in
+  Array.of_list (List.stable_sort compare (Array.to_list vs))
+
+let rec has_ext : type a. a Type.t -> bool = function
+  | Ext _ -> true
+  | List e -> has_ext e
+  | Record fs -> List.exists (fun (_, Type.Any t) -> has_ext t) fs
+  | _ -> false
+
+let one_key =
+  Gen.with_pp
+    (fun ppf (G.Sample (ty, vs), k, t) ->
+      Format.fprintf ppf "%a by %a in %d batches" G.pp_sample
+        (G.Sample (ty, vs))
+        pp_key k
+        (List.length (batches t)))
+    (Gen.bind G.sample (fun (G.Sample (ty, vs) as sample) ->
+         let x =
+           if has_ext ty then [] else [ ("x", Column.of_options ty vs) ]
+         in
+         Gen.map
+           (fun ((desc, nulls_first), t) ->
+             (sample, { R.name = "x"; desc; nulls_first }, t))
+           (Gen.pair (Gen.pair Gen.bool Gen.bool) (G.split (v x)))))
+
+(* An extension type, or one that holds one, has no order: its sample has no
+   column. *)
+let sorts_as_compare_value (G.Sample (ty, vs), k, t) =
+  assume (rows t > 0 || Array.length vs = 0);
+  if Schema.columns (schema t) <> [] then begin
+    cover "nulls" (Array.exists Option.is_none vs);
+    cover "several batches" (List.length (batches t) > 1);
+    let ran = run_ok (Query.sort [ order k ] (Query.of_table t)) in
+    equal
+      (array (option (G.witness ty)))
+      (sorted ty k vs)
+      (Column.options (Type.kind ty) (column ran "x"))
+  end
+
+let top_k_cases =
+  Gen.with_pp
+    (fun ppf (t, ks, offset, length) ->
+      Format.fprintf ppf "slice ~offset:%d ~length:%d of %a over %a" offset
+        length
+        (Format.pp_print_list pp_key)
+        ks pp t)
+    (Gen.bind (Gen.bind schemas table) (fun t ->
+         let n = rows t in
+         Gen.bind
+           (Gen.pair
+              (Gen.int_range 0 (n + 1))
+              (keys (Schema.columns (schema t))))
+           (fun (offset, ks) ->
+             Gen.map
+               (fun (length, t) -> (t, ks, offset, length))
+               (Gen.pair
+                  (Gen.one_of
+                     [
+                       Gen.int_range 0 2;
+                       Gen.constant (Int.max 0 (n - offset));
+                       Gen.int_range 0 (n + 3);
+                     ])
+                  (G.split t)))))
+
+(* A slice from the start over a sort is a top-k; over the sort's result read as
+   a table, it is a slice. *)
+let top_k_is_slice (t, ks, offset, length) =
+  let k = offset + length and n = rows t in
+  cover "k = 0" (k = 0);
+  cover "k = 1" (k = 1);
+  cover "k = rows" (k = n);
+  cover "k past rows" (k > n);
+  cover "a selection" (length > 0 && k < n && ks <> []);
+  let sort = Query.sort (List.map order ks) (Query.of_table t) in
+  same_outcome
+    (Query.slice ~offset ~length sort)
+    (Query.slice ~offset ~length (Query.of_table (run_ok sort)))
+
+let sorting =
+  group "Sorts and top-k"
+    [
+      prop "sort orders one key as Type.compare_value" one_key
+        sorts_as_compare_value;
+      prop "a slice of a sort is the slice of its rows" top_k_cases
+        top_k_is_slice;
+    ]
+
+(* Sources *)
+
+(* A source that logs its calls: its requests, and for each part the readers
+   opened, closed, and pulled after their close. *)
+type log = {
+  mutable requests : Source.request list;
+  opened : int array;
+  closed : int array;
+  mutable late : int;
+}
+
+let counting ?sorted t parts =
+  let log =
+    {
+      requests = [];
+      opened = Array.make (List.length parts) 0;
+      closed = Array.make (List.length parts) 0;
+      late = 0;
+    }
+  in
+  let part i bs =
+    let open_ () =
+      log.opened.(i) <- log.opened.(i) + 1;
+      let rest = ref bs in
+      let next () =
+        if log.closed.(i) > 0 then log.late <- log.late + 1;
+        match !rest with
+        | [] -> Ok None
+        | b :: bs ->
+            rest := bs;
+            Result.map Option.some b
+      in
+      Ok
+        {
+          Source.next;
+          close = (fun () -> log.closed.(i) <- log.closed.(i) + 1);
+        }
+    in
+    { Source.rows = None; open_ }
+  in
+  let read r =
+    log.requests <- r :: log.requests;
+    Ok (List.mapi part parts)
+  in
+  (Source.v ~name:"counting" ~schema:(schema t) ?sorted read, log)
+
+let ints xs = v [ ("x", Column.v Type.int64 xs) ]
+let parts xs = List.map (fun xs -> List.map (fun b -> Ok (ints b)) xs) xs
+let three = parts [ [ [| 0; 1 |]; [| 2 |] ]; [ [| 3; 4; 5 |] ]; [ [| 6 |] ] ]
+let xs t = Column.values Kind.int (column t "x")
+let every n log = equal (array int) (Array.make (Array.length log) n) log
+
+let sources =
+  group "Sources"
+    [
+      test "a run opens each part once and closes each reader once" (fun () ->
+          let s, log = counting (ints [||]) three in
+          let t = run_ok (Query.of_source s) in
+          equal (array int) (Array.init 7 Fun.id) (xs t);
+          equal int 1 (List.length log.requests);
+          every 1 log.opened;
+          every 1 log.closed;
+          equal ~msg:"pulls after a close" int 0 log.late);
+      test "a slice asks for its rows and opens only the parts that hold them"
+        (fun () ->
+          let s, log = counting (ints [||]) three in
+          let t =
+            run_ok (Query.slice ~offset:1 ~length:3 (Query.of_source s))
+          in
+          equal (array int) [| 1; 2; 3 |] (xs t);
+          equal
+            (list (option int))
+            [ Some 4 ]
+            (List.map (fun (r : Source.request) -> r.limit) log.requests);
+          equal (array int) [| 1; 1; 0 |] log.opened;
+          equal (array int) [| 1; 1; 0 |] log.closed);
+      test "a source's error is the run's, after closing its reader" (fun () ->
+          let e = Error.v ~row_group:1 "bad page" in
+          let s, log =
+            counting (ints [||])
+              [ [ Ok (ints [| 0 |]) ]; [ Error e ]; [ Ok (ints [| 1 |]) ] ]
+          in
+          let r = Query.run (Query.of_source s) in
+          equal string (error e)
+            (match r with Error e -> error e | Ok _ -> "no error");
+          equal (array int) [| 1; 1; 0 |] log.opened;
+          equal (array int) [| 1; 1; 0 |] log.closed);
+      test "a batch of other columns raises and closes its reader" (fun () ->
+          let other = v [ ("y", Column.v Type.int64 [| 0 |]) ] in
+          let s, log = counting (ints [||]) [ [ Ok other ] ] in
+          expect (message (fun () -> Query.run (Query.of_source s)))
+          @@ __POS_OF__
+               {| Query.run: counting yields a batch of the columns y int64, not x int64 |};
+          every 1 log.closed);
+      test "a raising function closes every reader" (fun () ->
+          let s, log = counting (ints [||]) three in
+          let f x = if x = 4 then raise (Boom (0, x)) else x in
+          let q =
+            Query.filter
+              Expr.(store Type.int64 (const f $ Col.int "x") >= int 0)
+              (Query.of_source s)
+          in
+          raises (Boom (0, 4)) (fun () -> Query.run q);
+          equal (array int) [| 1; 1; 0 |] log.closed);
+      test "rows out of the stated order fail at the first, across batches"
+        (fun () ->
+          let s, _ =
+            counting
+              ~sorted:[ Order.asc "x" ]
+              (ints [||])
+              (parts [ [ [| 0; 2 |]; [| 2; 3 |] ]; [ [| 1; 4 |] ] ])
+          in
+          let seen = ref 0 in
+          let r =
+            Query.fold (Query.of_source s) ~init:() (fun () b ->
+                seen := !seen + rows b)
+          in
+          expect (match r with Error e -> error e | Ok () -> "no error")
+          @@ __POS_OF__
+               {| counting (1 column): row 4: the row is out of the source's order [asc "x"]. |};
+          equal ~msg:"rows folded before the failure" int 4 !seen);
+      test "two places with one request read the source once" (fun () ->
+          let s, log = counting (ints [||]) three in
+          let q = Query.of_source s in
+          let t = run_ok (Query.append q q) in
+          equal int 14 (rows t);
+          equal int 1 (List.length log.requests);
+          every 1 log.opened;
+          every 1 log.closed);
+      test "a shared step runs once for all its readers" (fun () ->
+          let calls = ref 0 in
+          let f x =
+            incr calls;
+            x
+          in
+          let q =
+            Query.filter
+              Expr.(store Type.int64 (const f $ Col.int "x") >= int 0)
+              (Query.of_table (ints (Array.init 7 Fun.id)))
+          in
+          let t = run_ok (Query.append (Query.slice ~offset:0 ~length:2 q) q) in
+          equal (array int) [| 0; 1; 2; 3; 4; 5; 6; 0; 1 |] (xs t);
+          equal ~msg:"calls" int 7 !calls);
+      test "a shared step fails only where a reader needs its rows" (fun () ->
+          let f x = if x = 5 then raise (Boom (0, x)) else x in
+          let q =
+            Query.derive
+              Expr.[ "y" := store Type.int64 (const f $ Col.int "x") ]
+              (Query.of_table (ints (Array.init 7 Fun.id)))
+          in
+          let shared n = Query.slice ~offset:0 ~length:n (Query.append q q) in
+          equal int 4 (rows (run_ok (shared 4)));
+          raises (Boom (0, 5)) (fun () -> Query.run (shared 6)));
     ]
 
 let () =
@@ -1659,5 +2085,7 @@ let () =
          reductions;
          joins;
          lifts;
+         sorting;
+         sources;
          refusals;
        ])
