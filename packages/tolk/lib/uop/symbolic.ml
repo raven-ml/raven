@@ -329,6 +329,15 @@ let pm_remove_invalid =
             Some (replace s ~src:(List.map zero_invalid (src s))));
     ])
 
+(* [broadcast_const u] is the constant [u] is through movements that keep each
+   element's value, as a constant shaped like another node is ({!const_like}). *)
+let rec broadcast_const u =
+  match op u with
+  | Op.Const -> Some u
+  | Op.Reshape | Op.Expand | Op.Permute | Op.Shrink | Op.Flip ->
+      broadcast_const (nth u 0)
+  | _ -> None
+
 (* folding a strong dtype WHERE to a weak const branch keeps the strong dtype *)
 let fold_const_where gate c0 c1 w =
   let ret = if V.to_bool (num gate) then c0 else c1 in
@@ -593,14 +602,16 @@ let symbolic_simple =
             (fun m -> Some (cast (m "x") Dtype.Uint64));
           (* Simple where folding *)
           (* a conditional with the same results either way is a noop, also fold
-             const conditionals *)
+             const conditionals, broadcast ones included *)
           rule
             Upat.(where wild (var "val") (var "val"))
             (fun m -> Some (m "val"));
           rule
-            Upat.(named "w" (where (cvar "gate") (var "c0") (var "c1")))
+            Upat.(named "w" (where (var "gate") (var "c0") (var "c1")))
             (fun m ->
-              Some (fold_const_where (m "gate") (m "c0") (m "c1") (m "w")));
+              Option.map
+                (fun gate -> fold_const_where gate (m "c0") (m "c1") (m "w"))
+                (broadcast_const (m "gate")));
         ]);
       Movement.mop_cleanup;
     ]

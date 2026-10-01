@@ -2243,28 +2243,40 @@ tolk lowers as one, replaces it.
   none`, `› the sine of an angle read from a buffer takes its own only` and
   `› the cosine of an angle read from a buffer takes its own only`.
 
-## D75. A constant condition assumes nothing in a selection's branches
+## D75. A selection by a constant condition
 
-- **tinygrad:** `uop/symbolic.py:228-233` (`fold_where_closure`), which
-  substitutes `True` for a selection's condition in its true branch and
+- **tinygrad:** `uop/symbolic.py:198`, which folds a `WHERE` whose condition is
+  a `CONST` (`UPat.cvar("gate")`), and `:228-233` (`fold_where_closure`),
+  which substitutes `True` for a selection's condition in its true branch and
   `False` in its false branch, whatever the condition is.
-- **tolk.next:** `lib/uop/symbolic.ml:654` (`fold_where_closure`);
-  `test/gen/tinygrad.patch`, which gives tinygrad the same.
-- **Differs:** a condition that is a constant, broadcast or not, is left in
-  the branches. A broadcast constant is one node for every use of that
-  constant, so substituting it is no assumption about the selection: in
-  `where F (where F x (where F y x)) y`, with `F` a broadcast `False`, the
-  outer selection makes the inner `F`s `True`, the inner selection makes its
-  false branch's `True` back into `False`, and the rewrite does not
-  terminate. tinygrad raises "infinite loop in graph_rewrite" on that graph.
-- **Reason:** (b): rune's staged scans on Metal. D74's float bounds fold the
-  comparisons of a normal draw's sine and cosine (`by_quadrant`) to
-  broadcast constants in the tensor graph, and `Prepare.contiguous_view`'s
-  symbolic pass over it did not terminate:
-  `Rune_next.Jit › metal › staged scans › stage a scan whose step reads a
-  draw and another scan's result made before it`.
-- **Pinned by:** the Symbolic suite: `selections › a broadcast constant
-  condition is not folded in the branches (D75)`; and that rune.next test.
+- **tolk:** `lib/uop/symbolic.ml:334` (`broadcast_const`), `:610` and `:666`
+  (`fold_where_closure`); `test/gen/tinygrad.patch`, which gives tinygrad the
+  same.
+- **Differs:** a selection whose condition is a constant through movements
+  that keep each element's value (reshape, expand, permute, shrink, flip) is
+  its branch, as one by a `CONST` is. A padded constant is not folded, since
+  its padding holds `False`. `fold_where_closure` leaves a condition that is
+  a constant, broadcast, padded or not, in the branches: a broadcast constant
+  is one node for every use of that constant, so substituting it is no
+  assumption about the selection. In `where F (where F x (where F y x)) y`,
+  with `F` a broadcast `False`, the outer selection makes the inner `F`s
+  `True`, the inner selection makes its false branch's `True` back into
+  `False`, and the rewrite does not terminate; tinygrad raises "infinite loop
+  in graph_rewrite" on that graph.
+- **Reason:** (b): D74's float bounds fold the comparisons of rune's sine and
+  cosine (`by_quadrant`) to broadcast constants in the tensor graph. Two
+  symbolic passes over such graphs did not terminate:
+  `Prepare.contiguous_view`'s, on rune's staged scan reading a draw on Metal
+  (`Rune_next.Jit › metal › staged scans › stage a scan whose step reads a
+  draw and another scan's result made before it`), and
+  `Multi.lower_broadcast_copy`'s, on a sharded model's rope (kaun's
+  `test_decode_devices`). Folding the selection at its constant also drops
+  the branch never taken, such as the long reduction of a bounded angle.
+- **Pinned by:** the Symbolic suite: `symbolic_simple › selections › a
+  selection by a broadcast constant is the branch it picks` and `› a selection
+  by a padded constant is no constant's`, and `symbolic › selections › a
+  padded constant condition is not folded in the branches`; and those two
+  tests.
 
 ## D76. A stack of Invalid lanes keeps its width
 
