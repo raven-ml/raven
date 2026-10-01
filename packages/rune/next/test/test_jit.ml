@@ -915,7 +915,7 @@ let state =
 let pool ?(n = 64) () =
   Nx.reshape [| n; 2; 3 |] (Nx.arange_f Nx.float32 0. (Float.of_int (6 * n)) 1.)
 
-let write_rows pool x indices =
+let write_rows ?(rows_as = Fun.id) pool x indices =
   let k = Nx.dim 0 indices in
   let rows =
     Nx.reshape [| k; 2; 3 |]
@@ -923,7 +923,7 @@ let write_rows pool x indices =
   in
   Nx.scatter ~unique_indices:true ~axis:0
     ~indices:(Nx.broadcast_to [| k; 2; 3 |] (Nx.reshape [| k; 1; 1 |] indices))
-    ~values:rows pool
+    ~values:(rows_as rows) pool
 
 let projections k =
   Nx.reshape [| k; 6 |]
@@ -1069,6 +1069,17 @@ let rows_written ?at name =
           equal ~msg:"kernels" int 2 (List.length names);
           equal ~msg:"reductions" int 1
             (List.length (List.filter (fun n -> n.[0] = 'r') names)));
+      test
+        "a row made contiguous is stored by the kernel that computes it, as \
+         a key-value cache writes its rows" (fun () ->
+          let x = projections 1 and i = indices [ 5L ] in
+          let rows_as = Nx.contiguous in
+          let r, names =
+            kernels (fun () ->
+                Rune.jit write (write_rows ~rows_as) (pool ()) x i)
+          in
+          equal floats (write_rows ~rows_as (pool ()) x i) r;
+          equal ~msg:"kernels" int 2 (List.length names));
       test
         "stores only its rows, at the pool's first and last rows, and drops \
          the rows outside it" (fun () ->
