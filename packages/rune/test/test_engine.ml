@@ -107,6 +107,11 @@ let test_engine_fixes =
         check_arr ~msg:"dsort" [| 30.0; 10.0; 20.0 |] (Rune.grad' f x));
   ]
 
+(* The backward pass holds cotangents as the lazy views its pulls produce and
+   materializes where a reshape needs it and where a gradient leaves the tape. A
+   pair of transposes that cancel must then cost the gradient four permutes and
+   nothing else: no copy, so nothing a compiler has to run. The graph is the one
+   a grouped attention layer differentiates. *)
 let test_lazy_cotangents () =
   let q = Nx.ones Nx.float32 [| 2; 2; 2; 3; 4 |] in
   let attention_like k =

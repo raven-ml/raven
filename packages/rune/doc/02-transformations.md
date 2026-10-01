@@ -120,7 +120,7 @@ let () =
   (* [2. 4. 6.] — directional derivative *)
 ```
 
-`jvp p q f params tangents` takes the structures of the parameters and of the result, and returns one tangent per tensor of the result. A value returned beside the result is part of it: give `q` a structure that holds it, and its tangent comes back with the rest.
+`jvp p q f params tangents` takes the structures of the parameters and of the result, and returns one tangent per tensor of the result. A tensor returned beside the result is part of it: give `q` a structure that holds it, and its tangent comes back with the rest. A value that is not a tensor, such as a count, is computed from the result after `jvp` returns.
 
 ### Choosing Between Forward and Reverse Mode
 
