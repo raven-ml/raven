@@ -98,7 +98,7 @@
 96 Ops.PARAM dtypes.ulong [] ParamArg(slot=12, dtype=dtypes.ulong, size=1, name="put_value_compute_0", device=("NV",), volatile=True) tag="put_value_compute_0"
 97 Ops.PARAM dtypes.ulong [] ParamArg(slot=13, dtype=dtypes.ulong, size=1, name="gpentry_compute_0", device=("NV",), volatile=True) tag="gpentry_compute_0"
 98 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=32, device="NV")
-99 Ops.CALL dtypes.void [87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "simple_add", Estimates(), (3, 5), b"\x8c\xea\xfb\xcd'\xe3\xca\x0b6\x83\x92\xeck\xbfT\xb2j6CW\xeb\xa9\xe4.\xee \xa3)\xd5\x12^\x9d", (), ((0,), (1, 2))), (("NV",), "simple_add", Estimates(), (7, 9), b"\x8c\xea\xfb\xcd'\xe3\xca\x0b6\x83\x92\xeck\xbfT\xb2j6CW\xeb\xa9\xe4.\xee \xa3)\xd5\x12^\x9d", (), ((0,), (1, 2)))), nargs=10, slots=(("NV", 0),), written_bufs=(%98,)))
+99 Ops.CALL dtypes.void [87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "simple_add", Estimates(), (3, 5), b"c\xa9\xf1\xc4\xd7L\x8b\x83\xf2\xe2\xf5\xc1O\x7f\x81\xddA\xd2%8\xd59o\x10m\x96\x19\xaa\x85SX\xc6", (), ((0,), (1, 2))), (("NV",), "simple_add", Estimates(), (7, 9), b"c\xa9\xf1\xc4\xd7L\x8b\x83\xf2\xe2\xf5\xc1O\x7f\x81\xddA\xd2%8\xd59o\x10m\x96\x19\xaa\x85SX\xc6", (), ((0,), (1, 2)))), nargs=10, slots=(("NV", 0),), written_bufs=(%98,)))
 100 Ops.BINARY dtypes.uchar [] b"\xa6%\x01 \x11\x10\x00\x00\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x10\x03\xad \x01 \x00\x00\x00\x00\xb0 \x01 \t\x00\x00\x00"
 101 Ops.STORE dtypes.void [92, 100]
 102 Ops.SHRINK dtypes.uchar [92, 15, 17]

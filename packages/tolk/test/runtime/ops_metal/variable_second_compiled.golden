@@ -156,7 +156,7 @@
 154 Ops.ADD dtypes.int [152, 153]
 155 Ops.BUFFER dtypes.char [] ParamArg(slot=5, dtype=dtypes.char, size=256, device="METAL")
 156 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="METAL")
-157 Ops.CALL dtypes.void [135, 136, 137, 138, 139, 140, 141] CallInfo(aux=HCQInfo(device=("METAL",), kernels=((("METAL",), "E_5_2", Estimates(ops=10, lds=80, mem=80), (), b"*\x8d\x0d\xaf\xe4\x0b\xa1\x06\xa6\xb1sw\x94|w;\xee\x1d\xdeS\xadj\x8e'\xf8\x0e/\x82y\x97\xe2\x03", (), ((0,), (1,))), (("METAL",), "E_v", Estimates(ops=%142, lds=%147, mem=%150), (), b"\xff\xe8\xa0Z\xa24B\x04l\xa4\xf0\x9f\xb5;\nG\xa8f\xc2\x9e\xc5\x9f\xdd\x93\x15\x80\xed~\xe48\x92\x8f", (), ((0,), (1,)))), estimates=Estimates(ops=%151, lds=%154, mem=%154), nargs=6, slots=(("METAL", 2),), written_bufs=(%155, %156)))
+157 Ops.CALL dtypes.void [135, 136, 137, 138, 139, 140, 141] CallInfo(aux=HCQInfo(device=("METAL",), kernels=((("METAL",), "E_5_2", Estimates(ops=10, lds=80, mem=80), (), b"B;i\xca\x0e\x1fY\xfd\xac\xe8\xc5-\t\x19\xeeJ\x11\xd4\x0e\xf7\xcd\xe7L\xb6\x05)V;L\x04\x1f\x1b", (), ((0,), (1,))), (("METAL",), "E_v", Estimates(ops=%142, lds=%147, mem=%150), (), b"\xfe\xa8\x86\x18\xf5\xb1\x1ae}\xa8_x\x7f\xe0\xab\x8a\xc5>w\xd5D\x9b\xdfl+\xec\xc0\x93j\xe5\x04\x9d", (), ((0,), (1,)))), estimates=Estimates(ops=%151, lds=%154, mem=%154), nargs=6, slots=(("METAL", 2),), written_bufs=(%155, %156)))
 158 Ops.BITCAST dtypes.ulong [141] dtypes.ulong
 159 Ops.CONST dtypes.weakint [] 32
 160 Ops.CONST dtypes.weakint [] 33

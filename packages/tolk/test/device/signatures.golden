@@ -3,6 +3,8 @@ program	position	name	slot	dtype	shape	repr
 elementwise	0	None	0	dtypes.float	(16,)	(None, 0, dtypes.float, (16,))
 elementwise	1	None	1	dtypes.float	(16,)	(None, 1, dtypes.float, (16,))
 elementwise	2	None	2	dtypes.half	(16,)	(None, 2, dtypes.half, (16,))
+elementwise	3	'block_lo'	3	dtypes.int	()	('block_lo', 3, dtypes.int, ())
+elementwise	4	'block_hi'	4	dtypes.int	()	('block_hi', 4, dtypes.int, ())
 elementwise_metal	0	None	0	dtypes.float	(16,)	(None, 0, dtypes.float, (16,))
 elementwise_metal	1	None	1	dtypes.float	(16,)	(None, 1, dtypes.float, (16,))
 elementwise_metal	2	None	2	dtypes.half	(16,)	(None, 2, dtypes.half, (16,))

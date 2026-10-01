@@ -2341,6 +2341,52 @@ tolk lowers as one, replaces it.
   `kernel_counts.golden` and their kernel goldens, from the equally patched
   tinygrad.
 
+## D80. A host program runs its output loop in blocks on the host's cores
+
+- **tinygrad:** `runtime/ops_cpu.py:58-72` (`CPUProgram.__call__`), which
+  calls a kernel once per launch on the calling thread;
+  `codegen/__init__.py:371` (the pipeline after `pm_cast_const`) and `:435`
+  (`do_estimates`); `uop/ops.py:1330` (`KernelInfo`), `:1354`
+  (`ProgramInfo.vals`) and `:1359` (`ProgramInfo.from_sink`);
+  `engine/realize.py:16` (`get_call_var_uops`).
+- **tolk:** `lib/codegen/codegen.ml:703` (`split_blocks`), `:900` (its place
+  in the pipeline) and `:1004` (`whole_loop`); `lib/uop/ops.ml:339`
+  (`kernel_info.split`) and `:4681` (`program_info_of_sink`);
+  `lib/engine/realize.ml:27` (`get_call_var_uops`);
+  `engine/tolk_engine.ml:191` (`block_ops`) and `:219` (`Program.split`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
+  launch dimensions and variable values, and runs a split program as one
+  block; `test/gen/renderer/renderer.py`, whose estimate tables count a split
+  kernel's whole loop.
+- **Differs:** for a CPU target, once the kernel is final (after
+  `pm_cast_const`), the largest range of axis type `WEAK` whose end reads no
+  range, of at least two iterations, and that the address of every store to
+  global memory reads, runs `block_lo + r` for `r` below
+  `block_hi - block_lo`. `block_lo` and `block_hi` are new variables of the
+  range's type, bounded by `[0, n]` for a loop of `n` iterations. The
+  kernel's `KernelInfo` records `split = n`, which is its program's first
+  global size, and its estimates count the whole loop. A host launch cuts
+  `[0, n)` into `min(n, 4 × workers, ops / 2^18)` blocks, at least one, that
+  nx.device's thread pool runs (`Nx_device.Program.call ~split`); a queue's
+  launch (`get_call_var_uops`) runs one block, the whole loop.
+- **Reason:** (b): sofo's and symo's training steps on the CPU, which ran each
+  kernel on one core. Their hottest kernels, split by hand into 32 blocks on
+  kimchi's 8 E-cores (`taskset -c 6-13`, best of 30), took 6.17 ms and 0.77 ms
+  (r_256_8_4_4_32_4), 3.38 and 0.42 (r_32_32_4_4_128_16), 0.28 and 0.04
+  (r_256_3_3_100_4) and 17.8 and 2.83 (r_128_64_3_4_400_100_4). tinygrad
+  deleted its CPU threading at 4197f7423, after the pin.
+- **Pinned by:** the Codegen suite: `host programs in blocks › a host program
+  splits the loop each store's address reads`, `› stores of separate loops
+  split none`, `› a store of no loop splits none`, `› a reduction's loop is
+  never split`, `› a serial loop is never split`, `› a loop shrunk by its guard splits at its shrunk end,
+  unguarded` and `› a split loop of 2^25 iterations keeps 32-bit indices`; the
+  Tolk_engine suite: `host programs in blocks › a program writes the same bits
+  in 1, 3 and 32 blocks`, `› a run of much work splits into blocks`, `› a run
+  of little work runs as one block` and `› a run of a large kernel computes
+  its sums`; nx.device's host suite: `a split call runs each iteration once,
+  in its block` and `a split call runs while another domain's holds the
+  threads`.
+
 ## D81. The matrix-vector layout reads its operands through conversions and decoding
 
 - **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'

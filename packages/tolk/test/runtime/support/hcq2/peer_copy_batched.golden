@@ -66,6 +66,6 @@
 64 Ops.CUSTOM_FUNCTION dtypes.void [63] "submit_cpu_compute"
 65 Ops.AFTER dtypes.void [64, 26, 27]
 66 Ops.SINK dtypes.void [27, 65] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
-67 Ops.CALL dtypes.void [66] CallInfo(aux=HCQInfo(device=("CPU:1", "CPU:2"), kernels=((("CPU:1",), "copy       16 B,   CPU:2 <- CPU:1  ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,))), (("CPU:2",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"\xf3\x82su\xbd\x1c_@\xac\x9a.L\xcd\x83\x8b\xad$\xab.q\xca\xf2\xc5i\xf1\x99\x92\x9c\xfd\x16#\x16", (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), written_bufs=(%10, %59)))
+67 Ops.CALL dtypes.void [66] CallInfo(aux=HCQInfo(device=("CPU:1", "CPU:2"), kernels=((("CPU:1",), "copy       16 B,   CPU:2 <- CPU:1  ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,))), (("CPU:2",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"\xe4\xf3*\x0e\xc3\\\xdaw\xc7\xba\x96}\x93P\x0e\xb5\xf5h-\xe5\x96\x930\xb1\x9a\xe8\xbe\xf3^\x19\xe9\x05", (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), written_bufs=(%10, %59)))
 68 Ops.LINEAR dtypes.void [67]
 

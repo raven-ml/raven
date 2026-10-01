@@ -336,6 +336,7 @@ and Node : sig
     opts_to_apply : Opt.t list option;
     estimates : estimates option;
     beam : int;
+    split : sint option;
   }
 
   and program_info = {
@@ -423,6 +424,7 @@ let equal_kernel_info (k0 : kernel_info) (k1 : kernel_info) =
   && Option.equal (List.equal Opt.equal) k0.opts_to_apply k1.opts_to_apply
   && Option.equal equal_estimates k0.estimates k1.estimates
   && Int.equal k0.beam k1.beam
+  && Option.equal equal_sint k0.split k1.split
 
 let equal_program_info (p0 : program_info) (p1 : program_info) =
   List.equal equal_sint p0.global_size p1.global_size
@@ -884,12 +886,13 @@ and repr_estimates (e : estimates) =
 and repr_kernel_info (k : kernel_info) =
   strf
     "KernelInfo(name=%s, applied_opts=%s, opts_to_apply=%s, estimates=%s, \
-     beam=%d)"
+     beam=%d, split=%s)"
     (repr_string k.name)
     (repr_tuple (List.map repr_opt k.applied_opts))
     (repr_option (fun l -> repr_tuple (List.map repr_opt l)) k.opts_to_apply)
     (repr_option repr_estimates k.estimates)
     k.beam
+    (repr_option repr_sint k.split)
 
 and repr_program_info (p : program_info) =
   let ints l = repr_tuple (List.map string_of_int l) in
@@ -4661,8 +4664,8 @@ let custom_kernel args f =
 (* Programs *)
 
 let kernel_info ?(name = "test") ?(applied_opts = []) ?opts_to_apply ?estimates
-    ?(beam = 0) () =
-  { name; applied_opts; opts_to_apply; estimates; beam }
+    ?(beam = 0) ?split () =
+  { name; applied_opts; opts_to_apply; estimates; beam; split }
 
 let function_name (k : kernel_info) = Helpers.to_function_name k.name
 
@@ -4674,6 +4677,9 @@ let program_info_of_sink
   let vars = ref [] and globals = ref [] and outs = ref [] and ins = ref [] in
   let global_size = Array.make 3 (Int 1)
   and local_size = Array.make 3 (Int 1) in
+  (match sink.arg with
+  | Kernel { split = Some n; _ } -> global_size.(0) <- n
+  | _ -> ());
   List.iter
     (fun u ->
       if u.op = Op.Param then

@@ -3,109 +3,111 @@
 1 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1024, device="CPU")
 2 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU")
 3 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4, device="CPU")
-4 Ops.CONST dtypes.bool [] True
-5 Ops.CAST dtypes.bool [4] dtypes.bool
-6 Ops.CONST dtypes.weakfloat [] -0.5
-7 Ops.CAST dtypes.float [6] dtypes.float
-8 Ops.CONST dtypes.weakfloat [] -150.0
+4 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 256), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+5 Ops.PARAM dtypes.int [] ParamArg(slot=5, dtype=dtypes.int, vmin_vmax=(0, 256), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+6 Ops.CONST dtypes.bool [] True
+7 Ops.CAST dtypes.bool [6] dtypes.bool
+8 Ops.CONST dtypes.weakfloat [] -0.5
 9 Ops.CAST dtypes.float [8] dtypes.float
-10 Ops.CONST dtypes.weakfloat [] -inf
+10 Ops.CONST dtypes.weakfloat [] -150.0
 11 Ops.CAST dtypes.float [10] dtypes.float
-12 Ops.CONST dtypes.weakfloat [] 0.0
+12 Ops.CONST dtypes.weakfloat [] -inf
 13 Ops.CAST dtypes.float [12] dtypes.float
-14 Ops.CONST dtypes.weakfloat [] 0.00015359208919107914
+14 Ops.CONST dtypes.weakfloat [] 0.0
 15 Ops.CAST dtypes.float [14] dtypes.float
-16 Ops.CONST dtypes.weakfloat [] 0.0013392627006396651
+16 Ops.CONST dtypes.weakfloat [] 0.00015359208919107914
 17 Ops.CAST dtypes.float [16] dtypes.float
-18 Ops.CONST dtypes.weakfloat [] 0.009618384763598442
+18 Ops.CONST dtypes.weakfloat [] 0.0013392627006396651
 19 Ops.CAST dtypes.float [18] dtypes.float
-20 Ops.CONST dtypes.weakfloat [] 0.055503472685813904
+20 Ops.CONST dtypes.weakfloat [] 0.009618384763598442
 21 Ops.CAST dtypes.float [20] dtypes.float
-22 Ops.CONST dtypes.weakfloat [] 0.24022644758224487
+22 Ops.CONST dtypes.weakfloat [] 0.055503472685813904
 23 Ops.CAST dtypes.float [22] dtypes.float
-24 Ops.CONST dtypes.weakfloat [] 0.5
+24 Ops.CONST dtypes.weakfloat [] 0.24022644758224487
 25 Ops.CAST dtypes.float [24] dtypes.float
-26 Ops.CONST dtypes.weakfloat [] 0.6931471824645996
+26 Ops.CONST dtypes.weakfloat [] 0.5
 27 Ops.CAST dtypes.float [26] dtypes.float
-28 Ops.CONST dtypes.weakfloat [] 1.0
+28 Ops.CONST dtypes.weakfloat [] 0.6931471824645996
 29 Ops.CAST dtypes.float [28] dtypes.float
-30 Ops.CONST dtypes.weakfloat [] 1.4426950216293335
+30 Ops.CONST dtypes.weakfloat [] 1.0
 31 Ops.CAST dtypes.float [30] dtypes.float
-32 Ops.CONST dtypes.weakfloat [] 128.0
+32 Ops.CONST dtypes.weakfloat [] 1.4426950216293335
 33 Ops.CAST dtypes.float [32] dtypes.float
-34 Ops.CONST dtypes.weakfloat [] inf
+34 Ops.CONST dtypes.weakfloat [] 128.0
 35 Ops.CAST dtypes.float [34] dtypes.float
-36 Ops.CONST dtypes.weakfloat [] nan
+36 Ops.CONST dtypes.weakfloat [] inf
 37 Ops.CAST dtypes.float [36] dtypes.float
-38 Ops.CONST dtypes.weakint [] 1
-39 Ops.CAST dtypes.int [38] dtypes.int
-40 Ops.CONST dtypes.weakint [] 127
+38 Ops.CONST dtypes.weakfloat [] nan
+39 Ops.CAST dtypes.float [38] dtypes.float
+40 Ops.CONST dtypes.weakint [] 1
 41 Ops.CAST dtypes.int [40] dtypes.int
-42 Ops.CONST dtypes.weakint [] 23
+42 Ops.CONST dtypes.weakint [] 127
 43 Ops.CAST dtypes.int [42] dtypes.int
-44 Ops.CONST dtypes.weakint [] 256
+44 Ops.CONST dtypes.weakint [] 23
 45 Ops.CAST dtypes.int [44] dtypes.int
 46 Ops.CONST dtypes.weakint [] 4
 47 Ops.CAST dtypes.int [46] dtypes.int
 48 Ops.CONST dtypes.weakint [] 8
 49 Ops.CAST dtypes.int [48] dtypes.int
-50 Ops.RANGE dtypes.int [47] (0, AxisType.WEAK)
-51 Ops.INDEX dtypes.float [2, 50]
-52 Ops.LOAD dtypes.float [51]
-53 Ops.INDEX dtypes.float [3, 50]
-54 Ops.LOAD dtypes.float [53]
-55 Ops.SHL dtypes.int [50, 49]
-56 Ops.RANGE dtypes.int [45, 50] (1, AxisType.WEAK)
-57 Ops.ADD dtypes.int [55, 56]
-58 Ops.INDEX dtypes.float [1, 57]
-59 Ops.LOAD dtypes.float [58]
-60 Ops.INDEX dtypes.float [0, 57]
-61 Ops.SUB dtypes.float [59, 52]
-62 Ops.MUL dtypes.float [61, 31]
-63 Ops.CMPNE dtypes.bool [62, 11]
-64 Ops.CMPNE dtypes.bool [62, 35]
-65 Ops.CMPNE dtypes.bool [62, 62]
-66 Ops.WHERE dtypes.float [63, 62, 13]
-67 Ops.WHERE dtypes.float [65, 13, 66]
-68 Ops.WHERE dtypes.float [64, 67, 13]
-69 Ops.CMPLT dtypes.bool [68, 13]
-70 Ops.WHERE dtypes.float [69, 7, 25]
-71 Ops.ADD dtypes.float [68, 70]
-72 Ops.CAST dtypes.int [71] dtypes.int
-73 Ops.CAST dtypes.float [72] dtypes.float
-74 Ops.SHR dtypes.int [72, 39]
-75 Ops.ADD dtypes.int [74, 41]
-76 Ops.SHL dtypes.int [75, 43]
-77 Ops.BITCAST dtypes.float [76] dtypes.float
-78 Ops.SUB dtypes.int [72, 74]
-79 Ops.ADD dtypes.int [78, 41]
-80 Ops.SHL dtypes.int [79, 43]
-81 Ops.BITCAST dtypes.float [80] dtypes.float
-82 Ops.SUB dtypes.float [68, 73]
-83 Ops.MUL dtypes.float [15, 82]
-84 Ops.ADD dtypes.float [83, 17]
-85 Ops.MUL dtypes.float [84, 82]
+50 Ops.SUB dtypes.int [5, 4]
+51 Ops.RANGE dtypes.int [47] (0, AxisType.WEAK)
+52 Ops.INDEX dtypes.float [2, 51]
+53 Ops.LOAD dtypes.float [52]
+54 Ops.INDEX dtypes.float [3, 51]
+55 Ops.LOAD dtypes.float [54]
+56 Ops.SHL dtypes.int [51, 49]
+57 Ops.RANGE dtypes.int [50, 51] (1, AxisType.WEAK)
+58 Ops.ADD dtypes.int [4, 57]
+59 Ops.ADD dtypes.int [56, 58]
+60 Ops.INDEX dtypes.float [1, 59]
+61 Ops.LOAD dtypes.float [60]
+62 Ops.INDEX dtypes.float [0, 59]
+63 Ops.SUB dtypes.float [61, 53]
+64 Ops.MUL dtypes.float [63, 33]
+65 Ops.CMPNE dtypes.bool [64, 13]
+66 Ops.CMPNE dtypes.bool [64, 37]
+67 Ops.CMPNE dtypes.bool [64, 64]
+68 Ops.WHERE dtypes.float [65, 64, 15]
+69 Ops.WHERE dtypes.float [67, 15, 68]
+70 Ops.WHERE dtypes.float [66, 69, 15]
+71 Ops.CMPLT dtypes.bool [70, 15]
+72 Ops.WHERE dtypes.float [71, 9, 27]
+73 Ops.ADD dtypes.float [70, 72]
+74 Ops.CAST dtypes.int [73] dtypes.int
+75 Ops.CAST dtypes.float [74] dtypes.float
+76 Ops.SHR dtypes.int [74, 41]
+77 Ops.ADD dtypes.int [76, 43]
+78 Ops.SHL dtypes.int [77, 45]
+79 Ops.BITCAST dtypes.float [78] dtypes.float
+80 Ops.SUB dtypes.int [74, 76]
+81 Ops.ADD dtypes.int [80, 43]
+82 Ops.SHL dtypes.int [81, 45]
+83 Ops.BITCAST dtypes.float [82] dtypes.float
+84 Ops.SUB dtypes.float [70, 75]
+85 Ops.MUL dtypes.float [17, 84]
 86 Ops.ADD dtypes.float [85, 19]
-87 Ops.MUL dtypes.float [86, 82]
+87 Ops.MUL dtypes.float [86, 84]
 88 Ops.ADD dtypes.float [87, 21]
-89 Ops.MUL dtypes.float [88, 82]
+89 Ops.MUL dtypes.float [88, 84]
 90 Ops.ADD dtypes.float [89, 23]
-91 Ops.MUL dtypes.float [90, 82]
-92 Ops.ADD dtypes.float [91, 27]
-93 Ops.MUL dtypes.float [92, 82]
+91 Ops.MUL dtypes.float [90, 84]
+92 Ops.ADD dtypes.float [91, 25]
+93 Ops.MUL dtypes.float [92, 84]
 94 Ops.ADD dtypes.float [93, 29]
-95 Ops.MUL dtypes.float [94, 77]
-96 Ops.MUL dtypes.float [95, 81]
-97 Ops.CMPLT dtypes.bool [62, 9]
-98 Ops.CMPLT dtypes.bool [62, 33]
-99 Ops.CMPNE dtypes.bool [98, 5]
-100 Ops.WHERE dtypes.float [99, 35, 96]
-101 Ops.WHERE dtypes.float [97, 13, 100]
-102 Ops.WHERE dtypes.float [65, 37, 101]
-103 Ops.FDIV dtypes.float [102, 54]
-104 Ops.STORE dtypes.void [60, 103]
-105 Ops.END dtypes.void [104, 56]
-106 Ops.END dtypes.void [105, 50]
-107 Ops.SINK dtypes.void [106] KernelInfo(name="E_4_256") tag=1
-108 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107]
+95 Ops.MUL dtypes.float [94, 84]
+96 Ops.ADD dtypes.float [95, 31]
+97 Ops.MUL dtypes.float [96, 79]
+98 Ops.MUL dtypes.float [97, 83]
+99 Ops.CMPLT dtypes.bool [64, 11]
+100 Ops.CMPLT dtypes.bool [64, 35]
+101 Ops.CMPNE dtypes.bool [100, 7]
+102 Ops.WHERE dtypes.float [101, 37, 98]
+103 Ops.WHERE dtypes.float [99, 15, 102]
+104 Ops.WHERE dtypes.float [67, 39, 103]
+105 Ops.FDIV dtypes.float [104, 55]
+106 Ops.STORE dtypes.void [62, 105]
+107 Ops.END dtypes.void [106, 57]
+108 Ops.END dtypes.void [107, 51]
+109 Ops.SINK dtypes.void [108] KernelInfo(name="E_4_256", split=256) tag=1
+110 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109]
 

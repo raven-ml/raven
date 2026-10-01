@@ -1,143 +1,147 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
-4 Ops.CONST dtypes.weakint [] 2
-5 Ops.CAST dtypes.int [4] dtypes.int
-6 Ops.SHL dtypes.int [3, 5]
-7 Ops.SHRINK dtypes.float [0, 6, 2]
-8 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=1, dtype=dtypes.bfloat16, size=16, device="CPU")
-9 Ops.INDEX dtypes.bfloat16 [8, 6]
-10 Ops.LOAD dtypes.bfloat16 [9]
-11 Ops.BITCAST dtypes.ushort [10] dtypes.ushort
-12 Ops.CAST dtypes.uint [11] dtypes.uint
-13 Ops.CONST dtypes.weakint [] 16
-14 Ops.CAST dtypes.uint [13] dtypes.uint
-15 Ops.SHL dtypes.uint [12, 14]
-16 Ops.BITCAST dtypes.float [15] dtypes.float
-17 Ops.CONST dtypes.weakfloat [] 1.0
-18 Ops.CAST dtypes.float [17] dtypes.float
-19 Ops.ADD dtypes.float [16, 18]
-20 Ops.BITCAST dtypes.uint [19] dtypes.uint
-21 Ops.NEG dtypes.uint [20]
-22 Ops.CONST dtypes.weakint [] 2139095040
-23 Ops.CAST dtypes.uint [22] dtypes.uint
-24 Ops.AND dtypes.uint [21, 23]
-25 Ops.CONST dtypes.weakint [] 0
-26 Ops.CAST dtypes.uint [25] dtypes.uint
-27 Ops.CMPNE dtypes.bool [24, 26]
-28 Ops.SHR dtypes.uint [20, 14]
-29 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.SUB dtypes.int [2, 1]
+4 Ops.RANGE dtypes.int [3] (0, AxisType.WEAK)
+5 Ops.ADD dtypes.int [1, 4]
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.int [6] dtypes.int
+8 Ops.SHL dtypes.int [5, 7]
+9 Ops.CONST dtypes.weakint [] 4
+10 Ops.CAST dtypes.int [9] dtypes.int
+11 Ops.SHRINK dtypes.float [0, 8, 10]
+12 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=1, dtype=dtypes.bfloat16, size=16, device="CPU")
+13 Ops.INDEX dtypes.bfloat16 [12, 8]
+14 Ops.LOAD dtypes.bfloat16 [13]
+15 Ops.BITCAST dtypes.ushort [14] dtypes.ushort
+16 Ops.CAST dtypes.uint [15] dtypes.uint
+17 Ops.CONST dtypes.weakint [] 16
+18 Ops.CAST dtypes.uint [17] dtypes.uint
+19 Ops.SHL dtypes.uint [16, 18]
+20 Ops.BITCAST dtypes.float [19] dtypes.float
+21 Ops.CONST dtypes.weakfloat [] 1.0
+22 Ops.CAST dtypes.float [21] dtypes.float
+23 Ops.ADD dtypes.float [20, 22]
+24 Ops.BITCAST dtypes.uint [23] dtypes.uint
+25 Ops.NEG dtypes.uint [24]
+26 Ops.CONST dtypes.weakint [] 2139095040
+27 Ops.CAST dtypes.uint [26] dtypes.uint
+28 Ops.AND dtypes.uint [25, 27]
+29 Ops.CONST dtypes.weakint [] 0
 30 Ops.CAST dtypes.uint [29] dtypes.uint
-31 Ops.AND dtypes.uint [28, 30]
-32 Ops.ADD dtypes.uint [20, 31]
-33 Ops.CONST dtypes.weakint [] 32767
+31 Ops.CMPNE dtypes.bool [28, 30]
+32 Ops.SHR dtypes.uint [24, 18]
+33 Ops.CONST dtypes.weakint [] 1
 34 Ops.CAST dtypes.uint [33] dtypes.uint
-35 Ops.ADD dtypes.uint [32, 34]
-36 Ops.CONST dtypes.weakint [] 65535
-37 Ops.CAST dtypes.uint [36] dtypes.uint
-38 Ops.AND dtypes.uint [20, 37]
-39 Ops.CMPNE dtypes.bool [38, 26]
-40 Ops.CONST dtypes.weakint [] 65536
+35 Ops.AND dtypes.uint [32, 34]
+36 Ops.ADD dtypes.uint [24, 35]
+37 Ops.CONST dtypes.weakint [] 32767
+38 Ops.CAST dtypes.uint [37] dtypes.uint
+39 Ops.ADD dtypes.uint [36, 38]
+40 Ops.CONST dtypes.weakint [] 65535
 41 Ops.CAST dtypes.uint [40] dtypes.uint
-42 Ops.OR dtypes.uint [20, 41]
-43 Ops.WHERE dtypes.uint [39, 42, 20]
-44 Ops.WHERE dtypes.uint [27, 35, 43]
-45 Ops.SHR dtypes.uint [44, 14]
-46 Ops.CAST dtypes.ushort [45] dtypes.ushort
-47 Ops.CAST dtypes.uint [46] dtypes.uint
-48 Ops.SHL dtypes.uint [47, 14]
-49 Ops.BITCAST dtypes.float [48] dtypes.float
-50 Ops.CAST dtypes.int [29] dtypes.int
-51 Ops.ADD dtypes.int [6, 50]
-52 Ops.INDEX dtypes.bfloat16 [8, 51]
-53 Ops.LOAD dtypes.bfloat16 [52]
-54 Ops.BITCAST dtypes.ushort [53] dtypes.ushort
-55 Ops.CAST dtypes.uint [54] dtypes.uint
-56 Ops.SHL dtypes.uint [55, 14]
-57 Ops.BITCAST dtypes.float [56] dtypes.float
-58 Ops.ADD dtypes.float [57, 18]
-59 Ops.BITCAST dtypes.uint [58] dtypes.uint
-60 Ops.NEG dtypes.uint [59]
-61 Ops.AND dtypes.uint [60, 23]
-62 Ops.CMPNE dtypes.bool [61, 26]
-63 Ops.SHR dtypes.uint [59, 14]
-64 Ops.AND dtypes.uint [63, 30]
-65 Ops.ADD dtypes.uint [59, 64]
-66 Ops.ADD dtypes.uint [65, 34]
-67 Ops.AND dtypes.uint [59, 37]
-68 Ops.CMPNE dtypes.bool [67, 26]
-69 Ops.OR dtypes.uint [59, 41]
-70 Ops.WHERE dtypes.uint [68, 69, 59]
-71 Ops.WHERE dtypes.uint [62, 66, 70]
-72 Ops.SHR dtypes.uint [71, 14]
-73 Ops.CAST dtypes.ushort [72] dtypes.ushort
-74 Ops.CAST dtypes.uint [73] dtypes.uint
-75 Ops.SHL dtypes.uint [74, 14]
-76 Ops.BITCAST dtypes.float [75] dtypes.float
-77 Ops.ADD dtypes.int [6, 5]
-78 Ops.INDEX dtypes.bfloat16 [8, 77]
-79 Ops.LOAD dtypes.bfloat16 [78]
-80 Ops.BITCAST dtypes.ushort [79] dtypes.ushort
-81 Ops.CAST dtypes.uint [80] dtypes.uint
-82 Ops.SHL dtypes.uint [81, 14]
-83 Ops.BITCAST dtypes.float [82] dtypes.float
-84 Ops.ADD dtypes.float [83, 18]
-85 Ops.BITCAST dtypes.uint [84] dtypes.uint
-86 Ops.NEG dtypes.uint [85]
-87 Ops.AND dtypes.uint [86, 23]
-88 Ops.CMPNE dtypes.bool [87, 26]
-89 Ops.SHR dtypes.uint [85, 14]
-90 Ops.AND dtypes.uint [89, 30]
-91 Ops.ADD dtypes.uint [85, 90]
-92 Ops.ADD dtypes.uint [91, 34]
-93 Ops.AND dtypes.uint [85, 37]
-94 Ops.CMPNE dtypes.bool [93, 26]
-95 Ops.OR dtypes.uint [85, 41]
-96 Ops.WHERE dtypes.uint [94, 95, 85]
-97 Ops.WHERE dtypes.uint [88, 92, 96]
-98 Ops.SHR dtypes.uint [97, 14]
-99 Ops.CAST dtypes.ushort [98] dtypes.ushort
-100 Ops.CAST dtypes.uint [99] dtypes.uint
-101 Ops.SHL dtypes.uint [100, 14]
-102 Ops.BITCAST dtypes.float [101] dtypes.float
-103 Ops.CONST dtypes.weakint [] 3
-104 Ops.CAST dtypes.int [103] dtypes.int
-105 Ops.ADD dtypes.int [6, 104]
-106 Ops.INDEX dtypes.bfloat16 [8, 105]
-107 Ops.LOAD dtypes.bfloat16 [106]
-108 Ops.BITCAST dtypes.ushort [107] dtypes.ushort
-109 Ops.CAST dtypes.uint [108] dtypes.uint
-110 Ops.SHL dtypes.uint [109, 14]
-111 Ops.BITCAST dtypes.float [110] dtypes.float
-112 Ops.ADD dtypes.float [111, 18]
-113 Ops.BITCAST dtypes.uint [112] dtypes.uint
-114 Ops.NEG dtypes.uint [113]
-115 Ops.AND dtypes.uint [114, 23]
-116 Ops.CMPNE dtypes.bool [115, 26]
-117 Ops.SHR dtypes.uint [113, 14]
-118 Ops.AND dtypes.uint [117, 30]
-119 Ops.ADD dtypes.uint [113, 118]
-120 Ops.ADD dtypes.uint [119, 34]
-121 Ops.AND dtypes.uint [113, 37]
-122 Ops.CMPNE dtypes.bool [121, 26]
-123 Ops.OR dtypes.uint [113, 41]
-124 Ops.WHERE dtypes.uint [122, 123, 113]
-125 Ops.WHERE dtypes.uint [116, 120, 124]
-126 Ops.SHR dtypes.uint [125, 14]
-127 Ops.CAST dtypes.ushort [126] dtypes.ushort
-128 Ops.CAST dtypes.uint [127] dtypes.uint
-129 Ops.SHL dtypes.uint [128, 14]
-130 Ops.BITCAST dtypes.float [129] dtypes.float
-131 Ops.STACK dtypes.float [49, 76, 102, 130]
-132 Ops.STORE dtypes.void [7, 131]
-133 Ops.GROUP dtypes.void [132, 132, 132, 132]
-134 Ops.END dtypes.void [133, 3]
-135 Ops.SINK dtypes.void [134] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-136 Ops.SINK dtypes.void [134] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=256, lds=96, mem=96)) tag=1
-137 Ops.LINEAR dtypes.void [0, 8, 17, 18, 29, 50, 4, 5, 103, 104, 1, 2, 25, 26, 30, 13, 14, 22, 23, 33, 34, 36, 37, 40, 41, 3, 6, 51, 52, 53, 77, 78, 79, 105, 106, 107, 9, 10, 54, 55, 56, 57, 58, 59, 60, 63, 64, 65, 66, 67, 68, 61, 62, 69, 70, 71, 72, 73, 74, 80, 81, 82, 83, 84, 85, 86, 89, 90, 91, 92, 93, 94, 87, 88, 95, 96, 97, 98, 99, 100, 108, 109, 110, 111, 112, 113, 114, 117, 118, 119, 120, 121, 122, 115, 116, 123, 124, 125, 126, 127, 128, 11, 12, 15, 16, 19, 20, 21, 28, 31, 32, 35, 38, 39, 24, 27, 42, 43, 44, 45, 46, 47, 75, 76, 101, 102, 129, 130, 48, 49, 131, 7, 132, 133, 134, 135]
-138 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, __bf16* restrict data1_16) {\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int alu0 = (Lidx0<<2);\n    __bf16 val0 = (*(data1_16+(alu0+1)));\n    __bf16 val1 = (*(data1_16+(alu0+2)));\n    __bf16 val2 = (*(data1_16+(alu0+3)));\n    __bf16 val3 = (*(data1_16+alu0));\n    unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val0))))<<16u)))+1.0f)));\n    unsigned int alu1 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);\n    unsigned int alu2 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu1);\n    unsigned int cast1 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val1))))<<16u)))+1.0f)));\n    unsigned int alu3 = (((cast1&65535u)!=0u)?(cast1|65536u):cast1);\n    unsigned int alu4 = (((-cast1&2139095040u)!=0u)?(cast1+((cast1>>16u)&1u)+32767u):alu3);\n    unsigned int cast2 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val2))))<<16u)))+1.0f)));\n    unsigned int alu5 = (((cast2&65535u)!=0u)?(cast2|65536u):cast2);\n    unsigned int alu6 = (((-cast2&2139095040u)!=0u)?(cast2+((cast2>>16u)&1u)+32767u):alu5);\n    unsigned int cast3 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val3))))<<16u)))+1.0f)));\n    unsigned int alu7 = (((cast3&65535u)!=0u)?(cast3|65536u):cast3);\n    unsigned int alu8 = (((-cast3&2139095040u)!=0u)?(cast3+((cast3>>16u)&1u)+32767u):alu7);\n    *((float4*)((data0_16+alu0))) = (float4){__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu8>>16u)))))<<16u))),__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu2>>16u)))))<<16u))),__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu4>>16u)))))<<16u))),__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu6>>16u)))))<<16u)))};\n  }\n}\n"
-139 Ops.PROGRAM dtypes.void [136, 137, 138] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-140 Ops.SINK dtypes.void [135, 139]
+42 Ops.AND dtypes.uint [24, 41]
+43 Ops.CMPNE dtypes.bool [42, 30]
+44 Ops.CONST dtypes.weakint [] 65536
+45 Ops.CAST dtypes.uint [44] dtypes.uint
+46 Ops.OR dtypes.uint [24, 45]
+47 Ops.WHERE dtypes.uint [43, 46, 24]
+48 Ops.WHERE dtypes.uint [31, 39, 47]
+49 Ops.SHR dtypes.uint [48, 18]
+50 Ops.CAST dtypes.ushort [49] dtypes.ushort
+51 Ops.CAST dtypes.uint [50] dtypes.uint
+52 Ops.SHL dtypes.uint [51, 18]
+53 Ops.BITCAST dtypes.float [52] dtypes.float
+54 Ops.CAST dtypes.int [33] dtypes.int
+55 Ops.ADD dtypes.int [8, 54]
+56 Ops.INDEX dtypes.bfloat16 [12, 55]
+57 Ops.LOAD dtypes.bfloat16 [56]
+58 Ops.BITCAST dtypes.ushort [57] dtypes.ushort
+59 Ops.CAST dtypes.uint [58] dtypes.uint
+60 Ops.SHL dtypes.uint [59, 18]
+61 Ops.BITCAST dtypes.float [60] dtypes.float
+62 Ops.ADD dtypes.float [61, 22]
+63 Ops.BITCAST dtypes.uint [62] dtypes.uint
+64 Ops.NEG dtypes.uint [63]
+65 Ops.AND dtypes.uint [64, 27]
+66 Ops.CMPNE dtypes.bool [65, 30]
+67 Ops.SHR dtypes.uint [63, 18]
+68 Ops.AND dtypes.uint [67, 34]
+69 Ops.ADD dtypes.uint [63, 68]
+70 Ops.ADD dtypes.uint [69, 38]
+71 Ops.AND dtypes.uint [63, 41]
+72 Ops.CMPNE dtypes.bool [71, 30]
+73 Ops.OR dtypes.uint [63, 45]
+74 Ops.WHERE dtypes.uint [72, 73, 63]
+75 Ops.WHERE dtypes.uint [66, 70, 74]
+76 Ops.SHR dtypes.uint [75, 18]
+77 Ops.CAST dtypes.ushort [76] dtypes.ushort
+78 Ops.CAST dtypes.uint [77] dtypes.uint
+79 Ops.SHL dtypes.uint [78, 18]
+80 Ops.BITCAST dtypes.float [79] dtypes.float
+81 Ops.ADD dtypes.int [8, 7]
+82 Ops.INDEX dtypes.bfloat16 [12, 81]
+83 Ops.LOAD dtypes.bfloat16 [82]
+84 Ops.BITCAST dtypes.ushort [83] dtypes.ushort
+85 Ops.CAST dtypes.uint [84] dtypes.uint
+86 Ops.SHL dtypes.uint [85, 18]
+87 Ops.BITCAST dtypes.float [86] dtypes.float
+88 Ops.ADD dtypes.float [87, 22]
+89 Ops.BITCAST dtypes.uint [88] dtypes.uint
+90 Ops.NEG dtypes.uint [89]
+91 Ops.AND dtypes.uint [90, 27]
+92 Ops.CMPNE dtypes.bool [91, 30]
+93 Ops.SHR dtypes.uint [89, 18]
+94 Ops.AND dtypes.uint [93, 34]
+95 Ops.ADD dtypes.uint [89, 94]
+96 Ops.ADD dtypes.uint [95, 38]
+97 Ops.AND dtypes.uint [89, 41]
+98 Ops.CMPNE dtypes.bool [97, 30]
+99 Ops.OR dtypes.uint [89, 45]
+100 Ops.WHERE dtypes.uint [98, 99, 89]
+101 Ops.WHERE dtypes.uint [92, 96, 100]
+102 Ops.SHR dtypes.uint [101, 18]
+103 Ops.CAST dtypes.ushort [102] dtypes.ushort
+104 Ops.CAST dtypes.uint [103] dtypes.uint
+105 Ops.SHL dtypes.uint [104, 18]
+106 Ops.BITCAST dtypes.float [105] dtypes.float
+107 Ops.CONST dtypes.weakint [] 3
+108 Ops.CAST dtypes.int [107] dtypes.int
+109 Ops.ADD dtypes.int [8, 108]
+110 Ops.INDEX dtypes.bfloat16 [12, 109]
+111 Ops.LOAD dtypes.bfloat16 [110]
+112 Ops.BITCAST dtypes.ushort [111] dtypes.ushort
+113 Ops.CAST dtypes.uint [112] dtypes.uint
+114 Ops.SHL dtypes.uint [113, 18]
+115 Ops.BITCAST dtypes.float [114] dtypes.float
+116 Ops.ADD dtypes.float [115, 22]
+117 Ops.BITCAST dtypes.uint [116] dtypes.uint
+118 Ops.NEG dtypes.uint [117]
+119 Ops.AND dtypes.uint [118, 27]
+120 Ops.CMPNE dtypes.bool [119, 30]
+121 Ops.SHR dtypes.uint [117, 18]
+122 Ops.AND dtypes.uint [121, 34]
+123 Ops.ADD dtypes.uint [117, 122]
+124 Ops.ADD dtypes.uint [123, 38]
+125 Ops.AND dtypes.uint [117, 41]
+126 Ops.CMPNE dtypes.bool [125, 30]
+127 Ops.OR dtypes.uint [117, 45]
+128 Ops.WHERE dtypes.uint [126, 127, 117]
+129 Ops.WHERE dtypes.uint [120, 124, 128]
+130 Ops.SHR dtypes.uint [129, 18]
+131 Ops.CAST dtypes.ushort [130] dtypes.ushort
+132 Ops.CAST dtypes.uint [131] dtypes.uint
+133 Ops.SHL dtypes.uint [132, 18]
+134 Ops.BITCAST dtypes.float [133] dtypes.float
+135 Ops.STACK dtypes.float [53, 80, 106, 134]
+136 Ops.STORE dtypes.void [11, 135]
+137 Ops.GROUP dtypes.void [136, 136, 136, 136]
+138 Ops.END dtypes.void [137, 4]
+139 Ops.SINK dtypes.void [138] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=4) tag=1
+140 Ops.SINK dtypes.void [138] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=256, lds=96, mem=96), split=4) tag=1
+141 Ops.LINEAR dtypes.void [0, 12, 1, 2, 21, 22, 33, 54, 6, 7, 107, 108, 9, 10, 29, 30, 34, 17, 18, 26, 27, 37, 38, 40, 41, 44, 45, 3, 4, 5, 8, 55, 56, 57, 81, 82, 83, 109, 110, 111, 13, 14, 58, 59, 60, 61, 62, 63, 64, 67, 68, 69, 70, 71, 72, 65, 66, 73, 74, 75, 76, 77, 78, 84, 85, 86, 87, 88, 89, 90, 93, 94, 95, 96, 97, 98, 91, 92, 99, 100, 101, 102, 103, 104, 112, 113, 114, 115, 116, 117, 118, 121, 122, 123, 124, 125, 126, 119, 120, 127, 128, 129, 130, 131, 132, 15, 16, 19, 20, 23, 24, 25, 32, 35, 36, 39, 42, 43, 28, 31, 46, 47, 48, 49, 50, 51, 79, 80, 105, 106, 133, 134, 52, 53, 135, 11, 136, 137, 138, 139]
+142 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, __bf16* restrict data1_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    __bf16 val0 = (*(data1_16+(alu0+1)));\n    __bf16 val1 = (*(data1_16+(alu0+2)));\n    __bf16 val2 = (*(data1_16+(alu0+3)));\n    __bf16 val3 = (*(data1_16+alu0));\n    unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val0))))<<16u)))+1.0f)));\n    unsigned int alu1 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);\n    unsigned int alu2 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu1);\n    unsigned int cast1 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val1))))<<16u)))+1.0f)));\n    unsigned int alu3 = (((cast1&65535u)!=0u)?(cast1|65536u):cast1);\n    unsigned int alu4 = (((-cast1&2139095040u)!=0u)?(cast1+((cast1>>16u)&1u)+32767u):alu3);\n    unsigned int cast2 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val2))))<<16u)))+1.0f)));\n    unsigned int alu5 = (((cast2&65535u)!=0u)?(cast2|65536u):cast2);\n    unsigned int alu6 = (((-cast2&2139095040u)!=0u)?(cast2+((cast2>>16u)&1u)+32767u):alu5);\n    unsigned int cast3 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val3))))<<16u)))+1.0f)));\n    unsigned int alu7 = (((cast3&65535u)!=0u)?(cast3|65536u):cast3);\n    unsigned int alu8 = (((-cast3&2139095040u)!=0u)?(cast3+((cast3>>16u)&1u)+32767u):alu7);\n    *((float4*)((data0_16+alu0))) = (float4){__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu8>>16u)))))<<16u))),__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu2>>16u)))))<<16u))),__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu4>>16u)))))<<16u))),__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu6>>16u)))))<<16u)))};\n  }\n}\n"
+143 Ops.PROGRAM dtypes.void [140, 141, 142] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+144 Ops.SINK dtypes.void [139, 143]
 

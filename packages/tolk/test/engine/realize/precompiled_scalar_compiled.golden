@@ -1,24 +1,26 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=3, device="CPU")
-1 Ops.CONST dtypes.weakint [] 3
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
-4 Ops.INDEX dtypes.int [0, 3]
-5 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=3, device="CPU")
-6 Ops.INDEX dtypes.int [5, 3]
-7 Ops.LOAD dtypes.int [6]
-8 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(1, 8), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
-9 Ops.MUL dtypes.int [7, 8]
-10 Ops.STORE dtypes.void [4, 9]
-11 Ops.END dtypes.void [10, 3]
-12 Ops.SINK dtypes.void [11] KernelInfo(name="E_3", estimates=Estimates(ops=3, lds=24, mem=24)) tag=1
-13 Ops.SINK dtypes.void [11] KernelInfo(name="E_3") tag=1
-14 Ops.LINEAR dtypes.void [0, 5, 8, 1, 2, 3, 6, 7, 4, 9, 10, 11, 13]
-15 Ops.SOURCE dtypes.void [] "\nvoid E_3(int* restrict data0_3, int* restrict data1_3, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    int val0 = (*(data1_3+Lidx0));\n    *(data0_3+Lidx0) = (val0*v_);\n  }\n}\n"
-16 Ops.BINARY dtypes.uchar [] b"\nvoid E_3(int* restrict data0_3, int* restrict data1_3, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    int val0 = (*(data1_3+Lidx0));\n    *(data0_3+Lidx0) = (val0*v_);\n  }\n}\n"
-17 Ops.PROGRAM dtypes.void [12, 14, 15, 16] ProgramInfo(vars=(%8,), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-18 Ops.BUFFER dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=3, device="CPU")
-19 Ops.BUFFER dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=3, device="CPU")
-20 Ops.CALL dtypes.void [17, 18, 19] CallInfo()
-21 Ops.LINEAR dtypes.void [20]
+1 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 3), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 3), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.SUB dtypes.int [2, 1]
+4 Ops.RANGE dtypes.int [3] (0, AxisType.WEAK)
+5 Ops.ADD dtypes.int [1, 4]
+6 Ops.INDEX dtypes.int [0, 5]
+7 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=3, device="CPU")
+8 Ops.INDEX dtypes.int [7, 5]
+9 Ops.LOAD dtypes.int [8]
+10 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(1, 8), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
+11 Ops.MUL dtypes.int [9, 10]
+12 Ops.STORE dtypes.void [6, 11]
+13 Ops.END dtypes.void [12, 4]
+14 Ops.SINK dtypes.void [13] KernelInfo(name="E_3", estimates=Estimates(ops=3, lds=24, mem=24), split=3) tag=1
+15 Ops.SINK dtypes.void [13] KernelInfo(name="E_3", split=3) tag=1
+16 Ops.LINEAR dtypes.void [0, 7, 1, 2, 10, 3, 4, 5, 8, 9, 6, 11, 12, 13, 15]
+17 Ops.SOURCE dtypes.void [] "\nvoid E_3(int* restrict data0_3, int* restrict data1_3, const int block_lo_, const int block_hi_, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_3+alu0));\n    *(data0_3+alu0) = (val0*v_);\n  }\n}\n"
+18 Ops.BINARY dtypes.uchar [] b"\nvoid E_3(int* restrict data0_3, int* restrict data1_3, const int block_lo_, const int block_hi_, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_3+alu0));\n    *(data0_3+alu0) = (val0*v_);\n  }\n}\n"
+19 Ops.PROGRAM dtypes.void [14, 16, 17, 18] ProgramInfo(global_size=(3, 1, 1), vars=(%1, %2, %10), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+20 Ops.BUFFER dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=3, device="CPU")
+21 Ops.BUFFER dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=3, device="CPU")
+22 Ops.CALL dtypes.void [19, 20, 21] CallInfo()
+23 Ops.LINEAR dtypes.void [22]
 

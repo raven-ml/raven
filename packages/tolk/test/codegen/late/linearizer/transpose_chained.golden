@@ -6,16 +6,20 @@
 4 Ops.CONST dtypes.weakint [] 15
 5 Ops.CAST dtypes.int [4] dtypes.int
 6 Ops.MUL dtypes.int [3, 5]
-7 Ops.RANGE dtypes.int [5, 3] (1, AxisType.WEAK)
-8 Ops.ADD dtypes.int [6, 7]
-9 Ops.INDEX dtypes.float [0, 8]
-10 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=105, device="CPU")
-11 Ops.MUL dtypes.int [7, 2]
-12 Ops.ADD dtypes.int [11, 3]
-13 Ops.INDEX dtypes.float [10, 12]
-14 Ops.LOAD dtypes.float [13]
-15 Ops.STORE dtypes.void [9, 14]
-16 Ops.END dtypes.void [15, 7]
-17 Ops.END dtypes.void [16, 3]
-18 Ops.SINK dtypes.void [17] KernelInfo(name="E_7_15") tag=1
+7 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 15), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 15), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+9 Ops.SUB dtypes.int [8, 7]
+10 Ops.RANGE dtypes.int [9, 3] (1, AxisType.WEAK)
+11 Ops.ADD dtypes.int [7, 10]
+12 Ops.ADD dtypes.int [6, 11]
+13 Ops.INDEX dtypes.float [0, 12]
+14 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=105, device="CPU")
+15 Ops.MUL dtypes.int [11, 2]
+16 Ops.ADD dtypes.int [15, 3]
+17 Ops.INDEX dtypes.float [14, 16]
+18 Ops.LOAD dtypes.float [17]
+19 Ops.STORE dtypes.void [13, 18]
+20 Ops.END dtypes.void [19, 10]
+21 Ops.END dtypes.void [20, 3]
+22 Ops.SINK dtypes.void [21] KernelInfo(name="E_7_15", split=15) tag=1
 

@@ -1,11 +1,12 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef __fp16 __fp164 __attribute__((aligned(8),ext_vector_type(4)));
-void r_64_64_4_4_64_4(__fp16* restrict data0_65536, __fp16* restrict data1_65536, __fp16* restrict data2_65536) {
+void r_64_64_4_4_64_4(__fp16* restrict data0_65536, __fp16* restrict data1_65536, __fp16* restrict data2_65536, const int block_lo_, const int block_hi_) {
   float buf0[16];
-  for (int Lidx1 = 0; Lidx1 < 64; Lidx1++) {
-    int alu0 = (Lidx1<<10);
+  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
+    int alu0 = (block_lo_+Lidx1);
+    int alu1 = (alu0<<10);
     for (int Lidx2 = 0; Lidx2 < 64; Lidx2++) {
-      int alu1 = (Lidx2<<2);
+      int alu2 = (Lidx2<<2);
       *(buf0+0) = 0.0f;
       *(buf0+1) = 0.0f;
       *(buf0+10) = 0.0f;
@@ -23,16 +24,16 @@ void r_64_64_4_4_64_4(__fp16* restrict data0_65536, __fp16* restrict data1_65536
       *(buf0+8) = 0.0f;
       *(buf0+9) = 0.0f;
       for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {
-        int alu18 = ((Ridx0<<2)+alu0);
-        __fp164 val0 = (*((__fp164*)((data1_65536+(alu18+256)))));
-        __fp164 val1 = (*((__fp164*)((data1_65536+(alu18+512)))));
-        __fp164 val2 = (*((__fp164*)((data1_65536+(alu18+768)))));
-        __fp164 val3 = (*((__fp164*)((data1_65536+alu18))));
-        int alu19 = ((Ridx0<<10)+alu1);
-        __fp164 val4 = (*((__fp164*)((data2_65536+(alu19+256)))));
-        __fp164 val5 = (*((__fp164*)((data2_65536+(alu19+512)))));
-        __fp164 val6 = (*((__fp164*)((data2_65536+(alu19+768)))));
-        __fp164 val7 = (*((__fp164*)((data2_65536+alu19))));
+        int alu19 = ((Ridx0<<2)+alu1);
+        __fp164 val0 = (*((__fp164*)((data1_65536+(alu19+256)))));
+        __fp164 val1 = (*((__fp164*)((data1_65536+(alu19+512)))));
+        __fp164 val2 = (*((__fp164*)((data1_65536+(alu19+768)))));
+        __fp164 val3 = (*((__fp164*)((data1_65536+alu19))));
+        int alu20 = ((Ridx0<<10)+alu2);
+        __fp164 val4 = (*((__fp164*)((data2_65536+(alu20+256)))));
+        __fp164 val5 = (*((__fp164*)((data2_65536+(alu20+512)))));
+        __fp164 val6 = (*((__fp164*)((data2_65536+(alu20+768)))));
+        __fp164 val7 = (*((__fp164*)((data2_65536+alu20))));
         *(buf0+0) = ((*(buf0+0))+((float)(((__fp16)((val3[0]*val7[0])))))+((float)(((__fp16)((val3[1]*val4[0])))))+((float)(((__fp16)((val3[2]*val5[0])))))+((float)(((__fp16)((val3[3]*val6[0]))))));
         *(buf0+1) = ((*(buf0+1))+((float)(((__fp16)((val3[0]*val7[1])))))+((float)(((__fp16)((val3[1]*val4[1])))))+((float)(((__fp16)((val3[2]*val5[1])))))+((float)(((__fp16)((val3[3]*val6[1]))))));
         *(buf0+10) = ((*(buf0+10))+((float)(((__fp16)((val1[0]*val7[2])))))+((float)(((__fp16)((val1[1]*val4[2])))))+((float)(((__fp16)((val1[2]*val5[2])))))+((float)(((__fp16)((val1[3]*val6[2]))))));
@@ -50,11 +51,11 @@ void r_64_64_4_4_64_4(__fp16* restrict data0_65536, __fp16* restrict data1_65536
         *(buf0+8) = ((*(buf0+8))+((float)(((__fp16)((val1[0]*val7[0])))))+((float)(((__fp16)((val1[1]*val4[0])))))+((float)(((__fp16)((val1[2]*val5[0])))))+((float)(((__fp16)((val1[3]*val6[0]))))));
         *(buf0+9) = ((*(buf0+9))+((float)(((__fp16)((val1[0]*val7[1])))))+((float)(((__fp16)((val1[1]*val4[1])))))+((float)(((__fp16)((val1[2]*val5[1])))))+((float)(((__fp16)((val1[3]*val6[1]))))));
       }
-      int alu37 = (alu0+alu1);
-      *((__fp164*)((data0_65536+(alu37+256)))) = (__fp164){((__fp16)((*(buf0+4)))),((__fp16)((*(buf0+5)))),((__fp16)((*(buf0+6)))),((__fp16)((*(buf0+7))))};
-      *((__fp164*)((data0_65536+(alu37+512)))) = (__fp164){((__fp16)((*(buf0+8)))),((__fp16)((*(buf0+9)))),((__fp16)((*(buf0+10)))),((__fp16)((*(buf0+11))))};
-      *((__fp164*)((data0_65536+(alu37+768)))) = (__fp164){((__fp16)((*(buf0+12)))),((__fp16)((*(buf0+13)))),((__fp16)((*(buf0+14)))),((__fp16)((*(buf0+15))))};
-      *((__fp164*)((data0_65536+alu37))) = (__fp164){((__fp16)((*(buf0+0)))),((__fp16)((*(buf0+1)))),((__fp16)((*(buf0+2)))),((__fp16)((*(buf0+3))))};
+      int alu38 = (alu1+alu2);
+      *((__fp164*)((data0_65536+(alu38+256)))) = (__fp164){((__fp16)((*(buf0+4)))),((__fp16)((*(buf0+5)))),((__fp16)((*(buf0+6)))),((__fp16)((*(buf0+7))))};
+      *((__fp164*)((data0_65536+(alu38+512)))) = (__fp164){((__fp16)((*(buf0+8)))),((__fp16)((*(buf0+9)))),((__fp16)((*(buf0+10)))),((__fp16)((*(buf0+11))))};
+      *((__fp164*)((data0_65536+(alu38+768)))) = (__fp164){((__fp16)((*(buf0+12)))),((__fp16)((*(buf0+13)))),((__fp16)((*(buf0+14)))),((__fp16)((*(buf0+15))))};
+      *((__fp164*)((data0_65536+alu38))) = (__fp164){((__fp16)((*(buf0+0)))),((__fp16)((*(buf0+1)))),((__fp16)((*(buf0+2)))),((__fp16)((*(buf0+3))))};
     }
   }
 }

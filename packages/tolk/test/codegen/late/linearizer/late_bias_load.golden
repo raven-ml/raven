@@ -2,76 +2,78 @@
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=3136, device="CPU")
 1 Ops.CONST dtypes.weakint [] 14
 2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.CONST dtypes.weakint [] 16
-4 Ops.CAST dtypes.int [3] dtypes.int
-5 Ops.RANGE dtypes.int [4] (3, AxisType.WEAK)
-6 Ops.RANGE dtypes.int [2, 5] (4, AxisType.WEAK)
-7 Ops.MUL dtypes.int [6, 2]
-8 Ops.RANGE dtypes.int [2, 6] (5, AxisType.WEAK)
-9 Ops.ADD dtypes.int [7, 8]
-10 Ops.CONST dtypes.weakint [] 196
-11 Ops.CAST dtypes.int [10] dtypes.int
-12 Ops.MUL dtypes.int [5, 11]
-13 Ops.ADD dtypes.int [9, 12]
-14 Ops.INDEX dtypes.float [0, 13]
-15 Ops.ALLOC dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
-16 Ops.AFTER dtypes.float [15, 6, 8, 5]
-17 Ops.CONST dtypes.weakint [] 0
-18 Ops.CAST dtypes.int [17] dtypes.int
-19 Ops.INDEX dtypes.float [16, 18]
-20 Ops.CONST dtypes.weakfloat [] 0.0
-21 Ops.CAST dtypes.float [20] dtypes.float
-22 Ops.STORE dtypes.void [19, 21]
-23 Ops.CONST dtypes.weakint [] 3
-24 Ops.CAST dtypes.int [23] dtypes.int
-25 Ops.RANGE dtypes.int [24, 8] (0, AxisType.REDUCE)
-26 Ops.RANGE dtypes.int [24, 25] (1, AxisType.REDUCE)
-27 Ops.RANGE dtypes.int [24, 26] (2, AxisType.REDUCE)
-28 Ops.AFTER dtypes.float [15, 22, 25, 26, 27]
-29 Ops.INDEX dtypes.float [28, 18]
-30 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=768, device="CPU")
-31 Ops.CONST dtypes.weakint [] 4
-32 Ops.CAST dtypes.int [31] dtypes.int
-33 Ops.SHL dtypes.int [26, 32]
-34 Ops.SHL dtypes.int [6, 32]
-35 Ops.ADD dtypes.int [33, 34]
-36 Ops.ADD dtypes.int [27, 8]
+3 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.int [] ParamArg(slot=5, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+5 Ops.SUB dtypes.int [3, 4]
+6 Ops.RANGE dtypes.int [5] (3, AxisType.WEAK)
+7 Ops.RANGE dtypes.int [2, 6] (4, AxisType.WEAK)
+8 Ops.MUL dtypes.int [7, 2]
+9 Ops.RANGE dtypes.int [2, 7] (5, AxisType.WEAK)
+10 Ops.ADD dtypes.int [8, 9]
+11 Ops.ADD dtypes.int [4, 6]
+12 Ops.CONST dtypes.weakint [] 196
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.MUL dtypes.int [11, 13]
+15 Ops.ADD dtypes.int [10, 14]
+16 Ops.INDEX dtypes.float [0, 15]
+17 Ops.ALLOC dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+18 Ops.AFTER dtypes.float [17, 7, 9, 11]
+19 Ops.CONST dtypes.weakint [] 0
+20 Ops.CAST dtypes.int [19] dtypes.int
+21 Ops.INDEX dtypes.float [18, 20]
+22 Ops.CONST dtypes.weakfloat [] 0.0
+23 Ops.CAST dtypes.float [22] dtypes.float
+24 Ops.STORE dtypes.void [21, 23]
+25 Ops.CONST dtypes.weakint [] 3
+26 Ops.CAST dtypes.int [25] dtypes.int
+27 Ops.RANGE dtypes.int [26, 9] (0, AxisType.REDUCE)
+28 Ops.RANGE dtypes.int [26, 27] (1, AxisType.REDUCE)
+29 Ops.RANGE dtypes.int [26, 28] (2, AxisType.REDUCE)
+30 Ops.AFTER dtypes.float [17, 24, 27, 28, 29]
+31 Ops.INDEX dtypes.float [30, 20]
+32 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=768, device="CPU")
+33 Ops.CONST dtypes.weakint [] 4
+34 Ops.CAST dtypes.int [33] dtypes.int
+35 Ops.SHL dtypes.int [28, 34]
+36 Ops.SHL dtypes.int [7, 34]
 37 Ops.ADD dtypes.int [35, 36]
-38 Ops.CONST dtypes.weakint [] 8
-39 Ops.CAST dtypes.int [38] dtypes.int
-40 Ops.SHL dtypes.int [25, 39]
-41 Ops.ADD dtypes.int [37, 40]
-42 Ops.INDEX dtypes.float [30, 41]
-43 Ops.LOAD dtypes.float [42]
-44 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=432, device="CPU")
-45 Ops.MUL dtypes.int [26, 24]
-46 Ops.ADD dtypes.int [45, 27]
-47 Ops.CONST dtypes.weakint [] 9
-48 Ops.CAST dtypes.int [47] dtypes.int
-49 Ops.MUL dtypes.int [25, 48]
-50 Ops.ADD dtypes.int [46, 49]
-51 Ops.CONST dtypes.weakint [] 27
-52 Ops.CAST dtypes.int [51] dtypes.int
-53 Ops.MUL dtypes.int [5, 52]
-54 Ops.ADD dtypes.int [50, 53]
-55 Ops.INDEX dtypes.float [44, 54]
-56 Ops.LOAD dtypes.float [55]
-57 Ops.LOAD dtypes.float [29]
-58 Ops.MULACC dtypes.float [43, 56, 57]
-59 Ops.STORE dtypes.void [29, 58]
-60 Ops.END dtypes.void [59, 27]
-61 Ops.END dtypes.void [60, 26]
-62 Ops.END dtypes.void [61, 25]
-63 Ops.AFTER dtypes.float [15, 62]
-64 Ops.INDEX dtypes.float [63, 18]
-65 Ops.LOAD dtypes.float [64]
-66 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=16, device="CPU")
-67 Ops.INDEX dtypes.float [66, 5]
-68 Ops.LOAD dtypes.float [67]
-69 Ops.ADD dtypes.float [65, 68]
-70 Ops.STORE dtypes.void [14, 69]
-71 Ops.END dtypes.void [70, 8]
-72 Ops.END dtypes.void [71, 6]
-73 Ops.END dtypes.void [72, 5]
-74 Ops.SINK dtypes.void [73] KernelInfo(name="r_16_14_14_3_3_3") tag=1
+38 Ops.ADD dtypes.int [29, 9]
+39 Ops.ADD dtypes.int [37, 38]
+40 Ops.CONST dtypes.weakint [] 8
+41 Ops.CAST dtypes.int [40] dtypes.int
+42 Ops.SHL dtypes.int [27, 41]
+43 Ops.ADD dtypes.int [39, 42]
+44 Ops.INDEX dtypes.float [32, 43]
+45 Ops.LOAD dtypes.float [44]
+46 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=432, device="CPU")
+47 Ops.MUL dtypes.int [28, 26]
+48 Ops.ADD dtypes.int [47, 29]
+49 Ops.CONST dtypes.weakint [] 9
+50 Ops.CAST dtypes.int [49] dtypes.int
+51 Ops.MUL dtypes.int [27, 50]
+52 Ops.ADD dtypes.int [48, 51]
+53 Ops.CONST dtypes.weakint [] 27
+54 Ops.CAST dtypes.int [53] dtypes.int
+55 Ops.MUL dtypes.int [11, 54]
+56 Ops.ADD dtypes.int [52, 55]
+57 Ops.INDEX dtypes.float [46, 56]
+58 Ops.LOAD dtypes.float [57]
+59 Ops.LOAD dtypes.float [31]
+60 Ops.MULACC dtypes.float [45, 58, 59]
+61 Ops.STORE dtypes.void [31, 60]
+62 Ops.END dtypes.void [61, 29]
+63 Ops.END dtypes.void [62, 28]
+64 Ops.END dtypes.void [63, 27]
+65 Ops.AFTER dtypes.float [17, 64]
+66 Ops.INDEX dtypes.float [65, 20]
+67 Ops.LOAD dtypes.float [66]
+68 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=16, device="CPU")
+69 Ops.INDEX dtypes.float [68, 11]
+70 Ops.LOAD dtypes.float [69]
+71 Ops.ADD dtypes.float [67, 70]
+72 Ops.STORE dtypes.void [16, 71]
+73 Ops.END dtypes.void [72, 9]
+74 Ops.END dtypes.void [73, 7]
+75 Ops.END dtypes.void [74, 6]
+76 Ops.SINK dtypes.void [75] KernelInfo(name="r_16_14_14_3_3_3", split=16) tag=1
 

@@ -1,17 +1,18 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void r_8_8_8(__fp16* restrict data0_64, __fp16* restrict data1_64, __fp16* restrict data2_64) {
+void r_8_8_8(__fp16* restrict data0_64, __fp16* restrict data1_64, __fp16* restrict data2_64, const int block_lo_, const int block_hi_) {
   __fp16 buf0[1];
-  for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {
-    int alu0 = (Lidx1<<3);
+  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
+    int alu0 = (block_lo_+Lidx1);
+    int alu1 = (alu0<<3);
     for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {
       *(buf0+0) = ((__fp16)(0.0f));
       for (int Ridx0 = 0; Ridx0 < 8; Ridx0++) {
-        __fp16 val0 = (*(data1_64+(alu0+Ridx0)));
+        __fp16 val0 = (*(data1_64+(alu1+Ridx0)));
         __fp16 val1 = (*(data2_64+((Ridx0<<3)+Lidx2)));
         *(buf0+0) = ((*(buf0+0))+((__fp16)((val0*val1))));
       }
-      *(data0_64+(alu0+Lidx2)) = (*(buf0+0));
+      *(data0_64+(alu1+Lidx2)) = (*(buf0+0));
     }
   }
 }

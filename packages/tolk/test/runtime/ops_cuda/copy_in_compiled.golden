@@ -121,7 +121,7 @@
 119 Ops.PARAM dtypes.uchar [] ParamArg(slot=10, dtype=dtypes.uchar, size=24, name="kernargs_compute_0", device=("CUDA",)) tag="kernargs_compute_0"
 120 Ops.BUFFER dtypes.char [] ParamArg(slot=5, dtype=dtypes.char, size=256, device="CUDA")
 121 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CUDA")
-122 Ops.CALL dtypes.void [108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119] CallInfo(aux=HCQInfo(device=("CUDA",), kernels=((("CUDA",), "copy       16 B,    CUDA <- CPU    ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,))), (("CUDA",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"s\x9ewh\xd2\"\x04\x8d\x0f\xa9\xa0*|2\xf5\xf7\x15(}4\xc2\xd4\xf4\x1e6\x8ds\xa4E\x1b<{", (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), nargs=11, table=4, slots=(("CUDA", 1),), written_bufs=(%120, %121)))
+122 Ops.CALL dtypes.void [108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119] CallInfo(aux=HCQInfo(device=("CUDA",), kernels=((("CUDA",), "copy       16 B,    CUDA <- CPU    ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,))), (("CUDA",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"t\xee\xab\xca\xe3\xef\xc1!\xf1N,\t=\x81<IIE\x8e\xcetBs5\xde\x1f\xc6\xa2\xd9\xd4o\xc4", (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), nargs=11, table=4, slots=(("CUDA", 1),), written_bufs=(%120, %121)))
 123 Ops.BINARY dtypes.uchar [] b"\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 124 Ops.STORE dtypes.void [118, 123]
 125 Ops.BITCAST dtypes.ulong [118] dtypes.ulong

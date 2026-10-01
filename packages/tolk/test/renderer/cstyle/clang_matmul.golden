@@ -1,8 +1,8 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void r_16_16_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256) {
-  for (int Lidx1 = 0; Lidx1 < 16; Lidx1++) {
-    int alu0 = (Lidx1<<4);
+void r_16_16_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {
+  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
+    int alu0 = ((block_lo_+Lidx1)<<4);
     float4 val0 = (*((float4*)((data1_256+(alu0+12)))));
     float4 val1 = (*((float4*)((data1_256+(alu0+4)))));
     float4 val2 = (*((float4*)((data1_256+(alu0+8)))));

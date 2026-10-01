@@ -63,6 +63,6 @@
 61 Ops.CUSTOM_FUNCTION dtypes.void [60] "hcq_fence"
 62 Ops.AFTER dtypes.void [59, 61]
 63 Ops.SINK dtypes.void [62] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
-64 Ops.CALL dtypes.void [63, 4] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (3, 5), b"\x9a(\xcf\x94\xc3\x0c\xbb\xe8A\x1c\xe7\x0e\xff\xd5\xe8\x80>\x11\x852\x97\x1a\xae>\xea\xa8\t5\x95\x16\x0bf", (), ((0,), (1,))), (("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (7, 9), b"\x9a(\xcf\x94\xc3\x0c\xbb\xe8A\x1c\xe7\x0e\xff\xd5\xe8\x80>\x11\x852\x97\x1a\xae>\xea\xa8\t5\x95\x16\x0bf", (), ((0,), (1,)))), estimates=Estimates(ops=8, lds=64, mem=64), written_bufs=(%40, %51)))
+64 Ops.CALL dtypes.void [63, 4] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (3, 5), b"\xb5\x02\xcd\x9c\xcc\xdb\xba\xd7\x98\x80\xea\xb85\x87\x054;\x10\xf7\"\xf8k\x1d\x04@\xed(\x18!~\xe1j", (), ((0,), (1,))), (("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (7, 9), b"\xb5\x02\xcd\x9c\xcc\xdb\xba\xd7\x98\x80\xea\xb85\x87\x054;\x10\xf7\"\xf8k\x1d\x04@\xed(\x18!~\xe1j", (), ((0,), (1,)))), estimates=Estimates(ops=8, lds=64, mem=64), written_bufs=(%40, %51)))
 65 Ops.LINEAR dtypes.void [64]
 

@@ -913,6 +913,10 @@ thread.
 
 ### Tolk (new)
 
+- A compiled CPU kernel runs on every compute core: its launch splits the
+  largest output loop that every store reads into blocks the host's threads
+  run at once, when the kernel does enough work to repay waking them.
+  `Tolk_engine.Program.blocks` is the number of blocks a run takes.
 - A compiled matrix-vector product whose vector is converted, or whose matrix
   is decoded, such as `Nx_quant.apply`'s, spreads each row's reduction over a
   group of threads: it ran each row in one thread.
@@ -2956,6 +2960,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.Program.call ~split` runs a host program's iterations in blocks
+  on the host's threads, and `Nx_device.Program.workers` is their number. Eager
+  CPU kernels and compiled ones share this one pool.
 - **Breaking:** `Nx_device.Profile.Counters` carries the counted run's
   `start` and `stop` in place of the time they were read, and
   `Profile.output_chrome_trace` shows each run's counters on its device's

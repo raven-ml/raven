@@ -270,26 +270,37 @@ let kernel file cell = Ops.src (Lazy.force file).(int_of_string (cell "src"))
 let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 8))
 let at_n value s = Ops.sym_infer s [ ("n", value) ]
 
-let recorded_estimates cell : Ops.estimates =
-  let count column = Ops.Int (int_of_string (cell column)) in
-  { ops = count "ops"; lds = count "lds"; mem = count "mem" }
+(* A split kernel's counts are those of one block; the goldens count the block
+   that runs the whole loop, of the iterations in the cell "split". *)
+let whole cell vars =
+  match cell "split" with
+  | "-" -> vars
+  | extent -> ("block_lo", 0) :: ("block_hi", int_of_string extent) :: vars
 
 let recorded_kernels =
   group "estimates of recorded kernels"
     [
       Golden.cases "estimates.golden" (fun cell ->
           let uops = kernel recorded cell in
-          equal estimates (recorded_estimates cell)
-            (Renderer.Estimates.of_uops uops);
-          equal sint ~msg:"ignoring indexing"
-            (Int (int_of_string (cell "ops_ignoring_indexing")))
+          let e = Renderer.Estimates.of_uops uops in
+          let expect column s =
+            equal int ~msg:column
+              (int_of_string (cell column))
+              (Ops.sym_infer s (whole cell []))
+          in
+          expect "ops" e.ops;
+          expect "lds" e.lds;
+          expect "mem" e.mem;
+          expect "ops_ignoring_indexing"
             (Renderer.Estimates.of_uops ~ignore_indexing:true uops).ops);
       Golden.cases "symbolic_estimates.golden" ~key:[ "case"; "n" ] (fun cell ->
           let uops = kernel symbolic cell
           and value = int_of_string (cell "n") in
           let e = Renderer.Estimates.of_uops uops in
           let expect column s =
-            equal int ~msg:column (int_of_string (cell column)) (at_n value s)
+            equal int ~msg:column
+              (int_of_string (cell column))
+              (Ops.sym_infer s (whole cell [ ("n", value) ]))
           in
           expect "ops" e.ops;
           expect "lds" e.lds;

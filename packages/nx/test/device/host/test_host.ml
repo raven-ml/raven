@@ -416,6 +416,50 @@ let test_split_refusals () =
         [| 0; 0; 0 |] );
     ]
 
+(* [held] is [block] whose first block says it started, in [flags.(0)], then
+   runs once [flags.(1)] is set. *)
+let held =
+  lazy
+    (compile
+       {|ABI void held(void **b, const long long *v) {
+  long long *flags = b[0], *first = b[1], *runs = b[2];
+  if (v[1] == 0) {
+    __atomic_store_n(&flags[0], 1, __ATOMIC_SEQ_CST);
+    while (__atomic_load_n(&flags[1], __ATOMIC_SEQ_CST) == 0) {}
+  }
+  for (long long i = v[1]; i < v[2]; i++) { first[i] = v[1]; runs[i] += 1; }
+}|})
+
+(* A domain's split call while another's holds the host's threads: the second
+   call runs, whether it waits for the first or starts before the first holds
+   the threads, and each runs every iteration once. *)
+let test_split_domains () =
+  let p = load ~binary:(Lazy.force held) ~name:"held" in
+  let extent = 64 and blocks = 8 in
+  let flags = B.create host S.Int64 2 in
+  let first = B.create host S.Int64 extent
+  and runs = B.create host S.Int64 extent in
+  List.iter
+    (fun b -> Bigarray.Array1.fill (B.bigarray Bigarray.int64 b) 0L)
+    [ flags; runs ];
+  let flag = B.bigarray Bigarray.int64 flags in
+  let holding =
+    Domain.spawn (fun () ->
+        P.call
+          ~split:{ extent; blocks; lo = 1; hi = 2 }
+          p [| flags; first; runs |] [| 0; -1; -1 |])
+  in
+  while Bigarray.Array1.get flag 0 = 0L do
+    Domain.cpu_relax ()
+  done;
+  let waiting = Domain.spawn (fun () -> split_run ~extent ~blocks) in
+  Bigarray.Array1.set flag 1 1L;
+  Domain.join holding;
+  let _, second = Domain.join waiting in
+  let ones = List.init extent (fun _ -> 1L) in
+  equal ~msg:"the holding call" (list int64) ones (int64s_of runs);
+  equal ~msg:"the second call" (list int64) ones second
+
 let () =
   exit
     (run "nx.device host programs"
@@ -447,4 +491,6 @@ let () =
            [ (1000, 7); (5, 8); (64, 1); (0, 3); (3, 3) ]
            test_split;
          test "a split call refuses a split it cannot run" test_split_refusals;
+         test "a split call runs while another domain's holds the threads"
+           test_split_domains;
        ])

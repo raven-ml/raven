@@ -21,7 +21,7 @@ UOp(Ops.CONST, arg=42, tag=('y', 1), src=())
 
 UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name='n', addrspace=AddrSpace.ALU), src=())
 
-UOp(Ops.SINK, arg=KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0), src=(
+UOp(Ops.SINK, arg=KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, split=None), src=(
   UOp(Ops.ADD, arg=None, src=(
     x1:=UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name='n', addrspace=AddrSpace.ALU), src=()),
     UOp(Ops.CONST, arg=1, src=()),)),

@@ -67,7 +67,7 @@
 65 Ops.CUSTOM_FUNCTION dtypes.void [64] "submit_cpu_copy"
 66 Ops.AFTER dtypes.void [65, 54, 55]
 67 Ops.SINK dtypes.void [55, 66] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
-68 Ops.CALL dtypes.void [67] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"\x9a(\xcf\x94\xc3\x0c\xbb\xe8A\x1c\xe7\x0e\xff\xd5\xe8\x80>\x11\x852\x97\x1a\xae>\xea\xa8\t5\x95\x16\x0bf", (), ((0,), (1,))), (("CPU:1",), "copy       16 B,     CPU <- CPU:1  ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), written_bufs=(%37, %59)))
+68 Ops.CALL dtypes.void [67] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"\xb5\x02\xcd\x9c\xcc\xdb\xba\xd7\x98\x80\xea\xb85\x87\x054;\x10\xf7\"\xf8k\x1d\x04@\xed(\x18!~\xe1j", (), ((0,), (1,))), (("CPU:1",), "copy       16 B,     CPU <- CPU:1  ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), written_bufs=(%37, %59)))
 69 Ops.SHRINK dtypes.float [57, 6, 8]
 70 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
 71 Ops.SHRINK dtypes.float [70, 6, 8]
@@ -127,6 +127,6 @@
 125 Ops.CUSTOM_FUNCTION dtypes.void [124] "submit_cpu_compute"
 126 Ops.AFTER dtypes.void [125, 105, 106]
 127 Ops.SINK dtypes.void [106, 126] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
-128 Ops.CALL dtypes.void [127] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "copy       16 B,   CPU:1 <- CPU    ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,))), (("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"\x1a+\x0bO\x00G\x95,\x9aQ>\xc8\xa6\x0eY\xea\xbcI\xbd\x06\xbddC@mx\x9eZ%\xfb\xc9\xa1", (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), written_bufs=(%37, %122)))
+128 Ops.CALL dtypes.void [127] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "copy       16 B,   CPU:1 <- CPU    ", Estimates(lds=16, mem=16), (), None, (), ((0,), (1,))), (("CPU:1",), "E_4", Estimates(ops=4, lds=32, mem=32), (), b"j\x0c\xb24\xe6\xa7*\x1fb\xcf\xa3\x8bB\xfb\xf0Q:\xc8{\xf4K\xf5\xf6\x05\xf2\xa3\x9f0@\x11q\xc6", (), ((0,), (1,)))), estimates=Estimates(ops=4, lds=48, mem=48), written_bufs=(%37, %122)))
 129 Ops.LINEAR dtypes.void [68, 94, 128]
 

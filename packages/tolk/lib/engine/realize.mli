@@ -22,7 +22,8 @@ val get_call_arg_uops : Ops.t -> Ops.t list
 val get_call_var_uops : Ops.t -> Ops.t -> Ops.t list
 (** [get_call_var_uops call prg] is the value of each variable of the program
     [prg] ({!Ops.program_info.vars}), in order: the constant [call] binds it to,
-    or the variable itself when [call] leaves it free. *)
+    or the variable itself when [call] leaves it free. The bounds of a split
+    program's block ({!Ops.kernel_info.split}) are those of its whole loop. *)
 
 val get_call_outs_ins : Ops.t -> int list * int list
 (** [get_call_outs_ins call] is the positions among {!get_call_arg_uops} of the

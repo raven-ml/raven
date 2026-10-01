@@ -312,6 +312,114 @@ let programs =
               Engine.Program.run p (buffers ())));
     ]
 
+(* Host programs in blocks
+
+   A kernel of [m] sums, out[i] = sum_j a[i k + j] b[j] for [k] terms. Each sum
+   is summed in one block, in the same order whatever the blocks. *)
+
+let sums ?(name = "sums") m k =
+  let buffer slot n = Ops.placeholder ~slot [ n ] Float32 in
+  let a = buffer 1 (m * k) and b = buffer 2 k in
+  let i = Ops.range (Int m) [ 0 ] in
+  let j = Ops.range ~axis_type:Reduce (Int k) [ 1 ] in
+  let term =
+    let open Ops.O in
+    Ops.index a [ (i * Ops.int k) + j ] * Ops.index b [ j ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ~name ())
+    [
+      Ops.end_
+        (Ops.store
+           (Ops.index (buffer 0 m) [ i ])
+           (Ops.reduce term Op.Add [ j ]))
+        [ i ];
+    ]
+
+(* Values whose sums round differently in another order. *)
+let scattered n =
+  floats (Array.init n (fun x -> Float.sin (Float.of_int x) *. 1e3))
+
+let sums_in ~blocks m k =
+  let prg = Codegen.to_program (sums m k) (Lazy.force clang) in
+  let elf = Device.Tiny_elf.of_program prg in
+  let p =
+    match Nx_device.Program.load host ~binary:elf.lib ~name:elf.name with
+    | Ok p -> p
+    | Error why -> failwith why
+  in
+  let vars = match Ops.arg prg with Ops.Program i -> i.vars | _ -> [] in
+  let slot name =
+    Option.get (List.find_index (fun v -> Ops.expr v = name) vars)
+  in
+  let extent =
+    match Ops.arg (Ops.nth prg 0) with
+    | Ops.Kernel { split = Some (Int n); _ } -> n
+    | _ -> failwith "sums splits a loop of known iterations"
+  in
+  let out = Run.buffer host Float32 (floats (Array.make m 0.)) in
+  Nx_device.Program.call
+    ~split:{ extent; blocks; lo = slot "block_lo"; hi = slot "block_hi" }
+    p
+    [|
+      out;
+      Run.buffer host Float32 (scattered (m * k));
+      Run.buffer host Float32 (scattered k);
+    |]
+    (Array.make (List.length vars) 0);
+  Array.map
+    (function `Float x -> Int64.bits_of_float x | _ -> assert false)
+    (Run.values Float32 out)
+
+let same_bits_in_any_blocks () =
+  let one = sums_in ~blocks:1 512 64 in
+  List.iter
+    (fun blocks ->
+      equal
+        ~msg:(Printf.sprintf "%d blocks" blocks)
+        (array int64) one (sums_in ~blocks 512 64))
+    [ 3; 32 ]
+
+let blocks_of ?vars prg =
+  Engine.Program.blocks ?vars (Engine.Program.load host prg)
+
+let in_blocks =
+  group "host programs in blocks"
+    [
+      test "a program writes the same bits in 1, 3 and 32 blocks"
+        same_bits_in_any_blocks;
+      test "a run of much work splits into blocks" (fun () ->
+          let prg = Codegen.to_program (sums 4096 256) (Lazy.force clang) in
+          is_true ~msg:"blocks" (blocks_of prg > 1));
+      test "a run of little work runs as one block" (fun () ->
+          equal int 1 (blocks_of ~vars:[ ("n", 1) ] (Lazy.force axpy)));
+      test "a run of a large kernel computes its sums" (fun () ->
+          let m = 4096 and k = 256 in
+          let p =
+            Engine.Program.load host
+              (Codegen.to_program
+                 (sums ~name:"sums_run" m k)
+                 (Lazy.force clang))
+          in
+          let a = Array.init (m * k) (fun x -> Float.of_int (x mod 7))
+          and b = Array.init k (fun x -> Float.of_int (x mod 5)) in
+          let out = Run.buffer host Float32 (floats (Array.make m 0.)) in
+          Engine.Program.run p
+            [
+              out;
+              Run.buffer host Float32 (floats a);
+              Run.buffer host Float32 (floats b);
+            ];
+          let expected =
+            Array.init m (fun i ->
+                let s = ref 0. in
+                for j = 0 to k - 1 do
+                  s := !s +. (a.((i * k) + j) *. b.(j))
+                done;
+                !s)
+          in
+          equal values (floats expected) (Run.values Float32 out));
+    ]
+
 (* Linked schedules
 
    The recorded programs of the Schedule suite, scheduled, compiled for the
@@ -2076,6 +2184,7 @@ let () =
          targets;
          describing;
          programs;
+         in_blocks;
          schedules;
          padded_stores;
          group "a store through a shrink" [ valid_slot_store ];

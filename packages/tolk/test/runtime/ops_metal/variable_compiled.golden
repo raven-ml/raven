@@ -149,7 +149,7 @@
 147 Ops.ADD dtypes.int [146, 145]
 148 Ops.MUL dtypes.int [140, 96]
 149 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="METAL")
-150 Ops.CALL dtypes.void [133, 134, 135, 136, 137, 138, 139] CallInfo(aux=HCQInfo(device=("METAL",), kernels=((("METAL",), "E_v", Estimates(ops=%140, lds=%144, mem=%147), (), b"\x13Xqk\x80\x0c\xc1\xf05\n-\x81ZtN\xb9\xd64\xb8\x18\xeaN\n\xb1I\x99\x0f-N\xb5?\xa6", (), ((0,), (1,))),), estimates=Estimates(ops=%140, lds=%148, mem=%148), nargs=6, slots=(("METAL", 2),), written_bufs=(%149,)))
+150 Ops.CALL dtypes.void [133, 134, 135, 136, 137, 138, 139] CallInfo(aux=HCQInfo(device=("METAL",), kernels=((("METAL",), "E_v", Estimates(ops=%140, lds=%144, mem=%147), (), b"\xbd\xb0\xc7fw\x05\x8f\tbm\xa2\x0d\xd9\xec\xec\xc3\xf1,\x95\xe2\xf6\x0fH\xd8,p@\\\x8d\x80\xdc\x87", (), ((0,), (1,))),), estimates=Estimates(ops=%140, lds=%148, mem=%148), nargs=6, slots=(("METAL", 2),), written_bufs=(%149,)))
 151 Ops.BITCAST dtypes.ulong [139] dtypes.ulong
 152 Ops.STACK dtypes.weakint [1, 90, 21, 53, 62, 71, 96, 112, 104, 124]
 153 Ops.INDEX dtypes.ulong [151, 152]

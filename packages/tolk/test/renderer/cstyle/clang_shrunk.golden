@@ -1,9 +1,10 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void E_28n2A429(float* restrict data0_256, float* restrict data1_256, const int n_) {
-  for (int Lidx0 = 0; Lidx0 < (n_<<2); Lidx0++) {
-    float val0 = (*(data1_256+Lidx0));
-    *(data0_256+Lidx0) = (val0+1.0f);
+void E_28n2A429(float* restrict data0_256, float* restrict data1_256, const int block_lo_, const int block_hi_) {
+  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
+    int alu0 = (block_lo_+Lidx0);
+    float val0 = (*(data1_256+alu0));
+    *(data0_256+alu0) = (val0+1.0f);
   }
 }
 

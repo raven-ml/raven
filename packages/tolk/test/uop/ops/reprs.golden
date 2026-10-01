@@ -34,8 +34,8 @@ bound variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, na
 named local buffer	ParamArg(2, dtypes.int, 4, name='buf', addrspace=AddrSpace.LOCAL)	'buf'
 volatile param	ParamArg(0, dtypes.uint, 4, device='CPU', volatile=True)	None
 alloc	ParamArg(7, dtypes.float, 4, device='CPU')	None
-kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0)	None
-kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2)	None
+kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, split=None)	None
+kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2, split=None)	None
 bufferize	BufferizeOpts(device='CPU', addrspace=AddrSpace.LOCAL, removable=False)	None
 bufferize without device	BufferizeOpts(device=None, addrspace=AddrSpace.GLOBAL, removable=True)	None
 call	CallInfo(None, 'f', False, False)	None

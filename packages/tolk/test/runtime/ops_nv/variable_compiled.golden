@@ -117,7 +117,7 @@
 115 Ops.CONST dtypes.weakint [] 8
 116 Ops.MUL dtypes.int [107, 115]
 117 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="NV")
-118 Ops.CALL dtypes.void [96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "E_v", Estimates(ops=%107, lds=%111, mem=%114), (), b"7\xb7Q-\x99\x95\xfa\xa3\\*\xc5\x8b)\x1d\x1d\xd9\xee\xe36\xbe\xbd\x98\xf8\x0e\xb8\xc4\x85F\x00\xcb\x0d\xc0", (), ((0,), (1,))),), estimates=Estimates(ops=%107, lds=%116, mem=%116), nargs=10, slots=(("NV", 1),), written_bufs=(%117,)))
+118 Ops.CALL dtypes.void [96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "E_v", Estimates(ops=%107, lds=%111, mem=%114), (), b"!_2\xe3\x9e\xd5\x1b\xe0I3\x0f~\x9c\x8d\xae(\x10\x12\xfb\xc3(6\xb0\x1b\x06\xc3=\xe4\xaa\xa3\x9d\x10", (), ((0,), (1,))),), estimates=Estimates(ops=%107, lds=%116, mem=%116), nargs=10, slots=(("NV", 1),), written_bufs=(%117,)))
 119 Ops.BINARY dtypes.uchar [] b"\xa6%\x01 \x11\x10\x00\x00\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\xad \x01 \x00\x00\x00\x00\xb0 \x01 \t\x00\x00\x00"
 120 Ops.STORE dtypes.void [101, 119]
 121 Ops.SHRINK dtypes.uchar [101, 15, 17]

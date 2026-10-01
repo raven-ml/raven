@@ -248,15 +248,24 @@ let bound k =
     (fun (name, v) -> (name, `Int (Bigint.of_int v)))
     (Kernel_opts.variables k)
 
-(* The writes the interpreter gives [u] from the storage and variables that
-   [Kernel_opts.writes] gives the kernel [k]. *)
-let writes_of k u =
-  Interpreter.writes ~vars:(bound k) ~buffers:(Kernel_opts.inputs k) u
-
+(* The interpreter's writes of the lowered sink, from the storage and variables
+   that [Kernel_opts.writes] gives the kernel; a split kernel runs the block of
+   its whole loop. *)
 let keeps_writes row =
-  let k = kernel row in
+  let k = kernel row and u = lowered row in
+  let whole =
+    match (kernel_info u).split with
+    | None -> []
+    | Some n ->
+        let hi = Ops.sym_infer n (Kernel_opts.variables k) in
+        [
+          ("block_lo", `Int Bigint.zero); ("block_hi", `Int (Bigint.of_int hi));
+        ]
+  in
   equal (list Kernel_opts.write) (Kernel_opts.writes k)
-    (writes_of k (lowered row))
+    (Interpreter.writes
+       ~vars:(whole @ bound k)
+       ~buffers:(Kernel_opts.inputs k) u)
 
 (* The kernels that lower to stores alone, but that the interpreter does not
    read, each with its reason. *)
@@ -797,12 +806,37 @@ let estimates row =
   | Some e -> Format.asprintf "%a" Ops.pp_estimates e
   | None -> "none"
 
+(* A split program's instructions count one block; its estimates count the block
+   of the whole loop. *)
+let whole_loop p (e : Ops.estimates) : Ops.estimates =
+  match (kernel_info (Ops.nth p 0)).split with
+  | None -> e
+  | Some n ->
+      let var name =
+        List.find
+          (fun u -> Ops.is_variable u && Ops.expr u = name)
+          (Ops.src (Ops.nth p 1))
+      in
+      let lo = var "block_lo" and hi = var "block_hi" in
+      let bounds =
+        [
+          (lo, Ops.int ~dtype:(Ops.dtype lo) 0);
+          (hi, Ops.sint_to_uop ~dtype:(Ops.dtype hi) n);
+        ]
+      in
+      let fill : Ops.sint -> Ops.sint = function
+        | Int _ as i -> i
+        | Sym u -> Ops.ssimplify (Ops.substitute u bounds)
+      in
+      { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
+
 let counts_its_instructions row =
   let p = program row in
   equal string
     (Format.asprintf "%a" Ops.pp_estimates
-       (Renderer.Estimates.of_uops ~ignore_indexing:true
-          (Ops.src (Ops.nth p 1))))
+       (whole_loop p
+          (Renderer.Estimates.of_uops ~ignore_indexing:true
+             (Ops.src (Ops.nth p 1)))))
     (estimates row)
 
 let lowers_the_same_twice row = same_graph (lowered row) (lowered row)
@@ -869,7 +903,7 @@ let programs =
                  source p;
                  "#undef E_64_4";
                  "void E_64_4(void **b, const long long *v) { E_64_4_(b[0], \
-                  b[1], b[2]); }";
+                  b[1], b[2], v[0], v[1]); }";
                ])
             (binary_of p));
       test
@@ -2294,6 +2328,116 @@ let cleanups =
         (fun (_, u) -> rejects (fun () -> cleaned [ u ]));
     ]
 
+(* Host programs in blocks
+
+   A host program splits the largest loop that every store to memory reads in
+   its address into blocks, which the host's cores run at once. *)
+
+let split_of prg = (kernel_info (Ops.nth prg 0)).split
+let sint = Testable.make ~pp:Ops.Sint.pp ~equal:Ops.Sint.equal
+
+let in_blocks uops =
+  Codegen.to_program (Ops.sink ~kernel:(Ops.kernel_info ()) uops) clang
+
+let floats n slot = Ops.param ~shape:[ Int n ] slot Float32
+
+let splits_the_output_loop () =
+  let i = Ops.range (Int 1024) [ 0 ] in
+  let a = Ops.index (floats 1024 1) [ i ] in
+  let prg =
+    in_blocks [ Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ] ]
+  in
+  is_true ~msg:"split" (Option.is_some (split_of prg));
+  let names =
+    match Ops.arg prg with
+    | Program p -> List.map Ops.expr p.vars
+    | _ -> invalid_arg "a program holds its program information"
+  in
+  equal (list string) [ "block_lo"; "block_hi" ] names
+
+(* Two outputs, each written in a loop of its own: no loop is read by every
+   store, and splitting either would run the other's whole loop in every
+   block. *)
+let leaves_separate_loops () =
+  let i = Ops.range (Int 1024) [ 0 ] and j = Ops.range (Int 512) [ 1 ] in
+  let copy slot r n =
+    Ops.end_
+      (Ops.store
+         (Ops.index (floats n slot) [ r ])
+         (Ops.index (floats n 2) [ r ]))
+      [ r ]
+  in
+  equal (option sint) None
+    (split_of (in_blocks [ copy 0 i 1024; copy 1 j 512 ]))
+
+let leaves_a_store_of_no_loop () =
+  let i = Ops.range (Int 1024) [ 0 ] in
+  let a = Ops.index (floats 1024 2) [ i ] in
+  equal (option sint) None
+    (split_of
+       (in_blocks
+          [
+            Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ];
+            Ops.store (Ops.index (floats 1 1) [ Ops.int 0 ]) (Ops.float 1.);
+          ]))
+
+(* A serial loop's iterations may read what earlier ones wrote. *)
+let leaves_a_serial_loop () =
+  let i = Ops.range ~axis_type:Loop (Int 1024) [ 0 ] in
+  let a = Ops.index (floats 1024 1) [ i ] in
+  equal (option sint) None
+    (split_of
+       (in_blocks
+          [ Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ] ]))
+
+let leaves_a_reduction () =
+  let j = Ops.range ~axis_type:Reduce (Int 4096) [ 0 ] in
+  let sum = Ops.reduce (Ops.index (floats 4096 1) [ j ]) Op.Add [ j ] in
+  equal (option sint) None
+    (split_of
+       (in_blocks [ Ops.store (Ops.index (floats 1 0) [ Ops.int 0 ]) sum ]))
+
+(* A store of a value valid where r < 4 shrinks its loop to 4 iterations and
+   drops the guard; the split keeps both. *)
+let keeps_a_shrunk_loop () =
+  let r = Ops.range (Int 204) [ 0 ] in
+  let x = Ops.where (Ops.lt r (Ops.int 4)) (Ops.float 1.) Ops.invalid in
+  let prg =
+    Helpers.context
+      [ B (Helpers.noopt, true) ]
+      (fun () ->
+        in_blocks
+          [ Ops.end_ (Ops.store (Ops.index (floats 204 0) [ r ]) x) [ r ] ])
+  in
+  equal (option sint) (Some (Int 4)) (split_of prg);
+  equal int ~msg:"selections" 0 (count Where (Ops.src (Ops.nth prg 1)))
+
+(* An index of a buffer of 2^25 elements, past the 2^31 / 127 a block count of
+   up to 127 would multiply, stays 32 bits wide. *)
+let keeps_narrow_indices () =
+  let n = 1 lsl 25 in
+  let i = Ops.range (Int n) [ 0 ] in
+  let a = Ops.index (floats n 1) [ i ] in
+  let prg =
+    in_blocks [ Ops.end_ (Ops.store (Ops.index (floats n 0) [ i ]) a) [ i ] ]
+  in
+  equal (list Uops.uop) [] (List.filter wide (Ops.toposort (Ops.nth prg 0)))
+
+let blocks =
+  group "host programs in blocks"
+    [
+      test "a host program splits the loop each store's address reads"
+        splits_the_output_loop;
+      test "stores of separate loops split none" leaves_separate_loops;
+      test "a store of no loop splits none" leaves_a_store_of_no_loop;
+      test "a reduction's loop is never split" leaves_a_reduction;
+      test "a serial loop is never split" leaves_a_serial_loop;
+      test "a loop shrunk by its guard splits at its shrunk end, unguarded"
+        keeps_a_shrunk_loop;
+      test "a split loop of 2^25 iterations keeps 32-bit indices"
+        keeps_narrow_indices;
+    ]
+
 let () =
   Disk_cache.play parts;
   exit
@@ -2314,6 +2458,7 @@ let () =
          gated_stores;
          divisions;
          range_shrinking;
+         blocks;
          beam_search;
          caching;
          on_disk;

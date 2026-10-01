@@ -94,7 +94,7 @@
 92 Ops.PARAM dtypes.ulong [] ParamArg(slot=12, dtype=dtypes.ulong, size=1, name="put_value_compute_0", device=("NV",), volatile=True) tag="put_value_compute_0"
 93 Ops.PARAM dtypes.ulong [] ParamArg(slot=13, dtype=dtypes.ulong, size=1, name="gpentry_compute_0", device=("NV",), volatile=True) tag="gpentry_compute_0"
 94 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=32, device="NV")
-95 Ops.CALL dtypes.void [83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "simple_add", Estimates(), (), b"\x1c\x9f\xfe\x1b\xfe'.\x99\x01\n\xf4\xb5\x8c\x9b\xb6\xaf\xf4\xd2\xebF:\xf5v\x01\x8c\x97C\x05\xa7\x97\xa3\x9b", (), ((0,), (1, 2))),), nargs=10, slots=(("NV", 1),), written_bufs=(%94,)))
+95 Ops.CALL dtypes.void [83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93] CallInfo(aux=HCQInfo(device=("NV",), kernels=((("NV",), "simple_add", Estimates(), (), b"\x076!\xb5\x17\x11&\xdc\xfc\xfb\x0b\x98\xbex\xa8\xe8\xda\xd0\x9a\x1b=|r\xf0\x8f.`CS\xda\x9aG", (), ((0,), (1, 2))),), nargs=10, slots=(("NV", 1),), written_bufs=(%94,)))
 96 Ops.BINARY dtypes.uchar [] b"\xa6%\x01 \x11\x10\x00\x00\x17\x00\x05 \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x01\xad \x01 \x00\x00\x00\x00\xb0 \x01 \t\x00\x00\x00"
 97 Ops.STORE dtypes.void [88, 96]
 98 Ops.SHRINK dtypes.uchar [88, 15, 17]

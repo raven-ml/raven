@@ -1,16 +1,20 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=10, device="CPU")
 1 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=10, device="CPU")
-2 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-3 Ops.CONST dtypes.weakfloat [] 1.0
-4 Ops.CAST dtypes.float [3] dtypes.float
-5 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
-6 Ops.INDEX dtypes.float [1, 5]
-7 Ops.LOAD dtypes.float [6]
-8 Ops.INDEX dtypes.float [0, 5]
-9 Ops.ADD dtypes.float [7, 4]
-10 Ops.STORE dtypes.void [8, 9]
-11 Ops.END dtypes.void [10, 5]
-12 Ops.SINK dtypes.void [11] KernelInfo(name="E_n") tag=1
-13 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+2 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+4 Ops.CONST dtypes.weakfloat [] 1.0
+5 Ops.CAST dtypes.float [4] dtypes.float
+6 Ops.SUB dtypes.int [3, 2]
+7 Ops.RANGE dtypes.int [6] (0, AxisType.WEAK)
+8 Ops.ADD dtypes.int [2, 7]
+9 Ops.INDEX dtypes.float [1, 8]
+10 Ops.LOAD dtypes.float [9]
+11 Ops.INDEX dtypes.float [0, 8]
+12 Ops.ADD dtypes.float [10, 5]
+13 Ops.STORE dtypes.void [11, 12]
+14 Ops.END dtypes.void [13, 7]
+15 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+16 Ops.SINK dtypes.void [14] KernelInfo(name="E_n", split=%15) tag=1
+17 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]
 

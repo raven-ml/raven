@@ -127,6 +127,15 @@ module Program : sig
       Raises [Invalid_argument] if [buffers] are not as many as [p]'s buffer
       parameters, if one holds fewer bytes than its parameter, or if a variable
       is unbound, and as {!Nx_device.Program.call} does. *)
+
+  val blocks : ?vars:(string * int) list -> t -> int
+  (** [blocks ~vars p] is the number of blocks a {!run} of [p] with [vars]
+      splits its work into, which the host's cores run at once
+      ({!Nx_device.Program.workers}). It is [1] for a program whose iterations
+      depend on each other, or that does too little work to repay waking the
+      threads.
+
+      Raises [Invalid_argument] if a variable is unbound. *)
 end
 
 (** {1:schedules Linked schedules} *)

@@ -93,7 +93,7 @@
 91 Ops.CONST dtypes.weakint [] 8
 92 Ops.MUL dtypes.int [82, 91]
 93 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="CUDA")
-94 Ops.CALL dtypes.void [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81] CallInfo(aux=HCQInfo(device=("CUDA",), kernels=((("CUDA",), "E_v", Estimates(ops=%82, lds=%87, mem=%90), (), b"\xec\xf9\xb1\xe0/\x0fA\xc6\xd2\xb4\x0d\x92\xf3\xe5\xe2N9B\x83!(\xe4\x84^@_\xb3\x1bA\xe3\xce$", (), ((0,), (1,))),), estimates=Estimates(ops=%82, lds=%92, mem=%92), nargs=10, table=7, slots=(("CUDA", 1),), written_bufs=(%93,)))
+94 Ops.CALL dtypes.void [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81] CallInfo(aux=HCQInfo(device=("CUDA",), kernels=((("CUDA",), "E_v", Estimates(ops=%82, lds=%87, mem=%90), (), b"\x92\xa9y\x7f\xbdM\x89\x10\x83\xef\x1d\x90\xb8\x7fx\xa6\x02\xc9 \xf1\x14\xad/\xf3\xd3\x8baj\x0cZ\xf5\xab", (), ((0,), (1,))),), estimates=Estimates(ops=%82, lds=%92, mem=%92), nargs=10, table=7, slots=(("CUDA", 1),), written_bufs=(%93,)))
 95 Ops.BINARY dtypes.uchar [] b"\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 96 Ops.STORE dtypes.void [80, 95]
 97 Ops.BINARY dtypes.uchar [] b"\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"

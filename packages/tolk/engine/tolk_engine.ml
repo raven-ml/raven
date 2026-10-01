@@ -121,12 +121,26 @@ let device devices name =
 (* Host programs *)
 
 module Program = struct
+  (* A program whose launch splits a loop into blocks: the loop's iterations,
+     the program's operations, and the slots of its block_lo and block_hi
+     variables. *)
+  type split = { extent : Ops.sint; ops : Ops.sint; lo : int; hi : int }
+
   type t = {
     program : Nx_device.Program.t;
     buffers : Device.Tiny_elf.param list; (* in the order of the globals *)
     globals : int list; (* the argument slot of each *)
     vars : Ops.t list;
+    split : split option;
   }
+
+  let split_of prg (info : Ops.program_info) =
+    let slot name = List.find_index (fun v -> Ops.expr v = name) info.vars in
+    match (Ops.arg (Ops.nth prg 0), slot "block_lo", slot "block_hi") with
+    | Ops.Kernel { split = Some extent; estimates; _ }, Some lo, Some hi ->
+        let ops = match estimates with Some e -> e.ops | None -> extent in
+        Some { extent; ops; lo; hi }
+    | _ -> None
 
   let load d prg =
     if (target d).device <> "CPU" then
@@ -144,7 +158,13 @@ module Program = struct
         ~name:elf.name
     with
     | Ok program ->
-        { program; buffers; globals = info.globals; vars = info.vars }
+        {
+          program;
+          buffers;
+          globals = info.globals;
+          vars = info.vars;
+          split = split_of prg info;
+        }
     | Error why -> failwith why
 
   let value vars v =
@@ -160,6 +180,56 @@ module Program = struct
               (Printf.sprintf "Tolk_engine: variable %s is unbound"
                  (Option.value p.name ~default:(string_of_int p.slot))))
     | _ -> assert false
+
+  (* A block repays waking the pool's threads and joining them once it does 2^18
+     operations. A wake and a join cost a few microseconds, and a block should
+     cost ten times that, about 50 to 100 us. A core runs 1 to 2 G scalar
+     operations a second and about 12 G on vectorised loops, so 100 us is 2^17
+     to 2^20 operations; 2^18 sits between. A launch runs at most four blocks
+     per thread, so that the threads that claim blocks as they finish balance
+     fast and slow cores. *)
+  let block_ops = 1 lsl 18
+  let blocks_per_worker = 4
+
+  (* Whether the variable of slot [i] is a block's bound, which a launch sets
+     itself. *)
+  let bounds_block p i =
+    match p.split with Some s -> i = s.lo || i = s.hi | None -> false
+
+  (* The values of [vals], [p]'s variables or their bindings, each read by
+     [value], save the blocks' bounds. *)
+  let values p vals value =
+    Array.of_list
+      (List.mapi (fun i v -> if bounds_block p i then 0 else value v) vals)
+
+  (* [s] with each of its variables read by [value]. The loop a launch splits
+     may end at a variable its program no longer reads, as it reads the block's
+     bounds instead. *)
+  let eval value (s : Ops.sint) =
+    let variables u =
+      List.filter_map
+        (fun v ->
+          if Ops.is_variable v then Some (Ops.expr v, value v) else None)
+        (Ops.toposort u)
+    in
+    match s with Int n -> n | Sym u -> Ops.sym_infer s (variables u)
+
+  (* The split of a launch of [p] whose variables [value] reads, if [p]
+     splits. *)
+  let split p value =
+    match p.split with
+    | None -> None
+    | Some s ->
+        let extent = eval value s.extent and ops = eval value s.ops in
+        let most = blocks_per_worker * Nx_device.Program.workers () in
+        let blocks = max 1 (min (min extent most) (ops / block_ops)) in
+        Some { Nx_device.Program.extent; blocks; lo = s.lo; hi = s.hi }
+
+  let call p value buffers values =
+    Nx_device.Program.call ?split:(split p value) p.program buffers values
+
+  let blocks ?(vars = []) p =
+    match split p (value vars) with Some s -> s.blocks | None -> 1
 
   let run ?(vars = []) p buffers =
     let fn = "Tolk_engine.Program.run" in
@@ -179,8 +249,7 @@ module Program = struct
                (Nx_device.Buffer.nbytes b)
                need))
       p.buffers buffers;
-    Nx_device.Program.call p.program (Array.of_list buffers)
-      (Array.of_list (List.map (value vars) p.vars))
+    call p (value vars) (Array.of_list buffers) (values p p.vars (value vars))
 end
 
 (* Linked schedules *)
@@ -1009,8 +1078,8 @@ let rec run_call ~vars t slots = function
                  else d :: ds)
                [] buffers);
           let call_program () =
-            Nx_device.Program.call p.program (Array.of_list buffers)
-              (Array.of_list (List.map (value vars i) vals))
+            Program.call p (value vars i) (Array.of_list buffers)
+              (Program.values p vals (value vars i))
           in
           if reporting () then
             report

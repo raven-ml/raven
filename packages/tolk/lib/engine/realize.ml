@@ -24,6 +24,25 @@ let get_call_var_uops call prg =
   in
   match arg prg with
   | Program p ->
+      (* A split program a queue launches runs one block, the whole loop. *)
+      let bound =
+        if not (List.exists (fun v -> expr v = "block_hi") p.vars) then bound
+        else
+          let values n =
+            List.filter_map
+              (fun v ->
+                if not (is_variable v) then None
+                else
+                  Option.map (fun c -> (v, c)) (List.assoc_opt (expr v) bound))
+              (toposort n)
+          in
+          let n =
+            match List.hd p.global_size with
+            | Int n -> const (`Int (Bigint.of_int n))
+            | Sym n -> substitute n (values n)
+          in
+          ("block_lo", const (`Int Bigint.zero)) :: ("block_hi", n) :: bound
+      in
       List.map
         (fun v -> Option.value (List.assoc_opt (expr v) bound) ~default:v)
         p.vars

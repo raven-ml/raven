@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..d99e300 100644
+index efb2e82..285f119 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -99,9 +99,15 @@ def broadcast_and_devec_wmma(b:UOp):
@@ -77,7 +77,40 @@ index efb2e82..d99e300 100644
  
  # an Invalid in a REDUCE source is that reduce's identity
  pm_reduce_identity = PatternMatcher([
-@@ -310,7 +332,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -272,6 +294,32 @@ pm_implicit_barriers = PatternMatcher([
+   (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
+ ])
+ 
++# A host program's launch runs blocks of its largest output loop that every store to memory reads in its address on the
++# host's cores at once. The loop runs block_lo + r for r below block_hi - block_lo, two variables the launch sets for each block.
++def writes_memory(st:UOp) -> bool:
++  at = st.src[0].src[0] if st.src[0].op is Ops.CAST else st.src[0]
++  return at.op in (Ops.INDEX, Ops.SHRINK) and at.src[0].buf_uop.addrspace == AddrSpace.GLOBAL
++
++def split_blocks(sink:UOp) -> UOp:
++  nodes = list(sink.backward_slice_with_self)
++  stores = [u for u in nodes if u.op is Ops.STORE and writes_memory(u)]
++  def qualifies(r:UOp) -> bool:
++    return r.op is Ops.RANGE and r.axis_type == AxisType.WEAK and not r.src[0].ranges and int(r.src[0].vmax) >= 2 and \
++      all(r in st.src[0].backward_slice for st in stores)
++  cands = [r for r in nodes if qualifies(r)]
++  if not stores or not cands: return sink
++  r = cands[0]
++  for c in cands[1:]:
++    if int(c.src[0].vmax) > int(r.src[0].vmax): r = c
++  n = r.src[0]
++  lo, hi = [UOp.variable(nm, 0, n.vmax, dtype=r.dtype) for nm in ("block_lo", "block_hi")]
++  r2 = r.replace(src=(hi.alu(Ops.SUB, lo),)+r.src[1:])
++  moved = lo.alu(Ops.ADD, r2)
++  sink = sink.substitute({r: moved})
++  sink = sink.substitute({e: e.replace(src=tuple(r2 if x is moved else x for x in e.src)) for e in sink.toposort()
++                          if e.op is Ops.END and moved in e.src})
++  return sink.replace(arg=replace(sink.arg, split=n.ssimplify()))
++
+ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+   if VIZ: graph_rewrite(ast, PatternMatcher([]), name="View Base AST")
+   if DEBUG >= 5: print(pyrender(ast))
+@@ -310,7 +358,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -86,7 +119,7 @@ index efb2e82..d99e300 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -346,11 +368,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -346,11 +394,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -101,6 +134,34 @@ index efb2e82..d99e300 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
+@@ -369,6 +419,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+ 
+   # commit every const still bare so no renderer reads one
+   sink = graph_rewrite(sink, pm_cast_const, name="cast consts")
++  if optimize and ren.target.device == "CPU": sink = split_blocks(sink)
+ 
+   # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
+   sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
+@@ -432,9 +483,18 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+     if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
+   return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
+ 
++# a split kernel's estimates count all its blocks: its loop's bounds span the whole loop
++def whole_loop(k:KernelInfo, lin:tuple[UOp, ...], e:Estimates) -> Estimates:
++  if k.split is None: return e
++  lo, hi = [next(u for u in lin if u.op is Ops.PARAM and u.arg.name == nm) for nm in ("block_lo", "block_hi")]
++  n = k.split if isinstance(k.split, UOp) else hi.const_like(k.split)
++  def fill(x): return x.substitute({lo: lo.const_like(0), hi: n}).ssimplify() if isinstance(x, UOp) else x
++  return Estimates(fill(e.ops), fill(e.lds), fill(e.mem))
++
+ def do_estimates(prg:UOp, sink:UOp, lin:UOp) -> UOp|None:
+   if sink.arg.estimates is not None: return None
+-  return prg.replace(src=(sink.replace(arg=replace(sink.arg, estimates=Estimates.from_uops(lin.src, ignore_indexing=True))),)+prg.src[1:])
++  estimates = whole_loop(sink.arg, lin.src, Estimates.from_uops(lin.src, ignore_indexing=True))
++  return prg.replace(src=(sink.replace(arg=replace(sink.arg, estimates=estimates)),)+prg.src[1:])
+ 
+ def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp:
+   src = "\n".join(str(u.arg[0]) for u in lin.src)
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
 index e1d9579..1e6a05d 100644
 --- a/tinygrad/codegen/decomp/dtype.py
@@ -519,10 +580,22 @@ index 14add12..80e0ec5 100644
  
  def _to_np_dtype(dtype:DType) -> type|None:
 diff --git a/tinygrad/engine/realize.py b/tinygrad/engine/realize.py
-index 5461074..37fbf14 100644
+index 5461074..82d2043 100644
 --- a/tinygrad/engine/realize.py
 +++ b/tinygrad/engine/realize.py
-@@ -83,7 +83,7 @@ def track_stats(ctx:ExecContext, call:UOp, st:decimal.Decimal, ets:list[float|No
+@@ -16,6 +16,11 @@ def get_call_arg_uops(call:UOp) -> tuple[UOp, ...]: return tuple(s for s in call
+ def get_call_var_uops(call:UOp, prg:UOp) -> list[UOp]:
+   # a bound value is a bare CONST: the Variable states the width
+   bound = {s.expr: UOp.const(s.arg.val) for s in call.src[1:] if s.is_bound_var}
++  # a split program a queue launches runs one block, the whole loop
++  if any(v.expr == "block_hi" for v in prg.arg.vars):
++    n = prg.arg.global_size[0]
++    n = n.substitute({v: bound[v.expr] for v in n.toposort() if v.op is Ops.PARAM and v.expr in bound}) if isinstance(n, UOp) else UOp.const(n)
++    bound = {**bound, "block_lo": UOp.const(0), "block_hi": n}
+   return [bound.get(v.expr, v) for v in prg.arg.vars]
+ 
+ def get_call_outs_ins(call:UOp) -> tuple[tuple[int, ...], tuple[int, ...]]:
+@@ -83,7 +88,7 @@ def track_stats(ctx:ExecContext, call:UOp, st:decimal.Decimal, ets:list[float|No
        cpu_events.append(ProfilePointEvent(device, "exec", len(cpu_events), {"var_vals": ctx.var_vals,
          "bufs": [b.trace_num for b in bufs], "name": display_name, "outputs": outputs, "inputs": inputs}, ts=st))
      if DEBUG < (3 if stats is None and isinstance(call.arg.aux, HCQInfo) else 2) or not ctx.update_stats: continue
@@ -531,7 +604,7 @@ index 5461074..37fbf14 100644
        Device[device].synchronize()
        et, st = float(perf_counter_us() - st)*1e-6, perf_counter_us()
        GlobalCounters.time_sum_s += et
-@@ -184,10 +184,9 @@ def exec_hcq(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
+@@ -184,10 +189,9 @@ def exec_hcq(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
    if (info:=call.arg.aux).inputs:
      addrs = [cast(Buffer, _resolve(u, ctx.input_uops).buffer).get_buf(dev) + off for u, off, dev in info.inputs]
      cast(Buffer, call.src[1 + info.table].buffer).host.view(fmt='Q')[:len(addrs)] = array.array('Q', addrs)
@@ -934,7 +1007,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..710cfc3 100644
+index 2842d7e..d61c26e 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -92,6 +92,13 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
@@ -1026,7 +1099,33 @@ index 2842d7e..710cfc3 100644
        if dtypes.is_unsigned(self.dtype) and 0 <= smin and smax <= self.dtype.max: return smin, smax
        # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
        if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
-@@ -1404,12 +1447,18 @@ def safe_pow(x, y):
+@@ -1333,6 +1376,7 @@ class KernelInfo:
+   opts_to_apply: tuple|None = None
+   estimates: Estimates|None = None
+   beam: int = 0
++  split: sint|None = None # the iterations of the loop a host program's launch splits into blocks
+   @property
+   def function_name(self): return to_function_name(self.name)
+ 
+@@ -1352,6 +1396,9 @@ class ProgramInfo:
+     return global_size, local_size
+ 
+   def vals(self, var_vals:dict[str, int]) -> tuple[int, ...]:
++    # a split program runs here as one block, the whole loop
++    if any(k.expr == "block_hi" for k in self.vars):
++      var_vals = {**var_vals, "block_lo": 0, "block_hi": sym_infer(self.global_size[0], var_vals)}  # type: ignore[arg-type]
+     try: return tuple(var_vals[k.expr] for k in self.vars)
+     except KeyError as e: raise RuntimeError(f"unbound Variable {e}") from None
+ 
+@@ -1363,6 +1410,7 @@ class ProgramInfo:
+     ins: list[int] = []
+     global_size: list[int] = [1, 1, 1]
+     local_size: list[int] = [1, 1, 1]
++    if isinstance(sink.arg, KernelInfo) and sink.arg.split is not None: global_size[0] = sink.arg.split
+     for u in sink.toposort():
+       if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
+       if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
+@@ -1404,12 +1452,18 @@ def safe_pow(x, y):
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
  
@@ -1047,7 +1146,7 @@ index 2842d7e..710cfc3 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1469,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1420,6 +1474,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)

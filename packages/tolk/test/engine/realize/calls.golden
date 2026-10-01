@@ -1,26 +1,26 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 program	call	var_vals	bufs	vars	outs	ins	written	name	ops	lds	mem
-add	0	-	%1 %2 %3	-	0	1 2	0	E_4_4	16	192	192
-sum	0	-	%1 %2	-	0	1	0	r_4_8	28	144	144
-two_outputs	0	-	%1 %2	-	0	1	0	E_4_4	16	128	128
-two_outputs	1	-	%1 %2	-	0	1	0	E_4_4	16	128	128
-assign	0	-	%1	-	0	0	-	E_4_4	16	128	128
-custom_kernel	0	-	%1 %2	-	0	1	0	E_4_4	16	128	128
-custom_kernel	1	-	%1 %2	-	0	1	0	add_one_16	16	128	128
-custom_kernel	2	-	%1 %2	-	0	1	0	E_4_4	16	128	128
-precompiled_scalar	0	v=3	%1 %2	v	0	1	0	E_3	3	24	24
+add	0	-	%1 %2 %3	0 4	0	1 2	0	E_4_4	16	192	192
+sum	0	-	%1 %2	0 4	0	1	0	r_4_8	28	144	144
+two_outputs	0	-	%1 %2	0 4	0	1	0	E_4_4	16	128	128
+two_outputs	1	-	%1 %2	0 4	0	1	0	E_4_4	16	128	128
+assign	0	-	%1	0 4	0	0	-	E_4_4	16	128	128
+custom_kernel	0	-	%1 %2	0 4	0	1	0	E_4_4	16	128	128
+custom_kernel	1	-	%1 %2	0 4	0	1	0	add_one_16	16	128	128
+custom_kernel	2	-	%1 %2	0 4	0	1	0	E_4_4	16	128	128
+precompiled_scalar	0	v=3	%1 %2	0 3 v	0	1	0	E_3	3	24	24
 copy	0	-	%1 %2	-	0	1	0	[33mcopy       64 B,   CPU:1 <- CPU    [0m	0	64	64
-copy	1	-	%1 %2	-	0	1	0	E_4_4	16	128	128
+copy	1	-	%1 %2	0 4	0	1	0	E_4_4	16	128	128
 copy_view	0	-	%1 %2	-	0	1	0	[33mcopy      128 B,   CPU:1 <- CPU    [0m	0	128	128
-copy_view	1	-	%1 %2	-	0	1	0	E_8_4	32	256	256
+copy_view	1	-	%1 %2	0 8	0	1	0	E_8_4	32	256	256
 copy_big	0	-	%1 %2	-	0	1	0	[33mcopy    1.00 MB,   CPU:1 <- CPU    [0m	0	1048576	1048576
-copy_big	1	-	%1 %2	-	0	1	0	E_262144_4	1048576	2097152	2097152
-copy_variable	0	v=3	%1 %2	v	0	1	0	E_10	10	80	80
+copy_big	1	-	%1 %2	0 262144	0	1	0	E_262144_4	1048576	2097152	2097152
+copy_variable	0	v=3	%1 %2	0 10 v	0	1	0	E_10	10	80	80
 copy_variable	1	v=3	%1 %2	-	0	1	0	[33mcopy       40 B,   CPU:1 <- CPU    [0m	0	40	40
-copy_variable	2	v=3	%1 %2	v	0	1	0	E_v	3	24	24
-shard_add	0	-	%1 %2	-	0	1	0	E_4_4	16	128	128
+copy_variable	2	v=3	%1 %2	0 v	0	1	0	E_v	3	24	24
+shard_add	0	-	%1 %2	0 4	0	1	0	E_4_4	16	128	128
 shard_to_one	0	-	%1 %2	-	0	1	0	[33mcopy       64 B,     CPU <- CPU:1  [0m	0	64	64
-shard_to_one	1	-	%1 %2 %3	-	0	1 2	0	E_16_2	32	256	256
-variable_shrink	0	v=3	%1 %2	v	0	1	0	E_v	3	24	24
-variable_two	0	v=4 w=7	%1 %2	v	0	1	0	E_v	4	32	32
-variable_two	1	v=4 w=7	%1 %2	w	0	1	0	E_w	7	56	56
+shard_to_one	1	-	%1 %2 %3	0 16	0	1 2	0	E_16_2	32	256	256
+variable_shrink	0	v=3	%1 %2	0 v	0	1	0	E_v	3	24	24
+variable_two	0	v=4 w=7	%1 %2	0 v	0	1	0	E_v	4	32	32
+variable_two	1	v=4 w=7	%1 %2	0 w	0	1	0	E_w	7	56	56

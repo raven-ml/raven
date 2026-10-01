@@ -677,6 +677,70 @@ let apply_opts ?beam sink ren =
 let dbgtv () =
   match Sys.getenv_opt "DBGTV" with Some v -> v <> "" | None -> false
 
+(* Host programs in blocks *)
+
+(* The memory a store writes, as opposed to a register or local memory: a
+   parameter of the global address space. *)
+let writes_memory st =
+  let at = nth st 0 in
+  let at = if is Op.Cast at then nth at 0 else at in
+  (is Op.Index at || is Op.Shrink at)
+  && addrspace (buf_uop (nth at 0)) = Some Dtype.Global
+
+let int_vmax u = match vmax u with `Int z -> Bigint.to_int z | _ -> 0
+
+(* A host program's launch runs blocks of one loop on the host's cores at once
+   (Nx_device.Program.call's split). A loop qualifies when it is an output loop
+   no optimisation claimed (Weak), as those a GPU makes global are, and every
+   store to memory reads it in its address: the scheduler lets no index of such
+   a loop read what another writes, so its blocks are independent, and a block
+   computes exactly what the whole loop would for its indices. A serial loop
+   (Loop), whose iterations may read each other's writes, never qualifies. The
+   largest qualifying loop splits. It runs [block_lo + r] for [r] below
+   [block_hi - block_lo], two variables the launch sets for each block; the
+   passes before kept the loop's own bounds, so this is done once the kernel is
+   final. *)
+let split_blocks sink =
+  let all = Nodes.to_list (backward_slice_with_self sink) in
+  let stores = List.filter (fun u -> is Op.Store u && writes_memory u) all in
+  let addressed r st = Nodes.mem r (backward_slice (nth st 0)) in
+  let qualifies r =
+    is Op.Range r
+    && axis_type r = Axis_type.Weak
+    && Nodes.cardinal (ranges (nth r 0)) = 0
+    && int_vmax (nth r 0) >= 2
+    && List.for_all (addressed r) stores
+  in
+  let larger a b = if int_vmax (nth b 0) > int_vmax (nth a 0) then b else a in
+  match (stores, List.filter qualifies all) with
+  | [], _ | _, [] -> sink
+  | _, r :: rs ->
+      let r = List.fold_left larger r rs in
+      let n = nth r 0 and dt = dtype r in
+      let bound name = variable ~dtype:dt name (`Int Bigint.zero) (vmax n) in
+      let lo = bound "block_lo" and hi = bound "block_hi" in
+      let r' = replace r ~src:(alu hi Op.Sub [ lo ] :: List.tl (src r)) in
+      let moved = alu lo Op.Add [ r' ] in
+      let sink = substitute sink [ (r, moved) ] in
+      let ends =
+        pm (fun () ->
+            [
+              rule (Upat.op ~name:"e" Op.End) (fun m ->
+                  let e = m "e" in
+                  if List.memq moved (src e) then
+                    Some
+                      (replace e
+                         ~src:
+                           (List.map
+                              (fun x -> if x == moved then r' else x)
+                              (src e)))
+                  else None);
+            ])
+      in
+      let sink = rewrite ends sink in
+      let k = match arg sink with Kernel k -> k | _ -> assert false in
+      replace sink ~arg:(Kernel { k with split = Some (ssimplify n) })
+
 let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   check_spec Spec.tensor ast;
   (* resolve UNSHARDs (multi-device UNSHARDs are already resolved by the
@@ -832,6 +896,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = graph_rewrite ~ctx:ren sink pm_final_rewrite in
   (* commit every const still bare so no renderer reads one *)
   let sink = rewrite Uop_weak.pm_cast_const sink in
+  let sink =
+    if optimize && ren.target.device = "CPU" then split_blocks sink else sink
+  in
   (* add implicit barriers (stores/loads through LOCAL memory ordered by AFTER
      or across loop iterations need workgroup barriers) *)
   let sink = rewrite pm_implicit_barriers sink in
@@ -932,12 +999,31 @@ let do_linearize prg sink =
   in
   replace prg ~src:[ last lst; v Op.Linear ~src:lst ]
 
+(* A split kernel's estimates count all its blocks: its loop's variables span
+   the whole loop. *)
+let whole_loop (k : kernel_info) lin (e : estimates) =
+  match k.split with
+  | None -> e
+  | Some n ->
+      let var name =
+        List.find (fun u -> is_variable u && expr u = name) (src lin)
+      in
+      let lo = var "block_lo" and hi = var "block_hi" in
+      let n = sint_to_uop ~dtype:(dtype hi) n in
+      let fill = function
+        | Int _ as i -> i
+        | Sym u ->
+            ssimplify (substitute u [ (lo, int ~dtype:(dtype lo) 0); (hi, n) ])
+      in
+      { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
+
 let do_estimates prg sink lin =
   let k = kernel_info sink in
   if Option.is_some k.estimates then None
   else
     let estimates =
-      Renderer.Estimates.of_uops ~ignore_indexing:true (src lin)
+      whole_loop k lin
+        (Renderer.Estimates.of_uops ~ignore_indexing:true (src lin))
     in
     let sink =
       replace sink ~arg:(Kernel { k with estimates = Some estimates })
