@@ -1359,6 +1359,27 @@ let transformed at name ~steps f =
       equal near r (host (Rune.jit' (f ran) (Nx.place at (rows 9 4))));
       equal int steps !ran)
 
+(* [weighted ran w xs] is a loss over a scan of [xs] whose step reads [w] and
+   whose carry becomes tracked after its first step, counting its steps in
+   [ran]; [weights] and [row_weights] weigh the final carry and the outputs, so
+   no cotangent row is a constant. *)
+let weights = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |]
+
+let row_weights =
+  Nx.create Nx.float32 [| 9; 4 |]
+    (Array.init 36 (fun i -> 1. +. (Float.of_int i /. 36.)))
+
+let weighted ran w xs =
+  let step c x =
+    incr ran;
+    decay (Nx.add c w) (Nx.mul x c)
+  in
+  let c, ys = Rune.scan' ~f:step ~init:(ones 4) xs in
+  Nx.add (Nx.sum (Nx.mul c weights)) (Nx.sum (Nx.mul ys row_weights))
+
+let w0 = Nx.full Nx.float32 [| 4 |] 0.3
+let ws = Nx.stack ~axis:0 [ w0; Nx.mul_s w0 2.; Nx.mul_s w0 0.5 ]
+
 (* Scans on a device whose work runs from command queues. *)
 let staged_scans d =
   let at = on d and once _ = 1 in
@@ -1407,6 +1428,39 @@ let staged_scans d =
             Nx.add (Nx.sum ys) (Nx.sum (Nx.mul c k))
           in
           snd (Rune.jvp' loss xs (Nx.ones_like xs)));
+      transformed at
+        "stage grad in a weight the step reads, the forward step twice as the \
+         carry becomes tracked"
+        ~steps:3 (fun ran xs -> Rune.grad' (fun w -> weighted ran w xs) w0);
+      transformed at "stage jvp in the rows, the scan of their tangents"
+        ~steps:2 (fun ran xs ->
+          snd (Rune.jvp' (weighted ran w0) xs (Nx.mul_s xs 2.)));
+      transformed at "stage vmap over weights, the scan of their lanes" ~steps:2
+        (fun ran xs -> Rune.vmap' (fun w -> weighted ran w xs) ws);
+      transformed at "stage vmap of grad, both scans batched" ~steps:5
+        (fun ran xs -> Rune.vmap' (Rune.grad' (fun w -> weighted ran w xs)) ws);
+      transformed at "stage jvp of grad, the scans of the tangents" ~steps:5
+        (fun ran xs ->
+          snd (Rune.jvp' (Rune.grad' (fun w -> weighted ran w xs)) w0 weights));
+      test
+        "raise at the transpose for a step whose rerun reads a tracked value \
+         its first run did not" (fun () ->
+          let again = ref false in
+          let loss w =
+            let step c x =
+              let c = if !again then Nx.mul (Nx.add c x) w else Nx.add c x in
+              (c, c)
+            in
+            let xs = Nx.mul (Nx.place at (rows 9 4)) w in
+            let _, ys = Rune.scan' ~f:step ~init:(zeros 4) xs in
+            again := true;
+            Nx.sum (Nx.mul ys row_weights)
+          in
+          raises
+            (Invalid_argument
+               "Rune.grad': a function run again for its transpose reads a \
+                value the differentiation tracks that its first run did not")
+            (fun () -> Rune.jit' (Rune.grad' loss) (Nx.place at w0)));
       test
         "write out a step that draws under a key scope, drawing as eager does"
         (fun () ->
