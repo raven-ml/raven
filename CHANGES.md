@@ -2934,6 +2934,10 @@ thread.
 
 ### Nx
 
+- `Nx.contiguous` of a traced value is the value itself when its view is
+  C-contiguous, as for any other value. It used to copy unconditionally, so
+  under `Rune.jit` every call cut the program into another kernel. Use
+  `Nx.copy` for a value that must be materialised.
 - An allocation refused for lack of memory releases the borrows of that
   memory held by devices that run no operation, before it raises
   `Out_of_memory`. A borrow is released at its device's next operation, so a

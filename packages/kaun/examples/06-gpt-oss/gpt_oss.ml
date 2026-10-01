@@ -348,7 +348,7 @@ let of_hf ?placement cfg dt ckpt =
              Linear.w =
                (match placement with
                | None -> Nx.contiguous w
-               | Some _ -> Rune.jit' Nx.contiguous w);
+               | Some _ -> Rune.jit' Nx.copy w);
              b = None;
            });
   }

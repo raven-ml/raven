@@ -57,10 +57,8 @@ let take_rows ids t =
 let product ids w x =
   match w with
   | Quant w -> Nx_quant.apply ~ids w x
-  | Float w -> Nx.matmul x (Nx.contiguous (take_rows ids w))
+  | Float w -> Nx.matmul x (take_rows ids w)
 
-(* The gathered float rows and the activation are materialised: a product of two
-   buffers is what tolk's heuristics take for a matrix product. *)
 let apply ~limit p (ids, weights) x =
   let shape = Nx.shape x in
   let width = shape.(Array.length shape - 1) in
@@ -70,7 +68,7 @@ let apply ~limit p (ids, weights) x =
   let bias b = Nx.unsqueeze ~axes:[ 2 ] (take_rows ids b) in
   let x = Nx.reshape [| -1; 1; 1; width |] x in
   let h = Nx.add (product ids p.gate_up x) (bias p.gate_up_bias) in
-  let h = Nx.contiguous (activation ~limit h) in
+  let h = activation ~limit h in
   let y = Nx.add (product ids p.down h) (bias p.down_bias) in
   Nx.reshape shape
     (Nx.sum ~axes:[ 1; 2 ] (Nx.mul y (Nx.unsqueeze ~axes:[ 2; 3 ] weights)))

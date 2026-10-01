@@ -2964,17 +2964,14 @@ let place (type a b) p (x : (a, b) t) : (a, b) t =
   else move_to p x
 
 (* [copy x] is [x] in storage of its own, C-contiguous from its first element:
-   it always copies. [contiguous x] is [x] itself when its bytes are already
-   C-contiguous from its first element. A traced value has no bytes: the
-   interpretation that made it answers its copy. *)
+   it always copies. A traced value has no bytes: the interpretation that made
+   it answers its copy. [contiguous x] is [x] itself when its view, a traced
+   value's too, is already C-contiguous from its first element. *)
 let copy x = if intercepting () then perform (Contiguous x) else direct_copy x
 
 let contiguous x =
-  match x with
-  | Traced _ -> copy x
-  | Host _ | Placed _ ->
-      let v = view x in
-      if View.is_c_contiguous v && View.offset v = 0 then x else copy x
+  let v = view x in
+  if View.is_c_contiguous v && View.offset v = 0 then x else copy x
 
 (* Creation. A constant is not an operation. Uninterpreted on the host, a
    filled value is nx.cpu's fill of storage of its own. Otherwise it is one
