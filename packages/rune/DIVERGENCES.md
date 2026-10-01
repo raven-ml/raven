@@ -640,7 +640,7 @@ target's run lands.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest element of
   eager's factors, signs included, for well-conditioned matrices of up to
   5 x 5; measured maxima over 300 such matrices, in units of `max(m, n) u`:
-  2.3 (`float32`), 2.2 (`float64`), 0.04 (`float16`, `u` its own).
+  2.3 (`float32`), 2.1 (`float64`), 0.04 (`float16`, `u` its own).
 - **Reason:** (b).
 - **Pinned by:** `qr › matrices › *`, `qr › a zero column takes no
   reflection`, `› one element`, `› no column: q is the identity`, `› batch
