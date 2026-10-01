@@ -788,6 +788,19 @@ let staged_tests =
                "Rune.grad': a function run again for its transpose reads a \
                 value the differentiation tracks that its first run did not")
             (fun () -> staged (fun () -> Rune.grad' l sw)));
+      test
+        "a remat's barrier under jvp of grad reaches the stager with no traced \
+         value" (fun () ->
+          let u0 = vec [| 0.2; 0.4; -0.3 |] in
+          let g u =
+            Rune.grad'
+              (fun w -> Nx.sum (Nx.mul (Rune.remat one_tensor Nx.sin w) u))
+              sw
+          in
+          late := 0;
+          let d = staged (fun () -> snd (Rune.jvp' g u0 sv)) in
+          equal (close ()) (snd (Rune.jvp' g u0 sv)) d;
+          equal int 0 !late);
     ]
 
 let () =

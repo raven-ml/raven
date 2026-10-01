@@ -843,8 +843,9 @@ let of_tangents i flags n l =
   let leaves, ts = Scan.split n l in
   duals i flags leaves ts
 
-(* A barrier on duals of [i] reads their primals, and with value tangents their
-   tangents too, once [after] exists; a slot needs no barrier. *)
+(* A barrier with duals of [i] among its values or [after] reads the values'
+   primals, and with value tangents their tangents too, once the primals of
+   [after] exist; a slot needs no barrier. *)
 let barrier i values after =
   let flags = owned i values and after = List.map (primal_leaf i) after in
   match i.slots with
@@ -877,7 +878,7 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
       | None -> Some (fun () -> scan_values i r)
       | Some tape -> Some (fun () -> scan_slots i tape r))
   | Barrier { values; after } ->
-      if List.exists (fun (Nx.P x) -> owns i x) values then
+      if List.exists (fun (Nx.P x) -> owns i x) (values @ after) then
         Some (fun () -> barrier i values after)
       else None
   | Lane_index _ | Lane_count _ -> None
