@@ -2934,6 +2934,16 @@ thread.
 
 ### Nx
 
+- The garbage collector is paced by device memory: each device buffer counts
+  against the room left in its device's budget, so dropped GPU buffers are
+  found before the budget runs out. A device that filled its budget with
+  garbage forced a full major collection on its next allocation, and one
+  whose OCaml heap was small held its garbage until then.
+- The live memory of host buffers is measured as each major cycle ends, in
+  whichever domain ends it. It was measured by a finaliser of the domain that
+  loaded `nx.device`, so while that domain was blocked, as in `Domain.join`,
+  the pace stood still and the cache of collected host buffers was never
+  trimmed.
 - A device's released memory waits for the work that touched it, without
   blocking: each buffer of `Nx_device.submit`'s `touches` is stamped with the
   values its work signals. A GPU's buffer returns to its cache once other

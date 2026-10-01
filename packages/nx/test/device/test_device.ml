@@ -895,6 +895,35 @@ let test_finaliser_chain () =
     Gc.finalise (fun _ -> ignore (Sys.opaque_identity inner)) outer)
     ();
   equal int 4096 (B.nbytes (B.create d S.UInt8 4096))
+(* Allocating many budgets of a device's memory in dropped buffers, a sixteenth
+   of its budget each, never collects by force: the collector is paced by the
+   device's memory, and finds the dropped buffers before the budget runs out. *)
+let test_paced () =
+  let budget = 64 lsl 20 in
+  let d = (fake ~name:"PACED" ~budget ()).dev in
+  let forced () = (Gc.quick_stat ()).forced_major_collections in
+  let before = forced () in
+  for _ = 1 to 20 * 16 do
+    ignore (Sys.opaque_identity (B.create d S.UInt8 (budget / 16)))
+  done;
+  equal int 0 (forced () - before)
+
+(* The host's cache of collected buffers shrinks to its bound as major cycles
+   end, whichever domain runs them: here while the domain that made the
+   buffers is blocked. *)
+let test_measured_while_blocked () =
+  let held = List.init 48 (fun _ -> B.create host S.UInt8 (4 lsl 20)) in
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (Sys.opaque_identity held);
+  let worker =
+    Domain.spawn (fun () ->
+        for _ = 1 to 4 do
+          Gc.full_major ()
+        done;
+        cached host)
+  in
+  at_most int ~than:(32 lsl 20) (Domain.join worker)
 
 (* A domain blocked in a lock runs no OCaml code, its finalisers included. *)
 let test_dropped_by_blocked_domain () =
@@ -934,6 +963,13 @@ let memory =
         "memory that finaliser closures hold, two deep, returns to an \
          allocation that needs it"
         test_finaliser_chain;
+      test
+        "many budgets of dropped buffers of a device never collect by force"
+        test_paced;
+      test
+        "the host's cache shrinks as cycles end on any domain, the one that \
+         made its buffers blocked"
+        test_measured_while_blocked;
       test
         "four domains create, write and read buffers of one device at once, \
          and all their memory returns" (fun () ->

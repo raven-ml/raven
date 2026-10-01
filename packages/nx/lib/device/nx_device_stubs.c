@@ -8,7 +8,9 @@
 #include <caml/bigarray.h>
 #include <caml/custom.h>
 #include <caml/fail.h>
+#include <caml/gc_ctrl.h>
 #include <caml/memory.h>
+#include <caml/misc.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 #include <errno.h>
@@ -34,6 +36,17 @@
 #if defined(__APPLE__) && defined(__aarch64__)
 #include <pthread.h>
 #endif
+
+/* The system's page size. */
+static intnat page_bytes(void) {
+#ifdef _WIN32
+  SYSTEM_INFO info;
+  GetSystemInfo(&info);
+  return (intnat)info.dwPageSize;
+#else
+  return (intnat)sysconf(_SC_PAGESIZE);
+#endif
+}
 
 /* Release lists
 
@@ -85,14 +98,54 @@ static struct custom_operations token_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* A token that puts [v_record] on the list [v_list] once it is collected. The
-   node is made here, so that the finaliser allocates nothing. */
-value caml_nx_device_token(value v_list, value v_record) {
-  CAMLparam2(v_list, v_record);
+/* The runtime's bound on the memory of a custom block allocated young. */
+extern _Atomic uintnat caml_custom_minor_max_bsz;
+
+/* The memory a major cycle is due after, for a token of [mem] bytes of a
+   device with [room] bytes left in its budget: the share of the room the
+   collector applies to its heap, so that the garbage floating in the
+   device's memory stays a share of what the device could still allocate.
+   Memory the host shares, of which [live] bytes are allocated ([live] < 0
+   otherwise), is the program's own: there the share is at most that of the
+   heap and those bytes, as for host buffers, since a share of a large room
+   could leave gigabytes of garbage in the host's memory. It is at least a
+   page, since a bound of 0 would mean the heap's, and at least the minor
+   heap's bytes for a token the minor heap may hold, whose memory paces minor
+   collections too: a nearly full device would otherwise run them once per few
+   small buffers. */
+static mlsize_t pace(mlsize_t mem, mlsize_t room, intnat live) {
+  uintnat ratio =
+      atomic_load_explicit(&caml_custom_major_ratio, memory_order_relaxed);
+  mlsize_t max = room / 150 * ratio;
+  if (live >= 0) {
+    mlsize_t program =
+        caml_custom_get_max_major() + (mlsize_t)live / 150 * ratio;
+    if (program < max) max = program;
+  }
+  mlsize_t floor = (mlsize_t)page_bytes();
+  if (max < floor) max = floor;
+  if (mem <= atomic_load_explicit(&caml_custom_minor_max_bsz,
+                                  memory_order_relaxed)) {
+    mlsize_t minor = Bsize_wsize(Caml_state->minor_heap_wsz);
+    if (max < minor) max = minor;
+  }
+  return max;
+}
+
+/* A token that puts [v_record] on the list [v_list] once it is collected, and
+   paces the collector by the [v_mem] bytes of device memory it holds, out of
+   [v_room] the device has left, with [v_live] for memory the host shares (see
+   [pace]). The node is made here, so that the finaliser allocates nothing. */
+value caml_nx_device_token(value v_list, value v_record, value v_mem,
+                           value v_room, value v_live) {
+  CAMLparam5(v_list, v_record, v_mem, v_room, v_live);
   CAMLlocal1(v);
+  mlsize_t mem = (mlsize_t)Long_val(v_mem);
   struct nx_release_node *n = malloc(sizeof *n);
   if (n == NULL) caml_raise_out_of_memory();
-  v = caml_alloc_custom(&token_ops, sizeof(struct nx_token), 0, 1);
+  v = caml_alloc_custom(&token_ops, sizeof(struct nx_token), mem,
+                        pace(mem, (mlsize_t)Long_val(v_room),
+                             Long_val(v_live)));
   n->next = NULL;
   n->record = v_record;
   caml_register_generational_global_root(&n->record);
@@ -175,16 +228,17 @@ value caml_nx_device_heap_return_byte(value n) {
 }
 
 /* The bytes the collector has returned, ever, of buffers made before the last
-   major cycle ended, and the number of major cycles ended. A token holds its
-   bytes and the cycles ended when it was made. */
+   major cycle ended, and the number of major cycles seen ended (see
+   [slice_end]). A token holds its bytes and the cycles seen ended when it was
+   made. */
 static _Atomic intnat heap_collected;
-static _Atomic intnat heap_epoch;
+static _Atomic uintnat cycles_seen;
 
 static void heap_token_finalize(value v) {
   intnat n = ((intnat *)Data_custom_val(v))[0];
   intnat e = ((intnat *)Data_custom_val(v))[1];
   caml_nx_device_heap_return(n);
-  if (e < atomic_load_explicit(&heap_epoch, memory_order_relaxed))
+  if ((uintnat)e < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
     atomic_fetch_add_explicit(&heap_collected, n, memory_order_relaxed);
 }
 
@@ -199,7 +253,7 @@ value caml_nx_device_heap_token(value v_n) {
   value v = caml_alloc_custom(&heap_token_ops, 2 * sizeof(intnat), 0, 1);
   ((intnat *)Data_custom_val(v))[0] = Long_val(v_n);
   ((intnat *)Data_custom_val(v))[1] =
-      atomic_load_explicit(&heap_epoch, memory_order_relaxed);
+      (intnat)atomic_load_explicit(&cycles_seen, memory_order_relaxed);
   return v;
 }
 
@@ -229,9 +283,8 @@ static _Atomic intnat collected_at_cycle;
 
 static void heap_trim(void);
 
-/* Called at the end of each major cycle. */
-value caml_nx_device_heap_cycle(value unit) {
-  (void)unit;
+/* Run once per major cycle, after it ends (see [slice_end]). */
+static void cycle_ended(void) {
   intnat held = atomic_load_explicit(&heap_bytes, memory_order_relaxed);
   intnat collected =
       atomic_load_explicit(&heap_collected, memory_order_relaxed);
@@ -240,9 +293,30 @@ value caml_nx_device_heap_cycle(value unit) {
       (collected - atomic_exchange_explicit(&collected_at_cycle, collected,
                                             memory_order_relaxed));
   atomic_store_explicit(&heap_live, live > 0 ? live : 0, memory_order_relaxed);
-  atomic_fetch_add_explicit(&heap_epoch, 1, memory_order_relaxed);
   heap_trim();
-  return Val_unit;
+}
+
+/* The end of each major slice, in whichever domain runs it, sees whether a
+   major cycle ended since it last looked, and runs [cycle_ended] once if so.
+   The runtime calls it from C with nothing to allocate, which a finaliser
+   that the module re-registered at each cycle's end could not do: that ran
+   only in the domain that registered it, so the measure stood still while
+   that domain was blocked. */
+/* The number of major cycles ended, which the runtime exports and declares
+   only to itself. */
+extern uintnat caml_major_cycles_completed;
+
+static caml_timing_hook previous_slice_end;
+
+static void slice_end(void) {
+  uintnat ended = caml_major_cycles_completed;
+  uintnat seen = atomic_load_explicit(&cycles_seen, memory_order_relaxed);
+  if (ended != seen &&
+      atomic_compare_exchange_strong_explicit(&cycles_seen, &seen, ended,
+                                              memory_order_relaxed,
+                                              memory_order_relaxed))
+    cycle_ended();
+  if (previous_slice_end != NULL) previous_slice_end();
 }
 
 /* The memory a major cycle is due after: [caml_custom_get_max_major] is the
@@ -423,6 +497,8 @@ value caml_nx_device_heap_init(value unit) {
   (void)unit;
   heap_ops = caml_ba_ops;
   heap_ops.finalize = heap_finalize;
+  previous_slice_end = atomic_exchange_explicit(
+      &caml_major_slice_end_hook, slice_end, memory_order_relaxed);
   return Val_unit;
 }
 
@@ -493,13 +569,7 @@ value caml_nx_device_external_bytes(value v_addr, value v_n) {
 
 value caml_nx_device_page_size(value unit) {
   (void)unit;
-#ifdef _WIN32
-  SYSTEM_INFO info;
-  GetSystemInfo(&info);
-  return Val_long(info.dwPageSize);
-#else
-  return Val_long(sysconf(_SC_PAGESIZE));
-#endif
+  return Val_long(page_bytes());
 }
 
 intnat caml_nx_device_bigarray_address(value ba) {

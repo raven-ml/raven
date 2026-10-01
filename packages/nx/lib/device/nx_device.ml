@@ -336,7 +336,8 @@ external wait_u64 :
 
 external page_size : unit -> int = "caml_nx_device_page_size" [@@noalloc]
 external release_list : unit -> nativeint = "caml_nx_device_release_list"
-external make_token : nativeint -> base -> token = "caml_nx_device_token"
+external make_token : nativeint -> base -> int -> int -> int -> token
+  = "caml_nx_device_token"
 external released : nativeint -> base list = "caml_nx_device_released"
 
 external heap_bytes : unit -> (int[@untagged])
@@ -363,8 +364,6 @@ external heap_aligned :
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t option
   = "caml_nx_device_heap_aligned"
 
-external heap_cycle : unit -> unit = "caml_nx_device_heap_cycle" [@@noalloc]
-
 external heap_cached : unit -> (int[@untagged])
   = "caml_nx_device_heap_cached_byte" "caml_nx_device_heap_cached"
 [@@noalloc]
@@ -374,15 +373,6 @@ external heap_init : unit -> unit = "caml_nx_device_heap_init" [@@noalloc]
 
 let () = heap_init ()
 
-(* The collector is paced by the bytes host buffers hold live, which the end of
-   each major cycle measures: the cycle finalises a block that measures them
-   and is registered again, allocating nothing, so that an operation that ends
-   a cycle allocates as many words as one that does not. *)
-let rec end_of_cycle r =
-  heap_cycle ();
-  Gc.finalise end_of_cycle r
-
-let () = Gc.finalise end_of_cycle (Sys.opaque_identity (ref ()))
 
 external now_ns : unit -> (int[@untagged])
   = "caml_nx_device_now_ns_byte" "caml_nx_device_now_ns"
@@ -1034,13 +1024,6 @@ let descriptor f =
 
 (* Memory reclamation. Everything below runs with the device taken. *)
 
-(* [base], whose memory [d] releases once the base returned and every base
-   made from it are unreachable: they keep a token that puts [base], which
-   keeps none, on [d]'s release list once it is collected. A base has no
-   mutable field, so [base] sees the links and claims that its copies change. *)
-let owned d base =
-  { base with keep = Keep (base.keep, make_token d.released base) }
-
 (* Frees [memories], each with its function, once [d]'s work that touched them,
    which signals [v] at the latest, is done: at once with [~wait:false], which
    is given only memories whose work is done. If that work cannot be waited
@@ -1086,6 +1069,18 @@ let cached d =
   match d.allocated with Count _ -> d.cached | Heap_bytes -> heap_cached ()
 
 let fits d n = n <= d.budget - allocated d - cached d - d.retained
+
+(* [base], whose memory [d] releases once the base returned and every base
+   made from it are unreachable: they keep a token that puts [base], which
+   keeps none, on [d]'s release list once it is collected. A base has no
+   mutable field, so [base] sees the links and claims that its copies change.
+   The token's owned bytes pace the collector by the room left in [d]'s budget
+   (see the stubs). *)
+let owned d base =
+  let room = d.budget - allocated d - cached d - d.retained in
+  let live = if shares_host_memory d then allocated d else -1 in
+  let token = make_token d.released base base.bytes (Int.max 0 room) live in
+  { base with keep = Keep (base.keep, token) }
 
 (* Runs what other devices that map [m] registered, before [d] frees it: they
    unmap it. Memory one of them could not unmap is retained. [d] is

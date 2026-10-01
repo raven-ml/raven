@@ -66,10 +66,19 @@
     steady allocation of buffers they measure about 0.75 times the memory of
     the live ones. A program whose OCaml heap is small and whose buffers are
     large thus runs a major cycle per share of the memory it holds. The live
-    memory is measured by a finaliser that the domain that initialised this
-    module runs at the end of each cycle: while that domain is blocked, as in
-    [Domain.join], the measure is the last one it took. Smaller buffers are
-    paced as any bigarray: by the OCaml heap once they outlive the minor heap.
+    memory is measured once each cycle ends, at the end of the next major
+    slice of any domain. Smaller buffers are paced as any bigarray: by the
+    OCaml heap once they outlive the minor heap.
+
+    The memory of another device's buffers paces the major cycles by the room
+    left in that device's {!budget}: a cycle is due once the memory of the
+    buffers allocated since the last one reaches the same share of that room,
+    and at least a page. Unreachable buffers then hold at most three such
+    shares of what the device could still allocate, and a device that fills
+    up runs cycles more often instead of refusing allocations; a full
+    collection ({!Out_of_memory}) is the last resort. A buffer small enough
+    for the minor heap paces minor collections no faster than any custom
+    block does.
 
     {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
     the devices involved. A device that hangs or faults is lost for good
