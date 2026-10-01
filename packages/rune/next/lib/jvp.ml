@@ -269,14 +269,16 @@ let binary_tangent k a b y da db =
         (term (fun da -> binary Fdiv da b) da)
         (term (fun db -> mul db (unary Neg (binary Fdiv y b))) db)
   | Pow ->
-      (* a ** 0 is constant, and 0 ** b is constant along b wherever it is
-         defined. *)
+      (* 0 ** b is constant along b wherever it is defined, and a ** 0 along a,
+         whose coefficient b a ** (b - 1) is 0 times infinity only at a = 0.
+         Masking only there keeps the coefficient's own derivative, 1 / a along
+         b at b = 0, everywhere else. *)
       let zero x = Nx.equal x (Nx.zeros_like x) in
+      let both = Nx.logical_and (zero a) (zero b) in
       terms
         (term
            (fun da ->
-             mul da
-               (zero_where (zero b) (Nx.mul b (Nx.pow a (Nx.sub_s b (one b))))))
+             mul da (zero_where both (Nx.mul b (Nx.pow a (Nx.sub_s b (one b))))))
            da)
         (term (fun db -> mul db (zero_where (zero a) (Nx.mul y (Nx.log a)))) db)
   | Maximum -> selected y (Nx.logical_or (Nx.less b a) (Nx.isnan a)) da db
