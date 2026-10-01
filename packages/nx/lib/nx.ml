@@ -13,7 +13,6 @@ exception Linalg_error = Nx_backend.Linalg_error
 let context = Nx_effect.Placement.host
 
 module Device = Nx_effect.Device
-
 module Placement = Nx_effect.Placement
 
 let place = Nx_effect.place
@@ -69,20 +68,20 @@ let zeros dtype shape = Frontend.zeros context dtype shape
 let scalar dtype v = Frontend.scalar context dtype v
 let eye ?m ?k dtype n = Frontend.eye context ?m ?k dtype n
 
-(* A value made like a placed one lives where that one does, split as it is. *)
+(* A value made like a placed or traced one lives where that one does, split as
+   it is. *)
 let full_like x v =
   match x with
-  | Nx_effect.Placed { r_placement = p; _ } when not (Nx_effect.on_disk p) ->
-      Nx_effect.full p (dtype x) (shape x) v
+  | (Nx_effect.Placed _ | Nx_effect.Traced _)
+    when not (Nx_effect.on_disk (Nx_effect.placement x)) ->
+      Nx_effect.full (Nx_effect.placement x) (dtype x) (shape x) v
   | Nx_effect.Host _ | Nx_effect.Placed _ | Nx_effect.Traced _ ->
       Frontend.full_like x v
 
 let zeros_like x = full_like x (Nx_dtype.zero (dtype x))
 let ones_like x = full_like x (Nx_dtype.one (dtype x))
 let fill v x = full_like x v
-
-let arange dtype start stop step =
-  Frontend.arange context dtype start stop step
+let arange dtype start stop step = Frontend.arange context dtype start stop step
 
 let arange_f dtype start stop step =
   Frontend.arange_f context dtype start stop step
@@ -105,9 +104,7 @@ let bernoulli p = Frontend.bernoulli context p
 let permutation n = Frontend.permutation context n
 let shuffle x = Frontend.shuffle context x
 let categorical ?axis logits = Frontend.categorical context ?axis logits
-
-let truncated_normal lower upper =
-  Frontend.truncated_normal context lower upper
+let truncated_normal lower upper = Frontend.truncated_normal context lower upper
 
 (* ───── FFT ───── *)
 

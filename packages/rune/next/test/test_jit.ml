@@ -2135,6 +2135,30 @@ let device_lists =
           let r = Rune.jit' poly (Nx.place (split ~axis:1 pair) a) in
           is_true (Nx.Placement.equal (split ~axis:1 pair) (Nx.placement r));
           equal floats (poly a) (host r));
+      (* [zeros_like] of a split value is split alike, so the scatter is too and
+         stores each device's rows. *)
+      test "a scatter-add into zeros like a split value equals eager" (fun () ->
+          let f x t =
+            Nx.Op.eval
+              (Nx.Op.Scatter
+                 {
+                   mode = `Add;
+                   unique = false;
+                   axis = 1;
+                   indices = Nx.unsqueeze ~axes:[ -1 ] t;
+                   updates = Nx.ones Nx.float32 [| 4; 1 |];
+                   into = Nx.zeros_like x;
+                 })
+          in
+          let x = grid 4 3
+          and t = Nx.create Nx.int64 [| 4 |] [| 2L; 0L; 1L; 2L |] in
+          let at a = Nx.place (split pair) a in
+          equal close
+            (host (f (at x) (at t)))
+            (host
+               (Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                  f (at x) (at t))));
       test "the gradient of a mean over a split batch equals one device's"
         (fun () ->
           let f a = Nx.mean (Nx.mul a a) in
