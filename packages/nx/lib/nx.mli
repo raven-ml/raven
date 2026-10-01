@@ -1560,7 +1560,9 @@ val item : int list -> ('a, 'b) t -> 'a
 val take : ?axis:int -> indices:int64_t -> ('a, 'b) t -> ('a, 'b) t
 (** [take ?axis ~indices t] gathers elements from [t] at [indices] along [axis].
     When [axis] is omitted, [t] is flattened first, and the result has
-    [indices]' shape. An index outside \[[0],
+    [indices]' shape. With [axis], [indices] are read in C order whatever their
+    shape, and the result is [t]'s shape with [axis]'s length replaced by their
+    number: one index keeps the axis, of length [1]. An index outside \[[0],
     [size]), negative included, reads zero, eagerly and under [Rune.jit] alike;
     wrap indices with [mod_ (add_s i n) n] or clamp them with {!clamp} yourself.
     At an integer dtype the zero read is index [0]: mask with the index's range
@@ -1767,8 +1769,11 @@ val argwhere : ('a, 'b) t -> int64_t
 
     Element-wise arithmetic with broadcasting. At [float16], [bfloat16] and the
     float8 dtypes, every element-wise operation, the mathematical functions
-    below included, computes at [float32] and rounds once. Each operation [op]
-    has variants:
+    below included, computes at [float32] and rounds once. Integer addition,
+    subtraction, multiplication, negation and absolute value wrap modulo
+    [2^bits], so [abs] of an integer type's least value is that value. A NaN
+    result's sign and payload are unspecified. Each operation [op] has
+    variants:
     - [op_s t s] — tensor-scalar.
     - [rop_s s t] — scalar-tensor (reversed operands). *)
 
@@ -1797,7 +1802,8 @@ val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [div a b] is the element-wise quotient [a / b].
 
     Float dtypes use true division. Integer dtypes truncate toward zero, and an
-    integer divided by zero is zero.
+    integer divided by zero is zero. A signed integer type's least value divided
+    by [-1] is unspecified.
 
     {@ocaml[
       # let x = create int32 [| 2 |] [| -7l; 8l |] in
@@ -2412,6 +2418,8 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     layout can differ in rounding, and at overflow in whether a term overflows.
     {!mean} sums the same way, as do the contraction of {!matmul} and the
     products built on it, except where {!matmul} hands a product to Accelerate.
+    At [float16], [bfloat16] and the float8 dtypes, the terms are summed at
+    [float32] and the sum is rounded once to the dtype.
 
     {@ocaml[
       # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
@@ -2450,7 +2458,10 @@ val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 
 val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [prod ?axes ?keepdims t] is the product along [axes]. [keepdims] defaults to
-    [false].
+    [false]. A float product multiplies its factors in an unspecified
+    association, so the same values in another layout, or under a compiled
+    function, can differ in rounding, and at overflow or underflow in whether a
+    partial product overflows or underflows.
 
     {@ocaml[
       # create int32 [| 3 |] [| 2l; 3l; 4l |]

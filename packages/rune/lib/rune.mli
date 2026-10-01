@@ -719,9 +719,11 @@ val jit :
     overflows. A maximum over an axis is exact. Compiled float results can also
     differ from eager's in the last bits where the compiler fuses a multiply and
     an add or turns a division by a constant into a multiplication, and in
-    transcendental functions, which are approximations within a few units in the
-    last place; Metal flushes float32 subnormals to zero. A failed factorisation
-    gives non-finite values where eager raises {!Nx_backend.Linalg_error}.
+    transcendental functions, which are approximations within 4 units in the
+    last place of the result's dtype; Metal flushes float32 subnormals to zero.
+    A product over an axis ({!Nx.prod}) multiplies in an unspecified association
+    too. A failed factorisation gives non-finite values where eager raises
+    {!Nx_backend.Linalg_error}.
 
     {b Domains.} A compiled function may be called from any domain, several at
     once, and from inside its own function. A key being compiled makes the other
