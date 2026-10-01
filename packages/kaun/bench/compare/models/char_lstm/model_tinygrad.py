@@ -160,8 +160,8 @@ def train(spec, fixture, variant, steps):
 def run(spec, fixture, variant, device_name, steps, cache):
     knobs = {"DEV": {"cpu": "CPU", "metal": "METAL"}[device_name]}
     # Cold means no compiled kernel may be served from an earlier process.
-    # CACHELEVEL is the knob for tinygrad's on-disk compile cache, as JITCACHE
-    # is for Raven's and TORCHINDUCTOR_CACHE_DIR for PyTorch's.
+    # CACHELEVEL is the knob for tinygrad's on-disk compile cache, as it is for
+    # Raven's and TORCHINDUCTOR_CACHE_DIR for PyTorch's.
     if cache == "cold":
         knobs["CACHELEVEL"] = 0
     with Context(**knobs):

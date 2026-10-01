@@ -333,10 +333,15 @@ let () =
   | [ _; "variants" ] -> emit_variants ()
   | _ :: "run" :: rest ->
       let flags = flags rest in
-      (* Cold means no compiled program is served from an earlier process. Read
-         per call by the jit cache, so setting it here is enough. *)
-      if List.assoc_opt "cache" flags = Some "cold" then
-        Unix.putenv "JITCACHE" "0";
+      (* Cold means no compiled program is served from an earlier process.
+         CACHELEVEL=0 disables tolk's disk cache, which reads it at startup, so
+         the process runs itself again with it set. *)
+      if
+        List.assoc_opt "cache" flags = Some "cold"
+        && Sys.getenv_opt "CACHELEVEL" <> Some "0"
+      then
+        Unix.execve Sys.executable_name Sys.argv
+          (Array.append [| "CACHELEVEL=0" |] (Unix.environment ()));
       let spec = read_spec (required flags "spec") in
       let variant = required flags "variant" in
       let device = required flags "device" in

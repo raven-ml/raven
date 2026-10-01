@@ -88,8 +88,8 @@ line:
     losses[i] is the loss at step i, before update i; step_ms[i] is the wall
     clock of the whole of step i. --cache cold means no compiled artifact may
     be served from an earlier process: each side sets its own knob for that
-    (JITCACHE for Raven, TORCHINDUCTOR_CACHE_DIR for PyTorch, CACHELEVEL for
-    tinygrad), so the harness needs to know nothing about any of them.
+    (CACHELEVEL for Raven and tinygrad, TORCHINDUCTOR_CACHE_DIR for
+    PyTorch), so the harness needs to know nothing about any of them.
 
 model.py fixture --spec S --out F
     Writes the shared weights and data, deterministically. Fixture owner only.

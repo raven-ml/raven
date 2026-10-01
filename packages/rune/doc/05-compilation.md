@@ -1,6 +1,6 @@
 # Compilation
 
-`Rune.jit` traces a function once, compiles the traced computation into fused kernels for a device, and replays them on later calls. This page covers what a compiled call does with its arguments, where it runs and keeps memory, how compiled programs are cached across processes, and how to tune and debug them. `Rune.jit`'s documentation in `rune.mli` states the contract; this page explains how to use it.
+`Rune.jit` traces a function once, compiles the traced computation into fused kernels for the devices its values are on, and replays them on later calls. This page covers what a compiled call does with its arguments, where it runs and keeps memory, how compiled programs are cached across processes, how a GPU computes eagerly, and how to tune and debug them. `Rune.jit`'s documentation in `rune.mli` states the contract; this page explains how to use it.
 
 ## Signatures
 
@@ -36,44 +36,66 @@ Nx.to_array (List.hd caches).keys
    arguments; use the value the call returned" *)
 ```
 
-A consumed leaf must hold its storage alone. A slice, a transpose or a broadcast of a larger tensor raises before the call runs (pass `Nx.copy` of it), and so does a storage that two leaves of the call, or a leaf and a capture, reach. A host value has no storage to consume: it is uploaded, stays usable, and lends nothing.
+A consumed leaf must cover its whole storage. A slice, a transpose or a broadcast of a larger tensor raises before the call runs (pass `Nx.copy` of it), and so does a storage that two leaves of the call, or a leaf and a capture, reach.
 
 A result takes the storage of a consumed leaf when writing it there cannot change what the program reads: an optimizer update, or a cache written at a few slots. A loop that consumes its state therefore holds one generation of it on the device.
 
 ## Devices and Memory
 
-A call runs where its placed arguments and captures are (`Nx.place`, `Nx.placement`), and on `Rune.default_device ()` when none is placed. `~devices` names the devices instead: `[ Rune.device "METAL" ]`, or several devices of one backend. Host arguments are copied to the device on every call; a placed argument, such as the output of an earlier call, seeds the program with no transfer. Placing a model's weights once, as the kaun examples' importers do, means no compiled function uploads them.
+A call runs on the devices of its placed arguments and captures, and on the host when there are none, whatever the placements' backends. A device is an `Nx_device.t`, opened by the library of its runtime (`Nx_metal_device.v 0`, `Nx_cuda_device.v 1`), and a value is put on it with `Nx.place`:
+
+<!-- $MDX skip -->
+```ocaml
+let metal = Nx.Placement.device (Nx_metal_device.v 0)
+let step = Rune.jit' (fun x -> Nx.tanh (Nx.matmul x x))
+let y = step (Nx.place metal (Nx.rand Nx.float32 [| 64; 64 |]))
+(* compiled for Metal *)
+```
+
+A host argument is uploaded on each call, as an eager operation would move it, and a placed argument, such as the output of an earlier call, is read where it is. A capture is bound once per compiled function, at the trace that meets it: a value placed where the program computes is read in place, and any other value is placed there once. Placing a model's weights once, as the kaun examples' importers do, means no compiled function uploads them.
 
 Values placed on several devices run a program over those devices. A value split along an axis (`Nx.Placement.sharded ~axis`) is one slice on each device, and a copy (`Nx.Placement.replicated`) or a host argument is the whole value on each. The function sees whole values: an elementwise operation keeps its operands' split, and a reduction over a split axis becomes an allreduce, so the gradient of a loss over a batch split across devices is summed across them. Operands split differently raise as the function traces, as they do eagerly; `Nx.place` inside the function gathers a value to a copy on each device or splits one. A per-device computation is `vmap` over an axis split one slice per device.
 
-Outputs are values on the device: shape and dtype never transfer, and a read copies the elements it reads and leaves the output where it is. An nx operation on a placed value outside a compiled function computes on the host and places its result. A view of part of a storage is read in place: the program reads the storage the view reaches and applies a strided view's layout itself. Views that differ only by an offset that is a multiple of 16 bytes share a program, and a C-order window at such an offset shares the program of a value that covers its storage. Only views whose windows overlap (`Nx.sliding_window`) are copied.
+Outputs are values on the device: shape and dtype never transfer, and a read copies the elements it reads and leaves the output where it is. A view of part of a storage is read in place, its strides expressed in the program, so a window of a cache costs no copy.
 
-Device memory that backs an output is held until the output is garbage-collected or consumed. Past a budget of device allocations since the last major collection, 4 GiB by default and set in bytes by `RUNE_JIT_RESIDENT_BUDGET`, a collection runs before allocating more; an allocation that still fails raises `Nx.Device.Out_of_memory` before the call consumes anything. The intermediate values of a call live in scratch memory shared by every compiled function on the device, sized to the largest any of them needs, so the blocks of a deep model called in turn do not each hold their own.
+Device memory that backs an output is held until the output is garbage-collected or consumed. An allocation that fails raises `Nx_device.Out_of_memory` before the call consumes anything.
 
 ## Numerics
 
 A compiled program performs the operations the function performs. A sum over an axis (`Nx.sum`, `Nx.mean`, the contraction of `Nx.matmul`) is the sum of its terms in an unspecified association. The compiler may add the terms in another order than eager, split them across threads, and move a factor that does not vary along the summed axis out of the sum (`sum (0.125 * a * b)` becomes `0.125 * sum (a * b)`). Results then differ from eager's in rounding, and at overflow in whether a term overflows. A maximum over an axis is exact.
 
-Beyond that, compiled float results can differ from eager's in the last bits where the kernel compiler fuses a multiply and an add, where a division by a constant becomes a multiplication by its rounded reciprocal, and in transcendental functions, which are approximations within a few units in the last place (`Nx.pow` about 70); Metal flushes float32 subnormals to zero, a `float16` program on the CPU is not rounded after each operation, and signed integer overflow is undefined in the generated C.
+Beyond that, compiled float results can differ from eager's in the last bits where the compiler fuses a multiply and an add or turns a division by a constant into a multiplication, and in transcendental functions, which are approximations within a few units in the last place; Metal flushes float32 subnormals to zero. A failed factorisation gives non-finite values where eager raises `Nx_backend.Linalg_error`.
 
 ## The Persistent Cache
 
-The first compilation of a trace writes its scheduled and compiled kernels to a disk cache under `$XDG_CACHE_HOME/tolk/rune_jit` (`XDG_CACHE_HOME` defaults to `~/.cache` on Linux and `~/Library/Caches` on macOS). A later process compiling the same trace loads them, so tracing is most of a warm start. Entries are invalidated when the executable, the device, its compiler or the code generation options change. `JITCACHE=0` disables the cache; programs over several devices are never persisted. Results are identical either way.
+rune keeps no cache of its own across processes. tolk's caches are the persistent cache: compiled binaries under `CCACHE` and schedules under `SCACHE=2`, keyed by the scheduled program. A warm start still traces the function, which produces the key, and then loads what follows.
 
 ## Beam Search
 
-By default each kernel is scheduled by fixed heuristics. `~beam:n` (or the `BEAM` environment variable) searches schedules instead: each round compiles and times candidates on the device and keeps the `n` best. Compilation is much slower and the kernels are usually faster. The tuned result lands in the persistent cache, so the search runs once per trace. `~parallel:k` (or `PARALLEL`) bounds domains compiling independent kernels and search candidates. The default uses available CPUs; `0` compiles sequentially. Candidates are still timed one at a time.
+By default each kernel is scheduled by fixed heuristics. `jit ~beam:2` searches each kernel's schedules instead: each round compiles and times candidates on the device and keeps the `beam` fastest. The first call of a key compiles much longer and the kernels usually run faster. `~parallel` sets how many domains compile the candidates. Without these arguments, the `BEAM` and `PARALLEL` settings decide for every compiled function; an explicit `~beam`, `0` included, overrides them. The width is part of a call's key, so functions searched at different widths never share a program.
 
-The first compilation using a positive `PARALLEL` value fixes the shared worker
-limit for the process. Later positive values reuse that limit; `~parallel:0`
-compiles in the caller. Candidate timing remains sequential.
+```ocaml
+let square = Rune.jit' ~beam:2 ~parallel:8 (fun x -> Nx.mul x x)
+```
+
+## Eager Computation on a GPU
+
+Outside a compiled function, a placement's backend computes on its values. With `Rune.compiled`, each operation is a small program, compiled the first time it meets those dtypes and shapes, then queued:
+
+<!-- $MDX skip -->
+```ocaml
+let gpu = Nx.Placement.device ~backend:Rune.compiled (Nx_metal_device.v 0)
+let x = Nx.place gpu (Nx.rand Nx.float32 [| 1024; 1024 |])
+let y = Nx.tanh (Nx.matmul x x) (* two programs, queued *)
+```
+
+An operation `Rune.compiled` cannot compile raises `Nx_backend.Refused` before any work, such as a Fourier transform or `float64` on Metal: place the value on the host to compute it there. A placement whose backend does not run on its device refuses its first eager operation the same way, naming the two remedies: a placement with `~backend:Rune.compiled`, or a compiled function.
 
 ## Debugging
 
 `RUNE_JIT_DEBUG=1` prints, for each compiled function:
 
 - each retrace, with the first difference from the previous call's key: `rune.jit: retrace: 1.window: int 3 here, int 2 in the previous key`;
-- each replay, with the bytes it moved to and from the device;
-- what became of each consumed leaf: `rune.jit: 2.0.keys -> result 1.0.keys reused`, or `consumed, storage released`.
+- each call's storage reuse: `rune.jit: 2.0.keys -> result 1.0.keys reused`, with the views a call copies and the storage it copies because it cannot lend.
 
-`Rune.jit_stats` returns the same transfer counters for programmatic checks. A leaf is named by its path: the argument's position counted from 0, then its path inside that argument.
+A leaf is named by its path: the argument's position counted from 0, then its path inside that argument. The runtime counts what compiled code allocates and moves: `Nx_device.stats d` before and after, compared with `Nx_device.Stats.diff`, gives the bytes allocated on `d` and copied into and out of it. A profile taken with `Nx_device.Profile.start` holds one span per kernel on the device's clock, and host spans for a first call's phases (`rune.jit: trace`, `schedule`, `compile`, `link`); `DEBUG=2` prints one line per kernel.

@@ -28,7 +28,7 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Checkpointing | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Checkpoint` |
 | Pretrained models | `from_pretrained` per architecture | `kaun.hf` + an importer you write with `Checkpoint.to_float` |
 | RNG | global `torch.manual_seed` | scoped `Nx.Rng.with_key` |
-| Device | `model.to("cuda")` | eager on CPU; GPU via `Rune.jit ~devices` |
+| Device | `model.to("cuda")` | `Nx.place` of the weights; GPU via `Rune.jit` or a `Rune.compiled` placement |
 
 ---
 
@@ -231,7 +231,7 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 
 | PyTorch feature | Status in kaun |
 | --- | --- |
-| GPU / `model.to("cuda")` | Eager execution is CPU-only; compile a step with `Rune.jit` and pass `~devices:[ Rune.device "CUDA" ]` or `~devices:[ Rune.device "METAL" ]`. |
+| GPU / `model.to("cuda")` | Place the weights with `Nx.place` on a device (`Nx_cuda_device.v 0`, `Nx_metal_device.v 0`); a step compiled with `Rune.jit` runs there, and a placement with `~backend:Rune.compiled` computes eagerly there. |
 | `torch.compile` / JIT | `Rune.jit` compiles a step, and a `Rune.scan` in it as a loop. |
 | Layer coverage | Deliberately small: no recurrent layers; `Attention` covers grouped queries, rotary embeddings (`Rope`) and cached decoding (`Attention.cached`) and nothing beyond, no sliding windows or cross-attention layer; `Conv` is im2col-based and not tuned for large inputs. |
 | Mixed precision / AMP | Manual: cast with `Nx.Ptree.cast (module M) dt` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |

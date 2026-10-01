@@ -65,9 +65,10 @@ nest into records, so models compose structurally — see
 - **Loops** — `scan` folds over rows and compiles as a loop under `jit`;
   a branch on a value is OCaml's `if` on `Nx.item`
 - **Compilation** — `jit` traces a function once per key and replays it
-  as fused kernels, on the host, CUDA, or Metal via `~devices`; an argument
-  marked `consumes` in its signature is given up by each call, and its
-  storage is reused for the results
+  as fused kernels on the devices its values are placed on (the host, CUDA,
+  Metal); an argument marked `consumes` in its signature is given up by each
+  call, and its storage is reused for the results. `Rune.compiled` computes
+  eagerly on a GPU, one program per operation
 - **Stopping gradients** — `detach` holds a value constant
 - **Structures** — every transformation takes the structures it walks,
   so results may be structures too; primed variants (`grad'`, `vmap'`,

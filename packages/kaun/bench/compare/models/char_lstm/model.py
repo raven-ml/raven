@@ -28,7 +28,7 @@ import time
 # Inductor's on-disk cache must be redirected before torch is imported: the
 # cold measurement is only cold if no earlier process left a compiled kernel
 # behind. Done here rather than by the harness so each side owns its own cache
-# knobs (the Raven side owns JITCACHE the same way).
+# knobs (the Raven side owns CACHELEVEL the same way).
 if "--cache" in sys.argv and sys.argv[sys.argv.index("--cache") + 1] == "cold":
     _cold_cache = tempfile.mkdtemp(prefix="migrate-inductor-")
     os.environ["TORCHINDUCTOR_CACHE_DIR"] = _cold_cache
