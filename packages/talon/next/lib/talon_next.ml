@@ -12,7 +12,13 @@ module Kind = Kind
 module Record = Record
 module Type = Type
 module Schema = Schema
-module Column = Column
+
+module Column = struct
+  include Column
+
+  let parse = Form.parse
+end
+
 module Error = Error
 module Tz = Tz
 module Sel = Sel

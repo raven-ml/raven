@@ -357,7 +357,7 @@ let refusals =
          {| Column.options: row 2: 18446744073709551615 is outside int |};
     refuse "a float that rounds to infinity" (fun () ->
         Column.v float16 [| 65520. |])
-    @@ __POS_OF__ {| Column.v: row 0: float16 does not hold 65520 |};
+    @@ __POS_OF__ {| Column.v: row 0: float16 does not hold 65520. |};
     refuse "text that is not UTF-8" (fun () ->
         Column.of_options string [| None; Some "a\xff" |])
     @@ __POS_OF__ {| Column.of_options: row 1: string does not hold "a\xff" |};

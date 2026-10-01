@@ -667,6 +667,33 @@ module Column : sig
       offsets that are not 1-D, start below [0], decrease or reach past the
       child, a child of another type (for text, a [uint8] column with a null),
       or fields of other names, types or lengths than [ty]'s. *)
+
+  val parse : Type.any -> t -> (t, int * string) result
+  (** [parse ty c] is the column of type [ty] whose rows are the values that the
+      rows of the [string] or [binary] column [c] write, null where [c] is null,
+      or [Error (row, reason)] at the first non-null row that is not [ty]'s text
+      or holds a value [ty] does not, [reason] a phrase such as [not a number].
+      Formats that read text call it, mapping [row] to their own location. The
+      text of each type is:
+      - [bool]: [true] or [false];
+      - [int8] to [uint64]: a decimal integer with an optional sign, in the
+        type's range;
+      - [float16] to [float64]: a decimal number with an optional sign, digits
+        on at least one side of an optional point and an optional exponent, or
+        [inf], [infinity] or [nan] in any case with an optional sign, rounded to
+        the nearest value of the type, ties to even, beyond its range to an
+        infinity;
+      - [decimal[p, s]]: a decimal number with an optional sign, exact at the
+        scale [s] and of at most [p] digits;
+      - [string]: the bytes, valid UTF-8; [binary]: the bytes;
+      - a categorical: one of the dictionary's strings;
+      - [date]: [YYYY-MM-DD], from year [0000] to [9999];
+      - [datetime[u]] and [datetime[u, z]]: a date, [T] or a space, [hh:mm:ss]
+        and an optional fraction of one to nine digits, then, with a zone only,
+        [Z] or [±hh:mm]; a whole number of [u] in [u]'s range.
+
+      Raises [Invalid_argument] if [c] is neither [string] nor [binary], or [ty]
+      is another type. *)
 end
 
 module Error = Error

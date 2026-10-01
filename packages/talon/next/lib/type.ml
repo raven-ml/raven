@@ -217,6 +217,45 @@ let pp_list pp ppf vs =
 
 let pp_sep ppf () = Format.pp_print_string ppf ", "
 
+let pp_float ppf x =
+  if Float.is_nan x then Format.pp_print_string ppf "nan"
+  else if Float.equal x Float.infinity then
+    Format.pp_print_string ppf "infinity"
+  else if Float.equal x Float.neg_infinity then
+    Format.pp_print_string ppf "neg_infinity"
+  else
+    let shortest =
+      let s15 = Printf.sprintf "%.15g" x in
+      if Float.equal (float_of_string s15) x then s15
+      else
+        let s16 = Printf.sprintf "%.16g" x in
+        if Float.equal (float_of_string s16) x then s16
+        else Printf.sprintf "%.17g" x
+    in
+    let is_float_char c = Char.equal c '.' || Char.equal c 'e' in
+    Format.pp_print_string ppf
+      (if String.exists is_float_char shortest then shortest else shortest ^ ".")
+
+let rec pp_lit : type a. a Kind.t -> Format.formatter -> a -> unit =
+ fun k ppf v ->
+  match k with
+  | Int -> Format.pp_print_int ppf v
+  | Float -> pp_float ppf v
+  | Bool -> Format.pp_print_bool ppf v
+  | String -> pp_quoted ppf v
+  | Binary -> Binary.pp ppf v
+  | Decimal -> Decimal.pp ppf v
+  | Date -> Time.Date.pp ppf v
+  | Instant -> Time.pp ppf v
+  | Span -> Time.Span.pp ppf v
+  | List k -> pp_list (pp_lit k) ppf (Array.to_list v)
+  | Record -> Format.pp_print_string ppf "<record>"
+  | Tensor _ ->
+      Format.fprintf ppf "a tensor of shape %a" Nx.pp_shape (Nx.shape v)
+  | Ext -> ( match v with _ -> .)
+
+let pp_value ty ppf v = pp_lit (kind ty) ppf v
+
 (* Values *)
 
 let ns_per_unit = function

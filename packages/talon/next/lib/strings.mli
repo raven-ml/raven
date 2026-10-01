@@ -16,6 +16,14 @@
 type bytes = (int, Nx.uint8_elt) Nx_ragged.t
 (** The type for rows of bytes. *)
 
+val reading : by:string -> ('a, 'b) Nx.t -> (Nx_device.Buffer.t -> 'c) -> 'c
+(** [reading ~by x f] is [f b] for [b] a host buffer of [x]'s elements in C
+    order, under a read claim so that no compiled call lends its memory while
+    [f] reads it.
+
+    Raises [Invalid_argument] starting with [by] if [x] cannot be read, as under
+    a compiled function. *)
+
 val utf_8 : by:string -> ?mask:Nx.bool_t -> bytes -> (int * string) option
 (** [utf_8 ~by b] is [None] if every row of [b] is valid UTF-8, and otherwise
     [Some (row, reason)] for the first row that is not, [reason] naming the

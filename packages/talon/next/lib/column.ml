@@ -202,35 +202,18 @@ let push b x =
 let contents b = Array.sub b.items 0 b.len
 let offsets_tensor b = Nx.create Nx.int64 [| b.len |] (contents b)
 
-let pp_float ppf x =
-  let s = Printf.sprintf "%.15g" x in
-  let s = if float_of_string s = x then s else Printf.sprintf "%.17g" x in
-  Format.pp_print_string ppf s
-
-let pp_shape ppf x =
-  let dims = Array.to_list (Array.map string_of_int (Nx.shape x)) in
-  Format.fprintf ppf "a tensor of shape [%s]" (String.concat "×" dims)
-
-(* [check ty v] refuses a value [ty] does not hold. Booleans, binary, dates,
-   lists and records hold every value of theirs; the builders of lists and
+(* [check ty v] refuses a value [ty] does not hold. The builders of lists and
    records check their elements and fields, and a categorical's store checks its
    strings. *)
 let check : type a. a Type.t -> a -> unit =
  fun ty ->
-  let held = Type.holds ty in
-  let check pp v =
-    if not (held v) then refused "%a does not hold %a" Type.pp ty pp v
-  in
-  match (ty, Type.kind ty) with
-  | Categorical _, _ -> ignore
-  | _, Int -> check Format.pp_print_int
-  | _, Float -> check pp_float
-  | _, String -> check Type.pp_quoted
-  | _, Decimal -> check Decimal.pp
-  | _, Span -> check Time.Span.pp
-  | _, Instant -> check Time.pp
-  | _, Tensor _ -> check pp_shape
-  | _, (Bool | Binary | Date | List _ | Record | Ext) -> ignore
+  match ty with
+  | Categorical _ | List _ | Record _ | Ext _ -> ignore
+  | _ ->
+      let held = Type.holds ty in
+      fun v ->
+        if not (held v) then
+          refused "%a does not hold %a" Type.pp ty (Type.pp_value ty) v
 
 (* [rows ty ~null ~add ~data] is the builder that keeps the validity of each
    row, calls [null] or [add] to keep its value, and makes the column from [data

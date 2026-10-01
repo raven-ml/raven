@@ -115,3 +115,13 @@ val pp_list :
   (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a list -> unit
 (** [pp_list pp ppf vs] formats [vs] as an OCaml list, [["a"; "b"]], as plans
     write lists. *)
+
+val pp_lit : 'a Kind.t -> Format.formatter -> 'a -> unit
+(** [pp_lit k ppf v] formats [v] as [Expr.pp] writes a literal of kind [k]:
+    floats as OCaml literals ([15.], [nan], [neg_infinity]), text quoted as
+    {!pp_quoted} quotes it, a record as [<record>] and a tensor by its shape, as
+    in [a tensor of shape [2,3]]. *)
+
+val pp_value : 'a t -> Format.formatter -> 'a -> unit
+(** [pp_value t] is [pp_lit (kind t)]: plans and messages write values of [t]
+    with it. *)

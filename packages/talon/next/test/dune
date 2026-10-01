@@ -72,3 +72,9 @@
   (progn
    (run %{test} --corrected)
    (diff? test_column.ml test_column.ml.corrected))))
+
+(test
+ (name test_parse)
+ (modules test_parse)
+ (package talon)
+ (libraries windtrap talon.next talon_gen nx))

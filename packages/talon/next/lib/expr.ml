@@ -505,44 +505,6 @@ let node e = e.node
 
 (* Formatting *)
 
-let pp_float ppf x =
-  if Float.is_nan x then Format.pp_print_string ppf "nan"
-  else if Float.equal x Float.infinity then
-    Format.pp_print_string ppf "infinity"
-  else if Float.equal x Float.neg_infinity then
-    Format.pp_print_string ppf "neg_infinity"
-  else
-    let shortest =
-      let s15 = Printf.sprintf "%.15g" x in
-      if Float.equal (float_of_string s15) x then s15
-      else
-        let s16 = Printf.sprintf "%.16g" x in
-        if Float.equal (float_of_string s16) x then s16
-        else Printf.sprintf "%.17g" x
-    in
-    let is_float_char c = Char.equal c '.' || Char.equal c 'e' in
-    Format.pp_print_string ppf
-      (if String.exists is_float_char shortest then shortest else shortest ^ ".")
-
-let rec pp_lit : type a. a Kind.t -> Format.formatter -> a -> unit =
- fun k ppf v ->
-  match k with
-  | Int -> Format.pp_print_int ppf v
-  | Float -> pp_float ppf v
-  | Bool -> Format.pp_print_bool ppf v
-  | String -> Type.pp_quoted ppf v
-  | Binary -> Binary.pp ppf v
-  | Decimal -> Decimal.pp ppf v
-  | Date -> Time.Date.pp ppf v
-  | Instant -> Time.pp ppf v
-  | Span -> Time.Span.pp ppf v
-  | List k -> Type.pp_list (pp_lit k) ppf (Array.to_list v)
-  | Record -> Format.pp_print_string ppf "<record>"
-  | Tensor _ -> Format.pp_print_string ppf "<tensor>"
-  | Ext -> ( match v with _ -> .)
-
-let pp_value ty ppf v = pp_lit (Type.kind ty) ppf v
-
 let keywords =
   String.split_on_char ' '
     "and as assert asr begin class constraint do done downto effect else end \
@@ -700,14 +662,14 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   let str s ppf = Format.pp_print_string ppf s in
   let pp_values (type v w) (a : (v, w) t) (vs : v list) ppf =
     match a.typing with
-    | Some (Column ty) -> Type.pp_list (pp_value ty) ppf vs
+    | Some (Column ty) -> Type.pp_list (Type.pp_value ty) ppf vs
     | _ -> Format.pp_print_string ppf "[…]"
   in
   match e.node with
   | Handle (_, n) | Ext_handle (_, n) | Read (_, n) -> pp_name ppf n
   | Lit (k, v) ->
-      if is_negative k v then wrap ctx 7 ppf (fun ppf -> pp_lit k ppf v)
-      else pp_lit k ppf v
+      if is_negative k v then wrap ctx 7 ppf (fun ppf -> Type.pp_lit k ppf v)
+      else Type.pp_lit k ppf v
   | Null -> Format.pp_print_string ppf "null"
   | Rows -> Format.pp_print_string ppf "rows"
   | Int (op, a, b) ->
@@ -735,10 +697,13 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | Nx_where (c, a, b) -> app "where" [ arg c; arg a; arg b ]
   | Nx_cast (ty, a) -> app "convert" [ (fun ppf -> Type.pp ppf ty); arg a ]
   | Reduce (Quantile p, a) ->
-      app "quantile" [ (fun ppf -> pp_float ppf p); arg a ]
+      app "quantile" [ (fun ppf -> Type.pp_lit Float ppf p); arg a ]
   | Reduce (Ewm alpha, a) ->
       app "ewm"
-        [ (fun ppf -> Format.fprintf ppf "~alpha:%a" pp_float alpha); arg a ]
+        [
+          (fun ppf -> Format.fprintf ppf "~alpha:%a" (Type.pp_lit Float) alpha);
+          arg a;
+        ]
   | Reduce (r, a) -> app (reduction_name r) [ arg a ]
   | Over { by; order; e } ->
       let labelled label pp = function
@@ -1070,14 +1035,15 @@ let holds : type a. env -> string -> a typing -> a -> bool =
   | Column ty ->
       let held = Type.holds ty v in
       if not held then
-        report env "%a does not hold the %s %a." Type.pp ty what (pp_value ty) v;
+        report env "%a does not hold the %s %a." Type.pp ty what
+          (Type.pp_value ty) v;
       held
   | Extension d ->
       let s = d.enc v in
       let held = Type.holds d.storage s in
       if not held then
         report env "%a does not hold %a, the storage of the %s." Type.pp
-          d.storage (pp_value d.storage) s what;
+          d.storage (Type.pp_value d.storage) s what;
       held
   | Value -> true
 
