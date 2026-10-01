@@ -53,37 +53,49 @@
 51 Ops.INDEX dtypes.float [50, 10]
 52 Ops.CAST dtypes.float [51] dtypes.float
 53 Ops.EXP2 dtypes.float [52]
-54 Ops.CAST dtypes.float [53] dtypes.float
-55 Ops.BITCAST dtypes.uint [54] dtypes.uint
-56 Ops.CUSTOM dtypes.uchar [55] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-57 Ops.STORE dtypes.void [32, 56]
-58 Ops.INDEX dtypes.uchar [30, 37] tag=dtypes.fp8e5m2fnuz
-59 Ops.INDEX dtypes.float [50, 14]
-60 Ops.CAST dtypes.float [59] dtypes.float
-61 Ops.EXP2 dtypes.float [60]
-62 Ops.CAST dtypes.float [61] dtypes.float
-63 Ops.BITCAST dtypes.uint [62] dtypes.uint
-64 Ops.CUSTOM dtypes.uchar [63] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-65 Ops.STORE dtypes.void [58, 64]
-66 Ops.INDEX dtypes.uchar [30, 41] tag=dtypes.fp8e5m2fnuz
-67 Ops.INDEX dtypes.float [50, 18]
+54 Ops.BITCAST dtypes.uint [53] dtypes.uint
+55 Ops.CUSTOM dtypes.uchar [54] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+56 Ops.CUSTOM dtypes.float [55] ("f2f fp8e5m2fnuz float True", dtypes.float)
+57 Ops.CAST dtypes.float [56] dtypes.float
+58 Ops.BITCAST dtypes.uint [57] dtypes.uint
+59 Ops.CUSTOM dtypes.uchar [58] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+60 Ops.STORE dtypes.void [32, 59]
+61 Ops.INDEX dtypes.uchar [30, 37] tag=dtypes.fp8e5m2fnuz
+62 Ops.INDEX dtypes.float [50, 14]
+63 Ops.CAST dtypes.float [62] dtypes.float
+64 Ops.EXP2 dtypes.float [63]
+65 Ops.BITCAST dtypes.uint [64] dtypes.uint
+66 Ops.CUSTOM dtypes.uchar [65] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+67 Ops.CUSTOM dtypes.float [66] ("f2f fp8e5m2fnuz float True", dtypes.float)
 68 Ops.CAST dtypes.float [67] dtypes.float
-69 Ops.EXP2 dtypes.float [68]
-70 Ops.CAST dtypes.float [69] dtypes.float
-71 Ops.BITCAST dtypes.uint [70] dtypes.uint
-72 Ops.CUSTOM dtypes.uchar [71] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-73 Ops.STORE dtypes.void [66, 72]
-74 Ops.INDEX dtypes.uchar [30, 45] tag=dtypes.fp8e5m2fnuz
-75 Ops.INDEX dtypes.float [50, 22]
-76 Ops.CAST dtypes.float [75] dtypes.float
-77 Ops.EXP2 dtypes.float [76]
-78 Ops.CAST dtypes.float [77] dtypes.float
-79 Ops.BITCAST dtypes.uint [78] dtypes.uint
-80 Ops.CUSTOM dtypes.uchar [79] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-81 Ops.STORE dtypes.void [74, 80]
-82 Ops.GROUP dtypes.void [57, 65, 73, 81]
-83 Ops.GROUP dtypes.void [82, 82, 82, 82]
-84 Ops.END dtypes.void [83, 3]
-85 Ops.SINK dtypes.void [84] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-86 Ops.SINK dtypes.void [29, 85]
+69 Ops.BITCAST dtypes.uint [68] dtypes.uint
+70 Ops.CUSTOM dtypes.uchar [69] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+71 Ops.STORE dtypes.void [61, 70]
+72 Ops.INDEX dtypes.uchar [30, 41] tag=dtypes.fp8e5m2fnuz
+73 Ops.INDEX dtypes.float [50, 18]
+74 Ops.CAST dtypes.float [73] dtypes.float
+75 Ops.EXP2 dtypes.float [74]
+76 Ops.BITCAST dtypes.uint [75] dtypes.uint
+77 Ops.CUSTOM dtypes.uchar [76] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+78 Ops.CUSTOM dtypes.float [77] ("f2f fp8e5m2fnuz float True", dtypes.float)
+79 Ops.CAST dtypes.float [78] dtypes.float
+80 Ops.BITCAST dtypes.uint [79] dtypes.uint
+81 Ops.CUSTOM dtypes.uchar [80] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+82 Ops.STORE dtypes.void [72, 81]
+83 Ops.INDEX dtypes.uchar [30, 45] tag=dtypes.fp8e5m2fnuz
+84 Ops.INDEX dtypes.float [50, 22]
+85 Ops.CAST dtypes.float [84] dtypes.float
+86 Ops.EXP2 dtypes.float [85]
+87 Ops.BITCAST dtypes.uint [86] dtypes.uint
+88 Ops.CUSTOM dtypes.uchar [87] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+89 Ops.CUSTOM dtypes.float [88] ("f2f fp8e5m2fnuz float True", dtypes.float)
+90 Ops.CAST dtypes.float [89] dtypes.float
+91 Ops.BITCAST dtypes.uint [90] dtypes.uint
+92 Ops.CUSTOM dtypes.uchar [91] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+93 Ops.STORE dtypes.void [83, 92]
+94 Ops.GROUP dtypes.void [60, 71, 82, 93]
+95 Ops.GROUP dtypes.void [94, 94, 94, 94]
+96 Ops.END dtypes.void [95, 3]
+97 Ops.SINK dtypes.void [96] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+98 Ops.SINK dtypes.void [29, 97]
 

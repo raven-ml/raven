@@ -100,8 +100,11 @@
 98 Ops.CUSTOM dtypes.float [97] ("f2f_clamp bfloat16 True", dtypes.float)
 99 Ops.BITCAST dtypes.uint [98] dtypes.uint
 100 Ops.CUSTOM dtypes.ushort [99] ("f2f float bfloat16 True", dtypes.ushort)
-101 Ops.STORE dtypes.void [57, 100]
-102 Ops.END dtypes.void [101, 3]
-103 Ops.SINK dtypes.void [102] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
-104 Ops.SINK dtypes.void [55, 103]
+101 Ops.CUSTOM dtypes.float [100] ("f2f bfloat16 float True", dtypes.float)
+102 Ops.BITCAST dtypes.uint [101] dtypes.uint
+103 Ops.CUSTOM dtypes.ushort [102] ("f2f float bfloat16 True", dtypes.ushort)
+104 Ops.STORE dtypes.void [57, 103]
+105 Ops.END dtypes.void [104, 3]
+106 Ops.SINK dtypes.void [105] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+107 Ops.SINK dtypes.void [55, 106]
 

@@ -112,8 +112,11 @@
 110 Ops.CUSTOM dtypes.float [109] ("f2f_clamp fp8e5m2fnuz True", dtypes.float)
 111 Ops.BITCAST dtypes.uint [110] dtypes.uint
 112 Ops.CUSTOM dtypes.uchar [111] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-113 Ops.STORE dtypes.void [49, 112]
-114 Ops.END dtypes.void [113, 3]
-115 Ops.SINK dtypes.void [114] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
-116 Ops.SINK dtypes.void [47, 115]
+113 Ops.CUSTOM dtypes.float [112] ("f2f fp8e5m2fnuz float True", dtypes.float)
+114 Ops.BITCAST dtypes.uint [113] dtypes.uint
+115 Ops.CUSTOM dtypes.uchar [114] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+116 Ops.STORE dtypes.void [49, 115]
+117 Ops.END dtypes.void [116, 3]
+118 Ops.SINK dtypes.void [117] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+119 Ops.SINK dtypes.void [47, 118]
 

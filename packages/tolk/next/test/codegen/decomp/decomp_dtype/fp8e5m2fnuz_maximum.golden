@@ -77,43 +77,55 @@
 75 Ops.INDEX dtypes.float [74, 12]
 76 Ops.CAST dtypes.float [75] dtypes.float
 77 Ops.MAX dtypes.float [59, 76]
-78 Ops.CAST dtypes.float [77] dtypes.float
-79 Ops.BITCAST dtypes.uint [78] dtypes.uint
-80 Ops.CUSTOM dtypes.uchar [79] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-81 Ops.STORE dtypes.void [39, 80]
-82 Ops.INDEX dtypes.uchar [37, 44] tag=dtypes.fp8e5m2fnuz
-83 Ops.INDEX dtypes.float [57, 20]
-84 Ops.CAST dtypes.float [83] dtypes.float
-85 Ops.INDEX dtypes.float [74, 20]
-86 Ops.CAST dtypes.float [85] dtypes.float
-87 Ops.MAX dtypes.float [84, 86]
-88 Ops.CAST dtypes.float [87] dtypes.float
-89 Ops.BITCAST dtypes.uint [88] dtypes.uint
-90 Ops.CUSTOM dtypes.uchar [89] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-91 Ops.STORE dtypes.void [82, 90]
-92 Ops.INDEX dtypes.uchar [37, 48] tag=dtypes.fp8e5m2fnuz
-93 Ops.INDEX dtypes.float [57, 2]
+78 Ops.BITCAST dtypes.uint [77] dtypes.uint
+79 Ops.CUSTOM dtypes.uchar [78] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+80 Ops.CUSTOM dtypes.float [79] ("f2f fp8e5m2fnuz float True", dtypes.float)
+81 Ops.CAST dtypes.float [80] dtypes.float
+82 Ops.BITCAST dtypes.uint [81] dtypes.uint
+83 Ops.CUSTOM dtypes.uchar [82] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+84 Ops.STORE dtypes.void [39, 83]
+85 Ops.INDEX dtypes.uchar [37, 44] tag=dtypes.fp8e5m2fnuz
+86 Ops.INDEX dtypes.float [57, 20]
+87 Ops.CAST dtypes.float [86] dtypes.float
+88 Ops.INDEX dtypes.float [74, 20]
+89 Ops.CAST dtypes.float [88] dtypes.float
+90 Ops.MAX dtypes.float [87, 89]
+91 Ops.BITCAST dtypes.uint [90] dtypes.uint
+92 Ops.CUSTOM dtypes.uchar [91] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+93 Ops.CUSTOM dtypes.float [92] ("f2f fp8e5m2fnuz float True", dtypes.float)
 94 Ops.CAST dtypes.float [93] dtypes.float
-95 Ops.INDEX dtypes.float [74, 2]
-96 Ops.CAST dtypes.float [95] dtypes.float
-97 Ops.MAX dtypes.float [94, 96]
-98 Ops.CAST dtypes.float [97] dtypes.float
-99 Ops.BITCAST dtypes.uint [98] dtypes.uint
-100 Ops.CUSTOM dtypes.uchar [99] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-101 Ops.STORE dtypes.void [92, 100]
-102 Ops.INDEX dtypes.uchar [37, 52] tag=dtypes.fp8e5m2fnuz
-103 Ops.INDEX dtypes.float [57, 28]
-104 Ops.CAST dtypes.float [103] dtypes.float
-105 Ops.INDEX dtypes.float [74, 28]
-106 Ops.CAST dtypes.float [105] dtypes.float
-107 Ops.MAX dtypes.float [104, 106]
-108 Ops.CAST dtypes.float [107] dtypes.float
-109 Ops.BITCAST dtypes.uint [108] dtypes.uint
-110 Ops.CUSTOM dtypes.uchar [109] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-111 Ops.STORE dtypes.void [102, 110]
-112 Ops.GROUP dtypes.void [81, 91, 101, 111]
-113 Ops.GROUP dtypes.void [112, 112, 112, 112]
-114 Ops.END dtypes.void [113, 3]
-115 Ops.SINK dtypes.void [114] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-116 Ops.SINK dtypes.void [36, 115]
+95 Ops.BITCAST dtypes.uint [94] dtypes.uint
+96 Ops.CUSTOM dtypes.uchar [95] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+97 Ops.STORE dtypes.void [85, 96]
+98 Ops.INDEX dtypes.uchar [37, 48] tag=dtypes.fp8e5m2fnuz
+99 Ops.INDEX dtypes.float [57, 2]
+100 Ops.CAST dtypes.float [99] dtypes.float
+101 Ops.INDEX dtypes.float [74, 2]
+102 Ops.CAST dtypes.float [101] dtypes.float
+103 Ops.MAX dtypes.float [100, 102]
+104 Ops.BITCAST dtypes.uint [103] dtypes.uint
+105 Ops.CUSTOM dtypes.uchar [104] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+106 Ops.CUSTOM dtypes.float [105] ("f2f fp8e5m2fnuz float True", dtypes.float)
+107 Ops.CAST dtypes.float [106] dtypes.float
+108 Ops.BITCAST dtypes.uint [107] dtypes.uint
+109 Ops.CUSTOM dtypes.uchar [108] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+110 Ops.STORE dtypes.void [98, 109]
+111 Ops.INDEX dtypes.uchar [37, 52] tag=dtypes.fp8e5m2fnuz
+112 Ops.INDEX dtypes.float [57, 28]
+113 Ops.CAST dtypes.float [112] dtypes.float
+114 Ops.INDEX dtypes.float [74, 28]
+115 Ops.CAST dtypes.float [114] dtypes.float
+116 Ops.MAX dtypes.float [113, 115]
+117 Ops.BITCAST dtypes.uint [116] dtypes.uint
+118 Ops.CUSTOM dtypes.uchar [117] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+119 Ops.CUSTOM dtypes.float [118] ("f2f fp8e5m2fnuz float True", dtypes.float)
+120 Ops.CAST dtypes.float [119] dtypes.float
+121 Ops.BITCAST dtypes.uint [120] dtypes.uint
+122 Ops.CUSTOM dtypes.uchar [121] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
+123 Ops.STORE dtypes.void [111, 122]
+124 Ops.GROUP dtypes.void [84, 97, 110, 123]
+125 Ops.GROUP dtypes.void [124, 124, 124, 124]
+126 Ops.END dtypes.void [125, 3]
+127 Ops.SINK dtypes.void [126] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+128 Ops.SINK dtypes.void [36, 127]
 

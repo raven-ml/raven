@@ -44,36 +44,48 @@
 42 Ops.EXP2 dtypes.float [41]
 43 Ops.BITCAST dtypes.uint [42] dtypes.uint
 44 Ops.CUSTOM dtypes.ushort [43] ("f2f float bfloat16 True", dtypes.ushort)
-45 Ops.STORE dtypes.void [36, 44]
-46 Ops.INDEX dtypes.ushort [35, 12] tag=dtypes.bfloat16
-47 Ops.INDEX dtypes.ushort [37, 12] tag=dtypes.bfloat16
-48 Ops.LOAD dtypes.ushort [47]
-49 Ops.CUSTOM dtypes.float [48] ("f2f bfloat16 float True", dtypes.float)
-50 Ops.CAST dtypes.float [49] dtypes.float
-51 Ops.EXP2 dtypes.float [50]
-52 Ops.BITCAST dtypes.uint [51] dtypes.uint
-53 Ops.CUSTOM dtypes.ushort [52] ("f2f float bfloat16 True", dtypes.ushort)
-54 Ops.STORE dtypes.void [46, 53]
-55 Ops.INDEX dtypes.ushort [35, 19] tag=dtypes.bfloat16
-56 Ops.INDEX dtypes.ushort [37, 19] tag=dtypes.bfloat16
-57 Ops.LOAD dtypes.ushort [56]
-58 Ops.CUSTOM dtypes.float [57] ("f2f bfloat16 float True", dtypes.float)
-59 Ops.CAST dtypes.float [58] dtypes.float
-60 Ops.EXP2 dtypes.float [59]
-61 Ops.BITCAST dtypes.uint [60] dtypes.uint
-62 Ops.CUSTOM dtypes.ushort [61] ("f2f float bfloat16 True", dtypes.ushort)
-63 Ops.STORE dtypes.void [55, 62]
-64 Ops.INDEX dtypes.ushort [35, 26] tag=dtypes.bfloat16
-65 Ops.INDEX dtypes.ushort [37, 26] tag=dtypes.bfloat16
-66 Ops.LOAD dtypes.ushort [65]
-67 Ops.CUSTOM dtypes.float [66] ("f2f bfloat16 float True", dtypes.float)
-68 Ops.CAST dtypes.float [67] dtypes.float
-69 Ops.EXP2 dtypes.float [68]
+45 Ops.CUSTOM dtypes.float [44] ("f2f bfloat16 float True", dtypes.float)
+46 Ops.BITCAST dtypes.uint [45] dtypes.uint
+47 Ops.CUSTOM dtypes.ushort [46] ("f2f float bfloat16 True", dtypes.ushort)
+48 Ops.STORE dtypes.void [36, 47]
+49 Ops.INDEX dtypes.ushort [35, 12] tag=dtypes.bfloat16
+50 Ops.INDEX dtypes.ushort [37, 12] tag=dtypes.bfloat16
+51 Ops.LOAD dtypes.ushort [50]
+52 Ops.CUSTOM dtypes.float [51] ("f2f bfloat16 float True", dtypes.float)
+53 Ops.CAST dtypes.float [52] dtypes.float
+54 Ops.EXP2 dtypes.float [53]
+55 Ops.BITCAST dtypes.uint [54] dtypes.uint
+56 Ops.CUSTOM dtypes.ushort [55] ("f2f float bfloat16 True", dtypes.ushort)
+57 Ops.CUSTOM dtypes.float [56] ("f2f bfloat16 float True", dtypes.float)
+58 Ops.BITCAST dtypes.uint [57] dtypes.uint
+59 Ops.CUSTOM dtypes.ushort [58] ("f2f float bfloat16 True", dtypes.ushort)
+60 Ops.STORE dtypes.void [49, 59]
+61 Ops.INDEX dtypes.ushort [35, 19] tag=dtypes.bfloat16
+62 Ops.INDEX dtypes.ushort [37, 19] tag=dtypes.bfloat16
+63 Ops.LOAD dtypes.ushort [62]
+64 Ops.CUSTOM dtypes.float [63] ("f2f bfloat16 float True", dtypes.float)
+65 Ops.CAST dtypes.float [64] dtypes.float
+66 Ops.EXP2 dtypes.float [65]
+67 Ops.BITCAST dtypes.uint [66] dtypes.uint
+68 Ops.CUSTOM dtypes.ushort [67] ("f2f float bfloat16 True", dtypes.ushort)
+69 Ops.CUSTOM dtypes.float [68] ("f2f bfloat16 float True", dtypes.float)
 70 Ops.BITCAST dtypes.uint [69] dtypes.uint
 71 Ops.CUSTOM dtypes.ushort [70] ("f2f float bfloat16 True", dtypes.ushort)
-72 Ops.STORE dtypes.void [64, 71]
-73 Ops.GROUP dtypes.void [45, 54, 63, 72]
-74 Ops.END dtypes.void [73, 3]
-75 Ops.SINK dtypes.void [74] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-76 Ops.SINK dtypes.void [34, 75]
+72 Ops.STORE dtypes.void [61, 71]
+73 Ops.INDEX dtypes.ushort [35, 26] tag=dtypes.bfloat16
+74 Ops.INDEX dtypes.ushort [37, 26] tag=dtypes.bfloat16
+75 Ops.LOAD dtypes.ushort [74]
+76 Ops.CUSTOM dtypes.float [75] ("f2f bfloat16 float True", dtypes.float)
+77 Ops.CAST dtypes.float [76] dtypes.float
+78 Ops.EXP2 dtypes.float [77]
+79 Ops.BITCAST dtypes.uint [78] dtypes.uint
+80 Ops.CUSTOM dtypes.ushort [79] ("f2f float bfloat16 True", dtypes.ushort)
+81 Ops.CUSTOM dtypes.float [80] ("f2f bfloat16 float True", dtypes.float)
+82 Ops.BITCAST dtypes.uint [81] dtypes.uint
+83 Ops.CUSTOM dtypes.ushort [82] ("f2f float bfloat16 True", dtypes.ushort)
+84 Ops.STORE dtypes.void [73, 83]
+85 Ops.GROUP dtypes.void [48, 60, 72, 84]
+86 Ops.END dtypes.void [85, 3]
+87 Ops.SINK dtypes.void [86] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+88 Ops.SINK dtypes.void [34, 87]
 

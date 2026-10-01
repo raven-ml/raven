@@ -313,7 +313,8 @@ the Exclusions of `README.md`.
     `9042383626829825` is bfloat16 `0x5a01` here and `0x5a00` in tinygrad,
     whose double rounds it onto a tie. An emulated cast narrows a double, or
     an integer more precise than a float32, to float32 by rounding to odd, so
-    that the store's rounding is the one rounding; an emulated 64-bit integer
+    that the cast's rounding to the narrow float (D65) is the one rounding; an
+    emulated 64-bit integer
     converts to a float32 once, where tinygrad's word arithmetic rounds each
     word and their sum;
   - emulation keeps subnormals, both ways;
@@ -1745,7 +1746,7 @@ the Exclusions of `README.md`.
   widens every load of an emulated float to the emulating float and narrows
   every store back).
 - **tolk.next:** `lib/codegen/decomp/decomp_dtype.ml:677` (`moved`) and
-  `:803` (the store rule of `pm_float_decomp` that stores it), and
+  `:816` (the store rule of `pm_float_decomp` that stores it), and
   `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
 - **Differs:** a store of a value that moves stored bits without arithmetic
   (a load, a constant the float holds exactly, a selection between such
@@ -1774,7 +1775,7 @@ the Exclusions of `README.md`.
 - **tinygrad:** `renderer/cstyle.py:89-90` (`create_non_native_float_pats`,
   which casts a source of any type but float32 to a float32, then to the
   narrow float).
-- **tolk.next:** `lib/renderer/cstyle.ml:429` (the rule's cast), with
+- **tolk.next:** `lib/renderer/cstyle.ml:430` (the rule's cast), with
   `lib/codegen/decomp/decomp_dtype.ml:531` (`narrow`, D9's).
 - **Differs:** a renderer without arithmetic on a narrow float, Clang's on
   bfloat16 and HIP's on bfloat16 and the 8-bit floats, casts to it through a
@@ -1793,6 +1794,36 @@ the Exclusions of `README.md`.
   int64, int32, uint32, uint64 and float64 sources; rune.next's `Jit` suite:
   `values › a bfloat16 arange from 2^40 inside a compiled call equals
   eager's`.
+
+## D65. An emulated value is a value of its float
+
+- **tinygrad:** `codegen/decomp/dtype.py:198-201` (`pm_float_decomp`: a cast
+  to the emulated float only clamps its operand, `f2f_clamp`, and an
+  operation on it computes in the emulating float; only a store rounds).
+- **tolk.next:** `lib/codegen/decomp/decomp_dtype.ml:709` (`rounded`), `:791`
+  (the cast rule) and `:815` (the operation rule), and
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rules.
+- **Differs:** a cast to an emulated narrow float, and an operation on it,
+  round their result to it in the kernel: its bits encoded as the narrow
+  float's and decoded back. Every emulated node then holds a value of its
+  float, and the store's conversion is exact. tinygrad rounds only at the
+  store, so a value that a kernel casts to the narrow float and uses before
+  storing keeps the emulating float's precision: the e5m2 of 4113 cast back
+  to a float32 is 4113 there, and 4096 here, and an operation's result
+  feeds the next unrounded. A lane, a stack and a selection move values
+  already rounded, and stay as they are.
+- **Reason:** (b). nx rounds each operation's result to its dtype, and
+  rune.next compiles chains of operations on the 8-bit floats into one
+  kernel on the host and on Metal, which emulate them: `(y + y) * y` of an
+  e5m2 `y` computed eagerly differs from the kernel that rounds only once.
+- **Pinned by:** the `Decomp_dtype` suite
+  (`test/codegen/decomp/decomp_dtype`): `rounding in the kernel (D65) › a
+  cast to an emulated float and back is the value rounded once` and `› an
+  operation on an emulated float rounds its result to it`, on every emulated
+  float, and the goldens of every kernel that casts to or computes in an
+  emulated float, from the patched tinygrad; rune.next's `Jit` suite: `one
+  device › a chain of 8-bit float operations rounds after each, as eager
+  does`, and the same on Metal.
 
 ## D67. A long range runs as chunks of its trips
 

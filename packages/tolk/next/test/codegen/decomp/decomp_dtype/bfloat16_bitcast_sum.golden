@@ -47,37 +47,49 @@
 45 Ops.ADD dtypes.float [44, 9]
 46 Ops.BITCAST dtypes.uint [45] dtypes.uint
 47 Ops.CUSTOM dtypes.ushort [46] ("f2f float bfloat16 True", dtypes.ushort)
-48 Ops.BITCAST dtypes.ushort [47] dtypes.ushort
-49 Ops.STORE dtypes.void [5, 48]
-50 Ops.INDEX dtypes.ushort [40, 14] tag=dtypes.bfloat16
-51 Ops.LOAD dtypes.ushort [50]
-52 Ops.CUSTOM dtypes.float [51] ("f2f bfloat16 float True", dtypes.float)
-53 Ops.CAST dtypes.float [52] dtypes.float
-54 Ops.ADD dtypes.float [53, 9]
-55 Ops.BITCAST dtypes.uint [54] dtypes.uint
-56 Ops.CUSTOM dtypes.ushort [55] ("f2f float bfloat16 True", dtypes.ushort)
-57 Ops.BITCAST dtypes.ushort [56] dtypes.ushort
-58 Ops.STORE dtypes.void [15, 57]
-59 Ops.INDEX dtypes.ushort [40, 22] tag=dtypes.bfloat16
-60 Ops.LOAD dtypes.ushort [59]
-61 Ops.CUSTOM dtypes.float [60] ("f2f bfloat16 float True", dtypes.float)
-62 Ops.CAST dtypes.float [61] dtypes.float
-63 Ops.ADD dtypes.float [62, 9]
-64 Ops.BITCAST dtypes.uint [63] dtypes.uint
-65 Ops.CUSTOM dtypes.ushort [64] ("f2f float bfloat16 True", dtypes.ushort)
-66 Ops.BITCAST dtypes.ushort [65] dtypes.ushort
-67 Ops.STORE dtypes.void [23, 66]
-68 Ops.INDEX dtypes.ushort [40, 30] tag=dtypes.bfloat16
-69 Ops.LOAD dtypes.ushort [68]
-70 Ops.CUSTOM dtypes.float [69] ("f2f bfloat16 float True", dtypes.float)
-71 Ops.CAST dtypes.float [70] dtypes.float
-72 Ops.ADD dtypes.float [71, 9]
+48 Ops.CUSTOM dtypes.float [47] ("f2f bfloat16 float True", dtypes.float)
+49 Ops.BITCAST dtypes.uint [48] dtypes.uint
+50 Ops.CUSTOM dtypes.ushort [49] ("f2f float bfloat16 True", dtypes.ushort)
+51 Ops.BITCAST dtypes.ushort [50] dtypes.ushort
+52 Ops.STORE dtypes.void [5, 51]
+53 Ops.INDEX dtypes.ushort [40, 14] tag=dtypes.bfloat16
+54 Ops.LOAD dtypes.ushort [53]
+55 Ops.CUSTOM dtypes.float [54] ("f2f bfloat16 float True", dtypes.float)
+56 Ops.CAST dtypes.float [55] dtypes.float
+57 Ops.ADD dtypes.float [56, 9]
+58 Ops.BITCAST dtypes.uint [57] dtypes.uint
+59 Ops.CUSTOM dtypes.ushort [58] ("f2f float bfloat16 True", dtypes.ushort)
+60 Ops.CUSTOM dtypes.float [59] ("f2f bfloat16 float True", dtypes.float)
+61 Ops.BITCAST dtypes.uint [60] dtypes.uint
+62 Ops.CUSTOM dtypes.ushort [61] ("f2f float bfloat16 True", dtypes.ushort)
+63 Ops.BITCAST dtypes.ushort [62] dtypes.ushort
+64 Ops.STORE dtypes.void [15, 63]
+65 Ops.INDEX dtypes.ushort [40, 22] tag=dtypes.bfloat16
+66 Ops.LOAD dtypes.ushort [65]
+67 Ops.CUSTOM dtypes.float [66] ("f2f bfloat16 float True", dtypes.float)
+68 Ops.CAST dtypes.float [67] dtypes.float
+69 Ops.ADD dtypes.float [68, 9]
+70 Ops.BITCAST dtypes.uint [69] dtypes.uint
+71 Ops.CUSTOM dtypes.ushort [70] ("f2f float bfloat16 True", dtypes.ushort)
+72 Ops.CUSTOM dtypes.float [71] ("f2f bfloat16 float True", dtypes.float)
 73 Ops.BITCAST dtypes.uint [72] dtypes.uint
 74 Ops.CUSTOM dtypes.ushort [73] ("f2f float bfloat16 True", dtypes.ushort)
 75 Ops.BITCAST dtypes.ushort [74] dtypes.ushort
-76 Ops.STORE dtypes.void [31, 75]
-77 Ops.GROUP dtypes.void [49, 58, 67, 76]
-78 Ops.END dtypes.void [77, 3]
-79 Ops.SINK dtypes.void [78] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-80 Ops.SINK dtypes.void [39, 79]
+76 Ops.STORE dtypes.void [23, 75]
+77 Ops.INDEX dtypes.ushort [40, 30] tag=dtypes.bfloat16
+78 Ops.LOAD dtypes.ushort [77]
+79 Ops.CUSTOM dtypes.float [78] ("f2f bfloat16 float True", dtypes.float)
+80 Ops.CAST dtypes.float [79] dtypes.float
+81 Ops.ADD dtypes.float [80, 9]
+82 Ops.BITCAST dtypes.uint [81] dtypes.uint
+83 Ops.CUSTOM dtypes.ushort [82] ("f2f float bfloat16 True", dtypes.ushort)
+84 Ops.CUSTOM dtypes.float [83] ("f2f bfloat16 float True", dtypes.float)
+85 Ops.BITCAST dtypes.uint [84] dtypes.uint
+86 Ops.CUSTOM dtypes.ushort [85] ("f2f float bfloat16 True", dtypes.ushort)
+87 Ops.BITCAST dtypes.ushort [86] dtypes.ushort
+88 Ops.STORE dtypes.void [31, 87]
+89 Ops.GROUP dtypes.void [52, 64, 76, 88]
+90 Ops.END dtypes.void [89, 3]
+91 Ops.SINK dtypes.void [90] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+92 Ops.SINK dtypes.void [39, 91]
 

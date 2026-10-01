@@ -36,7 +36,7 @@ index efb2e82..8c64ddb 100644
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
-index e1d9579..b531ff8 100644
+index e1d9579..1e6a05d 100644
 --- a/tinygrad/codegen/decomp/dtype.py
 +++ b/tinygrad/codegen/decomp/dtype.py
 @@ -1,5 +1,6 @@
@@ -47,10 +47,13 @@ index e1d9579..b531ff8 100644
  from tinygrad.helpers import flatten, DEBUG, EMULATED_DTYPES
  from tinygrad.uop import GroupOp
  from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, graph_rewrite
-@@ -144,6 +145,26 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
+@@ -144,6 +145,29 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
  
  def f2f_rewrite(ctx:tuple, x:UOp) -> UOp: return graph_rewrite(x, pm_float_decomp, ctx=ctx, bottom_up=True)
  
++# x, a value of the emulating float, rounded to the emulated float: every emulated node holds a value of its float
++def f2f_round(x:UOp, fr:DType, to:DType) -> UOp: return f2f(f2f(x.bitcast(f2f_dt[to]), to, fr), fr, to)
++
 +# the bits a value of the emulated float moves from storage without arithmetic: a load, a constant, a selection between
 +# such values, and stacks and lanes of them. a move keeps every code, a signalling NaN's included
 +def f2f_moved(ctx:tuple, x:UOp) -> UOp|None:
@@ -74,10 +77,16 @@ index e1d9579..b531ff8 100644
  # tag is the 32-bit word this node becomes - (0 for the low word, 1 for the high, the dtype the consumer wants)
  pm_long_decomp: PatternMatcher = PatternMatcher([
    # the decomp's own bottom-up rewrite can mint bare consts mid-flight: word splitting commits them at the long sibling's dtype
-@@ -199,6 +220,9 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
-    f2f_clamp(val.cast(ctx[1]), ctx[0]) if x.dtype == ctx[0] else None),
+@@ -196,9 +220,13 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
+   (UPat(Ops.BITCAST, src=(UPat.var("x"),), name="bc"), lambda ctx,bc,x:
+    f2f(x.bitcast(f2f_dt[ctx[0]]), ctx[0], ctx[1]) if bc.dtype == ctx[0] else None),
+   (UPat(Ops.CAST, dtypes.floats, src=(UPat.var("val"),), name="x"), lambda ctx,x,val:
+-   f2f_clamp(val.cast(ctx[1]), ctx[0]) if x.dtype == ctx[0] else None),
++   f2f_round(f2f_clamp(val.cast(ctx[1]), ctx[0]), *ctx) if x.dtype == ctx[0] else None),
    (UPat(GroupOp.ALU|{Ops.STACK, Ops.INDEX}, dtypes.floats, name="x"), lambda ctx,x:
-    UOp(x.op, src=tuple(s.cast(ctx[1]) if s.dtype == ctx[0] else s for s in x.src), arg=x.arg, tag=x.tag) if x.dtype == ctx[0] else None),
+-   UOp(x.op, src=tuple(s.cast(ctx[1]) if s.dtype == ctx[0] else s for s in x.src), arg=x.arg, tag=x.tag) if x.dtype == ctx[0] else None),
++   (y if x.op in {Ops.STACK, Ops.INDEX, Ops.WHERE} else f2f_round(y, *ctx))
++   if x.dtype == ctx[0] and (y:=UOp(x.op, src=tuple(s.cast(ctx[1]) if s.dtype == ctx[0] else s for s in x.src), arg=x.arg, tag=x.tag)) is not None else None),
 +  # a store of a move stores the bits moved
 +  (UPat(Ops.STORE, src=(UPat.var("idx"), UPat.var("val")), allow_any_len=True, name='st'), lambda ctx,st,idx,val:
 +   st.replace(src=(f2f_rewrite(ctx, idx), bits, *st.src[2:])) if val.dtype == ctx[0] and (bits:=f2f_moved(ctx, val)) is not None else None),

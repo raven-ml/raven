@@ -794,6 +794,50 @@ let nans =
             (written ~on:on_narrows k [ List.map code cs ]));
     ]
 
+(* Rounding in the kernel (D65) *)
+
+(* Float32 values within every narrow float's range. *)
+let in_range =
+  List.map
+    (fun x -> `Float (Int32.float_of_bits (Int32.bits_of_float x)))
+    [ 13.7; 1.3; 0.1; 3.3; -2.7; 0.0123 ]
+
+(* [rounded dt v] is the value [v] rounded to [dt] once, as a float32. *)
+let rounded dt v =
+  match Dtype.const dt v with
+  | `Float x -> `Float x
+  | c -> failf "%a is no float" (Testable.pp Dtypes.const) c
+
+let rounding =
+  group "rounding in the kernel (D65)"
+    [
+      cases ~name:alias
+        "a cast to an emulated float and back is the value rounded once"
+        narrows (fun dt ->
+          let k =
+            kernel [ Float32 ] Float32 (List.length in_range) (fun xs ->
+                Ops.cast (Ops.cast (List.hd xs) dt) Float32)
+          in
+          equal (list value)
+            (List.map (rounded dt) in_range)
+            (written ~on:on_narrows k [ in_range ]));
+      cases ~name:alias
+        "an operation on an emulated float rounds its result to it" narrows
+        (fun dt ->
+          let xs = List.map (fun x -> code (encode dt x)) in_range in
+          let ys = List.rev xs in
+          let k =
+            kernel [ dt; dt ] Float32 (List.length xs) (fun l ->
+                Ops.cast (Ops.add (List.nth l 0) (List.nth l 1)) Float32)
+          in
+          let sum x y =
+            `Float (decode dt (as_int x) +. decode dt (as_int y))
+          in
+          equal (list value)
+            (List.map2 (fun x y -> rounded dt (sum x y)) xs ys)
+            (written ~on:on_narrows k [ xs; ys ]));
+    ]
+
 (* 64-bit integers *)
 
 let on_32_bits = lacking longs
@@ -1541,6 +1585,7 @@ let () =
          f2f_clamp;
          emulated_floats;
          nans;
+         rounding;
          d9;
          long_arithmetic;
          graphs;

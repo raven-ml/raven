@@ -2698,6 +2698,22 @@ let on_one_device ~name d =
               (Nx.cast Nx.float32 (host (g v)))
           in
           retraces (read 0) (read 1));
+      test
+        "a chain of 8-bit float operations rounds after each, as eager does"
+        (fun () ->
+          let chain (type b) (dt : (float, b) Nx.dtype) =
+            let x =
+              Nx.create Nx.float32 [| 6 |]
+                [| 13.7; 1.3; 0.1; 3.3; -2.7; 0.0123 |]
+            in
+            let f x =
+              let y = Nx.cast dt x in
+              Nx.cast Nx.float32 (Nx.mul (Nx.add y y) y)
+            in
+            equal floats (f x) (host (Rune.jit' f (placed d x)))
+          in
+          chain Nx.float8_e4m3;
+          chain Nx.float8_e5m2);
       test "a call whose trace raises allocates nothing" (fun () ->
           let a = placed d (x ()) in
           let before = allocated d in

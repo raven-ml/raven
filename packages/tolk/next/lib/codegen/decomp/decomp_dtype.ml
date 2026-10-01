@@ -703,6 +703,12 @@ and moved ((fr, _) as ctx) x =
       Option.map (fun lanes -> index lanes at) (moved ctx lanes)
   | _ -> None
 
+(* [x], a value of the emulating float, rounded to the emulated float [fr]: its
+   bits encoded as [fr]'s, decoded back. Every emulated node holds a value of
+   [fr], so a cast or an operation rounds where nx rounds it (D65). *)
+and rounded (fr, to_) x =
+  f2f (f2f (bitcast x (f2f_dt to_)) to_ fr) fr to_
+
 and f2f_rewrite ctx x =
   graph_rewrite ~bottom_up:true ~ctx x (Lazy.force pm_float_decomp)
 
@@ -782,7 +788,7 @@ and pm_float_decomp =
            (Upat.op Op.Cast ~dtype:floats ~src:[ Upat.var "val" ] ~name:"x")
            (fun ((fr, to_) as ctx) m ->
              if emulated ctx (m "x") then
-               Some (f2f_clamp (narrow (m "val") to_) fr)
+               Some (rounded ctx (f2f_clamp (narrow (m "val") to_) fr))
              else None);
          rule_ctx
            (Upat.v
@@ -792,14 +798,21 @@ and pm_float_decomp =
              let x = m "x" in
              if not (emulated ctx x) then None
              else
+               let y =
+                 v (op x)
+                   ~src:
+                     (List.map
+                        (fun s ->
+                          if Dtype.equal (dtype s) fr then cast s to_ else s)
+                        (src x))
+                   ~arg:(arg x) ?tag:(tag x)
+               in
+               (* A lane, a stack or a selection moves values already of
+                  [fr]; arithmetic rounds its result. *)
                Some
-                 (v (op x)
-                    ~src:
-                      (List.map
-                         (fun s ->
-                           if Dtype.equal (dtype s) fr then cast s to_ else s)
-                         (src x))
-                    ~arg:(arg x) ?tag:(tag x)));
+                 (if Op.Set.mem (op x) (ops [ Op.Stack; Op.Index; Op.Where ])
+                  then y
+                  else rounded ctx y));
          (* A store of a move stores the bits moved (D62). *)
          rule_ctx
            (Upat.v ~op:(ops [ Op.Store ]) ~allow_any_len:true
