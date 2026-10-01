@@ -16,6 +16,11 @@ the position of that kernel in `kernels`, and its text golden is its source.
 tolk.next writes a division, `Ops.FDIV`, on every target (D50), so a source is
 the one tinygrad writes once its renderer lists `Ops.FDIV` as Clang does.
 
+Metal's vector types of chars, unsigned shorts and unsigned longs are named
+after the one-word names Metal gives their elements (D55), so a Metal source
+is tinygrad's with `signed_char`, `unsigned_char`, `unsigned_short` and
+`unsigned_long` vectors named `char`, `uchar`, `ushort` and `ulong` ones.
+
 The rewrites are a table `rewrites`, whose rows give the position of an input
 in `rewrite_inputs` and of its result in `rewritten`. The table `declarations`
 holds what each renderer declares for a target, and `written` how each writes
@@ -288,6 +293,22 @@ def vector_cast():
     return lanes(a).store(lanes(b).load().cast(dtypes.int)).sink(arg=KernelInfo(name="vector_cast"))
 
 
+def vector_copy(dt, lanes):
+    """A vector of `lanes` elements of `dt`, loaded and stored whole."""
+    def make():
+        a, b = UOp.param(0, dt, lanes), UOp.param(1, dt, lanes)
+        def whole(buf): return UOp(Ops.SHRINK, src=(buf, int32(0), int32(lanes)))
+        return whole(a).store(whole(b).load()).sink(arg=KernelInfo(name="vector_copy"))
+    return make
+
+
+def reinterpreted_cast(dt):
+    """Four ints converted to four `dt` lanes at once."""
+    a, b = UOp.param(0, dt, 4), UOp.param(1, dtypes.int, 4)
+    def whole(buf): return UOp(Ops.SHRINK, src=(buf, int32(0), int32(4)))
+    return whole(a).store(whole(b).load().cast(dt)).sink(arg=KernelInfo(name="vector_cast"))
+
+
 def register_cast():
     """Two uint registers read as one ulong through a cast of their address,
     which C alone allows."""
@@ -402,6 +423,12 @@ def cases_of(name):
             ("table", ast(binary))]
     if name in ("metal", "cuda", "hip"):
         extra = [("nontemporal", ast(nontemporal))] if name == "hip" else []
+        if name == "metal":
+            # Every vector type Metal has: 2, 3 and 4 lanes of each element.
+            vectors = (dtypes.char, dtypes.uchar, dtypes.short, dtypes.ushort, dtypes.int, dtypes.uint, dtypes.long,
+                       dtypes.ulong, dtypes.half, dtypes.float, dtypes.bfloat16)
+            extra = [(f"vector_{dtype_name(dt)}_{n}", raw(vector_copy(dt, n))) for dt in vectors for n in (2, 3, 4)]
+            extra += [("vector_cast_char", raw(lambda: reinterpreted_cast(dtypes.char)))]
         return common(ren) + gpu() + tensor_cores(ren) + extra
     # The other AMD targets differ from gfx1100 in their tensor cores and 8-bit
     # and bfloat16 floats.
@@ -504,12 +531,29 @@ def writing_division(ren):
     return ren
 
 
+# D55: Metal's vector types are named after one-word elements, where tinygrad
+# joins the words of a two-word element's name with an underscore.
+
+METAL_VECTORS = {dtypes.char: "char", dtypes.uchar: "uchar", dtypes.ushort: "ushort", dtypes.ulong: "ulong"}
+
+
+def naming_vectors(ren):
+    if not isinstance(ren, MetalRenderer): return ren
+    render = ren._render_dtype
+    def _render_dtype(dtype, sz=1, *args, **kwargs):
+        written = render(dtype, sz, *args, **kwargs)
+        if sz == 1 or dtype not in METAL_VECTORS: return written
+        return written.replace(dtype.name.replace(" ", "_") + str(sz), METAL_VECTORS[dtype] + str(sz))
+    ren._render_dtype = _render_dtype
+    return ren
+
+
 def source(case, name, make, setting):
     def body():
         if setting:
             key, value = setting.split("=")
             os.environ[key] = value
-        return writing_division(renderer(name)).render(kernel_of(name, make, setting)[1])
+        return naming_vectors(writing_division(renderer(name))).render(kernel_of(name, make, setting)[1])
     body.__name__ = case
     return body
 

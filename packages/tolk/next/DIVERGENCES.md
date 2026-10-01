@@ -1387,3 +1387,25 @@ the Exclusions of `README.md`.
   reads a lane of a scalar or a constant`; and the cases `invalid_lanes` and
   `invalid_lanes_int8` of every target in `stages`, from the patched
   tinygrad.
+
+## D55. Metal names a vector after its element's one-word name
+
+- **tinygrad:** `renderer/cstyle.py:186` (`_render_dtype` names a vector
+  after its element's name with spaces made underscores) and `:362`
+  (`MetalRenderer.type_map` renames only `uint` and `bfloat`).
+- **tolk.next:** `lib/renderer/cstyle.ml:87,119` (`vector_names`) and
+  `:874-879` (Metal's).
+- **Differs:** a Metal vector of `signed char`, `unsigned char`,
+  `unsigned short` or `unsigned long` is a `char`, `uchar`, `ushort` or
+  `ulong` vector, as Metal names them; tinygrad writes `signed_char4`,
+  `unsigned_char4`, `unsigned_short4` and `unsigned_long4`, which Metal does
+  not have, so such a kernel does not compile. Scalars keep tinygrad's names.
+  Metal's vectors have 2, 3 or 4 lanes; none has 8.
+- **Reason:** (b). rune's compiled backend folds and unfolds int8 arrays on
+  Metal, whose kernels hold `char4` values (the Compiled suite's `fold of
+  integers`).
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `sources › by
+  default › metal_vector_<element>_<lanes>`, tinygrad's source with the D55
+  names, for each element and 2, 3 and 4 lanes, and `metal_vector_cast_char`;
+  and the slow `every GPU kernel compiles with its target's toolchain ›
+  metal_vector_*`, which compiles each with MTLCompiler.

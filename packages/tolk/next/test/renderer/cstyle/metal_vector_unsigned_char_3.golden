@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device unsigned char* data0_3; device unsigned char* data1_3; };
+kernel void vector_copy(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device unsigned char* data0_3 = args.data0_3; device unsigned char* data1_3 = args.data1_3;
+  uchar3 val0 = (*((device uchar3*)((data1_3+0))));
+  *((device uchar3*)((data0_3+0))) = val0;
+}

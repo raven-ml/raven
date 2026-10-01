@@ -84,6 +84,8 @@ type lang = {
   infinity : string;
   nan : string;
   promoted : Dtype.t list; (* scalars whose operations compute wider *)
+  vector_names : (Dtype.t * string) list;
+      (* the element names of vector types, where they are not type_map's *)
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
   string_rewrite : (ctx, string) Pattern_matcher.t;
 }
@@ -113,9 +115,12 @@ let render_dtype ?(sz = 1) ?(addrspace = Some Dtype.Alu) ?(override_ptr = false)
     Option.value (List.assoc_opt dt l.type_map) ~default:(Dtype.name dt)
   in
   if sz > 1 then
-    prefix
-    ^ String.map (function ' ' -> '_' | c -> c) name
-    ^ string_of_int sz ^ suffix
+    let element =
+      match List.assoc_opt dt l.vector_names with
+      | Some element -> element
+      | None -> String.map (function ' ' -> '_' | c -> c) name
+    in
+    prefix ^ element ^ string_of_int sz ^ suffix
   else prefix ^ name ^ suffix
 
 let render_scalar l dt = render_dtype l ~addrspace:(Some Dtype.Reg) dt
@@ -575,6 +580,7 @@ let cstyle =
     infinity = "INFINITY";
     nan = "NAN";
     promoted = Dtype.[ Int8; Uint8; Int16; Uint16 ];
+    vector_names = [];
     code_for_op;
     string_rewrite = base_rewrite;
   }
@@ -865,6 +871,12 @@ let metal_lang =
         "uint3 lid [[thread_position_in_threadgroup]]";
       ];
     type_map = [ (Dtype.Uint32, "uint"); (Dtype.Bfloat16, "bfloat") ];
+    (* Metal's vector types are named after one-word elements *)
+    vector_names =
+      Dtype.
+        [
+          (Int8, "char"); (Uint8, "uchar"); (Uint16, "ushort"); (Uint64, "ulong");
+        ];
     code_for_op = override code_for_op [ (Op.Sin, call "precise::sin") ];
     string_rewrite =
       Pattern_matcher.append
