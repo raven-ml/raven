@@ -10,7 +10,7 @@ module Repr = Nx.Repr
    slots: the first holds the call, the others [Part]. *)
 type entry =
   | Input
-  | Recorded : ('a, 'b) Nx.t Nx.Op.t * ('a, 'b) Nx_dtype.t -> entry
+  | Recorded : ('a, 'b) Nx.t Nx.Op.t -> entry
   | Call of {
       inputs : Nx.packed list;
       like : Nx.packed list;
@@ -81,9 +81,8 @@ let nonlinear t op =
 (* [record t op x] is the slot of [op]'s result, recorded on [t]; [x] is a slot
    operand, whose context the result takes. *)
 let record t op x =
-  let dtype = Nx.Op.dtype op in
-  slot t ~context:(Repr.context x) (placement op) dtype (Nx.Op.shape op)
-    (Recorded (op, dtype))
+  slot t ~context:(Repr.context x) (placement op) (Nx.Op.dtype op)
+    (Nx.Op.shape op) (Recorded op)
 
 let claims : type r. tape -> r Nx.Op.t -> bool =
  fun t op ->
@@ -516,9 +515,9 @@ let transpose cts =
   let t = cts.tape in
   for i = t.length - 1 downto 0 do
     match t.entries.(i) with
-    | Recorded (op, dtype) ->
+    | Recorded op ->
         Option.iter
-          (fun ct -> transpose_op cts op (Nx.unpack dtype ct))
+          (fun ct -> transpose_op cts op (Nx.unpack (Nx.Op.dtype op) ct))
           cts.cts.(i)
     | Call { inputs; like; pullback } ->
         transpose_call cts i inputs like pullback
