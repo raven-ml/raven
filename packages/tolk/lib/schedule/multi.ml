@@ -127,7 +127,9 @@ let replace_allreduce =
         (Upat.op Op.Shrink ~name:"shrink" ~allow_any_len:true
            ~src:[ Upat.op Op.Mstack ~name:"ms" ])
         (fun m -> Some (mstack_early_shrink (m "ms") (m "shrink")));
-      (* Shard selections move before movements and arithmetic. *)
+      (* Shard selections move before movements and elementwise operations, so
+         that a joined value's bitcast back to its dtype is read where the
+         selected shard is, with no kernel of its own. *)
       rule
         (Upat.op Op.Mselect ~name:"ms"
            ~src:
@@ -147,7 +149,7 @@ let replace_allreduce =
                ~src:(mselect (m "s") i :: List.map arg (List.tl (src v)))));
       rule
         (Upat.op Op.Mselect ~name:"ms"
-           ~src:[ Upat.v ~op:Op.Set.alu ~name:"a" () ])
+           ~src:[ Upat.v ~op:Op.Set.elementwise ~name:"a" () ])
         (fun m ->
           let i = shard_index (m "ms") in
           let a = m "a" in

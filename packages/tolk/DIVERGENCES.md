@@ -624,7 +624,7 @@ the Exclusions of `README.md`.
   `t = Tensor(Tensor.arange(48).float().reshape(4, 12).contiguous().realize().uop.copy_to_device(devs)._shard(0, r0)._shard(1, r1).unshard((0, 1), (r0, r1)))`,
   then `(t.reshape(4, 12, 1) * 2).to("CPU").schedule_linear()` raises
   `ValueError: size mismatch, can't reshape ((2, 3)) -> ((1, 3, 1))`.
-- **tolk:** `lib/schedule/multi.ml:362` (`reshape_multi`).
+- **tolk:** `lib/schedule/multi.ml:366` (`reshape_multi`).
 - **Differs:** each sharded axis of the new shape is divided by the shard
   count of its own range, so the shard of the repro reshapes to `(2, 3, 1)`.
   When the sharded axes share one count, the two agree.
@@ -663,7 +663,7 @@ the Exclusions of `README.md`.
   range, and so reads the shard of whichever device runs it. Repro:
   `x = Tensor([10.,20.]).shard(("CPU:0","CPU:1"), 0).realize(); w = Tensor([1.,2.]).to(("CPU:0","CPU:1")).realize(); (x + w)[0:1].tolist()`
   raises `RuntimeError: unbound Variable '_device_num'`.
-- **tolk:** `lib/schedule/multi.ml:131` (the rule), with `:54`
+- **tolk:** `lib/schedule/multi.ml:133` (the rule), with `:54`
   (`at_device`).
 - **Differs:** the movement's arguments take the selected shard's position
   for the device range, as a shrink moved before an `MSTACK` already does
@@ -1794,7 +1794,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `schedule/multi.py:188-200` (`stack_multi`, which stacks a
   source that is not sharded as it is beside the shards of the others).
-- **tolk:** `lib/schedule/multi.ml:474` (`stack_multi`), and
+- **tolk:** `lib/schedule/multi.ml:500` (`stack_multi`), and
   `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
 - **Differs:** in a stack whose sharded sources are sharded alike, a whole
   source, one value of the full shape on every device, takes its per-shard
@@ -2149,9 +2149,9 @@ tolk lowers as one, replaces it.
   (`data_srcs`), `:227` (`convert_gather`), `:319` and `:508`
   (`run_rangeify`'s consumer ranges); `lib/schedule/prepare.ml:90`
   (`move_index`), `:133` (`mops`), `:159` (`pm_tensor_mops`) and `:195`
-  (`fix_store_hazard`'s `reorders`); `lib/schedule/multi.ml:556`
-  (`same_devices`), `:567` (`gather_shards`), `:590` (`gather_multi`) and
-  `:692`; the same rules in `test/gen/tinygrad.patch`, which the goldens are
+  (`fix_store_hazard`'s `reorders`); `lib/schedule/multi.ml:558`
+  (`same_devices`), `:569` (`gather_shards`), `:592` (`gather_multi`) and
+  `:694`; the same rules in `test/gen/tinygrad.patch`, which the goldens are
   recorded with.
 - **Differs:** an `INDEX` whose one index source has axes, `INDEX(x, L)`,
   reads `x` at the row each element of `L` holds, and its shape is `L`'s
@@ -2501,7 +2501,7 @@ tolk lowers as one, replaces it.
 - **tinygrad:** `schedule/multi.py:256` (`store_value_multi`), which stores
   each shard of a sharded value into its own part of an unsharded
   destination.
-- **tolk:** `lib/schedule/multi.ml:607` (`store_value_multi`);
+- **tolk:** `lib/schedule/multi.ml:609` (`store_value_multi`);
   `test/gen/tinygrad.patch`.
 - **Differs:** a store of a sharded value into a destination that is whole
   and lives on several devices raises `Invalid_argument`. Each device would
@@ -2521,15 +2521,18 @@ tolk lowers as one, replaces it.
 
 - **tinygrad:** `schedule/multi.py:228-252` (`copy_multi`), which places each
   shard at its offset in zeros and sums the devices' values.
-- **tolk:** `lib/schedule/multi.ml:180` (`joined`) and `:300`, its use in
-  `copy_multi`; `test/gen/tinygrad.patch`, which gives tinygrad the same.
+- **tolk:** `lib/schedule/multi.ml:182` (`joined`) and `:302`, its use in
+  `copy_multi`; `:150`, shard selections moved before casts and bitcasts;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same.
 - **Differs:** the devices' values are joined by an allreduce with a bitwise
   or over each element's bits, as unsigned integers of its width, `uint8`
   for a boolean. Each element is nonzero on at most one device, so the or is
   its exact bits, where the sum turns `-0.` into `+0.` and quiets a
-  signalling NaN. A joined index type, which has no width, is refused. The
-  bitcasts can cost a kernel: `mesh_to_one` schedules 12 kernels, 11 with the
-  sum.
+  signalling NaN. A joined index type, which has no width, is refused. A
+  shard selection moves before a cast or bitcast as it moves before
+  arithmetic, where tinygrad's stops at arithmetic, so the bitcast back is
+  read where the selected shard is read: `mesh_to_one` schedules 11
+  kernels, as with the sum.
 - **Reason:** (b): rune reads a value sharded over devices whole on each, as
   nx places a gather of split rows by a split index, and expects eager's
   bits, `-0.` included: `Jit › gathers across devices`.

@@ -35,8 +35,8 @@
 33 Ops.PAD dtypes.float [29, 32, 2]
 34 Ops.BITCAST dtypes.uint [33] dtypes.uint
 35 Ops.ALLREDUCE dtypes.uint [34] (Ops.OR, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
-36 Ops.BITCAST dtypes.float [35] dtypes.float
-37 Ops.MSELECT dtypes.float [36] 0
+36 Ops.MSELECT dtypes.uint [35] 0
+37 Ops.BITCAST dtypes.float [36] dtypes.float
 38 Ops.CONST dtypes.weakfloat [] 1.0
 39 Ops.ADD dtypes.float [37, 38]
 40 Ops.STORE dtypes.void [3, 39]

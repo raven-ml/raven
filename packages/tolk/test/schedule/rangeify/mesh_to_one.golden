@@ -86,8 +86,8 @@
 84 Ops.CALL dtypes.void [23, 5, 83] CallInfo(name="allreduce", precompile=True)
 85 Ops.AFTER dtypes.uint [5, 84]
 86 Ops.RESHAPE dtypes.uint [85, 2]
-87 Ops.BITCAST dtypes.float [86] dtypes.float
-88 Ops.MSELECT dtypes.float [87] 0
+87 Ops.MSELECT dtypes.uint [86] 0
+88 Ops.BITCAST dtypes.float [87] dtypes.float
 89 Ops.CONST dtypes.weakfloat [] 1.0
 90 Ops.ADD dtypes.float [88, 89]
 91 Ops.STORE dtypes.void [3, 90]

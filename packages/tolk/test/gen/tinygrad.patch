@@ -937,9 +937,22 @@ index 228ec4e..b685b27 100644
    with Context(SPEC=min(SPEC.value, 2)):
      tsink = graph_rewrite(tsink, pm_apply_rangeify, ctx=rctx, bottom_up=True, name="apply rangeify")
 diff --git a/tinygrad/schedule/multi.py b/tinygrad/schedule/multi.py
-index 099ac10..894c9f7 100644
+index 099ac10..2e22d4b 100644
 --- a/tinygrad/schedule/multi.py
 +++ b/tinygrad/schedule/multi.py
+@@ -37,10 +37,10 @@ replace_allreduce = PatternMatcher([
+   (UPat(Ops.MSELECT, src=(UPat(Ops.MSTACK, name="mstack"),), name="ms"), lambda mstack, ms: mstack.src[ms.arg]),
+   # move shrink before MSTACK
+   (UPat(Ops.SHRINK, src=(UPat(Ops.MSTACK, name="ms"),), allow_any_len=True, name="shrink"), mstack_early_shrink),
+-  # move MSELECT before movement/ALU ops
++  # move MSELECT before movement/elementwise ops
+   (UPat(Ops.MSELECT, src=(UPat(GroupOp.Movement, src=(UPat.var("s"),), allow_any_len=True, name="v"),), name="ms"),
+    lambda s,v,ms: v.replace(src=(s.mselect(ms.arg),)+v.src[1:])),
+-  (UPat(Ops.MSELECT, src=(UPat(GroupOp.ALU, name="a"),), name="ms"), lambda a,ms:
++  (UPat(Ops.MSELECT, src=(UPat(GroupOp.Elementwise, name="a"),), name="ms"), lambda a,ms:
+    a.replace(src=tuple(s.mselect(ms.arg) if isinstance(s.device, tuple) else s for s in a.src))),
+ ])
+ 
 @@ -191,7 +191,8 @@ def stack_multi(root:UOp):
    if not multis: return None
    sharding = multis[0].sharding
