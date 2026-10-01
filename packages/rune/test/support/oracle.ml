@@ -8,10 +8,12 @@ open Windtrap
 (* Witnesses *)
 
 (* A tensor's elements, real ones as float64 and complex ones as complex128:
-   every dtype the suites compare widens exactly to one of them. *)
+   every dtype the suites compare widens exactly to one of them. They are read
+   on the host, since a device may have no float64. *)
 type elements = Real of float array | Cplx of Complex.t array
 
 let elements (type a b) (t : (a, b) Nx.t) =
+  let t = Nx.place Nx.Placement.host t in
   if Nx_dtype.is_complex (Nx.dtype t) then
     Cplx (Nx.to_array (Nx.cast Nx.complex128 t))
   else Real (Nx.to_array (Nx.cast Nx.float64 t))
