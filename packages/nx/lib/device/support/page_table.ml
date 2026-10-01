@@ -6,11 +6,28 @@
 type space = Phys | Sys | Peer
 
 module Space = struct
-  type t = { tlsf : Tlsf.t; lock : Mutex.t }
+  (* The allocator is made by the first allocation, so that a vendor's space,
+     which its library makes when it initialises, puts nothing in the heap of a
+     program that drives none of its GPUs. *)
+  type t = {
+    base : int;
+    length : int;
+    mutable tlsf : Tlsf.t option;
+    lock : Mutex.t;
+  }
 
-  let create ~base n = { tlsf = Tlsf.create ~base n; lock = Mutex.create () }
-  let base s = Tlsf.base s.tlsf
-  let length s = Tlsf.length s.tlsf
+  let create ~base n = { base; length = n; tlsf = None; lock = Mutex.create () }
+  let base s = s.base
+  let length s = s.length
+
+  (* [s]'s allocator. Called with [s]'s lock held. *)
+  let tlsf s =
+    match s.tlsf with
+    | Some t -> t
+    | None ->
+        let t = Tlsf.create ~base:s.base s.length in
+        s.tlsf <- Some t;
+        t
 
   let highest_bit n =
     let rec go b = if b * 2 > n then b else go (b * 2) in
@@ -18,9 +35,9 @@ module Space = struct
 
   let alloc ?(align = 0x1000) s n =
     Mutex.protect s.lock (fun () ->
-        Tlsf.alloc ~align:(Int.max (highest_bit n) align) s.tlsf n)
+        Tlsf.alloc ~align:(Int.max (highest_bit n) align) (tlsf s) n)
 
-  let free s a = Mutex.protect s.lock (fun () -> Tlsf.free s.tlsf a)
+  let free s a = Mutex.protect s.lock (fun () -> Tlsf.free (tlsf s) a)
 end
 
 type entry = {
