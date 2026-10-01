@@ -33,3 +33,13 @@
   (progn
    (run %{test} --corrected)
    (diff? test_scheme.ml test_scheme.ml.corrected))))
+
+(test
+ (name test_curve)
+ (modules test_curve)
+ (package hugin)
+ (libraries hugin.next.gg hugin.next.kit windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_curve.ml test_curve.ml.corrected))))

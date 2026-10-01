@@ -3,7 +3,7 @@
  (public_name hugin.next.kit)
  (libraries hugin.next.gg nx)
  (private_modules decimal steps scheme_data)
- (modules_without_implementation symbol curve stack)
+ (modules_without_implementation symbol stack)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
