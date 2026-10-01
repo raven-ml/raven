@@ -5,8 +5,15 @@
 
 (executable
  (name bench_tolk)
- (modules bench_tolk programs)
- (libraries tolk tolk_test thumper))
+ (modules bench_tolk programs kernels)
+ (libraries
+  tolk
+  tolk.engine
+  tolk_test
+  nx.device
+  nx.dtype
+  nx.cuda.device
+  thumper))
 
 (executable
  (name embed)
@@ -30,6 +37,21 @@
    ../test/schedule/prepare/softmax.golden
    ../test/schedule/prepare/sort.golden
    ../test/schedule/prepare/split_sum.golden))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:embed.exe} %{goldens}))))
+
+; The kernels are the sinks the Heuristic suite optimises: gpt-oss-20b's
+; decode products.
+
+(rule
+ (target kernels.ml)
+ (deps
+  (:goldens
+   ../test/codegen/opt/heuristic/gpt_oss_qkv.golden
+   ../test/codegen/opt/heuristic/gpt_oss_gate_up.golden
+   ../test/codegen/opt/heuristic/gpt_oss_down.golden))
  (action
   (with-stdout-to
    %{target}

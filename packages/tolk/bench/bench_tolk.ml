@@ -9,7 +9,16 @@
    reads the schedule and each kernel's program back from the disk cache.
 
    Kernels are lowered and rendered for the CPU's C renderer, on a fixed
-   architecture, so every machine times the same work. Nothing is compiled. *)
+   architecture, so every machine times the same work. Nothing is compiled.
+
+   [decode] runs kernels: gpt-oss-20b's decode products, recorded by the
+   Heuristic suite, compiled with the hand-coded optimisations for the host and
+   for a CUDA device, and timed one run at a time, synchronized. [qkv] is the
+   bfloat16 projection of a normalised activation; [gate_up] and [down] are
+   four experts' MXFP4 products, [down] summing them. The CUDA device is opened
+   in the measuring worker, which is forked without an exec, and CUDA's driver
+   must not be initialized before the fork: a fresh process of this executable
+   ([--cuda]) says whether a CUDA device opens. *)
 
 open Tolk
 
@@ -99,11 +108,80 @@ let program name =
       bench ~setup:(fun () -> kept name) "warm" warm;
     ]
 
+(* Decode products *)
+
+(* [sink] compiled for [d], named [name], and a run of it on scratch buffers
+   that waits for the device. *)
+let compiled name d sink =
+  let devices = Tolk_engine.device [ (name, d) ] in
+  let prg = Codegen.to_program sink (Tolk_engine.renderer d) in
+  let elf = Device.Tiny_elf.of_program prg in
+  let info = match Ops.arg prg with Program i -> i | _ -> assert false in
+  let params =
+    List.filteri (fun i _ -> i < List.length info.globals) elf.signature
+  in
+  let scratch (p : Device.Tiny_elf.param) =
+    Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8
+      (max 1 (List.fold_left ( * ) (Dtype.itemsize p.dtype) p.shape))
+  in
+  match (devices name).compiler.queues with
+  | None ->
+      let p = Tolk_engine.Program.load d prg and buffers = List.map scratch params in
+      fun () -> Tolk_engine.Program.run p buffers
+  | Some _ ->
+      let slots = 1 + List.fold_left max 0 info.globals in
+      let param slot =
+        List.nth params
+          (Option.get (List.find_index (Int.equal slot) info.globals))
+      in
+      let call =
+        Ops.call prg
+          (List.init slots (fun slot ->
+               let p = param slot in
+               Ops.param
+                 ~shape:(List.map (fun n -> Ops.Int n) p.shape)
+                 ~device:(Single name) slot p.dtype))
+      in
+      let linear =
+        Hcq2.compile_linear
+          ~devices:(fun n -> (devices n).compiler)
+          (Ops.v Op.Linear ~src:[ call ])
+      in
+      let s = Tolk_engine.link ~devices linear in
+      let buffers = Array.init slots (fun slot -> [ scratch (param slot) ]) in
+      fun () ->
+        Tolk_engine.run s buffers;
+        Nx_device.synchronize d
+
+let decode name open_device =
+  Thumper.group ~id:name name
+    (List.map
+       (fun (kernel, text) ->
+         Thumper.bench_with_setup
+           ~setup:(fun () ->
+             compiled (String.uppercase_ascii name) (open_device ())
+               (Graph.of_string text))
+           kernel
+           (fun run -> run ()))
+       Kernels.all)
+
+let run_self flag =
+  Sys.command (Filename.quote_command Sys.executable_name [ flag ])
+
+let cuda () =
+  if run_self "--cuda" <> 0 then []
+  else [ decode "cuda" (fun () -> Nx_cuda_device.v 0) ]
+
 let () =
+  (match Array.to_list Sys.argv with
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
+  | _ -> ());
   Thumper.run "tolk"
     ~budgets:
       [
         Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
         Thumper.Budget.no_more_alloc_than 0.01;
       ]
-    (List.map (fun (name, _) -> program name) Programs.all)
+    (List.map (fun (name, _) -> program name) Programs.all
+    @ (decode "cpu" (fun () -> Nx_device.host) :: cuda ()))
