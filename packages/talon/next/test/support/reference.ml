@@ -57,6 +57,8 @@ type 's out =
   | Out : string * ('a, 's) term -> 's out
   | Keep : string list -> Expr.row out
 
+type on = Keys of (string * string) list | Position | All
+
 type plan =
   | Table of Talon_next.t
   | Select of Expr.row out list * plan
@@ -65,6 +67,14 @@ type plan =
   | Slice of { offset : int; length : int; plan : plan }
   | Append of plan * plan
   | Aggregate of string list * Expr.agg out list * plan
+  | Join of {
+      kind : Join.kind;
+      each_left : Join.count;
+      each_right : Join.count;
+      on : on;
+      left : plan;
+      right : plan;
+    }
 
 let literal : type a s. a Type.t -> (a -> (a, s) Expr.t) option =
  fun ty ->
@@ -201,6 +211,13 @@ let out : type s. s out -> s Expr.out = function
   | Out (n, e) -> Expr.(n := expr e)
   | Keep ns -> Expr.keep (Sel.names ns)
 
+let cond = function
+  | Keys ks -> List.fold_left (fun c (l, r) -> Join.(c && eq l r)) Join.all ks
+  | Position -> Join.position
+  | All -> Join.all
+
+let keys = function Keys ks -> ks | Position | All -> []
+
 let rec query = function
   | Table t -> Query.of_table t
   | Select (os, p) -> Query.select (List.map out os) (query p)
@@ -209,6 +226,9 @@ let rec query = function
   | Slice { offset; length; plan } -> Query.slice ~offset ~length (query plan)
   | Append (p, rest) -> Query.append (query rest) (query p)
   | Aggregate (by, os, p) -> Query.aggregate ~by (List.map out os) (query p)
+  | Join { kind; each_left; each_right; on; left; right } ->
+      Query.join ~kind ~each_left ~each_right ~on:(cond on) (query right)
+        (query left)
 
 (* [derived cs outs] is the columns [cs] with [outs] in place of those of their
    names, then the others. *)
@@ -217,6 +237,21 @@ let derived cs outs =
     (fun (n, c) -> (n, Option.value ~default:c (List.assoc_opt n outs)))
     cs
   @ List.filter (fun (n, _) -> not (List.mem_assoc n cs)) outs
+
+(* [meet a b] is the type at which a left key of type [a] meets a right key of
+   type [b]. *)
+let meet (Type.Any a as t) (Type.Any b) =
+  if Type.equal a b then t
+  else
+    match Kind.provably_equal (Type.kind b) (Type.kind a) with
+    | Some Equal -> Type.Any (Option.get (Type.common [ a; b ]))
+    | None -> invalid_arg "Reference: keys that do not meet"
+
+(* [unkeyed on rs] is the right columns [rs] but the keys of [on]. *)
+let unkeyed on rs =
+  List.filter
+    (fun (n, _) -> not (List.exists (fun (_, r) -> String.equal r n) (keys on)))
+    rs
 
 let rec schema = function
   | Table t -> Schema.columns (Talon_next.schema t)
@@ -229,6 +264,17 @@ let rec schema = function
       let s = schema p in
       List.map (fun n -> (n, List.assoc n s)) by
       @ List.concat_map (out_schema s) os
+  | Join { kind; on; left; right; _ } -> (
+      let ls = schema left and rs = schema right in
+      let key (n, t) =
+        match List.assoc_opt n (keys on) with
+        | Some r -> (n, meet t (List.assoc r rs))
+        | None -> (n, t)
+      in
+      match kind with
+      | Semi | Anti -> ls
+      | Inner | Left -> ls @ unkeyed on rs
+      | Full -> List.map key ls @ unkeyed on rs)
 
 and out_schema : type s. _ -> s out -> _ =
  fun s -> function
@@ -657,6 +703,156 @@ let aggregate by os rs () =
   check failed;
   List.to_seq out ()
 
+(* Joins *)
+
+let key_text : type a. a Type.t -> (a option -> string) option =
+ fun ty ->
+  let text lit = function
+    | None -> "∅"
+    | Some v -> Format.asprintf "%a" Expr.pp (lit v)
+  in
+  match ty with Datetime _ -> None | _ -> Option.map text (literal ty)
+
+(* [same_key a b] is [true] iff the cells [a] and [b] are one key. *)
+let same_key (Cell (ty, _) as a) (Cell (ty', _) as b) =
+  let (Type.Any t) = meet (Any ty) (Any ty') in
+  match (read t a, read t b) with
+  | None, None -> true
+  | Some x, Some y -> Type.compare_value t x y = 0
+  | _ -> false
+
+let allows (count : Join.count) k =
+  match count with
+  | Any -> true
+  | At_most_one -> k <= 1
+  | One -> k = 1
+  | At_least_one -> k >= 1
+
+let phrase : Join.count -> string = function
+  | Any -> "any"
+  | At_most_one -> "at most one"
+  | One -> "one"
+  | At_least_one -> "at least one"
+
+(* [assertion side count names i r k] fails at row [i] of [side], [r], if
+   [count] does not allow its [k] matches, naming its keys [names]. *)
+let assertion side count names i r k =
+  if not (allows count k) then begin
+    let key n =
+      let (Cell (ty, v)) = List.assoc n r in
+      match key_text ty with
+      | Some text -> Format.asprintf "%a is %s" Type.pp_quoted n (text v)
+      | None ->
+          Format.kasprintf invalid_arg "Reference: no text for %a" Type.pp ty
+    in
+    let whose =
+      match names with
+      | [] -> ""
+      | ns -> " whose " ^ String.concat " and " (List.map key ns)
+    in
+    let why =
+      Printf.sprintf "the %s row%s matches %d rows, not %s" side whose k
+        (phrase count)
+    in
+    raise (Failed (i, why))
+  end
+
+let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
+  let ks = keys on in
+  let null (n, Type.Any ty) =
+    let (Type.Any st) = storage ty in
+    (n, Cell (st, None))
+  in
+  let pair l = function
+    | Some r ->
+        l @ List.map (fun (n, _) -> (n, List.assoc n r)) (unkeyed on rschema)
+    | None -> l @ List.map null (unkeyed on rschema)
+  in
+  (* A right row without a match, its keys in the left's. *)
+  let unmatched r =
+    pair
+      (List.map
+         (fun ((n, _) as c) ->
+           match List.assoc_opt n ks with
+           | Some rn -> (n, List.assoc rn r)
+           | None -> null c)
+         lschema)
+      (Some r)
+  in
+  let out l js =
+    match ((kind : Join.kind), js) with
+    | (Inner | Left | Full), _ :: _ -> List.map (fun r -> pair l (Some r)) js
+    | (Left | Full), [] -> [ pair l None ]
+    | Inner, [] -> []
+    | Semi, js -> if js = [] then [] else [ l ]
+    | Anti, js -> if js = [] then [ l ] else []
+  in
+  match on with
+  | All ->
+      let rs = Array.of_seq rs in
+      let n = ref 0 in
+      let each l =
+        assertion "left" each_left [] !n l (Array.length rs);
+        incr n;
+        List.to_seq (out l (Array.to_list rs))
+      in
+      let last () =
+        Array.iteri (fun j r -> assertion "right" each_right [] j r !n) rs;
+        if kind = Full && !n = 0 then Array.to_seq (Array.map unmatched rs) ()
+        else Seq.Nil
+      in
+      Seq.append (Seq.concat_map each ls) last ()
+  | Keys _ | Position ->
+      let ls = Array.of_seq ls in
+      let rs = Array.of_seq rs in
+      let matches i l j r =
+        match on with
+        | Position -> i = j
+        | _ ->
+            List.for_all
+              (fun (ln, rn) -> same_key (List.assoc ln l) (List.assoc rn r))
+              ks
+      in
+      let hits =
+        Array.mapi
+          (fun i l ->
+            List.filter
+              (fun j -> matches i l j rs.(j))
+              (List.init (Array.length rs) Fun.id))
+          ls
+      in
+      Array.iteri
+        (fun i l ->
+          assertion "left" each_left (List.map fst ks) i l
+            (List.length hits.(i)))
+        ls;
+      let counts =
+        Array.mapi
+          (fun j _ ->
+            Array.fold_left
+              (fun k js -> if List.mem j js then k + 1 else k)
+              0 hits)
+          rs
+      in
+      Array.iteri
+        (fun j r ->
+          assertion "right" each_right (List.map snd ks) j r counts.(j))
+        rs;
+      let pairs =
+        List.concat
+          (Array.to_list
+             (Array.mapi
+                (fun i l -> out l (List.map (Array.get rs) hits.(i)))
+                ls))
+      in
+      let rest =
+        if kind <> Full then []
+        else
+          List.filteri (fun j _ -> counts.(j) = 0) (Array.to_list rs)
+          |> List.map unmatched
+      in
+      List.to_seq (pairs @ rest) ()
+
 let rec rows : plan -> row Seq.t = function
   | Table t -> List.to_seq (table_rows t)
   | Select (os, p) -> step (local_outs os) (fun fr -> outs fr os) (rows p)
@@ -683,6 +879,10 @@ let rec rows : plan -> row Seq.t = function
         (List.filteri (fun i _ -> i >= start && i - start < length) rs)
   | Append (p, rest) -> Seq.append (rows p) (rows rest)
   | Aggregate (by, os, p) -> aggregate by os (rows p)
+  | Join { kind; each_left; each_right; on; left; right } ->
+      join kind (each_left, each_right) on
+        (schema left, schema right)
+        (rows left) (rows right)
 
 let run p =
   match List.of_seq (rows p) with

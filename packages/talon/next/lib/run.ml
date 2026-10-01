@@ -82,23 +82,24 @@ let empty s =
   in
   Table.batch s ~rows:0 (Array.of_list (List.map column (Schema.columns s)))
 
-(* [blocking q input s step] is [step] applied once, to all of [s]'s rows, the
-   input of [q]'s step. It emits nothing when [step] fails. *)
-let blocking q input s step =
+(* [gather input s] is all of [s]'s rows, the step [input]'s, as one batch. *)
+let gather input s =
   let rec pull bs =
     match s.next () with Some b -> pull (b :: bs) | None -> List.rev bs
   in
+  match pull [] with
+  | [] -> empty (Query.schema input)
+  | bs -> Table.concat (Table.of_batches bs)
+
+(* [blocking q input s step] is [step] applied once, to all of [s]'s rows, the
+   input of [q]'s step. It emits nothing when [step] fails. *)
+let blocking q input s step =
   let ran = ref false in
   let next () =
     if !ran then None
     else begin
       ran := true;
-      let b =
-        match pull [] with
-        | [] -> empty (Query.schema input)
-        | bs -> Table.concat (Table.of_batches bs)
-      in
-      match step b with
+      match step (gather input s) with
       | out, None -> Some out
       | _, Some f -> failed (line Query.pp_step q) f
     end
@@ -268,6 +269,53 @@ let append q a r rest =
         r.close ());
   }
 
+(* [join q left right l r] runs the join [q] of the streams [l] and [r], the
+   steps [left] and [right]. A join that blocks on both pulls [l] to its end,
+   then [r]; one that streams [l] pulls [r] to its end first. *)
+let join q left right l r =
+  let close () =
+    l.close ();
+    r.close ()
+  in
+  let emit = function
+    | Ok b -> Some b
+    | Error f -> failed (line Query.pp_step q) f
+  in
+  match Join_run.compile q with
+  | None -> Eval.not_lowered (line Query.pp_step q)
+  | Some (Blocking f) ->
+      let ran = ref false in
+      let next () =
+        if !ran then None
+        else begin
+          ran := true;
+          let l = gather left l in
+          emit (f l (gather right r))
+        end
+      in
+      { next; close }
+  | Some (Streaming { batch; last }) ->
+      let held = lazy (gather right r) in
+      let rows = ref 0 and ended = ref false in
+      let next () =
+        let r = Lazy.force held in
+        if !ended then None
+        else
+          match l.next () with
+          | Some b ->
+              let out =
+                Result.map_error
+                  (fun (f : Eval.failure) -> { f with row = !rows + f.row })
+                  (batch r b)
+              in
+              rows := !rows + Table.rows b;
+              emit out
+          | None ->
+              ended := true;
+              emit (last r (empty (Query.schema left)) !rows)
+      in
+      { next; close }
+
 (* A step whose expressions read other rows than their own blocks. *)
 let local outputs =
   List.for_all (fun (_, Expr.Packed e) -> Expr.row_local e) outputs
@@ -292,8 +340,8 @@ let rec stream q =
       else tail ~offset ~length (stream input)
   | Append { input; rest } ->
       append q (stream input) (stream rest) (Query.schema rest)
-  | Of_source _ | Sort _ | Join _ | Unnest _ ->
-      Eval.not_lowered (line Query.pp_step q)
+  | Join { left; right; _ } -> join q left right (stream left) (stream right)
+  | Of_source _ | Sort _ | Unnest _ -> Eval.not_lowered (line Query.pp_step q)
 
 (* Running *)
 

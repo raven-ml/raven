@@ -83,6 +83,12 @@ val columns : kind -> Schema.t -> Schema.t -> cond -> Schema.t
     computes with it the columns of a join, whose inputs the optimizer may
     narrow. *)
 
+val common_type : Type.any -> Type.any -> Type.any option
+(** [common_type l r] is the type at which a left column of type [l] meets a
+    right column of type [r] in an equality atom: their common type
+    ({!Type.common}), or their one type if either holds an extension type. A
+    {!Full} join's key has it. *)
+
 val equal : cond -> cond -> bool
 (** [equal c0 c1] is [true] iff [c0] and [c1] have equal atoms in the same
     order, [within] expressions compared by their identity ({!Expr.same}). *)

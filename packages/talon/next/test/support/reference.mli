@@ -97,6 +97,13 @@ type 's out =
   | Out : string * ('a, 's) term -> 's out
   | Keep : string list -> Expr.row out
 
+(** The type for join conditions. *)
+type on =
+  | Keys of (string * string) list
+      (** [Keys [(l, r); …]] is [eq l r && …], at least one atom. *)
+  | Position
+  | All
+
 (** The type for plans. *)
 type plan =
   | Table of Talon_next.t
@@ -106,6 +113,25 @@ type plan =
   | Slice of { offset : int; length : int; plan : plan }
   | Append of plan * plan  (** [Append (q, rest)] is [q |> append rest]. *)
   | Aggregate of string list * Expr.agg out list * plan
+  | Join of {
+      kind : Join.kind;
+      each_left : Join.count;
+      each_right : Join.count;
+      on : on;
+      left : plan;
+      right : plan;
+    }
+      (** A nested loop over the left's rows, then the right's. An equality join
+          reads all its left's rows, then all its right's; a join on [All] all
+          its right's, then its left's as it needs them. The assertions check
+          the left's rows in order, then the right's: a failure is at the first
+          row of that side whose number of matches the count does not allow, its
+          reason naming its keys as {!key_text} writes them. *)
+
+val key_text : 'a Type.t -> ('a option -> string) option
+(** [key_text ty] writes values of [ty] as the run's messages write a key, [∅]
+    for [None], or is [None] if the reference cannot write them: for the types
+    that [Expr] writes no literal of, and instants. *)
 
 val literal : 'a Type.t -> ('a -> ('a, 's) Expr.t) option
 (** [literal ty] makes the literals of [ty], if [Expr] writes them. *)

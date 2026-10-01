@@ -123,6 +123,13 @@ let within ty s =
     (fun t -> Option.equal Type.equal (Type.common [ ty; t ]) (Some ty))
     (kin ty s)
 
+(* [wider ty] is [ty] and the types of the palette that contain it. *)
+let wider ty =
+  ty
+  :: List.filter
+       (fun t -> Option.equal Type.equal (Type.common [ ty; t ]) (Some t))
+       (kin ty (List.map (fun t -> ("", t)) palette))
+
 (* [pair a b] draws an expression of [a] and one of [b], in either order. *)
 let pair a b =
   map2
@@ -404,7 +411,62 @@ let step level p =
       (table s)
       (Gen.permutation (List.map fst s))
   in
-  Gen.one_of [ select; derive; filter; slice; append; aggregate ]
+  (* The right is at most four rows of [p] or of a table of its columns, those a
+     handle reads renamed, each stored at a type that contains its own. Keys the
+     reference cannot write get no assertion. *)
+  let join columns =
+    let renamed (n, r, Type.Any ty) =
+      Gen.map
+        (fun t -> R.Out (r, R.Store (t, R.Col (ty, n))))
+        (Gen.of_list (wider ty))
+    in
+    let right =
+      Gen.bind
+        (Gen.triple Gen.bool (Gen.int_range (-6) 12) (Gen.int_range 0 4))
+        (fun (own, offset, length) ->
+          map2
+            (fun plan os -> R.Select (os, R.Slice { offset; length; plan }))
+            (if own then Gen.constant p
+             else Gen.map (fun t -> R.Table t) (table s))
+            (all (List.map renamed columns)))
+    in
+    Gen.bind (Gen.subsequence columns) (fun ks ->
+        let written =
+          List.for_all
+            (fun (_, _, Type.Any ty) -> Option.is_some (R.key_text ty))
+            ks
+        in
+        let count =
+          if not written then Gen.constant Join.Any
+          else
+            Gen.frequency
+              [
+                (3, Gen.constant Join.Any);
+                (1, Gen.of_list Join.[ At_most_one; One; At_least_one ]);
+              ]
+        in
+        let keys = R.Keys (List.map (fun (n, r, _) -> (n, r)) ks) in
+        let on =
+          if ks = [] then Gen.of_list R.[ Position; All ]
+          else
+            Gen.frequency
+              [ (3, Gen.constant keys); (1, Gen.of_list R.[ Position; All ]) ]
+        in
+        Gen.map
+          (fun ((on, kind), (each_left, each_right), right) ->
+            R.Join { kind; each_left; each_right; on; left = p; right })
+          (Gen.triple
+             (Gen.pair on (Gen.of_list Join.[ Inner; Left; Full; Semi; Anti ]))
+             (Gen.pair count count) right))
+  in
+  let columns =
+    List.mapi
+      (fun i (n, t) -> (n, Printf.sprintf "j%d_%d" level i, t))
+      (expressible s)
+  in
+  Gen.one_of
+    ([ select; derive; filter; slice; append; aggregate ]
+    @ if columns = [] then [] else [ join columns ])
 
 let rec plan level =
   if level = 0 then Gen.map (fun t -> R.Table t) (Gen.bind schemas table)
@@ -420,6 +482,10 @@ let rec split : R.plan -> R.plan Gen.t = function
   | Append (p, r) -> map2 (fun p r -> R.Append (p, r)) (split p) (split r)
   | Aggregate (by, os, p) ->
       Gen.map (fun p -> R.Aggregate (by, os, p)) (split p)
+  | Join j ->
+      map2
+        (fun left right -> R.Join { j with left; right })
+        (split j.left) (split j.right)
 
 let pp_plan ppf p = Query.pp ppf (R.query p)
 let plans = Gen.bind (Gen.int_range 0 3) plan
@@ -455,13 +521,16 @@ let holds t (n, R.Column (ty, vs)) =
   | Some Equal -> equal ~msg:n (array (option (G.witness ty))) vs vs'
   | None -> failf "%s holds %a, not %a" n Type.pp ty' Type.pp ty
 
-(* [mentions w p] is [true] iff [p] prints the word [w]. *)
-let mentions w p =
-  let s = Format.asprintf "%a" pp_plan p and n = String.length w in
+(* [occurs w s] is [true] iff [w] occurs in [s]; [mentions w p] iff [p] prints
+   it. *)
+let occurs w s =
+  let n = String.length w in
   let rec at i =
     i + n <= String.length s && (String.sub s i n = w || at (i + 1))
   in
   at 0
+
+let mentions w p = occurs w (Format.asprintf "%a" pp_plan p)
 
 let agrees p =
   let q = R.query p in
@@ -471,6 +540,7 @@ let agrees p =
   in
   cover "the optimizer keeps the plan" kept;
   cover "an aggregate" (mentions "aggregate" p);
+  cover "a join" (mentions "join" p);
   cover "an expression reads other rows" framed;
   match (attempt (fun () -> R.run p), attempt (fun () -> Query.run q)) with
   | Ok (Ok cs), Ok (Ok t) ->
@@ -485,6 +555,10 @@ let agrees p =
       cover "a kept plan that aggregates fails" (kept && mentions "aggregate" p);
       cover "a kept plan that reads other rows fails" (kept && framed);
       cover "a kept plan raises" (kept && Result.is_error expected);
+      cover "a kept plan fails a join's assertion"
+        (match expected with
+        | Ok (Error (_, why)) -> kept && occurs " rows, not " why
+        | _ -> false);
       if kept then same_failure expected actual
 
 (* Law 7: canonical layouts, byte for byte *)
@@ -1183,10 +1257,299 @@ let reductions =
           equal ~msg:"rows folded" int 0 !seen);
     ]
 
+(* Joins *)
+
+let join ?kind ?each_left ?each_right on l r =
+  Query.join ?kind ?each_left ?each_right ~on (Query.of_table r)
+    (Query.of_table l)
+
+let joined ?kind ?each_left ?each_right on l r =
+  run_ok (join ?kind ?each_left ?each_right on l r)
+
+let i64 xs = Column.v Type.int64 xs
+
+let column_is t (n, expected) =
+  equal ~msg:n
+    (list (option int))
+    expected
+    (Array.to_list (Column.options Kind.int (column t n)))
+
+let names t = List.map fst (Schema.columns (schema t))
+
+(* Left rows 0 and 2 match right rows 1 and 2, left row 1 matches right row 0,
+   and left row 3 and right row 3 match nothing. *)
+let keyed_left = v [ ("k", i64 [| 2; 1; 2; 3 |]); ("x", i64 [| 0; 1; 2; 3 |]) ]
+
+let keyed_right =
+  v [ ("k", i64 [| 1; 2; 2; 4 |]); ("y", i64 [| 10; 11; 12; 13 |]) ]
+
+let join_order =
+  let s x = Some x in
+  cases
+    ~name:(fun (name, _, _) -> name ^ ": left's order, matches in right's")
+    "Row order"
+    [
+      ( "Inner",
+        Join.Inner,
+        [
+          ("k", [ s 2; s 2; s 1; s 2; s 2 ]);
+          ("x", [ s 0; s 0; s 1; s 2; s 2 ]);
+          ("y", [ s 11; s 12; s 10; s 11; s 12 ]);
+        ] );
+      ( "Left",
+        Left,
+        [
+          ("k", [ s 2; s 2; s 1; s 2; s 2; s 3 ]);
+          ("x", [ s 0; s 0; s 1; s 2; s 2; s 3 ]);
+          ("y", [ s 11; s 12; s 10; s 11; s 12; None ]);
+        ] );
+      ( "Full",
+        Full,
+        [
+          ("k", [ s 2; s 2; s 1; s 2; s 2; s 3; s 4 ]);
+          ("x", [ s 0; s 0; s 1; s 2; s 2; s 3; None ]);
+          ("y", [ s 11; s 12; s 10; s 11; s 12; None; s 13 ]);
+        ] );
+      ("Semi", Semi, [ ("k", [ s 2; s 1; s 2 ]); ("x", [ s 0; s 1; s 2 ]) ]);
+      ("Anti", Anti, [ ("k", [ s 3 ]); ("x", [ s 3 ]) ]);
+    ]
+    (fun (_, kind, columns) ->
+      let t = joined ~kind (Join.keys [ "k" ]) keyed_left keyed_right in
+      equal ~msg:"columns" (list string) (List.map fst columns) (names t);
+      List.iter (column_is t) columns)
+
+(* [shapes] are a left of three rows and a right of two, and the other way. *)
+let shapes =
+  let s x = Some x in
+  let l3 = v [ ("x", i64 [| 0; 1; 2 |]) ]
+  and r2 = v [ ("y", i64 [| 10; 11 |]) ] in
+  let l2 = v [ ("x", i64 [| 0; 1 |]) ]
+  and r3 = v [ ("y", i64 [| 10; 11; 12 |]) ] in
+  let l0 = v [ ("x", i64 [||]) ] and r0 = v [ ("y", i64 [||]) ] in
+  cases
+    ~name:(fun (name, _, _, _, _, _) -> name)
+    "Position and all"
+    [
+      ( "position Inner keeps min(n, m) rows",
+        Join.position,
+        Join.Inner,
+        l3,
+        r2,
+        [ ("x", [ s 0; s 1 ]); ("y", [ s 10; s 11 ]) ] );
+      ( "position Semi keeps min(n, m) rows",
+        Join.position,
+        Semi,
+        l3,
+        r2,
+        [ ("x", [ s 0; s 1 ]) ] );
+      ( "position Left keeps n rows",
+        Join.position,
+        Left,
+        l3,
+        r2,
+        [ ("x", [ s 0; s 1; s 2 ]); ("y", [ s 10; s 11; None ]) ] );
+      ( "position Full keeps max(n, m) rows",
+        Join.position,
+        Full,
+        l2,
+        r3,
+        [ ("x", [ s 0; s 1; None ]); ("y", [ s 10; s 11; s 12 ]) ] );
+      ( "position Anti keeps the left's rows past m",
+        Join.position,
+        Anti,
+        l3,
+        r2,
+        [ ("x", [ s 2 ]) ] );
+      ( "position Anti keeps nothing when m >= n",
+        Join.position,
+        Anti,
+        l2,
+        r3,
+        [ ("x", []) ] );
+      ( "all pairs each left row with every right row",
+        Join.all,
+        Inner,
+        l2,
+        r2,
+        [ ("x", [ s 0; s 0; s 1; s 1 ]); ("y", [ s 10; s 11; s 10; s 11 ]) ] );
+      ( "all Left keeps the left over no right row",
+        Join.all,
+        Left,
+        l2,
+        r0,
+        [ ("x", [ s 0; s 1 ]); ("y", [ None; None ]) ] );
+      ( "all Full keeps the right under no left row",
+        Join.all,
+        Full,
+        l0,
+        r2,
+        [ ("x", [ None; None ]); ("y", [ s 10; s 11 ]) ] );
+      ( "all Inner over no right row is empty",
+        Join.all,
+        Inner,
+        l2,
+        r0,
+        [ ("x", []); ("y", []) ] );
+      ( "all Semi keeps every left row over a right row",
+        Join.all,
+        Semi,
+        l2,
+        r2,
+        [ ("x", [ s 0; s 1 ]) ] );
+      ( "all Anti keeps every left row over no right row",
+        Join.all,
+        Anti,
+        l2,
+        r0,
+        [ ("x", [ s 0; s 1 ]) ] );
+    ]
+    (fun (_, on, kind, l, r, columns) ->
+      let t = joined ~kind on l r in
+      equal ~msg:"columns" (list string) (List.map fst columns) (names t);
+      List.iter (column_is t) columns)
+
+let joins =
+  group "Joins"
+    [
+      join_order;
+      shapes;
+      test "null keys, NaNs and zeros each match as one key" (fun () ->
+          let payload = Int64.float_of_bits 0xfff8000000000001L in
+          let f =
+            Column.of_options Type.float64
+              [| Some Float.nan; Some (-0.); None; Some 1. |]
+          and g =
+            Column.of_options Type.float64
+              [| Some 0.; None; Some payload; Some (-1.) |]
+          in
+          let t =
+            joined (Join.eq "f" "g")
+              (v [ ("f", f); ("x", i64 [| 0; 1; 2; 3 |]) ])
+              (v [ ("g", g); ("y", i64 [| 10; 11; 12; 13 |]) ])
+          in
+          List.iter (column_is t)
+            [
+              ("x", [ Some 0; Some 1; Some 2 ]);
+              ("y", [ Some 12; Some 10; Some 11 ]);
+            ]);
+      test "text keys match by their bytes, a categorical as its text"
+        (fun () ->
+          let dict = Type.categorical [| "é"; "a" |] in
+          let t =
+            joined (Join.eq "s" "c")
+              (v
+                 [
+                   ("s", Column.v Type.string [| "é"; "e"; "a" |]);
+                   ("x", i64 [| 0; 1; 2 |]);
+                 ])
+              (v
+                 [
+                   ("c", Column.v dict [| "a"; "é" |]); ("y", i64 [| 10; 11 |]);
+                 ])
+          in
+          List.iter (column_is t)
+            [ ("x", [ Some 0; Some 2 ]); ("y", [ Some 11; Some 10 ]) ]);
+      test "a Full join's key has the common type and the right's value"
+        (fun () ->
+          let t =
+            joined ~kind:Full (Join.keys [ "k" ])
+              (v
+                 [ ("k", Column.v Type.int8 [| 1; 2 |]); ("x", i64 [| 0; 1 |]) ])
+              (v
+                 [
+                   ("k", Column.v Type.int16 [| 2; 300 |]);
+                   ("y", i64 [| 10; 11 |]);
+                 ])
+          in
+          equal schema_w
+            (Schema.v
+               Type.[ ("k", Any int16); ("x", Any int64); ("y", Any int64) ])
+            (schema t);
+          List.iter (column_is t)
+            [
+              ("k", [ Some 1; Some 2; Some 300 ]);
+              ("x", [ Some 0; Some 1; None ]);
+              ("y", [ None; Some 10; Some 11 ]);
+            ]);
+      test "an assertion names the side, the row's keys and its matches"
+        (fun () ->
+          let ends ?each_left ?each_right on l r =
+            match Query.run (join ?each_left ?each_right on l r) with
+            | Ok _ -> "no failure"
+            | Error e -> error e
+          in
+          let l = keyed_left and r = keyed_right in
+          let k = Join.keys [ "k" ] in
+          let texts =
+            v
+              [
+                ("s", Column.of_options Type.string [| Some "a"; None |]);
+                ("b", Column.v Type.bool [| true; true |]);
+              ]
+          in
+          expect
+            (String.concat "\n"
+               [
+                 ends ~each_left:One k l r;
+                 ends ~each_left:At_most_one k l r;
+                 ends ~each_left:At_least_one k l r;
+                 ends ~each_right:One k l r;
+                 ends ~each_right:At_least_one k l r;
+                 ends ~each_left:One ~each_right:One k l r;
+                 ends ~each_left:One Join.position l (v [ ("y", i64 [| 1 |]) ]);
+                 ends ~each_right:At_most_one Join.all l
+                   (v [ ("y", i64 [| 1 |]) ]);
+                 ends ~each_left:At_most_one
+                   (Join.keys [ "s"; "b" ])
+                   texts
+                   (v
+                      [
+                        ("s", Column.of_options Type.string [| None; None |]);
+                        ("b", Column.v Type.bool [| true; true |]);
+                      ]);
+               ])
+          @@ __POS_OF__
+               {|
+            join ~on:(keys ["k"]) ~each_left:One: row 0: the left row whose "k" is 2 matches 2 rows, not one.
+            join ~on:(keys ["k"]) ~each_left:At_most_one: row 0: the left row whose "k" is 2 matches 2 rows, not at most one.
+            join ~on:(keys ["k"]) ~each_left:At_least_one: row 3: the left row whose "k" is 3 matches 0 rows, not at least one.
+            join ~on:(keys ["k"]) ~each_right:One: row 1: the right row whose "k" is 2 matches 2 rows, not one.
+            join ~on:(keys ["k"]) ~each_right:At_least_one: row 3: the right row whose "k" is 4 matches 0 rows, not at least one.
+            join ~on:(keys ["k"]) ~each_left:One ~each_right:One: row 0: the left row whose "k" is 2 matches 2 rows, not one.
+            join ~on:position ~each_left:One: row 1: the left row matches 0 rows, not one.
+            join ~on:all ~each_right:At_most_one: row 0: the right row matches 4 rows, not at most one.
+            join ~on:(keys ["s"; "b"]) ~each_left:At_most_one: row 1: the left row whose "s" is ∅ and "b" is true matches 2 rows, not at most one.
+            |});
+      test "an equality join pulls its left first, a join on all its right"
+        (fun () ->
+          let t = v [ ("x", i64 [| 0; 1; 2 |]) ] in
+          let l = failing_at (1, "select", Fails, t) in
+          let r =
+            Query.select
+              Expr.[ "z" := Col.int "y" ]
+              (failing_at (0, "select", Raises, t))
+          in
+          let ends on = attempt (fun () -> Query.run (Query.join ~on r l)) in
+          ends_at 1 Fails (ends (Join.eq "y" "z"));
+          ends_at 0 Raises (ends Join.all));
+      test "a join on all streams its left, batch by batch" (fun () ->
+          let l =
+            of_batches [ v [ ("x", i64 [| 0; 1 |]) ]; v [ ("x", i64 [| 2 |]) ] ]
+          and r = v [ ("y", i64 [| 10; 11 |]) ] in
+          let seen =
+            Query.fold (join Join.all l r) ~init:[] (fun bs b -> rows b :: bs)
+          in
+          equal (list int) [ 4; 2 ] (List.rev (require_ok ~pp:Error.pp seen)));
+    ]
+
 let refusals =
   let t = v [ ("a", Column.v Type.int64 [| 2; 1 |]) ] in
   group "Not yet lowered"
     [
+      test "an inequality join is refused, naming the step" (fun () ->
+          let r = v [ ("b", Column.v Type.int64 [| 1 |]) ] in
+          expect (message (fun () -> Query.run (join (Join.lt "a" "b") t r)))
+          @@ __POS_OF__ {| join ~on:(lt "a" "b") is not implemented yet |});
       test "a sort is refused, naming the step" (fun () ->
           expect
             (message (fun () ->
@@ -1232,6 +1595,7 @@ let () =
          ocaml;
          failure_order;
          reductions;
+         joins;
          lifts;
          refusals;
        ])

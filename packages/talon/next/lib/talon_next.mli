@@ -2119,7 +2119,8 @@ module Query : sig
       in order. Over {!Join.position}, {!Join.Inner} and {!Join.Semi} keep
       min(n, m) rows, {!Join.Left} keeps n, {!Join.Full} max(n, m), and
       {!Join.Anti} [left]'s rows past m. Its columns are those {!Join}
-      describes. It blocks on [right], which it holds, in:
+      describes. An equality or {!Join.position} join blocks on both inputs; a
+      join on {!Join.all} blocks on [right] and streams [left]. It runs in:
       - O(n + m + matches) for an equality join;
       - O((n + m) log m + matches log matches) for an inequality join;
       - O((n + m) log m) for {!Join.closest} and {!Join.nearest}.
