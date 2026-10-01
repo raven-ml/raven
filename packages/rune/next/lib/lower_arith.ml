@@ -375,7 +375,14 @@ let atan2 y x =
 
    [e^|x| / 2 +- e^-|x| / 2], with the halving in the exponential's last
    scaling, so that [sinh] and [cosh] overflow where their value does. Below 1,
-   [sinh x] is its Taylor series, since the difference cancels. *)
+   [sinh x] is its Taylor series, since the difference cancels.
+
+   [tanh |x|] is fdlibm's [-t / (t + 2)] with [t = e^(-2|x|) - 1], at the cost
+   of one exponential: [t + 2] lies in [[1, 2]] and never cancels, and for a
+   large [|x|] [t] rounds to [-1] and the quotient to 1. Below [|x| = 1/4], [t]
+   is its Taylor series. Above, [e^(-2|x|) - 1] is exact while [e^(-2|x|)] is at
+   least [1/2], and does not cancel past it. [1 - 2 / (e^(2|x|) + 1)] would
+   cancel near 0. *)
 
 (* [1/3!], [1/5!], ... to [n] terms. *)
 let factorials n =
@@ -397,11 +404,20 @@ let cosh x =
   let a = abs x in
   exp ~times:0.5 a +: (exp (neg a) *: float x 0.5)
 
+(* [1/2!], [1/3!], ... to [1/n!]. *)
+let inverse_factorials n =
+  List.init (n - 1) (fun k ->
+      1.
+      /. List.fold_left ( *. ) 1.
+           (List.init (k + 2) (fun i -> Float.of_int (i + 1))))
+
 let tanh x =
-  where
-    (Ops.lt (float x 22.) (abs x))
-    (copysign (float x 1.) x)
-    (sinh x /: cosh x)
+  let y = float x (-2.) *: abs x in
+  let series =
+    y +: (y *: y *: horner y (inverse_factorials (if is64 x then 15 else 8)))
+  in
+  let t = where (Ops.lt (float x (-0.5)) y) series (exp y -: float x 1.) in
+  copysign (abs t /: (t +: float x 2.)) x
 
 (* Error function
 

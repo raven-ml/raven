@@ -348,6 +348,38 @@ let binary ~by name ~budget libm { g } file =
     { n = (fun a -> g a.(0) a.(1)) }
     file
 
+(* [tanh] where its lowering changes form: at [|x| = 1/4], where [e^(-2|x|) - 1]
+   stops being a series; around [1/2]; from 8 to 22, where [e^(-2|x|) - 1]
+   rounds to [-1] in [float32] and then in [float64]; and at the tiny and
+   subnormal arguments where [tanh x] rounds to [x]. Against libm, rounded once
+   to the dtype. *)
+let tanh_edges ~by =
+  let around c =
+    List.concat_map
+      (fun k ->
+        let d = Float.of_int k in
+        [ c +. (d *. Float.ldexp c (-52)); c +. (d *. Float.ldexp c (-23)) ])
+      [ -3; -2; -1; 0; 1; 2; 3 ]
+  in
+  let magnitudes =
+    List.concat_map around [ 0.25; 0.5; 1.; 8.; 9.; 18.; 19.; 22. ]
+    @ [ 0x1p-28; 0x1.8p-28; 0x1p-12; 0x1p-126; 0x1p-1074 ]
+  in
+  let points =
+    Array.of_list (List.concat_map (fun m -> [ m; -.m ]) magnitudes)
+  in
+  group "tanh where its form changes"
+    (List.map
+       (fun (F (dname, dt)) ->
+         test dname (fun () ->
+             let x = Nx.create dt [| Array.length points |] points in
+             let expected = Nx.map_item Float.tanh x in
+             let s, y = trace (fun () -> Nx.tanh x) in
+             ulps
+               ~budget:(if Nx_dtype.itemsize dt < 4 then 1 else 8)
+               ~expected [| x |] (by.eval s y)))
+       float_dtypes)
+
 let transcendentals ?tags name by =
   group ?tags name
     [
@@ -368,6 +400,7 @@ let transcendentals ?tags name by =
       unary ~by "sinh" ~budget:8 Float.sinh { f = Nx.sinh };
       unary ~by "cosh" ~budget:8 Float.cosh { f = Nx.cosh };
       unary ~by "tanh" ~budget:8 Float.tanh { f = Nx.tanh };
+      tanh_edges ~by;
       unary ~by "erf" ~budget:8 Float.erf { f = Nx.erf };
       binary ~by "atan2" ~budget:8 Float.atan2 { g = Nx.atan2 }
         "atan2_64.golden";
