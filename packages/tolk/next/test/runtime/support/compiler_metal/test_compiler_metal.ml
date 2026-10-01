@@ -163,15 +163,15 @@ let metal =
           is_metal_library
             (with_metal (fun () -> Compiler.compile (Compiler_metal.compiler ()) src)));
       test "compiles from several domains at once" (fun () ->
-          let names = List.init 4 (Printf.sprintf "k%d") in
-          let compile name () =
-            Compiler.compile (Compiler_metal.compiler ()) (kernel name)
+          let builds d =
+            List.init 8 (fun i ->
+                Compiler.compile (Compiler_metal.compiler ())
+                  (kernel (Printf.sprintf "k%d_%d" d i)))
           in
-          ignore (with_metal (compile "warm"));
-          let domains =
-            List.map (fun name -> Domain.spawn (compile name)) names
-          in
-          List.iter is_metal_library (List.map Domain.join domains));
+          let domains = List.init 8 (fun d -> Domain.spawn (fun () -> builds d)) in
+          List.iter
+            (List.iter is_metal_library)
+            (with_metal (fun () -> List.map Domain.join domains)));
       test "disassembly prints nothing" (fun () ->
           let metal = Compiler_metal.compiler () in
           let lib =

@@ -204,7 +204,8 @@ the Exclusions of `README.md`.
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk.next:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
   `lib/helpers.ml:106` (`Context_var`) and `:133` (`context`);
-  `lib/codegen/codegen.ml:976` (`to_program`'s cache).
+  `lib/codegen/codegen.ml:1025` (`to_program`'s cache);
+  `lib/runtime/support/compiler_metal.ml:38` (`build`).
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
   spawns its domains for the call and joins them before it returns, where
   tinygrad keeps a pool: an idle domain still takes part in every minor
@@ -223,13 +224,17 @@ the Exclusions of `README.md`.
   too. `to_program` keeps its programs in one table that every domain reads
   and fills under a lock, and a domain that asks for a program another is
   making waits for it, so each program is compiled once, as tinygrad's
-  parent compiles each key once.
+  parent compiles each key once. MTLCompiler, which a tinygrad worker loads
+  in its own process, is loaded once for every domain, and it re-parses its
+  options into LLVM's global option registry on every build, which is not
+  thread-safe: its builds run one at a time.
 - **Reason:** (a).
 - **Pinned by:** `Tolk_next.Helpers › context › is not seen by the other
   domains` and `Tolk_next.Helpers › context › binds for the domains spawned
   while it runs`; `Tolk_next.Worker` (every test); `Tolk_next.Codegen ›
   programs are kept › calls from several domains at once make one program,
-  compiled once (D5)`.
+  compiled once (D5)`; `Tolk_next.Compiler_metal › MTLCompiler › compiles
+  from several domains at once`.
 
 ## D6. Devices are named, never parsed
 

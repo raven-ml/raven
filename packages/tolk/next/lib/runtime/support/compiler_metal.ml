@@ -33,6 +33,12 @@ let mtl_compiler =
         loaded := Some l;
         l
 
+(* MTLCompiler re-parses its options into LLVM's global option registry on
+   every build, which is not thread-safe: one build runs at a time. *)
+let build =
+  let lock = Mutex.create () in
+  fun request -> Mutex.protect lock (fun () -> metal_compile request)
+
 (* MetalCompiler *)
 
 let compile src =
@@ -67,7 +73,7 @@ let compile src =
   let sizes = Bytes.create 16 in
   Bytes.set_int64_le sizes 0 (Int64.of_int (String.length src_padded));
   Bytes.set_int64_le sizes 8 (Int64.of_int (String.length params_padded));
-  match metal_compile (Bytes.to_string sizes ^ src_padded ^ params_padded) with
+  match build (Bytes.to_string sizes ^ src_padded ^ params_padded) with
   | Error e -> raise (Renderer.Compiler.Compile_error e)
   | Ok reply ->
       (* The library follows a header and the warnings. *)
