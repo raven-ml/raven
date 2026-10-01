@@ -240,6 +240,7 @@ the tangent; an integer or boolean row has no tangent. A path
 `J › cumulative › …` and `J › factorisations › …` are named cases. An old
 test of a fixed shape or fixture maps to the row whose generator draws it. The
 suite checks forward mode only; the pullbacks are the reverse-mode suite's.
+
 The reverse-mode suite is `next/test/rules/linear/test_transposes.ml`,
 written `T` below. Over the same rows and draws, ties and zeros included, it
 checks each row's pullback against its tangent by the adjoint identity
@@ -260,7 +261,6 @@ another map, and over no row; and that the row's `jacfwd'` and `jacrev'`
 are the loops of its tangent and its pullback. `B › edges › …` holds the
 operands a row's draws never batch (conditions, indices, starts, keys),
 reads inside a map, and nx's functions made of several rows.
-
 
 ### Old rune tests
 

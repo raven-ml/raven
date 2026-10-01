@@ -751,11 +751,22 @@ let matmul_instance g =
   let* m = int_range 1 3 in
   let* k = int_range 0 3 in
   let* n = int_range 1 3 in
-  let* lead = shape ~dim:(int_range 1 2) 0 2 in
-  let* drop = int_range 0 (Array.length lead) in
-  let* ones = array ~size:(constant (Array.length lead)) bool in
-  let lead_a = Array.mapi (fun i d -> if ones.(i) then 1 else d) lead in
-  let lead_b = Array.sub lead drop (Array.length lead - drop) in
+  (* Each operand's leading axes are a suffix of [lead], each axis of extent one
+     where the operand broadcasts it, in either operand or both. *)
+  let* lead = shape ~dim:(int_range 1 3) 0 2 in
+  let r = Array.length lead in
+  let side =
+    let+ drop = int_range 0 r
+    and+ ones =
+      array ~size:(constant r)
+        (frequency [ (2, constant false); (1, constant true) ])
+    in
+    Array.sub
+      (Array.mapi (fun i d -> if ones.(i) then 1 else d) lead)
+      drop (r - drop)
+  in
+  let* lead_a = side in
+  let* lead_b = side in
   let+ a = g (Array.append lead_a [| m; k |])
   and+ b = g (Array.append lead_b [| k; n |])
   and+ tracked = patterns 2 in

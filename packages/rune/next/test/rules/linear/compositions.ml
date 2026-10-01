@@ -132,6 +132,11 @@ let real_functions =
     two "solve" Nx.solve (pivoted ())
       (mat 3 2 [| 1.0; -2.0; 0.5; 3.0; -1.5; 0.7 |]);
     one "inv" Nx.inv (pivoted ());
+    two "a batch of triangular solves against one right-hand side"
+      (fun a b -> Nx.solve_triangular a b)
+      (Nx.create f64 [| 2; 2; 2 |]
+         [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
+      (mat 2 2 [| 1.0; -2.0; 0.5; 3.0 |]);
     test "the gradient of det is det times the inverse transpose" (fun () ->
         let a = pivoted () in
         equal

@@ -124,6 +124,36 @@ let compositions =
     is_the_loop "a constant result is broadcast"
       (fun _ -> Nx.scalar f64 7.)
       (xs ());
+    close_to_the_loop
+      "a product with a captured constant of batch axes of its own"
+      (fun r ->
+        Nx.matmul r
+          (Nx.create f64 [| 2; 3; 2 |]
+             (Array.init 12 (fun i -> float_of_int (i - 5) /. 4.))))
+      (xs ());
+    test "a product of two batched operands with batch axes of their own"
+      (fun () ->
+        let a =
+          Nx.create f64 [| 2; 2; 2; 3 |]
+            (Array.init 24 (fun i -> Float.sin (float_of_int i)))
+        in
+        let b =
+          Nx.create f64 [| 2; 3; 2 |]
+            (Array.init 12 (fun i -> Float.cos (float_of_int i)))
+        in
+        let expected =
+          Nx.stack
+            (List.init 2 (fun k -> Nx.matmul (Nx.get [ k ] a) (Nx.get [ k ] b)))
+        in
+        equal
+          (Reference.close ~rel:1e-12 ~floor:1e-14 ())
+          [ Reference.complexes expected ]
+          [
+            Reference.complexes
+              (Rune.vmap
+                 Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                 Nx.matmul a b);
+          ]);
     close_to_the_loop "softmax"
       (fun r ->
         let e = Nx.exp r in

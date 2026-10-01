@@ -74,6 +74,24 @@ let indexed =
           (gradient
              (fun x -> Op.eval (Pad ([| (2, 1) |], 5., x)))
              (vec [| 1.; 2. |])));
+    test "under unit_diag the diagonal receives nothing" (fun () ->
+        let solve a =
+          Op.eval
+            (Solve_triangular
+               {
+                 upper = false;
+                 transpose = false;
+                 unit_diag = true;
+                 a;
+                 b = vec [| 1.; -2. |];
+               })
+        in
+        let g =
+          Rune.grad'
+            (fun a -> Nx.sum (solve a))
+            (Nx.create f64 [| 2; 2 |] [| 9.; 9.; 0.5; 9. |])
+        in
+        equal floats [| 0.; 0. |] (Nx.to_array (Nx.diagonal g)));
     test "an element no window reads receives zero" (fun () ->
         let windows x =
           Op.eval (Move (x, Window { axis = 0; size = 2; step = 3 }))

@@ -151,6 +151,26 @@ let eig_gauge =
         ~scale:(Reference.norm (Reference.complexes dv))
         (Nx.matmul (adjoint v) dv))
 
+(* The tangent of eig pairs each eigenvalue with its vector by position, so eig
+   must give the same values in the same order with and without its vectors. *)
+let eig_values_agree =
+  prop
+    "eig gives the same eigenvalues, in the same order, with and without \
+     vectors"
+    (Gen.triple (Gen.int_range 1 4) Gen.bool seeds)
+    (fun (n, complex, seed) ->
+      let r = Random.State.make [| seed |] in
+      let check x =
+        equal (Reference.exact ())
+          (fst (Op.eval (Eig { vectors = false; x })))
+          (fst (Op.eval (Eig { vectors = true; x })))
+      in
+      let x = general r n in
+      if complex then
+        check
+          (Nx.add (Nx.cast Nx.complex128 x) (orthonormal Nx.complex128 r n n))
+      else check x)
+
 (* A real vector is defined up to its sign, which nx may flip from one matrix to
    the next, so the central difference aligns each vector with the one at the
    point before differencing: the sign that keeps the vectors continuous. *)
@@ -254,7 +274,8 @@ let undefined =
 
 let tests =
   [
-    group "gauge" ((eig_gauge :: gauge Nx.float64) @ gauge Nx.complex128);
+    group "gauge"
+      ((eig_values_agree :: eig_gauge :: gauge Nx.float64) @ gauge Nx.complex128);
     group "real vectors" real_vectors;
     group "undefined" undefined;
   ]
