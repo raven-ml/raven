@@ -718,8 +718,11 @@ val jit :
     results differ from eager's in rounding, and at overflow in whether a term
     overflows. A maximum over an axis is exact. Compiled float results can also
     differ from eager's in the last bits where the compiler fuses a multiply and
-    an add or turns a division by a constant into a multiplication, and in
-    transcendental functions, which are approximations within 4 units in the
+    an add, turns a division by a constant into a multiplication, or turns a
+    multiplication by a reciprocal ({!Nx.recip}) into a division, which also
+    differs where the reciprocal overflows: [x * recip y] is NaN at [x = 0] and
+    a [y] whose reciprocal is infinite, where [x / y] is [0]. They also differ
+    in transcendental functions, which are approximations within 4 units in the
     last place of the result's dtype; Metal flushes float32 subnormals to zero.
     A product over an axis ({!Nx.prod}) multiplies in an unspecified association
     too. A failed factorisation gives non-finite values where eager raises
