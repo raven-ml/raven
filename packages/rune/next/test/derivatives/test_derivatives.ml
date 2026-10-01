@@ -82,6 +82,20 @@ let grad_tests =
         let g = Rune.grad params_s quadratic (params ()) in
         equal ~msg:"w" (close ()) (vec [| 2.; -4.; 6. |]) g.w;
         equal ~msg:"b" (close ()) (vec [| 3. |]) g.b);
+    test "leaves of two dtypes differentiate in one pass" (fun () ->
+        let w = Nx.create Nx.float32 [| 2 |] [| 1.; -2. |]
+        and s = vec [| 3. |] in
+        let gw, gs =
+          Rune.grad
+            Nx.Ptree.(pair tensor tensor)
+            (fun (w, s) ->
+              Nx.add (Nx.cast f64 (Nx.sum (Nx.mul w w))) (Nx.sum (Nx.mul s s)))
+            (w, s)
+        in
+        equal ~msg:"float32" (exact ())
+          (Nx.create Nx.float32 [| 2 |] [| 2.; -4. |])
+          gw;
+        equal ~msg:"float64" (exact ()) (vec [| 6. |]) gs);
     test "a carried integer leaf has a zero gradient of its dtype and shape"
       (fun () ->
         let g = Rune.grad params_s quadratic (params ()) in
@@ -335,6 +349,21 @@ let jvp_tests =
         let _, dy = Rune.jvp params_s Nx.Ptree.tensor quadratic p t in
         (* 2 (1 - 2 + 3) + 3·2 *)
         equal (close ()) (scalar 10.) dy);
+    test "leaves of two dtypes push their tangents forward in one pass"
+      (fun () ->
+        let w = Nx.create Nx.float32 [| 2 |] [| 1.; -2. |]
+        and s = vec [| 3. |] in
+        let _, dy =
+          Rune.jvp
+            Nx.Ptree.(pair tensor tensor)
+            Nx.Ptree.tensor
+            (fun (w, s) ->
+              Nx.add (Nx.cast f64 (Nx.sum (Nx.mul w w))) (Nx.sum (Nx.mul s s)))
+            (w, s)
+            (Nx.create Nx.float32 [| 2 |] [| 1.; 0. |], vec [| 1. |])
+        in
+        (* 2 w₀ + 2 s *)
+        equal (exact ()) (scalar 8.) dy);
     test "the primal is the function's value, bit for bit" (fun () ->
         let f x = Nx.mul (Nx.exp x) (Nx.tanh x) in
         let x = vec [| 0.3; -0.8 |] in
@@ -547,6 +576,14 @@ let check_grads_tests =
 
 let detach_tests =
   [
+    test "a detached mean centres a value without its derivative" (fun () ->
+        (* Σ (x - m)² with m held constant has the gradient 2 (x - m): at [1; 2;
+           3; 6], m = 3. *)
+        equal (exact ())
+          (vec [| -4.; -2.; 0.; 6. |])
+          (Rune.grad'
+             (fun x -> Nx.sum (Nx.square (Nx.sub x (Rune.detach (Nx.mean x)))))
+             (vec [| 1.; 2.; 3.; 6. |])));
     test "outside every transformation detach is its argument" (fun () ->
         let x = vec [| 1.; 2. |] in
         is_true (Rune.detach x == x));

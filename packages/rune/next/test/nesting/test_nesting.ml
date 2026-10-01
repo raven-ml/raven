@@ -211,6 +211,59 @@ let custom_order_tests =
 
 (* Independence *)
 
+(* A curvature mark: a rule with no tensor result whose tangent map gathers the
+   tangents of every direction of a map and adds their Gram matrix to a
+   total. *)
+let directions = Rune.axis ()
+let curvature : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make ()
+
+let curvature_mark =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit (fun _ ->
+      ( (),
+        fun dy ->
+          let g = Rune.lanes directions dy in
+          Rune.Total.add curvature (Nx.matmul g (Nx.matrix_transpose g)) ))
+
+(* y = c ⊙ θ, marked, and a loss of it. *)
+let c () = vec [| 0.5; -2.; 1.5 |]
+
+let marked_loss theta =
+  let y = Nx.mul (c ()) theta in
+  curvature_mark y;
+  Nx.sum (Nx.square y)
+
+let theta () = vec [| 0.3; 1.1; -0.7 |]
+let dirs () = Nx.create f64 [| 2; 3 |] [| 1.; 0.; 2.; -1.; 3.; 0.5 |]
+
+let mark_tests =
+  [
+    test "a curvature mark sums the directions' Gram matrix in every lane"
+      (fun () ->
+        let zero = Nx.zeros f64 [| 2; 2 |] in
+        let _, totals =
+          Rune.vmap ~axis:directions
+            Nx.Ptree.(tensor @-> returns (pair (pair tensor tensor) tensor))
+            (fun dir ->
+              Rune.Total.collect curvature ~zero (fun () ->
+                  Rune.jvp' marked_loss (theta ()) dir))
+            (dirs ())
+        in
+        (* G stacks the directions' tangents of y, c ⊙ dir. *)
+        let g = Nx.mul (dirs ()) (c ()) in
+        let gram = Nx.matmul g (Nx.matrix_transpose g) in
+        equal (close ()) (Nx.stack [ gram; gram ]) totals);
+    test "a curvature mark is inert under value_and_grad" (fun () ->
+        let (_, g), total =
+          Rune.Total.collect curvature
+            ~zero:(Nx.zeros f64 [| 2; 2 |])
+            (fun () -> Rune.value_and_grad' marked_loss (theta ()))
+        in
+        equal ~msg:"gradient" (close ())
+          (Nx.mul_s (Nx.mul (Nx.square (c ())) (theta ())) 2.)
+          g;
+        equal ~msg:"total" (exact ()) (Nx.zeros f64 [| 2; 2 |]) total);
+  ]
+
 let independence_tests =
   [
     test "differentiations on two domains at once" (fun () ->
@@ -262,5 +315,6 @@ let () =
        [
          group "perturbation" perturbation_tests;
          group "custom rules at every order" custom_order_tests;
+         group "a curvature mark" mark_tests;
          group "independence" independence_tests;
        ])
