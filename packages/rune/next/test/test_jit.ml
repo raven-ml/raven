@@ -239,6 +239,14 @@ let values ~count ~heavy =
                ]
            in
            equal floats (f a) (Rune.jit' f a));
+       test "a bitcast's result has its dtype and its argument's bits"
+         (fun () ->
+           let a = Nx.create Nx.float32 [| 3 |] [| 1.; -0.; Float.nan |] in
+           let r = Rune.jit' (Nx.bitcast Nx.int32) a in
+           equal (tensor int32)
+             (Nx.create Nx.int32 [| 3 |]
+                [| 0x3f800000l; Int32.min_int; Int32.bits_of_float Float.nan |])
+             r);
        test "a zero-size result is an empty tensor" (fun () ->
            let a = Nx.zeros Nx.float32 [| 0; 3 |] in
            let r = Rune.jit' poly a in
@@ -1635,6 +1643,12 @@ let on_one_device ~name d =
               (Nx.cast Nx.float32 (host (g v)))
           in
           retraces (read 0) (read 1));
+      test "a call whose trace raises allocates nothing" (fun () ->
+          let a = placed d (x ()) in
+          let before = allocated d in
+          raises_jit_error (fun () ->
+              Rune.jit' (fun a -> if Nx.item [ 0 ] a > 0. then poly a else a) a);
+          equal ~msg:"bytes allocated" int before (allocated d));
       test "a consumed placed argument lends its storage" (fun () ->
           let a = placed d (x ()) in
           let before = Witness.addresses a in
