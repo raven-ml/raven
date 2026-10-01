@@ -434,6 +434,55 @@ let values ~count ~heavy =
                ("scatter set", scatter `Set);
                ("scatter add", scatter `Add);
              ]);
+       test "quantiles inside a compiled call equal eager's" (fun () ->
+           let a =
+             Nx.create Nx.float32 [| 2; 5 |]
+               [| 3.; Float.nan; -0.; 1.; 2.; 4.; 4.; Float.infinity; 0.; -1. |]
+           in
+           let f = Nx.quantile ~axis:1 [| 0.; 0.3; 0.5; 0.9; 1. |] in
+           equal floats (f a) (Rune.jit' f a);
+           let g = Nx.quantile [| 0.25; 0.75 |] in
+           let b = Nx.cast Nx.float64 a in
+           equal (tensor float_exact) (g b) (Rune.jit' g b));
+       test "a bitmap packed and read inside a compiled call is eager's"
+         (fun () ->
+           let m =
+             Nx.init Nx.bool [| 21 |] (fun i -> i.(0) mod 3 = 0 || i.(0) = 7)
+           in
+           let packed m = fst (Nx.Bits.bytes (Nx.Bits.of_bool m)) in
+           equal (tensor int) (packed m) (Rune.jit' packed m);
+           let b = Nx.Bits.sub (Nx.Bits.of_bool m) ~offset:3 ~length:15 in
+           let bytes, offset = Nx.Bits.bytes b in
+           let read f bytes = f (Nx.Bits.v ~offset ~length:15 bytes) in
+           equal (tensor bool) (Nx.Bits.to_bool b)
+             (Rune.jit' (read Nx.Bits.to_bool) bytes);
+           equal (tensor int64) (Nx.Bits.count b)
+             (Rune.jit' (read Nx.Bits.count) bytes));
+       test "a ragged array grouped by ids inside a compiled call is eager's"
+         (fun () ->
+           let ids = Nx.create Nx.int64 [| 6 |] [| 2L; 0L; -1L; 2L; 3L; 0L |] in
+           let x = Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 0. 12. 1.) in
+           let grouped ids x =
+             let r = Nx.Ragged.of_ids ~segments:3 ids x in
+             (Nx.Ragged.offsets r, Nx.Ragged.values (Nx.Ragged.map Nx.neg r))
+           in
+           let offsets, values = grouped ids x in
+           let offsets', values' =
+             Rune.jit
+               Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+               grouped ids x
+           in
+           equal (tensor int64) offsets offsets';
+           equal floats values values';
+           let medians ids x =
+             Nx.Ragged.quantile [| 0.; 0.5; 1. |]
+               (Nx.Ragged.of_ids ~segments:3 ids (Nx.flatten x))
+           in
+           let ids = Nx.concatenate ~axis:0 [ ids; ids ] in
+           equal floats (medians ids x)
+             (Rune.jit
+                Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                medians ids x));
        test "a zero-size result is an empty tensor" (fun () ->
            let a = Nx.zeros Nx.float32 [| 0; 3 |] in
            let r = Rune.jit' poly a in
@@ -1546,6 +1595,21 @@ let errors =
               Rune.jit'
                 (fun a -> if Nx.item [ 0 ] a > 0. then a else Nx.neg a)
                 (x ())));
+      test "a ragged take inside a compiled call names Nx.Ragged.take"
+        (fun () ->
+          let r =
+            Nx.Ragged.of_lengths
+              (Nx.create Nx.int64 [| 2 |] [| 1L; 3L |])
+              (x ())
+          in
+          let take indices = Nx.Ragged.values (Nx.Ragged.take ~indices r) in
+          raises_match
+            (function
+              | Rune.Jit_error m ->
+                  String.starts_with ~prefix:"Nx.Ragged.take: " m
+              | _ -> false)
+            (fun () ->
+              ignore (Rune.jit' take (Nx.create Nx.int64 [| 2 |] [| 1L; 0L |]))));
       test "an operation no target computes raises Jit_error" (fun () ->
           raises_jit_error (fun () ->
               Rune.jit'

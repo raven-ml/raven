@@ -640,6 +640,19 @@ module Ptree = Ptree
 (** Structures of tensors: types with one [walk] that walks their parts, which
     Rune's transformations, Vega's optimisers and checkpoints take. *)
 
+(** {1:bitmaps Bitmaps and ragged arrays}
+
+    Two layouts over plain tensors, Arrow's: packed booleans, and rows of
+    varying lengths. Their operations are compositions of tensor operations. *)
+
+module Bits = Bits
+(** Packed bitmaps: booleans eight to a byte of a [uint8] tensor, from a bit
+    offset, as Arrow's validity buffers. *)
+
+module Ragged = Ragged
+(** Ragged arrays: a tensor of values cut along its first axis by int64 offsets,
+    as Arrow's large lists and strings. *)
+
 (** {1:rng Random number generation}
 
     One generator, reached two ways. {!module-Rng} holds it: keys, one sampler
@@ -2482,6 +2495,35 @@ val std :
     [false].
 
     See also {!var}. *)
+
+val quantile : ?axis:int -> float array -> (float, 'b) t -> (float, 'b) t
+(** [quantile ?axis qs t] is the quantiles [qs] of [t] along [axis], or of all
+    its elements when [axis] is absent. The result leads with an axis of
+    [Array.length qs] entries, one per probability, followed by [t]'s axes
+    without [axis]: [[|Array.length qs|]] without [axis].
+
+    The quantile [q] of [n] elements interpolates linearly between the order
+    statistics around position [h = q * (n - 1)] of their
+    {{!section:sorting}sort order}: with [a] and [b] the elements at positions
+    [floor h] and [floor h + 1], it is [a + (h - floor h) * (b - a)]. At an
+    integer [h], or where [a] equals [b], it is [a] exactly. NaN sorts last, so
+    it reaches the upper quantiles. float16, bfloat16 and the float8 dtypes
+    interpolate in float32 and round once.
+
+    One sort serves every probability.
+
+    Raises [Invalid_argument] if a probability is outside \[[0], [1]\] or NaN,
+    if [axis] is out of bounds, or if there is no element to take quantiles of:
+    [axis] is empty, or [t] is empty without [axis].
+
+    {@ocaml[
+      # create float64 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |]
+        |> quantile [| 0.; 0.5; 0.75; 1. |] |> to_array
+      - : float array = [|1.; 3.; 4.; 5.|]
+      # create float64 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
+        |> quantile ~axis:1 [| 0.5 |]
+      - : (float, float64_elt) t = float64 [1,2] [[1.5, 3.5]]
+    ]} *)
 
 val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 (** [all ?axes ?keepdims t] is [true] iff every element along [axes] is

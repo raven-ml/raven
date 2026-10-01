@@ -176,6 +176,131 @@ let unique =
     keys "int64-1e7-1e6" l 1_000_000;
   ]
 
+let quantile =
+  let box = Nx.quantile [| 0.; 0.25; 0.5; 0.75; 1. |] in
+  [
+    row "float64-4e4" s (fun () -> uniform_float64 s) box;
+    row "float64-1e7" l (fun () -> uniform_float64 l) box;
+  ]
+
+let bits =
+  let mask () =
+    let st = state () in
+    Nx.cast Nx.bool
+      (tensor Bigarray.int8_unsigned l (fun _ -> Random.State.int st 2))
+  in
+  let bitmap () = Nx.Bits.of_bool (mask ()) in
+  [
+    row "of_bool-1e7" l mask (fun m -> fst (Nx.Bits.bytes (Nx.Bits.of_bool m)));
+    row "to_bool-1e7" l bitmap Nx.Bits.to_bool;
+    row "count-1e7" l bitmap Nx.Bits.count;
+  ]
+
+(* [n] strings of [w] random lowercase letters, as offsets and bytes, and a
+   permutation of them. *)
+let strings n w =
+  let st = state () in
+  let offsets =
+    Bigarray.Array1.init Bigarray.int64 Bigarray.c_layout (n + 1) (fun i ->
+        Int64.of_int (i * w))
+  in
+  let bytes =
+    Bigarray.Array1.init Bigarray.int8_unsigned Bigarray.c_layout (n * w)
+      (fun _ -> 97 + Random.State.int st 26)
+  in
+  let perm =
+    Bigarray.Array1.init Bigarray.int64 Bigarray.c_layout n Int64.of_int
+  in
+  for i = n - 1 downto 1 do
+    let j = Random.State.int st (i + 1) in
+    let t = perm.{i} in
+    perm.{i} <- perm.{j};
+    perm.{j} <- t
+  done;
+  (offsets, bytes, perm)
+
+let nx_of a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+
+external run_copy_total :
+  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  int = "bench_run_copy_total"
+[@@noalloc]
+
+external run_copy :
+  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  unit = "bench_run_copy"
+[@@noalloc]
+
+(* The run-copy twin allocates its results as host buffers, as nx does. *)
+let copy_runs (offsets, bytes, perm) =
+  let host = Nx_device.host in
+  let buffer s n = Nx_device.Buffer.create host s n in
+  let total = run_copy_total offsets perm in
+  let out = buffer Nx_dtype.Scalar.UInt8 total in
+  let out_offsets =
+    buffer Nx_dtype.Scalar.Int64 (Bigarray.Array1.dim perm + 1)
+  in
+  run_copy offsets bytes perm
+    (Nx_device.Buffer.bigarray Bigarray.int64 out_offsets)
+    (Nx_device.Buffer.bigarray Bigarray.int8_unsigned out);
+  Nx.of_buffer Nx.uint8 [| total |] out
+
+let ragged_take =
+  let ragged n w () =
+    let offsets, bytes, perm = strings n w in
+    (Nx.Ragged.v ~offsets:(nx_of offsets) (nx_of bytes), nx_of perm)
+  in
+  let take (r, indices) = Nx.Ragged.values (Nx.Ragged.take ~indices r) in
+  [
+    row "strings6-4e4-permuted" s (ragged s 6) take;
+    row "strings12-1e7-permuted" l (ragged l 12) take;
+    row "strings6-4e4-permuted-runcopy" s (fun () -> strings s 6) copy_runs;
+    row "strings12-1e7-permuted-runcopy" l (fun () -> strings l 12) copy_runs;
+  ]
+
+let ragged_rows =
+  let ragged n w () =
+    let offsets, bytes, _ = strings n w in
+    Nx.Ragged.v ~offsets:(nx_of offsets) (nx_of bytes)
+  in
+  let parts n w () =
+    let offsets, bytes, _ = strings n w in
+    (nx_of offsets, nx_of bytes)
+  in
+  let lengths n w () =
+    ( Nx.full Nx.int64 [| n |] (Int64.of_int w),
+      let _, bytes, _ = strings n w in
+      nx_of bytes )
+  in
+  [
+    (* [v] returns its operands, so it has no result bytes of its own. *)
+    Row
+      {
+        id = "v-strings12-1e7";
+        rows = l;
+        setup = parts l 12;
+        run = (fun (offsets, bytes) -> Nx.Ragged.v ~offsets bytes);
+        results = (fun _ -> []);
+      };
+    row "of_lengths-strings12-1e7" l (lengths l 12) (fun (lengths, bytes) ->
+        Nx.Ragged.offsets (Nx.Ragged.of_lengths lengths bytes));
+    row "concat-strings12-2x5e6" l
+      (fun () -> (ragged (l / 2) 12 (), ragged (l / 2) 12 ()))
+      (fun (a, b) -> Nx.Ragged.values (Nx.Ragged.concat [ a; b ]));
+    row "ids-strings6-4e4" s (ragged s 6) Nx.Ragged.ids;
+    row "ids-strings12-1e7" l (ragged l 12) Nx.Ragged.ids;
+    row "rank-strings12-1e7" l (ragged l 12) Nx.Ragged.rank;
+    row "quantile-float64-1e7-into-1e3" l
+      (fun () ->
+        Nx.Ragged.of_ids ~segments:1000 (int64s l 1000) (uniform_float64 l))
+      (Nx.Ragged.quantile [| 0.5 |]);
+  ]
+
 let groups =
   [
     ("arange", arange);
@@ -188,6 +313,10 @@ let groups =
     ("lexsort", lexsort);
     ("searchsorted", searchsorted);
     ("unique", unique);
+    ("quantile", quantile);
+    ("bits", bits);
+    ("ragged-take", ragged_take);
+    ("ragged", ragged_rows);
   ]
 
 (* The bytes of host arrays [f] allocates beyond its results': the rises of the

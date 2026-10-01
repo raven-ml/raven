@@ -33,20 +33,23 @@ let compare_float a b =
   else if a > b then 1
   else Bool.compare (Float.sign_bit b) (Float.sign_bit a)
 
+(* Floats with ties, signed zeros, infinities and NaN. *)
+let float_values =
+  Gen.frequency
+    [
+      (6, Gen.map float_of_int (Gen.int_range (-3) 3));
+      (2, Gen.float_range (-1e3) 1e3);
+      ( 1,
+        Gen.of_list ~pp:pp_float [ Float.nan; -0.; 0.; infinity; neg_infinity ]
+      );
+    ]
+
 let floats name dtype =
   S
     {
       name;
       dtype;
-      value =
-        Gen.frequency
-          [
-            (6, Gen.map float_of_int (Gen.int_range (-3) 3));
-            (2, Gen.float_range (-1e3) 1e3);
-            ( 1,
-              Gen.of_list ~pp:pp_float
-                [ Float.nan; -0.; 0.; infinity; neg_infinity ] );
-          ];
+      value = float_values;
       compare = compare_float;
       numeric = Float.compare;
       is_nan = Float.is_nan;
@@ -943,7 +946,136 @@ let uniques =
                 Nx.unique (Nx.zeros Nx.int32 [| 1; 1; 1 |])));
       ])
 
+(* Quantiles *)
+
+let r32 x = Int32.float_of_bits (Int32.bits_of_float x)
+
+(* The quantiles [qs] of [lane] by the definition: linear between the order
+   statistics around [q * (n - 1)] of the sort order, exactly the lower one at
+   an integer position or between equal ones, each operation rounded by
+   [round]. *)
+let quantiles ~round qs lane =
+  let n = Array.length lane in
+  let sorted =
+    Array.map
+      (fun i -> lane.(i))
+      (stable_order ~descending:false compare_float Float.is_nan lane)
+  in
+  Array.map
+    (fun q ->
+      let h = q *. float_of_int (n - 1) in
+      let lo = int_of_float (Float.floor h) in
+      let a = sorted.(lo) and b = sorted.(Int.min (lo + 1) (n - 1)) in
+      let f = h -. Float.floor h in
+      if f = 0. || a = b then a
+      else round (a +. round (round f *. round (b -. a))))
+    qs
+
+let probabilities =
+  Gen.array ~size:(Gen.int_range 0 4)
+    (Gen.frequency
+       [
+         (3, Gen.float_range 0. 1.);
+         (1, Gen.of_list ~pp:pp_float [ 0.; 0.25; 0.5; 1.; 1. /. 3. ]);
+       ])
+
+let quantiled ~round name dtype =
+  let drawn =
+    let open Gen in
+    let* t =
+      viewed
+        ~shape:(Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range 1 5))
+        ~pp:pp_float dtype float_values
+    in
+    let+ axis = option (int_range (-Nx.ndim t) (Nx.ndim t - 1))
+    and+ qs = probabilities in
+    (t, axis, qs)
+  in
+  prop name drawn (fun (t, axis, qs) ->
+      assume (Nx.numel t > 0);
+      let k = Array.length qs in
+      let r = Ref.of_nx t in
+      match axis with
+      | None ->
+          let expected = quantiles ~round qs r.data in
+          equal (array float_exact) expected (Nx.to_array (Nx.quantile qs t))
+      | Some a ->
+          let a = Ref.axis r a in
+          let expected = Ref.along ~axis:a ~length:k (quantiles ~round qs) r in
+          equal (Ref.witness float_exact) expected
+            (Ref.of_nx (Nx.moveaxis 0 a (Nx.quantile ~axis:a qs t))))
+
+let quantiles_group =
+  let x = Nx.create Nx.float64 [| 4 |] [| 4.; 1.; 3.; 2. |] in
+  group "quantile"
+    [
+      quantiled ~round:Fun.id "float64 quantiles are the definition's"
+        Nx.float64;
+      quantiled ~round:r32
+        "float32 quantiles are the definition's, rounded at each operation"
+        Nx.float32;
+      prop "float16 and bfloat16 interpolate in float32 and round once"
+        (Gen.pair
+           (Gen.array ~size:(Gen.int_range 1 9) float_values)
+           probabilities)
+        (fun (xs, qs) ->
+          let narrow (type b) (dt : (float, b) Nx.dtype) =
+            let t =
+              Nx.cast dt (Nx.create Nx.float32 [| Array.length xs |] xs)
+            in
+            equal (tensor float_exact)
+              (Nx.cast dt (Nx.quantile qs (Nx.cast Nx.float32 t)))
+              (Nx.quantile qs t)
+          in
+          narrow Nx.float16;
+          narrow Nx.bfloat16);
+      cases "quantile interpolates between order statistics" ~name:fst
+        [
+          ("the median of an even count", ([| 0.5 |], [| 2.5 |]));
+          ("the extremes", ([| 0.; 1. |], [| 1.; 4. |]));
+          ("an integer position", ([| 1. /. 3. |], [| 2. |]));
+          ("a quarter", ([| 0.25 |], [| 1.75 |]));
+        ]
+        (fun (_, (qs, expected)) ->
+          equal (array float_exact) expected (Nx.to_array (Nx.quantile qs x)));
+      test "NaN sorts last and reaches the top quantile" (fun () ->
+          let t = Nx.create Nx.float64 [| 3 |] [| nan; 1.; 2. |] in
+          equal (array float_exact) [| 1.; 2.; nan |]
+            (Nx.to_array (Nx.quantile [| 0.; 0.5; 1. |] t)));
+      test "between equal infinities the quantile is that infinity" (fun () ->
+          let t = Nx.create Nx.float64 [| 2 |] [| infinity; infinity |] in
+          equal (array float_exact) [| infinity |]
+            (Nx.to_array (Nx.quantile [| 0.5 |] t)));
+      test "the probabilities lead the result's shape" (fun () ->
+          let t = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
+          equal (array int) [| 5; 2; 4 |]
+            (Nx.shape (Nx.quantile ~axis:1 [| 0.; 0.1; 0.2; 0.3; 1. |] t));
+          equal (array int) [| 0 |] (Nx.shape (Nx.quantile [||] t)));
+      cases "quantile refuses what has no quantile" ~name:fst
+        [
+          ("a probability below 0", fun () -> Nx.quantile [| -0.1 |] x);
+          ("a probability above 1", fun () -> Nx.quantile [| 1.5 |] x);
+          ("a NaN probability", fun () -> Nx.quantile [| nan |] x);
+          ( "an empty axis",
+            fun () ->
+              Nx.quantile ~axis:1 [| 0.5 |] (Nx.zeros Nx.float64 [| 2; 0 |]) );
+          ( "an empty tensor",
+            fun () -> Nx.quantile [| 0.5 |] (Nx.zeros Nx.float64 [| 0 |]) );
+          ("an axis out of bounds", fun () -> Nx.quantile ~axis:1 [| 0.5 |] x);
+        ]
+        (fun (_, f) -> raises_invalid_arg f);
+    ]
+
 let () =
   exit
     (run "nx sorting"
-       [ sorts; top_ks; gathers; order_keys; lexsorts; searchsorts; uniques ])
+       [
+         sorts;
+         top_ks;
+         gathers;
+         order_keys;
+         lexsorts;
+         searchsorts;
+         uniques;
+         quantiles_group;
+       ])

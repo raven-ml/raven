@@ -1,6 +1,9 @@
 (executable
  (name bench_primitives)
- (libraries nx nx.device thumper))
+ (libraries nx nx.dtype nx.device thumper)
+ (foreign_stubs
+  (language c)
+  (names run_copy_stubs)))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly. bench_twins.py measures the numpy, pandas and polars twins.

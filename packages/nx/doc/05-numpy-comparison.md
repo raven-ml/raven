@@ -187,6 +187,9 @@ slice = arr[0]
 
 ## 5. Statistical Functions
 
+`Nx.quantile` sorts NaN last, so a NaN reaches only the upper quantiles, where
+`np.quantile` gives NaN for every quantile of a lane that holds one.
+
 **Nx:**
 <!-- $MDX skip -->
 ```ocaml
@@ -202,6 +205,9 @@ let max_val = Nx.max arr
 
 (* Sum along an axis *)
 let axis_sum = Nx.sum ~axes:[|0|] arr
+
+(* Quartiles along an axis, one row per probability *)
+let quartiles = Nx.quantile ~axis:0 [| 0.25; 0.5; 0.75 |] arr
 ```
 
 **NumPy:**
@@ -218,6 +224,9 @@ max_val = np.max(arr)
 
 # Sum along an axis
 axis_sum = np.sum(arr, axis=0)
+
+# Quartiles along an axis, one row per probability
+quartiles = np.quantile(arr, [0.25, 0.5, 0.75], axis=0)
 ```
 
 ## 6. Linear Algebra
@@ -308,6 +317,9 @@ first. `Nx.unique` numbers groups in order of first appearance, where
 let hits = Nx.positions mask
 let kept = Nx.compress ~condition:mask x
 
+(* A mask packed eight to a byte, least significant bit first *)
+let packed, _offset = Nx.Bits.bytes (Nx.Bits.of_bool mask)
+
 (* Sort by a, then by b descending *)
 let perm =
   Nx.lexsort (Nx.stack ~axis:1 [ Nx.order_key a; Nx.bitwise_not (Nx.order_key b) ])
@@ -329,6 +341,9 @@ let counts =
 # Positions where a mask holds, and the elements there
 hits = np.flatnonzero(mask)
 kept = x[mask]
+
+# A mask packed eight to a byte, least significant bit first
+packed = np.packbits(mask, bitorder="little")
 
 # Sort by a, then by b descending
 perm = np.lexsort((-b, a))

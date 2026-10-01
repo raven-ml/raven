@@ -1184,6 +1184,29 @@ let operation_tests =
         equal ~msg:"copies" int (count copy plain) (count copy with_pair);
         equal ~msg:"arithmetic" int (count arithmetic plain)
           (count arithmetic with_pair));
+    test "a ragged take's values differentiate as the rows they repeat"
+      (fun () ->
+        let offsets = Nx.create Nx.int64 [| 4 |] [| 0L; 2L; 3L; 6L |] in
+        let indices = Nx.create Nx.int64 [| 3 |] [| 2L; 0L; 2L |] in
+        let f x =
+          Nx.sum
+            (Nx.Ragged.values
+               (Nx.Ragged.take ~indices (Nx.Ragged.v ~offsets x)))
+        in
+        equal (exact ())
+          (vec [| 1.; 1.; 0.; 2.; 2.; 2. |])
+          (Rune.grad' f (vec [| 1.; 2.; 3.; 4.; 5.; 6. |])));
+    test "rows grouped by ids differentiate as the rows they permute" (fun () ->
+        let ids = Nx.create Nx.int64 [| 4 |] [| 1L; 0L; 1L; 5L |] in
+        let f x =
+          Nx.sum
+            (Nx.mul
+               (vec [| 1.; 2.; 3.; 4. |])
+               (Nx.Ragged.values (Nx.Ragged.of_ids ~segments:2 ids x)))
+        in
+        equal (exact ())
+          (vec [| 2.; 1.; 3.; 4. |])
+          (Rune.grad' f (vec [| 1.; -2.; 3.; 0.5 |])));
   ]
 
 (* Laws over generated programs *)

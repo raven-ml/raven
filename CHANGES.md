@@ -2939,6 +2939,17 @@ thread.
 
 ### Nx
 
+- Add `Nx.Bits`, packed bitmaps in Arrow's validity layout over a `uint8`
+  tensor at a bit offset, with `of_bool`, `to_bool`, `count`, `logand`, `logor`,
+  `lognot`, an O(1) `sub`, `take` and `concat`.
+- Add `Nx.Ragged`, ragged arrays as int64 offsets over a tensor of values
+  (Arrow's large lists and strings): `v` and `of_lengths` check their offsets,
+  `of_ids` groups rows by id and compiles, `sub`, `take`, `concat` and `map`
+  transform them, `quantile` takes each row's quantiles, and `ids` and `rank`
+  number rows by first appearance and by their order, byte strings as `memcmp`
+  orders them.
+- Add `Nx.quantile`, linear quantiles along an axis or over a whole tensor, one
+  sort for every probability, with NaN sorting last.
 - CUDA modules and Metal pipelines are unloaded with their binary once no
   program of it and no launch that uses it is reachable; they were kept for the
   device's life. `Nx_device.Program.keep` ties a binary to a buffer that

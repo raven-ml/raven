@@ -155,6 +155,46 @@ for id, n in [("gather/float32-rows-4e4x8", S),
                   lambda n=n: ints(n, n)),
          lambda a: a[0][a[1]])
 
+BOX = [0.0, 0.25, 0.5, 0.75, 1.0]
+for n, name in [(S, "4e4"), (L, "1e7")]:
+    twin(f"quantile/float64-{name}", "numpy", lambda n=n: uniform(n),
+         lambda x: np.quantile(x, BOX))
+    twin(f"quantile/float64-{name}", "pandas",
+         lambda n=n: pd.Series(uniform(n)), lambda s: s.quantile(BOX))
+
+
+def bools(n):
+    return rng().integers(0, 2, n).astype(bool)
+
+
+def packed(n):
+    return np.packbits(bools(n), bitorder="little")
+
+
+twin("bits/of_bool-1e7", "numpy", lambda: bools(L),
+     lambda m: np.packbits(m, bitorder="little"))
+twin("bits/to_bool-1e7", "numpy", lambda: packed(L),
+     lambda p: np.unpackbits(p, count=L, bitorder="little").view(bool))
+twin("bits/count-1e7", "numpy", lambda: packed(L),
+     lambda p: np.bitwise_count(p).sum())
+
+
+def words_of(n, w):
+    """n strings of w random lowercase letters."""
+    letters = rng().integers(97, 123, (n, w), dtype=np.uint8)
+    return letters.view(f"S{w}").ravel().astype(f"U{w}")
+
+
+def strings(n, w):
+    """n strings of w random lowercase letters, and a permutation of them."""
+    return pl.Series(words_of(n, w)), pl.Series(rng().permutation(n))
+
+
+for n, w, name in [(S, 6, "strings6-4e4-permuted"),
+                   (L, 12, "strings12-1e7-permuted")]:
+    twin(f"ragged-take/{name}", "polars", lambda n=n, w=w: strings(n, w),
+         lambda a: a[0].gather(a[1]))
+
 
 def mask(n):
     return uniform(n) < 0.5
@@ -197,6 +237,22 @@ for n, name, d, dname in [(S, "4e4", 100, "1e2"), (S, "4e4", 10_000, "1e4"),
     twin(id, "numpy", lambda n=n, d=d: ints(n, d),
          lambda k: np.unique(k, return_index=True, return_inverse=True,
                              return_counts=True))
+
+for n, w, name in [(S, 6, "strings6-4e4"), (L, 12, "strings12-1e7")]:
+    twin(f"ragged/ids-{name}", "pandas",
+         lambda n=n, w=w: pd.Series(words_of(n, w), dtype=object),
+         lambda s: pd.factorize(s, sort=False)[0])
+twin("ragged/rank-strings12-1e7", "polars", lambda: pl.Series(words_of(L, 12)),
+     lambda s: s.rank("dense"))
+twin("ragged/rank-strings12-1e7", "numpy",
+     lambda: words_of(L, 12),
+     lambda a: np.unique(a, return_inverse=True)[1])
+twin("ragged/quantile-float64-1e7-into-1e3", "pandas",
+     lambda: pd.Series(uniform(L)).groupby(ints(L, 1000)),
+     lambda g: g.quantile(0.5))
+twin("ragged/quantile-float64-1e7-into-1e3", "polars",
+     lambda: pl.DataFrame({"id": ints(L, 1000), "x": uniform(L)}),
+     lambda df: df.group_by("id").agg(pl.col("x").quantile(0.5, "linear")))
 
 
 # Measurement

@@ -537,6 +537,9 @@ let naming () =
   ({ E.run; claims }, seen)
 
 let mask = Nx.create Nx.bool [| 3 |] [| true; false; true |]
+let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 3L |]
+let lengths = Nx.create Nx.int64 [| 2 |] [| 1L; 2L |]
+let ids = Nx.create Nx.int64 [| 3 |] [| 1L; 0L; 1L |]
 let square = Nx.create Nx.float64 [| 2; 2 |] [| 2.; 1.; 1.; 3. |]
 let wide = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 7. |]
 
@@ -612,6 +615,38 @@ let reads =
               ignore (Nx.nonzero (Nx.scalar Nx.float32 1.));
               ignore (Nx.unique (Nx.zeros Nx.int32 [| 0 |])));
           equal names [] !seen);
+      Windtrap.cases ~name:fst
+        "a ragged array's read names its function and reads once"
+        [
+          ("Nx.Ragged.v", discard (fun () -> Nx.Ragged.v ~offsets x));
+          ( "Nx.Ragged.of_lengths",
+            discard (fun () -> Nx.Ragged.of_lengths lengths x) );
+          ( "Nx.Ragged.take",
+            discard (fun () ->
+                Nx.Ragged.take ~indices:lengths
+                  (Nx.Ragged.of_ids ~segments:2 ids x)) );
+          ( "Nx.Ragged.concat",
+            discard (fun () ->
+                let r = Nx.Ragged.of_ids ~segments:2 ids x in
+                Nx.Ragged.concat [ r; r; r ]) );
+        ]
+        (fun (expected, f) ->
+          let i, seen = naming () in
+          E.intercept i f;
+          equal names [ expected ] !seen);
+      Windtrap.cases ~name:fst "ids and rank name every round's read"
+        [
+          ( "Nx.Ragged.ids",
+            discard (fun () ->
+                Nx.Ragged.ids (Nx.Ragged.of_ids ~segments:2 ids x)) );
+          ( "Nx.Ragged.rank",
+            discard (fun () ->
+                Nx.Ragged.rank (Nx.Ragged.of_ids ~segments:2 ids x)) );
+        ]
+        (fun (expected, f) ->
+          let i, seen = naming () in
+          E.intercept i f;
+          equal names [ expected ] (List.sort_uniq String.compare !seen));
     ]
 
 let () =

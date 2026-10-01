@@ -2184,6 +2184,57 @@ let argsort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
     | UInt4 -> B.argsort ~descending ~axis (cast UInt8 x)
     | _ -> B.argsort ~descending ~axis x
 
+(* Quantiles *)
+
+let check_probabilities op qs =
+  Array.iter
+    (fun q ->
+      if not (q >= 0. && q <= 1.) then
+        err op "probability %g is outside [0, 1]" q)
+    qs
+
+(* [interpolate a b f] is [a + f * (b - a)] between the order statistics [a] and
+   [b], and [a] itself where [f] is zero or [a] equals [b]. Narrow floats
+   interpolate in float32 and round once. *)
+let interpolate (type b) (a : (float, b) t) (b : (float, b) t) (f : float64_t) :
+    (float, b) t =
+  let exact = equal_s f 0. in
+  let lerp (type c) (a : (float, c) t) (b : (float, c) t) =
+    let f = cast (dtype a) f in
+    where (logical_or exact (equal a b)) a (add a (mul f (sub b a)))
+  in
+  match dtype a with
+  | Float32 | Float64 -> lerp a b
+  | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
+      cast (dtype a) (lerp (cast Float32 a) (cast Float32 b))
+
+let quantile ?axis qs x =
+  check_probabilities "quantile" qs;
+  let x, axis =
+    match axis with
+    | None -> (flatten x, 0)
+    | Some axis -> (x, sort_axis "quantile" x axis)
+  in
+  let n = dim axis x in
+  if n = 0 then err "quantile" "axis %d is empty: it has no quantile" axis;
+  let ctx = B.context x and k = Array.length qs in
+  let sorted = B.sort ~descending:false ~axis x in
+  let at = Array.map (fun q -> q *. float_of_int (n - 1)) qs in
+  let lo = Array.map (fun h -> Int64.of_float (Float.floor h)) at in
+  let hi =
+    Array.map (fun i -> Int64.min (Int64.succ i) (Int64.of_int (n - 1))) lo
+  in
+  let order i =
+    moveaxis axis 0 (take ~axis ~indices:(create ctx Int64 [| k |] i) sorted)
+  in
+  let f = Array.map (fun h -> h -. Float.floor h) at in
+  let f =
+    reshape
+      (Array.init (ndim x) (fun d -> if d = 0 then k else 1))
+      (create ctx Float64 [| k |] f)
+  in
+  interpolate (order lo) (order hi) f
+
 (* The tensor and axis an arg-reduction runs along. *)
 let arg_axis op ?axis x =
   let r = ndim x in
@@ -2569,26 +2620,26 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
 
 (* Keys *)
 
-(* The order key of a float64: its bits, all flipped when the sign is set and
-   only the sign bit otherwise; every NaN keys to all ones. *)
-let float64_order_key (x : float64_t) : uint64_t =
-  let b = bitcast Int64 x in
-  let flip =
-    where (less_s b 0L) (scalar_like b (-1L)) (scalar_like b Int64.min_int)
-  in
-  bitcast UInt64 (where (isnan x) (scalar_like b (-1L)) (bitwise_xor b flip))
+(* Keys at a width: unsigned integers [u] of that width whose order is the sort
+   order. A signed integer flips its sign bit, [sign] in its own dtype. A float
+   takes its bits as the signed integers [s] of its width, all flipped when the
+   sign is set and only the sign bit otherwise, and every NaN keys to all
+   ones. *)
+let signed_key u ~sign x = bitcast u (bitwise_xor x (scalar_like x sign))
+
+let float_key s u ~sign x =
+  let b = bitcast s x in
+  let ones = scalar_like b (Nx_dtype.minus_one s) in
+  let flip = where (less_s b (Nx_dtype.zero s)) ones (scalar_like b sign) in
+  bitcast u (where (isnan x) ones (bitwise_xor b flip))
 
 let order_key (type a b) (x : (a, b) t) : uint64_t =
-  let signed v =
-    bitcast UInt64
-      (bitwise_xor (cast Int64 v) (scalar (B.context v) Int64 Int64.min_int))
-  in
+  let float x = float_key Int64 UInt64 ~sign:Int64.min_int (cast Float64 x) in
   match dtype x with
-  | Float64 -> float64_order_key x
-  | Float32 | Float16 | BFloat16 -> float64_order_key (cast Float64 x)
-  | Float8_e4m3 | Float8_e5m2 ->
-      float64_order_key (cast Float64 (cast Float16 x))
-  | Int4 | Int8 | Int16 | Int32 | Int64 -> signed x
+  | Float64 | Float32 | Float16 | BFloat16 -> float x
+  | Float8_e4m3 | Float8_e5m2 -> float (cast Float16 x)
+  | Int4 | Int8 | Int16 | Int32 | Int64 ->
+      signed_key UInt64 ~sign:Int64.min_int (cast Int64 x)
   | UInt4 | UInt8 | UInt16 | UInt32 | Bool -> cast UInt64 x
   | UInt64 -> x
   | Complex64 | Complex128 ->
