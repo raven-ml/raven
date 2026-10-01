@@ -109,7 +109,7 @@ let update m x starts v =
         Nx.sub (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1)) start
       in
       let within =
-        Nx.logical_and
+        Nx.bitwise_and
           (Nx.greater_equal_s rel 0l)
           (Nx.less_s rel (Int32.of_int len))
       in
@@ -133,7 +133,7 @@ let update m x starts v =
         Some
           (match !inside with
           | None -> within
-          | Some w -> Nx.logical_and w within)
+          | Some w -> Nx.bitwise_and w within)
     done;
     match !inside with None -> v | Some inside -> Nx.where inside !window x
   end

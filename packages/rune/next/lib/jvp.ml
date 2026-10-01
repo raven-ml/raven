@@ -180,8 +180,8 @@ let running_arg ~axis y =
   in
   let before = shifted ~axis 1 (Nx_dtype.zero (Nx.dtype y)) y in
   let changed =
-    Nx.logical_and (Nx.not_equal y before)
-      (Nx.logical_not (Nx.logical_and (Nx.isnan y) (Nx.isnan before)))
+    Nx.bitwise_and (Nx.not_equal y before)
+      (Nx.logical_not (Nx.bitwise_and (Nx.isnan y) (Nx.isnan before)))
   in
   Nx.cummax ~axis (Nx.where changed iota (Nx.zeros_like iota))
 
@@ -280,15 +280,15 @@ let binary_tangent k a b y da db =
          Masking only there keeps the coefficient's own derivative, 1 / a along
          b at b = 0, everywhere else. *)
       let zero x = Nx.equal x (Nx.zeros_like x) in
-      let both = Nx.logical_and (zero a) (zero b) in
+      let both = Nx.bitwise_and (zero a) (zero b) in
       terms
         (term
            (fun da ->
              mul da (zero_where both (Nx.mul b (Nx.pow a (Nx.sub_s b (one b))))))
            da)
         (term (fun db -> mul db (zero_where (zero a) (Nx.mul y (Nx.log a)))) db)
-  | Maximum -> selected y (Nx.logical_or (Nx.less b a) (Nx.isnan a)) da db
-  | Minimum -> selected y (Nx.logical_or (Nx.less a b) (Nx.isnan a)) da db
+  | Maximum -> selected y (Nx.bitwise_or (Nx.less b a) (Nx.isnan a)) da db
+  | Minimum -> selected y (Nx.bitwise_or (Nx.less a b) (Nx.isnan a)) da db
   | Atan2 ->
       let denom = Nx.add (Nx.mul a a) (Nx.mul b b) in
       terms
