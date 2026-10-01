@@ -49,6 +49,9 @@ external create_queue : int -> queue_args -> int * int64
 external wait_events : int -> int array -> int -> int -> string
   = "caml_nx_kfd_wait"
 
+external drm_info : int -> int -> int -> int -> int -> string
+  = "caml_nx_amd_drm_info"
+
 let topology = "/sys/devices/virtual/kfd/kfd/topology/nodes"
 
 let read file =
@@ -399,6 +402,22 @@ let flushes_hdp t = Option.is_some t.hdp
 
 (* Blocks at most [ms] on the GPU's events; raises the report of an exception of
    this GPU. *)
+(* The compute units of each shader array that the amdgpu driver reports
+   active: a bitmap per engine and array, as its device information lays them
+   out. *)
+let cu_bitmap t =
+  let info =
+    drm_info t.drm
+      (D.drm_command_base + D.drm_amdgpu_info)
+      D.Drm_amdgpu_info.sizeof D.amdgpu_info_dev_info
+      D.Drm_amdgpu_info_device.sizeof
+  in
+  let at, row = D.Drm_amdgpu_info_device.cu_bitmap in
+  Array.init 4 (fun i ->
+      Array.init 4 (fun j ->
+          Int32.to_int (String.get_int32_le info (at + (row * i) + (4 * j)))
+          land 0xffff_ffff))
+
 let sleep t ms =
   if t.events <> [||] then
     match wait_events t.fd t.events t.gpu_id ms with

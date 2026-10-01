@@ -461,6 +461,37 @@ let test_mapped () =
     check ~msg:(at "the GPU's writes, read by the host") (40 + round) host_view
   done
 
+(* A profile that counts gives the device its counting, the same while its
+   counters stay the same; a GPU without a counter refuses it by name. *)
+let test_counting () =
+  let a = low (device ()) in
+  is_true ~msg:"no profile" (Option.is_none (Nx_amd_device.counting a));
+  let counting names f =
+    let p = Nx_device.Profile.start ~counters:names () in
+    Fun.protect
+      ~finally:(fun () -> ignore (Nx_device.Profile.stop p))
+      (fun () ->
+        match Nx_amd_device.counting a with
+        | exception Failure why
+          when String.ends_with ~suffix:"set -l stable_std`" why ->
+            skip ~reason:why ()
+        | c -> f c)
+  in
+  counting [ "GRBM_GUI_ACTIVE" ] (fun c ->
+      let c = Option.get c in
+      equal int ~msg:"the log" (8 * (1 + c.slots)) (B.nbytes c.log);
+      equal int ~msg:"the samples" (c.slots * c.size) (B.nbytes c.samples);
+      equal int ~msg:"one GRBM value per die"
+        (8 * (Nx_amd_device.props a).xccs)
+        c.size;
+      is_true ~msg:"kept" (Option.get (Nx_amd_device.counting a) == c));
+  let p = Nx_device.Profile.start ~counters:[ "NO_SUCH_COUNTER" ] () in
+  Fun.protect
+    ~finally:(fun () -> ignore (Nx_device.Profile.stop p))
+    (fun () ->
+      raises_match (Exn.invalid_arg ~substring:"counts no NO_SUCH_COUNTER")
+        (fun () -> Nx_amd_device.counting a))
+
 (* Last: work that never signals hangs the device, which is lost after its
    timeout. *)
 let test_hang () =
@@ -495,7 +526,10 @@ let () =
            ];
          group "programs"
            [ test "code objects" test_programs; test "scratch" test_scratch ];
-         group "profiles" (Nx_test.Profiles.copies ~slack:1_000_000 gpus);
+         group "profiles"
+           (test "a profile that counts gives the device its counting"
+              test_counting
+           :: Nx_test.Profiles.copies ~slack:1_000_000 gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"
            [ test "work that never signals loses the device" test_hang ];

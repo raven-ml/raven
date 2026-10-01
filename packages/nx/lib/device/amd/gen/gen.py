@@ -3,8 +3,8 @@
 
 Run from the repository root:
 
-  uv run --with libclang==18.1.1 packages/nx/lib/device/amd/gen/gen.py
-  uv run --with libclang==18.1.1 packages/nx/lib/device/amd/gen/gen.py --check
+  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/device/amd/gen/gen.py
+  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/device/amd/gen/gen.py --check
 
 Every input is pinned in pins.json by URL and SHA-256: the source archives and
 files below, and the firmware files of the linux-firmware commit below. Every
@@ -25,6 +25,7 @@ import hashlib
 import json
 import pathlib
 import re
+import shutil
 import sys
 import tarfile
 import urllib.request
@@ -43,6 +44,7 @@ FIRMWARE_TREE = ("https://gitlab.com/api/v4/projects/kernel-firmware%2Flinux-fir
                  f"?path=amdgpu&ref={FIRMWARE_COMMIT}&per_page=100&page={{page}}")
 FIRMWARE_RAW = f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{FIRMWARE_COMMIT}/amdgpu/{{name}}"
 
+COUNTER_DEFS = "projects/rocprofiler-compute/src/rocprof_compute_soc/profile_configs/counter_defs.yaml"
 ROCM_FILES = [
     "projects/rocr-runtime/runtime/hsa-runtime/core/inc/registers.h",
     "projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_queue.h",
@@ -52,8 +54,14 @@ ROCM_FILES = [
     "projects/aqlprofile/linux/vega10_enum.h",
     "projects/aqlprofile/linux/soc21_enum.h",
     "projects/aqlprofile/linux/soc24_enum.h",
+    COUNTER_DEFS,
 ]
 LLVM_FILES = ["llvm/include/llvm/Support/AMDHSAKernelDescriptor.h"]
+
+# The performance counters of the blocks the runtime counts, for the GPUs it
+# supports: each GFX9 GPU by its own name, the later ones by their generation.
+COUNTER_BLOCKS = ["GRBM", "GL2C", "TCC", "SQ"]
+COUNTER_ARCHS = ["gfx942", "gfx950", "gfx11", "gfx12"]
 
 # Register blocks and the versions whose headers exist.
 REG_FILES = {
@@ -169,6 +177,8 @@ CONSTANTS = [
     "KFD_IOC_ALLOC_MEM_FLAGS_MMIO_REMAP", "KFD_MMIO_REMAP_HDP_MEM_FLUSH_CNTL",
     "KFD_IOC_QUEUE_TYPE_COMPUTE", "KFD_IOC_QUEUE_TYPE_SDMA", "KFD_IOC_QUEUE_TYPE_COMPUTE_AQL",
     "KFD_IOC_EVENT_SIGNAL", "KFD_IOC_EVENT_MEMORY", "KFD_IOC_EVENT_HW_EXCEPTION",
+    # the amdgpu driver's device information
+    "DRM_COMMAND_BASE", "DRM_AMDGPU_INFO", "AMDGPU_INFO_DEV_INFO",
     # AQL queues and kernels
     "AMD_QUEUE_PROPERTIES_IS_PTR64", "AMD_QUEUE_PROPERTIES_ENABLE_PROFILING",
     "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
@@ -242,6 +252,8 @@ STRUCTS = {
                                   "scratch_resource_descriptor", "scratch_backing_memory_location",
                                   "scratch_wave64_lane_byte_size"]),
     "kernel_descriptor_t": ("Kernel_descriptor", None),
+    "drm_amdgpu_info": ("Drm_amdgpu_info", ["return_pointer", "return_size", "query"]),
+    "drm_amdgpu_info_device": ("Drm_amdgpu_info_device", ["cu_bitmap"]),
 }
 
 SQ_BUF_RSRC = {  # by GC major: the unions of words 1 and 3
@@ -291,12 +303,15 @@ def sources(cache, pins, pin):
     root = cache / "src"
     tar = fetch(cache, KERNEL, pins, pin)
     kernel = root / key(KERNEL)
+    if kernel.exists() and not (kernel / "include/uapi/drm/amdgpu_drm.h").exists():
+        shutil.rmtree(kernel)  # extracted before the DRM headers were read
     if not kernel.exists():
         partial = kernel.with_suffix(".partial")
         with tarfile.open(tar) as t:
             top = t.getnames()[0].split("/")[0]
             members = [m for m in t.getmembers()
-                       if m.name.startswith(f"{top}/{AMD}/") or m.name == f"{top}/include/uapi/linux/kfd_ioctl.h"]
+                       if m.name.startswith((f"{top}/{AMD}/", f"{top}/include/uapi/drm/"))
+                       or m.name == f"{top}/include/uapi/linux/kfd_ioctl.h"]
             for m in members:
                 m.name = m.name[len(top) + 1:]
             t.extractall(partial, members=members, filter="data")
@@ -419,8 +434,9 @@ def generate(cache, pins, pin, outdir):
         "include/v10_structs.h", "include/v11_structs.h", "include/v12_structs.h", "amdgpu/amdgpu_ucode.h",
         "amdgpu/psp_gfx_if.h", "amdgpu/amdgpu_psp.h", "amdgpu/amdgpu_vm.h", "amdgpu/amdgpu_doorbell.h",
         "amdgpu/mxgpu_nv.h", "amdgpu/amdgpu_virt.h", "amdgpu/soc15d.h", "amdgpu/amdgpu.h"]]
-    kheaders.append(kernel / "include/uapi/linux/kfd_ioctl.h")
-    incs = [amd / "include", amd / "amdgpu", amd / "include/asic_reg", kernel / "include/uapi"]
+    kheaders += [kernel / "include/uapi/linux/kfd_ioctl.h", kernel / "include/uapi/drm/amdgpu_drm.h"]
+    incs = [amd / "include", amd / "amdgpu", amd / "include/asic_reg", kernel / "include/uapi",
+            kernel / "include/uapi/drm"]
     ku = Unit(ci, kheaders, incs, stub, defines=DEFINES)
     rheaders = [rocm / "projects/rocr-runtime/runtime/hsa-runtime/core/inc/registers.h",
                 rocm / "projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_queue.h",
@@ -607,6 +623,20 @@ def generate(cache, pins, pin, outdir):
     for ver in SDMA_PKT:
         out.append(f"  | {ml_version(ver)} -> (module Sdma_v{ver[0]} : SDMA)")
     out.append("  | _ -> failwith \"no SDMA packet definitions\"")
+    out.append("")
+
+    # performance counters
+    import yaml
+    defs = yaml.safe_load((rocm / COUNTER_DEFS).read_text())["rocprofiler-sdk"]["counters"]
+    out.append("(* The performance counters of each architecture: (name, block, event). *)")
+    out.append("let counters = function")
+    for arch in COUNTER_ARCHS:
+        cs = sorted((c["name"], d["block"], d["event"]) for c in defs for d in c["definitions"]
+                    if d.get("block") in COUNTER_BLOCKS and arch in d["architectures"])
+        out.append(f"  | {json.dumps(arch)} -> [")
+        out.extend(f"      ({json.dumps(n)}, {json.dumps(b)}, {e});" for n, b, e in cs)
+        out.append("    ]")
+    out.append("  | _ -> []")
     out.append("")
 
     # firmware

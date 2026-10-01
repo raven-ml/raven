@@ -42,6 +42,7 @@ type props = {
   xccs : int;
   shader_engines : int;
   compute_units : int;
+  compute_units_per_array : int;
   waves_per_cu : int;
   lds_bytes : int;
   scratch_slots_per_cu : int;
@@ -62,6 +63,39 @@ type kernel = {
   private_segment_buffer : bool;
 }
 
+type counter = {
+  name : string;
+  block : string;
+  event : int;
+  register : int;
+  instances : int;
+  engines : int;
+  arrays : int;
+  wgps : int;
+  offset : int;
+}
+
+type counting = {
+  slots : int;
+  log : Nx_device.Buffer.t;
+  samples : Nx_device.Buffer.t;
+  counters : counter list;
+  size : int;
+  wgp_active : engine:int -> array:int -> wgp:int -> bool;
+}
+
+type u64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+(* The counting of the counters [names], with the host's views of its log and
+   samples, and the runs of the log read so far. *)
+type count = {
+  names : string list;
+  counting : counting;
+  log_words : u64s;
+  sample_words : u64s;
+  mutable read : int;
+}
+
 (* The GPU behind a device, through its interface. *)
 type gpu =
   | Kfd_gpu of Kfd.t
@@ -80,10 +114,13 @@ type t = {
   borrows : (int, mem) Hashtbl.t; (* host memory mapped for borrows *)
   reach : (int, bool) Hashtbl.t; (* whether it reaches a peer, by index *)
   kernels : (nativeint, kernel) Hashtbl.t; (* by descriptor address, under hw *)
+  names : (nativeint, string) Hashtbl.t; (* kernel names, likewise *)
   images : (string, Nx_device.Buffer.t) Hashtbl.t; (* uploaded code objects *)
   props : props;
   scratch_lock : Mutex.t;
   mutable scratch : (Nx_device.Buffer.t * int) option;
+  count_lock : Mutex.t;
+  mutable count : count option;
   mutable aql_desc : Mmio.t option; (* the AQL queue's descriptor *)
   mutable queues : (queue * bool * queue list) option;
       (* the compute queue, whether it takes AQL packets, the SDMA queues *)
@@ -437,7 +474,8 @@ let load a ~binary ~entry:name =
             }
           in
           with_hw a (fun () ->
-              Hashtbl.replace a.kernels kernel.descriptor kernel);
+              Hashtbl.replace a.kernels kernel.descriptor kernel;
+              Hashtbl.replace a.names kernel.descriptor name);
           Ok kernel.descriptor)
 
 (* Scratch *)
@@ -493,8 +531,8 @@ let supported ((major, _, _) as t) =
   if not (List.mem t [ (9, 4, 2); (9, 5, 0) ] || major = 11 || major = 12) then
     failwith (Printf.sprintf "%s GPUs are not supported" (arch t))
 
-let props ~target ~ip ~xccs ~shader_engines ~compute_units ~waves_per_cu
-    ~lds_kib ~slots =
+let props ~target ~ip ~xccs ~shader_engines ~compute_units
+    ~compute_units_per_array ~waves_per_cu ~lds_kib ~slots =
   let v hwip = Option.value ~default:(0, 0, 0) (List.assoc_opt hwip ip) in
   {
     target;
@@ -504,6 +542,7 @@ let props ~target ~ip ~xccs ~shader_engines ~compute_units ~waves_per_cu
     xccs;
     shader_engines;
     compute_units;
+    compute_units_per_array;
     waves_per_cu;
     lds_bytes = lds_kib * 1024;
     scratch_slots_per_cu = slots;
@@ -669,6 +708,178 @@ let room a () =
       in
       half (if aql then 64 else 4) compute && List.for_all (half 1) sdma
 
+(* Counters *)
+
+(* The runs whose counters a device keeps until it reads them. *)
+let count_slots = 32
+
+let counters (p : props) names =
+  let major, _, _ = p.target in
+  let table =
+    D.counters
+      (if major = 9 then arch p.target else Printf.sprintf "gfx%d" major)
+  in
+  let registers = Hashtbl.create 4 and offset = ref 0 in
+  let counter name =
+    match List.find_opt (fun (n, _, _) -> n = name) table with
+    | None ->
+        invalid_arg
+          (Printf.sprintf "%s counts no %s; it counts %s" (arch p.target) name
+             (String.concat ", " (List.map (fun (n, _, _) -> n) table)))
+    | Some (_, block, event) ->
+        let register =
+          Option.value ~default:0 (Hashtbl.find_opt registers block)
+        in
+        Hashtbl.replace registers block (register + 1);
+        let instances, engines, arrays, wgps =
+          match block with
+          | "GRBM" -> (1, 1, 1, 1)
+          | "GL2C" -> (32, 1, 1, 1)
+          | "TCC" -> (16, 1, 1, 1)
+          | _ when major = 9 -> (1, p.shader_engines, 1, 1)
+          | _ -> (1, p.shader_engines, 2, p.compute_units_per_array / 2)
+        in
+        let c =
+          {
+            name;
+            block;
+            event;
+            register;
+            instances;
+            engines;
+            arrays;
+            wgps;
+            offset = !offset;
+          }
+        in
+        offset := !offset + (p.xccs * instances * engines * arrays * wgps * 8);
+        c
+  in
+  List.map counter names
+
+let values (p : props) c = p.xccs * c.instances * c.engines * c.arrays * c.wgps
+
+(* Under the amdgpu driver, counts are only stable in the GPU's stable power
+   state, which a GFX9 GPU does not need. *)
+let check_power a =
+  match a.gpu with
+  | Kfd_gpu k when match a.props.target with 9, _, _ -> false | _ -> true ->
+      let level =
+        try
+          String.trim
+            (In_channel.with_open_text
+               (k.sysfs ^ "/power_dpm_force_performance_level")
+               In_channel.input_all)
+        with Sys_error _ -> "unknown"
+      in
+      if level <> "profile_standard" then
+        failwith
+          (Printf.sprintf
+             "%s: counting needs the GPU's stable power state, not %s: run \
+              `amd-smi set -l stable_std`"
+             (name a.index) level)
+  | Kfd_gpu _ | Am_gpu _ -> ()
+
+let wgp_active a =
+  match a.gpu with
+  | Am_gpu _ -> fun ~engine:_ ~array:_ ~wgp:_ -> true
+  | Kfd_gpu k ->
+      let bitmap = Kfd.cu_bitmap k in
+      fun ~engine ~array ~wgp ->
+        (bitmap.(engine mod 4).(array + (engine / 4 * 2)) lsr (2 * wgp)) land 3
+        = 3
+
+let counting a =
+  match Nx_device.Profile.counters () with
+  | [] -> None
+  | names ->
+      Mutex.protect a.count_lock (fun () ->
+          match a.count with
+          | Some c when c.names = names -> Some c.counting
+          | _ ->
+              let counters = counters a.props names in
+              check_power a;
+              let size =
+                List.fold_left
+                  (fun n c -> n + (values a.props c * 8))
+                  0 counters
+              in
+              let d = Option.get a.dev in
+              let words n =
+                let b =
+                  Nx_device.Buffer.create ~memory:Pinned d
+                    Nx_dtype.Scalar.UInt64 n
+                in
+                match Nx_device.Buffer.borrow Nx_device.host b with
+                | Error why -> failwith why
+                | Ok h ->
+                    let w = Nx_device.Buffer.bigarray Bigarray.int64 h in
+                    Bigarray.Array1.fill w 0L;
+                    (b, w)
+              in
+              let log, log_words = words (1 + count_slots)
+              and samples, sample_words = words (count_slots * size / 8) in
+              let counting =
+                {
+                  slots = count_slots;
+                  log;
+                  samples;
+                  counters;
+                  size;
+                  wgp_active = wgp_active a;
+                }
+              in
+              a.count <-
+                Some { names; counting; log_words; sample_words; read = 0 };
+              Some counting)
+
+(* The counters of the runs the log took since the last report. *)
+let report a () =
+  Mutex.protect a.count_lock (fun () ->
+      match a.count with
+      | None -> []
+      | Some c ->
+          let n = Int64.to_int c.log_words.{0} and slots = c.counting.slots in
+          if n - c.read > slots then
+            Printf.eprintf
+              "%s: the counters of %d kernel runs were overwritten: \
+               synchronize more often\n\
+               %!"
+              (name a.index)
+              (n - c.read - slots);
+          let first = Int.max c.read (n - slots) in
+          let run k =
+            let slot = k mod slots in
+            let handle = Int64.to_nativeint c.log_words.{1 + slot} in
+            let name =
+              match with_hw a (fun () -> Hashtbl.find_opt a.names handle) with
+              | Some name -> name
+              | None -> Printf.sprintf "0x%nx" handle
+            in
+            let base = slot * c.counting.size / 8 in
+            let counters =
+              List.map
+                (fun ct ->
+                  ( ct.name,
+                    Array.init (values a.props ct) (fun j ->
+                        Int64.to_int c.sample_words.{base + (ct.offset / 8) + j})
+                  ))
+                c.counting.counters
+            in
+            Nx_device.Profile.Counters
+              {
+                device = Option.get a.dev;
+                name;
+                time = Nx_device.Profile.now ();
+                counters;
+              }
+          in
+          let events =
+            List.init (Int.max 0 (n - first)) (fun i -> run (first + i))
+          in
+          c.read <- n;
+          events)
+
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
     Driver.device ~name:(name a.index) ~arch:(arch a.props.target)
@@ -677,7 +888,7 @@ let make_device a ~budget ~sleep ?finalize () =
       ~load:(load a) ~peer:(peer a)
       ~reaches:(fun d' ->
         match amd_of d' with Some peer -> reaches a peer | None -> false)
-      ~dma:(dma a) ~room:(room a) ?finalize
+      ~dma:(dma a) ~room:(room a) ~report:(report a) ?finalize
       (Device_local
          {
            memory = allocator a Vram;
@@ -720,10 +931,13 @@ let record ~machine ~index ~gpu ~props =
     borrows = Hashtbl.create 16;
     reach = Hashtbl.create 4;
     kernels = Hashtbl.create 16;
+    names = Hashtbl.create 16;
     images = Hashtbl.create 8;
     props;
     scratch_lock = Mutex.create ();
     scratch = None;
+    count_lock = Mutex.create ();
+    count = None;
     aql_desc = None;
     queues = None;
     dev = None;
@@ -761,6 +975,7 @@ let open_kfd index =
     props ~target ~ip:k.ip_ver ~xccs
       ~shader_engines:(pr "array_count" / pr "simd_arrays_per_engine" / xccs)
       ~compute_units:(pr "simd_count" / pr "simd_per_cu" / xccs)
+      ~compute_units_per_array:(pr "cu_per_simd_array")
       ~waves_per_cu:(pr "max_waves_per_simd" * pr "simd_per_cu")
       ~lds_kib:(pr "lds_size_in_kb")
       ~slots:(pr "max_slots_scratch_cu")
@@ -790,6 +1005,7 @@ let open_booted ~machine ~buses ~index pci (am : Am.t) =
       ~target:(target_of ((a * 10000) + (b * 100) + c))
       ~ip:d.ip_ver ~xccs:d.xccs ~shader_engines:g.num_se
       ~compute_units:(g.cu_per_sa * g.sh_per_se * g.num_se)
+      ~compute_units_per_array:g.cu_per_sa
       ~waves_per_cu:(g.max_waves_per_simd * 2) ~lds_kib:g.lds_size
       ~slots:g.max_scratch_slots_per_cu
   in

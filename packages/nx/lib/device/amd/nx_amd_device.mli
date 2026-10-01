@@ -208,6 +208,8 @@ type props = {
   xccs : int;  (** The number of compute dies (XCCs). *)
   shader_engines : int;  (** The number of shader engines of one XCC. *)
   compute_units : int;  (** The number of compute units of one XCC. *)
+  compute_units_per_array : int;
+      (** The number of compute units of one shader array. *)
   waves_per_cu : int;  (** The most waves a compute unit runs at once. *)
   lds_bytes : int;  (** The local data share of a work-group, in bytes. *)
   scratch_slots_per_cu : int;  (** The scratch wave slots of a compute unit. *)
@@ -266,3 +268,70 @@ val scratch : t -> int -> Nx_device.Buffer.t
     unreachable. Call it before {!Nx_device.submit}, not inside.
 
     Raises {!Nx_device.Out_of_memory} if the device cannot allocate it. *)
+
+(** {2:counters Counters}
+
+    A profile that asks for counters ({!Nx_device.Profile.start}) has each run
+    of a kernel on the compute queue count them. *)
+
+type counter = {
+  name : string;  (** The counter's name, such as ["SQ_BUSY_CYCLES"]. *)
+  block : string;
+      (** The hardware block that counts it: ["GRBM"], ["GL2C"], ["TCC"] or
+          ["SQ"]. *)
+  event : int;  (** The event its block's counter selects. *)
+  register : int;
+      (** Which of its block's counter registers counts it: the counters of a
+          block take its registers in order. *)
+  instances : int;  (** The instances of its block in one XCC. *)
+  engines : int;  (** The shader engines it is counted in. *)
+  arrays : int;  (** The shader arrays of an engine it is counted in. *)
+  wgps : int;  (** The work-group processors of an array it is counted in. *)
+  offset : int;  (** The byte offset of its values in a run's samples. *)
+}
+(** The type for a counter as a kernel's run counts it. Its values are 64-bit
+    words, one per XCC, instance, engine, array and work-group processor, the
+    last varying fastest. *)
+
+val counters : props -> string list -> counter list
+(** [counters p names] is how a GPU of properties [p] counts the counters
+    [names], whose values follow each other in a run's samples in that order.
+
+    Raises [Invalid_argument] if the GPU does not count one of [names], naming
+    it and the counters it has. *)
+
+type counting = {
+  slots : int;  (** The runs it keeps until a synchronization reads them. *)
+  log : Nx_device.Buffer.t;
+      (** [1 + slots] [UInt64]: the runs taken so far, then the kernel
+          descriptor address of each slot's run. *)
+  samples : Nx_device.Buffer.t;
+      (** [slots] runs of [size] bytes, the values of [counters]. *)
+  counters : counter list;  (** The counters, in the profile's order. *)
+  size : int;  (** The bytes of a run's samples. *)
+  wgp_active : engine:int -> array:int -> wgp:int -> bool;
+      (** Whether a work-group processor is active. A run does not count an
+          inactive one, whose values stay [0]. *)
+}
+(** The type for the counting of a device's runs. Each submission of a compute
+    queue resets the counters and selects them at its start. A run of a kernel
+    takes the slot [(r + k) mod slots], where [r] is the first word of [log]
+    when the submission's host program runs and [k] the runs the submission took
+    before it: the host program writes the kernel's descriptor address into the
+    word [1 + slot] of [log], and adds the submission's runs to the first word
+    once it wrote the command buffer. The run writes the values of [counters]
+    into the [slot]th [size] bytes of [samples] once it completes. The device
+    reads the runs at each synchronization while the profile is taken, and when
+    it stops: their {!Nx_device.Profile.Counters} are named after the kernel's
+    function. It warns on the standard error when runs were taken over before it
+    read them. *)
+
+val counting : t -> counting option
+(** [counting a] is the counting of the counters of the profile being taken
+    ({!Nx_device.Profile.counters}), or [None] if it asks for none. The device
+    keeps it while the profile's counters stay the same.
+
+    Raises [Invalid_argument] if the GPU does not count a counter, as
+    {!counters} does, and [Failure] if, under {!Kernel}, a GPU other than a GFX9
+    one is not in its stable power state, which counts need: the message says to
+    run [amd-smi set -l stable_std]. *)

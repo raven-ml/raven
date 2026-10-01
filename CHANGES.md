@@ -2934,6 +2934,12 @@ thread.
 
 ### Nx
 
+- `Nx_amd_device` counts a profile's counters on AMD GPUs: `Nx_amd_device.counters`
+  lays out the GPU's counters by name, `Nx_amd_device.counting` gives the
+  libraries that submit work the device's log and samples, and the device reads
+  each run's values at its synchronizations. Under the amdgpu driver, counting
+  needs the GPU's stable power state, which the error names how to set. `props`
+  gains `compute_units_per_array`.
 - `Nx_device.Profile.start ~counters` asks the devices that count to count those
   hardware counters during each run of a program: a `Profile.Counters` event
   holds a run's values, and `Profile.output_chrome_trace` adds their sums to the

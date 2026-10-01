@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #ifdef _WIN32
@@ -376,6 +377,48 @@ intnat caml_nx_amd_now_ms(value unit) {
 
 value caml_nx_amd_now_ms_byte(value unit) {
   return Val_long(caml_nx_amd_now_ms(unit));
+}
+
+/* The [n] bytes of the amdgpu driver's information [query] about the GPU of
+   the render node [fd]: the ioctl [nr], whose request of [request] bytes
+   starts with the address and size of the answer and the query, as
+   amdgpu_drm.h's struct drm_amdgpu_info lays them out. */
+value caml_nx_amd_drm_info(value fd, value nr, value request, value query,
+                           value n) {
+  CAMLparam5(fd, nr, request, query, n);
+  CAMLlocal1(r);
+#ifdef __linux__
+  size_t size = Long_val(request);
+  unsigned char *req = calloc(1, size);
+  unsigned char *answer = calloc(1, Long_val(n));
+  if (req == NULL || answer == NULL) {
+    free(req);
+    free(answer);
+    caml_raise_out_of_memory();
+  }
+  uint64_t at = (uint64_t)(uintptr_t)answer;
+  uint32_t len = (uint32_t)Long_val(n), q = (uint32_t)Long_val(query);
+  memcpy(req, &at, 8);
+  memcpy(req + 8, &len, 4);
+  memcpy(req + 12, &q, 4);
+  unsigned long rq = _IOC(_IOC_WRITE, 'd', Int_val(nr), size);
+  int e = ioctl(Int_val(fd), rq, req) ? errno : 0;
+  free(req);
+  if (e) {
+    free(answer);
+    fail_errno("querying the amdgpu driver", e);
+  }
+  r = caml_alloc_initialized_string(Long_val(n), (const char *)answer);
+  free(answer);
+#else
+  (void)fd;
+  (void)nr;
+  (void)request;
+  (void)query;
+  (void)n;
+  no_linux();
+#endif
+  CAMLreturn(r);
 }
 
 value caml_nx_amd_linux(value unit) {
