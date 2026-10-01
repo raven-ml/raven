@@ -4984,6 +4984,11 @@ thread.
 
 ### Kaun
 
+- **Breaking:** `Rope` schedules hold the cosines and sines of every position
+  below a context, and `Rope.apply` reads the rows at its positions. The
+  constructors take `~context`; `Rope.context` returns it. Compiled attention
+  no longer computes sines and cosines, and long positions turn by their angle
+  rounded once instead of a float32 product.
 - **Breaking:** `Embedding.apply`'s ids, the labels of
   `Loss.softmax_cross_entropy_sparse`, `Metric` and `Kaun_datasets`,
   `Rope.apply`'s positions, `Fn.keep_top_k`'s `k` and every tensor of

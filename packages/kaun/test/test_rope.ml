@@ -19,7 +19,7 @@ let test_standard_frequencies () =
   equal ~msg:"theta ** (-2 i / head_dim)"
     (array (float 1e-12))
     [| 1.0; 0.1; 0.01 |]
-    (Rope.frequencies (Rope.make ~theta:1000.0 ~head_dim:6 ()))
+    (Rope.frequencies (Rope.make ~theta:1000.0 ~head_dim:6 ~context:16 ()))
 
 (* The Llama 3.1 schedule on a head of 8: the two highest frequencies are kept,
    the lowest is divided by the factor, the one between is blended. *)
@@ -27,9 +27,11 @@ let test_llama3_frequencies () =
   let f =
     Rope.frequencies
       (Rope.llama3 ~theta:500000.0 ~head_dim:8 ~factor:8.0 ~low_freq_factor:1.0
-         ~high_freq_factor:4.0 ~original_context:8192)
+         ~high_freq_factor:4.0 ~original_context:8192 ~context:16)
   in
-  let base = Rope.frequencies (Rope.make ~theta:500000.0 ~head_dim:8 ()) in
+  let base =
+    Rope.frequencies (Rope.make ~theta:500000.0 ~head_dim:8 ~context:16 ())
+  in
   equal ~msg:"pair 0 kept" (float 1e-12) base.(0) f.(0);
   equal ~msg:"pair 1 kept" (float 1e-12) base.(1) f.(1);
   equal ~msg:"pair 3 divided by the factor" (float 1e-15)
@@ -44,16 +46,22 @@ let test_llama3_frequencies () =
 let test_of_frequencies () =
   let f = [| 1.0; 0.25; 0.001 |] in
   equal ~msg:"the frequencies given" (array float_exact) f
-    (Rope.frequencies (Rope.of_frequencies f));
+    (Rope.frequencies (Rope.of_frequencies ~context:16 f));
+  equal ~msg:"the context given" int 16
+    (Rope.context (Rope.of_frequencies ~context:16 f));
   equal ~msg:"make is of_frequencies of the standard ones" (array float_exact)
-    (Rope.frequencies (Rope.make ~theta:1000.0 ~head_dim:6 ()))
+    (Rope.frequencies (Rope.make ~theta:1000.0 ~head_dim:6 ~context:16 ()))
     (Rope.frequencies
-       (Rope.of_frequencies
-          (Rope.frequencies (Rope.make ~theta:1000.0 ~head_dim:6 ()))));
+       (Rope.of_frequencies ~context:16
+          (Rope.frequencies
+             (Rope.make ~theta:1000.0 ~head_dim:6 ~context:16 ()))));
   raises (Invalid_argument "Rope.of_frequencies: no frequency") (fun () ->
-      Rope.of_frequencies [||]);
+      Rope.of_frequencies ~context:16 [||]);
   raises (Invalid_argument "Rope.of_frequencies: a frequency is not finite")
-    (fun () -> Rope.of_frequencies [| 1.0; Float.nan |])
+    (fun () -> Rope.of_frequencies ~context:16 [| 1.0; Float.nan |]);
+  raises
+    (Invalid_argument "Rope.of_frequencies: context must be positive, got 0")
+    (fun () -> Rope.of_frequencies ~context:0 [| 1.0 |])
 
 (* The gpt-oss schedule on a head of 8: the ramp runs from pair 1.01 to pair
    2.17, so pairs 0 and 1 are kept, pair 2 is blended and pair 3 is divided by
@@ -61,11 +69,13 @@ let test_of_frequencies () =
    ([GptOssRotaryEmbedding], formed in float32). *)
 let gpt_oss_yarn () =
   Rope.yarn ~theta:150000.0 ~head_dim:8 ~factor:32.0 ~beta_fast:32.0
-    ~beta_slow:1.0 ~original_context:4096
+    ~beta_slow:1.0 ~original_context:4096 ~context:4096
 
 let test_yarn_frequencies () =
   let f = Rope.frequencies (gpt_oss_yarn ()) in
-  let base = Rope.frequencies (Rope.make ~theta:150000.0 ~head_dim:8 ()) in
+  let base =
+    Rope.frequencies (Rope.make ~theta:150000.0 ~head_dim:8 ~context:16 ())
+  in
   equal ~msg:"pair 0 kept" float_exact base.(0) f.(0);
   equal ~msg:"pair 1 kept" float_exact base.(1) f.(1);
   equal ~msg:"pair 3 divided by the factor" (float 1e-18)
@@ -83,7 +93,7 @@ let test_yarn_frequencies () =
   raises (Invalid_argument "Rope.yarn: beta_fast must exceed beta_slow")
     (fun () ->
       Rope.yarn ~theta:150000.0 ~head_dim:8 ~factor:32.0 ~beta_fast:1.0
-        ~beta_slow:1.0 ~original_context:4096)
+        ~beta_slow:1.0 ~original_context:4096 ~context:4096)
 
 (* The reference scales its cosines and sines by 0.1 ln 32 + 1; divided by that,
    its rotated values are ours. It forms its frequencies in float32, a unit in
@@ -134,12 +144,15 @@ let test_position_zero_is_identity () =
   let x = Nx.create Nx.float32 [| 1; 1; 2; 4 |] (Array.init 8 float_of_int) in
   values_are ~msg:"unrotated" ~tol:0.0
     (Array.init 8 float_of_int)
-    (Rope.apply (Rope.make ~head_dim:4 ()) ~pos:(pos_of [| [| 0; 0 |] |]) x)
+    (Rope.apply
+       (Rope.make ~head_dim:4 ~context:1 ())
+       ~pos:(pos_of [| [| 0; 0 |] |])
+       x)
 
 (* One pair with frequency 1: position p turns [1; 0] to [cos p; sin p], pairing
    feature 0 with feature 1. *)
 let test_rotation () =
-  let t = Rope.make ~theta:1.0 ~head_dim:2 () in
+  let t = Rope.make ~theta:1.0 ~head_dim:2 ~context:3 () in
   let x = Nx.create Nx.float32 [| 1; 1; 2; 2 |] [| 1.; 0.; 0.; 1. |] in
   values_are ~msg:"rotated pairs" ~tol:1e-6
     [| cos 1.; sin 1.; -.sin 2.; cos 2. |]
@@ -148,7 +161,7 @@ let test_rotation () =
 let test_pairs_first_half_with_second () =
   (* head_dim 4 at theta 1: both pairs turn by the position. Feature 0 pairs
      with feature 2, not with feature 1. *)
-  let t = Rope.make ~theta:1.0 ~head_dim:4 () in
+  let t = Rope.make ~theta:1.0 ~head_dim:4 ~context:2 () in
   let x = Nx.create Nx.float32 [| 1; 1; 1; 4 |] [| 1.; 0.; 0.; 0. |] in
   values_are ~msg:"feature 0 rotates into feature 2" ~tol:1e-6
     [| cos 1.; 0.; sin 1.; 0. |]
@@ -158,7 +171,7 @@ let test_pairs_first_half_with_second () =
    depends on the positions only through their difference. *)
 let test_relative () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
-  let t = Rope.make ~head_dim:8 () in
+  let t = Rope.make ~head_dim:8 ~context:108 () in
   let q = Nx.randn Nx.float32 [| 1; 1; 1; 8 |] in
   let k = Nx.randn Nx.float32 [| 1; 1; 1; 8 |] in
   let dot pq pk =
@@ -168,26 +181,36 @@ let test_relative () =
   equal ~msg:"shifted by 100" (float 1e-4) (dot 7 3) (dot 107 103)
 
 let test_per_row_positions () =
-  let t = Rope.make ~theta:1.0 ~head_dim:2 () in
+  let t = Rope.make ~theta:1.0 ~head_dim:2 ~context:6 () in
   let x = Nx.create Nx.float32 [| 2; 1; 1; 2 |] [| 1.; 0.; 1.; 0. |] in
   values_are ~msg:"each row at its own position" ~tol:1e-6
     [| cos 3.; sin 3.; cos 5.; sin 5. |]
     (Rope.apply t ~pos:(pos_of [| [| 3 |]; [| 5 |] |]) x)
 
 (* At bfloat16 a long position times a small frequency is not representable; the
-   angle is formed at float32 and only the rotation runs at bfloat16. *)
+   angle is formed in float64 and only the rotation runs at bfloat16. *)
 let test_half_precision_angles () =
-  let t = Rope.make ~head_dim:2 ~theta:1.0 () in
+  let t = Rope.make ~head_dim:2 ~theta:1.0 ~context:100004 () in
   let x = Nx.create Nx.bfloat16 [| 1; 1; 1; 2 |] [| 1.; 0. |] in
   let y = Rope.apply t ~pos:(pos_of [| [| 100003 |] |]) x in
   equal ~msg:"dtype preserved" bool true (Nx.dtype y = Nx.bfloat16);
-  values_are ~msg:"rotated by the float32 angle" ~tol:2e-2
+  values_are ~msg:"rotated by the exact angle" ~tol:2e-2
     [| cos 100003.; sin 100003. |]
     (Nx.cast Nx.float32 y)
 
+(* A float32 product of position 100003 and frequency 0.1 is off by about 1e-3
+   radians; the angle in float64, rounded once, is not. *)
+let test_long_position_angles () =
+  let t = Rope.of_frequencies ~context:100004 [| 0.1 |] in
+  let x = Nx.create Nx.float32 [| 1; 1; 1; 2 |] [| 1.; 0. |] in
+  let a = 100003. *. 0.1 in
+  values_are ~msg:"cosine and sine of the exact angle" ~tol:1e-6
+    [| cos a; sin a |]
+    (Rope.apply t ~pos:(pos_of [| [| 100003 |] |]) x)
+
 let test_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 22) @@ fun () ->
-  let t = Rope.make ~head_dim:4 () in
+  let t = Rope.make ~head_dim:4 ~context:10 () in
   let pos = pos_of [| [| 2; 5; 9 |] |] in
   let w = Nx.randn Nx.float64 [| 1; 2; 3; 4 |] in
   match
@@ -200,7 +223,7 @@ let test_gradients () =
 
 let test_jit_matches_eager () =
   Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
-  let t = Rope.make ~head_dim:4 () in
+  let t = Rope.make ~head_dim:4 ~context:10 () in
   let pos = pos_of [| [| 2; 5; 9 |] |] in
   let x = Nx.randn Nx.float32 [| 1; 2; 3; 4 |] in
   let f x = Rope.apply t ~pos x in
@@ -211,15 +234,18 @@ let test_jit_matches_eager () =
 let test_rejects_bad_input () =
   raises
     (Invalid_argument "Rope.make: head_dim must be positive and even, got 3")
-    (fun () -> Rope.make ~head_dim:3 ());
+    (fun () -> Rope.make ~head_dim:3 ~context:4 ());
   raises
     (Invalid_argument
        "Rope.apply: x has head_dim 6 but the frequencies are for 4") (fun () ->
-      Rope.apply (Rope.make ~head_dim:4 ()) ~pos:(pos_of [| [| 0 |] |])
+      Rope.apply
+        (Rope.make ~head_dim:4 ~context:4 ())
+        ~pos:(pos_of [| [| 0 |] |])
         (Nx.zeros Nx.float32 [| 1; 1; 1; 6 |]));
   raises (Invalid_argument "Rope.apply: pos must have shape [2; 3] or [1; 3]")
     (fun () ->
-      Rope.apply (Rope.make ~head_dim:4 ())
+      Rope.apply
+        (Rope.make ~head_dim:4 ~context:4 ())
         ~pos:(pos_of [| [| 0; 1 |] |])
         (Nx.zeros Nx.float32 [| 2; 1; 3; 4 |]))
 
@@ -244,7 +270,10 @@ let () =
                test_pairs_first_half_with_second;
              test "products depend on the position difference" test_relative;
              test "each row has its own positions" test_per_row_positions;
-             test "angles are formed at float32" test_half_precision_angles;
+             test "a bfloat16 rotation turns by the exact angle"
+               test_half_precision_angles;
+             test "a long position turns by its angle rounded once"
+               test_long_position_angles;
              test "gradients agree with finite differences" test_gradients;
              test "compiles to the eager result" test_jit_matches_eager;
              test "invalid inputs are rejected" test_rejects_bad_input;

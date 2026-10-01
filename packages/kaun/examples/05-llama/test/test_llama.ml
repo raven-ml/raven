@@ -18,7 +18,7 @@ let cfg ~tied : Llama.config =
     head_dim = 4;
     hidden_dim = 16;
     norm_eps = 1e-5;
-    rope = Kaun.Rope.make ~head_dim:4 ();
+    rope = Kaun.Rope.make ~head_dim:4 ~context:64 ();
     tied;
   }
 

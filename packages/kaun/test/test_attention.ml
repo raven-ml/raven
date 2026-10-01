@@ -541,7 +541,7 @@ let test_gradients () =
   in
   grads_ok (Rune.check_grads attention64 (loss ?mask:None ?rope:None) p);
   grads_ok (Rune.check_grads attention64 (loss ~mask:(causal 3)) p);
-  let rope = Rope.make ~head_dim:2 () in
+  let rope = Rope.make ~head_dim:2 ~context:64 () in
   grads_ok (Rune.check_grads attention64 (loss ~mask:(causal 3) ~rope) p);
   let grouped, _ = grouped_pair Nx.float64 in
   let x = Nx.randn Nx.float64 [| 2; 3; 8 |] in
@@ -569,7 +569,7 @@ let index_at ~pos ~slots =
 (* A small grouped layer with rotary positions: 4 query heads, 2 key-value
    heads, head_dim 2. *)
 let head_dim = 2
-let rope = Rope.make ~head_dim ()
+let rope = Rope.make ~head_dim ~context:64 ()
 let layer dtype = Attention.make ~kv_dim:4 ~embed_dim:8 dtype
 
 let cache_at dtype slots =

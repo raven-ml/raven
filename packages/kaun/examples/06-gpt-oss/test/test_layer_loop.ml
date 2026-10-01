@@ -27,7 +27,7 @@ let cfg =
     experts_per_token = 2;
     swiglu_limit = 7.0;
     norm_eps = 1e-5;
-    rope = Rope.make ~head_dim:8 ();
+    rope = Rope.make ~head_dim:8 ~context:64 ();
     attention_scale = 1.0 /. sqrt 8.0;
     tied = false;
   }

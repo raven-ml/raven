@@ -12,28 +12,32 @@
     what attention needs.
 
     A value of type {!t} is the schedule: one inverse frequency per feature
-    pair, computed once on the host. It has no parameters and never enters a
-    parameter tree. Every published schedule is a choice of those frequencies,
-    so a new one is a constructor and {!apply} never changes. *)
+    pair, and the cosine and sine of each pair's angle at every position below
+    the schedule's context, computed once on the host. It has no parameters and
+    never enters a parameter tree. Every published schedule is a choice of those
+    frequencies, so a new one is a constructor and {!apply} never changes. *)
 
 type t
 (** The type for rotary schedules: the inverse frequencies of one attention
-    head, [head_dim / 2] of them. *)
+    head, [head_dim / 2] of them, and their angles' cosines and sines at the
+    positions [0] to [context - 1], in float32. *)
 
-val of_frequencies : float array -> t
-(** [of_frequencies f] is the schedule whose pair [i] has inverse frequency
-    [f.(i)], for a head of [2 * Array.length f] features. Every other
-    constructor is defined with it; use it for a schedule this module does not
-    name.
+val of_frequencies : context:int -> float array -> t
+(** [of_frequencies ~context f] is the schedule whose pair [i] has inverse
+    frequency [f.(i)], for a head of [2 * Array.length f] features and positions
+    below [context]. Its cosines and sines are of angles computed in float64,
+    rounded once to float32. Every other constructor is defined with it; use it
+    for a schedule this module does not name.
 
-    Raises [Invalid_argument] if [f] is empty or holds a non-finite number. *)
+    Raises [Invalid_argument] if [f] is empty or holds a non-finite number, or
+    [context] is not positive. *)
 
-val make : ?theta:float -> head_dim:int -> unit -> t
-(** [make ~head_dim ()] is the standard schedule: pair [i] has frequency
-    [theta ** (-2 i / head_dim)]. [theta] defaults to [10000.].
+val make : ?theta:float -> head_dim:int -> context:int -> unit -> t
+(** [make ~head_dim ~context ()] is the standard schedule: pair [i] has
+    frequency [theta ** (-2 i / head_dim)]. [theta] defaults to [10000.].
 
-    Raises [Invalid_argument] if [head_dim] is not positive and even, or [theta]
-    is not positive. *)
+    Raises [Invalid_argument] if [head_dim] is not positive and even, [theta] is
+    not positive, or [context] is not positive. *)
 
 val llama3 :
   theta:float ->
@@ -42,6 +46,7 @@ val llama3 :
   low_freq_factor:float ->
   high_freq_factor:float ->
   original_context:int ->
+  context:int ->
   t
 (** [llama3 ...] is the Llama 3.1 long-context schedule: the standard
     frequencies with the low ones divided by [factor], the high ones kept, and a
@@ -49,7 +54,7 @@ val llama3 :
     [original_context / low_freq_factor] and
     [original_context / high_freq_factor]. Llama 3.1 uses
     [~theta:500000. ~factor:8. ~low_freq_factor:1. ~high_freq_factor:4.
-     ~original_context:8192]; Llama 3.2 uses [~factor:32.].
+     ~original_context:8192 ~context:131072]; Llama 3.2 uses [~factor:32.].
 
     Raises [Invalid_argument] on a non-positive argument, or if
     [high_freq_factor <= low_freq_factor]. *)
@@ -61,6 +66,7 @@ val yarn :
   beta_fast:float ->
   beta_slow:float ->
   original_context:int ->
+  context:int ->
   t
 (** [yarn ...] is the YaRN long-context schedule (Peng et al., 2023), with the
     correction range left untruncated, as gpt-oss uses it. Pair [i] blends the
@@ -79,14 +85,18 @@ val yarn :
     scale the cosines and sines by [0.1 * ln factor + 1] compute the same
     attention. gpt-oss uses
     [~theta:150000. ~factor:32. ~beta_fast:32. ~beta_slow:1.
-     ~original_context:4096].
+     ~original_context:4096 ~context:131072].
 
     Raises [Invalid_argument] if [head_dim] is not positive and even, [theta],
-    [beta_slow] or [original_context] is not positive, [factor] is below [1], or
-    [beta_fast <= beta_slow]. *)
+    [beta_slow], [original_context] or [context] is not positive, [factor] is
+    below [1], or [beta_fast <= beta_slow]. *)
 
 val frequencies : t -> float array
 (** [frequencies t] is a copy of [t]'s inverse frequencies, in pair order. *)
+
+val context : t -> int
+(** [context t] is the number of positions [t] rotates: positions [0] to
+    [context t - 1]. *)
 
 val apply : t -> pos:Nx.int64_t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [apply t ~pos x] rotates [x], of shape [[| batch; heads; seq; head_dim |]],
@@ -101,10 +111,10 @@ val apply : t -> pos:Nx.int64_t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
     where [h] is [head_dim / 2] and [a] is [pos * frequency.(i)].
 
     Position [0] is the identity. A rotation keeps norms: [apply] never rescales
-    [x], and a schedule is a choice of angles and nothing else. The angles and
-    their sines and cosines are computed at float32 whatever [x]'s dtype and
-    cast to it for the rotation, so a float64 [x] is rotated to float32
-    accuracy. Differentiable through Rune in [x].
+    [x], and a schedule is a choice of angles and nothing else. The cosines and
+    sines are the rows of [t]'s tables at [pos], cast to [x]'s dtype for the
+    rotation, so a float64 [x] is rotated to float32 accuracy. Each position
+    must be below {!context}[ t]. Differentiable through Rune in [x].
 
     Raises [Invalid_argument] if [x] is not of rank 4, its last axis is not
     twice [t]'s pair count, or [pos] has another shape. *)

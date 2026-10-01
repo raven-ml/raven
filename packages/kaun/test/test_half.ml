@@ -208,7 +208,7 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
   ignore name;
   Nx.Rng.with_key (Nx.Rng.key 50) @@ fun () ->
   let head_dim = 2 in
-  let rope = Rope.make ~head_dim () in
+  let rope = Rope.make ~head_dim ~context:64 () in
   let p32 = Attention.make ~bias:false ~kv_dim:4 ~embed_dim:8 f32 in
   let x32 = Nx.mul_s (Nx.randn f32 [| 1; 6; 8 |]) 0.5 in
   let slots = Nx.create Nx.int64 [| 1; 6 |] (Array.init 6 Int64.of_int) in

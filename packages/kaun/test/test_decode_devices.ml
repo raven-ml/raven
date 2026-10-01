@@ -59,7 +59,7 @@ and kv_dim = 8
 and ffn = 16
 and layers = 2
 
-let rope = Rope.make ~head_dim ()
+let rope = Rope.make ~head_dim ~context:64 ()
 
 let model () =
   Nx.Rng.with_key (Nx.Rng.key 40) @@ fun () ->

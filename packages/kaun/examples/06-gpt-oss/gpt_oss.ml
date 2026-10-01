@@ -178,6 +178,7 @@ let config_of_json json =
       ~beta_fast:(field "beta_fast") ~beta_slow:(field "beta_slow")
       ~original_context:
         (int_of_float (field "original_max_position_embeddings"))
+      ~context:(int "max_position_embeddings")
   in
   let concentration = (0.1 *. log factor) +. 1.0 in
   let layers =

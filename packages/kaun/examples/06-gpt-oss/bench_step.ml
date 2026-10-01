@@ -34,7 +34,7 @@ let cfg n_layers =
     norm_eps = 1e-5;
     rope =
       Rope.yarn ~theta:150000.0 ~head_dim:64 ~factor:32.0 ~beta_fast:32.0
-        ~beta_slow:1.0 ~original_context:4096;
+        ~beta_slow:1.0 ~original_context:4096 ~context:131072;
     attention_scale = (((0.1 *. log 32.0) +. 1.0) ** 2.0) /. 8.0;
     tied = false;
   }

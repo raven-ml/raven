@@ -243,9 +243,10 @@ let config_of_json json =
   let dim = int "hidden_size" and n_heads = int "num_attention_heads" in
   let head_dim = int ~default:(dim / n_heads) "head_dim" in
   let theta = number ~default:10000.0 "rope_theta" in
+  let context = int "max_position_embeddings" in
   let rope =
     match json_mem "rope_scaling" json with
-    | Jsont.Null _ -> Rope.make ~theta ~head_dim ()
+    | Jsont.Null _ -> Rope.make ~theta ~head_dim ~context ()
     | scaling -> (
         let field name =
           match json_mem name scaling with
@@ -259,13 +260,14 @@ let config_of_json json =
           | _ -> missing "rope_scaling.rope_type"
         in
         match kind with
-        | "default" -> Rope.make ~theta ~head_dim ()
+        | "default" -> Rope.make ~theta ~head_dim ~context ()
         | "llama3" ->
             Rope.llama3 ~theta ~head_dim ~factor:(field "factor")
               ~low_freq_factor:(field "low_freq_factor")
               ~high_freq_factor:(field "high_freq_factor")
               ~original_context:
                 (int_of_float (field "original_max_position_embeddings"))
+              ~context
         | other -> failwith ("llama config.json: unsupported rope_type " ^ other)
         )
   in
