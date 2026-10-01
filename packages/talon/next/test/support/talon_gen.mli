@@ -10,7 +10,9 @@ open Talon_next
 
 val type_ : Type.any Gen.t
 (** [type_] draws a type: every scalar type at its edges of precision, scale,
-    unit and dictionary, and lists, records and extensions nested two deep. *)
+    unit and dictionary, extensions over them, and lists and records nested two
+    deep. [string], an extension, and a record of a record with an extension
+    field are each drawn in at least one case of seven. *)
 
 val value : 'a Type.t -> 'a Gen.t option
 (** [value ty] draws values [ty] holds, its bounds included: [min_int], [-0.],
@@ -19,8 +21,9 @@ val value : 'a Type.t -> 'a Gen.t option
     record with a field that is or holds one. *)
 
 val options : 'a Type.t -> 'a option array Gen.t
-(** [options ty] draws up to six rows of [ty], some of them null; every row when
-    [value ty] is [None]. *)
+(** [options ty] draws up to forty rows of [ty], some of them null, and no row
+    in at least one case of five. Every row is null when [value ty] is [None].
+*)
 
 (** The type for a type and rows of it. *)
 type sample = Sample : 'a Type.t * 'a option array -> sample

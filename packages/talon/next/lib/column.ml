@@ -26,6 +26,13 @@ let data c = c.data
 let valid c = Option.map Nx_bits.to_bool c.validity
 let has_type ty c = match c.type_ with Any t -> Type.equal t ty
 
+(* A value its type does not hold raises [Refused] with the reason while a
+   column is encoded. *)
+
+exception Refused of string
+
+let refused fmt = Format.kasprintf (fun r -> raise (Refused r)) fmt
+
 (* Scalars
 
    A scalar type stores one element of [dtype] per row. [load] reads a stored
@@ -43,13 +50,11 @@ type 'a scalar =
 let cell ?outside dtype store load =
   Some (Scalar { dtype; store; load; outside })
 
-let rec pow10 k = if k = 0 then 1L else Int64.mul 10L (pow10 (k - 1))
-
 (* A held decimal is exact at the type's scale. *)
 let rescale scale d =
   let u = Decimal.unscaled d and s = Decimal.scale d in
-  if s <= scale then Int64.mul u (pow10 (scale - s))
-  else Int64.div u (pow10 (s - scale))
+  if s <= scale then Int64.mul u (Type.pow10 (scale - s))
+  else Int64.div u (Type.pow10 (s - scale))
 
 let fits_int x = Int64.equal (Int64.of_int (Int64.to_int x)) x
 let check_int pp ok x = if ok x then None else Some (pp x ^ " is outside int")
@@ -98,14 +103,18 @@ let scalar : type a. a Type.t -> a scalar option = function
   | Float64 -> cell Nx.float64 Fun.id Fun.id
   | Decimal { scale; _ } ->
       cell Nx.int64 (rescale scale) (fun unscaled -> Decimal.v ~unscaled ~scale)
-  | Categorical d ->
+  | Categorical d as ty ->
       let index =
         lazy
           (let index = Hashtbl.create (Iarray.length d) in
            Iarray.iteri (fun i s -> Hashtbl.add index s (Int32.of_int i)) d;
            index)
       in
-      let code s = Hashtbl.find (Lazy.force index) s in
+      let code s =
+        match Hashtbl.find_opt (Lazy.force index) s with
+        | Some c -> c
+        | None -> refused "%a does not hold %a" Type.pp ty Type.pp_quoted s
+      in
       cell Nx.int32 code (fun c -> Iarray.get d (Int32.to_int c))
   | Date ->
       let store d = Int32.of_int (Time.Date.to_days d) in
@@ -174,13 +183,9 @@ let rec retype : type a. a Type.t -> t -> t =
 
 (* Encoding
 
-   A builder takes a type's values one row at a time and makes the column. A
-   value its type does not hold raises [Refused] with the reason, which the
-   builders of lists and records prefix with the element or the field. *)
-
-exception Refused of string
-
-let refused fmt = Format.kasprintf (fun r -> raise (Refused r)) fmt
+   A builder takes a type's values one row at a time and makes the column. The
+   builders of lists and records prefix a refusal with the element or the
+   field. *)
 
 type 'a builder = { add : 'a option -> unit; finish : unit -> t }
 
@@ -208,22 +213,24 @@ let pp_shape ppf x =
 
 (* [check ty v] refuses a value [ty] does not hold. Booleans, binary, dates,
    lists and records hold every value of theirs; the builders of lists and
-   records check their elements and fields. *)
+   records check their elements and fields, and a categorical's store checks its
+   strings. *)
 let check : type a. a Type.t -> a -> unit =
  fun ty ->
   let held = Type.holds ty in
   let check pp v =
     if not (held v) then refused "%a does not hold %a" Type.pp ty pp v
   in
-  match Type.kind ty with
-  | Int -> check Format.pp_print_int
-  | Float -> check pp_float
-  | String -> check Type.pp_quoted
-  | Decimal -> check Decimal.pp
-  | Span -> check Time.Span.pp
-  | Instant -> check Time.pp
-  | Tensor _ -> check pp_shape
-  | Bool | Binary | Date | List _ | Record | Ext -> ignore
+  match (ty, Type.kind ty) with
+  | Categorical _, _ -> ignore
+  | _, Int -> check Format.pp_print_int
+  | _, Float -> check pp_float
+  | _, String -> check Type.pp_quoted
+  | _, Decimal -> check Decimal.pp
+  | _, Span -> check Time.Span.pp
+  | _, Instant -> check Time.pp
+  | _, Tensor _ -> check pp_shape
+  | _, (Bool | Binary | Date | List _ | Record | Ext) -> ignore
 
 (* [rows ty ~null ~add ~data] is the builder that keeps the validity of each
    row, calls [null] or [add] to keep its value, and makes the column from [data
@@ -339,7 +346,7 @@ and record_builder :
    [Storage] field. *)
 and field_builder (name, Type.Any ft) =
   let (Any st) = Type.storage ft in
-  stored_field name ~ext:(Type.has_ext ft) ft st
+  stored_field name ~ext:(Kind.has_ext (Type.kind ft)) ft st
 
 and stored_field : type a b.
     string -> ext:bool -> a Type.t -> b Type.t -> Kind.field builder =
@@ -360,7 +367,7 @@ and stored_field : type a b.
         | exception Refused r -> refused "field %a: %s" Type.pp_name name r)
   in
   let add = function
-    | None -> b.add None
+    | None | Some (Kind.Value (_, None) | Storage (_, None)) -> b.add None
     | Some (Kind.Value (k', v)) -> if ext then mismatch k' else put k' v
     | Some (Storage (k', v)) -> if ext then put k' v else mismatch k'
   in
@@ -382,6 +389,7 @@ and tensor_builder : type a b.
   rows ty ~null:(fun () -> push cells zero) ~add ~data
 
 let encode ty n f =
+  if n < 0 then err "Column.encode: %d rows" n;
   let b = builder ty in
   let rec loop i =
     if i = n then Ok (b.finish ())
@@ -475,7 +483,7 @@ and list_reader : type a. a Type.t -> int array -> t -> a array reader =
 
 and field_reader (name, Type.Any ft) c =
   let (Any st) = Type.storage ft in
-  stored_reader name ~ext:(Type.has_ext ft) st c
+  stored_reader name ~ext:(Kind.has_ext (Type.kind ft)) st c
 
 and stored_reader : type a.
     string -> ext:bool -> a Type.t -> t -> (string * Kind.field) reader =
@@ -595,11 +603,13 @@ let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
   | _ -> err "Column.to_tensor: %a is not stored one element per row" Type.pp ty
 
 let ragged c =
-  match (c.type_, c.data) with
-  | (Any String | Any Binary), Bytes _ when c.nulls > 0 ->
+  match c.data with
+  | Bytes _ when c.nulls > 0 ->
       err "Column.ragged: row %d is null" (first_null c)
-  | (Any String | Any Binary), Bytes r -> r
-  | Any ty, _ -> err "Column.ragged: %a is neither string nor binary" Type.pp ty
+  | Bytes r -> r
+  | _ ->
+      let (Any ty) = c.type_ in
+      err "Column.ragged: %a is not stored as bytes" Type.pp ty
 
 (* Layouts *)
 
@@ -711,7 +721,7 @@ let unheld : type a. a Type.t -> t -> (int * string) option =
   in
   match ty with
   | Decimal { precision; _ } ->
-      let bound = pow10 precision in
+      let bound = Type.pow10 precision in
       let why = Printf.sprintf "unscaled value %Ld has more than %d digits" in
       first Nx.int64
         (Int64.neg (Int64.pred bound))

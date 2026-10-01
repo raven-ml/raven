@@ -85,6 +85,10 @@ val has_float : 'a t -> bool
     or an extension's storage, at any depth. A key of such a type has distinct
     values that are one key, such as [-0.] and [0.]. *)
 
+val pow10 : int -> int64
+(** [pow10 k] is 10{^ [k]}, for [k] in \[[0];[18]\]: the factor between a
+    decimal's unscaled values at two scales. *)
+
 val storage : 'a t -> any
 (** [storage t] is [t] with every extension it is, or holds as list elements,
     replaced by its storage type: the type of the values that a record field of

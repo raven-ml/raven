@@ -24,17 +24,30 @@ let message f =
 
 (* The codec *)
 
+let has_ext_field fields =
+  List.exists (function _, Type.Any (Type.Ext _) -> true | _ -> false) fields
+
+let record_of_ext_record fields =
+  let inner = function
+    | _, Type.Any (Type.Record fs) -> has_ext_field fs
+    | _ -> false
+  in
+  List.exists inner fields
+
 let round_trip (G.Sample (ty, vs)) =
   cover "a null" (nulls vs > 0);
   cover "no row" (vs = [||]);
+  cover "more rows than a builder starts with" (Array.length vs > 16);
   cover "nested" (match ty with List _ | Record _ -> true | _ -> false);
+  cover "a record of a record with an extension field"
+    (match ty with Record fs -> record_of_ext_record fs | _ -> false);
   cover "no kind reads it" (not (readable ty));
-  let c = Column.of_options ty vs in
   if readable ty then
-    Law.round_trip (rows ty) pass (Fun.const c)
+    Law.round_trip (rows ty) pass (Column.of_options ty)
       (Column.options (Type.kind ty))
       vs
-  else rejects (fun () -> Column.options (Type.kind ty) c)
+  else
+    rejects (fun () -> Column.options (Type.kind ty) (Column.of_options ty vs))
 
 let observations (G.Sample (ty, vs)) =
   let c = Column.of_options ty vs in
@@ -163,6 +176,26 @@ let float_bits =
           equal float_exact 0x1p-24 (read Type.float32 (0x1p-24 +. 0x1p-80));
           equal float_exact 2048. (read Type.float16 2049.);
           equal float_exact 2052. (read Type.float16 2051.));
+      test "float16 rounds once, from the double" (fun () ->
+          let read x =
+            (Column.values Kind.float (Column.v Type.float16 [| x |])).(0)
+          in
+          equal float_exact 2050. (read (2049. +. 0x1p-14));
+          equal float_exact 0x1p-24 (read (0x1p-25 +. 0x1p-60)));
+      test "float32 holds values below its limit and refuses the limit"
+        (fun () ->
+          let below = Float.pred 0x1.ffffffp127 in
+          equal float_exact 0x1.fffffep127
+            (Column.values Kind.float (Column.v Type.float32 [| below |])).(0);
+          rejects (fun () -> Column.v Type.float32 [| 0x1.ffffffp127 |]));
+      prop "float32 stores a double's nearest float32, ties to even"
+        (Gen.frequency
+           [ (1, Gen.any_float); (3, Gen.float_range (-3.5e38) 3.5e38) ])
+        (fun x ->
+          assume (Type.holds Type.float32 x);
+          let nearest = Int32.float_of_bits (Int32.bits_of_float x) in
+          equal (G.witness Type.float32) nearest
+            (Column.values Kind.float (Column.v Type.float32 [| x |])).(0));
     ]
 
 (* Storage *)
@@ -195,6 +228,37 @@ let storage =
           equal any_w (Any (Type.tensor Nx.float32 [| 2 |])) (Column.type_ c);
           equal (array float_exact) [| 1.; 2.; 3.; 4. |]
             (Nx.to_array (Column.to_tensor Nx.float32 c)));
+      test "to_tensor of of_tensor is the tensor itself" (fun () ->
+          let x = Nx.create Nx.float64 [| 2 |] [| 1.; 2. |] in
+          satisfies ~claim:"the same tensor" pass
+            (fun y -> y == x)
+            (Column.to_tensor Nx.float64 (Column.of_tensor x)));
+      test "a decimal is stored unscaled at its type's scale" (fun () ->
+          let d = Decimal.v ~unscaled:(-99990L) ~scale:3 in
+          let c = Column.v (Type.decimal ~precision:4 ~scale:2) [| d |] in
+          equal (array int64) [| -9999L |]
+            (Nx.to_array (Column.to_tensor Nx.int64 c)));
+      test "of_tensor reads strided, broadcast and transposed views" (fun () ->
+          let x = Nx.create Nx.int32 [| 6 |] [| 0l; 1l; 2l; 3l; 4l; 5l |] in
+          equal (array int) [| 0; 2; 4 |]
+            (Column.values Kind.int
+               (Column.of_tensor (Nx.slice [ Rs (0, 6, 2) ] x)));
+          let seven =
+            Nx.broadcast_to [| 3 |] (Nx.create Nx.int8 [| 1 |] [| 7 |])
+          in
+          equal (array int) [| 7; 7; 7 |]
+            (Column.values Kind.int (Column.of_tensor seven));
+          let m =
+            Nx.create Nx.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]
+          in
+          let rows =
+            Column.values (Kind.tensor Nx.float32)
+              (Column.of_tensor (Nx.transpose m))
+          in
+          equal
+            (array (array float_exact))
+            [| [| 0.; 3. |]; [| 1.; 4. |]; [| 2.; 5. |] |]
+            (Array.map Nx.to_array rows));
       test "of_tensor reads a 1-D tensor as its dtype's scalar type" (fun () ->
           let c =
             Column.of_tensor (Nx.create Nx.uint32 [| 2 |] [| -1l; 7l |])
@@ -230,6 +294,42 @@ let storage =
             (Nx.to_array (Nx_ragged.values r)));
     ]
 
+(* Records *)
+
+let mass = Type.ext ~name:"m" Type.float64
+let inner_ty = Type.record [ ("m", Any mass) ]
+
+(* No public constructor builds a record with an extension field, so the record
+   {m = null} is read from a column. *)
+let m_null =
+  let fields = [ ("m", Column.of_options mass [| None |]) ] in
+  let l = Column.Children { validity = None; length = 1; fields } in
+  let c = Result.get_ok (Column.of_layout (Any inner_ty) l) in
+  (Column.values Record.kind c).(0)
+
+let records =
+  group "Records"
+    [
+      test "a record field holding a record with an extension field" (fun () ->
+          let outer = Type.record [ ("r", Any inner_ty) ] in
+          let r v = Record.(add Record.kind "r" v empty) in
+          let back =
+            Column.values Record.kind
+              (Column.v outer [| r (Some m_null); r None |])
+          in
+          let inner r =
+            Option.map Record.names (Record.field Record.kind "r" r)
+          in
+          equal
+            (array (option (list string)))
+            [| Some [ "m" ]; None |] (Array.map inner back));
+      test "a null field of another kind is a null" (fun () ->
+          let r = Record.(add Kind.float "a" None empty) in
+          let ty = Type.record [ ("a", Any Type.int8) ] in
+          let back = Column.values Record.kind (Column.v ty [| r |]) in
+          equal (option int) None (Record.field Kind.int "a" back.(0)));
+    ]
+
 (* Refusals *)
 
 let ab = Record.(empty |> add Kind.int "a" (Some 1))
@@ -244,6 +344,17 @@ let refusals =
   [
     refuse "an int out of range" (fun () -> Column.v int8 [| 1; 300 |])
     @@ __POS_OF__ {| Column.v: row 1: int8 does not hold 300 |};
+    refuse "the first of two ints out of range" (fun () ->
+        Column.v int8 [| 1; 300; 400 |])
+    @@ __POS_OF__ {| Column.v: row 1: int8 does not hold 300 |};
+    refuse "the first value outside int that is not null" (fun () ->
+        let validity =
+          Nx_bits.of_bool (Nx.create Nx.bool [| 3 |] [| false; true; true |])
+        in
+        let x = Nx.create Nx.uint64 [| 3 |] [| -1L; 5L; -1L |] in
+        Column.options Kind.int (Column.of_tensor ~validity x))
+    @@ __POS_OF__
+         {| Column.options: row 2: 18446744073709551615 is outside int |};
     refuse "a float that rounds to infinity" (fun () ->
         Column.v float16 [| 65520. |])
     @@ __POS_OF__ {| Column.v: row 0: float16 does not hold 65520 |};
@@ -321,7 +432,7 @@ let refusals =
     @@ __POS_OF__
          {| Column.to_tensor: string is not stored one element per row |};
     refuse "ragged of a number column" (fun () -> Column.ragged int8s)
-    @@ __POS_OF__ {| Column.ragged: int8 is neither string nor binary |};
+    @@ __POS_OF__ {| Column.ragged: int8 is not stored as bytes |};
     refuse "ragged with a null" (fun () ->
         Column.ragged (Column.of_options binary [| None |]))
     @@ __POS_OF__ {| Column.ragged: row 0 is null |};
@@ -637,6 +748,7 @@ let () =
          edge_cases;
          float_bits;
          storage;
+         records;
          refusal_cases;
          layouts;
          layout_refusal_cases;

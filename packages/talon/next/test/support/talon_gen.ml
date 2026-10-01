@@ -49,10 +49,14 @@ let scalars =
     ]
 
 let names = [ "a"; "b"; "é"; "" ]
+let scalar = Gen.of_list ~pp:pp_any scalars
+let ext_scalar = Gen.map (fun (Type.Any t) -> ext t) scalar
 
+(* An extension is drawn as often at the bottom as at the top, so that a record
+   two deep can hold a record with an extension field. *)
 let rec nested depth =
-  let scalar = Gen.of_list ~pp:pp_any scalars in
-  if depth = 0 then scalar
+  let ext = ext_scalar in
+  if depth = 0 then Gen.frequency [ (3, scalar); (1, ext) ]
   else
     let inner = nested (depth - 1) in
     let record n =
@@ -64,11 +68,27 @@ let rec nested depth =
       [
         (4, scalar);
         (2, Gen.map (fun (Type.Any t) -> Type.Any (Type.list t)) inner);
-        (2, Gen.bind (Gen.int_range 0 3) record);
-        (1, Gen.map (fun (Type.Any t) -> ext t) scalar);
+        (3, Gen.bind (Gen.int_range 0 3) record);
+        (1, ext);
       ]
 
-let type_ = Gen.with_pp pp_any (nested 2)
+(* A record of a record with an extension field over [t]. *)
+let ext_in_record (Type.Any t) =
+  let (Type.Any e) = ext t in
+  Type.Any (Type.record [ ("r", Any (Type.record [ ("m", Any e) ])) ])
+
+(* Text, an extension and a record of a record with an extension field are rare
+   in [nested 2], and suites cover them: each is also drawn directly, in one
+   case of seven. *)
+let type_ =
+  Gen.with_pp pp_any
+    (Gen.frequency
+       [
+         (4, nested 2);
+         (1, Gen.constant (Type.Any Type.string));
+         (1, ext_scalar);
+         (1, Gen.map ext_in_record scalar);
+       ])
 
 (* Values *)
 
@@ -174,7 +194,11 @@ let options ty =
   let row =
     match value ty with Some g -> Gen.option g | None -> Gen.constant None
   in
-  Gen.array ~size:(Gen.int_range 0 6) row
+  let size =
+    Gen.frequency
+      [ (1, Gen.constant 0); (1, Gen.int_range 1 3); (3, Gen.int_range 0 40) ]
+  in
+  Gen.array ~size row
 
 (* Comparing and printing *)
 

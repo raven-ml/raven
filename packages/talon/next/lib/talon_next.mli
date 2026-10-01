@@ -621,11 +621,10 @@ module Column : sig
   (** [validity c] is [c]'s validity, [None] iff [c] has no null. *)
 
   val ragged : t -> (int, Nx.uint8_elt) Nx_ragged.t
-  (** [ragged c] is the bytes of the text or byte-string column [c], one row per
-      row of [c], in O(1).
+  (** [ragged c] is the bytes of [c], one row per row of [c], in O(1). [c] is
+      stored as bytes: its type is [string], [binary] or an extension of either.
 
-      Raises [Invalid_argument] if [c] is neither [string] nor [binary], or has
-      a null. *)
+      Raises [Invalid_argument] if [c] is not stored as bytes, or has a null. *)
 
   (** {1:layout Layouts}
 
