@@ -717,7 +717,7 @@ let rec program ctx dt s : expr Gen.t =
             @ (if product_ok then [ Mul ] else [])
             @ if ctx.no_minmax then [] else [ Maximum; Minimum ]
         | I32 ->
-            [ Add; Sub; And; Or; Xor ]
+            [ Add; Sub; Div; And; Or; Xor ]
             @ (if product_ok then [ Mul ] else [])
             @ if ctx.no_minmax then [] else [ Maximum; Minimum ]
         | Bool -> [ And; Or; Xor ]
@@ -869,16 +869,18 @@ let rec program ctx dt s : expr Gen.t =
           in
           map (fun a -> Take (None, i, a)) (through dt source)
       | Some ax ->
+          (* Indices of any shape, read in C order along the axis. *)
           let* d = int_range 0 3 in
           let source = Array.mapi (fun i x -> if i = ax then d else x) s in
           let indices = Gen.map Float.of_int (int_range (-2) (d + 1)) in
+          let* shape = of_numel s.(ax) in
           let* values = array ~size:(constant s.(ax)) indices in
           let* capture = bool in
           let i =
             Leaf
               {
                 dt = I64;
-                shape = [| s.(ax) |];
+                shape;
                 values;
                 capture = capture && not ctx.args_only;
               }
@@ -1027,8 +1029,25 @@ let label e =
          && Array.exists (subnormal l.dt) (value l.dt (create l)).elements)
        (leaves e))
 
+(* Whether [e] divides a signed integer type's least value by [-1], which nx
+   leaves unspecified. *)
+let overflowing_division =
+  exists (function
+    | Bin (Div, a, b) when dtype_of a = I32 -> (
+        match (eager a, eager b) with
+        | x, y ->
+            let x = Nx.unpack Nx.int32 x and y = Nx.unpack Nx.int32 y in
+            Nx.item []
+              (Nx.any
+                 (Nx.logical_and
+                    (Nx.equal_s x Int32.min_int)
+                    (Nx.equal_s y (-1l))))
+        | exception Invalid_argument _ -> false)
+    | _ -> false)
+
 let compiled_is_eager e =
   label e;
+  if overflowing_division e then reject ();
   let dt = dtype_of e in
   let zeros = signs_zeros e in
   let expected = outcome dt (fun () -> eager e) in
@@ -1052,6 +1071,7 @@ type fn = Exp | Log | Sin | Cos | Tanh | Exp2 | Log2
 type rounded =
   | Sum_f of int list * bool * expr
   | Mean_f of int list * bool * expr
+  | Prod_f of int list * bool * expr
   | Matmul_f of expr * expr
   | Fn of fn * expr
 
@@ -1065,7 +1085,8 @@ let fn_name = function
   | Log2 -> "log2"
 
 let rounded_leaves = function
-  | Sum_f (_, _, a) | Mean_f (_, _, a) | Fn (_, a) -> leaves a
+  | Sum_f (_, _, a) | Mean_f (_, _, a) | Prod_f (_, _, a) | Fn (_, a) ->
+      leaves a
   | Matmul_f (a, b) -> leaves a @ leaves b
 
 (* The rounded program as an expression: its root is applied to the exact
@@ -1083,6 +1104,8 @@ let root r : Nx.packed list -> Nx.packed =
   match (r, operands) with
   | Sum_f (axes, keepdims, _), [ a ] ->
       floats { f1 = (fun x -> Nx.sum ~axes ~keepdims x) } a
+  | Prod_f (axes, keepdims, _), [ a ] ->
+      floats { f1 = (fun x -> Nx.prod ~axes ~keepdims x) } a
   | Mean_f (axes, keepdims, _), [ a ] ->
       floats { f1 = (fun x -> Nx.mean ~axes ~keepdims x) } a
   | Fn (fn, _), [ a ] ->
@@ -1107,7 +1130,7 @@ let root r : Nx.packed list -> Nx.packed =
   | _ -> invalid_arg "a rounded program's operands"
 
 let operands = function
-  | Sum_f (_, _, a) | Mean_f (_, _, a) | Fn (_, a) -> [ a ]
+  | Sum_f (_, _, a) | Mean_f (_, _, a) | Prod_f (_, _, a) | Fn (_, a) -> [ a ]
   | Matmul_f (a, b) -> [ a; b ]
 
 let eval_rounded value r = root r (List.map (eval value) (operands r))
@@ -1116,7 +1139,7 @@ let pp_rounded ppf r =
   let e =
     (* Printed through an expression of the same leaves. *)
     match r with
-    | Sum_f (_, _, a) | Mean_f (_, _, a) | Fn (_, a) -> a
+    | Sum_f (_, _, a) | Mean_f (_, _, a) | Prod_f (_, _, a) | Fn (_, a) -> a
     | Matmul_f (a, b) -> Bin (Mul, a, b)
   in
   pp_program ppf e;
@@ -1130,6 +1153,10 @@ let pp_rounded ppf r =
         Printf.sprintf "Nx.mean ~axes:[%s] ~keepdims:%b"
           (String.concat "; " (List.map string_of_int axes))
           keepdims
+    | Prod_f (axes, keepdims, _) ->
+        Printf.sprintf "Nx.prod ~axes:[%s] ~keepdims:%b"
+          (String.concat "; " (List.map string_of_int axes))
+          keepdims
     | Matmul_f _ -> "Nx.matmul of the two operands, in place of Nx.mul"
     | Fn (fn, _) -> "Nx." ^ fn_name fn)
 
@@ -1138,13 +1165,13 @@ let rounded_programs =
   let ctx =
     { depth = 3; no_product = false; no_minmax = false; args_only = false }
   in
-  let reduction mean =
+  let reduction root =
     let* dt = of_list floats in
     let* s = shape in
     let* axes = subsequence (range 0 (Array.length s - 1)) in
     let* keepdims = bool in
     let+ a = program ctx dt s in
-    if mean then Mean_f (axes, keepdims, a) else Sum_f (axes, keepdims, a)
+    root (axes, keepdims, a)
   in
   let matmul =
     let* dt = of_list floats in
@@ -1172,10 +1199,19 @@ let rounded_programs =
   in
   with_pp pp_rounded
     (frequency
-       [ (2, reduction false); (1, reduction true); (2, matmul); (3, fn) ])
+       [
+         (2, reduction (fun (x, k, a) -> Sum_f (x, k, a)));
+         (1, reduction (fun (x, k, a) -> Mean_f (x, k, a)));
+         (1, reduction (fun (x, k, a) -> Prod_f (x, k, a)));
+         (2, matmul);
+         (3, fn);
+       ])
 
 (* Units of rounding *)
 
+(* The units in the last place of the result's dtype a compiled transcendental
+   function is within. *)
+let transcendental_ulps = 4
 let unit_roundoff = function F16 -> 0x1p-11 | _ -> 0x1p-24
 let largest = function F16 -> 65504. | _ -> 0x1.fffffep+127
 let least = function F16 -> 0x1p-24 | _ -> 0x1p-149
@@ -1209,9 +1245,29 @@ let summed dt ~count ~r ~s c e =
     c = 0. && e = 0. && (not (Float.sign_bit c)) && not (Float.sign_bit e)
   else close ()
 
+(* What the stated rounding allows of a product of [count] factors whose exact
+   product is [r]: in any association, each rounding at most a unit of [dt].
+   Where some association's partial product can leave [dt]'s normal range,
+   [2^big] above its greatest float or [2^small] below its least normal one, any
+   result is allowed. With [~zeros], a factor's zero may have either sign. *)
+let multiplied dt ~zeros ~count ~r ~big ~small c e =
+  let least_normal = match dt with F16 -> 0x1p-14 | _ -> 0x1p-126 in
+  if Float.is_nan r then Float.is_nan c && Float.is_nan e
+  else if big >= Float.log2 (largest dt) || small < Float.log2 least_normal then
+    true
+  else if zeros && r = 0. then c = 0. && e = 0.
+  else if Float.abs r = Float.infinity || r = 0. then
+    Int64.equal (Int64.bits_of_float c) (Int64.bits_of_float r)
+    && Int64.equal (Int64.bits_of_float e) (Int64.bits_of_float r)
+  else
+    Float.abs (c -. e)
+    <= 2. *. Float.of_int (count + 1) *. unit_roundoff dt *. Float.abs r
+
 let within_rounding r =
   cover "a sum" (match r with Sum_f _ -> true | _ -> false);
   cover "a mean" (match r with Mean_f _ -> true | _ -> false);
+  cover "a float product over axes"
+    (match r with Prod_f _ -> true | _ -> false);
   cover "a float product" (match r with Matmul_f _ -> true | _ -> false);
   List.iter
     (fun f ->
@@ -1268,6 +1324,30 @@ let within_rounding r =
                   (summed dt ~count ~r:(rs.(i) /. m) ~s:(ss.(i) /. m) ce ee)
             | _ -> check i (summed dt ~count ~r:rs.(i) ~s:ss.(i) ce ee)
           done
+      | Prod_f (axes, keepdims, _), [ a ] ->
+          let x = float64 a in
+          let shape = Nx.shape x in
+          let count = List.fold_left (fun n ax -> n * shape.(ax)) 1 axes in
+          let lx = Nx.log2 (Nx.abs x) in
+          let part keep =
+            f64s
+              (Nx.sum ~axes ~keepdims
+                 (Nx.where (keep lx) lx (Nx.zeros_like lx)))
+          in
+          let rs = f64s (Nx.prod ~axes ~keepdims x) in
+          let big =
+            part (fun l -> Nx.logical_and (Nx.isfinite l) (Nx.greater_s l 0.))
+          in
+          let small =
+            part (fun l -> Nx.logical_and (Nx.isfinite l) (Nx.less_s l 0.))
+          in
+          for i = 0 to n - 1 do
+            check i
+              (multiplied dt
+                 ~zeros:(List.exists signs_zeros (operands r))
+                 ~count ~r:rs.(i) ~big:big.(i) ~small:small.(i) c.elements.(i)
+                 e.elements.(i))
+          done
       | Matmul_f _, [ a; b ] ->
           let a = float64 a and b = float64 b in
           let k = (Nx.shape a).(Array.length (Nx.shape a) - 1) in
@@ -1286,7 +1366,8 @@ let within_rounding r =
               || ce = ee
               || Float.is_finite ce && Float.is_finite ee
                  && Float.abs (ce -. ee)
-                    <= 4. *. ulp dt (Float.max (Float.abs ce) (Float.abs ee)))
+                    <= Float.of_int transcendental_ulps
+                       *. ulp dt (Float.max (Float.abs ce) (Float.abs ee)))
           done
       | _ -> assert false)
 
