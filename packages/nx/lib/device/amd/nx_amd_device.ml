@@ -94,8 +94,15 @@ type profiling = {
 type u64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
 type u32s = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-type u8s =
-  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+(* A device's trace buffers, with the host's views of them. Every profile that
+   traces writes them, each run in its log's slot: a profile is taken at a time
+   and its stop reads its runs, so the runs of two logs never share a slot
+   unread. *)
+type traces = {
+  tracing : tracing;
+  host : Nx_device.Buffer.t; (* the host's borrow of the traces *)
+  end_words : u32s;
+}
 
 (* The profiling of a profile's counters and traces, with the host's views of
    its buffers, and the runs of the log read so far. *)
@@ -103,8 +110,7 @@ type profile = {
   profiling : profiling;
   log_words : u64s;
   sample_words : u64s;
-  trace_bytes : u8s;
-  end_words : u32s;
+  traces : traces option;
   mutable read : int;
 }
 
@@ -132,9 +138,9 @@ type t = {
   mutable scratch : (Nx_device.Buffer.t * int) option;
   profile_lock : Mutex.t;
   profiles : (string list * bool, profile) Hashtbl.t;
-  (* by the counters and traces asked for: work encoded for them writes
+      (* by the counters and traces asked for: work encoded for them writes
          there *)
-  (* by the counters asked for: work encoded for them writes there *)
+  mutable traces : traces option; (* made by the first profile that traces *)
   mutable aql_desc : Mmio.t option; (* the AQL queue's descriptor *)
   mutable queues : (queue * bool * queue list) option;
       (* the compute queue, whether it takes AQL packets, the SDMA queues *)
@@ -790,6 +796,33 @@ let host_words d memory scalar kind n =
 
 let empty kind = Bigarray.Array1.create kind Bigarray.c_layout 0
 
+(* The device's trace buffers, made once: a window of each shader engine per
+   slot. *)
+let traces a d =
+  match a.traces with
+  | Some t -> t
+  | None ->
+      let engines = a.props.shader_engines * a.props.xccs
+      and window = trace_bytes / count_slots in
+      let traces =
+        Nx_device.Buffer.create ~memory:Mapped d UInt8
+          (window * count_slots * engines)
+      in
+      let host =
+        match Nx_device.Buffer.borrow Nx_device.host traces with
+        | Ok h -> h
+        | Error why -> failwith why
+      in
+      let ends, end_words =
+        host_words d Pinned Int32 Bigarray.int32 (count_slots * engines)
+      in
+      Bigarray.Array1.fill end_words 0l;
+      let t =
+        { tracing = { traces; ends; window; engines }; host; end_words }
+      in
+      a.traces <- Some t;
+      t
+
 let profiling a =
   let asked = (Nx_device.Profile.counters (), Nx_device.Profile.traced ()) in
   match asked with
@@ -824,33 +857,11 @@ let profiling a =
                     ( Some { samples; counters; size; wgp_active = wgp_active a },
                       words )
               in
-              let tracing, trace_bytes, end_words =
-                if not trace then
-                  (None, empty Bigarray.int8_unsigned, empty Bigarray.int32)
-                else
-                  let engines = a.props.shader_engines * a.props.xccs
-                  and window = trace_bytes / count_slots in
-                  let traces, bytes =
-                    host_words d Mapped UInt8 Bigarray.int8_unsigned
-                      (window * count_slots * engines)
-                  in
-                  let ends, words =
-                    host_words d Pinned Int32 Bigarray.int32
-                      (count_slots * engines)
-                  in
-                  Bigarray.Array1.fill words 0l;
-                  (Some { traces; ends; window; engines }, bytes, words)
-              in
+              let traces = if trace then Some (traces a d) else None in
+              let tracing = Option.map (fun t -> t.tracing) traces in
               let profiling = { slots = count_slots; log; counting; tracing } in
               Hashtbl.replace a.profiles asked
-                {
-                  profiling;
-                  log_words;
-                  sample_words;
-                  trace_bytes;
-                  end_words;
-                  read = 0;
-                };
+                { profiling; log_words; sample_words; traces; read = 0 };
               Some profiling)
 
 (* The values of the counters of the run in [slot]. *)
@@ -867,10 +878,11 @@ let counted a p (c : counting) slot =
    engine's write pointer, which counts 32-byte units from the trace's start, or
    from address 0 on GFX 11.0. A GFX9 trace starts with a header its GPU does
    not write. *)
-let traced a p (t : tracing) ~slot ~se =
-  let off = ((se * p.profiling.slots) + slot) * t.window in
+let traced a (s : traces) ~slot ~se =
+  let t = s.tracing in
+  let off = ((se * count_slots) + slot) * t.window in
   let units w = w land 0x1FFF_FFFF * 32 in
-  let wptr = units (Int32.to_int p.end_words.{(slot * t.engines) + se}) in
+  let wptr = units (Int32.to_int s.end_words.{(slot * t.engines) + se}) in
   let wptr =
     match a.props.target with
     | 11, 0, _ ->
@@ -884,7 +896,13 @@ let traced a p (t : tracing) ~slot ~se =
     failwith
       (Printf.sprintf "%s: the trace of shader engine %d ends at %d of %d bytes"
          (name a.index) se wptr t.window);
-  let data = String.init wptr (fun i -> Char.chr p.trace_bytes.{off + i}) in
+  let data =
+    Mmio.read
+      (Mmio.v
+         (Nx_device.Buffer.address s.host)
+         (Nx_device.Buffer.nbytes s.host))
+      off wptr
+  in
   match a.props.target with
   | 9, _, _ ->
       let header = Bytes.create 8 in
@@ -915,7 +933,7 @@ let wave_spans device ~name ~se data =
 
 (* The counters and traces of the runs a log took since its last report, timed
    on the GPU's clock, and the runs it took over before they were read. *)
-let read_runs a p =
+let read_runs a (p : profile) =
   let device = Option.get a.dev in
   let n = Int64.to_int p.log_words.{0} and slots = p.profiling.slots in
   let first = Int.max p.read (n - slots) in
@@ -947,12 +965,12 @@ let read_runs a p =
           ]
     in
     let traces =
-      match p.profiling.tracing with
+      match p.traces with
       | None -> []
-      | Some t ->
+      | Some s ->
           List.concat
-            (List.init t.engines (fun se ->
-                 let data = traced a p t ~slot ~se in
+            (List.init s.tracing.engines (fun se ->
+                 let data = traced a s ~slot ~se in
                  Nx_device.Profile.Trace
                    { device; name; start; stop; part = se; data }
                  :: wave_spans device ~name ~se data))
@@ -1026,6 +1044,7 @@ let record ~machine ~index ~gpu ~props ~cu_per_array =
     scratch = None;
     profile_lock = Mutex.create ();
     profiles = Hashtbl.create 2;
+    traces = None;
     aql_desc = None;
     queues = None;
     dev = None;
