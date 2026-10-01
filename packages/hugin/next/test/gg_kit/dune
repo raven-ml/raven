@@ -3,3 +3,13 @@
  (modules test_ring2 test_pgon2)
  (package hugin)
  (libraries hugin.next.gg hugin.next.gg.kit windtrap))
+
+(test
+ (name test_field2)
+ (modules test_field2)
+ (package hugin)
+ (libraries hugin.next.gg hugin.next.gg.kit nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_field2.ml test_field2.ml.corrected))))

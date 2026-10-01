@@ -42,9 +42,9 @@
       other sides. It moves by at most the fraction [256 ε (c + d) / d] of the
       diagonal, where [ε] is [epsilon_float], [d] is the cell's extent along an
       axis, [c] the larger magnitude of its two coordinates on that axis, and
-      the axis the one that gives the larger fraction. This is negligible
-      unless the coordinates are large against the grid's spacing, where a
-      crossing can move to an end of the diagonal.
+      the axis the one that gives the larger fraction. This is negligible unless
+      the coordinates are large against the grid's spacing, where a crossing can
+      move to an end of the diagonal.
     - The polygon walks around the piece's boundary through its in corners and
       its crossings, in order. In a whole cell whose in corners are two opposite
       ones, this walk is a hexagon around the cell's centre if the mean of the
@@ -133,9 +133,9 @@ val isoband : lo:float -> hi:float -> t -> Pgon2.t
     diagonal of a triangle. There the bands bend at their crossings while the
     domain's boundary runs straight, so a band may leave the domain or leave
     uncovered a sliver of it that narrow; and where the crossings of two levels
-    on a side of the triangle lie within rounding error of each other, rings
-    may cross and bands overlap. The laws also assume that products of
-    coordinate differences neither overflow nor underflow, as the
+    on a side of the triangle lie within rounding error of each other, rings may
+    cross and bands overlap. The laws also assume that products of coordinate
+    differences neither overflow nor underflow, as the
     {{!Hugin_next_gg_kit.section-conventions}conventions} state for
     {!Pgon2.mem}.
 

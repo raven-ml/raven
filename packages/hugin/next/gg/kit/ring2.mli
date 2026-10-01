@@ -47,10 +47,9 @@ val y : t -> int -> float
 
 val area : t -> float
 (** [area r] is the signed area of [r], computed with rounding: positive if [r]
-    is positively oriented and negative if negatively, unless the area is
-    within rounding error of zero, and [0.] if [r] has fewer than three points.
-    It overflows to an infinity or NaN if [r] spans more than about
-    10{^ 154}. *)
+    is positively oriented and negative if negatively, unless the area is within
+    rounding error of zero, and [0.] if [r] has fewer than three points. It
+    overflows to an infinity or NaN if [r] spans more than about 10{^ 154}. *)
 
 val mem : P2.t -> t -> bool
 (** [mem pt r] is [true] iff the winding number of [r] around [pt] is not [0], a

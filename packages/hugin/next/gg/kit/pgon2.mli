@@ -35,8 +35,8 @@ val rings : t -> Ring2.t list
 val area : t -> float
 (** [area p] is the signed area of the rings of [p], the sum of their
     {!Ring2.area}s. It is the area of the surface of [p], up to rounding, when
-    the rings of [p] wind [0] or [1] times around every point off them, as
-    those of {!Field2.isoband} do. *)
+    the rings of [p] wind [0] or [1] times around every point off them, as those
+    of {!Field2.isoband} do. *)
 
 val mem : P2.t -> t -> bool
 (** [mem pt p] is [true] iff [pt] is in the surface of [p]: the winding numbers
