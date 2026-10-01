@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="160pt" height="100pt" viewBox="0 0 160 100">
+<defs>
+<g id="hs56901cd9bae08c0e">
+<path d="M2.5 0C2.5 1.3807 1.3807 2.5 0 2.5C-1.3807 2.5 -2.5 1.3807 -2.5 0C-2.5 -1.3807 -1.3807 -2.5 0 -2.5C1.3807 -2.5 2.5 -1.3807 2.5 0Z"/>
+<path d="M2.5 0C2.5 1.3807 1.3807 2.5 0 2.5C-1.3807 2.5 -2.5 1.3807 -2.5 0C-2.5 -1.3807 -1.3807 -2.5 0 -2.5C1.3807 -2.5 2.5 -1.3807 2.5 0Z" fill="none" stroke="#ffffff" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g id="hs1d05b488387bb7e9">
+<path d="M1 0C1 0.55228 0.55228 1 0 1C-0.55228 1 -1 0.55228 -1 0C-1 -0.55228 -0.55228 -1 0 -1C0.55228 -1 1 -0.55228 1 0Z" fill="none" stroke="#334d99" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g id="hsbf08e09f40df59ca">
+<g opacity="0.7">
+<path d="M2.5 0C2.5 1.3807 1.3807 2.5 0 2.5C-1.3807 2.5 -2.5 1.3807 -2.5 0C-2.5 -1.3807 -1.3807 -2.5 0 -2.5C1.3807 -2.5 2.5 -1.3807 2.5 0Z" fill="#000000" stroke="none"/>
+<path d="M2.5 0C2.5 1.3807 1.3807 2.5 0 2.5C-1.3807 2.5 -2.5 1.3807 -2.5 0C-2.5 -1.3807 -1.3807 -2.5 0 -2.5C1.3807 -2.5 2.5 -1.3807 2.5 0Z" fill="none" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<style>@font-face{font-family:hf0252a7cf48244b9e;src:url(data:font/ttf;base64,<102512 bytes>)}</style>
+<style>@font-face{font-family:hfbb904779c8b951e8;src:url(data:font/ttf;base64,<103820 bytes>)}</style>
+</defs>
+<path d="M0 0L160 0L160 100L0 100Z" fill="#ffffff"/>
+<g data-id="[0,&quot;dots&quot;]">
+<use href="#hs56901cd9bae08c0e" x="10" y="25" fill="#d6638b" data-row="0"/>
+<use href="#hs56901cd9bae08c0e" x="16.25" y="30.753" fill="#db6371" data-row="1"/>
+<use href="#hs56901cd9bae08c0e" x="22.5" y="35.098" fill="#db6656" data-row="2"/>
+<use href="#hs56901cd9bae08c0e" x="28.75" y="36.97" fill="#d86c38" data-row="3"/>
+<use href="#hs56901cd9bae08c0e" x="35" y="35.912" fill="#d0750c" data-row="4"/>
+<use href="#hs56901cd9bae08c0e" x="41.25" y="32.182" fill="#c47e00" data-row="5"/>
+<use href="#hs56901cd9bae08c0e" x="47.5" y="26.693" fill="#b38900" data-row="6"/>
+<use href="#hs56901cd9bae08c0e" x="53.75" y="20.791" fill="#9f9200" data-row="7"/>
+<use href="#hs56901cd9bae08c0e" x="60" y="15.918" fill="#869b0d" data-row="8"/>
+<use href="#hs56901cd9bae08c0e" x="66.25" y="13.27" fill="#67a23a" data-row="9"/>
+<use href="#hs56901cd9bae08c0e" x="72.5" y="13.493" fill="#3ea859" data-row="10"/>
+<use href="#hs56901cd9bae08c0e" x="78.75" y="16.534" fill="#00ab76" data-row="11"/>
+<use href="#hs56901cd9bae08c0e" x="85" y="21.647" fill="#00aa90" data-row="12"/>
+<use href="#hs56901cd9bae08c0e" x="91.25" y="27.581" fill="#00a7a6" data-row="13"/>
+<use href="#hs56901cd9bae08c0e" x="97.5" y="32.884" fill="#00a4b9" data-row="14"/>
+<use href="#hs56901cd9bae08c0e" x="103.75" y="36.256" fill="#00a0ce" data-row="15"/>
+<use href="#hs56901cd9bae08c0e" x="110" y="36.872" fill="#009adf" data-row="16"/>
+<use href="#hs56901cd9bae08c0e" x="116.25" y="34.582" fill="#4491e8" data-row="17"/>
+<use href="#hs56901cd9bae08c0e" x="122.5" y="29.945" fill="#6889ea" data-row="18"/>
+<use href="#hs56901cd9bae08c0e" x="128.75" y="24.098" fill="#8480e7" data-row="19"/>
+<use href="#hs56901cd9bae08c0e" x="135" y="18.472" fill="#9b78de" data-row="20"/>
+<use href="#hs56901cd9bae08c0e" x="141.25" y="14.444" fill="#af71d0" data-row="21"/>
+<use href="#hs56901cd9bae08c0e" x="147.5" y="13" fill="#bf6bbd" data-row="22"/>
+<use href="#hs56901cd9bae08c0e" x="153.75" y="14.495" fill="#cb66a8" data-row="23"/>
+</g>
+<use href="#hs1d05b488387bb7e9" transform="translate(20 75) scale(3)" stroke-width="0.33333"/>
+<use href="#hs1d05b488387bb7e9" transform="translate(45 75) scale(5)" stroke-width="0.2"/>
+<use href="#hs1d05b488387bb7e9" transform="translate(80 75) scale(8)" stroke-width="0.125"/>
+<use href="#hsbf08e09f40df59ca" x="120" y="75" stroke="#ff0000"/>
+<use href="#hsbf08e09f40df59ca" x="140" y="75" stroke="#0000ff"/>
+<text x="10 18.175 24.679 31.425 34.089 40.588 43.682 50.417 54.559 60.735 69.737 75.543 78.637 85.475 92.006 95.175 98.269 108.549 114.726 117.895 120.988 127.648 130.817 137.526" y="55" font-family="hf0252a7cf48244b9e" font-size="11" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">Hugin draws AV, Wa: 0.25</text>
+<text x="100 105.955 111.474 113.913" y="95" font-family="hfbb904779c8b951e8" font-size="9" fill="#991a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">Bold</text>
+<g data-id="[0,&quot;dots&quot;]" data-cells="120 5 32 24 4 3">
+<image x="120" y="5" width="32" height="24" preserveAspectRatio="none" style="image-rendering:pixelated" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAIUlEQVR4AWNkkLP5b2RkxADDLAEBATeQBRgX7LuzHlkAACDKC1eh/Z74AAAAAElFTkSuQmCC"/>
+</g>
+</svg>

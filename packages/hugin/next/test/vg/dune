@@ -35,3 +35,26 @@
    (diff? golden/shapes.png golden/shapes.png.corrected)
    (diff? golden/strokes.png golden/strokes.png.corrected)
    (diff? golden/marks.png golden/marks.png.corrected))))
+
+(test
+ (name test_svg)
+ (modules test_svg)
+ (package hugin)
+ (libraries
+  hugin.next.gg
+  hugin.next.font
+  hugin.next.vg
+  hugin.next.vg.raster
+  hugin.next.vg.svg
+  vg_corpus
+  nx
+  windtrap)
+ (deps
+  (glob_files golden/*.svg))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_svg.ml test_svg.ml.corrected)
+   (diff? golden/shapes.svg golden/shapes.svg.corrected)
+   (diff? golden/strokes.svg golden/strokes.svg.corrected)
+   (diff? golden/marks.svg golden/marks.svg.corrected))))

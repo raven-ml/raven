@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="160pt" height="100pt" viewBox="0 0 160 100">
+<path d="M0 0L160 0L160 100L0 100Z" fill="#ffffff"/>
+<path d="M10 30L25 10L40 30L55 10" fill="none" stroke="#000000" stroke-width="4"/>
+<path d="M60 30L75 10L90 30L105 10" fill="none" stroke="#cc3333" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M10 100L25 80L40 100L55 80" fill="none" stroke="#3333cc" stroke-width="4" stroke-linecap="square" stroke-linejoin="bevel"/>
+<path d="M10 60C40 20 60 100 90 60C103.333 46.667 116.667 46.667 130 60" fill="none" stroke="#1a804d" stroke-width="2" stroke-dasharray="6 3 1 3" stroke-dashoffset="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M100 90L150 70" fill="none" stroke="#000000" stroke-width="2" stroke-dasharray="0 5" stroke-linecap="square" stroke-linejoin="round"/>
+<path d="M150 20L150 20" fill="none" stroke="#991a99" stroke-opacity="0.5" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M150 50C150 55.523 145.523 60 140 60C134.477 60 130 55.523 130 50C130 44.477 134.477 40 140 40C145.523 40 150 44.477 150 50Z" fill="none" stroke="#666666" stroke-width="1.5" stroke-linecap="round"/>
+<path transform="matrix(1 0 0 0.5 0 0)" d="M128 170C128 174.418 124.418 178 120 178C115.582 178 112 174.418 112 170C112 165.582 115.582 162 120 162C124.418 162 128 165.582 128 170Z" fill="none" stroke="#994d99" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -26,8 +26,10 @@
       [@font-face] rule whose source is a data URI of the font file. A run is
       written as text only if each of its glyphs renders one character of the
       Basic Multilingual Plane, which XML can hold and which the font maps to
-      that glyph. Any other run is written as the filled outlines of its glyphs,
-      in a group whose [aria-label] is the run's text.
+      that glyph, other than glyph [0], which stands for the characters the font
+      lacks. Any other run is written as the filled outlines of its glyphs, in a
+      group whose [aria-label] is the run's text, its characters that XML cannot
+      hold replaced by U+FFFD.
     - An image is an [image] element holding a PNG data URI of its pixels,
       stretched over its box and drawn with [image-rendering: pixelated].
     - A clip is a [clipPath] element and a group that refers to it; a transform
@@ -36,9 +38,9 @@
       [use] element per instance, which sets what the instance varies: its
       translation and scale, the colours and alphas of the leaves it replaces,
       and their pen when it scales. It writes each instance in full instead when
-      one definition cannot carry these: when it scales its instances and the
-      strokes of its picture differ in width or dashes, or its picture holds a
-      stamp that scales.
+      one definition cannot carry these: when it scales its instances and either
+      the strokes of its picture differ in width or dashes or its picture holds
+      a stamp that scales.
     - A tag is a group carrying [data-] attributes, which {!section-tags}
       describes.
 
@@ -48,7 +50,9 @@
     {1:accuracy Accuracy}
 
     The document places every point the picture paints on the page within 0.001
-    point of where the picture puts it, whatever the transforms above it:
+    point of where the picture puts it, horizontally and vertically, whatever
+    the transforms above it, except the ends of dashes past the first thousand
+    lengths of their pattern along a subpath:
     - Coordinates are mapped to the page through the transforms above them, in
       double precision, and written in points with three decimals, so that the
       numbers of the document are of the order of the page's size.
@@ -62,9 +66,12 @@
       an image they do more than scale along the axes. The numbers under a
       matrix get the decimals that keep the accuracy, and so do those of a
       stamp's picture, which is written once, relative to its instances.
-    - Stroke widths, dash lengths and font sizes are written to the same
-      accuracy. Colours are written to 8 bits per component and alphas to three
-      decimals.
+    - Stroke widths and font sizes are written to the same accuracy, and dash
+      lengths, whose errors add up along a subpath, to a thousandth of it.
+      Colours are written to 8 bits per component and alphas to three decimals.
+    - A picture under transforms whose composition overflows the range of floats
+      or has no inverse is left out, and a number beyond [1e15] in magnitude is
+      written as [±1e15].
 
     A viewer that computes in single precision, as browsers do, rounds each
     number it reads to 24 significant bits: less than 0.001 point for a
@@ -99,7 +106,8 @@
       height of [box] and the grid's [width] and [height], separated by spaces,
       and, if transforms lie above the tag, [data-matrix], the composition of
       those transforms as [xx yx xy yy x0 y0], which maps the coordinates of
-      [box] to the page's.
+      [box] to the group's: the page's, or, in a stamp's picture written once,
+      those of the instance, which its [use] element places on the page.
 
     {1:determinism Determinism}
 
