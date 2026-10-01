@@ -2,44 +2,24 @@
    operation is not eligible for Accelerate. This benchmark intentionally calls
    the backend's owned-GEMM hook; public matmul stays in packages/nx/bench. *)
 
-type ('a, 'b) ffi = {
-  buffer : Nx_device.Buffer.t;
-  shape : int array;
-  strides : int array;
-  offset : int;
-  dtype : ('a, 'b) Nx_dtype.t;
-}
-
-external owned_matmul : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
+external owned_matmul :
+  ('a, 'b) Nx_array.t -> ('a, 'b) Nx_array.t -> ('a, 'b) Nx_array.t -> unit
   = "caml_nx_c_owned_matmul"
 
-let row_major shape =
-  let rank = Array.length shape in
-  let strides = Array.make rank 1 in
-  for axis = rank - 2 downto 0 do
-    strides.(axis) <- strides.(axis + 1) * shape.(axis + 1)
-  done;
-  strides
-
-let make shape =
+let make ?strides shape =
   let elements = Array.fold_left ( * ) 1 shape in
   let values =
     Bigarray.Array1.init Bigarray.float32 Bigarray.c_layout elements
       (fun index -> Float.sin (float_of_int (index * 17 mod 1021)) *. 0.25)
   in
   {
+    Nx_array.dtype = Nx_dtype.float32;
+    view = Nx_array.View.create ?strides shape;
     buffer = Nx_device.Buffer.of_bigarray values;
-    shape;
-    strides = row_major shape;
-    offset = 0;
-    dtype = Nx_dtype.float32;
   }
 
 let case ?a_strides name a_shape b_shape c_shape =
-  let a = make a_shape in
-  let a =
-    match a_strides with None -> a | Some strides -> { a with strides }
-  in
+  let a = make ?strides:a_strides a_shape in
   let b = make b_shape in
   let c = make c_shape in
   Thumper.bench name (fun () ->
