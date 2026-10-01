@@ -47,21 +47,24 @@ are reused, never removed: their warm `_build` is the point. Use
 Don't burn tokens. Give a new stream to a fresh agent with a short brief
 instead of a long-running one.
 
-- **Claim.** A worktree is taken while a dune watch server holds its
-  `_build/.lock`, which then contains the server's pid; the server's parent
-  processes lead to the Claude session that holds it. To claim one, start
-  `dune build --passive-watch-mode` in the background and check that the
-  lock holds your server's pid (a second server forwards to the first and
-  exits). If none is free, add the next number with
-  `git worktree add --detach`. Work on a branch named for the task.
+- **Claim.** A worktree is taken while git holds it locked. Claim one with
+  `git worktree lock --reason "<session> <agent> <task>" <path>`, which
+  fails if it is already locked; `git worktree list --verbose` shows each
+  lock's reason. If none is free, add the next number with
+  `git worktree add --detach --lock --reason "…" <path> main`, then copy
+  the checkout's `dune.lock` into it. Touch nothing in a worktree before
+  its lock is yours. Work on a branch named for the task.
 - **Keep.** The claimant keeps its branch rebased on main and copies the
   checkout's `dune.lock` when it changes.
-- **Build.** `dune build` and `dune runtest` forward to your server. Before
-  each, run `timeout 5 dune rpc ping`: no answer means the server is stuck,
-  so kill its pid and start another at once.
-- **Release.** When your task is done, kill your server and leave the tree
-  clean and detached at main. A server whose session has ended (parent
-  pid 1) is stale; anyone may stop it.
+- **Build.** Run one `dune build --passive-watch-mode` in the background;
+  `dune build` and `dune runtest` forward to it. Before each, run
+  `timeout 5 dune rpc ping`: no answer means the server is stuck, so kill
+  its pid and start another. The server watches every `$PATH` directory,
+  and for one that doesn't exist, its nearest existing parent: a missing
+  entry can make it watch `$HOME` and rebuild on every change there.
+- **Release.** When your task is done, kill your server, leave the tree
+  clean and detached at main, then `git worktree unlock <path>`. A lock
+  whose session has ended is stale; the lead clears it.
 
 ## Commands
 
