@@ -374,7 +374,6 @@ let test_f16_train_loss_scaled () =
   let y = Nx.matmul x (mat f32 2 1 [| 1.5; -0.5 |]) in
   let step =
     Rune.jit
-      ~devices:[ Rune.device "CPU" ]
       Nx.Ptree.(fit_in @-> returns fit_out)
       (fun ({ w; x; ls } : fit_in) ->
         let objective w =

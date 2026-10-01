@@ -9,7 +9,6 @@
 
 open Windtrap
 
-let dev = Rune.device "CPU"
 let steps = 6
 
 (* A float32 matrix and vector: Adafactor factors the one and not the other. *)
@@ -58,7 +57,7 @@ let compiles state ~init ~step () =
   let eager = run body in
   let compiled =
     run
-      (Rune.jit ~devices:[ dev ] Nx.Ptree.(consumes both @@ returns both) body)
+      (Rune.jit Nx.Ptree.(consumes both @@ returns both) body)
   in
   ignore
     (Nx.Ptree.map2 both
@@ -139,9 +138,7 @@ let test_radam_compiled_rectification () =
   let both = Nx.Ptree.pair p (Vega.adam_ptree p) in
   let compiled =
     path
-      (Rune.jit ~devices:[ dev ]
-         Nx.Ptree.(consumes both @@ returns both)
-         (step target32))
+      (Rune.jit Nx.Ptree.(consumes both @@ returns both) (step target32))
       (Nx.zeros Nx.float32 [| 3 |])
   in
   let exact = path (step target64) (Nx.zeros Nx.float64 [| 3 |]) in
@@ -162,7 +159,7 @@ let test_polynomial_decay_compiles () =
         Vega.Schedule.polynomial_decay ~init_value:1.0 ~end_value:0.1
           ~decay_steps:10 ~power ()
       in
-      let g = Rune.jit' ~devices:[ dev ] s in
+      let g = Rune.jit' s in
       for k = 0 to 20 do
         let step = Nx.scalar Nx.int32 (Int32.of_int k) in
         equal

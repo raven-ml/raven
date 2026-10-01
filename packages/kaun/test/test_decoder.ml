@@ -393,7 +393,6 @@ let test_generation_matches_recomputation () =
   in
   let step =
     Rune.jit
-      ~devices:[ Rune.device "CPU:1" ]
       Nx.Ptree.(
         tensor @-> Cache_index.ptree @-> consumes caches
         @@ returns (pair (pair tensor tensor) caches))
@@ -405,9 +404,16 @@ let test_generation_matches_recomputation () =
   in
   let context = Array.length start + steps in
   let index = ref (Cache_index.rows ~context [| Array.length start |]) in
-  let s = ref (step (ids [| start |]) !index (cache ~slots:context)) in
+  let placed =
+    Nx.Ptree.map caches
+      (fun _ t -> Nx.place (Nx.Placement.device Devices.cpu1) t)
+      (cache ~slots:context)
+  in
+  let s = ref (step (ids [| start |]) !index placed) in
+  let addresses kv =
+    Nx.Ptree.fold caches (fun _ t acc -> acc @ Devices.addresses t) kv []
+  in
   let sampled () = fst (fst !s) and sampled_from () = snd (fst !s) in
-  let leaves = 2 * layers * context * kv_dim * 4 in
   List.iteri
     (fun i (next, scores) ->
       let msg = Printf.sprintf "step %d" i in
@@ -415,12 +421,13 @@ let test_generation_matches_recomputation () =
       equal ~msg:(msg ^ ", token") int next
         (Int64.to_int (Nx.item [ 0; 0 ] (sampled ())));
       if i < steps - 1 then begin
-        let before = (Rune.jit_stats ()).reused_bytes in
+        let before = addresses (snd !s) in
         index := Cache_index.advance !index;
         s := step (sampled ()) !index (snd !s);
-        is_true
+        equal
           ~msg:(msg ^ ", every cache leaf is written in its own storage")
-          ((Rune.jit_stats ()).reused_bytes - before >= leaves)
+          (list nativeint) before
+          (addresses (snd !s))
       end)
     recomputed
 

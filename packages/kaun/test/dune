@@ -1,11 +1,3 @@
-; The suites jit without naming a device and assert CPU semantics; pin the
-; process-wide default so they do not auto-select a GPU backend.
-
-(env
- (_
-  (env-vars
-   (DEV CPU))))
-
 (tests
  (names
   test_kaun
@@ -28,20 +20,20 @@
  (modules
   (:standard \ test_cache_index_metal test_decode_devices))
  (package kaun)
- (libraries kaun rune vega nx nx.dtype windtrap unix))
+ (libraries kaun rune vega nx nx.dtype nx.device windtrap unix))
 
 (tests
  (names test_cache_index_metal)
  (modules test_cache_index_metal)
  (package kaun)
- (enabled_if
+ (build_if
   (= %{system} macosx))
- (libraries kaun rune nx windtrap))
+ (libraries kaun rune nx nx.device nx.metal.device windtrap))
 
-; Over CPU:1..CPU:4; it reads tolk's estimate of the bytes a replay moves.
+; Over CPU:1..CPU:4.
 
 (test
  (name test_decode_devices)
  (modules test_decode_devices)
  (package kaun)
- (libraries kaun rune nx tolk tolk.uop windtrap))
+ (libraries kaun rune nx nx.device windtrap))

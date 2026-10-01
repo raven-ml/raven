@@ -1688,7 +1688,6 @@ let test_one_storage_behind_two_caches_raises () =
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
   let step =
     Rune.jit
-      ~devices:[ Rune.device "CPU:1" ]
       Nx.Ptree.(consumes caches @@ returns caches)
       (List.map (fun (c : Nx.float32_t Attention.Cache.t) ->
            { c with Attention.Cache.keys = Nx.add_s c.keys 1.0 }))
@@ -1696,7 +1695,7 @@ let test_one_storage_behind_two_caches_raises () =
   let c =
     Nx.Ptree.map
       (Nx.Ptree.instantiate (module Attention.Cache))
-      (fun _ t -> Nx.place (Nx.Placement.device (Rune.device "CPU:1")) t)
+      (fun _ t -> Nx.place (Nx.Placement.device Devices.cpu1) t)
       (cache 4)
   in
   raises_match

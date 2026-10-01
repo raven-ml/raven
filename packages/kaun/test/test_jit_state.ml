@@ -21,10 +21,7 @@
 open Windtrap
 open Kaun
 
-let dev = Rune.device "CPU"
-
-let rows =
-  Nx.Placement.sharded ~axis:0 [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+let rows = Nx.Placement.sharded ~axis:0 [ Devices.cpu1; Devices.cpu2 ]
 
 let batch = 8
 let inputs = 8
@@ -144,13 +141,13 @@ let test_jit_matches_eager () =
   let eager = run_traj ~step0:train_step steps (init ()) in
   let compiled =
     run_traj
-      ~step0:(Rune.jit ~devices:[ dev ] step_signature train_step)
+      ~step0:(Rune.jit step_signature train_step)
       steps (init ())
   in
   check_trajectory ~msg:"jit adam" 1e-6 eager compiled
 
 let test_state_advances_across_compiled_calls () =
-  let jitted = Rune.jit ~devices:[ dev ] step_signature train_step in
+  let jitted = Rune.jit step_signature train_step in
   let s = ref (init ()) in
   for _ = 1 to steps do
     ignore (advance jitted s)
@@ -175,7 +172,7 @@ let test_state_advances_across_compiled_calls () =
 let test_split_batch_matches_jit () =
   let jit =
     run_traj
-      ~step0:(Rune.jit ~devices:[ dev ] step_signature train_step)
+      ~step0:(Rune.jit step_signature train_step)
       steps (init ())
   in
   (* The state enters from the host as a copy on each device, the batch split on
@@ -223,7 +220,7 @@ let test_lbfgs_jit_matches_eager () =
   let eager, _ = run_lbfgs ~step0:lbfgs_step steps (lbfgs_init ()) in
   let compiled, st =
     run_lbfgs
-      ~step0:(Rune.jit ~devices:[ dev ] lbfgs_signature lbfgs_step)
+      ~step0:(Rune.jit lbfgs_signature lbfgs_step)
       steps (lbfgs_init ())
   in
   check_trajectory ~msg:"jit lbfgs" 1e-5 eager compiled;
@@ -242,7 +239,7 @@ let test_lbfgs_line_search_does_not_trace () =
   let searching st x y =
     Vega.lbfgs_step model (Rune.value_and_grad model (loss_fn x y)) st
   in
-  let jitted = Rune.jit ~devices:[ dev ] lbfgs_signature searching in
+  let jitted = Rune.jit lbfgs_signature searching in
   let x, y = data_init () in
   raises_match
     (function Rune.Jit_error _ -> true | _ -> false)

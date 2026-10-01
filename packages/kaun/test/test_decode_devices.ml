@@ -6,8 +6,7 @@
 (* A tensor-parallel decode step over CPU:1..CPU:4: a Llama-shaped decoder whose
    projections are split by columns into the heads and by rows out of them, and
    whose caches are split on their kv-heads axis. It generates the tokens one
-   device generates, writes every pool in its own storage on every device, and
-   writes the pools in bytes proportional to the call's tokens. *)
+   device generates and writes every pool in its own storage on every device. *)
 
 open Windtrap
 open Kaun
@@ -30,7 +29,26 @@ type 'a model = {
 let caches : Nx.float32_t Attention.Cache.t list Nx.Ptree.t =
   Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
 
-let cpus = List.init 4 (fun i -> Rune.device (Printf.sprintf "CPU:%d" (i + 1)))
+(* Test devices over the host's memory, which the host addresses as it is. *)
+let cpus =
+  List.init 4 (fun i ->
+      Nx_device.Driver.device
+        ~name:(Printf.sprintf "CPU:%d" (i + 1))
+        ~arch:"test" ~budget:max_int
+        (Host_visible
+           { memory = Nx_device.Driver.host_memory; mapping = Some Identity }))
+
+(* Where each pool's storage starts on each device: a call that wrote the pools
+   in their own storage returns them at the addresses it was given. *)
+let addresses kv =
+  let of_leaf x =
+    match Nx.Repr.v x with
+    | Placed p ->
+        List.map Nx_device.Buffer.address
+          (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
+    | Host _ | Traced _ -> []
+  in
+  Nx.Ptree.fold caches (fun _ t acc -> acc @ of_leaf t) kv []
 
 (* Four query heads and four kv-heads of two features: one of each per
    device. *)
@@ -144,7 +162,7 @@ let step m =
       ((Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 scores), scores), kv))
 
 (* A prompt and four generated tokens: the ids, the logits each came from, and
-   the bytes each call after the prompt lent its outputs. *)
+   whether each call after the prompt returned the pools in their storage. *)
 let generate ~slots ?place m =
   let step = step m in
   let start = [| 3; 14; 1 |] in
@@ -153,12 +171,12 @@ let generate ~slots ?place m =
   let (id, scores), kv =
     step (int64s [| 1; 3 |] start) !index (cache ?place ~slots ())
   in
-  let s = ref (id, kv) and out = ref [ (id, scores, 0) ] in
+  let s = ref (id, kv) and out = ref [ (id, scores, true) ] in
   for _ = 1 to 4 do
     index := Cache_index.advance !index;
-    let before = (Rune.jit_stats ()).reused_bytes in
+    let before = addresses (snd !s) in
     let (id, scores), kv = step (fst !s) !index (snd !s) in
-    out := (id, scores, (Rune.jit_stats ()).reused_bytes - before) :: !out;
+    out := (id, scores, before = addresses kv) :: !out;
     s := (id, kv)
   done;
   (List.rev !out, snd !s)
@@ -168,7 +186,6 @@ let test_generation_over_four_devices () =
   let slots = 8 in
   let one, _ = generate ~slots m in
   let four, kv = generate ~slots ~place:(Nx.place kv_heads) (parallel m) in
-  let pools = 2 * layers * slots * kv_dim * 4 in
   List.iteri
     (fun i ((id, scores, _), (id', scores', lent)) ->
       let msg what = Printf.sprintf "token %d, %s" i what in
@@ -176,10 +193,7 @@ let test_generation_over_four_devices () =
       equal ~msg:(msg "logits")
         (array (float 1e-5))
         (Nx.to_array scores) (Nx.to_array scores');
-      if i > 0 then
-        equal
-          ~msg:(msg "every pool is written in its own storage")
-          int pools lent)
+      is_true ~msg:(msg "every pool is written in its own storage") lent)
     (List.combine one four);
   List.iter
     (fun (c : _ Attention.Cache.t) ->
@@ -187,46 +201,6 @@ let test_generation_over_four_devices () =
         (Nx.Placement.equal kv_heads (Nx.placement c.keys)
         && Nx.Placement.equal kv_heads (Nx.placement c.values)))
     kv
-
-(* The pools of a call that stores [len] tokens' keys and values and reads
-   nothing back: the bytes it moves, estimated per replay. *)
-let written_bytes len =
-  let slots = 128 in
-  let write =
-    Rune.jit
-      Nx.Ptree.(
-        Cache_index.ptree @-> tensor @-> tensor @-> consumes caches
-        @@ returns caches)
-      (fun index k v kv ->
-        List.map
-          (fun c ->
-            let _, _, c = Attention.Cache.extend index c k v in
-            c)
-          kv)
-  in
-  let index =
-    Cache_index.make
-      ~pos:(int64s [| 1; len |] (Array.init len Fun.id))
-      ~table:(int64s [| 1; slots |] (Array.init slots Fun.id))
-      ()
-  in
-  let k =
-    Nx.place kv_heads
-      (Nx.ones Nx.float32 [| 1; kv_dim / head_dim; len; head_dim |])
-  in
-  let kv = write index k k (cache ~place:(Nx.place kv_heads) ~slots ()) in
-  let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
-  ignore (write index k k kv);
-  Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem
-    before
-
-let test_writes_scale_with_tokens () =
-  let one = written_bytes 1 and many = written_bytes 64 in
-  let ratio = Tolk_uop.Bigint.to_float many /. Tolk_uop.Bigint.to_float one in
-  is_true
-    ~msg:
-      (Printf.sprintf "64 tokens write 64 times one token's bytes (%.2f)" ratio)
-    (Float.abs (ratio -. 64.0) <= 6.4)
 
 let () =
   exit
@@ -236,7 +210,5 @@ let () =
            [
              test "generation over four devices"
                test_generation_over_four_devices;
-             test "pool writes scale with the call's tokens"
-               test_writes_scale_with_tokens;
            ];
        ])

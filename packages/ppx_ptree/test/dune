@@ -1,11 +1,3 @@
-; The suites compile without naming a device and assert CPU semantics; pin
-; the process-wide default so they do not auto-select a GPU backend.
-
-(env
- (_
-  (env-vars
-   (DEV CPU))))
-
 (test
  (name test_ptree)
  (package ppx_ptree)

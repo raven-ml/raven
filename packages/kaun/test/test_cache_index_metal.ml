@@ -10,6 +10,7 @@ open Kaun
 
 let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let metal = Nx.Placement.device (Nx_metal_device.v 0)
 
 (* A toy compressed stream, as in test_attention.ml: each token stores its value
    at its position, the token that closes a block of 4 stores the sum of its
@@ -65,7 +66,6 @@ let stream index s =
 let test_stream_on_metal () =
   let step =
     Rune.jit
-      ~devices:[ Rune.device "METAL" ]
       Nx.Ptree.(Cache_index.ptree @-> consumes state @@ returns state)
       stream
   in
@@ -80,12 +80,14 @@ let test_stream_on_metal () =
   in
   let s =
     call
-      {
-        x = Nx.zeros Nx.float32 [| 1; 1; 1 |];
-        y = Nx.zeros Nx.float32 [| 1; 1 |];
-        sources = Nx.zeros Nx.float32 [| 12; 1 |];
-        entries = Nx.zeros Nx.float32 [| 3; 1 |];
-      }
+      (Nx.Ptree.map state
+         (fun _ t -> Nx.place metal t)
+         {
+           x = Nx.zeros Nx.float32 [| 1; 1; 1 |];
+           y = Nx.zeros Nx.float32 [| 1; 1 |];
+           sources = Nx.zeros Nx.float32 [| 12; 1 |];
+           entries = Nx.zeros Nx.float32 [| 3; 1 |];
+         })
       [| 0; 1; 2; 3; 4; 5 |]
   in
   let ys = ref (Array.to_list (flat s.y)) and s = ref s in
@@ -124,12 +126,11 @@ let test_one_slot_on_metal () =
       in
       let step =
         Rune.jit
-          ~devices:[ Rune.device "METAL" ]
           Nx.Ptree.(tensor @-> returns tensor)
           f
       in
       equal ~msg (array float_exact) (Array.make 8 expected)
-        (flat (step (int64s [| 1; 2 |] pos))))
+        (flat (step (Nx.place metal (int64s [| 1; 2 |] pos)))))
     [
       ("padding after the token", [| 0; -1 |], [| 0 |], 10.);
       ("padding before the token", [| -1; 0 |], [| 0 |], 20.);
