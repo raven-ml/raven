@@ -3004,6 +3004,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.submit` waits on the host only for the work that touched the
+  memory its buffers reach, as `Submission.waits` documents. It waited for all
+  work of each device whose memory they reach, which serialized unrelated work.
 - `Nx.complex` keeps each component as given: an infinite or NaN `~im` made
   the real part NaN, and a `-0.` component became `0.`. It now writes both
   components directly instead of adding `im * i` to `re`.

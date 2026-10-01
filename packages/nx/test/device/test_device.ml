@@ -1484,10 +1484,9 @@ let pool_commands =
    that touches them. Released memory enters the cache once the reader's work on
    it is done, and a create of its size reuses it at once, the device's own work
    being ordered by its queue. A buffer that the reader's work touches waits, on
-   the host, for the device's work that may use its memory: at least the latest
-   that touched it, under any buffer, and at most all the device submitted
-   (nx_device.mli says the latest that touched it; the runtime waits for all).
-   The cache holds one memory per size, so that which one a create reuses is
+   the host, for the latest of the device's work that touched its memory, under
+   any buffer, and a free of the cache for at most all the device submitted. The
+   cache holds one memory per size, so that which one a create reuses is
    known. *)
 module Uses = struct
   type memory = {
@@ -1541,8 +1540,8 @@ module Uses = struct
     b.memory.touched <- d.submitted
 
   (* The device's work that the host waited for, judged against the work that
-     may use [ms]. *)
-  let waited d ms outcome =
+     may use [ms]: at least the latest that touched them, and at most [upto]. *)
+  let waited d ms ~upto outcome =
     let touched = List.fold_left (fun v m -> Int.max v m.touched) 0 ms in
     match outcome with
     | Error e -> raise e
@@ -1551,12 +1550,12 @@ module Uses = struct
           touched
     | Ok (Some v) ->
         at_least ~msg:"a wait for its latest work" int ~than:touched v;
-        at_most ~msg:"a wait for submitted work" int ~than:d.submitted v;
+        at_most ~msg:"a wait for no later work" int ~than:upto v;
         d.signaled <- Int.max d.signaled v
 
   let read b outcome =
     let d = b.device in
-    waited d [ b.memory ] outcome;
+    waited d [ b.memory ] ~upto:b.memory.touched outcome;
     d.reads <- d.reads + 1;
     b.memory.read <- d.reads
 
@@ -1585,7 +1584,7 @@ module Uses = struct
     end
 
   let free_cache d outcome =
-    waited d d.cache outcome;
+    waited d d.cache ~upto:d.submitted outcome;
     d.cache <- []
 
   (* Whether dropping [b] keeps one released memory per size. *)
@@ -1714,8 +1713,8 @@ let pools =
         pool_commands;
       stateful ~count:200 ~steps:40
         "released memory is cached once other devices' work on it is done and \
-         reused at once, and a reused buffer waits for the work that may still \
-         use its memory"
+         reused at once, and a reused buffer waits for the latest work that \
+         touched its memory"
         uses_commands;
     ]
 

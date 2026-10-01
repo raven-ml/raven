@@ -97,9 +97,8 @@ type t = {
   released : nativeint; (* its release list (see the stubs) *)
   failed : string option Atomic.t;
       (* why the device was lost, which every operation raises *)
-  cache : (int * memory, (region * int) list) Hashtbl.t;
-      (* by size, and the memory it is: each region with the latest value its
-         own work on it signals *)
+  cache : (int * memory, reusable list) Hashtbl.t;
+      (* by size, and the memory it is *)
   mutable retiring : retiring list;
       (* released memory that waits for other devices' work *)
   pending : (int, t * int) Hashtbl.t;
@@ -115,6 +114,11 @@ type t = {
   mutable bytes_in : int;
   mutable bytes_out : int;
 }
+
+(* Memory in a device's cache: its region, the latest value of the device's work
+   that touched it, which a reuse of it waits for, and the device's last value
+   when it was released, which its free waits for (see [release]). *)
+and reusable = { region : region; touched : int; released : int }
 
 (* What a device is, with the memories it allocates. *)
 and kind =
@@ -1424,11 +1428,11 @@ let release_cache ?only ~wait d want =
             let free = free_of d cached_kind in
             let rec drop = function
               | e :: es when enough d want -> e :: es
-              | ((m, v) as e) :: es ->
-                  if wait || progress [ (d, v) ] = `Done then begin
+              | (e : reusable) :: es ->
+                  if wait || progress [ (d, e.released) ] = `Done then begin
                     cache_bytes d cached_kind (-size);
-                    freed := (free, m, cached_kind) :: !freed;
-                    last := Int.max !last v;
+                    freed := (free, e.region, cached_kind) :: !freed;
+                    last := Int.max !last e.released;
                     drop es
                   end
                   else e :: drop es
@@ -1449,11 +1453,11 @@ let foreign d stamps = List.filter (fun (d', _) -> d' != d) stamps
 
 (* Released owned memory of [b] enters [d]'s cache, with [d]'s own work on it:
    [d]'s later work on it is ordered after that work by [d]'s queue. *)
-let cache_memory d (b : base) own =
+let cache_memory d (b : base) ~touched ~released =
   allocate_bytes d b.kind (-b.bytes);
   let key = (b.bytes, b.kind) in
   let ms = Option.value ~default:[] (Hashtbl.find_opt d.cache key) in
-  Hashtbl.replace d.cache key ((b.memory, own) :: ms);
+  Hashtbl.replace d.cache key ({ region = b.memory; touched; released } :: ms);
   cache_bytes d b.kind b.bytes
 
 (* [m], [d]'s mapping of [src]'s memory, is unmapped: its borrows are
@@ -1545,7 +1549,8 @@ let release d (b : base) =
       (* A free to the driver waits for every piece of [d]'s work submitted
          before the release, listed or not, as tinygrad's free synchronizes the
          device; [d]'s own reuse waits for none of it. *)
-      let own = Int.max (own_stamp d stamps) (submitted d)
+      let touched = own_stamp d stamps in
+      let own = Int.max touched (submitted d)
       and until = foreign d stamps
       and { maps; depends; _ } = Atomic.get b.links in
       (* Another device's mapping of the memory is unmapped first, once every
@@ -1561,7 +1566,7 @@ let release d (b : base) =
       let retire () =
         List.iter (fun m -> unmap m.on b m) peers;
         match List.iter (fun f -> f ()) (List.rev depends) with
-        | () -> cache_memory d b own
+        | () -> cache_memory d b ~touched ~released:own
         | exception Failure _ ->
             allocate_bytes d b.kind (-b.bytes);
             retain_bytes d b.kind b.bytes;
@@ -1630,11 +1635,11 @@ let cached_of d kind =
 
 let take_cached d key =
   match Hashtbl.find_opt d.cache key with
-  | Some ((m, v) :: ms) ->
-      if ms = [] then Hashtbl.remove d.cache key
-      else Hashtbl.replace d.cache key ms;
+  | Some ((e : reusable) :: es) ->
+      if es = [] then Hashtbl.remove d.cache key
+      else Hashtbl.replace d.cache key es;
       cache_bytes d (snd key) (-fst key);
-      Some (m, Keep (), v)
+      Some (e.region, Keep (), e.touched)
   | Some [] | None -> None
 
 (* [n] bytes of [d]'s memory [kind], with the memory they are and the last value
@@ -3385,22 +3390,23 @@ let submit_taken ds ~touches f =
   let taken = List.fold_left (fun l d -> add d l) on reached in
   with_devices taken @@ fun () ->
   List.iter Buffer.reachable touches;
-  (* The latest value each device's work touched the reached memory with. *)
+  (* The latest value each device's work touched the reached memory with: the
+     stamps of each buffer's memory and of the memory its borrows map. *)
   let latest = ref [] in
-  let note d' v =
+  let note (s : stamp) =
     (* A lost device's work never completes; the memory it can reach raises its
        loss instead. *)
-    if failed d' = None then
-      match List.assq_opt d' !latest with
-      | Some v' when !v' >= v -> ()
-      | Some v' -> v' := v
-      | None -> latest := (d', ref v) :: !latest
+    if failed s.by = None then
+      match List.assq_opt s.by !latest with
+      | Some v when !v >= s.upto -> ()
+      | Some v -> v := s.upto
+      | None -> latest := (s.by, ref s.upto) :: !latest
   in
-  List.iter
-    (fun t ->
-      if runs_work t then note t (submitted t);
-      Hashtbl.iter (fun _ (d', v) -> note d' v) t.pending)
-    reached;
+  let rec note_reach base =
+    List.iter note (Atomic.get base.links).stamps;
+    match base.source with Some (src, _) -> note_reach src | None -> ()
+  in
+  List.iter (fun (b : buffer) -> note_reach b.base) touches;
   let d_set = List.sort by_id (List.filter (encodable ds) on) in
   (* A device's own earlier work is ordered by its vendor's rule. *)
   let alone d' = match ds with [ d ] -> d == d' | _ -> false in
