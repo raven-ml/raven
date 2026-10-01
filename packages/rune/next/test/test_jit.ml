@@ -2996,6 +2996,25 @@ let on_one_device ~name d =
           let f a = Nx.add_s (poly a) 0.8125 in
           equal close (f (x ()))
             (host (Rune.jit' ~beam:1 ~parallel:2 f (placed d (x ())))));
+      (* The gather broadcasts its indices to the rows it reads: the copy moves
+         the indices, and the broadcast is taken on the device. *)
+      test "a host index a gather reads uploads its own bytes" (fun () ->
+          let table = placed d (grid 16 4) in
+          let g =
+            Rune.jit' (fun ids ->
+                Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] ids) table)
+          in
+          let ids = Nx.create Nx.int64 [| 1; 4 |] [| 3L; 1L; 2L; 0L |] in
+          ignore (g ids);
+          let before = bytes_in d in
+          let r = g ids in
+          equal ~msg:"bytes received" int (Nx.nbytes ids)
+            (bytes_in d - before);
+          equal close
+            (Nx.take ~axis:0
+               ~indices:(Nx.reshape [| -1 |] ids)
+               (grid 16 4))
+            (host r));
       test "a placed argument feeds a call with no transfer" (fun () ->
           let g = Rune.jit' poly in
           let a = placed d (x ()) in

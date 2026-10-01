@@ -635,6 +635,18 @@ let followed s q u =
       Ops.Tbl.replace s.followed u ((q, v) :: known);
       v
 
+(* [copied u d] is [u] copied to the device [d]: the value its views of elements
+   read, copied, with the views that drop no element (reshapes, broadcasts,
+   permutations, flips and pads) taken on [d], so that a copy moves the bytes
+   the value reads, not those its broadcasts repeat. *)
+let rec copied u d =
+  match Ops.op u with
+  | Op.Reshape | Op.Expand | Op.Permute | Op.Flip | Op.Pad -> (
+      match Ops.src u with
+      | base :: rest -> Ops.replace u ~src:(copied base d :: rest)
+      | [] -> Ops.copy_to_device u d)
+  | _ -> Ops.copy_to_device u d
+
 (* [node s what p x] is the node of the operand [x] of an operation at [p]. A
    traced value on other devices is computed there when it reads only captures,
    and copied there otherwise, as nx places a host operand of an operation on a
@@ -647,7 +659,7 @@ let node s what p x =
       else
         match followed s (context p) u with
         | Some u -> u
-        | None -> Ops.copy_to_device u (device_of s p))
+        | None -> copied u (device_of s p))
   | Repr.Host _ | Repr.Placed _ -> capture s what p x
 
 let value s x = node s "a value" (Nx.placement x) x
@@ -681,7 +693,7 @@ let place s what p q x =
     | One | Copies -> (
         match followed s q u with
         | Some u -> u
-        | None -> Ops.copy_to_device u (device_of s q))
+        | None -> copied u (device_of s q))
 
 (* Operations *)
 
