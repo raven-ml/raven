@@ -388,6 +388,13 @@ let bounds_group =
           check_bounds (Ops.alu x Op.Sub [ y ]) (widened (-3.) 3.);
           check_bounds (Ops.alu x Op.Mul [ y ]) (widened (-2.) 3.));
       test
+        "a float operation of an operand within the subnormals bounds a flushed \
+         operand too" (fun () ->
+          let x = variable Float32 (f 1e5) (f 2e5) "x" in
+          let u = Ops.alu x Op.Mul [ Ops.float ~dtype:Float32 1e-40 ] in
+          at_most ordered_value ~than:(f 0.) (Ops.vmin u);
+          at_least ordered_value ~than:(f 2e-35) (Ops.vmax u));
+      test
         "a float operation of an unbounded operand, or that can overflow, has \
          its type's bounds" (fun () ->
           let full dt = (Dtype.min dt, Dtype.max dt) in

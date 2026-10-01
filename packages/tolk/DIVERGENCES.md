@@ -2197,7 +2197,9 @@ tolk lowers as one, replaces it.
 - **Differs:** a float sum, difference or product of operands with finite
   bounds has the bounds of its corners, computed in double and widened by a
   relative `2^-m` and the smallest normal of its type, `m` its mantissa's bits,
-  so that they hold the result rounded at its type, or flushed to zero. A
+  so that they hold the result rounded at its type, or flushed to zero; an
+  operand's end within the subnormals counts as 0, for a target that flushes
+  the operand. A
   result that may overflow its type, and one of a weak float, has the type's
   bounds. A truncation's bounds are its operand's, truncated, and a float
   negation's are its operand's, negated and swapped. A float selection by a
@@ -2228,9 +2230,10 @@ tolk lowers as one, replaces it.
 - **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › bounds hold every
   value a float operation rounds to (D74)`, sums, differences, products and
   selections, `› a float operation of bounded operands is bounded (D74)`,
-  `› a float operation of an unbounded operand, or that can overflow, has its
-  type's bounds (D74)`, `› a float selection by a comparison narrows what it
-  selects (D74)`, `› a float truncation and negation map their operand's
+  `› a float operation of an operand within the subnormals bounds a flushed
+  operand too`, `› a float operation of an unbounded operand, or that can
+  overflow, has its type's bounds (D74)`, `› a float selection by a
+  comparison narrows what it selects (D74)`, `› a float truncation and negation map their operand's
   bounds (D74)` and the float rows of `binary_bounds.golden`, from the
   equally patched tinygrad; the Transcendental suite: `graphs › a sine of an
   angle bounded below the switch-over is its fast form (D74)`; and

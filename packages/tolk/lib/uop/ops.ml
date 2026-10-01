@@ -1580,9 +1580,11 @@ and selected c (lo, hi) t =
 
 (* A float sum, difference or product of operands with finite bounds has bounds:
    the corners, widened by more than the result's rounding, a relative 2^-m and
-   the smallest normal of its type, which also covers a target that flushes
-   subnormals to zero. Finite operands make a finite result, never NaN, which no
-   bounds hold; a result that may overflow its type has none. *)
+   the smallest normal of its type. A target that flushes subnormals to zero
+   may flush an operand as well as the result: an operand's end within the
+   subnormals counts as 0, and the widening covers the result. Finite operands
+   make a finite result, never NaN, which no bounds hold; a result that may
+   overflow its type has none. *)
 and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
   let finite : Dtype.value -> float option = function
     | `Float x when Float.is_finite x -> Some x
@@ -1595,6 +1597,12 @@ and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
       List.map finite [ s0_min; s0_max; s1_min; s1_max ] )
   with
   | (Op.Add | Op.Sub | Op.Mul), false, [ Some a; Some b; Some c; Some d ] ->
+      let e, m = Dtype.finfo dt in
+      let rel = Float.ldexp 1. (-m)
+      and tiny = Float.ldexp 1. (2 - (1 lsl (e - 1))) in
+      let low x = if 0. < x && x < tiny then 0. else x
+      and high x = if -.tiny < x && x < 0. then 0. else x in
+      let a = low a and b = high b and c = low c and d = high d in
       let lo, hi =
         match op with
         | Op.Add -> (a +. c, b +. d)
@@ -1604,9 +1612,6 @@ and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
             ( List.fold_left Float.min Float.infinity corners,
               List.fold_left Float.max Float.neg_infinity corners )
       in
-      let e, m = Dtype.finfo dt in
-      let rel = Float.ldexp 1. (-m)
-      and tiny = Float.ldexp 1. (2 - (1 lsl (e - 1))) in
       let lo = lo -. (Float.abs lo *. rel) -. tiny
       and hi = hi +. (Float.abs hi *. rel) +. tiny in
       let fits x =

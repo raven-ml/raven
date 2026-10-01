@@ -889,7 +889,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..12abd7e 100644
+index 2842d7e..710cfc3 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -92,6 +92,13 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
@@ -906,7 +906,7 @@ index 2842d7e..12abd7e 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1102,8 +1109,26 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1102,8 +1109,29 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -921,11 +921,14 @@ index 2842d7e..12abd7e 100644
 +      b = [float(v) if isinstance(v, (int, float)) else math.nan for v in (*self._operand(self.src[0]), *self._operand(self.src[1]))]
 +      if all(math.isfinite(v) for v in b):
 +        a0, a1, b0, b1 = b
++        e, m = dtypes.finfo(self.dtype)
++        rel, tiny = math.ldexp(1.0, -m), math.ldexp(1.0, 2-(1 << (e-1)))
++        # a target that flushes subnormals may flush an operand: an end within them counts as 0
++        a0, b0 = (0.0 if 0 < a0 < tiny else a0), (0.0 if 0 < b0 < tiny else b0)
++        a1, b1 = (0.0 if -tiny < a1 < 0 else a1), (0.0 if -tiny < b1 < 0 else b1)
 +        if self.op is Ops.ADD: lo, hi = a0+b0, a1+b1
 +        elif self.op is Ops.SUB: lo, hi = a0-b1, a1-b0
 +        else: lo, hi = min(c:=(a0*b0, a0*b1, a1*b0, a1*b1)), max(c)
-+        e, m = dtypes.finfo(self.dtype)
-+        rel, tiny = math.ldexp(1.0, -m), math.ldexp(1.0, 2-(1 << (e-1)))
 +        lo, hi = lo - abs(lo)*rel - tiny, hi + abs(hi)*rel + tiny
 +        if all(math.isfinite(truncate[self.dtype](v)) for v in (lo, hi)): return lo, hi
      if self.op in GroupOp.Binary and not dtypes.is_float(self.dtype):
@@ -934,7 +937,7 @@ index 2842d7e..12abd7e 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,23 +1164,38 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1139,23 +1167,38 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -978,7 +981,7 @@ index 2842d7e..12abd7e 100644
        if dtypes.is_unsigned(self.dtype) and 0 <= smin and smax <= self.dtype.max: return smin, smax
        # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
        if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
-@@ -1404,12 +1444,18 @@ def safe_pow(x, y):
+@@ -1404,12 +1447,18 @@ def safe_pow(x, y):
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
  
@@ -999,7 +1002,7 @@ index 2842d7e..12abd7e 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1466,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1420,6 +1469,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
