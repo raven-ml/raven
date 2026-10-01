@@ -26,7 +26,7 @@ let elf sections =
   let shstrtab = Buffer.contents names in
   let sections =
     List.map
-      (fun ((n, k, a, c, l, i, al, e) as s) ->
+      (fun ((n, k, a, _, l, i, al, e) as s) ->
         if n = ".shstrtab" then (n, k, a, shstrtab, l, i, al, e) else s)
       sections
   in

@@ -2215,12 +2215,6 @@ module Submission = struct
 end
 
 let by_id a b = Int.compare a.id b.id
-
-(* The devices whose memory [b] reaches: its own, and those of the memory its
-   borrows map. *)
-let rec reach b =
-  b.owner :: (match b.source with Some (src, _) -> reach src | None -> [])
-
 let runs_work d = Option.is_some d.machine && d != disk
 
 (* Whether the work of every device of [ds] can wait on [d']'s signal word: [d']
@@ -2236,6 +2230,8 @@ let encodable ds d' =
 (* [d] added to the devices [l], once. *)
 let add d l = if List.memq d l then l else d :: l
 
+(* [l] with the devices whose memory [b] reaches: its own, and those of the
+   memory its borrows map. *)
 let rec reach_into l b =
   let l = add b.owner l in
   match b.source with Some (src, _) -> reach_into l src | None -> l

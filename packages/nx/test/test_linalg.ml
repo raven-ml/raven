@@ -9,7 +9,6 @@
 open Windtrap
 open Nx_test
 
-let pp_float ppf x = Format.fprintf ppf "%.17g" x
 let near = tensor (close ~rel:1e-9 ~abs:1e-9 ())
 let near_ref = Ref.witness (close ~rel:1e-9 ~abs:1e-9 ())
 

@@ -5652,7 +5652,7 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding x =
 
 (* Correlation and convolution *)
 
-let correlate_padding ~mode input_spatial k_shape =
+let correlate_padding ~mode k_shape =
   let k = Array.length k_shape in
   match mode with
   | `Valid -> Array.make k (0, 0)
@@ -5671,7 +5671,7 @@ let correlate ?(padding = `Valid) x kernel =
   if xr < kr then err "correlate" "input rank %d < kernel rank %d" xr kr;
   let ks = shape kernel in
   let input_spatial = Array.sub (shape x) (xr - kr) kr in
-  let pad_pairs = correlate_padding ~mode:padding input_spatial ks in
+  let pad_pairs = correlate_padding ~mode:padding ks in
   let ones_arr = Array.make kr 1 in
   let x_unf =
     B.unfold x ~kernel_size:ks ~stride:ones_arr ~dilation:ones_arr

@@ -183,11 +183,6 @@ let fill_nibbles b v =
   A.fill (A.sub ba 0 (n / 2)) (v lor (v lsl 4));
   if n land 1 = 1 then set_nibble ba (n - 1) v
 
-external fill_bytes :
-  (nativeint[@unboxed]) -> (int[@untagged]) -> Bytes.t -> unit
-  = "caml_nx_array_fill_byte" "caml_nx_array_fill"
-[@@noalloc]
-
 (* The bytes of [v] as one element of [dt], [width] bytes. *)
 let element (type a b) (dt : (a, b) Nx_dtype.t) width (v : a) =
   let e = Bytes.create width in
