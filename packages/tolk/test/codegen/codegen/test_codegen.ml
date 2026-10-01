@@ -1749,35 +1749,33 @@ let multiply_adds =
           is_false ~msg:"fma" (mentions "fma" (source prg)));
     ]
 
-(* Lanes of a scalar
+(* Lanes of an unrolled reduce
 
-   When every lane of an unrolled reduce reads an Invalid index, the stack of
-   lanes folds to one Invalid and the value to a scalar, which the reduce's
-   lanes still index. The renderers write those reads as components of a scalar,
-   as tinygrad's do, and the host's C compiler refuses them. rune lowers the
-   folds that made such kernels to zeros. *)
+   When every lane of an unrolled reduce reads an Invalid index, the lanes stay
+   a stack, so each lane's gated load folds to its own zero and the reduce sums
+   lanes of zeros. *)
 
-let refused_by_the_host name () =
+let sums_zeros name x zero () =
   let row = row_named (name ^ "_clang") in
   let prg =
-    under row (fun () ->
-        Codegen.to_program (kernel row) (Lazy.force host_uncompiled))
+    under row (fun () -> Codegen.to_program (kernel row) (Lazy.force host))
   in
-  match Renderer.Compiler.compile (Lazy.force host).compiler (source prg) with
-  | _ -> failf "the host compiled the program of %s" name
-  | exception Renderer.Compiler.Compile_error _ -> ()
+  equal (array Dtypes.value) [| zero |]
+    (List.assoc 0 (Run.on_host prg [ (1, x) ]))
 
 let lanes =
-  group "lanes of a scalar"
+  group "lanes of an unrolled reduce"
     [
-      test "a vector folded to a scalar is rendered as tinygrad renders it"
-        (fun () -> writes_as_tinygrad (row_named "invalid_lanes_metal"));
-      test "the host refuses the program of a vector folded to a scalar"
-        (refused_by_the_host "invalid_lanes");
-      test "a sum folded to a constant is rendered as tinygrad renders it"
-        (fun () -> writes_as_tinygrad (row_named "invalid_lanes_int8_metal"));
-      test "the host refuses the program of a sum folded to a constant"
-        (refused_by_the_host "invalid_lanes_int8");
+      test
+        "a reduce whose lanes all read an Invalid index is rendered as \
+         tinygrad renders it" (fun () ->
+          writes_as_tinygrad (row_named "invalid_lanes_metal"));
+      test "a reduce whose lanes all read an Invalid index sums to zero"
+        (sums_zeros "invalid_lanes" [| `Float 1.; `Float 2. |] (`Float 0.));
+      test "a sum of int8 lanes that all read an Invalid index is zero"
+        (sums_zeros "invalid_lanes_int8"
+           [| `Int Bigint.one; `Int Bigint.one |]
+           (`Int Bigint.zero));
     ]
 
 (* Vectors in programs *)
@@ -1791,9 +1789,8 @@ let applies_no_elementwise_operation_to_a_vector row =
 
 (* A fold of an int8 [2; 2] to [2; 1], kernel [1; 2], dilation [1; 2] and
    padding [(0, 0); (1, 1)], every window in the padding. In devectorize, the
-   gated load of each upcast lane folds to a scalar 0, and the select around it
-   stays a select of two lanes, as tinygrad's does, which the weak lowering
-   makes a cast of a stack of constants. *)
+   gated load of each upcast lane folds to its own 0, so the select around it is
+   a select per lane. *)
 let vector_select_kernel () =
   let open Ops.O in
   let out = Ops.param ~shape:[ Int 2 ] 0 Int8 in
@@ -1838,8 +1835,11 @@ let refused_on_a_cast kernel () =
 let vectors =
   group "vectors in programs"
     [
-      test "a cast left on two lanes after devectorize is refused"
-        (refused_on_a_cast (vector_select_kernel ()));
+      test "a select of lanes whose loads all fold is devectorized" (fun () ->
+          Helpers.context
+            [ B (Helpers.spec, 1) ]
+            (fun () ->
+              ignore (Codegen.to_program (vector_select_kernel ()) clang)));
       test "a weak constant stored into four lanes of half is refused"
         (refused_on_a_cast (half_zeros_kernel ()));
       group "no program applies an elementwise operation to a vector"
@@ -2002,9 +2002,8 @@ let bfloat16_casts =
 
 (* rune's fold of a float32 [4; 1] to [3; 1], kernel [2; 2], dilation [2; 2] and
    padding [(0, 0); (1, 1)], every window of the second axis in the padding.
-   Upcast, every lane of its gated index is Invalid, and the stack of lanes
-   folds to one Invalid without its width, as tinygrad's does; the reshape and
-   the permute of the lanes are then left over a scalar. *)
+   Upcast, every lane of its gated index is Invalid; the lanes stay a stack, so
+   the reshape and the permute that arranged them keep their width. *)
 let invalid_lanes_kernel () =
   let open Ops.O in
   let out = Ops.param ~shape:[ Int 3 ] 0 Float32 in
@@ -2029,13 +2028,15 @@ let invalid_lanes_kernel () =
 let invalid_lanes =
   group "lanes all Invalid"
     [
-      xfail
-        ~reason:
-          "a stack of Invalid lanes folds to one Invalid without its width, as \
-           tinygrad's does"
-        (slow "a kernel whose upcast lanes all read an Invalid index compiles"
-           (fun () ->
-             ignore (Codegen.to_program (invalid_lanes_kernel ()) clang)));
+      test "a kernel whose upcast lanes all read an Invalid index sums to zero"
+        (fun () ->
+          let prg =
+            Codegen.to_program (invalid_lanes_kernel ()) (Lazy.force host)
+          in
+          let x = Array.init 4 (fun j -> `Float (float_of_int (j + 1))) in
+          equal (array Dtypes.value)
+            (Array.make 3 (`Float 0.))
+            (List.assoc 0 (Run.on_host prg [ (1, x) ])));
     ]
 
 (* Errors *)

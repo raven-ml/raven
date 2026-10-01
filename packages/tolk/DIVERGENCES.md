@@ -1705,12 +1705,8 @@ the Exclusions of `README.md`.
   and code generation checks every lowered kernel against `Spec.program`, so
   a kernel that still holds vector arithmetic fails at lowering, naming the
   operation, on every target. Devectorize leaves none while every source
-  keeps its width. A fold there can drop one: when every lane of a gated
-  load's index is `Invalid`, the load folds to a scalar `0`, and the select
-  around it stays a vector select, as in tinygrad, which the weak lowering
-  makes a vector cast of a stack of constants, and the rule refuses.
-  rune builds no such kernel, since it lowers a fold or an unfold whose
-  windows along an axis read only padding to zeros.
+  keeps its width, which D76 keeps when every lane of a gated load's index
+  is `Invalid`.
 - **Reason:** (b). CUDA's vectors are structs without arithmetic, casts or
   selects, so a vector operation left after devectorize is a kernel that does
   not compile there, and one Metal renders without complaint; rune compiles
@@ -1718,9 +1714,9 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Spec` suite (`test/uop/spec`): `vectors in programs
   (D58) › a program has no elementwise operation on a vector` (add, cast and
   where on two lanes, and the same on one); the `Codegen` suite's `vectors in
-  programs (D58) › a cast left on two lanes after devectorize is refused`,
-  `› a weak constant stored into four lanes of half is refused` and, on every
-  case, `› no program applies an elementwise operation to a vector`.
+  programs › a weak constant stored into four lanes of half is refused` and,
+  on every case, `› no program applies an elementwise operation to a
+  vector`.
 
 ## D60. A loop of a call stays in the schedule
 
@@ -2263,3 +2259,31 @@ tolk lowers as one, replaces it.
   draw and another scan's result made before it`.
 - **Pinned by:** the Symbolic suite: `selections › a broadcast constant
   condition is not folded in the branches (D75)`; and that rune.next test.
+
+## D76. A stack of Invalid lanes keeps its width
+
+- **tinygrad:** `uop/symbolic.py:80` (`pm_data_invalid`'s first rule,
+  `invalid_pat.broadcast()`), which folds a stack of `Invalid` lanes to one
+  `Invalid`.
+- **tolk:** `lib/uop/symbolic.ml:237` (`pm_data_invalid`, without that rule);
+  `test/gen/tinygrad.patch`, which removes it from tinygrad too.
+- **Differs:** a stack of `Invalid` lanes stays a stack. When every upcast or
+  unrolled lane of a gated index is `Invalid`, devectorize splits the index
+  and its load into lanes, each lane's load folds to its own `0`, and the
+  value keeps its width. One `Invalid` in the stack's place drops the width:
+  the reshape and permute that arranged the lanes no longer type (tinygrad
+  raises `bad reshape: () -> (1, 2)`), a select mixes a scalar with lanes,
+  which `Spec.program` refuses (D58), and a reduce's lanes read components
+  of a scalar, which the C compiler refuses.
+- **Reason:** (b): rune's compiled tangent of a Cholesky factor, once a gather
+  lowers to an INDEX: the diagonal's gather fuses with `tril`'s gated loads
+  into the triangular solve's kernel, whose upcast lanes all read `Invalid`,
+  and compiling it raised `cannot reshape () to (2, 1)`.
+- **Pinned by:** the `Symbolic` suite: `invalid values › a stack of invalid
+  keeps its width`; the `Codegen` suite: the `invalid_lanes` and
+  `invalid_lanes_int8` goldens, recorded from tinygrad with the rule removed;
+  `lanes of an unrolled reduce › a reduce whose lanes all read an Invalid
+  index sums to zero` and `› a sum of int8 lanes that all read an Invalid
+  index is zero`; `lanes all Invalid › a kernel whose upcast lanes all read
+  an Invalid index sums to zero`; `vectors in programs › a select of lanes
+  whose loads all fold is devectorized`.
