@@ -63,7 +63,7 @@ let named m axis =
   match m.axis with Some a -> Type.Id.uid a = Type.Id.uid axis | None -> false
 
 (* An axis counted in a lane's shape, counted in its batched tensor's. *)
-let shifted axis = if axis >= 0 then axis + 1 else axis
+let shifted axis = axis + 1
 
 (* Batching *)
 

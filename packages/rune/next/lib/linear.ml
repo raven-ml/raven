@@ -231,13 +231,19 @@ type cotangents = { tape : tape; cts : Nx.packed option array }
 let cotangents t = { tape = t; cts = Array.make t.length None }
 
 let add cts x ct =
-  if owns cts.tape x then
+  if owns cts.tape x then begin
+    if Nx.shape ct <> Nx.shape x then
+      invalid_arg
+        (Format.asprintf
+           "Rune: a cotangent of shape %a reached a value of shape %a"
+           Nx.pp_shape (Nx.shape ct) Nx.pp_shape (Nx.shape x));
     let i = index x in
     cts.cts.(i) <-
       Some
         (match cts.cts.(i) with
         | None -> Nx.P ct
         | Some prev -> Nx.P (Nx.add (Nx.unpack (Nx.dtype ct) prev) ct))
+  end
 
 let cotangent cts x =
   if owns cts.tape x then Option.map (Nx.unpack (Nx.dtype x)) cts.cts.(index x)
@@ -419,25 +425,35 @@ let transpose_op : type a b.
       add x
         (Nx.real (Nx.dtype x) (eval (Fft { inverse = false; axes; x = ct })))
   | Irfft { axes; x; _ } ->
-      (* irfft extends the spectrum along the last axis by its conjugate mirror,
-         runs the inverse fft and takes the real part. The transpose embeds the
-         real cotangent, runs the same inverse fft and folds the mirror back:
-         bins 1 .. n - m received a second contribution, which on a real
-         cotangent's transform equals the first. *)
+      (* irfft resizes the spectrum along the last axis to the n / 2 + 1 bins
+         its output length n reads, truncating or padding with zeros, extends it
+         by its conjugate mirror, runs the inverse fft and takes the real part.
+         The transpose embeds the real cotangent, runs the same inverse fft,
+         folds the mirror back (bins 1 .. n - m received a second contribution,
+         which on a real cotangent's transform equals the first) and undoes the
+         resize, padding where it truncated and truncating where it padded. An
+         output of no element reads no bin. *)
       let last = axes.(Array.length axes - 1) in
-      let n = (Nx.shape ct).(last) in
-      let m = (n / 2) + 1 in
-      let z =
-        eval (Fft { inverse = true; axes; x = Nx.cast (Nx.dtype x) ct })
-      in
-      let head = shrink_axis ~axis:last (0, m) z in
-      add x
-        (if n - m >= 1 then
-           Nx.add head
-             (pad_axis ~axis:last
-                (1, m - 1 - (n - m))
-                (shrink_axis ~axis:last (1, n - m + 1) head))
-         else head)
+      let n = (Nx.shape ct).(last) and bins = (Nx.shape x).(last) in
+      if n > 0 then begin
+        let m = (n / 2) + 1 in
+        let z =
+          eval (Fft { inverse = true; axes; x = Nx.cast (Nx.dtype x) ct })
+        in
+        let head = shrink_axis ~axis:last (0, m) z in
+        let folded =
+          if n - m >= 1 then
+            Nx.add head
+              (pad_axis ~axis:last
+                 (1, m - 1 - (n - m))
+                 (shrink_axis ~axis:last (1, n - m + 1) head))
+          else head
+        in
+        add x
+          (if m > bins then shrink_axis ~axis:last (0, bins) folded
+           else if m < bins then pad_axis ~axis:last (0, bins - m) folded
+           else folded)
+      end
   | Contiguous x -> add x ct
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       (* The solve with op(A) transposes to the solve with op(A)ᵀ, the conjugate
