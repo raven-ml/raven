@@ -61,12 +61,13 @@ let field insn ~lo ~width v =
 
 let page a = a land lnot 0xfff
 
-(* The slot at [at] made to jump to [dst]: [jmp [rip]] then the address on
-   x86_64, [ldr x17, #8; br x17] then the address on aarch64. *)
+(* The slot at [at] made to jump to [dst], whose address is its second 8 bytes:
+   [jmp [rip + 2]] on x86_64, whose 6 bytes end 2 before it, and [ldr x17, #8;
+   br x17] on aarch64. *)
 let write_slot b ~machine ~at dst =
   if machine = em_x86_64 then begin
     Bytes.set_uint16_le b at 0x25ff;
-    set32 b (at + 2) 0
+    set32 b (at + 2) 2
   end
   else begin
     set32 b at 0x58000051;

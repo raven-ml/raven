@@ -2922,6 +2922,10 @@ thread.
 
 ### Nx
 
+- A host program on x86_64 that calls a function more than 2 GiB from its code,
+  such as the host's own 16-bit float conversions, no longer crashes: the jump
+  the loader writes for such a call read its target 2 bytes before the address
+  it had stored.
 - `Nx_device.runs_on_host` says whether a device's work is the host's: the
   host, or a device over host memory that loads no programs, such as a test
   device. `Nx_cpu.backend` runs on exactly those, so no longer on Metal.
