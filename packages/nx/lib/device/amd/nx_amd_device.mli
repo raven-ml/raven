@@ -263,10 +263,11 @@ val scratch : t -> int -> Nx_device.Buffer.t
 
     Raises {!Nx_device.Out_of_memory} if the device cannot allocate it. *)
 
-(** {2:counters Counters}
+(** {2:profiling Profiling}
 
-    A profile that asks for counters ({!Nx_device.Profile.start}) has each run
-    of a kernel on the compute queue count them. *)
+    A profile that asks for counters or traces ({!Nx_device.Profile.start}) has
+    each run of a kernel on the compute queue count the counters, and each
+    shader engine trace its threads, into a slot of the device's profiling. *)
 
 type counter = {
   name : string;  (** The counter's name, such as ["SQ_BUSY_CYCLES"]. *)
@@ -288,11 +289,6 @@ type counter = {
     last varying fastest. *)
 
 type counting = {
-  slots : int;  (** The runs it keeps until a synchronization reads them. *)
-  log : Nx_device.Buffer.t;
-      (** [1 + 3 * slots] [UInt64]: the runs taken so far, then for each slot
-          the kernel descriptor address of its run, and when the run started and
-          when it stopped, on the GPU's clock. *)
   samples : Nx_device.Buffer.t;
       (** [slots] runs of [size] bytes, the values of [counters]. *)
   counters : counter list;  (** The counters, in the profile's order. *)
@@ -302,27 +298,90 @@ type counting = {
           inactive one, whose values stay [0]. *)
 }
 (** The type for the counting of a device's runs. Each submission of a compute
-    queue resets the counters and selects them at its start. A run of a kernel
-    takes the slot [(r + k) mod slots], where [r] is the first word of [log]
-    when the submission's host program runs and [k] the runs the submission took
-    before it: the host program writes the kernel's descriptor address into the
-    word [1 + 3 * slot] of [log], and adds the submission's runs to the first
-    word once it wrote the command buffer. The queue writes the time into the
-    next word before the kernel and into the one after once the kernel
-    completed, then the values of [counters] into the [slot]th [size] bytes of
-    [samples]. The device reads the runs at each synchronization while the
-    profile is taken, and when it stops: their {!Nx_device.Profile.Counters} are
-    named after the kernel's function and timed by the run, and runs taken over
-    before the device read them are {!Nx_device.Profile.Overwritten}. *)
+    queue resets the counters and selects them at its start, and a run writes
+    the values of [counters] into the [slot]th [size] bytes of [samples] once it
+    completes. *)
 
-val counting : t -> counting option
-(** [counting a] is the counting of the counters of the profile being taken
-    ({!Nx_device.Profile.counters}), or [None] if it asks for none. The device
-    keeps the counting of each set of counters it was asked for, for its life:
-    work encoded for a set writes that set's log and samples whenever it runs,
-    and the device reads them all.
+type tracing = {
+  traces : Nx_device.Buffer.t;
+      (** The traces, in mapped memory: [slots] windows of [window] bytes for
+          each shader engine, the engine's windows first. *)
+  ends : Nx_device.Buffer.t;
+      (** [slots * engines] [Int32]: where each run's trace of each engine ends,
+          the run's engines first, as the engine's write pointer reads after the
+          run. *)
+  window : int;  (** The bytes of a run's trace of one engine. *)
+  engines : int;  (** The shader engines of all the XCCs. *)
+}
+(** The type for the tracing of a device's runs. Each run traces the waves of
+    every shader engine into the engine's window of its slot, and the
+    instructions of shader engines 0 and 1. A trace that fills its window is cut
+    short there. *)
+
+type profiling = {
+  slots : int;  (** The runs it keeps until a synchronization reads them. *)
+  log : Nx_device.Buffer.t;
+      (** [1 + 3 * slots] [UInt64]: the runs taken so far, then for each slot
+          the kernel descriptor address of its run, and when the run started and
+          when it stopped, on the GPU's clock. *)
+  counting : counting option;  (** The counting, if the profile counts. *)
+  tracing : tracing option;  (** The tracing, if the profile traces. *)
+}
+(** The type for the profiling of a device's runs. A run of a kernel takes the
+    slot [(r + k) mod slots], where [r] is the first word of [log] when the
+    submission's host program runs and [k] the runs the submission took before
+    it: the host program writes the kernel's descriptor address into the word
+    [1 + 3 * slot] of [log], and adds the submission's runs to the first word
+    once it wrote the command buffer. The queue writes the time into the next
+    word before the kernel and into the one after once the kernel completed. The
+    device reads the runs at each synchronization while the profile is taken,
+    and when it stops: their {!Nx_device.Profile.Counters} and the
+    {!Nx_device.Profile.Trace} of each shader engine, named after the kernel's
+    function and timed by the run; on GFX11 and GFX12 the spans of each trace's
+    waves ({!Thread_trace}), on a lane of their engine, compute unit, SIMD and
+    slot; and as {!Nx_device.Profile.Overwritten} the runs taken over before it
+    read them. *)
+
+val profiling : t -> profiling option
+(** [profiling a] is the profiling of the counters and traces of the profile
+    being taken ({!Nx_device.Profile.counters}, {!Nx_device.Profile.traced}), or
+    [None] if it asks for neither. The device keeps the profiling of each
+    request it was asked for, for its life: work encoded for a request writes
+    that request's buffers whenever it runs, and the device reads them all.
 
     Raises [Invalid_argument] if the GPU does not count a counter, naming it and
     the counters it has, and [Failure] if, under {!Kernel}, a GPU other than a
-    GFX9 one is not in its stable power state, which counts need: the message
-    says to run [amd-smi set -l stable_std]. *)
+    GFX9 one is not in its stable power state, which counts and traces need: the
+    message says to run [amd-smi set -l stable_std]. *)
+
+(** {2:traces Thread traces}
+
+    A thread trace is a stream of packets a shader engine writes while it runs
+    waves: when each wave starts and ends, the instructions it issues, and, from
+    time to time, markers of the GPU's realtime clock. Its times count the
+    shader engine's cycles from the start of the trace. *)
+
+module Thread_trace : sig
+  type wave = {
+    cu : int;
+        (** The compute unit, numbered within its shader engine; on GFX11 and
+            GFX12, its work-group processor and shader array. *)
+    simd : int;  (** The SIMD of the compute unit. *)
+    slot : int;  (** The SIMD's wave slot. *)
+    start : int;  (** When the wave started, in shader cycles. *)
+    stop : int;  (** When it ended, in shader cycles. *)
+  }
+  (** The type for a wave of a trace. *)
+
+  val waves : string -> wave list
+  (** [waves trace] is the waves that start and end in [trace], in the order
+      they end. A wave's start is paired with the next end of the same compute
+      unit, SIMD and slot. *)
+
+  val clock : string -> (int -> int) option
+  (** [clock trace] maps a shader time of [trace] to the GPU's 100 MHz realtime
+      clock, which its timestamps count, through the trace's realtime markers:
+      on the line through the two markers around it, or through the first two or
+      last two outside them. It is [None] for a trace of fewer than two markers
+      of distinct shader times, such as a GFX9 GPU's, whose traces have none. *)
+end

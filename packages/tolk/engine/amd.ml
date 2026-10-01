@@ -12,9 +12,9 @@ module A = Nx_amd_device
 (* The GPU as the compiler encodes its packets. *)
 let gpu a =
   let p = A.props a in
-  let counting (c : A.counting) =
+  let counting slots (c : A.counting) =
     {
-      Ops_amd.slots = c.slots;
+      Ops_amd.slots;
       counters =
         List.map
           (fun (ct : A.counter) ->
@@ -44,7 +44,9 @@ let gpu a =
     aql = A.aql a;
     compute_ring = B.nbytes (A.compute a).ring;
     copy_rings = List.map (fun (q : A.queue) -> B.nbytes q.ring) (A.sdma a);
-    counting = Option.map counting (A.counting a);
+    counting =
+      Option.bind (A.profiling a) (fun pr ->
+          Option.map (counting pr.slots) pr.counting);
   }
 
 let queue a = function
@@ -65,15 +67,17 @@ let program d a ~binary ~name =
       ignore (A.scratch a k.private_segment);
       k.code
 
-(* The counting of a batch that counts, which the profile being taken asks for
-   since the batch was compiled. *)
-let counted a =
-  match A.counting a with
-  | Some c -> c
-  | None ->
-      invalid_arg
-        "Tolk_engine.link: the batch counts its kernels' runs, and the profile \
-         being taken asks for no counters"
+(* The profiling of a batch that profiles, which the profile being taken asks
+   for since the batch was compiled. *)
+let mismatch () =
+  invalid_arg
+    "Tolk_engine.link: the batch profiles its kernels' runs as the profile \
+     being taken does not"
+
+let profiled a = match A.profiling a with Some p -> p | None -> mismatch ()
+
+let samples a =
+  match (profiled a).counting with Some c -> c.samples | None -> mismatch ()
 
 (* The storage of the placeholders AMD's commands name: those of the device
    [name]. *)
@@ -93,8 +97,8 @@ let placeholder name d a u =
         | Doorbell q -> (queue a q).doorbell
         | Program { binary; name } -> program d a ~binary ~name
         | Scratch n -> A.scratch a n
-        | Log -> (counted a).log
-        | Samples -> (counted a).samples)
+        | Log -> (profiled a).log
+        | Samples -> samples a)
       (Ops_amd.storage u)
 
 (* The queues address the memory nx.device says the device reaches: other memory

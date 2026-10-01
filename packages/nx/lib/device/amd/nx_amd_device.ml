@@ -71,22 +71,40 @@ type counter = {
 }
 
 type counting = {
-  slots : int;
-  log : Nx_device.Buffer.t;
   samples : Nx_device.Buffer.t;
   counters : counter list;
   size : int;
   wgp_active : engine:int -> array:int -> wgp:int -> bool;
 }
 
-type u64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
+type tracing = {
+  traces : Nx_device.Buffer.t;
+  ends : Nx_device.Buffer.t;
+  window : int;
+  engines : int;
+}
 
-(* The counting of a set of counters, with the host's views of its log and
-   samples, and the runs of the log read so far. *)
-type count = {
-  counting : counting;
+type profiling = {
+  slots : int;
+  log : Nx_device.Buffer.t;
+  counting : counting option;
+  tracing : tracing option;
+}
+
+type u64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
+type u32s = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+type u8s =
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+(* The profiling of a profile's counters and traces, with the host's views of
+   its buffers, and the runs of the log read so far. *)
+type profile = {
+  profiling : profiling;
   log_words : u64s;
   sample_words : u64s;
+  trace_bytes : u8s;
+  end_words : u32s;
   mutable read : int;
 }
 
@@ -112,9 +130,11 @@ type t = {
   cu_per_array : int; (* the compute units of a shader array *)
   scratch_lock : Mutex.t;
   mutable scratch : (Nx_device.Buffer.t * int) option;
-  count_lock : Mutex.t;
-  counts : (string list, count) Hashtbl.t;
-      (* by the counters asked for: work encoded for them writes there *)
+  profile_lock : Mutex.t;
+  profiles : (string list * bool, profile) Hashtbl.t;
+  (* by the counters and traces asked for: work encoded for them writes
+         there *)
+  (* by the counters asked for: work encoded for them writes there *)
   mutable aql_desc : Mmio.t option; (* the AQL queue's descriptor *)
   mutable queues : (queue * bool * queue list) option;
       (* the compute queue, whether it takes AQL packets, the SDMA queues *)
@@ -671,10 +691,14 @@ let room a () =
       in
       half (if aql then 64 else 4) compute && List.for_all (half 1) sdma
 
-(* Counters *)
+(* Profiling *)
 
 (* The runs whose counters a device keeps until it reads them. *)
 let count_slots = 32
+
+(* The bytes of a shader engine's traces over the runs a device keeps, as
+   tinygrad keeps them. *)
+let trace_bytes = 256 lsl 20
 
 let counters a names =
   let p = a.props in
@@ -723,8 +747,8 @@ let counters a names =
 
 let values (p : props) c = p.xccs * c.instances * c.engines * c.arrays * c.wgps
 
-(* Under the amdgpu driver, counts are only stable in the GPU's stable power
-   state, which a GFX9 GPU does not need. *)
+(* Under the amdgpu driver, counts and traces are only stable in the GPU's
+   stable power state, which a GFX9 GPU does not need. *)
 let check_power a =
   match a.gpu with
   | Kfd_gpu k when match a.props.target with 9, _, _ -> false | _ -> true ->
@@ -739,7 +763,7 @@ let check_power a =
       if level <> "profile_standard" then
         failwith
           (Printf.sprintf
-             "%s: counting needs the GPU's stable power state, not %s: run \
+             "%s: profiling needs the GPU's stable power state, not %s: run \
               `amd-smi set -l stable_std`"
              (name a.index) level)
   | Kfd_gpu _ | Am_gpu _ -> ()
@@ -757,92 +781,193 @@ let wgp_active a =
    started and when it stopped, on the GPU's clock. *)
 let entry_words = 3
 
-let counting a =
-  match Nx_device.Profile.counters () with
-  | [] -> None
-  | names ->
-      Mutex.protect a.count_lock (fun () ->
-          match Hashtbl.find_opt a.counts names with
-          | Some c -> Some c.counting
+(* [n] elements of [kind] in [d]'s [memory], and the host's view of them. *)
+let host_words d memory scalar kind n =
+  let b = Nx_device.Buffer.create ~memory d scalar n in
+  match Nx_device.Buffer.borrow Nx_device.host b with
+  | Error why -> failwith why
+  | Ok h -> (b, Nx_device.Buffer.bigarray kind h)
+
+let empty kind = Bigarray.Array1.create kind Bigarray.c_layout 0
+
+let profiling a =
+  let asked = (Nx_device.Profile.counters (), Nx_device.Profile.traced ()) in
+  match asked with
+  | [], false -> None
+  | names, trace ->
+      Mutex.protect a.profile_lock (fun () ->
+          match Hashtbl.find_opt a.profiles asked with
+          | Some p -> Some p.profiling
           | None ->
               let counters = counters a names in
               check_power a;
-              let size =
-                List.fold_left
-                  (fun n c -> n + (values a.props c * 8))
-                  0 counters
-              in
               let d = Option.get a.dev in
-              let words n =
-                let b =
-                  Nx_device.Buffer.create ~memory:Pinned d
-                    Nx_dtype.Scalar.UInt64 n
-                in
-                match Nx_device.Buffer.borrow Nx_device.host b with
-                | Error why -> failwith why
-                | Ok h ->
-                    let w = Nx_device.Buffer.bigarray Bigarray.int64 h in
-                    Bigarray.Array1.fill w 0L;
-                    (b, w)
+              let log, log_words =
+                host_words d Pinned UInt64 Bigarray.int64
+                  (1 + (entry_words * count_slots))
               in
-              let log, log_words = words (1 + (entry_words * count_slots))
-              and samples, sample_words = words (count_slots * size / 8) in
-              let counting =
+              Bigarray.Array1.fill log_words 0L;
+              let counting, sample_words =
+                match counters with
+                | [] -> (None, empty Bigarray.int64)
+                | _ ->
+                    let size =
+                      List.fold_left
+                        (fun n c -> n + (values a.props c * 8))
+                        0 counters
+                    in
+                    let samples, words =
+                      host_words d Pinned UInt64 Bigarray.int64
+                        (count_slots * size / 8)
+                    in
+                    Bigarray.Array1.fill words 0L;
+                    ( Some { samples; counters; size; wgp_active = wgp_active a },
+                      words )
+              in
+              let tracing, trace_bytes, end_words =
+                if not trace then
+                  (None, empty Bigarray.int8_unsigned, empty Bigarray.int32)
+                else
+                  let engines = a.props.shader_engines * a.props.xccs
+                  and window = trace_bytes / count_slots in
+                  let traces, bytes =
+                    host_words d Mapped UInt8 Bigarray.int8_unsigned
+                      (window * count_slots * engines)
+                  in
+                  let ends, words =
+                    host_words d Pinned Int32 Bigarray.int32
+                      (count_slots * engines)
+                  in
+                  Bigarray.Array1.fill words 0l;
+                  (Some { traces; ends; window; engines }, bytes, words)
+              in
+              let profiling = { slots = count_slots; log; counting; tracing } in
+              Hashtbl.replace a.profiles asked
                 {
-                  slots = count_slots;
-                  log;
-                  samples;
-                  counters;
-                  size;
-                  wgp_active = wgp_active a;
-                }
-              in
-              Hashtbl.replace a.counts names
-                { counting; log_words; sample_words; read = 0 };
-              Some counting)
+                  profiling;
+                  log_words;
+                  sample_words;
+                  trace_bytes;
+                  end_words;
+                  read = 0;
+                };
+              Some profiling)
 
-(* The counters of the runs a log took since its last report, timed on the GPU's
-   clock, and the runs it took over before they were read. *)
-let counted a c =
+(* The values of the counters of the run in [slot]. *)
+let counted a p (c : counting) slot =
+  let base = slot * c.size / 8 in
+  List.map
+    (fun ct ->
+      ( ct.name,
+        Array.init (values a.props ct) (fun j ->
+            Int64.to_int p.sample_words.{base + (ct.offset / 8) + j}) ))
+    c.counters
+
+(* The trace of shader engine [se] of the run in [slot]: the bytes up to the
+   engine's write pointer, which counts 32-byte units from the trace's start, or
+   from address 0 on GFX 11.0. A GFX9 trace starts with a header its GPU does
+   not write. *)
+let traced a p (t : tracing) ~slot ~se =
+  let off = ((se * p.profiling.slots) + slot) * t.window in
+  let units w = w land 0x1FFF_FFFF * 32 in
+  let wptr = units (Int32.to_int p.end_words.{(slot * t.engines) + se}) in
+  let wptr =
+    match a.props.target with
+    | 11, 0, _ ->
+        let start =
+          Nativeint.to_int (Nx_device.Buffer.address t.traces) + off
+        in
+        wptr - units (start / 32)
+    | _ -> wptr
+  in
+  if wptr < 0 || wptr > t.window then
+    failwith
+      (Printf.sprintf "%s: the trace of shader engine %d ends at %d of %d bytes"
+         (name a.index) se wptr t.window);
+  let data = String.init wptr (fun i -> Char.chr p.trace_bytes.{off + i}) in
+  match a.props.target with
+  | 9, _, _ ->
+      let header = Bytes.create 8 in
+      Bytes.set_int64_le header 0
+        (Int64.of_int (0x11 lor (4 lsl 13) lor (0xf lsl 16) lor (se lsl 24)));
+      Bytes.to_string header ^ data
+  | _ -> data
+
+(* The spans of the waves of a trace, on the GPU's clock, each on a lane of its
+   shader engine, compute unit, SIMD and slot. *)
+let wave_spans device ~name ~se data =
+  match Thread_trace.clock data with
+  | None -> []
+  | Some clock ->
+      List.map
+        (fun (w : Thread_trace.wave) ->
+          Nx_device.Profile.Span
+            {
+              device;
+              lane =
+                Printf.sprintf "SE %d CU %d SIMD %d wave %d" se w.cu w.simd
+                  w.slot;
+              name;
+              start = clock w.start;
+              stop = clock w.stop;
+            })
+        (Thread_trace.waves data)
+
+(* The counters and traces of the runs a log took since its last report, timed
+   on the GPU's clock, and the runs it took over before they were read. *)
+let read_runs a p =
   let device = Option.get a.dev in
-  let n = Int64.to_int c.log_words.{0} and slots = c.counting.slots in
-  let first = Int.max c.read (n - slots) in
+  let n = Int64.to_int p.log_words.{0} and slots = p.profiling.slots in
+  let first = Int.max p.read (n - slots) in
   let lost =
-    if first > c.read then
+    if first > p.read then
       [
         Nx_device.Profile.Overwritten
-          { device; time = Nx_device.Profile.now (); runs = first - c.read };
+          { device; time = Nx_device.Profile.now (); runs = first - p.read };
       ]
     else []
   in
   let run k =
     let slot = k mod slots in
-    let word i = Int64.to_int c.log_words.{1 + (entry_words * slot) + i} in
+    let word i = Int64.to_int p.log_words.{1 + (entry_words * slot) + i} in
     let handle = Nativeint.of_int (word 0) in
     let name =
       match with_hw a (fun () -> Hashtbl.find_opt a.kernels handle) with
       | Some e -> e.name
       | None -> Printf.sprintf "0x%nx" handle
     in
-    let base = slot * c.counting.size / 8 in
+    let start = word 1 and stop = word 2 in
     let counters =
-      List.map
-        (fun ct ->
-          ( ct.name,
-            Array.init (values a.props ct) (fun j ->
-                Int64.to_int c.sample_words.{base + (ct.offset / 8) + j}) ))
-        c.counting.counters
+      match p.profiling.counting with
+      | None -> []
+      | Some c ->
+          [
+            Nx_device.Profile.Counters
+              { device; name; start; stop; counters = counted a p c slot };
+          ]
     in
-    Nx_device.Profile.Counters
-      { device; name; start = word 1; stop = word 2; counters }
+    let traces =
+      match p.profiling.tracing with
+      | None -> []
+      | Some t ->
+          List.concat
+            (List.init t.engines (fun se ->
+                 let data = traced a p t ~slot ~se in
+                 Nx_device.Profile.Trace
+                   { device; name; start; stop; part = se; data }
+                 :: wave_spans device ~name ~se data))
+    in
+    counters @ traces
   in
-  let events = List.init (Int.max 0 (n - first)) (fun i -> run (first + i)) in
-  c.read <- n;
+  let events =
+    List.concat (List.init (Int.max 0 (n - first)) (fun i -> run (first + i)))
+  in
+  p.read <- n;
   lost @ events
 
 let report a () =
-  Mutex.protect a.count_lock (fun () ->
-      Hashtbl.fold (fun _ c events -> events @ counted a c) a.counts [])
+  Mutex.protect a.profile_lock (fun () ->
+      Hashtbl.fold (fun _ p events -> events @ read_runs a p) a.profiles [])
 
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
@@ -899,8 +1024,8 @@ let record ~machine ~index ~gpu ~props ~cu_per_array =
     cu_per_array;
     scratch_lock = Mutex.create ();
     scratch = None;
-    count_lock = Mutex.create ();
-    counts = Hashtbl.create 2;
+    profile_lock = Mutex.create ();
+    profiles = Hashtbl.create 2;
     aql_desc = None;
     queues = None;
     dev = None;
@@ -1130,3 +1255,5 @@ let kernel p =
           let e = with_hw a (fun () -> Hashtbl.find a.kernels descriptor) in
           { code; descriptor; private_segment = e.scratch })
         (Nx_device.Program.code p)
+
+module Thread_trace = Thread_trace

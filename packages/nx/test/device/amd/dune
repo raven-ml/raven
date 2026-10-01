@@ -6,6 +6,8 @@
  (name test_amd)
  (modules test_amd)
  (package nx)
+ (deps
+  (glob_files golden/*))
  (libraries
   nx.amd.device
   nx.remote.device

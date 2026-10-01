@@ -2974,6 +2974,10 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_amd_device.counting` is `Nx_amd_device.profiling`, which
+  also traces: each shader engine writes a thread trace of each kernel run, read
+  as a `Profile.Trace` per engine, and on GFX11 and GFX12 each wave is a span on
+  the GPU's timeline. `Nx_amd_device.Thread_trace` reads a trace's waves.
 - `Nx_device.Profile.start ~trace` asks the devices that trace for a thread
   trace of each run of a program: a `Profile.Trace` event holds the raw trace of
   a part of the device, timed by its run, and `Profile.traced` tells the
