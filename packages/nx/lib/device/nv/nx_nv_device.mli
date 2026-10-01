@@ -246,26 +246,14 @@ type kernel = {
           instruction prefetch may read past the code. It is in memory of the
           device that the device keeps for as long as it lives. *)
   entry : nativeint;  (** The address of the function's first instruction. *)
-  code_bytes : int;  (** The size of the function's code. *)
-  registers : int;  (** The registers a thread uses. *)
-  shared_bytes : int;
-      (** Shared memory per block, with the 1 KiB the hardware reserves. *)
-  local_bytes : int;  (** Local memory per thread, with its stack. *)
-  param_offset : int;
-      (** The offset of the parameters in constant bank 0, after the words the
-          launch fills itself. *)
-  banks : (int * nativeint * int) list;
-      (** The constant banks, as (index, address, bytes): those of the cubin at
-          their uploaded address, and bank 0 at the cubin's defaults, which a
-          launch replaces with its own parameters. *)
-  max_threads : int;
-      (** The most threads a block may have, given [registers]. *)
 }
-(** The type for the launch parameters of a kernel. *)
+(** The type for kernels: a function of an uploaded cubin. A launch reads the
+    rest of what it needs, such as registers and constant banks, from the cubin
+    itself. *)
 
 val kernel : Nx_device.Program.t -> kernel option
-(** [kernel p] is the launch parameters of [p], if [p] is loaded on an NV
-    device. Its {!Nx_device.Program.handle} is its [entry]. *)
+(** [kernel p] is the kernel of [p], if [p] is loaded on an NV device. Its
+    {!Nx_device.Program.handle} is its [entry]. *)
 
 type local_memory = {
   address : nativeint;  (** The local memory's first byte. *)

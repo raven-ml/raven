@@ -51,16 +51,7 @@ type props = {
 type kernel = {
   code : Nx_device.Buffer.t;
   descriptor : nativeint;
-  entry : nativeint;
-  rsrc1 : int;
-  rsrc2 : int;
-  rsrc3 : int;
-  wave32 : bool;
   private_segment : int;
-  group_segment : int;
-  kernarg_segment : int;
-  dispatch_ptr : bool;
-  private_segment_buffer : bool;
 }
 
 type counter = {
@@ -438,12 +429,9 @@ let upload a binary img =
 (* A code object the device cannot run, or has no memory for, is refused, and
    the device stays usable. *)
 let load a ~binary ~entry:name =
-  let major, _, _ = a.props.target in
   match
     let obj, img = Code_object.image binary in
-    ( img,
-      Code_object.kernel obj img ~name ~major ~lds_kib:(a.props.lds_bytes / 1024)
-    )
+    (img, Code_object.kernel obj img ~name ~lds_kib:(a.props.lds_bytes / 1024))
   with
   | exception Failure why -> Error why
   | img, k -> (
@@ -454,24 +442,13 @@ let load a ~binary ~entry:name =
              full, or the BAR is too small to map it (enable Resizable BAR in \
              the firmware settings)"
       | Some code ->
-          let at off =
-            Nativeint.add (Nx_device.Buffer.address code) (Nativeint.of_int off)
+          let descriptor =
+            Nativeint.add
+              (Nx_device.Buffer.address code)
+              (Nativeint.of_int k.descriptor)
           in
           let kernel =
-            {
-              code;
-              descriptor = at k.descriptor;
-              entry = at k.entry;
-              rsrc1 = k.rsrc1;
-              rsrc2 = k.rsrc2;
-              rsrc3 = k.rsrc3;
-              wave32 = k.wave32;
-              private_segment = k.private_segment;
-              group_segment = k.group_segment;
-              kernarg_segment = k.kernarg_segment;
-              dispatch_ptr = k.dispatch_ptr;
-              private_segment_buffer = k.private_segment_buffer;
-            }
+            { code; descriptor; private_segment = k.private_segment }
           in
           with_hw a (fun () ->
               Hashtbl.replace a.kernels kernel.descriptor kernel;

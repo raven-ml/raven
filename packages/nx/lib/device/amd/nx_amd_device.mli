@@ -242,23 +242,16 @@ type kernel = {
           ({!Nx_device_elf.load}), relocated, in memory of the device that the
           device keeps for as long as it lives. *)
   descriptor : nativeint;  (** The address of the kernel descriptor. *)
-  entry : nativeint;  (** The address of the kernel's first instruction. *)
-  rsrc1 : int;  (** [COMPUTE_PGM_RSRC1] as dispatched. *)
-  rsrc2 : int;  (** [COMPUTE_PGM_RSRC2] as dispatched, with the LDS size. *)
-  rsrc3 : int;  (** [COMPUTE_PGM_RSRC3]. *)
-  wave32 : bool;  (** [true] iff the kernel runs in waves of 32 lanes. *)
-  private_segment : int;  (** Scratch bytes per lane. *)
-  group_segment : int;  (** LDS bytes per work-group. *)
-  kernarg_segment : int;  (** Argument bytes. *)
-  dispatch_ptr : bool;  (** [true] iff it reads a dispatch packet pointer. *)
-  private_segment_buffer : bool;
-      (** [true] iff it reads a scratch buffer descriptor. *)
+  private_segment : int;
+      (** Scratch bytes per lane, which {!scratch} must provide. *)
 }
-(** The type for the dispatch parameters of a kernel. *)
+(** The type for kernels: a kernel descriptor of an uploaded code object. A
+    dispatch reads the rest of what it needs, such as its resource words, from
+    the descriptor itself. *)
 
 val kernel : Nx_device.Program.t -> kernel option
-(** [kernel p] is the dispatch parameters of [p], if [p] is loaded on an AMD
-    device. Its {!Nx_device.Program.handle} is its [descriptor]. *)
+(** [kernel p] is the kernel of [p], if [p] is loaded on an AMD device. Its
+    {!Nx_device.Program.handle} is its [descriptor]. *)
 
 val scratch : t -> int -> Nx_device.Buffer.t
 (** [scratch a n] is the device's scratch memory for kernels of up to [n]

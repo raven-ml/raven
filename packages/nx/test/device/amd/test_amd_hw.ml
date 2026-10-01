@@ -262,10 +262,8 @@ let test_programs () =
         Nativeint.add (B.address k.code) (Nativeint.of_int (B.nbytes k.code))
       in
       is_true ~msg:"inside the code"
-        (k.descriptor >= code && k.entry >= code && k.descriptor < end_
-       && k.entry < end_);
+        (k.descriptor >= code && k.descriptor < end_);
       equal ~msg:"on the device" bool true (Nx_device.equal (B.device k.code) d);
-      is_true ~msg:"room for its pointer" (k.kernarg_segment >= 8);
       match Nx_device.Program.load d ~binary ~name:"absent" with
       | Ok _ -> fail "loaded an absent function"
       | Error why -> contains ~msg:"refused" ~sub:"no kernel" why)

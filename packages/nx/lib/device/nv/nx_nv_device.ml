@@ -39,17 +39,7 @@ type props = {
   dma_class : int;
 }
 
-type kernel = {
-  image : Nx_device.Buffer.t;
-  entry : nativeint;
-  code_bytes : int;
-  registers : int;
-  shared_bytes : int;
-  local_bytes : int;
-  param_offset : int;
-  banks : (int * nativeint * int) list;
-  max_threads : int;
-}
+type kernel = { image : Nx_device.Buffer.t; entry : nativeint }
 
 type local_memory = { address : nativeint; bytes : int; per_thread : int }
 
@@ -474,25 +464,12 @@ let load n ~binary ~entry:name =
       match upload n binary c with
       | None -> Error "no GPU memory for the program"
       | Some image ->
-          let at off =
+          let entry =
             Nativeint.add
               (Nx_device.Buffer.address image)
-              (Nativeint.of_int off)
+              (Nativeint.of_int c.entry)
           in
-          let k =
-            {
-              image;
-              entry = at c.entry;
-              code_bytes = c.code_bytes;
-              registers = c.registers;
-              shared_bytes = c.shared_bytes;
-              local_bytes = c.local_bytes;
-              param_offset = c.param_offset;
-              banks =
-                List.map (fun (i, off, bytes) -> (i, at off, bytes)) c.banks;
-              max_threads = c.max_threads;
-            }
-          in
+          let k = { image; entry } in
           with_hw n (fun () -> Hashtbl.replace n.kernels k.entry k);
           Ok k.entry)
 

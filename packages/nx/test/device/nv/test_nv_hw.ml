@@ -298,10 +298,8 @@ let test_two_borrows () =
   is_true ~msg:"the second once the first let go" (same_bytes host (read d1));
   is_true ~msg:"the first again" (same_bytes host (read d0))
 
-(* Kernels compiled at test time, when NVIDIA's compiler is at hand: [fill]
-   writes through a local array, so that it uses local memory; [small] needs few
-   registers and one parameter, [big] many registers, a stack and three
-   parameters. *)
+(* A kernel compiled at test time, when NVIDIA's compiler is at hand: [fill]
+   writes through a local array, so that it uses local memory. *)
 let compile arch =
   match
     List.find_opt Sys.file_exists
@@ -315,14 +313,7 @@ let compile arch =
       Out_channel.with_open_text src (fun oc ->
           output_string oc
             "extern \"C\" __global__ void fill(int *p) { volatile int s[64]; \
-             s[threadIdx.x % 64] = 42; p[threadIdx.x] = s[threadIdx.x % 64]; }\n\
-             extern \"C\" __global__ void small(int *p) { p[threadIdx.x] = 1; }\n\
-             extern \"C\" __global__ void big(float *p, float *q, int n) { \
-             float a[32]; for (int i = 0; i < 32; i++) a[i] = p[i * n + \
-             threadIdx.x]; float s = 0; for (int i = 0; i < 32; i++) for (int \
-             j = 0; j < 32; j++) s += a[i] * a[j]; volatile float t[64]; \
-             t[threadIdx.x % 64] = s; q[threadIdx.x] = t[(threadIdx.x + 1) % \
-             64]; }\n");
+             s[threadIdx.x % 64] = 42; p[threadIdx.x] = s[threadIdx.x % 64]; }\n");
       let cmd =
         Printf.sprintf "%s -cubin -arch=%s -O2 %s -o %s 2>/dev/null" nvcc arch
           src out
@@ -335,7 +326,7 @@ let test_programs () =
   let d = device () in
   match compile (Nx_device.arch d) with
   | None -> skip ~reason:"no compiler for the GPU's architecture" ()
-  | Some binary ->
+  | Some binary -> (
       let p = program d ~binary ~name:"fill" in
       is_true ~msg:"cached" (p == program d ~binary ~name:"fill");
       let k = Option.get (Nx_nv_device.kernel p) in
@@ -349,23 +340,9 @@ let test_programs () =
         (Nx_device.equal d (B.device k.image));
       is_true ~msg:"a page past the image's last 4 KiB"
         (B.nbytes k.image mod 0x1000 = 0 && B.nbytes k.image >= 0x2000);
-      is_true ~msg:"registers" (k.registers > 0);
-      is_true ~msg:"threads" (k.max_threads >= 32);
-      (match Nx_device.Program.load d ~binary ~name:"absent" with
+      match Nx_device.Program.load d ~binary ~name:"absent" with
       | Ok _ -> fail "loaded an absent function"
-      | Error why -> contains ~msg:"refused" ~sub:"no function" why);
-      (* Each function of a cubin of several has its own registers, stack and
-         bank 0, whichever comes last in the cubin. *)
-      let kernel name =
-        Option.get (Nx_nv_device.kernel (program d ~binary ~name))
-      in
-      let small = kernel "small" and big = kernel "big" in
-      let bank0 (k : Nx_nv_device.kernel) =
-        List.find_map (fun (i, _, n) -> if i = 0 then Some n else None) k.banks
-      in
-      is_true ~msg:"registers of their own" (small.registers < big.registers);
-      is_true ~msg:"stacks of their own" (small.local_bytes < big.local_bytes);
-      is_true ~msg:"banks 0 of their own" (bank0 small < bank0 big)
+      | Error why -> contains ~msg:"refused" ~sub:"no function" why)
 
 let test_local_memory () =
   let d = device () in
