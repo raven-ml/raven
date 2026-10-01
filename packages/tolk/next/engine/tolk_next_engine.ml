@@ -919,7 +919,11 @@ let run ?(vars = []) t slots =
   let n = List.length t.calls in
   if Helpers.Context_var.value Helpers.debug >= 1 && n >= 10 then
     Printf.printf "jit execs %d calls\n%!" n;
-  Mutex.protect t.lock (fun () -> List.iter (run_call ~vars t slots) t.calls)
+  Mutex.protect t.lock (fun () ->
+      List.iter (run_call ~vars t slots) t.calls;
+      (* The borrows whose addresses the run's words hold outlive its
+         submission. *)
+      ignore (Sys.opaque_identity t.borrows))
 
 (* Measuring *)
 
