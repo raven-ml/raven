@@ -579,13 +579,18 @@ let op : type r. scope -> r Nx.Op.t -> r =
   | Convert (Bitcast, dt, x) ->
       ret dt (Lower_arith.bitcast (check s what p dt) (n x))
   | Threefry (key, counter) ->
-      let k = n key in
-      let slice = Ops.backward_slice_with_self k in
-      if not (List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments) then
+      let k = n key and c = n counter in
+      (* A parameter is an argument of a called body: a staged loop's trip. *)
+      let varies u =
+        let slice = Ops.backward_slice_with_self u in
+        Ops.op_in_backward_slice_with_self u [ Op.Param ]
+        || List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments
+      in
+      if not (varies k || varies c) then
         jit_error
-          "a random draw from a key that does not depend on the function's \
-           arguments would repeat on every call; pass the key as an argument";
-      ret Nx_dtype.int32 (Lower_arith.threefry k (n counter))
+          "a random draw that does not depend on the function's arguments \
+           would repeat on every call; pass the key as an argument";
+      ret Nx_dtype.int32 (Lower_arith.threefry k c)
   | Reduce (k, axes, x) ->
       like x (Lower_reduce.reduce k ~axes:(Array.to_list axes) (n x))
   | Scan (k, axis, x) -> like x (Lower_reduce.scan k ~axis (n x))

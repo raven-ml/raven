@@ -78,6 +78,15 @@ let calls =
                        (Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
                             Nx.rand Nx.float32 [| 4 |])))
                    (x ()))));
+      test "a draw from a captured key at counters of the arguments computes"
+        (fun () ->
+          let key =
+            Nx.create Nx.int32 [| 4; 2 |]
+              (Array.init 8 (fun i -> Int32.of_int (7 + (i mod 2))))
+          in
+          let draw c = Nx.Op.eval (Nx.Op.Threefry (key, c)) in
+          let c = Nx.create Nx.int32 [| 4; 2 |] (Array.init 8 Int32.of_int) in
+          equal (tensor int32) (draw c) (Rune.jit' draw c));
       test "reading a traced value raises Jit_error" (fun () ->
           raises_match
             (function Rune.Jit_error _ -> true | _ -> false)

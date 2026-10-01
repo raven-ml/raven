@@ -580,11 +580,11 @@ val scan :
 exception Jit_error of string
 (** Raised when a function cannot be compiled, while it is traced: it reads the
     value of a traced tensor ({!Nx.item} on a value that depends on the
-    arguments, or a branch on one), draws random values from a key that does not
-    depend on the arguments (a captured {!Nx.Rng.t}, or {!Nx.Rng.with_key} on a
-    constant key: the draw would be one constant replayed on every call), or
-    uses an operation or dtype the target of its devices cannot compute. Nothing
-    is consumed. *)
+    arguments, or a branch on one), draws random values that do not depend on
+    the arguments (from a captured {!Nx.Rng.t}, or {!Nx.Rng.with_key} on a
+    constant key, at counters that do not either: the draw would be one constant
+    replayed on every call), or uses an operation or dtype the target of its
+    devices cannot compute. Nothing is consumed. *)
 
 val jit : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
 (** [jit s f] is [f] compiled, a function of [f]'s type whose arguments and
