@@ -28,8 +28,8 @@
 (** {1:weights Weights} *)
 
 (** The type for quantised weights. Match on a weight to read its parts; only
-    the constructors build one. Block-scaled FP8, designed in RFC 0004, lands
-    later as a second format. *)
+    the constructors build one. Block-scaled FP8 lands later as a second
+    format. *)
 type t = private
   | Mxfp4 of {
       codes : (int, Nx.uint8_elt) Nx.t;
