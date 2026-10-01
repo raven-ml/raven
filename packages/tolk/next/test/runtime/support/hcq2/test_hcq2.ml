@@ -1125,6 +1125,19 @@ let queues =
           in
           ignore (lower_with (probing probe) [ adds (storage "CPU:1") (storage "CPU:1") ]);
           equal (list int) [ 7 ] !seen);
+      test "loop moves each word by its trip, a uint64 as two dwords and a uint16 as itself"
+        (fun () ->
+          let q = Hcq2.Queue.v ~devices:[ "CPU:1" ] "COMPUTE:0" in
+          let r = Ops.range (Int 3) [ Ops.unique_num () ] in
+          Hcq2.Queue.loop q r (fun () ->
+              ignore (Hcq2.Queue.q q [ Ops.cast r Uint64; Ops.cast r Uint16; u16 0 ]));
+          let words = Hcq2.Queue.words q in
+          equal (list (Testable.make ~pp:Dtype.pp ~equal:Dtype.equal)) ~msg:"types"
+            [ Uint32; Uint32; Uint16 ]
+            (List.map (fun (_, w) -> Ops.dtype w) words);
+          is_true ~msg:"each offset moves with the trip"
+            (List.for_all (fun (o, _) -> Ops.Nodes.mem r (Ops.ranges o)) words);
+          equal int ~msg:"bytes" 36 (Hcq2.Queue.size q));
       test "reset empties a queue" (fun () ->
           let seen = ref [] in
           let probe q =

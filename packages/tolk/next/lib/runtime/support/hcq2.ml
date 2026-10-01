@@ -131,18 +131,21 @@ module Queue = struct
           if i < List.length q.patches - first then Left p else Right p)
         (List.mapi (fun i p -> (i, p)) q.patches)
     in
-    (* Each trip gets its words as dwords: a trip need not be 8-byte aligned. *)
-    let dwords =
+    (* A trip need not be 8-byte aligned: each trip gets a word wider than a
+       dword as dwords, and a narrower one, such as the high bits of an address
+       in a descriptor, as itself. *)
+    let moved =
       List.concat_map
         (fun (o, w) ->
-          List.init
-            (Dtype.itemsize (dtype w) / 4)
-            (fun k ->
-              ( add (add o (int (4 * k))) (mul r (int trip)),
-                cast (shr w (int (32 * k))) Dtype.Uint32 )))
+          let at k = add (add o (int k)) (mul r (int trip)) in
+          let n = Dtype.itemsize (dtype w) in
+          if n <= 4 then [ (at 0, w) ]
+          else
+            List.init (n / 4) (fun k ->
+                (at (4 * k), cast (shr w (int (32 * k))) Dtype.Uint32)))
         (List.rev fresh)
     in
-    q.patches <- List.rev_append dwords older;
+    q.patches <- List.rev_append moved older;
     let body = Bytes.sub_string q.blob start trip in
     for _ = 1 to Dtype.Value.to_int (vmax r) do
       append q body
