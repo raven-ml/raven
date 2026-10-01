@@ -1,0 +1,231 @@
+; Every test of old rune (packages/rune/test) has a row in the regressions
+; ledger: a rune.next test or a named drop. Each windtrap suite lists its tests
+; with -l; test_read_lifetime, a plain executable, and exhaustive.t are one
+; test each. test_jit_metal builds on macOS only: elsewhere it is one test too.
+
+(executable
+ (name check_regressions)
+ (modules check_regressions))
+
+(rule
+ (with-stdout-to
+  test_grad.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_grad.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_ops.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_ops.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_complex.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_complex.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_engine.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_engine.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_jvp.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_jvp.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_vmap.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_vmap.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_custom.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_custom.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_fft.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_fft.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_jacobian.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_jacobian.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_control.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_control.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_jit.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_jit.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_device_lists.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_device_lists.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_rng.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_rng.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_total.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_total.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_half.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_half.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_composition.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_composition.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_quant.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_quant.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_jit_alignment.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_jit_alignment.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_remat_memory.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_remat_memory.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_tensor_parallel.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_tensor_parallel.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_jit_scratch.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_jit_scratch.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_jit_cache.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_jit_cache.exe} -l))))
+
+(rule
+ (with-stdout-to
+  test_jit_cuda.ml.list
+  (setenv
+   DEV
+   CPU
+   (run %{exe:../../../test/test_jit_cuda.exe} -l))))
+
+(rule
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   test_jit_metal.ml.list
+   (setenv
+    DEV
+    CPU
+    (run %{exe:../../../test/test_jit_metal.exe} -l)))))
+
+(rule
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   test_jit_metal.ml.list
+   (echo "*\n"))))
+
+(rule
+ (with-stdout-to
+  test_read_lifetime.ml.list
+  (echo "*\n")))
+
+(rule
+ (with-stdout-to
+  exhaustive.t.list
+  (echo "*\n")))
+
+; Its own alias until every old test is mapped; then runtest.
+
+(rule
+ (alias regressions)
+ (package rune)
+ (deps
+  (glob_files *.list))
+ (action
+  (run %{exe:check_regressions.exe} %{dep:../../../REGRESSIONS.md} %{deps})))

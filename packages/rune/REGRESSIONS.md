@@ -7,10 +7,24 @@ that keeps it, or to the reason it is dropped. The sources are:
   now owns;
 - every relevant case of tinygrad's tests for the module's operations.
 
-A row names its source as `old: <file> <test name>` or
+A row names its source as `old: <file> <path>; <path>; ...` or
 `tinygrad: <file>::<class>::<test>`, and its outcome as the new test's path
-(`<suite> › <group> › <test>`) or as `dropped: <reason>`. A module's section
-starts when its test pass does.
+(`<suite> › <group> › <test>`) or as `dropped: <reason>`. An old test's path
+is the one its suite's `-l` prints; a path ending in ` › *` covers a group,
+and `*` the whole file. A row may name a test that was since deleted, to
+record what became of it. `next/test/regressions` checks that a row maps every
+old test (`dune build @packages/rune/next/test/regressions/regressions`). A
+module's section starts when its test pass does.
+
+## Owners
+
+| Old test file | Section | Suites' designer |
+|---|---|---|
+| test_grad, test_engine, test_jacobian, test_control, test_composition, test_custom, test_total; the structural groups of test_jvp and test_complex | Transformations core | rune-core-tests |
+| test_ops, test_fft, test_rng; the rule groups of test_jvp and test_complex; test_vmap | Rule tables | rune-rules-tests |
+| test_jit, test_jit_metal, test_jit_cuda, test_jit_alignment, test_jit_cache, test_jit_scratch, test_device_lists, test_remat_memory, test_half, test_tensor_parallel, test_quant | Compiled, and the compiled call's | rune-compiled-test |
+| test_read_lifetime | Transformations core (dropped: nx's read path) | rune-core-tests |
+| exhaustive.t | the constructs' exhaustiveness | rune-core |
 
 ## Compiled
 
@@ -105,123 +119,240 @@ these files belong to the compiled call, in its own section.
 ## Transformations core
 
 The suites are in `next/test/`, one per directory, each through the public
-`Rune` alone: `Rune derivatives` (`derivatives/`, written `D` below),
-`Rune.scan` (`scan/`, `Sc`), `Rune structures` (`structure/`, `St`),
-`Rune nesting` (`nesting/`, `N`), `Rune compositions` (`composition/`, `M`)
-and `Rune constructs` (`constructs/`, `C`). Rows owned by the suites of the
-operations' rules, of `vmap`, of the custom rules and of totals are listed in
-those sections.
+`Rune` alone: `Rune derivatives` (`derivatives/`), `Rune.scan` (`scan/`),
+`Rune structures` (`structure/`), `Rune nesting` (`nesting/`),
+`Rune compositions` (`composition/`), `Rune constructs` (`constructs/`),
+`Rune totals` (`total/`) and `Rune custom rules` (`custom/`). Tests of an
+operation's rule in these files (ties and zeros of reductions, `set`, bitcast,
+pad, sort, an operation with no rule, a power at a zero base, the per-operation
+transposes) are mapped in Rule tables.
+
 
 ### test_grad.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_grad.ml reduction derivatives preserve zeros and ties; half reduction derivatives count ties without overflow | rules of `Reduce` | the rules' suite |
-| old: test_grad.ml no_grad scopes are independent across domains; …across systhreads | `no_grad` per domain | dropped: `no_grad` is gone; what it guarded is N › independence › differentiations on two domains at once, and D › pullbacks › a pullback may run on two domains at once |
-| old: test_grad.ml grad over records › aliased leaves are separate parameters | one tensor at two leaves | D › grad › a tensor behind two leaves is two parameters; D › jvp › a tensor behind two leaves has two tangents |
-| old: test_grad.ml grad over records › a capture of the argument is a constant | captures are constants | D › grad › a capture that is also the argument is a constant |
-| old: test_grad.ml grad over records › matches the analytic gradient | a record's gradient | D › grad › the gradient of a record is its analytic gradient |
-| old: test_grad.ml grad over records › unused leaf has zero gradient | unused leaves | D › grad › a leaf the objective does not use has a gradient of +0. |
-| old: test_grad.ml grad over records › preserves structure and shapes | the result's structure | D › grad › the gradient of a record is its analytic gradient; St › preconditions › integer, bool and key leaves beside a float one are carried |
-| old: test_grad.ml grad over records › value_and_grad returns the value | the value | D › value › the value is the objective's, bit for bit |
-| old: test_grad.ml grad over records › value_and_grad_aux returns auxiliary data | auxiliary results | D › value › an auxiliary result leaves through its structure as values; › an auxiliary result does not contribute to the gradient |
-| old: test_grad.ml grad over records › mixed dtypes differentiate in one pass | float32 and float64 leaves | D › jacobians › jacfwd' has the result's dtype and jacrev' the argument's (a cast between them) |
-| old: test_grad.ml grad over records › gradient descent converges | descent | D › grad › gradient descent on a square shrinks it by the step each time |
-| old: test_grad.ml grad over records › rejects an integer single-tensor argument | no float leaf | St › preconditions › a structure with no real or complex tensor is refused |
-| old: test_grad.ml grad over records › carries a non-differentiable leaf | carried leaves | St › preconditions › integer, bool and key leaves beside a float one are carried |
-| old: test_grad.ml vjp › scales by the cotangent; accepts non-scalar outputs | pullbacks | D › vjp › the pullback scales by the cotangent |
-| old: test_grad.ml vjp › pulls back structured cotangents | structured results | D › vjp › a structured result's pullback is the gradient of its pairing |
-| old: test_grad.ml vjp › rejects a cotangent shape mismatch; rejects cotangents of another structure | cotangent checks | D › vjp › cotangents of another structure are refused at the pullback; › a cotangent of another shape is refused at the pullback; › a cotangent of another dtype is refused at the pullback |
-| old: test_grad.ml vjp › vjp_fun pulls back a structured result | `vjp_fun` | D › vjp › a structured result's pullback is the gradient of its pairing (`vjp` returns the pullback) |
-| old: test_grad.ml remat › 15 tests | `remat` under each transformation, with captures | M › pairs › every cell of the remat column; C › with no transformation › remat with no transformation runs its function once; the capture cases are the custom rules' and remat's suite |
-| old: test_grad.ml remat › rejects a consumed argument | refusal | St › signatures › remat refuses a consumed argument when given its signature |
-| old: test_grad.ml set › differentiates both operands | rule of `Update` | the rules' suite |
-| old: test_grad.ml single-tensor variants › grad' matches the analytic gradient; vjp' pulls back the cotangent | `'` forms | D › shorthands › grad' is grad at one tensor; › vjp' is vjp at one tensor |
-| old: test_grad.ml single-tensor variants › a bitcast has zero derivative | rule of `Bitcast` | the rules' suite |
+| old: test_grad.ml grad over records › aliased leaves are separate parameters | one tensor at two leaves | Rune derivatives › grad › a tensor behind two leaves is two parameters; Rune derivatives › jvp › a tensor behind two leaves has two tangents |
+| old: test_grad.ml grad over records › a capture of the argument is a constant | a capture is a constant | Rune derivatives › grad › a capture that is also the argument is a constant |
+| old: test_grad.ml grad over records › matches the analytic gradient | a record's gradient | Rune derivatives › grad › the gradient of a record is its analytic gradient |
+| old: test_grad.ml grad over records › unused leaf has zero gradient | an unused leaf | Rune derivatives › grad › a leaf the objective does not use has a gradient of +0. |
+| old: test_grad.ml grad over records › preserves structure and shapes | the gradient's structure | Rune derivatives › grad › the gradient of a record is its analytic gradient; Rune structures › preconditions › integer, bool and key leaves beside a float one are carried |
+| old: test_grad.ml grad over records › value_and_grad returns the value | the value | Rune derivatives › value › the value is the objective's, bit for bit |
+| old: test_grad.ml grad over records › value_and_grad_aux returns auxiliary data | auxiliary results | Rune derivatives › value › an auxiliary result leaves through its structure as values; Rune derivatives › value › an auxiliary result does not contribute to the gradient |
+| old: test_grad.ml grad over records › mixed dtypes differentiate in one pass | two dtypes | Rune derivatives › grad › leaves of two dtypes differentiate in one pass |
+| old: test_grad.ml grad over records › gradient descent converges | descent | Rune derivatives › grad › gradient descent on a square shrinks it by the step each time |
+| old: test_grad.ml grad over records › rejects an integer single-tensor argument | no float leaf | Rune structures › preconditions › a structure with no real or complex tensor is refused › grad' of an integer tensor |
+| old: test_grad.ml grad over records › carries a non-differentiable leaf | carried leaves | Rune structures › preconditions › integer, bool and key leaves beside a float one are carried |
+| old: test_grad.ml vjp › scales by the cotangent; vjp › accepts non-scalar outputs | pullbacks | Rune derivatives › vjp › the pullback scales by the cotangent |
+| old: test_grad.ml vjp › pulls back structured cotangents; vjp › vjp_fun pulls back a structured result | structured results | Rune derivatives › vjp › a structured result's pullback is the gradient of its pairing |
+| old: test_grad.ml vjp › rejects a cotangent shape mismatch | cotangent shapes | Rune derivatives › vjp › a cotangent of another shape is refused at the pullback |
+| old: test_grad.ml vjp › rejects cotangents of another structure | cotangent structures | Rune derivatives › vjp › cotangents of another structure are refused at the pullback |
+| old: test_grad.ml remat › gradients are unchanged; remat › values are unchanged | remat is its function | Rune constructs › with no transformation › remat with no transformation runs its function once; Rune compositions › pairs › grad ∘ grad › remat; Rune constructs › a remat and what it captures › a captured weight's gradient |
+| old: test_grad.ml remat › takes a signature | signatures | Rune structures › signatures › a function of k arguments is itself through a signature |
+| old: test_grad.ml remat › a returned argument is not counted twice | a result that is an argument | Rune constructs › rules whose result is an argument, rules under a map › a remat of the identity adds its cotangent once |
+| old: test_grad.ml remat › rejects a consumed argument | consumed arguments | Rune structures › signatures › remat refuses a consumed argument when given its signature |
+| old: test_grad.ml remat › is its function under jvp | remat under jvp | Rune compositions › pairs › jvp ∘ jvp › remat; Rune constructs › a remat and what it captures › a captured weight's tangent |
+| old: test_grad.ml remat › composes with vmap | remat under vmap | Rune compositions › pairs › grad ∘ vmap › remat; Rune compositions › pairs › vmap ∘ grad › remat |
+| old: test_grad.ml remat › gradients are unchanged under jit | remat under jit | Rune compositions › pairs › jit ∘ grad › remat |
+| old: test_grad.ml remat › second derivatives are unchanged under jit | second derivatives under jit | Rune compositions › triples › jit ∘ jvp ∘ grad › remat |
+| old: test_grad.ml remat › second derivatives with respect to weights under jit | second derivatives in weights | Rune constructs › a remat and what it captures › second derivatives in a weight passed to the remat; Rune constructs › a remat and what it captures › second derivatives in a weight the remat captures |
+| old: test_grad.ml remat › differentiates a captured tensor | captures | Rune constructs › a remat and what it captures › a captured weight's gradient |
+| old: test_grad.ml remat › pushes forward a captured tensor's tangent | captures | Rune constructs › a remat and what it captures › a captured weight's tangent |
+| old: test_grad.ml remat › differentiates a tensor both captured and passed | captures | Rune constructs › a remat and what it captures › a weight both captured and passed gets both shares |
+| old: test_grad.ml remat › maps a batched capture | captures under a map | Rune constructs › a remat and what it captures › a remat inside a map captures the lane |
+| old: test_grad.ml remat › differentiates an argument it also captures | captures | Rune constructs › a remat and what it captures › an argument the function also captures gets both shares |
+| old: test_grad.ml single-tensor variants › grad' matches the analytic gradient | grad' | Rune derivatives › shorthands › grad' is grad at one tensor |
+| old: test_grad.ml single-tensor variants › vjp' pulls back the cotangent | vjp' | Rune derivatives › shorthands › vjp' is vjp at one tensor |
+| old: test_grad.ml no_grad scopes are independent across domains; no_grad scopes are independent across systhreads | no_grad per domain | dropped: `no_grad` is gone; transformations on two domains are independent: Rune nesting › independence › differentiations on two domains at once |
 
 ### test_engine.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_engine.ml higher order › second derivative composes; third derivative composes | nested gradients | N › perturbation › the second derivative of a cube; › the third derivative of a fourth power |
-| old: test_engine.ml gradient flow › detach stops the gradient | detach | D › detach › under grad a detached value has no derivative |
-| old: test_engine.ml gradient flow › no_grad region is constant | `no_grad` | dropped: `no_grad` is gone; D › detach |
-| old: test_engine.ml gradient flow › constants pass through unsupported ops | an operation with no rule on constants | the rules' suite (an operation with no rule, until its rule lands) |
-| old: test_engine.ml error contracts › unsupported op raises when its input is tracked | an operation with no rule | the rules' suite |
-| old: test_engine.ml error contracts › grad requires a scalar objective | scalar objective | St › preconditions › a non-scalar objective is refused; › a scalar objective may have any shape of one element |
-| old: test_engine.ml statefulness › grad is repeatable | no state between calls | D › grad › two differentiations of one function give one gradient |
-| old: test_engine.ml statefulness › value reads are transparent | reads inside the objective | D › grad › a value read inside the objective is its primal |
-| old: test_engine.ml regressions › pad keeps its fill value under grad; sort routes gradient through the permutation | rules of `Pad` and `Sort` | the rules' suite |
-| old: test_engine.ml backward pass › cotangents stay lazy views until a reshape or the result | no copies in a gradient | D › operations › a pair of cancelling transposes adds no copy and no arithmetic to a gradient |
-| old: test_engine.ml debugging › with_debug logs ops and preserves results | `with_debug` | dropped: `with_debug` is gone; its replacement is an interpreter installed with `Nx.Op.intercept`, which D › operations uses |
+| old: test_engine.ml higher order › second derivative composes | nested gradients | Rune nesting › perturbation › the second derivative of a cube |
+| old: test_engine.ml higher order › third derivative composes | nested gradients | Rune nesting › perturbation › the third derivative of a fourth power |
+| old: test_engine.ml gradient flow › detach stops the gradient | detach | Rune derivatives › detach › under grad a detached value has no derivative |
+| old: test_engine.ml gradient flow › no_grad region is constant | no_grad | dropped: `no_grad` is gone; Rune derivatives › detach › under grad a detached value has no derivative |
+| old: test_engine.ml error contracts › grad requires a scalar objective | scalar objectives | Rune structures › preconditions › a non-scalar objective is refused › grad' |
+| old: test_engine.ml statefulness › grad is repeatable | no state | Rune derivatives › grad › two differentiations of one function give one gradient |
+| old: test_engine.ml statefulness › value reads are transparent | reads | Rune derivatives › grad › a value read inside the objective is its primal |
+| old: test_engine.ml backward pass › cotangents stay lazy views until a reshape or the result | no copies | Rune derivatives › operations › a pair of cancelling transposes adds no copy and no arithmetic to a gradient |
+| old: test_engine.ml debugging › with_debug logs ops and preserves results | with_debug | dropped: `with_debug` is gone; an interpreter installed with `Nx.Op.intercept` replaces it, nx's suite |
 
 ### test_jacobian.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_jacobian.ml pullbacks › pullback is reusable across cotangents | reuse | D › vjp › a pullback applied twice equals two fresh pullbacks |
-| old: test_jacobian.ml pullbacks › pullback rejects a cotangent shape mismatch | checks | D › vjp › a cotangent of another shape is refused at the pullback |
-| old: test_jacobian.ml gradient checking › accepts correct gradients; catches a wrong custom rule | `check_grads` | D › check_grads › a correct gradient is accepted; › a pullback twice the true one is caught |
-| old: test_jacobian.ml jacobians › jacobians preserve float64; preserve float32; mixed-dtype jacobians follow tangent space dtypes | dtypes | D › jacobians › jacfwd' has the result's dtype and jacrev' the argument's; D › laws › jacfwd' equals jacrev' |
-| old: test_jacobian.ml jacobians › jacobian matches the analytic matrix | values | D › jacobians › the Jacobian is its analytic matrix |
-| old: test_jacobian.ml jacobians › jacobians restore input and output shapes | shapes | D › jacobians › the Jacobian's shape is the result's then the argument's |
-| old: test_jacobian.ml jacobians › jacobians evaluate the function once | one run | D › jacobians › each runs the function once |
-| old: test_jacobian.ml jacobians › hessian matches the analytic matrix | `hessian'` | D › jacobians › a Hessian is jacfwd' of grad' (`hessian'` is gone) |
-| old: test_jacobian.ml jacobians › hvp agrees with the materialized hessian; structured hvp matches analytic | `hvp`, `hvp'` | D › jacobians › a Hessian-vector product is jvp of grad; N › perturbation › a Hessian-vector product, forward over reverse (`hvp` and `hvp'` are gone) |
+| old: test_jacobian.ml pullbacks › pullback is reusable across cotangents | reuse | Rune derivatives › vjp › a pullback applied twice equals two fresh pullbacks |
+| old: test_jacobian.ml pullbacks › pullback rejects a cotangent shape mismatch | checks | Rune derivatives › vjp › a cotangent of another shape is refused at the pullback |
+| old: test_jacobian.ml gradient checking › accepts correct gradients | check_grads | Rune derivatives › check_grads › a correct gradient is accepted |
+| old: test_jacobian.ml gradient checking › catches a wrong custom rule | check_grads | Rune derivatives › check_grads › a pullback twice the true one is caught |
+| old: test_jacobian.ml jacobians › jacobians preserve float64; jacobians › jacobians preserve float32; jacobians › mixed-dtype jacobians follow tangent space dtypes | dtypes | Rune derivatives › jacobians › jacfwd' has the result's dtype and jacrev' the argument's; Rune derivatives › laws › jacfwd' equals jacrev' |
+| old: test_jacobian.ml jacobians › jacobian matches the analytic matrix | values | Rune derivatives › jacobians › the Jacobian is its analytic matrix |
+| old: test_jacobian.ml jacobians › jacobians restore input and output shapes | shapes | Rune derivatives › jacobians › the Jacobian's shape is the result's then the argument's |
+| old: test_jacobian.ml jacobians › jacobians evaluate the function once | one run | Rune derivatives › jacobians › each runs the function once |
+| old: test_jacobian.ml jacobians › hessian matches the analytic matrix | Hessians | Rune derivatives › jacobians › a Hessian is jacfwd' of grad' |
+| old: test_jacobian.ml jacobians › hvp agrees with the materialized hessian; jacobians › structured hvp matches analytic | Hessian-vector products | Rune derivatives › jacobians › a Hessian-vector product is jvp of grad; Rune nesting › perturbation › a Hessian-vector product, forward over reverse |
 
 ### test_control.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_control.ml scan › running-sum scan is cumsum; returns the final carry; folds structures | the fold | Sc › fold › a running sum is a cumulative sum; › the result's carry is the last step's; › a structured carry, rows and outputs; › a fold with nothing to emit returns unit |
-| old: test_control.ml scan › differentiates like the primitive; vectorizes over the batch | transformed scans | Sc › transformed › grad of a scan is grad of its primitive; › vmap of a scan is the cumulative sum of each row |
-| old: test_control.ml scan › rejects a scalar input | refusal | Sc › refusals › a scalar row tensor is refused |
-| old: test_control.ml scan › rejects a changed carry; rejects changed outputs; rejects a carry of another dtype | refusals | Sc › refusals › messages |
-| old: test_control.ml scan › rejects a changed carry under jit; a staged scan under vmap and jvp rejects a changed carry | refusals under transformations | Sc › refusals › under transformations; Sc › compiled › a changed carry is refused under jit |
-| old: test_control.ml scan › per-sample gradients; second-order gradients; hessian-vector product | nested transformations of a scan | Sc › transformed › per-row gradients of a scan; › second derivatives of a scan; › Hessian-vector products of a scan |
-| old: test_control.ml cond › selects the branch by predicate; differentiates the taken branch | `cond` | dropped: `cond` is gone; D › grad › a branch on a value differentiates the branch taken |
-| old: test_control.ml while_loop › iterates until the predicate fails; differentiates the taken iterations | `while_loop` | dropped: `while_loop` is gone; D › grad › a recursion on a value differentiates the iterations taken |
-| old: test_control.ml exceptions › each transformation × each call, eager and compiled | an exception reaches its call | C › exceptions › under no transformation, grad, jvp, vmap, a total's scope, a remat's function (each over remat, custom_jvp, custom_vjp, scan); Sc › body; the compiled cells are the compiled call's suite. "grad of rerun code" is C › exceptions › under a remat's function, without `no_grad` |
-| old: test_control.ml exceptions › an operation left unhandled inside a call | an unhandled effect is the code's | C › effects › an effect a construct's code leaves unhandled is that code's; Sc › body › an effect the body leaves unhandled is the body's |
+| old: test_control.ml scan › running-sum scan is cumsum | the fold | Rune.scan › fold › a running sum is a cumulative sum |
+| old: test_control.ml scan › returns the final carry | the carry | Rune.scan › fold › the result's carry is the last step's |
+| old: test_control.ml scan › differentiates like the primitive | grad | Rune.scan › transformed › grad of a scan is grad of its primitive |
+| old: test_control.ml scan › vectorizes over the batch | vmap | Rune.scan › transformed › vmap of a scan is the cumulative sum of each row |
+| old: test_control.ml scan › rejects a scalar input | refusal | Rune.scan › refusals › a scalar row tensor is refused |
+| old: test_control.ml scan › folds structures | structures | Rune.scan › fold › a structured carry, rows and outputs; Rune.scan › fold › a fold with nothing to emit returns unit |
+| old: test_control.ml scan › rejects a changed carry | refusal | Rune.scan › refusals › messages › a carry of another length |
+| old: test_control.ml scan › rejects a changed carry under jit | refusal under jit | Rune.scan › compiled › a changed carry is refused under jit |
+| old: test_control.ml scan › a staged scan under vmap and jvp rejects a changed carry | refusal under transformations | Rune.scan › refusals › under transformations › a changed carry is refused under jvp; Rune.scan › refusals › under transformations › a changed carry is refused under vmap |
+| old: test_control.ml scan › rejects changed outputs | refusal | Rune.scan › refusals › messages › outputs that differ from the first step's |
+| old: test_control.ml scan › rejects a carry of another dtype | refusal | Rune.scan › refusals › messages › a carry of another dtype |
+| old: test_control.ml scan › per-sample gradients (vmap of grad) | vmap of grad | Rune.scan › transformed › per-row gradients of a scan |
+| old: test_control.ml scan › second-order gradients (grad of grad) | grad of grad | Rune.scan › transformed › second derivatives of a scan |
+| old: test_control.ml scan › hessian-vector product (jvp of grad) | jvp of grad | Rune.scan › transformed › Hessian-vector products of a scan |
+| old: test_control.ml branches › differentiates the taken branch | branches | Rune derivatives › grad › a branch on a value differentiates the branch taken |
+| old: test_control.ml branches › differentiates the taken iterations | recursion | Rune derivatives › grad › a recursion on a value differentiates the iterations taken |
+| old: test_control.ml cond › selects the branch by predicate; cond › differentiates the taken branch | cond | dropped: `cond` is gone; Rune derivatives › grad › a branch on a value differentiates the branch taken |
+| old: test_control.ml while_loop › iterates until the predicate fails; while_loop › differentiates the taken iterations | while_loop | dropped: `while_loop` is gone; Rune derivatives › grad › a recursion on a value differentiates the iterations taken |
+| old: test_control.ml exceptions › eager › * | exceptions reach the call | Rune constructs › exceptions › under no transformation |
+| old: test_control.ml exceptions › jit › * | a refused operation | Rune constructs › exceptions › an operation a compiled function refuses raises at its call |
+| old: test_control.ml exceptions › grad › * | exceptions under grad | Rune constructs › exceptions › under grad |
+| old: test_control.ml exceptions › grad of rerun code › * | exceptions in rerun code | Rune constructs › exceptions › under a remat's function |
+| old: test_control.ml exceptions › jvp › * | exceptions under jvp | Rune constructs › exceptions › under jvp |
+| old: test_control.ml exceptions › vmap › * | exceptions under vmap | Rune constructs › exceptions › under vmap |
+| old: test_control.ml exceptions › jvp of a map › * | exceptions under jvp of a map | Rune constructs › exceptions › under jvp of a map |
+| old: test_control.ml exceptions › a total's scope › * | exceptions in a scope | Rune constructs › exceptions › under a total's scope |
+| old: test_control.ml exceptions › an operation left unhandled inside a call | unhandled effects | Rune constructs › effects › an effect a construct's code leaves unhandled is that code's; Rune.scan › body › an effect the body leaves unhandled is the body's |
 
 ### test_composition.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_composition.ml 7 compositions × 4 constructs | the matrix | M › pairs (every ordered pair of grad, jvp, vmap and jit over eight columns, against closed forms) and M › triples; the cells the old matrix left out (a custom rule in the mode it lacked) are cells that raise or, for `custom_jvp` under reverse mode, that compute |
+| old: test_composition.ml grad (vmap f) › * | grad of vmap | Rune compositions › pairs › grad ∘ vmap |
+| old: test_composition.ml vmap (grad f) › * | vmap of grad | Rune compositions › pairs › vmap ∘ grad |
+| old: test_composition.ml jit (grad f) › * | jit of grad | Rune compositions › pairs › jit ∘ grad |
+| old: test_composition.ml jit (vmap f) › * | jit of vmap | Rune compositions › pairs › jit ∘ vmap |
+| old: test_composition.ml jvp (vmap f) › * | jvp of vmap | Rune compositions › pairs › jvp ∘ vmap |
+| old: test_composition.ml vmap (jvp f) › * | vmap of jvp | Rune compositions › pairs › vmap ∘ jvp |
+| old: test_composition.ml jit (grad (vmap f)) › * | jit of grad of vmap | Rune compositions › triples › jit ∘ grad ∘ vmap |
 
 ### test_jvp.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_jvp.ml jvp over records › matches the analytic tangent | a record's tangent | D › jvp › the tangent of a record is its analytic tangent |
-| old: test_jvp.ml jvp over records › mixed dtypes propagate in one pass | dtypes | D › jacobians › jacfwd' has the result's dtype and jacrev' the argument's |
-| old: test_jvp.ml jvp over records › constant function has zero tangent | constants | D › jvp › a function of nothing it differentiates has a zero tangent |
-| old: test_jvp.ml jvp over records › jvp_aux returns auxiliary data | `jvp_aux` | dropped: `jvp_aux` is gone; the value is part of `jvp`'s result structure |
-| old: test_jvp.ml jvp over records › rejects tangent shape mismatch | checks | D › jvp › a tangent of another shape is refused |
-| old: test_jvp.ml jvp over records › agrees with grad on scalar objectives | one derivative | D › laws › jvp along v is the gradient paired with v |
-| old: test_jvp.ml jvp over records › gives per-leaf output tangents | structured results | D › jvp › each result leaf has its own tangent |
-| old: test_jvp.ml composition › hessian-vector product; grad of jvp; nested jvp | nesting | N › perturbation › a Hessian-vector product, forward over reverse; › a gradient of a tangent, reverse over forward; › a tangent of a tangent |
-| old: test_jvp.ml gates and errors › no_grad stops tangents | `no_grad` | dropped: `no_grad` is gone |
-| old: test_jvp.ml gates and errors › detach stops tangents | detach | D › detach › under jvp a detached value has no tangent |
-| old: test_jvp.ml gates and errors › rejects a leaf tangent shape mismatch; rejects tangents of another structure | checks | D › jvp › tangents of another structure are refused; St › mismatches |
-| old: test_jvp.ml gates and errors › unsupported op raises when input is active | an operation with no rule | the rules' suite |
-| old: test_jvp.ml operands without a tangent › a product by a constant has a finite tangent at an infinite operand | no term for a constant | D › edges › a constant operand adds no term at an infinite argument |
-| old: test_jvp.ml operands without a tangent › a power with a constant exponent has tangent 0 at a zero base | rule of `Pow` | the rules' suite |
-| old: test_jvp.ml the rule groups | each rule | the rules' suite |
+| old: test_jvp.ml jvp over records › matches the analytic tangent | a record's tangent | Rune derivatives › jvp › the tangent of a record is its analytic tangent |
+| old: test_jvp.ml jvp over records › mixed dtypes propagate in one pass | two dtypes | Rune derivatives › jvp › leaves of two dtypes push their tangents forward in one pass |
+| old: test_jvp.ml jvp over records › constant function has zero tangent | constants | Rune derivatives › jvp › a function of nothing it differentiates has a zero tangent |
+| old: test_jvp.ml jvp over records › rejects tangent shape mismatch; gates and errors › rejects a leaf tangent shape mismatch | tangent shapes | Rune derivatives › jvp › a tangent of another shape is refused |
+| old: test_jvp.ml jvp over records › agrees with grad on scalar objectives | one derivative | Rune derivatives › laws › jvp along v is the gradient paired with v |
+| old: test_jvp.ml jvp over records › gives per-leaf output tangents | structured results | Rune derivatives › jvp › each result leaf has its own tangent |
+| old: test_jvp.ml jvp over records › jvp_aux returns auxiliary data | jvp_aux | dropped: `jvp_aux` is gone; the auxiliary value is part of `jvp`'s result structure |
+| old: test_jvp.ml operands without a tangent › a product by a constant has a finite tangent at an infinite operand | no term for a constant | Rune derivatives › edges › a constant operand adds no term at an infinite argument |
+| old: test_jvp.ml composition › hessian-vector product (forward over reverse) | forward over reverse | Rune nesting › perturbation › a Hessian-vector product, forward over reverse |
+| old: test_jvp.ml composition › grad of jvp (reverse over forward) | reverse over forward | Rune nesting › perturbation › a gradient of a tangent, reverse over forward |
+| old: test_jvp.ml composition › nested jvp | forward over forward | Rune nesting › perturbation › a tangent of a tangent |
+| old: test_jvp.ml gates and errors › detach stops tangents | detach | Rune derivatives › detach › under jvp a detached value has no tangent |
+| old: test_jvp.ml gates and errors › no_grad stops tangents | no_grad | dropped: `no_grad` is gone; Rune derivatives › detach › under jvp a detached value has no tangent |
+| old: test_jvp.ml gates and errors › rejects tangents of another structure | tangent structures | Rune derivatives › jvp › tangents of another structure are refused |
 
 ### test_complex.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_complex.ml convention › 9 tests | the complex convention | D › complex (one test each, same claims) |
-| old: test_complex.ml the rule groups | each rule on complex operands | the rules' suite |
+| old: test_complex.ml convention › the gradient of \|z - c\|^2 is 2 (z - c) | convention | Rune derivatives › complex › the gradient of \|z - c\|² is 2 (z - c) |
+| old: test_complex.ml convention › the gradient of Re (c * z) is conj c | convention | Rune derivatives › complex › the gradient of Re (c z) is conj c |
+| old: test_complex.ml convention › a complex-valued objective is differentiated through its real part | convention | Rune derivatives › complex › a complex objective is differentiated through its real part |
+| old: test_complex.ml convention › a step against the gradient descends | convention | Rune derivatives › complex › a step against the gradient descends by lr \|g\|² to first order |
+| old: test_complex.ml convention › vjp is the adjoint of jvp | convention | Rune derivatives › complex › vjp's pullback is the adjoint of jvp on complex tensors |
+| old: test_complex.ml convention › custom_vjp's bwd takes and returns gradients | convention | Rune derivatives › complex › a complex custom_vjp equals its function's pullback |
+| old: test_complex.ml convention › jacrev' is jacfwd' on a complex-differentiable function | convention | Rune derivatives › complex › jacrev' is jacfwd' on a complex-differentiable function |
+| old: test_complex.ml convention › hvp is the derivative of the gradient | convention | Rune derivatives › complex › the Hessian-vector product of \|z\|² is 2v |
+| old: test_complex.ml convention › check_grads accepts a complex parameter | convention | Rune derivatives › complex › check_grads accepts a complex parameter |
+
+### test_custom.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_custom.ml custom_vjp › the rule replaces autodiff | the rule is used | Rune custom rules › custom_vjp › the rule replaces the derivative |
+| old: test_custom.ml custom_vjp › a correct rule matches autodiff | a true rule | Rune custom rules › custom_vjp › a true rule matches the function's derivative |
+| old: test_custom.ml custom_vjp › the rule composes inside a graph | composition | Rune custom rules › custom_vjp › the rule composes inside a function |
+| old: test_custom.ml custom_vjp › undifferentiated calls run fwd | no differentiation | Rune custom rules › custom_vjp › with no differentiation the call is its rule's value |
+| old: test_custom.ml custom_vjp › constants pass through | constants | Rune custom rules › custom_vjp › a call on a constant inside grad contributes nothing |
+| old: test_custom.ml custom_vjp › multi-leaf structures get per-leaf gradients | structures | Rune custom rules › custom_vjp › a rule over two arguments gives each its gradient |
+| old: test_custom.ml custom_vjp › rejects forward mode | no forward derivative | Rune custom rules › custom_vjp › jvp of a custom_vjp is refused |
+| old: test_custom.ml custom_vjp › checks bwd's gradients | checks | Rune custom rules › custom_vjp › a pullback of another structure than the arguments is refused |
+| old: test_custom.ml custom_vjp › a structured result | structured results | Rune custom rules › custom_vjp › a structured result |
+| old: test_custom.ml custom_vjp › a result that is its parameter | a result that is an argument | Rune constructs › rules whose result is an argument, rules under a map › a custom_vjp whose result is its argument adds its cotangent once; Rune constructs › rules whose result is an argument, rules under a map › a remat of the identity adds its cotangent once |
+| old: test_custom.ml custom_vjp › a unit result runs fwd under forward mode | no tensor result | Rune custom rules › custom_vjp › a custom_vjp with no tensor result runs under forward mode |
+| old: test_custom.ml custom_jvp › the rule replaces autodiff | the rule is used | Rune custom rules › custom_jvp › the tangent map replaces the derivative |
+| old: test_custom.ml custom_jvp › a correct rule matches autodiff | a true rule | Rune custom rules › custom_jvp › a true tangent map matches the function's derivative |
+| old: test_custom.ml custom_jvp › rejects reverse mode | reverse mode | dropped: a custom_jvp now serves reverse mode by its transposed tangent map: Rune custom rules › custom_jvp › under reverse mode the tangent map is transposed |
+| old: test_custom.ml custom_jvp › a structured result | structured results | Rune custom rules › custom_jvp › a structured result |
+| old: test_custom.ml custom_jvp › checks jvp's tangents | checks | Rune custom rules › custom_jvp › a tangent of another shape than the result is refused |
+| old: test_custom.ml custom_jvp › undifferentiated calls run f | no differentiation | Rune custom rules › custom_jvp › with no differentiation the call is its rule's value |
+| old: test_custom.ml custom_jvp › a result that is its parameter | a result that is an argument | Rune constructs › rules whose result is an argument, rules under a map › a custom_jvp whose result is its argument keeps the argument's tangent |
+| old: test_custom.ml custom_jvp › a unit result runs f under reverse mode | no tensor result | Rune custom rules › custom_jvp › a custom_jvp with no tensor result runs once under reverse mode |
+| old: test_custom.ml composition › per-sample gradients through a custom rule | vmap of grad | Rune custom rules › under a map › per-example gradients through a custom_vjp |
+| old: test_custom.ml composition › plain vmap batches the forward function | vmap | Rune custom rules › under a map › a map of a custom_vjp is the map of its value |
+| old: test_custom.ml composition › grad of vmap differentiates the batched forward computation; composition › grad of vmap applies the custom vjp rule | grad of vmap | Rune custom rules › under a map › grad of a map applies a custom_vjp's pullback to the lanes |
+| old: test_custom.ml composition › jvp of vmap keeps the mapped tangent shape; composition › jvp of vmap applies the custom jvp rule | jvp of vmap | Rune custom rules › under a map › jvp of a map applies a custom_jvp's tangent map to the lanes; Rune custom rules › under a map › a tangent map inside a map sees each lane's tangent |
+| old: test_custom.ml composition › grad of vmap of a custom jvp raises | reverse mode | dropped: a custom_jvp now serves reverse mode: Rune custom rules › under a map › grad of a map applies a custom_jvp's transposed tangent map |
+| old: test_custom.ml composition › vmap passes on a custom jvp that captures its lanes | lanes | Rune custom rules › under a map › a map passes on a custom_jvp that reads its lanes |
+| old: test_custom.ml composition › jvp of vmap of a custom vjp raises | no forward derivative | Rune custom rules › under a map › jvp of a map of a custom_vjp is refused |
+| old: test_custom.ml composition › vmap passes on a custom vjp that captures its lanes | lanes | Rune custom rules › under a map › a map passes on a custom_vjp that reads its lanes |
+| old: test_custom.ml compiled rules › custom reverse rule survives compilation and replay | under jit | Rune custom rules › under a compiled function › a custom_vjp's pullback under jit, replayed |
+| old: test_custom.ml compiled rules › custom forward rule survives compilation and replay | under jit | Rune custom rules › under a compiled function › a custom_jvp's tangent map under jit, replayed |
+| old: test_custom.ml compiled rules › custom backward uses indexed scatter | under jit | Rune custom rules › under a compiled function › a custom_vjp whose pullback scatters, under jit, replayed |
+
+### test_total.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_total.ml scopes › no scope is inert | no scope | Rune totals › scopes › with no scope an addition does nothing |
+| old: test_total.ml scopes › the innermost scope of a total collects | innermost scope | Rune totals › scopes › the innermost scope of a total collects |
+| old: test_total.ml scopes › a shape mismatch raises at the addition | shapes | Rune totals › scopes › an addition of another shape is refused where it is made |
+| old: test_total.ml scopes › an exception leaves the scope | exceptions | Rune totals › scopes › an exception leaves the scope |
+| old: test_total.ml scopes › a caught exception keeps its additions | exceptions | Rune totals › scopes › a caught exception keeps its additions |
+| old: test_total.ml scopes › a jit inside a scope runs eagerly | jit in a scope | Rune totals › scopes › a jit inside a scope runs eagerly and its additions count |
+| old: test_total.ml scans and remats › an eager scan counts each step | scans | Rune totals › scans and remats › a scan counts each step once |
+| old: test_total.ml scans and remats › a staged scan counts each step, replayed | staged scans | Rune totals › scans and remats › a staged scan counts each step, replayed |
+| old: test_total.ml scans and remats › a remat | remats | Rune totals › scans and remats › a remat counts its addition once |
+| old: test_total.ml scans and remats › a key scope inside a scope keeps its draws | key scopes | Rune totals › scans and remats › a key scope inside a scope keeps a scan's draws |
+| old: test_total.ml scans and remats › restarted traces discard their additions | restarts | Rune totals › scans and remats › restarted traces discard their additions |
+| old: test_total.ml scans and remats › a scope with no additions costs a staged scan nothing | cost | dropped: the cost of a staged loop belongs to the compiled call's suite |
+| old: test_total.ml scans and remats › an exception reaches the performer | exceptions | Rune totals › scans and remats › an exception of a scan or a remat reaches its call inside the scope |
+| old: test_total.ml scans and remats › placement restarts discard their additions | placement | dropped: jit's `?devices` and its placement restarts are gone; a trace places values as it runs |
+| old: test_total.ml maps › an addition crossing a map is the loop's | maps | Rune totals › maps › an addition crossing a map is the loop's; Rune totals › maps › an addition crossing a map over a scan is the loop's |
+| old: test_total.ml maps › a scope inside a map collects per lane | maps | Rune totals › maps › a scope inside a map collects per lane |
+| old: test_total.ml differentiation › a total is differentiated | differentiation | Rune totals › differentiation › a collected total is differentiated as a value; Rune totals › differentiation › a collected total is differentiated as a value, compiled |
+| old: test_total.ml sketch › a marked loss's Gauss-Newton sketch | sketches | Rune totals › sketches › a marked loss's Gauss-Newton sketch; Rune totals › sketches › a marked loss's sketch, compiled |
+| old: test_total.ml sketch › a marked model trains under grad | sketches | Rune totals › sketches › a marked model trains under grad |
+| old: test_total.ml sketch › a mark inside the model's own map | sketches | Rune totals › sketches › a mark inside the model's own map |
+| old: test_total.ml reverse mode › a scope outside grad counts once | reruns | Rune totals › code that runs again › a scope outside grad counts a scan's additions once; Rune totals › code that runs again › a scope outside grad counts a remat's addition once; Rune totals › code that runs again › a scope outside grad counts once, compiled |
+| old: test_total.ml reverse mode › rerun code inside rerun code | reruns | Rune totals › code that runs again › a remat in a remat counts once; Rune totals › code that runs again › a scan in a remat counts once |
+| old: test_total.ml reverse mode › a custom call in rerun code | reruns | Rune totals › code that runs again › a custom_vjp rule in a remat counts once; Rune totals › code that runs again › a custom_jvp rule with no tensor result in a remat counts once |
+| old: test_total.ml reverse mode › higher order | reruns | Rune totals › code that runs again › forward over reverse counts once; Rune totals › code that runs again › reverse over reverse counts once; Rune totals › code that runs again › a pullback applied twice counts once; Rune totals › code that runs again › jacrev' counts once; Rune totals › code that runs again › jacfwd', a map over the columns, counts once per column |
+| old: test_total.ml reverse mode › no_grad in rerun code | no_grad | dropped: `no_grad` is gone; additions in rerun code count once: Rune compositions › code that runs again adds to a total once |
+
+### test_quant.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_quant.ml debug › debug | with_debug of nx.quant's operations | dropped: `with_debug` is gone, and nx.quant's effect reaches no rune.next interpreter before quantised activations land in nx |
 
 ### test_read_lifetime.ml
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_read_lifetime.ml a read of a placed temporary under collection | nx's read path | dropped: no transformation is involved; nx's placement suite |
+| old: test_read_lifetime.ml * | a read of a placed temporary under collection | dropped: nx's read path, not rune's: nx's placement suite |
+
+### exhaustive.t
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: exhaustive.t * | an interpreter that forgets a construct does not compile | next/test/constructs/exhaustive.t |
 
 ## Rule tables
 
