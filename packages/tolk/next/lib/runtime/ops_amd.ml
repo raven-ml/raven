@@ -374,6 +374,8 @@ let compute_queue ~host gpu q : Hcq2.commands =
     let packet =
       if data.enable_dispatch_ptr then dispatch_packet data info () else []
     in
+    (* The arguments start on 128 bytes, as every buffer a queue's commands
+       address does; a kernel's argument segment needs 16. *)
     ( info,
       v Op.Linear ~src:(words @ packet)
         ~arg:(Region { name = "kernargs"; align = 128 }) )
