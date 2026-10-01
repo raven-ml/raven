@@ -41,8 +41,8 @@
    per element and stay scalar. A multi-input kernel therefore also branches on
    a 0 step, hoisting that operand's single load out of the loop and leaving the
    remaining pointers unit-stride — so the loop still vectorizes and reads half
-   the memory. Splat branches restate the SAME scalar expression with the same
-   operand order, so results are bit-identical to the contiguous branch. Only
+   the memory. Splat branches restate the SAME scalar expression, so results
+   are bit-identical to the contiguous branch, NaNs included (NX_C_NAN2). Only
    the innermost coalesced step is 0 for a 0-d broadcast; a partially broadcast
    operand (say [1,k] against [n,k]) keeps an innermost step of `es` and stays
    on the contiguous branch. */
@@ -399,6 +399,49 @@ static inline nx_c_complex64 nx_c_cdiv64(nx_c_complex64 a, nx_c_complex64 b) {
 #define NX_C_CDIV(a, b)                                                        \
   _Generic((a), nx_c_complex32: nx_c_cdiv32, nx_c_complex64: nx_c_cdiv64)(a, b)
 
+/* NaN operands. Given two NaNs, an arm64 or x86 instruction returns its first
+   register's, and clang orders the operands of a commutative operation (add,
+   mul, fma's product) per loop: a vector loop over a splat operand puts the
+   splat second, the scalar loop after it may put it first. So float arithmetic
+   picks the NaN in the source, as nx_c_fmax does: a NaN result is the first
+   NaN operand, its bits unchanged, or the operation's own NaN when no operand
+   is NaN. A complex result's NaN part is the first NaN among the operands'
+   parts, real before imaginary, or else the positive quiet NaN: a complex
+   operation is several float operations, and the sign of their own NaN
+   depends on how the compiler fused and negated them. float16, bfloat16 and
+   float8 compute in float, and widening quiets a signaling NaN.
+
+   The rule lives in functions: a call evaluates the operation on every
+   element, so clang emits plain selects and the loop vectorizes, where a `?:`
+   macro let it branch around the operation and the loop stayed scalar. */
+#define NX_C_DEFINE_NAN(T, sfx)                                                \
+  static inline T nx_c_nan2_##sfx(T a, T b, T r) {                             \
+    return a != a ? a : b != b ? b : r;                                        \
+  }                                                                            \
+  static inline T nx_c_nan3_##sfx(T a, T b, T c, T r) {                        \
+    return a != a ? a : nx_c_nan2_##sfx(b, c, r);                              \
+  }
+NX_C_DEFINE_NAN(float, f)
+NX_C_DEFINE_NAN(double, d)
+#undef NX_C_DEFINE_NAN
+#define NX_C_NAN2(a, b, r)                                                     \
+  _Generic((a), float: nx_c_nan2_f, double: nx_c_nan2_d)(a, b, r)
+#define NX_C_NAN3(a, b, c, r)                                                  \
+  _Generic((a), float: nx_c_nan3_f, double: nx_c_nan3_d)(a, b, c, r)
+
+#define NX_C_DEFINE_CNAN(C, T, re, im, make)                                   \
+  static inline C nx_c_cnan_##C(C a, C b, C r) {                               \
+    T n = NX_C_NAN2(re(a), im(a), NX_C_NAN2(re(b), im(b), (T)NAN));            \
+    T rr = re(r), ri = im(r);                                                  \
+    return make(rr != rr ? n : rr, ri != ri ? n : ri);                         \
+  }
+NX_C_DEFINE_CNAN(nx_c_complex32, float, crealf, cimagf, CMPLXF)
+NX_C_DEFINE_CNAN(nx_c_complex64, double, creal, cimag, CMPLX)
+#undef NX_C_DEFINE_CNAN
+#define NX_C_CNAN(a, b, r)                                                     \
+  _Generic((a), nx_c_complex32: nx_c_cnan_nx_c_complex32,                       \
+      nx_c_complex64: nx_c_cnan_nx_c_complex64)(a, b, r)
+
 #define NX_C_RECIP_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                  \
   NX_C_UK(recip, sfx, storage, compute, ld, st, ((vx) == 0 ? 0 : 1 / (vx)))
 #define NX_C_RECIP_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                  \
@@ -595,9 +638,11 @@ NX_C_ROUNDOP(round)
 #define NX_C_ARK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
   NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)))
 #define NX_C_ARK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
-  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)))
+  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
+         NX_C_NAN2(va, vb, (va)NX_C_CURSYM(vb)))
 #define NX_C_ARK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
-  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)))
+  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
+         NX_C_CNAN(va, vb, (va)NX_C_CURSYM(vb)))
 #define NX_C_ARK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_ARITH_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_ARK_##cat(sfx, storage, compute, ld, st)
@@ -647,9 +692,10 @@ static const nx_c_map_table nx_c_idiv_table = {
 
 /* fdiv: true division for float and complex (int div routes to idiv). */
 #define NX_C_FDIV_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                  \
-  NX_C_BK(fdiv, sfx, storage, compute, ld, st, ((va) / (vb)))
+  NX_C_BK(fdiv, sfx, storage, compute, ld, st, NX_C_NAN2(va, vb, (va) / (vb)))
 #define NX_C_FDIV_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                \
-  NX_C_BK(fdiv, sfx, storage, compute, ld, st, NX_C_CDIV((va), (vb)))
+  NX_C_BK(fdiv, sfx, storage, compute, ld, st,                                  \
+         NX_C_CNAN(va, vb, NX_C_CDIV(va, vb)))
 #define NX_C_FDIV_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
@@ -1039,7 +1085,8 @@ static const nx_c_map_table nx_c_where_table = {
 #define NX_C_FMA_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
   NX_C_FMAK(sfx, storage, compute, ld, st, ((va) * (vb) + (vc)))
 #define NX_C_FMA_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
-  NX_C_FMAK(sfx, storage, compute, ld, st, NX_C_MFN(fma, compute)(va, vb, vc))
+  NX_C_FMAK(sfx, storage, compute, ld, st,                                      \
+           NX_C_NAN3(va, vb, vc, NX_C_MFN(fma, compute)(va, vb, vc)))
 #define NX_C_FMA_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_FMA_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_FMA_KROW(sfx, storage, compute, ld, st, cat)                       \

@@ -250,6 +250,311 @@ let binary_ops =
             check "float64" Nx.float64);
       ])
 
+(* NaN operands *)
+
+(* An element's bits, a NaN's sign and payload included, do not depend on where
+   it falls in the run a kernel computes: in a vector body or the scalar loop
+   after it, beside a broadcast operand or a strided one. *)
+
+(* A float dtype seen through its bits: an element is [words] words of [width]
+   bits, stored as [word], and [special] draws a word whose exponent is all
+   ones, NaN or infinity, in either sign. *)
+type float_format =
+  | F : {
+      fname : string;
+      dtype : ('a, 'b) Nx.dtype;
+      word : ('c, 'd) Nx.dtype;
+      width : int;
+      words : int;
+      special : int64 Gen.t;
+    }
+      -> float_format
+
+(* The words of an IEEE layout of [e] exponent and [m] fraction bits whose
+   exponent is all ones: infinity and the NaNs whose fraction is at least
+   [least]. *)
+let special ~e ~m ~least =
+  let open Gen in
+  let ones = Int64.shift_left (Int64.pred (Int64.shift_left 1L e)) m in
+  let+ negative = bool
+  and+ fraction =
+    frequency
+      [
+        (1, constant 0L);
+        (4, int64_range least (Int64.pred (Int64.shift_left 1L m)));
+      ]
+  in
+  let w = Int64.logor ones fraction in
+  if negative then Int64.logor (Int64.shift_left 1L (e + m)) w else w
+
+let formats =
+  let f fname dtype word ~e ~m ?(least = 1L) words =
+    let special = special ~e ~m ~least in
+    F { fname; dtype; word; width = 1 + e + m; words; special }
+  in
+  [
+    f "float16" Nx.float16 Nx.int16 ~e:5 ~m:10 1;
+    f "bfloat16" Nx.bfloat16 Nx.int16 ~e:8 ~m:7 1;
+    (* E4M3 has no infinity, and its one NaN per sign has all ones. *)
+    f "float8_e4m3" Nx.float8_e4m3 Nx.int8 ~e:4 ~m:3 ~least:7L 1;
+    f "float8_e5m2" Nx.float8_e5m2 Nx.int8 ~e:5 ~m:2 1;
+    f "float32" Nx.float32 Nx.int32 ~e:8 ~m:23 1;
+    f "float64" Nx.float64 Nx.int64 ~e:11 ~m:52 1;
+    f "complex64" Nx.complex64 Nx.int32 ~e:8 ~m:23 2;
+    f "complex128" Nx.complex128 Nx.int64 ~e:11 ~m:52 2;
+  ]
+
+type nan_op = {
+  oname : string;
+  arity : int;
+  complex : bool;
+  run : 'a 'b. ('a, 'b) Nx.t array -> ('a, 'b) Nx.t;
+}
+
+(* A polymorphic binary operation, which [nan_ops] spreads over an array. *)
+type binary_fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+
+let nan_ops =
+  let binary ?(complex = false) oname { f } =
+    { oname; arity = 2; complex; run = (fun x -> f x.(0) x.(1)) }
+  in
+  [
+    binary ~complex:true "add" { f = Nx.add };
+    binary ~complex:true "sub" { f = Nx.sub };
+    binary ~complex:true "mul" { f = Nx.mul };
+    binary ~complex:true "div" { f = Nx.div };
+    binary ~complex:true "pow" { f = Nx.pow };
+    binary "maximum" { f = Nx.maximum };
+    binary "minimum" { f = Nx.minimum };
+    binary "mod_" { f = Nx.mod_ };
+    binary "atan2" { f = Nx.atan2 };
+    binary "hypot" { f = Nx.hypot };
+    {
+      oname = "fma";
+      arity = 3;
+      complex = false;
+      run = (fun x -> Nx.fma x.(0) x.(1) x.(2));
+    };
+  ]
+
+(* How an operand of [n] elements reaches the kernel: contiguous, every other
+   element of a longer run, or one element broadcast to [n]. *)
+type laid = Full | Every_other | Scalar
+
+let pp_laid ppf l =
+  Format.pp_print_string ppf
+    (match l with
+    | Full -> "full"
+    | Every_other -> "every other"
+    | Scalar -> "scalar")
+
+let pp_bits ppf v = Format.fprintf ppf "0x%Lx" v
+let bits_exact = Testable.make ~pp:pp_bits ~equal:Int64.equal
+
+(* [n], each operand's layout and its elements' words, and the step between the
+   operands' offsets. *)
+let nan_case (F f) arity =
+  let open Gen in
+  let word =
+    frequency
+      [
+        (3, f.special);
+        ( 2,
+          if f.width = 64 then int64
+          else int64_range 0L (Int64.pred (Int64.shift_left 1L f.width)) );
+      ]
+  in
+  let operand n =
+    let* laid = of_list ~pp:pp_laid [ Full; Every_other; Scalar ] in
+    let size = f.words * if laid = Scalar then 1 else n in
+    let+ words = array ~size:(constant size) word in
+    (laid, words)
+  in
+  let pp ppf (n, operands, step) =
+    Format.fprintf ppf "n = %d, offset step %d" n step;
+    Array.iter
+      (fun (laid, words) ->
+        Format.fprintf ppf "@ %a: [%a]" pp_laid laid
+          (Format.pp_print_seq ~pp_sep:Format.pp_print_space pp_bits)
+          (Array.to_seq words))
+      operands
+  in
+  with_pp pp
+    (let* n = int_range 0 40 in
+     let+ operands = array ~size:(constant arity) (operand n)
+     and+ step = int_range 0 15 in
+     (n, operands, step))
+
+(* [op]'s result over every offset of its operands, from 0 to 15 elements, is
+   word for word the result of each element computed alone. *)
+let alone_and_together (type a b c d) (dtype : (a, b) Nx.dtype)
+    (word : (c, d) Nx.dtype) ~width ~words op (n, operands, step) =
+  let unsigned v =
+    if width = 64 then v
+    else Int64.logand v (Int64.pred (Int64.shift_left 1L width))
+  in
+  let signed v =
+    if width < 64 && Int64.compare v (Int64.shift_left 1L (width - 1)) >= 0 then
+      Int64.sub v (Int64.shift_left 1L width)
+    else v
+  in
+  let of_words shape ws =
+    let shape = if words = 1 then shape else Array.append shape [| words |] in
+    Nx.create Nx.int64 shape (Array.map signed ws)
+    |> Nx.cast word |> Nx.bitcast dtype
+  in
+  let to_words t =
+    Array.map unsigned (Nx.to_array (Nx.cast Nx.int64 (Nx.bitcast word t)))
+  in
+  let laid_out ~off (laid, ws) =
+    match laid with
+    | Scalar -> of_words [||] ws
+    | Full ->
+        let pad = Array.make (off * words) 0L in
+        Nx.shrink
+          [| (off, off + n) |]
+          (of_words [| off + n |] (Array.append pad ws))
+    | Every_other ->
+        let len = off + (2 * n) in
+        let at j =
+          let e = (j / words) - off in
+          if e >= 0 && e mod 2 = 0 then ws.((e / 2 * words) + (j mod words))
+          else 0L
+        in
+        Nx.slice
+          [ Rs (off, len, 2) ]
+          (of_words [| len |] (Array.init (len * words) at))
+  in
+  let all_scalar = Array.for_all (fun (laid, _) -> laid = Scalar) operands in
+  let element i (laid, ws) =
+    of_words [||] (if laid = Scalar then ws else Array.sub ws (i * words) words)
+  in
+  let expected =
+    Array.concat
+      (List.init
+         (if all_scalar then 1 else n)
+         (fun i -> to_words (op.run (Array.map (element i) operands))))
+  in
+  for off = 0 to 15 do
+    let operands =
+      Array.mapi
+        (fun k o -> laid_out ~off:((off + (k * step)) mod 16) o)
+        operands
+    in
+    equal
+      ~msg:(Printf.sprintf "at offset %d" off)
+      (array bits_exact) expected
+      (to_words (op.run operands))
+  done
+
+(* The rule itself, on fixed operands: a NaN result is the first NaN operand. q1
+   and q2 are quiet NaNs of payloads 1 and 2, q2 negative, and s1 a signaling
+   NaN. *)
+let first_nan =
+  let f32 ws =
+    Nx.bitcast Nx.float32 (Nx.create Nx.int32 [| Array.length ws |] ws)
+  in
+  let f64 ws =
+    Nx.bitcast Nx.float64 (Nx.create Nx.int64 [| Array.length ws |] ws)
+  in
+  let c64 ws =
+    Nx.bitcast Nx.complex64 (Nx.create Nx.int32 [| Array.length ws / 2; 2 |] ws)
+  in
+  let words32 t = Nx.to_array (Nx.bitcast Nx.int32 t) in
+  let words64 t = Nx.to_array (Nx.bitcast Nx.int64 t) in
+  let w32 =
+    array
+      (Testable.make
+         ~pp:(fun ppf v -> Format.fprintf ppf "0x%lx" v)
+         ~equal:Int32.equal)
+  in
+  let arith =
+    [
+      ("add", { f = Nx.add });
+      ("sub", { f = Nx.sub });
+      ("mul", { f = Nx.mul });
+      ("div", { f = Nx.div });
+    ]
+  in
+  group "the first NaN operand"
+    [
+      test "add, sub, mul and div keep the first NaN operand's bits" (fun () ->
+          let q1 = 0x7fc00001l and q2 = 0xffc00002l and s1 = 0x7f800001l in
+          let one = 0x3f800000l in
+          let a = f32 [| q1; q2; one; s1 |] and b = f32 [| q2; q1; q2; q1 |] in
+          let q1d = 0x7ff8000000000001L and q2d = 0xfff8000000000002L in
+          let s1d = 0x7ff0000000000001L and oned = 0x3ff0000000000000L in
+          let ad = f64 [| q1d; q2d; oned; s1d |]
+          and bd = f64 [| q2d; q1d; q2d; q1d |] in
+          List.iter
+            (fun (name, { f }) ->
+              equal ~msg:(name ^ " at float32") w32 [| q1; q2; q2; s1 |]
+                (words32 (f a b));
+              equal ~msg:(name ^ " at float64") (array bits_exact)
+                [| q1d; q2d; q2d; s1d |]
+                (words64 (f ad bd)))
+            arith);
+      test "fma keeps the first of its three operands that is NaN" (fun () ->
+          let q1 = 0x7fc00001l and q2 = 0xffc00002l and s1 = 0x7f800001l in
+          let one = 0x3f800000l in
+          equal w32 [| q1; q2; q2; s1 |]
+            (words32
+               (Nx.fma
+                  (f32 [| one; q2; one; one |])
+                  (f32 [| q1; q1; one; s1 |])
+                  (f32 [| q2; s1; q2; q1 |]))));
+      test "a narrow float keeps the first NaN operand's sign" (fun () ->
+          let check (type b w) name (dt : (float, b) Nx.dtype)
+              (word : (int, w) Nx.dtype) ~neg ~pos =
+            let nan w = Nx.bitcast dt (Nx.create word [| 1 |] [| w |]) in
+            let sign x =
+              Float.sign_bit (Nx.item [ 0 ] (Nx.cast Nx.float32 x))
+            in
+            List.iter
+              (fun (op, { f }) ->
+                let msg = Printf.sprintf "%s at %s" op name in
+                equal ~msg bool true (sign (f (nan neg) (nan pos)));
+                equal ~msg bool false (sign (f (nan pos) (nan neg))))
+              arith
+          in
+          check "float16" Nx.float16 Nx.int16 ~neg:(-511) ~pos:0x7e02;
+          check "bfloat16" Nx.bfloat16 Nx.int16 ~neg:(-63) ~pos:0x7fc2;
+          check "float8_e4m3" Nx.float8_e4m3 Nx.int8 ~neg:(-1) ~pos:0x7f;
+          check "float8_e5m2" Nx.float8_e5m2 Nx.int8 ~neg:(-2) ~pos:0x7d);
+      test
+        "a NaN part of a complex result is the operands' first NaN part, or \
+         else the positive quiet NaN" (fun () ->
+          let q1 = 0x7fc00001l and q2 = 0xffc00002l and one = 0x3f800000l in
+          let a = c64 [| one; q1 |] and b = c64 [| q2; one |] in
+          List.iter
+            (fun (name, { f }) ->
+              equal ~msg:name w32 [| q1; q1 |] (words32 (f a b)))
+            arith;
+          let inf = 0x7f800000l and ninf = 0xff800000l in
+          equal ~msg:"own NaN" w32 [| 0x7fc00000l; 0l |]
+            (words32 (Nx.add (c64 [| inf; 0l |]) (c64 [| ninf; 0l |]))));
+    ]
+
+let nan_operands =
+  group "NaN operands"
+    (List.concat_map
+       (fun (F f as format) ->
+         List.filter_map
+           (fun op ->
+             if Nx_dtype.is_complex f.dtype && not op.complex then None
+             else
+               Some
+                 (prop
+                    (Printf.sprintf
+                       "%s at %s gives each element the bits it has alone"
+                       op.oname f.fname)
+                    (nan_case format op.arity)
+                    (alone_and_together f.dtype f.word ~width:f.width
+                       ~words:f.words op)))
+           nan_ops)
+       formats
+    @ [ first_nan ])
+
 (* Near zero, and multiply-adds *)
 
 (* [x] and its value under [f], from a sweep around 0 of both signs. *)
@@ -1113,6 +1418,7 @@ let () =
          checks;
          classifiers;
          binary_ops;
+         nan_operands;
          scalar_variants;
          refusals;
          comparisons;

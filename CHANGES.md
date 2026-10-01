@@ -3019,6 +3019,11 @@ thread.
 
 ### Nx
 
+- A NaN result of `Nx.add`, `Nx.sub`, `Nx.mul`, `Nx.div` or `Nx.fma` on the
+  host is the first NaN operand, or for complex numbers the first NaN part.
+  Given two NaNs, float `add`, `mul` and `fma` and complex `add` and `div`
+  returned one or the other by the element's position, so bits changed with
+  batching.
 - `Nx.fma` with one operand broadcast from a single element runs about 3 times
   faster on the host. That operand is loaded once and the loop vectorizes,
   where it took the strided scalar loop before.

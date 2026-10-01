@@ -1772,8 +1772,11 @@ val argwhere : ('a, 'b) t -> int64_t
     below included, computes at [float32] and rounds once. Integer addition,
     subtraction, multiplication, negation and absolute value wrap modulo
     [2^bits], so [abs] of an integer type's least value is that value. A NaN
-    result's sign and payload are unspecified. Each operation [op] has
-    variants:
+    result's sign and payload are unspecified, except on the host, where {!add},
+    {!sub}, {!mul}, {!div} and {!fma} give the first NaN operand: bit for bit at
+    [float32] and [float64], and its sign at the narrower floats. A NaN part of
+    their complex result is the first NaN among the operands' parts, real part
+    first, or else a positive quiet NaN. Each operation [op] has variants:
     - [op_s t s] — tensor-scalar.
     - [rop_s s t] — scalar-tensor (reversed operands). *)
 
