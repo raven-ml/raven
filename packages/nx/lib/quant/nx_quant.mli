@@ -19,6 +19,14 @@
     of the experts [ids] selects and one product, which the interpreter sees
     whole.
 
+    A transformation that runs those operations eagerly, such as a gradient
+    outside a compiled call, holds every matrix the product gathers, decoded at
+    float32: {!apply} with [ids] naming [s] experts at each of [t] positions
+    holds [t * s] decoded matrices. Differentiating a large mixture of experts
+    is therefore for compiled calls; eagerly it needs the memory of all those
+    matrices at once. An accumulation over each expert in turn would bound it to
+    one decoded matrix, at [e / s] times the arithmetic for [e] experts.
+
     A quantised weight has no gradient: build it once and capture it.
 
     {[
