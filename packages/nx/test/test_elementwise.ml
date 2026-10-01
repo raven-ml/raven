@@ -693,6 +693,21 @@ let complex_pair =
     (one ~pp:pp_complex Nx.complex128 complex_value)
     (one ~pp:pp_complex Nx.complex128 complex_value)
 
+(* Two float64 tensors of one shape and layout, of any elements. *)
+let component_pair =
+  let open Gen in
+  let* s = array ~size:(int_range 0 3) (int_range 0 3) in
+  let* steps = layout in
+  let one =
+    viewed ~shape:(constant s)
+      ~layout:(constant ~pp:pp_layout steps)
+      ~pp:pp_float Nx.float64 any_float
+  in
+  pair one one
+
+(* [components z] is [z]'s components as floats, along a last axis of two. *)
+let components z = Nx.bitcast Nx.float64 z
+
 let complex_numbers =
   let agree name rel nx ocaml =
     prop (name ^ " agrees with Stdlib.Complex") complex_pair (fun (a, b) ->
@@ -745,6 +760,32 @@ let complex_numbers =
            (tensor (complex_close ~rel:0.))
            (pair floats64 floats64) parts
            (fun (re, im) -> Nx.complex Nx.complex128 ~re ~im));
+      prop "complex's components read back as floats are re and im"
+        component_pair (fun (re, im) ->
+          equal (tensor float_exact)
+            (Nx.stack ~axis:(-1) [ re; im ])
+            (components (Nx.complex Nx.complex128 ~re ~im)));
+      test "complex keeps non-finite components, NaN and signed zeros"
+        (fun () ->
+          let re = Nx.create Nx.float64 [| 4 |] [| 1.; infinity; nan; -0. |]
+          and im = Nx.create Nx.float64 [| 4 |] [| infinity; 1.; -0.; nan |] in
+          equal (tensor float_exact)
+            (Nx.create Nx.float64 [| 4; 2 |]
+               [| 1.; infinity; infinity; 1.; nan; -0.; -0.; nan |])
+            (components (Nx.complex Nx.complex128 ~re ~im));
+          let z =
+            Nx.item []
+              (Nx.complex Nx.complex64 ~re:(Nx.scalar Nx.float64 1.)
+                 ~im:(Nx.scalar Nx.float64 infinity))
+          in
+          equal (pair float_exact float_exact) (1., infinity) (z.re, z.im));
+      test "complex broadcasts re against im" (fun () ->
+          let re = Nx.create Nx.float64 [| 2 |] [| 1.; -0. |]
+          and im = Nx.create Nx.float64 [| 2; 1 |] [| infinity; -0. |] in
+          equal (tensor float_exact)
+            (Nx.create Nx.float64 [| 2; 2; 2 |]
+               [| 1.; infinity; -0.; infinity; 1.; -0.; -0.; -0. |])
+            (components (Nx.complex Nx.complex128 ~re ~im)));
       cases "the sign of a zero imaginary part picks the side of the branch cut"
         ~name:(fun (re, im, _) -> Printf.sprintf "angle (%g, %g)" re im)
         [

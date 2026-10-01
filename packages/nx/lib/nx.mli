@@ -1865,12 +1865,14 @@ val fma : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     {2:complex_nonfinite Non-finite components}
 
-    Only {!real} and {!magnitude} read a component directly. The others reach
-    the imaginary component by rotating it into the real one, which multiplies
-    the two components together, so a non-finite component poisons the other:
-    {!imag}, {!angle}, {!val-complex}, and {!conjugate} produce NaN components
-    wherever an input component is infinite or NaN. Finite inputs are
-    unaffected, including components near the dtype maximum. *)
+    {!real} and {!magnitude} read a component directly, and {!val-complex}
+    writes both directly. The others reach the imaginary component by rotating
+    it into the real one, which multiplies the two components together, so a
+    non-finite component poisons the other: {!imag}, {!angle}, and {!conjugate}
+    produce NaN components wherever an input component is infinite or NaN.
+    Finite inputs are unaffected, including components near the dtype maximum.
+    {!bitcast} to the float of the components reads both exactly, as a last
+    axis of two. *)
 
 val real : (float, 'b) dtype -> (Complex.t, 'a) t -> (float, 'b) t
 (** [real dt z] is the real component of each element of [z].
@@ -1919,7 +1921,8 @@ val complex :
   im:(float, 'a) t ->
   (Complex.t, 'c) t
 (** [complex dt ~re ~im] assembles a complex tensor from its components, which
-    are broadcast together.
+    are broadcast together. Each component is kept as {!cast} gives it in the
+    float of [dt]'s components, infinities, NaN and signed zeros included.
 
     {@ocaml[
       # complex complex64

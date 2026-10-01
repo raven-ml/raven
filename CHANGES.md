@@ -3004,6 +3004,9 @@ thread.
 
 ### Nx
 
+- `Nx.complex` keeps each component as given: an infinite or NaN `~im` made
+  the real part NaN, and a `-0.` component became `0.`. It now writes both
+  components directly instead of adding `im * i` to `re`.
 - `Nx.take` without an axis returns a value of the indices' shape. It raised
   for scalar or multi-dimensional indices.
 - **Breaking:** `Nx_amd_device.counting` is `Nx_amd_device.profiling`, which

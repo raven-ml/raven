@@ -1162,6 +1162,51 @@ let complex_tests =
         is_ok (Rune.check_grads Nx.Ptree.tensor modulus2 (z3 ())));
   ]
 
+(* Complex numbers assembled from real parameters *)
+
+let assembled (re, im) = Nx.complex Nx.complex128 ~re ~im
+
+let complex_of_parts_tests =
+  [
+    test "the gradient of Re (c z) through complex is Re c and -Im c" (fun () ->
+        let c = c3 () in
+        let gre, gim =
+          Rune.grad pair
+            (fun p -> Nx.sum (Nx.real f64 (Nx.mul c (assembled p))))
+            (vec [| 1.; 2.; 3. |], vec [| -1.; 0.5; 4. |])
+        in
+        equal ~msg:"re" (exact ()) (Nx.real f64 c) gre;
+        equal ~msg:"im" (exact ()) (Nx.neg (Nx.imag f64 c)) gim);
+    test "the gradient of |z - c|² through complex is 2 (z - c) by parts"
+      (fun () ->
+        let c = c3 ()
+        and re = vec [| 1.; 2.; 3. |]
+        and im = vec [| -1.; 0.; 4. |] in
+        let gre, gim =
+          Rune.grad pair (fun p -> modulus2 (Nx.sub (assembled p) c)) (re, im)
+        in
+        equal ~msg:"re" (close ()) (Nx.mul_s (Nx.sub re (Nx.real f64 c)) 2.) gre;
+        equal ~msg:"im" (close ()) (Nx.mul_s (Nx.sub im (Nx.imag f64 c)) 2.) gim);
+    test "a component broadcast against the other sums its gradient" (fun () ->
+        let gre, gim =
+          Rune.grad pair
+            (fun p -> modulus2 (assembled p))
+            (vec [| 1.; 2.; 3. |], scalar 0.5)
+        in
+        equal ~msg:"re" (close ()) (vec [| 2.; 4.; 6. |]) gre;
+        equal ~msg:"im" (close ()) (scalar 3.) gim);
+    test "the tangent of complex is complex of the tangents" (fun () ->
+        let p = (vec [| 1.; 2. |], vec [| -1.; 3. |])
+        and v = (vec [| 0.5; -2. |], vec [| 4.; -0. |]) in
+        let _, dz = Rune.jvp pair Nx.Ptree.tensor assembled p v in
+        equal (exact ()) (assembled v) dz);
+    test "check_grads accepts a loss through complex" (fun () ->
+        is_ok
+          (Rune.check_grads pair
+             (fun p -> Nx.sum (Nx.real f64 (Nx.exp (assembled p))))
+             (vec [| 0.3; -0.2 |], vec [| 1.1; 0.4 |])));
+  ]
+
 (* The operations of a gradient *)
 
 (* The names of the operations [f ()] issues, sorted, and its result. *)
@@ -1368,6 +1413,7 @@ let () =
          group "edges" edge_tests;
          group "errors" error_tests;
          group "complex" complex_tests;
+         group "complex of parts" complex_of_parts_tests;
          group "operations" operation_tests;
          group "laws" laws;
          group "shorthands" shorthand_tests;

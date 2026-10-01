@@ -4201,12 +4201,12 @@ let matrix_transpose x =
    [Complex.t]. Two cast rules carry the component work: complex-to-float
    keeps the real part, float-to-complex sets a zero imaginary part.
 
-   Only [real] and [magnitude] read a lane directly. Reaching the imaginary
-   lane means rotating it into the real one, which is a complex multiply: it
-   is exact for finite components, but a non-finite component contaminates the
-   product through [inf * 0], so [imag], [angle], [complex], and [conjugate]
-   yield NaN there. Lifting a lane out without arithmetic would need a
-   component view of the storage, which the backend does not expose. *)
+   [complex] writes both lanes directly: it stacks the components along a last
+   axis of two and reads each pair as one complex element with a bitcast.
+   Reaching the imaginary lane from a complex value means rotating it into the
+   real one, which is a complex multiply: it is exact for finite components,
+   but a non-finite component contaminates the product through [inf * 0], so
+   [imag], [angle], and [conjugate] yield NaN there. *)
 
 let real dt (z : (Complex.t, _) t) = cast dt z
 
@@ -4215,7 +4215,15 @@ let imag dt (z : (Complex.t, _) t) =
 
 let magnitude dt (z : (Complex.t, _) t) = cast dt (abs z)
 let angle dt (z : (Complex.t, _) t) = atan2 (imag dt z) (real dt z)
-let complex dt ~re ~im = add (cast dt re) (mul_s (cast dt im) Complex.i)
+
+let complex (type c) (dt : (Complex.t, c) Nx_dtype.t) ~re ~im =
+  let re, im = broadcasted re im in
+  let pairs (type e) (part : (float, e) Nx_dtype.t) : (Complex.t, c) t =
+    bitcast dt (stack ~axis:(-1) [ cast part re; cast part im ])
+  in
+  match dt with
+  | Complex64 -> pairs Nx_dtype.float32
+  | Complex128 -> pairs Nx_dtype.float64
 
 let conjugate (type a b) (x : (a, b) t) : (a, b) t =
   let negate_imag (type c) (z : (Complex.t, c) t) : (Complex.t, c) t =
