@@ -1688,6 +1688,14 @@ module Buffer = struct
   let length_of n i = Int.min chunk (n - (i * chunk))
   let slot i = i land 1 * chunk
 
+  (* [e]'s copy on its queue [q] of chunk [i] of a copy of [n] bytes, from its
+     [src] to its [dst], and the value to wait for. *)
+  let copy_chunk ~timed e q n i ~dst ~src =
+    enqueue_copy ~timed ~first:(i = 0)
+      ~last:(i = chunks n - 1)
+      e q
+      (q.copy ~dst ~src (length_of n i))
+
   (* Runs [f], the host's side of a copy of [e]: if it raises, [e]'s copies are
      waited for first, so that none outlives the call. *)
   let settled e f =
@@ -1704,16 +1712,10 @@ module Buffer = struct
     let at = slots (host_of e) and on_e = staging_on e in
     let last = [| 0; 0 |] in
     for i = 0 to chunks n - 1 do
-      if i >= 2 then wait_signal e last.(i land 1);
+      wait_signal e last.(i land 1);
       settled e (fun () -> fill (at +! slot i) (i * chunk) (length_of n i));
       last.(i land 1) <-
-        enqueue_copy ~timed ~first:(i = 0)
-          ~last:(i = chunks n - 1)
-          e q
-          (q.copy
-             ~dst:(dst +! (i * chunk))
-             ~src:(on_e +! slot i)
-             (length_of n i))
+        copy_chunk ~timed e q n i ~dst:(dst +! (i * chunk)) ~src:(on_e +! slot i)
     done;
     wait_signal e (submitted e)
 
@@ -1725,13 +1727,9 @@ module Buffer = struct
     let fill i =
       if i < chunks n then
         last.(i land 1) <-
-          enqueue_copy ~timed ~first:(i = 0)
-            ~last:(i = chunks n - 1)
-            e q
-            (q.copy
-               ~dst:(on_e +! slot i)
-               ~src:(src +! (i * chunk))
-               (length_of n i))
+          copy_chunk ~timed e q n i
+            ~dst:(on_e +! slot i)
+            ~src:(src +! (i * chunk))
     in
     fill 0;
     fill 1;
@@ -1748,20 +1746,15 @@ module Buffer = struct
     let on_s = staging_on s and on_d = staging_on d in
     let last = [| 0; 0 |] in
     for i = 0 to chunks n - 1 do
-      let first = i = 0 and final = i = chunks n - 1 in
-      if i >= 2 then wait_signal d last.(i land 1);
+      wait_signal d last.(i land 1);
       wait_signal s
-        (enqueue_copy ~timed ~first ~last:final s qs
-           (qs.copy
-              ~dst:(on_s +! slot i)
-              ~src:(address src +! (i * chunk))
-              (length_of n i)));
+        (copy_chunk ~timed s qs n i
+           ~dst:(on_s +! slot i)
+           ~src:(address src +! (i * chunk)));
       last.(i land 1) <-
-        enqueue_copy ~timed ~first ~last:final d qd
-          (qd.copy
-             ~dst:(address dst +! (i * chunk))
-             ~src:(on_d +! slot i)
-             (length_of n i))
+        copy_chunk ~timed d qd n i
+          ~dst:(address dst +! (i * chunk))
+          ~src:(on_d +! slot i)
     done;
     wait_signal d (submitted d)
 
@@ -1824,46 +1817,44 @@ module Buffer = struct
      host addresses ([b] itself, or a staging slot its device fills), crosses
      into this process and out to memory the destination's host addresses, which
      the destination's device copies from when it is not [dst] itself. *)
-  let on_host ~timed ~first ~last b ~pos len k =
+  let on_host ~timed b n i =
     match hosted b with
-    | Some a -> a +! pos
+    | Some a -> a +! (i * chunk)
     | None ->
         let e = device b in
-        let q = queue e in
         wait_signal e
-          (enqueue_copy ~timed ~first ~last e q
-             (q.copy ~dst:(staging_on e +! slot k) ~src:(address b +! pos) len));
-        slots (host_of e) +! slot k
+          (copy_chunk ~timed e (queue e) n i
+             ~dst:(staging_on e +! slot i)
+             ~src:(address b +! (i * chunk)));
+        slots (host_of e) +! slot i
 
-  let landing b ~pos k =
+  let landing b i =
     match hosted b with
-    | Some a -> a +! pos
-    | None -> slots (host_of (device b)) +! slot k
+    | Some a -> a +! (i * chunk)
+    | None -> slots (host_of (device b)) +! slot i
 
-  let from_host ~timed ~first ~last b ~pos len k =
+  let from_host ~timed b n i =
     if hosted b = None then
       let e = device b in
-      let q = queue e in
       wait_signal e
-        (enqueue_copy ~timed ~first ~last e q
-           (q.copy ~dst:(address b +! pos) ~src:(staging_on e +! slot k) len))
+        (copy_chunk ~timed e (queue e) n i
+           ~dst:(address b +! (i * chunk))
+           ~src:(staging_on e +! slot i))
 
   let across ~timed ~src ~dst n =
     let hs = host_of (device src) and hd = host_of (device dst) in
     for i = 0 to chunks n - 1 do
-      let pos = i * chunk and len = length_of n i and k = i land 1 in
-      let first = i = 0 and last = i = chunks n - 1 in
-      let a = on_host ~timed ~first ~last src ~pos len k in
-      let b = landing dst ~pos k in
+      let len = length_of n i in
+      let a = on_host ~timed src n i and b = landing dst i in
       (match (hs.io, hd.io) with
       | None, None -> memmove b a len
       | None, Some io -> io_call hd (fun () -> io.write ~dst:b ~src:a len)
       | Some io, None -> io_call hs (fun () -> io.read ~src:a ~dst:b len)
       | Some io, Some io' ->
-          let relay = bigarray_address (staging_memory ()) +! slot k in
+          let relay = bigarray_address (staging_memory ()) +! slot i in
           io_call hs (fun () -> io.read ~src:a ~dst:relay len);
           io_call hd (fun () -> io'.write ~dst:b ~src:relay len));
-      from_host ~timed ~first ~last dst ~pos len k
+      from_host ~timed dst n i
     done
 
   (* [read b ~pos a n] reads the [n] bytes of the disk buffer [b] from its byte
