@@ -1,0 +1,643 @@
+alltypes_plain.parquet 0 "id" "int32" 8 1b615e621f96962a163fbfdd057cc226 4 5 6 7 2 3 0 1
+alltypes_plain.parquet 0 "bool_col" "bool" 8 db0f5b3e239edfc978418fbed35920de true false true false true false true false
+alltypes_plain.parquet 0 "tinyint_col" "int32" 8 cfd77919a3c74fcc2410819c1fc12d61 0 1 0 1 0 1 0 1
+alltypes_plain.parquet 0 "smallint_col" "int32" 8 cfd77919a3c74fcc2410819c1fc12d61 0 1 0 1 0 1 0 1
+alltypes_plain.parquet 0 "int_col" "int32" 8 cfd77919a3c74fcc2410819c1fc12d61 0 1 0 1 0 1 0 1
+alltypes_plain.parquet 0 "bigint_col" "int64" 8 35591b742678100b1629277baf70c7ef 0 10 0 10 0 10 0 10
+alltypes_plain.parquet 0 "float_col" "float32" 8 3f802b5b8a613dff3883cd731a49d06d 0x00000000 0x3f8ccccd 0x00000000 0x3f8ccccd 0x00000000 0x3f8ccccd 0x00000000 0x3f8ccccd
+alltypes_plain.parquet 0 "double_col" "float64" 8 d237ecfcd7bb658eb35836452ea086a8 0x0000000000000000 0x4024333333333333 0x0000000000000000 0x4024333333333333 0x0000000000000000 0x4024333333333333 0x0000000000000000 0x4024333333333333
+alltypes_plain.parquet 0 "date_string_col" "binary" 8 86bc0ceddbc345756bad6bdb63724782 "03/01/09" "03/01/09" "04/01/09" "04/01/09" "02/01/09" "02/01/09" "01/01/09" "01/01/09"
+alltypes_plain.parquet 0 "string_col" "binary" 8 3ecf30e24cf71bf68327deed285a4986 "0" "1" "0" "1" "0" "1" "0" "1"
+alltypes_plain.parquet 0 "timestamp_col" "datetime[ns]" 8 1a45c32b07d47cfd210e952414ed4c25 1235865600000000000 1235865660000000000 1238544000000000000 1238544060000000000 1233446400000000000 1233446460000000000 1230768000000000000 1230768060000000000
+alltypes_plain.snappy.parquet 0 "id" "int32" 2 5f9be3663be4dbbca3b49f8701185c0d 6 7
+alltypes_plain.snappy.parquet 0 "bool_col" "bool" 2 faddaebe9970aab800fb829bebbeddf8 true false
+alltypes_plain.snappy.parquet 0 "tinyint_col" "int32" 2 27a3f1a3d555387ab7bf589ca716c295 0 1
+alltypes_plain.snappy.parquet 0 "smallint_col" "int32" 2 27a3f1a3d555387ab7bf589ca716c295 0 1
+alltypes_plain.snappy.parquet 0 "int_col" "int32" 2 27a3f1a3d555387ab7bf589ca716c295 0 1
+alltypes_plain.snappy.parquet 0 "bigint_col" "int64" 2 8bd4dad7f40180e5022fff109a35838c 0 10
+alltypes_plain.snappy.parquet 0 "float_col" "float32" 2 160a10547a2d5116712b0a78f61e154c 0x00000000 0x3f8ccccd
+alltypes_plain.snappy.parquet 0 "double_col" "float64" 2 c346fe33a6fe23463738e8b8dd884dbd 0x0000000000000000 0x4024333333333333
+alltypes_plain.snappy.parquet 0 "date_string_col" "binary" 2 c6827f1d5d24e0af05b1dde0a08d2a28 "04/01/09" "04/01/09"
+alltypes_plain.snappy.parquet 0 "string_col" "binary" 2 0bae3d923eba654249bde9242d4cccbb "0" "1"
+alltypes_plain.snappy.parquet 0 "timestamp_col" "datetime[ns]" 2 0dfb84cc1e1b6493dcae3d9c39eeb7d6 1238544000000000000 1238544060000000000
+alltypes_dictionary.parquet 0 "id" "int32" 2 27a3f1a3d555387ab7bf589ca716c295 0 1
+alltypes_dictionary.parquet 0 "bool_col" "bool" 2 faddaebe9970aab800fb829bebbeddf8 true false
+alltypes_dictionary.parquet 0 "tinyint_col" "int32" 2 27a3f1a3d555387ab7bf589ca716c295 0 1
+alltypes_dictionary.parquet 0 "smallint_col" "int32" 2 27a3f1a3d555387ab7bf589ca716c295 0 1
+alltypes_dictionary.parquet 0 "int_col" "int32" 2 27a3f1a3d555387ab7bf589ca716c295 0 1
+alltypes_dictionary.parquet 0 "bigint_col" "int64" 2 8bd4dad7f40180e5022fff109a35838c 0 10
+alltypes_dictionary.parquet 0 "float_col" "float32" 2 160a10547a2d5116712b0a78f61e154c 0x00000000 0x3f8ccccd
+alltypes_dictionary.parquet 0 "double_col" "float64" 2 c346fe33a6fe23463738e8b8dd884dbd 0x0000000000000000 0x4024333333333333
+alltypes_dictionary.parquet 0 "date_string_col" "binary" 2 d795723b2ae6c6644cde335d454cc2d1 "01/01/09" "01/01/09"
+alltypes_dictionary.parquet 0 "string_col" "binary" 2 0bae3d923eba654249bde9242d4cccbb "0" "1"
+alltypes_dictionary.parquet 0 "timestamp_col" "datetime[ns]" 2 ff461e88622210d01d3049be94e8f947 1230768000000000000 1230768060000000000
+binary.parquet 0 "foo" "binary" 12 7ae0578948ee16618493da0f2c582793 "\x00" "\x01" "\x02" "\x03" "\x04" "\x05" "\x06" "\x07"
+binary_truncated_min_max.parquet 0 "utf8_full_truncation" "string" 12 f1f5131abebb78b21fb52a0194f71fe1 "Blart Versenwald III" "Alice Johnson" "Bob Smith" "Charlie Brown" "Diana Prince" "Edward Norton" "Fiona Apple" "George Lucas"
+binary_truncated_min_max.parquet 0 "binary_full_truncation" "binary" 12 f1f5131abebb78b21fb52a0194f71fe1 "Blart Versenwald III" "Alice Johnson" "Bob Smith" "Charlie Brown" "Diana Prince" "Edward Norton" "Fiona Apple" "George Lucas"
+binary_truncated_min_max.parquet 0 "utf8_partial_truncation" "string" 12 7507d704ec395dbfe39b6d510aee9d01 "Blart Versenwald III" "Alice Johnson" "Bob Smith" "Charlie Brown" "Diana Prince" "Edward Norton" "Fiona Apple" "George Lucas"
+binary_truncated_min_max.parquet 0 "binary_partial_truncation" "binary" 12 d28123c444e992080c47469bdd85510f "Blart Versenwald III" "Alice Johnson" "Bob Smith" "Charlie Brown" "Diana Prince" "Edward Norton" "Fiona Apple" "George Lucas"
+binary_truncated_min_max.parquet 0 "utf8_no_truncation" "string" 12 37f818340276258b6006eaa4f589410a "Blart Versenwald III" "Al" "Bob Smith" "Charlie Brown" "Diana Prince" "Edward Norton" "Fiona Apple" "George Lucas"
+binary_truncated_min_max.parquet 0 "binary_no_truncation" "binary" 12 37f818340276258b6006eaa4f589410a "Blart Versenwald III" "Al" "Bob Smith" "Charlie Brown" "Diana Prince" "Edward Norton" "Fiona Apple" "George Lucas"
+bson.parquet 0 "bson_field" "binary" 3 fcd30da6c7989a55b34873a8004bfc42 "\x0c\x00\x00\x00\x10a\x00\x01\x00\x00\x00\x00" "\x0f\x00\x00\x00\x10a\x00\x01\x00\x00\x00\x0ab\x00\x00" null
+json.parquet 0 "json_field" "string" 4 34ccf1180c85aa6365feae6cd094bf8f "{\x22a\x22:1}" "{\x22a\x22:1,\x22b\x22:null}" "[1,null,3]" null
+byte_array_decimal.parquet 0 "value" "decimal[4, 2]" 24 5d3100b075c5da70e943b8ee75cc3baf 100 200 300 400 500 600 700 800
+fixed_length_decimal_legacy.parquet 0 "value" "decimal[13, 2]" 24 5d3100b075c5da70e943b8ee75cc3baf 100 200 300 400 500 600 700 800
+int32_decimal.parquet 0 "value" "decimal[4, 2]" 24 5d3100b075c5da70e943b8ee75cc3baf 100 200 300 400 500 600 700 800
+int64_decimal.parquet 0 "value" "decimal[10, 2]" 24 5d3100b075c5da70e943b8ee75cc3baf 100 200 300 400 500 600 700 800
+byte_stream_split.zstd.parquet 0 "f32" "float32" 300 23e8948e95ebf9bf2704947ae9d37ce3 0x3fe1cc78 0x3ecce168 0x3f7a8e93 0x400f6acb 0x3fef0c24 0xbf7a2ee2 0x3f7338ff 0xbe1afd62
+byte_stream_split.zstd.parquet 0 "f64" "float64" 300 d2263e4cbdcc6c77be761b026a1ef1ff 0xbff4e788b338c8cf 0x3ffa87b40917451b 0xbfbe3fffb563e914 0xbfe5c40514b3caa9 0x3fe553029cfde988 0xbfdd7c6ed8dd0cdb 0xbff5591f69315f58 0xbff58c27a7c59e7a
+byte_stream_split_extended.gzip.parquet 0 "float16_plain" "float16" 200 2c91f2920a6fcc3b0c1d67e6e61d936b 0x4927 0x487b 0x4960 0x4978 0x4806 0x4859 0x4910 0x48d8
+byte_stream_split_extended.gzip.parquet 0 "float16_byte_stream_split" "float16" 200 2c91f2920a6fcc3b0c1d67e6e61d936b 0x4927 0x487b 0x4960 0x4978 0x4806 0x4859 0x4910 0x48d8
+byte_stream_split_extended.gzip.parquet 0 "float_plain" "float32" 200 1a20ecd386936bc509d3614126c2a0f0 0x412566b5 0x4136850c 0x41217309 0x412a4d93 0x40fe64fd 0x411f3873 0x41128221 0x410c7fbe
+byte_stream_split_extended.gzip.parquet 0 "float_byte_stream_split" "float32" 200 1a20ecd386936bc509d3614126c2a0f0 0x412566b5 0x4136850c 0x41217309 0x412a4d93 0x40fe64fd 0x411f3873 0x41128221 0x410c7fbe
+byte_stream_split_extended.gzip.parquet 0 "double_plain" "float64" 200 b487f3780c1319739d2955cacf519de2 0x4023a409f907360c 0x402464bfd6278d66 0x4025a41c4eeeb588 0x402336678e9c69dc 0x40250ad66f3e3b22 0x402377e3fa556e3c 0x4023c3d18356d975 0x4025a8b6b849ce27
+byte_stream_split_extended.gzip.parquet 0 "double_byte_stream_split" "float64" 200 b487f3780c1319739d2955cacf519de2 0x4023a409f907360c 0x402464bfd6278d66 0x4025a41c4eeeb588 0x402336678e9c69dc 0x40250ad66f3e3b22 0x402377e3fa556e3c 0x4023c3d18356d975 0x4025a8b6b849ce27
+byte_stream_split_extended.gzip.parquet 0 "int32_plain" "int32" 200 d5cb9da104071d4f41b38cbd7ebc6e27 24191 41157 7403 79368 64983 8481 22192 55546
+byte_stream_split_extended.gzip.parquet 0 "int32_byte_stream_split" "int32" 200 d5cb9da104071d4f41b38cbd7ebc6e27 24191 41157 7403 79368 64983 8481 22192 55546
+byte_stream_split_extended.gzip.parquet 0 "int64_plain" "int64" 200 4c6e43793cd0fc60689b6fd00678bdf3 293650000000 41079000000 51248000000 246066000000 572141000000 65530000000 984601000000 455117000000
+byte_stream_split_extended.gzip.parquet 0 "int64_byte_stream_split" "int64" 200 4c6e43793cd0fc60689b6fd00678bdf3 293650000000 41079000000 51248000000 246066000000 572141000000 65530000000 984601000000 455117000000
+byte_stream_split_extended.gzip.parquet 0 "flba5_plain" "binary" 200 bb02f703b0b05d0154f6d43128c4cfa2 "03795" "00363" "01038" "11914" "03125" "04625" "16947" "17477"
+byte_stream_split_extended.gzip.parquet 0 "flba5_byte_stream_split" "binary" 200 bb02f703b0b05d0154f6d43128c4cfa2 "03795" "00363" "01038" "11914" "03125" "04625" "16947" "17477"
+byte_stream_split_extended.gzip.parquet 0 "decimal_plain" "decimal[7, 3]" 200 1989d15ffb09f8e34b89ca916349a84b 1003858 968825 1104934 932398 913768 1047888 846436 1038969
+byte_stream_split_extended.gzip.parquet 0 "decimal_byte_stream_split" "decimal[7, 3]" 200 1989d15ffb09f8e34b89ca916349a84b 1003858 968825 1104934 932398 913768 1047888 846436 1038969
+column_chunk_key_value_metadata.parquet 0 "column1" "int32" 0 d41d8cd98f00b204e9800998ecf8427e
+column_chunk_key_value_metadata.parquet 0 "column2" "int32" 0 d41d8cd98f00b204e9800998ecf8427e
+concatenated_gzip_members.parquet 0 "long_col" "uint64" 513 56a4b541a8d92b58afc24377816c2259 1 2 3 4 5 6 7 8
+data_index_bloom_encoding_stats.parquet 0 "String" "string" 14 169a535057904b40f61e9a72743894c2 "Hello" "This is" "a" "test" "How" "are you" "doing " "today"
+data_index_bloom_encoding_with_length.parquet 0 "String" "string" 14 169a535057904b40f61e9a72743894c2 "Hello" "This is" "a" "test" "How" "are you" "doing " "today"
+datapage_v1-snappy-compressed-checksum.parquet 0 "a" "int32" 5120 8003595e5c0609f09e464bce85d13dc2 50462976 117835012 185207048 252579084 319951120 387323156 454695192 522067228
+datapage_v1-snappy-compressed-checksum.parquet 0 "b" "int32" 5120 48ec19fe35504684462db01836999204 1734763876 1802135912 1869507948 1936879984 2004252020 2071624056 2138996092 -2088599168
+datapage_v1-uncompressed-checksum.parquet 0 "a" "int32" 5120 8003595e5c0609f09e464bce85d13dc2 50462976 117835012 185207048 252579084 319951120 387323156 454695192 522067228
+datapage_v1-uncompressed-checksum.parquet 0 "b" "int32" 5120 48ec19fe35504684462db01836999204 1734763876 1802135912 1869507948 1936879984 2004252020 2071624056 2138996092 -2088599168
+int32_with_null_pages.parquet 0 "int32_field" "int32" 1000 d1300d6a95b062475909661cb05b50eb -654807448 -465559769 -34563097 398454479 null 2018642597 486675473 546345848
+plain-dict-uncompressed-checksum.parquet 0 "long_field" "int64" 1000 e0ee97dd2f8cc81d3bd8689964597683 0 0 0 0 0 0 0 0
+plain-dict-uncompressed-checksum.parquet 0 "binary_field" "binary" 1000 19dba80f7200d1058380c36431a13e1b "a655fd0e-9949-4059-bcae-fd6a002a4652" "a655fd0e-9949-4059-bcae-fd6a002a4652" "a655fd0e-9949-4059-bcae-fd6a002a4652" "a655fd0e-9949-4059-bcae-fd6a002a4652" "a655fd0e-9949-4059-bcae-fd6a002a4652" "a655fd0e-9949-4059-bcae-fd6a002a4652" "a655fd0e-9949-4059-bcae-fd6a002a4652" "a655fd0e-9949-4059-bcae-fd6a002a4652"
+rle-dict-snappy-checksum.parquet 0 "long_field" "int64" 1000 e0ee97dd2f8cc81d3bd8689964597683 0 0 0 0 0 0 0 0
+rle-dict-snappy-checksum.parquet 0 "binary_field" "binary" 1000 202f90e28233d6d0b1c0a2de029c574e "c95e263a-f5d4-401f-8107-5ca7146a1f98" "c95e263a-f5d4-401f-8107-5ca7146a1f98" "c95e263a-f5d4-401f-8107-5ca7146a1f98" "c95e263a-f5d4-401f-8107-5ca7146a1f98" "c95e263a-f5d4-401f-8107-5ca7146a1f98" "c95e263a-f5d4-401f-8107-5ca7146a1f98" "c95e263a-f5d4-401f-8107-5ca7146a1f98" "c95e263a-f5d4-401f-8107-5ca7146a1f98"
+datapage_v2_empty_datapage.snappy.parquet 0 "value" "float32" 1 37a6259cc0c1dae299a7866489dff0bd null
+page_v2_empty_compressed.parquet 0 "integer_column" "int32" 10 7e3ba72da228ff99cf80e079efac9130 null null null null null null null null
+delta_binary_packed.parquet 0 "bitwidth0" "int64" 200 13b7af3c96dc02a5b7df9d0c38d52d35 6374628540732951412 6374628540732951412 6374628540732951412 6374628540732951412 6374628540732951412 6374628540732951412 6374628540732951412 6374628540732951412
+delta_binary_packed.parquet 0 "bitwidth1" "int64" 200 e31233f21242b39e3c4efe0a38a5e740 0 -1 -1 -1 -1 -1 -2 -2
+delta_binary_packed.parquet 0 "bitwidth2" "int64" 200 3870d7f532c49ad3f8c9b22661f8ca23 0 -2 -1 -3 -2 -1 -1 0
+delta_binary_packed.parquet 0 "bitwidth3" "int64" 200 c8f0b1e8f6a00f01ff5ebe2f06a1e7ee 0 -4 -1 -3 -7 -6 -7 -5
+delta_binary_packed.parquet 0 "bitwidth4" "int64" 200 02de5dd68ae1d30f6424728b2857d40c 0 -8 -5 -3 -7 -7 -8 -4
+delta_binary_packed.parquet 0 "bitwidth5" "int64" 200 bcd49f83b1a3dee39ddd314bfde507be 0 -16 -15 -14 -23 -21 -11 -23
+delta_binary_packed.parquet 0 "bitwidth6" "int64" 200 bbf63cc6fc3d7fe30abec46927f11752 0 -32 -3 19 -4 -29 -4 15
+delta_binary_packed.parquet 0 "bitwidth7" "int64" 200 374a4b3eb7913631f9c931cb0c51b580 0 -64 -3 9 51 58 102 78
+delta_binary_packed.parquet 0 "bitwidth8" "int64" 200 45927d0604efbca1b1e613018d52924a 0 -128 -65 -70 -107 -174 -90 25
+delta_binary_packed.parquet 0 "bitwidth9" "int64" 200 64dc986311ad8957673782a98fb6551f 0 -256 -135 -291 -322 -370 -428 -298
+delta_binary_packed.parquet 0 "bitwidth10" "int64" 200 e564ad864265f3cdcc478f4c700821fb 0 -512 -151 -145 -69 147 640 323
+delta_binary_packed.parquet 0 "bitwidth11" "int64" 200 c5d406c8e46eee4e3846b8c178fe1f38 0 -1024 -884 -275 -404 -303 248 -656
+delta_binary_packed.parquet 0 "bitwidth12" "int64" 200 230d72d73e7e50d1dfc83f13327b4bd2 0 -2048 -498 -779 -497 -257 -666 -335
+delta_binary_packed.parquet 0 "bitwidth13" "int64" 200 bf17ddbf486542be971b063e62702bb6 0 -4096 -541 -4047 -1478 -1037 1697 1998
+delta_binary_packed.parquet 0 "bitwidth14" "int64" 200 3473f438b9188357a91801318a8b33b7 0 -8192 -2357 -8244 -1446 5630 12168 18308
+delta_binary_packed.parquet 0 "bitwidth15" "int64" 200 95bab47101be555e08de4d67327dc557 0 -16384 -13235 -9036 3148 8895 11689 10291
+delta_binary_packed.parquet 0 "bitwidth16" "int64" 200 5e6b68abe6350770e6e83c04e47ba063 0 -32768 -5032 19242 -5651 -35608 -47454 -24779
+delta_binary_packed.parquet 0 "bitwidth17" "int64" 200 17ecbfa57b02abdf87cc3b4544d3d929 0 -65536 -53240 -48154 -72427 -117842 -130484 -168487
+delta_binary_packed.parquet 0 "bitwidth18" "int64" 200 b514d989dc353e931458b8ae428d2916 0 -131072 -29011 57337 2324 -12437 20117 52710
+delta_binary_packed.parquet 0 "bitwidth19" "int64" 200 0336d746503177e49d74b446d13961de 0 -262144 -250328 -76872 -180065 -27731 -75384 163729
+delta_binary_packed.parquet 0 "bitwidth20" "int64" 200 368f62ecd5b90899435b8b511270a13f 0 -524288 -472084 -140006 -73164 60486 -93320 312623
+delta_binary_packed.parquet 0 "bitwidth21" "int64" 200 e7740b87510b829a4d26c34c33fe604f 0 -1048576 -14542 -606577 -1070042 -707663 203268 1124572
+delta_binary_packed.parquet 0 "bitwidth22" "int64" 200 e719403cb547d732918611fe9d333a80 0 -2097152 -1696277 -1112970 -2913370 -2929145 -4986664 -6004940
+delta_binary_packed.parquet 0 "bitwidth23" "int64" 200 fe3be6a3821a8cdc430dd1755c0e665f 0 -4194304 -1840215 -1741237 -2556489 -2079255 -2162578 365099
+delta_binary_packed.parquet 0 "bitwidth24" "int64" 200 292161f7a1edc4d628ac67a8ef9cde1d 0 -8388608 -3928478 -9834470 -13152247 -17271207 -8995125 -10397375
+delta_binary_packed.parquet 0 "bitwidth25" "int64" 200 2f4be814b7b1c2f966a3395198e7a2d4 0 -16777216 -7271486 -18759951 -18307794 -1875268 -6760008 8574828
+delta_binary_packed.parquet 0 "bitwidth26" "int64" 200 65448898ee8fae664be8acb561169820 0 -33554432 -21651755 -6702647 -21400650 -19770821 -32244703 -63826718
+delta_binary_packed.parquet 0 "bitwidth27" "int64" 200 04e901d6a644490fe93bbce35311d3c6 0 -67108864 -32837885 -48746571 -21970468 -80161864 -106596127 -60362169
+delta_binary_packed.parquet 0 "bitwidth28" "int64" 200 a9a3302128ee28c20a37671ec216f2a7 0 -134217728 -111433329 -75629270 -49244077 60023242 177836390 256227242
+delta_binary_packed.parquet 0 "bitwidth29" "int64" 200 802ec34e6633728d5041809e950c6c51 0 -268435456 -241601040 -261813622 -154493129 -421079858 -266837798 -3856403
+delta_binary_packed.parquet 0 "bitwidth30" "int64" 200 80d47f736102fe0190d76fcc268a6af4 0 -536870912 -50065479 -372076116 -865963106 -1199795687 -762866147 -975832397
+delta_binary_packed.parquet 0 "bitwidth31" "int64" 200 5c13bf8d7d26fdddb1c929b545e76fcd 0 -1073741824 -163270799 -209790348 -675026787 -1596156003 -2468267208 -2498101101
+delta_binary_packed.parquet 0 "bitwidth32" "int64" 200 9d2d22a8b28e4a4ebb90e0900139e0f9 0 -2147483648 -1986952430 -1454655246 269282718 -1428636547 389760980 -880256444
+delta_binary_packed.parquet 0 "bitwidth33" "int64" 200 248d2bda683076afb68d7756ac738b77 0 -4294967296 -4199967586 14148394 -1936781439 -3315076943 -992988241 -2948367208
+delta_binary_packed.parquet 0 "bitwidth34" "int64" 200 e535fbe5d0d1b57b89c9afd4e9396d37 0 -8589934592 -1344496374 3594034401 11152842629 4309884401 7180141332 6203611716
+delta_binary_packed.parquet 0 "bitwidth35" "int64" 200 9a744a4a4c160f26f23e0ada058053e8 0 -17179869184 -16288562574 -22765140849 -8330016935 -1119928926 14885016605 19687928212
+delta_binary_packed.parquet 0 "bitwidth36" "int64" 200 ca7ad77114e2a88d774a867345f5720e 0 -34359738368 -28644417946 -37447824121 -20375075134 -7573364471 -1511637873 -9781230924
+delta_binary_packed.parquet 0 "bitwidth37" "int64" 200 7910f9e9aa249dce2f07b6e2c56da907 0 -68719476736 -65240709120 973131962 4843904084 -29439686716 37404525522 8614389461
+delta_binary_packed.parquet 0 "bitwidth38" "int64" 200 f870526be5a9c871da6634770a0d06fd 0 -137438953472 -70538406032 -184009634540 -154956898562 -77734727780 -197046149773 -181589169937
+delta_binary_packed.parquet 0 "bitwidth39" "int64" 200 1e2a58560e94ac5bfd10ba0143e24bc9 0 -274877906944 -191624370730 -414171928390 -348410255803 -381153221847 -187479057508 -139212010426
+delta_binary_packed.parquet 0 "bitwidth40" "int64" 200 76fbef7e6dda59d3591eb711f3102c85 0 -549755813888 -296605683166 -33166024765 -57366930449 438498389411 230274097668 371875472672
+delta_binary_packed.parquet 0 "bitwidth41" "int64" 200 352055396b6ebdcca92d057b04816766 0 -1099511627776 -1011770835153 -1197833965973 -1692439856605 -1075668472404 -927050760313 -1174473260226
+delta_binary_packed.parquet 0 "bitwidth42" "int64" 200 b5cfa1824d07e5670eaaeb04de88e13f 0 -2199023255552 -1608485630598 -2945889030754 -1475642885659 688004155483 1799760668852 470808489818
+delta_binary_packed.parquet 0 "bitwidth43" "int64" 200 d02791ba8a178635cf4de96d98077691 0 -4398046511104 -4014593275381 -4176475312470 -8535248964530 -12155875302808 -10729406875828 -7350458341287
+delta_binary_packed.parquet 0 "bitwidth44" "int64" 200 5bf46d70cb82db0f7d5be41e7e0489ec 0 -8796093022208 -6105818392192 -3485626798002 -6025906219756 -2421765938549 -9796939892175 -1895363706255
+delta_binary_packed.parquet 0 "bitwidth45" "int64" 200 e42c77ca822398c1e7f79c5edaa52802 0 -17592186044416 -16882699520562 -33267360685874 -16857628299601 -1412459333102 11804765938550 10243781943563
+delta_binary_packed.parquet 0 "bitwidth46" "int64" 200 7a0fc4a0563231db5a156344b9e34329 0 -35184372088832 -24806559006505 -30046841485160 -62685577005613 -57897024522480 -50966479811265 -21934176136905
+delta_binary_packed.parquet 0 "bitwidth47" "int64" 200 c5beb067a9a2a780b36b8a3f28429d72 0 -70368744177664 -2633546645122 -44798370319938 -27221312319071 -67231976161515 -44073994829259 11986018548423
+delta_binary_packed.parquet 0 "bitwidth48" "int64" 200 93587f6fc46c3695a34393f30ea05752 0 -140737488355328 -117376993649456 -169294344644831 -198785994498891 -102178629353955 -96429064661339 -38783203690109
+delta_binary_packed.parquet 0 "bitwidth49" "int64" 200 1d9a80835b1bb0e57b8c72ca899430e5 0 -281474976710656 -108462505318873 43524599724868 171238115176440 200912794242206 286836747775733 58988343681595
+delta_binary_packed.parquet 0 "bitwidth50" "int64" 200 3a9184d97683ca1ff280a459b5859068 0 -562949953421312 -17587725526794 469339429031087 660593922279105 437990823358964 826008137253651 919985218147182
+delta_binary_packed.parquet 0 "bitwidth51" "int64" 200 a3bc55689c618e9e8671cf527c3e73c0 0 -1125899906842624 -404921059206593 -249413706008860 -943597583604423 -691145191610179 -819172490150060 -1879216418388626
+delta_binary_packed.parquet 0 "bitwidth52" "int64" 200 795a463b920e94f1027f74945ddce896 0 -2251799813685248 -156565041626495 1783640864794895 2827707839263247 3467057874929278 2491046898575225 785282571415803
+delta_binary_packed.parquet 0 "bitwidth53" "int64" 200 b31ea13551ba0c3adfb23a65217bf3ab 0 -4503599627370496 -314837785970473 2532719170052087 4070733887796967 985930545990978 371401587078797 -1798356971526639
+delta_binary_packed.parquet 0 "bitwidth54" "int64" 200 c92d33fc8d8b8a83fc674cab00634d8e 0 -9007199254740992 -5814847697611025 -6021542079991477 1851107790825924 7330199804693107 -573582956573021 4083217559270234
+delta_binary_packed.parquet 0 "bitwidth55" "int64" 200 d6c3e880066b9b0a57cfea2fc849b1a2 0 -18014398509481984 -12226190471490179 -22672611942859889 -10035362931120011 -15787463490118793 -22424390824700858 -20622206685995410
+delta_binary_packed.parquet 0 "bitwidth56" "int64" 200 aaae80ef55858a6b9575229b925b17ee 0 -36028797018963968 -25585079015954934 1385417775479117 -34178564238813898 -3529811048518225 8968658959701591 34030617276605758
+delta_binary_packed.parquet 0 "bitwidth57" "int64" 200 83914686c052c17fc1255dd05a393bb5 0 -72057594037927936 -15550441703940602 25457797741384317 -15400877254369937 -79246600304853010 -18708944194978315 44907398151239119
+delta_binary_packed.parquet 0 "bitwidth58" "int64" 200 f9d11c62b353fff1047bc97c080ca050 0 -144115188075855872 -56208863042127981 15212409470706824 14534187603609527 131968846278002895 140747723990970254 85907244363722199
+delta_binary_packed.parquet 0 "bitwidth59" "int64" 200 cf1cd21915830877f92afd227653ed8a 0 -288230376151711744 -90038694817934139 -293860965757446445 -436091502934230264 -282604809562268943 -456990195146363428 -200542403147528933
+delta_binary_packed.parquet 0 "bitwidth60" "int64" 200 06281f5010fe872941c4a4fdee19024e 0 -576460752303423488 -119581030183793765 -421796672552175066 103753242946746509 393659097234343208 195559856224514923 144951121694234471
+delta_binary_packed.parquet 0 "bitwidth61" "int64" 200 b0ec5c3ab064c05253c9af426700e64f 0 -1152921504606846976 -506045522191644725 -739907890298874818 -433954430332814130 -117358901750833047 -58121504121408814 94062120218954510
+delta_binary_packed.parquet 0 "bitwidth62" "int64" 200 b47b7246246e8e8900830b842fa5e863 0 -2305843009213693952 -608563416973139311 -359496579899035406 -2277734064379320830 -4454039315625288390 -3938402690046704430 -2429296149216326625
+delta_binary_packed.parquet 0 "bitwidth63" "int64" 200 b0a6251ce7f866af02b59bdd509fb875 0 -4611686018427387904 -268654784870221847 1767081710130543267 -1952725388208511715 1057622537212765505 -2644179234690480376 -5213688279934623354
+delta_binary_packed.parquet 0 "bitwidth64" "int64" 200 c7dfc2e0ea61590ba1e214d15ac2b5fc 0 -9223372036854775808 -725202170854031360 -9103419799827896320 -598707373574004736 -467456400607547392 -8590184427836801024 -8082003127769759744
+delta_binary_packed.parquet 0 "int_value" "int32" 200 fb02d2c3c8561e275b3b804eefc0a0ed -2070986743 -22783326 -1782018724 -795597708 -50404127 -1324028940 1224303596 1429112635
+delta_byte_array.parquet 0 "c_customer_id" "string" 1000 6f5adb2f0033f1e3bb8a557a5cb8a3fa "AAAAAAAAIODAAAAA" "AAAAAAAAHODAAAAA" "AAAAAAAAGODAAAAA" "AAAAAAAAFODAAAAA" "AAAAAAAAEODAAAAA" "AAAAAAAADODAAAAA" "AAAAAAAACODAAAAA" "AAAAAAAABODAAAAA"
+delta_byte_array.parquet 0 "c_salutation" "string" 1000 09acea557a21295d7e70abf3a1799fd2 "Sir" "Mrs." "Ms." "Sir" "Dr." "Sir" null "Mr."
+delta_byte_array.parquet 0 "c_first_name" "string" 1000 058b74564e06f77541a9290cb0dcef52 "Mark" "Lisa" "Evelyn" "Harvey" "Chris" "Richie" "Geneva" "Joseph"
+delta_byte_array.parquet 0 "c_last_name" "string" 1000 7ffd6c6869fe9fc67a762c48f87484b7 "Bailey" "Clark" "Joyner" null "Davis" "Smith" "Archie" "Fountain"
+delta_byte_array.parquet 0 "c_preferred_cust_flag" "string" 1000 4b94e5aefb8fc487fc2f0d143d64d5f1 "N" "Y" "N" "N" "Y" "Y" null "Y"
+delta_byte_array.parquet 0 "c_birth_country" "string" 1000 cf6f6f3b6fdb3642eaeb96f60afe09c7 "MOROCCO" "ITALY" "TUVALU" null "ALBANIA" "BERMUDA" null "PERU"
+delta_byte_array.parquet 0 "c_login" "string" 1000 5c3795715089ac7ea732b7fff5298dcb null null null null null null null null
+delta_byte_array.parquet 0 "c_email_address" "string" 1000 8dec3ae1e3f685d87d0c5f8f6d89a84e "Mark.Bailey@rg9qCNVJ0s7qeY.com" "Lisa.Clark@goPYS4tMB0.org" "Evelyn.Joyner@ialYx1zLN.edu" "Harvey.Stanford@sl59JiHqrp8X.org" "Chris.Davis@k6S3Q.com" "Richie.Smith@Z9FqyaNxVVr.com" "Geneva.Archie@eXycmPJO0e.edu" "Joseph.Fountain@9iBf4kl8dSfsfr.com"
+delta_byte_array.parquet 0 "c_last_review_date" "string" 1000 e1ac88ce92cdd78b73c2217cb148cd69 "2452443" "2452646" "2452439" "2452632" "2452570" "2452612" "2452637" "2452511"
+delta_encoding_optional_column.parquet 0 "c_customer_sk" "int64" 100 d795a075ec0120033b91beb835be2826 100 99 98 97 96 95 94 93
+delta_encoding_optional_column.parquet 0 "c_current_cdemo_sk" "int64" 100 881328a0397a87f620f17c5a841ce9fc 1254468 622676 574977 418763 1148074 796503 451893 647375
+delta_encoding_optional_column.parquet 0 "c_current_hdemo_sk" "int64" 100 4a65e8ccd339168b00fc9fcfa8ff6636 6370 2152 1615 102 6019 1663 1990 6229
+delta_encoding_optional_column.parquet 0 "c_current_addr_sk" "int64" 100 11416e6ed2529569facd9f25a28234ed 6672 17228 43853 49041 35611 16023 33287 35836
+delta_encoding_optional_column.parquet 0 "c_first_shipto_date_sk" "int64" 100 e3f80fa55583e311351036cf65ed96c6 2449148 2451687 2450894 2452467 2451505 2452468 2449553 2449341
+delta_encoding_optional_column.parquet 0 "c_first_sales_date_sk" "int64" 100 5f05e7cf1067b61421ebb785eaa838f7 2449118 2451657 2450864 2452437 2451475 2452438 2449523 2449311
+delta_encoding_optional_column.parquet 0 "c_birth_day" "int64" 100 29c8070e43a9456dc346b4340eb04ec6 13 9 23 19 22 17 14 6
+delta_encoding_optional_column.parquet 0 "c_birth_month" "int64" 100 4a0a6a0f8d5f2ee06758a8bfdb188d2b 7 12 6 5 10 4 5 10
+delta_encoding_optional_column.parquet 0 "c_birth_year" "int64" 100 55270c8f2668b3a8c8f16723c1bdc714 1958 1961 1965 1971 1955 1943 1982 1927
+delta_encoding_optional_column.parquet 0 "c_customer_id" "string" 100 62748a423dc3e3859877c4404ed01f98 "AAAAAAAAEGAAAAAA" "AAAAAAAADGAAAAAA" "AAAAAAAACGAAAAAA" "AAAAAAAABGAAAAAA" "AAAAAAAAAGAAAAAA" "AAAAAAAAPFAAAAAA" "AAAAAAAAOFAAAAAA" "AAAAAAAANFAAAAAA"
+delta_encoding_optional_column.parquet 0 "c_salutation" "string" 100 6d038b289a695caffe022eaaa39d59eb "Ms." "Sir" "Dr." "Mr." "Sir" "Ms." "Mr." "Sir"
+delta_encoding_optional_column.parquet 0 "c_first_name" "string" 100 d0dbe327a15c2d7da81bc8f86dfd3250 "Jeannette" "Austin" "David" "Stewart" "Shaun" "Elizabeth" "Craig" "Clyde"
+delta_encoding_optional_column.parquet 0 "c_last_name" "string" 100 6a971c4c42c5773dcd9e63f739a5cce0 "Johnson" "Tran" "Lewis" "Ruffin" "Lewis" "Hollingsworth" "Byrd" "Williams"
+delta_encoding_optional_column.parquet 0 "c_preferred_cust_flag" "string" 100 39380d0d8c3dd0161850bd7f07dfe765 "Y" "Y" "N" "Y" "N" "N" "Y" "N"
+delta_encoding_optional_column.parquet 0 "c_birth_country" "string" 100 1a2681f48ea9ab9c9de2c58e928a0134 "BANGLADESH" "NAMIBIA" "KIRIBATI" "MYANMAR" "NIGERIA" "GREECE" "FRENCH POLYNESIA" "FRENCH POLYNESIA"
+delta_encoding_optional_column.parquet 0 "c_email_address" "string" 100 85d72ce3b35ee135fbd6dee32dd405e7 "Jeannette.Johnson@8BvSqgp.com" "Austin.Tran@ect7cnjLsucbd.edu" "David.Lewis@5mhvq.org" "Stewart.Ruffin@R7Mrx.edu" "Shaun.Lewis@MTRUPYFTXf9.com" "Elizabeth.Hollingsworth@lVpeDS5Rcs.com" "Craig.Byrd@Dc0OEMXkvvuJ.com" "Clyde.Williams@en.com"
+delta_encoding_optional_column.parquet 0 "c_last_review_date" "string" 100 77c0ba1d813dd825a5306d0822e3647e "2452635" "2452437" "2452558" "2452528" "2452395" "2452584" "2452445" "2452510"
+delta_encoding_required_column.parquet 0 "c_customer_sk:" "int32" 100 46837d45017383336fb50daac8dc941f 105 104 103 102 101 100 99 98
+delta_encoding_required_column.parquet 0 "c_current_cdemo_sk:" "int32" 100 857942c4952d48f17bbb40f8ca22568a 949850 1090695 1659630 1250712 1730669 1254468 622676 574977
+delta_encoding_required_column.parquet 0 "c_current_hdemo_sk:" "int32" 100 cba5a2fd3166873fca9d319ce7926c48 383 3116 5909 1207 4190 6370 2152 1615
+delta_encoding_required_column.parquet 0 "c_current_addr_sk:" "int32" 100 899e6dcef64b5c11037def258e67aadc 46916 25490 33035 4149 464 6672 17228 43853
+delta_encoding_required_column.parquet 0 "c_first_shipto_date_sk:" "int32" 100 f1033d88b329e84a5f28a1af98d270d3 2452463 2450355 2451586 2450198 2450159 2449148 2451687 2450894
+delta_encoding_required_column.parquet 0 "c_first_sales_date_sk:" "int32" 100 1c5636406a696b3d51b922db49117cad 2452433 2450325 2451556 2450168 2450129 2449118 2451657 2450864
+delta_encoding_required_column.parquet 0 "c_birth_day:" "int32" 100 03526302d012134c1f0dfea30b695222 14 29 3 9 7 13 9 23
+delta_encoding_required_column.parquet 0 "c_birth_month:" "int32" 100 8a735fafb7c57d1fa0884a3be82d6299 1 11 5 8 5 7 12 6
+delta_encoding_required_column.parquet 0 "c_birth_year:" "int32" 100 0b1dfac47c533f3a4ce0b74962a4d90e 1945 1936 1947 1937 1951 1958 1961 1965
+delta_encoding_required_column.parquet 0 "c_customer_id:" "string" 100 facc151488fa7572efee4d8ae581572d "AAAAAAAAJGAAAAAA" "AAAAAAAAIGAAAAAA" "AAAAAAAAHGAAAAAA" "AAAAAAAAGGAAAAAA" "AAAAAAAAFGAAAAAA" "AAAAAAAAEGAAAAAA" "AAAAAAAADGAAAAAA" "AAAAAAAACGAAAAAA"
+delta_encoding_required_column.parquet 0 "c_salutation:" "string" 100 4038cc206e32de1a8c0a3fdaa8bd6d4b "Dr." "Dr." "Dr." "Ms." "Dr." "Ms." "Sir" "Dr."
+delta_encoding_required_column.parquet 0 "c_first_name:" "string" 100 2d0642e1f0efe3c6d95d9f9bbcd5edca "Frank" "Benjamin" "James" "Jodi" "Jeffrey" "Jeannette" "Austin" "David"
+delta_encoding_required_column.parquet 0 "c_last_name:" "string" 100 2aac1b96cc94e92eafc957b09922a0c4 "Strain" "Johnson" "Porter" "Silva" "Bruce" "Johnson" "Tran" "Lewis"
+delta_encoding_required_column.parquet 0 "c_preferred_cust_flag:" "string" 100 7b6cbccf87cd194c2ca0379ad8d53d1f "Y" "Y" "N" "N" "N" "Y" "Y" "N"
+delta_encoding_required_column.parquet 0 "c_birth_country:" "string" 100 1e0baf77fa1f2e219f4d7dba52a3dfae "VIRGIN ISLANDS, U.S." "BAHRAIN" "AFGHANISTAN" "CANADA" "MAURITANIA" "BANGLADESH" "NAMIBIA" "KIRIBATI"
+delta_encoding_required_column.parquet 0 "c_email_address:" "string" 100 c6a40f0aedec88ca57d0655e15f724fb "Frank.Strain@MbOHByB.edu" "Benjamin.Johnson@HL2ugJBTO.com" "James.Porter@3C1oBhj.com" "Jodi.Silva@lntBSGFbpEOSVs.com" "Jeffrey.Bruce@SPZG.com" "Jeannette.Johnson@8BvSqgp.com" "Austin.Tran@ect7cnjLsucbd.edu" "David.Lewis@5mhvq.org"
+delta_encoding_required_column.parquet 0 "c_last_review_date:" "string" 100 6c294a48a4c84bc4327e6bc189b7591a "2452378" "2452499" "2452359" "2452443" "2452590" "2452635" "2452437" "2452558"
+delta_length_byte_array.parquet 0 "FRUIT" "string" 1000 096067e169fbe8280e28f0f09e1dbe24 "apple_banana_mango0" "apple_banana_mango1" "apple_banana_mango4" "apple_banana_mango9" "apple_banana_mango16" "apple_banana_mango25" "apple_banana_mango36" "apple_banana_mango49"
+dict-page-offset-zero.parquet 0 "l_partkey" "int32" 39 8c09429ab320eb85c84d182d3d1b3102 1552 1552 1552 1552 1552 1552 1552 1552
+fixed_length_byte_array.parquet 0 "flba_field" "binary" 1000 5180aa5a993cac0c4fe5db5cb34bddd0 "\x00\x00\x03\xe8" null null null null null null null
+float16_nonzeros_and_nans.parquet 0 "x" "float16" 8 988f931930616ed4caa5815b3a67633c null 0x3c00 0xc000 0x7e00 0x0000 0xbc00 0x8000 0x4000
+float16_zeros_and_nans.parquet 0 "x" "float16" 3 beb79168bd114f01052143bb06d447cf null 0x0000 0x7e00
+floating_orders_nan_count.parquet 0 "float_ieee754" "float32" 10 d7bdff51a38ff14a24957facb7485c3e 0xc0000000 0xbf800000 0x80000000 0x00000000 0x3f000000 0x3f800000 0x40000000 0x40400000
+floating_orders_nan_count.parquet 0 "float_typedef" "float32" 10 d7bdff51a38ff14a24957facb7485c3e 0xc0000000 0xbf800000 0x80000000 0x00000000 0x3f000000 0x3f800000 0x40000000 0x40400000
+floating_orders_nan_count.parquet 0 "double_ieee754" "float64" 10 9ce5d804f1832f7ab6e0c5efc46dd11b 0xc000000000000000 0xbff0000000000000 0x8000000000000000 0x0000000000000000 0x3fe0000000000000 0x3ff0000000000000 0x4000000000000000 0x4008000000000000
+floating_orders_nan_count.parquet 0 "double_typedef" "float64" 10 9ce5d804f1832f7ab6e0c5efc46dd11b 0xc000000000000000 0xbff0000000000000 0x8000000000000000 0x0000000000000000 0x3fe0000000000000 0x3ff0000000000000 0x4000000000000000 0x4008000000000000
+floating_orders_nan_count.parquet 0 "float16_ieee754" "float16" 10 af0842ea91b6f525815aeb908dc25cff 0xc000 0xbc00 0x8000 0x0000 0x3800 0x3c00 0x4000 0x4200
+floating_orders_nan_count.parquet 0 "float16_typedef" "float16" 10 af0842ea91b6f525815aeb908dc25cff 0xc000 0xbc00 0x8000 0x0000 0x3800 0x3c00 0x4000 0x4200
+floating_orders_nan_count.parquet 1 "float_ieee754" "float32" 10 daeed9735208536178a730e8c9582e0e 0xffffffff 0xc0000000 0xfff00001 0xbf800000 0x80000000 0x00000000 0x3f800000 0x7fc00001
+floating_orders_nan_count.parquet 1 "float_typedef" "float32" 10 daeed9735208536178a730e8c9582e0e 0xffffffff 0xc0000000 0xfff00001 0xbf800000 0x80000000 0x00000000 0x3f800000 0x7fc00001
+floating_orders_nan_count.parquet 1 "double_ieee754" "float64" 10 01e686c8f556533e4834f51c559ba94d 0xffffffffffffffff 0xc000000000000000 0xfff0000000000001 0xbff0000000000000 0x8000000000000000 0x0000000000000000 0x3ff0000000000000 0x7ff0000000000001
+floating_orders_nan_count.parquet 1 "double_typedef" "float64" 10 01e686c8f556533e4834f51c559ba94d 0xffffffffffffffff 0xc000000000000000 0xfff0000000000001 0xbff0000000000000 0x8000000000000000 0x0000000000000000 0x3ff0000000000000 0x7ff0000000000001
+floating_orders_nan_count.parquet 1 "float16_ieee754" "float16" 10 b1edf9c15c1d2a2c5cd7d1c975c14659 0xffff 0xc000 0xfc01 0xbc00 0x8000 0x0000 0x3c00 0x7c01
+floating_orders_nan_count.parquet 1 "float16_typedef" "float16" 10 b1edf9c15c1d2a2c5cd7d1c975c14659 0xffff 0xc000 0xfc01 0xbc00 0x8000 0x0000 0x3c00 0x7c01
+floating_orders_nan_count.parquet 2 "float_ieee754" "float32" 10 d2ae51960f78be57fa871c4b218bf0b3 0xffffffff 0xfff00001 0x7fc00001 0x7fffffff 0xffffffff 0xfff00001 0x7fc00001 0x7fffffff
+floating_orders_nan_count.parquet 2 "float_typedef" "float32" 10 d2ae51960f78be57fa871c4b218bf0b3 0xffffffff 0xfff00001 0x7fc00001 0x7fffffff 0xffffffff 0xfff00001 0x7fc00001 0x7fffffff
+floating_orders_nan_count.parquet 2 "double_ieee754" "float64" 10 21991fae2137526e8aee391eb826c008 0xffffffffffffffff 0xfff0000000000001 0x7ff0000000000001 0x7fffffffffffffff 0xffffffffffffffff 0xfff0000000000001 0x7ff0000000000001 0x7fffffffffffffff
+floating_orders_nan_count.parquet 2 "double_typedef" "float64" 10 21991fae2137526e8aee391eb826c008 0xffffffffffffffff 0xfff0000000000001 0x7ff0000000000001 0x7fffffffffffffff 0xffffffffffffffff 0xfff0000000000001 0x7ff0000000000001 0x7fffffffffffffff
+floating_orders_nan_count.parquet 2 "float16_ieee754" "float16" 10 12fa4eb9f6f208d7ca2af6ff458eb2ef 0xffff 0xfc01 0x7c01 0x7fff 0xffff 0xfc01 0x7c01 0x7fff
+floating_orders_nan_count.parquet 2 "float16_typedef" "float16" 10 12fa4eb9f6f208d7ca2af6ff458eb2ef 0xffff 0xfc01 0x7c01 0x7fff 0xffff 0xfc01 0x7c01 0x7fff
+floating_orders_nan_count.parquet 3 "float_ieee754" "float32" 10 f027690300ddc7d7b8911f76de287f6d 0x00000000 0x00000000 0x00000000 0x3f000000 0x3f800000 0x3fc00000 0x40000000 0x40400000
+floating_orders_nan_count.parquet 3 "float_typedef" "float32" 10 f027690300ddc7d7b8911f76de287f6d 0x00000000 0x00000000 0x00000000 0x3f000000 0x3f800000 0x3fc00000 0x40000000 0x40400000
+floating_orders_nan_count.parquet 3 "double_ieee754" "float64" 10 a1b0696f07001dcbabbdade0b6f5ebd2 0x0000000000000000 0x0000000000000000 0x0000000000000000 0x3fe0000000000000 0x3ff0000000000000 0x3ff8000000000000 0x4000000000000000 0x4008000000000000
+floating_orders_nan_count.parquet 3 "double_typedef" "float64" 10 a1b0696f07001dcbabbdade0b6f5ebd2 0x0000000000000000 0x0000000000000000 0x0000000000000000 0x3fe0000000000000 0x3ff0000000000000 0x3ff8000000000000 0x4000000000000000 0x4008000000000000
+floating_orders_nan_count.parquet 3 "float16_ieee754" "float16" 10 da19ef0061edeb8ef3df1efc7a1c4a95 0x0000 0x0000 0x0000 0x3800 0x3c00 0x3e00 0x4000 0x4200
+floating_orders_nan_count.parquet 3 "float16_typedef" "float16" 10 da19ef0061edeb8ef3df1efc7a1c4a95 0x0000 0x0000 0x0000 0x3800 0x3c00 0x3e00 0x4000 0x4200
+floating_orders_nan_count.parquet 4 "float_ieee754" "float32" 10 f39c6cae1476bee23a36a06db44122ac 0xc0a00000 0xc0800000 0xc0400000 0xc0000000 0xbfc00000 0xbf800000 0xbf000000 0x80000000
+floating_orders_nan_count.parquet 4 "float_typedef" "float32" 10 f39c6cae1476bee23a36a06db44122ac 0xc0a00000 0xc0800000 0xc0400000 0xc0000000 0xbfc00000 0xbf800000 0xbf000000 0x80000000
+floating_orders_nan_count.parquet 4 "double_ieee754" "float64" 10 e1e6a34031ffcf7cc607b6873bb2a5c6 0xc014000000000000 0xc010000000000000 0xc008000000000000 0xc000000000000000 0xbff8000000000000 0xbff0000000000000 0xbfe0000000000000 0x8000000000000000
+floating_orders_nan_count.parquet 4 "double_typedef" "float64" 10 e1e6a34031ffcf7cc607b6873bb2a5c6 0xc014000000000000 0xc010000000000000 0xc008000000000000 0xc000000000000000 0xbff8000000000000 0xbff0000000000000 0xbfe0000000000000 0x8000000000000000
+floating_orders_nan_count.parquet 4 "float16_ieee754" "float16" 10 9454f32dad16e390c6aa8297cd6e414d 0xc500 0xc400 0xc200 0xc000 0xbe00 0xbc00 0xb800 0x8000
+floating_orders_nan_count.parquet 4 "float16_typedef" "float16" 10 9454f32dad16e390c6aa8297cd6e414d 0xc500 0xc400 0xc200 0xc000 0xbe00 0xbc00 0xb800 0x8000
+nan_in_stats.parquet 0 "x" "float64" 2 8f2acb6f8ada02c44a32dbd92d9b5f01 0x3ff0000000000000 0x7ff8000000000000
+single_nan.parquet 0 "mycol" "float64" 1 37a6259cc0c1dae299a7866489dff0bd null
+int96_from_spark.parquet 0 "a" error
+int96_timestamp_order.parquet 0 "ts" "datetime[ns]" 4 8811eb55d58ed76949ff4e4abfc1c81e 86399999999999 86400000000000 -50803199999999877 1000
+lz4_raw_compressed.parquet 0 "c0" "int64" 4 46b67fbee248a8bc2e8885327b527a85 1593604800 1593604800 1593604801 1593604801
+lz4_raw_compressed.parquet 0 "c1" "binary" 4 9c2d48f6fcd5849a5ee37542b47310d3 "abc" "def" "abc" "def"
+lz4_raw_compressed.parquet 0 "v11" "float64" 4 b984722c31696f7663a5c9218e778530 0x4045000000000000 0x401ecccccccccccd 0x4045100000000000 0x401ecccccccccccd
+sort_columns.parquet 0 "a" "int64" 3 4d580427d8ee0ae5c1d695ad4ffeb2e8 null 2 1
+sort_columns.parquet 0 "b" "string" 3 5c410401bff64a7935aa9be0bdd82d39 "a" "b" "c"
+sort_columns.parquet 1 "a" "int64" 3 4d580427d8ee0ae5c1d695ad4ffeb2e8 null 2 1
+sort_columns.parquet 1 "b" "string" 3 5c410401bff64a7935aa9be0bdd82d39 "a" "b" "c"
+rle_boolean_encoding.parquet 0 "datatype_boolean" "bool" 68 6ed39c81eedcd1e5247e6a2d6f0f3ca3 true false null true true false false true
+unknown-logical-type.parquet 0 "column with known type" "string" 3 cc40795e3df2db51aa50336e13749829 "known string 1" "known string 2" "known string 3"
+unknown-logical-type.parquet 0 "column with unknown type" "binary" 3 d7d2e26326798c3caca1b36dcbc64363 "unknown string 1" "unknown string 2" "unknown string 3"
+datapage_v1-corrupt-checksum.parquet 0 "a" error
+datapage_v1-corrupt-checksum.parquet 0 "b" error
+rle-dict-uncompressed-corrupt-checksum.parquet 0 "long_field" error
+rle-dict-uncompressed-corrupt-checksum.parquet 0 "binary_field" error
+bad_data/ARROW-GH-43605.parquet 0 "min_fl" "uint16" 21186 196a0ad19b7a33a4c5d7dbe41a60bf6e 0 0 0 0 0 0 0 0
+bad_data/ARROW-GH-47662.parquet 0 "flba_field" error
+types.parquet 0 "bool" "bool" 100 c2893d8527f0196b2eda0a84b34224d7 false true false false false null null true
+types.parquet 0 "i8" "int8" 100 fcccf653bfb307dc8d818089eaaf725f 57 89 115 65 -105 -42 7 -109
+types.parquet 0 "i16" "int16" 100 d3586b34150f4b501173cd71e17a31e4 -1157 -2900 null 10600 -16757 515 -628 -21929
+types.parquet 0 "i32" "int32" 100 869f541d7f184f5efe0270a1db690c6b 2084733284 null -1153033708 359237575 1001523279 1942321385 1046120735 1362071319
+types.parquet 0 "i64" "int64" 100 1dab60551ea861fc03d7a655e22bf23c -6682478625310077194 773127215347319597 2389294967138507152 null null -2028304376604248949 200831037870135919 -7117798663679228101
+types.parquet 0 "u8" "uint8" 100 5863b14cb1b030e3530c595af5fba580 null 228 162 90 0 26 80 158
+types.parquet 0 "u16" "uint16" 100 2d30cad0d04a63860679e7e084ff0afc null 42331 20315 47512 55881 6898 null 11845
+types.parquet 0 "u32" "uint32" 100 04443bd8c92e93f1e1304f1dcc728079 null 3155239509 1661613410 3100826857 1951360961 293990851 416752001 4063684745
+types.parquet 0 "u64" "uint64" 100 25e48c21bcbefcab444ffdbbf5add8ff 10926853874728050349 10247134071336681283 12796386821958737261 5660205356452775125 7086401788297060019 null 5384595276226215237 3241623136676479405
+types.parquet 0 "f16" "float16" 100 b0e475fbbe417bbce83946c11293f9d6 0x3dce 0xb94e 0x1d6f 0xb5bf 0xb9e9 0xbcc2 0x2bc4 0xbeee
+types.parquet 0 "f32" "float32" 100 41bc9deae81f116f8f8767935a62a8bc 0x7fc00000 0x80000000 0x7f800000 0xbe3538a4 0x3f77c237 0x3f1c91d4 0x3f169e17 0x3e5ac132
+types.parquet 0 "f64" "float64" 100 ac1308a1d1a5dbf3f2915b3498ed05bd 0xfff0000000000000 0x0000000000000000 null null 0xbff2b3f0dc6def5f 0x3fe05230b9090d0d 0x40017f63817e1063 0xbfe097bd8eb895da
+types.parquet 0 "d9" "decimal[9, 2]" 100 9be3a623de7e1ae0401775549e19776e -251232488 275590657 449930503 516564621 -654470124 -737546428 null -828065735
+types.parquet 0 "d18" "decimal[18, 6]" 100 242fcdc1564b901609d9f7cd7b7ecad4 null 5825587423057066 256333098202942760 -889293069484618972 null -459981190519341708 -628429385050172058 null
+types.parquet 0 "date" "date" 100 625c5c81e2f60b31556bcd3a6c09b340 895345 1180128 null 1196978 2583477 null 451476 1162076
+types.parquet 0 "clock_ms" "clock[ms]" 100 e06a7df5e0bd8d114940dc6e3fcf88a0 16721266 60181601 31974187 71841251 54039816 83191045 2340085 13156843
+types.parquet 0 "clock_us" "clock[us]" 100 2f511b2564e3af0cd351578ab30dca93 57582190211 84942883806 5160675193 3236492961 16901498069 49702794025 36626116738 7129010776
+types.parquet 0 "clock_ns" "clock[ns]" 100 fedbcc2f19e607c0448dc7cc5118b59a 51922555639658 23095654885456 null 50658748486077 63497861417475 9410855475665 36654702248454 null
+types.parquet 0 "ts_ms" "datetime[ms]" 100 3c6d6df3e1de35c36897d321c33b2c2a 281689948393 894445963016 620788985929 -618778398382 -449985522405 841167578744 -1114043495003 723342092664
+types.parquet 0 "ts_us_utc" "datetime[us, UTC]" 100 5257a8db59fb3f486e3ff20113f1fa85 281689948393258 null 620788985929815 -618778398381231 -449985522404934 841167578744785 null 723342092664720
+types.parquet 0 "ts_us_paris" "datetime[us, UTC]" 100 fefa7317aede06e7a43e3bfdd49dce13 281689948393258 894445963016499 null -618778398381231 -449985522404934 841167578744785 -1114043495002867 723342092664720
+types.parquet 0 "ts_ns" "datetime[ns]" 100 24d30b42513b38e4179ccc79e63f2596 1971829638752806 null 4345522901508705 -4331448788668617 -3149898656834538 null -7798304465020069 5063394648653040
+types.parquet 0 "string" "string" 100 5746c9be4f4ac3ecdc9fa91d420dc07d "v17\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v35\xc3\xa9\x0a\x22" "v10\xc3\xa9\x0a\x22" "v37\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22"
+types.parquet 0 "binary" "binary" 100 93a96de3b517154dad3da77bd795f295 "\x0b\x88d" "" "jo)" "\x9f\xa2\xea\xf5\x0d\xd9\xc2t" "\x14\x09\xc4\x9d\xd5G.\xc4" "ct\x1c\xdf\xfc\x81\x89e" "\x8d\xbb" "f\x01\xc8J\xea\x18\xe6j"
+types.parquet 0 "fsb" "binary" 100 b41657443f0229f7da3226ad76855aee "\xed\xae\xb2(\xa2" null "gr\xc8\xe6\xae" "\x12\x94\x84t9" "5\x02CPm" "\xe8M\xe57|" "P\xa5i\xe0h" "\xb4\x06F\xb4G"
+types.parquet 0 "uuid" "binary" 100 5042a119a713140d7bfac2d945f2bd59 "c\x82\x04V\xb3\x1a\xcb\xdb\xb3\x881\xf6A\xed*\x1e" "\xb8\x18E\xd41\x95\x9d\xd7:L\xb6\xb4\xa8B:\xe7" "\xa0\x12z>\xea\x1dV\x1ap\x8f\xf8\xbf\x8eS\x8a\xbc" "\xf2\xd2\xa7\xb2a\xe5p!\xb9\xca(\x87\x80\x00\xa6\x96" "\x07\xab'=\xe3$\xd8s\xd9B45v\xe9\xc9\xa8" "\x15\xf3bkK\x05\xcd\xf7,\xf0\xc9F_\x0c\x82\x8f" "\x95%\x81\xe2IMO\x05`\xc0=w\xd7\xc7\x98V" null
+types.parquet 0 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types.parquet 0 "no_null" "int64" 100 03cf183b9bf63e8000489dd8f802eec3 3 0 3 8 3 1 2 3
+types.parquet 0 "req_i32" "int32" 100 2df763f7912871dd37440e3c56cd6b26 -3 1 -2 3 4 4 -5 -5
+types.parquet 0 "req_string" "string" 100 e08cf7ddfaca046747e496c86d313958 "r0" "r1" "r2" "r3" "r4" "r5" "r6" "r0"
+types.parquet 1 "bool" "bool" 100 b8115b247e50a5949351fe838f0eaa69 true false true false true false null false
+types.parquet 1 "i8" "int8" 100 f28ce839fb8bc2a7da7010b3197659ff 15 54 -70 -76 103 59 -3 -57
+types.parquet 1 "i16" "int16" 100 5cbf53c224f8796fcffccafd020aed4f 7791 32586 6713 -22501 27484 20503 null null
+types.parquet 1 "i32" "int32" 100 731010e4bd485f9fdfaad1506faa630f null null null null -371198245 1364792124 -367134428 -2087263989
+types.parquet 1 "i64" "int64" 100 648ac76dc06fb66f4ec5ed71a13752e3 null 1520471832850312510 1607204492148687502 8325606400801951577 null -1695338862452912143 2093962064592865745 7127648898975472389
+types.parquet 1 "u8" "uint8" 100 33838c37f8cfcc0ef8dd3081e2d4b242 33 null 178 60 43 null 153 209
+types.parquet 1 "u16" "uint16" 100 f1e114054b158544efd7958df1ef0650 41196 52940 null null null null null null
+types.parquet 1 "u32" "uint32" 100 15ed1bfca978a2a4188f161a0893a45f 4282583507 843773377 3335426422 3024856421 3492730930 694960096 2056816880 3786980749
+types.parquet 1 "u64" "uint64" 100 287fc0c5b2f4bcc419f2def431dee533 4525672914629320589 14027472033250707801 15044812209651957423 11632880739211996095 16900220205509179161 1640112806658913525 9732474296662094189 13703903270581912421
+types.parquet 1 "f16" "float16" 100 e61baa7b6723011a2cc3303ae7df567b 0xb47e 0xbbc1 0xbf7a 0xb61c 0xb980 0x37e8 0xbde4 0x3dba
+types.parquet 1 "f32" "float32" 100 3c33fc3d95d7f18c0c256c351f77ab9f null 0x3ee1b6d0 0x3ed62e02 0x3f6f37f4 0xbf381b61 null 0xbf53a0c9 0xbf414148
+types.parquet 1 "f64" "float64" 100 0c9faa111a0585850523afbc4e14810a 0xbfee8863f39e6637 0xbfe4e251eb34e720 0xbfd1924ad611203f 0xbff3e5d088530fea 0xbff1c4a69372eadb 0xbfb9ae610f08fd55 null 0xbfe4fdf019bc1318
+types.parquet 1 "d9" "decimal[9, 2]" 100 0d342edfe137ae7c3fcadebfd3a8f430 594367033 -81075530 -493818800 969610245 -41445070 null null 174614263
+types.parquet 1 "d18" "decimal[18, 6]" 100 255cb0e30026c31cdaabd91504e71140 null null 307996723137430567 -603162539977814397 -199041882529679704 435913657029538588 null 543652135171453123
+types.parquet 1 "date" "date" 100 a0633fff0eb5fcb7a441df7884e51d3b 1162458 -337866 null 412599 -397396 -706046 204187 618068
+types.parquet 1 "clock_ms" "clock[ms]" 100 df1865a9f32aa34eba7490ac25f388a1 34277629 null 72851573 null 56617686 32723055 84142679 31111960
+types.parquet 1 "clock_us" "clock[us]" 100 a5ba3d45a2ae3fecf44872d491b48217 51215649636 28504954276 22373376354 null 1369090257 58141669411 6206504360 17021710661
+types.parquet 1 "clock_ns" "clock[ns]" 100 e491fd826e2a610ed4df73e24f9141a4 null 41656018616273 74927709295634 26204036839191 45549852473486 37896769847219 6049312342082 1786018618600
+types.parquet 1 "ts_ms" "datetime[ms]" 100 a13d2fb93203dbc30e9def5c63af7116 null null -161633635807 53457970569 839491706386 -350806391033 null null
+types.parquet 1 "ts_us_utc" "datetime[us, UTC]" 100 52ac4f768dc94391ef975e467c4ab7a9 1051924309431185 355245582507575 -161633635806539 53457970569687 839491706386303 -350806391032498 203317217097437 413620437662876
+types.parquet 1 "ts_us_paris" "datetime[us, UTC]" 100 c0ab6dd944d2a35197f78026e40024ab null 355245582507575 -161633635806539 53457970569687 839491706386303 -350806391032498 203317217097437 413620437662876
+types.parquet 1 "ts_ns" "datetime[ns]" 100 4feb1d801dd11da82ff02c80c291603f null 2486719077553025 -1131435450645773 374205793987809 5876441944704121 -2455644737227486 1423220519682059 2895343063640132
+types.parquet 1 "string" "string" 100 9591599043d2cc6857e8ed6cf0cfbd14 "v19\xc3\xa9\x0a\x22" "v12\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v11\xc3\xa9\x0a\x22" "v19\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v15\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22"
+types.parquet 1 "binary" "binary" 100 d3c28a717bc4747c82264b5c328e001f "\xa3\x18\xe24f" "\xc3\x8bW" "\xc5Y!\xea\xab<\x1d" "By\xb1g" "" "." "\x89{" "c\x8bj\xc35\xd2"
+types.parquet 1 "fsb" "binary" 100 328b1c81300f598f90ee1c9c02af6be3 "Y\xc8\x1c\x9f\x96" "\x17\x1f\x00\x8b&" ";\xa3\xcf\xbc\xc2" "\xf5\x9b\x7f\x22\xe9" "\x10\x0f\xfd\x0a\x82" "\x98>h\x08\xf9" null "\xdaq8o#"
+types.parquet 1 "uuid" "binary" 100 c0fd04b59f10d4e5fa2ec9d050c6daa5 null "\xcbL8\xb4\xe2T\x82_\xf4\xc7~\x22\x18\x9a\x94\xfa" "|\xa8\x17g\x12q\x01\xcaC\xfe\xbf6\x93(P\xf5" "\xf3\x81\xe5\x8a\xa2T0\xde\x1d\xcc\x86\xd2S&\xb2\xe1" ";W[=\x927[RW\xbd\xb2#\x95\xb4\x0f\xf4" null "\x96B\xc1\x11:\x0a[\x86\x13\x06\xc2\x86\xac\x5c\xfb^" "\xea^\x5c\xcfFHm!\x8b\x9b6\xc4\xa7J\x0f\x87"
+types.parquet 1 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types.parquet 1 "no_null" "int64" 100 d1d564bc842d5a5f37dd8fcabd6ede03 8 7 4 5 1 6 5 3
+types.parquet 1 "req_i32" "int32" 100 6ceca0f09e1b934a3e1b38822062fba6 4 2 3 -5 3 0 -3 0
+types.parquet 1 "req_string" "string" 100 b0cdf995a6a05bc242d9b1d8ab9d8361 "r2" "r3" "r4" "r5" "r6" "r0" "r1" "r2"
+types.parquet 2 "bool" "bool" 100 1c3a8c97c9564db6f1f903a2c38597d6 null null null null null true true false
+types.parquet 2 "i8" "int8" 100 7a2bee0b022ef84c7cdb64642eee0825 null null null null null null null 77
+types.parquet 2 "i16" "int16" 100 3430f807c64d7c323d91268487c7581f 3856 30783 -12440 -19507 14765 -16152 18053 -19642
+types.parquet 2 "i32" "int32" 100 c829fab0930699ebc585cd991087bff9 562206096 null -971814583 1622955047 -1870720503 523592230 -534356695 91511718
+types.parquet 2 "i64" "int64" 100 219a1599b09a1075c629707a0b7a9acc null null null null null null null null
+types.parquet 2 "u8" "uint8" 100 a0b4208c75206f23ed25c9a5c14ba1be 196 109 211 50 113 27 null null
+types.parquet 2 "u16" "uint16" 100 c51c4850ca11d3ee5527a3550f3e222f 47790 49854 40497 null 55766 10552 39758 14145
+types.parquet 2 "u32" "uint32" 100 5955f678ce5a6e6c9338e0fc4f22e524 2932503095 3803512331 2299891600 4058718367 831541589 3882545847 null null
+types.parquet 2 "u64" "uint64" 100 dcbbc78640e7082d50e3d9b78cd74bba null null null 13444947199955135343 10403453464816259413 null 12791293258045768183 11556270442971443439
+types.parquet 2 "f16" "float16" 100 0532d8a2524d0c8eeee3d66314031f05 0xbe64 0xbb89 0x3dcf 0x3fda 0x3933 0x3cbe 0xb822 0xacf0
+types.parquet 2 "f32" "float32" 100 d85334b3e77bfca3063c91e9a4c46347 null null 0xbee21ea0 null 0x3fc3e050 0x3fbff486 0xbe848aa3 0x3fce22d3
+types.parquet 2 "f64" "float64" 100 9dcfa72aa743f874d2ce7e85fa127dcd 0xbfeaa01678bcdd93 0x3ffb74ad9b809d2d 0x3fd073296db94184 0x3f857611912e9249 0x3ff7a2f64d884c12 null 0xbfb684fefcbb3bd6 0x3fe126ca650bf927
+types.parquet 2 "d9" "decimal[9, 2]" 100 9920e18038e54e964b06c2c09b5f863e 972305237 713450718 597935119 -256734510 8424036 -891845171 -965551752 -930518511
+types.parquet 2 "d18" "decimal[18, 6]" 100 a0c5a515f923c82f163dc54b5031cdae 935847657032642447 260167340268226737 -948595210943441259 -922891345598612321 null 575405151486342789 774999491738820416 -249984870206569685
+types.parquet 2 "date" "date" 100 5ec4497c450f990d6f411a781d9d9908 2387397 null -239844 850718 537227 645998 563231 -76069
+types.parquet 2 "clock_ms" "clock[ms]" 100 1263d45dfed1701e02b935ffbdb6868b 7586961 59867629 31250888 66695931 28638420 23755512 39145065 9543822
+types.parquet 2 "clock_us" "clock[us]" 100 0218d733b3cd23dc8cb1def32575dd1a 21513807476 44104208648 77263728102 82453651997 13773804772 49198884496 58220731018 13177314179
+types.parquet 2 "clock_ns" "clock[ns]" 100 3a6fbadde3c6b658db4f2d43c3ca5564 77131709357824 32254349052348 60555193923057 2284100956785 60231159273694 19553469550410 39006848049701 58215320802179
+types.parquet 2 "ts_ms" "datetime[ms]" 100 68802c5a23aa0a7a5c13f23350f56d90 701632455451 355843101130 null null 167522080266 -1036534037151 679287851181 1035987605241
+types.parquet 2 "ts_us_utc" "datetime[us, UTC]" 100 03a90b817fcc5f73a4552eaf1894be67 null 355843101130694 249388598410033 -695237157460648 167522080266088 -1036534037150813 679287851181351 1035987605241544
+types.parquet 2 "ts_us_paris" "datetime[us, UTC]" 100 14dabc4f69ffbb9a07bf80cc36ef8361 701632455451803 null 249388598410033 -695237157460648 null -1036534037150813 679287851181351 1035987605241544
+types.parquet 2 "ts_ns" "datetime[ns]" 100 17a43a16e000a5d222238960ef423f5d 4911427188162621 2490901707914858 null -4866660102224536 null -7255738260055691 null 7251913236690808
+types.parquet 2 "string" "string" 100 8c8e38448306e5d86c76e589c8fe8b50 null "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22" "v38\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22" null null "v30\xc3\xa9\x0a\x22"
+types.parquet 2 "binary" "binary" 100 b30902ca496d998c11c1079fe636beef "5" "s~\xaf\xea" null null null null null null
+types.parquet 2 "fsb" "binary" 100 50ee0955db82fdeebe65babf27780cf3 "\x8a\x14[\xec\xa5" "\xdd\xda\xae*l" "\x10\xaa\x0d\xdc7" "\xd9M\xe7\x1d\x17" "\xf7i\xc4\x02y" null "\xe9\xbd\xe0H\x8e" null
+types.parquet 2 "uuid" "binary" 100 273cd3a207652f418891a08c5c8b9371 null "'\xbb\x8b7\x88\xda\x12[\xde\xcb\xe0\xc9\xa7u)\xc4" "\xe5\xa1\xa4\xda3\xd6 \x80<\x17\xaa\xf7^9\xa1\x97" "\xa4c\xc9\x1d\x04\x04{\x94\x96G\xf3'f\xff\x16\xe9" "\x867\x82\x15\x1c\x19\xf0\xad\xa3M\x0aR\x14\x96\xed1" "\x82\xf1\x1f\xe8\x15\x1b\x0d\x86\x8b\x88\xc8\xa4\x89\x93\xdf\xcb" "\x09.\xa4'\xe9\x86\xcb\xf8j\x1a\x07\x1b\x0a\x83\xbe\x17" "\xbaI\xe4\xbf!\x9d^\x16\x1f\xb2\x8e\x9f\x06.V\xc0"
+types.parquet 2 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types.parquet 2 "no_null" "int64" 100 21dcfce023e34a5317728845ff4fc5d9 6 5 5 0 4 1 7 0
+types.parquet 2 "req_i32" "int32" 100 cdc0443bb10efd3b7ba56224c4bce609 4 0 4 3 0 3 4 1
+types.parquet 2 "req_string" "string" 100 c0407619319b6d0d4e0e047b28a5aeca "r4" "r5" "r6" "r0" "r1" "r2" "r3" "r4"
+types_v2_zstd.parquet 0 "bool" "bool" 100 c2893d8527f0196b2eda0a84b34224d7 false true false false false null null true
+types_v2_zstd.parquet 0 "i8" "int8" 100 fcccf653bfb307dc8d818089eaaf725f 57 89 115 65 -105 -42 7 -109
+types_v2_zstd.parquet 0 "i16" "int16" 100 d3586b34150f4b501173cd71e17a31e4 -1157 -2900 null 10600 -16757 515 -628 -21929
+types_v2_zstd.parquet 0 "i32" "int32" 100 869f541d7f184f5efe0270a1db690c6b 2084733284 null -1153033708 359237575 1001523279 1942321385 1046120735 1362071319
+types_v2_zstd.parquet 0 "i64" "int64" 100 1dab60551ea861fc03d7a655e22bf23c -6682478625310077194 773127215347319597 2389294967138507152 null null -2028304376604248949 200831037870135919 -7117798663679228101
+types_v2_zstd.parquet 0 "u8" "uint8" 100 5863b14cb1b030e3530c595af5fba580 null 228 162 90 0 26 80 158
+types_v2_zstd.parquet 0 "u16" "uint16" 100 2d30cad0d04a63860679e7e084ff0afc null 42331 20315 47512 55881 6898 null 11845
+types_v2_zstd.parquet 0 "u32" "uint32" 100 04443bd8c92e93f1e1304f1dcc728079 null 3155239509 1661613410 3100826857 1951360961 293990851 416752001 4063684745
+types_v2_zstd.parquet 0 "u64" "uint64" 100 25e48c21bcbefcab444ffdbbf5add8ff 10926853874728050349 10247134071336681283 12796386821958737261 5660205356452775125 7086401788297060019 null 5384595276226215237 3241623136676479405
+types_v2_zstd.parquet 0 "f16" "float16" 100 b0e475fbbe417bbce83946c11293f9d6 0x3dce 0xb94e 0x1d6f 0xb5bf 0xb9e9 0xbcc2 0x2bc4 0xbeee
+types_v2_zstd.parquet 0 "f32" "float32" 100 41bc9deae81f116f8f8767935a62a8bc 0x7fc00000 0x80000000 0x7f800000 0xbe3538a4 0x3f77c237 0x3f1c91d4 0x3f169e17 0x3e5ac132
+types_v2_zstd.parquet 0 "f64" "float64" 100 ac1308a1d1a5dbf3f2915b3498ed05bd 0xfff0000000000000 0x0000000000000000 null null 0xbff2b3f0dc6def5f 0x3fe05230b9090d0d 0x40017f63817e1063 0xbfe097bd8eb895da
+types_v2_zstd.parquet 0 "d9" "decimal[9, 2]" 100 9be3a623de7e1ae0401775549e19776e -251232488 275590657 449930503 516564621 -654470124 -737546428 null -828065735
+types_v2_zstd.parquet 0 "d18" "decimal[18, 6]" 100 242fcdc1564b901609d9f7cd7b7ecad4 null 5825587423057066 256333098202942760 -889293069484618972 null -459981190519341708 -628429385050172058 null
+types_v2_zstd.parquet 0 "date" "date" 100 625c5c81e2f60b31556bcd3a6c09b340 895345 1180128 null 1196978 2583477 null 451476 1162076
+types_v2_zstd.parquet 0 "clock_ms" "clock[ms]" 100 e06a7df5e0bd8d114940dc6e3fcf88a0 16721266 60181601 31974187 71841251 54039816 83191045 2340085 13156843
+types_v2_zstd.parquet 0 "clock_us" "clock[us]" 100 2f511b2564e3af0cd351578ab30dca93 57582190211 84942883806 5160675193 3236492961 16901498069 49702794025 36626116738 7129010776
+types_v2_zstd.parquet 0 "clock_ns" "clock[ns]" 100 fedbcc2f19e607c0448dc7cc5118b59a 51922555639658 23095654885456 null 50658748486077 63497861417475 9410855475665 36654702248454 null
+types_v2_zstd.parquet 0 "ts_ms" "datetime[ms]" 100 3c6d6df3e1de35c36897d321c33b2c2a 281689948393 894445963016 620788985929 -618778398382 -449985522405 841167578744 -1114043495003 723342092664
+types_v2_zstd.parquet 0 "ts_us_utc" "datetime[us, UTC]" 100 5257a8db59fb3f486e3ff20113f1fa85 281689948393258 null 620788985929815 -618778398381231 -449985522404934 841167578744785 null 723342092664720
+types_v2_zstd.parquet 0 "ts_us_paris" "datetime[us, UTC]" 100 fefa7317aede06e7a43e3bfdd49dce13 281689948393258 894445963016499 null -618778398381231 -449985522404934 841167578744785 -1114043495002867 723342092664720
+types_v2_zstd.parquet 0 "ts_ns" "datetime[ns]" 100 24d30b42513b38e4179ccc79e63f2596 1971829638752806 null 4345522901508705 -4331448788668617 -3149898656834538 null -7798304465020069 5063394648653040
+types_v2_zstd.parquet 0 "string" "string" 100 5746c9be4f4ac3ecdc9fa91d420dc07d "v17\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v35\xc3\xa9\x0a\x22" "v10\xc3\xa9\x0a\x22" "v37\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22"
+types_v2_zstd.parquet 0 "binary" "binary" 100 93a96de3b517154dad3da77bd795f295 "\x0b\x88d" "" "jo)" "\x9f\xa2\xea\xf5\x0d\xd9\xc2t" "\x14\x09\xc4\x9d\xd5G.\xc4" "ct\x1c\xdf\xfc\x81\x89e" "\x8d\xbb" "f\x01\xc8J\xea\x18\xe6j"
+types_v2_zstd.parquet 0 "fsb" "binary" 100 b41657443f0229f7da3226ad76855aee "\xed\xae\xb2(\xa2" null "gr\xc8\xe6\xae" "\x12\x94\x84t9" "5\x02CPm" "\xe8M\xe57|" "P\xa5i\xe0h" "\xb4\x06F\xb4G"
+types_v2_zstd.parquet 0 "uuid" "binary" 100 5042a119a713140d7bfac2d945f2bd59 "c\x82\x04V\xb3\x1a\xcb\xdb\xb3\x881\xf6A\xed*\x1e" "\xb8\x18E\xd41\x95\x9d\xd7:L\xb6\xb4\xa8B:\xe7" "\xa0\x12z>\xea\x1dV\x1ap\x8f\xf8\xbf\x8eS\x8a\xbc" "\xf2\xd2\xa7\xb2a\xe5p!\xb9\xca(\x87\x80\x00\xa6\x96" "\x07\xab'=\xe3$\xd8s\xd9B45v\xe9\xc9\xa8" "\x15\xf3bkK\x05\xcd\xf7,\xf0\xc9F_\x0c\x82\x8f" "\x95%\x81\xe2IMO\x05`\xc0=w\xd7\xc7\x98V" null
+types_v2_zstd.parquet 0 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types_v2_zstd.parquet 0 "no_null" "int64" 100 03cf183b9bf63e8000489dd8f802eec3 3 0 3 8 3 1 2 3
+types_v2_zstd.parquet 0 "req_i32" "int32" 100 2df763f7912871dd37440e3c56cd6b26 -3 1 -2 3 4 4 -5 -5
+types_v2_zstd.parquet 0 "req_string" "string" 100 e08cf7ddfaca046747e496c86d313958 "r0" "r1" "r2" "r3" "r4" "r5" "r6" "r0"
+types_v2_zstd.parquet 1 "bool" "bool" 100 b8115b247e50a5949351fe838f0eaa69 true false true false true false null false
+types_v2_zstd.parquet 1 "i8" "int8" 100 f28ce839fb8bc2a7da7010b3197659ff 15 54 -70 -76 103 59 -3 -57
+types_v2_zstd.parquet 1 "i16" "int16" 100 5cbf53c224f8796fcffccafd020aed4f 7791 32586 6713 -22501 27484 20503 null null
+types_v2_zstd.parquet 1 "i32" "int32" 100 731010e4bd485f9fdfaad1506faa630f null null null null -371198245 1364792124 -367134428 -2087263989
+types_v2_zstd.parquet 1 "i64" "int64" 100 648ac76dc06fb66f4ec5ed71a13752e3 null 1520471832850312510 1607204492148687502 8325606400801951577 null -1695338862452912143 2093962064592865745 7127648898975472389
+types_v2_zstd.parquet 1 "u8" "uint8" 100 33838c37f8cfcc0ef8dd3081e2d4b242 33 null 178 60 43 null 153 209
+types_v2_zstd.parquet 1 "u16" "uint16" 100 f1e114054b158544efd7958df1ef0650 41196 52940 null null null null null null
+types_v2_zstd.parquet 1 "u32" "uint32" 100 15ed1bfca978a2a4188f161a0893a45f 4282583507 843773377 3335426422 3024856421 3492730930 694960096 2056816880 3786980749
+types_v2_zstd.parquet 1 "u64" "uint64" 100 287fc0c5b2f4bcc419f2def431dee533 4525672914629320589 14027472033250707801 15044812209651957423 11632880739211996095 16900220205509179161 1640112806658913525 9732474296662094189 13703903270581912421
+types_v2_zstd.parquet 1 "f16" "float16" 100 e61baa7b6723011a2cc3303ae7df567b 0xb47e 0xbbc1 0xbf7a 0xb61c 0xb980 0x37e8 0xbde4 0x3dba
+types_v2_zstd.parquet 1 "f32" "float32" 100 3c33fc3d95d7f18c0c256c351f77ab9f null 0x3ee1b6d0 0x3ed62e02 0x3f6f37f4 0xbf381b61 null 0xbf53a0c9 0xbf414148
+types_v2_zstd.parquet 1 "f64" "float64" 100 0c9faa111a0585850523afbc4e14810a 0xbfee8863f39e6637 0xbfe4e251eb34e720 0xbfd1924ad611203f 0xbff3e5d088530fea 0xbff1c4a69372eadb 0xbfb9ae610f08fd55 null 0xbfe4fdf019bc1318
+types_v2_zstd.parquet 1 "d9" "decimal[9, 2]" 100 0d342edfe137ae7c3fcadebfd3a8f430 594367033 -81075530 -493818800 969610245 -41445070 null null 174614263
+types_v2_zstd.parquet 1 "d18" "decimal[18, 6]" 100 255cb0e30026c31cdaabd91504e71140 null null 307996723137430567 -603162539977814397 -199041882529679704 435913657029538588 null 543652135171453123
+types_v2_zstd.parquet 1 "date" "date" 100 a0633fff0eb5fcb7a441df7884e51d3b 1162458 -337866 null 412599 -397396 -706046 204187 618068
+types_v2_zstd.parquet 1 "clock_ms" "clock[ms]" 100 df1865a9f32aa34eba7490ac25f388a1 34277629 null 72851573 null 56617686 32723055 84142679 31111960
+types_v2_zstd.parquet 1 "clock_us" "clock[us]" 100 a5ba3d45a2ae3fecf44872d491b48217 51215649636 28504954276 22373376354 null 1369090257 58141669411 6206504360 17021710661
+types_v2_zstd.parquet 1 "clock_ns" "clock[ns]" 100 e491fd826e2a610ed4df73e24f9141a4 null 41656018616273 74927709295634 26204036839191 45549852473486 37896769847219 6049312342082 1786018618600
+types_v2_zstd.parquet 1 "ts_ms" "datetime[ms]" 100 a13d2fb93203dbc30e9def5c63af7116 null null -161633635807 53457970569 839491706386 -350806391033 null null
+types_v2_zstd.parquet 1 "ts_us_utc" "datetime[us, UTC]" 100 52ac4f768dc94391ef975e467c4ab7a9 1051924309431185 355245582507575 -161633635806539 53457970569687 839491706386303 -350806391032498 203317217097437 413620437662876
+types_v2_zstd.parquet 1 "ts_us_paris" "datetime[us, UTC]" 100 c0ab6dd944d2a35197f78026e40024ab null 355245582507575 -161633635806539 53457970569687 839491706386303 -350806391032498 203317217097437 413620437662876
+types_v2_zstd.parquet 1 "ts_ns" "datetime[ns]" 100 4feb1d801dd11da82ff02c80c291603f null 2486719077553025 -1131435450645773 374205793987809 5876441944704121 -2455644737227486 1423220519682059 2895343063640132
+types_v2_zstd.parquet 1 "string" "string" 100 9591599043d2cc6857e8ed6cf0cfbd14 "v19\xc3\xa9\x0a\x22" "v12\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v11\xc3\xa9\x0a\x22" "v19\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v15\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22"
+types_v2_zstd.parquet 1 "binary" "binary" 100 d3c28a717bc4747c82264b5c328e001f "\xa3\x18\xe24f" "\xc3\x8bW" "\xc5Y!\xea\xab<\x1d" "By\xb1g" "" "." "\x89{" "c\x8bj\xc35\xd2"
+types_v2_zstd.parquet 1 "fsb" "binary" 100 328b1c81300f598f90ee1c9c02af6be3 "Y\xc8\x1c\x9f\x96" "\x17\x1f\x00\x8b&" ";\xa3\xcf\xbc\xc2" "\xf5\x9b\x7f\x22\xe9" "\x10\x0f\xfd\x0a\x82" "\x98>h\x08\xf9" null "\xdaq8o#"
+types_v2_zstd.parquet 1 "uuid" "binary" 100 c0fd04b59f10d4e5fa2ec9d050c6daa5 null "\xcbL8\xb4\xe2T\x82_\xf4\xc7~\x22\x18\x9a\x94\xfa" "|\xa8\x17g\x12q\x01\xcaC\xfe\xbf6\x93(P\xf5" "\xf3\x81\xe5\x8a\xa2T0\xde\x1d\xcc\x86\xd2S&\xb2\xe1" ";W[=\x927[RW\xbd\xb2#\x95\xb4\x0f\xf4" null "\x96B\xc1\x11:\x0a[\x86\x13\x06\xc2\x86\xac\x5c\xfb^" "\xea^\x5c\xcfFHm!\x8b\x9b6\xc4\xa7J\x0f\x87"
+types_v2_zstd.parquet 1 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types_v2_zstd.parquet 1 "no_null" "int64" 100 d1d564bc842d5a5f37dd8fcabd6ede03 8 7 4 5 1 6 5 3
+types_v2_zstd.parquet 1 "req_i32" "int32" 100 6ceca0f09e1b934a3e1b38822062fba6 4 2 3 -5 3 0 -3 0
+types_v2_zstd.parquet 1 "req_string" "string" 100 b0cdf995a6a05bc242d9b1d8ab9d8361 "r2" "r3" "r4" "r5" "r6" "r0" "r1" "r2"
+types_v2_zstd.parquet 2 "bool" "bool" 100 1c3a8c97c9564db6f1f903a2c38597d6 null null null null null true true false
+types_v2_zstd.parquet 2 "i8" "int8" 100 7a2bee0b022ef84c7cdb64642eee0825 null null null null null null null 77
+types_v2_zstd.parquet 2 "i16" "int16" 100 3430f807c64d7c323d91268487c7581f 3856 30783 -12440 -19507 14765 -16152 18053 -19642
+types_v2_zstd.parquet 2 "i32" "int32" 100 c829fab0930699ebc585cd991087bff9 562206096 null -971814583 1622955047 -1870720503 523592230 -534356695 91511718
+types_v2_zstd.parquet 2 "i64" "int64" 100 219a1599b09a1075c629707a0b7a9acc null null null null null null null null
+types_v2_zstd.parquet 2 "u8" "uint8" 100 a0b4208c75206f23ed25c9a5c14ba1be 196 109 211 50 113 27 null null
+types_v2_zstd.parquet 2 "u16" "uint16" 100 c51c4850ca11d3ee5527a3550f3e222f 47790 49854 40497 null 55766 10552 39758 14145
+types_v2_zstd.parquet 2 "u32" "uint32" 100 5955f678ce5a6e6c9338e0fc4f22e524 2932503095 3803512331 2299891600 4058718367 831541589 3882545847 null null
+types_v2_zstd.parquet 2 "u64" "uint64" 100 dcbbc78640e7082d50e3d9b78cd74bba null null null 13444947199955135343 10403453464816259413 null 12791293258045768183 11556270442971443439
+types_v2_zstd.parquet 2 "f16" "float16" 100 0532d8a2524d0c8eeee3d66314031f05 0xbe64 0xbb89 0x3dcf 0x3fda 0x3933 0x3cbe 0xb822 0xacf0
+types_v2_zstd.parquet 2 "f32" "float32" 100 d85334b3e77bfca3063c91e9a4c46347 null null 0xbee21ea0 null 0x3fc3e050 0x3fbff486 0xbe848aa3 0x3fce22d3
+types_v2_zstd.parquet 2 "f64" "float64" 100 9dcfa72aa743f874d2ce7e85fa127dcd 0xbfeaa01678bcdd93 0x3ffb74ad9b809d2d 0x3fd073296db94184 0x3f857611912e9249 0x3ff7a2f64d884c12 null 0xbfb684fefcbb3bd6 0x3fe126ca650bf927
+types_v2_zstd.parquet 2 "d9" "decimal[9, 2]" 100 9920e18038e54e964b06c2c09b5f863e 972305237 713450718 597935119 -256734510 8424036 -891845171 -965551752 -930518511
+types_v2_zstd.parquet 2 "d18" "decimal[18, 6]" 100 a0c5a515f923c82f163dc54b5031cdae 935847657032642447 260167340268226737 -948595210943441259 -922891345598612321 null 575405151486342789 774999491738820416 -249984870206569685
+types_v2_zstd.parquet 2 "date" "date" 100 5ec4497c450f990d6f411a781d9d9908 2387397 null -239844 850718 537227 645998 563231 -76069
+types_v2_zstd.parquet 2 "clock_ms" "clock[ms]" 100 1263d45dfed1701e02b935ffbdb6868b 7586961 59867629 31250888 66695931 28638420 23755512 39145065 9543822
+types_v2_zstd.parquet 2 "clock_us" "clock[us]" 100 0218d733b3cd23dc8cb1def32575dd1a 21513807476 44104208648 77263728102 82453651997 13773804772 49198884496 58220731018 13177314179
+types_v2_zstd.parquet 2 "clock_ns" "clock[ns]" 100 3a6fbadde3c6b658db4f2d43c3ca5564 77131709357824 32254349052348 60555193923057 2284100956785 60231159273694 19553469550410 39006848049701 58215320802179
+types_v2_zstd.parquet 2 "ts_ms" "datetime[ms]" 100 68802c5a23aa0a7a5c13f23350f56d90 701632455451 355843101130 null null 167522080266 -1036534037151 679287851181 1035987605241
+types_v2_zstd.parquet 2 "ts_us_utc" "datetime[us, UTC]" 100 03a90b817fcc5f73a4552eaf1894be67 null 355843101130694 249388598410033 -695237157460648 167522080266088 -1036534037150813 679287851181351 1035987605241544
+types_v2_zstd.parquet 2 "ts_us_paris" "datetime[us, UTC]" 100 14dabc4f69ffbb9a07bf80cc36ef8361 701632455451803 null 249388598410033 -695237157460648 null -1036534037150813 679287851181351 1035987605241544
+types_v2_zstd.parquet 2 "ts_ns" "datetime[ns]" 100 17a43a16e000a5d222238960ef423f5d 4911427188162621 2490901707914858 null -4866660102224536 null -7255738260055691 null 7251913236690808
+types_v2_zstd.parquet 2 "string" "string" 100 8c8e38448306e5d86c76e589c8fe8b50 null "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22" "v38\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22" null null "v30\xc3\xa9\x0a\x22"
+types_v2_zstd.parquet 2 "binary" "binary" 100 b30902ca496d998c11c1079fe636beef "5" "s~\xaf\xea" null null null null null null
+types_v2_zstd.parquet 2 "fsb" "binary" 100 50ee0955db82fdeebe65babf27780cf3 "\x8a\x14[\xec\xa5" "\xdd\xda\xae*l" "\x10\xaa\x0d\xdc7" "\xd9M\xe7\x1d\x17" "\xf7i\xc4\x02y" null "\xe9\xbd\xe0H\x8e" null
+types_v2_zstd.parquet 2 "uuid" "binary" 100 273cd3a207652f418891a08c5c8b9371 null "'\xbb\x8b7\x88\xda\x12[\xde\xcb\xe0\xc9\xa7u)\xc4" "\xe5\xa1\xa4\xda3\xd6 \x80<\x17\xaa\xf7^9\xa1\x97" "\xa4c\xc9\x1d\x04\x04{\x94\x96G\xf3'f\xff\x16\xe9" "\x867\x82\x15\x1c\x19\xf0\xad\xa3M\x0aR\x14\x96\xed1" "\x82\xf1\x1f\xe8\x15\x1b\x0d\x86\x8b\x88\xc8\xa4\x89\x93\xdf\xcb" "\x09.\xa4'\xe9\x86\xcb\xf8j\x1a\x07\x1b\x0a\x83\xbe\x17" "\xbaI\xe4\xbf!\x9d^\x16\x1f\xb2\x8e\x9f\x06.V\xc0"
+types_v2_zstd.parquet 2 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types_v2_zstd.parquet 2 "no_null" "int64" 100 21dcfce023e34a5317728845ff4fc5d9 6 5 5 0 4 1 7 0
+types_v2_zstd.parquet 2 "req_i32" "int32" 100 cdc0443bb10efd3b7ba56224c4bce609 4 0 4 3 0 3 4 1
+types_v2_zstd.parquet 2 "req_string" "string" 100 c0407619319b6d0d4e0e047b28a5aeca "r4" "r5" "r6" "r0" "r1" "r2" "r3" "r4"
+types_gzip.parquet 0 "bool" "bool" 100 c2893d8527f0196b2eda0a84b34224d7 false true false false false null null true
+types_gzip.parquet 0 "i32" "int32" 100 869f541d7f184f5efe0270a1db690c6b 2084733284 null -1153033708 359237575 1001523279 1942321385 1046120735 1362071319
+types_gzip.parquet 0 "f64" "float64" 100 ac1308a1d1a5dbf3f2915b3498ed05bd 0xfff0000000000000 0x0000000000000000 null null 0xbff2b3f0dc6def5f 0x3fe05230b9090d0d 0x40017f63817e1063 0xbfe097bd8eb895da
+types_gzip.parquet 0 "d18" "decimal[18, 6]" 100 242fcdc1564b901609d9f7cd7b7ecad4 null 5825587423057066 256333098202942760 -889293069484618972 null -459981190519341708 -628429385050172058 null
+types_gzip.parquet 0 "string" "string" 100 5746c9be4f4ac3ecdc9fa91d420dc07d "v17\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v35\xc3\xa9\x0a\x22" "v10\xc3\xa9\x0a\x22" "v37\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22"
+types_gzip.parquet 0 "fsb" "binary" 100 b41657443f0229f7da3226ad76855aee "\xed\xae\xb2(\xa2" null "gr\xc8\xe6\xae" "\x12\x94\x84t9" "5\x02CPm" "\xe8M\xe57|" "P\xa5i\xe0h" "\xb4\x06F\xb4G"
+types_gzip.parquet 0 "req_string" "string" 100 e08cf7ddfaca046747e496c86d313958 "r0" "r1" "r2" "r3" "r4" "r5" "r6" "r0"
+types_gzip.parquet 1 "bool" "bool" 100 b8115b247e50a5949351fe838f0eaa69 true false true false true false null false
+types_gzip.parquet 1 "i32" "int32" 100 731010e4bd485f9fdfaad1506faa630f null null null null -371198245 1364792124 -367134428 -2087263989
+types_gzip.parquet 1 "f64" "float64" 100 0c9faa111a0585850523afbc4e14810a 0xbfee8863f39e6637 0xbfe4e251eb34e720 0xbfd1924ad611203f 0xbff3e5d088530fea 0xbff1c4a69372eadb 0xbfb9ae610f08fd55 null 0xbfe4fdf019bc1318
+types_gzip.parquet 1 "d18" "decimal[18, 6]" 100 255cb0e30026c31cdaabd91504e71140 null null 307996723137430567 -603162539977814397 -199041882529679704 435913657029538588 null 543652135171453123
+types_gzip.parquet 1 "string" "string" 100 9591599043d2cc6857e8ed6cf0cfbd14 "v19\xc3\xa9\x0a\x22" "v12\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v11\xc3\xa9\x0a\x22" "v19\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v15\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22"
+types_gzip.parquet 1 "fsb" "binary" 100 328b1c81300f598f90ee1c9c02af6be3 "Y\xc8\x1c\x9f\x96" "\x17\x1f\x00\x8b&" ";\xa3\xcf\xbc\xc2" "\xf5\x9b\x7f\x22\xe9" "\x10\x0f\xfd\x0a\x82" "\x98>h\x08\xf9" null "\xdaq8o#"
+types_gzip.parquet 1 "req_string" "string" 100 b0cdf995a6a05bc242d9b1d8ab9d8361 "r2" "r3" "r4" "r5" "r6" "r0" "r1" "r2"
+types_gzip.parquet 2 "bool" "bool" 100 1c3a8c97c9564db6f1f903a2c38597d6 null null null null null true true false
+types_gzip.parquet 2 "i32" "int32" 100 c829fab0930699ebc585cd991087bff9 562206096 null -971814583 1622955047 -1870720503 523592230 -534356695 91511718
+types_gzip.parquet 2 "f64" "float64" 100 9dcfa72aa743f874d2ce7e85fa127dcd 0xbfeaa01678bcdd93 0x3ffb74ad9b809d2d 0x3fd073296db94184 0x3f857611912e9249 0x3ff7a2f64d884c12 null 0xbfb684fefcbb3bd6 0x3fe126ca650bf927
+types_gzip.parquet 2 "d18" "decimal[18, 6]" 100 a0c5a515f923c82f163dc54b5031cdae 935847657032642447 260167340268226737 -948595210943441259 -922891345598612321 null 575405151486342789 774999491738820416 -249984870206569685
+types_gzip.parquet 2 "string" "string" 100 8c8e38448306e5d86c76e589c8fe8b50 null "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22" "v38\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22" null null "v30\xc3\xa9\x0a\x22"
+types_gzip.parquet 2 "fsb" "binary" 100 50ee0955db82fdeebe65babf27780cf3 "\x8a\x14[\xec\xa5" "\xdd\xda\xae*l" "\x10\xaa\x0d\xdc7" "\xd9M\xe7\x1d\x17" "\xf7i\xc4\x02y" null "\xe9\xbd\xe0H\x8e" null
+types_gzip.parquet 2 "req_string" "string" 100 c0407619319b6d0d4e0e047b28a5aeca "r4" "r5" "r6" "r0" "r1" "r2" "r3" "r4"
+types_lz4.parquet 0 "bool" "bool" 100 c2893d8527f0196b2eda0a84b34224d7 false true false false false null null true
+types_lz4.parquet 0 "i32" "int32" 100 869f541d7f184f5efe0270a1db690c6b 2084733284 null -1153033708 359237575 1001523279 1942321385 1046120735 1362071319
+types_lz4.parquet 0 "f64" "float64" 100 ac1308a1d1a5dbf3f2915b3498ed05bd 0xfff0000000000000 0x0000000000000000 null null 0xbff2b3f0dc6def5f 0x3fe05230b9090d0d 0x40017f63817e1063 0xbfe097bd8eb895da
+types_lz4.parquet 0 "d18" "decimal[18, 6]" 100 242fcdc1564b901609d9f7cd7b7ecad4 null 5825587423057066 256333098202942760 -889293069484618972 null -459981190519341708 -628429385050172058 null
+types_lz4.parquet 0 "string" "string" 100 5746c9be4f4ac3ecdc9fa91d420dc07d "v17\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v35\xc3\xa9\x0a\x22" "v10\xc3\xa9\x0a\x22" "v37\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22"
+types_lz4.parquet 0 "fsb" "binary" 100 b41657443f0229f7da3226ad76855aee "\xed\xae\xb2(\xa2" null "gr\xc8\xe6\xae" "\x12\x94\x84t9" "5\x02CPm" "\xe8M\xe57|" "P\xa5i\xe0h" "\xb4\x06F\xb4G"
+types_lz4.parquet 0 "req_string" "string" 100 e08cf7ddfaca046747e496c86d313958 "r0" "r1" "r2" "r3" "r4" "r5" "r6" "r0"
+types_lz4.parquet 1 "bool" "bool" 100 b8115b247e50a5949351fe838f0eaa69 true false true false true false null false
+types_lz4.parquet 1 "i32" "int32" 100 731010e4bd485f9fdfaad1506faa630f null null null null -371198245 1364792124 -367134428 -2087263989
+types_lz4.parquet 1 "f64" "float64" 100 0c9faa111a0585850523afbc4e14810a 0xbfee8863f39e6637 0xbfe4e251eb34e720 0xbfd1924ad611203f 0xbff3e5d088530fea 0xbff1c4a69372eadb 0xbfb9ae610f08fd55 null 0xbfe4fdf019bc1318
+types_lz4.parquet 1 "d18" "decimal[18, 6]" 100 255cb0e30026c31cdaabd91504e71140 null null 307996723137430567 -603162539977814397 -199041882529679704 435913657029538588 null 543652135171453123
+types_lz4.parquet 1 "string" "string" 100 9591599043d2cc6857e8ed6cf0cfbd14 "v19\xc3\xa9\x0a\x22" "v12\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v11\xc3\xa9\x0a\x22" "v19\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v15\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22"
+types_lz4.parquet 1 "fsb" "binary" 100 328b1c81300f598f90ee1c9c02af6be3 "Y\xc8\x1c\x9f\x96" "\x17\x1f\x00\x8b&" ";\xa3\xcf\xbc\xc2" "\xf5\x9b\x7f\x22\xe9" "\x10\x0f\xfd\x0a\x82" "\x98>h\x08\xf9" null "\xdaq8o#"
+types_lz4.parquet 1 "req_string" "string" 100 b0cdf995a6a05bc242d9b1d8ab9d8361 "r2" "r3" "r4" "r5" "r6" "r0" "r1" "r2"
+types_lz4.parquet 2 "bool" "bool" 100 1c3a8c97c9564db6f1f903a2c38597d6 null null null null null true true false
+types_lz4.parquet 2 "i32" "int32" 100 c829fab0930699ebc585cd991087bff9 562206096 null -971814583 1622955047 -1870720503 523592230 -534356695 91511718
+types_lz4.parquet 2 "f64" "float64" 100 9dcfa72aa743f874d2ce7e85fa127dcd 0xbfeaa01678bcdd93 0x3ffb74ad9b809d2d 0x3fd073296db94184 0x3f857611912e9249 0x3ff7a2f64d884c12 null 0xbfb684fefcbb3bd6 0x3fe126ca650bf927
+types_lz4.parquet 2 "d18" "decimal[18, 6]" 100 a0c5a515f923c82f163dc54b5031cdae 935847657032642447 260167340268226737 -948595210943441259 -922891345598612321 null 575405151486342789 774999491738820416 -249984870206569685
+types_lz4.parquet 2 "string" "string" 100 8c8e38448306e5d86c76e589c8fe8b50 null "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22" "v38\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22" null null "v30\xc3\xa9\x0a\x22"
+types_lz4.parquet 2 "fsb" "binary" 100 50ee0955db82fdeebe65babf27780cf3 "\x8a\x14[\xec\xa5" "\xdd\xda\xae*l" "\x10\xaa\x0d\xdc7" "\xd9M\xe7\x1d\x17" "\xf7i\xc4\x02y" null "\xe9\xbd\xe0H\x8e" null
+types_lz4.parquet 2 "req_string" "string" 100 c0407619319b6d0d4e0e047b28a5aeca "r4" "r5" "r6" "r0" "r1" "r2" "r3" "r4"
+types_plain.parquet 0 "bool" "bool" 100 c2893d8527f0196b2eda0a84b34224d7 false true false false false null null true
+types_plain.parquet 0 "i8" "int8" 100 fcccf653bfb307dc8d818089eaaf725f 57 89 115 65 -105 -42 7 -109
+types_plain.parquet 0 "i16" "int16" 100 d3586b34150f4b501173cd71e17a31e4 -1157 -2900 null 10600 -16757 515 -628 -21929
+types_plain.parquet 0 "i32" "int32" 100 869f541d7f184f5efe0270a1db690c6b 2084733284 null -1153033708 359237575 1001523279 1942321385 1046120735 1362071319
+types_plain.parquet 0 "i64" "int64" 100 1dab60551ea861fc03d7a655e22bf23c -6682478625310077194 773127215347319597 2389294967138507152 null null -2028304376604248949 200831037870135919 -7117798663679228101
+types_plain.parquet 0 "u8" "uint8" 100 5863b14cb1b030e3530c595af5fba580 null 228 162 90 0 26 80 158
+types_plain.parquet 0 "u16" "uint16" 100 2d30cad0d04a63860679e7e084ff0afc null 42331 20315 47512 55881 6898 null 11845
+types_plain.parquet 0 "u32" "uint32" 100 04443bd8c92e93f1e1304f1dcc728079 null 3155239509 1661613410 3100826857 1951360961 293990851 416752001 4063684745
+types_plain.parquet 0 "u64" "uint64" 100 25e48c21bcbefcab444ffdbbf5add8ff 10926853874728050349 10247134071336681283 12796386821958737261 5660205356452775125 7086401788297060019 null 5384595276226215237 3241623136676479405
+types_plain.parquet 0 "f16" "float16" 100 b0e475fbbe417bbce83946c11293f9d6 0x3dce 0xb94e 0x1d6f 0xb5bf 0xb9e9 0xbcc2 0x2bc4 0xbeee
+types_plain.parquet 0 "f32" "float32" 100 41bc9deae81f116f8f8767935a62a8bc 0x7fc00000 0x80000000 0x7f800000 0xbe3538a4 0x3f77c237 0x3f1c91d4 0x3f169e17 0x3e5ac132
+types_plain.parquet 0 "f64" "float64" 100 ac1308a1d1a5dbf3f2915b3498ed05bd 0xfff0000000000000 0x0000000000000000 null null 0xbff2b3f0dc6def5f 0x3fe05230b9090d0d 0x40017f63817e1063 0xbfe097bd8eb895da
+types_plain.parquet 0 "d9" "decimal[9, 2]" 100 9be3a623de7e1ae0401775549e19776e -251232488 275590657 449930503 516564621 -654470124 -737546428 null -828065735
+types_plain.parquet 0 "d18" "decimal[18, 6]" 100 242fcdc1564b901609d9f7cd7b7ecad4 null 5825587423057066 256333098202942760 -889293069484618972 null -459981190519341708 -628429385050172058 null
+types_plain.parquet 0 "date" "date" 100 625c5c81e2f60b31556bcd3a6c09b340 895345 1180128 null 1196978 2583477 null 451476 1162076
+types_plain.parquet 0 "clock_ms" "clock[ms]" 100 e06a7df5e0bd8d114940dc6e3fcf88a0 16721266 60181601 31974187 71841251 54039816 83191045 2340085 13156843
+types_plain.parquet 0 "clock_us" "clock[us]" 100 2f511b2564e3af0cd351578ab30dca93 57582190211 84942883806 5160675193 3236492961 16901498069 49702794025 36626116738 7129010776
+types_plain.parquet 0 "clock_ns" "clock[ns]" 100 fedbcc2f19e607c0448dc7cc5118b59a 51922555639658 23095654885456 null 50658748486077 63497861417475 9410855475665 36654702248454 null
+types_plain.parquet 0 "ts_ms" "datetime[ms]" 100 3c6d6df3e1de35c36897d321c33b2c2a 281689948393 894445963016 620788985929 -618778398382 -449985522405 841167578744 -1114043495003 723342092664
+types_plain.parquet 0 "ts_us_utc" "datetime[us, UTC]" 100 5257a8db59fb3f486e3ff20113f1fa85 281689948393258 null 620788985929815 -618778398381231 -449985522404934 841167578744785 null 723342092664720
+types_plain.parquet 0 "ts_us_paris" "datetime[us, UTC]" 100 fefa7317aede06e7a43e3bfdd49dce13 281689948393258 894445963016499 null -618778398381231 -449985522404934 841167578744785 -1114043495002867 723342092664720
+types_plain.parquet 0 "ts_ns" "datetime[ns]" 100 24d30b42513b38e4179ccc79e63f2596 1971829638752806 null 4345522901508705 -4331448788668617 -3149898656834538 null -7798304465020069 5063394648653040
+types_plain.parquet 0 "string" "string" 100 5746c9be4f4ac3ecdc9fa91d420dc07d "v17\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v35\xc3\xa9\x0a\x22" "v10\xc3\xa9\x0a\x22" "v37\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22"
+types_plain.parquet 0 "binary" "binary" 100 93a96de3b517154dad3da77bd795f295 "\x0b\x88d" "" "jo)" "\x9f\xa2\xea\xf5\x0d\xd9\xc2t" "\x14\x09\xc4\x9d\xd5G.\xc4" "ct\x1c\xdf\xfc\x81\x89e" "\x8d\xbb" "f\x01\xc8J\xea\x18\xe6j"
+types_plain.parquet 0 "fsb" "binary" 100 b41657443f0229f7da3226ad76855aee "\xed\xae\xb2(\xa2" null "gr\xc8\xe6\xae" "\x12\x94\x84t9" "5\x02CPm" "\xe8M\xe57|" "P\xa5i\xe0h" "\xb4\x06F\xb4G"
+types_plain.parquet 0 "uuid" "binary" 100 5042a119a713140d7bfac2d945f2bd59 "c\x82\x04V\xb3\x1a\xcb\xdb\xb3\x881\xf6A\xed*\x1e" "\xb8\x18E\xd41\x95\x9d\xd7:L\xb6\xb4\xa8B:\xe7" "\xa0\x12z>\xea\x1dV\x1ap\x8f\xf8\xbf\x8eS\x8a\xbc" "\xf2\xd2\xa7\xb2a\xe5p!\xb9\xca(\x87\x80\x00\xa6\x96" "\x07\xab'=\xe3$\xd8s\xd9B45v\xe9\xc9\xa8" "\x15\xf3bkK\x05\xcd\xf7,\xf0\xc9F_\x0c\x82\x8f" "\x95%\x81\xe2IMO\x05`\xc0=w\xd7\xc7\x98V" null
+types_plain.parquet 0 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types_plain.parquet 0 "no_null" "int64" 100 03cf183b9bf63e8000489dd8f802eec3 3 0 3 8 3 1 2 3
+types_plain.parquet 0 "req_i32" "int32" 100 2df763f7912871dd37440e3c56cd6b26 -3 1 -2 3 4 4 -5 -5
+types_plain.parquet 0 "req_string" "string" 100 e08cf7ddfaca046747e496c86d313958 "r0" "r1" "r2" "r3" "r4" "r5" "r6" "r0"
+types_plain.parquet 1 "bool" "bool" 100 b8115b247e50a5949351fe838f0eaa69 true false true false true false null false
+types_plain.parquet 1 "i8" "int8" 100 f28ce839fb8bc2a7da7010b3197659ff 15 54 -70 -76 103 59 -3 -57
+types_plain.parquet 1 "i16" "int16" 100 5cbf53c224f8796fcffccafd020aed4f 7791 32586 6713 -22501 27484 20503 null null
+types_plain.parquet 1 "i32" "int32" 100 731010e4bd485f9fdfaad1506faa630f null null null null -371198245 1364792124 -367134428 -2087263989
+types_plain.parquet 1 "i64" "int64" 100 648ac76dc06fb66f4ec5ed71a13752e3 null 1520471832850312510 1607204492148687502 8325606400801951577 null -1695338862452912143 2093962064592865745 7127648898975472389
+types_plain.parquet 1 "u8" "uint8" 100 33838c37f8cfcc0ef8dd3081e2d4b242 33 null 178 60 43 null 153 209
+types_plain.parquet 1 "u16" "uint16" 100 f1e114054b158544efd7958df1ef0650 41196 52940 null null null null null null
+types_plain.parquet 1 "u32" "uint32" 100 15ed1bfca978a2a4188f161a0893a45f 4282583507 843773377 3335426422 3024856421 3492730930 694960096 2056816880 3786980749
+types_plain.parquet 1 "u64" "uint64" 100 287fc0c5b2f4bcc419f2def431dee533 4525672914629320589 14027472033250707801 15044812209651957423 11632880739211996095 16900220205509179161 1640112806658913525 9732474296662094189 13703903270581912421
+types_plain.parquet 1 "f16" "float16" 100 e61baa7b6723011a2cc3303ae7df567b 0xb47e 0xbbc1 0xbf7a 0xb61c 0xb980 0x37e8 0xbde4 0x3dba
+types_plain.parquet 1 "f32" "float32" 100 3c33fc3d95d7f18c0c256c351f77ab9f null 0x3ee1b6d0 0x3ed62e02 0x3f6f37f4 0xbf381b61 null 0xbf53a0c9 0xbf414148
+types_plain.parquet 1 "f64" "float64" 100 0c9faa111a0585850523afbc4e14810a 0xbfee8863f39e6637 0xbfe4e251eb34e720 0xbfd1924ad611203f 0xbff3e5d088530fea 0xbff1c4a69372eadb 0xbfb9ae610f08fd55 null 0xbfe4fdf019bc1318
+types_plain.parquet 1 "d9" "decimal[9, 2]" 100 0d342edfe137ae7c3fcadebfd3a8f430 594367033 -81075530 -493818800 969610245 -41445070 null null 174614263
+types_plain.parquet 1 "d18" "decimal[18, 6]" 100 255cb0e30026c31cdaabd91504e71140 null null 307996723137430567 -603162539977814397 -199041882529679704 435913657029538588 null 543652135171453123
+types_plain.parquet 1 "date" "date" 100 a0633fff0eb5fcb7a441df7884e51d3b 1162458 -337866 null 412599 -397396 -706046 204187 618068
+types_plain.parquet 1 "clock_ms" "clock[ms]" 100 df1865a9f32aa34eba7490ac25f388a1 34277629 null 72851573 null 56617686 32723055 84142679 31111960
+types_plain.parquet 1 "clock_us" "clock[us]" 100 a5ba3d45a2ae3fecf44872d491b48217 51215649636 28504954276 22373376354 null 1369090257 58141669411 6206504360 17021710661
+types_plain.parquet 1 "clock_ns" "clock[ns]" 100 e491fd826e2a610ed4df73e24f9141a4 null 41656018616273 74927709295634 26204036839191 45549852473486 37896769847219 6049312342082 1786018618600
+types_plain.parquet 1 "ts_ms" "datetime[ms]" 100 a13d2fb93203dbc30e9def5c63af7116 null null -161633635807 53457970569 839491706386 -350806391033 null null
+types_plain.parquet 1 "ts_us_utc" "datetime[us, UTC]" 100 52ac4f768dc94391ef975e467c4ab7a9 1051924309431185 355245582507575 -161633635806539 53457970569687 839491706386303 -350806391032498 203317217097437 413620437662876
+types_plain.parquet 1 "ts_us_paris" "datetime[us, UTC]" 100 c0ab6dd944d2a35197f78026e40024ab null 355245582507575 -161633635806539 53457970569687 839491706386303 -350806391032498 203317217097437 413620437662876
+types_plain.parquet 1 "ts_ns" "datetime[ns]" 100 4feb1d801dd11da82ff02c80c291603f null 2486719077553025 -1131435450645773 374205793987809 5876441944704121 -2455644737227486 1423220519682059 2895343063640132
+types_plain.parquet 1 "string" "string" 100 9591599043d2cc6857e8ed6cf0cfbd14 "v19\xc3\xa9\x0a\x22" "v12\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v11\xc3\xa9\x0a\x22" "v19\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v15\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22"
+types_plain.parquet 1 "binary" "binary" 100 d3c28a717bc4747c82264b5c328e001f "\xa3\x18\xe24f" "\xc3\x8bW" "\xc5Y!\xea\xab<\x1d" "By\xb1g" "" "." "\x89{" "c\x8bj\xc35\xd2"
+types_plain.parquet 1 "fsb" "binary" 100 328b1c81300f598f90ee1c9c02af6be3 "Y\xc8\x1c\x9f\x96" "\x17\x1f\x00\x8b&" ";\xa3\xcf\xbc\xc2" "\xf5\x9b\x7f\x22\xe9" "\x10\x0f\xfd\x0a\x82" "\x98>h\x08\xf9" null "\xdaq8o#"
+types_plain.parquet 1 "uuid" "binary" 100 c0fd04b59f10d4e5fa2ec9d050c6daa5 null "\xcbL8\xb4\xe2T\x82_\xf4\xc7~\x22\x18\x9a\x94\xfa" "|\xa8\x17g\x12q\x01\xcaC\xfe\xbf6\x93(P\xf5" "\xf3\x81\xe5\x8a\xa2T0\xde\x1d\xcc\x86\xd2S&\xb2\xe1" ";W[=\x927[RW\xbd\xb2#\x95\xb4\x0f\xf4" null "\x96B\xc1\x11:\x0a[\x86\x13\x06\xc2\x86\xac\x5c\xfb^" "\xea^\x5c\xcfFHm!\x8b\x9b6\xc4\xa7J\x0f\x87"
+types_plain.parquet 1 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types_plain.parquet 1 "no_null" "int64" 100 d1d564bc842d5a5f37dd8fcabd6ede03 8 7 4 5 1 6 5 3
+types_plain.parquet 1 "req_i32" "int32" 100 6ceca0f09e1b934a3e1b38822062fba6 4 2 3 -5 3 0 -3 0
+types_plain.parquet 1 "req_string" "string" 100 b0cdf995a6a05bc242d9b1d8ab9d8361 "r2" "r3" "r4" "r5" "r6" "r0" "r1" "r2"
+types_plain.parquet 2 "bool" "bool" 100 1c3a8c97c9564db6f1f903a2c38597d6 null null null null null true true false
+types_plain.parquet 2 "i8" "int8" 100 7a2bee0b022ef84c7cdb64642eee0825 null null null null null null null 77
+types_plain.parquet 2 "i16" "int16" 100 3430f807c64d7c323d91268487c7581f 3856 30783 -12440 -19507 14765 -16152 18053 -19642
+types_plain.parquet 2 "i32" "int32" 100 c829fab0930699ebc585cd991087bff9 562206096 null -971814583 1622955047 -1870720503 523592230 -534356695 91511718
+types_plain.parquet 2 "i64" "int64" 100 219a1599b09a1075c629707a0b7a9acc null null null null null null null null
+types_plain.parquet 2 "u8" "uint8" 100 a0b4208c75206f23ed25c9a5c14ba1be 196 109 211 50 113 27 null null
+types_plain.parquet 2 "u16" "uint16" 100 c51c4850ca11d3ee5527a3550f3e222f 47790 49854 40497 null 55766 10552 39758 14145
+types_plain.parquet 2 "u32" "uint32" 100 5955f678ce5a6e6c9338e0fc4f22e524 2932503095 3803512331 2299891600 4058718367 831541589 3882545847 null null
+types_plain.parquet 2 "u64" "uint64" 100 dcbbc78640e7082d50e3d9b78cd74bba null null null 13444947199955135343 10403453464816259413 null 12791293258045768183 11556270442971443439
+types_plain.parquet 2 "f16" "float16" 100 0532d8a2524d0c8eeee3d66314031f05 0xbe64 0xbb89 0x3dcf 0x3fda 0x3933 0x3cbe 0xb822 0xacf0
+types_plain.parquet 2 "f32" "float32" 100 d85334b3e77bfca3063c91e9a4c46347 null null 0xbee21ea0 null 0x3fc3e050 0x3fbff486 0xbe848aa3 0x3fce22d3
+types_plain.parquet 2 "f64" "float64" 100 9dcfa72aa743f874d2ce7e85fa127dcd 0xbfeaa01678bcdd93 0x3ffb74ad9b809d2d 0x3fd073296db94184 0x3f857611912e9249 0x3ff7a2f64d884c12 null 0xbfb684fefcbb3bd6 0x3fe126ca650bf927
+types_plain.parquet 2 "d9" "decimal[9, 2]" 100 9920e18038e54e964b06c2c09b5f863e 972305237 713450718 597935119 -256734510 8424036 -891845171 -965551752 -930518511
+types_plain.parquet 2 "d18" "decimal[18, 6]" 100 a0c5a515f923c82f163dc54b5031cdae 935847657032642447 260167340268226737 -948595210943441259 -922891345598612321 null 575405151486342789 774999491738820416 -249984870206569685
+types_plain.parquet 2 "date" "date" 100 5ec4497c450f990d6f411a781d9d9908 2387397 null -239844 850718 537227 645998 563231 -76069
+types_plain.parquet 2 "clock_ms" "clock[ms]" 100 1263d45dfed1701e02b935ffbdb6868b 7586961 59867629 31250888 66695931 28638420 23755512 39145065 9543822
+types_plain.parquet 2 "clock_us" "clock[us]" 100 0218d733b3cd23dc8cb1def32575dd1a 21513807476 44104208648 77263728102 82453651997 13773804772 49198884496 58220731018 13177314179
+types_plain.parquet 2 "clock_ns" "clock[ns]" 100 3a6fbadde3c6b658db4f2d43c3ca5564 77131709357824 32254349052348 60555193923057 2284100956785 60231159273694 19553469550410 39006848049701 58215320802179
+types_plain.parquet 2 "ts_ms" "datetime[ms]" 100 68802c5a23aa0a7a5c13f23350f56d90 701632455451 355843101130 null null 167522080266 -1036534037151 679287851181 1035987605241
+types_plain.parquet 2 "ts_us_utc" "datetime[us, UTC]" 100 03a90b817fcc5f73a4552eaf1894be67 null 355843101130694 249388598410033 -695237157460648 167522080266088 -1036534037150813 679287851181351 1035987605241544
+types_plain.parquet 2 "ts_us_paris" "datetime[us, UTC]" 100 14dabc4f69ffbb9a07bf80cc36ef8361 701632455451803 null 249388598410033 -695237157460648 null -1036534037150813 679287851181351 1035987605241544
+types_plain.parquet 2 "ts_ns" "datetime[ns]" 100 17a43a16e000a5d222238960ef423f5d 4911427188162621 2490901707914858 null -4866660102224536 null -7255738260055691 null 7251913236690808
+types_plain.parquet 2 "string" "string" 100 8c8e38448306e5d86c76e589c8fe8b50 null "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22" "v38\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22" null null "v30\xc3\xa9\x0a\x22"
+types_plain.parquet 2 "binary" "binary" 100 b30902ca496d998c11c1079fe636beef "5" "s~\xaf\xea" null null null null null null
+types_plain.parquet 2 "fsb" "binary" 100 50ee0955db82fdeebe65babf27780cf3 "\x8a\x14[\xec\xa5" "\xdd\xda\xae*l" "\x10\xaa\x0d\xdc7" "\xd9M\xe7\x1d\x17" "\xf7i\xc4\x02y" null "\xe9\xbd\xe0H\x8e" null
+types_plain.parquet 2 "uuid" "binary" 100 273cd3a207652f418891a08c5c8b9371 null "'\xbb\x8b7\x88\xda\x12[\xde\xcb\xe0\xc9\xa7u)\xc4" "\xe5\xa1\xa4\xda3\xd6 \x80<\x17\xaa\xf7^9\xa1\x97" "\xa4c\xc9\x1d\x04\x04{\x94\x96G\xf3'f\xff\x16\xe9" "\x867\x82\x15\x1c\x19\xf0\xad\xa3M\x0aR\x14\x96\xed1" "\x82\xf1\x1f\xe8\x15\x1b\x0d\x86\x8b\x88\xc8\xa4\x89\x93\xdf\xcb" "\x09.\xa4'\xe9\x86\xcb\xf8j\x1a\x07\x1b\x0a\x83\xbe\x17" "\xbaI\xe4\xbf!\x9d^\x16\x1f\xb2\x8e\x9f\x06.V\xc0"
+types_plain.parquet 2 "all_null" "int32" 100 f27c31697d92fe84ce64a562327adafb null null null null null null null null
+types_plain.parquet 2 "no_null" "int64" 100 21dcfce023e34a5317728845ff4fc5d9 6 5 5 0 4 1 7 0
+types_plain.parquet 2 "req_i32" "int32" 100 cdc0443bb10efd3b7ba56224c4bce609 4 0 4 3 0 3 4 1
+types_plain.parquet 2 "req_string" "string" 100 c0407619319b6d0d4e0e047b28a5aeca "r4" "r5" "r6" "r0" "r1" "r2" "r3" "r4"
+encodings.parquet 0 "bool" "bool" 100 c2893d8527f0196b2eda0a84b34224d7 false true false false false null null true
+encodings.parquet 0 "i8" "int8" 100 fcccf653bfb307dc8d818089eaaf725f 57 89 115 65 -105 -42 7 -109
+encodings.parquet 0 "i32" "int32" 100 869f541d7f184f5efe0270a1db690c6b 2084733284 null -1153033708 359237575 1001523279 1942321385 1046120735 1362071319
+encodings.parquet 0 "i64" "int64" 100 1dab60551ea861fc03d7a655e22bf23c -6682478625310077194 773127215347319597 2389294967138507152 null null -2028304376604248949 200831037870135919 -7117798663679228101
+encodings.parquet 0 "u64" "uint64" 100 25e48c21bcbefcab444ffdbbf5add8ff 10926853874728050349 10247134071336681283 12796386821958737261 5660205356452775125 7086401788297060019 null 5384595276226215237 3241623136676479405
+encodings.parquet 0 "f16" "float16" 100 b0e475fbbe417bbce83946c11293f9d6 0x3dce 0xb94e 0x1d6f 0xb5bf 0xb9e9 0xbcc2 0x2bc4 0xbeee
+encodings.parquet 0 "f32" "float32" 100 41bc9deae81f116f8f8767935a62a8bc 0x7fc00000 0x80000000 0x7f800000 0xbe3538a4 0x3f77c237 0x3f1c91d4 0x3f169e17 0x3e5ac132
+encodings.parquet 0 "f64" "float64" 100 ac1308a1d1a5dbf3f2915b3498ed05bd 0xfff0000000000000 0x0000000000000000 null null 0xbff2b3f0dc6def5f 0x3fe05230b9090d0d 0x40017f63817e1063 0xbfe097bd8eb895da
+encodings.parquet 0 "d9" "decimal[9, 2]" 100 9be3a623de7e1ae0401775549e19776e -251232488 275590657 449930503 516564621 -654470124 -737546428 null -828065735
+encodings.parquet 0 "string" "string" 100 5746c9be4f4ac3ecdc9fa91d420dc07d "v17\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v35\xc3\xa9\x0a\x22" "v10\xc3\xa9\x0a\x22" "v37\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22"
+encodings.parquet 0 "fsb" "binary" 100 b41657443f0229f7da3226ad76855aee "\xed\xae\xb2(\xa2" null "gr\xc8\xe6\xae" "\x12\x94\x84t9" "5\x02CPm" "\xe8M\xe57|" "P\xa5i\xe0h" "\xb4\x06F\xb4G"
+encodings.parquet 0 "req_string" "string" 100 e08cf7ddfaca046747e496c86d313958 "r0" "r1" "r2" "r3" "r4" "r5" "r6" "r0"
+encodings.parquet 1 "bool" "bool" 100 b8115b247e50a5949351fe838f0eaa69 true false true false true false null false
+encodings.parquet 1 "i8" "int8" 100 f28ce839fb8bc2a7da7010b3197659ff 15 54 -70 -76 103 59 -3 -57
+encodings.parquet 1 "i32" "int32" 100 731010e4bd485f9fdfaad1506faa630f null null null null -371198245 1364792124 -367134428 -2087263989
+encodings.parquet 1 "i64" "int64" 100 648ac76dc06fb66f4ec5ed71a13752e3 null 1520471832850312510 1607204492148687502 8325606400801951577 null -1695338862452912143 2093962064592865745 7127648898975472389
+encodings.parquet 1 "u64" "uint64" 100 287fc0c5b2f4bcc419f2def431dee533 4525672914629320589 14027472033250707801 15044812209651957423 11632880739211996095 16900220205509179161 1640112806658913525 9732474296662094189 13703903270581912421
+encodings.parquet 1 "f16" "float16" 100 e61baa7b6723011a2cc3303ae7df567b 0xb47e 0xbbc1 0xbf7a 0xb61c 0xb980 0x37e8 0xbde4 0x3dba
+encodings.parquet 1 "f32" "float32" 100 3c33fc3d95d7f18c0c256c351f77ab9f null 0x3ee1b6d0 0x3ed62e02 0x3f6f37f4 0xbf381b61 null 0xbf53a0c9 0xbf414148
+encodings.parquet 1 "f64" "float64" 100 0c9faa111a0585850523afbc4e14810a 0xbfee8863f39e6637 0xbfe4e251eb34e720 0xbfd1924ad611203f 0xbff3e5d088530fea 0xbff1c4a69372eadb 0xbfb9ae610f08fd55 null 0xbfe4fdf019bc1318
+encodings.parquet 1 "d9" "decimal[9, 2]" 100 0d342edfe137ae7c3fcadebfd3a8f430 594367033 -81075530 -493818800 969610245 -41445070 null null 174614263
+encodings.parquet 1 "string" "string" 100 9591599043d2cc6857e8ed6cf0cfbd14 "v19\xc3\xa9\x0a\x22" "v12\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v11\xc3\xa9\x0a\x22" "v19\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v15\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22"
+encodings.parquet 1 "fsb" "binary" 100 328b1c81300f598f90ee1c9c02af6be3 "Y\xc8\x1c\x9f\x96" "\x17\x1f\x00\x8b&" ";\xa3\xcf\xbc\xc2" "\xf5\x9b\x7f\x22\xe9" "\x10\x0f\xfd\x0a\x82" "\x98>h\x08\xf9" null "\xdaq8o#"
+encodings.parquet 1 "req_string" "string" 100 b0cdf995a6a05bc242d9b1d8ab9d8361 "r2" "r3" "r4" "r5" "r6" "r0" "r1" "r2"
+encodings.parquet 2 "bool" "bool" 100 1c3a8c97c9564db6f1f903a2c38597d6 null null null null null true true false
+encodings.parquet 2 "i8" "int8" 100 7a2bee0b022ef84c7cdb64642eee0825 null null null null null null null 77
+encodings.parquet 2 "i32" "int32" 100 c829fab0930699ebc585cd991087bff9 562206096 null -971814583 1622955047 -1870720503 523592230 -534356695 91511718
+encodings.parquet 2 "i64" "int64" 100 219a1599b09a1075c629707a0b7a9acc null null null null null null null null
+encodings.parquet 2 "u64" "uint64" 100 dcbbc78640e7082d50e3d9b78cd74bba null null null 13444947199955135343 10403453464816259413 null 12791293258045768183 11556270442971443439
+encodings.parquet 2 "f16" "float16" 100 0532d8a2524d0c8eeee3d66314031f05 0xbe64 0xbb89 0x3dcf 0x3fda 0x3933 0x3cbe 0xb822 0xacf0
+encodings.parquet 2 "f32" "float32" 100 d85334b3e77bfca3063c91e9a4c46347 null null 0xbee21ea0 null 0x3fc3e050 0x3fbff486 0xbe848aa3 0x3fce22d3
+encodings.parquet 2 "f64" "float64" 100 9dcfa72aa743f874d2ce7e85fa127dcd 0xbfeaa01678bcdd93 0x3ffb74ad9b809d2d 0x3fd073296db94184 0x3f857611912e9249 0x3ff7a2f64d884c12 null 0xbfb684fefcbb3bd6 0x3fe126ca650bf927
+encodings.parquet 2 "d9" "decimal[9, 2]" 100 9920e18038e54e964b06c2c09b5f863e 972305237 713450718 597935119 -256734510 8424036 -891845171 -965551752 -930518511
+encodings.parquet 2 "string" "string" 100 8c8e38448306e5d86c76e589c8fe8b50 null "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22" "v38\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22" null null "v30\xc3\xa9\x0a\x22"
+encodings.parquet 2 "fsb" "binary" 100 50ee0955db82fdeebe65babf27780cf3 "\x8a\x14[\xec\xa5" "\xdd\xda\xae*l" "\x10\xaa\x0d\xdc7" "\xd9M\xe7\x1d\x17" "\xf7i\xc4\x02y" null "\xe9\xbd\xe0H\x8e" null
+encodings.parquet 2 "req_string" "string" 100 c0407619319b6d0d4e0e047b28a5aeca "r4" "r5" "r6" "r0" "r1" "r2" "r3" "r4"
+fallback.parquet 0 "i8" "int8" 100 fcccf653bfb307dc8d818089eaaf725f 57 89 115 65 -105 -42 7 -109
+fallback.parquet 0 "f64" "float64" 100 ac1308a1d1a5dbf3f2915b3498ed05bd 0xfff0000000000000 0x0000000000000000 null null 0xbff2b3f0dc6def5f 0x3fe05230b9090d0d 0x40017f63817e1063 0xbfe097bd8eb895da
+fallback.parquet 0 "string" "string" 100 5746c9be4f4ac3ecdc9fa91d420dc07d "v17\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v35\xc3\xa9\x0a\x22" "v10\xc3\xa9\x0a\x22" "v37\xc3\xa9\x0a\x22" "v4\xc3\xa9\x0a\x22" "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22"
+fallback.parquet 0 "binary" "binary" 100 93a96de3b517154dad3da77bd795f295 "\x0b\x88d" "" "jo)" "\x9f\xa2\xea\xf5\x0d\xd9\xc2t" "\x14\x09\xc4\x9d\xd5G.\xc4" "ct\x1c\xdf\xfc\x81\x89e" "\x8d\xbb" "f\x01\xc8J\xea\x18\xe6j"
+fallback.parquet 1 "i8" "int8" 100 f28ce839fb8bc2a7da7010b3197659ff 15 54 -70 -76 103 59 -3 -57
+fallback.parquet 1 "f64" "float64" 100 0c9faa111a0585850523afbc4e14810a 0xbfee8863f39e6637 0xbfe4e251eb34e720 0xbfd1924ad611203f 0xbff3e5d088530fea 0xbff1c4a69372eadb 0xbfb9ae610f08fd55 null 0xbfe4fdf019bc1318
+fallback.parquet 1 "string" "string" 100 9591599043d2cc6857e8ed6cf0cfbd14 "v19\xc3\xa9\x0a\x22" "v12\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v11\xc3\xa9\x0a\x22" "v19\xc3\xa9\x0a\x22" "v3\xc3\xa9\x0a\x22" "v15\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22"
+fallback.parquet 1 "binary" "binary" 100 d3c28a717bc4747c82264b5c328e001f "\xa3\x18\xe24f" "\xc3\x8bW" "\xc5Y!\xea\xab<\x1d" "By\xb1g" "" "." "\x89{" "c\x8bj\xc35\xd2"
+fallback.parquet 2 "i8" "int8" 100 7a2bee0b022ef84c7cdb64642eee0825 null null null null null null null 77
+fallback.parquet 2 "f64" "float64" 100 9dcfa72aa743f874d2ce7e85fa127dcd 0xbfeaa01678bcdd93 0x3ffb74ad9b809d2d 0x3fd073296db94184 0x3f857611912e9249 0x3ff7a2f64d884c12 null 0xbfb684fefcbb3bd6 0x3fe126ca650bf927
+fallback.parquet 2 "string" "string" 100 8c8e38448306e5d86c76e589c8fe8b50 null "v33\xc3\xa9\x0a\x22" "v31\xc3\xa9\x0a\x22" "v38\xc3\xa9\x0a\x22" "v25\xc3\xa9\x0a\x22" null null "v30\xc3\xa9\x0a\x22"
+fallback.parquet 2 "binary" "binary" 100 b30902ca496d998c11c1079fe636beef "5" "s~\xaf\xea" null null null null null null
+names.parquet 0 "a b" "int64" 2 31371f199688ae40ba84c37a303411be 1 2
+names.parquet 0 "\x22q\x22" "int64" 2 2157cc37775c0e65b468c9dd7e7b0b20 3 4
+names.parquet 0 "\xc3\xa9" "int64" 2 5a16b726336026b8ba4850301fb23ecb 5 6
+names.parquet 0 "" "int64" 2 125d00406bca0162015d8c57cbfc8536 7 8
+empty.parquet 0 "bool" "bool" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "i8" "int8" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "i16" "int16" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "i32" "int32" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "i64" "int64" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "u8" "uint8" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "u16" "uint16" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "u32" "uint32" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "u64" "uint64" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "f16" "float16" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "f32" "float32" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "f64" "float64" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "d9" "decimal[9, 2]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "d18" "decimal[18, 6]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "date" "date" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "clock_ms" "clock[ms]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "clock_us" "clock[us]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "clock_ns" "clock[ns]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "ts_ms" "datetime[ms]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "ts_us_utc" "datetime[us, UTC]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "ts_us_paris" "datetime[us, UTC]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "ts_ns" "datetime[ns]" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "string" "string" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "binary" "binary" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "fsb" "binary" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "uuid" "binary" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "all_null" "int32" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "no_null" "int64" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "req_i32" "int32" 0 d41d8cd98f00b204e9800998ecf8427e
+empty.parquet 0 "req_string" "string" 0 d41d8cd98f00b204e9800998ecf8427e
+int96.parquet 0 "ts_ns" "datetime[ns]" 100 24d30b42513b38e4179ccc79e63f2596 1971829638752806 null 4345522901508705 -4331448788668617 -3149898656834538 null -7798304465020069 5063394648653040
+int96.parquet 1 "ts_ns" "datetime[ns]" 100 4feb1d801dd11da82ff02c80c291603f null 2486719077553025 -1131435450645773 374205793987809 5876441944704121 -2455644737227486 1423220519682059 2895343063640132
+int96.parquet 2 "ts_ns" "datetime[ns]" 100 17a43a16e000a5d222238960ef423f5d 4911427188162621 2490901707914858 null -4866660102224536 null -7255738260055691 null 7251913236690808
+int32_with_uuid_logical_type.parquet 0 "int32_uuid" "int32" 10 60ed24bdb728cefaa650fc79a86e6ae4 0 1 2 3 4 5 6 7
+flba12_timestamp.parquet 0 "timestamp_millis" "binary" 6 b016ffb25f44476bf14a2dbb96bd55c4 "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" "\xe8\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" "\x18\xfc\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" "\xa0W\xd0{c\x08\x00\x00\x00\x00\x00\x00" "\x18\xd8\x1f\xd2w\xe6\x00\x00\x00\x00\x00\x00" "\x00(\xd3\xed|\xc7\xff\xff\xff\xff\xff\xff"
+flba12_timestamp.parquet 0 "timestamp_micros" "binary" 6 ad712d064cf03e98ae5454ca21569113 "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" "@B\x0f\x00\x00\x00\x00\x00\x00\x00\x00\x00" "\xc0\xbd\xf0\xff\xff\xff\xff\xff\xff\xff\xff\xff" "\x00I\xd6\xa5\x9b\xc4 \x00\x00\x00\x00\x00" "\xc0\x1dd\xcc\x0cD\x84\x03\x00\x00\x00\x00" "\x00@\xd4\x00\x01@#\xff\xff\xff\xff\xff"
+flba12_timestamp.parquet 0 "timestamp_nanos" "binary" 6 522fc069eff15a5d018314b828cd3a19 "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" "\x00\xca\x9a;\x00\x00\x00\x00\x00\x00\x00\x00" "\x006e\xc4\xff\xff\xff\xff\xff\xff\xff\xff" "\x00(\x0d\xcd\xff\xff\xff\x7f\x00\x00\x00\x00" "\x006\x14g\xfe\xd1\xa9\xbc\x0d\x00\x00\x00" "\x00\x00\x1a=\xeb\x03\xb2\xa1\xfc\xff\xff\xff"

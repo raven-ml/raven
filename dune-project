@@ -129,6 +129,8 @@
   dune
   (nx
    (= :version))
+  (compress
+   (= :version))
   (windtrap
    (and
     :with-test

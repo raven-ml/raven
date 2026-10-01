@@ -1,0 +1,12 @@
+(test
+ (name test_parquet)
+ (package talon)
+ (libraries windtrap talon.next talon.next.parquet nx nx.device)
+ (deps
+  values.txt
+  overrides.txt
+  (source_tree fixtures))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_parquet.ml test_parquet.ml.corrected))))
