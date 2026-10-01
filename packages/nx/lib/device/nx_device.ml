@@ -2134,12 +2134,8 @@ module Program = struct
         fmt
     in
     let d = p.p_device in
-    let call =
-      match d.call with
-      | Some call -> call
-      | None when d == host -> fun _ _ _ -> ()
-      | None -> refuse "the program is on %s, which runs no programs" d.name
-    in
+    if d != host && Option.is_none d.call then
+      refuse "the program is on %s, which runs no programs" d.name;
     Array.iter
       (fun (b : Buffer.t) ->
         if Option.is_none b.base.memory.host || host_of b.base.owner != d then
@@ -2168,7 +2164,7 @@ module Program = struct
     end
     else
       let at b = (Option.get (Buffer.hosted b), Buffer.nbytes b) in
-      try call p.p_handle (Array.map at buffers) values
+      try Option.get d.call p.p_handle (Array.map at buffers) values
       with Failure msg -> fail d msg
 end
 
