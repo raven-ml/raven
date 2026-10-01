@@ -35,7 +35,7 @@ type op =
   | Cat of int
   | Contiguous
   | Gather of int
-  | Scatter of [ `Set | `Add ] * bool * int
+  | Scatter of Nx_backend.scatter * bool * int
   | Update
   | Unfold of int array * int array * int array * (int * int) array
   | Fold of int array * int array * int array * int array * (int * int) array

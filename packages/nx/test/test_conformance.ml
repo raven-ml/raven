@@ -131,6 +131,30 @@ let cases : (string * (at -> Nx.packed list)) list =
                ~values:(at (Nx.slice [ R (0, 2); R (0, 2) ] wide))
                (at signed));
         ] );
+    ( "scatter max",
+      fun { at } ->
+        [
+          Nx.P
+            (Nx.scatter ~mode:`Max ~axis:1 ~indices:(at rows)
+               ~values:(at (Nx.slice [ R (0, 2); R (0, 2) ] wide))
+               (at signed));
+        ] );
+    ( "scatter min",
+      fun { at } ->
+        [
+          Nx.P
+            (Nx.scatter ~mode:`Min ~axis:1 ~indices:(at rows)
+               ~values:(at (Nx.slice [ R (0, 2); R (0, 2) ] wide))
+               (at signed));
+        ] );
+    ( "reduce_segments add",
+      fun { at } ->
+        [
+          Nx.P
+            (Nx.reduce_segments `Add ~segments:3
+               (at (Nx.create Nx.int64 [| 2 |] [| 2L; 0L |]))
+               (at signed));
+        ] );
     ( "set",
       fun { at } ->
         [

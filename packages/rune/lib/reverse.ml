@@ -394,7 +394,13 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
         pull1 (eval op) data (fun g ->
             scatter ~mode:`Add ~unique:false ~axis ~indices ~updates:g
               (T.zeros_like data))
-    | Scatter { mode; unique; axis; indices; updates; into } ->
+    | Scatter { mode = `Max | `Min; updates; into; _ } ->
+        if tracked into || tracked updates then
+          err_no_rule "a scatter by maxima or minima"
+        else eval op
+    | Scatter
+        { mode = (`Set | `Add) as mode; unique; axis; indices; updates; into }
+      ->
         let out = eval op in
         let tt = tracked into and tu = tracked updates in
         if tt || tu then begin

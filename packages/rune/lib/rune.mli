@@ -562,7 +562,8 @@ exception Jit_error of string
       call; pass the key as an input instead);
     - it used an operation the compiler does not support (FFT, the SVD and
       eigensolvers, complex, int4 and uint4 tensors, a bitcast between widths or
-      to or from float8).
+      to or from float8, a scatter by maxima or minima, and so
+      [Nx.reduce_segments] by [`Max] or [`Min]).
 
     QR, triangular solves, Cholesky, [solve], and [inv] do compile: they unroll
     at trace time into the fixed number of steps their shapes imply. *)

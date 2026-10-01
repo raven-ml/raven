@@ -135,7 +135,8 @@ let run : type r. tape -> r Nx.Op.t -> r =
       if owns t a && owns t b then nonlinear t op else record_any t op
   | Cat _ -> record_any t op
   | Gather _ -> record_any t op
-  | Scatter _ -> record_any t op
+  | Scatter { mode = `Set | `Add; _ } -> record_any t op
+  | Scatter { mode = `Max | `Min; _ } -> nonlinear t op
   | Update _ -> record_any t op
   | Unfold _ -> record_any t op
   | Fold _ -> record_any t op
@@ -376,7 +377,8 @@ let transpose_op : type a b.
                 updates = ct;
                 into = Nx.zeros_like x;
               }))
-  | Scatter { mode; unique; axis; indices; updates; into } ->
+  | Scatter
+      { mode = (`Set | `Add) as mode; unique; axis; indices; updates; into } ->
       add updates (scattered ~mode ~unique ~axis ~indices ~into ct);
       add into
         (match mode with
@@ -393,6 +395,7 @@ let transpose_op : type a b.
                       updates = Nx.zeros_like updates;
                       into = Nx.ones_like into;
                     })))
+  | Scatter { mode = `Max | `Min; _ } -> assert false (* Never recorded. *)
   | Update (x, starts, v) ->
       add x (eval (Update (ct, starts, Nx.zeros_like v)));
       add v (window ~starts v ct)

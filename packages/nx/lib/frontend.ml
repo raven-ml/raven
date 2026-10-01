@@ -1787,6 +1787,10 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
         err "scatter" "shape, dimension %d: indices has %d but tensor has %d"
           i idx_shape.(i) dim)
     t_shape;
+  (match mode with
+  | (`Max | `Min) when Nx_dtype.is_complex (dtype t) ->
+      err "scatter" "complex numbers are not ordered"
+  | `Set | `Add | `Max | `Min -> ());
   let values =
     if shape values = idx_shape then values else broadcast_to idx_shape values
   in
@@ -2167,6 +2171,39 @@ let argmax ?axis ?(keepdims = false) x =
 let argmin ?axis ?(keepdims = false) x =
   let x', axis = arg_axis "argmin" ?axis x in
   keep_axis ~keepdims ~axis x' (B.arg_reduce Argmin ~axis x')
+
+let reduce_segments (type a b) op ~segments ids (x : (a, b) t) =
+  let dt = dtype x in
+  if segments < 0 then err "reduce_segments" "%d segments" segments;
+  if ndim x = 0 then err "reduce_segments" "x is a scalar, which has no rows";
+  if ndim ids <> 1 || dim 0 ids <> dim 0 x then
+    err "reduce_segments" "ids of shape %s for %d rows"
+      (Shape.to_string (shape ids))
+      (dim 0 x);
+  let ordered () =
+    if Nx_dtype.is_complex dt then
+      err "reduce_segments" "complex numbers are not ordered"
+  in
+  let identity : a =
+    match (op, dt) with
+    | `Add, Bool -> err "reduce_segments" "booleans have no sum"
+    | `Add, _ -> Nx_dtype.zero dt
+    | `Max, _ ->
+        ordered ();
+        Nx_dtype.min_value dt
+    | `Min, _ ->
+        ordered ();
+        Nx_dtype.max_value dt
+  in
+  let along = Array.init (ndim x) (fun d -> if d = 0 then dim 0 x else 1) in
+  let into = Array.copy (shape x) in
+  into.(0) <- segments;
+  scatter
+    ~mode:(op :> Nx_backend.scatter)
+    ~axis:0
+    ~indices:(broadcast_to (shape x) (reshape along ids))
+    ~values:x
+    (full (B.context x) dt into identity)
 
 (* Above this many entries [top_k] stops taking one greatest entry per pass
    over the axis, each pass waiting on the one before it, and selects them by

@@ -21,7 +21,7 @@ type t =
   | Bitcast
   | Threefry
   | Gather
-  | Scatter
+  | Scatter of Nx_backend.scatter
   | Update
   | Unfold
   | Fold
@@ -59,7 +59,7 @@ let of_op : type r. r Nx.Op.t -> t =
   | Convert (Bitcast, _, _) -> Bitcast
   | Threefry _ -> Threefry
   | Gather _ -> Gather
-  | Scatter _ -> Scatter
+  | Scatter { mode; _ } -> Scatter mode
   | Update _ -> Update
   | Unfold _ -> Unfold
   | Fold _ -> Fold
@@ -145,7 +145,10 @@ let all =
         Bitcast;
         Threefry;
         Gather;
-        Scatter;
+        Scatter `Set;
+        Scatter `Add;
+        Scatter `Max;
+        Scatter `Min;
         Update;
         Unfold;
         Fold;
@@ -232,7 +235,10 @@ let name = function
   | Bitcast -> "bitcast"
   | Threefry -> "threefry"
   | Gather -> "gather"
-  | Scatter -> "scatter"
+  | Scatter `Set -> "scatter set"
+  | Scatter `Add -> "scatter add"
+  | Scatter `Max -> "scatter max"
+  | Scatter `Min -> "scatter min"
   | Update -> "update"
   | Unfold -> "unfold"
   | Fold -> "fold"

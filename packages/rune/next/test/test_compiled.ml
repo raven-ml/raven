@@ -1126,7 +1126,13 @@ let indexed d ~count =
     law "scatter exactly"
       (checks
          (Gen.bind
-            (rows [ ("set", (`Set, every d)); ("integer add", (`Add, ints)) ])
+            (rows
+               [
+                 ("set", (`Set, every d));
+                 ("integer add", (`Add, ints));
+                 ("max", (`Max, every d));
+                 ("min", (`Min, every d));
+               ])
             (fun (name, (mode, dtypes)) ->
               over dtypes
                 {

@@ -236,7 +236,13 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
     (* Gather / scatter *)
     | Gather (axis, indices, data) ->
         lift1 (eval op) data (fun dx -> gather ~axis indices dx)
-    | Scatter { mode; unique; axis; indices; updates; into } ->
+    | Scatter { mode = `Max | `Min; updates; into; _ } ->
+        if active into || active updates then
+          err_no_rule "a scatter by maxima or minima"
+        else eval op
+    | Scatter
+        { mode = (`Set | `Add) as mode; unique; axis; indices; updates; into }
+      ->
         let out = eval op in
         if active into || active updates then begin
           let d_template =

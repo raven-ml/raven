@@ -254,6 +254,16 @@ let cases () =
            updates = f32 [| 2; 1; 4 |];
            into = x;
          });
+    C
+      (Scatter
+         {
+           mode = `Max;
+           unique = true;
+           axis = 0;
+           indices = i64 [| 1; 3; 4 |] (Array.make 12 1L);
+           updates = f32 [| 1; 3; 4 |];
+           into = x;
+         });
     C (Update (x, i64 [| 3 |] [| 0L; 1L; 1L |], f32 [| 2; 2; 3 |]));
     C unfold;
     C

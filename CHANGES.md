@@ -172,6 +172,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` refuses `Nx.scatter ~mode:`Max` and `` `Min `` (and so
+  `Nx.reduce_segments` by them), and `Rune.grad` and `Rune.jvp` refuse to
+  differentiate through them; `Rune.vmap` maps them.
 - A compiled call that consumes an argument another domain is reading computes
   from a copy instead of writing over it, for host values as for placed ones;
   a host read could see the call's write before.
@@ -2931,6 +2934,17 @@ thread.
 
 ### Nx
 
+- `scatter` takes `~mode:`Max` and `` `Min ``: each position holds the maximum
+  or minimum of its element and the updates that reach it, NaN propagating and
+  `-0.` below `0.`. A NaN result keeps the element's NaN, or else the first NaN
+  update's, so its bits never depend on how the updates are grouped.
+- `Nx.reduce_segments op ~segments ids x` sums or takes the extremes of `x`'s
+  rows by segment id, from each op's identity; an id outside the segments drops
+  its row.
+- `scatter ~mode:`Add` on `float16`, `bfloat16` and the `float8` dtypes adds in
+  `float32` and rounds once per position, as `sum` does. It rounded after every
+  update, so 4096 additions of `1.` into one `float16` position gave 2048;
+  gradients of gathers over these dtypes gain the same precision.
 - Reductions and scans on the host give the same bits on every thread count,
   where a reduction keeping a long contiguous axis could change its association
   with the number of cores. Float sums over more than 1024 terms or over several

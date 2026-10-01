@@ -500,9 +500,31 @@ let test_half_reduction_ties () =
   let _, tangent = Rune.jvp' loss x (Nx.ones_like x) in
   check_arr ~msg:"all tied directions shift the maximum by one" [|1.|] tangent
 
+let test_scatter_by_extremes_is_not_differentiated () =
+  let scatter values =
+    Nx.scatter ~mode:`Max ~axis:0
+      ~indices:(Nx.zeros Nx.int64 [| 2 |])
+      ~values (Nx.zeros f32 [| 3 |])
+  in
+  let x = vec32 [| 1.0; 2.0 |] in
+  raises
+    (Invalid_argument
+       "Rune: the gradient of a scatter by maxima or minima is not \
+        implemented; detach its input if differentiation should not flow \
+        through it") (fun () -> Rune.grad' (fun x -> Nx.sum (scatter x)) x);
+  raises
+    (Invalid_argument
+       "Rune: the tangent of a scatter by maxima or minima is not implemented; \
+        detach its input if differentiation should not flow through it")
+    (fun () -> Rune.jvp' scatter x x);
+  check_arr ~msg:"a scatter of constants evaluates" [| 2.; 0.; 0. |]
+    (Rune.grad' (fun y -> Nx.sum (Nx.mul (scatter x) y)) (Nx.zeros f32 [| 3 |]))
+
 let tests =
   [
     test "reduction derivatives preserve zeros and ties" test_reduction_gradients_at_zeros_and_ties;
+    test "a scatter by maxima or minima is not differentiated"
+      test_scatter_by_extremes_is_not_differentiated;
     test "half reduction derivatives count ties without overflow" test_half_reduction_ties;
     group "grad over records"
       [

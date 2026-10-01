@@ -71,6 +71,20 @@ type reduce = Sum | Prod | Max | Min
     extremes is taken. *)
 type arg_reduce = Argmax | Argmin
 
+type scatter =
+  [ `Set  (** The update replaces the element. *)
+  | `Add
+    (** The element plus the update: modular on integers, a logical or on
+        booleans, and on floats a sum from [+0], so a position whose sum is
+        exactly zero holds [+0]. [float16], [bfloat16] and the [float8] dtypes
+        add in [float32] and round once per position. *)
+  | `Max
+    (** The greater of the element and the update, as [Maximum] takes it: NaN
+        propagates, and [-0] orders below [+0]. *)
+  | `Min  (** The lesser, as [Minimum] takes it. *) ]
+(** The type for how an update that a scatter brings to a position combines with
+    the element there. *)
+
 (** {1:kernels Kernels} *)
 
 type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
@@ -235,7 +249,7 @@ module type S = sig
       included, reads zero, and the kernel touches no memory outside [x]. *)
 
   val scatter :
-    mode:[ `Set | `Add ] ->
+    mode:scatter ->
     unique:bool ->
     axis:int ->
     indices:index_array ->
@@ -244,16 +258,27 @@ module type S = sig
     dst:('a, 'b) Nx_array.t ->
     unit
   (** [scatter ~mode ~unique ~axis ~indices ~updates x ~dst] writes [x] into
-      [dst], with each element of [updates] set ([`Set]) or added ([`Add]) at
-      the position of [indices] at the same index along [axis]. [indices] and
-      [updates] have one shape and [x]'s rank. Under [`Set] the last of
-      duplicate positions wins; under [`Add] every update adds. With [unique],
-      the caller asserts the positions are distinct, so updates may land in any
-      order: a position selected more than once then holds an unspecified one of
-      its updates, or an unspecified sum, and every other position is exact. An
-      update at an index outside \[[0], [n]), [n] being [x]'s size along [axis],
-      negative included, is dropped, and the kernel touches no memory outside
-      [dst]. *)
+      [dst], with each element of [updates] combined by [mode] into the element
+      at the position of [indices] at the same index along [axis]. [indices] and
+      [updates] have one shape and [x]'s rank.
+      - Under [`Set] the last of the updates to a position, in row-major order
+        of [indices], wins.
+      - Under [`Add] every update adds. A position of [float16], [bfloat16] or a
+        [float8] dtype that an update reaches holds its element and its updates
+        summed in [float32], rounded once.
+      - Under [`Max] and [`Min] a position holds the bits of the operand whose
+        value the extreme is, whatever the order in which the updates apply: a
+        NaN result is the element's NaN when the element is one, and otherwise
+        the first NaN update's in row-major order of [indices]. [x] is not
+        complex.
+
+      With [unique], the caller asserts the positions are distinct, so updates
+      may land in any order: a position selected more than once then holds an
+      unspecified one of its updates under [`Set], or an unspecified sum under
+      [`Add]. Every other position, and every position under [`Max] and [`Min],
+      is exact. An update at an index outside \[[0], [n]), [n] being [x]'s size
+      along [axis], negative included, is dropped, and the kernel touches no
+      memory outside [dst]. *)
 
   val update :
     ('a, 'b) Nx_array.t ->

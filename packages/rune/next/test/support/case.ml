@@ -604,38 +604,60 @@ let gather_case =
     Gather
     (fun (D d) -> gather_instance (tensor d (range (-3.) 3.)))
 
-let scatter_instance g =
+let scatter_name : Nx_backend.scatter -> string = function
+  | `Set -> "set"
+  | `Add -> "add"
+  | `Max -> "max"
+  | `Min -> "min"
+
+(* [scatter_instance mode operands] scatters by [mode] the updates into the
+   element [operands s is] draws, of shapes [is] and [s]. *)
+let scatter_instance (mode : Nx_backend.scatter) operands =
   let* s = shape ~dim:full_dim 1 3 in
   let* axis = int_range 0 (Array.length s - 1) in
   let* m = int_range 1 3 in
   let is = Array.mapi (fun i d -> if i = axis then m else d) s in
-  let+ into = g s
-  and+ updates = g is
+  let+ into, updates = operands s is
   and+ indices =
     tensor Nx.int64 (map float_of_int (int_range 0 (s.(axis) - 1))) is
-  and+ mode =
-    of_list
-      ~pp:(fun ppf m ->
-        Format.pp_print_string ppf
-          (match m with `Set -> "set" | `Add -> "add"))
-      [ `Set; `Add ]
   and+ tracked = patterns 2 in
   nary
-    (Format.asprintf "scatter (%s) along %d at %a"
-       (match mode with `Set -> "set" | `Add -> "add")
-       axis Nx.pp indices)
+    (Format.asprintf "scatter (%s) along %d at %a" (scatter_name mode) axis
+       Nx.pp indices)
     (fun xs ->
       let updates, into = two xs in
       [
         Op.eval (Scatter { mode; unique = false; axis; indices; updates; into });
       ])
-    [ updates; into ] tracked Zeroed
+    [ updates; into ] tracked
+    (match mode with `Set | `Add -> Zeroed | `Max | `Min -> Not_linear)
 
-let scatter_case =
-  case ~dtypes:(reals @ complexes)
-    ~complex:(scatter_instance (ctensor Nx.complex128 plane))
-    Scatter
-    (fun (D d) -> scatter_instance (tensor d (range (-3.) 3.)))
+(* [apart g s is] is the element and the updates [g s] and [g is] draw. *)
+let apart g s is =
+  let+ into = g s and+ updates = g is in
+  (into, updates)
+
+(* [together g s is] is the element and the updates cut from one tensor [g]
+   draws, so that the elements of [distinct] stay untied across the two. *)
+let together g s is =
+  let+ x = g [| numel s + numel is |] in
+  let cut lo n shape =
+    Nx.reshape shape (Nx.contiguous (Nx.slice [ Nx.R (lo, lo + n) ] x))
+  in
+  (cut 0 (numel s) s, cut (numel s) (numel is) is)
+
+let scatter_case (mode : Nx_backend.scatter) =
+  match mode with
+  | `Set | `Add ->
+      case ~dtypes:(reals @ complexes)
+        ~complex:(scatter_instance mode (apart (ctensor Nx.complex128 plane)))
+        (Scatter mode)
+        (fun (D d) -> scatter_instance mode (apart (tensor d (range (-3.) 3.))))
+  | `Max | `Min ->
+      case
+        ~finite:(scatter_instance mode (apart (tensor Nx.float64 tied)))
+        (Scatter mode)
+        (fun (D d) -> scatter_instance mode (together (distinct d)))
 
 let update_instance g =
   let* s = shape ~dim:full_dim 1 3 in
@@ -1305,7 +1327,7 @@ let of_row : Row.t -> t = function
   | Bitcast -> bitcast_case
   | Threefry -> threefry_case
   | Gather -> gather_case
-  | Scatter -> scatter_case
+  | Scatter mode -> scatter_case mode
   | Update -> update_case
   | Unfold -> unfold_case
   | Fold -> fold_case

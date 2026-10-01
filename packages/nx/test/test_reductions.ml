@@ -823,6 +823,247 @@ let associations =
         running_sums_round;
     ]
 
+(* Segment reductions, against a loop that starts each segment at its identity
+   and combines its rows into it in row order. Under Max and Min a row replaces
+   the segment's value when it wins: it is the greater (Max) or the lesser
+   (Min), -0 below +0 and a NaN beyond every number, and the value is not a NaN.
+   Floats compare up to NaN payloads, which "a segment holds its first NaN row's
+   bits" pins. *)
+type segmented =
+  | Seg : {
+      name : string;
+      dtype : ('a, 'b) Nx.dtype;
+      value : 'a Gen.t;
+      add : ('a -> 'a -> 'a) option;
+      wins : greater:bool -> 'a -> 'a -> bool;
+      exact : 'a testable;
+      pp : Format.formatter -> 'a -> unit;
+    }
+      -> segmented
+
+let up_to_nan =
+  Testable.contramap
+    (fun x -> if Float.is_nan x then None else Some (Int64.bits_of_float x))
+    (option int64)
+
+let float_wins ~greater a b =
+  (not (Float.is_nan a))
+  && (Float.is_nan b
+     || (if greater then b > a else b < a)
+     || (b = a && Float.sign_bit a = greater && Float.sign_bit b <> greater))
+
+let ordered_wins compare ~greater a b =
+  if greater then compare b a > 0 else compare b a < 0
+
+let float_seg name dtype =
+  Seg
+    {
+      name;
+      dtype;
+      value = tied_float;
+      add = Some ( +. );
+      wins = float_wins;
+      exact = up_to_nan;
+      pp = pp_float;
+    }
+
+let segmented =
+  [
+    float_seg "float64" Nx.float64;
+    float_seg "float32" Nx.float32;
+    float_seg "float16" Nx.float16;
+    Seg
+      {
+        name = "int32";
+        dtype = Nx.int32;
+        value = small_int32;
+        add = Some Int32.add;
+        wins = ordered_wins Int32.compare;
+        exact = int32;
+        pp = pp_int32;
+      };
+    Seg
+      {
+        name = "uint8";
+        dtype = Nx.uint8;
+        value = Gen.int_range 0 255;
+        add = Some (fun a b -> (a + b) land 255);
+        wins = ordered_wins Int.compare;
+        exact = int;
+        pp = Format.pp_print_int;
+      };
+    Seg
+      {
+        name = "bool";
+        dtype = Nx.bool;
+        value = Gen.bool;
+        add = None;
+        wins = ordered_wins Bool.compare;
+        exact = bool;
+        pp = Format.pp_print_bool;
+      };
+  ]
+
+let int64s xs = Nx.create Nx.int64 [| Array.length xs |] xs
+
+let segment_reductions =
+  let combines (Seg s) op =
+    let drawn =
+      let open Gen in
+      let* segments = int_range 0 4 in
+      let* n = int_range 0 8 in
+      let* width = option (int_range 0 3) in
+      let shape = match width with None -> [| n |] | Some w -> [| n; w |] in
+      (* A layout may transpose [x]: its rows are counted once it is drawn. *)
+      let* x = viewed ~shape:(constant shape) ~pp:s.pp s.dtype s.value in
+      let+ ids =
+        array ~size:(constant (Nx.dim 0 x)) (int_range (-1) segments)
+      in
+      (segments, ids, x)
+    in
+    let name = match op with `Add -> "Add" | `Max -> "Max" | `Min -> "Min" in
+    prop
+      (Printf.sprintf "%s reduce_segments %s combines each segment's rows"
+         s.name name) drawn (fun (segments, ids, x) ->
+        let r = Ref.of_nx x in
+        let w = Ref.numel (Array.sub r.shape 1 (Ref.ndim r - 1)) in
+        let combine a b =
+          match op with
+          | `Add -> Option.get s.add a b
+          | `Max -> if s.wins ~greater:true a b then b else a
+          | `Min -> if s.wins ~greater:false a b then b else a
+        in
+        let identity =
+          match op with
+          | `Add -> Nx_dtype.zero s.dtype
+          | `Max -> Nx_dtype.min_value s.dtype
+          | `Min -> Nx_dtype.max_value s.dtype
+        in
+        let expected = Array.make (segments * w) identity in
+        Array.iteri
+          (fun i id ->
+            if id >= 0 && id < segments then
+              for j = 0 to w - 1 do
+                let at = (id * w) + j in
+                expected.(at) <- combine expected.(at) r.data.((i * w) + j)
+              done)
+          ids;
+        let shape = Array.copy r.shape in
+        shape.(0) <- segments;
+        equal (Ref.witness s.exact)
+          (Ref.create shape expected)
+          (Ref.of_nx
+             (Nx.reduce_segments op ~segments
+                (int64s (Array.map Int64.of_int ids))
+                x)))
+  in
+  let props =
+    List.concat_map
+      (fun (Seg s as seg) ->
+        (if Option.is_some s.add then [ combines seg `Add ] else [])
+        @ [ combines seg `Max; combines seg `Min ])
+      segmented
+  in
+  let empty dtype op =
+    Nx.reduce_segments op ~segments:2 (int64s [||]) (Nx.zeros dtype [| 0 |])
+  in
+  group "segments"
+    (props
+    @ [
+        test "an empty segment holds the identity" (fun () ->
+            let floats dtype lo hi =
+              equal (array float_exact) [| lo; lo |]
+                (Nx.to_array (empty dtype `Max));
+              equal (array float_exact) [| hi; hi |]
+                (Nx.to_array (empty dtype `Min));
+              equal (array float_exact) [| 0.; 0. |]
+                (Nx.to_array (empty dtype `Add))
+            in
+            floats Nx.float64 neg_infinity infinity;
+            floats Nx.float16 neg_infinity infinity;
+            floats Nx.float8_e4m3 (-448.) 448.;
+            equal (array int) [| -128; -128 |]
+              (Nx.to_array (empty Nx.int8 `Max));
+            equal (array int) [| 127; 127 |] (Nx.to_array (empty Nx.int8 `Min));
+            equal (array int) [| 0; 0 |] (Nx.to_array (empty Nx.uint8 `Max));
+            equal (array int) [| 255; 255 |] (Nx.to_array (empty Nx.uint8 `Min));
+            equal (array int64) [| -1L; -1L |]
+              (Nx.to_array (empty Nx.uint64 `Min));
+            equal (array bool) [| false; false |]
+              (Nx.to_array (empty Nx.bool `Max));
+            equal (array bool) [| true; true |]
+              (Nx.to_array (empty Nx.bool `Min)));
+        test "a segment holds its first NaN row's bits under Max and Min"
+          (fun () ->
+            let x =
+              Nx.bitcast Nx.float64
+                (int64s
+                   [|
+                     Int64.bits_of_float 1.;
+                     0x7ff8000000000005L;
+                     0xfff8000000000006L;
+                   |])
+            in
+            List.iter
+              (fun op ->
+                equal (array int64) [| 0x7ff8000000000005L |]
+                  (Nx.to_array
+                     (Nx.bitcast Nx.uint64
+                        (Nx.reduce_segments op ~segments:1
+                           (Nx.zeros Nx.int64 [| 3 |])
+                           x))))
+              [ `Max; `Min ]);
+        test "-0 and +0 in one segment are +0 under Max and -0 under Min"
+          (fun () ->
+            let x = Nx.create Nx.float32 [| 2 |] [| -0.; 0. |] in
+            let ids = Nx.zeros Nx.int64 [| 2 |] in
+            equal (array float_exact) [| 0. |]
+              (Nx.to_array (Nx.reduce_segments `Max ~segments:1 ids x));
+            equal (array float_exact) [| -0. |]
+              (Nx.to_array (Nx.reduce_segments `Min ~segments:1 ids x)));
+        test "reduce_segments counts, sums and takes first rows" (fun () ->
+            let ids = int64s [| 0L; 2L; 0L; -1L; 2L |] in
+            let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+            equal (array float_exact) [| 4.; 0.; 7. |]
+              (Nx.to_array (Nx.reduce_segments `Add ~segments:3 ids x));
+            equal (array float_exact) [| 3.; neg_infinity; 5. |]
+              (Nx.to_array (Nx.reduce_segments `Max ~segments:3 ids x));
+            equal (array int64) [| 2L; 0L; 2L |]
+              (Nx.to_array
+                 (Nx.reduce_segments `Add ~segments:3 ids
+                    (Nx.ones Nx.int64 [| 5 |])));
+            let first =
+              Nx.reduce_segments `Min ~segments:3 ids (Nx.arange Nx.int64 0 5 1)
+            in
+            equal (array int64) [| 0L; Int64.max_int; 1L |] (Nx.to_array first);
+            equal (array float_exact) [| 1.; 0.; 2. |]
+              (Nx.to_array (Nx.take ~indices:first x)));
+        test
+          "reduce_segments refuses negative segments, a scalar, misshapen ids, \
+           complex extremes and boolean sums" (fun () ->
+            let ids = Nx.zeros Nx.int64 [| 2 |]
+            and x = Nx.zeros Nx.float32 [| 2 |] in
+            raises_invalid_arg (fun () ->
+                Nx.reduce_segments `Add ~segments:(-1) ids x);
+            raises_invalid_arg (fun () ->
+                Nx.reduce_segments `Add ~segments:1 ids
+                  (Nx.scalar Nx.float32 1.));
+            raises_invalid_arg (fun () ->
+                Nx.reduce_segments `Add ~segments:1
+                  (Nx.zeros Nx.int64 [| 3 |])
+                  x);
+            raises_invalid_arg (fun () ->
+                Nx.reduce_segments `Add ~segments:1
+                  (Nx.zeros Nx.int64 [| 2; 1 |])
+                  x);
+            raises_invalid_arg (fun () ->
+                Nx.reduce_segments `Max ~segments:1 ids
+                  (Nx.zeros Nx.complex64 [| 2 |]));
+            raises_invalid_arg (fun () ->
+                Nx.reduce_segments `Add ~segments:1 ids
+                  (Nx.zeros Nx.bool [| 2 |])));
+      ])
+
 let () =
   exit
     (run "nx reductions"
@@ -835,5 +1076,6 @@ let () =
          signed_zeros;
          normalisations;
          associations;
+         segment_reductions;
          at_scale;
        ])

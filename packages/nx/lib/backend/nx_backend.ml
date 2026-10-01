@@ -44,6 +44,7 @@ type binary = Nx_backend_intf.binary =
 type compare = Nx_backend_intf.compare = Equal | Not_equal | Less | Less_equal
 type reduce = Nx_backend_intf.reduce = Sum | Prod | Max | Min
 type arg_reduce = Nx_backend_intf.arg_reduce = Argmax | Argmin
+type scatter = Nx_backend_intf.scatter
 type index_array = Nx_backend_intf.index_array
 
 module type S = Nx_backend_intf.S

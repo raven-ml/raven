@@ -98,6 +98,24 @@ let indexed =
         in
         equal floats [| 1.; 1.; 0.; 1.; 1. |]
           (gradient windows (vec [| 1.; 2.; 3.; 4.; 5. |])));
+    test
+      "under Max the cotangent goes to the operand whose bits the result \
+       holds, the element first at a tie" (fun () ->
+        let scatter u =
+          Op.eval
+            (Scatter
+               {
+                 mode = `Max;
+                 unique = false;
+                 axis = 0;
+                 indices = indices [| 1; 1; 0; 2 |];
+                 updates = Nx.slice [ R (3, 7) ] u;
+                 into = Nx.slice [ R (0, 3) ] u;
+               })
+        in
+        equal floats
+          [| 1.; 0.; 1.; 0.; 1.; 0.; 0. |]
+          (gradient scatter (vec [| 0.; 5.; 4.; 7.; 9.; -1.; 4. |])));
   ]
 
 let recordings =

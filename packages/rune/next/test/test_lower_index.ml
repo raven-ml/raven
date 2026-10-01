@@ -318,6 +318,8 @@ let indexed =
       rows "scatter set unique" ~floats:element
         (scatter ~mode:`Set ~unique:true);
       rows "scatter add" ~floats:summand (scatter ~mode:`Add ~unique:false);
+      rows "scatter max" ~floats:element (scatter ~mode:`Max ~unique:false);
+      rows "scatter min" ~floats:element (scatter ~mode:`Min ~unique:false);
       test "the last of duplicate positions is set" (fun () ->
           agrees (fun () ->
               Nx.scatter ~axis:0

@@ -492,7 +492,7 @@ let assembly_edges : Row.t -> test list = function
                  (vec [| 1.; 2.; 3. |])
                  (vec [| 10.; 20.; 30. |])));
       ]
-  | Scatter ->
+  | Scatter (`Set | `Add) ->
       let indices = Nx.create Nx.int64 [| 2 |] [| 1L; 1L |] in
       let scatter mode updates =
         Op.eval
@@ -514,6 +514,74 @@ let assembly_edges : Row.t -> test list = function
         test "under Add duplicate updates add their tangents" (fun () ->
             equal floats [| 0.; 3.; 0. |]
               (tangent (scatter `Add) (vec [| 5.; 6. |]) (vec [| 1.; 2. |])));
+      ]
+  | Scatter ((`Max | `Min) as mode) ->
+      (* The tangent at [into] and [updates], laid end to end in one vector,
+         along the element tangents [10; 20; 30] and the update tangents [1; 2;
+         ...]. *)
+      let at into indices updates =
+        let n = Array.length into and k = Array.length updates in
+        let f x =
+          Op.eval
+            (Scatter
+               {
+                 mode;
+                 unique = false;
+                 axis = 0;
+                 indices =
+                   Nx.create Nx.int64 [| k |] (Array.map Int64.of_int indices);
+                 updates = Nx.slice [ R (n, n + k) ] x;
+                 into = Nx.slice [ R (0, n) ] x;
+               })
+        in
+        tangent f
+          (vec (Array.append into updates))
+          (vec
+             (Array.append
+                (Array.init n (fun i -> float_of_int (10 * (i + 1))))
+                (Array.init k (fun i -> float_of_int (i + 1)))))
+      in
+      let best = match mode with `Max -> 7. | `Min -> -7. in
+      let zero, other_zero =
+        match mode with `Max -> (0., -0.) | `Min -> (-0., 0.)
+      in
+      let nan = Float.nan in
+      [
+        test "a tie with the element gives the element's tangent" (fun () ->
+            equal floats [| 10.; 20. |] (at [| best; 0. |] [| 0 |] [| best |]));
+        test "of tied updates the first gives its tangent" (fun () ->
+            (* At a tie a scatter by extremes gives the tangent of the element,
+               then of the first update in index order. *)
+            equal floats [| 10.; 1. |]
+              (at [| 0.; 0. |] [| 1; 1 |] [| best; best |]));
+        test
+          "the zero that wins, +0 under Max and -0 under Min, gives its tangent"
+          (fun () ->
+            equal floats [| 1. |] (at [| other_zero |] [| 0 |] [| zero |]);
+            equal floats [| 10. |] (at [| zero |] [| 0 |] [| other_zero |]));
+        test "a NaN element keeps its tangent ahead of NaN updates" (fun () ->
+            equal floats [| 10. |] (at [| nan |] [| 0; 0 |] [| nan; 3. |]));
+        test "a number element takes the first NaN update's tangent" (fun () ->
+            equal floats [| 2. |] (at [| 1. |] [| 0; 0; 0 |] [| 2.; nan; nan |]));
+        test "a dropped or losing update contributes nothing" (fun () ->
+            equal floats [| 10.; 20.; 30. |]
+              (at [| best; best; best |] [| 0; 3 |] [| 0.; best |]));
+        test
+          "reduce_segments and the reduction agree in value and differ in \
+           tangent at a tie" (fun () ->
+            let x = vec [| best; best; 0. |] and v = vec [| 1.; 2.; 4. |] in
+            let segments x =
+              Nx.reduce_segments mode ~segments:1 (Nx.zeros Nx.int64 [| 3 |]) x
+            in
+            let reduced x =
+              Nx.reshape [| 1 |]
+                (match mode with `Max -> Nx.max x | `Min -> Nx.min x)
+            in
+            let y, dy = Rune.jvp' segments x v
+            and y', dy' = Rune.jvp' reduced x v in
+            equal floats (Nx.to_array y') (Nx.to_array y);
+            equal floats [| 1. |] (Nx.to_array dy);
+            equal floats [| reduce_tie 2 *. 3. |] (Nx.to_array dy'));
       ]
   | Cast ->
       let z re im = { Complex.re; im } in
@@ -688,7 +756,7 @@ let of_row (r : Row.t) =
   | Where -> where_edges
   | Reduce k -> reduce_edges k
   | Sort -> [ sort_law ]
-  | Pad | Cat | Gather | Scatter | Cast -> assembly_edges r
+  | Pad | Cat | Gather | Scatter _ | Cast -> assembly_edges r
   | Cholesky | Qr | Solve_triangular -> linalg_edges r
   | Read -> read_edges
   | Move Reshape -> reshape_edges

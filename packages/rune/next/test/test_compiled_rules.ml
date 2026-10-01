@@ -393,6 +393,32 @@ let compositions =
                    Nx.scatter ~mode:`Add ~axis:0 ~indices ~values t)
                  rows))
           (ints [| 2; 3; 2 |] [| 1; 0; 1; 2; 0; 0; 2; 2; 2; 1; 0; 1 |]));
+    test
+      "a compiled reduce_segments by extremes is its eager value, bit for bit"
+      (fun () ->
+        let x =
+          Nx.bitcast Nx.float64
+            (Nx.create Nx.uint64 [| 7 |]
+               [|
+                 Int64.bits_of_float 1.;
+                 0x7ff8000000000005L;
+                 Int64.bits_of_float (-0.);
+                 0xfff8000000000006L;
+                 0L;
+                 Int64.bits_of_float 3.;
+                 Int64.bits_of_float (-2.);
+               |])
+        in
+        let ids = ints [| 7 |] [| 0; 0; 1; 0; 1; 3; 2 |] in
+        List.iter
+          (fun mode ->
+            let f x =
+              Nx.bitcast Nx.uint64 (Nx.reduce_segments mode ~segments:3 ids x)
+            in
+            equal (array int64)
+              (Nx.to_array (f x))
+              (Nx.to_array (Rune.jit' f x)))
+          [ `Max; `Min ]);
   ]
 
 let metal =

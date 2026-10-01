@@ -2289,7 +2289,11 @@ let rec install : type a. state -> (unit -> a) -> a =
     (* Indexed access *)
     | Gather (axis, indices, data) ->
         ret (dt data) (F.Op.gather (go data) ~dim:axis (go indices))
-    | Scatter { mode; unique; axis; indices; updates; into } ->
+    | Scatter { mode = `Max | `Min; _ } ->
+        refuse "a scatter by maxima or minima"
+    | Scatter
+        { mode = (`Set | `Add) as mode; unique; axis; indices; updates; into }
+      ->
         (* Over a split destination each device writes its slice: the updates
            and their positions are split alike off the write axis and whole
            along it. *)

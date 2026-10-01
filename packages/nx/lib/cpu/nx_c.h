@@ -388,15 +388,19 @@ static inline int64_t nx_c_dtype_bytes(nx_c_dtype dt, int64_t count) {
      bool folds as 0/1 bytes; f16/bf16/fp8 accumulate in float.
    - Complex has no mod and no ordered comparison; rounding/abs/sign on complex
      are the kernel's concern (rejected loudly, never identity), not the ABI's.
-   - Float max/min, elementwise, reduced or scanned, are IEEE 754-2019 maximum
-     and minimum: NaN propagates and -0 orders below +0. A NaN result is the
-     first NaN met, the left operand's elementwise and the earliest in a
-     reduction's or a scan's order, so every grouping of a reduction gives the
-     same bits. argmax/argmin and sort order the zeros the same way, and
-     argmax/argmin find the first NaN.
+   - Float max/min, elementwise, reduced, scanned or scattered, are IEEE
+     754-2019 maximum and minimum: NaN propagates and -0 orders below +0. A
+     NaN result is the first NaN met: the left operand's elementwise, the
+     earliest in a reduction's or a scan's order, and in a scatter the
+     element's own before any update's, then the earliest update in the order
+     of its index space. So every grouping of a reduction, and every grouping
+     of a scatter's updates that keeps their index order, gives the same bits.
+     argmax/argmin and sort order the zeros the same way, and argmax/argmin
+     find the first NaN.
    - A float sum (a reduction, a scan, scatter's additions, fold's overlaps, a
      matmul's contraction) is +0 plus its terms, so one that is exactly zero is
-     +0 whatever the association and the layout. */
+     +0 whatever the association and the layout. f16/bf16/fp8 sums accumulate
+     in float and round to storage once. */
 
 /* ── Float extremes ───────────────────────────────────────────────────────
 
@@ -483,11 +487,22 @@ NX_C_DEFINE_FEXTREMES(double, uint64_t)
    walked in one chunk.
 
    Scatter (nx_c_move.c). Updates apply one at a time in the row-major order
-   of their index space: under Set the last update to a position wins, and
-   under Add a position that an update reaches holds +0 plus its value, then
-   each of its updates added in that order; one that none reaches keeps its
-   value. float16, bfloat16 and the float8 dtypes round to
-   storage after every update.
+   of their index space; a position that no update reaches keeps its value.
+   - Set: the last update to a position wins.
+   - Add: a position that an update reaches holds +0 plus its value, then each
+     of its updates added in that order. float16, bfloat16 and the float8
+     dtypes add in float, in a scratch value per position, and round to
+     storage once, after the walk. The scratch holds 5 bytes per position of
+     the output for the duration of the call.
+   - Max and Min: an update replaces the position's value when it is the
+     greater (Max) or the lesser (Min) by nx_c_fmax's order (-0 below +0, a NaN
+     update beyond every number), unless the value is a NaN, which no update
+     replaces. The winner's stored bytes are copied, so a NaN keeps its payload
+     and a narrow float its exact bits. The position ends with its own NaN, or
+     else the first NaN update's, or else the extreme of the numbers.
+   Integer Add, and Max and Min of every dtype, give the same bits under any
+   grouping of the updates that keeps their index order; float Add's bits
+   follow the index order.
 
    NX_C_FOLD_BLOCK and NX_C_SCAN_CHUNK fix bits outside nx's contract, which
    leaves sum's association unspecified: changing either changes bits and

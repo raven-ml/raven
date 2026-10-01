@@ -124,6 +124,22 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
         (Lower_reduce.of_bits (dtype x)
            (Lower_reduce.pick last (Lower_reduce.bits src)))
         x
+  | (`Max | `Min) as mode ->
+      (* Each position's candidates along the last axis: its element, then every
+         update in index order, an update that misses it standing in for the
+         element. The first candidate that is the extreme gives its bits, so a
+         NaN result is the element's or the first NaN update's. *)
+      let own = Ops.unsqueeze x (-1) in
+      let candidates =
+        cat r own [ Ops.where mask src (Ops.expand own (Ops.shape mask)) ]
+      in
+      let at =
+        Lower_reduce.arg_reduce
+          (match mode with `Max -> Argmax | `Min -> Argmin)
+          ~axis:r candidates
+      in
+      Ops.squeeze ~axis:r
+        (Lower_reduce.take candidates r (Ops.unsqueeze at (-1)))
 
 (* The window is [v] moved along each axis it does not fill to its start there:
    the positions of [x] along that axis against those of [v] as a one-hot mask,

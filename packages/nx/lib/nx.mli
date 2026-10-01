@@ -1611,7 +1611,7 @@ val take_along_axis : axis:int -> indices:int64_t -> ('a, 'b) t -> ('a, 'b) t
     See also {!take}, {!scatter}. *)
 
 val scatter :
-  ?mode:[ `Set | `Add ] ->
+  ?mode:[ `Set | `Add | `Max | `Min ] ->
   ?unique_indices:bool ->
   axis:int ->
   indices:int64_t ->
@@ -1626,18 +1626,34 @@ val scatter :
     eagerly and under [Rune.jit] alike, so [-1] addresses nothing; {!take} and
     {!take_along_axis} read zero at such an index.
 
-    [mode] controls how updates combine with [t]: [`Set] (default) overwrites,
-    the last update winning at duplicate positions; [`Add] accumulates every
-    update into [t]'s value, a float sum as {!sum} describes, so a position
-    whose value and updates sum to exactly zero holds [0.].
-    [unique_indices = true] promises that no position is selected twice,
-    letting backends write the updates in any order. Where the promise is
-    broken, a position selected more than once holds an unspecified one of its
-    updates under [`Set] and an unspecified value under [`Add]; every other
-    position is exact.
+    [mode] says how the updates that reach a position combine with [t]'s element
+    there:
+    - [`Set] (default) overwrites: the last update in row-major order of
+      [indices] wins.
+    - [`Add] accumulates every update into the element, a float sum as {!sum}
+      describes, so a position whose element and updates sum to exactly zero
+      holds [0.]. [float16], [bfloat16] and the [float8] dtypes accumulate in
+      [float32] and round once.
+    - [`Max] is the maximum of the element and its updates, as {!maximum} orders
+      them: NaN propagates and [-0.] is less than [0.].
+    - [`Min] is the minimum, as {!minimum} orders them.
+
+    Under [`Max] and [`Min] a position holds the bits of one of its operands: a
+    NaN result is the element's NaN when the element is one, and otherwise the
+    first NaN update's in row-major order of [indices].
+
+    [unique_indices = true] promises that no position is selected twice, letting
+    backends write the updates in any order. Where the promise is broken, a
+    position selected more than once holds an unspecified one of its updates
+    under [`Set] and an unspecified value under [`Add]; every other position is
+    exact, and [`Max] and [`Min] are exact everywhere.
 
     [scatter] differentiates with respect to both [t] and [values]; a dropped
-    update's gradient is zero.
+    update's gradient is zero. Under [`Max] and [`Min] a position's derivative
+    is that of the operand whose bits it holds: the element's when the element's
+    bits are the result's, otherwise the first update's, in row-major order of
+    [indices], whose bits are. Among tied operands that one takes the whole
+    derivative.
 
     {@ocaml[
       # let x = zeros float32 [| 2; 3 |] in
@@ -1652,9 +1668,10 @@ val scatter :
                                                   [20, 0, 0]]
     ]}
 
-    Raises [Invalid_argument] if shapes are incompatible.
+    Raises [Invalid_argument] if shapes are incompatible, or if [mode] is [`Max]
+    or [`Min] and [t] is complex.
 
-    See also {!set}, {!take_along_axis}. *)
+    See also {!set}, {!take_along_axis}, {!reduce_segments}. *)
 
 val compress :
   ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
@@ -2479,6 +2496,51 @@ val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
     Raises [Invalid_argument] as {!argmax} does.
 
     See also {!argmax}. *)
+
+val reduce_segments :
+  [ `Add | `Max | `Min ] -> segments:int -> int64_t -> ('a, 'b) t -> ('a, 'b) t
+(** [reduce_segments op ~segments ids x] combines the rows of [x] by segment:
+    row [s] of the result is [op]'s identity combined by [op] with every row [i]
+    of [x] whose id [ids.{i}] is [s]. The rows of [x] lie along axis 0, and
+    [ids] holds one id per row. The result has [x]'s shape but with [segments]
+    rows. It is [scatter ~mode:op ~axis:0] of [x]'s rows at [ids] into
+    [segments] rows of the identity, so it differentiates, maps and compiles as
+    {!scatter} does.
+
+    - [`Add] sums from [0] as {!scatter} adds, with bits that never depend on
+      the number of threads. Integer sums wrap.
+    - [`Max] and [`Min] take the extremes as {!scatter} does: NaN propagates,
+      [-0.] is less than [0.], and a segment whose extreme is NaN holds its
+      first NaN row's bits. Their identities are the least and greatest values
+      of the dtype: [neg_infinity] and [infinity], or [-448.] and [448.] in
+      [float8_e4m3], which has no infinity; the least and greatest integers, [0]
+      being the least unsigned one; [false] and [true].
+
+    A segment that no row reaches holds the identity. An id outside \[[0],
+    [segments]) drops its row: give a row that belongs to no segment the id
+    [-1], as in [where valid ids (scalar int64 (-1L))].
+
+    Its derivative is {!scatter}'s: at a tie the first row takes the whole
+    derivative, where {!max} over the segment's rows shares it. A segment that
+    holds its identity has a zero derivative.
+
+    The other per-segment statistics are one line each: counts are [`Add] of
+    ones, a mean is [`Add] divided by the counts, and each segment's first row
+    is [`Min] of the row positions [arange int64 0 n 1], then a {!take}.
+
+    {@ocaml[
+      # let ids = create int64 [| 5 |] [| 0L; 2L; 0L; -1L; 2L |] in
+        let x = create float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+        (to_array (reduce_segments `Add ~segments:3 ids x),
+         to_array (reduce_segments `Max ~segments:3 ids x))
+      - : float array * float array = ([|4.; 0.; 7.|], [|3.; neg_infinity; 5.|])
+    ]}
+
+    Raises [Invalid_argument] if [segments] is negative, if [x] is a scalar, if
+    [ids] is not 1-D with one id per row of [x], if [op] is [`Max] or [`Min] and
+    [x] is complex, or if [op] is [`Add] and [x] is boolean.
+
+    See also {!scatter}. *)
 
 (** {1:sorting Sorting and searching}
 
@@ -3804,7 +3866,7 @@ module Op : sig
         int * (int64, Nx_dtype.int64_elt) Nx_effect.t * ('a, 'b) Nx_effect.t
         -> ('a, 'b) Nx_effect.t t
     | Scatter : {
-        mode : [ `Set | `Add ];
+        mode : Nx_backend.scatter;
         unique : bool;
         axis : int;
         indices : (int64, Nx_dtype.int64_elt) Nx_effect.t;

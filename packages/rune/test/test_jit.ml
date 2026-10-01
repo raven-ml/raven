@@ -3201,6 +3201,21 @@ let test_bitcast_between_widths_is_refused () =
   refused (fun x -> Nx.bitcast Nx.uint64 x) (Nx.zeros Nx.uint8 [| 2; 8 |]);
   refused (fun x -> Nx.bitcast Nx.uint8 x) (Nx.zeros Nx.uint64 [| 2 |])
 
+let test_scatter_by_extremes_is_refused () =
+  List.iter
+    (fun mode ->
+      raises
+        (Rune.Jit_error
+           "Rune.jit: a scatter by maxima or minima is not supported inside \
+            jit; move it outside the jitted function") (fun () ->
+          Rune.jit'
+            (fun x ->
+              Nx.scatter ~mode ~axis:0
+                ~indices:(Nx.zeros Nx.int64 [| 2 |])
+                ~values:x (Nx.zeros f32 [| 3 |]))
+            (vec32 [| 1.0; 2.0 |])))
+    [ `Max; `Min ]
+
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
 let test_item_reads_one_element () =
   let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
@@ -5322,6 +5337,8 @@ let tests =
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "a bitcast between widths is refused"
           test_bitcast_between_widths_is_refused;
+        test "a scatter by maxima or minima is refused"
+          test_scatter_by_extremes_is_refused;
         test "bitcast outputs retain their own dtype"
           (check_bitcast_output_ownership ~devices:[ Nx.Device.host ]);
         test "float8 bitcasts preserve raw bytes through movements"

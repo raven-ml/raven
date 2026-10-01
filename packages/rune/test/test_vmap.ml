@@ -128,6 +128,16 @@ let oracle_tests =
         check_vmap ~msg:"gather"
           (fun r -> Nx.take_along_axis ~axis:0 ~indices:idx r)
           (xs ()));
+    test "scatter by maxima and minima" (fun () ->
+        let idx = Nx.create Nx.int64 [| 3 |] [| 1L; 1L; 0L |] in
+        List.iter
+          (fun mode ->
+            check_vmap ~msg:"scatter"
+              (fun r ->
+                Nx.scatter ~mode ~axis:0 ~indices:idx ~values:r
+                  (Nx.full f64 [| 2 |] 0.5))
+              (xs ()))
+          [ `Max; `Min ]);
     test "softmax composite" (fun () ->
         check_vmap ~msg:"softmax"
           (fun r ->

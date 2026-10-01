@@ -278,11 +278,13 @@ let pad padding v (x : ('a, 'b) t) ~dst =
 let cat ~axis xs ~dst = caml_cat dst (Array.of_list xs) axis
 let gather ~axis indices x ~dst = caml_gather dst x indices axis
 
-(* The scatter walk writes into a copy of [x]. *)
-let scatter ~mode ~unique:_ ~axis ~indices ~updates x ~dst =
+(* The scatter walk writes into a copy of [x]. The last argument packs the mode
+   in its two low bits and [unique] in the third. *)
+let scatter ~mode ~unique ~axis ~indices ~updates x ~dst =
   caml_copy dst x;
   caml_scatter dst indices updates axis
-    (match mode with `Set -> 0 | `Add -> 1)
+    ((match mode with `Set -> 0 | `Add -> 1 | `Max -> 2 | `Min -> 3)
+    lor if unique then 4 else 0)
 
 (* The window write is the strided copy: [x] copied, then [v] written through a
    shrunk view of the copy. The packed copy writes a window nibble by nibble,

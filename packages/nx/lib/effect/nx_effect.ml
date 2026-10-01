@@ -1059,7 +1059,7 @@ module Op = struct
     | Threefry : int32_t * int32_t -> int32_t t
     | Gather : int * int64_t * ('a, 'b) Types.t -> ('a, 'b) Types.t t
     | Scatter : {
-        mode : [ `Set | `Add ];
+        mode : Nx_backend.scatter;
         unique : bool;
         axis : int;
         indices : int64_t;

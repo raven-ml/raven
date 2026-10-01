@@ -29,7 +29,7 @@
    copy, pad and cat through the packed copy, gather, scatter's `Set and unfold
    through the element move below, serially wherever two elements of one byte
    could otherwise be written by two workers. Only fold and scatter's `Add,
-   which sum, refuse them. */
+   `Max and `Min, which compute, refuse them. */
 
 #include <string.h>
 
@@ -481,20 +481,19 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
 /* ── scatter ─────────────────────────────────────────────────────────────────
 
    out (already initialized to the template by the binding) receives updates at
-   out[c with axis -> indices[c]] for each index-space point c. `Set overwrites
-   (last write in row-major scan order wins); `Add accumulates. An update whose
-   index lies outside [0, axis_len), negative included, is dropped, as compiled
-   code drops it. The order of the updates is nx_c.h's (Associations), and a
-   parallel plan must keep it. Scatter runs SERIALLY: `Set's last-wins is only
-   well defined under a fixed order, and a parallel `Add over duplicate targets
-   is an unsynchronized read-modify-write race. A serial row-major walk makes
-   both modes deterministic and race-free with no partitioning or atomics;
-   unique_indices could unlock a parallel path but is not needed for
-   correctness and buys nothing on the ops that use scatter, so it is accepted
-   and ignored. Add uses a per-dtype accumulate (compute-typed load/add/store),
-   which packed dtypes have none of; Set is a bit-exact element move. Serial
-   does NOT mean under the runtime lock: the walk is a one-worker body driven
-   through nx_c_parallel_for, which runs it in order on the calling thread and
+   out[c with axis -> indices[c]] for each index-space point c, combined by the
+   mode: `Set overwrites, `Add accumulates, `Max and `Min keep the extreme. An
+   update whose index lies outside [0, axis_len), negative included, is
+   dropped, as compiled code drops it. The order of the updates and what each
+   mode does with them is nx_c.h's (Associations), and a parallel plan must
+   keep it. Scatter runs SERIALLY: `Set's last-wins is only well defined under
+   a fixed order, and a parallel `Add over duplicate targets is an
+   unsynchronized read-modify-write race. A serial row-major walk makes every
+   mode deterministic and race-free with no partitioning or atomics. `Set is a
+   bit-exact element move; the other modes combine through a per-dtype
+   function, which packed dtypes have none of. Serial does NOT mean under the
+   runtime lock: the walk is a one-worker body driven through
+   nx_c_parallel_for, which runs it in order on the calling thread and
    releases/re-acquires the lock around it per the engine's size cutoff, like
    every other kernel. */
 
@@ -509,10 +508,12 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
 #define NX_C_MOVE_ADD_NX_C_CAT_COMPLEX(a, b) ((a) + (b))
 #define NX_C_MOVE_ADD_NX_C_CAT_BOOL(a, b) ((a) + (b))
 
+/* The combination of the update at upd into the element at out. */
+typedef void nx_c_scatter_fn(char *out, const char *upd);
+
 /* Each update adds to +0 plus the position's current value, so a position
    holds +0 plus its template value and its updates, and a float sum that is
    exactly zero is +0, as every sum in nx is. */
-typedef void nx_c_scatter_add_fn(char *out, const char *upd);
 #define NX_C_SCATTER_ADD(sfx, storage, compute, ld, st, cat)                   \
   static void nx_c_scatter_add_##sfx(char *out, const char *upd) {             \
     compute acc = NX_C_MOVE_ADD_##cat((compute)0, nx_c_ld_##sfx(out));         \
@@ -521,18 +522,97 @@ typedef void nx_c_scatter_add_fn(char *out, const char *upd);
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ADD)
 #undef NX_C_SCATTER_ADD
 
-static nx_c_scatter_add_fn *const nx_c_scatter_add_tbl[NX_C_DTYPE_COUNT] = {
-#define NX_C_SCATTER_ADD_ROW(sfx, storage, compute, ld, st, cat)               \
+/* Whether the update b replaces the element a: b is the greater (MAX) or the
+   lesser (MIN), -0 below +0 and a NaN beyond every number, and a is not a
+   NaN, so a position keeps the first NaN it meets, its own before any
+   update's. A narrow float loads to float exactly, so its comparison is
+   exact. Booleans are 0 and 1, so MAX is or and MIN is and. */
+#define NX_C_WINS_MAX_NX_C_CAT_FLOAT(a, b)                                       \
+  ((a) == (a) &&                                                               \
+   ((b) != (b) || (b) > (a) || ((b) == (a) && signbit(a) && !signbit(b))))
+#define NX_C_WINS_MIN_NX_C_CAT_FLOAT(a, b)                                       \
+  ((a) == (a) &&                                                               \
+   ((b) != (b) || (b) < (a) || ((b) == (a) && !signbit(a) && signbit(b))))
+#define NX_C_WINS_MAX_ORDERED(a, b) ((b) > (a))
+#define NX_C_WINS_MIN_ORDERED(a, b) ((b) < (a))
+#define NX_C_WINS_MAX_NX_C_CAT_SINT NX_C_WINS_MAX_ORDERED
+#define NX_C_WINS_MIN_NX_C_CAT_SINT NX_C_WINS_MIN_ORDERED
+#define NX_C_WINS_MAX_NX_C_CAT_UINT NX_C_WINS_MAX_ORDERED
+#define NX_C_WINS_MIN_NX_C_CAT_UINT NX_C_WINS_MIN_ORDERED
+#define NX_C_WINS_MAX_NX_C_CAT_BOOL NX_C_WINS_MAX_ORDERED
+#define NX_C_WINS_MIN_NX_C_CAT_BOOL NX_C_WINS_MIN_ORDERED
+
+/* The winner's stored bytes are copied, so a NaN keeps its payload and a
+   narrow float its exact bits. Complex numbers are not ordered: they get
+   none. */
+#define NX_C_SCATTER_EXTREME(sfx, storage, compute, cat, ext, EXT)             \
+  static void nx_c_scatter_##ext##_##sfx(char *out, const char *upd) {         \
+    compute a = nx_c_ld_##sfx(out), b = nx_c_ld_##sfx(upd);                    \
+    if (NX_C_WINS_##EXT##_##cat(a, b)) memcpy(out, upd, sizeof(storage));      \
+  }
+#define NX_C_SCATTER_EXTREMES(sfx, storage, compute, ld, st, cat)              \
+  NX_C_SCATTER_EXTREMES_##cat(sfx, storage, compute, cat)
+#define NX_C_SCATTER_EXTREMES_ORDERED(sfx, storage, compute, cat)              \
+  NX_C_SCATTER_EXTREME(sfx, storage, compute, cat, max, MAX)                   \
+  NX_C_SCATTER_EXTREME(sfx, storage, compute, cat, min, MIN)
+#define NX_C_SCATTER_EXTREMES_NX_C_CAT_FLOAT NX_C_SCATTER_EXTREMES_ORDERED
+#define NX_C_SCATTER_EXTREMES_NX_C_CAT_SINT NX_C_SCATTER_EXTREMES_ORDERED
+#define NX_C_SCATTER_EXTREMES_NX_C_CAT_UINT NX_C_SCATTER_EXTREMES_ORDERED
+#define NX_C_SCATTER_EXTREMES_NX_C_CAT_BOOL NX_C_SCATTER_EXTREMES_ORDERED
+#define NX_C_SCATTER_EXTREMES_NX_C_CAT_COMPLEX(sfx, storage, compute, cat)
+NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_EXTREMES)
+#undef NX_C_SCATTER_EXTREMES
+
+/* The combining modes' tables, indexed by mode - 1 (Add, Max, Min), then by
+   nx_c_dtype. A NULL slot refuses the dtype. */
+#define NX_C_SCATTER_ROW_ADD(sfx, storage, compute, ld, st, cat)               \
   [NX_C_DTYPE_##sfx] = nx_c_scatter_add_##sfx,
-    NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ADD_ROW)
-#undef NX_C_SCATTER_ADD_ROW
+#define NX_C_SCATTER_ROWS(ext, sfx, cat) NX_C_SCATTER_ROWS_##cat(ext, sfx)
+#define NX_C_SCATTER_ROWS_ORDERED(ext, sfx)                                    \
+  [NX_C_DTYPE_##sfx] = nx_c_scatter_##ext##_##sfx,
+#define NX_C_SCATTER_ROWS_NX_C_CAT_FLOAT NX_C_SCATTER_ROWS_ORDERED
+#define NX_C_SCATTER_ROWS_NX_C_CAT_SINT NX_C_SCATTER_ROWS_ORDERED
+#define NX_C_SCATTER_ROWS_NX_C_CAT_UINT NX_C_SCATTER_ROWS_ORDERED
+#define NX_C_SCATTER_ROWS_NX_C_CAT_BOOL NX_C_SCATTER_ROWS_ORDERED
+#define NX_C_SCATTER_ROWS_NX_C_CAT_COMPLEX(ext, sfx)
+#define NX_C_SCATTER_ROW_MAX(sfx, storage, compute, ld, st, cat)               \
+  NX_C_SCATTER_ROWS(max, sfx, cat)
+#define NX_C_SCATTER_ROW_MIN(sfx, storage, compute, ld, st, cat)               \
+  NX_C_SCATTER_ROWS(min, sfx, cat)
+static nx_c_scatter_fn *const nx_c_scatter_tbl[3][NX_C_DTYPE_COUNT] = {
+    {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ROW_ADD)},
+    {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ROW_MAX)},
+    {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ROW_MIN)},
+};
+#undef NX_C_SCATTER_ROW_ADD
+#undef NX_C_SCATTER_ROW_MAX
+#undef NX_C_SCATTER_ROW_MIN
+
+/* The narrow floats' loads and stores, through float, for the sums that
+   accumulate in float and round once. */
+typedef struct {
+  float (*ld)(const void *p);
+  void (*st)(void *p, float v);
+} nx_c_narrow_io;
+
+static const nx_c_narrow_io nx_c_narrow[NX_C_DTYPE_COUNT] = {
+    [NX_C_DTYPE_f16] = {nx_c_ld_f16, nx_c_st_f16},
+    [NX_C_DTYPE_bf16] = {nx_c_ld_bf16, nx_c_st_bf16},
+    [NX_C_DTYPE_f8e4m3] = {nx_c_ld_f8e4m3, nx_c_st_f8e4m3},
+    [NX_C_DTYPE_f8e5m2] = {nx_c_ld_f8e5m2, nx_c_st_f8e5m2},
 };
 
 typedef struct {
   const nx_c_ndarray *out;
   const nx_c_ndarray *indices;
   const nx_c_ndarray *updates;
-  nx_c_scatter_add_fn *add; /* NULL = Set (bit-exact byte copy) */
+  nx_c_scatter_fn *combine; /* NULL = Set (bit-exact byte copy) */
+  /* A narrow float sum's scratch, indexed by the position's place in out:
+     the sum so far in acc, and in hit whether an update reached it. NULL
+     outside that path. */
+  const nx_c_narrow_io *narrow;
+  float *acc;
+  uint8_t *hit;
   int axis;
   int64_t esize;
 } nx_c_scatter_ctx;
@@ -549,24 +629,45 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   for (int64_t it = lo; it < hi; it++) {
     nx_c_unravel(it, nd, indices->shape, coord);
     int64_t idx_off = indices->offset + nx_c_dot(nd, coord, indices->strides);
-    int64_t index = *(const int64_t *)((const char *)indices->data +
-                                        idx_off * (int64_t)sizeof(int64_t));
+    int64_t index = ((const int64_t *)indices->data)[idx_off];
     if (index < 0 || index >= axis_len) continue;
     for (int d = 0; d < nd; d++) ocoord[d] = (d == axis) ? index : coord[d];
     int64_t out_off = out->offset + nx_c_dot(nd, ocoord, out->strides);
     int64_t upd_off = updates->offset + nx_c_dot(nd, coord, updates->strides);
-    if (sc->add)
-      sc->add((char *)out->data + out_off * esize,
-              (const char *)updates->data + upd_off * esize);
+    char *o = (char *)out->data + out_off * esize;
+    const char *u = (const char *)updates->data + upd_off * esize;
+    if (sc->acc) {
+      int64_t p = out_off - out->offset;
+      if (!sc->hit[p]) {
+        sc->acc[p] = 0.0f + sc->narrow->ld(o);
+        sc->hit[p] = 1;
+      }
+      sc->acc[p] += sc->narrow->ld(u);
+    } else if (sc->combine)
+      sc->combine(o, u);
     else
       nx_c_elem_move(out->data, out_off, updates->data, upd_off, esize);
   }
 }
 
+/* Each position of out that an update reached gets its narrow float sum,
+   rounded once. */
+static void nx_c_scatter_store_body(int64_t lo, int64_t hi, int worker,
+                                    void *vctx) {
+  (void)worker;
+  const nx_c_scatter_ctx *sc = vctx;
+  int64_t esize = sc->esize;
+  char *base = (char *)sc->out->data + sc->out->offset * esize;
+  for (int64_t p = lo; p < hi; p++)
+    if (sc->hit[p]) sc->narrow->st(base + p * esize, sc->acc[p]);
+}
+
+/* mode is 0 for Set, 1 for Add, 2 for Max, 3 for Min. */
 static nx_c_status nx_c_scatter_run(const nx_c_ndarray *out,
                                   const nx_c_ndarray *indices,
-                                  const nx_c_ndarray *updates, int axis, int mode,
-                                  nx_c_dtype dt, int64_t esize) {
+                                  const nx_c_ndarray *updates, int axis,
+                                  int mode, int unique, nx_c_dtype dt,
+                                  int64_t esize) {
   if (axis < 0 || axis >= out->ndim) return NX_C_ERR_AXIS;
   if (out->ndim != indices->ndim || out->ndim != updates->ndim)
     return NX_C_ERR_SHAPE;
@@ -574,20 +675,47 @@ static nx_c_status nx_c_scatter_run(const nx_c_ndarray *out,
     if (indices->shape[d] != updates->shape[d]) return NX_C_ERR_SHAPE;
     if (d != axis && indices->shape[d] != out->shape[d]) return NX_C_ERR_SHAPE;
   }
-  nx_c_scatter_add_fn *add = (mode == 1) ? nx_c_scatter_add_tbl[dt] : NULL;
-  if (mode == 1 && add == NULL) return NX_C_ERR_UNSUPPORTED_DTYPE;
+  nx_c_scatter_fn *combine = mode ? nx_c_scatter_tbl[mode - 1][dt] : NULL;
+  if (mode && combine == NULL)
+    return esize == 0 ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
 
   int nd = indices->ndim;
   int64_t total = nx_c_prod(nd, indices->shape);
   if (total == 0) return NX_C_OK;
+  nx_c_scatter_ctx sc = {out,  indices, updates, combine, NULL,
+                         NULL, NULL,    axis,    esize};
+  /* A narrow float sum keeps 5 bytes of scratch per position of out. With
+     distinct positions each sum has one update, which the per-update add
+     already rounds once. out is C-contiguous from its first element, so a
+     position's place in it is its offset from out->offset. */
+  int64_t positions = nx_c_prod(out->ndim, out->shape);
+  if (mode == 1 && !unique && positions > 0 && nx_c_narrow[dt].ld) {
+    sc.narrow = &nx_c_narrow[dt];
+    sc.acc = malloc((size_t)positions * sizeof(float));
+    sc.hit = calloc((size_t)positions, 1);
+    if (sc.acc == NULL || sc.hit == NULL) {
+      free(sc.acc);
+      free(sc.hit);
+      return NX_C_ERR_ALLOC;
+    }
+  }
   /* ONE worker keeps the row-major order (Set last-wins, Add accumulation
-     order) deterministic; nx_c_parallel_for still owns the lock handshake. */
-  nx_c_scatter_ctx sc = {out, indices, updates, add, axis, esize};
+     order, the first NaN) deterministic; nx_c_parallel_for still owns the
+     lock handshake. */
   int64_t bytes = total * (2 * esize + (int64_t)sizeof(int64_t));
   nx_c_parallel_for(1, total, bytes, nx_c_scatter_body, &sc, NULL);
+  if (sc.acc) {
+    nx_c_parallel_for(1, positions, positions * (esize + 5),
+                      nx_c_scatter_store_body, &sc, NULL);
+    free(sc.acc);
+    free(sc.hit);
+  }
   return NX_C_OK;
 }
 
+/* vmode packs the mode (bits 0-1: 0 Set, 1 Add, 2 Max, 3 Min) and whether the
+   positions are unique (bit 2) into one int, so the stub stays at five
+   arguments — no bytecode wrapper. */
 CAMLprim value caml_nx_c_scatter(value vout, value vindices, value vupdates,
                                 value vaxis, value vmode) {
   CAMLparam5(vout, vindices, vupdates, vaxis, vmode);
@@ -597,8 +725,9 @@ CAMLprim value caml_nx_c_scatter(value vout, value vindices, value vupdates,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vupdates, &updates);
   if (s != NX_C_OK) nx_c_raise("scatter", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  s = nx_c_scatter_run(&out, &indices, &updates, Int_val(vaxis), Int_val(vmode),
-                      dt, nx_c_elem_size(dt));
+  int mode = Int_val(vmode);
+  s = nx_c_scatter_run(&out, &indices, &updates, Int_val(vaxis), mode & 3,
+                      (mode >> 2) & 1, dt, nx_c_elem_size(dt));
   if (s != NX_C_OK) nx_c_raise_status("scatter", s);
   CAMLreturn(Val_unit);
 }

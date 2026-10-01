@@ -10,7 +10,9 @@
 
    [--transient] prints, instead of timing, the bytes of host arrays each row's
    call allocates beyond its result's, or [-] for a call that allocates enough
-   on the OCaml heap to collect. *)
+   on the OCaml heap to collect. [--transient] counts host arrays only: a
+   kernel's C scratch, such as narrow scatter Add's 5 bytes per position
+   (nx_c.h), is not counted. *)
 
 type row =
   | Row : {
@@ -78,18 +80,24 @@ let cumsum =
   ]
 
 let scatter =
-  let updates id mode n m =
+  let updates_of dtype id mode n m =
     row id n
-      (fun () -> (uniform_float64 n, indices n m, Nx.zeros Nx.float64 [| m |]))
+      (fun () ->
+        (Nx.cast dtype (uniform_float64 n), indices n m, Nx.zeros dtype [| m |]))
       (fun (values, indices, base) ->
         Nx.scatter ~mode ~axis:0 ~indices ~values base)
   in
+  let updates id = updates_of Nx.float64 id in
   [
     updates "add-float64-4e4-into-1e2" `Add s 100;
     updates "add-float64-1e7-into-1e2" `Add l 100;
     updates "add-float64-1e7-into-1e6" `Add l 1_000_000;
     updates "set-float64-4e4-into-4e4" `Set s s;
     updates "set-float64-1e7-into-1e6" `Set l 1_000_000;
+    updates "max-float64-4e4-into-1e2" `Max s 100;
+    updates "max-float64-1e7-into-1e2" `Max l 100;
+    updates "max-float64-1e7-into-1e6" `Max l 1_000_000;
+    updates_of Nx.float16 "add-float16-1e7-into-1e6" `Add l 1_000_000;
   ]
 
 let gather =

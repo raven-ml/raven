@@ -11,7 +11,9 @@
     [-0.], and a NaN keeps its payload. Where windows overlap or updates meet,
     the elements are summed as nx sums: floats at [float32] or wider from [+0.],
     rounded once, so that a sum that is exactly zero is [+0.]; integers
-    modularly; booleans as whether any holds.
+    modularly; booleans as whether any holds. Updates that meet under a maximum
+    or a minimum keep the bits of the operand that is the extreme, as nx.cpu
+    does.
 
     Indices are [int64] nodes, as nx's are. A scatter compares them with the
     positions of an axis of at most [2{^ 31}] elements in [int32], after every
@@ -35,7 +37,7 @@ val gather : int -> Ops.t -> Ops.t -> Ops.t
     [axis], reads zero. *)
 
 val scatter :
-  mode:[ `Set | `Add ] ->
+  mode:Nx_backend.scatter ->
   unique:bool ->
   axis:int ->
   indices:Ops.t ->
@@ -43,12 +45,19 @@ val scatter :
   Ops.t ->
   Ops.t
 (** [scatter ~mode ~unique ~axis ~indices ~updates x] is [x] with each element
-    of [updates] set ([`Set]) or added ([`Add]) at the position of the index
-    node [indices] at the same index along [axis]. A position that no update
-    reaches is [x]'s element. Under [`Set] the last of duplicate positions in
-    row-major order wins, and with [unique], which asserts that the positions
-    are distinct, one of them does. An update at an index outside \[[0], [n]),
-    [n] being [x]'s size along [axis], is dropped. *)
+    of [updates] combined by [mode] into the element at the position of the
+    index node [indices] at the same index along [axis]. A position that no
+    update reaches is [x]'s element.
+    - Under [`Set] the last of duplicate positions in row-major order wins, and
+      with [unique], which asserts that the positions are distinct, one of them
+      does.
+    - Under [`Add] the element and its updates are summed.
+    - Under [`Max] and [`Min] the position takes the bits of the first of its
+      element and its updates, in that order, that is the extreme: a NaN result
+      is the element's or the first NaN update's, with its payload.
+
+    An update at an index outside \[[0], [n]), [n] being [x]'s size along
+    [axis], is dropped. *)
 
 val update : Ops.t -> starts:Ops.t -> Ops.t -> Ops.t
 (** [update x ~starts v] is [x] with [v] at the window whose corner is the index

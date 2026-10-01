@@ -81,6 +81,12 @@ def set_at(base, i, u):
     return o
 
 
+def max_at(base, i, u):
+    o = base.copy()
+    np.maximum.at(o, i, u)
+    return o
+
+
 for n, name in [(S, "4e4"), (L, "1e7")]:
     twin(f"arange/int64-{name}", "numpy", lambda n=n: n,
          lambda n: np.arange(n, dtype=np.int64))
@@ -112,10 +118,17 @@ for id, f, n, m in [("add-float64-4e4-into-1e2", add_at, S, 100),
                     ("add-float64-1e7-into-1e2", add_at, L, 100),
                     ("add-float64-1e7-into-1e6", add_at, L, 1_000_000),
                     ("set-float64-4e4-into-4e4", set_at, S, S),
-                    ("set-float64-1e7-into-1e6", set_at, L, 1_000_000)]:
+                    ("set-float64-1e7-into-1e6", set_at, L, 1_000_000),
+                    ("max-float64-4e4-into-1e2", max_at, S, 100),
+                    ("max-float64-1e7-into-1e2", max_at, L, 100),
+                    ("max-float64-1e7-into-1e6", max_at, L, 1_000_000)]:
     twin(f"scatter/{id}", "numpy",
          lambda n=n, m=m: (np.zeros(m), ints(n, m), uniform(n)),
          lambda a, f=f: f(*a))
+twin("scatter/add-float16-1e7-into-1e6", "numpy",
+     lambda: (np.zeros(1_000_000, np.float16), ints(L, 1_000_000),
+              uniform(L).astype(np.float16)),
+     lambda a: add_at(*a))
 
 
 def gathered(make_x, make_i):

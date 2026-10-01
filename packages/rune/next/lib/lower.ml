@@ -760,7 +760,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
         match mode with
         | `Set when unique ->
             Lower_index.scatter_rows ~axis ~indices ~updates into
-        | `Set | `Add -> None
+        | `Set | `Add | `Max | `Min -> None
       in
       like x
         (write ~into

@@ -23,7 +23,7 @@ type t =
   | Bitcast
   | Threefry
   | Gather
-  | Scatter
+  | Scatter of Nx_backend.scatter
   | Update
   | Unfold
   | Fold

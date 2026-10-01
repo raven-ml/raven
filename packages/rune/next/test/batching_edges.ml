@@ -208,6 +208,13 @@ let compositions =
            Nx.sum (Nx.mul y y)))
       (mat 3 5
          (Array.init 15 (fun i -> float_of_int ((i * 7 mod 13) - 6) /. 4.)));
+    is_the_loop "reduce_segments over batched rows is the loop"
+      (fun r ->
+        Nx.reduce_segments `Max ~segments:2 (int64s [| 3 |] [| 1; -1; 1 |]) r)
+      (xs ());
+    is_the_loop "reduce_segments over batched ids is the loop"
+      (fun ids -> Nx.reduce_segments `Add ~segments:3 ids data)
+      (int64s [| 2; 4 |] [| 0; 2; 0; -1; 2; 2; 1; 3 |]);
   ]
 
 let tests =

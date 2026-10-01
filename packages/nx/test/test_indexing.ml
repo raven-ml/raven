@@ -197,6 +197,324 @@ let scatters =
                 (Nx.zeros Nx.int32 [| 2; 2 |])));
     ]
 
+(* Scatters by extremes. A tensor's elements are drawn from a pool of values of
+   its dtype, each of distinct bits, and named by their place in the pool, so a
+   result compares bit for bit: NaN payloads and the signs of zeros included.
+   [value] orders the pool as [maximum] does, NaN as [nan]. *)
+type pool =
+  | Pool : {
+      name : string;
+      dtype : ('a, 'b) Nx.dtype;
+      values : float array;
+      make : int array -> int array -> ('a, 'b) Nx.t;
+      cells : ('a, 'b) Nx.t -> int array;
+    }
+      -> pool
+
+(* The place in [bits] of each of [read]'s patterns. *)
+let places bits read =
+  Array.map (fun b -> Option.get (Array.find_index (( = ) b) bits)) read
+
+let float_pool name dtype bits values ~to_bits ~of_bits =
+  Pool
+    {
+      name;
+      dtype;
+      values;
+      make = (fun shape c -> of_bits shape (Array.map (Array.get bits) c));
+      cells = (fun t -> places bits (to_bits t));
+    }
+
+(* Every pool holds -inf, -1, -0, 0, 2.5, inf and three NaNs of distinct
+   payloads, one negative. *)
+let float_values =
+  [| neg_infinity; -1.; -0.; 0.; 2.5; infinity; nan; nan; nan |]
+
+let pools =
+  let wide (type b) (dtype : (float, b) Nx.dtype) unsigned bits =
+    float_pool (Nx_dtype.to_string dtype) dtype bits float_values
+      ~to_bits:(fun t -> Nx.to_array (Nx.bitcast unsigned t))
+      ~of_bits:(fun shape b -> Nx.bitcast dtype (Nx.create unsigned shape b))
+  in
+  let half dtype bits = wide dtype Nx.uint16 bits in
+  [
+    wide Nx.float64 Nx.uint64
+      [|
+        0xfff0000000000000L;
+        0xbff0000000000000L;
+        0x8000000000000000L;
+        0L;
+        0x4004000000000000L;
+        0x7ff0000000000000L;
+        0x7ff8000000000001L;
+        0x7ff8000000000002L;
+        0xfff8000000000003L;
+      |];
+    wide Nx.float32 Nx.uint32
+      [|
+        0xff800000l;
+        0xbf800000l;
+        0x80000000l;
+        0l;
+        0x40200000l;
+        0x7f800000l;
+        0x7fc00001l;
+        0x7fc00002l;
+        0xffc00003l;
+      |];
+    half Nx.float16
+      [| 0xfc00; 0xbc00; 0x8000; 0; 0x4100; 0x7c00; 0x7e01; 0x7e02; 0xfe03 |];
+    half Nx.bfloat16
+      [| 0xff80; 0xbf80; 0x8000; 0; 0x4020; 0x7f80; 0x7fc1; 0x7fc2; 0xffc3 |];
+    (let v = [| Int32.min_int; -1l; 0l; 1l; Int32.max_int |] in
+     Pool
+       {
+         name = "int32";
+         dtype = Nx.int32;
+         values = Array.map Int32.to_float v;
+         make =
+           (fun shape c -> Nx.create Nx.int32 shape (Array.map (Array.get v) c));
+         cells = (fun t -> places v (Nx.to_array t));
+       });
+    (let v = [| 0L; 1L; Int64.max_int; Int64.min_int; -1L |] in
+     Pool
+       {
+         name = "uint64";
+         dtype = Nx.uint64;
+         values = [| 0.; 1.; 0x1p63 -. 1024.; 0x1p63; 0x1p64 |];
+         make =
+           (fun shape c ->
+             Nx.create Nx.uint64 shape (Array.map (Array.get v) c));
+         cells = (fun t -> places v (Nx.to_array t));
+       });
+    (let v = [| false; true |] in
+     Pool
+       {
+         name = "bool";
+         dtype = Nx.bool;
+         values = [| 0.; 1. |];
+         make =
+           (fun shape c -> Nx.create Nx.bool shape (Array.map (Array.get v) c));
+         cells = (fun t -> places v (Nx.to_array t));
+       });
+  ]
+
+(* Whether the update [b] replaces the element [a] under [`Max] ([greater]) or
+   [`Min]: it is the extreme, -0 below +0 and a NaN beyond every number, and [a]
+   is not a NaN. *)
+let wins ~greater a b =
+  (not (Float.is_nan a))
+  && (Float.is_nan b
+     || (if greater then b > a else b < a)
+     || (b = a && Float.sign_bit a = greater && Float.sign_bit b <> greater))
+
+(* A shape, an axis of it, the element and the update at each position, and an
+   index along the axis at each position. *)
+let pooled size =
+  let open Gen in
+  let* s, axis, idx = positioned in
+  let cell = int_range 0 (size - 1) in
+  let+ into = array ~size:(constant (Ref.numel s)) cell
+  and+ updates = array ~size:(constant (Ref.numel s)) cell in
+  (s, axis, idx, into, updates)
+
+let scatters_by_extremes =
+  let extreme (Pool p) =
+    prop
+      (p.name
+     ^ " scatter Max and Min keep the extreme of each position and its \
+        updates, its bits included")
+      (Gen.pair (pooled (Array.length p.values)) Gen.bool)
+      (fun ((s, axis, idx, into, updates), greater) ->
+        let n = s.(axis) in
+        let expected = Array.copy into in
+        Array.iteri
+          (fun i k ->
+            if k >= 0 && k < n then begin
+              let dst = Ref.unravel s i in
+              dst.(axis) <- k;
+              let j = Ref.ravel s dst in
+              if wins ~greater p.values.(expected.(j)) p.values.(updates.(i))
+              then expected.(j) <- updates.(i)
+            end)
+          idx;
+        equal (array int) expected
+          (p.cells
+             (Nx.scatter
+                ~mode:(if greater then `Max else `Min)
+                ~axis
+                ~indices:(Nx.create Nx.int64 s (Array.map Int64.of_int idx))
+                ~values:(p.make s updates) (p.make s into))))
+  in
+  let unique (Pool p) =
+    prop
+      (p.name ^ " scatter Max and Min do not depend on unique_indices")
+      (Gen.pair (pooled (Array.length p.values)) Gen.bool)
+      (fun ((s, axis, _, into, updates), greater) ->
+        let n = s.(axis) in
+        let positions =
+          Nx.init Nx.int64 s (fun i -> Int64.of_int (n - 1 - i.(axis)))
+        in
+        let scatter unique_indices =
+          p.cells
+            (Nx.scatter
+               ~mode:(if greater then `Max else `Min)
+               ~unique_indices ~axis ~indices:positions
+               ~values:(p.make s updates) (p.make s into))
+        in
+        equal (array int) (scatter false) (scatter true))
+  in
+  (* Without NaN, permuting the updates and their indices alike keeps the
+     result. *)
+  let order (Pool p) =
+    let numbers =
+      List.filter
+        (fun c -> not (Float.is_nan p.values.(c)))
+        (List.init (Array.length p.values) Fun.id)
+    in
+    let drawn =
+      let open Gen in
+      let* updates = array ~size:(int_range 0 8) (of_list numbers) in
+      let m = Array.length updates in
+      let+ idx = array ~size:(constant m) (int_range (-1) 3)
+      and+ into = array ~size:(constant 3) (of_list numbers)
+      and+ perm = permutation (List.init m Fun.id)
+      and+ greater = bool in
+      (updates, idx, into, Array.of_list perm, greater)
+    in
+    prop
+      (p.name
+     ^ " without NaN, the order of the updates does not change scatter Max and \
+        Min") drawn (fun (updates, idx, into, perm, greater) ->
+        let m = Array.length updates in
+        let scatter updates idx =
+          p.cells
+            (Nx.scatter
+               ~mode:(if greater then `Max else `Min)
+               ~axis:0
+               ~indices:
+                 (Nx.create Nx.int64 [| m |] (Array.map Int64.of_int idx))
+               ~values:(p.make [| m |] updates) (p.make [| 3 |] into))
+        in
+        equal (array int) (scatter updates idx)
+          (scatter
+             (Array.map (Array.get updates) perm)
+             (Array.map (Array.get idx) perm)))
+  in
+  let f64_bits bits =
+    Nx.bitcast Nx.float64 (Nx.create Nx.uint64 [| Array.length bits |] bits)
+  in
+  group "scatter by extremes"
+    (List.map extreme pools @ List.map unique pools @ List.map order pools
+    @ [
+        test
+          "a NaN element keeps its payload, and a number takes the first NaN \
+           update's" (fun () ->
+            let updates =
+              f64_bits [| 0x7ff8000000000002L; 0x7ff8000000000003L |]
+            in
+            let scatter mode into =
+              Nx.to_array
+                (Nx.bitcast Nx.uint64
+                   (Nx.scatter ~mode ~axis:0
+                      ~indices:(Nx.zeros Nx.int64 [| 2 |])
+                      ~values:updates (f64_bits [| into |])))
+            in
+            List.iter
+              (fun mode ->
+                equal (array int64) [| 0x7ff8000000000001L |]
+                  (scatter mode 0x7ff8000000000001L);
+                equal (array int64) [| 0x7ff8000000000002L |]
+                  (scatter mode (Int64.bits_of_float 1.)))
+              [ `Max; `Min ]);
+        test "scatter Max of -0 and +0 is +0, and Min is -0" (fun () ->
+            let scatter mode into update =
+              Nx.to_array
+                (Nx.scatter ~mode ~axis:0
+                   ~indices:(Nx.zeros Nx.int64 [| 1 |])
+                   ~values:(Nx.create Nx.float32 [| 1 |] [| update |])
+                   (Nx.create Nx.float32 [| 1 |] [| into |]))
+            in
+            List.iter
+              (fun (into, update) ->
+                equal (array float_exact) [| 0. |] (scatter `Max into update);
+                equal (array float_exact) [| -0. |] (scatter `Min into update))
+              [ (-0., 0.); (0., -0.) ]);
+        test "scatter Max and Min refuse complex numbers" (fun () ->
+            List.iter
+              (fun mode ->
+                raises_invalid_arg (fun () ->
+                    Nx.scatter ~mode ~axis:0
+                      ~indices:(Nx.zeros Nx.int64 [| 1 |])
+                      ~values:(Nx.zeros Nx.complex64 [| 1 |])
+                      (Nx.zeros Nx.complex64 [| 1 |])))
+              [ `Max; `Min ]);
+      ])
+
+(* float16, bfloat16 and float8 additions accumulate in float32 and round once
+   per position. *)
+let narrow_additions =
+  let ones dtype k =
+    Nx.scatter ~mode:`Add ~axis:0
+      ~indices:(Nx.zeros Nx.int64 [| k |])
+      ~values:(Nx.ones dtype [| k |]) (Nx.zeros dtype [| 1 |])
+  in
+  (* Multiples of 1/16 in [-8, 8], exact in every narrow dtype here and summed
+     exactly in float32. *)
+  let sixteenths n =
+    Gen.array ~size:(Gen.constant n)
+      (Gen.map (fun k -> float_of_int k /. 16.) (Gen.int_range (-128) 128))
+  in
+  let sums (type b) name (dtype : (float, b) Nx.dtype) =
+    prop
+      (name ^ " scatter Add is the float32 sum rounded once")
+      (let open Gen in
+       let* m = int_range 0 40 in
+       let+ updates = sixteenths m
+       and+ idx = array ~size:(constant m) (int_range (-1) 3)
+       and+ into = sixteenths 3 in
+       (updates, idx, into))
+      (fun (updates, idx, into) ->
+        let m = Array.length updates in
+        let indices = Nx.create Nx.int64 [| m |] (Array.map Int64.of_int idx) in
+        let scatter dt =
+          Nx.scatter ~mode:`Add ~axis:0 ~indices
+            ~values:(Nx.create dt [| m |] updates)
+            (Nx.create dt [| 3 |] into)
+        in
+        equal (tensor int)
+          (Nx.bitcast Nx.uint16 (Nx.cast dtype (scatter Nx.float32)))
+          (Nx.bitcast Nx.uint16 (scatter dtype)))
+  in
+  group "narrow additions"
+    [
+      test "4096 float16 ones added into one position give 4096" (fun () ->
+          equal (array float_exact) [| 4096. |]
+            (Nx.to_array (ones Nx.float16 4096)));
+      test "512 bfloat16 ones and 32 float8_e4m3 ones add up exactly" (fun () ->
+          equal (array float_exact) [| 512. |]
+            (Nx.to_array (ones Nx.bfloat16 512));
+          equal (array float_exact) [| 32. |]
+            (Nx.to_array (ones Nx.float8_e4m3 32)));
+      test
+        "a position no update reaches keeps its bits, and a reached -0 plus -0 \
+         is +0" (fun () ->
+          let into =
+            Nx.bitcast Nx.float16
+              (Nx.create Nx.uint16 [| 3 |] [| 0x8000; 0x7e05; 0x8000 |])
+          in
+          let y =
+            Nx.scatter ~mode:`Add ~axis:0
+              ~indices:(Nx.create Nx.int64 [| 2 |] [| 2L; 2L |])
+              ~values:(Nx.full Nx.float16 [| 2 |] (-0.))
+              into
+          in
+          equal (array int) [| 0x8000; 0x7e05; 0 |]
+            (Nx.to_array (Nx.bitcast Nx.uint16 y)));
+      sums "float16" Nx.float16;
+      sums "bfloat16" Nx.bfloat16;
+    ]
+
 let selections =
   group "selections"
     [
@@ -422,6 +740,8 @@ let () =
        [
          gathers;
          scatters;
+         scatters_by_extremes;
+         narrow_additions;
          extremes;
          selections;
          windows;

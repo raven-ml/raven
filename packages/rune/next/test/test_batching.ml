@@ -71,12 +71,15 @@ let row seed k x =
 (* The rows whose elements each come from their own inputs compare bit for bit;
    those that accumulate compare to rounding. *)
 let accumulates : Row.t -> bool = function
-  | Reduce _ | Scan _ | Scatter | Fold | Matmul | Fft | Rfft | Irfft | Cholesky
-  | Qr | Lu | Svd | Eig | Eigh | Solve_triangular ->
+  | Reduce _ | Scan _
+  | Scatter `Add
+  | Fold | Matmul | Fft | Rfft | Irfft | Cholesky | Qr | Lu | Svd | Eig | Eigh
+  | Solve_triangular ->
       true
   | Unary _ | Binary _ | Compare _ | Where | Arg_reduce _ | Sort | Argsort | Pad
-  | Cat | Cast | Bitcast | Threefry | Gather | Update | Unfold | Contiguous
-  | Move _ | Place | Read ->
+  | Cat | Cast | Bitcast | Threefry | Gather
+  | Scatter (`Set | `Max | `Min)
+  | Update | Unfold | Contiguous | Move _ | Place | Read ->
       false
 
 let compare_rows (c : Case.t) expected actual =

@@ -185,6 +185,23 @@ let running_arg ~axis y =
   in
   Nx.cummax ~axis (Nx.where changed iota (Nx.zeros_like iota))
 
+(* Whether [a] and [b] hold the same bits: a float through the unsigned integer
+   of its width, a float8 through float16, whose bitcast a compiled function
+   refuses. *)
+let same (type a b) (a : (a, b) Nx.t) (b : (a, b) Nx.t) : Nx.bool_t =
+  let bits (type c d) (dt : (c, d) Nx.dtype) a b =
+    Nx.equal (Nx.bitcast dt a) (Nx.bitcast dt b)
+  in
+  match[@warning "@4@8"] Nx.dtype a with
+  | Float64 -> bits Nx.uint64 a b
+  | Float32 -> bits Nx.uint32 a b
+  | Float16 | BFloat16 -> bits Nx.uint16 a b
+  | Float8_e4m3 | Float8_e5m2 ->
+      bits Nx.uint16 (Nx.cast Nx.float16 a) (Nx.cast Nx.float16 b)
+  | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
+  | UInt64 | Bool | Complex64 | Complex128 ->
+      Nx.equal a b
+
 (* [linear_scan ~axis a b] is [r] with [r_k = a_k r_(k-1) + b_k] along [axis]
    and [r_(-1) = 0], composed by doubling in about [log2 n] rounds of products
    and sums: no division, so it is exact where [a] has zeros, and it is linear
@@ -305,6 +322,44 @@ let binary_tangent k a b y da db =
 
 (* [zeros_or dx x] is [x]'s tangent, or zeros like it if it has none. *)
 let zeros_or dx x = match dx with Some dx -> dx | None -> Nx.zeros_like x
+
+(* The tangent of a scatter by extremes whose result is [y]: at each position,
+   the tangent of the operand whose bits [y] holds, the element's when its bits
+   are [y]'s, otherwise that of the first update along [axis] whose bits are.
+   [first] is that update's position along [axis], or [m], outside the updates,
+   where none is; a gather there reads zero, as it does for a dropped update. *)
+let extreme_tangent ~axis ~indices ~updates ~into y du di =
+  let shape = Nx.shape indices in
+  let m = shape.(axis) in
+  let along = Array.mapi (fun a d -> if a = axis then d else 1) shape in
+  let order =
+    Nx.broadcast_to shape (Nx.reshape along (Nx.arange Nx.int64 0 m 1))
+  in
+  let none = Int64.of_int m in
+  let candidate =
+    Nx.where
+      (same updates (eval (Gather (axis, indices, y))))
+      order
+      (Nx.full Nx.int64 shape none)
+  in
+  let first =
+    eval
+      (Scatter
+         {
+           mode = `Min;
+           unique = false;
+           axis;
+           indices;
+           updates = candidate;
+           into = Nx.full Nx.int64 (Nx.shape into) none;
+         })
+  in
+  let from_update =
+    match du with
+    | Some du -> eval (Gather (axis, first, du))
+    | None -> Nx.zeros_like into
+  in
+  Nx.where (same into y) (zeros_or di into) from_update
 
 (* [viewable m dx] is [dx], copied to C order if [m] is a reshape that its view
    cannot take: a tangent need not share its primal's strides. *)
@@ -597,13 +652,17 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Threefry _ -> assert false (* Its int32 operands are never duals. *)
   | Gather (axis, indices, x) ->
       linear x (fun x -> eval (Gather (axis, indices, x)))
-  | Scatter s ->
+  | Scatter ({ mode = `Set | `Add; _ } as s) ->
       let updates, du = split i s.updates and into, di = split i s.into in
       dual i
         (eval (Scatter { s with updates; into }))
         (eval
            (Scatter
               { s with updates = zeros_or du updates; into = zeros_or di into }))
+  | Scatter ({ mode = `Max | `Min; axis; indices; _ } as s) ->
+      let updates, du = split i s.updates and into, di = split i s.into in
+      let y = eval (Scatter { s with updates; into }) in
+      dual i y (extreme_tangent ~axis ~indices ~updates ~into y du di)
   | Update (x, starts, v) ->
       let x, dx = split i x and v, dv = split i v in
       dual i
