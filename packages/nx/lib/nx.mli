@@ -1465,6 +1465,39 @@ val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
     [v]; the same as {!full_like} [t v], with the value first so it pipes. [t]
     is unchanged. *)
 
+(** {2:buffers Runtime buffers}
+
+    A value's elements in a device's memory, as file formats read and write
+    them, without a copy when they already lie there in C order. *)
+
+val of_buffer :
+  ?backend:Nx_backend.t ->
+  ('a, 'b) dtype ->
+  int array ->
+  Nx_device.Buffer.t ->
+  ('a, 'b) t
+(** [of_buffer dtype shape b] is the value of [shape] whose elements, in C
+    order, are [b]'s, without a copy, at [Placement.device ~backend d] for [b]'s
+    device [d]. [backend] defaults to [Nx_cpu.backend], with which a buffer of
+    the host gives a value at {!Placement.host}. [b] is shared with its other
+    holders, which must not write it while the value lives.
+
+    Raises [Invalid_argument] if [shape] does not have [b]'s number of elements,
+    if [b]'s format is not [dtype]'s, or as {!Placement.device}. *)
+
+val to_buffer : ('a, 'b) t -> Nx_device.Buffer.t
+(** [to_buffer x] is a buffer of exactly [x]'s elements in C order, on [x]'s
+    device. It is [x]'s own storage when that holds the elements as one run in C
+    order, and a copy otherwise: on the same device, or on the host for a value
+    on the disk, which computes nothing, or on a device that holds values in
+    memory of its own. The buffer is read-only by contract: [x] and its views
+    read the same memory. A traced value is read as {!Op.Read} reads it, by the
+    interpretation that made it, into a host buffer.
+
+    Raises [Invalid_argument] if [x] is on several devices (use {!shards}), or
+    as a read of a consumed value or of a traced one outside its interpretation
+    raises. *)
+
 (** {1:indexing Indexing and slicing}
 
     Indices are {!int64_t}, which reach every element a tensor can have. An
@@ -3966,9 +3999,35 @@ val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
 
 (** {1:low_level For transformations and file formats}
 
-    What a transformation and a file format need of nx's values: the operations
-    as values, their interpretation, and the representation of a value. Programs
-    never need this section. *)
+    What transformations, compiled calls and file formats need of nx's values:
+    each device's buffer of a value, the operations as values, their
+    interpretation, and the representation of a value. Programs never need this
+    section. *)
+
+val shards : ('a, 'b) t -> Nx_device.Buffer.t list * Nx_array.View.t
+(** [shards x] is the buffer of [x]'s storage on each device of
+    [Placement.devices (placement x)], in that order, and the view each device
+    has of its buffer. A host value is its one buffer. The buffers are [x]'s own
+    handles: the values over one storage give physically equal ones, and nothing
+    is copied.
+
+    Raises [Invalid_argument] if [x] is traced, if its devices hold it in memory
+    of their own, or as a read of a consumed value raises. *)
+
+val of_shards :
+  Placement.t ->
+  ('a, 'b) dtype ->
+  Nx_array.View.t ->
+  Nx_device.Buffer.t list ->
+  ('a, 'b) t
+(** [of_shards p dtype view buffers] is the value at [p] whose elements, on each
+    device, are those [view] reaches in that device's buffer of [buffers], in
+    {!Placement.devices} order: [of_shards p dtype view (fst (shards x))] is [x]
+    for [x] at [p] of view [view]. Nothing is copied.
+
+    Raises [Invalid_argument] unless there is one buffer per device of [p], each
+    in the memory of its device, of [dtype]'s format and of one length, and
+    [view] reaches no element outside them. *)
 
 (** Operations as values.
 

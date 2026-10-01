@@ -17,6 +17,10 @@ module Placement = Nx_effect.Placement
 
 let place = Nx_effect.place
 let placement = Nx_effect.placement
+let of_buffer = Nx_effect.of_buffer
+let to_buffer = Nx_effect.to_buffer
+let shards = Nx_effect.shards
+let of_shards = Nx_effect.of_shards
 
 module Ptree = Ptree
 
@@ -136,38 +140,10 @@ end
 module Repr = struct
   type ('a, 'b) node = ('a, 'b) Nx_effect.node = ..
 
-  (* Whether [v] reaches only elements [0] to [n - 1]. *)
-  let within v n =
-    Nx_array.View.numel v = 0
-    ||
-    let lo = ref (Nx_array.View.offset v)
-    and hi = ref (Nx_array.View.offset v) in
-    Array.iteri
-      (fun i d ->
-        let s = (Nx_array.View.strides v).(i) * (d - 1) in
-        if s < 0 then lo := !lo + s else hi := !hi + s)
-      (Nx_array.View.shape v);
-    !lo >= 0 && !hi < n
-
   module Storage = struct
     type t = Nx_effect.cell
 
-    let v p buffers =
-      let ds = Placement.devices p in
-      if List.compare_lengths ds buffers <> 0 then
-        invalid_arg "Nx.Repr.Storage.v: one buffer per device of the placement";
-      let length = Nx_device.Buffer.length (List.hd buffers) in
-      List.iter2
-        (fun d b ->
-          if Nx_device.Buffer.length b <> length then
-            invalid_arg "Nx.Repr.Storage.v: buffers of different lengths";
-          if Nx_device.Buffer.device b != Nx_effect.runtime_of d then
-            invalid_arg
-              (Printf.sprintf "Nx.Repr.Storage.v: a buffer for %s is on %s"
-                 (Device.name d)
-                 (Nx_device.name (Nx_device.Buffer.device b))))
-        ds buffers;
-      Nx_effect.cell ~placement:p ~length (Nx_effect.Runtime buffers)
+    let v p buffers = Nx_effect.shard_storage "Nx.Repr.Storage.v" p buffers
 
     let buffers (s : t) =
       match Nx_effect.Cell.state s with
@@ -195,9 +171,7 @@ module Repr = struct
     type ('a, 'b) t = ('a, 'b) Nx_effect.resident
 
     let v p dtype view (s : Storage.t) =
-      if not (within view s.length) then
-        invalid_arg "Nx.Repr.Placed.v: the view reaches outside the storage";
-      Nx_effect.placed p dtype view s
+      Nx_effect.placed_value "Nx.Repr.Placed.v" p dtype view s
 
     let id (x : ('a, 'b) t) = x.r_id
     let view (x : ('a, 'b) t) = x.r_view
@@ -222,10 +196,7 @@ module Repr = struct
   let v x = x
 
   let host (a : ('a, 'b) Nx_array.t) =
-    Nx_effect.check_host "Nx.Repr.host" a.dtype a.buffer;
-    if not (within a.view (Nx_device.Buffer.length a.buffer)) then
-      invalid_arg "Nx.Repr.host: the view reaches outside the buffer";
-    Nx_effect.Host a
+    Nx_effect.host_value "Nx.Repr.host" a.dtype a.view a.buffer
 
   let context = Nx_effect.context
   let view = Nx_effect.view

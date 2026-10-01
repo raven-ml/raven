@@ -3029,25 +3029,126 @@ let run (type a b) (x : (a, b) t) =
       | _ -> None)
   | Traced _ -> outside_trace ()
 
-(* [of_buffer dtype shape b] is the value of shape [shape] whose elements, of
-   [dtype], are [b]'s in C order, without a copy: a host value for a buffer of
-   the host, and on [b]'s device otherwise. *)
-let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
-  let n = Nx_device.Buffer.length b in
-  if Array.fold_left ( * ) 1 shape <> n then
+(* Values over runtime buffers *)
+
+(* Whether the view [v] reaches only elements [0] to [n - 1]. *)
+let fits v n =
+  View.numel v = 0
+  ||
+  let lo, hi = View.extent v in
+  lo >= 0 && hi <= n
+
+(* [shard_storage what p buffers] is the storage of [buffers], one per device of
+   [p], in order, of one length, each in the memory of its device. *)
+let shard_storage what p buffers =
+  let ds = devices_of p in
+  if List.compare_lengths ds buffers <> 0 then
     invalid_arg
-      (Printf.sprintf "Nx_effect.of_buffer: shape %s for %d elements"
-         (Shape.to_string shape) n);
+      (Printf.sprintf "%s: %d buffers for %d devices" what (List.length buffers)
+         (List.length ds));
+  let length = Nx_device.Buffer.length (List.hd buffers) in
+  List.iter2
+    (fun d b ->
+      if Nx_device.Buffer.length b <> length then
+        invalid_arg (what ^ ": buffers of different lengths");
+      if Nx_device.Buffer.device b != runtime_of d then
+        invalid_arg
+          (Printf.sprintf "%s: a buffer for %s is on %s" what d.d_name
+             (Nx_device.name (Nx_device.Buffer.device b))))
+    ds buffers;
+  cell ~placement:p ~length (Runtime buffers)
+
+(* [host_value what dtype view b] is the host value of [b] under [view]. *)
+let host_value what dtype view b =
+  check_host what dtype b;
+  if not (fits view (Nx_device.Buffer.length b)) then
+    invalid_arg (what ^ ": the view reaches outside the buffer");
+  Host { dtype; view; buffer = b }
+
+(* [placed_value what p dtype view c] is the value at [p] of [c] under
+   [view]. *)
+let placed_value what p dtype view c =
+  if not (fits view c.length) then
+    invalid_arg (what ^ ": the view reaches outside the storage");
+  placed p dtype view c
+
+let check_format what dtype b =
   let s = Nx_device.Buffer.dtype b in
   if not (Nx_dtype.Scalar.equal s (Nx_dtype.Scalar.of_dtype dtype)) then
     invalid_arg
-      (Printf.sprintf "Nx_effect.of_buffer: a %s buffer read as %s"
+      (Printf.sprintf "%s: a %s buffer read as %s" what
          (Nx_dtype.Scalar.to_string s)
-         (Nx_dtype.to_string dtype));
-  let d = Nx_device.Buffer.device b in
-  if Nx_device.equal d Nx_device.host then
-    reshape (from_host Placement.host dtype b) shape
-  else
-    let p = Placement.device (Device.of_runtime d) in
-    placed p dtype (View.create shape)
-      (cell ~placement:p ~length:n (Runtime [ b ]))
+         (Nx_dtype.to_string dtype))
+
+let of_shards (type a b) p (dtype : (a, b) Nx_dtype.t) view buffers : (a, b) t =
+  let what = "Nx.of_shards" in
+  if is_host_placement p then
+    match buffers with
+    | [ b ] -> host_value what dtype view b
+    | _ ->
+        invalid_arg
+          (Printf.sprintf "%s: %d buffers for 1 device" what
+             (List.length buffers))
+  else begin
+    List.iter (check_format what dtype) buffers;
+    placed_value what p dtype view (shard_storage what p buffers)
+  end
+
+let shards (type a b) (x : (a, b) t) =
+  match x with
+  | Host a -> ([ a.buffer ], a.view)
+  | Placed r -> (
+      match Cell.state r.r_cell with
+      | Live (Runtime buffers) ->
+          let holders = devices_of r.r_cell.placement in
+          let on d =
+            List.nth buffers (Option.get (List.find_index (( == ) d) holders))
+          in
+          (List.map on (devices_of r.r_placement), r.r_view)
+      | Live _ ->
+          invalid_arg
+            (Format.asprintf
+               "Nx.shards: %a holds its values in memory of its own"
+               pp_placement r.r_placement)
+      | Consumed k -> consumed k)
+  | Traced _ -> outside_trace ()
+
+let of_buffer (type a b) ?(backend = Nx_cpu.backend) (dtype : (a, b) Nx_dtype.t)
+    shape b : (a, b) t =
+  let what = "Nx.of_buffer" in
+  let n = Nx_device.Buffer.length b in
+  if Array.fold_left ( * ) 1 shape <> n then
+    invalid_arg
+      (Printf.sprintf "%s: shape %s for %d elements" what
+         (Shape.to_string shape) n);
+  check_format what dtype b;
+  let p =
+    Placement.device ~backend (Device.of_runtime (Nx_device.Buffer.device b))
+  in
+  of_shards p dtype (View.create shape) [ b ]
+
+(* An empty buffer of [x]'s dtype on its device. *)
+let empty (type a b) (x : (a, b) t) =
+  let s = Nx_dtype.Scalar.of_dtype (dtype x) in
+  match x with
+  | Placed r when not (on_disk r.r_placement) ->
+      create_runtime (List.hd (devices_of r.r_placement)) s 0
+  | Host _ | Placed _ | Traced _ -> Nx_device.Buffer.create Nx_device.host s 0
+
+(* A value on the disk, which computes nothing, is copied to the host, as is one
+   in memory of its own, which has no runtime buffer. A traced value is read by
+   the interpretation that made it. *)
+let to_buffer (type a b) (x : (a, b) t) =
+  match x with
+  | Traced _ -> elements ~by:"Nx.to_buffer" x
+  | Placed r when List.compare_length_with (devices_of r.r_placement) 1 > 0 ->
+      invalid_arg
+        (Format.asprintf "Nx.to_buffer: a value at %a is on several devices"
+           pp_placement r.r_placement)
+  | Host _ | Placed _ -> (
+      match run x with
+      | Some b -> b
+      | None when View.numel (view x) = 0 -> empty x
+      | None -> (
+          let y = copy x in
+          match run y with Some b -> b | None -> elements ~by:"Nx.to_buffer" y))

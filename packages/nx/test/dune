@@ -17,6 +17,7 @@
   test_runtime
   test_backend
   test_conformance
+  test_buffers
   test_intercept
   test_allocation)
  (package nx)

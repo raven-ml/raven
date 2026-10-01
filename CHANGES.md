@@ -2934,6 +2934,14 @@ thread.
 
 ### Nx
 
+- `Nx.of_buffer` makes the value of a shape over a runtime buffer's elements
+  without a copy, on the buffer's device, and `Nx.to_buffer` gives a buffer of
+  exactly a value's elements in C order on its device: its own storage when the
+  elements are one run of it. File formats read and write tensors through them
+  instead of `Nx.Repr`.
+- `Nx.shards` gives each device's buffer of a value and the view each device has
+  of it, and `Nx.of_shards` makes a value at a placement over such buffers, for
+  compiled calls that bind values' storage.
 - **Breaking:** `Nx_device.Driver.on_free` is `Driver.depends`, which runs
   once an allocation is released and all work on it is done, its own device's
   included. A hook ran when the memory went back to its driver, so what it
