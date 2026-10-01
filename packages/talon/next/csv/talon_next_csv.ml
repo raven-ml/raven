@@ -22,31 +22,7 @@ let invalid fn fmt =
 
 let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
 let plural n word = Printf.sprintf "%d %s%s" n word (if n = 1 then "" else "s")
-
-(* [quoted s] is [s] between double quotes, as talon quotes names: double quotes
-   and backslashes escaped, and control bytes and bytes outside valid UTF-8 as
-   [\x] and two hexadecimal digits. *)
-let quoted s =
-  let b = Buffer.create (String.length s + 2) in
-  let hex c = Printf.bprintf b "\\x%02x" (Char.code c) in
-  let i = ref 0 in
-  Buffer.add_char b '"';
-  while !i < String.length s do
-    let d = String.get_utf_8_uchar s !i and c = s.[!i] in
-    if not (Uchar.utf_decode_is_valid d) then (
-      hex c;
-      incr i)
-    else begin
-      let n = Uchar.utf_decode_length d in
-      (match c with
-      | '"' | '\\' -> Printf.bprintf b "\\%c" c
-      | c when c < ' ' || c = '\x7f' -> hex c
-      | _ -> Buffer.add_substring b s !i n);
-      i := !i + n
-    end
-  done;
-  Buffer.add_char b '"';
-  Buffer.contents b
+let quoted s = Format.asprintf "%a" Type.pp_quoted s
 
 (* Formats *)
 
@@ -133,12 +109,17 @@ let pp_format ppf f =
   Format.fprintf ppf ")";
   Option.iter
     (fun rows ->
-      Format.fprintf ppf ", types sniffed from %s %s" (thousands rows)
-        (if rows = 1 then "row" else "rows"))
+      Format.fprintf ppf ", types sniffed from %s"
+        (match rows with
+        | 0 -> "no rows"
+        | 1 -> "1 row"
+        | n -> thousands n ^ " rows"))
     f.sniffed;
   let left =
     Array.map
-      (fun c -> Format.asprintf "%a" Schema.pp (Schema.v [ (c.name, c.ty) ]))
+      (fun c ->
+        let (Type.Any ty) = c.ty in
+        Format.asprintf "%a %a" Type.pp_name c.name Type.pp ty)
       f.columns
   in
   let width = Array.fold_left (fun w s -> max w (scalars s)) 0 left in
@@ -182,7 +163,10 @@ let null = 63
 let fine = 64 (* Not a whole number of microseconds. *)
 let wide = 128 (* Outside the nanoseconds' range. *)
 let seen = 256 (* Not null. *)
-let meet a b = a land b land null lor (a lor b land lnot null)
+
+let meet a b =
+  let common = a land b and either = a lor b in
+  common land null lor (either land lnot null)
 
 (* [is_integer b pos len] is [true] iff the text is digits after an optional
    sign. *)
@@ -211,10 +195,7 @@ let forms ~nulls ~ticks ~floats s r j =
     else if in_unit ~zoned Ns then bit lor fine
     else 0
   in
-  if
-    (not (Scan.quoted s r j))
-    && (len = 0 || List.mem (Bytes.sub_string b pos len) nulls)
-  then null
+  if Columns.is_null nulls s r j then null
   else
     seen
     lor
@@ -389,6 +370,8 @@ let check_header f s =
              (quoted c.name)))
     f.columns
 
+(* A string column fails only on invalid UTF-8, so its type names its fix, and a
+   column sniffed from no rows is a string column. *)
 let value_error f s row j reason =
   let c = f.columns.(j) in
   let fix =
@@ -396,6 +379,7 @@ let value_error f s row j reason =
     | _, Type.Any Bool ->
         "Declare the null token (~nulls), or read the column as string \
          (with_type) and map its spellings with an expression."
+    | _, Type.Any String -> "Read the column as binary (with_type)."
     | Some rows, _ when not c.declared ->
         Printf.sprintf
           "The type was sniffed from %s. Declare the null token (~nulls) or \

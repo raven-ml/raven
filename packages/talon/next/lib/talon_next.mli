@@ -462,6 +462,15 @@ module Type : sig
       metadata always are: between double quotes, with double quotes and
       backslashes preceded by a backslash, and control bytes and bytes that are
       not part of valid UTF-8 written as [\x] and two hexadecimal digits. *)
+
+  val pp_name : Format.formatter -> string -> unit
+  (** [pp_name ppf n] formats the name [n] of a field or a column as {!pp}
+      formats a field name: as is, or quoted when it must be. Formats print
+      their columns' names with it. *)
+
+  val pp_quoted : Format.formatter -> string -> unit
+  (** [pp_quoted ppf s] formats [s] quoted, as {!pp} quotes a category. Messages
+      quote names and texts with it. *)
 end
 
 module Schema : sig

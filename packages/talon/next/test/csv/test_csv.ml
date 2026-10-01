@@ -326,7 +326,10 @@ let sniffing =
           ( "string from a column of nulls",
             "x,y\n,1\n,2\n",
             [ "x string"; "y int64" ] );
-          ("int64 past nulls", "x\n\n1\n\n", [ "x int64" ]);
+          ("int64 past nulls", "x,y\n,a\n1,b\n,c\n", [ "x int64"; "y string" ]);
+          ( "int64 past empty lines",
+            "x,y\n1,2\n\n3,4\n\n\n",
+            [ "x int64"; "y int64" ] );
           ( "string from a negative integer int64 does not hold",
             "x\n-9223372036854775809\n",
             [ "x string" ] );
@@ -378,6 +381,19 @@ let sniffing =
             csv (1 column, separator ',', quote '"', no header), types sniffed from 1 row
               column_1 int64
             |});
+      test "does not count empty lines as rows" (fun () ->
+          let f = sniffed ~rows:2 "x\n\n1\n\n\r\n2\nz\n" in
+          expect (format_text f)
+          @@ __POS_OF__
+               {|
+            csv (1 column, separator ',', quote '"', header), types sniffed from 2 rows
+              x int64
+            |});
+      test "counts no rows under a header alone" (fun () ->
+          equal string
+            "csv (2 columns, separator ',', quote '\"', header), types sniffed \
+             from no rows"
+            (dialect "a,b\n\n"));
       test "counts its rows with thousands separators" (fun () ->
           equal string
             "csv (1 column, separator ',', quote '\"', header), types sniffed \
@@ -440,7 +456,6 @@ let syntax_errors () =
       ("carriage return at the end", texts 1, "a\r");
       ("too many fields", texts 2, "a,b\nc,d,e\n");
       ("too few fields", texts 2, "a,b\nc\n");
-      ("an empty line in two columns", texts 2, "a,b\n\nc,d\n");
       ("lines after a quoted line break", texts 2, "\"a\nb\",c\nd,e,f\n");
       ( "the header names another column",
         Csv.format [ ("a", any Type.string); ("b", any Type.string) ],
@@ -464,7 +479,6 @@ let syntax_errors () =
     carriage return at the end: line 1, column 2: a carriage return that no line feed follows
     too many fields: line 2, column 5: the record has 3 fields, and the format 2 columns
     too few fields: line 2, column 2: the record has 1 field, and the format 2 columns
-    an empty line in two columns: line 2, column 1: the record has 1 field, and the format 2 columns
     lines after a quoted line break: line 3, column 5: the record has 3 fields, and the format 2 columns
     the header names another column: line 1, column 3: "c": the header does not name column 2 "b"
     the header has too few fields: line 1, column 2: the record has 1 field, and the format 2 columns
@@ -520,10 +534,27 @@ let syntax =
             2,
             "a,\nb,",
             "bytes [\"a\"; \"b\"]\nbytes [∅; ∅]" );
-          ( "an empty line is a record of one null field",
+          ( "an empty line in one column is skipped",
             1,
             "a\n\nb\n",
-            "bytes [\"a\"; ∅; \"b\"]" );
+            "bytes [\"a\"; \"b\"]" );
+          ( "an empty line between records is skipped",
+            2,
+            "a,b\n\nc,d\n",
+            "bytes [\"a\"; \"c\"]\nbytes [\"b\"; \"d\"]" );
+          ( "empty lines at the end are skipped",
+            2,
+            "a,b\n\n\n",
+            "bytes [\"a\"]\nbytes [\"b\"]" );
+          ( "empty lines of carriage returns and line feeds are skipped",
+            1,
+            "\r\na\r\n\r\n\nb\r\n\r\n",
+            "bytes [\"a\"; \"b\"]" );
+          ( "a line holding a quoted empty field is a record",
+            1,
+            "a\n\"\"\n",
+            "bytes [\"a\"; \"\"]" );
+          ("only empty lines are no record", 1, "\n\r\n\n", "no rows");
           ("a quoted field ends the input", 1, "\"a\"", "bytes [\"a\"]");
           ( "a byte order mark is not part of the first field",
             1,
@@ -548,7 +579,7 @@ let values =
         (Format.asprintf "%a" (fun ppf (Type.Any t) -> Type.pp ppf t) ty))
     "values"
     [
-      (any Type.bool, "true\nfalse\n\n", "bool [true; false; ∅]");
+      (any Type.bool, "true\nfalse\n", "bool [true; false]");
       (any Type.int8, "-128\n127\n+5\n-0\n", "int8 [-128; 127; 5; 0]");
       (any Type.int16, "-32768\n32767\n", "int16 [-32768; 32767]");
       ( any Type.int32,
@@ -580,6 +611,20 @@ let values =
       ( any Type.float16,
         "0.1\n65504\n1e5\n",
         "float16 [0.0999755859375; 65504; inf]" );
+      ( any Type.float32,
+        "1.00000005960464477550461637\n\
+         1.000000059604644775390625\n\
+         1.000000059604644775390624\n\
+         -1.00000005960464477550461637\n",
+        "float32 [1.0000001192092896; 1; 1; -1.0000001192092896]" );
+      ( any Type.float32,
+        "340282356779733661637539395458142568447\n\
+         340282356779733661637539395458142568448\n\
+         1e39\n",
+        "float32 [3.4028234663852886e+38; inf; inf]" );
+      ( any Type.float16,
+        "1.00048828125000000001\n1.00048828125\n65519.99999\n65520\n",
+        "float16 [1.0009765625; 1; 65504; inf]" );
       ( any (Type.decimal ~precision:5 ~scale:2),
         "123.45\n-1.5\n1.500\n0\n.5\n-0.00\n",
         "int64 [12345; -150; 150; 0; 50; 0]" );
@@ -611,8 +656,8 @@ let values =
         "bytes [\"caf\\195\\169\"; \"a\\\"b\"; \"\"]" );
       (any Type.binary, "\xff\xfe\n", "bytes [\"\\255\\254\"]");
       ( any (Type.categorical [| "a"; "b\"c"; "" |]),
-        "\"b\"\"c\"\na\n\"\"\n\n",
-        "int32 [1; 0; 2; ∅]" );
+        "\"b\"\"c\"\na\n\"\"\n",
+        "int32 [1; 0; 2]" );
     ]
     (fun (ty, s, expected) -> equal text expected (decode (columns [ ty ]) s))
 
@@ -717,8 +762,8 @@ let refusals () =
     2024-01-01T00:00:00+0100 as datetime[us, UTC]: line 1, column 1: "2024-01-01T00:00:00+0100": column "c1": cannot read as datetime[us, UTC]: not YYYY-MM-DDThh:mm:ss with an offset. Declare the null token (~nulls) or another type (with_type).
     2262-04-11T23:47:16.854775808Z as datetime[ns, UTC]: line 1, column 1: "2262-04-11T23:47:16.854775808Z": column "c1": cannot read as datetime[ns, UTC]: out of range. Declare the null token (~nulls) or another type (with_type).
     1677-09-21T00:12:43.145224191Z as datetime[ns, UTC]: line 1, column 1: "1677-09-21T00:12:43.145224191Z": column "c1": cannot read as datetime[ns, UTC]: out of range. Declare the null token (~nulls) or another type (with_type).
-    \255 as string: line 1, column 1: "\xff": column "c1": cannot read as string: not valid UTF-8. Declare the null token (~nulls) or another type (with_type).
-    \195 as string: line 1, column 1: "\xc3": column "c1": cannot read as string: not valid UTF-8. Declare the null token (~nulls) or another type (with_type).
+    \255 as string: line 1, column 1: "\xff": column "c1": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
+    \195 as string: line 1, column 1: "\xc3": column "c1": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
     b as categorical["a"]: line 1, column 1: "b": column "c1": cannot read as categorical["a"]: not in the dictionary. Declare the null token (~nulls) or another type (with_type).
     2024-01-01T00:00:00.0015 as datetime[ms]: line 1, column 1: "2024-01-01T00:00:00.0015": column "c1": cannot read as datetime[ms]: not a whole number of milliseconds. Declare the null token (~nulls) or another type (with_type).
     2024-01-01T00:00:00+24:00 as datetime[us, UTC]: line 1, column 1: "2024-01-01T00:00:00+24:00": column "c1": cannot read as datetime[us, UTC]: not an offset. Declare the null token (~nulls) or another type (with_type).
@@ -774,6 +819,7 @@ let data_errors () =
         "x,1\n2,y\n" );
       ("sniffed from one row", sniffed ~rows:1 "x\n1\nNA\n", "x\n1\nNA\n");
       ("bool spelled True", columns [ any Type.bool ], "true\nTrue\n");
+      ("sniffed string not UTF-8", sniffed "x\na\n", "x\na\n\xff\n");
     ];
   expect (output ())
   @@ __POS_OF__
@@ -781,7 +827,7 @@ let data_errors () =
     sniffed: line 4, column 1: "NA": column "dep_delay": cannot read as int64: not an integer. The type was sniffed from rows 1 to 2. Declare the null token (~nulls) or the type (with_type).
     declared: line 4, column 1: "NA": column "dep_delay": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
     range: line 2, column 1: "300": column "c1": cannot read as int8: out of range. Declare the null token (~nulls) or another type (with_type).
-    utf-8: line 2, column 1: "b\x0ac\xff": column "c1": cannot read as string: not valid UTF-8. Declare the null token (~nulls) or another type (with_type).
+    utf-8: line 2, column 1: "b\x0ac\xff": column "c1": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
     earliest row first: line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
     value before syntax: line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
     categorical: line 2, column 1: "b": column "c1": cannot read as categorical["a"]: not in the dictionary. Declare the null token (~nulls) or another type (with_type).
@@ -789,6 +835,7 @@ let data_errors () =
     earlier row first: line 1, column 1: "x": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
     sniffed from one row: line 3, column 1: "NA": column "x": cannot read as int64: not an integer. The type was sniffed from row 1. Declare the null token (~nulls) or the type (with_type).
     bool spelled True: line 2, column 1: "True": column "c1": cannot read as bool: not true or false. Declare the null token (~nulls), or read the column as string (with_type) and map its spellings with an expression.
+    sniffed string not UTF-8: line 3, column 1: "\xff": column "x": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
     |}
 
 (* Batches *)
@@ -832,6 +879,25 @@ let batches =
             (list (pair string int))
             (rows (Error.get_ok (read f big)))
             (rows (Error.get_ok (read ~slice_length f big))));
+      test "keep a quoted line feed at the 1 MiB edge in its field" (fun () ->
+          (* The quoted line feed is the input's byte 2^20 - 1, the first that
+             may end a batch. *)
+          let s =
+            "xx\n"
+            ^ String.concat "" (List.init 524285 (fun _ -> "x\n"))
+            ^ "\"a\nb\"\nz\n"
+          in
+          equal int ((1 lsl 20) - 1) (String.index_from s 1048574 '\n');
+          let rows =
+            List.concat_map
+              (fun b -> strings b.(0))
+              (Error.get_ok (read (texts 1) s))
+          in
+          equal int 524288 (List.length rows);
+          equal
+            (list (option string))
+            [ Some "x"; Some "a\nb"; Some "z" ]
+            (List.filteri (fun i _ -> i >= 524285) rows));
       test "count lines across batches" (fun () ->
           expect (failure f (big ^ "x,y\n"))
           @@ __POS_OF__
@@ -840,23 +906,25 @@ let batches =
 
 (* Properties *)
 
-(* A table of [cols] binary columns, with a header, encoded by hand: a null is
-   an unquoted empty field, a field is quoted when it must be or when [quote]
-   says, and each record ends in a line feed or a carriage return and a line
-   feed, the last one maybe not at all. *)
+(* A table of [cols] binary columns encoded by hand: a null is an unquoted empty
+   field, or the null token [NA] when it is a record's only field, a field is
+   quoted when it must be or when [quote] says, each record ends in a line feed
+   or a carriage return and a line feed, the last one maybe not at all, and an
+   empty line may precede a record. *)
 type table = {
   cols : int;
   rows : (string option * bool) list list;
   crlf : bool list;
+  blank : bool list;
   last : bool;
   slice : int;
 }
 
 let encode t =
   let b = Buffer.create 256 in
-  let field (v, quote) =
+  let field ~alone (v, quote) =
     match v with
-    | None -> ()
+    | None -> if alone then Buffer.add_string b "NA"
     | Some s ->
         let must =
           s = ""
@@ -877,18 +945,16 @@ let encode t =
   in
   let n = List.length t.rows in
   List.iteri
-    (fun i (row, crlf) ->
+    (fun i ((row, crlf), blank) ->
+      let break = if crlf then "\r\n" else "\n" in
+      if blank then Buffer.add_string b break;
       List.iteri
         (fun j f ->
           if j > 0 then Buffer.add_char b ',';
-          field f)
+          field ~alone:(t.cols = 1) f)
         row;
-      (* A last record of one null field must end in a line break, or the input
-         would end before it. *)
-      let single_null = match row with [ (None, _) ] -> true | _ -> false in
-      if i < n - 1 || t.last || single_null then
-        Buffer.add_string b (if crlf then "\r\n" else "\n"))
-    (List.combine t.rows t.crlf);
+      if i < n - 1 || t.last then Buffer.add_string b break)
+    (List.combine (List.combine t.rows t.crlf) t.blank);
   Buffer.contents b
 
 let table =
@@ -899,16 +965,19 @@ let table =
   let cell = pair (option (string_of ~size:(int_range 0 5) byte)) bool in
   let* rows = list ~size:(constant n) (list ~size:(constant cols) cell) in
   let* crlf = list ~size:(constant n) bool in
+  let* blank = list ~size:(constant n) bool in
   let* last = bool in
   let+ slice = int_range 1 16 in
-  { cols; rows; crlf; last; slice }
+  { cols; rows; crlf; blank; last; slice }
 
 let pp_table ppf t = Format.fprintf ppf "%S (slices of %d)" (encode t) t.slice
 
 let round_trip =
   prop "hand-encoded records read back as their fields"
     (Gen.with_pp pp_table table) (fun t ->
-      let f = columns (List.init t.cols (fun _ -> any Type.binary)) in
+      let f =
+        columns ~nulls:[ "NA" ] (List.init t.cols (fun _ -> any Type.binary))
+      in
       let got =
         Error.get_ok (read ~slice_length:t.slice f (encode t))
         |> List.concat_map (fun b ->

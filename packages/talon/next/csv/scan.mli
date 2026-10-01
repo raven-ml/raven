@@ -7,9 +7,9 @@
 
     A scanner reads a {!Bytesrw.Bytes.Reader.t} in batches of records, and
     splits each batch into records and fields by the syntax that
-    {!Talon_next_csv} documents. A batch's fields stay where they are in the
-    batch's bytes, and the scanner reuses its buffers from one batch to the
-    next, so scanning allocates nothing per record or field.
+    {!Talon_next_csv} documents, skipping empty lines. A batch's fields stay
+    where they are in the batch's bytes, and the scanner reuses its buffers from
+    one batch to the next, so scanning allocates nothing per record or field.
 
     A batch is found in two passes. The first reads the input until a line feed
     outside quotes, counting every quote as opening or closing quoted text, ends
@@ -96,8 +96,9 @@ val locate : t -> int -> int * int
 val sample : quote:char -> records:int -> Bytesrw.Bytes.Reader.t -> string
 (** [sample ~quote ~records r] is the input that [r] reads, up to the end of its
     [records]-th record, or all of it if it has fewer. Records end as {!next}'s
-    first pass finds them. [sample] reads those bytes, then pushes back on [r]
-    every byte it read, which [r] reads again. [records] is positive.
+    first pass finds them, at line feeds that end a line with a byte other than
+    a carriage return. [sample] reads those bytes, then pushes back on [r] every
+    byte it read, which [r] reads again. [records] is positive.
 
     Raises what reading [r] raises, after which [r] has lost the bytes it read.
 *)

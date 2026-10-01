@@ -18,8 +18,8 @@ type t =
       (** One value per row, in the storage of the column's type: [bool],
           integers of the type's width, [float16] to [float64], [int64] unscaled
           decimals, [int32] days, [int64] ticks, [int32] codes of a categorical.
-          [valid] is [true] at the rows that hold a value, and [None] when every
-          row does. *)
+          [valid], a byte validity mask, is [true] at the rows that hold a
+          value, and [None] when every row does. *)
   | Varsize of {
       valid : Nx.bool_t option;
       offsets : Nx.int64_t;
@@ -37,6 +37,10 @@ exception Invalid of { row : int; reason : string }
 val reads : Talon_next.Type.any -> bool
 (** [reads t] is [true] iff CSV reads [t]: [bool], an integer, float or decimal
     type, [string], [binary], a categorical, [date] or a [datetime]. *)
+
+val is_null : string list -> Scan.t -> int -> int -> bool
+(** [is_null nulls s r j] is [true] iff field [j] of record [r] of [s]'s batch
+    is null: unquoted, and empty or one of the null tokens [nulls]. *)
 
 type reader
 (** The type for column readers: a type, the dialect's quote and null tokens,

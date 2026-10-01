@@ -27,7 +27,7 @@ let reads (Type.Any t) =
 type reader = {
   ty : Type.any;
   quote : char;
-  nulls : string array;
+  nulls : string list;
   codes : (string, int) Hashtbl.t;
 }
 
@@ -37,23 +37,23 @@ let reader ~quote ~nulls ty =
   | Type.Any (Categorical d) ->
       Iarray.iteri (fun i s -> Hashtbl.add codes s i) d
   | _ -> ());
-  { ty; quote; nulls = Array.of_list nulls; codes }
+  { ty; quote; nulls; codes }
 
 let rec same_from b pos s i =
   i = String.length s
   || Bytes.unsafe_get b (pos + i) = String.unsafe_get s i
      && same_from b pos s (i + 1)
 
-let rec is_token b pos len nulls k =
-  k < Array.length nulls
-  && ((String.length nulls.(k) = len && same_from b pos nulls.(k) 0)
-     || is_token b pos len nulls (k + 1))
+let rec is_token b pos len = function
+  | [] -> false
+  | t :: ts ->
+      (String.length t = len && same_from b pos t 0) || is_token b pos len ts
 
-let is_null c s r j =
+let is_null nulls s r j =
   (not (Scan.quoted s r j))
   &&
   let len = Scan.len s r j in
-  len = 0 || is_token (Scan.bytes s) (Scan.pos s r j) len c.nulls 0
+  len = 0 || is_token (Scan.bytes s) (Scan.pos s r j) len nulls
 
 let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
 
@@ -77,8 +77,8 @@ let fixed c s j ~first ~rows kind zero parse =
   (try
      while !r < rows do
        let row = first + !r in
-       if is_null c s row j then null valid rows !r
-       else parse (Scan.bytes s) (Scan.pos s row j) (Scan.len s row j) a !r;
+       if is_null c.nulls s row j then null valid rows !r
+       else parse s row j a !r;
        incr r
      done
    with Text.Invalid reason -> raise (Invalid { row = first + !r; reason }));
@@ -97,7 +97,7 @@ let varsize c s j ~first ~rows ~utf_8 =
   (try
      while !r < rows do
        let row = first + !r in
-       if is_null c s row j then null valid rows !r
+       if is_null c.nulls s row j then null valid rows !r
        else begin
          let pos = Scan.pos s row j and len = Scan.len s row j in
          let quoted = Scan.quoted s row j in
@@ -121,30 +121,20 @@ let varsize c s j ~first ~rows ~utf_8 =
       data = tensor (A1.sub data 0 !o);
     }
 
-(* A field that holds the quote is quoted, and its quotes are doubled. *)
-let code c b pos len =
-  let text = Bytes.sub_string b pos len in
-  let text =
-    if not (String.contains text c.quote) then text
-    else begin
-      let u = Buffer.create len and i = ref 0 in
-      while !i < len do
-        Buffer.add_char u text.[!i];
-        i := if text.[!i] = c.quote then !i + 2 else !i + 1
-      done;
-      Buffer.contents u
-    end
-  in
-  match Hashtbl.find c.codes text with
+let code c s row j =
+  match Hashtbl.find c.codes (Scan.text s row j) with
   | k -> k
   | exception Not_found -> raise (Text.Invalid "not in the dictionary")
 
 let read c s j ~first ~rows =
-  let ints parse = fixed c s j ~first ~rows Bigarray.int64 0L parse in
-  let of_int f =
-    ints (fun b pos len a i -> A1.unsafe_set a i (Int64.of_int (f b pos len)))
+  let text f s row j = f (Scan.bytes s) (Scan.pos s row j) (Scan.len s row j) in
+  let ints f = fixed c s j ~first ~rows Bigarray.int64 0L (text f) in
+  let floats f = fixed c s j ~first ~rows Bigarray.float64 0. (text f) in
+  let of_field f =
+    fixed c s j ~first ~rows Bigarray.int64 0L (fun s row j a i ->
+        A1.unsafe_set a i (Int64.of_int (f s row j)))
   in
-  let floats () = fixed c s j ~first ~rows Bigarray.float64 0. Text.float in
+  let of_int f = of_field (text f) in
   let keep (values, valid) = Fixed { valid; values = Nx.P values } in
   let cast dt (values, valid) =
     Fixed { valid; values = Nx.P (Nx.cast dt values) }
@@ -164,15 +154,15 @@ let read c s j ~first ~rows =
   | Uint64 ->
       let values, valid = ints Text.uint64 in
       Fixed { valid; values = Nx.P (Nx.bitcast Nx.uint64 values) }
-  | Float16 -> cast Nx.float16 (floats ())
-  | Float32 -> cast Nx.float32 (floats ())
-  | Float64 -> keep (floats ())
+  | Float16 -> cast Nx.float16 (floats Text.float16)
+  | Float32 -> cast Nx.float32 (floats Text.float32)
+  | Float64 -> keep (floats Text.float)
   | Decimal { precision; scale } ->
       keep (of_int (Text.decimal ~precision ~scale))
   | Date -> cast Nx.int32 (of_int Text.date)
   | Datetime { unit_; zone } ->
       keep (ints (Text.datetime unit_ ~zoned:(zone <> None)))
-  | Categorical _ -> cast Nx.int32 (of_int (code c))
+  | Categorical _ -> cast Nx.int32 (of_field (code c))
   | String -> varsize c s j ~first ~rows ~utf_8:true
   | Binary -> varsize c s j ~first ~rows ~utf_8:false
   | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ ->

@@ -40,12 +40,22 @@ val int64 : Bytes.t -> int -> int -> int64s -> int -> unit
     [int64] holds, and stores it at [a.{i}]. *)
 
 val uint64 : Bytes.t -> int -> int -> int64s -> int -> unit
-(** [uint64 b pos len a i] reads a decimal integer with an optional [+] that
-    [uint64] holds, and stores its 64 bits at [a.{i}]. *)
+(** [uint64 b pos len a i] reads a decimal integer with an optional sign that
+    [uint64] holds, a minus only before zero, and stores its 64 bits at [a.{i}].
+*)
 
 val float : Bytes.t -> int -> int -> float64s -> int -> unit
 (** [float b pos len a i] reads a decimal number, [inf], [infinity] or [nan] as
     the nearest [float64], and stores it at [a.{i}]. *)
+
+val float32 : Bytes.t -> int -> int -> float64s -> int -> unit
+(** [float32 b pos len a i] reads the text as {!float} does, and stores at
+    [a.{i}] a float64 that rounds to the float32 nearest to the text, ties to
+    even. It allocates when the float64 nearest to the text is halfway between
+    two float32 values, whose digits it then compares exactly. *)
+
+val float16 : Bytes.t -> int -> int -> float64s -> int -> unit
+(** [float16 b pos len a i] is {!float32} for float16. *)
 
 val decimal : precision:int -> scale:int -> Bytes.t -> int -> int -> int
 (** [decimal ~precision ~scale b pos len] reads a decimal number without an

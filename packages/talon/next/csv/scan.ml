@@ -130,82 +130,96 @@ let push_record s rows nf =
   end;
   Array.unsafe_set s.records (rows + 1) nf
 
-(* [split s stop] splits the batch's input, up to [stop], into records. On a
-   syntax error the batch keeps the records before the one that holds it. *)
+(* [split s stop] splits the batch's input, up to [stop], into records, skipping
+   empty lines. On a syntax error the batch keeps the records before the one
+   that holds it. *)
 let split s stop =
   let b = s.buf and sep = s.sep and q = s.quote in
   let nf = ref 0 and rows = ref 0 and lines = ref 0 and i = ref s.start in
   s.records.(0) <- 0;
   (try
      while !i < stop do
-       let record_ends = ref false in
-       while not !record_ends do
-         let first = !i in
-         let j = ref first in
-         if first < stop && Bytes.unsafe_get b first = q then begin
-           let closed = ref false in
-           incr j;
-           while not !closed do
-             if !j >= stop then
-               raise (Syntax (first, "a quoted field does not end"));
-             let c = Bytes.unsafe_get b !j in
-             if c <> q then begin
-               if c = '\n' then incr lines;
+       let c = Bytes.unsafe_get b !i in
+       if c = '\n' then begin
+         incr lines;
+         incr i
+       end
+       else if c = '\r' && !i + 1 < stop && Bytes.unsafe_get b (!i + 1) = '\n'
+       then begin
+         incr lines;
+         i := !i + 2
+       end
+       else begin
+         let record_ends = ref false in
+         while not !record_ends do
+           let first = !i in
+           let j = ref first in
+           if first < stop && Bytes.unsafe_get b first = q then begin
+             let closed = ref false in
+             incr j;
+             while not !closed do
+               if !j >= stop then
+                 raise (Syntax (first, "a quoted field does not end"));
+               let c = Bytes.unsafe_get b !j in
+               if c <> q then begin
+                 if c = '\n' then incr lines;
+                 incr j
+               end
+               else if !j + 1 < stop && Bytes.unsafe_get b (!j + 1) = q then
+                 j := !j + 2
+               else begin
+                 closed := true;
+                 incr j
+               end
+             done
+           end
+           else begin
+             while
+               !j < stop
+               &&
+               let c = Bytes.unsafe_get b !j in
+               c <> sep && c <> '\n' && c <> '\r' && c <> q
+             do
                incr j
-             end
-             else if !j + 1 < stop && Bytes.unsafe_get b (!j + 1) = q then
-               j := !j + 2
-             else begin
-               closed := true;
-               incr j
-             end
-           done
-         end
-         else begin
-           while
-             !j < stop
-             &&
-             let c = Bytes.unsafe_get b !j in
-             c <> sep && c <> '\n' && c <> '\r' && c <> q
-           do
-             incr j
-           done;
-           if !j < stop && Bytes.unsafe_get b !j = q then
-             raise
-               (Syntax (!j, "a quote in a field that does not start with one"))
-         end;
-         push_field s !nf first !j;
-         incr nf;
-         let j = !j in
-         if j = stop then begin
-           i := stop;
-           record_ends := true
-         end
-         else
-           let c = Bytes.unsafe_get b j in
-           if c = sep then i := j + 1
-           else if c = '\n' then begin
-             incr lines;
-             i := j + 1;
+             done;
+             if !j < stop && Bytes.unsafe_get b !j = q then
+               raise
+                 (Syntax (!j, "a quote in a field that does not start with one"))
+           end;
+           push_field s !nf first !j;
+           incr nf;
+           let j = !j in
+           if j = stop then begin
+             i := stop;
              record_ends := true
            end
-           else if c = '\r' && j + 1 < stop && Bytes.unsafe_get b (j + 1) = '\n'
-           then begin
-             incr lines;
-             i := j + 2;
-             record_ends := true
-           end
-           else if c = '\r' then
-             raise (Syntax (j, "a carriage return that no line feed follows"))
            else
-             raise
-               (Syntax
-                  ( j,
-                    "a quoted field's closing quote is followed by a byte \
-                     other than a separator or a line break" ))
-       done;
-       push_record s !rows !nf;
-       incr rows
+             let c = Bytes.unsafe_get b j in
+             if c = sep then i := j + 1
+             else if c = '\n' then begin
+               incr lines;
+               i := j + 1;
+               record_ends := true
+             end
+             else if
+               c = '\r' && j + 1 < stop && Bytes.unsafe_get b (j + 1) = '\n'
+             then begin
+               incr lines;
+               i := j + 2;
+               record_ends := true
+             end
+             else if c = '\r' then
+               raise (Syntax (j, "a carriage return that no line feed follows"))
+             else
+               raise
+                 (Syntax
+                    ( j,
+                      "a quoted field's closing quote is followed by a byte \
+                       other than a separator or a line break" ))
+         done;
+         push_record s !rows !nf;
+         incr rows
+       end
      done
    with Syntax (at, msg) ->
      let line, column = locate s at in
@@ -271,6 +285,7 @@ let text s r j =
 let sample ~quote ~records r =
   let b = Buffer.create 65536 in
   let found = ref 0 and cut = ref (-1) and in_quotes = ref false in
+  let empty = ref true in
   while !cut < 0 do
     let slice = Reader.read r in
     if Slice.is_eod slice then cut := Buffer.length b
@@ -279,11 +294,15 @@ let sample ~quote ~records r =
       let i = ref (Slice.first slice) and last = Slice.last slice in
       while !cut < 0 && !i <= last do
         let c = Bytes.get bytes !i in
-        if c = quote then in_quotes := not !in_quotes
-        else if c = '\n' && not !in_quotes then begin
-          incr found;
-          if !found = records then cut := base + (!i - Slice.first slice) + 1
-        end;
+        if c = quote then in_quotes := not !in_quotes;
+        if c = '\n' && not !in_quotes then begin
+          if not !empty then begin
+            incr found;
+            if !found = records then cut := base + (!i - Slice.first slice) + 1
+          end;
+          empty := true
+        end
+        else if c <> '\r' then empty := false;
         incr i
       done;
       Slice.add_to_buffer b slice

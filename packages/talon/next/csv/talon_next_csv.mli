@@ -20,8 +20,10 @@
     {1:syntax Syntax}
 
     - A record ends at a line feed, or at a carriage return followed by a line
-      feed. The last record may end at the end of the input instead. An empty
-      line is a record of one empty field.
+      feed. The last record may end at the end of the input instead.
+    - An empty line, with no byte between its line breaks, is not a record: it
+      is skipped, wherever it is. A one-column file therefore writes a null as a
+      null token, never as an empty line.
     - Every record has one field per column, the header included.
     - A field that starts with the quote is {e quoted}. It ends at the next
       quote that is not doubled, which a separator, a line break or the end of
@@ -45,8 +47,8 @@
     - [float16] to [float64]: a decimal number with an optional sign, digits on
       at least one side of an optional point, and an optional exponent ([e] or
       [E], an optional sign, digits); or [inf], [infinity] or [nan] in any case,
-      with an optional sign. The number rounds to the nearest [float64], then to
-      the type;
+      with an optional sign. The number rounds to the nearest value of the type,
+      ties to even, and a number beyond the type's range rounds to an infinity;
     - [decimal[p, s]]: a decimal number with an optional sign and digits on at
       least one side of an optional point, exact at the scale [s] and of at most
       [p] digits;
@@ -70,26 +72,32 @@
 
     {!sniff} reads a file's first records to infer its format, with the quote
     ['"'] and the null tokens it is given:
-    - {b The separator}: [','], a tab, [';'] or ['|'], whichever splits every
-      record into the same number of fields, more than one, and into the most
-      fields; the first of that list on a tie. A file that none of them splits
-      has one column, and its separator is [','].
-    - {b The header}: the first record names the columns, unless at least one
-      column has a type other than [string], inferred from the other records,
-      and the first record's field in every such column is null or reads as that
-      type. Without a header, columns are named [column_1], [column_2], ….
-    - {b The types}, from the non-null fields of the records after the header:
-    - [bool] if every value is [true] or [false];
-    - [int64] if every value is a decimal integer that [int64] holds;
-    - [float64] if every value is a number and at least one is not such an
-      integer;
-    - [date] if every value is a date;
-    - [datetime[us]] if every value is a datetime without an offset, and
-      [datetime[us, UTC]] if every value is one with an offset, in nanoseconds
-      ([ns]) instead when a value is not a whole number of microseconds and
-      every value is in the nanoseconds' range;
-    - [string] otherwise: for text, for integers that [int64] does not hold, and
-      for a column with no value.
+    {ul
+     {- {b The separator}: [','], a tab, [';'] or ['|'], whichever splits every
+        record into the same number of fields, more than one, and into the most
+        fields; the first of that list on a tie. A file that none of them splits
+        has one column, and its separator is [','].
+     }
+     {- {b The header}: the first record names the columns, unless at least one
+        column has a type other than [string], inferred from the other records,
+        and the first record's field in every such column is null or reads as
+        that type. Without a header, columns are named [column_1], [column_2],
+        ….
+     }
+     {- {b The types}, from the non-null fields of the records after the header:
+        - [bool] if every value is [true] or [false];
+        - [int64] if every value is a decimal integer that [int64] holds;
+        - [float64] if every value is a number and at least one is not such an
+          integer;
+        - [date] if every value is a date;
+        - [datetime[us]] if every value is a datetime without an offset, and
+          [datetime[us, UTC]] if every value is one with an offset, in
+          nanoseconds ([ns]) instead when a value is not a whole number of
+          microseconds and every value is in the nanoseconds' range;
+        - [string] otherwise: for text, for integers that [int64] does not hold,
+          and for a column with no value.
+     }
+    }
 
     A number with a leading zero, such as [007] or [01.5], is text: it writes an
     identifier, whose zeros a number would lose. Sniffing never infers a
@@ -187,8 +195,8 @@ module Private : sig
         (** One value per row, in the storage of the column's type: [bool],
             integers of the type's width, [float16] to [float64], [int64]
             unscaled decimals, [int32] days, [int64] ticks, [int32] codes of a
-            categorical. [valid] is [true] at the rows that hold a value, and
-            [None] when every row does. *)
+            categorical. [valid], a byte validity mask, is [true] at the rows
+            that hold a value, and [None] when every row does. *)
     | Varsize of {
         valid : Nx.bool_t option;
         offsets : Nx.int64_t;

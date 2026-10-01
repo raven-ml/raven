@@ -147,6 +147,85 @@ let float b pos len a k =
     else A1.unsafe_set a k (float_of_string (Bytes.sub_string b pos len))
   end
 
+(* Rounding to a narrower type: [float] rounds once to float64, and a cast to
+   the narrower type rounds again. Only a float64 halfway between two values of
+   that type can round wrong then, so such a float64 moves one step towards the
+   text's value, found by comparing their exact digits, unless the text is the
+   float64 itself. *)
+
+(* [nearest ~p ~emin ~max v] is the value nearest to [v] of the binary type of
+   [p] significant bits, least exponent [emin] and greatest finite value [max],
+   for a [v] that is not halfway between two of them. *)
+let[@inline] nearest ~p ~emin ~max v =
+  let biased =
+    Int64.to_int (Int64.shift_right_logical (Int64.bits_of_float v) 52)
+  in
+  let e = Int.max ((biased land 0x7FF) - 1023) emin in
+  let ulp = Float.ldexp 1. (e - p + 1) in
+  let r = Float.round (v /. ulp) *. ulp in
+  if Float.abs r > max then Float.copy_sign Float.infinity v else r
+
+(* [magnitude s] is the significant digits of the decimal number [s], without
+   leading and trailing zeros, and the exponent [e] of its value [0.digits ×
+   10^e], ignoring its sign. The digits of zero are empty. *)
+let magnitude s =
+  let n = String.length s and digits = Buffer.create 32 in
+  let i = ref (if n > 0 && (s.[0] = '-' || s.[0] = '+') then 1 else 0) in
+  let point = ref (-1) and exp = ref 0 in
+  while !i < n && (is_digit s.[!i] || s.[!i] = '.') do
+    if s.[!i] = '.' then point := Buffer.length digits
+    else Buffer.add_char digits s.[!i];
+    incr i
+  done;
+  if !i < n then begin
+    incr i;
+    let negative = s.[!i] = '-' in
+    if negative || s.[!i] = '+' then incr i;
+    while !i < n do
+      if !exp < 100_000 then exp := (10 * !exp) + Char.code s.[!i] - 48;
+      incr i
+    done;
+    if negative then exp := - !exp
+  end;
+  let d = Buffer.contents digits in
+  let point = if !point < 0 then String.length d else !point in
+  let lead = ref 0 and stop = ref (String.length d) in
+  while !lead < !stop && d.[!lead] = '0' do
+    incr lead
+  done;
+  while !stop > !lead && d.[!stop - 1] = '0' do
+    decr stop
+  done;
+  if !lead = !stop then ("", 0)
+  else (String.sub d !lead (!stop - !lead), point - !lead + !exp)
+
+let compare_magnitude (d0, e0) (d1, e1) =
+  match (d0, d1) with
+  | "", "" -> 0
+  | "", _ -> -1
+  | _, "" -> 1
+  | _ -> if e0 <> e1 then Int.compare e0 e1 else String.compare d0 d1
+
+let narrow ~p ~emin ~max b pos len a k =
+  float b pos len a k;
+  let x = A1.unsafe_get a k in
+  if
+    Float.is_finite x
+    && nearest ~p ~emin ~max (Float.pred x)
+       <> nearest ~p ~emin ~max (Float.succ x)
+  then
+    (* 1100 digits write every float64 exactly. *)
+    let text = magnitude (Bytes.sub_string b pos len) in
+    match compare_magnitude text (magnitude (Printf.sprintf "%.1100e" x)) with
+    | 0 -> ()
+    | c ->
+        A1.unsafe_set a k
+          (if c > 0 = (x > 0.) then Float.succ x else Float.pred x)
+
+let float32 b pos len a k =
+  narrow ~p:24 ~emin:(-126) ~max:0x1.fffffep127 b pos len a k
+
+let float16 b pos len a k = narrow ~p:11 ~emin:(-14) ~max:65504. b pos len a k
 let int_pow10 = Array.init 19 (fun e -> int_of_float pow10.(e))
 
 let too_many precision =
