@@ -108,7 +108,7 @@ let test_cast () =
 
 (* Cache indices *)
 
-let int32s shape xs = Nx.create Nx.int32 shape xs
+let int64s shape xs = Nx.create Nx.int64 shape xs
 
 let test_index_whole () =
   equal ~msg:"whole" (list string)
@@ -145,12 +145,12 @@ let test_index_tabled () =
     ]
     (visits Cache_index.ptree index);
   let made =
-    Cache_index.make ~row:(int32s [| 1 |] [| 0l |])
-      ~pos:(int32s [| 1; 1 |] [| 0l |])
-      ~table:(int32s [| 2; 2 |] [| 0l; 1l; 2l; 3l |])
+    Cache_index.make ~row:(int64s [| 1 |] [| 0L |])
+      ~pos:(int64s [| 1; 1 |] [| 0L |])
+      ~table:(int64s [| 2; 2 |] [| 0L; 1L; 2L; 3L |])
       ()
   in
-  let selected = Cache_index.select (int32s [| 1; 1; 1 |] [| 0l |]) made in
+  let selected = Cache_index.select (int64s [| 1; 1; 1 |] [| 0L |]) made in
   equal ~msg:"a row and a selection" (list string)
     [
       "tokens: case \"tabled\"";
@@ -213,10 +213,10 @@ let test_index_round_trip () =
     (Cache_index.window 2 (Cache_index.rows ~every:[ 4 ] ~context:8 [| 3; 2 |]));
   round_trip ~msg:"a row and a selection"
     (Cache_index.select
-       (int32s [| 1; 1; 1 |] [| 1l |])
-       (Cache_index.make ~row:(int32s [| 1 |] [| 1l |])
-          ~pos:(int32s [| 1; 1 |] [| 1l |])
-          ~table:(int32s [| 2; 2 |] [| 0l; 1l; 2l; 3l |])
+       (int64s [| 1; 1; 1 |] [| 1L |])
+       (Cache_index.make ~row:(int64s [| 1 |] [| 1L |])
+          ~pos:(int64s [| 1; 1 |] [| 1L |])
+          ~table:(int64s [| 2; 2 |] [| 0L; 1L; 2L; 3L |])
           ()))
 
 let tests =

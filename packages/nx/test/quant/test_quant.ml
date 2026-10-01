@@ -199,7 +199,7 @@ let gathered dq ~lanes ids =
   let ids = Nx.broadcast_to wb ids in
   let matrix i =
     let pos = unravel wb i in
-    let id = Int32.to_int (Nx.item (Array.to_list pos) ids) in
+    let id = Int64.to_int (Nx.item (Array.to_list pos) ids) in
     let lane = List.init lanes (fun a -> if ds.(a) = 1 then 0 else pos.(a)) in
     Nx.slice
       (List.map
@@ -274,11 +274,11 @@ let products =
   let id e =
     frequency
       [
-        (6, map Int32.of_int (int_range (-2) (e + 1)));
+        (6, map Int64.of_int (int_range (-2) (e + 1)));
         ( 1,
           of_list
-            ~pp:(fun ppf -> Format.fprintf ppf "%ld")
-            [ Int32.min_int; Int32.max_int ] );
+            ~pp:(fun ppf -> Format.fprintf ppf "%Ld")
+            [ Int64.min_int; Int64.max_int; 0x1_0000_0000L ] );
       ]
   in
   let* experts, lanes =
@@ -306,7 +306,7 @@ let products =
           (Array.of_list tokens)
       in
       let+ ids = array ~size:(constant (Ref.numel is)) (id lead.(p)) in
-      ( Some (Nx.create Nx.int32 is ids),
+      ( Some (Nx.create Nx.int64 is ids),
         Array.append
           (broadcast (Array.sub lead 0 p) (Array.sub is 0 p))
           (Array.of_list tokens) )
@@ -334,8 +334,8 @@ let product_law ?(label = cover) (_, w, ids, transpose, X { at; x }) =
     match ids with
     | None -> Nx.full Nx.bool (Nx.shape expected) true
     | Some ids ->
-        let e = Int32.of_int lead.(Array.length lead - 1) in
-        let v = Nx.logical_and (Nx.greater_equal_s ids 0l) (Nx.less_s ids e) in
+        let e = Int64.of_int lead.(Array.length lead - 1) in
+        let v = Nx.logical_and (Nx.greater_equal_s ids 0L) (Nx.less_s ids e) in
         let units = if Nx.ndim x = 1 then [| 1 |] else [| 1; 1 |] in
         Nx.broadcast_to (Nx.shape expected)
           (Nx.reshape (Array.append (Nx.shape v) units) v)
@@ -405,7 +405,7 @@ let values_and_products =
           equal (array float_exact) (values w)
             (Nx.to_array (Nx.cast Nx.float64 dq));
           let x = random_floats [| 2; 1; 1; 4096 |]
-          and ids = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 0l; 1l; -1l |] in
+          and ids = Nx.create Nx.int64 [| 2; 2 |] [| 1L; 0L; 1L; -1L |] in
           let expected, bound = product ~transpose:false x dq in
           agrees ~k:4096 expected bound (Nx_quant.apply w x);
           product_law
@@ -465,12 +465,12 @@ let errors =
       ( "ids without an expert axis",
         "expert axis",
         apply
-          ~ids:(Nx.zeros Nx.int32 [| 3 |])
+          ~ids:(Nx.zeros Nx.int64 [| 3 |])
           (random_weight [| 5; 64 |])
           (x [| 64 |]) );
       ( "ids without the weight's lanes",
         "leading axes",
-        apply ~ids:(Nx.scalar Nx.int32 0l)
+        apply ~ids:(Nx.scalar Nx.int64 0L)
           (random_weight [| 2; 3; 5; 64 |])
           (x [| 64 |]) );
     ]
@@ -548,7 +548,7 @@ let others =
           ignore (Nx.Ptree.map2 Nx_quant.ptree (fun _ a _ -> a) w w);
           raises_invalid_arg (fun () -> Nx_quant.mxfp4 ~scales:bad codes);
           let ids =
-            Nx.create Nx.int32 [| 3; 2 |] [| -1l; 4l; 9l; -1l; -3l; 4l |]
+            Nx.create Nx.int64 [| 3; 2 |] [| -1L; 4L; 9L; -1L; -3L; 4L |]
           in
           let y =
             Nx_quant.apply ~ids w

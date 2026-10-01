@@ -215,7 +215,7 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
     let label what = Printf.sprintf "%s (%d tokens): %s" name tokens what in
     let error e = Printf.sprintf "  (%.1e)" e in
     let ids_t =
-      Nx.create Nx.int32 [| 1; tokens |] (Array.map Int32.of_int ids)
+      Nx.create Nx.int64 [| 1; tokens |] (Array.map Int64.of_int ids)
     in
     let x =
       ref (cast (Nx.reshape [| tokens; dim |] (Embedding.apply p.tok ids_t)))
@@ -224,7 +224,7 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
       summaries_error ~signs ~dim ~positions (mem "embedded" recorded) (host !x)
     in
     check (label "embedding") (e < tol) (error e);
-    let rows = Nx.reshape [| 1; tokens |] (Nx.arange Nx.int32 0 tokens 1) in
+    let rows = Nx.reshape [| 1; tokens |] (Nx.arange Nx.int64 0 tokens 1) in
     let index = Cache_index.whole ~batch:1 ~seq:tokens () in
     List.iteri
       (fun i (layer, (b, rb)) ->
@@ -258,7 +258,7 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
             routing ~k
               ~margin:(number (mem "margin" rb))
               (ints (mem "experts" rb))
-              (Array.map Int32.to_int
+              (Array.map Int64.to_int
                  (Nx.to_array (Nx.reshape [| -1 |] experts)))
           in
           (if exact then check else note)

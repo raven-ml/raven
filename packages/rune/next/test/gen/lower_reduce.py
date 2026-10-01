@@ -47,9 +47,9 @@ def cummax_int(): return kernels(operand(dtypes.int32).cummax(1)[0])
 @graph
 def cummin_int(): return kernels(operand(dtypes.int32).cummin(1)[0])
 @graph
-def argmax_int(): return kernels(operand(dtypes.int32).argmax(1))
+def argmax_int(): return kernels(operand(dtypes.int32).argmax(1).cast(dtypes.int64))
 @graph
-def argmin_int(): return kernels(operand(dtypes.int32).argmin(1))
+def argmin_int(): return kernels(operand(dtypes.int32).argmin(1).cast(dtypes.int64))
 
 
 def packed_positions(x, descending):
@@ -63,7 +63,7 @@ def packed_positions(x, descending):
     ranks = Tensor.arange(n, dtype=dtypes.int64).reshape(1, n)
     tie = (lambda r: mask - r) if descending else (lambda r: r)
     packed = ((keys << low) | tie(ranks)).contiguous()
-    return tie(packed.sort(-1, descending=descending)[0] & mask).cast(dtypes.int32)
+    return tie(packed.sort(-1, descending=descending)[0] & mask)
 
 
 @graph

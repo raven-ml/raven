@@ -165,7 +165,7 @@ let real_functions =
         equal ~msg:"a broadcast value sums its window" floats [| 5. |]
           (Nx.to_array
              (Rune.grad' (fun s -> set (Nx.R (1, 3)) s t) (Nx.scalar f64 1.)));
-        let start = Nx.scalar Nx.int32 2l in
+        let start = Nx.scalar Nx.int64 2L in
         equal ~msg:"through a run-time start, the value" floats [| 3.; 4. |]
           (Nx.to_array (Rune.grad' (fun v -> set (Nx.D (start, 2)) v t) v));
         equal ~msg:"through a run-time start, the target" floats
@@ -230,12 +230,12 @@ let complex_functions =
     two "vdot" Nx.vdot (z3 ()) (w3 ());
     one "slice, strided" (fun z -> Nx.slice [ Nx.Rs (0, 6, 2) ] z) (z6 ());
     one "slice, dynamic"
-      (fun z -> Nx.slice [ Nx.D (Nx.scalar Nx.int32 2l, 3) ] z)
+      (fun z -> Nx.slice [ Nx.D (Nx.scalar Nx.int64 2L, 3) ] z)
       (z6 ());
     one "set, dynamic"
       (fun z ->
         Nx.set
-          [ Nx.D (Nx.scalar Nx.int32 1l, 2) ]
+          [ Nx.D (Nx.scalar Nx.int64 1L, 2) ]
           (Nx.mul (Nx.shrink [| (0, 2) |] z) (Nx.shrink [| (1, 3) |] (w3 ())))
           z)
       (z3 ());

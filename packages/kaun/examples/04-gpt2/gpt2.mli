@@ -105,7 +105,7 @@ val cached :
   (float, 'b) Nx.t params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
-  (int32, Nx.int32_elt) Nx.t ->
+  Nx.int64_t ->
   (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids] —
     shape [[| batch; seq; n_embd |]] — which sit where [index] says and attend
@@ -130,7 +130,7 @@ val hidden :
   config ->
   ?dropout:float * Nx.Rng.t ->
   (float, 'b) Nx.t params ->
-  (int32, Nx.int32_elt) Nx.t ->
+  Nx.int64_t ->
   (float, 'b) Nx.t
 (** [hidden cfg ?dropout p ids] is the residual stream after the last block for
     the [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; n_embd |]],

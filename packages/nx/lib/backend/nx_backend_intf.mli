@@ -67,16 +67,16 @@ type compare = Equal | Not_equal | Less | Less_equal
     values along one axis ([Nx.cumsum]). *)
 type reduce = Sum | Prod | Max | Min
 
-(** The type for the position of an extreme along one axis, as [int32]. The
-    first of equal extremes is taken. *)
+(** The type for the position of an extreme along one axis. The first of equal
+    extremes is taken. *)
 type arg_reduce = Argmax | Argmin
 
 (** {1:kernels Kernels} *)
 
-type int32_array = (int32, Nx_dtype.int32_elt) Nx_array.t
-(** The type for int32 arrays: indices, and Threefry's words. Every index a
-    kernel reads or writes is an [int32]: axes longer than [2{^ 31} - 1] are
-    unsupported, and the limit is not checked. *)
+type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
+(** The type for index arrays: [int64] positions, which reach every element of
+    an array. A kernel accepts axes of any length, and decides whether an index
+    is inside its axis from all 64 bits. *)
 
 (** The type for backend implementations.
 
@@ -142,7 +142,11 @@ module type S = sig
       nx's complex accessors rely on both, so a cast through the modulus would
       change their results. *)
 
-  val threefry : int32_array -> int32_array -> dst:int32_array -> unit
+  val threefry :
+    (int32, Nx_dtype.int32_elt) Nx_array.t ->
+    (int32, Nx_dtype.int32_elt) Nx_array.t ->
+    dst:(int32, Nx_dtype.int32_elt) Nx_array.t ->
+    unit
   (** [threefry key counter ~dst] writes the Threefry-2x32 hash of each word
       pair of [counter] under [key] into [dst]. This is normative: 20 rounds,
       with the standard rotation constants and key schedule, so that a
@@ -167,7 +171,7 @@ module type S = sig
       into [dst], of [x]'s shape. *)
 
   val arg_reduce :
-    arg_reduce -> axis:int -> ('a, 'b) Nx_array.t -> dst:int32_array -> unit
+    arg_reduce -> axis:int -> ('a, 'b) Nx_array.t -> dst:index_array -> unit
   (** [arg_reduce k ~axis x ~dst] writes the position of the extreme of [x]
       along [axis], the first of equal ones, into [dst], which drops [axis]. *)
 
@@ -186,7 +190,7 @@ module type S = sig
     descending:bool ->
     axis:int ->
     ('a, 'b) Nx_array.t ->
-    dst:int32_array ->
+    dst:index_array ->
     unit
   (** [argsort ~descending ~axis x ~dst] writes the positions that sort [x]
       along [axis] into [dst]. The sort is stable, [-0] orders below [+0], and
@@ -217,7 +221,7 @@ module type S = sig
 
   val gather :
     axis:int ->
-    int32_array ->
+    index_array ->
     ('a, 'b) Nx_array.t ->
     dst:('a, 'b) Nx_array.t ->
     unit
@@ -231,7 +235,7 @@ module type S = sig
     mode:[ `Set | `Add ] ->
     unique:bool ->
     axis:int ->
-    indices:int32_array ->
+    indices:index_array ->
     updates:('a, 'b) Nx_array.t ->
     ('a, 'b) Nx_array.t ->
     dst:('a, 'b) Nx_array.t ->
@@ -250,7 +254,7 @@ module type S = sig
 
   val update :
     ('a, 'b) Nx_array.t ->
-    starts:int32_array ->
+    starts:index_array ->
     ('a, 'b) Nx_array.t ->
     dst:('a, 'b) Nx_array.t ->
     unit
@@ -382,8 +386,8 @@ module type S = sig
   val lu :
     ('a, 'b) Nx_array.t ->
     lu:('a, 'b) Nx_array.t ->
-    pivots:int32_array ->
-    perm:int32_array ->
+    pivots:index_array ->
+    perm:index_array ->
     unit
   (** [lu x ~lu ~pivots ~perm] writes the factorization of [x] with partial
       pivoting. For [x] of [m] rows, [n] columns and [k = min m n]:

@@ -2906,6 +2906,17 @@ thread.
 
 ### Nx
 
+- **Breaking:** indices are `int64`. `take`, `take_along_axis`, `scatter`, `D`
+  and `Nx_quant.apply ~ids` take `int64_t`; `argmax`, `argmin`, `sort`,
+  `argsort`, `top_k`, `nonzero`, `argwhere`, `lu`, `permutation` and
+  `categorical` return it; `Nx_backend.int32_array` is `index_array`. Past 2³¹
+  entries, `argmax`, `argmin`, `sort`, `argsort` and `lu` no longer raise, and
+  `nonzero`, `argwhere`, `compress`, `extract` and `set` no longer wrap.
+  `randint` still draws `int32`.
+- `Nx.Rng` draws of more than 2³² words or `float32` values, or of more than
+  2³¹ `float64` values or keys, no longer repeat their counters, which made the
+  later part of such a draw repeat the earlier part. Smaller draws keep their
+  values.
 - `Nx.arange` raises `Invalid_argument` when a value does not fit its dtype,
   where it wrapped integers, took `float16` past 65504 to infinity, saturated
   the float8 dtypes at their largest finite value and filled `bool` by
@@ -4557,6 +4568,12 @@ thread.
 
 ### Kaun
 
+- **Breaking:** `Embedding.apply`'s ids, the labels of
+  `Loss.softmax_cross_entropy_sparse`, `Metric` and `Kaun_datasets`,
+  `Rope.apply`'s positions, `Fn.keep_top_k`'s `k` and every tensor of
+  `Cache_index` are `int64`, nx's index type, so `Nx.argmax` and `Nx.top_k`
+  feed them without a cast. Widen brot's `int32` token ids once with
+  `Nx.cast Nx.int64`.
 - `Kaun_datasets` downloads and extracts on Windows. It found curl and ran
   curl and tar through the shell with `command -v`, which `cmd.exe` lacks; it
   now runs them directly. `Kaun_datasets` and `Kaun_hf` find the cache under

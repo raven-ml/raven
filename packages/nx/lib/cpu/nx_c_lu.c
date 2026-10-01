@@ -25,10 +25,10 @@
    every interchange. */
 #define LA_GEN_LU(sfx, T, R, DT, CONJ, NORM2, REAL, FROMR, SQRT)              \
   static void la_lu_##sfx(void *vA, int64_t m, int64_t n, int64_t lda,         \
-                          int32_t *piv, int32_t *perm) {                       \
+                          int64_t *piv, int64_t *perm) {                       \
     T *A = (T *)vA;                                                           \
     int64_t k = m < n ? m : n;                                                 \
-    for (int64_t i = 0; i < m; i++) perm[i] = (int32_t)i;                      \
+    for (int64_t i = 0; i < m; i++) perm[i] = i;                               \
     for (int64_t j = 0; j < k; j++) {                                          \
       int64_t p = j;                                                           \
       R best = LU_MAG_##sfx(A[j * lda + j]);                                   \
@@ -39,7 +39,7 @@
           p = i;                                                               \
         }                                                                      \
       }                                                                        \
-      piv[j] = (int32_t)p;                                                     \
+      piv[j] = p;                                                              \
       if (p != j) {                                                            \
         T *rj = A + j * lda;                                                   \
         T *rp = A + p * lda;                                                   \
@@ -48,7 +48,7 @@
           rj[c] = rp[c];                                                       \
           rp[c] = t;                                                           \
         }                                                                      \
-        int32_t q = perm[j];                                                   \
+        int64_t q = perm[j];                                                   \
         perm[j] = perm[p];                                                     \
         perm[p] = q;                                                           \
       }                                                                        \
@@ -70,7 +70,7 @@ LA_TRAITS_c64(LA_GEN_LU)
 #undef LA_GEN_LU
 
 typedef void (*la_lu_fn)(void *A, int64_t m, int64_t n, int64_t lda,
-                         int32_t *piv, int32_t *perm);
+                         int64_t *piv, int64_t *perm);
 
 static const la_lu_fn la_lu[LA_NCOMPUTE] = {
     [LA_F32] = la_lu_f32,
@@ -110,9 +110,9 @@ typedef struct {
   int64_t stride, off_piv, off_perm;
 } la_lu_ctx;
 
-static void la_lu_store(const int32_t *src, int64_t len, const char *dst,
+static void la_lu_store(const int64_t *src, int64_t len, const char *dst,
                         int64_t stride) {
-  int32_t *d = (int32_t *)dst;
+  int64_t *d = (int64_t *)dst;
   for (int64_t i = 0; i < len; i++) d[i * stride] = src[i];
 }
 
@@ -120,8 +120,8 @@ static void la_lu_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   la_lu_ctx *x = (la_lu_ctx *)vctx;
   const la_move_desc *mv = &la_move[x->dt];
   char *base = x->scratch + (int64_t)worker * x->stride;
-  int32_t *piv = (int32_t *)(base + x->off_piv);
-  int32_t *perm = (int32_t *)(base + x->off_perm);
+  int64_t *piv = (int64_t *)(base + x->off_piv);
+  int64_t *perm = (int64_t *)(base + x->off_perm);
   int64_t m = x->m, n = x->n;
   for (int64_t bt = lo; bt < hi; bt++) {
     const char *inb, *lub, *pivb, *permb;
@@ -130,9 +130,9 @@ static void la_lu_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     la_batch_base(bt, x->batch_nd, x->bshape, x->lu_bs, x->lu->offset, x->esz,
                   (const char *)x->lu->data, &lub);
     la_batch_base(bt, x->batch_nd, x->bshape, x->piv_bs, x->piv->offset,
-                  (int64_t)sizeof(int32_t), (const char *)x->piv->data, &pivb);
+                  (int64_t)sizeof(int64_t), (const char *)x->piv->data, &pivb);
     la_batch_base(bt, x->batch_nd, x->bshape, x->perm_bs, x->perm->offset,
-                  (int64_t)sizeof(int32_t), (const char *)x->perm->data,
+                  (int64_t)sizeof(int64_t), (const char *)x->perm->data,
                   &permb);
     mv->unpack(inb, x->in_rs, x->in_cs, m, n, base, n);
     la_lu[x->lc](base, m, n, n, piv, perm);
@@ -151,7 +151,6 @@ static nx_c_status nx_c_lu_run(const nx_c_ndarray *in, const nx_c_ndarray *lu,
   int64_t m = in->shape[nd - 2];
   int64_t n = in->shape[nd - 1];
   int64_t k = m < n ? m : n;
-  if (m > INT32_MAX) return LA_ERR_SHAPE_LA;
   if (lu->shape[nd - 2] != m || lu->shape[nd - 1] != n ||
       piv->shape[nd - 2] != k || perm->shape[nd - 2] != m)
     return LA_ERR_SHAPE_LA;
@@ -176,15 +175,15 @@ static nx_c_status nx_c_lu_run(const nx_c_ndarray *in, const nx_c_ndarray *lu,
   }
   if (nbatch == 0 || m == 0) return NX_C_OK;
 
-  int64_t bytes = nbatch * (2 * m * n * esz + (k + m) * 4);
+  int64_t bytes = nbatch * (2 * m * n * esz + (k + m) * 8);
   int nth = nx_c_threads_for(NX_C_COST_HEAVY, nbatch, m * n * k, bytes);
   if (nth > nbatch) nth = (int)nbatch;
   if (nth < 1) nth = 1;
 
 #define LA_ALN(b) (((b) + 63) & ~(int64_t)63)
   int64_t off_piv = LA_ALN(m * n * la_csize[lc]);
-  int64_t off_perm = off_piv + LA_ALN(k * (int64_t)sizeof(int32_t));
-  int64_t stride = off_perm + LA_ALN(m * (int64_t)sizeof(int32_t));
+  int64_t off_perm = off_piv + LA_ALN(k * (int64_t)sizeof(int64_t));
+  int64_t stride = off_perm + LA_ALN(m * (int64_t)sizeof(int64_t));
 #undef LA_ALN
   char *scratch = nx_c_aligned_alloc((size_t)stride * nth);
   if (!scratch) return NX_C_ERR_ALLOC;

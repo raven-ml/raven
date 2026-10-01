@@ -16,8 +16,8 @@
       exactly zero is [+0.];
     - {b extremes} follow IEEE 754-2019: NaN propagates, and [-0.] is less than
       [+0.];
-    - {b positions} are [int32]: of the first element equal to the extreme, or
-      of the elements in their sorted order. *)
+    - {b positions} are [int64], as nx's indices are: of the first element equal
+      to the extreme, or of the elements in their sorted order. *)
 
 open Tolk_next
 
@@ -56,8 +56,8 @@ val pick : Ops.t -> Ops.t -> Ops.t
 
 val take : Ops.t -> int -> Ops.t -> Ops.t
 (** [take x axis p] is the elements of [x] along [axis] at the positions [p],
-    each with its bits, of [p]'s shape: [x] and [p] agree on every other axis. A
-    position out of range takes [0]. *)
+    each with its bits, of [p]'s shape: [x] and [p] agree on every other axis.
+    [p] is [int64], and a position out of range takes [0]. *)
 
 val argsort : descending:bool -> axis:int -> Ops.t -> Ops.t
 (** [argsort ~descending ~axis x] is the positions that sort [x] along [axis],

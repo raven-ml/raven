@@ -83,8 +83,8 @@ let structural_benchmarks () =
   let cat_b = Nx.rand Nx.Float32 [| 512; 512 |] in
   let gather_source = Nx.rand Nx.Float32 [| 4096; 256 |] in
   let gather_indices =
-    Nx.create Nx.Int32 [| 1024 |]
-      (Array.init 1024 (fun i -> Int32.of_int (i * 37 mod 4096)))
+    Nx.create Nx.Int64 [| 1024 |]
+      (Array.init 1024 (fun i -> Int64.of_int (i * 37 mod 4096)))
   in
   let sort_input = Nx.rand Nx.Float32 [| 512; 512 |] in
   [

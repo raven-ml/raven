@@ -40,7 +40,7 @@ val init : vocab:int -> dim:int -> Nx.float32_t t
 
 (** {1:applying Applying} *)
 
-val apply : (float, 'b) Nx.t t -> (int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t
+val apply : (float, 'b) Nx.t t -> Nx.int64_t -> (float, 'b) Nx.t
 (** [apply p ids] gathers the table row of each id: the result has [ids]'s shape
     with a trailing axis of size [dim] appended, and its [(i, ..., :)] slice is
     row [ids.(i, ...)] of [p.table]. A scalar id yields a single row of shape

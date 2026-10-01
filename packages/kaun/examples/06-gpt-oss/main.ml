@@ -33,18 +33,18 @@ open Kaun
 
 let fixed_prompt =
   [|
-    200006l;
-    17360l;
-    200008l;
-    3575l;
-    553l;
-    17554l;
-    162016l;
-    11l;
-    261l;
-    4410l;
-    6439l;
-    2359l;
+    200006L;
+    17360L;
+    200008L;
+    3575L;
+    553L;
+    17554L;
+    162016L;
+    11L;
+    261L;
+    4410L;
+    6439L;
+    2359L;
   |]
 
 (* A device, a CPU device count ([4] is CPU:1..CPU:4) or a comma-separated
@@ -75,7 +75,7 @@ let generate ?devices cfg params dt ~log ~count ~on_token prompt =
          ?placement:(Option.map Gpt_oss.expert_parallel devices)
          cfg ~slots:context dt)
       index
-      (Nx.create Nx.int32 [| 1; n0 |] prompt)
+      (Nx.create Nx.int64 [| 1; n0 |] prompt)
   in
   Printf.fprintf log "prefill of %d tokens: %.3f s\n%!" n0 prefill;
   let out = Array.make count first in
@@ -84,7 +84,7 @@ let generate ?devices cfg params dt ~log ~count ~on_token prompt =
   let stop = ref (on_token first) in
   while (not !stop) && !n < count do
     let caches, index = !state in
-    let ids = Nx.create Nx.int32 [| 1; 1 |] [| out.(!n - 1) |] in
+    let ids = Nx.create Nx.int64 [| 1; 1 |] [| out.(!n - 1) |] in
     let token, caches, t = timed caches index ids in
     state := (caches, Cache_index.advance index);
     out.(!n) <- token;
@@ -111,7 +111,7 @@ let today () =
 let printer harmony ~show_analysis =
   let parser = ref (Harmony.parser harmony) and last = ref Harmony.Final in
   fun token ->
-    let p, text = Harmony.feed !parser (Int32.to_int token) in
+    let p, text = Harmony.feed !parser (Int64.to_int token) in
     parser := p;
     Option.iter
       (fun (channel, text) ->
@@ -192,7 +192,7 @@ let () =
         fixed_prompt
     in
     print_endline
-      (String.concat " " (Array.to_list (Array.map Int32.to_string out)))
+      (String.concat " " (Array.to_list (Array.map Int64.to_string out)))
   else begin
     let harmony =
       Harmony.of_file (Kaun_hf.download_file ~file:"tokenizer.json" !repo)
@@ -205,7 +205,7 @@ let () =
     let on_token = printer harmony ~show_analysis:!show_analysis in
     let out =
       generate ?devices cfg params dt ~log ~count:(count 256) ~on_token
-        (Array.map Int32.of_int ids)
+        (Array.map Int64.of_int ids)
     in
     print_newline ();
     Printf.eprintf "%d tokens generated\n" (Array.length out)

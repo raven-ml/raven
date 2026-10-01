@@ -86,8 +86,7 @@ val log_softmax : ?axis:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     and keeps the cumulative sum of {!keep_top_p} and the noise of the draw out
     of half precision, where neither has the resolution a vocabulary needs. *)
 
-val keep_top_k :
-  k:(int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val keep_top_k : k:Nx.int64_t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [keep_top_k ~k logits] is [logits] with every entry below the [k]-th largest
     of its row set to negative infinity; the last axis is the vocabulary.
     Entries equal to the [k]-th largest are all kept, so ties can leave more

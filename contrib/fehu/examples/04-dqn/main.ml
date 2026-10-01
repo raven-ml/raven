@@ -165,8 +165,9 @@ let () =
     let obs_batch = Nx.stack (Array.to_list obs_arr) in
     let next_obs_batch = Nx.stack (Array.to_list next_obs_arr) in
     let actions_batch =
-      Nx.stack
-        (Array.to_list (Array.map (fun a -> Nx.reshape [| 1 |] a) act_arr))
+      Nx.cast Nx.int64
+        (Nx.stack
+           (Array.to_list (Array.map (fun a -> Nx.reshape [| 1 |] a) act_arr)))
     in
     let rewards_t = Nx.create Nx.float32 [| n |] rew_arr in
 

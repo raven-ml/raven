@@ -148,7 +148,7 @@ type index =
           rank-1 boolean tensor [mask] is [true]. [mask] must have length equal
           to that axis. Equivalent to an [L] gather of the true positions. *)
   | N  (** [N] inserts a new axis of size 1 (does not consume an input axis). *)
-  | D of (int32, int32_elt) t * int
+  | D of int64_t * int
       (** [D (start, len)] selects the run of [len] positions beginning at the
           run-time value of the scalar tensor [start], clamped into \[[0],
           [size - len]\] so the run always fits. Keeps the axis, like [R]. [len]
@@ -822,8 +822,8 @@ module Rng : sig
   val randint :
     t -> ?low:int -> high:int -> int array -> (int32, int32_elt) tensor
   (** [randint k ~high shape] samples integers uniformly from [\[low, high)].
-      [low] defaults to [0]. The result is [int32], the type Nx indexes with;
-      cast it for a wider or narrower integer.
+      [low] defaults to [0]. The result is [int32]; cast it for a wider or
+      narrower integer.
 
       The draw comes from a 24-bit {!uniform}, so a range wider than [2 ** 24]
       leaves some values unreachable.
@@ -917,7 +917,7 @@ module Rng : sig
       device. Float32 places the proposals exactly up to a rate of about [1e5];
       give a float64 rate beyond that. *)
 
-  val categorical : t -> ?axis:int -> (float, 'a) tensor -> int32_t
+  val categorical : t -> ?axis:int -> (float, 'a) tensor -> int64_t
   (** [categorical k logits] samples category indices from unnormalised
       log-probabilities: one index per row of [logits] along [axis], which
       defaults to [-1] (the last axis). The result has the shape of [logits]
@@ -926,7 +926,7 @@ module Rng : sig
       Raises [Invalid_argument] if [logits] is a float8 type, or if [axis] is
       out of bounds or has length [0]. *)
 
-  val permutation : t -> int -> int32_t
+  val permutation : t -> int -> int64_t
   (** [permutation k n] is a random permutation of \[[0], [n-1]\].
 
       Raises [Invalid_argument] if [n <= 0]. *)
@@ -1016,14 +1016,14 @@ val truncated_normal : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
     landing in \[[lower], [upper]\], elementwise. See {!Rng.truncated_normal}.
 *)
 
-val categorical : ?axis:int -> (float, 'a) t -> int32_t
+val categorical : ?axis:int -> (float, 'a) t -> int64_t
 (** [categorical logits] samples one category index per row of [logits] along
     [axis]. See {!Rng.categorical}.
 
     Raises [Invalid_argument] if [logits] is a float8 type, or if [axis] is out
     of bounds or has length [0]. *)
 
-val permutation : int -> int32_t
+val permutation : int -> int64_t
 (** [permutation n] is a random permutation of \[[0], [n-1]\].
 
     Raises [Invalid_argument] if [n <= 0]. *)
@@ -1441,7 +1441,11 @@ val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
     [v]; the same as {!full_like} [t v], with the value first so it pipes. [t]
     is unchanged. *)
 
-(** {1:indexing Indexing and slicing} *)
+(** {1:indexing Indexing and slicing}
+
+    Indices are {!int64_t}, which reach every element a tensor can have. An
+    index outside its axis reads zero, and an update at one is dropped, however
+    far outside it lies. A [D] window clamps its start instead. *)
 
 val get : int list -> ('a, 'b) t -> ('a, 'b) t
 (** [get indices t] is the sub-tensor at [indices], indexing from the outermost
@@ -1538,7 +1542,7 @@ val item : int list -> ('a, 'b) t -> 'a
 
     See also {!get}. *)
 
-val take : ?axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+val take : ?axis:int -> indices:int64_t -> ('a, 'b) t -> ('a, 'b) t
 (** [take ?axis ~indices t] gathers elements from [t] at [indices] along [axis].
     When [axis] is omitted, [t] is flattened first. An index outside \[[0],
     [size]), negative included, reads zero, eagerly and under [Rune.jit] alike;
@@ -1552,15 +1556,14 @@ val take : ?axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
             [| 0l; 1l; 2l; 3l; 4l |]
         in
         take
-          ~indices:(create int32 [| 3 |] [| 1l; 3l; 0l |])
+          ~indices:(create int64 [| 3 |] [| 1L; 3L; 0L |])
           x
       - : (int32, int32_elt) t = [1, 3, 0]
     ]}
 
     See also {!scatter}, {!take_along_axis}. *)
 
-val take_along_axis :
-  axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+val take_along_axis : axis:int -> indices:int64_t -> ('a, 'b) t -> ('a, 'b) t
 (** [take_along_axis ~axis ~indices t] gathers values from [t] along [axis]
     using [indices]. [indices] must match [t]'s shape except along [axis]. An
     index outside \[[0], [size along axis]) reads zero, as in {!take}. Useful
@@ -1574,7 +1577,7 @@ val take_along_axis :
             [| 4.; 1.; 2.; 3.; 5.; 6. |]
         in
         let idx =
-          create int32 [| 2; 1 |] [| 1l; 0l |]
+          create int64 [| 2; 1 |] [| 1L; 0L |]
         in
         take_along_axis ~axis:1 ~indices:idx x
       - : (float, float32_elt) t = float32 [2,1] [[1],
@@ -1587,7 +1590,7 @@ val scatter :
   ?mode:[ `Set | `Add ] ->
   ?unique_indices:bool ->
   axis:int ->
-  indices:(int32, int32_elt) t ->
+  indices:int64_t ->
   values:('a, 'b) t ->
   ('a, 'b) t ->
   ('a, 'b) t
@@ -1615,7 +1618,7 @@ val scatter :
     {@ocaml[
       # let x = zeros float32 [| 2; 3 |] in
         let idx =
-          create int32 [| 2; 1 |] [| 1l; 0l |]
+          create int64 [| 2; 1 |] [| 1L; 0L |]
         in
         scatter ~axis:1 ~indices:idx
           ~values:(create float32 [| 2; 1 |]
@@ -1659,7 +1662,7 @@ val extract : condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
 
     See also {!compress}, {!nonzero}. *)
 
-val nonzero : ('a, 'b) t -> (int32, int32_elt) t array
+val nonzero : ('a, 'b) t -> int64_t array
 (** [nonzero t] is an array of 1-D index tensors, one per dimension, giving the
     coordinates of non-zero elements.
 
@@ -1672,13 +1675,12 @@ val nonzero : ('a, 'b) t -> (int32, int32_elt) t array
         in
         let idx = nonzero x in
         idx.(0), idx.(1)
-      - : (int32, int32_elt) t * (int32, int32_elt) t =
-      ([0, 1, 1, 2], [1, 0, 2, 2])
+      - : int64_t * int64_t = ([0, 1, 1, 2], [1, 0, 2, 2])
     ]}
 
     See also {!argwhere}. *)
 
-val argwhere : ('a, 'b) t -> (int32, int32_elt) t
+val argwhere : ('a, 'b) t -> int64_t
 (** [argwhere t] is a 2-D tensor of shape [[k; ndim t]] whose rows are the
     coordinates of the [k] non-zero elements.
 
@@ -2410,25 +2412,25 @@ val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 
     See also {!all}. *)
 
-val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
+val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 (** [argmax ?axis ?keepdims t] is the index of the maximum along [axis]: the
     first index holding the element {!max} returns, so [-0.] and [0.] do not
     tie and the argmax of [[-0.; 0.]] is [1]. A NaN counts as the maximum: the
     result is the index of the first NaN. When [axis] is omitted, operates on
     the flattened tensor. [keepdims] defaults to [false].
 
-    Raises [Invalid_argument] if [axis] is out of bounds, or if it holds more
-    than [Int32.max_int] entries, which an int32 index cannot reach.
+    Raises [Invalid_argument] if [axis] is out of bounds, or if the reduced
+    axis, all of [t] when [axis] is omitted, has no element.
 
     {@ocaml[
       # create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |]
         |> argmax |> item []
-      - : int32 = 4l
+      - : int64 = 4L
     ]}
 
     See also {!argmin}. *)
 
-val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
+val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 (** [argmin ?axis ?keepdims t] is the index of the minimum along [axis]: the
     first index holding the element {!min} returns, so the argmin of
     [[0.; -0.]] is [1]. A NaN counts as the minimum: the result is the index of
@@ -2441,11 +2443,7 @@ val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
 
 (** {1:sorting Sorting and searching} *)
 
-val sort :
-  ?descending:bool ->
-  ?axis:int ->
-  ('a, 'b) t ->
-  ('a, 'b) t * (int32, int32_elt) t
+val sort : ?descending:bool -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
 (** [sort ?descending ?axis t] sorts elements along [axis] and returns
     [(sorted, indices)] where [indices] maps sorted positions back to originals.
     [descending] defaults to [false]. [axis] defaults to [-1] (last).
@@ -2459,20 +2457,18 @@ val sort :
     {@ocaml[
       # create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |]
         |> sort
-      - : (int32, int32_elt) t * (int32, int32_elt) t =
-      (int32 [5] [1, 1, ..., 4, 5], int32 [5] [1, 3, ..., 2, 4])
+      - : (int32, int32_elt) t * int64_t =
+      (int32 [5] [1, 1, ..., 4, 5], int64 [5] [1, 3, ..., 2, 4])
     ]}
 
     See also {!argsort}. *)
 
-val argsort :
-  ?descending:bool -> ?axis:int -> ('a, 'b) t -> (int32, int32_elt) t
+val argsort : ?descending:bool -> ?axis:int -> ('a, 'b) t -> int64_t
 (** [argsort ?descending ?axis t] is [snd (sort ?descending ?axis t)].
 
     See also {!sort}. *)
 
-val top_k :
-  k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * (int32, int32_elt) t
+val top_k : k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
 (** [top_k ~k ?axis t] is [(values, indices)]: the [k] greatest entries along
     [axis], greatest first, and their positions. Both have [t]'s shape with
     [axis] of extent [k]. [axis] defaults to [-1] (last).
@@ -2489,9 +2485,10 @@ val top_k :
     bits of the dtype (eight for [float32]; every two bits past [2{^20}] entries
     over all rows), and only the [k] entries kept are put in order, by [k * k]
     comparisons, or by a sort of them once those number more than [2{^24}] over
-    all rows. Eagerly a call holds about 40 bytes per entry at once, mostly the
-    running counts that place the kept entries: 64 rows of 131072 [float32] peak
-    at about 480 MB, where a sort of them peaks at about 200 MB.
+    all rows. Eagerly a call holds about 30 bytes per entry at once, mostly the
+    running counts that place the kept entries: 64 rows of 131072 [float32] hold
+    about 250 MB, where a sort of them holds about 100 MB, its values and their
+    [int64] positions.
 
     Raises [Invalid_argument] if [t] has no dimension, [axis] is out of bounds,
     [k] is outside \[[1], extent of [axis]\], or [t] is complex.
@@ -2501,7 +2498,7 @@ val top_k :
           create float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] |> top_k ~k:2
         in
         (to_array values, to_array indices)
-      - : float array * int32 array = ([|5.; 4.|], [|4l; 2l|])
+      - : float array * int64 array = ([|5.; 4.|], [|4L; 2L|])
     ]}
 
     See also {!sort}, {!argmax}. *)
@@ -2713,7 +2710,7 @@ val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
 
     See also {!svd}, {!lu}. *)
 
-val lu : ('a, 'b) t -> (int32, int32_elt) t * ('a, 'b) t * ('a, 'b) t
+val lu : ('a, 'b) t -> int64_t * ('a, 'b) t * ('a, 'b) t
 (** [lu a] is [(perm, l, u)] where row [i] of [l *@ u] is row [perm.(i)] of [a],
     [l] is lower-triangular with ones on its diagonal, and [u] is
     upper-triangular. For [a] of shape [·.., m, n] and [k = min m n], [perm] is
@@ -3713,7 +3710,7 @@ module Op : sig
         -> ('a, 'b) Nx_effect.t t
     | Arg_reduce :
         Nx_backend.arg_reduce * int * ('a, 'b) Nx_effect.t
-        -> (int32, Nx_dtype.int32_elt) Nx_effect.t t
+        -> (int64, Nx_dtype.int64_elt) Nx_effect.t t
     | Sort : {
         descending : bool;
         axis : int;
@@ -3725,7 +3722,7 @@ module Op : sig
         axis : int;
         x : ('a, 'b) Nx_effect.t;
       }
-        -> (int32, Nx_dtype.int32_elt) Nx_effect.t t
+        -> (int64, Nx_dtype.int64_elt) Nx_effect.t t
     | Pad :
         (int * int) array * 'a * ('a, 'b) Nx_effect.t
         -> ('a, 'b) Nx_effect.t t
@@ -3738,20 +3735,20 @@ module Op : sig
         * (int32, Nx_dtype.int32_elt) Nx_effect.t
         -> (int32, Nx_dtype.int32_elt) Nx_effect.t t
     | Gather :
-        int * (int32, Nx_dtype.int32_elt) Nx_effect.t * ('a, 'b) Nx_effect.t
+        int * (int64, Nx_dtype.int64_elt) Nx_effect.t * ('a, 'b) Nx_effect.t
         -> ('a, 'b) Nx_effect.t t
     | Scatter : {
         mode : [ `Set | `Add ];
         unique : bool;
         axis : int;
-        indices : (int32, Nx_dtype.int32_elt) Nx_effect.t;
+        indices : (int64, Nx_dtype.int64_elt) Nx_effect.t;
         updates : ('a, 'b) Nx_effect.t;
         into : ('a, 'b) Nx_effect.t;
       }
         -> ('a, 'b) Nx_effect.t t
     | Update :
         ('a, 'b) Nx_effect.t
-        * (int32, Nx_dtype.int32_elt) Nx_effect.t
+        * (int64, Nx_dtype.int64_elt) Nx_effect.t
         * ('a, 'b) Nx_effect.t
         -> ('a, 'b) Nx_effect.t t
     | Unfold : {
@@ -3807,8 +3804,8 @@ module Op : sig
     | Lu :
         ('a, 'b) Nx_effect.t
         -> (('a, 'b) Nx_effect.t
-           * (int32, Nx_dtype.int32_elt) Nx_effect.t
-           * (int32, Nx_dtype.int32_elt) Nx_effect.t)
+           * (int64, Nx_dtype.int64_elt) Nx_effect.t
+           * (int64, Nx_dtype.int64_elt) Nx_effect.t)
            t
     | Svd : {
         full_matrices : bool;

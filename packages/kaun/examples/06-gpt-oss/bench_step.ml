@@ -135,7 +135,7 @@ let run ?device c params dt ~tokens ~steps ~context =
     let token, caches = step caches index ids in
     let token = Nx.item [ 0 ] token in
     let t = Unix.gettimeofday () -. t0 in
-    let ids = Nx.create Nx.int32 [| 1; 1 |] [| token |] in
+    let ids = Nx.create Nx.int64 [| 1; 1 |] [| token |] in
     ((caches, Cache_index.advance index, ids), t)
   in
   let report name t =
@@ -148,8 +148,8 @@ let run ?device c params dt ~tokens ~steps ~context =
     timed
       ( Gpt_oss.cache ?placement c ~slots:context dt,
         Cache_index.rows ~context [| tokens |],
-        Nx.create Nx.int32 [| 1; tokens |]
-          (Array.init tokens (fun i -> Int32.of_int (17 + i))) )
+        Nx.create Nx.int64 [| 1; tokens |]
+          (Array.init tokens (fun i -> Int64.of_int (17 + i))) )
   in
   report (Printf.sprintf "first call, %d tokens" tokens) t;
   let state = ref state in

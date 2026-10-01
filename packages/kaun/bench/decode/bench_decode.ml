@@ -114,20 +114,20 @@ let decoder params ~len =
   let state =
     ref
       (step
-         (Nx.zeros Nx.int32 [| 1; 8 |])
+         (Nx.zeros Nx.int64 [| 1; 8 |])
          (Cache_index.rows ~context:len [| 8 |])
          (cache ~slots:len))
   in
-  let at = Nx.full Nx.int32 [| 1; 1 |] (Int32.of_int (len / 2)) in
+  let at = Nx.full Nx.int64 [| 1; 1 |] (Int64.of_int (len / 2)) in
   let middle =
     Cache_index.make ~pos:at
-      ~table:(Nx.reshape [| 1; len |] (Nx.arange Nx.int32 0 len 1))
+      ~table:(Nx.reshape [| 1; len |] (Nx.arange Nx.int64 0 len 1))
       ()
   in
   let advance () =
     let token, caches = !state in
     state := step token middle caches;
-    ignore (Nx.item [ 0; 0 ] (fst !state) : int32)
+    ignore (Nx.item [ 0; 0 ] (fst !state) : int64)
   in
   advance ();
   advance

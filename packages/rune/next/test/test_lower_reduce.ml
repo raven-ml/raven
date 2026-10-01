@@ -326,9 +326,7 @@ let scans =
 
 (* Arg-reductions *)
 
-type positioning = {
-  p : 'a 'b. axis:int -> ('a, 'b) Nx.t -> (int32, Nx.int32_elt) Nx.t;
-}
+type positioning = { p : 'a 'b. axis:int -> ('a, 'b) Nx.t -> Nx.int64_t }
 
 let positions_of =
   [

@@ -24,7 +24,7 @@ let gather id n =
       let st = Random.State.make [| 15 |] in
       let x = Nx.init Nx.float32 [| n |] (fun _ -> Random.State.float st 1.) in
       let i =
-        Nx.init Nx.int32 [| n |] (fun _ -> Int32.of_int (Random.State.int st n))
+        Nx.init Nx.int64 [| n |] (fun _ -> Int64.of_int (Random.State.int st n))
       in
       (host_array i, host_array x, host_array (Nx.zeros Nx.float32 [| n |])))
     id

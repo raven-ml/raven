@@ -32,11 +32,6 @@
 /* Most operands any generated family takes: where() is 3 inputs + 1 output. */
 #define NX_C_MAX_OPERANDS 4
 
-/* Argmax/argmin axis longer than this cannot be indexed by the int32 result
-   (nx_c_arg_fini truncates to int32); the driver rejects it up front rather than
-   returning a truncated index. Maps to Failure in the binding. */
-#define NX_C_ERR_ARGREDUCE_CAP "argreduce axis length exceeds INT32_MAX"
-
 /* Preconditions the drivers verify rather than assume, including those the
    frontend and the binding are meant to guarantee (a valid axis, an output of
    the operation's rank, a fresh output): a caller that breaks one gets a loud
@@ -53,9 +48,9 @@
 /* The single status -> exception-kind classifier, so every family (map, move,
    sort, ...) raises identically: Invalid_argument for precondition and empty-
    axis violations (a bad user/binding argument), Failure for everything else
-   (unsupported dtype, packed, argreduce cap, allocation). A family
-   stub that catches a driver's non-NULL status routes it here rather than
-   hand-rolling its own map — that divergence is exactly what this forecloses.
+   (unsupported dtype, packed, allocation). A family stub that catches a
+   driver's non-NULL status routes it here rather than hand-rolling its own
+   map — that divergence is exactly what this forecloses.
    Same contract as nx_c_raise/nx_c_raise_invalid (nx_c.h): call ONLY with the
    runtime lock held. Implemented in nx_c_engine.c. */
 NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status status);
@@ -200,18 +195,13 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *s
                         nx_c_cost_class cls, void *ctx);
 
 /* ── Argreduce driver ──────────────────────────────────────────────────────
-   Argmax/argmin over exactly one axis. `out` is int32, rank in->ndim - 1, its
+   Argmax/argmin over exactly one axis. `out` is int64, rank in->ndim - 1, its
    axes aligned in order to the non-`axis` input axes. Rejects an empty axis
-   (NX_C_ERR_EMPTY_REDUCE) and an axis longer than INT32_MAX
-   (NX_C_ERR_ARGREDUCE_CAP) before any work. */
+   (NX_C_ERR_EMPTY_REDUCE) before any work. */
 nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
                              const nx_c_ndarray *in, int64_t in_elem,
                              const nx_c_ndarray *out, int axis,
                              nx_c_cost_class cls, void *ctx);
-
-/* Validate one argreduce axis length without touching operands, so the binding
-   (and tests) can reject an oversized axis without materializing it. */
-nx_c_status nx_c_argreduce_validate(int64_t axis_len);
 
 /* ── Scan driver ───────────────────────────────────────────────────────────
    Inclusive prefix scan over one axis; `out` has the same shape as `in`. The

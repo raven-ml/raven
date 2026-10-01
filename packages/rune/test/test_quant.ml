@@ -32,7 +32,7 @@ let weight ?(scale = scale_byte) shape =
 let floats shape =
   Nx.init Nx.float32 shape (fun _ -> Random.State.float rng 2.0 -. 1.0)
 
-let ints shape values = Nx.create Nx.int32 shape (Array.map Int32.of_int values)
+let ints shape values = Nx.create Nx.int64 shape (Array.map Int64.of_int values)
 
 (* The reference: Law 2's function, decoded from the format's definition and
    summed at float64. *)
@@ -67,7 +67,12 @@ let selected ~lanes dq ids =
   let trailing =
     positions / max 1 (Array.fold_left ( * ) 1 (Array.sub wb 0 lanes))
   in
-  let valid = Array.map (fun id -> id >= 0l && Int32.to_int id < e) ids in
+  let valid =
+    Array.map
+      (fun id ->
+        Int64.compare id 0L >= 0 && Int64.compare id (Int64.of_int e) < 0)
+      ids
+  in
   (* Position [p]'s matrix among the weight's, lanes flattened. *)
   let index p id =
     let rest = ref (p / max 1 trailing) and l = ref 0 and stride = ref 1 in
@@ -77,14 +82,14 @@ let selected ~lanes dq ids =
       if lane.(a) > 1 then l := !l + (i * !stride);
       stride := !stride * lane.(a)
     done;
-    if valid.(p) then Int32.of_int ((!l * e) + Int32.to_int id) else 0l
+    if valid.(p) then Int64.of_int ((!l * e) + Int64.to_int id) else 0L
   in
   let flat =
     Nx.reshape (Array.append [| -1 |] (Array.sub ds (lanes + 1) 2)) dq
   in
   let matrices =
     Nx.take ~axis:0
-      ~indices:(Nx.create Nx.int32 [| positions |] (Array.mapi index ids))
+      ~indices:(Nx.create Nx.int64 [| positions |] (Array.mapi index ids))
       flat
   in
   let mask = Nx.create Nx.bool [| positions; 1; 1 |] valid in
@@ -96,7 +101,7 @@ let selected ~lanes dq ids =
 type case = {
   w : Nx_quant.t;
   lanes : int;  (** Leading axes of [w] before its experts, with [ids]. *)
-  ids : Nx.int32_t option;
+  ids : Nx.int64_t option;
   x : Nx.float32_t;
   transpose : bool;
 }
@@ -432,6 +437,30 @@ let test_transposed () =
        ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 3 mod 6) - 1)))
        w
        (poison ~at:[ [ 0; 0 ] ] (floats [| 8; 2; 1; 8 |])))
+
+(* An id 2^32 from an expert, which a truncation to tolk's int32 ids would bring
+   to that expert, selects none, on each form: the kernel, gathered rows, a
+   block per position, past the row bound, and with lanes. *)
+let test_far_ids () =
+  let far = 1 lsl 32 in
+  battery
+    (case
+       ~ids:(ints [| 3 |] [| far + 1; 0; 1 - far |])
+       (weight [| 2; 40; 32 |])
+       (floats [| 3; 1; 32 |]));
+  let w = weight [| 6; 8; 64 |] in
+  battery (case ~ids:(ints [| 3 |] [| far + 5; 0; -far |]) w (floats [| 64 |]));
+  battery
+    (case
+       ~ids:(ints [| 6; 1 |] [| 0; far + 2; 1; 3; 5 - far; 4 |])
+       w
+       (floats [| 6; 1; 2; 64 |]));
+  battery (case ~ids:(ints [| 2 |] [| far + 1; 2 |]) w (floats [| 2; 65; 64 |]));
+  battery
+    (case ~lanes:1
+       ~ids:(ints [| 2; 2 |] [| far + 2; 0; 1; far |])
+       (weight [| 2; 3; 8; 64 |])
+       (floats [| 2; 2; 1; 64 |]))
 
 (* The largest finite scale bytes, on inputs small enough that no float32 sum
    overflows. *)
@@ -1074,6 +1103,8 @@ let () =
           slow "grouped" test_grouped;
           slow "transposed" test_transposed;
           slow "the largest scales" test_large_scales;
+          slow "ids 2^32 from an expert select none, on every form"
+            test_far_ids;
           test "empty" test_empty;
           slow "float16 x" test_float16;
           test "compiled dequant" test_dequant;

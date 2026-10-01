@@ -109,10 +109,7 @@ val softmax_cross_entropy :
     is empty, or if [targets]' shape differs from [logits]'. *)
 
 val softmax_cross_entropy_sparse :
-  ?reduction:reduction ->
-  (float, 'a) Nx.t ->
-  (int32, Nx.int32_elt) Nx.t ->
-  (float, 'a) Nx.t
+  ?reduction:reduction -> (float, 'a) Nx.t -> Nx.int64_t -> (float, 'a) Nx.t
 (** [softmax_cross_entropy_sparse logits labels] is {!softmax_cross_entropy}
     with integer class labels: [labels] has [logits]' shape without the last
     axis, and each label is the index of the true class, in

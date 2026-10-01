@@ -101,7 +101,7 @@ let () =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
     let logits = Policy.apply !params obs_batch in
     let action_idx = Nx.categorical logits in
-    let action = Nx.reshape [||] action_idx in
+    let action = Nx.reshape [||] (Nx.cast Nx.int32 action_idx) in
     let log_probs = Nx.log_softmax logits in
     let action_1 = Nx.reshape [| 1; 1 |] action_idx in
     let log_prob = Nx.take_along_axis ~axis:1 ~indices:action_1 log_probs in
@@ -141,8 +141,10 @@ let () =
     (* Stack observations and actions into batch tensors *)
     let obs_batch = Nx.stack (Array.to_list traj.observations) in
     let actions_batch =
-      Nx.stack
-        (Array.to_list (Array.map (fun a -> Nx.reshape [| 1 |] a) traj.actions))
+      Nx.cast Nx.int64
+        (Nx.stack
+           (Array.to_list
+              (Array.map (fun a -> Nx.reshape [| 1 |] a) traj.actions)))
     in
     let returns_t = Nx.create Nx.float32 [| n |] returns in
 

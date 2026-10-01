@@ -17,7 +17,7 @@ We use three raven packages:
 
 `Kaun_datasets.mnist` downloads MNIST the first time and caches it locally.
 It returns `(x_train, y_train, x_test, y_test)` — images as float32
-in [0, 1] with shape `[N; 1; 28; 28]`, labels as int32 with shape `[N]`.
+in [0, 1] with shape `[N; 1; 28; 28]`, labels as int64 with shape `[N]`.
 
 ```ocaml
 open Kaun
@@ -43,7 +43,7 @@ let _fig =
     let img = Nx.get [i; 0] x_train |> Nx.reshape [|28; 28|] in
     let label = Nx.item [i] y_train in
     Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
-    |> Hugin.title (Printf.sprintf "%ld" label)
+    |> Hugin.title (Printf.sprintf "%Ld" label)
     |> Hugin.no_axes)
   |> Hugin.hstack ~gap:0.
 ```
@@ -145,7 +145,7 @@ let _fig =
     let logits = Model.apply (fst !st) (Nx.get [i] x_test |> Nx.expand_dims [0]) in
     let pred_l = Nx.item [0] (Nx.argmax ~axis:1 logits) in
     Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
-    |> Hugin.title (Printf.sprintf "%ld->%ld" true_l pred_l)
+    |> Hugin.title (Printf.sprintf "%Ld->%Ld" true_l pred_l)
     |> Hugin.no_axes)
   |> Hugin.hstack ~gap:0.
 ```

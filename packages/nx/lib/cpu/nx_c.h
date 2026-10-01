@@ -605,13 +605,13 @@ typedef void nx_c_fold_step(nx_c_acc *acc, const char *in, int64_t in_step,
 typedef void nx_c_fold_fini(char *out, const nx_c_acc *acc, void *ctx);
 
 /* argreduce — argmax/argmin over exactly one axis (backend_intf: single axis,
-   int32 result). The accumulator carries the running extreme value and its
+   int64 result). The accumulator carries the running extreme value and its
    index along that axis. init sets index = -1 ("unset"), so step takes the
    first element unconditionally and no per-dtype identity is needed; the empty
    axis is rejected by the funnel. There is exactly one run per output (the
    axis), so the kernel's element counter is the axis index directly. step
    encapsulates NaN-wins, first-index-wins comparison so argmax/argmin agree
-   with reduce_max/min on NaN. fini writes the int32 index. */
+   with reduce_max/min on NaN. fini writes the int64 index. */
 typedef struct {
   nx_c_acc value;
   int64_t index;
@@ -619,7 +619,7 @@ typedef struct {
 
 static inline void nx_c_arg_init(nx_c_arg_acc *acc) { acc->index = -1; }
 static inline void nx_c_arg_fini(char *out, const nx_c_arg_acc *acc) {
-  *(int32_t *)out = (int32_t)acc->index;
+  *(int64_t *)out = acc->index;
 }
 typedef void nx_c_arg_step(nx_c_arg_acc *acc, const char *in, int64_t in_step,
                           int64_t n, void *ctx);

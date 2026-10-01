@@ -442,7 +442,7 @@ let test_compiled_custom_jvp () =
     [v3 (); vec64 [| -0.3; 0.4; 1.2 |]]
 
 let test_compiled_custom_scatter_backward () =
-  let indices = Nx.create Nx.int32 [|3|] [|2l; 0l; 2l|] in
+  let indices = Nx.create Nx.int64 [|3|] [|2L; 0L; 2L|] in
   let take x = Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
       ~fwd:(fun x -> Nx.take ~axis:0 ~indices x, Nx.mul_s x 0.)
       ~bwd:(fun zeros ct -> Nx.scatter ~mode:`Add ~axis:0 ~indices

@@ -203,6 +203,7 @@ let f32 shape =
        1.)
 
 let i32 shape values = Nx.create Nx.int32 shape values
+let i64 shape values = Nx.create Nx.int64 shape values
 
 (* An operation of each constructor whose result is one value, and each
    movement, over operands of shapes they change. *)
@@ -240,18 +241,18 @@ let cases () =
     C (Convert (Cast, Nx.int32, x));
     C (Convert (Bitcast, Nx.int32, x));
     C (Threefry (i32 [| 2 |] [| 1l; 2l |], i32 [| 2 |] [| 3l; 4l |]));
-    C (Gather (1, i32 [| 2; 2; 4 |] (Array.make 16 1l), x));
+    C (Gather (1, i64 [| 2; 2; 4 |] (Array.make 16 1L), x));
     C
       (Scatter
          {
            mode = `Add;
            unique = false;
            axis = 1;
-           indices = i32 [| 2; 1; 4 |] (Array.make 8 2l);
+           indices = i64 [| 2; 1; 4 |] (Array.make 8 2L);
            updates = f32 [| 2; 1; 4 |];
            into = x;
          });
-    C (Update (x, i32 [| 3 |] [| 0l; 1l; 1l |], f32 [| 2; 2; 3 |]));
+    C (Update (x, i64 [| 3 |] [| 0L; 1L; 1L |], f32 [| 2; 2; 3 |]));
     C unfold;
     C
       (Fold

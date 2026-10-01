@@ -141,11 +141,7 @@ val block :
     {!cached} folds it over the blocks; a driver that runs each block as its own
     compiled program calls it directly. *)
 
-val hidden :
-  config ->
-  (float, 'b) Nx.t params ->
-  (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t
+val hidden : config -> (float, 'b) Nx.t params -> Nx.int64_t -> (float, 'b) Nx.t
 (** [hidden cfg p ids] is the residual stream after the last block for the
     [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; dim |]]. Every
     token attends to the tokens before it. *)
@@ -169,7 +165,7 @@ val cached :
   (float, 'b) Nx.t params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
-  (int32, Nx.int32_elt) Nx.t ->
+  Nx.int64_t ->
   (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids],
     which sit where [index] says and attend through [caches], and the caches

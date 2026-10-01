@@ -850,8 +850,8 @@ let check_gathers_keep_negative_zero ?devices () =
         (Nx.init f32 [| 100; 2 |] (fun i ->
              if (i.(0) + i.(1)) mod 3 = 0 then -0. else float_of_int i.(1)))
     in
-    let rows = Nx.create Nx.int32 [| 4 |] [| 0l; 3l; 6l; 99l |] in
-    let columns = Nx.create Nx.int32 [| 1; 3 |] [| 0l; 4l; 2l |] in
+    let rows = Nx.create Nx.int64 [| 4 |] [| 0L; 3L; 6L; 99L |] in
+    let columns = Nx.create Nx.int64 [| 1; 3 |] [| 0L; 4L; 2L |] in
     let bits_of t = Nx.to_array (Nx.cast Nx.int32 (Nx.bitcast bits t)) in
     List.iter
       (fun (msg, f, x) ->
@@ -939,8 +939,8 @@ let check_top_k_long_row ?devices () =
       (Nx.shrink [| (0, 1); (0, k) |] (Nx.argsort ~descending:true ~axis:1 x))
   in
   let f x = snd (Nx.top_k ~k x) in
-  equal ~msg:"eager" (array int32) expected (Nx.to_array (f x));
-  equal ~msg:"compiled" (array int32) expected
+  equal ~msg:"eager" (array int64) expected (Nx.to_array (f x));
+  equal ~msg:"compiled" (array int64) expected
     (Nx.to_array (Rune.jit' ?devices f x))
 
 (* Sorting *)
@@ -1090,9 +1090,11 @@ let check_sort_pieces (type a b) ?infinities out pieces
 (* An index outside the axis drops a scatter's update, reads zero at a gather
    and passes no gradient back through one, where no range of the compiled
    destination's address meets the updates: one update beside a unit axis, or a
-   scatter axis of extent 1, whose index may be broadcast inside the function.
-   With and without the promise of unique indices. *)
+   scatter axis of extent 1, whose index may be broadcast inside the function,
+   and an index 2^32 from a position, which a truncation to 32 bits would bring
+   back to it. With and without the promise of unique indices. *)
 let check_out_of_range_beside_unit_axes ?devices () =
+  let far = 1 lsl 32 in
   let check msg expected f t =
     check_arr ~msg:(msg ^ ", eager") expected (f t);
     check_arr ~msg:(msg ^ ", compiled") expected (Rune.jit' ?devices f t)
@@ -1104,7 +1106,7 @@ let check_out_of_range_beside_unit_axes ?devices () =
     (fun (t, ids, broadcast, set, add) ->
       let n = Array.length ids in
       let indices =
-        Nx.create Nx.int32 [| n; 1 |] (Array.map Int32.of_int ids)
+        Nx.create Nx.int64 [| n; 1 |] (Array.map Int64.of_int ids)
       in
       let shape = Option.value broadcast ~default:[| n; 1 |] in
       let values =
@@ -1141,17 +1143,24 @@ let check_out_of_range_beside_unit_axes ?devices () =
       (column, [| 1; 3 |], None, [| 1.; 9.; 3. |], [| 1.; 11.; 3. |]);
       (one, [| -1; -1 |], None, [| 1. |], [| 1. |]);
       (row, [| -1; -1 |], Some [| 2; 3 |], [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
+      (column, [| far + 1; 2 |], None, [| 1.; 2.; 8. |], [| 1.; 2.; 11. |]);
+      (column, [| 1 - far |], None, [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
     ];
   List.iter
     (fun (ids, taken) ->
       let indices =
-        Nx.create Nx.int32 [| Array.length ids |] (Array.map Int32.of_int ids)
+        Nx.create Nx.int64 [| Array.length ids |] (Array.map Int64.of_int ids)
       in
       check "take" taken (Nx.take ~axis:0 ~indices) column)
-    [ ([| -1 |], [| 0. |]); ([| 3 |], [| 0. |]); ([| -1; 1 |], [| 0.; 2. |]) ];
-  let far = Nx.create Nx.int32 [| 2 |] [| -1l; -1l |] in
+    [
+      ([| -1 |], [| 0. |]);
+      ([| 3 |], [| 0. |]);
+      ([| -1; 1 |], [| 0.; 2. |]);
+      ([| far + 1; 2 - far; 2 |], [| 0.; 0.; 3. |]);
+    ];
+  let outside = Nx.create Nx.int64 [| 2 |] [| -1L; -1L |] in
   check "the gradient of take over an axis of size 1" [| 0.; 0.; 0. |]
-    (Rune.grad' (fun t -> Nx.sum (Nx.take ~axis:0 ~indices:far t)))
+    (Rune.grad' (fun t -> Nx.sum (Nx.take ~axis:0 ~indices:outside t)))
     row
 
 (* Values where rules have their edges: quarters in [-3, 3], which repeat,

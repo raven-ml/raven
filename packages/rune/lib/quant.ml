@@ -22,7 +22,7 @@ let scale_values =
 
 let group_scales scales =
   let table = Nx.create Nx.float32 [| 256 |] scale_values in
-  let indices = Nx.reshape [| -1 |] (Nx.cast Nx.int32 scales) in
+  let indices = Nx.reshape [| -1 |] (Nx.cast Nx.int64 scales) in
   Nx.reshape (Nx.shape scales) (Nx.take ~indices table)
 
 (* The magnitudes 0, 0.5, 1, 1.5, 2, 3, 4 and 6 are m / 2 up to 4, m - 2 for 5
@@ -76,17 +76,45 @@ let broadcast a b =
    the ids broadcast it against. *)
 let lane_index lanes =
   let p = Array.length lanes in
-  let index = ref (Nx.zeros Nx.int32 (ones p)) and stride = ref 1 in
+  let index = ref (Nx.zeros Nx.int64 (ones p)) and stride = ref 1 in
   for a = p - 1 downto 0 do
     if lanes.(a) > 1 then begin
       let shape = ones p in
       shape.(a) <- lanes.(a);
-      let along = Nx.arange Nx.int32 0 (lanes.(a) * !stride) !stride in
+      let along = Nx.arange Nx.int64 0 (lanes.(a) * !stride) !stride in
       index := Nx.add !index (Nx.reshape shape along)
     end;
     stride := !stride * lanes.(a)
   done;
   !index
+
+(* [matrices ~e ~lanes ids] is the matrix that each id of a lane addresses among
+   every lane's, lanes flattened into the experts: lane [l]'s expert [id] is
+   matrix [l * e + id], and an id outside the experts is [-1]. The ids are
+   compared in [int64], so that the cast to tolk's [int32] at a kernel brings
+   none into range.
+
+   Raises [Invalid_argument] if the matrices number more than [int32] holds. *)
+let matrices ~e ~lanes ids =
+  let total = count lanes * e in
+  if total > Int32.to_int Int32.max_int then
+    invalid_arg
+      (Printf.sprintf
+         "Nx_quant.apply: %d experts over every lane, more than a compiled \
+          product indexes"
+         total);
+  let valid =
+    Nx.logical_and (Nx.greater_equal_s ids 0L) (Nx.less_s ids (Int64.of_int e))
+  in
+  let lane = lane_index lanes in
+  let lane =
+    Nx.reshape
+      (Array.append (Nx.shape lane) (ones (Nx.ndim ids - Array.length lanes)))
+      lane
+  in
+  Nx.where valid
+    (Nx.add (Nx.mul_s lane (Int64.of_int e)) ids)
+    (Nx.full Nx.int64 [||] (-1L))
 
 (* Decode-then-matmul. Decoded matrices are materialised: a product of two
    buffers is what tolk's heuristics take for a matrix product, and with the
@@ -187,36 +215,16 @@ let by_kernel kernels ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
           finish batch (kernels.quant_matmul (kernel_x ~batch x) ~codes ~scales)
   | Some ids ->
       let p = cr - 3 in
-      let e = cs.(p) and is = Nx.shape ids in
       if not (rows_fit m) then None
       else
-        (* Lanes flattened: lane [l]'s expert [id] is matrix [l * e + id], and
-           an id outside the experts stays outside every lane's. *)
-        let index =
-          if p = 0 then ids
-          else
-            let valid =
-              Nx.logical_and
-                (Nx.greater_equal_s ids 0l)
-                (Nx.less_s ids (Int32.of_int e))
-            in
-            let lane = lane_index (Array.sub cs 0 p) in
-            let lane =
-              Nx.reshape
-                (Array.append (Nx.shape lane) (ones (Array.length is - p)))
-                lane
-            in
-            Nx.where valid
-              (Nx.add (Nx.mul_s lane (Int32.of_int e)) ids)
-              (Nx.full Nx.int32 [||] (-1l))
-        in
+        let index = matrices ~e:cs.(p) ~lanes:(Array.sub cs 0 p) ids in
         let batch = broadcast xb (Nx.shape index) in
         if count batch = 0 then None
         else
           let ids =
             Nx.reshape
               [| count batch |]
-              (Nx.contiguous (Nx.broadcast_to batch index))
+              (Nx.contiguous (Nx.broadcast_to batch (Nx.cast Nx.int32 index)))
           in
           let codes, scales = parts (count (Array.sub cs 0 (p + 1))) in
           finish batch
@@ -239,29 +247,15 @@ let batch_shape ~lanes xb is =
    each route's expert among every lane's (-1 for none) and its row block of
    [x]. *)
 let routes ~e ~lanes ids xb =
-  let p = Array.length lanes in
-  let is = Nx.shape ids in
-  let ob = batch_shape ~lanes xb is in
+  let ob = batch_shape ~lanes xb (Nx.shape ids) in
   let rank = Array.length ob in
-  let valid =
-    Nx.logical_and (Nx.greater_equal_s ids 0l) (Nx.less_s ids (Int32.of_int e))
-  in
-  let expert =
-    if p = 0 then Nx.where valid ids (Nx.full Nx.int32 [||] (-1l))
-    else
-      let q = Array.length is - p in
-      let lane = lane_index lanes in
-      let lane = Nx.reshape (Array.append (Nx.shape lane) (ones q)) lane in
-      Nx.where valid
-        (Nx.add (Nx.mul_s lane (Int32.of_int e)) ids)
-        (Nx.full Nx.int32 [||] (-1l))
-  in
+  let expert = matrices ~e ~lanes ids in
   let flat t =
     let s = Nx.shape t in
     let t = Nx.reshape (Array.append (ones (rank - Array.length s)) s) t in
     Nx.reshape [| -1 |] (Nx.contiguous (Nx.broadcast_to ob t))
   in
-  let row = Nx.reshape xb (Nx.arange Nx.int32 0 (count xb) 1) in
+  let row = Nx.reshape xb (Nx.arange Nx.int64 0 (count xb) 1) in
   (ob, flat expert, flat row)
 
 (* [x] as [[| rows of its batch; m; cols |]], a vector lifted to one row. *)
@@ -330,7 +324,8 @@ let instances kernels ~form ~transpose ~p ~e ids codes scales x =
     else Nx.pad [| (0, 0); (0, padded - m); (0, 0) |] 0.0 blocks
   in
   let y =
-    kernels.block_matmul ~transpose:(not transpose) blocks w ~ids:expert
+    kernels.block_matmul ~transpose:(not transpose) blocks w
+      ~ids:(Nx.cast Nx.int32 expert)
   in
   let y =
     if padded = m then y else Nx.shrink [| (0, Nx.dim 0 y); (0, m); (0, n) |] y
@@ -414,7 +409,7 @@ let grouped kernels ~transpose ~p ~e ids codes scales x =
     Nx.cast Nx.int32
       (Nx.equal
          (Nx.reshape [| r; 1 |] expert)
-         (Nx.reshape [| 1; d |] (Nx.arange Nx.int32 0 d 1)))
+         (Nx.reshape [| 1; d |] (Nx.arange Nx.int64 0 d 1)))
   in
   let rank =
     Nx.sum ~axes:[ 1 ]
@@ -427,15 +422,18 @@ let grouped kernels ~transpose ~p ~e ids codes scales x =
   in
   let last = Nx.cumsum blocks in
   let first = Nx.sub last blocks in
-  let valid = Nx.greater_equal_s expert 0l in
+  let valid = Nx.greater_equal_s expert 0L in
   let slot =
     Nx.where valid
-      (Nx.add (Nx.mul_s (Nx.take ~indices:expert first) (Int32.of_int b)) rank)
-      (Nx.full Nx.int32 [||] (-1l))
+      (Nx.cast Nx.int64
+         (Nx.add
+            (Nx.mul_s (Nx.take ~indices:expert first) (Int32.of_int b))
+            rank))
+      (Nx.full Nx.int64 [||] (-1L))
   in
   let table =
     Nx.scatter ~unique_indices:true ~axis:0 ~indices:slot ~values:row
-      (Nx.full Nx.int32 [| nb * b |] (-1l))
+      (Nx.full Nx.int64 [| nb * b |] (-1L))
   in
   let xblocks =
     Nx.reshape [| nb; b; cols |]
@@ -533,9 +531,9 @@ let gathered_blocks kernels ~transpose ~p ~e ids codes scales x =
     let take part = Nx.take ~axis:0 ~indices:expert part in
     let own =
       Nx.where
-        (Nx.greater_equal_s expert 0l)
-        (Nx.arange Nx.int32 0 g 1)
-        (Nx.full Nx.int32 [||] (-1l))
+        (Nx.greater_equal_s expert 0L)
+        (Nx.arange Nx.int64 0 g 1)
+        (Nx.full Nx.int64 [||] (-1L))
     in
     instances kernels ~form:"gathered" ~transpose ~p:0 ~e:g
       (Nx.reshape selected own) (take codes) (take scales) x

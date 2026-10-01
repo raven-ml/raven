@@ -18,7 +18,7 @@ let floats = array float_exact
 let gradient f x = Nx.to_array (Rune.grad' (fun x -> Nx.sum (f x)) x)
 
 let indices a =
-  Nx.create Nx.int32 [| Array.length a |] (Array.map Int32.of_int a)
+  Nx.create Nx.int64 [| Array.length a |] (Array.map Int64.of_int a)
 
 let indexed =
   [

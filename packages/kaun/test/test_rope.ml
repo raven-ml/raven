@@ -12,8 +12,8 @@ let values_are ?msg ~tol expected t =
 
 let pos_of rows =
   let batch = Array.length rows and seq = Array.length rows.(0) in
-  Nx.create Nx.int32 [| batch; seq |]
-    (Array.concat (Array.to_list rows) |> Array.map Int32.of_int)
+  Nx.create Nx.int64 [| batch; seq |]
+    (Array.concat (Array.to_list rows) |> Array.map Int64.of_int)
 
 let test_standard_frequencies () =
   equal ~msg:"theta ** (-2 i / head_dim)"

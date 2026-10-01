@@ -516,7 +516,7 @@ let grouped_pair dtype =
   let repeat (l : _ Linear.t) =
     (* head_dim 2: kv head [h] becomes query heads [2 h] and [2 h + 1]. *)
     let cols =
-      Nx.create Nx.int32 [| 8 |] [| 0l; 1l; 0l; 1l; 2l; 3l; 2l; 3l |]
+      Nx.create Nx.int64 [| 8 |] [| 0L; 1L; 0L; 1L; 2L; 3L; 2L; 3L |]
     in
     { l with Linear.w = Nx.take ~axis:1 ~indices:cols l.Linear.w }
   in
@@ -555,12 +555,12 @@ let test_gradients () =
 (* Key-value cache decoding *)
 
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
-let int32s shape a = Nx.create Nx.int32 shape (Array.map Int32.of_int a)
+let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 
 (* The index of tokens at [pos] in sequences held at [slots]. *)
 let index_at ~pos ~slots =
   let tensor a =
-    int32s
+    int64s
       [| Array.length a; Array.length a.(0) |]
       (Array.concat (Array.to_list a))
   in
@@ -713,7 +713,7 @@ let tokens_2_4 = Nx.create Nx.float32 [| 1; 2; 1 |] [| 30.; 50. |]
 let test_index_select () =
   let index, pool = selection_fixture () in
   let columns =
-    int32s [| 1; 2; 5 |] [| 1; 3; 2; -1; 1; (* at 4 *) 5; 6; 0; 4; 3 |]
+    int64s [| 1; 2; 5 |] [| 1; 3; 2; -1; 1; (* at 4 *) 5; 6; 0; 4; 3 |]
   in
   let selected = Cache_index.select columns index in
   let seen, pool' = Cache_index.extend selected tokens_2_4 pool in
@@ -746,17 +746,17 @@ let test_index_select () =
   raises
     (Invalid_argument
        "Cache_index.select: columns must have shape [1; 2; k], k > 0")
-    (fun () -> Cache_index.select (int32s [| 1; 2 |] [| 0; 1 |]) index);
+    (fun () -> Cache_index.select (int64s [| 1; 2 |] [| 0; 1 |]) index);
   raises
     (Invalid_argument
        "Cache_index.select: columns must have shape [1; 2; k], k > 0")
-    (fun () -> Cache_index.select (int32s [| 1; 2; 0 |] [||]) index)
+    (fun () -> Cache_index.select (int64s [| 1; 2; 0 |] [||]) index)
 
 (* Choosing every column in order is the read without a selection, token by
    token. *)
 let test_index_select_everything () =
   let index, pool = selection_fixture () in
-  let every = Nx.broadcast_to [| 1; 2; 6 |] (Nx.arange Nx.int32 0 6 1) in
+  let every = Nx.broadcast_to [| 1; 2; 6 |] (Nx.arange Nx.int64 0 6 1) in
   let seen, _ = Cache_index.extend index tokens_2_4 pool in
   let chosen, _ =
     Cache_index.extend (Cache_index.select every index) tokens_2_4 pool
@@ -781,7 +781,7 @@ let test_index_select_whole () =
     Nx.create Nx.float32 [| 2; 3; 1 |] [| 1.; 2.; 3.; 11.; 12.; 13. |]
   in
   let columns =
-    int32s [| 2; 3; 3 |] (Array.concat (List.init 6 (fun _ -> [| 2; 0; 1 |])))
+    int64s [| 2; 3; 3 |] (Array.concat (List.init 6 (fun _ -> [| 2; 0; 1 |])))
   in
   let selected = Cache_index.select columns index in
   let pool = Nx.zeros Nx.float32 [| 0; 1 |] in
@@ -818,7 +818,7 @@ let test_index_select_whole () =
 let test_index_select_broadcast () =
   let index = Cache_index.whole ~batch:1 ~seq:3 () in
   let columns =
-    Nx.broadcast_to [| 1; 3; 2 |] (int32s [| 1; 1; 2 |] [| 0; 2 |])
+    Nx.broadcast_to [| 1; 3; 2 |] (int64s [| 1; 1; 2 |] [| 0; 2 |])
   in
   let selected = Cache_index.select columns index in
   let seen, _ =
@@ -844,11 +844,11 @@ let test_index_one_slot () =
       snd
         (Cache_index.extend
            (Cache_index.make ~pos
-              ~table:(int32s [| 1; Array.length table |] table)
+              ~table:(int64s [| 1; Array.length table |] table)
               ())
            values pool)
     in
-    let pos = int32s [| 1; 2 |] pos in
+    let pos = int64s [| 1; 2 |] pos in
     (f pos, Rune.jit Nx.Ptree.(tensor @-> returns tensor) f pos)
   in
   List.iter
@@ -867,7 +867,7 @@ let test_index_one_slot () =
    drops it. *)
 let test_index_select_structure () =
   let index, _ = selection_fixture () in
-  let columns = int32s [| 1; 2; 1 |] [| 3; 5 |] in
+  let columns = int64s [| 1; 2; 1 |] [| 3; 5 |] in
   let selected = Cache_index.select columns index in
   let count index =
     Nx.Ptree.fold Cache_index.ptree (fun _ _ n -> n + 1) index 0
@@ -908,7 +908,7 @@ let test_index_select_compiled () =
   let run columns =
     let s =
       {
-        Selected.index = Cache_index.select (int32s [| 1; 2; 5 |] columns) index;
+        Selected.index = Cache_index.select (int64s [| 1; 2; 5 |] columns) index;
         pool;
         seen = Nx.zeros Nx.float32 [| 1; 2; 5; 1 |];
       }
@@ -931,9 +931,9 @@ let test_index_select_compiled () =
 let blocks_at ?(blocks = [| 2; 0; 1 |]) pos =
   let n = Array.length pos in
   Cache_index.make
-    ~every:[ (4, int32s [| 1; 3 |] blocks) ]
-    ~pos:(int32s [| 1; n |] pos)
-    ~table:(int32s [| 1; 12 |] (Array.init 12 Fun.id))
+    ~every:[ (4, int64s [| 1; 3 |] blocks) ]
+    ~pos:(int64s [| 1; n |] pos)
+    ~table:(int64s [| 1; 12 |] (Array.init 12 Fun.id))
     ()
 
 let block_pool () = Nx.zeros Nx.float32 [| 3; 1 |]
@@ -980,13 +980,13 @@ let test_index_every () =
   (* 10 positions in 3 blocks: the last block reaches past the positions. *)
   let ten =
     Cache_index.make
-      ~every:[ (4, int32s [| 1; 3 |] [| 0; 1; 2 |]) ]
-      ~pos:(int32s [| 1; 3 |] [| 9; 10; 11 |])
-      ~table:(int32s [| 1; 10 |] (Array.init 10 Fun.id))
+      ~every:[ (4, int64s [| 1; 3 |] [| 0; 1; 2 |]) ]
+      ~pos:(int64s [| 1; 3 |] [| 9; 10; 11 |])
+      ~table:(int64s [| 1; 10 |] (Array.init 10 Fun.id))
       ()
   in
   let positions index =
-    Array.to_list (Array.map Int32.to_int (flat (Cache_index.positions index)))
+    Array.to_list (Array.map Int64.to_int (flat (Cache_index.positions index)))
   in
   equal ~msg:"positions are clamped to the positions' table, at any stride"
     (list int) (positions ten)
@@ -998,10 +998,10 @@ let test_index_every_addresses () =
   let index =
     Cache_index.every 4
       (Cache_index.make
-         ~row:(int32s [| 2 |] [| 0; 3 |])
-         ~every:[ (4, int32s [| 1; 3 |] [| 2; -1; 1 |]) ]
-         ~pos:(int32s [| 2; 9 |] (Array.init 18 (fun i -> (i mod 9) - 1)))
-         ~table:(int32s [| 1; 12 |] (Array.init 12 Fun.id))
+         ~row:(int64s [| 2 |] [| 0; 3 |])
+         ~every:[ (4, int64s [| 1; 3 |] [| 2; -1; 1 |]) ]
+         ~pos:(int64s [| 2; 9 |] (Array.init 18 (fun i -> (i mod 9) - 1)))
+         ~table:(int64s [| 1; 12 |] (Array.init 12 Fun.id))
          ())
   in
   let values =
@@ -1044,7 +1044,7 @@ let test_index_every_window () =
    and is masked, even where its slot holds something. *)
 let test_index_every_select () =
   let pool = Nx.create Nx.float32 [| 3; 1 |] [| 0.; nan; 4. |] in
-  let columns = int32s [| 1; 2; 4 |] [| 1; 0; 2; -1; 1; 0; 2; 3 |] in
+  let columns = int64s [| 1; 2; 4 |] [| 1; 0; 2; -1; 1; 0; 2; 3 |] in
   let index =
     Cache_index.select columns (Cache_index.every 4 (blocks_at [| 5; 7 |]))
   in
@@ -1089,7 +1089,7 @@ let test_index_every_whole () =
     (bools (Cache_index.mask index));
   let chosen =
     Cache_index.select
-      (Nx.broadcast_to [| 2; 10; 2 |] (int32s [| 1; 1; 2 |] [| 1; 0 |]))
+      (Nx.broadcast_to [| 2; 10; 2 |] (int64s [| 1; 1; 2 |] [| 1; 0 |]))
       index
   in
   let seen, _ = Cache_index.extend chosen (numbered ~batch:2 ~from:0 10) pool in
@@ -1139,7 +1139,7 @@ let test_index_every_rejects () =
   raises (Invalid_argument "Cache_index.every: the index selects columns")
     (fun () ->
       Cache_index.every 4
-        (Cache_index.select (int32s [| 1; 4; 1 |] [| 0; 1; 2; 3 |]) rows));
+        (Cache_index.select (int64s [| 1; 4; 1 |] [| 0; 1; 2; 3 |]) rows));
   raises
     (Invalid_argument
        "Cache_index.rows: a block holds at least 2 positions, got 1") (fun () ->
@@ -1147,11 +1147,11 @@ let test_index_every_rejects () =
   raises
     (Invalid_argument "Cache_index.rows: two tables for blocks of 4 positions")
     (fun () -> Cache_index.rows ~every:[ 4; 4 ] ~context:12 [| 2 |]);
-  let table = int32s [| 1; 12 |] (Array.init 12 Fun.id) in
+  let table = int64s [| 1; 12 |] (Array.init 12 Fun.id) in
   let make every =
-    Cache_index.make ~every ~pos:(int32s [| 1; 1 |] [| 0 |]) ~table ()
+    Cache_index.make ~every ~pos:(int64s [| 1; 1 |] [| 0 |]) ~table ()
   in
-  let three = int32s [| 1; 3 |] [| 0; 1; 2 |] in
+  let three = int64s [| 1; 3 |] [| 0; 1; 2 |] in
   raises
     (Invalid_argument
        "Cache_index.make: a block holds at least 2 positions, got 1") (fun () ->
@@ -1163,7 +1163,7 @@ let test_index_every_rejects () =
     (Invalid_argument
        "Cache_index.make: the table of blocks of 4 positions must have shape \
         [1; context], context positive") (fun () ->
-      make [ (4, int32s [| 2; 3 |] (Array.make 6 0)) ]);
+      make [ (4, int64s [| 2; 3 |] (Array.make 6 0)) ]);
   let count index =
     Nx.Ptree.fold Cache_index.ptree (fun _ _ n -> n + 1) index 0
   in
@@ -1217,9 +1217,9 @@ let stream_ptree =
 let stream s =
   let batch = Cache_index.batch s.index and seq = Cache_index.seq s.index in
   let pos = Cache_index.positions s.index in
-  let first = Nx.reshape [| batch; seq; 1 |] (Nx.sub pos (Nx.mod_s pos 4l)) in
+  let first = Nx.reshape [| batch; seq; 1 |] (Nx.sub pos (Nx.mod_s pos 4L)) in
   let block =
-    Nx.add first (Nx.reshape [| 1; 1; 4 |] (Nx.arange Nx.int32 0 4 1))
+    Nx.add first (Nx.reshape [| 1; 1; 4 |] (Nx.arange Nx.int64 0 4 1))
   in
   let own, sources =
     Cache_index.extend (Cache_index.select block s.index) s.x s.sources
@@ -1249,16 +1249,16 @@ let stream_expected positions =
 (* A sequence of 12 positions fed in calls, each a list of lanes of one
    sequence, each lane a list of positions, over shuffled tables. *)
 let feed_stream ?(step = stream) calls =
-  let table = int32s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
-  let blocks = int32s [| 1; 3 |] [| 1; 2; 0 |] in
+  let table = int64s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
+  let blocks = int64s [| 1; 3 |] [| 1; 2; 0 |] in
   let ys, s =
     List.fold_left
       (fun (ys, s) lanes ->
         let batch = List.length lanes and seq = List.length (List.hd lanes) in
-        let pos = int32s [| batch; seq |] (Array.of_list (List.concat lanes)) in
+        let pos = int64s [| batch; seq |] (Array.of_list (List.concat lanes)) in
         let index =
           Cache_index.make
-            ~row:(int32s [| batch |] (Array.make batch 0))
+            ~row:(int64s [| batch |] (Array.make batch 0))
             ~every:[ (4, blocks) ]
             ~pos ~table ()
         in
@@ -1364,12 +1364,12 @@ let test_cached_ragged_batch () =
   equal ~msg:"left padding: a padded token sees nothing" (array bool)
     [| false; false; true; true; true; true; true; true; true; true |]
     (Nx.to_array (Nx.slice [ A; A; I 0 ] (Cache_index.mask index)));
-  equal ~msg:"positions, padding as 0" (array int32)
-    [| 0l; 0l; 0l; 1l; 2l; 0l; 1l; 2l; 3l; 4l |]
+  equal ~msg:"positions, padding as 0" (array int64)
+    [| 0L; 0L; 0L; 1L; 2L; 0L; 1L; 2L; 3L; 4L |]
     (Nx.to_array (Cache_index.positions index));
   let y, c = call p (cache 12) index x in
   let index = Cache_index.advance index in
-  equal ~msg:"each row advances from its own length" (array int32) [| 3l; 5l |]
+  equal ~msg:"each row advances from its own length" (array int64) [| 3L; 5L |]
     (Nx.to_array (Cache_index.positions index));
   let padding =
     Cache_index.advance
@@ -1380,9 +1380,9 @@ let test_cached_ragged_batch () =
   equal ~msg:"a lane of padding advances to a real token" (array bool)
     [| true; false; true; false |]
     (Nx.to_array (Cache_index.mask padding));
-  equal ~msg:"at position 0" (array int32) [| 0l; 0l |]
+  equal ~msg:"at position 0" (array int64) [| 0L; 0L |]
     (Nx.to_array (Cache_index.positions padding));
-  equal ~msg:"positions stay below the context" (array int32) [| 0l; 1l; 1l |]
+  equal ~msg:"positions stay below the context" (array int64) [| 0L; 1L; 1L |]
     (Nx.to_array
        (Cache_index.positions
           (index_at ~pos:[| [| -1; 1; 7 |] |] ~slots:[| [| 0; 1 |] |])));
@@ -1444,9 +1444,9 @@ let test_cached_shared_prefix () =
   let swapped, _ =
     call p c
       (Cache_index.make
-         ~row:(int32s [| 2 |] [| 2; 0 |])
-         ~pos:(int32s [| 2; 1 |] [| 3; 3 |])
-         ~table:(int32s [| 3; 4 |] [| 0; 1; 2; 3; -1; -1; -1; -1; 0; 1; 2; 4 |])
+         ~row:(int64s [| 2 |] [| 2; 0 |])
+         ~pos:(int64s [| 2; 1 |] [| 3; 3 |])
+         ~table:(int64s [| 3; 4 |] [| 0; 1; 2; 3; -1; -1; -1; -1; 0; 1; 2; 4 |])
          ())
       (Nx.concatenate ~axis:0
          [ Nx.slice [ R (1, 2) ] tails; Nx.slice [ R (0, 1) ] tails ])
@@ -1489,9 +1489,9 @@ let test_cached_addresses () =
   (* A lane whose row is outside the table is padding, whatever its positions:
      it stores nothing and its outputs are finite. *)
   let lost row =
-    Cache_index.make ~row:(int32s [| 1 |] [| row |])
-      ~pos:(int32s [| 1; 2 |] [| 0; 1 |])
-      ~table:(int32s [| 2; 4 |] [| 0; 1; 2; 3; 0; 1; 2; 3 |])
+    Cache_index.make ~row:(int64s [| 1 |] [| row |])
+      ~pos:(int64s [| 1; 2 |] [| 0; 1 |])
+      ~table:(int64s [| 2; 4 |] [| 0; 1; 2; 3; 0; 1; 2; 3 |])
       ()
   in
   List.iter
@@ -1723,8 +1723,8 @@ let test_cached_out_of_range_under_jit () =
   in
   let index =
     Cache_index.make
-      ~pos:(int32s [| 1; 3 |] [| -1; 1; 2 |])
-      ~table:(int32s [| 1; 4 |] [| 0; -1; 99; 3 |])
+      ~pos:(int64s [| 1; 3 |] [| -1; 1; 2 |])
+      ~table:(int64s [| 1; 4 |] [| 0; -1; 99; 3 |])
       ()
   in
   let eager = step { x; index; c = cache 4 } in
@@ -1803,7 +1803,7 @@ let test_attend_sinks_per_query_head () =
   let mask = causal 5 in
   (* Key-value head [h] repeated for query heads [2 h] and [2 h + 1]. *)
   let repeat t =
-    Nx.take ~axis:1 ~indices:(Nx.create Nx.int32 [| 4 |] [| 0l; 0l; 1l; 1l |]) t
+    Nx.take ~axis:1 ~indices:(Nx.create Nx.int64 [| 4 |] [| 0L; 0L; 1L; 1L |]) t
   in
   let direct =
     sink_reference ~mask ~scale:0.8
@@ -1904,15 +1904,15 @@ let test_cached_rejects_bad_geometry () =
        "Cache_index.make: pos must have shape [batch; seq] and table [rows; \
         context], neither of them empty") (fun () ->
       Cache_index.make
-        ~pos:(int32s [| 2 |] [| 0; 0 |])
-        ~table:(int32s [| 2; 4 |] [| 0; 1; 2; 3; 4; 5; 6; 7 |])
+        ~pos:(int64s [| 2 |] [| 0; 0 |])
+        ~table:(int64s [| 2; 4 |] [| 0; 1; 2; 3; 4; 5; 6; 7 |])
         ());
   raises
     (Invalid_argument
        "Cache_index.make: a table of 1 rows for 2 lanes needs ~row") (fun () ->
       Cache_index.make
-        ~pos:(int32s [| 2; 1 |] [| 0; 0 |])
-        ~table:(int32s [| 1; 4 |] [| 0; 1; 2; 3 |])
+        ~pos:(int64s [| 2; 1 |] [| 0; 0 |])
+        ~table:(int64s [| 1; 4 |] [| 0; 1; 2; 3 |])
         ());
   raises
     (Invalid_argument

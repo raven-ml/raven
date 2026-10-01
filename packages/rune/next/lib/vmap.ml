@@ -106,17 +106,17 @@ let update m x starts v =
         Nx.reshape [| m.size; 1 |] (Nx.slice [ Nx.A; Nx.I axis ] starts)
       in
       let rel =
-        Nx.sub (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1)) start
+        Nx.sub (Nx.reshape [| 1; n |] (Nx.arange Nx.int64 0 n 1)) start
       in
       let within =
         Nx.bitwise_and
-          (Nx.greater_equal_s rel 0l)
-          (Nx.less_s rel (Int32.of_int len))
+          (Nx.greater_equal_s rel 0L)
+          (Nx.less_s rel (Int64.of_int len))
       in
       let last =
         (len - 1) [@mutate off "an index past the window is masked by within"]
       in
-      let index = Nx.clamp ~min:0l ~max:(Int32.of_int last) rel in
+      let index = Nx.clamp ~min:0L ~max:(Int64.of_int last) rel in
       let along =
         Array.init (rank + 1) (fun d ->
             if d = 0 then m.size else if d = axis + 1 then n else 1)
@@ -139,7 +139,7 @@ let update m x starts v =
     | Some inside -> Nx.where inside !window x
     | None -> assert false (* Traced starts index at least one axis. *)
   end
-  else eval (Update (x, Nx.pad [| (1, 0) |] 0l starts, v))
+  else eval (Update (x, Nx.pad [| (1, 0) |] 0L starts, v))
 
 (* A product broadcasts its operands' leading axes positionally, so an operand
    with leading axes of its own lifts both to one leading rank, the map's axis

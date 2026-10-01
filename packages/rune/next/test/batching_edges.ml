@@ -15,6 +15,7 @@ let f64 = Nx.float64
 let vec a = Nx.create f64 [| Array.length a |] a
 let mat r c a = Nx.create f64 [| r; c |] a
 let int32s shape a = Nx.create Nx.int32 shape (Array.map Int32.of_int a)
+let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 
 (* [loop f xs] is [f] of each row of [xs], stacked. *)
 let loop f xs =
@@ -53,7 +54,7 @@ let integer_operands =
          |]);
     is_the_loop "batched indices alone gather per lane"
       (fun i -> Op.eval (Gather (0, i, data)))
-      (int32s [| 3; 2 |] [| 0; 3; 2; 2; -1; 1 |]);
+      (int64s [| 3; 2 |] [| 0; 3; 2; 2; -1; 1 |]);
     is_the_loop "batched indices alone scatter per lane"
       (fun i ->
         Op.eval
@@ -66,10 +67,10 @@ let integer_operands =
                updates = vec [| 1.; 10. |];
                into = data;
              }))
-      (int32s [| 3; 2 |] [| 0; 3; 2; 2; 1; 0 |]);
+      (int64s [| 3; 2 |] [| 0; 3; 2; 2; 1; 0 |]);
     is_the_loop "batched starts alone write each lane's window"
       (fun s -> Op.eval (Update (data, s, vec [| 7.; 8. |])))
-      (int32s [| 4; 1 |] [| 0; 1; 2; 1 |]);
+      (int64s [| 4; 1 |] [| 0; 1; 2; 1 |]);
     is_the_loop "batched starts alone write each lane's window of a matrix"
       (fun s ->
         Op.eval
@@ -77,9 +78,9 @@ let integer_operands =
              ( mat 3 3 (Array.init 9 float_of_int),
                s,
                mat 2 2 [| -1.; -2.; -3.; -4. |] )))
-      (int32s [| 4; 2 |] [| 0; 0; 1; 0; 0; 1; 1; 1 |]);
+      (int64s [| 4; 2 |] [| 0; 0; 1; 0; 0; 1; 1; 1 |]);
     test "batched starts and values write each lane's window" (fun () ->
-        let starts = int32s [| 3; 1 |] [| 2; 0; 1 |] in
+        let starts = int64s [| 3; 1 |] [| 2; 0; 1 |] in
         let values = mat 3 2 [| 7.; 8.; 9.; 10.; 11.; 12. |] in
         let write s v = Op.eval (Update (data, s, v)) in
         let expected =
@@ -166,7 +167,7 @@ let compositions =
       (Rune.grad' (fun x ->
            Nx.sum
              (Nx.take ~axis:0
-                ~indices:(int32s [| 3 |] [| 2; 0; 2 |])
+                ~indices:(int64s [| 3 |] [| 2; 0; 2 |])
                 (Nx.mul x x))))
       (xs ());
     close_to_the_loop "per-sample gradients of a sliding window"

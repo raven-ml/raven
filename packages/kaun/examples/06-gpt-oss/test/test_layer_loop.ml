@@ -139,13 +139,13 @@ let test_blocks_read_weights_and_reuse_caches () =
     caches;
   let cached = Layer_loop.cached ~devices:[ Rune.device "CPU:1" ] cfg p in
   let index = Cache_index.rows ~context [| n0 |] in
-  let ids = Nx.create Nx.int32 [| 1; n0 |] (Array.init n0 Int32.of_int) in
+  let ids = Nx.create Nx.int64 [| 1; n0 |] (Array.init n0 Int64.of_int) in
   let x, caches = cached caches index ids in
   let x = ref x and caches = ref caches and index = ref index in
   let pool = Nx.nbytes (List.hd !caches).Attention.Cache.keys in
   for step = 1 to steps do
     let msg = Printf.sprintf "step %d" step in
-    let token = Nx.create Nx.int32 [| 1; 1 |] [| Int32.of_int step |] in
+    let token = Nx.create Nx.int64 [| 1; 1 |] [| Int64.of_int step |] in
     index := Cache_index.advance !index;
     let index_bytes =
       Nx.Ptree.fold Cache_index.ptree (fun _ t n -> n + Nx.nbytes t) !index 0

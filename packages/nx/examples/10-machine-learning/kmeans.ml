@@ -30,7 +30,7 @@ let kmeanspp data k =
   for _ = 1 to k - 1 do
     let min_d = min ~axes:[ 1 ] (sq_distances data !centroids) in
     let chosen =
-      Int32.to_int (item [] (categorical (log (clamp ~min:1e-30 min_d))))
+      Int64.to_int (item [] (categorical (log (clamp ~min:1e-30 min_d))))
     in
     centroids :=
       concatenate ~axis:0 [ !centroids; reshape [| 1; d |] (get [ chosen ] data) ]
@@ -48,7 +48,7 @@ let () =
   Printf.printf "Data: %d points, %d features, %d clusters\n\n" n d k;
 
   let centroids = ref (kmeanspp data k) in
-  let labels = ref (zeros Int32 [| n |]) in
+  let labels = ref (zeros Int64 [| n |]) in
   let max_iter = 100 in
   let tol = 1e-6 in
   let converged = ref false in
@@ -58,7 +58,7 @@ let () =
 
     let old = !centroids in
     for c = 0 to k - 1 do
-      let mask = cast Float64 (equal !labels (scalar Int32 (Int32.of_int c))) in
+      let mask = cast Float64 (equal !labels (scalar Int64 (Int64.of_int c))) in
       let count = item [] (sum mask) in
       if count > 0.0 then begin
         let total = sum ~axes:[ 0 ] (mul data (unsqueeze ~axes:[ 1 ] mask)) in
@@ -77,7 +77,7 @@ let () =
   for c = 0 to k - 1 do
     let count =
       item []
-        (sum (cast Float64 (equal !labels (scalar Int32 (Int32.of_int c)))))
+        (sum (cast Float64 (equal !labels (scalar Int64 (Int64.of_int c)))))
     in
     Printf.printf "  Cluster %d: %.0f points\n" c count
   done;

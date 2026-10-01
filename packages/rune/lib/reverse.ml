@@ -418,12 +418,12 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
                           let rank =
                             T.broadcast_to shp
                               (T.reshape along
-                                 (T.arange T.int32 0 shp.(axis) 1))
+                                 (T.arange T.int64 0 shp.(axis) 1))
                           in
                           let winner =
                             scatter ~mode:`Set ~unique:false ~axis ~indices
                               ~updates:rank
-                              (T.zeros T.int32 (T.shape into))
+                              (T.zeros T.int64 (T.shape into))
                           in
                           T.where
                             (T.equal (gather ~axis indices winner) rank)
@@ -471,7 +471,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
                     for ax = 0 to rank - 1 do
                       let len = vshape.(ax) in
                       let start = T.reshape [||] (T.slice [ I ax ] starts) in
-                      let idx = T.add (T.arange T.int32 0 len 1) start in
+                      let idx = T.add (T.arange T.int64 0 len 1) start in
                       let shp = Array.copy (T.shape !win) in
                       shp.(ax) <- len;
                       let rs = Array.make rank 1 in

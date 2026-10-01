@@ -95,8 +95,8 @@ let close ~tol name expected actual =
 
 let ids_tensor rows =
   let batch = Array.length rows and seq = Array.length rows.(0) in
-  Nx.create Nx.int32 [| batch; seq |]
-    (Array.map Int32.of_int (Array.concat (Array.to_list rows)))
+  Nx.create Nx.int64 [| batch; seq |]
+    (Array.map Int64.of_int (Array.concat (Array.to_list rows)))
 
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
@@ -115,7 +115,7 @@ let validate (type b) ~device ~tol ~exact fx cfg
     compiled (fun ids -> to32 (Llama.logits cfg p (Llama.hidden cfg p ids))) ids
   in
   let argmax =
-    Array.map Int32.to_int (Nx.to_array (Nx.argmax ~axis:2 logits))
+    Array.map Int64.to_int (Nx.to_array (Nx.argmax ~axis:2 logits))
   in
   let reference = ints (mem "argmax_per_position" fx) in
   if exact then check "argmax of every position" (argmax = reference) ""
@@ -176,7 +176,7 @@ let validate (type b) ~device ~tol ~exact fx cfg
     blocks;
   if not !ok then Printf.printf "first disagreement: block %d\n%!" !worst_block;
   (* The decode contract on real weights: chunks through the caches. *)
-  let slots = Nx.create Nx.int32 [| 1; n |] (Array.init n Int32.of_int) in
+  let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
   let _, hs, _ =
     List.fold_left
       (fun (at, hs, caches) len ->
@@ -184,8 +184,8 @@ let validate (type b) ~device ~tol ~exact fx cfg
         if len = 0 then (at, hs, caches)
         else
           let pos =
-            Nx.create Nx.int32 [| 1; len |]
-              (Array.init len (fun i -> Int32.of_int (at + i)))
+            Nx.create Nx.int64 [| 1; len |]
+              (Array.init len (fun i -> Int64.of_int (at + i)))
           in
           let h, caches =
             Llama.cached cfg p caches

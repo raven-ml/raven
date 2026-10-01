@@ -540,7 +540,7 @@ let test_lu_matches_eager () =
     let perm, _, _ = Nx.lu m in
     perm
   in
-  equal ~msg:"row order" (array int32)
+  equal ~msg:"row order" (array int64)
     (Nx.to_array (order a))
     (Nx.to_array (Rune.jit' order a));
   check_arr ~msg:"det" (to_arr (Nx.det a)) (Rune.jit' Nx.det a)
@@ -924,14 +924,14 @@ let test_scan_carry_written_in_place () =
         let h = Nx.tanh (Nx.add_s c.h 0.25) in
         let cache =
           Nx.set
-            [ D (l, 1); D (Nx.mul_s l 3l, 1) ]
+            [ D (l, 1); D (Nx.mul_s l 3L, 1) ]
             (Nx.reshape [| 1; 1; d |] h)
             c.cache
         in
         let y = if read_old then Nx.sum c.cache else Nx.sum h in
         ({ Cache_carry.h; cache }, y))
       ~init:c
-      (Nx.arange Nx.int32 0 layers 1)
+      (Nx.arange Nx.int64 0 layers 1)
   in
   let c0 =
     {
@@ -998,7 +998,7 @@ let test_scan_reads_rows_in_place () =
     Nx.create f32 [| 4; 8; 4; 4 |]
       (Array.init 512 (fun i -> Float.of_int (i * 7 mod 13) /. 13.0))
   in
-  let rows = Nx.create Nx.int32 [| 2 |] [| 1l; 5l |] in
+  let rows = Nx.create Nx.int64 [| 2 |] [| 1L; 5L |] in
   let step x w =
     let w = Nx.take ~axis:0 ~indices:rows w in
     let y = Nx.sum ~axes:[ 0 ] (Nx.matmul w (Nx.reshape [| 4; 1 |] x)) in
@@ -1191,7 +1191,7 @@ let test_grad_through_scan_external_input () =
 
 (* A three-leaf input structure. *)
 (* A tensor with a run-time window start: the shape of every decode step. *)
-type windowed = { x : Nx.float32_t; pos : Nx.int32_t }
+type windowed = { x : Nx.float32_t; pos : Nx.int64_t }
 
 module Windowed = struct
   type _ t = windowed
@@ -1204,7 +1204,7 @@ module Windowed = struct
 end
 
 let windowed_ptree = Nx.Ptree.instantiate (module Windowed)
-let pos_at i = Nx.scalar Nx.int32 (Int32.of_int i)
+let pos_at i = Nx.scalar Nx.int64 (Int64.of_int i)
 
 (* One compiled program serves every window position: the start is read on every
    call, so the second call must write where its own [pos] says, not where the
@@ -2224,7 +2224,7 @@ let test_fp8_long_scans () =
    gathered. Reduce collapse lifted the subtraction out of the comparison and
    back in until it detected a rewrite cycle. *)
 let test_gather_of_narrowed_comparison () =
-  let at = Nx.create Nx.int32 [| 1 |] [| 1l |] in
+  let at = Nx.create Nx.int64 [| 1 |] [| 1L |] in
   let narrowed x = Nx.cast Nx.int32 (Nx.sub x (Nx.scalar Nx.int64 1L)) in
   let largest k = Nx.equal k (Nx.scalar Nx.int32 Int32.max_int) in
   let f x =
@@ -2243,7 +2243,7 @@ let test_gather_of_narrowed_comparison () =
 (* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
    keeps the last update, [`Add] accumulates both on top of [x]'s value. *)
 let test_scatter_matches_eager () =
-  let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 1l |] in
+  let idx = Nx.create Nx.int64 [| 2; 2 |] [| 2L; 0L; 1L; 1L |] in
   let f mode x =
     Nx.scatter ~mode ~axis:1 ~indices:idx
       ~values:(Nx.slice [ Nx.A; Nx.R (0, 2) ] x)
@@ -2258,7 +2258,7 @@ let test_scatter_matches_eager () =
 (* The compiled scatter ranges over the updates, not over the destination. Each
    case is held to the eager result. *)
 
-let i32 shape xs = Nx.create Nx.int32 shape (Array.map Int32.of_int xs)
+let i64 shape xs = Nx.create Nx.int64 shape (Array.map Int64.of_int xs)
 
 let iota shape =
   let n = Array.fold_left ( * ) 1 shape in
@@ -2275,11 +2275,11 @@ let check_scatter ~msg ?unique_indices ~axis ~indices ~values t =
 
 let test_scatter_duplicates () =
   check_scatter ~msg:"rows aimed at one row twice" ~axis:0
-    ~indices:(i32 [| 3; 3 |] [| 2; 0; 1; 2; 3; 1; 0; 0; 1 |])
+    ~indices:(i64 [| 3; 3 |] [| 2; 0; 1; 2; 3; 1; 0; 0; 1 |])
     ~values:(iota [| 3; 3 |])
     (iota [| 4; 3 |]);
   check_scatter ~msg:"every update of a lane aims at one cell" ~axis:1
-    ~indices:(i32 [| 2; 3 |] [| 1; 1; 1; 3; 3; 3 |])
+    ~indices:(i64 [| 2; 3 |] [| 1; 1; 1; 3; 3; 3 |])
     ~values:(iota [| 2; 3 |])
     (iota [| 2; 4 |])
 
@@ -2289,19 +2289,19 @@ let test_scatter_duplicates () =
 let test_scatter_many_duplicates_in_order () =
   let updates = 4096 and width = 8 in
   check_scatter ~msg:"4096 updates aimed at one row" ~axis:0
-    ~indices:(i32 [| updates; width |] (Array.make (updates * width) 1))
+    ~indices:(i64 [| updates; width |] (Array.make (updates * width) 1))
     ~values:(iota [| updates; width |])
     (Nx.zeros f32 [| 2; width |])
 
 let test_scatter_middle_axis () =
   check_scatter ~msg:"middle axis" ~axis:1
-    ~indices:(i32 [| 2; 2; 3 |] [| 3; 0; 1; 3; 2; 1; 0; 0; 0; 1; 2; 3 |])
+    ~indices:(i64 [| 2; 2; 3 |] [| 3; 0; 1; 3; 2; 1; 0; 0; 0; 1; 2; 3 |])
     ~values:(iota [| 2; 2; 3 |])
     (iota [| 2; 4; 3 |])
 
 let test_scatter_unique_indices () =
   check_scatter ~msg:"unique" ~unique_indices:true ~axis:0
-    ~indices:(i32 [| 2; 2 |] [| 3; 0; 1; 2 |])
+    ~indices:(i64 [| 2; 2 |] [| 3; 0; 1; 2 |])
     ~values:(iota [| 2; 2 |])
     (iota [| 4; 2 |])
 
@@ -2311,7 +2311,7 @@ let test_scatter_unique_indices () =
 let test_scatter_unique_indices_broken_at_one_row () =
   let rows = 6 and width = 8 and repeated = 5 in
   let targets = [| 2; repeated; 0; repeated; repeated; 3 |] in
-  let indices = Nx.broadcast_to [| rows; width |] (i32 [| rows; 1 |] targets) in
+  let indices = Nx.broadcast_to [| rows; width |] (i64 [| rows; 1 |] targets) in
   let values = iota [| rows; width |] in
   let f t = Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values t in
   let t = Nx.zeros f32 [| rows; width |] in
@@ -2355,7 +2355,7 @@ let check_eager_and_compiled ~msg expected f x =
   check_arr ~msg:(msg ^ ", compiled") expected (Rune.jit' f x)
 
 let test_scatter_out_of_range_dropped () =
-  let indices = i32 [| 4; 2 |] [| -1; 4; 1; -7; 2; 1; 5; -1 |] in
+  let indices = i64 [| 4; 2 |] [| -1; 4; 1; -7; 2; 1; 5; -1 |] in
   let values = iota [| 4; 2 |] in
   let f mode t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
   check_eager_and_compiled ~msg:"set"
@@ -2371,18 +2371,64 @@ let test_gather_out_of_range_reads_zero () =
   let table = iota [| 4; 2 |] in
   check_eager_and_compiled ~msg:"take rows"
     [| 5.0; 6.0; 0.0; 0.0; 0.0; 0.0 |]
-    (Nx.take ~axis:0 ~indices:(i32 [| 3 |] [| 2; -1; 4 |]))
+    (Nx.take ~axis:0 ~indices:(i64 [| 3 |] [| 2; -1; 4 |]))
     table;
   check_eager_and_compiled ~msg:"take_along_axis"
     [| 2.0; 0.0; 0.0; 4.0; 0.0; 5.0; 0.0; 0.0 |]
     (Nx.take_along_axis ~axis:1
-       ~indices:(i32 [| 4; 2 |] [| 1; 2; -1; 1; 9; 0; -3; 5 |]))
+       ~indices:(i64 [| 4; 2 |] [| 1; 2; -1; 1; 9; 0; -3; 5 |]))
     table
+
+(* Indices along an axis of 4, some 2^32 from one of its positions, which a
+   truncation to 32 bits would bring back to it. The indices are an argument, so
+   one compiled program serves every case. *)
+let far_indices =
+  let far = 1 lsl 32 in
+  let index =
+    Gen.frequency
+      [
+        (2, Gen.int_range (-2) 5);
+        ( 1,
+          let open Gen in
+          let+ i = int_range 0 3
+          and+ k = of_list ~pp:Format.pp_print_int [ -2; -1; 1; 2 ] in
+          i + (k * far) );
+      ]
+  in
+  let scatter mode indices t =
+    Nx.scatter ~mode ~axis:0
+      ~indices:(Nx.broadcast_to [| 6; 2 |] (Nx.reshape [| 6; 1 |] indices))
+      ~values:(iota [| 6; 2 |])
+      t
+  in
+  let both name f =
+    (name, f, lazy (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f))
+  in
+  let ops =
+    [
+      both "take" (fun indices t -> Nx.take ~axis:0 ~indices t);
+      both "scatter set" (scatter `Set);
+      both "scatter add" (scatter `Add);
+    ]
+  in
+  prop "gather and scatter under jit agree with eager at indices beyond ±2^32"
+    ~examples:[ [| far + 1; 1 - far; 2; -1; 4; far |] ]
+    (Gen.array ~size:(Gen.constant 6) index)
+    (fun idx ->
+      cover "an index 2^32 from a position"
+        (Array.exists (fun k -> Int.abs k >= far / 2) idx);
+      let indices = i64 [| 6 |] idx and t = iota [| 4; 2 |] in
+      List.iter
+        (fun (msg, f, compiled) ->
+          equal ~msg (array float_exact)
+            (to_arr (f indices t))
+            (to_arr (Lazy.force compiled indices t)))
+        ops)
 
 (* A dropped update's gradient is zero, the template's is zero only where an
    update landed, and a read of zero passes nothing back to the table. *)
 let test_grad_out_of_range_indices () =
-  let indices = i32 [| 4 |] [| -1; 2; 4; 0 |] in
+  let indices = i64 [| 4 |] [| -1; 2; 4; 0 |] in
   let weights = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
   let through ~values t =
     Nx.sum (Nx.mul weights (Nx.scatter ~axis:0 ~indices ~values t))
@@ -2399,12 +2445,12 @@ let test_grad_out_of_range_indices () =
     (vec32 [| 1.0; 1.0; 1.0; 1.0 |])
 
 let test_scatter_payload_dtypes () =
-  let indices = i32 [| 4 |] [| 2; 0; 2; 1 |] in
+  let indices = i64 [| 4 |] [| 2; 0; 2; 1 |] in
   List.iter
     (fun mode ->
-      let values = i32 [| 4 |] [| 5; 7; 9; 11 |] in
+      let values = Nx.create Nx.int32 [| 4 |] [| 5l; 7l; 9l; 11l |] in
       let ints t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
-      let t = i32 [| 3 |] [| 100; 200; 300 |] in
+      let t = Nx.create Nx.int32 [| 3 |] [| 100l; 200l; 300l |] in
       check_arr ~msg:"int32"
         (to_arr (Nx.cast f32 (ints t)))
         (Nx.cast f32 (Rune.jit' ints t));
@@ -2420,7 +2466,7 @@ let test_scatter_payload_dtypes () =
     [ `Set; `Add ]
 
 let test_scatter_under_vmap () =
-  let indices = i32 [| 3; 2 |] [| 1; 0; 1; 2; 0; 0 |] in
+  let indices = i64 [| 3; 2 |] [| 1; 0; 1; 2; 0; 0 |] in
   let values = iota [| 3; 2 |] and t = iota [| 3; 2 |] in
   let batch x = Nx.stack ~axis:0 [ x; Nx.add x x ] in
   let check ~msg f x =
@@ -2437,7 +2483,7 @@ let test_scatter_under_vmap () =
         (fun values -> Nx.scatter ~mode ~axis:0 ~indices ~values t)
         (batch values))
     [ ("set", `Set); ("add", `Add) ];
-  let rows = i32 [| 2; 3; 2 |] [| 1; 0; 1; 2; 0; 0; 2; 2; 2; 1; 0; 1 |] in
+  let rows = i64 [| 2; 3; 2 |] [| 1; 0; 1; 2; 0; 0; 2; 2; 2; 1; 0; 1 |] in
   let f indices = Nx.scatter ~mode:`Add ~axis:0 ~indices ~values t in
   check_arr ~msg:"over the indices"
     (to_arr (Rune.vmap' f rows))
@@ -2446,7 +2492,7 @@ let test_scatter_under_vmap () =
 (* The pullback of [take] accumulates a row's cotangent once per occurrence of
    its token. *)
 let test_grad_of_take_with_repeated_tokens () =
-  let indices = i32 [| 6 |] [| 3; 1; 3; 3; 0; 1 |] in
+  let indices = i64 [| 6 |] [| 3; 1; 3; 3; 0; 1 |] in
   let weights = iota [| 6; 2 |] in
   let loss table = Nx.sum (Nx.mul weights (Nx.take ~axis:0 ~indices table)) in
   let table = iota [| 5; 2 |] in
@@ -2463,7 +2509,7 @@ let test_take_large_table_matches_eager () =
       (Array.init (rows * 2) (fun i -> float_of_int (i mod 1000)))
   in
   let indices =
-    Nx.create Nx.int32 [| 4 |] [| 0l; 65_535l; 40_000l; 32_768l |]
+    Nx.create Nx.int64 [| 4 |] [| 0L; 65_535L; 40_000L; 32_768L |]
   in
   let f table = Nx.take ~axis:0 ~indices table in
   check_arr ~msg:"take" (to_arr (f table)) (Rune.jit' f table)
@@ -3817,7 +3863,7 @@ let test_outputs_never_write_into_inputs () =
 let test_consume_reuses_window_write () =
   let v = vec32 [| 9.0; 8.0 |] in
   let f { x; pos } =
-    { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2l }
+    { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2L }
   in
   let step = consume windowed_ptree f in
   let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
@@ -3836,7 +3882,7 @@ let test_consume_reuses_window_write () =
 (* The slot-pool write of a key-value cache: every slot takes a new row or keeps
    its old one, and the same program reads the written pool back through an
    index. The read follows the store, so the pool still reuses its storage. *)
-type pool = { slots : Nx.float32_t; writer : Nx.int32_t; read : Nx.float32_t }
+type pool = { slots : Nx.float32_t; writer : Nx.int64_t; read : Nx.float32_t }
 
 module Pool = struct
   type _ t = pool
@@ -3854,17 +3900,17 @@ let pool_ptree = Nx.Ptree.instantiate (module Pool)
 let test_consume_reuses_pool_read_after_write () =
   let n = 1024 in
   let rows = vec32 [| 10.0; 20.0; 30.0 |] in
-  let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
+  let window = Nx.create Nx.int64 [| 4 |] [| 5L; 2L; 7L; 0L |] in
   let f { slots; writer; read = _ } =
-    let fresh = Nx.take ~axis:0 ~indices:(Nx.maximum_s writer 0l) rows in
-    let slots = Nx.where (Nx.greater_equal_s writer 0l) fresh slots in
+    let fresh = Nx.take ~axis:0 ~indices:(Nx.maximum_s writer 0L) rows in
+    let slots = Nx.where (Nx.greater_equal_s writer 0L) fresh slots in
     { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
   in
   let step = consume pool_ptree f in
   let writer =
-    Nx.create Nx.int32 [| n |]
+    Nx.create Nx.int64 [| n |]
       (Array.init n (fun i ->
-           match i with 2 -> 0l | 5 -> 1l | 7 -> 2l | _ -> -1l))
+           match i with 2 -> 0L | 5 -> 1L | 7 -> 2L | _ -> -1L))
   in
   let s =
     ref
@@ -3918,7 +3964,7 @@ let test_consume_alternates_two_programs () =
 let scatter_pool ~consumes =
   let n = 1024 in
   let rows = Nx.create f32 [| 4; 1 |] [| 10.0; 20.0; 30.0; 40.0 |] in
-  let window = Nx.create Nx.int32 [| 4 |] [| 5l; 2l; 7l; 0l |] in
+  let window = Nx.create Nx.int64 [| 4 |] [| 5L; 2L; 7L; 0L |] in
   let f { slots; writer; read = _ } =
     let slots =
       Nx.scatter ~axis:0
@@ -3935,7 +3981,7 @@ let scatter_pool ~consumes =
       Rune.jit ~devices:[ cpu1 ] Nx.Ptree.(pool_ptree @-> returns pool_ptree) f
   in
   (* Tokens 1 and 3 aim at slot 5: the later one wins. Token 2 has no slot. *)
-  let writer = Nx.create Nx.int32 [| 4 |] [| 2l; 5l; -1l; 5l |] in
+  let writer = Nx.create Nx.int64 [| 4 |] [| 2L; 5L; -1L; 5L |] in
   let first =
     { slots = vec32 (Array.make n 1.0); writer; read = vec32 [| 0. |] }
   in
@@ -4040,7 +4086,7 @@ let test_a_consumed_argument_between_read_ones () =
    takes the pool's storage. *)
 let test_scatter_of_values_read_from_the_pool () =
   let n = 8 in
-  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 1l |] in
+  let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
   let f x =
     let values = Nx.mul_s (Nx.slice [ Nx.R (6, 8) ] (Nx.flip x)) 10.0 in
     Nx.scatter ~axis:0 ~indices ~values x
@@ -4055,7 +4101,7 @@ let test_scatter_of_values_read_from_the_pool () =
 (* The consumed pool is itself the values: the kernel would read through the
    storage it writes, so the output must not take it. *)
 let test_scatter_of_the_pool_into_itself () =
-  let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 2l; 1l; 0l |] in
+  let indices = Nx.create Nx.int64 [| 4 |] [| 3L; 2L; 1L; 0L |] in
   let f x = Nx.scatter ~axis:0 ~indices ~values:x x in
   let step = consume' f in
   let x () = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -4067,7 +4113,7 @@ let test_scatter_of_the_pool_into_itself () =
    the write: the output must not take the pool's storage, and the reader still
    sees the old value. *)
 let test_scatter_refuses_a_later_reader_of_the_pool () =
-  let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
+  let indices = Nx.create Nx.int64 [| 2 |] [| 1L; 3L |] in
   let values = vec32 [| 50.0; 70.0 |] in
   let f (p : Pair.pair) =
     let u = Nx.scatter ~axis:0 ~indices ~values p.u in
@@ -4089,7 +4135,7 @@ let test_scatter_refuses_a_later_reader_of_the_pool () =
 (* A reader of the old pool scheduled with the write: the output keeps the new
    value and the reader the old one, whether or not storage was reused. *)
 let test_scatter_beside_a_reader_of_the_old_value () =
-  let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
+  let indices = Nx.create Nx.int64 [| 2 |] [| 1L; 3L |] in
   let values = vec32 [| 50.0; 70.0 |] in
   let f (p : Pair.pair) =
     {
@@ -4867,7 +4913,7 @@ let test_borrowed_storage_is_never_lent () =
     ~finally:(fun () -> remove_file path)
     (fun () ->
       let reused () = (Rune.jit_stats ()).reused_bytes in
-      let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+      let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
       let values = Nx.create Nx.int32 [| 2 |] [| 7l; 9l |] in
       let step = consume' (fun x -> Nx.add x x) in
       let write =
@@ -5167,7 +5213,7 @@ let test_step_refuses_a_storage_both_arguments_reach () =
 (* An indexed write into a read leaf lands in fresh storage: the leaf keeps its
    value. *)
 let test_step_write_into_a_read_leaf () =
-  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+  let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
   let step =
     Rune.jit ~devices:[ cpu1 ]
       Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
@@ -5383,6 +5429,7 @@ let tests =
           test_scatter_out_of_range_dropped;
         test "gathers read zero outside the axis"
           test_gather_out_of_range_reads_zero;
+        far_indices;
         test "gradients through indices outside the axis"
           test_grad_out_of_range_indices;
         test "scatter carries int and bfloat16 payloads"

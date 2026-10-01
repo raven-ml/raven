@@ -279,7 +279,8 @@ let lu a =
   let x = Lower_arith.widen a in
   let batch, m, n = matrix x in
   let rank = Ops.ndim x in
-  let rows = row_index m and cols = column_index n in
+  (* The rows are [int64], as the pivots and the row order are. *)
+  let rows = Ops.cast (row_index m) Int64 and cols = column_index n in
   (* [swap u j p] exchanges row [j] and row [p], one per matrix, of [u]. *)
   let swap u j p =
     let _, _, c = matrix u in

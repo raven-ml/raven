@@ -34,9 +34,8 @@ let check_predictions ~fn predictions labels =
   if Array.length flat = 0 then invalid_argf fn "there are no examples";
   Array.iter
     (fun l ->
-      let l = Int32.to_int l in
-      if l < 0 || l >= classes then
-        invalid_argf fn "label %d is out of range [0;%d]" l (classes - 1))
+      if Int64.compare l 0L < 0 || Int64.compare l (Int64.of_int classes) >= 0
+      then invalid_argf fn "label %Ld is out of range [0;%d]" l (classes - 1))
     flat;
   (classes, flat)
 
@@ -78,7 +77,7 @@ let confusion_counts ~fn predictions labels =
   let counts = Array.make (classes * classes) 0 in
   Array.iteri
     (fun i l ->
-      let cell = (Int32.to_int l * classes) + Int32.to_int predicted.(i) in
+      let cell = (Int64.to_int l * classes) + Int64.to_int predicted.(i) in
       counts.(cell) <- counts.(cell) + 1)
     labels;
   (classes, counts)
@@ -150,9 +149,9 @@ let auc_roc scores labels =
   let positive =
     Array.map
       (fun l ->
-        if l <> 0l && l <> 1l then
-          invalid_argf fn "label %ld is neither 0 nor 1" l;
-        l = 1l)
+        if l <> 0L && l <> 1L then
+          invalid_argf fn "label %Ld is neither 0 nor 1" l;
+        l = 1L)
       (Nx.to_array labels)
   in
   let n = Array.length s in

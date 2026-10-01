@@ -8,7 +8,7 @@ open Kaun
 
 let vec xs = Nx.create Nx.float64 [| Array.length xs |] xs
 let mat rows cols xs = Nx.create Nx.float64 [| rows; cols |] xs
-let labels ls = Nx.create Nx.int32 [| Array.length ls |] ls
+let labels ls = Nx.create Nx.int64 [| Array.length ls |] ls
 let close ?(eps = 1e-9) expected l = equal (float eps) expected (Nx.item [] l)
 
 let close_grad ?(eps = 1e-9) expected g =
@@ -157,11 +157,11 @@ let softmax_ce_sparse_tests =
         close (log 2.)
           (Loss.softmax_cross_entropy_sparse
              (mat 1 2 [| 0.; 0. |])
-             (labels [| 0l |])));
+             (labels [| 0L |])));
     prop "matches the dense loss on one-hot targets" logits_and_labels
       (fun (xs, ls) ->
         let logits = mat 2 3 (Array.of_list xs) in
-        let ls = labels (Array.of_list (List.map Int32.of_int ls)) in
+        let ls = labels (Array.of_list (List.map Int64.of_int ls)) in
         let one_hot = Nx.cast Nx.float64 (Nx.one_hot ~num_classes:3 ls) in
         close ~eps:1e-9
           (Nx.item [] (Loss.softmax_cross_entropy logits one_hot))
@@ -170,18 +170,18 @@ let softmax_ce_sparse_tests =
         close (log 2.)
           (Loss.softmax_cross_entropy_sparse
              (vec [| 0.; 0. |])
-             (Nx.scalar Nx.int32 1l)));
+             (Nx.scalar Nx.int64 1L)));
     test "is finite at extreme incorrect logits" (fun () ->
         close 1000.
           (Loss.softmax_cross_entropy_sparse
              (mat 1 2 [| 1000.; 0. |])
-             (labels [| 1l |])));
+             (labels [| 1L |])));
     test "sum reduction adds per-example losses" (fun () ->
         close
           (2. *. log 2.)
           (Loss.softmax_cross_entropy_sparse ~reduction:`Sum
              (mat 2 2 [| 0.; 0.; 0.; 0. |])
-             (labels [| 0l; 1l |])));
+             (labels [| 0L; 1L |])));
     test "rejects labels that keep the class axis" (fun () ->
         raises
           (Invalid_argument
@@ -189,7 +189,7 @@ let softmax_ce_sparse_tests =
               match logits batch shape [2]") (fun () ->
             Loss.softmax_cross_entropy_sparse
               (mat 2 3 (Array.make 6 0.))
-              (Nx.create Nx.int32 [| 2; 3 |] (Array.make 6 0l))));
+              (Nx.create Nx.int64 [| 2; 3 |] (Array.make 6 0L))));
   ]
 
 (* Gradients. Rune.check_grads compares reverse-mode gradients against central
@@ -268,7 +268,7 @@ let grad_tests =
     test "softmax_cross_entropy_sparse gradient matches finite differences"
       (fun () ->
         grads_ok
-          (fun z -> Loss.softmax_cross_entropy_sparse z (labels [| 2l; 0l |]))
+          (fun z -> Loss.softmax_cross_entropy_sparse z (labels [| 2L; 0L |]))
           (mat 2 3 [| 0.1; -0.4; 1.2; 2.; 0.; -1. |]));
   ]
 

@@ -163,7 +163,7 @@ let test_grad_mean_keepdims () =
 (* A window write on the split axis: each device writes the part of the window
    that falls in its slice, for a static and for a traced start. *)
 module Win = struct
-  type win = { x : Nx.float32_t; v : Nx.float32_t; pos : Nx.int32_t }
+  type win = { x : Nx.float32_t; v : Nx.float32_t; pos : Nx.int64_t }
   type _ t = win
 
   let walk c { x; v; pos } =
@@ -182,7 +182,7 @@ let check_window msg f =
     {
       Win.x = m46 ();
       v = Nx.full f32 [| 2; 6 |] 9.0;
-      pos = Nx.scalar Nx.int32 1l;
+      pos = Nx.scalar Nx.int64 1L;
     }
   in
   check_arr ~eps:0.0 ~msg (to_arr (f w)) (g { w with x = rows devs2 w.x })
@@ -199,7 +199,7 @@ let test_set_traced_window_on_the_split_axis () =
    receives rows 4 and 1 of [values]. *)
 let pool_rows ~axis =
   let pool = Nx.create f32 [| 8; 4; 2 |] (arange 64) in
-  let slots = Nx.create Nx.int32 [| 2 |] [| 4l; 1l |] in
+  let slots = Nx.create Nx.int64 [| 2 |] [| 4L; 1L |] in
   let values =
     Nx.create f32 [| 2; 4; 2 |]
       (Array.init 16 (fun i -> 100. +. float_of_int i))
@@ -275,7 +275,7 @@ let test_batch_split_operations () =
    so eager and compiled code agree on a copy on each device. *)
 let test_rows_of_a_split_table () =
   let table = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1) in
-  let ids = Nx.create Nx.int32 [| 5 |] [| 7l; 0l; 3l; 3l; 6l |] in
+  let ids = Nx.create Nx.int64 [| 5 |] [| 7L; 0L; 3L; 3L; 6L |] in
   let take t = Nx.take ~axis:0 ~indices:ids t in
   let compiled = Rune.jit' take (rows devs4 table) in
   let eager = take (rows devs4 table) in
@@ -765,7 +765,7 @@ let test_two_collective_outputs () =
   let vocab, dim, n, cols = (8, 4, 4, 2) in
   let w = Nx.full f32 [| vocab; dim |] 0.02 in
   let m = Nx.full f32 [| n; cols; dim |] 0.5 in
-  let ids = Nx.reshape [| n; cols |] (Nx.arange Nx.int32 0 (n * cols) 1) in
+  let ids = Nx.reshape [| n; cols |] (Nx.arange Nx.int64 0 (n * cols) 1) in
   let step w m ids =
     let loss, g =
       Rune.value_and_grad Nx.Ptree.tensor

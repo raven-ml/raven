@@ -4,12 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 type tokens =
-  | Whole of Nx.int32_t
+  | Whole of Nx.int64_t
   | Tabled of {
-      row : Nx.int32_t option;
-      pos : Nx.int32_t;
-      table : Nx.int32_t;
-      blocks : (int * Nx.int32_t) list;
+      row : Nx.int64_t option;
+      pos : Nx.int64_t;
+      table : Nx.int64_t;
+      blocks : (int * Nx.int64_t) list;
     }
 
 (* [every] is how many positions a column holds: [1], or an [m] of the tokens'
@@ -19,7 +19,7 @@ type t = {
   tokens : tokens;
   every : int;
   window : int option;
-  columns : Nx.int32_t option;
+  columns : Nx.int64_t option;
 }
 
 let invalid fmt = Printf.ksprintf invalid_arg fmt
@@ -28,10 +28,10 @@ let invalid fmt = Printf.ksprintf invalid_arg fmt
    token. *)
 let left_padded ~seq lens =
   let batch = Array.length lens in
-  Nx.create Nx.int32 [| batch; seq |]
+  Nx.create Nx.int64 [| batch; seq |]
     (Array.init (batch * seq) (fun t ->
          let b = t / seq and i = t mod seq in
-         Int32.of_int (max (-1) (i - (seq - lens.(b))))))
+         Int64.of_int (max (-1) (i - (seq - lens.(b))))))
 
 let whole ?lens ~batch ~seq () =
   if batch <= 0 || seq <= 0 then
@@ -81,8 +81,8 @@ let rows ?(every = []) ~context lens =
   strides ~name:"rows" every;
   let seq = Array.fold_left max 1 lens in
   let runs columns =
-    Nx.create Nx.int32 [| batch; columns |]
-      (Array.init (batch * columns) Int32.of_int)
+    Nx.create Nx.int64 [| batch; columns |]
+      (Array.init (batch * columns) Int64.of_int)
   in
   let blocks = List.map (fun m -> (m, runs ((context + m - 1) / m))) every in
   {
@@ -180,10 +180,10 @@ let context index =
 let stands ~every columns =
   if every = 1 then columns
   else
-    Nx.add_s (Nx.mul_s columns (Int32.of_int every)) (Int32.of_int (every - 1))
+    Nx.add_s (Nx.mul_s columns (Int64.of_int every)) (Int64.of_int (every - 1))
 
 let inside ~below t =
-  Nx.logical_and (Nx.greater_equal_s t 0l) (Nx.less_s t (Int32.of_int below))
+  Nx.logical_and (Nx.greater_equal_s t 0L) (Nx.less_s t (Int64.of_int below))
 
 (* Positions, with every token of a lane whose row is outside the table as
    padding. *)
@@ -194,7 +194,7 @@ let pos index =
       let named = inside ~below:(Nx.dim 0 table) row in
       Nx.where
         (Nx.reshape [| Nx.dim 0 pos; 1 |] named)
-        pos (Nx.full_like pos (-1l))
+        pos (Nx.full_like pos (-1L))
 
 (* The positions' table bounds the positions, whatever the stride. *)
 let positions index =
@@ -203,7 +203,7 @@ let positions index =
     | Whole pos -> Nx.dim 1 pos - 1
     | Tabled { table; _ } -> Nx.dim 1 table - 1
   in
-  Nx.clamp ~min:0l ~max:(Int32.of_int last) (raw index)
+  Nx.clamp ~min:0L ~max:(Int64.of_int last) (raw index)
 
 let advance index =
   match index.tokens with
@@ -211,11 +211,11 @@ let advance index =
   | Tabled { row; table; blocks; _ } ->
       (* Any negative position is padding: a lane of it advances to 0. *)
       let last =
-        Nx.maximum_s (Nx.max ~axes:[ 1 ] ~keepdims:true (pos index)) (-1l)
+        Nx.maximum_s (Nx.max ~axes:[ 1 ] ~keepdims:true (pos index)) (-1L)
       in
       {
         index with
-        tokens = Tabled { row; pos = Nx.add_s last 1l; table; blocks };
+        tokens = Tabled { row; pos = Nx.add_s last 1L; table; blocks };
         columns = None;
       }
 
@@ -234,10 +234,10 @@ let sees ?window ~keys pos =
   match window with
   | None -> causal
   | Some w ->
-      Nx.logical_and causal (Nx.greater keys (Nx.sub_s query (Int32.of_int w)))
+      Nx.logical_and causal (Nx.greater keys (Nx.sub_s query (Int64.of_int w)))
 
 let column ~context =
-  Nx.reshape [| 1; context |] (Nx.arange Nx.int32 0 context 1)
+  Nx.reshape [| 1; context |] (Nx.arange Nx.int64 0 context 1)
 
 (* The position each chosen column stands at, [-1] outside the context. On a
    whole index at stride 1 a column is a token of the lane, which stands at its
@@ -245,7 +245,7 @@ let column ~context =
 let chosen index columns =
   let context = context index in
   (* The clamp also materialises a broadcast [columns] before the reshape. *)
-  let at = Nx.clamp ~min:0l ~max:(Int32.of_int (context - 1)) columns in
+  let at = Nx.clamp ~min:0L ~max:(Int64.of_int (context - 1)) columns in
   let at =
     match index.tokens with
     | Tabled _ -> stands ~every:index.every at
@@ -257,13 +257,13 @@ let chosen index columns =
              ~indices:(Nx.reshape [| b; s * k |] at)
              pos)
   in
-  Nx.where (inside ~below:context columns) at (Nx.full_like at (-1l))
+  Nx.where (inside ~below:context columns) at (Nx.full_like at (-1L))
 
 (* Which of its chosen columns each token sees, [batch; seq; k]. *)
 let sees_chosen index columns =
   let keys = chosen index columns in
   Nx.logical_and
-    (Nx.greater_equal_s keys 0l)
+    (Nx.greater_equal_s keys 0L)
     (sees ?window:index.window ~keys (pos index))
 
 let mask index =
@@ -272,7 +272,7 @@ let mask index =
   | Some columns, _ -> sees_chosen index columns
   | None, Whole _ when index.every = 1 ->
       let keys = Nx.reshape [| Nx.dim 0 pos; 1; Nx.dim 1 pos |] pos in
-      Nx.logical_and (Nx.greater_equal_s keys 0l) (sees ?window ~keys pos)
+      Nx.logical_and (Nx.greater_equal_s keys 0L) (sees ?window ~keys pos)
   | None, _ ->
       let context = context index in
       let keys = stands ~every:index.every (column ~context) in
@@ -293,13 +293,13 @@ let ones tail = Array.map (fun _ -> 1) tail
 let own ~every pos =
   if every = 1 then pos
   else
-    let m = Int32.of_int every in
+    let m = Int64.of_int every in
     let closes =
       Nx.logical_and
-        (Nx.greater_equal_s pos 0l)
-        (Nx.equal_s (Nx.mod_s (Nx.add_s pos 1l) m) 0l)
+        (Nx.greater_equal_s pos 0L)
+        (Nx.equal_s (Nx.mod_s (Nx.add_s pos 1L) m) 0L)
     in
-    Nx.where closes (Nx.div_s pos m) (Nx.full_like pos (-1l))
+    Nx.where closes (Nx.div_s pos m) (Nx.full_like pos (-1L))
 
 (* [pool] with [values] at the slot the table names at each token's column [at].
    A token that has none targets [-1], whose store is dropped. *)
@@ -310,7 +310,7 @@ let write ~at ~table values pool =
   let tokens = batch * seq in
   let slot = Nx.take_along_axis ~axis:1 ~indices:at table in
   let target =
-    Nx.where (inside ~below:context at) slot (Nx.full_like slot (-1l))
+    Nx.where (inside ~below:context at) slot (Nx.full_like slot (-1L))
   in
   let indices =
     Nx.broadcast_to
@@ -338,12 +338,12 @@ let read ?window ~every ~pos ~table pool =
         let first =
           Nx.min ~axes:[ 1 ] ~keepdims:true
             (Nx.where
-               (Nx.greater_equal_s pos 0l)
+               (Nx.greater_equal_s pos 0L)
                pos
-               (Nx.full_like pos Int32.max_int))
+               (Nx.full_like pos Int64.max_int))
         in
         Nx.logical_and upto
-          (Nx.greater column (Nx.sub_s first (Int32.of_int w)))
+          (Nx.greater column (Nx.sub_s first (Int64.of_int w)))
   in
   let live = Nx.reshape (Array.append [| batch * context |] (ones tail)) seen in
   let win =
@@ -359,9 +359,9 @@ let read ?window ~every ~pos ~table pool =
    [tail]. *)
 let read_chosen index columns ~tail fetch =
   let b = Nx.dim 0 columns and s = Nx.dim 1 columns and k = Nx.dim 2 columns in
-  let last = Int32.of_int (context index - 1) in
+  let last = Int64.of_int (context index - 1) in
   (* The clamp also materialises a broadcast [columns] before the reshape. *)
-  let flat = Nx.reshape [| b; s * k |] (Nx.clamp ~min:0l ~max:last columns) in
+  let flat = Nx.reshape [| b; s * k |] (Nx.clamp ~min:0L ~max:last columns) in
   let rows = fetch flat in
   let live = Nx.reshape [| b; s * k |] (sees_chosen index columns) in
   Nx.reshape
@@ -387,7 +387,7 @@ let rows_at ~tail values token =
 let closing ~every ~pos flat =
   let seq = Nx.dim 1 pos in
   let last = Nx.slice [ A; R (seq - 1, seq) ] pos in
-  Nx.add (stands ~every flat) (Nx.rsub_s (Int32.of_int (seq - 1)) last)
+  Nx.add (stands ~every flat) (Nx.rsub_s (Int64.of_int (seq - 1)) last)
 
 (* The rows of [pool] at the slots [table] names at the columns [flat], [batch;
    n], as [batch; n] then [tail]: zero at an unallocated one. *)

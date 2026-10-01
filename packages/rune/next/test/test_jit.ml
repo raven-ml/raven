@@ -756,7 +756,7 @@ let lending =
               (fun cache pos row -> Nx.set [ D (pos, 1) ] row cache)
           in
           let row = Nx.ones Nx.float32 [| 1; 3 |] in
-          let r = step cache (Nx.scalar Nx.int32 2l) row in
+          let r = step cache (Nx.scalar Nx.int64 2L) row in
           let expected =
             Nx.set
               [ R (2, 3) ]
@@ -1677,14 +1677,14 @@ let device_lists =
           equal floats (f a) (host (Rune.jit' f (Nx.place (split pair) a))));
       cases ~name:fst "a window written across the split axis equals eager"
         [
-          ("at a start the program holds", fun (_ : Nx.int32_t) -> Nx.R (1, 3));
+          ("at a start the program holds", fun (_ : Nx.int64_t) -> Nx.R (1, 3));
           ("at a start read when the call runs", fun pos -> Nx.D (pos, 2));
         ]
         (fun (_, at) ->
           let f x pos =
             Nx.set [ at pos; A ] (Nx.full Nx.float32 [| 2; 3 |] 9.) x
           in
-          let pos = Nx.scalar Nx.int32 1l in
+          let pos = Nx.scalar Nx.int64 1L in
           let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
           equal floats
             (f (grid 4 3) pos)
@@ -1969,7 +1969,7 @@ let on_one_device ~name d =
           let elements = Nx.create Nx.float32 [| 4 |] [| 5.; 6.; 1.; 2. |] in
           let pool = Nx.place (on d) (on_disk_at path elements) in
           let before = Witness.addresses pool in
-          let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+          let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
           let values = Nx.create Nx.float32 [| 2 |] [| 10.; 30. |] in
           let r =
             Rune.jit consumes (Nx.scatter ~axis:0 ~indices ~values) pool

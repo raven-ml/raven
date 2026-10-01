@@ -95,7 +95,7 @@ let load_ids path =
         Array.of_list
           (List.map
              (function
-               | Jsont.Number (f, _) -> Int32.of_float f
+               | Jsont.Number (f, _) -> Int64.of_float f
                | _ -> failwith (path ^ ": non-numeric id"))
              cells)
     | _ -> failwith (path ^ ": expected rows of ids")
@@ -117,8 +117,8 @@ let batch_of_ids ids =
     Array.init (batch_size * seq_len) (fun i ->
         ids.(i / seq_len).(off + (i mod seq_len)))
   in
-  ( Nx.create Nx.int32 [| batch_size; seq_len |] (take 0),
-    Nx.create Nx.int32 [| batch_size * seq_len |] (take 1) )
+  ( Nx.create Nx.int64 [| batch_size; seq_len |] (take 0),
+    Nx.create Nx.int64 [| batch_size * seq_len |] (take 1) )
 
 (* Loss: mean cross-entropy over all positions — log-softmax over the vocab
    axis, NLL of the target id, mean. [?dropout] threads the rate and the step's

@@ -189,8 +189,8 @@ let sorts_as_a_stable_sort (S s) ~shape =
         in
         let v, i = Nx.sort ~descending ~axis t in
         equal (Ref.witness s.exact) values (Ref.of_nx v);
-        equal (Ref.witness int32) (Ref.map Int32.of_int order) (Ref.of_nx i);
-        equal (tensor int32) i (Nx.argsort ~descending ~axis t))
+        equal (Ref.witness int64) (Ref.map Int64.of_int order) (Ref.of_nx i);
+        equal (tensor int64) i (Nx.argsort ~descending ~axis t))
 
 let sorts =
   group "sort"
@@ -210,10 +210,10 @@ let sorts =
             let check ~descending values indices =
               let v, i = Nx.sort ~descending t in
               equal ~msg:"values" (array float_exact) values (Nx.to_array v);
-              equal ~msg:"indices" (array int32) indices (Nx.to_array i)
+              equal ~msg:"indices" (array int64) indices (Nx.to_array i)
             in
-            check ~descending:false [| -0.; -0.; 0.; 0. |] [| 1l; 3l; 0l; 2l |];
-            check ~descending:true [| 0.; 0.; -0.; -0. |] [| 0l; 2l; 1l; 3l |]);
+            check ~descending:false [| -0.; -0.; 0.; 0. |] [| 1L; 3L; 0L; 2L |];
+            check ~descending:true [| 0.; 0.; -0.; -0. |] [| 0L; 2L; 1L; 3L |]);
         test "sort refuses an axis out of bounds" (fun () ->
             raises_invalid_arg (fun () ->
                 Nx.sort ~axis:1 (Nx.zeros Nx.float32 [| 3 |])));
@@ -232,7 +232,7 @@ let sorts =
             equal (array float_exact) expected (Nx.to_array v);
             equal (tensor float_exact) v
               (Nx.take_along_axis ~axis:1 ~indices:i t);
-            equal (tensor int32) i (Nx.argsort t));
+            equal (tensor int64) i (Nx.argsort t));
       ])
 
 (* Lanes on both sides of the lengths where top_k changes method: 8 passes, a
@@ -271,7 +271,7 @@ let top_ks =
              equal ~msg:"values" (tensor s.exact)
                (Nx.slice [ A; R (0, k) ] v)
                tv;
-             equal ~msg:"indices" (tensor int32) (Nx.slice [ A; R (0, k) ] i) ti))
+             equal ~msg:"indices" (tensor int64) (Nx.slice [ A; R (0, k) ] i) ti))
        (List.filter
           (fun (S s) -> List.mem s.name [ "float32"; "int32"; "uint16" ])
           sortables)
@@ -288,9 +288,9 @@ let top_ks =
                 let v, i = Nx.top_k ~k t in
                 equal ~msg (array float_exact) [| 0.; -0. |]
                   (Array.sub (Nx.to_array v) 0 2);
-                equal ~msg (array int32) [| 3l; 1l |]
+                equal ~msg (array int64) [| 3L; 1L |]
                   (Array.sub (Nx.to_array i) 0 2);
-                equal ~msg int32
+                equal ~msg int64
                   (Nx.item [] (Nx.argmax t))
                   (Nx.item [ 0 ] (snd (Nx.top_k ~k:1 t))))
               [ (2, 5); (9, 100); (9, 3000) ]);

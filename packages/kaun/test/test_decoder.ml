@@ -127,11 +127,11 @@ let hidden ?lens m ids =
 let logits m h =
   Nx.matmul (Rms_norm.apply m.norm h) (Nx.transpose m.tok.Embedding.table)
 
-let int32s shape a = Nx.create Nx.int32 shape (Array.map Int32.of_int a)
+let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 
 let ids rows =
   let batch = Array.length rows and seq = Array.length rows.(0) in
-  int32s [| batch; seq |] (Array.concat (Array.to_list rows))
+  int64s [| batch; seq |] (Array.concat (Array.to_list rows))
 
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
@@ -182,8 +182,8 @@ let whole m = logits m (hidden m (ids [| prompt |]))
 let chunk ~slots ~at len =
   let n = Array.length slots in
   Cache_index.make
-    ~pos:(int32s [| 1; len |] (Array.init len (fun i -> at + i)))
-    ~table:(int32s [| 1; n |] slots)
+    ~pos:(int64s [| 1; len |] (Array.init len (fun i -> at + i)))
+    ~table:(int64s [| 1; n |] slots)
     ()
 
 (* [prompt] fed in [chunks] through [call], with [before] applied to the caches
@@ -237,7 +237,7 @@ let test_chunks m call =
 let test_slot_renaming m call =
   let n = Array.length prompt and pool = 23 in
   let order = Nx.to_array (Nx.Rng.permutation (Nx.Rng.key 7) pool) in
-  let slots = Array.init n (fun j -> Int32.to_int order.(j)) in
+  let slots = Array.init n (fun j -> Int64.to_int order.(j)) in
   close ~msg:"a random permutation of the slots"
     (feed m call ~slots:(Array.init n Fun.id) ~pool [ 4; 3; 2 ])
     (feed m call ~slots ~pool [ 4; 3; 2 ])
@@ -248,16 +248,16 @@ let test_shared_prefix m call =
   let _, caches =
     call (cache ~slots:8)
       (Cache_index.make
-         ~pos:(int32s [| 1; 4 |] [| 0; 1; 2; 3 |])
-         ~table:(int32s [| 1; 6 |] [| 5; 2; 7; 0; -1; -1 |])
+         ~pos:(int64s [| 1; 4 |] [| 0; 1; 2; 3 |])
+         ~table:(int64s [| 1; 6 |] [| 5; 2; 7; 0; -1; -1 |])
          ())
       (ids [| prefix |])
   in
   let h, _ =
     call caches
       (Cache_index.make
-         ~pos:(int32s [| 2; 2 |] [| 4; 5; 4; 5 |])
-         ~table:(int32s [| 2; 6 |] [| 5; 2; 7; 0; 1; 3; 5; 2; 7; 0; 4; 6 |])
+         ~pos:(int64s [| 2; 2 |] [| 4; 5; 4; 5 |])
+         ~table:(int64s [| 2; 6 |] [| 5; 2; 7; 0; 1; 3; 5; 2; 7; 0; 4; 6 |])
          ())
       (ids tails)
   in
@@ -277,9 +277,9 @@ let test_lanes_of_one_sequence m call =
   let h, _ =
     call (cache ~slots:n)
       (Cache_index.make
-         ~row:(int32s [| n |] (Array.make n 0))
-         ~pos:(int32s [| n; 1 |] (Array.init n Fun.id))
-         ~table:(int32s [| 1; n |] (Array.init n (fun j -> n - 1 - j)))
+         ~row:(int64s [| n |] (Array.make n 0))
+         ~pos:(int64s [| n; 1 |] (Array.init n Fun.id))
+         ~table:(int64s [| 1; n |] (Array.init n (fun j -> n - 1 - j)))
          ())
       (Nx.reshape [| n; 1 |] (ids [| prompt |]))
   in
@@ -347,9 +347,9 @@ let test_empty_lane m call =
   let h, written =
     call (cache ~slots:n)
       (Cache_index.make
-         ~pos:(int32s [| 2; n |] (Array.append (none n) (Array.init n Fun.id)))
+         ~pos:(int64s [| 2; n |] (Array.append (none n) (Array.init n Fun.id)))
          ~table:
-           (int32s [| 2; n |] (Array.append (none n) (Array.init n Fun.id)))
+           (int64s [| 2; n |] (Array.append (none n) (Array.init n Fun.id)))
          ())
       (ids [| Array.make n 0; prompt |])
   in
@@ -359,8 +359,8 @@ let test_empty_lane m call =
   let h', _ =
     call written
       (Cache_index.make
-         ~pos:(int32s [| 1; 1 |] [| -1 |])
-         ~table:(int32s [| 1; n |] (none n))
+         ~pos:(int64s [| 1; 1 |] [| -1 |])
+         ~table:(int64s [| 1; n |] (none n))
          ())
       (ids [| [| 0 |] |])
   in
@@ -387,7 +387,7 @@ let test_generation_matches_recomputation () =
           Nx.slice [ I 0; I (Array.length row - 1) ] (hidden m (ids [| row |]))
         in
         let scores = logits m last in
-        let next = Int32.to_int (Nx.item [] (Nx.argmax ~axis:0 scores)) in
+        let next = Int64.to_int (Nx.item [] (Nx.argmax ~axis:0 scores)) in
         seq := !seq @ [ next ];
         (next, scores))
   in
@@ -413,7 +413,7 @@ let test_generation_matches_recomputation () =
       let msg = Printf.sprintf "step %d" i in
       close ~msg:(msg ^ ", logits") scores (sampled_from ());
       equal ~msg:(msg ^ ", token") int next
-        (Int32.to_int (Nx.item [ 0; 0 ] (sampled ())));
+        (Int64.to_int (Nx.item [ 0; 0 ] (sampled ())));
       if i < steps - 1 then begin
         let before = (Rune.jit_stats ()).reused_bytes in
         index := Cache_index.advance !index;

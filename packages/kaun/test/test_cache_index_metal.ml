@@ -8,7 +8,7 @@
 open Windtrap
 open Kaun
 
-let int32s shape a = Nx.create Nx.int32 shape (Array.map Int32.of_int a)
+let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
 (* A toy compressed stream, as in test_attention.ml: each token stores its value
@@ -40,9 +40,9 @@ let state = Nx.Ptree.instantiate (module State)
 let stream index s =
   let batch = Cache_index.batch index and seq = Cache_index.seq index in
   let pos = Cache_index.positions index in
-  let first = Nx.reshape [| batch; seq; 1 |] (Nx.sub pos (Nx.mod_s pos 4l)) in
+  let first = Nx.reshape [| batch; seq; 1 |] (Nx.sub pos (Nx.mod_s pos 4L)) in
   let block =
-    Nx.add first (Nx.reshape [| 1; 1; 4 |] (Nx.arange Nx.int32 0 4 1))
+    Nx.add first (Nx.reshape [| 1; 1; 4 |] (Nx.arange Nx.int64 0 4 1))
   in
   let own, sources =
     Cache_index.extend (Cache_index.select block index) s.x s.sources
@@ -69,11 +69,11 @@ let test_stream_on_metal () =
       Nx.Ptree.(Cache_index.ptree @-> consumes state @@ returns state)
       stream
   in
-  let table = int32s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
-  let blocks = int32s [| 1; 3 |] [| 1; 2; 0 |] in
+  let table = int64s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
+  let blocks = int64s [| 1; 3 |] [| 1; 2; 0 |] in
   let call s positions =
     let n = Array.length positions in
-    let pos = int32s [| 1; n |] positions in
+    let pos = int64s [| 1; n |] positions in
     let index = Cache_index.make ~every:[ (4, blocks) ] ~pos ~table () in
     let x = Nx.add_s (Nx.cast Nx.float32 (Nx.reshape [| 1; n; 1 |] pos)) 1. in
     step index { s with x; y = Nx.zeros Nx.float32 [| 1; n |] }
@@ -118,7 +118,7 @@ let test_one_slot_on_metal () =
         snd
           (Cache_index.extend
              (Cache_index.make ~pos
-                ~table:(int32s [| 1; Array.length table |] table)
+                ~table:(int64s [| 1; Array.length table |] table)
                 ())
              values pool)
       in
@@ -129,7 +129,7 @@ let test_one_slot_on_metal () =
           f
       in
       equal ~msg (array float_exact) (Array.make 8 expected)
-        (flat (step (int32s [| 1; 2 |] pos))))
+        (flat (step (int64s [| 1; 2 |] pos))))
     [
       ("padding after the token", [| 0; -1 |], [| 0 |], 10.);
       ("padding before the token", [| -1; 0 |], [| 0 |], 20.);

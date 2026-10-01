@@ -897,7 +897,7 @@ let reductions d ~count ~heavy =
             exact_of
               (both d (fun (module K : Nx_backend.S) env ->
                    let dst =
-                     env.dst Nx.int32 (without [| axis |] (shape_of x))
+                     env.dst Nx.int64 (without [| axis |] (shape_of x))
                    in
                    K.arg_reduce
                      (if descending then Argmax else Argmin)
@@ -924,7 +924,7 @@ let reductions d ~count ~heavy =
             (fun ~axis ~descending x ->
               exact_of
                 (both d (fun (module K : Nx_backend.S) env ->
-                     let dst = env.dst Nx.int32 (shape_of x) in
+                     let dst = env.dst Nx.int64 (shape_of x) in
                      K.argsort ~descending ~axis (env.on x) ~dst;
                      dst)));
         };
@@ -934,21 +934,27 @@ let reductions d ~count ~heavy =
 (* Assembly and indexed access *)
 
 (* Indices along an axis of [n] elements, of [shape]: in range, just out of it,
-   and the extremes of int32. *)
+   2^32 past a position, where a truncation to 32 bits would bring them back,
+   and the extremes of int64. *)
 let indices ~n shape =
   let open Gen in
   let index =
     frequency
       [
-        (8, int_range (-2) (n + 1));
+        (8, map Int64.of_int (int_range (-2) (n + 1)));
         ( 1,
-          of_list ~pp:Format.pp_print_int
-            [ Int32.to_int Int32.min_int; Int32.to_int Int32.max_int ] );
+          map
+            (fun i -> Int64.add (Int64.of_int i) 0x1_0000_0000L)
+            (int_range 0 (Int.max 0 (n - 1))) );
+        ( 1,
+          of_list
+            ~pp:(fun ppf -> Format.fprintf ppf "%Ld")
+            [ Int64.min_int; Int64.max_int ] );
       ]
   in
   bind
     (map
-       (fun xs -> Nx.create Nx.int32 shape (Array.map Int32.of_int xs))
+       (fun xs -> Nx.create Nx.int64 shape xs)
        (array ~size:(constant (numel shape)) index))
     laid_out
 
@@ -960,9 +966,9 @@ let positions ~unique ~axis ~n is =
       (Gen.map
          (fun order ->
            let order = Array.of_list order in
-           Nx.create Nx.int32 is
+           Nx.create Nx.int64 is
              (Array.init (numel is) (fun k ->
-                  Int32.of_int order.((unravel is k).(axis)))))
+                  Int64.of_int order.((unravel is k).(axis)))))
          (Gen.permutation (List.init n Fun.id)))
       laid_out
   else indices ~n is
@@ -1158,9 +1164,9 @@ let indexed d ~count =
                in
                let+ starts =
                  laid_out
-                   (Nx.create Nx.int32
+                   (Nx.create Nx.int64
                       [| Array.length s |]
-                      (Array.map Int32.of_int corner))
+                      (Array.map Int64.of_int corner))
                and+ v = operand d dt vs
                and+ x = operand d dt s in
                check
@@ -1501,8 +1507,8 @@ let linalg d ~count =
                let x =
                  Nx.take ~axis:(-2)
                    ~indices:
-                     (Nx.create Nx.int32 [| m |]
-                        (Array.of_list (List.map Int32.of_int order)))
+                     (Nx.create Nx.int64 [| m |]
+                        (Array.of_list (List.map Int64.of_int order)))
                    (conditioned x)
                in
                let+ a = laid_out x in
@@ -1514,9 +1520,9 @@ let linalg d ~count =
                      both d (fun (module K : Nx_backend.S) env ->
                          let lu = env.dst dt (Array.append b [| m; n |]) in
                          let pivots =
-                           env.dst Nx.int32 (Array.append b [| k |])
+                           env.dst Nx.int64 (Array.append b [| k |])
                          in
-                         let perm = env.dst Nx.int32 (Array.append b [| m |]) in
+                         let perm = env.dst Nx.int64 (Array.append b [| m |]) in
                          K.lu (env.on a) ~lu ~pivots ~perm;
                          (lu, pivots, perm))
                    in
@@ -1633,8 +1639,8 @@ let linalg d ~count =
                    K.solve_triangular ~upper:true ~transpose:false
                      ~unit_diag:false (on x) (on y) ~dst:(dst dt [| n |]);
                    K.qr ~reduced:true (on x) ~q:(dst dt s) ~r:(dst dt s);
-                   K.lu (on x) ~lu:(dst dt s) ~pivots:(dst Nx.int32 [| n |])
-                     ~perm:(dst Nx.int32 [| n |]);
+                   K.lu (on x) ~lu:(dst dt s) ~pivots:(dst Nx.int64 [| n |])
+                     ~perm:(dst Nx.int64 [| n |]);
                    if d.float64 then
                      K.svd (on x) ~u:(dst dt s) ~s:(dst Nx.float64 [| n |])
                        ~vt:(dst dt s)));

@@ -10,21 +10,50 @@ open Windtrap
 open Nx_test
 
 let ints = Ref.witness int32
+let positions = Ref.witness int64
 let shape = Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range 1 4)
 let iota s = Array.init (Ref.numel s) (fun i -> Int32.of_int (i + 1))
 let tensor_of s = (Ref.create s (iota s), Nx.create Nx.int32 s (iota s))
 
 let indices_tensor l =
-  Nx.create Nx.int32 [| Array.length l |] (Array.map Int32.of_int l)
+  Nx.create Nx.int64 [| Array.length l |] (Array.map Int64.of_int l)
 
-(* A shape, an axis of it, and indices along that axis from one past each
-   end. *)
+let far = 1 lsl 32
+
+(* An index along an axis of [n], [n > 0]: from one past each end, or a position
+   of the axis moved by a multiple of 2^32, which a 32-bit truncation would
+   bring back to that position. *)
+let index n =
+  let open Gen in
+  frequency
+    [
+      (4, int_range (-2) (n + 1));
+      ( 1,
+        let+ i = int_range 0 (n - 1) and+ k = of_list [ -2; -1; 1; 2 ] in
+        i + (k * far) );
+    ]
+
+(* Demands that both kinds of index outside an axis of [n] were drawn. *)
+let cover_outside n idx =
+  cover "an index just outside its axis"
+    (Array.exists (fun k -> (k < 0 || k >= n) && Int.abs k < far / 2) idx);
+  cover "an index 2^32 from a position of its axis"
+    (Array.exists (fun k -> Int.abs k >= far / 2) idx)
+
+(* A shape, an axis of it, and indices along that axis. *)
 let along =
   let open Gen in
   let* s = shape in
   let* axis = int_range 0 (Array.length s - 1) in
-  let n = s.(axis) in
-  let+ idx = array ~size:(int_range 0 5) (int_range (-2) (n + 1)) in
+  let+ idx = array ~size:(int_range 0 5) (index s.(axis)) in
+  (s, axis, idx)
+
+(* A shape, an axis of it, and an index along that axis at each position. *)
+let positioned =
+  let open Gen in
+  let* s = shape in
+  let* axis = int_range 0 (Array.length s - 1) in
+  let+ idx = array ~size:(constant (Ref.numel s)) (index s.(axis)) in
   (s, axis, idx)
 
 let read r src =
@@ -36,8 +65,10 @@ let gathers =
   group "gathers"
     [
       prop "take reads the flattened tensor, and zero out of range"
-        (Gen.pair shape
-           (Gen.array ~size:(Gen.int_range 0 6) (Gen.int_range (-2) 30)))
+        (let open Gen in
+         let* s = shape in
+         let+ idx = array ~size:(int_range 0 6) (index (Ref.numel s)) in
+         (s, idx))
         (fun (s, idx) ->
           let r, t = tensor_of s in
           let n = Ref.numel s in
@@ -48,8 +79,13 @@ let gathers =
                  let k = idx.(i.(0)) in
                  if k >= 0 && k < n then r.data.(k) else 0l))
             (Ref.of_nx (Nx.take ~indices:(indices_tensor idx) t)));
-      prop "take along an axis reads each index of that axis" along
+      prop
+        "take reads an int64 index inside its axis and zero outside it, \
+         however far"
+        ~examples:[ ([| 4 |], 0, [| far + 1; 2 - far; 1 |]) ]
+        along
         (fun (s, axis, idx) ->
+          cover_outside s.(axis) idx;
           let r, t = tensor_of s in
           let out = Array.copy s in
           out.(axis) <- Array.length idx;
@@ -60,17 +96,13 @@ let gathers =
                  read r src))
             (Ref.of_nx (Nx.take ~axis ~indices:(indices_tensor idx) t)));
       prop "take_along_axis reads, at each position, the index found there"
-        along (fun (s, axis, _) ->
+        positioned (fun (s, axis, idx) ->
           let r, t = tensor_of s in
-          let n = s.(axis) in
-          let positions =
-            Ref.init s (fun i -> Int32.of_int ((Ref.ravel s i mod (n + 3)) - 1))
-          in
-          let indices = Nx.create Nx.int32 s positions.data in
+          let indices = Nx.create Nx.int64 s (Array.map Int64.of_int idx) in
           equal ints
             (Ref.init s (fun i ->
                  let src = Array.copy i in
-                 src.(axis) <- Int32.to_int (Ref.get positions i);
+                 src.(axis) <- idx.(Ref.ravel s i);
                  read r src))
             (Ref.of_nx (Nx.take_along_axis ~axis ~indices t)));
       test "take without an axis reads a transposed tensor" (fun () ->
@@ -91,24 +123,21 @@ let scatters =
     [
       prop
         "scatter writes each value at its index, the last one winning, and \
-         drops out of range; a scalar value is broadcast"
-        (Gen.triple along Gen.bool Gen.bool) (fun ((s, axis, _), add, scalar) ->
-          let r, t = tensor_of s in
+         drops every update outside its axis, however far; a scalar value is \
+         broadcast" (Gen.triple positioned Gen.bool Gen.bool)
+        (fun ((s, axis, idx), add, scalar) ->
           let n = s.(axis) in
-          let positions =
-            Ref.init s (fun i ->
-                Int32.of_int ((Ref.ravel s i * 7 mod (n + 3)) - 1))
-          in
+          cover_outside n idx;
+          let r, t = tensor_of s in
           let values =
             Ref.init s (fun i ->
                 if scalar then 100l else Int32.of_int (100 * (Ref.ravel s i + 1)))
           in
           let expected = Array.copy r.data in
           for i = 0 to Ref.numel s - 1 do
-            let idx = Ref.unravel s i in
-            let k = Int32.to_int (Ref.get positions idx) in
+            let k = idx.(i) in
             if k >= 0 && k < n then begin
-              let dst = Array.copy idx in
+              let dst = Ref.unravel s i in
               dst.(axis) <- k;
               let j = Ref.ravel s dst in
               expected.(j) <-
@@ -121,7 +150,7 @@ let scatters =
                (Nx.scatter
                   ~mode:(if add then `Add else `Set)
                   ~axis
-                  ~indices:(Nx.create Nx.int32 s positions.data)
+                  ~indices:(Nx.create Nx.int64 s (Array.map Int64.of_int idx))
                   ~values:
                     (if scalar then Nx.scalar Nx.int32 100l
                      else Nx.create Nx.int32 s values.data)
@@ -131,7 +160,7 @@ let scatters =
           let v xs = Nx.create Nx.float32 [| Array.length xs |] xs in
           let add ~unique_indices indices values =
             Nx.scatter ~mode:`Add ~unique_indices ~axis:0
-              ~indices:(Nx.create Nx.int32 [| Array.length indices |] indices)
+              ~indices:(Nx.create Nx.int64 [| Array.length indices |] indices)
               ~values:(v values)
               (v [| -0.; -0.; -0. |])
           in
@@ -139,10 +168,10 @@ let scatters =
             (fun unique_indices ->
               let msg = Printf.sprintf "unique_indices = %b" unique_indices in
               equal ~msg (tensor float_exact) (v [| 0.; -0.; 0. |])
-                (add ~unique_indices [| 0l; 2l |] [| -0.; -0. |]))
+                (add ~unique_indices [| 0L; 2L |] [| -0.; -0. |]))
             [ false; true ];
           equal ~msg:"duplicates" (tensor float_exact) (v [| 0.; -0.; -0. |])
-            (add ~unique_indices:false [| 0l; 0l |] [| -0.; -0. |]));
+            (add ~unique_indices:false [| 0L; 0L |] [| -0.; -0. |]));
       test "scatter refuses indices of another rank" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.scatter ~axis:0 ~indices:(indices_tensor [| 0 |])
@@ -154,7 +183,7 @@ let scatters =
           let n = s.(axis) in
           (* Each lane takes the axis positions in reverse, which are unique. *)
           let positions =
-            Nx.init Nx.int32 s (fun i -> Int32.of_int (n - 1 - i.(axis)))
+            Nx.init Nx.int64 s (fun i -> Int64.of_int (n - 1 - i.(axis)))
           in
           let values = Nx.neg t in
           equal (tensor int32)
@@ -163,7 +192,7 @@ let scatters =
       test "scatter refuses indices whose shape differs off the axis" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.scatter ~axis:0
-                ~indices:(Nx.zeros Nx.int32 [| 1; 3 |])
+                ~indices:(Nx.zeros Nx.int64 [| 1; 3 |])
                 ~values:(Nx.zeros Nx.int32 [| 1; 3 |])
                 (Nx.zeros Nx.int32 [| 2; 2 |])));
     ]
@@ -220,15 +249,15 @@ let selections =
           in
           let k = List.length coords and n = Array.length s in
           let rows = Array.of_list coords in
-          equal ints
-            (Ref.init [| k; n |] (fun i -> Int32.of_int rows.(i.(0)).(i.(1))))
+          equal positions
+            (Ref.init [| k; n |] (fun i -> Int64.of_int rows.(i.(0)).(i.(1))))
             (Ref.of_nx (Nx.argwhere t));
           Array.iteri
             (fun d axis ->
               equal
                 ~msg:(Printf.sprintf "axis %d" d)
-                ints
-                (Ref.init [| k |] (fun i -> Int32.of_int rows.(i.(0)).(d)))
+                positions
+                (Ref.init [| k |] (fun i -> Int64.of_int rows.(i.(0)).(d)))
                 (Ref.of_nx axis))
             (Nx.nonzero t));
       prop
@@ -280,12 +309,66 @@ let selections =
                 (Nx.zeros Nx.int32 [| 2 |])));
     ]
 
+let extremes =
+  let x = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
+  let at = Nx.create Nx.int64 [| 3 |] [| Int64.min_int; 1L; Int64.max_int |] in
+  group "extreme indices"
+    [
+      test "Int64.min_int and Int64.max_int read zero" (fun () ->
+          let expected = Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 0l |] in
+          equal (tensor int32) expected (Nx.take ~indices:at x);
+          equal (tensor int32) expected
+            (Nx.take_along_axis ~axis:0 ~indices:at x));
+      test "updates at Int64.min_int and Int64.max_int are dropped" (fun () ->
+          equal (tensor int32)
+            (Nx.create Nx.int32 [| 3 |] [| 1l; 9l; 3l |])
+            (Nx.scatter ~axis:0 ~indices:at ~values:(Nx.scalar Nx.int32 9l) x));
+    ]
+
+(* Each case holds one tensor of 2^31 + 2 bytes, after collecting the ones
+   before it. *)
+let past_int32 =
+  let n = (1 lsl 31) + 2 in
+  let zeros () = Nx.broadcast_to [| n |] (Nx.scalar Nx.uint8 0) in
+  let at x i = Nx.item [ i ] x in
+  group "indices past 2^31"
+    [
+      slow "take, argmax and argmin reach positions past 2^31" (fun () ->
+          Gc.full_major ();
+          let x = Nx.pad [| (n - 1, 0) |] 0 (Nx.ones Nx.uint8 [| 1 |]) in
+          equal int64 (Int64.of_int (n - 1)) (Nx.item [] (Nx.argmax x));
+          equal int64 0L (Nx.item [] (Nx.argmin x));
+          equal (array int) [| 1; 0; 0 |]
+            (Nx.to_array
+               (Nx.take ~indices:(indices_tensor [| n - 1; n; -1 |]) x)));
+      slow "scatter writes past 2^31 and drops what a truncation would alias"
+        (fun () ->
+          Gc.full_major ();
+          let y =
+            Nx.scatter ~axis:0
+              ~indices:(indices_tensor [| n - 1; far + 3 |])
+              ~values:(Nx.create Nx.uint8 [| 2 |] [| 7; 9 |])
+              (zeros ())
+          in
+          equal int 7 (at y (n - 1));
+          equal int 0 (at y 3));
+      slow "a D window starts past 2^31" (fun () ->
+          Gc.full_major ();
+          let y =
+            Nx.set
+              [ Nx.D (Nx.scalar Nx.int64 (Int64.of_int (n - 2)), 2) ]
+              (Nx.ones Nx.uint8 [| 2 |]) (zeros ())
+          in
+          equal (array int) [| 0; 1; 1 |]
+            (Array.map (at y) [| n - 3; n - 2; n - 1 |]));
+    ]
+
 (* [D] reads a window whose start is a run-time scalar, clamped so the window
    fits. *)
 let windows =
   let window start len =
     Nx.slice
-      [ Nx.D (Nx.scalar Nx.int32 (Int32.of_int start), len) ]
+      [ Nx.D (Nx.scalar Nx.int64 (Int64.of_int start), len) ]
       (Nx.arange Nx.int32 0 5 1)
   in
   let expected first len =
@@ -296,7 +379,16 @@ let windows =
       cases "a window starts at its start, clamped into the axis"
         ~name:(fun (start, len, _) ->
           Printf.sprintf "start %d, length %d" start len)
-        [ (0, 2, 0); (2, 2, 2); (4, 2, 3); (-3, 2, 0); (9, 5, 0); (1, 0, 1) ]
+        [
+          (0, 2, 0);
+          (2, 2, 2);
+          (4, 2, 3);
+          (-3, 2, 0);
+          (9, 5, 0);
+          (1, 0, 1);
+          (far + 1, 2, 3);
+          (1 - far, 2, 0);
+        ]
         (fun (start, len, first) ->
           equal (tensor int32) (expected first len) (window start len));
       test "a window longer than its axis is refused" (fun () ->
@@ -306,7 +398,7 @@ let windows =
           equal (tensor int32)
             (Nx.create Nx.int32 [| 4 |] [| 0l; 0l; 7l; 7l |])
             (Nx.set
-               [ Nx.D (Nx.scalar Nx.int32 5l, 2) ]
+               [ Nx.D (Nx.scalar Nx.int64 5L, 2) ]
                (Nx.full Nx.int32 [| 2 |] 7l)
                x));
     ]
@@ -327,4 +419,12 @@ let stepped_ranges =
 let () =
   exit
     (run "nx indexing"
-       [ gathers; scatters; selections; windows; stepped_ranges ])
+       [
+         gathers;
+         scatters;
+         extremes;
+         selections;
+         windows;
+         stepped_ranges;
+         past_int32;
+       ])

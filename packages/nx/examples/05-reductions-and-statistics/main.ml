@@ -65,7 +65,7 @@ let () =
   let hottest_day = argmax ~axis:1 temps in
   Printf.printf "Hottest day per city:\n";
   for i = 0 to 3 do
-    Printf.printf "  %-10s  day %ld\n" cities.(i) (item [ i ] hottest_day)
+    Printf.printf "  %-10s  day %Ld\n" cities.(i) (item [ i ] hottest_day)
   done;
   print_newline ();
 

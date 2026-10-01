@@ -25,7 +25,7 @@
     Multiclass metrics share the sparse-label convention of
     {!Loss.softmax_cross_entropy_sparse}: [predictions] is a float tensor of
     shape [[...; classes]] holding logits or probabilities — only the order
-    within each row matters — and [labels] holds [int32] class indices in
+    within each row matters — and [labels] holds [int64] class indices in
     \[[0];[classes - 1]\], shaped like [predictions] without the last axis. The
     predicted class is the argmax over the last axis, ties resolving to the
     lowest class index.
@@ -36,12 +36,11 @@
 
 (** {1:accuracy Accuracy} *)
 
-val accuracy : (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+val accuracy : (float, 'a) Nx.t -> Nx.int64_t -> float
 (** [accuracy predictions labels] is the fraction of examples whose predicted
     class equals their label. *)
 
-val top_k_accuracy :
-  k:int -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+val top_k_accuracy : k:int -> (float, 'a) Nx.t -> Nx.int64_t -> float
 (** [top_k_accuracy ~k predictions labels] is the fraction of examples whose
     label ranks among the [k] highest-scoring classes. An example counts as
     correct when fewer than [k] classes score strictly higher than its label's
@@ -53,7 +52,7 @@ val top_k_accuracy :
 (** {1:confusion Confusion-matrix metrics} *)
 
 val confusion_matrix :
-  (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> (int32, Nx.int32_elt) Nx.t
+  (float, 'a) Nx.t -> Nx.int64_t -> (int32, Nx.int32_elt) Nx.t
 (** [confusion_matrix predictions labels] is the [[classes; classes]] matrix
     whose row [i], column [j] entry counts the examples with label [i] and
     predicted class [j]. Correct predictions lie on the diagonal. *)
@@ -66,22 +65,19 @@ type average = [ `Macro | `Micro ]
     for single-label classification micro precision, recall and F1 all equal
     {!val-accuracy}. *)
 
-val precision :
-  ?average:average -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+val precision : ?average:average -> (float, 'a) Nx.t -> Nx.int64_t -> float
 (** [precision ?average predictions labels] is the fraction of each class's
     predicted instances that are correct — [tp / (tp + fp)] — combined according
     to [average], which defaults to [`Macro]. A class never predicted has
     precision [0]. *)
 
-val recall :
-  ?average:average -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+val recall : ?average:average -> (float, 'a) Nx.t -> Nx.int64_t -> float
 (** [recall ?average predictions labels] is the fraction of each class's true
     instances that are predicted — [tp / (tp + fn)] — combined according to
     [average], which defaults to [`Macro]. A class with no true instances has
     recall [0]. *)
 
-val f1 :
-  ?average:average -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+val f1 : ?average:average -> (float, 'a) Nx.t -> Nx.int64_t -> float
 (** [f1 ?average predictions labels] is the harmonic mean of precision and
     recall per class — [2 tp / (2 tp + fp + fn)] — combined according to
     [average], which defaults to [`Macro]. A class with no true and no predicted
@@ -90,7 +86,7 @@ val f1 :
 
 (** {1:ranking Ranking} *)
 
-val auc_roc : (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+val auc_roc : (float, 'a) Nx.t -> Nx.int64_t -> float
 (** [auc_roc scores labels] is the area under the ROC curve of a binary
     classifier: the probability that a uniformly drawn positive example
     outscores a uniformly drawn negative one, tied pairs counting half —

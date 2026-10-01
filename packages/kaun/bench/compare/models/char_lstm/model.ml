@@ -143,7 +143,8 @@ let train_step spec inputs targets (params, opt) =
    Loading is therefore two moves — read the entries under their PyTorch names
    into a structure with the file's shapes, then transpose into the model. The
    weights are all float32, so they come out of the checkpoint as one structure;
-   the token grid is int32 and comes out as the entry it is. *)
+   the token grid is int32 and comes out as the entry it is, widened once to
+   int64, the type of indices. *)
 
 module Weights = struct
   type 'a t = {
@@ -196,7 +197,9 @@ let load_fixture spec path =
       (Nx.Ptree.instantiate (module Weights))
       ~like:template ckpt
   in
-  let tokens = Nx.unpack Nx.int32 (Kaun.Checkpoint.get "tokens" ckpt) in
+  let tokens =
+    Nx.cast Nx.int64 (Nx.unpack Nx.int32 (Kaun.Checkpoint.get "tokens" ckpt))
+  in
   if Nx.shape tokens <> [| spec.batches; spec.batch; spec.seq_len + 1 |] then
     failwith (path ^ ": the token grid does not have the spec's shape");
   let linear w b =

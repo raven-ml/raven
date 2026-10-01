@@ -85,7 +85,7 @@ let sorted_desc logits = fst (Nx.sort ~descending:true ~axis:(-1) logits)
 let keep_top_k ~k logits =
   let lead, vocab = last_axis ~fn:"keep_top_k" logits in
   let k = column ~fn:"keep_top_k" ~lead k in
-  let at = Nx.clamp ~min:0l ~max:(Int32.of_int (vocab - 1)) (Nx.sub_s k 1l) in
+  let at = Nx.clamp ~min:0L ~max:(Int64.of_int (vocab - 1)) (Nx.sub_s k 1L) in
   let sorted = sorted_desc logits in
   keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) ~indices:at sorted) logits
 
@@ -101,9 +101,9 @@ let keep_top_p ~p logits =
   (* [p >= 1] keeps everything: a confident row's cumulative sum rounds to one
      before its tail, which the mass test alone would drop. *)
   let all = Nx.greater_equal p (Nx.ones_like p) in
-  let kept = Nx.cast Nx.int32 (Nx.logical_or (Nx.less before p) all) in
+  let kept = Nx.cast Nx.int64 (Nx.logical_or (Nx.less before p) all) in
   let count = Nx.sum ~axes:[ -1 ] ~keepdims:true kept in
   let at =
-    Nx.clamp ~min:0l ~max:(Int32.of_int (vocab - 1)) (Nx.sub_s count 1l)
+    Nx.clamp ~min:0L ~max:(Int64.of_int (vocab - 1)) (Nx.sub_s count 1L)
   in
   keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) ~indices:at sorted) logits

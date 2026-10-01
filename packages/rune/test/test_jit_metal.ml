@@ -572,7 +572,7 @@ let test_place_from_the_disk () =
 let test_borrowed_storage_is_never_lent () =
   let metal = Rune.device "METAL" in
   let reused () = (Rune.jit_stats ()).reused_bytes in
-  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+  let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
   let write =
     Rune.jit ~devices:[ metal ]
       Nx.Ptree.(consumes tensor @@ returns tensor)
@@ -730,7 +730,7 @@ let test_host_started_loop_compiles_once () =
 let test_scatter_duplicates_on_metal () =
   let updates = 4096 and width = 8 in
   let indices =
-    Nx.create Nx.int32 [| updates; width |] (Array.make (updates * width) 1l)
+    Nx.create Nx.int64 [| updates; width |] (Array.make (updates * width) 1L)
   in
   let values =
     Nx.create f32 [| updates; width |]
@@ -891,7 +891,7 @@ let test_empty_values () =
   done
 
 let test_custom_backward_on_metal () =
-  let indices = Nx.create Nx.int32 [| 3 |] [| 2l; 0l; 2l |] in
+  let indices = Nx.create Nx.int64 [| 3 |] [| 2L; 0L; 2L |] in
   let take x =
     Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
       ~fwd:(fun x -> (Nx.take ~axis:0 ~indices x, Nx.mul_s x 0.))

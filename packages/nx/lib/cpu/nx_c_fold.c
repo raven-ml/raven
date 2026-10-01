@@ -815,7 +815,7 @@ static const nx_c_scan_table nx_c_cummin_table = {
    Reductions/scans are memory-bound (read the whole extent, trivial per-element
    work), so all carry NX_C_COST_BANDWIDTH. Reductions dispatch on the input
    dtype and preserve it (backend_intf reduce_* returns the input dtype);
-   argmax/argmin write int32 (the engine's fini). Each stub calls exactly one
+   argmax/argmin write int64 (the engine's fini). Each stub calls exactly one
    funnel, which validates, dispatches, runs, and raises with the op name.
 
    `no_identity` is the op's empty-axis policy (nx_c_engine.h): max/min have no
@@ -823,8 +823,8 @@ static const nx_c_scan_table nx_c_cummin_table = {
    returns NX_C_ERR_EMPTY_REDUCE before any kernel runs (never leaking the init
    sentinel) — but only when there are outputs to fill; an empty result reduces
    nothing and is a no-op. sum/prod have identities 0/1, so they pass false and
-   an empty extent stores the identity. The argreduce funnel rejects an empty or
-   oversized axis itself. */
+   an empty extent stores the identity. The argreduce funnel rejects an empty
+   axis itself. */
 
 #define NX_C_FOLD_STUB(cname, opname, table, stream_table, no_identity)         \
   CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxes) {        \

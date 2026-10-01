@@ -457,7 +457,7 @@ let test_set_grad_both_operands () =
   let by_s s = Nx.sum (Nx.mul c (Nx.set [ Nx.R (1, 3) ] s t)) in
   check_arr ~msg:"a broadcast value sums its window" [| 5.0 |]
     (Rune.grad' by_s (Nx.scalar f32 1.0));
-  let pos = Nx.scalar Nx.int32 2l in
+  let pos = Nx.scalar Nx.int64 2L in
   let by_v_at v = Nx.sum (Nx.mul c (Nx.set [ Nx.D (pos, 2) ] v t)) in
   check_arr ~msg:"dv through a run-time start" [| 3.0; 4.0 |]
     (Rune.grad' by_v_at v);

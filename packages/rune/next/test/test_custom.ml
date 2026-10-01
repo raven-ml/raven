@@ -371,7 +371,7 @@ let compiled_tests =
           (fun x -> equal (close ()) (Nx.mul_s x 200.) (f x))
           [ v3 (); vec [| -0.3; 0.4; 1.2 |] ]);
     test "a custom_vjp whose pullback scatters, under jit, replayed" (fun () ->
-        let indices = Nx.create Nx.int32 [| 3 |] [| 2l; 0l; 2l |] in
+        let indices = Nx.create Nx.int64 [| 3 |] [| 2L; 0L; 2L |] in
         let take =
           Rune.custom_vjp tensor tensor (fun x ->
               ( Nx.take ~axis:0 ~indices x,

@@ -1009,6 +1009,7 @@ module Op = struct
     | Window of { axis : int; size : int; step : int }
 
   type int32_t = (int32, Nx_dtype.int32_elt) Types.t
+  type int64_t = (int64, Nx_dtype.int64_elt) Types.t
 
   type _ t =
     | Unary : Nx_backend.unary * ('a, 'b) Types.t -> ('a, 'b) Types.t t
@@ -1025,9 +1026,7 @@ module Op = struct
         Nx_backend.reduce * int array * ('a, 'b) Types.t
         -> ('a, 'b) Types.t t
     | Scan : Nx_backend.reduce * int * ('a, 'b) Types.t -> ('a, 'b) Types.t t
-    | Arg_reduce :
-        Nx_backend.arg_reduce * int * ('a, 'b) Types.t
-        -> int32_t t
+    | Arg_reduce : Nx_backend.arg_reduce * int * ('a, 'b) Types.t -> int64_t t
     | Sort : {
         descending : bool;
         axis : int;
@@ -1039,25 +1038,25 @@ module Op = struct
         axis : int;
         x : ('a, 'b) Types.t;
       }
-        -> int32_t t
+        -> int64_t t
     | Pad : (int * int) array * 'a * ('a, 'b) Types.t -> ('a, 'b) Types.t t
     | Cat : int * ('a, 'b) Types.t list -> ('a, 'b) Types.t t
     | Convert :
         conversion * ('c, 'd) Nx_dtype.t * ('a, 'b) Types.t
         -> ('c, 'd) Types.t t
     | Threefry : int32_t * int32_t -> int32_t t
-    | Gather : int * int32_t * ('a, 'b) Types.t -> ('a, 'b) Types.t t
+    | Gather : int * int64_t * ('a, 'b) Types.t -> ('a, 'b) Types.t t
     | Scatter : {
         mode : [ `Set | `Add ];
         unique : bool;
         axis : int;
-        indices : int32_t;
+        indices : int64_t;
         updates : ('a, 'b) Types.t;
         into : ('a, 'b) Types.t;
       }
         -> ('a, 'b) Types.t t
     | Update :
-        ('a, 'b) Types.t * int32_t * ('a, 'b) Types.t
+        ('a, 'b) Types.t * int64_t * ('a, 'b) Types.t
         -> ('a, 'b) Types.t t
     | Unfold : {
         kernel_size : int array;
@@ -1103,7 +1102,7 @@ module Op = struct
         x : ('a, 'b) Types.t;
       }
         -> (('a, 'b) Types.t * ('a, 'b) Types.t) t
-    | Lu : ('a, 'b) Types.t -> (('a, 'b) Types.t * int32_t * int32_t) t
+    | Lu : ('a, 'b) Types.t -> (('a, 'b) Types.t * int64_t * int64_t) t
     | Svd : {
         full_matrices : bool;
         x : ('a, 'b) Types.t;
@@ -1945,9 +1944,9 @@ let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
   | Where (_, a, _) -> dtype a
   | Reduce (_, _, x) -> dtype x
   | Scan (_, _, x) -> dtype x
-  | Arg_reduce _ -> Nx_dtype.Int32
+  | Arg_reduce _ -> Nx_dtype.Int64
   | Sort { x; _ } -> dtype x
-  | Argsort _ -> Nx_dtype.Int32
+  | Argsort _ -> Nx_dtype.Int64
   | Pad (_, _, x) -> dtype x
   | Cat (_, x :: _) -> dtype x
   | Cat (_, []) -> invalid_arg "Nx.concatenate: no value to concatenate"
@@ -2067,7 +2066,7 @@ let k_scan ((module K) : kernels) k axis a =
 
 let k_arg_reduce ((module K) : kernels) k axis a =
   let dst =
-    alloc Nx_dtype.Int32
+    alloc Nx_dtype.Int64
       (Shape.reduce_output_shape (shape_of a) [| axis |] false)
   in
   K.arg_reduce k ~axis a ~dst;
@@ -2079,7 +2078,7 @@ let k_sort ((module K) : kernels) descending axis a =
   dst
 
 let k_argsort ((module K) : kernels) descending axis a =
-  let dst = alloc Nx_dtype.Int32 (shape_of a) in
+  let dst = alloc Nx_dtype.Int64 (shape_of a) in
   K.argsort ~descending ~axis a ~dst;
   dst
 
@@ -2194,8 +2193,8 @@ let k_qr ((module K) : kernels) reduced a =
 let k_lu ((module K) : kernels) a =
   let batch, m, n = matrix a in
   let lu = alloc a.dtype (shape_of a) in
-  let pivots = alloc Nx_dtype.Int32 (Array.append batch [| Int.min m n |]) in
-  let perm = alloc Nx_dtype.Int32 (Array.append batch [| m |]) in
+  let pivots = alloc Nx_dtype.Int64 (Array.append batch [| Int.min m n |]) in
+  let perm = alloc Nx_dtype.Int64 (Array.append batch [| m |]) in
   K.lu a ~lu ~pivots ~perm;
   (lu, pivots, perm)
 

@@ -139,12 +139,12 @@ let update_batched st x starts v =
     for ax = 0 to rank - 1 do
       let n = tshape.(ax) and len = vs.(ax) in
       let start = T.reshape [| b; 1 |] (T.slice [ T.A; T.I ax ] starts) in
-      let rel = T.sub (T.reshape [| 1; n |] (T.arange T.int32 0 n 1)) start in
+      let rel = T.sub (T.reshape [| 1; n |] (T.arange T.int64 0 n 1)) start in
       let inside =
-        T.logical_and (T.greater_equal_s rel 0l)
-          (T.less_s rel (Int32.of_int len))
+        T.logical_and (T.greater_equal_s rel 0L)
+          (T.less_s rel (Int64.of_int len))
       in
-      let idx = T.clamp ~min:0l ~max:(Int32.of_int (len - 1)) rel in
+      let idx = T.clamp ~min:0L ~max:(Int64.of_int (len - 1)) rel in
       let along =
         Array.init (rank + 1) (fun d ->
             if d = 0 then b else if d = ax + 1 then n else 1)
@@ -168,7 +168,7 @@ let update_batched st x starts v =
   else
     (* The batch axis is never written: its start is 0 and [v]'s batch extent
        is the whole axis. *)
-    update t ~starts:(pad [| (1, 0) |] 0l starts) v'
+    update t ~starts:(pad [| (1, 0) |] 0L starts) v'
 
 (* Quantised products. The lane becomes a leading axis of the weight's parts, of
    [ids] and of [x], a unit axis where one is a constant, after [pad] unit axes

@@ -585,7 +585,7 @@ let gather_instance g =
   let is = Array.mapi (fun i d -> if i = axis then m else d) s in
   let+ x = g s
   and+ indices =
-    tensor Nx.int32
+    tensor Nx.int64
       (frequency
          [
            (6, map float_of_int (int_range 0 (n - 1)));
@@ -612,7 +612,7 @@ let scatter_instance g =
   let+ into = g s
   and+ updates = g is
   and+ indices =
-    tensor Nx.int32 (map float_of_int (int_range 0 (s.(axis) - 1))) is
+    tensor Nx.int64 (map float_of_int (int_range 0 (s.(axis) - 1))) is
   and+ mode =
     of_list
       ~pp:(fun ppf m ->
@@ -645,11 +645,11 @@ let update_instance g =
     Array.fold_right
       (fun hi acc ->
         let+ v = int_range 0 hi and+ acc = acc in
-        Int32.of_int v :: acc)
+        Int64.of_int v :: acc)
       (Array.mapi (fun i d -> s.(i) - d) vs)
       (constant [])
   in
-  let starts = Nx.create Nx.int32 [| Array.length s |] (Array.of_list starts) in
+  let starts = Nx.create Nx.int64 [| Array.length s |] (Array.of_list starts) in
   let+ x = g s and+ v = g vs and+ tracked = patterns 2 in
   nary
     (Format.asprintf "update at %a" Nx.pp starts)
@@ -962,7 +962,7 @@ let lu_instance values d =
       (Nx.mul (Nx.eye ~m:n d k) (Nx.unsqueeze ~axes:[ -1 ] diag))
   in
   let rows =
-    Nx.create Nx.int32 [| m |] (Array.of_list (List.map Int32.of_int perm))
+    Nx.create Nx.int64 [| m |] (Array.of_list (List.map Int64.of_int perm))
   in
   let x = Nx.take ~axis:(-2) ~indices:rows (Nx.matmul l u) in
   let f x =

@@ -97,7 +97,7 @@ type index =
   | A
   | M of (bool, bool_elt) t
   | N
-  | D of (int32, Nx_dtype.int32_elt) t * int
+  | D of (int64, Nx_dtype.int64_elt) t * int
 
 (* ───── Tensor Properties ───── *)
 
@@ -1503,10 +1503,10 @@ let triangular_mask ~op ~cmp ?k x =
   if nd < 2 then err op "input requires at least 2D tensor";
   let rows = sh.(nd - 2) in
   let cols = sh.(nd - 1) in
-  let row_idx = reshape [| rows; 1 |] (arange (B.context x) int32 0 rows 1) in
-  let col_idx = reshape [| 1; cols |] (arange (B.context x) int32 0 cols 1) in
+  let row_idx = reshape [| rows; 1 |] (arange (B.context x) int64 0 rows 1) in
+  let col_idx = reshape [| 1; cols |] (arange (B.context x) int64 0 cols 1) in
   let k_offset =
-    sub col_idx (scalar (B.context x) int32 (Int32.of_int k_val))
+    sub col_idx (scalar (B.context x) int64 (Int64.of_int k_val))
   in
   let mask = cmp row_idx k_offset in
   where mask x (scalar_like x (Nx_dtype.zero (dtype x)))
@@ -1571,7 +1571,7 @@ type dim_op =
   | Squeeze of { idx : int }
   | Gather of int array
   | New_axis
-  | Window of { start : (int32, Nx_dtype.int32_elt) t; len : int }
+  | Window of { start : (int64, Nx_dtype.int64_elt) t; len : int }
 
 let normalize_slice_spec ~axis dim_size = function
   | I idx ->
@@ -1628,8 +1628,8 @@ let normalize_slice_spec ~axis dim_size = function
       let start = reshape [||] start in
       let start =
         minimum
-          (maximum start (scalar ctx Nx_dtype.int32 0l))
-          (scalar ctx Nx_dtype.int32 (Int32.of_int (dim_size - len)))
+          (maximum start (scalar ctx Nx_dtype.int64 0L))
+          (scalar ctx Nx_dtype.int64 (Int64.of_int (dim_size - len)))
       in
       Window { start; len }
 
@@ -1661,9 +1661,9 @@ let slice_internal specs x =
   let ops = parse_specs specs (shape x) in
   let gather_axis axis indices t =
     let idx_t =
-      init (B.context t) Nx_dtype.int32
+      create (B.context t) Nx_dtype.int64
         [| Array.length indices |]
-        (fun i -> Int32.of_int indices.(i.(0)))
+        (Array.map Int64.of_int indices)
     in
     take ~axis ~indices:idx_t t
   in
@@ -1688,7 +1688,7 @@ let slice_internal specs x =
           if len = 0 then shrink_axis axis 0 0 current
           else
             let idx =
-              add (arange (B.context current) Nx_dtype.int32 0 len 1) start
+              add (arange (B.context current) Nx_dtype.int64 0 len 1) start
             in
             take ~axis ~indices:idx current
         in
@@ -1871,17 +1871,17 @@ let set specs v x =
               (function `Int _ -> true | `Tensor _ -> false)
               corners
           then
-            create ctx Nx_dtype.int32 [| nd |]
+            create ctx Nx_dtype.int64 [| nd |]
               (Array.of_list
                  (List.map
                     (function
-                      | `Int i -> Int32.of_int i | `Tensor _ -> assert false)
+                      | `Int i -> Int64.of_int i | `Tensor _ -> assert false)
                     corners))
           else
             stack ~axis:0
               (List.map
                  (function
-                   | `Int i -> scalar ctx Nx_dtype.int32 (Int32.of_int i)
+                   | `Int i -> scalar ctx Nx_dtype.int64 (Int64.of_int i)
                    | `Tensor s -> s)
                  corners)
         in
@@ -1901,9 +1901,9 @@ let set specs v x =
           List.map
             (function
               | Squeeze { idx } ->
-                  (true, scalar ctx Nx_dtype.int32 (Int32.of_int idx))
+                  (true, scalar ctx Nx_dtype.int64 (Int64.of_int idx))
               | View { start; stop; step; _ } ->
-                  (false, arange ctx Nx_dtype.int32 start stop step)
+                  (false, arange ctx Nx_dtype.int64 start stop step)
               | Gather indices ->
                   let seen = Hashtbl.create (Array.length indices) in
                   Array.iter
@@ -1913,11 +1913,11 @@ let set specs v x =
                       Hashtbl.replace seen i ())
                     indices;
                   ( false,
-                    create ctx Nx_dtype.int32
+                    create ctx Nx_dtype.int64
                       [| Array.length indices |]
-                      (Array.map Int32.of_int indices) )
+                      (Array.map Int64.of_int indices) )
               | Window { start; len } ->
-                  (false, add (arange ctx Nx_dtype.int32 0 len 1) start)
+                  (false, add (arange ctx Nx_dtype.int64 0 len 1) start)
               | New_axis -> assert false)
             axis_ops
         in
@@ -1928,14 +1928,14 @@ let set specs v x =
                dims_info)
         in
         let target_rank = Array.length target_shape in
-        let flat_idx = ref (scalar ctx Nx_dtype.int32 0l) in
+        let flat_idx = ref (scalar ctx Nx_dtype.int64 0L) in
         let tdim = ref 0 in
         List.iteri
           (fun i (squeezed, idx_t) ->
-            let stride = Int32.of_int strides.(i) in
+            let stride = Int64.of_int strides.(i) in
             let weighted =
-              if stride = 1l then idx_t
-              else mul idx_t (scalar ctx Nx_dtype.int32 stride)
+              if stride = 1L then idx_t
+              else mul idx_t (scalar ctx Nx_dtype.int64 stride)
             in
             if squeezed then flat_idx := add !flat_idx weighted
             else begin
@@ -1965,10 +1965,10 @@ let nonzero_indices_only (condition : (bool, bool_elt) t) =
   let bits = to_array (flatten condition) in
   let positions = ref [] in
   for i = Array.length bits - 1 downto 0 do
-    if bits.(i) then positions := Int32.of_int i :: !positions
+    if bits.(i) then positions := Int64.of_int i :: !positions
   done;
   let arr = Array.of_list !positions in
-  [| create (B.context condition) Int32 [| Array.length arr |] arr |]
+  [| create (B.context condition) Int64 [| Array.length arr |] arr |]
 
 let compress ?axis ~(condition : (bool, bool_elt) t) t =
   match axis with
@@ -1979,8 +1979,8 @@ let compress ?axis ~(condition : (bool, bool_elt) t) t =
       let t_flat = flatten t in
       let cond_flat = flatten condition in
       let n =
-        sum ~axes:[ 0 ] (astype Int32 cond_flat)
-        |> squeeze |> unsafe_get [] |> Int32.to_int
+        sum ~axes:[ 0 ] (astype Int64 cond_flat)
+        |> squeeze |> unsafe_get [] |> Int64.to_int
       in
       if n = 0 then empty (B.context t) (dtype t) [| 0 |]
       else take ~indices:(nonzero_indices_only cond_flat).(0) t_flat
@@ -2012,30 +2012,30 @@ let nonzero (type a b) (t : (a, b) t) =
   let mask = not_equal t (zeros_like t) in
   let bits = to_array (flatten mask) in
   let n = Array.fold_left (fun acc b -> if b then acc + 1 else acc) 0 bits in
-  let coords = Array.init nd (fun _ -> Array.make n 0l) in
+  let coords = Array.init nd (fun _ -> Array.make n 0L) in
   let k = ref 0 in
   Array.iteri
     (fun flat b ->
       if b then begin
         let pos = Shape.unravel_index flat t_shape in
         for d = 0 to nd - 1 do
-          coords.(d).(!k) <- Int32.of_int pos.(d)
+          coords.(d).(!k) <- Int64.of_int pos.(d)
         done;
         incr k
       end)
     bits;
-  Array.map (fun c -> create (B.context t) Int32 [| n |] c) coords
+  Array.map (fun c -> create (B.context t) Int64 [| n |] c) coords
 
 let argwhere t =
   let coords = nonzero t in
   let nd = Array.length coords in
   if nd = 0 then
     let k = if item [] t = Nx_dtype.zero (dtype t) then 0 else 1 in
-    empty (B.context t) Int32 [| k; 0 |]
+    empty (B.context t) Int64 [| k; 0 |]
   else
     let n = dim 0 coords.(0) in
     let cols = Array.map to_array coords in
-    init (B.context t) Int32 [| n; nd |] (fun i -> cols.(i.(1)).(i.(0)))
+    init (B.context t) Int64 [| n; nd |] (fun i -> cols.(i.(1)).(i.(0)))
 
 (* ───── Splitting ───── *)
 
@@ -2105,17 +2105,16 @@ let sort_axis op x axis =
   axis
 
 let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
-  if ndim x = 0 then (x, scalar (B.context x) Nx_dtype.int32 0l)
+  if ndim x = 0 then (x, scalar (B.context x) Nx_dtype.int64 0L)
   else
     let axis = sort_axis "sort" x axis in
     (B.sort ~descending ~axis x, B.argsort ~descending ~axis x)
 
 let argsort ?(descending = false) ?(axis = -1) x =
-  if ndim x = 0 then scalar (B.context x) Nx_dtype.int32 0l
+  if ndim x = 0 then scalar (B.context x) Nx_dtype.int64 0L
   else B.argsort ~descending ~axis:(sort_axis "argsort" x axis) x
 
-(* The tensor and axis an arg-reduction runs along. Its indices are int32, so
-   the axis holds at most [Int32.max_int] entries, checked before flattening. *)
+(* The tensor and axis an arg-reduction runs along. *)
 let arg_axis op ?axis x =
   let r = ndim x in
   let a =
@@ -2129,8 +2128,6 @@ let arg_axis op ?axis x =
   in
   let n = match a with None -> numel x | Some a -> (shape x).(a) in
   if n = 0 then err op "an empty axis has no extreme";
-  if n > Int32.to_int Int32.max_int then
-    err op "axis of %d entries, more than an int32 index reaches" n;
   match a with None -> (flatten x, 0) | Some a -> (x, a)
 
 (* [y], an argument reduction of [x] along [axis], with that axis kept as one
@@ -2194,21 +2191,25 @@ let key_of_int64 (type c d) (dt : (c, d) Nx_dtype.t) (v : int64) : c =
   | Nx_dtype.Int64 -> v
   | _ -> invalid_arg "key_of_int64: not a signed key dtype"
 
-(* [radix_select ~k keys] is the positions of the [k] greatest entries of each
-   row of the signed integer [keys], shaped [b; n] with [n] above
+(* [radix_select_in cd ~k keys] is the positions of the [k] greatest entries of
+   each row of the signed integer [keys], shaped [b; n] with [n] above
    [top_k_sorted], in the order of a stable descending sort.
 
    The threshold, the [k]th greatest key, is found by radix select: each round
    extends its known prefix by the [radix_bits] greatest bits that leave at
    least [k] keys at or above. The keys above the threshold and the first of
    those equal to it fill the [k] slots, compacted in order by a running count
-   and a scatter, and are then put in order. *)
-let radix_select (type c d) ~k (keys : (c, d) t) =
+   and a scatter, and are then put in order.
+
+   Counts and positions are computed in [cd], which holds every running count,
+   at most [k * (n + 1)]. *)
+let radix_select_in (type c d p q) (cd : (p, q) Nx_dtype.t) ~k (keys : (c, d) t)
+    =
   let ctx = B.context keys in
   let kd = dtype keys in
   let b = dim 0 keys and n = dim 1 keys in
   let width = 8 * Nx_dtype.itemsize kd in
-  let kk = scalar ctx Nx_dtype.int32 (Int32.of_int k) in
+  let kk = scalar ctx cd (Nx_dtype.of_float cd (float_of_int k)) in
   let rows =
     let g = (n + radix_chunk - 1) / radix_chunk in
     (* Padding holds the least key, which only a count every key already
@@ -2239,9 +2240,9 @@ let radix_select (type c d) ~k (keys : (c, d) t) =
       in
       (* A chunk lane counts at most one key per chunk, so its count fits
          int16 below 32768 chunks: half what int32 would hold at once. *)
-      let count (type p q) (dt : (p, q) Nx_dtype.t) =
+      let count (type r s) (dt : (r, s) Nx_dtype.t) =
         sum ~axes:[ 2 ] (cast dt above)
-        |> contiguous |> cast Nx_dtype.int32 |> sum ~axes:[ 2 ] |> contiguous
+        |> contiguous |> cast cd |> sum ~axes:[ 2 ] |> contiguous
       in
       let counts =
         if dim 2 rows < 32768 then count Nx_dtype.int16
@@ -2254,40 +2255,31 @@ let radix_select (type c d) ~k (keys : (c, d) t) =
     search (full ctx kd [| b; 1 |] (Nx_dtype.min_value kd)) width
   in
   let above = greater keys threshold and at = equal keys threshold in
-  let n_above = sum ~axes:[ 1 ] ~keepdims:true (cast Nx_dtype.int32 above) in
+  let n_above = sum ~axes:[ 1 ] ~keepdims:true (cast cd above) in
   let room = sub kk n_above in
   (* One running count carries both, as [above + k * at]: fewer than [k] keys
      are above. *)
-  let running (type p q) (dt : (p, q) Nx_dtype.t) =
-    let base = full ctx dt [||] (Nx_dtype.of_float dt (float_of_int k)) in
-    let packed = add (cast dt above) (mul (cast dt at) base) in
-    let running = cumsum ~axis:1 packed in
-    ( cast Nx_dtype.int32 (mod_ running base),
-      cast Nx_dtype.int32 (div running base) )
-  in
-  let before_above, before_at =
-    if k * (n + 1) <= Int32.to_int Int32.max_int then running Nx_dtype.int32
-    else running Nx_dtype.int64
-  in
+  let running = cumsum ~axis:1 (add (cast cd above) (mul (cast cd at) kk)) in
+  let before_above = mod_ running kk and before_at = div running kk in
   let position =
-    broadcast_to [| b; n |]
-      (reshape [| 1; n |] (arange ctx Nx_dtype.int32 0 n 1))
+    broadcast_to [| b; n |] (reshape [| 1; n |] (arange ctx cd 0 n 1))
   in
   (* A stable partition: the keys above, then the keys taken at the threshold,
      then the rest, each in position order. *)
   let slot =
-    where above (sub_s before_above 1l)
+    where above
+      (sub_s before_above (Nx_dtype.one cd))
       (where
          (logical_and at (less_equal before_at room))
-         (add n_above (sub_s before_at 1l))
-         (add_s
-            (sub (sub position before_above) (minimum before_at room))
-            (Int32.of_int k)))
+         (add n_above (sub_s before_at (Nx_dtype.one cd)))
+         (add (sub (sub position before_above) (minimum before_at room)) kk))
   in
   let chosen =
-    scatter ~unique_indices:true ~axis:1 ~indices:slot ~values:position
-      (zeros ctx Nx_dtype.int32 [| b; n |])
+    scatter ~unique_indices:true ~axis:1 ~indices:(cast Nx_dtype.int64 slot)
+      ~values:position
+      (zeros ctx cd [| b; n |])
     |> shrink [| (0, b); (0, k) |]
+    |> cast Nx_dtype.int64
   in
   let chosen_keys = take_along_axis ~axis:1 ~indices:chosen keys in
   if b * k * k > top_k_counted then
@@ -2306,9 +2298,18 @@ let radix_select (type c d) ~k (keys : (c, d) t) =
     let precedes =
       logical_or (greater other mine) (logical_and earlier (equal other mine))
     in
-    let place = sum ~axes:[ 1 ] (cast Nx_dtype.int32 precedes) in
-    scatter ~unique_indices:true ~axis:1 ~indices:place ~values:chosen
-      (zeros ctx Nx_dtype.int32 [| b; k |])
+    let place = sum ~axes:[ 1 ] (cast cd precedes) in
+    scatter ~unique_indices:true ~axis:1
+      ~indices:(cast Nx_dtype.int64 place)
+      ~values:chosen
+      (zeros ctx Nx_dtype.int64 [| b; k |])
+
+(* [radix_select ~k keys] is [radix_select_in] in the narrowest of [int32] and
+   [int64] that holds its counts. *)
+let radix_select ~k keys =
+  if k * (dim 1 keys + 1) <= Int32.to_int Int32.max_int then
+    radix_select_in Nx_dtype.int32 ~k keys
+  else radix_select_in Nx_dtype.int64 ~k keys
 
 (* [select ~k keys] is [radix_select ~k keys], or the first [k] positions of a
    stable descending sort of [keys] when their rows are short. *)
@@ -2346,7 +2347,7 @@ let select_by_passes (type c d) ~k ~axis (keys : (c, d) t) =
   let n = dim axis keys in
   let along = Array.make (ndim keys) 1 in
   along.(axis) <- n;
-  let position = reshape along (arange (B.context keys) Nx_dtype.int32 0 n 1) in
+  let position = reshape along (arange (B.context keys) Nx_dtype.int64 0 n 1) in
   let low = full_like keys (Nx_dtype.min_value (dtype keys)) in
   (* One round picks the first free entry that a descending sort would place
      next. Comparing against the greatest key, under the free mask, keeps an
@@ -2383,7 +2384,7 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
       let batch = Array.sub (shape last) 0 (r - 1) in
       let b = Array.fold_left ( * ) 1 batch in
       let chosen =
-        if b = 0 then zeros (B.context x) Nx_dtype.int32 [| 0; k |]
+        if b = 0 then zeros (B.context x) Nx_dtype.int64 [| 0; k |]
         else select ~k (reshape [| b; n |] last)
       in
       moveaxis (-1) axis (reshape (Array.append batch [| k |]) chosen)
@@ -2606,19 +2607,30 @@ module Rng = struct
     create ctx Nx_dtype.int32 [| 2 |]
       [| Int32.of_int (seed asr 32); Int32.of_int seed |]
 
+  (* The [n; 2] counters of [n] blocks. Block [k] holds the words [(2k, 2k + 1)
+     mod 2^32], which repeat from 2^31 blocks on, so in a draw of more than 2^31
+     blocks the second word of block [k = q * 2^31 + r] is xored with [q], read
+     from either word's high half: the pair [(2r, (2r + 1) xor q)] gives back
+     [r] and [q], and the counters stay distinct up to 2^63 blocks. The term is
+     zero below 2^31 blocks, where it is not computed. *)
+  let counters ctx n =
+    let w = arange ctx Nx_dtype.int64 0 (2 * n) 1 in
+    let w =
+      if n <= 1 lsl 31 then w
+      else
+        bitwise_xor w
+          (mul (rshift w 32) (bitwise_and w (scalar ctx Nx_dtype.int64 1L)))
+    in
+    reshape [| n; 2 |] (cast Nx_dtype.int32 w)
+
   (* One Threefry application over [n] independent blocks: the key broadcast
-     across the rows of an [n; 2] counter whose row [i] holds [(2i, 2i+1)].
-     The broadcast is a stride-0 view; the kernel reads the key through its
-     strides, so materialising it would cost as many bytes as the draw. *)
+     across the rows of the counters. The broadcast is a stride-0 view; the
+     kernel reads the key through its strides, so materialising it would cost as
+     many bytes as the draw. *)
   let blocks name k n =
     check_key name k;
-    let ctx = B.context k in
     let kb = broadcast_to [| n; 2 |] (reshape [| 1; 2 |] k) in
-    let ctr =
-      reshape [| n; 2 |]
-        (cast Nx_dtype.int32 (arange ctx Nx_dtype.int64 0 (2 * n) 1))
-    in
-    B.threefry kb ctr
+    B.threefry kb (counters (B.context k) n)
 
   let split ?(n = 2) k =
     if n < 1 then invalid_arg "Nx.Rng.split: n must be at least 1";
@@ -3264,7 +3276,7 @@ module Rng = struct
           invalid_arg
             "Nx.Rng.categorical: logits requires floating point dtype"
     in
-    astype Nx_dtype.int32 (argmax (add logits g) ~axis ~keepdims:false)
+    argmax (add logits g) ~axis ~keepdims:false
 
   (* The scope: [next_key] performs [E_next_key]; [with_key] answers it by
      [fold_in root counter] with an incrementing counter — the same [fold_in]
@@ -3439,9 +3451,9 @@ let diagonal ?(offset = 0) ?axis1 ?axis2 x =
     let idx =
       add
         (mul
-           (arange ctx Nx_dtype.int32 0 diag_len 1)
-           (scalar ctx Nx_dtype.int32 (Int32.of_int step)))
-        (scalar ctx Nx_dtype.int32 (Int32.of_int start))
+           (arange ctx Nx_dtype.int64 0 diag_len 1)
+           (scalar ctx Nx_dtype.int64 (Int64.of_int step)))
+        (scalar ctx Nx_dtype.int64 (Int64.of_int start))
     in
     take ~axis:(nd - 2) ~indices:idx x_flat
 
@@ -3459,7 +3471,7 @@ let diag_construct k v =
   if n = 0 then zeros ctx dt [| s; s |]
   else
     let template = zeros ctx dt [| s; s |] in
-    let i = arange ctx Nx_dtype.int32 0 n 1 in
+    let i = arange ctx Nx_dtype.int64 0 n 1 in
     (* [B.scatter] needs [indices]' non-axis dimensions to match the
        template's, so [s - n] dummy rows/columns ride along scattering zeros —
        every written cell is distinct, and the dummies land where the template
@@ -3472,9 +3484,9 @@ let diag_construct k v =
       (* [v_i] at [i, i+k]: one index per row along axis 1. *)
       B.scatter ~mode:`Set ~unique:true template
         ~indices:
-          (extend ~axis:0 ~dtype:Nx_dtype.int32 [| pad; 1 |]
+          (extend ~axis:0 ~dtype:Nx_dtype.int64 [| pad; 1 |]
              (reshape [| n; 1 |]
-                (add i (scalar ctx Nx_dtype.int32 (Int32.of_int k)))))
+                (add i (scalar ctx Nx_dtype.int64 (Int64.of_int k)))))
         ~updates:
           (extend ~axis:0 ~dtype:dt [| pad; 1 |] (reshape [| n; 1 |] v))
         ~axis:1
@@ -3482,9 +3494,9 @@ let diag_construct k v =
       (* [v_j] at [j+|k|, j]: one index per column along axis 0. *)
       B.scatter ~mode:`Set ~unique:true template
         ~indices:
-          (extend ~axis:1 ~dtype:Nx_dtype.int32 [| 1; pad |]
+          (extend ~axis:1 ~dtype:Nx_dtype.int64 [| 1; pad |]
              (reshape [| 1; n |]
-                (add i (scalar ctx Nx_dtype.int32 (Int32.of_int (-k))))))
+                (add i (scalar ctx Nx_dtype.int64 (Int64.of_int (-k))))))
         ~updates:
           (extend ~axis:1 ~dtype:dt [| 1; pad |] (reshape [| 1; n |] v))
         ~axis:0
@@ -4393,7 +4405,7 @@ let norm (type a b) ?ord ?axes ?keepdims (x : (a, b) t) =
 (* +1 for a pivot that kept its row, -1 for one that exchanged it. *)
 let pivot_signs dt pivots =
   let one = ones (B.context pivots) dt (shape pivots) in
-  let steps = arange (B.context pivots) int32 0 (dim (-1) pivots) 1 in
+  let steps = arange (B.context pivots) int64 0 (dim (-1) pivots) 1 in
   where (not_equal pivots steps) (neg one) one
 
 let det a =
@@ -5114,23 +5126,21 @@ let fftfreq ctx dt ?(d = 1.0) n =
     if n mod 2 = 0 then
       concatenate ~axis:0
         [
-          cast dt (arange ctx Nx_dtype.int32 0 (n / 2) 1);
-          cast dt (arange ctx Nx_dtype.int32 (-(n / 2)) 0 1);
+          cast dt (arange ctx Nx_dtype.int64 0 (n / 2) 1);
+          cast dt (arange ctx Nx_dtype.int64 (-(n / 2)) 0 1);
         ]
     else
       concatenate ~axis:0
         [
-          cast dt (arange ctx Nx_dtype.int32 0 ((n + 1) / 2) 1);
-          cast dt (arange ctx Nx_dtype.int32 (-((n - 1) / 2)) 0 1);
+          cast dt (arange ctx Nx_dtype.int64 0 ((n + 1) / 2) 1);
+          cast dt (arange ctx Nx_dtype.int64 (-((n - 1) / 2)) 0 1);
         ]
   in
   mul_s freqs v
 
 let rfftfreq ctx dt ?(d = 1.0) n =
   let v = 1.0 /. (float_of_int n *. d) in
-  mul
-    (cast dt (arange ctx Nx_dtype.int32 0 ((n / 2) + 1) 1))
-    (scalar ctx dt v)
+  mul (cast dt (arange ctx Nx_dtype.int64 0 ((n / 2) + 1) 1)) (scalar ctx dt v)
 
 let fftshift ?axes x =
   let sh = shape x in
@@ -5306,13 +5316,13 @@ let real_transform_scale_last factor x =
 
 let real_transform_alternating_signs (type a) (dtype : (float, a) Nx_dtype.t)
     ctx n =
-  let indices = arange ctx Nx_dtype.int32 0 n 1 in
-  let even = equal_s (mod_s indices 2l) 0l in
+  let indices = arange ctx Nx_dtype.int64 0 n 1 in
+  let even = equal_s (mod_s indices 2L) 0L in
   where even (ones ctx dtype [| n |]) (full ctx dtype [| n |] (-1.0))
 
 let real_transform_phase (type a b) (float_dtype : (float, a) Nx_dtype.t)
     (complex_dtype : (Complex.t, b) Nx_dtype.t) ctx n =
-  let indices = cast float_dtype (arange ctx Nx_dtype.int32 0 n 1) in
+  let indices = cast float_dtype (arange ctx Nx_dtype.int64 0 n 1) in
   let angles = mul_s indices (-.Float.pi /. (2.0 *. float_of_int n)) in
   add
     (cast complex_dtype (cos angles))
@@ -5343,7 +5353,7 @@ let dct_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)
       concatenate ~axis:(-1) [ x; zeros ctx float_dtype zero_shape; tail ]
     in
     let spectrum = fft (cast complex_dtype extended) in
-    let odd_indices = arange ctx Nx_dtype.int32 1 (2 * n) 2 in
+    let odd_indices = arange ctx Nx_dtype.int64 1 (2 * n) 2 in
     cast float_dtype (take spectrum ~axis:(-1) ~indices:odd_indices)
   in
   match type_ with
@@ -5365,7 +5375,7 @@ let dct_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)
       in
       let transformed = dct_2 padded in
       take transformed ~axis:(-1)
-        ~indices:(arange ctx Nx_dtype.int32 1 (2 * n) 2)
+        ~indices:(arange ctx Nx_dtype.int64 1 (2 * n) 2)
   | _ -> assert false
 
 let dst_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)

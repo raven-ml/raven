@@ -107,7 +107,7 @@ let values codes scales =
   let s = Nx.shape codes in
   let r = Array.length s in
   let lead = Array.sub s 0 (r - 1) and k = 2 * s.(r - 1) in
-  let indices t = Nx.cast Nx.int32 (Nx.reshape [| -1 |] (Nx.contiguous t)) in
+  let indices t = Nx.cast Nx.int64 (Nx.reshape [| -1 |] (Nx.contiguous t)) in
   let v = Nx.take ~axis:0 ~indices:(indices codes) byte_values in
   let scale = Nx.take ~indices:(indices scales) e8m0 in
   let groups = Array.append lead [| k / 32 |] in
@@ -250,9 +250,9 @@ let rows_at indices t =
   else
     Nx.take ~axis:0
       ~indices:
-        (Nx.create Nx.int32
+        (Nx.create Nx.int64
            [| Array.length indices |]
-           (Array.map Int32.of_int indices))
+           (Array.map Int64.of_int indices))
       t
 
 (* The shapes of a product: [w']'s batch axes and the result's shape. A
@@ -318,9 +318,10 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
         let lanes = Array.sub ws 0 p and e = ws.(p) in
         let values = lazy (Nx.to_array ids) in
         let matrix_at idx =
-          let id = Int32.to_int (Lazy.force values).(locate is idx) in
-          if id < 0 || id >= e then -1
-          else (locate lanes (Array.sub idx 0 p) * e) + id
+          let id = (Lazy.force values).(locate is idx) in
+          if Int64.compare id 0L < 0 || Int64.compare id (Int64.of_int e) >= 0
+          then -1
+          else (locate lanes (Array.sub idx 0 p) * e) + Int64.to_int id
         in
         (Array.fold_left ( * ) 1 lanes * e, matrix_at)
   in
@@ -423,12 +424,12 @@ let composed_apply (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
         let lanes = Array.sub ws 0 p and e = ws.(p) in
         let ids = Nx.broadcast_to wb ids in
         let lane =
-          let at = ref (Nx.zeros Nx.int32 wb) and stride = ref 1 in
+          let at = ref (Nx.zeros Nx.int64 wb) and stride = ref 1 in
           for a = p - 1 downto 0 do
             if lanes.(a) > 1 then begin
               let shape = Array.mapi (fun b n -> if b = a then n else 1) wb in
-              let iota = Nx.reshape shape (Nx.arange Nx.int32 0 lanes.(a) 1) in
-              at := Nx.add !at (Nx.mul_s iota (Int32.of_int !stride))
+              let iota = Nx.reshape shape (Nx.arange Nx.int64 0 lanes.(a) 1) in
+              at := Nx.add !at (Nx.mul_s iota (Int64.of_int !stride))
             end;
             stride := !stride * lanes.(a)
           done;
@@ -436,14 +437,14 @@ let composed_apply (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
         in
         let valid =
           Nx.logical_and
-            (Nx.greater_equal_s ids 0l)
-            (Nx.less_s ids (Int32.of_int e))
+            (Nx.greater_equal_s ids 0L)
+            (Nx.less_s ids (Int64.of_int e))
         in
         let at =
           Nx.reshape [| -1 |]
             (Nx.add
-               (Nx.mul_s lane (Int32.of_int e))
-               (Nx.clamp ~min:0l ~max:(Int32.of_int (e - 1)) ids))
+               (Nx.mul_s lane (Int64.of_int e))
+               (Nx.clamp ~min:0L ~max:(Int64.of_int (e - 1)) ids))
         in
         let gather t =
           let s = Nx.shape t in
@@ -478,7 +479,7 @@ let composed_apply (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
 module Effect = struct
   type (_, _) op =
     | Apply : {
-        ids : (int32, Nx.int32_elt) Nx.t option;
+        ids : Nx.int64_t option;
         x : (float, 'b) Nx.t;
         transpose : bool;
       }

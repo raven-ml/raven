@@ -88,8 +88,7 @@ val yarn :
 val frequencies : t -> float array
 (** [frequencies t] is a copy of [t]'s inverse frequencies, in pair order. *)
 
-val apply :
-  t -> pos:(int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val apply : t -> pos:Nx.int64_t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [apply t ~pos x] rotates [x], of shape [[| batch; heads; seq; head_dim |]],
     by the positions [pos], of shape [[| batch; seq |]] (or [[| 1; seq |]],
     shared by the batch). Feature [i] is paired with feature [i + head_dim / 2]:

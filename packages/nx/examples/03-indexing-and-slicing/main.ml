@@ -72,6 +72,6 @@ let () =
 
   (* take: select specific students by index. *)
   let picks =
-    take ~axis:0 ~indices:(create int32 [| 3 |] [| 0l; 2l; 4l |]) grades
+    take ~axis:0 ~indices:(create int64 [| 3 |] [| 0L; 2L; 4L |]) grades
   in
   Printf.printf "Students 0, 2, 4:\n%s\n" (to_string picks)

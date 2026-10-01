@@ -20,7 +20,7 @@ let traced f =
 
 let agrees f = exact (f ()) (traced f)
 let f32 values = Nx.create Nx.float32 [| Array.length values |] values
-let i32 values = Nx.create Nx.int32 [| Array.length values |] values
+let i64 values = Nx.create Nx.int64 [| Array.length values |] values
 
 (* Drawn operations
 
@@ -89,8 +89,21 @@ let sizes ~rank ~least =
 let with_axis shape axis n =
   Array.mapi (fun d s -> if d = axis then n else s) shape
 
+let far = 1 lsl 32
+
+(* Positions in [lo, hi], some moved by 2^32, which an index narrowed by
+   truncation would bring back to where it was. *)
 let positions shape ~lo ~hi =
-  tensor Nx.int32 shape (Gen.map Int32.of_int (Gen.int_range lo hi))
+  let open Gen in
+  tensor Nx.int64 shape
+    (map Int64.of_int
+       (frequency
+          [
+            (4, int_range lo hi);
+            ( 1,
+              let+ i = int_range lo hi and+ k = of_list [ -1; 1 ] in
+              i + (k * far) );
+          ]))
 
 (* [each gens] draws from each of [gens], in order. *)
 let each gens =
@@ -227,8 +240,8 @@ let scatter ~mode ~unique =
                     Array.mapi (fun d _ -> if d = axis then m else 1) shape
                   in
                   Nx.broadcast_to at
-                    (Nx.reshape along (Nx.create Nx.int32 [| m |] first)))
-                (permutation (List.init n Int32.of_int))
+                    (Nx.reshape along (Nx.create Nx.int64 [| m |] first)))
+                (permutation (List.init n Int64.of_int))
             else positions at ~lo:(-1) ~hi:n
           in
           let+ x = tensor dt shape value and+ values = tensor dt at value in
@@ -257,7 +270,12 @@ let update =
               (each (List.map (fun s -> int_range 1 s) (Array.to_list shape)))
           in
           let* starts =
-            each (List.map (fun s -> int_range (-1) s) (Array.to_list shape))
+            each
+              (List.map
+                 (fun s ->
+                   frequency
+                     [ (4, int_range (-1) s); (1, of_list [ -far; far + 1 ]) ])
+                 (Array.to_list shape))
           in
           let+ x = tensor dt shape value and+ v = tensor dt window value in
           (starts, window, v, x)
@@ -268,7 +286,7 @@ let update =
             Nx.set
               (List.mapi
                  (fun d start ->
-                   Nx.D (Nx.scalar Nx.int32 (Int32.of_int start), window.(d)))
+                   Nx.D (Nx.scalar Nx.int64 (Int64.of_int start), window.(d)))
                  starts)
               v x)
           operands);
@@ -280,14 +298,21 @@ let indexed =
       rows "gather" ~floats:element gather;
       test "a gathered -0. keeps its sign" (fun () ->
           agrees (fun () ->
-              Nx.take ~indices:(i32 [| 1l; 0l; 1l |]) (f32 [| Float.nan; -0. |])));
+              Nx.take ~indices:(i64 [| 1L; 0L; 1L |]) (f32 [| Float.nan; -0. |])));
       test "an index out of range reads +0." (fun () ->
           agrees (fun () ->
-              Nx.take ~indices:(i32 [| -1l; 2l; 7l |]) (f32 [| -0.; -1. |])));
+              Nx.take ~indices:(i64 [| -1L; 2L; 7L |]) (f32 [| -0.; -1. |])));
+      test "an index of 2^32 + 1 reads zero compiled, on an axis of 4"
+        (fun () ->
+          let x = f32 [| 1.; 2.; 3.; 4. |] in
+          exact
+            (f32 [| 0.; 2. |])
+            (traced (fun () ->
+                 Nx.take ~indices:(i64 [| 0x1_0000_0001L; 1L |]) x)));
       test "a gather from an empty axis reads zeros" (fun () ->
           agrees (fun () ->
               Nx.take_along_axis ~axis:1
-                ~indices:(Nx.zeros Nx.int32 [| 2; 3 |])
+                ~indices:(Nx.zeros Nx.int64 [| 2; 3 |])
                 (Nx.zeros Nx.float32 [| 2; 0 |])));
       rows "scatter set" ~floats:element (scatter ~mode:`Set ~unique:false);
       rows "scatter set unique" ~floats:element
@@ -296,18 +321,18 @@ let indexed =
       test "the last of duplicate positions is set" (fun () ->
           agrees (fun () ->
               Nx.scatter ~axis:0
-                ~indices:(i32 [| 1l; 1l; 0l; 1l |])
+                ~indices:(i64 [| 1L; 1L; 0L; 1L |])
                 ~values:(f32 [| 1.; 2.; -0.; -0. |])
                 (f32 [| 5.; 6.; 7. |])));
       test "a position no update reaches keeps -0." (fun () ->
           agrees (fun () ->
               Nx.scatter ~mode:`Add ~axis:0
-                ~indices:(i32 [| 0l; 3l |])
+                ~indices:(i64 [| 0L; 3L |])
                 ~values:(f32 [| 1.; 1. |])
                 (f32 [| 2.; -0.; -0. |])));
       test "an update of -0. added to -0. is +0." (fun () ->
           agrees (fun () ->
-              Nx.scatter ~mode:`Add ~axis:0 ~indices:(i32 [| 0l |])
+              Nx.scatter ~mode:`Add ~axis:0 ~indices:(i64 [| 0L |])
                 ~values:(f32 [| -0. |]) (f32 [| -0. |])));
       rows "update" ~floats:element update;
       test "a window at constant starts" (fun () ->

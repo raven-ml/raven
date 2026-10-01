@@ -142,19 +142,19 @@ let test_embedding_init_shape () =
 
 let test_embedding_gathers_rows () =
   let p = embedding_4x3 () in
-  let ids = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
+  let ids = Nx.create Nx.int64 [| 2 |] [| 1L; 3L |] in
   values_are ~msg:"rows 1 and 3" ~tol:0.0
     [| 3.; 4.; 5.; 9.; 10.; 11. |]
     (Embedding.apply p ids)
 
 let test_embedding_output_shape () =
   let p = embedding_4x3 () in
-  let ids = Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 2l; 3l; 0l; 1l |] in
+  let ids = Nx.create Nx.int64 [| 2; 3 |] [| 0L; 1L; 2L; 3L; 0L; 1L |] in
   shape_is ~msg:"ids shape plus dim" [| 2; 3; 3 |] (Embedding.apply p ids)
 
 let test_embedding_scalar_id () =
   let p = embedding_4x3 () in
-  let id = Nx.create Nx.int32 [||] [| 2l |] in
+  let id = Nx.create Nx.int64 [||] [| 2L |] in
   let row = Embedding.apply p id in
   shape_is ~msg:"a single row" [| 3 |] row;
   values_are ~msg:"row 2" ~tol:0.0 [| 6.; 7.; 8. |] row
@@ -162,7 +162,7 @@ let test_embedding_scalar_id () =
 let test_embedding_duplicate_id_gradient () =
   Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
   let p = Embedding.make ~vocab:3 ~dim:2 Nx.float64 in
-  let ids = Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 0l |] in
+  let ids = Nx.create Nx.int64 [| 3 |] [| 0L; 2L; 0L |] in
   let loss p = Nx.sum (Embedding.apply p ids) in
   let g = Rune.grad embedding64 loss p in
   (* Row 0 is gathered twice, row 1 never, row 2 once. *)
@@ -173,7 +173,7 @@ let test_embedding_duplicate_id_gradient () =
 let test_embedding_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
   let p = Embedding.make ~vocab:5 ~dim:3 Nx.float64 in
-  let ids = Nx.create Nx.int32 [| 2; 2 |] [| 0l; 3l; 3l; 1l |] in
+  let ids = Nx.create Nx.int64 [| 2; 2 |] [| 0L; 3L; 3L; 1L |] in
   let loss p =
     let y = Embedding.apply p ids in
     Nx.sum (Nx.mul y y)
@@ -182,7 +182,7 @@ let test_embedding_gradients () =
 
 let test_embedding_out_of_range_ids_read_zero () =
   let p = embedding_4x3 () in
-  let ids = Nx.create Nx.int32 [| 3 |] [| 4l; 1l; -1l |] in
+  let ids = Nx.create Nx.int64 [| 3 |] [| 4L; 1L; -1L |] in
   values_are ~msg:"rows of zeros around row 1" ~tol:0.0
     [| 0.; 0.; 0.; 3.; 4.; 5.; 0.; 0.; 0. |]
     (Embedding.apply p ids)

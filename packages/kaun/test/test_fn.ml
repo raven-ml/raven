@@ -186,7 +186,7 @@ let grad_check_tests =
 (* Sampling masks *)
 
 let ninf = Float.neg_infinity
-let k_of n = Nx.scalar Nx.int32 (Int32.of_int n)
+let k_of n = Nx.scalar Nx.int64 (Int64.of_int n)
 let p_of v = Nx.scalar f64 v
 
 let masked ~msg expected t =
@@ -209,7 +209,7 @@ let test_top_k () =
 
 let test_top_k_per_row () =
   let logits = Nx.create f64 [| 2; 3 |] [| 1.0; 3.0; 2.0; 6.0; 4.0; 5.0 |] in
-  let k = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
+  let k = Nx.create Nx.int64 [| 2 |] [| 1L; 2L |] in
   masked ~msg:"each row has its own k"
     [| ninf; 3.0; ninf; 6.0; ninf; 5.0 |]
     (Fn.keep_top_k ~k logits)
@@ -266,7 +266,7 @@ let test_masks_compose_and_sample () =
   in
   let draws =
     List.init 40 (fun i ->
-        Int32.to_int
+        Int64.to_int
           (Nx.item [ 0 ]
              (Nx.Rng.categorical (Nx.Rng.key i)
                 (Nx.reshape [| 1; 4 |] (policy logits)))))
@@ -291,7 +291,7 @@ let test_masks_reject_bad_shapes () =
        "Fn.keep_top_k: the parameter must be a scalar or have the logits' \
         leading shape") (fun () ->
       Fn.keep_top_k
-        ~k:(Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 1l |])
+        ~k:(Nx.create Nx.int64 [| 3 |] [| 1L; 1L; 1L |])
         (Nx.zeros f64 [| 2; 4 |]));
   raises (Invalid_argument "Fn.keep_top_p: logits must not be a scalar")
     (fun () -> Fn.keep_top_p ~p:(p_of 0.5) (Nx.scalar f64 1.0))

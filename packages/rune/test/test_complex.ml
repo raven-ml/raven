@@ -222,7 +222,7 @@ let linear_tests =
       both "gather"
         (fun z ->
           Nx.take ~axis:0 z
-            ~indices:(Nx.create Nx.int32 [| 3 |] [| 2l; 0l; 2l |]))
+            ~indices:(Nx.create Nx.int64 [| 3 |] [| 2L; 0L; 2L |]))
         z3;
       both "flip" (fun z -> Nx.flip ~axes:[ 0 ] z) z3;
       both "where"
@@ -289,7 +289,7 @@ let arithmetic_tests =
     ]
 
 let movement_tests =
-  let idx = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 0l; 1l; 0l; 1l; 0l |] in
+  let idx = Nx.create Nx.int64 [| 2; 3 |] [| 1L; 0L; 1L; 0L; 1L; 0L |] in
   List.concat
     [
       both "reshape" (fun z -> Nx.reshape [| 3; 2 |] z) r23;
@@ -298,12 +298,12 @@ let movement_tests =
       both "shrink" (fun z -> Nx.shrink [| (0, 2); (1, 3) |] z) r23;
       both "slice, strided" (fun z -> Nx.slice [ Nx.Rs (0, 6, 2) ] z) z6;
       both "slice, dynamic"
-        (fun z -> Nx.slice [ Nx.D (Nx.scalar Nx.int32 2l, 3) ] z)
+        (fun z -> Nx.slice [ Nx.D (Nx.scalar Nx.int64 2L, 3) ] z)
         z6;
       both "set, dynamic"
         (fun z ->
           Nx.set
-            [ Nx.D (Nx.scalar Nx.int32 1l, 2) ]
+            [ Nx.D (Nx.scalar Nx.int64 1L, 2) ]
             (Nx.mul (Nx.shrink [| (0, 2) |] z) (Nx.shrink [| (1, 3) |] (b3 ())))
             z)
         z3;

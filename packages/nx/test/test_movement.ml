@@ -406,8 +406,8 @@ let movements =
           let n = Nx.numel t in
           Nx.take
             ~indices:
-              (Nx.create Nx.int32 [| 5 |]
-                 (Array.map Int32.of_int [| n - 1; 0; 0; n; -1 |]))
+              (Nx.create Nx.int64 [| 5 |]
+                 (Array.map Int64.of_int [| n - 1; 0; 0; n; -1 |]))
             t);
     };
     {
@@ -454,7 +454,7 @@ let movements =
             (fun _ t ->
               let s = Array.copy (Nx.shape t) in
               s.(0) <- 1;
-              Nx.scatter ~axis:0 ~indices:(Nx.zeros Nx.int32 s)
+              Nx.scatter ~axis:0 ~indices:(Nx.zeros Nx.int64 s)
                 ~values:(Nx.full (Nx.dtype t) [||] 7)
                 t)
             t);

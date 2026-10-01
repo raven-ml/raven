@@ -110,7 +110,7 @@ let oracle_tests =
     test "slice" (fun () ->
         check_vmap ~msg:"slice" (fun r -> Nx.slice [ Nx.R (1, 3) ] r) (xs ()));
     test "take_along_axis with constant indices" (fun () ->
-        let idx = Nx.create Nx.int32 [| 2 |] [| 2l; 0l |] in
+        let idx = Nx.create Nx.int64 [| 2 |] [| 2L; 0L |] in
         check_vmap ~msg:"gather"
           (fun r -> Nx.take_along_axis ~axis:0 ~indices:idx r)
           (xs ()));
@@ -360,7 +360,7 @@ let test_per_sample_gradients_of_gather () =
   (* The gather gradient scatter-adds its cotangent; under vmap the scatter
      effect must carry its Add mode or the per-sample gradients collapse to a
      Set-mode scatter. *)
-  let idx = Nx.create Nx.int32 [| 2 |] [| 1l; 1l |] in
+  let idx = Nx.create Nx.int64 [| 2 |] [| 1L; 1L |] in
   let f x =
     let gathered = Nx.take_along_axis ~axis:0 ~indices:idx x in
     Nx.sum (Nx.mul gathered gathered)
@@ -400,7 +400,7 @@ let test_jvp_through_vmap () =
 (* A window write batches over the template and the value; each row gets its own
    window. *)
 module Row_pos = struct
-  type row_pos = { row : Nx.float32_t; pos : Nx.int32_t }
+  type row_pos = { row : Nx.float32_t; pos : Nx.int64_t }
   type _ t = row_pos
 
   let walk c { row; pos } =
@@ -416,7 +416,7 @@ let row_pos = Nx.Ptree.(instantiate (module Row_pos) @-> returns tensor)
    position. *)
 let test_vmap_set_window_batched_start () =
   let xs = Nx.create f32 [| 2; 4 |] [| 0.; 1.; 2.; 3.; 10.; 11.; 12.; 13. |] in
-  let pos = Nx.create Nx.int32 [| 2 |] [| 1l; 5l |] in
+  let pos = Nx.create Nx.int64 [| 2 |] [| 1L; 5L |] in
   let v = vec32 [| 9.0; 8.0 |] in
   check_arr ~msg:"per-example windows, the second clamped"
     [| 0.; 9.; 8.; 3.; 10.; 11.; 9.; 8. |]

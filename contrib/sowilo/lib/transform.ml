@@ -16,25 +16,25 @@ let hw_axes rank =
 let float_range size = Nx.arange_f Nx.float32 0.0 (float size) 1.0
 
 let compute_nearest_indices ~size_in ~size_out =
-  if size_out = 1 || size_in = 1 then Nx.full Nx.int32 [| size_out |] Int32.zero
+  if size_out = 1 || size_in = 1 then Nx.full Nx.int64 [| size_out |] Int64.zero
   else
     let scale = float size_in /. float size_out in
     let coords = float_range size_out in
     let src = Nx.sub_s (Nx.mul_s (Nx.add_s coords 0.5) scale) 0.5 in
     let src_clipped = Nx.clamp ~min:0.0 ~max:(float (size_in - 1)) src in
-    Nx.cast Nx.int32 (Nx.round src_clipped)
+    Nx.cast Nx.int64 (Nx.round src_clipped)
 
 let compute_linear_axis ~size_in ~size_out =
   if size_out = 1 || size_in = 1 then
-    let zeros_i = Nx.full Nx.int32 [| size_out |] Int32.zero in
+    let zeros_i = Nx.full Nx.int64 [| size_out |] Int64.zero in
     let zeros_f = Nx.full Nx.float32 [| size_out |] 0.0 in
     (zeros_i, zeros_i, zeros_f)
   else
     let scale = float (size_in - 1) /. float (size_out - 1) in
     let src = Nx.mul_s (float_range size_out) scale in
-    let idx0 = src |> Nx.floor |> Nx.cast Nx.int32 in
-    let one = Nx.scalar_like idx0 Int32.(of_int 1) in
-    let max_idx = Nx.scalar_like idx0 Int32.(of_int (size_in - 1)) in
+    let idx0 = src |> Nx.floor |> Nx.cast Nx.int64 in
+    let one = Nx.scalar_like idx0 Int64.(of_int 1) in
+    let max_idx = Nx.scalar_like idx0 Int64.(of_int (size_in - 1)) in
     let idx1 = Nx.minimum (Nx.add idx0 one) max_idx in
     let delta = Nx.sub src (Nx.cast Nx.float32 idx0) in
     (idx0, idx1, delta)

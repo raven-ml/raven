@@ -31,7 +31,7 @@ There is nothing else to a layer: `layer.w` is an ordinary tensor you can read, 
 |--------|-----------|-------|
 | `Linear` | `w`, optional `b` | dense map over the last axis |
 | `Conv` | `w`, optional `b` | 2-D convolution, NCHW, `` `Valid``/`` `Same`` padding |
-| `Embedding` | `table` | token-id to row lookup (int32 ids in, floats out) |
+| `Embedding` | `table` | token-id to row lookup (int64 ids in, floats out) |
 | `Attention` | `q`, `k`, `v`, `out` projections | multi-head self-attention, optional causal mask |
 | `Layer_norm` | `gamma`, `beta` | normalization over the last axis |
 | `Batch_norm` | `gamma`, `beta` + separate `Stats.t` | normalization over the batch, running statistics |

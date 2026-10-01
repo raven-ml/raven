@@ -30,12 +30,12 @@ let value = Gen.map Int32.of_int (Gen.int_range (-9) 9)
 let iota base shape =
   Array.init (Ref.numel shape) (fun i -> Int32.of_int ((base * 100) + i))
 
-let int32s l =
-  Nx.create Nx.int32
+let int64s l =
+  Nx.create Nx.int64
     [| List.length l |]
-    (Array.of_list (List.map Int32.of_int l))
+    (Array.of_list (List.map Int64.of_int l))
 
-let at k = Nx.scalar Nx.int32 (Int32.of_int k)
+let at k = Nx.scalar Nx.int64 (Int64.of_int k)
 
 (* Arguments listed from the tensor they apply to, the simplest first. Each list
    holds at least one argument the API refuses. *)
@@ -515,7 +515,7 @@ let commands =
     command "take"
       (takes ^-> t ^-> makes t)
       (fun (axis, l) r -> Ref.take ?axis ~zero:0l (Array.of_list l) r)
-      (fun (axis, l) s -> Nx.take ?axis ~indices:(int32s l) s);
+      (fun (axis, l) s -> Nx.take ?axis ~indices:(int64s l) s);
     command "compress"
       (conditions ^-> t ^-> makes t)
       (fun (axis, l) r -> Ref.compress ?axis (Array.of_list l) r)

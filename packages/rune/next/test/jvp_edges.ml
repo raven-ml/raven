@@ -433,7 +433,7 @@ let assembly_edges : Row.t -> test list = function
   | Gather ->
       [
         test "an index outside the axis reads a zero tangent" (fun () ->
-            let indices = Nx.create Nx.int32 [| 4 |] [| -1l; 3l; 1l; 1l |] in
+            let indices = Nx.create Nx.int64 [| 4 |] [| -1L; 3L; 1L; 1L |] in
             equal floats [| 0.; 0.; 20.; 20. |]
               (tangent
                  (fun x -> Op.eval (Gather (0, indices, x)))
@@ -441,7 +441,7 @@ let assembly_edges : Row.t -> test list = function
                  (vec [| 10.; 20.; 30. |])));
       ]
   | Scatter ->
-      let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 1l |] in
+      let indices = Nx.create Nx.int64 [| 2 |] [| 1L; 1L |] in
       let scatter mode updates =
         Op.eval
           (Scatter

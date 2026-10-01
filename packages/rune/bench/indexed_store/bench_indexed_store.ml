@@ -10,7 +10,7 @@
    timing covers the device work. Run with DEV set to a GPU backend: on the
    host, outputs are host tensors and no storage is reused. *)
 
-type state = { pool : Nx.float32_t; rows : Nx.int32_t; values : Nx.float32_t }
+type state = { pool : Nx.float32_t; rows : Nx.int64_t; values : Nx.float32_t }
 
 module State = struct
   type _ t = state
@@ -25,7 +25,7 @@ end
 
 let state_ptree = Nx.Ptree.instantiate (module State)
 
-type batch = { rows : Nx.int32_t; values : Nx.float32_t }
+type batch = { rows : Nx.int64_t; values : Nx.float32_t }
 
 module Batch = struct
   type _ t = batch
@@ -101,8 +101,8 @@ let scatter_case ~runs ~n ~k =
         g { pool = w.pool; rows; values }
   in
   let rows =
-    Nx.create Nx.int32 [| k |]
-      (Array.init k (fun i -> Int32.of_int (i * (n / k))))
+    Nx.create Nx.int64 [| k |]
+      (Array.init k (fun i -> Int64.of_int (i * (n / k))))
   in
   let values = Nx.ones Nx.float32 [| k; heads; width |] in
   let state = ref (written (Nx.zeros Nx.float32 [| n; heads; width |])) in
@@ -130,7 +130,7 @@ let window_case ~runs ~n =
   let state = ref (written (Nx.zeros Nx.float32 [| n; width |])) in
   let at = ref 0 in
   let once () =
-    let pos = Nx.scalar Nx.int32 (Int32.of_int (!at mod n)) in
+    let pos = Nx.scalar Nx.int64 (Int64.of_int (!at mod n)) in
     incr at;
     state := step pos !state;
     ignore (Nx.item [] !state.probe : float)
@@ -142,8 +142,8 @@ let window_case ~runs ~n =
 
 let take_grad_case ~runs ~vocab ~dim ~tokens =
   let ids =
-    Nx.create Nx.int32 [| tokens |]
-      (Array.init tokens (fun i -> Int32.of_int (i * 7919 mod vocab)))
+    Nx.create Nx.int64 [| tokens |]
+      (Array.init tokens (fun i -> Int64.of_int (i * 7919 mod vocab)))
   in
   let loss table =
     let e = Nx.take ~axis:0 ~indices:ids table in

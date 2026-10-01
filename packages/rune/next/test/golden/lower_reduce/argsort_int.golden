@@ -67,13 +67,10 @@
 65 Ops.STORE dtypes.void [25, 64]
 66 Ops.END dtypes.void [65, 2, 20, 22]
 67 Ops.SINK dtypes.void [66] KernelInfo()
-68 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=16, device="CPU")
-69 Ops.INDEX dtypes.int [68, 5]
-70 Ops.INDEX dtypes.long [28, 5]
-71 Ops.AND dtypes.long [70, 32]
-72 Ops.CAST dtypes.int [71] dtypes.int
-73 Ops.STORE dtypes.void [69, 72]
-74 Ops.END dtypes.void [73, 2, 4]
-75 Ops.SINK dtypes.void [74] KernelInfo()
-76 Ops.SINK dtypes.void [19, 40, 55, 67, 55, 75]
+68 Ops.INDEX dtypes.long [28, 5]
+69 Ops.AND dtypes.long [68, 32]
+70 Ops.STORE dtypes.void [6, 69]
+71 Ops.END dtypes.void [70, 2, 4]
+72 Ops.SINK dtypes.void [71] KernelInfo()
+73 Ops.SINK dtypes.void [19, 40, 55, 67, 55, 72]
 

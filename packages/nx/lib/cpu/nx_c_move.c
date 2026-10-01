@@ -382,8 +382,8 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   for (int64_t it = lo; it < hi; it++) {
     nx_c_unravel(it, nd, out->shape, coord);
     int64_t idx_off = idx->offset + nx_c_dot(nd, coord, idx->strides);
-    int64_t index = *(const int32_t *)((const char *)idx->data +
-                                        idx_off * (int64_t)sizeof(int32_t));
+    int64_t index = *(const int64_t *)((const char *)idx->data +
+                                        idx_off * (int64_t)sizeof(int64_t));
     int64_t out_off = out->offset + nx_c_dot(nd, coord, out->strides);
     if (index < 0 || index >= axis_len) {
       nx_c_elem_zero(out->data, out_off, esize);
@@ -418,8 +418,8 @@ static void nx_c_gather_rows_body(int64_t lo, int64_t hi, int worker,
   size_t row_bytes = (size_t)g->row_elems * g->esize;
   for (int64_t i = lo; i < hi; i++) {
     int64_t idx_off = idx->offset + i * idx->strides[0];
-    int64_t index = *(const int32_t *)((const char *)idx->data +
-                                       idx_off * (int64_t)sizeof(int32_t));
+    int64_t index = *(const int64_t *)((const char *)idx->data +
+                                       idx_off * (int64_t)sizeof(int64_t));
     int64_t dst = out->offset + i * out->strides[0];
     char *o = (char *)out->data + dst * g->esize;
     if (index < 0 || index >= axis_len) {
@@ -547,8 +547,8 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   for (int64_t it = lo; it < hi; it++) {
     nx_c_unravel(it, nd, indices->shape, coord);
     int64_t idx_off = indices->offset + nx_c_dot(nd, coord, indices->strides);
-    int64_t index = *(const int32_t *)((const char *)indices->data +
-                                        idx_off * (int64_t)sizeof(int32_t));
+    int64_t index = *(const int64_t *)((const char *)indices->data +
+                                        idx_off * (int64_t)sizeof(int64_t));
     if (index < 0 || index >= axis_len) continue;
     for (int d = 0; d < nd; d++) ocoord[d] = (d == axis) ? index : coord[d];
     int64_t out_off = out->offset + nx_c_dot(nd, ocoord, out->strides);
@@ -581,7 +581,7 @@ static nx_c_status nx_c_scatter_run(const nx_c_ndarray *out,
   /* ONE worker keeps the row-major order (Set last-wins, Add accumulation
      order) deterministic; nx_c_parallel_for still owns the lock handshake. */
   nx_c_scatter_ctx sc = {out, indices, updates, add, axis, esize};
-  int64_t bytes = total * (2 * esize + (int64_t)sizeof(int32_t));
+  int64_t bytes = total * (2 * esize + (int64_t)sizeof(int64_t));
   nx_c_parallel_for(1, total, bytes, nx_c_scatter_body, &sc, NULL);
   return NX_C_OK;
 }

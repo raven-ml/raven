@@ -129,7 +129,7 @@ let cached m caches index ids =
 let logits m h =
   Nx.matmul (Rms_norm.apply m.norm h) (Nx.transpose m.tok.Embedding.table)
 
-let int32s shape a = Nx.create Nx.int32 shape (Array.map Int32.of_int a)
+let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 
 (* The decode step: the last token's logits and its greedy id, the caches
    consumed and returned. *)
@@ -151,7 +151,7 @@ let generate ~slots ?place m =
   let context = Array.length start + 4 in
   let index = ref (Cache_index.rows ~context [| Array.length start |]) in
   let (id, scores), kv =
-    step (int32s [| 1; 3 |] start) !index (cache ?place ~slots ())
+    step (int64s [| 1; 3 |] start) !index (cache ?place ~slots ())
   in
   let s = ref (id, kv) and out = ref [ (id, scores, 0) ] in
   for _ = 1 to 4 do
@@ -172,7 +172,7 @@ let test_generation_over_four_devices () =
   List.iteri
     (fun i ((id, scores, _), (id', scores', lent)) ->
       let msg what = Printf.sprintf "token %d, %s" i what in
-      equal ~msg:(msg "id") (array int32) (Nx.to_array id) (Nx.to_array id');
+      equal ~msg:(msg "id") (array int64) (Nx.to_array id) (Nx.to_array id');
       equal ~msg:(msg "logits")
         (array (float 1e-5))
         (Nx.to_array scores) (Nx.to_array scores');
@@ -206,8 +206,8 @@ let written_bytes len =
   in
   let index =
     Cache_index.make
-      ~pos:(int32s [| 1; len |] (Array.init len Fun.id))
-      ~table:(int32s [| 1; slots |] (Array.init slots Fun.id))
+      ~pos:(int64s [| 1; len |] (Array.init len Fun.id))
+      ~table:(int64s [| 1; slots |] (Array.init slots Fun.id))
       ()
   in
   let k =

@@ -177,7 +177,9 @@ let lanes t axis x =
         [
           Nx.P
             (Nx.reshape shape
-               (Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] index) summed));
+               (Nx.take ~axis:0
+                  ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 index))
+                  summed));
         ]
     | _ -> assert false (* One output. *)
   in
@@ -278,7 +280,7 @@ let scattered ~mode ~unique ~axis ~indices ~into ct =
       in
       let rank =
         Nx.broadcast_to shape
-          (Nx.reshape along (Nx.arange Nx.int32 0 shape.(axis) 1))
+          (Nx.reshape along (Nx.arange Nx.int64 0 shape.(axis) 1))
       in
       let winner =
         eval
@@ -289,7 +291,7 @@ let scattered ~mode ~unique ~axis ~indices ~into ct =
                axis;
                indices;
                updates = rank;
-               into = Nx.zeros Nx.int32 (Nx.shape into);
+               into = Nx.zeros Nx.int64 (Nx.shape into);
              })
       in
       Nx.where
@@ -306,7 +308,7 @@ let window ~starts v ct =
   for axis = 0 to rank - 1 do
     let len = vshape.(axis) in
     let start = Nx.reshape [||] (Nx.slice [ Nx.I axis ] starts) in
-    let idx = Nx.add (Nx.arange Nx.int32 0 len 1) start in
+    let idx = Nx.add (Nx.arange Nx.int64 0 len 1) start in
     let shape = Array.copy (Nx.shape !w) in
     shape.(axis) <- len;
     let along = Array.init rank (fun i -> if i = axis then len else 1) in

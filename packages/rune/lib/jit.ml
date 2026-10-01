@@ -1965,17 +1965,18 @@ let unstageable st xs =
 
 (* The window write of [v] into [t_in] at [starts]. A constant corner is a
    padded [v] selected over [t_in] in one pass. A traced corner is a scatter of
-   [v]'s elements at their flat positions in [t_in], which are distinct and,
-   the corner being clamped by the frontend, inside [t_in]: its cost is [v].
-   Over a [t_in] split along its first axis, the flat positions keep that
-   split, and each device writes the positions in its slice. Flat positions
-   are int32, and a [t_in] split along a later axis has none across its
-   devices, so beyond either the window is read through a clamped gather per
-   axis and masked. *)
+   [v]'s elements at their flat positions in [t_in], which are distinct and, the
+   corner being clamped by the frontend, inside [t_in]: its cost is [v]. Over a
+   [t_in] split along its first axis, the flat positions keep that split, and
+   each device writes the positions in its slice. Flat positions are int32, and
+   a [t_in] split along a later axis has none across its devices, so beyond
+   either the window is read through a clamped gather per axis and masked. The
+   traced paths read the corner in int32, which holds it exactly: the frontend
+   clamps it into [t_in]. *)
 let update_graph : type a b.
     state ->
     (a, b) Nx_effect.t ->
-    (int32, ND.int32_elt) Nx_effect.t ->
+    (int64, ND.int64_elt) Nx_effect.t ->
     (a, b) Nx_effect.t ->
     F.Tensor.t =
  fun st t_in starts v ->
@@ -1989,14 +1990,16 @@ let update_graph : type a b.
   in
   (* [starts]' entry for axis [ax], as a scalar of the program. *)
   let start_of st_t ax =
-    F.Movement.reshape (F.Movement.shrink st_t [ (ax, ax + 1) ]) []
+    F.Dtype_ops.cast
+      (F.Movement.reshape (F.Movement.shrink st_t [ (ax, ax + 1) ]) [])
+      TD.int32
   in
   let along ax = List.init rank (fun d -> if d = ax then -1 else 1) in
   if rank = 0 then tv
   else if not (is_traced starts) then begin
-    let start = Nx_array.Elements.get ND.int32 (Nx_effect.read starts) in
+    let start = Nx_array.Elements.get ND.int64 (Nx_effect.read starts) in
     let sv = Nx_effect.view starts in
-    let s k = Int32.to_int (start (NV.offset sv + (k * (NV.strides sv).(0)))) in
+    let s k = Int64.to_int (start (NV.offset sv + (k * (NV.strides sv).(0)))) in
     let pads =
       List.init rank (fun k -> Some (s k, tshape.(k) - s k - vshape.(k)))
     in
@@ -2218,19 +2221,19 @@ let rec install : type a. state -> (unit -> a) -> a =
        so the first of equal extremes is eager's position. *)
     | Arg_reduce (Argmax, axis, x) ->
         let keys, _ = order_keys ~nan:`Greatest (go x) in
-        ret ND.int32
-          (F.Dtype_ops.cast (F.Op.argmax ~axis ~keepdim:false keys) TD.int32)
+        ret ND.int64
+          (F.Dtype_ops.cast (F.Op.argmax ~axis ~keepdim:false keys) TD.int64)
     | Arg_reduce (Argmin, axis, x) ->
         let keys, _ = order_keys ~nan:`Least (go x) in
-        ret ND.int32
-          (F.Dtype_ops.cast (F.Op.argmin ~axis ~keepdim:false keys) TD.int32)
+        ret ND.int64
+          (F.Dtype_ops.cast (F.Op.argmin ~axis ~keepdim:false keys) TD.int64)
     | Sort { descending; axis; x } ->
         ret (dt x) (sort_graph ~packs:(packs st) ~dim:axis ~descending (go x))
     | Argsort { descending; axis; x } ->
-        ret ND.int32
+        ret ND.int64
           (F.Dtype_ops.cast
              (argsort_graph ~packs:(packs st) ~dim:axis ~descending (go x))
-             TD.int32)
+             TD.int64)
     | Scan (k, axis, x) ->
         let t = go x in
         let r =
@@ -2369,8 +2372,8 @@ let rec install : type a. state -> (unit -> a) -> a =
           let tl, tpiv, tperm = F.Linalg.lu (go x) in
           let p = result_placement st op in
           ( traced st p (dt x) tl,
-            traced st p ND.int32 tpiv,
-            traced st p ND.int32 tperm )
+            traced st p ND.int64 (F.Dtype_ops.cast tpiv TD.int64),
+            traced st p ND.int64 (F.Dtype_ops.cast tperm TD.int64) )
         else refuse "lu"
     | Svd _ | Eig _ | Eigh _ -> refuse (Op.name op)
     | Solve_triangular { upper; transpose; unit_diag; a; b } ->

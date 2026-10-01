@@ -287,7 +287,7 @@ let apply ~head_dim ?mask ?rope p x =
     match rope with
     | None -> (q, k)
     | Some t ->
-        let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
+        let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int64 0 seq 1) in
         (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
   Nx.reshape shape (merge p.out (attend ?mask q k v))

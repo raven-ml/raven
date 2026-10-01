@@ -42,7 +42,7 @@ let () =
   Printf.printf "load %.3f s, import %.3f s" loaded imported;
   Option.iter
     (fun device ->
-      let ids = Nx.create Nx.int32 [| 1; 8 |] (Array.init 8 Int32.of_int) in
+      let ids = Nx.create Nx.int64 [| 1; 8 |] (Array.init 8 Int64.of_int) in
       let forward ids =
         Llama.logits cfg params
           (Nx.slice [ A; I 7 ] (Llama.hidden cfg params ids))

@@ -91,7 +91,7 @@ let pp_index ppf (i : Nx.index) =
            ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
            Format.pp_print_bool)
         (Array.to_seq (Nx.to_array m))
-  | D (s, len) -> Format.fprintf ppf "D (%ld, %d)" (Nx.item [] s) len
+  | D (s, len) -> Format.fprintf ppf "D (%Ld, %d)" (Nx.item [] s) len
 
 let pp_specs ppf specs =
   Format.fprintf ppf "[%a]"
@@ -608,7 +608,7 @@ module Ref = struct
     | D (s, len) ->
         if Nx.ndim s <> 0 || len < 0 || len > dim then invalid_arg "slice";
         let first =
-          Int.max 0 (Int.min (dim - len) (Int32.to_int (Nx.item [] s)))
+          Int.max 0 (Int.min (dim - len) (Int64.to_int (Nx.item [] s)))
         in
         Keep (Array.init len (fun i -> first + i))
 

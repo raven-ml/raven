@@ -24,7 +24,7 @@ let parallel ds role ~axis =
 
 (* The sampling parameters are tensors, so a compiled step reads them as
    arguments: a captured temperature would be frozen into its program. *)
-type sampling = { temperature : Nx.float32_t; k : Nx.int32_t; p : Nx.float32_t }
+type sampling = { temperature : Nx.float32_t; k : Nx.int64_t; p : Nx.float32_t }
 
 module Sampling = struct
   type _ t = sampling
@@ -87,7 +87,7 @@ let generate (type b) ?devices cfg (params : (float, b) Nx.t Llama.params)
   let sampling =
     {
       temperature = Nx.scalar Nx.float32 (Float.max temperature 1e-6);
-      k = Nx.scalar Nx.int32 (Int32.of_int top_k);
+      k = Nx.scalar Nx.int64 (Int64.of_int top_k);
       p = Nx.scalar Nx.float32 top_p;
     }
   in
@@ -95,13 +95,13 @@ let generate (type b) ?devices cfg (params : (float, b) Nx.t Llama.params)
   let state =
     ref
       (step
-         (Nx.create Nx.int32 [| 1; n0 |] prompt)
+         (Nx.create Nx.int64 [| 1; n0 |] prompt)
          !index (Nx.Rng.key seed) sampling
          (Llama.cache
             ?placement:(Option.map parallel devices)
             cfg ~slots:context dt))
   in
-  let out = Array.make max_tokens 0l in
+  let out = Array.make max_tokens 0L in
   (* The first single-token step compiles under [--devices]: time from the
      second. *)
   let t0 = ref (Unix.gettimeofday ()) in
@@ -162,7 +162,7 @@ let () =
   let tokenizer = load_tokenizer () in
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
-  let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
+  let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
   let devices =
     if !devices = "" then None
     else Some (List.map Rune.device (parse_devices !devices))
@@ -179,4 +179,4 @@ let () =
       ~max_tokens:!count ids
   in
   print_string !prompt;
-  print_endline (Brot.decode tokenizer (Array.map Int32.to_int toks))
+  print_endline (Brot.decode tokenizer (Array.map Int64.to_int toks))

@@ -497,7 +497,7 @@ let is_permutation perm =
       r
   in
   Array.for_all
-    (fun k -> Int32.to_int sorted.data.(k) = k mod m)
+    (fun k -> Int64.to_int sorted.data.(k) = k mod m)
     (Array.init (Array.length r.data) Fun.id)
 
 (* The rows of [a] in the order [perm], lane by lane. *)
@@ -589,7 +589,7 @@ let factorizations =
           let same x y =
             let p, l, u = Nx.lu x and p', l', u' = Nx.lu y in
             let exact = tensor (close ~rel:0. ()) in
-            equal (tensor int32) p p';
+            equal (tensor int64) p p';
             equal exact l l';
             equal exact u u'
           in

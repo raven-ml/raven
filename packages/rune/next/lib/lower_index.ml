@@ -9,9 +9,26 @@ let dtype = Ops.dtype
 let ints l = List.map (fun n -> Ops.Int n) l
 let pads padding = List.map (fun (b, a) -> Some (Ops.Int b, Ops.Int a)) padding
 
+(* [narrow n p] is the [int64] positions [p] along an axis of [n] elements, in
+   [int32] when [n <= 2^31]. Read unsigned, a negative position is greater than
+   every [n], so one comparison finds the positions in [0, n); every other one
+   becomes [-1] before the cast, which would otherwise bring [2^32 + i] to
+   [i]. *)
+let narrow n p =
+  if n > 1 lsl 31 then p
+  else
+    let inside =
+      Ops.lt (Ops.bitcast p Uint64)
+        (Ops.const ~dtype:Uint64 (`Int (Z.of_int n)))
+    in
+    Ops.where inside (Ops.cast p Int32)
+      (Ops.const ~dtype:Int32 (`Int Z.minus_one))
+
 (* [one_hot idx n] is whether each index of [idx] is each position of a new last
    axis of [n] elements. *)
-let one_hot idx n = Ops.eq (Ops.unsqueeze idx (-1)) (Ops.arange n)
+let one_hot idx n =
+  let idx = narrow n idx in
+  Ops.eq (Ops.unsqueeze idx (-1)) (Ops.arange ~dtype:(dtype idx) n)
 
 (* Assembly *)
 
@@ -116,18 +133,24 @@ let update x ~starts v =
   let moved =
     List.filter (fun d -> List.nth k d < List.nth n d) (List.init r Fun.id)
   in
+  (* Positions along axis [d]. Its start lies within [x] (Nx_backend.S.update),
+     so the cast is exact. *)
+  let index d = if List.nth n d > 1 lsl 31 then Dtype.Int64 else Dtype.Int32 in
   let start d =
-    Ops.reshape (Ops.shrink starts [ Some (Ops.Int d, Ops.Int (d + 1)) ]) []
+    Ops.cast
+      (Ops.reshape (Ops.shrink starts [ Some (Ops.Int d, Ops.Int (d + 1)) ]) [])
+      (index d)
   in
+  let arange d m = Ops.arange ~dtype:(index d) m in
   let shift b d =
-    let at = Lower_reduce.along (r + 1) d (Ops.arange (List.nth n d)) in
-    let offset = Lower_reduce.along (r + 1) r (Ops.arange (List.nth k d)) in
+    let at = Lower_reduce.along (r + 1) d (arange d (List.nth n d)) in
+    let offset = Lower_reduce.along (r + 1) r (arange d (List.nth k d)) in
     Lower_reduce.pick
       (Ops.eq at (Ops.add offset (start d)))
       (Ops.transpose (Ops.unsqueeze b (-1)) d r)
   in
   let inside d =
-    let at = Lower_reduce.along r d (Ops.arange (List.nth n d)) in
+    let at = Lower_reduce.along r d (arange d (List.nth n d)) in
     let first = start d in
     Ops.bitwise_and (Ops.le first at)
       (Ops.lt at (Ops.add first (Ops.int (List.nth k d))))

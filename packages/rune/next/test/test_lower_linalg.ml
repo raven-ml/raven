@@ -123,7 +123,7 @@ let pivoted dtype =
   let order = Array.init m Fun.id in
   Array.stable_sort (fun i j -> Float.compare keys.(i) keys.(j)) order;
   Nx.take ~axis:0
-    ~indices:(Nx.create Nx.int32 [| m |] (Array.map Int32.of_int order))
+    ~indices:(Nx.create Nx.int64 [| m |] (Array.map Int64.of_int order))
     a
 
 (* Measured bounds *)

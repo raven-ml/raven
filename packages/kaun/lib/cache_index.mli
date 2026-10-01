@@ -73,10 +73,10 @@ type t
 (** {1:constructors Constructors} *)
 
 val make :
-  ?row:Nx.int32_t ->
-  ?every:(int * Nx.int32_t) list ->
-  pos:Nx.int32_t ->
-  table:Nx.int32_t ->
+  ?row:Nx.int64_t ->
+  ?every:(int * Nx.int64_t) list ->
+  pos:Nx.int64_t ->
+  table:Nx.int64_t ->
   unit ->
   t
 (** [make ~pos ~table ()] is the index of tokens at positions [pos] in sequences
@@ -137,7 +137,7 @@ val window : int -> t -> t
 
     Raises [Invalid_argument] if [w] is not positive. *)
 
-val select : Nx.int32_t -> t -> t
+val select : Nx.int64_t -> t -> t
 (** [select columns index] is [index] whose token [i] of lane [b] reads only the
     columns [columns.(b).(i)], of shape [[| batch; seq; k |]]: {!extend}'s
     [seen] has shape [[| batch; seq; k; ... |]], entry [c] of a token holding
@@ -213,7 +213,7 @@ val context : t -> int
     index. Under {!val-every} a column is a block: the width of the table of
     blocks, or [(seq + m - 1) / m] on a whole index. *)
 
-val positions : t -> Nx.int32_t
+val positions : t -> Nx.int64_t
 (** [positions index], of shape [[| batch; seq |]], is the tokens' positions
     clamped to [0] and the last column of the positions' table ([seq - 1] on a
     whole index), for rotating and for indexing a table of position embeddings:
@@ -264,7 +264,7 @@ val mask : t -> Nx.bool_t
 
 val ptree : t Nx.Ptree.t
 (** [ptree] is the structure of an index, for the signature of a compiled step
-    and for {!Nx.Ptree.map} over its tensors. Its leaves are the index's int32
+    and for {!Nx.Ptree.map} over its tensors. Its leaves are the index's int64
     tensors, its tables of blocks and its selection included, and it reports
     what a compiled program depends on beyond them. In walk order:
     - [tokens] reports case ["whole"] for an index built by {!whole}, then walks

@@ -79,7 +79,7 @@ end
 (* One-hot labels [0; 1; ...; d_out-1] cycled over [n] rows. *)
 let one_hot n =
   let labels =
-    Nx.init Nx.int32 [| n |] (fun i -> Int32.of_int (i.(0) mod d_out))
+    Nx.init Nx.int64 [| n |] (fun i -> Int64.of_int (i.(0) mod d_out))
   in
   Nx.cast Nx.float32 (Nx.one_hot ~num_classes:d_out labels)
 

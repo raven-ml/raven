@@ -11,7 +11,12 @@
     [-0.], and a NaN keeps its payload. Where windows overlap or updates meet,
     the elements are summed as nx sums: floats at [float32] or wider from [+0.],
     rounded once, so that a sum that is exactly zero is [+0.]; integers
-    modularly; booleans as whether any holds. *)
+    modularly; booleans as whether any holds.
+
+    Indices are [int64] nodes, as nx's are. A scatter compares them with the
+    positions of an axis of at most [2{^ 31}] elements in [int32], after every
+    index outside the axis is sent to [-1], so that no truncation brings one
+    inside it. A window's starts lie within [x] and are cast exactly. *)
 
 open Tolk_next
 
@@ -24,7 +29,7 @@ val cat : int -> Ops.t -> Ops.t list -> Ops.t
     They have one shape but along [axis]. *)
 
 val gather : int -> Ops.t -> Ops.t -> Ops.t
-(** [gather axis indices x] is, at each position of the [int32] node [indices],
+(** [gather axis indices x] is, at each position of the index node [indices],
     [x]'s element at that position with its [axis] component replaced by the
     index there. An index outside \[[0], [n]), [n] being [x]'s size along
     [axis], reads zero. *)
@@ -38,7 +43,7 @@ val scatter :
   Ops.t ->
   Ops.t
 (** [scatter ~mode ~unique ~axis ~indices ~updates x] is [x] with each element
-    of [updates] set ([`Set]) or added ([`Add]) at the position of the [int32]
+    of [updates] set ([`Set]) or added ([`Add]) at the position of the index
     node [indices] at the same index along [axis]. A position that no update
     reaches is [x]'s element. Under [`Set] the last of duplicate positions in
     row-major order wins, and with [unique], which asserts that the positions
@@ -46,9 +51,8 @@ val scatter :
     [n] being [x]'s size along [axis], is dropped. *)
 
 val update : Ops.t -> starts:Ops.t -> Ops.t -> Ops.t
-(** [update x ~starts v] is [x] with [v] at the window whose corner is the
-    [int32] vector [starts] and whose extent is [v]'s shape. The window lies
-    within [x]. *)
+(** [update x ~starts v] is [x] with [v] at the window whose corner is the index
+    vector [starts] and whose extent is [v]'s shape, a window within [x]. *)
 
 val unfold :
   kernel_size:int array ->

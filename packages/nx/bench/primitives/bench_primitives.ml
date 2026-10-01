@@ -47,7 +47,7 @@ let int64s n bound =
 
 let indices n bound =
   let st = state () in
-  tensor Bigarray.int32 n (fun _ -> Int32.of_int (Random.State.int st bound))
+  tensor Bigarray.int64 n (fun _ -> Int64.of_int (Random.State.int st bound))
 
 let monotone n = fst (Nx.sort (indices n n))
 

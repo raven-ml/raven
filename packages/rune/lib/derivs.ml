@@ -129,7 +129,7 @@ let running_arg ~axis out =
   let shape = T.shape out in
   let n = shape.(axis) in
   let along = Array.mapi (fun a _ -> if a = axis then n else 1) shape in
-  let iota = T.broadcast_to shape (T.reshape along (T.arange T.int32 0 n 1)) in
+  let iota = T.broadcast_to shape (T.reshape along (T.arange T.int64 0 n 1)) in
   let before = shifted ~axis 1 (Nx_dtype.zero (T.dtype out)) out in
   T.cummax ~axis (T.where (T.not_equal out before) iota (T.zeros_like iota))
 

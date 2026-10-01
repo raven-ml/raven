@@ -42,7 +42,7 @@ val qr : reduced:bool -> Ops.t -> Ops.t * Ops.t
 val lu : Ops.t -> Ops.t * Ops.t * Ops.t
 (** [lu a] is [(lu, pivots, perm)], the factorization of [a] with partial
     pivoting as {!Nx_backend.S.lu} writes it: both factors packed in [a]'s
-    shape, the [int32] row interchanged at each step, and the [int32] row order
+    shape, the [int64] row interchanged at each step, and the [int64] row order
     they produce. The pivot of a column is its first element of largest
     magnitude on or below the diagonal; an element below the diagonal that is
     NaN is never the pivot. A zero pivot leaves its column unscaled. *)

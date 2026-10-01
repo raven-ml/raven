@@ -70,8 +70,8 @@ let x_init () =
   Nx.create Nx.float32 [| batch; seq; dim |] (fill 13 (batch * seq * dim))
 
 let tgt_init () =
-  Nx.create Nx.int32 [| batch; seq |]
-    (Array.init (batch * seq) (fun i -> Int32.of_int (i * 5 mod vocab)))
+  Nx.create Nx.int64 [| batch; seq |]
+    (Array.init (batch * seq) (fun i -> Int64.of_int (i * 5 mod vocab)))
 
 let loss_fn x tgt m =
   let h =

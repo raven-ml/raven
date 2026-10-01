@@ -72,7 +72,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
     (dt : (float, b) Nx.dtype) ~max_tokens prompt =
   let n0 = Array.length prompt in
   let len = n0 + max_tokens in
-  let tokens = Array.make len 0l in
+  let tokens = Array.make len 0L in
   Array.blit prompt 0 tokens 0 n0;
   let step token index caches =
     let seq = (Nx.shape token).(1) in
@@ -100,7 +100,7 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
   let state =
     ref
       (step
-         (Nx.create Nx.int32 [| 1; n0 |] prompt)
+         (Nx.create Nx.int64 [| 1; n0 |] prompt)
          !index
          (Gpt2.cache ?placement:(whole_on device) cfg ~slots:len dt))
   in
@@ -130,9 +130,9 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
    through the caches in chunks gives the logits it gives whole. *)
 let check cfg params dt ids =
   let n = Array.length ids in
-  let tokens = Nx.create Nx.int32 [| 1; n |] ids in
+  let tokens = Nx.create Nx.int64 [| 1; n |] ids in
   let whole = Gpt2.logits cfg params (Gpt2.hidden cfg params tokens) in
-  let slots = Nx.create Nx.int32 [| 1; n |] (Array.init n Int32.of_int) in
+  let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
   let _, hs, _ =
     List.fold_left
       (fun (at, hs, caches) len ->
@@ -140,8 +140,8 @@ let check cfg params dt ids =
         if len = 0 then (at, hs, caches)
         else
           let pos =
-            Nx.create Nx.int32 [| 1; len |]
-              (Array.init len (fun i -> Int32.of_int (at + i)))
+            Nx.create Nx.int64 [| 1; len |]
+              (Array.init len (fun i -> Int64.of_int (at + i)))
           in
           let h, caches =
             Gpt2.cached cfg params caches
@@ -197,7 +197,7 @@ let () =
   let device = if !jit = "" then None else Some (Rune.device !jit) in
   let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
-  let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
+  let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
   if !check_only then begin
     check cfg params dt ids;
     exit 0
@@ -216,5 +216,5 @@ let () =
   let dt = Unix.gettimeofday () -. t0 in
   Printf.printf "generated %d tokens in %.2f s (%.2f tok/s)\n%!" !count dt
     (float_of_int !count /. dt);
-  let text = Brot.decode tokenizer (Array.map Int32.to_int toks) in
+  let text = Brot.decode tokenizer (Array.map Int64.to_int toks) in
   print_endline text

@@ -19,7 +19,7 @@ val cached :
   (float, 'b) Nx.t Gpt_oss.params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
-  (int32, Nx.int32_elt) Nx.t ->
+  Nx.int64_t ->
   (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [cached ~devices cfg p] is {!Gpt_oss.cached}[ cfg p] run on [devices] by an
     embedding program and one block program per layer kind, each compiled once
@@ -47,8 +47,8 @@ val greedy :
   (float, 'b) Nx.t Gpt_oss.params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
-  (int32, Nx.int32_elt) Nx.t ->
-  (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
+  Nx.int64_t ->
+  Nx.int64_t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
 (** [greedy ?devices cfg p caches index ids] is the most likely next token of
     each sequence, of shape [[| batch |]], after the tokens [ids], and the
     caches with their keys and values written. With [devices] it is {!cached}

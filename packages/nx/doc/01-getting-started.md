@@ -65,8 +65,8 @@ Every array has a `dtype` that determines its element type. Common dtypes:
 |-------|-----------|-------------|
 | `Float32` | `float` | Neural networks, images |
 | `Float64` | `float` | Scientific computing |
-| `Int32` | `int32` | Integer data, indices |
-| `Int64` | `int64` | Large integers |
+| `Int32` | `int32` | Integer data |
+| `Int64` | `int64` | Indices, large integers |
 | `Bool` | `bool` | Masks, conditions |
 | `Complex128` | `Complex.t` | Signal processing |
 

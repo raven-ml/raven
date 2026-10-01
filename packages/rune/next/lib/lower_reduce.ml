@@ -102,7 +102,7 @@ let argmax x axis =
   in
   Ops.cast
     (Ops.sub (Ops.int n) (Ops.rop (Ops.mul m down) Op.Max [ axis ]))
-    Dtype.Int32
+    Dtype.Int64
 
 let arg_reduce (k : Nx_backend.arg_reduce) ~axis x =
   match k with
@@ -214,6 +214,10 @@ let pick mask b =
   let selected = Ops.where mask b (Ops.int 0) in
   Ops.rop selected Op.Add [ Ops.ndim selected - 1 ]
 
+(* The positions are compared in [int64]: where [x] is read from memory, tolk
+   folds the selection into a load gated on [p]'s range and computes the load's
+   address in 32 bits, which a narrowing before the comparison would only
+   repeat. *)
 let take x axis p =
   let hot =
     Ops.eq (Ops.unsqueeze p (-1)) (Ops.arange ~dtype:(dtype p) (size x axis))
@@ -222,26 +226,23 @@ let take x axis p =
     (pick hot (Ops.transpose (Ops.unsqueeze (bits x) (-1)) axis (Ops.ndim x)))
 
 let argsort ~descending ~axis x =
-  if size x axis <= 1 then Ops.const_like ~dtype:Int32 x (`Int Z.zero)
+  if size x axis <= 1 then Ops.const_like ~dtype:Int64 x (`Int Z.zero)
   else
     let k = ordered (keys ~nan:(if descending then `Least else `Greatest) x) in
     let positions = positions ~descending axis in
-    let p =
-      if Dtype.itemsize (dtype k) <= 4 then positions (Ops.cast k Int64)
-      else
-        (* A 64-bit key sorts in two passes, its low half first: the second pass
-           sorts the high halves in the first pass's order, and being stable
-           keeps that order among equal high halves. *)
-        let half h = Ops.cast h Int64 in
-        let lo =
-          half
-            (Ops.bitwise_and k (Ops.const_like k (`Int (Z.of_int 0xffff_ffff))))
-        in
-        let first = positions lo in
-        take first axis
-          (positions (take (half (Ops.shr k (Ops.int 32))) axis first))
-    in
-    Ops.cast p Int32
+    if Dtype.itemsize (dtype k) <= 4 then positions (Ops.cast k Int64)
+    else
+      (* A 64-bit key sorts in two passes, its low half first: the second pass
+         sorts the high halves in the first pass's order, and being stable keeps
+         that order among equal high halves. *)
+      let half h = Ops.cast h Int64 in
+      let lo =
+        half
+          (Ops.bitwise_and k (Ops.const_like k (`Int (Z.of_int 0xffff_ffff))))
+      in
+      let first = positions lo in
+      take first axis
+        (positions (take (half (Ops.shr k (Ops.int 32))) axis first))
 
 let sort ~descending ~axis x =
   if size x axis <= 1 then x else take x axis (argsort ~descending ~axis x)

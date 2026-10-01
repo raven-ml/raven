@@ -1059,15 +1059,9 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *s
 }
 
 /* ── Argreduce driver ──────────────────────────────────────────────────────
-   Argmax/argmin over one axis into an int32 output, parallelized over the
+   Argmax/argmin over one axis into an int64 output, parallelized over the
    non-axis nest. One run per output (the axis); the kernel carries the running
    extreme and its index. */
-
-nx_c_status nx_c_argreduce_validate(int64_t axis_len) {
-  if (axis_len == 0) return NX_C_ERR_EMPTY_REDUCE;
-  if (axis_len > INT32_MAX) return NX_C_ERR_ARGREDUCE_CAP;
-  return NX_C_OK;
-}
 
 typedef struct {
   nx_c_arg_step *step;
@@ -1113,14 +1107,13 @@ nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
   if (out->ndim != in->ndim - 1) return NX_C_ERR_OUT_RANK;
 
   int64_t axis_len = in->shape[axis];
-  nx_c_status vs = nx_c_argreduce_validate(axis_len);
-  if (vs != NX_C_OK) return vs;
+  if (axis_len == 0) return NX_C_ERR_EMPTY_REDUCE;
 
   nx_c_arg_exec e;
   e.step = tbl->step[dt];
   e.ctx = ctx;
   e.in_base = (char *)in->data + in->offset * in_elem;
-  e.out_base = (char *)out->data + out->offset * (int64_t)sizeof(int32_t);
+  e.out_base = (char *)out->data + out->offset * (int64_t)sizeof(int64_t);
   e.axis_stride = in->strides[axis] * in_elem;
   e.axis_len = axis_len;
 
@@ -1129,7 +1122,7 @@ nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
     if (a == axis) continue;
     e.kshape[e.nk] = in->shape[a];
     e.k_in_stride[e.nk] = in->strides[a] * in_elem;
-    e.k_out_stride[e.nk] = out->strides[e.nk] * (int64_t)sizeof(int32_t);
+    e.k_out_stride[e.nk] = out->strides[e.nk] * (int64_t)sizeof(int64_t);
     e.nk++;
   }
 
@@ -1233,8 +1226,8 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
 
 /* One place maps a status to an exception kind. Precondition and empty-axis
    violations are the caller's bad argument (Invalid_argument); everything else
-   (unsupported dtype, packed, the argreduce cap, allocation) is a
-   Failure. Runs only on the cold error path, so strcmp is free. */
+   (unsupported dtype, packed, allocation) is a Failure. Runs only on the cold
+   error path, so strcmp is free. */
 NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
   if (strcmp(s, NX_C_ERR_EMPTY_REDUCE) == 0 || strcmp(s, NX_C_ERR_AXES) == 0 ||
       strcmp(s, NX_C_ERR_AXIS) == 0 || strcmp(s, NX_C_ERR_OUT_RANK) == 0 ||

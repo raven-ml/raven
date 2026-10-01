@@ -40,7 +40,7 @@ let weight ?(scale = any_scale) shape =
 let floats shape =
   Nx.init Nx.float32 shape (fun _ -> Random.State.float rng 2. -. 1.)
 
-let ints shape v = Nx.create Nx.int32 shape (Array.map Int32.of_int v)
+let ints shape v = Nx.create Nx.int64 shape (Array.map Int64.of_int v)
 
 (* [poison ~at x] is [x] with a NaN and an infinity in its rows at the batch
    indices [at], positions that select no expert. *)
@@ -70,7 +70,7 @@ let magnitudes (Nx_quant.Mxfp4 { codes; scales }) =
 type case = {
   name : string;
   w : Nx_quant.t;
-  ids : Nx.int32_t option;
+  ids : Nx.int64_t option;
   x : Nx.float32_t;
   transpose : bool;
 }
@@ -344,7 +344,7 @@ let dense ?ids w x =
         let named =
           Nx.logical_and
             (Nx.greater_equal ids (Nx.zeros_like ids))
-            (Nx.less ids (Nx.full Nx.int32 (Nx.shape ids) (Int32.of_int e)))
+            (Nx.less ids (Nx.full Nx.int64 (Nx.shape ids) (Int64.of_int e)))
         in
         let taken =
           Nx.reshape

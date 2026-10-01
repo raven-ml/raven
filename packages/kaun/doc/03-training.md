@@ -95,7 +95,7 @@ A loss maps predictions and targets to a scalar tensor — the shape `Rune.grad`
 | `Loss.mse`, `Loss.mae`, `Loss.huber` | regression |
 | `Loss.sigmoid_bce` | binary or multi-label classification (logits + 0/1 or soft targets) |
 | `Loss.softmax_cross_entropy` | multiclass, dense targets (one-hot or soft) |
-| `Loss.softmax_cross_entropy_sparse` | multiclass, int32 class indices |
+| `Loss.softmax_cross_entropy_sparse` | multiclass, int64 class indices |
 
 All reduce with `` `Mean`` by default (keeping the objective's scale independent of batch size); pass `~reduction:`` `Sum`` to add instead.
 
@@ -104,7 +104,7 @@ let () =
   let logits =
     Nx.create Nx.float32 [| 2; 3 |] [| 2.0; -1.0; 0.5; 0.1; 3.0; -0.2 |]
   in
-  let labels = Nx.create Nx.int32 [| 2 |] [| 0l; 1l |] in
+  let labels = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
   let l = Loss.softmax_cross_entropy_sparse logits labels in
   Printf.printf "loss = %.4f\n" (Nx.item [] l)
 ```
@@ -116,7 +116,7 @@ A dataset is a tensor — or a pair of tensors — whose axis 0 indexes examples
 ```ocaml
 let () =
   let x = Nx.create Nx.float32 [| 10; 2 |] (Array.init 20 float_of_int) in
-  let y = Nx.create Nx.int32 [| 10 |] (Array.init 10 Int32.of_int) in
+  let y = Nx.create Nx.int64 [| 10 |] (Array.init 10 Int64.of_int) in
   Data.batches2 ~batch_size:4 (x, y)
   |> Seq.iter (fun (xb, yb) ->
       Format.printf "batch: x %a  y %a@." Nx.pp_shape (Nx.shape xb)
@@ -141,7 +141,7 @@ The `kaun.datasets` library provides MNIST, Fashion-MNIST, and CIFAR-10 loaders 
 
 ## Metrics
 
-Metrics map a batch of predictions and integer labels to a plain `float` — evaluation summaries, never differentiated (train against `Loss`). Multiclass metrics share the sparse-label convention of `Loss.softmax_cross_entropy_sparse`: logits (or probabilities) in, int32 class indices as labels, argmax over the last axis as the predicted class:
+Metrics map a batch of predictions and integer labels to a plain `float` — evaluation summaries, never differentiated (train against `Loss`). Multiclass metrics share the sparse-label convention of `Loss.softmax_cross_entropy_sparse`: logits (or probabilities) in, int64 class indices as labels, argmax over the last axis as the predicted class:
 
 ```ocaml
 let () =
@@ -149,7 +149,7 @@ let () =
     Nx.create Nx.float32 [| 4; 3 |]
       [| 2.0; 0.1; 0.3; 0.2; 1.5; 0.1; 0.1; 0.2; 3.0; 1.0; 0.5; 0.2 |]
   in
-  let labels = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 1l |] in
+  let labels = Nx.create Nx.int64 [| 4 |] [| 0L; 1L; 2L; 1L |] in
   Printf.printf "accuracy: %.2f\n" (Metric.accuracy logits labels);
   Printf.printf "macro F1: %.2f\n" (Metric.f1 logits labels)
 ```
@@ -168,7 +168,7 @@ let () =
     }
   in
   let test_x = Nx.randn Nx.float32 [| 100; 4 |] in
-  let test_y = Nx.create Nx.int32 [| 100 |] (Array.init 100 (fun i -> Int32.of_int (i mod 3))) in
+  let test_y = Nx.create Nx.int64 [| 100 |] (Array.init 100 (fun i -> Int64.of_int (i mod 3))) in
   let correct, total =
     Data.batches2 ~batch_size:32 (test_x, test_y)
     |> Seq.fold_left

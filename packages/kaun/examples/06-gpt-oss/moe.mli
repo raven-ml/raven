@@ -44,8 +44,7 @@ val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
 
 (** {1:forward Forward} *)
 
-val route :
-  k:int -> (float, 'b) Nx.t -> (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t
+val route : k:int -> (float, 'b) Nx.t -> Nx.int64_t * (float, 'b) Nx.t
 (** [route ~k logits] is gpt-oss's routing [(experts, weights)] for router
     logits of shape [[| ...; experts |]], both of shape [[| ...; k |]]: the [k]
     experts with the greatest logits, greatest first, and the softmax of those
@@ -62,7 +61,7 @@ val activation : limit:float -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 val apply :
   limit:float ->
   (float, 'b) Nx.t t ->
-  (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t ->
+  Nx.int64_t * (float, 'b) Nx.t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t
 (** [apply ~limit p (experts, weights) x] is the experts applied to [x], whose

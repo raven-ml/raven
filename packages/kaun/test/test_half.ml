@@ -90,7 +90,7 @@ let test_linear_apply (type b) (dt : (float, b) Nx.dtype) ~tol () =
 
 let test_embedding_apply () =
   let p = { Embedding.table = mat f32 5 3 (grid 15) } in
-  let ids = vec Nx.int32 [| 0l; 3l; 4l |] in
+  let ids = vec Nx.int64 [| 0L; 3L; 4L |] in
   (* A gather rounds nothing: exact at float16. *)
   close ~msg:"float16 gather is exact" ~tol:0.0 (Embedding.apply p ids)
     (Embedding.apply (Nx.Ptree.cast (module Embedding) f16 p) ids)
@@ -211,15 +211,15 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
   let rope = Rope.make ~head_dim () in
   let p32 = Attention.make ~bias:false ~kv_dim:4 ~embed_dim:8 f32 in
   let x32 = Nx.mul_s (Nx.randn f32 [| 1; 6; 8 |]) 0.5 in
-  let slots = Nx.create Nx.int32 [| 1; 6 |] (Array.init 6 Int32.of_int) in
+  let slots = Nx.create Nx.int64 [| 1; 6 |] (Array.init 6 Int64.of_int) in
   let run (type c) (dt : (float, c) Nx.dtype) chunks =
     let p = Nx.Ptree.cast (module Attention) dt p32 and x = Nx.cast dt x32 in
     let _, ys, _ =
       List.fold_left
         (fun (at, ys, c) n ->
           let pos =
-            Nx.create Nx.int32 [| 1; n |]
-              (Array.init n (fun i -> Int32.of_int (at + i)))
+            Nx.create Nx.int64 [| 1; n |]
+              (Array.init n (fun i -> Int64.of_int (at + i)))
           in
           let y, c =
             Attention.cached ~head_dim ~rope p c
@@ -247,7 +247,7 @@ let test_cross_entropy_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
     Nx.create f32 [| 2; classes |]
       (Array.init (2 * classes) (fun i -> float_of_int (i mod 17) /. 8.0))
   in
-  let labels = Nx.create Nx.int32 [| 2 |] [| 5l; 4000l |] in
+  let labels = Nx.create Nx.int64 [| 2 |] [| 5L; 4000L |] in
   let half = Nx.cast dt logits in
   let expected = Loss.softmax_cross_entropy_sparse (Nx.cast f32 half) labels in
   let actual = Loss.softmax_cross_entropy_sparse half labels in
@@ -274,7 +274,7 @@ let test_cross_entropy_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
 let test_cross_entropy_island_overflow () =
   let classes = 70000 in
   let logits = Nx.zeros f16 [| 1; classes |] in
-  let labels = Nx.create Nx.int32 [| 1 |] [| 3l |] in
+  let labels = Nx.create Nx.int64 [| 1 |] [| 3L |] in
   let loss = Loss.softmax_cross_entropy_sparse logits labels in
   is_true ~msg:"finite" (Nx.item [] (Nx.all (Nx.isfinite loss)));
   equal ~msg:"log classes" (float 0.01)

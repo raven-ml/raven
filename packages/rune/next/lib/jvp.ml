@@ -176,7 +176,7 @@ let running_arg ~axis y =
   let n = shape.(axis) in
   let along = Array.mapi (fun a _ -> if a = axis then n else 1) shape in
   let iota =
-    Nx.broadcast_to shape (Nx.reshape along (Nx.arange Nx.int32 0 n 1))
+    Nx.broadcast_to shape (Nx.reshape along (Nx.arange Nx.int64 0 n 1))
   in
   let before = shifted ~axis 1 (Nx_dtype.zero (Nx.dtype y)) y in
   let changed =

@@ -289,7 +289,7 @@ let iota shape =
   Nx.create Nx.float64 shape
     (Array.init (Array.fold_left ( * ) 1 shape) (fun i -> float_of_int (i + 1)))
 
-let ints shape a = Nx.create Nx.int32 shape (Array.map Int32.of_int a)
+let ints shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 let near = array (float_rel ~rel:1e-10 ~abs:1e-12)
 
 let compiled_like_eager ?msg f x =

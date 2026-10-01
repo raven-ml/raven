@@ -23,7 +23,7 @@ let mnist ?(fashion = false) ?(normalize = true) ?(data_format = `NCHW) () =
       | `NHWC -> x
     in
     let y =
-      Nx.of_bigarray (Bigarray.genarray_of_array1 labels) |> Nx.cast Nx.int32
+      Nx.of_bigarray (Bigarray.genarray_of_array1 labels) |> Nx.cast Nx.int64
     in
     (x, y)
   in
@@ -44,7 +44,7 @@ let cifar10 ?(normalize = true) ?(data_format = `NCHW) () =
       | `NHWC -> Nx.transpose x ~axes:[ 0; 2; 3; 1 ]
     in
     let y =
-      Nx.of_bigarray (Bigarray.genarray_of_array1 labels) |> Nx.cast Nx.int32
+      Nx.of_bigarray (Bigarray.genarray_of_array1 labels) |> Nx.cast Nx.int64
     in
     (x, y)
   in

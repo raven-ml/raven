@@ -699,11 +699,11 @@ let op : type r. scope -> r Nx.Op.t -> r =
       like x (Lower_reduce.reduce k ~axes:(Array.to_list axes) (n x))
   | Scan (k, axis, x) -> like x (Lower_reduce.scan k ~axis (n x))
   | Arg_reduce (k, axis, x) ->
-      ret Nx_dtype.int32 (Lower_reduce.arg_reduce k ~axis (n x))
+      ret Nx_dtype.int64 (Lower_reduce.arg_reduce k ~axis (n x))
   | Sort { descending; axis; x } ->
       like x (Lower_reduce.sort ~descending ~axis (n x))
   | Argsort { descending; axis; x } ->
-      ret Nx_dtype.int32 (Lower_reduce.argsort ~descending ~axis (n x))
+      ret Nx_dtype.int64 (Lower_reduce.argsort ~descending ~axis (n x))
   | Pad (padding, fill, x) ->
       like x (Lower_index.pad padding (const (Nx.dtype x) fill) (n x))
   | Cat (axis, xs) -> (
@@ -732,7 +732,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
       (like x q, like x r)
   | Lu x ->
       let lu, pivots, perm = Lower_linalg.lu (factored x) in
-      (like x lu, ret Nx_dtype.int32 pivots, ret Nx_dtype.int32 perm)
+      (like x lu, ret Nx_dtype.int64 pivots, ret Nx_dtype.int64 perm)
   | Svd { full_matrices; x } ->
       let u, sv, vt = Lower_linalg.svd ~full_matrices (factored x) in
       (like x u, ret Nx_dtype.float64 sv, like x vt)

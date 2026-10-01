@@ -239,9 +239,9 @@ let routes =
   let chosen =
     List.filter (fun e -> not (unchosen e)) (List.init experts Fun.id)
   in
-  Nx.create Nx.int32 [| tokens; top |]
+  Nx.create Nx.int64 [| tokens; top |]
     (Array.init (tokens * top) (fun i ->
-         Int32.of_int (List.nth chosen (i * 5 mod List.length chosen))))
+         Int64.of_int (List.nth chosen (i * 5 mod List.length chosen))))
 
 let stack =
   Nx_quant.mxfp4
@@ -263,11 +263,11 @@ let moe experts firsts =
         let local = Nx.sub routes first in
         let mine =
           Nx.logical_and
-            (Nx.greater_equal_s local 0l)
-            (Nx.less_s local (Int32.of_int per))
+            (Nx.greater_equal_s local 0L)
+            (Nx.less_s local (Int64.of_int per))
         in
         Nx_quant.apply
-          ~ids:(Nx.where mine local (Nx.scalar_like local (-1l)))
+          ~ids:(Nx.where mine local (Nx.scalar_like local (-1L)))
           experts tokens_x)
       experts firsts
   in
@@ -291,7 +291,7 @@ let test_expert_parallel_product () =
     Nx_quant.place split (Nx_quant.mxfp4 ~scales:(lanes scales) (lanes codes))
   in
   let firsts =
-    Nx.place split (Nx.create Nx.int32 [| 4 |] [| 0l; 4l; 8l; 12l |])
+    Nx.place split (Nx.create Nx.int64 [| 4 |] [| 0L; 4L; 8L; 12L |])
   in
   let f =
     Rune.jit Nx.Ptree.(Nx_quant.ptree @-> tensor @-> returns tensor) moe
@@ -301,8 +301,8 @@ let test_expert_parallel_product () =
   equal ~msg:"equals one device" (array float_exact) (to_arr expect) (to_arr y);
   (* Every lane's routes over the experts split by lane are a partial product on
      each device, summed across them: what crosses is the allreduce of every
-     lane's products, and the gather of the lanes' ids that brings the routes
-     whole. No expert crosses. *)
+     lane's products, and the gather of the lanes' ids, as the kernel's int32,
+     that brings the routes whole. No expert crosses. *)
   let sum = Rune.jit' (Nx.sum ~axes:[ 0 ]) in
   let partials =
     Nx.place split

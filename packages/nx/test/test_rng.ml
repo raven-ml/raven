@@ -506,7 +506,7 @@ let supports =
           (fun (k, n) ->
             cover "n = 1" (n = 1);
             let p =
-              Array.map Int32.to_int (Nx.to_array (Rng.permutation k n))
+              Array.map Int64.to_int (Nx.to_array (Rng.permutation k n))
             in
             Array.sort Int.compare p;
             equal (array int) (Array.init n Fun.id) p);
@@ -855,7 +855,7 @@ let distributions =
   (* 20_000 draws of one element of permutation 5, one key each. *)
   let element i k =
     Array.init 20_000 (fun j ->
-        Int32.to_float (Nx.item [ i ] (Rng.permutation (Rng.fold_in k j) 5)))
+        Int64.to_float (Nx.item [ i ] (Rng.permutation (Rng.fold_in k j) 5)))
   in
   let gumbel = Cdf (fun x -> exp_neg (exp_neg x)) in
   let subkey i k = (Rng.split k).(i) in

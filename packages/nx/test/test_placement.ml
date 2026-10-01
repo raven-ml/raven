@@ -596,7 +596,7 @@ let results =
             rows,
             fun () ->
               let ids =
-                Nx.create Nx.int32 [| 8 |] [| 5l; 0l; 3l; 3l; 1l; 2l; 4l; 0l |]
+                Nx.create Nx.int64 [| 8 |] [| 5L; 0L; 3L; 3L; 1L; 2L; 4L; 0L |]
               in
               ( Nx.take ~axis:0 ~indices:ids w,
                 Nx.take ~axis:0 ~indices:(Nx.place rows ids) (Nx.place copies w)

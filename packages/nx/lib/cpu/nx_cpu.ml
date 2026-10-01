@@ -181,11 +181,11 @@ external caml_reduce_min : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
   = "caml_nx_c_reduce_min"
 
 external caml_argmax :
-  (int32, Nx_dtype.int32_elt) t -> ('a, 'b) t -> int -> unit
+  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> unit
   = "caml_nx_c_argmax"
 
 external caml_argmin :
-  (int32, Nx_dtype.int32_elt) t -> ('a, 'b) t -> int -> unit
+  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> unit
   = "caml_nx_c_argmin"
 
 external caml_cumsum : ('a, 'b) t -> ('a, 'b) t -> int -> unit
@@ -227,7 +227,7 @@ external caml_sort : ('a, 'b) t -> ('a, 'b) t -> int -> bool -> unit
   = "caml_nx_c_sort"
 
 external caml_argsort :
-  (int32, Nx_dtype.int32_elt) t -> ('a, 'b) t -> int -> bool -> unit
+  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> bool -> unit
   = "caml_nx_c_argsort"
 
 let sort ~descending ~axis x ~dst = caml_sort dst x axis descending
@@ -246,12 +246,12 @@ external caml_cat : ('a, 'b) t -> ('a, 'b) t array -> int -> unit
   = "caml_nx_c_cat"
 
 external caml_gather :
-  ('a, 'b) t -> ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t -> int -> unit
+  ('a, 'b) t -> ('a, 'b) t -> (int64, Nx_dtype.int64_elt) t -> int -> unit
   = "caml_nx_c_gather"
 
 external caml_scatter :
   ('a, 'b) t ->
-  (int32, Nx_dtype.int32_elt) t ->
+  (int64, Nx_dtype.int64_elt) t ->
   ('a, 'b) t ->
   int ->
   int ->
@@ -283,15 +283,15 @@ let scatter ~mode ~unique:_ ~axis ~indices ~updates x ~dst =
 (* The window write is the strided copy: [x] copied, then [v] written through a
    shrunk view of the copy. The packed copy writes a window nibble by nibble,
    keeping the elements around it. *)
-let update (x : ('a, 'b) t) ~(starts : Nx_backend.int32_array) v ~dst =
+let update (x : ('a, 'b) t) ~(starts : Nx_backend.index_array) v ~dst =
   caml_copy dst x;
-  let start = Elements.get Nx_dtype.int32 starts.buffer in
+  let start = Elements.get Nx_dtype.int64 starts.buffer in
   let offset = View.offset starts.view and stride = View.stride 0 starts.view in
   let bounds =
     Array.init
       (Array.length (shape x))
       (fun i ->
-        let c = Int32.to_int (start (offset + (i * stride))) in
+        let c = Int64.to_int (start (offset + (i * stride))) in
         (c, c + (shape v).(i)))
   in
   caml_copy (of_view dst (View.shrink dst.view bounds)) v
@@ -386,8 +386,8 @@ external caml_eigh :
 
 external caml_lu :
   ('a, 'b) t ->
-  (int32, Nx_dtype.int32_elt) t ->
-  (int32, Nx_dtype.int32_elt) t ->
+  (int64, Nx_dtype.int64_elt) t ->
+  (int64, Nx_dtype.int64_elt) t ->
   ('a, 'b) t ->
   unit = "caml_nx_c_lu"
 

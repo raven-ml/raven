@@ -80,8 +80,7 @@ val dequant : (float, 'b) Nx.dtype -> t -> (float, 'b) Nx.t
     result: beside it, only a few chunk-sized temporaries exist at once, so the
     peak does not grow with the weight. *)
 
-val apply :
-  ?ids:(int32, Nx.int32_elt) Nx.t -> t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val apply : ?ids:Nx.int64_t -> t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [apply ?ids w x] is
     [Nx.matmul x (Nx.matrix_transpose (dequant Nx.float32 w))] at [x]'s dtype,
     with {!Nx.matmul}'s shapes: [w] is [[| ...; n; k |]], [x] is
@@ -119,7 +118,7 @@ module Effect : sig
       [(float, 'b) Nx.t]. *)
   type (_, _) op =
     | Apply : {
-        ids : (int32, Nx.int32_elt) Nx.t option;
+        ids : Nx.int64_t option;
         x : (float, 'b) Nx.t;
         transpose : bool;
             (** [true] multiplies by the weight rather than by its transpose,

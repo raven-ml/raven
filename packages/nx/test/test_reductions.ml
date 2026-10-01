@@ -60,6 +60,7 @@ let with_axis tensors =
 let int32s shape = viewed ~shape ~pp:pp_int32 Nx.int32 small_int32
 let floats shape = viewed ~shape ~pp:pp_float Nx.float64 tied_float
 let ints = Ref.witness int32
+let positions = Ref.witness int64
 
 (* Whether [axes] of [t] (every axis for [None]) include an empty one. *)
 let empty_axis t axes =
@@ -207,7 +208,7 @@ let first_extreme better lane =
       let b = lane.(!best) in
       if (not (Float.is_nan b)) && (Float.is_nan x || better x b) then best := i)
     lane;
-  [| Int32.of_int !best |]
+  [| Int64.of_int !best |]
 
 let arg_reductions =
   let check name nx better =
@@ -228,7 +229,7 @@ let arg_reductions =
             else if axis = None && keepdims then kept
             else Ref.squeeze ~axes:[ a ] kept
           in
-          equal ints expected (Ref.of_nx (nx ?axis ~keepdims t)))
+          equal positions expected (Ref.of_nx (nx ?axis ~keepdims t)))
   in
   group "argmax and argmin"
     [
@@ -241,6 +242,12 @@ let arg_reductions =
       test "argmax refuses an axis out of bounds" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.argmax ~axis:2 (Nx.zeros Nx.float64 [| 2; 2 |])));
+      test "argmax and argmin refuse an empty axis, or an empty tensor"
+        (fun () ->
+          let t = Nx.zeros Nx.float64 [| 2; 0 |] in
+          raises_invalid_arg (fun () -> Nx.argmax ~axis:1 t);
+          raises_invalid_arg (fun () -> Nx.argmin ~axis:1 t);
+          raises_invalid_arg (fun () -> Nx.argmax t));
     ]
 
 let scans =
@@ -361,21 +368,21 @@ let signed_zeros =
                     ]);
             });
       test "argmax and argmin point at the zero max and min return" (fun () ->
-          let ints xs = Nx.create Nx.int32 [| Array.length xs |] xs in
+          let ints xs = Nx.create Nx.int64 [| Array.length xs |] xs in
           on_every_path mixed_zeros
             {
               run =
                 (fun msg t ->
                   let equal what =
-                    equal ~msg:(msg ^ ", " ^ what) (tensor int32)
+                    equal ~msg:(msg ^ ", " ^ what) (tensor int64)
                   in
-                  equal "argmax along rows" (ints [| 1l; 0l |])
+                  equal "argmax along rows" (ints [| 1L; 0L |])
                     (Nx.argmax ~axis:1 t);
-                  equal "argmin along rows" (ints [| 0l; 1l |])
+                  equal "argmin along rows" (ints [| 0L; 1L |])
                     (Nx.argmin ~axis:1 t);
-                  equal "argmax along columns" (ints [| 1l; 0l; 1l |])
+                  equal "argmax along columns" (ints [| 1L; 0L; 1L |])
                     (Nx.argmax ~axis:0 t);
-                  equal "argmin along columns" (ints [| 0l; 1l; 0l |])
+                  equal "argmin along columns" (ints [| 0L; 1L; 0L |])
                     (Nx.argmin ~axis:0 t));
             });
       test "cummax and cummin turn to the extreme zero" (fun () ->
@@ -430,8 +437,8 @@ let signed_zeros =
           let t = v [| -0.; Float.nan; 0. |] in
           equal ~msg:"max" float_exact Float.nan (Nx.item [] (Nx.max t));
           equal ~msg:"min" float_exact Float.nan (Nx.item [] (Nx.min t));
-          equal ~msg:"argmax" int32 1l (Nx.item [] (Nx.argmax t));
-          equal ~msg:"argmin" int32 1l (Nx.item [] (Nx.argmin t)));
+          equal ~msg:"argmax" int64 1L (Nx.item [] (Nx.argmax t));
+          equal ~msg:"argmin" int64 1L (Nx.item [] (Nx.argmin t)));
     ]
 
 (* The normalisations, at float64 on finite values. *)
@@ -538,8 +545,8 @@ let integer_dtypes =
              equal ~msg:"min" d.exact
                (value (snd (extreme (fun c -> c < 0))))
                (Nx.item [] (Nx.min t));
-             equal ~msg:"argmax" int32
-               (Int32.of_int (fst (extreme (fun c -> c > 0))))
+             equal ~msg:"argmax" int64
+               (Int64.of_int (fst (extreme (fun c -> c > 0))))
                (Nx.item [] (Nx.argmax t))))
        int_dtypes
     @ [
@@ -551,11 +558,12 @@ let integer_dtypes =
 let at_scale =
   group "reductions at scale"
     [
-      test "argmax and argmin refuse an axis longer than an int32 index reaches"
-        (fun () ->
-          let long = Nx.broadcast_to [| 2147483648 |] (Nx.scalar Nx.int8 1) in
-          raises_invalid_arg (fun () -> Nx.argmax long);
-          raises_invalid_arg (fun () -> Nx.argmin ~axis:0 long));
+      slow "argmax and argmin of 2^31 + 1 equal entries are 0" (fun () ->
+          let long =
+            Nx.broadcast_to [| (1 lsl 31) + 1 |] (Nx.scalar Nx.int8 1)
+          in
+          equal int64 0L (Nx.item [] (Nx.argmax long));
+          equal int64 0L (Nx.item [] (Nx.argmin ~axis:0 long)));
       slow
         "sum along the long axis of a matrix of two columns keeps each column"
         (fun () ->

@@ -214,7 +214,7 @@ let selection_tests =
           (m23 ())
           (mat64 2 3 [| 0.3; 0.9; -1.1; 0.2; -0.5; 1.3 |]));
     test "take_along_axis" (fun () ->
-        let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 2l |] in
+        let idx = Nx.create Nx.int64 [| 2; 2 |] [| 2L; 0L; 1L; 2L |] in
         check_jvp ~msg:"take_along_axis"
           (fun x -> Nx.take_along_axis ~axis:1 ~indices:idx x)
           (m23 ()));

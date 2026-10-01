@@ -308,7 +308,7 @@ let reindex col indices =
       if n = 0 then P (dtype, Nx.zeros dtype [| 0 |], None)
       else
         let idx_tensor =
-          Nx.create Nx.int32 [| n |] (Array.map Int32.of_int indices)
+          Nx.create Nx.int64 [| n |] (Array.map Int64.of_int indices)
         in
         let gathered = Nx.take ~axis:0 ~indices:idx_tensor tensor in
         let mask =

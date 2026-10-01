@@ -259,7 +259,7 @@ let ties ~devices fx =
   let experts = Array.length logits / 3 in
   let x = float32 [| 3; experts |] logits in
   let ids =
-    Array.map Int32.to_int
+    Array.map Int64.to_int
       (flat (compiled devices (fun x -> fst (Moe.route ~k x)) x))
   in
   let weights = flat (compiled devices (fun x -> snd (Moe.route ~k x)) x) in
@@ -303,7 +303,7 @@ let block ~devices ~tol ~k ~limit label (router, p) case =
   let route x = Moe.route ~k (Linear.apply router x) in
   let ids = compiled devices (fun x -> fst (route x)) tokens in
   check (name "selected experts")
-    (Array.map Int32.to_int (flat ids) = ints (mem "experts" case))
+    (Array.map Int64.to_int (flat ids) = ints (mem "experts" case))
     "";
   close ~tol (name "expert weights")
     (floats (mem "expert_weights" case))
@@ -341,8 +341,8 @@ let blocks ~devices ~tol fx ~label ~weight ckpt =
 
 let ids_tensor rows =
   let batch = Array.length rows and seq = Array.length rows.(0) in
-  Nx.create Nx.int32 [| batch; seq |]
-    (Array.map Int32.of_int (Array.concat (Array.to_list rows)))
+  Nx.create Nx.int64 [| batch; seq |]
+    (Array.map Int64.of_int (Array.concat (Array.to_list rows)))
 
 let with_scale_offset offset (p : _ Gpt_oss.params) =
   let shift = function
@@ -453,7 +453,7 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       ids
   in
   let argmax =
-    Array.map Int32.to_int (Nx.to_array (Nx.argmax ~axis:2 logits))
+    Array.map Int64.to_int (Nx.to_array (Nx.argmax ~axis:2 logits))
   in
   let top_ids = ints (mem "last_top_ids" case) in
   let top_values = floats (mem "last_top_values" case) in
@@ -516,7 +516,7 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
         (stream k))
     (if devices = None then List.init n_layers (fun i -> i + 1)
      else [ n_layers ]);
-  let slots = Nx.create Nx.int32 [| 1; n |] (Array.init n Int32.of_int) in
+  let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
   let chunked cached =
     let _, hs, _ =
       List.fold_left
@@ -525,8 +525,8 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
           if len = 0 then (at, hs, caches)
           else
             let pos =
-              Nx.create Nx.int32 [| 1; len |]
-                (Array.init len (fun i -> Int32.of_int (at + i)))
+              Nx.create Nx.int64 [| 1; len |]
+                (Array.init len (fun i -> Int64.of_int (at + i)))
             in
             let h, caches =
               cached caches
