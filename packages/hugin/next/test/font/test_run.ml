@@ -256,6 +256,16 @@ let runs =
           in
           raises_match (Exn.invalid_arg ~substring:"not finite") (fun () ->
               ignore (Run.bounds r)));
+      test "pp escapes only quotes, backslashes and controls in the text"
+        (fun () ->
+          let text = "é\"\\\n\u{85}\u{7F}中" in
+          let r =
+            Run.v ~clusters:[| 0 |] ~font ~size:10. ~text ~glyphs:[| 0 |]
+              ~xs:[| 0. |] ()
+          in
+          equal string
+            {|(run (font "Inter" 400 normal) 10 "é\"\\\n\194\133\127中" 0@0,0#0)|}
+            (Format.asprintf "%a" Run.pp r));
       test "equal compares every field, fonts by Font.equal" variants;
       prop "equal is an equivalence" (Gen.pair gen_run gen_run)
         (Law.equivalence run_t);

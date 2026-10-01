@@ -108,4 +108,6 @@ val equal : t -> t -> bool
     sizes, texts, glyphs, positions and clusters. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp ppf r] formats [r] for debugging. *)
+(** [pp ppf r] formats [r] for debugging. Its text is an OCaml string literal
+    that keeps its characters, escaping only double quotes, backslashes and
+    control characters. *)

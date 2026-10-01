@@ -138,7 +138,8 @@ let equal r r' =
      && Array.for_all2 Int.equal r.clusters r'.clusters
 
 let pp ppf r =
-  Format.fprintf ppf "@[<1>(run %a %g %S" Font.pp r.font r.size r.text;
+  Format.fprintf ppf "@[<1>(run %a %g %a" Font.pp r.font r.size Literal.pp
+    r.text;
   Array.iteri
     (fun i g ->
       Format.fprintf ppf "@ %d@@%g,%g#%d" g r.xs.(i) r.ys.(i) r.clusters.(i))

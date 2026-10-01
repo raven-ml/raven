@@ -884,6 +884,12 @@ let decoding =
         ~name:(fun (n, _, _) -> n)
         "a component placed by" component_cases component_placement;
       test "names come from US English, Windows, then Macintosh records" names;
+      test "pp escapes only quotes, backslashes and controls in the family"
+        (fun () ->
+          let name = name_table [ (1, 0, 0, 1, "Caf\x8E\"") ] in
+          equal string {|(font "Café\"" 400 normal)|}
+            (Format.asprintf "%a" Font.pp
+               (tiny ~tables:[ ("name", name) ] [ "" ])));
       test "missing tables fall back as documented" fallbacks;
       test "format 12 maps characters beyond the BMP" format_12_lookup;
       cases

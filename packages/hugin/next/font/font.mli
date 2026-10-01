@@ -123,7 +123,8 @@ val slant : t -> slant
     oblique; and [`Normal] otherwise. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp ppf f] formats the family, weight and slant of [f] for debugging. *)
+(** [pp ppf f] formats the family, weight and slant of [f] for debugging, the
+    family as {!Run.pp} formats text. *)
 
 (** {1:metrics Metrics} *)
 

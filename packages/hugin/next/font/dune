@@ -1,7 +1,7 @@
 (library
  (name hugin_next_font)
  (public_name hugin.next.font)
- (private_modules font_data)
+ (private_modules font_data literal)
  (libraries hugin.next.gg)
  (instrumentation
   (backend ppx_windtrap.coverage))

@@ -2,7 +2,10 @@
  (name hugin_next_text)
  (public_name hugin.next.text)
  (libraries hugin.next.gg hugin.next.font)
+ (private_modules literal)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
+
+(copy_files# ../font/literal.{ml,mli})

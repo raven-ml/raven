@@ -951,7 +951,7 @@ let weight f = f.weight
 let slant f = f.slant
 
 let pp ppf f =
-  Format.fprintf ppf "@[<1>(font %S@ %d@ %s)@]" f.family f.weight
+  Format.fprintf ppf "@[<1>(font %a@ %d@ %s)@]" Literal.pp f.family f.weight
     (match f.slant with
     | `Normal -> "normal"
     | `Italic -> "italic"

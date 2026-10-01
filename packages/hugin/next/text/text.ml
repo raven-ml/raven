@@ -113,9 +113,9 @@ let compare t t' =
 
 let pp_span ppf s =
   let st = s.style in
-  if style_equal st plain then Format.fprintf ppf "%S" s.chars
+  if style_equal st plain then Literal.pp ppf s.chars
   else begin
-    Format.fprintf ppf "@[<1>(%S" s.chars;
+    Format.fprintf ppf "@[<1>(%a" Literal.pp s.chars;
     if st.bold then Format.fprintf ppf "@ bold";
     if st.italic then Format.fprintf ppf "@ italic";
     if not (Float.equal st.k 1.) then Format.fprintf ppf "@ size %g" st.k;

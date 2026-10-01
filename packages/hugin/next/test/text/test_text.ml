@@ -162,6 +162,63 @@ let styles =
 
 (* Comparing and formatting *)
 
+(* Formatting *)
+
+let pp_at margin t =
+  let b = Buffer.create 64 in
+  let ppf = Format.formatter_of_buffer b in
+  Format.pp_set_margin ppf margin;
+  Format.fprintf ppf "%a@?" Text.pp t;
+  Buffer.contents b
+
+(* Each end of the two control ranges and its neighbour outside it. *)
+let literal_ends =
+  [
+    ("U+0000", "\u{0}", {|"\000"|});
+    ("U+001F", "\u{1F}", {|"\031"|});
+    ("U+0020", " ", {|" "|});
+    ("U+007E", "~", {|"~"|});
+    ("U+009F", "\u{9F}", {|"\194\159"|});
+    ("U+00A0", "\u{A0}", "\"\u{A0}\"");
+    ("U+00AD", "\u{AD}", "\"\u{AD}\"");
+  ]
+
+(* The literal of [wide] is 8 columns, two quotes, two characters and two
+   escapes, and 12 bytes, so the one-line form is 26 columns and fits a margin
+   of 27 but not of 26. *)
+let column_count () =
+  let wide = Text.(concat [ v "中中\"\""; bold (v "x") ]) in
+  equal string {|(text "中中\"\"" ("x" bold))|} (pp_at 27 wide);
+  equal string "(text \"中中\\\"\\\"\"\n (\"x\" bold))" (pp_at 26 wide)
+
+let literal_chars =
+  Gen.of_list
+    ~pp:(fun ppf s -> Format.fprintf ppf "%S" s)
+    [
+      "\u{0}";
+      "\n";
+      "\u{1F}";
+      " ";
+      "a";
+      "\"";
+      "\\";
+      "~";
+      "\u{7F}";
+      "\u{9F}";
+      "\u{A0}";
+      "\u{AD}";
+      "é";
+      "中";
+      "\u{2028}";
+      "\u{1F600}";
+    ]
+
+let non_empty =
+  Gen.with_pp
+    (fun ppf s -> Format.fprintf ppf "%S" s)
+    (Gen.map (String.concat "")
+       (Gen.list ~size:(Gen.int_range 1 8) literal_chars))
+
 let comparing =
   group "equal and compare"
     [
@@ -220,7 +277,25 @@ let comparing =
             |});
       test "formats a plain text as its string" (fun () ->
           expect (Format.asprintf "%a" Text.pp (Text.v "step size \u{03B7}"))
-          @@ __POS_OF__ {| (text "step size \206\183") |});
+          @@ __POS_OF__ {| (text "step size η") |});
+      test "formats strings escaping only quotes, backslashes and controls"
+        (fun () ->
+          equal string {|(text "a\"b\\c\td\194\133é中" ("\"" bold))|}
+            (Format.asprintf "%a" Text.pp
+               Text.(concat [ v "a\"b\\c\td\u{85}é中"; bold (v "\"") ])));
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "formats at the ends of the controls" literal_ends
+        (fun (_, s, lit) ->
+          equal string
+            ("(text " ^ lit ^ ")")
+            (Format.asprintf "%a" Text.pp (Text.v s)));
+      test "breaks lines counting a character as one column" column_count;
+      prop "formats a literal that reads back as its string" non_empty (fun s ->
+          equal string s
+            (Scanf.sscanf
+               (Format.asprintf "%a" Text.pp (Text.v s))
+               "(text %S)" Fun.id));
     ]
 
 let () =
