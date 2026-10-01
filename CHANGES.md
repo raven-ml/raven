@@ -172,6 +172,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` and the compiled operations compile a program again for each set
+  of counters a profile asks for (`Nx_device.Profile.start ~counters`). A
+  program compiled under a profile that counted was kept and reused: once the
+  profile stopped its next link was refused, and under other counters it
+  counted into memory nothing read.
 - **Breaking:** rune is rewritten. A transformation is an interpreter that owns
   its values, reverse mode transposes forward mode, and `jit` compiles through
   tolk on the devices its arguments are placed on. For callers:

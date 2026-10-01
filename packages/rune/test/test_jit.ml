@@ -1681,6 +1681,31 @@ let reports =
             first;
           let _, again = profiled (fun () -> g (y ())) in
           equal (list string) [] again);
+      test
+        "a call compiles once for each set of counters a profile asks for, and \
+         for none" (fun () ->
+          let g = Rune.jit' poly in
+          let compiles ?counters () =
+            let p = Nx_device.Profile.start ?counters () in
+            let r = Nx.to_array (g (x ())) in
+            let n =
+              List.length
+                (List.filter
+                   (function
+                     | Nx_device.Profile.Span s -> s.name = "rune.jit: compile"
+                     | _ -> false)
+                   (Nx_device.Profile.stop p))
+            in
+            equal ~msg:"its result" (array float_exact) [| 2.; 2.; 12.; 0.75 |]
+              r;
+            n
+          in
+          equal ~msg:"uncounted" int 1 (compiles ());
+          equal ~msg:"counted" int 1 (compiles ~counters:[ "A" ] ());
+          equal ~msg:"uncounted again" int 0 (compiles ());
+          equal ~msg:"other counters" int 1 (compiles ~counters:[ "B" ] ());
+          equal ~msg:"the first counters again" int 0
+            (compiles ~counters:[ "A" ] ()));
     ]
 
 (* Domains *)

@@ -99,8 +99,14 @@ let starts_its_run (l : layout) =
 (* Keys *)
 
 (* The settings of tolk a program depends on that a caller may change around a
-   call: the search's width, unoptimised kernels, and profiled batches. *)
-type settings = { beam : int; noopt : bool; profiled : bool }
+   call: the search's width, unoptimised kernels, profiled batches, and the
+   counters of the profile being taken, which a device's batches count. *)
+type settings = {
+  beam : int;
+  noopt : bool;
+  profiled : bool;
+  counters : string list;
+}
 
 (* [settings ~beam ()] are the settings a call compiles with: [beam], or else
    the width tolk's lowering reads, [JITBEAM]'s or else [BEAM]'s. *)
@@ -113,6 +119,7 @@ let settings ?beam () =
       | None -> H.getenv "JITBEAM" (H.Context_var.value H.beam));
     noopt = H.Context_var.value H.noopt;
     profiled = H.Context_var.value H.debug >= 2;
+    counters = Nx_device.Profile.counters ();
   }
 
 type key = {
@@ -149,7 +156,9 @@ let parts l =
   ]
 
 let pp_settings ppf s =
-  Format.fprintf ppf "BEAM=%d NOOPT=%b profiled=%b" s.beam s.noopt s.profiled
+  Format.fprintf ppf "BEAM=%d NOOPT=%b profiled=%b counters=[%s]" s.beam s.noopt
+    s.profiled
+    (String.concat "; " s.counters)
 
 (* The first difference between the key [k] and the previous key [k'], whose
    leaves are at [paths]. *)
