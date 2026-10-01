@@ -1625,6 +1625,15 @@ let buffers =
           Gc.full_major ();
           equal int (before + 4096) (allocated d);
           ignore (Sys.opaque_identity last));
+      test
+        "a borrow of all of a memory spans it, through a mapping of whole \
+         pages, and a borrow of part of it does not" (fun () ->
+          let file = create_file (temp_file ()) 16 in
+          let on_host = borrow host file in
+          let whole = borrow far_one.dev on_host in
+          let part = borrow far_one.dev (B.view on_host ~offset:8 S.UInt8 8) in
+          equal (list bool) [ true; true; true; false ]
+            (List.map B.spans [ file; on_host; whole; part ]));
       test "only a buffer that spans its memory can be consumed" (fun () ->
           let b = B.create host S.UInt8 8 in
           let window = B.view b ~offset:0 S.UInt8 4 in

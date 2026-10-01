@@ -2922,6 +2922,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.spans` of a borrow judges the memory it maps: a borrow of
+  all of a memory spans it even when its device maps whole pages around it, as
+  Metal maps a file's pages, so `Claim.consume` accepts it as it accepts the
+  memory itself.
 - An operation and a read (`to_array`, `item`, `pp`, `map_item`, `iter_item`,
   `fold_item`) claim the memory of the host values they read while they read
   it, so a compiled call on another domain that consumes one of them computes

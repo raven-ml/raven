@@ -420,10 +420,11 @@ module Buffer : sig
       byte. *)
 
   val spans : t -> bool
-  (** [spans b] is [true] iff [b]'s bytes are all of the memory it lies in, as
-      those of a buffer {!create} or {!of_bigarray} made are, and not those of a
-      {!view} of part of it: [offset b = 0] and [nbytes b] is the size of that
-      memory ({!Driver.Region.nbytes}). *)
+  (** [spans b] is [true] iff [b]'s bytes are all of the memory it lies in,
+      below its borrows, as those of a buffer {!create} or {!of_bigarray} made
+      are, and of a {!borrow} of one, and not those of a {!view} of part of it.
+      A borrow's mapping may hold more than the memory, such as the whole pages
+      around it: [spans] judges the memory it maps. *)
 
   val overlaps : t -> t -> bool
   (** [overlaps b b'] is [true] iff [b] and [b'] share a byte of memory: through

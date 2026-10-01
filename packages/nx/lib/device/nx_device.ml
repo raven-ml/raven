@@ -1503,6 +1503,10 @@ module Buffer = struct
     | Some (src, m) -> root { b with base = src; offset = b.offset - m.skip }
     | None -> b
 
+  let spans b =
+    let r = root b in
+    r.offset = 0 && nbytes r = r.base.memory.nbytes
+
   (* Memory is borrowed by where it lives: the disk's through the file's pages,
      system memory (the host's, a [Host_visible] device's, and any device's
      pinned memory) through [d]'s mapping of host memory, and the memory of a
@@ -1554,7 +1558,6 @@ module Buffer = struct
         size;
     { b with offset = b.offset + offset; dtype = s; length = n }
 
-  let spans b = b.offset = 0 && nbytes b = b.base.memory.nbytes
 
   (* The address space memory is addressed in: its machine's host's when the
      host addresses it, its device's otherwise, and its file's on the disk. *)
