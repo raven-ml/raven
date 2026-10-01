@@ -2141,6 +2141,20 @@ let edges d =
           (host_array
              (Nx.broadcast_to [| 2; 2 |]
                 (Nx.create Nx.float32 [| 1; 2 |] [| 1.; 2. |]))));
+    test "a fold of int8 overlapping windows compiles" (fun () ->
+        let x = array_of (Nx.create Nx.int8 [| 2; 2 |] [| 0; -128; 0; 0 |]) in
+        let w =
+          {
+            leading = [||];
+            kernel_size = [| 1; 2 |];
+            stride = [| 1; 1 |];
+            dilation = [| 1; 2 |];
+            padding = [| (0, 0); (1, 1) |];
+            spatial = [| 2; 1 |];
+            count = 2;
+          }
+        in
+        exact_of (both d (fold w x)));
     test
       "an operand whose buffer starts 2 bytes into its memory is read where it \
        is" (fun () ->
