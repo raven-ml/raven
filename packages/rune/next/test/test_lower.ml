@@ -361,6 +361,64 @@ let reads =
             (fun () -> trace (fun () -> f (Nx.copy (grid 2 2)))));
     ]
 
+(* Staged scans
+
+   A step's part that varies with no trip is computed once, before the loop;
+   what it reads through a movement, the loop reads in place. *)
+
+(* The sizes of the buffers each kernel of the schedule storing [y] reads or
+   writes, a list per kernel, the staged loop's kernels included. *)
+let kernel_buffers y =
+  let n = Nx.numel y in
+  let out =
+    Ops.new_buffer (Single "CPU") n (Option.get (Lower.dtype (Nx.dtype y)))
+  in
+  let view = Ops.reshape out [ Ops.Int n ] in
+  let linear, _ =
+    Tolk_next.Schedule.create_linear_with_vars
+      (Ops.sink
+         [
+           Ops.after view
+             [ Ops.store view (Ops.reshape (Lower.uop y) [ Ops.Int n ]) ];
+         ])
+  in
+  let rec bodies u =
+    if Ops.op u = Op.Call then [ Ops.body u ]
+    else List.concat_map bodies (Ops.src u)
+  in
+  List.map
+    (fun k ->
+      List.filter_map
+        (fun u -> if Ops.op u = Op.Param then Some (Ops.max_numel u) else None)
+        (Ops.toposort k))
+    (List.concat_map bodies (Ops.src linear))
+
+let staged_scans =
+  group "staged scans"
+    [
+      test
+        "a step reads its weight in place and its bias as a vector, through \
+         the product's transpose and the bias's broadcast" (fun () ->
+          let s = scope () in
+          let w = argument s (grid 32 32)
+          and bias = argument s (arange 32)
+          and xs = argument s (Nx.reshape [| 5; 8; 32 |] (arange 1280)) in
+          let c, _ =
+            Staged.install s (fun () ->
+                Rune.scan'
+                  ~f:(fun c x ->
+                    let c = Nx.add (Nx.add (Nx.matmul (Nx.tanh c) w) bias) x in
+                    (c, c))
+                  ~init:(Nx.zeros Nx.float32 [| 8; 32 |])
+                  xs)
+          in
+          let reading m = List.filter (List.mem m) (kernel_buffers c) in
+          equal ~msg:"kernels reading the weight's 1024 elements" int 1
+            (List.length (reading 1024));
+          is_true ~msg:"the step reads the bias's 32 elements"
+            (List.exists (List.mem 32) (reading 1024)));
+    ]
+
 (* Refusals *)
 
 let metal _ =
@@ -400,4 +458,13 @@ let refusals =
 let () =
   exit
   @@ run "lower"
-       [ dtypes; captures; parameters; movements; placements; reads; refusals ]
+       [
+         dtypes;
+         captures;
+         parameters;
+         movements;
+         placements;
+         reads;
+         staged_scans;
+         refusals;
+       ]

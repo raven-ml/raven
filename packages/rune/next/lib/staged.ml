@@ -101,9 +101,12 @@ let stride u m =
    none of the call's own parameters [own], runs inside no range that is open
    there, and reads storage replaced by a parameter of slot [next ()], which the
    call binds to the part, added to [args]: the part is computed once, before
-   the loop. A range open at a part is one of the body's own loops, which the
-   part moves with. Another call's parameter, such as an enclosing step's carry,
-   is storage the call binds like any other. *)
+   the loop. A movement stays in the body and the part is what it moves: a view
+   costs nothing where it is read, while computing it once would store a
+   transposed or broadcast copy that the loop then reads. A range open at a part
+   is one of the body's own loops, which the part moves with. Another call's
+   parameter, such as an enclosing step's carry, is storage the call binds like
+   any other. *)
 let cut ~own next args body =
   let reading = Ops.Tbl.create 64
   and storing = Ops.Tbl.create 64
@@ -186,7 +189,10 @@ let cut ~own next args body =
     | Some v -> v
     | None ->
         let v =
-          if varies u then
+          if
+            varies u
+            || (reads_storage u && Op.Set.mem (Ops.op u) Op.Set.movement)
+          then
             let src = List.map rebuild (sources u) in
             Ops.replace u
               ~src:(if Ops.op u = Op.Call then Ops.body u :: src else src)
