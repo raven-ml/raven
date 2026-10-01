@@ -1972,11 +1972,11 @@ let devices =
 
 (* The cache *)
 
-(* [compiles ~counters f] is [f ()] and the number of programs compiled
-   meanwhile, under a profile that asks for [counters]: the spans the host
-   records for them. *)
-let compiles ?counters f =
-  let p = Nx_device.Profile.start ?counters () in
+(* [compiles ~counters ~trace f] is [f ()] and the number of programs compiled
+   meanwhile, under a profile that asks for [counters] and [trace]: the spans
+   the host records for them. *)
+let compiles ?counters ?trace f =
+  let p = Nx_device.Profile.start ?counters ?trace () in
   match f () with
   | y ->
       let compilation = function
@@ -2047,11 +2047,11 @@ let cache d =
         exact_of r;
         equal int 1 again);
     test
-      "a profile's counters are another key, which later profiles that ask for \
-       them share" (fun () ->
-        let use ?counters () =
+      "a profile's counters and traces are another key, which later profiles \
+       that ask for them share" (fun () ->
+        let use ?counters ?trace () =
           let n, r =
-            compiles ?counters (fun () ->
+            compiles ?counters ?trace (fun () ->
                 addition d [| 5; 13 |] ~offset:0 ~base:0.)
           in
           exact_of r;
@@ -2061,7 +2061,9 @@ let cache d =
         equal ~msg:"counted" int 1 (use ~counters:[ "A" ] ());
         equal ~msg:"uncounted again" int 0 (use ());
         equal ~msg:"other counters" int 1 (use ~counters:[ "B" ] ());
-        equal ~msg:"the first counters again" int 0 (use ~counters:[ "A" ] ()));
+        equal ~msg:"the first counters again" int 0 (use ~counters:[ "A" ] ());
+        equal ~msg:"traced" int 1 (use ~trace:true ());
+        equal ~msg:"traced again" int 0 (use ~trace:true ()));
     test "a pad with a fill of -0. after one of 0. keeps its fill's sign"
       (fun () ->
         let x = array_of (f32 [| 2 |] [| 1.; 2. |]) in

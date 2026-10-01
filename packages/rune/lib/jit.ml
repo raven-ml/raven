@@ -100,12 +100,14 @@ let starts_its_run (l : layout) =
 
 (* The settings of tolk a program depends on that a caller may change around a
    call: the search's width, unoptimised kernels, profiled batches, and the
-   counters of the profile being taken, which a device's batches count. *)
+   counters and traces of the profile being taken, which a device's batches
+   count and trace. *)
 type settings = {
   beam : int;
   noopt : bool;
   profiled : bool;
   counters : string list;
+  traced : bool;
 }
 
 (* [settings ~beam ()] are the settings a call compiles with: [beam], or else
@@ -120,6 +122,7 @@ let settings ?beam () =
     noopt = H.Context_var.value H.noopt;
     profiled = H.Context_var.value H.debug >= 2;
     counters = Nx_device.Profile.counters ();
+    traced = Nx_device.Profile.traced ();
   }
 
 type key = {
@@ -156,9 +159,10 @@ let parts l =
   ]
 
 let pp_settings ppf s =
-  Format.fprintf ppf "BEAM=%d NOOPT=%b profiled=%b counters=[%s]" s.beam s.noopt
-    s.profiled
+  Format.fprintf ppf "BEAM=%d NOOPT=%b profiled=%b counters=[%s] traced=%b"
+    s.beam s.noopt s.profiled
     (String.concat "; " s.counters)
+    s.traced
 
 (* The first difference between the key [k] and the previous key [k'], whose
    leaves are at [paths]. *)

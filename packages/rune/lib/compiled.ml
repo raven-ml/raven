@@ -274,12 +274,12 @@ let link p d =
   links.(Atomic.fetch_and_add next 1 mod Array.length links)
 
 (* By the name of the host of the device a program compiled through, which its
-   host programs name, the counters of the profile it was compiled under, which
-   a device's batches count, and its key. Hashed through the whole key:
-   [Hashtbl.hash] stops before most of its shapes, and keys that differ only
-   there would share a bucket. *)
+   host programs name, the counters and traces of the profile it was compiled
+   under, which a device's batches count and trace, and its key. Hashed through
+   the whole key: [Hashtbl.hash] stops before most of its shapes, and keys that
+   differ only there would share a bucket. *)
 module Programs = Memo.Make (struct
-  type t = string * string list * key
+  type t = string * (string list * bool) * key
 
   let equal = ( = )
   let hash = Hashtbl.hash_param 256 512
@@ -302,7 +302,9 @@ let check what t d arrays layouts =
    program that exists passed the check. *)
 let program what key t d arrays dsts =
   Programs.find programs
-    (Nx_device.name (Nx_device.host_of d), Nx_device.Profile.counters (), key)
+    ( Nx_device.name (Nx_device.host_of d),
+      (Nx_device.Profile.counters (), Nx_device.Profile.traced ()),
+      key )
     ~miss:(fun () -> check what t d (arrays @ dsts) (key.inputs @ key.outputs))
     (fun () ->
       Nx_device.Profile.span ("compile " ^ what) (fun () -> compile key d))

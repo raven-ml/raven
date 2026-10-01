@@ -181,7 +181,8 @@ All notable changes to this project will be documented in this file.
   first failed check's message, and differentiates, maps and compiles
   `Nx.fma`, `Nx.log1p` and `Nx.expm1`.
 - `Rune.jit` and the compiled operations compile a program again for each set
-  of counters a profile asks for (`Nx_device.Profile.start ~counters`). A
+  of counters and each trace request a profile asks for
+  (`Nx_device.Profile.start ~counters ~trace`). A
   program compiled under a profile that counted was kept and reused: once the
   profile stopped its next link was refused, and under other counters it
   counted into memory nothing read.

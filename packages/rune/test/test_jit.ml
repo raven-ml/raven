@@ -1811,11 +1811,11 @@ let reports =
           let _, again = profiled (fun () -> g (y ())) in
           equal (list string) [] again);
       test
-        "a call compiles once for each set of counters a profile asks for, and \
-         for none" (fun () ->
+        "a call compiles once for each set of counters and traces a profile \
+         asks for, and for none" (fun () ->
           let g = Rune.jit' poly in
-          let compiles ?counters () =
-            let p = Nx_device.Profile.start ?counters () in
+          let compiles ?counters ?trace () =
+            let p = Nx_device.Profile.start ?counters ?trace () in
             let r = Nx.to_array (g (x ())) in
             let n =
               List.length
@@ -1834,7 +1834,11 @@ let reports =
           equal ~msg:"uncounted again" int 0 (compiles ());
           equal ~msg:"other counters" int 1 (compiles ~counters:[ "B" ] ());
           equal ~msg:"the first counters again" int 0
-            (compiles ~counters:[ "A" ] ()));
+            (compiles ~counters:[ "A" ] ());
+          equal ~msg:"traced" int 1 (compiles ~trace:true ());
+          equal ~msg:"counted and traced" int 1
+            (compiles ~counters:[ "A" ] ~trace:true ());
+          equal ~msg:"traced again" int 0 (compiles ~trace:true ()));
     ]
 
 (* Domains *)
