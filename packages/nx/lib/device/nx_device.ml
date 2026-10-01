@@ -2730,6 +2730,9 @@ module Program = struct
         in
         take 0
 
+  let keep p (b : Buffer.t) =
+    { b with base = { b.base with keep = Keep (b.base.keep, p.p_loaded.kept) } }
+
   let code p =
     Option.map
       (fun (r : region) ->

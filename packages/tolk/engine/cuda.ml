@@ -15,16 +15,7 @@ let word v =
   w
 
 (* The words host programs read, made once and kept for the life of the process:
-   the driver's entry points, and each device's context, streams and status, and
-   functions, with their programs. A word keeps its program loaded while a batch
-   reads it, and a placeholder's storage can keep nothing else alive, so a
-   loaded function and its module stay loaded until the process exits, even once
-   no compiled schedule uses them, as tinygrad's functools.cache on
-   CUDADevice.function keeps them. *)
-type words = {
-  handles : B.t; (* [context, compute stream, copy stream, status] *)
-  functions : (string * string, Nx_device.Program.t * B.t) Hashtbl.t;
-}
+   the driver's entry points, and each device's context, streams and status. *)
 
 let lock = Mutex.create ()
 let devices_words = ref []
@@ -40,9 +31,8 @@ let words d c =
         (fun i v ->
           (B.bigarray Bigarray.int64 handles).{i} <- Int64.of_nativeint v)
         [ C.context c; C.compute c; C.copy c; 0n ];
-      let w = { handles; functions = Hashtbl.create 16 } in
-      devices_words := (d, w) :: !devices_words;
-      w
+      devices_words := (d, handles) :: !devices_words;
+      handles
 
 let driver_word f =
   match Hashtbl.find_opt driver_words f with
@@ -55,16 +45,11 @@ let driver_word f =
           b
       | None -> invalid_arg ("the CUDA driver has no function " ^ f))
 
-let function_word d w binary name =
-  match Hashtbl.find_opt w.functions (binary, name) with
-  | Some (_, b) -> b
-  | None -> (
-      match Nx_device.Program.load d ~binary ~name with
-      | Ok p ->
-          let b = word (Nx_device.Program.handle p) in
-          Hashtbl.add w.functions (binary, name) (p, b);
-          b
-      | Error why -> failwith why)
+(* A function's word, which keeps its module loaded while a batch reads it. *)
+let function_word d binary name =
+  match Nx_device.Program.load d ~binary ~name with
+  | Ok p -> Nx_device.Program.keep p (word (Nx_device.Program.handle p))
+  | Error why -> failwith why
 
 (* The storage of the placeholders CUDA's commands name: those of the device
    [name], and the driver's entry points on the host. *)
@@ -79,10 +64,10 @@ let placeholder name d c u =
   | Some (Tuple [ String "cfunc"; String "cuda"; String f ]) ->
       Some (driver_word f)
   | _ when not on_device -> None
-  | Some (String "cuda") -> Some (words d c).handles
+  | Some (String "cuda") -> Some (words d c)
   | Some (String "stamp") -> Some (Lazy.force stamp_word)
   | Some (Tuple [ String "function"; Bytes binary; String f ]) ->
-      Some (function_word d (words d c) binary f)
+      Some (function_word d binary f)
   | _ -> None
 
 (* The queues address the memory nx.device says the device reaches: other memory

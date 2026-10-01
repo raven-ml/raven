@@ -707,6 +707,11 @@ module Program : sig
       stays loaded while the buffer is reachable, and its memory until that work
       is done. *)
 
+  val keep : t -> Buffer.t -> Buffer.t
+  (** [keep p b] is [b], as a buffer that also keeps [p]'s binary loaded while
+      it is reachable, such as a word holding [p]'s {!handle} that a host
+      program reads to launch it. *)
+
   val call : t -> Buffer.t array -> int array -> unit
   (** [call p buffers values] runs the host program [p] in the calling domain
       and returns once it returns. [p] is called as the C function

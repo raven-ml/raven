@@ -78,9 +78,6 @@ let open_metal mtl =
   in
   let event = new_event mtl and fence = new_fence mtl in
   let resources = Hashtbl.create 64 in
-  (* The pipelines of the device's programs, built once and kept for its
-     life. *)
-  let pipelines = Hashtbl.create 16 in
   let resident buffer add =
     match residency_set with
     | Some set -> residency set buffer add
@@ -121,17 +118,21 @@ let open_metal mtl =
     Driver.device ~name:(name 0) ~arch:(arch mtl) ~budget:(working_set mtl)
       ~completion:(Signal (fun ~timeline:_ -> signal))
       ~load:(fun ~binary ->
+        (* A function's pipeline, released with the image. *)
+        let made = ref [] in
         let entry name =
-          match Hashtbl.find_opt pipelines (binary, name) with
-          | Some p -> Ok p
-          | None -> (
-              match pipeline mtl binary name with
-              | p ->
-                  Hashtbl.add pipelines (binary, name) p;
-                  Ok p
-              | exception Failure why -> Error why)
+          match pipeline mtl binary name with
+          | p ->
+              made := p :: !made;
+              Ok p
+          | exception Failure why -> Error why
         in
-        Ok { Driver.code = None; entry; unload = ignore })
+        Ok
+          {
+            Driver.code = None;
+            entry;
+            unload = (fun () -> List.iter release !made);
+          })
       ~synchronized:cycle_pool ~resolve
       (Host_visible
          { memory = { alloc = (fun n -> region (alloc mtl n)); free }; mapping })
@@ -231,9 +232,7 @@ let indirect_commands m args cmds =
       | objects ->
           let objects = Array.to_list objects in
           let programs = List.map (fun c -> c.program) cmds in
-          Gc.finalise
-            (fun _ ->
+          Nx_device.Driver.depends args (fun () ->
               ignore (Sys.opaque_identity programs);
-              List.iter release objects)
-            args;
+              List.iter release objects);
           Ok (List.hd objects, List.tl objects))

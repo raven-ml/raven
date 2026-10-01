@@ -81,9 +81,30 @@ let chained bufs =
 
 let slot u = match Ops.arg u with Param p -> p.slot | _ -> -1
 
+(* A linked batch keeps what it launches: its programs are dropped at link time,
+   and their code must outlive the collections before its run. *)
+let held_by_batch () =
+  let src = storage "CUDA" and dst = storage "CUDA" in
+  let x = new_floats "CUDA" [| 1.; 2.; 3.; 4. |]
+  and y = new_floats "CUDA" (Array.make 4 0.) in
+  let s =
+    Tolk_engine.link ~devices:(devices ())
+      ~bound:[ (src, [ x ]); (dst, [ y ]) ]
+      (compile [ adds dst src ])
+  in
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Nx_device.synchronize (cuda ())
+  done;
+  Tolk_engine.run s [||];
+  Nx_device.synchronize (cuda ());
+  equal floats [| 2.; 3.; 4.; 5. |] (floats_of y)
+
 let execution =
   group "execution"
     [
+      test "a linked batch runs after collections, its programs held by it"
+        held_by_batch;
       slow "a chain of kernels computes what the interpreter says" (fun () ->
           let b = chain 3 in
           let calls = chained b in

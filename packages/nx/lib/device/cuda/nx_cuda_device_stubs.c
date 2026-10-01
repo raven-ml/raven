@@ -106,6 +106,7 @@ typedef void(CUDAAPI *CUhostFn)(void *);
   X(cuPointerGetAttribute, (void *, int, CUdeviceptr))                         \
   X(cuModuleLoadData, (CUmodule *, const void *))                              \
   X(cuModuleGetFunction, (CUfunction *, CUmodule, const char *))               \
+  X(cuModuleUnload, (CUmodule))                                                \
   X(cuGetErrorName, (CUresult, const char **))                                 \
   X(cuGetErrorString, (CUresult, const char **))
 
@@ -617,6 +618,15 @@ value caml_nx_cuda_module(value v_ctx, value v_image) {
   free(image);
   check(status);
   CAMLreturn(caml_copy_nativeint((intnat)module));
+}
+
+value caml_nx_cuda_module_unload(value v_ctx, value v_module) {
+  CAMLparam2(v_ctx, v_module);
+  CUresult status = push(Ptr_val(v_ctx));
+  if (status == CUDA_SUCCESS)
+    status = pop(p_cuModuleUnload(Ptr_val(v_module)));
+  check(status);
+  CAMLreturn(Val_unit);
 }
 
 value caml_nx_cuda_function(value v_ctx, value v_module, value v_name) {

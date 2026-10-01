@@ -2939,6 +2939,14 @@ thread.
 
 ### Nx
 
+- CUDA modules and Metal pipelines are unloaded with their binary once no
+  program of it and no launch that uses it is reachable; they were kept for the
+  device's life. `Nx_device.Program.keep` ties a binary to a buffer that
+  launches it, such as a word holding a function's handle.
+- `Nx_metal_device.indirect_commands` releases its command buffer once its
+  arguments' memory is released and the work that ran it is done. It was
+  released when the arguments were collected, while queued work could still
+  run it.
 - `Nx_io`'s savers and `Nx_quant`'s eager kernels hold a read claim on the
   memory they read while they use it, so a compiled call on another domain
   can no longer lend it and tear a saved file.

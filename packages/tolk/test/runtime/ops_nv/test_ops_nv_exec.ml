@@ -134,9 +134,30 @@ let trips ~k n () =
     (Array.init (4 * n) (fun i -> float_of_int (i + k)))
     (floats_of (List.hd (List.assq (List.nth bufs k) bound)))
 
+(* A linked batch keeps what it launches: its programs are dropped at link time,
+   and their code must outlive the collections before its run. *)
+let held_by_batch () =
+  let src = storage "NV" and dst = storage "NV" in
+  let x = new_floats "NV" [| 1.; 2.; 3.; 4. |]
+  and y = new_floats "NV" (Array.make 4 0.) in
+  let s =
+    Tolk_engine.link ~devices:(devices ())
+      ~bound:[ (src, [ x ]); (dst, [ y ]) ]
+      (compile [ adds dst src ])
+  in
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Nx_device.synchronize (nv ())
+  done;
+  Tolk_engine.run s [||];
+  Nx_device.synchronize (nv ());
+  equal floats [| 2.; 3.; 4.; 5. |] (floats_of y)
+
 let execution =
   group "execution"
     [
+      test "a linked batch runs after collections, its programs held by it"
+        held_by_batch;
       slow "a chain of kernels adds one per kernel" (fun () ->
           let b = chain 3 in
           let bound = bound_to [| 1.; 2.; 3.; 4. |] b in

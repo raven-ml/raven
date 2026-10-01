@@ -82,6 +82,9 @@ external wait :
 
 external load_module : nativeint -> string -> nativeint = "caml_nx_cuda_module"
 
+external unload_module : nativeint -> nativeint -> unit
+  = "caml_nx_cuda_module_unload"
+
 external get_function : nativeint -> nativeint -> string -> nativeint
   = "caml_nx_cuda_function"
 
@@ -195,28 +198,18 @@ let count () =
 
 let name i = if i = 0 then "CUDA" else Printf.sprintf "CUDA:%d" i
 
-(* Programs are functions of modules, each image loaded once and kept for the
-   context's life. The driver's refusal of an image or a name leaves the context
-   usable. *)
-let loader ctx =
-  let modules = Hashtbl.create 8 in
-  fun ~binary ->
-    match
-      match Hashtbl.find_opt modules binary with
-      | Some m -> m
-      | None ->
-          let m = load_module ctx binary in
-          Hashtbl.add modules binary m;
-          m
-    with
-    | exception Failure why -> Error why
-    | m ->
-        let entry name =
-          match get_function ctx m name with
-          | f -> Ok f
-          | exception Failure why -> Error why
-        in
-        Ok { Driver.code = None; entry; unload = ignore }
+(* Programs are functions of modules, unloaded with their image. The driver's
+   refusal of an image or a name leaves the context usable. *)
+let load ctx ~binary =
+  match load_module ctx binary with
+  | exception Failure why -> Error why
+  | m ->
+      let entry name =
+        match get_function ctx m name with
+        | f -> Ok f
+        | exception Failure why -> Error why
+      in
+      Ok { Driver.code = None; entry; unload = (fun () -> unload_module ctx m) }
 
 let open_cuda i ~arch ~budget ctx =
   let compute = stream ctx in
@@ -266,7 +259,7 @@ let open_cuda i ~arch ~budget ctx =
   in
   match
     Driver.device ~name:(name i) ~arch ~budget ~completion:(Sleep sleep)
-      ~load:(loader ctx)
+      ~load:(load ctx)
       (Device_local
          {
            memory;

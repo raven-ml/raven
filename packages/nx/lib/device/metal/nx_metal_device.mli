@@ -8,10 +8,10 @@
     Opens the Mac's GPU as an {!Nx_device.t} named ["METAL"]. Its buffers are
     memory that the processor and the GPU share, coherently, so copies between
     them and host buffers are memory copies, its pinned and mapped memory
-    ({!Nx_device.Buffer.memory}) are its own, and it borrows host
-    memory when the GPU shares the host's memory. Its programs are functions of
-    metallib binaries. Its budget defaults to the working set size Metal
-    recommends for the GPU.
+    ({!Nx_device.Buffer.memory}) are its own, and it borrows host memory when
+    the GPU shares the host's memory. Its programs are functions of metallib
+    binaries. Its budget defaults to the working set size Metal recommends for
+    the GPU.
 
     Its timestamps are readings of the host clock
     ({!Nx_device.Driver.Host_clock}).
@@ -84,8 +84,8 @@ val resources : t -> nativeint array
 
 val msg_send : nativeint
 (** [msg_send] is the address of [objc_msgSend], which a compiled host program
-    calls to send the Objective-C messages that encode and commit its work:
-    with the type of the method it sends, receiver and selector first. *)
+    calls to send the Objective-C messages that encode and commit its work: with
+    the type of the method it sends, receiver and selector first. *)
 
 val selector : string -> nativeint
 (** [selector name] is the selector [name], such as ["commandBuffer"] or
@@ -113,12 +113,14 @@ val indirect_commands :
     each a concurrent dispatch of its program on its arguments in [args], a
     buffer of [m]'s device, that runs after the dispatches before it; and the
     [MTLIndirectComputeCommand] of each dispatch, in order. They are released
-    once [args] is unreachable, and the programs of [cmds] stay loaded until
+    once [args] is unreachable and the work that ran them is done
+    ({!Nx_device.Driver.depends}), and the programs of [cmds] stay loaded until
     then. Work that runs the indirect command buffer lists [args] in its
     {!Nx_device.submit}'s [touches].
 
     [Error msg] if a command's threads per threadgroup exceed its pipeline's
     maximum, or if Metal cannot make the indirect command buffer.
 
-    Raises [Invalid_argument] if [args] is not a buffer of [m]'s device or if a
-    program of [cmds] is not loaded on it. *)
+    Raises [Invalid_argument] if [args] is not a buffer of [m]'s device that
+    {!Nx_device.Buffer.create} made, or if a program of [cmds] is not loaded on
+    it. *)
