@@ -407,8 +407,48 @@ let at where x =
 
 (* [agreeing f] is [f ()] with every operation it performs checked against
    [Nx.Op.placement]: evaluation puts the result where it says, or raises what
-   it raises. *)
+   it raises; and a value result has the shape and dtype [Nx.Op.shape] and
+   [Nx.Op.dtype] give. *)
 let agreeing f =
+  let described (type a b) (op : (a, b) Nx.t Nx.Op.t) (r : (a, b) Nx.t) =
+    let msg = Nx.Op.name op in
+    equal ~msg (array int) (Nx.shape r) (Nx.Op.shape op);
+    equal ~msg string
+      (Nx_dtype.to_string (Nx.dtype r))
+      (Nx_dtype.to_string (Nx.Op.dtype op))
+  in
+  let describe : type r. r Nx.Op.t -> r -> unit =
+   fun op r ->
+    match op with
+    | Unary _ -> described op r
+    | Binary _ -> described op r
+    | Compare _ -> described op r
+    | Where _ -> described op r
+    | Reduce _ -> described op r
+    | Scan _ -> described op r
+    | Arg_reduce _ -> described op r
+    | Sort _ -> described op r
+    | Argsort _ -> described op r
+    | Pad _ -> described op r
+    | Cat _ -> described op r
+    | Convert _ -> described op r
+    | Threefry _ -> described op r
+    | Gather _ -> described op r
+    | Scatter _ -> described op r
+    | Update _ -> described op r
+    | Unfold _ -> described op r
+    | Fold _ -> described op r
+    | Matmul _ -> described op r
+    | Fft _ -> described op r
+    | Rfft _ -> described op r
+    | Irfft _ -> described op r
+    | Contiguous _ -> described op r
+    | Cholesky _ -> described op r
+    | Solve_triangular _ -> described op r
+    | Move _ -> described op r
+    | Place _ -> described op r
+    | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Read _ -> ()
+  in
   let placed : type r. r Nx.Op.t -> r -> Nx.Placement.t option =
    fun op r ->
     match op with
@@ -447,9 +487,10 @@ let agreeing f =
               Nx.Placement.pp p
         | r ->
             Option.iter (equal ~msg placement p) (placed op r);
+            describe op r;
             r)
   in
-  Nx.Op.intercept { run } f
+  Nx.Op.intercept { run; claims = (fun _ -> true) } f
 
 type (_, _) Nx.Repr.node += Probe : ('a, 'b) Nx.Repr.node
 

@@ -1829,6 +1829,137 @@ let result_placement : type r. r Op.t -> placement =
   | Places p -> p
   | Reads _ -> Placement.host
 
+(* Results' metadata
+
+   The shape and dtype of an operation's result, from its operands', without
+   computing it: what nx allocates before a kernel writes it, and what
+   [Op.shape] and [Op.dtype] answer. *)
+
+let pad_shape padding s =
+  Array.mapi
+    (fun i d ->
+      let before, after = padding.(i) in
+      d + before + after)
+    s
+
+let cat_shape axis = function
+  | [] -> invalid_arg "Nx.concatenate: no value to concatenate"
+  | s :: _ as shapes ->
+      let total = List.fold_left (fun n s -> n + s.(axis)) 0 shapes in
+      Array.mapi (fun i d -> if i = axis then total else d) s
+
+let unfold_shape kernel_size stride dilation padding s =
+  let k = Array.length kernel_size in
+  let lead = Array.length s - k in
+  let windows =
+    Array.init k (fun i ->
+        let before, after = padding.(i) in
+        let extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+        ((s.(lead + i) + before + after - extent) / stride.(i)) + 1)
+  in
+  Array.append (Array.sub s 0 lead)
+    [| Array.fold_left ( * ) 1 kernel_size; Array.fold_left ( * ) 1 windows |]
+
+let fold_shape output_size s =
+  Array.append (Array.sub s 0 (Array.length s - 2)) output_size
+
+(* Leading batch axes broadcast; the product of [m, k] and [k, n] is [m, n]. *)
+let matmul_shape sa sb =
+  let na = Array.length sa and nb = Array.length sb in
+  let r = Int.max na nb - 2 in
+  let batch =
+    Array.init r (fun i ->
+        let da = if i - (r + 2 - na) >= 0 then sa.(i - (r + 2 - na)) else 1 in
+        let db = if i - (r + 2 - nb) >= 0 then sb.(i - (r + 2 - nb)) else 1 in
+        if da = 1 then db else da)
+  in
+  Array.append batch [| sa.(na - 2); sb.(nb - 1) |]
+
+(* The last transformed axis of a real transform holds [n / 2 + 1] complex
+   values, and its inverse [s]'s last size, or [2 (n - 1)]. *)
+let rfft_shape axes s =
+  let s = Array.copy s in
+  let last = axes.(Array.length axes - 1) in
+  s.(last) <- (s.(last) / 2) + 1;
+  s
+
+let irfft_shape axes sizes s =
+  let s = Array.copy s in
+  let n = Array.length axes - 1 in
+  let last = axes.(n) in
+  s.(last) <-
+    (match sizes with Some sizes -> sizes.(n) | None -> (s.(last) - 1) * 2);
+  s
+
+let result_shape : type a b. (a, b) t Op.t -> int array =
+ fun op ->
+  let s x = View.shape (view x) in
+  match op with
+  | Unary (_, x) -> s x
+  | Binary (_, a, _) -> s a
+  | Compare (_, a, _) -> s a
+  | Where (_, a, _) -> s a
+  | Reduce (_, axes, x) -> Shape.reduce_output_shape (s x) axes false
+  | Scan (_, _, x) -> s x
+  | Arg_reduce (_, axis, x) -> Shape.reduce_output_shape (s x) [| axis |] false
+  | Sort { x; _ } -> s x
+  | Argsort { x; _ } -> s x
+  | Pad (padding, _, x) -> pad_shape padding (s x)
+  | Cat (axis, xs) -> cat_shape axis (List.map s xs)
+  | Convert (_, _, x) -> s x
+  | Threefry (_, ctr) -> s ctr
+  | Gather (_, indices, _) -> s indices
+  | Scatter { into; _ } -> s into
+  | Update (x, _, _) -> s x
+  | Unfold { kernel_size; stride; dilation; padding; x } ->
+      unfold_shape kernel_size stride dilation padding (s x)
+  | Fold { output_size; x; _ } -> fold_shape output_size (s x)
+  | Matmul (a, b) -> matmul_shape (s a) (s b)
+  | Fft { x; _ } -> s x
+  | Rfft { axes; x; _ } -> rfft_shape axes (s x)
+  | Irfft { axes; s = sizes; x; _ } -> irfft_shape axes sizes (s x)
+  | Contiguous x -> s x
+  | Cholesky { x; _ } -> s x
+  | Solve_triangular { b; _ } -> s b
+  | Move (x, m) -> View.shape (move_view (view x) m)
+  | Place (_, x) -> s x
+  (* A read gives a buffer, whose abstract type the checker cannot tell from a
+     value's. *)
+  | Read _ -> assert false
+
+let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
+ fun op ->
+  match op with
+  | Unary (_, x) -> dtype x
+  | Binary (_, a, _) -> dtype a
+  | Compare _ -> Nx_dtype.Bool
+  | Where (_, a, _) -> dtype a
+  | Reduce (_, _, x) -> dtype x
+  | Scan (_, _, x) -> dtype x
+  | Arg_reduce _ -> Nx_dtype.Int32
+  | Sort { x; _ } -> dtype x
+  | Argsort _ -> Nx_dtype.Int32
+  | Pad (_, _, x) -> dtype x
+  | Cat (_, x :: _) -> dtype x
+  | Cat (_, []) -> invalid_arg "Nx.concatenate: no value to concatenate"
+  | Convert (_, dt, _) -> dt
+  | Threefry _ -> Nx_dtype.Int32
+  | Gather (_, _, data) -> dtype data
+  | Scatter { into; _ } -> dtype into
+  | Update (x, _, _) -> dtype x
+  | Unfold { x; _ } -> dtype x
+  | Fold { x; _ } -> dtype x
+  | Matmul (a, _) -> dtype a
+  | Fft { x; _ } -> dtype x
+  | Rfft { dtype; _ } -> dtype
+  | Irfft { dtype; _ } -> dtype
+  | Contiguous x -> dtype x
+  | Cholesky { x; _ } -> dtype x
+  | Solve_triangular { b; _ } -> dtype b
+  | Move (x, _) -> dtype x
+  | Place (_, x) -> dtype x
+  | Read _ -> assert false
+
 (* Dispatch
 
    With no interpretation, operands all on the host run nx.cpu directly, and any
@@ -1944,30 +2075,15 @@ let k_argsort ((module K) : kernels) descending axis a =
   dst
 
 let k_pad ((module K) : kernels) padding v a =
-  let shape =
-    Array.mapi
-      (fun i d ->
-        let before, after = padding.(i) in
-        d + before + after)
-      (shape_of a)
-  in
-  let dst = alloc a.dtype shape in
+  let dst = alloc a.dtype (pad_shape padding (shape_of a)) in
   K.pad padding v a ~dst;
   dst
 
 let k_cat ((module K) : kernels) axis xs =
-  match xs with
-  | [] -> invalid_arg "cat: empty tensor list"
-  | first :: _ ->
-      let s = shape_of first in
-      let axis = if axis < 0 then axis + Array.length s else axis in
-      let total = List.fold_left (fun n x -> n + (shape_of x).(axis)) 0 xs in
-      let dst =
-        alloc first.dtype
-          (Array.mapi (fun i d -> if i = axis then total else d) s)
-      in
-      K.cat ~axis xs ~dst;
-      dst
+  let shape = cat_shape axis (List.map shape_of xs) in
+  let dst = alloc (List.hd xs).dtype shape in
+  K.cat ~axis xs ~dst;
+  dst
 
 let k_cast ((module K) : kernels) dtype a =
   let dst = alloc dtype (shape_of a) in
@@ -2008,45 +2124,21 @@ let k_update ((module K) : kernels) a starts v =
   dst
 
 let k_unfold ((module K) : kernels) kernel_size stride dilation padding a =
-  let s = shape_of a in
-  let k = Array.length kernel_size in
-  let lead = Array.length s - k in
-  let windows =
-    Array.init k (fun i ->
-        let before, after = padding.(i) in
-        let extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
-        ((s.(lead + i) + before + after - extent) / stride.(i)) + 1)
+  let dst =
+    alloc a.dtype
+      (unfold_shape kernel_size stride dilation padding (shape_of a))
   in
-  let shape =
-    Array.append (Array.sub s 0 lead)
-      [| Array.fold_left ( * ) 1 kernel_size; Array.fold_left ( * ) 1 windows |]
-  in
-  let dst = alloc a.dtype shape in
   K.unfold ~kernel_size ~stride ~dilation ~padding a ~dst;
   dst
 
 let k_fold ((module K) : kernels) output_size kernel_size stride dilation
     padding a =
-  let s = shape_of a in
-  let dst =
-    alloc a.dtype
-      (Array.append (Array.sub s 0 (Array.length s - 2)) output_size)
-  in
+  let dst = alloc a.dtype (fold_shape output_size (shape_of a)) in
   K.fold ~output_size ~kernel_size ~stride ~dilation ~padding a ~dst;
   dst
 
-(* Leading batch axes broadcast; the product of [m, k] and [k, n] is [m, n]. *)
 let k_matmul ((module K) : kernels) a b =
-  let sa = shape_of a and sb = shape_of b in
-  let na = Array.length sa and nb = Array.length sb in
-  let r = Int.max na nb - 2 in
-  let batch =
-    Array.init r (fun i ->
-        let da = if i - (r + 2 - na) >= 0 then sa.(i - (r + 2 - na)) else 1 in
-        let db = if i - (r + 2 - nb) >= 0 then sb.(i - (r + 2 - nb)) else 1 in
-        if da = 1 then db else da)
-  in
-  let dst = alloc a.dtype (Array.append batch [| sa.(na - 2); sb.(nb - 1) |]) in
+  let dst = alloc a.dtype (matmul_shape (shape_of a) (shape_of b)) in
   K.matmul a b ~dst;
   dst
 
@@ -2055,23 +2147,13 @@ let k_fft ((module K) : kernels) inverse axes a =
   K.fft ~inverse ~axes a ~dst;
   dst
 
-(* The last transformed axis of a real transform holds [n / 2 + 1] complex
-   values, and its inverse [s]'s last size, or [2 (n - 1)]. *)
 let k_rfft ((module K) : kernels) dtype axes a =
-  let shape = Array.copy (shape_of a) in
-  let last = axes.(Array.length axes - 1) in
-  shape.(last) <- (shape.(last) / 2) + 1;
-  let dst = alloc dtype shape in
+  let dst = alloc dtype (rfft_shape axes (shape_of a)) in
   K.rfft ~axes a ~dst;
   dst
 
 let k_irfft ((module K) : kernels) dtype axes s a =
-  let shape = Array.copy (shape_of a) in
-  let n = Array.length axes - 1 in
-  let last = axes.(n) in
-  shape.(last) <-
-    (match s with Some sizes -> sizes.(n) | None -> (shape.(last) - 1) * 2);
-  let dst = alloc dtype shape in
+  let dst = alloc dtype (irfft_shape axes s (shape_of a)) in
   K.irfft ~axes ~s a ~dst;
   dst
 
@@ -2392,12 +2474,13 @@ let direct : type r. r Op.t -> r =
 
 (* Interception
 
-   [intercept i f] runs [f] with every operation its fiber performs delivered
-   to [i.run], which runs outside [f]'s handlers: the operations [i.run]
-   issues reach the enclosing interpretation. The gate is raised for the
-   extent of [f], however it ends. *)
+   [intercept i f] runs [f] with every operation its fiber performs and [i]
+   claims delivered to [i.run], which runs outside [f]'s handlers: the
+   operations [i.run] issues reach the enclosing interpretation. An operation
+   [i] does not claim reaches the enclosing interpretation as performed. The
+   gate is raised for the extent of [f], however it ends. *)
 
-type interpreter = { run : 'r. 'r Op.t -> 'r }
+type interpreter = { run : 'r. 'r Op.t -> 'r; claims : 'r. 'r Op.t -> bool }
 type _ Effect.t += E_op : 'r Op.t -> 'r Effect.t | E_intercepted : bool Effect.t
 
 let intercept i f =
@@ -2405,14 +2488,20 @@ let intercept i f =
   Fun.protect ~finally:(fun () -> Atomic.decr intercepts) @@ fun () ->
   let effc : type c a.
       c Effect.t -> ((c, a) Effect.Deep.continuation -> a) option = function
-    | E_op op ->
-        Some
-          (fun k ->
-            match i.run op with
-            | v -> Effect.Deep.continue k v
-            | exception e ->
-                let bt = Printexc.get_raw_backtrace () in
-                Effect.Deep.discontinue_with_backtrace k e bt)
+    | E_op op -> (
+        match i.claims op with
+        | false -> None
+        | true ->
+            Some
+              (fun k ->
+                match i.run op with
+                | v -> Effect.Deep.continue k v
+                | exception e ->
+                    let bt = Printexc.get_raw_backtrace () in
+                    Effect.Deep.discontinue_with_backtrace k e bt)
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            Some (fun k -> Effect.Deep.discontinue_with_backtrace k e bt))
     | E_intercepted -> Some (fun k -> Effect.Deep.continue k true)
     | _ -> None
   in

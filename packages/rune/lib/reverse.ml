@@ -1011,7 +1011,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
   (* While paused, every operation passes on as it is. *)
   let run op = if !paused > 0 then eval op else run op in
   match_with
-    (fun () -> intercept { run } f)
+    (fun () -> intercept { run; claims = (fun _ -> true) } f)
     ()
     { retc = Fun.id; exnc = raise; effc }
 

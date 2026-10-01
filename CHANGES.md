@@ -2889,6 +2889,14 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.Op.interpreter` gains `claims`, and `Nx.Op.intercept`
+  hands its interpreter only the operations it claims. An unclaimed operation
+  reaches the enclosing interpretation directly, without being performed
+  again, so a transformation pays nothing for operations on values it does not
+  own. An interpreter that takes every operation passes
+  `claims = (fun _ -> true)`.
+- `Nx.Op.shape` and `Nx.Op.dtype` give the shape and dtype of an operation's
+  result without computing it, as nx allocates the result.
 - `Nx_device.reaches d d'` says whether `d`'s work addresses the memory of
   `d'` once borrowed, without trying a borrow, and `Driver.device` takes the
   driver's `reaches` for the peers it maps. An AMD device reaches the GPUs of

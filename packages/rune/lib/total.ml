@@ -117,6 +117,6 @@ let rec collect : type a b r.
   (* The scope interprets its operations as they are, so that a compiled
      function called inside it runs as code whose additions reach it. *)
   match_with
-    (fun () -> Nx.Op.intercept { run = Nx.Op.eval } f)
+    (fun () -> Nx.Op.intercept { run = Nx.Op.eval; claims = (fun _ -> true) } f)
     ()
     { retc = (fun r -> (r, !total)); exnc = raise; effc }

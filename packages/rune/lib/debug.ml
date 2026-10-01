@@ -49,7 +49,7 @@ let rec install : type a. Format.formatter -> (unit -> a) -> a =
     eval op
   in
   match_with
-    (fun () -> intercept { run } f)
+    (fun () -> intercept { run; claims = (fun _ -> true) } f)
     ()
     { retc = Fun.id; exnc = raise; effc }
 

@@ -124,8 +124,13 @@ module Op = struct
 
   let eval = Nx_effect.eval
   let placement = Nx_effect.result_placement
+  let shape = Nx_effect.result_shape
+  let dtype = Nx_effect.result_dtype
 
-  type interpreter = Nx_effect.interpreter = { run : 'r. 'r t -> 'r }
+  type interpreter = Nx_effect.interpreter = {
+    run : 'r. 'r t -> 'r;
+    claims : 'r. 'r t -> bool;
+  }
 
   let intercept = Nx_effect.intercept
   let intercepted = Nx_effect.intercepted

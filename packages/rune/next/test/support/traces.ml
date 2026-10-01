@@ -19,7 +19,9 @@ let host =
   fun _ -> Lazy.force clang
 
 let scope ?(renderer = host) () = Lower.scope ~renderer
-let within s f = Nx.Op.intercept { run = (fun o -> Lower.op s o) } f
+
+let within s f =
+  Nx.Op.intercept { run = (fun o -> Lower.op s o); claims = (fun _ -> true) } f
 
 let trace ?renderer f =
   let s = scope ?renderer () in

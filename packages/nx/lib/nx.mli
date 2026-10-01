@@ -3808,6 +3808,18 @@ module Op : sig
       differently, an operation along a split axis, or a movement that would
       move elements between devices. *)
 
+  val shape : ('a, 'b) Nx_effect.t t -> int array
+  (** [shape op] is the shape of [op]'s result, without computing it, for an
+      [op] that {!eval} accepts. nx allocates every result at this shape.
+
+      Raises [Invalid_argument] for a concatenation of no value. *)
+
+  val dtype : ('a, 'b) Nx_effect.t t -> ('a, 'b) Nx_dtype.t
+  (** [dtype op] is the dtype of [op]'s result, without computing it, for an
+      [op] that {!eval} accepts.
+
+      Raises [Invalid_argument] for a concatenation of no value. *)
+
   val operands : 'r t -> packed list
   (** [operands op] is [op]'s value operands, in order. *)
 
@@ -3818,15 +3830,23 @@ module Op : sig
   (** [pp] formats an operation with its operands' dtypes and shapes, as in
       [mul float32[3] float32[3]]. *)
 
-  type interpreter = Nx_effect.interpreter = { run : 'r. 'r t -> 'r }
+  type interpreter = Nx_effect.interpreter = {
+    run : 'r. 'r t -> 'r;  (** [run op] is [op]'s result. *)
+    claims : 'r. 'r t -> bool;
+        (** [claims op] is [true] iff the interpreter takes [op], typically when
+            an operand is one of its own values. *)
+  }
   (** The type for interpreters of operations. *)
 
   val intercept : interpreter -> (unit -> 'a) -> 'a
-  (** [intercept i f] is [f ()] with every operation [f]'s fiber performs,
-      within its extent, delivered to [i.run]. [i.run] runs above every handler
-      [f] installs: an operation it issues reaches the interpretation around
-      [intercept], and an effect it performs the handlers around [intercept].
-      Fibers, threads and domains [f] starts are outside the extent. *)
+  (** [intercept i f] is [f ()] with every operation [f]'s fiber performs
+      within its extent and [i] claims delivered to [i.run]. [i.run] runs
+      above every handler [f] installs: an operation it issues reaches the
+      interpretation around [intercept], and an effect it performs the handlers
+      around [intercept]. An operation [i] does not claim reaches the
+      interpretation around [intercept] as if [i] were not installed, without
+      being performed again. Fibers, threads and domains [f] starts are outside
+      the extent. *)
 
   val intercepted : unit -> bool
   (** [intercepted ()] is [true] iff the calling fiber is inside the extent of
