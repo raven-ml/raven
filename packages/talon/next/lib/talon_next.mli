@@ -531,6 +531,103 @@ module Schema : sig
       The empty schema formats as nothing. *)
 end
 
+module Column : sig
+  (** Columns: one typed array of values, some of them null.
+
+      A column is an Arrow array over nx buffers. Its {e validity} is a bitmap
+      ({!Nx_bits.t}) with the bit of each row that holds a value set; it is
+      absent when no row is null. Its values are laid out by its type:
+      - one element per row of a primitive nx array: [bool] (one byte per
+        value), the integer and float types, [int64] unscaled values for
+        decimals, [int32] positions in the dictionary for categoricals, [int32]
+        days for dates and [int64] ticks for clocks, durations and datetimes. A
+        tensor column is one [(rows, …shape)] array;
+      - offsets into a child for byte strings, text and lists: text is a list of
+        bytes;
+      - one child per field for records.
+
+      An extension column is laid out as its storage. The values under a null
+      are unspecified; talon writes zeros, and empty rows, under the nulls it
+      makes. Columns are immutable, and share their buffers with the tensors
+      that read them. *)
+
+  type t
+  (** The type for columns. *)
+
+  val type_ : t -> Type.any
+  (** [type_ c] is the type of [c]'s values. *)
+
+  val length : t -> int
+  (** [length c] is the number of rows of [c]. *)
+
+  val null_count : t -> int
+  (** [null_count c] is the number of null rows of [c]. It costs O(1). *)
+
+  (** {1:ocaml OCaml values} *)
+
+  val v : 'a Type.t -> 'a array -> t
+  (** [v ty vs] is the column of type [ty] holding [vs], without nulls. A
+      [float32] or [float16] value is stored rounded to the nearest value of the
+      type, ties to even.
+
+      Raises [Invalid_argument] naming the row if [ty] does not hold a value of
+      [vs] ({!Type.holds}): text that is not UTF-8, a string outside a
+      categorical's dictionary, an integer outside the type's range, a span that
+      is not a whole number of the unit, a record of other fields. An extension
+      type has no values, so a column of it holds only nulls. *)
+
+  val of_options : 'a Type.t -> 'a option array -> t
+  (** [of_options ty vs] is like {!v}, with a null for each [None]. *)
+
+  val values : 'a Kind.t -> t -> 'a array
+  (** [values k c] is [c]'s values read as [k].
+
+      Raises [Invalid_argument] if [k] does not read [c]'s type (see
+      {!Kind.provably_equal}: no kind reads an extension column), if a row of
+      [c] is null, or, naming the row, if a value is outside what [k] reads: an
+      integer outside OCaml's [int], an instant or a span outside {!Time}'s
+      range, a list with a null element. *)
+
+  val options : 'a Kind.t -> t -> 'a option array
+  (** [options k c] is like {!values}, with [None] for each null. *)
+
+  (** {1:tensors Tensors and bytes} *)
+
+  val of_tensor : ?validity:Nx_bits.t -> ('a, 'b) Nx.t -> t
+  (** [of_tensor ?validity x] is the column of [x]'s rows, without a copy:
+      - for a 1-D [x], of the type of [x]'s dtype: [bool], [int8] to [uint64],
+        [float16] to [float64];
+      - for [x] of shape [(n, …shape)], a tensor column of [x]'s dtype and cell
+        shape [shape].
+
+      [validity] marks the rows that hold a value; it defaults to every row.
+
+      Raises [Invalid_argument] if [x] is a scalar, if [x] is 1-D of a dtype
+      that no scalar type stores ([bfloat16], the float8 and int4 dtypes,
+      complex), or if [validity]'s length is not [x]'s rows. *)
+
+  val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
+  (** [to_tensor dt c] is [c]'s values as stored, in O(1): numbers and booleans,
+      the days or ticks of temporal values, the codes of a categorical (its
+      dictionary is in its type), the unscaled values of decimals, and
+      [(rows, …shape)] for a tensor column. It shares [c]'s buffer, which must
+      not be written.
+
+      Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
+      converts the result), if [c] is not stored one element per row, or if [c]
+      has a null. *)
+
+  val validity : t -> Nx_bits.t option
+  (** [validity c] is [c]'s validity, [None] iff [c] has no null. *)
+
+  val ragged : t -> (int, Nx.uint8_elt) Nx_ragged.t
+  (** [ragged c] is the bytes of the text or byte-string column [c], one row per
+      row of [c], in O(1).
+
+      Raises [Invalid_argument] if [c] is neither [string] nor [binary], or has
+      a null. *)
+end
+
 module Error = Error
 module Tz = Tz
 

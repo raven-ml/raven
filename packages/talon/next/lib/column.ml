@@ -1,0 +1,602 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+type t = {
+  type_ : Type.any;
+  length : int;
+  nulls : int;
+  validity : Nx_bits.t option;
+  data : data;
+}
+
+and data =
+  | Fixed of Nx.packed
+  | Bytes of (int, Nx.uint8_elt) Nx_ragged.t
+  | List of { offsets : Nx.int64_t; child : t }
+  | Fields of t list
+
+let err fmt = Format.kasprintf invalid_arg fmt
+let type_ c = c.type_
+let length c = c.length
+let null_count c = c.nulls
+let validity c = c.validity
+let data c = c.data
+let valid c = Option.map Nx_bits.to_bool c.validity
+let has_type ty c = match c.type_ with Any t -> Type.equal t ty
+
+(* Scalars
+
+   A scalar type stores one element of [dtype] per row. [load] reads a stored
+   value back; where it can fall outside the OCaml type, [outside] says why. *)
+
+type 'a scalar =
+  | Scalar : {
+      dtype : ('b, 'c) Nx.dtype;
+      store : 'a -> 'b;
+      load : 'b -> 'a;
+      outside : ('b -> string option) option;
+    }
+      -> 'a scalar
+
+let cell ?outside dtype store load =
+  Some (Scalar { dtype; store; load; outside })
+
+let rec pow10 k = if k = 0 then 1L else Int64.mul 10L (pow10 (k - 1))
+
+(* A held decimal is exact at the type's scale. *)
+let rescale scale d =
+  let u = Decimal.unscaled d and s = Decimal.scale d in
+  if s <= scale then Int64.mul u (pow10 (scale - s))
+  else Int64.div u (pow10 (s - scale))
+
+let fits_int x = Int64.equal (Int64.of_int (Int64.to_int x)) x
+let check_int pp ok x = if ok x then None else Some (pp x ^ " is outside int")
+
+(* A temporal type's ticks, read back through [of_ticks], which is [None]
+   outside {!Time}'s range. *)
+let ticks ty (of_ticks : int64 -> 'a option) to_ticks =
+  let outside x =
+    match of_ticks x with
+    | Some _ -> None
+    | None ->
+        Some (Format.asprintf "%a tick %Ld is outside the range" Type.pp ty x)
+  in
+  cell ~outside Nx.int64 to_ticks (fun x -> Option.get (of_ticks x))
+
+let span_ticks ty : Type.unit_ -> Time.span scalar option = function
+  | S -> ticks ty Time.Span.of_s Time.Span.to_s
+  | Ms -> ticks ty Time.Span.of_ms Time.Span.to_ms
+  | Us -> ticks ty Time.Span.of_us Time.Span.to_us
+  | Ns -> cell Nx.int64 Time.Span.to_ns Time.Span.of_ns
+
+let instant_ticks ty : Type.unit_ -> Time.instant scalar option = function
+  | S -> ticks ty Time.of_s Time.to_s
+  | Ms -> ticks ty Time.of_ms Time.to_ms
+  | Us -> ticks ty Time.of_us Time.to_us
+  | Ns -> cell Nx.int64 Time.to_ns Time.of_ns
+
+let scalar : type a. a Type.t -> a scalar option = function
+  | Bool -> cell Nx.bool Fun.id Fun.id
+  | Int8 -> cell Nx.int8 Fun.id Fun.id
+  | Int16 -> cell Nx.int16 Fun.id Fun.id
+  | Int32 -> cell Nx.int32 Int32.of_int Int32.to_int
+  | Int64 ->
+      let outside = check_int (Printf.sprintf "%Ld") fits_int in
+      cell ~outside Nx.int64 Int64.of_int Int64.to_int
+  | Uint8 -> cell Nx.uint8 Fun.id Fun.id
+  | Uint16 -> cell Nx.uint16 Fun.id Fun.id
+  | Uint32 ->
+      cell Nx.uint32 Int32.of_int (fun x -> Int32.to_int x land 0xffff_ffff)
+  | Uint64 ->
+      let ok x = Int64.compare x 0L >= 0 && fits_int x in
+      let outside = check_int (Printf.sprintf "%Lu") ok in
+      cell ~outside Nx.uint64 Int64.of_int Int64.to_int
+  | Float16 -> cell Nx.float16 Fun.id Fun.id
+  | Float32 -> cell Nx.float32 Fun.id Fun.id
+  | Float64 -> cell Nx.float64 Fun.id Fun.id
+  | Decimal { scale; _ } ->
+      cell Nx.int64 (rescale scale) (fun unscaled -> Decimal.v ~unscaled ~scale)
+  | Categorical d ->
+      let index =
+        lazy
+          (let index = Hashtbl.create (Iarray.length d) in
+           Iarray.iteri (fun i s -> Hashtbl.add index s (Int32.of_int i)) d;
+           index)
+      in
+      let code s = Hashtbl.find (Lazy.force index) s in
+      cell Nx.int32 code (fun c -> Iarray.get d (Int32.to_int c))
+  | Date ->
+      let store d = Int32.of_int (Time.Date.to_days d) in
+      cell Nx.int32 store (fun x ->
+          Option.get (Time.Date.of_days (Int32.to_int x)))
+  | Clock u as ty -> span_ticks ty u
+  | Duration u as ty -> span_ticks ty u
+  | Datetime { unit_; _ } as ty -> instant_ticks ty unit_
+  | String | Binary | List _ | Record _ | Tensor _ | Ext _ -> None
+
+(* Making columns *)
+
+(* [stores ty n d] is [true] iff [d] is [ty]'s storage for [n] rows. *)
+let rec stores : type a. a Type.t -> int -> data -> bool =
+ fun ty n d ->
+  match (ty, d) with
+  | Ext { storage; _ }, d -> stores storage n d
+  | (String | Binary), Bytes r -> Nx_ragged.length r = n
+  | List e, List { offsets; child } ->
+      Nx.shape offsets = [| n + 1 |] && has_type e child
+  | Record fields, Fields cs ->
+      List.compare_lengths fields cs = 0
+      && List.for_all2
+           (fun (_, Type.Any t) c -> has_type t c && c.length = n)
+           fields cs
+  | Tensor (dt, cell), Fixed (P x) ->
+      Nx_dtype.equal dt (Nx.dtype x)
+      && Nx.shape x = Array.append [| n |] (Iarray.to_array cell)
+  | _, Fixed (P x) -> (
+      match scalar ty with
+      | Some (Scalar s) ->
+          Nx_dtype.equal s.dtype (Nx.dtype x) && Nx.shape x = [| n |]
+      | None -> false)
+  | _ -> false
+
+(* [with_validity] keeps a validity only when a row is null. *)
+let with_validity type_ validity ~length data =
+  let nulls =
+    match validity with
+    | None -> 0
+    | Some v -> length - Int64.to_int (Nx.item [] (Nx_bits.count v))
+  in
+  let validity = if nulls = 0 then None else validity in
+  { type_; length; nulls; validity; data }
+
+let make (Type.Any ty as type_) ?valid ~length data =
+  if not (stores ty length data) then
+    err "Column.make: the data is not %a's storage for %d rows" Type.pp ty
+      length;
+  match valid with
+  | Some m when Nx.shape m <> [| length |] ->
+      err "Column.make: a validity of length %d for %d rows" (Nx.numel m) length
+  | _ -> with_validity type_ (Option.map Nx_bits.of_bool valid) ~length data
+
+(* [retype ty c] is [c] as a column of [ty], a type with [c]'s storage: an
+   extension type over [c]'s, or the reverse. *)
+let rec retype : type a. a Type.t -> t -> t =
+ fun ty c ->
+  let data =
+    match (ty, c.data) with
+    | List e, List l -> List { l with child = retype e l.child }
+    | Ext { storage; _ }, _ -> (retype storage c).data
+    | _, d -> d
+  in
+  { c with type_ = Any ty; data }
+
+(* Encoding
+
+   A builder takes a type's values one row at a time and makes the column. A
+   value its type does not hold raises [Refused] with the reason, which the
+   builders of lists and records prefix with the element or the field. *)
+
+exception Refused of string
+
+let refused fmt = Format.kasprintf (fun r -> raise (Refused r)) fmt
+
+type 'a builder = { add : 'a option -> unit; finish : unit -> t }
+
+(* Growable arrays *)
+type 'a buf = { mutable items : 'a array; mutable len : int }
+
+let buf x = { items = Array.make 16 x; len = 0 }
+
+let push b x =
+  if b.len = Array.length b.items then b.items <- Array.append b.items b.items;
+  Array.unsafe_set b.items b.len x;
+  b.len <- b.len + 1
+
+let contents b = Array.sub b.items 0 b.len
+let offsets_tensor b = Nx.create Nx.int64 [| b.len |] (contents b)
+
+let pp_float ppf x =
+  let s = Printf.sprintf "%.15g" x in
+  let s = if float_of_string s = x then s else Printf.sprintf "%.17g" x in
+  Format.pp_print_string ppf s
+
+let pp_shape ppf x =
+  let dims = Array.to_list (Array.map string_of_int (Nx.shape x)) in
+  Format.fprintf ppf "a tensor of shape [%s]" (String.concat "×" dims)
+
+(* [check ty v] refuses a value [ty] does not hold. Booleans, binary, dates,
+   lists and records hold every value of theirs; the builders of lists and
+   records check their elements and fields. *)
+let check : type a. a Type.t -> a -> unit =
+ fun ty ->
+  let held = Type.holds ty in
+  let check pp v =
+    if not (held v) then refused "%a does not hold %a" Type.pp ty pp v
+  in
+  match Type.kind ty with
+  | Int -> check Format.pp_print_int
+  | Float -> check pp_float
+  | String -> check Type.pp_quoted
+  | Decimal -> check Decimal.pp
+  | Span -> check Time.Span.pp
+  | Instant -> check Time.pp
+  | Tensor _ -> check pp_shape
+  | Bool | Binary | Date | List _ | Record | Ext -> ignore
+
+(* [rows ty ~null ~add ~data] is the builder that keeps the validity of each
+   row, calls [null] or [add] to keep its value, and makes the column from [data
+   ()]. *)
+let rows ty ~null ~add ~data =
+  let valid = buf true and nulls = ref 0 in
+  let add = function
+    | None ->
+        null ();
+        incr nulls;
+        push valid false
+    | Some v ->
+        add v;
+        push valid true
+  in
+  let finish () =
+    let length = valid.len in
+    let valid =
+      if !nulls = 0 then None
+      else Some (Nx.create Nx.bool [| length |] (contents valid))
+    in
+    make (Any ty) ?valid ~length (data ())
+  in
+  { add; finish }
+
+let uint8_of_string s =
+  let a = Bigarray.(Array1.create int8_unsigned c_layout (String.length s)) in
+  String.iteri (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c)) s;
+  Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+
+let bytes_builder ty raw =
+  let check = check ty and bytes = Buffer.create 256 and offsets = buf 0L in
+  let next () = push offsets (Int64.of_int (Buffer.length bytes)) in
+  next ();
+  let add v =
+    check v;
+    Buffer.add_string bytes (raw v);
+    next ()
+  in
+  let data () =
+    let values = uint8_of_string (Buffer.contents bytes) in
+    Bytes (Nx_ragged.v ~offsets:(offsets_tensor offsets) values)
+  in
+  rows ty ~null:next ~add ~data
+
+let scalar_builder ty (Scalar s) =
+  let check = check ty and zero = Nx_dtype.zero s.dtype in
+  let values = buf zero in
+  let add v =
+    check v;
+    push values (s.store v)
+  in
+  let data () =
+    Fixed (P (Nx.create s.dtype [| values.len |] (contents values)))
+  in
+  rows ty ~null:(fun () -> push values zero) ~add ~data
+
+let rec builder : type a. a Type.t -> a builder =
+ fun ty ->
+  match ty with
+  | String -> bytes_builder ty Fun.id
+  | Binary -> bytes_builder ty (fun b -> (b :> string))
+  | List e -> list_builder ty e
+  | Record fields -> record_builder ty fields
+  | Tensor (dt, cell) -> tensor_builder ty dt (Iarray.to_array cell)
+  | Ext { storage; _ } ->
+      let b = builder storage in
+      let add = function None -> b.add None | Some (_ : Type.ext) -> . in
+      { add; finish = (fun () -> retype ty (b.finish ())) }
+  | _ -> (
+      match scalar ty with
+      | Some s -> scalar_builder ty s
+      | None -> assert false)
+
+and list_builder : type a. a array Type.t -> a Type.t -> a array builder =
+ fun ty e ->
+  let child = builder e and offsets = buf 0L and count = ref 0 in
+  let next () = push offsets (Int64.of_int !count) in
+  next ();
+  let add_element j v =
+    match child.add (Some v) with
+    | () -> incr count
+    | exception Refused r -> refused "element %d: %s" j r
+  in
+  let add vs =
+    Array.iteri add_element vs;
+    next ()
+  in
+  let data () =
+    List { offsets = offsets_tensor offsets; child = child.finish () }
+  in
+  rows ty ~null:next ~add ~data
+
+and record_builder :
+    Record.t Type.t -> (string * Type.any) list -> Record.t builder =
+ fun ty fields ->
+  let names = List.map fst fields in
+  let children = Array.of_list (List.map field_builder fields) in
+  let null () = Array.iter (fun c -> c.add None) children in
+  let add (r : Record.t) =
+    if not (List.equal String.equal names (Record.names r)) then
+      refused "%a does not hold a record of fields %a" Type.pp ty
+        (Type.pp_list Type.pp_name)
+        (Record.names r);
+    Iarray.iteri (fun j (_, f) -> children.(j).add (Some f)) r.Kind.fields
+  in
+  let data () =
+    Fields (Array.to_list (Array.map (fun c -> c.finish ()) children))
+  in
+  rows ty ~null ~add ~data
+
+(* A field whose type is or holds an extension holds its storage's values in a
+   [Storage] field. *)
+and field_builder (name, Type.Any ft) =
+  let (Any st) = Type.storage ft in
+  stored_field name ~ext:(Type.has_ext ft) ft st
+
+and stored_field : type a b.
+    string -> ext:bool -> a Type.t -> b Type.t -> Kind.field builder =
+ fun name ~ext ft st ->
+  let b = builder st and k = Type.kind st in
+  let mismatch : type c. c Kind.t -> unit =
+   fun k' ->
+    refused "field %a: %a does not hold a %a value" Type.pp_name name Type.pp ft
+      Kind.pp k'
+  in
+  let put : type c. c Kind.t -> c option -> unit =
+   fun k' v ->
+    match Kind.equal_witness k' k with
+    | None -> mismatch k'
+    | Some Equal -> (
+        match b.add v with
+        | () -> ()
+        | exception Refused r -> refused "field %a: %s" Type.pp_name name r)
+  in
+  let add = function
+    | None -> b.add None
+    | Some (Kind.Value (k', v)) -> if ext then mismatch k' else put k' v
+    | Some (Storage (k', v)) -> if ext then put k' v else mismatch k'
+  in
+  { add; finish = (fun () -> retype ft (b.finish ())) }
+
+and tensor_builder : type a b.
+    (a, b) Nx.t Type.t -> (a, b) Nx.dtype -> int array -> (a, b) Nx.t builder =
+ fun ty dt cell ->
+  let check = check ty and zero = Nx.zeros dt cell in
+  let cells = buf zero in
+  let add x =
+    check x;
+    push cells x
+  in
+  let data () =
+    if cells.len = 0 then Fixed (P (Nx.zeros dt (Array.append [| 0 |] cell)))
+    else Fixed (P (Nx.stack ~axis:0 (Array.to_list (contents cells))))
+  in
+  rows ty ~null:(fun () -> push cells zero) ~add ~data
+
+let encode ty n f =
+  let b = builder ty in
+  let rec loop i =
+    if i = n then Ok (b.finish ())
+    else
+      match b.add (f i) with
+      | () -> loop (i + 1)
+      | exception Refused r -> Error (i, r)
+  in
+  loop 0
+
+(* Decoding
+
+   A reader's [get] reads a row that is not null. Its [bad], absent for types
+   whose stored values all read, says why a row's value is outside the OCaml
+   type; the decoder asks it of every non-null row before any [get]. *)
+
+type 'a reader = { get : int -> 'a; bad : (int -> string option) option }
+
+let flags c = Option.map Nx.to_array (valid c)
+let is_valid flags i = match flags with None -> true | Some f -> f.(i)
+let int_offsets o = Array.map Int64.to_int (Nx.to_array o)
+
+let bytes_reader r =
+  let o = int_offsets (Nx_ragged.offsets r) in
+  let a = Bigarray.array1_of_genarray (Nx.to_bigarray (Nx_ragged.values r)) in
+  let get i =
+    String.init (o.(i + 1) - o.(i)) (fun k -> Char.unsafe_chr a.{o.(i) + k})
+  in
+  { get; bad = None }
+
+(* [first n f] is the first [Some] of [f 0], …, [f (n - 1)]. *)
+let first n f =
+  let rec loop i =
+    if i = n then None else match f i with None -> loop (i + 1) | r -> r
+  in
+  loop 0
+
+(* [make] keeps a column's data its type's storage, which leaves no other
+   case. *)
+let rec reader : type a. a Type.t -> t -> a reader =
+ fun ty c ->
+  match (ty, c.data) with
+  | String, Bytes r -> bytes_reader r
+  | Binary, Bytes r ->
+      let r = bytes_reader r in
+      { r with get = (fun i -> Binary.of_string (r.get i)) }
+  | List e, List { offsets; child } -> list_reader e (int_offsets offsets) child
+  | Record fields, Fields cs ->
+      let fields = Array.of_list (List.map2 field_reader fields cs) in
+      let get i =
+        {
+          Kind.fields =
+            Iarray.init (Array.length fields) (fun j -> fields.(j).get i);
+        }
+      in
+      let bad i =
+        first (Array.length fields) (fun j ->
+            match fields.(j).bad with Some bad -> bad i | None -> None)
+      in
+      let checked = Array.exists (fun f -> Option.is_some f.bad) fields in
+      { get; bad = (if checked then Some bad else None) }
+  | Tensor (dt, _), Fixed p ->
+      let x = Nx.unpack dt p in
+      { get = (fun i -> Nx.copy (Nx.get [ i ] x)); bad = None }
+  | Ext _, _ ->
+      let bad _ = Some "an extension value is read through its declaration" in
+      { get = (fun _ -> assert false); bad = Some bad }
+  | _, Fixed p -> (
+      match scalar ty with
+      | Some (Scalar s) ->
+          let a = Nx.to_array (Nx.unpack s.dtype p) in
+          let bad = Option.map (fun outside i -> outside a.(i)) s.outside in
+          { get = (fun i -> s.load a.(i)); bad }
+      | None -> assert false)
+  | _ -> assert false
+
+and list_reader : type a. a Type.t -> int array -> t -> a array reader =
+ fun e o child ->
+  let r = reader e child and flags = flags child in
+  let get i = Array.init (o.(i + 1) - o.(i)) (fun k -> r.get (o.(i) + k)) in
+  let element i k =
+    let j = o.(i) + k in
+    if not (is_valid flags j) then Some (Printf.sprintf "element %d is null" k)
+    else
+      match r.bad with
+      | None -> None
+      | Some bad -> Option.map (Printf.sprintf "element %d: %s" k) (bad j)
+  in
+  let bad i = first (o.(i + 1) - o.(i)) (element i) in
+  { get; bad = (if child.nulls = 0 && r.bad = None then None else Some bad) }
+
+and field_reader (name, Type.Any ft) c =
+  let (Any st) = Type.storage ft in
+  stored_reader name ~ext:(Type.has_ext ft) st c
+
+and stored_reader : type a.
+    string -> ext:bool -> a Type.t -> t -> (string * Kind.field) reader =
+ fun name ~ext st c ->
+  let r = reader st (retype st c) and flags = flags c and k = Type.kind st in
+  let get i =
+    let v = if is_valid flags i then Some (r.get i) else None in
+    (name, if ext then Kind.Storage (k, v) else Kind.Value (k, v))
+  in
+  let field bad i =
+    if not (is_valid flags i) then None
+    else Option.map (Format.asprintf "field %a: %s" Type.pp_name name) (bad i)
+  in
+  { get; bad = Option.map field r.bad }
+
+let decoder ty c =
+  if not (has_type ty c) then
+    err "Column.decoder: a column of %a is not one of %a"
+      (fun ppf (Type.Any t) -> Type.pp ppf t)
+      c.type_ Type.pp ty;
+  let r = reader ty c and flags = flags c in
+  let check bad i =
+    if is_valid flags i then Option.map (fun why -> (i, why)) (bad i) else None
+  in
+  match Option.bind r.bad (fun bad -> first c.length (check bad)) with
+  | Some e -> Error e
+  | None -> Ok (fun i -> if is_valid flags i then Some (r.get i) else None)
+
+(* OCaml values *)
+
+let v ty vs =
+  match encode ty (Array.length vs) (fun i -> Some vs.(i)) with
+  | Ok c -> c
+  | Error (row, why) -> err "Column.v: row %d: %s" row why
+
+let of_options ty vs =
+  match encode ty (Array.length vs) (Array.get vs) with
+  | Ok c -> c
+  | Error (row, why) -> err "Column.of_options: row %d: %s" row why
+
+(* [read fn k c] decodes [c] as [k], raising as [fn]. *)
+let read : type a. string -> a Kind.t -> t -> int -> a option =
+ fun fn k c ->
+  let (Any ty) = c.type_ in
+  match Kind.provably_equal (Type.kind ty) k with
+  | None when Kind.has_ext (Type.kind ty) ->
+      err "Column.%s: no kind reads %a" fn Type.pp ty
+  | None -> err "Column.%s: %a is not read as %a" fn Type.pp ty Kind.pp k
+  | Some Equal -> (
+      match decoder ty c with
+      | Ok get -> get
+      | Error (row, why) -> err "Column.%s: row %d: %s" fn row why)
+
+let options k c = Array.init c.length (read "options" k c)
+
+let values k c =
+  let get = read "values" k c in
+  let value i =
+    match get i with
+    | Some v -> v
+    | None -> err "Column.values: row %d is null" i
+  in
+  Array.init c.length value
+
+(* Tensors and bytes *)
+
+let first_null c =
+  let flags = Option.get (flags c) in
+  Option.get (first c.length (fun i -> if flags.(i) then None else Some i))
+
+let scalar_type : type a b. (a, b) Nx.dtype -> Type.any =
+ fun dt ->
+  match dt with
+  | Bool -> Any Type.bool
+  | Int8 -> Any Type.int8
+  | Int16 -> Any Type.int16
+  | Int32 -> Any Type.int32
+  | Int64 -> Any Type.int64
+  | UInt8 -> Any Type.uint8
+  | UInt16 -> Any Type.uint16
+  | UInt32 -> Any Type.uint32
+  | UInt64 -> Any Type.uint64
+  | Float16 -> Any Type.float16
+  | Float32 -> Any Type.float32
+  | Float64 -> Any Type.float64
+  | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Complex64 | Complex128
+    ->
+      err "Column.of_tensor: no scalar type stores %a; make it 2-D" Nx_dtype.pp
+        dt
+
+let of_tensor ?validity x =
+  let shape = Nx.shape x in
+  if shape = [||] then err "Column.of_tensor: a scalar has no rows";
+  let length = shape.(0) in
+  let type_ =
+    if Array.length shape = 1 then scalar_type (Nx.dtype x)
+    else
+      Any
+        (Type.tensor (Nx.dtype x) (Array.sub shape 1 (Array.length shape - 1)))
+  in
+  (match validity with
+  | Some v when Nx_bits.length v <> length ->
+      err "Column.of_tensor: a validity of length %d for %d rows"
+        (Nx_bits.length v) length
+  | _ -> ());
+  with_validity type_ validity ~length (Fixed (P x))
+
+let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
+  let (Any ty) = c.type_ in
+  match c.data with
+  | Fixed (P x) when not (Nx_dtype.equal dt (Nx.dtype x)) ->
+      err "Column.to_tensor: %a is stored as %a, not %a" Type.pp ty Nx_dtype.pp
+        (Nx.dtype x) Nx_dtype.pp dt
+  | Fixed _ when c.nulls > 0 ->
+      err "Column.to_tensor: row %d is null" (first_null c)
+  | Fixed p -> Nx.unpack dt p
+  | _ -> err "Column.to_tensor: %a is not stored one element per row" Type.pp ty
+
+let ragged c =
+  match (c.type_, c.data) with
+  | (Any String | Any Binary), Bytes _ when c.nulls > 0 ->
+      err "Column.ragged: row %d is null" (first_null c)
+  | (Any String | Any Binary), Bytes r -> r
+  | Any ty, _ -> err "Column.ragged: %a is neither string nor binary" Type.pp ty

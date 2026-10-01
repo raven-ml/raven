@@ -62,3 +62,13 @@
  (deps
   (package talon)
   (package nx)))
+
+(test
+ (name test_column)
+ (modules test_column)
+ (package talon)
+ (libraries windtrap talon.next talon_gen nx nx.bits nx.ragged)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_column.ml test_column.ml.corrected))))

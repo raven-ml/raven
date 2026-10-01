@@ -85,6 +85,11 @@ val has_float : 'a t -> bool
     or an extension's storage, at any depth. A key of such a type has distinct
     values that are one key, such as [-0.] and [0.]. *)
 
+val storage : 'a t -> any
+(** [storage t] is [t] with every extension it is, or holds as list elements,
+    replaced by its storage type: the type of the values that a record field of
+    type [t] holds ({!Kind.Storage}). *)
+
 val value : 'a t -> 'a -> 'a option
 (** [value t v] is [Some w] with [w] the value that [v], which [t] holds, has
     once stored as [t]: a [float32] value is [v] rounded to the nearest

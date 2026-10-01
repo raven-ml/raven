@@ -1,12 +1,13 @@
 (library
  (name talon_next)
  (public_name talon.next)
- (libraries nx nx.dtype nx.backend)
+ (libraries nx nx.dtype nx.backend nx.bits nx.ragged)
  (private_modules
   kind
   record
   schema
   type
+  column
   problem
   sel
   order

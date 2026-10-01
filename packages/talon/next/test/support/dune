@@ -1,0 +1,3 @@
+(library
+ (name talon_gen)
+ (libraries windtrap talon.next nx))
