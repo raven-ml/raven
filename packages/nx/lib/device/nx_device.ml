@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The field order of [region], [base], [root] and [Buffer.t] up to the fields
+(* The field order of [region], [base], [claim] and [Buffer.t] up to the fields
    nx_device.h reads is its C ABI. *)
 type region = {
   host : nativeint option;
@@ -147,7 +147,7 @@ and buffer = {
   offset : int; (* bytes into [base.memory] *)
   dtype : Nx_dtype.Scalar.t;
   length : int;
-  generation : generation; (* its root's when the buffer was made *)
+  generation : generation; (* its memory's when the buffer was made *)
 }
 
 and base = {
@@ -159,21 +159,27 @@ and base = {
   keep : keep;
   source : (base * mapped) option;
       (* for a borrow, the memory it maps, and the mapping *)
-  mutable links : links; [@atomic]
+  links : links Atomic.t;
   file : file option; (* on the disk, the file *)
-  root : base option;
-      (* the base below every view and borrow of the memory, [None] when it is
-         this one: the root, whose next fields count the claims on the memory
-         and its consumptions *)
+  claim : claim;
+      (* shared by every base over the memory, its borrows' and copies'
+         included *)
+}
+
+(* The claims on a memory and its consumptions: one record per memory, which
+   every base over it holds, its borrows, a file's host pages and the copies of
+   a base included. *)
+and claim = {
   mutable claims : int; [@atomic]
       (* the read claims, or -1 while one holder is exclusive; a holder outside
          the claims, such as a bigarray's, holds one it never releases *)
   mutable generation : generation; [@atomic]
-      (* a buffer made at another is dead *)
+      (* the memory's: a buffer made at another is dead *)
 }
 
 (* A generation of a memory: the first, or the one a consumption began, for the
-   reason [why]. *)
+   reason [why]. Generations compare physically, and only those of one memory
+   are compared. *)
 and generation = { why : string }
 
 (* The other devices that reach a base's memory, changed together. *)
@@ -829,25 +835,22 @@ let sync d =
    compare it physically. *)
 let first_generation = { why = "" }
 
-(* The base below every view and borrow of [base]'s memory. *)
-let root_of base = match base.root with None -> base | Some r -> r
-
 (* Raises [Lost] for a lost device that can reach [base]'s memory: its own
    device, a device it is mapped on or whose transfer into it could not be
    waited for, or those of the memory it maps. *)
 let rec check_reach base =
-  let { maps; reached } = base.links in
+  let { maps; reached } = Atomic.get base.links in
   List.iter check (base.owner :: (List.map (fun m -> m.on) maps @ reached));
   Option.iter (fun (src, _) -> check_reach src) base.source
 
 let rec update_links base f =
-  let l = base.links in
-  if not (Atomic.Loc.compare_and_set [%atomic.loc base.links] l (f l)) then
-    update_links base f
+  let l = Atomic.get base.links in
+  if not (Atomic.compare_and_set base.links l (f l)) then update_links base f
 
 let no_links = { maps = []; reached = [] }
 let update_maps base f = update_links base (fun l -> { l with maps = f l.maps })
-let mapping_on d base = List.find_opt (fun m -> m.on == d) base.links.maps
+let mapping_on d base =
+  List.find_opt (fun m -> m.on == d) (Atomic.get base.links).maps
 
 (* The device's address of the host address [a] in the mapping [m]. *)
 let mapped_address (m : region) a =
@@ -982,7 +985,7 @@ let reclaim d =
           | None when Option.is_some b.file ->
               (* No read or write of a file outlives the copy that made it. *)
               file_close b.memory.handle
-          | None when b.links.reached <> [] ->
+          | None when (Atomic.get b.links).reached <> [] ->
               (* Another device's work may still write it. *)
               allocate_bytes d (-b.bytes);
               d.retained <- d.retained + b.bytes;
@@ -1136,7 +1139,7 @@ module Buffer = struct
     offset : int; (* bytes into [base.memory] *)
     dtype : Nx_dtype.Scalar.t;
     length : int;
-    generation : generation; (* its root's when the buffer was made *)
+    generation : generation; (* its memory's when the buffer was made *)
   }
 
   (* [n * bitsize s / 8] rounded up, without the product overflowing. *)
@@ -1163,7 +1166,7 @@ module Buffer = struct
 
   (* Raises unless [b]'s memory was not consumed since [b] was made. *)
   let live b =
-    let g = (root_of b.base).generation in
+    let g = b.base.claim.generation in
     if b.generation != g then invalid_arg g.why
 
   let address b =
@@ -1183,14 +1186,18 @@ module Buffer = struct
   (* No byte of it is ever read or written, so the host addresses it. *)
   let no_memory = { host = Some 0n; address = 0n; handle = 0n; nbytes = 0 }
 
-  (* A base over [memory], whose root is its source's for a borrow, [root]'s
-     when given, and itself otherwise. *)
-  let base ?(bytes = 0) ?(kind = Device) ?source ?file ?root ?(exported = false)
-      ~borrowed ~keep d memory =
-    let root =
-      match (source, root) with
-      | Some (src, _), _ | None, Some src -> Some (root_of src)
-      | None, None -> None
+  (* A base over [memory], whose claims are its source's for a borrow,
+     [claim] when given, and new otherwise, held by whoever holds the bigarray
+     or the file when [exported]. *)
+  let base ?(bytes = 0) ?(kind = Device) ?source ?file ?claim
+      ?(exported = false) ~borrowed ~keep d memory =
+    let claim =
+      match (source, claim) with
+      | Some (src, _), _ -> src.claim
+      | None, Some c -> c
+      | None, None ->
+          let claims = if exported then 1 else 0 in
+          { claims; generation = first_generation }
     in
     {
       owner = d;
@@ -1200,16 +1207,14 @@ module Buffer = struct
       borrowed;
       keep;
       source;
-      links = no_links;
+      links = Atomic.make no_links;
       file;
-      root;
-      claims = (if exported then 1 else 0);
-      generation = first_generation;
+      claim;
     }
 
   (* The buffer of [n] elements of [s] at the start of [base]'s memory. *)
   let first base s n =
-    let generation = (root_of base).generation in
+    let generation = base.claim.generation in
     { base; offset = 0; dtype = s; length = n; generation }
 
   let empty ~borrowed d s n =
@@ -1372,7 +1377,7 @@ module Buffer = struct
             match file_map b.base.memory.handle b.base.memory.nbytes with
             | 0, ba ->
                 let base =
-                  base ~root:b.base ~borrowed:true ~keep:(Host ba) host
+                  base ~claim:b.base.claim ~borrowed:true ~keep:(Host ba) host
                     (heap_memory ba)
                 in
                 f.pages <- Some base;
@@ -1590,52 +1595,55 @@ module Buffer = struct
     let unbalanced () =
       invalid_arg "Nx_device.Buffer.Claim.release: unbalanced claim"
 
-    (* Claims count on the root, so a borrow and the memory it maps share them.
-       Each loop retries only a CAS that another domain's claim beat. *)
+    (* Claims count on the memory's record, so a borrow and the memory it maps
+       share them. Each loop retries only a CAS that another domain's claim
+       beat. *)
 
-    let rec read_root r =
-      let n = r.claims in
+    let rec read_claim m =
+      let n = m.claims in
       if n < 0 then busy ()
-      else if not (Atomic.Loc.compare_and_set [%atomic.loc r.claims] n (n + 1))
-      then read_root r
+      else if not (Atomic.Loc.compare_and_set [%atomic.loc m.claims] n (n + 1))
+      then read_claim m
 
-    let rec release_root r =
-      let n = r.claims in
+    let rec release_claim m =
+      let n = m.claims in
       if n <= 0 then unbalanced ()
-      else if not (Atomic.Loc.compare_and_set [%atomic.loc r.claims] n (n - 1))
-      then release_root r
+      else if not (Atomic.Loc.compare_and_set [%atomic.loc m.claims] n (n - 1))
+      then release_claim m
 
-    let exclusive_root r =
-      Atomic.Loc.compare_and_set [%atomic.loc r.claims] 1 (-1)
+    let exclusive_claim m =
+      Atomic.Loc.compare_and_set [%atomic.loc m.claims] 1 (-1)
 
-    let finish_root r =
-      if not (Atomic.Loc.compare_and_set [%atomic.loc r.claims] (-1) 1) then
+    let finish_claim m =
+      if not (Atomic.Loc.compare_and_set [%atomic.loc m.claims] (-1) 1) then
         invalid_arg "Nx_device.Buffer.Claim.finish: the memory is not exclusive"
 
     let read b =
       live b;
-      read_root (root_of b.base)
+      read_claim (b.base.claim)
 
-    let release b = release_root (root_of b.base)
-    let try_exclusive b = exclusive_root (root_of b.base)
-    let finish b = finish_root (root_of b.base)
+    let release b = release_claim (b.base.claim)
+    let try_exclusive b = exclusive_claim (b.base.claim)
+    let finish b = finish_claim (b.base.claim)
     let export = read
 
-    (* The roots a bracket reads, with repeats, and those it holds exclusive. *)
-    type t = { reads : base list; exclusive : base list }
+    (* The memories a bracket reads, with repeats, and those it holds
+       exclusive. *)
+    type t = { reads : claim list; exclusive : claim list }
 
-    let exclusive c b = List.memq (root_of b.base) c.exclusive
+    let exclusive c b = List.memq b.base.claim c.exclusive
 
     let consume c ~why b =
-      let r = root_of b.base in
-      if not (List.memq r c.reads) then
+      let m = b.base.claim in
+      if not (List.memq m c.reads) then
         invalid_arg "Nx_device.Buffer.Claim.consume: the buffer is not claimed";
       live b;
       if not (spans b) then
         invalid_arg
-          "Nx_device.Buffer.Claim.consume: the buffer is a window of its memory";
+          "Nx_device.Buffer.Claim.consume: the buffer is a window of its \
+           memory";
       let generation = { why } in
-      r.generation <- generation;
+      m.generation <- generation;
       { b with generation }
 
     (* Raises if a buffer of [donated] shares a byte with another of [rs] or
@@ -1685,9 +1693,9 @@ module Buffer = struct
         List.fold_left
           (fun taken b ->
             match read b with
-            | () -> root_of b.base :: taken
+            | () -> b.base.claim :: taken
             | exception e ->
-                List.iter release_root taken;
+                List.iter release_claim taken;
                 raise e)
           [] (rs @ donated)
       in
@@ -1695,24 +1703,24 @@ module Buffer = struct
       let exclusive =
         List.concat_map
           (fun shards ->
-            let roots = List.map (fun b -> root_of b.base) shards in
+            let claims = List.map (fun b -> b.base.claim) shards in
             if not (List.for_all spans shards) then []
             else
               let rec upgrade taken = function
-                | [] -> roots
-                | r :: rest ->
-                    if exclusive_root r then upgrade (r :: taken) rest
+                | [] -> claims
+                | m :: rest ->
+                    if exclusive_claim m then upgrade (m :: taken) rest
                     else begin
-                      List.iter finish_root taken;
+                      List.iter finish_claim taken;
                       []
                     end
               in
-              upgrade [] roots)
+              upgrade [] claims)
           donate
       in
       let release () =
-        List.iter finish_root exclusive;
-        List.iter release_root reads
+        List.iter finish_claim exclusive;
+        List.iter release_claim reads
       in
       match f { reads; exclusive } with
       | v ->
