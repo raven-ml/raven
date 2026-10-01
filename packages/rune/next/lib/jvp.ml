@@ -720,7 +720,10 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
           Some
             (fun () -> Construct.perform (Remat { p; q; f; args; recomputed }))
       | Some tape -> Some (fun () -> remat i tape p q f args))
-  | Scan _ | Barrier _ | Lanes _ | Lane_index _ | Lane_count _ -> None
+  | Lanes (axis, x) ->
+      let lanes x = Construct.perform (Lanes (axis, x)) in
+      Option.map (fun (x, dx) () -> dual i (lanes x) (lanes dx)) (own i x)
+  | Scan _ | Barrier _ | Lane_index _ | Lane_count _ -> None
 
 (* [region i tape captures p f a tracked] is [f a] run under a child of [i]
    recording on [tape], each leaf of [a] that [tracked] marks a dual of the

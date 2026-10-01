@@ -183,8 +183,16 @@ let answer : type r. tape -> r Construct.t -> (unit -> r) option =
               "Rune.Total.add: a custom_jvp tangent map adds a tangent under \
                reverse mode; a total takes values")
       else None
-  | Scan _ | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _
-  | Lane_count _ ->
+  | Lanes (_, x) ->
+      if owns t x then
+        Some
+          (fun () ->
+            invalid_arg
+              (t.entry
+             ^ ": reverse mode does not differentiate a value gathered across \
+                a map's lanes"))
+      else None
+  | Scan _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
       None
 
 let install t f =
