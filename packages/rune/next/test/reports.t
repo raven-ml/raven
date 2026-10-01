@@ -13,7 +13,7 @@ whether it was reused or copied.
   rune.jit: 0.1 -> result 1 reused
   rune.jit: retrace: 0: strides [1; 2] here, strides [3; 1] in the previous key
   rune.jit: retrace: 0: shape [4] here, shape [2; 3] in the previous key
-  rune.jit: retrace: 0: 1 elements into its run here, 0 elements into its run in the previous key
+  rune.jit: retrace: 0: 1 element into its run here, 0 elements into its run in the previous key
   rune.jit: 0 consumed, lent to no result
   rune.jit: retrace: BEAM=0 NOOPT=true profiled=false here, BEAM=0 NOOPT=false profiled=false in the previous key
 

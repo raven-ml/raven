@@ -147,7 +147,9 @@ let parts l =
     "shape [" ^ ints l.shape ^ "]";
     Format.asprintf "at %a" Placement.pp l.at;
     "strides [" ^ ints l.strides ^ "]";
-    Printf.sprintf "%d elements into its run" l.lead;
+    (match l.lead with
+    | 1 -> "1 element into its run"
+    | n -> Printf.sprintf "%d elements into its run" n);
     "a run at [" ^ ints (Array.of_list l.phases) ^ "] bytes past 16";
   ]
 
