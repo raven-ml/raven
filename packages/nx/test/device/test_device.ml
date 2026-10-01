@@ -1733,6 +1733,40 @@ let test_transfer_mappings () =
   done;
   equal ~msg:"unmapped once the memory is released" int 1 !unmaps
 
+(* A copy into a borrow of another device's memory maps the memory under it,
+   which the borrow's own region is not. *)
+let test_transfer_into_borrow () =
+  let asked = ref [] in
+  let peer owner r =
+    asked := Nx_device.name owner :: !asked;
+    Ok (r, ignore)
+  in
+  let p = far ~name:"PEER-A" ~peer ()
+  and q = far ~name:"PEER-B" ~peer:(fun _ r -> Ok (r, ignore)) ()
+  and c = far ~name:"PEER-C" () in
+  let memory = B.create c.dev S.UInt8 64 in
+  let dst = B.view (borrow q.dev memory) ~offset:8 S.UInt8 32 in
+  let src = B.create p.dev S.UInt8 32 in
+  write src (pattern 9 32);
+  B.copy ~src ~dst;
+  equal ~msg:"mapped the borrowed memory's owner" (list string) [ "PEER-C" ]
+    !asked;
+  equal ~msg:"written where the borrow lies" string (pattern 9 32)
+    (read (B.view memory ~offset:8 S.UInt8 32))
+
+(* A copy whose source cannot map the destination goes through the host, and
+   loses no device. *)
+let test_transfer_refused () =
+  let p = far ~name:"PEER-A" ~peer:(fun _ _ -> Error "no window") ()
+  and q = far ~name:"PEER-B" () in
+  let src = B.create p.dev S.UInt8 64 and dst = B.create q.dev S.UInt8 64 in
+  write src (pattern 4 64);
+  let staged = p.drv.staged + q.drv.staged in
+  B.copy ~src ~dst;
+  equal ~msg:"copied" string (pattern 4 64) (read dst);
+  less ~msg:"through staging" int ~than:(p.drv.staged + q.drv.staged) staged;
+  ignore (B.create p.dev S.UInt8 8)
+
 (* A borrow of a borrow maps the memory under the first. *)
 let test_borrow_of_borrow () =
   let a = fake ~name:"FIRST" ~maps:true () and c = far () in
@@ -1819,6 +1853,11 @@ let borrows =
       test
         "a copy into another device's memory maps it once, until it is released"
         test_transfer_mappings;
+      test "a copy into a borrow of another device's memory maps its owner's"
+        test_transfer_into_borrow;
+      test
+        "a copy whose source cannot map the destination goes through the host"
+        test_transfer_refused;
       test "a borrow of a borrow maps the memory under it" test_borrow_of_borrow;
       test "two bigarrays over the same bytes overlap" test_bigarray_overlaps;
     ]
@@ -2836,8 +2875,7 @@ let submissions =
       test "refuse no device, a host, the disk, and disk or dead buffers"
         test_submit_refusals;
       test
-        "count the bytes their work copies between devices, and none within \
-         one"
+        "count the bytes their work copies between devices, and none within one"
         test_copied;
     ]
 

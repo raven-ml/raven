@@ -2515,16 +2515,36 @@ module Buffer = struct
     | Host_copy
     | Into
     | Out_of
-    | Transfer of copy
+    | Transfer of copy * nativeint (* and the destination's address *)
     | Bounce
     | Across
     | Link of link
     | File of device option
   (* from or to the disk, staged by the device whose copy queue it names *)
 
+  (* Where [e]'s work addresses [b], another device's memory: through [e]'s
+     mapping of the memory under [b], which lasts until that memory is released,
+     or at [b]'s own address on a device that maps no other device's memory.
+     [None] if [e]'s driver refuses the mapping. *)
+  let address_on e b =
+    match e.peer with
+    | None -> Some (address b)
+    | Some peer -> (
+        let r = root b in
+        let map = peer_map peer r.base in
+        match
+          with_devices [ e ] (fun () -> map_on e r.base ~ends:With_memory ~map)
+        with
+        | Ok m ->
+            Some
+              (Nativeint.add m.mapped.address
+                 (Nativeint.of_int (m.skip + r.offset)))
+        | Error _ -> None)
+
   (* The route of a copy of [src] into [dst], and the devices it takes besides
-     the two: the hosts whose staging memory or [io] it uses, a link's
-     devices. *)
+     the two: the hosts whose staging memory or [io] it uses, a link's devices.
+     A transfer the source cannot map the destination for goes through the
+     host. *)
   let route ~src ~dst =
     let s = device src and d = device dst in
     let h = host_of s in
@@ -2546,8 +2566,12 @@ module Buffer = struct
       | None, Some _ -> (Out_of, if dst.base.owner != s then [ h ] else [])
       | None, None when s == d -> (Out_of, [])
       | None, None -> (
-          match (queue s).transfer d with
-          | Some transfer -> (Transfer transfer, [])
+          let transfer =
+            Option.bind ((queue s).transfer d) (fun copy ->
+                Option.map (fun at -> (copy, at)) (address_on s dst))
+          in
+          match transfer with
+          | Some (copy, at) -> (Transfer (copy, at), [])
           | None -> (Bounce, [ h ]))
 
   (* The devices whose copy queues a copy of [route] runs on. *)
@@ -2564,19 +2588,6 @@ module Buffer = struct
           [ src; dst ]
     | File e -> Option.to_list e
 
-  (* Where [e]'s work addresses [b], another device's memory: through [e]'s
-     mapping of it, which lasts until the memory is released, or at [b]'s own
-     address on a device that maps no other device's memory. *)
-  let address_on e (b : buffer) =
-    match e.peer with
-    | None -> address b
-    | Some peer -> (
-        match map_on e b.base ~ends:With_memory ~map:(peer_map peer b.base) with
-        | Ok m ->
-            Nativeint.add m.mapped.address
-              (Nativeint.of_int (m.skip + b.offset))
-        | Error why -> fail e why)
-
   let move ~timed route ~src ~dst n =
     let s = device src and d = device dst in
     match route with
@@ -2587,10 +2598,9 @@ module Buffer = struct
           n
     | Into -> into ~timed d ~src ~dst n
     | Out_of -> out_of ~timed s ~src ~dst n
-    | Transfer transfer -> (
+    | Transfer (transfer, at) -> (
         match
-          run ~timed s (queue s)
-            (transfer ~dst:(address_on s dst) ~src:(address src) n)
+          run ~timed s (queue s) (transfer ~dst:at ~src:(address src) n)
         with
         | () -> ()
         | exception (Lost _ as e) ->
@@ -2954,8 +2964,7 @@ module Submission = struct
 
   let copied s ~src ~dst n =
     if not (List.memq src s.taken && List.memq dst s.taken) then
-      invalid "copied: the submission does not take %s and %s" src.name
-        dst.name;
+      invalid "copied: the submission does not take %s and %s" src.name dst.name;
     if n < 0 then invalid "copied: %d bytes" n;
     if src != dst then s.copies <- (src, dst, n) :: s.copies
 end
