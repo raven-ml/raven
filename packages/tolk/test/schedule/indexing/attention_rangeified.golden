@@ -72,11 +72,11 @@
 70 Ops.RANGE dtypes.weakint [1] (12, AxisType.REDUCE)
 71 Ops.INDEX dtypes.float [61, 67, 68, 69, 70]
 72 Ops.REDUCE dtypes.float [71, 70] (Ops.ADD, 0)
-73 Ops.STAGE dtypes.float [72, 67, 68, 69] BufferizeOpts(device="CPU", removable=False)
+73 Ops.STAGE dtypes.float [72, 67, 68, 69] BufferizeOpts(device="CPU", inlinable=False)
 74 Ops.INDEX dtypes.float [73, 62, 63, 64]
 75 Ops.RECIPROCAL dtypes.float [74]
 76 Ops.MUL dtypes.float [66, 75]
-77 Ops.STAGE dtypes.float [76, 62, 63, 64, 65] BufferizeOpts(device="CPU", removable=False)
+77 Ops.STAGE dtypes.float [76, 62, 63, 64, 65] BufferizeOpts(device="CPU", inlinable=False)
 78 Ops.RANGE dtypes.weakint [1] (4, AxisType.REDUCE)
 79 Ops.INDEX dtypes.float [77, 12, 8, 2, 78]
 80 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=128, device="CPU")

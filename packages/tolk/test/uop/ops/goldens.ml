@@ -854,11 +854,11 @@ let reprs () =
     ( "bufferize",
       bufferize
         ~opts:
-          { device = Some (Single "CPU"); addrspace = Local; removable = false }
+          { device = Some (Single "CPU"); addrspace = Local; keep = Whole }
         (float 1.) [] );
     ( "bufferize without device",
       bufferize
-        ~opts:{ device = None; addrspace = Global; removable = true }
+        ~opts:{ device = None; addrspace = Global; keep = Removable }
         (float 1.) [] );
     ("call", call ~name:"f" (sink []) []);
     ( "call returning",

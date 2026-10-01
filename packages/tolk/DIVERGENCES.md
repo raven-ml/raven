@@ -2347,22 +2347,32 @@ tolk lowers as one, replaces it.
 ## D77. A broadcast value that runs a transcendental stays stored
 
 - **tinygrad:** `schedule/indexing.py:270-276` (`run_rangeify`, which
-  stores an elementwise value or reduction whose ranges a broadcast ends)
-  and `schedule/rangeify.py:50-95` (`remove_bufferize`, which inlines that
-  store again when its value reads at most three buffers and no reduction
-  reads a buffer).
-- **tolk:** `lib/schedule/indexing.ml:503` (`runs_transcendental`) and
-  `:571` (`assign_ranges`, which marks such a store non-removable);
-  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
+  stores an elementwise value or reduction whose ranges a broadcast ends),
+  `:60` (`BufferizeOpts.removable`) and `:90` (its value), and
+  `schedule/rangeify.py:25` (`cleanup_dead_axes`) and `:50-95`
+  (`remove_bufferize`, which inlines that store again when its value reads
+  at most three buffers and no reduction reads a buffer).
+- **tolk:** `lib/schedule/indexing.ml:566` (`assign_ranges`, which records
+  the values a broadcast stores), `:646` (`run_rangeify`, which keeps those
+  that run a transcendental), `:484` (`runs_transcendental`) and `:208`
+  (`bufferize_and_index`); `lib/uop/ops.mli:256` (`keep`, in place of
+  `removable`); `lib/schedule/rangeify.ml:41` (`cleanup_dead_axes`) and `:81`
+  (`remove_bufferize`); `test/gen/tinygrad.patch`, which gives tinygrad the
+  same rule through a field `inlinable` of `BufferizeOpts`.
 - **Differs:** where a broadcast ends ranges below a value, and computing
-  the value runs `EXP2`, `LOG2`, `SIN` or `POW` (down to the reductions,
-  storage and values already stored), the store is kept: the value is
-  computed once per element and read where it is broadcast. tinygrad's cost
-  check counts buffers and reductions only, so it inlines such a value
-  into its consumer, which computes it again for every element of the
-  ranges it does not vary along: a SwiGLU's sigmoid once per output column
-  of the down projection, a softmax's exponentials once per column of the
-  product with the values, a RoPE's sines and cosines once per head.
+  the value runs `EXP2`, `LOG2`, `SIN` or `POW`, the store is kept: the
+  value is computed once per element and read where it is broadcast. The
+  walk stops at reductions, storage and values that stay stored (stores,
+  user materialisations, custom kernels' sources and values already kept),
+  and values are decided producers first, so a value that reads a kept one
+  computes no transcendental of its own and may still be inlined. A kept
+  store (`Kept`) still loses the axes its value does not vary along; only
+  `remove_bufferize` leaves it. tinygrad's cost check counts buffers and
+  reductions only, so it inlines such a value into its consumer, which
+  computes it again for every element of the ranges it does not vary along:
+  a SwiGLU's sigmoid once per output column of the down projection, a
+  softmax's exponentials once per column of the product with the values, a
+  RoPE's sines and cosines once per head.
 - **Reason:** (b). On the host, where the transcendental functions are
   polynomials, recomputing them dominates. On an M-series Mac under load
   (provisional), one MoE block of gpt-oss-20b took 182 ms a token and
@@ -2372,12 +2382,15 @@ tolk lowers as one, replaces it.
   18.4 ms and 17.1 ms a token, and attention 23.5 ms and 16.8 ms at 512
   tokens, 187 ms and 183 ms at 2048. On CUDA, gpt-oss-20b's prefill took
   9.4 s and 3.1 s warm, and its attention-score kernel went from 29k nodes
-  to 479. The cost is memory: attention keeps its exponentials, one more
-  buffer of tokens by tokens by heads while the call runs (1.10 GB and
-  2.17 GB allocated at 2048 tokens).
-- **Pinned by:** the Rangeify suite's `swiglu_down` and `attention` rows of
-  `kernel_counts.golden` and their kernel goldens, from the equally patched
-  tinygrad.
+  to 479; symo's tutorial step on kimchi took 962 ms and 161 ms. The cost is
+  memory: attention keeps its exponentials, one more buffer the size of the
+  scores (tokens by tokens by heads) while the call runs, at every length;
+  at 2048 tokens 1.10 GB and 2.17 GB were allocated.
+- **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
+  `exp_dead_axis` (a kept exponential of a row expanded to a matrix is
+  stored as the row) and `exp_cheap_consumer` (a value that reads a kept
+  exponential is inlined) rows of `kernel_counts.golden` and their kernel
+  goldens, from the equally patched tinygrad.
 
 ## D79. A chain of one operation keeps its right operand's grouping
 

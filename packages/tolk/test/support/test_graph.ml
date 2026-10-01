@@ -93,7 +93,7 @@ let kinds =
              {
                device = Some (Single "CPU");
                addrspace = Local;
-               removable = false;
+               keep = Whole;
              })
         Stage );
     ( "a kernel with every optimisation and symbolic estimates",

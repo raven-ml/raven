@@ -35,7 +35,7 @@
 33 Ops.RANGE dtypes.weakint [3] (3, AxisType.REDUCE)
 34 Ops.INDEX dtypes.float [30, 32, 33]
 35 Ops.REDUCE dtypes.float [34, 33] (Ops.ADD, 0)
-36 Ops.STAGE dtypes.float [35, 32] BufferizeOpts(device="CPU", removable=False)
+36 Ops.STAGE dtypes.float [35, 32] BufferizeOpts(device="CPU", inlinable=False)
 37 Ops.INDEX dtypes.float [36, 2]
 38 Ops.RECIPROCAL dtypes.float [37]
 39 Ops.MUL dtypes.float [31, 38]

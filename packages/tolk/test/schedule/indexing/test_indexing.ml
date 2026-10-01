@@ -731,7 +731,7 @@ let rewrites =
     [
       test "a stage lives on its source's device and may be inlined" (fun () ->
           equal (list opts_witness)
-            [ { device = Some cpu; addrspace = Global; removable = true } ]
+            [ { device = Some cpu; addrspace = Global; keep = Removable } ]
             (opts (rangeified Ops.O.(x + Ops.permute x [ 1; 0 ]))));
       test "a stage of a value placed nowhere lives on the sink's device"
         (fun () ->
@@ -739,7 +739,7 @@ let rewrites =
             exp2 (Ops.expand (Ops.float ~dtype:Float32 2.) (ints [ 4; 4 ]))
           in
           equal (list opts_witness)
-            [ { device = Some cpu; addrspace = Global; removable = true } ]
+            [ { device = Some cpu; addrspace = Global; keep = Removable } ]
             (opts (rangeified Ops.O.(c + Ops.permute c [ 1; 0 ]))));
       test "a reduction of leading axes becomes a reduction over ranges"
         (fun () ->
@@ -804,12 +804,12 @@ let rewrites =
               {
                 device = Some (Single "CPU:0");
                 addrspace = Global;
-                removable = true;
+                keep = Removable;
               };
               {
                 device = Some (Single "CPU:1");
                 addrspace = Global;
-                removable = true;
+                keep = Removable;
               };
             ]
             (opts (Indexing.run_rangeify (program "mstack_of_values"))));

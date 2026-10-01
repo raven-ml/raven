@@ -186,6 +186,13 @@ PROGRAMS = {
     "swiglu_down": lambda: (lambda gu: (gu[:, :, 0].clamp(max_=7.0) * (gu[:, :, 0] * 1.702).sigmoid()
                                         * (gu[:, :, 1].clamp(-7.0, 7.0) + 1)) @ empty(32, 64))(
         (empty(7, 64) @ empty(64, 64)).reshape(7, 32, 2)),
+    # an exponential of a row expanded to a matrix, read where it is broadcast:
+    # stored as the row, it computes 8 exponentials
+    "exp_dead_axis": lambda: (empty(8).reshape(1, 8).expand(4, 8).exp()[:, :, None] * empty(8, 3)).sum(1),
+    # an exponential read where it is broadcast, and a cheap value of it read
+    # the same way, which reads the stored exponential
+    "exp_cheap_consumer": lambda: (lambda p: (p[:, None] * empty(8, 4)).sum(0) + ((p + 1)[:, None] * empty(8, 4)).sum(0))(
+        empty(8).exp()),
     # gathers at loaded indices, read where they are broadcast or twice, and a
     # masked sum that is no gather
     "gather_broadcast": lambda: empty(8, 32) @ empty(20, 32)[empty(12, dtype=dtypes.int)].T,

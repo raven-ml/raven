@@ -258,16 +258,28 @@ val pp_program_info : Format.formatter -> program_info -> unit
 (** [pp_program_info] formats
     [ProgramInfo(global_size=(1, 1, 1), local_size=(1, 1, 1), vars=(), ...)]. *)
 
+(** What later passes may do to a buffer an {!Op.Stage} makes. *)
+type keep =
+  | Removable
+      (** Drop the axes its value does not vary along, and inline it back
+          where that costs little. *)
+  | Kept  (** Drop the axes its value does not vary along, and keep it. *)
+  | Whole
+      (** Nothing: a value the user materialises, or a custom kernel reads,
+          is stored as it is. *)
+
 type bufferize_opts = {
   device : device option;  (** Where the new buffer lives. *)
   addrspace : Dtype.addr_space;  (** Its address space. *)
-  removable : bool;  (** Whether a later pass may inline it back. *)
+  keep : keep;  (** What later passes may do to it. *)
 }
 (** The type for the arguments of an {!Op.Stage} that makes a buffer. *)
 
 val pp_bufferize_opts : Format.formatter -> bufferize_opts -> unit
 (** [pp_bufferize_opts] formats
-    [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL, removable=True)].
+    [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL, removable=True,
+    inlinable=True)]: [removable] is [false] for {!Whole} only, and
+    [inlinable] for {!Kept} only.
 *)
 
 type hcq_kernel = {

@@ -345,7 +345,7 @@ let fix_group_for_reduce x =
             | [] -> assert false)
           reduce_gfr
       in
-      let opts = { device = None; addrspace = Dtype.Local; removable = true } in
+      let opts = { device = None; addrspace = Dtype.Local; keep = Removable } in
       let buf =
         index
           (bufferize ~opts ret (upstream_locals @ reduce_gfr))

@@ -75,6 +75,8 @@ let programs =
     "elementwise_three";
     "embedding";
     "swiglu_down";
+    "exp_dead_axis";
+    "exp_cheap_consumer";
     "gather_broadcast";
     "gather_read_twice";
     "gather_rotary";
@@ -536,7 +538,7 @@ let rules =
           let r = Ops.range ~axis_type:Loop (Sym v) [ 0 ] in
           let r' = Ops.range ~axis_type:Loop (Sym v) [ 1 ] in
           let opts : Ops.bufferize_opts =
-            { device = Some cpu; addrspace = Global; removable = false }
+            { device = Some cpu; addrspace = Global; keep = Whole }
           in
           let staged =
             Ops.bufferize ~opts (Ops.exp2 (Ops.index out [ r ])) [ r ]

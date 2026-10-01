@@ -3464,6 +3464,10 @@ schedule/rangeify/embedding.golden
 schedule/rangeify/embedding_kernels.golden
 schedule/rangeify/empty_sum.golden
 schedule/rangeify/empty_sum_kernels.golden
+schedule/rangeify/exp_cheap_consumer.golden
+schedule/rangeify/exp_cheap_consumer_kernels.golden
+schedule/rangeify/exp_dead_axis.golden
+schedule/rangeify/exp_dead_axis_kernels.golden
 schedule/rangeify/expand_before_cast.golden
 schedule/rangeify/expand_before_cast_kernels.golden
 schedule/rangeify/expand_kept.golden

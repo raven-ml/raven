@@ -38,7 +38,7 @@ let always_run u = op u = Op.Noop
 let cleanup_dead_axes b =
   let value = nth b 0 in
   (* An after is storage: its ranges say how consumers read it. *)
-  if (not (opts b).removable) || always_run value || op value = Op.After then
+  if (opts b).keep = Whole || always_run value || op value = Op.After then
     None
   else
     let axes = zip (shape b) (List.tl (src b)) in
@@ -77,8 +77,8 @@ let remove_bufferize src buf idx =
          (fun x -> List.mem (op x) Op.[ Range; Const ])
          (List.tl (Ops.src buf)))
   then invalid_arg "a stage's ranges are ranges or constants";
-  (* A user's materialisation is never removed. *)
-  if always_run src || not (opts buf).removable then None
+  (* A user's materialisation, and a value kept, are never removed. *)
+  if always_run src || (opts buf).keep <> Removable then None
   else
     (* The cost: the buffers the value reads, and whether a reduction reads
        one. *)
@@ -313,7 +313,7 @@ let limit_bufs ctx root =
           in
           let ends = List.map fresh orig in
           let opts =
-            { device = device s; addrspace = Dtype.Global; removable = true }
+            { device = device s; addrspace = Dtype.Global; keep = Removable }
           in
           index
             (bufferize ~opts (substitute s (List.combine orig ends)) ends)

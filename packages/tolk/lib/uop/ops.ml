@@ -242,10 +242,12 @@ type param_arg = {
   align : int;
 }
 
+type keep = Removable | Kept | Whole
+
 type bufferize_opts = {
   device : device option;
   addrspace : Dtype.addr_space;
-  removable : bool;
+  keep : keep;
 }
 
 type wmma = {
@@ -440,7 +442,7 @@ let equal_program_info (p0 : program_info) (p1 : program_info) =
 let equal_bufferize_opts (b0 : bufferize_opts) (b1 : bufferize_opts) =
   Option.equal equal_device b0.device b1.device
   && b0.addrspace = b1.addrspace
-  && Bool.equal b0.removable b1.removable
+  && b0.keep = b1.keep
 
 let equal_hcq_kernel (k0 : hcq_kernel) (k1 : hcq_kernel) =
   k0.devices = k1.devices
@@ -525,7 +527,7 @@ let hash_arg (a : arg) =
   | Queue q -> h (13, q.devices, q.queue)
   | Region r -> h (20, r.name, r.align)
   | Code c -> h (14, c.code, Dtype.hash c.dtype)
-  | Bufferize b -> h (15, b.device, b.removable)
+  | Bufferize b -> h (15, b.device, b.keep)
   | Kernel k -> h (16, k.name, k.beam)
   | Program p -> h (17, p.globals, List.map hash_sint p.global_size)
   | Call c -> h (18, c.name, c.precompile)
@@ -790,10 +792,11 @@ let repr_param_arg (p : param_arg) =
 let pp_param_arg ppf p = Format.pp_print_string ppf (repr_param_arg p)
 
 let repr_bufferize_opts (b : bufferize_opts) =
-  strf "BufferizeOpts(device=%s, addrspace=%s, removable=%s)"
+  strf "BufferizeOpts(device=%s, addrspace=%s, removable=%s, inlinable=%s)"
     (repr_option repr_device b.device)
     (repr_addr_space b.addrspace)
-    (repr_bool b.removable)
+    (repr_bool (b.keep <> Whole))
+    (repr_bool (b.keep <> Kept))
 
 let pp_bufferize_opts ppf b = Format.pp_print_string ppf (repr_bufferize_opts b)
 
