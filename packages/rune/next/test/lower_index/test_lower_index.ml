@@ -408,6 +408,13 @@ let windows =
                 ~stride:[| 1 |] ~dilation:[| 1 |]
                 ~padding:[| (0, 0) |]
                 (Nx.full Nx.float32 [| 2; 2 |] (-0.))));
+      test "a fold whose windows along an axis read only padding is zeros"
+        (fun () ->
+          agrees (fun () ->
+              Nx.combine_patches ~output_size:[| 3; 1 |] ~kernel_size:[| 2; 2 |]
+                ~stride:[| 1; 1 |] ~dilation:[| 2; 2 |]
+                ~padding:[| (0, 0); (1, 1) |]
+                (Nx.create Nx.float32 [| 4; 1 |] [| 1.; 2.; 3.; Float.nan |])));
       test "a single window of -0. folds to +0." (fun () ->
           agrees (fun () ->
               Nx.combine_patches ~output_size:[| 2 |] ~kernel_size:[| 1 |]

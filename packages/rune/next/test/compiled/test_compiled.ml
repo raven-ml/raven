@@ -1969,6 +1969,51 @@ let edges d =
           }
         in
         exact_of (both d (fold w x)));
+    test "a fold whose windows along an axis read only padding is zeros"
+      (fun () ->
+        let geometry ~kernel_size ~stride ~dilation ~padding ~spatial x =
+          let w =
+            {
+              leading = [||];
+              kernel_size;
+              stride;
+              dilation;
+              padding;
+              spatial;
+              count = 1;
+            }
+          in
+          exact_of (both d (fold w x))
+        in
+        geometry ~kernel_size:[| 2; 2 |] ~stride:[| 1; 1 |] ~dilation:[| 2; 2 |]
+          ~padding:[| (0, 0); (1, 1) |]
+          ~spatial:[| 3; 1 |]
+          (array_of
+          @@ Nx.create Nx.float32 [| 4; 1 |] [| 1.; 2.; 3.; Float.nan |]);
+        geometry ~kernel_size:[| 1; 1 |] ~stride:[| 2; 1 |] ~dilation:[| 1; 2 |]
+          ~padding:[| (1, 0); (1, 0) |]
+          ~spatial:[| 1; 2 |]
+          (array_of @@ Nx.create Nx.float32 [| 1; 3 |] [| 1.; -0.; 3. |]);
+        geometry ~kernel_size:[| 2 |] ~stride:[| 1 |] ~dilation:[| 2 |]
+          ~padding:[| (1, 1) |]
+          ~spatial:[| 1 |]
+          (array_of @@ Nx.create Nx.int32 [| 2; 1 |] [| 7l; -3l |]);
+        geometry ~kernel_size:[| 1; 3 |] ~stride:[| 2; 1 |] ~dilation:[| 1; 1 |]
+          ~padding:[| (1, 0); (0, 0) |]
+          ~spatial:[| 1; 5 |]
+          (array_of
+          @@ Nx.create Nx.float32 [| 3; 3 |]
+               [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]);
+        geometry ~kernel_size:[| 1; 2 |] ~stride:[| 2; 1 |] ~dilation:[| 1; 1 |]
+          ~padding:[| (1, 0); (0, 0) |]
+          ~spatial:[| 1; 3 |]
+          (array_of @@ Nx.create Nx.int8 [| 2; 2 |] [| 1; -128; 3; 4 |]);
+        geometry ~kernel_size:[| 1; 2 |] ~stride:[| 2; 2 |] ~dilation:[| 1; 1 |]
+          ~padding:[| (1, 0); (1, 1) |]
+          ~spatial:[| 1; 3 |]
+          (host_array
+             (Nx.broadcast_to [| 2; 2 |]
+                (Nx.create Nx.float32 [| 1; 2 |] [| 1.; 2. |]))));
     test "a fold of int8 overlapping windows compiles" (fun () ->
         let x = array_of (Nx.create Nx.int8 [| 2; 2 |] [| 0; -128; 0; 0 |]) in
         let w =

@@ -227,29 +227,48 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
         cut ~kernel:kernel_size.(a) ~stride:stride.(a) ~dilation:dilation.(a)
           ~size:(output_size.(a) + before + after))
   in
-  let shape f = ints (kept @ List.concat_map f cuts) in
-  let reshape u f = Ops.reshape u (shape f) in
-  let pad_to u f = Ops.pad_to u (List.map Option.some (shape f)) in
-  let x =
-    Ops.reshape x
-      (ints
-         (kept @ Array.to_list kernel_size @ List.map (fun c -> c.windows) cuts))
+  (* Along an axis whose every window reads only padding, no element lands in
+     the output, which is zeros. *)
+  let lands a c =
+    let before = fst padding.(a) in
+    List.exists
+      (fun w ->
+        List.exists
+          (fun j ->
+            let p = (w * c.stride) + (j * dilation.(a)) in
+            p >= before && p < before + output_size.(a))
+          (List.init c.kernel Fun.id))
+      (List.init c.windows Fun.id)
   in
-  let x =
-    Ops.permute x
-      (List.init lead Fun.id
-      @ List.concat (List.init k (fun a -> [ lead + a; lead + k + a ])))
-  in
-  let x = reshape x (fun c -> [ c.kernel; c.windows; 1 ]) in
-  let x = pad_to x (fun c -> [ c.kernel; c.windows; c.stride ]) in
-  let x = reshape x (fun c -> [ c.kernel; c.windows * c.stride ]) in
-  let x = pad_to x (fun c -> [ c.kernel; c.row ]) in
-  let x = reshape x (fun c -> [ c.kernel * c.row ]) in
-  let x = pad_to x (fun c -> [ c.copies * c.size ]) in
-  let x = reshape x (fun c -> [ c.copies; c.size ]) in
-  Ops.shrink
-    (Lower_reduce.reduce Sum ~axes:(List.init k (fun a -> lead + (2 * a))) x)
-    (List.map (fun _ -> None) kept
-    @ List.init k (fun a ->
-        let before = fst padding.(a) in
-        Some (Ops.Int before, Ops.Int (before + output_size.(a)))))
+  if not (List.for_all Fun.id (List.mapi lands cuts)) then
+    Ops.expand
+      (Ops.const ~dtype:(Ops.dtype x) (`Int Z.zero))
+      (ints (kept @ Array.to_list output_size))
+  else
+    let shape f = ints (kept @ List.concat_map f cuts) in
+    let reshape u f = Ops.reshape u (shape f) in
+    let pad_to u f = Ops.pad_to u (List.map Option.some (shape f)) in
+    let x =
+      Ops.reshape x
+        (ints
+           (kept @ Array.to_list kernel_size
+           @ List.map (fun c -> c.windows) cuts))
+    in
+    let x =
+      Ops.permute x
+        (List.init lead Fun.id
+        @ List.concat (List.init k (fun a -> [ lead + a; lead + k + a ])))
+    in
+    let x = reshape x (fun c -> [ c.kernel; c.windows; 1 ]) in
+    let x = pad_to x (fun c -> [ c.kernel; c.windows; c.stride ]) in
+    let x = reshape x (fun c -> [ c.kernel; c.windows * c.stride ]) in
+    let x = pad_to x (fun c -> [ c.kernel; c.row ]) in
+    let x = reshape x (fun c -> [ c.kernel * c.row ]) in
+    let x = pad_to x (fun c -> [ c.copies * c.size ]) in
+    let x = reshape x (fun c -> [ c.copies; c.size ]) in
+    Ops.shrink
+      (Lower_reduce.reduce Sum ~axes:(List.init k (fun a -> lead + (2 * a))) x)
+      (List.map (fun _ -> None) kept
+      @ List.init k (fun a ->
+          let before = fst padding.(a) in
+          Some (Ops.Int before, Ops.Int (before + output_size.(a)))))

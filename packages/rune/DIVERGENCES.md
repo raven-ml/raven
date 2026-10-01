@@ -553,14 +553,19 @@ target's run lands.
   in reverse order, a shrink by a pad of zeros, and the copies of the input
   summed, which sums the windows where they overlap, from `+0.`, at `float32`
   or wider and rounded once. Integers wrap; booleans are whether any window
-  holds.
+  holds. A fold whose windows along some axis read only padding is zeros, a
+  constant: no element of its input lands in the output, and the kernel that
+  sums nothing is one whose every lane reads an `Invalid` index, which tolk
+  cannot lower.
 - **nx:** `nx_backend.mli`, `fold`: the windows put back, summed where they
   overlap.
 - **Class:** rounded sum.
 - **Reason:** (b).
 - **Pinned by:** `windows › fold › *`,
   `windows › overlapping windows of -0. fold to +0.`,
-  `› a single window of -0. folds to +0.`.
+  `› a single window of -0. folds to +0.`, `› a fold whose windows along an
+  axis read only padding is zeros`; `Compiled › edges › a fold whose windows
+  along an axis read only padding is zeros`.
 
 ### L1. Products widen before they multiply
 
