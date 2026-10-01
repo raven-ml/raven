@@ -230,13 +230,6 @@ let scope ~renderer =
 
 let devices s = List.rev s.names
 let captures s = List.rev_map (fun c -> (c.buffer, c.buffers)) s.captures
-
-let held s =
-  List.filter_map
-    (fun c ->
-      match c.storage with Placed st -> Some st | Host_buffer _ -> None)
-    s.captures
-
 let writes s = s.writes
 
 (* The name that [s]'s nodes give [d]. *)

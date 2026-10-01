@@ -193,10 +193,6 @@ val captures : scope -> (Ops.t * Nx_device.Buffer.t list) list
     through the last one it reaches; its phase is where that run starts within
     16 bytes ({!Tolk_next.Ops.param_arg}). *)
 
-val held : scope -> Nx.Repr.Storage.t list
-(** [held s] is the placed storage that [s]'s captures bind: what a program of
-    [s] pins ({!Nx.Repr.Storage.pin}). Host storage records no binding. *)
-
 type write = {
   result : Ops.t;  (** The node of the write's result. *)
   into : Ops.t;  (** The node of the value it writes into. *)

@@ -8,10 +8,10 @@ module Op = Tolk_next.Op
 module Engine = Tolk_next_engine
 module Ptree = Nx.Ptree
 module Repr = Nx.Repr
-module Storage = Nx.Repr.Storage
 module Placement = Nx.Placement
 module View = Nx_array.View
 module B = Nx_device.Buffer
+module Claim = Nx_device.Buffer.Claim
 
 let debug =
   match Sys.getenv_opt "RUNE_JIT_DEBUG" with
@@ -37,13 +37,10 @@ type layout = {
 }
 
 (* A leaf as its parameter binds it: the value, read on the host for one on the
-   disk, whose pages it borrows; the storage a call claims for a placed one;
-   whether it is a host value; its view, its storage's buffers, the runs of them
-   it binds and its layout. *)
+   disk, whose pages it borrows; its view, its storage's buffers, the runs of
+   them it binds and its layout. *)
 type leaf = {
   x : Nx.packed;
-  cell : Storage.t option;
-  host : bool;
   view : View.t;
   buffers : B.t list;
   runs : B.t list;
@@ -53,12 +50,6 @@ type leaf = {
 let disk = Nx.Device.of_runtime Nx_device.disk
 
 let leaf (Nx.P t) =
-  let cell, host =
-    match Repr.v t with
-    | Host _ -> (None, true)
-    | Placed r -> (Some (Repr.Placed.storage r), false)
-    | Traced _ -> (None, false)
-  in
   let t =
     match Nx.Placement.devices (Nx.placement t) with
     | [ d ] when Nx.Device.equal d disk -> Nx.place Nx.Placement.host t
@@ -86,8 +77,24 @@ let leaf (Nx.P t) =
         }
       in
       let runs = List.map (Lower.run tdt view) buffers in
-      { x; cell; host; view; buffers; runs; layout }
-  | _ -> { x; cell; host; view; buffers; runs = []; layout }
+      { x; view; buffers; runs; layout }
+  | _ -> { x; view; buffers; runs = []; layout }
+
+(* Whether [l]'s view covers its storage, C-contiguous from its first element: a
+   result written over the storage is then the whole of it. *)
+let covers l =
+  let length = match l.buffers with b :: _ -> B.length b | [] -> 0 in
+  View.is_c_contiguous l.view
+  && View.offset l.view = 0
+  && View.numel l.view = length
+
+(* Whether a leaf of layout [l] is its run, C-contiguous from the run's first
+   element: a result of its size written over the run is then the whole of it,
+   and a copy of the run stands for it. *)
+let starts_its_run (l : layout) =
+  match l.view with
+  | Some v -> View.is_c_contiguous v && View.offset v = 0
+  | None -> false
 
 (* Keys *)
 
@@ -172,6 +179,31 @@ let difference paths k k' =
       first 0 (k.layouts, k'.layouts)
 
 (* Programs *)
+
+(* Pins. A program reads its captures on every call, so no call lends their
+   memory to a result: it copies instead. The pins are the captures of the
+   programs alive, held weakly through the list each program keeps. *)
+module Pins = struct
+  let lock = Mutex.create ()
+  let pinned : B.t list Weak.t list ref = ref []
+
+  let add = function
+    | [] -> ()
+    | captured ->
+        let w = Weak.create 1 in
+        Weak.set w 0 (Some captured);
+        Mutex.protect lock (fun () ->
+            pinned := w :: List.filter (fun w -> Weak.check w 0) !pinned)
+
+  let hold buffers =
+    let held w =
+      match Weak.get w 0 with
+      | Some captured ->
+          List.exists (fun c -> List.exists (B.overlaps c) buffers) captured
+      | None -> false
+    in
+    Mutex.protect lock (fun () -> List.exists held !pinned)
+end
 
 type output = Empty | Fresh of int | Lent of int
 
@@ -391,7 +423,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
     let (Nx.P x) = leaves.(i).x in
     let (Nx.P y) = ys.(j) in
     let l = leaves.(i).layout in
-    consumed.(i) && leaves.(i).runs <> []
+    consumed.(i) && leaves.(i).runs <> [] && starts_its_run l
     && Nx_dtype.equal (Nx.dtype x) (Nx.dtype y)
     && numel l.shape = numel (Nx.shape y)
     && Placement.equal l.at (Nx.placement y)
@@ -604,8 +636,6 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
     Ptree.rebuild result_s ~like:y
       (Array.to_list (Array.map (fun r -> r.like) results))
   in
-  let held = Lower.held s in
-  List.iter Storage.pin held;
   let p =
     {
       linked;
@@ -617,10 +647,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
       rebuild = Ptree.rebuild result_s ~like;
     }
   in
-  (* A consumed storage is retired by the collector once nothing reaches it. *)
-  Gc.finalise
-    (fun _ -> List.iter (fun st -> ignore (Storage.unpin st : bool)) held)
-    p;
+  Pins.add p.captured;
   p
 
 (* Calls *)
@@ -634,33 +661,19 @@ let why path =
 let reaches l l' =
   List.exists (fun r -> List.exists (B.overlaps r) l'.runs) l.runs
 
-(* [check entry consumed paths leaves] refuses a consumed leaf that does not
-   cover its whole storage or whose storage another leaf reaches. *)
+(* [check entry consumed paths leaves] refuses a consumed leaf whose storage
+   another leaf reaches. *)
 let check entry consumed paths leaves =
   Array.iteri
     (fun i l ->
-      if consumed.(i) then begin
-        let length = match l.buffers with b :: _ -> B.length b | [] -> 0 in
-        let whole =
-          View.numel l.view = length
-          && (length = 0 || View.extent l.view = (0, length))
-          && ((not l.host) || List.for_all B.spans l.buffers)
-        in
-        if not whole then
-          invalid_argf
-            "%s: %s is consumed and does not cover its whole storage; consume \
-             Nx.copy of it"
-            entry paths.(i);
+      if consumed.(i) then
         Array.iteri
           (fun k l' ->
             if k <> i && reaches l l' then
               invalid_argf "%s: %s is consumed and %s reaches its storage" entry
                 paths.(i) paths.(k))
-          leaves
-      end)
+          leaves)
     leaves
-
-type claim = { storage : Storage.t; mutable exclusive : bool }
 
 let fresh at dt shape =
   let n = numel (local at shape) in
@@ -678,10 +691,19 @@ let value r bufs =
     Nx.P
       (Repr.Placed.v r.at dtype
          (View.create (local r.at r.shape))
-         (Storage.v r.at bufs))
+         (Repr.Storage.v r.at bufs))
 
-(* [run entry p leaves] runs [p] on [leaves]: it claims their storage, allocates
-   the results', consumes the consumed leaves, and queues [p]. *)
+(* The buffers a call claims for a leaf: the runs it binds, or its storage's
+   buffers when it binds none. *)
+let claimed l = match l.runs with [] -> l.buffers | runs -> runs
+
+(* [run entry p leaves] runs [p] on [leaves] under claims on their memory. A
+   consumed leaf whose buffers span their memory and that no other live program
+   captures is consumed. It is lent to its result if it also covers its storage
+   and its memory is exclusive, and then consumed before the run, so that no
+   work queued on its old handles reads the write. Otherwise its result is a
+   copy, and it is consumed after the run. A leaf over a window of its memory,
+   or captured by another program, is copied and stays live. *)
 let run entry p leaves =
   let n = Array.length leaves in
   Array.iteri
@@ -693,36 +715,29 @@ let run entry p leaves =
         invalid_argf "%s: %s is consumed and the function captures its storage"
           entry p.paths.(i))
     leaves;
-  let claims = Array.make n None in
-  let finally () =
-    Array.iter
-      (Option.iter (fun c ->
-           if c.exclusive then ignore (Storage.finish c.storage : bool);
-           Storage.release c.storage))
-      claims
+  let read, donate =
+    Array.fold_right
+      (fun (i, l) (read, donate) ->
+        if p.consumed.(i) then (read, claimed l :: donate)
+        else (claimed l @ read, donate))
+      (Array.mapi (fun i l -> (i, l)) leaves)
+      ([], [])
   in
-  Fun.protect ~finally @@ fun () ->
-  Array.iteri
-    (fun i l ->
-      Option.iter
-        (fun storage ->
-          Storage.borrow storage;
-          let c = { storage; exclusive = false } in
-          claims.(i) <- Some c;
-          if p.consumed.(i) then begin
-            Storage.upgrade storage;
-            c.exclusive <- true
-          end)
-        l.cell)
-    leaves;
-  (* Whether the consumed leaf [i] can lend its memory on this call. *)
-  let own i =
+  Claim.with_ ~read ~donate @@ fun c ->
+  let consumable =
+    Array.mapi
+      (fun i l ->
+        p.consumed.(i)
+        && List.for_all B.spans l.buffers
+        && not (Pins.hold l.buffers))
+      leaves
+  in
+  let lendable i =
     let l = leaves.(i) in
-    List.for_all (fun b -> B.spans b && not (B.is_borrowed b)) l.buffers
-    &&
-    match claims.(i) with
-    | Some c -> Storage.pins c.storage = 0
-    | None -> true
+    consumable.(i) && covers l && List.for_all (Claim.exclusive c) (claimed l)
+  in
+  let consume i =
+    List.map (Claim.consume c ~why:(why p.paths.(i))) leaves.(i).buffers
   in
   let lends = Array.make n false in
   let storage =
@@ -731,32 +746,17 @@ let run entry p leaves =
         let (Nx.P t) = r.like in
         match r.out with
         | Empty | Fresh _ -> fresh r.at (Nx.dtype t) r.shape
-        | Lent i when own i ->
+        | Lent i when lendable i ->
             lends.(i) <- true;
             []
         | Lent i ->
             let copy = fresh r.at (Nx.dtype t) r.shape in
-            List.iter2 (fun src dst -> B.copy ~src ~dst) leaves.(i).buffers copy;
+            List.iter2 (fun src dst -> B.copy ~src ~dst) leaves.(i).runs copy;
             copy)
       p.results
   in
   let bufs =
-    Array.mapi
-      (fun i l ->
-        if not p.consumed.(i) then l.runs
-        else begin
-          Option.iter
-            (fun c -> Storage.consume c.storage ~path:p.paths.(i))
-            claims.(i);
-          if lends.(i) || l.host then
-            List.map
-              (fun b ->
-                B.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-                    B.Claim.consume c ~why:(why p.paths.(i)) b))
-              l.buffers
-          else l.buffers
-        end)
-      leaves
+    Array.mapi (fun i l -> if lends.(i) then consume i else l.runs) leaves
   in
   let results =
     Array.mapi
@@ -782,6 +782,9 @@ let run entry p leaves =
         p.results;
       Engine.run linked slots)
     p.linked;
+  Array.iteri
+    (fun i _ -> if consumable.(i) && not lends.(i) then ignore (consume i))
+    leaves;
   if debug then
     Array.iteri
       (fun i _ ->

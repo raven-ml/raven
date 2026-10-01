@@ -680,6 +680,91 @@ let results =
 
 let consumed_message a = message (fun () -> Nx.to_array a)
 
+(* The host value of the [n] floats of [b] from its [first]. *)
+let window b first n =
+  Nx.Repr.host
+    {
+      Nx_array.dtype = Nx.float32;
+      view = Nx_array.View.create [| n |];
+      buffer = Nx_device.Buffer.view b ~offset:(4 * first) Float32 n;
+    }
+
+let floats_buffer v =
+  let b = Nx_device.Buffer.create Nx_device.host Float32 (Array.length v) in
+  let ba = Nx_device.Buffer.bigarray Bigarray.float32 b in
+  Array.iteri (Bigarray.Array1.set ba) v;
+  b
+
+let test_consumed_window () =
+  let b = floats_buffer [| 1.; -2.; 3.; 0.5; 2.; 0.; -1.; 4. |] in
+  let first = window b 0 4 and second = window b 4 4 in
+  let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) second in
+  equal floats (Nx.add_s (y ()) 1.) r;
+  equal ~msg:"the window" floats (y ()) second;
+  equal ~msg:"its sibling" floats (x ()) first
+
+(* A call consuming a slice of [n] elements at [offset] of a longer value at
+   [at], whose storage it consumes. *)
+let consumed_slice ~at offset n =
+  let parent =
+    Nx.place at
+      (Nx.init Nx.float32 [| offset + n + 3 |] (fun i -> Float.of_int i.(0)))
+  in
+  let a = Nx.slice [ R (offset, offset + n) ] parent in
+  let f a = Nx.add_s (Nx.mul_s a 2.) 1. in
+  let expected =
+    f (Nx.init Nx.float32 [| n |] (fun i -> Float.of_int (offset + i.(0))))
+  in
+  let r = Rune.jit consumes f a in
+  equal ~msg:"the result" floats expected (Nx.place Nx.Placement.host r);
+  raises_match ~msg:"the parent" (Exn.invalid_arg ~substring:"consumed at 0")
+    (fun () -> Nx.to_array parent)
+
+(* The memory of host value [a]. *)
+let memory a =
+  match Nx.Repr.v a with
+  | Host h -> h.buffer
+  | Placed _ | Traced _ -> fail "expected a host value"
+
+(* Another domain's read of [a], in flight while a call consumes it, is a read
+   claim on its memory: the call cannot have it exclusive, so it computes from a
+   copy, and the read sees the elements it started with. *)
+let test_consumed_while_read () =
+  let a = x () in
+  let m = memory a in
+  let address = Nx_device.Buffer.address m in
+  let elements = Nx_device.Buffer.bigarray Bigarray.float32 m in
+  Nx_device.Buffer.Claim.read m;
+  let r =
+    Fun.protect ~finally:(fun () -> Nx_device.Buffer.Claim.release m)
+    @@ fun () ->
+    let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+    equal ~msg:"the read's elements" (array float_exact) [| 1.; -2.; 3.; 0.5 |]
+      (Array.init 4 (Bigarray.Array1.get elements));
+    r
+  in
+  is_false ~msg:"lent" (Witness.addresses r = [ address ]);
+  equal floats (Nx.add_s (x ()) 1.) r;
+  raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+      Nx.to_array a)
+
+(* A call that lends [a] holds its memory exclusive while it runs; another
+   domain's read of [a] then raises at once and never sees the write. *)
+let test_read_while_lent () =
+  let a = x () in
+  let m = memory a in
+  Nx_device.Buffer.Claim.read m;
+  is_true ~msg:"exclusive" (Nx_device.Buffer.Claim.try_exclusive m);
+  Fun.protect
+    ~finally:(fun () ->
+      Nx_device.Buffer.Claim.finish m;
+      Nx_device.Buffer.Claim.release m)
+    (fun () ->
+      raises_match (Exn.invalid_arg ~substring:"in use") (fun () -> Nx.neg a);
+      raises_match (Exn.invalid_arg ~substring:"in use") (fun () ->
+          Nx.to_array a));
+  equal floats (x ()) a
+
 let consumption =
   group "consumption"
     [
@@ -708,24 +793,46 @@ let consumption =
           let v = Nx.slice [ R (0, 2) ] a in
           ignore (Rune.jit consumes Nx.neg a);
           raises_invalid_arg (fun () -> Nx.to_array v));
-      test "a consumed slice raises before any work, consuming nothing"
-        (fun () ->
-          let a = Nx.slice [ R (0, 2) ] (x ()) in
-          raises_match
-            (Exn.invalid_arg
-               ~substring:
-                 "0 is consumed and does not cover its whole storage; consume \
-                  Nx.copy of it") (fun () -> Rune.jit consumes Nx.neg a);
-          equal floats (Nx.slice [ R (0, 2) ] (x ())) a);
       test
-        "a consumed broadcast of one element of its storage raises before any \
-         work" (fun () ->
+        "a consumed slice is computed from a copy, and its storage dies with it"
+        (fun () ->
+          let whole = x () in
+          let a = Nx.slice [ R (0, 2) ] whole in
+          let r = Rune.jit consumes Nx.neg a in
+          equal floats (Nx.neg (Nx.slice [ R (0, 2) ] (x ()))) r;
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array a);
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array whole));
+      test
+        "a consumed broadcast of one element of its storage is computed from a \
+         copy, and dies" (fun () ->
           let a = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
           let v = Nx.broadcast_to [| 2 |] (Nx.slice [ R (0, 1) ] a) in
-          raises_match
-            (Exn.invalid_arg ~substring:"does not cover its whole storage")
-            (fun () -> Rune.jit consumes Nx.neg v);
-          equal floats (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) a);
+          equal floats
+            (Nx.create Nx.float32 [| 2 |] [| -1.; -1. |])
+            (Rune.jit consumes Nx.neg v);
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array v));
+      cases "a consumed slice at an offset is computed into storage of its own"
+        ~name:(fun (o, n) -> Printf.sprintf "%d elements at %d" n o)
+        [ (1, 1); (1, 7); (5, 7); (5, 1027) ]
+        (fun (offset, n) -> consumed_slice ~at:Nx.Placement.host offset n);
+      test "a call that consumes zeros as its state runs, and the state dies"
+        (fun () ->
+          let state = Nx.zeros Nx.float32 [| 4 |] in
+          let r = Rune.jit consumes (fun s -> Nx.add s (x ())) state in
+          equal floats (x ()) r;
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array state));
+      test
+        "a consumed window of a larger memory is computed from a copy, and it \
+         and its siblings stay live"
+        test_consumed_window;
+      test "a consumed value another domain reads is copied, not lent"
+        test_consumed_while_read;
+      test "a value read while a call holds its memory exclusive raises busy"
+        test_read_while_lent;
       test
         "a consumed leaf that another leaf reaches raises before any work, \
          naming both paths" (fun () ->
@@ -1228,10 +1335,12 @@ let together fs =
 
 (* Captures *)
 
-let storage_of x =
-  match Nx.Repr.v x with
-  | Placed p -> Nx.Repr.Placed.storage p
-  | Host _ | Traced _ -> fail "expected a placed value"
+(* Whether a call that consumes [w] lends its storage to its result, which it
+   does unless a program pins it. It consumes [w]. *)
+let lends w =
+  let before = Witness.addresses w in
+  let r = Rune.jit consumes (fun a -> Nx.add_s a 0.) w in
+  Witness.addresses r = before
 
 let captures =
   group "captures"
@@ -1246,7 +1355,7 @@ let captures =
           let w = placed d1 (Nx.scalar Nx.float32 3.) in
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           equal close (Nx.mul_s (x ()) 3.) (host (g (placed d1 (x ()))));
-          equal int 0 (Nx.Repr.Storage.pins (storage_of w)));
+          is_true ~msg:"not pinned" (lends w));
       test "a host capture of a call on a device is placed there once"
         (fun () ->
           let w = y () in
@@ -1264,14 +1373,15 @@ let captures =
           is_true (Nx.Placement.equal (on d1) (Nx.placement r));
           equal close (Nx.mul (x ()) (y ())) (host r));
       test
-        "a host capture another call consumes makes the program raise, naming \
-         its path" (fun () ->
+        "a capture another call consumes is computed from a copy and stays \
+         live for the program" (fun () ->
           let w = y () in
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           ignore (g (x ()));
-          ignore (Rune.jit consumes Nx.neg w);
-          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
-              g (x ())));
+          equal ~msg:"the consuming call" floats (Nx.neg (y ()))
+            (Rune.jit consumes Nx.neg w);
+          equal ~msg:"the program" close (Nx.mul (x ()) (y ())) (g (x ()));
+          equal ~msg:"the capture" floats (y ()) w);
       test "two compiled functions share one captured buffer" (fun () ->
           let w = placed d1 (y ()) in
           let g1 = Rune.jit' (fun a -> Nx.mul a w)
@@ -1279,7 +1389,10 @@ let captures =
           let a = placed d1 (x ()) in
           equal close (Nx.mul (x ()) (y ())) (host (g1 a));
           equal close (Nx.add (x ()) (y ())) (host (g2 a));
-          equal ~msg:"pins" int 2 (Nx.Repr.Storage.pins (storage_of w)));
+          is_false ~msg:"pinned" (lends w);
+          equal ~msg:"the program after" close
+            (Nx.mul (x ()) (y ()))
+            (host (g1 a)));
       test "a bound capture read between calls stays bound" (fun () ->
           let w = placed d1 (y ()) in
           let g = Rune.jit' (fun a -> Nx.mul a w) in
@@ -1287,7 +1400,10 @@ let captures =
           ignore (g a);
           equal floats (y ()) (host w);
           equal close (Nx.mul (x ()) (y ())) (host (g a));
-          equal ~msg:"pins" int 1 (Nx.Repr.Storage.pins (storage_of w)));
+          is_false ~msg:"pinned" (lends w);
+          equal ~msg:"the program after" close
+            (Nx.mul (x ()) (y ()))
+            (host (g a)));
       test "a capture is released with the compiled function that binds it"
         (fun () ->
           let w = placed d1 (y ()) in
@@ -1297,7 +1413,21 @@ let captures =
           in
           run ();
           Gc.full_major ();
-          equal ~msg:"pins" int 0 (Nx.Repr.Storage.pins (storage_of w)));
+          is_true ~msg:"unpinned" (lends w));
+      test
+        "a dropped compiled function's captures are back in allocated after \
+         one collection and one operation of their device" (fun () ->
+          Gc.full_major ();
+          let before = allocated d4 in
+          let run () =
+            let w = placed d4 (y ()) in
+            let g = Rune.jit' (fun a -> Nx.mul a w) in
+            ignore (host (g (placed d4 (x ()))))
+          in
+          run ();
+          Gc.full_major ();
+          Nx_device.synchronize (Nx.Device.runtime d4);
+          equal int before (allocated d4));
       test "two compiled functions binding one capture run from two domains"
         (fun () ->
           let w = placed d1 (y ()) in
@@ -1370,9 +1500,13 @@ let errors =
             (placed twin1 (x ()))
             (placed twin2 (y ()))
           |> ignore );
-      ( "a consumed slice",
+      ( "a consumed leaf another leaf reaches",
         fun () ->
-          Rune.jit consumes Nx.neg (Nx.slice [ R (0, 2) ] (x ())) |> ignore );
+          let a = x () in
+          Rune.jit
+            Nx.Ptree.(consumes tensor @@ tensor @-> returns tensor)
+            Nx.add a a
+          |> ignore );
     ]
   in
   group "errors"
@@ -2910,6 +3044,25 @@ let disk =
           let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
           equal floats (Nx.add_s (x ()) 1.) (host r);
           equal floats (x ()) (host (on_disk_at_read path)));
+      test
+        "a consumed weight that is a window of its file is computed from a \
+         copy and stays readable, as its sibling does" (fun () ->
+          let module B = Nx_device.Buffer in
+          let path = temp_file () in
+          ignore (on_disk_at path (Nx.concatenate ~axis:0 [ x (); y () ]));
+          let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+          let file = require_ok ~pp:Format.pp_print_string (B.of_file path) in
+          let weight first =
+            Nx.Repr.Placed.v p Nx.float32
+              (Nx_array.View.create [| 4 |])
+              (Nx.Repr.Storage.v p
+                 [ B.view file ~offset:(4 * first) Float32 4 ])
+          in
+          let sibling = weight 0 and w = weight 4 in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) w in
+          equal floats (Nx.add_s (y ()) 1.) (host r);
+          equal ~msg:"the weight" floats (y ()) (host w);
+          equal ~msg:"its sibling" floats (x ()) (host sibling));
       test "the file opened is read, not the one at its path now" (fun () ->
           let path = temp_file () in
           let a = on_disk_at path (x ()) in
@@ -3001,6 +3154,10 @@ let on_one_device ~name d =
           let r = Rune.jit' poly (placed d (x ())) in
           is_true (Nx.Placement.equal (on d) (Nx.placement r));
           equal close (poly (x ())) (host r));
+      test "a consumed slice at an offset is computed into storage of its own"
+        (fun () ->
+          consumed_slice ~at:(on d) 1 7;
+          consumed_slice ~at:(on d) 5 1027);
       test "a call searched on several domains computes eager's values"
         (fun () ->
           let f a = Nx.add_s (poly a) 0.8125 in
@@ -3090,11 +3247,14 @@ let on_one_device ~name d =
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           let a = placed d (x ()) in
           ignore (g a);
-          equal ~msg:"pins" int 1 (Nx.Repr.Storage.pins (storage_of w));
           let before = bytes_in d in
           let r = g a in
           equal ~msg:"bytes received" int before (bytes_in d);
-          equal close (Nx.mul (x ()) (y ())) (host r));
+          equal close (Nx.mul (x ()) (y ())) (host r);
+          is_false ~msg:"pinned" (lends w);
+          equal ~msg:"the program after" close
+            (Nx.mul (x ()) (y ()))
+            (host (g a)));
       test "a value the call computes from host captures is uploaded once"
         (fun () ->
           let limit = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in

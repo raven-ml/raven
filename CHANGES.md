@@ -172,6 +172,15 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled call that consumes an argument another domain is reading computes
+  from a copy instead of writing over it, for host values as for placed ones;
+  a host read could see the call's write before.
+- A consumed argument of `Rune.jit` that views part of its storage, or
+  broadcasts it, is computed from a copy and its storage is consumed, where the
+  call raised "does not cover its whole storage". One whose buffer is a window
+  of larger memory, such as a weight loaded from a SafeTensors file, is copied
+  and stays live. A compiled function's captures, host ones included, are never
+  written over by another call that consumes them.
 - `Rune.jit` and `Rune.vmap` refusals of a read name the function that read,
   such as `Jit_error "Nx.item: …"`, instead of a fixed "item, to_host, or a
   data-dependent branch". `Rune.jit` refuses a `bitcast` between widths.
