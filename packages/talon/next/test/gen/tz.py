@@ -1,6 +1,6 @@
-"""Writes the TZif fixtures of the Tz suite.
+"""Writes the TZif fixtures of the Tz suite into golden/tz/.
 
-Run from this directory with `uv run fixtures.py`. It needs zic and zdump
+Run from the test directory with `uv run gen/tz.py`. It needs zic and zdump
 (tzcode) and a system zoneinfo with tzdata.zi; the fixtures are committed, so
 the suite itself needs neither.
 
@@ -30,9 +30,9 @@ ZONES = [
     "UTC",
     "Etc/GMT+5",
 ]
-HERE = Path(__file__).parent
-ZONEINFO = HERE / "zoneinfo"
-MALFORMED = HERE / "malformed"
+OUT = Path(__file__).parent.parent / "golden" / "tz"
+ZONEINFO = OUT / "zoneinfo"
+MALFORMED = OUT / "malformed"
 
 
 def block(transitions, types, leaps, isstd, isut, size):
@@ -227,7 +227,7 @@ def main():
     for case, content in MALFORMED_CASES.items():
         write(MALFORMED / case / "Zone", content)
     rows = [row for zone in ZONES for row in transitions(zone)]
-    (HERE / "transitions.txt").write_text("\n".join(rows) + "\n")
+    (OUT / "transitions.txt").write_text("\n".join(rows) + "\n")
 
 
 if __name__ == "__main__":

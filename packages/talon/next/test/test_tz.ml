@@ -9,8 +9,8 @@ module Error = Talon_next.Error
 
 (* Fixtures *)
 
-(* The database of zoneinfo/, written by fixtures.py. *)
-let db () = Error.get_ok (Tz.of_dir "zoneinfo")
+(* The database of golden/tz/zoneinfo/, written by gen/tz.py. *)
+let db () = Error.get_ok (Tz.of_dir "golden/tz/zoneinfo")
 let zone name = Error.get_ok (Tz.find (db ()) name)
 let hour = 3600
 let day = 86_400
@@ -30,7 +30,7 @@ let posix y m d h min =
 (* zdump's transitions of the zones copied from the system, from 1800 to 2200:
    [(zone, instant, offset before, offset after)]. *)
 let zdump =
-  In_channel.with_open_text "transitions.txt" In_channel.input_lines
+  In_channel.with_open_text "golden/tz/transitions.txt" In_channel.input_lines
   |> List.map (fun line ->
       Scanf.sscanf line "%s %Ld %d %d" (fun zone u before after ->
           (zone, u, before, after)))
@@ -438,47 +438,50 @@ let pp_result = function Ok _ -> "Ok" | Error e -> portable (to_string e)
 let pp_find db name = pp_result (Result.map Tz.name (Tz.find db name))
 
 let malformed () =
-  Sys.readdir "malformed" |> Array.to_list |> List.sort String.compare
+  Sys.readdir "golden/tz/malformed"
+  |> Array.to_list |> List.sort String.compare
   |> List.iter (fun case ->
-      let db = Error.get_ok (Tz.of_dir (Filename.concat "malformed" case)) in
+      let db =
+        Error.get_ok (Tz.of_dir (Filename.concat "golden/tz/malformed" case))
+      in
       print_endline (pp_find db "Zone"));
   expect (output ())
   @@ __POS_OF__
        {|
-    malformed/after-footer/Zone: byte 134: bytes follow the footer
-    malformed/designation/Zone: byte 118: time type 1 has the designation index 8, beyond the 8 designation bytes
-    malformed/designation-nul/Zone: byte 118: time type 1 has a designation with no NUL
-    malformed/footer-digits/Zone: byte 134: footer: the hour 123 is not in [0, 24]
-    malformed/footer-end/Zone: bytes 127-132: the footer does not end with a newline
-    malformed/footer-hour-v2/Zone: byte 146: footer: the hour 26 is not in [0, 24]
-    malformed/footer-hour-v3/Zone: byte 147: footer: the hour 168 is not in [0, 167]
-    malformed/footer-no-rule/Zone: byte 135: footer: daylight saving time "CCC" has no rule
-    malformed/footer-nul/Zone: byte 131: the footer holds a NUL byte
-    malformed/footer-short/Zone: byte 130: footer: the designation "BB" has fewer than 3 characters
-    malformed/footer-start/Zone: byte 127: the footer does not start with a newline
-    malformed/footer-syntax/Zone: byte 133: footer: the designation "x" has fewer than 3 characters
-    malformed/indicator/Zone: byte 128: time type 1 has the standard/wall indicator 2, not 0 or 1
-    malformed/isdst/Zone: byte 117: time type 1 has the DST indicator 2, not 0 or 1
-    malformed/isutcnt/Zone: bytes 74-77: the count of UT/local indicators is neither 0 nor the count of time types
-    malformed/leap-equal-v4/Zone: bytes 139-150: leap second 1 has the correction 1, which does not differ from the previous one, 1, by 1
-    malformed/leap-expiry-v2/Zone: bytes 139-150: leap second 1 has the correction 1, which does not differ from the previous one, 1, by 1
-    malformed/leap-first/Zone: bytes 127-138: the first leap-second correction is 2, not 1 or -1
-    malformed/leap-month/Zone: bytes 127-138: leap second 0 does not end a month
-    malformed/leap-negative/Zone: bytes 127-138: the first leap second occurs before 1970
-    malformed/leap-order/Zone: bytes 139-150: leap second 1 does not occur after the previous one
-    malformed/leap-step/Zone: bytes 139-150: leap second 1 has the correction 3, which does not differ from the previous one, 1, by 1
-    malformed/leap-unknown/Zone: bytes 98-105: transition 0 precedes the leap-second table, whose correction is unknown there
-    malformed/no-types/Zone: bytes 90-93: the count of time types is 0
-    malformed/not-ascending/Zone: bytes 106-113: transition 1 is not after the previous one
-    malformed/second-magic/Zone: bytes 54-57: the header does not start with "TZif"
-    malformed/truncated/Zone: bytes 98-126: the file ends after 114 bytes, inside the data block
-    malformed/type-index/Zone: byte 106: transition 0 has time type 2, beyond the 2 time types
-    malformed/ut-no-std/Zone: byte 128: time type 1 is in UT but not in standard time
-    malformed/ut-not-std/Zone: byte 130: time type 1 is in UT but not in standard time
-    malformed/utoff/Zone: bytes 113-116: time type 1 has the UT offset -2^31
-    malformed/v1-after-data/Zone: byte 69: bytes follow the data block of a version 1 file
-    malformed/version/Zone: byte 4: unknown version '1'
-    malformed/versions-differ/Zone: byte 58: the second header's version '2' differs from the first's, '3'
+    golden/tz/malformed/after-footer/Zone: byte 134: bytes follow the footer
+    golden/tz/malformed/designation/Zone: byte 118: time type 1 has the designation index 8, beyond the 8 designation bytes
+    golden/tz/malformed/designation-nul/Zone: byte 118: time type 1 has a designation with no NUL
+    golden/tz/malformed/footer-digits/Zone: byte 134: footer: the hour 123 is not in [0, 24]
+    golden/tz/malformed/footer-end/Zone: bytes 127-132: the footer does not end with a newline
+    golden/tz/malformed/footer-hour-v2/Zone: byte 146: footer: the hour 26 is not in [0, 24]
+    golden/tz/malformed/footer-hour-v3/Zone: byte 147: footer: the hour 168 is not in [0, 167]
+    golden/tz/malformed/footer-no-rule/Zone: byte 135: footer: daylight saving time "CCC" has no rule
+    golden/tz/malformed/footer-nul/Zone: byte 131: the footer holds a NUL byte
+    golden/tz/malformed/footer-short/Zone: byte 130: footer: the designation "BB" has fewer than 3 characters
+    golden/tz/malformed/footer-start/Zone: byte 127: the footer does not start with a newline
+    golden/tz/malformed/footer-syntax/Zone: byte 133: footer: the designation "x" has fewer than 3 characters
+    golden/tz/malformed/indicator/Zone: byte 128: time type 1 has the standard/wall indicator 2, not 0 or 1
+    golden/tz/malformed/isdst/Zone: byte 117: time type 1 has the DST indicator 2, not 0 or 1
+    golden/tz/malformed/isutcnt/Zone: bytes 74-77: the count of UT/local indicators is neither 0 nor the count of time types
+    golden/tz/malformed/leap-equal-v4/Zone: bytes 139-150: leap second 1 has the correction 1, which does not differ from the previous one, 1, by 1
+    golden/tz/malformed/leap-expiry-v2/Zone: bytes 139-150: leap second 1 has the correction 1, which does not differ from the previous one, 1, by 1
+    golden/tz/malformed/leap-first/Zone: bytes 127-138: the first leap-second correction is 2, not 1 or -1
+    golden/tz/malformed/leap-month/Zone: bytes 127-138: leap second 0 does not end a month
+    golden/tz/malformed/leap-negative/Zone: bytes 127-138: the first leap second occurs before 1970
+    golden/tz/malformed/leap-order/Zone: bytes 139-150: leap second 1 does not occur after the previous one
+    golden/tz/malformed/leap-step/Zone: bytes 139-150: leap second 1 has the correction 3, which does not differ from the previous one, 1, by 1
+    golden/tz/malformed/leap-unknown/Zone: bytes 98-105: transition 0 precedes the leap-second table, whose correction is unknown there
+    golden/tz/malformed/no-types/Zone: bytes 90-93: the count of time types is 0
+    golden/tz/malformed/not-ascending/Zone: bytes 106-113: transition 1 is not after the previous one
+    golden/tz/malformed/second-magic/Zone: bytes 54-57: the header does not start with "TZif"
+    golden/tz/malformed/truncated/Zone: bytes 98-126: the file ends after 114 bytes, inside the data block
+    golden/tz/malformed/type-index/Zone: byte 106: transition 0 has time type 2, beyond the 2 time types
+    golden/tz/malformed/ut-no-std/Zone: byte 128: time type 1 is in UT but not in standard time
+    golden/tz/malformed/ut-not-std/Zone: byte 130: time type 1 is in UT but not in standard time
+    golden/tz/malformed/utoff/Zone: bytes 113-116: time type 1 has the UT offset -2^31
+    golden/tz/malformed/v1-after-data/Zone: byte 69: bytes follow the data block of a version 1 file
+    golden/tz/malformed/version/Zone: byte 4: unknown version '1'
+    golden/tz/malformed/versions-differ/Zone: byte 58: the second header's version '2' differs from the first's, '3'
     |}
 
 (* The error of a rejected name holds no path, so it is printed as is. *)
@@ -553,23 +556,24 @@ let not_zones () =
   expect (output ())
   @@ __POS_OF__
        {|
-    zoneinfo/Europe: a directory, not a zone
-    zoneinfo/zone.tab: bytes 0-3: the header does not start with "TZif"
-    zoneinfo/tiny: bytes 0-43: the file ends after 2 bytes, inside a header
-    zoneinfo/Europe/Nowhere: No such file or directory
-    zoneinfo/CONSOLE: No such file or directory
-    zoneinfo/COM: No such file or directory
-    zoneinfo/COM10: No such file or directory
-    zoneinfo/LPTX: No such file or directory
-    zoneinfo/NULL.zone: No such file or directory
-    zoneinfo/.AUX: No such file or directory
+    golden/tz/zoneinfo/Europe: a directory, not a zone
+    golden/tz/zoneinfo/zone.tab: bytes 0-3: the header does not start with "TZif"
+    golden/tz/zoneinfo/tiny: bytes 0-43: the file ends after 2 bytes, inside a header
+    golden/tz/zoneinfo/Europe/Nowhere: No such file or directory
+    golden/tz/zoneinfo/CONSOLE: No such file or directory
+    golden/tz/zoneinfo/COM: No such file or directory
+    golden/tz/zoneinfo/COM10: No such file or directory
+    golden/tz/zoneinfo/LPTX: No such file or directory
+    golden/tz/zoneinfo/NULL.zone: No such file or directory
+    golden/tz/zoneinfo/.AUX: No such file or directory
     |}
 
 let write path content =
   Out_channel.with_open_bin path (fun oc -> output_string oc content)
 
 let paris () =
-  In_channel.with_open_bin "zoneinfo/Europe/Paris" In_channel.input_all
+  In_channel.with_open_bin "golden/tz/zoneinfo/Europe/Paris"
+    In_channel.input_all
 
 (* A tree with links of every kind, and a file that is not TZif. *)
 let tree () =
@@ -684,8 +688,8 @@ let of_dir =
   group "of_dir"
     [
       test "rejects a path that is not a directory" (fun () ->
-          expect (pp_result (Tz.of_dir "transitions.txt"))
-          @@ __POS_OF__ {| transitions.txt: not a directory |});
+          expect (pp_result (Tz.of_dir "golden/tz/transitions.txt"))
+          @@ __POS_OF__ {| golden/tz/transitions.txt: not a directory |});
       test "rejects a missing directory" (fun () ->
           expect (pp_result (Tz.of_dir "missing"))
           @@ __POS_OF__ {| missing: No such file or directory |});
@@ -696,7 +700,7 @@ let system =
   group "system"
     [
       test "reads TZDIR" (fun () ->
-          setenv "TZDIR" (Some "zoneinfo");
+          setenv "TZDIR" (Some "golden/tz/zoneinfo");
           let z = Error.get_ok (Tz.find (Error.get_ok (Tz.system ())) "UTC") in
           equal int 0 (Tz.offset_s z 0L));
       test "fails when TZDIR names no directory" (fun () ->

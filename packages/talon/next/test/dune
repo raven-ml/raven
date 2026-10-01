@@ -1,0 +1,64 @@
+(test
+ (name test_error)
+ (modules test_error)
+ (package talon)
+ (libraries windtrap talon.next))
+
+(test
+ (name test_expr)
+ (modules test_expr)
+ (package talon)
+ (libraries windtrap talon.next nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_expr.ml test_expr.ml.corrected))))
+
+(test
+ (name test_plan)
+ (modules test_plan)
+ (package talon)
+ (libraries windtrap talon.next nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_plan.ml test_plan.ml.corrected))))
+
+(test
+ (name test_query)
+ (modules test_query)
+ (package talon)
+ (libraries windtrap talon.next nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_query.ml test_query.ml.corrected))))
+
+(test
+ (name test_types)
+ (modules test_types)
+ (package talon)
+ (libraries windtrap talon.next nx unix)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_types.ml test_types.ml.corrected))))
+
+(test
+ (name test_tz)
+ (modules test_tz)
+ (package talon)
+ (libraries windtrap talon.next unix)
+ (deps
+  (source_tree golden/tz))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_tz.ml test_tz.ml.corrected))))
+
+(cram
+ (applies_to shape)
+ (package talon)
+ (deps
+  (package talon)
+  (package nx)))
