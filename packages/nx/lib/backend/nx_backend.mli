@@ -301,7 +301,8 @@ module type S = sig
       of [x] of shape [(leading..., spatial...)] into [dst] of shape
       [(leading..., product kernel_size, l)], [l] being the number of windows:
       [((spatial + before + after - (dilation (kernel - 1) + 1)) / stride + 1)]
-      along each axis, multiplied. *)
+      along each axis, or [0] where the dilated kernel is longer than the padded
+      extent, multiplied. *)
 
   val fold :
     output_size:int array ->

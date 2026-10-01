@@ -5644,10 +5644,54 @@ let sliding_window ?axis ~window ?(step = 1) x =
       window size;
   B.sliding_window x ~axis ~window ~step
 
+(* A window's size, step and dilation along each of its axes are positive, and
+   its padding is not negative. *)
+let check_window op ~kernel_size ~stride ~dilation ~padding =
+  let k = Array.length kernel_size in
+  if k = 0 then err op "kernel_size has no axis";
+  if
+    Array.length stride <> k
+    || Array.length dilation <> k
+    || Array.length padding <> k
+  then
+    err op "stride, dilation and padding need one entry per kernel axis (%d)" k;
+  let positive name a =
+    Array.iter (fun n -> if n < 1 then err op "%s %d is not positive" name n) a
+  in
+  positive "kernel_size" kernel_size;
+  positive "stride" stride;
+  positive "dilation" dilation;
+  Array.iter
+    (fun (before, after) ->
+      if before < 0 || after < 0 then
+        err op "padding (%d, %d) is negative" before after)
+    padding
+
 let extract_patches ~kernel_size ~stride ~dilation ~padding x =
+  check_window "extract_patches" ~kernel_size ~stride ~dilation ~padding;
+  let k = Array.length kernel_size in
+  if ndim x < k then
+    err "extract_patches" "%d kernel axes for a rank %d tensor" k (ndim x);
   B.unfold x ~kernel_size ~stride ~dilation ~padding
 
 let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding x =
+  let op = "combine_patches" in
+  check_window op ~kernel_size ~stride ~dilation ~padding;
+  let k = Array.length kernel_size in
+  if Array.length output_size <> k then
+    err op "output_size has %d axes, kernel_size %d" (Array.length output_size) k;
+  Array.iter
+    (fun n -> if n < 0 then err op "output_size %d is negative" n)
+    output_size;
+  if ndim x < 2 then err op "a rank %d tensor holds no patches" (ndim x);
+  let patch = Array.fold_left ( * ) 1 kernel_size
+  and windows =
+    Array.fold_left ( * ) 1
+      (B.window_counts kernel_size stride dilation padding output_size)
+  in
+  if dim (-2) x <> patch || dim (-1) x <> windows then
+    err op "patches of shape (%d, %d), where the geometry gives (%d, %d)"
+      (dim (-2) x) (dim (-1) x) patch windows;
   B.fold x ~output_size ~kernel_size ~stride ~dilation ~padding
 
 (* Correlation and convolution *)

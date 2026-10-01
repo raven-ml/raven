@@ -1848,14 +1848,22 @@ let cat_shape axis = function
       let total = List.fold_left (fun n s -> n + s.(axis)) 0 shapes in
       Array.mapi (fun i d -> if i = axis then total else d) s
 
+(* The windows along each spatial axis of extents [spatial]: none where the
+   dilated kernel is longer than the padded extent. *)
+let window_counts kernel_size stride dilation padding spatial =
+  Array.mapi
+    (fun i n ->
+      let before, after = padding.(i) in
+      let extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+      let padded = n + before + after in
+      if padded < extent then 0 else ((padded - extent) / stride.(i)) + 1)
+    spatial
+
 let unfold_shape kernel_size stride dilation padding s =
   let k = Array.length kernel_size in
   let lead = Array.length s - k in
   let windows =
-    Array.init k (fun i ->
-        let before, after = padding.(i) in
-        let extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
-        ((s.(lead + i) + before + after - extent) / stride.(i)) + 1)
+    window_counts kernel_size stride dilation padding (Array.sub s lead k)
   in
   Array.append (Array.sub s 0 lead)
     [| Array.fold_left ( * ) 1 kernel_size; Array.fold_left ( * ) 1 windows |]

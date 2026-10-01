@@ -2901,6 +2901,15 @@ thread.
 
 ### Nx
 
+- `Nx.combine_patches` and `Nx.extract_patches` handle windows that do not fit:
+  an axis shorter than its dilated kernel, even with padding, has no window.
+  `combine_patches` of no window crashed the process by reading past its input,
+  and now gives zeros. `extract_patches` counted a window that overhangs the
+  padded axis by less than a stride, and now does not. Both now raise
+  `Invalid_argument` for a geometry with a non-positive size, stride or
+  dilation, a negative padding or mismatched lengths, and `combine_patches`
+  for patches whose shape the geometry does not give, where invalid input
+  could read or write out of bounds.
 - `Nx_amd_device` allocates mapped memory (`Buffer.create ~memory:Mapped`) in
   the GPU's own memory, which the host writes through its memory BAR, and
   flushes the host data path before each copy of its own so that the copy

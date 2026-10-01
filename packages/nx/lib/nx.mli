@@ -3510,7 +3510,11 @@ val extract_patches :
     windows from the last [K] spatial dimensions where
     [K = Array.length kernel_size].
 
-    Input: [[leading…; spatial…]]. Output: [[leading…; prod(kernel_size); L]].
+    Input: [[leading…; spatial…]]. Output: [[leading…; prod(kernel_size); L]],
+    where [L] is the product over the spatial axes of the number of windows,
+    [(n + before + after - (dilation (kernel - 1) + 1)) / stride + 1] for an
+    axis of [n] elements, or [0] where the dilated kernel is longer than the
+    padded axis.
 
     {@ocaml[
       # arange_f float32 0. 16. 1.
@@ -3524,6 +3528,11 @@ val extract_patches :
       - : int array = [|1; 1; 4; 9|]
     ]}
 
+    Raises [Invalid_argument] if [kernel_size] is empty, if [stride],
+    [dilation] and [padding] do not have one entry per kernel axis, if a size,
+    stride or dilation is not positive or a padding negative, or if [t] has
+    fewer axes than [kernel_size].
+
     See also {!combine_patches}. *)
 
 val combine_patches :
@@ -3535,7 +3544,15 @@ val combine_patches :
   ('a, 'b) t ->
   ('a, 'b) t
 (** [combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding t] is
-    the inverse of {!extract_patches}. Overlapping values are summed.
+    the inverse of {!extract_patches}: [t], of shape
+    [[leading…; prod(kernel_size); L]], is placed back into a tensor of shape
+    [[leading…; output_size…]]. Overlapping values are summed, and an element
+    no window covers is zero.
+
+    Raises [Invalid_argument] as {!extract_patches} does on the geometry, if
+    [output_size] does not have one non-negative entry per kernel axis, or if
+    [t]'s last two axes are not those an {!extract_patches} to [output_size]
+    gives.
 
     See also {!extract_patches}. *)
 

@@ -621,35 +621,50 @@ typedef struct {
   int64_t leading_size;
 } nx_c_window;
 
+#define NX_C_ERR_WINDOW "invalid window geometry"
+
 /* Read the K-long parameter arrays. `padding` is flat [before0, after0, ...] of
-   length 2K. */
-static void nx_c_window_params(nx_c_window *w, value vkernel, value vstride,
-                              value vdilation, value vpadding, int K,
-                              int leading_ndim, int64_t esize) {
+   length 2K. A window's size, step and dilation are positive and its padding
+   is not negative, or the geometry is refused. */
+static nx_c_status nx_c_window_params(nx_c_window *w, value vkernel,
+                                      value vstride, value vdilation,
+                                      value vpadding, int K, int leading_ndim,
+                                      int64_t esize) {
+  if ((int)Wosize_val(vstride) != K || (int)Wosize_val(vdilation) != K ||
+      (int)Wosize_val(vpadding) != 2 * K)
+    return NX_C_ERR_WINDOW;
   w->K = K;
   w->leading_ndim = leading_ndim;
   w->esize = esize;
+  w->kernel_prod = 1;
   for (int d = 0; d < K; d++) {
     w->kernel[d] = Long_val(Field(vkernel, d));
     w->stride[d] = Long_val(Field(vstride, d));
     w->dilation[d] = Long_val(Field(vdilation, d));
     w->pad_before[d] = Long_val(Field(vpadding, 2 * d));
     w->pad_after[d] = Long_val(Field(vpadding, 2 * d + 1));
+    if (w->kernel[d] < 1 || w->stride[d] < 1 || w->dilation[d] < 1 ||
+        w->pad_before[d] < 0 || w->pad_after[d] < 0)
+      return NX_C_ERR_WINDOW;
+    w->kernel_prod *= w->kernel[d];
   }
+  return NX_C_OK;
 }
 
 /* Per-dim window count from the (unpadded) spatial extents, plus the row-major
-   cumprods used to decompose a flat window / kernel index. win[d] is exactly the
-   reference's L factor: how many strided placements of the effective (dilated)
-   kernel fit in the padded extent. spatial_extent is the input extent for unfold
-   and the output extent for fold. */
+   cumprods used to decompose a flat window / kernel index, and their product L.
+   win[d] is how many strided placements of the effective (dilated) kernel fit
+   in the padded extent: none when the kernel is longer than it.
+   spatial_extent is the input extent for unfold and the output extent for
+   fold. */
 static void nx_c_window_counts(nx_c_window *w, const int64_t *spatial_extent) {
   int K = w->K;
+  w->L = 1;
   for (int d = 0; d < K; d++) {
     int64_t eff = w->dilation[d] * (w->kernel[d] - 1) + 1;
     int64_t padded = spatial_extent[d] + w->pad_before[d] + w->pad_after[d];
-    int64_t win = (padded - eff) / w->stride[d] + 1;
-    w->win[d] = win < 1 ? 1 : win;
+    w->win[d] = padded < eff ? 0 : (padded - eff) / w->stride[d] + 1;
+    w->L *= w->win[d];
   }
   w->win_cumprod[K - 1] = 1;
   for (int d = K - 2; d >= 0; d--)
@@ -1044,12 +1059,18 @@ CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
     nx_c_raise_invalid("unfold", NX_C_ERR_SHAPE);
   int ld = in.ndim - K;
   nx_c_window w;
-  nx_c_window_params(&w, vkernel, vstride, vdilation, vpadding, K, ld,
-                    nx_c_elem_size(dt));
-  w.kernel_prod = out.shape[ld];
-  w.L = out.shape[ld + 1];
+  s = nx_c_window_params(&w, vkernel, vstride, vdilation, vpadding, K, ld,
+                         nx_c_elem_size(dt));
+  if (s != NX_C_OK) nx_c_raise_invalid("unfold", s);
   w.leading_size = nx_c_prod(ld, in.shape);
   nx_c_window_counts(&w, &in.shape[ld]); /* windows per input spatial dim */
+  /* The kernel walks the destination by the geometry: its shape must be the
+     one the geometry gives. */
+  if (out.ndim != ld + 2 || out.shape[ld] != w.kernel_prod ||
+      out.shape[ld + 1] != w.L)
+    nx_c_raise_invalid("unfold", NX_C_ERR_SHAPE);
+  for (int i = 0; i < ld; i++)
+    if (out.shape[i] != in.shape[i]) nx_c_raise_invalid("unfold", NX_C_ERR_SHAPE);
 
   int64_t total = w.leading_size * w.kernel_prod * w.L;
   if (total > 0) {
@@ -1086,17 +1107,30 @@ CAMLprim value caml_nx_c_fold(value vout, value vin, value voutput_size,
                                               : NX_C_ERR_UNSUPPORTED_DTYPE);
 
   int K = (int)Wosize_val(vkernel);
-  if (K < 1 || K > NX_C_MAX_SPATIAL || in.ndim < 2)
+  if (K < 1 || K > NX_C_MAX_SPATIAL || in.ndim < 2 ||
+      (int)Wosize_val(voutput_size) != K)
     nx_c_raise_invalid("fold", NX_C_ERR_SHAPE);
   int ld = in.ndim - 2;
   nx_c_window w;
-  nx_c_window_params(&w, vkernel, vstride, vdilation, vpadding, K, ld,
-                    nx_c_elem_size(dt));
-  w.kernel_prod = in.shape[ld];
-  w.L = in.shape[ld + 1];
+  s = nx_c_window_params(&w, vkernel, vstride, vdilation, vpadding, K, ld,
+                         nx_c_elem_size(dt));
+  if (s != NX_C_OK) nx_c_raise_invalid("fold", s);
   w.leading_size = nx_c_prod(ld, in.shape);
-  for (int d = 0; d < K; d++) w.output_size[d] = Long_val(Field(voutput_size, d));
+  for (int d = 0; d < K; d++) {
+    w.output_size[d] = Long_val(Field(voutput_size, d));
+    if (w.output_size[d] < 0) nx_c_raise_invalid("fold", NX_C_ERR_WINDOW);
+  }
   nx_c_window_counts(&w, w.output_size); /* windows per output spatial dim */
+  /* The kernel reads the source by the geometry: its shape must be the one an
+     unfold to the output gives, and the destination's the output's. */
+  if (in.shape[ld] != w.kernel_prod || in.shape[ld + 1] != w.L ||
+      out.ndim != ld + K)
+    nx_c_raise_invalid("fold", NX_C_ERR_SHAPE);
+  for (int i = 0; i < ld; i++)
+    if (out.shape[i] != in.shape[i]) nx_c_raise_invalid("fold", NX_C_ERR_SHAPE);
+  for (int d = 0; d < K; d++)
+    if (out.shape[ld + d] != w.output_size[d])
+      nx_c_raise_invalid("fold", NX_C_ERR_SHAPE);
 
   int64_t out_spatial = nx_c_prod(K, w.output_size);
   int64_t total = w.leading_size * out_spatial;
