@@ -24,14 +24,14 @@
     copies directly only to GPUs of its machine. The machine needs what {!Pci}
     needs here, and the process none of it.
 
-    {b Memory.} Buffers are GPU memory, which the host does not address.
-    {!Nx_device.Buffer.copy} moves their bytes on the GPU's copy engine (SDMA):
-    directly from and to host memory the GPU addresses, and through the host's
-    staging memory from and to other host memory. Host memory the GPU addresses
-    is registered with it and coherent for it:
+    {b Memory.} Buffers are GPU memory, which the host does not address, but for
+    mapped memory. {!Nx_device.Buffer.copy} moves their bytes on the GPU's copy
+    engine (SDMA): directly from and to host memory the GPU addresses, and
+    through the host's staging memory from and to other host memory. Host memory
+    the GPU addresses is registered with it and coherent for it:
     - {!Nx_device.Buffer.create}[ ~memory:Pinned] allocates it, uncached system
       memory, and it counts in the device's budget, which defaults to the GPU's
-      memory size. Mapped memory is this memory too;
+      memory size;
     - {!Nx_device.Buffer.borrow} maps host memory, whole pages of it. It counts
       in no budget;
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs
@@ -39,6 +39,15 @@
       each other's memory, over a direct link or a large memory BAR, the
       source's copy engine writes the destination; otherwise the bytes go
       through the staging memory.
+
+    {!Nx_device.Buffer.create}[ ~memory:Mapped] allocates GPU memory that the
+    host also writes, through the GPU's memory BAR, write-combined. The host's
+    writes reach the GPU's memory once the host data path (HDP) is flushed: the
+    runtime flushes it before each copy of its own, and work submitted to the
+    device flushes it before it starts (see {!section-low}). Without a BAR that
+    covers the GPU's memory (Resizable BAR), or under the [amdgpu] driver when
+    it does not give the process the HDP's flush register, mapped memory is
+    pinned memory.
 
     {b Timestamps} count the GPU's global clock, 100 MHz
     ({!Nx_device.Driver.Device_clock}); the copy engine stamps it for the
@@ -131,9 +140,12 @@ val v :
 
     For the libraries that submit work to an AMD device, inside
     {!Nx_device.submit}: they write packets into its queues. Every address below
-    is the same for the host and for the GPU. Work begins with a flush of the
-    host data path (HDP), since the host's writes to GPU memory through the BAR,
-    such as uploaded programs, are not otherwise visible to it.
+    is the same for the host and for the GPU. The host's writes to GPU memory
+    through the BAR, such as mapped memory and uploaded programs, are visible to
+    work only after a flush of the host data path (HDP): a compute queue's work
+    begins with one, in PM4 packets, and a library flushes it from the host with
+    {!flush_hdp} before it submits work to a copy queue, which has no such
+    packet.
 
     Work for the value [v] first waits on its queue until the low 32 bits of the
     signal word ({!Nx_device.signal_word}) equal [v - 1], and ends by writing
@@ -218,6 +230,12 @@ val sdma : t -> queue list
 
 val props : t -> props
 (** [props a] is the GPU's properties. *)
+
+val flush_hdp : t -> unit
+(** [flush_hdp a] flushes the GPU's host data path (HDP) from the host, after a
+    full fence, so that the host's earlier writes through the BAR reach the
+    GPU's memory. Under the [amdgpu] driver without the HDP's flush register,
+    the device has no mapped memory and [flush_hdp] does nothing. *)
 
 type kernel = {
   code : Nx_device.Buffer.t;

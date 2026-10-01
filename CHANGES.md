@@ -2889,6 +2889,14 @@ thread.
 
 ### Nx
 
+- `Nx_amd_device` allocates mapped memory (`Buffer.create ~memory:Mapped`) in
+  the GPU's own memory, which the host writes through its memory BAR, and
+  flushes the host data path before each copy of its own so that the copy
+  engine sees those writes; `Nx_amd_device.flush_hdp` gives that flush to the
+  libraries that submit copy-queue work. Without a BAR that covers the GPU's
+  memory, or without the HDP flush register under the amdgpu driver, mapped
+  memory is pinned memory, and a code object that needs host-visible memory is
+  refused with the reason instead of raising.
 - `Nx.eigh` and `Nx.eigvalsh` read only the real part of a complex matrix's
   diagonal, as their documentation now says and as `Nx.cholesky` already did.
   They used its imaginary parts too, so a complex matrix that was not exactly

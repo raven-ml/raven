@@ -305,6 +305,11 @@ let peer a d' r =
   | Some _ -> Error "the GPUs do not reach each other's memory"
   | None -> Error "memory of another vendor"
 
+let flush_hdp a =
+  match a.gpu with
+  | Kfd_gpu k -> Kfd.flush_hdp k
+  | Am_gpu g -> with_hw a (fun () -> Am.flush_hdp g.am.d)
+
 let queue a ~timeline =
   let signal = Nativeint.to_int (Region.address timeline) in
   let props = a.props in
@@ -318,6 +323,8 @@ let queue a ~timeline =
     let timeout_ms =
       Option.fold ~none:Driver.default_timeout ~some:Nx_device.timeout a.dev
     in
+    (* The copy engine reads what the host wrote to mapped memory. *)
+    flush_hdp a;
     Sdma.submit q ~timeout_ms words
   in
   let submit ~dst ~src n ~signal:v =
@@ -404,7 +411,11 @@ let load a ~binary ~entry:name =
   | exception Failure why -> Error why
   | img, k -> (
       match upload a binary img with
-      | None -> Error "no GPU memory for the program"
+      | None ->
+          Error
+            "no GPU memory the host addresses for the program: the memory is \
+             full, or the BAR is too small to map it (enable Resizable BAR in \
+             the firmware settings)"
       | Some code ->
           let at off =
             Nativeint.add (Nx_device.Buffer.address code) (Nativeint.of_int off)
@@ -671,7 +682,11 @@ let make_device a ~budget ~sleep ?finalize () =
          {
            memory = allocator a Vram;
            host_memory = allocator a Host;
-           mapped = None;
+           mapped =
+             (match a.gpu with
+             | Am_gpu g when Pci_memory.small_bar g.memory -> None
+             | Kfd_gpu k when not (Kfd.flushes_hdp k) -> None
+             | _ -> Some (allocator a Visible));
            mapping = mapping a;
            queue = queue a;
          })

@@ -93,6 +93,9 @@ type t = {
   sysfs : string;
   mutable events : int array; (* signal, memory exception, hardware exception *)
   mutable doorbells : (nativeint * int64) option; (* the page, and its offset *)
+  hdp : Mmio.t option;
+      (* the driver's page of registers whose first word flushes the HDP, if it
+         remaps one *)
 }
 
 let prop t k =
@@ -104,6 +107,21 @@ let prop t k =
    driver lets a process acquire it only once, so a failed open reuses them.
    Opens are serialized by the caller. *)
 let acquired : (int, t) Hashtbl.t = Hashtbl.create 4
+
+(* The page of registers the driver remaps for the process, whose first word
+   flushes the host data path (HDP); [None] if the driver refuses it. *)
+let remap_hdp fd gpu_id =
+  let n = 0x1000 in
+  let addr = reserve n in
+  let flags =
+    D.kfd_ioc_alloc_mem_flags_mmio_remap lor D.kfd_ioc_alloc_mem_flags_writable
+    lor D.kfd_ioc_alloc_mem_flags_no_substitute
+  in
+  match kfd_alloc fd gpu_id addr n flags 0L with
+  | Error _ ->
+      unmap_mem addr n;
+      None
+  | Ok (_, offset) -> Some (Mmio.v (map_file fd addr n offset) n)
 
 let open_new node =
   let dir = Printf.sprintf "%s/%d" topology node in
@@ -173,6 +191,7 @@ let open_new node =
     sysfs;
     events = [||];
     doorbells = None;
+    hdp = remap_hdp fd gpu_id;
   }
 
 let open_gpu i =
@@ -260,11 +279,8 @@ let alloc t kind n =
   with
   | Error e ->
       unmap_mem addr n;
-      if e = enomem then None
-      else if e = einval && kind = Visible then
-        failwith
-          "cannot allocate host-visible VRAM: enable Resizable BAR in the \
-           firmware settings"
+      (* Without a large BAR, the GPU has no memory the host addresses. *)
+      if e = enomem || (e = einval && kind = Visible) then None
       else
         failwith
           (Printf.sprintf "allocating %d bytes of GPU memory failed (errno %d)"
@@ -369,6 +385,17 @@ let create_queue t args =
         (page, base)
   in
   Nativeint.add page (Int64.to_nativeint (Int64.sub doorbell base))
+
+(* Flushes the host data path (HDP), so that the host's writes to the GPU's
+   memory through its BAR reach it, if the driver remaps its register. *)
+let flush_hdp t =
+  Option.iter
+    (fun page ->
+      Mmio.barrier ();
+      Mmio.set32 page D.kfd_mmio_remap_hdp_mem_flush_cntl 0)
+    t.hdp
+
+let flushes_hdp t = Option.is_some t.hdp
 
 (* Blocks at most [ms] on the GPU's events; raises the report of an exception of
    this GPU. *)

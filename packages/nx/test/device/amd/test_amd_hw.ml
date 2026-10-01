@@ -432,6 +432,32 @@ let test_coherence () =
     check ~msg:(at "borrowed memory and VRAM") (20 + round) lent2
   done
 
+(* Mapped memory: the host writes it through the BAR, and the copy engine reads
+   what it wrote, a write-combined window flushed through the host data path
+   before each copy. *)
+let test_mapped () =
+  let d = device () in
+  let n = (2 * mib) + 4099 in
+  let m = B.create ~memory:Mapped d S.UInt8 n in
+  let host_view =
+    match B.borrow Nx_device.host m with
+    | Ok h -> h
+    | Error why -> fail ("the host addresses mapped memory: " ^ why)
+  in
+  let v = B.create d S.UInt8 n
+  and written = B.create Nx_device.host S.UInt8 n in
+  for round = 1 to 8 do
+    let at what = Printf.sprintf "%s, round %d" what round in
+    write_pattern (30 + round) host_view;
+    B.copy ~src:m ~dst:v;
+    check ~msg:(at "the host's writes through the BAR") (30 + round) v;
+    write_pattern (40 + round) written;
+    B.copy ~src:written ~dst:v;
+    B.copy ~src:v ~dst:m;
+    Nx_device.synchronize d;
+    check ~msg:(at "the GPU's writes, read by the host") (40 + round) host_view
+  done
+
 (* Last: work that never signals hangs the device, which is lost after its
    timeout. *)
 let test_hang () =
@@ -461,6 +487,8 @@ let () =
              test "two GPUs around 1 GiB copies" (peer_boundaries (1024 * mib));
              test "copies that wrap the SDMA ring" test_ring_wraps;
              test "host writes, GPU copies, host reads" test_coherence;
+             test "mapped memory, written by the host and by the GPU"
+               test_mapped;
            ];
          group "programs"
            [ test "code objects" test_programs; test "scratch" test_scratch ];
