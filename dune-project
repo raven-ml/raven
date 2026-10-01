@@ -215,20 +215,22 @@
  (dir packages/kaun)
  (synopsis "Neural networks for OCaml")
  (description
-  "Neural networks built on Rune. Models are typed parameter structures with pure apply functions; training steps compose value_and_grad with structural optimizers; there is no opaque trainer or layer type.")
+  "Neural networks over Nx, trained with Rune. Models are typed parameter structures with pure apply functions; training steps compose value_and_grad with structural optimizers; there is no opaque trainer or layer type.")
  (depends
   (ocaml
    (>= 5.5.0))
   dune
   (nx
    (= :version))
-  (rune
-   (= :version))
   logs
   jsont
   bytesrw
-  ; vega is not a library dependency: users compose it with kaun in their
-  ; own code, as kaun's tests, benches and docs do.
+  ; rune and vega are not library dependencies: users compose them with
+  ; kaun in their own code, as kaun's tests, benches and docs do.
+  (rune
+   (and
+    (= :version)
+    :with-test))
   (vega
    (and
     (= :version)

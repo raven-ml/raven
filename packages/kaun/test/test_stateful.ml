@@ -122,19 +122,6 @@ let test_bn_grads_flow_to_params () =
        (fun g -> Float.abs g > 1e-3)
        (Nx.to_array grads.Batch_norm.beta))
 
-let test_bn_stat_update_is_detached () =
-  let params, stats = Batch_norm.init ~features:2 in
-  let x = Lazy.force bn_x in
-  let g =
-    Rune.grad'
-      (fun x ->
-        let _, stats' = Batch_norm.apply params stats ~training:true x in
-        Nx.sum (Nx.add stats'.Batch_norm.Stats.mean stats'.Batch_norm.Stats.var))
-      x
-  in
-  check_arr ~msg:"no gradient flows through the running stats"
-    (Array.make 8 0.0) (Nx.reshape [| 8 |] g)
-
 let test_bn_stats_checkpoint () =
   let params, _ = Batch_norm.init ~features:2 in
   let stats =
@@ -174,9 +161,9 @@ module Model = struct
     let out = field c "out" Linear.walk out in
     { lin; bn; out }
 
-  let forward p stats ~training x =
+  let forward ?momentum p stats ~training x =
     let h = Linear.apply p.lin x in
-    let h, stats = Batch_norm.apply p.bn stats ~training h in
+    let h, stats = Batch_norm.apply ?momentum p.bn stats ~training h in
     let h = Nx.tanh h in
     (Linear.apply p.out h, stats)
 end
@@ -229,6 +216,82 @@ let test_bn_train_step_roundtrip () =
   is_true ~msg:"eval leaves the stats unchanged" (stats'' == stats');
   let eval_loss = Nx.item [] (Loss.mse pred y) in
   is_true ~msg:"eval loss is in the training loss's ballpark" (eval_loss < first)
+
+(* [Model.forward] in training mode with its running statistics updated from
+   batch statistics held constant by [Rune.detach]. *)
+let detached_forward ~momentum p (stats : _ Batch_norm.Stats.t) x =
+  let h = Linear.apply p.Model.lin x in
+  let y, _ = Batch_norm.apply ~momentum p.bn stats ~training:true h in
+  let h = Rune.detach h in
+  let blend old batch =
+    Nx.add (Nx.mul_s old momentum) (Nx.mul_s batch (1.0 -. momentum))
+  in
+  let stats' =
+    {
+      Batch_norm.Stats.mean = blend stats.mean (Nx.mean ~axes:[ 0 ] h);
+      var = blend stats.var (Nx.var ~axes:[ 0 ] h);
+    }
+  in
+  (Linear.apply p.out (Nx.tanh y), stats')
+
+let bn_stats = Nx.Ptree.instantiate (module Batch_norm.Stats)
+
+let leaves s v =
+  Nx.Ptree.fold s
+    (fun p t acc ->
+      (Nx.Ptree.Path.to_string p, Nx.to_array (Nx.cast Nx.float64 t)) :: acc)
+    v []
+
+let leaves_t eps = list (pair string (array eps))
+
+let step_t =
+  pair (float 1e-6) (pair (leaves_t (float 1e-6)) (leaves_t (float 1e-6)))
+
+let bn_step_gen =
+  Gen.(
+    quad (int_range 0 1_000_000) (int_range 1 6) (int_range 1 4)
+      (float_range 0.0 1.0))
+
+let test_bn_stats_need_no_detach =
+  prop "the running stats need no stop-gradient" bn_step_gen
+    (fun (seed, n, features, momentum) ->
+      cover "a one-row batch" (n = 1);
+      Nx.Rng.with_key (Nx.Rng.key seed) @@ fun () ->
+      let x = Nx.randn Nx.float32 [| n; 2 |] in
+      let y = Nx.randn Nx.float32 [| n; 1 |] in
+      let params =
+        {
+          Model.lin = Linear.init ~inputs:2 ~outputs:features;
+          bn = fst (Batch_norm.init ~features);
+          out = Linear.init ~inputs:features ~outputs:1;
+        }
+      in
+      let stats =
+        {
+          Batch_norm.Stats.mean = Nx.randn Nx.float32 [| features |];
+          var = Nx.exp (Nx.randn Nx.float32 [| features |]);
+        }
+      in
+      let step forward =
+        let objective p =
+          let pred, stats' = forward p stats x in
+          (Loss.mse pred y, stats')
+        in
+        let loss, grads, stats' =
+          Rune.value_and_grad_aux model bn_stats objective params
+        in
+        (Nx.item [] loss, (leaves model grads, leaves bn_stats stats'))
+      in
+      equal ~msg:"a training step matches the detached update" step_t
+        (step (detached_forward ~momentum))
+        (step (fun p s x -> Model.forward ~momentum p s ~training:true x));
+      let loss s =
+        Loss.mse (fst (Model.forward ~momentum params s ~training:true x)) y
+      in
+      let zeros = List.map (fun (p, a) -> (p, Array.map (fun _ -> 0.0) a)) in
+      equal ~msg:"the running stats carry no gradient" (leaves_t float_exact)
+        (zeros (leaves bn_stats stats))
+        (leaves bn_stats (Rune.grad bn_stats loss stats)))
 
 (* Dropout *)
 
@@ -505,12 +568,11 @@ let tests =
         test "eval mode normalizes with the running stats"
           test_bn_eval_uses_running_stats;
         test "gradients flow to gamma and beta" test_bn_grads_flow_to_params;
-        test "no gradient flows through the stat update"
-          test_bn_stat_update_is_detached;
         test "stats checkpoint under their own prefix" test_bn_stats_checkpoint;
         test "init rejects non-positive features" test_bn_init_validates;
         test "train step threads stats through value_and_grad_aux"
           test_bn_train_step_roundtrip;
+        test_bn_stats_need_no_detach;
       ];
     group "dropout"
       [

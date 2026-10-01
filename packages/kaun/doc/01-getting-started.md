@@ -26,7 +26,7 @@ Add to your `dune` file:
  (libraries kaun rune vega nx))
 ```
 
-Note the layering: kaun's library depends only on nx and rune. Optimizers come from [vega](../../vega/doc/index.md), which you depend on directly and compose in your own code — there is no trainer in between.
+Note the layering: kaun's library depends only on nx. Differentiation comes from [rune](../../rune/doc/index.md) and optimizers from [vega](../../vega/doc/index.md), which you depend on directly and compose in your own code — there is no trainer in between.
 
 ## A Model Is a Record
 

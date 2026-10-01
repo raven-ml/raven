@@ -1,6 +1,6 @@
 # Kaun
 
-Neural networks for OCaml, built on [rune](../rune/) autodiff.
+Neural networks for OCaml, trained with [rune](../rune/) autodiff.
 
 Kaun provides the building blocks for training neural networks —
 layers, activations, initializers, losses, data batching, metrics,
@@ -11,7 +11,7 @@ training step is a few lines you own end to end.
 The glue is `Nx.Ptree`, the structures of [nx](../nx/):
 [rune](../rune/) (transformations) and [vega](../vega/)
 (optimizers) each sit on nx independently, kaun's library depends
-only on nx and rune, and the three compose in your code through
+only on nx, and the three compose in your code through
 the one record type you define.
 
 ## The Core Idea

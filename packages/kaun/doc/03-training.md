@@ -4,7 +4,7 @@ Kaun has no trainer. A training step is a function you write: it composes `Rune.
 
 ## The Layering
 
-Kaun's library depends only on nx and rune. Optimizers come from [vega](../../vega/doc/index.md), an independent package that also sits directly on nx: you add `vega` to your own project's dependencies and compose it in your code. The three libraries meet in the one record type you define — all of them operate on any `Nx.Ptree.S` structure, so there is no adapter layer and nothing to configure.
+Kaun's library depends only on nx; you differentiate with rune in your own code. Optimizers come from [vega](../../vega/doc/index.md), an independent package that also sits directly on nx: you add `vega` to your own project's dependencies and compose it in your code. The three libraries meet in the one record type you define — all of them operate on any `Nx.Ptree.S` structure, so there is no adapter layer and nothing to configure.
 
 ## Anatomy of a Training Step
 

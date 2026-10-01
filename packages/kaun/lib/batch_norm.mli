@@ -116,9 +116,9 @@ val apply :
     With [training = true], [mean] and [var] are the current batch's mean and
     population variance — gradients flow through them to [x] — and [stats'] is
     the updated running statistics [momentum * stats + (1 - momentum) * batch].
-    The update is detached: no gradient flows through [stats'], which a
-    training step returns through {!Rune.value_and_grad_aux} (see the module
-    preamble).
+    [y] does not depend on [stats]. A training step returns [stats'] beside the
+    loss through {!Rune.value_and_grad_aux}, which gives it back
+    undifferentiated (see the module preamble).
 
     With [training = false], [mean] and [var] are [stats] and [stats' == stats].
 

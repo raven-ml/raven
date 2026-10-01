@@ -5035,6 +5035,9 @@ thread.
 
 ### Kaun
 
+- The `kaun` library depends on nx alone, no longer on rune: add rune to your
+  project to differentiate. `Batch_norm.apply` no longer detaches the running
+  statistics; `Rune.value_and_grad_aux` returns them undifferentiated.
 - Add `Cache_index.draft ~slots ~sees` to verify a tree of draft tokens in one
   call: each stores at a chosen slot and sees the cache and the draft tokens
   `sees` names. A kept path's slots go in the next call's table.

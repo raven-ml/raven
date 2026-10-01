@@ -1,8 +1,8 @@
 # kaun
 
-Kaun is a neural network library for OCaml built on [rune](../../rune/doc/index.md) autodiff. It provides the building blocks for training networks — layers, activations, initializers, losses, data batching, metrics, checkpoints — as plain records and pure functions. There is no layer object and no trainer: a model is a typed record you write, and a training step is a few lines you own end to end.
+Kaun is a neural network library for OCaml, trained with [rune](../../rune/doc/index.md) autodiff. It provides the building blocks for training networks — layers, activations, initializers, losses, data batching, metrics, checkpoints — as plain records and pure functions. There is no layer object and no trainer: a model is a typed record you write, and a training step is a few lines you own end to end.
 
-The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md): [rune](../../rune/doc/index.md) (transformations) and [vega](../../vega/doc/index.md) (optimizers) each sit on nx independently, kaun's library depends only on nx and rune, and the three compose in your code through the one record type you define.
+The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md): [rune](../../rune/doc/index.md) (transformations) and [vega](../../vega/doc/index.md) (optimizers) each sit on nx independently, kaun's library depends only on nx, and the three compose in your code through the one record type you define.
 
 ## Features
 

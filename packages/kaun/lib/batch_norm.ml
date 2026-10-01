@@ -94,11 +94,8 @@ let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
   let y = Nx.add (Nx.mul normalized (broadcast p.gamma)) (broadcast p.beta) in
   if not training then (y, stats)
   else
-    (* Running statistics are bookkeeping, not part of the differentiable
-       computation: detach the batch statistics so no gradient ever flows
-       through the returned stats. *)
     let update old batch =
-      let batch = Rune.detach (Nx.reshape [| features |] batch) in
+      let batch = Nx.reshape [| features |] batch in
       Nx.add (Nx.mul_s old momentum) (Nx.mul_s batch (1.0 -. momentum))
     in
     ( y,
