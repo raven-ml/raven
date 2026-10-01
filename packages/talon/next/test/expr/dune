@@ -1,0 +1,15 @@
+(test
+ (name test_expr)
+ (package talon)
+ (libraries windtrap talon.next nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_expr.ml test_expr.ml.corrected))))
+
+(cram
+ (applies_to shape)
+ (package talon)
+ (deps
+  (package talon)
+  (package nx)))

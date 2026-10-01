@@ -1,8 +1,17 @@
 (library
  (name talon_next)
  (public_name talon.next)
- (libraries nx nx.dtype)
- (private_modules kind record schema type)
+ (libraries nx nx.dtype nx.backend)
+ (private_modules
+  kind
+  record
+  schema
+  type
+  problem
+  sel
+  order
+  window
+  expr)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

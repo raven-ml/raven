@@ -75,3 +75,8 @@ val pp : Format.formatter -> 'a t -> unit
 
 val pp_name : Format.formatter -> string -> unit
 (** [pp_name ppf n] formats the field name [n] as {!pp} does. *)
+
+val pp_list :
+  (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a list -> unit
+(** [pp_list pp ppf vs] formats [vs] as an OCaml list, [["a"; "b"]], as plans
+    write lists. *)

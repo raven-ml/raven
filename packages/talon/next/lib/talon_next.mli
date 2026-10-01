@@ -8,7 +8,11 @@
     {!Type}s say what columns store and {!Kind}s what their cells read as in
     OCaml. {!Binary}, {!Decimal}, {!Time} and {!Record} are the OCaml values
     that cells read as, {!Schema}s name and type a table's columns, and {!Tz}
-    reads the time zone database that zoned operations take. *)
+    reads the time zone database that zoned operations take.
+
+    {!Expr}essions compute over a frame's columns, read through {!Col} handles
+    and {!Ext} declarations; {!Sel} chooses columns, {!Order} sorts and
+    {!Window} cuts the rows that {!Expr.rolling} reduces. *)
 
 module Binary = Binary
 module Decimal = Decimal
@@ -512,3 +516,855 @@ end
 
 module Error = Error
 module Tz = Tz
+
+module Sel : sig
+  (** Column selectors.
+
+      A selector chooses a set of columns by name, type or kind, without naming
+      a schema. A verb resolves it against its input schema when it is applied,
+      to an ordered list of distinct names. [Expr.keep], [Expr.across],
+      [Expr.each], the pivot's [~cols] and [Kit.drop] take selectors; keys stay
+      [string list].
+
+      Selectors combine with {!( + )}, {!( - )} and {!inter}, written inside
+      [Sel.( … )]: [Sel.(prefix "wk" - names [ "wk76" ])]. *)
+
+  type t
+  (** The type for selectors. *)
+
+  (** {1:constructors Constructors} *)
+
+  val all : t
+  (** [all] selects every column, in schema order. *)
+
+  val names : string list -> t
+  (** [names ns] selects the columns [ns], in the order of [ns]. A name that
+      appears twice is selected once, at its first position. A name the schema
+      lacks is a problem. *)
+
+  val prefix : string -> t
+  (** [prefix p] selects the columns whose name starts with [p], in schema
+      order. *)
+
+  val suffix : string -> t
+  (** [suffix s] selects the columns whose name ends with [s], in schema order.
+  *)
+
+  val of_kind : 'a Kind.t -> t
+  (** [of_kind k] selects the columns that a handle of kind [k] binds (see
+      {!Kind.provably_equal}), in schema order. It selects no extension column.
+  *)
+
+  val where : (string -> Type.any -> bool) -> t
+  (** [where p] selects the columns [(n, t)] for which [p n t] is [true], in
+      schema order. [p] must be pure; it runs when a verb is applied. *)
+
+  val ( + ) : t -> t -> t
+  (** [s0 + s1] selects [s0]'s columns, then [s1]'s columns not in [s0]. *)
+
+  val ( - ) : t -> t -> t
+  (** [s0 - s1] selects [s0]'s columns that are not in [s1], in [s0]'s order. *)
+
+  val inter : t -> t -> t
+  (** [inter s0 s1] selects [s0]'s columns that are in [s1], in [s0]'s order. *)
+end
+
+module Order : sig
+  (** Sort keys.
+
+      A sort key names a column, a direction and where its nulls go.
+      [Query.sort] and [Expr.over]'s [~order] take a list of keys, compared in
+      turn; a source's [~sorted] claim is one.
+
+      Each key orders by talon's total order (see {!Type.compare_value}):
+      ascending puts NaN after every number, and descending reverses it, putting
+      NaN first. Nulls go last in both directions unless {!nulls_first}. *)
+
+  type t
+  (** The type for sort keys. *)
+
+  val asc : string -> t
+  (** [asc name] orders the column [name] ascending, nulls last. *)
+
+  val desc : string -> t
+  (** [desc name] orders the column [name] descending, nulls last. *)
+
+  val nulls_first : t -> t
+  (** [nulls_first k] is [k] with its nulls before every value. *)
+end
+
+module Window : sig
+  (** Windows: the rows around a row.
+
+      A window cuts, for each row i of a frame, the rows that [Expr.rolling]
+      reduces: a range of positions around i, or a range of times around the
+      time of i. Positions and times are those of the enclosing frame, in its
+      order. *)
+
+  type t
+  (** The type for windows. *)
+
+  val rows : before:int -> after:int -> t
+  (** [rows ~before ~after] holds, for row i, the rows j of its frame with
+      [i - before <= j <= i + after]: [rows ~before:6 ~after:0] is the last
+      seven rows, the row included. A negative bound excludes rows on its side:
+      [rows ~before:3 ~after:(-1)] is the three rows before, without the row
+      itself. Rows past the frame's edges are absent, so a window near an edge
+      holds fewer rows.
+
+      Raises [Invalid_argument] if [before + after < 0], a window that is empty
+      for every row. *)
+
+  val time : ?after:Time.span -> before:Time.span -> string -> t
+  (** [time ?after ~before on] holds the rows whose time in the column [on] is
+      later than [before] before the row's own time and at most [after] past it:
+      [time ~before:(Time.Span.days 7) "ts"] is the last seven days, the row's
+      own time included. [after] defaults to the zero span. The column [on] is a
+      datetime, date, clock or duration column, a date counting 86,400 seconds a
+      day, and its values must ascend within each frame: a violation is a data
+      error that suggests sorting (see [Expr.over]'s [~order]).
+
+      Raises [Invalid_argument] if [before + after] is not positive, a window
+      that is empty for every row. *)
+end
+
+module Expr : sig
+  (** Expressions: typed computations over the columns of a frame.
+
+      An expression [('a, 's) t] computes values that read as ['a] from the
+      columns of a {e frame}, the ordered rows a verb or an enclosing expression
+      gives it. Its {e shape} ['s] is {!row}, one value per row of the frame, or
+      {!agg}, one value per frame. Handles ([Col]) are [row], reductions take
+      [row] to [agg], and literals and elementwise operations keep their
+      operands' shape, so [sum (w *. x) /. sum w] is [agg]. ['s] is a covariant
+      phantom, so [let cutoff = Expr.float 15.] generalizes, and no call site
+      writes a shape.
+
+      Expressions are data. Building one reads nothing; a verb binds it to its
+      input schema when the verb is applied, checks it and infers its type,
+      reporting every problem at once. Write them inside [Expr.( … )], where the
+      operators below shadow OCaml's.
+
+      {b Types.} Whatever a value meets fixes its type:
+      - A handle of kind [k] binds a column whose type [k] reads (see
+        {!Kind.provably_equal}).
+      - Operands meet at the one of their types that contains the others
+        ({!Type.common}). Types that do not meet are a problem: [cast] first.
+      - A literal, or an expression of literals such as [int 2 * int 50], takes
+        the type of the operand it meets, which must hold each literal and the
+        value of each integer operation of literals ({!Type.holds}). Where it
+        meets none, it takes its kind's default type: [int64], [float64],
+        [bool], [string], [date], [datetime[ns, UTC]] or [duration[ns]].
+      - {!null}, a {!const} and a {!( $ )} result take the type of the operand
+        they meet. Where they meet none, {!store} gives them one. Without it, a
+        [const] or [$] result stands only as an argument of {!( $ )} or as what
+        [Query.values] decodes, so [if_ c (const a) (const b)] is a problem, and
+        a [null] stands nowhere.
+      - Result types follow from operand types alone: each function below states
+        its result's type.
+
+      {b Frames.} A context supplies a frame, and frames nest:
+      - [select], [derive] and [filter]: the input's rows;
+      - [aggregate ~by]: one group's rows, in input order;
+      - {!over}[ ~by ~order e]: the enclosing frame, partitioned by [by], each
+        partition in [order]; results return to their rows;
+      - {!rolling}[ w e]: each row's window, cut from the enclosing frame.
+
+      A frame's order is its input order, and no expression reorders values
+      without returning them to their rows.
+
+      {b Nulls.} Elementwise operations are null where an operand is null,
+      except where stated. Comparisons are Kleene: a comparison with null is
+      null. Reductions skip nulls except {!rows}, {!count}, {!n_unique} and
+      {!collect}. *)
+
+  (** {1:types Expressions and outputs} *)
+
+  type row
+  (** The shape of expressions with one value per row of their frame. *)
+
+  type agg
+  (** The shape of expressions with one value per frame. *)
+
+  type ('a, +'s) t
+  (** The type for expressions of shape ['s] whose values read as ['a]. *)
+
+  type +'s out
+  (** The type for outputs of shape ['s]: named expressions, as [select],
+      [derive], [aggregate] and {!record} take them. *)
+
+  (** {1:outputs Outputs} *)
+
+  val ( := ) : string -> ('a, 's) t -> 's out
+  (** [name := e] outputs [e] as the column [name]. It binds more loosely than
+      every operator, so ["late" := delay > float 15.] needs no parentheses. [e]
+      needs a column type: a {!const} or {!( $ )} result needs {!store}, and an
+      {!option} result is never one. *)
+
+  val keep : Sel.t -> row out
+  (** [keep sel] outputs the columns that [sel] selects, unchanged and under
+      their names. It keeps a column of any type, extensions included. *)
+
+  val across : 'a Kind.t -> Sel.t -> (string -> ('a, row) t -> 's out) -> 's out
+  (** [across k sel f] is the outputs [f n (Col.v k n)] for each name [n] that
+      [sel] selects, in order:
+      [across Kind.float Sel.(prefix "wk") (fun n x -> n := over (rank x))]. A
+      selected column that [k] does not bind is a problem: narrow [sel] with
+      {!Sel.of_kind}. [f] runs when the verb is applied and must be pure. *)
+
+  type 's column = { column : 'a. string -> ('a, row) t -> 's out }
+  (** The type for functions of one column of any type. *)
+
+  val each : Sel.t -> 's column -> 's out
+  (** [each sel { column }] is the outputs [column n x] for each name [n] that
+      [sel] selects, in order, where [x] reads the column [n] at its own type,
+      extensions included:
+      [each Sel.all { column = (fun n x -> n := rows - count x) }]. [column] is
+      polymorphic, so it applies only operations that take every type; each is
+      checked against the column's type when the verb is applied: {!sum} of a
+      string column is a problem. An extension column is read without its
+      declaration, so operations that order its values ({!min}, {!( < )},
+      {!rank}, …) or compute with them ({!sum}, {!mean}, …) are problems, and
+      those that count, move, select or compare them for equality apply.
+      [column] runs when the verb is applied and must be pure. *)
+
+  (** {1:literals Literals} *)
+
+  val int : int -> (int, 's) t
+  (** [int n] is the integer [n]. *)
+
+  val float : float -> (float, 's) t
+  (** [float x] is the float [x]. It may round to the type it takes. *)
+
+  val bool : bool -> (bool, 's) t
+  (** [bool b] is the boolean [b]. *)
+
+  val string : string -> (string, 's) t
+  (** [string s] is the text [s].
+
+      Raises [Invalid_argument] if [s] is not valid UTF-8. *)
+
+  val instant : Time.instant -> (Time.instant, 's) t
+  (** [instant t] is the instant [t]. *)
+
+  val span : Time.span -> (Time.span, 's) t
+  (** [span d] is the span [d]. *)
+
+  val date : Time.date -> (Time.date, 's) t
+  (** [date d] is the date [d]. *)
+
+  val null : ('a, 's) t
+  (** [null] is null, typed by what it meets. *)
+
+  (** {1:elementwise Elementwise operations} *)
+
+  val ( + ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a + b] is the sum of [a] and [b], wrapping on overflow as nx's integers
+      do. Its type is the operands' common type, as for {!( - )}, {!( * )},
+      {!( / )} and {!( mod )}. *)
+
+  val ( - ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a - b] is the difference of [a] and [b]. *)
+
+  val ( * ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a * b] is the product of [a] and [b]. *)
+
+  val ( / ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a / b] is the quotient of [a] by [b], truncated toward zero, and null
+      where [b] is zero. *)
+
+  val ( mod ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a mod b] is the remainder of [a] by [b], of [a]'s sign, and null where
+      [b] is zero. *)
+
+  val ( +. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a +. b] is the IEEE 754 sum of [a] and [b]. Its type is the operands'
+      common type, as for {!( -. )}, {!( *. )}, {!( /. )} and {!( ** )}. *)
+
+  val ( -. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a -. b] is the difference of [a] and [b]. *)
+
+  val ( *. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a *. b] is the product of [a] and [b]. *)
+
+  val ( /. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a /. b] is the quotient of [a] by [b]. *)
+
+  val ( ** ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a ** b] is [a] to the power [b]. *)
+
+  val ( = ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a = b] is [true] iff [a] and [b] are equal in talon's total order
+      ({!Type.compare_value}), so [nan = nan] and [-0. = 0.], and null if either
+      is null. The operands meet at their common type. *)
+
+  val ( <> ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a <> b] is [not (a = b)]. *)
+
+  val ( < ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a < b] is [true] iff [a] comes before [b] in talon's total order, so
+      [x > float 15.] holds for NaN, and null if either is null. Operands of an
+      extension type need a declaration made with [~ordered:true]. *)
+
+  val ( > ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a > b] is [b < a]. *)
+
+  val ( <= ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a <= b] is [a < b || a = b]. *)
+
+  val ( >= ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a >= b] is [b <= a]. *)
+
+  val ( && ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
+  (** [a && b] is Kleene's conjunction: [false] if either is [false], else null
+      if either is null. Both operands are computed. *)
+
+  val ( || ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
+  (** [a || b] is Kleene's disjunction: [true] if either is [true], else null if
+      either is null. *)
+
+  val not : (bool, 's) t -> (bool, 's) t
+  (** [not a] is the negation of [a], null where [a] is. *)
+
+  val if_ : (bool, 's) t -> ('a, 's) t -> ('a, 's) t -> ('a, 's) t
+  (** [if_ c a b] is [a] where [c] is [true] and [b] where [c] is [false] or
+      null. [a] and [b] meet at their common type. *)
+
+  val is_null : ('a, 's) t -> (bool, 's) t
+  (** [is_null a] is [true] where [a] is null and [false] elsewhere. It is never
+      null. *)
+
+  val coalesce : ('a, 's) t list -> ('a, 's) t
+  (** [coalesce es] is the first of [es] that is not null, or null. [es] meet at
+      their common type. *)
+
+  val is_in : 'a list -> ('a, 's) t -> (bool, 's) t
+  (** [is_in vs a] is [true] iff [a] is the same key as one of [vs] (see
+      {!Type.compare_value}), so it is [false], never null, where [a] is null:
+      [not (is_in vs a)] is [true] there, whereas [not (a = v0 || a = v1)] is
+      null. [a]'s type must hold each of [vs]; an extension's values are encoded
+      with its declaration. *)
+
+  val cut : 'a array -> ('a, 's) t -> (int, 's) t
+  (** [cut edges a] is the number of [edges] at or below [a] in talon's total
+      order, as [int64]: bins are half-open, a value below every edge is [0] and
+      one at or above every edge is the number of distinct edges. [edges] need
+      not be sorted, and a repeated edge counts once. [a]'s type must hold each
+      edge, and an extension type needs an ordered declaration. [edges] is
+      copied. *)
+
+  val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
+  (** [cast ty a] converts [a]'s values to [ty]:
+      - between [bool], integer, float and decimal types: integers take exact
+        values only, so a fractional, infinite or NaN float, or a value out of
+        range, is a data error; floats round to nearest; decimals round to
+        nearest at their scale, ties away from zero; [bool] takes [0] and [1]
+        only, and gives [0] and [1];
+      - between [string] and categorical types: the text is kept, and a
+        categorical takes only the strings of its dictionary;
+      - between datetimes that both have a zone, or both have none, between
+        durations, and between clocks: values are kept, and a value that is not
+        a whole number of the new unit is a data error;
+      - lists element by element, records with the same field names field by
+        field, and tensors of the same shape element by element, as [Nx.cast]
+        does.
+
+      Any other pair is a problem that names the function that converts it, if
+      one does: {!Str.parse} and {!Temporal.parse} for text to values,
+      {!Temporal.format} for dates, clocks and datetimes to text,
+      {!Temporal.localize} for zones, [Ext.storage] and [Ext.wrap] for
+      extensions. [a] needs a column type. *)
+
+  type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+  (** The type for elementwise nx functions of one argument that preserve its
+      dtype, such as [Nx.exp]. *)
+
+  val nx : fn -> ('a, 's) t -> ('a, 's) t
+  (** [nx { f } a] applies [f] to [a]'s values with nx's semantics, IEEE's for
+      floats: [nx { f = Nx.exp } x]. [a] has an nx dtype: an integer, float or
+      [bool] type. When the verb is applied, talon calls [f] once on a traced
+      value of that dtype and records the operations [f] performs; an [f] that
+      moves, reduces or reshapes its argument is a problem, and so is one that
+      ignores it, which would lose its nulls. *)
+
+  type fn2 = { f2 : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+  (** The type for elementwise nx functions of two arguments of one dtype that
+      preserve it, such as [Nx.atan2]. *)
+
+  val nx2 : fn2 -> ('a, 's) t -> ('a, 's) t -> ('a, 's) t
+  (** [nx2 { f2 } a b] is like {!nx} for two arguments, which meet at their
+      common type: [nx2 { f2 = Nx.atan2 } y x]. *)
+
+  (** {1:reductions Reductions}
+
+      A reduction takes a [row] expression to one value per frame. Over no
+      values, {!sum}, {!count} and {!n_unique} are [0], {!collect} is the empty
+      list, and every other reduction is null. *)
+
+  val rows : (int, agg) t
+  (** [rows] is the number of rows of the frame, as [int64]. *)
+
+  val count : ('a, row) t -> (int, agg) t
+  (** [count a] is the number of non-null values of [a], as [int64]. *)
+
+  val sum : ('a, row) t -> ('a, agg) t
+  (** [sum a] is the sum of [a]'s values: [int64] over integers, [a]'s type over
+      floats and durations, and [decimal[18, s]] over decimals of scale [s].
+      Integer sums wrap as nx's integers do; a duration or decimal sum that
+      overflows is a data error. Other types are a problem. *)
+
+  val min : ('a, row) t -> ('a, agg) t
+  (** [min a] is the least of [a]'s values in talon's total order, of [a]'s
+      type. An extension type needs an ordered declaration. *)
+
+  val max : ('a, row) t -> ('a, agg) t
+  (** [max a] is the greatest of [a]'s values, like {!min}. *)
+
+  val first : ('a, row) t -> ('a, agg) t
+  (** [first a] is [a]'s first non-null value in frame order. *)
+
+  val last : ('a, row) t -> ('a, agg) t
+  (** [last a] is [a]'s last non-null value in frame order. *)
+
+  val only : ('a, row) t -> ('a, agg) t
+  (** [only a] is [a]'s one distinct non-null value, and a data error naming the
+      frame when [a] has several. *)
+
+  val mean : ('a, row) t -> (float, agg) t
+  (** [mean a] is the arithmetic mean of [a]'s values, as [float64]. [a] is an
+      integer or float expression, as for {!std}, {!var}, {!median} and
+      {!quantile}; other types are a problem. *)
+
+  val std : ('a, row) t -> (float, agg) t
+  (** [std a] is the sample standard deviation of [a]'s values, dividing by n -
+      1, and null for fewer than two values. *)
+
+  val var : ('a, row) t -> (float, agg) t
+  (** [var a] is the sample variance of [a]'s values, like {!std}. *)
+
+  val median : ('a, row) t -> (float, agg) t
+  (** [median a] is [quantile 0.5 a]. *)
+
+  val quantile : float -> ('a, row) t -> (float, agg) t
+  (** [quantile p a] is the [p]-quantile of [a]'s values, interpolating linearly
+      between the two nearest ranks.
+
+      Raises [Invalid_argument] if [p] is not in \[[0];[1]\]. *)
+
+  val ewm : alpha:float -> ('a, row) t -> (float, agg) t
+  (** [ewm ~alpha a] is the exponentially weighted mean of [a]'s values in frame
+      order, as [float64]: y is the first value, then (1 − [alpha])·y +
+      [alpha]·x at each next value x, and [ewm ~alpha a] is the last y. A NaN
+      propagates to every later y. [Kit.cumulative (ewm ~alpha a)] is the
+      smoothed series.
+
+      Raises [Invalid_argument] unless [0. < alpha && alpha <= 1.]. *)
+
+  val n_unique : ('a, row) t -> (int, agg) t
+  (** [n_unique a] is the number of distinct keys of [a], null being one key, as
+      [int64]. *)
+
+  val arg_min : ('a, row) t -> (int, agg) t
+  (** [arg_min a] is the zero-based position in the frame of [a]'s first least
+      value, as [int64]. An extension type needs an ordered declaration. *)
+
+  val arg_max : ('a, row) t -> (int, agg) t
+  (** [arg_max a] is the position of [a]'s first greatest value, like
+      {!arg_min}. *)
+
+  val collect : ('a, row) t -> ('a array, agg) t
+  (** [collect a] is the list of [a]'s values in frame order, nulls included, of
+      type [list[t]] for [a]'s type [t]. *)
+
+  (** {1:frames Frames} *)
+
+  val over : ?by:string list -> ?order:Order.t list -> ('a, 's) t -> ('a, row) t
+  (** [over ~by ~order e] evaluates [e] in the enclosing frame, partitioned by
+      the columns [by] (key identity, null being one key) and each partition
+      ordered by [order]. A reduction is broadcast over its partition's rows,
+      and a row expression such as {!shift} or {!rank} runs within its partition
+      and returns its values to their rows. [by] defaults to no columns, one
+      partition; [order] to none, the frame's order. At the top of [derive] or
+      [filter], [over (mean x)] is the mean of the whole input, and it blocks
+      the pipeline. Its type is [e]'s. An [order] key of an extension type is a
+      problem: sort by its storage, derived first. *)
+
+  val rolling : Window.t -> ('a, agg) t -> ('a, row) t
+  (** [rolling w e] is, for each row, [e] over the row's window [w], as if the
+      window were [e]'s frame:
+      [rolling (Window.rows ~before:6 ~after:0) (mean x)]. A window with too few
+      values is a comparison away:
+      [if_ (rolling w (count x) >= int 7) (rolling w (mean x)) null]. Its type
+      is [e]'s. *)
+
+  val shift : int -> ('a, row) t -> ('a, row) t
+  (** [shift n a] is [a]'s value [n] rows earlier in the frame, or [-n] rows
+      later if [n] is negative, and null past the frame's edges. *)
+
+  val rank : ('a, row) t -> (int, row) t
+  (** [rank a] is the 1-based rank of [a]'s value among the frame's non-null
+      values in talon's total order, ties taking the lowest rank (SQL's [RANK]),
+      as [int64], and null where [a] is null. An extension type needs an ordered
+      declaration. *)
+
+  (** {1:ocaml OCaml values}
+
+      These functions compute in OCaml, once per row, at native speed. They must
+      be pure; an exception they raise propagates from the run. *)
+
+  val const : 'a -> ('a, 's) t
+  (** [const v] is [v] on every row. It is typed by what it meets, an
+      extension's value being encoded with its declaration; a type that does not
+      hold [v] is a problem. *)
+
+  val ( $ ) : ('a -> 'b, 's) t -> ('a, 's) t -> ('b, 's) t
+  (** [f $ a] applies [f]'s function to [a]'s value, once per row where no
+      argument is null, and is null elsewhere: [const mk $ carrier $ delay]. An
+      argument is decoded with its column type, so it needs one, unless it is
+      itself an OCaml value: a [const], a [$] result or an {!option}. The result
+      is typed by what it meets, or by {!store}. *)
+
+  val option : ('a, 's) t -> ('a option, 's) t
+  (** [option a] is [Some v] where [a] is [v] and [None] where [a] is null. It
+      is never null, and is an argument of {!( $ )} or what [Query.values]
+      decodes. [a] needs a column type. *)
+
+  val of_option : ('a option, 's) t -> ('a, 's) t
+  (** [of_option a] is [v] where [a] is [Some v] and null where it is [None]. It
+      is typed by what it meets, or by {!store}. *)
+
+  val store : 'b Type.t -> ('b, 's) t -> ('b, 's) t
+  (** [store ty a] is [a] typed as [ty], as if [a] met an operand of type [ty]:
+      a literal, [null], [const], [$] or {!of_option} result takes [ty], and an
+      [a] of a type that [ty] contains is widened to it. A literal or {!const}
+      value that [ty] does not hold is a problem, and a [$] or {!of_option}
+      result that it does not hold a data error. *)
+
+  val batch :
+    (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+    (('a, 'b) Nx.t, row) t ->
+    (('c, 'd) Nx.t, row) t
+  (** [batch f x] applies [f] to batches of the tensor expression [x], its cells
+      stacked as [(n, …shape)], for a model's forward pass. [f] must be
+      row-separable: [f (a ++ b)] is [f a ++ f b]. It sees zeros under nulls,
+      and its result is null where [x] is. When the verb is applied, talon calls
+      [f] on an empty batch to learn the result's dtype and cell shape, which
+      give its type. *)
+
+  (** {1:nested Nested values}
+
+      No expression reads a list's elements. A computation on them is
+      [Query.unnest], then expressions, then [Query.aggregate ~by] the row's id,
+      where {!collect} rebuilds a list. *)
+
+  val record : 's out list -> (Record.t, 's) t
+  (** [record os] is the record whose fields are the outputs [os], in order. An
+      output name that appears twice is a problem. *)
+
+  val field : 'a Kind.t -> string -> (Record.t, 's) t -> ('a, 's) t
+  (** [field k name r] is the field [name] of the record [r], which [k] must
+      bind, null where [r] is null. *)
+
+  val unpack : (Record.t, row) t -> row out
+  (** [unpack r] outputs each field of the record [r] as a column named after
+      it, in order. *)
+
+  (** {1:text Text} *)
+
+  (** Text.
+
+      Text counts and slices Unicode scalar values and maps case with the full
+      Unicode mappings. Categorical values are text. *)
+  module Str : sig
+    type pattern
+    (** The type for patterns: what text is matched against. *)
+
+    val literal : string -> pattern
+    (** [literal s] matches [s] anywhere in the text.
+
+        Raises [Invalid_argument] if [s] is empty or not valid UTF-8, as
+        {!prefix} and {!suffix} do. *)
+
+    val prefix : string -> pattern
+    (** [prefix s] matches [s] at the start of the text. *)
+
+    val suffix : string -> pattern
+    (** [suffix s] matches [s] at the end of the text. *)
+
+    val pieces : string list -> pattern
+    (** [pieces ss] matches the strings [ss] in order without overlap:
+        [matches (pieces [ "special"; "requests" ])] is SQL's
+        [LIKE '%special%requests%'].
+
+        Raises [Invalid_argument] if [ss] is empty or holds an empty or
+        non-UTF-8 string. *)
+
+    val length : (string, 's) t -> (int, 's) t
+    (** [length a] is the number of Unicode scalar values of [a], as [int64]. *)
+
+    val slice : offset:int -> length:int -> (string, 's) t -> (string, 's) t
+    (** [slice ~offset ~length a] is the at most [length] scalar values of [a]
+        from [offset], counted from the end when [offset] is negative, as
+        [Query.slice] counts rows.
+
+        Raises [Invalid_argument] if [length < 0]. *)
+
+    val lower : (string, 's) t -> (string, 's) t
+    (** [lower a] is [a] mapped to lowercase with the full Unicode mapping. *)
+
+    val upper : (string, 's) t -> (string, 's) t
+    (** [upper a] is [a] mapped to uppercase with the full Unicode mapping:
+        ["ß"] gives ["SS"]. *)
+
+    val matches : pattern -> (string, 's) t -> (bool, 's) t
+    (** [matches p a] is [true] iff [p] matches [a]. *)
+
+    val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
+    (** [parse ty a] is the value of type [ty] that the text [a] writes, in the
+        forms that [talon.csv] reads: [true] and [false]; decimal integers with
+        an optional sign; decimal or scientific floats, [inf], [-inf] and [nan];
+        decimals; ISO 8601 dates; and ISO 8601 datetimes, with an offset or [Z]
+        exactly when [ty] has a zone. Any other text, and a value that [ty] does
+        not hold, is a data error. [ty] is a [bool], integer, float, decimal,
+        [date] or [datetime] type, or a categorical, which takes only the
+        strings of its dictionary. *)
+  end
+
+  (** {1:time Time} *)
+
+  (** Temporal values.
+
+      Dates, clocks and datetimes without a zone are wall-clock values: their
+      calendar is read as it is, and they take no zone. A datetime with a zone
+      holds instants, and reading its calendar takes the [~zone] whose wall
+      clock reads them. Where a zone's wall clock reads a time twice or never,
+      {!floor} and {!offset} keep the instant's offset when it applies and
+      otherwise move past the gap; {!localize} takes the policy explicitly. *)
+  module Temporal : sig
+    val add : ('a, 's) t -> (Time.span, 's) t -> ('a, 's) t
+    (** [add a d] is [a] advanced by [d], of [a]'s type: a datetime, a duration
+        or a clock, [d] being a duration of [a]'s unit or a coarser one, or a
+        date, [d] being whole days. A literal [d] that is not whole days is a
+        problem, and another a data error. A result out of range, or a clock
+        outside its day, is a data error. *)
+
+    val diff : ('a, 's) t -> ('a, 's) t -> (Time.span, 's) t
+    (** [diff a b] is the span from [b] to [a]: a duration of their common unit
+        for datetimes, durations and clocks, which meet as {!Type.common} says,
+        and [duration[s]] for dates. *)
+
+    type field =
+      [ `Year
+      | `Month
+      | `Day
+      | `Hour
+      | `Minute
+      | `Second
+      | `Nanosecond
+      | `Weekday
+      | `Yearday ]
+    (** The type for calendar fields:
+        - [`Year], astronomical: year [0] is 1 BC;
+        - [`Month], [1] to [12], and [`Day], the day of the month, [1] to [31];
+        - [`Hour], [0] to [23], [`Minute] and [`Second], [0] to [59];
+        - [`Nanosecond], the nanosecond within the second;
+        - [`Weekday], the ISO day of the week, [1] for Monday to [7];
+        - [`Yearday], the day of the year, [1] to [366]. *)
+
+    val field : field -> ?zone:Tz.zone -> ('a, 's) t -> (int, 's) t
+    (** [field f ?zone a] is the field [f] of [a], as [int64]:
+        [field `Year orderdate], [field `Hour ~zone:paris ts]. [a] is a date, a
+        clock or a datetime. A datetime with a zone holds instants, read on
+        [zone]'s wall clock, which it requires; dates, clocks and datetimes
+        without a zone are wall-clock values and take no [zone]. A date has no
+        time-of-day field and a clock no calendar field: asking for one is a
+        problem. *)
+
+    val floor : ?zone:Tz.zone -> Time.step -> ('a, 's) t -> ('a, 's) t
+    (** [floor ?zone step a] is the first instant of the period of [step] that
+        holds [a], a date or a datetime, on [zone]'s wall clock when [a] has a
+        zone, which then requires [zone]. Periods are counted from 1970-01-01
+        00:00, and weeks from Monday 1970-01-05. Where the period's first
+        wall-clock time is skipped, it is the first instant after the gap. A
+        date floors by calendar steps only. Its type is [a]'s.
+
+        Raises [Invalid_argument] if [step] is not positive. *)
+
+    val offset : ?zone:Tz.zone -> Time.step -> ('a, 's) t -> ('a, 's) t
+    (** [offset ?zone step a] is [a], a date or a datetime, moved by [step]: an
+        exact step moves the instant, and a calendar step moves the wall clock,
+        on [zone]'s when [a] has a zone, as for {!floor}; a day of the month
+        past the month's end becomes its last day. A date moves by calendar
+        steps only. Its type is [a]'s. *)
+
+    type policy = [ `Earlier | `Later | `Null | `Fail ]
+    (** The type for resolutions of a wall-clock time that a zone reads twice or
+        never. A time read twice has two instants; a skipped time has the two
+        instants that the offsets before and after the skip give it, the later
+        being the time moved past the gap. [`Earlier] and [`Later] pick one,
+        [`Null] gives null, and [`Fail] is a data error. *)
+
+    val localize :
+      Tz.zone ->
+      ambiguous:policy ->
+      gap:policy ->
+      (Time.instant, 's) t ->
+      (Time.instant, 's) t
+    (** [localize zone ~ambiguous ~gap a] is the instant at which [zone]'s wall
+        clock reads [a], resolved by [ambiguous] where it reads [a] twice and by
+        [gap] where it never does. [a] is a datetime without a zone, and the
+        result has [a]'s unit and [zone]'s name. *)
+
+    val windows :
+      ?zone:Tz.zone ->
+      every:Time.step ->
+      period:Time.step ->
+      ('a, 's) t ->
+      ('a array, 's) t
+    (** [windows ?zone ~every ~period a] is the starts of the windows that hold
+        [a], a date or a datetime, in ascending order: windows start every
+        [every], as {!floor} places them, and last [period], as {!offset} moves.
+        Its type is [list[t]] for [a]'s type [t]. [unnest], then [aggregate],
+        gives hopping windows.
+
+        Raises [Invalid_argument] if [every] or [period] is not positive. *)
+
+    val parse : string -> 'a Type.t -> (string, 's) t -> ('a, 's) t
+    (** [parse fmt ty a] reads the text [a] in the format [fmt] as a value of
+        [ty], a [date], [datetime] or [clock] type. [fmt] holds the directives
+        [%Y] (the year), [%m], [%d], [%H], [%M], [%S] (two digits each), [%f]
+        (one to nine digits of a fraction of a second), [%z] ([Z] or a [±hh:mm]
+        offset) and [%%]; other characters match themselves. A datetime with
+        [%z] needs a zone in [ty], and one without needs none. Text that does
+        not match, and a value that [ty] does not hold, are data errors.
+
+        Raises [Invalid_argument] if [fmt] holds another directive. *)
+
+    val format : string -> ('a, 's) t -> (string, 's) t
+    (** [format fmt a] writes [a], a date, datetime or clock, in the format
+        [fmt], as {!parse} reads it; [%f] writes nine digits and [%z] writes
+        [Z]. [%z] needs a datetime with a zone.
+
+        Raises [Invalid_argument] as {!parse} does. *)
+  end
+
+  (** {1:fmt Formatting} *)
+
+  val pp : Format.formatter -> ('a, 's) t -> unit
+  (** [pp ppf e] formats [e] as it is written inside [Expr.( … )], with fewest
+      parentheses: [(amount -. over (mean amount)) /. over (std amount)].
+      Besides:
+      - a handle formats as its column name, quoted as an OCaml string unless it
+        is an OCaml lowercase identifier that is neither a keyword nor a value
+        of this module;
+      - a literal formats as its value: [15], [15.], [nan], ["text"], [true],
+        [2024-03-15], [2024-03-15T09:30:00], [15m];
+      - an OCaml value of {!const} formats as [<const>], and the functions of
+        {!nx}, {!nx2} and {!batch} as [<fn>];
+      - an {!is_in} list and {!cut} edges format with their operand's type once
+        bound, and as [[…]] before. *)
+end
+
+module Col : sig
+  (** Column handles.
+
+      A handle names a column and the kind its values read as. It is bound to no
+      table: a verb binds it to its input when it is applied, so a module of
+      handles serves as a schema. A handle of kind [k] binds a column whose type
+      [k] reads ({!Kind.provably_equal}); a missing column, or one of another
+      kind, is a problem the verb reports. No handle binds an extension column:
+      [Ext.col] does. *)
+
+  val v : 'a Kind.t -> string -> ('a, Expr.row) Expr.t
+  (** [v k name] is the column [name] read as [k]:
+      [v (Kind.list Kind.int) "tokens"]. *)
+
+  val bool : string -> (bool, Expr.row) Expr.t
+  (** [bool name] is [v Kind.bool name]. *)
+
+  val int : string -> (int, Expr.row) Expr.t
+  (** [int name] is [v Kind.int name], which binds every integer type. *)
+
+  val float : string -> (float, Expr.row) Expr.t
+  (** [float name] is [v Kind.float name], which binds every float type. *)
+
+  val string : string -> (string, Expr.row) Expr.t
+  (** [string name] is [v Kind.string name], which binds [string] and
+      categorical types. *)
+
+  val binary : string -> (Binary.t, Expr.row) Expr.t
+  (** [binary name] is [v Kind.binary name]. *)
+
+  val decimal : string -> (Decimal.t, Expr.row) Expr.t
+  (** [decimal name] is [v Kind.decimal name]. *)
+
+  val date : string -> (Time.date, Expr.row) Expr.t
+  (** [date name] is [v Kind.date name]. *)
+
+  val instant : string -> (Time.instant, Expr.row) Expr.t
+  (** [instant name] is [v Kind.instant name], which binds every datetime type.
+  *)
+
+  val span : string -> (Time.span, Expr.row) Expr.t
+  (** [span name] is [v Kind.span name], which binds every duration and clock
+      type. *)
+end
+
+module Ext : sig
+  (** Extension declarations.
+
+      An extension type is a named type stored as another ({!Type.ext}). A
+      declaration gives it OCaml values ['e], converted to and from its storage
+      values ['s]. It is the only way to read an extension column's values or
+      compute on them: no {!Col} handle binds one. A library's claim to an
+      extension's name is a convention, as in Arrow; what it controls is ['e],
+      whose values come only from [dec] and [enc].
+
+      Without a declaration, an extension column moves through the order-free
+      structural operations: [keep], [Expr.each], filtering, gathering,
+      appending, joining and grouping by key identity on its storage. Its order,
+      and computation on its values, need a declaration. *)
+
+  type ('e, 's) t
+  (** The type for declarations of extensions whose values read as ['e] and are
+      stored as ['s]. *)
+
+  val v :
+    name:string ->
+    ?metadata:string ->
+    ordered:bool ->
+    's Type.t ->
+    dec:('s -> 'e) ->
+    enc:('e -> 's) ->
+    ('e, 's) t
+  (** [v ~name ~metadata ~ordered storage ~dec ~enc] declares the extension type
+      [Type.ext ~name ~metadata storage] with:
+      - [dec], which reads a stored value as ['e]: [Query.values] and
+        [Column.values] decode with it;
+      - [enc], which stores an ['e]: literals, {!Expr.const} values and
+        {!Expr.is_in} values encode with it. It must be injective;
+      - [ordered], a promise that the order of stored values is the order of the
+        values, as for an epoch stored normalized. With [~ordered:false],
+        {!Expr.min}, {!Expr.max}, {!Expr.arg_min}, {!Expr.arg_max},
+        {!Expr.rank}, {!Expr.cut} and [<] are problems on its values. Sort and
+        join keys are names, which no declaration binds: sort an extension
+        column by its storage, derived first.
+
+      [metadata] defaults to [""].
+
+      Raises [Invalid_argument] as {!Type.ext} does. *)
+
+  val col : ('e, 's) t -> string -> ('e, Expr.row) Expr.t
+  (** [col e name] is the column [name] read through [e]. It binds only a column
+      whose type is [e]'s: the same name, metadata and storage type, so a
+      declaration of metres never binds a column of kilograms. *)
+
+  val storage : ('e, 's) t -> ('e, 'sh) Expr.t -> ('s, 'sh) Expr.t
+  (** [storage e x] is the stored values of [x], an expression of [e]'s type, as
+      [e]'s storage type. *)
+
+  val wrap : ('e, 's) t -> ('s, 'sh) Expr.t -> ('e, 'sh) Expr.t
+  (** [wrap e x] is [x]'s values as values of [e]'s type: [x] meets [e]'s
+      storage type, which must contain [x]'s type. [wrap e (storage e x)] has
+      [x]'s values. *)
+end

@@ -178,6 +178,10 @@ let pp_name ppf n =
   if n <> "" && String.for_all is_bare_byte n then Format.pp_print_string ppf n
   else pp_quoted ppf n
 
+let pp_list pp ppf vs =
+  let pp_sep ppf () = Format.fprintf ppf ";@ " in
+  Format.fprintf ppf "@[<hov 1>[%a]@]" (Format.pp_print_list ~pp_sep pp) vs
+
 let pp_sep ppf () = Format.pp_print_string ppf ", "
 
 (* Values *)
