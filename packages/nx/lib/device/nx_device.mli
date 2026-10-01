@@ -916,7 +916,7 @@ module Profile : sig
             run is timed by the device, within the span the libraries that
             submit work record for it, if they record one. *)
     | Overwritten of {
-        device : device;
+        device : device;  (** The device that lost them. *)
         time : int;  (** When the device found them overwritten. *)
         runs : int;  (** The runs whose counters are lost. *)
       }
