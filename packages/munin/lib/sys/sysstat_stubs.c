@@ -824,89 +824,57 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
   }
 
   /* Read all entries into a temporary buffer to avoid TOCTOU race */
-  int capacity = 64;
-  int count = 0;
-  char** dirs = malloc(capacity * sizeof(char*));
-  char** devs = malloc(capacity * sizeof(char*));
-  char** types = malloc(capacity * sizeof(char*));
-
-  if (!dirs || !devs || !types) {
-    free(dirs);
-    free(devs);
-    free(types);
-    endmntent(f);
-    result = caml_alloc(0, 0);
-    CAMLreturn(result);
-  }
+  struct mount {
+    char* dir;
+    char* dev;
+    char* type;
+  };
+  size_t capacity = 64;
+  size_t count = 0;
+  struct mount* mounts = malloc(capacity * sizeof *mounts);
+  int failed = mounts == NULL;
 
   struct mntent* mnt;
-  while ((mnt = getmntent(f)) != NULL) {
-    if (count >= capacity) {
+  while (!failed && (mnt = getmntent(f)) != NULL) {
+    if (count == capacity) {
+      struct mount* grown = realloc(mounts, 2 * capacity * sizeof *mounts);
+      if (!grown) {
+        failed = 1;
+        break;
+      }
+      mounts = grown;
       capacity *= 2;
-      char** new_dirs = realloc(dirs, capacity * sizeof(char*));
-      char** new_devs = realloc(devs, capacity * sizeof(char*));
-      char** new_types = realloc(types, capacity * sizeof(char*));
-      if (!new_dirs || !new_devs || !new_types) {
-        /* Clean up on allocation failure */
-        for (int j = 0; j < count; j++) {
-          free(dirs[j]);
-          free(devs[j]);
-          free(types[j]);
-        }
-        free(new_dirs ? new_dirs : dirs);
-        free(new_devs ? new_devs : devs);
-        free(new_types ? new_types : types);
-        endmntent(f);
-        result = caml_alloc(0, 0);
-        CAMLreturn(result);
-      }
-      dirs = new_dirs;
-      devs = new_devs;
-      types = new_types;
     }
-    dirs[count] = strdup(mnt->mnt_dir);
-    devs[count] = strdup(mnt->mnt_fsname);
-    types[count] = strdup(mnt->mnt_type);
-    if (!dirs[count] || !devs[count] || !types[count]) {
-      /* Clean up on strdup failure */
-      for (int j = 0; j <= count; j++) {
-        free(dirs[j]);
-        free(devs[j]);
-        free(types[j]);
-      }
-      free(dirs);
-      free(devs);
-      free(types);
-      endmntent(f);
-      result = caml_alloc(0, 0);
-      CAMLreturn(result);
-    }
-    count++;
+    struct mount m = {strdup(mnt->mnt_dir), strdup(mnt->mnt_fsname),
+                      strdup(mnt->mnt_type)};
+    mounts[count++] = m;
+    if (!m.dir || !m.dev || !m.type) failed = 1;
   }
   endmntent(f);
 
   /* Now allocate OCaml structures from the buffered data */
-  result = caml_alloc(count, 0);
-  for (int i = 0; i < count; i++) {
-    tup = caml_alloc_tuple(3);
-    str = caml_copy_string(dirs[i]);
-    Store_field(tup, 0, str);
-    str = caml_copy_string(devs[i]);
-    Store_field(tup, 1, str);
-    str = caml_copy_string(types[i]);
-    Store_field(tup, 2, str);
-    Store_field(result, i, tup);
+  if (failed) {
+    result = caml_alloc(0, 0);
+  } else {
+    result = caml_alloc(count, 0);
+    for (size_t i = 0; i < count; i++) {
+      tup = caml_alloc_tuple(3);
+      str = caml_copy_string(mounts[i].dir);
+      Store_field(tup, 0, str);
+      str = caml_copy_string(mounts[i].dev);
+      Store_field(tup, 1, str);
+      str = caml_copy_string(mounts[i].type);
+      Store_field(tup, 2, str);
+      Store_field(result, i, tup);
+    }
   }
 
-  /* Free temporary buffers */
-  for (int i = 0; i < count; i++) {
-    free(dirs[i]);
-    free(devs[i]);
-    free(types[i]);
+  for (size_t i = 0; i < count; i++) {
+    free(mounts[i].dir);
+    free(mounts[i].dev);
+    free(mounts[i].type);
   }
-  free(dirs);
-  free(devs);
-  free(types);
+  free(mounts);
 #else
   result = caml_alloc(0, 0);
 #endif
