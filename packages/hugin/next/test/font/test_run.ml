@@ -118,6 +118,8 @@ let pp_box ppf b =
   Format.fprintf ppf "[%.17g, %.17g; %.17g, %.17g]" (Box2.minx b) (Box2.miny b)
     (Box2.maxx b) (Box2.maxy b)
 
+let box_t = Testable.make ~pp:pp_box ~equal:Box2.equal
+
 let box_near =
   Testable.make ~pp:pp_box ~equal:(fun a b ->
       let close x y = Float.abs (x -. y) <= 1e-12 in
@@ -140,6 +142,40 @@ let bounds_of_ink () =
           (P2.v (5. +. (10. *. em 180)) (2. -. (10. *. em 1490)))
           (P2.v (o +. (10. *. em 1124)) (2. +. (10. *. em 24)))))
     (Run.bounds r)
+
+(* Runs of inked and uninked glyphs (H, o, i, space and .notdef) at positions in
+   any order, one character of text per glyph. *)
+let gen_placed =
+  let open Gen in
+  let glyph =
+    of_list
+      (0
+      :: List.map
+           (fun c -> Font.glyph font (Uchar.of_char c))
+           [ 'H'; 'o'; 'i'; ' ' ])
+  in
+  let coord = float_range (-1000.) 1000. in
+  let+ size = of_list [ 0.; 0.5; 10.; 1000. ]
+  and+ placed = list ~size:(int_range 0 6) (triple glyph coord coord) in
+  let glyphs = Array.of_list (List.map (fun (g, _, _) -> g) placed) in
+  let xs = Array.of_list (List.map (fun (_, x, _) -> x) placed) in
+  let ys = Array.of_list (List.map (fun (_, _, y) -> y) placed) in
+  let text = String.make (Array.length glyphs) 'a' in
+  Run.v ~ys ~font ~size ~text ~glyphs ~xs ()
+
+(* The definition of [Run.bounds]: the union of each glyph's ink box moved by
+   the transform that sets the glyph. *)
+let union_of_inks r =
+  let s = Run.size r in
+  List.fold_left
+    (fun acc i ->
+      let m = Affine.(translate (Run.x r i) (Run.y r i) * scale s s) in
+      match (acc, Font.ink font (Run.glyph r i)) with
+      | acc, None -> acc
+      | None, Some b -> Some (Box2.transform m b)
+      | Some u, Some b -> Some (Box2.union u (Box2.transform m b)))
+    None
+    (List.init (Run.length r) Fun.id)
 
 let gen_run =
   let open Gen in
@@ -203,6 +239,9 @@ let runs =
             (fun () -> f r 2));
       test "bounds is the union of the glyphs' ink, placed and scaled"
         bounds_of_ink;
+      prop "bounds is the union of the placed and scaled ink boxes"
+        (Gen.with_pp Run.pp gen_placed) (fun r ->
+          equal (option box_t) (union_of_inks r) (Run.bounds r));
       test "bounds is None without ink" (fun () ->
           let glyphs, xs = set "  " in
           is_none ~pp:pp_box
@@ -210,6 +249,13 @@ let runs =
           is_none ~pp:pp_box
             (Run.bounds
                (Run.v ~font ~size:10. ~text:"" ~glyphs:[||] ~xs:[||] ())));
+      test "bounds raises on a corner past max_float" (fun () ->
+          let glyphs, _ = set "H" in
+          let r =
+            Run.v ~font ~size:max_float ~text:"H" ~glyphs ~xs:[| max_float |] ()
+          in
+          raises_match (Exn.invalid_arg ~substring:"not finite") (fun () ->
+              ignore (Run.bounds r)));
       test "equal compares every field, fonts by Font.equal" variants;
       prop "equal is an equivalence" (Gen.pair gen_run gen_run)
         (Law.equivalence run_t);

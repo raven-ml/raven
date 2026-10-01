@@ -108,17 +108,24 @@ let cluster r i =
   check "cluster" r i;
   r.clusters.(i)
 
+(* A size is not negative, so scaling keeps a box's minimum corner its
+   minimum. *)
 let bounds r =
-  let box = ref None in
+  let s = r.size in
+  let minx = ref infinity and miny = ref infinity in
+  let maxx = ref neg_infinity and maxy = ref neg_infinity in
   for i = 0 to Array.length r.glyphs - 1 do
-    match Path.bounds (Font.outline r.font r.glyphs.(i)) with
+    match Font.ink r.font r.glyphs.(i) with
     | None -> ()
     | Some b ->
-        let m = Affine.(translate r.xs.(i) r.ys.(i) * scale r.size r.size) in
-        let b = Box2.transform m b in
-        box := Some (match !box with None -> b | Some u -> Box2.union u b)
+        let x = r.xs.(i) and y = r.ys.(i) in
+        minx := Float.min !minx (x +. (s *. Box2.minx b));
+        miny := Float.min !miny (y +. (s *. Box2.miny b));
+        maxx := Float.max !maxx (x +. (s *. Box2.maxx b));
+        maxy := Float.max !maxy (y +. (s *. Box2.maxy b))
   done;
-  !box
+  if !minx > !maxx then None
+  else Some (Box2.of_pts (P2.v !minx !miny) (P2.v !maxx !maxy))
 
 let equal r r' =
   r == r'

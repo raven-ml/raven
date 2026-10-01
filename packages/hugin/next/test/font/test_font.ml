@@ -372,6 +372,7 @@ let glyph_range =
       "Font.kerning",
       fun f g -> ignore (Font.kerning f 0 g) );
     ("outline", "Font.outline", fun f g -> ignore (Font.outline f g));
+    ("ink", "Font.ink", fun f g -> ignore (Font.ink f g));
   ]
 
 (* Every mapping of the character map and every kerned pair of printable ASCII,
@@ -1018,6 +1019,21 @@ let composite_points () =
   is_error `Malformed ~sub:"glyph 3: more than 65535 points"
     (Font.of_string over)
 
+(* Glyph 1 is 256 empty components, so 255 copies of it expand to 255 * 257 =
+   65535 components; glyph [k + 1] of [nested] is 100 copies of glyph [k], so
+   glyph 3 expands to 1,010,100. *)
+let composite_components () =
+  let comp gs = composite (List.map (fun g -> (xy, g, "\000\000", [])) gs) in
+  let wide = comp (List.init 256 (fun _ -> 0)) in
+  let fits = tiny_file [ ""; wide; comp (List.init 255 (fun _ -> 1)) ] in
+  is_ok ~pp:Font.pp_error (Font.of_string fits);
+  let over = tiny_file [ ""; wide; comp (0 :: List.init 255 (fun _ -> 1)) ] in
+  is_error `Malformed ~sub:"glyph 2: more than 65535 components"
+    (Font.of_string over);
+  let nested = "" :: List.init 3 (fun k -> comp (List.init 100 (fun _ -> k))) in
+  is_error `Malformed ~sub:"glyph 3: more than 65535 components"
+    (Font.of_string (tiny_file nested))
+
 let os2_heights () =
   let os2 = os2_pos regular_ttf in
   let cap = set_u16 regular_ttf (os2 + 88) 1400 in
@@ -1180,6 +1196,7 @@ let edges =
       test "format 12 groups past the table are malformed" format_12_overflow;
       test "components after a scaled one are read in place" two_components;
       test "a composite has at most 65535 points" composite_points;
+      test "a composite has at most 65535 components" composite_components;
       test "a contour of two points has ink" (fun () ->
           let f = tiny [ ""; simple [ [ on 0 0; on 100 0 ] ] ] in
           equal (option box_t)
@@ -1250,6 +1267,61 @@ let all_glyphs_within f =
           (contains_box (Font.bounds f))
           b
   done
+
+(* [ink_is_bounds f] checks {!Font.ink} against the outline of every glyph of
+   [f]. *)
+let ink_is_bounds f =
+  for g = 0 to Font.glyph_count f - 1 do
+    equal
+      ~msg:(Printf.sprintf "glyph %d" g)
+      (option box_t)
+      (Path.bounds (Font.outline f g))
+      (Font.ink f g)
+  done
+
+let box_near =
+  let near a b = Float.abs (a -. b) <= 1e-15 in
+  Testable.make ~pp:pp_box ~equal:(fun a b ->
+      near (Box2.minx a) (Box2.minx b)
+      && near (Box2.miny a) (Box2.miny b)
+      && near (Box2.maxx a) (Box2.maxx b)
+      && near (Box2.maxy a) (Box2.maxy b))
+
+(* Glyph 1 is a ring of four quadratics whose ink spans 12.5 to 87.5 on both
+   axes and whose control points reach 0 and 100. Glyph 2 is glyph 1 turned an
+   eighth of a turn about the origin and scaled by 1/√2: its ink spans -25 to 25
+   in x and 25 to 75 in y, where the image of the box of glyph 1 spans -37.5 to
+   37.5 and 12.5 to 87.5. Glyphs 0, 3 and 4 have no ink: no data, no contours,
+   and a contour of one point. *)
+let ink_of_curves_and_components () =
+  let f =
+    tiny
+      [
+        "";
+        simple [ [ off 0 50; off 50 100; off 100 50; off 50 0 ] ];
+        composite
+          [
+            ( words lor xy lor two_by_two,
+              1,
+              be16 0 ^ be16 0,
+              [ half; half; -half; half ] );
+          ];
+        simple [];
+        simple [ [ on 10 10 ] ];
+      ]
+  in
+  ink_is_bounds f;
+  let box x0 y0 x1 y1 = Some (Box2.of_pts (P2.v x0 y0) (P2.v x1 y1)) in
+  equal ~msg:"glyph 1" (option box_near)
+    (box 0.0125 (-0.0875) 0.0875 (-0.0125))
+    (Font.ink f 1);
+  equal ~msg:"glyph 2" (option box_near)
+    (box (-0.025) (-0.075) 0.025 (-0.025))
+    (Font.ink f 2);
+  List.iter
+    (fun g ->
+      is_none ~msg:(Printf.sprintf "glyph %d" g) ~pp:pp_box (Font.ink f g))
+    [ 0; 3; 4 ]
 
 (* Ink boxes read with fontTools, in font units, y up. *)
 let ink =
@@ -1334,17 +1406,28 @@ let outlines =
             |});
       test "a glyph without ink is empty" (fun () ->
           is_true (Path.is_empty (Font.outline (regular ()) 560));
-          is_true (Path.is_empty (Font.outline (regular ()) 0)));
+          is_true (Path.is_empty (Font.outline (regular ()) 0));
+          is_none ~pp:pp_box (Font.ink (regular ()) 560);
+          is_none ~pp:pp_box (Font.ink (regular ()) 0));
       cases
         ~name:(fun (n, _, _) -> n)
-        "outline's ink box" ink
+        "ink and the outline's bounds are fontTools' box of" ink
         (fun (_, g, (x0, y0, x1, y1)) ->
-          equal (option box_t)
-            (Some
-               (Box2.of_pts
-                  (P2.v (em x0) (0. -. em y1))
-                  (P2.v (em x1) (0. -. em y0))))
-            (Path.bounds (Font.outline (regular ()) g)));
+          let box =
+            Some
+              (Box2.of_pts
+                 (P2.v (em x0) (0. -. em y1))
+                 (P2.v (em x1) (0. -. em y0)))
+          in
+          equal ~msg:"outline" (option box_t) box
+            (Path.bounds (Font.outline (regular ()) g));
+          equal ~msg:"ink" (option box_t) box (Font.ink (regular ()) g));
+      test "ink is the outline's bounds for every glyph of regular" (fun () ->
+          ink_is_bounds (regular ()));
+      test "ink is the outline's bounds for every glyph of bold" (fun () ->
+          ink_is_bounds (bold ()));
+      test "ink bounds curves and transformed components tightly"
+        ink_of_curves_and_components;
       test "every glyph of regular lies within its bounds" (fun () ->
           all_glyphs_within (regular ()));
       test "every glyph of bold lies within its bounds" (fun () ->

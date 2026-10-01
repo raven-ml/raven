@@ -94,9 +94,9 @@ val cluster : t -> int -> int
 (** {1:bounds Bounds} *)
 
 val bounds : t -> Box2.t option
-(** [bounds r] is the smallest box containing the ink of the glyphs of [r], each
-    outline scaled by [size r] and moved to its origin, or [None] if no glyph
-    has ink.
+(** [bounds r] is the smallest box containing the ink boxes ({!Font.ink}) of the
+    glyphs of [r], each scaled by [size r] and moved to its glyph's origin, or
+    [None] if no glyph has ink.
 
     Raises [Invalid_argument] if a corner of that box is not finite, which takes
     a size or a position near [max_float]. *)

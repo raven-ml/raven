@@ -541,34 +541,39 @@ let shape glyphs g =
     let contours = i16 t 0 in
     if contours >= 0 then simple g t contours else composite g t
 
-(* The points of every glyph, composites summed, checked against the 65535 of
-   TrueType's point indices; this also rejects cycles of components. *)
+(* The points and the components of every glyph, composites expanded, each
+   checked against 65535: TrueType's point indices are 16-bit, and the bound on
+   components keeps the expansion of a composite, which [outline] and [inks]
+   walk, linear in its points and components however deeply composites of empty
+   glyphs nest. This also rejects cycles of components. *)
 let validate_glyphs glyphs n =
-  let points = Array.make n (-1) in
-  let rec count g =
+  let points = Array.make n (-1) and parts = Array.make n 0 in
+  let rec visit g =
     match points.(g) with
     | -2 -> malformed "glyph %d: composite contains itself" g
     | -1 ->
         points.(g) <- -2;
-        let p =
+        let p, k =
           match shape glyphs g with
-          | Empty -> 0
-          | Simple { xs; _ } -> Array.length xs
+          | Empty -> (0, 0)
+          | Simple { xs; _ } -> (Array.length xs, 0)
           | Composite cs ->
               List.fold_left
-                (fun acc (c, _) ->
+                (fun (p, k) (c, _) ->
                   if c >= n then
                     malformed "glyph %d: component %d does not exist" g c;
-                  acc + count c)
-                0 cs
+                  visit c;
+                  (p + points.(c), k + 1 + parts.(c)))
+                (0, 0) cs
         in
         if p > 0xFFFF then malformed "glyph %d: more than 65535 points" g;
+        if k > 0xFFFF then malformed "glyph %d: more than 65535 components" g;
         points.(g) <- p;
-        p
-    | p -> p
+        parts.(g) <- k
+    | _ -> ()
   in
   for g = 0 to n - 1 do
-    ignore (count g)
+    visit g
   done
 
 (* Fonts *)
@@ -579,6 +584,7 @@ type t = {
   glyph_count : int;
   advances : float array;
   glyphs : glyphs;
+  ink : float array;
   cmap : cmap;
   kerning : kerning;
   ascent : float;
@@ -685,16 +691,45 @@ let contours upem (m : Affine.t) ends on xs ys path =
     ends;
   !path
 
-let outline f g =
-  check_glyph "outline" f g;
+let glyph_outline glyphs upem g =
   let rec emit g m path =
-    match shape f.glyphs g with
+    match shape glyphs g with
     | Empty -> path
-    | Simple { ends; on; xs; ys } -> contours f.upem m ends on xs ys path
+    | Simple { ends; on; xs; ys } -> contours upem m ends on xs ys path
     | Composite cs ->
         List.fold_left (fun path (c, cm) -> emit c Affine.(m * cm) path) path cs
   in
   emit g Affine.id Path.empty
+
+let outline f g =
+  check_glyph "outline" f g;
+  glyph_outline f.glyphs f.upem g
+
+(* The ink boxes of glyphs [0] to [n - 1], four floats each, [minx], [miny],
+   [maxx] and [maxy], or four NaNs for a glyph without ink. *)
+let inks glyphs upem n =
+  let ink = Array.make (4 * n) Float.nan in
+  for g = 0 to n - 1 do
+    match Path.bounds (glyph_outline glyphs upem g) with
+    | None -> ()
+    | Some b ->
+        ink.(4 * g) <- Box2.minx b;
+        ink.((4 * g) + 1) <- Box2.miny b;
+        ink.((4 * g) + 2) <- Box2.maxx b;
+        ink.((4 * g) + 3) <- Box2.maxy b
+  done;
+  ink
+
+let ink f g =
+  check_glyph "ink" f g;
+  (* [g < glyph_count f], so [(4 * g) + 3] indexes [f.ink]. *)
+  let minx = Array.unsafe_get f.ink (4 * g) in
+  if Float.is_nan minx then None
+  else
+    let miny = Array.unsafe_get f.ink ((4 * g) + 1) in
+    let maxx = Array.unsafe_get f.ink ((4 * g) + 2) in
+    let maxy = Array.unsafe_get f.ink ((4 * g) + 3) in
+    Some (Box2.of_pts (P2.v minx miny) (P2.v maxx maxy))
 
 (* Names *)
 
@@ -846,6 +881,7 @@ let decode s =
       glyph_count;
       advances;
       glyphs;
+      ink = inks glyphs upem glyph_count;
       cmap;
       kerning;
       ascent;
@@ -879,7 +915,7 @@ let decode s =
   let ink_top u =
     match glyph f (Uchar.of_char u) with
     | 0 -> None
-    | g -> Option.map (fun b -> 0. -. Box2.miny b) (Path.bounds (outline f g))
+    | g -> Option.map (fun b -> 0. -. Box2.miny b) (ink f g)
   in
   let height pos u default =
     match os2_height pos with

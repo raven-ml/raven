@@ -6,11 +6,11 @@
 (** OpenType fonts.
 
     A font is one face of an OpenType file with TrueType outlines, decoded once:
-    its character map, glyph advances, pair kerning, vertical metrics and glyph
-    outlines. Two faces of {{:https://rsms.me/inter/}Inter} are bundled,
-    {!regular} and {!bold}, so output is the same on every machine without
-    system fonts; other faces load from a file's bytes with {!of_string} or
-    {!of_file}.
+    its character map, glyph advances, pair kerning, vertical metrics, glyph
+    outlines and their ink boxes. Two faces of {{:https://rsms.me/inter/}Inter}
+    are bundled, {!regular} and {!bold}, so output is the same on every machine
+    without system fonts; other faces load from a file's bytes with {!of_string}
+    or {!of_file}.
 
     Fonts are immutable values. Every function of this module is pure, none
     fails on account of a font's data once {!of_string} returned it, and fonts
@@ -72,7 +72,9 @@ val of_string : string -> (t, error) result
     The error is [Unsupported _] for a valid font that uses what this decoder
     does not handle, such as CFF or CFF2 outlines, a font collection, or a
     character map without a Unicode subtable (platform 0, or platform 3 with
-    encoding 1 or 10) of format 4 or 12, and [Malformed _] for anything else. A
+    encoding 1 or 10) of format 4 or 12, and [Malformed _] for anything else,
+    which includes a composite glyph whose components, expanded down to simple
+    glyphs, hold more than 65535 points or more than 65535 components. A
     variable font decodes as its default instance. *)
 
 val of_file : string -> (t, error) result
@@ -190,4 +192,9 @@ val outline : t -> glyph -> Path.t
 (** [outline f g] is the outline of [g], unhinted, to be filled under the
     nonzero rule. Its quadratic curves are exact, composite glyphs are the union
     of their transformed components, and a glyph without ink, such as a space,
-    is {!Path.empty}. Its ink box is [Path.bounds (outline f g)]. *)
+    is {!Path.empty}. Its ink box is {!ink}. *)
+
+val ink : t -> glyph -> Box2.t option
+(** [ink f g] is [Path.bounds (outline f g)], the smallest box containing the
+    ink of [g], or [None] if [g] has no ink. It is recorded when [f] is decoded,
+    so [ink] builds no outline. *)
