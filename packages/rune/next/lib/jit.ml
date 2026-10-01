@@ -461,7 +461,10 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
           | "" -> "the result"
           | path -> "result " ^ path
         in
-        { like = Nx.P (Nx.zeros dt [| 0 |]); shape; at; out; name })
+        (* A structure checks its leaves' shapes; a broadcast scalar has the
+           shape without the bytes. *)
+        let like = Nx.P (Nx.broadcast_to shape (Nx.zeros dt [||])) in
+        { like; shape; at; out; name })
       ys
   in
   let sink = Ops.sink (List.rev !stores) in

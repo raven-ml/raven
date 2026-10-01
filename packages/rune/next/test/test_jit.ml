@@ -495,6 +495,16 @@ let results =
       test "one value passed at two read leaves is read at both" (fun () ->
           let a = x () in
           equal floats (Nx.add a a) (Rune.jit two Nx.add a a));
+      test "a result can be a structure that checks its leaves' shapes"
+        (fun () ->
+          let next =
+            Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
+          in
+          let step k = (Nx.Rng.split k).(0) in
+          let k = Nx.Rng.key 42 in
+          equal (tensor int32)
+            (step k :> (int32, Nx.int32_elt) Nx.t)
+            (next step k :> (int32, Nx.int32_elt) Nx.t));
     ]
 
 (* Consumption *)
