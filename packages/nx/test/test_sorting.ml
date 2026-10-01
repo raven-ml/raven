@@ -304,13 +304,14 @@ let sorts =
             equal (tensor int64) i (Nx.argsort t));
       ])
 
-(* Lanes on both sides of the lengths where top_k changes method: 8 passes, a
-   sort up to 2048 entries, a radix select past it. *)
+(* Lanes on both sides of the lengths where top_k changes method: counting ranks
+   up to 32 entries, then 8 passes or a sort up to 2048 entries, a radix select
+   past it. *)
 let top_ks =
   let lane_length =
     Gen.frequency
       [
-        (4, Gen.int_range 1 20);
+        (4, Gen.int_range 1 40);
         (2, Gen.int_range 2040 2060);
         (1, Gen.int_range 3000 5000);
       ]
@@ -333,6 +334,7 @@ let top_ks =
          in
          prop (s.name ^ " top_k is the first k of a descending sort") drawn
            (fun (t, k) ->
+             cover "ranks counted" (Nx.dim 1 t <= 32);
              cover "a radix select" (Nx.dim 1 t > 2048);
              cover "more than eight" (k > 8);
              let v, i = Nx.sort ~descending:true ~axis:1 t in
@@ -360,7 +362,7 @@ let top_ks =
                 equal ~msg (array int64) [| 3L; 1L |]
                   (Array.sub (Nx.to_array i) 0 2);
                 equal ~msg int64 (Nx.item [] (Nx.argmax t)) (Nx.item [ 0 ] i))
-              [ (2, 5); (9, 100); (9, 3000) ]);
+              [ (2, 5); (5, 5); (2, 100); (9, 100); (9, 3000) ]);
         test "top_k puts NaN first and agrees with argmax, on each path"
           (fun () ->
             List.iter
@@ -378,7 +380,21 @@ let top_ks =
                 equal ~msg (array int64) [| 1L; 3L; 2L |]
                   (Array.sub (Nx.to_array i) 0 3);
                 equal ~msg int64 (Nx.item [] (Nx.argmax t)) (Nx.item [ 0 ] i))
-              [ (3, 5); (9, 100); (9, 3000) ]);
+              [ (3, 5); (5, 5); (3, 100); (9, 100); (9, 3000) ]);
+        test "top_k takes tied entries in their positions' order, on each path"
+          (fun () ->
+            List.iter
+              (fun (k, n) ->
+                let t =
+                  Nx.init Nx.float32 [| 2; n |] (fun i ->
+                      Float.of_int (i.(1) * 7 mod 3))
+                in
+                let msg = Printf.sprintf "k = %d of %d" k n in
+                let v, i = Nx.sort ~descending:true ~axis:1 t in
+                let tv, ti = Nx.top_k ~k ~axis:1 t in
+                equal ~msg (tensor float_exact) (Nx.slice [ A; R (0, k) ] v) tv;
+                equal ~msg (tensor int64) (Nx.slice [ A; R (0, k) ] i) ti)
+              [ (1, 6); (3, 6); (6, 6); (1, 100); (4, 100); (9, 100) ]);
         test
           "top_k refuses a scalar, an axis out of bounds and a k past the axis"
           (fun () ->

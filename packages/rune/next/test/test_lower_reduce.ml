@@ -461,6 +461,29 @@ let sorts =
           in
           sort_agrees ~descending:false ~axis:0 b;
           sort_agrees ~descending:true ~axis:0 b);
+      test "top_k ranks a short row by counting, as eager does" (fun () ->
+          let x =
+            Nx.create Nx.float32 [| 2; 6 |]
+              [|
+                1.; -0.; Float.nan; 0.; 1.; -1.; 2.; 2.; -0.; Float.nan; 0.; 2.;
+              |]
+          in
+          List.iter
+            (fun k ->
+              agrees (fun () -> fst (Nx.top_k ~k ~axis:1 x));
+              agrees (fun () -> snd (Nx.top_k ~k ~axis:1 x)))
+            [ 1; 3; 6 ]);
+      test "top_k of a short row takes three kernels for its positions"
+        (fun () ->
+          List.iter
+            (fun (k, n) ->
+              let x = Nx.zeros Nx.float32 [| 16; n |] in
+              let _, y = trace (fun () -> snd (Nx.top_k ~k x)) in
+              equal
+                ~msg:(Printf.sprintf "%d of %d" k n)
+                int 3
+                (List.length (Tolk_next.Ops.src (Programs.kernels y))))
+            [ (2, 4); (4, 32); (16, 32); (32, 32) ]);
     ]
 
 (* Compiled for the host
@@ -524,7 +547,9 @@ let parity =
   let i () = Nx.zeros Nx.int32 [| 4; 4 |] in
   let u ?(shape = [| 4; 4 |]) () = Nx.zeros Nx.uint32 shape in
   let case file f =
-    Golden.graph ("golden/lower_reduce/" ^ file ^ ".golden") (fun () ->
+    Golden.graph
+      ("golden/lower_reduce/" ^ file ^ ".golden")
+      (fun () ->
         let args = f () in
         Programs.kernels (snd (trace (fun () -> args ()))))
   in

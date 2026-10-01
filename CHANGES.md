@@ -2909,6 +2909,12 @@ thread.
 
 ### Nx
 
+- `Nx.top_k` ranks an axis of at most 32 entries in one pass, each entry
+  placed by the number of entries before it, instead of one pass per entry
+  taken or a sort. A compiled call runs 3 kernels for the positions of 4 of
+  32 entries instead of 14, and 3 for 16 of 32 instead of 22; values, ties,
+  NaN and the zeros keep their order. Eagerly the comparisons cost more over
+  many rows: 0.77 ms against 0.20 for 4 of 32 over 512 rows.
 - `Nx_device.Buffer.consume` of a buffer that was itself returned by
   `consume` no longer lets the memory be freed while the new buffer still
   uses it. The memory went back to the device at the next collection and was

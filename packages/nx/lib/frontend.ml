@@ -2176,6 +2176,15 @@ let top_k_sorted = 2048
    at once, and they are sorted. *)
 let top_k_counted = 1 lsl 24
 
+(* Up to this many entries along the axis, [top_k] ranks every entry by
+   counting the entries that precede it: [n * n] comparisons per row and no
+   pass waiting on another, where taking one entry per pass costs a kernel per
+   pass when compiled. Compiled for the host, the indices of 2 of 4 entries
+   take 3 kernels instead of 6, 4 of 32 take 3 instead of 14, and 16 of 32
+   (a sort before) 3 instead of 22. Eagerly the comparisons cost more than
+   the passes: 0.77 ms against 0.20 for 4 of 32 over 512 rows. *)
+let top_k_compared = 32
+
 (* A radix round decides [radix_bits] bits of the threshold's key at once,
    with one count per nonzero digit, all held at once by an eager backend:
    2^bits - 1 counts per entry. Rows of up to [radix_wide] entries in all take
@@ -2316,6 +2325,30 @@ let radix_select_in (type c d p q) (cd : (p, q) Nx_dtype.t) ~k (keys : (c, d) t)
       ~values:chosen
       (zeros ctx Nx_dtype.int64 [| b; k |])
 
+(* [select_by_counting ~k keys] is the positions of the [k] greatest entries
+   of each row of [keys], shaped [b; n], in the order of a stable descending
+   sort. An entry's place is the number of entries that precede it, greater
+   ones and equal ones at earlier positions, and slot [r] holds the position
+   whose place is [r]: [n * n] comparisons per row, none waiting on another. *)
+let select_by_counting ~k keys =
+  let ctx = B.context keys in
+  let b = dim 0 keys and n = dim 1 keys in
+  let position = arange ctx Nx_dtype.int32 0 n 1 in
+  let mine = reshape [| b; 1; n |] keys in
+  let other = reshape [| b; n; 1 |] keys in
+  let earlier =
+    less (reshape [| n; 1 |] position) (reshape [| 1; n |] position)
+  in
+  let precedes =
+    where earlier (greater_equal other mine) (greater other mine)
+  in
+  let place = sum ~axes:[ 1 ] (cast Nx_dtype.int32 precedes) in
+  let slot = reshape [| 1; k; 1 |] (arange ctx Nx_dtype.int32 0 k 1) in
+  let at = equal (reshape [| b; 1; n |] place) slot in
+  let none = scalar ctx Nx_dtype.int32 0l in
+  cast Nx_dtype.int64
+    (sum ~axes:[ 2 ] (where at (reshape [| 1; 1; n |] position) none))
+
 (* [radix_select ~k keys] is [radix_select_in] in the narrowest of [int32] and
    [int64] that holds its counts. *)
 let radix_select ~k keys =
@@ -2323,10 +2356,16 @@ let radix_select ~k keys =
     radix_select_in Nx_dtype.int32 ~k keys
   else radix_select_in Nx_dtype.int64 ~k keys
 
+(* [counted ~b ~n] is [true] iff [b] rows of [n] entries are ranked by
+   counting. *)
+let counted ~b ~n = n <= top_k_compared && b * n * n <= top_k_counted
+
 (* [select ~k keys] is [radix_select ~k keys], or the first [k] positions of a
-   stable descending sort of [keys] when their rows are short. *)
+   stable descending sort of [keys] when their rows are short, or their ranks
+   counted when they are shorter. *)
 let select (type c d) ~k (keys : (c, d) t) =
-  if dim 1 keys <= top_k_sorted then
+  if counted ~b:(dim 0 keys) ~n:(dim 1 keys) then select_by_counting ~k keys
+  else if dim 1 keys <= top_k_sorted then
     shrink
       [| (0, dim 0 keys); (0, k) |]
       (argsort ~descending:true ~axis:1 keys)
@@ -2390,8 +2429,10 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
   let dt = dtype x in
   if Nx_dtype.is_complex dt then
     err "top_k" "complex numbers have no selection key";
+  let rows = Array.fold_left ( * ) 1 (shape x) / n in
   let positions (type c d) (keys : (c, d) t) =
-    if k <= top_k_rounds then select_by_passes ~k ~axis keys
+    if k <= top_k_rounds && not (counted ~b:rows ~n) then
+      select_by_passes ~k ~axis keys
     else
       let last = contiguous (moveaxis axis (-1) keys) in
       let batch = Array.sub (shape last) 0 (r - 1) in

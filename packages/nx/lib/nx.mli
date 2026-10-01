@@ -2523,9 +2523,12 @@ val top_k : k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
     [take_along_axis ~axis ~indices t], so it differentiates with respect to
     [t].
 
-    Up to [k = 8] the cost is [k] passes over [axis], each after the one before
-    it, which suits a router choosing a few of many. A greater [k] sorts [axis]
-    when it has at most 2048 entries. A longer [axis] is not sorted: the [k]th
+    An [axis] of at most 32 entries is ranked in one pass: each entry's place
+    is the number of entries before it, [n * n] comparisons for [n] entries
+    (while all rows hold at most [2{^24}] of them). Past it, up to [k = 8] the
+    cost is [k] passes over [axis], each after the one before it, which suits a
+    router choosing a few of many. A greater [k] sorts [axis] when it has at
+    most 2048 entries. A longer [axis] is not sorted: the [k]th
     greatest entry is found by radix select, one pass over [axis] for every four
     bits of the dtype (eight for [float32]; every two bits past [2{^20}] entries
     over all rows), and only the [k] entries kept are put in order, by [k * k]

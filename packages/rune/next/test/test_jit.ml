@@ -344,6 +344,27 @@ let values ~count ~heavy =
                  ~msg:(Printf.sprintf "top %d" k)
                  (tensor int64) eager (Rune.jit' indices scores))
              [ 2; 17 ]);
+       test "top_k of a short row ranked by counting is eager's" (fun () ->
+           let x =
+             Nx.create Nx.float32 [| 2; 6 |]
+               [|
+                 1.; -0.; Float.nan; 0.; 1.; -1.; 2.; 2.; -0.; Float.nan; 0.; 2.;
+               |]
+           in
+           List.iter
+             (fun k ->
+               let top x = Nx.top_k ~k ~axis:1 x in
+               let v, i = top x in
+               let v', i' =
+                 Rune.jit
+                   Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+                   top x
+               in
+               equal ~msg:(Printf.sprintf "values, top %d" k) floats v v';
+               equal
+                 ~msg:(Printf.sprintf "indices, top %d" k)
+                 (tensor int64) i i')
+             [ 1; 3; 6 ]);
        prop "gather and scatter at indices 2^32 from a position equal eager's"
          ~examples:[ [| far + 1; 1 - far; 2; -1; 4; far |] ]
          (Gen.array ~size:(Gen.constant 6) far_index)
