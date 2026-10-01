@@ -800,6 +800,44 @@ let pullback_tests =
 
 let inf = Float.infinity
 
+(* [flat x] is [x] flattened, which raises unless [x] is C-contiguous. *)
+let flat x = Nx.reshape [| -1 |] x
+
+let mat r c =
+  Nx.reshape [| r; c |] (Nx.arange_f f64 1. (Float.of_int (1 + (r * c))) 1.)
+
+let fresh_tests =
+  [
+    test "a gradient through a matmul's transposed operand flattens" (fun () ->
+        let q = mat 2 3 and k = mat 4 3 in
+        let _, gk =
+          Rune.grad
+            Nx.Ptree.(pair tensor tensor)
+            (fun (q, k) -> Nx.sum (Nx.matmul q (Nx.matrix_transpose k)))
+            (q, k)
+        in
+        is_true (Nx.is_c_contiguous gk);
+        equal (exact ())
+          (flat
+             (Nx.contiguous
+                (Nx.broadcast_to [| 4; 3 |]
+                   (Nx.sum ~axes:[ 0 ] ~keepdims:true q))))
+          (flat gk));
+    test "a sum's gradient, a broadcast, is a value of its own" (fun () ->
+        is_true (Nx.is_c_contiguous (Rune.grad' Nx.sum (mat 2 3))));
+    test "a pullback's transposed cotangent flattens" (fun () ->
+        let _, pullback = Rune.vjp' Nx.matrix_transpose (mat 2 3) in
+        let ct = mat 3 2 in
+        equal (exact ())
+          (flat (Nx.contiguous (Nx.matrix_transpose ct)))
+          (flat (pullback ct)));
+    test "a transposed tangent flattens" (fun () ->
+        let dx = mat 2 3 in
+        equal (exact ())
+          (flat (Nx.contiguous (Nx.matrix_transpose dx)))
+          (flat (snd (Rune.jvp' Nx.matrix_transpose (mat 2 3) dx))));
+  ]
+
 let edge_tests =
   [
     test "a constant operand adds no term at an infinite argument" (fun () ->
@@ -1208,6 +1246,7 @@ let () =
          group "detach" detach_tests;
          group "escapes" escapes_tests;
          group "pullbacks" pullback_tests;
+         group "fresh derivatives" fresh_tests;
          group "edges" edge_tests;
          group "errors" error_tests;
          group "complex" complex_tests;

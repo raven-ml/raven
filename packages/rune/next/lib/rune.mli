@@ -55,6 +55,12 @@
     a value that depends on the lanes and inside {!val-jit} on one that depends
     on the arguments.
 
+    {b Derivatives are fresh.} A gradient, a pullback's result and a tangent are
+    values of their own, in C order from the start of their storage, never a
+    view such as the transpose or the broadcast their computation ends with:
+    [Nx.reshape [| -1 |]] takes each as it is. Under another transformation they
+    are its values, and their layout is its own.
+
     {b Nesting.} Transformations nest in any order, and each differentiates,
     maps or compiles only the values of its own function: in
     [grad' (fun x -> Nx.mul x (grad' (fun y -> Nx.add x y) one)) one], the inner

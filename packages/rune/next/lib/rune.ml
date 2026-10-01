@@ -7,6 +7,13 @@ module Ptree = Nx.Ptree
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+(* [fresh x] is [x] in storage of its own, in C order from its start, when [x]
+   is an eager view: a gradient or a tangent is a computation's result, and its
+   layout is not the caller's to inherit. A traced value's layout is its
+   interpretation's. *)
+let fresh x =
+  match Nx.Repr.v x with Traced _ -> x | Host _ | Placed _ -> Nx.contiguous x
+
 (* Reverse mode *)
 
 (* [linearize fn p f params] is [f] applied to [params] under a recorder and a
@@ -41,7 +48,7 @@ let pull p tape i seeded params seed =
   Linear.transpose cts;
   let gradient _ x s =
     match Option.bind (snd (Jvp.split i s)) (Linear.cotangent cts) with
-    | Some g -> Nx.conjugate g
+    | Some g -> fresh (Nx.conjugate g)
     | None -> Nx.zeros_like x
   in
   Ptree.map2 p gradient params seeded
@@ -113,7 +120,7 @@ let jvp_of fn p q f params tangents =
     invalid_argf "%s: the parameters hold no real or complex tensor" fn;
   let y = Jvp.install i (fun () -> f duals) in
   ( Ptree.map q (fun _ v -> fst (Jvp.split i v)) y,
-    Ptree.map q (fun _ v -> Jvp.tangent i v) y )
+    Ptree.map q (fun _ v -> fresh (Jvp.tangent i v)) y )
 
 let jvp p q f params tangents = jvp_of "Rune.jvp" p q f params tangents
 
