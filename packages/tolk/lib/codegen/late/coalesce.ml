@@ -50,8 +50,11 @@ let runs l =
   in
   match l with [] -> [] | _ -> go [] [] l
 
+let dmc = Helpers.variable "DMC" 0
+let allow_half8 = Helpers.variable "ALLOW_HALF8" 0
+
 let memory_coalescing sink (r : Renderer.t) =
-  if Helpers.getenv "DMC" 0 <> 0 then sink
+  if dmc <> 0 then sink
   else begin
     (* Collect, each group's offsets in the order first seen. *)
     let groups = ref [] in
@@ -115,10 +118,8 @@ let memory_coalescing sink (r : Renderer.t) =
                Dtype.([ Float32; Float16; Int32; Uint32 ] @ fp8s)
              && r.supports_float4
            then
-             if
-               dtype key.buf = Dtype.Float16
-               && Helpers.getenv "ALLOW_HALF8" 0 <> 0
-             then [ 8; 4; 2 ]
+             if dtype key.buf = Dtype.Float16 && allow_half8 <> 0 then
+               [ 8; 4; 2 ]
              else [ 4; 2 ]
            else [])
           @ [ 1 ]

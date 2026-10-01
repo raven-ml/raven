@@ -1241,20 +1241,19 @@ let on_disk =
       group "a schedule made under one setting is not read back under another"
         (List.map
            (fun (name, value) -> test name (misses_on [ (name, value) ]))
-           [
-             ("SPLIT_REDUCEOP", "0");
-             ("MAX_KERNEL_BUFFERS", "8");
-             ("RING", "0");
-             ("ALL2ALL", "1");
-             ("ALLREDUCE_CAST", "0");
-             ("ALLREDUCE_NODE_NDEVS", "2");
-             ("DEFAULT_FLOAT", "half");
-             ("DEFAULT_INT", "long");
-             ("REDUCEOP_SPLIT_THRESHOLD", "65536");
-             ("REDUCEOP_SPLIT_SIZE", "20");
-             ("RING_ALLREDUCE_THRESHOLD", "1");
-             ("LATE_ALLREDUCE", "0");
-           ]);
+           ([
+              ("SPLIT_REDUCEOP", "0");
+              ("MAX_KERNEL_BUFFERS", "8");
+              ("RING", "0");
+              ("ALL2ALL", "1");
+              ("ALLREDUCE_CAST", "0");
+              ("ALLREDUCE_NODE_NDEVS", "2");
+              ("DEFAULT_FLOAT", "half");
+              ("DEFAULT_INT", "long");
+            ]
+           @ List.map
+               (fun (name, default) -> (name, string_of_int (default + 1)))
+               (Helpers.variables ())));
       group "a damaged entry is made anew, and replaced"
         [
           test "truncated" (recovers Disk_cache.truncated);

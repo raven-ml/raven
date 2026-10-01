@@ -43,6 +43,19 @@ val getenv_string : string -> string -> string
     or [default] if [key] is unset. A variable set to the empty string is [""].
 *)
 
+val variable : string -> int -> int
+(** [variable key default] is [getenv key default], for a variable that changes
+    what compilation makes outside the settings: it is recorded among
+    {!variables}, on which schedules and programs kept on disk are keyed.
+    Declare it at a module's top level, so that it is recorded before anything
+    is compiled.
+
+    Raises [Invalid_argument] if [key] is already declared. *)
+
+val variables : unit -> (string * int) list
+(** [variables ()] is each variable declared with {!variable}, with its default,
+    sorted by name. *)
+
 (** {1:settings Settings} *)
 
 (** Settings.

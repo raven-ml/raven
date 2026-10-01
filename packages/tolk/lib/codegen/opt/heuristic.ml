@@ -117,12 +117,14 @@ let tensor_cores k =
       [ 0; 1; 2 ]
   else None
 
+let mv = Helpers.variable "MV" 1
+let blocksize = Helpers.variable "MV_BLOCKSIZE" 4
+let threads_per_row = Helpers.variable "MV_THREADS_PER_ROW" 8
+let rows_per_thread = Helpers.variable "MV_ROWS_PER_THREAD" 4
+
 (* should use matvec - TODO: adjust/tune based on the wide vs tall/large vs
    small mat *)
 let matvec k =
-  let blocksize = Helpers.getenv "MV_BLOCKSIZE" 4
-  and threads_per_row = Helpers.getenv "MV_THREADS_PER_ROW" 8
-  and rows_per_thread = Helpers.getenv "MV_ROWS_PER_THREAD" 4 in
   let ren = K.ren k in
   let mulop =
     match K.reduceop k with
@@ -148,8 +150,7 @@ let matvec k =
   in
   match operands with
   | Some (vector, matrix)
-    when ren.has_local
-         && Helpers.getenv "MV" 1 <> 0
+    when ren.has_local && mv <> 0
          && (blocksize > 1 || threads_per_row > 1 || rows_per_thread > 1)
          && List.length (K.full_shape k) >= 2
          && ren.has_shared -> (

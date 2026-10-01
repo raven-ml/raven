@@ -99,6 +99,24 @@ let getenv = memoize parse_int
 let getenv_float = memoize parse_float
 let getenv_string = memoize Result.ok
 
+(* The variables declared, with their defaults, by name. *)
+let declared_variables = Atomic.make []
+
+let rec record key default =
+  let vars = Atomic.get declared_variables in
+  if List.mem_assoc key vars then
+    invalid_arg (Printf.sprintf "variable %s is already declared" key);
+  if
+    not
+      (Atomic.compare_and_set declared_variables vars ((key, default) :: vars))
+  then record key default
+
+let variable key default =
+  record key default;
+  getenv key default
+
+let variables () = List.sort compare (Atomic.get declared_variables)
+
 (* Settings *)
 
 module Context_var = struct

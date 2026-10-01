@@ -106,15 +106,15 @@ val to_program :
     Programs are also kept on disk ({!Helpers.Diskcache}, table ["to_program"]),
     for later processes: a program is read back for the same [ast], renderer and
     settings, the values of the setting {!Helpers.tuple_order} and of the
-    environment variables [MV], [MV_BLOCKSIZE], [MV_THREADS_PER_ROW],
-    [MV_ROWS_PER_THREAD], [ALIGNED] and [EXPAND_SSA], and the same sources of
-    this library. A program read back is not checked against {!Spec.program}
-    again. An entry that does not read as a program is made anew and replaced.
-    The program of a kernel that asks for a beam search is not kept on disk.
+    environment variables in {!Helpers.variables}, and the same sources of this
+    library. A program read back is not checked against {!Spec.program} again.
+    An entry that does not read as a program is made anew and replaced. The
+    program of a kernel that asks for a beam search is not kept on disk.
 
     When the setting {!Helpers.debug} is [3] or more, the optimisations applied
     are printed on standard output, from [4] the source too, and from [7] the
-    binary is disassembled ({!Renderer.Compiler.disassemble}).
+    binary is disassembled ({!Renderer.Compiler.disassemble}), for a program
+    read back from disk too.
 
     Raises [Invalid_argument] if [ast] is neither an {!Op.Sink} with kernel
     information nor an {!Op.Program}, or as {!full_rewrite_to_sink} does. Raises

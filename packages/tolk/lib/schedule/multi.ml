@@ -162,7 +162,7 @@ let replace_allreduce =
     ])
 
 let replace_allreduce =
-  if Helpers.getenv "LATE_ALLREDUCE" 1 <> 0 then replace_allreduce
+  if Helpers.variable "LATE_ALLREDUCE" 1 <> 0 then replace_allreduce
   else
     Pattern_matcher.append
       (Pattern_matcher.v

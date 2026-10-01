@@ -9,6 +9,8 @@ open Ops
 
 let strf = Printf.sprintf
 let is o u = Op.equal (op u) o
+let expand_ssa = Helpers.variable "EXPAND_SSA" 0 <> 0
+let aligned = Helpers.variable "ALIGNED" 1 <> 0
 
 (* the integer [s] holds from its [i]th character on *)
 let number_from i s =
@@ -669,7 +671,6 @@ let render_uops l uops =
     | Some s -> not (is Op.Store s && nth s 1 == u)
     | None -> true
   in
-  let expand_ssa = Helpers.getenv "EXPAND_SSA" 0 <> 0 in
   let bufs = ref []
   and kernel = ref []
   and depth = ref 1
@@ -841,7 +842,7 @@ let clang_vector_prefix l (dt, count) =
   let rec pow2_floor n p = if 2 * p > n then p else pow2_floor n (2 * p) in
   (* round (down) to a power of two, as clang does by default *)
   let alignment =
-    if Helpers.getenv "ALIGNED" 1 <> 0 && not (Dtype.is_bool dt) then
+    if aligned && not (Dtype.is_bool dt) then
       pow2_floor (Dtype.itemsize dt * count) 1
     else 1
   in

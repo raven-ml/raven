@@ -1150,25 +1150,12 @@ let to_program_cache = Hashtbl.create 64
 let to_program_lock = Mutex.create ()
 
 (* The key of a program, in memory and on disk: the kernel, the renderer and its
-   target, every setting and environment variable that the passes, the
-   heuristic, the coalescing of memory accesses and the C renderer read, and the
-   digest of this library's sources, of which a program is a function. A kernel
-   that asks for a beam search is not kept on disk, since its program is what
-   the search found. *)
+   target, every setting the passes read, the environment variables declared
+   with [Helpers.variable], and the digest of this library's sources, of which
+   a program is a function. A kernel that asks for a beam search is not kept on
+   disk, since its program is what the search found. *)
 let program_key ast (ren : Renderer.t) =
   let open Helpers in
-  let getenvs =
-    [
-      "MV";
-      "MV_BLOCKSIZE";
-      "MV_THREADS_PER_ROW";
-      "MV_ROWS_PER_THREAD";
-      "ALIGNED";
-      "EXPAND_SSA";
-      "DMC";
-      "ALLOW_HALF8";
-    ]
-  in
   String.concat "\n"
     ([
        Source_digest.digest;
@@ -1188,19 +1175,32 @@ let program_key ast (ren : Renderer.t) =
        Int.to_string (setting tc_min_globals);
        Bool.to_string (setting tuple_order);
      ]
-    @ List.map (fun v -> v ^ "=" ^ getenv_string v "") getenvs)
+    @ List.map (fun (v, _) -> v ^ "=" ^ getenv_string v "") (variables ()))
 
 let kept ast =
   match (op ast, arg ast) with Op.Sink, Kernel k -> k.beam = 0 | _ -> true
 
 let program prg = op prg = Op.Program && List.length (src prg) = 4
 
+(* A program read back is shown as a compiled one is: its source from DEBUG 4,
+   its instructions from 7. *)
+let show_kept (ren : Renderer.t) prg =
+  match (arg (nth prg 2), arg (nth prg 3)) with
+  | String source, Bytes lib ->
+      if setting Helpers.debug >= 4 then print_endline source;
+      if setting Helpers.debug >= 7 then
+        Renderer.Compiler.disassemble ren.compiler lib
+  | _ -> ()
+
 let made_program ?beam ~key ast ren =
   if not (kept ast) then do_to_program ?beam ast ren
   else
-    fst
-      (Graph.cached ~table:"to_program" ~key ~valid:program (fun () ->
-           do_to_program ?beam ast ren))
+    let prg, hit =
+      Graph.cached ~table:"to_program" ~key ~valid:program (fun () ->
+          do_to_program ?beam ast ren)
+    in
+    if hit then show_kept ren prg;
+    prg
 
 let to_program ?beam ast ren =
   let key = program_key ast ren in

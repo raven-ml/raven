@@ -767,6 +767,14 @@ let recovers damage () =
   equal outcome ~msg:"made again" (the_program ()) (made db);
   equal outcome ~msg:"then read back" (the_program ()) (read_from_disk db)
 
+let shows_its_source () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  let prg = Codegen.to_program (Lazy.force add_kernel) clang in
+  match read_from_disk ~env:[ ("DEBUG", "4") ] db with
+  | Ok out -> contains ~sub:(source prg) out
+  | Error err -> failf "the child failed: %s" err
+
 let ignores_other_builds () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
@@ -790,27 +798,23 @@ let on_disk =
       group "a program made under one setting is not read back under another"
         (List.map
            (fun (name, value) -> test name (misses_on [ (name, value) ]))
-           [
-             ("NOOPT", "1");
-             ("TC", "0");
-             ("TC_SELECT", "0");
-             ("TC_OPT", "1");
-             ("TC_MIN_GLOBALS", "1");
-             ("TRANSCENDENTAL", "2");
-             ("DISABLE_FAST_IDIV", "0");
-             ("ALLOW_TF32", "1");
-             ("TUPLE_ORDER", "0");
-             ("DEFAULT_INT", "long");
-             ("EMULATED_DTYPES", "long");
-             ("MV", "0");
-             ("MV_BLOCKSIZE", "8");
-             ("MV_THREADS_PER_ROW", "4");
-             ("MV_ROWS_PER_THREAD", "2");
-             ("ALIGNED", "0");
-             ("EXPAND_SSA", "1");
-             ("DMC", "1");
-             ("ALLOW_HALF8", "1");
-           ]);
+           ([
+              ("NOOPT", "1");
+              ("TC", "0");
+              ("TC_SELECT", "0");
+              ("TC_OPT", "1");
+              ("TC_MIN_GLOBALS", "1");
+              ("TRANSCENDENTAL", "2");
+              ("DISABLE_FAST_IDIV", "0");
+              ("ALLOW_TF32", "1");
+              ("TUPLE_ORDER", "0");
+              ("DEFAULT_INT", "long");
+              ("EMULATED_DTYPES", "long");
+            ]
+           @ List.map
+               (fun (name, default) -> (name, string_of_int (default + 1)))
+               (Helpers.variables ())));
+      test "a program read back shows its source at DEBUG 4" shows_its_source;
       group "a damaged entry is made anew, and replaced"
         [
           test "truncated" (recovers Disk_cache.truncated);

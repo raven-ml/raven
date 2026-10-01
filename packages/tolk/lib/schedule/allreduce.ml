@@ -9,6 +9,9 @@ open Ops
 
 let setting = Helpers.Context_var.value
 
+let ring_allreduce_threshold =
+  Helpers.variable "RING_ALLREDUCE_THRESHOLD" 256_000
+
 (* The lists combined below hold one value per device or per chunk. *)
 let nonempty f = function
   | x :: rest -> f x rest
@@ -38,10 +41,7 @@ let handle_allreduce red =
         List.for_all (function Int _ -> true | Sym _ -> false) shape
       in
       let large () =
-        ndev > 2
-        && Sint.(
-             resolve
-               (numel > Int (Helpers.getenv "RING_ALLREDUCE_THRESHOLD" 256_000)))
+        ndev > 2 && Sint.(resolve (numel > Int ring_allreduce_threshold))
       in
       let use_all2all =
         concrete

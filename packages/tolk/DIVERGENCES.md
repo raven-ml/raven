@@ -1864,22 +1864,25 @@ the Exclusions of `README.md`.
   text (`Graph`), and a later process reads them back instead of making
   them. tinygrad keeps programs for its process only, and schedules on disk
   only when asked. Each key is tinygrad's in-memory key, what else shapes
-  the result (for programs `TUPLE_ORDER` and the environment variables `MV`,
-  `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`, `MV_ROWS_PER_THREAD`, `ALIGNED`,
-  `EXPAND_SSA`, `DMC` and `ALLOW_HALF8`; for schedules the settings and
-  environment variables of splitting reductions, kernels' buffers and
-  allreduces, and the default types), and the digest of the library's
-  sources, which dune computes when it builds the library: an entry is a
-  function of the code that made it. One key serves memory and disk, so a
-  setting changed within the process by `context` makes the result again,
-  where tinygrad's in-memory keys leave out `TUPLE_ORDER` and, for schedules,
+  the result (for programs `TUPLE_ORDER`, for schedules the settings of
+  splitting reductions, kernels' buffers and allreduces and the default
+  types, and for both the environment variables that tinygrad reads with
+  `getenv` where it compiles, which tolk declares with `Helpers.variable`
+  so that each is keyed: `ALIGNED`, `ALLOW_HALF8`, `DMC`, `EXPAND_SSA`,
+  `LATE_ALLREDUCE`, the `MV` variables, the `REDUCEOP_SPLIT` variables and
+  `RING_ALLREDUCE_THRESHOLD`), and the digest of the library's sources,
+  which dune computes when it builds the library: an entry is a function
+  of the code that made it. One key serves memory and disk, so a setting
+  changed within the process by `context` makes the result again, where
+  tinygrad's in-memory keys leave out `TUPLE_ORDER` and, for schedules,
   every setting. An entry that does not read
   as a program or a schedule is a miss, and is replaced. The program of a
   kernel that asks for a beam search is not kept, since it is what the
   search found. `SCACHE=1` keeps schedules in memory only, as tinygrad's
   default does. A kernel's name holds no colour, where tinygrad colours it
   unless `NO_COLOR` is set: a kept program does not depend on the display of
-  the process that made it.
+  the process that made it. A program read back shows its source and
+  instructions at `DEBUG` 4 and 7, as a compiled one does.
 - **Reason:** (b). rune's first compiled call of a model is gated at 10% of
   the old rune's, which kept compiled schedules on disk. With binaries alone
   on disk, a warm process schedules and lowers every kernel again: on
