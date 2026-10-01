@@ -802,6 +802,30 @@ let ranged name =
     1
     (List.tl (String.split_on_char '_' name))
 
+(* A decode step as gpt-oss's attention takes it: the token's slot looked up in
+   a table at its position, its key and value rows written there into two pools,
+   and an attention of its query over the pools' rows read back through the
+   table. *)
+let decode_step (keys, values) x pos table =
+  let slot = Nx.take_along_axis ~axis:1 ~indices:pos table in
+  let indices = Nx.broadcast_to [| 1; 2; 3 |] (Nx.reshape [| 1; 1; 1 |] slot) in
+  let weight k =
+    Nx.reshape [| 6; 6 |] (Nx.arange_f Nx.float32 k (k +. 36.) 1.)
+  in
+  let row k = Nx.reshape [| 1; 2; 3 |] (Nx.matmul x (weight k)) in
+  let write pool k =
+    Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values:(row k) pool
+  in
+  let keys = write keys 0. and values = write values 36. in
+  let read pool = Nx.take ~axis:0 ~indices:(Nx.reshape [| 16 |] table) pool in
+  let q = Nx.contiguous (Nx.reshape [| 2; 3 |] (row 72.)) in
+  let scores = Nx.sum ~axes:[ 2 ] (Nx.mul (read keys) q) in
+  let weights = Nx.softmax ~axes:[ 0 ] (Nx.div_s scores 1e4) in
+  let out =
+    Nx.sum ~axes:[ 0 ] (Nx.mul (Nx.unsqueeze ~axes:[ 2 ] weights) (read values))
+  in
+  (out, (keys, values))
+
 (* [rows_written ?at name] is the tests of a lent write of rows whose values are
    placed at [at], on the host by default. *)
 let rows_written ?at name =
@@ -831,6 +855,35 @@ let rows_written ?at name =
           (64, [ -1L; -5L ]);
         ]
         (fun (n, l) -> agrees ~n (projections (List.length l)) (indices l));
+      test
+        "a decode step writes its cache rows and attends over them, as eager \
+         does" (fun () ->
+          let pools () = (pool ~n:16 (), pool ~n:16 ()) in
+          let table =
+            Nx.create Nx.int64 [| 1; 16 |]
+              (Array.init 16 (fun j -> Int64.of_int (15 - j)))
+          in
+          let both = Nx.Ptree.(pair tensor tensor) in
+          let step =
+            Rune.jit
+              Nx.Ptree.(
+                consumes both @@ tensor @-> tensor @-> tensor
+                @-> returns (pair tensor both))
+              decode_step
+          in
+          List.iter
+            (fun p ->
+              let x = projections 1
+              and pos = Nx.create Nx.int64 [| 1; 1 |] [| p |] in
+              let out, (keys, values) = decode_step (pools ()) x pos table in
+              let k, v = pools () in
+              let out', (keys', values') =
+                step (on k, on v) (on x) (on pos) (on table)
+              in
+              equal close out (host out');
+              equal floats keys (host keys');
+              equal floats values (host values'))
+            [ 0L; 7L; 15L ]);
       test "an unlent write of rows leaves the pool it writes into" (fun () ->
           let a = on (pool ())
           and x = projections 2
