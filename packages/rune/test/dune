@@ -252,7 +252,7 @@
  (name test_jit_programs)
  (modules test_jit_programs)
  (package rune)
- (libraries windtrap rune nx nx.dtype nx.device)
+ (libraries windtrap rune nx nx.dtype)
  (action
   (run %{test} --exclude-tag slow)))
 

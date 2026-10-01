@@ -2659,3 +2659,31 @@ tolk lowers as one, replaces it.
   and a cache split over devices along its rows: `Jit › a lent write of rows ›
   a pool split along the written axis is written whole`.
 - **Pinned by:** the `Multi` suite: `multi_pm › scatters › *`.
+
+## D88. On arm64 a float zero reaches C as a value the backend cannot see
+
+- **tinygrad:** `renderer/cstyle.py:264` (`ClangRenderer`, whose
+  `string_rewrite` writes a float zero as a literal, `0.0f`).
+- **tolk:** `lib/renderer/cstyle.ml:835` (`opaque_zero`) and `:909` (`clang`,
+  which adds it for an arm64 target); `test/gen/tinygrad.patch`, which gives
+  tinygrad's `ClangRenderer` the same rule.
+- **Differs:** for an arm64 target, every float zero constant, at float16,
+  bfloat16, float32 or float64, renders as an empty `asm` statement over a
+  register holding it, `({float z = 0.0f; __asm__("" : "+w"(z)); z;})`, cast
+  to its dtype. x86_64 keeps the literal.
+- **Reason:** (b): clang's AArch64 backend lowers a select of a value and a
+  zero literal, by a comparison of the two, to `fminnm` or `fmaxnm`, which
+  keep the value's zero where the select returns the literal's: `(v < 0.0f) ?
+  v : 0.0f` is `-0.0` at `v = -0.0` from `-O1` up, in Homebrew clang 22.1.7
+  and Apple clang 17. A maximum against a zero, rendered as such a select,
+  meets it too, and an add of `+0.0` after it is then dropped. Under
+  `Rune.jit`, `Nx.where (Nx.less x z) x z` gave `-0.` where eager gives `0.`,
+  and a sum of a minimum against a folded zero gave `-0.`, which a float sum
+  never is. `-ffp-exception-behavior=maytrap` or `-frounding-math` also
+  avoid it, at 2.7× to 4.7× the time of a matmul or an element-wise kernel;
+  the register costs two instructions in an element-wise loop.
+- **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `zeros on arm64 ›
+  a float zero is opaque to the backend on arm64, and a literal on x86_64`
+  and `› a select of a value and a zero picks the zero at -0., on the host`;
+  rune's Jit programs suite: `a compiled program › selects a zero as eagerly,
+  whatever the other value's sign` and the rounded law's example.

@@ -1187,6 +1187,54 @@ let grouping =
           equal values [| `Float big |] (List.assoc 0 out));
     ]
 
+(* Zeros on arm64 *)
+
+(* [data0[0] = data1[0] < 0 ? data1[0] : 0] at [dt]: a select of a value and a
+   zero by their comparison, which clang's AArch64 backend lowers to a minimum
+   instruction keeping the value's zero. *)
+let zero_select dt =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let at slot = Ops.index (Ops.param ~shape:[ Int 1 ] slot dt) [ zero ] in
+  let x = Ops.load (at 1) [] in
+  let z = Ops.float ~dtype:dt 0. in
+  Linearizer.linearize
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"zero_select" ())
+       [ Ops.store (at 0) (Ops.where (Ops.lt x z) x z) ])
+
+let arm64 = Cstyle.clang (target "CPU" "CLANG" "arm64,generic")
+let asm_barrier = "__asm__(\"\" : \"+w\"(z))"
+
+let contains s sub =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+  in
+  at 0
+
+let zeros_on_arm64 =
+  group "zeros on arm64"
+    [
+      cases
+        ~name:(fun dt -> Dtype.name dt)
+        "a float zero is opaque to the backend on arm64, and a literal on \
+         x86_64"
+        Dtype.[ Float16; Bfloat16; Float32; Float64 ]
+        (fun dt ->
+          let uops = zero_select dt in
+          equal ~msg:"arm64" bool true
+            (contains (render arm64 uops) asm_barrier);
+          equal ~msg:"x86_64" bool false
+            (contains (render clang uops) asm_barrier));
+      test "a select of a value and a zero picks the zero at -0., on the host"
+        (fun () ->
+          let k = Run.program (Lazy.force host) (zero_select Float32) in
+          match List.assoc 0 (Run.on_host k [ (1, [| `Float (-0.) |]) ]) with
+          | [| `Float z |] ->
+              equal float_exact 0. z
+          | _ -> failf "one float");
+    ]
+
 let () =
   exit
     (run "Tolk.Cstyle"
@@ -1207,4 +1255,5 @@ let () =
          bf16_truncation;
          execution;
          division_group;
+         zeros_on_arm64;
        ])

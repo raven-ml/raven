@@ -1230,15 +1230,17 @@ let f64s t = Nx.to_array t
 
 (* What the stated rounding allows of a sum of terms: [count] terms whose exact
    sum is [r] and whose magnitudes sum to [s], summed at float32 in any
-   association and rounded once to [dt]. *)
-let summed dt ~count ~r ~s c e =
+   association and rounded once to [dt]. Past [dt]'s greatest float, [total],
+   the sum's magnitude before a mean divides it, any result is allowed. *)
+let summed ?total dt ~count ~r ~s c e =
+  let total = Option.value total ~default:s in
   let close () =
     Float.abs (c -. e)
     <= (2. *. Float.of_int count *. 0x1p-24 *. s)
        +. (2. *. unit_roundoff dt *. Float.max (Float.abs c) (Float.abs e))
   in
   if Float.is_nan r then Float.is_nan c && Float.is_nan e
-  else if s > largest dt then true
+  else if total > largest dt then true
   else if Float.abs r = Float.infinity then c = r && e = r
   else if s = 0. then
     (* A sum of zeros is [0.], never [-0.]. *)
@@ -1321,7 +1323,10 @@ let within_rounding r =
             | Mean_f _ ->
                 let m = Float.of_int count in
                 check i
-                  (summed dt ~count ~r:(rs.(i) /. m) ~s:(ss.(i) /. m) ce ee)
+                  (summed dt ~count ~total:ss.(i)
+                     ~r:(rs.(i) /. m)
+                     ~s:(ss.(i) /. m)
+                     ce ee)
             | _ -> check i (summed dt ~count ~r:rs.(i) ~s:ss.(i) ce ee)
           done
       | Prod_f (axes, keepdims, _), [ a ] ->
@@ -1406,14 +1411,22 @@ let below_zero =
   let zero = Broadcast ([| 3 |], leaf ~capture:true F32 [||] [| 0. |]) in
   Where (Cmp (Less, x, zero), x, zero)
 
-(* The AArch64 backend of clang lowers a select of a value and a zero constant,
-   by a comparison of the two, to a minimum or maximum instruction, which picks
-   the zero of the value's sign. *)
-let on_arm64 t =
-  match Nx_device.arch Nx_device.host with
-  | "arm64" | "aarch64" ->
-      xfail ~reason:"clang's AArch64 backend lowers the select to fminnm" t
-  | _ -> t
+(* A sum of a minimum against a zero that folds to a constant, which clang's
+   AArch64 backend turned into a minimum instruction keeping [-0.], and whose
+   added [+0.] it then dropped. *)
+let rounded_found =
+  [
+    Sum_f
+      ( [],
+        false,
+        Bin
+          ( Minimum,
+            Take
+              ( Some 0,
+                leaf I64 [| 1 |] [| 0. |],
+                Cast (F32, leaf F16 [| 0 |] [||]) ),
+            leaf ~capture:true F32 [| 2 |] [| -0.; 0. |] ) );
+  ]
 
 let suite =
   group "a compiled program"
@@ -1421,18 +1434,17 @@ let suite =
       prop "computes eager's bits" ~count:300 ~examples:found programs
         compiled_is_eager;
       prop "computes eager's values within the stated rounding" ~count:300
-        rounded_programs within_rounding;
+        ~examples:rounded_found rounded_programs within_rounding;
       test "reshapes a layout no strides can view as eagerly" (fun () ->
           let dt = dtype_of unviewable_reshape in
           equal (outcomes ~zeros:false)
             (outcome dt (fun () -> eager unviewable_reshape))
             (outcome dt (fun () -> compiled unviewable_reshape)));
-      on_arm64
-        (test "selects a zero as eagerly, whatever the other value's sign"
-           (fun () ->
-             equal (outcomes ~zeros:false)
-               (outcome F32 (fun () -> eager below_zero))
-               (outcome F32 (fun () -> compiled below_zero))));
+      test "selects a zero as eagerly, whatever the other value's sign"
+        (fun () ->
+          equal (outcomes ~zeros:false)
+            (outcome F32 (fun () -> eager below_zero))
+            (outcome F32 (fun () -> compiled below_zero)));
     ]
 
 let () = exit (run "Rune.jit programs" [ suite ])

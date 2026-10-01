@@ -823,6 +823,35 @@ let clang_lang =
     kernel_typedef = (fun _ -> abi ^ "void");
   }
 
+(* clang's AArch64 backend lowers a select of a value and a float zero constant,
+   by a comparison of the two, to fminnm or fmaxnm, which return the zero of the
+   value's sign where the select returns the constant's: [(v < 0.0f) ? v : 0.0f]
+   is -0.0 at v = -0.0 from -O1 up, in Homebrew clang 22.1.7 and Apple clang 17.
+   A maximum against a zero, rendered as such a select, meets it too, and an add
+   of +0.0 after it is then folded away. The backend matches the literal: on
+   arm64 a float zero is rendered as a value it cannot see through, an empty asm
+   statement over a register holding it. It costs that register, which loops
+   hoist, and comparisons against it where an immediate zero would do. *)
+let opaque_zero =
+  Pattern_matcher.fold (fun () ->
+      [
+        rule_ctx (cast_of ~dtype:Dtype.floats ~name:"x" c) (fun ctx m ->
+            match value (m "c") with
+            | `Float v when v = 0. && Dtype.equal (dtype (m "x")) Dtype.Float64
+              ->
+                Some
+                  (strf "({double z = %s; __asm__(\"\" : \"+w\"(z)); z;})"
+                     (const_str (m "c")))
+            | `Float v when v = 0. ->
+                let zero =
+                  strf "({float z = %sf; __asm__(\"\" : \"+w\"(z)); z;})"
+                    (const_str (m "c"))
+                in
+                if Dtype.equal (dtype (m "x")) Dtype.Float32 then Some zero
+                else Some (strf "(%s)" (render_cast ctx (m "x") zero))
+            | _ -> None);
+      ])
+
 (* LLVM legalizes a double to half cast on CPUs without native support (such as
    x86 without AVX512-FP16) into a compiler-rt libcall *)
 let clang_extra_matcher =
@@ -868,7 +897,18 @@ let clang (target : Helpers.Target.t) =
   Renderer.v ~name:"ClangRenderer" ~has_local:false ~global_max:[ 1; 0; 0 ]
     ~extra_matcher:clang_extra_matcher ~code_for_op:clang_lang.code_for_op
     ~native
-    ~render:(render clang_kernel clang_lang)
+    ~render:
+      (render clang_kernel
+         (if
+            String.starts_with ~prefix:"arm64" arch
+            || String.starts_with ~prefix:"aarch64" arch
+          then
+            {
+              clang_lang with
+              string_rewrite =
+                Pattern_matcher.append opaque_zero clang_lang.string_rewrite;
+            }
+          else clang_lang))
     ~compiler:(Compiler_cpu.clang arch) target
 
 (* Metal *)
