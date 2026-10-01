@@ -61,7 +61,7 @@ let fixed ty ?valid x =
 
 let boolean ?valid x = fixed (Type.Any Type.bool) ?valid x
 
-(* [column t vs] is the column of the values [vs] at the typing [t]. *)
+(* [column t vs] is the column of the literals [vs] at the typing [t]. *)
 let column : type a. a Expr.typing -> a option array -> Column.t =
  fun t vs ->
   let encoded ty vs =
@@ -74,12 +74,12 @@ let column : type a. a Expr.typing -> a option array -> Column.t =
   | Extension d ->
       let c = encoded d.storage (Array.map (Option.map d.enc) vs) in
       Column.with_data (Any d.type_) (Column.data c) c
-  | Value -> not_lowered "an OCaml value"
+  | Value -> assert false (* An OCaml value is no column. *)
 
 let type_of : type a. a Expr.typing -> Type.any = function
   | Column ty -> Any ty
   | Extension d -> Any d.type_
-  | Value -> not_lowered "an OCaml value"
+  | Value -> assert false (* An OCaml value is no column. *)
 
 (* [meet ta tb] is the type at which operands of the typings [ta] and [tb]
    meet. *)
@@ -289,11 +289,27 @@ let is_in vs =
         let x, w = words a vs in
         found (fst (Nx.sort w)) x a
 
+(* [lifted ty cs x] is the column of [ty] stored as [x], which an nx operation
+   computes over the columns [cs]: null where one of them is. *)
+let lifted ty cs x = fixed (Any ty) ?valid:(valid cs) x
+
+(* [width cs] is the rows that the columns [cs] broadcast to, and [wide cs dt c]
+   is [c]'s values cast to [dt] and broadcast to them. *)
+let width cs =
+  List.fold_left
+    (fun n c -> if Column.length c = 1 then n else Column.length c)
+    1 cs
+
+let wide cs dt c = Nx.broadcast_to [| width cs |] (tensor dt c)
+
 (* Compiling
 
    Each node compiles once per call of [outputs], [predicate] or [values]. A
-   node that the expressions reach twice gets a slot, which holds its value
-   during the evaluation of a frame. *)
+   node of a column typing that the expressions reach twice gets a slot, which
+   holds its value during the evaluation of a frame. A node of OCaml values
+   computes at each place it is reached: its function is pure, so it computes
+   the same values there. Operands evaluate from left to right, as the order of
+   failures at a row demands, so [binary] and [ternary] name each result. *)
 
 type env = {
   frame : frame;
@@ -321,6 +337,84 @@ let get env n =
         env.slots.(n.slot) <- Some c;
         c
 
+let fail env row cause =
+  match env.failure with
+  | Some f when f.row <= row -> ()
+  | _ -> env.failure <- Some { row; cause }
+
+(* [fill env c] is [c], or the one row of literals [c] repeated on each of the
+   frame's rows. *)
+let fill env c =
+  let n = env.frame.rows in
+  if Column.length c = n then c else Column.take (Nx.zeros Nx.int64 [| n |]) c
+
+(* [each env f] is [f i] on each row [i] before the earliest failure, and [None]
+   from it on. An exception that [f] raises fails at its row, which ends the
+   calls. *)
+let each env f =
+  let vs = Array.make env.frame.rows None in
+  let rec go i =
+    let stop =
+      match env.failure with Some f -> f.row | None -> env.frame.rows
+    in
+    if i < stop then
+      match f i with
+      | v ->
+          vs.(i) <- v;
+          go (i + 1)
+      | exception exn ->
+          fail env i (Raised (exn, Printexc.get_raw_backtrace ()))
+  in
+  go 0;
+  vs
+
+let decoder : type a.
+    a Expr.typing -> Column.t -> (int -> a option, int * string) result =
+  function
+  | Column ty -> Column.decoder ty
+  | Extension d ->
+      fun c ->
+        let c = Column.with_data (Any d.storage) (Column.data c) c in
+        Result.map
+          (fun get i -> Option.map d.dec (get i))
+          (Column.decoder d.storage c)
+  | Value -> assert false (* An OCaml value is no column. *)
+
+(* [decode env dec c] is [c]'s rows decoded to OCaml by [dec] ({!decoder}). A
+   row that [dec] refuses fails. *)
+let decode env dec c =
+  match dec c with
+  | Ok get -> each env get
+  | Error (row, why) ->
+      fail env row (Data why);
+      each env (Result.get_ok (dec (Column.sub c ~offset:0 ~length:row)))
+
+(* [store env t vs] is the column of the OCaml values [vs] at the column typing
+   [t]. A value that [t] does not hold fails at its row, and is null from it
+   on. *)
+let store : type a. env -> a Expr.typing -> a option array -> Column.t =
+ fun env t vs ->
+  let encode ty vs =
+    let n = Array.length vs in
+    match Column.encode ty n (Array.get vs) with
+    | Ok c -> c
+    | Error (row, why) ->
+        fail env row (Data why);
+        Result.get_ok
+          (Column.encode ty n (fun i -> if i < row then vs.(i) else None))
+  in
+  match t with
+  | Column ty -> encode ty vs
+  | Extension d ->
+      let c = encode d.storage (each env (fun i -> Option.map d.enc vs.(i))) in
+      Column.with_data (Any d.type_) (Column.data c) c
+  | Value -> assert false (* An OCaml value is no column. *)
+
+let operand_dtype e =
+  match Expr.typing e with
+  | Column ty -> Option.get (dtype ty)
+  | _ -> assert false (* A lift's operand has a column type. *)
+
 let rec compile : type a s. state -> (a, s) Expr.t -> node =
  fun st e ->
   match List.find_opt (fun (Expr.Packed e', _) -> Expr.same e e') st.nodes with
@@ -344,13 +438,22 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   in
   let binary a b f =
     let a = compile st a and b = compile st b in
-    fun env -> f (get env a) (get env b)
+    fun env ->
+      let a = get env a in
+      f a (get env b)
+  in
+  let ternary a b c f =
+    let a = compile st a and b = compile st b and c = compile st c in
+    fun env ->
+      let a = get env a in
+      let b = get env b in
+      f a b (get env c)
   in
   match (Expr.node e, typing) with
   | (Handle (_, n) | Read (_, n) | Ext_handle (_, n)), _ ->
       let i = Option.get (List.find_index (String.equal n) st.names) in
       fun env -> env.frame.columns.(i)
-  | Lit (_, v), _ ->
+  | (Lit (_, v) | Const v), _ ->
       let c = column typing [| Some v |] in
       Fun.const c
   | Null, _ ->
@@ -369,8 +472,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       let t = type_of typing in
       let wa = widen (type_of (Expr.typing a)) t
       and wb = widen (type_of (Expr.typing b)) t in
-      let c = compile st c and a = compile st a and b = compile st b in
-      fun env -> choose (truth (get env c)) (wa (get env a)) (wb (get env b))
+      ternary c a b (fun c a b -> choose (truth c) (wa a) (wb b))
   | Is_null a, _ -> unary a is_null
   | Coalesce es, _ ->
       let t = type_of typing in
@@ -382,26 +484,63 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
         column (Expr.typing a) (Array.of_list (List.map Option.some vs))
       in
       unary a (is_in vs)
-  | Store (ty, a), _ -> (
-      match Expr.typing a with
-      | Value -> not_lowered (Format.asprintf "%a" Expr.pp e)
-      | ta -> unary a (widen (type_of ta) (Any ty)))
+  | Store (ty, a), _ -> unary a (widen (type_of (Expr.typing a)) (Any ty))
+  | (App _ | Of_option _), _ ->
+      let vs = ocaml st e in
+      fun env -> store env typing (vs env)
+  | Nx_unary (op, a), Column ty ->
+      let (Dtype dt) = Option.get (dtype ty) in
+      unary a (fun a -> lifted ty [ a ] (Nx.Op.eval (Unary (op, tensor dt a))))
+  | Nx_binary (op, a, b), Column ty ->
+      let (Dtype dt) = Option.get (dtype ty) in
+      binary a b (fun a b ->
+          let cs = [ a; b ] in
+          lifted ty cs (Nx.Op.eval (Binary (op, wide cs dt a, wide cs dt b))))
+  | Nx_compare (op, a, b), _ ->
+      let (Dtype dt) = operand_dtype a in
+      binary a b (fun a b ->
+          let cs = [ a; b ] in
+          lifted Type.bool cs
+            (Nx.Op.eval (Compare (op, wide cs dt a, wide cs dt b))))
+  | Nx_where (c, a, b), Column ty ->
+      let (Dtype dt) = Option.get (dtype ty) in
+      ternary c a b (fun c a b ->
+          let cs = [ c; a; b ] in
+          lifted ty cs
+            (Nx.Op.eval (Where (wide cs Nx.bool c, wide cs dt a, wide cs dt b))))
+  | Nx_cast (ty, a), _ ->
+      let (Dtype dt) = Option.get (dtype ty) in
+      let (Dtype from) = operand_dtype a in
+      unary a (fun a ->
+          lifted ty [ a ] (Nx.Op.eval (Convert (Cast, dt, tensor from a))))
   | _ -> not_lowered (Format.asprintf "%a" Expr.pp e)
+
+(* [ocaml st e] computes [e]'s values as OCaml values, [None] where [e] is
+   null. *)
+and ocaml : type a s. state -> (a, s) Expr.t -> env -> a option array =
+ fun st e ->
+  match Expr.node e with
+  | Const v -> fun env -> Array.make env.frame.rows (Some v)
+  | App (f, a) ->
+      let f = ocaml st f and a = ocaml st a in
+      fun env ->
+        let f = f env in
+        let a = a env in
+        each env (fun i ->
+            match (f.(i), a.(i)) with Some f, Some a -> Some (f a) | _ -> None)
+  | Option a ->
+      let a = ocaml st a in
+      fun env -> Array.map Option.some (a env)
+  | Of_option a ->
+      let a = ocaml st a in
+      fun env -> Array.map Option.join (a env)
+  | _ ->
+      let n = compile st e and dec = decoder (Expr.typing e) in
+      fun env -> decode env dec (fill env (get env n))
 
 (* Calls *)
 
 let env st frame = { frame; slots = Array.make st.slots None; failure = None }
-
-let fail env row cause =
-  match env.failure with
-  | Some f when f.row <= row -> ()
-  | _ -> env.failure <- Some { row; cause }
-
-(* [fill env c] is [c], or the one row of literals [c] repeated on each of the
-   frame's rows. *)
-let fill env c =
-  let n = env.frame.rows in
-  if Column.length c = n then c else Column.take (Nx.zeros Nx.int64 [| n |]) c
 
 let outputs s os =
   let st = state s in
@@ -419,42 +558,10 @@ let predicate s p =
     let m = truth (fill env (get env n)) in
     (m, env.failure)
 
-let values : type a.
-    Schema.t -> (a, Expr.row) Expr.t -> frame -> a option array * failure option
-    =
- fun s e ->
+let values s e =
   let st = state s in
-  let n = compile st e in
-  let decoder : Column.t -> (int -> a option, int * string) result =
-    match Expr.typing e with
-    | Column ty -> Column.decoder ty
-    | Extension d ->
-        fun c ->
-          let c = Column.with_data (Any d.storage) (Column.data c) c in
-          Result.map
-            (fun get i -> Option.map d.dec (get i))
-            (Column.decoder d.storage c)
-    | Value -> not_lowered (Format.asprintf "%a" Expr.pp e)
-  in
+  let vs = ocaml st e in
   fun frame ->
     let env = env st frame in
-    let c = fill env (get env n) in
-    let vs = Array.make frame.rows None in
-    let rec read get i stop =
-      if i < stop then
-        match get i with
-        | v ->
-            vs.(i) <- v;
-            read get (i + 1) stop
-        | exception exn ->
-            fail env i (Raised (exn, Printexc.get_raw_backtrace ()))
-    in
-    let rec decode stop =
-      match decoder (Column.sub c ~offset:0 ~length:stop) with
-      | Ok get -> read get 0 stop
-      | Error (row, why) ->
-          fail env row (Data why);
-          decode row
-    in
-    decode (match env.failure with Some f -> f.row | None -> frame.rows);
+    let vs = vs env in
     (vs, env.failure)

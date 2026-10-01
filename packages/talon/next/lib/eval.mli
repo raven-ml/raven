@@ -11,18 +11,25 @@
 
     {b Compiled once per step.} [outputs s os], [predicate s p] and [values s e]
     analyse their expressions once, when applied to them: the kernel of each
-    node, the casts of its operands, and one slot per subexpression that the
-    expressions share ({!Expr.same}), computed once per frame. The resulting
-    function is applied to each frame. Every operation is eager nx on the
-    frame's columns. A literal is a column of one row that nx broadcasts; an
-    output of literals alone is broadcast to the frame's rows, last.
+    node, the casts of its operands, and one slot per subexpression of a column
+    typing that the expressions share ({!Expr.same}), computed once per frame.
+    The resulting function is applied to each frame. Every operation is eager nx
+    on the frame's columns, and OCaml values are arrays of the frame's rows. A
+    literal is a column of one row that nx broadcasts; an output of literals
+    alone is broadcast to the frame's rows, last.
 
-    {b Failures.} A failure is found at a row: a value that [Query.values]
-    cannot decode, or an exception that a user function raises. The evaluator
-    records the earliest, gives the failing value a null and goes on, so the
-    rows before the failing one are computed as if it had not failed. It returns
-    the failure with its result. A user function is not called again after it
-    raises. *)
+    {b Failures.} A failure is found at a row: a value that [store] does not
+    hold, a value that OCaml cannot read (an argument of [$], or what
+    [Query.values] decodes), or an exception that a user function or an
+    extension's declaration raises. The evaluator records the earliest, gives
+    the failing value a null and goes on, so the rows before the failing one are
+    computed as if it had not failed. It returns the failure with its result. No
+    user function is called at or past the earliest failure.
+
+    Nodes evaluate one after the other, each over the whole frame: the outputs
+    in order, and every operand of a node, branches included, before the node,
+    from left to right. Of two failures at one row, the one recorded is the one
+    that evaluating that row alone in this order meets first. *)
 
 type frame
 (** The type for frames. *)

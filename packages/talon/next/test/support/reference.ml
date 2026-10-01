@@ -24,6 +24,8 @@ type 'a expr =
   | Coalesce : 'a expr list -> 'a expr
   | Is_in : 'a list * 'a expr -> bool expr
   | Store : 'a Type.t * 'a expr -> 'a expr
+  | Map : int Type.t * ('a -> int) * 'a expr -> int expr
+  | Bind : int Type.t * ('a option -> int option) * 'a expr -> int expr
 
 type out = Out : string * 'a expr -> out | Keep of string list
 
@@ -53,6 +55,8 @@ let literal : type a s. a Type.t -> (a -> (a, s) Expr.t) option =
 
 let rec type_of : type a. a expr -> a Type.t = function
   | Col (ty, _) | Lit (ty, _) | Null ty | Store (ty, _) -> ty
+  | Map (ty, _, _) -> ty
+  | Bind (ty, _, _) -> ty
   | Int (_, a, b) -> common a b
   | Float (_, a, b) -> common a b
   | If (_, a, b) -> common a b
@@ -112,6 +116,8 @@ let rec expr : type a. a expr -> (a, Expr.row) Expr.t = function
   | Coalesce es -> Expr.coalesce (List.map expr es)
   | Is_in (vs, a) -> Expr.is_in vs (expr a)
   | Store (ty, a) -> Expr.store ty (expr a)
+  | Map (ty, f, a) -> Expr.(store ty (const f $ expr a))
+  | Bind (ty, f, a) -> Expr.(store ty (of_option (const f $ option (expr a))))
 
 let out = function
   | Out (n, e) -> Expr.(n := expr e)
@@ -208,10 +214,18 @@ let compare (op : cmp) c =
   | `Gt -> c > 0
   | `Ge -> c >= 0
 
+(* [Data reason] is a failure of an expression, at the row being evaluated. *)
+exception Data of string
+
+let held ty v =
+  if Type.holds ty v then v
+  else raise (Data (Format.asprintf "%a does not hold %d" Type.pp ty v))
+
 let rec eval : type a. row -> a expr -> a option =
  fun row e ->
   let both f a b =
-    match (eval row a, eval row b) with Some x, Some y -> f x y | _ -> None
+    let x = eval row a in
+    match (x, eval row b) with Some x, Some y -> f x y | _ -> None
   in
   match e with
   | Col (ty, n) -> read ty (List.assoc n row)
@@ -224,19 +238,25 @@ let rec eval : type a. row -> a expr -> a option =
         (fun x y -> Some (compare op (Type.compare_value (common a b) x y)))
         a b
   | And (a, b) -> (
-      match (eval row a, eval row b) with
+      let x = eval row a in
+      match (x, eval row b) with
       | Some false, _ | _, Some false -> Some false
       | Some true, Some true -> Some true
       | _ -> None)
   | Or (a, b) -> (
-      match (eval row a, eval row b) with
+      let x = eval row a in
+      match (x, eval row b) with
       | Some true, _ | _, Some true -> Some true
       | Some false, Some false -> Some false
       | _ -> None)
   | Not a -> Option.map not (eval row a)
-  | If (c, a, b) -> if eval row c = Some true then eval row a else eval row b
+  | If (c, a, b) ->
+      let c = eval row c in
+      let a = eval row a in
+      let b = eval row b in
+      if c = Some true then a else b
   | Is_null a -> Some (Option.is_none (eval row a))
-  | Coalesce es -> List.find_map (eval row) es
+  | Coalesce es -> List.find_map Fun.id (List.map (eval row) es)
   | Store (_, a) -> eval row a
   | Is_in (vs, a) ->
       let ty = type_of a in
@@ -245,6 +265,8 @@ let rec eval : type a. row -> a expr -> a option =
         (Option.fold ~none:false
            ~some:(fun x -> List.exists (same x) vs)
            (eval row a))
+  | Map (ty, f, a) -> Option.map (fun x -> held ty (f x)) (eval row a)
+  | Bind (ty, f, a) -> Option.map (held ty) (f (eval row a))
 
 let out_cells row = function
   | Out (n, e) -> [ (n, Cell (type_of e, eval row e)) ]
@@ -272,31 +294,50 @@ let table_rows t =
   in
   List.init (rows t) (fun i -> List.map (fun c -> c.(i)) columns)
 
-let rec rows : plan -> row list = function
-  | Table t -> table_rows t
-  | Select (os, p) ->
-      List.map (fun r -> List.concat_map (out_cells r) os) (rows p)
+(* [Failed (row, reason)] is a step's failure at its input's row [row]. *)
+exception Failed of int * string
+
+(* [step f rs] is [f] on each row of [rs], as one step. *)
+let step f rs =
+  Seq.mapi
+    (fun i r ->
+      match f r with v -> v | exception Data why -> raise (Failed (i, why)))
+    rs
+
+let rec rows : plan -> row Seq.t = function
+  | Table t -> List.to_seq (table_rows t)
+  | Select (os, p) -> step (fun r -> List.concat_map (out_cells r) os) (rows p)
   | Derive (os, p) ->
-      List.map (fun r -> derived r (List.concat_map (out_cells r) os)) (rows p)
-  | Filter (e, p) -> List.filter (fun r -> eval r e = Some true) (rows p)
+      step (fun r -> derived r (List.concat_map (out_cells r) os)) (rows p)
+  | Filter (e, p) ->
+      Seq.filter_map Fun.id
+        (step (fun r -> if eval r e = Some true then Some r else None) (rows p))
+  | Slice { offset; length; plan } when offset >= 0 ->
+      let stop =
+        if length > max_int - offset then max_int else offset + length
+      in
+      Seq.drop offset (Seq.take stop (rows plan))
   | Slice { offset; length; plan } ->
-      let rs = rows plan in
-      let start = if offset < 0 then List.length rs + offset else offset in
-      List.filteri (fun i _ -> i >= start && i - start < length) rs
-  | Append (p, rest) -> rows p @ rows rest
+      let rs = List.of_seq (rows plan) in
+      let start = List.length rs + offset in
+      List.to_seq
+        (List.filteri (fun i _ -> i >= start && i - start < length) rs)
+  | Append (p, rest) -> Seq.append (rows p) (rows rest)
 
 let run p =
-  let rs = rows p in
-  let column (n, Type.Any ty) =
-    let (Type.Any ty) = storage ty in
-    ( n,
-      Column
-        (ty, Array.of_list (List.map (fun r -> read ty (List.assoc n r)) rs)) )
-  in
-  List.map column (schema p)
+  match List.of_seq (rows p) with
+  | exception Failed (row, why) -> Error (row, why)
+  | rs ->
+      let column (n, Type.Any ty) =
+        let (Type.Any ty) = storage ty in
+        let vs = List.map (fun r -> read ty (List.assoc n r)) rs in
+        (n, Column (ty, Array.of_list vs))
+      in
+      Ok (List.map column (schema p))
 
 let values e p =
-  let vs = List.map (fun r -> eval r e) (rows p) in
-  match List.find_index Option.is_none vs with
-  | Some i -> Error i
-  | None -> Ok (Array.of_list (List.map Option.get vs))
+  let null = "the value is null; read it through Expr.option" in
+  let value r = match eval r e with Some v -> v | None -> raise (Data null) in
+  match Array.of_seq (step value (rows p)) with
+  | vs -> Ok vs
+  | exception Failed (row, why) -> Error (row, why)

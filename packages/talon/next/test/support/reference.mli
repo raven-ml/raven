@@ -11,7 +11,15 @@
     of an operation meet at their common type ({!Talon_next.Type.common}), and a
     literal or [Null] stands only beside an operand that reads a column, so that
     it takes that operand's type. Extension columns are read as their storage.
-*)
+
+    {b Failures.} Rows flow through the plan one at a time, each step pulling
+    the rows it needs from its input: a slice from the start pulls its input's
+    first [offset + length] rows, and a slice from the end all of them. At a
+    row, a step evaluates its outputs in order, and an expression every operand,
+    branches included, before its node, from left to right. The first failure
+    met ends the run: a value that a {!Map} or {!Bind} type does not hold, at
+    the row of the step's input, or an exception that a function raises, which
+    propagates. *)
 
 open Talon_next
 
@@ -38,6 +46,11 @@ type 'a expr =
   | Is_in : 'a list * 'a expr -> bool expr
   | Store : 'a Type.t * 'a expr -> 'a expr
       (** At a type that contains the operand's. *)
+  | Map : int Type.t * ('a -> int) * 'a expr -> int expr
+      (** [Map (ty, f, a)] is [store ty (const f $ a)], at a type of OCaml
+          [int]s. [a] reads a column. *)
+  | Bind : int Type.t * ('a option -> int option) * 'a expr -> int expr
+      (** [Bind (ty, f, a)] is [store ty (of_option (const f $ option a))]. *)
 
 (** The type for outputs. *)
 type out = Out : string * 'a expr -> out | Keep of string list
@@ -72,9 +85,11 @@ type column = Column : 'a Type.t * 'a option array -> column
 val decode : Column.t -> column
 (** [decode c] is [c]'s values, an extension's as its storage's. *)
 
-val run : plan -> (string * column) list
-(** [run p] is [p]'s rows, column by column, as {!decode} reads them. *)
+val run : plan -> ((string * column) list, int * string) result
+(** [run p] is [p]'s rows, column by column, as {!decode} reads them, or
+    [Error (row, reason)] where it fails at the row [row] of a step's input,
+    [reason] as the run says it. *)
 
-val values : 'a expr -> plan -> ('a array, int) result
-(** [values e p] is [e] on each of [p]'s rows, or [Error r] for the first row
-    [r] where [e] is null. *)
+val values : 'a expr -> plan -> ('a array, int * string) result
+(** [values e p] is [e] on each of [p]'s rows, or [Error (row, reason)] where
+    [p] fails, or where [e] fails or is null at [p]'s row [row]. *)

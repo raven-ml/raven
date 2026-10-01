@@ -30,7 +30,11 @@ let rec all = function
    expressions as the reference writes them. Arithmetic stays within 32 bits,
    where the reference computes exactly. Each type that changes its values'
    representation when it widens (decimals, clocks) appears once, since those
-   conversions are not lowered yet. *)
+   conversions are not lowered yet. OCaml functions hash their argument: one in
+   about [p] raises [Boom], and the others give values that an [int8] or an
+   unsigned type may not hold. *)
+
+exception Boom of (int * int)
 
 let palette =
   Type.
@@ -143,6 +147,11 @@ let rec anchored : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
         ]
     in
     let is k = Kind.provably_equal (Type.kind ty) k in
+    let lifts : a R.expr Gen.t list =
+      match is Kind.int with
+      | Some Equal -> [ lift (ty : int Type.t) s (d - 1) ]
+      | None -> []
+    in
     let arith : a R.expr Gen.t list =
       match (is Kind.int, is Kind.float, ty) with
       | Some Equal, _, (Int8 | Int16 | Int32 | Uint8 | Uint16 | Uint32) ->
@@ -158,7 +167,35 @@ let rec anchored : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
       :: map2 (fun c (a, b) -> R.If (c, a, b)) (predicate s (d - 1)) two
       :: Gen.map (fun (a, b) -> R.Coalesce [ a; b ]) two
       :: Gen.map (fun a -> R.Store (ty, a)) narrower
-      :: arith)
+      :: (arith @ lifts))
+
+and lift : int Type.t -> _ -> int -> int R.expr Gen.t =
+ fun ty s d ->
+  Gen.bind
+    (Gen.of_list (expressible s))
+    (fun (_, Type.Any t) ->
+      let ints =
+        Gen.(triple (int_range 2 10) (int_range 1 300) (int_range 0 99))
+      in
+      map2
+        (fun (p, k, label) (bind, a) ->
+          let value h = (h mod k) - (k / 4) in
+          if bind then
+            let f = function
+              | None -> Some k
+              | Some v ->
+                  let h = Hashtbl.hash v in
+                  if h mod 3 = 0 then None else Some (value h)
+            in
+            R.Bind (ty, f, a)
+          else
+            let f v =
+              let h = Hashtbl.hash v in
+              if h mod p = 0 then raise (Boom (label, h)) else value h
+            in
+            R.Map (ty, f, a))
+        ints
+        (Gen.pair Gen.bool (anchored t s d)))
 
 and operand : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
  fun ty s d ->
@@ -218,6 +255,10 @@ let output s name =
           ( 1,
             Gen.of_list
               [ out (R.Lit (Type.int64, 7)); out (R.Lit (Type.string, "é")) ] );
+          ( 3,
+            Gen.bind
+              (Gen.of_list Type.[ int8; uint8; int32; uint32 ])
+              (fun ty -> Gen.map out (lift ty s 1)) );
         ])
 
 let outputs s names = all (List.map (output s) names)
@@ -279,7 +320,29 @@ let pp_plan ppf p = Query.pp ppf (R.query p)
 let plans = Gen.bind (Gen.int_range 0 3) plan
 let split_plans = Gen.with_pp pp_plan (Gen.bind plans split)
 
-(* The run against the reference *)
+(* The run against the reference
+
+   [Query.t] is abstract, so the reference runs the plan as written. Where the
+   optimizer keeps it ([Query.equal]), the run is that plan, and agrees with the
+   reference failures included. Elsewhere the optimizer may remove failures and
+   move the conjuncts that fail, so the run agrees where the reference does not
+   fail. *)
+
+(* [attempt f] is [Ok (f ())], or [Error b] where [f] raises [Boom b]. *)
+let attempt f = match f () with r -> Ok r | exception Boom b -> Error b
+let error e = Format.asprintf "%a" Error.pp e
+
+(* [same_failure expected actual] checks that the run's [actual] is the
+   reference's failure [expected]: a step's error at its row, with its reason,
+   or the same exception. *)
+let same_failure expected actual =
+  match (expected, actual) with
+  | Ok (Error (row, why)), Ok (Error e) ->
+      contains ~sub:(Printf.sprintf ": row %d: %s." row why) (error e)
+  | Error b, Error b' -> equal (Windtrap.pair int int) b b'
+  | Ok (Error (row, why)), _ -> failf "no failure at row %d: %s" row why
+  | Error (label, _), _ -> failf "no Boom %d raised" label
+  | Ok (Ok _), _ -> assert false
 
 let holds t (n, R.Column (ty, vs)) =
   let (R.Column (ty', vs')) = R.decode (column t n) in
@@ -288,11 +351,21 @@ let holds t (n, R.Column (ty, vs)) =
   | None -> failf "%s holds %a, not %a" n Type.pp ty' Type.pp ty
 
 let agrees p =
-  let t = run_ok (R.query p) in
-  cover "rows in the result" (rows t > 0);
-  at_most int ~than:1 (List.length (batches t));
-  equal schema_w (Schema.v (R.schema p)) (schema t);
-  List.iter (holds t) (R.run p)
+  let q = R.query p in
+  let kept = Query.equal (Query.optimize q) q in
+  cover "the optimizer keeps the plan" kept;
+  match (attempt (fun () -> R.run p), attempt (fun () -> Query.run q)) with
+  | Ok (Ok cs), Ok (Ok t) ->
+      cover "rows in the result" (rows t > 0);
+      at_most int ~than:1 (List.length (batches t));
+      equal schema_w (Schema.v (R.schema p)) (schema t);
+      List.iter (holds t) cs
+  | Ok (Ok _), Ok (Error e) -> failf "the run fails: %s" (error e)
+  | Ok (Ok _), Error (label, _) -> failf "the run raises Boom %d" label
+  | expected, actual ->
+      cover "a kept plan fails at a row" (kept && Result.is_ok expected);
+      cover "a kept plan raises" (kept && Result.is_error expected);
+      if kept then same_failure expected actual
 
 (* Law 7: canonical layouts, byte for byte *)
 
@@ -326,11 +399,18 @@ let two_splits =
     (Gen.bind plans (fun p -> Gen.pair (split p) (split p)))
 
 let same_layouts (p0, p1) =
-  let t0 = run_ok (R.query p0) and t1 = run_ok (R.query p1) in
-  List.iter
-    (fun (n, _) ->
-      equal ~msg:n (list string) (buffers (column t0 n)) (buffers (column t1 n)))
-    (R.schema p0)
+  let run p () = Query.run (R.query p) in
+  match (attempt (run p0), attempt (run p1)) with
+  | Ok (Ok t0), Ok (Ok t1) ->
+      List.iter
+        (fun (n, _) ->
+          equal ~msg:n (list string)
+            (buffers (column t0 n))
+            (buffers (column t1 n)))
+        (R.schema p0)
+  | Ok (Error e0), Ok (Error e1) -> equal string (error e0) (error e1)
+  | Error b0, Error b1 -> equal (Windtrap.pair int int) b0 b1
+  | _ -> fail "the two splits end differently"
 
 (* Values *)
 
@@ -347,25 +427,115 @@ let values_cases =
               (Gen.of_list (expressible s))
               (fun (_, Type.Any ty) -> Gen.map (fun e -> E e) (anchored ty s 1)))))
 
+(* [Query.values] reads its rows through the optimizer, so its failures are the
+   reference's where the plan's rows are. *)
 let values_agree (p, E e) =
-  match (R.values e p, Query.values (R.expr e) (R.query p)) with
-  | Ok expected, Ok actual ->
-      equal (array (G.witness (R.type_of e))) expected actual
-  | Error row, Error err ->
-      contains
-        ~sub:(Printf.sprintf ": row %d: the value is null" row)
-        (Format.asprintf "%a" Error.pp err)
-  | Ok _, Error err -> failf "values failed: %a" Error.pp err
-  | Error row, Ok _ -> failf "no failure at the null of row %d" row
+  match attempt (fun () -> R.run p) with
+  | Ok (Error _) | Error _ -> ()
+  | Ok (Ok _) -> (
+      let actual = attempt (fun () -> Query.values (R.expr e) (R.query p)) in
+      match (attempt (fun () -> R.values e p), actual) with
+      | Ok (Ok expected), Ok (Ok actual) ->
+          equal (array (G.witness (R.type_of e))) expected actual
+      | Ok (Ok _), Ok (Error e) -> failf "values failed: %s" (error e)
+      | Ok (Ok _), Error (label, _) -> failf "values raised Boom %d" label
+      | expected, actual ->
+          cover "values fails" true;
+          same_failure expected actual)
+
+(* A streaming step that fails at a row emits the rows before it *)
+
+type kind = Fails | Raises
+
+let failing =
+  Gen.with_pp
+    (fun ppf (r, step, kind, t) ->
+      Format.fprintf ppf "%s %s at row %d of %d batches" step
+        (match kind with Fails -> "fails" | Raises -> "raises")
+        r
+        (List.length (batches t)))
+    (Gen.bind (Gen.int_range 1 40) (fun n ->
+         let x = Column.v Type.int64 (Array.init n Fun.id) in
+         Gen.map
+           (fun (r, (step, kind), t) -> (r, step, kind, t))
+           (Gen.triple
+              (Gen.int_range 0 (n - 1))
+              (Gen.pair
+                 (Gen.of_list [ "select"; "derive"; "filter" ])
+                 (Gen.of_list [ Fails; Raises ]))
+              (G.split (v [ ("x", x) ])))))
+
+(* [failing_at (r, step, kind, t)] is [step] over [t], failing at row [r]. *)
+let failing_at (r, step, kind, t) =
+  let f x =
+    if x <> r then x
+    else match kind with Fails -> 100_000 | Raises -> raise (Boom (0, x))
+  in
+  let y = Expr.(store Type.int16 (const f $ Col.int "x")) in
+  let q =
+    match step with
+    | "select" -> Query.select Expr.[ "y" := y ]
+    | "derive" -> Query.derive Expr.[ "y" := y ]
+    | _ -> Query.filter Expr.(y >= int 0)
+  in
+  q (Query.of_table t)
+
+(* [ends_at r kind outcome] checks that [outcome] is the failure at row [r]. *)
+let ends_at r kind outcome =
+  match (kind, outcome) with
+  | Fails, Ok (Error e) ->
+      contains ~sub:(Printf.sprintf ": row %d: int16 does not hold" r) (error e)
+  | Raises, Error (_, x) -> equal int r x
+  | _ -> fail "the run ends otherwise"
+
+(* The rows that [fold] sees before a failure at row [r] are the [r] rows before
+   it, whatever the batches. *)
+let emits_before ((r, _, kind, _) as c) =
+  let seen = ref 0 in
+  let fold () =
+    Query.fold (failing_at c) ~init:() (fun () b -> seen := !seen + rows b)
+  in
+  ends_at r kind (attempt fold);
+  equal ~msg:"rows folded before the failure" int r !seen
+
+(* A failure past the rows a slice from the start keeps is never met, whatever
+   the batches, and one at a row it keeps always is. Before [offset], the
+   optimizer may move the slice below the failing step, which then never sees
+   the row. The error's row counts over the step's input in the optimized plan,
+   so a data error is matched by its reason. *)
+let sliced =
+  Gen.pair failing (Gen.pair (Gen.int_range 0 10) (Gen.int_range 0 15))
+
+let slice_stops (((r, _, kind, t) as c), (offset, length)) =
+  let outcome =
+    attempt (fun () -> Query.run (Query.slice ~offset ~length (failing_at c)))
+  in
+  let stop = offset + length in
+  cover "the failure is past the slice" (r >= stop);
+  cover "the failure is in the slice" (offset <= r && r < stop);
+  match outcome with
+  | Ok (Ok ran) when r >= stop ->
+      let kept = Int.max 0 (Int.min stop (rows t) - offset) in
+      equal ~msg:"rows" int kept (rows ran)
+  | _ when r >= stop -> fail "a failure past the slice is met"
+  | Ok (Error e) when kind = Fails && r >= offset ->
+      contains ~sub:"int16 does not hold 100000." (error e)
+  | Error (_, x) when kind = Raises && r >= offset -> equal int r x
+  | _ when r >= offset -> fail "the failure in the slice is not met"
+  | _ -> ()
 
 let laws =
   group "Laws"
     [
-      prop "run gives the reference's rows, whatever the batches" split_plans
-        agrees;
+      prop "a streaming step that fails at row r emits the rows before r"
+        failing emits_before;
+      prop "a slice from the start never meets a failure past its rows" sliced
+        slice_stops;
+      prop ~count:500 "run gives the reference's rows, whatever the batches"
+        split_plans agrees;
       prop "run's layouts are the same bytes whatever the batches" two_splits
         same_layouts;
-      prop "values gives the reference's values, or fails at its first null"
+      prop "values gives the reference's values, or fails where it does"
         values_cases values_agree;
     ]
 
@@ -509,27 +679,27 @@ let float_order =
       compares "x >= y" Expr.(x >= y) [| t; f; t; t; t |];
     ]
 
+let celsius =
+  Ext.v ~name:"celsius" ~ordered:true Type.float64
+    ~dec:(fun c -> if Float.is_nan c then raise Exit else c)
+    ~enc:Fun.id
+
+let degrees cs =
+  let valid =
+    Nx.create Nx.bool [| Array.length cs |] (Array.map Option.is_some cs)
+  in
+  let c =
+    Column.of_tensor ~validity:(Nx_bits.of_bool valid)
+      (Nx.create Nx.float64
+         [| Array.length cs |]
+         (Array.map (Option.value ~default:0.) cs))
+  in
+  let ty = Type.Any (Type.ext ~name:"celsius" Type.float64) in
+  v [ ("t", Result.get_ok (Column.of_layout ty (Column.layout c))) ]
+
 let failures =
   let in_two_batches cs0 cs1 = of_batches [ v cs0; v cs1 ] in
   let x = Col.int "x" in
-  let celsius =
-    Ext.v ~name:"celsius" ~ordered:true Type.float64
-      ~dec:(fun c -> if Float.is_nan c then raise Exit else c)
-      ~enc:Fun.id
-  in
-  let degrees cs =
-    let valid =
-      Nx.create Nx.bool [| Array.length cs |] (Array.map Option.is_some cs)
-    in
-    let c =
-      Column.of_tensor ~validity:(Nx_bits.of_bool valid)
-        (Nx.create Nx.float64
-           [| Array.length cs |]
-           (Array.map (Option.value ~default:0.) cs))
-    in
-    let ty = Type.Any (Type.ext ~name:"celsius" Type.float64) in
-    v [ ("t", Result.get_ok (Column.of_layout ty (Column.layout c))) ]
-  in
   let error r = Format.asprintf "%a" Error.pp (require_error r) in
   group "Failures"
     [
@@ -564,6 +734,224 @@ let failures =
           let t = degrees [| Some Float.nan; None |] in
           raises Exit (fun () ->
               Query.values (Ext.col celsius "t") (Query.of_table t)));
+    ]
+
+let ocaml =
+  let x = Col.int "x" and y = Col.int "y" in
+  let t =
+    v
+      [
+        ("x", Column.of_options Type.int64 [| Some 1; None; Some 3; Some 4 |]);
+        ("y", Column.of_options Type.int64 [| Some 10; Some 20; None; Some 40 |]);
+      ]
+  in
+  let stored e = ints (Expr.store Type.int64 e) t in
+  let values e = require_ok ~pp:Error.pp (Query.values e (Query.of_table t)) in
+  group "OCaml values"
+    [
+      test "const is its value on every row" (fun () ->
+          rows_are Type.int64 (Array.make 4 (Some 5)) (stored (Expr.const 5)));
+      test "f $ a is called once per row where no argument is null" (fun () ->
+          let calls = ref 0 in
+          let add a b =
+            incr calls;
+            a + b
+          in
+          rows_are Type.int64
+            [| Some 11; None; None; Some 44 |]
+            (stored Expr.(const add $ x $ y));
+          equal int 2 !calls);
+      test "option is never null, and of_option is null at None" (fun () ->
+          equal
+            (array (option int))
+            [| Some 1; None; Some 3; Some 4 |]
+            (values Expr.(const Fun.id $ option x));
+          rows_are Type.int64
+            [| Some 2; None; Some 4; Some 5 |]
+            (stored Expr.(of_option (const (Option.map succ) $ option x))));
+      test "values reads OCaml values of rows with nulls" (fun () ->
+          equal
+            (array (Windtrap.pair int (option int)))
+            [| (1, Some 10); (3, None); (4, Some 40) |]
+            (require_ok ~pp:Error.pp
+               (Query.values
+                  Expr.(const (fun a b -> (a, b)) $ x $ option y)
+                  (Query.filter Expr.(not (is_null x)) (Query.of_table t)))));
+      test "a $ result meeting an extension is encoded with its declaration"
+        (fun () ->
+          let t =
+            v
+              [
+                ("t", column (degrees [| Some 1.5; None |]) "t");
+                ("x", Column.v Type.int64 [| 1; 2 |]);
+              ]
+          in
+          let t' = Ext.col celsius "t" in
+          let q =
+            Query.derive
+              Expr.[ "t" := coalesce [ t'; const float_of_int $ x ] ]
+              (Query.of_table t)
+          in
+          equal (array float_exact) [| 1.5; 2. |]
+            (require_ok ~pp:Error.pp (Query.values t' q)));
+      test "a function is not called again after it raises" (fun () ->
+          let calls = ref 0 in
+          let f a =
+            incr calls;
+            if a = 3 then raise Exit else a
+          in
+          raises Exit (fun () -> stored Expr.(const f $ x));
+          equal int 2 !calls);
+      test "a value its store type does not hold fails at its row" (fun () ->
+          let hundred a = a * 100 in
+          expect
+            (error
+               (require_error
+                  (Query.run
+                     (Query.select
+                        Expr.[ "z" := store Type.int8 (const hundred $ x) ]
+                        (Query.of_table t)))))
+          @@ __POS_OF__
+               {| select ["z" := store int8 (<const> $ x)]: row 2: int8 does not hold 300. |});
+    ]
+
+(* At a row, outputs fail in order and an operand before its node; an earlier
+   row fails first. [boom] raises at the row where [x] is 3, and [big] gives a
+   value [int8] does not hold there and at the next row. *)
+let failure_order =
+  let x = Col.int "x" in
+  let t =
+    of_batches
+      [
+        v [ ("x", Column.v Type.int64 [| 1; 2 |]) ];
+        v [ ("x", Column.v Type.int64 [| 3; 4 |]) ];
+      ]
+  in
+  let boom a = if a = 3 then raise Exit else a in
+  let big a = if a >= 3 then 1000 else a in
+  let big_at_4 a = if a = 4 then 1000 else a in
+  let boom_at_4 a = if a = 4 then raise Exit else a in
+  let int8 f e = Expr.(store Type.int8 (const f $ e)) in
+  let ends q =
+    match Query.run q with
+    | Ok _ -> "no failure"
+    | Error e -> error e
+    | exception Exit -> "Exit"
+  in
+  let select os = ends (Query.select os (Query.of_table t)) in
+  group "Failure order"
+    [
+      test "a raising $ in the first output" (fun () ->
+          equal string "Exit"
+            (select Expr.[ "a" := int8 boom x; "b" := int8 big x ]));
+      test "a raising $ in the second output" (fun () ->
+          expect (select Expr.[ "b" := int8 big x; "a" := int8 boom x ])
+          @@ __POS_OF__
+               {| select ["b" := store int8 (<const> $ x); "a" := store int8 (<const> $ x)]: row 2: int8 does not hold 1000. |});
+      test "a raising $ around a failing operand" (fun () ->
+          expect (select Expr.[ "a" := int8 boom (int8 big x) ])
+          @@ __POS_OF__
+               {| select ["a" := store int8 (<const> $ store int8 (<const> $ x))]: row 2: int8 does not hold 1000. |});
+      test "a raising $ inside a failing node" (fun () ->
+          equal string "Exit" (select Expr.[ "a" := int8 big (int8 boom x) ]));
+      test "a later step's failure at an earlier row comes first" (fun () ->
+          let q =
+            Query.of_table t
+            |> Query.derive Expr.[ "b" := int8 big_at_4 x ]
+            |> Query.filter Expr.(int8 boom x > int 0)
+          in
+          equal string "Exit" (ends q));
+      test "an earlier step's failure at an earlier row comes first" (fun () ->
+          let q =
+            Query.of_table t
+            |> Query.derive Expr.[ "b" := int8 big x ]
+            |> Query.filter Expr.(int8 boom_at_4 x > int 0)
+          in
+          expect (ends q)
+          @@ __POS_OF__
+               {| derive ["b" := store int8 (<const> $ x)]: row 2: int8 does not hold 1000. |});
+    ]
+
+(* Lifts *)
+
+let numeric =
+  Type.
+    [
+      Any int8;
+      Any int16;
+      Any int32;
+      Any int64;
+      Any uint8;
+      Any uint32;
+      Any float16;
+      Any float32;
+      Any float64;
+    ]
+
+let unary_lifts =
+  Expr.
+    [
+      ("neg", { f = Nx.neg });
+      ("abs", { f = Nx.abs });
+      ("square", { f = (fun x -> Nx.mul x x) });
+      ( "abs by where",
+        { f = (fun x -> Nx.where (Nx.less x (Nx.sub x x)) (Nx.neg x) x) } );
+      ( "through float64",
+        { f = (fun x -> Nx.cast (Nx.dtype x) (Nx.cast Nx.float64 x)) } );
+    ]
+
+let lift_cases =
+  Gen.with_pp
+    (fun ppf (G.Sample (ty, vs), (name, _)) ->
+      Format.fprintf ppf "%s over %a, %d rows" name Type.pp ty (Array.length vs))
+    (Gen.pair
+       (Gen.bind (Gen.of_list numeric) (fun (Type.Any ty) ->
+            Gen.map (fun vs -> G.Sample (ty, vs)) (G.options ty)))
+       (Gen.of_list unary_lifts))
+
+(* [nx f x] is [f] on [x]'s stored values with nx, null where [x] is, with zeros
+   under its nulls. *)
+let lifts_agree (G.Sample (ty, vs), (_, (fn : Expr.fn))) =
+  let c = Column.of_options ty vs in
+  let expected =
+    match Column.layout c with
+    | Fixed { validity; values = P x } ->
+        let y = fn.f x in
+        let y =
+          match validity with
+          | None -> y
+          | Some b -> Nx.where (Nx_bits.to_bool b) y (Nx.zeros_like y)
+        in
+        Column.of_tensor ?validity y
+    | _ -> assert false
+  in
+  let t = v [ ("x", c) ] in
+  let actual = result Expr.(nx fn (Col.v (Type.kind ty) "x")) t in
+  equal (list string) (buffers expected) (buffers actual)
+
+let lifts =
+  let x = Col.int "x" and y = Col.int "y" in
+  let t =
+    v
+      [
+        ("x", Column.of_options Type.int16 [| Some 1; None; Some (-3) |]);
+        ("y", Column.of_options Type.int16 [| Some 7; Some 8; None |]);
+      ]
+  in
+  let maximum = Expr.{ f2 = Nx.maximum } in
+  group "Lifts"
+    [
+      prop "nx f x is f on x's values, null where x is" lift_cases lifts_agree;
+      test "nx2 f x y is null where either is" (fun () ->
+          rows_are Type.int16 [| Some 7; None; None |]
+            (ints Expr.(nx2 maximum x y) t));
+      test "nx2 f x literal broadcasts the literal" (fun () ->
+          rows_are Type.int16 [| Some 1; None; Some 0 |]
+            (ints Expr.(nx2 maximum x (int 0)) t));
+      test "nx of literals alone is on every row" (fun () ->
+          rows_are Type.int64
+            [| Some 2; Some 2; Some 2 |]
+            (ints Expr.(nx { f = Nx.abs } (int (-2))) t));
     ]
 
 let refusals =
@@ -605,4 +993,15 @@ let refusals =
 let () =
   exit
     (run "Run"
-       [ laws; kleene; arithmetic; widening; float_order; failures; refusals ])
+       [
+         laws;
+         kleene;
+         arithmetic;
+         widening;
+         float_order;
+         failures;
+         ocaml;
+         failure_order;
+         lifts;
+         refusals;
+       ])
