@@ -189,17 +189,17 @@ module Scaled = struct
 end
 
 let train_step_scaled objective key { params; ls } =
-  (* The scale enters as the backward seed: [vjp] against the scale cotangent is
-     exactly [grad (fun p -> Loss_scale.scale ls (objective p))] — every float16
-     cotangent downstream carries the scale, which is the underflow protection —
-     but the loss comes back unscaled for reporting. (It also sidesteps a tolk
-     CUDA codegen bug, 2026-07: with the loss-multiply form, one backward kernel
-     of this model renders a whole-vocab-axis vectorized store,
-     [make_float50257], which NVRTC rejects.) *)
-  let loss, grads =
+  (* The scale enters as the backward seed: the pullback of the scale cotangent
+     is exactly [grad (fun p -> Loss_scale.scale ls (objective p))] — every
+     float16 cotangent downstream carries the scale, which is the underflow
+     protection — but the loss comes back unscaled for reporting. (It also
+     sidesteps a tolk CUDA codegen bug, 2026-07: with the loss-multiply form,
+     one backward kernel of this model renders a whole-vocab-axis vectorized
+     store, [make_float50257], which NVRTC rejects.) *)
+  let loss, pullback =
     Rune.vjp gpt2_tree Nx.Ptree.tensor (objective key) params
-      ls.Vega.Loss_scale.scale
   in
+  let grads = pullback ls.Vega.Loss_scale.scale in
   let grads = Vega.Loss_scale.unscale gpt2_tree ls grads in
   let finite = Vega.Loss_scale.grads_finite gpt2_tree grads in
   let state = Vega.sgd_init gpt2_tree params in
