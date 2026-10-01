@@ -787,6 +787,44 @@ let lending =
               ls
           in
           equal (list nativeint) before (List.map address r));
+      (* A momentum step: the parameters read the new velocity, which reads the
+         parameters. Each result is written over its own state, the velocity
+         first, and the parameters read it from there. *)
+      test "a step whose results read each other's state lends both" (fun () ->
+          let step (w, v) =
+            let v = Nx.add (Nx.mul_s v 0.9) (Nx.mul_s (Nx.sub w (x ())) 2.) in
+            (Nx.sub w (Nx.mul_s v 0.1), v)
+          in
+          let g = Rune.jit state step in
+          let zeros () =
+            (Nx.zeros Nx.float32 [| 4 |], Nx.zeros Nx.float32 [| 4 |])
+          in
+          let compiled = ref (zeros ()) and eager = ref (zeros ()) in
+          for _ = 1 to 3 do
+            let before = (address (fst !compiled), address (snd !compiled)) in
+            compiled := g !compiled;
+            eager := step !eager;
+            equal (pair nativeint nativeint) before
+              (address (fst !compiled), address (snd !compiled))
+          done;
+          equal floats (fst !eager) (fst !compiled);
+          equal floats (snd !eager) (snd !compiled));
+      (* Each result reads the other's state before its store: no order exists,
+         and the latest result takes storage of its own. *)
+      test "results that read each other's state in a cycle lend the earliest"
+        (fun () ->
+          let step (a, b) = (Nx.add a b, Nx.sub b a) in
+          let g = Rune.jit state step in
+          let compiled = ref (x (), y ()) and eager = ref (x (), y ()) in
+          for _ = 1 to 3 do
+            let a = address (fst !compiled) and b = address (snd !compiled) in
+            compiled := g !compiled;
+            eager := step !eager;
+            equal nativeint a (address (fst !compiled));
+            is_false (Nativeint.equal b (address (snd !compiled)))
+          done;
+          equal floats (fst !eager) (fst !compiled);
+          equal floats (snd !eager) (snd !compiled));
     ]
 
 (* [together fs] runs each of [fs] on a domain of its own, all released at once,

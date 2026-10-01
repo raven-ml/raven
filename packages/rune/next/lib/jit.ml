@@ -263,6 +263,103 @@ let lend ~leaves ~fits ~reads ~writes nodes ys =
     (fun j i -> reads i nodes.(j) = Staged.Apart);
   lent
 
+(* [replaced map u] is [u] with each node [map] pairs replaced by its image. *)
+let replaced map u =
+  let memo = Ops.Tbl.create 64 in
+  let rec go u =
+    match List.assq_opt u map with
+    | Some v -> v
+    | None -> (
+        match Ops.Tbl.find_opt memo u with
+        | Some v -> v
+        | None ->
+            let src = Ops.src u in
+            let src' = List.map go src in
+            let v =
+              if List.for_all2 ( == ) src src' then u
+              else Ops.replace u ~src:src'
+            in
+            Ops.Tbl.add memo u v;
+            v)
+  in
+  go u
+
+(* [ordered ~leaves nodes lent] is [lent] with pairs given up until the stores
+   have an order, and that order of the results. A lent result is written over
+   its leaf as an assignment: another result reads it through its store, so it
+   runs after that store, and a result that reads the leaf itself runs before
+   it. Pairs whose results must each run before the other's store are given up,
+   the latest result first. *)
+let ordered ~leaves nodes lent =
+  let n = Array.length nodes in
+  let owner i = Option.value ~default:(-1) (Array.find_index (( = ) i) lent) in
+  let rec settle () =
+    let memo = Ops.Tbl.create 64 in
+    (* The lent leaves a node reads, and the lent results it reads. *)
+    let rec reads root u =
+      match Array.find_index (( == ) u) nodes with
+      | Some j when u != root && lent.(j) >= 0 -> ([], [ j ])
+      | _ -> (
+          match Array.find_index (( == ) u) leaves with
+          | Some i when owner i >= 0 -> ([ i ], [])
+          | _ -> (
+              match Ops.Tbl.find_opt memo u with
+              | Some r -> r
+              | None ->
+                  let r =
+                    List.fold_left
+                      (fun (l, j) s ->
+                        let l', j' = reads root s in
+                        ( List.sort_uniq Int.compare (l' @ l),
+                          List.sort_uniq Int.compare (j' @ j) ))
+                      ([], []) (Ops.src u)
+                  in
+                  if u != root then Ops.Tbl.add memo u r;
+                  r))
+    in
+    (* [before.(k)] are the results [k] runs before. *)
+    let before = Array.make n [] in
+    Array.iteri
+      (fun k u ->
+        let old, fresh = reads u u in
+        List.iter
+          (fun i -> if owner i <> k then before.(k) <- owner i :: before.(k))
+          old;
+        List.iter (fun j -> before.(j) <- k :: before.(j)) fresh)
+      nodes;
+    (* A depth-first walk: the results in an order of their stores, or a cycle,
+       from a result back to itself. *)
+    let state = Array.make n `New and order = ref [] in
+    let rec visit k =
+      match state.(k) with
+      | `Done -> None
+      | `Open -> Some [ k ]
+      | `New -> (
+          state.(k) <- `Open;
+          match List.find_map visit before.(k) with
+          | Some c -> Some (k :: c)
+          | None ->
+              state.(k) <- `Done;
+              order := k :: !order;
+              None)
+    in
+    match List.find_map visit (List.init n Fun.id) with
+    | None -> (lent, !order)
+    | Some path ->
+        let last = List.nth path (List.length path - 1) in
+        let rec from = function
+          | k :: rest when k <> last -> from rest
+          | c -> c
+        in
+        let j =
+          List.fold_left max (-1)
+            (List.filter (fun k -> lent.(k) >= 0) (from path))
+        in
+        lent.(j) <- -1;
+        settle ()
+  in
+  settle ()
+
 (* [local at shape] is the shape of each device's window of a value of [shape]
    at [at]. *)
 let local at shape =
@@ -321,26 +418,44 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
       ~reads:(fun i -> Lazy.force reads.(i))
       ~writes:(Lower.writes s) nodes ys
   in
-  let stores = ref [] in
+  let lent, order =
+    ordered ~leaves:(Array.map (fun (Nx.P t) -> Lower.uop t) params) nodes lent
+  in
+  (* The results are stored in that order: a result that reads a lent one reads
+     its store. *)
+  let assigned = ref []
+  and stores = ref []
+  and outs = Array.make (Array.length ys) Empty in
+  List.iter
+    (fun j ->
+      let (Nx.P y) = ys.(j) in
+      let store slot =
+        let target =
+          Lower.output s ~slot (Nx.placement y) (Nx.dtype y) (Nx.shape y)
+        in
+        if target != nodes.(j) then begin
+          let stored =
+            Ops.after target [ Ops.store target (replaced !assigned nodes.(j)) ]
+          in
+          stores := stored :: !stores;
+          if lent.(j) >= 0 then assigned := (nodes.(j), stored) :: !assigned
+        end
+      in
+      if numel (Nx.shape y) = 0 then ()
+      else if lent.(j) >= 0 then begin
+        store slots.(lent.(j));
+        outs.(j) <- Lent lent.(j)
+      end
+      else
+        let k = Ops.unique_num () in
+        store k;
+        outs.(j) <- Fresh k)
+    order;
   let results =
     Array.mapi
       (fun j (Nx.P y) ->
         let shape = Nx.shape y and at = Nx.placement y and dt = Nx.dtype y in
-        let store slot =
-          let target = Lower.output s ~slot at dt shape in
-          if target != nodes.(j) then
-            stores := Ops.after target [ Ops.store target nodes.(j) ] :: !stores
-        in
-        let out =
-          if numel shape = 0 then Empty
-          else if lent.(j) >= 0 then (
-            store slots.(lent.(j));
-            Lent lent.(j))
-          else
-            let k = Ops.unique_num () in
-            store k;
-            Fresh k
-        in
+        let out = outs.(j) in
         let name =
           match Ptree.Path.to_string (fst named.(j)) with
           | "" -> "the result"
