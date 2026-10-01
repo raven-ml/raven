@@ -6,7 +6,7 @@
 
 (rule
  (alias bench)
- (locks %{project_root}/bench)
+ (locks %{workspace_root}/bench)
  (action
   (progn
    (run %{exe:bench_decode.exe})

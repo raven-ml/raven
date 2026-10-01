@@ -9,14 +9,14 @@
  (alias bench)
  ; Serialize bench rules across the workspace: concurrent suites contend for
  ; cores and distort measurements.
- (locks %{project_root}/bench)
+ (locks %{workspace_root}/bench)
  (action
   (progn
    (run %{exe:bench_primitives.exe})
    (diff? nx_primitives.thumper nx_primitives.thumper.corrected))))
 
 (rule
- (locks %{project_root}/bench)
+ (locks %{workspace_root}/bench)
  (action
   (with-stdout-to
    nx_primitives.transient.actual
