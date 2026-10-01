@@ -145,12 +145,12 @@ let run : type r. tape -> r Nx.Op.t -> r =
   | Contiguous _ -> record_any t op
   | Move _ -> record_any t op
   | Place _ -> record_any t op
-  | Read _ ->
+  | Read { by; _ } ->
       invalid_arg
         (Printf.sprintf
-           "%s: a custom_jvp tangent map reads a tangent's value; under \
-            reverse mode a tangent has none"
-           t.entry)
+           "%s: a custom_jvp tangent map reads a tangent's value with %s; \
+            under reverse mode a tangent has none"
+           t.entry by)
   | Compare _ | Arg_reduce _ | Sort _ | Argsort _
   | Convert (Bitcast, _, _)
   | Threefry _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ ->

@@ -312,9 +312,10 @@ val custom_jvp :
     that is not linear in the tangents
     (["Rune.grad: a custom_jvp tangent map applies exp to a tangent; a tangent
       map must be linear in its tangents"]), adds a value to a tangent or pads
-    one with a nonzero fill, which are affine, reads a tangent's value
-    (["Rune.grad: a custom_jvp tangent map reads a tangent's value; under
-      reverse mode a tangent has none"]), or adds a tangent to a {!Total}. *)
+    one with a nonzero fill, which are affine, adds a tangent to a {!Total}, or
+    reads a tangent's value
+    (["Rune.grad: a custom_jvp tangent map reads a tangent's value with Nx.item;
+      under reverse mode a tangent has none"]). *)
 
 val custom_vjp :
   'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q * ('q -> 'p)) -> 'p -> 'q

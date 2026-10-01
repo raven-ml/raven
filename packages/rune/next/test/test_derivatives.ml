@@ -915,8 +915,8 @@ let error_cases =
                  x))
           (vec [| 1. |]) );
     ( "a tangent map reading a tangent",
-      "Rune.grad': a custom_jvp tangent map reads a tangent's value; under \
-       reverse mode a tangent has none",
+      "Rune.grad': a custom_jvp tangent map reads a tangent's value with \
+       Nx.item; under reverse mode a tangent has none",
       fun () ->
         under_grad
           (fun dx ->
