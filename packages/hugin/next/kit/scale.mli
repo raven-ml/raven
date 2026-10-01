@@ -461,13 +461,14 @@ val merge : 'd t -> 'd t -> ('d t, property) result
     on its successes, and [merge s s] is [Ok s]. *)
 
 val imply : 'd t -> 'd t -> 'd t
-(** [imply i s] is [s] with each property that [s] leaves unset taken from [i]:
-    a figure implies the properties a mark asks for, such as [zero] for a
-    length, on the specification the mark's channels give. Every constructor
-    sets the transform, so [imply] keeps the transform of [s], and a domain that
-    [i] sets is taken only if it satisfies the constraints the constructor of
-    [s] states on domains: [imply (linear ~domain:(-1., 1.) ()) (log ())] leaves
-    the domain unset. *)
+(** [imply i s] is [s] with each property that [s] leaves unset taken from [i],
+    except the name: a figure implies the properties a mark asks for, such as
+    [zero] for a length, on the specification the mark's channels give, and a
+    name is the identity of a scale, which no mark implies, so [imply] keeps the
+    name of [s] or its absence. Every constructor sets the transform, so [imply]
+    keeps the transform of [s], and a domain that [i] sets is taken only if it
+    satisfies the constraints the constructor of [s] states on domains:
+    [imply (linear ~domain:(-1., 1.) ()) (log ())] leaves the domain unset. *)
 
 val hull :
   ?valid:Nx.bool_t -> float t -> ('a, 'b) Nx.t -> (float * float) option

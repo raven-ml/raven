@@ -1391,6 +1391,17 @@ let merging =
             (Scale.imply
                (Scale.linear ~name:"x" ~nice:false ())
                (Scale.log ~name:"y" ())));
+      prop "imply never takes a name" (Gen.pair gen_spec gen_spec)
+        (fun (i, s) ->
+          cover "the implied specification is named"
+            (Option.is_some (Scale.name i));
+          equal (option string) (Scale.name s) (Scale.name (Scale.imply i s)));
+      test "imply leaves a subject without a name unnamed" (fun () ->
+          equal fscale
+            (Scale.linear ~zero:true ())
+            (Scale.imply
+               (Scale.linear ~name:"x" ~zero:true ())
+               (Scale.linear ())));
       test "imply leaves out a domain the subject refuses" (fun () ->
           equal fscale (Scale.log ())
             (Scale.imply (Scale.linear ~domain:(-1., 1.) ()) (Scale.log ()));

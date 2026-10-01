@@ -742,7 +742,7 @@ let imply : type d. d t -> d t -> d t =
         None
     | d -> d
   in
-  union s { i with domain }
+  union s { i with name = None; domain }
 
 let equal s s' = List.for_all snd (agreements { holds = equal_opt } s s')
 
