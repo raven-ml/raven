@@ -118,6 +118,8 @@ color_shapes_4	4	[32, 32, 16, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.RED
 arange_local	2	[16, 8]	[AxisType.GLOBAL, AxisType.LOCAL]	[]	[0, 1]	[]	0	1	0	0	1	  16    8	0:16:GLOBAL 1:8:LOCAL
 arange_local_upcast	2	[8, 16]	[AxisType.LOCAL, AxisType.UPCAST]	[]	[0]	[]	1	16	0	0	1	   8   16	0:1:GLOBAL 2:16:UPCAST
 top_split_upcast	3	[4, 16, 64]	[AxisType.WEAK, AxisType.UPCAST, AxisType.REDUCE]	[2]	[0]	[2]	1	16	0	1	2	   4   16   64	1:4:WEAK 2:16:UPCAST
+double_sum_group	2	[16, 4]	[AxisType.LOCAL, AxisType.REDUCE]	[0, 1]	[0]	[0, 1]	0	1	1	2	2	  16    4	0:1:REDUCE 3:16:LOCAL
+double_sum_group_twice	2	[4, 16]	[AxisType.LOCAL, AxisType.LOCAL]	[0, 1]	[0, 1]	[0, 1]	0	1	2	2	2	   4   16	0:1:REDUCE 4:16:LOCAL
 split_last_axis	3	[32, 16, 2]	[AxisType.WEAK, AxisType.REDUCE, AxisType.UNROLL]	[1, 2]	[0]	[1]	1	2	0	1	2	  32   16    2	0:16:REDUCE 2:2:UNROLL
 unroll_32	3	[64, 2, 32]	[AxisType.WEAK, AxisType.REDUCE, AxisType.UNROLL]	[1, 2]	[0]	[1]	1	32	0	1	2	  64    2   32	0:2:REDUCE 2:32:UNROLL
 upcast_16	3	[4, 16, 64]	[AxisType.WEAK, AxisType.UPCAST, AxisType.REDUCE]	[2]	[0]	[2]	1	16	0	1	2	   4   16   64	1:4:WEAK 2:16:UPCAST

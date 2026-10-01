@@ -2484,9 +2484,9 @@ stores through a pad.
   operands are loads (`mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
   Ops.INDEX`) and the vector's index has the first reduce range as a term of
   its sum.
-- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`read`), `:68` (`term_of`) and
-  `:122` (`matvec`); `test/gen/tinygrad.patch`, which gives tinygrad the same
-  before the goldens are recorded.
+- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`term_of`) and `:175`
+  (`matrix_of`), which D89 widens; `test/gen/tinygrad.patch`, which gives
+  tinygrad the same before the goldens are recorded.
 - **Differs:** the vector is a load read through dtype conversions (`CAST`,
   `BITCAST`), and the matrix any computation of loads with no reduce, whose
   ranges then stand for the matrix load's index's. The first reduce range may
@@ -2657,3 +2657,50 @@ stores through a pad.
   and `› a select of a value and a zero picks the zero at -0., on the host`;
   rune's Jit programs suite: `a compiled program › selects a zero as eagerly,
   whatever the other value's sign` and the rounded law's example.
+
+## D89. A matrix-vector product is laid out by its matrix
+
+- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
+  matrix-vector case: the first reduce axis split into `MV_THREADS_PER_ROW`
+  local threads, 8, the first global axis that 16 divides into
+  `MV_BLOCKSIZE` local threads, 4, then `MV_ROWS_PER_THREAD` upcast lanes,
+  4, whatever the matrix's layout and size), and `codegen/opt/postrange.py:132-134`
+  (`apply_opt`, which refuses a local split of a reduce axis inside another
+  reduce).
+- **tolk:** `lib/codegen/opt/heuristic.ml:138-151` (`lanes`, `rows`,
+  `columns`, `busy`, `in_flight`), `:175` (`matrix_of`), `:190` (`units`) and
+  `:198` (`matvec`); `lib/codegen/opt/postrange.ml:307-316`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
+- **Differs:** the vector is any computation of accesses with no reduce,
+  either operand of the product, in fewer ranges than the matrix. The range of
+  unit stride in an access of the matrix that reads along the reduce chooses
+  the layout. Along the reduce (`W[n, k]`): the reduce splits into up to 32
+  local threads, adjacent threads reading adjacent elements, 4 rows a
+  workgroup, and what is left of the reduce is unrolled by its largest divisor
+  up to 8. Along an output (`W[k, n]`): that axis splits into 32 local threads
+  and 2 upcast lanes, and the reduce into the threads, up to 32, that make
+  32768 threads; with more than 32768 outputs the kernel takes the other
+  rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD` are
+  gone; `MV=0` stays. A reduce axis inside another reduce splits into local
+  threads, each iteration of the outer reduce storing and reading the shared
+  buffer between barriers; inside an unrolled reduce it is still refused.
+- **Reason:** (b): gpt-oss-20b's decode on CUDA (RTX 5000 Ada, 576 GB/s).
+  tinygrad's layout puts 8 threads on a row whatever the matrix: rows along
+  the reduce read one byte a thread, columns along an output read 8 rows apart,
+  and few outputs leave the GPU short of threads. The query projection
+  multiplies a normalised activation, which tinygrad declines, and ran 1024
+  threads; the experts' down product sums four experts, a reduce around the
+  matrix-vector one, which could not split, and ran 720 threads reading
+  11520 bytes each. Per decode step, from 45.5 ms to 11.1 ms: the down
+  products from 15.72 ms to 0.91 ms (5% to 81% of the bandwidth), gate-up
+  from 15.38 ms to 2.60 ms (10% to 57%), the attention projections from
+  8.56 ms to 2.17 ms, the output projection from 1.57 ms to 1.12 ms (63% to
+  88%); the 201088 outputs of the head keep their layout.
+- **Pinned by:** the Heuristic suite: `the optimisations chosen are
+  tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`, `experts_down_*`
+  and `gpt_oss_*`, recorded from the equally patched tinygrad, and `the
+  hand-coded optimisations keep a kernel's writes › small kernels ›
+  experts_down_metal` (a group inside another reduce); the Postrange suite's
+  cases `double_sum_group` and `double_sum_group_twice`; the tolk bench's
+  `cpu/` and `cuda/` rows.

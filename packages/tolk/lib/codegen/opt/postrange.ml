@@ -304,15 +304,16 @@ module Scheduler = struct
             check (reduces <> [])
               (Format.asprintf "cannot %a an axis that's not in a REDUCE"
                  Axis_type.pp (role target));
-            (* We currently dont support a group within another reduce *)
+            (* An enclosing reduce runs its iterations in turn, each storing
+               and reading the shared buffer between barriers; an unrolled one
+               would need a buffer per lane. *)
             if target = Local then
               check
                 (not
                    (List.exists
-                      (fun u ->
-                        List.mem (axis_type u) [ Axis_type.Reduce; Unroll ])
+                      (fun u -> axis_type u = Axis_type.Unroll)
                       (Nodes.to_list (ranges (List.hd reduces)))))
-                "cannot have a group inside another reduce"
+                "cannot have a group inside an unrolled reduce"
           end;
           let replaced, new_rng = split ~top k rng amt target in
           [ replaced; new_rng ]

@@ -1,0 +1,41 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4096, device="CPU")
+1 Ops.CONST dtypes.weakint [] 64
+2 Ops.RANGE dtypes.weakint [1] (1, AxisType.GLOBAL)
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (3, AxisType.UPCAST)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 32
+8 Ops.MUL dtypes.weakint [6, 7]
+9 Ops.RANGE dtypes.weakint [7] (2, AxisType.LOCAL)
+10 Ops.ADD dtypes.weakint [8, 9]
+11 Ops.INDEX dtypes.float [0, 10]
+12 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=2880, device="CPU")
+13 Ops.CONST dtypes.weakint [] 180
+14 Ops.RANGE dtypes.weakint [13] (0, AxisType.REDUCE)
+15 Ops.CONST dtypes.weakint [] 16
+16 Ops.MUL dtypes.weakint [14, 15]
+17 Ops.RANGE dtypes.weakint [15] (4, AxisType.LOCAL)
+18 Ops.ADD dtypes.weakint [16, 17]
+19 Ops.INDEX dtypes.float [12, 18]
+20 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=1, device="CPU")
+21 Ops.CONST dtypes.weakint [] 0
+22 Ops.INDEX dtypes.float [20, 21]
+23 Ops.RECIPROCAL dtypes.float [22]
+24 Ops.MUL dtypes.float [19, 23]
+25 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=2880, device="CPU")
+26 Ops.INDEX dtypes.float [25, 18]
+27 Ops.MUL dtypes.float [24, 26]
+28 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=4, dtype=dtypes.bfloat16, size=11796480, device="CPU")
+29 Ops.CONST dtypes.weakint [] 4096
+30 Ops.MUL dtypes.weakint [18, 29]
+31 Ops.ADD dtypes.weakint [30, 10]
+32 Ops.INDEX dtypes.bfloat16 [28, 31]
+33 Ops.CAST dtypes.float [32] dtypes.float
+34 Ops.MUL dtypes.float [27, 33]
+35 Ops.REDUCE dtypes.float [34, 14, 17] (Ops.ADD, 0)
+36 Ops.STORE dtypes.void [11, 35]
+37 Ops.END dtypes.void [36, 2, 5, 9]
+38 Ops.SINK dtypes.void [37] KernelInfo(name="r_64_32_16_2_180", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=3, arg=(16, AxisType.LOCAL)))) tag=1
+

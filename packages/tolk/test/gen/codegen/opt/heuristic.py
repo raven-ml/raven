@@ -63,6 +63,11 @@ def decoded(n, k):
     return (values.reshape(n, k // 32, 32) * scales.reshape(n, k // 32, 1)).reshape(n, k)
 
 
+def normed(k):
+    """A [1, k] activation divided by its scale and multiplied by a gain, as a normalisation leaves it."""
+    return empty(1, k) / empty(1, 1) * empty(k)
+
+
 def with_vars(*tensors):
     return [c.src[0] for c in Tensor.linear_with_vars(*tensors)[0].src if c.src[0].op is Ops.SINK][-1]
 
@@ -94,6 +99,16 @@ KERNELS = {
     "matvec": lambda: last(empty(1024, 4096) @ empty(4096, 1)),
     "vecmat_of_cast": lambda: last(empty(1, 4096, dtype=dtypes.bfloat16).float() @ empty(4096, 1024)),
     "vecmat_decoded": lambda: last(empty(1, 4096) @ decoded(1024, 4096).T),
+    "vecmat_normed": lambda: last((empty(1, 4096) / empty(1, 1) * empty(4096)) @ empty(4096, 1024)),
+    "vecmat_wide": lambda: last(empty(1, 256) @ empty(256, 65536)),
+    # gpt-oss-20b's decode products, the experts already selected: a projection of a normalised activation by a bfloat16
+    # matrix, and four experts' MXFP4 products, gate and up of the normalised activation, then down of each expert's own
+    # activation, scaled and summed over the experts
+    "gpt_oss_qkv": lambda: last(normed(2880) @ empty(2880, 4096, dtype=dtypes.bfloat16).float()),
+    "gpt_oss_gate_up": lambda: last(normed(2880) @ decoded(4 * 5760, 2880).T),
+    "gpt_oss_down": lambda: last(((empty(4, 1, 2880) @ decoded(4 * 2880, 2880).reshape(4, 2880, 2880).transpose(1, 2)).relu()
+                                  * empty(4, 1, 1)).sum(0)),
+    "experts_down": lambda: last(((empty(2, 1, 32) @ empty(2, 16, 32).transpose(1, 2)).relu() * empty(2, 1, 1)).sum(0)),
     "conv": lambda: last(empty(1, 16, 32, 32).conv2d(empty(32, 16, 3, 3), padding=1)),
     "conv_half": lambda: last(empty(1, 16, 32, 32, dtype=dtypes.half).conv2d(empty(32, 16, 3, 3, dtype=dtypes.half), padding=1)),
     "stack": lambda: last(Tensor.stack(empty(1024), empty(1024), empty(1024))),
@@ -127,11 +142,9 @@ for renderer in ["metal", "cuda", "amd"]:
     case("conv_half", renderer, "_tc_opt_1", TC_OPT=1)
 case("matmul_half", "metal", "_tc_select_2", TC_SELECT=2)
 case("matmul", "cuda", "_tf32", ALLOW_TF32=1)
-# the matrix-vector layout's sizes and switch, from the environment
+# the matrix-vector layouts' switch, from the environment
 for renderer in ["metal", "cuda", "amd"]:
     case("vecmat", renderer, "_mv_0", MV=0)
-    case("vecmat", renderer, "_mv_block_rows_1", MV_BLOCKSIZE=1, MV_ROWS_PER_THREAD=1)
-    case("vecmat", renderer, "_mv_sizes_1", MV_BLOCKSIZE=1, MV_THREADS_PER_ROW=1, MV_ROWS_PER_THREAD=1)
 
 
 INPUTS = {}

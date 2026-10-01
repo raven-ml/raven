@@ -57,19 +57,18 @@ let index_of x l =
 let idx b = get_idx (nth b 1)
 let indexes r b = Nodes.mem r (backward_slice (idx b))
 
-(* The load [u] reads through dtype conversions. *)
-let rec read u =
-  match op u with
-  | Op.Cast | Op.Bitcast -> read (nth u 0)
-  | Op.Index -> Some u
-  | _ -> None
-
 (* Whether [r] is a term of the index [i], alone or times a constant. *)
 let term_of r i =
   List.exists
     (fun t ->
       t == r || (op t = Op.Mul && nth t 0 == r && op (nth t 1) = Op.Const))
     (split_uop i Op.Add)
+
+(* The accesses [u] computes from, when it computes with no reduce. *)
+let accesses u =
+  let slice = Nodes.to_list (backward_slice_with_self u) in
+  if List.exists (fun x -> op x = Op.Reduce) slice then []
+  else List.filter (fun x -> op x = Op.Index) slice
 
 (* first try the tensor cores *)
 let tensor_cores k =
@@ -117,80 +116,142 @@ let tensor_cores k =
       [ 0; 1; 2 ]
   else None
 
-let mv = Helpers.variable "MV" 1
-let blocksize = Helpers.variable "MV_BLOCKSIZE" 4
-let threads_per_row = Helpers.variable "MV_THREADS_PER_ROW" 8
-let rows_per_thread = Helpers.variable "MV_ROWS_PER_THREAD" 4
+(* Matrix-vector products
 
-(* should use matvec - TODO: adjust/tune based on the wide vs tall/large vs
-   small mat *)
+   A product of a matrix and a vector reads each matrix element once, so it
+   runs as fast as memory feeds it: adjacent threads read adjacent elements,
+   each thread keeps several loads in flight, and enough threads run to keep
+   the memory busy. Where the matrix is laid out decides the layout:
+
+     rows along the reduce, W[n, k]       columns along an output, W[k, n]
+
+     lanes   k ->                         lanes   n ->
+     t0 t1 .. t31 t0 t1 .. t31 ...        t0 t1 .. t31   (2 columns each)
+     a row's [lanes] threads read it      the reduce splits into threads
+     in turn, [rows] rows a workgroup,    until [busy] threads run
+     unrolled by up to [in_flight] *)
+
+let mv = Helpers.variable "MV" 1
+
+(* The threads of a SIMD group: a CUDA warp, an AMD wave32, a Metal
+   simdgroup. *)
+let lanes = 32
+
+(* The rows of a workgroup in the rows layout: 4 SIMD groups. *)
+let rows = 4
+
+(* The outputs of a thread in the columns layout. *)
+let columns = 2
+
+(* The threads that keep a GPU's memory busy. *)
+let busy = 32768
+
+(* The loads of its row a thread of the rows layout keeps in flight, at
+   most. *)
+let in_flight = 8
+
+(* The largest power of two at most [cap] that divides [r]'s size. *)
+let rec pow2_dividing r cap =
+  if cap <= 1 then 1
+  else if Option.is_some (divides (nth r 0) (Bigint.of_int cap)) then cap
+  else pow2_dividing r (cap / 2)
+
+(* The largest divisor of [r]'s size that is at most [n]. *)
+let rec divisor_at_most r n =
+  if n <= 1 then 1
+  else if Option.is_some (divides (nth r 0) (Bigint.of_int n)) then n
+  else divisor_at_most r (n - 1)
+
+(* The least power of two at least [n]. *)
+let pow2_above n =
+  let rec go p = if p >= n then p else go (2 * p) in
+  go 1
+
+(* The matrix of a product [m] summed over [first], if it is one of a matrix
+   and a vector. Both are computations of accesses with no reduce, such as
+   values decoded from codes by a table or a vector normalised by a scale. The
+   vector runs in some of the matrix's ranges, the matrix in more, and one of
+   the vector's accesses reads along [first], alone or at a constant stride. *)
+let matrix_of first m =
+  let is_vector (v, w) =
+    let v_accesses = accesses v and w_ranges = ranges w in
+    v_accesses <> []
+    && accesses w <> []
+    && List.exists (fun a -> term_of first (idx a)) v_accesses
+    && Nodes.fold (fun r ok -> ok && Nodes.mem r w_ranges) (ranges v) true
+    && Nodes.cardinal w_ranges > Nodes.cardinal (ranges v)
+  in
+  List.find_map
+    (fun (v, w) -> if is_vector (v, w) then Some w else None)
+    [ (nth m 0, nth m 1); (nth m 1, nth m 0) ]
+
+(* The ranges of unit stride of the accesses of [w] that read along [first]:
+   the matrix is laid out along them. *)
+let units first w =
+  List.concat_map
+    (fun a ->
+      if Nodes.mem first (ranges (idx a)) then
+        List.filter (fun t -> op t = Op.Range) (split_uop (idx a) Op.Add)
+      else [])
+    (accesses w)
+
 let matvec k =
+  (* The axis of [r], or of what replaced it when a split made it shorter. *)
+  let axis r =
+    let id = axis_id r in
+    let rec go i = function
+      | [] -> invalid_arg "the range is not an axis of the kernel"
+      | u :: _ when axis_id u = id -> i
+      | _ :: rest -> go (i + 1) rest
+    in
+    go 0 (K.rngs k)
+  in
+  let divisible_at r n = divisible (shape_at k (axis r)) n in
+  let rows_layout first globals =
+    let threads = pow2_dividing first lanes in
+    match List.find_opt (fun g -> divisible_at g rows) globals with
+    | Some g when threads > 1 && try_split k (axis first) threads Opt.Local ->
+        ignore (split k (axis g) rows Opt.Local);
+        (* what the lanes leave of the row, if anything *)
+        let same u = axis_id u = axis_id first in
+        (match List.find_opt same (K.rngs k) with
+        | Some rest ->
+            let loads = divisor_at_most rest in_flight in
+            if loads > 1 then ignore (try_split k (axis rest) loads Opt.Unroll)
+        | None -> ());
+        Some k
+    | _ -> None
+  in
+  let columns_layout first g =
+    let wanted =
+      match prod_at k (K.upcastable_dims k) with
+      | Int n -> pow2_above (busy * columns / max n 1)
+      | Sym _ -> 1
+    in
+    if wanted <= 1 || not (divisible_at g (lanes * columns)) then None
+    else begin
+      ignore (split k (axis g) lanes Opt.Local);
+      ignore (split k (axis g) columns Opt.Upcast);
+      let threads = pow2_dividing first (min wanted lanes) in
+      if threads > 1 then ignore (try_split k (axis first) threads Opt.Local);
+      Some k
+    end
+  in
   let ren = K.ren k in
-  let mulop =
-    match K.reduceop k with
-    | Some r
-      when match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false ->
-        Some (nth r 0)
-    | _ -> None
-  in
-  (* The vector is a load, read through dtype conversions, and the matrix a
-     computation of loads with no reduce, such as values decoded from codes by a
-     table. *)
-  let operands =
-    match mulop with
-    | Some m when op m = Op.Mul -> (
-        let matrix = nth m 1 in
-        match read (nth m 0) with
-        | Some vector
-          when op_in_backward_slice_with_self matrix [ Op.Index ]
-               && not (op_in_backward_slice_with_self matrix [ Op.Reduce ]) ->
-            Some (vector, matrix)
-        | _ -> None)
-    | _ -> None
-  in
-  match operands with
-  | Some (vector, matrix)
-    when ren.has_local && mv <> 0
-         && (blocksize > 1 || threads_per_row > 1 || rows_per_thread > 1)
-         && List.length (K.full_shape k) >= 2
-         && ren.has_shared -> (
-      let idx0 = idx vector and matrix_ranges = ranges matrix in
-      match K.ranges_of k [ Reduce ] with
-      | first_reduce_rng :: _
-        when term_of first_reduce_rng idx0
-             && List.for_all
-                  (fun r -> Nodes.mem r matrix_ranges)
-                  (Nodes.to_list (ranges idx0)) ->
-          K.axes_of k [ Global ]
-          |> List.find_map (fun global_idx ->
-              if
-                Option.is_some
-                  (divides (nth first_reduce_rng 0)
-                     (Bigint.of_int threads_per_row))
-                && divisible (shape_at k global_idx)
-                     (blocksize * rows_per_thread)
-              then begin
-                if debug () >= 3 then
-                  Format.eprintf
-                    "MATVEC: full_shape=%a %s MV_BLOCKSIZE=%d \
-                     MV_THREADS_PER_ROW=%d MV_ROWS_PER_THREAD=%d@."
-                    (Format.pp_print_list Sint.pp)
-                    (K.full_shape k)
-                    (Render.render first_reduce_rng)
-                    blocksize threads_per_row rows_per_thread;
-                if threads_per_row > 1 then
-                  ignore
-                    (try_split k
-                       (List.hd (K.axes_of k [ Reduce ]))
-                       threads_per_row Opt.Local);
-                if blocksize > 1 then
-                  ignore (split k global_idx blocksize Opt.Local);
-                if rows_per_thread > 1 then
-                  ignore (split k global_idx rows_per_thread Opt.Upcast);
-                Some k
-              end
-              else None)
-      | _ -> None)
+  match (K.reduceop k, K.ranges_of k [ Reduce ]) with
+  | Some r, first :: _
+    when ren.has_local && ren.has_shared && mv <> 0
+         && (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+         && op (nth r 0) = Op.Mul -> (
+      match matrix_of first (nth r 0) with
+      | None -> None
+      | Some w ->
+          let units = units first w and globals = K.ranges_of k [ Global ] in
+          if List.memq first units then rows_layout first globals
+          else
+            Option.bind
+              (List.find_opt (fun g -> List.memq g units) globals)
+              (columns_layout first))
   | _ -> None
 
 (* are we grouping? (requires local shape support) *)

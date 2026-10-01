@@ -31,9 +31,9 @@ type case = {
   renderer : string;
   settings : Helpers.binding list;
   environment : string;
-      (** The settings of the matrix-vector layout, [MV] and [MV_*], which are
-          read once from the environment: a case under them runs in a process of
-          its own (see dune), tagged by {!process}. *)
+      (** The switch of the matrix-vector layouts, [MV], which is read once
+          from the environment: a case under it runs in a process of its own
+          (see dune), tagged by {!process}. *)
   opts : Opt.t list;  (** The optimisations tinygrad chose. *)
 }
 
@@ -55,12 +55,7 @@ let case_of_row cell =
 let recorded_cases = List.map case_of_row (Golden.rows "cases.golden")
 
 let processes =
-  [
-    ("", "");
-    ("MV=0", "mv_0");
-    ("MV_BLOCKSIZE=1 MV_ROWS_PER_THREAD=1", "mv_block_rows_1");
-    ("MV_BLOCKSIZE=1 MV_THREADS_PER_ROW=1 MV_ROWS_PER_THREAD=1", "mv_sizes_1");
-  ]
+[ ("", ""); ("MV=0", "mv_0") ]
 
 (* The cases of the process that runs with [environment], in a group tagged
    after it, which first checks that the process has it. *)

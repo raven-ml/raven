@@ -939,6 +939,10 @@ thread.
 
 ### Tolk (new)
 
+- GPU matrix-vector products take their layout from the matrix's and split
+  the reduce, also one inside another reduce, until the GPU is busy: gpt-oss-20b
+  decodes in 11.1 ms on an RTX 5000 Ada, from 45.5 ms. `MV_BLOCKSIZE`,
+  `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD` are removed.
 - `Spec.program` refuses an index of a vector value at a lane that is not a
   constant, which CUDA cannot compile: its vectors are structs. Such a kernel
   fails at lowering where it failed in NVRTC.

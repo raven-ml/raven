@@ -1,5 +1,5 @@
-; MV and MV_* are read once per process, so the cases under them run in
-; processes of their own, with the variables set.
+; MV is read once per process, so the cases under it run in a process of
+; their own, with the variable set.
 
 (test
  (name test_heuristic)
@@ -9,37 +9,11 @@
   (glob_files *.golden))
  (action
   (progn
-   (run
-    %{test}
-    --exclude-tag
-    slow
-    --exclude-tag
-    mv_0
-    --exclude-tag
-    mv_block_rows_1
-    --exclude-tag
-    mv_sizes_1)
+   (run %{test} --exclude-tag slow --exclude-tag mv_0)
    (setenv
     MV
     0
-    (run %{test} --tag mv_0))
-   (setenv
-    MV_BLOCKSIZE
-    1
-    (setenv
-     MV_ROWS_PER_THREAD
-     1
-     (run %{test} --tag mv_block_rows_1)))
-   (setenv
-    MV_BLOCKSIZE
-    1
-    (setenv
-     MV_THREADS_PER_ROW
-     1
-     (setenv
-      MV_ROWS_PER_THREAD
-      1
-      (run %{test} --tag mv_sizes_1)))))))
+    (run %{test} --tag mv_0)))))
 
 (rule
  (alias slow)

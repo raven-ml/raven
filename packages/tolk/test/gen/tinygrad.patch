@@ -386,38 +386,103 @@ index 62c3191..fb2d746 100644
  def xpow(base:UOp, exponent:UOp) -> UOp:
    # start with b ** e = exp2(e * log2(b))
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index 712a2b7..440b7b3 100644
+index 712a2b7..aa90243 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -60,13 +60,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -58,25 +58,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+           if (axis:=unit_stride_axes_mul_4[0]) in (upd:=k.upcastable_dims)+k.unrollable_dims:
+             k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST if axis in upd else AxisType.UNROLL)))
  
-   # should use matvec - TODO: adjust/tune based on the wide vs tall/large vs small mat
-   MV_BLOCKSIZE, MV_THREADS_PER_ROW, MV_ROWS_PER_THREAD = getenv("MV_BLOCKSIZE", 4), getenv("MV_THREADS_PER_ROW", 8), getenv("MV_ROWS_PER_THREAD", 4)
-+  # the vector is a load, read through dtype conversions, and the matrix a computation of loads, such as values decoded from codes by a table
-+  def read(u):
-+    while u.op in (Ops.CAST, Ops.BITCAST): u = u.src[0]
-+    return u if u.op is Ops.INDEX else None
-+  def of_loads(u): return any(x.op is Ops.INDEX for x in u.toposort()) and not any(x.op is Ops.REDUCE for x in u.toposort())
-   if k.ren.has_local and getenv("MV",1) != 0 and (MV_BLOCKSIZE > 1 or MV_THREADS_PER_ROW > 1 or MV_ROWS_PER_THREAD > 1) and  \
-     k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and len(k.full_shape) >= 2 and k.ren.has_shared and \
+-  # should use matvec - TODO: adjust/tune based on the wide vs tall/large vs small mat
+-  MV_BLOCKSIZE, MV_THREADS_PER_ROW, MV_ROWS_PER_THREAD = getenv("MV_BLOCKSIZE", 4), getenv("MV_THREADS_PER_ROW", 8), getenv("MV_ROWS_PER_THREAD", 4)
+-  if k.ren.has_local and getenv("MV",1) != 0 and (MV_BLOCKSIZE > 1 or MV_THREADS_PER_ROW > 1 or MV_ROWS_PER_THREAD > 1) and  \
+-    k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and len(k.full_shape) >= 2 and k.ren.has_shared and \
 -    (mulop:=k.reduceop.src[0]).op is Ops.MUL and mulop.src[0].op is Ops.INDEX and mulop.src[1].op is Ops.INDEX:
 -    idx0, idx1 = mulop.src[0].src[1].get_idx(), mulop.src[1].src[1].get_idx()
-+    (mulop:=k.reduceop.src[0]).op is Ops.MUL and (vector:=read(mulop.src[0])) is not None and \
-+    of_loads(matrix:=mulop.src[1]):
-+    idx0 = vector.src[1].get_idx()
-     if k.ranges_of(AxisType.REDUCE):
-       first_reduce_rng = k.ranges_of(AxisType.REDUCE)[0]
+-    if k.ranges_of(AxisType.REDUCE):
+-      first_reduce_rng = k.ranges_of(AxisType.REDUCE)[0]
 -      if any(u is first_reduce_rng for u in idx0.split_uop(Ops.ADD)) and all(r in idx1.ranges for r in idx0.ranges):
-+      # the vector reads along the first reduce range, at a constant stride
-+      if any(u is first_reduce_rng or (u.op is Ops.MUL and u.src[0] is first_reduce_rng and u.src[1].op is Ops.CONST)
-+             for u in idx0.split_uop(Ops.ADD)) and all(r in matrix.ranges for r in idx0.ranges):
-         for global_idx in k.axes_of(AxisType.GLOBAL):
-           if first_reduce_rng.src[0].divides(MV_THREADS_PER_ROW) is not None and k.full_shape[global_idx]%(MV_BLOCKSIZE*MV_ROWS_PER_THREAD) == 0:
-             if DEBUG >= 3:
+-        for global_idx in k.axes_of(AxisType.GLOBAL):
+-          if first_reduce_rng.src[0].divides(MV_THREADS_PER_ROW) is not None and k.full_shape[global_idx]%(MV_BLOCKSIZE*MV_ROWS_PER_THREAD) == 0:
+-            if DEBUG >= 3:
+-              print(f"MATVEC: {k.full_shape=} {first_reduce_rng.render()} {MV_BLOCKSIZE=} {MV_THREADS_PER_ROW=} {MV_ROWS_PER_THREAD=}")
+-            try:
+-              if MV_THREADS_PER_ROW > 1: k.apply_opt(Opt(OptOps.SPLIT, k.axes_of(AxisType.REDUCE)[0], (MV_THREADS_PER_ROW, AxisType.LOCAL)))
+-            except KernelOptError: pass
+-            if MV_BLOCKSIZE > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_BLOCKSIZE, AxisType.LOCAL)))
+-            if MV_ROWS_PER_THREAD > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_ROWS_PER_THREAD, AxisType.UPCAST)))
+-            return k
++  # matrix-vector products read each matrix element once, as fast as memory feeds them: adjacent threads read adjacent elements, each
++  # thread keeps several loads in flight, and enough threads run to keep the memory busy. A matrix of rows along the reduce gives each
++  # row LANES threads that read it in turn, ROWS rows to a workgroup, unrolled by up to IN_FLIGHT; one of columns along an output gives
++  # LANES threads adjacent outputs, COLUMNS of them each, and splits the reduce until BUSY threads run
++  LANES, ROWS, COLUMNS, BUSY, IN_FLIGHT = 32, 4, 2, 32768, 8
++  def accesses(u):
++    s = u.toposort()
++    return [] if any(x.op is Ops.REDUCE for x in s) else [x for x in s if x.op is Ops.INDEX]
++  def pow2_dividing(r, cap):
++    while cap > 1 and r.src[0].divides(cap) is None: cap //= 2
++    return max(cap, 1)
++  def divisor_at_most(r, n): return next((d for d in range(n, 1, -1) if r.src[0].divides(d) is not None), 1)
++  def axis(r): return next(i for i,x in enumerate(k.rngs) if x.axis_id == r.axis_id)
++  def divisible(r, n): return isinstance(s:=k.full_shape[axis(r)], int) and s % n == 0
++  def matvec() -> Scheduler|None:
++    if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0 and k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and \
++            (mulop:=k.reduceop.src[0]).op is Ops.MUL and k.ranges_of(AxisType.REDUCE)): return None
++    first = k.ranges_of(AxisType.REDUCE)[0]
++    # the matrix and the vector are computations of accesses with no reduce; the vector runs in some of the matrix's ranges, the
++    # matrix in more, and one of the vector's accesses reads along the first reduce range, alone or at a constant stride
++    def is_vector(v, w):
++      return len(accesses(v)) > 0 and len(accesses(w)) > 0 and all(r in w.ranges for r in v.ranges) and len(w.ranges) > len(v.ranges) and \
++        any(any(t is first or (t.op is Ops.MUL and t.src[0] is first and t.src[1].op is Ops.CONST) for t in a.src[1].get_idx().split_uop(Ops.ADD))
++            for a in accesses(v))
++    if (w:=next((w for v,w in [mulop.src, mulop.src[::-1]] if is_vector(v, w)), None)) is None: return None
++    # the ranges of unit stride of the accesses that read along the reduce: the matrix is laid out along them
++    units = [t for a in accesses(w) if first in a.src[1].get_idx().ranges for t in a.src[1].get_idx().split_uop(Ops.ADD) if t.op is Ops.RANGE]
++    if any(t is first for t in units):
++      threads = pow2_dividing(first, LANES)
++      if threads <= 1 or (g:=next((g for g in k.ranges_of(AxisType.GLOBAL) if divisible(g, ROWS)), None)) is None: return None
++      try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
++      except KernelOptError: return None
++      k.apply_opt(Opt(OptOps.SPLIT, axis(g), (ROWS, AxisType.LOCAL)))
++      # what the lanes leave of the row, if anything
++      if (rest:=next((x for x in k.rngs if x.axis_id == first.axis_id), None)) is not None and (loads:=divisor_at_most(rest, IN_FLIGHT)) > 1:
++        try: k.apply_opt(Opt(OptOps.SPLIT, axis(rest), (loads, AxisType.UNROLL)))
++        except KernelOptError: pass
++      return k
++    if (g:=next((g for g in k.ranges_of(AxisType.GLOBAL) if any(t is g for t in units)), None)) is None: return None
++    wanted = 1
++    if isinstance(outputs:=prod(k.full_shape[i] for i in k.upcastable_dims), int):
++      while wanted < BUSY*COLUMNS//max(outputs, 1): wanted *= 2
++    if wanted <= 1 or not divisible(g, LANES*COLUMNS): return None
++    k.apply_opt(Opt(OptOps.SPLIT, axis(g), (LANES, AxisType.LOCAL)))
++    k.apply_opt(Opt(OptOps.SPLIT, axis(g), (COLUMNS, AxisType.UPCAST)))
++    if (threads:=pow2_dividing(first, min(wanted, LANES))) > 1:
++      try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
++      except KernelOptError: pass
++    return k
++  if (mk:=matvec()) is not None: return mk
+ 
+   # are we grouping? (requires local shape support)
+   if resolve(prod(k.full_shape[i] for i in k.upcastable_dims) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index f80c800..060072f 100644
+index f80c800..ded7eb9 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
+@@ -128,10 +128,10 @@ class Scheduler:
+       if new_type is AxisType.UNROLL or rng.axis_type is AxisType.REDUCE:
+         reduces = [u for u in self.reduceops if rng in merge_dicts([r.ranges for r in u.src[1:]])]
+         check(len(reduces) > 0, f"cannot {new_type.name} an axis that's not in a REDUCE")
+-        # We currently dont support a group within another rudece, TODO: fix if-contexts
++        # an enclosing reduce runs its iterations in turn, each storing and reading the shared buffer between barriers; an unrolled one
++        # would need a buffer per lane
+         if new_type is AxisType.LOCAL:
+-          check(not any(u.axis_type in (AxisType.REDUCE, AxisType.UNROLL) for u in reduces[0].ranges),
+-            "cannot have a group inside another reduce")
++          check(not any(u.axis_type is AxisType.UNROLL for u in reduces[0].ranges), "cannot have a group inside an unrolled reduce")
+       ret = self.shift_to(rng, amt, new_type, top=top)
+     elif opt.op is OptOps.TC:
+       check(len(self.applied_opts) == 0, "tensor core opts must be first") # TODO: remove the need for this by having warps
 @@ -173,6 +173,14 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
