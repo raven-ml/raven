@@ -1969,7 +1969,7 @@ let edges d =
           }
         in
         exact_of (both d (fold w x)));
-    test "a fold of int8 overlapping windows compiles (D59)" (fun () ->
+    test "a fold of int8 overlapping windows compiles" (fun () ->
         let x = array_of (Nx.create Nx.int8 [| 2; 2 |] [| 0; -128; 0; 0 |]) in
         let w =
           {

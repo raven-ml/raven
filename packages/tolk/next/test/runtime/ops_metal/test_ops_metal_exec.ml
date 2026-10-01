@@ -106,9 +106,11 @@ let windows n () =
 
 (* The floor of a float16 [3; 4] of strides [1; 3] over the twelve halves of a
    buffer whose first lies [offset] bytes into its memory, as a kernel that
-   takes it to lie [phase] bytes past a 16-byte boundary. Code generation reads
-   the twelve halves as three vectors of four. *)
-let floor_of_strided ~offset ~phase =
+   takes it to lie there: [offset] bytes past a 16-byte boundary. Code
+   generation reads the twelve halves as three vectors of four, whose addresses
+   the phase keeps aligned. *)
+let floor_of_strided offset =
+  let phase = offset in
   let half ?phase slot =
     Ops.param ~shape:[ Int 12 ] ~device:(Single "METAL") ?phase slot Float16
   in
@@ -157,15 +159,7 @@ let phases =
         List.iter
           (fun offset ->
             equal ~msg:(string_of_int offset) floats floors
-              (floor_of_strided ~offset ~phase:offset))
-          [ 2; 6 ]);
-    slow
-      "a float16 buffer 2 or 6 bytes into its memory is misread with phase 0, \
-       as Metal merges its misaligned vector loads" (fun () ->
-        List.iter
-          (fun offset ->
-            is_false ~msg:(string_of_int offset)
-              (floors = floor_of_strided ~offset ~phase:0))
+              (floor_of_strided offset))
           [ 2; 6 ]);
   ]
 

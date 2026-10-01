@@ -384,6 +384,14 @@ let program : t =
   Pattern_matcher.append
     (Pattern_matcher.fold
        [
+         (* Every elementwise operation on values is on scalars: renderers whose
+            vectors are structs without arithmetic cannot write one on a vector
+            (D58). A bitcast of memory views it, and a node without a shape is
+            judged by the other rules. *)
+         decide (Upat.v ~op:Op.Set.elementwise ~name:"x" ()) "x" (fun x ->
+             match (addrspace x, shape_opt x) with
+             | Some Dtype.Alu, Some (_ :: _) -> Some false
+             | _ | (exception Invalid_argument _) -> None);
          decide (Upat.v ~op:Op.Set.all ~name:"x" ()) "x" (fun x ->
              if
                op x <> Op.Cast && List.exists (fun s -> op s = Op.Const) (src x)

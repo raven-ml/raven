@@ -65,8 +65,9 @@ val program : t
 (** [program] is {!shared} as programs restrict it: every width is stated, so a
     constant appears only under the cast that types it and nothing else is weak;
     there is no movement but a shrink of storage by a constant length, no global
-    buffer and no {!Ops.invalid}. It adds conditionals ({!Op.If}, {!Op.Endif})
-    and lowered, [int32] {!Op.Special}s. *)
+    buffer and no {!Ops.invalid}; no elementwise operation on values has a
+    vector shape, a bitcast of memory aside. It adds conditionals ({!Op.If},
+    {!Op.Endif}) and lowered, [int32] {!Op.Special}s. *)
 
 val hcq : t
 (** [hcq] is {!shared} with the operations of command-queue programs: the

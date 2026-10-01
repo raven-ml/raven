@@ -1584,8 +1584,7 @@ the Exclusions of `README.md`.
   buffer starts 2 bytes into its memory is read where it is (D54)`, on the
   host and on Metal, whose sweeps draw buffers that start at any byte; the
   slow `Ops_metal (execution)` suite's `phase (D54) › a float16 buffer 2 or 6
-  bytes into its memory is read where it lies with its phase` and its
-  counterpart with phase 0, which Metal misreads.
+  bytes into its memory is read where it lies with its phase`.
 
 ## D55. Metal names a vector after its element's one-word name
 
@@ -1632,6 +1631,28 @@ the Exclusions of `README.md`.
   (D56)`, and the negative float16 rows of `values.golden` of magnitude below
   `2^-16`, from the patched tinygrad.
 
+## D58. A program applies no elementwise operation to a vector
+
+- **tinygrad:** `uop/spec.py:205` (`spec_program`, which accepts an
+  elementwise operation of any shape).
+- **tolk.next:** `lib/uop/spec.ml:390` (the first rule of `program`).
+- **Differs:** `Spec.program` rejects an operation of `Op.Set.elementwise`
+  on values, casts and bitcasts included, whose shape has an axis; a bitcast
+  of memory, which views it, stays allowed. `SPEC` defaults to 1
+  and code generation checks every lowered kernel against `Spec.program`, so
+  a kernel that still holds vector arithmetic fails at lowering, naming the
+  operation, on every target. Devectorize leaves none (D59), so the rule
+  rejects no kernel tinygrad or tolk.next lowers today.
+- **Reason:** (b). CUDA's vectors are structs without arithmetic, casts or
+  selects, so a vector operation left after devectorize is a kernel that does
+  not compile there, and one Metal renders without complaint; rune compiles
+  its kernels for both.
+- **Pinned by:** the `Spec` suite (`test/uop/spec`): `vectors in programs
+  (D58) › a program has no elementwise operation on a vector` (add, cast and
+  where on two lanes, and the same on one); the `Codegen` suite's `vectors
+  left after devectorize (D59) › no program applies an elementwise operation
+  to a vector`, on every case.
+
 ## D59. Devectorize reads a scalar source as every lane
 
 - **tinygrad:** `codegen/__init__.py:117-124` (`do_devectorize`, which
@@ -1658,5 +1679,5 @@ the Exclusions of `README.md`.
   case, `› no program applies an elementwise operation to a vector`; and the
   case `invalid_lanes_fold` of every target in `stages`, from the patched
   tinygrad. In rune.next, the `Compiled` suite's `edges › a fold of int8
-  overlapping windows compiles (D59)` and its integer fold law, int8
+  overlapping windows compiles` and its integer fold law, int8
   included, on the host.

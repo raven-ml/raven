@@ -253,6 +253,33 @@ let type_verify =
         ];
     ]
 
+(* Vectors in programs (D58) *)
+
+(* An elementwise operation of a program on two lanes, and the same operation on
+   one. *)
+let lanes op =
+  let pair a b = Ops.stack [ fvar a; fvar b ] in
+  match op with
+  | `Add ->
+      (Ops.add (pair "a" "b") (pair "c" "d"), Ops.add (fvar "a") (fvar "c"))
+  | `Cast -> (Ops.cast (pair "a" "b") Int32, Ops.cast (fvar "a") Int32)
+  | `Where ->
+      let cond = Ops.stack [ flag "p"; flag "q" ] in
+      ( Ops.where cond (pair "a" "b") (pair "c" "d"),
+        Ops.where (flag "p") (fvar "a") (fvar "c") )
+
+let vectors =
+  group "vectors in programs (D58)"
+    [
+      cases "a program has no elementwise operation on a vector"
+        ~name:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
+        [ `Add; `Cast; `Where ]
+        (fun op ->
+          let vector, scalar = lanes op in
+          equal verdict (Some false) (judge Spec.program vector);
+          is_false (judge Spec.program scalar = Some false));
+    ]
+
 (* Construction *)
 
 let ill_typed () = fresh_v ~src:[ fvar "a"; fvar "b" ] Op.And
@@ -307,4 +334,6 @@ let construction =
     ]
 
 let () =
-  exit (run "Tolk_next.Spec" [ verdicts; bounds; type_verify; construction ])
+  exit
+    (run "Tolk_next.Spec"
+       [ verdicts; bounds; type_verify; vectors; construction ])
