@@ -50,7 +50,7 @@
 48 Ops.CONST dtypes.weakint [] 8
 49 Ops.MUL dtypes.int [47, 48]
 50 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="CPU:1")
-51 Ops.CALL dtypes.void [41, 42, 43, 44, 45] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_v", Estimates(ops=%47, lds=%49, mem=%49), (), b"\x98B\x97\x7f\xf3\x1cO\\\xe17\xc1}[\xc4\xcbw\x02\xcct6\x81\xbc\x1dAR8hK\xc5c\xc9\xe8", (), ((0,), (1,))),), estimates=Estimates(ops=%47, lds=%49, mem=%49), nargs=4, slots=(("CPU:1", 1),), written_bufs=(%50,)))
+51 Ops.CALL dtypes.void [41, 42, 43, 44, 45] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_v", Estimates(ops=%47, lds=%49, mem=%49), (), b"\xb3\x19\xcc\n1\xe8\x12\x8b\xf6\xcd\xd9{d\x08\"\x88\xcf\xe0\x9f\xc4\xa1V\x8b\xd6[-\xee\x0e#\xe9\xeb\x8c", (), ((0,), (1,))),), estimates=Estimates(ops=%47, lds=%49, mem=%49), nargs=4, slots=(("CPU:1", 1),), written_bufs=(%50,)))
 52 Ops.BINARY dtypes.uchar [] b"\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 53 Ops.STORE dtypes.void [44, 52]
 54 Ops.BITCAST dtypes.ulong [44] dtypes.ulong

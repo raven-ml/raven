@@ -30,8 +30,8 @@
 28 Ops.STORE dtypes.void [11, 27]
 29 Ops.GROUP dtypes.void [28, 28, 28, 28]
 30 Ops.END dtypes.void [29, 4]
-31 Ops.SINK dtypes.void [30] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=5) tag=1
-32 Ops.SINK dtypes.void [30] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=25, lds=80, mem=80), split=5) tag=1
+31 Ops.SINK dtypes.void [30] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(5, 1, 2)) tag=1
+32 Ops.SINK dtypes.void [30] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=25, lds=80, mem=80), split=(5, 1, 2)) tag=1
 33 Ops.LINEAR dtypes.void [0, 1, 2, 15, 16, 21, 22, 24, 25, 12, 13, 18, 19, 6, 7, 9, 10, 3, 4, 5, 14, 17, 23, 26, 20, 27, 8, 11, 28, 29, 30, 31]
 34 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_5_4(int* restrict data0_20, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0*-20);\n    *((int4*)((data0_20+(alu0<<2)))) = (int4){(alu1+-1),(alu1+-6),(alu1+-11),(alu1+-16)};\n  }\n}\n"
 35 Ops.PROGRAM dtypes.void [32, 33, 34] ProgramInfo(global_size=(5, 1, 1), vars=(%1, %2), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

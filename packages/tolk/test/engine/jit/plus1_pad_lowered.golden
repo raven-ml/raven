@@ -27,8 +27,8 @@
 25 Ops.STORE dtypes.void [13, 24]
 26 Ops.END dtypes.void [25, 10]
 27 Ops.END dtypes.void [26, 3]
-28 Ops.SINK dtypes.void [27] KernelInfo(name="E_3_10", estimates=Estimates(ops=90, lds=240, mem=240), split=10) tag=1
-29 Ops.SINK dtypes.void [27] KernelInfo(name="E_3_10", split=10) tag=1
+28 Ops.SINK dtypes.void [27] KernelInfo(name="E_3_10", estimates=Estimates(ops=90, lds=240, mem=240), split=(10, 2, 3)) tag=1
+29 Ops.SINK dtypes.void [27] KernelInfo(name="E_3_10", split=(10, 2, 3)) tag=1
 30 Ops.LINEAR dtypes.void [0, 16, 7, 8, 14, 18, 19, 21, 22, 4, 5, 1, 2, 9, 3, 6, 10, 11, 12, 17, 15, 20, 13, 23, 24, 25, 26, 27, 29]
 31 Ops.SOURCE dtypes.void [] "\nvoid E_3_10(float* restrict data0_30, float* restrict data1_30, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = (block_lo_+Lidx1);\n      int alu1 = ((Lidx0*10)+alu0);\n      _Bool alu2 = (alu0<i_);\n      float val0 = (alu2?*(data1_30+alu1):0.0f);\n      float alu3 = (alu2?(val0+1.0f):0.0f);\n      *(data0_30+alu1) = alu3;\n    }\n  }\n}\n"
 32 Ops.BINARY dtypes.uchar [] b"\nvoid E_3_10(float* restrict data0_30, float* restrict data1_30, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = (block_lo_+Lidx1);\n      int alu1 = ((Lidx0*10)+alu0);\n      _Bool alu2 = (alu0<i_);\n      float val0 = (alu2?*(data1_30+alu1):0.0f);\n      float alu3 = (alu2?(val0+1.0f):0.0f);\n      *(data0_30+alu1) = alu3;\n    }\n  }\n}\n"

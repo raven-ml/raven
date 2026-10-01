@@ -545,6 +545,11 @@ let estimates : Ops.estimates codec =
 let kernel_info : Ops.kernel_info codec =
   let make name applied_opts opts_to_apply estimates beam split :
       Ops.kernel_info =
+    let split =
+      Option.map
+        (fun (iterations, lo, hi) : Ops.split -> { iterations; lo; hi })
+        split
+    in
     { name; applied_opts; opts_to_apply; estimates; beam; split }
   in
   let get (f : Ops.kernel_info -> _) = f in
@@ -557,7 +562,12 @@ let kernel_info : Ops.kernel_info codec =
   |> field "estimates" ~default:None (option estimates)
        (get (fun k -> k.estimates))
   |> field "beam" ~default:0 int (get (fun k -> k.beam))
-  |> field "split" ~default:None (option sint) (get (fun k -> k.split))
+  |> field "split" ~default:None
+       (option (triple sint int int))
+       (get (fun k ->
+            Option.map
+              (fun (s : Ops.split) -> (s.iterations, s.lo, s.hi))
+              k.split))
   |> finish
 
 let target : Helpers.Target.t codec =

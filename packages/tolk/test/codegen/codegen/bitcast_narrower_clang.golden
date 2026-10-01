@@ -24,8 +24,8 @@
 22 Ops.STORE dtypes.void [17, 21]
 23 Ops.GROUP dtypes.void [15, 22]
 24 Ops.END dtypes.void [23, 4]
-25 Ops.SINK dtypes.void [24] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), split=4) tag=1
-26 Ops.SINK dtypes.void [24] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32), split=4) tag=1
+25 Ops.SINK dtypes.void [24] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), split=(4, 2, 3)) tag=1
+26 Ops.SINK dtypes.void [24] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32), split=(4, 2, 3)) tag=1
 27 Ops.LINEAR dtypes.void [0, 10, 1, 2, 6, 7, 18, 19, 3, 4, 5, 11, 12, 8, 16, 17, 9, 13, 14, 20, 21, 22, 15, 23, 24, 25]
 28 Ops.SOURCE dtypes.void [] "\nvoid E_4_2(unsigned short* restrict data0_8, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0_0 = 0; Lidx0_0 < (block_hi_-block_lo_); Lidx0_0++) {\n    int alu0 = (block_lo_+Lidx0_0);\n    float val0 = (*(data1_4+alu0));\n    int alu1 = (alu0<<1);\n    unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)(val0));\n    *(data0_8+(alu1+1)) = ((unsigned short)((cast0>>16u)));\n    *(data0_8+alu1) = ((unsigned short)(cast0));\n  }\n}\n"
 29 Ops.PROGRAM dtypes.void [26, 27, 28] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

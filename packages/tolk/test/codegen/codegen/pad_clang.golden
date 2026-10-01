@@ -63,8 +63,8 @@
 61 Ops.GROUP dtypes.void [60, 60, 60, 60]
 62 Ops.END dtypes.void [61, 9]
 63 Ops.END dtypes.void [62, 4]
-64 Ops.SINK dtypes.void [63] KernelInfo(name="E_18_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=18) tag=1
-65 Ops.SINK dtypes.void [63] KernelInfo(name="E_18_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=486, lds=2304, mem=2052), split=18) tag=1
+64 Ops.SINK dtypes.void [63] KernelInfo(name="E_18_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=(18, 2, 3)) tag=1
+65 Ops.SINK dtypes.void [63] KernelInfo(name="E_18_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=486, lds=2304, mem=2052), split=(18, 2, 3)) tag=1
 66 Ops.LINEAR dtypes.void [0, 15, 1, 2, 24, 25, 34, 35, 49, 50, 43, 44, 37, 38, 20, 21, 26, 27, 16, 17, 29, 30, 10, 11, 53, 54, 6, 7, 3, 4, 5, 18, 8, 28, 31, 32, 9, 12, 19, 51, 52, 55, 56, 57, 45, 46, 47, 39, 40, 41, 22, 23, 33, 58, 48, 42, 36, 59, 13, 14, 60, 61, 62, 63, 64]
 67 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_18_4_4(float* restrict data0_288, float* restrict data1_225, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    _Bool alu1 = ((0<alu0)&(alu0<16));\n    for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {\n      int alu2 = (Lidx1<<2);\n      int alu3 = ((alu0*15)+alu2);\n      float val0 = (((Lidx1<3)&alu1)?*(data1_225+(alu3+-12)):0.0f);\n      float val1 = (alu1?*(data1_225+(alu3+-13)):0.0f);\n      float val2 = (alu1?*(data1_225+(alu3+-14)):0.0f);\n      float val3 = (alu1?*(data1_225+(alu3+-15)):0.0f);\n      *((float4*)((data0_288+((alu0<<4)+alu2)))) = (float4){(val3*2.0f),(val2*2.0f),(val1*2.0f),(val0*2.0f)};\n    }\n  }\n}\n"
 68 Ops.PROGRAM dtypes.void [65, 66, 67] ProgramInfo(global_size=(18, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

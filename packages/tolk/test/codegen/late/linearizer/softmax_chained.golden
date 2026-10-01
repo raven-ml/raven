@@ -6,8 +6,8 @@
 4 Ops.CONST dtypes.weakint [] 8
 5 Ops.CAST dtypes.int [4] dtypes.int
 6 Ops.SHL dtypes.int [3, 5]
-7 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 256), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-8 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 256), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+7 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 256), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.int [] ParamArg(slot=5, dtype=dtypes.int, vmin_vmax=(0, 256), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
 9 Ops.SUB dtypes.int [8, 7]
 10 Ops.RANGE dtypes.int [9, 3] (1, AxisType.WEAK)
 11 Ops.ADD dtypes.int [7, 10]
@@ -108,5 +108,5 @@
 106 Ops.STORE dtypes.void [13, 105]
 107 Ops.END dtypes.void [106, 10]
 108 Ops.END dtypes.void [107, 3]
-109 Ops.SINK dtypes.void [108] KernelInfo(name="E_4_256", split=256) tag=1
+109 Ops.SINK dtypes.void [108] KernelInfo(name="E_4_256", split=(256, 4, 5)) tag=1
 

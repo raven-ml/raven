@@ -29,8 +29,8 @@
 27 Ops.MUL dtypes.int [1, 26]
 28 Ops.CONST dtypes.weakint [] 36
 29 Ops.MUL dtypes.int [26, 28]
-30 Ops.SINK dtypes.void [23] KernelInfo(name="E_3_i", estimates=Estimates(ops=%27, lds=%29, mem=%29), split=%24) tag=1
-31 Ops.SINK dtypes.void [23] KernelInfo(name="E_3_i", split=%24) tag=1
+30 Ops.SINK dtypes.void [23] KernelInfo(name="E_3_i", estimates=Estimates(ops=%27, lds=%29, mem=%29), split=(%24, 3, 4)) tag=1
+31 Ops.SINK dtypes.void [23] KernelInfo(name="E_3_i", split=(%24, 3, 4)) tag=1
 32 Ops.LINEAR dtypes.void [0, 14, 17, 7, 8, 4, 5, 1, 2, 9, 3, 6, 10, 11, 12, 15, 16, 18, 19, 13, 20, 21, 22, 23, 31]
 33 Ops.SOURCE dtypes.void [] "\nvoid E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0*10)+(block_lo_+Lidx1));\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"
 34 Ops.BINARY dtypes.uchar [] b"\nvoid E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0*10)+(block_lo_+Lidx1));\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"

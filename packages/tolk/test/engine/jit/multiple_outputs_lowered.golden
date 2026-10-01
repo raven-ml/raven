@@ -39,8 +39,8 @@
 37 Ops.STORE dtypes.void [11, 36]
 38 Ops.GROUP dtypes.void [37, 37, 37, 37]
 39 Ops.END dtypes.void [38, 4]
-40 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=192, mem=192), split=4) tag=1
-41 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=4) tag=1
+40 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=192, mem=192), split=(4, 3, 4)) tag=1
+41 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(4, 3, 4)) tag=1
 42 Ops.LINEAR dtypes.void [0, 12, 18, 1, 2, 15, 16, 23, 24, 6, 7, 31, 32, 9, 10, 3, 4, 5, 8, 13, 14, 19, 20, 17, 25, 28, 33, 21, 26, 29, 34, 22, 27, 30, 35, 36, 11, 37, 38, 39, 41]
 43 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    float4 val0 = (*((float4*)((data1_16+alu0))));\n    float4 val1 = (*((float4*)((data2_16+alu0))));\n    *((float4*)((data0_16+alu0))) = (float4){(val0[0]+val1[0]),(val0[1]+val1[1]),(val0[2]+val1[2]),(val0[3]+val1[3])};\n  }\n}\n"
 44 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    float4 val0 = (*((float4*)((data1_16+alu0))));\n    float4 val1 = (*((float4*)((data2_16+alu0))));\n    *((float4*)((data0_16+alu0))) = (float4){(val0[0]+val1[0]),(val0[1]+val1[1]),(val0[2]+val1[2]),(val0[3]+val1[3])};\n  }\n}\n"
@@ -55,8 +55,8 @@
 53 Ops.STORE dtypes.void [11, 52]
 54 Ops.GROUP dtypes.void [53, 53, 53, 53]
 55 Ops.END dtypes.void [54, 4]
-56 Ops.SINK dtypes.void [55] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=192, mem=192), split=4) tag=1
-57 Ops.SINK dtypes.void [55] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=4) tag=1
+56 Ops.SINK dtypes.void [55] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=192, mem=192), split=(4, 3, 4)) tag=1
+57 Ops.SINK dtypes.void [55] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(4, 3, 4)) tag=1
 58 Ops.LINEAR dtypes.void [0, 12, 18, 1, 2, 15, 16, 23, 24, 6, 7, 31, 32, 9, 10, 3, 4, 5, 8, 13, 14, 19, 20, 17, 25, 28, 33, 21, 26, 29, 34, 48, 49, 50, 51, 52, 11, 53, 54, 55, 57]
 59 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    float4 val0 = (*((float4*)((data1_16+alu0))));\n    float4 val1 = (*((float4*)((data2_16+alu0))));\n    *((float4*)((data0_16+alu0))) = (float4){(val0[0]-val1[0]),(val0[1]-val1[1]),(val0[2]-val1[2]),(val0[3]-val1[3])};\n  }\n}\n"
 60 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    float4 val0 = (*((float4*)((data1_16+alu0))));\n    float4 val1 = (*((float4*)((data2_16+alu0))));\n    *((float4*)((data0_16+alu0))) = (float4){(val0[0]-val1[0]),(val0[1]-val1[1]),(val0[2]-val1[2]),(val0[3]-val1[3])};\n  }\n}\n"
@@ -71,8 +71,8 @@
 69 Ops.STORE dtypes.void [11, 68]
 70 Ops.GROUP dtypes.void [69, 69, 69, 69]
 71 Ops.END dtypes.void [70, 4]
-72 Ops.SINK dtypes.void [71] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=192, mem=192), split=4) tag=1
-73 Ops.SINK dtypes.void [71] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=4) tag=1
+72 Ops.SINK dtypes.void [71] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=192, mem=192), split=(4, 3, 4)) tag=1
+73 Ops.SINK dtypes.void [71] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(4, 3, 4)) tag=1
 74 Ops.LINEAR dtypes.void [0, 12, 18, 1, 2, 15, 16, 23, 24, 6, 7, 31, 32, 9, 10, 3, 4, 5, 8, 13, 14, 19, 20, 17, 25, 28, 33, 21, 26, 29, 34, 64, 65, 66, 67, 68, 11, 69, 70, 71, 73]
 75 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    float4 val0 = (*((float4*)((data1_16+alu0))));\n    float4 val1 = (*((float4*)((data2_16+alu0))));\n    *((float4*)((data0_16+alu0))) = (float4){(val0[0]*val1[0]),(val0[1]*val1[1]),(val0[2]*val1[2]),(val0[3]*val1[3])};\n  }\n}\n"
 76 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    float4 val0 = (*((float4*)((data1_16+alu0))));\n    float4 val1 = (*((float4*)((data2_16+alu0))));\n    *((float4*)((data0_16+alu0))) = (float4){(val0[0]*val1[0]),(val0[1]*val1[1]),(val0[2]*val1[2]),(val0[3]*val1[3])};\n  }\n}\n"

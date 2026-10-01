@@ -41,8 +41,8 @@
 39 Ops.CONST dtypes.weakint [] 12
 40 Ops.MUL dtypes.int [15, 39]
 41 Ops.ADD dtypes.int [40, 39]
-42 Ops.SINK dtypes.void [36] KernelInfo(name="r_3_i", estimates=Estimates(ops=%38, lds=%41, mem=%41), split=3) tag=1
-43 Ops.SINK dtypes.void [36] KernelInfo(name="r_3_i", split=3) tag=1
+42 Ops.SINK dtypes.void [36] KernelInfo(name="r_3_i", estimates=Estimates(ops=%38, lds=%41, mem=%41), split=(3, 2, 3)) tag=1
+43 Ops.SINK dtypes.void [36] KernelInfo(name="r_3_i", split=(3, 2, 3)) tag=1
 44 Ops.LINEAR dtypes.void [0, 20, 1, 2, 15, 7, 33, 12, 13, 9, 10, 21, 22, 3, 4, 5, 8, 11, 14, 16, 23, 24, 25, 26, 17, 18, 19, 27, 28, 29, 30, 31, 32, 6, 34, 35, 36, 43]
 45 Ops.SOURCE dtypes.void [] "\nvoid r_3_i(float* restrict data0_3, float* restrict data1_30, const int block_lo_, const int block_hi_, const int i_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    *(buf0+0) = 0.0f;\n    for (int Ridx0 = 0; Ridx0 < i_; Ridx0++) {\n      float val0 = (*(data1_30+((Ridx0*3)+alu0)));\n      *(buf0+0) = ((*(buf0+0))+val0);\n    }\n    *(data0_3+alu0) = ((*(buf0+0))/((float)(i_)));\n  }\n}\n"
 46 Ops.BINARY dtypes.uchar [] b"\nvoid r_3_i(float* restrict data0_3, float* restrict data1_30, const int block_lo_, const int block_hi_, const int i_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    *(buf0+0) = 0.0f;\n    for (int Ridx0 = 0; Ridx0 < i_; Ridx0++) {\n      float val0 = (*(data1_30+((Ridx0*3)+alu0)));\n      *(buf0+0) = ((*(buf0+0))+val0);\n    }\n    *(data0_3+alu0) = ((*(buf0+0))/((float)(i_)));\n  }\n}\n"

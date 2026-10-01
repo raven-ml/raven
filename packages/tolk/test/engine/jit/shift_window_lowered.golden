@@ -20,8 +20,8 @@
 18 Ops.STORE dtypes.void [14, 17]
 19 Ops.GROUP dtypes.void [13, 18]
 20 Ops.END dtypes.void [19, 4]
-21 Ops.SINK dtypes.void [20] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(lds=128, mem=128), split=8) tag=1
-22 Ops.SINK dtypes.void [20] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), split=8) tag=1
+21 Ops.SINK dtypes.void [20] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(lds=128, mem=128), split=(8, 3, 4)) tag=1
+22 Ops.SINK dtypes.void [20] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), split=(8, 3, 4)) tag=1
 23 Ops.LINEAR dtypes.void [0, 15, 7, 1, 2, 8, 9, 3, 4, 5, 16, 17, 10, 11, 12, 6, 14, 13, 18, 19, 20, 22]
 24 Ops.SOURCE dtypes.void [] "\nvoid E_8_2(int* restrict data0_16, int* restrict data1_8, int* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int val0 = (*(data1_8+alu0));\n    int alu1 = (alu0+8);\n    int val1 = (*(data2_16+alu1));\n    *(data0_16+alu0) = val1;\n    *(data0_16+alu1) = val0;\n  }\n}\n"
 25 Ops.BINARY dtypes.uchar [] b"\nvoid E_8_2(int* restrict data0_16, int* restrict data1_8, int* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int val0 = (*(data1_8+alu0));\n    int alu1 = (alu0+8);\n    int val1 = (*(data2_16+alu1));\n    *(data0_16+alu0) = val1;\n    *(data0_16+alu1) = val0;\n  }\n}\n"

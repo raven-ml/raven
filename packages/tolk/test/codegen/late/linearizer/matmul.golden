@@ -81,5 +81,5 @@
 79 Ops.STORE dtypes.void [11, 78]
 80 Ops.END dtypes.void [79, 9]
 81 Ops.END dtypes.void [80, 4]
-82 Ops.SINK dtypes.void [81] KernelInfo(name="r_4_3_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),), split=4) tag=1
+82 Ops.SINK dtypes.void [81] KernelInfo(name="r_4_3_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),), split=(4, 3, 4)) tag=1
 

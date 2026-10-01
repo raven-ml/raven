@@ -46,7 +46,7 @@
 44 Ops.LOAD dtypes.float [43]
 45 Ops.STORE dtypes.void [6, 44]
 46 Ops.END dtypes.void [45, 4]
-47 Ops.SINK dtypes.void [46] KernelInfo(name="r_4_8_8", split=4) tag=1
+47 Ops.SINK dtypes.void [46] KernelInfo(name="r_4_8_8", split=(4, 2, 3)) tag=1
 48 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
 49 Ops.AFTER dtypes.float [48, 5]
 50 Ops.INDEX dtypes.float [49, 10]
@@ -70,8 +70,8 @@
 68 Ops.LOAD dtypes.float [67]
 69 Ops.STORE dtypes.void [6, 68]
 70 Ops.END dtypes.void [69, 4]
-71 Ops.SINK dtypes.void [70] KernelInfo(name="r_4_8_8", estimates=Estimates(ops=64, lds=144, mem=144), split=4) tag=1
-72 Ops.SINK dtypes.void [70] KernelInfo(name="r_4_8_8", split=4) tag=1
+71 Ops.SINK dtypes.void [70] KernelInfo(name="r_4_8_8", estimates=Estimates(ops=64, lds=144, mem=144), split=(4, 2, 3)) tag=1
+72 Ops.SINK dtypes.void [70] KernelInfo(name="r_4_8_8", split=(4, 2, 3)) tag=1
 73 Ops.LINEAR dtypes.void [0, 20, 1, 2, 48, 52, 12, 13, 27, 28, 9, 10, 21, 22, 15, 16, 3, 4, 5, 23, 18, 24, 25, 26, 53, 29, 54, 55, 49, 60, 50, 51, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 6, 69, 70, 72]
 74 Ops.SOURCE dtypes.void [] "\nvoid r_4_8_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  float buf0[1];\n  float buf1[8];\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      float val0 = (*(data1_32+((alu0<<3)+Lidx1)));\n      *(buf1+Lidx1) = (val0*2.0f);\n    }\n    *(buf0+0) = 0.0f;\n    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {\n      *(buf0+0) = ((*(buf0+0))+(*(buf1+Lidx2)));\n    }\n    *(data0_4+alu0) = (*(buf0+0));\n  }\n}\n"
 75 Ops.PROGRAM dtypes.void [71, 73, 74] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

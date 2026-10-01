@@ -23,8 +23,8 @@
 21 Ops.SUB dtypes.int [19, 20]
 22 Ops.CONST dtypes.weakint [] 8
 23 Ops.MUL dtypes.int [21, 22]
-24 Ops.SINK dtypes.void [18] KernelInfo(name="E_v", estimates=Estimates(ops=%21, lds=%23, mem=%23), split=%19) tag=1
-25 Ops.SINK dtypes.void [18] KernelInfo(name="E_v", split=%19) tag=1
+24 Ops.SINK dtypes.void [18] KernelInfo(name="E_v", estimates=Estimates(ops=%21, lds=%23, mem=%23), split=(%19, 2, 3)) tag=1
+25 Ops.SINK dtypes.void [18] KernelInfo(name="E_v", split=(%19, 2, 3)) tag=1
 26 Ops.LINEAR dtypes.void [4, 11, 5, 6, 14, 15, 7, 8, 9, 12, 13, 10, 16, 17, 18, 25]
 27 Ops.SOURCE dtypes.void [] "\nvoid E_v(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_10+alu0));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"
 28 Ops.BINARY dtypes.uchar [] b"\nvoid E_v(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_10+alu0));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"
@@ -40,6 +40,6 @@
 38 Ops.CUSTOM_FUNCTION dtypes.void [37] "hcq_fence"
 39 Ops.AFTER dtypes.void [36, 38]
 40 Ops.SINK dtypes.void [39] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
-41 Ops.CALL dtypes.void [40] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_v", Estimates(ops=%21, lds=%23, mem=%23), (), b"\x98B\x97\x7f\xf3\x1cO\\\xe17\xc1}[\xc4\xcbw\x02\xcct6\x81\xbc\x1dAR8hK\xc5c\xc9\xe8", (), ((0,), (1,))),), estimates=Estimates(ops=%21, lds=%23, mem=%23), written_bufs=(%30,)))
+41 Ops.CALL dtypes.void [40] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "E_v", Estimates(ops=%21, lds=%23, mem=%23), (), b"\xb3\x19\xcc\n1\xe8\x12\x8b\xf6\xcd\xd9{d\x08\"\x88\xcf\xe0\x9f\xc4\xa1V\x8b\xd6[-\xee\x0e#\xe9\xeb\x8c", (), ((0,), (1,))),), estimates=Estimates(ops=%21, lds=%23, mem=%23), written_bufs=(%30,)))
 42 Ops.LINEAR dtypes.void [41]
 

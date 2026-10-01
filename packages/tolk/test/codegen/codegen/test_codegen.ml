@@ -248,6 +248,14 @@ let bound k =
     (fun (name, v) -> (name, `Int (Bigint.of_int v)))
     (Kernel_opts.variables k)
 
+(* The variable of [slot] among [uops]. *)
+let variable_of uops slot =
+  List.find
+    (fun u ->
+      Ops.is_variable u
+      && match Ops.arg u with Param p -> p.slot = slot | _ -> false)
+    uops
+
 (* The interpreter's writes of the lowered sink, from the storage and variables
    that [Kernel_opts.writes] gives the kernel; a split kernel runs the block of
    its whole loop. *)
@@ -256,11 +264,10 @@ let keeps_writes row =
   let whole =
     match (kernel_info u).split with
     | None -> []
-    | Some n ->
-        let hi = Ops.sym_infer n (Kernel_opts.variables k) in
-        [
-          ("block_lo", `Int Bigint.zero); ("block_hi", `Int (Bigint.of_int hi));
-        ]
+    | Some s ->
+        let name slot = Ops.expr (variable_of (Ops.toposort u) slot) in
+        let hi = Ops.sym_infer s.iterations (Kernel_opts.variables k) in
+        [ (name s.lo, `Int Bigint.zero); (name s.hi, `Int (Bigint.of_int hi)) ]
   in
   equal (list Kernel_opts.write) (Kernel_opts.writes k)
     (Interpreter.writes
@@ -811,17 +818,13 @@ let estimates row =
 let whole_loop p (e : Ops.estimates) : Ops.estimates =
   match (kernel_info (Ops.nth p 0)).split with
   | None -> e
-  | Some n ->
-      let var name =
-        List.find
-          (fun u -> Ops.is_variable u && Ops.expr u = name)
-          (Ops.src (Ops.nth p 1))
-      in
-      let lo = var "block_lo" and hi = var "block_hi" in
+  | Some s ->
+      let lo = variable_of (Ops.src (Ops.nth p 1)) s.lo
+      and hi = variable_of (Ops.src (Ops.nth p 1)) s.hi in
       let bounds =
         [
           (lo, Ops.int ~dtype:(Ops.dtype lo) 0);
-          (hi, Ops.sint_to_uop ~dtype:(Ops.dtype hi) n);
+          (hi, Ops.sint_to_uop ~dtype:(Ops.dtype hi) s.iterations);
         ]
       in
       let fill : Ops.sint -> Ops.sint = function
@@ -2333,7 +2336,11 @@ let cleanups =
    A host program splits the largest loop that every store to memory reads in
    its address into blocks, which the host's cores run at once. *)
 
-let split_of prg = (kernel_info (Ops.nth prg 0)).split
+let split_of prg =
+  Option.map
+    (fun (s : Ops.split) -> s.iterations)
+    (kernel_info (Ops.nth prg 0)).split
+
 let sint = Testable.make ~pp:Ops.Sint.pp ~equal:Ops.Sint.equal
 
 let in_blocks uops =

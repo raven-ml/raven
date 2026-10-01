@@ -14,8 +14,8 @@
 12 Ops.SHL dtypes.int [9, 11]
 13 Ops.STORE dtypes.void [6, 12]
 14 Ops.END dtypes.void [13, 4]
-15 Ops.SINK dtypes.void [14] KernelInfo(name="E_5", estimates=Estimates(ops=5, lds=40, mem=40), split=5) tag=1
-16 Ops.SINK dtypes.void [14] KernelInfo(name="E_5", split=5) tag=1
+15 Ops.SINK dtypes.void [14] KernelInfo(name="E_5", estimates=Estimates(ops=5, lds=40, mem=40), split=(5, 2, 3)) tag=1
+16 Ops.SINK dtypes.void [14] KernelInfo(name="E_5", split=(5, 2, 3)) tag=1
 17 Ops.LINEAR dtypes.void [0, 7, 1, 2, 10, 11, 3, 4, 5, 8, 9, 6, 12, 13, 14, 16]
 18 Ops.SOURCE dtypes.void [] "\nvoid E_5(int* restrict data0_5, int* restrict data1_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    *(data0_5+alu0) = (val0<<1);\n  }\n}\n"
 19 Ops.BINARY dtypes.uchar [] b"\nvoid E_5(int* restrict data0_5, int* restrict data1_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    *(data0_5+alu0) = (val0<<1);\n  }\n}\n"
@@ -47,8 +47,8 @@
 45 Ops.ADD dtypes.int [41, 44]
 46 Ops.STORE dtypes.void [39, 45]
 47 Ops.END dtypes.void [46, 37]
-48 Ops.SINK dtypes.void [47] KernelInfo(name="E_5", estimates=Estimates(ops=5, lds=60, mem=60), split=5) tag=1
-49 Ops.SINK dtypes.void [47] KernelInfo(name="E_5", split=5) tag=1
+48 Ops.SINK dtypes.void [47] KernelInfo(name="E_5", estimates=Estimates(ops=5, lds=60, mem=60), split=(5, 3, 4)) tag=1
+49 Ops.SINK dtypes.void [47] KernelInfo(name="E_5", split=(5, 3, 4)) tag=1
 50 Ops.LINEAR dtypes.void [0, 7, 42, 34, 35, 36, 37, 38, 40, 41, 43, 44, 39, 45, 46, 47, 49]
 51 Ops.SOURCE dtypes.void [] "\nvoid E_5(int* restrict data0_5, int* restrict data1_5, int* restrict data2_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    int val1 = (*(data2_5+alu0));\n    *(data0_5+alu0) = (val0+val1);\n  }\n}\n"
 52 Ops.BINARY dtypes.uchar [] b"\nvoid E_5(int* restrict data0_5, int* restrict data1_5, int* restrict data2_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    int val1 = (*(data2_5+alu0));\n    *(data0_5+alu0) = (val0+val1);\n  }\n}\n"

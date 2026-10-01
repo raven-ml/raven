@@ -1,7 +1,7 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=108, device="CPU")
-1 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 6), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 6), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 6), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 6), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
 3 Ops.SUB dtypes.int [2, 1]
 4 Ops.CONST dtypes.weakint [] 3
 5 Ops.CAST dtypes.int [4] dtypes.int
@@ -81,5 +81,5 @@
 79 Ops.END dtypes.void [78, 12]
 80 Ops.END dtypes.void [79, 7]
 81 Ops.END dtypes.void [80, 6]
-82 Ops.SINK dtypes.void [81] KernelInfo(name="r_3_6_6_2_3_3", split=6) tag=1
+82 Ops.SINK dtypes.void [81] KernelInfo(name="r_3_6_6_2_3_3", split=(6, 3, 4)) tag=1
 

@@ -108,5 +108,5 @@
 106 Ops.STORE dtypes.void [13, 105]
 107 Ops.END dtypes.void [106, 10]
 108 Ops.END dtypes.void [107, 3]
-109 Ops.SINK dtypes.void [108] KernelInfo(name="E_4_256", split=256) tag=1
+109 Ops.SINK dtypes.void [108] KernelInfo(name="E_4_256", split=(256, 4, 5)) tag=1
 

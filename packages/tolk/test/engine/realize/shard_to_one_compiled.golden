@@ -37,8 +37,8 @@
 35 Ops.STORE dtypes.void [30, 34]
 36 Ops.GROUP dtypes.void [26, 35]
 37 Ops.END dtypes.void [36, 17]
-38 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=32, lds=256, mem=256), split=16) tag=1
-39 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), split=16) tag=1
+38 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=32, lds=256, mem=256), split=(16, 3, 4)) tag=1
+39 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), split=(16, 3, 4)) tag=1
 40 Ops.LINEAR dtypes.void [13, 31, 20, 14, 15, 23, 24, 27, 28, 16, 17, 18, 32, 33, 21, 22, 19, 29, 30, 34, 25, 26, 35, 36, 37, 39]
 41 Ops.SOURCE dtypes.void [] "\nvoid E_16_2(float* restrict data0_32, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0_1 = 0; Lidx0_1 < (block_hi_-block_lo_); Lidx0_1++) {\n    int alu0 = (block_lo_+Lidx0_1);\n    float val0 = (*(data1_16+alu0));\n    float val1 = (*(data2_16+alu0));\n    *(data0_32+alu0) = (val1+1.0f);\n    *(data0_32+(alu0+16)) = (val0+1.0f);\n  }\n}\n"
 42 Ops.BINARY dtypes.uchar [] b"\nvoid E_16_2(float* restrict data0_32, float* restrict data1_16, float* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0_1 = 0; Lidx0_1 < (block_hi_-block_lo_); Lidx0_1++) {\n    int alu0 = (block_lo_+Lidx0_1);\n    float val0 = (*(data1_16+alu0));\n    float val1 = (*(data2_16+alu0));\n    *(data0_32+alu0) = (val1+1.0f);\n    *(data0_32+(alu0+16)) = (val0+1.0f);\n  }\n}\n"

@@ -44,5 +44,5 @@
 42 Ops.STORE dtypes.void [11, 41]
 43 Ops.END dtypes.void [42, 9]
 44 Ops.END dtypes.void [43, 4]
-45 Ops.SINK dtypes.void [44] KernelInfo(name="r_4_3_8", split=4) tag=1
+45 Ops.SINK dtypes.void [44] KernelInfo(name="r_4_3_8", split=(4, 3, 4)) tag=1
 

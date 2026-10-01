@@ -185,6 +185,15 @@ type estimates = {
 val pp_estimates : Format.formatter -> estimates -> unit
 (** [pp_estimates] formats [Estimates(ops=0, lds=0, mem=0)]. *)
 
+type split = {
+  iterations : sint;  (** The loop's iterations, [0] to [iterations - 1]. *)
+  lo : int;  (** The slot of the variable that holds a block's first. *)
+  hi : int;  (** The slot of the variable that holds the one after its last. *)
+}
+(** The type for the loop a host program's launch splits into blocks that the
+    host's cores run at once. Its program runs the iterations from the value of
+    its variable [lo] up to that of [hi]. *)
+
 type kernel_info = {
   name : string;  (** The kernel's name. *)
   applied_opts : Opt.t list;  (** The optimisations applied, in order. *)
@@ -192,10 +201,7 @@ type kernel_info = {
       (** The optimisations to apply, or [None] to choose them. *)
   estimates : estimates option;  (** The kernel's cost. *)
   beam : int;  (** The beam width to search optimisations with, or [0]. *)
-  split : sint option;
-      (** The iterations of the loop a host program's launch splits into blocks
-          that the host's cores run at once, if any: its program reads each
-          block's bounds from the variables [block_lo] and [block_hi]. *)
+  split : split option;  (** The loop its launch splits, if any. *)
 }
 (** The type for the arguments of a kernel's {!Op.Sink}. *)
 
@@ -205,7 +211,7 @@ val kernel_info :
   ?opts_to_apply:Opt.t list ->
   ?estimates:estimates ->
   ?beam:int ->
-  ?split:sint ->
+  ?split:split ->
   unit ->
   kernel_info
 (** [kernel_info ()] is the argument with these fields. [name] defaults to

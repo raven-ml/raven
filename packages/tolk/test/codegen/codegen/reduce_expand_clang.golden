@@ -39,8 +39,8 @@
 37 Ops.GROUP dtypes.void [36, 36, 36, 36]
 38 Ops.END dtypes.void [37, 9]
 39 Ops.END dtypes.void [38, 4]
-40 Ops.SINK dtypes.void [39] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=16) tag=1
-41 Ops.SINK dtypes.void [39] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=256, lds=2112, mem=2112), split=16) tag=1
+40 Ops.SINK dtypes.void [39] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=(16, 3, 4)) tag=1
+41 Ops.SINK dtypes.void [39] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=256, lds=2112, mem=2112), split=(16, 3, 4)) tag=1
 42 Ops.LINEAR dtypes.void [0, 15, 18, 1, 2, 21, 22, 25, 26, 10, 11, 31, 32, 6, 7, 3, 4, 5, 16, 17, 8, 9, 12, 13, 19, 20, 23, 27, 29, 33, 24, 28, 30, 34, 35, 14, 36, 37, 38, 39, 40]
 43 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_16_4_4(float* restrict data0_256, float* restrict data1_16, float* restrict data2_256, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_16+alu0));\n    for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {\n      int alu1 = ((alu0<<4)+(Lidx1<<2));\n      float4 val1 = (*((float4*)((data2_256+alu1))));\n      *((float4*)((data0_256+alu1))) = (float4){(val0+val1[0]),(val0+val1[1]),(val0+val1[2]),(val0+val1[3])};\n    }\n  }\n}\n"
 44 Ops.PROGRAM dtypes.void [41, 42, 43] ProgramInfo(global_size=(16, 1, 1), vars=(%1, %2), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

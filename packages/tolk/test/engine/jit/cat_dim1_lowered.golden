@@ -71,8 +71,8 @@
 69 Ops.ADD dtypes.int [68, 63]
 70 Ops.CONST dtypes.weakint [] 24
 71 Ops.ADD dtypes.int [69, 70]
-72 Ops.SINK dtypes.void [54] KernelInfo(name="E_3_(i+2)", estimates=Estimates(ops=%60, lds=%62, mem=%71), split=%56) tag=1
-73 Ops.SINK dtypes.void [54] KernelInfo(name="E_3_(i+2)", split=%56) tag=1
+72 Ops.SINK dtypes.void [54] KernelInfo(name="E_3_(i+2)", estimates=Estimates(ops=%60, lds=%62, mem=%71), split=(%56, 3, 4)) tag=1
+73 Ops.SINK dtypes.void [54] KernelInfo(name="E_3_(i+2)", split=(%56, 3, 4)) tag=1
 74 Ops.LINEAR dtypes.void [0, 14, 25, 7, 8, 22, 42, 43, 20, 21, 34, 35, 27, 28, 15, 16, 4, 5, 45, 46, 1, 2, 31, 32, 47, 9, 3, 17, 6, 29, 10, 11, 18, 19, 23, 24, 26, 30, 33, 37, 36, 38, 39, 40, 41, 48, 44, 49, 50, 12, 13, 51, 52, 53, 54, 73]
 75 Ops.SOURCE dtypes.void [] "\nvoid E_3_28i2B229(float* restrict data0_36, float* restrict data1_30, float* restrict data2_6, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = (block_lo_+Lidx1);\n      _Bool alu1 = (alu0<i_);\n      float val0 = (alu1?*(data1_30+((Lidx0*10)+alu0)):0.0f);\n      int alu2 = ((alu0-i_)+(Lidx0<<1));\n      int alu3 = (alu2%6);\n      int alu4 = (((alu3!=0)&(alu2<0))?6:0);\n      float val1 = (((alu1!=1)&(alu0<(i_+2)))?*(data2_6+(alu3+alu4)):0.0f);\n      *(data0_36+((Lidx0*12)+alu0)) = (val0+val1);\n    }\n  }\n}\n"
 76 Ops.BINARY dtypes.uchar [] b"\nvoid E_3_28i2B229(float* restrict data0_36, float* restrict data1_30, float* restrict data2_6, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = (block_lo_+Lidx1);\n      _Bool alu1 = (alu0<i_);\n      float val0 = (alu1?*(data1_30+((Lidx0*10)+alu0)):0.0f);\n      int alu2 = ((alu0-i_)+(Lidx0<<1));\n      int alu3 = (alu2%6);\n      int alu4 = (((alu3!=0)&(alu2<0))?6:0);\n      float val1 = (((alu1!=1)&(alu0<(i_+2)))?*(data2_6+(alu3+alu4)):0.0f);\n      *(data0_36+((Lidx0*12)+alu0)) = (val0+val1);\n    }\n  }\n}\n"

@@ -17,8 +17,8 @@
 15 Ops.ADD dtypes.float [9, 14]
 16 Ops.STORE dtypes.void [6, 15]
 17 Ops.END dtypes.void [16, 4]
-18 Ops.SINK dtypes.void [17] KernelInfo(name="E_3", split=3) tag=1
-19 Ops.SINK dtypes.void [17] KernelInfo(name="E_3", estimates=Estimates(ops=3, lds=36, mem=28), split=3) tag=1
+18 Ops.SINK dtypes.void [17] KernelInfo(name="E_3", split=(3, 2, 3)) tag=1
+19 Ops.SINK dtypes.void [17] KernelInfo(name="E_3", estimates=Estimates(ops=3, lds=36, mem=28), split=(3, 2, 3)) tag=1
 20 Ops.LINEAR dtypes.void [0, 7, 1, 2, 10, 11, 3, 4, 5, 8, 9, 12, 13, 14, 6, 15, 16, 17, 18]
 21 Ops.SOURCE dtypes.void [] "\nvoid E_3(float* restrict data0_3, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    float val1 = (*(data1_4+(alu0+1)));\n    *(data0_3+alu0) = (val0+val1);\n  }\n}\n"
 22 Ops.PROGRAM dtypes.void [19, 20, 21] ProgramInfo(global_size=(3, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

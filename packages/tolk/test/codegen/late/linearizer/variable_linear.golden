@@ -15,6 +15,6 @@
 13 Ops.STORE dtypes.void [11, 12]
 14 Ops.END dtypes.void [13, 7]
 15 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-16 Ops.SINK dtypes.void [14] KernelInfo(name="E_n", split=%15) tag=1
+16 Ops.SINK dtypes.void [14] KernelInfo(name="E_n", split=(%15, 2, 3)) tag=1
 17 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]
 

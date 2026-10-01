@@ -699,9 +699,25 @@ let int_vmax u = match vmax u with `Int z -> Bigint.to_int z | _ -> 0
    largest qualifying loop splits. It runs [block_lo + r] for [r] below
    [block_hi - block_lo], two variables the launch sets for each block; the
    passes before kept the loop's own bounds, so this is done once the kernel is
-   final. *)
+   final. The launch knows the two by their slots, the first past those already
+   taken, which the numbering of the kernel's other variables keeps; their
+   names, fresh among the kernel's variables, only name them in its source. *)
 let split_blocks sink =
   let all = Nodes.to_list (backward_slice_with_self sink) in
+  let slots, names =
+    List.fold_left
+      (fun (slots, names) u ->
+        match arg u with
+        | Param p when op u = Op.Param ->
+            let slots = if p.slot >= 0 then max slots (p.slot + 1) else slots in
+            (slots, Option.fold ~none:names ~some:(fun n -> n :: names) p.name)
+        | _ -> (slots, names))
+      (0, []) all
+  in
+  let rec fresh ?(i = 0) base =
+    let name = if i = 0 then base else base ^ "_" ^ string_of_int i in
+    if List.mem name names then fresh ~i:(i + 1) base else name
+  in
   let stores = List.filter (fun u -> is Op.Store u && writes_memory u) all in
   let addressed r st = Nodes.mem r (backward_slice (nth st 0)) in
   let qualifies r =
@@ -717,8 +733,12 @@ let split_blocks sink =
   | _, r :: rs ->
       let r = List.fold_left larger r rs in
       let n = nth r 0 and dt = dtype r in
-      let bound name = variable ~dtype:dt name (`Int Bigint.zero) (vmax n) in
-      let lo = bound "block_lo" and hi = bound "block_hi" in
+      let bound slot name =
+        param
+          ~vmin_vmax:(`Int Bigint.zero, vmax n)
+          ~multiple_of:1 ~name:(fresh name) ~addrspace:(Some Dtype.Alu) slot dt
+      in
+      let lo = bound slots "block_lo" and hi = bound (slots + 1) "block_hi" in
       let r' = replace r ~src:(alu hi Op.Sub [ lo ] :: List.tl (src r)) in
       let moved = alu lo Op.Add [ r' ] in
       let sink = substitute sink [ (r, moved) ] in
@@ -739,7 +759,8 @@ let split_blocks sink =
       in
       let sink = rewrite ends sink in
       let k = match arg sink with Kernel k -> k | _ -> assert false in
-      replace sink ~arg:(Kernel { k with split = Some (ssimplify n) })
+      let split = { iterations = ssimplify n; lo = slots; hi = slots + 1 } in
+      replace sink ~arg:(Kernel { k with split = Some split })
 
 let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   check_spec Spec.tensor ast;
@@ -1004,12 +1025,16 @@ let do_linearize prg sink =
 let whole_loop (k : kernel_info) lin (e : estimates) =
   match k.split with
   | None -> e
-  | Some n ->
-      let var name =
-        List.find (fun u -> is_variable u && expr u = name) (src lin)
+  | Some s ->
+      let var slot =
+        List.find
+          (fun u ->
+            is_variable u
+            && match arg u with Param p -> p.slot = slot | _ -> false)
+          (src lin)
       in
-      let lo = var "block_lo" and hi = var "block_hi" in
-      let n = sint_to_uop ~dtype:(dtype hi) n in
+      let lo = var s.lo and hi = var s.hi in
+      let n = sint_to_uop ~dtype:(dtype hi) s.iterations in
       let fill = function
         | Int _ as i -> i
         | Sym u ->

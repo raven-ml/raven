@@ -39,8 +39,8 @@
 37 Ops.STORE dtypes.void [33, 36]
 38 Ops.GROUP dtypes.void [16, 24, 30, 37]
 39 Ops.END dtypes.void [38, 4]
-40 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=4) tag=1
-41 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=256, mem=256), split=4) tag=1
+40 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(4, 2, 3)) tag=1
+41 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=256, mem=256), split=(4, 2, 3)) tag=1
 42 Ops.LINEAR dtypes.void [0, 10, 1, 2, 17, 18, 6, 7, 13, 31, 14, 3, 4, 5, 8, 19, 21, 22, 25, 27, 28, 32, 34, 35, 11, 12, 20, 26, 33, 9, 23, 29, 36, 15, 24, 30, 37, 16, 38, 39, 40]
 43 Ops.SOURCE dtypes.void [] "\nvoid E_4_4(unsigned long* restrict data0_16, unsigned long* restrict data1_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    int alu1 = (alu0+1);\n    unsigned long val0 = (*(data1_16+alu1));\n    int alu2 = (alu0+2);\n    unsigned long val1 = (*(data1_16+alu2));\n    int alu3 = (alu0+3);\n    unsigned long val2 = (*(data1_16+alu3));\n    unsigned long val3 = (*(data1_16+alu0));\n    *(data0_16+alu1) = (val0>>3ul);\n    *(data0_16+alu2) = (val1>>3ul);\n    *(data0_16+alu3) = (val2>>3ul);\n    *(data0_16+alu0) = (val3>>3ul);\n  }\n}\n"
 44 Ops.PROGRAM dtypes.void [41, 42, 43] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

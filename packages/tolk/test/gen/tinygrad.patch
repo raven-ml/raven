@@ -14,9 +14,18 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..285f119 100644
+index efb2e82..eb1457e 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
+@@ -2,7 +2,7 @@ from dataclasses import replace
+ import itertools, functools
+ from tinygrad.helpers import DISABLE_FAST_IDIV, TRANSCENDENTAL, SPEC, DEBUG, VIZ, IMAGE, NOOPT, EMULATED_DTYPES, USE_TC
+ from tinygrad.helpers import ALLOW_TF32, DEFAULT_FLOAT, DEFAULT_INT, TC_SELECT, TC_OPT, TC_MIN_GLOBALS, TracingKey, Context, panic
+-from tinygrad.uop.ops import PatternMatcher, graph_rewrite, UOp, Ops, UPat, rewrite_group, KernelInfo, ProgramInfo, GroupOp, AxisType
++from tinygrad.uop.ops import PatternMatcher, graph_rewrite, UOp, Ops, UPat, rewrite_group, KernelInfo, ProgramInfo, GroupOp, AxisType, ParamArg
+ from tinygrad.uop.weak import pm_lower_weak, pm_commit_weak, pm_cast_const
+ from tinygrad.uop.render import pyrender
+ from tinygrad.uop.spec import type_verify, spec_tensor, spec_program
 @@ -99,9 +99,15 @@ def broadcast_and_devec_wmma(b:UOp):
      src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
    return UOp.stack(*src).reshape(b.shape)
@@ -77,12 +86,14 @@ index efb2e82..285f119 100644
  
  # an Invalid in a REDUCE source is that reduce's identity
  pm_reduce_identity = PatternMatcher([
-@@ -272,6 +294,32 @@ pm_implicit_barriers = PatternMatcher([
+@@ -272,6 +294,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
 +# A host program's launch runs blocks of its largest output loop that every store to memory reads in its address on the
 +# host's cores at once. The loop runs block_lo + r for r below block_hi - block_lo, two variables the launch sets for each block.
++# The launch knows the two by their slots, the first past those already taken; their names, fresh among the kernel's
++# variables, only name them in its source.
 +def writes_memory(st:UOp) -> bool:
 +  at = st.src[0].src[0] if st.src[0].op is Ops.CAST else st.src[0]
 +  return at.op in (Ops.INDEX, Ops.SHRINK) and at.src[0].buf_uop.addrspace == AddrSpace.GLOBAL
@@ -99,18 +110,22 @@ index efb2e82..285f119 100644
 +  for c in cands[1:]:
 +    if int(c.src[0].vmax) > int(r.src[0].vmax): r = c
 +  n = r.src[0]
-+  lo, hi = [UOp.variable(nm, 0, n.vmax, dtype=r.dtype) for nm in ("block_lo", "block_hi")]
++  params = [u.arg for u in nodes if u.op is Ops.PARAM]
++  slot, names = max([p.slot+1 for p in params if p.slot >= 0], default=0), {p.name for p in params}
++  def fresh(base:str) -> str: return next(nm for i in itertools.count() if (nm:=base if i == 0 else f"{base}_{i}") not in names)
++  lo, hi = [UOp(Ops.PARAM, arg=ParamArg(s, r.dtype, name=fresh(nm), vmin_vmax=(0, n.vmax), multiple_of=1, addrspace=AddrSpace.ALU))
++            for s, nm in ((slot, "block_lo"), (slot+1, "block_hi"))]
 +  r2 = r.replace(src=(hi.alu(Ops.SUB, lo),)+r.src[1:])
 +  moved = lo.alu(Ops.ADD, r2)
 +  sink = sink.substitute({r: moved})
 +  sink = sink.substitute({e: e.replace(src=tuple(r2 if x is moved else x for x in e.src)) for e in sink.toposort()
 +                          if e.op is Ops.END and moved in e.src})
-+  return sink.replace(arg=replace(sink.arg, split=n.ssimplify()))
++  return sink.replace(arg=replace(sink.arg, split=(n.ssimplify(), slot, slot+1)))
 +
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if VIZ: graph_rewrite(ast, PatternMatcher([]), name="View Base AST")
    if DEBUG >= 5: print(pyrender(ast))
-@@ -310,7 +358,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -310,7 +364,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -119,7 +134,7 @@ index efb2e82..285f119 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -346,11 +394,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -346,11 +400,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -134,7 +149,7 @@ index efb2e82..285f119 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -369,6 +419,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -369,6 +425,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # commit every const still bare so no renderer reads one
    sink = graph_rewrite(sink, pm_cast_const, name="cast consts")
@@ -142,15 +157,16 @@ index efb2e82..285f119 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -432,9 +483,18 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -432,9 +489,19 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
 +# a split kernel's estimates count all its blocks: its loop's bounds span the whole loop
 +def whole_loop(k:KernelInfo, lin:tuple[UOp, ...], e:Estimates) -> Estimates:
 +  if k.split is None: return e
-+  lo, hi = [next(u for u in lin if u.op is Ops.PARAM and u.arg.name == nm) for nm in ("block_lo", "block_hi")]
-+  n = k.split if isinstance(k.split, UOp) else hi.const_like(k.split)
++  n, lo, hi = k.split
++  lo, hi = [next(u for u in lin if u.is_variable and u.arg.slot == s) for s in (lo, hi)]
++  n = n if isinstance(n, UOp) else hi.const_like(n)
 +  def fill(x): return x.substitute({lo: lo.const_like(0), hi: n}).ssimplify() if isinstance(x, UOp) else x
 +  return Estimates(fill(e.ops), fill(e.lds), fill(e.mem))
 +
@@ -580,22 +596,31 @@ index 14add12..80e0ec5 100644
  
  def _to_np_dtype(dtype:DType) -> type|None:
 diff --git a/tinygrad/engine/realize.py b/tinygrad/engine/realize.py
-index 5461074..82d2043 100644
+index 5461074..dae92f9 100644
 --- a/tinygrad/engine/realize.py
 +++ b/tinygrad/engine/realize.py
-@@ -16,6 +16,11 @@ def get_call_arg_uops(call:UOp) -> tuple[UOp, ...]: return tuple(s for s in call
+@@ -16,8 +16,20 @@ def get_call_arg_uops(call:UOp) -> tuple[UOp, ...]: return tuple(s for s in call
  def get_call_var_uops(call:UOp, prg:UOp) -> list[UOp]:
    # a bound value is a bare CONST: the Variable states the width
    bound = {s.expr: UOp.const(s.arg.val) for s in call.src[1:] if s.is_bound_var}
 +  # a split program a queue launches runs one block, the whole loop
-+  if any(v.expr == "block_hi" for v in prg.arg.vars):
-+    n = prg.arg.global_size[0]
++  if (split:=getattr(prg.src[0].arg, "split", None)) is not None:
++    n, lo, hi = split
 +    n = n.substitute({v: bound[v.expr] for v in n.toposort() if v.op is Ops.PARAM and v.expr in bound}) if isinstance(n, UOp) else UOp.const(n)
-+    bound = {**bound, "block_lo": UOp.const(0), "block_hi": n}
++    return [UOp.const(0) if v.arg.slot == lo else n if v.arg.slot == hi else bound.get(v.expr, v) for v in prg.arg.vars]
    return [bound.get(v.expr, v) for v in prg.arg.vars]
  
++# a split program run here runs one block, the whole loop
++def whole_loop(prg:UOp, var_vals:dict[str, int]) -> dict[str, int]:
++  if (split:=getattr(prg.src[0].arg, "split", None)) is None: return var_vals
++  n, lo, hi = split
++  names = {v.arg.slot: v.expr for v in prg.arg.vars}
++  return {**var_vals, names[lo]: 0, names[hi]: sym_infer(n, var_vals)}
++
  def get_call_outs_ins(call:UOp) -> tuple[tuple[int, ...], tuple[int, ...]]:
-@@ -83,7 +88,7 @@ def track_stats(ctx:ExecContext, call:UOp, st:decimal.Decimal, ets:list[float|No
+   ast = call.body
+   if isinstance(call.arg.aux, HCQInfo): return (), ()
+@@ -83,7 +95,7 @@ def track_stats(ctx:ExecContext, call:UOp, st:decimal.Decimal, ets:list[float|No
        cpu_events.append(ProfilePointEvent(device, "exec", len(cpu_events), {"var_vals": ctx.var_vals,
          "bufs": [b.trace_num for b in bufs], "name": display_name, "outputs": outputs, "inputs": inputs}, ts=st))
      if DEBUG < (3 if stats is None and isinstance(call.arg.aux, HCQInfo) else 2) or not ctx.update_stats: continue
@@ -604,7 +629,25 @@ index 5461074..82d2043 100644
        Device[device].synchronize()
        et, st = float(perf_counter_us() - st)*1e-6, perf_counter_us()
        GlobalCounters.time_sum_s += et
-@@ -184,10 +189,9 @@ def exec_hcq(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
+@@ -165,7 +177,7 @@ def exec_kernel(ctx:ExecContext, call:UOp, ast:UOp, devices=None) -> list[float|
+     prg_bufs = [b.ensure_allocated() for b in bufs]
+     rt = get_runtime(device, ast, cache=ctx.cache)
+     global_size, local_size = ast.arg.launch_dims(var_vals)
+-    ets.append(rt(*[b.get_buf(device) for b in prg_bufs], global_size=global_size, local_size=local_size, vals=ast.arg.vals(var_vals),
++    ets.append(rt(*[b.get_buf(device) for b in prg_bufs], global_size=global_size, local_size=local_size, vals=ast.arg.vals(whole_loop(ast, var_vals)),
+                   wait=ctx.wait, timeout=ctx.timeout))
+   return ets
+ 
+@@ -176,7 +188,7 @@ def exec_validate(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
+     var_vals = {**ctx.var_vals, **device_vars}
+     cpu_rt = get_runtime("CPU", prg:=to_program(ast.src[0], Device["CPU"].renderer))
+     global_size, local_size = prg.arg.launch_dims(var_vals)
+-    cpu_rt(*[bufs[i].ensure_allocated()._buf for i in prg.arg.globals], global_size=global_size, local_size=local_size, vals=prg.arg.vals(var_vals))
++    cpu_rt(*[bufs[i].ensure_allocated()._buf for i in prg.arg.globals], global_size=global_size, local_size=local_size, vals=prg.arg.vals(whole_loop(prg, var_vals)))
+     for i in prg.arg.outs: np.testing.assert_allclose(dev_bufs[i].ensure_allocated().numpy(), bufs[i].numpy(), rtol=1e-3, atol=1e-3)
+   return []
+ 
+@@ -184,10 +196,9 @@ def exec_hcq(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
    if (info:=call.arg.aux).inputs:
      addrs = [cast(Buffer, _resolve(u, ctx.input_uops).buffer).get_buf(dev) + off for u, off, dev in info.inputs]
      cast(Buffer, call.src[1 + info.table].buffer).host.view(fmt='Q')[:len(addrs)] = array.array('Q', addrs)
@@ -1069,10 +1112,10 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..d61c26e 100644
+index 2842d7e..e29e8ff 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
-@@ -92,6 +92,15 @@
+@@ -92,6 +92,15 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
    return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
  
  def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
@@ -1088,7 +1131,7 @@ index 2842d7e..d61c26e 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1102,8 +1111,29 @@
+@@ -1102,8 +1111,29 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -1119,7 +1162,7 @@ index 2842d7e..d61c26e 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,28 +1169,45 @@
+@@ -1139,28 +1169,45 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -1173,33 +1216,24 @@ index 2842d7e..d61c26e 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1333,6 +1380,7 @@
+@@ -1333,6 +1380,8 @@ class KernelInfo:
    opts_to_apply: tuple|None = None
    estimates: Estimates|None = None
    beam: int = 0
-+  split: sint|None = None # the iterations of the loop a host program's launch splits into blocks
++  # the loop a host program's launch splits into blocks: its iterations, and the slots of the variables that hold a block's bounds
++  split: tuple[sint, int, int]|None = None
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1352,6 +1400,9 @@
-     return global_size, local_size
- 
-   def vals(self, var_vals:dict[str, int]) -> tuple[int, ...]:
-+    # a split program runs here as one block, the whole loop
-+    if any(k.expr == "block_hi" for k in self.vars):
-+      var_vals = {**var_vals, "block_lo": 0, "block_hi": sym_infer(self.global_size[0], var_vals)}  # type: ignore[arg-type]
-     try: return tuple(var_vals[k.expr] for k in self.vars)
-     except KeyError as e: raise RuntimeError(f"unbound Variable {e}") from None
- 
-@@ -1363,6 +1414,7 @@
+@@ -1363,6 +1412,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
-+    if isinstance(sink.arg, KernelInfo) and sink.arg.split is not None: global_size[0] = sink.arg.split
++    if isinstance(sink.arg, KernelInfo) and sink.arg.split is not None: global_size[0] = sink.arg.split[0]
      for u in sink.toposort():
        if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1404,12 +1456,18 @@
+@@ -1404,12 +1454,18 @@ def safe_pow(x, y):
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
  
@@ -1220,7 +1254,7 @@ index 2842d7e..d61c26e 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1478,8 @@
+@@ -1420,6 +1476,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)

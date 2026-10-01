@@ -44,8 +44,8 @@
 42 Ops.MUL dtypes.int [41, 39]
 43 Ops.MUL dtypes.int [41, 38]
 44 Ops.ADD dtypes.int [42, 43]
-45 Ops.SINK dtypes.void [36] KernelInfo(name="r_i_j", estimates=Estimates(ops=%40, lds=%44, mem=%44), split=%37) tag=1
-46 Ops.SINK dtypes.void [36] KernelInfo(name="r_i_j", split=%37) tag=1
+45 Ops.SINK dtypes.void [36] KernelInfo(name="r_i_j", estimates=Estimates(ops=%40, lds=%44, mem=%44), split=(%37, 2, 3)) tag=1
+46 Ops.SINK dtypes.void [36] KernelInfo(name="r_i_j", split=(%37, 2, 3)) tag=1
 47 Ops.LINEAR dtypes.void [0, 20, 1, 2, 15, 7, 33, 12, 13, 9, 10, 21, 22, 3, 4, 5, 8, 11, 23, 14, 16, 24, 25, 26, 17, 18, 19, 27, 28, 29, 30, 31, 32, 6, 34, 35, 36, 46]
 48 Ops.SOURCE dtypes.void [] "\nvoid r_i_j(float* restrict data0_10, float* restrict data1_100, const int block_lo_, const int block_hi_, const int j_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    *(buf0+0) = 0.0f;\n    for (int Ridx0 = 0; Ridx0 < j_; Ridx0++) {\n      float val0 = (*(data1_100+((alu0*10)+Ridx0)));\n      *(buf0+0) = ((*(buf0+0))+val0);\n    }\n    *(data0_10+alu0) = ((*(buf0+0))/((float)(j_)));\n  }\n}\n"
 49 Ops.BINARY dtypes.uchar [] b"\nvoid r_i_j(float* restrict data0_10, float* restrict data1_100, const int block_lo_, const int block_hi_, const int j_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    *(buf0+0) = 0.0f;\n    for (int Ridx0 = 0; Ridx0 < j_; Ridx0++) {\n      float val0 = (*(data1_100+((alu0*10)+Ridx0)));\n      *(buf0+0) = ((*(buf0+0))+val0);\n    }\n    *(data0_10+alu0) = ((*(buf0+0))/((float)(j_)));\n  }\n}\n"
@@ -101,8 +101,8 @@
 99 Ops.CONST dtypes.weakint [] 8
 100 Ops.MUL dtypes.int [38, 99]
 101 Ops.ADD dtypes.int [98, 100]
-102 Ops.SINK dtypes.void [91] KernelInfo(name="r_i_j", estimates=Estimates(ops=%97, lds=%101, mem=%101), split=%37) tag=1
-103 Ops.SINK dtypes.void [91] KernelInfo(name="r_i_j", split=%37) tag=1
+102 Ops.SINK dtypes.void [91] KernelInfo(name="r_i_j", estimates=Estimates(ops=%97, lds=%101, mem=%101), split=(%37, 3, 4)) tag=1
+103 Ops.SINK dtypes.void [91] KernelInfo(name="r_i_j", split=(%37, 3, 4)) tag=1
 104 Ops.LINEAR dtypes.void [0, 20, 74, 57, 58, 66, 7, 85, 86, 87, 88, 12, 13, 9, 10, 21, 22, 59, 60, 61, 75, 76, 63, 64, 70, 65, 67, 71, 72, 73, 68, 69, 78, 77, 79, 80, 81, 82, 83, 84, 62, 89, 90, 91, 103]
 105 Ops.SOURCE dtypes.void [] "\nvoid r_i_j(float* restrict data0_10, float* restrict data1_100, float* restrict data2_10, const int block_lo_, const int block_hi_, const int j_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    float val0 = (*(data2_10+alu0));\n    *(buf0+0) = 0.0f;\n    for (int Ridx0 = 0; Ridx0 < j_; Ridx0++) {\n      float val1 = (*(data1_100+((alu0*10)+Ridx0)));\n      float alu2 = (val1-val0);\n      *(buf0+0) = __builtin_fmaf(alu2,alu2,(*(buf0+0)));\n    }\n    *(data0_10+alu0) = ((*(buf0+0))/((float)((j_+-1))));\n  }\n}\n"
 106 Ops.BINARY dtypes.uchar [] b"\nvoid r_i_j(float* restrict data0_10, float* restrict data1_100, float* restrict data2_10, const int block_lo_, const int block_hi_, const int j_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    float val0 = (*(data2_10+alu0));\n    *(buf0+0) = 0.0f;\n    for (int Ridx0 = 0; Ridx0 < j_; Ridx0++) {\n      float val1 = (*(data1_100+((alu0*10)+Ridx0)));\n      float alu2 = (val1-val0);\n      *(buf0+0) = __builtin_fmaf(alu2,alu2,(*(buf0+0)));\n    }\n    *(data0_10+alu0) = ((*(buf0+0))/((float)((j_+-1))));\n  }\n}\n"

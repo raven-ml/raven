@@ -329,6 +329,7 @@ and Node : sig
 
   and sint = Int of int | Sym of t
   and estimates = { ops : sint; lds : sint; mem : sint }
+  and split = { iterations : sint; lo : int; hi : int }
 
   and kernel_info = {
     name : string;
@@ -336,7 +337,7 @@ and Node : sig
     opts_to_apply : Opt.t list option;
     estimates : estimates option;
     beam : int;
-    split : sint option;
+    split : split option;
   }
 
   and program_info = {
@@ -418,13 +419,16 @@ let equal_estimates (e0 : estimates) (e1 : estimates) =
   equal_sint e0.ops e1.ops && equal_sint e0.lds e1.lds
   && equal_sint e0.mem e1.mem
 
+let equal_split (s0 : split) (s1 : split) =
+  equal_sint s0.iterations s1.iterations && s0.lo = s1.lo && s0.hi = s1.hi
+
 let equal_kernel_info (k0 : kernel_info) (k1 : kernel_info) =
   String.equal k0.name k1.name
   && List.equal Opt.equal k0.applied_opts k1.applied_opts
   && Option.equal (List.equal Opt.equal) k0.opts_to_apply k1.opts_to_apply
   && Option.equal equal_estimates k0.estimates k1.estimates
   && Int.equal k0.beam k1.beam
-  && Option.equal equal_sint k0.split k1.split
+  && Option.equal equal_split k0.split k1.split
 
 let equal_program_info (p0 : program_info) (p1 : program_info) =
   List.equal equal_sint p0.global_size p1.global_size
@@ -892,7 +896,11 @@ and repr_kernel_info (k : kernel_info) =
     (repr_option (fun l -> repr_tuple (List.map repr_opt l)) k.opts_to_apply)
     (repr_option repr_estimates k.estimates)
     k.beam
-    (repr_option repr_sint k.split)
+    (repr_option
+       (fun s ->
+         repr_tuple
+           [ repr_sint s.iterations; string_of_int s.lo; string_of_int s.hi ])
+       k.split)
 
 and repr_program_info (p : program_info) =
   let ints l = repr_tuple (List.map string_of_int l) in
@@ -4718,7 +4726,7 @@ let program_info_of_sink
   let global_size = Array.make 3 (Int 1)
   and local_size = Array.make 3 (Int 1) in
   (match sink.arg with
-  | Kernel { split = Some n; _ } -> global_size.(0) <- n
+  | Kernel { split = Some s; _ } -> global_size.(0) <- s.iterations
   | _ -> ());
   List.iter
     (fun u ->

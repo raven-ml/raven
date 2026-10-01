@@ -15,8 +15,8 @@
 13 Ops.LOAD dtypes.float [8, 10, 12]
 14 Ops.STORE dtypes.void [6, 13]
 15 Ops.END dtypes.void [14, 4]
-16 Ops.SINK dtypes.void [15] KernelInfo(name="E_10", estimates=Estimates(ops=10, lds=80, mem=80), split=10) tag=1
-17 Ops.SINK dtypes.void [15] KernelInfo(name="E_10", split=10) tag=1
+16 Ops.SINK dtypes.void [15] KernelInfo(name="E_10", estimates=Estimates(ops=10, lds=80, mem=80), split=(10, 2, 3)) tag=1
+17 Ops.SINK dtypes.void [15] KernelInfo(name="E_10", split=(10, 2, 3)) tag=1
 18 Ops.LINEAR dtypes.void [0, 7, 1, 2, 11, 9, 10, 3, 4, 5, 8, 12, 13, 6, 14, 15, 17]
 19 Ops.SOURCE dtypes.void [] "\nvoid E_10(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = ((alu0<v_)?*(data1_10+alu0):0.0f);\n    *(data0_10+alu0) = val0;\n  }\n}\n"
 20 Ops.BINARY dtypes.uchar [] b"\nvoid E_10(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = ((alu0<v_)?*(data1_10+alu0):0.0f);\n    *(data0_10+alu0) = val0;\n  }\n}\n"
@@ -47,8 +47,8 @@
 45 Ops.SUB dtypes.int [44, 23]
 46 Ops.CONST dtypes.weakint [] 8
 47 Ops.MUL dtypes.int [45, 46]
-48 Ops.SINK dtypes.void [43] KernelInfo(name="E_v", estimates=Estimates(ops=%45, lds=%47, mem=%47), split=%44) tag=1
-49 Ops.SINK dtypes.void [43] KernelInfo(name="E_v", split=%44) tag=1
+48 Ops.SINK dtypes.void [43] KernelInfo(name="E_v", estimates=Estimates(ops=%45, lds=%47, mem=%47), split=(%44, 2, 3)) tag=1
+49 Ops.SINK dtypes.void [43] KernelInfo(name="E_v", split=(%44, 2, 3)) tag=1
 50 Ops.LINEAR dtypes.void [29, 36, 1, 2, 39, 40, 3, 4, 5, 37, 38, 35, 41, 42, 43, 49]
 51 Ops.SOURCE dtypes.void [] "\nvoid E_v(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_10+alu0));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"
 52 Ops.BINARY dtypes.uchar [] b"\nvoid E_v(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_10+alu0));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"

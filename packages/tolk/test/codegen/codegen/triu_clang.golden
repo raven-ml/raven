@@ -54,8 +54,8 @@
 52 Ops.GROUP dtypes.void [51, 51, 51, 51]
 53 Ops.END dtypes.void [52, 11]
 54 Ops.END dtypes.void [53, 4]
-55 Ops.SINK dtypes.void [54] KernelInfo(name="E_256_64_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=256) tag=1
-56 Ops.SINK dtypes.void [54] KernelInfo(name="E_256_64_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=180224, lds=524288, mem=524288), split=256) tag=1
+55 Ops.SINK dtypes.void [54] KernelInfo(name="E_256_64_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=(256, 2, 3)) tag=1
+56 Ops.SINK dtypes.void [54] KernelInfo(name="E_256_64_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=180224, lds=524288, mem=524288), split=(256, 2, 3)) tag=1
 57 Ops.LINEAR dtypes.void [0, 19, 1, 2, 24, 25, 21, 22, 28, 29, 12, 13, 42, 43, 16, 17, 9, 10, 6, 7, 3, 4, 5, 8, 11, 14, 15, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 44, 45, 46, 47, 48, 49, 20, 23, 26, 27, 50, 18, 51, 52, 53, 54, 55]
 58 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_256_64_4(float* restrict data0_65536, float* restrict data1_65536, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 64; Lidx1++) {\n      int alu1 = (Lidx1<<2);\n      int alu2 = ((alu0<<8)+alu1);\n      float val0 = ((((alu1+1)<alu0)!=1)?*(data1_65536+(alu2+1)):0.0f);\n      float val1 = ((((alu1+2)<alu0)!=1)?*(data1_65536+(alu2+2)):0.0f);\n      float val2 = ((((alu1+3)<alu0)!=1)?*(data1_65536+(alu2+3)):0.0f);\n      float val3 = (((alu1<alu0)!=1)?*(data1_65536+alu2):0.0f);\n      *((float4*)((data0_65536+alu2))) = (float4){val3,val0,val1,val2};\n    }\n  }\n}\n"
 59 Ops.PROGRAM dtypes.void [56, 57, 58] ProgramInfo(global_size=(256, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

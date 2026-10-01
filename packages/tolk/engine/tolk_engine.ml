@@ -122,8 +122,8 @@ let device devices name =
 
 module Program = struct
   (* A program whose launch splits a loop into blocks: the loop's iterations,
-     the program's operations, and the slots of its block_lo and block_hi
-     variables. *)
+     the program's operations, and the positions among its variables of those
+     that hold a block's bounds. *)
   type split = { extent : Ops.sint; ops : Ops.sint; lo : int; hi : int }
 
   type t = {
@@ -135,11 +135,22 @@ module Program = struct
   }
 
   let split_of prg (info : Ops.program_info) =
-    let slot name = List.find_index (fun v -> Ops.expr v = name) info.vars in
-    match (Ops.arg (Ops.nth prg 0), slot "block_lo", slot "block_hi") with
-    | Ops.Kernel { split = Some extent; estimates; _ }, Some lo, Some hi ->
-        let ops = match estimates with Some e -> e.ops | None -> extent in
-        Some { extent; ops; lo; hi }
+    let at slot =
+      List.find_index
+        (fun v ->
+          match Ops.arg v with Ops.Param p -> p.slot = slot | _ -> false)
+        info.vars
+    in
+    match Ops.arg (Ops.nth prg 0) with
+    | Ops.Kernel { split = Some s; estimates; _ } -> (
+        let ops =
+          match estimates with Some e -> e.ops | None -> s.iterations
+        in
+        match (at s.lo, at s.hi) with
+        | Some lo, Some hi -> Some { extent = s.iterations; ops; lo; hi }
+        | _ ->
+            invalid_arg
+              "Tolk_engine.Program.load: a split's bounds are no variables")
     | _ -> None
 
   let load d prg =

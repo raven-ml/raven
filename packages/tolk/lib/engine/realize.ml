@@ -24,28 +24,35 @@ let get_call_var_uops call prg =
   in
   match arg prg with
   | Program p ->
-      (* A split program a queue launches runs one block, the whole loop. *)
-      let bound =
-        if not (List.exists (fun v -> expr v = "block_hi") p.vars) then bound
-        else
-          let values n =
-            List.filter_map
-              (fun v ->
-                if not (is_variable v) then None
-                else
-                  Option.map (fun c -> (v, c)) (List.assoc_opt (expr v) bound))
-              (toposort n)
-          in
-          let n =
-            match List.hd p.global_size with
-            | Int n -> const (`Int (Bigint.of_int n))
-            | Sym n -> substitute n (values n)
-          in
-          ("block_lo", const (`Int Bigint.zero)) :: ("block_hi", n) :: bound
+      let named v = List.assoc_opt (expr v) bound in
+      let value =
+        match arg (nth prg 0) with
+        | Kernel { split = Some s; _ } -> (
+            (* A split program a queue launches runs one block, the whole
+               loop. *)
+            let iterations =
+              match s.iterations with
+              | Int n -> const (`Int (Bigint.of_int n))
+              | Sym n ->
+                  let values =
+                    List.filter_map
+                      (fun v ->
+                        if is_variable v then
+                          Option.map (fun c -> (v, c)) (named v)
+                        else None)
+                      (toposort n)
+                  in
+                  substitute n values
+            in
+            fun v ->
+              match arg v with
+              | Param { slot; _ } when slot = s.lo ->
+                  Some (const (`Int Bigint.zero))
+              | Param { slot; _ } when slot = s.hi -> Some iterations
+              | _ -> named v)
+        | _ -> named
       in
-      List.map
-        (fun v -> Option.value (List.assoc_opt (expr v) bound) ~default:v)
-        p.vars
+      List.map (fun v -> Option.value (value v) ~default:v) p.vars
   | _ -> invalid_arg "get_call_var_uops takes a program"
 
 let aux call = match arg call with Call { aux; _ } -> aux | _ -> None

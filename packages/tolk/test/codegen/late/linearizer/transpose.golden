@@ -21,5 +21,5 @@
 19 Ops.STORE dtypes.void [13, 18]
 20 Ops.END dtypes.void [19, 10]
 21 Ops.END dtypes.void [20, 3]
-22 Ops.SINK dtypes.void [21] KernelInfo(name="E_7_15", split=15) tag=1
+22 Ops.SINK dtypes.void [21] KernelInfo(name="E_7_15", split=(15, 2, 3)) tag=1
 

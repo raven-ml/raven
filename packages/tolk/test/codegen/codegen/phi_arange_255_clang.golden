@@ -8,8 +8,8 @@
 6 Ops.INDEX dtypes.int [0, 5]
 7 Ops.STORE dtypes.void [6, 5]
 8 Ops.END dtypes.void [7, 4]
-9 Ops.SINK dtypes.void [8] KernelInfo(name="E_255", split=255) tag=1
-10 Ops.SINK dtypes.void [8] KernelInfo(name="E_255", estimates=Estimates(lds=1020, mem=1020), split=255) tag=1
+9 Ops.SINK dtypes.void [8] KernelInfo(name="E_255", split=(255, 1, 2)) tag=1
+10 Ops.SINK dtypes.void [8] KernelInfo(name="E_255", estimates=Estimates(lds=1020, mem=1020), split=(255, 1, 2)) tag=1
 11 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 12 Ops.SOURCE dtypes.void [] "\nvoid E_255(int* restrict data0_255, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    *(data0_255+alu0) = alu0;\n  }\n}\n"
 13 Ops.PROGRAM dtypes.void [10, 11, 12] ProgramInfo(global_size=(255, 1, 1), vars=(%1, %2), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

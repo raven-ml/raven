@@ -40,8 +40,8 @@
 38 Ops.ADD dtypes.float [36, 37]
 39 Ops.STORE dtypes.void [6, 38]
 40 Ops.END dtypes.void [39, 4]
-41 Ops.SINK dtypes.void [40] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=28, lds=144, mem=144), split=4) tag=1
-42 Ops.SINK dtypes.void [40] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),), split=4) tag=1
+41 Ops.SINK dtypes.void [40] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=28, lds=144, mem=144), split=(4, 2, 3)) tag=1
+42 Ops.SINK dtypes.void [40] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),), split=(4, 2, 3)) tag=1
 43 Ops.LINEAR dtypes.void [0, 7, 1, 2, 15, 16, 18, 19, 22, 23, 8, 9, 11, 12, 3, 4, 5, 10, 28, 29, 30, 13, 14, 6, 31, 33, 35, 37, 17, 20, 24, 26, 21, 25, 27, 32, 34, 36, 38, 39, 40, 42]
 44 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid r_4_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"
 45 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid r_4_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"

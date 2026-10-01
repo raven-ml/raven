@@ -348,18 +348,21 @@ let sums_in ~blocks m k =
     | Error why -> failwith why
   in
   let vars = match Ops.arg prg with Ops.Program i -> i.vars | _ -> [] in
-  let slot name =
-    Option.get (List.find_index (fun v -> Ops.expr v = name) vars)
+  let at slot =
+    Option.get
+      (List.find_index
+         (fun v ->
+           match Ops.arg v with Ops.Param p -> p.slot = slot | _ -> false)
+         vars)
   in
-  let extent =
+  let extent, lo, hi =
     match Ops.arg (Ops.nth prg 0) with
-    | Ops.Kernel { split = Some (Int n); _ } -> n
+    | Ops.Kernel { split = Some { iterations = Int n; lo; hi }; _ } ->
+        (n, at lo, at hi)
     | _ -> failwith "sums splits a loop of known iterations"
   in
   let out = Run.buffer host Float32 (floats (Array.make m 0.)) in
-  Nx_device.Program.call
-    ~split:{ extent; blocks; lo = slot "block_lo"; hi = slot "block_hi" }
-    p
+  Nx_device.Program.call ~split:{ extent; blocks; lo; hi } p
     [|
       out;
       Run.buffer host Float32 (scattered (m * k));
@@ -1995,6 +1998,65 @@ let places_in_mapped_memory () =
 
 let on_cpu1 storage = List.find (fun s -> placement s.arg = [ "CPU:1" ]) storage
 
+(* A kernel that fills four floats with the variable [name], whose bounds are
+   those a split of its loop would give its block's bounds. *)
+let fill_with name d =
+  let i = Ops.range (Int 4) [ 0 ] in
+  let out = Ops.placeholder ~slot:0 [ 4 ] Float32 in
+  let v =
+    Ops.variable ~dtype:Int32 name (Dtype.Value.of_int 0) (Dtype.Value.of_int 4)
+  in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"fill_with" ())
+      [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.cast v Float32)) [ i ] ]
+  in
+  let y = Ops.new_buffer (Single d) 4 Float32 in
+  (y, Ops.call kernel [ y ])
+
+(* [fill_with name]'s kernel compiled with its loop whole, which the host
+   splits. *)
+let unoptimized f = Helpers.context [ B (Helpers.noopt, true) ] f
+
+(* What a run of [fill_with name] on [d] writes with [name] bound to 3. *)
+let filled (devices : string -> Engine.device) d name =
+  let y, call = fill_with name d in
+  let compiled =
+    unoptimized (fun () ->
+        Hcq2.compile_linear
+          ~devices:(fun n -> (devices n).compiler)
+          (Ops.v Op.Linear ~src:[ call ]))
+  in
+  let out =
+    Run.buffer (devices d).device Float32 (floats [| 0.; 0.; 0.; 0. |])
+  in
+  let s = Engine.link ~devices ~bound:[ (y, [ out ]) ] compiled in
+  Engine.run ~vars:[ (name, 3) ] s [||];
+  Run.values Float32 out
+
+let named_as_bounds =
+  let case (devices, d) name =
+    test (Printf.sprintf "a variable named %s, run on %s" name d) (fun () ->
+        equal values (floats [| 3.; 3.; 3.; 3. |]) (filled devices d name))
+  in
+  let splits name =
+    test (Printf.sprintf "a kernel with a variable named %s splits" name)
+      (fun () ->
+        let _, call = fill_with name "CPU" in
+        let prg =
+          unoptimized (fun () ->
+              Codegen.to_program (Ops.body call) (Lazy.force clang))
+        in
+        match Ops.arg (Ops.nth prg 0) with
+        | Ops.Kernel { split = Some _; _ } -> ()
+        | _ -> failf "%s's kernel does not split" name)
+  in
+  group "a variable named as a block's bounds is a variable like any other"
+    (List.map splits [ "block_lo"; "block_hi" ]
+    @ List.concat_map
+        (fun at -> List.map (case at) [ "n"; "block_lo"; "block_hi" ])
+        [ (devices, "CPU"); (on_null, "CPU:1") ])
+
 let batches =
   group "batches"
     [
@@ -2192,5 +2254,6 @@ let () =
          runs;
          measures;
          batches;
+         named_as_bounds;
          metal;
        ])

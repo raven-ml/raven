@@ -72,7 +72,7 @@
 70 Ops.WHERE dtypes.float [69, 68, 8]
 71 Ops.STORE dtypes.void [6, 70]
 72 Ops.END dtypes.void [71, 4]
-73 Ops.SINK dtypes.void [72] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),), split=128) tag=1
+73 Ops.SINK dtypes.void [72] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),), split=(128, 3, 4)) tag=1
 74 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
 75 Ops.AFTER dtypes.float [74, 5]
 76 Ops.INDEX dtypes.float [75, 12]
@@ -90,8 +90,8 @@
 88 Ops.WHERE dtypes.float [87, 86, 8]
 89 Ops.STORE dtypes.void [6, 88]
 90 Ops.END dtypes.void [89, 4]
-91 Ops.SINK dtypes.void [90] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),), estimates=Estimates(ops=33024, lds=131584, mem=66560), split=128) tag=1
-92 Ops.SINK dtypes.void [90] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),), split=128) tag=1
+91 Ops.SINK dtypes.void [90] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),), estimates=Estimates(ops=33024, lds=131584, mem=66560), split=(128, 3, 4)) tag=1
+92 Ops.SINK dtypes.void [90] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),), split=(128, 3, 4)) tag=1
 93 Ops.LINEAR dtypes.void [0, 21, 32, 1, 2, 74, 7, 8, 11, 12, 48, 49, 51, 52, 22, 23, 43, 44, 29, 30, 15, 16, 37, 38, 25, 26, 33, 34, 3, 4, 5, 75, 76, 77, 17, 35, 36, 53, 54, 55, 45, 46, 47, 39, 40, 41, 57, 58, 78, 79, 80, 24, 27, 28, 56, 50, 42, 31, 59, 60, 61, 62, 81, 82, 83, 84, 85, 86, 6, 87, 88, 89, 90, 92]
 94 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid r_128_32_4(float* restrict data0_128, float* restrict data1_128, float* restrict data2_16384, const int block_lo_, const int block_hi_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    *(buf0+0) = 0.0f;\n    for (int Ridx0 = 0; Ridx0 < 32; Ridx0++) {\n      int alu2 = ((Ridx0<<9)+alu0);\n      float val0 = (*(data2_16384+(alu2+128)));\n      float val1 = (*(data2_16384+(alu2+256)));\n      float val2 = (*(data2_16384+(alu2+384)));\n      float val3 = (*(data2_16384+alu2));\n      float4 val4 = (*((float4*)((data1_128+(Ridx0<<2)))));\n      *(buf0+0) = ((*(buf0+0))+__builtin_fmaf(val4[3],val2,__builtin_fmaf(val4[2],val1,__builtin_fmaf(val4[1],val0,(val4[0]*val3)))));\n    }\n    float val5 = (*(buf0+0));\n    float alu5 = ((0.0f<val5)?val5:0.0f);\n    *(data0_128+alu0) = alu5;\n  }\n}\n"
 95 Ops.PROGRAM dtypes.void [91, 93, 94] ProgramInfo(global_size=(128, 1, 1), vars=(%1, %2), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

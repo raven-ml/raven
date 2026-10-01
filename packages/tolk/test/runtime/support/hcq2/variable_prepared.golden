@@ -19,8 +19,8 @@
 17 Ops.SUB dtypes.int [15, 16]
 18 Ops.CONST dtypes.weakint [] 8
 19 Ops.MUL dtypes.int [17, 18]
-20 Ops.SINK dtypes.void [14] KernelInfo(name="E_v", estimates=Estimates(ops=%17, lds=%19, mem=%19), split=%15) tag=1
-21 Ops.SINK dtypes.void [14] KernelInfo(name="E_v", split=%15) tag=1
+20 Ops.SINK dtypes.void [14] KernelInfo(name="E_v", estimates=Estimates(ops=%17, lds=%19, mem=%19), split=(%15, 2, 3)) tag=1
+21 Ops.SINK dtypes.void [14] KernelInfo(name="E_v", split=(%15, 2, 3)) tag=1
 22 Ops.LINEAR dtypes.void [0, 7, 1, 2, 10, 11, 3, 4, 5, 8, 9, 6, 12, 13, 14, 21]
 23 Ops.SOURCE dtypes.void [] "\nvoid E_v(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_10+alu0));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"
 24 Ops.BINARY dtypes.uchar [] b"\nvoid E_v(float* restrict data0_10, float* restrict data1_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_10+alu0));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"

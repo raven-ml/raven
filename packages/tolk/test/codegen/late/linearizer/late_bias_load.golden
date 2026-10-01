@@ -2,8 +2,8 @@
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=3136, device="CPU")
 1 Ops.CONST dtypes.weakint [] 14
 2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.int [] ParamArg(slot=5, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.int [] ParamArg(slot=5, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.int [3, 4]
 6 Ops.RANGE dtypes.int [5] (3, AxisType.WEAK)
 7 Ops.RANGE dtypes.int [2, 6] (4, AxisType.WEAK)
@@ -75,5 +75,5 @@
 73 Ops.END dtypes.void [72, 9]
 74 Ops.END dtypes.void [73, 7]
 75 Ops.END dtypes.void [74, 6]
-76 Ops.SINK dtypes.void [75] KernelInfo(name="r_16_14_14_3_3_3", split=16) tag=1
+76 Ops.SINK dtypes.void [75] KernelInfo(name="r_16_14_14_3_3_3", split=(16, 4, 5)) tag=1
 

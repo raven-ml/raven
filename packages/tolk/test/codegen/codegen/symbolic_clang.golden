@@ -18,14 +18,14 @@
 16 Ops.STORE dtypes.void [6, 15]
 17 Ops.END dtypes.void [16, 4]
 18 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(1, 64), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-19 Ops.SINK dtypes.void [17] KernelInfo(name="E_n", split=%18) tag=1
+19 Ops.SINK dtypes.void [17] KernelInfo(name="E_n", split=(%18, 2, 3)) tag=1
 20 Ops.CONST dtypes.weakint [] 0
 21 Ops.SUB dtypes.int [18, 20]
 22 Ops.CONST dtypes.weakint [] 2
 23 Ops.MUL dtypes.int [21, 22]
 24 Ops.CONST dtypes.weakint [] 8
 25 Ops.MUL dtypes.int [21, 24]
-26 Ops.SINK dtypes.void [17] KernelInfo(name="E_n", estimates=Estimates(ops=%23, lds=%25, mem=%25), split=%18) tag=1
+26 Ops.SINK dtypes.void [17] KernelInfo(name="E_n", estimates=Estimates(ops=%23, lds=%25, mem=%25), split=(%18, 2, 3)) tag=1
 27 Ops.LINEAR dtypes.void [0, 7, 1, 2, 13, 14, 10, 11, 3, 4, 5, 8, 9, 6, 12, 15, 16, 17, 19]
 28 Ops.SOURCE dtypes.void [] "\nvoid E_n(float* restrict data0_64, float* restrict data1_64, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_64+alu0));\n    *(data0_64+alu0) = ((val0*2.0f)+1.0f);\n  }\n}\n"
 29 Ops.PROGRAM dtypes.void [26, 27, 28] ProgramInfo(global_size=(%18, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

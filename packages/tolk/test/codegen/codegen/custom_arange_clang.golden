@@ -26,8 +26,8 @@
 24 Ops.STORE dtypes.void [11, 23]
 25 Ops.GROUP dtypes.void [24, 24, 24, 24]
 26 Ops.END dtypes.void [25, 4]
-27 Ops.SINK dtypes.void [26] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=4) tag=1
-28 Ops.SINK dtypes.void [26] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=12, lds=64, mem=64), split=4) tag=1
+27 Ops.SINK dtypes.void [26] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(4, 1, 2)) tag=1
+28 Ops.SINK dtypes.void [26] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=12, lds=64, mem=64), split=(4, 1, 2)) tag=1
 29 Ops.LINEAR dtypes.void [0, 1, 2, 13, 14, 6, 7, 19, 20, 9, 10, 3, 4, 5, 8, 15, 16, 17, 18, 21, 22, 12, 23, 11, 24, 25, 26, 27]
 30 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid custom_arange_16(float* restrict data0_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    *((float4*)((data0_16+alu0))) = (float4){((float)(alu0)),((float)((alu0+1))),((float)((alu0+2))),((float)((alu0+3)))};\n  }\n}\n"
 31 Ops.PROGRAM dtypes.void [28, 29, 30] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

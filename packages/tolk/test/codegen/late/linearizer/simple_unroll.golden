@@ -163,5 +163,5 @@
 161 Ops.GROUP dtypes.void [139, 146, 153, 160]
 162 Ops.END dtypes.void [161, 10]
 163 Ops.END dtypes.void [162, 3]
-164 Ops.SINK dtypes.void [163] KernelInfo(name="r_16_64_4_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), split=64) tag=1
+164 Ops.SINK dtypes.void [163] KernelInfo(name="r_16_64_4_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), split=(64, 3, 4)) tag=1
 

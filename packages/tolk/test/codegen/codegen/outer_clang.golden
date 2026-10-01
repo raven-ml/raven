@@ -45,8 +45,8 @@
 43 Ops.GROUP dtypes.void [24, 33, 42]
 44 Ops.END dtypes.void [43, 11]
 45 Ops.END dtypes.void [44, 4]
-46 Ops.SINK dtypes.void [45] KernelInfo(name="E_32_16_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(3, AxisType.UPCAST)),), split=32) tag=1
-47 Ops.SINK dtypes.void [45] KernelInfo(name="E_32_16_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(3, AxisType.UPCAST)),), estimates=Estimates(ops=1536, lds=12416, mem=6464), split=32) tag=1
+46 Ops.SINK dtypes.void [45] KernelInfo(name="E_32_16_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(3, AxisType.UPCAST)),), split=(32, 3, 4)) tag=1
+47 Ops.SINK dtypes.void [45] KernelInfo(name="E_32_16_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(3, AxisType.UPCAST)),), estimates=Estimates(ops=1536, lds=12416, mem=6464), split=(32, 3, 4)) tag=1
 48 Ops.LINEAR dtypes.void [0, 17, 20, 1, 2, 25, 26, 9, 10, 34, 35, 12, 13, 6, 7, 3, 4, 5, 18, 19, 8, 11, 14, 29, 30, 31, 38, 39, 40, 21, 22, 15, 27, 28, 36, 37, 16, 32, 41, 23, 33, 42, 24, 43, 44, 45, 46]
 49 Ops.SOURCE dtypes.void [] "\nvoid E_32_16_3(float* restrict data0_1536, float* restrict data1_32, float* restrict data2_48, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_32+alu0));\n    for (int Lidx1 = 0; Lidx1 < 16; Lidx1++) {\n      int alu1 = (Lidx1*3);\n      float val1 = (*(data2_48+(alu1+1)));\n      float val2 = (*(data2_48+(alu1+2)));\n      float val3 = (*(data2_48+alu1));\n      int alu2 = ((alu0*48)+alu1);\n      *(data0_1536+(alu2+1)) = (val0*val1);\n      *(data0_1536+(alu2+2)) = (val0*val2);\n      *(data0_1536+alu2) = (val0*val3);\n    }\n  }\n}\n"
 50 Ops.PROGRAM dtypes.void [47, 48, 49] ProgramInfo(global_size=(32, 1, 1), vars=(%1, %2), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

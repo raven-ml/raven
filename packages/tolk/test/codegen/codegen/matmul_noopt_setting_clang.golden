@@ -43,7 +43,7 @@
 41 Ops.STORE dtypes.void [13, 40]
 42 Ops.END dtypes.void [41, 11]
 43 Ops.END dtypes.void [42, 4]
-44 Ops.SINK dtypes.void [43] KernelInfo(name="r_16_16_16", split=16) tag=1
+44 Ops.SINK dtypes.void [43] KernelInfo(name="r_16_16_16", split=(16, 3, 4)) tag=1
 45 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
 46 Ops.AFTER dtypes.float [45, 5, 11]
 47 Ops.INDEX dtypes.float [46, 17]
@@ -60,8 +60,8 @@
 58 Ops.STORE dtypes.void [13, 57]
 59 Ops.END dtypes.void [58, 11]
 60 Ops.END dtypes.void [59, 4]
-61 Ops.SINK dtypes.void [60] KernelInfo(name="r_16_16_16", estimates=Estimates(ops=8192, lds=33792, mem=3072), split=16) tag=1
-62 Ops.SINK dtypes.void [60] KernelInfo(name="r_16_16_16", split=16) tag=1
+61 Ops.SINK dtypes.void [60] KernelInfo(name="r_16_16_16", estimates=Estimates(ops=8192, lds=33792, mem=3072), split=(16, 3, 4)) tag=1
+62 Ops.SINK dtypes.void [60] KernelInfo(name="r_16_16_16", split=(16, 3, 4)) tag=1
 63 Ops.LINEAR dtypes.void [0, 25, 29, 1, 2, 45, 19, 20, 16, 17, 9, 10, 6, 7, 3, 4, 5, 8, 11, 46, 47, 48, 22, 26, 27, 28, 30, 31, 32, 33, 49, 50, 51, 52, 53, 54, 55, 56, 57, 12, 13, 58, 59, 60, 62]
 64 Ops.SOURCE dtypes.void [] "\nvoid r_16_16_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<4);\n    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {\n      *(buf0+0) = 0.0f;\n      for (int Ridx0 = 0; Ridx0 < 16; Ridx0++) {\n        float val0 = (*(data1_256+(alu1+Ridx0)));\n        float val1 = (*(data2_256+((Ridx0<<4)+Lidx2)));\n        *(buf0+0) = __builtin_fmaf(val0,val1,(*(buf0+0)));\n      }\n      *(data0_256+(alu1+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
 65 Ops.PROGRAM dtypes.void [61, 63, 64] ProgramInfo(global_size=(16, 1, 1), vars=(%1, %2), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
