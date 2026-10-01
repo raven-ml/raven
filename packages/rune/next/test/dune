@@ -138,9 +138,9 @@
   (run %{exe:test_lower_reduce.exe} --tag slow)))
 
 ; The compiled backend, and the rules under the compiled call, run on the host
-; by default; their Metal tests, the rules' rows and the backend's cost figures
-; are slow. CACHEDB is a directory of the sandbox, so that every run compiles
-; its programs.
+; by default, their programs from the compile cache; their Metal tests, the
+; rules' rows and the backend's cost figures are slow. The slow alias sets
+; CACHEDB to a directory of the sandbox, so that it compiles every program.
 
 (tests
  (names test_compiled test_compiled_rules)
@@ -159,13 +159,8 @@
   nx.device
   nx.dtype
   tolk.next)
- (deps
-  (sandbox always))
  (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{test} --exclude-tag slow))))
+  (run %{test} --exclude-tag slow)))
 
 (rule
  (alias slow)
@@ -190,9 +185,8 @@
    (run %{exe:test_compiled_rules.exe} --tag slow))))
 
 ; The compiled call runs on the host and on test devices by default, and on
-; Metal in the slow alias. Its programs come from the compile cache, as the
-; other suites' do: the compiled backend's suite compiles every kernel afresh.
-; reports.t pins the lines RUNE_JIT_DEBUG prints, which the call reads once.
+; Metal in the slow alias, its programs from the compile cache. reports.t pins
+; the lines RUNE_JIT_DEBUG prints, which the call reads once.
 
 (test
  (name test_jit)
