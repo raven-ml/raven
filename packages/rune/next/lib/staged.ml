@@ -97,12 +97,8 @@ let queued p =
   match Nx.Placement.devices p with
   | [ d ] -> (
       let rd = Nx.Device.runtime d in
-      let h = Nx_device.host_of rd in
-      let named =
-        (Nx_device.name rd, rd)
-        :: (if h == rd then [] else [ (Nx_device.name h, h) ])
-      in
-      match Tolk_next_engine.device named (Nx_device.name rd) with
+      let n = Nx_device.name rd in
+      match Tolk_next_engine.device [ (n, rd) ] n with
       | device -> Option.is_some device.compiler.queues
       | exception Invalid_argument _ -> false)
   | _ -> false

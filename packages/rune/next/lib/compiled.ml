@@ -153,12 +153,6 @@ let lock = Mutex.create ()
 (* What a device's programs are compiled for, and the dtypes they compute. *)
 type target = { target : Helpers.Target.t; dtypes : Dtype.t list }
 
-(* The engine's view of [d], named [name], and of its host, named [host]. *)
-let engine_devices ~name ~host d =
-  let h = Nx_device.host_of d in
-  let named = if h == d then [ (name, d) ] else [ (name, d); (host, h) ] in
-  Engine.device named
-
 let runs_on d =
   d != Nx_device.disk
   &&
@@ -167,8 +161,7 @@ let runs_on d =
   | t ->
       t.device = "CPU"
       || Option.is_some
-           (engine_devices ~name:"DEVICE" ~host:"HOST" d "DEVICE").compiler
-             .queues
+           (Engine.device [ ("DEVICE", d) ] "DEVICE").compiler.queues
 
 (* [memo cell latch k make] is [k]'s value in [cell], made by [make] the first
    time, under [latch]. [cell] is read without [latch], which only guards its
@@ -203,14 +196,13 @@ let target what d =
 
 (* Programs *)
 
-(* A compiled program, in which its device and its host have the names [name]
-   and [host], the storage of the [i]th of its operands and destinations is the
-   parameter of slot [slots.(i)] ([-1] for an empty array), and its links on
-   each device it ran on, taken in turn. *)
+(* A compiled program, in which its device has the name [name], the storage of
+   the [i]th of its operands and destinations is the parameter of slot
+   [slots.(i)] ([-1] for an empty array), and its links on each device it ran
+   on, taken in turn. *)
 type program = {
   linear : Ops.t;
   name : string;
-  host : string;
   slots : int array;
   nslots : int;
   latch : Mutex.t;
@@ -224,11 +216,10 @@ type program = {
 let links = 16
 
 (* [compile key d] is the program of [key], compiled through [d], a device of
-   [key]'s target. It names its device after the target and its host [HOST]: a
-   link binds the names to the device it runs on. A program on the host names no
-   other device. *)
+   [key]'s target and host. It names its device after the target: a link binds
+   the name to the device it runs on, and the engine names its host. *)
 let compile (key : key) d =
-  let name = key.target.device and host = "HOST" in
+  let name = key.target.device in
   let device = Ops.Single name in
   (* Each layout's node, and its run's buffer if it has elements. *)
   let node (l : layout) =
@@ -255,7 +246,7 @@ let compile (key : key) d =
   in
   let linear, _ = Schedule.create_linear_with_vars (Ops.sink stores) in
   let buffers = List.filter_map snd (operands @ outs) in
-  let devices = engine_devices ~name ~host d in
+  let devices = Engine.device [ (name, d) ] in
   let linear =
     Jit.jit_lower
       ~devices:(fun n -> (devices n).compiler)
@@ -268,7 +259,6 @@ let compile (key : key) d =
   {
     linear;
     name;
-    host;
     slots = Array.of_list (List.map (fun (_, b) -> slot b) (operands @ outs));
     nslots = List.length buffers;
     latch = Mutex.create ();
@@ -279,15 +269,17 @@ let compile (key : key) d =
 let link p d =
   let links, next =
     memo p.links p.latch d @@ fun () ->
-    let devices = engine_devices ~name:p.name ~host:p.host d in
+    let devices = Engine.device [ (p.name, d) ] in
     (Array.init links (fun _ -> Engine.link ~devices p.linear), Atomic.make 0)
   in
   links.(Atomic.fetch_and_add next 1 mod Array.length links)
 
-(* Hashed through the whole key: [Hashtbl.hash] stops before most of its shapes,
-   and keys that differ only there would share a bucket. *)
+(* By the name of the host of the device a program compiled through, which its
+   host programs name, and its key. Hashed through the whole key: [Hashtbl.hash]
+   stops before most of its shapes, and keys that differ only there would share
+   a bucket. *)
 module Programs = Memo.Make (struct
-  type t = key
+  type t = string * key
 
   let equal = ( = )
   let hash = Hashtbl.hash_param 256 512
@@ -309,7 +301,8 @@ let check what t d arrays layouts =
 (* The program of [key], compiled the first time, once its dtypes are checked: a
    program that exists passed the check. *)
 let program what key t d arrays dsts =
-  Programs.find programs key
+  Programs.find programs
+    (Nx_device.name (Nx_device.host_of d), key)
     ~miss:(fun () -> check what t d (arrays @ dsts) (key.inputs @ key.outputs))
     (fun () ->
       Nx_device.Profile.span ("compile " ^ what) (fun () -> compile key d))

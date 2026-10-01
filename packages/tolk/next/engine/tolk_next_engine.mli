@@ -70,7 +70,8 @@ val device : (string * Nx_device.t) list -> string -> device
     ["DISK"]. A Metal, CUDA, AMD or NV device has the command queues of its
     vendor ({!Tolk_next.Ops_metal}, {!Tolk_next.Ops_cuda}, {!Tolk_next.Ops_amd},
     {!Tolk_next.Ops_nv}), submitted by host programs of the host of its machine
-    ({!Nx_device.host_of}), which [devices] must name, and gives the storage its
+    ({!Nx_device.host_of}), under the name [devices] gives it, or under its own
+    ({!Nx_device.name}) when [devices] gives it none, and gives the storage its
     commands name: Metal's objects, selectors, indirect command buffers and
     stamps and the address of [objc_msgSend]; CUDA's context, streams,
     functions, stamping function and the driver's entry points; AMD's rings and
@@ -84,11 +85,11 @@ val device : (string * Nx_device.t) list -> string -> device
     that runs work from queues of its own, such as a test of the compiler, makes
     a {!device} of its own.
 
-    Raises [Invalid_argument] if [devices] does not map [name], or does not name
-    the host of a Metal, CUDA, AMD or NV device, [Failure] with nx.device's
-    reason when an AMD or NV device refuses a program's code object at link, and
-    {!Nx_device.Out_of_memory} when an NV device cannot grow its local memory
-    for a batch it links. *)
+    Raises [Invalid_argument] if [devices] does not map [name], or gives the
+    name of an unnamed host of a Metal, CUDA, AMD or NV device to another
+    device, [Failure] with nx.device's reason when an AMD or NV device refuses a
+    program's code object at link, and {!Nx_device.Out_of_memory} when an NV
+    device cannot grow its local memory for a batch it links. *)
 
 (** {1:programs Host programs} *)
 

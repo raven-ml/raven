@@ -132,6 +132,15 @@ let describing =
           is_true (Option.is_none d.compiler.queues));
       test "a name the map does not hold is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () -> devices "CPU:9"));
+      test
+        "a device's host that the map does not name is named after itself, and \
+         a named one is not" (fun () ->
+          let d = Lazy.force unmapped in
+          is_true ~msg:"unnamed"
+            (Nx_device.equal Nx_device.host
+               (Engine.device [ ("X", d) ] "CPU").device);
+          raises_match ~msg:"named H" Exn.invalid_arg (fun () ->
+              Engine.device [ ("X", d); ("H", host) ] "CPU"));
     ]
 
 (* Host programs
@@ -1751,6 +1760,19 @@ let metal =
     [
       group "recorded"
         (List.map computes_on_metal [ "copy"; "copy_one"; "copy_view" ]);
+      slow "a batch whose names omit the host runs, the engine naming it"
+        (fun () ->
+          let on name =
+            match Metal.device with
+            | None -> skip ~reason:"no Metal device" ()
+            | Some m -> Engine.device [ ("CPU:1", m) ] name
+          in
+          let big = program "copy" in
+          let s, vars, storage = linked ~devices:on big in
+          Engine.run ~vars s (slots storage);
+          equal slot_values
+            (expected ~vars big storage)
+            (by_slot storage contents));
       cases ~tags:[ "slow" ] ~name:Fun.id
         "a batch runs on the buffers each run binds to its parameters"
         [ "copy"; "copy_view" ] (fun name ->

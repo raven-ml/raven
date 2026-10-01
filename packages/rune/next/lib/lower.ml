@@ -463,17 +463,8 @@ let parameter s ~slot p dt shape =
 (* The engine's devices *)
 
 let engine s =
-  let named = List.map (fun (n, d) -> (n, Device.runtime d)) (devices s) in
-  let hosts =
-    List.fold_left
-      (fun hosts (_, d) ->
-        let h = Nx_device.host_of d in
-        let n = Nx_device.name h in
-        if List.mem_assoc n named || List.mem_assoc n hosts then hosts
-        else (n, h) :: hosts)
-      [] named
-  in
-  Tolk_next_engine.device (named @ hosts)
+  Tolk_next_engine.device
+    (List.map (fun (n, d) -> (n, Device.runtime d)) (devices s))
 
 (* Captures *)
 

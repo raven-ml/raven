@@ -53,7 +53,21 @@ type device = {
    its commands name and its refresh inside each submission. *)
 let vendors = [ Metal.queues; Cuda.queues; Amd.queues; Nv.queues ]
 
+(* [devices] with the host of each of its devices that none of its names names,
+   under the host's own name. *)
+let with_hosts devices =
+  List.fold_left
+    (fun devices (_, d) ->
+      let h = Nx_device.host_of d in
+      let n = Nx_device.name h in
+      if
+        List.exists (fun (_, d') -> d' == h) devices || List.mem_assoc n devices
+      then devices
+      else devices @ [ (n, h) ])
+    devices devices
+
 let device devices name =
+  let devices = with_hosts devices in
   let d = find "device" devices name in
   (* The disk runs no program: its copies are the runtime's. *)
   let target =
