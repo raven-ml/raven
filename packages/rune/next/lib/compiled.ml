@@ -170,27 +170,12 @@ let runs_on d =
            (engine_devices ~name:"DEVICE" ~host:"HOST" d "DEVICE").compiler
              .queues
 
-(* [memo cell latch k make] is [k]'s value in [cell], made by [make] the first
-   time, under [latch]. [cell] is read without [latch], which only guards its
-   additions. *)
-let memo cell latch k make =
-  match List.assq_opt k (Atomic.get cell) with
-  | Some v -> v
-  | None -> (
-      Mutex.protect latch @@ fun () ->
-      match List.assq_opt k (Atomic.get cell) with
-      | Some v -> v
-      | None ->
-          let v = make () in
-          Atomic.set cell ((k, v) :: Atomic.get cell);
-          v)
-
 let targets = Atomic.make []
 
 (* [target what d] is [d]'s target, for the kernel [what], which refuses a
    device the backend does not run on. *)
 let target what d =
-  memo targets lock d @@ fun () ->
+  Memo.assoc targets lock d @@ fun () ->
   if not (runs_on d) then
     refuse what "%s runs no compiled program" (Nx_device.name d);
   let target = Engine.target d in
@@ -278,26 +263,22 @@ let compile (key : key) d =
 (* [p]'s next link on [d], linked there the first time. *)
 let link p d =
   let links, next =
-    memo p.links p.latch d @@ fun () ->
+    Memo.assoc p.links p.latch d @@ fun () ->
     let devices = engine_devices ~name:p.name ~host:p.host d in
     (Array.init links (fun _ -> Engine.link ~devices p.linear), Atomic.make 0)
   in
   links.(Atomic.fetch_and_add next 1 mod Array.length links)
 
-(* The compiled programs, by key, each compiled once under its own latch, so
-   that keys compile concurrently. *)
-type entry = { latch : Mutex.t; compiled : program option Atomic.t }
-
 (* Hashed through the whole key: [Hashtbl.hash] stops before most of its shapes,
    and keys that differ only there would share a bucket. *)
-module Programs = Hashtbl.Make (struct
+module Programs = Memo.Make (struct
   type t = key
 
   let equal = ( = )
   let hash = Hashtbl.hash_param 256 512
 end)
 
-let programs : entry Programs.t = Programs.create 64
+let programs : program Programs.t = Programs.create ()
 
 (* [check what t d arrays layouts] refuses a dtype that [t], the target of [d],
    does not compute. *)
@@ -313,37 +294,13 @@ let check what t d arrays layouts =
 (* The program of [key], compiled the first time, once its dtypes are checked: a
    program that exists passed the check. *)
 let program what key t d arrays dsts =
-  let e =
-    Mutex.protect lock @@ fun () ->
-    match Programs.find_opt programs key with
-    | Some e -> e
-    | None ->
-        check what t d (arrays @ dsts) (key.inputs @ key.outputs);
-        let e = { latch = Mutex.create (); compiled = Atomic.make None } in
-        Programs.add programs key e;
-        e
-  in
-  match Atomic.get e.compiled with
-  | Some p -> p
-  | None -> (
-      Mutex.protect e.latch @@ fun () ->
-      match Atomic.get e.compiled with
-      | Some p -> p
-      | None ->
-          let p =
-            Nx_device.Profile.span ("compile " ^ what) (fun () -> compile key d)
-          in
-          Atomic.set e.compiled (Some p);
-          p)
+  Programs.find programs key
+    ~miss:(fun () -> check what t d (arrays @ dsts) (key.inputs @ key.outputs))
+    (fun () ->
+      Nx_device.Profile.span ("compile " ^ what) (fun () -> compile key d))
 
 (* The buffer of the run of [a]'s storage its parameter binds. *)
-let slice (A a) =
-  let dt = Option.get (Lower.dtype a.dtype) in
-  let start, span = Lower.span dt a.view in
-  B.view a.buffer
-    ~offset:(start * Dtype.itemsize dt)
-    (Nx_dtype.Scalar.of_dtype a.dtype)
-    span
+let slice (A a) = Lower.run (Option.get (Lower.dtype a.dtype)) a.view a.buffer
 
 (* [run what op arrays dsts] computes [op] over [arrays] into [dsts], on the
    device of [dsts]. *)
