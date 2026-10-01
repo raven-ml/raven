@@ -513,7 +513,8 @@ let unmap_peer g m = uvm_unmap g m.va m.size
 
 (* Host memory mapped for borrows: each range is described to RM once, by the
    first GPU to map it, and mapped for each GPU that borrows it; the last
-   unmapping frees the range and the description. *)
+   unmapping frees the range and the description. A range covers whole pages,
+   which unified memory requires of its bounds. *)
 type range = {
   addr : int;
   bytes : int;
@@ -526,7 +527,7 @@ let ranges : (int, range) Hashtbl.t = Hashtbl.create 16
 let ranges_lock = Mutex.create ()
 
 let map_host g a n =
-  let a = Nativeint.to_int a in
+  let a = Nativeint.to_int a and n = round_up n page in
   Mutex.protect ranges_lock (fun () ->
       match Hashtbl.find_opt ranges a with
       | Some r when r.bytes = n -> (
