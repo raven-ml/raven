@@ -1559,7 +1559,8 @@ val item : int list -> ('a, 'b) t -> 'a
 
 val take : ?axis:int -> indices:int64_t -> ('a, 'b) t -> ('a, 'b) t
 (** [take ?axis ~indices t] gathers elements from [t] at [indices] along [axis].
-    When [axis] is omitted, [t] is flattened first. An index outside \[[0],
+    When [axis] is omitted, [t] is flattened first, and the result has
+    [indices]' shape. An index outside \[[0],
     [size]), negative included, reads zero, eagerly and under [Rune.jit] alike;
     wrap indices with [mod_ (add_s i n) n] or clamp them with {!clamp} yourself.
     At an integer dtype the zero read is index [0]: mask with the index's range

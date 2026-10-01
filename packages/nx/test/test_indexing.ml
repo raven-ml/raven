@@ -105,6 +105,33 @@ let gathers =
                  src.(axis) <- idx.(Ref.ravel s i);
                  read r src))
             (Ref.of_nx (Nx.take_along_axis ~axis ~indices t)));
+      prop "take without an axis gives a value of the indices' shape"
+        ~examples:
+          [ ([| 3 |], [||], [| 1 |]); ([| 2; 2 |], [| 2; 1 |], [| 3; 5 |]) ]
+        (let open Gen in
+         with_pp (fun ppf (s, at, idx) ->
+             let ints a =
+               String.concat "; " (Array.to_list (Array.map string_of_int a))
+             in
+             Format.fprintf ppf "([|%s|], [|%s|], [|%s|])" (ints s) (ints at)
+               (ints idx))
+         @@ let* s = shape in
+            let* at = array ~size:(int_range 0 3) (int_range 0 3) in
+            let+ idx =
+              array ~size:(constant (Ref.numel at)) (index (Ref.numel s))
+            in
+            (s, at, idx))
+        (fun (s, at, idx) ->
+          cover "scalar indices" (at = [||]);
+          cover "indices of rank 2 or more" (Array.length at >= 2);
+          let r, t = tensor_of s in
+          let n = Ref.numel s in
+          let indices = Nx.create Nx.int64 at (Array.map Int64.of_int idx) in
+          equal ints
+            (Ref.init at (fun i ->
+                 let k = idx.(Ref.ravel at i) in
+                 if k >= 0 && k < n then r.data.(k) else 0l))
+            (Ref.of_nx (Nx.take ~indices t)));
       test "take without an axis reads a transposed tensor" (fun () ->
           let r, t = tensor_of [| 2; 3 |] in
           let indices = [| 1; 4 |] in

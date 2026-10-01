@@ -2989,6 +2989,8 @@ thread.
 
 ### Nx
 
+- `Nx.take` without an axis returns a value of the indices' shape. It raised
+  for scalar or multi-dimensional indices.
 - **Breaking:** `Nx_amd_device.counting` is `Nx_amd_device.profiling`, which
   also traces: each shader engine writes a thread trace of each kernel run, read
   as a `Profile.Trace` per engine, and on GFX11 and GFX12 each wave is a span on

@@ -1570,7 +1570,9 @@ let triu ?k x = triangular_mask ~op:"triu" ~cmp:less_equal ?k x
 
 let take ?axis ~indices t =
   match axis with
-  | None -> B.gather ~axis:0 indices (flatten t)
+  | None ->
+      let flat = reshape [| numel indices |] indices in
+      reshape (shape indices) (B.gather ~axis:0 flat (flatten t))
   | Some axis ->
       let t_shape = shape t in
       let axis = resolve_single_axis t axis in
