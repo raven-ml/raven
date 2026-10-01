@@ -908,6 +908,13 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** tolk is a new port of tinygrad's compiler, at the tinygrad
+  commit its test generator pins, running on `nx.device`'s runtimes. It
+  replaces the first port: `tolk.uop`, `tolk.frontend`, `tolk.nn`, `tolk.cpu`,
+  `tolk.cuda`, `tolk.metal`, `tolk.amd`, `tolk.hcq`, `tolk.nv` and
+  `tolk.nvrtc` go, and the libraries are `tolk` and `tolk.engine` (modules
+  `Tolk` and `Tolk_engine`). Tensors, devices and buffers are nx's, and rune
+  compiles through it.
 - Tolk no longer depends on Zarith, and so needs no GMP on the system. Its
   exact integers, the values of integer constants, dtype limits and bounds,
   are `Bigint.t`, an arbitrary-precision integer in pure OCaml with the names
