@@ -1,0 +1,9 @@
+(library
+ (name hugin_next_vg_pdf)
+ (public_name hugin.next.vg.pdf)
+ (libraries hugin.next.vg hugin.next.gg hugin.next.font nx nx.io)
+ (modules_without_implementation hugin_next_vg_pdf)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))
