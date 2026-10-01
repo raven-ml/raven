@@ -1665,16 +1665,34 @@ let vector_select_kernel () =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ l ]) (Ops.cast sum Int8)) [ l ] ]
 
+(* An unfold of a float16 whose windows all read padding, as rune lowered it
+   before it lowered such an unfold to zeros: a weak 0. stored into each
+   element. Upcast, the store is one store of four lanes, and the weak lowering
+   casts the float32 stack of the constant's lanes to half, which tinygrad
+   renders as a cast between vector types that Clang refuses. *)
+let half_zeros_kernel () =
+  let open Ops.O in
+  let out = Ops.param ~shape:[ Int 4 ] 0 Float16 in
+  let r0 = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
+  let r1 = Ops.range ~axis_type:Weak (Int 2) [ 1 ] in
+  let store = Ops.store (Ops.index out [ (r0 * int 2) + r1 ]) (float 0.) in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ r0; r1 ] ]
+
+let refused_on_a_cast kernel () =
+  Helpers.context
+    [ B (Helpers.spec, 1) ]
+    (fun () ->
+      raises_match
+        (Exn.invalid_arg ~substring:"on Ops.CAST")
+        (fun () -> Codegen.to_program kernel clang))
+
 let vectors =
   group "vectors in programs (D58)"
     [
-      test "a cast left on two lanes after devectorize is refused" (fun () ->
-          Helpers.context
-            [ B (Helpers.spec, 1) ]
-            (fun () ->
-              raises_match
-                (Exn.invalid_arg ~substring:"on Ops.CAST")
-                (fun () -> Codegen.to_program (vector_select_kernel ()) clang)));
+      test "a cast left on two lanes after devectorize is refused"
+        (refused_on_a_cast (vector_select_kernel ()));
+      test "a weak constant stored into four lanes of half is refused"
+        (refused_on_a_cast (half_zeros_kernel ()));
       group "no program applies an elementwise operation to a vector"
         (per_row ~only:compiles applies_no_elementwise_operation_to_a_vector);
     ]

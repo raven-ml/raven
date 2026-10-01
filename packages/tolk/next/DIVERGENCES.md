@@ -1695,9 +1695,9 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Spec` suite (`test/uop/spec`): `vectors in programs
   (D58) › a program has no elementwise operation on a vector` (add, cast and
   where on two lanes, and the same on one); the `Codegen` suite's `vectors in
-  programs (D58) › a cast left on two lanes after devectorize is refused`
-  and, on every case, `› no program applies an elementwise operation to a
-  vector`.
+  programs (D58) › a cast left on two lanes after devectorize is refused`,
+  `› a weak constant stored into four lanes of half is refused` and, on every
+  case, `› no program applies an elementwise operation to a vector`.
 
 ## D60. A loop of a call stays in the schedule
 
