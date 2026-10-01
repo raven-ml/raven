@@ -972,7 +972,9 @@ static const nx_c_map_table nx_c_where_table = {
 
 /* A float takes the libm multiply-add of its compute type, rounded once: float16,
    bfloat16 and float8 take float32's and round again on the store. An integer
-   wraps, its signed forms running in the unsigned width as add and mul do. */
+   wraps, its signed forms running in the unsigned width as add and mul do. As
+   in NX_C_BK, a contiguous run with one operand broadcast (a 0 step) loads that
+   operand once, outside a loop that still vectorizes. */
 #define NX_C_FMAK(sfx, storage, compute, ld, st, EXPR)                          \
   static void nx_c_fma_##sfx(char *const *pp, const int64_t *ssx, int64_t nn,   \
                             void *ctx) {                                       \
@@ -990,6 +992,36 @@ static const nx_c_map_table nx_c_where_table = {
         compute va = (compute)ld(pA[i]);                                       \
         compute vb = (compute)ld(pB[i]);                                       \
         compute vc = (compute)ld(pC[i]);                                       \
+        pO[i] = (storage)st(EXPR);                                             \
+      }                                                                        \
+    } else if (so == es && sa == 0 && sb == es && sc == es) {                 \
+      storage *pO = (storage *)out;                                           \
+      const compute va = nx_c_ld_##sfx(in0);                                  \
+      const storage *pB = (const storage *)in1;                               \
+      const storage *pC = (const storage *)in2;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute vb = (compute)ld(pB[i]);                                       \
+        compute vc = (compute)ld(pC[i]);                                       \
+        pO[i] = (storage)st(EXPR);                                             \
+      }                                                                        \
+    } else if (so == es && sa == es && sb == 0 && sc == es) {                 \
+      storage *pO = (storage *)out;                                           \
+      const storage *pA = (const storage *)in0;                               \
+      const compute vb = nx_c_ld_##sfx(in1);                                  \
+      const storage *pC = (const storage *)in2;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = (compute)ld(pA[i]);                                       \
+        compute vc = (compute)ld(pC[i]);                                       \
+        pO[i] = (storage)st(EXPR);                                             \
+      }                                                                        \
+    } else if (so == es && sa == es && sb == es && sc == 0) {                 \
+      storage *pO = (storage *)out;                                           \
+      const storage *pA = (const storage *)in0;                               \
+      const storage *pB = (const storage *)in1;                               \
+      const compute vc = nx_c_ld_##sfx(in2);                                  \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = (compute)ld(pA[i]);                                       \
+        compute vb = (compute)ld(pB[i]);                                       \
         pO[i] = (storage)st(EXPR);                                             \
       }                                                                        \
     } else {                                                                   \

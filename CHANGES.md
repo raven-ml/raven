@@ -3019,6 +3019,9 @@ thread.
 
 ### Nx
 
+- `Nx.fma` with one operand broadcast from a single element runs about 3 times
+  faster on the host. That operand is loaded once and the loop vectorizes,
+  where it took the strided scalar loop before.
 - `Nx.imag`, `Nx.angle` and `Nx.conjugate` keep non-finite components and
   signed zeros: `imag` of `1 + ∞i` was NaN, and `conjugate` of `1 + 0i` had an
   imaginary part of `0.`. Components are now read through `Nx.bitcast`.
