@@ -25,9 +25,13 @@
    but what they generate is noise: it rarely opens a message, so a prompt
    usually prints nothing but the timings.
 
+   With [--profile FILE], the prompt's call is profiled and its events written
+   to [FILE] in Chrome's trace format: on its first call the step is traced and
+   compiled, so the profile shows what that costs.
+
    Usage: main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--count N]
-   [--prompt TEXT [--system TEXT] [--reasoning low|medium|high]
-   [--show-analysis]]. *)
+   [--profile FILE] [--prompt TEXT [--system TEXT]
+   [--reasoning low|medium|high] [--show-analysis]]. *)
 
 open Kaun
 
@@ -47,10 +51,23 @@ let fixed_prompt =
     2359L;
   |]
 
+(* [profiled file f] is [f ()]. Under [Some file], it writes the profile of
+   [f ()] to [file]. *)
+let profiled file f =
+  match file with
+  | None -> f ()
+  | Some file ->
+      let p = Nx_device.Profile.start () in
+      let r = f () in
+      let events = Nx_device.Profile.stop p in
+      Out_channel.with_open_bin file (fun oc ->
+          Nx_device.Profile.output_chrome_trace oc events);
+      r
+
 (* [on_token] sees every generated token as it arrives and says whether to stop.
    With [devices], the step compiles for them and the caches are placed there as
-   the parameters are. *)
-let generate ?devices cfg params dt ~log ~count ~on_token prompt =
+   the parameters are. Under [profile], the prompt's call is profiled. *)
+let generate ?devices ?profile cfg params dt ~log ~count ~on_token prompt =
   let placement = Option.map Nx.Placement.replicated devices in
   let step = Layer_loop.greedy ?placement cfg params in
   let timed caches index ids =
@@ -63,12 +80,13 @@ let generate ?devices cfg params dt ~log ~count ~on_token prompt =
   let context = n0 + count in
   let index = Cache_index.rows ~context [| n0 |] in
   let first, caches, prefill =
-    timed
-      (Gpt_oss.cache
-         ?placement:(Option.map Gpt_oss.expert_parallel devices)
-         cfg ~slots:context dt)
-      index
-      (Nx.create Nx.int64 [| 1; n0 |] prompt)
+    profiled profile (fun () ->
+        timed
+          (Gpt_oss.cache
+             ?placement:(Option.map Gpt_oss.expert_parallel devices)
+             cfg ~slots:context dt)
+          index
+          (Nx.create Nx.int64 [| 1; n0 |] prompt))
   in
   Printf.fprintf log "prefill of %d tokens: %.3f s\n%!" n0 prefill;
   let out = Array.make count first in
@@ -128,6 +146,7 @@ let effort_of_string = function
 let () =
   let repo = ref "tiny-random/gpt-oss-mxfp4" in
   let devices = ref "" and count = ref 0 and dtype = ref "" in
+  let profile = ref "" in
   let prompt = ref "" and system = ref "" and reasoning = ref "medium" in
   let show_analysis = ref false in
   Arg.parse
@@ -146,6 +165,10 @@ let () =
       ( "--count",
         Arg.Set_int count,
         "Most tokens to generate (default: 16, or 256 for a prompt)" );
+      ( "--profile",
+        Arg.Set_string profile,
+        "Write the profile of the prompt's call to this file, in Chrome's \
+         trace format" );
       ("--prompt", Arg.Set_string prompt, "What the user says");
       ("--system", Arg.Set_string system, "Instructions for the model");
       ("--reasoning", Arg.Set_string reasoning, "low, medium (default) or high");
@@ -155,7 +178,8 @@ let () =
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--count N] \
-     [--prompt TEXT [--system TEXT] [--reasoning EFFORT] [--show-analysis]]";
+     [--profile FILE] [--prompt TEXT [--system TEXT] [--reasoning EFFORT] \
+     [--show-analysis]]";
   let effort = effort_of_string !reasoning in
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config !repo) in
   let ckpt = Kaun_hf.load_checkpoint !repo in
@@ -168,6 +192,7 @@ let () =
     if !devices = "" then None else Some (Devices.parse !devices)
   in
   let count default = if !count > 0 then !count else default in
+  let profile = if !profile = "" then None else Some !profile in
   let log = if !prompt = "" then stdout else stderr in
   let t0 = Unix.gettimeofday () in
   let params =
@@ -179,7 +204,7 @@ let () =
     (Unix.gettimeofday () -. t0);
   if !prompt = "" then
     let out =
-      generate ?devices cfg params dt ~log ~count:(count 16)
+      generate ?devices ?profile cfg params dt ~log ~count:(count 16)
         ~on_token:(fun _ -> false)
         fixed_prompt
     in
@@ -196,7 +221,8 @@ let () =
     in
     let on_token = printer harmony ~show_analysis:!show_analysis in
     let out =
-      generate ?devices cfg params dt ~log ~count:(count 256) ~on_token
+      generate ?devices ?profile cfg params dt ~log ~count:(count 256)
+        ~on_token
         (Array.map Int64.of_int ids)
     in
     print_newline ();
