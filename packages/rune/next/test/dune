@@ -140,7 +140,8 @@
 ; The compiled backend, and the rules under the compiled call, run on the host
 ; by default, their programs from the compile cache; their Metal tests, the
 ; rules' rows and the backend's cost figures are slow. The slow alias sets
-; CACHEDB to a directory of the sandbox, so that it compiles every program.
+; CACHEDB to a directory of the sandbox, so that it compiles every program: it is
+; the check of compilation from a cold cache.
 
 (tests
  (names test_compiled test_compiled_rules)
