@@ -9,6 +9,13 @@ module Path = struct
   type seg = Field of string | Index of int
   type t = Root | Dot of t * string | At of t * int
 
+  let root = Root
+
+  let add seg p =
+    match seg with Field name -> Dot (p, name) | Index i -> At (p, i)
+
+  let v segs = List.fold_left (fun p seg -> add seg p) Root segs
+
   let segments p =
     let rec go acc = function
       | Root -> acc

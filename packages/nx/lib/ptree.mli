@@ -64,6 +64,17 @@ module Path : sig
   (** The type for paths. The root path has no segments. [Some] and a variant's
       case add no segment. *)
 
+  val root : t
+  (** [root] is the path with no segments. *)
+
+  val v : seg list -> t
+  (** [v segs] is the path with segments [segs], from the root. [v []] is
+      {!root}. *)
+
+  val add : seg -> t -> t
+  (** [add seg p] is [p] extended with [seg]: its segments are [p]'s followed by
+      [seg]. It takes constant time and shares [p]. *)
+
   val segments : t -> seg list
   (** [segments p] is [p]'s segments, from the root. *)
 

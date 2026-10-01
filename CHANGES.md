@@ -2901,6 +2901,10 @@ thread.
 
 ### Nx
 
+- `Nx.Ptree.Path.root`, `Nx.Ptree.Path.v` and `Nx.Ptree.Path.add` construct
+  paths, which code outside nx could only receive from a walk. A path can now
+  be written literally and compared with the one a walk gives, as in
+  `Path.equal p (Path.v [ Field "out"; Field "w" ])`.
 - `Nx.Device.runtime` is the runtime device whose buffers hold a device's
   placed values, the inverse of `Nx.Device.of_runtime`, for compiled calls
   that allocate on the devices their trace names.

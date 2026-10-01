@@ -506,6 +506,162 @@ let chosen =
             = [ P.Read; P.Consumed ]));
     ]
 
+(* Constructed paths *)
+
+let pp_seg ppf = function
+  | P.Path.Field name -> Format.fprintf ppf "Field %S" name
+  | P.Path.Index i -> Format.fprintf ppf "Index %d" i
+
+let seg = Testable.make ~pp:pp_seg ~equal:( = )
+
+(* A path prints as its segments, which tell apart paths that print alike. *)
+let path =
+  Testable.make ~equal:P.Path.equal ~pp:(fun ppf p ->
+      Testable.pp (list seg) ppf (P.Path.segments p))
+
+(* An equal segment whose name is held in another string. *)
+let fresh = function
+  | P.Path.Field name -> P.Path.Field (Bytes.to_string (Bytes.of_string name))
+  | Index _ as seg -> seg
+
+let seg_gen =
+  let open Gen in
+  with_pp pp_seg
+    (frequency
+       [
+         ( 2,
+           map
+             (fun name -> P.Path.Field name)
+             (one_of
+                [
+                  of_list
+                    [ ""; "."; "a.b"; "a"; "b"; "\xc3\xa9t\xc3\xa9"; "\000" ];
+                  string;
+                ]) );
+         ( 2,
+           map
+             (fun i -> P.Path.Index i)
+             (one_of
+                [
+                  int_range (-1) 3;
+                  of_list [ min_int; min_int + 1; max_int - 1; max_int ];
+                ]) );
+       ])
+
+let segs_gen = Gen.list ~size:(Gen.int_range 0 6) seg_gen
+
+(* Segment lists one edit away from [segs]: one segment replaced, the last
+   dropped, one more appended, or an index turned into the field that prints
+   like it. *)
+let neighbour_gen segs =
+  let open Gen in
+  let n = List.length segs in
+  let replace i seg = List.mapi (fun j s -> if j = i then seg else s) segs in
+  let indices =
+    List.concat
+      (List.mapi
+         (fun j -> function P.Path.Index i -> [ (j, i) ] | Field _ -> [])
+         segs)
+  in
+  let appended = map (fun seg -> segs @ [ seg ]) seg_gen in
+  let edits =
+    if n = 0 then []
+    else
+      [
+        bind (int_range 0 (n - 1)) (fun i -> map (replace i) seg_gen);
+        constant (List.filteri (fun j _ -> j < n - 1) segs);
+      ]
+  in
+  let renamed =
+    if indices = [] then []
+    else
+      [
+        map
+          (fun (j, i) -> replace j (P.Path.Field (Int.to_string i)))
+          (of_list indices);
+      ]
+  in
+  one_of ((appended :: edits) @ renamed)
+
+let rec is_prefix a b =
+  match (a, b) with
+  | [], _ -> true
+  | x :: a, y :: b -> x = y && is_prefix a b
+  | _ :: _, [] -> false
+
+let walked s x = List.rev (P.fold s (fun p _ acc -> p :: acc) x [])
+
+let constructed =
+  group "constructed paths"
+    [
+      prop "segments of v is the list v was given" segs_gen (fun segs ->
+          Law.round_trip (list seg) path P.Path.v P.Path.segments segs);
+      prop "add appends one segment and agrees with v"
+        (Gen.pair segs_gen seg_gen) (fun (segs, s) ->
+          let p = P.Path.add s (P.Path.v segs) in
+          equal (list seg) (segs @ [ s ]) (P.Path.segments p);
+          equal path (P.Path.v (segs @ [ s ])) p);
+      prop "v of a walked path's segments is that path" trees (fun x ->
+          let ps = walked tree x in
+          cover "a path of two segments or more"
+            (List.exists (fun p -> List.length (P.Path.segments p) >= 2) ps);
+          List.iter (Law.round_trip path (list seg) P.Path.segments P.Path.v) ps);
+      prop "constructed paths are equal exactly when their segments are"
+        ~count:300
+        ~examples:
+          P.Path.
+            [
+              ([ Field "a"; Field "w" ], [ Field "b"; Field "w" ]);
+              ([ Index 0; Index 1 ], [ Index 2; Index 1 ]);
+              ([ Index 0; Index 1 ], [ Index 0 ]);
+              ([ Index 1 ], [ Field "1" ]);
+            ]
+        (Gen.with_pp
+           (Testable.pp (pair (list seg) (list seg)))
+           (Gen.frequency
+              [
+                (1, Gen.map (fun a -> (a, a)) segs_gen);
+                ( 3,
+                  Gen.bind segs_gen (fun a ->
+                      Gen.map (fun b -> (a, b)) (neighbour_gen a)) );
+                (1, Gen.pair segs_gen segs_gen);
+              ]))
+        (fun (a, b) ->
+          let last l = List.nth_opt (List.rev l) 0 in
+          cover "equal" (a = b);
+          cover "differ before the last segment"
+            (a <> b
+            && List.length a = List.length b
+            && a <> []
+            && last a = last b);
+          cover "one is a prefix of the other"
+            (a <> b && (is_prefix a b || is_prefix b a));
+          cover "differ and print alike"
+            (a <> b
+            && String.equal
+                 (P.Path.to_string (P.Path.v a))
+                 (P.Path.to_string (P.Path.v b)));
+          let p = P.Path.v a and q = P.Path.v (List.map fresh b) in
+          Law.equivalence path (p, q);
+          equal bool (a = b) (P.Path.equal p q));
+      test "the root has no segments and is v of no segments" (fun () ->
+          equal (list seg) [] (P.Path.segments P.Path.root);
+          equal path P.Path.root (P.Path.v []));
+      test "constructed paths equal the paths a walk gives" (fun () ->
+          let x = vec [| 1. |] in
+          let field name = fresh (Field name) in
+          equal (list path) [ P.Path.root ] (walked P.tensor x);
+          equal (list path) [ P.Path.v [ field "a.b" ] ] (walked dotted x);
+          equal (list path)
+            [ P.Path.(add (field "b") (add (field "a") root)) ]
+            (walked nested x);
+          equal (list path)
+            P.Path.[ v [ Index 0; Index 1 ]; v [ Index 1; Index 1 ] ]
+            (walked
+               P.(list (pair (option tensor) tensor))
+               [ (None, x); (None, x) ]));
+    ]
+
 (* Errors *)
 
 module Packed_list = struct
@@ -595,4 +751,4 @@ let errors =
     ]
     (fun (m, f) -> raises (Invalid_argument m) f)
 
-let () = exit (run "nx ptree" [ laws; chosen; errors ])
+let () = exit (run "nx ptree" [ laws; chosen; constructed; errors ])
