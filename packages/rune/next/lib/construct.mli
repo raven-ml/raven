@@ -126,3 +126,8 @@ val perform : 'r t -> 'r
 (** [perform c] is the answer of the nearest installation that takes [c], or
     [c]'s default, computed at the call, when none does. An exception an
     installation answers with is raised here. *)
+
+val scan : Scan.request -> Scan.result
+(** [scan r] is [perform (Scan r)], or, when [r] is declined with
+    {!Scan.Not_staged}, [Scan.fold r] at the call, inside every installation
+    around it. *)

@@ -87,6 +87,11 @@ let perform c =
   | r -> r
   | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> default c
 
+let scan r =
+  match perform (Scan r) with
+  | r -> r
+  | exception Scan.Not_staged -> Scan.fold r
+
 let resume answer k =
   match answer () with
   | r -> Effect.Deep.continue k r

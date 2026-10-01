@@ -229,23 +229,6 @@ let run : type r. t -> r Nx.Op.t -> r =
 
 (* Constructs *)
 
-(* [relanes m flags x] is [x], a value of [s], with the tensors at [flags] made
-   lanes of [m]. *)
-let relanes m s flags x =
-  let leaves, _ = Nx.Ptree.flatten s x in
-  Nx.Ptree.rebuild s ~like:x
-    (List.map2
-       (fun f (Nx.P x) -> if f then Nx.P (lane m x) else Nx.P x)
-       flags leaves)
-
-let lanes_of m s x =
-  List.map (fun (Nx.P x) -> owns m x) (fst (Nx.Ptree.flatten s x))
-
-let physicals m s x = Nx.Ptree.map s (fun _ x -> physical m x) x
-let all_batched m s x = Nx.Ptree.map s (fun _ x -> batched m x) x
-
-(* Leaves *)
-
 let leaf_lanes m = List.map (fun (Nx.P x) -> owns m x)
 
 let lanes_at m flags =
@@ -255,6 +238,15 @@ let batched_at m flags =
   List.map2 (fun f (Nx.P x) -> if f then Nx.P (batched m x) else Nx.P x) flags
 
 let physical_leaf m (Nx.P x) = Nx.P (physical m x)
+
+(* [relanes m s flags x] is [x], a value of [s], with the tensors at [flags]
+   made lanes of [m]. *)
+let relanes m s flags x =
+  Nx.Ptree.rebuild s ~like:x (lanes_at m flags (fst (Nx.Ptree.flatten s x)))
+
+let lanes_of m s x = leaf_lanes m (fst (Nx.Ptree.flatten s x))
+let physicals m s x = Nx.Ptree.map s (fun _ x -> physical m x) x
+let all_batched m s x = Nx.Ptree.map s (fun _ x -> batched m x) x
 
 (* A lane's rows along a scan's axis, the scan's axis in front of the map's; and
    back. *)

@@ -295,11 +295,6 @@ let steps fn xs =
         invalid_arg (fn ^ ": the xs leaves differ in their leading length");
       if n = 0 then invalid_arg (fn ^ ": xs is empty along the scan axis")
 
-let answer r =
-  match Construct.perform (Scan r) with
-  | r -> r
-  | exception Scan.Not_staged -> Scan.fold r
-
 let scan_of fn cs xs_s ys_s ~f ~init xs =
   let req_xs, _ = Ptree.flatten xs_s xs in
   steps fn req_xs;
@@ -320,7 +315,7 @@ let scan_of fn cs xs_s ys_s ~f ~init xs =
     (fst (Ptree.flatten cs c'), fst (Ptree.flatten ys_s y))
   in
   let req_carry, _ = Ptree.flatten cs init in
-  let r = answer { req_carry; req_xs; req_step; req_reverse = false } in
+  let r = Construct.scan { req_carry; req_xs; req_step; req_reverse = false } in
   match !first with
   | Some y0 ->
       (Ptree.rebuild cs ~like:init r.r_carry, Ptree.rebuild ys_s ~like:y0 r.r_ys)

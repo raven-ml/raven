@@ -484,6 +484,22 @@ let hvp loss w =
 
 let capture_tests =
   [
+    test
+      "a remat whose rerun captures a value its first run did not raises at \
+       the backward pass" (fun () ->
+        let again = ref false in
+        let f w x =
+          if !again then Nx.mul x w
+          else begin
+            again := true;
+            Nx.sin x
+          end
+        in
+        raises
+          (Invalid_argument
+             "Rune.grad': a function run again for its transpose reads a value \
+              the differentiation tracks that its first run did not") (fun () ->
+            Rune.grad' (fun w -> Nx.sum (rematted (f w) (Nx.cos w))) (at ())));
     test "a remat capturing two weights gives each its gradient" (fun () ->
         let loss r (u, v) =
           Nx.sum
