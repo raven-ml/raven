@@ -540,8 +540,10 @@ end
 module Table = Stdlib.Weak.Make (Interned)
 
 (* The table is split in shards, each behind its own lock, so that domains
-   building nodes rarely wait for each other. *)
-let shards = Array.init 64 (fun _ -> (Table.create 256, Mutex.create ()))
+   building nodes rarely wait for each other. Each shard starts at the least
+   size and grows with its nodes, so that a program that builds none keeps no
+   table in the heap every major collection marks. *)
+let shards = Array.init 64 (fun _ -> (Table.create 0, Mutex.create ()))
 let next_id = Atomic.make 0
 
 let node op src arg tag dtype id =
