@@ -11,7 +11,7 @@
 
 val complexes : ('a, 'b) Nx.t -> Complex.t array
 (** [complexes x] is the elements of the real or complex tensor [x] as complex
-    numbers, in C order.
+    numbers, in C order, read on the host wherever [x] lies.
 
     Raises [Invalid_argument] for another dtype. *)
 

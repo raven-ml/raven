@@ -5,7 +5,10 @@
 
 (* Elements *)
 
+(* A compiled result may lie on a device that computes nothing eagerly, such
+   as Metal: the cast runs on the host. *)
 let complexes x =
+  let x = Nx.place Nx.Placement.host x in
   let dt = Nx.dtype x in
   if Nx_dtype.is_complex dt then Nx.to_array (Nx.cast Nx.complex128 x)
   else if Nx_dtype.is_float dt then
