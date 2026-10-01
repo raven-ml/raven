@@ -232,7 +232,7 @@ let sink_reference ?mask ?scale ~sinks q k v =
   let weights = Nx.softmax (Nx.concatenate ~axis:3 [ scores; column ]) in
   Nx.matmul (Nx.slice [ A; A; A; R (0, m) ] weights) v
 
-let flat_of t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let flat_of t = Nx.to_array (Nx.reshape [| -1 |] t)
 let same ~msg a b = equal ~msg (array (float 1e-5)) (flat_of a) (flat_of b)
 let sink_values dtype = Nx.create dtype [| 4; 1 |] [| -1.5; 0.25; 2.0; 0.75 |]
 
@@ -554,7 +554,7 @@ let test_gradients () =
 
 (* Key-value cache decoding *)
 
-let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 
 (* The index of tokens at [pos] in sequences held at [slots]. *)

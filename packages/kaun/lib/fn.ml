@@ -68,7 +68,7 @@ let column ~fn ~lead param =
   let one = Array.append lead [| 1 |] in
   if ps = [||] then
     Nx.broadcast_to one (Nx.reshape (Array.map (fun _ -> 1) one) param)
-  else Nx.reshape one (Nx.contiguous param)
+  else Nx.reshape one param
 
 (* Entries below the threshold leave the distribution; ties at it stay. *)
 let keep_from ~threshold logits =

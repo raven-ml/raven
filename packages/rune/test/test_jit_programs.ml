@@ -1027,22 +1027,11 @@ let label e =
          && Array.exists (subnormal l.dt) (value l.dt (create l)).elements)
        (leaves e))
 
-(* Eager nx refuses a reshape that cannot view its operand's layout, which a
-   traced value does not have: under jit the reshape computes. *)
-let unviewable = function
-  | Refused m ->
-      let needle = "cannot view it" in
-      let n = String.length needle and l = String.length m in
-      let rec at i = i + n <= l && (String.sub m i n = needle || at (i + 1)) in
-      at 0
-  | Value _ -> false
-
 let compiled_is_eager e =
   label e;
   let dt = dtype_of e in
   let zeros = signs_zeros e in
   let expected = outcome dt (fun () -> eager e) in
-  if unviewable expected then reject ();
   classify "eager refuses the program"
     (match expected with Refused _ -> true | Value _ -> false);
   classify "an empty result"
@@ -1252,7 +1241,6 @@ let within_rounding r =
   in
   match List.map (eval create) (operands r) with
   | exception Invalid_argument m ->
-      if unviewable (Refused m) then reject ();
       equal (outcomes ~zeros:false) (Refused m) (outcome dt compiled)
   | ops -> (
       let e = value dt (root r ops) in
@@ -1307,15 +1295,7 @@ let within_rounding r =
 let leaf ?(capture = false) dt shape values =
   Leaf { dt; shape; values; capture }
 
-let found =
-  [
-    (* [take] without an axis at scalar indices raised. *)
-    Bin
-      ( Add,
-        Take (None, leaf I64 [||] [| 0. |], leaf F32 [||] [| 0. |]),
-        leaf ~capture:true F32 [||] [| 0. |] );
-  ]
-
+(* A reshape of a broadcast, which no strides can view: a copy. *)
 let unviewable_reshape =
   Bin
     ( Add,
@@ -1326,6 +1306,17 @@ let unviewable_reshape =
             ( [| 8 |],
               Broadcast ([| 4; 2 |], leaf F32 [| 4; 1 |] [| 0.; 0.; 0.; 0. |])
             ) ) )
+
+let found =
+  [
+    (* [take] without an axis at scalar indices raised. *)
+    Bin
+      ( Add,
+        Take (None, leaf I64 [||] [| 0. |], leaf F32 [||] [| 0. |]),
+        leaf ~capture:true F32 [||] [| 0. |] );
+    (* A reshape eager nx refused for its operand's layout. *)
+    unviewable_reshape;
+  ]
 
 (* [where (x < 0) x 0], which selects the zero at [x = -0.], the zero a captured
    scalar: a constant of the program. *)
@@ -1350,15 +1341,11 @@ let suite =
         compiled_is_eager;
       prop "computes eager's values within the stated rounding" ~count:300
         rounded_programs within_rounding;
-      xfail
-        ~reason:
-          "a traced value has no layout, so a reshape eager nx refuses \
-           computes under jit"
-        (test "refuses a reshape eager nx cannot view" (fun () ->
-             let dt = dtype_of unviewable_reshape in
-             equal (outcomes ~zeros:false)
-               (outcome dt (fun () -> eager unviewable_reshape))
-               (outcome dt (fun () -> compiled unviewable_reshape))));
+      test "reshapes a layout no strides can view as eagerly" (fun () ->
+          let dt = dtype_of unviewable_reshape in
+          equal (outcomes ~zeros:false)
+            (outcome dt (fun () -> eager unviewable_reshape))
+            (outcome dt (fun () -> compiled unviewable_reshape)));
       on_arm64
         (test "selects a zero as eagerly, whatever the other value's sign"
            (fun () ->

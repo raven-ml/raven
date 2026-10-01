@@ -904,9 +904,7 @@ let flatten ?(start_dim = 0) ?(end_dim = -1) x =
           Array.sub sh (e + 1) (r - (e + 1));
         ]
   in
-  (* A view where the layout allows one, a copy otherwise. *)
-  if View.can_reshape (B.view x) target then reshape target x
-  else reshape target (contiguous x)
+  reshape target x
 
 let cumulative_scan ?axis op x =
   let orig_shape = shape x in
@@ -1317,8 +1315,7 @@ let repeat ?axis count x =
     in
     let merged = Array.copy t_shape in
     merged.(ax_idx) <- t_shape.(ax_idx) * count;
-    reshape merged
-      (contiguous (expand wide (unsqueeze ~axes:[ ax_idx + 1 ] x)))
+    reshape merged (expand wide (unsqueeze ~axes:[ ax_idx + 1 ] x))
 
 (* ───── Concatenation and Stacking ───── *)
 
@@ -1995,11 +1992,9 @@ let set specs v x =
               incr tdim
             end)
           dims_info;
-        let x_flat = reshape [| numel x |] (contiguous x) in
+        let x_flat = reshape [| numel x |] x in
         let y_flat =
-          reshape
-            [| array_prod target_shape |]
-            (contiguous (reshape target_shape v))
+          reshape [| array_prod target_shape |] (reshape target_shape v)
         in
         let result =
           B.scatter ~mode:`Set ~unique:true x_flat
@@ -2815,12 +2810,7 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
       let chosen =
         if b = 0 then zeros (B.context x) Nx_dtype.int64 [| 0; k |]
         else
-          (* A view of rows where the layout allows one, a copy otherwise: a
-             compiled ranking then computes the keys where it compares them. *)
-          let rows = [| b; n |] in
-          if View.can_reshape (B.view last) rows then
-            select ~k (reshape rows last)
-          else select ~k (reshape rows (contiguous last))
+          select ~k (reshape [| b; n |] last)
       in
       moveaxis (-1) axis (reshape (Array.append batch [| k |]) chosen)
   in
@@ -2961,7 +2951,7 @@ let searchsorted (type a b) ~side (s : (a, b) t) (v : (a, b) t) =
   else
     let q =
       if rows then numeric_key v
-      else reshape [| n |] (contiguous (numeric_key v))
+      else reshape [| n |] (numeric_key v)
     and rounds = bit_length m in
     (* All-ones keys past [m], which no query precedes: no round reads outside
        the table. *)
@@ -4124,9 +4114,7 @@ let diagonal ?(offset = 0) ?axis1 ?axis2 x =
       (Array.append (Array.sub (shape x_trans) 0 (nd - 2)) [| 0 |])
   else
     let prefix = Array.sub (shape x_trans) 0 (nd - 2) in
-    let x_flat =
-      reshape (Array.append prefix [| d1 * d2 |]) (contiguous x_trans)
-    in
+    let x_flat = reshape (Array.append prefix [| d1 * d2 |]) x_trans in
     (* Diagonal indices: start + i*(d2+1) for i in 0..diag_len-1 *)
     let start = if offset >= 0 then offset else -offset * d2 in
     let step = d2 + 1 in

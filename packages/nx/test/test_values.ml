@@ -440,19 +440,7 @@ let commands =
     command "reshape"
       (reshapes ^-> t ^-> makes t)
       Ref.reshape
-      (fun shape s -> Nx.reshape shape (Nx.contiguous s));
-    (* A reshape is a view, so nx refuses a layout it cannot view. *)
-    command "reshape a view"
-      (reshapes ^-> t ^-> judges elt)
-      (fun shape r -> function
-        | Ok v -> (
-            match Ref.reshape shape r with
-            | expected -> equal elt expected v
-            | exception Invalid_argument _ ->
-                fail "reshaped to a shape of another size")
-        | Error (Invalid_argument _) -> ()
-        | Error e -> raise e)
-      (fun shape s -> Ref.of_nx (Nx.reshape shape s));
+      (fun shape s -> Nx.reshape shape s);
     command "transpose"
       (permutations_of ^-> t ^-> makes t)
       (fun axes r -> Ref.transpose ?axes r)

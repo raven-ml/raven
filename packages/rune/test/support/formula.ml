@@ -58,9 +58,7 @@ let rec term t x =
   | Sum (axis, keepdims, p) -> Nx.sum ~axes:[ axis ] ~keepdims (term p x)
   | Max (axis, p) -> Nx.max ~axes:[ axis ] (term p x)
   | Permute (axes, p) -> Nx.transpose ~axes (term p x)
-  (* A reshape views only some layouts, so it reads a contiguous copy, as a
-     caller reshaping any view must. *)
-  | Reshape (s, p) -> Nx.reshape s (Nx.contiguous (term p x))
+  | Reshape (s, p) -> Nx.reshape s (term p x)
   | Flip (axis, p) -> Nx.flip ~axes:[ axis ] (term p x)
   | Pad (widths, p) -> Nx.pad widths 0. (term p x)
   | Shrink (ranges, p) -> Nx.shrink ranges (term p x)

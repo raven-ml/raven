@@ -682,7 +682,7 @@ let reshape_edges =
         in
         let factor x = Op.eval (Cholesky { upper = true; x }) in
         equal (Reference.exact ())
-          (Nx.reshape [| 4 |] (Nx.contiguous (snd (Rune.jvp' factor a v))))
+          (Nx.reshape [| 4 |] (snd (Rune.jvp' factor a v)))
           (snd (Rune.jvp' f a v)));
   ]
 

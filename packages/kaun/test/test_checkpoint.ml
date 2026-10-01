@@ -10,7 +10,7 @@ let f32 = Nx.float32
 let f64 = Nx.float64
 let vec32 xs = Nx.create f32 [| Array.length xs |] xs
 let vec64 xs = Nx.create f64 [| Array.length xs |] xs
-let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let to_arr t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 (* Checkpoints round-trip bit-exactly, so comparisons are exact. *)
 let check_arr ~msg expected actual =

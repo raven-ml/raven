@@ -98,7 +98,7 @@ let ids_tensor rows =
   Nx.create Nx.int64 [| batch; seq |]
     (Array.map Int64.of_int (Array.concat (Array.to_list rows)))
 
-let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 let validate (type b) ~device ~tol ~exact fx cfg
     (p : (float, b) Nx.t Llama.params) (dt : (float, b) Nx.dtype) =

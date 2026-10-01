@@ -3007,6 +3007,9 @@ thread.
 
 ### Nx
 
+- `Nx.reshape` and `Nx.ravel` copy a tensor whose layout no view can express,
+  such as a flattened transpose. They raised and asked for `Nx.contiguous`,
+  while the same reshape under `Rune.jit` computed.
 - `Nx_device.Buffer.create ~memory:Mapped` gives pinned memory when the
   window or the device's own memory cannot hold the buffer, and keeps the cache.
   It raised `Out_of_memory` once the device's own memory was full.

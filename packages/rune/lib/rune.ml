@@ -255,9 +255,7 @@ let jacfwd' f x =
   in
   let r = Nx.ndim cols in
   let y_shape = Array.sub (Nx.shape cols) 1 (r - 1) in
-  Nx.reshape
-    (Array.append y_shape (Nx.shape x))
-    (Nx.contiguous (Nx.moveaxis 0 (r - 1) cols))
+  Nx.reshape (Array.append y_shape (Nx.shape x)) (Nx.moveaxis 0 (r - 1) cols)
 
 let jacrev' f x =
   let fn = "Rune.jacrev'" in
@@ -271,7 +269,7 @@ let jacrev' f x =
       (fun e -> Nx.conjugate (pullback e))
       (basis y)
   in
-  Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) (Nx.contiguous rows)
+  Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) rows
 
 let lanes a x = Construct.perform (Lanes (a, x))
 let lane_index ?axis () = Construct.perform (Lane_index axis)

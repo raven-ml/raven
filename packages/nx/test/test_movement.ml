@@ -300,7 +300,7 @@ let reshaped =
 let reshapes =
   group "reshapes"
     [
-      prop "reshape views every layout it can, and refuses the others"
+      prop "reshape views every layout it can, and copies the others"
         (Gen.with_pp
            (fun ppf (steps, t, target) ->
              Format.fprintf ppf "%a, of shape %a, to %a" pp_layout steps
@@ -317,7 +317,9 @@ let reshapes =
           end
           else begin
             cover "a layout no reshape can view" true;
-            raises_invalid_arg (fun () -> Nx.reshape target t)
+            equal ints
+              (Ref.reshape target (Ref.of_nx t))
+              (Ref.of_nx (Nx.reshape target t))
           end);
     ]
 
@@ -384,9 +386,11 @@ let views =
               Nx.shrink [| (0, 5) |] (tensor_of [| 4 |]));
           raises_invalid_arg (fun () ->
               Nx.shrink [| (3, 1) |] (tensor_of [| 4 |])));
-      test "ravel refuses a tensor it cannot flatten without copying" (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.ravel (Nx.transpose (tensor_of [| 2; 3 |]))));
+      test "ravel copies a tensor it cannot view flat" (fun () ->
+          let t = Nx.transpose (tensor_of [| 2; 3 |]) in
+          equal ints
+            (Ref.reshape [| 6 |] (Ref.of_nx t))
+            (Ref.of_nx (Nx.ravel t)));
     ]
 
 (* Two 4-bit elements share a byte, so a view of them rarely starts, strides or

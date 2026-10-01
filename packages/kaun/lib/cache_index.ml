@@ -317,9 +317,7 @@ let write ~at ~table values pool =
       (Array.append [| tokens |] tail)
       (Nx.reshape (Array.append [| tokens |] (ones tail)) target)
   in
-  let values =
-    Nx.reshape (Array.append [| tokens |] tail) (Nx.contiguous values)
-  in
+  let values = Nx.reshape (Array.append [| tokens |] tail) values in
   Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values pool
 
 (* [pool] at each lane's columns, zero at the columns no token of the lane sees.

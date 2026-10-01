@@ -676,9 +676,7 @@ let apart g s is =
    draws, so that the elements of [distinct] stay untied across the two. *)
 let together g s is =
   let+ x = g [| numel s + numel is |] in
-  let cut lo n shape =
-    Nx.reshape shape (Nx.contiguous (Nx.slice [ Nx.R (lo, lo + n) ] x))
-  in
+  let cut lo n shape = Nx.reshape shape (Nx.slice [ Nx.R (lo, lo + n) ] x) in
   (cut 0 (numel s) s, cut (numel s) (numel is) is)
 
 let scatter_case (mode : Nx_backend.scatter) =

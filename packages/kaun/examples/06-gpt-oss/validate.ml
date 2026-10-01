@@ -80,7 +80,7 @@ let check name ok detail =
   Printf.printf "%-66s %s%s\n%!" name (if ok then "ok" else "FAIL") detail;
   if not ok then incr failures
 
-let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 (* Agreement relative to the vector's largest magnitude. A NaN or an infinity
    anywhere fails. *)

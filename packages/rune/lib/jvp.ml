@@ -155,7 +155,7 @@ let others ~axes x =
     List.filter (fun a -> not (Array.mem a axes)) (List.init (Nx.ndim x) Fun.id)
   in
   let order = Array.of_list (kept @ Array.to_list axes) in
-  let moved = Nx.contiguous (Nx.transpose ~axes:(Array.to_list order) x) in
+  let moved = Nx.transpose ~axes:(Array.to_list order) x in
   let k = List.length kept in
   let n = Array.fold_left (fun n a -> n * shape.(a)) 1 axes in
   let flat =

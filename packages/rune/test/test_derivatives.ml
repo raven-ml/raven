@@ -899,28 +899,26 @@ let fresh_tests =
           Rune.jvp' (fun x -> Nx.mul_s x (second x)) (mat 2 3) (mat 2 3)
         in
         equal (exact ()) (Nx.mul_s (mat 2 3) 4.) y);
-    test "a reshape that a strided value's view cannot take raises as eagerly"
+    test "a reshape that a strided value's view cannot take computes as eagerly"
       (fun () ->
         let tr = Nx.matrix_transpose in
-        let refused f x shape =
-          let e =
-            Invalid_argument
-              (Printf.sprintf
-                 "reshape: cannot reshape %s, call contiguous() first" shape)
-          in
-          raises ~msg:"eagerly" e (fun () -> ignore (f x));
-          raises ~msg:"under jvp" e (fun () -> ignore (Rune.jvp' f x x));
-          raises ~msg:"under grad" e (fun () ->
-              ignore (Rune.grad' (fun x -> Nx.sum (f x)) x))
+        (* [f] moves elements, so its tangent is [f] of the tangent and the
+           gradient of its sum is one everywhere. *)
+        let moves f x =
+          let y, dy = Rune.jvp' f x (Nx.mul_s x 2.) in
+          equal ~msg:"under jvp" (exact ()) (f x) y;
+          equal ~msg:"the tangent" (exact ()) (f (Nx.mul_s x 2.)) dy;
+          equal ~msg:"under grad" (exact ()) (Nx.ones_like x)
+            (Rune.grad' (fun x -> Nx.sum (f x)) x)
         in
-        refused
+        moves
           (fun x -> Nx.reshape [| 24 |] (tr (Nx.reshape [| 3; 8 |] (tr x))))
-          (mat 4 6) "[6,4] to [3,8], strides [1,6] cannot view it";
-        refused
+          (mat 4 6);
+        moves
           (fun x ->
             Nx.reshape [| 4; 6 |]
               (Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.reshape [| 2; 2; 6 |] x)))
-          (mat 4 6) "[2,2,6] to [4,6], strides [6,12,1] cannot view it");
+          (mat 4 6));
     test "a transposed dual is not C-contiguous, as eagerly" (fun () ->
         let seen = ref [] in
         let f x =

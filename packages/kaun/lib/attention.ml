@@ -237,9 +237,7 @@ let merge l y =
   match Nx.shape y with
   | [| batch; heads; seq; d |] ->
       Linear.apply l
-        (Nx.reshape
-           [| batch; seq; heads * d |]
-           (Nx.contiguous (Nx.swapaxes 1 2 y)))
+        (Nx.reshape [| batch; seq; heads * d |] (Nx.swapaxes 1 2 y))
   | _ -> invalid_arg "Attention.merge: y must have shape [batch; heads; seq; d]"
 
 let causal_mask ~seq ?valid () =
@@ -281,7 +279,7 @@ let apply ~head_dim ?mask ?rope p x =
   let batch = Array.fold_left ( * ) 1 (Array.sub shape 0 (rank - 2)) in
   Option.iter (check_mask ~fn:"apply" ~batch ~n:seq ~m:seq) mask;
   (* Leading axes fold into one batch axis for the pieces and unfold after. *)
-  let x = Nx.reshape [| batch; seq; embed |] (Nx.contiguous x) in
+  let x = Nx.reshape [| batch; seq; embed |] x in
   let q = split ~head_dim p.q x and k = split ~head_dim p.k x in
   let v = split ~head_dim p.v x in
   let q, k =

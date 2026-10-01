@@ -8,7 +8,7 @@ module Fn = Kaun.Fn
 
 let f64 = Nx.float64
 let vec xs = Nx.create f64 [| Array.length xs |] xs
-let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let to_arr t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 let check_arr ?(eps = 1e-9) ~msg expected actual =
   let t = if eps = 0. then float_exact else float eps in

@@ -11,8 +11,9 @@
 
     {b Tensors, views, and contiguity.} A tensor is a {e view} over a flat
     buffer described by a shape, strides, and an offset. Operations that only
-    rearrange metadata ({!reshape}, {!transpose}, {!val-slice}, …) return views
-    in O(1) without copying data. Use {!is_c_contiguous} to test whether
+    rearrange metadata ({!transpose}, {!val-slice}, …) return views in O(1)
+    without copying data; {!reshape} returns one where the layout allows it, and
+    a copy otherwise. Use {!is_c_contiguous} to test whether
     elements are laid out contiguously in row-major order, and {!contiguous} to
     obtain a contiguous copy when needed.
 
@@ -995,14 +996,15 @@ val shuffle : ('a, 'b) t -> ('a, 'b) t
 (** {1:shape Shape manipulation} *)
 
 val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
-(** [reshape shape t] is a view of [t] with the given [shape].
+(** [reshape shape t] is [t]'s elements, in C order, with the given [shape]: a
+    view of [t]'s storage where its layout allows one, and a copy otherwise, as
+    for a flattened transpose.
 
     At most one dimension may be [-1]; it is inferred from the total number of
     elements. The product of [shape] must equal {!numel} [t].
 
-    Raises [Invalid_argument] if [shape] is incompatible, contains more than one
-    [-1], or cannot view [t]'s layout, as a transpose's cannot be flattened;
-    call {!contiguous} first.
+    Raises [Invalid_argument] if [shape] is incompatible or contains more than
+    one [-1].
 
     {@ocaml[
       # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
@@ -1097,10 +1099,8 @@ val unflatten : int -> int array -> ('a, 'b) t -> ('a, 'b) t
     See also {!flatten}. *)
 
 val ravel : ('a, 'b) t -> ('a, 'b) t
-(** [ravel t] is [t] reshaped to 1-D. Returns a view when possible.
-
-    Raises [Invalid_argument] if [t] cannot be flattened without copying; call
-    {!contiguous} first.
+(** [ravel t] is [t] reshaped to 1-D: a view where [t]'s layout allows one, a
+    copy otherwise.
 
     See also {!flatten}, {!contiguous}. *)
 

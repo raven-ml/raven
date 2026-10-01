@@ -2751,6 +2751,13 @@ let direct_copy x =
   | Host a -> Host (k_contiguous host_env a)
   | _ -> on_devices (Contiguous x)
 
+(* [x] moved by [m]. A reshape that [x]'s strides cannot express, such as a
+   flattened transpose, moves a C-order copy of [x]. *)
+let direct_move x m =
+  match m with
+  | Reshape s when not (View.can_reshape (view x) s) -> moved (direct_copy x) m
+  | _ -> moved x m
+
 let direct_scan k axis x =
   match x with
   | Host a -> Host (k_scan host_env k axis a)
@@ -2914,7 +2921,7 @@ let direct : type r. r Op.t -> r =
   | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ -> on_devices op
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       direct_solve_triangular upper transpose unit_diag a b
-  | Move (x, m) -> moved x m
+  | Move (x, m) -> direct_move x m
   | Place (p, x) -> move_to p x
   | Read { x; _ } -> read_elements_of x
   | Check { ok; msg } -> check_elements ok msg
@@ -3094,7 +3101,7 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
   else direct_solve_triangular upper transpose unit_diag a b
 
 let move x m =
-  if intercepting () then perform (Move (x, m)) else moved x m
+  if intercepting () then perform (Move (x, m)) else direct_move x m
 let reshape x shape = move x (Reshape shape)
 let expand x shape = move x (Expand shape)
 let permute x axes = move x (Permute axes)

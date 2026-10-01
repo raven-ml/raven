@@ -9,7 +9,7 @@ open Windtrap
 open Kaun
 
 let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
-let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 let metal = Nx.Placement.device (Nx_metal_device.v 0)
 
 (* A toy compressed stream, as in test_attention.ml: each token stores its value

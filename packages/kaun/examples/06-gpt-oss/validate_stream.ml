@@ -98,7 +98,7 @@ let signs ~rows ~dim =
       if (!state lsr 16) land 1 = 1 then 1.0 else -1.0)
 
 let host t =
-  Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous (Nx.cast Nx.float32 t)))
+  Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float32 t))
 
 let worst_of a = Array.fold_left (fun m d -> if d <= m then m else d) 0.0 a
 

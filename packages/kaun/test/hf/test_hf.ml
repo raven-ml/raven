@@ -12,7 +12,7 @@ module Hf = Kaun_hf
 
 let f32 = Nx.float32
 let vec xs = Nx.create f32 [| Array.length xs |] xs
-let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let to_arr t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 let entry name ckpt =
   match Checkpoint.get name ckpt with Nx.P x -> Nx.cast f32 x

@@ -133,7 +133,7 @@ let ids rows =
   let batch = Array.length rows and seq = Array.length rows.(0) in
   int64s [| batch; seq |] (Array.concat (Array.to_list rows))
 
-let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 (* The float32 tolerance of the law, relative to the logit's size. *)
 let close ~msg expected actual =
