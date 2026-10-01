@@ -345,7 +345,7 @@ let local_word devs bytes =
   load (index word [ int 0 ]) []
 
 (* Each program's launch template is built once for its devices. Its cubin is
-   the engine's to load, relocated by the device that runs it (DIVERGENCES D38):
+   the engine's to load, relocated by the device that runs it:
    the placeholder names the cubin and its kernel, and is as long as the image
    the device lays out, with room for the GPU's prefetch after it. *)
 let programs = Hashtbl.create 16
@@ -423,7 +423,7 @@ let queue props q : Hcq2.commands =
     and doorbell = word "doorbell" Dtype.Uint32 1
     and put = word "put_value" Dtype.Uint64 1 in
     let dwords = max_numel cmdbuf * Dtype.itemsize (dtype cmdbuf) / 4 in
-    (* An entry's length field holds 21 bits of words (DIVERGENCES D43). *)
+    (* An entry's length field holds 21 bits of words. *)
     if dwords >= 1 lsl 21 then
       raise
         (Hcq2.Over_capacity
@@ -590,7 +590,7 @@ let queue props q : Hcq2.commands =
   in
   (* The copy engine writes a 64-bit value in 32-bit words: its low word, then
      its high word, where the value lives when the low word wrapped to 0 and
-     into a word of its own otherwise (DIVERGENCES D40). *)
+     into a word of its own otherwise. *)
   let copy_signal signal value =
     let a = addr signal in
     let one = G.nvc6b5_launch_dma_semaphore_type_release_one_word_semaphore in

@@ -1,6 +1,6 @@
 (* Tests of Tolk.Ops_nv: the batches of NV devices, their command words and host
-   programs, are tinygrad's, with DIVERGENCES D1, D40 and D43 applied to
-   tinygrad by the generator. *)
+   programs, are tinygrad's, as the generator changes tinygrad where tolk
+   departs from it. *)
 
 open Windtrap
 open Tolk
@@ -49,7 +49,7 @@ let recorded_devices ~blackwell = function
       }
 
 (* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is a
-   SHA-256 (DIVERGENCES D12): recorded graphs are compared without them. *)
+   SHA-256: recorded graphs are compared without them. *)
 let without_profile_keys u =
   let unkeyed c =
     match Ops.arg c with

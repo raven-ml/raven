@@ -35,7 +35,7 @@
     of the signal word; when the low word is not [0], the second write goes to a
     word of its own, a volatile placeholder of the device tagged ["nv_sink"]. A
     word being written thus never reads above its old value, and a high word
-    written late never takes the value back: see DIVERGENCES D40. *)
+    written late never takes the value back. *)
 
 (** {1:queues Command queues} *)
 

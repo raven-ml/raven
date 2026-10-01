@@ -36,5 +36,5 @@ val placeholders_like : Ops.t -> Ops.t -> Ops.t
 val without_profile_keys : Ops.t -> Ops.t
 (** [without_profile_keys u] is [u] without the profile key of each kernel its
     command-queue calls enqueue ({!Tolk.Ops.hcq_kernel}). A kernel's key is its
-    program's BLAKE2 digest, where tinygrad's is a SHA-256 (DIVERGENCES D12), so
+    program's BLAKE2 digest, where tinygrad's is a SHA-256, so
     a graph is compared with a golden without them. *)

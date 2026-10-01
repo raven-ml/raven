@@ -24,16 +24,16 @@ GPU, with a profile log of PROF_SLOTS runs; the work-group processor 2 of the
 shader engine 1 is inactive.
 
 tinygrad is changed as tolk differs from it:
-- DIVERGENCES D1, as hcq2_d1.py applies it;
-- DIVERGENCES D37: a wait on a device's signal word is for equality of its
+- a device's signal word is one word, as hcq2_d1.py applies it;
+- a wait on a device's signal word is for equality of its
   low 32 bits, and a signal of one writes all 64 bits: in one write on the
   compute queue, and on a copy queue its high half after its low half when the
   low half is 0, four NOPs otherwise;
-- DIVERGENCES D38: a program's placeholder names its code object and kernel,
+- a program's placeholder names its code object and kernel,
   which the engine loads, instead of holding the image a link patch writes;
-- DIVERGENCES D48: the grid of a dispatch packet in a kernel's arguments is
+- the grid of a dispatch packet in a kernel's arguments is
   words, 32-bit constants when it is known;
-- DIVERGENCES D66: a counted run's entry in the profile log is its kernel
+- a counted run's entry in the profile log is its kernel
   descriptor's address;
 - an address is taken on the queue's first device, as tolk names one
   device.
@@ -145,7 +145,7 @@ getaddr = UOp.getaddr
 UOp.getaddr = lambda self, device: getaddr(self, device[0] if isinstance(device, tuple) else device)
 
 
-# DIVERGENCES D37
+# Signal words
 
 def is_signal_word(signal): return hcq2.unwrap_view(signal)[0].tag == "timeline"
 
@@ -182,7 +182,7 @@ ops_amd.AMDComputeQueue.wait, ops_amd.AMDComputeQueue.signal = compute_wait, com
 ops_amd.AMDSDMAQueue.wait, ops_amd.AMDSDMAQueue.signal = sdma_wait, sdma_signal
 
 
-# DIVERGENCES D38
+# Programs the engine loads
 
 def amd_build_program(dev, prg, devs):
     data, image = ops_amd._amd_program_image(dev, lib := prg.src[3].arg)
@@ -198,7 +198,7 @@ ops_amd.AMDDevice.prof_log = property(lambda self: SimpleNamespace(size=1 + self
 ops_amd.AMDDevice.pmc_buf = property(lambda self: SimpleNamespace(size=self.pmc_size * self.prof_slots, dtype=dtypes.uint8))
 
 
-# DIVERGENCES D66
+# Counted runs in the profile log
 
 def prof_start(self, data, info, lib):
     if not (self.dev.pmc_enabled or self.dev.sqtt_enabled): return None
@@ -211,7 +211,7 @@ def prof_start(self, data, info, lib):
 ops_amd.AMDComputeQueue.prof_start = prof_start
 
 
-# DIVERGENCES D48
+# Dispatch grids as words
 
 dispatch_packet = ops_amd.dispatch_packet
 ops_amd.dispatch_packet = lambda *args, **kwargs: [UOp.const(w, dtypes.uint32) if isinstance(w, int) else w
@@ -298,7 +298,7 @@ for case in CASES: declare(case)
 
 # The words of a wait on a device's signal word for a value, and of a signal of
 # one, and of a queue's signal in the slots, at values that carry into the high
-# half (DIVERGENCES D37): the signal word is at 0x10000, the slot at 0x20000.
+# half: the signal word is at 0x10000, the slot at 0x20000.
 
 SIGNAL_WORD, SLOT = 0x10000, 0x20000
 CARRIES = (2**32 - 1, 2**32, 2**32 + 1, 2**33 - 1, 2**33)

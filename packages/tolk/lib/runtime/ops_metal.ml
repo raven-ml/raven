@@ -12,7 +12,7 @@ open Ops
 let handles = [ "queue"; "event"; "fence"; "resources"; "count" ]
 
 (* [retain] and [release] keep a profiled command buffer alive in its stamps
-   until the device reads its times (DIVERGENCES D34). *)
+   until the device reads its times. *)
 let selectors =
   [
     "commandBuffer";

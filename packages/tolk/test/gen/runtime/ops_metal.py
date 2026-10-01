@@ -11,10 +11,11 @@ compiles: a program's binary is its source's bytes. For each case:
   `<case>_host.golden` the source of each batch's host program, in order.
 
 tinygrad is changed as tolk differs from it:
-- DIVERGENCES D1, as hcq2_d1.py applies it, and D7: a batch's slots hold no
+- a device's signal word is one word, as hcq2_d1.py applies it, and a
+  batch's slots hold no
   timeline slot, so a command's stamps are words 3 and 5 of its slots, not 5
   and 7;
-- DIVERGENCES D34: a command buffer waits in its stamps retained, after the
+- a command buffer waits in its stamps retained, after the
   release of one an earlier run left there unread;
 - MetalQueue takes an address on its first device, as tolk names one
   device.
@@ -71,7 +72,7 @@ def exec_(self, call, prg):
 ops_metal.MetalQueue.exec = exec_
 
 
-# DIVERGENCES D7 and D34
+# Stamp slots and retained command buffers
 
 ops_metal.SELECTORS += ("retain", "release")
 msg_send, mtl_sel, mtl_cb, mtl_enc, mtl_msg = (ops_metal.MSGSEND, ops_metal.mtl_sel, ops_metal.mtl_cb, ops_metal.mtl_enc,

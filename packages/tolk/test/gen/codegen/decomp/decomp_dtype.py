@@ -10,16 +10,15 @@ data types, so it runs for two targets: one that has every data type and is
 told to emulate `<type>`, and one that lacks `<type>`. The generator checks that
 both make the same graph, which the golden holds.
 
-The conversions of a narrow float are IEEE conversions in tolk
-(DIVERGENCES D9), so for the narrow floats the pass runs with `f2f` and
-`f2f_clamp` held opaque: each call is a CUSTOM node of the type the call
-returns, over the call's operand, whose code names the call and its arguments,
-`f2f <from> <to> <sat>` or `f2f_clamp <type> <sat>`. Everything else in the
-graph is tinygrad's. A cast to a narrow float from a type more precise than a
-float32 narrows its operand otherwise in tolk (D9), so does a cast of an
-emulated 64-bit integer to a float32 or narrower (D9), and a cast of a float to
-an emulated 64-bit integer splits it otherwise (D22), so no golden holds one.
-"""
+The conversions of a narrow float are IEEE conversions in tolk, so for the
+narrow floats the pass runs with `f2f` and `f2f_clamp` held opaque: each call
+is a CUSTOM node of the type the call returns, over the call's operand, whose
+code names the call and its arguments, `f2f <from> <to> <sat>` or `f2f_clamp
+<type> <sat>`. Everything else in the graph is tinygrad's. A cast to a narrow
+float from a type more precise than a float32 narrows its operand otherwise in
+tolk (D9), so does a cast of an emulated 64-bit integer to a float32 or
+narrower (D9), and a cast of a float to an emulated 64-bit integer splits it
+otherwise (D22), so no golden holds one. """
 
 from golden import graph
 from graph import kernels, stage

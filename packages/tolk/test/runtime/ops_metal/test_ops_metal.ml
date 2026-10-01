@@ -30,7 +30,7 @@ let recorded_devices ~arch ~residency_set = function
       }
 
 (* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is a
-   SHA-256 (DIVERGENCES D12): recorded graphs are compared without them. *)
+   SHA-256: recorded graphs are compared without them. *)
 let without_profile_keys u =
   let unkeyed c =
     match Ops.arg c with
@@ -98,7 +98,7 @@ let recorded =
            ])
        cases)
 
-(* Loops (DIVERGENCES D30) *)
+(* Loops *)
 
 let uncompiled =
   Renderer.with_compiler (Renderer.Compiler.v Fun.id) (Cstyle.clang host_target)

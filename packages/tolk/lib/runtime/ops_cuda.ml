@@ -40,8 +40,8 @@ let queue ~host q : Hcq2.commands =
       (index (after rt_vars (!h :: !ranges)) [ int (if copy then 2 else 1) ])
       []
   in
-  (* A function's address, from a word of the device's that the host reads
-     (DIVERGENCES D36): a function is loaded on each device. *)
+  (* A function's address, from a word of the device's that the host reads: a
+     function is loaded on each device. *)
   let extern tag =
     load
       (index

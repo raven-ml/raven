@@ -41,7 +41,7 @@ index efb2e82..e125354 100644
  
 -def reduce_ranges_to_acc(ctx:itertools.count, r:UOp):
 -  acc = UOp.alloc_like(r, next(ctx), AddrSpace.REG)
-+# DIVERGENCES D25: a sum adds each product of its source into its running sum as one multiply-add, where the renderer writes one for its
++# A sum adds each product of its source into its running sum as one multiply-add, where the renderer writes one for its
 +# type, in the order it adds them unfused: its additions are tagged "fusable" while the products are indexed down to their operands
 +def fuses(ren:Renderer, r:UOp, x:UOp) -> bool:
 +  return r.arg[0] is Ops.ADD and x.op is Ops.MUL and Ops.MULACC in ren.code_for_op and r.dtype in (dtypes.float32, dtypes.float64) \
@@ -96,7 +96,7 @@ index efb2e82..e125354 100644
  
    # floordiv+mod / dtype decomp (early)
 -  supported_ops = tuple(ren.code_for_op.keys())
-+  # DIVERGENCES D25: a multiply-add is a sum's alone
++  # A multiply-add is a sum's alone
 +  supported_ops = tuple(k for k in ren.code_for_op.keys() if k is not Ops.MULACC)
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
@@ -537,7 +537,7 @@ index 0dd26d2..dd2aded 100644
      Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
 -    Ops.WHERE: lambda a,b,c,dtype: f"({a}?{b}:{c})", Ops.CMPEQ: lambda a,b,dtype: f"({a}=={b})"}
 +    Ops.WHERE: lambda a,b,c,dtype: f"({a}?{b}:{c})", Ops.CMPEQ: lambda a,b,dtype: f"({a}=={b})",
-+    Ops.MULACC: lambda a,b,c,dtype: f"fma({a},{b},{c})"}  # DIVERGENCES D25
++    Ops.MULACC: lambda a,b,c,dtype: f"fma({a},{b},{c})"}
  
    string_rewrite = base_rewrite
  

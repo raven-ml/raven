@@ -1,4 +1,4 @@
-(** CUDA sources that keep float8 infinities special (DIVERGENCES D16).
+(** CUDA sources that keep float8 infinities special.
 
     Where tinygrad's CUDA source converts a value to a float8 type [T] with the
     saturating constructor [(T)(value)], tolk's calls [tg_fp8<T>(value, byte)],

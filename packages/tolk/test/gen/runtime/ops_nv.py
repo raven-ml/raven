@@ -21,20 +21,20 @@ simple_add kernel directly: `<case>_batch.golden` is the batch, and
 it.
 
 tinygrad is changed as tolk differs from it:
-- DIVERGENCES D1, as hcq2_d1.py applies it;
-- DIVERGENCES D38: a program's placeholder names its cubin and kernel, which
+- a device's signal word is one word, as hcq2_d1.py applies it;
+- a program's placeholder names its cubin and kernel, which
   the engine loads, instead of holding the image a link patch writes;
-- DIVERGENCES D40: the copy engine signals the high word of a value too, when
+- the copy engine signals the high word of a value too, when
   its low word is 0, and into a word of its own otherwise;
-- DIVERGENCES D43: a launch descriptor and its constant buffer 0 are nested
+- a launch descriptor and its constant buffer 0 are nested
   LINEARs of 256-byte alignment, the queue ends a chain of launches when a
   command stops it or the queue is submitted, and it takes its command buffer
   once it has; every region the words address, directly or through the words
   of a region, is laid out once, in the buffer of its name;
-- DIVERGENCES D51: the local memory a descriptor states is a word of the
+- the local memory a descriptor states is a word of the
   device, which the engine fills, where tinygrad writes the device's value
   into the descriptor;
-- DIVERGENCES D71: a descriptor states a constant bank's size in 16-byte
+- a descriptor states a constant bank's size in 16-byte
   units, where tinygrad writes its bytes;
 - an address is taken on one device, as tolk names one device.
 """
@@ -100,7 +100,7 @@ getaddr = UOp.getaddr
 UOp.getaddr = lambda self, device=None: getaddr(self, device[0] if isinstance(device, tuple) else device)
 
 
-# DIVERGENCES D43: regions of their own alignment, taken by the queue
+# Regions of their own alignment, taken by the queue
 
 def region(name, blob, patches):
     words, pos = [], 0
@@ -190,9 +190,9 @@ def nv_build_program(dev, prg, devs):
     local = local_words[(devs, required[0])].index(0).load()
     if data.qmd.ver >= 4: data.qmd.write(shader_local_memory_high_size_shifted4=local >> 4)
     else: data.qmd.write(shader_local_memory_high_size=local)
-    # DIVERGENCES D71: a constant bank's size, in 16-byte units
+    # A constant bank's size, in 16-byte units
     for i, (_, sz) in data.constbufs.items(): data.qmd.write(**{f"constant_buffer_size_shifted4_{i}": round_up(sz, 16) >> 4})
-    # DIVERGENCES D38: the placeholder names the cubin and its kernel, which the engine loads
+    # The placeholder names the cubin and its kernel, which the engine loads
     program = UOp.placeholder((len(data.image),), dtypes.uint8, 0, device=devs, tag=("program", prg.src[3].arg, prg.to_elf().name))
     ops_nv._nv_program_cache[(prg.src[3].arg, devs)] = (data, program)
     return data, program
@@ -265,7 +265,7 @@ for name, f in dict(__init__=compute_init, end_chain=end_chain, wait=compute_wai
     setattr(ops_nv.NVComputeQueue, name, f)
 
 
-# DIVERGENCES D40
+# The high word of a signal
 
 def copy_signal(self, signal, value):
     addr = signal.getaddr(self.devs)

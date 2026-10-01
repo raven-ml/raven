@@ -1,11 +1,11 @@
 """tinygrad's hcq2.py as tolk differs from it, for the generators of
 batches and their host programs.
 
-- DIVERGENCES D1: a device's signal word is one word, the value the work
+- a device's signal word is one word, the value the work
   before a batch signalled is the host program's variable `submitted_<d>`, the
   value the batch signals `value_<d>`, a queue waits for the first and the
   batch stores the second, and the fence only re-arms the queue signals, after
-  the first, so the slots hold no timeline slot (D7).
+  the first, so the slots hold no timeline slot.
 
 Importing the module patches tinygrad.
 """

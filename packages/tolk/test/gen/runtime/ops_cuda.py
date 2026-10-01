@@ -11,8 +11,8 @@ source's bytes. For each case:
   `<case>_host.golden` the source of each batch's host program, in order.
 
 tinygrad is changed as tolk differs from it:
-- DIVERGENCES D1, as hcq2_d1.py applies it;
-- DIVERGENCES D36: a kernel's function and the stamping host function are
+- a device's signal word is one word, as hcq2_d1.py applies it;
+- a kernel's function and the stamping host function are
   read from words of the device, where tinygrad takes the address of a buffer
   placed at them;
 - an address is taken on one device, as tolk names one device.
@@ -61,7 +61,7 @@ getaddr = UOp.getaddr
 UOp.getaddr = lambda self, device=None: getaddr(self, device[0] if isinstance(device, tuple) else device)
 
 
-# DIVERGENCES D36
+# Functions read from words of the device
 
 ops_cuda.CUDAQueue.extern = lambda self, tag: UOp.placeholder((1,), dtypes.uint64, 0, device=self.devs, tag=tag).index(0).load()
 

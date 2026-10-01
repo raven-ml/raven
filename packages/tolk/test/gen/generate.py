@@ -10,7 +10,7 @@ Each generator file `gen/<path>.py` runs in a fresh interpreter against
 the tinygrad checkout, which must be clean and at TINYGRAD, with
 `gen/tinygrad.patch` applied to a copy of it: the patch makes tinygrad's
 rewrites keep IEEE and modular values, and its constants a NaN's bits, as
-tolk's do (DIVERGENCES D13, D24 and D27), and its constant arithmetic
+tolk's do, and its constant arithmetic
 compute what the README's CPython rows say; it also removes `HCQInfo`'s
 `host_deps` and `skip_wait`, which tolk's `Ops.hcq_info` does not have
 (see the README).

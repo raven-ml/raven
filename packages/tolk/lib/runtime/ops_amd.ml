@@ -90,7 +90,7 @@ let dw vals =
     0 vals
 
 (* A device's signal word, which only the batch's own work moves past the value
-   its queues wait for (DIVERGENCES D37). *)
+   its queues wait for. *)
 let is_signal_word s =
   match tag (fst (Hcq2.unwrap_view s)) with
   | Some (Tag.String "timeline") -> true
@@ -168,8 +168,7 @@ let program_data gpu lib =
     image_size = Helpers.round_up (Bytes.length image) 4;
   }
 
-(* The program's code object, which the engine loads on the devices (DIVERGENCES
-   D38). *)
+(* The program's code object, which the engine loads on the devices. *)
 let amd_build_program gpu prg devs =
   let obj = Device.Tiny_elf.of_program prg in
   let data = program_data gpu obj.lib in
@@ -831,7 +830,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
       List.iter (emit O.(getaddr base + int off)) !items;
       let size = Hcq2.Queue.size q in
       (* A submission writes at most half the ring, which the device leaves room
-         for (DIVERGENCES D39). *)
+         for. *)
       if 2 * size > gpu.compute_ring then
         raise
           (Hcq2.Over_capacity
@@ -965,7 +964,7 @@ let copy_queue ~host gpu q : Hcq2.commands =
     let cmdbuf = substitute cmdbuf [ (base, on_host) ] in
     let rs = ring / 4 and size_dw = max_numel cmdbuf / 4 in
     (* Zeroing the tail can double what a submission writes, which is at most
-       half the ring (DIVERGENCES D39). *)
+       half the ring. *)
     if 4 * (size_dw * 4) > ring then
       raise
         (Hcq2.Over_capacity

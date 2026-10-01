@@ -16,7 +16,7 @@ source for its instructions with those casts: the text golden
 `<case>_narrowed` of a case whose column `narrowed` is `True`.
 
 The kernels are those of tinygrad's tests of the pipeline (test_linearizer*.py,
-test_custom_kernel.py, the rows its section of REGRESSIONS.md takes from other
+test_custom_kernel.py, and kernels of other test
 files), the kernels of the old tolk's codegen goldens, and `Tensor` programs
 chosen to cover each pass, with `Tensor.empty` in place of realized data,
 which schedules the same kernels.

@@ -321,7 +321,7 @@ let names =
       test "is empty for no part" (fun () -> equal string "" (Hcq2.to_name []));
     ]
 
-(* DIVERGENCES D1: timeline values are parameters *)
+(* Timeline values are parameters *)
 
 let param_arg u =
   match Ops.arg u with Param p -> p | _ -> failf "%a is no parameter" Ops.pp u
@@ -948,7 +948,7 @@ let scheduling =
             (match info.estimates.lds with Int n -> n | Sym _ -> -1));
     ]
 
-(* DIVERGENCES D7: stamp slots follow Submission.record *)
+(* Stamp slots follow Submission.record *)
 
 let stamps =
   group "stamp slots (D7)"
@@ -2137,7 +2137,7 @@ let loops =
             (List.map (fun k -> u64_of b (8 * k)) [ 0; 1; 2 ]));
     ]
 
-(* DIVERGENCES D30: a range around calls is a loop in its batch *)
+(* A range around calls is a loop in its batch *)
 
 let r = Ops.range (Int 3) [ 7 ]
 

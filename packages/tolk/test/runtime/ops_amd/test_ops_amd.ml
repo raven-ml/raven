@@ -157,7 +157,7 @@ let gpu_devices (g : Ops_amd.gpu) = function
 let recorded_devices name = gpu_devices (gpu name)
 
 (* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is a
-   SHA-256 (DIVERGENCES D12): recorded graphs are compared without them. *)
+   SHA-256: recorded graphs are compared without them. *)
 let without_profile_keys u =
   let unkeyed c =
     match Ops.arg c with
@@ -236,7 +236,7 @@ let recorded =
            ])
        cases)
 
-(* Signal words (DIVERGENCES D37) *)
+(* Signal words *)
 
 let signal_word = 0x10000
 and slot = 0x20000
@@ -496,7 +496,7 @@ let carry_law =
            ])
        [ "gfx1100"; "gfx942_cpx" ])
 
-(* Room in the rings (DIVERGENCES D39) *)
+(* Room in the rings *)
 
 (* The submission of a queue of [gpu] with [commands] encoded. *)
 let submits gpu queue commands =
@@ -672,7 +672,7 @@ let refusals =
                   cmds.exec (buffer 4) (buffer 4))));
     ]
 
-(* Loops (DIVERGENCES D30) *)
+(* Loops *)
 
 (* The code object of the recorded case [case]'s first kernel. *)
 let code_object case =
@@ -765,12 +765,12 @@ let loops =
           is_false ~msg:"addresses in integers" (contains "float"));
     ]
 
-(* Batches split at their queues' capacity (DIVERGENCES D39) *)
+(* Batches split at their queues' capacity *)
 
 (* The batches of a range of [trips] trips of a kernel, or of a copy, on a
    device [g] like the one [name] names, each with its trips and the bytes its
    queue's ring takes, from the placeholder [tag]: those of the range's chunks
-   (DIVERGENCES D67) first. *)
+   first. *)
 let pieces ?copy ~trips g name case tag =
   let linear =
     plain (fun () ->

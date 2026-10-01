@@ -30,7 +30,7 @@ let recorded_devices = function
       }
 
 (* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is a
-   SHA-256 (DIVERGENCES D12): recorded graphs are compared without them. *)
+   SHA-256: recorded graphs are compared without them. *)
 let without_profile_keys u =
   let unkeyed c =
     match Ops.arg c with
@@ -94,7 +94,7 @@ let recorded =
            ])
        cases)
 
-(* DIVERGENCES D36: a function's address is a word *)
+(* A function's address is a word *)
 
 (* A renderer whose binary is its source's bytes: batching compiles nothing. *)
 let uncompiled =

@@ -325,7 +325,7 @@ let captures =
       equal (list string) names
         (List.map fst (variables (captured (cell "case")))))
 
-(* Profile keys are left out of the comparison (DIVERGENCES D12). *)
+(* Profile keys are left out of the comparison. *)
 let lowers_as_recorded case =
   let file = case ^ "_lowered.golden" in
   test file (fun () ->

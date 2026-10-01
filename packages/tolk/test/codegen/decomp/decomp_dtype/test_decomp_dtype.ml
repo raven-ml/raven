@@ -1,6 +1,6 @@
 (* Tests of Tolk.Decomp_dtype: the pass rewrites kernels as tinygrad's does, its
    conversions of the narrow floats are IEEE conversions that give the codes
-   Dtype folds (DIVERGENCES D9), and its 64-bit integers compute what 64-bit
+   Dtype folds, and its 64-bit integers compute what 64-bit
    integers compute. *)
 
 open Windtrap

@@ -67,7 +67,7 @@ let cast_weak_srcs c u =
     let widths = committed u :: srcs in
     let dt = Dtype.least_upper (dtype c :: widths) in
     (* An integer cast never computes in a float, which the lattice puts above a
-       64-bit unsigned and a signed integer (DIVERGENCES D44): the node computes
+       64-bit unsigned and a signed integer: the node computes
        at 64 bits, unsigned only where its bounds pass a signed integer's. *)
     let dt =
       if Dtype.is_int (dtype c) && Dtype.is_float dt then

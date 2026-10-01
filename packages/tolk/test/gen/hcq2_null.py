@@ -4,7 +4,7 @@ whose host is the CPU. Each compiles for Clang on x86_64, and no program
 compiles: a program's binary is its source's bytes.
 
 tinygrad is changed as tolk differs from it:
-- DIVERGENCES D1, as hcq2_d1.py applies it;
+- a device's signal word is one word, as hcq2_d1.py applies it;
 - NullQueue writes a variable by value, as a variable has no address, and
   takes an address on its first device, as tolk names one device.
 

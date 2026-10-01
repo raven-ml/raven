@@ -484,7 +484,7 @@ let signal_word_tag = Ops.Tag.String "timeline"
 let staging_tag = Ops.Tag.String "staging"
 
 (* The staging memory of each host, which the staged copies of every linked
-   schedule share (DIVERGENCES D45), kept for the life of the process: each run
+   schedule share, kept for the life of the process: each run
    that stages through it touches it, so nx.device orders the runs. *)
 let stagings = ref []
 let stagings_lock = Mutex.create ()

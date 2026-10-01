@@ -87,7 +87,7 @@ let placeholder name d n u =
       (Ops_nv.storage u)
 
 (* The queues address the memory nx.device says the device reaches: other memory
-   is copied through the host's (DIVERGENCES D46). *)
+   is copied through the host's. *)
 let reaches d devices name =
   match List.assoc_opt name devices with
   | Some d' -> Nx_device.reaches d d'
