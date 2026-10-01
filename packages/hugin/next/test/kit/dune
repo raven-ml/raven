@@ -1,0 +1,4 @@
+(tests
+ (names test_locale)
+ (package hugin)
+ (libraries hugin.next.kit windtrap))
