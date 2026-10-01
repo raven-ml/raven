@@ -559,7 +559,7 @@ let others =
             (0, Nx.zeros Nx.float32 [| 3; 2; 1; 6 |])
             (bytes_out () - sent, y);
           equal (array int) [| 4; 6; 64 |] (Nx_quant.shape w));
-      test "dequant and apply name themselves when they read" (fun () ->
+      test "under an interpreter, dequant and apply read nothing" (fun () ->
           let w = random_weight [| 3; 4; 64 |] in
           let reads f =
             let seen = ref [] in
@@ -575,9 +575,9 @@ let others =
             Nx.Op.intercept { run; claims } (fun () -> ignore (f ()));
             List.sort_uniq String.compare !seen
           in
-          equal (list string) [ "Nx_quant.dequant" ]
+          equal (list string) []
             (reads (fun () -> Nx_quant.dequant Nx.float32 w));
-          equal (list string) [ "Nx_quant.apply" ]
+          equal (list string) []
             (reads (fun () ->
                  Nx_quant.apply
                    ~ids:(Nx.create Nx.int64 [| 2 |] [| 0L; 2L |])
