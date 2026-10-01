@@ -295,7 +295,16 @@ let rec link p d =
    that keys compile concurrently. *)
 type entry = { latch : Mutex.t; compiled : program option Atomic.t }
 
-let programs : (key, entry) Hashtbl.t = Hashtbl.create 64
+(* Hashed through the whole key: [Hashtbl.hash] stops before most of its shapes,
+   and keys that differ only there would share a bucket. *)
+module Programs = Hashtbl.Make (struct
+  type t = key
+
+  let equal = ( = )
+  let hash = Hashtbl.hash_param 256 512
+end)
+
+let programs : entry Programs.t = Programs.create 64
 
 (* [check what t d arrays layouts] refuses a dtype that [t], the target of [d],
    does not compute. *)
@@ -313,12 +322,12 @@ let check what t d arrays layouts =
 let program what key t d arrays dsts =
   let e =
     Mutex.protect lock @@ fun () ->
-    match Hashtbl.find_opt programs key with
+    match Programs.find_opt programs key with
     | Some e -> e
     | None ->
         check what t d (arrays @ dsts) key.layouts;
         let e = { latch = Mutex.create (); compiled = Atomic.make None } in
-        Hashtbl.add programs key e;
+        Programs.add programs key e;
         e
   in
   match Atomic.get e.compiled with
