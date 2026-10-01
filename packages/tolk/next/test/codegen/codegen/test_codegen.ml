@@ -1762,6 +1762,45 @@ let signed_zeros =
           padding_computed ~flip fill before after xs);
     ]
 
+(* Lanes all Invalid *)
+
+(* rune's fold of a float32 [4; 1] to [3; 1], kernel [2; 2], dilation [2; 2]
+   and padding [(0, 0); (1, 1)], every window of the second axis in the
+   padding. Upcast, every lane of its gated index is Invalid, and the stack of
+   lanes folds to one Invalid without its width, as tinygrad's does; the
+   reshape and the permute of the lanes are then left over a scalar. *)
+let invalid_lanes_kernel () =
+  let open Ops.O in
+  let out = Ops.param ~shape:[ Int 3 ] 0 Float32 in
+  let x = Ops.param ~shape:[ Int 4 ] 1 Float32 in
+  let o = Ops.range ~axis_type:Weak (Int 3) [ 2 ] in
+  let r0 = Ops.range ~axis_type:Reduce (Int 4) [ 0 ] in
+  let r1 = Ops.range ~axis_type:Reduce (Int 4) [ 1 ] in
+  let j = (r0 * int 3) + o and k = (r1 * int 3) + int 1 in
+  let inside = (r1 < int 3) land (j < int 10) in
+  let gate =
+    (j < int 10) land (r1 < int 3)
+    land ((j % int 5 < int 1) land (k % int 5 < int 1))
+  in
+  let at = (j // int 5 * int 2) + (k // int 5) in
+  let read = Ops.index x [ Ops.valid at inside ] in
+  let zero = Ops.float ~dtype:Float32 0. in
+  let sum = Ops.reduce (Ops.where gate read zero) Op.Add [ r0; r1 ] + zero in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ o ]) sum) [ o ] ]
+
+let invalid_lanes =
+  group "lanes all Invalid"
+    [
+      xfail
+        ~reason:
+          "a stack of Invalid lanes folds to one Invalid without its width, \
+           as tinygrad's does"
+        (slow "a kernel whose upcast lanes all read an Invalid index compiles"
+           (fun () ->
+             ignore (Codegen.to_program (invalid_lanes_kernel ()) clang)));
+    ]
+
 (* Errors *)
 
 (* A kernel holds no conditional: only a program's instructions do. *)
@@ -2030,6 +2069,7 @@ let () =
          lanes;
          vectors;
          signed_zeros;
+         invalid_lanes;
          gated_stores;
          divisions;
          range_shrinking;
