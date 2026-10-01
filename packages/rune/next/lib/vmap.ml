@@ -135,7 +135,9 @@ let update m x starts v =
           | None -> within
           | Some w -> Nx.bitwise_and w within)
     done;
-    match !inside with None -> v | Some inside -> Nx.where inside !window x
+    match !inside with
+    | Some inside -> Nx.where inside !window x
+    | None -> assert false (* Traced starts index at least one axis. *)
   end
   else eval (Update (x, Nx.pad [| (1, 0) |] 0l starts, v))
 

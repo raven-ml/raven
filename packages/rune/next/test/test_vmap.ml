@@ -288,6 +288,43 @@ let lanes =
         equal ~msg:"jvp inside the map" close
           (values (stack 4 (fun _ -> total)))
           (values inside));
+    test "a lane index names its map through a map of another name" (fun () ->
+        let a = Rune.axis () and b = Rune.axis () in
+        let index ?axis () = Nx.cast f64 (Rune.lane_index ?axis ()) in
+        let grid = Nx.zeros f64 [| 2; 3 |] in
+        let rows = stack 2 (fun i -> Nx.full f64 [| 3 |] (Float.of_int i)) in
+        equal ~msg:"a named outer map, an anonymous inner one" floats
+          (values rows)
+          (values
+             (Rune.vmap' ~axis:a
+                (Rune.vmap' (fun z -> Nx.add z (index ~axis:a ())))
+                grid));
+        equal ~msg:"an anonymous outer map, a named inner one" floats
+          (values rows)
+          (values
+             (Rune.vmap'
+                (Rune.vmap' ~axis:b (fun z -> Nx.add z (index ())))
+                grid)));
+    test "reverse mode inside a map counts the lanes of the named map around it"
+      (fun () ->
+        (* Each lane's z enters every lane's Σₗ zₗ yₗ, so its gradient sums the
+           four: 4 y. *)
+        let a = Rune.axis () and x = xs () in
+        equal close
+          (values (Nx.mul_s x 4.))
+          (values
+             (Rune.vmap' ~axis:a
+                (Rune.vmap' (fun y ->
+                     Rune.grad' (fun z -> Nx.sum (Rune.lanes a (Nx.mul z y))) y))
+                x)));
+    test "a remat's barrier on values no lane holds passes through the map"
+      (fun () ->
+        let c = vec [| 0.3; -0.7; 1.1 |] and x = xs () in
+        let rematted = Rune.remat Nx.Ptree.(tensor @-> returns tensor) Nx.sin in
+        let g () = Rune.grad' (fun w -> Nx.sum (rematted w)) c in
+        equal close
+          (values (Nx.add x (Nx.broadcast_to [| 4; 3 |] (Nx.cos c))))
+          (values (Rune.vmap' (fun r -> Nx.add r (g ())) x)));
     test "outside its named map, reverse mode differentiates through the gather"
       (fun () ->
         (* Σᵢ (Σⱼ xⱼ) · xᵢ = |Σⱼ xⱼ|² has the gradient 2 Σⱼ xⱼ in every row. *)
