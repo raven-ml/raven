@@ -586,7 +586,9 @@ let op : type r. scope -> r Nx.Op.t -> r =
         Ops.op_in_backward_slice_with_self u [ Op.Param ]
         || List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments
       in
-      if not (varies k || varies c) then
+      (* An empty draw has nothing to repeat. *)
+      let empty = Ops.max_numel c = 0 in
+      if not (empty || varies k || varies c) then
         jit_error
           "a random draw that does not depend on the function's arguments \
            would repeat on every call; pass the key as an argument";

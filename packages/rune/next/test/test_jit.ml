@@ -87,6 +87,11 @@ let calls =
           let draw c = Nx.Op.eval (Nx.Op.Threefry (key, c)) in
           let c = Nx.create Nx.int32 [| 4; 2 |] (Array.init 8 Int32.of_int) in
           equal (tensor int32) (draw c) (Rune.jit' draw c));
+      test "an empty draw from a captured key computes" (fun () ->
+          let key = Nx.zeros Nx.int32 [| 0; 2 |] in
+          let draw x = Nx.Op.eval (Nx.Op.Threefry (key, Nx.cast Nx.int32 x)) in
+          let x = Nx.zeros Nx.float64 [| 0; 2 |] in
+          equal (tensor int32) (draw x) (Rune.jit' draw x));
       test "reading a traced value raises Jit_error" (fun () ->
           raises_match
             (function Rune.Jit_error _ -> true | _ -> false)
