@@ -1,6 +1,19 @@
 # thumper baseline v1
 # suite: sowilo
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+Sowilo/Canny-1080p	alloc_words	exact	27699
+Sowilo/Canny-1080p	wall_time	batch=1	n=20	9.562e-02	9.169e-02 9.330e-02 9.416e-02 9.421e-02 9.455e-02 9.489e-02 9.495e-02 9.513e-02 9.514e-02 9.549e-02 9.575e-02 9.636e-02 9.765e-02 9.793e-02 9.798e-02 9.833e-02 9.851e-02 9.943e-02 9.966e-02 1.021e-01
+Sowilo/GaussianBlur-1080p	alloc_words	exact	3842
+Sowilo/GaussianBlur-1080p	wall_time	batch=1	n=20	6.829e-02	6.301e-02 6.404e-02 6.440e-02 6.441e-02 6.511e-02 6.556e-02 6.602e-02 6.645e-02 6.713e-02 6.810e-02 6.848e-02 6.888e-02 6.925e-02 6.987e-02 7.261e-02 7.261e-02 7.393e-02 7.475e-02 7.498e-02 7.624e-02
+Sowilo/Sobel-720p	alloc_words	exact	2802
+Sowilo/Sobel-720p	wall_time	batch=1	n=20	2.363e-02	2.334e-02 2.338e-02 2.346e-02 2.346e-02 2.347e-02 2.350e-02 2.351e-02 2.352e-02 2.353e-02 2.361e-02 2.365e-02 2.366e-02 2.369e-02 2.370e-02 2.370e-02 2.372e-02 2.372e-02 2.374e-02 2.461e-02 2.920e-02
+Sowilo/ToGrayscale-1080p	alloc_words	exact	258
+Sowilo/ToGrayscale-1080p	wall_time	batch=4	n=20	9.609e-04	9.528e-04 9.540e-04 9.564e-04 9.569e-04 9.574e-04 9.576e-04 9.580e-04 9.589e-04 9.600e-04 9.603e-04 9.615e-04 9.616e-04 9.624e-04 9.636e-04 9.666e-04 9.749e-04 9.911e-04 1.006e-03 1.076e-03 1.088e-03
+
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
