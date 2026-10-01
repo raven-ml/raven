@@ -155,26 +155,28 @@ val global_dot :
     Float16 gradients underflow: activations and gradients that fit float16
     still produce per-element gradient contributions below [2^-24], which round
     to zero. Loss scaling multiplies the loss by a large factor before the
-    backward pass — scaling every gradient with it — and divides the gradients
-    back down before the optimizer step. A {!Loss_scale.dynamic} scale also
-    adapts itself: overflowed steps (non-finite gradients) are skipped and the
-    scale backs off; long runs of finite steps grow it back.
+    backward pass, scaling every gradient with it, and divides the gradients
+    back down in the optimizer step. A {!Loss_scale.dynamic} scale also adapts
+    itself: a step whose gradients overflowed (hold a NaN or an infinity) is
+    skipped and the scale backs off; long runs of finite steps grow it back.
+
+    {!Loss_scale.step} wraps one optimizer step, here Adam's over the parameters
+    and its state:
 
     {[
-      let step (params, ls) =
-        let objective p = Vega.Loss_scale.scale ls (loss p) in
-        let sloss, grads = Rune.value_and_grad model objective params in
-        let grads = Vega.Loss_scale.unscale model ls grads in
-        let finite = Vega.Loss_scale.grads_finite model grads in
-        let params' = (* optimizer step on [grads] *) in
-        let params =
-          Nx.Ptree.map2 model (fun _ p p' -> Nx.where finite p' p) params params'
-        in
-        ((params, Vega.Loss_scale.adjust ls ~finite), sloss)
+    let model_state = Nx.Ptree.pair model (Vega.adam_ptree model)
+
+    let step ((params, opt), ls) =
+      let objective p = Vega.Loss_scale.scale ls (loss p) in
+      let _, grads = Rune.value_and_grad model objective params in
+      Vega.Loss_scale.step model model_state ls ~grads
+        (fun grads -> Vega.adam_step model ~lr opt ~params ~grads)
+        (params, opt)
     ]}
 
-    Bfloat16 shares float32's exponent range and needs none of this — loss
-    scaling is for float16 training. *)
+    Bfloat16 shares float32's exponent range and needs no scale. Under
+    [Loss_scale.static 1.0], {!Loss_scale.step} only skips the steps whose
+    gradients are not finite. *)
 
 (** Loss scales for float16 training, after JAX's [jmp]. *)
 module Loss_scale : sig
@@ -186,13 +188,12 @@ module Loss_scale : sig
       captured float would be a constant of the program. *)
 
   val static : float -> t
-  (** [static s] is the fixed scale [s]: {!adjust} returns it unchanged.
-      [static 1.0] makes the loss-scaling plumbing the identity.
+  (** [static s] is the fixed scale [s]: {!step} never changes it.
 
       Raises [Invalid_argument] if [s] is not positive. *)
 
   val dynamic : ?init:float -> unit -> t
-  (** [dynamic ()] is a fresh adaptive scale, adjusted by {!adjust}. [init]
+  (** [dynamic ()] is a fresh adaptive scale, adjusted by {!step}. [init]
       defaults to [32768.] ([2^15]).
 
       Raises [Invalid_argument] if [init] is not positive. *)
@@ -201,36 +202,39 @@ module Loss_scale : sig
   (** [scale ls x] is [x] times the current scale, at [x]'s dtype. Apply it to
       the loss, inside the differentiated objective. *)
 
-  val unscale : 'p Nx.Ptree.t -> t -> 'p -> 'p
-  (** [unscale p ls grads] divides every leaf of [grads] by the current scale,
-      at the leaf's dtype. Apply it to the gradients before any gradient
-      transformation or optimizer step. *)
-
-  val grads_finite : 'p Nx.Ptree.t -> 'p -> (bool, Nx.bool_elt) Nx.t
-  (** [grads_finite p grads] is a scalar boolean tensor: [true] iff every
-      element of every leaf of [grads] is finite (no NaN or infinity). Feed it
-      to {!adjust} and use it to skip the parameter update of an overflowed step
-      (select between updated and previous parameters with {!Nx.where}, as in
-      the module preamble — tensor arithmetic, so the step still traces under
-      jit). *)
-
-  val adjust :
+  val step :
     ?growth_interval:int ->
     ?growth_factor:float ->
     ?backoff_factor:float ->
+    'p Nx.Ptree.t ->
+    's Nx.Ptree.t ->
     t ->
-    finite:(bool, Nx.bool_elt) Nx.t ->
-    t
-  (** [adjust ls ~finite] is the scale for the next step. For a {!dynamic}
-      scale: if [finite] is [false] the scale is multiplied by [backoff_factor]
-      (default [0.5]) and the finite-step counter resets; if [finite] is [true]
-      the counter advances, and on reaching [growth_interval] (default [2000])
-      the scale is multiplied by [growth_factor] (default [2.]) and the counter
-      resets. For a {!static} scale, [adjust] is the identity. Pure [Nx.where]
-      arithmetic on the state tensors — safe inside a jitted step.
+    grads:'p ->
+    ('p -> 's) ->
+    's ->
+    's * t
+  (** [step p s ls ~grads update x] is one optimizer step from [x] under the
+      loss scale [ls], and the scale for the next step. [grads] are gradients of
+      the scaled loss, with structure [p]; [x], typically the parameters and the
+      optimizer state, has structure [s].
+
+      [step] divides every leaf of [grads] by the current scale, at the leaf's
+      dtype, and checks that every element of the result is finite.
+      - If it is, the step is [update grads'] for the divided gradients
+        [grads']. A {!dynamic} scale counts the finite step; on reaching
+        [growth_interval] (default [2000]) consecutive finite steps it is
+        multiplied by [growth_factor] (default [2.]) and the count restarts.
+      - Otherwise the step is skipped: it is [x], every tensor of it, the
+        optimizer's counters included. A {!dynamic} scale is multiplied by
+        [backoff_factor] (default [0.5]) and the count restarts.
+
+      A {!static} scale is returned unchanged. [step] is tensor arithmetic: it
+      always computes [update grads'] and selects with {!Nx.where}, so it
+      compiles under {!Rune.val-jit} into one program whatever the gradients.
 
       Raises [Invalid_argument] if [growth_interval], [growth_factor] or
-      [backoff_factor] is not positive. *)
+      [backoff_factor] is not positive, or as {!Nx.Ptree.map2} does if
+      [update grads'] and [x] differ in structure. *)
 
   val ptree : t Nx.Ptree.t
   (** [ptree] is the structure of a loss scale. It visits the fixed tensors

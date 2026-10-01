@@ -46,7 +46,6 @@ between the backward pass and the step:
 | `clip_by_global_norm p ~max_norm g` | Rescale all leaves together so their joint L2 norm is at most `max_norm` |
 | `clip_by_value p ~max g` | Clamp every element to `[-max, max]` |
 | `global_norm p g` | The joint L2 norm, read on the host for logging |
-| `Loss_scale.unscale p ls g` | Divide by a float16 loss scale |
 
 Your own transformation is a function over the structure, usually one
 `Nx.Ptree.map`. To centralize the gradients of every matrix, for instance:
@@ -120,20 +119,24 @@ unchanged, in the parameters and in the state.
 
 ## Skipping Overflowed Steps
 
-In float16 training, a step whose gradients overflowed is skipped by selecting
-between the updated and the previous parameters, in tensor arithmetic so it
-still compiles:
+In float16 training, the loss is multiplied by a scale before the backward
+pass and the gradients are divided by it in the step. `Vega.Loss_scale.step`
+wraps a step: it divides the gradients, applies the step if they are all
+finite, keeps the parameters and the whole optimizer state if not, and returns
+the scale for the next step:
 
 <!-- $MDX skip -->
 ```ocaml
-let finite = Vega.Loss_scale.grads_finite model grads in
-let params', st' = Vega.adam_step model ~lr st ~params ~grads in
-let params = Nx.Ptree.map2 model (fun _ p p' -> Nx.where finite p' p) params params' in
-let st = Nx.Ptree.map2 (Vega.adam_ptree model) (fun _ s s' -> Nx.where finite s' s) st st'
+let model_state = Nx.Ptree.pair model (Vega.adam_ptree model)
+
+let (params, st), ls =
+  Vega.Loss_scale.step model model_state ls ~grads
+    (fun grads -> Vega.adam_step model ~lr st ~params ~grads)
+    (params, st)
 ```
 
-`Vega.Loss_scale` adapts the scale itself; its documentation has the whole
-loop.
+The step is tensor arithmetic, so it compiles. With `Loss_scale.static 1.0`
+it only skips the steps whose gradients are not finite.
 
 ## Next Steps
 

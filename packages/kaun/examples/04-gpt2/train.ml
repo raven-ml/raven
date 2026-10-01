@@ -173,8 +173,7 @@ let key = Nx.Ptree.option Nx.Rng.ptree
 (* Float16 compute needs loss scaling: float16 gradients underflow below 2^-24.
    The scale state is consumed and returned by the jitted step as tensor leaves,
    so the dynamic scale really updates across compiled calls. Overflowed steps
-   keep the previous parameters (selected with [Nx.where] on the finite flag, so
-   the step still traces once). *)
+   keep the previous parameters. *)
 
 type scaled = { params : Gpt2.t; ls : Vega.Loss_scale.t }
 
@@ -200,16 +199,14 @@ let train_step_scaled objective key { params; ls } =
     Rune.vjp gpt2_tree Nx.Ptree.tensor (objective key) params
   in
   let grads = pullback ls.Vega.Loss_scale.scale in
-  let grads = Vega.Loss_scale.unscale gpt2_tree ls grads in
-  let finite = Vega.Loss_scale.grads_finite gpt2_tree grads in
   let state = Vega.sgd_init gpt2_tree params in
-  let params' =
-    fst (Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) state ~params ~grads)
+  let params, ls =
+    Vega.Loss_scale.step gpt2_tree gpt2_tree ls ~grads
+      (fun grads ->
+        fst (Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) state ~params ~grads))
+      params
   in
-  let params =
-    Nx.Ptree.map2 gpt2_tree (fun _ p p' -> Nx.where finite p' p) params params'
-  in
-  (loss, { params; ls = Vega.Loss_scale.adjust ls ~finite })
+  (loss, { params; ls })
 
 (* The data-parallel step takes the batch as arguments, split on axis 0 across
    the devices, and the parameters as copies. The dropout key is a copy too, and

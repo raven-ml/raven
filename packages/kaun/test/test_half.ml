@@ -382,14 +382,14 @@ let test_f16_train_loss_scaled () =
           Vega.Loss_scale.scale ls loss
         in
         let sloss, grads = Rune.value_and_grad Nx.Ptree.tensor objective w in
-        let grads = Vega.Loss_scale.unscale Nx.Ptree.tensor ls grads in
-        let finite = Vega.Loss_scale.grads_finite Nx.Ptree.tensor grads in
-        let w' = Nx.sub w (Nx.mul_s grads 0.2) in
-        {
-          w = Nx.where finite w' w;
-          loss = Nx.div sloss ls.Vega.Loss_scale.scale;
-          ls = Vega.Loss_scale.adjust ~growth_interval:3 ls ~finite;
-        })
+        let loss = Nx.div sloss ls.Vega.Loss_scale.scale in
+        let w, ls =
+          Vega.Loss_scale.step ~growth_interval:3 Nx.Ptree.tensor
+            Nx.Ptree.tensor ls ~grads
+            (fun grads -> Nx.sub w (Nx.mul_s grads 0.2))
+            w
+        in
+        { w; loss; ls })
   in
   let w = ref (Nx.zeros f32 [| 2; 1 |]) in
   let ls = ref (Vega.Loss_scale.dynamic ~init:1024.0 ()) in

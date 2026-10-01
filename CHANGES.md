@@ -87,6 +87,10 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- `Loss_scale.step` replaces `Loss_scale.unscale`, `grads_finite` and
+  `adjust`: it wraps an optimizer step, divides the gradients by the scale,
+  skips the step on overflow and returns the next scale. A skipped step keeps
+  the whole value it is given, so the optimizer state can no longer be left out.
 - A compiled `Schedule.polynomial_decay` with a fractional `power` was NaN
   from `decay_steps` on, so training kept a NaN learning rate after the
   decay: `1 - s / steps` compiled to a value just below zero. It now takes

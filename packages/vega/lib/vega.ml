@@ -243,19 +243,12 @@ module Loss_scale = struct
   let unscale p t grads =
     Nx.Ptree.map p (fun _ g -> Nx.div g (Nx.cast (Nx.dtype g) t.scale)) grads
 
-  let grads_finite p grads =
+  let all_finite p grads =
     Nx.Ptree.fold p
       (fun _ g acc -> Nx.logical_and acc (Nx.all (Nx.isfinite g)))
       grads (Nx.scalar Nx.bool true)
 
-  let adjust ?(growth_interval = 2000) ?(growth_factor = 2.0)
-      ?(backoff_factor = 0.5) t ~finite =
-    if growth_interval <= 0 then
-      invalid_argf
-        "Vega.Loss_scale.adjust: expected growth_interval > 0, got %d"
-        growth_interval;
-    validate_positive "Vega.Loss_scale.adjust" "growth_factor" growth_factor;
-    validate_positive "Vega.Loss_scale.adjust" "backoff_factor" backoff_factor;
+  let adjust ~growth_interval ~growth_factor ~backoff_factor t ~finite =
     let dynamic = Nx.greater_equal_s t.good_steps 0l in
     let good = Nx.add_s t.good_steps 1l in
     let grow = Nx.greater_equal_s good (Int32.of_int growth_interval) in
@@ -267,6 +260,23 @@ module Loss_scale = struct
       scale = Nx.where dynamic scale' t.scale;
       good_steps = Nx.where dynamic good' t.good_steps;
     }
+
+  (* The update is computed whatever [finite] is and selected leaf by leaf, so
+     the step has no control flow and compiles once. Every tensor of [x] is
+     selected, the optimizer's counters with the rest. *)
+  let step ?(growth_interval = 2000) ?(growth_factor = 2.0)
+      ?(backoff_factor = 0.5) p s t ~grads update x =
+    if growth_interval <= 0 then
+      invalid_argf "Vega.Loss_scale.step: expected growth_interval > 0, got %d"
+        growth_interval;
+    validate_positive "Vega.Loss_scale.step" "growth_factor" growth_factor;
+    validate_positive "Vega.Loss_scale.step" "backoff_factor" backoff_factor;
+    let grads = unscale p t grads in
+    let finite = all_finite p grads in
+    let x =
+      Nx.Ptree.map2 s (fun _ x' x -> Nx.where finite x' x) (update grads) x
+    in
+    (x, adjust ~growth_interval ~growth_factor ~backoff_factor t ~finite)
 end
 
 (* Learning rates *)

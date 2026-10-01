@@ -111,6 +111,47 @@ let tests =
            Vega.adafactor_step Wb.ptree ~lr:(Nx.mul_s (Nx.rsqrt t) 1e-2) st));
   ]
 
+(* A loss-scaled Adam step compiles once and follows the eager steps, through a
+   step whose gradients overflow: [poison] is added to every gradient, [0.] but
+   at the third step, where it is an infinity. *)
+let test_loss_scaled_compiles () =
+  let both = Nx.Ptree.pair Wb.ptree (Vega.adam_ptree Wb.ptree) in
+  let all = Nx.Ptree.pair both Vega.Loss_scale.ptree in
+  let body poison ((params, st), ls) =
+    let g = grads params in
+    let scaled x = Nx.add (Vega.Loss_scale.scale ls x) poison in
+    let grads = { Wb.w = scaled g.w; b = scaled g.b } in
+    Vega.Loss_scale.step ~growth_interval:2 Wb.ptree both ls ~grads
+      (fun grads -> Vega.adam_step Wb.ptree ~lr st ~params ~grads)
+      (params, st)
+  in
+  let run f =
+    let rec go k x =
+      if k = steps then x
+      else
+        let bad = if k = 2 then Float.infinity else 0.0 in
+        go (k + 1) (f (Nx.scalar Nx.float32 bad) x)
+    in
+    let params = wb 1 in
+    go 0
+      ( (params, Vega.adam_init Wb.ptree params),
+        Vega.Loss_scale.dynamic ~init:1024.0 () )
+  in
+  let eager = run body in
+  let compiled =
+    run (Rune.jit Nx.Ptree.(tensor @-> consumes all @@ returns all) body)
+  in
+  equal ~msg:"one backoff and two growths" float_exact 2048.0
+    (Nx.item [] (snd compiled).Vega.Loss_scale.scale);
+  ignore
+    (Nx.Ptree.map2 all
+       (fun path x y ->
+         equal
+           ~msg:(Format.asprintf "%a" Nx.Ptree.Path.pp path)
+           (float 1e-5) 0.0 (max_diff x y);
+         x)
+       eager compiled)
+
 (* RAdam at [b2 = 0.9999], compiled in float32: the rectified steps 6 to 12 move
    as far as eager float64 ones to within 1.5e-4 (2e-5 eagerly; the float32 [1 -
    pow b2 t] was off by 3.5%). The remaining error is float32's [rho = rho_inf -
@@ -181,5 +222,10 @@ let () =
                test_radam_compiled_rectification;
              test "a polynomial decay compiles to eager's values"
                test_polynomial_decay_compiles;
+           ];
+         group "loss scaling"
+           [
+             test "a loss-scaled step compiles, overflow included"
+               test_loss_scaled_compiles;
            ];
        ])
