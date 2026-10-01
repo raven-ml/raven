@@ -207,23 +207,6 @@ type 'r program = {
 }
 
 let span phase f = Nx_device.Profile.span ("rune.jit: " ^ phase) f
-
-(* The renderer of each device, made once per trace. *)
-let renderers () =
-  let made = ref [] in
-  fun d ->
-    match List.assq_opt d !made with
-    | Some r -> r
-    | None ->
-        let t = Engine.target (Nx.Device.runtime d) in
-        let r =
-          match Tolk_next.Device.renderer ~arch:t.arch t.device with
-          | Ok r -> r
-          | Error why -> failwith why
-        in
-        made := (d, r) :: !made;
-        r
-
 let numel shape = Array.fold_left ( * ) 1 shape
 
 let id (Nx.P y) =
@@ -381,7 +364,9 @@ let paths args_s roles args =
    [args], whose leaves are [leaves], and compiles and links its program. *)
 let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
     (args : a) leaves ~paths ~consumed =
-  let s = Lower.scope ~renderer:(renderers ()) in
+  let s =
+    Lower.scope ~renderer:(fun d -> Engine.renderer (Nx.Device.runtime d))
+  in
   let slots = Array.map (fun _ -> Ops.unique_num ()) leaves in
   let params =
     Array.mapi

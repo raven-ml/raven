@@ -41,6 +41,14 @@ val target : Nx_device.t -> Helpers.Target.t
     Raises [Invalid_argument] if [d] runs no program: the disk, or a device no
     vendor claims that is no host and does not share its host's memory. *)
 
+val renderer : Nx_device.t -> Renderer.t
+(** [renderer d] is the renderer of [d]'s {!target}, which writes the source of
+    its programs, made once per target ({!Tolk_next.Device.renderer}).
+
+    Raises [Invalid_argument] as {!target} does, and [Failure] with the reason
+    when the target's renderer is not available, such as a compiler the machine
+    lacks. *)
+
 type device = {
   device : Nx_device.t;  (** The device. *)
   compiler : Hcq2.device;

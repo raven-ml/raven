@@ -186,13 +186,10 @@ let target what d =
   memo targets lock d @@ fun () ->
   if not (runs_on d) then
     refuse what "%s runs no compiled program" (Nx_device.name d);
-  let target = Engine.target d in
-  let r =
-    match Device.renderer ~arch:target.arch target.device with
-    | Ok r -> r
-    | Error why -> failwith why
-  in
-  { target; dtypes = Renderer.supported_dtypes r }
+  {
+    target = Engine.target d;
+    dtypes = Renderer.supported_dtypes (Engine.renderer d);
+  }
 
 (* Programs *)
 

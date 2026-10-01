@@ -107,6 +107,13 @@ let targets =
         (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Engine.target (Lazy.force local)));
+      test
+        "a target's renderer is made once, and shared by the devices that \
+         compile for it" (fun () ->
+          is_true (Engine.renderer host == Engine.renderer host);
+          is_true (Engine.renderer host == Engine.renderer (device "CPU:1"));
+          raises_match Exn.invalid_arg (fun () ->
+              Engine.renderer Nx_device.disk));
       test "Metal compiles for its GPU family" (fun () ->
           match Metal.device with
           | None -> skip ~reason:"no Metal device" ()

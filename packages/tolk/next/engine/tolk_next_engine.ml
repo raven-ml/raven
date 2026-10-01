@@ -32,6 +32,12 @@ let target d =
         (Printf.sprintf "Tolk_next_engine.target: %s runs no program"
            (Nx_device.name d))
 
+let renderer d =
+  let t = target d in
+  match Device.renderer ~arch:t.arch t.device with
+  | Ok r -> r
+  | Error why -> failwith why
+
 let find fn devices name =
   match List.assoc_opt name devices with
   | Some d -> d
