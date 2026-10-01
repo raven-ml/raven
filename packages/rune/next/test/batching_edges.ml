@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Maps over the operands a row's draws never batch: conditions, indices, starts
-   and keys; a read inside a map; and nx's functions made of several rows, each
-   against its loop. *)
+   and keys; the bitcasts between widths, which the row's draws never take; a
+   read inside a map; and nx's functions made of several rows, each against its
+   loop. *)
 
 open Windtrap
 module Rune = Rune_next.Rune
@@ -97,6 +98,32 @@ let integer_operands =
       (int32s [| 3; 2 |] [| 1; 2; 3; 4; 5; 6 |]);
   ]
 
+(* Each lane's last axis holds eight bytes: one uint64. *)
+let bytes =
+  Nx.create Nx.uint8 [| 3; 2; 8 |]
+    (Array.init 48 (fun i -> ((i * 29) + 3) land 255))
+
+let widths =
+  [
+    is_the_loop "a widening bitcast reads each lane's last axis"
+      (Nx.bitcast Nx.uint64) bytes;
+    is_the_loop "a narrowing bitcast gives each lane a last axis of its own"
+      (Nx.bitcast Nx.uint8) (Nx.bitcast Nx.uint64 bytes);
+    is_the_loop "a widening bitcast of vector lanes gives scalar lanes"
+      (Nx.bitcast Nx.uint64)
+      (Nx.reshape [| 6; 8 |] bytes);
+    is_the_loop "a narrowing bitcast of scalar lanes gives vector lanes"
+      (Nx.bitcast Nx.uint8)
+      (Nx.bitcast Nx.uint64 (Nx.reshape [| 6; 8 |] bytes));
+    is_the_loop "a widening bitcast through a moved batch axis reads each lane"
+      (Nx.bitcast Nx.uint64)
+      (Nx.moveaxis 1 0 (Nx.contiguous (Nx.moveaxis 0 1 bytes)));
+    is_the_loop
+      "a widening bitcast of lanes interleaved in memory reads each lane"
+      (Nx.bitcast Nx.uint64)
+      (Nx.moveaxis 2 0 (Nx.contiguous (Nx.moveaxis 0 2 bytes)));
+  ]
+
 let reads =
   [
     test "reading a lane raises" (fun () ->
@@ -186,6 +213,7 @@ let compositions =
 let tests =
   [
     group "integer operands" integer_operands;
+    group "bitcasts between widths" widths;
     group "reads" reads;
     group "compositions" compositions;
   ]
