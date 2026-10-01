@@ -5028,6 +5028,11 @@ thread.
 
 ### Kaun
 
+- Add `Cache_index.draft ~slots ~sees` to verify a tree of draft tokens in one
+  call: each stores at a chosen slot and sees the cache and the draft tokens
+  `sees` names. A kept path's slots go in the next call's table.
+- Add `Cache_index.packed ~seq lens` for several sequences per lane: positions
+  restart at each sequence and a token sees only its own.
 - **Breaking:** `Rope` schedules hold the cosines and sines of every position
   below a context, and `Rope.apply` reads the rows at its positions. The
   constructors take `~context`; `Rope.context` returns it. Compiled attention

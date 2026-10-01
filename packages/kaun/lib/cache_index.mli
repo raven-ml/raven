@@ -10,13 +10,14 @@
     row [s] of every pool. A cache index says, for one call, which position each
     token holds and which slots hold the positions of its sequence. One
     contiguous run of slots per sequence ({!rows}), paged allocation, a prefix
-    shared by two sequences and a forked beam are all values of an index, and a
-    layer is the same for each. A model passes the index it was given to every
-    layer and never looks inside; a layer calls {!extend} on each of its pools
-    and attends under {!mask}. A layer that keeps one entry per block of
-    positions reads its pools through {!val-every}, and one that attends to a
-    few columns per token through {!select}. {!ptree} is an index's structure,
-    which a compiled step's signature names.
+    shared by two sequences, a forked beam, a tree of draft tokens verified in
+    one call ({!draft}) and several sequences packed in one lane ({!packed}) are
+    all values of an index, and a layer is the same for each. A model passes the
+    index it was given to every layer and never looks inside; a layer calls
+    {!extend} on each of its pools and attends under {!mask}. A layer that keeps
+    one entry per block of positions reads its pools through {!val-every}, and
+    one that attends to a few columns per token through {!select}. {!ptree} is
+    an index's structure, which a compiled step's signature names.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -28,15 +29,17 @@
       slot holding position [j], and column [j] of a table of blocks of [m]
       positions ({!val-every}) the slot holding block [j], positions [j * m] to
       [j * m + m - 1]. A column {e stands at} its position, or at its block's
-      last. Within a row a slot appears once. What a layer stores may depend on
-      the position and on every token before it (a rotated key above the first
-      block), so two sequences share a slot only at the same column, after the
-      same tokens. Every column a token sees names a slot that this call or an
-      earlier one stored; a hole inside that range reads as a zero key with the
-      weight of a zero score. A column is freed and becomes [-1] once it is
-      below every reach still to be fed. A layer's reach through a table is the
-      furthest back any of its reads looks: its window, its selections, and a
-      closing token's read of its block's positions.
+      last. Under a {!draft} the columns are the table's, then the call's
+      tokens, each standing at its token's position. Within a row a slot appears
+      once. What a layer stores may depend on the position and on every token
+      before it (a rotated key above the first block), so two sequences share a
+      slot only at the same column, after the same tokens. Every column a token
+      sees names a slot that this call or an earlier one stored; a hole inside
+      that range reads as a zero key with the weight of a zero score. A column
+      is freed and becomes [-1] once it is below every reach still to be fed. A
+      layer's reach through a table is the furthest back any of its reads looks:
+      its window, its selections, and a closing token's read of its block's
+      positions.
     + {b [-1] addresses nothing.} A position of [-1] is padding, a table entry
       of [-1] is an unallocated column, and a lane whose [row] is [-1] is
       padding throughout. A slot outside the pool and a row outside the table
@@ -45,9 +48,10 @@
       an index outside a tensor, so an eager run and a compiled run agree on
       every cache index.
     + {b A token stores at its own column:} the slot its table names at the
-      column that stands at its position. In blocks of [m] positions only a
-      block's last token has one; the others store nothing. A token whose
-      position is past the last column stores nothing.
+      column that stands at its position, or under a {!draft} the slot the draft
+      names. In blocks of [m] positions only a block's last token has one; the
+      others store nothing. A token whose position is past the last column
+      stores nothing.
     + {b Write targets are distinct.} Within a call the targets that address a
       slot are distinct, and a slot another sequence's table names is never one
       of them: a shared slot is one an earlier call wrote. Two tokens aimed at
@@ -58,7 +62,8 @@
     + {b A column no token of its lane sees contributes exactly zero,} whatever
       its slot holds: {!extend} replaces it by zero before any weight multiplies
       it. That covers an unallocated column, a column that stands past every
-      position of the lane, and a column below the index's {!window} for every
+      position of the lane (under a {!draft}, a table column at or past the
+      lane's least position), and a column below the index's {!window} for every
       token of the lane. The zeroing and the {!mask} read one window, the
       index's, so a layer cannot zero with one and mask with another. Under a
       selection ({!select}) this holds per chosen column, and a column the token
@@ -128,6 +133,23 @@ val whole : ?lens:int array -> batch:int -> seq:int -> unit -> t
     Raises [Invalid_argument] if [batch] or [seq] is not positive or a length
     does not fit. *)
 
+val packed : seq:int -> int array array -> t
+(** [packed ~seq lens] is the whole index of lanes that each hold several
+    sequences one after another: lane [b] holds sequences of [lens.(b).(0)],
+    [lens.(b).(1)], ... tokens, padded on the left to [seq] as in {!whole}, and
+    each sequence's tokens are at positions [0] to [n - 1]. A token sees the
+    tokens of its own sequence at or before its own and no other: under {!mask}
+    token [j] of a lane is of token [i]'s sequence when [j - p_j = i - p_i],
+    where [p] is the position. Nothing is read and nothing is kept.
+
+    [packed ~seq (Array.map (fun n -> [| n |]) lens)] masks, extends and rotates
+    as [whole ~lens ~batch ~seq ()]; packing several sequences in a lane gives
+    each the outputs it has alone, up to floating-point reassociation. One
+    compiled program serves every packing of [batch] lanes of [seq] tokens.
+
+    Raises [Invalid_argument] if there is no lane, [seq] is not positive, a
+    length is negative or a lane's lengths sum past [seq]. *)
+
 val window : int -> t -> t
 (** [window w index] is [index] whose tokens see only the last [w] positions at
     or before their own, themselves included. It replaces the window [index]
@@ -154,8 +176,38 @@ val select : Nx.int64_t -> t -> t
     as the last [w] positions, reads [k] rows per token whatever the context,
     where {!extend} without a selection reads [context] per lane.
 
-    Raises [Invalid_argument] if [columns] does not have that shape or [k] is
-    [0]. *)
+    Raises [Invalid_argument] if [columns] does not have that shape, [k] is [0]
+    or [index] is a {!draft}. *)
+
+val draft : slots:Nx.int64_t -> sees:Nx.bool_t -> t -> t
+(** [draft ~slots ~sees index] is [index] whose tokens are a draft verified in
+    one call, a tree of guesses for instance, with:
+
+    - [slots], of shape [[| batch; seq |]]: [slots.(b).(i)] is the slot token
+      [i] of lane [b] stores at, [-1] for none. The caller takes them from the
+      slots no table names.
+    - [sees], of shape [[| batch; seq; seq |]]: [sees.(b).(i).(j)] says whether
+      token [i] of lane [b] sees token [j] of the same lane. For a tree it is
+      [true] at the token's ancestors and the token itself.
+
+    Under a draft the table holds each sequence up to the call, and the columns
+    are the table's, then the call's tokens: {!context} is the table's width
+    plus [seq], and {!extend}'s [seen] is the table read followed by the call's
+    [values]. A token sees the table's columns that stand before its lane's
+    least position, and token [j] when [sees] says so; of both, only those that
+    stand at or before its position and, under the index's {!window}, within it.
+    Draft tokens store nothing in the table's columns.
+
+    After verification the caller keeps a path by naming, in the next call's
+    table, the slot of each kept token at the column of its position:
+    [table.(r).(p_j) <- slots.(b).(j)]; the other slots are free again, and
+    nothing is copied. A draft of one chain of tokens is a chunk, which needs no
+    draft: tokens at consecutive positions store at their own columns.
+
+    It keeps [index]'s window and replaces any draft [index] had.
+
+    Raises [Invalid_argument] if [slots] or [sees] does not have that shape, or
+    if [index] is whole, reads blocks ({!val-every}) or selects columns. *)
 
 val every : int -> t -> t
 (** [every m index] is [index] read in blocks of [m] positions, for a layer that
@@ -188,14 +240,16 @@ val every : int -> t -> t
 
     Raises [Invalid_argument] if [m] is not positive, or, when [index] does not
     read blocks of [m] already, if it reads blocks of another size, selects
-    columns, or has a table and none for blocks of [m] positions. *)
+    columns, is a {!draft} or {!packed}, or has a table and none for blocks of
+    [m] positions. *)
 
 val advance : t -> t
 (** [advance index] is the index of the next token of every lane. It keeps
-    [index]'s window and {!val-every} and drops its selection: [seq] is [1] and
-    the position is one past the lane's greatest. A lane of padding advances to
-    position [0]. It is per lane: where two lanes name one sequence it is not
-    the sequence's next position, and the caller sets positions itself.
+    [index]'s window and {!val-every} and drops its selection and its {!draft}:
+    [seq] is [1] and the position is one past the lane's greatest. A lane of
+    padding advances to position [0]. It is per lane: where two lanes name one
+    sequence it is not the sequence's next position, and the caller sets
+    positions itself.
 
     Raises [Invalid_argument] on a whole index. *)
 
@@ -209,9 +263,10 @@ val seq : t -> int
 
 val context : t -> int
 (** [context index] is the number of columns a sequence can hold, the width of
-    what {!extend} returns: the table's on an index with one, [seq] on a whole
-    index. Under {!val-every} a column is a block: the width of the table of
-    blocks, or [(seq + m - 1) / m] on a whole index. *)
+    what {!extend} returns: the table's on an index with one, plus [seq] under a
+    {!draft}, and [seq] on a whole index. Under {!val-every} a column is a
+    block: the width of the table of blocks, or [(seq + m - 1) / m] on a whole
+    index. *)
 
 val positions : t -> Nx.int64_t
 (** [positions index], of shape [[| batch; seq |]], is the tokens' positions
@@ -237,7 +292,9 @@ val extend :
       that is unallocated, that stands past every position of its lane, or below
       the index's {!window} for every token of its lane, is zero. Under a
       selection it is each token's chosen columns, of shape
-      [[| batch; seq; k; ... |]] (see {!select}).
+      [[| batch; seq; k; ... |]] (see {!select}). Under a {!draft} the draft's
+      tokens store at its slots, and [seen] is the table's columns followed by
+      [values].
 
     On a whole index [seen] is [values], the values of the tokens that close
     each block under {!val-every}, or the chosen ones under a selection, and
@@ -248,9 +305,10 @@ val extend :
     one limit: compiled, the write stores each token's row on its own, up to 16
     tokens a call, and a call of more, such as a long prefill, rewrites the
     whole pool once per token. Compiled, the slot numbers and the zeroing fuse
-    into the gather: the read is one gated load per element. That holds while the slot numbers stay an unevaluated
-    expression of the index's tensors; forcing them into storage, as
-    {!Nx.contiguous} does, costs a buffer and a kernel per pool per layer.
+    into the gather: the read is one gated load per element. That holds while
+    the slot numbers stay an unevaluated expression of the index's tensors;
+    forcing them into storage, as {!Nx.contiguous} does, costs a buffer and a
+    kernel per pool per layer.
 
     Raises [Invalid_argument] if [values] does not have that shape. *)
 
@@ -258,27 +316,32 @@ val mask : t -> Nx.bool_t
 (** [mask index], of shape [[| batch; seq; context |]], is which columns of
     {!extend}'s [seen] each token sees: those that stand at or before its
     position, and under the index's {!window} only the last of them. On a whole
-    index the columns are the call's tokens, and padded ones are hidden. A
-    padded token sees none. Under a selection it has shape [[| batch; seq; k |]]
-    and says which of its chosen columns each token sees. *)
+    index the columns are the call's tokens, and a token sees those of its own
+    sequence ({!packed}); padded ones are hidden. Under a {!draft} its last
+    [seq] columns are the call's tokens, seen as {!draft} says. A padded token
+    sees none. Under a selection it has shape [[| batch; seq; k |]] and says
+    which of its chosen columns each token sees. *)
 
 (** {1:structure Structure} *)
 
 val ptree : t Nx.Ptree.t
 (** [ptree] is the structure of an index, for the signature of a compiled step
-    and for {!Nx.Ptree.map} over its tensors. Its leaves are the index's int64
-    tensors, its tables of blocks and its selection included, and it reports
-    what a compiled program depends on beyond them. In walk order:
-    - [tokens] reports case ["whole"] for an index built by {!whole}, then walks
-      its positions at [tokens.pos]; or case ["tabled"], then whether [row] is
-      present and, if it is, [row] itself at [tokens.row], the positions at
-      [tokens.pos], the table at [tokens.table], and at [tokens.blocks] the
-      number of tables of blocks, each reporting its block size before its table
-      at [tokens.blocks.]{e i};
+    and for {!Nx.Ptree.map} over its tensors. Its leaves are the index's
+    tensors, its tables of blocks, its selection and its draft included: int64,
+    and bool for a draft's [sees]. It reports what a compiled program depends on
+    beyond them. In walk order:
+    - [tokens] reports case ["whole"] for an index built by {!whole}, or
+      ["packed"] for one built by {!packed}, then walks its positions at
+      [tokens.pos]; or case ["tabled"], then whether [row] is present and, if it
+      is, [row] itself at [tokens.row], the positions at [tokens.pos], the table
+      at [tokens.table], and at [tokens.blocks] the number of tables of blocks,
+      each reporting its block size before its table at [tokens.blocks.]{e i};
     - [every] reports the block size the index reads in ({!val-every}), [1] when
       it reads positions;
     - [window] reports whether a {!window} is set and its size;
-    - [columns] reports whether a selection ({!select}) is present and walks it.
+    - [columns] reports whether a selection ({!select}) is present and walks it;
+    - [draft] reports whether a {!draft} is present and walks its slots at
+      [draft.slots] and its [sees] at [draft.sees].
 
     Two indices share a compiled program only if they agree on all of these
     reports; one that differs, such as another window, compiles its own. *)

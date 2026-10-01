@@ -1755,6 +1755,498 @@ let test_cached_gradients () =
   in
   grads_ok (Rune.check_grads attention64 loss p)
 
+(* Drafts. A tree of draft tokens is verified in one call: token [i] continues
+   token [parents.(i)], token 0 continues the cache. *)
+
+let ancestors parents =
+  let n = Array.length parents in
+  let rec path i = if i < 0 then [] else i :: path parents.(i) in
+  Array.init n (fun i -> List.rev (path i))
+
+let depths parents =
+  Array.map (fun path -> List.length path - 1) (ancestors parents)
+
+(* [sees.(i).(j)]: token [j] is token [i] or one of its ancestors. *)
+let tree_sees parents =
+  let n = Array.length parents in
+  let paths = ancestors parents in
+  Nx.create Nx.bool [| 1; n; n |]
+    (Array.init (n * n) (fun t -> List.mem (t mod n) paths.(t / n)))
+
+(* One sequence over a table of 12 columns whose slots are shuffled; draft
+   tokens store at slots 12 and up, which no table names. *)
+let draft_table = [| 7; 2; 11; 0; 5; 9; 1; 10; 3; 6; 4; 8 |]
+let draft_slot i = 19 - i
+let draft_cache () = cache 20
+
+let windowed window index =
+  Option.fold ~none:index ~some:(fun w -> Cache_index.window w index) window
+
+(* The cache after a prefix of [p] tokens, with NaN in the slots of the columns
+   past it: a draft must not read them, and sequential decoding writes them
+   before it reads them. *)
+let after_prefix ~window p_layer x p =
+  let index =
+    windowed window
+      (index_at ~pos:[| Array.init p Fun.id |] ~slots:[| draft_table |])
+  in
+  let _, c = call p_layer (draft_cache ()) index (Nx.slice [ A; R (0, p) ] x) in
+  Nx.Ptree.Payload.map
+    (module Attention.Cache)
+    (fun _ t ->
+      Array.fold_left
+        (fun t s ->
+          Nx.set [ Nx.R (s, s + 1) ] (Nx.full Nx.float32 [| 1; 2; 2 |] nan) t)
+        t
+        (Array.sub draft_table p (12 - p)))
+    c
+
+(* The output of each token of [tokens], fed one by one at positions [p], [p +
+   1], ... through [table]. *)
+let sequential ~window p_layer c table ~p tokens =
+  let ys, _ =
+    List.fold_left
+      (fun (ys, (c, at)) x ->
+        let index =
+          windowed window (index_at ~pos:[| [| at |] |] ~slots:[| table |])
+        in
+        let y, c = call p_layer c index x in
+        (y :: ys, (c, at + 1)))
+      ([], (c, p))
+      tokens
+  in
+  List.rev ys
+
+(* A draft of [parents] after a prefix of [p] tokens gives each token the output
+   of decoding its path alone; keeping the path to token [kept], the next
+   token's output is the one after that path. *)
+let draft_agrees ~window ~p ~parents ~kept =
+  Nx.Rng.with_key (Nx.Rng.key 40) @@ fun () ->
+  let n = Array.length parents in
+  let p_layer = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 1; p; 8 |] in
+  let tokens = Array.init n (fun _ -> Nx.randn Nx.float32 [| 1; 1; 8 |]) in
+  let bonus = Nx.randn Nx.float32 [| 1; 1; 8 |] in
+  let c = after_prefix ~window p_layer x p in
+  let depth = depths parents and paths = ancestors parents in
+  let index =
+    windowed window
+      (Cache_index.draft
+         ~slots:(int64s [| 1; n |] (Array.init n draft_slot))
+         ~sees:(tree_sees parents)
+         (index_at
+            ~pos:[| Array.map (fun d -> p + d) depth |]
+            ~slots:[| draft_table |]))
+  in
+  let y, c' =
+    call p_layer c index (Nx.concatenate ~axis:1 (Array.to_list tokens))
+  in
+  is_true ~msg:"no NaN reaches the outputs"
+    (Array.for_all Float.is_finite (flat y));
+  let along path = List.map (fun j -> tokens.(j)) path in
+  Array.iteri
+    (fun i path ->
+      let alone =
+        List.nth
+          (sequential ~window p_layer c draft_table ~p (along path))
+          depth.(i)
+      in
+      close
+        ~msg:(Printf.sprintf "token %d is its path decoded alone" i)
+        alone
+        (Nx.slice [ A; R (i, i + 1) ] y))
+    paths;
+  (* Keeping a path names its slots at the columns of its positions. *)
+  let kept_path = paths.(kept) in
+  let table = Array.copy draft_table in
+  List.iteri (fun d j -> table.(p + d) <- draft_slot j) kept_path;
+  let next = p + depth.(kept) + 1 in
+  let y_next, _ =
+    call p_layer c'
+      (windowed window (index_at ~pos:[| [| next |] |] ~slots:[| table |]))
+      bonus
+  in
+  let expected =
+    List.nth
+      (sequential ~window p_layer c draft_table ~p
+         (along kept_path @ [ bonus ]))
+      (depth.(kept) + 1)
+  in
+  close ~msg:"after keeping a path, the next token follows it" expected y_next
+
+let window_gen = Gen.(option (int_range 1 4))
+
+let test_linear_draft =
+  prop "a linear draft is sequential decoding"
+    Gen.(triple (int_range 1 5) (int_range 1 6) window_gen)
+    (fun (p, n, window) ->
+      cover "a window" (Option.is_some window);
+      cover "no window" (Option.is_none window);
+      cover "one token" (n = 1);
+      let parents = Array.init n (fun i -> i - 1) in
+      draft_agrees ~window ~p ~parents ~kept:(n - 1))
+
+(* Token [i > 0] continues a token before it. *)
+let tree_gen =
+  Gen.(
+    let* n = int_range 1 6 in
+    let+ picks = list ~size:(constant n) (int_range 0 1000) in
+    let picks = Array.of_list picks in
+    ( Array.init n (fun i -> if i = 0 then -1 else picks.(i) mod i),
+      picks.(0) mod n ))
+
+let test_tree_draft =
+  prop "a tree draft gives each token its path's output"
+    Gen.(triple (int_range 1 5) tree_gen window_gen)
+    (fun (p, (parents, kept), window) ->
+      let children i =
+        Array.fold_left (fun n q -> if q = i then n + 1 else n) 0 parents
+      in
+      let branches =
+        Array.exists
+          (fun i -> children i > 1)
+          (Array.init (Array.length parents) Fun.id)
+      in
+      cover "a branching tree" branches;
+      cover "a window" (Option.is_some window);
+      draft_agrees ~window ~p ~parents ~kept)
+
+(* Positions 0 and 1 in a table of 4 columns; a root at 2 and two children at 3.
+   Values are numbered by position plus one, so a read names what it holds. *)
+let draft_fixture () =
+  let table = [| 3; 0; 2; 1 |] in
+  let _, pool =
+    Cache_index.extend
+      (index_at ~pos:[| [| 0; 1 |] |] ~slots:[| table |])
+      (numbered ~batch:1 ~from:0 2)
+      (Nx.zeros Nx.float32 [| 7; 1 |])
+  in
+  (* Column 2's slot holds NaN: the draft must not read it. *)
+  let pool = Nx.set [ Nx.R (2, 3) ] (Nx.full Nx.float32 [| 1; 1 |] nan) pool in
+  let index =
+    Cache_index.draft
+      ~slots:(int64s [| 1; 3 |] [| 6; 4; 5 |])
+      ~sees:(tree_sees [| -1; 0; 0 |])
+      (index_at ~pos:[| [| 2; 3; 3 |] |] ~slots:[| table |])
+  in
+  (index, pool)
+
+let test_draft_index () =
+  let index, pool = draft_fixture () in
+  equal ~msg:"the table's columns, then the call's tokens" int 7
+    (Cache_index.context index);
+  let values = Nx.create Nx.float32 [| 1; 3; 1 |] [| 30.; 40.; 41. |] in
+  let seen, pool' = Cache_index.extend index values pool in
+  values_are
+    ~msg:"the table below the least position, zero past it, then the tokens"
+    ~tol:0.
+    [| 1.; 2.; 0.; 0.; 30.; 40.; 41. |]
+    seen;
+  equal ~msg:"stores land at the draft's slots, and only there"
+    (array (option float_exact))
+    [| Some 2.; Some 0.; None; Some 1.; Some 40.; Some 41.; Some 30. |]
+    (Array.map (fun v -> if Float.is_nan v then None else Some v) (flat pool'));
+  equal ~msg:"each token sees the table before the draft and its ancestors"
+    (list bool)
+    [
+      (* root *)
+      true;
+      true;
+      false;
+      false;
+      true;
+      false;
+      false;
+      (* child 1 *)
+      true;
+      true;
+      false;
+      false;
+      true;
+      true;
+      false;
+      (* child 2 *)
+      true;
+      true;
+      false;
+      false;
+      true;
+      false;
+      true;
+    ]
+    (bools (Cache_index.mask index));
+  equal ~msg:"under a window, within it" (list bool)
+    [
+      false;
+      true;
+      false;
+      false;
+      true;
+      false;
+      false;
+      false;
+      false;
+      false;
+      false;
+      true;
+      true;
+      false;
+      false;
+      false;
+      false;
+      false;
+      true;
+      false;
+      true;
+    ]
+    (bools (Cache_index.mask (Cache_index.window 2 index)));
+  (* [sees] cannot reach a later position, and padding sees and stores
+     nothing. *)
+  let odd =
+    Cache_index.draft
+      ~slots:(int64s [| 1; 3 |] [| 6; 4; 5 |])
+      ~sees:(Nx.full Nx.bool [| 1; 3; 3 |] true)
+      (index_at ~pos:[| [| 2; 3; -1 |] |] ~slots:[| [| 3; 0; 2; 1 |] |])
+  in
+  equal ~msg:"no later position, no padding" (list bool)
+    [
+      true;
+      true;
+      false;
+      false;
+      true;
+      false;
+      false;
+      true;
+      true;
+      false;
+      false;
+      true;
+      true;
+      false;
+      false;
+      false;
+      false;
+      false;
+      false;
+      false;
+      false;
+    ]
+    (bools (Cache_index.mask odd));
+  let _, pool' = Cache_index.extend odd values pool in
+  is_true ~msg:"a padded token stores nothing" (Nx.item [ 5; 0 ] pool' = 0.);
+  shape_is ~msg:"advance drops the draft" [| 1; 1; 4 |]
+    (Cache_index.mask (Cache_index.advance index))
+
+let test_draft_rejects () =
+  let index, _ = draft_fixture () in
+  let tabled = index_at ~pos:[| [| 2 |] |] ~slots:[| [| 0; 1; 2 |] |] in
+  let one = int64s [| 1; 1 |] [| 0 |]
+  and sees = Nx.full Nx.bool [| 1; 1; 1 |] true in
+  raises (Invalid_argument "Cache_index.draft: a whole index keeps nothing")
+    (fun () ->
+      Cache_index.draft ~slots:one ~sees (Cache_index.whole ~batch:1 ~seq:1 ()));
+  raises (Invalid_argument "Cache_index.draft: a whole index keeps nothing")
+    (fun () ->
+      Cache_index.draft ~slots:one ~sees
+        (Cache_index.packed ~seq:1 [| [| 1 |] |]));
+  raises (Invalid_argument "Cache_index.draft: slots must have shape [1; 1]")
+    (fun () ->
+      Cache_index.draft ~slots:(int64s [| 1; 2 |] [| 0; 1 |]) ~sees tabled);
+  raises (Invalid_argument "Cache_index.draft: sees must have shape [1; 1; 1]")
+    (fun () ->
+      Cache_index.draft ~slots:one
+        ~sees:(Nx.full Nx.bool [| 1; 1 |] true)
+        tabled);
+  raises (Invalid_argument "Cache_index.draft: the index selects columns")
+    (fun () ->
+      Cache_index.draft ~slots:one ~sees
+        (Cache_index.select (int64s [| 1; 1; 1 |] [| 0 |]) tabled));
+  raises
+    (Invalid_argument "Cache_index.draft: the index reads blocks of 2 positions")
+    (fun () ->
+      Cache_index.draft ~slots:one ~sees
+        (Cache_index.every 2 (Cache_index.rows ~every:[ 2 ] ~context:4 [| 1 |])));
+  raises (Invalid_argument "Cache_index.select: the index is a draft")
+    (fun () -> Cache_index.select (int64s [| 1; 3; 1 |] [| 0; 0; 0 |]) index);
+  raises (Invalid_argument "Cache_index.every: the index is a draft") (fun () ->
+      Cache_index.every 2 index)
+
+(* Compiled, a draft's slots and tree are inputs: one program serves two trees,
+   and each reads and stores as eager. *)
+let test_draft_compiled () =
+  Nx.Rng.with_key (Nx.Rng.key 41) @@ fun () ->
+  let p_layer = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
+  let c =
+    after_prefix ~window:None p_layer (Nx.randn Nx.float32 [| 1; 3; 8 |]) 3
+  in
+  let traces = ref 0 in
+  let step { x; index; c } =
+    incr traces;
+    let y, c = call p_layer c index x in
+    { x = y; index; c }
+  in
+  let compiled = Rune.jit Nx.Ptree.(step_ptree @-> returns step_ptree) step in
+  List.iter
+    (fun parents ->
+      let index =
+        Cache_index.draft
+          ~slots:(int64s [| 1; 4 |] [| 12; 15; 13; 14 |])
+          ~sees:(tree_sees parents)
+          (index_at
+             ~pos:[| Array.map (fun d -> 3 + d) (depths parents) |]
+             ~slots:[| draft_table |])
+      in
+      let eager = step { x; index; c } in
+      let jitted = compiled { x; index; c } in
+      close ~msg:"outputs" eager.x jitted.x;
+      (* The other slots hold the prefix's NaN poison. *)
+      let drafted t = Nx.slice [ R (12, 16) ] t.c.keys in
+      close ~msg:"stored keys" (drafted eager) (drafted jitted))
+    [ [| -1; 0; 0; 1 |]; [| -1; 0; 1; 1 |] ];
+  equal ~msg:"two trees, one compiled trace and two eager runs" int 3 !traces
+
+(* Packed lanes *)
+
+let test_packed_mask () =
+  let index = Cache_index.packed ~seq:5 [| [| 2; 2 |] |] in
+  equal ~msg:"positions restart, padding first" (array int64)
+    [| 0L; 0L; 1L; 0L; 1L |]
+    (Nx.to_array (Cache_index.positions index));
+  equal ~msg:"a token sees its own sequence up to itself" (list bool)
+    [
+      false;
+      false;
+      false;
+      false;
+      false;
+      false;
+      true;
+      false;
+      false;
+      false;
+      false;
+      true;
+      true;
+      false;
+      false;
+      false;
+      false;
+      false;
+      true;
+      false;
+      false;
+      false;
+      false;
+      true;
+      true;
+    ]
+    (bools (Cache_index.mask index));
+  let lens = [| 3; 5; 0 |] in
+  let alone = Cache_index.whole ~lens ~batch:3 ~seq:5 ()
+  and packed = Cache_index.packed ~seq:5 (Array.map (fun n -> [| n |]) lens) in
+  List.iter
+    (fun (msg, wrap) ->
+      equal
+        ~msg:("one sequence per lane is whole: " ^ msg)
+        (list bool)
+        (bools (Cache_index.mask (wrap alone)))
+        (bools (Cache_index.mask (wrap packed))))
+    [ ("mask", Fun.id); ("windowed", Cache_index.window 2) ];
+  equal ~msg:"and so are its positions" (array int64)
+    (Nx.to_array (Cache_index.positions alone))
+    (Nx.to_array (Cache_index.positions packed));
+  (* A chosen column is a token of the lane, seen within its sequence. *)
+  let chosen =
+    Cache_index.select
+      (int64s [| 1; 5; 2 |] [| 0; 0; 1; 1; 1; 2; 1; 3; 2; 4 |])
+      index
+  in
+  equal ~msg:"a selection sees within the sequence" (list bool)
+    [ false; false; true; true; true; true; false; true; false; true ]
+    (bools (Cache_index.mask chosen));
+  raises
+    (Invalid_argument "Cache_index.every: a packed lane holds several sequences")
+    (fun () -> Cache_index.every 2 index);
+  raises (Invalid_argument "Cache_index.advance: a whole index keeps nothing")
+    (fun () -> Cache_index.advance index);
+  raises
+    (Invalid_argument "Cache_index.packed: lane 0 holds 6 tokens, more than 5")
+    (fun () -> Cache_index.packed ~seq:5 [| [| 3; 3 |] |]);
+  raises
+    (Invalid_argument "Cache_index.packed: a sequence of -1 tokens in lane 1")
+    (fun () -> Cache_index.packed ~seq:5 [| [| 1 |]; [| -1 |] |]);
+  raises (Invalid_argument "Cache_index.packed: no lanes") (fun () ->
+      Cache_index.packed ~seq:5 [||]);
+  raises (Invalid_argument "Cache_index.packed: seq must be positive, got 0")
+    (fun () -> Cache_index.packed ~seq:0 [| [||] |])
+
+(* Lanes of 9 tokens, each holding up to three sequences of up to three
+   tokens. *)
+let packing_gen =
+  Gen.(
+    pair
+      (list ~size:(constant 2) (list ~size:(int_range 1 3) (int_range 0 3)))
+      window_gen)
+
+let test_packed_alone =
+  prop "a packed lane gives each sequence its outputs alone" packing_gen
+    (fun (lanes, window) ->
+      let lens = Array.of_list (List.map Array.of_list lanes) in
+      cover "several sequences in a lane"
+        (Array.exists (fun l -> Array.length l > 1) lens);
+      cover "a window" (Option.is_some window);
+      Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+      let p_layer = layer Nx.float32 in
+      let x = Nx.randn Nx.float32 [| 2; 9; 8 |] in
+      let y, _ =
+        call p_layer (cache 0)
+          (windowed window (Cache_index.packed ~seq:9 lens))
+          x
+      in
+      is_true ~msg:"padding produces no nan"
+        (Array.for_all Float.is_finite (flat y));
+      Array.iteri
+        (fun b lens ->
+          let at = ref (9 - Array.fold_left ( + ) 0 lens) in
+          Array.iter
+            (fun n ->
+              if n > 0 then begin
+                let part t = Nx.slice [ R (b, b + 1); R (!at, !at + n) ] t in
+                let alone, _ =
+                  call p_layer (cache 0)
+                    (windowed window (Cache_index.whole ~batch:1 ~seq:n ()))
+                    (part x)
+                in
+                close
+                  ~msg:(Printf.sprintf "lane %d, a sequence at %d" b !at)
+                  alone (part y)
+              end;
+              at := !at + n)
+            lens)
+        lens)
+
+(* Compiled, one program serves every packing. *)
+let test_packed_compiled () =
+  Nx.Rng.with_key (Nx.Rng.key 43) @@ fun () ->
+  let p_layer = layer Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 2; 6; 8 |] in
+  let traces = ref 0 in
+  let forward (x, index) =
+    incr traces;
+    fst (call p_layer (cache 0) index x)
+  in
+  let compiled =
+    Rune.jit Nx.Ptree.(pair tensor Cache_index.ptree @-> returns tensor) forward
+  in
+  List.iter
+    (fun lens ->
+      let index = Cache_index.packed ~seq:6 lens in
+      close ~msg:"compiled = eager" (forward (x, index)) (compiled (x, index)))
+    [ [| [| 2; 4 |]; [| 6 |] |]; [| [| 1; 1; 3 |]; [| 3; 2 |] |] ];
+  equal ~msg:"two packings, one compiled trace and two eager runs" int 3 !traces
+
 (* The pieces of a layer *)
 
 let composed ?scale ?sinks p c index x =
@@ -2096,5 +2588,19 @@ let () =
                test_cache_list_paths;
              test "invalid geometry is rejected"
                test_cached_rejects_bad_geometry;
+           ];
+         group "drafts and packed lanes"
+           [
+             test_linear_draft;
+             test_tree_draft;
+             test "a draft reads the table before it, then its tokens"
+               test_draft_index;
+             test "a draft is a tabled index without blocks or selections"
+               test_draft_rejects;
+             test "a compiled draft reads and stores as eager"
+               test_draft_compiled;
+             test "a packed lane masks within each sequence" test_packed_mask;
+             test_packed_alone;
+             test "a compiled packing equals eager" test_packed_compiled;
            ];
        ])

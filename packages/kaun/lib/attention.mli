@@ -114,11 +114,19 @@ val causal_mask :
     ({!Nx.Ptree.consumes} in [Rune.jit]'s signature), the write happens in the
     cache's own storage and the cache given to the call is dead after it.
 
-    The addressing laws are {!Cache_index}'s. The layer adds three:
+    The addressing laws are {!Cache_index}'s. The layer adds five:
 
     + {b Chunking is invariant.} A prompt fed whole, in chunks, token by token,
       or as one-token lanes of one sequence gives the same outputs and the same
       written slots, up to floating-point reassociation.
+    + {b A draft is its paths.} Over a {!Cache_index.draft} whose [sees] names
+      each token's ancestors, a token's output is the one it has when its path
+      from the cache is fed alone, token by token, up to floating-point
+      reassociation; a path kept by naming its slots in the table continues as
+      if it had been fed so.
+    + {b Packing is invariant.} Over {!Cache_index.packed}, each sequence of a
+      lane gives the outputs it gives alone over {!Cache_index.whole}, up to
+      floating-point reassociation.
     + {b The whole-sequence pass is the cached pass.} Over {!Cache_index.whole},
       {!cached} is causal attention of the tokens over themselves and returns
       its cache as given, at the cost of {!apply}; over {!Cache_index.rows} and
@@ -190,10 +198,11 @@ val cached :
 
     A token sees the positions of its sequence at or before its own, those of
     this call included, and under the index's {!Cache_index.window} only the
-    last of them: a prompt fed whole, in chunks, or token by token gives the
-    same outputs up to floating-point reassociation. With [rope], queries and
-    keys are rotated at the index's positions before the keys are stored. A
-    padded token's output is the output projection of zero.
+    last of them; under a {!Cache_index.draft}, the sequence before the call and
+    the draft tokens it sees: a prompt fed whole, in chunks, or token by token
+    gives the same outputs up to floating-point reassociation. With [rope],
+    queries and keys are rotated at the index's positions before the keys are
+    stored. A padded token's output is the output projection of zero.
 
     The layer extends each leaf with {!Cache_index.extend} and attends once over
     what that returns, under {!Cache_index.mask}. On a whole index the tokens

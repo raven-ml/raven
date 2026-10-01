@@ -110,6 +110,12 @@ let test_cast () =
 
 let int64s shape xs = Nx.create Nx.int64 shape xs
 
+let drafted index =
+  Cache_index.draft
+    ~slots:(int64s [| 1; 1 |] [| 3L |])
+    ~sees:(Nx.full Nx.bool [| 1; 1; 1 |] true)
+    index
+
 let test_index_whole () =
   equal ~msg:"whole" (list string)
     [
@@ -118,8 +124,19 @@ let test_index_whole () =
       "every: int 1";
       "window: None";
       "columns: None";
+      "draft: None";
     ]
-    (visits Cache_index.ptree (Cache_index.whole ~batch:2 ~seq:3 ()))
+    (visits Cache_index.ptree (Cache_index.whole ~batch:2 ~seq:3 ()));
+  equal ~msg:"packed" (list string)
+    [
+      "tokens: case \"packed\"";
+      "tokens.pos: a leaf";
+      "every: int 1";
+      "window: None";
+      "columns: None";
+      "draft: None";
+    ]
+    (visits Cache_index.ptree (Cache_index.packed ~seq:3 [| [| 1; 2 |] |]))
 
 let test_index_tabled () =
   let index =
@@ -142,6 +159,7 @@ let test_index_tabled () =
       "window: Some";
       "window: int 2";
       "columns: None";
+      "draft: None";
     ]
     (visits Cache_index.ptree index);
   let made =
@@ -163,8 +181,25 @@ let test_index_tabled () =
       "window: None";
       "columns: Some";
       "columns: a leaf";
+      "draft: None";
     ]
-    (visits Cache_index.ptree selected)
+    (visits Cache_index.ptree selected);
+  equal ~msg:"a draft" (list string)
+    [
+      "tokens: case \"tabled\"";
+      "tokens.row: Some";
+      "tokens.row: a leaf";
+      "tokens.pos: a leaf";
+      "tokens.table: a leaf";
+      "tokens.blocks: length 0";
+      "every: int 1";
+      "window: None";
+      "columns: None";
+      "draft: Some";
+      "draft.slots: a leaf";
+      "draft.sees: a leaf";
+    ]
+    (visits Cache_index.ptree (drafted made))
 
 let test_index_keys () =
   (* Everything a compiled program depends on changes what the index visits. *)
@@ -180,7 +215,12 @@ let test_index_keys () =
   differ ~msg:"a block size"
     (Cache_index.rows ~every:[ 4 ] ~context:8 [| 3; 2 |])
     (Cache_index.rows ~every:[ 2 ] ~context:8 [| 3; 2 |]);
-  differ ~msg:"whole or tabled" (Cache_index.whole ~batch:2 ~seq:3 ()) index
+  differ ~msg:"whole or tabled" (Cache_index.whole ~batch:2 ~seq:3 ()) index;
+  differ ~msg:"whole or packed"
+    (Cache_index.whole ~batch:1 ~seq:3 ())
+    (Cache_index.packed ~seq:3 [| [| 3 |] |]);
+  let one = Cache_index.rows ~context:4 [| 1 |] in
+  differ ~msg:"a draft" one (drafted one)
 
 let test_index_round_trip () =
   let round_trip ~msg index =
@@ -217,7 +257,9 @@ let test_index_round_trip () =
        (Cache_index.make ~row:(int64s [| 1 |] [| 1L |])
           ~pos:(int64s [| 1; 1 |] [| 1L |])
           ~table:(int64s [| 2; 2 |] [| 0L; 1L; 2L; 3L |])
-          ()))
+          ()));
+  round_trip ~msg:"a draft" (drafted (Cache_index.rows ~context:4 [| 1 |]));
+  round_trip ~msg:"a packing" (Cache_index.packed ~seq:4 [| [| 2; 1 |] |])
 
 let tests =
   [
