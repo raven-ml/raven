@@ -242,7 +242,7 @@ type param_arg = {
   align : int;
 }
 
-type keep = Removable | Kept | Whole
+type keep = Removable | Broadcast | Whole
 
 type bufferize_opts = {
   device : device option;
@@ -792,11 +792,11 @@ let repr_param_arg (p : param_arg) =
 let pp_param_arg ppf p = Format.pp_print_string ppf (repr_param_arg p)
 
 let repr_bufferize_opts (b : bufferize_opts) =
-  strf "BufferizeOpts(device=%s, addrspace=%s, removable=%s, inlinable=%s)"
+  strf "BufferizeOpts(device=%s, addrspace=%s, removable=%s, broadcast=%s)"
     (repr_option repr_device b.device)
     (repr_addr_space b.addrspace)
     (repr_bool (b.keep <> Whole))
-    (repr_bool (b.keep <> Kept))
+    (repr_bool (b.keep = Broadcast))
 
 let pp_bufferize_opts ppf b = Format.pp_print_string ppf (repr_bufferize_opts b)
 

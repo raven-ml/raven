@@ -26,7 +26,7 @@
 24 Ops.CONST dtypes.weakint [] 0
 25 Ops.WHERE dtypes.int [21, 23, 24]
 26 Ops.REDUCE dtypes.int [25, 16] (Ops.ADD, 0)
-27 Ops.STAGE dtypes.int [26, 15] BufferizeOpts(device="CPU")
+27 Ops.STAGE dtypes.int [26, 15] BufferizeOpts(device="CPU", broadcast=True)
 28 Ops.RANGE dtypes.weakint [14] (1, AxisType.REDUCE)
 29 Ops.INDEX dtypes.int [27, 28]
 30 Ops.CONST dtypes.weakint [] -1

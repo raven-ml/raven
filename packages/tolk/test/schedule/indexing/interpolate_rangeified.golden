@@ -38,7 +38,7 @@
 36 Ops.INDEX dtypes.int [34, 35]
 37 Ops.CONST dtypes.weakint [] 16
 38 Ops.FLOORDIV dtypes.int [36, 37]
-39 Ops.STAGE dtypes.int [38, 35] BufferizeOpts(device="CPU")
+39 Ops.STAGE dtypes.int [38, 35] BufferizeOpts(device="CPU", broadcast=True)
 40 Ops.RANGE dtypes.weakint [1] (19, AxisType.WEAK)
 41 Ops.INDEX dtypes.int [39, 40]
 42 Ops.STAGE dtypes.int [41, 18, 18, 40] BufferizeOpts(device="CPU")
@@ -52,7 +52,7 @@
 50 Ops.AND dtypes.bool [8, 49]
 51 Ops.WHERE dtypes.int [50, 17, 18]
 52 Ops.REDUCE dtypes.int [51, 45] (Ops.ADD, 0)
-53 Ops.STAGE dtypes.int [52, 44] BufferizeOpts(device="CPU")
+53 Ops.STAGE dtypes.int [52, 44] BufferizeOpts(device="CPU", broadcast=True)
 54 Ops.RANGE dtypes.weakint [26] (16, AxisType.WEAK)
 55 Ops.INDEX dtypes.int [53, 54]
 56 Ops.ADD dtypes.int [55, 21]
@@ -85,7 +85,7 @@
 83 Ops.MUL dtypes.weakint [16, 21]
 84 Ops.ADD dtypes.int [82, 83]
 85 Ops.FLOORDIV dtypes.int [84, 37]
-86 Ops.STAGE dtypes.int [85, 80] BufferizeOpts(device="CPU")
+86 Ops.STAGE dtypes.int [85, 80] BufferizeOpts(device="CPU", broadcast=True)
 87 Ops.RANGE dtypes.weakint [1] (11, AxisType.WEAK)
 88 Ops.INDEX dtypes.int [86, 87]
 89 Ops.STAGE dtypes.int [88, 18, 18, 87] BufferizeOpts(device="CPU")
@@ -107,14 +107,14 @@
 105 Ops.CONST dtypes.weakfloat [] 16.0
 106 Ops.RECIPROCAL dtypes.weakfloat [105]
 107 Ops.MUL dtypes.float [104, 106]
-108 Ops.STAGE dtypes.float [107, 101] BufferizeOpts(device="CPU")
+108 Ops.STAGE dtypes.float [107, 101] BufferizeOpts(device="CPU", broadcast=True)
 109 Ops.RANGE dtypes.weakint [1] (8, AxisType.WEAK)
 110 Ops.INDEX dtypes.float [108, 109]
 111 Ops.STAGE dtypes.float [110, 18, 18, 109] BufferizeOpts(device="CPU")
 112 Ops.INDEX dtypes.float [111, 18, 18, 62]
 113 Ops.MUL dtypes.float [100, 112]
 114 Ops.ADD dtypes.float [79, 113]
-115 Ops.STAGE dtypes.float [114, 18, 18, 75, 62] BufferizeOpts(device="CPU")
+115 Ops.STAGE dtypes.float [114, 18, 18, 75, 62] BufferizeOpts(device="CPU", broadcast=True)
 116 Ops.RANGE dtypes.weakint [26] (5, AxisType.WEAK)
 117 Ops.RANGE dtypes.weakint [1] (4, AxisType.WEAK)
 118 Ops.INDEX dtypes.float [115, 18, 18, 116, 117]

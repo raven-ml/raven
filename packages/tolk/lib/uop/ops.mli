@@ -263,7 +263,11 @@ type keep =
   | Removable
       (** Drop the axes its value does not vary along, and inline it back
           where that costs little. *)
-  | Kept  (** Drop the axes its value does not vary along, and keep it. *)
+  | Broadcast
+      (** As {!Removable}, for a value read where it is broadcast: it is not
+          inlined back where computing it runs a transcendental function, which
+          its readers would compute again for each element of the ranges it
+          does not vary along. *)
   | Whole
       (** Nothing: a value the user materialises, or a custom kernel reads,
           is stored as it is. *)
@@ -278,9 +282,8 @@ type bufferize_opts = {
 val pp_bufferize_opts : Format.formatter -> bufferize_opts -> unit
 (** [pp_bufferize_opts] formats
     [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL, removable=True,
-    inlinable=True)]: [removable] is [false] for {!Whole} only, and
-    [inlinable] for {!Kept} only.
-*)
+     broadcast=False)]: [removable] is [false] for {!Whole} only, and
+    [broadcast] [true] for {!Broadcast} only. *)
 
 type hcq_kernel = {
   devices : string list;  (** The devices the kernel runs on. *)

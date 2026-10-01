@@ -193,6 +193,10 @@ PROGRAMS = {
     # the same way, which reads the stored exponential
     "exp_cheap_consumer": lambda: (lambda p: (p[:, None] * empty(8, 4)).sum(0) + ((p + 1)[:, None] * empty(8, 4)).sum(0))(
         empty(8).exp()),
+    # a decode step's rotated query: rows of a cosine table gathered at the
+    # token's position, multiplied into each head and read by the scores
+    "rope_decode": lambda: (lambda rows: ((empty(4, 1, 8) * rows) @ empty(4, 8, 9)))(
+        (Tensor.arange(16).reshape(16, 1) * empty(1, 8)).cos()[empty(1, dtype=dtypes.int)]),
     # gathers at loaded indices, read where they are broadcast or twice, and a
     # masked sum that is no gather
     "gather_broadcast": lambda: empty(8, 32) @ empty(20, 32)[empty(12, dtype=dtypes.int)].T,

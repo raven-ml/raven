@@ -33,13 +33,13 @@ let rec zip l0 l1 =
 (* Cleanups *)
 
 let always_run u = op u = Op.Noop
+let transcendental = ops Op.[ Exp2; Log2; Sin; Pow ]
 
 (* Whether an axis dies is only known once an expand to its left is seen. *)
 let cleanup_dead_axes b =
   let value = nth b 0 in
   (* An after is storage: its ranges say how consumers read it. *)
-  if (opts b).keep = Whole || always_run value || op value = Op.After then
-    None
+  if (opts b).keep = Whole || always_run value || op value = Op.After then None
   else
     let axes = zip (shape b) (List.tl (src b)) in
     let dead rng =
@@ -77,8 +77,8 @@ let remove_bufferize src buf idx =
          (fun x -> List.mem (op x) Op.[ Range; Const ])
          (List.tl (Ops.src buf)))
   then invalid_arg "a stage's ranges are ranges or constants";
-  (* A user's materialisation, and a value kept, are never removed. *)
-  if always_run src || (opts buf).keep <> Removable then None
+  (* A user's materialisation is never removed. *)
+  if always_run src || (opts buf).keep = Whole then None
   else
     (* The cost: the buffers the value reads, and whether a reduction reads
        one. *)
@@ -102,10 +102,17 @@ let remove_bufferize src buf idx =
           true
       | _ -> true
     in
-    let reduces =
-      List.filter (fun x -> op x = Op.Reduce) (toposort ~gate:red_gate src)
+    let computed = toposort ~gate:red_gate src in
+    let reduces = List.filter (fun x -> op x = Op.Reduce) computed in
+    (* Inlined where it is broadcast, the value would be computed again for each
+       element of the ranges it does not vary along: one whose computing runs a
+       transcendental function stays stored. Its producers are already stored
+       or inlined, so the walk sees what inlining would compute. *)
+    let recomputes =
+      (opts buf).keep = Broadcast
+      && List.exists (fun x -> Op.Set.mem (op x) transcendental) computed
     in
-    if Tbl.length accessed > 3 then None
+    if Tbl.length accessed > 3 || recomputes then None
     else
       let reads_buffer x = List.mem (op x) Op.[ Param; Stage; After ] in
       if

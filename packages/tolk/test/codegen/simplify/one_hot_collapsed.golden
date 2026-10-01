@@ -13,7 +13,7 @@
 11 Ops.CAST dtypes.int [10] dtypes.int
 12 Ops.CONST dtypes.weakint [] 1
 13 Ops.ADD dtypes.int [11, 12]
-14 Ops.STAGE dtypes.int [13, 10] BufferizeOpts(device="CPU")
+14 Ops.STAGE dtypes.int [13, 10] BufferizeOpts(device="CPU", broadcast=True)
 15 Ops.INDEX dtypes.int [14, 5]
 16 Ops.CONST dtypes.weakint [] -1
 17 Ops.ADD dtypes.int [15, 16]

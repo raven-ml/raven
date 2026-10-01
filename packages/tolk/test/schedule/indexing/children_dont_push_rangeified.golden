@@ -20,7 +20,7 @@
 18 Ops.INDEX dtypes.float [17, 15]
 19 Ops.ADD dtypes.float [16, 18]
 20 Ops.CONST dtypes.weakint [] 0
-21 Ops.STAGE dtypes.float [19, 12, 14, 20] BufferizeOpts(device="CPU")
+21 Ops.STAGE dtypes.float [19, 12, 14, 20] BufferizeOpts(device="CPU", broadcast=True)
 22 Ops.INDEX dtypes.float [21, 6, 2, 20]
 23 Ops.INDEX dtypes.float [21, 4, 2, 20]
 24 Ops.ADD dtypes.float [22, 23]

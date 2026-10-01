@@ -27,7 +27,7 @@
 25 Ops.ADD dtypes.float [23, 24]
 26 Ops.SQRT dtypes.float [25]
 27 Ops.CONST dtypes.weakint [] 0
-28 Ops.STAGE dtypes.float [26, 16, 27] BufferizeOpts(device="CPU")
+28 Ops.STAGE dtypes.float [26, 16, 27] BufferizeOpts(device="CPU", broadcast=True)
 29 Ops.INDEX dtypes.float [28, 2, 27]
 30 Ops.RECIPROCAL dtypes.float [29]
 31 Ops.MUL dtypes.float [15, 30]

@@ -77,6 +77,7 @@ let programs =
     "swiglu_down";
     "exp_dead_axis";
     "exp_cheap_consumer";
+    "rope_decode";
     "gather_broadcast";
     "gather_read_twice";
     "gather_rotary";

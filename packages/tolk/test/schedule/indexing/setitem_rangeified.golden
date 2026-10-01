@@ -33,7 +33,7 @@
 31 Ops.CONST dtypes.weakint [] 4
 32 Ops.CMPLT dtypes.bool [27, 31]
 33 Ops.AND dtypes.bool [30, 32]
-34 Ops.STAGE dtypes.bool [33, 26, 17] BufferizeOpts(device="CPU")
+34 Ops.STAGE dtypes.bool [33, 26, 17] BufferizeOpts(device="CPU", broadcast=True)
 35 Ops.INDEX dtypes.bool [34, 2, 17]
 36 Ops.RANGE dtypes.weakint [1] (5, AxisType.WEAK)
 37 Ops.INDEX dtypes.int [25, 36, 17]
@@ -42,7 +42,7 @@
 40 Ops.FLOORMOD dtypes.int [39, 15]
 41 Ops.CMPNE dtypes.bool [40, 17]
 42 Ops.CMPNE dtypes.bool [41, 7]
-43 Ops.STAGE dtypes.bool [42, 36, 17] BufferizeOpts(device="CPU")
+43 Ops.STAGE dtypes.bool [42, 36, 17] BufferizeOpts(device="CPU", broadcast=True)
 44 Ops.INDEX dtypes.bool [43, 2, 17]
 45 Ops.AND dtypes.bool [35, 44]
 46 Ops.RANGE dtypes.weakint [1] (4, AxisType.WEAK)
@@ -54,7 +54,7 @@
 52 Ops.CMPNE dtypes.bool [51, 7]
 53 Ops.CMPLT dtypes.bool [50, 1]
 54 Ops.AND dtypes.bool [52, 53]
-55 Ops.STAGE dtypes.bool [54, 17, 49] BufferizeOpts(device="CPU")
+55 Ops.STAGE dtypes.bool [54, 17, 49] BufferizeOpts(device="CPU", broadcast=True)
 56 Ops.INDEX dtypes.bool [55, 17, 4]
 57 Ops.RANGE dtypes.weakint [1] (2, AxisType.WEAK)
 58 Ops.INDEX dtypes.int [48, 17, 57]
@@ -63,7 +63,7 @@
 61 Ops.FLOORMOD dtypes.int [60, 15]
 62 Ops.CMPNE dtypes.bool [61, 17]
 63 Ops.CMPNE dtypes.bool [62, 7]
-64 Ops.STAGE dtypes.bool [63, 17, 57] BufferizeOpts(device="CPU")
+64 Ops.STAGE dtypes.bool [63, 17, 57] BufferizeOpts(device="CPU", broadcast=True)
 65 Ops.INDEX dtypes.bool [64, 17, 4]
 66 Ops.AND dtypes.bool [56, 65]
 67 Ops.AND dtypes.bool [45, 66]

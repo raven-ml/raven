@@ -2370,27 +2370,26 @@ tolk lowers as one, replaces it.
   `schedule/rangeify.py:25` (`cleanup_dead_axes`) and `:50-95`
   (`remove_bufferize`, which inlines that store again when its value reads
   at most three buffers and no reduction reads a buffer).
-- **tolk:** `lib/schedule/indexing.ml:566` (`assign_ranges`, which records
-  the values a broadcast stores), `:646` (`run_rangeify`, which keeps those
-  that run a transcendental), `:484` (`runs_transcendental`) and `:208`
-  (`bufferize_and_index`); `lib/uop/ops.mli:256` (`keep`, in place of
-  `removable`); `lib/schedule/rangeify.ml:41` (`cleanup_dead_axes`) and `:81`
-  (`remove_bufferize`); `test/gen/tinygrad.patch`, which gives tinygrad the
-  same rule through a field `inlinable` of `BufferizeOpts`.
-- **Differs:** where a broadcast ends ranges below a value, and computing
-  the value runs `EXP2`, `LOG2`, `SIN` or `POW`, the store is kept: the
-  value is computed once per element and read where it is broadcast. The
-  walk stops at reductions, storage and values that stay stored (stores,
-  user materialisations, custom kernels' sources and values already kept),
-  and values are decided producers first, so a value that reads a kept one
-  computes no transcendental of its own and may still be inlined. A kept
-  store (`Kept`) still loses the axes its value does not vary along; only
-  `remove_bufferize` leaves it. tinygrad's cost check counts buffers and
+- **tolk:** `lib/schedule/indexing.ml:542` (`assign_ranges`, which records
+  the values a broadcast stores) and `:205` (`bufferize_and_index`, which
+  marks their stages `Broadcast`); `lib/uop/ops.mli:262` (`keep`, in place of
+  `removable`); `lib/schedule/rangeify.ml:114` (`remove_bufferize`, which
+  keeps such a stage); `test/gen/tinygrad.patch`, which gives tinygrad the
+  same rule through a field `broadcast` of `BufferizeOpts`.
+- **Differs:** where a broadcast ends ranges below a value, its store is
+  marked, and the cost check keeps it if computing it runs `EXP2`, `LOG2`,
+  `SIN` or `POW`: the value is computed once per element and read where it
+  is broadcast. The cost check sees the value with its producers already
+  stored or inlined, so it counts exactly what inlining would compute: a
+  value that reads a stored exponential computes none, and is inlined as
+  before. A marked store still loses the axes its value does not vary
+  along. tinygrad's cost check counts buffers and
   reductions only, so it inlines such a value into its consumer, which
   computes it again for every element of the ranges it does not vary along:
   a SwiGLU's sigmoid once per output column of the down projection, a
   softmax's exponentials once per column of the product with the values, a
-  RoPE's sines and cosines once per head.
+  RoPE's sines and cosines once per head. A value read once per element,
+  as a rotated query reads its rows of a stored sine table, is not marked.
 - **Reason:** (b). On the host, where the transcendental functions are
   polynomials, recomputing them dominates. On an M-series Mac under load
   (provisional), one MoE block of gpt-oss-20b took 182 ms a token and
@@ -2406,9 +2405,11 @@ tolk lowers as one, replaces it.
   at 2048 tokens 1.10 GB and 2.17 GB were allocated.
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is
-  stored as the row) and `exp_cheap_consumer` (a value that reads a kept
-  exponential is inlined) rows of `kernel_counts.golden` and their kernel
-  goldens, from the equally patched tinygrad.
+  stored as the row), `exp_cheap_consumer` (a value that reads a kept
+  exponential is inlined) and `rope_decode` (a decode step's rotated query
+  reads its gathered rows of a cosine table and is not stored) rows of
+  `kernel_counts.golden` and their kernel goldens, from the equally patched
+  tinygrad.
 
 ## D79. A chain of one operation keeps its right operand's grouping
 

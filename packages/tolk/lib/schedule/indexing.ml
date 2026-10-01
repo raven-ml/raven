@@ -18,10 +18,8 @@ type ctx = {
   realize_map : int list option Tbl.t;
       (* The nodes stored whole: marked, then the axes given new ranges. *)
   non_removable : unit Tbl.t;
-  broadcast : unit Tbl.t;  (* The values stored because a broadcast reads them. *)
-  kept : unit Tbl.t;
-      (* Those of them that stay stored, as computing them runs a
-         transcendental function. *)
+  broadcast : unit Tbl.t;
+      (* The values stored because a broadcast reads them. *)
   stored_through : unit Tbl.t;
       (* The pads a store's destination moves through: its writes outside their
          sources are dropped. *)
@@ -202,10 +200,9 @@ let bufferize_and_index ctx ~indexed s src_rngs =
     | Some (Some _) ->
         let closed = snd (Tbl.find ctx.range_map s) in
         let keep =
-          if
-            Op.Set.mem (op s) always_contiguous || Tbl.mem ctx.non_removable s
+          if Op.Set.mem (op s) always_contiguous || Tbl.mem ctx.non_removable s
           then Whole
-          else if Tbl.mem ctx.kept s then Kept
+          else if Tbl.mem ctx.broadcast s then Broadcast
           else Removable
         in
         let opts : bufferize_opts =
@@ -478,27 +475,6 @@ let merge_consumer_rngs rctx x consumer_rngs =
    ranges, as a sink does not. *)
 let no_ranges = ops Op.[ Call; Linear; After; Mstack; Mselect ]
 
-(* Whether computing [x] runs a transcendental function: down to the reductions,
-   storage, and values that stay stored, which are not computed again where [x]
-   is. A stored value that a later pass may inline back is computed again. *)
-let runs_transcendental rctx x =
-  let stays_stored u =
-    Tbl.mem rctx.kept u
-    || Tbl.mem rctx.realize_map u
-       && (op u = Op.Store
-          || Op.Set.mem (op u) always_contiguous
-          || Tbl.mem rctx.non_removable u)
-  in
-  let computed u =
-    u == x
-    || not
-         (stays_stored u
-         || Op.Set.mem (op u) (ops Op.[ Reduce; Buffer; Param; After; Alloc ]))
-  in
-  List.exists
-    (fun u -> Op.Set.mem (op u) (ops Op.[ Exp2; Log2; Sin; Pow ]))
-    (toposort ~gate:computed x)
-
 let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
   let consumers = List.rev (Tbl.find consumer_map x) in
   let ending =
@@ -609,7 +585,6 @@ let run_rangeify ?(debug = false) tsink =
       realize_map = Tbl.create 64;
       non_removable = Tbl.create 8;
       broadcast = Tbl.create 8;
-      kept = Tbl.create 8;
       stored_through = Tbl.create 8;
       range_map = Tbl.create 256;
       range_idx = 0;
@@ -636,15 +611,6 @@ let run_rangeify ?(debug = false) tsink =
       if not (Op.Set.mem (op x) no_ranges) then
         assign_ranges rctx ~debug ~consumer_map ~ending_ranges x)
     (List.rev tsink_toposort);
-  (* Read where it is broadcast, a value would be computed again for each
-     element of the ranges it does not vary along: one that runs a
-     transcendental function is kept. Producers are decided first, so that a
-     value reading a kept one computes no transcendental of its own. *)
-  List.iter
-    (fun x ->
-      if Tbl.mem rctx.broadcast x && runs_transcendental rctx x then
-        Tbl.replace rctx.kept x ())
-    tsink_toposort;
   let spec = min (Helpers.Context_var.value Helpers.spec) 2 in
   let tsink =
     Helpers.context

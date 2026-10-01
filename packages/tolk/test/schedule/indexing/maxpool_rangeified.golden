@@ -26,7 +26,7 @@
 24 Ops.CONST dtypes.weakfloat [] -inf
 25 Ops.WHERE dtypes.float [12, 23, 24]
 26 Ops.CONST dtypes.weakint [] 0
-27 Ops.STAGE dtypes.float [25, 26, 19, 15, 17] BufferizeOpts(device="CPU")
+27 Ops.STAGE dtypes.float [25, 26, 19, 15, 17] BufferizeOpts(device="CPU", broadcast=True)
 28 Ops.MUL dtypes.weakint [2, 6]
 29 Ops.RANGE dtypes.weakint [6] (3, AxisType.REDUCE)
 30 Ops.ADD dtypes.weakint [28, 29]

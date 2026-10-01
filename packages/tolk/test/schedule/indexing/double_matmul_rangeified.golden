@@ -19,7 +19,7 @@
 17 Ops.INDEX dtypes.float [13, 16]
 18 Ops.MUL dtypes.float [12, 17]
 19 Ops.REDUCE dtypes.float [18, 10] (Ops.ADD, 0)
-20 Ops.STAGE dtypes.float [19, 8, 15] BufferizeOpts(device="CPU")
+20 Ops.STAGE dtypes.float [19, 8, 15] BufferizeOpts(device="CPU", broadcast=True)
 21 Ops.RANGE dtypes.weakint [1] (2, AxisType.REDUCE)
 22 Ops.INDEX dtypes.float [20, 2, 21]
 23 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=256, device="CPU")

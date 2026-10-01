@@ -603,9 +603,11 @@ let program_info : Ops.program_info codec =
   |> finish
 
 let bufferize_opts : Ops.bufferize_opts codec =
-  let make device addrspace removable inlinable : Ops.bufferize_opts =
+  let make device addrspace removable broadcast : Ops.bufferize_opts =
     let keep : Ops.keep =
-      if not removable then Whole else if inlinable then Removable else Kept
+      if not removable then Whole
+      else if broadcast then Broadcast
+      else Removable
     in
     { device; addrspace; keep }
   in
@@ -615,7 +617,7 @@ let bufferize_opts : Ops.bufferize_opts codec =
   |> field "addrspace" ~default:Dtype.Global addr_space
        (get (fun b -> b.addrspace))
   |> field "removable" ~default:true bool (get (fun b -> b.keep <> Whole))
-  |> field "inlinable" ~default:true bool (get (fun b -> b.keep <> Kept))
+  |> field "broadcast" ~default:false bool (get (fun b -> b.keep = Broadcast))
   |> finish
 
 (* A kernel that a command-queue call enqueues is written as a tuple: [(devices,

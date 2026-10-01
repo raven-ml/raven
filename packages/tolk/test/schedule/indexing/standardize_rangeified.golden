@@ -25,7 +25,7 @@
 23 Ops.RECIPROCAL dtypes.weakfloat [22]
 24 Ops.MUL dtypes.float [21, 23]
 25 Ops.CONST dtypes.weakint [] 0
-26 Ops.STAGE dtypes.float [24, 18, 25] BufferizeOpts(device="CPU")
+26 Ops.STAGE dtypes.float [24, 18, 25] BufferizeOpts(device="CPU", broadcast=True)
 27 Ops.INDEX dtypes.float [26, 15, 25]
 28 Ops.CONST dtypes.weakfloat [] -1.0
 29 Ops.MUL dtypes.float [27, 28]
@@ -41,7 +41,7 @@
 39 Ops.RECIPROCAL dtypes.weakfloat [38]
 40 Ops.MUL dtypes.float [37, 39]
 41 Ops.SQRT dtypes.float [40]
-42 Ops.STAGE dtypes.float [41, 33, 25] BufferizeOpts(device="CPU")
+42 Ops.STAGE dtypes.float [41, 33, 25] BufferizeOpts(device="CPU", broadcast=True)
 43 Ops.INDEX dtypes.float [42, 2, 25]
 44 Ops.RECIPROCAL dtypes.float [43]
 45 Ops.MUL dtypes.float [32, 44]

@@ -774,20 +774,19 @@ index 1f6134e..24949cf 100644
  
  # *****************
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 228ec4e..b685b27 100644
+index 228ec4e..e11dba7 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
-@@ -11,6 +11,9 @@ from tinygrad.helpers import argsort, all_same, cpu_profile, colored, Context, S
+@@ -11,6 +11,8 @@ from tinygrad.helpers import argsort, all_same, cpu_profile, colored, Context, S
  class IndexingContext:
    realize_map: dict[UOp, None|list[int]] = field(default_factory=dict)
    non_removable: dict[UOp, None] = field(default_factory=dict)
-+  # values stored because a broadcast reads them, and those of them that stay stored as they run a transcendental function
++  # values stored because a broadcast reads them
 +  broadcast: dict[UOp, None] = field(default_factory=dict)
-+  kept: dict[UOp, None] = field(default_factory=dict)
    range_map: dict[UOp, tuple[tuple[UOp, ...], tuple[UOp, ...]]] = field(default_factory=dict)
  
    # create ranges
-@@ -35,6 +38,13 @@ def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
+@@ -35,6 +37,13 @@ def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
    # you don't usually have to do this for assign unless there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce
    if dest.base in src.toposort(enter_calls=False): ctx.realize_map[src] = None
  
@@ -801,7 +800,7 @@ index 228ec4e..b685b27 100644
  def realize_custom_kernel_srcs(ctx:IndexingContext, c:UOp) -> None:
    for s in c.src[1:]:
      while s.op is Ops.RESHAPE: s = s.src[0]
-@@ -49,6 +59,7 @@ pm_generate_realize_map = PatternMatcher([
+@@ -49,6 +58,7 @@ pm_generate_realize_map = PatternMatcher([
    (UPat(Ops.STORE, name="tr"), realize),
    # realize srcs of these
    (UPat((Ops.MSELECT, Ops.MSTACK), name="rb"), realize_srcs),
@@ -809,16 +808,16 @@ index 228ec4e..b685b27 100644
    # sometimes we need to realize the src of STORE if there's a self-access, or if it's a cross device store
    (UPat(Ops.STORE, src=(UPat.var("dest"), UPat.var("src"))), realize_store_after_src),
  ])
-@@ -58,6 +69,8 @@ class BufferizeOpts:
+@@ -58,6 +68,8 @@ class BufferizeOpts:
    device: str|tuple[str, ...]|None
    addrspace: AddrSpace = AddrSpace.GLOBAL
    removable: bool = True
-+  # whether remove_bufferize may inline it back; cleanup_dead_axes still drops its dead axes
-+  inlinable: bool = True
++  # read where it is broadcast: remove_bufferize keeps it if computing it runs a transcendental function
++  broadcast: bool = False
  
  def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if x.op not in GroupOp.Broadcastable: return rngs
-@@ -67,32 +80,39 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
+@@ -67,32 +79,39 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
  # TODO: srcs contain (real data srcs, something else, ranges) and the boundary is confusing. see range_start
  def data_srcs(op:Ops, src:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.RANGE, Ops.SPECIAL}: return ()
@@ -836,7 +835,7 @@ index 228ec4e..b685b27 100644
 +    del ctx.realize_map[s]
 +    return s.end(*[r for r in closed_ranges if r.op is Ops.RANGE])
 +  removable = s.op not in ALWAYS_CONTIGUOUS and s not in ctx.non_removable
-+  opts = BufferizeOpts(device=s.device, removable=removable, inlinable=s not in ctx.kept)
++  opts = BufferizeOpts(device=s.device, removable=removable, broadcast=s in ctx.broadcast)
 +  new_src = UOp(Ops.STAGE, src=(s,)+closed_ranges, arg=opts)
 +  return new_src.index(*src_rngs) if indexed else new_src
 +
@@ -878,7 +877,7 @@ index 228ec4e..b685b27 100644
  
  def create_bufferize_and_index_based_on_ranges(ctx:IndexingContext, x:UOp):
    if x.op in {Ops.STAGE, Ops.INDEX}: return None
-@@ -140,6 +160,8 @@ pm_apply_rangeify = PatternMatcher([
+@@ -140,6 +159,8 @@ pm_apply_rangeify = PatternMatcher([
    (UPat(Ops.PAD, name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
@@ -887,23 +886,7 @@ index 228ec4e..b685b27 100644
    # finally, apply_rangeify
    (UPat(GroupOp.All, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -186,6 +208,15 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
-     case _: raise RuntimeError(f"{op} is not a MovementOp")
-   return rngs
- 
-+# whether computing x runs a transcendental function: down to the reductions, storage, and values that stay stored. a
-+# stored value that remove_bufferize may inline back is computed again
-+def runs_transcendental(rctx:IndexingContext, x:UOp) -> bool:
-+  def stays_stored(u:UOp) -> bool:
-+    return u in rctx.kept or (u in rctx.realize_map and (u.op is Ops.STORE or u.op in ALWAYS_CONTIGUOUS or u in rctx.non_removable))
-+  def computed(u:UOp) -> bool:
-+    return u is x or not (stays_stored(u) or u.op in {Ops.REDUCE, Ops.BUFFER, Ops.PARAM, Ops.AFTER, Ops.ALLOC})
-+  return any(u.op in {Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.POW} for u in x.toposort(gate=computed))
-+
- @rewrite_group(new_ctx=False)
- def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
-   if debug: print("**************************")
-@@ -227,7 +258,10 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -227,7 +248,10 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -915,7 +898,7 @@ index 228ec4e..b685b27 100644
      if x in rctx.realize_map:
        # if this is in the realize_map, we create new ranges (at the output)
        out_rngs = tuple(rctx.new_range(s) for s in x.shape)
-@@ -273,6 +307,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -273,6 +297,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        ending_ranges[x] = []
        if len(_realize_axis):
          rctx.realize_map[x] = _realize_axis
@@ -923,19 +906,6 @@ index 228ec4e..b685b27 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -312,6 +347,12 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
-     # assign to the range map. rngs are the input ranges, out_rngs are the output ranges, from the x op.
-     rctx.range_map[x] = (rngs, out_rngs)
- 
-+  # read where it is broadcast, a value would be computed again for each element of the ranges it does not vary along:
-+  # one that runs a transcendental function is kept. producers are decided first, so that a value reading a kept one
-+  # computes no transcendental of its own
-+  for x in tsink_toposort:
-+    if x in rctx.broadcast and runs_transcendental(rctx, x): rctx.kept[x] = None
-+
-   # NOTE: SPEC=3 is broken here with shape
-   with Context(SPEC=min(SPEC.value, 2)):
-     tsink = graph_rewrite(tsink, pm_apply_rangeify, ctx=rctx, bottom_up=True, name="apply rangeify")
 diff --git a/tinygrad/schedule/multi.py b/tinygrad/schedule/multi.py
 index 099ac10..2e22d4b 100644
 --- a/tinygrad/schedule/multi.py
@@ -1137,18 +1107,29 @@ index a5cf57d..ae2879b 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 0239aa4..781b2c2 100644
+index 0239aa4..59df4be 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
-@@ -53,7 +53,7 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
-   assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
+@@ -77,13 +77,18 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+       indexes.append(x)
+     if x.op is Ops.REDUCE: reduces.append(x)
+     return True
+-  src.toposort(gate=red_gate)
++  computed = src.toposort(gate=red_gate)
+   del red_gate
+   accessed_buffers = dedup(accessed_buffers)
  
-   # if it's user contiguous, we never remove it
--  if src.op in ALWAYS_RUN_OPS or not buf.arg.removable: return None
-+  if src.op in ALWAYS_RUN_OPS or not buf.arg.removable or not buf.arg.inlinable: return None
+   # if this is generated from multiple buffers, don't remove this buffer
+   if len(accessed_buffers) > 3: return None
  
-   # *** here is where we compute the cost ***
-   # if we return None, the bufferize is kept
++  # inlined where it is broadcast, the value would be computed again for each element of the ranges it does not vary
++  # along: one whose computing runs a transcendental function stays stored. its producers are already stored or inlined,
++  # so the walk sees what inlining would compute
++  if buf.arg.broadcast and any(u.op in {Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.POW} for u in computed): return None
++
+   # if any reduces access a buffer, don't remove this buffer
+   buffer_in_reduce = False
+   def buf_gate(x:UOp):
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py

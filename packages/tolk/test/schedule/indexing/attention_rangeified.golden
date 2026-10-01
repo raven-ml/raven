@@ -52,7 +52,7 @@
 50 Ops.RANGE dtypes.weakint [1] (20, AxisType.REDUCE)
 51 Ops.INDEX dtypes.float [41, 47, 48, 49, 50]
 52 Ops.REDUCE dtypes.float [51, 50] (Ops.MAX, 0)
-53 Ops.STAGE dtypes.float [52, 47, 48, 49] BufferizeOpts(device="CPU")
+53 Ops.STAGE dtypes.float [52, 47, 48, 49] BufferizeOpts(device="CPU", broadcast=True)
 54 Ops.INDEX dtypes.float [53, 42, 43, 44]
 55 Ops.CONST dtypes.weakfloat [] -1.0
 56 Ops.MUL dtypes.float [54, 55]
@@ -72,11 +72,11 @@
 70 Ops.RANGE dtypes.weakint [1] (12, AxisType.REDUCE)
 71 Ops.INDEX dtypes.float [61, 67, 68, 69, 70]
 72 Ops.REDUCE dtypes.float [71, 70] (Ops.ADD, 0)
-73 Ops.STAGE dtypes.float [72, 67, 68, 69] BufferizeOpts(device="CPU", inlinable=False)
+73 Ops.STAGE dtypes.float [72, 67, 68, 69] BufferizeOpts(device="CPU", broadcast=True)
 74 Ops.INDEX dtypes.float [73, 62, 63, 64]
 75 Ops.RECIPROCAL dtypes.float [74]
 76 Ops.MUL dtypes.float [66, 75]
-77 Ops.STAGE dtypes.float [76, 62, 63, 64, 65] BufferizeOpts(device="CPU", inlinable=False)
+77 Ops.STAGE dtypes.float [76, 62, 63, 64, 65] BufferizeOpts(device="CPU", broadcast=True)
 78 Ops.RANGE dtypes.weakint [1] (4, AxisType.REDUCE)
 79 Ops.INDEX dtypes.float [77, 12, 8, 2, 78]
 80 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=128, device="CPU")

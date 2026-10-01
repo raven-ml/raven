@@ -49,7 +49,7 @@
 47 Ops.INDEX dtypes.float [45, 46]
 48 Ops.SQRT dtypes.float [47]
 49 Ops.RECIPROCAL dtypes.float [48]
-50 Ops.STAGE dtypes.float [49, 46] BufferizeOpts(device="CPU")
+50 Ops.STAGE dtypes.float [49, 46] BufferizeOpts(device="CPU", broadcast=True)
 51 Ops.INDEX dtypes.float [50, 7]
 52 Ops.MUL dtypes.float [44, 51]
 53 Ops.CMPLT dtypes.bool [12, 52]
