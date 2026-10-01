@@ -104,10 +104,40 @@ let chain x =
   Nx.sum !t
 
 let chain_benchmarks x0 =
+  let v = Nx.ones_like x0 in
   [
     Thumper.bench "chain fwd (nx eager)" (fun () -> chain x0);
     Thumper.bench ~tags:[ "lab" ] "chain grad" (fun () -> Rune.grad' chain x0);
+    Thumper.bench "chain jvp" (fun () -> Rune.jvp' chain x0 v);
   ]
+
+(* HMC: one leapfrog trajectory of [hmc_steps] steps on a Gaussian over
+   [hmc_dim] floats, as a sampler runs it eagerly: each step takes the log
+   density's value and gradient at a new position. *)
+let hmc_dim = 16
+let hmc_steps = 20
+
+let hmc_benchmarks () =
+  let mean = Nx.randn Nx.float32 [| hmc_dim |] in
+  let precision = Nx.rand Nx.float32 [| hmc_dim |] in
+  let log_density q =
+    Nx.mul_s (Nx.sum (Nx.mul precision (Nx.square (Nx.sub q mean)))) (-0.5)
+  in
+  let eps = 0.1 in
+  let leapfrog q p =
+    let g = snd (Rune.value_and_grad' log_density q) in
+    let q = ref q and p = ref p and g = ref g in
+    for _ = 1 to hmc_steps do
+      p := Nx.add !p (Nx.mul_s !g (eps /. 2.));
+      q := Nx.add !q (Nx.mul_s !p eps);
+      g := snd (Rune.value_and_grad' log_density !q);
+      p := Nx.add !p (Nx.mul_s !g (eps /. 2.))
+    done;
+    (!q, !p)
+  in
+  let q0 = Nx.randn Nx.float32 [| hmc_dim |] in
+  let p0 = Nx.randn Nx.float32 [| hmc_dim |] in
+  [ Thumper.bench "leapfrog" (fun () -> leapfrog q0 p0) ]
 
 (* Declined: one-element adds of constants under transformations that have
    nothing to do with them, so each add passes through the transformation
@@ -474,6 +504,7 @@ let () =
           Thumper.group "MlpJvp" (mlp_jvp_benchmarks params x y);
           Thumper.group "PerSampleGrads" (vmap_benchmarks params x);
           Thumper.group "DeepChain" (chain_benchmarks x0);
+          Thumper.group "Hmc" (hmc_benchmarks ());
           Thumper.group "Declined" (declined_benchmarks ());
           Thumper.group "Jit" (jit_benchmarks params x x0);
           Thumper.group "JitFootprint"
