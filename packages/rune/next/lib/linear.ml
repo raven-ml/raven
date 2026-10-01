@@ -6,9 +6,17 @@
 open Nx.Op
 module Repr = Nx.Repr
 
+(* A tape's entries, one per slot. A linear call's outputs are consecutive
+   slots: the first holds the call, the others [Part]. *)
 type entry =
   | Input
   | Recorded : ('a, 'b) Nx.t Nx.Op.t * ('a, 'b) Nx_dtype.t -> entry
+  | Call of {
+      inputs : Nx.packed list;
+      like : Nx.packed list;
+      pullback : Nx.packed list -> Nx.packed list;
+    }
+  | Part
 
 type tape = {
   entry : string;
@@ -51,6 +59,15 @@ let slot t ~context placement dtype shape e =
 let input t x =
   slot t ~context:(Repr.context x) (Nx.placement x) (Nx.dtype x) (Nx.shape x)
     Input
+
+let call t inputs pullback like =
+  List.mapi
+    (fun j (Nx.P y) ->
+      let e = if j = 0 then Call { inputs; like; pullback } else Part in
+      Nx.P
+        (slot t ~context:(Repr.context y) (Nx.placement y) (Nx.dtype y)
+           (Nx.shape y) e))
+    like
 
 (* Recording *)
 
@@ -154,7 +171,7 @@ let run : type r. tape -> r Nx.Op.t -> r =
   | Threefry _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ ->
       nonlinear t op
 
-let call : type r. tape -> r Construct.t -> (unit -> r) option =
+let answer : type r. tape -> r Construct.t -> (unit -> r) option =
  fun t c ->
   match[@warning "@4@8"] c with
   | Detach x -> if owns t x then Some (fun () -> x) else None
@@ -174,7 +191,7 @@ let install t f =
   Construct.install
     {
       op = Some { run = (fun op -> run t op); claims = (fun op -> claims t op) };
-      call = (fun c -> call t c);
+      call = (fun c -> answer t c);
     }
     f
 
@@ -470,10 +487,32 @@ let transpose_op : type a b.
   | Read _ ->
       assert false (* Never recorded. *)
 
+let transpose_call cts i inputs like pullback =
+  let received = ref false in
+  let outputs =
+    List.mapi
+      (fun j (Nx.P y) ->
+        match cts.cts.(i + j) with
+        | Some ct ->
+            received := true;
+            ct
+        | None -> Nx.P (Nx.zeros_like y))
+      like
+  in
+  if !received then
+    List.iter2
+      (fun (Nx.P x) ct -> add cts x (Nx.unpack (Nx.dtype x) ct))
+      inputs (pullback outputs)
+
 let transpose cts =
   let t = cts.tape in
   for i = t.length - 1 downto 0 do
-    match (t.entries.(i), cts.cts.(i)) with
-    | Recorded (op, dtype), Some ct -> transpose_op cts op (Nx.unpack dtype ct)
-    | (Input | Recorded _), None | Input, Some _ -> ()
+    match t.entries.(i) with
+    | Recorded (op, dtype) ->
+        Option.iter
+          (fun ct -> transpose_op cts op (Nx.unpack dtype ct))
+          cts.cts.(i)
+    | Call { inputs; like; pullback } ->
+        transpose_call cts i inputs like pullback
+    | Input | Part -> ()
   done

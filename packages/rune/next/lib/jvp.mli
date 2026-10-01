@@ -18,8 +18,10 @@
 type t
 (** The type for installations of forward mode. *)
 
-val create : unit -> t
-(** [create ()] is a fresh installation, distinct from every other. *)
+val create : ?slots:Linear.tape -> string -> t
+(** [create ?slots entry] is a fresh installation, distinct from every other,
+    for the entry point named [entry], which its errors name. Its tangents are
+    values, or under reverse mode slots of [slots]. *)
 
 val dual : t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [dual i x dx] is the dual of [i] whose primal is [x] and tangent [dx]. *)
@@ -31,5 +33,17 @@ val split : t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t option
 val install : t -> (unit -> 'a) -> 'a
 (** [install i f] is [f ()] under [i]'s interpreter ({!Construct.install}).
 
+    A custom rule with one of [i]'s duals among its arguments runs at the
+    arguments' primals, outside [i]: a [custom_jvp] rule's result is the answer
+    of the differentiations around [i] to the rule there, and its tangent the
+    rule's tangent map at [i]'s tangents, zeros or a slot nothing feeds for an
+    argument [i] does not track; under reverse mode the map is not applied to
+    a result that holds no tensor, and a loop in it unrolls. A [custom_vjp]
+    rule's result is the rule's, with, under reverse mode, a linear call whose
+    transpose is the rule's pullback between the conjugated cotangents and
+    gradients.
+
     Raises [Invalid_argument], at the operation, when an operation on one of
-    [i]'s duals has no tangent rule. *)
+    [i]'s duals has no tangent rule; at a custom rule's operation on one of
+    [i]'s duals; and at a [custom_vjp] call with a tensor in its result when
+    [i]'s tangents are values. *)

@@ -19,7 +19,8 @@ let differentiable x =
    leaf of [params] becomes a dual whose tangent is an input slot. It is the
    tape, the forward mode, the leaves as [f] received them, and [f]'s result. *)
 let linearize fn p f params =
-  let tape = Linear.create fn and i = Jvp.create () in
+  let tape = Linear.create fn in
+  let i = Jvp.create ~slots:tape fn in
   let any = ref false in
   let seeded =
     Ptree.map p
@@ -103,7 +104,7 @@ let vjp p q f params = vjp_of "Rune.vjp" p q f params
 (* Forward mode *)
 
 let jvp_of fn p q f params tangents =
-  let i = Jvp.create () in
+  let i = Jvp.create fn in
   let any = ref false in
   let duals =
     Structure.map2 fn p ~this:"the parameters" ~that:"the tangents"
@@ -184,8 +185,11 @@ let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
 
 (* Custom differentiation rules *)
 
-let custom_jvp _ _ _ _ = not_yet "custom_jvp"
-let custom_vjp _ _ _ _ = not_yet "custom_vjp"
+let custom_jvp p q rule args =
+  Construct.perform (Custom (Jvp_rule { p; q; rule; args; value = None }))
+
+let custom_vjp p q rule args =
+  Construct.perform (Custom (Vjp_rule { p; q; rule; args }))
 
 (* Gradient checkpointing *)
 

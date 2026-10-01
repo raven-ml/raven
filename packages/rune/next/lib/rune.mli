@@ -270,7 +270,9 @@ val custom_jvp :
     batches the rule.
 
     Under reverse mode, a loop in [map] ({!scan}) runs written out, even under
-    {!val-jit}.
+    {!val-jit}, and a value that [map] selects with {!Nx.where}, concatenates,
+    scatters or writes beside a tangent is taken as zero: [map] must give such a
+    value only as a tangent's zero fill.
 
     Raises [Invalid_argument] if [map]'s result differs from the result in its
     visits, or a tangent from its result tensor in dtype or shape; and if [rule]

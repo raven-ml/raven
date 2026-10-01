@@ -43,6 +43,18 @@ val install : tape -> (unit -> 'a) -> 'a
      map must be linear in its tangents"], an addition or a nonzero padding
     being affine, or if it reads a slot's value. *)
 
+val call :
+  tape ->
+  Nx.packed list ->
+  (Nx.packed list -> Nx.packed list) ->
+  Nx.packed list ->
+  Nx.packed list
+(** [call t xs pullback ys] records a linear map from the slots [xs] of [t] to
+    fresh slots with the metadata of [ys], which it returns, one per value of
+    [ys]. Its transpose is [pullback]: given the cotangents of the outputs, in
+    order, zeros where none arrived, it returns the cotangents of [xs], in
+    order. [pullback] runs only when an output received a cotangent. *)
+
 (** {1:transposing Transposing} *)
 
 type cotangents

@@ -6,9 +6,13 @@
 open Nx.Op
 module Repr = Nx.Repr
 
-type t = unit ref
+type t = {
+  entry : string;
+  slots : Linear.tape option;
+  id : unit ref;  (** Each installation is a block of its own. *)
+}
 
-let create () = ref ()
+let create ?slots entry = { entry; slots; id = ref () }
 
 type (_, _) Repr.node +=
   | Dual : {
@@ -513,19 +517,147 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Place (p, x) -> linear x (fun x -> eval (Place (p, x)))
   | Read x -> eval (Read (primal i x))
 
-let call : type r. t -> r Construct.t -> (unit -> r) option =
+(* Custom rules *)
+
+let differentiable x =
+  let dt = Nx.dtype x in
+  Nx_dtype.is_float dt || Nx_dtype.is_complex dt
+
+let holds_tensor q y = Nx.Ptree.fold q (fun _ _ _ -> true) y false
+
+let holds_own i p args =
+  Nx.Ptree.fold p (fun _ x any -> any || owns i x) args false
+
+(* [zero i x] is the tangent of [x] when [i] tracks none: zeros, or under
+   reverse mode a slot nothing feeds. *)
+let zero i x =
+  match i.slots with
+  | Some tape -> Linear.input tape x
+  | None -> Nx.zeros_like x
+
+(* [guarded i ~entry ~loops f] is [f ()], raising at an operation on one of
+   [i]'s duals: a rule receives its arguments' primals, and a value [i] tracks
+   that it captures would lose its derivative. Unless [loops], a scan [f]
+   performs is declined, so that it unrolls into operations the recorder
+   sees. *)
+let guarded i ~entry ~loops f =
+  let run _ =
+    invalid_arg
+      (entry
+     ^ ": the rule uses a value its own differentiation tracks; pass it as an \
+        argument")
+  in
+  let claims op = List.exists (fun (Nx.P x) -> owns i x) (operands op) in
+  let call : type r. r Construct.t -> (unit -> r) option = function
+    | Scan _ when not loops -> Some (fun () -> raise Scan.Not_staged)
+    | Scan _ | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _
+    | Lane_count _ | Add _ | Detach _ ->
+        None
+  in
+  Construct.install { op = Some { run; claims }; call } f
+
+(* A custom_jvp call: its result is the answer of the differentiations around
+   [i] to the rule at the primals, and its tangent the rule's tangent map at
+   [i]'s tangents. *)
+let custom_jvp i p q rule args =
+  let entry = "Rune.custom_jvp" in
+  let a = Nx.Ptree.map p (fun _ x -> primal i x) args in
+  let value, map = guarded i ~entry ~loops:true (fun () -> rule a) in
+  let y =
+    Construct.perform
+      (Custom (Jvp_rule { p; q; rule; args = a; value = Some value }))
+  in
+  if Option.is_some i.slots && not (holds_tensor q y) then y
+  else
+    let da =
+      Nx.Ptree.map p
+        (fun _ x ->
+          match split i x with _, Some dx -> dx | x, None -> zero i x)
+        args
+    in
+    let dy =
+      guarded i ~entry ~loops:(Option.is_none i.slots) (fun () -> map da)
+    in
+    Structure.map2 entry q ~this:"the result" ~that:"the tangent map's result"
+      (fun _ y dy -> if differentiable y then dual i y dy else y)
+      y dy
+
+(* A custom_vjp call: its result is the rule's at the primals, and under reverse
+   mode a linear call whose transpose is the rule's pullback. *)
+let custom_vjp i p q rule args =
+  let entry = "Rune.custom_vjp" in
+  let a = Nx.Ptree.map p (fun _ x -> primal i x) args in
+  let y, pullback = guarded i ~entry ~loops:true (fun () -> rule a) in
+  match i.slots with
+  | _ when not (holds_tensor q y) -> y
+  | None ->
+      invalid_arg
+        (i.entry
+       ^ ": a custom_vjp rule has no forward derivative; give the function a \
+          custom_jvp rule")
+  | Some tape ->
+      let leaves, _ = Nx.Ptree.flatten p args in
+      let tracked = List.map (fun (Nx.P x) -> owns i x) leaves in
+      let tangents =
+        List.filter_map
+          (fun (Nx.P x) -> Option.map (fun (_, dx) -> Nx.P dx) (own i x))
+          leaves
+      in
+      let ys, _ = Nx.Ptree.flatten q y in
+      let outputs = List.filter (fun (Nx.P y) -> differentiable y) ys in
+      let conj (Nx.P c) = Nx.P (Nx.conjugate c) in
+      let transpose cts =
+        let rec fill ys cts =
+          match (ys, cts) with
+          | Nx.P y :: ys, ct :: rest when differentiable y ->
+              conj ct :: fill ys rest
+          | Nx.P y :: ys, cts -> Nx.P (Nx.zeros_like y) :: fill ys cts
+          | [], _ -> []
+        in
+        let g = pullback (Nx.Ptree.rebuild q ~like:y (fill ys cts)) in
+        ignore
+          (Structure.map2 entry p ~this:"the arguments"
+             ~that:"the pullback's result"
+             (fun _ x _ -> x)
+             a g);
+        List.filter_map
+          (fun (t, g) -> if t then Some (conj g) else None)
+          (List.combine tracked (fst (Nx.Ptree.flatten p g)))
+      in
+      let slots = ref (Linear.call tape tangents transpose outputs) in
+      let attach _ y =
+        match !slots with
+        | s :: rest when differentiable y ->
+            slots := rest;
+            dual i y (Nx.unpack (Nx.dtype y) s)
+        | _ -> y
+      in
+      Nx.Ptree.map q attach y
+
+let custom : type q. t -> q Construct.rule -> (unit -> q) option =
+ fun i r ->
+  match r with
+  | Jvp_rule { p; q; rule; args; _ } ->
+      if holds_own i p args then Some (fun () -> custom_jvp i p q rule args)
+      else None
+  | Vjp_rule { p; q; rule; args } ->
+      if holds_own i p args then Some (fun () -> custom_vjp i p q rule args)
+      else None
+
+let answer : type r. t -> r Construct.t -> (unit -> r) option =
  fun i c ->
   match[@warning "@4@8"] c with
   | Detach x ->
       Option.map (fun (x, _) () -> Construct.perform (Detach x)) (own i x)
-  | Scan _ | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _
-  | Lane_count _ | Add _ ->
+  | Custom r -> custom i r
+  | Scan _ | Remat _ | Barrier _ | Lanes _ | Lane_index _ | Lane_count _ | Add _
+    ->
       None
 
 let install i f =
   Construct.install
     {
       op = Some { run = (fun op -> run i op); claims = (fun op -> claims i op) };
-      call = (fun c -> call i c);
+      call = (fun c -> answer i c);
     }
     f
