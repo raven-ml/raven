@@ -2901,6 +2901,10 @@ thread.
 
 ### Nx
 
+- `Nx.logical_and`, `logical_or` and `logical_xor` on `bool` tensors apply
+  the bitwise operation directly instead of testing each operand against zero
+  and casting the result back: one array per call instead of four, about four
+  times faster on a 128 × 256 mask.
 - `Nx.Ptree.Path.root`, `Nx.Ptree.Path.v` and `Nx.Ptree.Path.add` construct
   paths, which code outside nx could only receive from a walk. A path can now
   be written literally and compared with the one a walk gives, as in

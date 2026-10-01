@@ -473,10 +473,14 @@ let bitwise_and a b = binop And a b
 (* ───── Logical and Comparison Operations ───── *)
 
 (* A logical operation reads non-zero as true and gives zero or one of the
-   operands' dtype. *)
+   operands' dtype. On [bool], whose only values are 0 and 1, it is the bitwise
+   operation. *)
 let truth x =
   cmpop Not_equal x (scalar_like x (Nx_dtype.zero (dtype x)))
-let logical op a b = cast (dtype a) (binop op (truth a) (truth b))
+let logical (type a b) op (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  match dtype a with
+  | Nx_dtype.Bool -> binop op a b
+  | _ -> cast (dtype a) (binop op (truth a) (truth b))
 let logical_and a b = logical And a b
 let logical_or a b = logical Or a b
 let logical_xor a b = logical Xor a b
