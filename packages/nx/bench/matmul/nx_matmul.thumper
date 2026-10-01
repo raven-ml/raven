@@ -1,6 +1,31 @@
 # thumper baseline v1
 # suite: nx_matmul
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+f32/MatMul-SquareLarge-512x512-512x512-f32-Nx	alloc_words	exact	85
+f32/MatMul-SquareLarge-512x512-512x512-f32-Nx	wall_time	batch=1	n=20	5.463e-03	5.354e-03 5.389e-03 5.396e-03 5.403e-03 5.412e-03 5.432e-03 5.435e-03 5.448e-03 5.451e-03 5.461e-03 5.466e-03 5.484e-03 5.553e-03 5.557e-03 5.626e-03 5.683e-03 6.467e-03 7.549e-03 7.646e-03 7.696e-03
+f32/MatMul-SquareSmall-64x64-64x64-f32-Nx	alloc_words	exact	85
+f32/MatMul-SquareSmall-64x64-64x64-f32-Nx	wall_time	batch=128	n=20	3.407e-05	3.405e-05 3.405e-05 3.405e-05 3.406e-05 3.406e-05 3.406e-05 3.406e-05 3.406e-05 3.407e-05 3.407e-05 3.407e-05 3.407e-05 3.409e-05 3.409e-05 3.409e-05 3.409e-05 3.410e-05 3.411e-05 3.412e-05 3.464e-05
+f32/MatMul-TallSkinny-256x64-64x256-f32-Nx	alloc_words	exact	85
+f32/MatMul-TallSkinny-256x64-64x256-f32-Nx	wall_time	batch=8	n=20	4.792e-04	4.769e-04 4.770e-04 4.770e-04 4.770e-04 4.771e-04 4.772e-04 4.773e-04 4.776e-04 4.776e-04 4.792e-04 4.793e-04 4.794e-04 4.796e-04 4.796e-04 4.798e-04 4.803e-04 4.806e-04 4.808e-04 5.168e-04 5.583e-04
+f32/MatMul-Wide-128x256-256x64-f32-Nx	alloc_words	exact	85
+f32/MatMul-Wide-128x256-256x64-f32-Nx	wall_time	batch=16	n=20	2.547e-04	2.541e-04 2.543e-04 2.543e-04 2.543e-04 2.544e-04 2.545e-04 2.546e-04 2.546e-04 2.546e-04 2.547e-04 2.547e-04 2.549e-04 2.549e-04 2.552e-04 2.556e-04 2.557e-04 2.560e-04 2.560e-04 2.603e-04 2.624e-04
+f64/MatMul-SquareLarge-512x512-512x512-f64-Nx	alloc_words	exact	85
+f64/MatMul-SquareLarge-512x512-512x512-f64-Nx	wall_time	batch=1	n=20	6.393e-03	6.163e-03 6.195e-03 6.236e-03 6.284e-03 6.314e-03 6.314e-03 6.324e-03 6.325e-03 6.328e-03 6.358e-03 6.429e-03 6.430e-03 6.437e-03 6.452e-03 6.454e-03 6.495e-03 6.523e-03 6.670e-03 6.723e-03 6.825e-03
+f64/MatMul-SquareSmall-64x64-64x64-f64-Nx	alloc_words	exact	85
+f64/MatMul-SquareSmall-64x64-64x64-f64-Nx	wall_time	batch=256	n=20	2.739e-05	2.733e-05 2.734e-05 2.735e-05 2.735e-05 2.735e-05 2.738e-05 2.738e-05 2.738e-05 2.738e-05 2.739e-05 2.739e-05 2.739e-05 2.739e-05 2.742e-05 2.742e-05 2.742e-05 2.745e-05 2.746e-05 2.746e-05 2.751e-05
+f64/MatMul-TallSkinny-256x64-64x256-f64-Nx	alloc_words	exact	85
+f64/MatMul-TallSkinny-256x64-64x256-f64-Nx	wall_time	batch=8	n=20	4.152e-04	4.111e-04 4.131e-04 4.133e-04 4.142e-04 4.145e-04 4.145e-04 4.146e-04 4.151e-04 4.152e-04 4.152e-04 4.152e-04 4.153e-04 4.154e-04 4.154e-04 4.159e-04 4.167e-04 4.169e-04 4.171e-04 4.192e-04 4.425e-04
+f64/MatMul-Wide-128x256-256x64-f64-Nx	alloc_words	exact	85
+f64/MatMul-Wide-128x256-256x64-f64-Nx	wall_time	batch=32	n=20	1.949e-04	1.946e-04 1.947e-04 1.947e-04 1.947e-04 1.948e-04 1.948e-04 1.948e-04 1.948e-04 1.949e-04 1.949e-04 1.949e-04 1.950e-04 1.950e-04 1.951e-04 1.951e-04 1.951e-04 1.951e-04 1.958e-04 1.963e-04 1.966e-04
+layout-and-batch/MatMul-Batched-64x32x32-f32-Nx	alloc_words	exact	89
+layout-and-batch/MatMul-Batched-64x32x32-f32-Nx	wall_time	batch=128	n=20	4.537e-05	4.516e-05 4.520e-05 4.522e-05 4.529e-05 4.530e-05 4.533e-05 4.534e-05 4.534e-05 4.537e-05 4.537e-05 4.537e-05 4.537e-05 4.540e-05 4.547e-05 4.548e-05 4.549e-05 4.549e-05 4.550e-05 4.554e-05 4.994e-05
+layout-and-batch/MatMul-Transposed-512x512-f32-Nx	alloc_words	exact	85
+layout-and-batch/MatMul-Transposed-512x512-f32-Nx	wall_time	batch=1	n=20	5.888e-03	5.307e-03 5.309e-03 5.311e-03 5.400e-03 5.406e-03 5.436e-03 5.467e-03 5.486e-03 5.615e-03 5.873e-03 5.904e-03 5.995e-03 6.072e-03 6.319e-03 6.401e-03 6.655e-03 7.439e-03 8.084e-03 9.421e-03 1.062e-02
+
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release

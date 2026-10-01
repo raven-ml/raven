@@ -1,6 +1,51 @@
 # thumper baseline v1
 # suite: nx_primitives
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+arange/int32-1e7	alloc_words	exact	397
+arange/int32-1e7	wall_time	batch=1	n=20	2.867e-02	2.810e-02 2.854e-02 2.857e-02 2.858e-02 2.862e-02 2.862e-02 2.863e-02 2.863e-02 2.864e-02 2.866e-02 2.867e-02 2.867e-02 2.868e-02 2.869e-02 2.871e-02 2.872e-02 2.872e-02 2.873e-02 2.885e-02 2.889e-02
+arange/int64-1e7	alloc_words	exact	338
+arange/int64-1e7	wall_time	batch=1	n=20	2.149e-02	2.121e-02 2.136e-02 2.137e-02 2.140e-02 2.143e-02 2.144e-02 2.145e-02 2.147e-02 2.148e-02 2.149e-02 2.149e-02 2.157e-02 2.162e-02 2.162e-02 2.163e-02 2.164e-02 2.167e-02 2.171e-02 2.180e-02 2.185e-02
+arange/int64-4e4	alloc_words	exact	338
+arange/int64-4e4	wall_time	batch=64	n=20	1.768e-04	1.748e-04 1.752e-04 1.753e-04 1.753e-04 1.757e-04 1.757e-04 1.759e-04 1.762e-04 1.766e-04 1.768e-04 1.768e-04 1.772e-04 1.774e-04 1.776e-04 1.778e-04 1.778e-04 1.781e-04 1.784e-04 1.791e-04 1.805e-04
+argsort/float64-1e7	alloc_words	exact	59
+argsort/float64-1e7	wall_time	batch=1	n=20	2.358e-01	2.335e-01 2.336e-01 2.337e-01 2.337e-01 2.339e-01 2.340e-01 2.341e-01 2.346e-01 2.349e-01 2.352e-01 2.363e-01 2.367e-01 2.369e-01 2.377e-01 2.378e-01 2.379e-01 2.380e-01 2.382e-01 2.391e-01 2.411e-01
+argsort/float64-4e4	alloc_words	exact	59
+argsort/float64-4e4	wall_time	batch=16	n=20	4.235e-04	4.195e-04 4.196e-04 4.208e-04 4.215e-04 4.221e-04 4.227e-04 4.227e-04 4.230e-04 4.231e-04 4.233e-04 4.238e-04 4.240e-04 4.248e-04 4.248e-04 4.258e-04 4.265e-04 4.266e-04 4.270e-04 4.272e-04 4.289e-04
+argsort/uint64-1e7	alloc_words	exact	59
+argsort/uint64-1e7	wall_time	batch=1	n=20	2.434e-01	2.422e-01 2.423e-01 2.426e-01 2.428e-01 2.430e-01 2.431e-01 2.432e-01 2.433e-01 2.433e-01 2.433e-01 2.436e-01 2.441e-01 2.463e-01 2.465e-01 2.469e-01 2.471e-01 2.479e-01 2.480e-01 2.483e-01 2.516e-01
+argsort/uint64-4e4	alloc_words	exact	59
+argsort/uint64-4e4	wall_time	batch=16	n=20	4.572e-04	4.547e-04 4.555e-04 4.557e-04 4.561e-04 4.562e-04 4.564e-04 4.567e-04 4.567e-04 4.568e-04 4.572e-04 4.573e-04 4.579e-04 4.583e-04 4.596e-04 4.598e-04 4.602e-04 4.611e-04 4.635e-04 4.640e-04 4.655e-04
+cumsum/float64-1e7	alloc_words	exact	86
+cumsum/float64-1e7	wall_time	batch=1	n=20	1.281e-02	1.238e-02 1.262e-02 1.264e-02 1.264e-02 1.268e-02 1.275e-02 1.279e-02 1.280e-02 1.280e-02 1.280e-02 1.281e-02 1.285e-02 1.289e-02 1.289e-02 1.290e-02 1.291e-02 1.306e-02 1.308e-02 1.320e-02 1.322e-02
+cumsum/float64-4e4	alloc_words	exact	86
+cumsum/float64-4e4	wall_time	batch=64	n=20	9.188e-05	9.075e-05 9.086e-05 9.098e-05 9.104e-05 9.108e-05 9.111e-05 9.123e-05 9.152e-05 9.155e-05 9.184e-05 9.193e-05 9.216e-05 9.224e-05 9.252e-05 9.282e-05 9.307e-05 9.371e-05 9.388e-05 9.406e-05 9.506e-05
+cumsum/int64-1e7	alloc_words	exact	86
+cumsum/int64-1e7	wall_time	batch=1	n=20	1.221e-02	1.170e-02 1.189e-02 1.208e-02 1.211e-02 1.211e-02 1.213e-02 1.214e-02 1.215e-02 1.216e-02 1.220e-02 1.221e-02 1.222e-02 1.225e-02 1.243e-02 1.248e-02 1.249e-02 1.256e-02 1.265e-02 1.292e-02 1.293e-02
+gather/float32-1e7-monotone	alloc_words	exact	84
+gather/float32-1e7-monotone	wall_time	batch=1	n=20	4.613e-02	4.592e-02 4.599e-02 4.600e-02 4.600e-02 4.602e-02 4.602e-02 4.605e-02 4.607e-02 4.607e-02 4.612e-02 4.614e-02 4.620e-02 4.623e-02 4.625e-02 4.627e-02 4.630e-02 4.632e-02 4.639e-02 4.639e-02 4.639e-02
+gather/float32-4e4-monotone	alloc_words	exact	84
+gather/float32-4e4-monotone	wall_time	batch=16	n=20	1.755e-04	1.727e-04 1.739e-04 1.741e-04 1.746e-04 1.746e-04 1.751e-04 1.753e-04 1.753e-04 1.754e-04 1.755e-04 1.755e-04 1.758e-04 1.758e-04 1.759e-04 1.760e-04 1.762e-04 1.763e-04 1.770e-04 1.772e-04 1.774e-04
+gather/float32-rows-1.25e6x8	alloc_words	exact	128
+gather/float32-rows-1.25e6x8	wall_time	batch=1	n=20	2.060e-02	2.018e-02 2.027e-02 2.028e-02 2.029e-02 2.032e-02 2.032e-02 2.048e-02 2.048e-02 2.058e-02 2.059e-02 2.062e-02 2.068e-02 2.075e-02 2.079e-02 2.137e-02 2.146e-02 2.157e-02 2.176e-02 2.279e-02 2.303e-02
+gather/float32-rows-4e4x8	alloc_words	exact	128
+gather/float32-rows-4e4x8	wall_time	batch=16	n=20	3.293e-04	3.230e-04 3.242e-04 3.247e-04 3.265e-04 3.268e-04 3.278e-04 3.280e-04 3.280e-04 3.292e-04 3.293e-04 3.293e-04 3.295e-04 3.295e-04 3.307e-04 3.314e-04 3.317e-04 3.318e-04 3.323e-04 3.333e-04 3.334e-04
+gather/float64-1e7-random	alloc_words	exact	84
+gather/float64-1e7-random	wall_time	batch=1	n=20	2.651e-01	2.628e-01 2.628e-01 2.632e-01 2.637e-01 2.637e-01 2.640e-01 2.641e-01 2.647e-01 2.648e-01 2.650e-01 2.652e-01 2.653e-01 2.656e-01 2.659e-01 2.668e-01 2.706e-01 2.713e-01 2.716e-01 2.718e-01 2.771e-01
+scatter/add-float64-1e7-into-1e2	alloc_words	exact	67
+scatter/add-float64-1e7-into-1e2	wall_time	batch=1	n=20	3.582e-02	3.550e-02 3.552e-02 3.552e-02 3.554e-02 3.555e-02 3.555e-02 3.557e-02 3.562e-02 3.568e-02 3.576e-02 3.588e-02 3.594e-02 3.596e-02 3.597e-02 3.598e-02 3.599e-02 3.625e-02 3.628e-02 3.636e-02 3.638e-02
+scatter/add-float64-1e7-into-1e6	alloc_words	exact	67
+scatter/add-float64-1e7-into-1e6	wall_time	batch=1	n=20	6.129e-02	5.887e-02 6.068e-02 6.081e-02 6.093e-02 6.094e-02 6.098e-02 6.106e-02 6.111e-02 6.120e-02 6.129e-02 6.129e-02 6.130e-02 6.134e-02 6.136e-02 6.148e-02 6.158e-02 6.159e-02 6.228e-02 6.301e-02 6.501e-02
+scatter/add-float64-4e4-into-1e2	alloc_words	exact	67
+scatter/add-float64-4e4-into-1e2	wall_time	batch=32	n=20	1.423e-04	1.393e-04 1.398e-04 1.398e-04 1.405e-04 1.408e-04 1.414e-04 1.419e-04 1.420e-04 1.420e-04 1.422e-04 1.424e-04 1.424e-04 1.427e-04 1.440e-04 1.441e-04 1.483e-04 1.491e-04 1.501e-04 1.510e-04 1.521e-04
+scatter/set-float64-1e7-into-1e6	alloc_words	exact	67
+scatter/set-float64-1e7-into-1e6	wall_time	batch=1	n=20	4.420e-02	4.392e-02 4.414e-02 4.416e-02 4.416e-02 4.417e-02 4.417e-02 4.418e-02 4.418e-02 4.419e-02 4.419e-02 4.421e-02 4.435e-02 4.435e-02 4.436e-02 4.439e-02 4.439e-02 4.441e-02 4.443e-02 4.443e-02 4.454e-02
+scatter/set-float64-4e4-into-4e4	alloc_words	exact	67
+scatter/set-float64-4e4-into-4e4	wall_time	batch=32	n=20	2.819e-04	2.800e-04 2.805e-04 2.806e-04 2.807e-04 2.809e-04 2.810e-04 2.812e-04 2.813e-04 2.817e-04 2.818e-04 2.820e-04 2.820e-04 2.823e-04 2.823e-04 2.828e-04 2.849e-04 2.849e-04 2.854e-04 2.867e-04 2.873e-04
+
 # machine: ca352e279bc47cb1
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release

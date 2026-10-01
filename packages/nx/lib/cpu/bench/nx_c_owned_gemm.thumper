@@ -1,6 +1,19 @@
 # thumper baseline v1
 # suite: nx_c_owned_gemm
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+owned-gemm/f32-512x512	alloc_words	exact	0
+owned-gemm/f32-512x512	wall_time	batch=1	n=20	7.480e-03	5.389e-03 5.391e-03 5.704e-03 6.468e-03 7.349e-03 7.364e-03 7.399e-03 7.472e-03 7.473e-03 7.480e-03 7.480e-03 7.493e-03 7.495e-03 7.497e-03 7.499e-03 7.549e-03 7.569e-03 7.579e-03 7.913e-03 8.792e-03
+owned-gemm/f32-64x64	alloc_words	exact	0
+owned-gemm/f32-64x64	wall_time	batch=128	n=20	3.395e-05	3.390e-05 3.390e-05 3.390e-05 3.391e-05 3.391e-05 3.391e-05 3.393e-05 3.394e-05 3.394e-05 3.394e-05 3.395e-05 3.396e-05 3.397e-05 3.399e-05 3.399e-05 3.399e-05 3.399e-05 3.400e-05 3.401e-05 3.402e-05
+owned-gemm/f32-batched-64x32x32	alloc_words	exact	0
+owned-gemm/f32-batched-64x32x32	wall_time	batch=128	n=20	4.367e-05	4.344e-05 4.354e-05 4.358e-05 4.359e-05 4.362e-05 4.363e-05 4.365e-05 4.366e-05 4.367e-05 4.367e-05 4.367e-05 4.369e-05 4.374e-05 4.376e-05 4.376e-05 4.380e-05 4.392e-05 4.405e-05 4.474e-05 4.544e-05
+owned-gemm/f32-transposed-512x512	alloc_words	exact	0
+owned-gemm/f32-transposed-512x512	wall_time	batch=1	n=20	7.479e-03	5.309e-03 5.461e-03 6.465e-03 6.663e-03 6.792e-03 7.350e-03 7.367e-03 7.369e-03 7.375e-03 7.473e-03 7.485e-03 7.486e-03 7.488e-03 7.492e-03 7.495e-03 7.505e-03 7.507e-03 7.512e-03 7.541e-03 7.546e-03
+
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release

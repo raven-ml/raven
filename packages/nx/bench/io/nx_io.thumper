@@ -1,6 +1,41 @@
 # thumper baseline v1
 # suite: nx_io
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+gzip/Gunzip-stored-1-MiB	alloc_words	exact	172
+gzip/Gunzip-stored-1-MiB	wall_time	batch=16	n=20	5.069e-04	5.011e-04 5.024e-04 5.032e-04 5.034e-04 5.036e-04 5.046e-04 5.064e-04 5.066e-04 5.069e-04 5.069e-04 5.070e-04 5.077e-04 5.078e-04 5.081e-04 5.082e-04 5.091e-04 5.093e-04 5.094e-04 5.113e-04 5.115e-04
+jpeg/Load-JPEG-512x512-RGB	alloc_words	exact	157
+jpeg/Load-JPEG-512x512-RGB	wall_time	batch=1	n=20	6.966e-03	6.924e-03 6.925e-03 6.926e-03 6.926e-03 6.935e-03 6.936e-03 6.944e-03 6.951e-03 6.953e-03 6.955e-03 6.976e-03 6.980e-03 6.982e-03 6.983e-03 6.994e-03 7.002e-03 7.008e-03 7.012e-03 7.018e-03 7.071e-03
+jpeg/Save-JPEG-512x512-RGB	alloc_words	exact	168
+jpeg/Save-JPEG-512x512-RGB	wall_time	batch=1	n=20	2.599e-03	2.588e-03 2.588e-03 2.593e-03 2.594e-03 2.594e-03 2.594e-03 2.596e-03 2.597e-03 2.598e-03 2.598e-03 2.599e-03 2.602e-03 2.604e-03 2.604e-03 2.605e-03 2.606e-03 2.607e-03 2.608e-03 2.613e-03 2.650e-03
+npy/Load-NPY-1-MiB-f32	alloc_words	batch=64	n=20	5.252e+02	5.242e+02 5.242e+02 5.242e+02 5.243e+02 5.243e+02 5.243e+02 5.243e+02 5.243e+02 5.244e+02 5.248e+02 5.256e+02 5.256e+02 5.256e+02 5.256e+02 5.256e+02 5.256e+02 5.256e+02 5.257e+02 5.257e+02 5.257e+02
+npy/Load-NPY-1-MiB-f32	wall_time	batch=64	n=20	7.317e-05	6.873e-05 6.892e-05 6.955e-05 6.958e-05 7.091e-05 7.103e-05 7.210e-05 7.229e-05 7.271e-05 7.288e-05 7.346e-05 7.392e-05 7.403e-05 7.451e-05 7.454e-05 7.491e-05 8.037e-05 8.238e-05 1.804e-04 3.268e-04
+npy/Save-NPY-1-MiB-f32	alloc_words	batch=32	n=20	4.026e+02	4.025e+02 4.025e+02 4.025e+02 4.025e+02 4.025e+02 4.026e+02 4.026e+02 4.026e+02 4.026e+02 4.026e+02 4.026e+02 4.026e+02 4.027e+02 4.027e+02 4.027e+02 4.027e+02 4.027e+02 4.027e+02 4.027e+02 4.028e+02
+npy/Save-NPY-1-MiB-f32	wall_time	batch=32	n=20	1.510e-04	1.506e-04 1.507e-04 1.507e-04 1.508e-04 1.508e-04 1.508e-04 1.509e-04 1.509e-04 1.510e-04 1.510e-04 1.510e-04 1.512e-04 1.512e-04 1.534e-04 1.534e-04 1.541e-04 1.541e-04 1.541e-04 1.544e-04 1.550e-04
+npz/Load-NPZ-Deflate-1-MiB-f32	alloc_words	exact	798
+npz/Load-NPZ-Deflate-1-MiB-f32	wall_time	batch=1	n=20	9.954e-03	8.470e-03 8.549e-03 8.606e-03 8.904e-03 8.977e-03 9.114e-03 9.370e-03 9.393e-03 9.656e-03 9.937e-03 9.971e-03 9.972e-03 9.992e-03 9.994e-03 1.000e-02 1.015e-02 1.017e-02 1.024e-02 1.030e-02 1.046e-02
+npz/Load-NPZ-Store-1-MiB-u8	alloc_words	batch=16	n=20	7.846e+02	7.799e+02 7.799e+02 7.799e+02 7.799e+02 7.799e+02 7.799e+02 7.804e+02 7.804e+02 7.834e+02 7.844e+02 7.849e+02 7.849e+02 7.849e+02 7.849e+02 7.849e+02 7.854e+02 7.854e+02 7.854e+02 7.856e+02 7.886e+02
+npz/Load-NPZ-Store-1-MiB-u8	wall_time	batch=16	n=20	3.865e-04	3.628e-04 3.630e-04 3.659e-04 3.662e-04 3.695e-04 3.824e-04 3.824e-04 3.840e-04 3.851e-04 3.857e-04 3.873e-04 3.878e-04 3.882e-04 3.953e-04 4.489e-04 4.931e-04 5.760e-04 6.960e-04 7.455e-04 7.596e-04
+npz/Save-NPZ-Deflate-1-MiB-f32	alloc_words	exact	981
+npz/Save-NPZ-Deflate-1-MiB-f32	wall_time	batch=1	n=20	1.169e-02	1.153e-02 1.154e-02 1.155e-02 1.156e-02 1.157e-02 1.158e-02 1.163e-02 1.166e-02 1.166e-02 1.166e-02 1.171e-02 1.172e-02 1.173e-02 1.175e-02 1.183e-02 1.183e-02 1.183e-02 1.184e-02 1.186e-02 1.208e-02
+npz/Save-NPZ-adaptive-1-MiB-u8	alloc_words	exact	990
+npz/Save-NPZ-adaptive-1-MiB-u8	wall_time	batch=4	n=20	1.411e-03	1.382e-03 1.383e-03 1.390e-03 1.390e-03 1.403e-03 1.407e-03 1.411e-03 1.411e-03 1.411e-03 1.411e-03 1.412e-03 1.417e-03 1.419e-03 1.419e-03 1.428e-03 1.428e-03 1.429e-03 1.434e-03 1.439e-03 1.542e-03
+png/Load-PNG-512x512-RGB	alloc_words	exact	157
+png/Load-PNG-512x512-RGB	wall_time	batch=1	n=20	2.691e-03	2.662e-03 2.671e-03 2.675e-03 2.675e-03 2.677e-03 2.677e-03 2.678e-03 2.679e-03 2.686e-03 2.689e-03 2.692e-03 2.697e-03 2.704e-03 2.711e-03 2.711e-03 2.713e-03 2.713e-03 2.717e-03 2.719e-03 2.723e-03
+png/Save-PNG-512x512-RGB	alloc_words	exact	168
+png/Save-PNG-512x512-RGB	wall_time	batch=1	n=20	6.838e-03	6.781e-03 6.793e-03 6.800e-03 6.802e-03 6.805e-03 6.806e-03 6.811e-03 6.812e-03 6.813e-03 6.826e-03 6.850e-03 6.870e-03 6.878e-03 6.880e-03 6.881e-03 6.886e-03 6.898e-03 6.912e-03 6.919e-03 6.946e-03
+safetensors/Load-SafeTensors-1-MiB-f32	alloc_words	exact	1321
+safetensors/Load-SafeTensors-1-MiB-f32	wall_time	batch=1024	n=20	3.603e-06	3.562e-06 3.573e-06 3.573e-06 3.576e-06 3.580e-06 3.585e-06 3.591e-06 3.596e-06 3.599e-06 3.600e-06 3.606e-06 3.608e-06 3.611e-06 3.612e-06 3.614e-06 3.629e-06 3.632e-06 3.635e-06 3.646e-06 3.659e-06
+safetensors/Load-and-sum-SafeTensors-64-MiB-f32	alloc_words	exact	1529
+safetensors/Load-and-sum-SafeTensors-64-MiB-f32	wall_time	batch=1	n=20	5.243e-03	4.965e-03 5.005e-03 5.006e-03 5.011e-03 5.027e-03 5.049e-03 5.145e-03 5.182e-03 5.190e-03 5.235e-03 5.250e-03 5.259e-03 5.260e-03 5.272e-03 5.276e-03 5.279e-03 5.300e-03 5.314e-03 5.318e-03 5.329e-03
+safetensors/Save-SafeTensors-1-MiB-f32	alloc_words	batch=32	n=20	1.489e+03	1.488e+03 1.488e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03 1.489e+03
+safetensors/Save-SafeTensors-1-MiB-f32	wall_time	batch=32	n=20	2.341e-04	2.248e-04 2.256e-04 2.257e-04 2.259e-04 2.284e-04 2.285e-04 2.292e-04 2.318e-04 2.328e-04 2.337e-04 2.345e-04 2.358e-04 2.359e-04 2.366e-04 2.371e-04 2.403e-04 2.409e-04 2.657e-04 4.029e-04 9.822e-04
+safetensors/Save-SafeTensors-64-MiB-f32	alloc_words	exact	1450
+safetensors/Save-SafeTensors-64-MiB-f32	wall_time	batch=1	n=20	1.477e-02	1.423e-02 1.425e-02 1.426e-02 1.432e-02 1.444e-02 1.449e-02 1.454e-02 1.464e-02 1.471e-02 1.473e-02 1.480e-02 1.516e-02 1.524e-02 1.532e-02 1.562e-02 1.566e-02 1.579e-02 1.581e-02 1.586e-02 4.339e-02
+
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
