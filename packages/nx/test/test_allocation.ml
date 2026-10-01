@@ -45,6 +45,23 @@ let dispatch =
           equal int 2 (words (fun () -> Nx.shape row)));
     ]
 
+let per_element =
+  group "allocation per element"
+    [
+      (* Both lengths give arrays of more than 64 KiB, which the host allocates
+         on a page and by a path of its own. *)
+      cases "arange allocates as many words for 2^20 elements as for 2^15"
+        ~name:(fun (name, _) -> name)
+        [
+          ("int64", fun n -> ignore (Nx.arange Nx.int64 0 n 1));
+          ("int32, through a cast", fun n -> ignore (Nx.arange Nx.int32 0 n 1));
+        ]
+        (fun (_, arange) ->
+          equal int
+            (words (fun () -> arange (1 lsl 15)))
+            (words (fun () -> arange (1 lsl 20))));
+    ]
+
 (* With no interception anywhere, a host operation allocates its result's array,
    which nx.cpu's kernel writes, and the two words of the [Host] block around
    it. *)
@@ -67,4 +84,4 @@ let host_path =
           equal int (words kernel + 2) (words (fun () -> Nx.add a b)));
     ]
 
-let () = exit (run "nx allocation" [ dispatch; host_path ])
+let () = exit (run "nx allocation" [ dispatch; per_element; host_path ])

@@ -119,22 +119,90 @@ let linear_points ~endpoint start stop n =
   let step = if span = 0 then 0. else (stop -. start) /. float_of_int span in
   Array.init n (fun i -> start +. (float_of_int i *. step))
 
+type dtype = Dtype : ('a, 'b) Nx.dtype -> dtype
+
+(* Each dtype with the least and greatest integers it holds, from arange's
+   contract: an integer dtype's range, 0 and 1 for bool, and the magnitudes up
+   to a float dtype's largest finite value, clipped to OCaml's ints. *)
+let held =
+  [
+    (Dtype Nx.bool, 0, 1);
+    (Dtype Nx.int4, -8, 7);
+    (Dtype Nx.uint4, 0, 15);
+    (Dtype Nx.int8, -128, 127);
+    (Dtype Nx.uint8, 0, 255);
+    (Dtype Nx.int16, -32768, 32767);
+    (Dtype Nx.uint16, 0, 65535);
+    (Dtype Nx.int32, -(1 lsl 31), (1 lsl 31) - 1);
+    (Dtype Nx.uint32, 0, (1 lsl 32) - 1);
+    (Dtype Nx.int64, min_int, max_int);
+    (Dtype Nx.uint64, 0, max_int);
+    (Dtype Nx.float16, -65504, 65504);
+    (Dtype Nx.bfloat16, min_int, max_int);
+    (Dtype Nx.float32, min_int, max_int);
+    (Dtype Nx.float64, min_int, max_int);
+    (Dtype Nx.float8_e4m3, -448, 448);
+    (Dtype Nx.float8_e5m2, -57344, 57344);
+    (Dtype Nx.complex64, min_int, max_int);
+    (Dtype Nx.complex128, min_int, max_int);
+  ]
+
+let pp_held ppf (Dtype d, _, _) = Nx.pp_dtype ppf d
+
+let int64s l =
+  let a = Array.of_list (List.map Int64.of_int l) in
+  Nx.create Nx.int64 [| Array.length a |] a
+
+(* Tensors of one dtype, equal in shape and elements. *)
+let same () =
+  Testable.make ~pp:Nx.pp ~equal:(fun a b ->
+      Nx.shape a = Nx.shape b && Nx.to_array a = Nx.to_array b)
+
+(* Each bound a dtype holds short of OCaml's ints, with the direction that
+   leaves the dtype: +1 past the greatest, -1 past the least. *)
+let held_bounds =
+  List.concat_map
+    (fun ((_, least, greatest) as d) ->
+      (if least > min_int then [ (d, least, -1) ] else [])
+      @ if greatest < max_int then [ (d, greatest, 1) ] else [])
+    held
+
+(* The bound [b] is reached from inside, toward and away from it, and the values
+   one past it are refused from both directions. *)
+let held_bound ((Dtype dtype, _, _), b, out) =
+  let holds start stop step expected =
+    equal (same ())
+      (Nx.cast dtype (int64s expected))
+      (Nx.arange dtype start stop step)
+  in
+  holds (b - out) (b + out) out [ b - out; b ];
+  holds b (b - (2 * out)) (-out) [ b; b - out ];
+  raises_invalid_arg (fun () -> Nx.arange dtype (b - out) (b + (2 * out)) out);
+  raises_invalid_arg (fun () ->
+      Nx.arange dtype (b + out) (b - (2 * out)) (-out))
+
 let bound = Gen.float_range (-100.) 100.
 
 let ranges =
   group "ranges"
     [
-      prop "arange counts from start by step while short of stop"
-        (Gen.triple (Gen.int_range (-20) 20) (Gen.int_range (-20) 20)
+      prop "arange is start + i * step in every dtype that holds its values"
+        (Gen.quad
+           (Gen.of_list ~pp:pp_held held)
+           (Gen.int_range (-20) 20) (Gen.int_range (-20) 20)
            (Gen.one_of [ Gen.int_range (-7) (-1); Gen.int_range 1 7 ]))
-        (fun (start, stop, step) ->
-          let l =
-            Array.of_list
-              (List.map Int32.of_int (arithmetic_progression start stop step))
+        (fun ((Dtype dtype, least, greatest), start, stop, step) ->
+          let values = arithmetic_progression start stop step in
+          let fits =
+            List.for_all (fun v -> least <= v && v <= greatest) values
           in
-          equal ints
-            (Ref.create [| Array.length l |] l)
-            (Ref.of_nx (Nx.arange Nx.int32 start stop step)));
+          cover "every value fits" (fits && values <> []);
+          cover "a value does not fit" (not fits);
+          if fits then
+            equal (same ())
+              (Nx.cast dtype (int64s values))
+              (Nx.arange dtype start stop step)
+          else raises_invalid_arg (fun () -> Nx.arange dtype start stop step));
       prop "arange_f counts from start by step while short of stop"
         (Gen.triple (Gen.int_range (-20) 20) (Gen.int_range (-20) 20)
            (Gen.one_of [ Gen.int_range (-7) (-1); Gen.int_range 1 7 ]))
@@ -191,6 +259,47 @@ let ranges =
       test "arange refuses a zero step" (fun () ->
           raises_invalid_arg (fun () -> Nx.arange Nx.int32 0 3 0);
           raises_invalid_arg (fun () -> Nx.arange_f Nx.float64 0. 3. 0.));
+      cases "arange holds the last value of its dtype and refuses the next"
+        ~name:(fun (d, b, _) -> Format.asprintf "%a %d" pp_held d b)
+        held_bounds held_bound;
+      test "arange holds 0 and 1 in bool and refuses 2 and -1" (fun () ->
+          equal (same ())
+            (Nx.create Nx.bool [| 2 |] [| false; true |])
+            (Nx.arange Nx.bool 0 2 1);
+          equal (same ())
+            (Nx.create Nx.bool [| 1 |] [| true |])
+            (Nx.arange Nx.bool 1 2 1);
+          raises_invalid_arg (fun () -> Nx.arange Nx.bool 0 3 1);
+          raises_invalid_arg (fun () -> Nx.arange Nx.bool (-1) 1 1));
+      test "an empty arange raises nothing, whatever its bounds" (fun () ->
+          equal (array int) [| 0 |] (Nx.shape (Nx.arange Nx.int8 1000 0 1));
+          equal (array int) [| 0 |] (Nx.shape (Nx.arange Nx.uint8 (-5) (-10) 1));
+          equal (array int) [| 0 |] (Nx.shape (Nx.arange Nx.int4 100 50 1)));
+      test "arange spans OCaml's whole int range without overflow" (fun () ->
+          let p61 = 1 lsl 61 in
+          equal (same ())
+            (int64s [ min_int; -p61; 0; p61 ])
+            (Nx.arange Nx.int64 min_int max_int p61);
+          equal (same ())
+            (int64s [ max_int; max_int - p61; max_int - (2 * p61); -p61 - 1 ])
+            (Nx.arange Nx.int64 max_int min_int (-p61));
+          (* The last partial sum, 3 * step, leaves int64. *)
+          equal (same ())
+            (int64s [ min_int; -1; max_int - 1 ])
+            (Nx.arange Nx.int64 min_int max_int max_int);
+          equal (same ())
+            (int64s [ max_int; 0; -max_int ])
+            (Nx.arange Nx.int64 max_int min_int (-max_int)));
+      test "a float arange rounds as cast does, to nearest even" (fun () ->
+          equal (same ())
+            (Nx.create Nx.float16 [| 8 |]
+               [| 2048.; 2048.; 2050.; 2052.; 2052.; 2052.; 2054.; 2056. |])
+            (Nx.arange Nx.float16 2048 2056 1));
+      test "a complex arange has a zero imaginary part" (fun () ->
+          let c re = { Complex.re; im = 0. } in
+          equal (same ())
+            (Nx.create Nx.complex64 [| 4 |] [| c (-2.); c (-1.); c 0.; c 1. |])
+            (Nx.arange Nx.complex64 (-2) 2 1));
       test "linspace and logspace refuse a negative count" (fun () ->
           raises_invalid_arg (fun () -> Nx.linspace Nx.float64 0. 1. (-1));
           raises_invalid_arg (fun () -> Nx.logspace Nx.float64 0. 1. (-1)));

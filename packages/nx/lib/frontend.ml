@@ -1364,48 +1364,61 @@ let eye ctx ?m ?k dtype n =
   done;
   create ctx dtype [| n; cols |] arr
 
-let arange (type a b) ctx (dtype : (a, b) Nx_dtype.t) start stop step =
-  if step = 0 then invalid_arg "arange: step cannot be zero";
-  let num_elements =
-    if step > 0 then
-      if start >= stop then 0 else (stop - start + step - 1) / step
-    else if start <= stop then 0
-    else (start - stop + -step - 1) / -step
-  in
-  if num_elements <= 0 then empty ctx dtype [| 0 |]
+(* The integers [dtype] holds: its range for an integer dtype, 0 and 1 for
+   [bool], and for a float or complex dtype those whose magnitude is at most its
+   largest finite value. Bounds beyond OCaml's ints are clipped to them. *)
+let held_integers (type a b) (dtype : (a, b) Nx_dtype.t) =
+  match dtype with
+  | Nx_dtype.Bool -> (0, 1)
+  | Nx_dtype.Int4 -> (-8, 7)
+  | Nx_dtype.UInt4 -> (0, 15)
+  | Nx_dtype.Int8 -> (-128, 127)
+  | Nx_dtype.UInt8 -> (0, 255)
+  | Nx_dtype.Int16 -> (-32768, 32767)
+  | Nx_dtype.UInt16 -> (0, 65535)
+  | Nx_dtype.Int32 -> (-0x8000_0000, 0x7fff_ffff)
+  | Nx_dtype.UInt32 -> (0, 0xffff_ffff)
+  | Nx_dtype.UInt64 -> (0, max_int)
+  | Nx_dtype.Float16 -> (-65504, 65504)
+  | Nx_dtype.Float8_e4m3 -> (-448, 448)
+  | Nx_dtype.Float8_e5m2 -> (-57344, 57344)
+  | Nx_dtype.Int64 | Nx_dtype.BFloat16 | Nx_dtype.Float32 | Nx_dtype.Float64
+  | Nx_dtype.Complex64 | Nx_dtype.Complex128 ->
+      (min_int, max_int)
+
+(* The count of the values [start + i * step] on [start]'s side of [stop]. In
+   int64, [stop - start] does not overflow. *)
+let arange_length start stop step =
+  if (step > 0 && start >= stop) || (step < 0 && start <= stop) then 0
   else
-    let float_at i =
-      float_of_int start +. (float_of_int i *. float_of_int step)
-    in
-    let int_at i = start + (i * step) in
-    let f_init idx_arr : a =
-      let i = idx_arr.(0) in
-      match dtype with
-      | Nx_dtype.Float16 -> float_at i
-      | Nx_dtype.Float32 -> float_at i
-      | Nx_dtype.Float64 -> float_at i
-      | Nx_dtype.BFloat16 -> float_at i
-      | Nx_dtype.Float8_e4m3 -> float_at i
-      | Nx_dtype.Float8_e5m2 -> float_at i
-      | Nx_dtype.Int8 -> int_at i
-      | Nx_dtype.UInt8 -> int_at i
-      | Nx_dtype.Int16 -> int_at i
-      | Nx_dtype.UInt16 -> int_at i
-      | Nx_dtype.Int4 -> int_at i
-      | Nx_dtype.UInt4 -> int_at i
-      | Nx_dtype.Bool -> i <> 0
-      | Nx_dtype.Int32 ->
-          Int32.(add (of_int start) (mul (of_int i) (of_int step)))
-      | Nx_dtype.UInt32 ->
-          Int32.(add (of_int start) (mul (of_int i) (of_int step)))
-      | Nx_dtype.Int64 ->
-          Int64.(add (of_int start) (mul (of_int i) (of_int step)))
-      | Nx_dtype.UInt64 ->
-          Int64.(add (of_int start) (mul (of_int i) (of_int step)))
-      | Nx_dtype.Complex64 -> { Complex.re = float_at i; im = 0. }
-      | Nx_dtype.Complex128 -> { Complex.re = float_at i; im = 0. }
-    in
-    init ctx dtype [| num_elements |] f_init
+    let span = Int64.(abs (sub (of_int stop) (of_int start))) in
+    let n = Int64.(succ (div (pred span) (abs (of_int step)))) in
+    if Int64.compare n (Int64.of_int max_int) > 0 then
+      err "arange" "%d to %d by %d, more than max_int values" start stop step;
+    Int64.to_int n
+
+(* The values are [start - step] plus the running sum of [n] copies of [step]. A
+   partial sum leaves int64 only where the values span more than 2{^62}; int64
+   addition wraps (nx.cpu builds with -fwrapv), so the values are still
+   exact. *)
+let arange (type a b) ctx (dtype : (a, b) Nx_dtype.t) start stop step : (a, b) t
+    =
+  if step = 0 then invalid_arg "arange: step cannot be zero";
+  let n = arange_length start stop step in
+  if n = 0 then empty ctx dtype [| 0 |]
+  else
+    (* The last value lies between [start] and [stop], so the wrapping int
+       arithmetic computes it exactly. *)
+    let last = start + ((n - 1) * step) in
+    let lo = Int.min start last and hi = Int.max start last in
+    let least, greatest = held_integers dtype in
+    if lo < least || hi > greatest then
+      err "arange" "values %d to %d, %s holds %d to %d" lo hi
+        (Nx_dtype.to_string dtype) least greatest;
+    let int64 v = scalar ctx Nx_dtype.int64 v in
+    let steps = broadcast_to [| n |] (int64 (Int64.of_int step)) in
+    let shift = int64 Int64.(sub (of_int start) (of_int step)) in
+    cast dtype (add (cumsum ~axis:0 steps) shift)
 
 let arange_f ctx dtype start_f stop_f step_f =
   if step_f = 0. then invalid_arg "arange_f: step cannot be zero";
@@ -2601,7 +2614,10 @@ module Rng = struct
     check_key name k;
     let ctx = B.context k in
     let kb = broadcast_to [| n; 2 |] (reshape [| 1; 2 |] k) in
-    let ctr = reshape [| n; 2 |] (arange ctx Nx_dtype.int32 0 (2 * n) 1) in
+    let ctr =
+      reshape [| n; 2 |]
+        (cast Nx_dtype.int32 (arange ctx Nx_dtype.int64 0 (2 * n) 1))
+    in
     B.threefry kb ctr
 
   let split ?(n = 2) k =

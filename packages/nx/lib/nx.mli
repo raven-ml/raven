@@ -517,10 +517,17 @@ val diag : ?k:int -> ('a, 'b) t -> ('a, 'b) t
     See also {!eye}, {!diagonal}. *)
 
 val arange : ('a, 'b) dtype -> int -> int -> int -> ('a, 'b) t
-(** [arange dtype start stop step] is a 1-D tensor of values from [start]
-    (inclusive) to [stop] (exclusive) with stride [step].
+(** [arange dtype start stop step] is the 1-D tensor of the values
+    [start + i * step], [i = 0, 1, ...], from [start] (inclusive) toward [stop]
+    (exclusive). It is empty when [stop] does not lie beyond [start] in [step]'s
+    direction. A float or complex [dtype] holds each value as {!cast} converts
+    an [int64] to it, and [bool] holds [0] as [false] and [1] as [true].
 
-    Raises [Invalid_argument] if [step = 0].
+    Raises [Invalid_argument] if [step = 0], if a value does not fit [dtype], or
+    if the range holds more than [max_int] values. An integer dtype fits the
+    values of its range, [bool] fits [0] and [1], and a float or complex dtype
+    fits the values whose magnitude is at most its largest finite value, such
+    as [65504] for [float16] and [448] for [float8_e4m3].
 
     {@ocaml[
       # arange int32 0 10 2

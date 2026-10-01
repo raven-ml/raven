@@ -262,6 +262,19 @@ let threefry =
         [| -997049700l; 1212020640l |]
         (answer [| 0x13198a2el; 0x03707344l |] [| 0x243f6a88l; 0x85a308d3l |]))
 
+let counters =
+  test "bits is Threefry of the key over the counters (2i, 2i + 1)" (fun () ->
+      let k = Rng.key 42 and n = 37 in
+      let counters =
+        Nx.create Nx.int32 [| n; 2 |] (Array.init (2 * n) Int32.of_int)
+      in
+      let keys =
+        Nx.broadcast_to [| n; 2 |] (Nx.reshape [| 1; 2 |] (k :> Nx.int32_t))
+      in
+      equal (array int32)
+        (Nx.to_array (Nx.Op.eval (Threefry (keys, counters))))
+        (Nx.to_array (Rng.bits k [| 2 * n |])))
+
 (* Supports. Every sampler draws, at every dtype it takes, values of its support
    in the requested shape. A parameter outside its domain raises nothing, and
    the laws hold where the parameters are inside it. A parameter in any layout
@@ -934,6 +947,7 @@ let () =
        [
          key_tests;
          threefry;
+         counters;
          supports;
          uniform_grid;
          errors;

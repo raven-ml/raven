@@ -2111,6 +2111,33 @@ let test_long_scans_match_eager () =
   check "cummax" (Nx.cummax ~axis:0) values;
   check "cumprod" (Nx.cumprod ~axis:0) signs
 
+type arange = Arange : ('a, 'b) Nx.dtype * int * int * int -> arange
+
+(* An arange is a running sum: its lengths straddle the compiled scan's split of
+   256 elements and its two stages above 512. *)
+let arange_cases =
+  [
+    Arange (Nx.int64, 0, 1, 1);
+    Arange (Nx.int64, 0, 257, 1);
+    Arange (Nx.int64, 0, 513, 1);
+    Arange (Nx.int64, 0, 1 lsl 20, 1);
+    Arange (Nx.int32, 0, 513, 1);
+    Arange (f32, 0, 513, 1);
+    Arange (Nx.int64, 1000, -26, -2);
+  ]
+
+let pp_arange ppf (Arange (dtype, start, stop, step)) =
+  Format.fprintf ppf "%a %d %d %d" Nx.pp_dtype dtype start stop step
+
+let test_arange_matches_eager (Arange (dtype, start, stop, step)) =
+  let arange () = Nx.arange dtype start stop step in
+  let eager = arange () in
+  let compiled =
+    Rune.jit' (fun x -> Nx.add x (arange ())) (Nx.zeros_like eager)
+  in
+  let values t = Nx.to_array (Nx.cast Nx.int64 t) in
+  equal (array int64) (values eager) (values compiled)
+
 (* A running maximum or minimum orders -0 below +0, compiled as eager. *)
 let test_scans_order_zeros () =
   List.iter
@@ -5324,6 +5351,18 @@ let tests =
         slow "small integer scans keep their dtype"
           test_small_int_scans_keep_dtype;
         test "long scans match eager" test_long_scans_match_eager;
+        cases "arange inside a compiled function equals eager arange"
+          ~name:(Format.asprintf "%a" pp_arange)
+          arange_cases test_arange_matches_eager;
+        xfail ~reason:"compiled int64 -> bfloat16 cast rounds through float32"
+          (test "a bfloat16 arange inside a compiled function equals eager"
+             (fun () ->
+               test_arange_matches_eager
+                 (Arange
+                    ( Nx.bfloat16,
+                      1 lsl 40,
+                      (1 lsl 40) + (8 * ((1 lsl 31) + 12345)),
+                      (1 lsl 31) + 12345 ))));
         test "scans propagate NaN" test_scans_propagate_nan;
         test "scans order -0 below +0" test_scans_order_zeros;
         test "8-bit float scans along a long axis" test_fp8_long_scans;

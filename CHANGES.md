@@ -2906,6 +2906,12 @@ thread.
 
 ### Nx
 
+- `Nx.arange` raises `Invalid_argument` when a value does not fit its dtype,
+  where it wrapped integers, took `float16` past 65504 to infinity, saturated
+  the float8 dtypes at their largest finite value and filled `bool` by
+  position. It no longer allocates per element: a 10⁷-element `int64` arange
+  takes 6.2 ms instead of 586 ms, and `Nx.Rng` draws of 10⁶ `float32` take
+  3.8 ms instead of 61 ms.
 - `Nx.logical_and`, `logical_or` and `logical_xor` on `bool` tensors apply
   the bitwise operation directly instead of testing each operand against zero
   and casting the result back: one array per call instead of four, about four

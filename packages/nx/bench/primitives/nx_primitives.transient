@@ -1,6 +1,6 @@
-arange/int64-4e4	-	-
-arange/int64-1e7	-	-
-arange/int32-1e7	-	-
+arange/int64-4e4	320016	8.0
+arange/int64-1e7	80000016	8.0
+arange/int32-1e7	160000016	16.0
 argsort/float64-4e4	0	0.0
 argsort/float64-1e7	0	0.0
 argsort/uint64-4e4	0	0.0
