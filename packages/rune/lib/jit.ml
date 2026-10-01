@@ -1465,7 +1465,7 @@ let schedule_calls linear =
     (fun call ->
       let call = U.without_after call in
       match U.as_call call with
-      | Some { body; args } -> (
+      | Some { body; args; _ } -> (
           match U.arg call with
           | U.Arg.Call_info { aux = Some info; _ } ->
               List.map2

@@ -731,7 +731,7 @@ let fmod x y =
    quotient by -1 wraps. A kernel computes both sides of a selection, so the
    divisor is made safe before it divides. *)
 
-let division x y =
+let division y =
   let zero = Ops.eq y (int y 0) in
   let minus_one =
     if is_signed y then Ops.eq y (int y (-1)) else Ops.bool false
@@ -741,14 +741,14 @@ let division x y =
 let idiv x y =
   if is_float x then float2 (fun x y -> Ops.trunc (x /: y)) x y
   else
-    let zero, minus_one, safe = division x y in
+    let zero, minus_one, safe = division y in
     where zero (int x 0)
       (where minus_one (wrapping1 Ops.neg x) (Ops.div ~rounding:`Trunc x safe))
 
 let rem x y =
   if is_float x then float2 fmod x y
   else
-    let zero, minus_one, safe = division x y in
+    let zero, minus_one, safe = division y in
     where (Ops.bitwise_or zero minus_one) (int x 0) (Ops.fmod x safe)
 
 (* Extremes

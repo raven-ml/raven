@@ -72,7 +72,7 @@ let create name =
               (fun instruction ->
                 let next =
                   match (U.as_call instruction, U.arg instruction) with
-                  | Some { body; args = [ dst; src ] }, _
+                  | Some { body; args = [ dst; src ]; _ }, _
                     when U.op body = Tolk_uop.Ops.Store ->
                       let bytes =
                         uint (U.max_numel src * D.itemsize (U.dtype src))

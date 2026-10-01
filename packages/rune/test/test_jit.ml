@@ -5594,6 +5594,8 @@ let tests =
         test "triangular solve takes a vector right-hand side"
           test_solve_triangular_vector_rhs;
         test "triangular solve is batched" test_solve_triangular_batched;
+        slow "a wide triangular solve takes the blocked path"
+          test_solve_triangular_blocked;
         test "LU matches eager" test_lu_matches_eager;
         test "the gradient of det compiles" test_det_gradient_compiles;
         test "solve and inv match eager" test_solve_matches_eager;

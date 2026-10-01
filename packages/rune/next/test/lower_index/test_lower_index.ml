@@ -224,7 +224,7 @@ let scatter ~mode ~unique =
                 (fun order ->
                   let first = Array.sub (Array.of_list order) 0 m in
                   let along =
-                    Array.mapi (fun d s -> if d = axis then m else 1) shape
+                    Array.mapi (fun d _ -> if d = axis then m else 1) shape
                   in
                   Nx.broadcast_to at
                     (Nx.reshape along (Nx.create Nx.int32 [| m |] first)))
