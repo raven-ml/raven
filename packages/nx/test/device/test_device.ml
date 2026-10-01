@@ -4513,6 +4513,123 @@ let machines =
       test "programs of another machine's host" test_remote_programs;
     ]
 
+(* Reaching memory for a device's work: a borrow where the device maps it, and a
+   staged buffer for host memory under 64 KiB, which a device that maps whole
+   pages does not. The device's work is a domain that reads or writes the staged
+   memory at its address, then signals. *)
+
+(* The [n] bytes at the address [a]. *)
+let bytes_at a n =
+  let ba = chars n in
+  memmove (B.address (B.of_bigarray ba)) a n;
+  List.init n (fun i -> Char.code ba.{i})
+
+(* A host buffer of [n] bytes holding [bytes]. *)
+let host_bytes bytes =
+  let ba = chars (List.length bytes) in
+  List.iteri (fun i b -> ba.{i} <- Char.chr b) bytes;
+  let b = B.create host S.UInt8 (List.length bytes) in
+  B.copy ~src:(B.of_bigarray ba) ~dst:b;
+  b
+
+let contents b =
+  let n = B.nbytes b in
+  let ba = chars n in
+  B.copy ~src:b ~dst:(B.of_bigarray ba);
+  List.init n (fun i -> Char.code ba.{i})
+
+(* Whether [s] holds [sub]. *)
+let mentions s sub =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+  in
+  at 0
+
+let reached d b access =
+  match B.reach d b access with Ok r -> r | Error why -> failwith why
+
+(* [d]'s work: after 50 ms, [f], then the signal of [v]. *)
+let work_later d v f =
+  let word = B.address (Nx_device.signal_word d) in
+  Domain.spawn (fun () ->
+      Unix.sleepf 0.05;
+      f ();
+      store_signal word v)
+
+let staging =
+  group "reach"
+    [
+      test "memory the device maps is borrowed, and its own is itself"
+        (fun () ->
+          let d = (fake ~maps:true ()).dev in
+          let big = B.create host S.UInt8 page in
+          let r = reached d big B.Read in
+          is_false ~msg:"borrowed, not staged" (B.is_staged r);
+          is_true ~msg:"the borrow's memory"
+            (Nativeint.equal
+               (B.address (Result.get_ok (B.borrow d big)))
+               (B.address r));
+          let own = B.create d S.UInt8 8 in
+          is_true ~msg:"its own" (reached d own B.Read_write == own));
+      test
+        "a staged buffer read by the work holds the bytes of its submission, \
+         which returns before the work completes" (fun () ->
+          let d = (fake ~maps:true ()).dev in
+          let b = host_bytes [ 1; 2; 3; 4 ] in
+          let r = reached d b B.Read in
+          is_true ~msg:"staged" (B.is_staged r);
+          let v = submit d ~touches:[ r ] Fun.id in
+          is_true ~msg:"returned before the work" (Nx_device.signaled d < v);
+          B.copy ~src:(host_bytes [ 9; 9; 9; 9 ]) ~dst:b;
+          equal (list int) ~msg:"what the work reads" [ 1; 2; 3; 4 ]
+            (bytes_at (B.address r) 4);
+          store_signal (B.address (Nx_device.signal_word d)) v);
+      test
+        "a staged buffer the work writes is copied back once the work \
+         completed, the bytes it did not write kept" (fun () ->
+          let d = (fake ~maps:true ()).dev in
+          let b = host_bytes [ 1; 2; 3; 4; 5; 6; 7; 8 ] in
+          let r = reached d b B.Read_write in
+          let written = B.of_bigarray (chars 4) in
+          B.copy ~src:(host_bytes [ 9; 9; 9; 9 ]) ~dst:written;
+          let domain =
+            submit d ~touches:[ r ] (fun v ->
+                work_later d v (fun () ->
+                    memmove (B.address r) (B.address written) 4))
+          in
+          is_true ~msg:"completed" (Nx_device.signaled d = Nx_device.submitted d);
+          equal (list int) [ 9; 9; 9; 9; 5; 6; 7; 8 ] (contents b);
+          Domain.join domain);
+      test
+        "two runs over different sources, the first in flight: each reads its \
+         own, and the first's memory is not reused under it" (fun () ->
+          let d = (fake ~maps:true ()).dev in
+          let first () =
+            let r = reached d (host_bytes [ 1; 2; 3; 4 ]) B.Read in
+            ignore (submit d ~touches:[ r ] Fun.id);
+            B.address r
+          in
+          let a1 = first () in
+          Gc.full_major ();
+          let r2 = reached d (host_bytes [ 5; 6; 7; 8 ]) B.Read in
+          let v2 = submit d ~touches:[ r2 ] Fun.id in
+          equal (list int) ~msg:"the first run's bytes" [ 1; 2; 3; 4 ]
+            (bytes_at a1 4);
+          equal (list int) ~msg:"the second run's bytes" [ 5; 6; 7; 8 ]
+            (bytes_at (B.address r2) 4);
+          store_signal (B.address (Nx_device.signal_word d)) v2);
+      test
+        "host memory of 64 KiB or more the device does not map is refused, \
+         naming its size" (fun () ->
+          let d = (fake ~maps:true ()).dev in
+          let ba = chars (2 * page) in
+          let off_page = B.of_bigarray (Bigarray.Array1.sub ba 1 page) in
+          match B.reach d off_page B.Read with
+          | Ok _ -> fail "reached"
+          | Error why -> is_true ~msg:why (mentions why (string_of_int page)));
+    ]
+
 let () =
   if Sys.getenv_opt "NX_DEVICE_FINALIZE_CHILD" = Some "1" then finalize_child ();
   exit
@@ -4533,4 +4650,5 @@ let () =
          hooks;
          profiles;
          machines;
+         staging;
        ])

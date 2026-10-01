@@ -428,6 +428,35 @@ module Buffer : sig
       Raises [Invalid_argument] if [b] is on another machine or is dead
       ({!Claim.consume}), and {!Lost} if [d] is lost. *)
 
+  (** The type for what a device's work does with a buffer it reaches. *)
+  type access =
+    | Read  (** The work reads the buffer. *)
+    | Read_write  (** The work reads and writes it. *)
+
+  val reach : device -> t -> access -> (t, string) result
+  (** [reach d b access] is a buffer on [d] over [b]'s bytes, for the work of
+      [d] that [access]es them: [borrow d b] where [d] maps [b]'s memory, and
+      otherwise, for fewer than 64 KiB of memory of this machine's host
+      ({!shares_host_memory}), a {e staged} buffer: memory of [d] of [b]'s
+      format and length ({!is_staged}). A host buffer of 64 KiB or more starts
+      on a page when {!create} makes it, and is borrowed.
+
+      A {!submit} whose [touches] hold a staged buffer copies [b] into it, with
+      its devices taken, after its waits and once the work that last used the
+      staged memory is done: its work reads [b] as it was then. When [access] is
+      [Read_write], [submit] then waits for its work, with no device taken, and
+      copies the staged buffer back into [b] before it returns.
+
+      [Error why] as {!borrow}, and, naming its size, if [b] is 64 KiB or more
+      of host memory that [d] does not map, such as a bigarray's that does not
+      start on a page: a copy on every submission would cost its size each time
+      and hold it twice.
+
+      Raises as {!borrow}. *)
+
+  val is_staged : t -> bool
+  (** [is_staged b] is [true] iff [b] is a staged buffer that {!reach} made. *)
+
   val device : t -> device
   (** [device b] is the device whose memory [b] is. *)
 
@@ -1059,6 +1088,11 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
     committed, so [f] may raise only before it enqueues any work. A {!Lost} that
     [f] raises loses its device, as a driver error after work was enqueued
     leaves the queue in an unknown state.
+
+    A staged buffer of [touches] ({!Buffer.reach}) is filled from the memory it
+    stands in for before [f] runs. [submit] returns once every call is queued,
+    except when [touches] hold a staged buffer the work writes: [submit] then
+    waits for the work and copies that buffer back before it returns.
 
     Inside [f], the devices are used only through {!Submission}, {!submitted},
     {!signaled}, {!signal_word}, the buffers' properties and low-level

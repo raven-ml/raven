@@ -2974,6 +2974,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.reach d b access` gives device work its way to `b`: a
+  borrow where `d` maps `b`, and for host memory under 64 KiB that `d` cannot
+  map, such as a small tensor on a CUDA, AMD or NV GPU, a staged buffer that
+  `submit` fills before the work and copies back after it when it writes.
 - **Breaking:** pinned memory counts in no device budget. It is the host's RAM,
   so a GPU's `Nx_device.budget` counted it against VRAM it never used; its
   driver's refusal is its limit. `budget` covers the device's own memory,

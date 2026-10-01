@@ -51,25 +51,11 @@ type image = {
   unload : unit -> unit;
 }
 
-(* What must stay reachable for as long as a base does. Host memory is the
-   bigarray that holds it from its first byte: views of it join that bigarray's
-   storage, which outlives the base. *)
-type keep =
-  | Keep : 'a -> keep
-  | Host : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
-  | Heap : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * heap_token -> keep
-  | Addressed : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * 'c -> keep
-    (* another device's memory the host addresses, as a bigarray that owns
-       nothing, and what keeps the memory *)
-  | With : keep * 'a -> keep
-(* a memory's keep, and one more holder, such as a release token *)
-
-(* The host memory of [create] is kept with its token: a custom block whose
-   finaliser returns the reserved bytes to the host's count. *)
-and heap_token
-
 (* Which of a device's memories [Buffer.create] allocates. *)
 type memory = Device | Pinned | Mapped
+
+(* What a device's work does with a buffer it reaches. *)
+type access = Read | Read_write
 
 (* The bytes a device allocated: an atomic count, or the host's, which the
    finalisers of its buffers' tokens return. *)
@@ -189,6 +175,30 @@ and base = {
       (* shared by every base over the memory, its borrows' and copies'
          included *)
 }
+
+(* The host memory a staged buffer stands in for on its device, and what the
+   device's work does with it: a submission copies [original] in before the
+   work, and back once the work is done when it writes it. *)
+and stage = { original : buffer; access : access }
+
+(* What must stay reachable for as long as a base does. Host memory is the
+   bigarray that holds it from its first byte: views of it join that bigarray's
+   storage, which outlives the base. *)
+and keep =
+  | Keep : 'a -> keep
+  | Host : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
+  | Heap : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * heap_token -> keep
+  | Addressed : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * 'c -> keep
+    (* another device's memory the host addresses, as a bigarray that owns
+       nothing, and what keeps the memory *)
+  | With : keep * 'a -> keep
+    (* a memory's keep, and one more holder, such as a release token *)
+  | Staged : keep * stage -> keep
+(* a staged buffer's memory, and the memory it stands in for (see [stage]) *)
+
+(* The host memory of [create] is kept with its token: a custom block whose
+   finaliser returns the reserved bytes to the host's count. *)
+and heap_token
 
 (* The claims on a memory and its consumptions: one record per memory, which
    every base over it holds, its borrows, a file's host pages and the copies of
@@ -1351,6 +1361,14 @@ let release_token d kind r bytes =
    from it are unreachable: they keep a token that puts [base], which keeps
    none, on [d]'s release list once it is collected. A base has no mutable
    field, so [base] sees the links and claims that its copies change. *)
+(* The memory a staged buffer's base stands in for, if it is one. *)
+let rec staged_keep = function
+  | Staged (_, st) -> Some st
+  | With (keep, _) -> staged_keep keep
+  | Keep _ | Host _ | Heap _ | Addressed _ -> None
+
+let stage_of base = staged_keep base.keep
+
 let owned d (base : base) =
   {
     base with
@@ -1470,11 +1488,12 @@ let retire d =
    it is done (see [retire]). Owned memory waits for other devices' work alone:
    [d]'s own work on it orders its reuse. Owned memory that something depends on
    waits for all work, [d]'s too, since what depends on it may hold objects that
-   work reads. A mapping waits for every device's work on its borrows, [d]'s
-   too, once the last of them is unreachable: a mapping of host memory is
-   unmapped, and one of another device's memory stays its driver's until that
-   memory is freed. Host memory never comes here: it is the heap's, returned
-   when the collector finds its base unreachable. *)
+   work reads. So does a staged buffer: the host writes it, which no queue
+   orders after [d]'s reads of it. A mapping waits for every device's work on
+   its borrows, [d]'s too, once the last of them is unreachable: a mapping of
+   host memory is unmapped, and one of another device's memory stays its
+   driver's until that memory is freed. Host memory never comes here: it is the
+   heap's, returned when the collector finds its base unreachable. *)
 let release d (b : base) =
   let stamps = List.map (fun s -> (s.by, s.upto)) (Atomic.get b.links).stamps in
   match b.source with
@@ -1519,7 +1538,10 @@ let release d (b : base) =
       let until =
         List.fold_left (fun u m -> stamped u m.on (submitted m.on)) until peers
       in
-      let until = if depends = [] then until else stamped until d own in
+      let until =
+        if depends = [] && Option.is_none (stage_of b) then until
+        else stamped until d own
+      in
       let retire () =
         List.iter (fun m -> unmap m.on b m) peers;
         match List.iter (fun f -> f ()) (List.rev depends) with
@@ -1592,21 +1614,23 @@ let cached_of d kind =
 
 let take_cached d key =
   match Hashtbl.find_opt d.cache key with
-  | Some ((m, _) :: ms) ->
+  | Some ((m, v) :: ms) ->
       if ms = [] then Hashtbl.remove d.cache key
       else Hashtbl.replace d.cache key ms;
       cache_bytes d (snd key) (-fst key);
-      Some (m, Keep ())
+      Some (m, Keep (), v)
   | Some [] | None -> None
 
-(* [n] bytes of [d]'s memory [kind], with the memory they are. Mapped memory the
-   window or the driver refuses releases the cached mapped memory, which holds
-   the window, and tries again; mapped memory still refused while the device's
-   own memory has room is pinned memory instead. Any other allocation its pools
-   or the driver refuse releases the cache and tries again, then waits for the
-   work of released memory and tries again. One still refused raises [Exhausted]
-   until [last]: the unreachable buffers, whose memory the collector cannot see,
-   may hold what it needs (see [last_resort_rounds] and [exhausted]). *)
+(* [n] bytes of [d]'s memory [kind], with the memory they are and the last value
+   of [d]'s work that used them, [0] for memory new from the driver. Mapped
+   memory the window or the driver refuses releases the cached mapped memory,
+   which holds the window, and tries again; mapped memory still refused while
+   the device's own memory has room is pinned memory instead. Any other
+   allocation its pools or the driver refuse releases the cache and tries again,
+   then waits for the work of released memory and tries again. One still refused
+   raises [Exhausted] until [last]: the unreachable buffers, whose memory the
+   collector cannot see, may hold what it needs (see [last_resort_rounds] and
+   [exhausted]). *)
 exception Exhausted
 
 let rec allocate d n ~kind ~last =
@@ -1617,7 +1641,7 @@ let rec allocate d n ~kind ~last =
     (fun p -> if n > p.ceiling then over := true);
   if !over then raise (Out_of_memory (d, n));
   match take_cached d (n, kind) with
-  | Some (m, keep) -> (m, keep, kind)
+  | Some (m, keep, used) -> (m, keep, kind, used)
   | None -> (
       release_cache ~wait:true d (Room (kind, n));
       let alloc n =
@@ -1637,7 +1661,7 @@ let rec allocate d n ~kind ~last =
                "Nx_device.Driver.device: %s's allocator gave memory the host \
                 does not address"
                d.name)
-      | Some (m, keep) -> (m, keep, kind)
+      | Some (m, keep) -> (m, keep, kind, 0)
       | None when kind = Mapped && fits d Device n && cached_of d Mapped ->
           release_cache ~only:Mapped ~wait:true d All;
           allocate d n ~kind ~last
@@ -1738,6 +1762,7 @@ let () =
 module Buffer = struct
   type device = t
   type nonrec memory = memory = Device | Pinned | Mapped
+  type nonrec access = access = Read | Read_write
 
   type t = buffer = {
     base : base;
@@ -1855,7 +1880,7 @@ module Buffer = struct
           or Buffer.create_file"
          fn)
 
-  let create ?(memory = Device) d s n =
+  let allocated ?stage ~memory d s n =
     if d == disk then not_files "Buffer.create";
     match checked_nbytes "Buffer.create" s n with
     | 0 -> empty ~borrowed:false d s n
@@ -1885,7 +1910,7 @@ module Buffer = struct
           match
             with_devices [ d ] (fun () ->
                 let last = round = last_resort_rounds in
-                let ((_, _, given) as m) = allocate d bytes ~kind ~last in
+                let ((_, _, given, _) as m) = allocate d bytes ~kind ~last in
                 allocate_bytes d given bytes;
                 memory_changed d;
                 m)
@@ -1895,10 +1920,18 @@ module Buffer = struct
               exhausted d;
               take (round + 1)
         in
-        let memory, keep, kind = take 0 in
+        let memory, keep, kind, used = take 0 in
+        let keep =
+          match stage with Some st -> Staged (keep, st) | None -> keep
+        in
         let base = base ~bytes ~kind ~borrowed:false ~keep d memory in
         let base = owned d base in
+        (* Cached memory may still be read by [d]'s work, which a write of the
+           host to it, such as a staged buffer's copy, waits for. *)
+        if used > 0 then stamp_use base d used;
         first base s n
+
+  let create ?(memory = Device) d s n = allocated ~memory d s n
 
   (* The bytes an element of [k] is aligned to: one component's for the complex
      kinds. *)
@@ -2176,6 +2209,27 @@ module Buffer = struct
         else borrow_host d r
       else borrow_peer d r
 
+  let is_staged b = Option.is_some (stage_of b.base)
+
+  (* Memory of this machine's host that [d] does not map is staged: under
+     [aligned_from] bytes, it is the memory nx puts off a page, which no device
+     that maps whole pages maps. More would be copied on every submission and
+     held twice, so it is refused. *)
+  let reach d b access =
+    match borrow d b with
+    | Ok r -> Ok r
+    | Error why ->
+        let o = (root b).base.owner in
+        if host_of d != host || not (shares_host_memory o) then Error why
+        else if nbytes b >= aligned_from then
+          Error
+            (Printf.sprintf "%d bytes of host memory %s does not map: %s"
+               (nbytes b) d.name why)
+        else
+          Ok
+            (allocated ~stage:{ original = b; access } ~memory:Pinned d b.dtype
+               b.length)
+
   let view b ~offset s n =
     let fail fmt =
       Printf.ksprintf (fun m -> invalid_arg ("Nx_device.Buffer.view: " ^ m)) fmt
@@ -2391,7 +2445,7 @@ module Buffer = struct
         | Host ba -> bigarray_view ba k buf.offset (bytes / size)
         | Heap (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
         | Addressed (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
-        | With (keep, _) -> view keep
+        | With (keep, _) | Staged (keep, _) -> view keep
         | Keep _ -> assert false (* host memory is always a bigarray's *)
       in
       view buf.base.keep
@@ -3210,6 +3264,39 @@ let rec reach_into l b =
   let l = add b.owner l in
   match b.source with Some (src, _) -> reach_into l src | None -> l
 
+(* Waits on the host for the work that touched [b]'s memory. *)
+let wait_work (b : buffer) =
+  List.iter (fun s -> wait_signal s.by s.upto) (Atomic.get b.base.links).stamps
+
+(* The staged buffers of [touches], with what they stand in for. A submission
+   touching none allocates nothing here. *)
+let rec staged_of = function
+  | [] -> []
+  | (b : buffer) :: rest -> (
+      match stage_of b.base with
+      | Some st -> (b, st) :: staged_of rest
+      | None -> staged_of rest)
+
+(* A staged buffer's copies, on the host: its original into it once the work
+   that wrote the original and the work that used the staged memory are done,
+   and back into its original once its own work is. The device's work never
+   touches the original, which the submission neither takes nor stamps. *)
+let stage_in ((b : buffer), st) =
+  Buffer.reachable st.original;
+  wait_work st.original;
+  wait_work b;
+  memmove
+    (Option.get (Buffer.hosted b))
+    (Option.get (Buffer.hosted st.original))
+    (Buffer.nbytes b)
+
+let stage_out ((b : buffer), st) =
+  wait_work b;
+  memmove
+    (Option.get (Buffer.hosted st.original))
+    (Option.get (Buffer.hosted b))
+    (Buffer.nbytes b)
+
 (* Stamps each memory that [touches] reach with the values [values] of the
    devices [ds], which signal once their work is done: the release of that
    memory waits for them. *)
@@ -3249,60 +3336,70 @@ let submit ds ~touches f =
     List.fold_left (fun l (b : buffer) -> add b.base.owner l) ds touches
   in
   let taken = List.fold_left (fun l d -> add d l) on reached in
-  with_devices taken @@ fun () ->
-  List.iter Buffer.reachable touches;
-  (* The latest value each device's work touched the reached memory with. *)
-  let latest = ref [] in
-  let note d' v =
-    (* A lost device's work never completes; the memory it can reach raises its
-       loss instead. *)
-    if failed d' = None then
-      match List.assq_opt d' !latest with
-      | Some v' when !v' >= v -> ()
-      | Some v' -> v' := v
-      | None -> latest := (d', ref v) :: !latest
-  in
-  List.iter
-    (fun t ->
-      if runs_work t then note t (submitted t);
-      Hashtbl.iter (fun _ (d', v) -> note d' v) t.pending)
-    reached;
-  let d_set = List.sort by_id (List.filter (encodable ds) on) in
-  (* A device's own earlier work is ordered by its vendor's rule. *)
-  let alone d' = match ds with [ d ] -> d == d' | _ -> false in
-  List.iter
-    (fun (d', v) ->
-      if not (List.memq d' d_set || alone d') then wait_signal d' !v)
-    !latest;
-  let waits =
-    List.map
-      (fun d' ->
+  let staged = staged_of touches in
+  let r =
+    with_devices taken @@ fun () ->
+    List.iter Buffer.reachable touches;
+    (* The latest value each device's work touched the reached memory with. *)
+    let latest = ref [] in
+    let note d' v =
+      (* A lost device's work never completes; the memory it can reach raises
+         its loss instead. *)
+      if failed d' = None then
         match List.assq_opt d' !latest with
-        | Some v -> (d', !v)
-        | None -> (d', Atomic.get d'.settled))
-      d_set
+        | Some v' when !v' >= v -> ()
+        | Some v' -> v' := v
+        | None -> latest := (d', ref v) :: !latest
+    in
+    List.iter
+      (fun t ->
+        if runs_work t then note t (submitted t);
+        Hashtbl.iter (fun _ (d', v) -> note d' v) t.pending)
+      reached;
+    let d_set = List.sort by_id (List.filter (encodable ds) on) in
+    (* A device's own earlier work is ordered by its vendor's rule. *)
+    let alone d' = match ds with [ d ] -> d == d' | _ -> false in
+    List.iter
+      (fun (d', v) ->
+        if not (List.memq d' d_set || alone d') then wait_signal d' !v)
+      !latest;
+    let waits =
+      List.map
+        (fun d' ->
+          match List.assq_opt d' !latest with
+          | Some v -> (d', !v)
+          | None -> (d', Atomic.get d'.settled))
+        d_set
+    in
+    List.iter wait_room ds;
+    List.iter stage_in staged;
+    let s =
+      {
+        Submission.devices = ds;
+        values = Array.of_list (List.map (fun d -> submitted d + 1) ds);
+        taken;
+        waits;
+        spans = [];
+      }
+    in
+    let r = f s in
+    List.iteri (fun i d -> commit d s.values.(i)) ds;
+    stamp_touches ds s.values touches;
+    List.iter
+      (fun t ->
+        List.iteri
+          (fun i d ->
+            if t != d then Hashtbl.replace t.pending d.id (d, s.values.(i)))
+          ds)
+      reached;
+    List.iter (fun (d, p) -> push d.spans p) (List.rev s.spans);
+    r
   in
-  List.iter wait_room ds;
-  let s =
-    {
-      Submission.devices = ds;
-      values = Array.of_list (List.map (fun d -> submitted d + 1) ds);
-      taken;
-      waits;
-      spans = [];
-    }
-  in
-  let r = f s in
-  List.iteri (fun i d -> commit d s.values.(i)) ds;
-  stamp_touches ds s.values touches;
+  (* The work is waited for with no device taken, so that it blocks no other
+     domain's work on them. *)
   List.iter
-    (fun t ->
-      List.iteri
-        (fun i d ->
-          if t != d then Hashtbl.replace t.pending d.id (d, s.values.(i)))
-        ds)
-    reached;
-  List.iter (fun (d, p) -> push d.spans p) (List.rev s.spans);
+    (fun ((_, st) as b) -> if st.access = Read_write then stage_out b)
+    staged;
   r
 
 let signal_word d =
