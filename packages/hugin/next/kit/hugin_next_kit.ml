@@ -8,3 +8,7 @@ module Number = Number
 module Time = Time
 module Scale = Scale
 module Ticks = Ticks
+module Scheme = Scheme
+module Symbol = Symbol
+module Curve = Curve
+module Stack = Stack
