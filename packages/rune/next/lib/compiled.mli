@@ -12,9 +12,11 @@
     program is compiled the first time the process meets its {e key}: the
     operation and its static arguments (axes, padding, fill value, ...), each
     operand's and the destination's dtype, shape, strides and offset modulo 16
-    bytes, and the target of the destination's device. It is kept for the life
-    of the process, and linked a few times on each device that runs it; each run
-    takes the next link in turn, since runs of one link are serialized.
+    bytes, where its buffer's run of elements starts within 16 bytes of memory,
+    which the program's vector accesses are aligned to, and the target of the
+    destination's device. It is kept for the life of the process, and linked a
+    few times on each device that runs it; each run takes the next link in turn,
+    since runs of one link are serialized.
 
     A kernel queues its program on the device and returns: a read of the result
     waits for it, as for any work on the device. While a profile is taken

@@ -11,8 +11,8 @@ open Tolk_next
 let held u =
   let buffer p =
     match Ops.arg p with
-    | Param { slot; size = Some n; dtype; device = Some d; _ } ->
-        (p, Ops.new_buffer ~slot d n dtype)
+    | Param { slot; size = Some n; dtype; device = Some d; phase; _ } ->
+        (p, Ops.new_buffer ~slot ~phase d n dtype)
     | _ -> invalid_arg "a parameter that is not storage"
   in
   Ops.substitute u

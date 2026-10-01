@@ -31,17 +31,14 @@ let numel shape = Array.fold_left ( * ) 1 shape
 (* A device the compiled programs run on. [flushes] is whether it flushes
    float32 subnormals to zero, as Metal does, bfloat16 ones included since they
    compute at float32 (ledger, Targets); [budgets] are its measured maxima of
-   units in the last place, by row, where they differ from the ledger's.
-   [starts] is the multiple of bytes at which the buffers drawn for it start in
-   their memory, and [narrow_folds] whether a fold of 8-bit integers compiles
-   for it. *)
+   units in the last place, by row, where they differ from the ledger's, and
+   [narrow_folds] whether a fold of 8-bit integers compiles for it. *)
 type device = {
   device : Nx_device.t;
   name : string;
   float64 : bool;
   flushes : bool;
   budgets : (string * int) list;
-  starts : int;
   narrow_folds : bool;
 }
 
@@ -52,7 +49,6 @@ let on_host =
     float64 = true;
     flushes = false;
     budgets = [];
-    starts = 1;
     (* Pending tn-cstyle: the fold casts between 8-bit vectors with a C cast,
        which Clang refuses. *)
     narrow_folds = false;
@@ -67,9 +63,6 @@ let on_metal =
         float64 = false;
         flushes = true;
         budgets = [];
-        (* Pending tn-metal: Metal reads the wrong elements of a buffer that
-           starts 2 bytes into its memory. *)
-        starts = 4;
         narrow_folds = true;
       })
     Metal.device
@@ -156,13 +149,10 @@ let both d f = (f cpu on_cpu, f compiled (on_device d))
    starts [inner] elements into another. *)
 type layout = { strides : int array; offset : int; length : int; inner : int }
 
-(* The multiple of elements of [dtype] at which a buffer for [d] starts. *)
-let inner d dtype = Int.max 1 (d.starts / Nx_dtype.itemsize dtype)
-
 (* The axes of [shape] in any order, each reversed or not, with gaps between
-   rows, and, where [broadcast], some of stride zero. The buffer starts a
-   multiple of [inner] elements into its memory. *)
-let layout ?(broadcast = true) ?(inner = 1) shape =
+   rows, and, where [broadcast], some of stride zero. The buffer starts up to
+   three elements into its memory. *)
+let layout ?(broadcast = true) shape =
   let open Gen in
   let r = Array.length shape in
   let* order = permutation (List.init r Fun.id) in
@@ -176,7 +166,7 @@ let layout ?(broadcast = true) ?(inner = 1) shape =
   let* before = int_range 0 7 in
   let* start = int_range 0 3 in
   let+ after = int_range 0 3 in
-  let inner = start / inner * inner in
+  let inner = start in
   let strides = Array.make r 0 and span = ref 1 in
   List.iter
     (fun axis ->
@@ -269,14 +259,13 @@ let operand ?broadcast ?bits ?(flush = false) d dtype shape =
   let bits = if flush && d.flushes then flushed dtype bits else bits in
   let open Gen in
   with_pp pp_arr
-    (let* l = layout ?broadcast ~inner:(inner d dtype) shape in
+    (let* l = layout ?broadcast shape in
      let+ xs = array ~size:(constant l.length) bits in
      of_bits dtype shape l xs)
 
-(* The host value [x] under a drawn layout without broadcast, for [d] (the host
-   by default), the elements its view does not reach poisoned with bytes
-   [0x7f]. *)
-let laid_out ?(d = on_host) (x : ('a, 'b) Nx.t) =
+(* The host value [x] under a drawn layout without broadcast, the elements its
+   view does not reach poisoned with bytes [0x7f]. *)
+let laid_out (x : ('a, 'b) Nx.t) =
   let dtype = Nx.dtype x and shape = Nx.shape x in
   Gen.with_pp pp_arr
     (Gen.map
@@ -293,7 +282,7 @@ let laid_out ?(d = on_host) (x : ('a, 'b) Nx.t) =
            set !p (get k)
          done;
          a)
-       (layout ~broadcast:false ~inner:(inner d dtype) shape))
+       (layout ~broadcast:false shape))
 
 (* The element of [dt] whose bits are [v]. *)
 let element_of_bits (type a b) (dt : (a, b) Nx_dtype.t) v : a =
@@ -1422,7 +1411,7 @@ let linalg d ~count =
                let* x = matrix dt s in
                let+ upper = bool
                and+ a =
-                 laid_out ~d (conditioned (Nx.matmul x (Nx.matrix_transpose x)))
+                 laid_out (conditioned (Nx.matmul x (Nx.matrix_transpose x)))
                in
                check
                  [ said "upper %b" upper; shown a ]
@@ -1448,7 +1437,7 @@ let linalg d ~count =
                let* m = size in
                let* n = size in
                let* x = matrix dt (Array.append b [| m; n |]) in
-               let+ reduced = bool and+ a = laid_out ~d (conditioned x) in
+               let+ reduced = bool and+ a = laid_out (conditioned x) in
                check
                  [ said "reduced %b" reduced; shown a ]
                  (fun () ->
@@ -1507,7 +1496,7 @@ let linalg d ~count =
                         (Array.of_list (List.map Int32.of_int order)))
                    (conditioned x)
                in
-               let+ a = laid_out ~d x in
+               let+ a = laid_out x in
                check
                  [ shown a ]
                  (fun () ->
@@ -1540,7 +1529,7 @@ let linalg d ~count =
                let* n = int_range 1 4 in
                let* x = matrix dt (Array.append b [| m; n |]) in
                let x = conditioned x in
-               let+ full = bool and+ a = laid_out ~d x in
+               let+ full = bool and+ a = laid_out x in
                check
                  [ said "full %b" full; shown a ]
                  (fun () ->
@@ -1594,8 +1583,8 @@ let linalg d ~count =
                let+ upper = bool
                and+ transpose = bool
                and+ unit_diag = bool
-               and+ a = laid_out ~d x
-               and+ y = laid_out ~d y in
+               and+ a = laid_out x
+               and+ y = laid_out y in
                check
                  [
                    said "upper %b transpose %b unit_diag %b" upper transpose
@@ -2021,21 +2010,15 @@ let edges d =
           }
         in
         exact_of (both d (fold w x)));
-    (if d.flushes then
-       xfail
-         ~reason:
-           "Metal reads the wrong elements of a buffer that starts 2 bytes \
-            into its memory (tn-metal)"
-     else Fun.id)
-    @@ test
-         "an operand whose buffer starts 2 bytes into its memory is read where \
-          it is" (fun () ->
-           let x =
-             of_bits Nx.float16 [| 3; 4 |]
-               { strides = [| 1; 3 |]; offset = 0; length = 12; inner = 1 }
-               (Array.init 12 (fun i -> if i = 7 then 0x7bffL else 0L))
-           in
-           exact_of (both d (unary Floor x)));
+    test
+      "an operand whose buffer starts 2 bytes into its memory is read where it \
+       is (D54)" (fun () ->
+        let x =
+          of_bits Nx.float16 [| 3; 4 |]
+            { strides = [| 1; 3 |]; offset = 0; length = 12; inner = 1 }
+            (Array.init 12 (fun i -> if i = 7 then 0x7bffL else 0L))
+        in
+        exact_of (both d (unary Floor x)));
     test
       "a concatenation of 17 pieces, a kernel of 18 arguments, keeps every bit"
       (fun () ->

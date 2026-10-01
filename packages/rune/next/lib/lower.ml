@@ -363,6 +363,24 @@ let span tdt v =
   let start = lo - (lo mod per) in
   (start, hi - start)
 
+let phase dt b start =
+  let at = Nx_device.Buffer.address b in
+  Nativeint.(to_int (rem (add at (of_int (start * Dtype.itemsize dt))) 16n))
+
+(* The phase of element [start] of [bufs], the buffers of one placement: the
+   same for every buffer. *)
+let phase_of what tdt bufs start =
+  match
+    List.sort_uniq Int.compare (List.map (fun b -> phase tdt b start) bufs)
+  with
+  | [] -> 0
+  | [ p ] -> p
+  | _ ->
+      jit_error
+        "cannot compile %s: its buffers start at different places within 16 \
+         bytes"
+        what
+
 (* The constant [c] broadcast to [shape]. *)
 let broadcast c shape =
   let shape = Array.to_list shape in
@@ -372,15 +390,17 @@ let param s ~slot x =
   let what = "an argument" in
   let p = Nx.placement x in
   let tdt = check s what p (Nx.dtype x) in
-  let _, _, v = storage x in
+  let _, bufs, v = storage x in
   let shape = Nx.shape x in
   let u =
     if View.numel v = 0 then
       broadcast (Ops.const ~dtype:tdt (`Int Z.zero)) shape
     else
       let start, span = span tdt v in
+      let phase = phase_of what tdt bufs start in
       viewed what
-        (Ops.param ~shape:[ Ops.Int span ] ~device:(device_of s p) slot tdt)
+        (Ops.param ~shape:[ Ops.Int span ] ~device:(device_of s p) ~phase slot
+           tdt)
         p shape v start
   in
   traced p (Nx.dtype x) u
@@ -421,7 +441,8 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
     | Some c -> c.node
     | None ->
         let start, span = span tdt v in
-        let buffer = Ops.new_buffer (device_of s p) span tdt in
+        let phase = phase_of what tdt bufs start in
+        let buffer = Ops.new_buffer ~phase (device_of s p) span tdt in
         let view b =
           Nx_device.Buffer.view b
             ~offset:(start * Dtype.itemsize tdt)

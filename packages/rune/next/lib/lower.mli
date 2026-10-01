@@ -48,8 +48,14 @@ val const : ('a, 'b) Nx_dtype.t -> 'a -> Dtype.const
 val span : Dtype.t -> Nx_array.View.t -> int * int
 (** [span dt v] is the run of elements of [dt] that the non-empty view [v]
     reaches, from the element at or below the first one it reaches whose offset
-    is a multiple of 16 bytes, through the last one: [(start, length)]. Kernels
-    load up to 16 bytes at a time from where a buffer starts. *)
+    is a multiple of 16 bytes, through the last one: [(start, length)]. *)
+
+val phase : Dtype.t -> Nx_device.Buffer.t -> int -> int
+(** [phase dt b start] is the bytes by which element [start] of [dt] in [b] lies
+    past a 16-byte boundary of [b]'s memory: the phase of storage that starts
+    there ({!Tolk_next.Ops.param_arg}).
+
+    Raises [Invalid_argument] if [b] is dead. *)
 
 val strided : Ops.t -> Nx_array.View.t -> int -> Ops.t
 (** [strided flat v start] is the view [v] over the node [flat] of its storage's
@@ -94,10 +100,14 @@ val param : scope -> slot:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     placement, of its dtype and shape, whose node views the parameter [slot] as
     [x]'s view views its storage. The parameter holds the run of [x]'s storage
     that {!captures} describes for a capture; a program binds it to that run of
-    each argument it is called with.
+    each argument it is called with. The parameter's phase is where that run of
+    [x]'s storage starts within 16 bytes ({!Tolk_next.Ops.param_arg}), and the
+    program accesses memory as aligned to it: an argument whose run starts
+    elsewhere within 16 bytes needs a program traced from it.
 
-    Raises [Jit_error] if a device of [x]'s placement cannot compute its dtype,
-    and [Invalid_argument] if [x] is traced. *)
+    Raises [Jit_error] if a device of [x]'s placement cannot compute its dtype
+    or [x]'s buffers start at different places within 16 bytes, and
+    [Invalid_argument] if [x] is traced. *)
 
 val uop : ('a, 'b) Nx.t -> Ops.t
 (** [uop x] is the node of the traced value [x].
@@ -113,4 +123,5 @@ val captures : scope -> (Ops.t * Nx_device.Buffer.t list) list
     it binds, one per device of the node, in the order [s] met them. A node
     holds the run of its capture's storage from the element at or below the
     first element its view reaches whose offset is a multiple of 16 bytes,
-    through the last one it reaches. *)
+    through the last one it reaches; its phase is where that run starts within
+    16 bytes ({!Tolk_next.Ops.param_arg}). *)

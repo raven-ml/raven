@@ -13,6 +13,7 @@ open Traces
 open Rune_next
 module Ops = Tolk_next.Ops
 module Dtype = Tolk_next.Dtype
+module Op = Tolk_next.Op
 
 let pp_float ppf x = Format.fprintf ppf "%.17g" x
 let floats = viewed ~pp:pp_float Nx.float32 Gen.any_float
@@ -75,6 +76,28 @@ let windowed =
 
 let bound s = List.length (Lower.captures s)
 
+(* [n] floats over memory that starts 4 bytes past a 16-byte boundary, as a
+   tensor mapped from a file may. *)
+let past_boundary n =
+  let ba = Bigarray.Array1.create Float32 C_layout (n + 4) in
+  let at b =
+    Nativeint.to_int (Nativeint.rem (Nx_device.Buffer.address b) 16n)
+  in
+  let k = (4 - at (Nx_device.Buffer.of_bigarray ba) + 16) mod 16 / 4 in
+  let sub = Bigarray.Array1.sub ba k n in
+  for i = 0 to n - 1 do
+    sub.{i} <- float_of_int i
+  done;
+  Nx.of_bigarray (Bigarray.genarray_of_array1 sub)
+
+(* The phase of the storage [u] reads, a parameter or a buffer. *)
+let phase u =
+  let storage v = Ops.op v = Op.Param || Ops.op v = Op.Buffer in
+  match List.filter storage (Ops.toposort u) with
+  | [ v ] -> (
+      match Ops.arg v with Param p -> p.phase | _ -> fail "a parameter")
+  | _ -> fail "one storage"
+
 let captures =
   group "captures"
     [
@@ -136,6 +159,14 @@ let captures =
                    (function Ops.Int n -> n | Ops.Sym _ -> -1)
                    (Ops.shape u))
           | _ -> fail "one capture on one device");
+      test "a capture of storage 4 bytes past a 16-byte boundary has phase 4"
+        (fun () ->
+          let x = past_boundary 12 in
+          let s, y = copied x in
+          exact x y;
+          match Lower.captures s with
+          | [ (u, _) ] -> equal int 4 (phase u)
+          | _ -> fail "one capture");
       test "an empty view is bound nowhere" (fun () ->
           let s, y = copied (Nx.slice [ R (2, 2) ] (arange 4)) in
           equal (array int) [| 0 |] (Nx.shape y);
@@ -165,6 +196,39 @@ let parameters =
     [
       prop "a parameter views its argument's storage, whatever its strides"
         floats (fun x -> exact x (parameter x));
+      test "a parameter of storage 4 bytes past a 16-byte boundary has phase 4"
+        (fun () ->
+          let x = past_boundary 12 in
+          let s = scope () in
+          let y = Lower.param s ~slot:0 x in
+          equal int 4 (phase (Lower.uop y));
+          exact x (parameter x));
+      test "a parameter of a slice is where its run starts within 16 bytes"
+        (fun () ->
+          let x = Nx.slice [ R (5, 12) ] (past_boundary 12) in
+          let s = scope () in
+          equal int 4 (phase (Lower.uop (Lower.param s ~slot:0 x)));
+          exact x (parameter x));
+      test
+        "a program over an argument 4 bytes past a 16-byte boundary computes \
+         nx's values" (fun () ->
+          let x = past_boundary 12 in
+          let s = scope () in
+          let y =
+            within s (fun () ->
+                let a = argument s x in
+                Nx.add a (Nx.mul a a))
+          in
+          let phases =
+            List.filter_map
+              (fun u ->
+                match (Ops.op u, Ops.arg u) with
+                | Op.Param, Param p -> Some p.phase
+                | _ -> None)
+              (Ops.toposort (Programs.kernels y))
+          in
+          equal (list int) [ 0; 4 ] (List.sort compare phases);
+          exact (Nx.add x (Nx.mul x x)) (Programs.compiled s y));
       test "a parameter binds nothing when traced" (fun () ->
           let s = scope () in
           ignore (Lower.param s ~slot:0 (grid 2 3));

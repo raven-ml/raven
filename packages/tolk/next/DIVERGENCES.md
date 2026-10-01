@@ -1446,8 +1446,10 @@ the Exclusions of `README.md`.
   program's cache key.
 - **Reason:** (b). rune's `Compiled` runs an operation over the storage it is
   given, and mapped weights put a tensor at any byte offset of its file: a
-  vector access of 16 bytes from an address that is not a multiple of 16 is
-  undefined in Clang's `aligned(16)` vector types and faults on CUDA.
+  vector access from an address that is not a multiple of its width is
+  undefined in Clang's `aligned(16)` vector types and faults on CUDA, and on
+  Metal (an M1 Max) a `half4` read 2 bytes past a boundary reads the wrong
+  elements.
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase
   (D54) › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
@@ -1460,7 +1462,13 @@ the Exclusions of `README.md`.
   differ in phase (D54)` and `param_like keeps its storage's phase, moved by a
   shrink by a constant (D54)`; the graph format's round trip of `a buffer past
   a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
-  a view 8 bytes into a disk file whose parameter has no phase.
+  a view 8 bytes into a disk file whose parameter has no phase. In rune.next,
+  the `Lower` suite's `a parameter of storage 4 bytes past a 16-byte boundary
+  has phase 4`, `a capture of storage 4 bytes past a 16-byte boundary has
+  phase 4` and `a program over an argument 4 bytes past a 16-byte boundary
+  computes nx's values`, and the `Compiled` suite's `edges › an operand whose
+  buffer starts 2 bytes into its memory is read where it is (D54)`, on the
+  host and on Metal, whose sweeps draw buffers that start at any byte.
 
 ## D55. Metal names a vector after its element's one-word name
 
