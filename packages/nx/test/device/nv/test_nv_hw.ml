@@ -438,14 +438,17 @@ let room d max =
       ();
   top
 
-(* Every route at every size around [max]: direct from and to aligned host
-   memory, staged from and to host memory off a page, VRAM to VRAM at offsets,
+(* Every route at every size around [max]: direct from host memory the device
+   borrows, staged from and to host memory it does not, VRAM to VRAM at offsets,
    and into and out of borrowed memory. *)
 let boundaries max () =
   let d = device () in
   let top = room d max in
   let src = B.create Nx_device.host S.UInt8 top in
   write_pattern 1 src;
+  let mapped = borrow d src in
+  let staged = B.create Nx_device.host S.UInt8 top in
+  write_pattern 1 staged;
   let out = B.create Nx_device.host S.UInt8 top in
   let lent = B.create Nx_device.host S.UInt8 top in
   let borrowed = borrow d lent in
@@ -454,10 +457,10 @@ let boundaries max () =
     (fun n ->
       let at what = Printf.sprintf "%s, %d bytes" what n in
       equal ~msg:(at "direct in") int 1
-        (steps d (fun () -> B.copy ~src:(view src 0 n) ~dst:(view v 0 n)));
+        (steps d (fun () -> B.copy ~src:(view mapped 0 n) ~dst:(view v 0 n)));
       B.copy ~src:(view v 0 n) ~dst:(view out 0 n);
-      check ~msg:(at "direct in and out") 1 (view out 0 n);
-      B.copy ~src:(view src 1 n) ~dst:(view v 0 n);
+      check ~msg:(at "direct in, staged out") 1 (view out 0 n);
+      B.copy ~src:(view staged 1 n) ~dst:(view v 0 n);
       B.copy ~src:(view v 0 n) ~dst:(view out 3 n);
       check ~msg:(at "staged in and out") ~from:1 1 (view out 3 n);
       B.copy ~src:(view v 0 n) ~dst:(view w 5 n);
