@@ -304,11 +304,7 @@ let widen bounds k a b c d =
   let lo = Float.min (Float.min a b) (Float.min c d) in
   let hi = Float.max (Float.max a b) (Float.max c d) in
   let extreme t =
-    if
-      (0. < t && t < 1.)
-      [@mutate
-        off "the curve's value at 0 or 1 is an end point, bounded already"]
-    then begin
+    if 0. < t && t < 1. then begin
       let v = Float.min hi (Float.max lo (bezier t a b c d)) in
       bounds.(k) <- Float.min bounds.(k) v;
       bounds.(k + 2) <- Float.max bounds.(k + 2) v

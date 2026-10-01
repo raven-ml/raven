@@ -182,8 +182,7 @@ let lookup cmap c =
   | Segments { sub; ends; starts; deltas; offsets } ->
       let i = search (Array.length ends) (fun i -> ends.(i) >= c) in
       if i = Array.length ends || starts.(i) > c || starts.(i) = 0xFFFF then 0
-      else if (offsets.(i) < 0) [@mutate off "positions are positive"] then
-        (c + deltas.(i)) land 0xFFFF
+      else if offsets.(i) < 0 then (c + deltas.(i)) land 0xFFFF
       else
         let g = u16 sub (offsets.(i) + (2 * (c - starts.(i)))) in
         if g = 0 then 0 else (g + deltas.(i)) land 0xFFFF
@@ -334,9 +333,7 @@ let pair_subtable t pos =
       check_classes t classes2 count2;
       let records = pos + 16 in
       let size = value_size format1 + value_size format2 in
-      check_end t
-        (records + (count1 * count2 * size))
-      [@mutate off "the coverage and class tables follow the matrix"];
+      check_end t (records + (count1 * count2 * size));
       Class_pairs
         { coverage; format1; format2; classes1; classes2; count2; records }
   | f -> malformed "'GPOS': pair adjustment format %d" f
@@ -348,10 +345,7 @@ let gpos t =
   let lookup_count = u16 t lookup_list in
   let has_kern = ref false in
   let kern = Array.make lookup_count false in
-  for
-    i = 0
-    to (u16 t features - 1) [@mutate off "a kern feature has no parameters"]
-  do
+  for i = 0 to u16 t features - 1 do
     let r = features + 2 + (6 * i) in
     if u32 t r = 0x6B65726E (* "kern" *) then begin
       has_kern := true;
@@ -655,10 +649,7 @@ let contours upem (m : Affine.t) ends on xs ys path =
         let x i = xs.(base + (i mod n)) and y i = ys.(base + (i mod n)) in
         let first =
           let rec find i =
-            if (i >= n) [@mutate off "point n is point 0, found off-curve"] then
-              -1
-            else if on i then i
-            else find (i + 1)
+            if i >= n then -1 else if on i then i else find (i + 1)
           in
           find 0
         in

@@ -39,15 +39,12 @@ let with_alpha a c =
 (* sRGB transfer functions *)
 
 let linear c =
-  if (c <= 0.04045) [@mutate off "the two pieces meet at the threshold"] then
-    c /. 12.92
-  else Float.pow ((c +. 0.055) /. 1.055) 2.4
+  if c <= 0.04045 then c /. 12.92 else Float.pow ((c +. 0.055) /. 1.055) 2.4
 
 (* Clamped so that rounding cannot leave [0;1]. *)
 let encode c =
   let e =
-    if (c <= 0.0031308) [@mutate off "the two pieces meet at the threshold"]
-    then 12.92 *. c
+    if c <= 0.0031308 then 12.92 *. c
     else (1.055 *. Float.pow c (1. /. 2.4)) -. 0.055
   in
   Float.min 1. (Float.max 0. e)
@@ -117,8 +114,7 @@ let gamut_map alpha l a b =
   else if l <= 0. then { black with alpha }
   else
     let a, b =
-      if (Float.hypot a b > 1.) [@mutate off "a chroma of 1 caps to itself"]
-      then
+      if Float.hypot a b > 1. then
         let hue = Float.atan2 b a in
         (Float.cos hue, Float.sin hue)
       else (a, b)
@@ -128,15 +124,13 @@ let gamut_map alpha l a b =
     else
       let clip_at a b = clipped alpha (linear_of_oklab l a b) in
       let origin = clip_at a b in
-      if (delta_e l a b origin < jnd) [@mutate off "a distance of exactly jnd"]
-      then origin
+      if delta_e l a b origin < jnd then origin
       else
         let chroma = Float.hypot a b and hue = Float.atan2 b a in
         let cos_h = Float.cos hue and sin_h = Float.sin hue in
         let rec search lo hi lo_in_gamut last =
           let range = hi -. lo in
-          if (range <= epsilon) [@mutate off "a range of exactly epsilon"] then
-            last
+          if range <= epsilon then last
           else
             let c = (lo +. hi) /. 2. in
             let a = c *. cos_h and b = c *. sin_h in
@@ -145,12 +139,8 @@ let gamut_map alpha l a b =
             else
               let clip = clip_at a b in
               let e = delta_e l a b clip in
-              if (e >= jnd) [@mutate off "a distance of exactly jnd"] then
-                search lo c lo_in_gamut clip
-              else if
-                (jnd -. e < epsilon)
-                [@mutate off "a distance of exactly jnd - epsilon"]
-              then clip
+              if e >= jnd then search lo c lo_in_gamut clip
+              else if jnd -. e < epsilon then clip
               else search c hi false clip
         in
         search 0. chroma true origin
@@ -171,17 +161,13 @@ let two_pi = 2. *. Float.pi
 let to_oklch c =
   let l, a, b = to_oklab c in
   let chroma = Float.hypot a b in
-  if (chroma < powerless) [@mutate off "a chroma of exactly the threshold"] then
-    (l, chroma, Float.nan)
+  if chroma < powerless then (l, chroma, Float.nan)
   else
     let h = Float.atan2 b a in
     (* [h +. two_pi] rounds to [two_pi] for a negative [h] above [-4e-16], which
        no colour reaches in practice. *)
-    let h = if (h < 0.) [@mutate off "-0. is 0."] then h +. two_pi else h in
-    ( l,
-      chroma,
-      if (h >= two_pi) [@mutate off "needs a hue within 4e-16 below 0"] then 0.
-      else h )
+    let h = if h < 0. then h +. two_pi else h in
+    (l, chroma, if h >= two_pi then 0. else h)
 
 let of_oklch ?(alpha = 1.) l c h =
   if not (Float.is_finite l && Float.is_finite c && c >= 0.) then
@@ -210,11 +196,7 @@ let contrast c =
   let y =
     (0.2126 *. linear c.r) +. (0.7152 *. linear c.g) +. (0.0722 *. linear c.b)
   in
-  if
-    (y >= luminance_threshold)
-    [@mutate off "a luminance of exactly the threshold"]
-  then black
-  else white
+  if y >= luminance_threshold then black else white
 
 (* Hexadecimal notation *)
 
