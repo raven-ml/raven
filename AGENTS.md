@@ -44,6 +44,9 @@ main checkout, and never change the main checkout's working tree (no
 are reused, never removed: their warm `_build` is the point. Use
 `git -C <path>`, never `cd <path> && git …`.
 
+Don't burn tokens. Give a new stream to a fresh agent with a short brief
+instead of a long-running one.
+
 - **Claim.** A worktree is taken while a dune watch server holds its
   `_build/.lock`, which then contains the server's pid; the server's parent
   processes lead to the Claude session that holds it. To claim one, start
