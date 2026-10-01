@@ -2909,6 +2909,11 @@ thread.
 
 ### Nx
 
+- NV devices open under release 615 of NVIDIA's kernel driver, which
+  `Nx_nv_device` refused as unsupported. That release moved the bits of the
+  cache flush the device issues and added 8 bytes to the parameters of a
+  channel group, so it is described on its own rather than as 610. A release
+  not described is still refused, naming it.
 - Programs holding large tensors on the host run far fewer major collections:
   host buffers of 64 KiB or more pace the collector by a share of the OCaml
   heap and the live buffers together, where it took the heap alone. With 256 MB

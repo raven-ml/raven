@@ -15,9 +15,9 @@ into a temporary directory and fails if the committed file differs.
 The GSP firmware is release 570.144, so everything the driver-less interface
 reads comes from that tree: the GSP's messages, the resource manager's
 parameters it forwards, registers, page-table formats and class methods. The
-kernel interface speaks to the installed driver, whose parameter layouts
-differ between releases: the layouts that differ are emitted once per release,
-the others once, and the script fails if the split changes.
+kernel interface speaks to the installed driver, whose parameter layouts and
+bit fields differ between releases: those that differ are emitted once per
+release, the others once, and the script fails if the split changes.
 
 Struct layouts come from libclang, for x86_64 Linux; the script checks that
 aarch64 Linux lays them out the same. Structures upstream defines only inside
@@ -46,6 +46,7 @@ RELEASES = {
     570: GITHUB + "refs/tags/570.144.tar.gz",
     580: GITHUB + "2af9f1f0f7de4988432d4ae875b5858ffdb09cc2.tar.gz",
     610: GITHUB + "refs/tags/610.43.03.tar.gz",
+    615: GITHUB + "refs/tags/615.71.09.tar.gz",
 }
 GSP = 570
 NVFW = "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/drivers/gpu/drm/nouveau/include/nvfw/"
@@ -160,6 +161,11 @@ RM_FIELDS = [
     "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_INVALIDATE", "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_FLUSH_MODE",
 ]
 
+# The bit fields whose ranges differ between the releases.
+RM_FIELDS_PER_RELEASE = {"NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_WRITE_BACK",
+                         "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_INVALIDATE",
+                         "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_FLUSH_MODE"}
+
 # Structs, by C name: the module they become and the fields read ("a__b" for a
 # nested field). An array field is (offset, bytes of an element, count).
 RM_STRUCTS = {
@@ -251,7 +257,7 @@ RM_GSP_ONLY = {
 
 # The structs whose layouts differ between the releases.
 RM_PER_RELEASE = {"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NVOS46_PARAMETERS", "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS", "NV_VASPACE_ALLOCATION_PARAMETERS",
-                  "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS", "UVM_FREE_PARAMS"}
+                  "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS", "UVM_FREE_PARAMS", "NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS"}
 RM_STRUCTS.update({
     "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS": ("Gpfifo_alloc", [
         "gpFifoOffset", "gpFifoEntries", "flags", "hContextShare", "hVASpace", "hUserdMemory", "userdOffset",
@@ -707,12 +713,13 @@ def generate(cache, pins, pin, outdir):
     rm_files = {rel: headers(t, RM_HEADERS) + [pathlib.Path(p) for p in glob.glob(
         str(t / "src/common/sdk/nvidia/inc/**/*.h"), recursive=True)] for rel, t in trees.items()}
     ranges = {rel: field_ranges(rm_files[rel], RM_FIELDS) for rel in trees}
-    for f in RM_FIELDS:
-        if len({ranges[r][f] for r in trees}) != 1:
-            sys.exit(f"{f} differs between releases")
+    differ = {f for f in RM_FIELDS if len({ranges[r][f] for r in trees}) != 1}
+    if differ != RM_FIELDS_PER_RELEASE:
+        sys.exit(f"the bit fields that differ between releases are {sorted(differ)}, not {sorted(RM_FIELDS_PER_RELEASE)}")
     out.append("(* Bit fields of their words: (lowest bit, bits). *)")
     for f in RM_FIELDS:
-        out.append(f"let {f.lower()} = {ml_tuple(ranges[GSP][f])}")
+        if f not in RM_FIELDS_PER_RELEASE:
+            out.append(f"let {f.lower()} = {ml_tuple(ranges[GSP][f])}")
     out.append("")
 
     layouts = {}
@@ -748,6 +755,10 @@ def generate(cache, pins, pin, outdir):
             out.append(f"    val {snake(f)} : ({' * '.join(['int'] * arity)}){opt}")
         out.append("  end")
         out.append("")
+    for f in RM_FIELDS:
+        if f in RM_FIELDS_PER_RELEASE:
+            out.append(f"  val {f.lower()} : int * int")
+    out.append("")
     out.append("  val statuses : (int * string) list")
     out.append("end")
     out.append("")
@@ -766,6 +777,10 @@ def generate(cache, pins, pin, outdir):
                     out.append(f"    let {snake(f)} = None")
             out.append("  end")
             out.append("")
+        for f in RM_FIELDS:
+            if f in RM_FIELDS_PER_RELEASE:
+                out.append(f"  let {f.lower()} = {ml_tuple(ranges[rel][f])}")
+        out.append("")
         codes = re.findall(r'NV_STATUS_CODE\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*"([^"]*)"\s*\)',
                            (tree / "kernel-open/common/inc/nvstatuscodes.h").read_text())
         out.append("  let statuses = [")

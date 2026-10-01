@@ -8,8 +8,8 @@
     Opens NVIDIA GPUs as {!Nx_device.t}s named ["NV"], ["NV:1"], ["NV:2"], ...
     through one of two interfaces:
     - {!Kernel}, the resource manager interface of NVIDIA's Linux kernel driver
-      ([/dev/nvidiactl] and [/dev/nvidia-uvm]) of the releases 570, 580 and 610.
-      The driver owns the GPU and shares it with other programs.
+      ([/dev/nvidiactl] and [/dev/nvidia-uvm]) of the releases 570, 580, 610 and
+      615. The driver owns the GPU and shares it with other programs.
     - {!Pci}, the runtime's own driver: it takes the GPU's PCI function from its
       kernel driver, boots the GPU's security processors and its GSP with their
       firmware, and manages the GPU's memory and page tables itself. The GPU is

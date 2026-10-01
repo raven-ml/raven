@@ -4,6 +4,7 @@
  "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/2af9f1f0f7de4988432d4ae875b5858ffdb09cc2.tar.gz": "ce56c65a43268f20f535a0c1a71e3df990ed8fd18c7c24b2d0f7152f7cebf834",
  "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/570.144.tar.gz": "33229a246d6c9f0781702e95b847aef87d6845216246ba284d5a6ae46a400849",
  "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/610.43.03.tar.gz": "9df87d753cd9c05aa0eedc462af9b35debb549a657136e863282f94c96ee2640",
+ "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/615.71.09.tar.gz": "caf48cda7d5fe7374d1d24ca4a90efb4dc783eefabfad5fa4b64fdc24213b62a",
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ad102/gsp/booter_load-570.144.bin": "8b293e19b637c5e22c87a2428d1c71bb13e0904e8a88ac6b3c6c1f2679c6e37a",
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ad102/gsp/bootloader-570.144.bin": "65ab2e6b6e0fca95365c4deac79a34582abcfeb15b6ae234138f22e7183118a8",
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/booter_load-570.144.bin": "4497e3eff7e95c774b8a569d17b27c08c9650158d10b229d2be81cdcad9a085b",

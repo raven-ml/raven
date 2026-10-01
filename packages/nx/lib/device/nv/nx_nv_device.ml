@@ -802,8 +802,8 @@ let setup ~taken ~machine ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes
   let group =
     alloc ~parent:device D.kepler_channel_group_a
       (fun p ->
-        P.set p D.Channel_group_alloc.engine_type D.nv2080_engine_type_graphics)
-      D.Channel_group_alloc.sizeof
+        P.set p R.Channel_group_alloc.engine_type D.nv2080_engine_type_graphics)
+      R.Channel_group_alloc.sizeof
   in
   let ctxshare =
     alloc ~parent:group D.fermi_context_share_a
@@ -1235,14 +1235,15 @@ let invalidate_caches n =
   | Pci_gpu _ ->
       n.rm.control n.obj.subdevice
         D.nv2080_ctrl_cmd_internal_bus_flush_with_sysmembar None
-  | Kernel_gpu _ ->
+  | Kernel_gpu g ->
+      let (module R : D.RELEASE) = g.c.release in
       let module F = D.Flush_gpu_cache in
       let p = P.create F.sizeof in
       P.set p F.flags
-        (P.bits D.nv2080_ctrl_fb_flush_gpu_cache_flags_write_back
+        (P.bits R.nv2080_ctrl_fb_flush_gpu_cache_flags_write_back
            D.nv2080_ctrl_fb_flush_gpu_cache_flags_write_back_yes
-        lor P.bits D.nv2080_ctrl_fb_flush_gpu_cache_flags_invalidate
+        lor P.bits R.nv2080_ctrl_fb_flush_gpu_cache_flags_invalidate
               D.nv2080_ctrl_fb_flush_gpu_cache_flags_invalidate_yes
-        lor P.bits D.nv2080_ctrl_fb_flush_gpu_cache_flags_flush_mode
+        lor P.bits R.nv2080_ctrl_fb_flush_gpu_cache_flags_flush_mode
               D.nv2080_ctrl_fb_flush_gpu_cache_flags_flush_mode_full_cache);
       n.rm.control n.obj.subdevice D.nv2080_ctrl_cmd_fb_flush_gpu_cache (Some p)
