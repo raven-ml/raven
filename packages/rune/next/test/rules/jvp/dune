@@ -1,0 +1,14 @@
+; The swept laws run in the slow alias.
+
+(test
+ (name test_jvp_rules)
+ (package rune)
+ (libraries windtrap rune.next rune_next_rules nx nx.backend nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_jvp_rules.exe} --tag slow)))

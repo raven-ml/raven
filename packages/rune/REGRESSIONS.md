@@ -223,3 +223,59 @@ those sections.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | old: test_read_lifetime.ml a read of a placed temporary under collection | nx's read path | dropped: no transformation is involved; nx's placement suite |
+
+## Rule tables
+
+The forward-mode suite is `next/test/rules/jvp/test_jvp_rules.ml`, written
+`J` below. Its rows are the rows of nx's operations, one per constructor of
+`Nx.Op.t` and kind, each applied through `Nx.Op.eval` to operands drawn inside
+its domain, with its static arguments drawn over their range (axes, shapes,
+pads, windows, flags, which operands carry a tangent). Every row runs the same
+laws: its primal and its tangent's metadata at each dtype it takes, its tangent
+against a central difference on float64 and complex128, against the closed
+form for elementwise rows, a linear row's tangent against the row applied to
+the tangent bit for bit, and the second order against a central difference of
+the tangent; an integer or boolean row has no tangent. A path
+`J › <row> › <law>` names such a law; `J › edges › <row> › …` and
+`J › cumulative › …` and `J › factorisations › …` are named cases. An old
+test of a fixed shape or fixture maps to the row whose generator draws it. The
+suite checks forward mode only; the pullbacks are the reverse-mode suite's.
+
+
+### Old rune tests
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jvp.ml unary rules › neg, exp, log, sqrt, recip, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, abs, erf | each unary tangent | J › unary <kind> › the tangent agrees with a central difference; › the tangent is the derivative's closed form |
+| old: test_jvp.ml binary rules › add, sub, mul, div, pow, maximum, minimum, atan2 | each binary tangent | J › binary <kind> › the tangent agrees with a central difference (div is fdiv), for each operand carrying a tangent |
+| old: test_jvp.ml operands without a tangent › a power with a constant exponent has tangent 0 at a zero base | no NaN from the exponent's coefficient | J › edges › binary pow › at a zero base › x ** 2 has tangent 0 |
+| old: test_jvp.ml operands without a tangent › a product by a constant has a finite tangent at an infinite operand | no term for a constant operand | J › edges › binary mul › a constant's infinite coefficient never meets a zero |
+| old: test_jvp.ml reduction rules › sum over one axis; sum keepdims; prod over one axis; max over one axis; min over one axis | reduction tangents | J › reduce <kind> › the tangent agrees with a central difference (axes drawn; keepdims is a reshape of the result) |
+| old: test_jvp.ml movement rules › reshape; transpose; shrink; flip; sliding window | movement tangents | J › move reshape, move permute, move shrink, move flip, move window › the tangent agrees with a central difference; › a linear operation's tangent is the operation on the tangent |
+| old: test_jvp.ml movement rules › sliding window tangent is the windowed tangent | a window's tangent is the windowed tangent | J › move window › a linear operation's tangent is the operation on the tangent |
+| old: test_jvp.ml movement rules › pad; concatenate | pad and cat tangents | J › pad; J › cat (the same laws); J › edges › pad › the tangent's fill is zero; J › edges › cat › a piece with no tangent contributes zeros |
+| old: test_jvp.ml selection rules › where; take_along_axis | selection tangents | J › where; J › gather (the same laws) |
+| old: test_jvp.ml selection rules › sort | a sort's tangent | J › sort (the same laws); J › edges › sort › the tangent is the tangent gathered by the primal's argsort, bit for bit |
+| old: test_jvp.ml scan rules › cumsum; cumprod; cummax; cummin | scan tangents | J › scan <kind> › the tangent agrees with a central difference |
+| old: test_jvp.ml scan rules › cummax carries the tangent of each running maximum's element | the running extremum's element's tangent | J › cumulative › running extrema › cummax: the tangent is each running extremum's element's, bit for bit; › of equal elements a running extremum takes the convention's |
+| old: test_jvp.ml scan rules › cumprod is exact at zeros | no division in the running product's rule | J › cumulative › running products › cumprod is exact at zeros |
+| old: test_jvp.ml matmul rules › 2d x 2d; batched x batched; 2d x batched; batched x 2d | matmul tangents | J › matmul › the tangent agrees with a central difference (leading axes drawn, extent-1 axes broadcast, ranks that differ) |
+| old: test_jvp.ml linalg rules › cholesky; cholesky (batched) | cholesky's tangent | J › cholesky › the tangent agrees with a central difference |
+| old: test_jvp.ml linalg rules › cholesky reads the lower triangle | the tangent of the unread triangle | J › edges › cholesky › a tangent above the diagonal has no effect, in both modes |
+| old: test_jvp.ml linalg rules › lu (square, batched) | lu's tangent | J › lu › the tangent agrees with a central difference (pivots drawn with a margin) |
+| old: test_jvp.ml linalg rules › solve_triangular (batched vector rhs) | the triangular solve's tangent | J › solve_triangular › the tangent agrees with a central difference (flags, vector and matrix right-hand sides, batches drawn); J › edges › solve_triangular › a tangent in the triangle the solve does not read has no effect |
+| old: test_jvp.ml gates and errors › unsupported op raises when input is active | a tangent with no rule raises | dropped: every operation has a tangent rule; the tangents with no definition raise in J › factorisations › undefined › a complete SVD of a non-square matrix has no tangent, and J › edges › qr › a complete factorisation of a tall matrix has no tangent |
+| old: test_complex.ml holomorphic rules › recip, sqrt, exp, log, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, mul, fdiv, pow, matmul, reduce_prod (forward) | complex tangents | J › <row> › on complex values the tangent agrees with a central difference |
+| old: test_complex.ml modulus › abs (forward) | the modulus's real-linear tangent | J › unary abs › on complex values the tangent agrees with a central difference |
+| old: test_complex.ml sign › sign (forward) | the complex sign's tangent | J › unary sign › on complex values the tangent agrees with a central difference |
+| old: test_complex.ml transforms › fft; ifft; irfft, even, odd and truncated (forward) | transform tangents | J › fft (inverse drawn); J › irfft (output sizes drawn) › on complex values the tangent agrees with a central difference |
+| old: test_complex.ml linear and movement rules › neg, sum, cumsum, cumprod, cat, gather, flip, where (forward) | complex linear tangents | J › <row> › on complex values the tangent agrees with a central difference |
+| old: test_complex.ml arithmetic › add, sub, matmul batched, matmul vector (forward) | complex arithmetic tangents | J › binary add, binary sub, matmul › on complex values the tangent agrees with a central difference |
+| old: test_complex.ml movements › reshape, transpose, pad, shrink, sliding window, scatter set, scatter add (forward) | complex movement tangents | J › <row> › on complex values the tangent agrees with a central difference |
+| old: test_complex.ml triangular solves › lower, upper, lower transposed, upper transposed, unit diagonal transposed, vector transposed (forward) | the conjugate transpose in the solve's tangent | J › solve_triangular › on complex values the tangent agrees with a central difference (all 8 flag combinations drawn) |
+| old: test_complex.ml cholesky › lower; upper (forward) | the Hermitian factor's tangent | J › cholesky › on complex values the tangent agrees with a central difference; J › edges › cholesky › an imaginary tangent on the diagonal has no effect |
+| old: test_complex.ml factorisations › lu (forward) | complex lu | J › lu › on complex values the tangent agrees with a central difference |
+| old: test_grad.ml reduction derivatives preserve zeros and ties (forward and eager reverse) | products at zeros, shared ties | J › edges › reduce prod › one zero leaves the product of the others, two leave zero; J › edges › reduce max, reduce min › tied elements share the derivative |
+| old: test_grad.ml half reduction derivatives count ties without overflow (eager) | a float16 tie count | J › edges › reduce max, reduce min › a float16 tie count above 65,504 does not overflow |
+| old: test_grad.ml single-tensor variants › a bitcast has zero derivative | a bitcast carries no tangent | J › bitcast › it has no tangent and passes no cotangent |
+| old: test_fft.ml forward mode › rfft tangent is rfft of the tangent; irfft tangent is irfft of the tangent | linear transform tangents | J › rfft, irfft › a linear operation's tangent is the operation on the tangent |
