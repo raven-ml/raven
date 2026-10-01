@@ -74,12 +74,12 @@ let mstack_early_shrink ms shrink =
 (* A selection of a value on no device is that value (D35). *)
 let pm_unselect_deviceless =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.op Op.Mselect ~src:[ Upat.var "x" ])
         (fun m ->
           if Option.is_none (device (m "x")) then Some (m "x") else None);
-    ]
+    ])
 
 let lower_broadcast_copy c x =
   match (device c, device x) with
@@ -112,7 +112,7 @@ let replace_allreduce =
     Upat.op Op.Copy ~name:"c" ~src:[ Upat.var "x" ] ~allow_any_len:true
   in
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* A copy to several devices is a copy to each. *)
       rule copy (fun m -> lower_broadcast_copy (m "c") (m "x"));
       (* A copy from several devices to one copies the first shard. *)
@@ -157,18 +157,18 @@ let replace_allreduce =
                  (List.map
                     (fun s -> if is_multi s then mselect s i else s)
                     (src a))));
-    ]
+    ])
 
 let replace_allreduce =
   if Helpers.getenv "LATE_ALLREDUCE" 1 <> 0 then replace_allreduce
   else
     Pattern_matcher.append
       (Pattern_matcher.v
-         [
+         (fun () -> [
            rule
              (Upat.op Op.Allreduce ~name:"red" ~src:[ Upat.var "buf" ])
              (fun m -> Allreduce.handle_allreduce (m "red"));
-         ])
+         ]))
       replace_allreduce
 
 (* Sharded operations *)
@@ -586,7 +586,7 @@ and multi_pm =
      in
      Pattern_matcher.append
        (Pattern_matcher.v
-          [
+          (fun () -> [
             rule
               (Upat.v ~op:Op.Set.alu ~name:"root" ~early_reject:[ Op.Unshard ]
                  ()) (fun m -> alu_multi (m "root"));
@@ -674,7 +674,7 @@ and multi_pm =
               (Upat.op Op.Store ~name:"root" ~allow_any_len:true
                  ~src:[ Upat.op Op.Unshard ~name:"multi" ])
               (fun m -> Some (store_dest_multi (m "root") (m "multi")));
-          ])
+          ]))
        replace_allreduce)
 
 let multi_pm = Lazy.force multi_pm

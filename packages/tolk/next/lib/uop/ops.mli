@@ -1717,17 +1717,21 @@ module Pattern_matcher : sig
   type ('ctx, 'r) t
   (** The type for pattern matchers. *)
 
-  val v : ('ctx, node) rule list -> ('ctx, node) t
-  (** [v rules] is the rewriter of [rules]. A rule declines by returning [None]
-      or the node it matched; the next rule is then tried.
+  val v : (unit -> ('ctx, node) rule list) -> ('ctx, node) t
+  (** [v rules] is the rewriter of the rules [rules ()] returns, which it
+      calls once, on its first rewrite. A rule declines by returning [None] or
+      the node it matched; the next rule is then tried.
 
-      Raises [Invalid_argument] if a rule's pattern has no operation. *)
+      The first rewrite raises [Invalid_argument] if a rule's pattern has no
+      operation. *)
 
-  val fold : ('ctx, 'r) rule list -> ('ctx, 'r) t
-  (** [fold rules] is the matcher of [rules], whose results are not the nodes
+  val fold : (unit -> ('ctx, 'r) rule list) -> ('ctx, 'r) t
+  (** [fold rules] is the matcher of the rules [rules ()] returns, which it
+      calls once, on its first rewrite, and whose results are not the nodes
       they match. A rule declines by returning [None].
 
-      Raises [Invalid_argument] if a rule's pattern has no operation. *)
+      The first rewrite raises [Invalid_argument] if a rule's pattern has no
+      operation. *)
 
   val append : ('ctx, 'r) t -> ('ctx, 'r) t -> ('ctx, 'r) t
   (** [append m0 m1] tries [m0]'s rules, then [m1]'s, each declining as its

@@ -234,7 +234,7 @@ let unary_or_cast = Op.Set.union Op.Set.unary (ops [ Op.Cast; Op.Bitcast ])
 
 let pm_data_invalid =
   pm
-    [
+    (fun () -> [
       rule (Upat.broadcast invalid_pat) (fun m -> Some (m "i"));
       rule (Upat.v ~op:unary_or_cast ~src:[ invalid_pat ] ()) (fun m ->
           Some (m "i"));
@@ -310,11 +310,11 @@ let pm_data_invalid =
         (fun m ->
           let x = m "x" in
           Some (match src x with _ :: alt :: _ -> alt | _ -> const_v x zero));
-    ]
+    ])
 
 let pm_remove_invalid =
   pm
-    [
+    (fun () -> [
       rule (Upat.named "w" invalid_gate) (fun m ->
           let w = m "w" in
           Some (replace w ~src:[ m "cond"; m "x"; const_v w zero ]));
@@ -326,7 +326,7 @@ let pm_remove_invalid =
               if is_invalid x then const ~dtype:(dtype s) (`Int Z.zero) else x
             in
             Some (replace s ~src:(List.map zero_invalid (src s))));
-    ]
+    ])
 
 (* folding a strong dtype WHERE to a weak const branch keeps the strong dtype *)
 let fold_const_where gate c0 c1 w =
@@ -343,7 +343,7 @@ let symbolic_simple =
     [
       pm_data_invalid;
       pm
-        [
+        (fun () -> [
           (* Self folding *)
           (* a float x + 0 is x only for -0., since -0. + +0. is +0. *)
           rule
@@ -600,7 +600,7 @@ let symbolic_simple =
             Upat.(named "w" (where (cvar "gate") (var "c0") (var "c1")))
             (fun m ->
               Some (fold_const_where (m "gate") (m "c0") (m "c1") (m "w")));
-        ];
+        ]);
       Movement.mop_cleanup;
     ]
 
@@ -638,7 +638,7 @@ let canonicalize_simplex x =
 
 let commutative =
   pm
-    [
+    (fun () -> [
       (* COMMUTATIVE flipping (only for index) *)
       (* NOTE: this can break merging vector math by only flipping some of them *)
       rule
@@ -648,7 +648,7 @@ let commutative =
           if compare_structure (nth x 1) (nth x 0) < 0 then
             Some (replace x ~src:(List.rev (src x)))
           else None);
-    ]
+    ])
 
 (* in cond.where(t, f), cond is True within t and False within f *)
 let fold_where_closure cond t f =
@@ -673,7 +673,7 @@ let symbolic =
       symbolic_simple;
       commutative;
       pm
-        ([
+        (fun () -> [
            (* Boolean algebra *)
            rule
              Upat.(
@@ -1185,7 +1185,7 @@ let drop_and_clauses cond x i =
 
 let pm_drop_and_clauses =
   pm
-    [ rule invalid_gate (fun m -> drop_and_clauses (m "cond") (m "x") (m "i")) ]
+    (fun () -> [ rule invalid_gate (fun m -> drop_and_clauses (m "cond") (m "x") (m "i")) ])
 
 (* move conditions from where to load's valid, drop clauses already in load *)
 let where_on_load cond buf idx or_cast =
@@ -1230,12 +1230,12 @@ let pm_move_where_on_load =
     | _ -> where_on_load cond (m "buf") (m "idx") (m "or_cast")
   in
   pm
-    [
+    (fun () -> [
       rule Upat.(where (var "cond") loaded zero) (fun m -> on_load m (m "cond"));
       rule
         Upat.(where (var "cond") zero loaded)
         (fun m -> on_load m (logical_not (m "cond")));
-    ]
+    ])
 
 (* pure index math only: a LOAD in x executes even where cond is false, so its
    INDEX valid must survive the assumption *)
@@ -1248,18 +1248,18 @@ let gated_given_valid cond x i =
 
 let pm_simplify_valid =
   pm
-    [
+    (fun () -> [
       (* simplify valid *)
       rule (Upat.op Op.And ~dtype:boolean ~name:"valid") (fun m ->
           simplify_valid (m "valid"));
       rule invalid_gate (fun m -> gated_given_valid (m "cond") (m "x") (m "i"));
-    ]
+    ])
 
 let remove_from_sink_like = ops [ Op.Noop; Op.Stack; Op.Sink; Op.Group ]
 
 let pm_clean_up_group_sink =
   pm
-    [
+    (fun () -> [
       (* clean up GROUP/SINK *)
       rule (Upat.op Op.Group ~src:[ Upat.var "x" ]) (fun m -> Some (m "x"));
       rule
@@ -1275,7 +1275,7 @@ let pm_clean_up_group_sink =
                 (src root)
             in
             Some (v (op root) ~src:srcs ~arg:(arg root)));
-    ]
+    ])
 
 let sym =
   let indexed = Upat.op Op.Index ~name:"index" in
@@ -1287,7 +1287,7 @@ let sym =
       symbolic;
       pm_simplify_valid;
       pm
-        [
+        (fun () -> [
           (* Pow *)
           rule (Upat.op Op.Pow ~name:"p") (fun m ->
               let p = m "p" in
@@ -1323,7 +1323,7 @@ let sym =
             (fun m ->
               let c = m "c" in
               Some O.((m "x" * c) + (m "y" * c)));
-        ];
+        ]);
       pm_clean_up_group_sink;
     ]
 

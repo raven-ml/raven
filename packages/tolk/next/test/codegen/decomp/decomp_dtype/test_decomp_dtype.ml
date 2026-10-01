@@ -1216,7 +1216,7 @@ let conversion u =
 let with_conversions u =
   let restore =
     PM.v
-      [ PM.rule (Ops.Upat.op Custom ~name:"c") (fun m -> conversion (m "c")) ]
+      (fun () -> [ PM.rule (Ops.Upat.op Custom ~name:"c") (fun m -> conversion (m "c")) ])
   in
   Ops.graph_rewrite ~ctx:()
     (Ops.graph_rewrite ~ctx:() u restore)

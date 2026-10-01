@@ -70,7 +70,7 @@ let pm_generate_realize_map =
     None
   in
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx
         (Upat.op Op.Call ~name:"c" ~allow_any_len:true
            ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program ]) () ])
@@ -84,7 +84,7 @@ let pm_generate_realize_map =
       rule_ctx
         (Upat.op Op.Store ~src:[ Upat.var "dest"; Upat.var "src" ])
         (mark (fun ctx m -> realize_store_after_src ctx (m "dest") (m "src")));
-    ]
+    ])
 
 (* Applying ranges *)
 
@@ -212,24 +212,24 @@ let pm_apply_rangeify =
     rule_ctx (Upat.v ~op:o ~name:"x" ()) (fun ctx m -> f ctx (m "x"))
   in
   Pattern_matcher.v
-    [
+    (fun () -> [
       on (ops [ Op.Reduce ]) convert_reduce_to_reduce_with_ranges;
       on (ops [ Op.Pad ]) convert_pad_to_where_to_keep_behavior_local;
       on (ops [ Op.Stack ]) convert_stack_to_where;
       on Op.Set.all create_bufferize_and_index_based_on_ranges;
       on Op.Set.movement remove_movement_op_after_rangeify;
-    ]
+    ])
 
 let pm_fix_deviceless =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx (Upat.op Op.Stage ~name:"b") (fun device m ->
           let b = m "b" in
           match arg b with
           | Bufferize ({ device = None; _ } as o) ->
               Some (replace b ~arg:(Bufferize { o with device }))
           | _ -> None);
-    ]
+    ])
 
 (* Movements *)
 

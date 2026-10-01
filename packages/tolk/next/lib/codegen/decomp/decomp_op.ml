@@ -135,7 +135,7 @@ let simplifying_patterns ops =
   let x_int = Upat.var ~dtype:Dtype.ints "x" and c = Upat.cvar "c" in
   let a = Upat.var "a" and b = Upat.var "b" in
   Pattern_matcher.v
-    (List.concat
+    (fun () -> List.concat
        [
          when_ ops Shr
            [
@@ -180,7 +180,7 @@ let late_patterns ~disable_fast_idiv ops =
   let int_value u = match value u with `Int z -> Some z | _ -> None in
   let fast ctx m = Option.bind (int_value (m "d")) (fast_idiv ctx (m "x")) in
   Pattern_matcher.v
-    (List.concat
+    (fun () -> List.concat
        [
          (if Op.Set.mem Max ops || not (Op.Set.mem Cmplt ops) then []
           else

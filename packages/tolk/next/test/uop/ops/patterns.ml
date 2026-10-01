@@ -11,7 +11,7 @@ let matches p u = P.match_ p u <> []
 let tagged u = Some (Ops.rtag u)
 
 (* [pm_rtag p] tags the node [p] names ["x"]. *)
-let pm_rtag p = Pm.v [ Pm.rule p (fun m -> tagged (m "x")) ]
+let pm_rtag p = Pm.v (fun () -> [ Pm.rule p (fun m -> tagged (m "x")) ])
 let rewrite m u = Pm.rewrite m () u
 
 let c1 = Ops.float 1.
@@ -51,12 +51,12 @@ let upat =
         (fun () ->
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule
                   (P.op ~arg:(Const (i 0)) ~name:"x" Op.Const)
                   (fun m -> tagged (m "x"));
                 Pm.rule (P.op ~name:"x" Op.Max) (fun m -> tagged (m "x"));
-              ]
+              ])
           in
           let zero = Ops.float 0. in
           equal (option uop) (tagged zero) (rewrite m zero);
@@ -91,18 +91,18 @@ let upat =
       test "a NaN argument matches a NaN constant" (fun () ->
           let m =
             Pm.fold
-              [
+              (fun () -> [
                 Pm.rule
                   (P.op ~arg:(Const (f Float.nan)) Op.Const)
                   (fun _ -> Some true);
-              ]
+              ])
           in
           equal (option bool) (Some true)
             (Pm.rewrite m () (Ops.float Float.nan)));
       test "the sources of a rule filter it" (fun () ->
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule
                   (P.op ~name:"x"
                      ~perm:
@@ -115,7 +115,7 @@ let upat =
                     match Ops.value (m "c") with
                     | `Int n when Z.equal (Z.abs n) Z.one -> tagged (m "x")
                     | _ -> None);
-              ]
+              ])
           in
           let mul a b = Ops.v ~src:[ Ops.int a; Ops.int b ] Op.Mul in
           List.iter
@@ -196,13 +196,13 @@ let upat =
           let noop = Ops.v Op.Noop in
           let p =
             Pm.fold
-              [
+              (fun () -> [
                 Pm.rule
                   (P.op
                      ~src:[ P.op Op.Noop; P.op Op.Noop ]
                      ~allow_any_len:true Op.Noop)
                   (fun _ -> Some true);
-              ]
+              ])
           in
           equal (option bool) (Some true)
             (Pm.rewrite p () (Ops.v ~src:[ noop; noop; noop ] Op.Noop));
@@ -226,14 +226,14 @@ let upat =
           let v1 = weak_var "a" 0 10 and v2 = weak_var "b" 0 10 in
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule
                   P.(P.var "a" + P.any [ P.var "x"; P.var "y"; P.var "z" ])
                   (fun m ->
                     match m "y" with
                     | y -> tagged Ops.O.(m "a" + y)
                     | exception Invalid_argument _ -> None);
-              ]
+              ])
           in
           equal (option uop)
             (tagged Ops.O.(v1 + v2))
@@ -458,82 +458,84 @@ let matchers =
   let a = var "a" 0 10 in
   group "Pattern_matcher"
     [
-      test "v rejects a rule whose pattern has no operation" (fun () ->
-          rejects (fun () -> Pm.v [ Pm.rule P.wild (fun _ -> Some a) ]));
+      test "v's first rewrite rejects a rule whose pattern has no operation"
+        (fun () ->
+          let m = Pm.v (fun () -> [ Pm.rule P.wild (fun _ -> Some a) ]) in
+          rejects (fun () -> Pm.rewrite m () a));
       test "the first rule that matches and does not decline wins" (fun () ->
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule (P.op Op.Param) (fun _ -> None);
                 Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x"));
                 Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1));
                 Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2));
-              ]
+              ])
           in
           equal (option uop) (Some (Ops.int 1)) (rewrite m a));
       test "a fold's rule declines by returning nothing" (fun () ->
           let m =
             Pm.fold
-              [
+              (fun () -> [
                 Pm.rule (P.op Op.Param) (fun _ -> None);
                 Pm.rule (P.op Op.Param) (fun _ -> Some "second");
-              ]
+              ])
           in
           equal (option string) (Some "second") (Pm.rewrite m () a));
       test "a fold's rule that returns its node is a result" (fun () ->
           let m =
             Pm.fold
-              [
+              (fun () -> [
                 Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x"));
                 Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1));
-              ]
+              ])
           in
           equal (option uop) (Some a) (Pm.rewrite m () a));
       test "concat tries the matchers' rules in order" (fun () ->
           let one =
-            Pm.v [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ]
+            Pm.v (fun () -> [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ])
           in
           let two =
-            Pm.v [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ]
+            Pm.v (fun () -> [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ])
           in
-          let none = Pm.v [ Pm.rule (P.op Op.Param) (fun _ -> None) ] in
+          let none = Pm.v (fun () -> [ Pm.rule (P.op Op.Param) (fun _ -> None) ]) in
           equal (option uop)
             (Some (Ops.int 2))
             (rewrite (Pm.concat [ none; two; one ]) a);
           equal (option uop) None (rewrite (Pm.concat []) a));
       test "a naming the pattern does not bind is rejected" (fun () ->
           let m =
-            Pm.v [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "y")) ]
+            Pm.v (fun () -> [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "y")) ])
           in
           rejects (fun () -> rewrite m a));
       test "rule_ctx reads the context" (fun () ->
           let ctx = ref 0 in
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule_ctx (P.op ~src:[] ~name:"x" Op.Noop) (fun ctx m ->
                     incr ctx;
                     Some (Ops.replace ~src:[ Ops.v Op.Noop ] (m "x")));
-              ]
+              ])
           in
           let once = Option.get (Pm.rewrite m ctx (Ops.v Op.Noop)) in
           equal (option uop) None (Pm.rewrite m ctx once);
           equal int 1 !ctx);
       test "append tries the first matcher's rules first" (fun () ->
           let one =
-            Pm.v [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ]
+            Pm.v (fun () -> [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ])
           in
           let two =
-            Pm.v [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ]
+            Pm.v (fun () -> [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ])
           in
           equal (option uop) (Some (Ops.int 1)) (rewrite (Pm.append one two) a);
           equal (option uop) (Some (Ops.int 2)) (rewrite (Pm.append two one) a));
       test "with_ctx joins a matcher without context to one with" (fun () ->
           let plain =
-            Pm.v [ Pm.rule (P.op Op.Const) (fun _ -> Some (Ops.int 1)) ]
+            Pm.v (fun () -> [ Pm.rule (P.op Op.Const) (fun _ -> Some (Ops.int 1)) ])
           in
           let reading =
-            Pm.v [ Pm.rule_ctx (P.op Op.Param) (fun ctx _ -> Some ctx) ]
+            Pm.v (fun () -> [ Pm.rule_ctx (P.op Op.Param) (fun ctx _ -> Some ctx) ])
           in
           let m = Pm.append reading (Pm.with_ctx plain) in
           equal (option uop) (Some (Ops.int 7)) (Pm.rewrite m (Ops.int 7) a);
@@ -545,11 +547,11 @@ let matchers =
           let fired = ref 0 in
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule (P.op ~early_reject:[ Op.Mul ] Op.Add) (fun _ ->
                     incr fired;
                     None);
-              ]
+              ])
           in
           equal (option uop) None (rewrite m Ops.O.(a + int 1));
           equal int 0 !fired;
@@ -571,7 +573,7 @@ let fconst x = Ops.float x
    a weak integer constant into 1.0 + 2.0. *)
 let simple_pm =
   Pm.v
-    [
+    (fun () -> [
       Pm.rule (P.cvar ~dtype:[ Weak_int ] "x") (fun _ ->
           Some Ops.O.(float 1. + float 2.));
       Pm.rule
@@ -586,7 +588,7 @@ let simple_pm =
         P.(P.var "x" + P.cvar "c1" + P.cvar "c2")
         (fun m ->
           Some Ops.O.(m "x" + float (value_of (m "c1") +. value_of (m "c2"))));
-    ]
+    ])
 
 let rewrite_to value u =
   let out = Ops.graph_rewrite ~ctx:() u simple_pm in
@@ -607,10 +609,10 @@ let sin u = Ops.alu u Op.Sin []
 
 let three_to_four =
   Pm.v
-    [
+    (fun () -> [
       Pm.rule (P.op ~arg:(Const (i 3)) Op.Const) (fun _ -> Some (Ops.int 4));
       Pm.rule (P.op ~arg:(Const (i 4)) Op.Const) (fun _ -> Some (Ops.int 3));
-    ]
+    ])
 
 (* A rule that records the node it sees, and declines. *)
 let label u =
@@ -620,11 +622,11 @@ let label u =
 
 let recorder tag =
   Pm.v
-    [
+    (fun () -> [
       Pm.rule_ctx (P.v ~op:Op.Set.all ~name:"x" ()) (fun log m ->
           log := (label (m "x") ^ tag) :: !log;
           None);
-    ]
+    ])
 
 let recorded log = List.rev !log
 let gate = Pm.rule (P.op Op.Add) (fun _ -> raise Ops.Bottom_up_gate)
@@ -649,12 +651,12 @@ let rewriting =
           equal uop Ops.O.(v + float 3.) out);
       test "keeps shared nodes shared" (fun () ->
           let v1 = fvar "v" and v2 = fvar "v" in
-          let out = Ops.graph_rewrite ~ctx:() Ops.O.(v1 + v2) (Pm.v []) in
+          let out = Ops.graph_rewrite ~ctx:() Ops.O.(v1 + v2) (Pm.v (fun () -> [])) in
           is_true (Ops.nth out 0 == Ops.nth out 1));
       test "a rule that returns its node declines, whatever the direction"
         (fun () ->
           let m =
-            Pm.v [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x")) ]
+            Pm.v (fun () -> [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x")) ])
           in
           equal uop a (Ops.graph_rewrite ~ctx:() a m);
           equal uop a (Ops.graph_rewrite ~bottom_up:true ~ctx:() a m));
@@ -679,40 +681,40 @@ let rewriting =
           let staged = Ops.bufferize (fvar "a") [] in
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule (P.op ~name:"x" Op.Stage) (fun m ->
                     Some
                       (Ops.call
                          (Ops.custom_function "f" [ Ops.param_like (m "x") 0 ])
                          [ m "x" ]));
-              ]
+              ])
           in
           rejects (fun () ->
               Ops.graph_rewrite ~bottom_up:true ~ctx:() (Ops.sink [ staged ]) m));
       test "a gate keeps a bottom-up node and leaves its sources unvisited"
         (fun () ->
-          let m = Pm.v [ gate; unreachable Op.Mul ] in
+          let m = Pm.v (fun () -> [ gate; unreachable Op.Mul ]) in
           let u = Ops.O.((a * a) + (b * c)) in
           equal uop u (Ops.graph_rewrite ~bottom_up:true ~ctx:() u m);
           let m =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule
                   P.(P.var "a" + P.var "a")
                   (fun m -> Some Ops.O.(int 2 * m "a"));
                 Pm.rule (P.op Op.Mul) (fun _ -> raise Ops.Bottom_up_gate);
                 unreachable Op.Const;
-              ]
+              ])
           in
           equal uop
             Ops.O.(int 2 * a)
             (Ops.graph_rewrite ~bottom_up:true ~ctx:() Ops.O.(a + a) m));
       test "rejects bottom_up with bpm" (fun () ->
           rejects (fun () ->
-              Ops.graph_rewrite ~bottom_up:true ~bpm:(Pm.v []) ~ctx:() a
-                (Pm.v [])));
+              Ops.graph_rewrite ~bottom_up:true ~bpm:(Pm.v (fun () -> [])) ~ctx:() a
+                (Pm.v (fun () -> []))));
       test "a walk lets a gate escape" (fun () ->
-          let m = Pm.v [ gate ] in
+          let m = Pm.v (fun () -> [ gate ]) in
           raises Ops.Bottom_up_gate (fun () ->
               Ops.graph_rewrite ~walk:true ~bottom_up:true ~ctx:()
                 Ops.O.(a + b)
@@ -730,7 +732,7 @@ let rewriting =
       test "tags let a rewrite apply once" (fun () ->
           let plus_one =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule (P.op ~name:"x" Op.Const) (fun m ->
                     let x = m "x" in
                     if Option.is_some (Ops.tag x) then None
@@ -740,7 +742,7 @@ let rewriting =
                           Some
                             (Ops.rtag ~tag:(Int 1) (Ops.int (Z.to_int n + 1)))
                       | _ -> None);
-              ]
+              ])
           in
           let one = Ops.int 1 in
           let g = Ops.graph_rewrite ~ctx:() Ops.O.(one + one) plus_one in
@@ -761,7 +763,7 @@ let rewriting =
           Helpers.context
             [ B (Ops.rewrite_stack_limit, 8) ]
             (fun () ->
-              rejects (fun () -> Ops.graph_rewrite ~ctx:() wide (Pm.v []))));
+              rejects (fun () -> Ops.graph_rewrite ~ctx:() wide (Pm.v (fun () -> [])))));
     ]
 
 let substituting =
@@ -807,13 +809,13 @@ let substituting =
           let s = Ops.O.(three + four) in
           let visit =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule (P.op ~name:"c" Op.Const) (fun m ->
                     let c = m "c" in
                     if c == three || c == four then
                       fail "entered the replaced node"
                     else None);
-              ]
+              ])
           in
           equal uop
             Ops.O.(int 7 + int 2)
@@ -936,12 +938,12 @@ let walks =
           let one = Ops.int 1 and two = Ops.int 2 in
           let bpm =
             Pm.v
-              [
+              (fun () -> [
                 Pm.rule_ctx (P.v ~op:Op.Set.all ~name:"x" ()) (fun log m ->
                     let x = m "x" in
                     log := (label x ^ " bpm") :: !log;
                     if x == one then Some (Ops.int 10) else None);
-              ]
+              ])
           in
           let out =
             Ops.graph_rewrite ~walk:true ~bpm ~ctx:log
@@ -1018,7 +1020,7 @@ let call_bodies =
 
 let fold =
   Pm.v
-    [
+    (fun () -> [
       Pm.rule
         P.(P.cvar "x" + P.cvar "y")
         (fun m ->
@@ -1034,7 +1036,7 @@ let fold =
                (Ops.exec_alu Op.Mul Weak_int
                   [ Ops.value (m "x"); Ops.value (m "y") ])));
       Pm.rule P.(P.var "x" + int 0) (fun m -> Some (m "x"));
-    ]
+    ])
 
 type expr = X | K of int | Plus of expr * expr | Times of expr * expr
 

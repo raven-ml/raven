@@ -43,14 +43,14 @@ let int_shape s =
 
 let pm_number_params =
   pm
-    [
+    (fun () -> [
       rule_ctx (Upat.op Op.Param ~name:"x") (fun ctx m ->
           match arg (m "x") with
           | Param p when p.slot = -1 ->
               incr ctx;
               Some (replace (m "x") ~arg:(Param { p with slot = !ctx - 1 }))
           | _ -> None);
-    ]
+    ])
 
 let build_range_map sink =
   let ctx = Hashtbl.create 8 in
@@ -126,13 +126,13 @@ let expand_range ctx r =
 
 let expander =
   pm
-    [
+    (fun () -> [
       rule (Upat.op Op.Reduce ~name:"r") (fun m -> expand_reduce (m "r"));
       rule_ctx (Upat.op Op.Range ~name:"r") (fun ctx m ->
           expand_range ctx (m "r"));
       rule_ctx (Upat.op Op.Wmma ~name:"u") (fun ctx m ->
           expand_wmma ctx (m "u"));
-    ]
+    ])
   ++ lift Simplify.pm_flatten_range
   ++ lift Movement.mop_cleanup
 
@@ -188,7 +188,7 @@ let pm_wmma_add =
     match marg (m "permute") with Permute o -> o | _ -> assert false
   in
   pm
-    [
+    (fun () -> [
       rule (plus wmma) (fun m -> Some (wmma_accumulate (m "wmma") (m "add")));
       (* push permute/reshape to the other side of the add *)
       rule
@@ -204,12 +204,12 @@ let pm_wmma_add =
           let o = order m and w = m "wmma" in
           let add = reshape (permute (m "add") (Helpers.argsort o)) (shape w) in
           Some (permute (reshape O.(w + add) (shape (m "reshape"))) o));
-    ]
+    ])
 
 let pm_expand_broadcast =
   pm_wmma_add
   ++ pm
-       [
+       (fun () -> [
          rule
            (Upat.v
               ~op:
@@ -219,7 +219,7 @@ let pm_expand_broadcast =
            (fun m -> expand_broadcast (m "x"));
          rule (Upat.op Op.Wmma ~name:"b") (fun m ->
              broadcast_and_devec_wmma (m "b"));
-       ]
+       ])
 
 let do_devectorize b =
   let s = shape b in
@@ -261,7 +261,7 @@ let storage = ops [ Op.Param; Op.Buffer; Op.Alloc ]
 let devectorizer2 =
   Prepare.pm_mops
   ++ pm
-       [
+       (fun () -> [
          (* unpack broadcasting *)
          rule
            (Upat.v
@@ -316,7 +316,7 @@ let devectorizer2 =
                  let broadcast x n = stack (List.init n (fun _ -> x)) in
                  Some (List.fold_left broadcast x (List.rev sizes))
              | _ -> None);
-       ]
+       ])
 
 (* Reductions *)
 
@@ -447,7 +447,7 @@ let expand_horizontal_reduce r =
 (* an Invalid in a REDUCE source is that reduce's identity *)
 let pm_reduce_identity =
   pm
-    [
+    (fun () -> [
       rule
         (Upat.reduce ~allow_any_len:true ~name:"red" Symbolic.invalid_gate [])
         (fun m ->
@@ -456,12 +456,12 @@ let pm_reduce_identity =
             const_like x (identity_element (fst (reduce_arg red)) (dtype red))
           in
           Some (replace red ~src:(where (m "cond") x id :: srcs red)));
-    ]
+    ])
 
 let pm_reduce_local =
   lift pm_wmma_add
   ++ pm
-       [
+       (fun () -> [
          (* fix group for reduce *)
          rule (Upat.op Op.Reduce ~name:"x") (fun m ->
              fix_group_for_reduce (m "x"));
@@ -474,7 +474,7 @@ let pm_reduce_local =
              expand_horizontal_reduce (m "r"));
          rule (Upat.op Op.Sink ~name:"sink") (fun m ->
              merge_reduce_ends (m "sink"));
-       ]
+       ])
   ++ lift Symbolic.pm_clean_up_group_sink
 
 (* Loads and local buffers *)
@@ -489,7 +489,7 @@ let maybe_load u =
 
 let pm_add_loads =
   pm
-    [
+    (fun () -> [
       rule
         (Upat.v
            ~op:
@@ -505,7 +505,7 @@ let pm_add_loads =
           | p :: x :: rest ->
               Some (replace (m "x") ~src:(p :: maybe_load x :: rest))
           | _ -> None);
-    ]
+    ])
 
 let add_local_buffer slots x =
   let addrspace =
@@ -520,10 +520,10 @@ let add_local_buffer slots x =
 
 let pm_add_local_buffers =
   pm
-    [
+    (fun () -> [
       rule_ctx (Upat.op Op.Stage ~name:"x") (fun slots m ->
           add_local_buffer slots (m "x"));
-    ]
+    ])
   ++ lift Prepare.pm_mops
 
 (* float ALUs need a float operand *)
@@ -531,7 +531,7 @@ let pm_add_local_buffers =
    float polynomials and assert a float operand *)
 let pm_cast_float_alu =
   pm
-    [
+    (fun () -> [
       rule
         (Upat.v
            ~op:(ops [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Reciprocal ])
@@ -541,7 +541,7 @@ let pm_cast_float_alu =
           let u = m "u" and x = m "x" in
           if Dtype.equal (dtype x) (dtype u) then None
           else Some (replace u ~src:[ cast x (dtype u) ]));
-    ]
+    ])
 
 (* Barriers *)
 
@@ -597,13 +597,13 @@ let add_war_barrier end_ =
 
 let pm_implicit_barriers =
   pm
-    [
+    (fun () -> [
       rule (Upat.op Op.After ~name:"after") (fun m ->
           add_raw_barrier (m "after"));
       rule
         (Upat.v ~op:(ops [ Op.End; Op.Backedge ]) ~name:"end" ())
         (fun m -> add_war_barrier (m "end"));
-    ]
+    ])
 
 (* Lowering *)
 
@@ -818,7 +818,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
 (* inject IF/ENDIF. only needed if device doesn't support gated stores *)
 let pm_linearize_cleanups =
   Pattern_matcher.fold
-    [
+    (fun () -> [
       (* if statements are not allowed in graph *)
       rule
         (Upat.v ~op:(ops [ Op.If; Op.Endif ]) ())
@@ -837,15 +837,15 @@ let pm_linearize_cleanups =
           let st = replace u ~src:[ nth u 0; nth u 1 ] in
           let mif = v Op.If ~src:[ m "gate"; nth u 0 ] in
           Some (st, [ mif; st; v Op.Endif ~src:[ mif ] ]));
-    ]
+    ])
 
 let pm_alloc_to_buf =
   Pattern_matcher.fold
-    [
+    (fun () -> [
       rule (Upat.op Op.Alloc ~name:"x") (fun m ->
           let buf = replace (m "x") ~op:Op.Buffer in
           Some (buf, [ buf ]));
-    ]
+    ])
 
 (* requires lst be toposorted. like graph rewrite, but for lines *)
 let line_rewrite lst m ctx =
@@ -945,7 +945,7 @@ let pm_to_program =
   let sink = Upat.op Op.Sink ~name:"sink"
   and lin = Upat.op Op.Linear ~name:"lin" in
   pm
-    [
+    (fun () -> [
       rule (program [ sink ]) (fun m ->
           Some (do_linearize (m "prg") (m "sink")));
       rule
@@ -958,7 +958,7 @@ let pm_to_program =
         (program
            [ Upat.wild; Upat.op Op.Linear; Upat.op Op.Source ~name:"source" ])
         (fun ren m -> do_compile ren (m "prg") (m "source"));
-    ]
+    ])
 
 let do_to_program ?beam ast (ren : Renderer.t) =
   let prg =

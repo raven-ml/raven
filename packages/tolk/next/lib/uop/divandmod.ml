@@ -247,7 +247,7 @@ let floor_ops = Op.Set.of_list [ Op.Floordiv; Op.Floormod ]
 
 let div_and_mod_symbolic =
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* Fast inline rules *)
       (* (x // c + a) // d is (x + a * c) // (c * d) for d > 0, where
            nothing wraps *)
@@ -282,4 +282,4 @@ let div_and_mod_symbolic =
       (* Slow rules *)
       rule (Upat.v ~op:floor_ops ~dtype:[ Dtype.Weak_int ] ~name:"d" ())
         (fun m -> fold_divmod_general (m "d"));
-    ]
+    ])

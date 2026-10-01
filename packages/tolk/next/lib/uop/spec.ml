@@ -111,7 +111,7 @@ let memory = Upat.or_casted (pat [ Op.Index; Op.Shrink ] ~name:"uidx")
 
 let shared : t =
   Pattern_matcher.fold
-    [
+    (fun () -> [
       accept (pat [ Op.Sink ] ~dtype:[ Dtype.Void ]);
       accept (pat [ Op.Noop ]);
       accept (pat [ Op.Const ] ~src:[]);
@@ -269,14 +269,14 @@ let shared : t =
         (pat [ Op.Wmma ] ~src:[ Upat.wild; Upat.wild; Upat.wild ] ~name:"x")
         "x"
         (fun x -> match arg x with Wmma _ -> true | _ -> false);
-    ]
+    ])
 
 let is_device = Option.is_some
 
 let tensor : t =
   Pattern_matcher.append
     (Pattern_matcher.fold
-       [
+       (fun () -> [
          check
            (pat
               [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Reciprocal ]
@@ -377,13 +377,13 @@ let tensor : t =
                   pat [ Op.Source ];
                   pat [ Op.Binary ];
                 ]);
-       ])
+       ]))
     shared
 
 let program : t =
   Pattern_matcher.append
     (Pattern_matcher.fold
-       [
+       (fun () -> [
          (* Every elementwise operation on values is on scalars: renderers whose
             vectors are structs without arithmetic cannot write one on a vector
             (D58). A bitcast of memory views it, and a node without a shape is
@@ -430,13 +430,13 @@ let program : t =
               ~name:"s")
            "s"
            (fun s -> match arg s with String _ -> true | _ -> false);
-       ])
+       ]))
     shared
 
 let hcq : t =
   Pattern_matcher.append
     (Pattern_matcher.fold
-       [
+       (fun () -> [
          check
            (pat [ Op.Getaddr ] ~dtype:[ Dtype.Uint64 ] ~name:"x"
               ~src:
@@ -460,14 +460,14 @@ let hcq : t =
          accept
            (pat [ Op.Program ] ~dtype:[ Dtype.Void ]
               ~src:[ Upat.or_after (pat [ Op.Buffer; Op.Param ]) ]);
-       ])
+       ]))
     shared
 
 let full : t =
   Pattern_matcher.concat
     [
       Pattern_matcher.fold
-        [
+        (fun () -> [
           check
             (pat [ Op.End ]
                ~src:[ Upat.v ~dtype:[ Dtype.Void ] (); Upat.wild ]
@@ -480,7 +480,7 @@ let full : t =
                    (List.tl (src x)));
           accept (pat [ Op.After ] ~src:[ Upat.wild ] ~allow_any_len:true);
           accept (pat [ Op.Load; Op.Store ]);
-        ];
+        ]);
       tensor;
       program;
       hcq;
@@ -500,7 +500,7 @@ let rec loop_bound u =
 
 let kernel_graph : t =
   Pattern_matcher.fold
-    [
+    (fun () -> [
       accept (pat [ Op.Sink ] ~dtype:[ Dtype.Void ]);
       accept (pat [ Op.Const ] ~src:[]);
       accept (pat [ Op.Cast ] ~src:[ pat [ Op.Const ] ~src:[] ]);
@@ -559,6 +559,6 @@ let kernel_graph : t =
                            ]))
                  ();
              ]);
-    ]
+    ])
 
 let () = Private.set_spec full

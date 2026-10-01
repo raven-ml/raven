@@ -21,7 +21,7 @@ let permute_arg u =
 let mop_cleanup =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         (* Merge adjacent shrinks. *)
         rule
           (Upat.f
@@ -105,4 +105,4 @@ let mop_cleanup =
             if List.compare_length_with idxs (ndim idx1_arg) = 0 then
               Some (index (m "buf") [ index idx1_arg idxs ])
             else None);
-      ])
+      ]))

@@ -336,7 +336,7 @@ and pm_long_decomp =
      in
      let w ws i = List.nth ws i in
      Pattern_matcher.v
-       [
+       (fun () -> [
          (* The decomposition's own rewrite can mint bare constants: they commit
             at the long sibling's type. *)
          rule (Upat.v ~op:Op.Set.all ~name:"x" ()) (fun m ->
@@ -469,7 +469,7 @@ and pm_long_decomp =
                      (Lazy.force pm_long_decomp)
                  in
                  load (replace (reindex ~mul:2 idx w) ~tag:None) []));
-       ])
+       ]))
 
 (* Floats *)
 
@@ -680,7 +680,7 @@ and pm_float_decomp =
      in
      let floats = Dtype.floats in
      Pattern_matcher.v
-       [
+       (fun () -> [
          rule_ctx (Upat.v ~op:Op.Set.defines ~name:"x" ())
            (fun ((fr, _) as ctx) m ->
              let x = m "x" in
@@ -788,7 +788,7 @@ and pm_float_decomp =
              if Dtype.equal (dtype value) to_ && tagged ctx idx then
                Some (f2f_store (m "st") idx value fr to_)
              else None);
-       ])
+       ]))
 
 (* Passes *)
 
@@ -824,7 +824,7 @@ let do_dtype_decomps ctx sink =
 
 let pm_dtype_decomps =
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* Find the types to decompose. *)
       rule_ctx
         (Upat.v ~op:Op.Set.all
@@ -838,4 +838,4 @@ let pm_dtype_decomps =
           None);
       rule_ctx (Upat.op Op.Sink ~name:"sink") (fun ctx m ->
           Some (do_dtype_decomps ctx (m "sink")));
-    ]
+    ])

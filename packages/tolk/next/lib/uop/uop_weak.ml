@@ -82,7 +82,7 @@ let cast_weak_srcs c u =
 let pm_commit_weak =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         rule (Upat.v ~op:Op.Set.broadcastable ~name:"u" ()) (fun m ->
             commit_weak_srcs (m "u"));
         rule
@@ -99,7 +99,7 @@ let pm_commit_weak =
           (Upat.op Op.Cast ~name:"c"
              ~src:[ Upat.v ~op:Op.Set.alu ~dtype:Dtype.weaks ~name:"u" () ])
           (fun m -> cast_weak_srcs (m "c") (m "u"));
-      ])
+      ]))
 
 (* Consumers absorb the weak cast off their sources and default the constants
    they cannot derive; the operations that produce a type settle here. A weak
@@ -158,7 +158,7 @@ let lower_weak_node u =
 let pm_lower_weak =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         (* A guarded long index into small storage narrows: the values outside
            the guard are discarded. *)
         rule
@@ -205,7 +205,7 @@ let pm_lower_weak =
             | _ -> None);
         rule (Upat.v ~op:Op.Set.all ~name:"u" ()) (fun m ->
             lower_weak_node (m "u"));
-      ])
+      ]))
 
 (* Drop the cast off a committed constant where the consumer derives it anyway,
    so rules keyed on bare constants keep matching. The drop must change nothing
@@ -242,10 +242,10 @@ let uncast_const u =
 let pm_uncast_const =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         rule (Upat.v ~op:Op.Set.broadcastable ~name:"u" ()) (fun m ->
             uncast_const (m "u"));
-      ])
+      ]))
 
 (* Commit every remaining bare constant, keyed on the consumer: being bare is a
    property of the edge. *)
@@ -269,7 +269,7 @@ let cast_consts u =
 let pm_cast_const =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         rule (Upat.v ~op:Op.Set.all ~name:"u" ~early_reject:[ Op.Const ] ())
           (fun m -> cast_consts (m "u"));
-      ])
+      ]))

@@ -1444,11 +1444,11 @@ let range_shrinking =
 let breaking =
   Renderer.v
     ~extra_matcher:
-      (Ops.Pattern_matcher.v
-         [
-           Ops.Pattern_matcher.rule (Ops.Upat.op Customi) (fun _ ->
-               Some (Ops.v Source ~arg:(String "x")));
-         ])
+      (Ops.Pattern_matcher.v (fun () ->
+           [
+             Ops.Pattern_matcher.rule (Ops.Upat.op Customi) (fun _ ->
+                 Some (Ops.v Source ~arg:(String "x")));
+           ]))
     (target "" "" "")
 
 let marker_kernel =
@@ -1981,7 +1981,7 @@ let diagnostics =
 (* Instruction lists *)
 
 let rule pat f = Ops.Pattern_matcher.rule pat f
-let matcher rules = Ops.Pattern_matcher.fold rules
+let matcher rules = Ops.Pattern_matcher.fold (fun () -> rules)
 let nothing = matcher []
 let lidx = Ops.special (Int 4) "lidx0"
 let gidx = Ops.special (Int 8) "gidx0"

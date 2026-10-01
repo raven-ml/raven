@@ -35,11 +35,11 @@ let flatten_range r =
 
 let pm_flatten_range =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.v ~op:(Op.Set.of_list [ Op.Reduce; Op.End ]) ~name:"r" ())
         (fun m -> flatten_range (m "r"));
-    ]
+    ])
 
 (* Index and range arithmetic uses floor division and remainder until the late
    rewrites. *)
@@ -143,7 +143,7 @@ let do_substitute ctx x sub =
 
 let pm_simplify_ranges =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.v ~op:(Op.Set.of_list [ Op.End; Op.Reduce ]) ~name:"u" ())
         (fun m -> simplify_merge_adjacent (m "u"));
@@ -158,7 +158,7 @@ let pm_simplify_ranges =
           None);
       rule_ctx (Upat.op Op.Sink ~name:"x") (fun ctx m ->
           do_substitute ctx (m "x") (fun r c -> replace r ~src:[ c ]));
-    ]
+    ])
 
 let mark_range_mod ctx r c =
   (* A range that is not looped over cannot be split. *)
@@ -181,7 +181,7 @@ let split k v =
 
 let pm_split_ranges =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx
         Upat.O.(Upat.op Op.Range ~name:"r" % Upat.cvar "c")
         (fun ctx m ->
@@ -189,7 +189,7 @@ let pm_split_ranges =
           None);
       rule_ctx (Upat.op Op.Sink ~name:"x") (fun ctx m ->
           do_substitute ctx (m "x") split);
-    ]
+    ])
 
 (* Reductions *)
 
@@ -221,10 +221,10 @@ let reduce_unparented red =
 
 let pm_reduce_unparented =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule (Upat.op Op.Reduce ~name:"red") (fun m ->
           reduce_unparented (m "red"));
-    ]
+    ])
 
 (* The sum of [value] over the part of [r] within [lower, upper). A float sum of
    no terms is 0 whatever the value, where 0 times an infinity is NaN. *)
@@ -264,7 +264,7 @@ let pm_reduce_collapse =
     [
       pm_reduce_unparented;
       Pattern_matcher.v
-        [
+        (fun () -> [
           (* Lift x + y out of a reduction on a comparison. *)
           rule
             Upat.O.(var "x" + var "y" < var "c")
@@ -330,7 +330,7 @@ let pm_reduce_collapse =
               var ~dtype:(Dtype.Bool :: Dtype.Weak_int :: Dtype.ints) "x"
               * Upat.f (var ~dtype:[ Dtype.Bool ] "gate") Op.Cast)
             (fun m -> Some (where (m "gate") (m "x") (int 0)));
-        ];
+        ]);
       Symbolic.symbolic;
     ]
 
@@ -340,7 +340,7 @@ let pm_reduce_load_collapse =
     [
       pm_reduce_collapse;
       Pattern_matcher.v
-        [
+        (fun () -> [
           (* Lift x + y out of a reduction on an inequality, where no cast
              narrows. *)
           rule
@@ -368,7 +368,7 @@ let pm_reduce_load_collapse =
               let idx = cast (m "idx") (dtype r) in
               let v = O.((idx >= int 0) land (idx < nth r 0)) in
               Some (where v (substitute expr [ (r, valid idx v) ]) (int 0)));
-        ];
+        ]);
     ]
 
 let reduce_collapse ?(pm = pm_reduce_collapse) red u =
@@ -421,13 +421,13 @@ let pm_reduce_simplify =
     [
       pm_reduce_unparented;
       Pattern_matcher.v
-        [
+        (fun () -> [
           rule
             (Upat.op Op.Reduce ~name:"red" ~allow_any_len:true
                ~arg:(Reduce { op = Op.Add; num_axes = 0 })
                ~src:[ Upat.var "u" ])
             (fun m -> reduce_collapse (m "red") (m "u"));
-        ];
+        ]);
     ]
 
 let no_load u = not (op_in_backward_slice_with_self u [ Op.Index ])
@@ -435,7 +435,7 @@ let no_load u = not (op_in_backward_slice_with_self u [ Op.Index ])
 (* Remove a reduction on a load, from indexing a tensor with another. *)
 let pm_load_collapse =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.op Op.Reduce ~name:"red"
            ~arg:(Reduce { op = Op.Add; num_axes = 0 })
@@ -450,4 +450,4 @@ let pm_load_collapse =
           let x = m "x" and y = m "y" and c = m "c" in
           if no_load y && no_load c && not (no_load x) then Some O.(x < c - y)
           else None);
-    ]
+    ])

@@ -105,7 +105,7 @@ let mop_index r idx =
 let pm_mops =
   let movement = Upat.v ~op:Op.Set.movement ~name:"r" () in
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule (Upat.f movement Op.Index ~allow_any_len:true ~name:"idx") (fun m ->
           mop_index (m "r") (m "idx"));
       (* Movements and indices move after the effects they are ordered after. *)
@@ -122,7 +122,7 @@ let pm_mops =
       rule (Upat.end_ ~name:"a" ~allow_any_len:true movement []) (fun m ->
           let a = m "a" in
           Some (replace a ~src:(nth (m "r") 0 :: List.tl (src a))));
-    ]
+    ])
 
 (* Cleanups *)
 
@@ -419,18 +419,18 @@ let materialize_cross_device_src dest src =
 
 let pm_inline_calls =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule (Upat.op Op.Call ~name:"c") (fun m -> resolve_function (m "c"));
       rule
         (Upat.op Op.After ~allow_any_len:true
            ~src:[ Upat.var "r"; Upat.op Op.Sink ~name:"t" ])
         (fun m -> resolve_returned_after (m "r") (m "t"));
-    ]
+    ])
 
 let pm_disk_copy =
   let movement = Upat.v ~op:Op.Set.movement ~name:"x" () in
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* A disk copy reads its source without materialising its movements. *)
       rule
         (Upat.f (Upat.f movement Op.Stage) Op.Copy ~name:"copy")
@@ -446,14 +446,14 @@ let pm_disk_copy =
           else
             let copy = replace (m "copy") ~src:[ nth x 0 ] in
             Some (replace x ~src:(copy :: List.tl (src x))));
-    ]
+    ])
 
 let earliest_rewrites =
   let var = Upat.var in
   let buf_store_src = Upat.store (var "buf") [ var "src" ] in
   Pattern_matcher.append Movement.mop_cleanup
     (Pattern_matcher.v
-       [
+       (fun () -> [
          (* Allreduces are resolved bottom up. *)
          rule
            (Upat.op Op.Allreduce ~name:"red" ~src:[ var "buf" ])
@@ -584,7 +584,7 @@ let earliest_rewrites =
                List.filter (fun u -> op u <> Op.Noop) (List.tl (src s))
              in
              Some (replace s ~src:(nth s 0 :: List.map walk_mop kept)));
-       ])
+       ]))
 
 let prepare_rangeify sink =
   let tsink =
@@ -643,7 +643,7 @@ let pm_contiguous_view_offset =
   let var = Upat.var in
   let first b c = Some (index (rtag b) [ c ]) in
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx
         (Upat.f
            (Upat.op Op.Bitcast ~name:"b")
@@ -660,7 +660,7 @@ let pm_contiguous_view_offset =
         (Upat.op Op.Index ~src:[ var "b"; Upat.cvar "c" ])
         (fun ctx m ->
           if Sint.equal (numel ctx) (Int 1) then first (m "b") (m "c") else None);
-    ]
+    ])
 
 let contiguous_view u =
   let idx = index (flatten u) [ range (numel u) [ 0 ] ] in

@@ -16,11 +16,11 @@ let simplify_valid_load buf start_idx valid =
 
 let indexing_simplify =
   Pattern_matcher.v
-    [
+    (fun () -> [
       Pattern_matcher.rule
         (Upat.op Op.Index ~src:[ Upat.var "buf"; Symbolic.invalid_gate ])
         (fun m -> simplify_valid_load (m "buf") (m "x") (m "cond"));
-    ]
+    ])
 
 (* Memory coalescing *)
 

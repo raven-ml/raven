@@ -58,13 +58,13 @@ let cleanup_dead_axes b =
 
 let pm_gate_substitute =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx (Upat.v ~op:Op.Set.all ~name:"b" ()) (fun ctx m ->
           let rs = ranges (m "b") in
           if Tbl.to_seq_keys ctx |> Seq.exists (fun r -> Nodes.mem r rs) then
             None
           else raise Bottom_up_gate);
-    ]
+    ])
 
 (* A buffer stored only to be read through movements is removed: the indices of
    the read are expressed in terms of the stored value's. *)
@@ -151,7 +151,7 @@ let after_all_invalid after =
 let pm_const_buffer_folding =
   Pattern_matcher.append (with_ctx Prepare.pm_mops)
     (Pattern_matcher.v
-       [
+       (fun () -> [
          rule (Upat.op Op.Stage ~name:"b") (fun m -> cleanup_dead_axes (m "b"));
          (* A stage of an index by the stage's own ranges is the storage. *)
          rule
@@ -188,11 +188,11 @@ let pm_const_buffer_folding =
              if Option.is_none (device s) then
                Some (replace idx ~src:(s :: List.tl (src idx)))
              else None);
-       ])
+       ]))
 
 let pm_remove_bufferize =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.f
            (Upat.f (var "src") Op.Stage ~allow_any_len:true ~name:"buf")
@@ -203,7 +203,7 @@ let pm_remove_bufferize =
       rule
         (Upat.op Op.End ~allow_any_len:true ~src:[ Upat.op Op.Noop ~name:"x" ])
         (fun m -> Some (m "x"));
-    ]
+    ])
 
 let strip_zero_offset_shrink x =
   match op x with
@@ -228,10 +228,10 @@ let no_indexing_calls u =
 
 let pm_no_indexing_calls =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule (Upat.op Op.Call ~name:"u") (fun m ->
           Some (no_indexing_calls (m "u")));
-    ]
+    ])
 
 let loop_range r = Axis_type.equal (axis_type r) Axis_type.Loop
 
@@ -240,7 +240,7 @@ let loop_range r = Axis_type.equal (axis_type r) Axis_type.Loop
    each trip, and stays. *)
 let pm_no_views =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.v
            ~op:(ops Op.[ Reshape; Shrink ])
@@ -262,7 +262,7 @@ let pm_no_views =
           let r = m "r" in
           if is_tagged r && loop_range r then Some (replace r ~tag:None)
           else None);
-    ]
+    ])
 
 module Bufs = Set.Make (struct
   type t = Ops.t
@@ -323,11 +323,11 @@ let limit_bufs ctx root =
 
 let pm_limit_bufs =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx
         (Upat.v ~op:(Op.Set.union Op.Set.binary Op.Set.ternary) ~name:"root" ())
         (fun ctx m -> limit_bufs ctx (m "root"));
-    ]
+    ])
 
 (* Buffers *)
 
@@ -413,11 +413,11 @@ let pm_add_buffers =
     [
       with_ctx Prepare.pm_mops;
       Pattern_matcher.v
-        [
+        (fun () -> [
           rule (Upat.op Op.Stage ~name:"x") (fun m -> flatten_bufferize (m "x"));
-        ];
+        ]);
       Pattern_matcher.v
-        [
+        (fun () -> [
           rule_ctx
             (Upat.op Op.Stage ~name:"x" ~src:[ Upat.wild; Upat.var "idx" ])
             (fun ctx m -> bufferize_to_store ctx (m "x") (m "idx"));
@@ -459,20 +459,20 @@ let pm_add_buffers =
             (fun _ -> Some (v Op.Noop));
           rule (Upat.op Op.After ~name:"x") (fun m ->
               remove_noop_afters (m "x"));
-        ];
+        ]);
     ]
 
 (* Scalar parameters keep their identity across the call boundary. *)
 let pm_add_param_range_tags =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.v ~op:(ops Op.[ Param; Range ]) ~name:"x" ())
         (fun m ->
           let x = m "x" in
           if op x = Op.Param && addrspace x = Some Dtype.Alu then None
           else Some (rtag ~tag:(Tag.Tuple []) x));
-    ]
+    ])
 
 (* Kernels *)
 
@@ -552,7 +552,7 @@ let check_buf_states x =
 
 let to_define_global =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx (Upat.op Op.Store ~name:"x") (fun _ m ->
           check_buf_states (m "x");
           None);
@@ -583,7 +583,7 @@ let to_define_global =
           Some (replace b ~arg:(Bufferize { (opts b) with device = None })));
       rule_ctx (Upat.op Op.Range ~name:"r") (fun ctx m ->
           renumber_range ctx (m "r"));
-    ]
+    ])
 
 let split_store x =
   (* Open device ranges are bound per device at launch. A loop around a call
@@ -610,11 +610,11 @@ let split_store x =
 
 let split_kernels =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.v ~op:(ops Op.[ Store; End ]) ~name:"x" ())
         (fun m -> split_store (m "x"));
-    ]
+    ])
 
 let get_kernel_graph tsink =
   let setting = Helpers.Context_var.value in

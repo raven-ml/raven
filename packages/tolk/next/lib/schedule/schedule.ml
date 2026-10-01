@@ -179,7 +179,7 @@ let create_schedule sched_sink =
 (* A linear in a linear is inlined into it. *)
 let pm_flatten_linear =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule (Upat.op Op.Linear ~name:"lin" ~early_reject:[ Op.Linear ]) (fun m ->
           let lin = m "lin" in
           Some
@@ -188,7 +188,7 @@ let pm_flatten_linear =
                  (List.concat_map
                     (fun c -> if op c = Op.Linear then src c else [ c ])
                     (src lin))));
-    ]
+    ])
 
 (* Parameters and call-local storage *)
 
@@ -215,7 +215,7 @@ let create_new_buffer (buffers, args) b =
 
 let pm_post_sched_cache =
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* Positional arguments are resolved outside kernel bodies; free variables
          have slot -1. *)
       rule_ctx (Upat.op Op.Param ~name:"x") (fun (_, args) m ->
@@ -224,7 +224,7 @@ let pm_post_sched_cache =
       (* Call-local storage is bound to new buffers for this invocation. *)
       rule_ctx (Upat.op Op.Alloc ~name:"b") (fun ctx m ->
           Some (create_new_buffer ctx (m "b")));
-    ]
+    ])
 
 (* Nested linear calls are lexical scopes: their positional parameters shadow
    the enclosing scope, while calls without scalar arguments, such as a
@@ -273,12 +273,12 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
 let pm_resolve_linear_call =
   Pattern_matcher.append
     (Pattern_matcher.v
-       [
+       (fun () -> [
          rule
            (Upat.op Op.Call ~name:"linear_call" ~allow_any_len:true
               ~src:[ Upat.op Op.Linear ])
            (fun m -> Some (resolve_linear_call (m "linear_call")));
-       ])
+       ]))
     pm_flatten_linear
 
 (* Scheduling calls *)
@@ -325,10 +325,10 @@ let lower_sink_to_linear call =
 
 let pm_schedule =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule (Upat.op Op.Call ~name:"call") (fun m ->
           lower_sink_to_linear (m "call"));
-    ]
+    ])
 
 (* Copies *)
 
@@ -382,7 +382,7 @@ let pm_copy_from_store =
     Upat.op Op.Call ~name:"call" ~allow_any_len:true ~src:[ Upat.sink [ body ] ]
   in
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.op Op.Call ~name:"call"
            ~src:[ Upat.op Op.Sink ~name:"ast"; var "dst"; var "src" ])
@@ -409,7 +409,7 @@ let pm_copy_from_store =
         (fun m ->
           assert_all_same_devices (m "ast");
           None);
-    ]
+    ])
 
 (* Callify: the tensor graph becomes a call, with its state scoped *)
 
@@ -481,7 +481,7 @@ let is_store_after u =
    normalisation belongs here. *)
 let pm_callify_ctx_collect =
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* Movements and bitcasts of a buffer that collapse to a contiguous range
          are a shrink of it. *)
       rule_ctx
@@ -506,7 +506,7 @@ let pm_callify_ctx_collect =
           let u = m "u" in
           if is_store_after u then ctx.stores <- u :: ctx.stores;
           None);
-    ]
+    ])
 
 (* Call-local storage gets slots of its own scope, so that equal calls hash
    alike for the schedule cache. Fresh slots count up from 0; negative slots are
@@ -529,12 +529,12 @@ let rec canonicalize_call_body c =
 and pm_canonicalize_alloc =
   lazy
     (Pattern_matcher.v
-       [
+       (fun () -> [
          rule (Upat.op Op.Call ~name:"c") (fun m ->
              Some (canonicalize_call_body (m "c")));
          rule_ctx (Upat.op Op.Alloc ~name:"b") (fun ctx m ->
              canonicalize_alloc ctx (m "b"));
-       ])
+       ]))
 
 let replace_input_buffer ctx b =
   ctx.replacements <- b :: ctx.replacements;
@@ -542,7 +542,7 @@ let replace_input_buffer ctx b =
 
 let pm_replace_buf =
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* Global buffers become parameters, which normalises the cache key;
          variables are scalar parameters and do not match. *)
       rule_ctx (Upat.op Op.Buffer ~name:"b") (fun ctx m ->
@@ -562,7 +562,7 @@ let pm_replace_buf =
       rule_ctx (Upat.op Op.Param ~name:"b") (fun ctx m ->
           let b = m "b" in
           if is_bound_var b then Some (replace_input_buffer ctx b) else None);
-    ]
+    ])
 
 let transform_to_call big_sink =
   if setting Helpers.spec <> 0 then Spec.type_verify Spec.tensor big_sink;

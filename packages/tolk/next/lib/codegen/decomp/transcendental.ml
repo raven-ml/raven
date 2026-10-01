@@ -489,4 +489,4 @@ let patterns ~force ops =
   let transcendentals =
     [ (Op.Exp2, xexp2); (Log2, xlog2); (Sin, fun d -> xsin d) ]
   in
-  Pattern_matcher.v (List.concat_map decompose transcendentals @ sqrt)
+  Pattern_matcher.v (fun () -> List.concat_map decompose transcendentals @ sqrt)

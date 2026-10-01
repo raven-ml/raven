@@ -132,7 +132,7 @@ let renderer =
     | _ -> None
   in
   fold
-    [
+    (fun () -> [
       rule (x Op.Param) (named ~prefix:"p");
       rule
         (xs (Op.Set.of_list [ Op.Buffer; Op.Alloc ]))
@@ -197,7 +197,7 @@ let renderer =
           Some
             ("{" ^ String.concat "," (List.map (r ctx) (Ops.src (m "x"))) ^ "}"));
       rule (xs Op.Set.all) (fun m -> Some (to_string pp (m "x")));
-    ]
+    ])
 
 let rec render ?(simplify = true) u =
   let s = if simplify then Ops.simplify u else u in

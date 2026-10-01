@@ -695,7 +695,7 @@ let minted sink =
   in
   let renumber =
     Pattern_matcher.v
-      [
+      (fun () -> [
         Pattern_matcher.rule (Upat.op ~name:"x" Op.Alloc) (fun m ->
             let x = m "x" in
             match arg x with
@@ -705,7 +705,7 @@ let minted sink =
                      ~arg:(Param { p with slot = List.assoc p.slot slots })
                      x)
             | _ -> None);
-      ]
+      ])
   in
   graph_rewrite ~walk:true ~ctx:() sink renumber
 

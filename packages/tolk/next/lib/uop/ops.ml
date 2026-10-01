@@ -4063,7 +4063,24 @@ module Pattern_matcher = struct
     declines : 'r -> t -> bool;
   }
 
-  type ('ctx, 'r) t = ('ctx, 'r) part list
+  (* A matcher builds its parts on its first rewrite, so that a program that
+     never rewrites keeps no rules in the heap, which every major collection
+     marks. Domains that race to the first rewrite each build the parts, and
+     all keep the first built. *)
+  type ('ctx, 'r) t = {
+    build : unit -> ('ctx, 'r) part list;
+    parts : ('ctx, 'r) part list option Atomic.t;
+  }
+
+  let make build = { build; parts = Atomic.make None }
+
+  let parts m =
+    match Atomic.get m.parts with
+    | Some p -> p
+    | None ->
+        let p = m.build () in
+        if Atomic.compare_and_set m.parts None (Some p) then p
+        else Option.get (Atomic.get m.parts)
 
   let op_count = List.length (Op.Set.to_list Op.Set.all)
 
@@ -4080,16 +4097,17 @@ module Pattern_matcher = struct
       rules;
     { by_op = Array.map List.rev by_op; declines }
 
-  let v rules = [ part ~declines:( == ) rules ]
-  let fold rules = [ part ~declines:(fun _ _ -> false) rules ]
-  let append m0 m1 = m0 @ m1
-  let concat ms = List.concat ms
+  let v rules = make (fun () -> [ part ~declines:( == ) (rules ()) ])
+  let fold rules = make (fun () -> [ part ~declines:(fun _ _ -> false) (rules ()) ])
+  let append m0 m1 = make (fun () -> parts m0 @ parts m1)
+  let concat ms = make (fun () -> List.concat_map parts ms)
 
   let with_ctx m =
     let ignore_ctx r = { r with fn = (fun _ m -> r.fn () m) } in
-    List.map
-      (fun p -> { p with by_op = Array.map (List.map ignore_ctx) p.by_op })
-      m
+    make (fun () ->
+        List.map
+          (fun p -> { p with by_op = Array.map (List.map ignore_ctx) p.by_op })
+          (parts m))
 
   let src_ops u =
     match u.src_ops_memo with
@@ -4121,7 +4139,7 @@ module Pattern_matcher = struct
             | Some x when not (p.declines x u) -> Some x
             | _ -> first_rule p rest)
     in
-    List.find_map (fun p -> first_rule p p.by_op.(Op.to_int u.op)) m
+    List.find_map (fun p -> first_rule p p.by_op.(Op.to_int u.op)) (parts m)
 end
 
 (* Rewriting *)
@@ -4286,10 +4304,10 @@ let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
 let pm_substitute : (t Tbl.t, t) Pattern_matcher.t =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         rule_ctx (Upat.v ~op:Op.Set.all ~name:"x" ()) (fun subs m ->
             Tbl.find_opt subs (m "x"));
-      ])
+      ]))
 
 let substitute ?extra_pm ?(walk = false) ?(enter_calls = false) u subs =
   let tbl = Tbl.create 16 in
@@ -4307,15 +4325,15 @@ let substitute ?extra_pm ?(walk = false) ?(enter_calls = false) u subs =
 let remove_all_tags =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         rule (Upat.v ~op:Op.Set.all ~name:"x" ()) (fun m ->
             let x = m "x" in
             if Option.is_none x.tag then None else Some (replace ~tag:None x));
-      ])
+      ]))
 
 let pm_drop_after =
   Pattern_matcher.(
-    v [ rule (Upat.op Op.After ~name:"a") (fun m -> Some (nth (m "a") 0)) ])
+    v (fun () -> [ rule (Upat.op Op.After ~name:"a") (fun m -> Some (nth (m "a") 0)) ]))
 
 let resolve_returned_after r effects =
   let target = unsharded_base r in
@@ -4451,11 +4469,11 @@ let unbound_outputs c =
 let pm_resolve_params : (t option array, t) Pattern_matcher.t =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         rule_ctx (Upat.op Op.Param ~name:"p") (fun params m ->
             let slot = (param_arg_of (m "p")).slot in
             if slot >= 0 then params.(slot) else None);
-      ])
+      ]))
 
 let call_with_outputs ?name ?(precompile = false) ?aux ?output_pos values args =
   let n = List.length args + List.length values in

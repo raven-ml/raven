@@ -251,7 +251,7 @@ let add_gpudims (r : Renderer.t) s =
 
 let pm_device_to_var =
   Pattern_matcher.v
-    [
+    (fun () -> [
       Pattern_matcher.rule (Upat.op Op.Range ~name:"r") (fun m ->
           let r = m "r" in
           if axis_type r = Axis_type.Device then
@@ -274,13 +274,13 @@ let pm_device_to_var =
                 (replace e
                    ~src:(body :: List.filter (fun s -> op s <> Op.Param) ends))
           | _ -> None);
-    ]
+    ])
 
 let pm_add_gpudims =
   Pattern_matcher.append
     (Pattern_matcher.v
-       [
+       (fun () -> [
          Pattern_matcher.rule_ctx (Upat.op Op.Sink ~name:"s") (fun r m ->
              add_gpudims r (m "s"));
-       ])
+       ]))
     (Pattern_matcher.with_ctx pm_device_to_var)

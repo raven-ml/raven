@@ -37,7 +37,7 @@ let gated_load l = Upat.load Upat.wild [ Upat.wild; l ] ~name:"l"
 let pm_move_gates_from_index =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         (* Two indices under one gate, as images index: this rule must come
            first, since the next ones would ungate only the first index. *)
         rule
@@ -76,4 +76,4 @@ let pm_move_gates_from_index =
                     (gated_load
                        (bitwise_not (var "gate" ~dtype:[ Dtype.Bool ]))))))
           move_where_load;
-      ])
+      ]))

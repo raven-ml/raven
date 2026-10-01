@@ -537,7 +537,7 @@ let pm_prep ~devices ~lower_and_compile =
   Pattern_matcher.concat
     [
       Pattern_matcher.v
-        [
+        (fun () -> [
           rule (Upat.op ~name:"call" Op.Call) (fun m ->
               unwrap_call devices (m "call"));
           rule
@@ -547,7 +547,7 @@ let pm_prep ~devices ~lower_and_compile =
             (fun m ->
               stage_copy ~devices ~lower_and_compile (m "call") (m "dst")
                 (m "src"));
-        ];
+        ]);
       Schedule.pm_flatten_linear;
     ]
 
@@ -1555,7 +1555,7 @@ let hcq_fence f =
 
 let pm_hcq_encode devices =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule (Upat.op ~name:"submit" ~allow_any_len:true Op.Custom_function)
         (fun m ->
           let s = m "submit" in
@@ -1582,12 +1582,12 @@ let pm_hcq_encode devices =
                       Some (buf_uop s, after (buf_uop s) deps)
                     else None)
                   (toposort root))));
-    ]
+    ])
 
 (* The words known at link leave the host program: link writes them. *)
 let pm_patches =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx (Upat.op ~name:"a" Op.After) (fun ctx m ->
           let a = m "a" in
           let links, rest =
@@ -1600,7 +1600,7 @@ let pm_patches =
             ctx := !ctx @ links;
             Some (after (nth a 0) rest)
           end);
-    ]
+    ])
 
 (* Lowering a batch *)
 
@@ -1615,7 +1615,7 @@ let bitcast_view x v b =
 
 let pm_views =
   Pattern_matcher.v
-    [
+    (fun () -> [
       (* A shrink of a shrink is one shrink. *)
       rule
         (Upat.f ~name:"s" ~allow_any_len:true
@@ -1643,11 +1643,11 @@ let pm_views =
           if List.length (shape (m "v")) = 1 then
             bitcast_view (m "x") (m "v") (m "b")
           else None);
-    ]
+    ])
 
 let pm_renumber =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule_ctx (Upat.op ~name:"u" Op.Range) (fun next m ->
           let u = m "u" in
           match arg u with
@@ -1664,7 +1664,7 @@ let pm_renumber =
               incr next;
               Some (replace u ~arg:(Param { p with slot = !next - 1 }))
           | _ -> None);
-    ]
+    ])
 
 let getaddr_device g =
   match arg g with
@@ -1686,7 +1686,7 @@ let lower_call ~devices call =
       (Pattern_matcher.with_ctx (pm_hcq_encode devices))
   in
   let body =
-    graph_rewrite ~ctx:lt_patches ~bpm:pm_patches body (Pattern_matcher.v [])
+    graph_rewrite ~ctx:lt_patches ~bpm:pm_patches body (Pattern_matcher.v (fun () -> []))
   in
   (* An address is its storage's and a byte offset: afters drop, since an
      address depends on nothing, and views share their storage's slot. *)
@@ -1882,7 +1882,7 @@ let lower_call ~devices call =
 
 let pm_encode devices =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.op ~name:"call" ~allow_any_len:true
            ~src:[ Upat.op Op.Sink ]
@@ -1893,7 +1893,7 @@ let pm_encode devices =
           | Call { aux = Some { nargs = 0; _ }; _ } ->
               Some (lower_call ~devices c)
           | _ -> None);
-    ]
+    ])
 
 (* Compiling *)
 
@@ -1923,7 +1923,7 @@ let hcq_compile ~devices ~lower_and_compile ~profile linear =
 (* A kernel that asks for no beam search asks for one of the setting's width. *)
 let pm_beam width =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.op ~name:"call" ~allow_any_len:true
            ~src:[ Upat.op ~name:"sink" Op.Sink ]
@@ -1936,7 +1936,7 @@ let pm_beam width =
               in
               Some (replace (m "call") ~src:(sink :: List.tl (src (m "call"))))
           | _ -> None);
-    ]
+    ])
 
 let compile_linear ?search ?profile ~devices linear =
   let profile =

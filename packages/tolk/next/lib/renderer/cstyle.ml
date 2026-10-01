@@ -186,7 +186,7 @@ let base_rewrite =
   let r = rule_ctx in
   let str p s = r p (fun _ _ -> Some s) in
   Pattern_matcher.fold
-    [
+    (fun () -> [
       (* local/reg buffers *)
       r (Upat.op ~name:"x" Op.Buffer) (fun ctx m ->
           Some (render_buffer ctx (m "x")));
@@ -391,7 +391,7 @@ let base_rewrite =
           | Code { code; _ } ->
               Some (format code (List.map (fun y -> ctx.%{y}) (src x)))
           | _ -> None);
-    ]
+    ])
 
 (* Non-native floats *)
 
@@ -407,7 +407,7 @@ let create_non_native_float_pats ?(casting = true) dts =
   let in_dts u = List.exists (Dtype.equal (dtype u)) dts in
   let x = Upat.var ~dtype:dts "x" and y = Upat.var ~dtype:dts "y" in
   Pattern_matcher.v
-    ([
+    (fun () -> [
        (* a weak CONST states no width and cannot be restated: commit it at the
           emulated dtype a sibling src states *)
        rule (Upat.v ~op:Op.Set.alu ~name:"x" ()) (fun m ->
@@ -452,7 +452,7 @@ let cast_float_to_bf16 x =
 (* manual bfloat16 casting patterns, which need no compiler intrinsics *)
 let pm_manual_bf16_cast =
   Pattern_matcher.v
-    [
+    (fun () -> [
       rule
         (Upat.op ~dtype:[ Dtype.Float32 ]
            ~src:[ Upat.var ~dtype:[ Dtype.Bfloat16 ] "x" ]
@@ -465,16 +465,16 @@ let pm_manual_bf16_cast =
            ~src:[ Upat.var ~dtype:[ Dtype.Float32 ] "x" ]
            Op.Cast)
         (fun m -> Some (cast_float_to_bf16 (m "x")));
-    ]
+    ])
 
 (* a bfloat16 stored as ushort renders its const as the bit pattern *)
 let pm_bf16_ushort_const =
   Pattern_matcher.fold
-    [
+    (fun () -> [
       rule (cast_of ~dtype:[ Dtype.Bfloat16 ] c) (fun m ->
           let bits = Dtype.to_storage_scalar Dtype.Bfloat16 (cval (m "c")) in
           Some (Format.asprintf "%au" Dtype.pp_const bits));
-    ]
+    ])
 
 let uops_to_dtypes uops =
   let dtypes u =
@@ -806,11 +806,11 @@ let clang_extra_matcher =
   Pattern_matcher.concat
     [
       Pattern_matcher.v
-        [
+        (fun () -> [
           rule
             (Upat.cast (Upat.var ~dtype:[ Dtype.Float64 ] "x") Dtype.Float16)
             (fun m -> Some (cast (cast (m "x") Dtype.Float32) Dtype.Float16));
-        ];
+        ]);
       create_non_native_float_pats [ Dtype.Bfloat16 ];
       pm_manual_bf16_cast;
     ]
@@ -881,7 +881,7 @@ let metal_lang =
     string_rewrite =
       Pattern_matcher.append
         (Pattern_matcher.fold
-           [
+           (fun () -> [
              rule_ctx (Upat.op ~name:"x" Op.Bitcast) (fun ctx m ->
                  let x = m "x" and l = ctx.lang in
                  if is_ptr (addrspace x) then None
@@ -892,7 +892,7 @@ let metal_lang =
                         (render_scalar l (dtype x))
                         (render_scalar l (dtype s))
                         ctx.%{s}));
-           ])
+           ]))
         base_rewrite;
   }
 
@@ -901,13 +901,13 @@ let metal_lang =
 let metal_extra_matcher =
   Pattern_matcher.append
     (Pattern_matcher.v
-       [
+       (fun () -> [
          rule
            (Upat.v
               ~op:(Op.Set.of_list Op.[ Sqrt; Exp2; Log2; Sin; Trunc ])
               ~dtype:[ Dtype.Bfloat16 ] ~name:"x" ())
            (fun m -> Some (cast (on_floats (m "x")) Dtype.Bfloat16));
-       ])
+       ]))
     pm_manual_bf16_cast
 
 let metal_wmma l (name, _, dtype_in, dtype_out, _) =
@@ -1038,7 +1038,7 @@ let cuda_lang =
     string_rewrite =
       Pattern_matcher.append
         (Pattern_matcher.fold
-           [
+           (fun () -> [
              rule_ctx (cast_of ~dtype:Dtype.fp8_ocp ~name:"x" c) (fun ctx m ->
                  match cval (m "c") with
                  | `Float v when Float.abs v = Float.infinity ->
@@ -1068,7 +1068,7 @@ let cuda_lang =
                         (render_scalar l (dtype x))
                         (render_scalar l (dtype s))
                         ctx.%{s}));
-           ])
+           ]))
         base_rewrite;
   }
 
@@ -1076,7 +1076,7 @@ let cuda_extra_matcher =
   Pattern_matcher.append
     (create_non_native_float_pats ~casting:false Dtype.fp8s)
     (Pattern_matcher.v
-       [
+       (fun () -> [
          rule
            (Upat.op ~dtype:Dtype.fp8s
               ~src:[ Upat.var ~dtype:Dtype.fp8s "x" ]
@@ -1085,7 +1085,7 @@ let cuda_extra_matcher =
              let x = m "x" and y = m "y" in
              if Dtype.equal (dtype x) (dtype y) then None
              else Some (cast (cast x Dtype.Float32) (dtype y)));
-       ])
+       ]))
 
 let cuda_vector_prefix l (dt, count) =
   let vec = render_dtype l dt ~sz:count ~addrspace:(Some Dtype.Reg)
@@ -1227,7 +1227,7 @@ let is_cdna4 arch = gpu arch = "gfx950"
 
 let cdna_rewrite =
   Pattern_matcher.fold
-    [
+    (fun () -> [
       rule_ctx (Upat.op ~name:"x" Op.Wmma) (fun ctx m ->
           let x = m "x" in
           match arg x with
@@ -1274,18 +1274,18 @@ let cdna_rewrite =
           Some
             (strf "__builtin_amdgcn_cvt_f32_%s((unsigned int)%s, 0)" kind
                ctx.%{nth (m "x") 0}));
-    ]
+    ])
 
 (* a load flagged nontemporal bypasses the caches (only used on global loads) *)
 let nontemporal_rewrite =
   Pattern_matcher.fold
-    [
+    (fun () -> [
       rule_ctx
         (Upat.op ~arg:(String "nontemporal") ~src:[ Upat.var "bidx" ] Op.Load)
         (fun ctx m ->
           Some
             (strf "__builtin_nontemporal_load(%s)" (render_ptr ctx (m "bidx"))));
-    ]
+    ])
 
 let hip_lang arch =
   let rewrite =
@@ -1337,7 +1337,7 @@ let hip_extra_matcher arch =
     ([
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
        Pattern_matcher.v
-         [
+         (fun () -> [
            rule (Upat.op ~dtype:[ Dtype.Float32 ] ~name:"x" Op.Wmma) (fun m ->
                match src (m "x") with
                | [ a; b; acc ]
@@ -1345,7 +1345,7 @@ let hip_extra_matcher arch =
                    let u64 u = bitcast u Dtype.Uint64 in
                    Some (replace (m "x") ~src:[ u64 a; u64 b; acc ])
                | _ -> None);
-         ];
+         ]);
      ]
     @ if is_cdna4 arch then [] else [ pm_manual_bf16_cast ])
 

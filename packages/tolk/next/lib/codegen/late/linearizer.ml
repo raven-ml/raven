@@ -142,13 +142,13 @@ let cfg_context sink =
 let pm_add_control_flow =
   Pattern_matcher.(
     v
-      [
+      (fun () -> [
         rule_ctx (Upat.op Op.Range ~name:"x") (fun edges m ->
             let x = m "x" in
             Option.map
               (fun y -> replace ~src:(src x @ [ y ]) x)
               (Tbl.find_opt edges x));
-      ])
+      ]))
 
 (* Splitting ends *)
 
@@ -171,4 +171,4 @@ let do_split_ends e =
 
 let pm_split_ends =
   Pattern_matcher.(
-    v [ rule (Upat.op Op.End ~name:"e") (fun m -> do_split_ends (m "e")) ])
+    v (fun () -> [ rule (Upat.op Op.End ~name:"e") (fun m -> do_split_ends (m "e")) ]))
