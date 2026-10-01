@@ -109,6 +109,23 @@ let mstack_fits x =
 
 let memory = Upat.or_casted (pat [ Op.Index; Op.Shrink ] ~name:"uidx")
 
+(* Each argument of storage starts where its parameter in the body takes it to:
+   what is known of the argument's start implies what the parameter assumes,
+   which its vector accesses were merged for. *)
+let args_fit c =
+  let args = Array.of_list (src_without_body c) in
+  List.for_all
+    (fun u ->
+      match (op u, arg u) with
+      | Op.Param, Param p
+        when p.addrspace = Some Dtype.Global
+             && p.slot >= 0
+             && p.slot < Array.length args ->
+          let align, phase = storage_phase args.(p.slot) in
+          align >= p.align && phase mod p.align = p.phase
+      | _ -> true)
+    (toposort ~enter_calls:false (body c))
+
 let shared : t =
   Pattern_matcher.fold
     (fun () -> [
@@ -241,7 +258,7 @@ let shared : t =
            ~src:[ Upat.v ~op:opaque_call_bodies () ]
            ~allow_any_len:true ~name:"x")
         "x"
-        (fun x -> match arg x with Call _ -> true | _ -> false);
+        (fun x -> match arg x with Call _ -> args_fit x | _ -> false);
       accept (pat [ Op.Barrier ] ~dtype:[ Dtype.Void ]);
       accept (pat [ Op.Ins ]);
       check (Upat.load memory []) "uidx" validate_index;
@@ -534,10 +551,11 @@ let kernel_graph : t =
         (pat [ Op.Add; Op.Mul ] ~dtype:[ Dtype.Weak_int ] ~name:"x")
         "x"
         (fun x -> List.for_all loop_bound (src x));
-      accept
+      check
         (pat [ Op.Call ]
            ~src:[ Upat.v ~op:opaque_call_bodies () ]
-           ~allow_any_len:true);
+           ~allow_any_len:true ~name:"x")
+        "x" args_fit;
       accept
         (pat [ Op.After ] ~allow_any_len:true
            ~src:

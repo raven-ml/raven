@@ -380,7 +380,43 @@ let loops =
                Ops.O.(var ~dtype:Weak_int "n" 0 8 + int 1)));
     ]
 
+(* Arguments against their parameters (D54) *)
+
+(* A call, in a loop of three trips, of a body adding one to its parameter of
+   four floats, whose start is known to [align] bytes, on rows [stride] floats
+   apart. *)
+let call_on_rows ~align stride =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let rows = Ops.param ~shape:[ Int ((2 * stride) + 4) ] 1 Float32 in
+  let start = Ops.O.(r * int stride) in
+  let row = Ops.shrink rows [ Some (Sym start, Sym Ops.O.(start + int 4)) ] in
+  let p = Ops.param ~shape:[ Int 4 ] ~align 0 Float32 in
+  let k = Ops.range (Int 4) [ 0 ] in
+  let one = Ops.float ~dtype:Float32 1. in
+  let body =
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [ Ops.end_ (Ops.store (Ops.index p [ k ]) (Ops.add (Ops.index p [ k ]) one)) [ k ] ]
+  in
+  Ops.call ~precompile:true body [ row ]
+
+let arguments =
+  group "kernel_graph › arguments against their parameters (D54)"
+    [
+      test "refuses a row a float apart for a parameter that starts on 16 bytes"
+        (fun () ->
+          equal verdict (Some false)
+            (judge Spec.kernel_graph (call_on_rows ~align:16 5)));
+      test "accepts a row four floats apart for a parameter that starts on 16 bytes"
+        (fun () ->
+          equal verdict (Some true)
+            (judge Spec.kernel_graph (call_on_rows ~align:16 4)));
+      test "accepts a row a float apart for a parameter that starts on 4 bytes"
+        (fun () ->
+          equal verdict (Some true)
+            (judge Spec.kernel_graph (call_on_rows ~align:4 5)));
+    ]
+
 let () =
   exit
     (run "Tolk_next.Spec"
-       [ verdicts; bounds; type_verify; vectors; construction; loops ])
+       [ verdicts; bounds; type_verify; vectors; construction; loops; arguments ])
