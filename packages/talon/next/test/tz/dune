@@ -1,0 +1,12 @@
+(test
+ (name test_tz)
+ (package talon)
+ (libraries windtrap talon.next unix)
+ (deps
+  transitions.txt
+  (source_tree zoneinfo)
+  (source_tree malformed))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_tz.ml test_tz.ml.corrected))))

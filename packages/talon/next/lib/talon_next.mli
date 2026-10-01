@@ -7,7 +7,8 @@
 
     {!Type}s say what columns store and {!Kind}s what their cells read as in
     OCaml. {!Binary}, {!Decimal}, {!Time} and {!Record} are the OCaml values
-    that cells read as, and {!Schema}s name and type a table's columns. *)
+    that cells read as, {!Schema}s name and type a table's columns, and {!Tz}
+    reads the time zone database that zoned operations take. *)
 
 module Binary = Binary
 module Decimal = Decimal
@@ -508,3 +509,6 @@ module Schema : sig
       quoted as {!Type.pp} quotes field names, and types format with {!Type.pp}.
       The empty schema formats as nothing. *)
 end
+
+module Error = Error
+module Tz = Tz

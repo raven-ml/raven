@@ -1,0 +1,4 @@
+(test
+ (name test_error)
+ (package talon)
+ (libraries windtrap talon.next))

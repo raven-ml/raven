@@ -10,3 +10,5 @@ module Kind = Kind
 module Record = Record
 module Type = Type
 module Schema = Schema
+module Error = Error
+module Tz = Tz
