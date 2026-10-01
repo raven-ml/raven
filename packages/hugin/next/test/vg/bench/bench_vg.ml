@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* The renderers' budgets: 100,000 stamped markers and a stroked polyline of a
-   million points on a 640 by 480 page at density 1, and the scatter of the
-   first release's budget, 100,000 dots on a 360 by 240 page, to PNG at density
-   2. *)
+   million points on a 640 by 480 page, at density 1 for raster output, and the
+   scatter of the first release's budget, 100,000 dots on a 360 by 240 page, to
+   PNG at density 2. *)
 
 open Hugin_next_gg
 open Hugin_next_vg
@@ -71,4 +71,23 @@ let raster =
           Hugin_next_vg_raster.png ~density:2. scatter);
     ]
 
-let () = Thumper.run "hugin_next_vg" [ raster ]
+let svg =
+  let render r () = Hugin_next_vg_svg.render r in
+  Thumper.group "svg"
+    [
+      Thumper.bench "100k stamps" (render stamps);
+      Thumper.bench "1M-point polyline" (render polyline);
+    ]
+
+let pdf =
+  let render r () = Hugin_next_vg_pdf.render r in
+  Thumper.group "pdf"
+    [
+      Thumper.bench "100k stamps" (render stamps);
+      Thumper.bench "1M-point polyline" (render polyline);
+    ]
+
+(* Twenty batches of the PDF polyline, half a second each, exceed thumper's
+   default deadline of ten seconds per case. *)
+let config = Thumper.Config.(default |> deadline 60.)
+let () = Thumper.run ~config "hugin_next_vg" [ raster; svg; pdf ]

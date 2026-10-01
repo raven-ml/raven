@@ -58,3 +58,26 @@
    (diff? golden/shapes.svg golden/shapes.svg.corrected)
    (diff? golden/strokes.svg golden/strokes.svg.corrected)
    (diff? golden/marks.svg golden/marks.svg.corrected))))
+
+(test
+ (name test_pdf)
+ (modules test_pdf)
+ (package hugin)
+ (libraries
+  hugin.next.gg
+  hugin.next.font
+  hugin.next.vg
+  hugin.next.vg.pdf
+  vg_corpus
+  nx
+  nx.io
+  windtrap)
+ (deps
+  (glob_files golden/*.pdf.txt))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_pdf.ml test_pdf.ml.corrected)
+   (diff? golden/shapes.pdf.txt golden/shapes.pdf.txt.corrected)
+   (diff? golden/strokes.pdf.txt golden/strokes.pdf.txt.corrected)
+   (diff? golden/marks.pdf.txt golden/marks.pdf.txt.corrected))))

@@ -5,6 +5,10 @@
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 
+pdf/100k-stamps	alloc_words	exact	7829075
+pdf/100k-stamps	wall_time	batch=1	n=20	9.934e-02	9.781e-02 9.785e-02 9.796e-02 9.807e-02 9.811e-02 9.833e-02 9.850e-02 9.869e-02 9.897e-02 9.925e-02 9.943e-02 9.957e-02 9.964e-02 9.974e-02 1.002e-01 1.003e-01 1.010e-01 1.019e-01 1.026e-01 1.039e-01
+pdf/1M-point-polyline	alloc_words	exact	49339188
+pdf/1M-point-polyline	wall_time	batch=1	n=20	5.808e-01	5.662e-01 5.667e-01 5.719e-01 5.719e-01 5.729e-01 5.731e-01 5.746e-01 5.764e-01 5.798e-01 5.808e-01 5.808e-01 5.812e-01 5.837e-01 6.024e-01 6.070e-01 6.108e-01 6.231e-01 6.272e-01 6.319e-01 6.506e-01
 raster/100k-coloured-stamps	alloc_words	exact	3426033
 raster/100k-coloured-stamps	wall_time	batch=1	n=20	5.028e-02	4.988e-02 4.992e-02 4.995e-02 4.997e-02 4.997e-02 5.009e-02 5.011e-02 5.012e-02 5.016e-02 5.027e-02 5.029e-02 5.037e-02 5.040e-02 5.049e-02 5.061e-02 5.073e-02 5.079e-02 5.083e-02 5.096e-02 5.131e-02
 raster/100k-dot-scatter-to-PNG	alloc_words	exact	2457061
@@ -13,3 +17,7 @@ raster/100k-stamps	alloc_words	exact	2126273
 raster/100k-stamps	wall_time	batch=1	n=20	5.013e-02	4.959e-02 4.975e-02 4.981e-02 4.982e-02 4.984e-02 4.986e-02 4.987e-02 4.988e-02 5.001e-02 5.002e-02 5.024e-02 5.027e-02 5.037e-02 5.050e-02 5.062e-02 5.081e-02 5.084e-02 5.116e-02 5.169e-02 5.191e-02
 raster/1M-point-polyline	alloc_words	exact	18789262
 raster/1M-point-polyline	wall_time	batch=1	n=20	1.911e-01	1.866e-01 1.866e-01 1.870e-01 1.873e-01 1.874e-01 1.875e-01 1.888e-01 1.903e-01 1.904e-01 1.911e-01 1.911e-01 1.914e-01 1.916e-01 1.918e-01 1.918e-01 1.924e-01 1.927e-01 1.933e-01 1.934e-01 1.938e-01
+svg/100k-stamps	alloc_words	exact	16734389
+svg/100k-stamps	wall_time	batch=1	n=20	2.669e-02	2.615e-02 2.639e-02 2.641e-02 2.650e-02 2.652e-02 2.655e-02 2.655e-02 2.656e-02 2.665e-02 2.665e-02 2.673e-02 2.673e-02 2.676e-02 2.677e-02 2.684e-02 2.691e-02 2.691e-02 2.719e-02 2.751e-02 2.831e-02
+svg/1M-point-polyline	alloc_words	exact	42598879
+svg/1M-point-polyline	wall_time	batch=1	n=20	1.464e-01	1.428e-01 1.443e-01 1.447e-01 1.448e-01 1.451e-01 1.452e-01 1.453e-01 1.458e-01 1.461e-01 1.463e-01 1.464e-01 1.469e-01 1.471e-01 1.472e-01 1.472e-01 1.485e-01 1.578e-01 1.611e-01 1.628e-01 1.820e-01

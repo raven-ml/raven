@@ -1,0 +1,359 @@
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 160 100] /Resources 5 0 R /Contents 4 0 R >>
+4 0 obj
+<< /Length 664 /Filter /FlateDecode >>
+stream
+1 0 0 -1 0 100 cm
+q
+1 1 1 rg
+0 0 m
+160 0 l
+160 100 l
+0 100 l
+h
+f
+Q
+q
+0.839 0.388 0.546 rg
+1 0 0 1 10 25 cm
+/X1 Do
+Q
+q
+0.857 0.389 0.445 rg
+1 0 0 1 16.25 30.753 cm
+/X1 Do
+Q
+q
+0.86 0.402 0.338 rg
+1 0 0 1 22.5 35.098 cm
+/X1 Do
+Q
+q
+0.846 0.425 0.22 rg
+1 0 0 1 28.75 36.97 cm
+/X1 Do
+Q
+q
+0.815 0.458 0.049 rg
+1 0 0 1 35 35.912 cm
+/X1 Do
+Q
+q
+0.768 0.496 0 rg
+1 0 0 1 41.25 32.182 cm
+/X1 Do
+Q
+q
+0.703 0.536 0 rg
+1 0 0 1 47.5 26.693 cm
+/X1 Do
+Q
+q
+0.622 0.574 0 rg
+1 0 0 1 53.75 20.791 cm
+/X1 Do
+Q
+q
+0.524 0.608 0.05 rg
+1 0 0 1 60 15.918 cm
+/X1 Do
+Q
+q
+0.404 0.636 0.228 rg
+1 0 0 1 66.25 13.27 cm
+/X1 Do
+Q
+q
+0.242 0.657 0.35 rg
+1 0 0 1 72.5 13.493 cm
+/X1 Do
+Q
+q
+0 0.669 0.462 rg
+1 0 0 1 78.75 16.534 cm
+/X1 Do
+Q
+q
+0 0.666 0.566 rg
+1 0 0 1 85 21.647 cm
+/X1 Do
+Q
+q
+0 0.655 0.65 rg
+1 0 0 1 91.25 27.581 cm
+/X1 Do
+Q
+q
+0 0.643 0.727 rg
+1 0 0 1 97.5 32.884 cm
+/X1 Do
+Q
+q
+0 0.628 0.81 rg
+1 0 0 1 103.75 36.256 cm
+/X1 Do
+Q
+q
+0 0.602 0.875 rg
+1 0 0 1 110 36.872 cm
+/X1 Do
+Q
+q
+0.268 0.57 0.908 rg
+1 0 0 1 116.25 34.582 cm
+/X1 Do
+Q
+q
+0.409 0.536 0.918 rg
+1 0 0 1 122.5 29.945 cm
+/X1 Do
+Q
+q
+0.517 0.503 0.905 rg
+1 0 0 1 128.75 24.098 cm
+/X1 Do
+Q
+q
+0.608 0.471 0.87 rg
+1 0 0 1 135 18.472 cm
+/X1 Do
+Q
+q
+0.684 0.443 0.814 rg
+1 0 0 1 141.25 14.444 cm
+/X1 Do
+Q
+q
+0.748 0.418 0.742 rg
+1 0 0 1 147.5 13 cm
+/X1 Do
+Q
+q
+0.798 0.4 0.657 rg
+1 0 0 1 153.75 14.495 cm
+/X1 Do
+Q
+q
+0.33333 w
+3 0 0 3 20 75 cm
+/X2 Do
+Q
+q
+0.2 w
+5 0 0 5 45 75 cm
+/X2 Do
+Q
+q
+0.125 w
+8 0 0 8 80 75 cm
+/X2 Do
+Q
+q
+1 0 0 RG
+1 0 0 1 120 75 cm
+/X4 Do
+Q
+q
+0 0 1 RG
+1 0 0 1 140 75 cm
+/X4 Do
+Q
+q
+0 0 0 rg
+BT
+/F1 11 Tf
+1 0 0 -1 10 55 Tm
+[<002E><00FB><00B8><00C0> 0.001 <00D8> -0.001 <0230><00A7> 0.001 <00ED><0093> -0.001 <0109><00F1><0230><0002> 68.359 <0082> 96.191 <01A4><0230><0083> 50.782 <0093> -0.001 <01A8><0230><0162> 25.391 <01A5><0164> -0.001 <0167>] TJ
+ET
+Q
+q
+0.6 0.1 0.1 rg
+BT
+/F2 9 Tf
+1 0 0 -1 100 95 Tm
+[<0010><00DE><00D1><00A7>] TJ
+ET
+Q
+q
+32 0 0 -24 120 29 cm
+/X5 Do
+Q
+
+endstream
+5 0 obj
+<< /Font << /F1 10 0 R /F2 11 0 R >> /XObject << /X1 6 0 R /X2 7 0 R /X3 8 0 R /X4 9 0 R /X5 13 0 R >> /ExtGState << /G1 << /Type /ExtGState /ca 0.7 /CA 0.7 >> >> >>
+6 0 obj
+<< /Length 92 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-4.25 -4.25 4.25 4.25] /Resources 5 0 R >>
+stream
+q
+2.5 0 m
+2.5 1.3807 1.3807 2.5 0 2.5 c
+-1.3807 2.5 -2.5 1.3807 -2.5 0 c
+-2.5 -1.3807 -1.3807 -2.5 0 -2.5 c
+1.3807 -2.5 2.5 -1.3807 2.5 0 c
+h
+f
+Q
+q
+1 1 1 RG
+0.75 w
+1 J
+1 j
+2.5 0 m
+2.5 1.3807 1.3807 2.5 0 2.5 c
+-1.3807 2.5 -2.5 1.3807 -2.5 0 c
+-2.5 -1.3807 -1.3807 -2.5 0 -2.5 c
+1.3807 -2.5 2.5 -1.3807 2.5 0 c
+h
+S
+Q
+
+endstream
+7 0 obj
+<< /Length 80 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-3 -3 3 3] /Resources 5 0 R >>
+stream
+q
+0.2 0.3 0.6 RG
+1 J
+1 j
+1 0 m
+1 0.55228 0.55228 1 0 1 c
+-0.55228 1 -1 0.55228 -1 0 c
+-1 -0.55228 -0.55228 -1 0 -1 c
+0.55228 -1 1 -0.55228 1 0 c
+h
+S
+Q
+
+endstream
+8 0 obj
+<< /Length 91 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-4.25 -4.25 4.25 4.25] /Resources 5 0 R /Group << /S /Transparency /I true >> >>
+stream
+q
+0 0 0 rg
+2.5 0 m
+2.5 1.3807 1.3807 2.5 0 2.5 c
+-1.3807 2.5 -2.5 1.3807 -2.5 0 c
+-2.5 -1.3807 -1.3807 -2.5 0 -2.5 c
+1.3807 -2.5 2.5 -1.3807 2.5 0 c
+h
+f
+Q
+q
+0.75 w
+1 J
+1 j
+2.5 0 m
+2.5 1.3807 1.3807 2.5 0 2.5 c
+-1.3807 2.5 -2.5 1.3807 -2.5 0 c
+-2.5 -1.3807 -1.3807 -2.5 0 -2.5 c
+1.3807 -2.5 2.5 -1.3807 2.5 0 c
+h
+S
+Q
+
+endstream
+9 0 obj
+<< /Length 26 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-4.25 -4.25 4.25 4.25] /Resources 5 0 R >>
+stream
+q
+/G1 gs
+/X3 Do
+Q
+
+endstream
+10 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /Inter-Regular /Encoding /Identity-H /DescendantFonts [16 0 R] /ToUnicode 17 0 R >>
+11 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /Inter-Bold /Encoding /Identity-H /DescendantFonts [20 0 R] /ToUnicode 21 0 R >>
+12 0 obj
+<< /Length 16 /Filter /FlateDecode /Type /XObject /Subtype /Image /Width 4 /Height 3 /ColorSpace /DeviceGray /BitsPerComponent 8 /Interpolate false >>
+stream
+ffffffffd7d7d7d7afafafaf
+endstream
+13 0 obj
+<< /Length 46 /Filter /FlateDecode /Type /XObject /Subtype /Image /Width 4 /Height 3 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Interpolate false /SMask 12 0 R >>
+stream
+001e3c32506e6482a096b4d2506e8c82a0beb4d2f0e60422a0bedcd2f00e0422
+40365472
+endstream
+14 0 obj
+<< /Length 39751 /Filter /FlateDecode /Length1 76884 >>
+stream <76884 bytes>
+15 0 obj
+<< /Type /FontDescriptor /FontName /Inter-Regular /Flags 4 /FontBBox [-738.77 -322.266 2583.008 1107.91] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 96 /FontFile2 14 0 R >>
+16 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Inter-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 15 0 R /DW 1000 /W [2 [689.941] 46 [743.164] 130 [689.941] 131 [985.352] 147 [561.523] 167 [612.305] 184 [613.281] 192 [242.188] 216 [590.82] 237 [376.465] 241 [527.832] 251 [591.309] 265 [818.359] 354 [630.859] 356 [609.863] 359 [593.262] 420 [288.086] 421 [288.086] 424 [288.086] 560 [281.25]] /CIDToGIDMap /Identity >>
+17 0 obj
+<< /Length 324 /Filter /FlateDecode >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+20 beginbfchar
+<0002> <0041>
+<002E> <0048>
+<0082> <0056>
+<0083> <0057>
+<0093> <0061>
+<00A7> <0064>
+<00B8> <0067>
+<00C0> <0069>
+<00D8> <006E>
+<00ED> <0072>
+<00F1> <0073>
+<00FB> <0075>
+<0109> <0077>
+<0162> <0030>
+<0164> <0032>
+<0167> <0035>
+<01A4> <002C>
+<01A5> <002E>
+<01A8> <003A>
+<0230> <0020>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+18 0 obj
+<< /Length 40637 /Filter /FlateDecode /Length1 77864 >>
+stream <77864 bytes>
+19 0 obj
+<< /Type /FontDescriptor /FontName /Inter-Bold /Flags 4 /FontBBox [-787.598 -334.473 2583.008 1112.793] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 169 /FontFile2 18 0 R >>
+20 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Inter-Bold /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 19 0 R /DW 1000 /W [16 [661.621] 167 [630.371] 209 [270.996] 222 [613.281]] /CIDToGIDMap /Identity >>
+21 0 obj
+<< /Length 241 /Filter /FlateDecode >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+4 beginbfchar
+<0010> <0042>
+<00A7> <0064>
+<00D1> <006C>
+<00DE> <006F>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream

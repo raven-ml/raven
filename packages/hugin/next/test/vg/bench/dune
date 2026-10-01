@@ -1,6 +1,12 @@
 (executable
  (name bench_vg)
- (libraries hugin.next.gg hugin.next.vg hugin.next.vg.raster thumper))
+ (libraries
+  hugin.next.gg
+  hugin.next.vg
+  hugin.next.vg.raster
+  hugin.next.vg.svg
+  hugin.next.vg.pdf
+  thumper))
 
 ; Not attached to runtest on purpose: run with
 ; `dune build --profile release @packages/hugin/next/test/vg/bench/bench`.
