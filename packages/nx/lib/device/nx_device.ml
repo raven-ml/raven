@@ -179,8 +179,11 @@ and base = {
 
 (* The host memory a staged buffer stands in for on its device, and what the
    device's work does with it: a submission copies [original] in before the
-   work, and back once the work is done when it writes it. *)
-and stage = { original : buffer; access : access }
+   work, and back once the work is done when it writes it. [busy] is held by the
+   submission that uses it from before its copy in until after its copy back, so
+   that another domain's run of the same work waits; submissions take the stages
+   they touch in the order of their [id]. *)
+and stage = { original : buffer; access : access; id : int; busy : Mutex.t }
 
 (* What must stay reachable for as long as a base does. Host memory is the
    bigarray that holds it from its first byte: views of it join that bigarray's
@@ -2213,6 +2216,7 @@ module Buffer = struct
       else borrow_peer d r
 
   let is_staged b = Option.is_some (stage_of b.base)
+  let stage_ids = Atomic.make 0
 
   (* Memory of this machine's host that [d] does not map is staged: under
      [aligned_from] bytes, it is the memory nx puts off a page, which no device
@@ -2230,8 +2234,15 @@ module Buffer = struct
                (nbytes b) d.name why)
         else
           Ok
-            (allocated ~stage:{ original = b; access } ~memory:Pinned d b.dtype
-               b.length)
+            (allocated
+               ~stage:
+                 {
+                   original = b;
+                   access;
+                   id = Atomic.fetch_and_add stage_ids 1;
+                   busy = Mutex.create ();
+                 }
+               ~memory:Pinned d b.dtype b.length)
 
   let view b ~offset s n =
     let fail fmt =
@@ -3340,7 +3351,7 @@ let rec stamp_touches ds values = function
       stamp_reach ds values b.base;
       stamp_touches ds values rest
 
-let submit ds ~touches f =
+let submit_taken ds ~touches f =
   let invalid fmt = Printf.ksprintf invalid_arg ("Nx_device.submit: " ^^ fmt) in
   let ds = List.sort_uniq by_id ds in
   if ds = [] then invalid "no device";
@@ -3358,71 +3369,95 @@ let submit ds ~touches f =
     List.fold_left (fun l (b : buffer) -> add b.base.owner l) ds touches
   in
   let taken = List.fold_left (fun l d -> add d l) on reached in
-  let staged = staged_of touches in
-  let r =
-    with_devices taken @@ fun () ->
-    List.iter Buffer.reachable touches;
-    (* The latest value each device's work touched the reached memory with. *)
-    let latest = ref [] in
-    let note d' v =
-      (* A lost device's work never completes; the memory it can reach raises
-         its loss instead. *)
-      if failed d' = None then
-        match List.assq_opt d' !latest with
-        | Some v' when !v' >= v -> ()
-        | Some v' -> v' := v
-        | None -> latest := (d', ref v) :: !latest
-    in
-    List.iter
-      (fun t ->
-        if runs_work t then note t (submitted t);
-        Hashtbl.iter (fun _ (d', v) -> note d' v) t.pending)
-      reached;
-    let d_set = List.sort by_id (List.filter (encodable ds) on) in
-    (* A device's own earlier work is ordered by its vendor's rule. *)
-    let alone d' = match ds with [ d ] -> d == d' | _ -> false in
-    List.iter
-      (fun (d', v) ->
-        if not (List.memq d' d_set || alone d') then wait_signal d' !v)
-      !latest;
-    let waits =
-      List.map
-        (fun d' ->
-          match List.assq_opt d' !latest with
-          | Some v -> (d', !v)
-          | None -> (d', Atomic.get d'.settled))
-        d_set
-    in
-    List.iter wait_room ds;
-    List.iter stage_in staged;
-    let s =
-      {
-        Submission.devices = ds;
-        values = Array.of_list (List.map (fun d -> submitted d + 1) ds);
-        taken;
-        waits;
-        spans = [];
-      }
-    in
-    let r = f s in
-    List.iteri (fun i d -> commit d s.values.(i)) ds;
-    stamp_touches ds s.values touches;
-    List.iter
-      (fun t ->
-        List.iteri
-          (fun i d ->
-            if t != d then Hashtbl.replace t.pending d.id (d, s.values.(i)))
-          ds)
-      reached;
-    List.iter (fun (d, p) -> push d.spans p) (List.rev s.spans);
-    r
+  with_devices taken @@ fun () ->
+  List.iter Buffer.reachable touches;
+  (* The latest value each device's work touched the reached memory with. *)
+  let latest = ref [] in
+  let note d' v =
+    (* A lost device's work never completes; the memory it can reach raises its
+       loss instead. *)
+    if failed d' = None then
+      match List.assq_opt d' !latest with
+      | Some v' when !v' >= v -> ()
+      | Some v' -> v' := v
+      | None -> latest := (d', ref v) :: !latest
   in
-  (* The work is waited for with no device taken, so that it blocks no other
-     domain's work on them. *)
   List.iter
-    (fun ((_, st) as b) -> if st.access = Read_write then stage_out b)
-    staged;
+    (fun t ->
+      if runs_work t then note t (submitted t);
+      Hashtbl.iter (fun _ (d', v) -> note d' v) t.pending)
+    reached;
+  let d_set = List.sort by_id (List.filter (encodable ds) on) in
+  (* A device's own earlier work is ordered by its vendor's rule. *)
+  let alone d' = match ds with [ d ] -> d == d' | _ -> false in
+  List.iter
+    (fun (d', v) ->
+      if not (List.memq d' d_set || alone d') then wait_signal d' !v)
+    !latest;
+  let waits =
+    List.map
+      (fun d' ->
+        match List.assq_opt d' !latest with
+        | Some v -> (d', !v)
+        | None -> (d', Atomic.get d'.settled))
+      d_set
+  in
+  List.iter wait_room ds;
+  List.iter stage_in (staged_of touches);
+  let s =
+    {
+      Submission.devices = ds;
+      values = Array.of_list (List.map (fun d -> submitted d + 1) ds);
+      taken;
+      waits;
+      spans = [];
+    }
+  in
+  let r = f s in
+  List.iteri (fun i d -> commit d s.values.(i)) ds;
+  stamp_touches ds s.values touches;
+  List.iter
+    (fun t ->
+      List.iteri
+        (fun i d ->
+          if t != d then Hashtbl.replace t.pending d.id (d, s.values.(i)))
+        ds)
+    reached;
+  List.iter (fun (d, p) -> push d.spans p) (List.rev s.spans);
   r
+
+(* A submission that touches staged buffers holds them from before its copies in
+   until after its copies back, which wait for its work with no device taken, so
+   that they block no other domain's work on the devices. *)
+let submit ds ~touches f =
+  match staged_of touches with
+  | [] -> submit_taken ds ~touches f
+  | staged ->
+      let staged =
+        List.sort_uniq
+          (fun (_, (s : stage)) (_, (s' : stage)) -> Int.compare s.id s'.id)
+          staged
+      in
+      let rec hold = function
+        | [] -> ()
+        | (_, st) :: rest -> (
+            Mutex.lock st.busy;
+            match hold rest with
+            | () -> ()
+            | exception e ->
+                Mutex.unlock st.busy;
+                raise e)
+      in
+      hold staged;
+      Fun.protect
+        ~finally:(fun () ->
+          List.iter (fun (_, st) -> Mutex.unlock st.busy) staged)
+        (fun () ->
+          let r = submit_taken ds ~touches f in
+          List.iter
+            (fun ((_, st) as b) -> if st.access = Read_write then stage_out b)
+            staged;
+          r)
 
 let signal_word d =
   let owner = match d.kind with Local _ -> d | _ -> host_of d in

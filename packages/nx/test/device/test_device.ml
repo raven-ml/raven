@@ -4546,6 +4546,33 @@ let mentions s sub =
   in
   at 0
 
+(* A device's signal whose first wait holds until [release], as a run whose work
+   completed but whose domain has not yet gone on. A wait made meanwhile finds
+   the work done. *)
+let held_signal () =
+  let signaled = Atomic.make 0 and held = Atomic.make false in
+  let opened = Atomic.make false in
+  let lock = Mutex.create () and cond = Condition.create () in
+  let rec reach v =
+    let s = Atomic.get signaled in
+    if v > s && not (Atomic.compare_and_set signaled s v) then reach v
+  in
+  let wait v ~timeout_ms:_ =
+    if (not (Atomic.get opened)) && not (Atomic.exchange held true) then
+      Mutex.protect lock (fun () ->
+          while not (Atomic.get opened) do
+            Condition.wait cond lock
+          done);
+    reach v;
+    true
+  in
+  let release () =
+    Mutex.protect lock (fun () ->
+        Atomic.set opened true;
+        Condition.broadcast cond)
+  in
+  ({ Driver.signaled = (fun () -> Atomic.get signaled); wait }, held, release)
+
 let reached d b access =
   match B.reach d b access with Ok r -> r | Error why -> failwith why
 
@@ -4655,6 +4682,33 @@ let staging =
           let dst = B.create gpu S.UInt8 4 in
           B.copy ~src:(host_bytes [ 3; 4; 5; 6 ]) ~dst;
           equal (list int) [ 3; 4; 5; 6 ] (contents dst));
+      test
+        "two runs from two domains over one staged buffer that the work writes \
+         copy back in turn" (fun () ->
+          let signal, held, release = held_signal () in
+          let d = (fake ~maps:true ~signal ()).dev in
+          let b = host_bytes [ 1; 1; 1; 1 ] in
+          let r = reached d b B.Read_write in
+          let nines = B.of_bigarray (chars 4) in
+          B.copy ~src:(host_bytes [ 9; 9; 9; 9 ]) ~dst:nines;
+          (* The first run writes nines and is held after its work, before it
+             copies them back. *)
+          let first =
+            Domain.spawn (fun () ->
+                submit d ~touches:[ r ] (fun _ ->
+                    memmove (B.address r) (B.address nines) 4))
+          in
+          while not (Atomic.get held) do
+            Domain.cpu_relax ()
+          done;
+          let second =
+            Domain.spawn (fun () -> submit d ~touches:[ r ] ignore)
+          in
+          Unix.sleepf 0.05;
+          release ();
+          Domain.join first;
+          Domain.join second;
+          equal (list int) [ 9; 9; 9; 9 ] (contents b));
       test
         "host memory of 64 KiB or more the device does not map is refused, \
          naming its size" (fun () ->
