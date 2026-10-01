@@ -730,18 +730,6 @@ let lending =
               ls
           in
           equal (list nativeint) before (List.map address r));
-      test "a loop consuming its state holds two generations of it" (fun () ->
-          let n = 1 lsl 16 in
-          let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
-          let s = ref (placed d3 (Nx.zeros Nx.float32 [| n |])) in
-          s := step !s;
-          let base = allocated d3 in
-          for _ = 1 to 20 do
-            s := step !s
-          done;
-          at_most ~msg:"bytes allocated across 20 steps" int ~than:(4 * n)
-            (allocated d3 - base);
-          equal (tensor float_exact) (Nx.full Nx.float32 [| n |] 21.) (host !s));
     ]
 
 (* [together fs] runs each of [fs] on a domain of its own, all released at once,
@@ -782,17 +770,6 @@ let captures =
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           equal close (Nx.mul_s (x ()) 3.) (host (g (placed d1 (x ()))));
           equal int 0 (Nx.Repr.Storage.pins (storage_of w)));
-      test "a capture placed where the call computes is bound, not uploaded"
-        (fun () ->
-          let w = placed d1 (y ()) in
-          let g = Rune.jit' (fun a -> Nx.mul a w) in
-          let a = placed d1 (x ()) in
-          ignore (g a);
-          equal ~msg:"pins" int 1 (Nx.Repr.Storage.pins (storage_of w));
-          let before = bytes_in d1 in
-          let r = g a in
-          equal ~msg:"bytes received" int before (bytes_in d1);
-          equal close (Nx.mul (x ()) (y ())) (host r));
       test "a host capture of a call on a device is placed there once"
         (fun () ->
           let w = y () in
@@ -1103,11 +1080,6 @@ let transformations =
 let placement =
   group "placement"
     [
-      test "a call runs where its arguments lie, and leaves its results there"
-        (fun () ->
-          let r = Rune.jit' poly (placed d1 (x ())) in
-          is_true (Nx.Placement.equal (on d1) (Nx.placement r));
-          equal close (poly (x ())) (host r));
       test "a host argument of a call on a device is uploaded at each call"
         (fun () ->
           let g = Rune.jit two Nx.mul in
@@ -1116,19 +1088,6 @@ let placement =
           let before = bytes_in d2 in
           ignore (g a (y ()));
           equal ~msg:"bytes received" int (before + 16) (bytes_in d2));
-      test "a placed argument feeds a call with no transfer" (fun () ->
-          let g = Rune.jit' poly in
-          let a = placed d1 (x ()) in
-          ignore (g a);
-          let before = bytes_in d1 in
-          ignore (g a);
-          equal int before (bytes_in d1));
-      test "a placed view is read where it lies" (fun () ->
-          let a = Nx.transpose (placed d1 (grid 2 3)) in
-          let before = bytes_in d1 in
-          let r = Rune.jit' poly a in
-          equal int before (bytes_in d1);
-          equal close (poly (Nx.transpose (grid 2 3))) (host r));
       slow
         "a state starting on the host retraces once on a device, then replays"
         (fun () ->
@@ -1515,8 +1474,12 @@ let on_one_device ~name d =
           ignore (g a);
           equal int before (bytes_in d));
       test "a placed view is read where it lies" (fun () ->
+          let g = Rune.jit' poly in
           let a = Nx.transpose (placed d (grid 2 3)) in
-          let r = Rune.jit' poly a in
+          ignore (g a);
+          let before = bytes_in d in
+          let r = g a in
+          equal ~msg:"bytes received" int before (bytes_in d);
           equal close (poly (Nx.transpose (grid 2 3))) (host r));
       test
         "a float16 argument starting 2 bytes further retraces once, and is \
@@ -1546,9 +1509,11 @@ let on_one_device ~name d =
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           let a = placed d (x ()) in
           ignore (g a);
+          equal ~msg:"pins" int 1 (Nx.Repr.Storage.pins (storage_of w));
           let before = bytes_in d in
-          equal close (Nx.mul (x ()) (y ())) (host (g a));
-          equal int before (bytes_in d));
+          let r = g a in
+          equal ~msg:"bytes received" int before (bytes_in d);
+          equal close (Nx.mul (x ()) (y ())) (host r));
       test "a loop consuming its state holds two generations of it" (fun () ->
           let n = 1 lsl 16 in
           let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
