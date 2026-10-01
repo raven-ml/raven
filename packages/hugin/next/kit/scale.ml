@@ -755,6 +755,17 @@ let is_real (type a b) (dtype : (a, b) Nx.dtype) =
   | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64 | UInt64 ->
       true
 
+let missing s x =
+  if not (is_real (Nx.dtype x)) then err "missing" "the tensor is not real";
+  let xf = Nx.cast Nx.float64 x in
+  match s.transform with
+  | Custom _ ->
+      let xs = Nx.to_array xf in
+      Nx.create Nx.bool (Nx.shape x) (Array.map (missing s.transform) xs)
+  | Log _ ->
+      Nx.logical_not (Nx.logical_and (Nx.isfinite xf) (Nx.greater_s xf 0.))
+  | Linear | Symlog _ | Pow _ -> Nx.logical_not (Nx.isfinite xf)
+
 let hull ?valid s x =
   if not (is_real (Nx.dtype x)) then err "hull" "the tensor is not real";
   let shape = Nx.shape x in
@@ -775,39 +786,13 @@ let hull ?valid s x =
   if Nx.numel x = 0 then None
   else
     let xf = Nx.cast Nx.float64 x in
-    let lo, hi =
-      match s.transform with
-      | Custom _ ->
-          let xs = Nx.to_array xf in
-          let keep =
-            match valid with None -> None | Some v -> Some (Nx.to_array v)
-          in
-          let lo = ref Float.infinity and hi = ref Float.neg_infinity in
-          Array.iteri
-            (fun i v ->
-              let kept = match keep with None -> true | Some k -> k.(i) in
-              if kept && not (missing s.transform v) then begin
-                lo := Float.min v !lo;
-                hi := Float.max v !hi
-              end)
-            xs;
-          (!lo, !hi)
-      | Linear | Log _ | Symlog _ | Pow _ ->
-          let keep = Nx.isfinite xf in
-          let keep =
-            match s.transform with
-            | Log _ -> Nx.logical_and keep (Nx.greater_s xf 0.)
-            | _ -> keep
-          in
-          let keep =
-            match valid with None -> keep | Some v -> Nx.logical_and keep v
-          in
-          let lo = Nx.min (Nx.where keep xf (Nx.full_like xf Float.infinity)) in
-          let hi =
-            Nx.max (Nx.where keep xf (Nx.full_like xf Float.neg_infinity))
-          in
-          (Nx.item [] lo, Nx.item [] hi)
+    let keep = Nx.logical_not (missing s x) in
+    let keep =
+      match valid with None -> keep | Some v -> Nx.logical_and keep v
     in
+    let lo = Nx.min (Nx.where keep xf (Nx.full_like xf Float.infinity)) in
+    let hi = Nx.max (Nx.where keep xf (Nx.full_like xf Float.neg_infinity)) in
+    let lo = Nx.item [] lo and hi = Nx.item [] hi in
     if lo <= hi then Some (lo, hi) else None
 
 (* Formatting *)

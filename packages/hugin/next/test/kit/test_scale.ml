@@ -1581,6 +1581,59 @@ let hulls =
                 (Nx.create Nx.bool [| 1 |] [| true |])));
     ]
 
+(* Missing values *)
+
+let missings =
+  let scales =
+    [
+      ("linear", Scale.linear ~domain:(0., 1.) ());
+      ("log", Scale.log ~domain:(1., 10.) ());
+      ("symlog", Scale.symlog ~domain:(-1., 1.) ());
+      ("pow", Scale.pow ~exponent:0.5 ~domain:(0., 4.) ());
+      ("custom", ln ~domain:(1., 10.) ());
+    ]
+  in
+  let gen_values =
+    Gen.array ~size:(Gen.int_range 0 6)
+      (Gen.frequency
+         [
+           (4, Gen.any_float);
+           ( 1,
+             Gen.of_list ~pp:Format.pp_print_float
+               [ 0.; -0.; -1.; Float.min_float; Float.nan; Float.infinity ] );
+         ])
+  in
+  group "missing"
+    [
+      (* A set domain has ends that are not missing, so [normalize] is [nan]
+         exactly at missing values. *)
+      prop "agrees with normalize on a set domain"
+        (Gen.pair
+           (Gen.of_list
+              ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n)
+              scales)
+           gen_values)
+        (fun ((_, s), xs) ->
+          cover "a missing value"
+            (Array.exists (fun x -> Float.is_nan (Scale.normalize s x)) xs);
+          let expected =
+            Array.map (fun x -> Float.is_nan (Scale.normalize s x)) xs
+          in
+          equal (array bool) expected (Nx.to_array (Scale.missing s (f64 xs))));
+      test "keeps the shape and reads integers as floats" (fun () ->
+          let x = Nx.create Nx.int32 [| 2; 2 |] [| 0l; 1l; -3l; 5l |] in
+          let m = Scale.missing (Scale.log ()) x in
+          equal (array int) [| 2; 2 |] (Nx.shape m);
+          equal (array bool) [| true; false; true; false |] (Nx.to_array m));
+      test "complex and boolean tensors are refused" (fun () ->
+          invalid (fun () ->
+              Scale.missing (Scale.linear ())
+                (Nx.create Nx.complex64 [| 1 |] [| Complex.one |]));
+          invalid (fun () ->
+              Scale.missing (Scale.linear ())
+                (Nx.create Nx.bool [| 1 |] [| true |])));
+    ]
+
 let () =
   exit
     (run "Scale"
@@ -1597,4 +1650,5 @@ let () =
          merging;
          comparing;
          hulls;
+         missings;
        ])

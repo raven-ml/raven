@@ -483,6 +483,15 @@ val hull :
     Raises [Invalid_argument] if [x] has a complex or boolean dtype or [valid]
     does not broadcast to the shape of [x]. *)
 
+val missing : float t -> ('a, 'b) Nx.t -> Nx.bool_t
+(** [missing s x] is [true] where an element of [x] is
+    {{!section-missing}missing} for [s], and has the shape of [x]. Elements are
+    converted to floats first, as {!hull} converts them, and only the transform
+    of [s] is read. It is computed where [x] lives, except on a custom scale,
+    whose transform is an OCaml function: [x] is then read to the host.
+
+    Raises [Invalid_argument] if [x] has a complex or boolean dtype. *)
+
 val fit : 'd domain option -> 'd t -> 'd t
 (** [fit observed s] is [s] with [nice] and [zero] unset and its domain set to:
     - the domain of [s], if set;
