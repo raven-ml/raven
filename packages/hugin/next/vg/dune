@@ -2,7 +2,6 @@
  (name hugin_next_vg)
  (public_name hugin.next.vg)
  (libraries hugin.next.gg hugin.next.font nx)
- (modules_without_implementation picture renderable)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
