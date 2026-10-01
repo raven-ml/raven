@@ -2046,16 +2046,10 @@ let edges d =
           (Nx.bitcast Nx.int32 (value e))
           (Nx.bitcast Nx.int32 (back a)));
   ]
-  @
-  (* A device that flushes subnormals takes the logarithm of -0. instead. *)
-  if d.flushes then []
-  else
-    [
-      xfail
-        ~reason:
-          "the host's log of a negative subnormal below the least normal is \
-           -inf (rune-lower)"
-      @@ test "the logarithm of a negative subnormal is NaN" (fun () ->
+  @ [
+      (* A device that flushes subnormals too: the sign is read from the
+         bits. *)
+      test "the logarithm of a negative subnormal is NaN" (fun () ->
           let log x = exact_of (both d (unary Log (array_of x))) in
           log
             (Nx.create Nx.float32 [| 3 |] [| -0x1p-149; -0x1p-130; -0x1p-127 |]);
