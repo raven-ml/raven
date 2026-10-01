@@ -286,13 +286,12 @@ let pm_resolve_linear_call =
 let schedule_cache : (string, t) Hashtbl.t = Hashtbl.create 64
 let schedule_cache_lock = Mutex.create ()
 
-(* With the setting scache at 2 or more, schedules outlive the process in the
-   disk cache. Its key is the function's, what else shapes a schedule that a
-   process does not change (the settings and environment variables that
-   splitting reductions, bounding kernels' buffers and allreduces read, and the
-   default types), and the digest of this library's sources, of which a schedule
+(* The key of a schedule, in memory and, with the setting scache at 2 or more,
+   on disk: the function's, the settings and environment variables that
+   splitting reductions, bounding kernels' buffers and allreduces read, the
+   default types, and the digest of this library's sources, of which a schedule
    is a function. *)
-let disk_key fn =
+let schedule_key fn =
   let open Helpers in
   String.concat "\n"
     ([
@@ -323,7 +322,8 @@ let lower_sink_to_linear call =
   | Op.Sink, Kernel _ -> None
   | Op.Sink, _ when precompile ->
       let start = Unix.gettimeofday () in
-      let cache_key = key fn and cached = setting Helpers.scache >= 1 in
+      let cache_key = Digest.BLAKE256.string (schedule_key fn)
+      and cached = setting Helpers.scache >= 1 in
       let hit =
         if cached then
           Mutex.protect schedule_cache_lock (fun () ->
@@ -341,7 +341,7 @@ let lower_sink_to_linear call =
         | None ->
             let linear, kept =
               if setting Helpers.scache >= 2 then
-                Graph.cached ~table:"schedule_cache" ~key:(disk_key fn)
+                Graph.cached ~table:"schedule_cache" ~key:cache_key
                   ~valid:(fun l -> op l = Op.Linear)
                   make
               else (make (), false)

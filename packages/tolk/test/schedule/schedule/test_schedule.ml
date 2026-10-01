@@ -597,9 +597,35 @@ let bodies_at_once () =
         (Uops.numbered_like alone r))
     (List.combine bigs (in_domains bigs))
 
+(* A setting that shapes a schedule keeps a body scheduled under another value
+   from being returned. *)
+let separates setting () =
+  let big = unique "assign" in
+  with_settings ~debug:3 ~scache:1 (fun () ->
+      ignore (Schedule.create_linear_with_vars big);
+      Helpers.context [ setting ] (fun () ->
+          ignore (Schedule.create_linear_with_vars big)));
+  equal (list string)
+    [ "CACHE MISS"; "CACHE MISS" ]
+    (List.map (fun (_, verdict, _) -> verdict) (reports ()))
+
 let cache =
   group "create_linear_with_vars › cache"
     [
+      group "a body scheduled under one setting misses under another"
+        (List.map
+           (fun (name, setting) -> test name (separates setting))
+           Helpers.
+             [
+               ("SPLIT_REDUCEOP", B (split_reduceop, false));
+               ("MAX_KERNEL_BUFFERS", B (max_kernel_buffers, 8));
+               ("RING", B (ring, 0));
+               ("ALL2ALL", B (all2all, 1));
+               ("ALLREDUCE_CAST", B (allreduce_cast, false));
+               ("ALLREDUCE_NODE_NDEVS", B (allreduce_node_ndevs, 2));
+               ("DEFAULT_FLOAT", B (default_float, "half"));
+               ("DEFAULT_INT", B (default_int, "long"));
+             ]);
       test "a body scheduled again is a hit under the key it missed on"
         miss_then_hit;
       test "a hit is the schedule the miss made" hit_is_the_miss;

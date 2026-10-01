@@ -656,6 +656,15 @@ let separates_settings () =
     (applied optimised);
   equal (list Kernel_opts.opt) ~msg:"under NOOPT" [] (applied unoptimised)
 
+(* Every setting a program depends on keeps a program made under another value
+   from being returned: the program is made, and compiled, again. *)
+let separates setting () =
+  let compiled, r = counting () in
+  let k = fresh_kernel () in
+  ignore (Codegen.to_program k r);
+  ignore (Helpers.context [ setting ] (fun () -> Codegen.to_program k r));
+  equal int ~msg:"compilations" 2 (Atomic.get compiled)
+
 let target_of p =
   match Ops.arg p with
   | Program { target; _ } -> target.renderer
@@ -691,6 +700,24 @@ let caching =
         compiles_once_across_domains;
       test "a program made under one setting is not returned under another"
         separates_settings;
+      group "a program is made again under another value of"
+        (List.map
+           (fun (name, setting) -> test name (separates setting))
+           Helpers.
+             [
+               ("NOOPT", B (noopt, true));
+               ("TC", B (use_tc, 0));
+               ("TC_SELECT", B (tc_select, 0));
+               ("TC_OPT", B (tc_opt, 1));
+               ("TC_MIN_GLOBALS", B (tc_min_globals, 1));
+               ("TRANSCENDENTAL", B (transcendental, 2));
+               ("DISABLE_FAST_IDIV", B (disable_fast_idiv, false));
+               ("ALLOW_TF32", B (allow_tf32, true));
+               ("DEFAULT_FLOAT", B (default_float, "half"));
+               ("DEFAULT_INT", B (default_int, "long"));
+               ("EMULATED_DTYPES", B (emulated_dtypes, [ "long" ]));
+               ("TUPLE_ORDER", B (tuple_order, false));
+             ]);
       test "a program for one target is not returned for another"
         separates_targets;
       test "a failed compilation is not kept: the next call compiles anew"
@@ -781,6 +808,8 @@ let on_disk =
              ("MV_ROWS_PER_THREAD", "2");
              ("ALIGNED", "0");
              ("EXPAND_SSA", "1");
+             ("DMC", "1");
+             ("ALLOW_HALF8", "1");
            ]);
       group "a damaged entry is made anew, and replaced"
         [

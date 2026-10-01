@@ -1142,24 +1142,6 @@ let do_to_program ?beam ast (ren : Renderer.t) =
   in
   graph_rewrite ~ctx:ren prg pm_to_program
 
-(* config affects generated programs and cache keys *)
-let to_program_key ast (ren : Renderer.t) =
-  let open Helpers in
-  ( key ast,
-    ren.name,
-    ren.target,
-    setting noopt,
-    setting emulated_dtypes,
-    setting use_tc,
-    setting disable_fast_idiv,
-    setting transcendental,
-    setting allow_tf32,
-    setting default_float,
-    setting default_int,
-    setting tc_select,
-    setting tc_opt,
-    setting tc_min_globals )
-
 (* Each kernel's program is made once: a domain that asks for one being made
    waits for it, holding the entry's lock, rather than making it again. *)
 type entry = { lock : Mutex.t; mutable prg : Ops.t option }
@@ -1167,13 +1149,13 @@ type entry = { lock : Mutex.t; mutable prg : Ops.t option }
 let to_program_cache = Hashtbl.create 64
 let to_program_lock = Mutex.create ()
 
-(* Programs outlive the process in the disk cache. Its key is what
-   [to_program_key] holds, and what else shapes a program that a process does
-   not change: the linearizer's order, the environment variables that the
-   heuristic and the C renderer read, and the digest of this library's sources,
-   of which a program is a function. A kernel that asks for a beam search is not
-   kept, since its program is what the search found. *)
-let disk_key ast (ren : Renderer.t) =
+(* The key of a program, in memory and on disk: the kernel, the renderer and its
+   target, every setting and environment variable that the passes, the
+   heuristic, the coalescing of memory accesses and the C renderer read, and the
+   digest of this library's sources, of which a program is a function. A kernel
+   that asks for a beam search is not kept on disk, since its program is what
+   the search found. *)
+let program_key ast (ren : Renderer.t) =
   let open Helpers in
   let getenvs =
     [
@@ -1183,6 +1165,8 @@ let disk_key ast (ren : Renderer.t) =
       "MV_ROWS_PER_THREAD";
       "ALIGNED";
       "EXPAND_SSA";
+      "DMC";
+      "ALLOW_HALF8";
     ]
   in
   String.concat "\n"
@@ -1211,15 +1195,15 @@ let kept ast =
 
 let program prg = op prg = Op.Program && List.length (src prg) = 4
 
-let made_program ?beam ast ren =
+let made_program ?beam ~key ast ren =
   if not (kept ast) then do_to_program ?beam ast ren
   else
     fst
-      (Graph.cached ~table:"to_program" ~key:(disk_key ast ren) ~valid:program
-         (fun () -> do_to_program ?beam ast ren))
+      (Graph.cached ~table:"to_program" ~key ~valid:program (fun () ->
+           do_to_program ?beam ast ren))
 
 let to_program ?beam ast ren =
-  let key = to_program_key ast ren in
+  let key = program_key ast ren in
   let entry =
     Mutex.protect to_program_lock (fun () ->
         match Hashtbl.find_opt to_program_cache key with
@@ -1233,6 +1217,6 @@ let to_program ?beam ast ren =
       match entry.prg with
       | Some prg -> prg
       | None ->
-          let prg = made_program ?beam ast ren in
+          let prg = made_program ?beam ~key ast ren in
           entry.prg <- Some prg;
           prg)

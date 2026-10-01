@@ -922,6 +922,10 @@ thread.
 
 ### Tolk (new)
 
+- A program kept on disk or in memory is made again under another value of
+  `DMC`, `ALLOW_HALF8` or, within a process, `TUPLE_ORDER`, and a schedule
+  under another value of any setting that shapes it: a cached one made under
+  the old value was returned.
 - A float `Mulacc` that a graph states folds and evaluates rounded once, as
   every target computes it, where it rounded twice, and an Invalid gate around
   one of its operands moves out of it, where it reached verification.

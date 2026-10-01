@@ -1851,9 +1851,9 @@ the Exclusions of `README.md`.
   `schedule/__init__.py:127-137` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
   default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
-- **tolk:** `lib/codegen/codegen.ml:1065` (`disk_key`), `:1098`
-  (`kept`) and `:1103` (`made_program`); `lib/schedule/schedule.ml:295`
-  (`disk_key`) and `:319` (`lower_sink_to_linear`); `lib/uop/graph.ml:939`
+- **tolk:** `lib/codegen/codegen.ml:1158` (`program_key`), `:1193`
+  (`kept`) and `:1198` (`made_program`); `lib/schedule/schedule.ml:294`
+  (`schedule_key`) and `:318` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:631` (`get_optimized_ast`'s
   name); `lib/helpers.ml:269` (`scache`, `2` by default); and
   `lib/dune`'s rule for `source_digest.ml`, written by
@@ -1864,13 +1864,16 @@ the Exclusions of `README.md`.
   text (`Graph`), and a later process reads them back instead of making
   them. tinygrad keeps programs for its process only, and schedules on disk
   only when asked. Each key is tinygrad's in-memory key, what else shapes
-  the result and a process does not change (for programs `TUPLE_ORDER` and
-  the environment variables `MV`, `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`,
-  `MV_ROWS_PER_THREAD`, `ALIGNED` and `EXPAND_SSA`; for schedules the
-  settings and environment variables of splitting reductions, kernels'
-  buffers and allreduces, and the default types), and the digest of the
-  library's sources, which dune computes when it builds the library: an
-  entry is a function of the code that made it. An entry that does not read
+  the result (for programs `TUPLE_ORDER` and the environment variables `MV`,
+  `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`, `MV_ROWS_PER_THREAD`, `ALIGNED`,
+  `EXPAND_SSA`, `DMC` and `ALLOW_HALF8`; for schedules the settings and
+  environment variables of splitting reductions, kernels' buffers and
+  allreduces, and the default types), and the digest of the library's
+  sources, which dune computes when it builds the library: an entry is a
+  function of the code that made it. One key serves memory and disk, so a
+  setting changed within the process by `context` makes the result again,
+  where tinygrad's in-memory keys leave out `TUPLE_ORDER` and, for schedules,
+  every setting. An entry that does not read
   as a program or a schedule is a miss, and is replaced. The program of a
   kernel that asks for a beam search is not kept, since it is what the
   search found. `SCACHE=1` keeps schedules in memory only, as tinygrad's
@@ -1883,14 +1886,17 @@ the Exclusions of `README.md`.
   gpt-oss's tiny random checkpoint on Metal, 0.64 s of scheduling and 2.08 s
   of lowering of a 3.16 s first call, against 0.58 s for the old rune.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `programs are
-  kept on disk › a program made by one process is read back by the
-  next`, `› a program made under one setting is not read back under another
+  kept › a program is made again under another value of ›` each setting,
+  `programs are kept on disk › a program made by one process is read back by
+  the next`, `› a program made under one setting is not read back under another
   ›` each setting, `› a damaged entry is made anew, and replaced ›
   truncated` and `› holding no program`, `› an entry of another build of the
   library is not read back`, and `› processes making one program at once all
   get it`; and the `Schedule` suite (`test/schedule/schedule`):
-  `create_linear_with_vars › schedules are kept on disk ›` the same
-  for schedules, and `› with SCACHE at 1, nothing is kept on disk`.
+  `create_linear_with_vars › cache › a body scheduled under one setting
+  misses under another ›` each setting, `create_linear_with_vars ›
+  schedules are kept on disk ›` the same as programs' for schedules, and `›
+  with SCACHE at 1, nothing is kept on disk`.
 
 ## D64. A cast to a narrow float through a float32 rounds once
 
