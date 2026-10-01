@@ -938,6 +938,34 @@ let memory =
               is_true ~msg:"collected" !freed)
             [ page; (4 * page) + 3 ]);
       test
+        "a collected host buffer's memory is kept for the next buffer of its \
+         size, unless a view of it lives, until the cache is freed" (fun () ->
+          let n = (4 * page) + 4093 in
+          let made () = B.address (B.create host S.UInt8 n) in
+          let first = made () in
+          Gc.full_major ();
+          Gc.full_major ();
+          is_true ~msg:"kept" (cached host >= n);
+          equal ~msg:"reused" nativeint first (made ());
+          Gc.full_major ();
+          Nx_device.free_cache host;
+          equal ~msg:"given back" int 0 (cached host);
+          let a, view =
+            (fun () ->
+              let b = B.create host S.UInt8 n in
+              write b (pattern 7 n);
+              (B.address b, B.bigarray Bigarray.char b))
+              ()
+          in
+          Gc.full_major ();
+          Gc.full_major ();
+          let b = B.create host S.UInt8 n in
+          is_false ~msg:"not the viewed memory"
+            (Nativeint.equal a (B.address b));
+          write b (pattern 9 n);
+          equal ~msg:"the view keeps its bytes" string (pattern 7 n)
+            (string_of view));
+      test
         "a buffer of up to max_int bytes that its device cannot allocate \
          raises Out_of_memory" (fun () ->
           let small = (fake ~budget:1000 ()).dev and n = (1 lsl 58) + 1 in

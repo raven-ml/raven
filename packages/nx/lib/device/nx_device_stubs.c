@@ -53,10 +53,19 @@ value caml_nx_device_heap_bytes_byte(value unit) {
   return Val_long(caml_nx_device_heap_bytes(unit));
 }
 
+static void heap_drop_all(void);
+static intnat heap_kept(void);
+
+/* A reservation counts the buffers the allocator keeps for reuse (see below)
+   against the budget too, and gives them back when they are what stands in its
+   way. */
 value caml_nx_device_heap_reserve(intnat n, intnat budget) {
   intnat held = atomic_load_explicit(&heap_bytes, memory_order_relaxed);
   do {
-    if (n > budget - held) return Val_false;
+    if (n > budget - held - heap_kept()) {
+      if (heap_kept() == 0 || n > budget - held) return Val_false;
+      heap_drop_all();
+    }
   } while (!atomic_compare_exchange_weak_explicit(
       &heap_bytes, &held, held + n, memory_order_relaxed,
       memory_order_relaxed));
@@ -156,19 +165,160 @@ static mlsize_t heap_cycle_bytes(void) {
                                   memory_order_relaxed);
 }
 
+/* Reusing freed buffers
+
+   A buffer's memory goes back to the C library when the collector frees it,
+   and the library may return it to the system: glibc trims the top of its heap
+   and unmaps large blocks, so the next buffer of that size faults its pages in
+   again, and an eager operation, which makes a fresh output each time, runs at
+   half the speed or less. Freed buffers are kept instead, each under its exact
+   size, and the next allocation of that size takes the one freed last. They
+   are kept while they hold no more than a major cycle's share of the program's
+   memory, as [heap_cycle_bytes] gives it, the garbage a cycle may already leave
+   floating, and at least [HEAP_CACHE_FLOOR]; past it the least recently freed
+   go back to the library, and an allocation that fails gives them all back
+   before trying again.
+
+   A kept buffer holds its own links in its first bytes. A spin lock guards the
+   list: the collector frees buffers on any domain, and holding the lock costs
+   a few pointer writes. */
+
+#define HEAP_CACHE_FLOOR ((size_t)32 << 20)
+
+struct heap_entry {
+  struct heap_entry *newer, *older;
+  size_t n;
+};
+
+static atomic_flag heap_cache_lock = ATOMIC_FLAG_INIT;
+static struct heap_entry *heap_newest, *heap_oldest;
+static _Atomic size_t heap_cached;
+
+static void heap_cache_acquire(void) {
+  while (atomic_flag_test_and_set_explicit(&heap_cache_lock,
+                                           memory_order_acquire)) {
+  }
+}
+
+static void heap_cache_release(void) {
+  atomic_flag_clear_explicit(&heap_cache_lock, memory_order_release);
+}
+
+static void heap_unlink(struct heap_entry *e) {
+  if (e->newer) e->newer->older = e->older;
+  else heap_newest = e->older;
+  if (e->older) e->older->newer = e->newer;
+  else heap_oldest = e->newer;
+  heap_cached -= e->n;
+}
+
+static mlsize_t heap_cycle_bytes(void);
+
+/* Keeps the [n] bytes at [data], or gives back the least recently kept. */
+static void heap_keep(void *data, size_t n) {
+  size_t cap = heap_cycle_bytes();
+  if (cap < HEAP_CACHE_FLOOR) cap = HEAP_CACHE_FLOOR;
+  struct heap_entry *e = data, *dropped = NULL;
+  heap_cache_acquire();
+  e->n = n;
+  e->older = heap_newest;
+  e->newer = NULL;
+  if (heap_newest) heap_newest->newer = e;
+  else heap_oldest = e;
+  heap_newest = e;
+  heap_cached += n;
+  while (heap_cached > cap) {
+    struct heap_entry *old = heap_oldest;
+    heap_unlink(old);
+    old->older = dropped;
+    dropped = old;
+  }
+  heap_cache_release();
+  while (dropped) {
+    struct heap_entry *next = dropped->older;
+    free(dropped);
+    dropped = next;
+  }
+}
+
+/* The most recently kept buffer of exactly [n] bytes, or NULL. */
+static void *heap_take(size_t n) {
+  heap_cache_acquire();
+  struct heap_entry *e = heap_newest;
+  while (e && e->n != n) e = e->older;
+  if (e) heap_unlink(e);
+  heap_cache_release();
+  return e;
+}
+
+static intnat heap_kept(void) {
+  return (intnat)atomic_load_explicit(&heap_cached, memory_order_relaxed);
+}
+
+intnat caml_nx_device_heap_cached(value unit) {
+  (void)unit;
+  return heap_kept();
+}
+
+value caml_nx_device_heap_cached_byte(value unit) {
+  (void)unit;
+  return Val_long(heap_kept());
+}
+
+/* Gives every kept buffer back to the C library. */
+static void heap_drop_all(void) {
+  heap_cache_acquire();
+  struct heap_entry *e = heap_newest;
+  heap_newest = heap_oldest = NULL;
+  heap_cached = 0;
+  heap_cache_release();
+  while (e) {
+    struct heap_entry *next = e->older;
+    free(e);
+    e = next;
+  }
+}
+
 /* The runtime's operations of bigarrays. The runtime exports them but declares
    them only to itself (CAML_INTERNALS): a bigarray's block must be made here
    with [caml_alloc_custom], which takes the memory a cycle is due after, where
-   [caml_ba_alloc] takes the runtime's. The block is then a bigarray like any
-   other, which the bigarray functions handle and the collector finalises by
-   freeing its data, as nx's tests of it check. */
+   [caml_ba_alloc] takes the runtime's. The block's operations are the
+   runtime's with one change, its finaliser, which keeps the memory where the
+   runtime's frees it: the block is a bigarray like any other, which the
+   bigarray functions handle, as nx's tests of it check. A sub of it shares a
+   proxy with it, as the runtime makes one, and whichever of them is collected
+   last releases the memory: the block keeps it, a sub frees it. */
 extern const struct custom_operations caml_ba_ops;
 
-/* The [n] bytes at [data], from [malloc], as a [char] bigarray that frees
-   them. */
+static void heap_finalize(value v) {
+  struct caml_ba_array *b = Caml_ba_array_val(v);
+  size_t n = (size_t)b->dim[0];
+  if (b->proxy == NULL) heap_keep(b->data, n);
+  else if (atomic_fetch_sub(&b->proxy->refcount, 1) == 1) {
+    heap_keep(b->proxy->data, n);
+    free(b->proxy);
+  }
+}
+
+static struct custom_operations heap_ops;
+static atomic_int heap_ops_ready;
+
+static const struct custom_operations *heap_bigarray_ops(void) {
+  if (!atomic_load_explicit(&heap_ops_ready, memory_order_acquire)) {
+    struct custom_operations ops = caml_ba_ops;
+    ops.finalize = heap_finalize;
+    heap_ops = ops;
+    atomic_store_explicit(&heap_ops_ready, 1, memory_order_release);
+  }
+  return &heap_ops;
+}
+
+/* The [n] bytes at [data], from [malloc], as a [char] bigarray that keeps
+   them once collected. */
 static value heap_bigarray(void *data, size_t n) {
-  value ba = caml_alloc_custom(&caml_ba_ops, SIZEOF_BA_ARRAY + sizeof(intnat),
-                               n, heap_cycle_bytes());
+  value ba = caml_alloc_custom(heap_bigarray_ops(),
+                               SIZEOF_BA_ARRAY + sizeof(intnat), n,
+                               heap_cycle_bytes());
   struct caml_ba_array *b = Caml_ba_array_val(ba);
   b->data = data;
   b->num_dims = 1;
@@ -178,16 +328,31 @@ static value heap_bigarray(void *data, size_t n) {
   return ba;
 }
 
-/* [v_n] bytes of the heap, as a [char] bigarray that frees them. */
+/* [v_n] bytes of the heap, as a [char] bigarray that keeps them once
+   collected. */
 value caml_nx_device_heap_alloc(value v_n) {
   size_t n = (size_t)Long_val(v_n);
-  void *data = malloc(n);
+  void *data = heap_take(n);
+  if (data == NULL) data = malloc(n);
+  if (data == NULL) {
+    heap_drop_all();
+    data = malloc(n);
+  }
   if (data == NULL) caml_raise_out_of_memory();
   return heap_bigarray(data, n);
 }
 
-/* [v_n] bytes of the heap on a page, as a [char] bigarray that frees them, or
-   [None] where the C library aligns nothing that [free] releases (Windows). */
+value caml_nx_device_heap_drop(value unit) {
+  (void)unit;
+  heap_drop_all();
+  return Val_unit;
+}
+
+/* [v_n] bytes of the heap on a page, as a [char] bigarray that keeps them once
+   collected, or [None] where the C library aligns nothing that [free]
+   releases (Windows). A platform takes its buffers from this or from
+   [caml_nx_device_heap_alloc], never both, so a kept buffer has the alignment
+   of the ones it serves. */
 value caml_nx_device_heap_aligned(value v_page, value v_n) {
   CAMLparam2(v_page, v_n);
 #ifdef _WIN32
@@ -195,10 +360,12 @@ value caml_nx_device_heap_aligned(value v_page, value v_n) {
   (void)v_n;
   CAMLreturn(Val_none);
 #else
-  void *data = NULL;
-  size_t n = (size_t)Long_val(v_n);
-  if (posix_memalign(&data, (size_t)Long_val(v_page), n))
-    caml_raise_out_of_memory();
+  size_t n = (size_t)Long_val(v_n), page = (size_t)Long_val(v_page);
+  void *data = heap_take(n);
+  if (data == NULL && posix_memalign(&data, page, n) != 0) {
+    heap_drop_all();
+    if (posix_memalign(&data, page, n) != 0) caml_raise_out_of_memory();
+  }
   CAMLreturn(caml_alloc_some(heap_bigarray(data, n)));
 #endif
 }

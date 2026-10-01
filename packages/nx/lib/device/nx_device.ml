@@ -306,6 +306,12 @@ external heap_aligned :
 
 external heap_cycle : unit -> unit = "caml_nx_device_heap_cycle" [@@noalloc]
 
+external heap_cached : unit -> (int[@untagged])
+  = "caml_nx_device_heap_cached_byte" "caml_nx_device_heap_cached"
+[@@noalloc]
+
+external heap_drop : unit -> unit = "caml_nx_device_heap_drop" [@@noalloc]
+
 (* The collector is paced by the bytes host buffers hold live, which the end of
    each major cycle measures: the cycle finalises a block that measures them
    and is registered again, allocating nothing, so that an operation that ends
@@ -865,7 +871,12 @@ let allocator_of d = function
 let free_of d kind =
   match allocator_of d kind with Some a -> a.free | None -> d.free
 
-let fits d n = n <= d.budget - allocated d - d.cached - d.retained
+(* The bytes [d] keeps for reuse: the host's are the collected buffers its
+   allocator keeps (see the stubs). *)
+let cached d =
+  match d.allocated with Count _ -> d.cached | Heap_bytes -> heap_cached ()
+
+let fits d n = n <= d.budget - allocated d - cached d - d.retained
 
 (* Runs what other devices that map [m] registered, before [d] frees it: they
    unmap it. Memory one of them could not unmap is retained. [d] is
@@ -886,31 +897,34 @@ let free_mapped d free size (m : region) =
 (* Frees cached memory, of the memory [only] if given, to the system until [d]
    fits [n] more bytes, or its cache is empty. *)
 let release_cache ?only d n =
-  if d.cached > 0 && not (fits d n) then begin
-    let freed = ref [] in
-    let keys =
-      Hashtbl.fold
-        (fun ((_, kind) as key) _ acc ->
-          if Option.fold ~none:true ~some:(( = ) kind) only then key :: acc
-          else acc)
-        d.cache []
-    in
-    List.iter
-      (fun ((size, kind) as key) ->
-        let free = free_mapped d (free_of d kind) size in
-        let rec drop = function
-          | m :: ms when not (fits d n) ->
-              d.cached <- d.cached - size;
-              freed := (free, m) :: !freed;
-              drop ms
-          | ms -> ms
+  match d.allocated with
+  | Heap_bytes -> if not (fits d n) then heap_drop ()
+  | Count _ ->
+      if d.cached > 0 && not (fits d n) then begin
+        let freed = ref [] in
+        let keys =
+          Hashtbl.fold
+            (fun ((_, kind) as key) _ acc ->
+              if Option.fold ~none:true ~some:(( = ) kind) only then key :: acc
+              else acc)
+            d.cache []
         in
-        match drop (Hashtbl.find d.cache key) with
-        | [] -> Hashtbl.remove d.cache key
-        | ms -> Hashtbl.replace d.cache key ms)
-      keys;
-    free_all d ~owned:true ~keep:() !freed
-  end
+        List.iter
+          (fun ((size, kind) as key) ->
+            let free = free_mapped d (free_of d kind) size in
+            let rec drop = function
+              | m :: ms when not (fits d n) ->
+                  d.cached <- d.cached - size;
+                  freed := (free, m) :: !freed;
+                  drop ms
+              | ms -> ms
+            in
+            match drop (Hashtbl.find d.cache key) with
+            | [] -> Hashtbl.remove d.cache key
+            | ms -> Hashtbl.replace d.cache key ms)
+          keys;
+        free_all d ~owned:true ~keep:() !freed
+      end
 
 (* An unreachable program leaves the cache, unless a load replaced it there, and
    is released at once: only the host releases programs, and it runs them in the
@@ -2182,7 +2196,7 @@ let stats d =
       (if failed d = None then try reclaim d with Lost _ -> ());
       {
         Stats.allocated = allocated d;
-        cached = d.cached;
+        cached = cached d;
         retained = d.retained;
         bytes_in = d.bytes_in;
         bytes_out = d.bytes_out;

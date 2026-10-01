@@ -640,7 +640,10 @@ module Stats : sig
 
   val cached : t -> int
   (** [cached s] is the bytes in the device's cache: memory allocated from the
-      driver and held for reuse. *)
+      driver and held for reuse. The host's cache holds the memory of collected
+      buffers of 64 KiB or more for the next buffers of their sizes: up to a
+      major cycle's share of the program's memory, or 32 MiB where that is
+      less. *)
 
   val retained : t -> int
   (** [retained s] is the bytes of the device's own memory that it retains

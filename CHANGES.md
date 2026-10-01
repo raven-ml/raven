@@ -2909,6 +2909,15 @@ thread.
 
 ### Nx
 
+- Host buffers of 64 KiB or more reuse the memory of collected buffers of
+  the same size instead of returning it to the C library, which on Linux
+  trims or unmaps it, so the next eager operation faulted its pages in again
+  and timings swung by 2-4x from run to run. The cache holds up to a major
+  cycle's share of the program's memory (at least 32 MiB), counts against
+  the host's budget, shows in `Nx_device.Stats.cached`, and
+  `Nx_device.free_cache Nx_device.host` empties it. On Linux x86, vega's
+  optimizer steps keep their medians with a spread of 0.3-8% where it reached
+  120%, and eager random draws of 1M elements are 13-28% faster.
 - An NV GPU under NVIDIA's kernel driver borrows host memory whose length is
   not a multiple of 4 KiB. `Nx_device.Buffer.borrow` refused it with
   `NV_ERR_INVALID_ADDRESS`, because unified memory takes ranges of whole pages
