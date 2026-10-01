@@ -42,21 +42,6 @@ let read_string file ~pos n =
   let chars = B.bigarray Bigarray.char b in
   String.init n (Bigarray.Array1.get chars)
 
-(* [entry file kind shape ~off ~len] is the entry of [len] bytes at byte [off]
-   of [file]: a value on the disk over them, or on a big-endian host their
-   elements read and put in the host's byte order. *)
-let entry (type a b) file (kind : (a, b) Nx_dtype.t) shape ~off ~len =
-  let size = Nx_dtype.itemsize kind in
-  let n = len / size in
-  let bytes = B.view file ~offset:off (Nx_dtype.Scalar.of_dtype kind) n in
-  if Sys.big_endian then begin
-    let buffer = Nx_array.Elements.create kind n in
-    B.copy ~src:bytes ~dst:buffer;
-    Nx_io_codec.byteswap (Storage.bytes buffer) ~element_size:size ~elements:n;
-    Nx.P (Nx.of_buffer kind shape buffer)
-  end
-  else Nx.P (Nx.of_buffer kind shape bytes)
-
 (* The header of [file] and the offset of its data, once the file's length is
    the one the header describes. *)
 let read_header file =
@@ -103,7 +88,7 @@ let load_safetensors path =
               | _ -> Array.of_list info.shape
             in
             Hashtbl.replace archive name
-              (entry file kind shape ~off:(data_start + start) ~len))
+              (Storage.mapped file kind shape ~off:(data_start + start) ~len))
           metadata.index_map;
         archive
       with
@@ -165,9 +150,9 @@ let replace_or_keep temp path =
   in
   try Unix.rename temp path with
   | Unix.Unix_error _ when Sys.win32 -> (
-      (* Windows refuses to replace a file while a view of its pages is
-         mapped: a value loaded from [path] and borrowed may hold one until it
-         is collected. *)
+      (* Windows refuses to replace a file while a view of its pages is mapped:
+         a value loaded from [path] and borrowed may hold one until it is
+         collected. *)
       Gc.full_major ();
       Nx_device.synchronize Nx_device.disk;
       try Unix.rename temp path with Unix.Unix_error (e, _, _) -> failed e)

@@ -3011,6 +3011,9 @@ thread.
 
 ### Nx
 
+- Add `Nx_io.load_gguf`, which loads a GGUF file (versions 2 and 3): its
+  metadata as `Nx_io.Gguf.value`s and its tensors as values on the disk, as
+  `load_safetensors` does. A block-quantized tensor loads as its bytes.
 - `Nx.reshape` and `Nx.ravel` copy a tensor whose layout no view can express,
   such as a flattened transpose. They raised and asked for `Nx.contiguous`,
   while the same reshape under `Rune.jit` computed.

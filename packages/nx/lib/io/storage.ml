@@ -38,3 +38,18 @@ let file_bytes path =
   match Result.bind (B.of_file path) (B.borrow Nx_device.host) with
   | Ok b -> bytes b
   | Error why -> raise (Sys_error why)
+
+(* [mapped file kind shape ~off ~len] is the entry of [len] bytes at byte [off]
+   of [file]: a value on the disk over them, or on a big-endian host their
+   elements read and put in the host's byte order. *)
+let mapped (type a b) file (kind : (a, b) Nx_dtype.t) shape ~off ~len =
+  let size = Nx_dtype.itemsize kind in
+  let n = len / size in
+  let view = B.view file ~offset:off (Nx_dtype.Scalar.of_dtype kind) n in
+  if Sys.big_endian then begin
+    let buffer = Nx_array.Elements.create kind n in
+    B.copy ~src:view ~dst:buffer;
+    Nx_io_codec.byteswap (bytes buffer) ~element_size:size ~elements:n;
+    Nx.P (Nx.of_buffer kind shape buffer)
+  end
+  else Nx.P (Nx.of_buffer kind shape view)

@@ -84,6 +84,12 @@ let gunzip ~src ~dst = Gzip_io.gunzip ~src ~dst
 let load_safetensors = Nx_safetensors.load_safetensors
 let save_safetensors = Nx_safetensors.save_safetensors
 
+(* GGUF *)
+
+module Gguf = Gguf
+
+let load_gguf = Gguf.load
+
 (* Text *)
 
 let save_txt ?sep ?append ?newline ?header ?footer ?comments path arr =

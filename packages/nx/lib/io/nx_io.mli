@@ -6,13 +6,13 @@
 (** Tensor I/O.
 
     Load and save {!Nx} tensors in common formats: images (PNG and JPEG), NumPy
-    ([.npy] and [.npz]), SafeTensors, and delimited text. *)
+    ([.npy] and [.npz]), SafeTensors, and delimited text, and load GGUF. *)
 
 (** {1:archives Archives} *)
 
 type archive = (string, Nx.packed) Hashtbl.t
-(** The type for named tensors, as {!load_npz} and {!load_safetensors} return
-    them. Read an entry with {!Nx.unpack}. *)
+(** The type for named tensors, as {!load_npz}, {!load_safetensors} and
+    {!load_gguf} return them. Read an entry with {!Nx.unpack}. *)
 
 (** {1:image Images} *)
 
@@ -135,16 +135,15 @@ val load_safetensors : string -> archive
 
     Loading opens the file and reads its header; it reads no tensor data. Each
     entry is a value on the disk device ({!Nx_device.disk}), over the entry's
-    bytes in the file. The host reads an entry where it lies:
-    an operation on it computes on the file's pages, mapped copy-on-write, and
-    so does {!Nx.place} onto the host or onto a device whose memory is the
-    host's, such as Metal's, which borrows them without a copy. {!Nx.place} onto
-    a device whose memory the host does not address reads the entry's bytes into
-    it. A movement ({!Nx.reshape}, {!Nx.slice}, {!Nx.transpose}, ...) of an
-    entry is a value on the disk too. An entry whose bytes are not aligned to
-    its elements, which a header of odd length causes, is read instead of
-    mapped. On a big-endian host the entries are read and put in its byte order
-    as they load.
+    bytes in the file. The host reads an entry where it lies: an operation on it
+    computes on the file's pages, mapped copy-on-write, and so does {!Nx.place}
+    onto the host or onto a device whose memory is the host's, such as Metal's,
+    which borrows them without a copy. {!Nx.place} onto a device whose memory
+    the host does not address reads the entry's bytes into it. A movement
+    ({!Nx.reshape}, {!Nx.slice}, {!Nx.transpose}, ...) of an entry is a value on
+    the disk too. An entry whose bytes are not aligned to its elements, which a
+    header of odd length causes, is read instead of mapped. On a big-endian host
+    the entries are read and put in its byte order as they load.
 
     The file stays open, and mapped once read, until the last value over it is
     garbage collected, and its values see the file that was opened:
@@ -189,6 +188,124 @@ val save_safetensors :
       has no SafeTensors equivalent (complex and int4 dtypes). If the rename is
       refused twice, the message names the temporary file, which is kept and
       holds [entries]. *)
+
+(** {1:gguf GGUF} *)
+
+(** GGUF files.
+
+    A GGUF file holds a model's tensors and its metadata: key-values that
+    describe the architecture, the tokenizer and the file itself. *)
+module Gguf : sig
+  (** The type for metadata values, one case per GGUF value type. An unsigned
+      64-bit value is held in [int64] by its bits. An array's elements are of
+      one type. *)
+  type value =
+    | Uint8 of int
+    | Int8 of int
+    | Uint16 of int
+    | Int16 of int
+    | Uint32 of int
+    | Int32 of int
+    | Uint64 of int64
+    | Int64 of int64
+    | Float32 of float
+    | Float64 of float
+    | Bool of bool
+    | String of string  (** The bytes stored, UTF-8 by the specification. *)
+    | Array of value array
+
+  (** The type for tensor types. Each tensor of a file is stored as one of them:
+      a scalar type, whose elements nx holds, or a block format, which stores
+      the elements of a row in blocks of a fixed number of elements and bytes.
+  *)
+  type dtype =
+    | F32
+    | F16
+    | BF16
+    | F64
+    | I8
+    | I16
+    | I32
+    | I64
+    | Q4_0
+    | Q4_1
+    | Q5_0
+    | Q5_1
+    | Q8_0
+    | Q8_1
+    | Q2_K
+    | Q3_K
+    | Q4_K
+    | Q5_K
+    | Q6_K
+    | Q8_K
+    | IQ2_XXS
+    | IQ2_XS
+    | IQ3_XXS
+    | IQ1_S
+    | IQ4_NL
+    | IQ3_S
+    | IQ2_S
+    | IQ4_XS
+    | IQ1_M
+    | TQ1_0
+    | TQ2_0
+    | MXFP4
+
+  type tensor_info = {
+    dtype : dtype;  (** The type the tensor is stored as. *)
+    shape : int array;
+        (** The tensor's logical shape, in row-major order: the reverse of the
+            dimensions the file lists, whose first varies fastest. *)
+  }
+  (** The type for a tensor's description in the file. *)
+
+  type t = {
+    version : int;  (** The format version, [2] or [3]. *)
+    metadata : (string * value) list;  (** The key-values, in file order. *)
+    tensors : archive;  (** The tensors, by name. *)
+    tensor_infos : (string, tensor_info) Hashtbl.t;
+        (** The description of each tensor of [tensors], by name. *)
+  }
+  (** The type for the contents of a GGUF file. *)
+end
+
+val load_gguf : string -> Gguf.t
+(** [load_gguf path] is the contents of the GGUF file [path], of version 2 or 3,
+    in little-endian byte order.
+
+    Loading opens the file and reads its header: the key-values and the tensor
+    descriptions. It reads no tensor data. Each tensor is a value on the disk
+    device ({!Nx_device.disk}) over its bytes in the file, read where they lie
+    as {!load_safetensors} reads its entries: an operation on it computes on the
+    file's pages, mapped copy-on-write, and {!Nx.place} onto a device whose
+    memory is the host's borrows them without a copy. A tensor whose bytes are
+    not aligned to its elements, which a [general.alignment] below its element
+    size allows, is read instead of mapped. On a big-endian host the tensors are
+    read and put in its byte order as they load.
+
+    A tensor of a scalar type has its {!Gguf.tensor_info.shape} and the dtype of
+    the same name: [Float32], [Float16], [BFloat16], [Float64], [Int8], [Int16],
+    [Int32] or [Int64]. A tensor of a block format is loaded as its bytes, at
+    [uint8], of its logical shape with the last dimension replaced by the size
+    of a row in bytes: a Q8_0 row of 64 elements is two blocks of 34 bytes, so a
+    Q8_0 tensor of logical shape [[|m; 64|]] loads at shape [[|m; 68|]]. A
+    tensor with no elements is an empty tensor of its shape.
+
+    The file stays open, and mapped once read, until the last value over it is
+    garbage collected, and its values see the file that was opened.
+    {b The file must not change in place while a value loaded from it is alive}:
+    rewriting it may change their values, and truncating it kills the process
+    with a bus error when a truncated page is read. On Windows a mapped file may
+    not be deleted or replaced until its values are collected.
+
+    @raise Failure
+      naming [path], if it is not a regular file that can be read, if it does
+      not start with the GGUF magic, if its version is not 2 or 3 or its byte
+      order is big-endian, if its header is malformed or cut short, names a key
+      or a tensor twice, or gives a tensor a type this function does not know, a
+      row that is not a whole number of blocks or a position that is not a
+      multiple of the alignment, or if the file ends before a tensor's data. *)
 
 (** {1:text Text format} *)
 
