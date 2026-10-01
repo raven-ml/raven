@@ -503,16 +503,18 @@ let rows perm a =
 let factorizations =
   group "factorizations"
     [
-      prop "cholesky gives L with L Lᵀ = a, reading only the lower triangle"
-        (sized spd) (fun a ->
+      prop
+        "cholesky gives L with L Lᵀ = a and U with Uᵀ U = a, both reading only \
+         the lower triangle" (sized spd) (fun a ->
+          let noisy = Nx.add (Nx.tril a) (Nx.triu ~k:1 (Nx.full_like a 7.)) in
           let l = Nx.cholesky a in
           equal near a (l *@ t l);
           is_true ~msg:"L is lower-triangular" (is_upper (t l));
-          equal near l
-            (Nx.cholesky
-               (Nx.add (Nx.tril a) (Nx.triu ~k:1 (Nx.full_like a 7.))));
+          equal ~msg:"L ignores the upper triangle" near l (Nx.cholesky noisy);
           let u = Nx.cholesky ~upper:true a in
-          equal near a (t u *@ u));
+          equal near a (t u *@ u);
+          equal ~msg:"U ignores the upper triangle" near u
+            (Nx.cholesky ~upper:true noisy));
       prop "cholesky of a Hermitian matrix gives L with L Lᴴ = a" (sized spd)
         (fun a ->
           let z =

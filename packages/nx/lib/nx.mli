@@ -2676,8 +2676,9 @@ val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
     real symmetric or complex Hermitian. When [upper] is [true], returns the
     upper-triangular factor [U] such that [a = Uᴴ U]; otherwise (default)
     returns the lower-triangular factor [L] such that [a = L Lᴴ], where [ᴴ] is
-    the conjugate transpose, the transpose on real matrices. Only the lower
-    triangle of [a] is read; the upper triangle may hold anything.
+    the conjugate transpose, the transpose on real matrices. Whichever factor
+    is returned, only the lower triangle of [a] is read, its diagonal included;
+    the strictly upper triangle may hold anything.
 
     Raises {!Linalg_error} with kind [`Not_positive_definite] if [a] is not
     positive-definite. Raises [Invalid_argument] if [a] is not square or the
