@@ -2903,3 +2903,29 @@ stores through a pad.
   tinygrad's › applied_opts`, cases `routed_blocks_metal`,
   `routed_blocks_cuda` and `routed_blocks_amd` (the local split on the
   matrix's row axis), recorded from the equally patched tinygrad.
+
+## D102. An empty argument of a precompiled call is its constant
+
+- **tinygrad:** `schedule/prepare.py:264` (the size-0 rule, which makes every
+  value with no element a constant expanded to its shape), `schedule/rangeify.py:143`
+  (`no_indexing_calls`), `uop/spec.py:254-280` (`spec_kernel_graph`, which
+  admits no expand) and `schedule/__init__.py:19-23,72-75` (`_states` and the
+  call's arguments in `create_schedule`, which take buffer states only).
+- **tolk:** `lib/schedule/rangeify.ml:227` (`no_indexing_calls`) and
+  `lib/schedule/schedule.ml:55` (`empty_argument`) and `:74`
+  (`create_schedule`).
+- **Differs:** an argument with no element of a precompiled call, which the
+  size-0 rule made an expanded constant, reaches the kernel graph as the
+  scalar constant, without its expand. `create_schedule` reads no state of it
+  and passes it as the call's argument. The body, scheduled on its own, makes
+  the empty parameter a constant too, so none of its kernels binds the
+  argument. A kernel's argument is still a buffer state. tinygrad fails the
+  kernel graph's verification on the expand.
+- **Reason:** (b): `Rune.vmap (Rune.grad (Rune.jit scan))` over no lane. The
+  staged scan's backward step is a precompiled call in a loop whose carry has
+  no element and whose rows have some.
+- **Pinned by:** the `Tolk_engine` suite: `link and run › a scan whose carry
+  has no element runs on its rows`; rune's `test_jit_transformations`: `jit
+  is the identity under a transformation › a scan`, whose mapped shapes hold
+  no lane.
+

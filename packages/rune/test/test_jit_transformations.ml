@@ -33,10 +33,13 @@ let shapes =
   [ [| 3 |]; [| 0 |]; [| 1 |]; [| 2; 3 |]; [| 4; 0 |]; [| 0; 2 |]; [| 1; 5 |] ]
 
 (* Shapes whose rows a map takes, and those a scan takes: at least one row. A
-   map of a scan takes at least one lane of those ({!no_lane}). *)
+   map of a scan takes lanes of those, and over no lane its carry has no element
+   while its step reads rows that have some. *)
 let matrices = List.filter (fun s -> Array.length s = 2) shapes
 let rows = List.filter (fun s -> s.(0) > 0) matrices
-let lanes_of_rows = [ [| 2; 3; 2 |]; [| 3; 1; 4 |]; [| 2; 2; 0 |] ]
+
+let lanes_of_rows =
+  [ [| 2; 3; 2 |]; [| 3; 1; 4 |]; [| 2; 2; 0 |]; [| 0; 2; 3 |] ]
 
 (* Each shape with no element, at each dtype: every law runs them. *)
 let empty shapes =
@@ -235,27 +238,13 @@ let law (fn, shapes, mapped) c t =
           equal ~msg:(string_of_int i) (close dt) e (List.nth actual i))
         expected)
 
-(* Over no lane, the scan's carry has no element while its step reads rows that
-   have some, which a staged scan does not compile. *)
-let no_lane =
-  xfail
-    ~reason:
-      "a staged scan whose carry has no element and whose step reads its rows \
-       fails tolk's verification of an expand"
-    (test "vmap of grad (jit f) of a scan over no lane is vmap of grad f"
-       (fun () ->
-         let x = values Nx.float32 [| 0; 2; 3 |] 1 in
-         let map f = Rune.vmap' (Rune.grad' (loss f)) x in
-         equal (close Nx.float32) (map scan.f) (map (Rune.jit' scan.f))))
-
 let identity =
   group "jit is the identity under a transformation"
-    (no_lane
-    :: List.map
-         (fun ((fn, _, _) as f) ->
-           let c = compile fn in
-           group fn.name (List.map (law f c) transformations))
-         functions)
+    (List.map
+       (fun ((fn, _, _) as f) ->
+         let c = compile fn in
+         group fn.name (List.map (law f c) transformations))
+       functions)
 
 (* A compiled function that consumes its argument consumes nothing under a
    transformation, so the argument stays readable for the backward pass. *)

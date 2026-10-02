@@ -222,13 +222,18 @@ let strip_zero_offset_shrink x =
   | _ -> x
 
 (* A call's arguments that have consumers can be indexed; the call reads its
-   storage. *)
+   storage. An empty argument of a precompiled call is the constant prepare made
+   of it: the body reaches no element of it, and the call passes the scalar. *)
 let no_indexing_calls u =
+  let precompiled = match arg u with Call c -> c.precompile | _ -> false in
   let arg x =
     match op x with
     | Op.Index -> nth x 0
     | Op.Shrink -> strip_zero_offset_shrink x
     | Op.Mstack -> replace x ~src:(List.map strip_zero_offset_shrink (src x))
+    | (Op.Expand | Op.Reshape)
+      when precompiled && Sint.equal (numel x) (Int 0) ->
+        base x
     | _ -> x
   in
   replace u ~src:(List.map arg (src u))

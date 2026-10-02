@@ -946,6 +946,10 @@ thread.
 
 ### Tolk (new)
 
+- A precompiled call whose argument has no element compiles: the argument
+  passes as its constant. `Rune.jit` of a scan whose carry has no element
+  and whose step reads its rows failed verification, as under `vmap (grad
+  (jit f))` over no lane.
 - A matrix-vector product's workgroup takes rows of its matrix, which share
   the vector's loads, before rows that each read a vector of their own.
   `Nx_quant.apply ~ids` on a prompt laid its workgroups over blocks of

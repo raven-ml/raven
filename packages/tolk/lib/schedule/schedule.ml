@@ -50,6 +50,12 @@ let rec states s =
       invalid_arg
         (Format.asprintf "a kernel's input is a buffer state, not %a" Op.pp o)
 
+(* An empty argument of a precompiled call is its constant (Rangeify): the body,
+   scheduled on its own, reaches no element of it, and it is no state. *)
+let empty_argument k s =
+  op (unwrap_src s) = Op.Const
+  && match arg k with Call c -> c.precompile | _ -> false
+
 let split_after after =
   let effects = List.tl (src after) in
   let kernels, rest =
@@ -95,13 +101,18 @@ let create_schedule sched_sink =
           (fun k ->
             if Ordered.find_opt in_degree k = None then
               Ordered.replace in_degree k 0;
-            let kernel_deps =
+            let call =
               if op k = Op.End then begin
                 if op (nth k 0) <> Op.Call then
                   invalid_arg "an end of a kernel ends a call";
-                List.tl (src (nth k 0))
+                nth k 0
               end
-              else List.tl (src k)
+              else k
+            in
+            let kernel_deps =
+              List.filter
+                (fun s -> not (empty_argument call s))
+                (List.tl (src call))
             in
             let read_states = List.concat_map states kernel_deps in
             reads :=
@@ -154,7 +165,10 @@ let create_schedule sched_sink =
     if op k <> Op.Call then invalid_arg "a scheduled kernel is a call";
     let args =
       List.filter_map
-        (fun s -> if is_bound_var s then None else Some (argument s))
+        (fun s ->
+          if is_bound_var s then None
+          else if empty_argument k s then Some s
+          else Some (argument s))
         (List.tl (src k))
     in
     let call = replace k ~src:(body k :: args) in
