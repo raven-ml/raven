@@ -120,7 +120,7 @@ let errors =
                  dot ~x:(num ~scale:lr x) ~y:(num x) ();
                  dot ~x:(num x) ~y:(num x) ();
                ])),
-        [ "0"; "1" ] );
+        [ "0 and 1 read two x scales in the panel root" ] );
       ( "two guides implied for one scale",
         (fun () ->
           let m g =
@@ -129,7 +129,7 @@ let errors =
               draw_nothing
           in
           resolve (layer [ m true; m false ])),
-        [ "0"; "1"; "color" ] );
+        [ "0 and 1 imply different guides for the scale \"color\"" ] );
       ( "two names on a child",
         (fun () ->
           resolve (layer [ name "a" (name "b" (dot1 [| 1. |] [| 1. |])) ])),
@@ -159,7 +159,7 @@ let errors =
                       (Coord.cartesian ~aspect:1. ())
                       (dot1 [| 1. |] [| 1. |]);
                   ]))),
-        [ "root"; "0" ] );
+        [ "the panel root lies under two coordinate systems, at root and 0" ] );
       ( "two implied coordinate systems",
         (fun () ->
           let m a =
@@ -168,13 +168,13 @@ let errors =
               [] draw_nothing
           in
           resolve (layer [ m 1.; m 2. ])),
-        [ "0"; "1" ] );
+        [ "0 and 1 imply two coordinate systems in the panel root" ] );
       ( "rows of different lengths",
         (fun () -> resolve (grid [ [ layer []; layer [] ]; [ layer [] ] ])),
         [ "root" ] );
       ( "a span past the last row",
         (fun () -> resolve (grid [ [ span ~rows:2 (layer []) ] ])),
-        [ "0" ] );
+        [ "the span 0 reaches past the last row" ] );
       ( "a span over another cell",
         (fun () ->
           resolve
@@ -183,7 +183,7 @@ let errors =
                  [ layer []; layer []; span ~rows:2 (layer []) ];
                  [ layer []; span ~cols:2 (layer []) ];
                ])),
-        [ "4" ] );
+        [ "the span 4 covers another cell" ] );
       ( "widths of the wrong length",
         (fun () -> resolve (grid ~widths:[ 1. ] [ [ layer []; layer [] ] ])),
         [ "root"; "widths" ] );
@@ -192,7 +192,7 @@ let errors =
         [ "root"; "heights" ] );
       ( "a span outside a grid",
         (fun () -> resolve (layer [ span (layer []) ])),
-        [ "0" ] );
+        [ "0 spans cells outside a grid" ] );
       ( "grids that do not broadcast",
         (fun () ->
           resolve
@@ -232,7 +232,7 @@ let errors =
                    ~x:(num ~scale:(Scale.linear ~zero:false ()) x)
                    ~y:(num x) ();
                ])),
-        [ "0"; "1"; "zero"; "x" ] );
+        [ "0 and 1 give the scale \"x\" two explicit values"; "zero" ] );
       ( "two implied values of one property",
         (fun () ->
           let m c =
@@ -241,7 +241,7 @@ let errors =
               draw_nothing
           in
           resolve (layer [ m true; m false ])),
-        [ "0"; "1"; "clamp" ] );
+        [ "0 and 1 give the scale \"color\" two implied values"; "clamp" ] );
       ( "two kinds on a user's scale",
         (fun () ->
           let s = Scale.band ~name:"lr" () in
@@ -253,12 +253,17 @@ let errors =
                    ~fill:(cat ~scale:s (i32 [| 0 |]))
                    ();
                ])),
-        [ "0"; "1"; "lr" ] );
+        [
+          "the scale \"lr\" is read as quantitative by 0 and as categorical by \
+           1";
+        ] );
       ( "two kinds on x",
         (fun () ->
           resolve
             (layer [ dot1 [| 1. |] [| 1. |]; rect ~x:(dim 0) ~y:(num x) () ])),
-        [ "0"; "1"; "x" ] );
+        [
+          "the scale \"x\" is read as quantitative by 0 and as categorical by 1";
+        ] );
       ( "labelled and indexed categories on one scale",
         (fun () ->
           resolve
@@ -269,7 +274,9 @@ let errors =
                    ();
                  dot ~x:(num x) ~y:(num x) ~fill:(dim 0) ();
                ])),
-        [ "0"; "1"; "color" ] );
+        [
+          "0 and 1 read labelled and indexed categories on the scale \"color\"";
+        ] );
       ( "a labelled domain read by indexed categories",
         (fun () ->
           resolve
@@ -290,10 +297,10 @@ let errors =
                    ~fill:(dim ~labels:[| "a"; "c" |] 0)
                    ();
                ])),
-        [ "0"; "1"; "color" ] );
+        [ "0 and 1 give the category 1 of the scale \"color\" two texts" ] );
       ( "an axis of no position scale",
         (fun () -> resolve (layer [ dot1 [| 1. |] [| 1. |]; axis "color" ])),
-        [ "1"; "color" ] );
+        [ "the axis 1 names \"color\"" ] );
       ( "two different axes for one scale",
         (fun () ->
           resolve
@@ -315,7 +322,7 @@ let errors =
         [ "the axis a of \"lr\""; "top" ] );
       ( "a legend of no scale with a legend",
         (fun () -> resolve (layer [ dot1 [| 1. |] [| 1. |]; legend "x" ])),
-        [ "1"; "x" ] );
+        [ "the legend 1 names \"x\"" ] );
       ( "two different legends for one scale",
         (fun () ->
           resolve
@@ -325,7 +332,7 @@ let errors =
                  legend "color";
                  legend ~show:false "color";
                ])),
-        [ "1"; "2"; "color" ] );
+        [ "1 and 2 are two different legends for \"color\"" ] );
       ( "a wrapping fx with an fy",
         (fun () ->
           resolve
