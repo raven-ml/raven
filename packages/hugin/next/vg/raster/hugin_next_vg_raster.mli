@@ -33,7 +33,10 @@
       the pixels on the edge, and let a little of the backdrop through there, as
       in browsers and PDF viewers.
     - Compositing is source-over on the encoded components, premultiplied by
-      alpha and rounded to 8 bits after each primitive.
+      alpha, in single-precision floating point. Components are rounded to 8
+      bits once, when the image is read out, so that translucent primitives
+      drawn over one another reach the colour they composite to: up to a
+      thousand fills at any opacity from [0.02] land within a level of it.
     - An image paints a pixel with the image pixel under the pixel's centre, so
       its edges are not antialiased. Where an image is shown smaller than its
       pixels, a pixel averages the image pixels under [k] by [k] points spread
@@ -55,8 +58,9 @@ val render : density:float -> Hugin_next_vg.Renderable.t -> Nx.uint8_t
     with straight alpha, on the host, where [w] and [h] are the width and height
     of the page of [r] multiplied by [density] and rounded to the nearest
     integer. Pixel [(i, j)] shows the square of the page with top left corner
-    [(float j /. density, float i /. density)] and side [1. /. density]. Pixels
-    the picture paints nothing on are [(0, 0, 0, 0)].
+    [(float j /. density, float i /. density)] and side [1. /. density]. Each
+    component is the level nearest its composited value. Pixels the picture
+    paints nothing on, and those whose alpha rounds to [0], are [(0, 0, 0, 0)].
 
     Raises [Invalid_argument] if [density] is not finite and positive, or if [w]
     or [h] is less than [1] or greater than [2{^31} - 1], and what reading the

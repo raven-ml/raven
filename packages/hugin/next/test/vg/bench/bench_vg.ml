@@ -54,6 +54,18 @@ let scatter =
          Picture.stamp sx sy (Picture.fill (Color.v 0.2 0.4 0.8) dot);
        ])
 
+(* Translucent dots on a page at density 2, 1280 by 960 pixels: compositing
+   dominates, over a surface too large for the caches. *)
+let translucent =
+  let dot = Path.circle (P2.v 0. 0.) 2. in
+  page
+    (Picture.group
+       [
+         Picture.fill Color.white (Path.rect (Box2.v 0. 0. 640. 480.));
+         Picture.stamp xs ys
+           (Picture.fill (Color.v ~alpha:0.05 0.2 0.4 0.8) dot);
+       ])
+
 (* Scaled instances of an opacity, each drawn in a layer of its own. *)
 let faded =
   let scales = Array.init n (fun _ -> 0.5 +. Random.float 1.5) in
@@ -69,6 +81,8 @@ let raster =
       Thumper.bench "1M-point polyline" (render polyline);
       Thumper.bench "100k-dot scatter to PNG" (fun () ->
           Hugin_next_vg_raster.png ~density:2. scatter);
+      Thumper.bench "100k translucent dots at density 2" (fun () ->
+          Hugin_next_vg_raster.render ~density:2. translucent);
     ]
 
 let svg =

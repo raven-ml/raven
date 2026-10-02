@@ -416,7 +416,7 @@ let rec composite (t : Surface.t) (clip : Surface.clip) ox oy ~tw ~th planes
           done
         done
     | Layer { alpha; planes; scratch } ->
-        Bigarray.Array1.fill scratch.px 0;
+        Surface.clear scratch;
         composite scratch (Surface.whole scratch) 0 0 ~tw ~th planes fill stroke;
         Surface.composite t clip scratch ox oy alpha
   in

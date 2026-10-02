@@ -683,12 +683,106 @@ let over_formula (c, c') =
            ((Float.of_int got *. Float.of_int alpha /. 255.) -. premultiplied)))
     [ ("red", r, Color.r); ("green", g, Color.g); ("blue", b, Color.b) ]
 
+(* A page painted with a backdrop, if any, then with [count] fills of the whole
+   page, each a colour of [palette] in turn faded by [opacity], as the alpha of
+   its colour or as a group opacity. *)
+type dense = {
+  backdrop : Color.t option;
+  palette : Color.t list;
+  opacity : float;
+  count : int;
+  as_group : bool;
+}
+
+let pp_dense ppf d =
+  Format.fprintf ppf
+    "@[<v>backdrop %a@,palette %a@,opacity %g@,count %d@,as group %b@]"
+    (Format.pp_print_option
+       ~none:(fun ppf () -> Format.pp_print_string ppf "none")
+       Color.pp)
+    d.backdrop
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space Color.pp)
+    d.palette d.opacity d.count d.as_group
+
+let gen_dense =
+  let open Gen in
+  let opaque =
+    let unit = float_range 0. 1. in
+    map (fun (r, g, b) -> Color.v r g b) (triple unit unit unit)
+  in
+  let opacity =
+    frequency
+      [
+        (1, of_list ~pp:Format.pp_print_float [ 0.02; 1. ]);
+        (4, float_range 0.02 1.);
+      ]
+  in
+  let count = frequency [ (1, int_range 1 4); (3, int_range 1 1000) ] in
+  with_pp pp_dense
+    (map
+       (fun ((backdrop, palette), (opacity, count, as_group)) ->
+         { backdrop; palette; opacity; count; as_group })
+       (pair
+          (pair (option opaque) (list ~size:(int_range 1 3) opaque))
+          (triple opacity count bool)))
+
+(* [dense_within_a_level d] checks the page of [d] against source-over in exact
+   arithmetic: each component of the pixel is the level nearest the exact
+   colour, straight, up to the drift of compositing in single precision, about a
+   thousandth of a level over a thousand blends. *)
+let dense_within_a_level d =
+  let whole = rect 0. 0. 1. 1. in
+  let palette = Array.of_list d.palette in
+  let shape i =
+    let c = palette.(i mod Array.length palette) in
+    if d.as_group then Picture.opacity d.opacity (Picture.fill c whole)
+    else Picture.fill (Color.with_alpha d.opacity c) whole
+  in
+  let backdrop =
+    match d.backdrop with None -> [] | Some c -> [ Picture.fill c whole ]
+  in
+  let img = render 1. 1. (Picture.group (backdrop @ List.init d.count shape)) in
+  (* Premultiplied, in [0;1]. *)
+  let over (r, g, b, a) c =
+    let k = d.opacity and k' = 1. -. d.opacity in
+    ( (k *. Color.r c) +. (k' *. r),
+      (k *. Color.g c) +. (k' *. g),
+      (k *. Color.b c) +. (k' *. b),
+      k +. (k' *. a) )
+  in
+  let start =
+    match d.backdrop with
+    | None -> (0., 0., 0., 0.)
+    | Some c -> (Color.r c, Color.g c, Color.b c, 1.)
+  in
+  let r, g, b, a =
+    List.fold_left over start
+      (List.init d.count (fun i -> palette.(i mod Array.length palette)))
+  in
+  let r', g', b', a' = rgba img 0 0 in
+  let near name exact got =
+    at_most ~msg:name (float 1e-9) ~than:(0.5 +. 1e-3)
+      (Float.abs (Float.of_int got -. (255. *. exact)))
+  in
+  near "alpha" a a';
+  near "red" (r /. a) r';
+  near "green" (g /. a) g';
+  near "blue" (b /. a) b';
+  cover "the lightest opacity" (d.opacity = 0.02);
+  cover "an opaque opacity" (d.opacity = 1.);
+  cover "a transparent backdrop" (d.backdrop = None);
+  cover "an opaque backdrop" (d.backdrop <> None);
+  cover "group opacities" d.as_group;
+  cover "hundreds of light fills" (d.opacity < 0.05 && d.count > 200)
+
 let compositing =
   group "compositing"
     [
       prop "fills composite source-over on encoded components"
         (Gen.pair gen_color gen_color)
         over_formula;
+      prop "many translucent fills composite to within a level" gen_dense
+        dense_within_a_level;
       test "source-over on encoded components" (fun () ->
           let half = Color.with_alpha 0.5 red in
           let img =
@@ -704,6 +798,17 @@ let compositing =
           equal ~msg:"green" int 0 g;
           equal ~msg:"blue" int 128 b;
           equal ~msg:"alpha" int 255 a);
+      test "a component reads back as the level nearest it" (fun () ->
+          (* A grey of 200.7 levels under an alpha of 100.8 levels, each nearest
+             the level above it. *)
+          let g = 200.7 /. 255. in
+          let img =
+            render 1. 1.
+              (Picture.fill
+                 (Color.v ~alpha:(100.8 /. 255.) g g g)
+                 (rect 0. 0. 1. 1.))
+          in
+          equal color (201, 201, 201, 101) (rgba img 0 0));
       test "output has straight alpha" (fun () ->
           let img =
             render 1. 1.
@@ -742,8 +847,7 @@ let compositing =
           in
           let r, _, b, a = rgba img 0 1 in
           is_true ~msg:"red shows through" (r > 0 && b > r);
-          at_most ~msg:"alpha, 0.75 rounded per primitive" int ~than:1
-            (abs (a - 191)));
+          equal ~msg:"alpha, 0.75 rounded once" int 191 a);
       test "opacity 0. paints nothing" (fun () ->
           equal float_exact 0.
             (coverage
@@ -1105,9 +1209,8 @@ let glyphs =
           let alphas =
             Array.to_list (Nx.to_array (Nx.slice [ A; A; I 3 ] img))
           in
-          at_most ~msg:"the most opaque pixel, 0.75 rounded per glyph" int
-            ~than:1
-            (abs (List.fold_left Int.max 0 alphas - 191)));
+          equal ~msg:"the most opaque pixel, 0.75 rounded once" int 191
+            (List.fold_left Int.max 0 alphas));
     ]
 
 (* Images *)
