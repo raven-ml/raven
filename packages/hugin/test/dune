@@ -265,7 +265,7 @@
 
 ; hugin
 
-; The Guide's call sites only need to compile, so they form a library that
+; The call sites only need to compile, so they form a library that
 ; nothing links.
 
 (library

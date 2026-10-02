@@ -1,7 +1,12 @@
-(* The call sites of RFC 0016's Guide, against hugin.mli. This library is
-   compiled and never run: it checks that the interface states what the
-   benchmark figures need. Munin and talon values that do not exist yet are
-   stubbed with the types the RFC gives them. *)
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* The call sites of the benchmark figures, against hugin.mli. This library is
+   compiled and never run: it checks that the interface states what the figures
+   need. Munin and talon values that do not exist yet are stubbed with the types
+   the figures read. *)
 
 module Munin = struct
   module Run = struct
@@ -62,8 +67,8 @@ let sweep rates finals losses =
   let fitted = Resolved.scale (resolve f) lr in
   line ~y:(num losses) ~stroke:(num ~scale:fitted rates) ()
 
-(* Composing figures. The Guide stacks these bars with [stack], which comes with
-   the data-and-transforms RFC. *)
+(* Composing figures. The bars would stack with a [stack] transform, which hugin
+   does not provide. *)
 
 let compose a b = (grid [ [ a; b ] ], grid [ [ a ]; [ b ] ], span ~cols:2 a)
 
