@@ -13,9 +13,14 @@
 
 open Windtrap
 open Nx_test
-module Rune = Rune_internals.Rune
 
 let floats = tensor float_exact
+
+(* Floats whose zeros are equal whatever their sign, and every NaN equal: a
+   compiled maximum or minimum leaves a zero result's sign to its target. *)
+let up_to_zero =
+  tensor (Testable.make ~pp:(Testable.pp float_exact) ~equal:Float.equal)
+
 let close = Oracle.tensor ~rel:1e-5 ~abs:1e-30 ()
 let x () = Nx.create Nx.float32 [| 4 |] [| 1.; -2.; 3.; 0.5 |]
 let y () = Nx.create Nx.float32 [| 4 |] [| 2.; 0.; -1.; 4. |]
@@ -277,7 +282,7 @@ let values =
             let actual = Rune.jit two apply a b in
             match agreement with
             | Exact -> equal floats expected actual
-            | Exact_up_to_zero -> Traces.exact_up_to_zero expected actual
+            | Exact_up_to_zero -> equal up_to_zero expected actual
             | Rounded -> equal (rounded a b) expected actual)
         | exception Invalid_argument m ->
             (* An empty extreme raises eagerly; compiled, it raises too. *)
@@ -4188,7 +4193,7 @@ let lost_devices =
 
 let () =
   exit
-    (run "Rune_internals.Jit"
+    (run "Rune.jit"
        [
          values;
          keys;

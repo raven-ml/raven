@@ -1,3 +1,5 @@
+; Suites that link rune_internals check invariants no public function shows.
+
 (tests
  (names
   test_derivatives
@@ -25,6 +27,12 @@
 (test
  (name test_scan)
  (modules test_scan)
+ (package rune)
+ (libraries windtrap rune rune_test nx nx.dtype))
+
+(test
+ (name test_staging)
+ (modules test_staging)
  (package rune)
  (libraries windtrap rune_internals rune_test nx nx.dtype))
 
@@ -149,9 +157,8 @@
  (modules test_jit)
  (libraries
   windtrap
-  rune_internals
+  rune
   rune_test
-  rune_lowering_test
   nx_test
   nx
   nx.array
