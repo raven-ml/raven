@@ -767,6 +767,232 @@ let bounds =
       prop "bounds are those of a fine flattening" gen_program bounds_tight;
     ]
 
+(* Cropping *)
+
+let crop_box = Box2.v (-25.) (-15.) 55. 50.
+
+let inside_box ~margin b (x, y) =
+  Box2.minx b +. margin < x
+  && x < Box2.maxx b -. margin
+  && Box2.miny b +. margin < y
+  && y < Box2.maxy b -. margin
+
+(* [polygons segs] is the closed polygons of the flattened segments [segs], each
+   subpath closed as a fill closes it. *)
+let polygons segs =
+  let close start pts acc =
+    match (start, pts) with
+    | Some s, _ :: _ -> List.rev (s :: pts) :: acc
+    | _ -> acc
+  in
+  let rec go start pts acc = function
+    | [] -> List.rev (close start pts acc)
+    | M (x, y) :: rest -> go (Some (x, y)) [ (x, y) ] (close start pts acc) rest
+    | L (x, y) :: rest -> go start ((x, y) :: pts) acc rest
+    | Z :: rest -> go None [] (close start pts acc) rest
+    | C _ :: rest -> go start pts acc rest
+  in
+  go None [] [] segs
+
+(* [winding polys q] is the winding number of [polys] around [q]. *)
+let winding polys (px, py) =
+  let w = ref 0 in
+  let edge (x0, y0) (x1, y1) =
+    let side = ((x1 -. x0) *. (py -. y0)) -. ((px -. x0) *. (y1 -. y0)) in
+    if y0 <= py then (if y1 > py && side > 0. then incr w)
+    else if y1 <= py && side < 0. then decr w
+  in
+  List.iter
+    (fun pts ->
+      let rec loop = function
+        | a :: (b :: _ as rest) ->
+            edge a b;
+            loop rest
+        | [ _ ] | [] -> ()
+      in
+      loop pts)
+    polys;
+  !w
+
+(* [area polys] is the signed area of [polys] by the shoelace formula. *)
+let area polys =
+  let a = ref 0. in
+  List.iter
+    (fun pts ->
+      let rec loop = function
+        | (x0, y0) :: ((x1, y1) :: _ as rest) ->
+            a := !a +. ((x0 *. y1) -. (x1 *. y0));
+            loop rest
+        | [ _ ] | [] -> ()
+      in
+      loop pts)
+    polys;
+  Float.abs (!a /. 2.)
+
+let fine p = flat ~tolerance:1e-6 Affine.id p
+let gen_coord r = Gen.float_range (-.r) r
+let gen_point r = Gen.pair (gen_coord r) (gen_coord r)
+
+let gen_shapes ~closed =
+  Gen.with_pp
+    (Format.pp_print_list (fun ppf pts -> pp_cmd ppf (Poly (closed, pts))))
+    (Gen.list ~size:(Gen.int_range 1 3)
+       (Gen.list ~size:(Gen.int_range 2 7) (gen_point 60.)))
+
+let shapes_path ~closed subs =
+  build (List.map (fun pts -> Poly (closed, pts)) subs)
+
+(* The region law: inside the box, a cropped polygon winds around every point as
+   the polygon does, and outside it around none. *)
+let crop_keeps_windings (subs, q) =
+  let p = shapes_path ~closed:true subs in
+  let w = winding (polygons (fine (Path.crop crop_box p))) q in
+  let inside = inside_box ~margin:0. crop_box q in
+  cover "a point inside the box" inside;
+  cover "a point the polygons wind around" (winding (polygons (segs p)) q <> 0);
+  equal int (if inside then winding (polygons (segs p)) q else 0) w
+
+let dist_to_segment (px, py) ((x0, y0), (x1, y1)) =
+  let dx = x1 -. x0 and dy = y1 -. y0 in
+  let l = (dx *. dx) +. (dy *. dy) in
+  let t =
+    if l = 0. then 0.
+    else
+      Float.min 1.
+        (Float.max 0. ((((px -. x0) *. dx) +. ((py -. y0) *. dy)) /. l))
+  in
+  Float.hypot (px -. (x0 +. (t *. dx))) (py -. (y0 +. (t *. dy)))
+
+let edges segs =
+  let rec go cur acc = function
+    | [] -> List.rev acc
+    | M (x, y) :: rest -> go (x, y) acc rest
+    | L (x, y) :: rest -> go (x, y) ((cur, (x, y)) :: acc) rest
+    | (C _ | Z) :: rest -> go cur acc rest
+  in
+  go (0., 0.) [] segs
+
+let near_edges es q = List.exists (fun e -> dist_to_segment q e <= 1e-9) es
+
+(* The line law: a cropped polyline draws the points of the polyline within the
+   box, and no other. *)
+let crop_keeps_lines subs =
+  let p = shapes_path ~closed:false subs in
+  let original = edges (segs p)
+  and cropped = edges (segs (Path.crop crop_box p)) in
+  let mid ((x0, y0), (x1, y1)) = ((x0 +. x1) /. 2., (y0 +. y1) /. 2.) in
+  List.iter
+    (fun e ->
+      let q = mid e in
+      equal bool ~msg:"within the box" true
+        (inside_box ~margin:(-1e-9) crop_box q);
+      equal bool ~msg:"on the polyline" true (near_edges original q))
+    cropped;
+  List.iter
+    (fun ((x0, y0), (x1, y1)) ->
+      for k = 0 to 8 do
+        let t = Float.of_int k /. 8. in
+        let q = (x0 +. (t *. (x1 -. x0)), y0 +. (t *. (y1 -. y0))) in
+        if inside_box ~margin:1e-6 crop_box q then
+          equal bool ~msg:"kept" true (near_edges cropped q)
+      done)
+    original;
+  cover "a polyline crossing an edge"
+    (List.length cropped > 0 && List.length cropped <> List.length original)
+
+let unit_box = Box2.v 0. 0. 1. 1.
+
+let cropping =
+  group "crop"
+    [
+      prop "crop is the path itself when it lies within the box" gen_program
+        (fun prog ->
+          let p = build prog in
+          equal path_t p (Path.crop (Box2.v (-200.) (-200.) 400. 400.) p));
+      prop "crop keeps the windings of polygons within the box"
+        (Gen.pair (gen_shapes ~closed:true) (gen_point 70.))
+        crop_keeps_windings;
+      prop "crop keeps the points of polylines within the box"
+        (gen_shapes ~closed:false) crop_keeps_lines;
+      prop "crop draws within the box, finite points only" gen_gappy_program
+        (fun prog ->
+          List.iter
+            (function
+              | (M (x, y) | L (x, y)) as s ->
+                  satisfies ~claim:"finite segment"
+                    (Testable.make ~pp:pp_seg ~equal:( = ))
+                    all_finite s;
+                  equal bool ~msg:"within the box" true
+                    (inside_box ~margin:(-1e-9) crop_box (x, y))
+              | C _ | Z -> ())
+            (fine (Path.crop crop_box (build prog))));
+      test "crop puts a cut on the edge exactly" (fun () ->
+          equal segs_exact
+            [ M (0., 0.); L (1., 1. /. 3.) ]
+            (segs
+               (Path.crop unit_box (Path.polyline [| 0.; 3. |] [| 0.; 1. |]))));
+      test "crop cuts a curve into the cubic of its part within the box"
+        (fun () ->
+          (* x = t and y = 9 t (1 - t), cut at t = 1/2. *)
+          let p =
+            Path.empty
+            |> Path.move_to (pt 0. 0.)
+            |> Path.cubic_to (pt (1. /. 3.) 3.) (pt (2. /. 3.) 3.) (pt 1. 0.)
+          in
+          equal segs_near
+            [ M (0., 0.); C (1. /. 6., 1.5, 1. /. 3., 2.25, 0.5, 2.25) ]
+            (segs (Path.crop (Box2.v 0. 0. 0.5 3.) p)));
+      test "crop keeps the pieces of a curve that leaves and comes back"
+        (fun () ->
+          let p =
+            Path.empty
+            |> Path.move_to (pt 0. 0.)
+            |> Path.cubic_to (pt 0. 4.) (pt 1. (-4.)) (pt 1. 0.)
+          in
+          match segs (Path.crop (Box2.v 0. (-0.5) 1. 1.) p) with
+          | [ M _; C _; M (_, y0); C _; M (_, y1); C _ ] ->
+              equal (list float_eq) [ 0.5; -0.5 ] [ y0; y1 ]
+          | s -> failf "%d segments" (List.length s));
+      test "crop of a closed subpath stays closed along the edges" (fun () ->
+          let p = Path.rect (Box2.v (-1.) (-1.) 2. 2.) in
+          let s = segs (Path.crop (Box2.v 0. 0. 2. 2.) p) in
+          equal
+            (option (Testable.make ~pp:pp_seg ~equal:( = )))
+            (Some Z)
+            (List.nth_opt s (List.length s - 1));
+          equal (float 1e-12) 1. (area (polygons s)));
+      (* The circle's cubics depart from it, so its share of the disc they bound
+         is the reference. *)
+      cases ~name:fst "crop of a circle fills its part within the box"
+        [
+          ("on an edge, half its disc", (Box2.v 0. (-5.) 5. 10., `Share 0.5));
+          ("at a corner, a quarter", (Box2.v 0. 0. 5. 5., `Share 0.25));
+          ("around the box, the box", (Box2.v (-0.5) (-0.5) 1. 1., `Area 1.));
+        ]
+        (fun (_, (b, expected)) ->
+          let disc = Path.circle (pt 0. 0.) 1. in
+          let expected =
+            match expected with
+            | `Share k -> k *. area (polygons (fine disc))
+            | `Area a -> a
+          in
+          equal (float 1e-9) expected
+            (area (polygons (fine (Path.crop b disc)))));
+      test "crop of a ring around the box fills nothing" (fun () ->
+          let outer = Path.rect (Box2.v (-4.) (-4.) 8. 8.) in
+          let inner =
+            Path.polygon [| -2.; -2.; 2.; 2. |] [| -2.; 2.; 2.; -2. |]
+          in
+          let ring = Path.append inner outer in
+          equal (float 1e-12) 0.
+            (area (polygons (segs (Path.crop unit_box ring)))));
+      test "crop of a path outside the box is empty" (fun () ->
+          equal segs_exact []
+            (segs
+               (Path.crop unit_box
+                  (Path.polyline [| 2.; 3.; 3. |] [| 0.; 0.; 5. |]))));
+    ]
+
 (* Equality and printing *)
 
 let gen_polys =
@@ -847,4 +1073,4 @@ let equality =
 let () =
   exit
     (run "hugin.next.gg path"
-       [ building; shapes; gaps; flattening; bounds; equality ])
+       [ building; shapes; gaps; flattening; bounds; cropping; equality ])

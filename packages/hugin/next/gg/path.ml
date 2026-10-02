@@ -336,6 +336,256 @@ let bounds p =
     Some (Box2.of_pts (P2.v b.(0) b.(1)) (P2.v b.(2) b.(3)))
   else None
 
+(* Cropping
+
+   A box is the intersection of four half-planes, and [crop] cuts each subpath
+   by them in turn. A cut keeps the pieces of an open subpath within the
+   half-plane as subpaths of their own. A closed subpath stays one closed
+   subpath: from where it leaves the half-plane to where it comes back, it runs
+   straight along the edge instead. That segment and the piece it replaces bound
+   a region outside the half-plane, so the winding number of every point inside
+   is unchanged, and so is the region under either fill rule. *)
+
+type seg =
+  | S_line of float * float
+  | S_cubic of float * float * float * float * float * float
+
+(* A subpath as [fold] visits it: its start, its segments in drawing order and
+   whether it is closed, its closing segment not among [segs]. *)
+type sub = { sx : float; sy : float; segs : seg list; closed : bool }
+
+let subpaths p =
+  let subs = ref [] and cur = ref None in
+  let push closed =
+    match !cur with
+    | None -> ()
+    | Some (sx, sy, segs) ->
+        subs := { sx; sy; segs = List.rev segs; closed } :: !subs;
+        cur := None
+  in
+  let add s =
+    match !cur with
+    | Some (sx, sy, segs) -> cur := Some (sx, sy, s :: segs)
+    | None -> assert false (* [fold] starts every subpath with [move]. *)
+  in
+  fold
+    ~move:(fun () x y ->
+      push false;
+      cur := Some (x, y, []))
+    ~line:(fun () x y -> add (S_line (x, y)))
+    ~cubic:(fun () a b c d x y -> add (S_cubic (a, b, c, d, x, y)))
+    ~close:(fun () -> push true)
+    () p;
+  push false;
+  List.rev !subs
+
+(* The half-plane of the points whose coordinate along [axis] is at least [c] if
+   [lower], and at most [c] otherwise. *)
+type half = { axis : [ `X | `Y ]; c : float; lower : bool }
+
+let within h v = if h.lower then v >= h.c else v <= h.c
+let along h x y = match h.axis with `X -> x | `Y -> y
+let on_edge h x y = match h.axis with `X -> (h.c, y) | `Y -> (x, h.c)
+
+(* [split t a b c d] is the control values of the parts of the cubic Bézier
+   coordinate [a], [b], [c], [d] before and after [t], by de Casteljau. *)
+let split t a b c d =
+  let lerp u v = u +. (t *. (v -. u)) in
+  let ab = lerp a b and bc = lerp b c and cd = lerp c d in
+  let abc = lerp ab bc and bcd = lerp bc cd in
+  let m = lerp abc bcd in
+  ((a, ab, abc, m), (m, bcd, cd, d))
+
+(* [section t0 t1 a b c d] is the control values of the part of the cubic
+   coordinate between [t0] and [t1]. *)
+let section t0 t1 a b c d =
+  let (a, b, c, d), _ = split t1 a b c d in
+  snd (split (t0 /. t1) a b c d)
+
+let bisections = 64
+
+(* [crossings h a b c d] is the parameters in ]0;1[ at which the cubic
+   coordinate [a], [b], [c], [d] enters or leaves [h], in increasing order. It
+   is monotone between the roots of its derivative, so each such interval holds
+   at most one crossing, found by bisection. *)
+let crossings h a b c d =
+  let d0 = b -. a and d1 = c -. b and d2 = d -. c in
+  let qa = d0 -. (2. *. d1) +. d2 and qb = 2. *. (d1 -. d0) and qc = d0 in
+  let disc = (qb *. qb) -. (4. *. qa *. qc) in
+  let q = -0.5 *. (qb +. Float.copy_sign (Float.sqrt disc) qb) in
+  let turns =
+    List.filter (fun t -> 0. < t && t < 1.) [ q /. qa; qc /. q ]
+    |> List.sort_uniq Float.compare
+  in
+  let inside t = within h (bezier t a b c d) in
+  let rec cross acc lo = function
+    | [] -> List.rev acc
+    | hi :: rest ->
+        let acc =
+          if inside lo = inside hi then acc
+          else begin
+            let lo' = ref lo and hi' = ref hi and side = inside lo in
+            for _ = 1 to bisections do
+              let mid = (!lo' +. !hi') /. 2. in
+              if inside mid = side then lo' := mid else hi' := mid
+            done;
+            ((!lo' +. !hi') /. 2.) :: acc
+          end
+        in
+        cross acc hi rest
+  in
+  cross [] 0. (turns @ [ 1. ])
+
+(* [contained h s] is [true] iff every point [s] was built with is within [h],
+   which then holds all of [s]. *)
+let contained h s =
+  let ok x y = within h (along h x y) in
+  ok s.sx s.sy
+  && List.for_all
+       (function
+         | S_line (x, y) -> ok x y
+         | S_cubic (a, b, c, d, x, y) -> ok a b && ok c d && ok x y)
+       s.segs
+
+(* [cut h ~region s acc] adds to [acc] the subpaths of [s] within [h], latest
+   first: [s]'s region within [h] as one closed subpath if [region], and its
+   pieces within [h] otherwise. *)
+let cut h ~region s acc =
+  if contained h s then s :: acc
+  else
+    let out = ref acc and start = ref None and segs = ref [] in
+    let finish ~closed =
+      (match (!start, !segs) with
+      | Some (sx, sy), _ :: _ ->
+          out := { sx; sy; segs = List.rev !segs; closed } :: !out
+      | _ -> ());
+      start := None;
+      segs := []
+    in
+    (* The subpath enters [h] at [(x, y)], on its edge. *)
+    let enter x y =
+      match !start with
+      | None -> start := Some (x, y)
+      | Some _ -> segs := S_line (x, y) :: !segs
+    in
+    let leave () = if not region then finish ~closed:false in
+    let inside = ref (within h (along h s.sx s.sy)) in
+    if !inside then start := Some (s.sx, s.sy);
+    (* [piece seg ~enters ~ends] adds [seg], the part of a segment within [h],
+       which starts at [enters], entering [h] there if the subpath was outside,
+       and whose end is put on the edge if [ends]. *)
+    let piece seg ~enters ~ends =
+      let snap x y = if ends then on_edge h x y else (x, y) in
+      let seg =
+        match seg with
+        | S_line (x, y) ->
+            let x, y = snap x y in
+            S_line (x, y)
+        | S_cubic (a, b, c, d, x, y) ->
+            let x, y = snap x y in
+            S_cubic (a, b, c, d, x, y)
+      in
+      if not !inside then begin
+        let x, y = enters in
+        enter x y
+      end;
+      segs := seg :: !segs;
+      inside := true
+    in
+    let outside () =
+      if !inside then leave ();
+      inside := false
+    in
+    let rec go x0 y0 = function
+      | [] -> ()
+      | (S_line (x, y) as seg) :: rest ->
+          let a = along h x0 y0 and b = along h x y in
+          (* Where the segment crosses the edge, if it does. *)
+          let cross () =
+            let t = (h.c -. a) /. (b -. a) in
+            on_edge h (x0 +. (t *. (x -. x0))) (y0 +. (t *. (y -. y0)))
+          in
+          (match (within h a, within h b) with
+          | true, true -> piece seg ~enters:(x0, y0) ~ends:false
+          | false, false -> outside ()
+          | true, false ->
+              let ex, ey = cross () in
+              piece (S_line (ex, ey)) ~enters:(x0, y0) ~ends:false;
+              outside ()
+          | false, true -> piece seg ~enters:(cross ()) ~ends:false);
+          go x y rest
+      | (S_cubic (c1x, c1y, c2x, c2y, x, y) as seg) :: rest ->
+          let a = along h x0 y0 and b = along h c1x c1y in
+          let c = along h c2x c2y and d = along h x y in
+          let all p = p a && p b && p c && p d in
+          (if all (within h) then piece seg ~enters:(x0, y0) ~ends:false
+           else if all (fun v -> not (within h v)) then outside ()
+           else
+             let ts = (0. :: crossings h a b c d) @ [ 1. ] in
+             let rec pieces = function
+               | t0 :: (t1 :: _ as rest) ->
+                   let xs = section t0 t1 x0 c1x c2x x
+                   and ys = section t0 t1 y0 c1y c2y y in
+                   let (px0, px1, px2, px3), (py0, py1, py2, py3) = (xs, ys) in
+                   let mid =
+                     along h
+                       (bezier 0.5 px0 px1 px2 px3)
+                       (bezier 0.5 py0 py1 py2 py3)
+                   in
+                   (if not (within h mid) then outside ()
+                    else
+                      let enters =
+                        if t0 = 0. then (x0, y0) else on_edge h px0 py0
+                      in
+                      piece
+                        (S_cubic (px1, py1, px2, py2, px3, py3))
+                        ~enters ~ends:(t1 < 1.));
+                   pieces rest
+               | [ _ ] | [] -> ()
+             in
+             pieces ts);
+          go x y rest
+    in
+    let segs_in =
+      if s.closed then s.segs @ [ S_line (s.sx, s.sy) ] else s.segs
+    in
+    go s.sx s.sy segs_in;
+    finish ~closed:region;
+    !out
+
+let crop b p =
+  match bounds p with
+  | None -> p
+  | Some pb
+    when Box2.minx b <= Box2.minx pb
+         && Box2.maxx pb <= Box2.maxx b
+         && Box2.miny b <= Box2.miny pb
+         && Box2.maxy pb <= Box2.maxy b ->
+      p
+  | Some _ ->
+      let halves =
+        [
+          { axis = `X; c = Box2.minx b; lower = true };
+          { axis = `X; c = Box2.maxx b; lower = false };
+          { axis = `Y; c = Box2.miny b; lower = true };
+          { axis = `Y; c = Box2.maxy b; lower = false };
+        ]
+      in
+      let cut_all subs h =
+        List.rev
+          (List.fold_left (fun acc s -> cut h ~region:s.closed s acc) [] subs)
+      in
+      let subs = List.fold_left cut_all (subpaths p) halves in
+      let seg acc = function
+        | S_line (x, y) -> Line (x, y) :: acc
+        | S_cubic (a, b, c, d, x, y) -> Cubic (a, b, c, d, x, y) :: acc
+      in
+      List.fold_left
+        (fun acc s ->
+          let acc = List.fold_left seg (Move (s.sx, s.sy) :: acc) s.segs in
+          if s.closed then Close :: acc else acc)
+        [] subs
+
 (* Comparing and formatting *)
 
 (* A cursor reads the segments a path was built from one at a time: [next]
