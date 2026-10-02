@@ -464,7 +464,8 @@ let normalisation =
           equal float_exact 3. (Scale.length (Scale.band ~domain:cats ()));
           equal float_exact 3.5
             (Scale.length (Scale.band ~padding:0.5 ~domain:cats ()));
-          equal float_exact 0. (Scale.length (Scale.band ())));
+          equal float_exact 0. (Scale.length (Scale.band ()));
+          equal float_exact 0. (Scale.length (Scale.band ~padding:0.5 ())));
       test "an overflowing length is infinite, a missing end's nan" (fun () ->
           equal float_exact Float.infinity
             (Scale.length

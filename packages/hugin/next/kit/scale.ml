@@ -300,7 +300,9 @@ let length : type d. d t -> float =
         let t = forward tf a b in
         Float.abs (t b -. t a)
   | Instants (a, b) -> Float.abs (Steps.ns_diff b a) /. 1e9
-  | Categories c -> Float.of_int (size c) +. padding s
+  | Categories c ->
+      let n = size c in
+      if n = 0 then 0. else Float.of_int n +. padding s
 
 let wrap s = s.wrap
 let scheme s = s.scheme
