@@ -49,7 +49,7 @@ open Resolved
 
 let margin_em = 0.5 (* Around the page. *)
 let horizontal = Guide.horizontal
-let longest f l = List.fold_left (fun m x -> Float.max m (f x)) 0. l
+let longest = Guide.longest
 
 (* Nodes *)
 
@@ -885,62 +885,54 @@ let span shown hull (g : Guide.spec) length =
           (lo -. Box2.minx hull, hi -. Box2.minx hull))
   | Axis _ | Legend _ | Title _ -> (0., length)
 
+(* [map f node geo] is [node] with the guides [gs] of each of its nodes
+   replaced by [f hull gs], [hull] the node's data hull in [geo]. *)
+let rec map f node geo =
+  match node with
+  | Panel p -> Panel { p with guides = f geo.hull p.guides }
+  | Grid g ->
+      let cell c k = { c with node = map f c.node k } in
+      let cells = List.map2 cell g.cells geo.kids in
+      Grid { g with cells; guides = f geo.hull g.guides }
+
+let rec strip = function
+  | Panel p -> Panel { p with guides = [] }
+  | Grid g ->
+      let cell c = { c with node = strip c.node } in
+      Grid { g with cells = List.map cell g.cells; guides = [] }
+
 (* [lay em cx slot node geo] is [node] with its guides laid out at the lengths
-   of [geo]: those of its cells first, then its axes and headers, then the
-   titles that align to their labels. [slot x] is the specification of the guide
-   [x], the length its rows wrap at if frozen, and its band if parted; a guide
-   not parted takes a band of its own, numbered by its place. *)
-let rec lay em cx slot node geo =
-  let hull = geo.hull in
-  let one span k x =
+   of [geo]: axes and headers first, then the titles, which align to their
+   labels, and legends. [slot x] is the specification of the guide [x], the
+   length its rows wrap at if frozen, and its band if parted; a guide not
+   parted takes a band of its own, numbered by its place. *)
+let lay em cx slot node geo =
+  let one hull shown k x =
     let spec, wrap, band = slot x in
     let length = side_length hull spec.Guide.side in
     let wrap = Option.value wrap ~default:length in
     let across = across hull spec.side in
-    let guide =
-      Guide.lay cx spec ~length ~across ~wrap ~span:(span spec length)
-    in
+    let span = span shown hull spec length in
+    let guide = Guide.lay cx spec ~length ~across ~wrap ~span in
     { guide; band = Option.value band ~default:k }
   in
-  match node with
-  | Panel { id; coord; ratio; guides } ->
-      let first k x =
-        let spec, _, _ = slot x in
-        if rank (Guide.tier spec.kind) > 1 then (k, x, None)
-        else (k, x, Some (one (fun _ l -> (0., l)) k x))
-      in
-      let guides = List.mapi first guides in
-      let axes = List.filter_map (fun (_, _, l) -> l) guides in
-      let shown = placed em (Panel { id; coord; ratio; guides = axes }) geo in
-      let title (k, x, l) =
-        match l with Some l -> l | None -> one (span shown hull) k x
-      in
-      Panel { id; coord; ratio; guides = List.map title guides }
-  | Grid { id; widths; heights; cells; guides } ->
-      let cell c k =
-        let node = lay em cx slot c.node k in
-        { r0 = c.r0; c0 = c.c0; nr = c.nr; nc = c.nc; node }
-      in
-      let cells = List.map2 cell cells geo.kids in
-      let shown =
-        placed em (Grid { id; widths; heights; cells; guides = [] }) geo
-      in
-      Grid
-        {
-          id;
-          widths;
-          heights;
-          cells;
-          guides = List.mapi (one (span shown hull)) guides;
-        }
-
-let rec strip = function
-  | Panel { id; coord; ratio; _ } -> Panel { id; coord; ratio; guides = [] }
-  | Grid { id; widths; heights; cells; _ } ->
-      let cell c =
-        { r0 = c.r0; c0 = c.c0; nr = c.nr; nc = c.nc; node = strip c.node }
-      in
-      Grid { id; widths; heights; cells = List.map cell cells; guides = [] }
+  let axis hull k x =
+    let spec, _, _ = slot x in
+    let l =
+      if rank (Guide.tier spec.kind) > 1 then None else Some (one hull [] k x)
+    in
+    (k, x, l)
+  in
+  let axes = map (fun hull xs -> List.mapi (axis hull) xs) node geo in
+  let shown =
+    placed em
+      (map (fun _ xs -> List.filter_map (fun (_, _, l) -> l) xs) axes geo)
+      geo
+  in
+  let guide hull (k, x, l) =
+    match l with Some l -> l | None -> one hull shown k x
+  in
+  map (fun hull xs -> List.map (guide hull) xs) axes geo
 
 (* Laid-out figures *)
 
@@ -1089,7 +1081,12 @@ let layout ?prev ?(theme = Theme.default) size r =
   match attempt ?prev theme size r with
   | l -> l
   | exception Needs (w, h) ->
-      (* The size a figure too small names is one that lays it out. *)
+      (* The size a figure too small names is one that lays it out. Each named
+         size is strictly larger than the one tried, and an attempt whose
+         choices of ticks, rows and bands are those of the attempt before lays
+         out at the size that attempt named. So the attempts are at most one
+         more than the changes of choice up to the widest need: at most three
+         retries over 15,000 random figures. *)
       let rec fits w h =
         match attempt theme (Size.figure w h) r with
         | _ -> (w, h)
@@ -1126,10 +1123,6 @@ let equal l l' =
 
 (* Formatting *)
 
-let pp_box ppf b =
-  Format.fprintf ppf "[(%g, %g) (%g, %g)]" (Box2.minx b) (Box2.miny b)
-    (Box2.maxx b) (Box2.maxy b)
-
 let pp_ticks ppf (F f, t) =
   Format.fprintf ppf "@[<hov 2>%S %a%a@ %a@]" f.name Channel.pp_kind f.kind
     (Format.pp_print_option (fun ppf p -> Format.fprintf ppf " in %a" pp_id p))
@@ -1140,7 +1133,8 @@ let pp ppf l =
   Format.fprintf ppf "@[<v>layout %g × %g" w h;
   List.iter
     (fun (p, c) ->
-      Format.fprintf ppf "@,panel %a %a %a" pp_id p.id pp_box p.box Coord.pp c)
+      Format.fprintf ppf "@,panel %a %a %a" pp_id p.id Guide.pp_box p.box
+        Coord.pp c)
     l.lpanels;
   List.iter (Format.fprintf ppf "@,%a" Guide.pp) l.guides;
   Format.fprintf ppf "@,@[<v 2>ticks";

@@ -30,6 +30,9 @@ val no_sides : sides
 val horizontal : Figure.side -> bool
 (** [horizontal s] is [true] iff [s] is [`Top] or [`Bottom]. *)
 
+val longest : ('a -> float) -> 'a list -> float
+(** [longest f l] is the greatest of [0.] and the [f x] for the [x] of [l]. *)
+
 (** {1:elements Elements} *)
 
 type placed = { text : Text.t; set : Text.Layout.t; at : P2.t; data : bool }
@@ -128,3 +131,6 @@ val move : P2.t -> t -> t
 
 val equal : t -> t -> bool
 val pp : Format.formatter -> t -> unit
+
+val pp_box : Format.formatter -> Box2.t -> unit
+(** [pp_box ppf b] formats [b] by its corners. *)
