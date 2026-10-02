@@ -31,7 +31,7 @@ If you already use JAX, this should be enough to become productive in rune quick
 | Gradient checking | `jax.test_util.check_grads` | `check_grads` |
 | Randomness | Typed splittable keys (`jax.random.key`) | Keys of a private type (`Nx.Rng.t`), or a scope (`Nx.Rng.with_key`) |
 | JIT compilation | `jax.jit` | `jit` — traces once per key (every tensor's path, dtype and shape, and what its structure reports); CPU, CUDA, or Metal |
-| Devices | `jax.device_put`, GPU/TPU | `Nx.place` on an `Nx_device.t` (`Nx_metal_device.v 0`); compiled functions run where their values are |
+| Devices | `jax.device_put`, GPU/TPU | `Nx.place` on an `Nx.Device.t` (`Nx.Device.gpu ()`); compiled functions run where their values are |
 
 ---
 
@@ -335,7 +335,7 @@ let () =
 | JAX feature | Status in rune |
 | --- | --- |
 | `jax.jit` | `jit s f` compiles to fused kernels for the signature `s`, cached per key: each tensor's path, dtype and shape, and the data the structures report (a window, a list's length). It compiles `scan` as a loop and rejects a branch on a traced value. |
-| GPU/TPU, `jax.device_put` | `Nx.place (Nx.Placement.device (Nx_metal_device.v 0))` holds a tensor's bytes on a device, and a compiled function over it runs there; a captured placed value is read with no upload. A placement with `~backend:Rune.compiled` computes eagerly on the GPU, one program per operation. |
+| GPU/TPU, `jax.device_put` | `Nx.place (Nx.Placement.on [ Nx.Device.gpu () ])` holds a tensor's bytes on a device, and a compiled function over it runs there; a captured placed value is read with no upload. An eager operation on a GPU value raises, naming `Rune.jit`. |
 | `jax.pmap` / distributed | `jit` over values placed on several devices, as `jax.jit` over sharded inputs: the function sees whole values and a reduction over a split axis is an allreduce. A per-device computation is `vmap` over an axis split one slice per device; there is no `shard_map`. |
 | Full op coverage under AD | Every operation has a forward rule and a batching rule. The tangents of a complete SVD of a non-square matrix and of a complete QR factorisation of a tall one raise; `detach` inputs where derivatives should not flow. |
 | `jax.random` keys | Implicit scoped RNG instead; see §11. |

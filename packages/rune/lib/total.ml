@@ -60,6 +60,19 @@ and collect : type a b r.
             let result, s = threaded t ~zero r in
             receive s;
             result)
+    | Compiled { p; q; f; args; compiler } ->
+        let f (args, zero) = collect t ~zero (fun () -> f args) in
+        let p = Nx.Ptree.pair p Nx.Ptree.tensor
+        and q = Nx.Ptree.pair q Nx.Ptree.tensor in
+        let compiler = compiler.derive (Totals t) in
+        Some
+          (fun () ->
+            let args = (args, Nx.zeros_like zero) in
+            let y, s =
+              Construct.perform (Compiled { p; q; f; args; compiler })
+            in
+            receive s;
+            y)
     | Remat { p; q; f; args; recomputed } ->
         let f args = collect t ~zero:(Nx.zeros_like zero) (fun () -> f args) in
         let q = Nx.Ptree.pair q Nx.Ptree.tensor in
@@ -73,8 +86,7 @@ and collect : type a b r.
     | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
         None
   in
-  let marker = { Nx.Op.run = Nx.Op.eval; claims = (fun _ -> false) } in
-  let r = Construct.install { op = Some marker; call = answer } f in
+  let r = Construct.install { op = None; call = answer } f in
   (r, !total)
 
 let rec discarding : type r. (unit -> r) -> r =
@@ -89,6 +101,10 @@ let rec discarding : type r. (unit -> r) -> r =
     | Remat ({ f; _ } as r) ->
         let f args = discarding (fun () -> f args) in
         Some (fun () -> Construct.perform (Remat { r with f }))
+    | Compiled ({ f; compiler; _ } as c) ->
+        let f args = discarding (fun () -> f args) in
+        let compiler = compiler.derive Discarding in
+        Some (fun () -> Construct.perform (Compiled { c with f; compiler }))
     | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
         None
   in

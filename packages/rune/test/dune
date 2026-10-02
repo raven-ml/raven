@@ -147,74 +147,6 @@
  (action
   (run %{exe:test_lower_reduce.exe} --tag slow)))
 
-; The compiled backend, and the rules under the compiled call, run on the host
-; by default, their programs from the compile cache; their Metal, CUDA and NV
-; tests, the rules' rows and the backend's cost figures are slow. The slow alias
-; sets CACHEDB to a directory of the sandbox, so that it compiles every program:
-; it is the check of compilation from a cold cache.
-
-(test
- (name test_compiled_rules)
- (modules test_compiled_rules)
- (package rune)
- (libraries
-  windtrap
-  rune
-  rune_test_devices
-  rune_rules
-  nx_test
-  nx
-  nx.array
-  nx.backend
-  nx.cpu
-  nx.device
-  nx.dtype
-  tolk)
- (action
-  (run %{test} --exclude-tag slow)))
-
-(test
- (name test_compiled)
- (modules test_compiled)
- (package rune)
- (libraries
-  windtrap
-  rune_internals
-  rune_test_devices
-  rune_lowering_test
-  nx_test
-  nx
-  nx.array
-  nx.backend
-  nx.cpu
-  nx.device
-  nx.dtype
-  tolk)
- (action
-  (run %{test} --exclude-tag slow)))
-
-(rule
- (alias slow)
- (package rune)
- (deps
-  (sandbox always))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{exe:test_compiled.exe} --tag slow))))
-
-(rule
- (alias slow)
- (package rune)
- (deps
-  (sandbox always))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{exe:test_compiled_rules.exe} --tag slow))))
-
 ; The compiled call runs on the host and on test devices by default, and on
 ; Metal, CUDA and NV in the slow alias, its programs from the compile cache.
 ; reports.t pins the lines RUNE_JIT_DEBUG prints, which the call reads once.
@@ -227,11 +159,13 @@
   windtrap
   rune_internals
   rune_test
-  rune_test_devices
+  nx.nv.device
   rune_lowering_test
   nx_test
   nx
   nx.array
+  nx.backend
+  nx.cpu
   nx.bits
   nx.device
   nx.dtype
@@ -263,7 +197,7 @@
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries windtrap rune rune_test_devices nx_test nx nx.quant nx.device)
+ (libraries windtrap rune nx_test nx nx.quant nx.device)
  (action
   (run %{test} --exclude-tag slow)))
 

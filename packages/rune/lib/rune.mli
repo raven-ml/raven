@@ -656,13 +656,13 @@ val jit :
     at different widths never share a program.
 
     {b Placement.} A call runs on the devices of its placed arguments and
-    captures, and on the host when there are none, whatever the placements'
-    backends. Every value the function computes lives where nx would place it,
-    decided as it traces: a misplaced operand raises [Invalid_argument] with
-    nx's message, and nothing moves between devices unless the function places
-    it with {!Nx.place}. A host argument is uploaded on each call, as an eager
-    operation would move it. A view is read in place, its strides expressed in
-    the program.
+    captures, and on the host when there are none, whatever backends run around
+    it ({!Nx.Op.kernels}). Every value the function computes lives where nx
+    would place it, decided as it traces: a misplaced operand raises
+    [Invalid_argument] with nx's message, and nothing moves between devices
+    unless the function places it with {!Nx.place}. A host argument is uploaded
+    on each call, as an eager operation would move it. A view is read in place,
+    its strides expressed in the program.
 
     {b Results.} Every result leaf is a value with storage of its own. A result
     that returns a read argument or a capture unchanged is a copy, and a value
@@ -734,31 +734,21 @@ val jit :
     fiber. A call returns once its work is queued, and a read of a result waits
     for it.
 
-    {b Transformations.} Under an enclosing transformation ({!grad},
-    {!val-vmap}, an outer [jit]), [jit s f] is [f]: it runs the function, so the
-    transformation sees its operations, and checks and consumes nothing. Compile
-    outermost, differentiating {e inside} the compiled function, as [step] above
-    does, to compile the forward and backward passes together.
+    {b Transformations.} A transformation of a compiled function compiles:
+    [grad (jit s f)], [jvp], [vmap] of it and a {!Total.collect} around it each
+    run programs compiled for the function the transformation derives from [f],
+    kept in the compiled function by key as its own are, and consume nothing.
+    Under {!grad} the forward pass is [f]'s program, and the backward pass a
+    program that runs [f] again before its pullback, so [f]'s forward work runs
+    twice: [jit (grad f)], differentiating {e inside} the compiled function as
+    [step] above does, compiles the two passes together. Inside an outer [jit],
+    [jit s f] is [f], traced into the outer program. A compiled function that
+    reads, through its closure, a value a transformation around it tracks raises
+    [Invalid_argument]: pass the value as an argument.
 
     Raises {!Jit_error} when tracing fails, and [Invalid_argument] if [s] has no
     argument, for a misplaced leaf or capture, for a name met with two devices,
     and as consumption above says. *)
-
-val compiled : Nx_backend.t
-(** [compiled] is the backend that computes each operation as a program compiled
-    for the target of its operands' device, once per operation, dtypes, shapes
-    and layouts. It runs on the host and on every device that rune's compiler
-    has a target for, such as Metal and CUDA. A placement on a GPU computes
-    there with it:
-
-    {[
-    let gpu = Nx.Placement.device ~backend:Rune.compiled metal
-    let y = Nx.tanh (Nx.matmul x x) (* x placed at gpu: two programs *)
-    ]}
-
-    An operation it cannot compile raises {!Nx_backend.Refused} before any work:
-    a Fourier transform, an eigendecomposition, a complex or 4-bit dtype, or a
-    dtype the device does not compute, such as [float64] on Metal. *)
 
 (** {1:tensor Functions of one tensor}
 

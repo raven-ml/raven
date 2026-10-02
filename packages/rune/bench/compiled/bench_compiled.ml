@@ -3,48 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* rune's Compiled backend, kernel by kernel. A compiled gather costs one load
-   per output only where tolk folds the one-hot sum its lowering builds into a
-   load at the computed index. Without the fold, the 1Mi row is a sum of 2^40
-   terms, so its baseline guards the fold.
+(* Compiled host programs.
 
    A top_k over a short axis, eagerly and compiled for the host. An axis of at
    most 32 entries is ranked by counting, n * n comparisons a row: compiled,
    that is 3 kernels whatever k; eagerly, it costs more than passes over the
    axis would.
 
-   On Metal and on CUDA, chains of one operation a call on 1024 float32
-   elements, each reading the result of the one before: one kernel, and five in
-   turn. The device is opened in the measuring worker, which is forked without
-   an exec. Metal's compiler service cannot be reached from such a process: it
-   answers only from Metal's cache of pipelines. Before measuring, a fresh
-   process of this executable ([--warm]) runs every chain's setup, which makes
-   each pipeline into that cache. CUDA's driver must not be initialized before
-   the fork, so a fresh process ([--cuda]) says whether a CUDA device opens. *)
-
-let kernels = Nx_backend.kernels Rune.compiled
-
-let host_array x =
-  match Nx.Repr.v (Nx.copy x) with
-  | Host a -> a
-  | Placed _ | Traced _ -> invalid_arg "bench_compiled: not a host value"
-
-(* [n] float32 values gathered at [n] uniform indices in [0, n). Compilation
-   happens in the warm-up. *)
-let gather id n =
-  let (module K : Nx_backend.S) = kernels in
-  Thumper.bench_with_setup ~id
-    ~setup:(fun () ->
-      let st = Random.State.make [| 15 |] in
-      let x = Nx.init Nx.float32 [| n |] (fun _ -> Random.State.float st 1.) in
-      let i =
-        Nx.init Nx.int64 [| n |] (fun _ -> Int64.of_int (Random.State.int st n))
-      in
-      (host_array i, host_array x, host_array (Nx.zeros Nx.float32 [| n |])))
-    id
-    (fun (i, x, dst) ->
-      K.gather ~axis:0 i x ~dst;
-      Nx_device.synchronize Nx_device.host)
+   The launches run on the host and on CUDA. The CUDA device is opened in the
+   measuring worker, which is forked without an exec. CUDA's driver must not be
+   initialized before the fork, so a fresh process ([--cuda]) says whether a
+   CUDA device opens. *)
 
 (* [k] of [n] float32 entries in each of [rows] rows. The compiled function is
    traced and compiled in the setup's first call. *)
@@ -271,8 +240,7 @@ let product_scan h xs =
 let launches ?(prefix = "") ~place ~sync () =
   let st = Random.State.make [| 15 |] in
   let uniform shape =
-    place
-      (Nx.init Nx.float32 shape (fun _ -> Random.State.float st 0.1))
+    place (Nx.init Nx.float32 shape (fun _ -> Random.State.float st 0.1))
   in
   let h () = uniform [| launch_dim; launch_dim |] in
   [
@@ -291,7 +259,8 @@ let launches ?(prefix = "") ~place ~sync () =
         let f =
           Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) product_scan
         in
-        let x = h () and xs = uniform [| scan_steps; launch_dim; launch_dim |] in
+        let x = h ()
+        and xs = uniform [| scan_steps; launch_dim; launch_dim |] in
         ignore (f x xs);
         sync ();
         (f, x, xs))
@@ -301,121 +270,37 @@ let launches ?(prefix = "") ~place ~sync () =
         sync ());
   ]
 
-(* Chains on a GPU *)
-
-type chain = {
-  device : Nx_device.t;
-  x : (float, Nx_dtype.float32_elt) Nx_array.t;
-  mutable a : (float, Nx_dtype.float32_elt) Nx_array.t;
-  mutable b : (float, Nx_dtype.float32_elt) Nx_array.t;
-  mutable step : int;
-}
-
-(* A chain: its name, its setup, and its timed call. *)
-type case = { name : string; setup : unit -> chain; call : chain -> unit }
-
-let n = 1024
-
-let chains open_device =
-  let (module K) = kernels in
-  let array d =
-    let buffer = Nx_device.Buffer.create d Nx_dtype.Scalar.Float32 n in
-    Nx_device.Buffer.copy
-      ~src:
-        (Nx_device.Buffer.of_bigarray
-           (Bigarray.(Array1.init float32 c_layout n) (fun i ->
-                1. +. (float_of_int i /. 1e4))))
-      ~dst:buffer;
-    {
-      Nx_array.dtype = Nx_dtype.Float32;
-      view = Nx_array.View.create [| n |];
-      buffer;
-    }
-  in
-  let chain name kinds =
-    let setup () =
-      let device = open_device () in
-      let c =
-        {
-          device;
-          x = array device;
-          a = array device;
-          b = array device;
-          step = 0;
-        }
-      in
-      Array.iter (fun k -> K.binary k c.x c.x ~dst:c.a) kinds;
-      Nx_device.synchronize device;
-      c
-    in
-    let call c =
-      K.binary kinds.(c.step mod Array.length kinds) c.a c.x ~dst:c.b;
-      let a = c.a in
-      c.a <- c.b;
-      c.b <- a;
-      c.step <- c.step + 1
-    in
-    { name; setup; call }
-  in
-  [
-    chain "chain_one_add" Nx_backend.[| Add |];
-    chain "chain_distinct" Nx_backend.[| Add; Mul; Sub; Maximum; Minimum |];
-  ]
-
-let teardown c = Nx_device.synchronize c.device
-
-let group ?(more = []) name open_device =
-  Thumper.group ~id:name name
-    (List.map
-       (fun c ->
-         Thumper.bench_with_setup c.name ~setup:c.setup ~teardown c.call)
-       (chains open_device)
-    @ more)
-
 (* The launches on a GPU's device, which opens in the measuring worker. *)
 let gpu_launches open_device =
   let device = lazy (open_device ()) in
   launches ~prefix:"jit-"
-    ~place:(fun x ->
-      Nx.place
-        (Nx.Placement.device ~backend:Rune.compiled (Lazy.force device))
-        x)
+    ~place:(fun x -> Nx.place (Nx.Placement.on [ Lazy.force device ]) x)
     ~sync:(fun () -> Nx_device.synchronize (Lazy.force device))
     ()
 
 let run_self flag =
   Sys.command (Filename.quote_command Sys.executable_name [ flag ])
 
-let metal args =
-  match Metal.device with
-  | None -> []
-  | Some open_device ->
-      if (not (List.mem "list" args)) && run_self "--warm" <> 0 then
-        failwith "the pipelines could not be made";
-      [ group "metal" open_device ]
-
 let cuda () =
   if run_self "--cuda" <> 0 then []
   else
-    let open_device () = Nx_cuda_device.v 0 in
-    [ group "cuda" open_device ~more:(gpu_launches open_device) ]
+    [
+      Thumper.group ~id:"cuda" "cuda"
+        (gpu_launches (fun () -> Nx.Device.cuda 0));
+    ]
 
 let () =
-  match (Array.to_list Sys.argv, Metal.device) with
-  | [ _; "--warm" ], Some open_device ->
-      List.iter (fun c -> teardown (c.setup ())) (chains open_device)
-  | [ _; "--cuda" ], _ ->
-      exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
-  | args, _ ->
+  match Array.to_list Sys.argv with
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Nx.Device.get (Nx.Device.Cuda 0)) then 0 else 1)
+  | _ ->
       Thumper.run "compiled"
         ~budgets:
           [
             Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
             Thumper.Budget.no_more_alloc_than 0.01;
           ]
-        (Thumper.group ~id:"gather" "gather"
-           [ gather "float32-1Mi-from-1Mi-host" (1 lsl 20) ]
-        :: topk ~k:4 ~n:32 ~rows:512
+        (topk ~k:4 ~n:32 ~rows:512
         :: Thumper.group ~id:"searchsorted" "searchsorted"
              [
                searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
@@ -427,4 +312,4 @@ let () =
              (launches ~place:Fun.id
                 ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
                 ())
-        :: (metal args @ cuda ()))
+        :: cuda ())

@@ -824,8 +824,8 @@ let guarded i ~entry ~loops f =
   let claims op = List.exists (fun (Nx.P x) -> owns i x) (operands op) in
   let call : type r. r Construct.t -> (unit -> r) option = function
     | Scan _ when not loops -> Some (fun () -> raise Scan.Not_staged)
-    | Scan _ | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _
-    | Lane_count _ | Add _ | Detach _ ->
+    | Scan _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _
+    | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         None
   in
   Construct.install { op = Some { run; claims }; call } f
@@ -963,6 +963,13 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
       match i.slots with
       | None -> Some (fun () -> remat_values i p q f args recomputed)
       | Some tape -> Some (fun () -> remat i tape p q f args))
+  | Compiled { p; q; f; args; compiler } -> (
+      if not (holds_own i p args) then None
+      else
+        match i.slots with
+        | None -> Some (fun () -> compiled_values i p q f args compiler)
+        | Some tape ->
+            Some (fun () -> compiled_slots i tape p q f args compiler))
   | Lanes (axis, x) ->
       let lanes x = Construct.perform (Lanes (axis, x)) in
       Option.map (fun (x, dx) () -> dual i (lanes x) (lanes dx)) (own i x)
@@ -1128,6 +1135,100 @@ and remat_values : type p q.
   in
   let ys, _ = Nx.Ptree.flatten q y and dys, _ = Nx.Ptree.flatten q dy in
   Nx.Ptree.rebuild q ~like:y (duals i !dependent ys (pick !dependent dys))
+
+(* With value tangents a compiled call passes on as the compiled call of its
+   function's jvp over the arguments' primals and tangents, as a remat does:
+   the function runs under [i] reinstalled when the jvp is traced. Every real
+   or complex result comes out a dual, its tangent zero where it depends on no
+   tracked argument, so that the result is the same whether or not the program
+   was traced on this call. *)
+and compiled_values : type p q.
+    t -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p ->
+    (p, q) Construct.compiler -> q =
+ fun i p q f args compiler ->
+  let tracked = owned i (fst (Nx.Ptree.flatten p args)) in
+  let f (a, da) =
+    install i (fun () ->
+        let a_leaves, _ = Nx.Ptree.flatten p a
+        and da_leaves, _ = Nx.Ptree.flatten p da in
+        let leaves = duals i tracked a_leaves (pick tracked da_leaves) in
+        let y = f (Nx.Ptree.rebuild p ~like:a leaves) in
+        ( Nx.Ptree.map q (fun _ y -> primal i y) y,
+          Nx.Ptree.map q (fun _ y -> tangent i y) y ))
+  in
+  let args =
+    ( Nx.Ptree.map p (fun _ x -> primal i x) args,
+      Nx.Ptree.map p (fun _ x -> tangent i x) args )
+  in
+  let y, dy =
+    Construct.perform
+      (Compiled
+         {
+           p = Nx.Ptree.pair p p;
+           q = Nx.Ptree.pair q q;
+           f;
+           args;
+           compiler = compiler.derive (Jvp tracked);
+         })
+  in
+  let ys, _ = Nx.Ptree.flatten q y and dys, _ = Nx.Ptree.flatten q dy in
+  let outputs = List.map (fun (Nx.P y) -> Linear.differentiable y) ys in
+  Nx.Ptree.rebuild q ~like:y (duals i outputs ys (pick outputs dys))
+
+(* Under reverse mode a compiled call passes on as the compiled call of its
+   function's values at the arguments' primals, which consumes nothing: the
+   function runs under a child of [i] on a scratch tape it drops, as a remat's
+   forward run does, so that the child answers the custom rules it calls. The
+   tape gains a linear call from the tracked arguments' tangents to the real
+   or complex results', whose transpose is the compiled call of the function's
+   pullback: it runs the function again at the arguments, so no intermediate
+   is kept. A function that reads a value [i] tracks through its closure
+   raises, as its pullback cannot return that value's cotangent. *)
+and compiled_slots : type p q.
+    t -> Linear.tape -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p ->
+    (p, q) Construct.compiler -> q =
+ fun i tape p q f args compiler ->
+  let leaves, _ = Nx.Ptree.flatten p args in
+  let tracked = owned i leaves in
+  let a = Nx.Ptree.map p (fun _ x -> primal i x) args in
+  let run a l = f (Nx.Ptree.rebuild p ~like:a l) in
+  let forward a =
+    let c, _, y =
+      region i (Linear.create i.entry) [] tracked
+        (fst (Nx.Ptree.flatten p a))
+        (run a)
+    in
+    Nx.Ptree.map q (fun _ y -> primal c y) y
+  in
+  let y =
+    Construct.perform
+      (Compiled
+         { p; q; f = forward; args = a; compiler = compiler.derive Primal })
+  in
+  let ys, _ = Nx.Ptree.flatten q y in
+  let outputs = List.map (fun (Nx.P y) -> Linear.differentiable y) ys in
+  if not (List.mem true outputs) then y
+  else
+    let pullback (a, cts) =
+      Total.discarding @@ fun () ->
+      let rerun l = fst (Nx.Ptree.flatten q (run a l)) in
+      fst (pullback i [] tracked (fst (Nx.Ptree.flatten p a)) rerun outputs cts)
+    in
+    let transpose cts =
+      Construct.perform
+        (Compiled
+           {
+             p = Nx.Ptree.pair p Construct.packed;
+             q = Construct.packed;
+             f = pullback;
+             args = (a, cts);
+             compiler = compiler.derive (Vjp tracked);
+           })
+    in
+    let slots =
+      Linear.call tape (tangents i tracked leaves) transpose (pick outputs ys)
+    in
+    Nx.Ptree.rebuild q ~like:y (duals i outputs ys slots)
 
 (* [region i tape captures flags leaves f] is [f] run at [leaves] under a child
    of [i] recording on [tape], each leaf [flags] marks a dual of the child with

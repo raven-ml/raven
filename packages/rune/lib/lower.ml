@@ -357,7 +357,7 @@ let home x = if on_disk x then Placement.host else Nx.placement x
 (* A value made beside one at [p] is a full copy on each of its devices. *)
 let context p =
   if Placement.equal p Placement.host then Placement.host
-  else Placement.replicated ~backend:(Placement.backend p) (Placement.devices p)
+  else Placement.on (Placement.devices p)
 
 (* [settled s what p u] is [u], a value computed at [p]'s devices, laid out as
    nx places a result at [p]. Where they differ, a value split over the devices
@@ -388,7 +388,13 @@ let uop : type a b. (a, b) Nx.t -> Ops.t =
   | Repr.Traced t -> (
       match Repr.Traced.node t with
       | Uop u -> u
-      | _ -> invalid_arg "a value traced by another transformation")
+      | _ ->
+          (* An operand of the trace that no installation inside it owns is a
+             value a transformation around the call traced: the function
+             captured it. *)
+          invalid_arg
+            "a compiled function reads, through its closure, a value a \
+             transformation around its call tracks; pass it as an argument")
   | Repr.Host _ | Repr.Placed _ ->
       invalid_arg "not a value traced by a compiled function"
 

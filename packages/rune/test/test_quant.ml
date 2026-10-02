@@ -227,18 +227,10 @@ let values =
 
 (* Placements *)
 
-let driver name =
-  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
-    (Host_visible
-       {
-         memory = Nx_device.Driver.host_memory;
-         mapping = Some Nx_device.Driver.Identity;
-       })
-
-let devices = List.map driver [ "Q1"; "Q2"; "Q3"; "Q4" ]
+let devices = Nx.Device.all [ Cpu 1; Cpu 2; Cpu 3; Cpu 4 ]
 
 let pair = [ List.nth devices 0; List.nth devices 1 ]
-let split ?(axis = 0) ds = Nx.Placement.sharded ~backend:Rune.compiled ~axis ds
+let split ?(axis = 0) ds = Nx.Placement.sharded ~axis ds
 let host t = Nx.place Nx.Placement.host t
 let routed w ids x = Nx_quant.apply ~ids w x
 
@@ -311,16 +303,16 @@ let placements =
                   routed
                   (Nx_quant.place (split devices) w)
                   (Nx.place
-                     (Nx.Placement.replicated ~backend:Rune.compiled devices)
+                     (Nx.Placement.on devices)
                      ids)
                   (Nx.place
-                     (Nx.Placement.replicated ~backend:Rune.compiled devices)
+                     (Nx.Placement.on devices)
                      x))));
       test "dequant of a weight placed on a device is eager's bit for bit"
         (fun () ->
           let w = weight [| 2; 4; 128 |] in
           let p =
-            Nx.Placement.device ~backend:Rune.compiled (List.hd devices)
+            Nx.Placement.on [ List.hd devices ]
           in
           equal (tensor float_exact)
             (Nx_quant.dequant Nx.float32 w)
@@ -361,8 +353,8 @@ let peak d f =
    ids. An index broadcast to the gathered codes, [16; 2; 64; 128] here, would
    take 2 MiB. *)
 let memory =
-  let d = driver "Q5" in
-  let p = Nx.Placement.device ~backend:Rune.compiled d in
+  let d = Nx.Device.cpu 5 in
+  let p = Nx.Placement.on [ d ] in
   group "memory"
     [
       test "compiled, a routed product holds its result and its ids' size"
@@ -539,11 +531,11 @@ let undifferentiated =
 (* Metal *)
 
 let metal =
-  match Metal.device with
+  match Result.to_option (Nx.Device.get Metal) with
   | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
   | Some m ->
       let p =
-        Nx.Placement.device ~backend:Rune.compiled m
+        Nx.Placement.on [ m ]
       in
       cases
         ~name:(fun c -> c.name)

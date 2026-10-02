@@ -67,8 +67,8 @@ nest into records, so models compose structurally — see
 - **Compilation** — `jit` traces a function once per key and replays it
   as fused kernels on the devices its values are placed on (the host, CUDA,
   Metal); an argument marked `consumes` in its signature is given up by each
-  call, and its storage is reused for the results. `Rune.compiled` computes
-  eagerly on a GPU, one program per operation
+  call, and its storage is reused for the results. `grad`, `jvp` and `vmap`
+  of a compiled function compile too
 - **Stopping gradients** — `detach` holds a value constant
 - **Structures** — every transformation takes the structures it walks,
   so results may be structures too; primed variants (`grad'`, `vmap'`,

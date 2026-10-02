@@ -86,18 +86,24 @@ let raises_jit_error f =
 
 let message f = Oracle.message (fun () -> ignore (f ()))
 
-(* Devices over the host's memory, whose programs are the host's *)
+(* [opened w] is the device [w] names, if it opens on this machine. *)
+let opened w = Result.to_option (Nx.Device.get w)
 
-let driver ?(mapping = Some Nx_device.Driver.Identity) name =
-  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
-    (Host_visible { memory = Nx_device.Driver.host_memory; mapping })
+(* Test devices over the host's memory, whose programs are the host's *)
 
 let d1, d2, d3, d4 =
-  match List.map driver [ "J1"; "J2"; "J3"; "J4" ] with
-  | [ a; b; c; d ] -> (a, b, c, d)
-  | _ -> assert false
+  (Nx.Device.cpu 1, Nx.Device.cpu 2, Nx.Device.cpu 3, Nx.Device.cpu 4)
 
-let on d = Nx.Placement.device ~backend:Rune.compiled d
+let on d = Nx.Placement.on [ d ]
+
+(* A device only compiled functions compute on, as on a GPU: it shares the
+   host's memory, so its programs are the host's, and loads programs, so nx.cpu
+   does not compute there. *)
+let gpu =
+  Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
+    ~load:(fun ~binary:_ -> Error "programs run on the host")
+    (Host_visible
+       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
 let placed d t = Nx.place (on d) t
 let stats = Nx_device.stats
 let bytes_in d = Nx_device.Stats.bytes_in (stats d)
@@ -675,23 +681,15 @@ let keys =
           retraces
             (fun () -> equal close (poly (x ())) (host (g (placed d1 (x ())))))
             (fun () -> equal close (poly (x ())) (host (g (placed d2 (x ()))))));
-      slow "another backend on one device retraces once" (fun () ->
-          let g = g () in
-          retraces
-            (fun () -> equal close (poly (x ())) (host (g (placed d1 (x ())))))
-            (fun () ->
-              equal close
-                (poly (x ()))
-                (host (g (Nx.place (Nx.Placement.device d1) (x ()))))));
       slow "a split value after a replicated one retraces once" (fun () ->
           let g = g () in
           let on p () =
             equal close (poly (x ())) (host (g (Nx.place p (x ()))))
           in
           retraces
-            (on (Nx.Placement.replicated ~backend:Rune.compiled [ d1; d2 ]))
+            (on (Nx.Placement.on [ d1; d2 ]))
             (on
-               (Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d1; d2 ])));
+               (Nx.Placement.sharded ~axis:0 [ d1; d2 ])));
     ]
 
 (* Results *)
@@ -1149,7 +1147,7 @@ let rows_written ?at name =
         [ [ 0L; 63L ]; [ 31L; 32L ]; [ 63L; 0L; -1L; 64L ]; [ -1L; -2L ] ]
         (fun l ->
           let both =
-            Nx.Placement.replicated ~backend:Rune.compiled [ d1; d2 ]
+            Nx.Placement.on [ d1; d2 ]
           in
           let x = projections (List.length l) and i = indices l in
           equal floats
@@ -1157,7 +1155,7 @@ let rows_written ?at name =
             (host
                (Rune.jit write write_rows
                   (Nx.place
-                     (Nx.Placement.sharded ~backend:Rune.compiled ~axis:0
+                     (Nx.Placement.sharded ~axis:0
                         [ d1; d2 ])
                      (pool ()))
                   (Nx.place both x) (Nx.place both i))));
@@ -1608,7 +1606,7 @@ let captures =
             ignore (g (placed d1 (x ())))
           in
           run ();
-          Gc.full_major ();
+          ignore (settled d1);
           is_true ~msg:"unpinned" (lends w));
       test
         "a dropped compiled function's captures are back in allocated after \
@@ -1678,8 +1676,14 @@ let captures =
 
 (* Errors *)
 
-let twin1 = driver "TWIN"
-let twin2 = driver "TWIN"
+(* Two devices of one name. *)
+let twin () =
+  Nx_device.Driver.device ~name:"TWIN" ~arch:"test" ~budget:max_int
+    (Host_visible
+       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
+
+let twin1 = twin ()
+let twin2 = twin ()
 
 let errors =
   let leaked = ref None in
@@ -2024,10 +2028,91 @@ let transformations =
       test "a detached value inside a compiled call is its value" (fun () ->
           let f a = Nx.add a (Rune.detach (poly a)) in
           equal close (f (x ())) (Rune.jit' f (x ())));
-      test "under a transformation a compiled function runs its function"
-        (fun () ->
+      test "grad of a compiled function is its function's gradient" (fun () ->
           let f a = Nx.sum (poly a) in
           equal floats (Rune.grad' f (x ())) (Rune.grad' (Rune.jit' f) (x ())));
+      test
+        "grad of a compiled function compiles its forward and backward passes \
+         once" (fun () ->
+          let g = Rune.jit' (fun a -> Nx.sum (poly a)) in
+          equal ~msg:"first call" int 2
+            (traces (fun () -> ignore (Rune.grad' g (x ()))));
+          equal ~msg:"second call" int 0
+            (traces (fun () -> ignore (Rune.grad' g (x ())))));
+      test
+        "grad of a compiled function computes on a device where only compiled \
+         functions compute" (fun () ->
+          let f a = Nx.sum (Nx.mul (Nx.tanh a) a) in
+          let on_gpu = Nx.place (Nx.Placement.on [ gpu ]) (x ()) in
+          raises_invalid_arg (fun () -> ignore (Rune.grad' f on_gpu));
+          let g = Rune.grad' (Rune.jit' f) on_gpu in
+          equal Nx_test.Devices.placement (Nx.Placement.on [ gpu ])
+            (Nx.placement g);
+          equal close (Rune.grad' f (x ())) (host g));
+      test
+        "a compiled function that reads a value grad tracks through its \
+         closure raises, naming the fix" (fun () ->
+          raises
+            (Invalid_argument
+               "a compiled function reads, through its closure, a value a \
+                transformation around its call tracks; pass it as an argument")
+            (fun () ->
+              ignore
+                (Rune.grad'
+                   (fun w -> Nx.sum (Rune.jit' (fun a -> Nx.mul a w) (x ())))
+                   (y ()))));
+      test "jvp of a compiled function compiles its forward derivative"
+        (fun () ->
+          let g = Rune.jit' poly in
+          let r = ref None in
+          let n = traces (fun () -> r := Some (Rune.jvp' g (x ()) (y ()))) in
+          let out, dout = Option.get !r in
+          let out', dout' = Rune.jvp' poly (x ()) (y ()) in
+          equal ~msg:"traces" int 1 n;
+          equal floats out' out;
+          equal floats dout' dout);
+      test "vmap of a compiled function compiles the mapped function" (fun () ->
+          let rows = Nx.reshape [| 2; 2 |] (x ()) in
+          let g = Rune.jit' (fun r -> Nx.sum (poly r)) in
+          let r = ref None in
+          let n = traces (fun () -> r := Some (Rune.vmap' g rows)) in
+          equal ~msg:"traces" int 1 n;
+          equal floats
+            (Rune.vmap' (fun r -> Nx.sum (poly r)) rows)
+            (Option.get !r));
+      test "a total collects the additions of a compiled function" (fun () ->
+          let t = Rune.Total.make () in
+          let f a =
+            Rune.Total.add t (Nx.sum a);
+            poly a
+          in
+          let zero = Nx.zeros Nx.float32 [||] in
+          let y, total =
+            Rune.Total.collect t ~zero (fun () -> Rune.jit' f (x ()))
+          in
+          let y', total' = Rune.Total.collect t ~zero (fun () -> f (x ())) in
+          equal floats y' y;
+          equal floats total' total);
+      test "a compiled function under a backend's run compiles" (fun () ->
+          let adds = ref 0 in
+          let module Counting = struct
+            include (Nx_cpu : Nx_backend.S)
+
+            let binary k a b ~dst =
+              if k = Nx_backend.Add then incr adds;
+              Nx_cpu.binary k a b ~dst
+          end in
+          let g = Rune.jit' poly in
+          let r = ref None in
+          let n =
+            traces (fun () ->
+                Nx.Op.intercept
+                  (Nx.Op.kernels (module Counting))
+                  (fun () -> r := Some (g (x ()))))
+          in
+          equal ~msg:"traces" int 1 n;
+          equal ~msg:"eager additions" int 0 !adds;
+          equal floats (poly (x ())) (Option.get !r));
       test
         "a compiled function called inside another one's trace traces through"
         (fun () ->
@@ -2083,14 +2168,14 @@ let placement =
       test "a split argument computes on each device, and stays split"
         (fun () ->
           let p =
-            Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d1; d2 ]
+            Nx.Placement.sharded ~axis:0 [ d1; d2 ]
           in
           let r = Rune.jit' poly (Nx.place p (x ())) in
           is_true (Nx.Placement.equal p (Nx.placement r));
           equal close (poly (x ())) (host r));
       test "a consumed split state is lent on every device" (fun () ->
           let p =
-            Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d3; d4 ]
+            Nx.Placement.sharded ~axis:0 [ d3; d4 ]
           in
           let a = Nx.place p (x ()) in
           let before = Witness.addresses a in
@@ -2099,12 +2184,12 @@ let placement =
           is_true (Nx.Placement.equal p (Nx.placement r)));
       slow "a product and a sum over four devices equal one device" (fun () ->
           let p =
-            Nx.Placement.sharded ~backend:Rune.compiled ~axis:0
+            Nx.Placement.sharded ~axis:0
               [ d1; d2; d3; d4 ]
           in
           let w =
             Nx.place
-              (Nx.Placement.replicated ~backend:Rune.compiled [ d1; d2; d3; d4 ])
+              (Nx.Placement.on [ d1; d2; d3; d4 ])
               (grid 3 3)
           in
           let f a = Nx.sum ~axes:[ 1 ] (Nx.matmul a w) in
@@ -2490,7 +2575,7 @@ let staged_scans d =
         ~init:(ones 4)
         (fun c x ->
           let h = Nx.sqrt (Nx.place Nx.Placement.host c) in
-          let c = Nx.add (Nx.place at h) x in
+          let c = Nx.add (Nx.place (Nx.placement x) h) x in
           (c, c))
         (rows 5 4);
       staged at "update a carry its next value reads through a product"
@@ -3033,13 +3118,13 @@ let scans =
 
 (* Device lists *)
 
-let split ?(axis = 0) ds = Nx.Placement.sharded ~backend:Rune.compiled ~axis ds
-let copies ds = Nx.Placement.replicated ~backend:Rune.compiled ds
+let split ?(axis = 0) ds = Nx.Placement.sharded ~axis ds
+let copies ds = Nx.Placement.on ds
 
 (* Rows split over two devices, gathered: each device reads the rows it holds
    and the devices join the bits of what they read, so -0. keeps its sign. *)
 let split_gathers =
-  let split = Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d1; d2 ] in
+  let split = Nx.Placement.sharded ~axis:0 [ d1; d2 ] in
   let rows =
     Nx.init Nx.float32 [| 6; 3 |] (fun i ->
         let k = (i.(0) * 3) + i.(1) in
@@ -3138,12 +3223,6 @@ let device_lists =
           in
           equal close (Nx.sum a) (host s);
           equal close (Nx.max a) (host m));
-      test "arguments placed with another backend bind, and results keep it"
-        (fun () ->
-          let p = Nx.Placement.sharded ~axis:0 pair in
-          let r = Rune.jit' poly (Nx.place p (grid 4 3)) in
-          is_true (Nx.Placement.equal p (Nx.placement r));
-          equal floats (poly (grid 4 3)) (host r));
       slow "a result fed back to the call moves no bytes" (fun () ->
           let g = Rune.jit' (fun a -> Nx.mul_s a 0.5) in
           let r = ref (g (Nx.place (split pair) (grid 4 3))) in
@@ -3395,7 +3474,7 @@ let device_lists =
 let on_disk_at_read path =
   let module B = Nx_device.Buffer in
   let pp = Format.pp_print_string in
-  let p = Nx.Placement.device Nx_device.disk in
+  let p = Nx.Placement.on [ Nx_device.disk ] in
   Nx.Repr.Placed.v p Nx.float32
     (Nx_array.View.create [| 4 |])
     (Nx.Repr.Storage.v p
@@ -3411,7 +3490,7 @@ let on_disk_at path x =
   let src = elements x in
   let pp = Format.pp_print_string in
   B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
-  let p = Nx.Placement.device Nx_device.disk in
+  let p = Nx.Placement.on [ Nx_device.disk ] in
   Nx.Repr.Placed.v p (Nx.dtype x)
     (Nx_array.View.create (Nx.shape x))
     (Nx.Repr.Storage.v p
@@ -3438,7 +3517,7 @@ let unaligned_on_disk v =
           land 255)
   in
   ignore (on_disk_at path bytes);
-  let p = Nx.Placement.device Nx_device.disk in
+  let p = Nx.Placement.on [ Nx_device.disk ] in
   Nx.Repr.Placed.v p Nx.int32
     (Nx_array.View.create [| n |])
     (Nx.Repr.Storage.v p
@@ -3476,7 +3555,7 @@ let disk =
           let module B = Nx_device.Buffer in
           let path = temp_file () in
           ignore (on_disk_at path (Nx.concatenate ~axis:0 [ x (); y () ]));
-          let p = Nx.Placement.device Nx_device.disk in
+          let p = Nx.Placement.on [ Nx_device.disk ] in
           let file = require_ok ~pp:Format.pp_print_string (B.of_file path) in
           let weight first =
             Nx.Repr.Placed.v p Nx.float32
@@ -3749,10 +3828,11 @@ let on_one_device ~name d =
           chain Nx.float8_e5m2);
       test "a call whose trace raises allocates nothing" (fun () ->
           let a = placed d (x ()) in
-          let before = allocated d in
+          let before = settled d in
           raises_jit_error (fun () ->
               Rune.jit' (fun a -> if Nx.item [ 0 ] a > 0. then poly a else a) a);
-          equal ~msg:"bytes allocated" int before (allocated d));
+          equal ~msg:"bytes allocated" int before (settled d);
+          ignore (Sys.opaque_identity a));
       test "a consumed placed argument lends its storage" (fun () ->
           let a = placed d (x ()) in
           let before = Witness.addresses a in
@@ -3776,21 +3856,20 @@ let on_one_device ~name d =
       test "a value the call computes from host captures is uploaded once"
         (fun () ->
           let limit = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
-          let f a =
+          let f at a =
             let mask = Nx.less_s limit 2l in
             let scale = Nx.mul_s (Nx.cast Nx.float32 limit) 0.5 in
-            Nx.where
-              (Nx.place (on d) mask)
-              (Nx.mul a (Nx.place (on d) scale))
+            Nx.where (Nx.place at mask)
+              (Nx.mul a (Nx.place at scale))
               (Nx.zeros_like a)
           in
-          let g = Rune.jit' f in
+          let g = Rune.jit' (f (on d)) in
           let a = placed d (x ()) in
           ignore (g a);
           let before = bytes_in d in
           let r = g a in
           equal ~msg:"bytes received" int before (bytes_in d);
-          equal close (host (f (x ()))) (host r));
+          equal close (f Nx.Placement.host (x ())) (host r));
       test "a loop consuming its state holds two generations of it" (fun () ->
           let n = 1 lsl 16 in
           let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
@@ -3909,7 +3988,7 @@ let on_gpu kind = function
         sums_fuse_products m;
         staged_scans m;
         rows_written
-          ~at:(Nx.Placement.device ~backend:Rune.compiled m)
+          ~at:(Nx.Placement.on [ m ])
           "a lent write of rows";
         gathers ~at:(on m) m;
       ]
@@ -3942,8 +4021,10 @@ let () =
          disk;
          on_one_device ~name:"one device" d4;
          sums_fuse_products Nx_device.host;
-         group ~tags:[ "slow" ] "metal" (on_gpu "Metal" Metal.device);
-         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" Nvidia.cuda);
-         group ~tags:[ "slow" ] "nv" (on_gpu "NV" Nvidia.nv);
+         group ~tags:[ "slow" ] "metal" (on_gpu "Metal" (opened Metal));
+         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened (Cuda 0)));
+         group ~tags:[ "slow" ] "nv"
+           (on_gpu "NV"
+              (Result.to_option (Nx_nv_device.get ~interface:Kernel 0)));
          group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
        ])

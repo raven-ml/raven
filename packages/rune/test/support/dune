@@ -23,22 +23,6 @@
   nx.device
   nx.dtype))
 
-; The Metal and NVIDIA devices, where they build.
-
-(library
- (name rune_test_devices)
- (wrapped false)
- (modules metal nvidia)
- (libraries
-  nx.device
-  nx.cuda.device
-  nx.nv.device
-  (select
-   metal.ml
-   from
-   (nx.metal.device -> metal.macos.ml)
-   (-> metal.other.ml))))
-
 ; The rule suites' cases, rows and references.
 
 (library

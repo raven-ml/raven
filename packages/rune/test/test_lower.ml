@@ -247,7 +247,7 @@ let parameters =
           ignore (Lower.param s ~slot:0 (grid 2 3));
           equal int 0 (bound s));
       test "a parameter is at its argument's placement" (fun () ->
-          let x = Nx.place (Nx.Placement.device d1) (grid 2 3) in
+          let x = Nx.place (Nx.Placement.on [ d1 ]) (grid 2 3) in
           let s = scope () in
           let y = Lower.param s ~slot:0 x in
           is_true (Nx.Placement.equal (Nx.placement x) (Nx.placement y));
@@ -285,19 +285,19 @@ let placements =
       test "a traced value placed on a device is copied there" (fun () ->
           let x = grid 2 3 in
           let s, y =
-            trace (fun () -> Nx.place (Nx.Placement.device d1) (Nx.transpose x))
+            trace (fun () -> Nx.place (Nx.Placement.on [ d1 ]) (Nx.transpose x))
           in
           exact (Nx.transpose x) (value s y);
-          is_true (Nx.Placement.equal (Nx.Placement.device d1) (Nx.placement y));
+          is_true (Nx.Placement.equal (Nx.Placement.on [ d1 ]) (Nx.placement y));
           equal (list string) [ "CPU"; "CPU:1" ] (names s));
       test "a traced value placed on devices is a copy on each" (fun () ->
-          let p = Nx.Placement.replicated [ d1; d2 ] in
+          let p = Nx.Placement.on [ d1; d2 ] in
           let s, y = trace (fun () -> Nx.place p (Nx.flip (arange 4))) in
           exact (Nx.flip (arange 4)) (value s y);
           equal (list string) [ "CPU"; "CPU:1"; "CPU:2" ] (names s));
       test "a capture on another placement is placed once, then bound there"
         (fun () ->
-          let p = Nx.Placement.device d1 and x = grid 2 2 in
+          let p = Nx.Placement.on [ d1 ] and x = grid 2 2 in
           let s, y = trace (fun () -> Nx.place p x) in
           exact (grid 2 2) (value s y);
           match Lower.captures s with
@@ -305,7 +305,7 @@ let placements =
               equal string "CPU:1" (Nx_device.name (Nx_device.Buffer.device b))
           | _ -> fail "one capture on one device");
       test "a placed capture is bound where it lies, without a copy" (fun () ->
-          let x = Nx.place (Nx.Placement.device d1) (grid 2 3) in
+          let x = Nx.place (Nx.Placement.on [ d1 ]) (grid 2 3) in
           let s, y = copied x in
           exact (grid 2 3) y;
           equal (list string) [ "CPU:1" ] (names s));
@@ -321,8 +321,8 @@ let placements =
           exact (grid 3 4) y;
           equal int 1 (bound s));
       test "two devices of one name cannot meet in one trace" (fun () ->
-          let a = Nx.place (Nx.Placement.device d1) (grid 2 2) in
-          let b = Nx.place (Nx.Placement.device twin) (grid 2 2) in
+          let a = Nx.place (Nx.Placement.on [ d1 ]) (grid 2 2) in
+          let b = Nx.place (Nx.Placement.on [ twin ]) (grid 2 2) in
           raises_match (Exn.invalid_arg ~substring:"CPU:1") (fun () ->
               trace (fun () -> (Nx.copy a, Nx.copy b))));
     ]

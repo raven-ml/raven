@@ -42,11 +42,11 @@ A result takes the storage of a consumed leaf when writing it there cannot chang
 
 ## Devices and Memory
 
-A call runs on the devices of its placed arguments and captures, and on the host when there are none, whatever the placements' backends. A device is an `Nx_device.t`, opened by the library of its runtime (`Nx_metal_device.v 0`, `Nx_cuda_device.v 1`), and a value is put on it with `Nx.place`:
+A call runs on the devices of its placed arguments and captures, and on the host when there are none, whatever backends run around it. A device is opened with `Nx.Device` (`Nx.Device.gpu ()`, `Nx.Device.cuda 1`), and a value is put on it with `Nx.place`:
 
 <!-- $MDX skip -->
 ```ocaml
-let metal = Nx.Placement.device (Nx_metal_device.v 0)
+let metal = Nx.Placement.on [ Nx.Device.metal () ]
 let step = Rune.jit' (fun x -> Nx.tanh (Nx.matmul x x))
 let y = step (Nx.place metal (Nx.rand Nx.float32 [| 64; 64 |]))
 (* compiled for Metal *)
@@ -54,7 +54,7 @@ let y = step (Nx.place metal (Nx.rand Nx.float32 [| 64; 64 |]))
 
 A host argument is uploaded on each call, as an eager operation would move it, and a placed argument, such as the output of an earlier call, is read where it is. A capture is bound once per compiled function, at the trace that meets it: a value placed where the program computes is read in place, and any other value is placed there once. Placing a model's weights once, as the kaun examples' importers do, means no compiled function uploads them.
 
-Values placed on several devices run a program over those devices. A value split along an axis (`Nx.Placement.sharded ~axis`) is one slice on each device, and a copy (`Nx.Placement.replicated`) or a host argument is the whole value on each. The function sees whole values: an elementwise operation keeps its operands' split, and a reduction over a split axis becomes an allreduce, so the gradient of a loss over a batch split across devices is summed across them. Operands split differently raise as the function traces, as they do eagerly; `Nx.place` inside the function gathers a value to a copy on each device or splits one. A per-device computation is `vmap` over an axis split one slice per device.
+Values placed on several devices run a program over those devices. A value split along an axis (`Nx.Placement.sharded ~axis`) is one slice on each device, and a copy (`Nx.Placement.on`) or a host argument is the whole value on each. The function sees whole values: an elementwise operation keeps its operands' split, and a reduction over a split axis becomes an allreduce, so the gradient of a loss over a batch split across devices is summed across them. Operands split differently raise as the function traces, as they do eagerly; `Nx.place` inside the function gathers a value to a copy on each device or splits one. A per-device computation is `vmap` over an axis split one slice per device.
 
 Outputs are values on the device: shape and dtype never transfer, and a read copies the elements it reads and leaves the output where it is. A view of part of a storage is read in place, its strides expressed in the program, so a window of a cache costs no copy.
 
@@ -78,18 +78,24 @@ By default each kernel is scheduled by fixed heuristics. `jit ~beam:2` searches 
 let square = Rune.jit' ~beam:2 ~parallel:8 (fun x -> Nx.mul x x)
 ```
 
+## Transformations of a Compiled Function
+
+`grad`, `jvp` and `vmap` of a compiled function compile, and so does a `Total.collect` around one. Each runs programs compiled for the function the transformation derives, kept in the compiled function by key as its own programs are, so a `grad (jit f)` in a loop compiles once. Under `grad`, the forward pass is `f`'s program and the backward pass a program that runs `f` again before its pullback. `jit (grad f)` compiles both passes as one program and runs the forward work once, so it stays the fast form.
+
+A compiled function that reads, through its closure, a value a transformation around it tracks raises `Invalid_argument`: pass the value as an argument.
+
 ## Eager Computation on a GPU
 
-Outside a compiled function, a placement's backend computes on its values. With `Rune.compiled`, each operation is a small program, compiled the first time it meets those dtypes and shapes, then queued:
+Outside a compiled function, nx computes eager operations on the host and on test devices. An eager operation on a GPU value raises `Invalid_argument` before any work, naming the remedies: compile the function with `Rune.jit`, run the program under a backend that covers the GPU (`Nx.Op.kernels`), or `Nx.place` the value on the host. Constants, views, reads and `Nx.place` work on every device:
 
 <!-- $MDX skip -->
 ```ocaml
-let gpu = Nx.Placement.device ~backend:Rune.compiled (Nx_metal_device.v 0)
+let gpu = Nx.Placement.on [ Nx.Device.gpu () ]
 let x = Nx.place gpu (Nx.rand Nx.float32 [| 1024; 1024 |])
-let y = Nx.tanh (Nx.matmul x x) (* two programs, queued *)
+let row = Nx.slice [ I 0 ] x                 (* a view: works *)
+let y = Rune.jit' (fun x -> Nx.tanh (Nx.matmul x x)) x  (* compiled *)
+let z = Nx.sum x                             (* raises *)
 ```
-
-An operation `Rune.compiled` cannot compile raises `Nx_backend.Refused` before any work, such as a Fourier transform or `float64` on Metal: place the value on the host to compute it there. A placement whose backend does not run on its device refuses its first eager operation the same way, naming the two remedies: a placement with `~backend:Rune.compiled`, or a compiled function.
 
 ## Debugging
 

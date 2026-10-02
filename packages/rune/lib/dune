@@ -5,7 +5,6 @@
  (name rune)
  (public_name rune)
  (private_modules
-  compiled
   construct
   jit
   jvp

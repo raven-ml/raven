@@ -206,7 +206,7 @@ let lanes t axis x =
   | [ y ] -> Nx.unpack (Nx.dtype x) y
   | _ -> assert false (* One output. *)
 
-let answer : type r. tape -> r Construct.t -> (unit -> r) option =
+let rec answer : type r. tape -> r Construct.t -> (unit -> r) option =
  fun t c ->
   match[@warning "@4@8"] c with
   | Detach x -> if owns t x then Some (fun () -> x) else None
@@ -220,10 +220,16 @@ let answer : type r. tape -> r Construct.t -> (unit -> r) option =
       else None
   | Lanes (axis, x) ->
       if owns t x then Some (fun () -> lanes t axis x) else None
+  | Compiled { p; f; args; _ } ->
+      (* A compiled function of tangents is linear: it runs under the tape. *)
+      if Nx.Ptree.fold p (fun _ x any -> any || owns t x) args false then
+        Some (fun () -> install t (fun () -> f args))
+      else None
   | Scan _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
       None
 
-let install t f =
+and install : type a. tape -> (unit -> a) -> a =
+ fun t f ->
   let owner = { Construct.owns = (fun x -> owns t x) } in
   let claims op = Construct.claims owner op in
   Construct.install

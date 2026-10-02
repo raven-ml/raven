@@ -375,8 +375,8 @@ All notable changes to this project will be documented in this file.
   makes them: a map adds the sum of its lanes', reverse mode drops the ones
   it makes again while rerunning code, and a scan staged under `Rune.jit`
   carries the sum out of its loop, so it stays one loop and a replay computes
-  the total again. A `jit` inside a scope runs eagerly; open the scope inside
-  the compiled function to compile it.
+  the total again. A `jit` inside a scope compiles the function that also
+  returns its additions.
 
 - `Rune.lanes a x` gathers `x` across the lanes of a map, as data: inside the
   map named `a` (`Rune.vmap ~axis:a`, `Rune.vmap' ~axis:a`, with

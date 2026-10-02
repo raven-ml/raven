@@ -307,6 +307,32 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
               (Remat { p; q; f; args = physicals m p args; recomputed })
           in
           relanes m q !out y)
+  | Compiled { p; q; f; args; compiler } ->
+      (* The compiled call of the mapped function, whose results all carry the
+         lanes, so that they are the same whether or not it was traced on this
+         call. *)
+      Some
+        (fun () ->
+          let lanes = lanes_of m p args in
+          let f args =
+            all_batched m q (install m (fun () -> f (relanes m p lanes args)))
+          in
+          let derived =
+            Construct.Vmap { lanes; size = m.size; axis = m.axis }
+          in
+          let y =
+            Construct.perform
+              (Compiled
+                 {
+                   p;
+                   q;
+                   f;
+                   args = physicals m p args;
+                   compiler = compiler.derive derived;
+                 })
+          in
+          let outs = List.map (fun _ -> true) (fst (Nx.Ptree.flatten q y)) in
+          relanes m q outs y)
   | Scan r -> Some (fun () -> scan m r)
   | Barrier { values; after } ->
       let flags = leaf_lanes m values in

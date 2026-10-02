@@ -23,8 +23,70 @@ type 'q rule =
     }
       -> 'q rule
 
+type (_, _, _, _) step =
+  | Primal : ('p, 'q, 'p, 'q) step
+  | Jvp : bool list -> ('p, 'q, 'p * 'p, 'q * 'q) step
+  | Vjp : bool list -> ('p, 'q, 'p * Nx.packed list, Nx.packed list) step
+  | Vmap : {
+      lanes : bool list;
+      size : int;
+      axis : axis option;
+    }
+      -> ('p, 'q, 'p, 'q) step
+  | Totals :
+      ('a, 'b) total
+      -> ('p, 'q, 'p * ('a, 'b) Nx.t, 'q * ('a, 'b) Nx.t) step
+  | Discarding : ('p, 'q, 'p, 'q) step
+
+let same_axis a b =
+  match (a, b) with
+  | None, None -> true
+  | Some a, Some b -> Type.Id.uid a = Type.Id.uid b
+  | _ -> false
+
+let same_step : type p q a b c d.
+    (p, q, a, b) step -> (p, q, c, d) step -> (a * b, c * d) Type.eq option =
+ fun s s' ->
+  match (s, s') with
+  | Primal, Primal -> Some Equal
+  | Jvp f, Jvp f' when f = f' -> Some Equal
+  | Vjp f, Vjp f' when f = f' -> Some Equal
+  | Vmap v, Vmap v'
+    when v.lanes = v'.lanes && v.size = v'.size && same_axis v.axis v'.axis ->
+      Some Equal
+  | Totals t, Totals t' -> (
+      match Type.Id.provably_equal t t' with
+      | Some Equal -> Some Equal
+      | None -> None)
+  | Discarding, Discarding -> Some Equal
+  | ( (Primal | Jvp _ | Vjp _ | Vmap _ | Totals _ | Discarding),
+      (Primal | Jvp _ | Vjp _ | Vmap _ | Totals _ | Discarding) ) ->
+      None
+
+type ('p, 'q) compiler = {
+  run : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q;
+  derive : 'p2 'q2. ('p, 'q, 'p2, 'q2) step -> ('p2, 'q2) compiler;
+}
+
+module Packed = struct
+  type _ t = Nx.packed list
+
+  let walk c l =
+    Nx.Ptree.Walk.list (fun c (Nx.P x) -> Nx.P (Nx.Ptree.Walk.tensor c x)) c l
+end
+
+let packed : Nx.packed list Nx.Ptree.t = Nx.Ptree.instantiate (module Packed)
+
 type _ t =
   | Scan : Scan.request -> Scan.result t
+  | Compiled : {
+      p : 'p Nx.Ptree.t;
+      q : 'q Nx.Ptree.t;
+      f : 'p -> 'q;
+      args : 'p;
+      compiler : ('p, 'q) compiler;
+    }
+      -> 'q t
   | Remat : {
       p : 'p Nx.Ptree.t;
       q : 'q Nx.Ptree.t;
@@ -71,6 +133,7 @@ type _ Effect.t += Construct : 'r t -> 'r Effect.t
 
 let default : type r. r t -> r = function
   | Scan _ -> raise Scan.Not_staged
+  | Compiled { p; q; f; args; compiler } -> compiler.run p q f args
   | Remat { f; args; _ } -> f args
   | Barrier { values; _ } -> values
   | Custom (Jvp_rule { value = Some y; _ }) -> y
@@ -82,11 +145,19 @@ let default : type r. r t -> r = function
   | Add _ -> ()
   | Detach x -> x
 
+(* How many installations are live, on any domain. While none is, a construct is
+   answered by its default without performing an effect, which would raise
+   [Effect.Unhandled] on every compiled call outside a transformation. The count
+   is global because a suspended fiber may resume on another domain. *)
+let installed = Atomic.make 0
+
 let perform c =
-  let e = Construct c in
-  match Effect.perform e with
-  | r -> r
-  | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> default c
+  if Atomic.get installed = 0 then default c
+  else
+    let e = Construct c in
+    match Effect.perform e with
+    | r -> r
+    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> default c
 
 let scan r =
   match perform (Scan r) with
@@ -117,4 +188,6 @@ let install i f =
   let exnc e =
     Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
   in
+  Atomic.incr installed;
+  Fun.protect ~finally:(fun () -> Atomic.decr installed) @@ fun () ->
   Effect.Deep.match_with f () { retc = Fun.id; exnc; effc }

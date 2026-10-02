@@ -5,16 +5,10 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-cuda/chain_distinct	alloc_words	exact	861
-cuda/chain_distinct	wall_time	batch=1024	n=20	5.139e-06	5.107e-06 5.115e-06 5.119e-06 5.123e-06 5.126e-06 5.129e-06 5.131e-06 5.132e-06 5.137e-06 5.138e-06 5.139e-06 5.162e-06 5.165e-06 5.168e-06 5.170e-06 5.177e-06 5.177e-06 5.181e-06 5.199e-06 5.199e-06
-cuda/chain_one_add	alloc_words	exact	861
-cuda/chain_one_add	wall_time	batch=1024	n=20	5.079e-06	5.046e-06 5.057e-06 5.065e-06 5.067e-06 5.068e-06 5.072e-06 5.073e-06 5.075e-06 5.077e-06 5.077e-06 5.081e-06 5.081e-06 5.086e-06 5.090e-06 5.090e-06 5.091e-06 5.093e-06 5.094e-06 5.255e-06 7.525e-06
 cuda/jit-chain-64	alloc_words	batch=64	n=20	1.390e+03	1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.390e+03 1.476e+03 1.592e+03 1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.594e+03 1.598e+03
 cuda/jit-chain-64	wall_time	batch=64	n=20	1.283e-04	1.278e-04 1.279e-04 1.279e-04 1.279e-04 1.279e-04 1.280e-04 1.281e-04 1.281e-04 1.281e-04 1.282e-04 1.283e-04 1.284e-04 1.286e-04 1.287e-04 1.392e-04 1.397e-04 1.398e-04 1.399e-04 1.400e-04 1.407e-04
 cuda/jit-scan-256	alloc_words	exact	1784
 cuda/jit-scan-256	wall_time	batch=4	n=20	1.570e-03	1.563e-03 1.565e-03 1.566e-03 1.566e-03 1.567e-03 1.567e-03 1.570e-03 1.570e-03 1.570e-03 1.570e-03 1.570e-03 1.571e-03 1.571e-03 1.571e-03 1.572e-03 1.572e-03 1.573e-03 1.573e-03 1.574e-03 1.575e-03
-gather/float32-1Mi-from-1Mi-host	alloc_words	exact	550
-gather/float32-1Mi-from-1Mi-host	wall_time	batch=32	n=20	2.360e-04	2.348e-04 2.354e-04 2.354e-04 2.355e-04 2.356e-04 2.356e-04 2.357e-04 2.358e-04 2.358e-04 2.358e-04 2.361e-04 2.364e-04 2.382e-04 2.386e-04 2.393e-04 2.395e-04 2.410e-04 2.440e-04 2.441e-04 2.447e-04
 indexed/scatter-16-rows-into-4096x1024-cache-host	alloc_words	exact	1531
 indexed/scatter-16-rows-into-4096x1024-cache-host	wall_time	batch=2048	n=20	3.272e-06	3.254e-06 3.255e-06 3.257e-06 3.262e-06 3.263e-06 3.266e-06 3.269e-06 3.269e-06 3.270e-06 3.271e-06 3.273e-06 3.277e-06 3.282e-06 3.282e-06 3.283e-06 3.284e-06 3.287e-06 3.312e-06 3.313e-06 3.321e-06
 indexed/take-512-rows-of-32768x1024-host	alloc_words	exact	1183
@@ -41,10 +35,3 @@ topk/4-of-32-512-rows-compiled	alloc_words	exact	1287
 topk/4-of-32-512-rows-compiled	wall_time	batch=256	n=20	3.402e-05	3.364e-05 3.380e-05 3.386e-05 3.386e-05 3.386e-05 3.390e-05 3.391e-05 3.394e-05 3.395e-05 3.398e-05 3.405e-05 3.406e-05 3.414e-05 3.415e-05 3.417e-05 3.418e-05 3.420e-05 3.456e-05 3.468e-05 3.472e-05
 topk/4-of-32-512-rows-eager	alloc_words	exact	3034
 topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.721e-04	7.577e-04 7.618e-04 7.633e-04 7.675e-04 7.688e-04 7.698e-04 7.699e-04 7.700e-04 7.702e-04 7.718e-04 7.724e-04 7.730e-04 7.744e-04 7.754e-04 7.768e-04 7.779e-04 7.801e-04 7.823e-04 7.848e-04 7.888e-04
-
-# machine: ca352e279bc47cb1
-# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
-# ocaml: 5.5.1 · 64-bit · release
-
-gather/float32-1Mi-from-1Mi-host	alloc_words	exact	549
-gather/float32-1Mi-from-1Mi-host	wall_time	batch=1	n=20	8.023e-04	7.720e-04 7.742e-04 7.755e-04 7.762e-04 7.770e-04 7.780e-04 7.888e-04 7.912e-04 7.998e-04 8.016e-04 8.030e-04 8.040e-04 8.050e-04 8.060e-04 8.065e-04 8.158e-04 8.222e-04 8.227e-04 8.287e-04 8.328e-04

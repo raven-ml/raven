@@ -333,7 +333,6 @@ let scan cs xs_s ys_s ~f ~init xs = scan_of "Rune.scan" cs xs_s ys_s ~f ~init xs
 exception Jit_error = Lower.Jit_error
 
 let jit ?beam ?parallel s f = Jit.jit ?beam ?parallel "Rune.jit" s f
-let compiled = Compiled.backend
 
 (* Functions of one tensor *)
 

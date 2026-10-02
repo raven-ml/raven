@@ -500,6 +500,8 @@ let rec trace : 'a. body:bool -> Lower.scope -> (unit -> 'a) -> 'a =
    fun c ->
     match[@warning "@4@8"] c with
     | Detach x -> Some (fun () -> x)
+    | Compiled { f; args; _ } ->
+        Some (fun () -> trace ~body s (fun () -> f args))
     | Scan r -> Some (fun () -> stage (trace ~body:true) s r)
     | Remat { recomputed = true; p; f; args; _ } when not body ->
         Some

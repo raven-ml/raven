@@ -5,11 +5,11 @@
 
 (** rune's constructs, and the one frame that installs their interpreters.
 
-    A {e construct} is an operation rune adds to nx's: a scan, a remat, a custom
-    rule, a collective of a map, an addition to a total, a detach. Its performer
-    asks the installations around it with {!perform}; an installation
-    ({!install}) is one application of a transformation, an interpreter of nx's
-    operations and of these constructs.
+    A {e construct} is an operation rune adds to nx's: a scan, a compiled call,
+    a remat, a custom rule, a collective of a map, an addition to a total, a
+    detach. Its performer asks the installations around it with {!perform}; an
+    installation ({!install}) is one application of a transformation, an
+    interpreter of nx's operations and of these constructs.
 
     Every interpreter matches {!type-t} exhaustively, with no wildcard, written
     [match[@warning "@4@8"] c with], so a construct added here is a compile
@@ -51,11 +51,73 @@ type 'q rule =
     }
       -> 'q rule
 
+(** The type for the transformations a compiled function's programs derive from:
+    a step turns a function from ['p] to ['q] into one from ['p2] to ['q2]. *)
+type (_, _, _, _) step =
+  | Primal : ('p, 'q, 'p, 'q) step
+      (** The function's values for reverse mode, which consume nothing. *)
+  | Jvp : bool list -> ('p, 'q, 'p * 'p, 'q * 'q) step
+      (** [Jvp tracked] is the function's forward derivative, from the arguments
+          and their tangents to the results and theirs, the leaves [tracked]
+          marks being differentiated. *)
+  | Vjp : bool list -> ('p, 'q, 'p * Nx.packed list, Nx.packed list) step
+      (** [Vjp tracked] is the function's pullback, from the arguments and the
+          cotangents of the results that are real or complex, to the cotangents
+          of the leaves [tracked] marks. It runs the function again. *)
+  | Vmap : {
+      lanes : bool list;
+      size : int;
+      axis : axis option;
+    }
+      -> ('p, 'q, 'p, 'q) step
+      (** The function mapped over [size] lanes, the leaves [lanes] marks
+          carrying them on a leading axis, under the map named [axis]. The
+          results all carry the lanes. *)
+  | Totals :
+      ('a, 'b) total
+      -> ('p, 'q, 'p * ('a, 'b) Nx.t, 'q * ('a, 'b) Nx.t) step
+      (** [Totals t] is the function that also returns the sum of its additions
+          to [t], from the arguments and a zero. *)
+  | Discarding : ('p, 'q, 'p, 'q) step
+      (** The function with its additions to totals dropped. *)
+
+val same_step :
+  ('p, 'q, 'a, 'b) step ->
+  ('p, 'q, 'c, 'd) step ->
+  ('a * 'b, 'c * 'd) Type.eq option
+(** [same_step s s'] is [Some Equal] iff [s] and [s'] derive the same function.
+*)
+
+type ('p, 'q) compiler = {
+  run : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q;
+      (** [run p q f args] is [f args] computed by a program compiled for the
+          devices of [args], which [f] traces the first time its key is met. *)
+  derive : 'p2 'q2. ('p, 'q, 'p2, 'q2) step -> ('p2, 'q2) compiler;
+      (** [derive s] is the compiler of the functions [s] derives, which keeps
+          their programs. *)
+}
+(** The type for compilers of a compiled function and of the functions
+    transformations derive from it. *)
+
+val packed : Nx.packed list Nx.Ptree.t
+(** [packed] is the structure of a list of tensors of any dtypes. *)
+
 (** The type for constructs whose answer is ['r]. Each has a {e default}, its
     answer when no installation takes it. *)
 type _ t =
   | Scan : Scan.request -> Scan.result t
       (** A scan. Default: raises {!Scan.Not_staged}. *)
+  | Compiled : {
+      p : 'p Nx.Ptree.t;
+      q : 'q Nx.Ptree.t;
+      f : 'p -> 'q;
+      args : 'p;
+      compiler : ('p, 'q) compiler;
+    }
+      -> 'q t
+      (** [f args], compiled. A transformation passes on the call of the
+          function it derives from [f], with the compiler [compiler.derive]
+          gives that derivation. Default: [compiler.run p q f args]. *)
   | Remat : {
       p : 'p Nx.Ptree.t;
       q : 'q Nx.Ptree.t;

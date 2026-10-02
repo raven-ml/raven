@@ -76,10 +76,11 @@ val jit :
   'a ->
   'b
 (** [jit ~beam ~parallel entry s f] is [f] compiled, as {!Rune.jit} documents
-    it, for the entry point named [entry], which its messages start with. Under
-    an enclosing transformation ({!Nx.Op.intercepted}), it is [f], which checks
-    and consumes nothing: {!Total.collect} is one until totals are a program's
-    outputs.
+    it, for the entry point named [entry], which its messages start with. Each
+    call performs {!Construct.Compiled}: a transformation around it passes on
+    the call of the function it derives, whose programs the compiler that
+    [derive] gives keeps, and with none the call runs the program of its key. A
+    derived function consumes nothing.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument; and at
     a call, before any work, for a consumed leaf that does not cover its whole

@@ -404,12 +404,13 @@ let local at shape =
   let d = List.hd (Placement.devices at) in
   Array.map (fun (lo, hi) -> hi - lo) (Placement.window at shape d)
 
-(* The path of each leaf of [args], and whether its argument is consumed. *)
+(* The path of each leaf of [args], and whether its argument is consumed: never
+   without [roles], as for a function a transformation derives. *)
 let paths args_s roles args =
   let at = List.rev (Ptree.fold args_s (fun p _ acc -> p :: acc) args []) in
   let consumed p =
-    match Ptree.Path.segments p with
-    | Ptree.Path.Index k :: _ -> List.nth roles k = Ptree.Consumed
+    match (roles, Ptree.Path.segments p) with
+    | Some roles, Ptree.Path.Index k :: _ -> List.nth roles k = Ptree.Consumed
     | _ -> false
   in
   ( Array.of_list (List.map Ptree.Path.to_string at),
@@ -825,38 +826,79 @@ module Programs = Memo.Make (struct
   let hash = hash
 end)
 
-let compiled ?beam ?parallel (type a r) entry (args_s : a Ptree.t)
-    (result_s : r Ptree.t) roles (g : a -> r) : a -> r =
+(* A compiler keeps the programs of one function, the compiled function's own or
+   one a transformation derives from it, by key, and the compilers of the
+   functions derived from it, by step. *)
+type ('p, 'q) child =
+  | Child :
+      ('p, 'q, 'a, 'b) Construct.step * ('a, 'b) Construct.compiler
+      -> ('p, 'q) child
+
+let rec find : type p q a b.
+    (p, q, a, b) Construct.step ->
+    (p, q) child list ->
+    (a, b) Construct.compiler option =
+ fun step -> function
+  | [] -> None
+  | Child (step', c) :: rest -> (
+      match Construct.same_step step' step with
+      | Some Equal -> Some c
+      | None -> find step rest)
+
+let rec compiler : type a r.
+    int option ->
+    int option ->
+    string ->
+    Ptree.role list option ->
+    (a, r) Construct.compiler =
+ fun beam parallel entry roles ->
   let table = Programs.create () and last = Atomic.make None in
-  fun args ->
-    if Nx.Op.intercepted () then g args
-    else
-      let ts, skeleton = Ptree.flatten args_s args in
-      let leaves = Array.of_list (List.map leaf ts) in
-      let key =
-        {
-          skeleton;
-          settings = settings ?beam ();
-          layouts = Array.to_list (Array.map (fun l -> l.layout) leaves);
-        }
-      in
-      let retrace () =
-        Option.iter
-          (fun k ->
-            report "retrace: %s"
-              (difference (fst (paths args_s roles args)) key k))
-          (Atomic.get last)
-      in
-      let p =
-        Programs.find table key ~miss:retrace (fun () ->
-            let paths, consumed = paths args_s roles args in
-            compile ~beam:key.settings.beam ?parallel args_s result_s g args
-              leaves ~paths ~consumed)
-      in
-      Atomic.set last (Some key);
-      check entry p.consumed p.paths leaves;
-      run entry p leaves
+  let children = ref [] and lock = Mutex.create () in
+  let call (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r) (args : a) :
+      r =
+    let ts, skeleton = Ptree.flatten args_s args in
+    let leaves = Array.of_list (List.map leaf ts) in
+    let key =
+      {
+        skeleton;
+        settings = settings ?beam ();
+        layouts = Array.to_list (Array.map (fun l -> l.layout) leaves);
+      }
+    in
+    let retrace () =
+      Option.iter
+        (fun k ->
+          report "retrace: %s"
+            (difference (fst (paths args_s roles args)) key k))
+        (Atomic.get last)
+    in
+    let p =
+      Programs.find table key ~miss:retrace (fun () ->
+          let paths, consumed = paths args_s roles args in
+          compile ~beam:key.settings.beam ?parallel args_s result_s g args
+            leaves ~paths ~consumed)
+    in
+    Atomic.set last (Some key);
+    check entry p.consumed p.paths leaves;
+    run entry p leaves
+  in
+  let derive : type a2 r2.
+      (a, r, a2, r2) Construct.step -> (a2, r2) Construct.compiler =
+   fun step ->
+    Mutex.protect lock @@ fun () ->
+    match find step !children with
+    | Some c -> c
+    | None ->
+        let c = compiler beam parallel entry None in
+        children := Child (step, c) :: !children;
+        c
+  in
+  { run = call; derive }
 
 let jit ?beam ?parallel entry s f =
   let (Structure.Signature u) = Structure.signature entry s in
-  u.curry (compiled ?beam ?parallel entry u.args u.result u.roles (u.apply f))
+  let compiler = compiler beam parallel entry (Some u.roles) in
+  let f = u.apply f in
+  u.curry (fun args ->
+      Construct.perform
+        (Compiled { p = u.args; q = u.result; f; args; compiler }))

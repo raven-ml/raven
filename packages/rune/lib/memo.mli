@@ -5,8 +5,8 @@
 
 (** Values made once per key, from any domain.
 
-    A compiled call, and each kernel of the compiled backend, makes its program
-    the first time it meets a key, and reads it without making it again. *)
+    A compiled call makes its program the first time it meets a key, and reads
+    it without making it again. *)
 
 (** Tables whose values are made once per key. *)
 module Make (K : Hashtbl.HashedType) : sig
