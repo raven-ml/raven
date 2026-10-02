@@ -590,7 +590,8 @@ let output =
           equal string "hugin figure" (Format.asprintf "%a" pp (other ()));
           equal string "hugin figure (1 warning)"
             (Format.asprintf "%a" pp warned));
-      test "pp opens a tag holding the SVG document" (fun () ->
+      test "pp opens a display tag holding the SVG document save writes"
+        (fun () ->
           let b = Buffer.create 1024 in
           let ppf = Format.formatter_of_buffer b in
           let tags = ref [] in
@@ -609,10 +610,11 @@ let output =
               mark_close_stag = (fun _ -> "");
             };
           Format.fprintf ppf "%a@?" pp (other ());
+          let file = Filename.concat (temp_dir ()) "f.svg" in
+          save file (other ());
+          let svg = In_channel.with_open_bin file In_channel.input_all in
           match !tags with
-          | [ s ] ->
-              starts_with ~affix:"quill.display\nimage/svg+xml\n\n" s;
-              contains ~sub:"<svg" s
+          | [ s ] -> equal text ("quill.display\nimage/svg+xml\n\n" ^ svg) s
           | l -> failf "%d tags" (List.length l));
     ]
 

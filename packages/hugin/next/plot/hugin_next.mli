@@ -1645,11 +1645,14 @@ val save :
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf f] displays [f] in a Quill notebook: it renders [f] as SVG as
-    {!save} does by default, and opens on [ppf] a [Format.String_tag] that
-    follows Quill's display protocol and carries the document. Formatters
-    ignoring the tag print its content, a one-line summary of [f] that counts
+    {!save} does by default, and prints on [ppf] a one-line summary of [f]
+    inside a [Format.String_tag]. The tag's string is the line [quill.display],
+    the line [image/svg+xml], an empty display id line, then the SVG document: a
+    display tag of the display protocol documented in Quill's [Quill.Cell]
+    module. Hugin depends on no Quill library.
+
+    Formatters ignore the tag by default and print the summary alone. It counts
     the drawing's warnings, such as [hugin figure (2 warnings)], so that a user
-    without the display sees that there are some. Hugin depends on no Quill
-    library.
+    without the display sees that there are some.
 
     Raises what {!render} raises. *)

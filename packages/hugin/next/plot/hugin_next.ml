@@ -112,29 +112,20 @@ let save ?(warn = Format.eprintf "%a@." pp_warning) ?view ?theme
   let data = write (Drawing.renderable d) in
   Out_channel.with_open_bin file (fun oc -> Out_channel.output_string oc data)
 
-(* Quill's display protocol: the prefix, the MIME type, the display id (none),
-   the size hint in points and the document, one per line. *)
-let display_prefix = "quill.display"
+(* The header of an SVG display tag in Quill's display protocol: the line
+   [quill.display], the MIME type's line and an empty display id line. The
+   document follows. *)
+let svg_display = "quill.display\nimage/svg+xml\n\n"
 
 let pp ppf f =
   let d = render default_size f in
-  let r = Drawing.renderable d in
-  let doc =
-    String.concat "\n"
-      [
-        display_prefix;
-        "image/svg+xml";
-        "";
-        Printf.sprintf "%g %g" (Renderable.w r) (Renderable.h r);
-        Hugin_next_vg_svg.render r;
-      ]
-  in
+  let tag = svg_display ^ Hugin_next_vg_svg.render (Drawing.renderable d) in
   let summary =
     match List.length (Drawing.warnings d) with
     | 0 -> "hugin figure"
     | 1 -> "hugin figure (1 warning)"
     | n -> Printf.sprintf "hugin figure (%d warnings)" n
   in
-  Format.pp_open_stag ppf (Format.String_tag doc);
+  Format.pp_open_stag ppf (Format.String_tag tag);
   Format.pp_print_string ppf summary;
   Format.pp_close_stag ppf ()
