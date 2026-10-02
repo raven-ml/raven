@@ -17,6 +17,7 @@ let equal = Figure.equal
 
 let dot = Marks.dot
 let line = Marks.line
+let area = Marks.area
 let rect = Marks.rect
 let rule = Marks.rule
 let text = Marks.text

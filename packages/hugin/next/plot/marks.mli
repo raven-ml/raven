@@ -33,6 +33,18 @@ val line :
   unit ->
   t
 
+val area :
+  ?x:('x, float) channel ->
+  ?y2:('y, float) channel ->
+  ?fill:('f, Color.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?curve:Curve.t ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  y:('y, float) channel ->
+  unit ->
+  t
+
 val rect :
   ?x:('x, float) channel ->
   ?x2:('x, float) channel ->

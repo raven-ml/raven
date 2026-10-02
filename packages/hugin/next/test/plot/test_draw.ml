@@ -1349,6 +1349,60 @@ let reducers =
           | l -> failf "%d images" (List.length l));
     ]
 
+(* Areas *)
+
+(* [fill_paths d] is the path of each fill that the mark of [layer [ m ]] draws
+   in [d]. *)
+let fill_paths d =
+  List.concat_map
+    (fun (_, p) ->
+      List.rev
+        (fold
+           (fun acc -> function Picture.Fill f -> f.path :: acc | _ -> acc)
+           [] p))
+    (tags (path [ Index 0 ]) d)
+
+let subpaths p =
+  Path.fold
+    ~move:(fun n _ _ -> n + 1)
+    ~line:(fun n _ _ -> n)
+    ~cubic:(fun n _ _ _ _ _ _ -> n)
+    ~close:Fun.id 0 p
+
+let areas =
+  group "Areas"
+    [
+      test "swapping y and y2 fills the same pixels" (fun () ->
+          let a = num (f64 [| 0.; 3.; 1.; 2. |])
+          and b = num (f64 [| 2.; 1.; 3.; 0. |]) in
+          let page f =
+            Raster.render ~density:1. (Drawing.renderable (drawn f))
+          in
+          within_one ~msg:"pixels"
+            (page (area ~y:a ~y2:b ()))
+            (page (area ~y:b ~y2:a ())));
+      test "a dropped row splits the region" (fun () ->
+          let d =
+            drawn
+              (layer [ area ~y:(num (f64 [| 1.; 2.; nan; 2.; 1.; 3. |])) () ])
+          in
+          equal (list int) [ 2 ] (List.map subpaths (fill_paths d)));
+      test "each series is filled alone" (fun () ->
+          let y =
+            Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 1.; 2.; 3.; 2. |]
+          in
+          let d = drawn (layer [ area ~y:(num y) ~fill:(dim 0) () ]) in
+          equal (list int) [ 1; 1 ] (List.map subpaths (fill_paths d)));
+      test "an area alone fills down to zero" (fun () ->
+          let ys = f64 [| 1.; 3.; 2. |] in
+          let page f =
+            Raster.render ~density:1. (Drawing.renderable (drawn f))
+          in
+          within_one ~msg:"pixels"
+            (page (area ~y:(num ys) ~y2:(num (f64 [| 0.; 0.; 0. |])) ()))
+            (page (area ~y:(num ys) ())));
+    ]
+
 (* Goldens *)
 
 let golden name = Filename.concat "golden" name
@@ -1377,4 +1431,5 @@ let goldens =
 
 let () =
   exit
-    (run "Draw" [ rows; channels; domain; drawings; output; reducers; goldens ])
+    (run "Draw"
+       [ rows; channels; domain; drawings; output; reducers; areas; goldens ])

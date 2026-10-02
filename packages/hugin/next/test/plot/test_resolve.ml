@@ -740,6 +740,20 @@ let merging =
       test "a stem implies zero on its length" (fun () ->
           equal floats (0., 3.)
             (hull (resolve (rule ~x:(dim 0) ~y:(num ~scale:exact x) ())) "y"));
+      test "an area alone implies zero" (fun () ->
+          equal floats (0., 3.)
+            (hull (resolve (area ~y:(num ~scale:exact x) ())) "y"));
+      test "an area with a baseline fits the hull of its curves" (fun () ->
+          let lo = f64 [| 1.; 1.5 |] in
+          equal floats (1., 3.)
+            (hull (resolve (area ~y:(num ~scale:exact x) ~y2:(num lo) ())) "y"));
+      test "an error bar fits the hull of its ends" (fun () ->
+          let lo = f64 [| 1.; 1.5 |] in
+          equal floats (1., 3.)
+            (hull
+               (resolve
+                  (rule ~x:(dim 0) ~y:(num ~scale:exact lo) ~y2:(num x) ()))
+               "y"));
       test "the size role implies zero" (fun () ->
           equal floats (0., 3.)
             (hull

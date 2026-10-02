@@ -199,8 +199,7 @@ let style rows xs (name, role) ~default equal =
             else if not (equal v vs.(!first)) then varies := true)
         vs;
       if !varies then
-        Mark.warn rows
-          (Printf.sprintf "the %s of a line varies along a series" name);
+        Mark.warn rows (Printf.sprintf "the %s varies along a series" name);
       if !first < 0 then default else vs.(!first)
 
 (* [closed p] is [p] with every subpath closed. *)
@@ -289,6 +288,56 @@ let line ?x ?stroke ?fill ?width ?opacity ?(curve = Curve.linear) ?fx ?fy ~y ()
      ]
     @ facets fx fy)
     draw_line
+
+(* Areas *)
+
+(* [paint_area rows xs path] fills [path], given in normalised positions, with
+   the fill of the series [rows], a row at [xs.(i)] being dropped where that is
+   [nan]. *)
+let paint_area rows xs path =
+  let accent = Theme.accent (Mark.theme rows) in
+  let o = style rows xs ("opacity", Role.opacity) ~default:1. Float.equal in
+  let fill = style rows xs ("fill", Role.fill) ~default:accent Color.equal in
+  Picture.fill (fade o fill) (Mark.project rows path)
+
+(* Each series is the region between its curve and its baseline: [y2], or else
+   the start of [y]'s length. *)
+let draw_area rows =
+  let curve =
+    Option.value (first_value rows curve_param) ~default:Curve.linear
+  in
+  let series s =
+    let us, vs = Mark.positions s in
+    let base =
+      match Mark.get s Role.y2 with
+      | Some y2 -> y2
+      | None -> fst (Mark.extent s `Y)
+    in
+    paint_area s us (Curve.area curve ~x0:us ~y0:base us vs)
+  in
+  Picture.group (List.map series (Mark.series rows))
+
+(* The swatch's box filled. *)
+let swatch_area rows =
+  let x0, x1 = Mark.extent rows `X and y0, y1 = Mark.extent rows `Y in
+  let box = Box2.of_pts (P2.v x0.(0) y0.(0)) (P2.v x1.(0) y1.(0)) in
+  paint_area rows x0 (Path.rect box)
+
+let area ?x ?y2 ?fill ?opacity ?(curve = Curve.linear) ?fx ?fy ~y () =
+  let x =
+    match x with Some x -> on Role.x x | None -> on Role.x (index (-1))
+  in
+  make "area" ~swatch:swatch_area
+    ([
+       Some x;
+       position Role.y ~alone:(Option.is_none y2) (Some y);
+       opt Role.y2 y2;
+       opt Role.fill fill;
+       opt Role.opacity opacity;
+       Some (on curve_param (const curve));
+     ]
+    @ facets fx fy)
+    draw_area
 
 (* Rects *)
 

@@ -650,6 +650,8 @@ let equality =
           ("dot", fun () -> dot ~x:(num v) ~y:(num v) ~size:(num v) ());
           ( "line with a curve",
             fun () -> line ~curve:Curve.natural ~stroke:(dim 0) ~y:(num m) () );
+          ( "an area with a curve",
+            fun () -> area ~curve:Curve.natural ~y2:(num v) ~y:(num v) () );
           ("bars", fun () -> rect ~x:(dim 0) ~y:(num v) ());
           ("a reference line", fun () -> rule ~y:(floats [| 0. |]) ());
           ( "text with offsets",

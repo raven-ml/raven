@@ -385,8 +385,8 @@ val varies : int array -> ('d, 'r) channel -> int -> bool
     select ({!section-facets}). The built-in marks below are made as {!Mark.v}
     makes marks, from bindings and a draw function, and take their channels as
     labelled arguments named after their roles ({!section-roles}). They use only
-    this interface, so a user can write each of them: {!line}, {!text} and
-    {!image} keep their curve, text offsets and pixels in parameters
+    this interface, so a user can write each of them: {!line}, {!area}, {!text}
+    and {!image} keep their curves, text offsets and pixels in parameters
     ({!Role.param}). Every mark takes the facet channels [fx] and [fy], and
     every mark but {!image} takes [opacity], [1.] by default.
 
@@ -453,6 +453,34 @@ val line :
 
     A line with more than four rows per device-pixel column is reduced
     ({!Mark.m4}). *)
+
+val area :
+  ?x:('x, float) channel ->
+  ?y2:('y, float) channel ->
+  ?fill:('f, Color.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?curve:Curve.t ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  y:('y, float) channel ->
+  unit ->
+  t
+(** [area ~y ()] fills, for each series of its rows ({!Mark.series}), as {!line}
+    splits them, the region between the curve through the points of [y] and the
+    curve through those of its {e baseline} ({!Curve.area}), with [fill], the
+    accent by default, at [opacity]. Where:
+    - [x] defaults to [index (-1)] ({!index}).
+    - the baseline is [y2]; without [y2], [y] is a {e length}, as in {!rect},
+      and the baseline is zero clamped into the domain. [area] implies [zero] on
+      the scale of a length ({!section-merging}).
+    - [curve] says how both curves pass through their points, {!Curve.linear} by
+      default.
+
+    A dropped row splits the region, and a series takes its fill and opacity
+    from its first row that is not dropped, with a warning if one of them varies
+    along it. A legend entry is its box filled. So [area ~y ()] fills under a
+    curve, [area ~y:hi ~y2:lo ()] a band between two curves, and
+    [area ~y:(num ~valid y) ()] only where [valid] holds. *)
 
 val rect :
   ?x:('x, float) channel ->

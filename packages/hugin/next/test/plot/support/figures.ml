@@ -195,6 +195,30 @@ let paper () =
   in
   grid [ [ panel "(a)" a; panel "(b)" b ]; [ panel "(c)" c; panel "(d)" d ] ]
 
+(* Bands: two runs' mean accuracy over steps, each over the band of one standard
+   deviation about it. *)
+
+let bands () =
+  let t = 24 in
+  let at k i = float i.(1) +. (7. *. float k) in
+  let mean =
+    Nx.init Nx.float64 [| 2; t |] (fun i ->
+        1. -. exp (-.at 0 i /. (6. +. (6. *. float i.(0)))))
+  and std =
+    Nx.init Nx.float64 [| 2; t |] (fun i ->
+        0.05 +. (0.04 *. Float.abs (sin (at 1 i /. 3.))))
+  in
+  let run = dim ~title:(Text.v "run") ~labels:[| "a"; "b" |] 0 in
+  let step = index ~title:(Text.v "step") (-1) in
+  layer
+    [
+      area ~x:step
+        ~y:(num ~title:(Text.v "accuracy") (Nx.add mean std))
+        ~y2:(num (Nx.sub mean std))
+        ~fill:run ~opacity:(const 0.25) ();
+      line ~x:step ~y:(num mean) ~stroke:run ();
+    ]
+
 let paper_theme = Theme.v ~size:8. ()
 let paper_size = Size.figure (Size.mm 180.) (Size.mm 110.)
 
@@ -211,6 +235,7 @@ let goldens =
     ("landscape", landscape, Theme.default, default);
     ("dashboard", dashboard, Theme.default, default);
     ("paper", paper, paper_theme, paper_size);
+    ("bands", bands, Theme.default, default);
   ]
 
 (* Goldens are drawn at one device pixel per point. *)
