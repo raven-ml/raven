@@ -18,14 +18,16 @@
 
    A job is published behind a generation counter, and its workers count down
    to the caller. Jobs come in bursts, such as the kernels of a compiled
-   program, a few microseconds apart: a thread that waits, for the next job or
-   for the job's workers, spins on the counter for [spin_ns] before it parks on
-   a condition variable, and is woken only if it parked. A job's publication
-   then costs no system call, and its workers start at once.
+   program, a few microseconds apart: a worker spins on the counter until
+   [spin_ns] has passed since it last took part in a job, and the caller spins
+   on the countdown for [spin_ns], before either parks on a condition variable.
+   A job wakes the parked threads only if one of its workers parked. A job's
+   publication then costs no system call, its workers start at once, and a
+   worker that a burst's jobs leave out parks once its window ends.
 
    Workers run pure C and never touch the OCaml runtime, so they are not
-   registered with it. The pool lives until process exit: workers park on the
-   wake condition between jobs and the OS reclaims them. */
+   registered with it. The pool lives until process exit, and the OS reclaims
+   its workers then. */
 
 #if defined(__linux__)
 #define _GNU_SOURCE /* sched_getaffinity, CPU_COUNT */
@@ -55,8 +57,8 @@
    takes a system call and tens of microseconds before it runs, which a launch
    of a compiled program's kernel paid with each of its workers; spinning for
    longer than the gaps between such launches keeps the workers running for
-   the next. A thread that finds nothing to do in that time parks, so an idle
-   pool costs nothing. */
+   the next. A worker that took part in no job for that long parks, so an
+   idle pool, and a worker that narrow jobs leave out, cost nothing. */
 static const uint64_t spin_ns = 100000;
 static const uint64_t busy_ns = 2000;
 
@@ -68,24 +70,25 @@ static inline void relax(void) {
 #endif
 }
 
-/* Spins while [*word] is [value] ([until] 0) or until it is ([until] 1), for
-   at most [spin_ns], and returns the last value read. The clock is read every
-   few loads. Past [busy_ns], the thread yields its core between reads, so
-   that a spinning pool slows other threads little when the cores are all
-   taken. */
-static uint64_t spin(_Atomic uint64_t *word, uint64_t value, int until) {
+/* Spins while [*word] is [value] ([until] 0) or until it is ([until] 1), up
+   to the clock's [deadline], and returns the last value read. The clock is
+   read every few loads. Past [busy_ns] of spinning, the thread yields its core
+   between reads, so that a spinning pool slows other threads little when the
+   cores are all taken. */
+static uint64_t spin(_Atomic uint64_t *word, uint64_t value, int until,
+                     uint64_t deadline) {
   uint64_t v = atomic_load_explicit(word, memory_order_acquire);
   if ((v == value) == until) return v;
-  uint64_t start = nx_device_now_ns(), spent = 0;
+  uint64_t start = nx_device_now_ns();
   for (;;) {
     for (int i = 0; i < 64; i++) {
       relax();
       v = atomic_load_explicit(word, memory_order_acquire);
       if ((v == value) == until) return v;
     }
-    if (spent >= busy_ns) sched_yield();
-    spent = nx_device_now_ns() - start;
-    if (spent >= spin_ns) return v;
+    uint64_t now = nx_device_now_ns();
+    if (now >= deadline) return v;
+    if (now - start >= busy_ns) sched_yield();
   }
 }
 
@@ -106,7 +109,7 @@ struct pool {
   pthread_cond_t done;   /* a parked caller waits here for the job's end */
   _Atomic uint64_t generation; /* even; odd while a job is being written */
   _Atomic uint64_t pending;    /* participating workers not yet finished */
-  _Atomic int sleepers;        /* workers parked on [wake] */
+  _Atomic uint64_t parked;     /* bit [id] set while worker [id] is parked */
   _Atomic int waiting;         /* whether the caller parked on [done] */
   /* The job, written while the generation is odd and read while it is even:
      a worker that is no participant may read the next job's while the caller
@@ -218,29 +221,43 @@ static void chunk(int64_t total, int64_t parts, int64_t idx, int64_t *lo,
   *hi = (idx + 1) * total / parts;
 }
 
-/* Parking: a thread counts itself in [sleepers] (or sets [waiting]) and reads
+/* Parking: a thread sets its bit in [parked] (or sets [waiting]) and reads
    the word it waits on again before it waits, and the thread that changes the
-   word reads the count after the change, both sequentially consistent: one of
+   word reads the flag after the change, both sequentially consistent: one of
    them sees the other, so no wakeup is lost. The signal is sent under the
-   mutex the parked thread waits with. */
+   mutex the parked thread waits with.
 
-static uint64_t park_worker(pool *p, uint64_t seen) {
+   A job wakes the parked workers only if one of its participants is among
+   them, so a parked worker that takes no part in a job sleeps through it. A
+   worker that a broadcast wakes for a job it takes no part in parks again at
+   once, since its window has ended. */
+
+static uint64_t park_worker(pool *p, int id, uint64_t seen) {
+  uint64_t bit = (uint64_t)1 << id;
   pthread_mutex_lock(&p->mtx);
-  atomic_fetch_add(&p->sleepers, 1);
+  atomic_fetch_or(&p->parked, bit);
   uint64_t g;
   while ((g = atomic_load(&p->generation)) == seen)
     pthread_cond_wait(&p->wake, &p->mtx);
-  atomic_fetch_sub(&p->sleepers, 1);
+  atomic_fetch_and(&p->parked, ~bit);
   pthread_mutex_unlock(&p->mtx);
   return g;
 }
 
-/* The generation of the next job after [seen], once it is written. */
-static uint64_t next_job(pool *p, uint64_t seen) {
+/* The bits of [parked] of the workers of a job of [nthreads] threads: 1 to
+   nthreads - 1, the caller being worker 0. */
+static uint64_t participants(int nthreads) {
+  uint64_t all = nthreads >= 64 ? ~(uint64_t)0 : ((uint64_t)1 << nthreads) - 1;
+  return all & ~(uint64_t)1;
+}
+
+/* The generation of the next job after [seen], once it is written, spinning
+   for it until [deadline] and parked after. */
+static uint64_t next_job(pool *p, int id, uint64_t seen, uint64_t deadline) {
   uint64_t g = seen;
   for (;;) {
-    uint64_t v = spin(&p->generation, g, 0);
-    if (v == g) v = park_worker(p, g);
+    uint64_t v = spin(&p->generation, g, 0, deadline);
+    if (v == g) v = park_worker(p, id, g);
     if (v % 2 == 0 && v != seen) return v;
     g = v;
   }
@@ -253,8 +270,12 @@ static void *worker(void *arg) {
   /* Workers start before the first job, at generation 0: seeding [seen] with 0
      makes a worker that first runs after job 1 was published process it. */
   uint64_t seen = 0;
+  /* The spin window runs from the worker's last part in a job, and a job it
+     takes no part in leaves the window as it was: a worker that narrow jobs
+     leave out parks once the window ends, for the rest of their burst. */
+  uint64_t deadline = nx_device_now_ns() + spin_ns;
   for (;;) {
-    uint64_t g = next_job(p, seen);
+    uint64_t g = next_job(p, id, seen, deadline);
     int active;
     nx_device_range_body body;
     void *ctx;
@@ -267,7 +288,7 @@ static void *worker(void *arg) {
       nchunks = atomic_load_explicit(&p->nchunks, memory_order_relaxed);
       atomic_thread_fence(memory_order_acquire);
       if (atomic_load_explicit(&p->generation, memory_order_relaxed) == g) break;
-      g = next_job(p, seen);
+      g = next_job(p, id, seen, deadline);
     }
     seen = g;
     /* A participant keeps the next job from being written until it counts
@@ -289,6 +310,7 @@ static void *worker(void *arg) {
       pthread_cond_signal(&p->done);
       pthread_mutex_unlock(&p->mtx);
     }
+    deadline = nx_device_now_ns() + spin_ns;
   }
   return NULL;
 }
@@ -298,8 +320,8 @@ static pool *create(void) {
   if (!p) return NULL;
   p->nworkers = workers();
   atomic_init(&p->generation, 0);
+  atomic_init(&p->parked, 0);
   atomic_init(&p->pending, 0);
-  atomic_init(&p->sleepers, 0);
   atomic_init(&p->waiting, 0);
   atomic_init(&p->active, 0);
   atomic_init(&p->body, NULL);
@@ -413,7 +435,7 @@ static void run(int nthreads, int64_t total, int64_t nchunks,
   atomic_store_explicit(&p->pending, (uint64_t)(nthreads - 1),
                         memory_order_relaxed);
   atomic_store(&p->generation, g + 2);
-  if (atomic_load(&p->sleepers) > 0) {
+  if (atomic_load(&p->parked) & participants(nthreads)) {
     pthread_mutex_lock(&p->mtx);
     pthread_cond_broadcast(&p->wake);
     pthread_mutex_unlock(&p->mtx);
@@ -427,7 +449,8 @@ static void run(int nthreads, int64_t total, int64_t nchunks,
     body(lo, hi, 0, ctx);
   }
 
-  if (spin(&p->pending, 0, 1) != 0) {
+  if (atomic_load(&p->pending) != 0 &&
+      spin(&p->pending, 0, 1, nx_device_now_ns() + spin_ns) != 0) {
     pthread_mutex_lock(&p->mtx);
     atomic_store(&p->waiting, 1);
     while (atomic_load(&p->pending) != 0) pthread_cond_wait(&p->done, &p->mtx);
