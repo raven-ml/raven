@@ -93,18 +93,8 @@
 ; (golden/<suite>/, written by gen/generate.py).
 
 (tests
- (names
-  test_lower
-  test_lower_arith
-  test_lower_index
-  test_lower_linalg
-  test_lower_reduce)
- (modules
-  test_lower
-  test_lower_arith
-  test_lower_index
-  test_lower_linalg
-  test_lower_reduce)
+ (names test_lower test_lower_arith test_lower_index test_lower_reduce)
+ (modules test_lower test_lower_arith test_lower_index test_lower_reduce)
  (package rune)
  (libraries
   windtrap
@@ -120,10 +110,73 @@
  (deps
   (glob_files golden/lower_arith/*.golden)
   (glob_files golden/lower_index/*.golden)
-  (glob_files golden/lower_linalg/*.golden)
   (glob_files golden/lower_reduce/*.golden))
  (action
   (run %{test} --exclude-tag slow)))
+
+; The linear algebra suite runs as six shards, which dune runs in parallel.
+
+(executable
+ (name test_lower_linalg)
+ (modules test_lower_linalg)
+ (libraries
+  windtrap
+  rune_internals
+  rune_lowering_test
+  tolk_test
+  nx_test
+  nx
+  nx.dtype
+  nx.device
+  tolk))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --exclude-tag slow --shard 1/6)))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --exclude-tag slow --shard 2/6)))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --exclude-tag slow --shard 3/6)))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --exclude-tag slow --shard 4/6)))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --exclude-tag slow --shard 5/6)))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --exclude-tag slow --shard 6/6)))
 
 (rule
  (alias slow)
@@ -196,7 +249,8 @@
  (action
   (run %{test} --exclude-tag slow)))
 
-; Generated programs, compiled on the host against eager nx.
+; Generated programs, compiled on the host against eager nx. The property on
+; bits runs in a process of its own, beside the rest of the suite.
 
 (test
  (name test_jit_programs)
@@ -204,7 +258,18 @@
  (package rune)
  (libraries windtrap rune nx nx.dtype)
  (action
-  (run %{test} --exclude-tag slow)))
+  (run %{test} --exclude-tag slow -f "computes eager's bits")))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (action
+  (run
+   %{exe:test_jit_programs.exe}
+   --exclude-tag
+   slow
+   -e
+   "computes eager's bits")))
 
 ; Quantised products under the compiled call and the transformations, on the
 ; host and test devices by default and on Metal, CUDA and AMD in the slow alias.
