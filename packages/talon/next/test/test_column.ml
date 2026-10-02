@@ -268,14 +268,12 @@ let storage =
             Column.of_tensor ~validity (Nx.create Nx.int8 [| 1 |] [| 1 |])
           in
           is_none (Column.validity c));
-      test "ragged is the bytes of each row" (fun () ->
-          let r = Column.ragged (Column.v Type.string [| "é"; ""; "ab" |]) in
-          equal (array int64) [| 2L; 0L; 2L |]
-            (Nx.to_array (Nx_ragged.lengths r));
-          equal (array int)
-            [| 0xc3; 0xa9; 0x61; 0x62 |]
-            (Nx.to_array (Nx_ragged.values r)));
     ]
+
+(* Offsets and validities *)
+
+let n x = Nx.create Nx.int64 [| Array.length x |] x
+let bits b = Nx_bits.of_bool (Nx.create Nx.bool [| Array.length b |] b)
 
 (* Records *)
 
@@ -409,11 +407,43 @@ let refusals =
         Column.to_tensor Nx.uint8 (Column.v string [| "a" |]))
     @@ __POS_OF__
          {| Column.to_tensor: string is not stored one element per row |};
-    refuse "ragged of a number column" (fun () -> Column.ragged int8s)
-    @@ __POS_OF__ {| Column.ragged: int8 is not stored as bytes |};
-    refuse "ragged with a null" (fun () ->
-        Column.ragged (Column.of_options binary [| None |]))
-    @@ __POS_OF__ {| Column.ragged: row 0 is null |};
+    refuse "ragged of a number column" (fun () ->
+        Column.ragged Nx.int8 (Column.v int8 [| 1 |]))
+    @@ __POS_OF__ {| Column.ragged: int8 is not a list of int8, text or bytes |};
+    refuse "ragged of a list at another dtype" (fun () ->
+        Column.ragged Nx.int64 (Column.v (list int32) [| [| 1 |] |]))
+    @@ __POS_OF__ {| Column.ragged: list[int32] is stored as int32, not int64 |};
+    refuse "ragged of text at another dtype than uint8" (fun () ->
+        Column.ragged Nx.int8 (Column.v string [| "a" |]))
+    @@ __POS_OF__ {| Column.ragged: string is stored as uint8, not int8 |};
+    refuse "ragged of a list of text" (fun () ->
+        Column.ragged Nx.uint8 (Column.v (list string) [| [| "a" |] |]))
+    @@ __POS_OF__
+         {| Column.ragged: list[string] is not a list of uint8, text or bytes |};
+    refuse "ragged with a null row" (fun () ->
+        Column.ragged Nx.uint8
+          (Column.of_options binary [| Some (Binary.of_string "a"); None |]))
+    @@ __POS_OF__ {| Column.ragged: row 1 is null |};
+    refuse "ragged with a null element" (fun () ->
+        let elements = Column.of_options int32 [| Some 1; Some 2; None |] in
+        let l =
+          Column.Varsize
+            { validity = None; offsets = n [| 0L; 2L; 3L |]; child = elements }
+        in
+        Column.ragged Nx.int32
+          (Result.get_ok (Column.of_layout (Any (list int32)) l)))
+    @@ __POS_OF__ {| Column.ragged: an element of row 1 is null |};
+    refuse "of_ragged with a validity of another length" (fun () ->
+        Column.of_ragged ~validity:(bits [| true |])
+          (Nx_ragged.v
+             ~offsets:(n [| 0L; 1L; 1L |])
+             (Nx.create Nx.int32 [| 1 |] [| 7l |])))
+    @@ __POS_OF__ {| Column.of_ragged: a validity of length 1 for 2 rows |};
+    refuse "of_ragged of bfloat16 elements" (fun () ->
+        Column.of_ragged
+          (Nx_ragged.v ~offsets:(n [| 0L; 1L |]) (Nx.zeros Nx.bfloat16 [| 1 |])))
+    @@ __POS_OF__
+         {| Column.of_ragged: no scalar type stores bfloat16; make it 2-D |};
   ]
 
 let refusal_cases =
@@ -495,9 +525,6 @@ let ext_in_record (G.Sample (ty, vs)) =
   let l = Column.Children { validity = None; length; fields } in
   let r = require_ok (Column.of_layout (Any rty) l) in
   Law.round_trip column_w pass (Column.values Record.kind) (Column.v rty) r
-
-let n x = Nx.create Nx.int64 [| Array.length x |] x
-let bits b = Nx_bits.of_bool (Nx.create Nx.bool [| Array.length b |] b)
 
 let fixed ?validity dt x =
   Column.Fixed { validity; values = P (Nx.create dt [| Array.length x |] x) }
@@ -705,6 +732,166 @@ let layout_refusal_cases =
     "Layout refusals" layout_refusals
     (fun (_, f, expected) -> expect (message f) expected)
 
+(* Ragged arrays *)
+
+(* The type for a dtype, its values' equality and a generator of them. *)
+type dtype =
+  | Dtype : string * ('a, 'b) Nx.dtype * ('a -> 'a -> bool) * 'a Gen.t -> dtype
+
+let bits_equal a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
+
+let dtypes =
+  let int lo hi = Gen.int_range lo hi in
+  [
+    Dtype ("bool", Nx.bool, Bool.equal, Gen.bool);
+    Dtype ("int8", Nx.int8, Int.equal, int (-128) 127);
+    Dtype ("int16", Nx.int16, Int.equal, int (-32768) 32767);
+    Dtype ("int32", Nx.int32, Int32.equal, Gen.int32);
+    Dtype ("int64", Nx.int64, Int64.equal, Gen.int64);
+    Dtype ("uint8", Nx.uint8, Int.equal, int 0 255);
+    Dtype ("uint16", Nx.uint16, Int.equal, int 0 65535);
+    Dtype ("uint32", Nx.uint32, Int32.equal, Gen.int32);
+    Dtype ("uint64", Nx.uint64, Int64.equal, Gen.int64);
+    Dtype
+      ( "float16",
+        Nx.float16,
+        bits_equal,
+        Gen.map Int.to_float (int (-2048) 2048) );
+    Dtype
+      ( "float32",
+        Nx.float32,
+        bits_equal,
+        Gen.map
+          (fun x -> Int32.float_of_bits (Int32.bits_of_float x))
+          Gen.any_float );
+    Dtype ("float64", Nx.float64, bits_equal, Gen.any_float);
+  ]
+
+(* [ragged_gen dt v] draws up to six rows of up to four values, over values that
+   may hold rows before the first offset and after the last. *)
+let ragged_gen (type a b) (dt : (a, b) Nx.dtype) (v : a Gen.t) =
+  let open Gen in
+  let* lengths = list ~size:(int_range 0 6) (int_range 0 4) in
+  let* before = int_range 0 2 in
+  let* after = int_range 0 2 in
+  let total = before + List.fold_left ( + ) 0 lengths + after in
+  let+ values = array ~size:(constant total) v in
+  let offsets =
+    List.fold_left (fun acc l -> (List.hd acc + l) :: acc) [ before ] lengths
+    |> List.rev_map Int64.of_int |> Array.of_list
+  in
+  Nx_ragged.v ~offsets:(n offsets) (Nx.create dt [| total |] values)
+
+let ragged_w (type a b) (eq : a -> a -> bool) : (a, b) Nx_ragged.t Testable.t =
+  let rows r =
+    let o = Nx.to_array (Nx_ragged.offsets r)
+    and v = Nx.to_array (Nx_ragged.values r) in
+    Array.init
+      (Array.length o - 1)
+      (fun i ->
+        let first = Int64.to_int o.(i) in
+        Array.sub v first (Int64.to_int o.(i + 1) - first))
+  in
+  Testable.make
+    ~pp:(fun ppf r ->
+      Format.fprintf ppf "%d rows of lengths %a" (Nx_ragged.length r) Nx.pp
+        (Nx_ragged.lengths r))
+    ~equal:(fun a b ->
+      let ra = rows a and rb = rows b in
+      Array.length ra = Array.length rb
+      && Array.for_all2
+           (fun x y -> Array.length x = Array.length y && Array.for_all2 eq x y)
+           ra rb)
+
+let ragged =
+  group "Ragged arrays"
+    (List.map
+       (fun (Dtype (name, dt, eq, v)) ->
+         prop
+           (Printf.sprintf "ragged %s of of_ragged is the ragged array" name)
+           (Gen.with_pp
+              (fun ppf r -> Format.fprintf ppf "%d rows" (Nx_ragged.length r))
+              (ragged_gen dt v))
+           (fun r ->
+             cover "no row" (Nx_ragged.length r = 0);
+             cover "an empty row"
+               (Array.exists (Int64.equal 0L)
+                  (Nx.to_array (Nx_ragged.lengths r)));
+             Law.round_trip (ragged_w eq) column_w Column.of_ragged
+               (Column.ragged dt) r))
+       dtypes
+    @ [
+        test "of_ragged is a list of the dtype's type, sharing the buffers"
+          (fun () ->
+            let r =
+              Nx_ragged.v
+                ~offsets:(n [| 1L; 3L; 3L |])
+                (Nx.create Nx.int32 [| 4 |] [| 9l; 1l; 2l; 9l |])
+            in
+            let c = Column.of_ragged r in
+            equal any_w (Any Type.(list int32)) (Column.type_ c);
+            equal
+              (rows Type.(list int32))
+              [| Some [| 1; 2 |]; Some [||] |]
+              (Column.options Kind.(list int) c);
+            let back = Column.ragged Nx.int32 c in
+            satisfies ~claim:"the same values" pass
+              (fun v -> v == Nx_ragged.values r)
+              (Nx_ragged.values back);
+            satisfies ~claim:"the same offsets" pass
+              (fun o -> o == Nx_ragged.offsets r)
+              (Nx_ragged.offsets back));
+        test "of_ragged's validity makes rows null" (fun () ->
+            let r =
+              Nx_ragged.v
+                ~offsets:(n [| 0L; 1L; 2L |])
+                (Nx.create Nx.int8 [| 2 |] [| 1; 2 |])
+            in
+            equal
+              (rows Type.(list int8))
+              [| Some [| 1 |]; None |]
+              (Column.options
+                 Kind.(list int)
+                 (Column.of_ragged ~validity:(bits [| true; false |]) r)));
+        test "of_ragged of values of two axes is a list of tensors" (fun () ->
+            let r =
+              Nx_ragged.v
+                ~offsets:(n [| 0L; 2L |])
+                (Nx.zeros Nx.float32 [| 2; 3 |])
+            in
+            equal any_w
+              (Any Type.(list (tensor Nx.float32 [| 3 |])))
+              (Column.type_ (Column.of_ragged r)));
+        prop "ragged uint8 of text is each row's bytes"
+          (Gen.array ~size:(Gen.int_range 0 8)
+             (Option.get (G.value Type.string)))
+          (fun ss ->
+            let r = Column.ragged Nx.uint8 (Column.v Type.string ss) in
+            equal (array int)
+              (Array.map String.length ss)
+              (Array.map Int64.to_int (Nx.to_array (Nx_ragged.lengths r)));
+            let bytes = String.concat "" (Array.to_list ss) in
+            let o = Int64.to_int (Nx.item [ 0 ] (Nx_ragged.offsets r)) in
+            equal (array int)
+              (Array.init (String.length bytes) (fun i -> Char.code bytes.[i]))
+              (Array.sub
+                 (Nx.to_array (Nx_ragged.values r))
+                 o (String.length bytes)));
+        test "a null element outside the rows is not the column's" (fun () ->
+            let elements =
+              Column.of_options Type.int32 [| None; Some 1; None |]
+            in
+            let l =
+              Column.Varsize
+                { validity = None; offsets = n [| 1L; 2L |]; child = elements }
+            in
+            let c =
+              Result.get_ok (Column.of_layout (Any Type.(list int32)) l)
+            in
+            let r = Column.ragged Nx.int32 c in
+            equal (array int64) [| 1L; 2L |] (Nx.to_array (Nx_ragged.offsets r)));
+      ])
+
 let () =
   exit
     (run "Column"
@@ -713,6 +900,7 @@ let () =
          edge_cases;
          float_bits;
          storage;
+         ragged;
          records;
          refusal_cases;
          layouts;

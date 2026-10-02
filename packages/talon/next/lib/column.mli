@@ -31,7 +31,8 @@ val options : 'a Kind.t -> t -> 'a option array
 val of_tensor : ?validity:Nx_bits.t -> ('a, 'b) Nx.t -> t
 val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
 val validity : t -> Nx_bits.t option
-val ragged : t -> (int, Nx.uint8_elt) Nx_ragged.t
+val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
+val of_ragged : ?validity:Nx_bits.t -> ('a, 'b) Nx_ragged.t -> t
 val layout : t -> layout
 val of_layout : Type.any -> layout -> (t, int * string) result
 

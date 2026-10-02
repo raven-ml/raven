@@ -535,36 +535,36 @@ let first_null c =
   let flags = Option.get (flags c) in
   Option.get (first c.length (fun i -> if flags.(i) then None else Some i))
 
-let scalar_type : type a b. (a, b) Nx.dtype -> Type.any =
- fun dt ->
-  match dt with
-  | Bool -> Any Type.bool
-  | Int8 -> Any Type.int8
-  | Int16 -> Any Type.int16
-  | Int32 -> Any Type.int32
-  | Int64 -> Any Type.int64
-  | UInt8 -> Any Type.uint8
-  | UInt16 -> Any Type.uint16
-  | UInt32 -> Any Type.uint32
-  | UInt64 -> Any Type.uint64
-  | Float16 -> Any Type.float16
-  | Float32 -> Any Type.float32
-  | Float64 -> Any Type.float64
-  | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Complex64 | Complex128
-    ->
-      err "Column.of_tensor: no scalar type stores %a; make it 2-D" Nx_dtype.pp
-        dt
+(* [cells fn x] is the type of the rows of [x]: its dtype's scalar type for a
+   1-D [x], and a tensor type of its cells otherwise. *)
+let cells : type a b. string -> (a, b) Nx.t -> Type.any =
+ fun fn x ->
+  let shape = Nx.shape x and dt = Nx.dtype x in
+  if Array.length shape > 1 then
+    Any (Type.tensor dt (Array.sub shape 1 (Array.length shape - 1)))
+  else
+    match dt with
+    | Bool -> Any Type.bool
+    | Int8 -> Any Type.int8
+    | Int16 -> Any Type.int16
+    | Int32 -> Any Type.int32
+    | Int64 -> Any Type.int64
+    | UInt8 -> Any Type.uint8
+    | UInt16 -> Any Type.uint16
+    | UInt32 -> Any Type.uint32
+    | UInt64 -> Any Type.uint64
+    | Float16 -> Any Type.float16
+    | Float32 -> Any Type.float32
+    | Float64 -> Any Type.float64
+    | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Complex64
+    | Complex128 ->
+        err "Column.%s: no scalar type stores %a; make it 2-D" fn Nx_dtype.pp dt
 
 let of_tensor ?validity x =
   let shape = Nx.shape x in
   if shape = [||] then err "Column.of_tensor: a scalar has no rows";
   let length = shape.(0) in
-  let type_ =
-    if Array.length shape = 1 then scalar_type (Nx.dtype x)
-    else
-      Any
-        (Type.tensor (Nx.dtype x) (Array.sub shape 1 (Array.length shape - 1)))
-  in
+  let type_ = cells "of_tensor" x in
   (match validity with
   | Some v when Nx_bits.length v <> length ->
       err "Column.of_tensor: a validity of length %d for %d rows"
@@ -582,15 +582,6 @@ let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
       err "Column.to_tensor: row %d is null" (first_null c)
   | Fixed p -> Nx.unpack dt p
   | _ -> err "Column.to_tensor: %a is not stored one element per row" Type.pp ty
-
-let ragged c =
-  match c.data with
-  | Bytes _ when c.nulls > 0 ->
-      err "Column.ragged: row %d is null" (first_null c)
-  | Bytes r -> r
-  | _ ->
-      let (Any ty) = c.type_ in
-      err "Column.ragged: %a is not stored as bytes" Type.pp ty
 
 (* Structural operations *)
 
@@ -612,6 +603,58 @@ let rec sub c ~offset ~length =
     | Fields cs -> Fields (List.map (sub ~offset ~length) cs)
   in
   with_validity c.type_ validity ~length data
+
+(* Ragged arrays *)
+
+let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx_ragged.t =
+  let (Any ty) = c.type_ in
+  let mismatch stored =
+    err "Column.ragged: %a is stored as %a, not %a" Type.pp ty Nx_dtype.pp
+      stored Nx_dtype.pp dt
+  in
+  if c.nulls > 0 then err "Column.ragged: row %d is null" (first_null c);
+  match c.data with
+  | Bytes r -> (
+      match Nx_dtype.equal_witness Nx.uint8 dt with
+      | Some Equal -> r
+      | None -> mismatch Nx.uint8)
+  | List { offsets; child = { data = Fixed (P x); _ } as child } ->
+      if not (Nx_dtype.equal dt (Nx.dtype x)) then mismatch (Nx.dtype x);
+      let r = Nx_ragged.v ~offsets (Nx.unpack dt (P x)) in
+      (* Only the elements of the rows count: values outside the offsets are not
+         the column's. *)
+      (if child.nulls > 0 then
+         let first = Int64.to_int (Nx.item [ 0 ] offsets) in
+         let last = Int64.to_int (Nx.item [ c.length ] offsets) in
+         let elements = sub child ~offset:first ~length:(last - first) in
+         if elements.nulls > 0 then
+           let j = Int64.of_int (first + first_null elements) in
+           let ends = Nx.shrink [| (1, c.length + 1) |] offsets in
+           let row =
+             Nx.item [] (Nx.sum (Nx.cast Nx.int64 (Nx.less_equal_s ends j)))
+           in
+           err "Column.ragged: an element of row %Ld is null" row);
+      r
+  | _ ->
+      err "Column.ragged: %a is not a list of %a, text or bytes" Type.pp ty
+        Nx_dtype.pp dt
+
+let of_ragged ?validity r =
+  let values = Nx_ragged.values r in
+  let (Type.Any e as cell) = cells "of_ragged" values in
+  let child =
+    with_validity cell None ~length:(Nx.dim 0 values) (Fixed (P values))
+  in
+  let length = Nx_ragged.length r in
+  (match validity with
+  | Some v when Nx_bits.length v <> length ->
+      err "Column.of_ragged: a validity of length %d for %d rows"
+        (Nx_bits.length v) length
+  | _ -> ());
+  with_validity
+    (Any (Type.list e))
+    validity ~length
+    (List { offsets = Nx_ragged.offsets r; child })
 
 (* [gather indices c] is the data of [c]'s rows at [indices], zeros and empty
    rows outside [c]'s rows. *)

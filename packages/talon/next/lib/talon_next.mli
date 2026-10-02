@@ -568,7 +568,7 @@ module Column : sig
   val options : 'a Kind.t -> t -> 'a option array
   (** [options k c] is like {!values}, with [None] for each null. *)
 
-  (** {1:tensors Tensors and bytes} *)
+  (** {1:tensors Tensors and ragged arrays} *)
 
   val of_tensor : ?validity:Nx_bits.t -> ('a, 'b) Nx.t -> t
   (** [of_tensor ?validity x] is the column of [x]'s rows, without a copy:
@@ -596,11 +596,28 @@ module Column : sig
   val validity : t -> Nx_bits.t option
   (** [validity c] is [c]'s validity, [None] iff [c] has no null. *)
 
-  val ragged : t -> (int, Nx.uint8_elt) Nx_ragged.t
-  (** [ragged c] is the bytes of [c], one row per row of [c], in O(1). [c] is
-      stored as bytes: its type is [string], [binary] or an extension of either.
+  val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
+  (** [ragged dt c] is [c]'s rows as a ragged array without a copy, one row per
+      row of [c]: a list column's offsets and its elements, stored as [dt], or a
+      [string] or [binary] column's offsets and bytes, [dt] being {!Nx.uint8}.
+      An extension of such a type is read as its storage. It reads the offsets
+      once, as {!Nx_ragged.v} checks them, and no element. It shares [c]'s
+      buffers, which must not be written.
 
-      Raises [Invalid_argument] if [c] is not stored as bytes, or has a null. *)
+      Raises [Invalid_argument] if [c] is neither a list whose elements are
+      stored as [dt] nor text or bytes with [dt] {!Nx.uint8}, or if a row of [c]
+      or an element of a row is null. *)
+
+  val of_ragged : ?validity:Nx_bits.t -> ('a, 'b) Nx_ragged.t -> t
+  (** [of_ragged ?validity r] is the list column whose rows are [r]'s rows, null
+      where [validity] has no bit set, without a copy: a [list] of the element
+      type {!of_tensor} gives [r]'s values, such as [list[int32]] for
+      {!Nx.int32} values, and of a tensor type for values of more than one axis.
+      [validity] defaults to every row valid. [ragged dt (of_ragged r)] has
+      [r]'s rows.
+
+      Raises [Invalid_argument] if [validity]'s length is not [r]'s number of
+      rows, or if [r]'s dtype has no talon type, as {!of_tensor} does. *)
 
   (** {1:layout Layouts}
 
@@ -2405,8 +2422,8 @@ module Kit : sig
       let s = Query.schema q and r = Query.schema rest in
       pad (nulls r s) q |> Query.append (pad (nulls s r) rest)
       ]}
-      A column that both have, of two types, takes the type where they meet,
-      and one whose types do not meet is a problem of the [append]. *)
+      A column that both have, of two types, takes the type where they meet, and
+      one whose types do not meet is a problem of the [append]. *)
 
   (** {1:runs Runs} *)
 
