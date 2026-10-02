@@ -531,7 +531,11 @@ let gen_scale =
     ]
   |> Gen.with_pp (fun ppf (Axis s) -> Scale.pp ppf s)
 
-let gen_length = Gen.float_range 20. 2000.
+(* Axes from short to billions of points long, as an aspect panel with very
+   unequal spans asks for. *)
+let gen_length =
+  Gen.frequency
+    [ (4, Gen.float_range 20. 2000.); (1, Gen.float_range 1e6 1e12) ]
 
 let check_no_overlap ?(measure = measure) length (t : Ticks.t) =
   let extent (k : Ticks.tick) =
@@ -585,6 +589,22 @@ let choice =
       prop "major ticks are in the domain, minor ticks between, none at a major"
         (Gen.pair gen_scale gen_length) (fun (Axis s, length) ->
           check_shape (Ticks.choose ~length ~measure s));
+      prop "a long axis has at most twice a hundred ticks"
+        (Gen.pair gen_scale (Gen.float_range 1e6 1e12))
+        (fun (Axis s, length) ->
+          (* Beyond [2 m + 1] ticks the density is negative, and a candidate of
+             about [m] ticks scores higher. *)
+          at_most int ~than:201
+            (List.length (Ticks.choose ~length ~measure s).major));
+      test "an axis of billions of points aims for a hundred ticks" (fun () ->
+          (* [m] is [100], so [ρt = 99]: the step [0.01] has [ρ = 100], a
+             density of [2 - 100/99], the tick [0] and full coverage, and beats
+             the steps [0.02] and [0.005] around it. *)
+          let t = Ticks.choose ~length:1e10 ~measure (linear 0. 1.) in
+          equal (list string)
+            (List.init 101 (fun i ->
+                 Printf.sprintf "%.2f" (Float.of_int i /. 100.)))
+            (labels t));
       prop "chosen labels never overlap" (Gen.pair gen_scale gen_length)
         (fun (Axis s, length) ->
           check_no_overlap length (Ticks.choose ~length ~measure s));
@@ -856,7 +876,8 @@ let reference ~length s candidates =
     List.fold_left (fun m k -> m +. extent k) 0. reference.major
     /. Float.of_int (List.length reference.major)
   in
-  let rho_t = Float.max 1. ((length /. (2. *. mean)) -. 1.) in
+  let m = Float.min (length /. (2. *. mean)) 100. in
+  let rho_t = Float.max 1. (m -. 1.) in
   let norm = Scale.normalize s in
   let best = ref None in
   let consider c =

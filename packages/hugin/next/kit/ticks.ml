@@ -700,6 +700,12 @@ let strides_family st names =
   in
   skips 1
 
+(* The most ticks [choose] aims for, however long the axis. A reader takes in no
+   more on one axis, and the density bounds the search by the target: without
+   the cap, an axis of billions of points would make candidates of billions of
+   ticks. *)
+let most_ticks = 100.
+
 let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
     (s : d Scale.t) : t =
   if not (Float.is_finite length && length > 0.) then
@@ -764,9 +770,8 @@ let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
       Array.fold_left (fun m l -> m +. tick_extent st l) 0. labels
       /. Float.of_int (Array.length labels)
     in
-    let st =
-      { st with rho_t = Float.max 1. ((length /. (2. *. mean)) -. 1.) }
-    in
+    let m = Float.min (length /. (2. *. mean)) most_ticks in
+    let st = { st with rho_t = Float.max 1. (m -. 1.) } in
     (match Scale.domain s with
     | Floats (a, b) ->
         let tf = Scale.Private.transform s in

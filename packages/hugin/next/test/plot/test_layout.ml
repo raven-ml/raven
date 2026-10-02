@@ -254,12 +254,7 @@ let gen_case =
 
 let figure_of c =
   let cell (a, b) =
-    (* Under an aspect, x spans what y does, or one axis's title could ask the
-       other for a length of many billions of points. *)
-    let x =
-      if c.aspect then f64 [| 0.; 10. ** Float.of_int b |]
-      else f64 [| -.(10. ** Float.of_int a); 10. ** Float.of_int b |]
-    in
+    let x = f64 [| -.(10. ** Float.of_int a); 10. ** Float.of_int b |] in
     let y = f64 [| 0.; 10. ** Float.of_int b |] in
     let title = if c.titled then Some (Text.v "value") else None in
     let fx =
@@ -295,8 +290,7 @@ let figure_of c =
         row :: rows rest
   in
   let g = grid (rows (List.map cell c.exps)) in
-  (* A shared x under an aspect would span cells of other magnitudes. *)
-  let g = if c.shared && not c.aspect then share [ ("x", `Shared) ] g else g in
+  let g = if c.shared then share [ ("x", `Shared) ] g else g in
   if c.titled then title ~align:c.align (Text.v "A figure") g else g
 
 (* [laid c] is the layout of [c], discarding a figure too small for it. *)

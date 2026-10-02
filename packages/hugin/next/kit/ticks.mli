@@ -128,10 +128,11 @@ val of_values :
       in [1], [2], [5], [10], [20], [50], …; [Q = [1]], and [j] is the rank of
       [k] in that sequence, from [1].
 
-    With [n] ticks at positions [p_1 < … < p_n], and [m = length / (2 ē)], where
-    [ē] is the mean extent of the labels of
-    [of_values ~locale ~notation s (Scale.ticks ~count:10 s)], the number of
-    ticks at which such labels fill half the axis, a candidate scores
+    With [n] ticks at positions [p_1 < … < p_n], and
+    [m = min (length / (2 ē)) 100], where [ē] is the mean extent of the labels
+    of [of_values ~locale ~notation s (Scale.ticks ~count:10 s)], the number of
+    ticks at which such labels fill half the axis, but no more than a hundred,
+    which a reader cannot take in on one axis, a candidate scores
 
     {[
     0.25 S + 0.2 C + 0.5 D
@@ -157,7 +158,8 @@ val of_values :
     fewer ticks, then to the earlier in this order. [ρt] is fixed before the
     search, so a candidate with [n - 1 > ρt] has a density of at most
     [2 - (n - 1) / ρt]; with the bound [2 - j] on the simplicity, this ends the
-    search on every domain, as in the paper. *)
+    search on every domain, as in the paper, and, since [ρt < 100], bounds the
+    ticks of the candidates it makes by a constant whatever [length]. *)
 
 (** {1:labels Labels}
 
