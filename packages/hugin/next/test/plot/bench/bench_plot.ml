@@ -72,6 +72,18 @@ let png size f =
   Hugin_next_vg_raster.png ~density:2. (Drawing.renderable (render size f))
 
 let walk = Nx.cumsum (Nx.Rng.normal (Nx.Rng.key 1) Nx.float32 [| 10_000_000 |])
+
+(* The walk with one step in a thousand missing. *)
+let gappy =
+  let missing =
+    Nx.less_s (Nx.Rng.uniform (Nx.Rng.key 4) Nx.float32 [| 10_000_000 |]) 0.001
+  in
+  Nx.where missing (Nx.full_like walk Float.nan) walk
+
+(* A line whose x is in no order changes column at almost every row, so that M4
+   keeps almost every row. *)
+let shuffled = Nx.Rng.uniform (Nx.Rng.key 5) Nx.float32 [| 1_000_000 |]
+let shuffled_walk = Nx.slice [ R (0, 1_000_000) ] walk
 let cloud = Nx.Rng.normal (Nx.Rng.key 2) Nx.float32 [| 100_000; 2 |]
 
 (* Attention weights of 12 layers by 12 heads over 128 tokens. *)
@@ -82,6 +94,11 @@ let budgets =
     [
       Thumper.bench "10M-step line to PNG" (fun () ->
           png (Size.figure 360. 240.) (line ~y:(num walk) ()));
+      Thumper.bench "10M-step line with gaps to PNG" (fun () ->
+          png (Size.figure 360. 240.) (line ~y:(num gappy) ()));
+      Thumper.bench "1M-step line over unsorted x to PNG" (fun () ->
+          png (Size.figure 360. 240.)
+            (line ~x:(num shuffled) ~y:(num shuffled_walk) ()));
       Thumper.bench "100k dots to PNG" (fun () ->
           png (Size.figure 360. 240.)
             (dot
