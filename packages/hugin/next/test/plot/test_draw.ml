@@ -519,6 +519,22 @@ let domain =
           equal (list page_box)
             [ Some (Box2.v (Box2.minx box) mid (Box2.w box) 0.) ]
             strokes);
+      test "an image beyond its domain keeps its pixels, clipped to the panel"
+        (fun () ->
+          let zoom =
+            dot
+              ~x:(num ~scale:(Scale.linear ~domain:(1., 3.) ()) (f64 [| 2. |]))
+              ~y:(num (f64 [| 2. |]))
+              ()
+          in
+          let f = layer [ image (Nx.ones Nx.float32 [| 4; 4 |]); zoom ] in
+          let size = Size.panels 100. 100. in
+          let box = (List.hd (Layout.panels (layout size (resolve f)))).box in
+          let d = drawn ~size f in
+          equal int 1 (clips d);
+          match images d with
+          | [ (b, _) ] -> equal (float 1e-9) (2. *. Box2.w box) (Box2.w b)
+          | l -> failf "%d images" (List.length l));
       test "a text anchored at the domain's corner is drawn whole" (fun () ->
           let d =
             drawn

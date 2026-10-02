@@ -448,25 +448,36 @@ let datum px lead k =
   done;
   Nx.slice (Array.to_list (Array.map (fun i -> Nx.I i) index)) px
 
+let unit_square = Box2.v 0. 0. 1. 1.
+
+(* An image is placed by its positions, which a zoom can take beyond the domain,
+   and then clipped to the domain: it has no ink beyond its box. *)
 let draw_image lead rows =
   match first_value rows Role.pixels with
   | None -> Picture.empty
   | Some (Nx.P px) ->
       let at = Coord.point (Mark.projection rows) in
-      let x0, x1 = Mark.extent rows `X and y0, y1 = Mark.extent rows `Y in
+      let get role = Option.get (Mark.get rows role) in
+      let x0 = get Role.x and x1 = get Role.x2 in
+      let y0 = get Role.y and y1 = get Role.y2 in
       let index = Mark.index rows in
+      let within u = 0. <= u && u <= 1. in
       let image i =
         if not (finite x0.(i) && finite y0.(i)) then Picture.empty
         else
           let box = Box2.of_pts (at x0.(i) y0.(i)) (at x1.(i) y1.(i)) in
           let px = Pixels.rgba (datum px lead index.(i)) in
           let shape = Nx.shape px in
-          match
-            Pixels.plan ~density:rows.Rows.density box ~rows:shape.(0)
-              ~cols:shape.(1)
-          with
-          | None -> Picture.image box px
-          | Some plan -> Picture.image plan.window (Pixels.gather plan px)
+          let picture =
+            match
+              Pixels.plan ~density:rows.Rows.density box ~rows:shape.(0)
+                ~cols:shape.(1)
+            with
+            | None -> Picture.image box px
+            | Some plan -> Picture.image plan.window (Pixels.gather plan px)
+          in
+          if List.for_all within [ x0.(i); x1.(i); y0.(i); y1.(i) ] then picture
+          else Picture.clip (Mark.project rows (Path.rect unit_square)) picture
       in
       Picture.group (List.init (Mark.length rows) image)
 
