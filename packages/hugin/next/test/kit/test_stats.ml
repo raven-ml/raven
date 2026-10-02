@@ -85,6 +85,23 @@ let gen_value =
       (1, Gen.of_list [ nan; infinity; neg_infinity ]);
     ]
 
+(* [size] floats at most three spacings above a base at [1.], at [2^60] or
+   [-2^60], or at either end of the finite floats. *)
+let gen_cluster size =
+  let open Gen in
+  let rec succ k a = if k = 0 then a else succ (k - 1) (Float.succ a) in
+  let* base =
+    of_list
+      [
+        1.;
+        Float.ldexp 1. 60;
+        -.Float.ldexp 1. 60;
+        -.max_float;
+        Float.pred (Float.pred max_float);
+      ]
+  in
+  array ~size:(constant size) (map (fun k -> succ k base) (int_range 0 3))
+
 let gen_case =
   let open Gen in
   let* lead =
@@ -98,9 +115,17 @@ let gen_case =
       ]
   in
   let* len = frequency [ (1, int_range 0 2); (4, int_range 3 40) ] in
-  let groups = Array.fold_left ( * ) 1 lead in
-  let+ dtype = of_list dtypes
-  and+ values = array ~size:(constant (groups * len)) gen_value
+  let size = Array.fold_left ( * ) 1 lead * len in
+  (* A repeated value draws samples whose finite values are all equal, and a
+     cluster of floats a few spacings apart, kept in float64, draws spans too
+     narrow for their bins: independent draws almost never give either. *)
+  let+ dtype, values =
+    frequency
+      [
+        (4, pair (of_list dtypes) (array ~size:(constant size) gen_value));
+        (1, pair (of_list dtypes) (map (Array.make size) gen_value));
+        (1, map (fun v -> (F64, v)) (gen_cluster size));
+      ]
   and+ bins = option (int_range 1 12) in
   { dtype; lead; len; values; bins }
 
@@ -166,6 +191,7 @@ let law_edges c =
     equal number ~msg:"first edge" lo first;
     equal number ~msg:"last edge" hi last)
   else (
+    cover "a span widened for its bins" (lo < hi);
     at_most float_exact ~msg:"first edge" ~than:lo first;
     at_least float_exact ~msg:"last edge" ~than:hi last;
     at_least float_exact ~msg:"first edge" ~than:(-.max_float) first;
