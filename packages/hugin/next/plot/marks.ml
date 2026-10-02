@@ -26,7 +26,7 @@ let opt role = Option.map (on role)
 
 let line_em = 0.15
 let outline_em = 0.08
-let dot_em = 0.5 (* The diameter of a dot's circle. *)
+let dot_em = 0.6 (* The diameter of a dot's circle. *)
 let em rows k = k *. Theme.size (Mark.theme rows)
 let dot_area rows = Float.pi *. Float.pow (em rows dot_em /. 2.) 2.
 

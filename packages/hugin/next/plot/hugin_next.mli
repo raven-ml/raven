@@ -1112,7 +1112,7 @@ module Theme : sig
       ({!Hugin_next_kit.Ticks.choose}); legend swatches [1] em square and [0.25]
       em from their labels, and colour bars [1] em wide; axis lines, ticks and
       the outlines of marks [0.08] em wide, and grid lines [0.06] em wide; lines
-      and rules [0.15] em wide; dots of the area of a circle [0.5] em across;
+      and rules [0.15] em wide; dots of the area of a circle [0.6] em across;
       and [1] em added to the protrusions that meet a gap between grid cells.
 
       Text and axes are in the ink, their lesser parts at a fraction of its

@@ -708,6 +708,17 @@ let drawings =
                   ]));
           equal (list (array int)) [ [| 0 |] ] !seen);
       test "titles take the ink, labels and axes a part of its opacity" inked;
+      test "a dot has the area of a circle 0.6 em across" (fun () ->
+          (* A stamp scales a symbol of unit area by the root of its area: a
+             circle 6 points across at the default size of 10 points. *)
+          let d = drawn (dot ~x:(const 0.5) ~y:(const 0.5) ()) in
+          let scales =
+            collect (function Picture.Stamp s -> Some s.scales | _ -> None) d
+          in
+          equal
+            (list (option floats))
+            [ Some [| Float.sqrt (Float.pi *. 9.) |] ]
+            scales);
       test "the paper is painted first, and a transparent one not at all"
         (fun () ->
           let first theme =
