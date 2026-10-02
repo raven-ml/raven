@@ -253,6 +253,54 @@ let reverse =
            (fun p x -> Rune.grad params (fun p -> loss p x) p));
     ]
 
+(* Finite checks
+
+   A loss-scaled step keeps each update only if every gradient is finite: one
+   value of no axes, reduced from all the gradients, that the update of each of
+   128 leaves selects by. Most leaves are vectors of 768 or 3072, every fourth a
+   768 x 768 matrix. The value is computed once, and the reductions of the small
+   leaves share the threads of one workgroup. *)
+
+let finite_leaves = 128
+
+(* The compiled step and its operands, after one call. *)
+let finite_setup ~place ~sync () =
+  let shape i =
+    if i mod 4 = 3 then [| 768; 768 |]
+    else [| (if i mod 2 = 0 then 768 else 3072) |]
+  in
+  let step grads params =
+    let finite =
+      List.fold_left
+        (fun acc g -> Nx.logical_and acc (Nx.all (Nx.isfinite g)))
+        (Nx.all (Nx.isfinite (List.hd grads)))
+        (List.tl grads)
+    in
+    List.map2
+      (fun g x -> Nx.where finite (Nx.sub x (Nx.mul_s g 1e-4)) x)
+      grads params
+  in
+  let st = Random.State.make [| 15 |] in
+  let leaf i =
+    place (Nx.init Nx.float32 (shape i) (fun _ -> Random.State.float st 1.))
+  in
+  let grads = List.init finite_leaves leaf in
+  let params = List.init finite_leaves leaf in
+  let f =
+    Rune.jit
+      Nx.Ptree.(list tensor @-> list tensor @-> returns (list tensor))
+      step
+  in
+  ignore (f grads params);
+  sync ();
+  (f, grads, params)
+
+let finite_checks ~place ~sync id =
+  Thumper.bench_with_setup ~setup:(finite_setup ~place ~sync) id
+    (fun (f, grads, params) ->
+      ignore (f grads params);
+      sync ())
+
 (* Launches
 
    Compiled functions of many small kernels, whose time is mostly the cost of
@@ -333,10 +381,40 @@ let cuda () =
         (gpu_launches (fun () -> Nx.Device.v (Cuda 0)));
     ]
 
+(* The finite checks on the Mac's Metal GPU. A forked worker cannot reach
+   Metal's compiler, so a fresh process ([--metal]) compiles the step into the
+   disk cache, which the worker's step then reads, and says whether Metal
+   opens. *)
+let on_metal () =
+  let device = Nx.Device.v Metal in
+  ( (fun x -> Nx.place (Nx.Placement.on device) x),
+    fun () -> Nx_device.synchronize (Nx.Device.memory device) )
+
+let metal () =
+  if run_self "--metal" <> 0 then []
+  else
+    let device = lazy (on_metal ()) in
+    [
+      Thumper.group ~id:"metal" "metal"
+        [
+          finite_checks
+            ~place:(fun x -> fst (Lazy.force device) x)
+            ~sync:(fun () -> snd (Lazy.force device) ())
+            (Printf.sprintf "finite-checks-%d-leaves" finite_leaves);
+        ];
+    ]
+
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--cuda" ] ->
       exit (if Result.is_ok (Nx.Device.get (Cuda 0)) then 0 else 1)
+  | [ _; "--metal" ] -> (
+      match Nx.Device.get Metal with
+      | Error _ -> exit 1
+      | Ok _ ->
+          let place, sync = on_metal () in
+          ignore (finite_setup ~place ~sync ());
+          exit 0)
   | _ ->
       Thumper.run "compiled"
         ~budgets:
@@ -352,8 +430,14 @@ let () =
                  ~m:1_000_000;
              ]
         :: split :: indexed :: rope :: select_zero :: reverse
+        :: Thumper.group ~id:"finite" "finite"
+             [
+               finite_checks ~place:Fun.id
+                 ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+                 (Printf.sprintf "checks-%d-leaves-host" finite_leaves);
+             ]
         :: Thumper.group ~id:"launch" "launch"
              (launches ~place:Fun.id
                 ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
                 ())
-        :: cuda ())
+        :: (cuda () @ metal ()))

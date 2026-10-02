@@ -44,6 +44,8 @@ topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.620e-04	7.475e-04 7.509e-04
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 
+finite/checks-128-leaves-host	alloc_words	exact	109962
+finite/checks-128-leaves-host	wall_time	batch=1	n=20	1.470e-02	1.136e-02 1.136e-02 1.224e-02 1.287e-02 1.289e-02 1.355e-02 1.367e-02 1.367e-02 1.381e-02 1.450e-02 1.491e-02 1.505e-02 1.536e-02 1.552e-02 1.557e-02 1.577e-02 1.590e-02 1.702e-02 1.751e-02 3.392e-02
 indexed/scatter-16-rows-into-4096x1024-cache-host	alloc_words	exact	1537
 indexed/scatter-16-rows-into-4096x1024-cache-host	wall_time	batch=1	n=20	4.771e-06	4.458e-06 4.542e-06 4.625e-06 4.625e-06 4.667e-06 4.708e-06 4.708e-06 4.750e-06 4.750e-06 4.750e-06 4.792e-06 4.792e-06 4.833e-06 4.833e-06 4.875e-06 4.875e-06 4.875e-06 4.875e-06 4.917e-06 9.292e-06
 indexed/take-512-rows-of-32768x1024-host	alloc_words	exact	1189
@@ -54,6 +56,8 @@ launch/chain-64	alloc_words	exact	4556
 launch/chain-64	wall_time	batch=128	n=20	7.203e-05	7.193e-05 7.196e-05 7.196e-05 7.197e-05 7.198e-05 7.200e-05 7.200e-05 7.200e-05 7.202e-05 7.203e-05 7.203e-05 7.209e-05 7.210e-05 7.213e-05 7.216e-05 7.219e-05 7.226e-05 7.232e-05 7.233e-05 7.239e-05
 launch/scan-256	alloc_words	exact	65197
 launch/scan-256	wall_time	batch=16	n=20	4.541e-04	4.519e-04 4.519e-04 4.522e-04 4.523e-04 4.523e-04 4.525e-04 4.529e-04 4.531e-04 4.535e-04 4.540e-04 4.542e-04 4.543e-04 4.547e-04 4.565e-04 4.572e-04 4.575e-04 4.583e-04 4.618e-04 4.649e-04 4.833e-04
+metal/finite-checks-128-leaves	alloc_words	exact	347429
+metal/finite-checks-128-leaves	wall_time	batch=1	n=20	8.036e-03	5.596e-03 6.005e-03 6.019e-03 6.785e-03 6.841e-03 7.290e-03 7.585e-03 7.603e-03 7.656e-03 8.034e-03 8.039e-03 8.277e-03 8.290e-03 8.346e-03 8.406e-03 8.496e-03 8.496e-03 8.645e-03 8.685e-03 8.983e-03
 reverse/grad-of-jit-mlp-float32-host	alloc_words	exact	8402
 reverse/grad-of-jit-mlp-float32-host	wall_time	batch=128	n=20	6.140e-05	5.943e-05 5.943e-05 5.947e-05 5.969e-05 5.980e-05 5.985e-05 6.052e-05 6.097e-05 6.101e-05 6.114e-05 6.167e-05 6.167e-05 6.177e-05 6.243e-05 6.261e-05 6.318e-05 6.327e-05 6.441e-05 6.469e-05 6.483e-05
 reverse/jit-of-grad-mlp-float32-host	alloc_words	exact	2996
