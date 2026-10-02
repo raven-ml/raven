@@ -190,6 +190,15 @@ let storage =
             [| -1L; Int64.min_int; 1L |]
             (stored Type.uint64
                [ "18446744073709551615"; "9223372036854775808"; "+1" ]));
+      test "a datetime reads a signed year, past nanoseconds' range" (fun () ->
+          equal (array int64)
+            [| 253402300800L; -62167219201L; -62135596800L |]
+            (stored (Type.datetime S)
+               [
+                 "+10000-01-01T00:00:00";
+                 "-0001-12-31 23:59:59";
+                 "0001-01-01T00:00:00";
+               ]));
     ]
 
 (* Refusals *)
@@ -257,6 +266,11 @@ let refusals =
       ( Any (datetime S),
         "2024-01-01T00:00:00.5",
         "not a whole number of seconds" );
+      (Any (datetime S), "+999-01-01T00:00:00", "not YYYY-MM-DD");
+      (Any (datetime S), "+5881581-01-01T00:00:00", "out of range");
+      ( Any (datetime S),
+        "+10000-01-01",
+        "not YYYY-MM-DDThh:mm:ss without an offset" );
       ( Any (datetime Ms),
         "2024-01-01T00:00:00.0015",
         "not a whole number of milliseconds" );

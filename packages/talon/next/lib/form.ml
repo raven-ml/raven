@@ -419,19 +419,29 @@ let form ~zoned =
    [u] since 1970-01-01 00:00:00, in UTC when it has an offset. *)
 let datetime u ~zoned b pos len (a : int64s) k =
   let stop = pos + len in
-  if len < 19 then form ~zoned;
-  let days = date_at b pos in
-  let t = get b (pos + 10) in
-  let hh = two_digits b (pos + 11) and mm = two_digits b (pos + 14) in
-  let ss = two_digits b (pos + 17) in
+  (* A signed year makes the date longer than ten bytes. *)
+  let rec date_end i =
+    if i >= stop || get b i = 'T' || get b i = ' ' then i else date_end (i + 1)
+  in
+  let dlen =
+    if len > 0 && (get b pos = '+' || get b pos = '-') then
+      date_end (pos + 1) - pos
+    else 10
+  in
+  if len < dlen + 9 then form ~zoned;
+  let days = date b pos dlen in
+  let p = pos + dlen in
+  let t = get b p in
+  let hh = two_digits b (p + 1) and mm = two_digits b (p + 4) in
+  let ss = two_digits b (p + 7) in
   if
     (t <> 'T' && t <> ' ')
     || hh < 0 || mm < 0 || ss < 0
-    || get b (pos + 13) <> ':'
-    || get b (pos + 16) <> ':'
+    || get b (p + 3) <> ':'
+    || get b (p + 6) <> ':'
   then form ~zoned;
   if hh > 23 || mm > 59 || ss > 59 then invalid "not a time of day";
-  let i = ref (pos + 19) and ns = ref 0 in
+  let i = ref (p + 9) and ns = ref 0 in
   if !i < stop && get b !i = '.' then begin
     incr i;
     ns := fraction b i stop;
