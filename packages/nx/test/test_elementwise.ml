@@ -1446,13 +1446,19 @@ let dtypes =
 (* [nx] over [n] float64 values against [ocaml] on each, as the positions where
    they differ. *)
 let agrees nx ocaml n =
-  let x = Nx.init Nx.float64 [| n |] (fun i -> float_of_int (i.(0) mod 1013)) in
-  let y = Nx.to_array (nx x) in
+  let x = Bigarray.(Array1.create float64 c_layout n) in
+  for i = 0 to n - 1 do
+    x.{i} <- float_of_int (i mod 1013)
+  done;
+  let y =
+    Bigarray.array1_of_genarray
+      (Nx.to_bigarray (nx (Nx.of_bigarray (Bigarray.genarray_of_array1 x))))
+  in
   let bad = ref [] in
-  Array.iteri
-    (fun i v -> if v <> ocaml (float_of_int (i mod 1013)) then bad := i :: !bad)
-    y;
-  equal (list int) [] (List.rev !bad)
+  for i = n - 1 downto 0 do
+    if y.{i} <> ocaml (float_of_int (i mod 1013)) then bad := i :: !bad
+  done;
+  equal (list int) [] !bad
 
 (* A square root of a million elements, as IEEE rounds it, runs on the pool. *)
 let roots () = agrees Nx.sqrt Float.sqrt 1_000_000

@@ -1076,17 +1076,36 @@ let small ~msg limit value =
 let c128 x = Nx.cast Nx.complex128 x
 let adjoint x = Nx.conjugate (t x)
 
+(* The elements of a float64 or int64 tensor in row-major order, read without
+   boxing. *)
+let row_major x = Bigarray.reshape_1 (Nx.to_bigarray x) (Nx.numel x)
+
 let fro x =
-  Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. (Nx.to_array (c128 x))
-  |> Float.sqrt
+  let x = c128 x in
+  let re = row_major (Nx.real Nx.float64 x)
+  and im = row_major (Nx.imag Nx.float64 x) in
+  let s = ref 0. in
+  for i = 0 to Bigarray.Array1.dim re - 1 do
+    s := !s +. ((re.{i} *. re.{i}) +. (im.{i} *. im.{i}))
+  done;
+  Float.sqrt !s
 
 let rel ~expected actual =
   fro (Nx.sub (c128 expected) (c128 actual)) /. fro expected
 
-(* ‖QᴴQ - I‖ relative to ‖I‖, over the columns of [q]. *)
-let orthonormality q =
-  let g = adjoint (c128 q) *@ c128 q in
-  rel ~expected:(c128 (identity_like g)) g
+(* ‖QᴴQ - I‖ relative to ‖I‖, over the columns of [q]. A real [q]'s Gram matrix
+   is formed in float64, where it costs a quarter of complex128. *)
+let orthonormality (type a b) (q : (a, b) Nx.t) =
+  let complex =
+    match Nx.dtype q with Complex64 | Complex128 -> true | _ -> false
+  in
+  if complex then
+    let g = adjoint (c128 q) *@ c128 q in
+    rel ~expected:(identity_like g) g
+  else
+    let q = Nx.cast Nx.float64 q in
+    let g = t q *@ q in
+    rel ~expected:(identity_like g) g
 
 let real_part z = Nx.cast Nx.float64 z
 
@@ -2334,136 +2353,184 @@ let mm_name = function
 
 type mm_layout = Contiguous | Transposed | Strided
 
-(* The [r x c] matrix of row-major [xs] held in [layout]. *)
-let held dtype layout r c xs =
+let pp_layout ppf l =
+  Format.pp_print_string ppf
+    (match l with
+    | Contiguous -> "contiguous"
+    | Transposed -> "transposed"
+    | Strided -> "strided")
+
+(* The contiguous matrix [x] held in [layout]. *)
+let held layout x =
   match layout with
-  | Contiguous -> Nx.create dtype [| r; c |] xs
-  | Transposed ->
-      Nx.matrix_transpose
-        (Nx.create dtype [| c; r |]
-           (Array.init (r * c) (fun i -> xs.((i mod r * c) + (i / r)))))
-  | Strided when c = 0 -> Nx.create dtype [| r; c |] xs
+  | Contiguous -> x
+  | Transposed -> Nx.matrix_transpose (Nx.copy (Nx.matrix_transpose x))
+  | Strided when Nx.dim 1 x = 0 -> x
   | Strided ->
-      let wide =
-        Nx.create dtype
-          [| r; 2 * c |]
-          (Array.init
-             (r * 2 * c)
-             (fun i ->
-               let row = i / (2 * c) and col = i mod (2 * c) in
-               xs.((row * c) + (col / 2))))
-      in
-      Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~axis:1 ~window:1 ~step:2 wide)
+      Nx.squeeze ~axes:[ -1 ]
+        (Nx.sliding_window ~axis:1 ~window:1 ~step:2 (Nx.repeat ~axis:1 2 x))
 
 let layouts =
   [ (Contiguous, Contiguous); (Transposed, Strided); (Strided, Transposed) ]
 
-let check_matmul md (m, k, n) (la, lb) =
-  let fail_at i j fmt =
+(* An [r x c] float64 matrix uniform on [-1, 1). *)
+let unit_floats rng r c =
+  let g =
+    Bigarray.Genarray.create Bigarray.float64 Bigarray.c_layout [| r; c |]
+  in
+  let v = Bigarray.reshape_1 g (r * c) in
+  for i = 0 to (r * c) - 1 do
+    Bigarray.Array1.unsafe_set v i (Random.State.float rng 2. -. 1.)
+  done;
+  Nx.of_bigarray g
+
+(* An [r x c] int64 matrix of values of a width: half anywhere in its range,
+   half small, wrapped to it. *)
+let wrapped_ints rng ~bits ~signed r c =
+  let g =
+    Bigarray.Genarray.create Bigarray.int64 Bigarray.c_layout [| r; c |]
+  in
+  let v = Bigarray.reshape_1 g (r * c) in
+  for i = 0 to (r * c) - 1 do
+    let x =
+      if Random.State.bool rng then Random.State.int64 rng Int64.max_int
+      else Int64.of_int (Random.State.int rng 19 - 9)
+    in
+    Bigarray.Array1.unsafe_set v i (wrap ~bits ~signed x)
+  done;
+  Nx.of_bigarray g
+
+(* The reference is computed once, then each layout's product is held to it. It
+   runs row by row for locality: each output still sums its products in order of
+   the contraction index. *)
+let check_matmul md (m, k, n) =
+  let rng = Random.State.make [| m; k; n |] in
+  let products a b f =
+    List.iter
+      (fun (la, lb) -> f (la, lb) (Nx.matmul (held la a) (held lb b)))
+      layouts
+  in
+  let fail_at (la, lb) o fmt =
     Format.kasprintf
       (fun s ->
-        failf "%s %dx%dx%d, output (%d, %d): %s" (mm_name md) m k n i j s)
+        failf "%s %dx%dx%d, %a times %a, output (%d, %d): %s" (mm_name md) m k n
+          pp_layout la pp_layout lb (o / n) (o mod n) s)
       fmt
   in
   match md with
   | Mf d ->
       (* The operands' values are those of the dtype: rounded once. *)
-      let values len =
-        Nx.to_array
-          (Nx.cast Nx.float64
-             (Nx.cast d.dtype
-                (Nx.create Nx.float64 [| len |]
-                   (Array.init len (fun _ -> Random.float 2. -. 1.)))))
-      in
-      let xa = values (m * k) and xb = values (k * n) in
-      let c =
-        Nx.to_array
-          (Nx.cast Nx.float64
-             (Nx.matmul (held d.dtype la m k xa) (held d.dtype lb k n xb)))
-      in
+      let a = Nx.cast d.dtype (unit_floats rng m k) in
+      let b = Nx.cast d.dtype (unit_floats rng k n) in
+      let xa = row_major (Nx.cast Nx.float64 a) in
+      let xb = row_major (Nx.cast Nx.float64 b) in
+      let sum = Array.make (m * n) 0. and mag = Array.make (m * n) 0. in
       for i = 0 to m - 1 do
-        for j = 0 to n - 1 do
-          let s = ref 0. and mag = ref 0. in
-          for p = 0 to k - 1 do
-            let t = xa.((i * k) + p) *. xb.((p * n) + j) in
-            s := !s +. t;
-            mag := !mag +. Float.abs t
-          done;
-          let limit =
-            (1.01 *. float_of_int k *. d.acc *. !mag)
-            +. (d.storage *. Float.abs !s)
-            +. d.floor
-          in
-          let got = c.((i * n) + j) in
-          if not (Float.abs (got -. !s) <= limit) then
-            fail_at i j "got %.17g, the sum of products is %.17g (bound %g)" got
-              !s limit
+        for p = 0 to k - 1 do
+          let x = xa.{(i * k) + p} in
+          for j = 0 to n - 1 do
+            let o = (i * n) + j and t = x *. xb.{(p * n) + j} in
+            sum.(o) <- sum.(o) +. t;
+            mag.(o) <- mag.(o) +. Float.abs t
+          done
         done
-      done
+      done;
+      let limit =
+        Array.mapi
+          (fun o mag ->
+            (1.01 *. float_of_int k *. d.acc *. mag)
+            +. (d.storage *. Float.abs sum.(o))
+            +. d.floor)
+          mag
+      in
+      products a b (fun layout c ->
+          let c = row_major (Nx.cast Nx.float64 c) in
+          for o = 0 to (m * n) - 1 do
+            if not (Float.abs (c.{o} -. sum.(o)) <= limit.(o)) then
+              fail_at layout o
+                "got %.17g, the sum of products is %.17g (bound %g)" c.{o}
+                sum.(o) limit.(o)
+          done)
   | Mc d ->
-      let values len =
-        Nx.to_array
-          (Nx.cast Nx.complex128
-             (Nx.cast d.dtype
-                (Nx.create Nx.complex128 [| len |]
-                   (Array.init len (fun _ ->
-                        {
-                          Complex.re = Random.float 2. -. 1.;
-                          im = Random.float 2. -. 1.;
-                        })))))
+      let operand r c =
+        Nx.complex d.dtype ~re:(unit_floats rng r c) ~im:(unit_floats rng r c)
       in
-      let xa = values (m * k) and xb = values (k * n) in
-      let c =
-        Nx.to_array
-          (Nx.cast Nx.complex128
-             (Nx.matmul (held d.dtype la m k xa) (held d.dtype lb k n xb)))
+      let a = operand m k in
+      let b = operand k n in
+      let a_re = row_major (Nx.real Nx.float64 a)
+      and a_im = row_major (Nx.imag Nx.float64 a)
+      and b_re = row_major (Nx.real Nx.float64 b)
+      and b_im = row_major (Nx.imag Nx.float64 b) in
+      let abs re im =
+        Array.init (Bigarray.Array1.dim re) (fun i -> Float.hypot re.{i} im.{i})
       in
+      let a_abs = abs a_re a_im and b_abs = abs b_re b_im in
+      let sum_re = Array.make (m * n) 0. and sum_im = Array.make (m * n) 0. in
+      let mag = Array.make (m * n) 0. in
       for i = 0 to m - 1 do
-        for j = 0 to n - 1 do
-          let s = ref Complex.zero and mag = ref 0. in
-          for p = 0 to k - 1 do
-            let t = Complex.mul xa.((i * k) + p) xb.((p * n) + j) in
-            s := Complex.add !s t;
-            mag := !mag +. Complex.norm t
-          done;
-          let limit =
-            (4.04 *. float_of_int (k + 1) *. d.unit *. !mag)
-            +. (d.unit *. Complex.norm !s)
-          in
-          let got = c.((i * n) + j) in
-          if not (Complex.norm (Complex.sub got !s) <= limit) then
-            fail_at i j "got %g%+gi, the sum of products is %g%+gi (bound %g)"
-              got.re got.im !s.re !s.im limit
+        for p = 0 to k - 1 do
+          let ar = a_re.{(i * k) + p} and ai = a_im.{(i * k) + p} in
+          let a_abs = a_abs.((i * k) + p) in
+          for j = 0 to n - 1 do
+            let br = b_re.{(p * n) + j} and bi = b_im.{(p * n) + j} in
+            let o = (i * n) + j in
+            sum_re.(o) <- sum_re.(o) +. ((ar *. br) -. (ai *. bi));
+            sum_im.(o) <- sum_im.(o) +. ((ar *. bi) +. (ai *. br));
+            mag.(o) <- mag.(o) +. (a_abs *. b_abs.((p * n) + j))
+          done
         done
-      done
+      done;
+      let limit =
+        Array.mapi
+          (fun o mag ->
+            (4.04 *. float_of_int (k + 1) *. d.unit *. mag)
+            +. (d.unit *. Float.hypot sum_re.(o) sum_im.(o)))
+          mag
+      in
+      products a b (fun layout c ->
+          let c_re = row_major (Nx.real Nx.float64 c)
+          and c_im = row_major (Nx.imag Nx.float64 c) in
+          for o = 0 to (m * n) - 1 do
+            let er = c_re.{o} -. sum_re.(o) and ei = c_im.{o} -. sum_im.(o) in
+            if not (Float.hypot er ei <= limit.(o)) then
+              fail_at layout o
+                "got %g%+gi, the sum of products is %g%+gi (bound %g)" c_re.{o}
+                c_im.{o} sum_re.(o) sum_im.(o) limit.(o)
+          done)
   | Mi (Int_dtype d) ->
-      let value () =
-        let r = Random.int64 Int64.max_int in
-        wrap ~bits:d.bits ~signed:d.signed
-          (if Random.bool () then r
-           else Int64.sub (Int64.of_int (Random.int 19)) 9L)
+      (* Values reach the dtype exactly: by value through int64 for a narrower
+         one, by bits for one of 64. *)
+      let of_i64 x =
+        if d.bits = 64 then Nx.bitcast d.dtype x else Nx.cast d.dtype x
       in
-      let xa = Array.init (m * k) (fun _ -> value ())
-      and xb = Array.init (k * n) (fun _ -> value ()) in
-      let of_i64 xs = Array.map d.of_i64 xs in
-      let c =
-        Nx.to_array
-          (Nx.matmul
-             (held d.dtype la m k (of_i64 xa))
-             (held d.dtype lb k n (of_i64 xb)))
+      let to_i64 x =
+        if d.bits = 64 then Nx.bitcast Nx.int64 x else Nx.cast Nx.int64 x
       in
+      let xa = wrapped_ints rng ~bits:d.bits ~signed:d.signed m k in
+      let xb = wrapped_ints rng ~bits:d.bits ~signed:d.signed k n in
+      let a = of_i64 xa and b = of_i64 xb in
+      let xa = row_major xa and xb = row_major xb in
+      let sum =
+        Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout (m * n)
+      in
+      Bigarray.Array1.fill sum 0L;
       for i = 0 to m - 1 do
-        for j = 0 to n - 1 do
-          let s = ref 0L in
-          for p = 0 to k - 1 do
-            s := Int64.add !s (Int64.mul xa.((i * k) + p) xb.((p * n) + j))
-          done;
-          let expected = wrap ~bits:d.bits ~signed:d.signed !s in
-          let got = d.to_i64 c.((i * n) + j) in
-          if got <> expected then
-            fail_at i j "got %Ld, expected %Ld" got expected
+        for p = 0 to k - 1 do
+          let x = xa.{(i * k) + p} in
+          for j = 0 to n - 1 do
+            let o = (i * n) + j in
+            sum.{o} <- Int64.add sum.{o} (Int64.mul x xb.{(p * n) + j})
+          done
         done
-      done
+      done;
+      let expected o = wrap ~bits:d.bits ~signed:d.signed sum.{o} in
+      products a b (fun layout c ->
+          let c = row_major (to_i64 c) in
+          for o = 0 to (m * n) - 1 do
+            let expected = expected o in
+            if not (Int64.equal c.{o} expected) then
+              fail_at layout o "got %Ld, expected %Ld" c.{o} expected
+          done)
 
 let pp_mnk ppf (m, k, n) = Format.fprintf ppf "%dx%d times %dx%d" m k k n
 
@@ -2472,7 +2539,7 @@ let routes =
     List.concat_map (fun s -> List.map (fun md -> (md, s)) mm_dtypes) shapes
   in
   let name (md, s) = Format.asprintf "%s, %a" (mm_name md) pp_mnk s in
-  let run (md, s) = List.iter (check_matmul md s) layouts in
+  let run (md, s) = check_matmul md s in
   group "matmul routes"
     [
       cases ~name

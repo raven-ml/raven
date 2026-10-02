@@ -116,9 +116,8 @@ let fresh dtype shape =
   Bigarray.Array1.fill (Nx_device.Buffer.bigarray Bigarray.char buffer) '\xa5';
   { Nx_array.dtype; view = View.create shape; buffer }
 
-let bytes_of (a : (_, _) arr) =
-  let b = Nx_device.Buffer.bigarray Bigarray.char a.buffer in
-  String.init (Bigarray.Array1.dim b) (fun i -> Bigarray.Array1.unsafe_get b i)
+(* The bytes of [a], without a copy: runs compare them in C. *)
+let bytes_of (a : (_, _) arr) = Nx_device.Buffer.bigarray Bigarray.char a.buffer
 
 (* Values. Floats are uniform in [-1, 1), or near 1 for products, so that a long
    sum's or product's last bits depend on its association. With [specials],
@@ -144,29 +143,37 @@ let float_value st ~specials:with_specials ~prod =
   else if prod then 1. +. Random.State.float st 0.002 -. 0.001
   else Random.State.float st 2. -. 1.
 
+(* A draw of one value of [dtype], the dtype matched once per operand. *)
 let value : type a b.
-    Random.State.t -> specials:bool -> prod:bool -> (a, b) Nx_dtype.t -> a =
+    Random.State.t ->
+    specials:bool ->
+    prod:bool ->
+    (a, b) Nx_dtype.t ->
+    unit ->
+    a =
  fun st ~specials ~prod dtype ->
   let float () = float_value st ~specials ~prod in
   let extreme () = Random.State.int st 32 in
   match dtype with
-  | Float16 -> float ()
-  | Float32 -> float ()
-  | Float64 -> float ()
-  | BFloat16 -> float ()
-  | Complex64 -> { Complex.re = float (); im = float () }
+  | Float16 -> float
+  | Float32 -> float
+  | Float64 -> float
+  | BFloat16 -> float
+  | Complex64 -> fun () -> { Complex.re = float (); im = float () }
   | Int32 -> (
-      match extreme () with
-      | 0 -> Int32.min_int
-      | 1 -> Int32.max_int
-      | _ -> Random.State.bits32 st)
+      fun () ->
+        match extreme () with
+        | 0 -> Int32.min_int
+        | 1 -> Int32.max_int
+        | _ -> Random.State.bits32 st)
   | Int64 -> (
-      match extreme () with
-      | 0 -> Int64.min_int
-      | 1 -> Int64.max_int
-      | _ -> Random.State.bits64 st)
-  | UInt8 -> Random.State.int st 256
-  | Bool -> Random.State.bool st
+      fun () ->
+        match extreme () with
+        | 0 -> Int64.min_int
+        | 1 -> Int64.max_int
+        | _ -> Random.State.bits64 st)
+  | UInt8 -> fun () -> Random.State.int st 256
+  | Bool -> fun () -> Random.State.bool st
   | _ -> invalid_arg "test_planner: no values for this dtype"
 
 (* A layout: a C-contiguous base buffer of [base] elements and the view of it
@@ -202,8 +209,9 @@ let operand st ~specials ~prod dtype l =
   let n = Array.fold_left ( * ) 1 l.base in
   let buffer = Nx_array.Elements.create dtype n in
   let set = Nx_array.Elements.set dtype buffer in
+  let value = value st ~specials ~prod dtype in
   for i = 0 to n - 1 do
-    set i (value st ~specials ~prod dtype)
+    set i (value ())
   done;
   { Nx_array.dtype; view = l.view (View.create l.base); buffer }
 
@@ -216,12 +224,12 @@ let outcome run threads =
 
 let difference one other =
   match (one, other) with
-  | Ok a, Ok b when String.length a = String.length b ->
+  | Ok a, Ok b when Bigarray.Array1.dim a = Bigarray.Array1.dim b ->
       let i = ref 0 in
-      while a.[!i] = b.[!i] do
+      while a.{!i} = b.{!i} do
         incr i
       done;
-      Printf.sprintf "byte %d of %d differs" !i (String.length a)
+      Printf.sprintf "byte %d of %d differs" !i (Bigarray.Array1.dim a)
   | Ok _, Ok _ -> "the lengths differ"
   | Error e, Ok _ -> Printf.sprintf "one thread raised %s, this did not" e
   | Ok _, Error e -> Printf.sprintf "it raised %s, one thread did not" e

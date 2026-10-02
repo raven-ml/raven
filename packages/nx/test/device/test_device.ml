@@ -28,13 +28,21 @@ external c_live : B.t -> bool = "test_nx_device_buffer_live"
 let host = Nx_device.host
 let chars n : chars = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
 
+(* Byte loops: the tests move hundreds of megabytes through these, where the
+   init functions of Bigarray and String call a closure per byte. *)
 let string_of (ba : chars) =
-  String.init (Bigarray.Array1.dim ba) (Bigarray.Array1.get ba)
+  let b = Bytes.create (Bigarray.Array1.dim ba) in
+  for i = 0 to Bytes.length b - 1 do
+    Bytes.unsafe_set b i (Bigarray.Array1.unsafe_get ba i)
+  done;
+  Bytes.unsafe_to_string b
 
 let of_string s =
-  B.of_bigarray
-    (Bigarray.Array1.init Bigarray.char Bigarray.c_layout (String.length s)
-       (String.get s))
+  let ba = chars (String.length s) in
+  for i = 0 to String.length s - 1 do
+    Bigarray.Array1.unsafe_set ba i (String.unsafe_get s i)
+  done;
+  B.of_bigarray ba
 
 (* The [n] bytes at the host address [a]. *)
 let peek a n =
@@ -74,8 +82,12 @@ let loads h ~binary:_ =
   Ok { Driver.code = None; entry = (fun _ -> Ok h); unload = ignore }
 
 let pattern seed n =
-  String.init n (fun i ->
-      Char.chr (((seed * 31) + (i * 7) + (i / 5)) land 0xff))
+  let b = Bytes.create n in
+  for i = 0 to n - 1 do
+    Bytes.unsafe_set b i
+      (Char.unsafe_chr (((seed * 31) + (i * 7) + (i / 5)) land 0xff))
+  done;
+  Bytes.unsafe_to_string b
 
 (* A machine has one device of a name, and the tests make many devices of one
    kind: [unique kind] names one of them, and [kind_of] reads its kind back. *)
@@ -371,7 +383,20 @@ module Model = struct
   type cells =
     (int, Bigarray.int16_signed_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-  type memory = { cells : cells; on_page : bool }
+  (* Every cell that something wrote lies in [lo, hi), so that a check of a
+     large memory reads only the cells written. *)
+  type memory = {
+    cells : cells;
+    on_page : bool;
+    mutable lo : int;
+    mutable hi : int;
+  }
+
+  let wrote m off n =
+    if n > 0 then begin
+      m.lo <- Int.min m.lo off;
+      m.hi <- Int.max m.hi (off + n)
+    end
 
   (* The buffers over some memory, the bytes owned, whether they count in the
      device's budget, and for a borrow the host memory it maps. *)
@@ -441,7 +466,7 @@ module Model = struct
     Option.iter (fun d -> d.owns <- holding :: d.owns) device;
     let cells = Bigarray.(Array1.create int16_signed c_layout (nbytes s n)) in
     Bigarray.Array1.fill cells (-1);
-    let memory = { cells; on_page } in
+    let memory = { cells; on_page; lo = Bigarray.Array1.dim cells; hi = 0 } in
     let borrowed = false and dropped = false in
     {
       memory;
@@ -519,7 +544,10 @@ module Model = struct
   let holder r = if r.borrowed then None else r.device
 
   let fill r s =
-    String.iteri (fun i c -> r.memory.cells.{r.off + i} <- Char.code c) s
+    wrote r.memory r.off (String.length s);
+    for i = 0 to String.length s - 1 do
+      r.memory.cells.{r.off + i} <- Char.code (String.unsafe_get s i)
+    done
 
   let write seed r =
     alive r;
@@ -539,6 +567,7 @@ module Model = struct
     let cells = Bigarray.(Array1.create int16_signed c_layout n) in
     Bigarray.Array1.blit (sub src) cells;
     Bigarray.Array1.blit cells (sub dst);
+    wrote dst.memory dst.off n;
     let between =
       match (holder src, holder dst) with
       | Some a, Some b -> a != b
@@ -566,14 +595,20 @@ module Model = struct
 
   (* Whether [ba] holds the bytes of [r] that something wrote. *)
   let holds r (ba : chars) =
-    let n = size r and cells = r.memory.cells and off = r.off in
-    let rec from i =
-      i = n
-      ||
-      let c = cells.{off + i} in
-      (c < 0 || Char.code ba.{i} = c) && from (i + 1)
-    in
-    from 0
+    let n = size r and m = r.memory and off = r.off in
+    if off + n > Bigarray.Array1.dim m.cells || n > Bigarray.Array1.dim ba then
+      invalid_arg "holds";
+    let last = Int.min (off + n) m.hi in
+    let i = ref (Int.max off m.lo) in
+    while
+      !i < last
+      &&
+      let c = Bigarray.Array1.unsafe_get m.cells !i in
+      c < 0 || Char.code (Bigarray.Array1.unsafe_get ba (!i - off)) = c
+    do
+      incr i
+    done;
+    !i >= last
 
   (* [s] with the bytes of [r] that nothing wrote masked. *)
   let masked r s =
@@ -2067,12 +2102,18 @@ let test_staged_slots () =
   let slot = 64 lsl 20 in
   let n = (2 * slot) + (slot / 2) + 12345 in
   let bytes =
-    String.init n (fun i ->
-        Char.chr (((i * 7) + (i lsr 16) + (i / slot * 13)) land 0xff))
+    let b = Bytes.create n in
+    for i = 0 to n - 1 do
+      Bytes.unsafe_set b i
+        (Char.unsafe_chr (((i * 7) + (i lsr 16) + (i / slot * 13)) land 0xff))
+    done;
+    Bytes.unsafe_to_string b
   in
   let differing s =
     let d = ref 0 in
-    String.iteri (fun i c -> if c <> bytes.[i] then incr d) s;
+    for i = 0 to n - 1 do
+      if s.[i] <> bytes.[i] then incr d
+    done;
     !d
   in
   let dev = B.view (B.create f.dev S.UInt8 (n + 1000)) ~offset:1000 S.UInt8 n in

@@ -1,7 +1,6 @@
 ; nx links no vendor runtime: these suites link nx, and the build refuses them
 ; if any vendor's library reaches them. Metal's runtime exists on macOS alone,
-; and links_no_metal checks it there. Each suite's default run excludes its
-; slow tests; the slow alias runs them.
+; and links_no_metal checks it there.
 
 (tests
  (names
@@ -16,7 +15,6 @@
   test_elementwise
   test_reductions
   test_sorting
-  test_linalg
   test_windows
   test_fft
   test_runtime
@@ -27,7 +25,7 @@
   test_allocation
   test_lost)
  (package nx)
- (modules :standard \ test_format links_no_metal)
+ (modules :standard \ test_linalg test_format links_no_metal)
  (libraries
   nx.dtype
   nx
@@ -43,39 +41,44 @@
   nx.nv.device
   nx.amd.device
   nx.remote.device
-  nx.rdma.device)
- (action
-  (run %{test} --exclude-tag slow)))
+  nx.rdma.device))
+
+; The linear algebra suite runs as four shards, which dune runs in parallel.
+
+(executable
+ (name test_linalg)
+ (modules test_linalg)
+ (libraries nx windtrap nx_test)
+ (forbidden_libraries
+  nx.cuda.device
+  nx.nv.device
+  nx.amd.device
+  nx.remote.device
+  nx.rdma.device))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package nx)
  (action
-  (run %{exe:test_elementwise.exe} --tag slow)))
+  (run %{exe:test_linalg.exe} --shard 1/4)))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package nx)
  (action
-  (run %{exe:test_indexing.exe} --tag slow)))
+  (run %{exe:test_linalg.exe} --shard 2/4)))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package nx)
  (action
-  (run %{exe:test_linalg.exe} --tag slow)))
+  (run %{exe:test_linalg.exe} --shard 3/4)))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package nx)
  (action
-  (run %{exe:test_reductions.exe} --tag slow)))
-
-(rule
- (alias slow)
- (package nx)
- (action
-  (run %{exe:test_rng.exe} --tag slow)))
+  (run %{exe:test_linalg.exe} --shard 4/4)))
 
 (test
  (name test_format)

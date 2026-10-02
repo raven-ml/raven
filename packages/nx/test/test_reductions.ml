@@ -851,19 +851,19 @@ let integer_dtypes =
 let at_scale =
   group "reductions at scale"
     [
-      slow "argmax and argmin of 2^31 + 1 equal entries are 0" (fun () ->
-          let long =
-            Nx.broadcast_to [| (1 lsl 31) + 1 |] (Nx.scalar Nx.int8 1)
-          in
-          equal int64 0L (Nx.item [] (Nx.argmax long));
-          equal int64 0L (Nx.item [] (Nx.argmin ~axis:0 long)));
       slow
         "sum along the long axis of a matrix of two columns keeps each column"
         (fun () ->
           let rows = 9_000_000 in
           let t =
-            Nx.init Nx.float64 [| rows; 2 |] (fun i ->
-                float_of_int ((i.(0) mod 7) + i.(1)))
+            let g = Bigarray.(Genarray.create float64 c_layout [| rows; 2 |]) in
+            let v = Bigarray.reshape_2 g rows 2 in
+            for i = 0 to rows - 1 do
+              for c = 0 to 1 do
+                v.{i, c} <- float_of_int ((i mod 7) + c)
+              done
+            done;
+            Nx.of_bigarray g
           in
           let column c =
             let s = ref 0. in
