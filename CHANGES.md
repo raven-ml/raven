@@ -3110,6 +3110,9 @@ thread.
 
 ### Nx
 
+- `Nx_amd_device` loads programs and gives mapped memory on a GPU without
+  Resizable BAR under the kernel driver: code and mapped buffers live in
+  system memory, as over PCI. Loading any program failed there before.
 - `Nx.unique` over rows of several words, and `Nx_ragged.ids`, merge their
   blocks' groups without reading rows across the whole input. Ids of 10⁷ text
   rows of 12 bytes take 0.7× the time.

@@ -161,9 +161,12 @@ let alloc_mem a kind n =
   with_hw a (fun () ->
       match a.gpu with
       | Kfd_gpu k ->
+          (* Without a large BAR the driver maps the host no VRAM, and memory
+             the host writes is system memory, as under PCI. *)
           let kind =
             match kind with
             | Vram -> Kfd.Vram
+            | Visible when k.visible = 0 -> Kfd.Host
             | Visible -> Kfd.Visible
             | Host -> Kfd.Host
             | Uncached -> Kfd.Uncached
@@ -412,11 +415,11 @@ let dma a r =
 (* Programs *)
 
 (* The most memory the host can map for code: the part of the GPU's memory it
-   maps under the kernel driver; under PCI the memory BAR, unless it is small
-   and memory the host maps is system memory. *)
+   maps under the kernel driver, unless it maps none; under PCI the memory BAR,
+   unless it is small. Without that memory, code is in system memory. *)
 let code_window a =
   match a.gpu with
-  | Kfd_gpu k -> k.visible
+  | Kfd_gpu k -> if k.visible = 0 then max_int else k.visible
   | Am_gpu g ->
       if Pci_memory.small_bar g.memory then max_int else snd (Pci.bar g.pci 0)
 
@@ -1011,7 +1014,7 @@ let make_device a ~budget ~sleep ?finalize () =
            mapped =
              (match a.gpu with
              | Am_gpu g when Pci_memory.small_bar g.memory -> None
-             | Kfd_gpu k when not (Kfd.flushes_hdp k) -> None
+             | Kfd_gpu k when k.visible = 0 || not (Kfd.flushes_hdp k) -> None
              | _ -> Some (allocator a Visible, code_window a));
            mapping = mapping a;
            queue = queue a;
