@@ -683,18 +683,6 @@ let context target t =
   in
   Option.get (go t ~x:None ~c:None ~cell:root)
 
-(* [independent_over_shared g] is [true] iff [g] keeps x per cell and a cell of
-   [g] is a grid that shares one x: [g] then holds no x scale, though its leaves
-   read one (see the xfail below). *)
-let independent_over_shared g =
-  match g.body with
-  | Grid_of (Some `Independent, _, rows) ->
-      List.exists
-        (fun ch ->
-          match ch.body with Grid_of (Some `Shared, _, _) -> true | _ -> false)
-        (List.concat rows)
-  | _ -> false
-
 let scopes_law t =
   let t = annotate t in
   let r = resolve (figure t) in
@@ -740,17 +728,16 @@ let scopes_law t =
       List.iter
         (fun (n, pick) ->
           let msg = Format.asprintf "%s at %a" n Nx.Ptree.Path.pp g.id in
-          if n = "x" && independent_over_shared g then ()
-          else
-            match distinct (List.map pick view) with
-            | [ s ] -> (
-                cover "a grid holding a scope" true;
-                match hull_of pick s with
-                | Some h -> equal ~msg floats h (hull ~at:g.id r n)
-                | None -> invalid (fun () -> hull ~at:g.id r n))
-            | _ ->
-                cover "a grid holding no scope" true;
-                fails_naming [ "no scope" ] (fun () -> hull ~at:g.id r n))
+
+          match distinct (List.map pick view) with
+          | [ s ] -> (
+              cover "a grid holding a scope" true;
+              match hull_of pick s with
+              | Some h -> equal ~msg floats h (hull ~at:g.id r n)
+              | None -> invalid (fun () -> hull ~at:g.id r n))
+          | _ ->
+              cover "a grid holding no scope" true;
+              fails_naming [ "no scope" ] (fun () -> hull ~at:g.id r n))
         names)
     (grids t)
 
@@ -834,18 +821,14 @@ let scopes =
   group "scopes"
     [
       prop "one scale per name, kind and scope" gen_tree scopes_law;
-      xfail
-        ~reason:
-          "a grid keeping x per cell keys its cell apart from the x the cell \
-           shares"
-        (test "a grid keeping x per cell holds the x its cell shares" (fun () ->
-             let leaf = dot1 [| 1. |] [| 0. |] in
-             let f =
-               share
-                 [ ("x", `Independent) ]
-                 (grid [ [ share [ ("x", `Shared) ] (grid [ [ leaf ] ]) ] ])
-             in
-             equal floats (1., 1.) (hull (resolve f) "x")));
+      test "a grid keeping x per cell holds the x its cell shares" (fun () ->
+          let leaf = dot1 [| 1. |] [| 0. |] in
+          let f =
+            share
+              [ ("x", `Independent) ]
+              (grid [ [ share [ ("x", `Shared) ] (grid [ [ leaf ] ]) ] ])
+          in
+          equal floats (1., 1.) (hull (resolve f) "x"));
       cases
         ~name:(fun (n, _, _, _, _, _) -> n)
         "fits" hulls

@@ -246,14 +246,21 @@ let check_share id pairs f s =
       | _ -> ())
     pairs
 
+(* A position or facet shared by a grid cell is that cell's scope: the scope its
+   grid gives the cell when it keeps the name per cell, and the one a layer
+   broadcasting the grid renames. *)
 let share_env (env : env) id pairs =
+  let key name =
+    if Role.by_cell name && Nx.Ptree.Path.equal env.cell id then Cell id
+    else Node id
+  in
   List.fold_left
     (fun (env : env) (name, (s : sharing)) ->
       match s with
       | `Shared ->
           {
             env with
-            shares = (name, Node id) :: env.shares;
+            shares = (name, key name) :: env.shares;
             pending =
               List.filter (fun n -> not (String.equal n name)) env.pending;
           }
