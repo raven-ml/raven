@@ -233,12 +233,11 @@ let product x codes scales =
    Instances split over devices are grouped on each device: a sort cannot run
    along a split axis, and a device's instances are its own rows. *)
 
-(* A block holds 2 instances, the size measured fastest on the GPU: on an RTX
-   5000 Ada, gpt-oss-20b's 512-token prefill takes 1.15 s in blocks of 2 and
-   2.08 s in blocks of 4, and one expert's 512-token product 28.8 ms against
-   57.3 ms. The host and Metal measured blocks of 4 faster (a 64-token host
-   product 203 against 281 ms). *)
-let block = 2
+(* A block holds 4 instances, the size measured fastest on every device:
+   gpt-oss-20b's gate and up product of 512 tokens takes 21.9 ms in blocks of 4
+   and 25.3 ms in blocks of 2 on an RTX 5000 Ada, and 162 ms and 167 ms on an
+   M1 Max's Metal; of 64 tokens on the host, 203 ms and 281 ms. *)
+let block = 4
 
 (* [shards t] is the number of devices' windows that split [t]'s first axis. *)
 let shards t =

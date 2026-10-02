@@ -954,8 +954,8 @@ thread.
   in blocks of 4.
 - A decoded operand of a summed product that an output axis reads only
   through its quotient by a block is decoded once per block. `Nx_quant.apply
-  ~ids` on a prompt decodes each expert's matrix once per block of 2
-  positions: gpt-oss-20b's 512-token prefill on an RTX 5000 Ada takes 1.15 s,
+  ~ids` on a prompt decodes each expert's matrix once per block of 4
+  positions: gpt-oss-20b's 512-token prefill on an RTX 5000 Ada takes 0.71 s,
   from 1.49 s.
 - A host kernel of more than 2^31 operations runs on all the host's cores.
   Its count of operations wrapped in 32 bits, sometimes below one block's
