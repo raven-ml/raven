@@ -39,10 +39,9 @@ let first losses = save "loss.svg" (line ~y:(num losses) ())
 (* Data enters through lifts: losses : [5; T]. *)
 
 let seeds steps losses =
-  line ~x:(num steps) ~y:(num losses) ~stroke:(dim ~title:(Text.v "seed") 0) ()
+  line ~x:(num steps) ~y:(num losses) ~stroke:(dim ~title:"seed" 0) ()
 
-let step_axis losses =
-  line ~x:(index ~title:(Text.v "step") (-1)) ~y:(num losses) ()
+let step_axis losses = line ~x:(index ~title:"step" (-1)) ~y:(num losses) ()
 
 (* Scales are named, and composition decides sharing. *)
 
@@ -84,16 +83,15 @@ let dashboard run =
     layer
       [
         rule ~x:(num epochs) ~opacity:(const 0.15) ();
-        line
-          ~x:(num ~title:(Text.v "step") step)
-          ~y:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") loss)
+        line ~x:(num ~title:"step" step)
+          ~y:(num ~scale:(Scale.log ()) ~title:"loss" loss)
           ~opacity:(const 0.3) ();
         line ~x:(num step) ~y:(num (Nx.ewma ~alpha:0.02 loss)) ();
       ]
   and accuracy =
     layer
       [
-        dot ~x:(num vstep) ~y:(num ~title:(Text.v "val. accuracy") acc) ();
+        dot ~x:(num vstep) ~y:(num ~title:"val. accuracy" acc) ();
         text
           ~x:(num (at vstep))
           ~y:(num (at acc))
@@ -108,11 +106,10 @@ let dashboard run =
 let confusion (m : Nx.int32_t) classes =
   let counts = Nx.cast Nx.float64 m in
   let recall =
-    num ~title:(Text.v "recall")
-      Nx.(div counts (sum ~axes:[ 1 ] ~keepdims:true counts))
+    num ~title:"recall" Nx.(div counts (sum ~axes:[ 1 ] ~keepdims:true counts))
   in
-  let predicted = dim ~title:(Text.v "predicted") ~labels:classes 1
-  and truth = dim ~title:(Text.v "true") ~labels:classes 0 in
+  let predicted = dim ~title:"predicted" ~labels:classes 1
+  and truth = dim ~title:"true" ~labels:classes 0 in
   layer
     [
       rect ~x:predicted ~y:truth ~fill:recall ();
@@ -125,12 +122,9 @@ let confusion (m : Nx.int32_t) classes =
 (* Attention grid: a : [12; 12; T; T]. *)
 
 let attention (a : Nx.float32_t) tokens =
-  rect
-    ~fy:(dim ~title:(Text.v "layer") 0)
-    ~fx:(dim ~title:(Text.v "head") 1)
+  rect ~fy:(dim ~title:"layer" 0) ~fx:(dim ~title:"head" 1)
     ~y:(dim ~labels:tokens 2) ~x:(dim ~labels:tokens 3)
-    ~fill:(num ~title:(Text.v "attention") a)
-    ()
+    ~fill:(num ~title:"attention" a) ()
 
 (* Embedding scatter, e : [100_000; 2], and its density. nx counts points into
    the cells of given edges, so the density computes its edges where the data
@@ -186,9 +180,7 @@ let by_optimizer t =
   in
   line
     ~x:(num (Column.to_tensor Nx.int64 (column t "step")))
-    ~y:
-      (num ~title:(Text.v "loss")
-         (Column.to_tensor Nx.float64 (column t "loss")))
+    ~y:(num ~title:"loss" (Column.to_tensor Nx.float64 (column t "loss")))
     ~stroke:(codes "optimizer") ~fx:(codes "batch_size") ()
 
 (* Loss landscape: loss : [nb; na], alphas : [na], betas : [nb], path : [n; 2].
@@ -202,7 +194,7 @@ let landscape ~(alphas : Nx.float64_t) ~(betas : Nx.float64_t)
     [
       contour ~x:(num alphas)
         ~y:(num Nx.(slice [ A; N ] betas))
-        ~fill:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") loss)
+        ~fill:(num ~scale:(Scale.log ()) ~title:"loss" loss)
         ();
       line ~x:px ~y:py ();
       dot ~x:px ~y:py ~size:(const 9.) ();
@@ -211,7 +203,6 @@ let landscape ~(alphas : Nx.float64_t) ~(betas : Nx.float64_t)
 (* Paper figure. *)
 
 let figure_3 ~a ~b ~c ~d =
-  let panel s f = title ~align:`Left (Text.bold (Text.v s)) f in
   let font file =
     In_channel.(with_open_bin file input_all) |> Font.of_string |> Result.get_ok
   in
@@ -221,13 +212,13 @@ let figure_3 ~a ~b ~c ~d =
       ()
   in
   let fig =
-    grid [ [ panel "(a)" a; panel "(b)" b ]; [ panel "(c)" c; panel "(d)" d ] ]
+    grid [ [ title "(a)" a; title "(b)" b ]; [ title "(c)" c; title "(d)" d ] ]
   in
   save ~theme
     ~size:(Size.figure (Size.mm 180.) (Size.mm 110.))
     "figure-3.pdf" fig
 
-let eta = Text.(concat [ v "step size η"; sub (v "0") ])
+let eta = axis' ~title:Text.(concat [ v "step size η"; sub (v "0") ]) "x"
 
 (* Rendering in stages. *)
 
@@ -244,8 +235,7 @@ let to_png f =
   Hugin_vg_raster.png ~density:2. (Drawing.renderable d)
 
 let to_svg f =
-  Hugin_vg_svg.render
-    (Drawing.renderable (render (Size.panels 120. 80.) f))
+  Hugin_vg_svg.render (Drawing.renderable (render (Size.panels 120. 80.) f))
 
 let quietly f = save ~warn:ignore ~density:(Size.dpi 300.) "figure.png" f
 

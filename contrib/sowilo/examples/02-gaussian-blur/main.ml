@@ -6,7 +6,7 @@
 open Hugin
 
 let image_path = "sowilo/examples/lena.png"
-let panel s px = image px |> title (Text.v s)
+let panel s px = image px |> title s
 
 let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in

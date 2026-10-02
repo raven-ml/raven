@@ -18,10 +18,10 @@ let () =
   let m = counts in
   let f = Nx.cast Nx.float64 m in
   let recall =
-    num ~title:(Text.v "recall") Nx.(div f (sum ~axes:[ 1 ] ~keepdims:true f))
+    num ~title:"recall" Nx.(div f (sum ~axes:[ 1 ] ~keepdims:true f))
   in
-  let predicted = dim ~title:(Text.v "predicted") ~labels:classes 1
-  and truth = dim ~title:(Text.v "true") ~labels:classes 0 in
+  let predicted = dim ~title:"predicted" ~labels:classes 1
+  and truth = dim ~title:"true" ~labels:classes 0 in
   layer
     [
       rect ~x:predicted ~y:truth ~fill:recall ();

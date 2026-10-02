@@ -47,12 +47,17 @@
       {e density}, in device pixels per point, which {!draw} reduces data for
       and raster output is drawn at.
     - {b Planes.} Pictures, boxes and projected points are in the y-down plane
-      of {{!Hugin_gg.section-conventions}[hugin.gg]}, in points.
-      Positions within a panel are {e normalised}: [0.] at its left or bottom
-      edge and [1.] at its right or top edge, whatever its coordinate system,
-      which maps them into the panel's box ({!Coord}).
+      of {{!Hugin_gg.section-conventions}[hugin.gg]}, in points. Positions
+      within a panel are {e normalised}: [0.] at its left or bottom edge and
+      [1.] at its right or top edge, whatever its coordinate system, which maps
+      them into the panel's box ({!Coord}).
     - {b Argument order.} Functions that build on a figure take it last, so
-      [f |> title t |> coord c] chains.
+      [f |> title s |> coord c] chains.
+    - {b Titles.} Titles are strings. Where styles, colours and sub- or
+      superscripts pay, for figure and axis titles, a primed function takes a
+      rich text ({!Text.t}) where its plain twin takes a string: [title' t] for
+      [title s], [axis' ~title:t] for [axis ~title:s]. An empty title is no
+      title.
     - {b Equality.} [equal] functions compare structure, floats by
       [Float.equal]. The leaves of figures, tensors and functions, compare
       physically ({!equal}), and images by their elements ({!Picture.equal}).
@@ -254,14 +259,14 @@ type ('d, 'r) channel
     the text its scale shows it by. A quantity is written in plain notation in
     the theme's locale, each value of the mark with the decimals that the value
     needing the most needs to reproduce itself in its source dtype
-    ({!Hugin_kit.Number.decimals}): a float32 [0.9234] reads [0.9234], a
-    column of numbers shares its decimals, and an integer count reads without a
-    decimal separator. *)
+    ({!Hugin_kit.Number.decimals}): a float32 [0.9234] reads [0.9234], a column
+    of numbers shares its decimals, and an integer count reads without a decimal
+    separator. *)
 
 val num :
   ?scale:float Scale.t ->
   ?valid:Nx.bool_t ->
-  ?title:Text.t ->
+  ?title:string ->
   ('a, 'b) Nx.t ->
   (float, 'r) channel
 (** [num ~scale ~valid ~title x] is the quantities of [x], one datum per
@@ -284,7 +289,7 @@ val num :
 val cat :
   ?scale:string Scale.t ->
   ?valid:Nx.bool_t ->
-  ?title:Text.t ->
+  ?title:string ->
   ?labels:string array ->
   ('a, 'b) Nx.t ->
   (string, 'r) channel
@@ -308,14 +313,14 @@ val cat :
     of [codes] without growing it. *)
 
 val strings :
-  ?scale:string Scale.t -> ?title:Text.t -> string array -> (string, 'r) channel
+  ?scale:string Scale.t -> ?title:string -> string array -> (string, 'r) channel
 (** [strings ~scale ~title a] is the labelled categories named by the elements
     of [a], one datum per element, with [scale] and [title] as for {!num}: its
     shape is [[|Array.length a|]], and it contributes its distinct strings to
     its scale's domain in order of first appearance. [a] is copied. *)
 
 val floats :
-  ?scale:float Scale.t -> ?title:Text.t -> float array -> (float, 'r) channel
+  ?scale:float Scale.t -> ?title:string -> float array -> (float, 'r) channel
 (** [floats ~scale ~title a] is the quantities of the elements of [a], one datum
     per element, with [scale] and [title] as for {!num}: its shape is
     [[|Array.length a|]], and NaN and infinities are missing. [a] is copied, and
@@ -326,7 +331,7 @@ val floats :
 val dim :
   ?scale:string Scale.t ->
   ?valid:Nx.bool_t ->
-  ?title:Text.t ->
+  ?title:string ->
   ?labels:string array ->
   int ->
   (string, 'r) channel
@@ -345,13 +350,13 @@ val dim :
     The mark it is bound in raises [Invalid_argument] when it is made if its
     shape has no axis [k] or if [labels] differs in length from that axis. *)
 
-val index : ?scale:float Scale.t -> ?title:Text.t -> int -> (float, 'r) channel
+val index : ?scale:float Scale.t -> ?title:string -> int -> (float, 'r) channel
 (** [index ~scale ~title k] is the index along axis [k] of the shape of the mark
     it is bound in, as quantities: the datum [(i0, …, in)] has the value
     [float ik]. A negative [k] counts from the last axis, [-1] being the last.
     [scale] and [title] are as for {!num}. It holds no tensor and takes no part
-    in broadcasting: [line ~x:(index ~title:(Text.v "step") (-1)) ~y:(num l) ()]
-    titles the x that {!line} gives by default.
+    in broadcasting: [line ~x:(index ~title:"step" (-1)) ~y:(num l) ()] titles
+    the x that {!line} gives by default.
 
     The mark it is bound in raises [Invalid_argument] when it is made if its
     shape has no axis [k]. *)
@@ -684,10 +689,10 @@ val contour :
     [contour] implies [stepped] on its fill scale ({!Scale.linear}), so every
     reader of that scale paints the same steps and its colour bar steps at the
     levels. Between two consecutive levels [lo] and [hi], the isoband
-    ({!Hugin_gg_kit.Field2.isoband}) of the field's normalised values is
-    filled with [f ((lo +. hi) /. 2.)], where [Mark.range rows Role.fill] is
-    [Some f] ({!Mark.range}). Missing samples cut holes. A field whose columns'
-    x or rows' y are not strictly monotone once normalised draws nothing, with a
+    ({!Hugin_gg_kit.Field2.isoband}) of the field's normalised values is filled
+    with [f ((lo +. hi) /. 2.)], where [Mark.range rows Role.fill] is [Some f]
+    ({!Mark.range}). Missing samples cut holes. A field whose columns' x or
+    rows' y are not strictly monotone once normalised draws nothing, with a
     warning.
 
     Raises [Invalid_argument] if the mark's shape has fewer than two axes, if
@@ -789,11 +794,13 @@ val contour :
     yields no legend when each channel that reads it has the data of a position
     channel of its mark whose axis is shown in the channel's panels: that axis
     names the categories already, so bars coloured by their own x category have
-    no legend. A guide is titled by the distinct titles of the channels that
-    read its scale, in the order the figure is written, separated by commas, and
-    is untitled if they have none. These rules are defaults: marks can imply
-    that a scale has a guide or none ({!Mark.bind}), and an explicit {!axis} or
-    {!legend} decides over both ({!section-merging}).
+    no legend. A guide is titled by the distinct titles that its explicit axes
+    ({!axis}, one per panel it serves) or legend ({!legend}) set, or if they set
+    none, by those of the channels that read its scale, in the order the figure
+    is written, separated by commas, and is untitled if there are none. These
+    rules are defaults: marks can imply that a scale has a guide or none
+    ({!Mark.bind}), and an explicit {!axis} or {!legend} decides over both
+    ({!section-merging}).
 
     A guide serving several panels stands beside the smallest panel or grid
     holding them. An axis shared by the panels of a column, for x, or of a row,
@@ -927,16 +934,15 @@ module View : sig
   val zoom : ?at:id -> 'd Scale.t -> ('d * 'd) option key
   (** [zoom ~at s] is the key of the zoom of the continuous scale named like
       [s], of the kind of [s], in the scope that holds the node [at]
-      ({!Hugin.section-scopes}), the root by default. Its value
-      [Some (a, b)] sets that scale's domain to \[[a];[b]\]
-      ({!Scale.with_domain}) in place of its fitted and explicit domains, and
-      its initial value [None] leaves it. Every continuous scale has such a key
-      without declaring one, and user keys cannot name it. In {!resolve}, after
-      the figure's structure changes, a zoom whose node lies in another scope
-      with a scale of its name and kind applies there; one whose node, name or
-      kind is gone, whose node no scope of its name holds, or whose domain the
-      scale cannot take, is ignored with a warning, and so are the zooms of a
-      scale that several set.
+      ({!Hugin.section-scopes}), the root by default. Its value [Some (a, b)]
+      sets that scale's domain to \[[a];[b]\] ({!Scale.with_domain}) in place of
+      its fitted and explicit domains, and its initial value [None] leaves it.
+      Every continuous scale has such a key without declaring one, and user keys
+      cannot name it. In {!resolve}, after the figure's structure changes, a
+      zoom whose node lies in another scope with a scale of its name and kind
+      applies there; one whose node, name or kind is gone, whose node no scope
+      of its name holds, or whose domain the scale cannot take, is ignored with
+      a warning, and so are the zooms of a scale that several set.
 
       Raises [Invalid_argument] if [s] is unnamed or categorical. *)
 
@@ -1053,12 +1059,16 @@ val share : (string * sharing) list -> t -> t
     one scale per position and facet; and for [`Independent] at a mark on a name
     that its [fx] or [fy] reads, since that scale makes the panels. *)
 
-val title : ?align:Text.Layout.halign -> Text.t -> t -> t
+val title : ?align:Text.Layout.halign -> string -> t -> t
 (** [title ~align s f] is [f] with the title [s] above it, set bold in the
     theme's faces at [1.2] em ({!Theme.section-lengths}). [align] aligns it with
     the data areas of [f]: [`Left], the default, with their left edge, [`Center]
     on their middle and [`Right] with their right edge. Titles nest:
     [title a (title b f)] draws [a] above [b]. *)
+
+val title' : ?align:Text.Layout.halign -> Text.t -> t -> t
+(** [title' ~align t f] is {!title} with the rich text [t]: [title s f] is
+    [title' (Text.v s) f]. *)
 
 val coord : Coord.t -> t -> t
 (** [coord c f] draws the panels of [f] in the coordinate system [c]. A panel
@@ -1091,11 +1101,12 @@ val bind : 'a View.key -> ('a -> t) -> t
 type side = [ `Left | `Right | `Top | `Bottom ]
 (** The type for the sides of a panel or of a scope's figure. *)
 
-val axis : ?side:side -> ?grid:bool -> ?show:bool -> string -> t
-(** [axis ~side ~grid ~show name] is the axis of the position or facet scale
-    [name] in each panel of the figures it is layered with, in place of the one
-    the coordinate system generates ({!section-guides}). It draws nothing
-    itself. Where:
+val axis :
+  ?side:side -> ?grid:bool -> ?show:bool -> ?title:string -> string -> t
+(** [axis ~side ~grid ~show ~title name] is the axis of the position or facet
+    scale [name] in each panel of the figures it is layered with, in place of
+    the one the coordinate system generates ({!section-guides}). It draws
+    nothing itself. Where:
     - [side] is the side of the panel it is drawn on. Defaults to the side the
       coordinate system gives the role reading the scale: under
       {!Coord.cartesian}, [`Bottom] for x and [`Left] for y; [`Top] for fx and
@@ -1103,21 +1114,35 @@ val axis : ?side:side -> ?grid:bool -> ?show:bool -> string -> t
     - [grid] says whether lines cross the panel at its ticks. Defaults to
       [false].
     - [show] says whether it is drawn at all. Defaults to [true].
+    - [title] titles it in place of the titles of the scale's channels
+      ({!section-guides}): [axis ~title:"time (s)" "x"]. Defaults to none.
 
     {!resolve} raises [Invalid_argument] if [name] names no position or facet
     scale of the panels it is layered with, if [side] is [`Left] or [`Right] for
     a scale that [x] reads or [`Top] or [`Bottom] for one that [y] reads, or if
     a panel holds two different axes for one scale. *)
 
+val axis' :
+  ?side:side -> ?grid:bool -> ?show:bool -> ?title:Text.t -> string -> t
+(** [axis' ~side ~grid ~show ~title name] is {!axis} with the rich text [title]:
+    [axis ~title:s name] is [axis' ~title:(Text.v s) name], and
+    [axis' ~title:Text.(concat [ v "x"; sup (v "2") ]) "x"] titles x with x². *)
+
 type corner = [ `Top_left | `Top_right | `Bottom_left | `Bottom_right ]
 (** The type for the corners of a panel or of a scope's figure. *)
 
-val legend : ?side:[< side | `Inside of corner ] -> ?show:bool -> string -> t
-(** [legend ~side ~show name] is the legend of the scales named [name] in the
-    scope of the figures it is layered with, in place of the one generated for
-    each ({!section-guides}), placed on [side] of the panels that read the
-    scales, [`Right] by default, and drawn iff [show], [true] by default. It
-    draws nothing itself.
+val legend :
+  ?side:[< side | `Inside of corner ] ->
+  ?show:bool ->
+  ?title:string ->
+  string ->
+  t
+(** [legend ~side ~show ~title name] is the legend of the scales named [name] in
+    the scope of the figures it is layered with, in place of the one generated
+    for each ({!section-guides}), placed on [side] of the panels that read the
+    scales, [`Right] by default, drawn iff [show], [true] by default, and titled
+    [title] in place of the titles of the scales' channels, by default none:
+    [legend ~title:"seed" "color"]. It draws nothing itself.
 
     With [`Inside c], the legend lies in the corner [c] of the data area of the
     panel in that corner of those panels, the top-right panel of a grid of
@@ -1289,8 +1314,8 @@ module Theme : sig
       the labels of one axis or legend at least [0.5] em apart, and titles [0.5]
       em from what they title; ticks aiming to lie [5] em apart on x axes and
       colour bars and [3.5] em apart on y axes, fewer if their labels would fill
-      more than half the axis ({!Hugin_kit.Ticks.choose}); legend swatches
-      [0.8] em square, or [1.5] em long for a legend of [stroke] colours or dash
+      more than half the axis ({!Hugin_kit.Ticks.choose}); legend swatches [0.8]
+      em square, or [1.5] em long for a legend of [stroke] colours or dash
       patterns, or as large as the largest circle of a legend of areas, [0.25]
       em from their labels, in rows [0.4] em apart, and colour bars [1] em wide;
       axis lines, ticks and the outlines of marks [0.08] em wide, and grid lines
@@ -1438,16 +1463,16 @@ module Mark : sig
     binding
   (** [bind ~imply ~guide r c] binds the channel [c] to the role [r], where:
       - [imply] is the specification whose properties the mark implies on the
-        scale [c] reads ({!Hugin.section-merging}), of the kind of [c]'s
-        data; its name and transform are ignored, and so is [imply] if [c] is a
+        scale [c] reads ({!Hugin.section-merging}), of the kind of [c]'s data;
+        its name and transform are ignored, and so is [imply] if [c] is a
         constant. {!rect} and {!rule} bind a length with
         [~imply:(Scale.linear ~zero:true ())], and {!rect} the band position of
         a bar with [~imply:(Scale.band ~padding:0.2 ())].
       - [guide] implies whether the scale [c] reads has a guide, an axis or a
         legend: [true] that it has one, [false] that it has none. It merges as
-        the scale's properties do ({!Hugin.section-merging}): two marks
-        implying different values raise in {!resolve}, and an explicit {!axis}
-        or {!legend} overrides both. Unset, it implies nothing. *)
+        the scale's properties do ({!Hugin.section-merging}): two marks implying
+        different values raise in {!resolve}, and an explicit {!axis} or
+        {!legend} overrides both. Unset, it implies nothing. *)
 
   (** {1:rows Rows}
 
@@ -1459,16 +1484,16 @@ module Mark : sig
 
       The domain of a panel is the unit square of normalised positions, its
       edges included. A draw function clips positions to it and leaves ink whole
-      ({!Hugin.section-missing}): it joins {!positions} into paths and
-      gives them to {!project}, which cuts them at the domain's edges, and
-      places symbols and texts at {!points}, which are [nan] outside it.
-      {!positions} and {!extent} are not clipped: the domain applies where a
-      value enters the page. Ink is clipped only where it has no geometry to
-      cut: {!image} clips an image that reaches beyond the domain to it.
-      {!index} gives its datum, and {!get} and {!normalized} its own values,
-      missing only where they are missing, so that a contour knows the x of a
-      column one of whose samples is dropped. Rows are valid only during the
-      call of the function given them. *)
+      ({!Hugin.section-missing}): it joins {!positions} into paths and gives
+      them to {!project}, which cuts them at the domain's edges, and places
+      symbols and texts at {!points}, which are [nan] outside it. {!positions}
+      and {!extent} are not clipped: the domain applies where a value enters the
+      page. Ink is clipped only where it has no geometry to cut: {!image} clips
+      an image that reaches beyond the domain to it. {!index} gives its datum,
+      and {!get} and {!normalized} its own values, missing only where they are
+      missing, so that a contour knows the x of a column one of whose samples is
+      dropped. Rows are valid only during the call of the function given them.
+  *)
 
   type rows
   (** The type for the rows of a mark in one panel. *)
@@ -1506,12 +1531,12 @@ module Mark : sig
       scale, and [None] if it is unbound, bound to a constant or reads no scale.
       [f u] is the value of [r] at the normalised value [u], mapped by the
       channel's {!map_range}: on a continuous scale, the value the range of [r]
-      gives [u] ({!Hugin.section-roles}), as the scale's specification or
-      else the theme sets it, and [u] itself for a position; on a band scale,
-      the value of the category whose step holds [u] ({!Scale.invert}). For
-      [nan], and on a band scale for a [u] that no step holds, it is the value
-      {!get} gives a missing value. With [range rows r = Some f], [get rows r]
-      is [Option.map (Array.map f) (normalized rows r)], and a contour fills the
+      gives [u] ({!Hugin.section-roles}), as the scale's specification or else
+      the theme sets it, and [u] itself for a position; on a band scale, the
+      value of the category whose step holds [u] ({!Scale.invert}). For [nan],
+      and on a band scale for a [u] that no step holds, it is the value {!get}
+      gives a missing value. With [range rows r = Some f], [get rows r] is
+      [Option.map (Array.map f) (normalized rows r)], and a contour fills the
       band between two levels with [f] at their midpoint. *)
 
   val scale : rows -> [ `X | `Y ] -> 'd Scale.kind -> 'd Scale.t option
@@ -1672,8 +1697,8 @@ module Mark : sig
   val broadcast : ?shape:int array -> binding list -> int array
   (** [broadcast ~shape bindings] is the shape of the mark that
       [v ~shape bindings] makes: [shape], by default [[||]], and the shapes of
-      the channels broadcast together ({!Hugin.section-data}). A mark
-      checks its data with it, and with {!Hugin.varies}, before it is made.
+      the channels broadcast together ({!Hugin.section-data}). A mark checks its
+      data with it, and with {!Hugin.varies}, before it is made.
 
       Raises [Invalid_argument] if [shape] has a negative dimension, if the
       channels and [shape] do not broadcast, or if a {!Hugin.dim} or a
@@ -1713,9 +1738,8 @@ module Mark : sig
         half its opacity, and other roles are unbound, so that its point is the
         box's centre ({!points}) and its extents span the box ({!extent}). For
         the entry [k] of a legend of [n] entries, the rows have the shape
-        [[|n|]], the index [[|k|]] and the legend's id
-        ({!Hugin.section-ids}), with which {!draw} tags the swatch. Unset,
-        it is [draw].
+        [[|n|]], the index [[|k|]] and the legend's id ({!Hugin.section-ids}),
+        with which {!draw} tags the swatch. Unset, it is [draw].
 
       [draw] and [swatch] must not read mutable state.
 
@@ -1728,8 +1752,7 @@ module Mark : sig
         scale, [text] or a {!Role.value};
       - [shape] has a negative dimension;
       - the channels and [shape] do not broadcast, or a {!Hugin.dim} or a
-        {!Hugin.index} does not fit their shape
-        ({!Hugin.section-data}). *)
+        {!Hugin.index} does not fit their shape ({!Hugin.section-data}). *)
 end
 
 (** {1:stages Stages} *)
@@ -1768,12 +1791,12 @@ module Resolved : sig
       under, then those about values of the view that no key reads. *)
 
   val equal : t -> t -> bool
-  (** [equal r r'] is [true] iff [r] and [r'] resolve {!Hugin.equal}
-      figures under {!View.equal} views to the same scopes, {!Scale.equal}
-      fitted scales and equal warnings. The figures that {!bind} returns are not
-      compared: they are functions of the figure and the view, and comparing a
-      figure that a {!bind} builds afresh on each call would make a resolved
-      figure unequal to itself resolved again. *)
+  (** [equal r r'] is [true] iff [r] and [r'] resolve {!Hugin.equal} figures
+      under {!View.equal} views to the same scopes, {!Scale.equal} fitted scales
+      and equal warnings. The figures that {!bind} returns are not compared:
+      they are functions of the figure and the view, and comparing a figure that
+      a {!bind} builds afresh on each call would make a resolved figure unequal
+      to itself resolved again. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf r] formats the scopes of [r], their fitted scales and the
@@ -1866,17 +1889,17 @@ val layout :
   ?prev:Layout.t -> ?theme:Theme.t -> Size.t -> Resolved.t -> Layout.t
 (** [layout ~prev ~theme size r] lays [r] out at [size] in [theme],
     {!Theme.default} by default. It measures text in the theme's faces; chooses
-    the ticks of each guide by their measured labels
-    ({!Hugin_kit.Ticks.choose}) at the lengths a solve without guides
-    gives, then again at those that a solve with the first choice's guides
-    gives, and freezes the second choice; solves with each guide apart from the
-    others and each legend above or below its panels one entry a row, which
-    gives the shortest lengths the figure can take, and there wraps legend
-    entries into rows and decides which guides share a band; solves a last time;
-    and lays each guide out at the final lengths, which leave it the room it
-    needs, and builds each panel's projection. An axis or colour bar too short
-    for its labels keeps, in order, each label that clears the last one it kept,
-    and drops the others, which never widens a protrusion.
+    the ticks of each guide by their measured labels ({!Hugin_kit.Ticks.choose})
+    at the lengths a solve without guides gives, then again at those that a
+    solve with the first choice's guides gives, and freezes the second choice;
+    solves with each guide apart from the others and each legend above or below
+    its panels one entry a row, which gives the shortest lengths the figure can
+    take, and there wraps legend entries into rows and decides which guides
+    share a band; solves a last time; and lays each guide out at the final
+    lengths, which leave it the room it needs, and builds each panel's
+    projection. An axis or colour bar too short for its labels keeps, in order,
+    each label that clears the last one it kept, and drops the others, which
+    never widens a protrusion.
 
     Panels and grids are nodes, and only their data areas take tracks. Axes,
     headers, legends and titles are guides on a side of a node
@@ -1948,11 +1971,11 @@ val save :
 (** [save ~warn ~view ~theme ~size ~density file f] writes the renderable of
     [render ~view ~theme ~density size f] to [file] in the format its extension
     names, ignoring case: PNG for [.png], drawn at [density] with the density
-    and the sRGB colour space recorded ({!Hugin_vg_raster.png}); SVG for
-    [.svg]; PDF for [.pdf]. [size] defaults to [Size.figure 360. 240.] and
-    [density] to [2.]. [warn] is called on each of the drawing's warnings, in
-    order, before the file is written; by default it formats the warning with
-    {!pp_warning} on [Format.err_formatter].
+    and the sRGB colour space recorded ({!Hugin_vg_raster.png}); SVG for [.svg];
+    PDF for [.pdf]. [size] defaults to [Size.figure 360. 240.] and [density] to
+    [2.]. [warn] is called on each of the drawing's warnings, in order, before
+    the file is written; by default it formats the warning with {!pp_warning} on
+    [Format.err_formatter].
 
     Raises [Invalid_argument] for another extension, what {!render} raises, and
     [Sys_error] if [file] cannot be written. *)

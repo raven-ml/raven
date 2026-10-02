@@ -30,7 +30,7 @@ let acc = Nx.create Nx.float64 [| at / epoch |] [| 0.61; 0.74; 0.81; 0.84 |]
 let accuracy =
   layer
     [
-      line ~x:(num vstep) ~y:(num ~title:(Text.v "val. accuracy") acc) ();
+      line ~x:(num vstep) ~y:(num ~title:"val. accuracy" acc) ();
       dot ~x:(num vstep) ~y:(num acc) ();
     ]
 
@@ -41,8 +41,8 @@ let dashboard n =
       [
         rule ~x:(num epochs) ~opacity:(const 0.15) ();
         line
-          ~x:(num ~title:(Text.v "step") (upto step))
-          ~y:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") (upto loss))
+          ~x:(num ~title:"step" (upto step))
+          ~y:(num ~scale:(Scale.log ()) ~title:"loss" (upto loss))
           ();
       ]
   in
@@ -114,6 +114,5 @@ let budgets =
 let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
-  Thumper.run ~config "hugin_plot"
-    [ Thumper.group "stages" [ live ]; budgets ]
+  Thumper.run ~config "hugin_plot" [ Thumper.group "stages" [ live ]; budgets ]
   |> exit

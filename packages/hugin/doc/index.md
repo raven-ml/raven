@@ -22,11 +22,11 @@ let losses =
 
 let () =
   line
-    ~x:(num ~title:(Text.v "progress") steps)
-    ~y:(num ~title:(Text.v "loss") losses)
-    ~stroke:(dim ~title:(Text.v "run") 0)
+    ~x:(num ~title:"progress" steps)
+    ~y:(num ~title:"loss" losses)
+    ~stroke:(dim ~title:"run" 0)
     ()
-  |> title (Text.v "Five runs")
+  |> title "Five runs"
   |> save "runs.png"
 ```
 

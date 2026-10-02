@@ -186,6 +186,7 @@ let panel scales (c : content) p =
                 scale = f.name;
                 side = None;
                 show;
+                title = None;
               }
         in
         let part =
@@ -348,7 +349,7 @@ let rec labelled = function
       Grid { g with cells = List.map cell cells }
 
 (* [showing node] is each scale and side of a shown axis or header of [node],
-   with its guide and the panels showing it, headers first. *)
+   with the guides and the panels showing it, headers first. *)
 let showing node =
   let rec go acc = function
     | Grid g -> List.fold_left (fun acc c -> go acc c.node) acc g.cells
@@ -363,11 +364,10 @@ let showing node =
   in
   let group groups (_, k, g, pid) =
     match List.assoc_opt k groups with
-    | None -> groups @ [ (k, (g, [ pid ])) ]
-    | Some (g, pids) ->
-        List.map
-          (fun (k', v) -> if k' = k then (k, (g, pids @ [ pid ])) else (k', v))
-          groups
+    | None -> groups @ [ (k, ([ g ], [ pid ])) ]
+    | Some (gs, pids) ->
+        let v = (gs @ [ g ], pids @ [ pid ]) in
+        List.map (fun (k', v') -> if k' = k then (k, v) else (k', v')) groups
   in
   let headers (a, _, _, _) (b, _, _, _) = Bool.compare a b in
   List.fold_left group [] (List.stable_sort headers (List.rev (go [] node)))
@@ -381,14 +381,21 @@ let showing node =
    An explicit legend, or a mark's, keeps it. *)
 let build (r : Resolved.t) scales =
   let tree = of_shaped r scales Nx.Ptree.Path.root r.shaped in
-  let titled tree ((scale, side), (guide, pids)) =
+  let titled tree ((scale, side), (guides, pids)) =
     let (F f) = scales.(scale) in
+    let titles = List.filter_map (fun (g : guide) -> g.title) guides in
     attach pids
       (fun id ->
         {
           Guide.id = path id [ Field "axis"; Field f.name ];
           side = (if horizontal side then side else `Top);
-          kind = Axis { guide; scale; part = Scale_title side };
+          kind =
+            Axis
+              {
+                guide = List.hd guides;
+                scale;
+                part = Scale_title { side; titles };
+              };
         })
       tree
   in
@@ -461,7 +468,7 @@ let build (r : Resolved.t) scales =
         | Some g -> g
         | None ->
             let show = Option.value f.guide ~default:f.legend in
-            { kind = Legend; scale = f.name; side = None; show }
+            { kind = Legend; scale = f.name; side = None; show; title = None }
       in
       let kind =
         match f.kind with
@@ -982,7 +989,7 @@ let guide_length em hull (g : Guide.spec) =
    and headers [shown]. *)
 let span shown hull (g : Guide.spec) length =
   match g.kind with
-  | Axis { scale; part = Scale_title side; _ } -> (
+  | Axis { scale; part = Scale_title { side; _ }; _ } -> (
       let serves ((g' : Guide.t), _) =
         equal_side g'.spec.side side
         &&

@@ -209,7 +209,7 @@ let () =
   let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
   let edges = canny ~low:0.2 ~high:0.6 gray in
-  let panel label px = Hugin.(image px |> title (Text.v label)) in
+  let panel label px = Hugin.(image px |> title label) in
   Hugin.grid [ [ panel "Original" img; panel "Canny Edges" edges ] ]
   |> Hugin.save ~size:(Hugin.Size.panels 240. 240.) "edges.png"
 ```

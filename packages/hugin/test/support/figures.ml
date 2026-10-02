@@ -19,11 +19,10 @@ let confusion () =
   in
   let counts = Nx.cast Nx.float64 m in
   let recall =
-    num ~title:(Text.v "recall")
-      Nx.(div counts (sum ~axes:[ 1 ] ~keepdims:true counts))
+    num ~title:"recall" Nx.(div counts (sum ~axes:[ 1 ] ~keepdims:true counts))
   in
-  let predicted = dim ~title:(Text.v "predicted") ~labels:classes 1
-  and truth = dim ~title:(Text.v "true") ~labels:classes 0 in
+  let predicted = dim ~title:"predicted" ~labels:classes 1
+  and truth = dim ~title:"true" ~labels:classes 0 in
   layer
     [
       rect ~x:predicted ~y:truth ~fill:recall ();
@@ -46,12 +45,9 @@ let attention () =
           float (1 + ((i.(0) + (2 * i.(1)) + q + k) mod 4))
           /. float (4 * (q + 1)))
   in
-  rect
-    ~fy:(dim ~title:(Text.v "layer") 0)
-    ~fx:(dim ~title:(Text.v "head") 1)
+  rect ~fy:(dim ~title:"layer" 0) ~fx:(dim ~title:"head" 1)
     ~y:(dim ~labels:tokens 2) ~x:(dim ~labels:tokens 3)
-    ~fill:(num ~title:(Text.v "attention") a)
-    ()
+    ~fill:(num ~title:"attention" a) ()
 
 (* Embedding scatter: e : [n; 2], points on a spiral coloured by digit. *)
 
@@ -115,7 +111,7 @@ let landscape () =
     [
       contour ~x:(num alphas)
         ~y:(num Nx.(slice [ A; N ] betas))
-        ~fill:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") loss)
+        ~fill:(num ~scale:(Scale.log ()) ~title:"loss" loss)
         ();
       line ~x:px ~y:py ();
       dot ~x:px ~y:py ~size:(const 9.) ();
@@ -139,16 +135,15 @@ let dashboard () =
     layer
       [
         rule ~x:(num epochs) ~opacity:(const 0.15) ();
-        line
-          ~x:(num ~title:(Text.v "step") step)
-          ~y:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") loss)
+        line ~x:(num ~title:"step" step)
+          ~y:(num ~scale:(Scale.log ()) ~title:"loss" loss)
           ~opacity:(const 0.3) ();
         line ~x:(num step) ~y:(num (Nx.ewma ~alpha:0.1 loss)) ();
       ]
   and accuracy =
     layer
       [
-        dot ~x:(num vstep) ~y:(num ~title:(Text.v "val. accuracy") acc) ();
+        dot ~x:(num vstep) ~y:(num ~title:"val. accuracy" acc) ();
         text
           ~x:(num (at vstep))
           ~y:(num (at acc))
@@ -161,39 +156,37 @@ let dashboard () =
 (* Two-column paper figure, in the bundled faces at 8 points. *)
 
 let paper () =
-  let panel s f = title ~align:`Left (Text.bold (Text.v s)) f in
   let t = Nx.linspace Nx.float64 0. 6. 40 in
   let k = Nx.reshape [| 2; 1 |] (f64 [| 1.; 2. |]) in
   let a =
-    line
-      ~x:(num ~title:(Text.v "time (s)") t)
-      ~y:(num ~title:(Text.v "amplitude") (Nx.sin (Nx.mul k t)))
-      ~stroke:(dim ~title:(Text.v "harmonic") ~labels:[| "1st"; "2nd" |] 0)
+    line ~x:(num ~title:"time (s)" t)
+      ~y:(num ~title:"amplitude" (Nx.sin (Nx.mul k t)))
+      ~stroke:(dim ~title:"harmonic" ~labels:[| "1st"; "2nd" |] 0)
       ()
   in
   let b =
     dot
       ~x:
-        (num ~scale:(Scale.log ()) ~title:(Text.v "parameters")
+        (num ~scale:(Scale.log ()) ~title:"parameters"
            (f64 [| 10.; 100.; 1000.; 10000. |]))
-      ~y:(num ~title:(Text.v "error") (f64 [| 0.9; 0.5; 0.3; 0.2 |]))
+      ~y:(num ~title:"error" (f64 [| 0.9; 0.5; 0.3; 0.2 |]))
       ()
   in
   let methods = [| "ours"; "base" |] in
   let c =
     rect
-      ~x:(strings ~title:(Text.v "method") methods)
-      ~y:(num ~title:(Text.v "score") (f64 [| 0.82; 0.71 |]))
+      ~x:(strings ~title:"method" methods)
+      ~y:(num ~title:"score" (f64 [| 0.82; 0.71 |]))
       ()
   in
   let d =
     rect ~x:(dim 1) ~y:(dim 0)
       ~fill:
-        (num ~title:(Text.v "response")
+        (num ~title:"response"
            (Nx.init Nx.float64 [| 4; 5 |] (fun i -> float (i.(0) * i.(1)))))
       ()
   in
-  grid [ [ panel "(a)" a; panel "(b)" b ]; [ panel "(c)" c; panel "(d)" d ] ]
+  grid [ [ title "(a)" a; title "(b)" b ]; [ title "(c)" c; title "(d)" d ] ]
 
 (* Bands: two runs' mean accuracy over steps, each over the band of one standard
    deviation about it. *)
@@ -208,12 +201,12 @@ let bands () =
     Nx.init Nx.float64 [| 2; t |] (fun i ->
         0.05 +. (0.04 *. Float.abs (sin (at 1 i /. 3.))))
   in
-  let run = dim ~title:(Text.v "run") ~labels:[| "a"; "b" |] 0 in
-  let step = index ~title:(Text.v "step") (-1) in
+  let run = dim ~title:"run" ~labels:[| "a"; "b" |] 0 in
+  let step = index ~title:"step" (-1) in
   layer
     [
       area ~x:step
-        ~y:(num ~title:(Text.v "accuracy") (Nx.add mean std))
+        ~y:(num ~title:"accuracy" (Nx.add mean std))
         ~y2:(num (Nx.sub mean std))
         ~fill:run ~opacity:(const 0.25) ();
       line ~x:step ~y:(num mean) ~stroke:run ();

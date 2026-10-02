@@ -12,10 +12,8 @@ let weights n =
 
 let () =
   let h = Stats.histogram ~bins:40 (weights 2_500) in
-  rect
-    ~x:(num ~title:(Text.v "weight") h.x)
-    ~x2:(num h.x2)
-    ~y:(num ~title:(Text.v "density") h.density)
+  rect ~x:(num ~title:"weight" h.x) ~x2:(num h.x2)
+    ~y:(num ~title:"density" h.density)
     ~fill:(dim ~labels:[| "initialisation"; "trained" |] 0)
     ~opacity:(const 0.6) ()
   |> save "histogram.png"

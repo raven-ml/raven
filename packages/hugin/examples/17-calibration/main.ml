@@ -12,9 +12,9 @@ let () =
   let under = Nx.pow_s p 1.4 in
   let observed = Nx.stack [ over; under ] in
   let unit = Scale.linear ~domain:(0., 1.) ~notation:Percent in
-  let x = num ~scale:(unit ~name:"x" ()) ~title:(Text.v "predicted") p in
-  let y = num ~scale:(unit ~name:"y" ()) ~title:(Text.v "observed") observed in
-  let model = dim ~title:(Text.v "model") ~labels:[| "A"; "B" |] 0 in
+  let x = num ~scale:(unit ~name:"x" ()) ~title:"predicted" p in
+  let y = num ~scale:(unit ~name:"y" ()) ~title:"observed" observed in
+  let model = dim ~title:"model" ~labels:[| "A"; "B" |] 0 in
   layer
     [
       abline ~slope:(const 1.) ~intercept:(const 0.) ~dash:(const Dash.dashed)
@@ -23,5 +23,5 @@ let () =
       dot ~x ~y ~fill:model ();
     ]
   |> coord (Coord.cartesian ~aspect:1. ())
-  |> title (Text.v "Calibration")
+  |> title "Calibration"
   |> save ~size:(Size.figure 320. 260.) "calibration.png"

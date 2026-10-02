@@ -83,7 +83,7 @@ let signals = Nx.mul (Nx.exp (Nx.neg (Nx.mul damping t))) (Nx.sin t)
 
 let () =
   line ~x:(num t) ~y:(num signals)
-    ~fx:(dim ~title:(Text.v "damping") ~labels:[| "0.1"; "0.2"; "0.4"; "0.8" |] 0)
+    ~fx:(dim ~title:"damping" ~labels:[| "0.1"; "0.2"; "0.4"; "0.8" |] 0)
     ()
   |> save ~size:(Size.figure 480. 200.) "facets.png"
 ```
@@ -100,11 +100,9 @@ data areas by default. Titles nest, and a grid of titled cells labels each
 panel:
 
 ```ocaml
-let panel s f = title (Text.bold (Text.v s)) f
-
 let () =
-  grid [ [ panel "(a)" decay; panel "(b)" fast ] ]
-  |> title ~align:`Center (Text.v "Two decays")
+  grid [ [ title "(a)" decay; title "(b)" fast ] ]
+  |> title ~align:`Center "Two decays"
   |> save ~size:(Size.figure 480. 220.) "titled.png"
 ```
 
@@ -143,7 +141,7 @@ size, so `~size:8.` sets a figure for a printed column:
 let print = Theme.v ~size:8. ~palette:Scheme.okabe_ito ()
 
 let () =
-  grid [ [ panel "(a)" decay; panel "(b)" fast ] ]
+  grid [ [ title "(a)" decay; title "(b)" fast ] ]
   |> save ~theme:print ~size:(Size.figure (Size.mm 85.) (Size.mm 40.)) "column.pdf"
 ```
 

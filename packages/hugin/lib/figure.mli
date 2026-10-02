@@ -74,6 +74,7 @@ type guide = {
   scale : string;
   side : place option;
   show : bool;
+  title : Text.t option;
 }
 
 type t =
@@ -107,9 +108,16 @@ val layer : t list -> t
 val grid : ?widths:float list -> ?heights:float list -> t list list -> t
 val span : ?rows:int -> ?cols:int -> t -> t
 val share : (string * sharing) list -> t -> t
-val title : ?align:Text.Layout.halign -> Text.t -> t -> t
+val title : ?align:Text.Layout.halign -> string -> t -> t
+val title' : ?align:Text.Layout.halign -> Text.t -> t -> t
 val coord : Coord.t -> t -> t
 val name : string -> t -> t
 val bind : 'a View.key -> ('a -> t) -> t
-val axis : ?side:side -> ?grid:bool -> ?show:bool -> string -> t
-val legend : ?side:[< place ] -> ?show:bool -> string -> t
+
+val axis :
+  ?side:side -> ?grid:bool -> ?show:bool -> ?title:string -> string -> t
+
+val axis' :
+  ?side:side -> ?grid:bool -> ?show:bool -> ?title:Text.t -> string -> t
+
+val legend : ?side:[< place ] -> ?show:bool -> ?title:string -> string -> t

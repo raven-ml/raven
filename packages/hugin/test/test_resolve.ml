@@ -137,11 +137,7 @@ let errors =
       ( "two names under a wrapper",
         (fun () ->
           resolve
-            (layer
-               [
-                 name "a"
-                   (title (Text.v "t") (name "b" (dot1 [| 1. |] [| 1. |])));
-               ])),
+            (layer [ name "a" (title "t" (name "b" (dot1 [| 1. |] [| 1. |]))) ])),
         [ "root" ] );
       ( "two names on the root",
         (fun () -> resolve (name "a" (name "b" (layer [])))),
@@ -216,9 +212,7 @@ let errors =
         [ "root" ] );
       ( "two titles among layered children",
         (fun () ->
-          resolve
-            (layer
-               [ title (Text.v "a") (layer []); title (Text.v "b") (layer []) ])),
+          resolve (layer [ title "a" (layer []); title "b" (layer []) ])),
         [ "root" ] );
       ( "two explicit values of one property",
         (fun () ->
@@ -306,6 +300,16 @@ let errors =
           resolve
             (layer [ dot1 [| 1. |] [| 1. |]; axis "x"; axis ~grid:true "x" ])),
         [ "root"; "x" ] );
+      ( "two axes for one scale with different titles",
+        (fun () ->
+          resolve
+            (layer
+               [
+                 dot1 [| 1. |] [| 1. |];
+                 axis ~title:"a" "x";
+                 axis ~title:"b" "x";
+               ])),
+        [ "root"; "x" ] );
       ( "an x axis on the left",
         (fun () ->
           resolve
@@ -331,6 +335,16 @@ let errors =
                  dot ~fill:(num x) ~x:(num x) ~y:(num x) ();
                  legend "color";
                  legend ~show:false "color";
+               ])),
+        [ "1 and 2 are two different legends for \"color\"" ] );
+      ( "two legends for one scale with different titles",
+        (fun () ->
+          resolve
+            (layer
+               [
+                 dot ~fill:(num x) ~x:(num x) ~y:(num x) ();
+                 legend ~title:"a" "color";
+                 legend ~title:"b" "color";
                ])),
         [ "1 and 2 are two different legends for \"color\"" ] );
       ( "two inside legends of one scale in different corners",
@@ -436,12 +450,12 @@ let composition =
   group "composition"
     [
       prop "layer lifts a title" (Gen.pair gen_mark gen_mark) (fun (a, b) ->
-          let w = title (Text.v "w") in
+          let w = title "w" in
           pp_equal (layer [ w a; b ]) (w (layer [ a; b ]));
           pp_equal (layer [ a; w b ]) (w (layer [ a; b ])));
       prop "layer lifts titles one at a time" (Gen.pair gen_mark gen_mark)
         (fun (a, b) ->
-          let t s = title (Text.v s) in
+          let t s = title s in
           pp_equal
             (layer [ t "w" (t "v" a); t "w" b ])
             (t "w" (t "v" (layer [ a; b ])));
@@ -1470,7 +1484,7 @@ let baselines =
                     ();
                   line ~y:(num ~scale:(Scale.log ()) y) () |> name "fit";
                 ]
-              |> title (Text.v "t");
+              |> title "t";
               layer
                 [
                   rect ~x:(dim 0) ~y:(num y)

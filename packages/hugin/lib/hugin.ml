@@ -41,10 +41,12 @@ let grid = Figure.grid
 let span = Figure.span
 let share = Figure.share
 let title = Figure.title
+let title' = Figure.title'
 let coord = Figure.coord
 let name = Figure.name
 let bind = Figure.bind
 let axis = Figure.axis
+let axis' = Figure.axis'
 let legend = Figure.legend
 
 (* Sizes *)

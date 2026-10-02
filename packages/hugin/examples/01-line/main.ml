@@ -14,12 +14,9 @@ let () =
   in
   let losses = Nx.add (Nx.exp (Nx.mul (Nx.neg t) (Nx.mul_s seeds 4.))) noise in
   let f =
-    line
-      ~x:(num ~title:(Text.v "progress") t)
-      ~y:(num ~title:(Text.v "loss") losses)
-      ~stroke:(dim ~title:(Text.v "seed") 0)
-      ()
-    |> title (Text.v "Training loss")
+    line ~x:(num ~title:"progress" t) ~y:(num ~title:"loss" losses)
+      ~stroke:(dim ~title:"seed" 0) ()
+    |> title "Training loss"
   in
   save "line.png" f;
   save ~theme:Theme.dark "line-dark.png" f

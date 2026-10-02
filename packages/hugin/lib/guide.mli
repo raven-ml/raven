@@ -72,9 +72,9 @@ type axis_part =
       (** The axis proper; unlabelled where the next panel on its side labels
           it. *)
   | Header of int  (** A facet header, its category's index. *)
-  | Scale_title of Figure.side
-      (** The title of the axes or headers on that side of the panels it serves.
-      *)
+  | Scale_title of { side : Figure.side; titles : Text.t list }
+      (** The title of the axes or headers on that side of the panels it serves,
+          with the titles their explicit axes set. *)
 
 type kind =
   | Axis of { guide : Figure.guide; scale : int; part : axis_part }

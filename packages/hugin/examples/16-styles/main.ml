@@ -18,19 +18,16 @@ let () =
   in
   let optimiser = Scale.band ~name:"optimiser" () in
   let run () =
-    dim ~scale:optimiser ~title:(Text.v "optimiser")
+    dim ~scale:optimiser ~title:"optimiser"
       ~labels:[| "SGD"; "Adam"; "Lion" |]
       0
   in
   layer
     [
       rule ~y:(floats [| 0.25 |]) ~dash:(const Dash.dotted) ();
-      line
-        ~x:(num ~title:(Text.v "progress") t)
-        ~y:(num ~title:(Text.v "loss") loss)
+      line ~x:(num ~title:"progress" t) ~y:(num ~title:"loss" loss)
         ~stroke:(run ()) ~dash:(run ()) ();
       frame ();
       legend ~side:(`Inside `Top_right) "optimiser";
     ]
-  |> title (Text.v "Validation loss")
-  |> save "styles.png"
+  |> title "Validation loss" |> save "styles.png"

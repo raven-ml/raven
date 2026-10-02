@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 module Scale = Hugin_kit.Scale
-module Text = Hugin_text.Text
 open Common
 
 type _ kind = Quantities : float kind | Categories : string kind
@@ -47,7 +46,7 @@ type _ lift =
 type 'd data = {
   lift : 'd lift;
   spec : 'd Scale.t option;
-  title : Text.t option;
+  title : string option;
 }
 
 type ('d, 'r) t =
@@ -92,7 +91,7 @@ let rec equal : type d e r. r Role.range -> (d, r) t -> (e, r) t -> bool =
       match equal_lift a.lift b.lift with
       | Some Type.Equal ->
           Option.equal Scale.equal a.spec b.spec
-          && Option.equal Text.equal a.title b.title
+          && Option.equal String.equal a.title b.title
       | None -> false)
   | Map (f, c), Map (f', c') -> f == f' && equal r c c'
   | _ -> false

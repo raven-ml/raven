@@ -15,14 +15,14 @@ let () =
     Nx.mul_s (Nx.Rng.normal (Nx.Rng.key 15) Nx.float64 [| seeds; steps |]) 0.02
   in
   let losses = Nx.add (Nx.exp (Nx.mul (Nx.neg t) rates)) (Nx.add_s noise 0.1) in
-  let progress = num ~title:(Text.v "progress") t in
+  let progress = num ~title:"progress" t in
   layer
     [
       area ~x:progress
-        ~y:(num ~title:(Text.v "validation loss") (Nx.max ~axes:[ 0 ] losses))
+        ~y:(num ~title:"validation loss" (Nx.max ~axes:[ 0 ] losses))
         ~y2:(num (Nx.min ~axes:[ 0 ] losses))
         ~opacity:(const 0.3) ();
       line ~x:progress ~y:(num (Nx.mean ~axes:[ 0 ] losses)) ();
     ]
-  |> title (Text.v "Validation loss over eight seeds")
+  |> title "Validation loss over eight seeds"
   |> save "area.png"

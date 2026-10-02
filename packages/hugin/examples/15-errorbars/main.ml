@@ -11,11 +11,11 @@ let () =
       (Nx.mul_s (Nx.Rng.normal (Nx.Rng.key 15) Nx.float64 [| 4; 5 |]) 0.02)
   in
   let mean = Nx.mean ~axes:[ 1 ] runs and std = Nx.std ~axes:[ 1 ] runs in
-  let x = strings ~title:(Text.v "method") methods in
+  let x = strings ~title:"method" methods in
   layer
     [
       rule ~x ~y:(num (Nx.sub mean std)) ~y2:(num (Nx.add mean std)) ();
-      dot ~x ~y:(num ~title:(Text.v "accuracy") mean) ();
+      dot ~x ~y:(num ~title:"accuracy" mean) ();
     ]
-  |> title (Text.v "Accuracy over five seeds")
+  |> title "Accuracy over five seeds"
   |> save "errorbars.png"

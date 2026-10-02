@@ -44,6 +44,7 @@ type guide = {
   scale : string;
   side : place option;
   show : bool;
+  title : Text.t option;
 }
 
 type t =
@@ -142,17 +143,21 @@ let equal_guide g g' =
   && String.equal g.scale g'.scale
   && Option.equal equal_place g.side g'.side
   && Bool.equal g.show g'.show
+  && Option.equal Text.equal g.title g'.title
 
 let is_axis g = match g.kind with Axis _ -> true | Legend -> false
 
 let pp_guide ppf g =
-  Format.fprintf ppf "%s %S%a%s%s"
+  Format.fprintf ppf "%s %S%a%s%s%a"
     (match g.kind with Axis _ -> "axis" | Legend -> "legend")
     g.scale
     (Format.pp_print_option (fun ppf s -> Format.fprintf ppf " %a" pp_place s))
     g.side
     (match g.kind with Axis { grid = true } -> " grid" | _ -> "")
     (if g.show then "" else " hidden")
+    (Format.pp_print_option (fun ppf t ->
+         Format.fprintf ppf " titled %a" Text.pp t))
+    g.title
 
 let equal_halign (a : Text.Layout.halign) (a' : Text.Layout.halign) =
   match (a, a') with
@@ -319,7 +324,8 @@ let share pairs f =
   distinct pairs;
   Share (pairs, f)
 
-let title ?(align = `Left) text f = Title { align; text; f }
+let title' ?(align = `Left) text f = Title { align; text; f }
+let title ?align s f = title' ?align (Text.v s) f
 let coord c f = Coord_sys (c, f)
 
 let name s f =
@@ -330,15 +336,18 @@ let name s f =
 
 let bind k fn = Bind (k, fn)
 
-let axis ?side ?(grid = false) ?(show = true) scale =
+let axis' ?side ?(grid = false) ?(show = true) ?title scale =
   let side = Option.map (fun s -> (s : side :> place)) side in
-  Guide { kind = Axis { grid }; scale; side; show }
+  Guide { kind = Axis { grid }; scale; side; show; title }
+
+let axis ?side ?grid ?show ?title scale =
+  axis' ?side ?grid ?show ?title:(Option.map Text.v title) scale
 
 (* A legend's place may be given as a [side], whose type is closed. *)
 let place : [< place ] -> place = function
   | (`Left | `Right | `Top | `Bottom) as s -> s
   | `Inside c -> `Inside c
 
-let legend ?side ?(show = true) scale =
+let legend ?side ?(show = true) ?title scale =
   let side = Option.map place side in
-  Guide { kind = Legend; scale; side; show }
+  Guide { kind = Legend; scale; side; show; title = Option.map Text.v title }

@@ -33,16 +33,15 @@ let () =
     layer
       [
         rule ~x:(num epochs) ~opacity:(const 0.15) ();
-        line
-          ~x:(num ~title:(Text.v "step") step)
-          ~y:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") loss)
+        line ~x:(num ~title:"step" step)
+          ~y:(num ~scale:(Scale.log ()) ~title:"loss" loss)
           ~opacity:(const 0.3) ();
         line ~x:(num step) ~y:(num (Nx.ewma ~alpha:0.02 loss)) ();
       ]
   and accuracy =
     layer
       [
-        line ~x:(num vstep) ~y:(num ~title:(Text.v "val. accuracy") acc) ();
+        line ~x:(num vstep) ~y:(num ~title:"val. accuracy" acc) ();
         dot ~x:(num vstep) ~y:(num acc) ();
         text
           ~x:(num (at vstep))

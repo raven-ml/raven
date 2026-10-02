@@ -781,14 +781,13 @@ let reuse =
 let inked () =
   let ink = Color.v ~alpha:0.8 0.2 0.1 0.3 in
   let part a = Color.with_alpha (0.8 *. a) ink in
-  let title t = Text.v t in
   let f =
     dot
-      ~x:(num ~title:(title "x") (f64 [| 0.; 1.; 2. |]))
-      ~y:(num ~title:(title "y") (f64 [| 0.; 1.; 2. |]))
-      ~fill:(strings ~title:(title "kind") [| "a"; "b"; "a" |])
+      ~x:(num ~title:"x" (f64 [| 0.; 1.; 2. |]))
+      ~y:(num ~title:"y" (f64 [| 0.; 1.; 2. |]))
+      ~fill:(strings ~title:"kind" [| "a"; "b"; "a" |])
       ()
-    |> Hugin.title (title "T")
+    |> Hugin.title "T"
   in
   let d = drawn ~theme:(Theme.v ~ink ()) f in
   let strokes =

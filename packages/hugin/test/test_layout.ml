@@ -299,7 +299,7 @@ let figure_of c =
   let cell (a, b) =
     let x = f64 [| -.(10. ** Float.of_int a); 10. ** Float.of_int b |] in
     let y = f64 [| 0.; 10. ** Float.of_int b |] in
-    let title pick = Option.map (fun t -> Text.v (pick t)) c.titles in
+    let title pick = Option.map pick c.titles in
     let fx =
       if c.facets then
         Some (strings ?title:(title (fun (_, f, _) -> f)) [| "left"; "right" |])
@@ -337,9 +337,7 @@ let figure_of c =
   in
   let g = grid (rows (List.map cell c.exps)) in
   let g = if c.shared then share [ ("x", `Shared) ] g else g in
-  match c.titles with
-  | None -> g
-  | Some (_, _, t) -> title ~align:c.align (Text.v t) g
+  match c.titles with None -> g | Some (_, _, t) -> title ~align:c.align t g
 
 (* [needs size f] is the size that [layout] names when [f] is too small for
    [size], if it is. *)
@@ -458,7 +456,7 @@ let sizes =
           check (plain ramp);
           check
             (grid [ [ plain ramp; plain ramp ]; [ plain ramp; plain ramp ] ]);
-          check (title (Text.v "t") (plain ~fill:(num ramp) ramp)));
+          check (title "t" (plain ~fill:(num ramp) ramp)));
       test "panels sizes give each flexible track its weight's data area"
         (fun () ->
           let hidden = [ axis ~show:false "x"; axis ~show:false "y" ] in
@@ -495,13 +493,13 @@ let sizes =
       test
         "a figure too small for its decorations raises with the size it needs"
         (fun () ->
-          let f = title (Text.v "A long title") (plain ramp) in
+          let f = title "A long title" (plain ramp) in
           fails_naming [ "needs"; "figure 40 × 30 pt" ] (fun () ->
               lay (Size.figure 40. 30.) f));
       test "flexible tracks shrink to nothing before a figure raises" (fun () ->
           let f =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
-            |> title (Text.v "t")
+            |> title "t"
           in
           let least = (2. *. margin) +. head_h "t" +. title_gap in
           let w = 100. in
@@ -621,7 +619,7 @@ let grids =
             layer
               [
                 dot
-                  ~fx:(strings ~title:(Text.v "run") [| "a"; "b" |])
+                  ~fx:(strings ~title:"run" [| "a"; "b" |])
                   ~x:(num (f64 x))
                   ~y:(num (f64 x))
                   ();
@@ -674,7 +672,7 @@ let grids =
             Box2.minx (List.hd (boxes (lay (Size.panels 80. 80.) (f t))))
           in
           equal close (margin +. tick +. pad +. label_w "bb") (left None);
-          equal close (left None) (left (Some (Text.v "name"))));
+          equal close (left None) (left (Some "name")));
       test "a nested grid's panels align with its neighbours" (fun () ->
           let inner = grid [ [ plain ramp ]; [ plain ramp ] ] in
           let l =
@@ -740,8 +738,7 @@ let aspects =
       test "a nested aspect panel under a wider title stays on its page"
         (fun () ->
           let f =
-            grid [ [ square ] ]
-            |> title ~align:`Left (Text.v "A rather wide title")
+            grid [ [ square ] ] |> title ~align:`Left "A rather wide title"
           in
           List.iter
             (fun h -> apart (lay (Size.panels 40. h) f))
@@ -872,8 +869,7 @@ let long_title =
   dot
     ~x:(num (f64 [| 0.; 1.; 3.; 4. |]))
     ~y:
-      (num
-         ~title:(Text.v "a very very long title for a scale here")
+      (num ~title:"a very very long title for a scale here"
          (f64 [| 0.; 1.; 2.; 4. |]))
     ()
 
@@ -911,11 +907,76 @@ let least_sizes =
 
 (* [box_mid_x (x0, _, x1, _)] is the middle of a printed box along x. *)
 let mid_x (x0, _, x1, _) = (x0 +. x1) /. 2.
+let corners b = [ Box2.minx b; Box2.miny b; Box2.maxx b; Box2.maxy b ]
 
 let titles =
-  let time = num ~title:(Text.v "time") ramp in
+  let time = num ~title:"time" ramp in
+  let timed ?fill guides =
+    layer (dot ~x:time ~y:(num ramp) ?fill () :: guides)
+  in
   group "titles"
     [
+      test "an axis title replaces the titles of the channels" (fun () ->
+          let l =
+            lay (Size.panels 60. 40.) (timed [ axis ~title:"t (s)" "x" ])
+          in
+          equal int 1 (List.length (text_lines l {|"t (s)"|}));
+          equal int 0 (List.length (text_lines l {|"time"|})));
+      test "an axis' title is set in its styles" (fun () ->
+          let l =
+            lay (Size.panels 60. 40.)
+              (timed [ axis' ~title:(Text.italic (Text.v "t")) "x" ])
+          in
+          equal int 1 (List.length (text_lines l {|(text ("t" italic))|})));
+      test "a legend title replaces the titles of the channels" (fun () ->
+          let fill = strings ~title:"kind" [| "a"; "b"; "a"; "b" |] in
+          let l =
+            lay (Size.panels 60. 40.)
+              (timed ~fill [ legend ~title:"group" "color" ])
+          in
+          equal int 1 (List.length (text_lines l {|"group"|}));
+          equal int 0 (List.length (text_lines l {|"kind"|})));
+      cases ~name:fst "an empty title is no title"
+        [
+          ("on a figure", (title "" (plain ramp), plain ramp));
+          ( "on an axis",
+            (timed [ axis ~title:"" "x" ], layer [ plain ramp; axis "x" ]) );
+          ( "on a legend",
+            ( layer
+                [
+                  plain ~fill:(num ~title:"z" ramp) ramp;
+                  legend ~title:"" "color";
+                ],
+              plain ~fill:(num ramp) ramp ) );
+          ( "on a channel",
+            (dot ~x:(num ~title:"" ramp) ~y:(num ramp) (), plain ramp) );
+        ]
+        (fun (_, (f, untitled)) ->
+          let l = lay (Size.panels 60. 40.) f
+          and l' = lay (Size.panels 60. 40.) untitled in
+          equal
+            (list (list (float 1e-9)))
+            (List.map corners (boxes l'))
+            (List.map corners (boxes l));
+          equal int (List.length (texts l')) (List.length (texts l)));
+      test "an axis titled once shows the distinct titles of its axes"
+        (fun () ->
+          let cell t = layer [ plain ramp; axis ~title:t "x" ] in
+          let l =
+            lay (Size.panels 60. 40.)
+              (grid [ [ cell "a" ]; [ cell "b" ]; [ cell "a" ] ]
+              |> share [ ("x", `Shared) ])
+          in
+          equal int 1 (List.length (text_lines l {|"a, b"|})));
+      test "an axis titled once takes its axes' title over its channels'"
+        (fun () ->
+          let l =
+            lay (Size.panels 60. 40.)
+              (grid [ [ timed [] ]; [ timed [ axis ~title:"t (s)" "x" ] ] ]
+              |> share [ ("x", `Shared) ])
+          in
+          equal int 1 (List.length (text_lines l {|"t (s)"|}));
+          equal int 0 (List.length (text_lines l {|"time"|})));
       test "a shared axis is labelled on the outer panel only, titled once"
         (fun () ->
           let l =
@@ -956,7 +1017,7 @@ let titles =
         (fun () ->
           let f =
             dot ~x:(num ramp)
-              ~y:(num ~title:(Text.v "loss") (f64 [| 0.; 10.; 100.; 1000. |]))
+              ~y:(num ~title:"loss" (f64 [| 0.; 10.; 100.; 1000. |]))
               ()
           in
           let l = lay (Size.panels 80. 60.) f in
@@ -979,7 +1040,7 @@ let titles =
           let f =
             layer
               [
-                dot ~x:(num ramp) ~y:(num ~title:(Text.v "loss") ramp) ();
+                dot ~x:(num ramp) ~y:(num ~title:"loss" ramp) ();
                 axis ~side:`Right "y";
               ]
           in
@@ -1004,8 +1065,7 @@ let titles =
           let at align =
             let l =
               lay (Size.panels 80. 60.)
-                (plain ~y:(f64 [| 1.; 2e6; 3.; 4. |]) ramp
-                |> title ~align (Text.v "T"))
+                (plain ~y:(f64 [| 1.; 2e6; 3.; 4. |]) ramp |> title ~align "T")
             in
             (List.hd (boxes l), text_box l {|(text ("T" bold))|})
           in
@@ -1018,34 +1078,32 @@ let titles =
       test "a figure title aligns with the left edge by default" (fun () ->
           let l =
             lay (Size.panels 80. 60.)
-              (plain ~y:(f64 [| 1.; 2e6; 3.; 4. |]) ramp |> title (Text.v "T"))
+              (plain ~y:(f64 [| 1.; 2e6; 3.; 4. |]) ramp |> title "T")
           in
           let x0, _, _, _ = text_box l {|(text ("T" bold))|} in
           equal (float 1e-3) (Box2.minx (List.hd (boxes l))) x0);
       test "a figure title is half an em above what it titles" (fun () ->
           let f =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
-            |> title (Text.v "T")
+            |> title "T"
           in
           let l = lay (Size.panels 50. 40.) f in
           let _, _, _, y1 = text_box l {|(text ("T" bold))|} in
           equal (float 1e-3) title_gap (Box2.miny (List.hd (boxes l)) -. y1));
       test "a figure title is set bold at 1.2 em" (fun () ->
-          let l =
-            lay (Size.panels 50. 40.) (title (Text.v "Tg") (plain ramp))
-          in
+          let l = lay (Size.panels 50. 40.) (title "Tg" (plain ramp)) in
           let _, y0, _, y1 = text_box l {|(text ("Tg" bold))|} in
           equal (float 1e-3) (head_h "Tg") (y1 -. y0));
       test "titles nest, the outer above the inner" (fun () ->
           let l =
             lay (Size.panels 50. 40.)
-              (title (Text.v "outer") (title (Text.v "inner") (plain ramp)))
+              (title "outer" (title "inner" (plain ramp)))
           in
           let _, _, _, y1 = text_box l {|(text ("outer" bold))|} in
           let _, y0, _, _ = text_box l {|(text ("inner" bold))|} in
           at_most float_exact ~than:y0 y1);
       test "a facet title is half an em above the headers" (fun () ->
-          let fx = strings ~title:(Text.v "model") [| "a"; "b"; "a"; "b" |] in
+          let fx = strings ~title:"model" [| "a"; "b"; "a"; "b" |] in
           let l =
             lay (Size.panels 50. 40.) (dot ~x:(num ramp) ~y:(num ramp) ~fx ())
           in
@@ -1054,10 +1112,9 @@ let titles =
           equal (float 1e-3) title_gap (y0 -. y1));
       test "a facet grid's y, fx and fy titles share a line above it" (fun () ->
           let f =
-            dot ~x:(num ramp)
-              ~y:(num ~title:(Text.v "y") ramp)
-              ~fx:(strings ~title:(Text.v "head") [| "a"; "b"; "a"; "b" |])
-              ~fy:(strings ~title:(Text.v "layer") [| "p"; "p"; "q"; "q" |])
+            dot ~x:(num ramp) ~y:(num ~title:"y" ramp)
+              ~fx:(strings ~title:"head" [| "a"; "b"; "a"; "b" |])
+              ~fy:(strings ~title:"layer" [| "p"; "p"; "q"; "q" |])
               ()
           in
           let l = lay (Size.panels 80. 60.) f in
@@ -1074,8 +1131,8 @@ let titles =
         (fun head ->
           let f =
             dot ~x:(num ramp)
-              ~y:(num ~title:(Text.v "a y title") ramp)
-              ~fx:(strings ~title:(Text.v head) [| "a"; "b"; "a"; "b" |])
+              ~y:(num ~title:"a y title" ramp)
+              ~fx:(strings ~title:head [| "a"; "b"; "a"; "b" |])
               ()
           in
           let l = lay (Size.panels 60. 40.) f in
@@ -1088,11 +1145,8 @@ let titles =
       test "a long y title moves above the facet title" (fun () ->
           let f =
             dot ~x:(num ramp)
-              ~y:
-                (num
-                   ~title:(Text.v "a y title long enough to reach the middle")
-                   ramp)
-              ~fx:(strings ~title:(Text.v "head") [| "a"; "b"; "a"; "b" |])
+              ~y:(num ~title:"a y title long enough to reach the middle" ramp)
+              ~fx:(strings ~title:"head" [| "a"; "b"; "a"; "b" |])
               ()
           in
           let l = lay (Size.panels 60. 40.) f in
@@ -1297,10 +1351,9 @@ let legends =
             layer
               [
                 plain
-                  ~fill:
-                    (strings ~title:(Text.v "kind") [| "a"; "b"; "a"; "b" |])
+                  ~fill:(strings ~title:"kind" [| "a"; "b"; "a"; "b" |])
                   ramp;
-                rect ~x:(num ramp) ~fill:(num ~title:(Text.v "load") ramp) ();
+                rect ~x:(num ramp) ~fill:(num ~title:"load" ramp) ();
               ]
           in
           expect (printed (lay (Size.panels 80. 60.) f))
@@ -1370,11 +1423,9 @@ let legends =
           | [] -> fail "no swatches");
       test "a legend on top or at the bottom holds its title" (fun () ->
           let cats =
-            strings
-              ~title:(Text.v "A long legend title")
-              [| "a"; "b"; "a"; "b" |]
+            strings ~title:"A long legend title" [| "a"; "b"; "a"; "b" |]
           in
-          let nums = num ~title:(Text.v "A long legend title") ramp in
+          let nums = num ~title:"A long legend title" ramp in
           let at side f = layer [ f; legend ~side "color" ] in
           List.iter
             (fun side ->
@@ -1410,7 +1461,7 @@ let legends =
                 plain ~fill:(strings [| "a"; "b"; "a"; "b" |]) ramp;
                 legend ~side:`Left "color";
               ]
-            |> title ~align:`Center (Text.v "A centred title")
+            |> title ~align:`Center "A centred title"
           in
           apart (lay (Size.panels 22. 79.) f));
     ]
@@ -1441,7 +1492,7 @@ let guides =
             "A title long enough, with a box after it, to reach past the right \
              margin of a formatter"
           in
-          let l = lay (Size.panels 300. 60.) (title (Text.v t) (plain ramp)) in
+          let l = lay (Size.panels 300. 60.) (title t (plain ramp)) in
           match text_lines l t with
           | [ line ] -> in_order ~subs:[ t; "[(" ] line
           | lines -> failf "%d lines" (List.length lines));
@@ -1627,11 +1678,9 @@ let inside_figures =
   let data = f64 [| 1.; 2.; 3. |] in
   [
     ( "categories",
-      dot ~x:(num data) ~y:(num data)
-        ~fill:(strings ~title:(Text.v "kind") kinds)
-        () );
+      dot ~x:(num data) ~y:(num data) ~fill:(strings ~title:"kind" kinds) () );
     ( "a colour bar",
-      dot ~x:(num data) ~y:(num data) ~fill:(num ~title:(Text.v "z") data) () );
+      dot ~x:(num data) ~y:(num data) ~fill:(num ~title:"z" data) () );
   ]
 
 let named l = Gen.of_list ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n) l
@@ -1816,14 +1865,13 @@ let readable (name, th) =
     (contrast (Scheme.color (Theme.scheme th) 0.) paper)
 
 let homogeneous_figures =
-  let fill = strings ~title:(Text.v "kind") [| "a"; "b"; "a"; "b" |] in
+  let fill = strings ~title:"kind" [| "a"; "b"; "a"; "b" |] in
   [
     ("dots", plain ramp);
     ( "a legend and a title",
-      title (Text.v "Load") (dot ~x:(num ramp) ~y:(num ramp) ~fill ()) );
+      title "Load" (dot ~x:(num ramp) ~y:(num ramp) ~fill ()) );
     ( "facets and a colour bar",
-      rect ~x:(num ramp) ~y:(num ramp)
-        ~fill:(num ~title:(Text.v "z") ramp)
+      rect ~x:(num ramp) ~y:(num ramp) ~fill:(num ~title:"z" ramp)
         ~fx:(strings [| "p"; "q"; "p"; "q" |])
         () );
   ]
@@ -1891,18 +1939,13 @@ let glyphs =
         (fun () ->
           fails_naming [ "1: "; "U+10FFFD" ] (fun () ->
               lay (Size.panels 50. 50.)
-                (grid
-                   [
-                     [
-                       plain ramp; title (Text.v ("a" ^ unmapped)) (plain ramp);
-                     ];
-                   ])));
+                (grid [ [ plain ramp; title ("a" ^ unmapped) (plain ramp) ] ])));
       test "a channel title no face draws raises naming its axis" (fun () ->
-          let f = dot ~x:(num ~title:(Text.v unmapped) ramp) ~y:(num ramp) () in
+          let f = dot ~x:(num ~title:unmapped ramp) ~y:(num ramp) () in
           fails_naming [ "axis.x: "; "U+10FFFD" ] (fun () ->
               lay (Size.panels 50. 50.) f));
       test "a facet title no face draws raises naming its axis" (fun () ->
-          let fx = strings ~title:(Text.v unmapped) [| "a"; "b"; "a"; "b" |] in
+          let fx = strings ~title:unmapped [| "a"; "b"; "a"; "b" |] in
           let f = dot ~x:(num ramp) ~y:(num ramp) ~fx () in
           fails_naming [ "axis.fx: "; "U+10FFFD" ] (fun () ->
               lay (Size.panels 50. 50.) f));
@@ -1978,7 +2021,7 @@ let projections =
       test "a panel of no height has no inverse" (fun () ->
           let f =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
-            |> title (Text.v "t")
+            |> title "t"
           in
           let p =
             List.hd

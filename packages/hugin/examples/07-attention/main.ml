@@ -15,11 +15,8 @@ let () =
       (Nx.full Nx.float32 [| 3; 4; t; t |] Float.neg_infinity)
   in
   let a = Nx.softmax ~axes:[ 3 ] masked in
-  rect
-    ~fy:(dim ~title:(Text.v "layer") 0)
-    ~fx:(dim ~title:(Text.v "head") 1)
+  rect ~fy:(dim ~title:"layer" 0) ~fx:(dim ~title:"head" 1)
     ~y:(dim ~labels:tokens 2) ~x:(dim ~labels:tokens 3)
-    ~fill:(num ~title:(Text.v "attention") a)
-    ()
+    ~fill:(num ~title:"attention" a) ()
   |> coord (Coord.cartesian ~aspect:1. ())
   |> save ~size:(Size.figure 520. 380.) "attention.png"

@@ -43,14 +43,16 @@ Wrappers take the figure last, so they chain with `|>`:
 
 ```ocaml
 let () =
-  line ~x:(num ~title:(Text.v "x") x) ~y:(num ~title:(Text.v "sin x") (Nx.sin x)) ()
-  |> title (Text.v "A sine wave")
+  line ~x:(num ~title:"x" x) ~y:(num ~title:"sin x" (Nx.sin x)) ()
+  |> title "A sine wave"
   |> save "sine-titled.svg"
 ```
 
 The `title` of a channel titles the axis or legend of the scale it reads.
-Text is a `Text.t`, so a title can mix styles:
-`Text.concat [ Text.v "x"; Text.sup (Text.v "2") ]` writes x².
+Titles are strings. For styles, colours, sub- and superscripts, `title'`
+and `axis'` take a `Text.t`:
+`layer [ f; axis' ~title:Text.(concat [ v "x"; sup (v "2") ]) "x" ]`
+titles the x axis x².
 
 ## Channels
 
@@ -84,7 +86,7 @@ let rates = Nx.create Nx.float64 [| 5; 1 |] [| 2.; 2.5; 3.; 3.5; 4. |]
 let curves = Nx.exp (Nx.neg (Nx.mul rates steps))
 
 let () =
-  line ~x:(num steps) ~y:(num curves) ~stroke:(dim ~title:(Text.v "rate") 0) ()
+  line ~x:(num steps) ~y:(num curves) ~stroke:(dim ~title:"rate" 0) ()
   |> save "curves.png"
 ```
 

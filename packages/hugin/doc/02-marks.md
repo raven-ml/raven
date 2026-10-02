@@ -44,8 +44,8 @@ let () =
   let py = Nx.add (Nx.mul_s (Nx.cast Nx.float64 group) 2.) (Nx.Rng.normal keys.(1) Nx.float64 [| n |]) in
   let labels = [| "control"; "treated" |] in
   dot ~x:(num px) ~y:(num py)
-    ~fill:(cat ~title:(Text.v "group") ~labels group)
-    ~size:(num ~title:(Text.v "weight") (Nx.Rng.uniform keys.(2) Nx.float64 [| n |]))
+    ~fill:(cat ~title:"group" ~labels group)
+    ~size:(num ~title:"weight" (Nx.Rng.uniform keys.(2) Nx.float64 [| n |]))
     ()
   |> save "dots.png"
 ```
@@ -87,7 +87,7 @@ colour or a pattern, so `by_run` makes one for each:
 let () =
   let curves = Nx.sin (Nx.add (Nx.reshape [| 3; 1 |] (Nx.linspace Nx.float64 0. 1. 3)) t) in
   let run = Scale.band ~name:"run" () in
-  let by_run () = dim ~scale:run ~title:(Text.v "run") ~labels:[| "a"; "b"; "c" |] 0 in
+  let by_run () = dim ~scale:run ~title:"run" ~labels:[| "a"; "b"; "c" |] 0 in
   line ~x:(num t) ~y:(num curves) ~stroke:(by_run ()) ~dash:(by_run ()) ()
   |> save "dashes.png"
 ```
@@ -130,8 +130,8 @@ from zero to its value. Bars are categories along x and lengths along y:
 let () =
   let models = [| "small"; "base"; "large" |] in
   rect
-    ~x:(strings ~title:(Text.v "model") models)
-    ~y:(num ~title:(Text.v "accuracy") (Nx.create Nx.float64 [| 3 |] [| 0.71; 0.78; 0.83 |]))
+    ~x:(strings ~title:"model" models)
+    ~y:(num ~title:"accuracy" (Nx.create Nx.float64 [| 3 |] [| 0.71; 0.78; 0.83 |]))
     ()
   |> save "bars.png"
 ```
@@ -142,7 +142,7 @@ through `~fill`, and a continuous colour scale yields a colour bar:
 ```ocaml
 let () =
   let z = Nx.Rng.normal (key 3) Nx.float64 [| 12; 16 |] in
-  rect ~x:(dim 1) ~y:(dim 0) ~fill:(num ~title:(Text.v "z") z) ()
+  rect ~x:(dim 1) ~y:(dim 0) ~fill:(num ~title:"z" z) ()
   |> save "heatmap.png"
 ```
 
@@ -153,7 +153,7 @@ edge:
 ```ocaml
 let () =
   let h = Stats.histogram ~bins:30 (Nx.Rng.normal (key 4) Nx.float64 [| 2_000 |]) in
-  rect ~x:(num h.x) ~x2:(num h.x2) ~y:(num ~title:(Text.v "count") h.count) ()
+  rect ~x:(num h.x) ~x2:(num h.x2) ~y:(num ~title:"count" h.count) ()
   |> save "histogram.png"
 ```
 
@@ -276,6 +276,6 @@ let () =
   let xs = Nx.linspace Nx.float64 (-2.) 2. 60 in
   let ys = Nx.reshape [| 50; 1 |] (Nx.linspace Nx.float64 (-1.5) 1.5 50) in
   let field = Nx.add (Nx.square xs) (Nx.mul_s (Nx.square ys) 2.) in
-  contour ~x:(num xs) ~y:(num ys) ~fill:(num ~title:(Text.v "f") field) ()
+  contour ~x:(num xs) ~y:(num ys) ~fill:(num ~title:"f" field) ()
   |> save "contour.png"
 ```

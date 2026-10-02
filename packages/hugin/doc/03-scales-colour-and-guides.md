@@ -21,7 +21,7 @@ so this line is drawn on a logarithmic y:
 
 ```ocaml
 let () =
-  line ~x:(num steps) ~y:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") loss) ()
+  line ~x:(num steps) ~y:(num ~scale:(Scale.log ()) ~title:"loss" loss) ()
   |> save "log.png"
 ```
 
@@ -66,7 +66,7 @@ keeps its default:
 ```ocaml
 let () =
   let acc = Nx.create Nx.float64 [| 5 |] [| 0.42; 0.61; 0.7; 0.74; 0.76 |] in
-  line ~y:(num ~scale:(Scale.linear ~domain:(0., 1.) ()) ~title:(Text.v "accuracy") acc) ()
+  line ~y:(num ~scale:(Scale.linear ~domain:(0., 1.) ()) ~title:"accuracy" acc) ()
   |> save "domain.png"
 ```
 
@@ -108,7 +108,7 @@ let () =
   grid
     [
       [
-        line ~x:(num steps) ~y:(num curves) ~stroke:(num ~scale:lr ~title:(Text.v "rate") rates) ();
+        line ~x:(num steps) ~y:(num curves) ~stroke:(num ~scale:lr ~title:"rate" rates) ();
         dot ~x:(num ~scale:lr (Nx.flatten rates)) ~y:(num final)
           ~fill:(num ~scale:lr (Nx.flatten rates)) ();
       ];
@@ -187,13 +187,15 @@ let () =
       dot ~x:(index 0) ~y:(num values) ~fill:(cat ~labels:[| "a"; "b"; "c" |] codes) ();
       axis ~grid:true "y";
       axis ~show:false "x";
-      legend ~side:`Bottom "color";
+      legend ~side:`Bottom ~title:"group" "color";
     ]
   |> save "guides.png"
 ```
 
 `~grid:true` draws lines across the panel at the axis's ticks, `~show:false`
-hides a guide, and `~side` moves it.
+hides a guide, `~side` moves it, and `~title` titles it in place of its
+channels' titles. `axis'` takes the title as a `Text.t`, for styles,
+colours, sub- and superscripts.
 
 A legend can also lie inside a corner of its panels, with
 `` ~side:(`Inside `Top_right) ``. It is drawn under the marks and no corner

@@ -89,7 +89,7 @@ Hugin draws figures directly in the notebook.
 let x = Nx.linspace Nx.float32 0. 6.28 200
 let y = Nx.sin x
 
-let _fig = Hugin.(line ~x:(num x) ~y:(num y) () |> title (Text.v "A sine wave"))
+let _fig = Hugin.(line ~x:(num x) ~y:(num y) () |> title "A sine wave")
 ```
 
 ## Automatic Differentiation with Rune
@@ -117,7 +117,7 @@ let gs = Rune.vmap' (Rune.grad' f) xs
 
 let _fig =
   let open Hugin in
-  line ~x:(num ~title:(Text.v "x") xs) ~y:(num (Nx.stack [ ys; gs ]))
+  line ~x:(num ~title:"x" xs) ~y:(num (Nx.stack [ ys; gs ]))
     ~stroke:(dim ~labels:[| "f(x) = x³"; "f'(x) = 3x²" |] 0) ()
 ```
 |}

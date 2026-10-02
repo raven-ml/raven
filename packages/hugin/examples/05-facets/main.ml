@@ -10,10 +10,7 @@ let () =
       (Nx.create Nx.float64 [| 4 |] [| 0.2; 0.4; 0.6; 0.8 |])
   in
   let y = Nx.mul (Nx.exp (Nx.neg (Nx.mul_s (Nx.mul rate t) 0.5))) (Nx.cos t) in
-  line
-    ~x:(num ~title:(Text.v "time") t)
-    ~y:(num ~title:(Text.v "signal") y)
-    ~fx:
-      (dim ~title:(Text.v "damping") ~labels:[| "0.2"; "0.4"; "0.6"; "0.8" |] 0)
+  line ~x:(num ~title:"time" t) ~y:(num ~title:"signal" y)
+    ~fx:(dim ~title:"damping" ~labels:[| "0.2"; "0.4"; "0.6"; "0.8" |] 0)
     ()
   |> save ~size:(Size.figure 480. 200.) "facets.png"

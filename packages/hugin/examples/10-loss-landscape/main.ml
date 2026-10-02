@@ -26,10 +26,9 @@ let () =
   and py = num Nx.(slice [ A; I 1 ] path) in
   layer
     [
-      contour
-        ~x:(num ~title:(Text.v "α") alphas)
-        ~y:(num ~title:(Text.v "β") Nx.(slice [ A; N ] betas))
-        ~fill:(num ~scale:(Scale.log ()) ~title:(Text.v "loss") loss)
+      contour ~x:(num ~title:"α" alphas)
+        ~y:(num ~title:"β" Nx.(slice [ A; N ] betas))
+        ~fill:(num ~scale:(Scale.log ()) ~title:"loss" loss)
         ();
       line ~x:px ~y:py ~stroke:(const Color.white) ();
       dot ~x:px ~y:py ~size:(const 9.) ~fill:(const Color.white) ();

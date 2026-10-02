@@ -6,7 +6,7 @@ let () =
   let classes = [| "cat"; "dog"; "bird"; "fish" |] in
   let scores = Nx.create Nx.float64 [| 4 |] [| 0.92; 0.88; 0.71; 0.64 |] in
   rect
-    ~x:(strings ~title:(Text.v "class") classes)
-    ~y:(num ~title:(Text.v "accuracy") scores)
+    ~x:(strings ~title:"class" classes)
+    ~y:(num ~title:"accuracy" scores)
     ~fill:(strings classes) ()
   |> save "bars.png"

@@ -31,7 +31,7 @@ open Hugin
 let () =
   let x = Nx.linspace Nx.float64 0. 6.28 100 in
   line ~x:(num x) ~y:(num (Nx.sin x)) ()
-  |> title (Text.v "Sine wave")
+  |> title "Sine wave"
   |> save "sine.png"
 ```
 

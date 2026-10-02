@@ -6,7 +6,6 @@
 (** Channels: the data or constants a role is bound to. *)
 
 module Scale := Hugin_kit.Scale
-module Text := Hugin_text.Text
 
 (** {1:kinds Kinds} *)
 
@@ -56,7 +55,7 @@ val equal_lift : 'd lift -> 'e lift -> ('d, 'e) Type.eq option
 type 'd data = {
   lift : 'd lift;
   spec : 'd Scale.t option;
-  title : Text.t option;
+  title : string option;
 }
 
 type ('d, 'r) t =
@@ -88,33 +87,33 @@ val varies : int array -> ('d, 'r) t -> int -> bool
 val num :
   ?scale:float Scale.t ->
   ?valid:Nx.bool_t ->
-  ?title:Text.t ->
+  ?title:string ->
   ('a, 'b) Nx.t ->
   (float, 'r) t
 
 val cat :
   ?scale:string Scale.t ->
   ?valid:Nx.bool_t ->
-  ?title:Text.t ->
+  ?title:string ->
   ?labels:string array ->
   ('a, 'b) Nx.t ->
   (string, 'r) t
 
 val strings :
-  ?scale:string Scale.t -> ?title:Text.t -> string array -> (string, 'r) t
+  ?scale:string Scale.t -> ?title:string -> string array -> (string, 'r) t
 
 val floats :
-  ?scale:float Scale.t -> ?title:Text.t -> float array -> (float, 'r) t
+  ?scale:float Scale.t -> ?title:string -> float array -> (float, 'r) t
 
 val dim :
   ?scale:string Scale.t ->
   ?valid:Nx.bool_t ->
-  ?title:Text.t ->
+  ?title:string ->
   ?labels:string array ->
   int ->
   (string, 'r) t
 
-val index : ?scale:float Scale.t -> ?title:Text.t -> int -> (float, 'r) t
+val index : ?scale:float Scale.t -> ?title:string -> int -> (float, 'r) t
 val const : 'r -> ('d, 'r) t
 val map_range : ('r -> 'r) -> ('d, 'r) t -> ('d, 'r) t
 

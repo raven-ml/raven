@@ -12,9 +12,9 @@ let () =
   let p = Nx.add at (Nx.Rng.normal keys.(0) Nx.float64 [| n; 2 |]) in
   let weight = Nx.Rng.uniform keys.(1) Nx.float64 [| n |] in
   dot
-    ~x:(num ~title:(Text.v "x") Nx.(slice [ A; I 0 ] p))
-    ~y:(num ~title:(Text.v "y") Nx.(slice [ A; I 1 ] p))
-    ~fill:(cat ~title:(Text.v "cluster") ~labels:[| "a"; "b"; "c" |] cluster)
-    ~size:(num ~title:(Text.v "weight") weight)
+    ~x:(num ~title:"x" Nx.(slice [ A; I 0 ] p))
+    ~y:(num ~title:"y" Nx.(slice [ A; I 1 ] p))
+    ~fill:(cat ~title:"cluster" ~labels:[| "a"; "b"; "c" |] cluster)
+    ~size:(num ~title:"weight" weight)
     ~opacity:(const 0.8) ()
   |> save "scatter.png"

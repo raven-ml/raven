@@ -20,15 +20,15 @@ let figure n =
   dot
     ~x:(num Nx.(slice [ A; I 0 ] e))
     ~y:(num Nx.(slice [ A; I 1 ] e))
-    ~fill:(cat ~title:(Text.v "digit") ~labels:digits labels)
+    ~fill:(cat ~title:"digit" ~labels:digits labels)
     ~opacity:(const 0.3) ()
 
 let () =
   grid
     [
       [
-        figure 3_000 |> title (Text.v "3,000 points");
-        figure 100_000 |> title (Text.v "100,000 points");
+        figure 3_000 |> title "3,000 points";
+        figure 100_000 |> title "100,000 points";
       ];
     ]
   |> save ~size:(Size.figure 640. 300.) "embedding.png"

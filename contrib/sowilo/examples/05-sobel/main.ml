@@ -6,7 +6,7 @@
 open Hugin
 
 let image_path = "sowilo/examples/lena.png"
-let panel s px = image px |> title (Text.v s)
+let panel s px = image px |> title s
 
 let normalize_gradient img =
   let abs_img = Nx.abs img in

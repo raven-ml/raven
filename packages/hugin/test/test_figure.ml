@@ -245,15 +245,12 @@ let mark_v =
           ( "a title on the text role",
             fun () ->
               Mark.v ~name:"m"
-                [ Mark.bind Role.text (strings ~title:(Text.v "t") [| "a" |]) ]
+                [ Mark.bind Role.text (strings ~title:"t" [| "a" |]) ]
                 draw_nothing );
           ( "a title on a value role",
             fun () ->
               Mark.v ~name:"m"
-                [
-                  Mark.bind (Role.value ~name:"angle")
-                    (num ~title:(Text.v "t") v);
-                ]
+                [ Mark.bind (Role.value ~name:"angle") (num ~title:"t" v) ]
                 draw_nothing );
         ];
       accepts "accept"
@@ -342,8 +339,8 @@ type recipe =
   | R_mapped of int * int
   | R_level of float (* A reference line at a level given as a float. *)
   | R_custom of float option (* The aspect of the coordinate system implied. *)
-  | R_axis of string * bool
-  | R_legend of string * bool
+  | R_axis of string * bool * string option
+  | R_legend of string * bool * string option
   | R_bind of string * int
   | R_layer of recipe list
   | R_grid of float list option * recipe list list
@@ -366,9 +363,7 @@ let rec build = function
       let valid = Option.map (fun k -> masks.(k)) k in
       dot ~x:(num ?valid tensors.(i)) ~y:(num tensors.(j)) ()
   | R_line (i, titled) ->
-      let x =
-        if titled then index ~title:(Text.v "step") (-1) else index (-1)
-      in
+      let x = if titled then index ~title:"step" (-1) else index (-1) in
       line ~x ~y:(num tensors.(i)) ()
   | R_bar i -> rect ~x:(dim 0) ~y:(num tensors.(i)) ()
   | R_mapped (i, k) ->
@@ -384,13 +379,13 @@ let rec build = function
       Mark.v ~name:"custom" ?coord
         [ Mark.bind Role.x (num tensors.(0)) ]
         custom_draw
-  | R_axis (s, grid) -> axis ~grid s
-  | R_legend (s, show) -> legend ~show s
+  | R_axis (s, grid, title) -> axis ~grid ?title s
+  | R_legend (s, show, title) -> legend ~show ?title s
   | R_bind (s, i) -> bind (View.number s ~init:0.) bound.(i)
   | R_layer rs -> layer (List.map build rs)
   | R_grid (widths, rows) -> grid ?widths (List.map (List.map build) rows)
   | R_span (rows, cols, r) -> span ~rows ~cols (build r)
-  | R_title (s, k, r) -> title ~align:aligns.(k) (Text.v s) (build r)
+  | R_title (s, k, r) -> title ~align:aligns.(k) s (build r)
   | R_name (s, r) -> name s (build r)
   | R_share (s, indep, r) ->
       share [ (s, if indep then `Independent else `Shared) ] (build r)
@@ -402,6 +397,8 @@ let pp_list pp ppf l =
     l
 
 let pp_aspect = Format.pp_print_option Format.pp_print_float
+let pp_title = Format.pp_print_option Format.pp_print_string
+let other_title = function None -> Some "t" | Some _ -> None
 
 let rec pp_recipe ppf = function
   | R_dot (i, j, k) ->
@@ -413,8 +410,9 @@ let rec pp_recipe ppf = function
   | R_mapped (i, k) -> Format.fprintf ppf "mapped %d %d" i k
   | R_level v -> Format.fprintf ppf "level %g" v
   | R_custom a -> Format.fprintf ppf "custom %a" pp_aspect a
-  | R_axis (s, g) -> Format.fprintf ppf "axis %S %b" s g
-  | R_legend (s, show) -> Format.fprintf ppf "legend %S %b" s show
+  | R_axis (s, g, t) -> Format.fprintf ppf "axis %S %b %a" s g pp_title t
+  | R_legend (s, show, t) ->
+      Format.fprintf ppf "legend %S %b %a" s show pp_title t
   | R_bind (s, i) -> Format.fprintf ppf "bind %S %d" s i
   | R_layer rs -> Format.fprintf ppf "@[layer %a@]" (pp_list pp_recipe) rs
   | R_grid (ws, rows) ->
@@ -449,8 +447,12 @@ let rec gen_recipe depth =
         map (fun (i, k) -> R_mapped (i, k)) (pair idx (int_range 0 1));
         map (fun v -> R_level v) (of_list (Array.to_list levels));
         map (fun a -> R_custom a) aspect;
-        map (fun (s, g) -> R_axis (s, g)) (pair (of_list [ "x"; "y" ]) bool);
-        map (fun (s, show) -> R_legend (s, show)) (pair word bool);
+        map
+          (fun (s, (g, t)) -> R_axis (s, g, t))
+          (pair (of_list [ "x"; "y" ]) (pair bool (option word)));
+        map
+          (fun (s, (show, t)) -> R_legend (s, show, t))
+          (pair word (pair bool (option word)));
         map (fun (s, i) -> R_bind (s, i)) (pair word (int_range 0 1));
       ]
   in
@@ -498,8 +500,9 @@ let rec variants r =
     | R_mapped (i, k) -> [ R_mapped (i, 1 - k) ]
     | R_level v -> [ R_level (if Float.equal v 0. then Float.nan else 0.) ]
     | R_custom a -> [ R_custom (other_aspect a) ]
-    | R_axis (s, g) -> [ R_axis (s, not g) ]
-    | R_legend (s, show) -> [ R_legend (s, not show) ]
+    | R_axis (s, g, t) -> [ R_axis (s, not g, t); R_axis (s, g, other_title t) ]
+    | R_legend (s, show, t) ->
+        [ R_legend (s, not show, t); R_legend (s, show, other_title t) ]
     | R_bind (s, i) -> [ R_bind (s, 1 - i) ]
     | R_layer rs -> [ R_layer (R_bar 0 :: rs) ]
     | R_grid (ws, rows) ->
@@ -582,8 +585,10 @@ let equality =
           R_level Float.nan;
           R_custom None;
           R_custom (Some 2.);
-          R_axis ("x", false);
-          R_legend ("a", true);
+          R_axis ("x", false, None);
+          R_axis ("x", false, Some "a");
+          R_legend ("a", true, None);
+          R_legend ("a", true, Some "a");
           R_bind ("a", 0);
           R_layer [ R_bar 0 ];
           R_grid (None, [ [ R_bar 0; R_bar 1 ] ]);
@@ -629,13 +634,14 @@ let equality =
           ("one grey image", f32 [| 2; 3 |]);
           ("a batch of RGB images", f32 [| 4; 2; 3; 3 |]);
         ]
-        (fun (_, px) ->
-          equal bool true (Hugin.equal (image px) (image px)));
-      test "a title's default alignment is left" (fun () ->
+        (fun (_, px) -> equal bool true (Hugin.equal (image px) (image px)));
+      prop "a title is its rich text" Gen.string (fun s ->
+          equal bool true (Hugin.equal (title s a) (title' (Text.v s) a)));
+      prop "an axis title is its rich text" Gen.string (fun s ->
           equal bool true
-            (Hugin.equal
-               (title (Text.v "t") a)
-               (title ~align:`Left (Text.v "t") a)));
+            (Hugin.equal (axis ~title:s "x") (axis' ~title:(Text.v s) "x")));
+      test "a title's default alignment is left" (fun () ->
+          equal bool true (Hugin.equal (title "t" a) (title ~align:`Left "t" a)));
       test "a binding of the same key and function is equal" (fun () ->
           let k = View.number "k" ~init:1. in
           let fn _ = a in
@@ -656,8 +662,8 @@ let equality =
           ("a reference line", fun () -> rule ~y:(floats [| 0. |]) ());
           ( "text with offsets",
             fun () ->
-              Hugin.text ~dx:2. ~dy:(-1.) ~x:(num v) ~y:(num v)
-                ~text:(num v) () );
+              Hugin.text ~dx:2. ~dy:(-1.) ~x:(num v) ~y:(num v) ~text:(num v) ()
+          );
           ("an image", fun () -> image m);
           ("a contour", fun () -> contour ~fill:(num m) ());
         ]

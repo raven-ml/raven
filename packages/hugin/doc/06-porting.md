@@ -33,8 +33,8 @@ let () =
   layer
     [
       line
-        ~x:(num ~title:(Text.v "x") x)
-        ~y:(num ~scale:(Scale.linear ~domain:(-1., 1.) ()) ~title:(Text.v "y") y)
+        ~x:(num ~title:"x" x)
+        ~y:(num ~scale:(Scale.linear ~domain:(-1., 1.) ()) ~title:"y" y)
         ~stroke:(strings [| "sin" |]) ~dash:(const Dash.dashed) ();
       legend ~side:(`Inside `Top_right) "color";
     ]
@@ -88,8 +88,8 @@ scale gives its first colour and its legend lists.
 | First hugin | Current hugin |
 |---|---|
 | `layers fs` | `layer fs` |
-| `title s` | `title (Text.v s)` |
-| `xlabel s`, `ylabel s` | `~title:(Text.v s)` on the channel given to `~x` or `~y` |
+| `title s` | `title s` |
+| `xlabel s`, `ylabel s` | `~title:s` on the channel given to `~x` or `~y`, or `layer [ f; axis ~title:s "x" ]` |
 | `xlim lo hi`, `ylim lo hi` | `~scale:(Scale.linear ~domain:(lo, hi) ())` on that channel |
 | `` xscale `Log ``, `` `Sqrt ``, `` `Symlog c `` | `Scale.log ()`, `Scale.pow ~exponent:0.5 ()`, `Scale.symlog ~constant:c ()` |
 | `` xscale `Asinh `` | `Scale.custom ~transform:"asinh" ~forward:Float.asinh ~inverse:Float.sinh ()` |

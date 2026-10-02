@@ -94,7 +94,7 @@ let hull = function
 type axis_part =
   | Ticks of { labelled : bool }
   | Header of int
-  | Scale_title of side
+  | Scale_title of { side : side; titles : Text.t list }
 
 type kind =
   | Axis of { guide : guide; scale : int; part : axis_part }
@@ -201,6 +201,8 @@ let longest f l = List.fold_left (fun m x -> Float.max m (f x)) 0. l
 
 (* Texts *)
 
+let no_text = Text.v ""
+
 let tick_text (t : Ticks.tick) =
   match t.context with
   | None -> Text.v t.label
@@ -209,19 +211,27 @@ let tick_text (t : Ticks.tick) =
 let categorical (F f) =
   match f.kind with Channel.Categories -> true | Channel.Quantities -> false
 
-(* [guide_title s note] is the distinct titles of the channels reading [s] in
-   the order of the figure, separated by commas, then [note]. *)
-let guide_title (F f) note =
-  let add acc m =
-    match m.m_d.title with
-    | Some t when not (List.exists (Text.equal t) acc) -> t :: acc
-    | _ -> acc
+(* [guide_title s explicit note] is the distinct titles of [explicit], or if it
+   is empty, those of the channels reading [s] in the order of the figure,
+   separated by commas, then [note]. An empty title is no title. *)
+let guide_title (F f) explicit note =
+  let titles =
+    match explicit with
+    | [] ->
+        List.filter_map
+          (fun m -> Option.map Text.v m.m_d.title)
+          (by_order f.members)
+    | ts -> ts
+  in
+  let add acc t =
+    if Text.equal t no_text || List.exists (Text.equal t) acc then acc
+    else t :: acc
   in
   let rec join = function
     | ([] | [ _ ]) as l -> l
     | t :: ts -> t :: Text.v ", " :: join ts
   in
-  let titles = join (List.rev (List.fold_left add [] (by_order f.members))) in
+  let titles = join (List.rev (List.fold_left add [] titles)) in
   let note =
     match (note, titles) with
     | None, _ -> []
@@ -484,7 +494,7 @@ let entries_body cx g ~wrap ~top s scale (t : Ticks.t) =
   let least = if horizontal g.side then entry else float n *. row in
   (List.map fst entries, labels, labels, least)
 
-let legend cx g ~length ~wrap scale (t : Ticks.t) =
+let legend cx g ~length ~wrap ~titles scale (t : Ticks.t) =
   let s = cx.scales.(scale) and vertical = not (horizontal g.side) in
   let pad = em cx pad_em in
   let reach =
@@ -499,7 +509,7 @@ let legend cx g ~length ~wrap scale (t : Ticks.t) =
           place cx ~valign:`Bottom ~data:false 1. text
             (P2.v 0. (-.(pad +. reach)))
         else place cx ~valign:`Top ~data:false 1. text (P2.v 0. 0.))
-      (guide_title s t.note)
+      (guide_title s titles t.note)
   in
   let top =
     match title with
@@ -540,6 +550,7 @@ let lay cx g ~length ~across ~wrap ~span =
     { spec = g; length; bounds = None; least = 0.; wrap; elements = [] }
   in
   match g.kind with
+  | Title { text; _ } when Text.equal text no_text -> empty
   | Title { align; text } ->
       title cx g ~length ~wrap ~span align head_em (Text.bold text)
   | Axis { guide = { show = false; _ }; _ }
@@ -551,14 +562,16 @@ let lay cx g ~length ~across ~wrap ~span =
         cx.ticks.(scale)
   | Axis { scale; part = Header cat; _ } ->
       header cx g ~length ~wrap cx.scales.(scale) cat
-  | Axis { scale; part = Scale_title axis; _ } -> (
+  | Axis { scale; part = Scale_title { side = axis; titles }; _ } -> (
       let s = cx.scales.(scale) in
-      match guide_title s cx.ticks.(scale).note with
+      match guide_title s titles cx.ticks.(scale).note with
       | None -> empty
       | Some text ->
           let align = if horizontal axis then `Center else `Left in
           title cx g ~length ~wrap ~span align 1. text)
-  | Legend { scale; _ } -> legend cx g ~length ~wrap scale cx.ticks.(scale)
+  | Legend { guide; scale } ->
+      let titles = Option.to_list guide.title in
+      legend cx g ~length ~wrap ~titles scale cx.ticks.(scale)
 
 let protrusion g =
   match g.bounds with
