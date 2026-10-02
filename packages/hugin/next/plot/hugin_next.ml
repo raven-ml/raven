@@ -3337,7 +3337,12 @@ type track = Flex of float | Fixed
 type item =
   | Leaf of leaf
   | Grid of grid
-  | Heading of { align : Text.Layout.halign; head : Text.t; hside : side }
+  | Heading of {
+      owner : id; (* The titled node, or a facet scale's axis. *)
+      align : Text.Layout.halign;
+      head : Text.t;
+      hside : side;
+    }
   | Legend of legend_spec
 
 and grid = {
@@ -3425,8 +3430,8 @@ let check cx owner p =
                 p.text chars )
             :: !(cx.notes)
         else
-          err "layout" "%a holds %s, which no face of the theme has" Text.pp
-            p.text chars
+          err "layout" "%a: %a holds %s, which no face of the theme has" pp_id
+            owner Text.pp p.text chars
 
 let place_text cx owner ?halign ?valign ~turned ~data k text at =
   let p = { text; set = set cx ?halign ?valign k text; at; turned; data } in
@@ -4151,8 +4156,7 @@ let place_legend cx acc ls cell span =
         }
         :: acc.legends
 
-let place_heading cx ~align ~head ~side cell span outer =
-  let owner = Nx.Ptree.Path.root in
+let place_heading cx ~owner ~align ~head ~side cell span outer =
   let span = Option.value span ~default:cell in
   let _, valign, turned = outer_align side in
   if turned then
@@ -4187,9 +4191,10 @@ let rec place cx acc unit item box ~span ~outer =
   match item with
   | Leaf l -> Some (place_leaf cx acc l box)
   | Grid g -> place_grid cx acc unit g box
-  | Heading { align; head; hside } ->
+  | Heading { owner; align; head; hside } ->
       acc.titles <-
-        place_heading cx ~align ~head ~side:hside box span outer :: acc.titles;
+        place_heading cx ~owner ~align ~head ~side:hside box span outer
+        :: acc.titles;
       None
   | Legend ls ->
       place_legend cx acc ls box span;
@@ -4565,11 +4570,11 @@ let build r scales uses =
       (fun (b, l) -> if Nx.Ptree.Path.equal b id then Some l else None)
       legends
   in
-  let heading side (align, head) =
-    (side, Heading { align; head; hside = side })
+  let heading owner side (align, head) =
+    (side, Heading { owner; align; head; hside = side })
   in
   (* The title of a facet scale goes beside its headers. *)
-  let facet_title c (i, role) =
+  let facet_title pid c (i, role) =
     let (F f as s) = scales.(i) in
     let explicit = explicit_axis c f.sid.sname in
     let show =
@@ -4583,7 +4588,11 @@ let build r scales uses =
       | _ -> default_side role
     in
     match guide_title s None with
-    | Some t when show -> [ heading side (`Center, t) ]
+    | Some t when show ->
+        let owner =
+          Nx.Ptree.Path.(add (Field f.sid.sname) (add (Field "axis") pid))
+        in
+        [ heading owner side (`Center, t) ]
     | _ -> []
   in
   let content pid c =
@@ -4634,7 +4643,9 @@ let build r scales uses =
         let titles =
           List.concat_map
             (fun (i, role) ->
-              Option.fold ~none:[] ~some:(fun i -> facet_title c (i, role)) i)
+              Option.fold ~none:[]
+                ~some:(fun i -> facet_title pid c (i, role))
+                i)
             facets
         in
         wrap pid titles
@@ -4670,7 +4681,7 @@ let build r scales uses =
               gbody = None;
             }
     in
-    let titles = List.rev_map (heading `Top) s.titles in
+    let titles = List.rev_map (heading id `Top) s.titles in
     wrap id titles (wrap id (legends_at id) body)
   in
   block Nx.Ptree.Path.root r.shaped

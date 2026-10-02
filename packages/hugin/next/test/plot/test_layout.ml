@@ -802,13 +802,25 @@ let guides =
 let glyphs =
   group "glyphs"
     [
-      test "a title no face draws raises naming the character" (fun () ->
-          fails_naming [ "U+10FFFD" ] (fun () ->
+      test "a title no face draws raises naming the character and its node"
+        (fun () ->
+          fails_naming [ "1: "; "U+10FFFD" ] (fun () ->
               lay (Size.panels 50. 50.)
-                (title (Text.v ("a" ^ unmapped)) (plain ramp))));
-      test "a channel title no face draws raises" (fun () ->
+                (grid
+                   [
+                     [
+                       plain ramp; title (Text.v ("a" ^ unmapped)) (plain ramp);
+                     ];
+                   ])));
+      test "a channel title no face draws raises naming its axis" (fun () ->
           let f = dot ~x:(num ~title:(Text.v unmapped) ramp) ~y:(num ramp) () in
-          fails_naming [ "U+10FFFD" ] (fun () -> lay (Size.panels 50. 50.) f));
+          fails_naming [ "axis.x: "; "U+10FFFD" ] (fun () ->
+              lay (Size.panels 50. 50.) f));
+      test "a facet title no face draws raises naming its axis" (fun () ->
+          let fx = strings ~title:(Text.v unmapped) [| "a"; "b"; "a"; "b" |] in
+          let f = dot ~x:(num ramp) ~y:(num ramp) ~fx () in
+          fails_naming [ "axis.fx: "; "U+10FFFD" ] (fun () ->
+              lay (Size.panels 50. 50.) f));
       test "a category label no face draws is a warning" (fun () ->
           let f =
             plain ~fill:(strings [| "ok"; "b" ^ unmapped; "ok"; "ok" |]) ramp
@@ -818,7 +830,7 @@ let glyphs =
           | [ (id, msg) ] ->
               equal string "legend.color.cat"
                 (Format.asprintf "%a" Nx.Ptree.Path.pp id);
-              is_true (contains msg "U+10FFFD")
+              in_order ~subs:[ "U+10FFFD" ] msg
           | ws -> failf "%d warnings" (List.length ws));
     ]
 
