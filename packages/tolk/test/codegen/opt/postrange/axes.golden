@@ -132,6 +132,7 @@ swap_globals	3	[128, 128, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.REDUC
 swap_then_split	5	[32, 32, 4, 4, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.REDUCE]	[4]	[0, 1, 2]	[4]	1	4	0	1	3	  32   32    4    4  128	2:32:GLOBAL 4:4:UPCAST
 swap_with_itself	3	[128, 128, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.REDUCE]	[2]	[0, 1]	[2]	0	1	0	1	3	 128  128  128	
 local_ignores_shared_memory	4	[4, 128, 32, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.REDUCE]	[3]	[0, 1, 2]	[3]	0	1	0	1	3	   4  128   32  128	1:4:GLOBAL 3:32:LOCAL
+tc_operands_swapped	5	[16, 16, 32, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.REDUCE]	[4]	[0, 1]	[4]	1	2	0	1	3	  16   16   32    2   16	1:16:GLOBAL 2:16:GLOBAL 0:16:REDUCE
 stage_then_reduce_globals	3	[8, 8, 4]	[AxisType.LOOP, AxisType.LOOP, AxisType.GLOBAL]	[1]	[2]	[]	0	1	0	1	3	   8    8    4	
 stage_outside_an_output_globals	4	[8, 8, 2, 4]	[AxisType.LOOP, AxisType.LOOP, AxisType.WEAK, AxisType.GLOBAL]	[1]	[2, 3]	[]	0	1	0	1	3	   8    8    2    4	
 loop_counter_upcast	2	[2, 2]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	1	2	0	0	6	   2    2	0:2:WEAK 2:2:UPCAST

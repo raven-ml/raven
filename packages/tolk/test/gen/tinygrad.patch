@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..5028dcf 100644
+index efb2e82..405c70f 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,7 +2,7 @@ from dataclasses import replace
@@ -390,7 +390,7 @@ index 62c3191..fb2d746 100644
  def xpow(base:UOp, exponent:UOp) -> UOp:
    # start with b ** e = exp2(e * log2(b))
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index 712a2b7..a78ae66 100644
+index 712a2b7..ccf141f 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -2,6 +2,7 @@ import itertools
@@ -401,7 +401,27 @@ index 712a2b7..a78ae66 100644
  from tinygrad.codegen.late.coalesce import image_valid_dims
  from tinygrad.codegen.opt.postrange import Scheduler
  
-@@ -58,25 +59,78 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,8 +25,18 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+     2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
+   TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
+   """
++  # an operand is decoded when it converts integers it reads into floats
++  def decoded(o):
++    return any(u.op in (Ops.CAST, Ops.BITCAST) and dtypes.is_float(u.dtype) and dtypes.is_int(u.src[0].dtype)
++               for u in o.toposort(gate=lambda u: u.op is not Ops.INDEX))
++  # decoding packed values splits the reduce into a range over the bytes and one over a byte's values: a product with a decoded operand
++  # takes the tensor cores over the bytes
++  def decoded_product():
++    if k.reduceop is None or k.reduceop.arg[0] is not Ops.ADD: return False
++    mul = k.reduceop.src[0] if k.reduceop.src[0].op is not Ops.CAST else k.reduceop.src[0].src[0]
++    return mul.op is Ops.MUL and any(decoded(o) for o in mul.src)
+   # NOTE: unless TC_OPT is > 0, we only trigger tensor cores if there's only one reduce axis
+-  if USE_TC > 0 and (len(k.reduce_axes) == 1 or (TC_OPT.value >= 1)):
++  if USE_TC > 0 and (len(k.reduce_axes) == 1 or (TC_OPT.value >= 1) or decoded_product()):
+     for axis in range(3):
+       tk = k.copy()
+       # check TC first and apply hand-coded opts if successful
+@@ -58,25 +69,75 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
            if (axis:=unit_stride_axes_mul_4[0]) in (upd:=k.upcastable_dims)+k.unrollable_dims:
              k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST if axis in upd else AxisType.UNROLL)))
  
@@ -428,9 +448,6 @@ index 712a2b7..a78ae66 100644
 +  # values of the axis: when it is decoded, converting integers it reads into floats, upcast by d, up to RUN_CAP, the axis's lanes
 +  # decode it once, as a matrix a block of rows shares is decoded once
 +  RUN_CAP = 4
-+  def decoded(o):
-+    return any(u.op in (Ops.CAST, Ops.BITCAST) and dtypes.is_float(u.dtype) and dtypes.is_int(u.src[0].dtype)
-+               for u in o.toposort(gate=lambda u: u.op is not Ops.INDEX))
 +  def run(o, r):
 +    divs = [u.src[1].arg if u.op is Ops.FLOORDIV and u.src[1].op is Ops.CONST else None for u in o.toposort() if any(s is r for s in u.src)]
 +    return divs[0] if divs and divs[0] is not None and all(d == divs[0] for d in divs) else 1
@@ -499,7 +516,7 @@ index 712a2b7..a78ae66 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -118,6 +152,8 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -118,6 +179,8 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      for axis, upcast_amount in itertools.product(k.upcastable_dims, ([128] if not len(upcasted_axis) else []) if is_dsp else [3,4]):
        # if we haven't upcasted it, it mods, and buffer has stride 0 on axis while having no stride 0 in the upcasted axis already
        if axis in upcasted_axis or k.full_shape[axis]%upcast_amount != 0: continue
@@ -509,7 +526,7 @@ index 712a2b7..a78ae66 100644
        if any(rng not in b.src[1].get_idx().backward_slice and all(r2 in b.src[1].get_idx().backward_slice
            for r2 in k.ranges_of(AxisType.UPCAST, AxisType.UNROLL)) for b in k.bufs):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index f80c800..988dcc1 100644
+index f80c800..96fb3eb 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -14,6 +14,8 @@ from tinygrad.renderer import Renderer
@@ -590,21 +607,56 @@ index f80c800..988dcc1 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -182,7 +219,7 @@ class Scheduler:
+@@ -182,21 +219,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
 -        if tc.dtype_in == in0.dtype and tc.dtype_in == in1.dtype and tc.dtype_out == reduceop.dtype:
 +        if self._tc_operand(tc, in0) is not None and self._tc_operand(tc, in1) is not None and tc.dtype_out == reduceop.dtype:
            # tensor cores have three ranges. X, Y, and REDUCE
-           in0_ranges = sorted([u for u in in0.ranges if u not in in1.ranges], key=lambda x: x.arg[0], reverse=True)
-           in1_ranges = sorted([u for u in in1.ranges if u not in in0.ranges], key=lambda x: x.arg[0], reverse=True)
-@@ -219,7 +256,8 @@ class Scheduler:
+-          in0_ranges = sorted([u for u in in0.ranges if u not in in1.ranges], key=lambda x: x.arg[0], reverse=True)
+-          in1_ranges = sorted([u for u in in1.ranges if u not in in0.ranges], key=lambda x: x.arg[0], reverse=True)
++          # a range the other operand reads only in whole tiles of the core's dim, as r // d for a multiple d of it, is the operand's own:
++          # a tile of r's values reads one value of the other, as a block of rows reads its block's matrix
++          def in_tiles(u, r, dim):
++            readers = [x for x in u.toposort() if any(s is r for s in x.src)]
++            return len(readers) > 0 and all(x.op is Ops.FLOORDIV and x.src[1].op is Ops.CONST and x.src[1].arg % dim == 0 for x in readers)
++          def own(a, b, dim): return sorted([u for u in a.ranges if u not in b.ranges or in_tiles(b, u, dim)], key=lambda x: x.arg[0], reverse=True)
+           red_ranges = sorted(UOp.sink(*reduceop.src[1:]).ranges, key=lambda x: x.arg[0], reverse=True)
+-          if DEBUG >= 3:
+-            print(f"TC({axis}): {[(x.arg[0],x.vmax+1) for x in in0_ranges]}",
+-                              f"{[(x.arg[0],x.vmax+1) for x in in1_ranges]} {[(x.arg[0],x.vmax+1) for x in red_ranges]}")
+-          if not len(in0_ranges) or not len(in1_ranges) or not len(red_ranges): continue
+-
+-          # pick ranges
+-          # NOTE: in1 and in0 are switched because tc.dims is (N, M, K)
+-          axis_choices = list(itertools.product(in1_ranges, in0_ranges, red_ranges))
++
++          # pick ranges: the core's A runs along M and its B along N, tc.dims being (N, M, K). Either operand may be A: in0 first, then in1,
++          # whose ranges then run along M
++          axis_choices = []
++          for swapped, (a, b) in ((False, (in0, in1)), (True, (in1, in0))):
++            a_ranges, b_ranges = own(a, b, tc.dims[1]), own(b, a, tc.dims[0])
++            if DEBUG >= 3:
++              print(f"TC({axis}): {[(x.arg[0],x.vmax+1) for x in a_ranges]}",
++                                f"{[(x.arg[0],x.vmax+1) for x in b_ranges]} {[(x.arg[0],x.vmax+1) for x in red_ranges]}")
++            axis_choices += [(swapped, c) for c in itertools.product(b_ranges, a_ranges, red_ranges)]
+           if not (axis < len(axis_choices)): continue
+-          axes = list(axis_choices[axis])
++          swapped, axes = axis_choices[axis]
++          axes = list(axes)
+           check(not any(self.rngs[i] in axes[:2] for i in self.reduce_axes), "tensor core N and M can't be contracted")
+ 
+           # do optimizations and save the ranges
+@@ -219,7 +263,11 @@ class Scheduler:
              reduceop = get_single_element([x for x in self.reduceops if axes[2] in UOp.sink(*x.src[1:]).ranges])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]
 -            ins = mul.src if gate is None else tuple(gate.where(x, UOp.const(0, x.dtype)) for x in mul.src)
-+            ins = tuple(self._tc_operand(tc, x) for x in mul.src)
++            # an operand read in whole tiles of the other's axis is one value over a tile: its reads of the other's bits, which stay below the
++            # tile, are read at 0. A reads no N bit, and B no M bit
++            ins = tuple(self._tc_operand(tc, x).substitute({ne[c]: ne[c].const_like(0) for c in ne if c[0] == d})
++                        for x,d in zip(mul.src[::-1] if swapped else mul.src, "nm"))
 +            ins = ins if gate is None else tuple(gate.where(x, UOp.const(0, x.dtype)) for x in ins)
              srcs = [x.substitute({ne[a]: ne[b] for a,b in rl.items()}, walk=True) for x,rl in zip(ins, tc.relabel())]
  
@@ -1325,9 +1377,18 @@ index a5cf57d..ae2879b 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 0239aa4..59df4be 100644
+index 0239aa4..2e2e110 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
+@@ -1,7 +1,7 @@
+ from dataclasses import dataclass, field, replace
+ from typing import cast
+ import itertools
+-from tinygrad.dtype import dtypes, AddrSpace, Invalid
++from tinygrad.dtype import dtypes, AddrSpace, Invalid, can_lossless_cast
+ from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo, ParamArg
+ from tinygrad.uop.ops import graph_rewrite, sint, AxisType, BottomUpGate, rewrite_group
+ from tinygrad.uop.symbolic import symbolic
 @@ -77,13 +77,18 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
        indexes.append(x)
      if x.op is Ops.REDUCE: reduces.append(x)
@@ -1348,6 +1409,37 @@ index 0239aa4..59df4be 100644
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
+@@ -227,10 +232,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+     return buf.after(*ended_stores)
+ 
+   if x.arg.addrspace == AddrSpace.GLOBAL:
++    # a value its kernels read widened from a narrower type that holds every value is stored narrow, and each read widens it; a value
++    # stored whole keeps its type
++    value = x.src[0]
++    if x.arg.removable and widens(value): value, dtype = value.src[0], value.src[0].commit_dtype()
+     buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, size, device=x.arg.device))
+-    do_store = buf.index(idx).store(x.src[0].cast(dtype)).end(*rngs)
++    do_store = buf.index(idx).store(value.cast(dtype)).end(*rngs)
+     return buf.after(do_store).cast(x.dtype)
+ 
++def widens(x:UOp) -> bool:
++  if x.op is not Ops.CAST: return False
++  s, d = x.src[0].dtype, x.dtype
++  return s != dtypes.bool and s not in dtypes.weaks and d not in dtypes.weaks and s.itemsize < d.itemsize and can_lossless_cast(s, d)
++
+ # collapse any BUFFERIZE to single input BUFFERIZE
+ def flatten_bufferize(x:UOp):
+   if len(x.src) == 2: return None
+@@ -258,6 +272,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+   # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
+   (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
+    lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
++  # so does an index of a narrow store through its widening
++  (UPat(Ops.INDEX, src=(UPat(Ops.CAST, src=(UPat(Ops.AFTER, name="buf"),)),), allow_any_len=True, name="u"),
++   lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
+ 
+   # move RESHAPEs through MSELECT/MSTACK
+   (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py

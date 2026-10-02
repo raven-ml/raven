@@ -950,6 +950,17 @@ thread.
 
 ### Tolk (new)
 
+- A value that kernels read widened to a type holding each of its values, as
+  `bfloat16` to `float32`, is stored at its own type and widened as it is
+  read: half the bytes, and a `float32` product of such values runs on the
+  tensor cores. gpt-oss-20b's attention output projection of a 512-token
+  prefill on an RTX 5000 Ada takes 0.30 ms, from 2.34 ms.
+- The tensor cores take a product whose rows share the other operand by
+  blocks, as `Nx_quant.apply ~ids` on a prompt multiplies each block of
+  positions by its expert's matrix, with either operand as the core's first,
+  and a product of decoded weights whatever its number of reduce axes.
+  gpt-oss-20b's 512-token prefill on an RTX 5000 Ada takes 0.22 s, from
+  0.71 s.
 - A value of no axes that its consumers broadcast, such as a reduction of a
   whole tensor, is computed once. Each consumer computed it again for each
   of its elements: `x - Nx.sum x` summed `x` once per element, and

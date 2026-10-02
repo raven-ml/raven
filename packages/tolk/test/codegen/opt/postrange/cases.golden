@@ -174,7 +174,8 @@ tc_use_tc_zero	matmul	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 0)),)		Kernel
 tc_use_tc_out_of_range	matmul	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 3)),)		KernelOptError	0
 tc_without_reduce	add_one	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
 tc_on_max	row_max	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
-tc_axis_out_of_choices	matmul	metal	(Opt(op=OptOps.TC, axis=1, arg=(-1, 0, 1)),)		KernelOptError	0
+tc_operands_swapped	matmul	metal	(Opt(op=OptOps.TC, axis=1, arg=(-1, 0, 1)),)		ok	
+tc_axis_out_of_choices	matmul	metal	(Opt(op=OptOps.TC, axis=2, arg=(-1, 0, 1)),)		KernelOptError	0
 custom_gemm_group	custom_gemm	amd	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		KernelOptError	0
 custom_gemm_unroll	custom_gemm	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)),)		KernelOptError	0
 stage_then_reduce_globals	stage_then_reduce	metal	()		ok	

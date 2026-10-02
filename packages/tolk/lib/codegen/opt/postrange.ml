@@ -340,6 +340,30 @@ module Scheduler = struct
     then Some (nth u 0)
     else None
 
+  (* Whether [u] reads the range [r] only in whole tiles of [dim]: as [r / d]
+     for a multiple [d] of [dim]. A tile of [r]'s values then reads one value of
+     [u], as an operand reads the axis the core's other operand runs along:
+
+       row     0 .. 15 | 16 .. 31 | ...     rows   x[row]           M
+       block       0   |     1    |          weight W[owner[row / 16]]
+
+     with [dim] 16 the core takes 16 rows of [x] against one block's matrix. *)
+  let in_tiles u r dim =
+    let readers =
+      List.filter
+        (fun x -> List.memq r (src x))
+        (Nodes.to_list (backward_slice_with_self u))
+    in
+    let tile x =
+      op x = Op.Floordiv
+      && op (nth x 1) = Op.Const
+      &&
+      match value (nth x 1) with
+      | `Int d -> Bigint.(equal (rem d (of_int dim)) zero)
+      | _ -> false
+    in
+    readers <> [] && List.for_all tile readers
+
   let rec apply ?(append_opt = true) k (opt : Opt.t) =
     let axis_rng axis =
       check
@@ -521,38 +545,43 @@ module Scheduler = struct
         let first r = List.hd (axis_id r) in
         List.stable_sort (fun a b -> Int.compare (first b) (first a)) rs
       in
-      let only a b =
-        List.filter (fun u -> not (mem_ranges u b)) (Nodes.to_list (ranges a))
+      let n_dim, m_dim, _ = Tc.dims tc in
+      let only a b dim =
+        by_id_desc
+          (List.filter
+             (fun u -> (not (mem_ranges u b)) || in_tiles b u dim)
+             (Nodes.to_list (ranges a)))
       in
-      let in0_ranges = by_id_desc (only in0 in1)
-      and in1_ranges = by_id_desc (only in1 in0)
-      and red_ranges = by_id_desc (sink_ranges (List.tl (src reduceop))) in
-      if Helpers.Context_var.value Helpers.debug >= 3 then begin
-        let show rs =
-          String.concat ", "
-            (List.map
-               (fun r ->
-                 strf "(%d, %s)"
-                   (List.hd (axis_id r))
-                   (Bigint.to_string (size r)))
-               rs)
-        in
-        Format.eprintf "TC(%d): [%s] [%s] [%s]@." axis (show in0_ranges)
-          (show in1_ranges) (show red_ranges)
-      end;
-      (* pick ranges. NOTE: in1 and in0 are switched because tc.dims is (N, M,
-         K) *)
-      let choices =
+      let red_ranges = by_id_desc (sink_ranges (List.tl (src reduceop))) in
+      (* pick ranges: the core's A runs along M and its B along N, tc.dims
+         being (N, M, K). Either operand may be A: in0 first, as tinygrad
+         takes it, then in1, whose ranges then run along M. *)
+      let roles swapped a b =
+        let a_ranges = only a b m_dim and b_ranges = only b a n_dim in
+        if Helpers.Context_var.value Helpers.debug >= 3 then begin
+          let show rs =
+            String.concat ", "
+              (List.map
+                 (fun r ->
+                   strf "(%d, %s)"
+                     (List.hd (axis_id r))
+                     (Bigint.to_string (size r)))
+                 rs)
+          in
+          Format.eprintf "TC(%d): [%s] [%s] [%s]@." axis (show a_ranges)
+            (show b_ranges) (show red_ranges)
+        end;
         List.concat_map
           (fun n ->
             List.concat_map
-              (fun m -> List.map (fun r -> [| n; m; r |]) red_ranges)
-              in0_ranges)
-          in1_ranges
+              (fun m -> List.map (fun r -> (swapped, [| n; m; r |])) red_ranges)
+              a_ranges)
+          b_ranges
       in
+      let choices = roles false in0 in1 @ roles true in1 in0 in
       if axis >= List.length choices then None
       else
-        let axes = List.nth choices axis in
+        let swapped, axes = List.nth choices axis in
         let rs = rngs k in
         check
           (not
@@ -608,11 +637,14 @@ module Scheduler = struct
         | exception Refused _ ->
             k.ast <- saved;
             None
-        | ne ->
-            if use_tc <> 2 then use_wmma k tc axes ne;
-            Some (Array.to_list axes)
+        | ne -> (
+            match if use_tc <> 2 then use_wmma k tc ~swapped axes ne with
+            | exception Refused _ ->
+                k.ast <- saved;
+                None
+            | () -> Some (Array.to_list axes))
 
-  and use_wmma k (tc : Tc.t) axes ne =
+  and use_wmma k (tc : Tc.t) ~swapped axes ne =
     let ne_of c = snd (List.find (fun (b, _) -> Tc.equal_bit b c) ne) in
     let reduceop =
       match
@@ -632,7 +664,28 @@ module Scheduler = struct
       if op r0 = Op.Where then (Some (nth r0 0), nth r0 1) else (None, r0)
     in
     let mul = if op mul = Op.Cast then nth mul 0 else mul in
-    let ins = List.map (fun x -> Option.get (tc_operand tc x)) (src mul) in
+    (* An operand read in whole tiles of the other's axis (see [in_tiles]) is
+       one value over a tile: its reads of the other's bits, which stay below
+       the tile, are read at 0. A reads no N bit, and B no M bit. *)
+    let own bit x =
+      substitute (Option.get (tc_operand tc x))
+        (List.filter_map
+           (fun (c, r) ->
+             if bit c then Some (r, const ~dtype:(dtype r) (`Int Bigint.zero))
+             else None)
+           ne)
+    in
+    let a, b =
+      match src mul with
+      | [ x; y ] -> if swapped then (y, x) else (x, y)
+      | _ -> invalid_arg "a multiply has two operands"
+    in
+    let ins =
+      [
+        own (function Tc.N _ -> true | _ -> false) a;
+        own (function Tc.M _ -> true | _ -> false) b;
+      ]
+    in
     let ins =
       match gate with
       | None -> ins

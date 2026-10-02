@@ -343,6 +343,18 @@ let pm_limit_bufs =
 
 (* Buffers *)
 
+(* Whether [x] converts its source to a wider type that holds every value of
+   it, as bfloat16 to float32. *)
+let widens x =
+  op x = Op.Cast
+  &&
+  let s = Ops.dtype (nth x 0) and d = Ops.dtype x in
+  (not (Dtype.equal s Dtype.Bool))
+  && (not (List.exists (Dtype.equal s) Dtype.weaks))
+  && (not (List.exists (Dtype.equal d) Dtype.weaks))
+  && Dtype.itemsize s < Dtype.itemsize d
+  && Dtype.can_lossless_cast s d
+
 let bufferize_to_store ctx x idx =
   let dtype = commit_dtype x in
   let rngs = sorted_ranges (Nodes.to_list (ranges idx)) in
@@ -378,7 +390,17 @@ let bufferize_to_store ctx x idx =
       Some (after buf (List.filter_map end_store stores))
   else
     match opts x with
-    | { addrspace = Dtype.Global; device; _ } ->
+    | { addrspace = Dtype.Global; device; keep } ->
+        (* A value its kernels read widened from a narrower type is stored
+           narrow, and each read widens it: the stores and reads move half the
+           bytes of bfloat16 widened to float32, and a reader's float32 product
+           of such values is one of bfloat16 values, which a tensor core
+           multiplies. A value stored whole keeps its type. *)
+        let value, dtype =
+          if keep <> Whole && widens value then
+            (nth value 0, commit_dtype (nth value 0))
+          else (value, dtype)
+        in
         let slot = !ctx in
         incr ctx;
         let buf =
@@ -386,7 +408,7 @@ let bufferize_to_store ctx x idx =
             ~arg:(Param (param_arg ~slot ~size:(max_numel x) ?device dtype))
         in
         let do_store =
-          end_ (store (index buf [ idx ]) (cast (nth x 0) dtype)) rngs
+          end_ (store (index buf [ idx ]) (cast value dtype)) rngs
         in
         Some (cast (after buf [ do_store ]) (Ops.dtype x))
     | _ -> None
@@ -440,6 +462,14 @@ let pm_add_buffers =
           rule
             (Upat.op Op.Index ~name:"u" ~allow_any_len:true
                ~src:[ Upat.op Op.Cast ~dtype:Dtype.weaks ~src:[ var "buf" ] ])
+            (fun m ->
+              let u = m "u" in
+              Some
+                (cast (replace u ~src:(m "buf" :: List.tl (src u))) (dtype u)));
+          (* So does an index of a narrow store through its widening. *)
+          rule
+            (Upat.op Op.Index ~name:"u" ~allow_any_len:true
+               ~src:[ Upat.op Op.Cast ~src:[ Upat.op Op.After ~name:"buf" ] ])
             (fun m ->
               let u = m "u" in
               Some

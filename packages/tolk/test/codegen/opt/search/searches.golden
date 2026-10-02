@@ -11,6 +11,6 @@ add	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, Tr
 add_large	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	82
 add_large	metal	1	False	False	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	82
 sum_rows	metal	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	136
-matmul_half	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)))	194
-matmul_half	cuda	1	True	True	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)))	129
+matmul_half	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)))	197
+matmul_half	cuda	1	True	True	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)))	132
 pad_7x7	hip	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SWAP, axis=1, arg=2))	102

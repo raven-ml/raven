@@ -1614,7 +1614,7 @@ the Exclusions of `README.md`.
   Metal.
 - **tolk:** `lib/uop/ops.ml:241` (`phase` and `align`), `:3244`
   (`param_arg`, which checks them) and `:3489` (`storage_phase`, which
-  `param_like` gives a parameter); `lib/schedule/rangeify.ml:502` (`debuf`,
+  `param_like` gives a parameter); `lib/schedule/rangeify.ml:532` (`debuf`,
   which gives them a kernel's parameter); `lib/codegen/late/coalesce.ml:130`
   (the merge).
 - **Differs:** a parameter or buffer carries a congruence for its start: its
@@ -1757,7 +1757,7 @@ the Exclusions of `README.md`.
   (`spec_kernel_graph`, which admits device ranges only, and no end).
 - **tolk:** `lib/schedule/rangeify.ml:236` (`loop_range`), `:241`
   (`pm_no_views`, which keeps a view that moves with a loop's range and
-  untags the range), `:588` (`split_store`), `lib/schedule/schedule.ml:141`
+  untags the range), `:618` (`split_store`), `lib/schedule/schedule.ml:141`
   (`create_schedule`: `loops`, `argument` and the kept end),
   `lib/uop/spec.ml:489` (`loop`, `loop_bound` and `kernel_graph`), and
   `test/gen/tinygrad.patch`, which gives tinygrad's `spec_kernel_graph` the
@@ -1863,7 +1863,7 @@ the Exclusions of `README.md`.
 - **tolk:** `lib/codegen/codegen.ml:1157` (`program_key`), `:1167`
   (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:309`
   (`schedule_key`) and `:314` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
-  (`cached`); `lib/codegen/opt/postrange.ml:631` (`get_optimized_ast`'s
+  (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
   name); `lib/helpers.ml:325` (`scache`, `2` by default) and `:132`
   (`shaping`); `lib/runtime/support/compiler_cpu.ml:30` (`cc`); and
   `lib/dune`'s rule for `source_digest.ml`, written by
@@ -2493,7 +2493,7 @@ stores through a pad.
   operands are loads (`mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
   Ops.INDEX`) and the vector's index has the first reduce range as a term of
   its sum.
-- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`term_of`) and `:176`
+- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`term_of`) and `:203`
   (`operands`), which D89 widens; `test/gen/tinygrad.patch`, which gives
   tinygrad the same before the goldens are recorded.
 - **Differs:** the vector is a load read through dtype conversions (`CAST`,
@@ -2676,9 +2676,9 @@ stores through a pad.
   4, whatever the matrix's layout and size), and `codegen/opt/postrange.py:132-134`
   (`apply_opt`, which refuses a local split of a reduce axis inside another
   reduce).
-- **tolk:** `lib/codegen/opt/heuristic.ml:138-151` (`lanes`, `rows`,
-  `columns`, `busy`, `in_flight`), `:176` (`operands`), `:191` (`units`) and
-  `:199` (`matvec`); `lib/codegen/opt/postrange.ml:307-316`;
+- **tolk:** `lib/codegen/opt/heuristic.ml:165-178` (`lanes`, `rows`,
+  `columns`, `busy`, `in_flight`), `:203` (`operands`), `:218` (`units`) and
+  `:226` (`matvec`); `lib/codegen/opt/postrange.ml:307-316`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
 - **Differs:** the vector is any computation of accesses with no reduce,
@@ -2758,8 +2758,8 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:115-120` (`hand_coded_optimizations`:
   more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
   can take a kernel to 64 lanes or more).
-- **tolk:** `lib/codegen/opt/heuristic.ml:400-404` (`host_lanes`,
-  `beyond_host_lanes`), `:424` (`upcast_more`).
+- **tolk:** `lib/codegen/opt/heuristic.ml:417-421` (`host_lanes`,
+  `beyond_host_lanes`), `:441` (`upcast_more`).
 - **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
   take an upcast that would make the kernel's upcast and unrolled lanes more
   than 32. Other devices upcast as tinygrad does.
@@ -2778,8 +2778,8 @@ stores through a pad.
   upcasts of output axes, which find reuse only on an axis that some access
   does not read, take 3 or 4 values of it, and come after the matrix-vector
   layout of `:61-79` has returned).
-- **tolk:** `lib/codegen/opt/heuristic.ml:282` (`run_cap`), `:286` (`run`),
-  `:305` (`decoded`), `:320` (`upcast_shared`) and `:560` (its place, before
+- **tolk:** `lib/codegen/opt/heuristic.ml:309` (`run_cap`), `:313` (`run`),
+  `:75` (`decoded`), `:337` (`upcast_shared`) and `:577` (its place, before
   `matvec`); `test/gen/tinygrad.patch`, which gives tinygrad the same before
   the goldens are recorded.
 - **Differs:** before the matrix-vector layout, an output axis that an operand
@@ -2883,7 +2883,7 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
   matrix-vector case, which splits `MV_BLOCKSIZE` local threads from the
   first global axis that divides, whichever operand reads it).
-- **tolk:** `lib/codegen/opt/heuristic.ml:176` (`operands`) and `:211`
+- **tolk:** `lib/codegen/opt/heuristic.ml:203` (`operands`) and `:238`
   (`rows_layout`); `test/gen/tinygrad.patch`, which gives tinygrad the same
   before the goldens are recorded.
 - **Differs:** D89's rows layout splits its 4 SIMD groups from the first
@@ -2937,7 +2937,7 @@ stores through a pad.
   split of a reduce axis splits that axis alone, and sizes the shared
   memory by the first reduction's type).
 - **tolk:** `lib/codegen/opt/postrange.ml:203` (`siblings`), `:171`
-  (`smem`) and `:363` (its use in `apply`); `test/gen/tinygrad.patch`,
+  (`smem`) and `:387` (its use in `apply`); `test/gen/tinygrad.patch`,
   which gives tinygrad the same before the goldens are recorded.
 - **Differs:** a local split of an axis of reductions that no reduce axis
   encloses also splits, by the same threads, one axis of each other such
@@ -3006,3 +3006,64 @@ stores through a pad.
   integer constant as its type holds it` and `› converts an infinity or a NaN
   to an integer type`; `clang_transcendental_half.golden`, recorded from the
   equally patched tinygrad.
+
+## D104. A value read widened from a narrower type is stored narrow
+
+- **tinygrad:** `schedule/rangeify.py:208-210` (`bufferize_to_store`, which
+  stores a stage's value at its committed dtype).
+- **tolk:** `lib/schedule/rangeify.ml:348` (`widens`), `:358`
+  (`bufferize_to_store`) and `:469` (the index of a narrow store through its
+  widening); `test/gen/tinygrad.patch`, which gives tinygrad the same before
+  the goldens are recorded.
+- **Differs:** a stage that is not stored whole, whose value is a cast to a
+  wider type that holds every value of its source (`Dtype.can_lossless_cast`,
+  `bool` and the weak types excepted), stores the source at its own type, and
+  each index of the buffer widens the value it reads. Where the stage is
+  placed and how it is laid out do not change.
+- **Reason:** (b): rune widens a product's `bfloat16` operands to `float32`
+  before multiplying them (D29), and a stage sits where its consumers end
+  their ranges, after the widening. gpt-oss-20b's attention probabilities, its
+  attention output and the rows of its experts were stored as `float32`
+  values of `bfloat16`: twice the bytes, and a `float32` load, which no CUDA
+  tensor core multiplies. Stored narrow, the output projection of a 512-token
+  prefill on an RTX 5000 Ada runs on the tensor cores in 0.30 ms where it took
+  2.34 ms, and the scores in 0.29 ms where they took 0.87 ms.
+- **Pinned by:** the Heuristic suite's `projection_of_stored` kernel, whose
+  golden reads the stored attention output as `bfloat16`, and its cases
+  `projection_of_stored_{metal,cuda,amd}` (the tensor cores apply), recorded
+  from the equally patched tinygrad.
+
+## D105. A tensor core takes rows that share the other operand's tile
+
+- **tinygrad:** `codegen/opt/postrange.py:187-197` (`_apply_tc_opt`: M runs
+  along a range of `in0` that `in1` does not read, N along one of `in1` that
+  `in0` does not read), `:222` (the core multiplies the multiply's own
+  operands), and `codegen/opt/heuristic.py:28` (`hand_coded_optimizations`
+  tries the cores on a kernel of one reduce axis only, below `TC_OPT=1`).
+- **tolk:** `lib/codegen/opt/postrange.ml:351` (`in_tiles`), `:559` (`roles`)
+  and `:670` (`own`); `lib/codegen/opt/heuristic.ml:86` (`decoded_product`)
+  and `:98` (`tensor_cores`); `test/gen/tinygrad.patch`, which gives tinygrad
+  the same before the goldens are recorded.
+- **Differs:** a range both operands read is the core's M (or N) range of one
+  of them when the other reads it only as `r / d`, `d` a multiple of the
+  core's M (or N): that operand reads one value over each tile of the core,
+  and the core reads its bits of the range at 0. Either operand may be the
+  core's A: the choices with `in0` as A come first, as tinygrad orders them,
+  then those with `in1`. A summed product with a decoded operand (D92's
+  `decoded`) tries the cores whatever its number of reduce axes.
+- **Reason:** (b): `Nx_quant.apply ~ids` on a prompt, which sorts positions
+  by expert into blocks of up to 16 rows, each multiplying its expert's
+  matrix, `W[owner[row / 16]]`. The rows read the row axis and the matrix
+  reads it by blocks, so tinygrad finds no M range; the decoded bytes split
+  the reduce into bytes and a byte's two values (D81), which tinygrad's
+  heuristic leaves to the hand-coded path. A block of 8, which fewer
+  positions take, fits CUDA's N of 8 and not its M of 16, so its rows are the
+  core's B. gpt-oss-20b's 512-token gate and up product on an
+  RTX 5000 Ada takes 2.9 ms on the tensor cores, from 13.3 ms, and the down
+  product 1.5 ms, from 6.9 ms; the prefill takes 0.22 s, from 0.71 s.
+- **Pinned by:** the Heuristic suite's cases `routed_tiles_{metal,cuda,amd}`
+  (the cores apply to a product in blocks of 16 rows), recorded from the
+  equally patched tinygrad; the Postrange suite's `tc_operands_swapped`
+  (the second choice of a matmul makes its `in1` the core's A); rune's
+  `Rune.quant › gpus › CUDA › on CUDA, a prompt's routes in blocks are
+  eager's`, blocks of 16 and of 8 (slow, on the GPU).

@@ -70,12 +70,39 @@ let accesses u =
   if List.exists (fun x -> op x = Op.Reduce) slice then []
   else List.filter (fun x -> op x = Op.Index) slice
 
+(* Whether [o] is decoded: its value converts integers it reads into floats,
+   by a cast or a bitcast, outside any access's address. *)
+let decoded o =
+  let converts u =
+    (op u = Op.Cast || op u = Op.Bitcast)
+    && Dtype.is_float (dtype u)
+    && Dtype.is_int (dtype (nth u 0))
+  in
+  List.exists converts (toposort ~gate:(fun u -> op u <> Op.Index) o)
+
+(* Whether [k] sums a product with a decoded operand. Decoding packed values
+   splits the reduce into a range over the bytes and one over a byte's values,
+   and the tensor cores take the bytes. *)
+let decoded_product k =
+  match K.reduceop k with
+  | Some r -> (
+      let m = nth r 0 in
+      let m = if op m = Op.Cast then nth m 0 else m in
+      match arg r with
+      | Reduce { op = Op.Add; _ } when op m = Op.Mul ->
+          List.exists decoded (src m)
+      | _ -> false)
+  | None -> false
+
 (* first try the tensor cores *)
 let tensor_cores k =
   let use_tc = setting Helpers.use_tc and tc_opt = setting Helpers.tc_opt in
   let tc_select = setting Helpers.tc_select in
   let min_globals = setting Helpers.tc_min_globals in
-  if use_tc > 0 && (List.length (K.reduce_axes k) = 1 || tc_opt >= 1) then
+  if
+    use_tc > 0
+    && (List.length (K.reduce_axes k) = 1 || tc_opt >= 1 || decoded_product k)
+  then
     List.find_map
       (fun axis ->
         let tk = K.copy k in
@@ -299,16 +326,6 @@ let run o r =
     ->
       d
   | _ -> Bigint.one
-
-(* Whether [o] is decoded: its value converts integers it reads into floats,
-   by a cast or a bitcast, outside any access's address. *)
-let decoded o =
-  let converts u =
-    (op u = Op.Cast || op u = Op.Bitcast)
-    && Dtype.is_float (dtype u)
-    && Dtype.is_int (dtype (nth u 0))
-  in
-  List.exists converts (toposort ~gate:(fun u -> op u <> Op.Index) o)
 
 (* The largest amount from [a] down that divides both [run] and [n]. *)
 let rec within run n a =

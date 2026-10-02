@@ -462,7 +462,9 @@ case("tc_use_tc_zero", "matmul", "metal", [tensor_core(use_tc=0)])
 case("tc_use_tc_out_of_range", "matmul", "metal", [tensor_core(use_tc=3)])
 case("tc_without_reduce", "add_one", "metal", [tensor_core()])
 case("tc_on_max", "row_max", "metal", [tensor_core()])
-case("tc_axis_out_of_choices", "matmul", "metal", [tensor_core(axis=1)])
+# a matmul's one choice of ranges, then the same with the operands' roles swapped
+case("tc_operands_swapped", "matmul", "metal", [tensor_core(axis=1)])
+case("tc_axis_out_of_choices", "matmul", "metal", [tensor_core(axis=2)])
 
 # test_custom_kernel.py
 
