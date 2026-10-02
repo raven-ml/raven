@@ -233,11 +233,13 @@ let product x codes scales =
    Instances split over devices are grouped on each device: a sort cannot run
    along a split axis, and a device's instances are its own rows. *)
 
-(* A block holds 2 instances, the size measured fastest: on an RTX 5000 Ada,
-   gpt-oss-20b's routed gate and up product of 512 tokens takes 34.5 ms in
-   blocks of 2, 37.4 ms in blocks of 8, 49.9 ms in blocks of 32 and 108.5 ms
-   ungrouped, and blocks of 2 are the fastest from 64 tokens to 2048. *)
-let block = 2
+(* A block holds 4 instances, the size measured fastest end to end: on an
+   RTX 5000 Ada, gpt-oss-20b's 512-token prefill takes 1.04 s in blocks of 4,
+   1.11 s in blocks of 2 and 1.08 s in blocks of 8, and a host product of 64
+   tokens 203 ms, against 281 ms and 275 ms. One expert's product of 512 tokens
+   alone favours blocks of 2 on that GPU (28.6 against 58.2 ms); a model's
+   routes give each expert far fewer. *)
+let block = 4
 
 (* [shards t] is the number of devices' windows that split [t]'s first axis. *)
 let shards t =
