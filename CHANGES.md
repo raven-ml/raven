@@ -3046,6 +3046,9 @@ thread.
 
 ### Nx
 
+- `Nx.arange` past 1024 values adds a column of row starts to a row of
+  offsets, one elementwise pass, where it summed every value in a running sum:
+  10⁷ int64 values take 1.3 ms where they took about 6 ms.
 - `Nx.scatter ~mode:`Add` of integers along one axis, and so
   `Nx.reduce_segments `Add` and `Nx.unique`'s counts, adds in a loop typed by
   the elements' width, where it called a function per update.

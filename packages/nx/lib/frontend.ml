@@ -1446,10 +1446,31 @@ let arange_length start stop step =
       err "arange" "%d to %d by %d, more than max_int values" start stop step;
     Int64.to_int n
 
-(* The values are [start - step] plus the running sum of [n] copies of [step]. A
-   partial sum leaves int64 only where the values span more than 2{^62}; int64
-   addition wraps (nx.cpu builds with -fwrapv), so the values are still
-   exact. *)
+(* [arange_int64 ctx n start step] is the [n] values [start + i * step] in
+   int64. Up to [arange_run] values, they are [start - step] plus the running
+   sum of copies of [step]. Past it, they are rows of [arange_run] values: a
+   column of the rows' starts plus a row of offsets, one elementwise pass over
+   two short ranges. A partial sum leaves int64 only where the values span more
+   than 2{^62}; int64 arithmetic wraps (nx.cpu builds with -fwrapv), so the
+   values are still exact. *)
+let arange_run = 1024
+
+let rec arange_int64 ctx n start step =
+  let int64 v = scalar ctx Nx_dtype.int64 v in
+  if n <= arange_run then
+    add
+      (cumsum ~axis:0 (broadcast_to [| n |] (int64 step)))
+      (int64 (Int64.sub start step))
+  else
+    let b = arange_run in
+    let a = (n + b - 1) / b in
+    let starts = arange_int64 ctx a start (Int64.mul step (Int64.of_int b)) in
+    let offsets = arange_int64 ctx b 0L step in
+    shrink
+      [| (0, n) |]
+      (reshape [| a * b |]
+         (add (reshape [| a; 1 |] starts) (reshape [| 1; b |] offsets)))
+
 let arange (type a b) ctx (dtype : (a, b) Nx_dtype.t) start stop step : (a, b) t
     =
   if step = 0 then invalid_arg "arange: step cannot be zero";
@@ -1464,10 +1485,7 @@ let arange (type a b) ctx (dtype : (a, b) Nx_dtype.t) start stop step : (a, b) t
     if lo < least || hi > greatest then
       err "arange" "values %d to %d, %s holds %d to %d" lo hi
         (Nx_dtype.to_string dtype) least greatest;
-    let int64 v = scalar ctx Nx_dtype.int64 v in
-    let steps = broadcast_to [| n |] (int64 (Int64.of_int step)) in
-    let shift = int64 Int64.(sub (of_int start) (of_int step)) in
-    cast dtype (add (cumsum ~axis:0 steps) shift)
+    cast dtype (arange_int64 ctx n (Int64.of_int start) (Int64.of_int step))
 
 let arange_f ctx dtype start_f stop_f step_f =
   if step_f = 0. then invalid_arg "arange_f: step cannot be zero";

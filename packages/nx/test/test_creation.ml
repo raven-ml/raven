@@ -203,6 +203,29 @@ let ranges =
               (Nx.cast dtype (int64s values))
               (Nx.arange dtype start stop step)
           else raises_invalid_arg (fun () -> Nx.arange dtype start stop step));
+      prop "a long arange is start + i * step, up to the ends of int64"
+        (let open Gen in
+         let* n = int_range 1025 5000 in
+         let* step = int_range 1 (max_int / n) in
+         let+ step = of_list [ step; -step ]
+         and+ slack = int_range 0 1000
+         and+ low = bool in
+         (* A start at either end of OCaml's ints that the values, and the
+            stop one step past them, stay within. *)
+         let span = n * abs step in
+         let start =
+           match (low, step > 0) with
+           | true, true -> min_int + slack
+           | true, false -> min_int + span + slack
+           | false, true -> max_int - span - slack
+           | false, false -> max_int - slack
+         in
+         (n, start, step))
+        (fun (n, start, step) ->
+          let stop = start + (n * step) in
+          equal (same ())
+            (int64s (List.init n (fun i -> start + (i * step))))
+            (Nx.arange Nx.int64 start stop step));
       prop "arange_f counts from start by step while short of stop"
         (Gen.triple (Gen.int_range (-20) 20) (Gen.int_range (-20) 20)
            (Gen.one_of [ Gen.int_range (-7) (-1); Gen.int_range 1 7 ]))
