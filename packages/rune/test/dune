@@ -150,7 +150,7 @@
   (run %{exe:test_lower_reduce.exe} --tag slow)))
 
 ; The compiled call runs on the host and on test devices by default, and on
-; Metal, CUDA and NV in the slow alias, its programs from the compile cache.
+; Metal, CUDA, NV and AMD in the slow alias, its programs from the compile cache.
 ; reports.t pins the lines RUNE_JIT_DEBUG prints, which the call reads once.
 
 (test
@@ -174,6 +174,7 @@
   nx.metal
   nx.cuda
   nx.nv
+  nx.amd
   tolk)
  (action
   (run %{test} --exclude-tag slow)))
@@ -206,13 +207,22 @@
   (run %{test} --exclude-tag slow)))
 
 ; Quantised products under the compiled call and the transformations, on the
-; host and test devices by default and on Metal in the slow alias.
+; host and test devices by default and on Metal, CUDA and AMD in the slow alias.
 
 (test
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries windtrap rune nx_test nx nx.quant nx.device nx.metal nx.cuda)
+ (libraries
+  windtrap
+  rune
+  nx_test
+  nx
+  nx.quant
+  nx.device
+  nx.metal
+  nx.cuda
+  nx.amd)
  (action
   (run %{test} --exclude-tag slow)))
 

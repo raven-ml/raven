@@ -4173,5 +4173,6 @@ let () =
          group ~tags:[ "slow" ] "metal" (on_gpu "Metal" (opened Nx_metal.get));
          group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened Nx_cuda.get));
          group ~tags:[ "slow" ] "nv" (on_gpu "NV" (opened Nx_nv.get));
+         group ~tags:[ "slow" ] "amd" (on_gpu "AMD" (opened Nx_amd.get));
          group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
        ])
