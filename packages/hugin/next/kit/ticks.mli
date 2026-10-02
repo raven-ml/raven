@@ -54,15 +54,18 @@ type t = private {
 val choose :
   ?locale:Locale.t ->
   ?notation:Number.notation ->
+  ?spacing:float ->
   length:float ->
   measure:(string -> float) ->
   'd Scale.t ->
   t
-(** [choose ~locale ~notation ~length ~measure s] is the most legible ticks of
-    [s] for an axis [length] long on which the normalised values [0] and [1] lie
-    at the ends, where [measure l] is the extent that label [l] needs along the
-    axis, in the unit of [length], including the clearance it wants from its
-    neighbours. The major ticks are the values of the best
+(** [choose ~locale ~notation ~spacing ~length ~measure s] is the most legible
+    ticks of [s] for an axis [length] long on which the normalised values [0]
+    and [1] lie at the ends, where [measure l] is the extent that label [l]
+    needs along the axis, in the unit of [length], including the clearance it
+    wants from its neighbours, and [spacing], [0.] by default, is the least
+    distance between ticks that the density aims for, in the same unit
+    ({!section-candidates}). The major ticks are the values of the best
     {{!section-candidates}candidate}, labelled as {!of_values} labels them with
     [locale] and [notation], and the minor ticks are the candidate's
     ({!section-minor}).
@@ -76,9 +79,9 @@ val choose :
     and takes the extent of a temporal tick as the greater of the extents of its
     label and its context.
 
-    Raises [Invalid_argument] if [length] is not finite and positive, [measure]
-    returns a value that is not finite and positive, or [notation] is given and
-    [s] is not quantitative. *)
+    Raises [Invalid_argument] if [length] is not finite and positive, [spacing]
+    is not finite and non-negative, [measure] returns a value that is not finite
+    and positive, or [notation] is given and [s] is not quantitative. *)
 
 val of_values :
   ?locale:Locale.t -> ?notation:Number.notation -> 'd Scale.t -> 'd array -> t
@@ -134,9 +137,10 @@ val of_values :
     Talbot, Lin and Hanrahan score it, its {e simplicity} (a preferred step, a
     small skip, and [0.] among the ticks, [1.] on a log scale), its {e coverage}
     of the domain by the span of its ticks, and its {e density}, near the number
-    of ticks at which labels fill half the axis, but no more than a hundred,
-    which a reader cannot take in on one axis. Those labels are the labels of
-    about ten values of the scale's family inside the domain:
+    of ticks that lie the greater of [spacing] and twice the mean extent of
+    their labels apart, so that labels fill at most half the axis, but no more
+    than a hundred, which a reader cannot take in on one axis. Those labels are
+    the labels of about ten values of the scale's family inside the domain:
     - on linear, pow and custom scales, the multiples of the decimal step for a
       tenth of the domain's length, the step its nice domain rounds to
       ({!Scale.section-nice});

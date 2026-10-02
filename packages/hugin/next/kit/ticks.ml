@@ -796,10 +796,12 @@ let strides st names =
   in
   go (least 1)
 
-let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
-    (s : d Scale.t) : t =
+let choose (type d) ?(locale = Locale.default) ?notation ?(spacing = 0.) ~length
+    ~measure (s : d Scale.t) : t =
   if not (Float.is_finite length && length > 0.) then
     err "choose" "length %g is not finite and positive" length;
+  if not (Float.is_finite spacing && spacing >= 0.) then
+    err "choose" "spacing %g is not finite and non-negative" spacing;
   check_notation "choose" notation s;
   let notation = Option.map decimal_notation notation in
   let extents = Hashtbl.create 64 in
@@ -858,8 +860,8 @@ let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
   in
   (* [continuous a reference search] is the ticks of a continuous domain from
      [a]. The labels of the values [reference ()], those a nice domain rounds
-     to, set the density target: [m] ticks of their mean extent fill half the
-     axis. *)
+     to, set the density target: [m] ticks the greater of [spacing] and twice
+     their mean extent apart. *)
   let continuous a reference search =
     let u = st.norm a in
     if Float.is_nan u then ticks_of [||] [||] None []
@@ -876,7 +878,7 @@ let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
         Array.fold_left (fun m l -> m +. tick_extent st l) 0. labels
         /. Float.of_int (Array.length labels)
       in
-      let m = Float.min (length /. (2. *. mean)) most_ticks in
+      let m = Float.min (length /. Float.max spacing (2. *. mean)) most_ticks in
       let st = { st with rho_t = Float.max 1. (m -. 1.) } in
       search st;
       chosen st

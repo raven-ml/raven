@@ -136,7 +136,8 @@ let axes () =
             Row ("thirty categories at 300", band 30, 300.);
             Row ("one category at 50", band 1, 50.);
           ]))
-  @@ __POS_OF__ {|
+  @@ __POS_OF__
+       {|
     linear [0;1] at 300: 0.0 0.2 0.4 0.6 0.8 1.0, 15 minor
     linear [0;100] at 120: 0 50 100, 8 minor
     linear [-1;1] at 600: −1.0 −0.8 −0.6 −0.4 −0.2 0.0 0.2 0.4 0.6 0.8 1.0, 30 minor
@@ -901,6 +902,33 @@ let choice =
           in
           equal (list float_exact) (positions 0L)
             (positions (Int64.shift_left 1L 62)));
+      prop "a spacing below twice every extent changes nothing"
+        (Gen.triple gen_scale gen_length (Gen.float_range 0. 20.))
+        (fun (Axis s, length, spacing) ->
+          (* Every extent is at least [10], so twice the mean is at least
+             [20]. *)
+          equal
+            (Testable.make ~pp:Ticks.pp ~equal:Ticks.equal)
+            (Ticks.choose ~length ~measure s)
+            (Ticks.choose ~spacing ~length ~measure s));
+      test "a spacing of a fifth of the axis aims for five steps" (fun () ->
+          (* [m] is [5], so [ρt = 4]: the step [0.25] has [ρ = 4], a density of
+             [1], the tick [0] and full coverage, and beats the simpler steps
+             [0.2], of density [0.75], and [0.5], of density [0]. Without the
+             spacing the step is [0.1]. *)
+          let s = linear 0. 1. in
+          equal (list string)
+            [ "0.00"; "0.25"; "0.50"; "0.75"; "1.00" ]
+            (labels (Ticks.choose ~spacing:100. ~length:500. ~measure s));
+          equal int 11
+            (List.length (Ticks.choose ~length:500. ~measure s).major));
+      test "the spacing must be finite and non-negative" (fun () ->
+          let choose spacing =
+            Ticks.choose ~spacing ~length:100. ~measure (linear 0. 1.)
+          in
+          invalid (fun () -> choose (-1.));
+          invalid (fun () -> choose Float.nan);
+          invalid (fun () -> choose Float.infinity));
       test "the length must be finite and positive" (fun () ->
           invalid (fun () -> Ticks.choose ~length:0. ~measure (linear 0. 1.));
           invalid (fun () ->

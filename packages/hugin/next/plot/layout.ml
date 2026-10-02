@@ -37,6 +37,8 @@ let pad_em = 0.25 (* Between ticks, labels and titles, swatches and labels. *)
 let clear_em = 0.5 (* Between the labels of one axis or legend. *)
 let gap_em = 1.
 let swatch_em = 1. (* Swatches and the width of colour bars. *)
+let x_spacing_em = 5. (* The spacing ticks aim for on x axes and colour bars. *)
+let y_spacing_em = 3.5 (* On y axes. *)
 
 (* Text measurements, by size, alignment and text. *)
 module Measures = Map.Make (struct
@@ -1088,8 +1090,8 @@ let lengths cx acc =
 (* [choose cx lengths] is the ticks of each scale. A facet scale and a
    categorical one with a legend show every category. Otherwise the ticks are
    chosen once against every guide that shows them, at its length: a label's
-   extent is the greatest fraction of a guide's length it takes, so that no two
-   labels overlap on any of them. *)
+   extent, and the spacing of ticks, are the greatest fractions of a guide's
+   length they take, so that no two labels overlap on any of them. *)
 let choose cx lengths =
   let locale = Theme.locale cx.theme in
   let label t = set cx label_em (Text.v t) in
@@ -1106,6 +1108,11 @@ let choose cx lengths =
         | false, true -> Float.max sw (height l)
         | false, false -> sw +. em cx pad_em +. width l +. clear)
     | Header_of -> 0.
+  in
+  let spacing = function
+    | Axis_of X | Legend_of { bar = true; _ } -> em cx x_spacing_em
+    | Axis_of Y -> em cx y_spacing_em
+    | Legend_of { bar = false; _ } | Header_of -> 0.
   in
   Array.mapi
     (fun i (F f as s) ->
@@ -1129,7 +1136,8 @@ let choose cx lengths =
         | [] -> Ticks.of_values ~locale f.scale [||]
         | guides ->
             let measure t = longest (fun (u, l) -> measure u t /. l) guides in
-            Ticks.choose ~locale ~length:1. ~measure f.scale)
+            let spacing = longest (fun (u, l) -> spacing u /. l) guides in
+            Ticks.choose ~locale ~spacing ~length:1. ~measure f.scale)
     cx.scales
 
 (* Laid-out figures *)
