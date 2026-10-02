@@ -3052,6 +3052,10 @@ thread.
 
 ### Nx
 
+- `Nx.take` along one axis of elements of 1 to 8 bytes moves them in a loop
+  typed by their width, where it called a function per element, so
+  `Nx_ragged.take` and the gathers of indices and bytes it is made of run
+  faster.
 - `Nx.take ~axis:0` of whole rows copies each row, now also from data whose
   rows overlap or lie apart, such as a window view, where it moved one element
   at a time: `Nx_ragged.ids` of 10⁷ twelve-byte strings takes 167 ms where it

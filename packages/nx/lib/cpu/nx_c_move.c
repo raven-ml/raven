@@ -376,6 +376,31 @@ typedef struct {
   int64_t esize;
 } nx_c_gather_ctx;
 
+/* One axis of elements of 1, 2, 4 or 8 bytes, in that unsigned width. An index
+   outside the axis reads element 0 and keeps zero instead, so that indices in
+   and out of range take no branch each. */
+#define NX_C_GATHER_LINE(T)                                                    \
+  static void nx_c_gather_line_##T(const nx_c_gather_ctx *g, int64_t lo,       \
+                                   int64_t hi) {                               \
+    const nx_c_ndarray *data = g->data, *ix = g->indices, *out = g->out;      \
+    const int64_t *index = (const int64_t *)ix->data + ix->offset;            \
+    const T *d = (const T *)data->data + data->offset;                        \
+    T *o = (T *)out->data + out->offset;                                      \
+    int64_t n = data->shape[0], is = ix->strides[0], ds = data->strides[0],   \
+            os = out->strides[0];                                             \
+    for (int64_t it = lo; it < hi; it++) {                                    \
+      int64_t k = index[it * is];                                             \
+      bool kept = (uint64_t)k < (uint64_t)n;                                  \
+      T v = n > 0 ? d[(kept ? k : 0) * ds] : (T)0;                            \
+      o[it * os] = kept ? v : (T)0;                                           \
+    }                                                                          \
+  }
+NX_C_GATHER_LINE(uint8_t)
+NX_C_GATHER_LINE(uint16_t)
+NX_C_GATHER_LINE(uint32_t)
+NX_C_GATHER_LINE(uint64_t)
+#undef NX_C_GATHER_LINE
+
 static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
   const nx_c_gather_ctx *g = vctx;
@@ -385,6 +410,13 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   int nd = out->ndim, axis = g->axis;
   int64_t esize = g->esize, axis_len = data->shape[axis];
   if (nd == 1) {
+    switch (esize) {
+    case 1: nx_c_gather_line_uint8_t(g, lo, hi); return;
+    case 2: nx_c_gather_line_uint16_t(g, lo, hi); return;
+    case 4: nx_c_gather_line_uint32_t(g, lo, hi); return;
+    case 8: nx_c_gather_line_uint64_t(g, lo, hi); return;
+    default: break;
+    }
     /* One axis: positions are strides times the counter, with no unravel. */
     for (int64_t it = lo; it < hi; it++) {
       int64_t index = ((const int64_t *)idx->data)[idx->offset +

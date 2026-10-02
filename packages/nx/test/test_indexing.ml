@@ -95,6 +95,42 @@ let gathers =
                  src.(axis) <- idx.(i.(axis));
                  read r src))
             (Ref.of_nx (Nx.take ~axis ~indices:(indices_tensor idx) t)));
+      group "take along one axis reads elements of every width"
+        (List.map
+           (fun (Int_dtype d) ->
+             let drawn =
+               let open Gen in
+               let* n = int_range 0 6 in
+               let+ data =
+                 array ~size:(constant n)
+                   (int_value ~bits:d.bits ~signed:d.signed)
+               and+ idx = array ~size:(int_range 0 8) (int_range (-2) 8)
+               and+ flipped = bool in
+               (data, idx, flipped)
+             in
+             prop d.name drawn (fun (data, idx, flipped) ->
+                 let n = Array.length data in
+                 (* Flipped operands are the same arrays through negative
+                    strides. *)
+                 let flip x =
+                   if flipped then Nx.flip (Nx.contiguous (Nx.flip x)) else x
+                 in
+                 equal (array d.exact)
+                   (Array.map
+                      (fun k ->
+                        d.of_i64 (if k >= 0 && k < n then data.(k) else 0L))
+                      idx)
+                   (Nx.to_array
+                      (Nx.take
+                         ~indices:
+                           (flip
+                              (Nx.create Nx.int64
+                                 [| Array.length idx |]
+                                 (Array.map Int64.of_int idx)))
+                         (flip
+                            (Nx.create d.dtype [| n |]
+                               (Array.map d.of_i64 data)))))))
+           int_dtypes);
       prop "take of rows of a window view copies each window"
         (let open Gen in
          let* n = int_range 1 20 in
