@@ -1328,6 +1328,55 @@ module Op = struct
     | Read { x; _ } -> [ P x ]
     | Check { ok; _ } -> [ P ok ]
 
+  type mapper = { f : 'a 'b. ('a, 'b) Types.t -> ('a, 'b) Types.t }
+
+  let map_operands : type r. mapper -> r t -> r t =
+   fun o op ->
+    let f = o.f in
+    match[@warning "@4@8"] op with
+    | Unary (k, x) -> Unary (k, f x)
+    | Binary (k, a, b) -> Binary (k, f a, f b)
+    | Compare (k, a, b) -> Compare (k, f a, f b)
+    | Where (c, a, b) -> Where (f c, f a, f b)
+    | Fma (a, b, c) -> Fma (f a, f b, f c)
+    | Reduce (k, axes, x) -> Reduce (k, axes, f x)
+    | Scan (k, axis, x) -> Scan (k, axis, f x)
+    | Arg_reduce (k, axis, x) -> Arg_reduce (k, axis, f x)
+    | Sort s -> Sort { s with x = f s.x }
+    | Argsort s -> Argsort { s with x = f s.x }
+    | Pad (padding, v, x) -> Pad (padding, v, f x)
+    | Cat (axis, xs) -> Cat (axis, List.map f xs)
+    | Convert (c, dtype, x) -> Convert (c, dtype, f x)
+    | Threefry (key, ctr) -> Threefry (f key, f ctr)
+    | Gather (axis, indices, data) -> Gather (axis, f indices, f data)
+    | Scatter s ->
+        Scatter
+          {
+            s with
+            indices = f s.indices;
+            updates = f s.updates;
+            into = f s.into;
+          }
+    | Update (x, starts, v) -> Update (f x, f starts, f v)
+    | Unfold u -> Unfold { u with x = f u.x }
+    | Fold u -> Fold { u with x = f u.x }
+    | Matmul (a, b) -> Matmul (f a, f b)
+    | Fft t -> Fft { t with x = f t.x }
+    | Rfft t -> Rfft { t with x = f t.x }
+    | Irfft t -> Irfft { t with x = f t.x }
+    | Contiguous x -> Contiguous (f x)
+    | Cholesky c -> Cholesky { c with x = f c.x }
+    | Qr q -> Qr { q with x = f q.x }
+    | Lu x -> Lu (f x)
+    | Svd d -> Svd { d with x = f d.x }
+    | Eig d -> Eig { d with x = f d.x }
+    | Eigh d -> Eigh { d with x = f d.x }
+    | Solve_triangular t -> Solve_triangular { t with a = f t.a; b = f t.b }
+    | Move (x, m) -> Move (f x, m)
+    | Place (p, x) -> Place (p, f x)
+    | Read r -> Read { r with x = f r.x }
+    | Check c -> Check { c with ok = f c.ok }
+
   let pp ppf op =
     let operand ppf (P x) =
       Format.fprintf ppf "%s%s"
@@ -2667,51 +2716,6 @@ let compute : type r. env list -> settle -> r Op.t -> r =
   | Move _ | Place _ | Read _ | Check _ ->
       invalid_arg "Nx_effect.compute: the operation computes nothing"
 
-type mapper = { f : 'a 'b. ('a, 'b) t -> ('a, 'b) t }
-
-(* [with_operands o op] is [op] over [o.f] of each of its value operands. *)
-let with_operands : type r. mapper -> r Op.t -> r Op.t =
- fun o op ->
-  let f = o.f in
-  match[@warning "@4@8"] op with
-  | Unary (k, x) -> Unary (k, f x)
-  | Binary (k, a, b) -> Binary (k, f a, f b)
-  | Compare (k, a, b) -> Compare (k, f a, f b)
-  | Where (c, a, b) -> Where (f c, f a, f b)
-  | Fma (a, b, c) -> Fma (f a, f b, f c)
-  | Reduce (k, axes, x) -> Reduce (k, axes, f x)
-  | Scan (k, axis, x) -> Scan (k, axis, f x)
-  | Arg_reduce (k, axis, x) -> Arg_reduce (k, axis, f x)
-  | Sort s -> Sort { s with x = f s.x }
-  | Argsort s -> Argsort { s with x = f s.x }
-  | Pad (padding, v, x) -> Pad (padding, v, f x)
-  | Cat (axis, xs) -> Cat (axis, List.map f xs)
-  | Convert (c, dtype, x) -> Convert (c, dtype, f x)
-  | Threefry (key, ctr) -> Threefry (f key, f ctr)
-  | Gather (axis, indices, data) -> Gather (axis, f indices, f data)
-  | Scatter s ->
-      Scatter
-        { s with indices = f s.indices; updates = f s.updates; into = f s.into }
-  | Update (x, starts, v) -> Update (f x, f starts, f v)
-  | Unfold u -> Unfold { u with x = f u.x }
-  | Fold u -> Fold { u with x = f u.x }
-  | Matmul (a, b) -> Matmul (f a, f b)
-  | Fft t -> Fft { t with x = f t.x }
-  | Rfft t -> Rfft { t with x = f t.x }
-  | Irfft t -> Irfft { t with x = f t.x }
-  | Contiguous x -> Contiguous (f x)
-  | Cholesky c -> Cholesky { c with x = f c.x }
-  | Qr q -> Qr { q with x = f q.x }
-  | Lu x -> Lu (f x)
-  | Svd d -> Svd { d with x = f d.x }
-  | Eig d -> Eig { d with x = f d.x }
-  | Eigh d -> Eigh { d with x = f d.x }
-  | Solve_triangular t -> Solve_triangular { t with a = f t.a; b = f t.b }
-  | Move (x, m) -> Move (f x, m)
-  | Place (p, x) -> Place (p, f x)
-  | Read r -> Read { r with x = f r.x }
-  | Check c -> Check { c with ok = f c.ok }
-
 (* [x]'s array on [d]: its storage there, through its view. *)
 let local (type a b) d (x : (a, b) t) : (a, b) Nx_array.t =
   match x with
@@ -2843,7 +2847,7 @@ let on_devices : type r. r Op.t -> r =
                 in
                 (whole, cut)
           in
-          let op = with_operands { f = (fun x -> move_to target x) } op in
+          let op = Op.map_operands { f = (fun x -> move_to target x) } op in
           let envs = List.map2 env_on kernels ds in
           with_cells (cells_of op) (fun () ->
               compute envs (settle_on q ~windowed envs) op))

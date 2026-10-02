@@ -4581,6 +4581,16 @@ module Op : sig
   val operands : 'r t -> packed list
   (** [operands op] is [op]'s value operands, in order. *)
 
+  type mapper = Nx_effect.Op.mapper = {
+    f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t;
+  }
+  (** The type for maps of values that keep their dtype. *)
+
+  val map_operands : mapper -> 'r t -> 'r t
+  (** [map_operands m op] is [op] with each value operand [x] replaced by
+      [m.f x]: the operation of [op]'s kind and parameters, whose {!operands}
+      are [m.f] of [op]'s, in order. [m.f] is applied once per operand. *)
+
   val name : 'r t -> string
   (** [name op] is [op]'s name, as messages print it. *)
 

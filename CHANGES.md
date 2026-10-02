@@ -3038,6 +3038,8 @@ thread.
 
 ### Nx
 
+- Add `Nx.Op.map_operands`, which rebuilds an operation over other operands,
+  so an interpreter that substitutes values need not match every operation.
 - `Nx_device.Driver.device` raises `Invalid_argument` on a name already made
   on its machine, so two callers cannot make two memories that print alike,
   such as a second `"CPU:1"`.

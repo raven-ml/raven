@@ -78,61 +78,17 @@ let made : type r. r Construct.t -> r -> Nx.packed list =
 
 (* Substitutions *)
 
-type subst = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
-
-(* [substituted s op] is [op] over the operands [s] gives for [op]'s. *)
-let substituted : type r. subst -> r Nx.Op.t -> r Nx.Op.t =
- fun { f } op ->
-  match[@warning "@4@8"] op with
-  | Unary (k, x) -> Unary (k, f x)
-  | Binary (k, a, b) -> Binary (k, f a, f b)
-  | Compare (k, a, b) -> Compare (k, f a, f b)
-  | Where (c, a, b) -> Where (f c, f a, f b)
-  | Fma (a, b, c) -> Fma (f a, f b, f c)
-  | Reduce (k, axes, x) -> Reduce (k, axes, f x)
-  | Scan (k, axis, x) -> Scan (k, axis, f x)
-  | Arg_reduce (k, axis, x) -> Arg_reduce (k, axis, f x)
-  | Sort s -> Sort { s with x = f s.x }
-  | Argsort s -> Argsort { s with x = f s.x }
-  | Pad (padding, v, x) -> Pad (padding, v, f x)
-  | Cat (axis, xs) -> Cat (axis, List.map f xs)
-  | Convert (c, dt, x) -> Convert (c, dt, f x)
-  | Threefry (key, counter) -> Threefry (f key, f counter)
-  | Gather (axis, indices, x) -> Gather (axis, f indices, f x)
-  | Scatter s ->
-      Scatter
-        { s with indices = f s.indices; updates = f s.updates; into = f s.into }
-  | Update (x, starts, v) -> Update (f x, f starts, f v)
-  | Unfold u -> Unfold { u with x = f u.x }
-  | Fold u -> Fold { u with x = f u.x }
-  | Matmul (a, b) -> Matmul (f a, f b)
-  | Fft u -> Fft { u with x = f u.x }
-  | Rfft u -> Rfft { u with x = f u.x }
-  | Irfft u -> Irfft { u with x = f u.x }
-  | Contiguous x -> Contiguous (f x)
-  | Cholesky c -> Cholesky { c with x = f c.x }
-  | Qr c -> Qr { c with x = f c.x }
-  | Lu x -> Lu (f x)
-  | Svd c -> Svd { c with x = f c.x }
-  | Eig c -> Eig { c with x = f c.x }
-  | Eigh c -> Eigh { c with x = f c.x }
-  | Solve_triangular s -> Solve_triangular { s with a = f s.a; b = f s.b }
-  | Move (x, m) -> Move (f x, m)
-  | Place (p, x) -> Place (p, f x)
-  | Read r -> Read { r with x = f r.x }
-  | Check c -> Check { c with ok = f c.ok }
-
 (* [substituting owner s f] is [f ()] with each value [owner] owns that an
    operation or a construct of its extent reads replaced by [s]'s for it, in the
    callbacks of the constructs too. *)
-let substituting (owner : Construct.owner) (s : subst) f =
+let substituting (owner : Construct.owner) (s : mapper) f =
   let leaf (Nx.P x) = Nx.P (s.f x) in
   let leaves = List.map leaf in
   let rec install : 'a. (unit -> 'a) -> 'a =
    fun f ->
     let claims op = Construct.claims owner op in
     Construct.install
-      { op = Some { run = (fun op -> eval (substituted s op)); claims }; call }
+      { op = Some { run = (fun op -> eval (map_operands s op)); claims }; call }
       f
   and call : type r. r Construct.t -> (unit -> r) option =
    fun c ->
@@ -197,7 +153,7 @@ let substituting (owner : Construct.owner) (s : subst) f =
 
 (* A value made by a movement or a placement, and how to make it again over the
    values a substitution gives for its operand. *)
-type recipe = Recipe : ('a, 'b) Nx.t * (subst -> ('a, 'b) Nx.t) -> recipe
+type recipe = Recipe : ('a, 'b) Nx.t * (mapper -> ('a, 'b) Nx.t) -> recipe
 
 let recipe : type r. r Nx.Op.t -> r -> recipe option =
  fun op r ->

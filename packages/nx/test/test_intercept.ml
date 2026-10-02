@@ -523,6 +523,42 @@ let describing =
               E.dtype (Cat (0, ([] : (float, Nx.float32_elt) Nx.t list)))));
     ]
 
+(* Mapping operands *)
+
+(* [maps_operands (C op)] checks that each operand of [op] mapped by a copy is
+   the copy of [op]'s operand at its position: each storage is numbered by the
+   first of [op]'s operands that holds it, and a copy's by its source's. *)
+let maps_operands (C op) =
+  let made = ref [] in
+  let f x =
+    let y = Nx.copy x in
+    made := (Nx_test.storage y, Nx_test.storage x) :: !made;
+    y
+  in
+  let storages op =
+    List.map (fun (Nx.P x) -> Nx_test.storage x) (E.operands op)
+  in
+  let mapped = storages (E.map_operands { f } op) and before = storages op in
+  let rec number b i = function
+    | [] -> -1
+    | b' :: rest -> if b' == b then i else number b (i + 1) rest
+  in
+  let source c =
+    match List.assq_opt c !made with Some b -> number b 0 before | None -> -1
+  in
+  equal (list int)
+    (List.map (fun b -> number b 0 before) before)
+    (List.map source mapped)
+
+let mapping =
+  group "Op.map_operands"
+    [
+      test "maps each operand of each operation in its place" (fun () ->
+          List.iter maps_operands (cases ()));
+      prop "maps each operand of each drawn operation in its place" generated
+        maps_operands;
+    ]
+
 (* Reads *)
 
 (* An interpreter that claims only reads and records the name each carries. *)
@@ -617,4 +653,13 @@ let reads =
 let () =
   exit
     (run "nx interception"
-       [ extent; asking; failing; unobservable; claiming; describing; reads ])
+       [
+         extent;
+         asking;
+         failing;
+         unobservable;
+         claiming;
+         describing;
+         mapping;
+         reads;
+       ])
