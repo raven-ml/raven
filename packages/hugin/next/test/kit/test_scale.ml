@@ -25,6 +25,8 @@ let notation =
   Testable.make ~pp:Number.pp_notation ~equal:(fun (n : Number.notation) n' ->
       n = n')
 
+let dash = Testable.make ~pp:Dash.pp ~equal:Dash.equal
+
 let property =
   Testable.make ~pp:Scale.pp_property ~equal:(fun (p : Scale.property) q ->
       p = q)
@@ -938,6 +940,10 @@ let conflicts =
         band ~symbols:[| Symbol.circle |] (),
         band ~symbols:[| Symbol.circle; Symbol.square |] () );
     Conflict
+      ( Dashes,
+        band ~dashes:[| Dash.solid |] (),
+        band ~dashes:[| Dash.solid; Dash.dashed |] () );
+    Conflict
       (Unknown, Scale.linear ~unknown:red (), Scale.linear ~unknown:blue ());
   ]
 
@@ -1137,6 +1143,7 @@ let comparing =
                 Scheme;
                 Areas;
                 Symbols;
+                Dashes;
                 Unknown;
               ]
           in
@@ -1158,6 +1165,7 @@ let comparing =
               "scheme";
               "areas";
               "symbols";
+              "dashes";
               "unknown";
             ]
             names);
@@ -1186,6 +1194,7 @@ let comparing =
                  pp (Scale.linear ~ticks:[| 0.; 0.1 +. 0.2 |] ~notation:Si ());
                  pp (Scale.time ~ticks:[| Time.epoch |] ());
                  pp (Scale.band ~ticks:[| "a"; "b c" |] ());
+                 pp (Scale.band ~dashes:[| Dash.solid; Dash.dotted |] ());
                ])
           @@ __POS_OF__
                {|
@@ -1200,6 +1209,7 @@ let comparing =
             (linear (ticks 0 0.30000000000000004) (notation si))
             (time (ticks 1970-01-01T00:00:00Z))
             (band (ticks "a" "b c"))
+            (band (dashes (solid) (1 2)))
             |});
     ]
 
@@ -1226,6 +1236,7 @@ let all_properties =
       Scheme;
       Areas;
       Symbols;
+      Dashes;
       Unknown;
     ]
 
@@ -1273,6 +1284,15 @@ let observers =
           equal (array float_exact) [| 1.; 2. |] out;
           out.(1) <- 5.;
           equal (option (array float_exact)) (Some [| 1.; 2. |]) (Scale.ticks s));
+      test "dashes are copied in and out" (fun () ->
+          let ds = [| Dash.dashed |] in
+          let s = Scale.band ~dashes:ds () in
+          ds.(0) <- Dash.solid;
+          let out = Option.get (Scale.dashes s) in
+          out.(0) <- Dash.dotted;
+          equal (option (array dash)) (Some [| Dash.dashed |]) (Scale.dashes s));
+      test "a band scale refuses no dashes" (fun () ->
+          invalid (fun () -> Scale.band ~dashes:[||] ()));
       test "ticks and notation are None unset" (fun () ->
           equal (option (array string)) None (Scale.ticks (Scale.band ()));
           equal (option notation) None (Scale.notation (Scale.log ())));

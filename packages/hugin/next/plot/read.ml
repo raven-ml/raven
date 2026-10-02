@@ -8,6 +8,7 @@ module Text = Hugin_next_text.Text
 module Scale = Hugin_next_kit.Scale
 module Scheme = Hugin_next_kit.Scheme
 module Symbol = Hugin_next_kit.Symbol
+module Dash = Hugin_next_kit.Dash
 module Number = Hugin_next_kit.Number
 module Ticks = Hugin_next_kit.Ticks
 open Common
@@ -234,7 +235,8 @@ let base : type r.
         | Encoding { map = Area; _ } -> lerp areas
         | Encoding { map = Width; _ } ->
             lerp (em ctx (fst width_em), em ctx (snd width_em))
-        | Encoding { map = Color | Shape; _ } | Position _ | Facet _ | Value ->
+        | Encoding { map = Color | Shape | Pattern; _ }
+        | Position _ | Facet _ | Value ->
             Fun.id
       in
       Some (finite g, Float.nan)
@@ -252,6 +254,19 @@ let base : type r.
           Some
             ( By_index (Array.init (n ()) (fun i -> symbols.(i mod k))),
               symbols.(0) )
+      | Quantities -> None)
+  | Role.Dashes -> (
+      match f.kind with
+      | Categories ->
+          let dashes =
+            match Scale.dashes f.scale with
+            | Some d -> d
+            | None -> Array.of_list Dash.all
+          in
+          let k = Array.length dashes in
+          Some
+            ( By_index (Array.init (n ()) (fun i -> dashes.(i mod k))),
+              dashes.(0) )
       | Quantities -> None)
   | Role.Panels -> (
       match f.kind with
@@ -401,7 +416,7 @@ let unscaled ctx rd (B b as bd) index sel =
   | Role.Texts ->
       let g i t = if miss.(i) then t else g t in
       (column b.role (Array.mapi g (Lazy.force texts)), miss)
-  | Role.Colors | Role.Symbols | Role.Panels | Role.Param _ ->
+  | Role.Colors | Role.Symbols | Role.Dashes | Role.Panels | Role.Param _ ->
       err "draw" "the role %s reads no scale" b.role.name
 
 let rows ?only ctx rd ~id projection ~warn reads sel =
@@ -478,8 +493,8 @@ let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
             let ink = Theme.ink ctx.theme in
             let alpha = Color.alpha ink *. neutral_alpha in
             Some (column b.role [| Color.with_alpha alpha ink |])
-        | Role.Floats | Role.Texts | Role.Symbols | Role.Panels | Role.Param _
-          ->
+        | Role.Floats | Role.Texts | Role.Symbols | Role.Dashes | Role.Panels
+        | Role.Param _ ->
             None)
   in
   {

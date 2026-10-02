@@ -11,9 +11,9 @@
     ticks of an axis, {!Number} writes numbers, {!Time} puts instants on the
     calendar and {!Locale} holds the strings numbers and dates are written with.
     {!Scheme} colours normalised values and categories, {!Symbol} draws marker
-    shapes, {!Curve} draws lines through points, {!Stack} lays lengths end to
-    end and {!Stats} summarises data, as histograms. The kit measures no text:
-    choosing ticks takes a function that measures labels.
+    shapes, {!Dash} breaks lines, {!Curve} draws lines through points, {!Stack}
+    lays lengths end to end and {!Stats} summarises data, as histograms. The kit
+    measures no text: choosing ticks takes a function that measures labels.
 
     {1:conventions Conventions}
 
@@ -52,6 +52,7 @@ module Scale = Scale
 module Ticks = Ticks
 module Scheme = Scheme
 module Symbol = Symbol
+module Dash = Dash
 module Curve = Curve
 module Stack = Stack
 module Stats = Stats

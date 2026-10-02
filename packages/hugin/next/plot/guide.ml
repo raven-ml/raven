@@ -252,13 +252,14 @@ let sized (F f) =
       | Role.Encoding _ | Position _ | Facet _ | Value -> false)
     f.members
 
-(* [stroked s] is [true] iff every channel the legend of [s] shows is a
-   [stroke], which lines and rules draw: its swatches are line swatches. *)
+(* [stroked s] is [true] iff every channel the legend of [s] shows is a [stroke]
+   or a [dash], which lines and rules draw: its swatches are line swatches. *)
 let stroked (F f) =
   List.for_all
     (fun m ->
       Role.shown_on m.m_use <> Some `Legend
-      || String.equal m.m_role Role.stroke.name)
+      || String.equal m.m_role Role.stroke.name
+      || String.equal m.m_role Role.dash.name)
     f.members
 
 (* The frame of a side *)

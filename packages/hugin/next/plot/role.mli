@@ -8,6 +8,7 @@
 module Color := Hugin_next_gg.Color
 module Text := Hugin_next_text.Text
 module Symbol := Hugin_next_kit.Symbol
+module Dash := Hugin_next_kit.Dash
 module Scale := Hugin_next_kit.Scale
 
 (** {1:ranges Ranges} *)
@@ -20,6 +21,7 @@ type _ range =
   | Floats : float range
   | Colors : Color.t range
   | Symbols : Symbol.t range
+  | Dashes : Dash.t range
   | Texts : Text.t range
   | Panels : string range
   | Param : 'r param -> 'r range
@@ -43,6 +45,7 @@ type map =
   | Area  (** [size]: an area in pt², from the scale's areas. *)
   | Width  (** A line width, from the theme. *)
   | Shape  (** [symbol]: the scale's symbols, cycling. *)
+  | Pattern  (** [dash]: the scale's dash patterns, cycling. *)
 
 (** What a role is. *)
 type use =
@@ -66,6 +69,7 @@ val opacity : ('d, float) t
 val size : (float, float) t
 val width : ('d, float) t
 val symbol : (string, Symbol.t) t
+val dash : (string, Dash.t) t
 val text : ('d, Text.t) t
 val fx : (string, string) t
 val fy : (string, string) t

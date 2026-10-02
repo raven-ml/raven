@@ -158,6 +158,10 @@ type _ domain =
       scale with: category [i] with [symbols.(i mod k)] for [k] symbols. The
       array must not be empty, and is copied in and out. Unset, the role takes
       its theme's set for the way the mark paints its symbols.
+    - [dashes], the dash patterns that the dash role draws the categories of a
+      band scale with: category [i] with [dashes.(i mod k)] for [k] patterns.
+      The array must not be empty, and is copied in and out. Unset, the role
+      takes {!Dash.all}.
     - [unknown], the colour that colour roles paint missing values with. Unset,
       missing values draw no paint.
 
@@ -300,6 +304,7 @@ val band :
   ?ticks:string array ->
   ?scheme:Scheme.t ->
   ?symbols:Symbol.t array ->
+  ?dashes:Dash.t array ->
   ?unknown:Color.t ->
   unit ->
   string t
@@ -351,6 +356,9 @@ val areas : float t -> (float * float) option
 
 val symbols : string t -> Symbol.t array option
 (** [symbols s] is the symbols of [s], if set, as a fresh array. *)
+
+val dashes : string t -> Dash.t array option
+(** [dashes s] is the dash patterns of [s], if set, as a fresh array. *)
 
 val stepped : float t -> bool
 (** [stepped s] is [true] iff [s] sets [stepped] to [true]. *)
@@ -469,6 +477,7 @@ type property =
   | Scheme
   | Areas
   | Symbols
+  | Dashes
   | Unknown
 
 val sets : property -> 'd t -> bool
@@ -535,9 +544,9 @@ val equal : 'd t -> 'd t -> bool
 (** [equal s s'] is [true] iff [s] and [s'] set the same properties to equal
     values: floats by [Float.equal], instants by {!Time.equal}, colours by
     {!Color.equal}, schemes by {!Scheme.equal}, arrays element by element,
-    symbols by {!Symbol.equal}, and the functions of custom transforms
-    physically. A property unset differs from the same property set to its
-    default. *)
+    symbols by {!Symbol.equal}, dash patterns by {!Dash.equal}, and the
+    functions of custom transforms physically. A property unset differs from the
+    same property set to its default. *)
 
 val pp : Format.formatter -> 'd t -> unit
 (** [pp ppf s] formats the properties [s] sets, for debugging and tests, a

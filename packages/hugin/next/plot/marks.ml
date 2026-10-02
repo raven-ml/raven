@@ -80,6 +80,13 @@ let fills rows ~default =
 
 let strokes rows = Option.map (faded rows) (Mark.get rows Role.stroke)
 
+(* [pen ~cap width dash] strokes at [width] with [dash], whose lengths are in
+   multiples of the width. *)
+let pen ?cap width dash =
+  let scaled l = l *. width in
+  let dash = if width > 0. then List.map scaled (Dash.lengths dash) else [] in
+  Stroke.v ?cap ~dash width
+
 (* [box_path rows (x0, x1) (y0, y1) i] is the rectangle of row [i]'s extents on
    the page. *)
 let box_path rows (x0, x1) (y0, y1) i =
@@ -234,6 +241,7 @@ let draw_series rows xs path =
   let width =
     style rows xs ("width", Role.width) ~default:(em rows line_em) Float.equal
   in
+  let dash = style rows xs ("dash", Role.dash) ~default:Dash.solid Dash.equal in
   let stroke =
     Option.map
       (fun _ ->
@@ -252,13 +260,13 @@ let draw_series rows xs path =
             (Mark.project rows (closed path));
           (match stroke with
           | Some c ->
-              Picture.stroke (Stroke.v width) (fade o c)
+              Picture.stroke (pen width dash) (fade o c)
                 (Mark.project rows path)
           | None -> Picture.empty);
         ]
   | None ->
       let c = Option.value stroke ~default:(Theme.accent th) in
-      Picture.stroke (Stroke.v width) (fade o c) (Mark.project rows path)
+      Picture.stroke (pen width dash) (fade o c) (Mark.project rows path)
 
 let draw_line rows =
   let curve =
@@ -286,8 +294,8 @@ let swatch_line rows =
    does. *)
 let boxed = Curve.[ linear; step_after; step_before; step_mid ]
 
-let line ?x ?stroke ?fill ?width ?opacity ?(curve = Curve.linear) ?fx ?fy ~y ()
-    =
+let line ?x ?stroke ?fill ?width ?dash ?opacity ?(curve = Curve.linear) ?fx ?fy
+    ~y () =
   let x =
     match x with Some x -> on Role.x x | None -> on Role.x (index (-1))
   in
@@ -303,6 +311,7 @@ let line ?x ?stroke ?fill ?width ?opacity ?(curve = Curve.linear) ?fx ?fy ~y ()
        opt Role.stroke stroke;
        opt Role.fill fill;
        opt Role.width width;
+       opt Role.dash dash;
        opt Role.opacity opacity;
        Some (on curve_param (const curve));
      ]
@@ -428,17 +437,18 @@ let draw_rule rows =
   let ax, ay, bx, by = segments rows in
   let colours = faded rows (or_const rows Role.stroke (Theme.ink th)) in
   let widths = or_const rows Role.width (em rows line_em) in
+  let dashes = or_const rows Role.dash Dash.solid in
   let segment i =
     let path =
       Mark.project rows
         (Path.polyline [| ax.(i); bx.(i) |] [| ay.(i); by.(i) |])
     in
     if Option.is_none (Path.bounds path) then Picture.empty
-    else Picture.stroke (Stroke.v ~cap:`Butt widths.(i)) colours.(i) path
+    else Picture.stroke (pen ~cap:`Butt widths.(i) dashes.(i)) colours.(i) path
   in
   Picture.group (List.init n segment)
 
-let rule ?x ?x2 ?y ?y2 ?stroke ?width ?opacity ?fx ?fy () =
+let rule ?x ?x2 ?y ?y2 ?stroke ?width ?dash ?opacity ?fx ?fy () =
   let has = Option.is_some in
   let positions =
     if has x && not (has x2) then
@@ -462,7 +472,12 @@ let rule ?x ?x2 ?y ?y2 ?stroke ?width ?opacity ?fx ?fy () =
   in
   make "rule"
     (positions
-    @ [ opt Role.stroke stroke; opt Role.width width; opt Role.opacity opacity ]
+    @ [
+        opt Role.stroke stroke;
+        opt Role.width width;
+        opt Role.dash dash;
+        opt Role.opacity opacity;
+      ]
     @ facets fx fy)
     draw_rule
 

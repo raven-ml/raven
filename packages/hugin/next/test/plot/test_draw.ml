@@ -82,6 +82,7 @@ let images d =
 
 let stamps d = collect (function Picture.Stamp s -> Some s.xs | _ -> None) d
 let color = Testable.make ~pp:Color.pp ~equal:Color.equal
+let dash = Testable.make ~pp:Dash.pp ~equal:Dash.equal
 let text_t = Testable.make ~pp:Text.pp ~equal:Text.equal
 let drawing = Testable.make ~pp:Drawing.pp ~equal:Drawing.equal
 let is_nan = Float.is_nan
@@ -1283,6 +1284,8 @@ let m4_lines =
       ("catmull_rom", line ~curve:Curve.catmull_rom ~y:(num y) (), false);
       ("basis", line ~curve:Curve.basis ~y:(num y) (), false);
       ("filled", line ~fill:(const Color.red) ~y:(num y) (), false);
+      ("dashed", line ~dash:(const Dash.dashed) ~y:(num y) (), false);
+      ("solid", line ~dash:(const Dash.solid) ~y:(num y) (), true);
     ]
     (fun (_, f, reduced) -> equal bool reduced (line_rows f < 2000))
 
@@ -1936,6 +1939,149 @@ let steps =
           equal bool false (stepped_with (Some false)));
     ]
 
+(* Dashes *)
+
+(* [strokes_of id d] is the stroke style of each stroke drawn under the
+   outermost tag [id] in [d], in drawing order. *)
+let strokes_of id d =
+  match tags id d with
+  | [] -> []
+  | (_, p) :: _ ->
+      List.rev
+        (fold
+           (fun acc -> function
+             | Picture.Stroke s -> s.stroke :: acc | _ -> acc)
+           [] p)
+
+let mark_id = path [ Index 0 ]
+let lengths = list float_exact
+
+let gen_column =
+  Gen.array ~size:(Gen.int_range 1 6)
+    (Gen.frequency
+       [
+         (4, Gen.float_range (-5.) 5.);
+         (1, Gen.of_list ~pp:Format.pp_print_float [ nan; Float.infinity ]);
+       ])
+
+(* [solid_law (name, mark) ys] states that [mark ys] with a constant solid dash
+   draws what it draws without one. *)
+let solid_law ((_, mark), ys) =
+  let d dash = drawn (layer [ mark dash (f64 ys) ]) in
+  equal drawing (d None) (d (Some (const Dash.solid)))
+
+let dashed_marks =
+  Gen.of_list
+    ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n)
+    [
+      ("line", fun dash y -> line ?dash ~y:(num y) ());
+      ("rule", fun dash y -> rule ?dash ~y:(num y) ());
+    ]
+
+let pattern_cases =
+  List.concat_map
+    (fun d -> List.map (fun w -> (d, w)) [ 0.5; 2. ])
+    [ Dash.dashed; Dash.dotted; Dash.dash_dot; Dash.v [ 3. ] ]
+
+let pattern_case (d, w) =
+  let y = num (f64 [| 1.; 2.; 3. |]) in
+  List.iter
+    (fun (name, f) ->
+      let expected = List.map (fun l -> l *. w) (Dash.lengths d) in
+      match strokes_of mark_id (drawn (layer [ f ])) with
+      | [] -> failf "%s draws no stroke" name
+      | ss ->
+          List.iter
+            (fun s ->
+              equal ~msg:name lengths expected (Stroke.dash s);
+              equal ~msg:name float_exact w (Stroke.width s))
+            ss)
+    [
+      ("line", line ~dash:(const d) ~width:(const w) ~y ());
+      ("rule", rule ~dash:(const d) ~width:(const w) ~y ());
+    ]
+
+let dashes =
+  group "Dashes"
+    [
+      prop "a constant solid dash draws what no dash draws"
+        (Gen.pair dashed_marks gen_column)
+        solid_law;
+      cases "a stroke's dash is the pattern's lengths times its width"
+        ~name:(fun (d, w) -> Format.asprintf "%a at %g" Dash.pp d w)
+        pattern_cases pattern_case;
+      test "category i takes pattern i modulo their number" (fun () ->
+          let ds = [| Dash.dashed; Dash.dotted |] in
+          let scale = Scale.band ~dashes:ds () in
+          let got =
+            rows_of ~shape:[| 5; 2 |]
+              [ Mark.bind Role.dash (dim ~scale 0) ]
+              (fun r -> Option.get (Mark.get r Role.dash))
+          in
+          equal (array dash) (Array.init 10 (fun k -> ds.(k / 2 mod 2))) got);
+      test "categories take Dash.all by default, cycling" (fun () ->
+          let all = Array.of_list Dash.all in
+          let got =
+            rows_of ~shape:[| 6 |]
+              [ Mark.bind Role.dash (dim 0) ]
+              (fun r -> Option.get (Mark.get r Role.dash))
+          in
+          equal (array dash) (Array.init 6 (fun k -> all.(k mod 4))) got);
+      test "a series takes the pattern of its first row" (fun () ->
+          let y =
+            num (Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 3.; 2.; 1. |])
+          in
+          let scale = Scale.band ~dashes:[| Dash.dotted; Dash.dashed |] () in
+          let d = drawn (layer [ line ~y ~dash:(dim ~scale 0) () ]) in
+          let w = 0.15 *. Theme.size Theme.default in
+          let times d = List.map (fun l -> l *. w) (Dash.lengths d) in
+          equal (list lengths)
+            [ times Dash.dotted; times Dash.dashed ]
+            (List.map Stroke.dash (strokes_of mark_id d)));
+      test "a scale read by stroke and dash has one legend of both" (fun () ->
+          let run = Scale.band ~name:"run" () in
+          let y =
+            num (Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 3.; 2.; 1. |])
+          in
+          let d =
+            drawn
+              (layer
+                 [
+                   line ~y ~stroke:(dim ~scale:run 0) ~dash:(dim ~scale:run 0)
+                     ();
+                 ])
+          in
+          let legends =
+            List.sort_uniq
+              (fun a b ->
+                String.compare
+                  (Nx.Ptree.Path.to_string a)
+                  (Nx.Ptree.Path.to_string b))
+              (collect
+                 (function
+                   | Picture.Tag { tag; _ }
+                     when List.exists
+                            (function
+                              | Nx.Ptree.Path.Field "legend" -> true
+                              | _ -> false)
+                            (Nx.Ptree.Path.segments tag.id) ->
+                       Some tag.id
+                   | _ -> None)
+                 d)
+          in
+          equal
+            (list
+               (Testable.make ~pp:Nx.Ptree.Path.pp ~equal:Nx.Ptree.Path.equal))
+            [ path [ Field "legend"; Field "run"; Field "cat" ] ]
+            legends;
+          let w = 0.15 *. Theme.size Theme.default in
+          equal (list lengths)
+            (List.map
+               (fun d -> List.map (fun l -> l *. w) (Dash.lengths d))
+               [ Dash.solid; Dash.dashed ])
+            (List.map Stroke.dash (strokes_of (List.hd legends) d)));
+    ]
+
 (* Explicit ticks *)
 
 let gen_ticks =
@@ -2097,6 +2243,7 @@ let () =
          areas;
          steps;
          explicit_ticks;
+         dashes;
          legend_swatches;
          public_marks;
          goldens;

@@ -23,6 +23,7 @@ module Picture = Hugin_next_vg.Picture
 module Renderable = Hugin_next_vg.Renderable
 module Raster = Hugin_next_vg_raster
 module Scale = Hugin_next_kit.Scale
+module Dash = Hugin_next_kit.Dash
 open Common
 open Channel
 open Figure
@@ -374,6 +375,18 @@ let runs edges ~inside ~dropped xt yt =
     in
     Some (Array.map Int64.to_int (Nx.to_array (Nx.nonzero kept).(0)))
 
+(* [undashed m] is [true] iff [m] binds no dash other than the constant solid
+   one: a reduced path moves the phase of a dash pattern along it. *)
+let undashed m =
+  match find_binding Role.dash m.bindings with
+  | None -> true
+  | Some (B b) -> (
+      match
+        (Role.equal_range b.role.range Role.Dashes, Channel.constant b.ch)
+      with
+      | Some Type.Equal, Some d -> Dash.equal d Dash.solid
+      | _ -> false)
+
 (* [m4 cx m panel reads mask] is the rows of [m] that M4 keeps of those that
    [mask] puts in [panel], as [runs] finds them, if it applies: the series have
    more than [m4_rows] rows per device-pixel column, and their channels other
@@ -434,7 +447,10 @@ let m4 cx m (panel : Layout.panel) reads mask =
       Some (Nx.create Nx.float64 [| w + 3 |] (Array.of_list all))
   in
   let applies =
-    rank > 0 && w > 0 && last > m4_rows * w && List.for_all constant m.bindings
+    rank > 0 && w > 0
+    && last > m4_rows * w
+    && List.for_all constant m.bindings
+    && undashed m
   in
   match (applies, read Role.x, read Role.y) with
   | true, Some (x, mx, sx), Some (y, my, _) -> (

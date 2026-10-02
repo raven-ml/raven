@@ -6,6 +6,7 @@
 module Color = Hugin_next_gg.Color
 module Text = Hugin_next_text.Text
 module Symbol = Hugin_next_kit.Symbol
+module Dash = Hugin_next_kit.Dash
 module Scale = Hugin_next_kit.Scale
 open Common
 
@@ -15,6 +16,7 @@ type _ range =
   | Floats : float range
   | Colors : Color.t range
   | Symbols : Symbol.t range
+  | Dashes : Dash.t range
   | Texts : Text.t range
   | Panels : string range
   | Param : 'r param -> 'r range
@@ -25,6 +27,7 @@ let equal_range : type r s. r range -> s range -> (r, s) Type.eq option =
   | Floats, Floats -> Some Type.Equal
   | Colors, Colors -> Some Type.Equal
   | Symbols, Symbols -> Some Type.Equal
+  | Dashes, Dashes -> Some Type.Equal
   | Texts, Texts -> Some Type.Equal
   | Panels, Panels -> Some Type.Equal
   | Param p, Param q -> Type.Id.provably_equal p.id q.id
@@ -36,12 +39,13 @@ let equal_in : type r. r range -> r -> r -> bool =
   | Floats -> Float.equal v v'
   | Colors -> Color.equal v v'
   | Symbols -> Symbol.equal v v'
+  | Dashes -> Dash.equal v v'
   | Texts -> Text.equal v v'
   | Panels -> String.equal v v'
   | Param p -> p.equal v v'
 
 type axis = X | Y
-type map = Color | Opacity | Area | Width | Shape
+type map = Color | Opacity | Area | Width | Shape | Pattern
 
 type use =
   | Position of { axis : axis; far : bool }
@@ -61,6 +65,7 @@ let make : type r. string -> r range -> use -> ('d, r) t =
     | Encoding { map = Color; _ }, Colors -> true
     | Encoding { map = Opacity | Area | Width; _ }, Floats -> true
     | Encoding { map = Shape; _ }, Symbols -> true
+    | Encoding { map = Pattern; _ }, Dashes -> true
     | _ -> false
   in
   if not fits then err "Role" "the use of %s maps outside its range" name;
@@ -78,6 +83,7 @@ let opacity = make "opacity" Floats (encoding "opacity" Opacity)
 let size = make "size" Floats (encoding "size" Area)
 let width = make "width" Floats (encoding "width" Width)
 let symbol = make "symbol" Symbols (encoding "symbol" Shape)
+let dash = make "dash" Dashes (encoding "dash" Pattern)
 let text = make "text" Texts Value
 let fx = make "fx" Panels (Facet X)
 let fy = make "fy" Panels (Facet Y)
@@ -94,6 +100,7 @@ let names =
     size.name;
     width.name;
     symbol.name;
+    dash.name;
     text.name;
     fx.name;
     fy.name;
@@ -143,4 +150,4 @@ let by_cell n = List.exists (reads n) [ x.use; y.use; fx.use; fy.use ]
 
 let by_kind n =
   List.exists (reads n)
-    [ fill.use; opacity.use; size.use; width.use; symbol.use ]
+    [ fill.use; opacity.use; size.use; width.use; symbol.use; dash.use ]

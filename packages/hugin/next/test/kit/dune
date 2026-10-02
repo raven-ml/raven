@@ -45,6 +45,16 @@
    (diff? test_curve.ml test_curve.ml.corrected))))
 
 (test
+ (name test_dash)
+ (modules test_dash)
+ (package hugin)
+ (libraries hugin.next.kit windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_dash.ml test_dash.ml.corrected))))
+
+(test
  (name test_symbol)
  (modules test_symbol)
  (package hugin)

@@ -49,6 +49,7 @@ type 'd t = {
   scheme : Scheme.t option;
   areas : (float * float) option;
   symbols : Symbol.t array option;
+  dashes : Dash.t array option;
   unknown : Color.t option;
 }
 
@@ -69,6 +70,7 @@ type property =
   | Scheme
   | Areas
   | Symbols
+  | Dashes
   | Unknown
 
 let err fn fmt =
@@ -178,12 +180,13 @@ let check_areas fn (a0, a1) =
 (* Constructors *)
 
 let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
-    ?ticks ?notation ?padding ?wrap ?tz_offset_s ?scheme ?areas ?symbols
+    ?ticks ?notation ?padding ?wrap ?tz_offset_s ?scheme ?areas ?symbols ?dashes
     ?unknown () =
   Option.iter (check_areas fn) areas;
   Option.iter
     (fun ss -> if Array.length ss = 0 then err fn "no symbols")
     symbols;
+  Option.iter (fun ds -> if Array.length ds = 0 then err fn "no dashes") dashes;
   Option.iter (check_tz fn) tz_offset_s;
   Option.iter
     (fun p ->
@@ -209,6 +212,7 @@ let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
     scheme;
     areas;
     symbols = Option.map Array.copy symbols;
+    dashes = Option.map Array.copy dashes;
     unknown;
   }
 
@@ -254,11 +258,11 @@ let time ?name ?domain ?nice ?clamp ?reverse ?tz_offset_s ?ticks ?scheme
     ?domain:(Option.map (fun (a, b) -> Instants (a, b)) domain)
     ?nice ?clamp ?reverse ?tz_offset_s ?ticks ?scheme ?unknown ()
 
-let band ?name ?domain ?padding ?reverse ?wrap ?ticks ?scheme ?symbols ?unknown
-    () =
+let band ?name ?domain ?padding ?reverse ?wrap ?ticks ?scheme ?symbols ?dashes
+    ?unknown () =
   make "band" Categorical Linear ?name
     ?domain:(Option.map (fun c -> Categories c) domain)
-    ?padding ?reverse ?wrap ?ticks ?scheme ?symbols ?unknown ()
+    ?padding ?reverse ?wrap ?ticks ?scheme ?symbols ?dashes ?unknown ()
 
 (* Properties *)
 
@@ -325,6 +329,7 @@ let ticks s = Option.map Array.copy s.ticks
 let notation s = s.notation
 let areas s = s.areas
 let symbols s = Option.map Array.copy s.symbols
+let dashes s = Option.map Array.copy s.dashes
 let unknown s = s.unknown
 let tz_offset_s s = Option.value ~default:0 s.tz_offset_s
 
@@ -636,6 +641,7 @@ let agreements r s s' =
     (Scheme, r.holds Scheme.equal s.scheme s'.scheme);
     (Areas, r.holds equal_pair s.areas s'.areas);
     (Symbols, r.holds equal_symbols s.symbols s'.symbols);
+    (Dashes, r.holds (equal_array Dash.equal) s.dashes s'.dashes);
     (Unknown, r.holds Color.equal s.unknown s'.unknown);
   ]
 
@@ -659,6 +665,7 @@ let union s s' =
     scheme = first s.scheme s'.scheme;
     areas = first s.areas s'.areas;
     symbols = first s.symbols s'.symbols;
+    dashes = first s.dashes s'.dashes;
     unknown = first s.unknown s'.unknown;
   }
 
@@ -725,6 +732,7 @@ let property_name = function
   | Scheme -> "scheme"
   | Areas -> "areas"
   | Symbols -> "symbols"
+  | Dashes -> "dashes"
   | Unknown -> "unknown"
 
 let pp_property ppf p = Format.pp_print_string ppf (property_name p)
@@ -778,7 +786,7 @@ let pp (type d) ppf (s : d t) =
     | Categorical -> fun ppf -> Format.fprintf ppf "%S"
   in
   let values = Format.pp_print_array ~pp_sep:Format.pp_print_space value in
-  Format.fprintf ppf "@[<1>(%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a)@]" head s
+  Format.fprintf ppf "@[<1>(%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a)@]" head s
     (field "name" (fun ppf -> Format.fprintf ppf "%S"))
     s.name (field "domain" pp_domain) s.domain (field "nice" bool) s.nice
     (field "zero" bool) s.zero (field "clamp" bool) s.clamp
@@ -795,7 +803,11 @@ let pp (type d) ppf (s : d t) =
     s.areas
     (field "symbols"
        (Format.pp_print_array ~pp_sep:Format.pp_print_space Symbol.pp))
-    s.symbols (field "unknown" Color.pp) s.unknown
+    s.symbols
+    (field "dashes"
+       (Format.pp_print_array ~pp_sep:Format.pp_print_space (fun ppf d ->
+            Format.fprintf ppf "@[<1>(%a)@]" Dash.pp d)))
+    s.dashes (field "unknown" Color.pp) s.unknown
 
 (* Observers *)
 
@@ -817,6 +829,7 @@ let sets (type d) p (s : d t) =
   | Scheme -> Option.is_some s.scheme
   | Areas -> Option.is_some s.areas
   | Symbols -> Option.is_some s.symbols
+  | Dashes -> Option.is_some s.dashes
   | Unknown -> Option.is_some s.unknown
 
 (* Defined last, so that the constructors above are those of [tf]. *)

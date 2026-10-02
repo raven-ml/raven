@@ -178,6 +178,9 @@ module Scheme = Hugin_next_kit.Scheme
 module Symbol = Hugin_next_kit.Symbol
 (** Marker symbols. *)
 
+module Dash = Hugin_next_kit.Dash
+(** Dash patterns. *)
+
 module Curve = Hugin_next_kit.Curve
 (** Curves through points. *)
 
@@ -235,12 +238,13 @@ type ('d, 'r) channel
       | [size]           | [float]    | ["size"]       | an area in square points       |
       | [width]          | [float]    | ["width"]      | a line width in points         |
       | [symbol]         | [Symbol.t] | ["symbol"]     | a symbol                       |
+      | [dash]           | [Dash.t]   | ["dash"]       | a dash pattern                 |
       | [text]           | [Text.t]   | none           | a text                         |
       | [fx], [fy]       | [string]   | ["fx"], ["fy"] | the panel the mark is drawn in |
     }
 
     A role takes channels of any kind, except that [size] takes quantities and
-    [symbol], [fx] and [fy] take categories, as their types say: neither
+    [symbol], [dash], [fx] and [fy] take categories, as their types say: neither
     [~fx:(num x)] nor [num ~scale:(Scale.band ()) x] type-checks. The ranges
     that normalised values map into are those the scale's specification sets, or
     else the theme's ({!Theme.section-ranges}).
@@ -430,6 +434,7 @@ val line :
   ?stroke:('s, Color.t) channel ->
   ?fill:('f, Color.t) channel ->
   ?width:('w, float) channel ->
+  ?dash:(string, Dash.t) channel ->
   ?opacity:('o, float) channel ->
   ?curve:Curve.t ->
   ?fx:(string, string) channel ->
@@ -447,17 +452,21 @@ val line :
     - [curve] says how the curve passes through the points, {!Curve.linear} by
       default. A curve breaks where a row is dropped ({!Curve.section-runs}).
     - Without [fill], each series is stroked with [stroke] at [width], the
-      theme's line width by default.
+      theme's line width by default, broken by [dash], {!Dash.solid} by default.
     - With [fill], each series is closed and filled under the even-odd rule, and
       outlined only if [stroke] is given.
 
-    A series takes its colours, width and opacity from its first row that is not
-    dropped, with a warning if one of them varies along it.
+    A series takes its colours, width, dash pattern and opacity from its first
+    row that is not dropped, with a warning if one of them varies along it. So
+    [line ~y ~dash:(const Dash.dashed) ()] dashes every series, and with
+    [let run = Scale.band ~name:"run" ()],
+    [line ~y ~stroke:(dim ~scale:run 0) ~dash:(dim ~scale:run 0) ()] tells the
+    series of axis [0] apart by colour and pattern in one legend.
 
     A line without [fill] drawn with {!Curve.linear} or a step, whose piece
     between two points depends on those two points alone and stays within their
     bounding box, is reduced when it has more than four rows per device-pixel
-    column ({!Mark.m4}). *)
+    column, unless it is dashed ({!Mark.m4}). *)
 
 val area :
   ?x:('x, float) channel ->
@@ -534,6 +543,7 @@ val rule :
   ?y2:('y, float) channel ->
   ?stroke:('s, Color.t) channel ->
   ?width:('w, float) channel ->
+  ?dash:(string, Dash.t) channel ->
   ?opacity:('o, float) channel ->
   ?fx:(string, string) channel ->
   ?fy:(string, string) channel ->
@@ -551,7 +561,10 @@ val rule :
     A position on a band scale is the centre of its band. [rule] implies [zero]
     on the scale of a length, as {!rect} does, so stems are proportional to
     their values. The segment is stroked with [stroke], the ink by default, at
-    [width], the theme's line width by default.
+    [width], the theme's line width by default, with butt caps, broken by
+    [dash], {!Dash.solid} by default:
+    [rule ~y:(floats [| 0. |]) ~dash:(const Dash.dashed) ()] is a dashed
+    reference line.
 
     Raises [Invalid_argument] if [x2] is given without [x] or [y2] without [y],
     or if the channels given match none of these cases. *)
@@ -1193,14 +1206,14 @@ module Theme : sig
       em from what they title; ticks aiming to lie [5] em apart on x axes and
       colour bars and [3.5] em apart on y axes, fewer if their labels would fill
       more than half the axis ({!Hugin_next_kit.Ticks.choose}); legend swatches
-      [0.8] em square, or [1.5] em long for a legend of [stroke] colours, or as
-      large as the largest circle of a legend of areas, [0.25] em from their
-      labels, in rows [0.4] em apart, and colour bars [1] em wide; axis lines,
-      ticks and the outlines of marks [0.08] em wide, and grid lines [0.06] em
-      wide; lines and rules [0.15] em wide; dots of the area of a circle [0.6]
-      em across; [1] em between a legend and what it stands beside, and added to
-      the protrusions that meet a gap between grid cells; and a margin of [0.5]
-      em around the page.
+      [0.8] em square, or [1.5] em long for a legend of [stroke] colours or dash
+      patterns, or as large as the largest circle of a legend of areas, [0.25]
+      em from their labels, in rows [0.4] em apart, and colour bars [1] em wide;
+      axis lines, ticks and the outlines of marks [0.08] em wide, and grid lines
+      [0.06] em wide; lines and rules [0.15] em wide; dots of the area of a
+      circle [0.6] em across; [1] em between a legend and what it stands beside,
+      and added to the protrusions that meet a gap between grid cells; and a
+      margin of [0.5] em around the page.
 
       Text and axes are in the ink, their lesser parts at a fraction of its
       opacity: tick and legend labels at [0.75], axis lines and ticks at [0.6],
@@ -1211,13 +1224,13 @@ module Theme : sig
       The ranges a role maps normalised values into are those its scale's
       specification sets, and otherwise: colours by the theme's [scheme] on a
       continuous scale and its [palette] on a band scale; symbols by
-      {!Symbol.filled} or {!Symbol.stroked}, as {!dot} says; sizes from area
-      [0.] to the area of a circle [1.5] em across, the [size] role implying
-      [zero] on its scale since an area is a magnitude; widths from [0.05] to
-      [0.5] em; opacities from [0.] to [1.], the normalised value clamped into
-      \[[0];[1]\]; positions by the coordinate system, a bar's band position
-      implying padding [0.2] of a step on its band scale ({!rect}), so that bars
-      stand apart. *)
+      {!Symbol.filled} or {!Symbol.stroked}, as {!dot} says; dash patterns by
+      {!Dash.all}; sizes from area [0.] to the area of a circle [1.5] em across,
+      the [size] role implying [zero] on its scale since an area is a magnitude;
+      widths from [0.05] to [0.5] em; opacities from [0.] to [1.], the
+      normalised value clamped into \[[0];[1]\]; positions by the coordinate
+      system, a bar's band position implying padding [0.2] of a step on its band
+      scale ({!rect}), so that bars stand apart. *)
 
   (** {1:comparing Comparing and formatting} *)
 
@@ -1277,6 +1290,9 @@ module Role : sig
 
   val symbol : (string, Symbol.t) t
   (** [symbol] is a marker shape. *)
+
+  val dash : (string, Dash.t) t
+  (** [dash] is a dash pattern. *)
 
   val text : ('d, Text.t) t
   (** [text] is a text. It reads no scale ({!Hugin_next.section-roles}). *)
@@ -1392,7 +1408,8 @@ module Mark : sig
       range, positions normalised and a constant repeated, or [None] if the mark
       binds no channel to [r]. A missing value is the unknown colour of its
       scale for a colour, [nan] for a float, the first symbol of its scale for a
-      symbol and the empty text for a text. The array is fresh. *)
+      symbol, the first dash pattern of its scale for a dash and the empty text
+      for a text. The array is fresh. *)
 
   val normalized : rows -> ('d, 'r) Role.t -> float array option
   (** [normalized rows r] is [Some us], the value of each row for the role [r]
@@ -1526,7 +1543,9 @@ module Mark : sig
       another edge of a column lies in the column after. Only the rows in the
       panel make runs: the rows of a series that its facets put in other panels
       neither join nor split them. It applies when [x] and [y] read continuous
-      scales and the projection is affine.
+      scales, the projection is affine and the mark binds no [dash] other than
+      [const Dash.solid]: a dash pattern runs along the length of the path,
+      which reducing changes.
 
       A mark naming it strokes each series as a path through its points, whose
       piece between two consecutive points depends on those two points alone and

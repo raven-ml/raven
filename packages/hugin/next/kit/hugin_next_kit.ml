@@ -10,6 +10,7 @@ module Scale = Scale
 module Ticks = Ticks
 module Scheme = Scheme
 module Symbol = Symbol
+module Dash = Dash
 module Curve = Curve
 module Stack = Stack
 module Stats = Stats

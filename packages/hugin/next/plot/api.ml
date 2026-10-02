@@ -20,6 +20,7 @@ module Number = Hugin_next_kit.Number
 module Scale = Hugin_next_kit.Scale
 module Scheme = Hugin_next_kit.Scheme
 module Symbol = Hugin_next_kit.Symbol
+module Dash = Hugin_next_kit.Dash
 module Curve = Hugin_next_kit.Curve
 module Stats = Hugin_next_kit.Stats
 
