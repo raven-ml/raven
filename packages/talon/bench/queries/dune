@@ -3,7 +3,7 @@
 ; README.md).
 
 (library
- (name d7)
+ (name queries)
  (wrapped false)
  (modules answer workload h2o tpch)
  (libraries talon talon.csv talon.parquet bytesrw nx))
@@ -11,15 +11,15 @@
 (executable
  (name runner)
  (modules runner)
- (libraries d7 talon))
+ (libraries queries talon))
 
 (executables
  (names bench_h2o bench_tpch)
  (modules bench_h2o bench_tpch cases)
- (libraries d7 talon thumper))
+ (libraries queries talon thumper))
 
 (test
  (name test_answer)
  (modules test_answer)
  (package talon)
- (libraries windtrap d7 talon))
+ (libraries windtrap queries talon))

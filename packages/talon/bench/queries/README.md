@@ -136,9 +136,9 @@ case ids that end in `/talon`, such as `groupby/1e8/q03/talon`:
 
 ```sh
 export TALON_BENCH_DATA=DATA
-dune exec packages/talon/bench/d7/bench_h2o.exe -- list
-dune exec packages/talon/bench/d7/bench_h2o.exe -- check -f groupby/1e7
-dune exec packages/talon/bench/d7/bench_tpch.exe -- bless -f tpch/sf1
+dune exec packages/talon/bench/queries/bench_h2o.exe -- list
+dune exec packages/talon/bench/queries/bench_h2o.exe -- check -f groupby/1e7
+dune exec packages/talon/bench/queries/bench_tpch.exe -- bless -f tpch/sf1
 ```
 
 Each case loads its workload's tables before thumper measures it, and each
@@ -151,10 +151,10 @@ baselines, identifiers as `String`, never as `Categorical`.
 `runner.exe` writes and checks talon's answers:
 
 ```sh
-R=_build/default/packages/talon/bench/d7/runner.exe
+R=_build/default/packages/talon/bench/queries/runner.exe
 $R questions groupby/1e7                      # the ids of a workload's questions
 $R answer DATA tpch/sf1/q21 q21.csv           # write one canonical answer
-$R check packages/talon/bench/d7/answers DATA   # check every CI answer
+$R check packages/talon/bench/queries/answers DATA   # check every CI answer
 ```
 
 TPC-H's talon queries state their joins in a committed order, since talon does

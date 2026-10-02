@@ -124,8 +124,8 @@ jobs:
         env:
           DATA: ${{ runner.temp }}/talon-bench
         run: |
-          (cd packages/talon/bench/d7 && uv run h2o_data.py 1e6 "$DATA" && uv run tpch_data.py 0.1 "$DATA")
-          opam exec -- dune exec --release packages/talon/bench/d7/runner.exe -- check packages/talon/bench/d7/answers "$DATA"
+          (cd packages/talon/bench/queries && uv run h2o_data.py 1e6 "$DATA" && uv run tpch_data.py 0.1 "$DATA")
+          opam exec -- dune exec --release packages/talon/bench/queries/runner.exe -- check packages/talon/bench/queries/answers "$DATA"
 
       - name: Build and test rune
         run: |
