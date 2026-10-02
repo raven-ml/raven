@@ -1253,12 +1253,11 @@ module Runtimes = struct
          (require_ok ~pp (B.of_file path))
          ~offset:0 (B.dtype src) (B.length src))
 
-  (* A budget of 16 bytes past what [r] holds, while [f] runs. *)
-  let tight r f =
+  (* [f ()] with no room in [r]'s budget. *)
+  let full r f =
     let budget = Nx_device.budget r in
     Fun.protect ~finally:(fun () -> Nx_device.set_budget r budget) @@ fun () ->
-    Gc.full_major ();
-    Nx_device.set_budget r (Nx_device.Stats.allocated (Nx_device.stats r) + 16);
+    Nx_device.set_budget r 0;
     f ()
 
   (* [laws ms] checks the runtimes [ms], each a memory: operations on its device
@@ -1334,8 +1333,8 @@ module Runtimes = struct
                 test
                   "an operation's result the runtime cannot allocate raises \
                    Out_of_memory with the device and its bytes" (fun () ->
-                    tight m @@ fun () ->
                     let x = Nx.place on_d (Nx.zeros Nx.float32 [| 4 |]) in
+                    full m @@ fun () ->
                     raises_match (out_of_memory 16) (fun () -> Nx.add x x);
                     (* Held through the addition: the refused allocation
                        collects garbage and tries again, and could take a dead
@@ -1371,7 +1370,7 @@ module Runtimes = struct
           test
             "a placement the runtime cannot allocate raises Out_of_memory with \
              the device and its bytes" (fun () ->
-              tight m @@ fun () ->
+              full m @@ fun () ->
               raises_match (out_of_memory 400) (fun () ->
                   Nx.place on_d (Nx.zeros Nx.float32 [| 100 |])));
         ]
