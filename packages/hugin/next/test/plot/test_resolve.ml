@@ -350,6 +350,22 @@ let errors =
     "resolve raises, naming the nodes at fault" cases_
     (fun (_, f, subs) -> fails_naming subs f)
 
+(* A traced tensor outside any trace: reading it raises. *)
+type (_, _) Nx.Repr.node += Outside
+
+let traced () =
+  Nx.Repr.Traced.v ~context:Nx.Placement.host Nx.Placement.host Nx.float64
+    [| 2 |] Outside
+
+let reads =
+  group "reads"
+    [
+      test "a tensor that cannot be read raises naming its mark" (fun () ->
+          let t = dot ~x:(num (traced ())) ~y:(const 0.5) () |> name "t" in
+          fails_naming [ "resolve: t: "; "traced" ] (fun () ->
+              resolve (layer [ dot1 [| 1. |] [| 1. |]; t ])));
+    ]
+
 let resolved_scale =
   let r = resolve (layer [ dot1 [| 1. |] [| 2. |] |> name "a" ]) in
   group "Resolved.scale"
@@ -1198,6 +1214,7 @@ let () =
     (run "hugin.next resolve"
        [
          errors;
+         reads;
          resolved_scale;
          composition;
          ids;

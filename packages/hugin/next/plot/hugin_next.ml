@@ -2785,6 +2785,11 @@ let dedupe ws =
   List.rev
     (List.fold_left (fun acc w -> if seen w acc then acc else w :: acc) [] ws)
 
+(* [reading mid f] is [f ()], which reads the tensors of the mark [mid], with
+   the errors of reading them naming the mark. *)
+let reading mid f =
+  try f () with Invalid_argument msg -> err "resolve" "%a: %s" pp_id mid msg
+
 (* [in_order order ws] is [ws] sorted by the position in [order] of the node
    each is about, a generated node's being that of the innermost node of [order]
    it lies under. *)
@@ -2878,7 +2883,9 @@ let resolve ?prev ?(view = View.empty) figure =
                 e_mark = occ.mark;
                 e_inputs = inputs;
                 e_filter = fkey;
-                e_summary = summarise occ.mark.shape inputs mask;
+                e_summary =
+                  reading occ.mid (fun () ->
+                      summarise occ.mark.shape inputs mask);
               }
         in
         fresh := e :: !fresh;
@@ -2952,7 +2959,8 @@ let resolve ?prev ?(view = View.empty) figure =
         let at c role =
           match c with
           | None -> Everywhere
-          | Some c -> presence occ.mark.shape occ.mark role c
+          | Some c ->
+              reading mid (fun () -> presence occ.mark.shape occ.mark role c)
         in
         List.filter_map
           (fun p ->

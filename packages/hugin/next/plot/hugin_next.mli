@@ -73,8 +73,9 @@
       values are {e warnings}: nothing is substituted for the values at fault,
       the stage goes on, and each stage output lists its warnings and those of
       the stages before it ({!Drawing.warnings}). {!resolve} and {!draw} also
-      raise what reading a tensor raises, for a traced tensor or one whose
-      storage a compiled call consumed, naming the channel.
+      raise the [Invalid_argument] that reading a tensor raises, for a traced
+      tensor or one whose storage a compiled call consumed, with its message
+      prefixed by the id of the mark.
 
     {1:data Data and rows}
 
