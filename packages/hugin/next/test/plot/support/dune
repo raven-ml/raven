@@ -1,0 +1,3 @@
+(library
+ (name hugin_next_test_figures)
+ (libraries hugin.next nx))

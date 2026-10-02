@@ -41,4 +41,13 @@
  (name test_draw)
  (modules test_draw)
  (package hugin)
- (libraries hugin.next hugin.next.vg.raster nx windtrap))
+ (libraries
+  hugin.next
+  hugin.next.vg.raster
+  hugin.next.vg.svg
+  hugin_next_test_figures
+  nx
+  nx.io
+  windtrap)
+ (deps
+  (glob_files golden/*)))

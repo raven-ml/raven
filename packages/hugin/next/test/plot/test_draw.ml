@@ -6,6 +6,7 @@
 open Hugin_next
 open Windtrap
 module Raster = Hugin_next_vg_raster
+module Svg = Hugin_next_vg_svg
 
 (* Data *)
 
@@ -86,6 +87,18 @@ let drawing = Testable.make ~pp:Drawing.pp ~equal:Drawing.equal
 let is_nan = Float.is_nan
 let floats = array float_exact
 let close = float 1e-9
+
+(* [within_one a b] states that two images differ by at most one colour level in
+   each channel they both have. *)
+let within_one ~msg a b =
+  let channels t = (Nx.shape t).(2) in
+  let c = Int.min (channels a) (channels b) in
+  let a = Nx.slice [ A; A; R (0, c) ] a and b = Nx.slice [ A; A; R (0, c) ] b in
+  equal ~msg (array int) (Nx.shape a) (Nx.shape b);
+  let a = Nx.to_array a and b = Nx.to_array b in
+  let worst = ref 0 in
+  Array.iteri (fun i v -> worst := Int.max !worst (abs (v - b.(i)))) a;
+  at_most ~msg int ~than:1 !worst
 
 (* The colour a pixel of raster output holds for [c]. *)
 let byte v = Float.to_int (Float.round (255. *. v))
@@ -867,4 +880,30 @@ let reducers =
           | l -> failf "%d images" (List.length l));
     ]
 
-let () = exit (run "Draw" [ rows; drawings; output; reducers ])
+(* Goldens *)
+
+let golden name = Filename.concat "golden" name
+
+(* [same_text name expected actual] states that two documents are equal, naming
+   the first byte where they differ. *)
+let same_text name expected actual =
+  if not (String.equal expected actual) then
+    let n = Int.min (String.length expected) (String.length actual) in
+    let rec first i =
+      if i < n && expected.[i] = actual.[i] then first (i + 1) else i
+    in
+    failf "%s differs from its golden at byte %d" name (first 0)
+
+let goldens =
+  let open Hugin_next_test_figures in
+  cases
+    ~name:(fun (n, _, _, _) -> n)
+    "the benchmark figures draw their goldens" Figures.goldens
+    (fun ((name, _, _, _) as g) ->
+      let r = Drawing.renderable (Figures.drawing g) in
+      same_text name (read_file (golden (name ^ ".svg"))) (Svg.render r);
+      within_one ~msg:name
+        (Nx_io.load_image (golden (name ^ ".png")))
+        (Raster.render ~density:Figures.density r))
+
+let () = exit (run "Draw" [ rows; drawings; output; reducers; goldens ])
