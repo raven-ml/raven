@@ -332,8 +332,9 @@ let date_at b pos =
 
 (* A year outside [0000] to [9999] is signed and of at least four digits, as
    [Time.Date.pp] writes it: [-0044-03-15], [+12345-01-01]. Past 2^40 the year
-   stops growing, which is out of range. *)
-let date b pos len =
+   stops growing, past any range. [civil_days] is the days of any such date,
+   which a datetime's ticks bound, and [date] those that {!Time.Date} holds. *)
+let civil_days b pos len =
   if len = 10 then date_at b pos
   else begin
     let stop = pos + len in
@@ -344,10 +345,13 @@ let date b pos len =
       if not (is_digit (get b i)) then invalid "not YYYY-MM-DD";
       if !y < 1 lsl 40 then y := (10 * !y) + digit b i
     done;
-    let days = day_at b (stop - 6) (if get b pos = '-' then - !y else !y) in
-    if Option.is_none (Time.Date.of_days days) then invalid "out of range";
-    days
+    day_at b (stop - 6) (if get b pos = '-' then - !y else !y)
   end
+
+let date b pos len =
+  let days = civil_days b pos len in
+  if Option.is_none (Time.Date.of_days days) then invalid "out of range";
+  days
 
 let floor_div a b = Int64.(if rem a b < 0L then pred (div a b) else div a b)
 
@@ -371,14 +375,31 @@ let ticks u secs ns =
   let div = 1_000_000_000 / per in
   if ns mod div <> 0 then invalid (not_whole u);
   let secs, frac =
-    if secs < 0 && ns > 0 then (secs + 1, (ns / div) - per) else (secs, ns / div)
+    if Int64.compare secs 0L < 0 && ns > 0 then
+      (Int64.succ secs, (ns / div) - per)
+    else (secs, ns / div)
   in
-  let s = Int64.of_int secs and per = Int64.of_int per in
-  let whole = Int64.mul s per in
+  let per = Int64.of_int per in
+  let whole = Int64.mul secs per in
   let v = Int64.add whole (Int64.of_int frac) in
-  if Int64.div whole per <> s || frac >= 0 <> (Int64.compare v whole >= 0) then
-    invalid "out of range";
+  if Int64.div whole per <> secs || frac >= 0 <> (Int64.compare v whole >= 0)
+  then invalid "out of range";
   v
+
+(* The most days whose seconds int64 holds. *)
+let max_days = Int64.to_int (Int64.div Int64.max_int 86400L)
+
+(* [seconds days s] is [days] days and [s] seconds, [|s| < 2 * 86400], as int64
+   seconds. A negative [days] counts from [days + 1], so that the least seconds
+   do not wrap. *)
+let seconds days s =
+  let days, s = if days < 0 then (days + 1, s - 86400) else (days, s) in
+  if Int.abs days > max_days then invalid "out of range";
+  let d = Int64.mul (Int64.of_int days) 86400L and s = Int64.of_int s in
+  let r = Int64.add d s in
+  if Int64.compare s 0L >= 0 <> (Int64.compare r d >= 0) then
+    invalid "out of range";
+  r
 
 (* [fraction b i stop] reads one to nine digits of a fraction of a second at
    [!i], as nanoseconds, or is [-1]. *)
@@ -435,7 +456,7 @@ let datetime u ~zoned b pos len (a : int64s) k =
     else 10
   in
   if len < dlen + 9 then form ~zoned;
-  let days = date b pos dlen in
+  let days = civil_days b pos dlen in
   let p = pos + dlen in
   let t = get b p in
   let hh = two_digits b (p + 1) and mm = two_digits b (p + 4) in
@@ -458,7 +479,7 @@ let datetime u ~zoned b pos len (a : int64s) k =
     else match offset b i stop with Some o -> o | None -> form ~zoned
   in
   if !i <> stop then form ~zoned;
-  let secs = (86400 * days) + (3600 * hh) + (60 * mm) + ss - offset in
+  let secs = seconds days ((3600 * hh) + (60 * mm) + ss - offset) in
   A1.unsafe_set a k (ticks u secs !ns)
 
 (* [directed fmt ty] reads a text in the format [fmt] of [Temporal.parse] as a
@@ -525,8 +546,8 @@ let directed fmt (Type.Any ty) b pos len (a : int64s) k =
   A1.unsafe_set a k
     (match ty with
     | Date -> Int64.of_int days
-    | Clock u -> ticks u tod !ns
-    | Datetime { unit_; _ } -> ticks unit_ ((86400 * days) + tod - !off) !ns
+    | Clock u -> ticks u (Int64.of_int tod) !ns
+    | Datetime { unit_; _ } -> ticks unit_ (seconds days (tod - !off)) !ns
     | _ -> assert false (* Binding checked [ty]. *))
 
 (* Parsing *)

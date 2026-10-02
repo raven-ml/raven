@@ -47,8 +47,7 @@ val print : Column.t -> Column.t
     of [c]'s rows, as {!pp} writes them, null where [c] is, which {!parse} reads
     back to [c]. It is [c] itself for [string] and [binary], and a [string]
     column otherwise. A value of [int64] or [uint64] beyond OCaml's [int], and
-    ticks of any unit, are written in full. A datetime whose day is outside
-    {!Time.Date}'s range writes a text that {!parse} refuses as out of range.
+    ticks of any unit, are written in full.
 
     Raises [Invalid_argument] if [c]'s type is not one {!parse} reads. *)
 

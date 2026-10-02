@@ -190,6 +190,15 @@ let storage =
             [| -1L; Int64.min_int; 1L |]
             (stored Type.uint64
                [ "18446744073709551615"; "9223372036854775808"; "+1" ]));
+      test "a datetime reads the extremes of its ticks" (fun () ->
+          equal (array int64)
+            [| Int64.max_int; Int64.min_int; 185542587187199L |]
+            (stored (Type.datetime S)
+               [
+                 "+292277026596-12-04T15:30:07";
+                 "-292277022657-01-27T08:29:52";
+                 "+5881580-07-11T23:59:59";
+               ]));
       test "a datetime reads a signed year, past nanoseconds' range" (fun () ->
           equal (array int64)
             [| 253402300800L; -62167219201L; -62135596800L |]
@@ -267,7 +276,9 @@ let refusals =
         "2024-01-01T00:00:00.5",
         "not a whole number of seconds" );
       (Any (datetime S), "+999-01-01T00:00:00", "not YYYY-MM-DD");
-      (Any (datetime S), "+5881581-01-01T00:00:00", "out of range");
+      (Any (datetime S), "+292277026596-12-04T15:30:08", "out of range");
+      (Any (datetime S), "-292277022657-01-27T08:29:51", "out of range");
+      (Any (datetime Ms), "+300000000-01-01T00:00:00", "out of range");
       ( Any (datetime S),
         "+10000-01-01",
         "not YYYY-MM-DDThh:mm:ss without an offset" );
@@ -490,6 +501,33 @@ let of_ticks ty xs =
   | Ok c -> c
   | Error (row, why) -> failf "row %d: %s" row why
 
+(* Datetimes drawn at the edges of their int64 ticks and of {!Time.Date}'s days,
+   which {!G.value}'s instants do not reach outside nanoseconds. *)
+let extreme_ticks =
+  let per : Type.unit_ -> int64 = function
+    | S -> 1L
+    | Ms -> 1_000L
+    | Us -> 1_000_000L
+    | Ns -> 1_000_000_000L
+  in
+  let open Gen in
+  let* u = of_list Type.[ S; Ms; Us; Ns ] in
+  let* zone = of_list [ None; Some "UTC" ] in
+  let scaled secs =
+    let t = Int64.mul secs (per u) in
+    if Int64.div t (per u) = secs then [ t ] else []
+  in
+  let edges =
+    [ Int64.min_int; Int64.succ Int64.min_int; -1L; 0L; 1L ]
+    @ [ Int64.pred Int64.max_int; Int64.max_int ]
+    @ scaled 185542587187199L @ scaled 185542587187200L
+    @ scaled (-185542587187200L) @ scaled (-185542587187201L)
+  in
+  let+ xs =
+    array ~size:(int_range 1 8) (frequency [ (1, of_list edges); (1, int64) ])
+  in
+  (Type.datetime ?zone u, xs)
+
 let readable (G.Sample (ty, _)) =
   match ty with
   | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
@@ -586,6 +624,15 @@ let printing =
                "Column.print: duration[s] is not a type that Column.parse reads")
             (fun () ->
               Column.print (Column.v (Type.duration S) [| Time.Span.s 1 |])));
+      prop "Column.parse reads back every tick a datetime holds" extreme_ticks
+        (fun (ty, xs) ->
+          let c = of_ticks ty xs in
+          let back =
+            match Column.parse (Column.type_ c) (Column.print c) with
+            | Ok c -> c
+            | Error (row, why) -> failf "row %d: %s" row why
+          in
+          equal (array int64) xs (Nx.to_array (Column.to_tensor Nx.int64 back)));
       prop "Column.parse reads back what Column.print writes"
         (Gen.such_that readable G.sample) (fun (G.Sample (ty, vs)) ->
           let c = Column.of_options ty vs in

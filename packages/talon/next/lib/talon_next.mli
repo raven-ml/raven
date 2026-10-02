@@ -689,9 +689,10 @@ module Column : sig
       - a categorical: one of the dictionary's strings;
       - [date]: [YYYY-MM-DD], a year outside [0000] to [9999] signed and of at
         least four digits, as {!Time.Date.pp} writes it: [-0044-03-15];
-      - [datetime[u]] and [datetime[u, z]]: a date, [T] or a space, [hh:mm:ss]
-        and an optional fraction of one to nine digits, then, with a zone only,
-        [Z] or [±hh:mm]; a whole number of [u] in [u]'s range.
+      - [datetime[u]] and [datetime[u, z]]: a date of any year, [T] or a space,
+        [hh:mm:ss] and an optional fraction of one to nine digits, then, with a
+        zone only, [Z] or [±hh:mm]; a whole number of [u] in [u]'s range, the
+        int64 ticks, which bound the year.
 
       Raises [Invalid_argument] if [c] is neither [string] nor [binary], or [ty]
       is another type. *)
@@ -707,11 +708,9 @@ module Column : sig
         [0.0015], [-0], [1e+21]), or [nan], [inf] or [-inf];
       - a decimal with its type's scale of digits after the point;
       - a datetime with the fewest fraction digits that are exact, and [Z] when
-        its type has a zone;
+        its type has a zone, every tick of its unit included, past
+        {!Time.Date}'s years;
       - an integer in full, past OCaml's [int] included.
-
-      A datetime whose day is outside {!Time.Date}'s range is written, and
-      {!parse} refuses it as out of range.
 
       Raises [Invalid_argument] if [c]'s type is not one {!parse} reads. *)
 end
