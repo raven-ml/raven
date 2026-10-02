@@ -1948,6 +1948,22 @@ let checks =
           in
           raises (Invalid_argument "element 1 is not below 1") (fun () -> f xs);
           equal ~msg:"the steps up to the failing one ran" int 2 !steps);
+      test
+        "a sampler's traced parameter outside its domain raises when the call \
+         returns" (fun () ->
+          let k = Nx.Rng.key 0 in
+          let draw =
+            Rune.jit
+              Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+              Nx.Rng.bernoulli
+          in
+          raises
+            (Invalid_argument "Nx.Rng.bernoulli: p at [2] is not in [0, 1]")
+            (fun () -> draw k (failing ()));
+          let p = Nx.create Nx.float32 [| 3 |] [| 0.; 0.5; 1. |] in
+          equal (array bool)
+            (Nx.to_array (Nx.Rng.bernoulli k p))
+            (Nx.to_array (draw k p)));
       test "a check under a gradient checks the primal" (fun () ->
           let loss x = Nx.sum (bounded x) in
           raises (Invalid_argument "element 2 is not below 1") (fun () ->

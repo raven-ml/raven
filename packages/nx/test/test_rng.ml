@@ -130,7 +130,17 @@ let rate =
 
 let logit =
   Gen.frequency
-    [ (4, Gen.float_range (-5.) 5.); (1, chosen [ neg_infinity; 0.; 30. ]) ]
+    [
+      (4, Gen.float_range (-5.) 5.);
+      (1, chosen [ neg_infinity; 0.; 30. ]);
+      (1, chosen [ Float.nan; infinity ]);
+    ]
+
+(* The domains nx.mli states, NaN outside every one. *)
+let in_unit p = p >= 0. && p <= 1.
+let not_nan x = not (Float.is_nan x)
+let in_rates r = Float.is_finite r && r >= 0.
+let log_probability x = x < infinity
 
 (* Every function of this module that takes a key, at fixed arguments. *)
 
@@ -276,9 +286,9 @@ let counters =
         (Nx.to_array (Rng.bits k [| 2 * n |])))
 
 (* Supports. Every sampler draws, at every dtype it takes, values of its support
-   in the requested shape. A parameter outside its domain raises nothing, and
-   the laws hold where the parameters are inside it. A parameter in any layout
-   gives the draw its copy gives, which also compares two calls. *)
+   in the requested shape. A parameter with an element outside its domain
+   raises, and the laws hold where the parameters are inside it. A parameter in
+   any layout gives the draw its copy gives, which also compares two calls. *)
 
 type sized = {
   draw : 'b. Rng.t -> (float, 'b) Nx.dtype -> int array -> (float, 'b) Nx.t;
@@ -303,43 +313,49 @@ let sized =
       fun _ v -> Float.is_finite v && v >= 0. );
   ]
 
-(* Samplers of one parameter tensor, with what a draw holds given its parameter;
-   a second parameter is a scalar. *)
+(* Samplers of one parameter tensor, with the parameter's domain and what a draw
+   holds given its parameter; a second parameter is a scalar inside its
+   domain. *)
 type elementwise = { sample : 'b. Rng.t -> (float, 'b) Nx.t -> float Ref.t }
 
 let elementwise =
   let s t v = Nx.scalar (Nx.dtype t) v in
   let within a b v = v >= Float.min a b && v <= Float.max a b in
-  (* float8_e4m3 holds an infinite bound as NaN, outside the domain. *)
-  let bounded a t v = Float.is_nan t || within a t v in
   [
-    ( "bernoulli is true where p >= 1 and false where p <= 0 or NaN",
+    ( "bernoulli is true where p is 1 and false where p is 0",
       probability,
+      in_unit,
       { sample = (fun k p -> drawn (Rng.bernoulli k p)) },
-      fun p b -> if p >= 1. then b = 1. else p > 0. || b = 0. );
+      fun p b -> (b = 0. || b = 1.) && (p < 1. || b = 1.) && (p > 0. || b = 0.)
+    );
     ( "truncated_normal lies between a lower bound and 1.5, in either order",
       bound,
+      not_nan,
       { sample = (fun k t -> drawn (Rng.truncated_normal k t (s t 1.5))) },
-      bounded 1.5 );
+      within 1.5 );
     ( "truncated_normal lies between -1.5 and an upper bound, in either order",
       bound,
+      not_nan,
       { sample = (fun k t -> drawn (Rng.truncated_normal k (s t (-1.5)) t)) },
-      bounded (-1.5) );
+      within (-1.5) );
     ( "gamma draws are finite and non-negative",
       concentration,
+      inside,
       { sample = (fun k c -> drawn (Rng.gamma k c)) },
-      fun c g -> (not (inside c)) || (Float.is_finite g && g >= 0.) );
+      fun _ g -> Float.is_finite g && g >= 0. );
     ( "beta draws lie in [0, 1], over their first concentration",
       concentration,
+      inside,
       { sample = (fun k a -> drawn (Rng.beta k a (s a 2.))) },
-      fun a v -> (not (inside a)) || within 0. 1. v );
+      fun _ v -> within 0. 1. v );
     ( "beta draws lie in [0, 1], over their second concentration",
       concentration,
+      inside,
       { sample = (fun k b -> drawn (Rng.beta k (s b 2.) b)) },
-      fun b v -> (not (inside b)) || within 0. 1. v );
-    ( "poisson counts are non-negative, and zero where the rate is not \
-       positive (an infinite rate included, where nx.mli is silent)",
+      fun _ v -> within 0. 1. v );
+    ( "poisson counts are non-negative, and zero where the rate is zero",
       rate,
+      in_rates,
       { sample = (fun k r -> drawn (Rng.poisson k r)) },
       fun r c -> c >= 0. && (r > 0. || c = 0.) );
   ]
@@ -395,19 +411,27 @@ let supports =
                r.data))
        sized
     @ List.map
-        (fun (claim, value, s, holds) ->
+        (fun (claim, value, domain, s, holds) ->
           prop
-            (claim ^ ", in its parameter's shape")
+            (claim
+           ^ ", in its parameter's shape; a parameter outside its domain raises"
+            )
             (Gen.pair key (param value))
             (fun (k, P t) ->
-              let r = s.sample k t in
-              equal exactly (s.sample k (Nx.copy t)) r;
-              equal (array int) (Nx.shape t) r.shape;
-              Array.iteri
-                (fun i p ->
-                  let v = r.data.(i) in
-                  is_true ~msg:(Printf.sprintf "%h from %h" v p) (holds p v))
-                (floats t)))
+              let valid = Array.for_all domain (floats t) in
+              cover "a parameter outside the domain" (not valid);
+              cover "a non-empty parameter inside the domain"
+                (valid && Nx.numel t > 0);
+              if not valid then raises_invalid_arg (fun () -> s.sample k t)
+              else
+                let r = s.sample k t in
+                equal exactly (s.sample k (Nx.copy t)) r;
+                equal (array int) (Nx.shape t) r.shape;
+                Array.iteri
+                  (fun i p ->
+                    let v = r.data.(i) in
+                    is_true ~msg:(Printf.sprintf "%h from %h" v p) (holds p v))
+                  (floats t)))
         elementwise
     @ [
         prop "uniform at float32 is the low 24 bits of bits, scaled by 2^-24"
@@ -458,7 +482,10 @@ let supports =
           (Gen.pair key (param ~shape:components concentration))
           (fun (k, P c) ->
             let n = Nx.dim (-1) c in
-            if n < 2 then raises_invalid_arg (fun () -> Rng.dirichlet k c)
+            let concentrations = Array.for_all inside (floats c) in
+            cover "a concentration outside the domain" (not concentrations);
+            if n < 2 || not concentrations then
+              raises_invalid_arg (fun () -> Rng.dirichlet k c)
             else (
               same_draw (Rng.dirichlet k) c;
               let d = drawn (Rng.dirichlet k c) in
@@ -466,19 +493,20 @@ let supports =
               let tol =
                 float_of_int n *. Float.ldexp 1. (-significand (Nx.dtype c))
               in
-              List.iter2
-                (fun c row ->
-                  if Array.for_all inside c then (
-                    Array.iter (at_least float_exact ~than:0.) row;
-                    equal (float tol) 1. (Array.fold_left ( +. ) 0. row)))
-                (rows n (floats c))
+              List.iter
+                (fun row ->
+                  Array.iter (at_least float_exact ~than:0.) row;
+                  equal (float tol) 1. (Array.fold_left ( +. ) 0. row))
                 (rows n d.data)));
         prop
           "categorical gives one index per lane along axis, by default the \
-           last, never on a -inf logit beside a finite one"
-          (Gen.pair key logits_along) (fun (k, (P t, axis)) ->
+           last, never on a -inf logit beside a finite one, and raises on a \
+           NaN or infinite logit" (Gen.pair key logits_along)
+          (fun (k, (P t, axis)) ->
             let n = Nx.dim axis t in
-            if n = 0 then
+            let logits = Array.for_all log_probability (floats t) in
+            cover "a logit outside the domain" (not logits);
+            if n = 0 || not logits then
               raises_invalid_arg (fun () -> Rng.categorical k ~axis t)
             else (
               same_draw (Rng.categorical k ~axis) t;
@@ -614,6 +642,65 @@ let errors =
         ] );
     ]
     (fun (_, refused) -> List.iter raises_invalid_arg refused)
+
+(* A parameter outside its domain is refused with a message naming the sampler,
+   the parameter, the index of its first element outside the domain, and the
+   domain. A broadcast parameter is indexed in its broadcast shape. *)
+let refusals =
+  let v d xs = Nx.create d [| Array.length xs |] xs in
+  let m d r c xs = Nx.create d [| r; c |] xs in
+  let f32 = Nx.float32 and f64 = Nx.float64 in
+  let two = Nx.scalar f32 2. in
+  cases ~name:fst "refusals"
+    [
+      ( "Nx.Rng.gamma: concentration at [2] is not in (0, inf)",
+        fun () -> ignore (Rng.gamma k0 (v f32 [| 1.; 2.; -0.5 |])) );
+      ( "Nx.Rng.gamma: concentration at [1] is not in (0, inf)",
+        fun () -> ignore (Rng.gamma k0 (v f64 [| 1.; 0.; Float.nan |])) );
+      ( "Nx.Rng.beta: a at [0; 1] is not in (0, inf)",
+        fun () -> ignore (Rng.beta k0 (m f32 1 2 [| 1.; 0. |]) two) );
+      ( "Nx.Rng.beta: b at [1] is not in (0, inf)",
+        fun () ->
+          ignore (Rng.beta k0 (v f32 [| 1.; 1. |]) (v f32 [| 1.; Float.nan |]))
+      );
+      ( "Nx.Rng.dirichlet: concentration at [1; 1] is not in (0, inf)",
+        fun () ->
+          ignore (Rng.dirichlet k0 (m f64 2 2 [| 1.; 1.; 1.; infinity |])) );
+      ( "Nx.Rng.poisson: rate is not in [0, inf)",
+        fun () -> ignore (Rng.poisson k0 (Nx.scalar f32 (-1.))) );
+      ( "Nx.Rng.poisson: rate at [0] is not in [0, inf)",
+        fun () -> ignore (Rng.poisson k0 (v f64 [| infinity |])) );
+      ( "Nx.Rng.bernoulli: p at [0; 2] is not in [0, 1]",
+        fun () ->
+          ignore
+            (Rng.bernoulli k0
+               (Nx.broadcast_to [| 3; 4 |] (v f32 [| 0.5; 0.5; 1.5; 0.5 |]))) );
+      ( "Nx.Rng.bernoulli: p at [1; 0] is not in [0, 1]",
+        fun () ->
+          ignore
+            (Nx.bernoulli
+               (Nx.broadcast_to [| 3; 4 |] (m f32 3 1 [| 0.; -0.1; 1. |]))) );
+      ( "Nx.Rng.truncated_normal: upper at [1] is NaN",
+        fun () ->
+          ignore
+            (Rng.truncated_normal k0
+               (v f32 [| 0.; 0. |])
+               (v f32 [| 1.; Float.nan |])) );
+      ( "Nx.Rng.truncated_normal: lower is NaN",
+        fun () ->
+          ignore
+            (Nx.truncated_normal (Nx.scalar f64 Float.nan) (v f64 [| 1.; 2. |]))
+      );
+      ( "Nx.Rng.categorical: logits at [0; 1] is not in [-inf, inf)",
+        fun () ->
+          ignore (Rng.categorical k0 (m f32 2 2 [| 0.; infinity; 0.; 0. |])) );
+      ( "Nx.Rng.categorical: logits at [1; 0] is not in [-inf, inf)",
+        fun () ->
+          ignore
+            (Nx.categorical ~axis:0
+               (m f32 2 2 [| 0.; neg_infinity; Float.nan; 0. |])) );
+    ]
+    (fun (message, draw) -> raises (Invalid_argument message) draw)
 
 (* The scope. A program is a list of keyless draws, each with its keyed twin:
    the keyed sampler of the same name, or the key itself for [next_key]. *)
@@ -951,6 +1038,7 @@ let () =
          supports;
          uniform_grid;
          errors;
+         refusals;
          scopes;
          distribution_tests;
        ])

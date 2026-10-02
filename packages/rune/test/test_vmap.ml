@@ -146,6 +146,14 @@ let checks =
         in
         raises (Invalid_argument "element 1,0") (fun () ->
             Rune.vmap' below_one ms));
+    test "a sampler's mapped parameter is checked lane by lane" (fun () ->
+        let rows = Nx.create f64 [| 2; 2 |] [| 0.5; 0.5; 0.5; 2. |] in
+        raises
+          (Invalid_argument
+             "Nx.Rng.gamma: concentration at [0] is not in (0, inf)") (fun () ->
+            Rune.vmap' (Nx.Rng.gamma (Nx.Rng.key 0)) (Nx.neg rows));
+        raises (Invalid_argument "Nx.Rng.bernoulli: p at [1] is not in [0, 1]")
+          (fun () -> Rune.vmap' (Nx.Rng.bernoulli (Nx.Rng.key 0)) rows));
     test "a check of mapped values compiles" (fun () ->
         let rows = Nx.create f64 [| 2; 2 |] [| 0.; 0.; 0.; 4. |] in
         raises (Invalid_argument "element 1") (fun () ->

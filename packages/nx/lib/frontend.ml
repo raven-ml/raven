@@ -3365,6 +3365,61 @@ module Rng = struct
     let target = Shape.broadcast (shape a) (shape b) in
     (broadcast_to target a, broadcast_to target b)
 
+  (* A sampler checks its parameters against their domains with one [check]
+     before it draws, so a concrete parameter raises at once and a traced one
+     when its compiled call returns. A parameter is given by its name, its
+     refusal and where its elements lie in its domain. Two parameters are
+     checked as one, their flattened tests end to end, and the index of the
+     first failure tells them apart. *)
+  let refusal sampler name refused i =
+    let at =
+      if Array.length i = 0 then ""
+      else Printf.sprintf " at [%s]" (shape_string i)
+    in
+    Printf.sprintf "Nx.Rng.%s: %s%s %s" sampler name at refused
+
+  let require sampler (name, refused, ok) =
+    check ok (refusal sampler name refused)
+
+  let require_both sampler (na, ra, a) (nb, rb, b) =
+    let n = numel a in
+    check (concatenate ~axis:0 [ flatten a; flatten b ]) (fun i ->
+        let i = i.(0) in
+        if i < n then refusal sampler na ra (Shape.unravel_index i (shape a))
+        else refusal sampler nb rb (Shape.unravel_index (i - n) (shape b)))
+
+  (* [distinct x] is [x] with each broadcast axis, of stride 0, cut to its first
+     element: the elements a check must read, one for a broadcast scalar. The
+     first failing element of [x] in C order sits at index 0 on such an axis,
+     so it has the same index in both. *)
+  let distinct x =
+    let strides = View.strides (Value.view x) in
+    if not (Array.mem 0 strides) then x
+    else
+      let keep d n = if strides.(d) = 0 && n > 0 then (0, 1) else (0, n) in
+      shrink (Array.mapi keep (shape x)) x
+
+  (* The domains, NaN outside each. *)
+  let positive x =
+    let x = distinct x in
+    logical_and (cmpgt x (scalar_like x 0.0)) (isfinite x)
+
+  let non_negative x =
+    let x = distinct x in
+    logical_and (cmpge x (scalar_like x 0.0)) (isfinite x)
+
+  let probability x =
+    let x = distinct x in
+    logical_and (cmpge x (scalar_like x 0.0)) (cmple x (scalar_like x 1.0))
+
+  let not_nan x = logical_not (isnan (distinct x))
+
+  let below_infinity x =
+    let x = distinct x in
+    cmplt x (scalar_like x Float.infinity)
+
+  let in_positive = "is not in (0, inf)"
+
   (* Random bits -> [0, 1): keep the low [p] bits and scale them by 2^-p,
      where [p] is the destination's significand width. Both steps are exact,
      so a draw is one of the 2^p multiples of 2^-p in [0, 1 - 2^-p]: the
@@ -3582,6 +3637,7 @@ module Rng = struct
 
   (* Gamma(a) = Gamma(a + 1) * U^(1/a) below 1. *)
   let gamma (type b) k (concentration : (float, b) t) : (float, b) t =
+    require "gamma" ("concentration", in_positive, positive concentration);
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let acc, a, below_one, boost =
         marsaglia_tsang compute k concentration
@@ -3607,6 +3663,9 @@ module Rng = struct
      difference of their logarithms is not. Both draws inherit {!gamma}'s
      bounded-rejection approximation. *)
   let beta (type b) k (a : (float, b) t) (b : (float, b) t) : (float, b) t =
+    require_both "beta"
+      ("a", in_positive, positive a)
+      ("b", in_positive, positive b);
     let a, b = pair a b in
     let ks = split k in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
@@ -3627,6 +3686,7 @@ module Rng = struct
       invalid_arg
         "Nx.Rng.dirichlet: concentration needs at least two components on \
          its last axis";
+    require "dirichlet" ("concentration", in_positive, positive concentration);
     let axes = [ nd - 1 ] in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let l = log_gamma compute k concentration in
@@ -3710,9 +3770,8 @@ module Rng = struct
 
      Below 10, inversion: one uniform against the cumulative pmf, whose terms
      exp (-rate + k log rate - log k!) are formed directly over a leading axis
-     of 48 rounds. The mass beyond 48 at rate 10 is 4e-18. A rate of zero, a
-     negative rate or NaN makes every term NaN, every comparison false and the
-     count 0.
+     of 48 rounds. The mass beyond 48 at rate 10 is 4e-18. A rate of zero
+     makes every term NaN, every comparison false and the count 0.
 
      From 10 up, Hörmann's transformed rejection with squeeze (PTRS): a
      proposal from a scaled logistic hat, accepted by a squeeze test or,
@@ -3731,6 +3790,7 @@ module Rng = struct
   let poisson_rejection_rounds = 16
 
   let poisson (type b) k (rate : (float, b) t) =
+    require "poisson" ("rate", "is not in [0, inf)", non_negative rate);
     let ctx = Value.context k in
     let shape = shape rate in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
@@ -3858,6 +3918,7 @@ module Rng = struct
          (scalar ctx Nx_dtype.uint32 (Int32.of_int low)))
 
   let bernoulli (type b) k (p : (float, b) t) =
+    require "bernoulli" ("p", "is not in [0, 1]", probability p);
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       cmplt (uniform k compute (shape p)) (at compute p)
     in
@@ -3871,6 +3932,9 @@ module Rng = struct
      not depend on how much mass the interval holds. *)
   let truncated_normal (type b) k (lower : (float, b) t)
       (upper : (float, b) t) : (float, b) t =
+    require_both "truncated_normal"
+      ("lower", "is NaN", not_nan lower)
+      ("upper", "is NaN", not_nan upper);
     let lower, upper = pair lower upper in
     let ctx = Value.context k in
     let target = dtype lower in
@@ -3936,7 +4000,7 @@ module Rng = struct
      argmax samples from the distribution they describe. The noise is built at
      least in float32, then cast to the logits' dtype — a float16 Gumbel would
      quantise the comparison the argmax turns on. *)
-  let categorical (type a b) k ?(axis = -1) (logits : (a, b) t) =
+  let categorical (type b) k ?(axis = -1) (logits : (float, b) t) =
     let logits_dtype = dtype logits in
     let logits_shape = shape logits in
     let nd = Array.length logits_shape in
@@ -3952,10 +4016,9 @@ module Rng = struct
       | Float32 | Float16 | BFloat16 -> noise Nx_dtype.float32
       | Float8_e4m3 | Float8_e5m2 ->
           invalid_arg "Nx.Rng.categorical: float8 logits are not supported"
-      | _ ->
-          invalid_arg
-            "Nx.Rng.categorical: logits requires floating point dtype"
     in
+    require "categorical"
+      ("logits", "is not in [-inf, inf)", below_infinity logits);
     argmax (add logits g) ~axis ~keepdims:false
 
   (* The scope: [next_key] performs [E_next_key]; [with_key] answers it by

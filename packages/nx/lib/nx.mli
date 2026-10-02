@@ -820,11 +820,14 @@ module Rng : sig
       [normal] is standard, [exponential] has rate 1, and the caller's own [add]
       and [mul] place them, the same line for a scalar and a tensor.
 
-      Parameters are data, so their values are not checked: an argument outside
-      the distribution's domain gives the result the arithmetic gives, NaN for a
-      float draw, as [log] of a negative does. Each sampler states its domain.
-      Shapes and dtypes are known when the program is built, so those are still
-      checked and raise [Invalid_argument].
+      Each sampler states its parameters' domain, which never holds NaN, and
+      checks every element against it with one {!val-check}: an element outside
+      raises [Invalid_argument] naming the sampler, the parameter, the index of
+      its first such element in C order and the domain, as in
+      [Nx.Rng.gamma: concentration at [3] is not in (0, inf)]. A concrete
+      parameter raises at once, a traced one when its compiled call returns, and
+      a mapped one with its index in the lane. Shapes and dtypes are known when
+      the program is built, so they raise as the call is made.
 
       Float draws are computed at float64 for float64 parameters and at float32
       otherwise, then returned at the parameters' dtype. *)
@@ -861,7 +864,8 @@ module Rng : sig
   val bernoulli : t -> (float, 'b) tensor -> (bool, bool_elt) tensor
   (** [bernoulli k p] samples booleans that are [true] with probability [p],
       elementwise. The comparison runs at 24 random bits unless [p] is float64.
-      A [p] above [1] is always [true]; below [0], or NaN, always [false]. *)
+
+      Raises [Invalid_argument] if an element of [p] is outside \[[0], [1]\]. *)
 
   val truncated_normal :
     t -> (float, 'b) tensor -> (float, 'b) tensor -> (float, 'b) tensor
@@ -877,7 +881,10 @@ module Rng : sig
 
       The bounds enter through {!erf}, which reaches [±1] at about 8.3 standard
       deviations at float64 and 5.4 at narrower dtypes: an interval beyond that
-      collapses onto its bound nearer zero. *)
+      collapses onto its bound nearer zero. An infinite bound leaves that side
+      untruncated.
+
+      Raises [Invalid_argument] if an element of [lower] or [upper] is NaN. *)
 
   val gumbel : t -> (float, 'b) dtype -> int array -> (float, 'b) tensor
   (** [gumbel k dtype shape] samples the standard Gumbel distribution, the
@@ -894,9 +901,8 @@ module Rng : sig
   val gamma : t -> (float, 'b) tensor -> (float, 'b) tensor
   (** [gamma k concentration] samples the gamma distribution with the given
       concentration (the shape parameter, named to avoid colliding with the
-      tensor shape) and unit rate, elementwise; [concentration] must be
-      positive. Divide by a rate, or multiply by a scale, for the two-parameter
-      family.
+      tensor shape) and unit rate, elementwise. Divide by a rate, or multiply by
+      a scale, for the two-parameter family.
 
       Other distributions follow from it: a chi-square with [k] degrees of
       freedom is [2] times a gamma of concentration [k /. 2], and Student's t is
@@ -907,31 +913,35 @@ module Rng : sig
       the first acceptance taken. Roughly one element in [1e14] is accepted by
       none and falls back to the distribution's mean. Its derivative in
       [concentration] flows through the accepted proposal alone, without the
-      acceptance correction, so it is a biased estimator. *)
+      acceptance correction, so it is a biased estimator.
+
+      Raises [Invalid_argument] if an element of [concentration] is outside
+      ([0], [inf]): not positive, or not finite. *)
 
   val beta : t -> (float, 'b) tensor -> (float, 'b) tensor -> (float, 'b) tensor
   (** [beta k a b] samples the beta distribution on [[0, 1]] with concentrations
       [a] and [b], in that order (Beta(a, b) is the mirror image of Beta(b, a)),
-      elementwise; the two broadcast against each other and must be positive.
-      Built from two {!gamma} draws, whose approximation and biased derivative
-      it inherits. *)
+      elementwise; the two broadcast against each other. Built from two {!gamma}
+      draws, whose approximation and biased derivative it inherits.
+
+      Raises [Invalid_argument] if an element of [a] or [b] is outside ([0],
+      [inf]). *)
 
   val dirichlet : t -> (float, 'b) tensor -> (float, 'b) tensor
   (** [dirichlet k concentration] samples the Dirichlet distribution whose
       components are the last axis of [concentration], one draw per row; the
-      result has the shape of [concentration] and every row sums to one. The
-      concentrations must be positive.
+      result has the shape of [concentration] and every row sums to one.
 
       Built from one {!gamma} draw, whose approximation and biased derivative it
       inherits.
 
       Raises [Invalid_argument] if the last axis of [concentration] has fewer
-      than two components. *)
+      than two components, or if an element of [concentration] is outside ([0],
+      [inf]). *)
 
   val poisson : t -> (float, 'b) tensor -> int32_t
   (** [poisson k rate] samples the Poisson distribution with the given rate,
-      elementwise, at any rate; [rate] must be positive and finite, and a rate
-      of zero, a negative rate or NaN gives a count of [0].
+      elementwise, at any rate; a rate of zero gives a count of [0].
 
       Below 10 the count is read off the cumulative distribution with one
       uniform, exactly. From 10 up it comes from a transformed rejection sampler
@@ -942,16 +952,21 @@ module Rng : sig
 
       Computed at [rate]'s compute dtype, so a float32 rate compiles on every
       device. Float32 places the proposals exactly up to a rate of about [1e5];
-      give a float64 rate beyond that. *)
+      give a float64 rate beyond that.
+
+      Raises [Invalid_argument] if an element of [rate] is outside \[[0],
+      [inf]): negative, infinite or NaN. *)
 
   val categorical : t -> ?axis:int -> (float, 'a) tensor -> int64_t
   (** [categorical k logits] samples category indices from unnormalised
       log-probabilities: one index per row of [logits] along [axis], which
-      defaults to [-1] (the last axis). The result has the shape of [logits]
-      with [axis] removed; broadcast [logits] for more draws than rows.
+      defaults to [-1] (the last axis). A logit of [neg_infinity] is a category
+      of probability zero. The result has the shape of [logits] with [axis]
+      removed; broadcast [logits] for more draws than rows.
 
-      Raises [Invalid_argument] if [logits] is a float8 type, or if [axis] is
-      out of bounds or has length [0]. *)
+      Raises [Invalid_argument] if [logits] is a float8 type, if [axis] is out
+      of bounds or has length [0], or if an element of [logits] is outside
+      \[[-inf], [inf]): [infinity] or NaN. *)
 
   val permutation : t -> int -> int64_t
   (** [permutation k n] is a random permutation of \[[0], [n-1]\].
@@ -1036,19 +1051,23 @@ val randint : ?low:int -> high:int -> int array -> (int32, int32_elt) t
 
 val bernoulli : (float, 'b) t -> bool_t
 (** [bernoulli p] samples booleans that are [true] with probability [p],
-    elementwise. See {!Rng.bernoulli}. *)
+    elementwise. See {!Rng.bernoulli}.
+
+    Raises [Invalid_argument] if an element of [p] is outside \[[0], [1]\]. *)
 
 val truncated_normal : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
 (** [truncated_normal lower upper] samples the standard normal conditioned on
     landing in \[[lower], [upper]\], elementwise. See {!Rng.truncated_normal}.
-*)
+
+    Raises [Invalid_argument] if an element of [lower] or [upper] is NaN. *)
 
 val categorical : ?axis:int -> (float, 'a) t -> int64_t
 (** [categorical logits] samples one category index per row of [logits] along
     [axis]. See {!Rng.categorical}.
 
-    Raises [Invalid_argument] if [logits] is a float8 type, or if [axis] is out
-    of bounds or has length [0]. *)
+    Raises [Invalid_argument] if [logits] is a float8 type, if [axis] is out of
+    bounds or has length [0], or if an element of [logits] is [infinity] or NaN.
+*)
 
 val permutation : int -> int64_t
 (** [permutation n] is a random permutation of \[[0], [n-1]\].

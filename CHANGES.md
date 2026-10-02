@@ -3099,6 +3099,9 @@ thread.
 
 ### Nx
 
+- `Nx.Rng` samplers raise `Invalid_argument` on a parameter outside its
+  domain, NaN included, where they returned NaN or a fixed draw (`bernoulli`
+  true above 1, `poisson` 0 below 0). A traced one raises when the call returns.
 - `Nx_amd_device.profiling` puts a GPU under the kernel driver in its stable
   power state itself, through a context of the amdgpu driver on the render
   node the device holds, and the process keeps it until it exits: counting or
