@@ -393,17 +393,43 @@ let time =
             (array (option string))
             [| Some "2024-03-15T08:00:00Z" |]
             (Column.options Kind.string (result r t)));
-      test "an exact step that is not whole ticks is refused" (fun () ->
-          let t = one "t" (Column.v (Type.datetime S) [| Time.of_ns 0L |]) in
-          let e =
-            Expr.Temporal.floor (Exact (Time.Span.ms 1500)) (Col.instant "t")
+      test "an exact step is whole ticks of the datetime's unit" (fun () ->
+          let at u ns = one "t" (Column.v (Type.datetime u) [| Time.of_ns ns |])
+          and t = Col.instant "t"
+          and ms n = Time.Exact (Time.Span.ms n) in
+          let problem e u =
+            match compute e (at u 0L) with
+            | _ -> "no problem"
+            | exception Invalid_argument m -> m
           in
-          match compute e t with
-          | _ -> fail "no exception"
-          | exception Invalid_argument m ->
-              expect m
-              @@ __POS_OF__
-                   {| Temporal.floor of datetime[s] by 1s500ms is not implemented yet |});
+          expect
+            (String.concat "\n"
+               Expr.Temporal.
+                 [
+                   problem (floor (ms 1500) t) S;
+                   problem (offset (ms 500) t) S;
+                   problem (floor (ms 1500) t) Ms;
+                 ])
+          @@ __POS_OF__
+               {|
+            select: 1 problem
+              "out" := Temporal.floor 1s500ms t
+                Temporal.floor moves datetime[s] by multiples of 1s, not 1s500ms.
+              input (1 column): t datetime[s]
+            select: 1 problem
+              "out" := Temporal.offset 500ms t
+                Temporal.offset moves datetime[s] by multiples of 1s, not 500ms.
+              input (1 column): t datetime[s]
+            no problem
+            |};
+          let instants c =
+            Array.map (Option.map Time.to_ns) (Column.options Kind.instant c)
+          in
+          equal
+            (array (option int64))
+            [| Some 3_000_000_000L |]
+            (instants
+               (result Expr.Temporal.(floor (ms 1500) t) (at Ms 3_400_000_000L))));
       test "format and parse" (fun () ->
           let t = dates [| Some (date 2024 3 15); None |] in
           equal

@@ -504,14 +504,10 @@ let diff (Type.Any ty) =
         in
         checked t [ a; b ] ~ok r range
 
-(* [exact ty s] is the ticks of [ty]'s unit in the span [s]. *)
-let exact what (Type.Any ty) s =
-  let tick = Type.ns_per_unit (Option.get (unit_of ty)) in
-  let ns = Time.Span.to_ns s in
-  if not (Int64.equal (Int64.rem ns tick) 0L) then
-    not_lowered
-      (Format.asprintf "%s of %a by %a" what Type.pp ty Time.Span.pp s);
-  Int64.div ns tick
+(* [exact ty s] is the ticks of [ty]'s unit in the span [s], which binding
+   checked is whole ticks. *)
+let exact (Type.Any ty) s =
+  Int64.div (Time.Span.to_ns s) (Type.ns_per_unit (Option.get (unit_of ty)))
 
 (* [moved t c days x] is the values [x] of the column [c] of [t] moved to the
    days [days], at the same time of day, failing with [why] out of range. *)
@@ -547,7 +543,7 @@ let floor (step : Time.step) t =
   in
   match step with
   | Exact s ->
-      let k = exact "Temporal.floor" t s in
+      let k = exact t s in
       fun c ->
         let x = int64s c in
         let r = Nx.sub x (floor_mod x k) in
@@ -577,7 +573,7 @@ let offset (step : Time.step) t =
   in
   match step with
   | Exact s ->
-      let k = Nx.scalar Nx.int64 (exact "Temporal.offset" t s) in
+      let k = Nx.scalar Nx.int64 (exact t s) in
       fun c ->
         let r, ok = plus (int64s c) k in
         checked t [ c ] ~ok r (why c)

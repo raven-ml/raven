@@ -1551,7 +1551,8 @@ module Expr : sig
         zone, which then requires [zone]. Periods are counted from 1970-01-01
         00:00, and weeks from Monday 1970-01-05. Where the period's first
         wall-clock time is skipped, it is the first instant after the gap. A
-        date floors by calendar steps only. Its type is [a]'s.
+        date floors by calendar steps only, and a datetime by exact steps of
+        whole ticks of its unit. Its type is [a]'s.
 
         Raises [Invalid_argument] if [step] is not positive. *)
 
@@ -1560,7 +1561,8 @@ module Expr : sig
         exact step moves the instant, and a calendar step moves the wall clock,
         on [zone]'s when [a] has a zone, as for {!floor}; a day of the month
         past the month's end becomes its last day. A date moves by calendar
-        steps only. Its type is [a]'s. *)
+        steps only, and a datetime by exact steps of whole ticks of its unit.
+        Its type is [a]'s. *)
 
     type policy = [ `Earlier | `Later | `Null | `Fail ]
     (** The type for resolutions of a wall-clock time that a zone reads twice or

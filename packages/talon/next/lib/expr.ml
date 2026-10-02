@@ -1229,11 +1229,18 @@ let whole_days span =
     (Int64.rem (Time.Span.to_ns span) (Time.Span.to_ns (Time.Span.days 1)))
     0L
 
+(* An exact step on a datetime is whole ticks, since the result is of the
+   column's type. *)
 let calendar_step : type a. env -> string -> a Type.t -> Time.step -> unit =
  fun env what ty step ->
   match (ty, step) with
   | Date, Time.Exact _ ->
       report env "%s moves a date by calendar steps only." what
+  | Datetime { unit_; _ }, Time.Exact s ->
+      let tick = Type.ns_per_unit unit_ in
+      if not (Int64.equal (Int64.rem (Time.Span.to_ns s) tick) 0L) then
+        report env "%s moves %a by multiples of %a, not %a." what Type.pp ty
+          Time.Span.pp (Time.Span.of_ns tick) Time.Span.pp s
   | _ -> ()
 
 (* Lifts *)
