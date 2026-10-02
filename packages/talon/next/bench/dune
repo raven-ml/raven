@@ -5,7 +5,7 @@
 (library
  (name d7)
  (wrapped false)
- (modules answer workload h2o)
+ (modules answer workload h2o tpch)
  (libraries talon.next talon.next.csv talon.next.parquet bytesrw nx))
 
 (executable
@@ -13,9 +13,9 @@
  (modules runner)
  (libraries d7 talon.next))
 
-(executable
- (name bench_h2o)
- (modules bench_h2o cases)
+(executables
+ (names bench_h2o bench_tpch)
+ (modules bench_h2o bench_tpch cases)
  (libraries d7 talon.next thumper))
 
 (test

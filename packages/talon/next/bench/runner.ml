@@ -39,6 +39,7 @@ let families =
   [
     ("groupby", { ci = "1e6"; workload = H2o.groupby });
     ("join", { ci = "1e6"; workload = H2o.join });
+    ("tpch", { ci = "sf0.1"; workload = Tpch.workload });
   ]
 
 let family name =
