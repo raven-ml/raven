@@ -1,0 +1,7 @@
+; On Linux with an NVIDIA GPU and NVIDIA's kernel driver; skips elsewhere. Nothing here
+; opens a GPU over PCI.
+
+(test
+ (name test_nx_nv)
+ (package nx)
+ (libraries nx nx.nv nx.nv.device nx.device windtrap))

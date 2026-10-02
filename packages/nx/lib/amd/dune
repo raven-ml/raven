@@ -1,0 +1,4 @@
+(library
+ (name nx_amd)
+ (public_name nx.amd)
+ (libraries nx nx.device nx.amd.device))

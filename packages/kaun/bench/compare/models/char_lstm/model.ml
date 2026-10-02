@@ -183,10 +183,6 @@ let load_fixture spec path =
 
 let now_ms () = Unix.gettimeofday () *. 1e3
 
-(* The device a variant runs on, as in ["cpu"] or ["metal"]. *)
-let device_of name =
-  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string name)
-
 let run spec ~fixture ~variant ~device ~steps =
   let params, tokens = load_fixture spec fixture in
   let step =
@@ -205,7 +201,7 @@ let run spec ~fixture ~variant ~device ~steps =
   let state =
     ref
       (Nx.Ptree.map state
-         (fun _ t -> Nx.place (Nx.Placement.on (device_of device)) t)
+         (fun _ t -> Nx.place (Nx.Placement.on (Devices.first device)) t)
          (params, Vega.sgd_init model params))
   in
   let losses = Array.make steps 0. and step_ms = Array.make steps 0. in
@@ -247,7 +243,9 @@ let device_works name =
   match
     Rune.jit'
       (fun x -> Nx.add x x)
-      (Nx.place (Nx.Placement.on (device_of name)) (Nx.ones Nx.float32 [| 4 |]))
+      (Nx.place
+         (Nx.Placement.on (Devices.first name))
+         (Nx.ones Nx.float32 [| 4 |]))
   with
   | (_ : Nx.float32_t) -> true
   | exception _ -> false

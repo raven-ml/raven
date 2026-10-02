@@ -187,7 +187,7 @@ weights, and generates text through a key-value cache.
 ## Scope and Limitations
 
 - Eager execution runs on CPU through [Nx](../nx/). For GPU, place the
-  weights on a device (`Nx.Device.gpu ()`, `Nx.Device.v (Cuda 0)`) and
+  weights on a device (`Nx_metal.device 0`, `Nx_cuda.device 0`) and
   compile a step with [`Rune.jit`](../rune/), which runs where its values are;
   the `04-gpt2` example does this behind a `--jit` flag. `jit` compiles
   `Rune.scan` as a loop, so a recurrence's compile time is independent of its

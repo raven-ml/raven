@@ -174,10 +174,6 @@ let check ?device cfg params dt ids =
     worst;
   if not (worst < 1e-4) then exit 1
 
-(* The first device [s] names that opens, as in ["CUDA:0,METAL"]. *)
-let device_of s =
-  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string s)
-
 let () =
   let prompt = ref default_prompt in
   let count = ref 10 in
@@ -211,7 +207,7 @@ let () =
     if !dtype = "" then Gpt2.stored_dtype weights
     else Gpt2.dtype_of_string !dtype
   in
-  let device = if !jit = "" then None else Some (device_of !jit) in
+  let device = if !jit = "" then None else Some (Devices.first !jit) in
   let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt weights in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in

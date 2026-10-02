@@ -129,125 +129,6 @@ let placements =
             ]);
     ]
 
-(* Wants *)
-
-let want = Testable.make ~pp:Nx.Device.pp_want ~equal:( = )
-let pp_want_list = Format.pp_print_list Nx.Device.pp_want
-let failure = function Failure _ -> true | _ -> false
-
-(* Every want, its indices across their edges. *)
-let wants =
-  let index =
-    Gen.frequency [ (4, Gen.int_range 0 3); (1, Gen.int_range 0 max_int) ]
-  in
-  let open Nx.Device in
-  Gen.with_pp Nx.Device.pp_want
-    (Gen.one_of
-       [
-         Gen.of_list ~pp:Nx.Device.pp_want [ Host; Gpu; Metal ];
-         Gen.map
-           (fun k -> Cpu k)
-           (Gen.frequency
-              [ (4, Gen.int_range 1 4); (1, Gen.int_range 1 max_int) ]);
-         Gen.map (fun i -> Cuda i) index;
-         Gen.map (fun i -> Nv i) index;
-         Gen.map (fun i -> Amd i) index;
-         Gen.map (fun i -> Nv_pci i) index;
-         Gen.map (fun i -> Amd_pci i) index;
-       ])
-
-(* The wants that open on any machine: the host and test memories. *)
-let opening = Nx.Device.[ Host; Cpu 1; Cpu 2; Cpu 7 ]
-
-let wants_group =
-  group "wants"
-    [
-      cases ~name:fst "of_string reads"
-        [
-          ("CPU", [ Nx.Device.Host ]);
-          ("gpu", [ Gpu ]);
-          ("cpu:2, CUDA:1", [ Cpu 2; Cuda 1 ]);
-          ("METAL,NV:3,AMD", [ Metal; Nv 3; Amd 0 ]);
-          ("CUDA,NV", [ Cuda 0; Nv 0 ]);
-          (" nv-pci:1 ,Amd-Pci", [ Nv_pci 1; Amd_pci 0 ]);
-        ]
-        (fun (s, ws) ->
-          equal (result (list want) string) (Ok ws) (Nx.Device.of_string s));
-      cases ~name:(Printf.sprintf "%S") "of_string refuses"
-        [
-          "";
-          "GPU:0";
-          "CUDA:-1";
-          "CPU:x";
-          "CPU:0";
-          "CPU,";
-          "METAL:0:1";
-          "NV-PCI:";
-          "TPU";
-        ] (fun s ->
-          ignore (require_error ~pp:pp_want_list (Nx.Device.of_string s)));
-      prop "of_string reads back what pp_want prints" wants (fun w ->
-          Law.round_trip want string
-            (Format.asprintf "%a" Nx.Device.pp_want)
-            (fun s ->
-              match
-                require_ok ~pp:Format.pp_print_string (Nx.Device.of_string s)
-              with
-              | [ w ] -> w
-              | ws -> failf "%d wants" (List.length ws))
-            w);
-      prop "an unpaired device's name reads back as the want that opened it"
-        (Gen.of_list ~pp:Nx.Device.pp_want (Nx.Device.Gpu :: opening))
-        (fun w ->
-          match Nx.Device.get w with
-          | Error e -> skip ~reason:e ()
-          | Ok d -> (
-              match Nx.Device.of_string (Nx.Device.name d) with
-              | Ok [ w' ] -> equal device d (Nx.Device.v w')
-              | _ -> fail ("unreadable name " ^ Nx.Device.name d)));
-      test "Gpu never takes a GPU from its kernel driver" (fun () ->
-          match Nx.Device.get Gpu with
-          | Error e -> starts_with ~affix:"no GPU opens: " e
-          | Ok d ->
-              let kind =
-                List.hd (String.split_on_char ':' (Nx.Device.name d))
-              in
-              is_false ~msg:(Nx.Device.name d)
-                (String.ends_with ~suffix:"-PCI" kind));
-      test
-        "Nv and Amd fail without touching PCI where their kernel interface is \
-         absent" (fun () ->
-          let absent path = not (Sys.file_exists path) in
-          if absent "/dev/nvidiactl" then is_error (Nx.Device.get (Nv 0));
-          if absent "/dev/kfd" then is_error (Nx.Device.get (Amd 0)));
-      test "first opens the first device that opens" (fun () ->
-          equal device (Nx.Device.v (Cpu 1))
-            (Nx.Device.first [ Cuda 99; Cpu 1; Cpu 2 ]));
-      test "first raises Failure when none opens, and on no device" (fun () ->
-          raises_match failure (fun () -> ignore (Nx.Device.first [ Cuda 99 ]));
-          raises_invalid_arg (fun () -> ignore (Nx.Device.first [])));
-      test
-        "all opens every device, and raises Failure when one does not open, \
-         and on a repeated want" (fun () ->
-          equal (list device)
-            [ Nx.Device.v (Cpu 1); Nx.Device.v (Cpu 2) ]
-            (Nx.Device.all [ Cpu 1; Cpu 2 ]);
-          raises_match failure (fun () ->
-              ignore (Nx.Device.all [ Cpu 1; Cuda 99 ]));
-          raises_invalid_arg (fun () -> ignore (Nx.Device.all [ Cpu 1; Cpu 1 ])));
-      test "v raises Failure with get's reason" (fun () ->
-          let why = Result.get_error (Nx.Device.get (Cuda 99)) in
-          raises (Failure why) (fun () -> ignore (Nx.Device.v (Cuda 99))));
-      test "indices are not negative, and test memories start at 1" (fun () ->
-          refuses
-            [
-              (fun () -> ignore (Nx.Device.get (Cpu 0)));
-              (fun () -> ignore (Nx.Device.get (Cpu (-1))));
-              (fun () -> ignore (Nx.Device.get (Cuda (-1))));
-              (fun () -> ignore (Nx.Device.get (Nv_pci (-1))));
-            ]);
-    ]
-
 (* Devices *)
 
 (* A device as plain data: a memory and a backend. [Default] is the memory's own
@@ -1207,7 +1088,6 @@ let () =
     (run "nx placement"
        [
          placements;
-         wants_group;
          devices;
          place_tests;
          movements;

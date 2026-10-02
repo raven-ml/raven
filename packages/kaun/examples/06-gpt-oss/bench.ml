@@ -45,10 +45,6 @@ let seconds f =
   let v = f () in
   (v, Unix.gettimeofday () -. t0)
 
-(* The first device [s] names that opens, as in ["CUDA:0,METAL"]. *)
-let device_of s =
-  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string s)
-
 let () =
   let jit = ref "METAL" in
   let tokens = ref 1 and steps = ref 20 in
@@ -78,7 +74,7 @@ let () =
         })
   in
   Printf.printf "random weights built in %.1f s\n%!" building;
-  let device = device_of !jit in
+  let device = Devices.first !jit in
   let f =
     Rune.jit' (fun x ->
         Moe.apply ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)

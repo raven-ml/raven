@@ -3,5 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let on_mac = false
-let get () = Error "METAL: Metal exists on macOS only"
+(* nx alone, linked: the build refuses it if Metal's runtime reaches it. *)
+
+let () = ignore (Nx.Device.name Nx.Device.host)

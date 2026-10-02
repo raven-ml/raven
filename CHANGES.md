@@ -229,7 +229,7 @@ All notable changes to this project will be documented in this file.
   - `jit` takes no `~devices`: a call runs where its arguments and captures
     are placed. `device`, `devices`, `default_device`, `jit_stats` and
     `reset_jit_stats` go. A device is an `Nx.Device.t`
-    (`Nx.Device.v Metal`), and `Nx_device.stats` of its memory counts its
+    (`Nx_metal.device 0`), and `Nx_device.stats` of its memory counts its
     transfers and allocations.
   - Gradients and tangents are fresh, contiguous values.
 - `Rune.jit` refuses `Nx.scatter ~mode:`Max` and `` `Min `` (and so
@@ -741,7 +741,7 @@ All notable changes to this project will be documented in this file.
 - Compiled `Nx.cummax` and `Nx.cummin` are NaN from the first NaN on, as
   eager ones are. They kept the running maximum or minimum past a NaN.
 - **Breaking:** Remove `Rune.to_device`. Place values with
-  `Nx.place (Nx.Placement.on (Nx.Device.v Metal)) x`; on the host,
+  `Nx.place (Nx.Placement.on (Nx_metal.device 0)) x`; on the host,
   `Nx.place` returns its argument where `to_device` made it contiguous.
 - A placed leaf or capture that views part of its storage (a slice, a
   transpose, a flip, a broadcast) is read in place by a compiled function on its
@@ -2558,10 +2558,10 @@ thread.
   sleep after 200ms instead of 2s, surfacing faults sooner.
 
 - NVIDIA GPUs are now a hardware-queue runtime target: the device
-  `Nx.Device.Nv i` drives the kernel driver's channels directly, with
+  `Nx_nv.device i` drives the kernel driver's channels directly, with
   kernels compiled straight to cubin by nvrtc, covering the Ampere, Ada,
   and Blackwell generations. The userspace CUDA backend
-  (`Nx.Device.Cuda i`) remains available unchanged.
+  (`Nx_cuda.device i`) remains available unchanged.
 
 - Driver-less AMD devices can now sleep on interrupts instead of spinning:
   with `VFIO=1` (and the `vfio-pci` kernel module), the device's MSI vector
@@ -2574,7 +2574,7 @@ thread.
   RDNA3/RDNA4 consumer parts. Opt-in and unvalidated on real hardware so
   far; the kernel driver remains the default.
 
-- AMD GPUs are now a runtime target: the device `Nx.Device.Amd i` drives
+- AMD GPUs are now a runtime target: the device `Nx_amd.device i` drives
   the GPU through the Linux kernel driver's hardware queues, with kernels
   compiled by the ROCm comgr library. Supports gfx942, gfx950, and the
   gfx11/gfx12 generations (single-die), with DMA-engine host transfers and
@@ -3178,14 +3178,10 @@ thread.
   `Nx.Device.with_backend b d` pairs it with a backend `b`. Placing a value
   between devices over one memory is a view, so it changes only who computes.
   `Nx.Device.make` and `memory` cross to the `Nx_device.t` nx.device opens.
-- Add `Nx.Device` wants, plain data that names a device: `Host`, `Cpu k`,
-  `Gpu`, `Metal`, `Cuda i`, `Nv i`, `Amd i`, `Nv_pci i` and `Amd_pci i`.
-  `Nx.Device.v`, `get`, `first` and `all` open them now, `of_string` reads
-  them from a command line (`"gpu,cpu"`) and `pp_want` prints them back.
-  `Gpu` and `Nx.Device.gpu ()` are the Metal GPU of a Mac, and elsewhere the
-  first GPU a kernel driver opens, CUDA's before nx's own; only `Nv_pci` and
-  `Amd_pci` take a GPU from its kernel driver. Opening a device twice gives
-  an equal device. nx links the vendor device runtimes.
+- Add `nx.metal`, `nx.cuda`, `nx.nv` and `nx.amd`, whose `device i` and
+  `get i` open a vendor's GPU as an `Nx.Device.t`. `Nx_nv` and `Nx_amd` add
+  `device_pci` and `get_pci`, the only calls that take a GPU from its kernel
+  driver. nx links no vendor runtime: a program links the vendors it uses.
 - **Breaking:** who computes an eager operation is read off its operands: the
   backend of their devices computes, in every domain and under every
   transformation, and a host operand joins the placed ones for the call. A

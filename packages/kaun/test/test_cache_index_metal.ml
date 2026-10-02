@@ -10,7 +10,7 @@ open Kaun
 
 let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
-let metal = Nx.Placement.on (Nx.Device.v Metal)
+let metal = Nx.Placement.on (Nx_metal.device 0)
 
 (* A toy compressed stream, as in test_attention.ml: each token stores its value
    at its position, the token that closes a block of 4 stores the sum of its

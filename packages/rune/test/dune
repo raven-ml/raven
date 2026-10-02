@@ -161,7 +161,6 @@
   windtrap
   rune_internals
   rune_test
-  nx.nv.device
   rune_lowering_test
   nx_test
   nx
@@ -172,6 +171,9 @@
   nx.device
   nx.dtype
   nx.ragged
+  nx.metal
+  nx.cuda
+  nx.nv
   tolk)
  (action
   (run %{test} --exclude-tag slow)))
@@ -210,7 +212,7 @@
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries windtrap rune nx_test nx nx.quant nx.device)
+ (libraries windtrap rune nx_test nx nx.quant nx.device nx.metal)
  (action
   (run %{test} --exclude-tag slow)))
 

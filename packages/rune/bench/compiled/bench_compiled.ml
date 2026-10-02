@@ -378,7 +378,7 @@ let cuda () =
   else
     [
       Thumper.group ~id:"cuda" "cuda"
-        (gpu_launches (fun () -> Nx.Device.v (Cuda 0)));
+        (gpu_launches (fun () -> Nx_cuda.device 0));
     ]
 
 (* The finite checks on the Mac's Metal GPU. A forked worker cannot reach
@@ -386,7 +386,7 @@ let cuda () =
    disk cache, which the worker's step then reads, and says whether Metal
    opens. *)
 let on_metal () =
-  let device = Nx.Device.v Metal in
+  let device = Nx_metal.device 0 in
   ( (fun x -> Nx.place (Nx.Placement.on device) x),
     fun () -> Nx_device.synchronize (Nx.Device.memory device) )
 
@@ -406,10 +406,9 @@ let metal () =
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Nx.Device.get (Cuda 0)) then 0 else 1)
+  | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
   | [ _; "--metal" ] -> (
-      match Nx.Device.get Metal with
+      match Nx_metal.get 0 with
       | Error _ -> exit 1
       | Ok _ ->
           let place, sync = on_metal () in

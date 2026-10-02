@@ -87,8 +87,9 @@ let raises_jit_error f =
 
 let message f = Oracle.message (fun () -> ignore (f ()))
 
-(* [opened w] is the device [w] names, if it opens on this machine. *)
-let opened w = Result.to_option (Nx.Device.get w)
+(* [opened get] is GPU 0 of the vendor library whose [get] it is, if it opens on
+   this machine. *)
+let opened get = Result.to_option (get 0)
 
 (* Test devices over the host's memory, whose programs are the host's *)
 
@@ -4055,8 +4056,8 @@ let () =
          disk;
          on_one_device ~name:"one device" d4;
          sums_fuse_products Nx.Device.host;
-         group ~tags:[ "slow" ] "metal" (on_gpu "Metal" (opened Metal));
-         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened (Cuda 0)));
-         group ~tags:[ "slow" ] "nv" (on_gpu "NV" (opened (Nv 0)));
+         group ~tags:[ "slow" ] "metal" (on_gpu "Metal" (opened Nx_metal.get));
+         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened Nx_cuda.get));
+         group ~tags:[ "slow" ] "nv" (on_gpu "NV" (opened Nx_nv.get));
          group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
        ])

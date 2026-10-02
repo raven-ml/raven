@@ -1,3 +1,7 @@
+; nx links no vendor runtime: these suites link nx, and the build refuses them
+; if any vendor's library reaches them. Metal's runtime exists on macOS alone,
+; and links_no_metal checks it there.
+
 (tests
  (names
   test_placement
@@ -21,7 +25,7 @@
   test_intercept
   test_allocation)
  (package nx)
- (modules :standard \ test_format)
+ (modules :standard \ test_format links_no_metal)
  (libraries
   nx.dtype
   nx
@@ -31,7 +35,13 @@
   nx.device
   unix
   windtrap
-  nx_test))
+  nx_test)
+ (forbidden_libraries
+  nx.cuda.device
+  nx.nv.device
+  nx.amd.device
+  nx.remote.device
+  nx.rdma.device))
 
 (test
  (name test_format)
@@ -42,3 +52,20 @@
   (progn
    (run %{test} --corrected)
    (diff? test_format.ml test_format.ml.corrected))))
+
+
+(executable
+ (name links_no_metal)
+ (modules links_no_metal)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries nx)
+ (forbidden_libraries nx.metal.device))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (run %{exe:links_no_metal.exe})))

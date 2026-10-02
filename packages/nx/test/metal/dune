@@ -1,0 +1,6 @@
+; On a Mac with a Metal GPU; skips elsewhere.
+
+(test
+ (name test_nx_metal)
+ (package nx)
+ (libraries nx nx.metal windtrap))

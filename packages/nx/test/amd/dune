@@ -1,0 +1,7 @@
+; On Linux with an AMD GPU and the amdgpu kernel driver; skips elsewhere. Nothing here
+; opens a GPU over PCI.
+
+(test
+ (name test_nx_amd)
+ (package nx)
+ (libraries nx nx.amd nx.amd.device nx.device windtrap))

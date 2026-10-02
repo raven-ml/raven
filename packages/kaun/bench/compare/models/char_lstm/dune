@@ -4,6 +4,10 @@
   kaun
   vega
   nx
+  nx.metal
+  nx.cuda
+  nx.nv
+  nx.amd
   nx.device
   nx.io
   rune

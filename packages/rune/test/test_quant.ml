@@ -333,7 +333,7 @@ let values =
 
 (* Placements *)
 
-let devices = Nx.Device.all [ Cpu 1; Cpu 2; Cpu 3; Cpu 4 ]
+let devices = List.map Nx.Device.cpu [ 1; 2; 3; 4 ]
 let pair = [ List.nth devices 0; List.nth devices 1 ]
 let split ?(axis = 0) ds = Nx.Placement.sharded ~axis ds
 let host t = Nx.place Nx.Placement.host t
@@ -452,7 +452,7 @@ let peak device f =
    ids. An index broadcast to the gathered codes, [16; 2; 64; 128] here, would
    take 2 MiB. *)
 let memory =
-  let d = Nx.Device.v (Cpu 5) in
+  let d = Nx.Device.cpu 5 in
   let p = Nx.Placement.on d in
   group "memory"
     [
@@ -673,7 +673,7 @@ let undifferentiated =
 (* Metal *)
 
 let metal =
-  match Result.to_option (Nx.Device.get Metal) with
+  match Result.to_option (Nx_metal.get 0) with
   | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
   | Some m ->
       let p = Nx.Placement.on m in

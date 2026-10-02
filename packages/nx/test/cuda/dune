@@ -1,0 +1,6 @@
+; On a machine with an NVIDIA GPU and its CUDA driver; skips elsewhere.
+
+(test
+ (name test_nx_cuda)
+ (package nx)
+ (libraries nx nx.cuda nx.cuda.device nx.device windtrap))

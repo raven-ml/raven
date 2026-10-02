@@ -253,7 +253,7 @@ let host () =
     @ List.map (format_product ~device) formats)
 
 let cuda_quant () =
-  quant "cuda" ~device:(fun () -> Nx.Device.v (Cuda 0)) ~prompt:512
+  quant "cuda" ~device:(fun () -> Nx_cuda.device 0) ~prompt:512
 
 (* Metal's pipelines are made by [--warm], as the decode kernels are (below). *)
 let metal_prompt = 512
@@ -392,7 +392,7 @@ let gpt_oss_params placement =
    runs the [prompt] tokens at positions 0 onwards. Each call takes the caches
    of the one before and reads its token back on the host. *)
 let gpt_oss_step kind =
-  let placement = Nx.Placement.on (Nx.Device.v (Cuda 0)) in
+  let placement = Nx.Placement.on (Nx_cuda.device 0) in
   let step = Layer_loop.greedy ~placement gpt_oss (gpt_oss_params placement) in
   let caches =
     ref
@@ -458,8 +458,7 @@ let () =
       warm_metal ()
   | [ _; "--warm-gpt-oss" ] ->
       List.iter (fun kind -> (gpt_oss_step kind) ()) gpt_oss_kinds
-  | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Nx.Device.get (Cuda 0)) then 0 else 1)
+  | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
   | argv ->
       let measures =
         match argv with

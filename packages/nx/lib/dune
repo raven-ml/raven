@@ -1,5 +1,5 @@
-; nx links the vendors' device runtimes, so that Nx.Device opens every device.
-; Metal exists on macOS alone.
+; nx links no vendor runtime: a vendor's devices come from its own library
+; (nx.cuda, nx.metal, nx.nv, nx.amd).
 
 (library
  (name nx)
@@ -21,22 +21,13 @@
   entry
   frontend
   ptree
-  ptree_intf
-  device_metal)
+  ptree_intf)
  (libraries
   nx_dtype
   nx_array
   nx_backend
   nx_cpu
-  nx_device
-  nx.cuda.device
-  nx.nv.device
-  nx.amd.device
-  (select
-   device_metal.ml
-   from
-   (nx.metal.device -> device_metal.macos.ml)
-   (-> device_metal.other.ml)))
+  nx_device)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

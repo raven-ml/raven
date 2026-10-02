@@ -1,6 +1,6 @@
 (executables
  (names main train)
- (modules gpt2 main train)
+ (modules gpt2 devices main train)
  (libraries
   kaun
   kaun.hf
@@ -9,6 +9,10 @@
   jsont.bytesrw
   brot
   nx
+  nx.metal
+  nx.cuda
+  nx.nv
+  nx.amd
   nx.dtype
   nx.device
   nx.io

@@ -8,6 +8,8 @@
  (modules bench_decode moe gpt_oss layer_loop metal)
  (libraries
   nx
+  nx.cuda
+  nx.metal
   nx.device
   nx.io
   nx.quant

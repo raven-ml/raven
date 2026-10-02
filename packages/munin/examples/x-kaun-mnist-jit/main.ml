@@ -90,11 +90,7 @@ let () =
   in
   (* The parameters start on the device, so the compiled step runs there and
      keeps them there. *)
-  let on_device =
-    match Nx.Device.of_string !device with
-    | Ok ws -> Nx.Placement.on (Nx.Device.first ws)
-    | Error e -> failwith e
-  in
+  let on_device = Nx.Placement.on (Devices.first !device) in
   params := Nx.Ptree.map cnn (fun _ t -> Nx.place on_device t) !params;
   let state = Vega.sgd_init cnn !params in
   let n_params = Nx.Ptree.fold cnn (fun _ t n -> n + Nx.numel t) !params 0 in

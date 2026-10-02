@@ -232,9 +232,11 @@ val to_array : ('a, 'b) t -> 'a array
     ({!Device.t}) is a memory and the backend that computes on it eagerly, if
     any: {!Device.host} and test devices compute with nx.cpu, and a GPU computes
     eagerly with nothing until {!Device.with_backend} pairs it with a backend. A
-    placement ({!Placement.t}) is one device, a full copy on each of a list of
-    devices, or an equal slice on each along one axis. Values start on the host;
-    {!place} moves them, and is the only thing that moves them between devices.
+    GPU's device comes from its vendor's library: [Nx_metal.device 0],
+    [Nx_cuda.device 0], and the libraries nx.nv and nx.amd. A placement
+    ({!Placement.t}) is one device, a full copy on each of a list of devices, or
+    an equal slice on each along one axis. Values start on the host; {!place}
+    moves them, and is the only thing that moves them between devices.
 
     Who computes an eager operation is read off its operands alone:
     + A value on {!Placement.host} or on the disk joins the placement of the
@@ -300,29 +302,6 @@ module Device : sig
   (** The type for devices. Devices are plain values: two are {!equal} when they
       have one memory and one backend, however they were made. *)
 
-  (** The type for devices wanted, as plain data. *)
-  type want =
-    | Host  (** The host, ["CPU"]. *)
-    | Cpu of int
-        (** [Cpu k], [k >= 1], is the test memory ["CPU:k"]: memory of the
-            host's that nx.cpu computes on, so a program runs multi-device work
-            on one machine. *)
-    | Gpu
-        (** The default GPU: the Metal GPU of a Mac, and elsewhere the first GPU
-            that opens through a kernel driver, through the vendor's runtime
-            before nx's own: [Cuda 0], then [Nv 0], then [Amd 0]. It never takes
-            a GPU from its kernel driver. *)
-    | Metal  (** The Metal GPU of a Mac. *)
-    | Cuda of int
-        (** CUDA GPU [i], through NVIDIA's CUDA driver library. GPUs are
-            numbered in PCI bus order. *)
-    | Nv of int  (** NVIDIA GPU [i], through NVIDIA's kernel driver. *)
-    | Amd of int  (** AMD GPU [i], through the [amdgpu] kernel driver. *)
-    | Nv_pci of int
-        (** NVIDIA GPU [i], through nx's own driver, which detaches the GPU's
-            kernel driver and keeps the GPU for the process. *)
-    | Amd_pci of int  (** AMD GPU [i], through nx's own driver, as {!Nv_pci}. *)
-
   val host : t
   (** [host] is the host's memory, computed by nx.cpu. *)
 
@@ -332,54 +311,6 @@ module Device : sig
       other [k], so a program runs multi-device work on one machine.
 
       Raises [Invalid_argument] if [k < 1]. *)
-
-  val get : want -> (t, string) result
-  (** [get w] is the device [w] names, opened now, with its memory's default
-      backend, or [Error msg] with the reason it does not open. A failed open is
-      not remembered, so a later [get] tries again, except where a vendor's
-      driver library failed to load. A vendor's first open fixes its interface
-      for the process: a want of the other interface, {!Gpu} included, then
-      fails with that reason. [CUDA:0] and [NV:0] over one GPU are two memories.
-      Every [get w] that succeeds gives an equal device.
-
-      Raises [Invalid_argument] for a negative index or a [Cpu k] with [k < 1].
-  *)
-
-  val v : want -> t
-  (** [v w] is {!get}[ w].
-
-      Raises [Failure] with {!get}'s reason if it does not open, and as {!get}
-      does. *)
-
-  val gpu : unit -> t
-  (** [gpu ()] is [v Gpu].
-
-      Raises [Failure] listing each GPU's reason if none opens. *)
-
-  val first : want list -> t
-  (** [first ws] is the first device of [ws] that opens; it opens none after it.
-
-      Raises [Failure] with each one's reason if none opens, and
-      [Invalid_argument] if [ws] is empty. *)
-
-  val all : want list -> t list
-  (** [all ws] is each device of [ws], opened.
-
-      Raises [Failure] naming each one that does not open, with its reason, and
-      [Invalid_argument] if [ws] repeats a want. *)
-
-  val of_string : string -> (want list, string) result
-  (** [of_string s] is the wants of the comma-separated names of [s], in any
-      case, around blanks: [GPU], [CPU] ({!Host}), [CPU:k], [METAL], [CUDA[:i]],
-      [NV[:i]], [AMD[:i]], [NV-PCI[:i]] and [AMD-PCI[:i]], an index left out
-      being [0]. As in [of_string "cuda:0,cuda:1"]. [Error msg] names the first
-      that is no device. The caller decides whether the list is a preference
-      ({!first}) or a set ({!all}). *)
-
-  val pp_want : Format.formatter -> want -> unit
-  (** [pp_want] formats a want as {!of_string} reads it, in full and upper case,
-      as {!name} names its device: [of_string (Format.asprintf "%a" pp_want w)]
-      is [Ok [ w ]] for every [w] {!get} accepts. *)
 
   val with_backend : Nx_backend.t -> t -> t
   (** [with_backend b d] is [d]'s memory computed eagerly by [b]. Values on it
@@ -394,9 +325,9 @@ module Device : sig
   val make : ?backend:Nx_backend.t -> Nx_device.t -> t
   (** [make ~backend m] is the device over the memory [m] computed eagerly by
       [backend]. [backend] defaults to [m]'s own: nx.cpu on the host and test
-      memories, none on others. It is the device {!get} opens, and a program
-      makes with it a device over a memory no want names, such as the disk
-      ({!Nx_device.disk}) or another machine's GPU.
+      memories, none on others. A vendor's library makes its devices with it, as
+      [Nx_cuda.device] does, and so does a program for a memory no library
+      names, such as the disk ({!Nx_device.disk}) or another machine's GPU.
 
       Raises [Invalid_argument] unless [backend] computes on [m]. *)
 
@@ -408,9 +339,8 @@ module Device : sig
   val name : t -> string
   (** [name d] is [d]'s memory's name ([CPU], [CPU:k], [METAL], [CUDA:i],
       [NV:i], [NV-PCI:i], [AMD:i], [AMD-PCI:i]), then [/] and the backend's name
-      when [d]'s backend is not its memory's default, as in ["CPU/nx-oxcaml"]. A
-      device's name without a backend's parses back to its want with
-      {!of_string}. *)
+      when [d]'s backend is not its memory's default, as in ["CPU/nx-oxcaml"].
+  *)
 
   val equal : t -> t -> bool
   (** [equal d d'] is [true] iff [d] and [d'] have one memory

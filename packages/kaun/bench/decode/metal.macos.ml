@@ -1,1 +1,1 @@
-let device = Some (fun () -> Nx.Device.v Metal)
+let device = Some (fun () -> Nx_metal.device 0)

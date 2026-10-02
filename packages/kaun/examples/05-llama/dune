@@ -1,6 +1,6 @@
 (executables
  (names main validate)
- (modules llama main validate)
+ (modules llama devices main validate)
  (libraries
   kaun
   kaun.hf
@@ -8,6 +8,10 @@
   jsont.bytesrw
   brot
   nx
+  nx.metal
+  nx.cuda
+  nx.nv
+  nx.amd
   nx.device
   nx.io
   rune

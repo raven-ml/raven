@@ -625,10 +625,6 @@ let models ~devices ~dtype ~label fx path =
         ~exact ~label fx case cfg p dt)
     (members (mem "cases" fx))
 
-(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
-let devices_of s =
-  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
-
 let () =
   let fixtures = ref "fixtures" and devices = ref "" in
   let dtype = ref "float32" in
@@ -652,7 +648,7 @@ let () =
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "validate.exe [--fixtures DIR] [--float-weights FILE] [--mxfp4-weights \
      FILE] [--devices LIST] [--dtype DT]";
-  let devices = if !devices = "" then None else Some (devices_of !devices) in
+  let devices = if !devices = "" then None else Some (Devices.all !devices) in
   let weights fx given =
     let repo = string (mem "repo" fx) in
     Printf.printf "%s, reference recorded from sha256 %s\n%!" repo

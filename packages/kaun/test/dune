@@ -27,7 +27,7 @@
  (package kaun)
  (build_if
   (= %{system} macosx))
- (libraries kaun rune nx windtrap))
+ (libraries kaun rune nx nx.metal windtrap))
 
 ; Over CPU:1..CPU:4.
 

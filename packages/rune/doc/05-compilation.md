@@ -42,11 +42,11 @@ A result takes the storage of a consumed leaf when writing it there cannot chang
 
 ## Devices and Memory
 
-A call compiles for the memories of its placed arguments and captures, and for the host's when there are none: the backends their devices carry take no part, and the results land on the arguments' devices. A device is opened with `Nx.Device` (`Nx.Device.gpu ()`, `Nx.Device.v (Cuda 1)`), and a value is put on it with `Nx.place`:
+A call compiles for the memories of its placed arguments and captures, and for the host's when there are none: the backends their devices carry take no part, and the results land on the arguments' devices. A GPU's device comes from its vendor's library (`Nx_metal.device 0` from nx.metal, `Nx_cuda.device 1` from nx.cuda), and a value is put on it with `Nx.place`:
 
 <!-- $MDX skip -->
 ```ocaml
-let metal = Nx.Placement.on (Nx.Device.v Metal)
+let metal = Nx.Placement.on (Nx_metal.device 0)
 let step = Rune.jit' (fun x -> Nx.tanh (Nx.matmul x x))
 let y = step (Nx.place metal (Nx.rand Nx.float32 [| 64; 64 |]))
 (* compiled for Metal *)
@@ -90,7 +90,7 @@ Outside a compiled function, an operation computes eagerly with the backend of i
 
 <!-- $MDX skip -->
 ```ocaml
-let gpu = Nx.Placement.on (Nx.Device.gpu ())
+let gpu = Nx.Placement.on (Nx_metal.device 0)
 let x = Nx.place gpu (Nx.rand Nx.float32 [| 1024; 1024 |])
 let row = Nx.slice [ I 0 ] x                 (* a view: works *)
 let zeros = Nx.zeros_like x                  (* a constant: works *)

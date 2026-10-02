@@ -125,10 +125,6 @@ let load_tokenizer () =
   | Ok t -> t
   | Error e -> failwith ("tokenizer: " ^ e)
 
-(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
-let devices_of s =
-  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
-
 let () =
   let prompt = ref "The capital of France is" in
   let count = ref 24 and devices = ref "" in
@@ -159,7 +155,7 @@ let () =
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
-  let devices = if !devices = "" then None else Some (devices_of !devices) in
+  let devices = if !devices = "" then None else Some (Devices.all !devices) in
   (* At the weights' own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =
     if !dtype = "" then Llama.stored_dtype weights

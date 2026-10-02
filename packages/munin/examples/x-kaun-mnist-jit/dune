@@ -2,6 +2,10 @@
  (name main)
  (libraries
   nx
+  nx.metal
+  nx.cuda
+  nx.nv
+  nx.amd
   nx.io
   rune
   vega

@@ -182,10 +182,6 @@ let run ?device c params dt ~tokens ~steps ~context =
     (1e3 *. times.(steps / 2))
     (1e3 *. times.(steps - 1))
 
-(* The first device [s] names that opens, as in ["CUDA:0,METAL"]. *)
-let device_of s =
-  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string s)
-
 let () =
   let jit = ref "METAL" and layers = ref 1 and steps = ref 5 in
   let tokens = ref 1 and context = ref 64 and dtype = ref "bfloat16" in
@@ -205,7 +201,7 @@ let () =
      [--context N] [--dtype DT] [--small-vocab]";
   let c = cfg !layers in
   let c = if !skip_tables then { c with Gpt_oss.vocab_size = 1024 } else c in
-  let device = if !jit = "" then None else Some (device_of !jit) in
+  let device = if !jit = "" then None else Some (Devices.first !jit) in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
   let t0 = Unix.gettimeofday () in
   let p = params ?device c dt ~skip_tables:!skip_tables in

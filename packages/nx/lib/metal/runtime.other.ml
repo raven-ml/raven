@@ -3,5 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let on_mac = true
-let get () = Nx_metal_device.get 0
+let get i =
+  if i < 0 then invalid_arg (Printf.sprintf "Nx_metal.get: %d < 0" i);
+  Error "METAL: Metal exists on macOS only"

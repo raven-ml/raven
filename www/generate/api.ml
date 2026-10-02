@@ -14,6 +14,10 @@ let libraries =
     ( "nx",
       [
         ("nx", "Nx");
+        ("nx.metal", "Nx_metal");
+        ("nx.cuda", "Nx_cuda");
+        ("nx.nv", "Nx_nv");
+        ("nx.amd", "Nx_amd");
         ("nx.cpu", "Nx_cpu");
         ("nx.array", "Nx_array");
         ("nx.backend", "Nx_backend");

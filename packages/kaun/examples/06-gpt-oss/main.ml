@@ -143,10 +143,6 @@ let effort_of_string = function
   | "high" -> Harmony.High
   | s -> invalid_arg ("reasoning " ^ s ^ ": expected low, medium or high")
 
-(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
-let devices_of s =
-  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
-
 let () =
   let repo = ref "tiny-random/gpt-oss-mxfp4" in
   let devices = ref "" and count = ref 0 and dtype = ref "" in
@@ -191,7 +187,7 @@ let () =
     if !dtype = "" then Gpt_oss.stored_dtype weights
     else Gpt_oss.dtype_of_string !dtype
   in
-  let devices = if !devices = "" then None else Some (devices_of !devices) in
+  let devices = if !devices = "" then None else Some (Devices.all !devices) in
   let count default = if !count > 0 then !count else default in
   let profile = if !profile = "" then None else Some !profile in
   let log = if !prompt = "" then stdout else stderr in
