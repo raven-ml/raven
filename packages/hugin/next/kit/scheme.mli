@@ -5,18 +5,12 @@
 
 (** Colour schemes.
 
-    A scheme is the colours a scale's colour roles paint with. It has two
-    readings. Its {e continuous} reading gives the colour of a normalised value
-    ({!color}), for quantitative and temporal scales; its {e discrete} reading
-    gives [n] colours for [n] classes ({!colors}), for a band scale over [n]
-    categories. Every scheme has both, so a band scale can colour ordered
-    categories with a sequential scheme, and a quantitative scale can bin its
-    values into the classes of a {!palette}.
-
-    Schemes are {{!section-sequential}sequential}, for quantities from low to
-    high; {{!section-diverging}diverging}, for quantities on either side of a
-    midpoint at the normalised value [0.5]; or
-    {{!section-qualitative}qualitative}, for categories without order.
+    A scheme is the colours a scale's colour roles paint with. Every scheme has
+    two readings: the {e continuous} reading gives the colour of a normalised
+    value ({!color}) and the {e discrete} reading gives [n] colours for [n]
+    classes ({!colors}). Schemes are {{!section-sequential}sequential},
+    {{!section-diverging}diverging} about the normalised value [0.5], or
+    {{!section-qualitative}qualitative}.
 
     {1:continuous Continuous reading}
 
@@ -26,9 +20,7 @@
     float product [float N *. u] clamped to \[[0];[N - 1]\]. Values below [0],
     [neg_infinity] included, take the first colour; values from [1] up,
     [infinity] included, the last; and [nan] takes the colour given to {!color}
-    for unknown values. A figure that gathers colours from the table by this
-    index, as a heatmap drawn as one image or a colour bar does, paints exactly
-    the colours {!color} gives.
+    for unknown values.
 
     A scheme published as a table, such as {!viridis}, has that table. A {!ramp}
     samples its interpolant at [256] evenly spaced values, ends included. A
@@ -42,8 +34,7 @@
       scheme it reverses, in reverse order.
     + A {!palette} of [k] colours, as every qualitative scheme is, and its
       {!reverse} give the colours of their table in order and start again from
-      the first after the last: class [i] has colour [i mod k] of the table. A
-      class thus keeps its colour whatever [n] is.
+      the first after the last: class [i] has colour [i mod k] of the table.
     + A Brewer sequential or diverging scheme, for [n] up to the classes of its
       largest designed table, gives the table its authors designed for [n]
       classes. They designed none below three: for one class a sequential scheme
@@ -59,9 +50,6 @@
       middle of the ramp. Thus [colors m (ramp cs)] is [cs].
     + Any other scheme and its {!reverse} give their continuous reading at
       [i / (n - 1)], ends included, or at [0.5] for one class.
-
-    Past its [k] colours a palette repeats them, so categories share colours. A
-    figure that warns about it compares the colours {!colors} gives.
 
     References:
     - Cynthia A. Brewer, Mark Harrower and The Pennsylvania State University.
@@ -89,35 +77,29 @@ val ramp : Color.t array -> t
 (** [ramp cs] is the sequential scheme that runs through the [m] colours [cs] in
     order, at evenly spaced normalised values from [0] to [1], interpolating in
     Oklab with {!Color.mix} between consecutive ones. Its table is
-    [colors 256 (ramp cs)] ({!section-discrete}), so a ramp through [256]
-    colours has them as its table. [cs] is copied.
+    [colors 256 (ramp cs)] ({!section-discrete}). [cs] is copied.
 
     Raises [Invalid_argument] if [cs] is empty. *)
 
 val palette : Color.t array -> t
 (** [palette cs] is the qualitative scheme of the colours [cs], in order. Its
-    table is [cs], so its continuous reading bins \[[0];[1]\] into
-    [Array.length cs] classes: [palette (colors 5 blues)] colours a quantitative
-    scale in five classes. [cs] is copied.
+    table is [cs]. [cs] is copied.
 
     Raises [Invalid_argument] if [cs] is empty. *)
 
 val reverse : t -> t
-(** [reverse s] is [s] with its table in reverse order, so that low values take
-    the colours [s] gives to high ones: [reverse rdbu] colours high values red.
-    Its discrete reading is that of [s] in reverse order for a Brewer scheme or
-    a ramp, and is otherwise read from the reversed table ({!section-discrete}),
-    so that a reversed palette keeps each class's colour as classes are added.
-    [reverse (reverse s)] is [s]. *)
+(** [reverse s] is [s] with its table in reverse order. Its discrete reading is
+    that of [s] in reverse order for a Brewer scheme or a ramp, and is otherwise
+    read from the reversed table ({!section-discrete}). [reverse (reverse s)] is
+    [s]. *)
 
 (** {1:readings Readings} *)
 
 val color : ?unknown:Color.t -> t -> float -> Color.t
 (** [color ~unknown s u] is the colour of the normalised value [u] in the
     {{!section-continuous}continuous reading} of [s], and [unknown] if [u] is
-    [nan]. [unknown] defaults to {!Color.transparent}, which paints nothing; a
-    figure passes [?unknown:(Scale.unknown sc)] for the scale [sc] it colours
-    with. [color ~unknown s] may be applied once and reused. *)
+    [nan]. [unknown] defaults to {!Color.transparent}. [color ~unknown s] may be
+    applied once and reused. *)
 
 val table : t -> Color.t array
 (** [table s] is the table of [s] ({!section-continuous}), from the colour of
@@ -131,11 +113,10 @@ val colors : int -> t -> Color.t array
 
 (** {1:sequential Sequential schemes}
 
-    The first five are perceptually uniform: lightness rises steadily from [0]
-    to [1], so that equal steps of data look like equal steps of colour, and
-    they read in greyscale. Their tables are their published tables of [256]
-    colours, each component rounded to the nearest multiple of [1/255], which
-    can swap the lightness of neighbouring entries. *)
+    The first five are perceptually uniform, their lightness rising from [0] to
+    [1]. Their tables are their published tables of [256] colours, each
+    component rounded to the nearest multiple of [1/255], which can swap the
+    lightness of neighbouring entries. *)
 
 val viridis : t
 (** [viridis] runs from dark purple through blue and green to yellow (van der
@@ -159,9 +140,7 @@ val cividis : t
 val turbo : t
 (** [turbo] is a rainbow from dark blue through cyan, green, yellow and red to
     dark red (Mikhailov), with its published table of [256] colours rounded as
-    those above. Its lightness rises then falls, so it shows bands that are not
-    in the data and misreads in greyscale; it suits finding fine detail more
-    than reading values. Hugin uses it only when asked. *)
+    those above. Its lightness rises then falls. *)
 
 (** {2:brewer_sequential Brewer sequential schemes}
 
@@ -228,8 +207,7 @@ val ylorrd : t
     ColorBrewer's diverging schemes, with designed tables of 3 to 11 classes
     whose middle class, for an odd number of classes, is a light neutral. Their
     continuous reading is the {!ramp} through their 11-class table, which is
-    light at [0.5]. A figure puts a data value at the midpoint through its
-    scale's domain, such as a domain symmetric about [0.]. *)
+    light at [0.5]. *)
 
 val brbg : t
 (** [brbg] is Brewer's BrBG, brown to blue-green. *)
@@ -268,8 +246,7 @@ val okabe_ito : t
 (** [okabe_ito] is the eight colours of Okabe and Ito, which stay apart for
     viewers with any common colour vision deficiency: [#000000] black, [#e69f00]
     orange, [#56b4e9] sky blue, [#009e73] bluish green, [#f0e442] yellow,
-    [#0072b2] blue, [#d55e00] vermilion and [#cc79a7] reddish purple. The yellow
-    is faint on white paper. *)
+    [#0072b2] blue, [#d55e00] vermilion and [#cc79a7] reddish purple. *)
 
 val tableau10 : t
 (** [tableau10] is the ten colours of Tableau 10 by Maureen Stone: [#4e79a7],
@@ -305,10 +282,8 @@ val set3 : t
 val equal : t -> t -> bool
 (** [equal s s'] is [true] iff [s] and [s'] are the same named scheme or are
     made by the same constructor, {!ramp} or {!palette}, from colours that are
-    pairwise {!Color.equal}, and both or neither are reversed. Equality is
-    structural, as in {{!Hugin_next_gg.section-conventions}[hugin.next.gg]}: a
-    ramp through the table of {!viridis} paints as {!viridis} does and is not
-    equal to it. *)
+    pairwise {!Color.equal}, and both or neither are reversed: a ramp through
+    the table of {!viridis} is not equal to {!viridis}. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf s] formats [s] for debugging: a named scheme by its name, such as
