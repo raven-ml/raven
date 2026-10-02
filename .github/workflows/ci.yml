@@ -36,6 +36,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      # A benchmark run by `dune build` or `dune runtest` can take minutes or
+      # exhaust memory: benchmarks run only through @bench.
+      - name: Check that benchmarks run only on @bench
+        if: runner.os == 'Linux'
+        run: python3 scripts/check_bench_rules.py
+
       - name: Set-up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
