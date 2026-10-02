@@ -56,7 +56,9 @@ let gen_instant =
 let gen_tz =
   Gen.frequency
     [
-      (2, Gen.of_list [ 0; 3600; -18000; 19800; 86399; -86399 ]);
+      ( 2,
+        Gen.of_list ~pp:Format.pp_print_int
+          [ 0; 3600; -18000; 19800; 86399; -86399 ] );
       (1, Gen.int_range (-86399) 86399);
     ]
 
@@ -80,6 +82,34 @@ let gen_near =
     (Gen.map
        (fun (s, n) -> with_ns (Time.v S (Int64.of_int s)) n)
        (Gen.pair (Gen.int_range (-20_000_000_000) 20_000_000_000) gen_nsec))
+
+let leap y = (y mod 4 = 0 && y mod 100 <> 0) || y mod 400 = 0
+
+let month_length y = function
+  | 2 -> if leap y then 29 else 28
+  | 4 | 6 | 9 | 11 -> 30
+  | _ -> 31
+
+(* Dates within a million years, many in leap years and in February, half of
+   them on the last day of a month. *)
+let gen_date =
+  let open Gen in
+  let pp ppf (y, m, d) = Format.fprintf ppf "%d-%02d-%02d" y m d in
+  let year = int_range (-1_000_000) 1_000_000 in
+  with_pp pp
+    (let* y = frequency [ (1, year); (1, map (fun y -> 4 * (y / 4)) year) ] in
+     let* m = frequency [ (1, constant 2); (2, int_range 1 12) ] in
+     let n = month_length y m in
+     let+ d = frequency [ (1, constant n); (1, int_range 1 n) ] in
+     (y, m, d))
+
+let gen_time =
+  Gen.triple (Gen.int_range 0 23) (Gen.int_range 0 59) (Gen.int_range 0 59)
+
+let next (y, m, d) =
+  if d < month_length y m then (y, m, d + 1)
+  else if m < 12 then (y, m + 1, 1)
+  else (y + 1, 1, 1)
 
 (* Instants *)
 
@@ -204,62 +234,26 @@ let civil =
         (fun (_, f) -> invalid f);
       test "to_date_time raises on an offset out of range" (fun () ->
           invalid (fun () -> Time.to_date_time ~tz_offset_s:90_000 Time.epoch));
-      test "days from 1900 to 2100 follow each other" (fun () ->
-          let y = ref 1900 and m = ref 1 and d = ref 1 in
-          let expected = ref (-2_208_988_800) in
-          while !y <= 2100 do
-            let dt = ((!y, !m, !d), (0, 0, 0)) in
-            equal
-              ~msg:(Printf.sprintf "%d-%d-%d" !y !m !d)
-              instant (utc !expected) (Time.of_date_time dt);
-            equal date_time dt (Time.to_date_time (utc !expected));
-            expected := !expected + 86_400;
-            let leap = (!y mod 4 = 0 && !y mod 100 <> 0) || !y mod 400 = 0 in
-            let len =
-              [|
-                31;
-                (if leap then 29 else 28);
-                31;
-                30;
-                31;
-                30;
-                31;
-                31;
-                30;
-                31;
-                30;
-                31;
-              |].(!m - 1)
-            in
-            if !d < len then incr d
-            else begin
-              d := 1;
-              if !m < 12 then incr m
-              else begin
-                m := 1;
-                incr y
-              end
-            end
-          done);
+      prop "the day after a date starts a day later"
+        ~examples:
+          [ (1900, 2, 28); (2000, 2, 29); (2100, 2, 28); (1969, 12, 31) ]
+        gen_date
+        (fun d ->
+          cover "February 29" (match d with _, 2, 29 -> true | _ -> false);
+          cover "December 31" (match d with _, 12, 31 -> true | _ -> false);
+          let start = Time.of_date d in
+          equal instant
+            (Time.v S (Int64.add start.Time.sec 86_400L))
+            (Time.of_date (next d)));
       prop "to_date_time inverts of_date_time over the representable range"
         (Gen.pair gen_tz gen_instant) (fun (tz_offset_s, t) ->
           let whole = Time.v S t.Time.sec in
           equal instant whole
             (Time.of_date_time ~tz_offset_s (Time.to_date_time ~tz_offset_s t)));
       prop "of_date_time inverts to_date_time for years within a million"
-        (Gen.triple gen_tz
-           (Gen.triple
-              (Gen.int_range (-1_000_000) 1_000_000)
-              (Gen.int_range 1 12) (Gen.int_range 1 31))
-           (Gen.triple (Gen.int_range 0 23) (Gen.int_range 0 59)
-              (Gen.int_range 0 59)))
-        (fun (tz_offset_s, ((y, m, d) as dt), tm) ->
-          assume
-            (d <= 28 || m <> 2
-            || (d = 29 && y mod 4 = 0 && (y mod 100 <> 0 || y mod 400 = 0)));
-          assume (d <= 30 || not (List.mem m [ 2; 4; 6; 9; 11 ]));
-          let t = Time.of_date_time ~tz_offset_s (dt, tm) in
-          equal date_time (dt, tm) (Time.to_date_time ~tz_offset_s t));
+        (Gen.triple gen_tz gen_date gen_time) (fun (tz_offset_s, d, tm) ->
+          let t = Time.of_date_time ~tz_offset_s (d, tm) in
+          equal date_time (d, tm) (Time.to_date_time ~tz_offset_s t));
     ]
 
 (* Intervals *)
@@ -438,17 +432,6 @@ let intervals =
       test "range of one boundary is that boundary" (fun () ->
           equal (list instant) [ Time.epoch ]
             (boundaries (Time.days 1) Time.epoch Time.epoch));
-      test "ceil skips a month start with nanoseconds" (fun () ->
-          equal instant
-            (Time.of_date (2026, 4, 1))
-            (Time.ceil (Time.months 1) (with_ns (Time.of_date (2026, 3, 1)) 5));
-          equal instant
-            (Time.of_date (2026, 4, 1))
-            (Time.ceil (Time.months 1) (at (2026, 3, 1) (0, 0, 1))));
-      test "ceil to years skips a month start" (fun () ->
-          equal instant
-            (Time.of_date (2027, 1, 1))
-            (Time.ceil (Time.years 1) (Time.of_date (2026, 3, 1))));
       test "nanoseconds carry into seconds" (fun () ->
           let t = Time.add (ns 1) 1 (Time.v Ns 999_999_999L) in
           equal int 0 t.Time.nsec;
@@ -480,14 +463,20 @@ let interval_laws =
           at_most instant ~than:t f;
           less instant ~than:(Time.add ~tz_offset_s i 1 f) t);
       prop "ceil i t >= t > add i (-1) (ceil i t)"
-        (Gen.triple gen_tz gen_interval gen_near) (fun (tz_offset_s, i, t) ->
+        ~examples:
+          [
+            (0, Time.months 1, with_ns (Time.of_date (2026, 3, 1)) 5);
+            (0, Time.months 1, at (2026, 3, 1) (0, 0, 1));
+            (0, Time.years 1, Time.of_date (2026, 3, 1));
+          ]
+        (Gen.triple gen_tz gen_interval gen_near)
+        (fun (tz_offset_s, i, t) ->
           let c = Time.ceil ~tz_offset_s i t in
           at_least instant ~than:t c;
           greater instant ~than:(Time.add ~tz_offset_s i (-1) c) t);
       prop "floor is idempotent" (Gen.triple gen_tz gen_interval gen_near)
         (fun (tz_offset_s, i, t) ->
-          let f = Time.floor ~tz_offset_s i in
-          equal instant (f t) (f (f t)));
+          Law.idempotent instant (Time.floor ~tz_offset_s i) t);
       prop "ceil and floor agree exactly on boundaries"
         (Gen.triple gen_tz gen_interval gen_near) (fun (tz_offset_s, i, t) ->
           let f = Time.floor ~tz_offset_s i t in
@@ -513,13 +502,22 @@ let interval_laws =
           less instant
             ~than:(Time.add ~tz_offset_s i 1 r.(Array.length r - 1))
             t');
-      prop "add of fixed strides composes"
+      prop "add composes on boundaries"
+        (Gen.triple gen_tz gen_interval
+           (Gen.triple gen_near
+              (Gen.int_range (-1000) 1000)
+              (Gen.int_range (-1000) 1000)))
+        (fun (tz_offset_s, i, (t, a, b)) ->
+          let add n t = Time.add ~tz_offset_s i n t in
+          let t = Time.floor ~tz_offset_s i t in
+          equal instant (add (a + b) t) (add b (add a t)));
+      prop "add of fixed strides composes from any instant"
         (Gen.triple gen_instant
            (Gen.int_range (-1000) 1000)
            (Gen.int_range (-1000) 1000))
         (fun (t, a, b) ->
-          let i = ns 999_999_937 in
-          match (Time.add i (a + b) t, Time.add i b (Time.add i a t)) with
+          let add n t = Time.add (ns 999_999_937) n t in
+          match (add (a + b) t, add b (add a t)) with
           | expected, actual -> equal instant expected actual
           | exception Invalid_argument _ -> reject ());
     ]
