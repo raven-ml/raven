@@ -988,18 +988,22 @@ static value call(value v_entry, value v_buffers, value v_values,
     /* A block past the iterations would run none. */
     if (j.blocks > j.extent) j.blocks = j.extent > 0 ? j.extent : 1;
     if (nthreads > j.blocks) nthreads = (int)j.blocks;
-    j.values = malloc((size_t)nthreads * (nv ? nv : 1) * sizeof *j.values);
+    /* One thread writes the bounds into the values read above. */
+    j.values = nthreads > 1 ? malloc((size_t)nthreads * (nv ? nv : 1) *
+                                     sizeof *j.values)
+                            : v;
     if (j.values == NULL) {
       if (b != small_b) free(b);
       if (v != small_v) free(v);
       caml_raise_out_of_memory();
     }
-    for (int w = 0; w < nthreads; w++)
-      memcpy(j.values + (size_t)w * nv, v, nv * sizeof *v);
+    if (nthreads > 1)
+      for (int w = 0; w < nthreads; w++)
+        memcpy(j.values + (size_t)w * nv, v, nv * sizeof *v);
     caml_release_runtime_system();
     pool->run(nthreads, j.blocks, j.blocks, run_blocks, &j);
     caml_acquire_runtime_system();
-    free(j.values);
+    if (j.values != v) free(j.values);
   }
   if (b != small_b) free(b);
   if (v != small_v) free(v);

@@ -3025,6 +3025,11 @@ thread.
 
 ### Nx
 
+- The host's thread pool, which runs the blocks of `Nx_device.Program.call`
+  and nx.cpu's parallel kernels, keeps its threads spinning for up to 100 us
+  between jobs instead of parking them after each. A compiled program's
+  kernels, launched microseconds apart, no longer wake every thread: a jitted
+  RNN step of 1,609 launches went from 52 to 29 ms on an M1 Max.
 - A NaN result of `Nx.sum`, `Nx.prod`, `Nx.cumsum` or `Nx.cumprod` on the host
   is the first NaN term in index order along the reduced axes. Which NaN
   survived depended on the layout, the length and the path the reduction took.

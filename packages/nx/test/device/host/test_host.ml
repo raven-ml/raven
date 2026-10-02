@@ -460,6 +460,30 @@ let test_split_domains () =
   equal ~msg:"the holding call" (list int64) ones (int64s_of runs);
   equal ~msg:"the second call" (list int64) ones second
 
+(* Split calls in a burst from two domains, of as many blocks as the host has
+   threads or fewer, so that the threads each call takes vary from one call to
+   the next: each runs every iteration once. *)
+let test_split_bursts =
+  let call = Gen.pair (Gen.int_range 0 300) (Gen.int_range 1 16) in
+  prop "split calls in a burst from two domains each run every iteration once"
+    (Gen.list ~size:(Gen.int_range 1 40) call)
+    (fun calls ->
+      let burst () =
+        List.map
+          (fun (extent, blocks) -> (extent, snd (split_run ~extent ~blocks)))
+          calls
+      in
+      let other = Domain.spawn burst in
+      let here = burst () in
+      let there = Domain.join other in
+      let once (extent, runs) =
+        equal ~msg:(Printf.sprintf "%d iterations" extent) (list int64)
+          (List.init extent (fun _ -> 1L))
+          runs
+      in
+      List.iter once here;
+      List.iter once there)
+
 let () =
   exit
     (run "nx.device host programs"
@@ -493,4 +517,5 @@ let () =
          test "a split call refuses a split it cannot run" test_split_refusals;
          test "a split call runs while another domain's holds the threads"
            test_split_domains;
+         test_split_bursts;
        ])
