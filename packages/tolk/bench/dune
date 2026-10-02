@@ -50,6 +50,8 @@
  (deps
   (:goldens
    ../test/codegen/opt/heuristic/gpt_oss_qkv.golden
+   ../test/codegen/opt/heuristic/gpt_oss_kv.golden
+   ../test/codegen/opt/heuristic/gpt_oss_router.golden
    ../test/codegen/opt/heuristic/gpt_oss_gate_up.golden
    ../test/codegen/opt/heuristic/gpt_oss_down.golden))
  (action

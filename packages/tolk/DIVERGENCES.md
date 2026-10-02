@@ -2493,7 +2493,7 @@ stores through a pad.
   operands are loads (`mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
   Ops.INDEX`) and the vector's index has the first reduce range as a term of
   its sum.
-- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`term_of`) and `:203`
+- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`term_of`) and `:209`
   (`operands`), which D89 widens; `test/gen/tinygrad.patch`, which gives
   tinygrad the same before the goldens are recorded.
 - **Differs:** the vector is a load read through dtype conversions (`CAST`,
@@ -2676,9 +2676,9 @@ stores through a pad.
   4, whatever the matrix's layout and size), and `codegen/opt/postrange.py:132-134`
   (`apply_opt`, which refuses a local split of a reduce axis inside another
   reduce).
-- **tolk:** `lib/codegen/opt/heuristic.ml:165-178` (`lanes`, `rows`,
-  `columns`, `busy`, `in_flight`), `:203` (`operands`), `:218` (`units`) and
-  `:226` (`matvec`); `lib/codegen/opt/postrange.ml:307-316`;
+- **tolk:** `lib/codegen/opt/heuristic.ml:167-184` (`lanes`, `rows`,
+  `columns`, `busy`, `in_flight`), `:209` (`operands`), `:224` (`units`) and
+  `:232` (`matvec`); `lib/codegen/opt/postrange.ml:307-316`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
 - **Differs:** the vector is any computation of accesses with no reduce,
@@ -2758,8 +2758,8 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:115-120` (`hand_coded_optimizations`:
   more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
   can take a kernel to 64 lanes or more).
-- **tolk:** `lib/codegen/opt/heuristic.ml:419-423` (`host_lanes`,
-  `beyond_host_lanes`), `:451` (`upcast_more`).
+- **tolk:** `lib/codegen/opt/heuristic.ml:431-435` (`host_lanes`,
+  `beyond_host_lanes`), `:463` (`upcast_more`).
 - **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
   take an upcast that would make the kernel's upcast and unrolled lanes more
   than 32. Other devices upcast as tinygrad does.
@@ -2778,8 +2778,8 @@ stores through a pad.
   upcasts of output axes, which find reuse only on an axis that some access
   does not read, take 3 or 4 values of it, and come after the matrix-vector
   layout of `:61-79` has returned).
-- **tolk:** `lib/codegen/opt/heuristic.ml:309` (`run_cap`), `:313` (`run`),
-  `:75` (`decoded`), `:337` (`upcast_shared`) and `:577` (its place, before
+- **tolk:** `lib/codegen/opt/heuristic.ml:322` (`run_cap`), `:326` (`run`),
+  `:75` (`decoded`), `:350` (`upcast_shared`) and `:608` (its place, before
   `matvec`); `test/gen/tinygrad.patch`, which gives tinygrad the same before
   the goldens are recorded.
 - **Differs:** before the matrix-vector layout, an output axis that an operand
@@ -2883,7 +2883,7 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
   matrix-vector case, which splits `MV_BLOCKSIZE` local threads from the
   first global axis that divides, whichever operand reads it).
-- **tolk:** `lib/codegen/opt/heuristic.ml:203` (`operands`) and `:238`
+- **tolk:** `lib/codegen/opt/heuristic.ml:209` (`operands`) and `:244`
   (`rows_layout`); `test/gen/tinygrad.patch`, which gives tinygrad the same
   before the goldens are recorded.
 - **Differs:** D89's rows layout splits its 4 SIMD groups from the first
@@ -3142,8 +3142,8 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:115-138` (`hand_coded_optimizations`'
   upcasts of output axes: by 3 or 4, of an axis that some access does not
   read while it reads every upcast axis, until the kernel has 32 lanes).
-- **tolk:** `lib/codegen/opt/heuristic.ml:59` (`reads`), `:432` (`choice
-  ~fill`) and `:487` (the fill); `test/gen/tinygrad.patch`, which gives
+- **tolk:** `lib/codegen/opt/heuristic.ml:59` (`reads`), `:444` (`choice
+  ~fill`) and `:499` (the fill); `test/gen/tinygrad.patch`, which gives
   tinygrad the same before the goldens are recorded.
 - **Differs:** on the host (`target.device = "CPU"`), when no upcast by 3 or 4
   is left, an output axis not yet upcast is upcast by 2 if the kernel's lanes
@@ -3173,7 +3173,7 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:140-154` (the unroll of the last
   reduce axis: whole when it is at most 32, by 4 otherwise, while the kernel
   has fewer than 64 lanes).
-- **tolk:** `lib/codegen/opt/heuristic.ml:505` (`unroll`, its `fits`);
+- **tolk:** `lib/codegen/opt/heuristic.ml:517` (`unroll`, its `fits`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
 - **Differs:** on the host, a kernel with more than one reduce does not take
@@ -3197,6 +3197,30 @@ stores through a pad.
   `metal`, `cuda` and `amd` the sum is unrolled), recorded from the equally
   patched tinygrad; the tolk bench's `lorenz` rows.
 
+## D110. A matrix-vector product with few outputs takes fewer threads across them
+
+- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
+  matrix-vector case, `MV_BLOCKSIZE` local threads on the output, whatever
+  its size); D89 replaces it.
+- **tolk:** `lib/codegen/opt/heuristic.ml:177` (`sector_lanes`) and `:274`
+  (`columns_layout`'s `across`); `test/gen/tinygrad.patch`, which gives
+  tinygrad the same before the goldens are recorded.
+- **Differs:** D89's columns layout puts 32 threads across the outputs and
+  up to 32 along the reduce. When the outputs are too few for that to run
+  32768 threads, a workgroup of 1024 threads takes fewer across, down to 8,
+  and more along the reduce, as many as the reduce's power-of-two divisor
+  allows, so that more workgroups share the outputs. 8 threads of 2
+  bfloat16 columns read a 32-byte sector. A product of 32 outputs, which
+  took D89's 64 at least, now takes this layout too.
+- **Reason:** (b): gpt-oss-20b's decode on CUDA (RTX 5000 Ada, 100
+  multiprocessors). The key and value projections, 512 outputs, ran on 8
+  workgroups and took 9.05 us each; on 32 they take 7.8 us. The router, 32
+  outputs, fell back to a group of 16 threads per output and took 6.7 us; it
+  takes 3.7 us.
+- **Pinned by:** the Heuristic suite: `the optimisations chosen are
+  tinygrad's › applied_opts`, cases `gpt_oss_kv_*`, `gpt_oss_router_*`,
+  `vecmat_*` and `shared_keys_*`, recorded from the equally patched
+  tinygrad; the tolk bench's `cuda/gpt_oss_kv` and `cuda/gpt_oss_router`.
 ## D111. A hung AM device is lost, never recovered in the process
 
 - **tinygrad:** `runtime/ops_amd.py:782-801` (`_collect_interrupts`, whose

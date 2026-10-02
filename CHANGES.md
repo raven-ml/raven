@@ -954,6 +954,11 @@ thread.
 
 ### Tolk (new)
 
+- A matrix-vector product with few outputs, along a matrix laid out by
+  columns, spreads them over more workgroups with fewer threads across each.
+  gpt-oss-20b's key and value projections, 512 outputs, ran on 8 of an RTX
+  5000 Ada's 100 multiprocessors: 7.8 us each instead of 9.05 us, and its
+  router 3.7 us instead of 6.7 us.
 - A value that every output of a reduction reads, such as the normalised
   vector of a matrix-vector product, is stored once instead of computed again
   for each output when it reads more than one buffer. gpt-oss-20b's decode

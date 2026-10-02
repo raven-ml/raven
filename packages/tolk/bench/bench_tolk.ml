@@ -14,7 +14,8 @@
    [decode] runs kernels: gpt-oss-20b's decode products, recorded by the
    Heuristic suite, compiled with the hand-coded optimisations for the host and
    for a CUDA device, and timed one run at a time, synchronized. [qkv] is the
-   bfloat16 projection of a normalised activation; [gate_up] and [down] are
+   bfloat16 projection of a normalised activation, [kv] its narrower key or
+   value projection and [router] its experts' scores; [gate_up] and [down] are
    four experts' MXFP4 products, [down] summing them. The CUDA device is opened
    in the measuring worker, which is forked without an exec, and CUDA's driver
    must not be initialized before the fork: a fresh process of this executable

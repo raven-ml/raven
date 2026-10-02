@@ -421,7 +421,7 @@ index 712a2b7..0466789 100644
      for axis in range(3):
        tk = k.copy()
        # check TC first and apply hand-coded opts if successful
-@@ -58,25 +69,75 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -58,25 +69,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
            if (axis:=unit_stride_axes_mul_4[0]) in (upd:=k.upcastable_dims)+k.unrollable_dims:
              k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST if axis in upd else AxisType.UNROLL)))
  
@@ -464,7 +464,7 @@ index 712a2b7..0466789 100644
 +  # thread keeps several loads in flight, and enough threads run to keep the memory busy. A matrix of rows along the reduce gives each
 +  # row LANES threads that read it in turn, ROWS rows to a workgroup, unrolled by up to IN_FLIGHT; one of columns along an output gives
 +  # LANES threads adjacent outputs, COLUMNS of them each, and splits the reduce until BUSY threads run
-+  LANES, ROWS, COLUMNS, BUSY, IN_FLIGHT = 32, 4, 2, 32768, 8
++  LANES, ROWS, COLUMNS, BUSY, IN_FLIGHT, SECTOR_LANES = 32, 4, 2, 32768, 8, 8
 +  def accesses(u):
 +    s = u.toposort()
 +    return [] if any(x.op is Ops.REDUCE for x in s) else [x for x in s if x.op is Ops.INDEX]
@@ -505,10 +505,12 @@ index 712a2b7..0466789 100644
 +    wanted = 1
 +    if isinstance(outputs:=prod(k.full_shape[i] for i in k.upcastable_dims), int):
 +      while wanted < BUSY*COLUMNS//max(outputs, 1): wanted *= 2
-+    if wanted <= 1 or not divisible(g, LANES*COLUMNS): return None
-+    k.apply_opt(Opt(OptOps.SPLIT, axis(g), (LANES, AxisType.LOCAL)))
++    # few outputs take fewer of a workgroup's threads each, down to SECTOR_LANES, so that more workgroups split them
++    across = max(SECTOR_LANES, LANES*LANES//max(wanted, LANES))
++    if wanted <= 1 or not divisible(g, across*COLUMNS): return None
++    k.apply_opt(Opt(OptOps.SPLIT, axis(g), (across, AxisType.LOCAL)))
 +    k.apply_opt(Opt(OptOps.SPLIT, axis(g), (COLUMNS, AxisType.UPCAST)))
-+    if (threads:=pow2_dividing(first, min(wanted, LANES))) > 1:
++    if (threads:=pow2_dividing(first, min(wanted, LANES*LANES//across))) > 1:
 +      try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
 +      except KernelOptError: pass
 +    return k

@@ -156,8 +156,9 @@ let tensor_cores k =
      lanes   k ->                         lanes   n ->
      t0 t1 .. t31 t0 t1 .. t31 ...        t0 t1 .. t31   (2 columns each)
      a row's [lanes] threads read it      the reduce splits into threads
-     in turn, [rows] rows a workgroup,    until [busy] threads run
-     unrolled by up to [in_flight] *)
+     in turn, [rows] rows a workgroup,    until [busy] threads run; with
+     unrolled by up to [in_flight]        few outputs a workgroup takes as
+                                          few as [sector_lanes] across *)
 
 let mv = Helpers.variable "MV" 1
 
@@ -170,6 +171,10 @@ let rows = 4
 
 (* The outputs of a thread in the columns layout. *)
 let columns = 2
+
+(* The fewest threads across a row in the columns layout: 8 threads of 2
+   bfloat16 columns read a 32-byte sector, memory's unit of transfer. *)
+let sector_lanes = 8
 
 (* The threads that keep a GPU's memory busy. *)
 let busy = 32768
@@ -262,11 +267,18 @@ let matvec k =
       | Int n -> pow2_above (busy * columns / max n 1)
       | Sym _ -> 1
     in
-    if wanted <= 1 || not (divisible_at g (lanes * columns)) then None
+    (* A workgroup holds [lanes * lanes] threads. Few outputs take fewer of
+       them across, down to [sector_lanes], and more along the reduce, so that
+       more workgroups share the outputs: 512 outputs take 32 workgroups of 8
+       threads across where they took 8 of 32. *)
+    let across = max sector_lanes (lanes * lanes / max wanted lanes) in
+    if wanted <= 1 || not (divisible_at g (across * columns)) then None
     else begin
-      ignore (split k (axis g) lanes Opt.Local);
+      ignore (split k (axis g) across Opt.Local);
       ignore (split k (axis g) columns Opt.Upcast);
-      let threads = pow2_dividing first (min wanted lanes) in
+      let threads =
+        pow2_dividing first (min wanted (lanes * lanes / across))
+      in
       if threads > 1 then ignore (try_split k (axis first) threads Opt.Local);
       Some k
     end
