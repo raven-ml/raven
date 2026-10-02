@@ -890,19 +890,6 @@ let least_sizes =
   let named =
     prop "a figure too small names a size that lays it out" ~count:40
       (Gen.pair gen_case (Gen.float_range 0.3 1.))
-      (fun (c, k) ->
-        let f = figure_of c in
-        match needs (Size.figure 1. 1.) f with
-        | None -> assume false
-        | Some (w, h) -> (
-            match needs (Size.figure (k *. w) (k *. h)) f with
-            | None -> ()
-            | Some (w', h') -> (
-                match tried (Size.figure w' h') f with
-                | Ok l -> apart l
-                | Error s ->
-                    equal (option (pair float_exact float_exact)) None (Some s))
-            ))
       names_law
   in
   (* Figures too small at a factor of their least size, whose named size the law
