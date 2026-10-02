@@ -1,0 +1,166 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+module Scale = Hugin_next_kit.Scale
+module Text = Hugin_next_text.Text
+open Common
+
+type _ lift =
+  | Num : { x : ('a, 'b) Nx.t; valid : Nx.bool_t option } -> float lift
+  | Index : int -> float lift
+  | Scalar : float -> float lift
+  | Cat : {
+      codes : ('a, 'b) Nx.t;
+      valid : Nx.bool_t option;
+      labels : string array option;
+    }
+      -> string lift
+  | Strings : string array -> string lift
+  | Dim : {
+      axis : int;
+      valid : Nx.bool_t option;
+      labels : string array option;
+    }
+      -> string lift
+
+type ('d, 'r) t =
+  | Const : 'r -> ('d, 'r) t
+  | Data : {
+      lift : 'd lift;
+      scale : 'd Scale.t option;
+      title : Text.t option;
+    }
+      -> ('d, 'r) t
+  | Map : ('r -> 'r) * ('d, 'r) t -> ('d, 'r) t
+
+let lift_kind : type d. d lift -> d Scale.kind = function
+  | Num _ -> Scale.Quantitative
+  | Index _ -> Scale.Quantitative
+  | Scalar _ -> Scale.Quantitative
+  | Cat _ -> Scale.Categorical
+  | Strings _ -> Scale.Categorical
+  | Dim _ -> Scale.Categorical
+
+let equal_lift : type d e. d lift -> e lift -> (d, e) Type.eq option =
+ fun l l' ->
+  let ok b = if b then Some Type.Equal else None in
+  match (l, l') with
+  | Num a, Num b ->
+      ok (equal_tensor a.x b.x && Option.equal ( == ) a.valid b.valid)
+  | Index k, Index k' -> ok (Int.equal k k')
+  | Scalar v, Scalar v' -> ok (Float.equal v v')
+  | Cat a, Cat b ->
+      ok
+        (equal_tensor a.codes b.codes
+        && Option.equal ( == ) a.valid b.valid
+        && Option.equal equal_strings a.labels b.labels)
+  | Strings a, Strings b -> ok (equal_strings a b)
+  | Dim a, Dim b ->
+      ok
+        (Int.equal a.axis b.axis
+        && Option.equal ( == ) a.valid b.valid
+        && Option.equal equal_strings a.labels b.labels)
+  | _ -> None
+
+let rec equal : type d e r. r Role.range -> (d, r) t -> (e, r) t -> bool =
+ fun r c c' ->
+  match (c, c') with
+  | Const v, Const v' -> Role.equal_in r v v'
+  | Data a, Data b -> (
+      match equal_lift a.lift b.lift with
+      | Some Type.Equal ->
+          Option.equal Scale.equal a.scale b.scale
+          && Option.equal Text.equal a.title b.title
+      | None -> false)
+  | Map (f, c), Map (f', c') -> f == f' && equal r c c'
+  | _ -> false
+
+type 'd data = {
+  lift : 'd lift;
+  spec : 'd Scale.t option;
+  title : Text.t option;
+}
+
+let rec data : type d r. (d, r) t -> d data option = function
+  | Const _ -> None
+  | Data { lift; scale; title } -> Some { lift; spec = scale; title }
+  | Map (_, c) -> data c
+
+(* Lifts *)
+
+let is_real : type a b. (a, b) Nx.dtype -> bool = function
+  | Nx.Complex64 | Nx.Complex128 | Nx.Bool -> false
+  | _ -> true
+
+let is_integer : type a b. (a, b) Nx.dtype -> bool = function
+  | Nx.Int4 | Nx.UInt4 | Nx.Int8 | Nx.UInt8 | Nx.Int16 | Nx.UInt16 | Nx.Int32
+  | Nx.UInt32 | Nx.Int64 | Nx.UInt64 ->
+      true
+  | _ -> false
+
+(* [fits s s'] is [true] iff [s] broadcasts to [s'] without growing it. *)
+let fits s s' =
+  let n = Array.length s and n' = Array.length s' in
+  n <= n'
+  &&
+  let ok = ref true in
+  for i = 0 to n - 1 do
+    let d = s.(i) in
+    if d <> 1 && d <> s'.(n' - n + i) then ok := false
+  done;
+  !ok
+
+let check_valid fn shape = function
+  | None -> ()
+  | Some v ->
+      if not (fits (Nx.shape v) shape) then
+        err fn "valid, of shape %a, does not broadcast to the shape %a" pp_shape
+          (Nx.shape v) pp_shape shape
+
+let check_distinct fn labels =
+  let seen = Hashtbl.create (Array.length labels) in
+  Array.iter
+    (fun l ->
+      if Hashtbl.mem seen l then err fn "the label %S is repeated" l;
+      Hashtbl.add seen l ())
+    labels
+
+let num ?scale ?valid ?title x =
+  if not (is_real (Nx.dtype x)) then
+    err "num" "the dtype %s is not real" (Nx_dtype.to_string (Nx.dtype x));
+  check_valid "num" (Nx.shape x) valid;
+  Data { lift = Num { x; valid }; scale; title }
+
+let cat ?scale ?valid ?title ?labels codes =
+  if not (is_integer (Nx.dtype codes)) then
+    err "cat" "the dtype %s is not an integer dtype"
+      (Nx_dtype.to_string (Nx.dtype codes));
+  check_valid "cat" (Nx.shape codes) valid;
+  Option.iter (check_distinct "cat") labels;
+  let labels = Option.map Array.copy labels in
+  Data { lift = Cat { codes; valid; labels }; scale; title }
+
+let strings ?scale ?title a =
+  Data { lift = Strings (Array.copy a); scale; title }
+
+let dim ?scale ?valid ?title ?labels axis =
+  let labels = Option.map Array.copy labels in
+  Data { lift = Dim { axis; valid; labels }; scale; title }
+
+let index ?scale ?title axis = Data { lift = Index axis; scale; title }
+let const v = Const v
+let map_range f c = Map (f, c)
+
+let axis_of shape k =
+  let n = Array.length shape in
+  let a = if k < 0 then n + k else k in
+  if a < 0 || a >= n then None else Some a
+
+let lift_shape : type d. d lift -> int array option = function
+  | Num { x; _ } -> Some (Nx.shape x)
+  | Cat { codes; _ } -> Some (Nx.shape codes)
+  | Strings a -> Some [| Array.length a |]
+  | Dim { valid = Some v; _ } -> Some (Nx.shape v)
+  | Dim { valid = None; _ } | Index _ | Scalar _ -> None

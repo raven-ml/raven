@@ -13,6 +13,23 @@
   hugin.next.kit
   nx
   nx.dtype)
+ (private_modules
+  common
+  coord
+  view
+  size
+  theme
+  role
+  channel
+  figure
+  mark
+  marks
+  expand
+  arrange
+  summary
+  resolved
+  items
+  layout)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
