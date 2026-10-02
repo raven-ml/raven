@@ -77,10 +77,11 @@
   (run %{dep:test_kernels.bc.exe} --slow-threshold 10)))
 
 ; The native-vs-bytecode differential: the same deterministic dump from the
-; kernel and from the reference must be byte-identical. The dumps take minutes
-; in bytecode, so they run on runtest alone: the native binary reads the
-; bytecode one's dump on stdin and compares it with its own, leaving no file
-; that @default would build.
+; kernel and from the reference must be byte-identical. The native binary reads
+; the bytecode one's dump on stdin and compares it with its own, leaving no file
+; that @default would build. The reference in bytecode takes a minute and a
+; half over the whole dump, so it runs as eight shards, which dune runs in
+; parallel.
 (executable
  (name dump_kernels)
  (modules dump_kernels)
@@ -95,5 +96,82 @@
   (glob_files %{project_root}/packages/brot/bench/data/*))
  (action
   (pipe-stdout
-   (run %{dep:dump_kernels.bc.exe})
-   (run %{dep:dump_kernels.exe} --compare))))
+   (run %{dep:dump_kernels.bc.exe} --shard 1/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 1/8))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (pipe-stdout
+   (run %{dep:dump_kernels.bc.exe} --shard 2/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 2/8))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (pipe-stdout
+   (run %{dep:dump_kernels.bc.exe} --shard 3/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 3/8))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (pipe-stdout
+   (run %{dep:dump_kernels.bc.exe} --shard 4/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 4/8))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (pipe-stdout
+   (run %{dep:dump_kernels.bc.exe} --shard 5/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 5/8))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (pipe-stdout
+   (run %{dep:dump_kernels.bc.exe} --shard 6/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 6/8))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (pipe-stdout
+   (run %{dep:dump_kernels.bc.exe} --shard 7/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 7/8))))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (deps
+  (glob_files fixtures/parity/*)
+  (glob_files %{project_root}/packages/brot/bench/data/*))
+ (action
+  (pipe-stdout
+   (run %{dep:dump_kernels.bc.exe} --shard 8/8)
+   (run %{dep:dump_kernels.exe} --compare --shard 8/8))))

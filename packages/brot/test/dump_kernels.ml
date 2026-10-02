@@ -59,55 +59,56 @@ let read_file path =
 
 let read_opt path = if Sys.file_exists path then Some (read_file path) else None
 
-(* Output: full values for short inputs, a digest above that, so the dump stays
-   small while covering megabytes. *)
+(* Output: a sequence of values in full when it is short, and otherwise its
+   length and the digest of its values' bytes, so the dump stays small while
+   covering megabytes. Digesting bytes, rather than the printed values, keeps
+   the bytecode binary's dump from costing more than its encoding. *)
 
-let ints_line ints =
-  String.concat " " (List.map string_of_int (Array.to_list ints))
+let shown = 256
 
-let show name line =
-  if String.length line <= 2048 then pf "%s: %s\n" name line
+let show name ~text ~bytes values =
+  let n = Array.length values in
+  if n <= shown then
+    pf "%s: %s\n" name
+      (String.concat " " (Array.to_list (Array.map text values)))
   else
-    pf "%s: len=%d md5=%s\n" name (String.length line)
-      (Digest.to_hex (Digest.string line))
+    let b = Buffer.create (8 * n) in
+    Array.iter (bytes b) values;
+    pf "%s: n=%d md5=%s\n" name n
+      (Digest.to_hex (Digest.string (Buffer.contents b)))
+
+let add_int b i = Buffer.add_int64_le b (Int64.of_int i)
+let show_ints name ints = show name ~text:string_of_int ~bytes:add_int ints
 
 let dump_ids tok name text =
-  show (name ^ "/ids")
-    (ints_line (Brot.encode_ids tok ~add_special_tokens:false text))
+  show_ints (name ^ "/ids") (Brot.encode_ids tok ~add_special_tokens:false text)
 
 let dump_encoding tok name text =
   let e = Brot.encode tok ~add_special_tokens:false text in
-  show (name ^ "/e.ids") (ints_line (Brot.Encoding.ids e));
+  show_ints (name ^ "/e.ids") (Brot.Encoding.ids e);
   show (name ^ "/e.offsets")
-    (String.concat " "
-       (List.map
-          (fun (a, b) -> Printf.sprintf "%d-%d" a b)
-          (Array.to_list (Brot.Encoding.offsets e))));
+    ~text:(fun (a, b) -> Printf.sprintf "%d-%d" a b)
+    ~bytes:(fun buf (a, b) ->
+      add_int buf a;
+      add_int buf b)
+    (Brot.Encoding.offsets e);
   show (name ^ "/e.words")
-    (String.concat " "
-       (List.map
-          (function None -> "_" | Some w -> string_of_int w)
-          (Array.to_list (Brot.Encoding.word_ids e))))
-
-let digest_line ints =
-  let line = ints_line ints in
-  if String.length line <= 2048 then line
-  else
-    Printf.sprintf "len=%d md5=%s" (String.length line)
-      (Digest.to_hex (Digest.string line))
+    ~text:(function None -> "_" | Some w -> string_of_int w)
+    ~bytes:(fun buf w -> add_int buf (Option.value w ~default:(-1)))
+    (Brot.Encoding.word_ids e)
 
 let dump_batch tok name texts =
   let ids, lengths =
     Brot.encode_batch_ids tok ~add_special_tokens:false ~domains:4 texts
   in
-  let buf = Buffer.create 65536 in
-  for i = 0 to Bigarray.Array1.dim ids - 1 do
-    Buffer.add_string buf (Int32.to_string (Bigarray.Array1.get ids i));
-    Buffer.add_char buf ' '
+  let n = Bigarray.Array1.dim ids in
+  let buf = Buffer.create (4 * n) in
+  for i = 0 to n - 1 do
+    Buffer.add_int32_le buf (Bigarray.Array1.get ids i)
   done;
-  pf "%s/batch: rows=%d md5=%s lengths=%s\n" name (List.length texts)
-    (Digest.to_hex (Digest.string (Buffer.contents buf)))
-    (digest_line lengths)
+  pf "%s/batch: rows=%d md5=%s\n" name (List.length texts)
+    (Digest.to_hex (Digest.string (Buffer.contents buf)));
+  show_ints (name ^ "/batch.lengths") lengths
 
 (* The generated adversarial inputs. *)
 
@@ -506,13 +507,26 @@ let report_difference ~ours ~theirs =
   Printf.eprintf
     "dumps differ at line %d:\n  this binary: %s\n  stdin:       %s\n%!" n o t
 
-let () =
-  let against_stdin, corpus_arg =
-    match Array.to_list Sys.argv with
-    | _ :: "--compare" :: rest -> (true, List.nth_opt rest 0)
-    | _ :: rest -> (false, List.nth_opt rest 0)
-    | [] -> (false, None)
+(* [dump_kernels [--compare] [--shard K/N] [CORPUS]]: with [--shard K/N], the
+   dump covers a part of the differential, so that dune runs it as several
+   processes. A part is the [j]th text through the [t]th tokenizer, or that
+   tokenizer's batch, at [j] the number of texts; shard [K] takes the parts
+   where [t + j] modulo [N] is [K - 1], so that the few large texts of each
+   tokenizer go to different shards. *)
+let args () =
+  let rec go ~compare ~shard ~corpus = function
+    | "--compare" :: rest -> go ~compare:true ~shard ~corpus rest
+    | "--shard" :: s :: rest ->
+        let shard = Scanf.sscanf s "%u/%u%!" (fun k n -> (k, n)) in
+        go ~compare ~shard ~corpus rest
+    | path :: rest -> go ~compare ~shard ~corpus:(Some path) rest
+    | [] -> (compare, shard, corpus)
   in
+  go ~compare:false ~shard:(1, 1) ~corpus:None
+    (List.tl (Array.to_list Sys.argv))
+
+let () =
+  let against_stdin, (k, n), corpus_arg = args () in
   let fixture name = read_opt (Filename.concat "fixtures/parity" name) in
   let data name = read_opt (Filename.concat "../bench/data" name) in
   let file_tok name =
@@ -546,34 +560,38 @@ let () =
         adversarial;
       ]
   in
+  let tokenizer = ref (-1) in
+  let mine j = (!tokenizer + j) mod n = k - 1 in
   let run name tok =
-    List.iter
-      (fun (tname, text) ->
-        dump_ids tok (name ^ "/" ^ tname) text;
-        dump_encoding tok (name ^ "/" ^ tname) text)
+    incr tokenizer;
+    List.iteri
+      (fun j (tname, text) ->
+        if mine j then begin
+          dump_ids tok (name ^ "/" ^ tname) text;
+          dump_encoding tok (name ^ "/" ^ tname) text
+        end)
       texts;
-    dump_batch tok name (List.map snd texts);
-    match corpus_arg with
-    | None -> ()
-    | Some path ->
-        dump_batch tok (name ^ "/corpus")
-          (split_on_marker "<|endoftext|>" (read_file path))
+    if mine (List.length texts) then begin
+      dump_batch tok name (List.map snd texts);
+      match corpus_arg with
+      | None -> ()
+      | Some path ->
+          dump_batch tok (name ^ "/corpus")
+            (split_on_marker "<|endoftext|>" (read_file path))
+    end
   in
-  (match file_tok "gpt2" with
-  | Some tok -> run "gpt2" tok
-  | None -> pf "gpt2: skipped\n");
-  (match file_tok "roberta_base" with
-  | Some tok -> run "roberta_base" tok
-  | None -> pf "roberta_base: skipped\n");
-  (match file_tok "llama3" with
-  | Some tok -> run "llama3" tok
-  | None -> pf "llama3: skipped\n");
-  (match file_tok "llama" with
-  | Some tok -> run "llama" tok
-  | None -> pf "llama: skipped\n");
-  (match file_tok "mistral" with
-  | Some tok -> run "mistral" tok
-  | None -> pf "mistral: skipped\n");
+  let from_file name =
+    match file_tok name with
+    | Some tok -> run name tok
+    | None ->
+        incr tokenizer;
+        if mine 0 then pf "%s: skipped\n" name
+  in
+  from_file "gpt2";
+  from_file "roberta_base";
+  from_file "llama3";
+  from_file "llama";
+  from_file "mistral";
   run "synth_full" (synth_full ());
   run "synth_nocache" (synth_full ~cache_capacity:0 ());
   run "synth_ignore" (synth_full ~ignore_merges:true ());
