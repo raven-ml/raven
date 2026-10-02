@@ -1091,6 +1091,62 @@ let arithmetic =
                small));
     ]
 
+(* Text equality against one row compares bytes; the rows are drawn to share
+   prefixes, lengths and scalar values written two ways. *)
+let text_equality =
+  let words =
+    [|
+      Some "";
+      Some "ab";
+      Some "abc";
+      Some "a";
+      Some "abd";
+      None;
+      Some "\xc3\xa9";
+      Some "e\xcc\x81";
+      Some "\xc3\xa9t\xc3\xa9";
+    |]
+  in
+  let table = v [ ("s", Column.of_options Type.string words) ] in
+  let s = Col.string "s" in
+  let compares name e expected =
+    test name (fun () -> rows_are Type.bool expected (bools e table))
+  in
+  group "Text equality"
+    [
+      compares "= a literal holds for the same bytes alone"
+        Expr.(s = string "ab")
+        [| f; t; f; f; f; None; f; f; f |];
+      compares "a literal = holds for the same bytes alone"
+        Expr.(string "ab" = s)
+        [| f; t; f; f; f; None; f; f; f |];
+      compares "<> a literal is the negation, null under a null"
+        Expr.(s <> string "ab")
+        [| t; f; t; t; t; None; t; t; t |];
+      compares "= the empty text holds for the empty row alone"
+        Expr.(s = string "")
+        [| t; f; f; f; f; None; f; f; f |];
+      compares "a precomposed letter is not its decomposed form"
+        Expr.(s = string "\xc3\xa9")
+        [| f; f; f; f; f; None; t; f; f |];
+      compares "a literal <> holds for every other text"
+        Expr.(string "\xc3\xa9t\xc3\xa9" <> s)
+        [| t; t; t; t; t; None; t; t; f |];
+      compares "= null is null" Expr.(s = null) (Array.make 9 None);
+      test "two columns of one row compare by bytes" (fun () ->
+          let one =
+            v
+              [
+                ("a", Column.v Type.string [| "ab" |]);
+                ("b", Column.v Type.string [| "abc" |]);
+              ]
+          in
+          rows_are Type.bool [| f; t |]
+            (Array.append
+               (bools Expr.(Col.string "a" = Col.string "b") one)
+               (bools Expr.(Col.string "a" <> Col.string "b") one)));
+    ]
+
 let widening =
   let mixed =
     v
@@ -2292,6 +2348,7 @@ let () =
          kleene;
          arithmetic;
          widening;
+         text_equality;
          float_order;
          failures;
          ocaml;

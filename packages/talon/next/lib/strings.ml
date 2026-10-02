@@ -195,3 +195,19 @@ let matches ~by ?mask p r =
   rows ~by ?mask r (fun i v first stop ->
       if matches v first stop then A.unsafe_set hits i 1);
   Nx.cast Nx.bool (tensor hits)
+
+let equal ~by r one =
+  let s = ref "" in
+  rows ~by one (fun _ v first stop ->
+      s :=
+        String.init (stop - first) (fun k ->
+            Char.unsafe_chr (A.unsafe_get v (first + k))));
+  let s = !s in
+  let n = String.length s in
+  let hits =
+    A.create Bigarray.int8_unsigned Bigarray.c_layout (Nx_ragged.length r)
+  in
+  A.fill hits 0;
+  rows ~by r (fun i v first stop ->
+      if stop - first = n && at v first s then A.unsafe_set hits i 1);
+  Nx.cast Nx.bool (tensor hits)

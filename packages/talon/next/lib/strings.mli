@@ -8,7 +8,8 @@
     What is not an array operation over text: UTF-8 validation, counting,
     slicing and matching scalar values. Each kernel reads its operand's bytes on
     the host, once, as a read named by its caller's function [by], and loops
-    over them row by row. Comparisons and grouping of text are not here.
+    over them row by row. Comparisons and grouping of text compare codes
+    elsewhere; {!equal}, equality with one text, needs none.
 
     Rows are those of an [Nx_ragged.t]; a row outside [mask], where one is
     given, is not read. *)
@@ -56,3 +57,7 @@ type pattern =
 val matches : by:string -> ?mask:Nx.bool_t -> pattern -> bytes -> Nx.bool_t
 (** [matches ~by p b] is [true] where [p] matches the row of [b], and [false]
     outside [mask]. *)
+
+val equal : by:string -> bytes -> bytes -> Nx.bool_t
+(** [equal ~by b one] is [true] where the row of [b] is the bytes of [one]'s
+    row, [one] of one row. *)
