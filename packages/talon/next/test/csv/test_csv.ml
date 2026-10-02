@@ -1062,6 +1062,10 @@ let files =
             /nonexistent/data.csv: No such file or directory
             /nonexistent/data.csv: No such file or directory
             |});
+      test "raises on null tokens given with a format" (fun () ->
+          let f = Csv.format ~nulls:[ "NA" ] [ ("x", any Type.int64) ] in
+          raises_match (Exn.invalid_arg ~substring:"~nulls") (fun () ->
+              Csv.file ~format:f ~nulls:[ "NA" ] "data.csv"));
       test "opens its file again for each read" (fun () ->
           with_file "x\n1\n" @@ fun path ->
           let f = Csv.format [ ("x", any Type.int64) ] in

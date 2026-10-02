@@ -197,4 +197,5 @@ val file :
 
     [Error e] if the file cannot be opened, or as {!sniff}.
 
-    Raises [Invalid_argument] as {!sniff} does on [nulls]. *)
+    Raises [Invalid_argument] if both [format] and [nulls] are given, since a
+    format holds its null tokens ({!format}), or as {!sniff} does on [nulls]. *)

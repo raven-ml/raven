@@ -629,11 +629,13 @@ let file ?format ?nulls path =
     let name = Format.asprintf "csv %a" Type.pp_quoted path in
     source_of ~name ~file:path f open_
   in
-  let nulls = Option.value ~default:[] nulls in
-  check_nulls "file" ~seps:separators ~quote:'"' nulls;
-  match format with
-  | Some f -> Ok (source f)
-  | None -> (
+  match (format, nulls) with
+  | Some _, Some _ ->
+      invalid "file" "a format holds its null tokens, so ~nulls is for sniffing"
+  | Some f, None -> Ok (source f)
+  | None, nulls -> (
+      let nulls = Option.value ~default:[] nulls in
+      check_nulls "file" ~seps:separators ~quote:'"' nulls;
       match open_ () with
       | exception Sys_error msg -> Error (Error.v msg)
       | r, close ->
