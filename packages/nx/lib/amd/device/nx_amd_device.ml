@@ -303,7 +303,8 @@ let amd_of d =
 
 (* Whether [a]'s copy engine reaches the memory of [peer], which the topology
    fixes: over a link the driver reports, or through [peer]'s memory BAR when it
-   is large, as mapping [peer]'s memory requires, on the same machine. *)
+   is large, as mapping [peer]'s memory requires, on the same machine and with
+   no IOMMU between them, which maps for a GPU only memory of its own. *)
 let reaches a peer =
   with_hw a (fun () ->
       match Hashtbl.find_opt a.reach peer.index with
@@ -312,9 +313,11 @@ let reaches a peer =
           let r =
             match (a.gpu, peer.gpu) with
             | Kfd_gpu k, Kfd_gpu k' -> Kfd.reaches k.node k'.node
-            | Am_gpu _, Am_gpu g' ->
+            | Am_gpu g, Am_gpu g' ->
                 a.machine == peer.machine
-                && not (Pci_memory.small_bar g'.memory)
+                && (not (Pci_memory.small_bar g'.memory))
+                && Pci.addressing g.pci = Pci.Physical
+                && Pci.addressing g'.pci = Pci.Physical
             | _ -> false
           in
           Hashtbl.replace a.reach peer.index r;
@@ -395,6 +398,8 @@ let dma a r =
   match (a.gpu, find a (Nativeint.to_int (Region.address r))) with
   | Kfd_gpu _, _ -> Error "the kernel driver's memory is not described"
   | Am_gpu _, None -> Error "no allocation of this GPU"
+  | Am_gpu { pci; _ }, Some _ when Pci.addressing pci = Pci.Iommu ->
+      Error "the GPU is behind an IOMMU, which maps memory for it alone"
   | Am_gpu { memory; pci; _ }, Some (Am_mem pm) -> (
       let map = pm.mapping in
       match map.space with
@@ -1193,7 +1198,7 @@ let open_am ?firmware ~machine ~index bus =
   | Some _ -> ()
   | None -> (
       match Pci.detached bus with
-      | Ok () -> ()
+      | Ok _ -> ()
       | Error why ->
           failwith
             (Printf.sprintf "%s; Nx_amd_device.detach %d detaches it" why index)
@@ -1347,7 +1352,7 @@ let reset i =
   match Pci.detached bus with
   | Error why ->
       Error (Printf.sprintf "%s; Nx_amd_device.detach %d detaches it" why i)
-  | Ok () ->
+  | Ok _ ->
       let p = Pci.take ~lock:"am" bus in
       Fun.protect
         ~finally:(fun () -> Pci.release p)

@@ -6,6 +6,7 @@
 module Remote = Remote
 module Remote_server = Remote_server
 module Pci = Pci
+module Vfio = Vfio
 module Mmio = Mmio
 module Sysmem = Sysmem
 module Tlsf = Tlsf

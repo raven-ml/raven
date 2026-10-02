@@ -322,13 +322,17 @@ let room n () =
 let refused : (int * int) list Atomic.t = Atomic.make []
 let pair i j = (Int.min i j, Int.max i j)
 
-(* Whether [n]'s copy engine reaches the memory of [peer]. *)
+(* Whether [n]'s copy engine reaches the memory of [peer]. Behind an IOMMU, a
+   GPU reaches only the memory mapped for it. *)
 let reaches n peer =
   match (n.gpu, peer.gpu) with
   | Kernel_gpu _, Kernel_gpu _ ->
       not (List.mem (pair n.index peer.index) (Atomic.get refused))
-  | Pci_gpu _, Pci_gpu p ->
-      n.machine == peer.machine && not (Pci_memory.small_bar p.memory)
+  | Pci_gpu p', Pci_gpu p ->
+      n.machine == peer.machine
+      && (not (Pci_memory.small_bar p.memory))
+      && Pci.addressing p'.pci = Pci.Physical
+      && Pci.addressing p.pci = Pci.Physical
   | _ -> false
 
 (* Maps [peer]'s allocation that holds [x] on [n], at its first use, at the same
@@ -384,6 +388,8 @@ let dma n r =
   match (n.gpu, find n (Nativeint.to_int (Region.address r))) with
   | Kernel_gpu _, _ -> Error "the kernel driver's memory is not described"
   | Pci_gpu _, None -> Error "no allocation of this GPU"
+  | Pci_gpu { pci; _ }, Some _ when Pci.addressing pci = Pci.Iommu ->
+      Error "the GPU is behind an IOMMU, which maps memory for it alone"
   | Pci_gpu { memory; pci; _ }, Some (Pci_mem pm) -> (
       let map = pm.mapping in
       match map.space with
@@ -1054,7 +1060,7 @@ let open_pci ?firmware ~machine ~index bus =
   | Some _ -> ()
   | None -> (
       match Pci.detached bus with
-      | Ok () -> ()
+      | Ok _ -> ()
       | Error why ->
           failwith
             (Printf.sprintf "%s; Nx_nv_device.detach %d detaches it" why index)));
@@ -1198,7 +1204,7 @@ let reset i =
   match Pci.detached bus with
   | Error why ->
       Error (Printf.sprintf "%s; Nx_nv_device.detach %d detaches it" why i)
-  | Ok () ->
+  | Ok _ ->
       let p = Pci.take ~lock:"nv" bus in
       Fun.protect
         ~finally:(fun () -> Pci.release p)

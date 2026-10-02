@@ -41,7 +41,7 @@
 #endif
 
 #ifdef __linux__
-#include <linux/vfio.h>
+#include <caml/unixsupport.h>
 #include <sys/random.h>
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
@@ -215,27 +215,29 @@ value caml_nx_sysmem_reserve(value base, value n) {
 #endif
 }
 
-/* Maps [n] bytes of shared, populated and locked memory at [va], inside a
+/* Maps [n] bytes of shared and populated memory at [va], inside a
    reservation, or where the kernel chooses if [va] is 0, from a huge page if
-   [huge], and is their address. Populating takes time: the runtime is
-   released. */
-value caml_nx_sysmem_alloc(value va, value n, value huge) {
+   [huge], locked if [locked], and is their address. Populating takes time: the
+   runtime is released. */
+value caml_nx_sysmem_alloc(value va, value n, value huge, value locked) {
 #ifdef __linux__
   void *at = (void *)Nativeint_val(va);
-  int flags = MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE | MAP_LOCKED |
-              (at ? MAP_FIXED : 0) | (Bool_val(huge) ? MAP_HUGETLB : 0);
+  int flags = MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE |
+              (Bool_val(locked) ? MAP_LOCKED : 0) | (at ? MAP_FIXED : 0) |
+              (Bool_val(huge) ? MAP_HUGETLB : 0);
   size_t len = Long_val(n);
   caml_release_runtime_system();
   void *p = mmap(at, len, PROT_READ | PROT_WRITE, flags, -1, 0);
   int e = errno;
   caml_acquire_runtime_system();
   errno = e;
-  if (p == MAP_FAILED) fail_errno("allocating locked system memory");
+  if (p == MAP_FAILED) fail_errno("allocating system memory");
   return caml_copy_nativeint((intnat)p);
 #else
   (void)va;
   (void)n;
   (void)huge;
+  (void)locked;
   fail_linux("Locked system memory");
   return Val_unit;
 #endif
@@ -459,61 +461,84 @@ value caml_nx_file_lock(value path) {
 #endif
 }
 
-/* VFIO: a function bound to vfio-pci in no-IOMMU mode, and an eventfd its
-   MSI interrupt signals. Returns the container, group, device and eventfd
-   descriptors; on failure, closes those it opened. */
+/* VFIO. The structures are encoded by the caller (vfio.ml); these stubs only
+   open its files and make its requests, raising [Unix.Unix_error] with the
+   errno so that the caller names what to change. */
 
+value caml_nx_vfio_file(value path) {
+  CAMLparam1(path);
 #ifdef __linux__
-static void vfio_fail(int fds[4], const char *what) {
-  int e = errno;
-  for (int i = 0; i < 4; i++)
-    if (fds[i] >= 0) close(fds[i]);
-  errno = e;
-  fail_errno(what);
-}
-#endif
-
-value caml_nx_vfio_open(value group, value bus) {
-  CAMLparam2(group, bus);
-  CAMLlocal1(r);
-#ifdef __linux__
-  int fds[4] = {-1, -1, -1, -1};
-  int container = fds[0] = open("/dev/vfio/vfio", O_RDWR | O_CLOEXEC);
-  if (container < 0) vfio_fail(fds, "opening /dev/vfio/vfio");
-  if (ioctl(container, VFIO_CHECK_EXTENSION, VFIO_NOIOMMU_IOMMU) <= 0) {
-    close(container);
-    caml_failwith("VFIO is not in its no-IOMMU mode (set "
-                  "/sys/module/vfio/parameters/enable_unsafe_noiommu_mode "
-                  "to 1)");
-  }
-  int g = fds[1] = open(String_val(group), O_RDWR | O_CLOEXEC);
-  if (g < 0) vfio_fail(fds, String_val(group));
-  if (ioctl(g, VFIO_GROUP_SET_CONTAINER, &container) != 0 ||
-      (ioctl(container, VFIO_SET_IOMMU, VFIO_NOIOMMU_IOMMU) != 0 &&
-       errno != EBUSY))
-    vfio_fail(fds, "attaching the VFIO group");
-  int dev = fds[2] = ioctl(g, VFIO_GROUP_GET_DEVICE_FD, String_val(bus));
-  if (dev < 0) vfio_fail(fds, "opening the VFIO device");
-  int efd = fds[3] = eventfd(0, EFD_CLOEXEC);
-  if (efd < 0) vfio_fail(fds, "creating the interrupt eventfd");
-  char buf[sizeof(struct vfio_irq_set) + sizeof(int)];
-  struct vfio_irq_set *irq = (struct vfio_irq_set *)buf;
-  irq->argsz = sizeof buf;
-  irq->flags = VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER;
-  irq->index = VFIO_PCI_MSI_IRQ_INDEX;
-  irq->start = 0;
-  irq->count = 1;
-  memcpy(irq->data, &efd, sizeof efd);
-  if (ioctl(dev, VFIO_DEVICE_SET_IRQS, irq) != 0)
-    vfio_fail(fds, "routing the GPU's interrupt");
-  r = caml_alloc_tuple(4);
-  for (int i = 0; i < 4; i++) Store_field(r, i, Val_int(fds[i]));
+  if (!caml_string_is_c_safe(path))
+    caml_invalid_argument("a VFIO file name with a NUL byte");
+  int fd = open(String_val(path), O_RDWR | O_CLOEXEC);
+  if (fd < 0) caml_uerror("open", path);
+  CAMLreturn(Val_int(fd));
 #else
-  (void)group;
-  (void)bus;
+  (void)path;
   fail_linux("VFIO");
+  CAMLreturn(Val_unit);
 #endif
-  CAMLreturn(r);
+}
+
+/* [ioctl(fd, request, arg)] for a request whose argument is a number. */
+value caml_nx_vfio_ioctl(value fd, value request, value arg) {
+#ifdef __linux__
+  int r = ioctl(Int_val(fd), (unsigned long)Long_val(request),
+                (unsigned long)Long_val(arg));
+  if (r < 0) caml_uerror("ioctl", Nothing);
+  return Val_int(r);
+#else
+  (void)fd;
+  (void)request;
+  (void)arg;
+  fail_linux("VFIO");
+  return Val_unit;
+#endif
+}
+
+/* [ioctl(fd, request, b)] for a request whose argument is the structure [b],
+   which the kernel may write back. Mapping memory pins it, which takes time:
+   the runtime is released, over a copy of [b]. */
+value caml_nx_vfio_ioctl_bytes(value fd, value request, value b) {
+  CAMLparam3(fd, request, b);
+#ifdef __linux__
+  size_t n = caml_string_length(b);
+  void *buf = malloc(n ? n : 1);
+  if (buf == NULL) caml_raise_out_of_memory();
+  memcpy(buf, Bytes_val(b), n);
+  int f = Int_val(fd);
+  unsigned long req = (unsigned long)Long_val(request);
+  caml_release_runtime_system();
+  int r = ioctl(f, req, buf);
+  int e = errno;
+  caml_acquire_runtime_system();
+  memcpy(Bytes_val(b), buf, n);
+  free(buf);
+  if (r < 0) {
+    errno = e;
+    caml_uerror("ioctl", Nothing);
+  }
+  CAMLreturn(Val_int(r));
+#else
+  (void)fd;
+  (void)request;
+  (void)b;
+  fail_linux("VFIO");
+  CAMLreturn(Val_unit);
+#endif
+}
+
+/* An eventfd an interrupt signals. */
+value caml_nx_vfio_eventfd(value unit) {
+  (void)unit;
+#ifdef __linux__
+  int fd = eventfd(0, EFD_CLOEXEC);
+  if (fd < 0) caml_uerror("eventfd", Nothing);
+  return Val_int(fd);
+#else
+  fail_linux("VFIO");
+  return Val_unit;
+#endif
 }
 
 /* Waits at most [ms] for the eventfd [efd], with the runtime released. */

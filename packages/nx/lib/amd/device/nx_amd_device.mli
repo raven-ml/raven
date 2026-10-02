@@ -48,9 +48,9 @@
       in no budget;
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs
       it and kept for the life of the process. Between two AMD GPUs that reach
-      each other's memory, over a direct link or a large memory BAR, the
-      source's copy engine writes the destination; otherwise the bytes go
-      through the staging memory.
+      each other's memory, over a direct link or a large memory BAR with no
+      IOMMU between them, the source's copy engine writes the destination;
+      otherwise the bytes go through the staging memory.
 
     {!Nx_device.Buffer.create}[ ~memory:Mapped] allocates GPU memory that the
     host also writes, through the GPU's memory BAR, write-combined. The host's
@@ -86,12 +86,15 @@
     must be detached from its kernel driver ({!detach}), reset if its kernel
     driver or a process that did not close it cleanly booted it ({!reset}), and
     its firmware at hand ({!fetch_firmware}): {!get} fails otherwise, naming the
-    call. Opening needs root, or the capabilities and file permissions to take
-    PCI functions ({!Nx_device_support.Pci}) and to lock memory and read its
-    physical addresses ({!Nx_device_support.Sysmem}). It boots the GPU with the
-    firmware it was validated with, verified by digest ({!get}). A GPU that the
-    previous process closed cleanly boots in a fraction of a second; a reset one
-    boots fully, which takes seconds.
+    call. A GPU an administrator bound to [vfio-pci] on a machine with an IOMMU
+    opens without root, given access to its IOMMU group's [/dev/vfio/N] and a
+    locked-memory limit that holds its system memory ({!Nx_device_support.Pci}).
+    Otherwise opening needs root, or the capabilities and file permissions to
+    take PCI functions and to lock memory and read its physical addresses
+    ({!Nx_device_support.Sysmem}). It boots the GPU with the firmware it was
+    validated with, verified by digest ({!get}). A GPU that the previous process
+    closed cleanly boots in a fraction of a second; a reset one boots fully,
+    which takes seconds.
 
     While the process holds a GPU open under {!Pci}, the runtime keeps its
     memory, fabric and SoC clocks at their highest state, and its graphics clock

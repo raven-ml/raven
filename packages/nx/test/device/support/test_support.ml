@@ -647,12 +647,513 @@ let not_addresses =
 (* An address at which no machine the tests run on has a function. *)
 let no_function = "ffff:ff:1f.7"
 
+let addressing =
+  Testable.make
+    ~pp:(fun ppf a ->
+      Format.pp_print_string ppf
+        (match a with Pci.Physical -> "Physical" | Iommu -> "Iommu"))
+    ~equal:( = )
+
 let test_no_function () =
   let why = no_function ^ " is no PCI function of this machine" in
-  equal ~msg:"not detached" (result unit string) (Error why)
+  equal ~msg:"not detached" (result addressing string) (Error why)
     (Pci.detached no_function);
   raises ~msg:"detach" (Failure why) (fun () -> Pci.detach no_function);
   raises ~msg:"attach" (Failure why) (fun () -> Pci.attach no_function)
+
+(* How a function is taken, by its state: [Ok] the way, or [Error] with a piece
+   of the reason. *)
+let access_cases =
+  let bus = "0000:01:00.0" and audio = "0000:01:00.1" in
+  let st ?driver ?(siblings = []) ?(enabled = true) iommu =
+    { Pci.driver; iommu; siblings; enabled }
+  in
+  let bind = "sudo driverctl set-override 0000:01:00.0 vfio-pci" in
+  cases "the way a function is taken follows from its state"
+    ~name:(fun (name, _, _) -> name)
+    [
+      ( "vfio-pci behind a translating IOMMU",
+        st ~driver:"vfio-pci" ~siblings:[ audio ] Pci.Translating,
+        Ok Pci.Iommu );
+      ( "vfio-pci behind a passthrough IOMMU",
+        st ~driver:"vfio-pci" Pci.Identity,
+        Ok Pci.Iommu );
+      ( "vfio-pci behind an IOMMU, disabled",
+        st ~driver:"vfio-pci" ~enabled:false Pci.Translating,
+        Ok Pci.Iommu );
+      ( "vfio-pci without an IOMMU",
+        st ~driver:"vfio-pci" Pci.No_iommu,
+        Ok Pci.Physical );
+      ( "vfio-pci without an IOMMU, beside its audio",
+        st ~driver:"vfio-pci" ~siblings:[ audio ] Pci.No_iommu,
+        Error "shares its device with 0000:01:00.1" );
+      ("no driver, no IOMMU", st Pci.No_iommu, Ok Pci.Physical);
+      ("no driver, passthrough IOMMU", st Pci.Identity, Ok Pci.Physical);
+      ("no driver, translating IOMMU", st Pci.Translating, Error bind);
+      ( "no driver, disabled",
+        st ~enabled:false Pci.No_iommu,
+        Error "0000:01:00.0 is disabled" );
+      ( "no driver, beside its audio",
+        st ~siblings:[ audio ] Pci.Identity,
+        Error "shares its device with 0000:01:00.1" );
+      ( "a kernel driver, no IOMMU",
+        st ~driver:"nvidia" Pci.No_iommu,
+        Error "0000:01:00.0 is bound to the driver nvidia" );
+      ( "a kernel driver, behind an IOMMU",
+        st ~driver:"amdgpu" Pci.Translating,
+        Error bind );
+    ]
+    (fun (_, state, expected) ->
+      match (expected, Pci.access bus state) with
+      | Ok a, got -> equal (result addressing string) (Ok a) got
+      | Error piece, Error why -> contains ~sub:piece why
+      | Error _, got -> equal (result addressing string) expected got)
+
+(* Vfio *)
+
+(* Linux's VFIO constants (include/uapi/linux/vfio.h), in the order
+   [test_support_vfio_header] gives them. *)
+let header_spec =
+  [
+    ("VFIO_GET_API_VERSION", 0x3b64);
+    ("VFIO_CHECK_EXTENSION", 0x3b65);
+    ("VFIO_SET_IOMMU", 0x3b66);
+    ("VFIO_GROUP_GET_STATUS", 0x3b67);
+    ("VFIO_GROUP_SET_CONTAINER", 0x3b68);
+    ("VFIO_GROUP_GET_DEVICE_FD", 0x3b6a);
+    ("VFIO_DEVICE_GET_REGION_INFO", 0x3b6c);
+    ("VFIO_DEVICE_SET_IRQS", 0x3b6e);
+    ("VFIO_DEVICE_RESET", 0x3b6f);
+    ("VFIO_IOMMU_GET_INFO", 0x3b70);
+    ("VFIO_IOMMU_MAP_DMA", 0x3b71);
+    ("VFIO_IOMMU_UNMAP_DMA", 0x3b72);
+    ("VFIO_API_VERSION", 0);
+    ("VFIO_TYPE1v2_IOMMU", 3);
+    ("VFIO_NOIOMMU_IOMMU", 8);
+    ("VFIO_PCI_CONFIG_REGION_INDEX", 7);
+    ("sizeof vfio_group_status", 8);
+    ("sizeof vfio_region_info", 32);
+    ("vfio_region_info.cap_offset", 12);
+    ("vfio_region_info.size", 16);
+    ("vfio_region_info.offset", 24);
+    ("sizeof vfio_irq_set", 20);
+    ("sizeof vfio_iommu_type1_info", 24);
+    ("vfio_iommu_type1_info.iova_pgsizes", 8);
+    ("vfio_iommu_type1_info.cap_offset", 16);
+    ("sizeof vfio_iommu_type1_dma_map", 32);
+    ("vfio_iommu_type1_dma_map.vaddr", 8);
+    ("vfio_iommu_type1_dma_map.iova", 16);
+    ("vfio_iommu_type1_dma_map.size", 24);
+    ("sizeof vfio_iommu_type1_dma_unmap", 24);
+    ("vfio_iommu_type1_dma_unmap.iova", 8);
+    ("vfio_iommu_type1_dma_unmap.size", 16);
+    ("VFIO_GROUP_FLAGS_VIABLE", 1);
+    ("VFIO_REGION_INFO_FLAG_READ", 1);
+    ("VFIO_REGION_INFO_FLAG_WRITE", 2);
+    ("VFIO_REGION_INFO_FLAG_MMAP", 4);
+    ("VFIO_REGION_INFO_FLAG_CAPS", 8);
+    ("VFIO_REGION_INFO_CAP_SPARSE_MMAP", 1);
+    ("VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER", 36);
+    ("VFIO_PCI_MSI_IRQ_INDEX", 1);
+    ("VFIO_IOMMU_INFO_PGSIZES", 1);
+    ("VFIO_IOMMU_INFO_CAPS", 2);
+    ("VFIO_IOMMU_TYPE1_INFO_CAP_IOVA_RANGE", 1);
+    ("VFIO_IOMMU_TYPE1_INFO_DMA_AVAIL", 3);
+    ("VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE", 3);
+  ]
+
+let spec name = List.assoc name header_spec
+
+external vfio_header : unit -> int array = "test_support_vfio_header"
+
+let test_header () =
+  match vfio_header () with
+  | [||] -> skip ~reason:"no <linux/vfio.h> on this system" ()
+  | values ->
+      equal ~msg:"the header's constants"
+        (list (pair string int))
+        header_spec
+        (List.combine (List.map fst header_spec) (Array.to_list values))
+
+let requests =
+  Vfio.
+    [
+      (Get_api_version, "VFIO_GET_API_VERSION");
+      (Check_extension, "VFIO_CHECK_EXTENSION");
+      (Set_iommu, "VFIO_SET_IOMMU");
+      (Group_get_status, "VFIO_GROUP_GET_STATUS");
+      (Group_set_container, "VFIO_GROUP_SET_CONTAINER");
+      (Group_get_device_fd, "VFIO_GROUP_GET_DEVICE_FD");
+      (Device_get_region_info, "VFIO_DEVICE_GET_REGION_INFO");
+      (Device_set_irqs, "VFIO_DEVICE_SET_IRQS");
+      (Device_reset, "VFIO_DEVICE_RESET");
+      (Iommu_get_info, "VFIO_IOMMU_GET_INFO");
+      (Iommu_map_dma, "VFIO_IOMMU_MAP_DMA");
+      (Iommu_unmap_dma, "VFIO_IOMMU_UNMAP_DMA");
+    ]
+
+let test_requests =
+  cases "request numbers" ~name:snd requests (fun (r, name) ->
+      equal int (spec name) (Vfio.request r))
+
+let test_numbers () =
+  equal ~msg:"API version" int (spec "VFIO_API_VERSION") Vfio.api_version;
+  equal ~msg:"type 1 v2" int (spec "VFIO_TYPE1v2_IOMMU") (Vfio.iommu Type1v2);
+  equal ~msg:"no IOMMU" int (spec "VFIO_NOIOMMU_IOMMU") (Vfio.iommu No_iommu);
+  equal ~msg:"configuration region" int
+    (spec "VFIO_PCI_CONFIG_REGION_INDEX")
+    Vfio.config_region
+
+(* A structure in the machine's byte order, from its fields: [`W v] a 32-bit
+   word, [`D v] a 64-bit one, [`H v] a 16-bit one. *)
+let fields l =
+  let size = function `H _ -> 2 | `W _ -> 4 | `D _ -> 8 in
+  let b = Bytes.make (List.fold_left (fun n f -> n + size f) 0 l) '\000' in
+  ignore
+    (List.fold_left
+       (fun off f ->
+         (match f with
+         | `H v -> Bytes.set_uint16_ne b off v
+         | `W v -> Bytes.set_int32_ne b off (Int32.of_int v)
+         | `D v -> Bytes.set_int64_ne b off (Int64.of_int v));
+         off + size f)
+       0 l);
+  b
+
+let hex b =
+  String.concat " "
+    (List.init (Bytes.length b) (fun i ->
+         Printf.sprintf "%02x" (Char.code (Bytes.get b i))))
+
+let bytes_hex =
+  Testable.make
+    ~pp:(fun ppf b -> Format.pp_print_string ppf (hex b))
+    ~equal:Bytes.equal
+
+let test_encodings () =
+  equal ~msg:"group status" bytes_hex
+    (fields [ `W (spec "sizeof vfio_group_status"); `W 0 ])
+    (Vfio.group_status ());
+  equal ~msg:"region info" bytes_hex
+    (fields [ `W 32; `W 0; `W 5; `W 0; `D 0; `D 0 ])
+    (Vfio.region_info 5);
+  equal ~msg:"region info, larger" int 64
+    (Bytes.length (Vfio.region_info ~argsz:64 5));
+  equal ~msg:"MSI to an eventfd" bytes_hex
+    (fields
+       [
+         `W 24;
+         `W (spec "VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER");
+         `W (spec "VFIO_PCI_MSI_IRQ_INDEX");
+         `W 0;
+         `W 1;
+         `W 9;
+       ])
+    (Vfio.msi 9);
+  equal ~msg:"IOMMU info" bytes_hex
+    (fields [ `W 24; `W 0; `D 0; `W 0; `W 0 ])
+    (Vfio.iommu_info ());
+  equal ~msg:"map" bytes_hex
+    (fields
+       [
+         `W 32;
+         `W (spec "VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE");
+         `D 0x7f00_1234_5000;
+         `D 0x1_0020_0000;
+         `D 0x20_0000;
+       ])
+    (Vfio.map_dma ~va:0x7f00_1234_5000n ~iova:0x1_0020_0000 0x20_0000);
+  equal ~msg:"unmap" bytes_hex
+    (fields [ `W 24; `W 0; `D 0x1_0020_0000; `D 0x20_0000 ])
+    (Vfio.unmap_dma ~iova:0x1_0020_0000 0x20_0000);
+  is_true ~msg:"viable" (Vfio.viable (fields [ `W 8; `W 3 ]));
+  is_true ~msg:"not viable" (not (Vfio.viable (fields [ `W 8; `W 2 ])))
+
+let region_t =
+  Testable.make
+    ~pp:(fun ppf (r : Vfio.region) ->
+      Format.fprintf ppf "{size 0x%x; offset 0x%x; r %b; w %b; mmap %b; %s}"
+        r.size r.offset r.readable r.writable r.mappable
+        (match r.areas with
+        | None -> "whole"
+        | Some l ->
+            String.concat ","
+              (List.map (fun (o, n) -> Printf.sprintf "[0x%x+0x%x]" o n) l)))
+    ~equal:( = )
+
+(* A region answer: the fixed part, then [caps] from byte 32 on. *)
+let region_answer ~flags ?(caps = []) ~size ~offset () =
+  let caps = fields caps in
+  let cap_offset = if Bytes.length caps = 0 then 0 else 32 in
+  Bytes.cat
+    (fields
+       [
+         `W (32 + Bytes.length caps);
+         `W flags;
+         `W 0;
+         `W cap_offset;
+         `D size;
+         `D offset;
+       ])
+    caps
+
+let test_regions () =
+  let rw =
+    spec "VFIO_REGION_INFO_FLAG_READ" lor spec "VFIO_REGION_INFO_FLAG_WRITE"
+  in
+  let mmap = spec "VFIO_REGION_INFO_FLAG_MMAP"
+  and caps = spec "VFIO_REGION_INFO_FLAG_CAPS" in
+  let bar1 = 1 lsl 40 in
+  equal ~msg:"a BAR the process maps whole" region_t
+    {
+      size = 0x1000_0000;
+      offset = bar1;
+      readable = true;
+      writable = true;
+      mappable = true;
+      areas = None;
+    }
+    (Vfio.region
+       (region_answer ~flags:(rw lor mmap) ~size:0x1000_0000 ~offset:bar1 ()));
+  equal ~msg:"configuration space" region_t
+    {
+      size = 0x1000;
+      offset = 7 lsl 40;
+      readable = true;
+      writable = true;
+      mappable = false;
+      areas = None;
+    }
+    (Vfio.region (region_answer ~flags:rw ~size:0x1000 ~offset:(7 lsl 40) ()));
+  (* An MSI-X capability (3) first, then the sparse areas around its table. *)
+  let sparse =
+    [
+      `H 3;
+      `H 1;
+      `W 40;
+      `H (spec "VFIO_REGION_INFO_CAP_SPARSE_MMAP");
+      `H 1;
+      `W 0;
+      `W 2;
+      `W 0;
+      `D 0;
+      `D 0x2000;
+      `D 0x3000;
+      `D 0xd000;
+    ]
+  in
+  equal ~msg:"a BAR the process maps in parts" region_t
+    {
+      size = 0x10000;
+      offset = 0;
+      readable = true;
+      writable = true;
+      mappable = true;
+      areas = Some [ (0, 0x2000); (0x3000, 0xd000) ];
+    }
+    (Vfio.region
+       (region_answer
+          ~flags:(rw lor mmap lor caps)
+          ~caps:sparse ~size:0x10000 ~offset:0 ()));
+  let fails msg b =
+    raises_match ~msg (Exn.failure ~substring:"VFIO") (fun () -> Vfio.region b)
+  in
+  fails "too short" (Bytes.make 31 '\000');
+  fails "a capability past the end"
+    (region_answer ~flags:caps
+       ~caps:[ `H 1; `H 1; `W 400 ]
+       ~size:0 ~offset:0 ());
+  fails "a loop"
+    (region_answer ~flags:caps ~caps:[ `H 3; `H 1; `W 32 ] ~size:0 ~offset:0 ());
+  fails "areas past the end"
+    (region_answer ~flags:caps
+       ~caps:[ `H 1; `H 1; `W 0; `W 9; `W 0 ]
+       ~size:0 ~offset:0 ())
+
+let test_iommu_info () =
+  let flags = spec "VFIO_IOMMU_INFO_PGSIZES" lor spec "VFIO_IOMMU_INFO_CAPS" in
+  let caps =
+    fields
+      [
+        `H (spec "VFIO_IOMMU_TYPE1_INFO_CAP_IOVA_RANGE");
+        `H 1;
+        `W 72;
+        `W 2;
+        `W 0;
+        `D 0;
+        `D 0xfedf_ffff;
+        `D 0xfef0_0000;
+        `D (-1);
+        `H (spec "VFIO_IOMMU_TYPE1_INFO_DMA_AVAIL");
+        `H 1;
+        `W 0;
+        `W 65535;
+      ]
+  in
+  let b =
+    Bytes.cat
+      (fields
+         [ `W (24 + Bytes.length caps); `W flags; `D 0x4020_1000; `W 24; `W 0 ])
+      caps
+  in
+  let info = Vfio.iommu_of b in
+  equal ~msg:"page sizes" int 0x4020_1000 info.page_sizes;
+  equal ~msg:"ranges, the last saturated"
+    (list (pair int int))
+    [ (0, 0xfedf_ffff); (0xfef0_0000, max_int) ]
+    info.ranges;
+  equal ~msg:"mappings" (option int) (Some 65535) info.mappings;
+  equal ~msg:"the size the kernel asks for" int (Bytes.length b) (Vfio.argsz b);
+  let bare = Vfio.iommu_of (fields [ `W 24; `W 0; `D 0; `W 0; `W 0 ]) in
+  equal ~msg:"no capabilities, no ranges" (list (pair int int)) [] bare.ranges;
+  equal ~msg:"no capabilities, no count" (option int) None bare.mappings
+
+(* Device addresses, against a model: the window is the largest part of [4 GiB,
+   1 TiB) in one of the IOMMU's ranges, and live allocations lie in it, on a
+   page or on 2 MiB from 2 MiB on, apart from each other. *)
+
+let gib = 1 lsl 30
+
+let low = 4 * gib
+and high = 1 lsl 40
+
+type model = {
+  window : int * int;
+  page : int;
+  mutable live : (int * int) list; (* address, bytes *)
+}
+
+let round_up n a = (n + a - 1) / a * a
+
+let model_window ~page ranges =
+  let ranges = if ranges = [] then [ (0, max_int) ] else ranges in
+  List.fold_left
+    (fun (wb, wn) (first, last) ->
+      let a = round_up (min high (max first low)) page in
+      let b = if last >= high - 1 then high else (last + 1) / page * page in
+      if b - a > wn then (a, b - a) else (wb, wn))
+    (0, 0) ranges
+
+let point =
+  Gen.frequency
+    [
+      (3, Gen.int_range 0 (2 * high));
+      ( 2,
+        Gen.of_list
+          ~pp:(fun ppf x -> Format.fprintf ppf "0x%x" x)
+          [
+            0;
+            0xfedf_ffff;
+            0xfef0_0000;
+            low - 1;
+            low;
+            low + 0x1234;
+            high - 1;
+            high;
+            max_int;
+          ] );
+    ]
+
+let ranges_gen =
+  Gen.list ~size:(Gen.int_range 0 3)
+    (Gen.map (fun (a, b) -> (min a b, max a b)) (Gen.pair point point))
+
+let page_gen = Gen.of_list ~pp:Format.pp_print_int [ 4096; 16384; 65536 ]
+
+let iova =
+  abstract "iova" ~invariant:(fun (m : model) a ->
+      equal ~msg:"window" (pair int int) m.window (Vfio.Iova.window a))
+
+let live = among int iova (fun m -> List.map fst m.live)
+
+let size_gen =
+  Gen.frequency
+    [
+      (4, Gen.int_range 1 (64 * 1024));
+      (2, Gen.int_range (1 lsl 20) (6 lsl 20));
+      (1, Gen.int_range 1 (1 lsl 36));
+    ]
+
+let create_model (page, ranges) =
+  let window = model_window ~page ranges in
+  if snd window = 0 then
+    failwith "the IOMMU maps no device addresses between 4 GiB and 1 TiB";
+  { window; page; live = [] }
+
+(* The largest free range of the window. *)
+let largest_gap m =
+  let base, size = m.window in
+  let sorted = List.sort compare m.live in
+  let last, gap =
+    List.fold_left
+      (fun (at, gap) (a, k) -> (a + k, max gap (a - at)))
+      (base, 0) sorted
+  in
+  max gap (base + size - last)
+
+let alloc_judge n m (got : (int option, exn) result) =
+  let base, size = m.window in
+  let bytes = round_up n m.page in
+  let align = if bytes >= 2 lsl 20 then 2 lsl 20 else m.page in
+  match got with
+  | Error e -> raise e
+  | Ok None ->
+      cover "exhausted" true;
+      less ~msg:"the largest free range" int
+        ~than:(2 * (bytes + align))
+        (largest_gap m)
+  | Ok (Some a) ->
+      cover "a large allocation" (bytes >= 2 lsl 20);
+      equal ~msg:"aligned" int 0 (a mod align);
+      less ~msg:"from the window" int ~than:(a + 1) base;
+      less ~msg:"inside the window" int ~than:(base + size + 1) (a + bytes);
+      List.iter
+        (fun (b, k) ->
+          is_true
+            ~msg:
+              (Printf.sprintf "[0x%x, +0x%x) apart from [0x%x, +0x%x)" a bytes b
+                 k)
+            (a + bytes <= b || b + k <= a))
+        m.live;
+      m.live <- (a, bytes) :: m.live
+
+let iova_commands =
+  [
+    command "create"
+      (Gen.pair page_gen ranges_gen @-> makes iova)
+      create_model
+      (fun (page, ranges) -> Vfio.Iova.create ~page ranges);
+    command "alloc"
+      (size_gen @-> iova ^-> judges (option int))
+      alloc_judge
+      (fun n a -> Vfio.Iova.alloc a n);
+    command "free"
+      (iova ^-> live ^-> returns unit)
+      (fun m x -> m.live <- List.filter (fun (b, _) -> b <> x) m.live)
+      (fun a x -> Vfio.Iova.free a x);
+  ]
+
+let test_iova = stateful "device addresses" iova_commands
+
+let test_iova_refusals () =
+  raises_match (Exn.failure ~substring:"4 GiB and 1 TiB") (fun () ->
+      Vfio.Iova.create ~page:4096 [ (0, low - 1) ]);
+  raises_match (Exn.failure ~substring:"4 GiB and 1 TiB") (fun () ->
+      Vfio.Iova.create ~page:4096 [ (high, max_int) ]);
+  raises_match (Exn.invalid_arg ~substring:"page") (fun () ->
+      Vfio.Iova.create ~page:3000 []);
+  let a =
+    Vfio.Iova.create ~page:4096 [ (0, 0xfedf_ffff); (0xfef0_0000, max_int) ]
+  in
+  equal ~msg:"x86's ranges" (pair int int)
+    (low, high - low)
+    (Vfio.Iova.window a);
+  raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+      Vfio.Iova.alloc a 0);
+  let x = require_some (Vfio.Iova.alloc a 1) in
+  Vfio.Iova.free a x;
+  raises_match (Exn.invalid_arg ~substring:"no addresses") (fun () ->
+      Vfio.Iova.free a x)
 
 (* Remote: a server in this process, on the loopback. *)
 
@@ -1111,6 +1612,18 @@ let () =
              test_bus_order;
              not_addresses;
              test "a function the machine lacks is refused" test_no_function;
+             access_cases;
+           ];
+         group "vfio"
+           [
+             test "the kernel's header" test_header;
+             test_requests;
+             test "numbers" test_numbers;
+             test "structures" test_encodings;
+             test "regions" test_regions;
+             test "IOMMU information" test_iommu_info;
+             test_iova;
+             test "device addresses refused" test_iova_refusals;
            ];
          group "remote"
            [

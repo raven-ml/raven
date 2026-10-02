@@ -68,8 +68,9 @@
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs
       it and kept for the life of the process. Between two NV GPUs that reach
       each other's memory, through peer access under {!Kernel} or a memory BAR
-      as large as the GPU's memory under {!Pci}, the source's copy engine writes
-      the destination; otherwise the bytes go through the staging memory.
+      as large as the GPU's memory under {!Pci} with no IOMMU between them, the
+      source's copy engine writes the destination; otherwise the bytes go
+      through the staging memory.
 
     {b Timestamps} count the GPU's timer in nanoseconds
     ({!Nx_device.Driver.Device_clock}); the copy engine stamps it for the
@@ -94,12 +95,15 @@
     {b Under {!Pci}}, opening a GPU changes nothing outside the process. The GPU
     must be detached from its kernel driver ({!detach}), reset if it was booted
     before ({!reset}), and its firmware at hand ({!fetch_firmware}): {!get}
-    fails otherwise, naming the call. Opening needs root, or the capabilities
-    and file permissions to take PCI functions ({!Nx_device_support.Pci}) and to
-    lock memory and read its physical addresses ({!Nx_device_support.Sysmem}).
-    It supports the GPUs of the Ampere (GA10x), Ada (AD10x) and Blackwell
-    (GB20x) families, and boots them with the firmware they were validated with,
-    verified by digest ({!get}). Booting takes seconds. *)
+    fails otherwise, naming the call. A GPU an administrator bound to [vfio-pci]
+    on a machine with an IOMMU opens without root, given access to its IOMMU
+    group's [/dev/vfio/N] and a locked-memory limit that holds its system memory
+    ({!Nx_device_support.Pci}). Otherwise opening needs root, or the
+    capabilities and file permissions to take PCI functions and to lock memory
+    and read its physical addresses ({!Nx_device_support.Sysmem}). It supports
+    the GPUs of the Ampere (GA10x), Ada (AD10x) and Blackwell (GB20x) families,
+    and boots them with the firmware they were validated with, verified by
+    digest ({!get}). Booting takes seconds. *)
 
 (** The type for the interfaces that reach NVIDIA GPUs. *)
 type interface =

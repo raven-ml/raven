@@ -12,11 +12,23 @@
     function changes nothing on the machine; {!detach} and {!attach} do, and
     what they change persists after the process.
 
-    This works through Linux's [/sys/bus/pci] and, for interrupts, VFIO, and
-    needs the privileges to write there: root, or file permissions and
-    capabilities granted for it. The process takes nothing it lacks the rights
-    for, and asks for none: a missing privilege raises [Failure] naming the file
-    and the command that grants it. On other systems {!scan} finds nothing, and
+    A function is taken one of two ways, which follow from the machine's state
+    ({!access}) and which {!addressing} reports:
+    - {e Behind an IOMMU}, through VFIO, without root. An administrator binds
+      the function to [vfio-pci] ([driverctl set-override BUS vfio-pci]) on a
+      machine whose IOMMU is on, and grants the user its group's file
+      [/dev/vfio/N]. The function then reaches only the system memory the
+      process maps for it, at device addresses the process chooses, and the
+      memory the process maps counts against its locked-memory limit
+      ([ulimit -l]).
+    - {e Physically}, through [/sys/bus/pci] and, for interrupts, VFIO's
+      no-IOMMU mode, as root, or with file permissions and capabilities granted
+      for it. The function reaches system memory at its physical addresses,
+      which the IOMMU, if any, must not translate.
+
+    The process takes nothing it lacks the rights for, and asks for none: a
+    missing privilege or binding raises [Failure] naming the file and the
+    command that grants it. On other systems {!scan} finds nothing, and
     {!detach}, {!attach} and {!take} raise.
 
     A function may also be another machine's, taken through a {!Remote}
@@ -58,18 +70,64 @@ val scan :
     machine of [remote] if given, on this one otherwise. It is [[]] where the
     system has no [/sys/bus/pci]. *)
 
+(** {1:access How a function is taken} *)
+
+(** The type for how a function reaches system memory. *)
+type addressing =
+  | Physical
+      (** At physical addresses: the function was taken through [/sys/bus/pci],
+          which needs root. *)
+  | Iommu
+      (** Through an IOMMU, at device addresses the process maps for it alone:
+          the function was taken through VFIO, which needs access to its group's
+          file [/dev/vfio/N] and no root. *)
+
+(** The type for what an IOMMU does with a function's DMA while no process holds
+    it. *)
+type iommu =
+  | No_iommu  (** There is none, or VFIO's no-IOMMU mode stands in for one. *)
+  | Identity  (** It passes physical addresses through ([iommu=pt]). *)
+  | Translating  (** It translates them. *)
+
+type state = {
+  driver : string option;  (** The kernel driver bound to it, if any. *)
+  iommu : iommu;  (** What its IOMMU group does with its DMA. *)
+  siblings : string list;  (** The other functions of its device. *)
+  enabled : bool;  (** Whether it is enabled. *)
+}
+(** The type for the state of a function of this machine. *)
+
+val access : string -> state -> (addressing, string) result
+(** [access bus s] is how {!take} takes the function at [bus] in the state [s],
+    or [Error why]:
+    - bound to [vfio-pci] in a group of an IOMMU ([Identity] or [Translating]),
+      it is taken behind the IOMMU ([Iommu]), siblings and all;
+    - bound to [vfio-pci] without an IOMMU, or bound to no driver and enabled
+      under no IOMMU or an [Identity] one, it is taken [Physical]ly, alone on
+      its device;
+    - bound to another driver, under a [Translating] IOMMU without [vfio-pci],
+      sharing its device, or disabled, it is not, and [why] says why and, where
+      it applies, the [driverctl] command that binds it to [vfio-pci]. *)
+
+val detached : string -> (addressing, string) result
+(** [detached bus] is {!access} for the function at [bus] of this machine in its
+    current state: [Ok a] iff {!take} can take it, in the way [a]. [Error why]
+    also if [bus] is no function of this machine. *)
+
 val detach : string -> unit
 (** [detach bus] detaches the function at [bus] of this machine, so that a
-    process can take it ({!take}): it unbinds the function's kernel driver,
-    unless that is [vfio-pci], removes the other functions of its device, such
-    as its audio function, and enables it. Its kernel driver's users, a display
-    among them, lose it. This persists after the process, until {!attach} or a
-    reboot. It needs root, or write access to the files under [/sys/bus/pci] it
-    writes.
+    process can take it ({!take}), unless it is {!detached} already: it unbinds
+    the function's kernel driver, unless that is [vfio-pci], removes the other
+    functions of its device, such as its audio function, and enables it. Its
+    kernel driver's users, a display among them, lose it. This persists after
+    the process, until {!attach} or a reboot. It needs root, or write access to
+    the files under [/sys/bus/pci] it writes. A function {!detached} already is
+    left as it is.
 
     Raises [Failure] if [bus] is no function of this machine, if a process has
-    it taken, if the process may not write a file, naming it, or if the driver
-    stays bound. *)
+    it taken, if the process may not write a file, naming it, if the driver
+    stays bound, or if the function is still not {!detached}, saying why, such
+    as when an IOMMU translates its addresses. *)
 
 val attach : string -> unit
 (** [attach bus] gives the function at [bus] of this machine back to its kernel
@@ -79,27 +137,32 @@ val attach : string -> unit
     [/sys/bus/pci/drivers_probe].
 
     Raises [Failure] if [bus] is no function of this machine, if a process has
-    it taken, if it is bound to [vfio-pci], or if no driver takes it, such as
-    when the driver's module is not loaded. *)
+    it taken, if it is bound to [vfio-pci], naming the [driverctl] command that
+    unbinds it, or if no driver takes it, such as when the driver's module is
+    not loaded. *)
 
-val detached : string -> (unit, string) result
-(** [detached bus] is [Ok ()] if the function at [bus] of this machine is as
-    {!detach} leaves it: bound to no kernel driver but [vfio-pci], alone on its
-    device, and enabled unless [vfio-pci] holds it. [Error why] says what
-    differs, such as ["0000:01:00.0 is bound to the driver nvidia"]. *)
+(** {1:functions_taken Functions taken} *)
 
 val take : ?remote:Remote.t -> lock:string -> string -> t
 (** [take ~lock bus] takes the function at [bus], of the machine of [remote] if
-    given, which must be {!detached} there: it locks it for this process through
-    the files [nx_BUS.lock], which every process of this library takes, and
-    [LOCK_BUS.lock], which every process driving such a GPU takes, in the
-    temporary directory. A lock file that is a link or no regular file is
-    refused. A function bound to [vfio-pci] in VFIO's no-IOMMU mode delivers its
-    interrupts to {!wait_interrupt}. Taking it changes nothing on the machine.
+    given, which must be {!detached} there, in the way {!detached} says: it
+    locks it for this process through the files [nx_BUS.lock], which every
+    process of this library takes, and [LOCK_BUS.lock], which every process
+    driving such a GPU takes, in the temporary directory. A lock file that is a
+    link or no regular file is refused. A function bound to [vfio-pci] delivers
+    its interrupts to {!wait_interrupt}; behind an IOMMU, it is opened in a VFIO
+    container of its own. Taking it changes nothing on the machine. Another
+    machine's function is taken {!Physical}ly: its server refuses one behind an
+    IOMMU.
 
     Raises [Failure] if the function is not {!detached}, saying why, if another
     process holds it, if a lock file cannot be opened, such as one another user
-    created, or if the process may not access it, each naming what to change. *)
+    created, or if the process may not access it, each naming what to change:
+    such as the udev rule that grants [/dev/vfio/N], or the [driverctl] commands
+    that bind the other functions of its IOMMU group to [vfio-pci]. *)
+
+val addressing : t -> addressing
+(** [addressing p] is how [p] reaches system memory, as it was taken. *)
 
 val bus : t -> string
 (** [bus p] is [p]'s bus address on its machine. *)
@@ -125,7 +188,9 @@ val bar : t -> int -> int * int
 val map_bar : ?offset:int -> ?length:int -> t -> int -> Mmio.t
 (** [map_bar p i] maps [length] bytes (defaults to the rest of the BAR) of [p]'s
     BAR [i] from byte [offset] (defaults to [0]) into the process, for the life
-    of the process. Child processes do not inherit the mapping. *)
+    of the process. Child processes do not inherit the mapping.
+
+    Raises [Failure] if VFIO does not let the process map those bytes. *)
 
 val unmap_bar : Mmio.t -> unit
 (** [unmap_bar m] unmaps [m], which {!map_bar} mapped. Another machine's BARs
@@ -134,14 +199,15 @@ val unmap_bar : Mmio.t -> unit
 val resize_bar : t -> int -> unit
 (** [resize_bar p i] makes [p]'s BAR [i] as large as the function allows, so
     that it covers all of a GPU's memory where the platform permits. The size
-    persists after the process.
+    persists after the process. It needs root, and Linux refuses it while a
+    driver, [vfio-pci] among them, holds the function.
 
     Raises [Failure] if the system refuses. *)
 
 val reset : t -> unit
-(** [reset p] resets [p] with the reset Linux has for it, and waits, for at most
-    a second, until it answers again: it clears the state a previous driver left
-    in it.
+(** [reset p] resets [p] with the reset Linux has for it, through VFIO behind an
+    IOMMU, and waits, for at most a second, until it answers again: it clears
+    the state a previous driver left in it.
 
     Raises [Failure] naming the file if the process may not reset it or Linux
     has no reset for it, and if [p] does not answer in time. *)
@@ -154,12 +220,18 @@ val wait_interrupt : t -> int -> bool
 val release : t -> unit
 (** [release p] gives [p] back: it closes the process's files for it and unlocks
     it. Its BAR mappings stay, except on another machine, where they go with it.
-*)
+    Behind an IOMMU, [p] no longer reaches the system memory mapped for it,
+    which stays allocated until {!free_sysmem}. *)
 
 (** {1:sysmem System memory of the function's machine}
 
-    {!Sysmem}'s functions, on the machine of the function: a GPU's system memory
-    must be memory of the machine it is in. *)
+    {!Sysmem}'s functions, on the machine of the function, and for the function:
+    a GPU's system memory must be memory of the machine it is in, at the
+    addresses the GPU reaches it at. These are its physical addresses for a
+    function taken {!Physical}ly. Behind an IOMMU they are device addresses
+    which the process maps for this function alone: memory is mapped whole, at
+    consecutive device addresses, and needs neither the privileges of physical
+    addresses nor huge pages. *)
 
 val page : t -> int
 (** [page p] is the page size of [p]'s machine. *)
@@ -168,13 +240,23 @@ val reserve : t -> base:int -> int -> unit
 (** [reserve p ~base n] is {!Sysmem.reserve} on [p]'s machine. *)
 
 val alloc_sysmem : t -> ?contiguous:bool -> ?va:int -> int -> Mmio.t * int list
-(** [alloc_sysmem p ?contiguous ?va n] is {!Sysmem.alloc} on [p]'s machine. *)
+(** [alloc_sysmem p ?contiguous ?va n] is {!Sysmem.alloc} on [p]'s machine, with
+    the address at which [p] reaches each page. Behind an IOMMU, the memory is
+    {!Sysmem.map}ped and mapped for [p], and [contiguous] memory may be of any
+    size.
+
+    Raises [Failure] as {!Sysmem.alloc} does, or, behind an IOMMU, if the
+    locked-memory limit is reached, naming how to raise it. *)
 
 val free_sysmem : t -> Mmio.t -> unit
-(** [free_sysmem p m] is {!Sysmem.free} on [p]'s machine. *)
+(** [free_sysmem p m] is {!Sysmem.free} on [p]'s machine, of memory
+    {!alloc_sysmem} returned, which [p] reaches no more. *)
 
 val pin : t -> nativeint -> int -> int list
-(** [pin p a n] is {!Sysmem.pin} on [p]'s machine. *)
+(** [pin p a n] is {!Sysmem.pin} on [p]'s machine, with the address at which [p]
+    reaches each page. Behind an IOMMU, pins are counted per range [(a, n)],
+    which {!unpin} releases as {!pin} pinned it. *)
 
 val unpin : t -> nativeint -> int -> unit
-(** [unpin p a n] is {!Sysmem.unpin} on [p]'s machine. *)
+(** [unpin p a n] is {!Sysmem.unpin} on [p]'s machine, of memory {!pin} pinned.
+*)

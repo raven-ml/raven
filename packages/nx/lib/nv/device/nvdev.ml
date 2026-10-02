@@ -311,15 +311,17 @@ let round_up n a = (n + a - 1) / a * a
 
 (* [boot_mem d n] is [n] bytes the GPU's falcons reach: the process's view of
    them, their address in the GPU's memory if there, and the bus address of each
-   page. They are system memory if [sysmem] (defaults to whether the BAR is too
-   small to reach the GPU's memory), and the GPU's memory otherwise, which is
-   one physical block. System memory is one physical block too if [contiguous],
-   for the firmware that is given its first address alone. The memory is kept
-   for the life of the process. *)
+   page. They are system memory if [sysmem], and the GPU's memory otherwise,
+   which is one physical block. [sysmem] defaults to whether the GPU cannot
+   reach its memory through its BAR: the BAR is too small, or an IOMMU, which
+   maps only system memory for it, stands between them. System memory is one
+   block of bus addresses too if [contiguous], for the firmware that is given
+   its first address alone. The memory is kept for the life of the process. *)
 let boot_mem d ?sysmem ?(contiguous = false) ?data n =
   let sz = round_up n 0x1000 in
   let view, paddr, pages =
-    if Option.value sysmem ~default:(not d.large_bar) then
+    let through_bar = d.large_bar && Pci.addressing d.pci = Pci.Physical in
+    if Option.value sysmem ~default:(not through_bar) then
       let align =
         if contiguous && sz > Pci.page d.pci then 2 lsl 20 else 0x1000
       in

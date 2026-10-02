@@ -3,12 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** System memory that devices address physically.
+(** System memory that devices address.
 
     A GPU that the process drives itself reaches system memory by physical
-    address, through page tables the process writes. That memory must stay where
+    address, through page tables the process writes, unless an IOMMU stands
+    between them ({!Pci.addressing}). Memory reached physically must stay where
     it is: resident, locked, and at the physical pages the process read for it.
-    This module allocates such memory, and pins memory the process already has.
+    This module allocates such memory, pins memory the process already has, and
+    maps memory for an IOMMU to pin ({!map}).
 
     Reading physical addresses and locking pages need Linux, the privileges for
     [/proc/self/pagemap] and [mlock], and the kernel setting
@@ -48,9 +50,19 @@ val alloc : ?contiguous:bool -> ?va:int -> int -> Mmio.t * int list
     on a page, if [contiguous] memory is larger than 2 MiB, or if [va] is not on
     2 MiB for [contiguous] memory larger than a page. *)
 
+val map : ?va:int -> int -> Mmio.t
+(** [map ~va n] maps [n] bytes, rounded up to {!page}, of new, zeroed memory at
+    [va], inside a range {!reserve} reserved, or where the system chooses
+    without [va]. The memory is neither locked nor its addresses read: a
+    function behind an IOMMU pins it when the IOMMU maps it. It needs no
+    privilege.
+
+    Raises [Failure] if the system cannot, and [Invalid_argument] if [va] is not
+    on a page. *)
+
 val free : Mmio.t -> unit
-(** [free m] releases memory {!alloc} returned, with the pins it held, and
-    returns its addresses to their reservation if they had one. *)
+(** [free m] releases memory {!alloc} or {!map} returned, with the pins it held,
+    and returns its addresses to their reservation if they had one. *)
 
 val pin : nativeint -> int -> int list
 (** [pin a n] locks the [n] bytes of process memory at [a], which starts on a

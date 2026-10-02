@@ -5,7 +5,10 @@
 
 external page_size : unit -> int = "caml_nx_support_page_size"
 external reserve_at : nativeint -> int -> unit = "caml_nx_sysmem_reserve"
-external map_at : nativeint -> int -> bool -> nativeint = "caml_nx_sysmem_alloc"
+
+external map_at : nativeint -> int -> bool -> bool -> nativeint
+  = "caml_nx_sysmem_alloc"
+
 external release_at : nativeint -> int -> unit = "caml_nx_sysmem_release"
 external unmap_at : nativeint -> int -> unit = "caml_nx_sysmem_unmap"
 external lock_at : nativeint -> int -> unit = "caml_nx_sysmem_lock"
@@ -96,12 +99,28 @@ let unmap a n =
   end
   else release_at a n
 
-let alloc ?(contiguous = false) ?va n =
+let on_page fn va =
   Option.iter
     (fun va ->
       if va mod page <> 0 then
-        invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on a page" va))
-    va;
+        invalid_arg (Printf.sprintf "Sysmem.%s: 0x%x is not on a page" fn va))
+    va
+
+(* Maps [n] bytes at [va], or where the system chooses. *)
+let map_bytes ?va n ~huge ~locked =
+  let a =
+    map_at (Nativeint.of_int (Option.value ~default:0 va)) n huge locked
+  in
+  if va = None then Mutex.protect lock (fun () -> Hashtbl.replace placed a ());
+  a
+
+let map ?va n =
+  on_page "map" va;
+  let n = extent n in
+  Mmio.v (map_bytes ?va n ~huge:false ~locked:false) n
+
+let alloc ?(contiguous = false) ?va n =
+  on_page "alloc" va;
   if contiguous && n > huge then
     invalid_arg "Sysmem.alloc: contiguous memory is at most 2 MiB";
   let huge_page = contiguous && n > page in
@@ -112,14 +131,13 @@ let alloc ?(contiguous = false) ?va n =
     va;
   let n = extent ~contiguous n in
   let a =
-    try map_at (Nativeint.of_int (Option.value ~default:0 va)) n huge_page
+    try map_bytes ?va n ~huge:huge_page ~locked:true
     with Failure why when huge_page ->
       failwith
         (why
        ^ "; contiguous memory needs a free huge page: sudo sysctl -w \
           vm.nr_hugepages=16")
   in
-  if va = None then Mutex.protect lock (fun () -> Hashtbl.replace placed a ());
   let m = Mmio.v a n in
   match physical a n with
   | exception e ->

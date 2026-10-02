@@ -171,6 +171,12 @@ let run s cmd a0 a1 a2 a3 =
       if Hashtbl.fold (fun _ p acc -> acc || Pci.bus p = bus) s.functions false
       then fail "%s is already taken by this connection" bus;
       let p = Pci.take ~lock bus in
+      (* The system memory the server gives is reached physically. *)
+      if Pci.addressing p = Pci.Iommu then begin
+        Pci.release p;
+        fail "%s is behind an IOMMU, which the server does not map memory for"
+          bus
+      end;
       let id = s.next_function in
       s.next_function <- id + 1;
       Hashtbl.replace s.functions id p;

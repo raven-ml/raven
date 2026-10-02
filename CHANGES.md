@@ -3110,6 +3110,20 @@ thread.
 
 ### Nx
 
+- A GPU over PCI (`Nx_nv`, `Nx_amd` and their runtimes under `Pci`) opens
+  without root once an administrator binds it to `vfio-pci` on a machine whose
+  IOMMU is on and grants its `/dev/vfio/N`: `Nx_device_support.Pci` takes it
+  through VFIO, maps its BARs and configuration space from the VFIO file, and
+  maps system memory for it at device addresses the process allocates, so
+  neither `/proc/self/pagemap`, `mlock` privileges nor huge pages are needed.
+  Unbound or no-IOMMU functions are taken through `/sys/bus/pci` as before, as
+  root. A missing binding, permission or memlock limit fails naming the
+  `driverctl` command, udev rule or limits file that grants it. Behind an
+  IOMMU, GPUs copy to each other through host memory, `Driver.dma` refuses
+  their memory, and a remote server refuses such functions. New `Pci.access`,
+  `state`, `addressing`, `Sysmem.map` and the `Vfio` module; **breaking:**
+  `Pci.detached` returns how the function is taken, and an unbound function an
+  IOMMU translates is no longer reported detached.
 - `Nx_amd_device` uploads programs' code into the GPU's own memory through the
   copy engine, whatever the size of the memory BAR, and counts it there. On a
   GPU without Resizable BAR, programs now load under the kernel driver, where

@@ -109,7 +109,11 @@ let map_host m a n =
 
 let map_peer m m' mem =
   let map = mem.mapping in
-  if map.space <> Page_table.Sys && small_bar m' then
+  if Pci.addressing m.pci = Pci.Iommu || Pci.addressing m'.pci = Pci.Iommu then
+    Error
+      "a GPU behind an IOMMU reaches only its own memory and the memory the \
+       process maps for it"
+  else if map.space <> Page_table.Sys && small_bar m' then
     Error "the other GPU's memory BAR is too small for peer access"
   else
     let pages, space =

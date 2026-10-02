@@ -85,7 +85,8 @@ val map_peer : t -> t -> memory -> (memory, string) result
 (** [map_peer m m' mem] maps [mem], memory {!alloc} allocated on the GPU of
     [m'], for the GPU of [m], at its address on [m']: the GPU's memory through
     [m']'s memory BAR or link, and system memory at its pages, which stay
-    [m']'s. [Error why] if [mem] is the GPU's memory and [m']'s BAR is small. *)
+    [m']'s. [Error why] if [mem] is the GPU's memory and [m']'s BAR is small, or
+    if either GPU is behind an IOMMU ({!Pci.addressing}). *)
 
 val unmap : t -> memory -> unit
 (** [unmap m mem] unmaps [mem], which {!map_host} or {!map_peer} mapped, and

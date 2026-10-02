@@ -193,6 +193,8 @@ let dma n pci r =
   let a = Region.address r in
   match Mutex.protect n.lock (fun () -> Hashtbl.find_opt n.memory a) with
   | None -> Error "no buffer of this adapter"
+  | Some _ when Pci.addressing pci = Pci.Iommu ->
+      Error "the adapter is behind an IOMMU, which maps memory for it alone"
   | Some (_, pages) ->
       let page = Pci.page pci in
       Ok
@@ -229,7 +231,7 @@ let open_nic ~machine ~remote index =
   | Some _ -> ()
   | None -> (
       match Pci.detached bus with
-      | Ok () -> ()
+      | Ok _ -> ()
       | Error why ->
           failwith
             (Printf.sprintf "%s; Nx_rdma_device.detach %d detaches it" why index)
