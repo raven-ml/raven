@@ -1479,7 +1479,7 @@ let baselines =
           grid root, 1 × 2
             cell (0, 0)
               panel 0
-                title (text "t")
+                title (text "t") left
                 dot 0.0
                 line 0.fit
             cell (0, 1)

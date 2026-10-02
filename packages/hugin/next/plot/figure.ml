@@ -293,7 +293,7 @@ let share pairs f =
   distinct pairs;
   Share (pairs, f)
 
-let title ?(align = `Center) text f = Title { align; text; f }
+let title ?(align = `Left) text f = Title { align; text; f }
 let coord c f = Coord_sys (c, f)
 
 let name s f =

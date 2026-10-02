@@ -1015,6 +1015,13 @@ let titles =
           equal (float 1e-3) (P2.x (Box2.mid b)) (mid_x t);
           let b, (_, _, x1, _) = at `Right in
           equal (float 1e-3) (Box2.maxx b) x1);
+      test "a figure title aligns with the left edge by default" (fun () ->
+          let l =
+            lay (Size.panels 80. 60.)
+              (plain ~y:(f64 [| 1.; 2e6; 3.; 4. |]) ramp |> title (Text.v "T"))
+          in
+          let x0, _, _, _ = text_box l {|(text ("T" bold))|} in
+          equal (float 1e-3) (Box2.minx (List.hd (boxes l))) x0);
       test "a figure title is half an em above what it titles" (fun () ->
           let f =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]

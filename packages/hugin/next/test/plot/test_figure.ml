@@ -631,11 +631,11 @@ let equality =
         ]
         (fun (_, px) ->
           equal bool true (Hugin_next.equal (image px) (image px)));
-      test "a title's default alignment is centre" (fun () ->
+      test "a title's default alignment is left" (fun () ->
           equal bool true
             (Hugin_next.equal
                (title (Text.v "t") a)
-               (title ~align:`Center (Text.v "t") a)));
+               (title ~align:`Left (Text.v "t") a)));
       test "a binding of the same key and function is equal" (fun () ->
           let k = View.number "k" ~init:1. in
           let fn _ = a in
