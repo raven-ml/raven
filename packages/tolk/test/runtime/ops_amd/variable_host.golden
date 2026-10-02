@@ -1,12 +1,12 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void hcq_submit(volatile unsigned long* restrict doorbell_compute_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned long* restrict put_value_compute_0_2_1, volatile unsigned long* restrict write_ptr_compute_0_3_1, volatile unsigned int* restrict ring_compute_0_4_4194304, unsigned char* restrict cmdbuf_compute_0_5_340, unsigned char* restrict kernargs_compute_0_6_28, unsigned char* restrict ib_compute_0_7_16, const unsigned long submitted_amd_, const int v_, const unsigned long value_amd_) {
+void hcq_submit(volatile unsigned long* restrict doorbell_compute_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned long* restrict put_value_compute_0_2_1, volatile unsigned long* restrict write_ptr_compute_0_3_1, volatile unsigned int* restrict ring_compute_0_4_4194304, unsigned char* restrict cmdbuf_compute_0_5_312, unsigned char* restrict kernargs_compute_0_6_28, unsigned char* restrict ib_compute_0_7_16, const unsigned long submitted_amd_, const int v_, const unsigned long value_amd_) {
   *(slots_1_2+0) = 0ul;
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
   unsigned long val0 = (*(put_value_compute_0_2_1+0));
-  *(((int*)(cmdbuf_compute_0_5_340))+71) = v_;
-  *(((unsigned int*)(cmdbuf_compute_0_5_340))+19) = ((unsigned int)(submitted_amd_));
-  *(((unsigned long*)((cmdbuf_compute_0_5_340+0)))+41) = value_amd_;
+  *(((int*)(cmdbuf_compute_0_5_312))+64) = v_;
+  *(((unsigned int*)(cmdbuf_compute_0_5_312))+12) = ((unsigned int)(submitted_amd_));
+  *(((unsigned long*)((cmdbuf_compute_0_5_312+4)))+37) = value_amd_;
   *(((int*)(kernargs_compute_0_6_28))+4) = v_;
   int cast0 = ((int)((val0&4194303ul)));
   int alu6 = ((4194304-cast0)^-1);

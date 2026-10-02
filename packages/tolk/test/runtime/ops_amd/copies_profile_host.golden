@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void hcq_submit(volatile unsigned long* restrict slots_0_16, volatile unsigned long* restrict doorbell_copy_0_1_1, volatile unsigned long* restrict put_value_copy_0_2_1, volatile unsigned long* restrict write_ptr_copy_0_3_1, volatile unsigned int* restrict ring_copy_0_4_4194304, unsigned char* restrict cmdbuf_copy_0_5_200, volatile unsigned long* restrict doorbell_compute_0_6_1, volatile unsigned long* restrict put_value_compute_0_7_1, volatile unsigned long* restrict write_ptr_compute_0_8_1, volatile unsigned int* restrict ring_compute_0_9_4194304, unsigned char* restrict cmdbuf_compute_0_10_492, unsigned char* restrict ib_compute_0_12_16, const unsigned long submitted_amd_, const unsigned long value_amd_) {
+void hcq_submit(volatile unsigned long* restrict slots_0_16, volatile unsigned long* restrict doorbell_copy_0_1_1, volatile unsigned long* restrict put_value_copy_0_2_1, volatile unsigned long* restrict write_ptr_copy_0_3_1, volatile unsigned int* restrict ring_copy_0_4_4194304, unsigned char* restrict cmdbuf_copy_0_5_200, volatile unsigned long* restrict doorbell_compute_0_6_1, volatile unsigned long* restrict put_value_compute_0_7_1, volatile unsigned long* restrict write_ptr_compute_0_8_1, volatile unsigned int* restrict ring_compute_0_9_4194304, unsigned char* restrict cmdbuf_compute_0_10_464, unsigned char* restrict ib_compute_0_12_16, const unsigned long submitted_amd_, const unsigned long value_amd_) {
   *(slots_0_16+0) = 0ul;
   *(slots_0_16+2) = 0ul;
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
@@ -22,8 +22,8 @@ void hcq_submit(volatile unsigned long* restrict slots_0_16, volatile unsigned l
   *(put_value_copy_0_2_1+0) = alu9;
   *(doorbell_copy_0_1_1+0) = alu9;
   unsigned long val2 = (*(put_value_compute_0_7_1+0));
-  *(((unsigned int*)(cmdbuf_compute_0_10_492))+19) = cast0;
-  *(((unsigned long*)((cmdbuf_compute_0_10_492+0)))+60) = value_amd_;
+  *(((unsigned int*)(cmdbuf_compute_0_10_464))+12) = cast0;
+  *(((unsigned long*)((cmdbuf_compute_0_10_464+4)))+56) = value_amd_;
   int cast3 = ((int)((val2&4194303ul)));
   int alu15 = ((4194304-cast3)^-1);
   int alu16 = ((alu15<-5)?-5:alu15);

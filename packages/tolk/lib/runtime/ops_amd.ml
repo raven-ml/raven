@@ -315,23 +315,14 @@ let compute_queue ~host gpu q : Hcq2.commands =
         (Hcq2.Queue.get_dword q (start - 4)
         lor ((Hcq2.Queue.size q - start) / 4))
   in
-  let wait_reg_mem ?(mask = 0xffff_ffff) ?mem ?(reg = 0) ?(reg_done = 0)
+  let wait_reg_mem ?(mask = 0xffff_ffff) ?mem ?(reg = 0)
       ?(op = wait_reg_mem_function_geq) value =
     let info =
       (Bool.to_int (Option.is_some mem) lsl G.wait_reg_mem_mem_space)
-      lor Bool.to_int
-            ((Option.is_none mem && reg_done > 0)
-             [@mutate
-               off
-                 "a wait on memory has no done register, and one on a register \
-                  has one"])
-          lsl G.wait_reg_mem_operation
       lor (op lsl G.wait_reg_mem_function)
       lor (0 lsl G.wait_reg_mem_engine)
     in
-    let at =
-      match mem with Some m -> [ m ] | None -> [ u32 reg; u32 reg_done ]
-    in
+    let at = match mem with Some m -> [ m ] | None -> [ u32 reg; u32 0 ] in
     pkt3 G.packet3_wait_reg_mem ((u32 info :: at) @ [ value; u32 mask; u32 4 ])
   in
   let acquire_mem ?(gli = 1) ?(gl2 = 1) () =
@@ -389,11 +380,12 @@ let compute_queue ~host gpu q : Hcq2.commands =
         u32 0;
       ]
   in
-  let memory_barrier () =
-    wait_reg_mem ~reg:G.bif_bx_pf_gpu_hdp_flush_req
-      ~reg_done:G.bif_bx_pf_gpu_hdp_flush_done (u32 0xffff_ffff);
-    acquire_mem ()
-  in
+  (* The host flushes the host data path before each submission, after its
+     writes through the BAR, so a barrier only invalidates the GPU's caches. A
+     flush from the queue, which requests every client's flush and waits until
+     all of them are done, hangs a GFX12 compute queue within a few hundred
+     batches: its MEC waits on the read of the done register. *)
+  let memory_barrier () = acquire_mem () in
   (* Profiling: a run's slot holds its counters and its traces until a
      synchronization reads them back. *)
   let registers = lazy (profile_registers gpu) in

@@ -39,11 +39,11 @@ let new_floats name xs =
 (* Kernels *)
 
 (* The call of the kernel storing [x + 1] of each element [x] of [inp] into
-   [out], four floats each. *)
-let adds out inp =
+   [out], [n] floats each, four by default. *)
+let adds ?(n = 4) out inp =
   let device = Option.get (Ops.device out) in
-  let param slot = Ops.param ~shape:[ Int 4 ] ~device slot Float32 in
-  let i = Ops.range (Int 4) [ 0 ] in
+  let param slot = Ops.param ~shape:[ Int n ] ~device slot Float32 in
+  let i = Ops.range (Int n) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
   let st =
     Ops.store
@@ -110,8 +110,8 @@ let profiled f =
       f ();
       Nx_device.Profile.stop p)
 
-(* The events of a profile around a chain of three kernels; a GPU out of its
-   stable power state skips. *)
+(* The events of a profile around a chain of three kernels; a GPU whose stable
+   power state another process holds skips. *)
 let profile_chain ?counters ?trace () =
   let b = chain 3 in
   let bound = bound_to (Array.make 4 0.) b in
@@ -122,7 +122,7 @@ let profile_chain ?counters ?trace () =
     (fun () ->
       match run_calls ~bound (chained b) with
       | exception Failure why
-        when String.ends_with ~suffix:"set -l stable_std`" why ->
+        when String.ends_with ~suffix:"which another process holds" why ->
           skip ~reason:why ()
       | _ -> Nx_device.Profile.stop p)
 
@@ -184,6 +184,28 @@ let execution =
           Nx_device.synchronize (amd ());
           equal floats [| 16.; 16.; 16.; 16. |]
             (floats_of (List.hd (List.assq (List.hd b) bound))));
+      slow "a thousand runs back to back while the host allocates" (fun () ->
+          (* Each run's batch starts with a memory barrier while the host
+             submits the next and allocates and frees device memory, as a
+             model's calls do: a GFX12 compute queue hung within a few hundred
+             runs while its barrier flushed the host data path. *)
+          let n = 1 lsl 20 in
+          let src = storage ~n "AMD" and dst = storage ~n "AMD" in
+          let bound =
+            [
+              (src, [ new_floats "AMD" (Array.make n 1.) ]);
+              (dst, [ new_floats "AMD" (Array.make n 0.) ]);
+            ]
+          in
+          let s = link ~bound [ adds ~n dst src ] in
+          for i = 1 to 1000 do
+            Tolk_engine.run s [||];
+            ignore (B.create (amd ()) Float32 n);
+            if i mod 20 = 0 then Gc.full_major ()
+          done;
+          Nx_device.synchronize (amd ());
+          equal floats (Array.make n 2.)
+            (floats_of (List.hd (List.assq dst bound))));
       slow "a profile records a span of each kernel on the device, in order"
         (fun () ->
           let b = chain 2 in
@@ -283,7 +305,8 @@ let execution =
               (fun () ->
                 match link ~bound (chained b) with
                 | exception Failure why
-                  when String.ends_with ~suffix:"set -l stable_std`" why ->
+                  when String.ends_with ~suffix:"which another process holds"
+                         why ->
                     skip ~reason:why ()
                 | s -> s)
           in

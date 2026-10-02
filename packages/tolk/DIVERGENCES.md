@@ -3246,3 +3246,47 @@ stores through a pad.
 - **Pinned by:** nx.amd.device's hardware suite
   (`packages/nx/test/device/amd/test_amd_hw.ml`): `failures › work that
   never signals loses the device`, on a GPU.
+
+## D112. An AMD memory barrier leaves the host data path to the host
+
+- **tinygrad:** `runtime/ops_amd.py:142-146` (`memory_barrier`: a
+  `WAIT_REG_MEM` that writes every bit of the bus interface's
+  `GPU_HDP_FLUSH_REQ` and waits until `GPU_HDP_FLUSH_DONE` holds them all,
+  then `acquire_mem`).
+- **tolk:** `lib/runtime/ops_amd.ml:388` (`memory_barrier`, `acquire_mem`
+  alone) and `:318` (`wait_reg_mem`, which no longer writes a register
+  before its wait); `engine/amd.ml:144` (`queues`, whose submission hook
+  flushes the host data path from the host before each host program).
+- **Differs:** a barrier invalidates the GPU's caches and does not flush the
+  host data path (HDP), whose flush registers the queue encoder no longer
+  names. The host flushes it through the driver's remapped
+  `HDP_MEM_FLUSH_CNTL` (`Nx_amd_device.flush_hdp`) before each submission,
+  after every write through the BAR: memory a host program writes on each run
+  is pinned host memory, which the HDP does not carry.
+- **Reason:** (c). On a Radeon AI PRO R9700 (GFX12, nbif 6.3.1) under the
+  amdgpu driver, a compute queue running batches back to back while the host
+  allocates and frees device memory hangs within a few hundred batches, and
+  the driver resets the GPU for every process on it. At the hang no wave runs
+  and the MEC waits on a register read (`CP_CPC_STALLED_STAT1`
+  `MEC1_WAIT_ON_RCIU_READ`) inside the batch, the barrier's wait on
+  `GPU_HDP_FLUSH_DONE`, the only register the batch reads. The request is
+  a handshake shared by the GPU's engines, one bit each: on nbif 6.3.1 bits
+  0-9 are the command processors' (`CP0`-`CP9`), 10-11 the copy engines',
+  12-31 reserved. amdgpu's rings request and wait on their own bit only,
+  derived from the ring's ME and pipe (`ref_and_mask_cp2 << pipe` on MEC1).
+  tinygrad requests all 32 bits and waits until all are done, so its wait
+  also depends on every other engine's handshake, the driver's copy rings'
+  among them. No narrower mask is correct for a user queue: the scheduler
+  (MES or HWS) maps it to a pipe it chooses, and may remap it, so the queue
+  cannot name its own bit, and the pipes' bits are the driver's rings' too.
+  ROCr never flushes from a user queue: it writes the remapped
+  `HDP_MEM_FLUSH_CNTL` from the host, as nx does. On other generations the
+  change relies on the same host flush, which `Nx_amd_device.flush_hdp` does
+  identically through the KFD remap on GFX9 and GFX11 and through the
+  register under AM, and on nx giving no mapped memory when the driver
+  remaps no flush register, so that the host never writes through the BAR
+  without one.
+- **Pinned by:** the Ops_amd suite: every recorded case, from the generator
+  patched as `test/gen/runtime/ops_amd.py` says; and on a GPU,
+  `test_ops_amd_exec`'s `execution › a thousand runs back to back while the
+  host allocates`.

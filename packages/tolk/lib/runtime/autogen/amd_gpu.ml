@@ -26,7 +26,6 @@ let data_sel__mec_release_mem__send_gpu_clock_counter = 3
 let int_sel__mec_release_mem__none = 0
 let int_sel__mec_release_mem__send_interrupt_after_write_confirm = 2
 let wait_reg_mem_mem_space = 4
-let wait_reg_mem_operation = 6
 let wait_reg_mem_function = 0
 let wait_reg_mem_engine = 8
 let event_type = 0
@@ -541,8 +540,6 @@ let gc_families = [ (9, 4, 3); (11, 0, 0); (11, 0, 3); (11, 5, 0); (12, 0, 0) ]
 let compute_dispatch_initiator_compute_shader_en = (0, 0)
 let compute_dispatch_initiator_force_start_at_000 = (2, 2)
 let compute_dispatch_initiator_cs_w32_en = (15, 15)
-let bif_bx_pf_gpu_hdp_flush_req = 0xe26
-let bif_bx_pf_gpu_hdp_flush_done = 0xe27
 
 (* HSA and the kernel descriptor *)
 

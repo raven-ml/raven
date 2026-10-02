@@ -42,7 +42,9 @@ tinygrad is changed as tolk differs from it:
 - a dispatch's thread-trace marker numbers the dispatches of its queue from 0,
   so that a batch's packets depend on the batch alone;
 - an address is taken on the queue's first device, as tolk names one
-  device.
+  device;
+- a memory barrier invalidates the GPU's caches only: the host flushes the
+  host data path before each submission.
 """
 
 from types import SimpleNamespace
@@ -249,6 +251,11 @@ def numbered_init(self, submit):
 
 
 ops_amd.AMDComputeQueue.__init__ = numbered_init
+
+
+# Memory barriers that leave the host data path to the host
+
+ops_amd.AMDComputeQueue.memory_barrier = lambda self: self.acquire_mem()
 
 
 # Dispatch grids as words

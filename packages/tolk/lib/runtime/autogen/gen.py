@@ -130,7 +130,7 @@ PM4_CONSTANTS = [
 ]
 # Fields, as the shift of their first bit: the headers give no width. RELEASE_MEM's fields are pm4_soc15.py's
 # DATA_SEL and INT_SEL, and pm4_nv.py's PACKET3_RELEASE_MEM_* of the same shifts.
-PM4_SHIFTS = ["WAIT_REG_MEM_MEM_SPACE", "WAIT_REG_MEM_OPERATION", "WAIT_REG_MEM_FUNCTION", "WAIT_REG_MEM_ENGINE",
+PM4_SHIFTS = ["WAIT_REG_MEM_MEM_SPACE", "WAIT_REG_MEM_FUNCTION", "WAIT_REG_MEM_ENGINE",
               "EVENT_TYPE", "EVENT_INDEX"]
 PM4_RELEASE_SHIFTS = {"DATA_SEL": "PACKET3_RELEASE_MEM_DATA_SEL", "INT_SEL": "PACKET3_RELEASE_MEM_INT_SEL",
                       "EVENT_TYPE": "PACKET3_RELEASE_MEM_EVENT_TYPE", "EVENT_INDEX": "PACKET3_RELEASE_MEM_EVENT_INDEX"}
@@ -165,8 +165,6 @@ TRACE_CONSTANTS = ["SQ_TT_RT_FREQ_4096_CLK", "SQ_TT_WTYPE_INCLUDE_CS_BIT", "SQ_T
                    "SQ_TT_TOKEN_EXCLUDE_ALUEXEC_SHIFT", "SQ_TT_TOKEN_EXCLUDE_VALUINST_SHIFT",
                    "SQ_TT_TOKEN_EXCLUDE_IMMEDIATE_SHIFT", "SQ_TT_TOKEN_EXCLUDE_INST_SHIFT", "THREAD_TRACE_MARKER",
                    "THREAD_TRACE_FINISH"]
-# The host data path's flush registers of each bus interface family, as ops_amd.py's memory_barrier names them.
-NBIO_FAMILIES = {"nbio_4_3_0": "0", "nbio_7_2_0": "0", "nbio_7_7_0": "0", "nbio_7_9_0": "0", "nbio_7_11_0": "1", "nbif_6_3_1": "0"}
 
 HSA_CONSTANTS = ["HSA_PACKET_HEADER_TYPE", "HSA_PACKET_HEADER_BARRIER", "HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE",
                  "HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE", "HSA_FENCE_SCOPE_SYSTEM", "HSA_PACKET_TYPE_VENDOR_SPECIFIC",
@@ -223,7 +221,6 @@ def amd():
               f"{ml_value(same('mtype', [field(m, 'SDMA_PKT_FENCE_HEADER_mtype') for m in sdmas[1:]]))}"]
     lines += ["", "(* Registers, by address *)", ""]
     bases = {k: tuple(getattr(am(f"{k}_offsets"), f"GC_BASE__INST0_SEG{s}", 0) for s in range(6)) for k in ("vega", "navi")}
-    nbio_bases = {k: tuple(getattr(am(f"{k}_offsets"), f"NBIO_BASE__INST0_SEG{s}", 0) for s in range(9)) for k in ("vega", "navi")}
 
     def addr(fam, base, n):
         off, seg, _ = getattr(regs, fam)[n]
@@ -251,12 +248,6 @@ def amd():
         lo, hi = same(f, [getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2][f] for fam in GC_FAMILIES
                           if f in getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2]])
         lines += [f"let compute_dispatch_initiator_{f} = {ml_value((hi, lo))}"]
-    for f in ("regBIF_BX_PF{}_GPU_HDP_FLUSH_REQ", "regBIF_BX_PF{}_GPU_HDP_FLUSH_DONE"):
-        values = []
-        for fam, pf in NBIO_FAMILIES.items():
-            base = nbio_bases["vega" if fam == "nbio_7_9_0" else "navi"]
-            values.append(addr(fam, base, f.format(pf)))
-        lines += [f"let {f.format('')[3:].lower()} = {ml_value(same(f, values))}"]
     lines += ["", "(* HSA and the kernel descriptor *)", ""]
     lines += [f"let {n.lower()} = {ml_value(getattr(hsa, n))}" for n in HSA_CONSTANTS]
     offsets = lambda t: {f[0]: f[2] for f in t._real_fields_}

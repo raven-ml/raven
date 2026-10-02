@@ -939,6 +939,11 @@ thread.
 
 ### Tolk (new)
 
+- A compiled call run back to back on a GFX12 AMD GPU no longer hangs it,
+  which made the driver reset the GPU for every process on it: a batch's
+  memory barrier only invalidates the GPU's caches, and the host flushes the
+  host data path before each submission, as it already did. A routed MXFP4
+  product hung a Radeon AI PRO R9700 within a few hundred calls.
 - A matrix-vector product with few outputs, along a matrix laid out by
   columns, spreads them over more workgroups with fewer threads across each.
   gpt-oss-20b's key and value projections, 512 outputs, ran on 8 of an RTX
