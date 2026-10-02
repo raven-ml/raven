@@ -31,3 +31,5 @@ dune exec packages/hugin/next/examples/01-line/main.exe
 | [`11-dashboard`](11-dashboard/main.ml) | A training dashboard: loss on a log scale over epochs, and validation accuracy, sharing x | ![](11-dashboard/dashboard.png) |
 | [`12-paper-figure`](12-paper-figure/main.ml) | A two-column paper figure at 8 points, panels labelled (a) to (d) | ![](12-paper-figure/paper.png) |
 | [`13-histogram`](13-histogram/main.ml) | Two histograms over shared bins from `Stats.histogram`, drawn as rects from their edges | ![](13-histogram/histogram.png) |
+| [`14-area`](14-area/main.ml) | A band between the lowest and highest of eight seeds (`area` with `y2`), under their mean | ![](14-area/area.png) |
+| [`15-errorbars`](15-errorbars/main.ml) | Error bars as a composition: a `rule` from `y` to `y2` under each `dot` | ![](15-errorbars/errorbars.png) |
