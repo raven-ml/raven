@@ -2904,6 +2904,62 @@ stores through a pad.
   `routed_blocks_cuda` and `routed_blocks_amd` (the local split on the
   matrix's row axis), recorded from the equally patched tinygrad.
 
+## D100. A reduction of no axes that a broadcast ends is stored
+
+- **tinygrad:** `schedule/indexing.py:271-276` (`run_rangeify`, which stores
+  an elementwise value or reduction whose ranges a broadcast ends by
+  realizing each of its axes, so a value of no axes is not stored).
+- **tolk:** `lib/schedule/indexing.ml:467` (`assign_ranges`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the
+  goldens are recorded.
+- **Differs:** a value of no axes whose consumers broadcast it, and whose
+  computation holds a reduction, is stored as one element, as a value with
+  axes is. The cost check (`remove_bufferize`) then inlines it again where
+  no reduction of it reads a buffer and it reads at most three. A value of
+  no axes without a reduction, such as a shard's offset, stays inlined.
+  tinygrad computes such a reduction inside its consumer, once for each
+  element: `x - x.sum()` sums the whole of `x` for each element.
+- **Reason:** (b): `Vega.Loss_scale.step`, whose `finite`, the conjunction
+  of `Nx.all (Nx.isfinite g)` over every gradient, selects each update.
+  In GPT-2 124M's float16 step on an M1 Max's Metal, five kernels each
+  reduced all 148 gradients again: the scale and its counters, and the
+  embedding updates, about 14 ms a step. Stored, one kernel reduces them.
+- **Pinned by:** the Rangeify suite's `sum_all_broadcast` and
+  `finite_checks` rows of `kernel_counts.golden` and their kernel goldens,
+  and its `reduce_expand_child` and `preserve_multistage_reduce` rows; the
+  Jit suite's `nonzero` and `masked_select` goldens; rune's `lower_linalg`
+  goldens `qr_q` and `qr_r`, whose reflections' norms are stored; all from
+  the equally patched tinygrad.
+
+## D101. A group shares its threads with the kernel's independent reductions
+
+- **tinygrad:** `codegen/opt/postrange.py:123-135` (`apply_opt`: a local
+  split of a reduce axis splits that axis alone, and sizes the shared
+  memory by the first reduction's type).
+- **tolk:** `lib/codegen/opt/postrange.ml:203` (`siblings`), `:171`
+  (`smem`) and `:363` (its use in `apply`); `test/gen/tinygrad.patch`,
+  which gives tinygrad the same before the goldens are recorded.
+- **Differs:** a local split of an axis of reductions that no reduce axis
+  encloses also splits, by the same threads, one axis of each other such
+  reduction: its first reduce axis that the amount divides, when only such
+  reductions close it, when it neither reads a grouped reduction nor is
+  read by one, and while every grouped reduction's buffer fits in shared
+  memory. The shared memory checked is the sum of the grouped reductions'
+  buffers. A reduction that reads another stays out, since the final
+  reductions of shared buffers that one thread range closes run as one
+  loop.
+- **Reason:** (b): the kernel of D100's `finite`. Grouped on its first
+  reduction, each of its 16 threads ran the other 147 whole. In GPT-2
+  124M's float16 step on an M1 Max's Metal the kernel took 3.1 ms and takes
+  0.77 ms; 200 checks of float16 vectors, from 3.6 ms to 0.90 ms.
+- **Pinned by:** the Postrange suite's cases `sibling_sums_group` (a
+  reduction the amount does not divide stays out), `ten_sums_group` (eight
+  of ten buffers fit) and `single_kernel_softmax_group` (the sum that reads
+  a maximum stays out); the Codegen suite's `two_grouped_stores_local`
+  goldens and its claim that a barrier follows each local store; all from
+  the equally patched tinygrad. The rune bench's `finite/` and `metal/`
+  rows.
+
 ## D102. An empty argument of a precompiled call is its constant
 
 - **tinygrad:** `schedule/prepare.py:264` (the size-0 rule, which makes every

@@ -1108,7 +1108,12 @@ let claims =
       claim "phi_arange_255" "computes an arange without accumulators"
         arange_without_phis;
       claim "two_grouped_stores_local" "puts a barrier after each local store"
-        (fun row -> equal int 2 (count Barrier (instructions row)));
+        (fun row ->
+          let uops = instructions row in
+          let local_store u = is Store u && in_space Local (Ops.nth u 0) in
+          equal int
+            (List.length (List.filter local_store uops))
+            (count Barrier uops));
       claim "reduce_shapeless_const_unroll"
         "folds the sum of a constant over an unroll" (fun row ->
           let nodes = Ops.toposort (lowered row) in

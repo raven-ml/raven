@@ -135,6 +135,17 @@ def stage_outside_an_output(C, A):
 def kernel_of(*stores): return UOp.sink(*stores, arg=KernelInfo())
 
 
+def single_kernel_softmax(x):
+    # runtime/test_softmax_fusion.py: the sum reads the first maximum, the second maximum reads neither
+    nr_dim, r_dim = x.shape
+    inp = x.reshape(nr_dim, 1, 1, r_dim).expand(nr_dim, r_dim, 1, r_dim)
+    imx = x.reshape(nr_dim, 1, r_dim, 1).expand(nr_dim, r_dim, r_dim, r_dim).max(axis=-2, keepdim=True)
+    ss = (inp - imx.detach()).exp().sum(axis=-1, keepdim=True)
+    inp = x.reshape(nr_dim, r_dim, 1, 1)
+    imx = x.reshape(nr_dim, 1, r_dim, 1).expand(nr_dim, r_dim, r_dim, 1).max(axis=-2, keepdim=True)
+    return (inp - imx.detach()).exp().div(ss).reshape(x.shape)
+
+
 def summing_local(size):
     """out[l] = sum over r of a[l*8+r], the thread axis l of size `size`."""
     out, a = UOp.param(0, dtypes.float, 16), UOp.param(1, dtypes.float, 128)
@@ -256,6 +267,9 @@ KERNELS = {
     "arange": lambda: last(Tensor.arange(128).clone()),
     "sum_rows_64": lambda: last(empty(64, 64).sum(1)),
     "double_sum": lambda: last(empty(4, 4, 4).sum((1, 2)).sum()),
+    "sibling_sums": lambda: last(empty(64).sum() + empty(128).sum() + empty(40).sum()),
+    "ten_sums": lambda: last(sum((empty(1024).sum() for _ in range(9)), start=empty(1024).sum())),
+    "single_kernel_softmax": lambda: last(single_kernel_softmax(empty(32, 32))),
     # test_custom_kernel.py
     "variable_add": lambda: [c.src[0] for c in Tensor.linear_with_vars(
         empty(10)[:UOp.variable("n", 1, 10).bind(4)].contiguous() + 1)[0].src if c.src[0].op is Ops.SINK][-1],
@@ -399,6 +413,10 @@ case("top_split_upcast", "sum_rows_64", "cpu", [upcast(0, 16, top=True)])
 case("double_sum_group", "double_sum", "metal", [local(0, 16, top=True)])
 case("double_sum_unroll_group", "double_sum", "metal", [unroll(1, 4), local(0, 16, top=True)])
 case("double_sum_group_twice", "double_sum", "metal", [local(1, 4, top=True), local(1, 16, top=True)])
+# a group shares its threads with the independent outermost reductions whose axis it divides, while their buffers fit
+case("sibling_sums_group", "sibling_sums", "metal", [local(0, 16, top=True)])
+case("ten_sums_group", "ten_sums", "metal", [local(0, 1024, top=True)])
+case("single_kernel_softmax_group", "single_kernel_softmax", "metal", [local(2, 4)])
 
 # The refusals of apply_opt, one per check
 

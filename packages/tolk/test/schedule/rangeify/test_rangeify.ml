@@ -85,6 +85,7 @@ let programs =
     "expand_before_cast";
     "expand_kept";
     "expand_staged";
+    "finite_checks";
     "full_invalid";
     "inline_function";
     "invalids_read";
@@ -158,6 +159,7 @@ let programs =
     "std";
     "sum";
     "sum_all";
+    "sum_all_broadcast";
     "sum_kept_broadcast";
     "symbolic_contiguous";
     "prefix_sum_broadcast";

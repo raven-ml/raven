@@ -129,6 +129,9 @@ top_split_upcast	sum_rows_64	cpu	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType
 double_sum_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		ok	
 double_sum_unroll_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))		KernelOptError	1
 double_sum_group_twice	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)))		ok	
+sibling_sums_group	sibling_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		ok	
+ten_sums_group	ten_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
+single_kernel_softmax_group	single_kernel_softmax	metal	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		ok	
 split_axis_negative	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=-1, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
 split_axis_past_end	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UNROLL)),)		KernelOptError	0
 split_last_axis	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UNROLL)),)		ok	

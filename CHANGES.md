@@ -950,6 +950,14 @@ thread.
 
 ### Tolk (new)
 
+- A value of no axes that its consumers broadcast, such as a reduction of a
+  whole tensor, is computed once. Each consumer computed it again for each
+  of its elements: `x - Nx.sum x` summed `x` once per element, and
+  `Vega.Loss_scale.step` checked every gradient in five kernels.
+- A kernel's independent reductions share the threads of its workgroup. A
+  check of many values, such as `Vega.Loss_scale`'s, ran all but its first
+  reduction in each thread: in GPT-2 124M's float16 step on an M1 Max's
+  Metal it takes 0.77 ms, from 3.1 ms.
 - A precompiled call whose argument has no element compiles: the argument
   passes as its constant. `Rune.jit` of a scan whose carry has no element
   and whose step reads its rows failed verification, as under `vmap (grad
@@ -958,7 +966,6 @@ thread.
   holds, the integer part of a float wrapped to the type's width. A constant
   past 64 bits, such as a large float padding value converted to an integer,
   was written as a literal C refuses.
-
 - A matrix-vector product's workgroup takes rows of its matrix, which share
   the vector's loads, before rows that each read a vector of their own.
   `Nx_quant.apply ~ids` on a prompt laid its workgroups over blocks of

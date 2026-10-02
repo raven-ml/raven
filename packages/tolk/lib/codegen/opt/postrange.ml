@@ -144,6 +144,90 @@ module Scheduler = struct
          (fun i -> List.mem (List.nth types i) [ Axis_type.Warp; Local ])
          (reduce_axes k))
 
+  (* Grouping
+
+     A local split of a reduce axis groups the reductions that close it: each
+     thread of the workgroup reduces its part of the axis into a buffer in
+     shared memory, which every thread then reduces. *)
+
+  let closers k rng =
+    List.filter
+      (fun u -> List.exists (mem_ranges rng) (List.tl (src u)))
+      (reduceops k)
+
+  let grouped_reduces k =
+    let thread r = List.mem (axis_type r) Axis_type.[ Warp; Local ] in
+    List.filter
+      (fun u ->
+        List.exists
+          (fun s -> List.exists thread (Nodes.to_list (ranges s)))
+          (List.tl (src u)))
+      (reduceops k)
+
+  let union us vs = us @ List.filter (fun v -> not (List.memq v us)) vs
+
+  (* The bytes of shared memory the buffers of [grouped] take after a split by
+     [amt]. The sizes may exceed an int, so the product is a node. *)
+  let smem k amt grouped =
+    let shape = full_shape k in
+    let lanes =
+      List.fold_left
+        (fun p a -> mul p (sint_to_uop (List.nth shape a)))
+        (z amt)
+        (axes_of k [ Upcast; Warp; Local ])
+    in
+    let bytes =
+      List.fold_left (fun n u -> n + Dtype.itemsize (dtype u)) 0 grouped
+    in
+    mul lanes (int bytes)
+
+  let smem_fits k amt grouped =
+    to_bool O.(smem k amt grouped <= int k.ren.shared_max)
+
+  (* The reductions no reduce axis of the kernel encloses. *)
+  let outermost k =
+    let red = List.map (List.nth (rngs k)) (reduce_axes k) in
+    List.filter
+      (fun u -> not (List.exists (fun r -> mem_ranges r u) red))
+      (reduceops k)
+
+  (* [siblings k rng amt grouped] is the axes that a group of [rng] by [amt]
+     splits besides [rng], so that its threads share the kernel's independent
+     outermost reductions, as a check of many values combines many: without them
+     each thread runs the others whole. [rng]'s reductions must be outermost.
+     Each other outermost reduction gives its first reduce axis that [amt]
+     divides and that only outermost reductions close, while those reductions
+     read no grouped one nor are read by one, and the buffers fit in shared
+     memory along with [grouped]'s. A reduction that reads another stays out:
+     the two final reductions of the shared buffers would run one loop. *)
+  let siblings k rng amt grouped =
+    let top = outermost k in
+    let axis_of u =
+      List.find_opt
+        (fun r ->
+          axis_type r = Axis_type.Reduce
+          && List.exists (mem_ranges r) (List.tl (src u))
+          && Option.is_some (divides (nth r 0) amt)
+          && List.for_all (fun c -> List.memq c top) (closers k r))
+        (rngs k)
+    in
+    let independent grouped u =
+      not (List.exists (fun g -> reaches u g || reaches g u) grouped)
+    in
+    let take (axes, grouped) u =
+      match axis_of u with
+      | Some r when not (List.memq u grouped || List.memq r axes) ->
+          let joining = closers k r in
+          let joined = union grouped joining in
+          if
+            List.for_all (independent grouped) joining && smem_fits k amt joined
+          then (r :: axes, joined)
+          else (axes, grouped)
+      | _ -> (axes, grouped)
+    in
+    if not (List.for_all (fun u -> List.memq u top) (closers k rng)) then []
+    else List.rev (fst (List.fold_left take ([], grouped) top))
+
   (* Printing *)
 
   let output_rngs k =
@@ -276,25 +360,17 @@ module Scheduler = struct
             check Bigint.(leq amt (of_int 32)) "don't unroll more than 32";
           if target = Upcast then
             check Bigint.(leq amt (of_int 16)) "don't upcast more than 16";
+          let groups = target = Local && List.mem axis (reduce_axes k) in
+          let grouped = grouped_reduces k in
+          let grouped =
+            if groups then union grouped (closers k rng) else grouped
+          in
           (* prevents METAL compiler hangs *)
-          (match reduceop k with
-          | Some r
-            when (target = Local && List.mem axis (reduce_axes k))
-                 || group_for_reduces k > 0 ->
-              (* the sizes may exceed an int, so the product is a node *)
-              let shape = full_shape k in
-              let smem_sz =
-                List.fold_left
-                  (fun p a -> mul p (sint_to_uop (List.nth shape a)))
-                  (z amt)
-                  (axes_of k [ Upcast; Warp; Local ])
-                |> fun p -> mul p (int (Dtype.itemsize (dtype r)))
-              in
-              check
-                (to_bool O.(smem_sz <= int k.ren.shared_max))
-                (strf "exceeds maximum shared memory size: needs %s, max %d"
-                   (Render.render smem_sz) k.ren.shared_max)
-          | _ -> ());
+          if groups || group_for_reduces k > 0 then
+            check (smem_fits k amt grouped)
+              (strf "exceeds maximum shared memory size: needs %s, max %d"
+                 (Render.render (smem k amt grouped))
+                 k.ren.shared_max);
           if target = Unroll || axis_type rng = Reduce then begin
             let reduces =
               List.filter
@@ -315,7 +391,11 @@ module Scheduler = struct
                       (Nodes.to_list (ranges (List.hd reduces)))))
                 "cannot have a group inside an unrolled reduce"
           end;
+          let shared = if groups then siblings k rng amt grouped else [] in
           let replaced, new_rng = split ~top k rng amt target in
+          List.iter
+            (fun r -> ignore (split ~top ~new_rng k r amt target))
+            shared;
           [ replaced; new_rng ]
       | Tc { axis; tc_select; tc_opt; use_tc } -> (
           check (k.applied_opts = []) "tensor core opts must be first";

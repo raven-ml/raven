@@ -157,6 +157,13 @@ def split(program):
     return split_program
 
 
+def finite_checks():
+    """A loss-scaled step's selection: whether every gradient is finite, one value of no axes that each update reads."""
+    grads = [empty(64), empty(32, 32), empty(48)]
+    finite = (grads[0] == grads[0]).all() & (grads[1] == grads[1]).all() & (grads[2] == grads[2]).all()
+    return tuple(finite.where(g * 2, g) for g in grads)
+
+
 def many_inputs(n, *shape): return sum((empty(*(shape or (8,))) for _ in range(n)), start=empty(*(shape or (8,))))
 
 
@@ -238,6 +245,8 @@ PROGRAMS = {
         empty(4, 4), empty(4, 4)),
     "reduce_expand_child": lambda: (lambda a, b: (a.sum() + 2, a.sum() + b))(empty(32, 32, 32), empty(1, 16)),
     "reduce_broadcast_not_recomputed": lambda: (lambda a: a - a.mean(axis=0, keepdim=True))(empty(32, 16)),
+    "sum_all_broadcast": lambda: (lambda a: a - a.sum())(empty(32, 16)),
+    "finite_checks": finite_checks,
     "ugly_reduceop_pairing": lambda: (lambda a, b, c: (c * a.sum(-1, keepdim=True)).sum(-1)
                                       + (b * a.sum(-1, keepdim=True)).sum(-1))(empty(4, 32), empty(4, 32), empty(4, 32)),
     "reduce_expand_reduce": lambda: (lambda a: (a + a.sum(-1, keepdim=True)).sum(-1))(empty(4, 32)),

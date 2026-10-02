@@ -469,7 +469,14 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
                (Op.Set.union Op.Set.elementwise (ops [ Op.Reduce ]))
         then begin
           ending := [];
-          if List.is_empty out_rngs then out_rngs
+          (* A value of no axes that computes a reduction is stored too, as one
+             element: inlined where it is broadcast, each element of the
+             consumer would compute the reduction whole. Without a reduction it
+             is scalar arithmetic, which may be an offset of a shard. *)
+          if
+            List.is_empty out_rngs
+            && not (op_in_backward_slice_with_self x [ Op.Reduce ])
+          then out_rngs
           else begin
             Tbl.replace rctx.realize_map x
               (Some (List.init (List.length out_rngs) Fun.id));

@@ -53,8 +53,10 @@ div_collapse	1
 reduce_same_size	3
 reduce_multiple_paths	2
 reduce_ext_reduce_child	2
-reduce_expand_child	3
+reduce_expand_child	4
 reduce_broadcast_not_recomputed	2
+sum_all_broadcast	2
+finite_checks	5
 ugly_reduceop_pairing	2
 reduce_expand_reduce	2
 multireduce_parallel	1
@@ -70,7 +72,7 @@ shrink_pad_unsafe	1
 base_change_expand_pad	1
 base_change_pad_expand	1
 zero_size_children	1
-preserve_multistage_reduce	3
+preserve_multistage_reduce	4
 clone	1
 contiguous	2
 assign	1

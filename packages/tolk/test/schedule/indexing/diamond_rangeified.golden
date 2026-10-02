@@ -27,9 +27,11 @@
 25 Ops.RANGE dtypes.weakint [1] (2, AxisType.REDUCE)
 26 Ops.INDEX dtypes.float [13, 24, 25]
 27 Ops.REDUCE dtypes.float [26, 24, 25] (Ops.MAX, 0)
-28 Ops.ADD dtypes.float [23, 27]
-29 Ops.STORE dtypes.void [3, 28]
-30 Ops.END dtypes.void [29, 2]
-31 Ops.AFTER dtypes.float [0, 30]
-32 Ops.SINK dtypes.void [31]
+28 Ops.STAGE dtypes.float [27] BufferizeOpts(device="CPU", broadcast=True)
+29 Ops.INDEX dtypes.float [28]
+30 Ops.ADD dtypes.float [23, 29]
+31 Ops.STORE dtypes.void [3, 30]
+32 Ops.END dtypes.void [31, 2]
+33 Ops.AFTER dtypes.float [0, 32]
+34 Ops.SINK dtypes.void [33]
 
