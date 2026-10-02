@@ -1502,6 +1502,14 @@ and broadcast lid shares children arrs first =
   in
   let nrows = List.fold_left (fun d a -> dim d a.nrows) 1 arrs in
   let ncols = List.fold_left (fun d a -> dim d a.ncols) 1 arrs in
+  (* Under nx's rule a figure of one cell repeats into none beside a grid of
+     none, which would drop it. *)
+  let has_cells s =
+    match s.body with Single _ -> true | Arr a -> a.nrows * a.ncols > 0
+  in
+  if nrows * ncols = 0 && List.exists has_cells children then
+    err "resolve" "a child of %a with cells is layered with a grid of none"
+      pp_id lid;
   let layout a = List.map (fun c -> (c.row, c.col, c.rows, c.cols)) a.cells in
   let spanned a = List.exists (fun c -> c.rows > 1 || c.cols > 1) a.cells in
   let template =

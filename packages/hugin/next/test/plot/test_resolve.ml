@@ -202,6 +202,9 @@ let errors =
                  grid [ [ layer [] ]; [ layer [] ]; [ layer [] ] ];
                ])),
         [ "root" ] );
+      ( "a mark layered with a grid of no cells",
+        (fun () -> resolve (layer [ dot1 [| 1. |] [| 1. |]; grid [] ])),
+        [ "root" ] );
       ( "a grid with spans and another grid",
         (fun () ->
           resolve
@@ -422,6 +425,9 @@ let composition =
           | _ ->
               cover "shapes that do not broadcast" true;
               invalid (fun () -> resolve (layer [ g r c; g r' c' ])));
+      test "grids of no cells layer into a grid of none" (fun () ->
+          equal bool true
+            (contains (printed (resolve (layer [ grid []; grid [] ]))) "0 × 0"));
       test "a layered mark joins each cell of a grid" (fun () ->
           let r =
             resolve

@@ -821,7 +821,8 @@ val layer : t list -> t
       gives [a] another id.
 
     {!resolve} raises [Invalid_argument] if the children's arrangements do not
-    broadcast. *)
+    broadcast, or broadcast to no cells while a child has some, since that child
+    would be drawn nowhere: [layer [ a; grid [] ]] raises. *)
 
 val grid : ?widths:float list -> ?heights:float list -> t list list -> t
 (** [grid rows] arranges figures in a grid of rows, from the top, of cells, from
