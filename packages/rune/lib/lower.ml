@@ -583,18 +583,27 @@ let same_view v0 v1 =
   && View.shape v0 = View.shape v1
   && View.strides v0 = View.strides v1
 
+(* Whether every element of a value of view [v] reads one element of its
+   storage, as a scalar's and a broadcast scalar's do. *)
+let single v =
+  View.numel v > 0
+  &&
+  let lo, hi = View.extent v in
+  hi - lo = 1
+
+(* [scalar tdt x] is [x], a value of one element that is not traced, as a
+   constant of dtype [tdt]: its element is read now. *)
+let scalar tdt x =
+  let shape = Nx.shape x in
+  let first = Nx.item (List.map (fun _ -> 0) (Array.to_list shape)) x in
+  broadcast (Ops.const ~dtype:tdt (const (Nx.dtype x) first)) shape
+
 (* [bind s what p x] is the node of [x], a value at [p] that is not traced. *)
 let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
  fun s what p x ->
   let dt = Nx.dtype x and shape = Nx.shape x in
   let tdt = check s what p dt in
   let key = key x and bufs, v = Nx.shards x in
-  let one =
-    View.numel v > 0
-    &&
-    let lo, hi = View.extent v in
-    hi - lo = 1
-  in
   let owned =
     match key with
     | Host_buffer b -> not (Nx_device.Buffer.is_borrowed b)
@@ -602,9 +611,7 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
   in
   if View.numel v = 0 then
     broadcast (Ops.const ~dtype:tdt (`Int Bigint.zero)) shape
-  else if one && owned then
-    let first = Nx.item (List.map (fun _ -> 0) (Array.to_list shape)) x in
-    broadcast (Ops.const ~dtype:tdt (const dt first)) shape
+  else if single v && owned then scalar tdt x
   else
     let same c =
       same_storage c.storage key && same_view c.view v && Placement.equal c.at p
@@ -623,10 +630,14 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
         node
 
 (* [placed s what p x] is the node of [x], a value that is not traced, at [p]:
-   where it lies if that is [p], placed there first otherwise. *)
+   where it lies if that is [p], placed there first otherwise. A value of one
+   element that lies elsewhere is a constant read now: placing it would copy it
+   to [p] only to read it back, and a copy waits for the work queued on [p], so
+   a trace would stall behind the kernels of the calls before it. *)
 let placed s what p x =
-  if (not (on_disk x)) && same_layout (Nx.placement x) p (Nx.shape x) then
-    bind s what p x
+  if on_disk x then bind s what p (Nx.place p x)
+  else if same_layout (Nx.placement x) p (Nx.shape x) then bind s what p x
+  else if single (snd (Nx.shards x)) then scalar (check s what p (Nx.dtype x)) x
   else bind s what p (Nx.place p x)
 
 (* [capture s what p x] is the node of [x], a value that is not traced, as an

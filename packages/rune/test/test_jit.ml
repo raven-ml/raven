@@ -1596,6 +1596,19 @@ let captures =
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           equal close (Nx.mul_s (x ()) 3.) (host (g (placed d1 (x ()))));
           is_true ~msg:"not pinned" (lends w));
+      test
+        "host scalars beside a value on a device are constants: the trace \
+         moves no byte" (fun () ->
+          let half = Nx.broadcast_to [| 4 |] (Nx.scalar Nx.float32 0.5) in
+          let f a = Nx.add (Nx.mul_s a 3.) half in
+          let g = Rune.jit' f in
+          let a = placed d2 (x ()) in
+          let before = stats d2 in
+          let r = g a in
+          let moved = Nx_device.Stats.diff before (stats d2) in
+          equal ~msg:"bytes received" int 0 (Nx_device.Stats.bytes_in moved);
+          equal ~msg:"bytes sent" int 0 (Nx_device.Stats.bytes_out moved);
+          equal close (f (x ())) (host r));
       test "a host capture of a call on a device is placed there once"
         (fun () ->
           let w = y () in

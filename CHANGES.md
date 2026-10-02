@@ -178,6 +178,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `jit` reads a host scalar operand of a value on a device, such as `add_s`'s,
+  as a constant where it lies. It used to copy it to the device and back, and
+  each copy waited for the work queued there, so a trace stalled behind the
+  previous call's kernels.
 - **Breaking:** `grad`, `jvp` and `vmap` of a `jit` function, and a
   `Total.collect` around one, compile: each runs programs for the derived
   function, kept in the compiled function. Before, `jit` ran its function as
