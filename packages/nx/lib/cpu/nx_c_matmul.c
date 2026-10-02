@@ -1622,6 +1622,22 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   return NX_C_OK;
 }
 
+/* The direct loop for one 2-D product, in whichever orientation streams its
+   operands. The loop vectorizes along B's rows when they are contiguous and
+   otherwise runs one strided dot per output. C = A·B and Cᵀ = Bᵀ·Aᵀ sum
+   every output's products in the same order, so when only Aᵀ has contiguous
+   rows (A column-major, as in linalg's column-major panels) the transposed
+   product is the same computation at the vectorized rate. */
+static void mm_direct2d(const nx_c_mm_desc *d, const char *A, int64_t a_rs,
+                        int64_t a_cs, const char *B, int64_t b_rs,
+                        int64_t b_cs, char *C, int64_t c_rs, int64_t c_cs,
+                        int64_t m, int64_t n, int64_t k) {
+  if (b_cs != 1 && a_rs == 1)
+    d->direct(B, b_cs, b_rs, A, a_cs, a_rs, C, c_cs, c_rs, n, m, k);
+  else
+    d->direct(A, a_rs, a_cs, B, b_rs, b_cs, C, c_rs, c_cs, m, n, k);
+}
+
 /* ── Compute-typed GEMM entry for the linalg family (nx_c_matmul.h) ─────────
 
    One 2-D C = A·B over COMPUTE-typed strided buffers, dt in {f32,f64,c32,c64}
@@ -1642,7 +1658,7 @@ nx_c_status nx_c_gemm2d_ct(nx_c_dtype dt, int64_t m, int64_t n, int64_t k,
   if (m <= 0 || n <= 0) return NX_C_OK;
   int MR = d->MR, NR = d->NR;
   if (k <= 0 || m < MR || n < NR || (int64_t)m * n * k < MM_DIRECT_CUTOFF) {
-    d->direct(A, a_rs, a_cs, B, b_rs, b_cs, C, c_rs, c_cs, m, n, k);
+    mm_direct2d(d, A, a_rs, a_cs, B, b_rs, b_cs, C, c_rs, c_cs, m, n, k);
     return NX_C_OK;
   }
   int64_t mcm = m < MM_MC ? m : MM_MC;
@@ -1716,7 +1732,7 @@ nx_c_status nx_c_gemm2d_ct_ws(nx_c_dtype dt, int64_t m, int64_t n, int64_t k,
   if (m <= 0 || n <= 0) return NX_C_OK;
   int MR = d->MR, NR = d->NR;
   if (k <= 0 || m < MR || n < NR || (int64_t)m * n * k < MM_DIRECT_CUTOFF) {
-    d->direct(A, a_rs, a_cs, B, b_rs, b_cs, C, c_rs, c_cs, m, n, k);
+    mm_direct2d(d, A, a_rs, a_cs, B, b_rs, b_cs, C, c_rs, c_cs, m, n, k);
     return NX_C_OK;
   }
   int64_t mcm = m < MM_MC ? m : MM_MC;
