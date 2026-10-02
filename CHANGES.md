@@ -3052,6 +3052,8 @@ thread.
 
 ### Nx
 
+- `Nx.bitcast` on a device of a view at an offset, such as a slice, read the
+  storage from its start: the result now keeps the view, as on the host.
 - `Nx_ragged.ids` builds each round's words in the elements' memory order,
   which tells rows apart as well as the sort order does, and reads every row
   in place on its first round, where it reordered each word's bytes and

@@ -101,6 +101,14 @@ let cases : (string * (at -> Nx.packed list)) list =
     ("bitcast int32", fun { at } -> [ Nx.P (Nx.bitcast Nx.float32 (at ints)) ]);
     ( "bitcast narrower",
       fun { at } -> [ Nx.P (Nx.bitcast Nx.uint16 (at signed)) ] );
+    ( "bitcast of a view",
+      fun { at } ->
+        [ Nx.P (Nx.bitcast Nx.int64 (Nx.slice [ I 1; R (1, 3) ] (at signed))) ]
+    );
+    ( "bitcast narrower of a view",
+      fun { at } ->
+        [ Nx.P (Nx.bitcast Nx.uint16 (Nx.slice [ A; R (1, 3) ] (at signed))) ]
+    );
     ( "bitcast wider",
       fun { at } ->
         [ Nx.P (Nx.bitcast Nx.complex128 (at (Nx.reshape [| 3; 2 |] signed))) ]

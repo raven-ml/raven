@@ -132,7 +132,9 @@ let compute : type r. Kernels.env list -> settle -> r Op.t -> r =
       invalid_arg "Nx: the operation computes nothing"
 
 (* The results of every device at [q], each the whole result, or, when
-   [windowed], each device's window of the whole result copied out on it. *)
+   [windowed], each device's window of the whole result copied out on it. A
+   result is read through its array's view, which a bitcast shares with its
+   operand. *)
 let settle_on q ~windowed envs =
   let ds = Placement.devices q in
   let window e d a =
@@ -151,8 +153,7 @@ let settle_on q ~windowed envs =
           else arrays
         in
         let a = List.hd arrays in
-        placed "Nx" q a.dtype
-          (View.create (Kernels.shape_of a))
+        placed "Nx" q a.dtype a.view
           (cell ~placement:q
              ~length:(Nx_device.Buffer.length a.buffer)
              (List.map (fun (a : (_, _) Nx_array.t) -> a.buffer) arrays)));
