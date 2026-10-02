@@ -22,6 +22,25 @@
     the system memory of its machine are then that machine's addresses, reached
     through the connection, and it has no interrupts. *)
 
+(** {1:addresses Bus addresses}
+
+    A function's bus address names it on its machine, as Linux spells it:
+    ["DDDD:BB:DD.F"], its domain, bus, device and function numbers in lowercase
+    hexadecimal, the domain in at least four digits. *)
+
+val address : domain:int -> bus:int -> device:int -> fn:int -> string
+(** [address ~domain ~bus ~device ~fn] is the bus address of function [fn] of
+    device [device] on bus [bus] of domain [domain], such as ["0000:03:00.0"].
+    Kernel drivers report their devices by these numbers. *)
+
+val compare_address : string -> string -> int
+(** [compare_address a b] orders bus addresses in bus order: by domain, then
+    bus, device and function, each as a number.
+
+    Raises [Invalid_argument] if [a] or [b] is no bus address. *)
+
+(** {1:functions Functions} *)
+
 type t
 (** The type for PCI functions the process has taken. *)
 
@@ -31,11 +50,11 @@ val scan :
   ?class_:int ->
   (int * int list) list ->
   string list
-(** [scan ~vendor ids] is the bus addresses, such as ["0000:03:00.0"] and in
-    their order, of the functions of [vendor] whose device id, masked by [m], is
-    in [l] for some [(m, l)] of [ids], and whose base class is [class_] if
-    given, on the machine of [remote] if given, on this one otherwise. It is
-    [[]] where the system has no [/sys/bus/pci]. *)
+(** [scan ~vendor ids] is the bus addresses, in bus order ({!compare_address}),
+    of the functions of [vendor] whose device id, masked by [m], is in [l] for
+    some [(m, l)] of [ids], and whose base class is [class_] if given, on the
+    machine of [remote] if given, on this one otherwise. It is [[]] where the
+    system has no [/sys/bus/pci]. *)
 
 val take : ?remote:Remote.t -> lock:string -> string -> t
 (** [take ~lock bus] takes the function at [bus], of the machine of [remote] if

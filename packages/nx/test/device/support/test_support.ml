@@ -575,6 +575,55 @@ let test_firmware_download () =
   | Error why -> contains ~msg:"a failed download" ~sub:"downloading" why
   | Ok _ -> fail "nothing to download"
 
+(* Pci *)
+
+(* Linux names a function [pci_name]: "%04x:%02x:%02x.%d" of its domain, bus,
+   device and function. *)
+let spelled =
+  cases "a bus address is spelled as Linux names the function"
+    ~name:(fun (_, s) -> s)
+    [
+      ((0, 3, 0, 0), "0000:03:00.0");
+      ((0, 0xff, 0x1f, 7), "0000:ff:1f.7");
+      ((0xabcd, 0x0a, 1, 1), "abcd:0a:01.1");
+      ((0x10000, 0, 2, 0), "10000:00:02.0");
+    ]
+    (fun ((domain, bus, device, fn), s) ->
+      equal string s (Pci.address ~domain ~bus ~device ~fn))
+
+(* Domains around 0x10000 order differently as numbers and as text. *)
+let pci_numbers =
+  let domain =
+    Gen.frequency
+      [
+        (2, Gen.int_range 0 2);
+        (1, Gen.int_range 0xfff0 0xffff);
+        (1, Gen.int_range 0x10000 0x10002);
+      ]
+  in
+  Gen.quad domain (Gen.int_range 0 0xff) (Gen.int_range 0 0x1f)
+    (Gen.int_range 0 7)
+
+let address (domain, bus, device, fn) = Pci.address ~domain ~bus ~device ~fn
+
+let test_bus_order =
+  prop "bus order is the order of the numbers"
+    (Gen.pair pci_numbers pci_numbers) (fun (a, b) ->
+      let (da, _, _, _), (db, _, _, _) = (a, b) in
+      cover "a four-digit and a five-digit domain"
+        (da < 0x10000 <> (db < 0x10000));
+      cover "one domain" (da = db);
+      equal int
+        (Int.compare (compare a b) 0)
+        (Int.compare (Pci.compare_address (address a) (address b)) 0))
+
+let not_addresses =
+  cases "a string that is no bus address is refused" ~name:(Printf.sprintf "%S")
+    [ ""; "0000:03:00"; "0000:03:00."; "0000:03:00.0.1"; "0000:3g:00.0"; "x" ]
+    (fun s ->
+      raises_match (Exn.invalid_arg ~substring:"no PCI bus address") (fun () ->
+          Pci.compare_address s "0000:00:00.0"))
+
 (* Remote: a server in this process, on the loopback. *)
 
 let key = "a key of the test, long enough"
@@ -1026,6 +1075,7 @@ let () =
              test "allocated memory stays locked" test_sysmem_pins;
              test "contiguous memory" test_sysmem_contiguous;
            ];
+         group "pci" [ spelled; test_bus_order; not_addresses ];
          group "remote"
            [
              test "handshake" test_handshake;

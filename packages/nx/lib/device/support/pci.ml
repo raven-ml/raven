@@ -62,6 +62,33 @@ let readlink link =
 let hex s =
   int_of_string (if String.starts_with ~prefix:"0x" s then s else "0x" ^ s)
 
+(* Bus addresses *)
+
+let address ~domain ~bus ~device ~fn =
+  Printf.sprintf "%04x:%02x:%02x.%x" domain bus device fn
+
+(* The numbers of the bus address [a], which Linux spells "DDDD:BB:DD.F". *)
+let numbers a =
+  let invalid () = invalid_arg (Printf.sprintf "%S is no PCI bus address" a) in
+  let num s =
+    if
+      s <> ""
+      && String.length s <= 8
+      && String.for_all Char.Ascii.is_hex_digit s
+    then int_of_string ("0x" ^ s)
+    else invalid ()
+  in
+  match String.split_on_char ':' a with
+  | [ domain; bus; df ] -> (
+      match String.split_on_char '.' df with
+      | [ device; fn ] -> (num domain, num bus, num device, num fn)
+      | _ -> invalid ())
+  | _ -> invalid ()
+
+let compare_address a b = compare (numbers a) (numbers b)
+
+(* Functions *)
+
 let scan_local ~vendor ?class_ ids =
   if not (Sys.file_exists root) then []
   else
@@ -77,7 +104,7 @@ let scan_local ~vendor ?class_ ids =
           | None -> true
           | Some c -> hex (read (path bus "class")) lsr 16 = c
         with Sys_error _ | Failure _ -> false)
-    |> List.sort String.compare
+    |> List.sort compare_address
 
 let driver bus =
   let link = path bus "driver" in
