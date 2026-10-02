@@ -5,6 +5,7 @@
 
 open Talon_next
 module Reader = Bytesrw.Bytes.Reader
+module A1 = Bigarray.Array1
 
 type column = { name : string; ty : Type.any; declared : bool }
 
@@ -39,8 +40,16 @@ let check_names fn names =
       Hashtbl.add seen n ())
     names
 
+let reads (Type.Any t) =
+  match t with
+  | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+  | Float16 | Float32 | Float64 | Decimal _ | String | Binary | Categorical _
+  | Date | Datetime _ ->
+      true
+  | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
+
 let check_type fn name ty =
-  if not (Columns.reads ty) then
+  if not (reads ty) then
     invalid fn "column %s: CSV does not read %s" (quoted name) (type_name ty)
 
 let check_nulls fn ~seps ~quote nulls =
@@ -134,97 +143,223 @@ let pp_format ppf f =
 
 (* Errors *)
 
-exception Failed of Error.t
+exception
+  Failed of { at : (int * int) option; text : string option; msg : string }
 
-let fail_at s pos ?text msg =
-  let line, column = Scan.locate s pos in
-  raise (Failed (Error.v ~line ~column ?text msg))
+let fail ?at ?text msg = raise (Failed { at; text; msg })
+let fail_at s pos ?text msg = fail ~at:(Scan.locate s pos) ?text msg
 
-let protect f =
+(* [file] is the path the errors name. A [Sys_error] names its own. *)
+let protect ?file f =
+  let error ?line ?column ?text msg =
+    Error (Error.v ?file ?line ?column ?text msg)
+  in
   try f () with
-  | Failed e -> Error e
-  | Scan.Error { line; column; msg } -> Error (Error.v ~line ~column msg)
-  | Bytesrw.Bytes.Stream.Error e ->
-      Error (Error.v (Bytesrw.Bytes.Stream.error_message e))
+  | Failed { at = Some (line, column); text; msg } ->
+      error ~line ~column ?text msg
+  | Failed { at = None; text; msg } -> error ?text msg
+  | Scan.Error { line; column; msg } -> error ~line ~column msg
+  | Bytesrw.Bytes.Stream.Error e -> error (Bytesrw.Bytes.Stream.error_message e)
   | Sys_error msg -> Error (Error.v msg)
+
+(* Fields *)
+
+let rec same_from b pos s i =
+  i = String.length s
+  || Bytes.unsafe_get b (pos + i) = String.unsafe_get s i
+     && same_from b pos s (i + 1)
+
+let rec is_token b pos len = function
+  | [] -> false
+  | t :: ts ->
+      (String.length t = len && same_from b pos t 0) || is_token b pos len ts
+
+let is_null nulls s r j =
+  (not (Scan.quoted s r j))
+  &&
+  let len = Scan.len s r j in
+  len = 0 || is_token (Scan.bytes s) (Scan.pos s r j) len nulls
+
+let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+
+(* A binary column has no value to check, so [of_layout] cannot fail. *)
+let binary ?validity offsets data =
+  let length = A1.dim offsets - 1 in
+  let validity = Option.map (fun v -> Nx_bits.v ~length (tensor v)) validity in
+  Result.get_ok
+    (Column.of_layout (Type.Any Type.binary)
+       (Varsize
+          {
+            validity;
+            offsets = tensor offsets;
+            child = Column.of_tensor (tensor data);
+          }))
+
+let no_texts =
+  binary
+    (A1.init Bigarray.int64 Bigarray.c_layout 1 (Fun.const 0L))
+    (A1.create Bigarray.int8_unsigned Bigarray.c_layout 0)
+
+(* [texts ~quote ~nulls s j ~first ~rows] is the binary column of field [j] of
+   the records [first] to [first + rows - 1] of [s]'s batch, its doubled quotes
+   undoubled, null where the field is. *)
+let texts ~quote ~nulls s j ~first ~rows =
+  let b = Scan.bytes s in
+  let total = ref 0 in
+  for r = first to first + rows - 1 do
+    total := !total + Scan.len s r j
+  done;
+  let data = A1.create Bigarray.int8_unsigned Bigarray.c_layout !total in
+  let offsets = A1.create Bigarray.int64 Bigarray.c_layout (rows + 1) in
+  A1.unsafe_set offsets 0 0L;
+  let validity = ref None and o = ref 0 in
+  (* The validity's bytes are made at the first null. *)
+  let null i =
+    let v =
+      match !validity with
+      | Some v -> v
+      | None ->
+          let v =
+            A1.create Bigarray.int8_unsigned Bigarray.c_layout ((rows + 7) / 8)
+          in
+          A1.fill v 0xFF;
+          validity := Some v;
+          v
+    in
+    A1.unsafe_set v (i / 8) (A1.unsafe_get v (i / 8) land lnot (1 lsl (i mod 8)))
+  in
+  for i = 0 to rows - 1 do
+    let r = first + i in
+    if is_null nulls s r j then null i
+    else begin
+      let pos = Scan.pos s r j and len = Scan.len s r j in
+      let quoted = Scan.quoted s r j in
+      let k = ref pos in
+      while !k < pos + len do
+        let c = Bytes.unsafe_get b !k in
+        A1.unsafe_set data !o (Char.code c);
+        incr o;
+        k := if quoted && c = quote then !k + 2 else !k + 1
+      done
+    end;
+    A1.unsafe_set offsets (i + 1) (Int64.of_int !o)
+  done;
+  binary ?validity:!validity offsets (A1.sub data 0 !o)
 
 (* Sniffing
 
-   A text's forms are the types it reads as, as bits, with flags. A null reads
-   as every type, and a column's forms are the meet of its fields' forms. *)
+   A column's type is the first candidate that each of its sampled values reads
+   as, by [Column.parse] over the column's texts with its nulls and the rows
+   outside the sample masked. *)
 
-let bool_ = 1
-let int_ = 2
-let float_ = 4
-let date_ = 8
-let naive = 16
-let zoned = 32
-let null = 63
-let fine = 64 (* Not a whole number of microseconds. *)
-let wide = 128 (* Outside the nanoseconds' range. *)
-let seen = 256 (* Not null. *)
+let candidates =
+  Type.
+    [
+      Any bool;
+      Any int64;
+      Any float64;
+      Any date;
+      Any (datetime Us);
+      Any (datetime Ns);
+      Any (datetime ~zone:"UTC" Us);
+      Any (datetime ~zone:"UTC" Ns);
+    ]
 
-let meet a b =
-  let common = a land b and either = a lor b in
-  common land null lor (either land lnot null)
+let is_digit c = '0' <= c && c <= '9'
+
+let after_sign b pos len =
+  if len > 0 && (Bytes.get b pos = '-' || Bytes.get b pos = '+') then pos + 1
+  else pos
 
 (* [is_integer b pos len] is [true] iff the text is digits after an optional
    sign. *)
 let is_integer b pos len =
-  let stop = pos + len in
-  let first =
-    if len > 0 && (Bytes.get b pos = '-' || Bytes.get b pos = '+') then pos + 1
-    else pos
-  in
-  let rec digits i =
-    i = stop || (Char.Ascii.is_digit (Bytes.get b i) && digits (i + 1))
-  in
+  let first = after_sign b pos len and stop = pos + len in
+  let rec digits i = i = stop || (is_digit (Bytes.get b i) && digits (i + 1)) in
   first < stop && digits first
 
-let forms ~nulls ~ticks ~floats s r j =
-  let b = Scan.bytes s and pos = Scan.pos s r j and len = Scan.len s r j in
-  let reads parse =
-    match parse b pos len with () -> true | exception Text.Invalid _ -> false
-  in
-  let number = not (Text.leading_zero b pos len) in
-  let in_unit ~zoned u =
-    reads (fun b p l -> Text.datetime u ~zoned b p l ticks 0)
-  in
-  let datetime ~zoned bit =
-    if in_unit ~zoned Us then bit lor if in_unit ~zoned Ns then 0 else wide
-    else if in_unit ~zoned Ns then bit lor fine
-    else 0
-  in
-  if Columns.is_null nulls s r j then null
-  else
-    seen
-    lor
-    if reads (fun b p l -> ignore (Text.bool b p l)) then bool_
-    else if number && reads (fun b p l -> Text.int64 b p l ticks 0) then
-      int_ lor float_
-    else if is_integer b pos len then 0
-    else if number && reads (fun b p l -> Text.float b p l floats 0) then float_
-    else if reads (fun b p l -> ignore (Text.date b p l)) then date_
-    else
-      let forms = datetime ~zoned:false naive in
-      if forms <> 0 then forms else datetime ~zoned:true zoned
+(* [leading_zero b pos len] is [true] iff the text, after an optional sign,
+   starts with a zero followed by a digit, as [007] and [-01.5] do. *)
+let leading_zero b pos len =
+  let i = after_sign b pos len in
+  i + 1 < pos + len && Bytes.get b i = '0' && is_digit (Bytes.get b (i + 1))
 
-(* [infer forms] is the type that columns of [forms] read as, and its bit, [0]
-   for [string]. *)
-let infer forms : int * Type.any =
-  let datetime bit zone =
-    if forms land fine = 0 then (bit, Type.Any (Type.datetime ?zone Us))
-    else if forms land wide = 0 then (bit, Type.Any (Type.datetime ?zone Ns))
-    else (0, Type.Any Type.string)
+(* A batch of sampled records: each column's texts, and for each of its rows,
+   whether the field is a value, an integer, and a number with a leading
+   zero. *)
+type sampled = {
+  first : int; (* The batch's first record in the sample. *)
+  texts : Column.t array;
+  value : bool array array;
+  integer : bool array array;
+  lead : bool array array;
+}
+
+let sampled ~nulls s ~first =
+  let rows = Scan.rows s and cols = Scan.fields s 0 in
+  let each f =
+    Array.init cols (fun j ->
+        Array.init rows (fun r ->
+            f (Scan.bytes s) (Scan.pos s r j) (Scan.len s r j)))
   in
-  if forms land seen = 0 then (0, Type.Any Type.string)
-  else if forms land bool_ <> 0 then (bool_, Type.Any Type.bool)
-  else if forms land int_ <> 0 then (int_, Type.Any Type.int64)
-  else if forms land float_ <> 0 then (float_, Type.Any Type.float64)
-  else if forms land date_ <> 0 then (date_, Type.Any Type.date)
-  else if forms land naive <> 0 then datetime naive None
-  else if forms land zoned <> 0 then datetime zoned (Some "UTC")
-  else (0, Type.Any Type.string)
+  {
+    first;
+    texts =
+      Array.init cols (fun j -> texts ~quote:'"' ~nulls s j ~first:0 ~rows);
+    value =
+      Array.init cols (fun j ->
+          Array.init rows (fun r -> not (is_null nulls s r j)));
+    integer = each is_integer;
+    lead = each leading_zero;
+  }
+
+let masked c mask =
+  match Column.layout c with
+  | Varsize { offsets; child; _ } ->
+      let validity =
+        Some (Nx_bits.of_bool (Nx.create Nx.bool [| Array.length mask |] mask))
+      in
+      Result.get_ok
+        (Column.of_layout (Type.Any Type.binary)
+           (Varsize { validity; offsets; child }))
+  | Fixed _ | Children _ -> assert false
+
+(* [reads_as ty b j keep] is [true] iff the values of column [j] of [b] at the
+   records [keep] holds read as [ty]. Numbers have no leading zero, and an
+   integer reads as [float64] only if [int64] holds it. *)
+let reads_as ty b j keep =
+  let mask extra =
+    Array.init
+      (Array.length b.value.(j))
+      (fun r -> b.value.(j).(r) && keep (b.first + r) && extra r)
+  in
+  let parses ty m =
+    (not (Array.mem true m))
+    || Result.is_ok (Column.parse ty (masked b.texts.(j) m))
+  in
+  let m = mask (Fun.const true) in
+  let number () = not (Array.exists2 ( && ) m b.lead.(j)) in
+  match ty with
+  | Type.Any Int64 -> number () && parses ty m
+  | Type.Any Float64 ->
+      number () && parses ty m
+      && parses (Type.Any Type.int64) (mask (fun r -> b.integer.(j).(r)))
+  | _ -> parses ty m
+
+let reads_all batches ty j keep =
+  List.for_all (fun b -> reads_as ty b j keep) batches
+
+let infer batches j keep =
+  let seen b =
+    Array.exists Fun.id
+      (Array.mapi (fun r v -> v && keep (b.first + r)) b.value.(j))
+  in
+  if not (List.exists seen batches) then Type.Any Type.string
+  else
+    Option.value ~default:(Type.Any Type.string)
+      (List.find_opt (fun ty -> reads_all batches ty j keep) candidates)
+
+let is_text = function Type.Any String -> true | _ -> false
 
 let records ~sep sample f =
   let s = Scan.make ~sep ~quote:'"' (Reader.of_string sample) in
@@ -288,8 +423,7 @@ type name = { text : string; raw : string; at : int * int }
 let check_names_read names =
   Array.iteri
     (fun j n ->
-      let line, column = n.at in
-      let fail msg = raise (Failed (Error.v ~line ~column ~text:n.raw msg)) in
+      let fail msg = fail ~at:n.at ~text:n.raw msg in
       if not (String.is_valid_utf_8 n.text) then
         fail "the column name is not UTF-8";
       for k = 0 to j - 1 do
@@ -298,58 +432,54 @@ let check_names_read names =
       done)
     names
 
-let sniff ?(rows = 16384) ?(nulls = []) r =
-  if rows < 1 then invalid "sniff" "rows is %d, not positive" rows;
-  check_nulls "sniff" ~seps:separators ~quote:'"' nulls;
-  protect @@ fun () ->
+let sniff_from ?file ~rows ~nulls r =
+  protect ?file @@ fun () ->
   let sample = Scan.sample ~quote:'"' ~records:(rows + 1) r in
   let sep = separator sample in
-  let ticks = Bigarray.(Array1.create int64 c_layout 1) in
-  let floats = Bigarray.(Array1.create float64 c_layout 1) in
-  let names = ref [||] and all = ref [] in
-  records ~sep sample (fun s r ->
-      if !all = [] then
-        names :=
-          Array.init (Scan.fields s r) (fun j ->
-              {
-                text = Scan.text s r j;
-                raw = Scan.raw s r j;
-                at = Scan.locate s (Scan.start s r j);
-              });
-      all :=
-        Array.init (Scan.fields s r) (forms ~nulls ~ticks ~floats s r) :: !all);
-  if !all = [] then raise (Failed (Error.v "the input holds no record"));
-  let all = Array.of_list (List.rev !all) in
-  let cols = Array.length !names and n = Array.length all in
-  let meet_rows first last =
-    Array.init cols (fun j ->
-        let f = ref null in
-        for r = first to last do
-          f := meet !f all.(r).(j)
-        done;
-        !f)
+  let s = Scan.make ~sep ~quote:'"' (Reader.of_string sample) in
+  let names = ref [||] and batches = ref [] and n = ref 0 in
+  while Scan.next s do
+    if !n = 0 then
+      names :=
+        Array.init (Scan.fields s 0) (fun j ->
+            {
+              text = Scan.text s 0 j;
+              raw = Scan.raw s 0 j;
+              at = Scan.locate s (Scan.start s 0 j);
+            });
+    batches := sampled ~nulls s ~first:!n :: !batches;
+    n := !n + Scan.rows s
+  done;
+  if !n = 0 then fail "the input holds no record";
+  let batches = List.rev !batches and n = !n in
+  let infer keep =
+    Array.init (Array.length !names) (fun j -> infer batches j keep)
   in
-  let types = Array.map infer (meet_rows 1 (n - 1)) in
-  let typed = Array.exists (fun (bit, _) -> bit <> 0) types in
+  let types = infer (fun r -> r >= 1) in
+  let reads_first j ty =
+    is_text ty || reads_all batches ty j (fun r -> r = 0)
+  in
   let header =
-    not
-      (typed
-      && Array.for_all2
-           (fun (bit, _) f -> bit = 0 || f land bit <> 0)
-           types all.(0))
+    Array.for_all is_text types
+    || not (Array.for_all Fun.id (Array.mapi reads_first types))
   in
   let used = if header then n - 1 else min n rows in
-  let types =
-    if header then types else Array.map infer (meet_rows 0 (used - 1))
-  in
+  let types = if header then types else infer (fun r -> r < used) in
   if header then check_names_read !names;
   let name j =
     if header then !names.(j).text else Printf.sprintf "column_%d" (j + 1)
   in
   let columns =
-    Array.mapi (fun j (_, ty) -> { name = name j; ty; declared = false }) types
+    Array.mapi (fun j ty -> { name = name j; ty; declared = false }) types
   in
   Ok { sep; quote = '"'; header; nulls; columns; sniffed = Some used }
+
+let sample_rows = 16384
+
+let sniff ?(rows = sample_rows) ?(nulls = []) r =
+  if rows < 1 then invalid "sniff" "rows is %d, not positive" rows;
+  check_nulls "sniff" ~seps:separators ~quote:'"' nulls;
+  sniff_from ~rows ~nulls r
 
 (* Reading *)
 
@@ -391,60 +521,121 @@ let value_error f s row j reason =
     (Printf.sprintf "column %s: cannot read as %s: %s. %s" (quoted c.name)
        (type_name c.ty) reason fix)
 
+(* A reading of a text: its scanner, the columns it reads, by position, and the
+   rows it may still yield. *)
+type reading = {
+  f : format;
+  s : Scan.t;
+  read : int list;
+  mutable header : bool;
+  mutable left : int;
+}
+
+let reading f ~read ~limit r =
+  let s = Scan.make ~sep:f.sep ~quote:f.quote r in
+  { f; s; read; header = f.header; left = Option.value ~default:max_int limit }
+
 (* A batch's failure is at its earliest row, then its leftmost column. *)
-let batch f readers s ~first ~rows =
-  let failure = ref None in
-  let read j c =
-    match Columns.read c s j ~first ~rows with
-    | column -> Some column
-    | exception Columns.Invalid { row; reason } ->
-        (match !failure with
-        | Some (r, _, _) when r <= row -> ()
-        | _ -> failure := Some (row, j, reason));
-        None
+let batch { f; s; read; _ } ~first ~rows =
+  let parse j =
+    let texts = texts ~quote:f.quote ~nulls:f.nulls s j ~first ~rows in
+    (j, Column.parse f.columns.(j).ty texts)
   in
-  let columns = Array.mapi read readers in
-  match !failure with
-  | Some (row, j, reason) -> value_error f s row j reason
-  | None -> Array.map Option.get columns
+  let parsed = List.map parse read in
+  let earliest failure (j, p) =
+    match (p, failure) with
+    | Error (row, _), Some (r, _, _) when r <= row -> failure
+    | Error (row, reason), _ -> Some (row, j, reason)
+    | Ok _, _ -> failure
+  in
+  match List.fold_left earliest None parsed with
+  | Some (row, j, reason) -> value_error f s (first + row) j reason
+  | None ->
+      Talon_next.v ~rows
+        (List.map (fun (j, p) -> (f.columns.(j).name, Result.get_ok p)) parsed)
 
-module Private = struct
-  type column = Columns.t =
-    | Fixed of { valid : Nx.bool_t option; values : Nx.packed }
-    | Varsize of {
-        valid : Nx.bool_t option;
-        offsets : Nx.int64_t;
-        data : Nx.uint8_t;
-      }
-
-  let read f r =
-    protect @@ fun () ->
-    let s = Scan.make ~sep:f.sep ~quote:f.quote r in
-    let readers =
-      Array.map
-        (fun c -> Columns.reader ~quote:f.quote ~nulls:f.nulls c.ty)
-        f.columns
-    in
-    let cols = Array.length f.columns in
-    let header = ref f.header and batches = ref [] in
-    while Scan.next s do
-      let first =
-        if !header then begin
-          check_header f s;
-          1
-        end
-        else 0
-      in
-      header := false;
-      let rows = Scan.rows s and last = ref first in
-      while !last < rows && Scan.fields s !last = cols do
-        incr last
-      done;
-      if !last > first then
-        batches := batch f readers s ~first ~rows:(!last - first) :: !batches;
-      if !last < rows then fields_error f s !last
+(* [next r] is the next batch of [r], which stops at its limit. A batch ends
+   before a record of another number of fields, which then fails. *)
+let rec next r =
+  if r.left = 0 then None
+  else if not (Scan.next r.s) then begin
+    if r.header then fail "the input is empty, and the format has a header";
+    None
+  end
+  else begin
+    let first = if r.header then 1 else 0 in
+    if r.header then check_header r.f r.s;
+    r.header <- false;
+    let rows = Scan.rows r.s and cols = Array.length r.f.columns in
+    let last = ref first in
+    while
+      !last < rows && !last - first < r.left && Scan.fields r.s !last = cols
+    do
+      incr last
     done;
-    if !header then
-      raise (Failed (Error.v "the input is empty, and the format has a header"));
-    Ok (List.rev !batches)
-end
+    let n = !last - first in
+    let b = if n > 0 then Some (batch r ~first ~rows:n) else None in
+    if !last < rows && n < r.left then fields_error r.f r.s !last;
+    r.left <- r.left - n;
+    match b with Some _ -> b | None -> next r
+  end
+
+let schema f =
+  Schema.v (Array.to_list (Array.map (fun c -> (c.name, c.ty)) f.columns))
+
+let decode f r =
+  protect @@ fun () ->
+  let r =
+    reading f ~read:(List.init (Array.length f.columns) Fun.id) ~limit:None r
+  in
+  let rec batches acc =
+    match next r with Some b -> batches (b :: acc) | None -> List.rev acc
+  in
+  match batches [] with
+  | [] ->
+      let empty c = (c.name, Result.get_ok (Column.parse c.ty no_texts)) in
+      Ok (Talon_next.v (Array.to_list (Array.map empty f.columns)))
+  | bs -> Ok (Talon_next.of_batches bs)
+
+(* [open_ ()] is a reader and the function that closes it. *)
+let source_of ~name ?file f open_ =
+  let index n =
+    let rec find j =
+      if String.equal f.columns.(j).name n then j else find (j + 1)
+    in
+    find 0
+  in
+  let parts (q : Source.request) =
+    let read = List.map index q.columns in
+    let open_ () =
+      protect ?file @@ fun () ->
+      let r, close = open_ () in
+      let r = reading f ~read ~limit:q.limit r in
+      let next () = protect ?file (fun () -> Ok (next r)) in
+      Ok { Source.next; close }
+    in
+    Ok [ { Source.rows = None; open_ } ]
+  in
+  Source.v ~name ~schema:(schema f) parts
+
+let source f open_ = source_of ~name:"csv" f (fun () -> (open_ (), ignore))
+
+let file ?format ?nulls path =
+  let open_ () =
+    let ic = open_in_bin path in
+    (Reader.of_in_channel ic, fun () -> close_in_noerr ic)
+  in
+  let source f =
+    let name = Format.asprintf "csv %a" Type.pp_quoted path in
+    source_of ~name ~file:path f open_
+  in
+  let nulls = Option.value ~default:[] nulls in
+  check_nulls "file" ~seps:separators ~quote:'"' nulls;
+  match format with
+  | Some f -> Ok (source f)
+  | None -> (
+      match open_ () with
+      | exception Sys_error msg -> Error (Error.v msg)
+      | r, close ->
+          Fun.protect ~finally:close @@ fun () ->
+          Result.map source (sniff_from ~file:path ~rows:sample_rows ~nulls r))

@@ -40,33 +40,13 @@
     An unquoted empty field is null, and so is an unquoted field equal to one of
     the format's null tokens. A quoted field is never null: [""] is the empty
     string. Every other field's text, without its quotes and with its doubled
-    quotes undoubled, reads as its column's type, which is one of these:
-    - [bool]: [true] or [false];
-    - [int8] to [uint64]: a decimal integer with an optional sign, in the type's
-      range;
-    - [float16] to [float64]: a decimal number with an optional sign, digits on
-      at least one side of an optional point, and an optional exponent ([e] or
-      [E], an optional sign, digits); or [inf], [infinity] or [nan] in any case,
-      with an optional sign. The number rounds to the nearest value of the type,
-      ties to even, and a number beyond the type's range rounds to an infinity;
-    - [decimal[p, s]]: a decimal number with an optional sign and digits on at
-      least one side of an optional point, exact at the scale [s] and of at most
-      [p] digits;
-    - [string]: the text, which must be valid UTF-8;
-    - [binary]: the text's bytes;
-    - a categorical: one of the dictionary's strings;
-    - [date]: [YYYY-MM-DD], a day of the proleptic Gregorian calendar from year
-      [0000] to [9999];
-    - [datetime[u]] and [datetime[u, z]]: a date, [T] or a space, then
-      [hh:mm:ss] and an optional fraction of a second of one to nine digits.
-      With a zone, an offset follows, [Z] or [±hh:mm], and the value is the
-      instant it names, in UTC. Without a zone, no offset follows, and the value
-      is the wall-clock time. It must be a whole number of [u], in [u]'s range.
+    quotes undoubled, reads as its column's type as {!Talon_next.Column.parse}
+    reads it. CSV reads [bool], the integer, float and decimal types, [string],
+    [binary], categoricals, [date] and [datetime]: read a time of day as
+    [string], then convert it with [Expr.Temporal.parse].
 
-    A field that is not its type's text, or whose value the type does not hold,
-    fails the read, with its line and column, its text and the fix. CSV reads no
-    other type: read a time of day as [string], then convert it with
-    [Expr.Temporal.parse].
+    A field that does not read as its type fails the read, with its line and
+    column, its text and the fix.
 
     {1:sniffing Sniffing}
 
@@ -183,41 +163,38 @@ val sniff :
     Raises [Invalid_argument] if [rows < 1], or if a null token holds the quote,
     a line break or one of the separators sniffing chooses from. *)
 
-(**/**)
+(** {1:reading Reading} *)
 
-(** Not part of the API: talon's tests read decoded columns through it until
-    [decode] and sources read CSV. *)
-module Private : sig
-  (** The type for columns in Arrow's layouts. A row's value is zero, or the
-      empty byte string, under a null. *)
-  type column =
-    | Fixed of { valid : Nx.bool_t option; values : Nx.packed }
-        (** One value per row, in the storage of the column's type: [bool],
-            integers of the type's width, [float16] to [float64], [int64]
-            unscaled decimals, [int32] days, [int64] ticks, [int32] codes of a
-            categorical. [valid], a byte validity mask, is [true] at the rows
-            that hold a value, and [None] when every row does. *)
-    | Varsize of {
-        valid : Nx.bool_t option;
-        offsets : Nx.int64_t;
-        data : Nx.uint8_t;
-      }
-        (** Byte strings, for [string] and [binary]: row [i] is [data] from
-            [offsets.{i}] to [offsets.{i + 1}], and [offsets.{0}] is [0]. *)
+val decode :
+  format -> Bytesrw.Bytes.Reader.t -> (Talon_next.t, Talon_next.Error.t) result
+(** [decode f r] is the table of the records that [r] reads, read as [f] says,
+    in batches of about one MiB of input. The batches are fixed by the bytes of
+    [r]'s input, never by how [r] slices them.
 
-  val read :
-    format ->
-    Bytesrw.Bytes.Reader.t ->
-    (column array list, Talon_next.Error.t) result
-  (** [read f r] is the records that [r] reads, read as [f] says, in batches:
-      each batch has one column per column of [f], in order, and the batches
-      hold the records in order. The batches are fixed by the bytes of [r]'s
-      input, never by how [r] slices them.
+    [Error e] at the earliest record, and its first field, that fails: a header
+    that does not name [f]'s columns, a record that breaks the {{!syntax}syntax}
+    or has another number of fields, a field that does not read as its column's
+    type, or a read of [r] that raises {!Bytesrw.Bytes.Stream.Error} or
+    [Sys_error]. An empty input fails when [f] has a header. [e] gives the line
+    and column. *)
 
-      [Error e] at the earliest record, and that record's first field, that
-      fails: a header that does not name [f]'s columns, a record that breaks the
-      {{!syntax}syntax} or has another number of fields than [f] has columns, a
-      field that does not read as its column's type, or a read of [r] that
-      raises {!Bytesrw.Bytes.Stream.Error} or [Sys_error]. An empty input fails
-      when [f] has a header. *)
-end
+val source : format -> (unit -> Bytesrw.Bytes.Reader.t) -> Talon_next.Source.t
+(** [source f open_] is the source, named [csv], of the records that the readers
+    [open_ ()] read, as [f] says, in {!decode}'s batches. Each read of the
+    source calls [open_] once. It reads the request's columns only, stops after
+    its limit, and applies no conjunct. Its errors are {!decode}'s, for the
+    records it reads. *)
+
+val file :
+  ?format:format ->
+  ?nulls:string list ->
+  string ->
+  (Talon_next.Source.t, Talon_next.Error.t) result
+(** [file ?format ?nulls path] is the {!source} of the CSV file [path], named
+    [csv "path"], whose errors name [path]: as [format] says, or as {!sniff}
+    [?nulls] infers from the file when [format] is absent. Each read opens the
+    file again.
+
+    [Error e] if the file cannot be opened, or as {!sniff}.
+
+    Raises [Invalid_argument] as {!sniff} does on [nulls]. *)

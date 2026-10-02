@@ -22,48 +22,46 @@ let columns ?nulls types =
   Csv.format ~header:false ?nulls
     (List.mapi (fun i t -> (Printf.sprintf "c%d" (i + 1), t)) types)
 
-let read ?slice_length f s =
-  Csv.Private.read f (Reader.of_string ?slice_length s)
+let read ?slice_length f s = Csv.decode f (Reader.of_string ?slice_length s)
+let names t = List.map fst (Schema.columns (schema t))
+let all_columns t = List.map (column t) (names t)
 
 (* The shortest of [%.15g], [%.16g] and [%.17g] that reads back as [x]. *)
 let float_text x =
   let fits p = float_of_string (Printf.sprintf "%.*g" p x) = x in
   Printf.sprintf "%.*g" (if fits 15 then 15 else if fits 16 then 16 else 17) x
 
-(* [strings c] is the rows of the varsize column [c]. *)
-let strings (c : Csv.Private.column) =
-  match c with
-  | Fixed _ -> fail "a fixed column"
-  | Varsize { valid; offsets; data } ->
+let valid c =
+  match Column.validity c with
+  | None -> Fun.const true
+  | Some v ->
+      let v = Nx.to_array (Nx_bits.to_bool v) in
+      fun i -> v.(i)
+
+(* [byte_rows c] is the byte strings of the rows of the varsize column [c],
+   whether null or not. *)
+let byte_rows c =
+  match Column.layout c with
+  | Varsize { offsets; child; _ } ->
       let o = Array.map Int64.to_int (Nx.to_array offsets) in
-      let d = Nx.to_array data in
-      let valid = Option.map Nx.to_array valid in
+      let d = Nx.to_array (Column.to_tensor Nx.uint8 child) in
       List.init
         (Array.length o - 1)
         (fun i ->
-          match valid with
-          | Some v when not v.(i) -> None
-          | _ ->
-              Some
-                (String.init
-                   (o.(i + 1) - o.(i))
-                   (fun k -> Char.chr d.(o.(i) + k))))
+          String.init (o.(i + 1) - o.(i)) (fun k -> Char.chr d.(o.(i) + k)))
+  | Fixed _ | Children _ -> fail "not a varsize column"
 
-let read_float s =
-  match read (columns [ any Type.float64 ]) s with
-  | Ok [ [| Fixed { values = Nx.P v; _ } |] ] ->
-      (Nx.to_array (Nx.cast Nx.float64 v)).(0)
-  | _ -> fail "not one float"
+(* [strings c] is the rows of the varsize column [c]. *)
+let strings c =
+  let valid = valid c in
+  List.mapi (fun i s -> if valid i then Some s else None) (byte_rows c)
 
-(* [cells c] is the dtype of [c] and its rows printed, [∅] at a null. *)
-let cells (c : Csv.Private.column) =
-  let nulls valid n f =
-    let valid = Option.map Nx.to_array valid in
-    List.init n (fun i ->
-        match valid with Some v when not v.(i) -> "∅" | _ -> f i)
-  in
-  match c with
-  | Fixed { valid; values = Nx.P x } ->
+(* [cells c] is the storage of [c] and its rows printed, [∅] at a null. *)
+let cells c =
+  let valid = valid c in
+  let rows n f = List.init n (fun i -> if valid i then f i else "∅") in
+  match Column.layout c with
+  | Fixed { values = Nx.P x; _ } ->
       let dtype = Format.asprintf "%a" Nx.pp_dtype (Nx.dtype x) in
       let row =
         match dtype with
@@ -80,28 +78,28 @@ let cells (c : Csv.Private.column) =
             let a = Nx.to_array (Nx.cast Nx.int64 x) in
             fun i -> Int64.to_string a.(i)
       in
-      (dtype, nulls valid (Nx.shape x).(0) row)
-  | Varsize { valid; offsets; data } ->
-      let o = Array.map Int64.to_int (Nx.to_array offsets) in
-      let d = Nx.to_array data in
-      let row i =
-        Printf.sprintf "%S"
-          (String.init (o.(i + 1) - o.(i)) (fun k -> Char.chr d.(o.(i) + k)))
-      in
-      ("bytes", nulls valid (Array.length o - 1) row)
+      (dtype, rows (Nx.shape x).(0) row)
+  | Varsize _ ->
+      let bs = Array.of_list (byte_rows c) in
+      ("bytes", rows (Array.length bs) (fun i -> Printf.sprintf "%S" bs.(i)))
+  | Children _ -> fail "a record column"
 
-(* [decode f s] is each column of [f] read from [s], printed as its dtype and
-   its rows across batches: [int8 [1; ∅]]. *)
+(* [printed t] is each column of [t] printed as its storage and its rows: [int8
+   [1; ∅]]. *)
+let printed t =
+  if rows t = 0 then "no rows"
+  else
+    String.concat "\n"
+      (List.map
+         (fun c ->
+           let dtype, rows = cells c in
+           Printf.sprintf "%s [%s]" dtype (String.concat "; " rows))
+         (all_columns t))
+
 let decode ?slice_length f s =
   match read ?slice_length f s with
   | Error e -> "error: " ^ error_text e
-  | Ok [] -> "no rows"
-  | Ok (b :: _ as batches) ->
-      String.concat "\n"
-        (List.init (Array.length b) (fun j ->
-             let dtype = fst (cells b.(j)) in
-             let rows = List.concat_map (fun b -> snd (cells b.(j))) batches in
-             Printf.sprintf "%s [%s]" dtype (String.concat "; " rows)))
+  | Ok t -> printed t
 
 let failure f s = match read f s with Ok _ -> "ok" | Error e -> error_text e
 
@@ -292,6 +290,9 @@ let sniffing =
           ( "string from an integer int64 does not hold",
             "x\n1\n9223372036854775808\n",
             [ "x string" ] );
+          ( "string from a float and an integer int64 does not hold",
+            "x\n1.5\n9223372036854775808\n",
+            [ "x string" ] );
           ("float64 from integers and a float", "x\n1\n2.5\n", [ "x float64" ]);
           ("float64 from an exponent", "x\n1e3\n", [ "x float64" ]);
           ("float64 from nan and inf", "x\nnan\n-inf\n1\n", [ "x float64" ]);
@@ -389,6 +390,19 @@ let sniffing =
             csv (1 column, separator ',', quote '"', header), types sniffed from 2 rows
               x int64
             |});
+      test "infers types from records past the first MiB" (fun () ->
+          (* 12,000 records of 100 bytes span two of the scanner's batches. *)
+          let s =
+            "x,y\n"
+            ^ String.concat ""
+                (List.init 11999 (fun _ -> "1," ^ String.make 97 'a' ^ "\n"))
+            ^ "z,b\n"
+          in
+          equal (list string) [ "x string"; "y string" ] (column_types s);
+          equal (list string) [ "x int64"; "y string" ]
+            (List.tl
+               (String.split_on_char '\n' (format_text (sniffed ~rows:11999 s)))
+            |> List.map String.trim));
       test "counts no rows under a header alone" (fun () ->
           equal string
             "csv (2 columns, separator ',', quote '\"', header), types sniffed \
@@ -661,115 +675,6 @@ let values =
     ]
     (fun (ty, s, expected) -> equal text expected (decode (columns [ ty ]) s))
 
-let refusals () =
-  List.iter
-    (fun (ty, s) ->
-      Printf.printf "%s as %s: %s\n" (String.escaped s)
-        (Format.asprintf "%a" (fun ppf (Type.Any t) -> Type.pp ppf t) ty)
-        (failure (columns [ ty ]) (s ^ "\n")))
-    [
-      (any Type.bool, "True");
-      (any Type.bool, "1");
-      (any Type.int8, "128");
-      (any Type.int8, "-129");
-      (any Type.int8, "1.0");
-      (any Type.int8, " 1");
-      (any Type.int8, "+");
-      (any Type.uint8, "-1");
-      (any Type.uint32, "4294967296");
-      (any Type.int32, "99999999999999999999999");
-      (any Type.int64, "9223372036854775808");
-      (any Type.int64, "-9223372036854775809");
-      (any Type.uint64, "18446744073709551616");
-      (any Type.uint64, "-1");
-      (any Type.float64, ".");
-      (any Type.float64, "e5");
-      (any Type.float64, "1e");
-      (any Type.float64, "1.2.3");
-      (any Type.float64, "0x10");
-      (any Type.float64, "1_000");
-      (any Type.float64, "nan1");
-      (any Type.float64, "--1");
-      (any (Type.decimal ~precision:5 ~scale:2), "1.234");
-      (any (Type.decimal ~precision:5 ~scale:2), "1234.5");
-      (any (Type.decimal ~precision:5 ~scale:2), "1e2");
-      (any (Type.decimal ~precision:5 ~scale:2), ".");
-      (any Type.date, "2023-02-29");
-      (any Type.date, "2024-1-01");
-      (any Type.date, "2024-13-01");
-      (any Type.date, "2024-01-01T00:00:00");
-      (any (Type.datetime Us), "2024-01-01T00:00:00.1234567");
-      (any (Type.datetime Us), "2024-01-01T00:00:00Z");
-      (any (Type.datetime Us), "2024-01-01T24:00:00");
-      (any (Type.datetime Us), "2024-01-01T00:00:60");
-      (any (Type.datetime Us), "2024-01-01T00:00:00.");
-      (any (Type.datetime Us), "2024-01-01T00:00:00.1234567890");
-      (any (Type.datetime Us), "2024-01-01t00:00:00");
-      (any (Type.datetime S), "2024-01-01T00:00:00.5");
-      (any (Type.datetime ~zone:"UTC" Us), "2024-01-01T00:00:00");
-      (any (Type.datetime ~zone:"UTC" Us), "2024-01-01T00:00:00+0100");
-      (any (Type.datetime ~zone:"UTC" Ns), "2262-04-11T23:47:16.854775808Z");
-      (any (Type.datetime ~zone:"UTC" Ns), "1677-09-21T00:12:43.145224191Z");
-      (any Type.string, "\xff");
-      (any Type.string, "\xc3");
-      (any (Type.categorical [| "a" |]), "b");
-      (any (Type.datetime Ms), "2024-01-01T00:00:00.0015");
-      (any (Type.datetime ~zone:"UTC" Us), "2024-01-01T00:00:00+24:00");
-      (any (Type.datetime ~zone:"UTC" Us), "2024-01-01T00:00:00+01:60");
-    ];
-  expect (output ())
-  @@ __POS_OF__
-       {|
-    True as bool: line 1, column 1: "True": column "c1": cannot read as bool: not true or false. Declare the null token (~nulls), or read the column as string (with_type) and map its spellings with an expression.
-    1 as bool: line 1, column 1: "1": column "c1": cannot read as bool: not true or false. Declare the null token (~nulls), or read the column as string (with_type) and map its spellings with an expression.
-    128 as int8: line 1, column 1: "128": column "c1": cannot read as int8: out of range. Declare the null token (~nulls) or another type (with_type).
-    -129 as int8: line 1, column 1: "-129": column "c1": cannot read as int8: out of range. Declare the null token (~nulls) or another type (with_type).
-    1.0 as int8: line 1, column 1: "1.0": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
-     1 as int8: line 1, column 1: " 1": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
-    + as int8: line 1, column 1: "+": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
-    -1 as uint8: line 1, column 1: "-1": column "c1": cannot read as uint8: out of range. Declare the null token (~nulls) or another type (with_type).
-    4294967296 as uint32: line 1, column 1: "4294967296": column "c1": cannot read as uint32: out of range. Declare the null token (~nulls) or another type (with_type).
-    99999999999999999999999 as int32: line 1, column 1: "99999999999999999999999": column "c1": cannot read as int32: out of range. Declare the null token (~nulls) or another type (with_type).
-    9223372036854775808 as int64: line 1, column 1: "9223372036854775808": column "c1": cannot read as int64: out of range. Declare the null token (~nulls) or another type (with_type).
-    -9223372036854775809 as int64: line 1, column 1: "-9223372036854775809": column "c1": cannot read as int64: out of range. Declare the null token (~nulls) or another type (with_type).
-    18446744073709551616 as uint64: line 1, column 1: "18446744073709551616": column "c1": cannot read as uint64: out of range. Declare the null token (~nulls) or another type (with_type).
-    -1 as uint64: line 1, column 1: "-1": column "c1": cannot read as uint64: out of range. Declare the null token (~nulls) or another type (with_type).
-    . as float64: line 1, column 1: ".": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    e5 as float64: line 1, column 1: "e5": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    1e as float64: line 1, column 1: "1e": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    1.2.3 as float64: line 1, column 1: "1.2.3": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    0x10 as float64: line 1, column 1: "0x10": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    1_000 as float64: line 1, column 1: "1_000": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    nan1 as float64: line 1, column 1: "nan1": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    --1 as float64: line 1, column 1: "--1": column "c1": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    1.234 as decimal[5, 2]: line 1, column 1: "1.234": column "c1": cannot read as decimal[5, 2]: more than 2 digits after the point. Declare the null token (~nulls) or another type (with_type).
-    1234.5 as decimal[5, 2]: line 1, column 1: "1234.5": column "c1": cannot read as decimal[5, 2]: more than 5 digits. Declare the null token (~nulls) or another type (with_type).
-    1e2 as decimal[5, 2]: line 1, column 1: "1e2": column "c1": cannot read as decimal[5, 2]: not a decimal number. Declare the null token (~nulls) or another type (with_type).
-    . as decimal[5, 2]: line 1, column 1: ".": column "c1": cannot read as decimal[5, 2]: not a decimal number. Declare the null token (~nulls) or another type (with_type).
-    2023-02-29 as date: line 1, column 1: "2023-02-29": column "c1": cannot read as date: not a day of the calendar. Declare the null token (~nulls) or another type (with_type).
-    2024-1-01 as date: line 1, column 1: "2024-1-01": column "c1": cannot read as date: not YYYY-MM-DD. Declare the null token (~nulls) or another type (with_type).
-    2024-13-01 as date: line 1, column 1: "2024-13-01": column "c1": cannot read as date: not a day of the calendar. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00 as date: line 1, column 1: "2024-01-01T00:00:00": column "c1": cannot read as date: not YYYY-MM-DD. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00.1234567 as datetime[us]: line 1, column 1: "2024-01-01T00:00:00.1234567": column "c1": cannot read as datetime[us]: not a whole number of microseconds. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00Z as datetime[us]: line 1, column 1: "2024-01-01T00:00:00Z": column "c1": cannot read as datetime[us]: not YYYY-MM-DDThh:mm:ss without an offset. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T24:00:00 as datetime[us]: line 1, column 1: "2024-01-01T24:00:00": column "c1": cannot read as datetime[us]: not a time of day. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:60 as datetime[us]: line 1, column 1: "2024-01-01T00:00:60": column "c1": cannot read as datetime[us]: not a time of day. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00. as datetime[us]: line 1, column 1: "2024-01-01T00:00:00.": column "c1": cannot read as datetime[us]: not YYYY-MM-DDThh:mm:ss without an offset. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00.1234567890 as datetime[us]: line 1, column 1: "2024-01-01T00:00:00.1234567890": column "c1": cannot read as datetime[us]: not YYYY-MM-DDThh:mm:ss without an offset. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01t00:00:00 as datetime[us]: line 1, column 1: "2024-01-01t00:00:00": column "c1": cannot read as datetime[us]: not YYYY-MM-DDThh:mm:ss without an offset. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00.5 as datetime[s]: line 1, column 1: "2024-01-01T00:00:00.5": column "c1": cannot read as datetime[s]: not a whole number of seconds. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00 as datetime[us, UTC]: line 1, column 1: "2024-01-01T00:00:00": column "c1": cannot read as datetime[us, UTC]: not YYYY-MM-DDThh:mm:ss with an offset. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00+0100 as datetime[us, UTC]: line 1, column 1: "2024-01-01T00:00:00+0100": column "c1": cannot read as datetime[us, UTC]: not YYYY-MM-DDThh:mm:ss with an offset. Declare the null token (~nulls) or another type (with_type).
-    2262-04-11T23:47:16.854775808Z as datetime[ns, UTC]: line 1, column 1: "2262-04-11T23:47:16.854775808Z": column "c1": cannot read as datetime[ns, UTC]: out of range. Declare the null token (~nulls) or another type (with_type).
-    1677-09-21T00:12:43.145224191Z as datetime[ns, UTC]: line 1, column 1: "1677-09-21T00:12:43.145224191Z": column "c1": cannot read as datetime[ns, UTC]: out of range. Declare the null token (~nulls) or another type (with_type).
-    \255 as string: line 1, column 1: "\xff": column "c1": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
-    \195 as string: line 1, column 1: "\xc3": column "c1": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
-    b as categorical["a"]: line 1, column 1: "b": column "c1": cannot read as categorical["a"]: not in the dictionary. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00.0015 as datetime[ms]: line 1, column 1: "2024-01-01T00:00:00.0015": column "c1": cannot read as datetime[ms]: not a whole number of milliseconds. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00+24:00 as datetime[us, UTC]: line 1, column 1: "2024-01-01T00:00:00+24:00": column "c1": cannot read as datetime[us, UTC]: not an offset. Declare the null token (~nulls) or another type (with_type).
-    2024-01-01T00:00:00+01:60 as datetime[us, UTC]: line 1, column 1: "2024-01-01T00:00:00+01:60": column "c1": cannot read as datetime[us, UTC]: not an offset. Declare the null token (~nulls) or another type (with_type).
-    |}
-
 let nulls =
   group "nulls"
     [
@@ -779,19 +684,21 @@ let nulls =
                (columns ~nulls:[ "NA" ] [ any Type.int64; any Type.string ])
                "1,NA\nNA,\"NA\"\n,N/A\n"));
       test "a null holds zero, or the empty byte string" (fun () ->
-          match
-            read (columns [ any Type.int64; any Type.string ]) "7,a\n,\n"
-          with
-          | Ok [ [| Fixed { values = Nx.P x; _ }; Varsize { offsets; _ } |] ] ->
+          let t =
+            Error.get_ok
+              (read (columns [ any Type.int64; any Type.string ]) "7,a\n,\n")
+          in
+          (match Column.layout (column t "c1") with
+          | Fixed { values = Nx.P x; _ } ->
               equal (list int64) [ 7L; 0L ]
-                (Array.to_list (Nx.to_array (Nx.cast Nx.int64 x)));
-              equal (list int64) [ 0L; 1L; 1L ]
-                (Array.to_list (Nx.to_array offsets))
-          | _ -> fail "not one batch of a fixed and a varsize column");
+                (Array.to_list (Nx.to_array (Nx.cast Nx.int64 x)))
+          | Varsize _ | Children _ -> fail "not a fixed column");
+          equal (list string) [ "a"; "" ] (byte_rows (column t "c2")));
       test "every row valid has no validity" (fun () ->
-          match read (columns [ any Type.int64 ]) "1\n2\n" with
-          | Ok [ [| Fixed { valid = None; _ } |] ] -> ()
-          | _ -> fail "a validity mask");
+          let t = Error.get_ok (read (columns [ any Type.int64 ]) "1\n2\n") in
+          match Column.validity (column t "c1") with
+          | None -> ()
+          | Some _ -> fail "a validity");
     ]
 
 let data_errors () =
@@ -827,7 +734,7 @@ let data_errors () =
     sniffed: line 4, column 1: "NA": column "dep_delay": cannot read as int64: not an integer. The type was sniffed from rows 1 to 2. Declare the null token (~nulls) or the type (with_type).
     declared: line 4, column 1: "NA": column "dep_delay": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
     range: line 2, column 1: "300": column "c1": cannot read as int8: out of range. Declare the null token (~nulls) or another type (with_type).
-    utf-8: line 2, column 1: "b\x0ac\xff": column "c1": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
+    utf-8: line 2, column 1: "b\x0ac\xff": column "c1": cannot read as string: invalid UTF-8 at byte 3. Read the column as binary (with_type).
     earliest row first: line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
     value before syntax: line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
     categorical: line 2, column 1: "b": column "c1": cannot read as categorical["a"]: not in the dictionary. Declare the null token (~nulls) or another type (with_type).
@@ -835,7 +742,7 @@ let data_errors () =
     earlier row first: line 1, column 1: "x": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
     sniffed from one row: line 3, column 1: "NA": column "x": cannot read as int64: not an integer. The type was sniffed from row 1. Declare the null token (~nulls) or the type (with_type).
     bool spelled True: line 2, column 1: "True": column "c1": cannot read as bool: not true or false. Declare the null token (~nulls), or read the column as string (with_type) and map its spellings with an expression.
-    sniffed string not UTF-8: line 3, column 1: "\xff": column "x": cannot read as string: not valid UTF-8. Read the column as binary (with_type).
+    sniffed string not UTF-8: line 3, column 1: "\xff": column "x": cannot read as string: invalid UTF-8 at byte 0. Read the column as binary (with_type).
     |}
 
 (* Batches *)
@@ -853,32 +760,21 @@ let big =
 
 let batches =
   let f = columns [ any Type.string; any Type.int64 ] in
+  let decoded ?slice_length s = Error.get_ok (read ?slice_length f s) in
+  let sizes t = List.map rows (batches t) in
   group "batches"
     [
       test "split a large input, keeping every record in order" (fun () ->
-          let bs = Error.get_ok (read f big) in
-          greater int ~than:1 (List.length bs);
-          let ints =
-            List.concat_map
-              (fun b ->
-                match b.(1) with
-                | Csv.Private.Fixed { values = Nx.P x; _ } ->
-                    Array.to_list (Nx.to_array (Nx.cast Nx.int64 x))
-                | Varsize _ -> fail "a varsize column")
-              bs
-          in
-          equal (list int64) (List.init big_rows Int64.of_int) ints);
+          let t = decoded big in
+          greater int ~than:1 (List.length (batches t));
+          equal (array int)
+            (Array.init big_rows Fun.id)
+            (Column.values Kind.int (column t "c2")));
       cases ~name:(Printf.sprintf "are the same in slices of %d bytes")
         "slicing" [ 7; 4096; 100_000 ] (fun slice_length ->
-          let rows r =
-            List.map
-              (fun b -> (fst (cells b.(1)), List.length (snd (cells b.(1)))))
-              r
-          in
-          equal
-            (list (pair string int))
-            (rows (Error.get_ok (read f big)))
-            (rows (Error.get_ok (read ~slice_length f big))));
+          equal (list int)
+            (sizes (decoded big))
+            (sizes (decoded ~slice_length big)));
       test "keep a quoted line feed at the 1 MiB edge in its field" (fun () ->
           (* The quoted line feed is the input's byte 2^20 - 1, the first that
              may end a batch. *)
@@ -888,11 +784,8 @@ let batches =
             ^ "\"a\nb\"\nz\n"
           in
           equal int ((1 lsl 20) - 1) (String.index_from s 1048574 '\n');
-          let rows =
-            List.concat_map
-              (fun b -> strings b.(0))
-              (Error.get_ok (read (texts 1) s))
-          in
+          let t = Error.get_ok (read (texts 1) s) in
+          let rows = strings (column t "c1") in
           equal int 524288 (List.length rows);
           equal
             (list (option string))
@@ -904,7 +797,7 @@ let batches =
                {| line 400001, column 3: "y": column "c2": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type). |});
     ]
 
-(* Properties *)
+(* Hand-encoded tables *)
 
 (* A table of [cols] binary columns encoded by hand: a null is an unquoted empty
    field, or the null token [NA] when it is a record's only field, a field is
@@ -972,64 +865,212 @@ let table =
 
 let pp_table ppf t = Format.fprintf ppf "%S (slices of %d)" (encode t) t.slice
 
+let binaries t =
+  columns ~nulls:[ "NA" ] (List.init t.cols (fun _ -> any Type.binary))
+
 let round_trip =
-  prop "hand-encoded records read back as their fields"
+  prop "hand-encoded records decode as their fields"
     (Gen.with_pp pp_table table) (fun t ->
-      let f =
-        columns ~nulls:[ "NA" ] (List.init t.cols (fun _ -> any Type.binary))
+      let d =
+        Error.get_ok (read ~slice_length:t.slice (binaries t) (encode t))
       in
+      let columns = List.map strings (all_columns d) in
       let got =
-        Error.get_ok (read ~slice_length:t.slice f (encode t))
-        |> List.concat_map (fun b ->
-            let columns = Array.to_list (Array.map strings b) in
-            List.init
-              (List.length (List.hd columns))
-              (fun i -> List.map (fun c -> List.nth c i) columns))
+        List.init (rows d) (fun i -> List.map (fun c -> List.nth c i) columns)
       in
       equal (list (list (option string))) (List.map (List.map fst) t.rows) got)
 
-let float_texts =
-  let open Gen in
-  let digits = string_of ~size:(int_range 0 22) (char_range '0' '9') in
-  let* int = digits in
-  let* frac = digits in
-  let* exp = option (int_range (-340) 330) in
-  let int = if int = "" && frac = "" then "0" else int in
-  constant
-    (int
-    ^ (if frac = "" then "" else "." ^ frac)
-    ^ match exp with None -> "" | Some e -> "e" ^ string_of_int e)
+(* Sources *)
 
-let floats =
-  group "float64"
+let run_ok q = Error.get_ok (Query.run q)
+
+let run_error q =
+  match Query.run q with Ok _ -> "ok" | Error e -> error_text e
+
+(* [opening ?slice_length s] opens readers on [s], and counts them. *)
+let opening ?slice_length s =
+  let opened = ref 0 in
+  let open_ () =
+    incr opened;
+    Reader.of_string ?slice_length s
+  in
+  (open_, opened)
+
+let source ?slice_length f s =
+  Query.of_source (Csv.source f (fst (opening ?slice_length s)))
+
+let keep names q =
+  Query.select (if names = [] then [] else Expr.[ keep (Sel.names names) ]) q
+
+let ab = Csv.format [ ("a", any Type.int64); ("b", any Type.int8) ]
+
+(* Record 4's [b] does not read. *)
+let bad_b = "a,b\n1,1\n2,\n3,x\n"
+
+(* What a read with a request yields: the table's columns, each column's
+   validity and the bytes of its rows, under nulls too, so that two reads agree
+   byte for byte. *)
+let layout t =
+  Printf.sprintf "%d rows" (rows t)
+  :: List.map
+       (fun n ->
+         let c = column t n in
+         let valid = valid c in
+         Printf.sprintf "%s: %s" n
+           (String.concat "; "
+              (List.mapi
+                 (fun i s -> Printf.sprintf "%b %S" (valid i) s)
+                 (byte_rows c))))
+       (names t)
+
+type request = { t : table; read : bool list; limit : int option }
+
+let request =
+  let open Gen in
+  let* t = table in
+  let* read = list ~size:(constant t.cols) bool in
+  let+ limit = option (int_range 0 14) in
+  { t; read; limit }
+
+let pp_request ppf r =
+  Format.fprintf ppf "%a, reading %s, limit %s" pp_table r.t
+    (String.concat "" (List.map (fun b -> if b then "1" else "0") r.read))
+    (match r.limit with None -> "none" | Some n -> string_of_int n)
+
+let ask r q =
+  let names =
+    List.filteri
+      (fun j _ -> List.nth r.read j)
+      (List.init r.t.cols (fun j -> Printf.sprintf "c%d" (j + 1)))
+  in
+  let q = keep names q in
+  match r.limit with None -> q | Some n -> Query.slice ~offset:0 ~length:n q
+
+let sources =
+  group "source"
     [
-      prop "reads a number as float_of_string does"
-        (Gen.with_pp Format.pp_print_string float_texts) (fun s ->
-          equal int64
-            (Int64.bits_of_float (float_of_string s))
-            (Int64.bits_of_float (read_float s)));
-      prop "reads a float printed with 17 digits as itself" Gen.float (fun x ->
-          equal int64 (Int64.bits_of_float x)
-            (Int64.bits_of_float (read_float (Printf.sprintf "%.17g" x))));
+      test "reads the table that decode reads" (fun () ->
+          equal text
+            (printed (Error.get_ok (read ab "a,b\n1,1\n2,\n")))
+            (printed (run_ok (source ab "a,b\n1,1\n2,\n"))));
+      test "reads the request's columns only" (fun () ->
+          equal text "int64 [1; 2; 3]"
+            (printed (run_ok (keep [ "a" ] (source ab bad_b)))));
+      test "stops after its limit" (fun () ->
+          equal text "int64 [1; 2]\nint8 [1; ∅]"
+            (printed
+               (run_ok (Query.slice ~offset:0 ~length:2 (source ab bad_b)))));
+      test "counts rows without reading a column" (fun () ->
+          equal int 3 (rows (run_ok (keep [] (source ab bad_b)))));
+      test "fails where decode fails, at the record's line and column"
+        (fun () ->
+          let failed = run_error (source ab bad_b) in
+          equal string (failure ab bad_b) failed;
+          expect failed
+          @@ __POS_OF__
+               {| line 4, column 3: "x": column "b": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type). |});
+      test "fails on a record of another number of fields within its limit"
+        (fun () ->
+          let s = "a,b\n1,1\n2\n" in
+          expect (run_error (Query.slice ~offset:0 ~length:2 (source ab s)))
+          @@ __POS_OF__
+               {| line 3, column 2: the record has 1 field, and the format 2 columns |};
+          equal text "int64 [1]\nint8 [1]"
+            (printed (run_ok (Query.slice ~offset:0 ~length:1 (source ab s)))));
+      test "opens a reader for each read" (fun () ->
+          let open_, opened = opening "a,b\n1,1\n" in
+          let q = Query.of_source (Csv.source ab open_) in
+          let first = printed (run_ok q) in
+          equal text first (printed (run_ok q));
+          equal int 2 !opened);
+      prop
+        "reads the bytes decode reads, whatever its reader's slices, columns \
+         and limit" (Gen.with_pp pp_request request) (fun r ->
+          let f = binaries r.t and s = encode r.t in
+          let decoded = Query.of_table (Error.get_ok (read f s)) in
+          equal (list string)
+            (layout (run_ok (ask r decoded)))
+            (layout (run_ok (ask r (source ~slice_length:r.t.slice f s)))));
     ]
 
-let ints =
-  prop "reads an int64 printed in decimal as itself" Gen.int64 (fun x ->
-      equal text
-        (Printf.sprintf "int64 [%Ld]" x)
-        (decode (columns [ any Type.int64 ]) (Int64.to_string x)))
+(* Files *)
 
-let dates =
-  prop "reads a date as Time.Date counts its days"
-    Gen.(int_range (-719528) 2932896)
-    (fun days ->
-      let d = Option.get (Time.Date.of_days days) in
-      let y, m, dd = Time.Date.to_civil d in
-      equal text
-        (Printf.sprintf "int32 [%d]" days)
-        (decode
-           (columns [ any Type.date ])
-           (Printf.sprintf "%04d-%02d-%02d" y m dd)))
+let with_file contents f =
+  let path = Filename.temp_file "talon" ".csv" in
+  Out_channel.with_open_bin path (fun oc -> output_string oc contents);
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
+
+(* [anonymous path s] is [s] with each [path] written [data.csv]. *)
+let anonymous path s =
+  let n = String.length path and b = Buffer.create (String.length s) in
+  let i = ref 0 in
+  while !i < String.length s do
+    if !i + n <= String.length s && String.sub s !i n = path then begin
+      Buffer.add_string b "data.csv";
+      i := !i + n
+    end
+    else begin
+      Buffer.add_char b s.[!i];
+      incr i
+    end
+  done;
+  Buffer.contents b
+
+let files =
+  group "file"
+    [
+      test "sniffs its file with the null tokens and reads it" (fun () ->
+          with_file "x,y\n1,NA\n2,b\n" @@ fun path ->
+          let s = Error.get_ok (Csv.file ~nulls:[ "NA" ] path) in
+          equal text "int64 [1; 2]\nbytes [∅; \"b\"]"
+            (printed (run_ok (Query.of_source s))));
+      test "names its file in its plans and errors" (fun () ->
+          with_file "x\n1\nz\n" @@ fun path ->
+          let f = Csv.format [ ("x", any Type.int64) ] in
+          let q = Query.of_source (Error.get_ok (Csv.file ~format:f path)) in
+          expect
+            (anonymous path (Format.asprintf "%a@.%s" Query.pp q (run_error q)))
+          @@ __POS_OF__
+               {|
+            query → x int64
+            csv "data.csv" (1 column)
+            data.csv:3:1: "z": column "x": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type).
+            |});
+      test "names its file in a sniffing error" (fun () ->
+          with_file "a,b\n1\n" @@ fun path ->
+          expect
+            (anonymous path
+               (match Csv.file path with
+               | Ok _ -> "ok"
+               | Error e -> error_text e))
+          @@ __POS_OF__
+               {| data.csv:2:1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2 |});
+      test "fails on a file it cannot open" (fun () ->
+          let path = "/nonexistent/data.csv" in
+          let f = Csv.format [ ("x", any Type.int64) ] in
+          let opened = Error.get_ok (Csv.file ~format:f path) in
+          expect
+            (String.concat "\n"
+               [
+                 (match Csv.file path with
+                 | Ok _ -> "ok"
+                 | Error e -> error_text e);
+                 run_error (Query.of_source opened);
+               ])
+          @@ __POS_OF__
+               {|
+            /nonexistent/data.csv: No such file or directory
+            /nonexistent/data.csv: No such file or directory
+            |});
+      test "opens its file again for each read" (fun () ->
+          with_file "x\n1\n" @@ fun path ->
+          let f = Csv.format [ ("x", any Type.int64) ] in
+          let q = Query.of_source (Error.get_ok (Csv.file ~format:f path)) in
+          equal text "int64 [1]" (printed (run_ok q));
+          Out_channel.with_open_bin path (fun oc ->
+              output_string oc "x\n2\n3\n");
+          equal text "int64 [2; 3]" (printed (run_ok q)));
+    ]
 
 let () =
   exit
@@ -1040,12 +1081,10 @@ let () =
          sniffing;
          syntax;
          values;
-         test "refusals are as baselined" refusals;
          nulls;
          test "data errors are as baselined" data_errors;
          batches;
          round_trip;
-         floats;
-         ints;
-         dates;
+         sources;
+         files;
        ])

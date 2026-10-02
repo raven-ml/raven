@@ -1,7 +1,7 @@
 (library
  (name talon_next_csv)
  (public_name talon.next.csv)
- (libraries talon.next nx bytesrw)
- (private_modules scan text columns)
+ (libraries talon.next nx nx.bits bytesrw)
+ (private_modules scan)
  (instrumentation
   (backend ppx_windtrap.coverage)))
