@@ -457,9 +457,10 @@ val rect :
     unless [stroke] alone is given, and outlined with [stroke] at the theme's
     outline width.
 
-    A rect whose [x] and [y] read band scales, with neither [x2], [y2] nor
-    [stroke], is drawn under an affine projection as one image per panel whose
-    pixels are its cells ({!Mark.cells}).
+    A rect whose [x] and [y] read band scales without padding, with neither
+    [x2], [y2] nor [stroke], and no two of whose rows in a panel share a cell,
+    is drawn under an affine projection as one image per panel whose pixels are
+    its cells ({!Mark.cells}). Otherwise each row is drawn as a rectangle.
 
     Raises [Invalid_argument] if [x2] is given without [x] or [y2] without [y].
 *)
@@ -1382,8 +1383,9 @@ module Mark : sig
   (** {1:reducers Reducers}
 
       A reducer draws a mark's rows in its stead when they are many for the
-      density {!draw} is given, where the data lives and before the rows are
-      read. It applies only to the marks that name it, which so state that they
+      density {!draw} is given. {!m4} and {!cells} choose rows where the data
+      lives, before they are read; {!raster} reads the rows and paints them
+      once. It applies only to the marks that name it, which so state that they
       draw what it draws, and every reduction draws what the mark would draw
       from every row, as each states. *)
 
@@ -1401,21 +1403,23 @@ module Mark : sig
 
   val cells : reducer
   (** [cells] draws a panel's rows as one image whose pixels are their cells,
-      when the projection is affine, [x] and [y] read band scales, the mark
-      binds no [x2], [y2] or [stroke], and no two rows share a cell; a cell no
-      row covers paints nothing. Past 4 × 4 cells per device pixel, only the
-      cells that raster output samples are gathered and read. A mark naming it
-      fills the rectangle of each row's extents ({!extent}) with its [fill] at
-      its [opacity] and draws nothing else, so the image is exactly its drawing.
-  *)
+      when the projection is affine, [x] and [y] read band scales without
+      padding, the mark binds no [x2], [y2] or [stroke], and no two rows share a
+      cell; a cell no row covers paints nothing. A padded band scale leaves gaps
+      between cells, which one image of steps cannot show. Past 4 cells per
+      device pixel along either axis, only the cells that raster output samples
+      are gathered and read. A mark naming it fills the rectangle of each row's
+      extents ({!extent}) with its [fill] at its [opacity] and draws nothing
+      else, so the image is exactly its drawing. *)
 
   val raster : reducer
   (** [raster] draws a panel's picture of the mark as one image painted by the
       raster renderer at the density, over the device pixels the picture reaches
       ({!Picture.bounds}), when the mark has more than 20,000 rows in the panel
       or more rows than the panel has device pixels, whatever the output. Rows
-      are painted in their order, so the image is what the picture paints, up to
-      the rounding of compositing it once. *)
+      are painted in their order, so the image is what the picture paints, each
+      component rounded to a level. Composited onto a raster page, which rounds
+      again, it is within one level of the picture drawn there directly. *)
 
   (** {1:making Making marks} *)
 
@@ -1651,7 +1655,9 @@ val draw : ?prev:Drawing.t -> density:float -> Layout.t -> Drawing.t
     equal those of a panel of [prev] is reused, with the warnings its draw
     functions gave: the result is {!Drawing.equal} to [draw ~density l]. Draw
     functions read the theme and the ticks ({!Mark.theme}, {!Mark.ticks}), so a
-    change of either draws the panel again.
+    change of either draws the panel again. Marks compare as {!equal} compares
+    them, tensors physically, so a tensor changed in place between two draws is
+    not seen, and the panel is reused with its old picture.
 
     Raises [Invalid_argument] if [density] is not finite and positive, what draw
     functions raise, and as reading a tensor raises ({!section-conventions}). *)

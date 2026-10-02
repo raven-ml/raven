@@ -803,9 +803,9 @@ let m4_series ys =
 
 let ys n = Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| n |]
 
-(* [plain_and_reduced reduce n] draws the same picture of [n] dots with and
-   without the reducer [reduce]. *)
-let dots_with reduce n =
+(* [dots_with ~alpha reduce n] is a mark of [n] dots filled at [alpha], reduced
+   by [reduce]. *)
+let dots_with ?(alpha = 0.3) reduce n =
   let e = Nx.Rng.uniform (Nx.Rng.key 4) Nx.float64 [| n; 2 |] in
   let disc = Picture.fill Color.black (Path.circle (P2.v 0. 0.) 1.5) in
   Mark.v ~name:"dots" ?reduce
@@ -816,8 +816,29 @@ let dots_with reduce n =
     (fun r ->
       let xs, ys = Mark.points r in
       Picture.stamp
-        ~fills:(Array.make (Mark.length r) (Color.v ~alpha:0.3 0.1 0.3 0.8))
+        ~fills:(Array.make (Mark.length r) (Color.v ~alpha 0.1 0.3 0.8))
         xs ys disc)
+
+(* A panel of 20 by 20 points has 400 device pixels at density 1 and 1,600 at
+   density 2, fewer than the dots, so raster applies at both. *)
+let raster_as_drawn =
+  prop "raster draws what the picture paints, within a level" ~count:30
+    (Gen.triple
+       (Gen.of_list ~pp:Format.pp_print_float [ 0.02; 0.3; 1. ])
+       (Gen.of_list ~pp:Format.pp_print_float [ 1.; 2. ])
+       (Gen.int_range 1_601 4_000))
+    (fun (alpha, density, n) ->
+      cover "the lightest opacity" (alpha = 0.02);
+      cover "an opaque opacity" (alpha = 1.);
+      let size = Size.panels 20. 20. in
+      let page reduce =
+        let d = drawn ~density ~size (dots_with ~alpha reduce n) in
+        (d, Raster.render ~density (Drawing.renderable d))
+      in
+      let reduced, got = page (Some Mark.raster) in
+      let _, expected = page None in
+      equal int 1 (List.length (images reduced));
+      within_one ~msg:"pixels" expected got)
 
 (* Heatmaps *)
 
@@ -878,6 +899,7 @@ let reducers =
           in
           ignore (drawn ~size:(Size.panels 50. 50.) m);
           equal int 1001 (only seen));
+      raster_as_drawn;
       cases
         ~name:(fun (n, _, _) -> Printf.sprintf "%d dots in %s" n "a panel")
         "raster draws dots as one image past its thresholds"
@@ -978,6 +1000,33 @@ let reducers =
               ]
           in
           equal int 0 (List.length (cells (drawn f))));
+      test "a heatmap on a padded band scale draws rectangles" (fun () ->
+          let z =
+            Nx.create Nx.float64 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]
+          in
+          let f =
+            layer
+              [
+                rect
+                  ~x:(dim ~scale:(Scale.band ~padding:0.1 ()) 1)
+                  ~y:(dim 0) ~fill:(num z) ();
+              ]
+          in
+          let d = drawn f and r = resolve f in
+          let fills =
+            List.concat_map
+              (fun (_, p) ->
+                List.rev
+                  (fold
+                     (fun acc -> function
+                       | Picture.Fill { color; _ } -> color :: acc | _ -> acc)
+                     [] p))
+              (tags (path [ Index 0 ]) d)
+          in
+          equal int 0 (List.length (cells d));
+          equal (list color)
+            (List.init 6 (fun k -> viridis_of r (Float.of_int k)))
+            fills);
       test "a gathered heatmap draws what the whole image draws" (fun () ->
           let h = 300 and w = 400 in
           let z =
