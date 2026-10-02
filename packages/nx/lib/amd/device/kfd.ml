@@ -80,8 +80,6 @@ let gpu_nodes () =
       | Some id -> id <> 0
       | None | (exception Sys_error _) -> false)
 
-let available () = Sys.file_exists "/dev/kfd"
-
 (* The topology node of the GPU at the bus address [bus], if the driver holds
    it. Nodes follow the order in which the driver took its GPUs and leave out
    those it does not hold: GPUs are numbered by bus address instead. A node's

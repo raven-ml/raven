@@ -1055,11 +1055,6 @@ let open_pci ?firmware ~machine ~index bus =
 let chosen = ref None
 let lock = Mutex.create ()
 
-let default () =
-  match !chosen with
-  | Some i -> i
-  | None -> if Nvk.available () then Kernel else Pci
-
 (* Raises [Lost] for [host] if its machine can no longer be reached: the
    synchronization of [host] meets the failed connection, which loses it. *)
 let check_reach host =
@@ -1115,28 +1110,22 @@ let open_gpu ~machine ~iface ?firmware i =
               refuse ~machine iface i
                 (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e))))
 
-let get ?(host = Nx_device.host) ?interface ?firmware i =
+let get ?(host = Nx_device.host) ~interface ?firmware i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_nv_device.get: %d < 0" i);
-  let remote = Nx_remote_device.remote host in
-  let refuse iface = refuse ~machine:host iface i in
+  let refuse = refuse ~machine:host interface i in
   Mutex.protect lock (fun () ->
-      match (remote, interface) with
-      | Some _, Some Kernel ->
-          refuse Pci "another machine's GPUs are reached over PCI"
-      | Some _, _ -> open_gpu ~machine:host ~iface:Pci ?firmware i
-      | None, _ when not (linux ()) ->
-          refuse
-            (Option.value interface ~default:Kernel)
-            "NVIDIA GPUs need Linux"
+      match (Nx_remote_device.remote host, interface) with
+      | Some _, Kernel -> refuse "another machine's GPUs are reached over PCI"
+      | Some _, Pci -> open_gpu ~machine:host ~iface:Pci ?firmware i
+      | None, _ when not (linux ()) -> refuse "NVIDIA GPUs need Linux"
       | None, _ -> (
-          let iface = Option.value interface ~default:(default ()) in
           match !chosen with
-          | Some c when c <> iface ->
-              refuse iface
+          | Some c when c <> interface ->
+              refuse
                 (Printf.sprintf
                    "this process reaches NVIDIA GPUs through %s, not %s"
-                   (interface_name c) (interface_name iface))
-          | _ -> open_gpu ~machine:host ~iface ?firmware i))
+                   (interface_name c) (interface_name interface))
+          | _ -> open_gpu ~machine:host ~iface:interface ?firmware i))
 
 let of_device = nv_of
 let compute n = fst (Option.get n.public)

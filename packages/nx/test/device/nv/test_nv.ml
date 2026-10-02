@@ -69,20 +69,22 @@ let test_other_machine () =
       if Nx_nv_device.count ~host () > 0 then
         skip ~reason:"the machine has a GPU" ();
       let named = Printf.sprintf "NV-PCI@127.0.0.1:%d: " port in
-      (match Nx_nv_device.get ~host 0 with
+      (match Nx_nv_device.get ~host ~interface:Pci 0 with
       | Ok _ -> fail "a GPU opened"
-      | Error msg ->
-          is_true ~msg:"the GPU's name starts it"
-            (String.starts_with ~prefix:named msg));
+      | Error msg -> starts_with ~msg:"the GPU's PCI name" ~affix:named msg);
       (match Nx_nv_device.get ~host ~interface:Kernel 0 with
       | Ok _ -> fail "a GPU opened"
-      | Error msg -> contains ~msg:"over PCI only" ~sub:"over PCI" msg);
+      | Error msg ->
+          starts_with ~msg:"the GPU's kernel name"
+            ~affix:(Printf.sprintf "NV@127.0.0.1:%d: " port)
+            msg;
+          contains ~msg:"over PCI only" ~sub:"over PCI" msg);
       Nx_device_support.Remote_server.stop s;
       let lost = function Nx_device.Lost (d, _) -> d == host | _ -> false in
       raises_match ~msg:"count, the machine gone" lost (fun () ->
           Nx_nv_device.count ~host ());
       raises_match ~msg:"get, the machine gone" lost (fun () ->
-          Nx_nv_device.get ~host 1)
+          Nx_nv_device.get ~host ~interface:Pci 1)
 
 let () =
   exit
@@ -101,10 +103,10 @@ let () =
                        | Nx_nv_device.Kernel -> "NV: "
                        | Pci -> "NV-PCI: "
                      in
-                     is_true ~msg:"the failure names the GPU and its interface"
-                       (String.starts_with ~prefix:name msg))
-               [ Nx_nv_device.Kernel; Pci; Kernel ];
-             is_error (Nx_nv_device.get 0));
+                     starts_with
+                       ~msg:"the failure names the GPU and its interface"
+                       ~affix:name msg)
+               [ Nx_nv_device.Kernel; Pci; Kernel ]);
          test "the GPUs are the machine's display controllers" (fun () ->
              equal int (linux_gpus ()) (Nx_nv_device.count ()));
          test "an index past the GPUs is refused with their count"
@@ -112,7 +114,7 @@ let () =
          test "another machine's GPUs are opened over PCI" test_other_machine;
          test "a negative index is refused" (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->
-                 Nx_nv_device.get (-1)));
+                 Nx_nv_device.get ~interface:Kernel (-1)));
          test "a device of another vendor has no NV channels" (fun () ->
              is_true (Option.is_none (Nx_nv_device.of_device Nx_device.host)));
        ])

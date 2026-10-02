@@ -20,7 +20,6 @@ external map_at : int -> nativeint -> int -> unit = "caml_nx_nv_map"
 external release_at : nativeint -> int -> unit = "caml_nx_nv_release"
 
 let ctl_path = "/dev/nvidiactl"
-let available () = Sys.file_exists ctl_path
 
 (* The escape ioctls: read and write, of the parameters' size, in the driver's
    magic. *)

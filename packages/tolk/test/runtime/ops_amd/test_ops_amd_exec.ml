@@ -2,9 +2,13 @@ open Windtrap
 open Tolk
 module B = Nx_device.Buffer
 
-(* The first AMD GPU, or a skip where there is none. *)
+(* The first AMD GPU through the kernel driver, or a skip where there is
+   none. *)
 let amd =
-  lazy (match Nx_amd_device.get 0 with Ok d -> Some d | Error _ -> None)
+  lazy
+    (match Nx_amd_device.get ~interface:Kernel 0 with
+    | Ok d -> Some d
+    | Error _ -> None)
 
 let amd () =
   match Lazy.force amd with Some d -> d | None -> skip ~reason:"no AMD GPU" ()

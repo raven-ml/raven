@@ -5,8 +5,13 @@ open Windtrap
 open Tolk
 module B = Nx_device.Buffer
 
-(* The first NVIDIA GPU, or a skip where there is none. *)
-let nv = lazy (match Nx_nv_device.get 0 with Ok d -> Some d | Error _ -> None)
+(* The first NVIDIA GPU through the kernel driver, or a skip where there is
+   none. *)
+let nv =
+  lazy
+    (match Nx_nv_device.get ~interface:Kernel 0 with
+    | Ok d -> Some d
+    | Error _ -> None)
 
 let nv () =
   match Lazy.force nv with

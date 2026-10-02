@@ -15,6 +15,11 @@
       firmware, and manages the GPU's memory and page tables itself. The GPU is
       this process's until it exits.
 
+    The two differ in what a program observes: who else may use the GPU, what a
+    fault or a crash leaves behind, how much memory the host maps, and which
+    copies go direct. Nothing chooses between them for the caller: {!get} takes
+    the interface.
+
     {b Numbering.} GPU [i] is the [i]th of the machine's NVIDIA GPUs, its
     display controllers in bus order ({!Nx_device_support.Pci.compare_address}),
     under both interfaces: index [i] names the same GPU through either, and
@@ -110,16 +115,15 @@ val count : ?host:Nx_device.t -> unit -> int
 
 val get :
   ?host:Nx_device.t ->
-  ?interface:interface ->
+  interface:interface ->
   ?firmware:string ->
   int ->
   (Nx_device.t, string) result
-(** [get i] is NVIDIA GPU [i] through [interface], opened by the first call that
-    succeeds; every later call returns the same value. The first successful open
-    fixes the process's interface. Given another machine's [host] (defaults to
-    {!Nx_device.host}), it is that machine's GPU [i], which only {!Pci} reaches.
-    [interface] defaults to the process's interface once a device is open, and
-    before that to {!Kernel} if [/dev/nvidiactl] exists and {!Pci} otherwise.
+(** [get ~interface i] is NVIDIA GPU [i] through [interface], opened by the
+    first call that succeeds; every later call returns the same value. The first
+    successful open fixes the process's interface. Given another machine's
+    [host] (defaults to {!Nx_device.host}), it is that machine's GPU [i], which
+    only {!Pci} reaches.
 
     Under {!Pci}, each of the GPU's firmware images must have the SHA-256 digest
     it was validated with. An image is read from the directory [firmware], if
@@ -138,8 +142,9 @@ val get :
     hold the GPU or is of another release, naming it, that {!Pci} does not
     support the GPU's family, that a privilege is missing, or that a firmware
     image is missing or differs, naming the file. [msg] starts with the GPU's
-    name, such as ["NV:2: no GPU 2; there are 2 NVIDIA GPUs"]. Under {!Kernel},
-    a failed open gives back what it took, so a later [get] may open the GPU.
+    name under [interface], such as ["NV:2: no GPU 2; there are 2 NVIDIA GPUs"].
+    Under {!Kernel}, a failed open gives back what it took, so a later [get] may
+    open the GPU.
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
     {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)
