@@ -51,39 +51,18 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- **Breaking:** hugin is redesigned: a figure (`Hugin.t`) is marks that bind
+  channels (`num`, `cat`, `dim`) to roles over named `Scale.t`s, composed with
+  `layer`, `grid` and facets. `imshow`, `hstack`, `Cmap` and decorations go.
 - `hugin` no longer depends on `bytesrw`: the PDF writers deflate their
   streams with `Compress_deflate.Zlib.compress`.
-- Marks and `Hugin_vg.Picture.image` read a placed value to the host once, as
-  they are made. A placed image raised in the raster and PDF backends.
-- Hugin no longer depends on cairo or SDL2. Plots render through
+- Hugin no longer depends on cairo or SDL2. Figures render through
   `hugin.vg` with the bundled Inter font, so `opam install hugin` needs no
-  system libraries and a specification produces the same bytes on every
-  machine. PDF output keeps text as text with the font embedded, and SVG
-  output embeds the font too.
-- Remove `Hugin.show`. There is no interactive window any more; view plots
-  in Quill or render them to a file.
-- `Theme.font` loses its `family` field: the bundled font is used, and
-  `weight` picks its regular or bold face.
-- Fix y-axis labels, which read top to bottom; they now read bottom to top.
-- Add `hugin.vg`, a 2D vector picture model with no system dependencies,
-  and one library per renderer. `Hugin_vg.Path` builds paths from lines,
-  cubic Béziers and bulk polylines, `Affine` composes transforms, and
-  `Stroke` and `Color` describe how paths are drawn. `Font` bundles two
-  faces of Inter and reads any TrueType font with `Font.of_string`; it
-  measures text with kerning (`advance`, `bounds`, `ascent`, `descent`) and
-  turns it into paths (`outline`, `glyph_path`), so text looks the same on
-  every machine. `Picture` is the display list: fills with nonzero or
-  even-odd rules, strokes with caps, joins and dashes, text, Nx images,
-  groups, path clips, affine transforms, and `stamp` for drawing one
-  picture at many points. `Picture.bounds`, `Path.bounds` and
-  `Font.bounds` give the `Box` a drawing occupies, so aligning any picture
-  is one `transform`, `Path.flatten` folds over a path with its curves
-  replaced by chords, and `Picture.pp` prints a picture for tests and
-  debugging. `hugin.vg.raster` draws a picture into an
-  `[|height; width; 4|]` RGBA tensor with analytic antialiasing;
-  `hugin.vg.svg` and `hugin.vg.pdf` write it as a self-contained SVG or
-  single-page PDF document, with text kept as text, the fonts it uses
-  embedded, images stored losslessly and every PDF stream deflated.
+  system libraries and a figure produces the same bytes on every machine.
+  PDF output keeps text as text with the font embedded, and SVG output embeds
+  the font too.
+- Remove `Hugin.show`. There is no interactive window any more; view figures
+  in Quill or save them to a file.
 
 ### Vega
 
@@ -6095,15 +6074,10 @@ thread.
   and records; Parquet writing; Arrow IPC and JSON; Unicode case mapping; and
   HTML display in Quill.
 
-### Hugin
-
-- Fix contour rendering. The marching squares implementation produced disconnected
-  2-point line segments instead of joined polylines. Contour lines now render as
-  smooth connected curves, and filled contours (`~filled:true`) produce correct
-  closed polygons instead of degenerate 2-point fills.
-
 ### Quill
 
+- The kernel no longer turns markdown data URIs in the toplevel's output into
+  displays. Figures display through display tags, as `Hugin.pp` prints them.
 - `Quill_top.install_printer` returns the toplevel's report when a printer does
   not install, and quill prints it instead of ignoring it. Quill installs
   `Talon.pp` and `Talon.Query.pp`, and loads `talon.parquet`.
