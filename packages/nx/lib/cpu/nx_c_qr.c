@@ -35,7 +35,9 @@
    too), and the trailing C := (I - V Tᴴ Vᴴ) C is two GEMMs (W = Vᴴ C, then
    C -= V (Tᴴ W)) through nx_c_gemm2d_ct_ws. la_qrq forms Q the same way: block
    reflectors (I - V T Vᴴ, T not Tᴴ) applied to the identity in reverse panel
-   order, matching the unblocked la_qrq_unb's H_j. Real types drop the conjugation
+   order, matching the unblocked la_qrq_unb's H_j. A reflector starting at row j
+   meets only columns j.. that are not still identity columns, which it leaves
+   unchanged, so both skip the columns left of j. Real types drop the conjugation
    (CONJ, the imaginary text), so one body serves real and complex. V, Vc, T, W, P,
    and the GEMM panels are caller per-worker scratch. */
 #define LA_GEN_QR(sfx, T, R, DT, CONJ, NORM2, REAL, FROMR, SQRT)               \
@@ -88,15 +90,16 @@
         for (int64_t i = 0; i <= c; i++) Tm[i * ldt + c] = (T)0;             \
         continue;                                                           \
       }                                                                      \
-      for (int64_t i = 0; i < c; i++) {                                      \
-        T s = (T)0;                                                          \
-        for (int64_t r = c; r < m - j0; r++) {                              \
-          T vri = A[(j0 + r) * lda + (j0 + i)];                             \
-          T vrc = (r == c) ? (T)1 : A[(j0 + r) * lda + (j0 + c)];           \
-          s += CONJ(vri) * vrc;                                             \
-        }                                                                    \
-        Tm[i * ldt + c] = -tc * s;                                          \
+      /* Vᴴ v_c over the panel's earlier columns, row by row so the sums     \
+         run along the row-major panel; each sums in row order. */          \
+      T s[LA_QR_NB];                                                         \
+      for (int64_t i = 0; i < c; i++) s[i] = (T)0;                           \
+      for (int64_t r = c; r < m - j0; r++) {                                 \
+        const T *Ar = &A[(j0 + r) * lda + j0];                               \
+        T vrc = (r == c) ? (T)1 : Ar[c];                                     \
+        for (int64_t i = 0; i < c; i++) s[i] += CONJ(Ar[i]) * vrc;          \
       }                                                                      \
+      for (int64_t i = 0; i < c; i++) Tm[i * ldt + c] = -tc * s[i];          \
       for (int64_t i = 0; i < c; i++) {                                      \
         T acc = (T)0;                                                        \
         for (int64_t l = i; l < c; l++)                                     \
@@ -131,7 +134,7 @@
       for (int64_t c = 0; c < nq; c++) Q[i * ldq + c] = i == c ? (T)1 : (T)0; \
     for (int64_t jj = 0; jj < k; jj++) {                                   \
       int64_t j = k - 1 - jj;                                              \
-      for (int64_t cc0 = 0; cc0 < nq; cc0 += LA_QR_CB) {                  \
+      for (int64_t cc0 = j; cc0 < nq; cc0 += LA_QR_CB) {                  \
         int64_t ccN = cc0 + LA_QR_CB < nq ? cc0 + LA_QR_CB : nq;          \
         int64_t cw = ccN - cc0;                                           \
         T w[LA_QR_CB];                                                     \
@@ -178,13 +181,18 @@
       nx_c_gemm2d_ct_ws(DT, jb, nt, mp, (const char *)Vc, 1, jb,           \
                        (const char *)&A[j0 * lda + (j0 + jb)], lda, 1,     \
                        (char *)W, nt, 1, (char *)vg);                      \
-      for (int64_t a = jb - 1; a >= 0; a--)                                \
-        for (int64_t q = 0; q < nt; q++) {                                 \
-          T acc = (T)0;                                                    \
-          for (int64_t l = 0; l <= a; l++)                                \
-            acc += CONJ(Tm[l * jb + a]) * W[l * nt + q];                   \
-          W[a * nt + q] = acc;                                             \
+      /* W := Tᴴ W in place, a row at a time from the bottom: row a reads   \
+         itself and the rows above it, which are not yet overwritten. */    \
+      for (int64_t a = jb - 1; a >= 0; a--) {                              \
+        T *Wa = &W[a * nt];                                                \
+        T taa = CONJ(Tm[a * jb + a]);                                      \
+        for (int64_t q = 0; q < nt; q++) Wa[q] = taa * Wa[q];             \
+        for (int64_t l = 0; l < a; l++) {                                  \
+          const T *Wl = &W[l * nt];                                        \
+          T tla = CONJ(Tm[l * jb + a]);                                    \
+          for (int64_t q = 0; q < nt; q++) Wa[q] += tla * Wl[q];          \
         }                                                                   \
+      }                                                                     \
       nx_c_gemm2d_ct_ws(DT, mp, nt, jb, (const char *)Vm, jb, 1,           \
                        (const char *)W, nt, 1, (char *)P, nt, 1,           \
                        (char *)vg);                                        \
@@ -217,22 +225,29 @@
       int64_t mp = m - j0;                                                 \
       nx_c_la_buildv_##sfx(vA, m, lda, j0, jb, Vm, Vc);                        \
       nx_c_la_larft_##sfx(vA, m, lda, j0, jb, vtau, Tm, jb);                   \
-      nx_c_gemm2d_ct_ws(DT, jb, nq, mp, (const char *)Vc, 1, jb,          \
-                       (const char *)&Q[j0 * ldq], ldq, 1, (char *)W, nq, \
-                       1, (char *)vg);                                     \
-      for (int64_t a = 0; a < jb; a++)                                     \
-        for (int64_t q = 0; q < nq; q++) {                                \
-          T acc = (T)0;                                                   \
-          for (int64_t l = a; l < jb; l++)                               \
-            acc += Tm[a * jb + l] * W[l * nq + q];                        \
-          W[a * nq + q] = acc;                                            \
+      int64_t nw = nq - j0;                                                \
+      T *Qb = &Q[j0 * ldq + j0];                                           \
+      nx_c_gemm2d_ct_ws(DT, jb, nw, mp, (const char *)Vc, 1, jb,          \
+                       (const char *)Qb, ldq, 1, (char *)W, nw, 1,        \
+                       (char *)vg);                                        \
+      /* W := T W in place, a row at a time from the top: row a reads      \
+         itself and the rows below it, which are not yet overwritten. */   \
+      for (int64_t a = 0; a < jb; a++) {                                   \
+        T *Wa = &W[a * nw];                                               \
+        T taa = Tm[a * jb + a];                                           \
+        for (int64_t q = 0; q < nw; q++) Wa[q] = taa * Wa[q];            \
+        for (int64_t l = a + 1; l < jb; l++) {                            \
+          const T *Wl = &W[l * nw];                                       \
+          T tal = Tm[a * jb + l];                                         \
+          for (int64_t q = 0; q < nw; q++) Wa[q] += tal * Wl[q];         \
         }                                                                  \
-      nx_c_gemm2d_ct_ws(DT, mp, nq, jb, (const char *)Vm, jb, 1,          \
-                       (const char *)W, nq, 1, (char *)P, nq, 1,          \
+      }                                                                    \
+      nx_c_gemm2d_ct_ws(DT, mp, nw, jb, (const char *)Vm, jb, 1,          \
+                       (const char *)W, nw, 1, (char *)P, nw, 1,          \
                        (char *)vg);                                       \
       for (int64_t r = 0; r < mp; r++)                                    \
-        for (int64_t q = 0; q < nq; q++)                                  \
-          Q[(j0 + r) * ldq + q] -= P[r * nq + q];                        \
+        for (int64_t q = 0; q < nw; q++)                                  \
+          Qb[r * ldq + q] -= P[r * nw + q];                              \
     }                                                                      \
   }
 #define LA_EXPAND_QR(sfx, T, R, DT, CONJ, NORM2, REAL, FROMR, SQRT)            \

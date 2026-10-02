@@ -3072,6 +3072,8 @@ thread.
 
 ### Nx
 
+- `Nx.qr` forms Q only over the columns its reflectors change: a float64
+  256 x 256 factorization takes 1.8 ms on one kimchi core where it took 2.9.
 - `Nx.matmul` shares a large product among threads by row blocks when whole
   column panels would leave threads idle: a float32 2048 x 2048 product on
   6 cores takes 25 ms where it took 33.
