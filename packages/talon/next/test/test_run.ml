@@ -1692,6 +1692,41 @@ let joins =
     [
       join_order;
       shapes;
+      test "a failing join under an empty slice of a slice from the end"
+        (fun () ->
+          (* The join fails at its left's row 0, but no slice reads a row. *)
+          let t = v [ ("x", i64 [| 0; 1 |]) ] in
+          let right =
+            R.Select
+              ( [ R.Out ("y", R.Col (Type.int64, "x")) ],
+                R.Slice { offset = 0; length = 0; plan = R.Table t } )
+          in
+          let failing =
+            R.Join
+              {
+                kind = Inner;
+                each_left = One;
+                each_right = Any;
+                on = Position;
+                left = R.Table t;
+                right;
+              }
+          in
+          let p =
+            R.Slice
+              {
+                offset = 0;
+                length = 0;
+                plan = R.Slice { offset = -1; length = 0; plan = failing };
+              }
+          in
+          equal ~msg:"reference rows" int 0
+            (match R.run p with
+            | Ok ((_, R.Column (_, vs)) :: _) -> Array.length vs
+            | Ok [] -> 0
+            | Error (row, why) ->
+                failf "the reference fails at row %d: %s" row why);
+          equal ~msg:"run rows" int 0 (rows (run_ok (R.query p))));
       test "null keys, NaNs and zeros each match as one key" (fun () ->
           let payload = Int64.float_of_bits 0xfff8000000000001L in
           let f =
