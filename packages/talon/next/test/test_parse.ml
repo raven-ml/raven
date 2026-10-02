@@ -473,7 +473,131 @@ let laws =
             (Decimal.v ~unscaled ~scale));
     ]
 
+(* Printing *)
+
+let texts c = Column.options Kind.string (Column.print c)
+
+let printed ty vs expected =
+  equal
+    (array (option string))
+    (Array.of_list (List.map Option.some expected))
+    (texts (Column.v ty (Array.of_list vs)))
+
+(* [of_ticks ty xs] is the column of [ty] whose values are the int64 [xs]. *)
+let of_ticks ty xs =
+  let values = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
+  match Column.of_layout (Any ty) (Fixed { validity = None; values }) with
+  | Ok c -> c
+  | Error (row, why) -> failf "row %d: %s" row why
+
+let readable (G.Sample (ty, _)) =
+  match ty with
+  | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+  | Float16 | Float32 | Float64 | Decimal _ | String | Binary | Categorical _
+  | Date | Datetime _ ->
+      true
+  | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
+
+let printing =
+  group "printing"
+    [
+      test "a float64 is the fewest digits that read back" (fun () ->
+          printed Type.float64
+            [ 150.; 0.0015; -0.; 0.; 0.1; 123.456; 1e20; 1e21; 1e-7; 1e-8 ]
+            [
+              "150";
+              "0.0015";
+              "-0";
+              "0";
+              "0.1";
+              "123.456";
+              "100000000000000000000";
+              "1e+21";
+              "0.0000001";
+              "1e-08";
+            ];
+          printed Type.float64
+            [ nan; infinity; neg_infinity; 5e-324; Float.max_float ]
+            [ "nan"; "inf"; "-inf"; "5e-324"; "1.7976931348623157e+308" ]);
+      test "a narrow float is the fewest digits that read back at its width"
+        (fun () ->
+          printed Type.float32 [ 0.1; 16777216. ] [ "0.1"; "16777216" ];
+          printed Type.float16 [ 65504.; 0.1; 6e-8 ] [ "65500"; "0.1"; "6e-08" ]);
+      test "integers are written in full" (fun () ->
+          printed Type.int8 [ -128; 127 ] [ "-128"; "127" ];
+          equal
+            (array (option string))
+            [| Some "-9223372036854775808"; Some "9223372036854775807" |]
+            (texts (of_ticks Type.int64 [| Int64.min_int; Int64.max_int |]));
+          equal
+            (array (option string))
+            [| Some "18446744073709551615"; Some "0" |]
+            (texts
+               (Column.of_tensor (Nx.create Nx.uint64 [| 2 |] [| -1L; 0L |]))));
+      test "other types write the text parse reads" (fun () ->
+          printed Type.bool [ true; false ] [ "true"; "false" ];
+          printed
+            (Type.decimal ~precision:5 ~scale:2)
+            [
+              Decimal.v ~unscaled:150L ~scale:2;
+              Decimal.v ~unscaled:(-5L) ~scale:2;
+            ]
+            [ "1.50"; "-0.05" ];
+          printed (Type.categorical [| "a"; "b" |]) [ "b"; "a" ] [ "b"; "a" ];
+          printed Type.date
+            [ day 0; day (-719529) ]
+            [ "1970-01-01"; "-0001-12-31" ];
+          printed
+            (Type.datetime ~zone:"UTC" Ms)
+            [ instant Time.of_ms 1500L; instant Time.of_ms (-1L) ]
+            [ "1970-01-01T00:00:01.5Z"; "1969-12-31T23:59:59.999Z" ]);
+      test "a datetime is written from its ticks, past Time's range" (fun () ->
+          let ty = Type.datetime S in
+          let c = of_ticks ty [| 253402300800L; -62167219201L |] in
+          equal
+            (array (option string))
+            [| Some "+10000-01-01T00:00:00"; Some "-0001-12-31T23:59:59" |]
+            (texts c);
+          let back =
+            match Column.parse (Any ty) (Column.print c) with
+            | Ok c -> c
+            | Error (row, why) -> failf "row %d: %s" row why
+          in
+          equal (array int64)
+            [| 253402300800L; -62167219201L |]
+            (Nx.to_array (Column.to_tensor Nx.int64 back)));
+      test "nulls stay null" (fun () ->
+          equal
+            (array (option string))
+            [| None; Some "1"; None |]
+            (texts (Column.of_options Type.int16 [| None; Some 1; None |])));
+      test "text is written as it is" (fun () ->
+          printed Type.string [ "a,b"; ""; "\"" ] [ "a,b"; ""; "\"" ];
+          equal
+            (array (option string))
+            [| Some "\xff" |]
+            (Column.options Kind.binary
+               (Column.print
+                  (Column.v Type.binary [| Binary.of_string "\xff" |]))
+            |> Array.map (Option.map (fun b -> (b : Binary.t :> string)))));
+      test "a type parse does not read is refused" (fun () ->
+          raises
+            (Invalid_argument
+               "Column.print: duration[s] is not a type that Column.parse reads")
+            (fun () ->
+              Column.print (Column.v (Type.duration S) [| Time.Span.s 1 |])));
+      prop "Column.parse reads back what Column.print writes"
+        (Gen.such_that readable G.sample) (fun (G.Sample (ty, vs)) ->
+          let c = Column.of_options ty vs in
+          let back = Column.parse (Column.type_ c) (Column.print c) in
+          let pp ppf (row, why) = Format.fprintf ppf "row %d: %s" row why in
+          equal
+            (array (option (G.witness ty)))
+            vs
+            (Column.options (Type.kind ty) (require_ok ~pp back)));
+    ]
+
 let () =
   exit
     (run "talon.next.parse"
-       [ value_cases; storage; refusal_cases; errors; laws ])
+       [ value_cases; storage; refusal_cases; errors; laws; printing ])

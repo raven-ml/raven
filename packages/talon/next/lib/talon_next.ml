@@ -17,6 +17,7 @@ module Column = struct
   include Column
 
   let parse = Form.parse
+  let print = Form.print
 end
 
 let v = Table.v

@@ -35,10 +35,22 @@ val format_with : string -> Column.t -> Column.t
 
 val pp : 'a Type.t -> Format.formatter -> 'a -> unit
 (** [pp ty ppf v] writes [v]'s canonical text, which {!parse} reads back to [v]:
-    a decimal with [ty]'s scale of digits after the point; a datetime with the
-    fewest fraction digits that are exact, and [Z] when [ty] has a zone. Text
-    and byte strings are written as they are. Floats, and types that {!parse}
-    does not read, write as {!Type.pp_lit} writes their values. *)
+    a float in the fewest significant digits that round to it at [ty]'s width,
+    without an exponent from [1e-7] up to [1e21] ([150], [0.0015], [1e+21]), or
+    [nan], [inf] or [-inf]; a decimal with [ty]'s scale of digits after the
+    point; a datetime with the fewest fraction digits that are exact, and [Z]
+    when [ty] has a zone. Text and byte strings are written as they are. Types
+    that {!parse} does not read write as {!Type.pp_lit} writes their values. *)
+
+val print : Column.t -> Column.t
+(** [print c] is [Talon_next.Column.print c]: the column of the canonical texts
+    of [c]'s rows, as {!pp} writes them, null where [c] is, which {!parse} reads
+    back to [c]. It is [c] itself for [string] and [binary], and a [string]
+    column otherwise. A value of [int64] or [uint64] beyond OCaml's [int], and
+    ticks of any unit, are written in full. A datetime whose day is outside
+    {!Time.Date}'s range writes a text that {!parse} refuses as out of range.
+
+    Raises [Invalid_argument] if [c]'s type is not one {!parse} reads. *)
 
 val pp_cell : Column.t -> int -> Format.formatter -> unit
 (** [pp_cell c i ppf] writes row [i] of [c] alone, as messages show a key: [∅]

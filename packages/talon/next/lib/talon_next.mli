@@ -695,6 +695,25 @@ module Column : sig
 
       Raises [Invalid_argument] if [c] is neither [string] nor [binary], or [ty]
       is another type. *)
+
+  val print : t -> t
+  (** [print c] is the column of the canonical texts of [c]'s rows, null where
+      [c] is null, which {!parse} reads back: [parse (type_ c) (print c)] is
+      [c]. Formats that write text call it. It is [c] itself for [string] and
+      [binary], and a [string] column otherwise. Each value is written in the
+      text {!parse} reads:
+      - a float in the fewest significant digits that read back to it at its
+        type's width, without an exponent from [1e-7] up to [1e21] ([150],
+        [0.0015], [-0], [1e+21]), or [nan], [inf] or [-inf];
+      - a decimal with its type's scale of digits after the point;
+      - a datetime with the fewest fraction digits that are exact, and [Z] when
+        its type has a zone;
+      - an integer in full, past OCaml's [int] included.
+
+      A datetime whose day is outside {!Time.Date}'s range is written, and
+      {!parse} refuses it as out of range.
+
+      Raises [Invalid_argument] if [c]'s type is not one {!parse} reads. *)
 end
 
 (** {1:tables Tables} *)
