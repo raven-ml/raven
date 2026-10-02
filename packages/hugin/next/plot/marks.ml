@@ -503,29 +503,50 @@ let rule ?x ?x2 ?y ?y2 ?stroke ?width ?dash ?opacity ?fx ?fy () =
 let slope_role = Role.value ~name:"slope"
 let intercept_role = Role.value ~name:"intercept"
 
+(* [within m c (a, b) (ya, yb)] is the interval of the x in \[[a];[b]\] whose [y
+   = m x + c] lies in \[[ya];[yb]\], if any: y is monotone in x, so these x form
+   one interval. *)
+let within m c (a, b) (ya, yb) =
+  let lo, hi =
+    if m = 0. then
+      if ya <= c && c <= yb then (a, b) else (Float.infinity, Float.neg_infinity)
+    else
+      let x0 = (ya -. c) /. m and x1 = (yb -. c) /. m in
+      (Float.max a (Float.min x0 x1), Float.min b (Float.max x0 x1))
+  in
+  if lo <= hi then Some (lo, hi) else None
+
 (* [equation_path rows sx sy m c] is the line y = m x + c across the x domain of
-   [sx], in normalised positions: a segment between its ends if [sx] and [sy]
-   are linear, and otherwise a curve through points one point of the page apart
-   along x. *)
+   [sx], cut in data to the y domain of [sy], in normalised positions: a segment
+   between its ends if [sx] and [sy] are linear, and otherwise a curve through
+   points one point of the page apart along x. Cutting before normalising keeps
+   a clamped scale from clamping it. *)
 let equation_path rows sx sy m c =
-  let nx = Scale.normalize sx and ny = Scale.normalize sy in
-  let y x = ny ((m *. x) +. c) in
-  match (Scale.transform sx, Scale.transform sy) with
-  | Scale.Linear, Scale.Linear ->
-      let (Scale.Floats (a, b)) = Scale.domain sx in
-      Path.polyline [| nx a; nx b |] [| y a; y b |]
-  | _ ->
-      let at u = Coord.point (Mark.projection rows) u 0. in
-      let w = Float.abs (P2.x (at 1.) -. P2.x (at 0.)) in
-      let n = Int.max 1 (Float.to_int (Float.ceil w)) in
-      let us = Array.init (n + 1) (fun j -> Float.of_int j /. Float.of_int n) in
-      let vs =
-        Array.map
-          (fun u ->
-            match Scale.invert sx u with Some x -> y x | None -> Float.nan)
-          us
-      in
-      Curve.path Curve.linear us vs
+  let (Scale.Floats (a, b)) = Scale.domain sx
+  and (Scale.Floats (ya, yb)) = Scale.domain sy in
+  match within m c (a, b) (ya, yb) with
+  | None -> Path.empty
+  | Some (lo, hi) -> (
+      let nx = Scale.normalize sx and ny = Scale.normalize sy in
+      (* Inside the interval, y leaves the domain by rounding alone. *)
+      let y x = ny (Float.min yb (Float.max ya ((m *. x) +. c))) in
+      match (Scale.transform sx, Scale.transform sy) with
+      | Scale.Linear, Scale.Linear ->
+          Path.polyline [| nx lo; nx hi |] [| y lo; y hi |]
+      | _ ->
+          let u0 = nx lo and u1 = nx hi in
+          let at u = Coord.point (Mark.projection rows) u 0. in
+          let w = Float.abs (P2.x (at u1) -. P2.x (at u0)) in
+          let n = Int.max 1 (Float.to_int (Float.ceil w)) in
+          let x j =
+            if j = 0 then lo
+            else if j = n then hi
+            else
+              let u = u0 +. (Float.of_int j /. Float.of_int n *. (u1 -. u0)) in
+              Option.value (Scale.invert sx u) ~default:Float.nan
+          in
+          let xs = Array.init (n + 1) x in
+          Curve.path Curve.linear (Array.map nx xs) (Array.map y xs))
 
 let draw_abline rows =
   match

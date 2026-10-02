@@ -596,14 +596,15 @@ val abline :
   t
 (** [abline ~slope ~intercept ()] draws, for each row, the line
     [y = slope × x + intercept] across the x domain of each panel, cut at the
-    domain's edges: a straight segment if the panel's x and y scales are both
-    linear, and otherwise a curve through points one point of the page apart
-    along x. [slope] and [intercept] are values ({!Role.value}): they read no
-    scale and contribute to no domain, so an abline never widens the domain it
-    is drawn across. The line is stroked as {!rule} strokes, with [stroke], the
-    ink by default, at [width], the theme's line width by default, broken by
-    [dash]. [abline ~slope:(const 1.) ~intercept:(const 0.) ()] is the diagonal
-    of a calibration plot, and
+    domain's edges in data, before a scale clamps, so a clamped scale draws the
+    same line: a straight segment if the panel's x and y scales are both linear,
+    and otherwise a curve through points one point of the page apart along x.
+    [slope] and [intercept] are values ({!Role.value}): they read no scale and
+    contribute to no domain, so an abline never widens the domain it is drawn
+    across. The line is stroked as {!rule} strokes, with [stroke], the ink by
+    default, at [width], the theme's line width by default, broken by [dash].
+    [abline ~slope:(const 1.) ~intercept:(const 0.) ()] is the diagonal of a
+    calibration plot, and
     [abline ~slope:(num s) ~intercept:(num b) ~stroke:(dim 0) ()] one fitted
     line per seed.
 

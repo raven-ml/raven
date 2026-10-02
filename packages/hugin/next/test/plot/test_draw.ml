@@ -2096,16 +2096,24 @@ let line_id = path [ Index 1 ]
 
 (* Position scales of each transform, the data a line [y = 2x + 1] spans without
    leaving their domains. *)
+(* Position scales of each transform, a line [y = m x + 1] over data from
+   [(1, 3)] to [(100, 201)], whether it is a segment, and whether it spans the x
+   domain or leaves through the top of the y domain. *)
 let transforms =
   let lin name = Scale.linear ~name () and log name = Scale.log ~name () in
   [
-    ("linear", (lin "x", lin "y"));
-    ("log x", (log "x", lin "y"));
-    ("log y", (lin "x", log "y"));
-    ("log x and y", (log "x", log "y"));
+    ("linear", (lin "x", lin "y", 2., `Segment, `Across));
+    ("log x", (log "x", lin "y", 2., `Curve, `Across));
+    ("log y", (lin "x", log "y", 2., `Curve, `Across));
+    ("log x and y", (log "x", log "y", 2., `Curve, `Across));
+    ("linear, cut at the top", (lin "x", lin "y", 20., `Segment, `Top));
+    ( "clamped y",
+      (lin "x", Scale.linear ~name:"y" ~clamp:true (), 20., `Segment, `Top) );
+    ( "clamped log y",
+      (lin "x", Scale.log ~name:"y" ~clamp:true (), 20., `Curve, `Top) );
   ]
 
-let equation_case (name, (sx, sy)) =
+let equation_case (_, (sx, sy, m, shape, exit)) =
   let f =
     layer
       [
@@ -2113,7 +2121,7 @@ let equation_case (name, (sx, sy)) =
           ~x:(num ~scale:sx (f64 [| 1.; 100. |]))
           ~y:(num ~scale:sy (f64 [| 3.; 201. |]))
           ();
-        abline ~slope:(const 2.) ~intercept:(const 1.) ();
+        abline ~slope:(const m) ~intercept:(const 1.) ();
       ]
   in
   let r = resolve f in
@@ -2122,22 +2130,18 @@ let equation_case (name, (sx, sy)) =
   let fx = Resolved.scale r sx and fy = Resolved.scale r sy in
   let pts =
     List.concat_map
-      (fun s -> points_of s)
-      (List.map
-         (fun (st : Picture.t) ->
-           match st with Stroke s -> s.path | _ -> Path.empty)
-         (List.concat_map
-            (fun (_, p) ->
-              fold
-                (fun acc p ->
-                  match p with Picture.Stroke _ -> p :: acc | _ -> acc)
-                [] p)
-            (tags line_id (draw ~density:1. l))))
+      (fun (_, p) ->
+        fold
+          (fun acc p ->
+            match p with Picture.Stroke s -> acc @ points_of s.path | _ -> acc)
+          [] p)
+      (tags line_id (draw ~density:1. l))
   in
   let n = List.length pts in
-  if name = "linear" then equal ~msg:"a segment" int 2 n
-  else greater ~msg:"a curve" int ~than:50 n;
-  let us =
+  (match shape with
+  | `Segment -> equal ~msg:"a segment" int 2 n
+  | `Curve -> greater ~msg:"a curve" int ~than:20 n);
+  let uvs =
     List.map
       (fun p ->
         let u, v = Option.get (Coord.invert proj p) in
@@ -2146,14 +2150,17 @@ let equation_case (name, (sx, sy)) =
         equal
           ~msg:(Format.asprintf "%a" P2.pp p)
           (float_rel ~rel:1e-9 ~abs:0.)
-          ((2. *. x) +. 1.)
+          ((m *. x) +. 1.)
           y;
-        u)
+        (u, v))
       pts
   in
+  let most f = List.fold_left (fun a uv -> Float.max a (f uv)) 0. uvs in
   equal ~msg:"from the domain's start" (float 1e-9) 0.
-    (List.fold_left Float.min 1. us);
-  equal ~msg:"to its end" (float 1e-9) 1. (List.fold_left Float.max 0. us)
+    (List.fold_left (fun a (u, _) -> Float.min a u) 1. uvs);
+  match exit with
+  | `Across -> equal ~msg:"to its end" (float 1e-9) 1. (most fst)
+  | `Top -> equal ~msg:"to its top" (float 1e-9) 1. (most snd)
 
 let gen_coefficient =
   Gen.frequency
