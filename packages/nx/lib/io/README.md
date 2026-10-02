@@ -1,6 +1,7 @@
 # Nx I/O codecs
 
-This directory contains Raven-authored, ISC-licensed codec kernels used only by
+`Nx_io_codec` and its C stubs (`nx_io_bytes.c`, `nx_io_png.c`,
+`nx_io_jpeg.c`) are Raven-authored, ISC-licensed codec kernels used only by
 `nx.io`. They are part of the `nx_io` library rather than an installed codec
 sublibrary.
 
