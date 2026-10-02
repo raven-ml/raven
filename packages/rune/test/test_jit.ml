@@ -3840,9 +3840,22 @@ let on_one_device ~name d =
           chain Nx.float8_e5m2);
       test "a call whose trace raises allocates nothing" (fun () ->
           let a = placed d (x ()) in
+          (* The trace collects, as an allocation may make it do, and so returns
+             what was unreachable on [d] before the call, such as what an
+             earlier test left: the count before the call is taken once that
+             memory has returned. *)
+          let call () =
+            raises_jit_error (fun () ->
+                Rune.jit'
+                  (fun a ->
+                    Gc.full_major ();
+                    if Nx.item [ 0 ] a > 0. then poly a else a)
+                  a)
+          in
+          call ();
+          ignore (Sys.opaque_identity (placed d (y ())));
           let before = settled d in
-          raises_jit_error (fun () ->
-              Rune.jit' (fun a -> if Nx.item [ 0 ] a > 0. then poly a else a) a);
+          call ();
           equal ~msg:"bytes allocated" int before (settled d);
           ignore (Sys.opaque_identity a));
       test "a consumed placed argument lends its storage" (fun () ->
