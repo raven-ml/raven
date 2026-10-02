@@ -152,28 +152,37 @@ let law_edges c =
   let lo, hi =
     match fs with
     | [] -> (0., 1.)
-    | f :: fs ->
-        let lo = List.fold_left Float.min f fs
-        and hi = List.fold_left Float.max f fs in
-        if lo < hi then (lo, hi)
-        else
-          let h = Float.max 0.5 (Float.abs lo *. epsilon_float) in
-          (Float.max (lo -. h) (-.max_float), Float.min (hi +. h) max_float)
+    | f :: fs -> (List.fold_left Float.min f fs, List.fold_left Float.max f fs)
   in
   cover "no finite value" (fs = []);
   cover "one finite value" (match fs with [ _ ] -> true | _ -> false);
   cover "all equal"
     (fs <> [] && List.for_all (fun v -> v = List.hd fs) fs && List.length fs > 1);
-  equal number ~msg:"first edge" lo x.(0);
-  equal number ~msg:"last edge" hi x2.(n - 1);
-  let width = (hi -. lo) /. Float.of_int n in
-  let eps = 4. *. epsilon_float *. Float.max (Float.abs lo) (Float.abs hi) in
+  let m = Float.max (Float.abs lo) (Float.abs hi) in
+  let w = 4. *. Float.of_int n *. m *. epsilon_float in
+  let w = if lo = hi then Float.max w 1. else w in
+  let first = x.(0) and last = x2.(n - 1) in
+  if hi -. lo >= w then (
+    equal number ~msg:"first edge" lo first;
+    equal number ~msg:"last edge" hi last)
+  else (
+    at_most float_exact ~msg:"first edge" ~than:lo first;
+    at_least float_exact ~msg:"last edge" ~than:hi last;
+    at_least float_exact ~msg:"first edge" ~than:(-.max_float) first;
+    at_most float_exact ~msg:"last edge" ~than:max_float last;
+    let eps = 4. *. Float.max m 1. *. epsilon_float in
+    equal (float eps) ~msg:"span" w (last -. first);
+    if first > -.max_float && last < max_float then
+      equal (float eps) ~msg:"widened equally" (lo -. first) (last -. hi));
+  let width = (last -. first) /. Float.of_int n in
+  let eps =
+    4. *. epsilon_float *. Float.max (Float.abs first) (Float.abs last)
+  in
   Array.iteri
     (fun j a ->
-      equal (float eps)
-        ~msg:(Printf.sprintf "width of bin %d" j)
-        width
-        (x2.(j) -. a))
+      let msg = Printf.sprintf "width of bin %d" j in
+      greater float_exact ~msg ~than:a x2.(j);
+      equal (float eps) ~msg width (x2.(j) -. a))
     x
 
 let law_counts c =
@@ -265,7 +274,7 @@ let span name values (lo, hi) =
 
 let spans =
   let big = Float.ldexp 1. 60 in
-  let below_max = max_float -. (max_float *. epsilon_float) in
+  let below_max = max_float -. (max_float *. (16. *. epsilon_float)) in
   group "spans"
     [
       span "spans the least to the greatest finite value"
@@ -274,12 +283,39 @@ let spans =
       span "equal values span a half either side" [| 3.; 3.; nan |] (2.5, 3.5);
       span "one value spans a half either side" [| -1. |] (-1.5, -0.5);
       span "signed zeros are equal values" [| -0.; 0. |] (-0.5, 0.5);
-      span "a large value spans the gap to its neighbours" [| big; big |]
-        (big -. 256., big +. 256.);
-      span "the largest float spans within the finite floats" [| max_float |]
+      span "a large value spans four spacings per bin" [| big; big |]
+        (big -. 2048., big +. 2048.);
+      span "the largest float shifts within the finite floats" [| max_float |]
         (below_max, max_float);
       span "no finite value spans zero to one" [| nan; infinity |] (0., 1.);
       span "no value spans zero to one" [||] (0., 1.);
+    ]
+
+(* Each bin has a positive width, and its densities times widths sum to one. *)
+let widths name ?bins v =
+  test name (fun () ->
+      let h = Stats.histogram ?bins v in
+      let x = host h.x and x2 = host h.x2 and density = host h.density in
+      Array.iteri
+        (fun j a ->
+          greater float_exact
+            ~msg:(Printf.sprintf "right edge of bin %d" j)
+            ~than:a x2.(j))
+        x;
+      let integral = ref 0. in
+      Array.iteri
+        (fun j d -> integral := !integral +. (d *. (x2.(j) -. x.(j))))
+        density;
+      equal (float 1e-12) ~msg:"integral" 1. !integral)
+
+let narrow =
+  let big = Float.ldexp 1. 60 in
+  group "narrow spans"
+    [
+      widths "equal extreme integers fill their bins"
+        (Nx.create Nx.int64 [| 3 |] (Array.make 3 Int64.max_int));
+      widths "adjacent large floats fill many bins" ~bins:12
+        (f64 [| 2 |] [| big; Float.succ big |]);
     ]
 
 let sturges =
@@ -358,4 +394,4 @@ let errors =
           invalid (fun () -> Stats.histogram (Nx.zeros Nx.bool [| 3 |])));
     ]
 
-let () = exit (run "Stats" [ laws; spans; sturges; shapes; errors ])
+let () = exit (run "Stats" [ laws; spans; narrow; sturges; shapes; errors ])

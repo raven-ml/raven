@@ -33,12 +33,14 @@ val histogram : ?bins:int -> ('a, 'b) Nx.t -> bins
     bins of equal width, one histogram per index of [v]'s other axes. Values are
     converted to [float64] first, as {!Nx.cast} does.
 
-    - The bins span the finite values of all of [v], from the least to the
-      greatest, which are the left edge of the first bin and the right edge of
-      the last. If the finite values all equal [a], they span from [a -. h] to
-      [a +. h], kept within the finite floats, with [h] the greater of [0.5] and
-      [abs_float a *. epsilon_float], so that the bins have a width. If there is
-      no finite value, they span from [0.] to [1.].
+    - The bins span the finite values of all of [v], from the least [lo] to the
+      greatest [hi], which are the left edge of the first bin and the right edge
+      of the last. If there is no finite value, [lo] is [0.] and [hi] is [1.].
+    - So that every bin has a positive width, a span narrower than
+      [w = 4. *. float bins *. m *. epsilon_float], with [m] the greater of
+      [abs_float lo] and [abs_float hi], widens by the same amount on either
+      side to the width [w], shifted to stay within the finite floats. If
+      [lo = hi], [w] is at least [1.].
     - A bin holds the values from its left edge included to its right edge
       excluded; the last bin holds its right edge too. Every finite value is in
       one bin, and NaN and infinities are in none.
