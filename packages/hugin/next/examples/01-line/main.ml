@@ -1,4 +1,5 @@
-(* Loss curves: one line per seed, coloured by the seed. *)
+(* Loss curves: one line per seed, coloured by the seed, in the default theme
+   and in the dark one. *)
 
 open Hugin_next
 
@@ -12,10 +13,13 @@ let () =
     Nx.mul_s (Nx.Rng.normal (Nx.Rng.key 1) Nx.float64 [| 3; steps |]) 0.03
   in
   let losses = Nx.add (Nx.exp (Nx.mul (Nx.neg t) (Nx.mul_s seeds 4.))) noise in
-  line
-    ~x:(num ~title:(Text.v "progress") t)
-    ~y:(num ~title:(Text.v "loss") losses)
-    ~stroke:(dim ~title:(Text.v "seed") 0)
-    ()
-  |> title (Text.v "Training loss")
-  |> save "line.png"
+  let f =
+    line
+      ~x:(num ~title:(Text.v "progress") t)
+      ~y:(num ~title:(Text.v "loss") losses)
+      ~stroke:(dim ~title:(Text.v "seed") 0)
+      ()
+    |> title (Text.v "Training loss")
+  in
+  save "line.png" f;
+  save ~theme:Theme.dark "line-dark.png" f

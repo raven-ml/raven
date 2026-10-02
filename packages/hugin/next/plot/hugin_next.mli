@@ -1169,6 +1169,27 @@ module Theme : sig
   val default : t
   (** [default] is [v ()]. *)
 
+  (** {1:presets Presets}
+
+      Presets are themes of {!v}, combined by their accessors:
+      [Theme.(v ~ink:(ink dark) ~paper:(paper dark) ~size:(size talk) ())] is a
+      dark theme for slides. *)
+
+  val dark : t
+  (** [dark] is [v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ()]: light ink
+      on dark paper. Labels, axes and grid lines take parts of the ink
+      ({!section-lengths}), so they lighten with it. *)
+
+  val talk : t
+  (** [talk] is [v ~size:16. ()], for slides: text and every length derived from
+      the base size ({!section-lengths}) are [1.6] times the default's, so a
+      figure at [Size.figure (1.6 *. w) (1.6 *. h)] is the default one at
+      [Size.figure w h] enlarged. *)
+
+  val poster : t
+  (** [poster] is [v ~size:20. ()], for posters: text and every length derived
+      from the base size are twice the default's. *)
+
   (** {1:accessors Accessors} *)
 
   val ink : t -> Color.t

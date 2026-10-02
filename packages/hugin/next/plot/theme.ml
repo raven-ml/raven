@@ -32,6 +32,9 @@ let v ?(ink = Color.gray 0.1) ?(paper = Color.white) ?accent ?(size = 10.)
   { ink; paper; accent; size; fonts; palette; scheme; locale }
 
 let default = v ()
+let dark = v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ()
+let talk = v ~size:16. ()
+let poster = v ~size:20. ()
 let ink th = th.ink
 let paper th = th.paper
 let accent th = th.accent

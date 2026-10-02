@@ -19,6 +19,7 @@ dune exec packages/hugin/next/examples/01-line/main.exe
 | Example | Shows | Image |
 |---|---|---|
 | [`01-line`](01-line/main.ml) | Lines over a step axis, one per seed, coloured by a `dim` | ![](01-line/line.png) |
+| [`01-line`](01-line/main.ml) | The same lines in `Theme.dark` | ![](01-line/line-dark.png) |
 | [`02-scatter`](02-scatter/main.ml) | Dots coloured by category and sized by a quantity, with two legends | ![](02-scatter/scatter.png) |
 | [`03-bars`](03-bars/main.ml) | Bars: a `rect` over a band scale, its length from zero | ![](03-bars/bars.png) |
 | [`04-heatmap`](04-heatmap/main.ml) | A matrix as cells, its rows and columns read with `dim`, and a colour bar | ![](04-heatmap/heatmap.png) |

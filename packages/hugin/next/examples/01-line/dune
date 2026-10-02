@@ -12,9 +12,11 @@
  render
  (rule
   (alias assets)
-  (deps ../main.exe ../line.png)
+  (deps ../main.exe ../line.png ../line-dark.png)
   (action
    (progn
     (run ../main.exe)
     (no-infer
-     (cmp ../line.png line.png))))))
+     (progn
+      (cmp ../line.png line.png)
+      (cmp ../line-dark.png line-dark.png)))))))

@@ -25,6 +25,9 @@ val v :
   t
 
 val default : t
+val dark : t
+val talk : t
+val poster : t
 val ink : t -> Color.t
 val paper : t -> Color.t
 val accent : t -> Color.t

@@ -1537,6 +1537,96 @@ let ticks =
             (axis_labels (lay (Size.panels 100. 60.) f) "axis.x"));
     ]
 
+(* Theme presets *)
+
+(* [luminance c] is the WCAG relative luminance of the opaque colour [c]. *)
+let luminance c =
+  let lin v =
+    if v <= 0.04045 then v /. 12.92 else Float.pow ((v +. 0.055) /. 1.055) 2.4
+  in
+  (0.2126 *. lin (Color.r c))
+  +. (0.7152 *. lin (Color.g c))
+  +. (0.0722 *. lin (Color.b c))
+
+(* [contrast a b] is the WCAG contrast ratio of [a] and [b]. *)
+let contrast a b =
+  let la = luminance a and lb = luminance b in
+  (Float.max la lb +. 0.05) /. (Float.min la lb +. 0.05)
+
+(* [over a c p] is [c] at the opacity [a] composited over [p], in encoded sRGB
+   as renderers composite. *)
+let over a c p =
+  let mix f = (a *. f c) +. ((1. -. a) *. f p) in
+  Color.v (mix Color.r) (mix Color.g) (mix Color.b)
+
+let readable (name, th) =
+  let ink = Theme.ink th and paper = Theme.paper th in
+  at_least ~msg:(name ^ " ink") float_exact ~than:7. (contrast ink paper);
+  at_least ~msg:(name ^ " axes") float_exact ~than:3.
+    (contrast (over 0.6 ink paper) paper)
+
+let homogeneous_figures =
+  let fill = strings ~title:(Text.v "kind") [| "a"; "b"; "a"; "b" |] in
+  [
+    ("dots", plain ramp);
+    ( "a legend and a title",
+      title (Text.v "Load") (dot ~x:(num ramp) ~y:(num ramp) ~fill ()) );
+    ( "facets and a colour bar",
+      rect ~x:(num ramp) ~y:(num ramp)
+        ~fill:(num ~title:(Text.v "z") ramp)
+        ~fx:(strings [| "p"; "q"; "p"; "q" |])
+        () );
+  ]
+
+let ticks_of l =
+  let p = printed l in
+  let rec at i = if String.sub p i 6 = "\nticks" then i else at (i + 1) in
+  let i = at 0 in
+  String.sub p i (String.length p - i)
+
+let homogeneity ((name, f), (k, (w, h))) =
+  let w = Float.of_int w and h = Float.of_int h in
+  let base = lay (Size.figure w h) f in
+  let theme = Theme.v ~size:(k *. Theme.size Theme.default) () in
+  let scaled = lay ~theme (Size.figure (k *. w) (k *. h)) f in
+  let rel = float_rel ~rel:1e-9 ~abs:0. in
+  let corners b = [ Box2.minx b; Box2.miny b; Box2.maxx b; Box2.maxy b ] in
+  equal ~msg:name
+    (list (list rel))
+    (List.map (fun b -> List.map (fun v -> k *. v) (corners b)) (boxes base))
+    (List.map corners (boxes scaled));
+  equal ~msg:name string (ticks_of base) (ticks_of scaled)
+
+let themes =
+  group "themes"
+    [
+      cases "ink reads on paper, and axes at their opacity" ~name:fst
+        [ ("default", Theme.default); ("dark", Theme.dark) ]
+        readable;
+      test "the presets are the themes of v they state" (fun () ->
+          let theme = Testable.make ~pp:Theme.pp ~equal:Theme.equal in
+          equal theme
+            (Theme.v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ())
+            Theme.dark;
+          equal theme (Theme.v ~size:16. ()) Theme.talk;
+          equal theme (Theme.v ~size:20. ()) Theme.poster);
+      prop "a theme k times the size lays a figure k times larger out alike"
+        (Gen.pair
+           (Gen.of_list
+              ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n)
+              homogeneous_figures)
+           (Gen.pair
+              (Gen.of_list ~pp:Format.pp_print_float
+                 [
+                   Theme.size Theme.talk /. Theme.size Theme.default;
+                   Theme.size Theme.poster /. Theme.size Theme.default;
+                   0.5;
+                   3.;
+                 ])
+              (Gen.pair (Gen.int_range 200 400) (Gen.int_range 150 300))))
+        homogeneity;
+    ]
+
 (* Glyphs *)
 
 let glyphs =
@@ -1670,6 +1760,7 @@ let () =
          titles;
          legends;
          ticks;
+         themes;
          glyphs;
          reuse;
          projections;
