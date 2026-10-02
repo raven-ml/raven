@@ -289,7 +289,7 @@ let ragged_rows =
     (nx_of offsets, nx_of bytes)
   in
   let lengths n w () =
-    ( Nx.full Nx.int64 [| n |] (Int64.of_int w),
+    ( Nx.copy (Nx.full Nx.int64 [| n |] (Int64.of_int w)),
       let _, bytes, _ = strings n w in
       nx_of bytes )
   in
