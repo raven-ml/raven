@@ -78,22 +78,35 @@ let segment_sum s ids x = Nx.reduce_segments `Add ~segments:s.count ids x
 let rows s =
   fixed int64 (segment_sum s s.ids (Nx.ones Nx.int64 [| Nx.dim 0 s.ids |]))
 
+(* [at s] is each row's place in the order of the rows, which keeps each
+   segment's rows in its order. *)
+let at s =
+  let n = Nx.dim 0 s.ids in
+  match s.order with
+  | None -> positions n
+  | Some p -> Nx.scatter ~axis:0 ~indices:p ~values:(positions n) (none n)
+
 (* [pick s op hit] is, in each segment, the row where [hit] holds that comes
-   first ([`Min]) or last ([`Max]) in the segment's order, and its place in the
-   segment; [-1] for both where no row does. *)
+   first ([`Min]) or last ([`Max]) in the segment's order, [-1] where no row
+   does: the row of least or greatest {!at}. *)
 let pick s op hit =
-  let r = view s in
-  let v = Nx_ragged.values r and n = Nx.dim 0 s.ids in
-  let ids =
-    Nx.where (Nx.take ~indices:v hit) (Nx.take ~indices:v s.ids) (none n)
-  in
-  let j = Nx.reduce_segments op ~segments:s.count ids (positions n) in
+  let n = Nx.dim 0 s.ids in
+  let ids = Nx.where hit s.ids (none n) in
+  let j = Nx.reduce_segments op ~segments:s.count ids (at s) in
   let found =
     Nx.logical_and (Nx.greater_equal_s j 0L) (Nx.less_s j (Int64.of_int n))
   in
-  let start = Nx.shrink [| (0, s.count) |] (Nx_ragged.offsets r) in
-  ( Nx.where found (Nx.take ~indices:j v) (none s.count),
-    Nx.where found (Nx.sub j start) (none s.count) )
+  let row = match s.order with None -> j | Some p -> Nx.take ~indices:j p in
+  Nx.where found row (none s.count)
+
+(* [place s rows] is the place of each segment's row [rows], or [-1], among the
+   segment's rows in its order: the number of them before it. *)
+let place s rows =
+  let at = at s in
+  let mark = Nx.take ~indices:rows at in
+  let before = Nx.less at (Nx.take ~indices:s.ids mark) in
+  let p = segment_sum s s.ids (Nx.cast Nx.int64 before) in
+  Nx.where (Nx.greater_equal_s rows 0L) p (none s.count)
 
 (* [first_where m why] is the first segment where [m] holds, failing for the
    reason [why]. *)
@@ -156,8 +169,11 @@ let reduce : type a b.
     let hit = Nx.equal (Lazy.force words) (Nx.take ~indices:s.ids e) in
     pick s `Min (Nx.logical_and valid hit)
   in
-  let place (_, p) = fixed int64 ~valid:(Nx.greater_equal_s p 0L) p in
-  let value (row, _) = Column.take row c in
+  let place row =
+    let p = place s row in
+    fixed int64 ~valid:(Nx.greater_equal_s p 0L) p
+  in
+  let value row = Column.take row c in
   let ok c = (c, None) in
   match r with
   | Count -> ok (fixed int64 count)
