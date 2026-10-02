@@ -3915,6 +3915,26 @@ module Driver = struct
 
   let name = compose
 
+  (* The names minted on each machine, by its host's id, so that no two devices
+     of one machine share a name: a name identifies a device of its machine. A
+     name is reserved before its device is made, and given back if making it
+     fails. *)
+  let minted = Hashtbl.create 16
+  let minted_lock = Mutex.create ()
+
+  let () =
+    Hashtbl.replace minted (host.id, host.name) ();
+    Hashtbl.replace minted (host.id, disk.name) ()
+
+  let reserve key name =
+    Mutex.protect minted_lock (fun () ->
+        if Hashtbl.mem minted key then
+          refuse "device" "a device named %s exists on its machine" name;
+        Hashtbl.replace minted key ())
+
+  let give_back key =
+    Mutex.protect minted_lock (fun () -> Hashtbl.remove minted key)
+
   let device ~name ~arch ~budget ?(host = host) ?(completion = Poll) ?load ?peer
       ?(reaches = fun _ -> false) ?link ?dma ?(resolve = ignore)
       ?(synchronized = ignore) ?report ?(room = fun () -> true)
@@ -3922,6 +3942,9 @@ module Driver = struct
     if budget < 0 then refuse "device" "budget %d < 0" budget;
     if Option.is_some host.machine then
       refuse "device" "%s is not a host" host.name;
+    let key = (host.id, name) and name = compose ~host name in
+    if name = host.name then
+      refuse "device" "a device named %s exists on its machine" name;
     let memory =
       match memory with
       | Host_visible _ -> memory
@@ -3936,10 +3959,11 @@ module Driver = struct
           in
           Device_local { l with queue }
     in
-    create
+    reserve key name;
+    let description =
       {
         Description.default with
-        name = compose ~host name;
+        name;
         arch;
         machine = Some host;
         budget;
@@ -3955,7 +3979,13 @@ module Driver = struct
         finalize;
         resolve;
       }
-      (Driver_memory memory)
+    in
+    match create description (Driver_memory memory) with
+    | d -> d
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        give_back key;
+        Printexc.raise_with_backtrace e bt
 
   let buffer d (r : region) s n =
     if d == disk then Buffer.not_files "Driver.buffer";

@@ -50,14 +50,17 @@ let device ?(i = 0) () =
       match Nx_nv_device.get ~interface:Pci (first + i) with
       | Ok d -> d
       | Error msg -> skip ~reason:msg ())
-  | None ->
+  | None -> (
       if Nx_nv_device.count ~interface:Kernel () <= i then
         skip
           ~reason:
             "no NVIDIA GPU through the kernel driver; set NX_NV_PCI_TEST=i to \
              take GPU i over PCI"
           ()
-      else Nx_nv_device.v ~interface:Kernel i
+      else
+        match Nx_nv_device.get ~interface:Kernel i with
+        | Ok d -> d
+        | Error e -> failwith e)
 
 (* The GPUs nx's runtime laws run on: over PCI, the one the suite may take and
    the next, if there is one. Under the kernel driver, a GPU that does not open
@@ -73,9 +76,10 @@ let gpus =
   | None -> (
       try
         Ok
-          (List.init
-             (Nx_nv_device.count ~interface:Kernel ())
-             (Nx_nv_device.v ~interface:Kernel))
+          (List.init (Nx_nv_device.count ~interface:Kernel ()) (fun i ->
+               match Nx_nv_device.get ~interface:Kernel i with
+               | Ok d -> d
+               | Error e -> failwith e))
       with Failure why -> Error why)
 
 (* The tests [suites gpus] makes, or one that fails with why a GPU did not

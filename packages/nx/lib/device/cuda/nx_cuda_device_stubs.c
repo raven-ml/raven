@@ -81,6 +81,7 @@ typedef void(CUDAAPI *CUhostFn)(void *);
   X(cuDriverGetVersion, (int *))                                               \
   X(cuDeviceGetCount, (int *))                                                 \
   X(cuDeviceGet, (CUdevice *, int))                                            \
+  X(cuDeviceGetPCIBusId, (char *, int, CUdevice))                              \
   X(cuDeviceGetAttribute, (int *, int, CUdevice))                              \
   X(cuDeviceTotalMem_v2, (size_t *, CUdevice))                                 \
   X(cuDevicePrimaryCtxRetain, (CUcontext *, CUdevice))                         \
@@ -236,6 +237,19 @@ value caml_nx_cuda_driver_version(value unit) {
 static int supported(CUdevice device, int which) {
   int v = 0;
   return p_cuDeviceGetAttribute(&v, which, device) == CUDA_SUCCESS && v != 0;
+}
+
+/* The PCI address of the device of an ordinal, as "DDDD:BB:DD.F" in
+   lower-case hexadecimal. */
+value caml_nx_cuda_bus_id(value v_ordinal) {
+  CAMLparam1(v_ordinal);
+  CUdevice device = 0;
+  char id[32] = {0};
+  check(p_cuDeviceGet(&device, Int_val(v_ordinal)));
+  check(p_cuDeviceGetPCIBusId(id, sizeof(id), device));
+  for (char *c = id; *c != '\0'; c++)
+    if (*c >= 'A' && *c <= 'F') *c = (char)(*c - 'A' + 'a');
+  CAMLreturn(caml_copy_string(id));
 }
 
 /* [(device, major, minor, total bytes, stream memory ops, unified)] */

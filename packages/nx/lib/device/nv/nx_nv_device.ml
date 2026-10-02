@@ -521,7 +521,16 @@ let sleep n ~timeline ms =
 
 (* Opening *)
 
-let name i = if i = 0 then "NV" else Printf.sprintf "NV:%d" i
+(* GPU [i]'s name through [iface] on the machine of [machine]: ["NV:i"], and
+   ["NV-PCI:i"] for this machine's GPUs taken from their kernel driver, so that
+   the name says which interface reaches the GPU. *)
+let name ~machine iface i =
+  let kind =
+    match iface with
+    | Pci when machine == Nx_device.host -> "NV-PCI"
+    | Kernel | Pci -> "NV"
+  in
+  if i = 0 then kind else Printf.sprintf "%s:%d" kind i
 
 let arch v =
   if v = 0xa04 then "sm_120"
@@ -871,9 +880,11 @@ let mapped_allocator n =
   | _ -> Some (allocator n Visible, code_window n)
 
 let make_device n ?finalize () =
+  let iface = match n.gpu with Kernel_gpu _ -> Kernel | Pci_gpu _ -> Pci in
   let dev =
-    Driver.device ~name:(name n.index) ~arch:(arch n.props.sm_version)
-      ~host:n.machine ~budget:(budget n)
+    Driver.device
+      ~name:(name ~machine:n.machine iface n.index)
+      ~arch:(arch n.props.sm_version) ~host:n.machine ~budget:(budget n)
       ~completion:(Sleep (sleep n))
       ~load:(load n) ~peer:(peer n) ~dma:(dma n) ~room:(room n) ?finalize
       (Device_local
@@ -1078,9 +1089,9 @@ let count ?(host = Nx_device.host) ?interface () =
 let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
 
 (* Why GPU [i] of the machine of [machine] cannot be opened. *)
-let refuse ~machine i why =
+let refuse ~machine iface i why =
   check_reach machine;
-  Error (Driver.name ~host:machine (name i) ^ ": " ^ why)
+  Error (Driver.name ~host:machine (name ~machine iface i) ^ ": " ^ why)
 
 (* Opens [i] through [iface] on the machine of [machine], once. *)
 let open_gpu ~machine ~iface ?firmware i =
@@ -1098,35 +1109,33 @@ let open_gpu ~machine ~iface ?firmware i =
           Atomic.set opened (((machine, i), n) :: Atomic.get opened);
           Ok (Option.get n.dev)
       | exception (Failure why | Sys_error why | Invalid_argument why) ->
-          refuse ~machine i why
+          refuse ~machine iface i why
       | exception Unix.Unix_error (e, f, arg) ->
-          refuse ~machine i
+          refuse ~machine iface i
             (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e)))
 
 let get ?(host = Nx_device.host) ?interface ?firmware i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_nv_device.get: %d < 0" i);
   let remote = Nx_remote_device.remote host in
-  let refuse = refuse ~machine:host i in
+  let refuse iface = refuse ~machine:host iface i in
   Mutex.protect lock (fun () ->
       match (remote, interface) with
       | Some _, Some Kernel ->
-          refuse "another machine's GPUs are reached over PCI"
+          refuse Pci "another machine's GPUs are reached over PCI"
       | Some _, _ -> open_gpu ~machine:host ~iface:Pci ?firmware i
-      | None, _ when not (linux ()) -> refuse "NVIDIA GPUs need Linux"
+      | None, _ when not (linux ()) ->
+          refuse
+            (Option.value interface ~default:Kernel)
+            "NVIDIA GPUs need Linux"
       | None, _ -> (
           let iface = Option.value interface ~default:(default ()) in
           match !chosen with
           | Some c when c <> iface ->
-              refuse
+              refuse iface
                 (Printf.sprintf
                    "this process reaches NVIDIA GPUs through %s, not %s"
                    (interface_name c) (interface_name iface))
           | _ -> open_gpu ~machine:host ~iface ?firmware i))
-
-let v ?host ?interface ?firmware i =
-  match get ?host ?interface ?firmware i with
-  | Ok d -> d
-  | Error msg -> failwith msg
 
 let of_device = nv_of
 let compute n = fst (Option.get n.public)

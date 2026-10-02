@@ -151,12 +151,15 @@ let () =
                  match Nx_amd_device.get ~interface 0 with
                  | Ok _ -> fail "a GPU opened"
                  | Error msg ->
-                     is_true ~msg:"the vendor names the failure"
-                       (String.starts_with ~prefix:"AMD: " msg))
+                     let name =
+                       match interface with
+                       | Nx_amd_device.Kernel -> "AMD: "
+                       | Pci -> "AMD-PCI: "
+                     in
+                     is_true ~msg:"the failure names the GPU and its interface"
+                       (String.starts_with ~prefix:name msg))
                [ Nx_amd_device.Kernel; Pci; Kernel ];
-             is_error (Nx_amd_device.get 0);
-             raises_match (Exn.failure ~substring:"AMD: ") (fun () ->
-                 Nx_amd_device.v 0));
+             is_error (Nx_amd_device.get 0));
          test "another machine's GPUs are opened over PCI" test_other_machine;
          test "a negative index is refused" (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->

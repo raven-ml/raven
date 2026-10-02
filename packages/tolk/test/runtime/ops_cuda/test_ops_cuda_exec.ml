@@ -3,7 +3,10 @@ open Tolk
 module B = Nx_device.Buffer
 
 (* The CUDA devices, and a skip where there are too few. *)
-let gpus = lazy (List.init (Nx_cuda_device.count ()) Nx_cuda_device.v)
+let gpus =
+  lazy
+    (List.init (Nx_cuda_device.count ()) (fun i ->
+         match Nx_cuda_device.get i with Ok d -> d | Error e -> failwith e))
 
 let cuda () =
   match Lazy.force gpus with

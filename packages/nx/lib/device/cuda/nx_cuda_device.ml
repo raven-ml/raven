@@ -12,6 +12,7 @@ external host_stamp : unit -> nativeint = "caml_nx_cuda_host_stamp"
 external device_count : unit -> int = "caml_nx_cuda_count"
 external driver_version : unit -> int = "caml_nx_cuda_driver_version"
 external describe : int -> string = "caml_nx_cuda_describe"
+external bus_id : int -> string = "caml_nx_cuda_bus_id"
 
 external device : int -> int * int * int * int * bool * bool
   = "caml_nx_cuda_device"
@@ -198,6 +199,21 @@ let count () =
 
 let name i = if i = 0 then "CUDA" else Printf.sprintf "CUDA:%d" i
 
+(* The driver's ordinals in PCI bus order, read once: device [i] is the [i]th
+   GPU by PCI address among those the driver sees, whatever order
+   [CUDA_DEVICE_ORDER] gives the ordinals, so that [CUDA:i] is the GPU
+   [nvidia-smi] numbers [i] when the driver sees every GPU. *)
+let by_bus = ref None
+
+let ordinal_of i =
+  match !by_bus with
+  | Some o -> o.(i)
+  | None ->
+      let ids = List.init (device_count ()) (fun k -> (bus_id k, k)) in
+      let o = Array.of_list (List.map snd (List.sort compare ids)) in
+      by_bus := Some o;
+      o.(i)
+
 (* Programs are functions of modules, unloaded with their image. The driver's
    refusal of an image or a name leaves the context usable. *)
 let load ctx ~binary =
@@ -296,7 +312,7 @@ let get i =
             if i >= n then refuse "no such device; there are %d CUDA devices" n
             else
               let ordinal, major, minor, budget, memory_ops, unified =
-                device i
+                device (ordinal_of i)
               in
               if not memory_ops then
                 refuse
@@ -321,8 +337,6 @@ let get i =
                     (try release ordinal with Failure _ -> ());
                     raise e
           with Failure why -> refuse "%s" why))
-
-let v i = match get i with Ok d -> d | Error msg -> failwith msg
 
 let cuda fn d =
   match find d with

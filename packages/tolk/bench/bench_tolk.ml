@@ -207,7 +207,11 @@ let run_self flag =
 
 let cuda () =
   if run_self "--cuda" <> 0 then []
-  else [ decode "cuda" (fun () -> Nx_cuda_device.v 0) ]
+  else
+    [
+      decode "cuda" (fun () ->
+          match Nx_cuda_device.get 0 with Ok d -> d | Error e -> failwith e);
+    ]
 
 let () =
   (match Array.to_list Sys.argv with

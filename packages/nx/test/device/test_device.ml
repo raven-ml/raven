@@ -77,6 +77,36 @@ let pattern seed n =
   String.init n (fun i ->
       Char.chr (((seed * 31) + (i * 7) + (i / 5)) land 0xff))
 
+(* A machine has one device of a name, and the tests make many devices of one
+   kind: [unique kind] names one of them, and [kind_of] reads its kind back. *)
+let made = Atomic.make 0
+let unique kind = Printf.sprintf "%s#%d" kind (Atomic.fetch_and_add made 1)
+
+let kind_of name =
+  match String.index_opt name '#' with
+  | Some i -> String.sub name 0 i
+  | None -> name
+
+(* [masked s] is [s] with the number of every device it names removed: what a
+   message or a profile says of devices, by their kinds. *)
+let masked s =
+  let b = Buffer.create (String.length s) in
+  let n = String.length s in
+  let i = ref 0 in
+  while !i < n do
+    if s.[!i] = '#' then begin
+      incr i;
+      while !i < n && s.[!i] >= '0' && s.[!i] <= '9' do
+        incr i
+      done
+    end
+    else begin
+      Buffer.add_char b s.[!i];
+      incr i
+    end
+  done;
+  Buffer.contents b
+
 let stats = Nx_device.stats
 let allocated d = Nx_device.Stats.allocated (stats d)
 let cached d = Nx_device.Stats.cached (stats d)
@@ -274,8 +304,8 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     | false, None, None -> Poll
   in
   let dev =
-    Driver.device ~name ~arch:"test" ~budget ~completion ?load ?peer
-      ?synchronized ?report ?finalize ?resolve ?room ?reaches memory
+    Driver.device ~name:(unique name) ~arch:"test" ~budget ~completion ?load
+      ?peer ?synchronized ?report ?finalize ?resolve ?room ?reaches memory
   in
   Option.iter (Nx_device.set_timeout dev) timeout_ms;
   { dev; drv }
@@ -592,7 +622,8 @@ let buffer_invariant (r : Model.buffer) s =
     equal ~msg:"length" int r.length (B.length b);
     equal ~msg:"bytes" int n (B.nbytes b);
     equal ~msg:"borrowed" bool r.borrowed (B.is_borrowed b);
-    equal ~msg:"device" string (Model.name r) (Nx_device.name (B.device b));
+    equal ~msg:"device" string (Model.name r)
+      (kind_of (Nx_device.name (B.device b)));
     if n > 0 then begin
       let held = peek (B.address b) n in
       if not (Model.holds r held) then
@@ -2281,7 +2312,8 @@ let test_peer_borrows () =
     (borrow o.dev b == b);
   (match B.borrow (far ()).dev b with
   | Ok _ -> fail "borrowed without a peer"
-  | Error why -> contains ~msg:"no peer" ~sub:"cannot address OWNER memory" why);
+  | Error why ->
+      contains ~msg:"no peer" ~sub:"cannot address OWNER memory" (masked why));
   let refusing = far ~peer:(fun _ _ -> Error "no route") () in
   (match B.borrow refusing.dev b with
   | Ok _ -> fail "borrowed a refused region"
@@ -2366,7 +2398,7 @@ let test_transfer_into_borrow () =
   write src (pattern 9 32);
   B.copy ~src ~dst;
   equal ~msg:"mapped the borrowed memory's owner" (list string) [ "PEER-C" ]
-    !asked;
+    (List.map masked !asked);
   equal ~msg:"written where the borrow lies" string (pattern 9 32)
     (read (B.view memory ~offset:8 S.UInt8 32))
 
@@ -2678,7 +2710,7 @@ let test_unbalanced_release () =
 (* A borrow and the memory it maps share one count (L12). *)
 let test_claims_through_borrows () =
   let cpu =
-    Driver.device ~name:"CPU:1" ~arch:"test" ~budget:max_int
+    Driver.device ~name:(unique "CPU:1") ~arch:"test" ~budget:max_int
       (Host_visible { memory = Driver.host_memory; mapping = Some Identity })
   in
   let b = B.create host S.UInt8 page in
@@ -2924,10 +2956,29 @@ let refusals =
       fun () ->
         match f () with
         | Ok _ -> fail "accepted"
-        | Error why -> contains ~msg:"the reason" ~sub why )
+        | Error why -> contains ~msg:"the reason" ~sub (masked why) )
   in
+  let host_visible =
+    Driver.Host_visible { memory = Driver.host_memory; mapping = None }
+  in
+  let named name memory = Driver.device ~name ~arch:"x" ~budget:0 memory in
+  let exists = Exn.invalid_arg ~substring:"exists on its machine" in
   cases ~name:fst "refuse"
     [
+      ( "a second device of a name on its machine, the host's and the disk's \
+         included",
+        fun () ->
+          let name = unique "ONCE" in
+          ignore (named name host_visible);
+          raises_match exists (fun () -> named name host_visible);
+          raises_match exists (fun () -> named "CPU" host_visible);
+          raises_match exists (fun () -> named "DISK" host_visible) );
+      ( "nothing of a device that fails to be made, its name included",
+        fun () ->
+          let name = unique "AGAIN" in
+          raises_match (Exn.failure ~substring:"timeline") (fun () ->
+              named name (local memory));
+          ignore (named name host_visible) );
       raise_ "a device with a negative budget" (fun () ->
           make ~budget:(-1) (Host_visible { memory; mapping = None }));
       raise_ "a device with a clock of 0 Hz" (fun () ->
@@ -3316,7 +3367,7 @@ let settle ds =
       store_signal (B.address (Nx_device.signal_word d)) (Nx_device.submitted d))
     ds
 
-let named = List.map (fun (d, v) -> (Nx_device.name d, v))
+let named = List.map (fun (d, v) -> (masked (Nx_device.name d), v))
 
 let waits_of ds ~touches =
   Nx_device.submit ds ~touches Nx_device.Submission.waits
@@ -3510,7 +3561,8 @@ let test_hang () =
   (match Nx_device.synchronize d with
   | () -> fail "synchronized a hung device"
   | exception e ->
-      equal ~msg:"printed" string "HUNG: hang detected" (Printexc.to_string e));
+      equal ~msg:"printed" string "HUNG: hang detected"
+        (masked (Printexc.to_string e)));
   let hung = lost d "hang detected" in
   List.iter (raises_match hung)
     [
@@ -3524,7 +3576,7 @@ let test_hang () =
     ];
   equal ~msg:"waits" int 1 !waits;
   equal ~msg:"name and arch" (pair string string) ("HUNG", "test")
-    (Nx_device.name d, Nx_device.arch d);
+    (masked (Nx_device.name d), Nx_device.arch d);
   equal ~msg:"budget, submitted, signaled" (triple int int int) (max_int, 1, 0)
     (Nx_device.budget d, Nx_device.submitted d, Nx_device.signaled d);
   equal ~msg:"its signal word" int 1 (B.length (Nx_device.signal_word d));
@@ -3722,7 +3774,7 @@ let faulty what =
         unmap = (fun _ -> fault "unmap");
       }
   in
-  Driver.device ~name:"FAULTY" ~arch:"test" ~budget:max_int
+  Driver.device ~name:(unique "FAULTY") ~arch:"test" ~budget:max_int
     ~peer:(fun _ r ->
       fault "peer";
       Ok (r, ignore))
@@ -3936,7 +3988,7 @@ let test_finalize () =
     ]
     (List.sort compare (String.split_on_char '\n' (String.trim out)));
   contains ~msg:"a failed exit synchronization is reported"
-    ~sub:"HANGING synchronization failed" err;
+    ~sub:"HANGING synchronization failed" (masked err);
   contains ~msg:"a raising finalize is reported" ~sub:"boom" err
 
 let hooks =
@@ -3994,9 +4046,9 @@ let spans =
     | P.Span s ->
         Some
           {
-            on = Nx_device.name s.device;
+            on = masked (Nx_device.name s.device);
             lane = s.lane;
-            what = s.name;
+            what = masked s.name;
             t0 = s.start;
             t1 = s.stop;
           }
@@ -4452,14 +4504,14 @@ let test_output () =
   in
   let processes = meta "process_name" and threads = meta "thread_name" in
   let named (pid, tid) =
-    (List.assoc (pid, 0) processes, List.assoc (pid, tid) threads)
+    (masked (List.assoc (pid, 0) processes), List.assoc (pid, tid) threads)
   in
   let complete =
     List.map
       (fun e ->
         let key = (int_of_float (num "pid" e), int_of_float (num "tid" e)) in
         let lo = num "ts" e in
-        (named key, str "name" e, lo, lo +. num "dur" e))
+        (named key, masked (str "name" e), lo, lo +. num "dur" e))
       (ph "X")
   in
   equal ~msg:"spans"
@@ -4504,7 +4556,7 @@ let test_output () =
     List.filter_map
       (fun e ->
         let pid = int_of_float (num "pid" e) in
-        if List.assoc (pid, 0) processes = "P" then
+        if masked (List.assoc (pid, 0) processes) = "P" then
           Some (str "name" e, num "allocated" (field "args" e))
         else None)
       (ph "C")
@@ -4572,7 +4624,11 @@ let counting log =
 let counted =
   List.filter_map (function
     | P.Counters c ->
-        Some (Nx_device.name c.device, c.name, (c.start, c.stop), c.counters)
+        Some
+          ( masked (Nx_device.name c.device),
+            c.name,
+            (c.start, c.stop),
+            c.counters )
     | P.Span _ | P.Allocation _ | P.Load _ | P.Trace _ | P.Overwritten _ -> None)
 
 let counts =

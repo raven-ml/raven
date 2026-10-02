@@ -40,7 +40,7 @@ external execute :
   int ->
   unit = "test_metal_execute_byte" "test_metal_execute"
 
-let metal = Nx_metal_device.v 0
+let metal = Result.get_ok (Nx_metal_device.get 0)
 let m = Option.get (Nx_metal_device.of_device metal)
 
 let borrow_host b =
@@ -114,9 +114,8 @@ let page = 1 lsl 16
 let opening =
   group "opening"
     [
-      test "count is one, and get and v open that device once" (fun () ->
+      test "count is one, and get opens that device once" (fun () ->
           equal int 1 (Nx_metal_device.count ());
-          is_true (Nx_metal_device.v 0 == metal);
           is_true (Result.get_ok (Nx_metal_device.get 0) == metal));
       test
         "it is METAL, of an Apple GPU family, with a budget of its working set"
@@ -130,12 +129,11 @@ let opening =
       cases ~name:fst "refuse"
         [
           ("a device past the count", fun () -> is_error (Nx_metal_device.get 1));
-          ( "v of a device past the count, with get's message",
+          ( "a device past the count, naming the device first",
             fun () ->
               let why = Result.get_error (Nx_metal_device.get 1) in
               is_true ~msg:"the device's name first"
-                (String.starts_with ~prefix:"METAL:1: " why);
-              raises (Failure why) (fun () -> Nx_metal_device.v 1) );
+                (String.starts_with ~prefix:"METAL:1: " why) );
           ( "a device of index -1",
             fun () ->
               raises_match Exn.invalid_arg (fun () -> Nx_metal_device.get (-1))

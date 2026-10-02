@@ -5,8 +5,8 @@
 
 (** NVIDIA devices, without CUDA.
 
-    Opens NVIDIA GPUs as {!Nx_device.t}s named ["NV"], ["NV:1"], ["NV:2"], ...
-    through one of two interfaces:
+    Opens NVIDIA GPUs as {!Nx_device.t}s through one of two interfaces, which
+    their names tell apart:
     - {!Kernel}, the resource manager interface of NVIDIA's Linux kernel driver
       ([/dev/nvidiactl] and [/dev/nvidia-uvm]) of the releases 570, 580, 610 and
       615. The driver owns the GPU and shares it with other programs.
@@ -15,8 +15,10 @@
       firmware, and manages the GPU's memory and page tables itself. The GPU is
       this process's until it exits.
 
-    A process uses one interface, chosen by its first open. Both need Linux:
-    elsewhere {!count} is [0] and {!get} says why.
+    Through {!Kernel} the GPUs are named ["NV"], ["NV:1"], ["NV:2"], ..., and
+    through {!Pci} ["NV-PCI"], ["NV-PCI:1"], .... A process uses one interface,
+    chosen by its first open. Both need Linux: elsewhere {!count} is [0] and
+    {!get} says why.
 
     {b Other machines.} Given the host of another machine ([nx.remote.device]),
     {!count} and {!get} reach that machine's GPUs, over {!Pci} through the
@@ -141,15 +143,6 @@ val get :
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
     {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)
-
-val v :
-  ?host:Nx_device.t ->
-  ?interface:interface ->
-  ?firmware:string ->
-  int ->
-  Nx_device.t
-(** [v i] is like {!get} but raises [Failure] with [get]'s message when the GPU
-    cannot be opened. *)
 
 (** {1:low Low-level}
 

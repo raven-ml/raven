@@ -1530,10 +1530,15 @@ module Driver : sig
         device's access to the memory the process is about to release. Defaults
         to doing nothing.
 
-      Raises [Invalid_argument] if [budget < 0], if [host] is no host, if the
-      queue's clock is a [Device_clock] of no more than [0] Hz, or if
-      [host_memory] gives memory the host does not address, and [Failure] if the
-      device's machine has no memory for its timeline. *)
+      A name identifies a device of its machine: nothing makes a second device
+      of one name on one machine, not even after the first is unreachable.
+
+      Raises [Invalid_argument] if [budget < 0], if [host] is no host, if a
+      device named [name] was made on the device's machine, if the queue's clock
+      is a [Device_clock] of no more than [0] Hz, or if [host_memory] gives
+      memory the host does not address, and [Failure] if the device's machine
+      has no memory for its timeline. A device that fails to be made leaves its
+      name free. *)
 
   val host :
     address:string ->

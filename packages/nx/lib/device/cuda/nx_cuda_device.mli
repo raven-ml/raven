@@ -6,7 +6,11 @@
 (** CUDA devices.
 
     Opens NVIDIA GPUs as {!Nx_device.t}s named ["CUDA"], ["CUDA:1"], ["CUDA:2"],
-    ... in the driver's order, each on its GPU's primary context.
+    ... in PCI bus order, each on its GPU's primary context: GPU [i] is the
+    [i]th by PCI address among those the driver sees, whatever
+    [CUDA_DEVICE_ORDER] says, so it is the GPU [nvidia-smi] numbers [i] when the
+    driver sees every GPU. [CUDA_VISIBLE_DEVICES] decides which GPUs the driver
+    sees.
 
     {b Memory.} Buffers are GPU memory, which the host does not address.
     {!Nx_device.Buffer.copy} moves their bytes on the device's copy stream:
@@ -73,10 +77,6 @@ val get : int -> (Nx_device.t, string) result
     without them.
 
     Raises [Invalid_argument] if [i < 0]. *)
-
-val v : int -> Nx_device.t
-(** [v i] is like {!get} but raises [Failure] with [get]'s message when the
-    device cannot be opened. *)
 
 val of_address :
   Nx_device.t -> nativeint -> Nx_dtype.Scalar.t -> int -> Nx_device.Buffer.t

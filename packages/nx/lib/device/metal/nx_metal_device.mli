@@ -34,10 +34,6 @@ val get : int -> (Nx_device.t, string) result
 
     Raises [Invalid_argument] if [i < 0]. *)
 
-val v : int -> Nx_device.t
-(** [v i] is like {!get} but raises [Failure] with [get]'s message when the
-    device cannot be opened. *)
-
 (** {1:low Low-level}
 
     For the libraries that submit work to a Metal device, inside

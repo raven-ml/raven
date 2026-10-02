@@ -164,8 +164,6 @@ let get i =
               release mtl;
               refuse why))
 
-let v i = match get i with Ok d -> d | Error msg -> failwith msg
-
 let of_device d =
   match Atomic.get opened with
   | Some m when Nx_device.equal m.dev d -> Some m

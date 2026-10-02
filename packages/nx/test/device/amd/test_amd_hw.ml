@@ -49,14 +49,17 @@ let device ?(i = 0) () =
       match Nx_amd_device.get ~interface:Pci (first + i) with
       | Ok d -> d
       | Error msg -> skip ~reason:msg ())
-  | None ->
+  | None -> (
       if Nx_amd_device.count ~interface:Kernel () <= i then
         skip
           ~reason:
             "no AMD GPU through the kernel driver; set NX_AMD_PCI_TEST=i to \
              take GPU i over PCI"
           ()
-      else Nx_amd_device.v ~interface:Kernel i
+      else
+        match Nx_amd_device.get ~interface:Kernel i with
+        | Ok d -> d
+        | Error e -> failwith e)
 
 (* The GPUs nx's runtime laws run on. *)
 let gpus =
@@ -66,9 +69,10 @@ let gpus =
       | Ok d -> [ d ]
       | Error _ -> [])
   | None ->
-      List.init
-        (Nx_amd_device.count ~interface:Kernel ())
-        (Nx_amd_device.v ~interface:Kernel)
+      List.init (Nx_amd_device.count ~interface:Kernel ()) (fun i ->
+          match Nx_amd_device.get ~interface:Kernel i with
+          | Ok d -> d
+          | Error e -> failwith e)
 
 let fill_host n f =
   let b = B.create Nx_device.host S.UInt8 n in

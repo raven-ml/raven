@@ -16,7 +16,7 @@ external stall : nativeint -> nativeint -> nativeint -> int -> unit
 
 let test_hang () =
   if Nx_cuda_device.count () = 0 then skip ~reason:"no CUDA device" ();
-  let d = Nx_cuda_device.v 0 in
+  let d = match Nx_cuda_device.get 0 with Ok d -> d | Error e -> failwith e in
   let c = Option.get (Nx_cuda_device.of_device d) in
   Nx_device.set_timeout d 500;
   Nx_device.submit [ d ] ~touches:[] (fun s ->

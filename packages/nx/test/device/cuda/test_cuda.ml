@@ -24,7 +24,9 @@ external foreign_host_alloc : nativeint -> int -> nativeint * nativeint
 external other_context_alloc : int -> int -> nativeint
   = "test_other_context_alloc"
 
-let gpus = List.init (Nx_cuda_device.count ()) Nx_cuda_device.v
+let gpus =
+  List.init (Nx_cuda_device.count ()) (fun i ->
+      match Nx_cuda_device.get i with Ok d -> d | Error e -> failwith e)
 
 (* The host address of [b]'s first byte, if the host addresses [b]'s memory. *)
 let hosted b =
@@ -111,7 +113,7 @@ let opening =
       equal string "CUDA" (Nx_device.name d);
       starts_with ~affix:"sm_" (Nx_device.arch d);
       greater int ~than:0 (Nx_device.budget d);
-      is_true (Nx_cuda_device.v 0 == d);
+      is_true (Result.get_ok (Nx_cuda_device.get 0) == d);
       let n = Nx_cuda_device.count () in
       starts_with
         ~affix:(Printf.sprintf "CUDA:%d: no such device" n)

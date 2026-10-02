@@ -508,8 +508,20 @@ let scratch a n =
 
 (* Opening *)
 
-(* A GPU of another machine is named for it: ["AMD:1@HOST:PORT"]. *)
-let name i = if i = 0 then "AMD" else Printf.sprintf "AMD:%d" i
+(* GPU [i]'s name through [iface] on the machine of [machine]: ["AMD:i"], and
+   ["AMD-PCI:i"] for this machine's GPUs taken from their kernel driver, so that
+   the name says which interface reaches the GPU. *)
+let name ~machine iface i =
+  let kind =
+    match iface with
+    | Pci when machine == Nx_device.host -> "AMD-PCI"
+    | Kernel | Pci -> "AMD"
+  in
+  if i = 0 then kind else Printf.sprintf "%s:%d" kind i
+
+let gpu_name a =
+  let iface = match a.gpu with Kfd_gpu _ -> Kernel | Am_gpu _ -> Pci in
+  name ~machine:a.machine iface a.index
 
 let target_of v =
   let v = if v = 90403 then 90402 else v in
@@ -771,7 +783,7 @@ let check_power a =
           (Printf.sprintf
              "%s: profiling needs the GPU's stable power state, not %s: run \
               `amd-smi set -l stable_std`"
-             (name a.index) level)
+             (gpu_name a) level)
   | Kfd_gpu _ | Am_gpu _ -> ()
 
 let wgp_active a =
@@ -895,7 +907,7 @@ let traced a (s : traces) ~slot ~se =
   if wptr < 0 || wptr > t.window then
     failwith
       (Printf.sprintf "%s: the trace of shader engine %d ends at %d of %d bytes"
-         (name a.index) se wptr t.window);
+         (gpu_name a) se wptr t.window);
   let data =
     Mmio.read
       (Mmio.v
@@ -989,8 +1001,8 @@ let report a () =
 
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
-    Driver.device ~name:(name a.index) ~arch:(arch a.props.target)
-      ~host:a.machine ~budget
+    Driver.device ~name:(gpu_name a) ~arch:(arch a.props.target) ~host:a.machine
+      ~budget
       ~completion:(Sleep (fun ~timeline:_ -> sleep))
       ~load:(load a) ~peer:(peer a)
       ~reaches:(fun d' ->
@@ -1205,9 +1217,9 @@ let count ?(host = Nx_device.host) ?interface () =
 let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
 
 (* Why GPU [i] of the machine of [machine] cannot be opened. *)
-let refuse ~machine i why =
+let refuse ~machine iface i why =
   check_reach machine;
-  Error (Driver.name ~host:machine (name i) ^ ": " ^ why)
+  Error (Driver.name ~host:machine (name ~machine iface i) ^ ": " ^ why)
 
 (* Opens [i] through [iface] on the machine of [machine], once. *)
 let open_gpu ~machine ~iface ?firmware i =
@@ -1224,36 +1236,33 @@ let open_gpu ~machine ~iface ?firmware i =
           Atomic.set opened (((machine, i), a) :: Atomic.get opened);
           Ok (Option.get a.dev)
       | exception (Failure why | Sys_error why | Invalid_argument why) ->
-          refuse ~machine i why
+          refuse ~machine iface i why
       | exception Unix.Unix_error (e, fn, arg) ->
-          refuse ~machine i
+          refuse ~machine iface i
             (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e))
-      | exception Not_found -> refuse ~machine i "opening failed: Not_found")
+      | exception Not_found ->
+          refuse ~machine iface i "opening failed: Not_found")
 
 let get ?(host = Nx_device.host) ?interface ?firmware i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_amd_device.get: %d < 0" i);
   let remote = Nx_remote_device.remote host in
-  let refuse = refuse ~machine:host i in
+  let refuse iface = refuse ~machine:host iface i in
   Mutex.protect lock (fun () ->
       match (remote, interface) with
       | Some _, Some Kernel ->
-          refuse "another machine's GPUs are reached over PCI"
+          refuse Pci "another machine's GPUs are reached over PCI"
       | Some _, _ -> open_gpu ~machine:host ~iface:Pci ?firmware i
-      | None, _ when not (linux ()) -> refuse "AMD GPUs need Linux"
+      | None, _ when not (linux ()) ->
+          refuse (Option.value interface ~default:Kernel) "AMD GPUs need Linux"
       | None, _ -> (
           let iface = Option.value interface ~default:(default ()) in
           match !chosen with
           | Some c when c <> iface ->
-              refuse
+              refuse iface
                 (Printf.sprintf
                    "this process reaches AMD GPUs through %s, not %s"
                    (interface_name c) (interface_name iface))
           | _ -> open_gpu ~machine:host ~iface ?firmware i))
-
-let v ?host ?interface ?firmware i =
-  match get ?host ?interface ?firmware i with
-  | Ok d -> d
-  | Error msg -> failwith msg
 
 let of_device = amd_of
 let queues a = Option.get a.queues
