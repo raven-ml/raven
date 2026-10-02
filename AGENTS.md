@@ -34,6 +34,10 @@ Breaking one causes real damage.
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
 | `contrib/` | fehu, sowilo, norn: own `dune-project`, own `CHANGES.md`, public core libraries only |
 
+A package's main library lives at `lib/`, each sub-library at
+`lib/<name>/`, named without the package prefix. tolk keeps its
+`include_subdirs` module groups.
+
 Accepted designs live in `doc/rfc/`.
 
 ## Parallel agents
@@ -155,8 +159,9 @@ promises, through the public interface, never what the code does today.
   and floats with a stated tolerance, never `is_true`.
 - Write a test where a user would get a wrong answer or a crash. Fixing a
   bug: write the test first, watch it fail, then fix and watch it pass.
-- Layout: `test/test_*.ml` in one `dune` file; only `support/`, `golden/` and
-  `gen/` subdirectories.
+- Layout: `test/` mirrors `lib/`, with the main library's suites as
+  `test/test_*.ml` in one `dune` file, each sub-library's in `test/<name>/`,
+  and `support/`, `golden/` and `gen/` at the level that needs them.
 - A structure shared between domains gets `stateful ~domains:2`, which
   explains every result by some order of the calls. A known interleaving is
   held deterministically: don't loop and hope. No mutation runs, no
