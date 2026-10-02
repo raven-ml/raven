@@ -110,14 +110,16 @@
     3 grid layered with a 2 × 1 grid makes six cells; a facet panel adds
     [Field "panel"], then [Field c] for the name ({!Scale.type-categories}) of
     its [fy] category, then for that of its [fx] category, those it has; a
-    generated guide adds [Field "axis"] or [Field "legend"], then [Field] of the
-    name of its scale. Wrappers, {!span} and {!bind} add nothing. {!name} takes
-    none of ["axis"], ["legend"], ["panel"] and ["cell"], so a generated node
-    never has the id of a written one. Since ids depend only on the structure of
-    the figure, a figure rebuilt by the same code has the same ids, and {!name}
-    pins a subtree whose position varies. Errors, warnings, {!View.zoom},
-    {!Resolved.scale} and the tags of drawn pictures ({!Picture.tag}) name nodes
-    by id. *)
+    generated axis adds [Field "axis"], then [Field] of the name of its scale; a
+    generated legend adds [Field "legend"], then [Field] of the name of its
+    scale, then [Field] of its kind, ["num"], ["cat"] or ["time"], since a scale
+    is identified by its name and kind. Wrappers, {!span} and {!bind} add
+    nothing. {!name} takes none of ["axis"], ["legend"], ["panel"] and ["cell"],
+    so a generated node never has the id of a written one. Since ids depend only
+    on the structure of the figure, a figure rebuilt by the same code has the
+    same ids, and {!name} pins a subtree whose position varies. Errors,
+    warnings, {!View.zoom}, {!Resolved.scale} and the tags of drawn pictures
+    ({!Picture.tag}) name nodes by id. *)
 
 (** {1:lower Lower libraries}
 

@@ -423,6 +423,24 @@ let guides =
   group "guides"
     [
       no_overlap;
+      test "a legend's id is its scale's name and kind" (fun () ->
+          let f =
+            layer
+              [
+                plain ~fill:(strings [| "a"; "b"; "a"; "b" |]) ramp;
+                plain ~fill:(num ramp) ramp;
+              ]
+          in
+          let ids =
+            String.split_on_char '\n' (printed (lay (Size.panels 80. 60.) f))
+            |> List.filter_map (fun line ->
+                match String.split_on_char ' ' (String.trim line) with
+                | "legend" :: id :: _ -> Some id
+                | _ -> None)
+          in
+          equal (list string)
+            [ "legend.color.cat"; "legend.color.num" ]
+            (List.sort String.compare ids));
       test "a shared axis is labelled on the outer panel only" (fun () ->
           let l =
             lay (Size.panels 60. 40.)
@@ -457,7 +475,9 @@ let guides =
               ~fy:(strings [| "p"; "p"; "q"; "q" |])
               ()
           in
-          expect (printed (lay (Size.panels 40. 30.) f)) @@ __POS_OF__ {|
+          expect (printed (lay (Size.panels 40. 30.) f))
+          @@ __POS_OF__
+               {|
             layout 121.611 × 111.169
             panel panel.p.a [(11.814, 13.3896) (51.814, 43.3896)] cartesian
               axis panel.p.a.axis.x bottom
@@ -500,7 +520,9 @@ let guides =
                 rect ~x:(num ramp) ~fill:(num ~title:(Text.v "load") ramp) ();
               ]
           in
-          expect (printed (lay (Size.panels 80. 60.) f)) @@ __POS_OF__ {|
+          expect (printed (lay (Size.panels 80. 60.) f))
+          @@ __POS_OF__
+               {|
             layout 156.476 × 96.9341
             panel root [(11.814, 20.0444) (91.814, 80.0444)] cartesian
               axis axis.x bottom
@@ -509,11 +531,11 @@ let guides =
               axis axis.y left
                 label (text "1") [(2.15332, 74.5996) (5.81396, 85.4893)]
                 label (text "4") [(0, 14.5996) (5.81396, 25.4893)]
-            legend legend.color right
+            legend legend.color.cat right
               title (text "kind") [(104.721, 5.44482) (124.662, 17.5444)]
               entry 0.25 [(104.721, 20.4893) (114.721, 30.4893)] (text "a") [(117.221, 20.0444) (122.275, 30.9341)]
               entry 0.75 [(104.721, 31.3789) (114.721, 41.3789)] (text "b") [(117.221, 30.9341) (122.732, 41.8237)]
-            legend legend.color right
+            legend legend.color.num right
               title (text "load") [(134.662, 0) (154.916, 12.0996)]
               bar [(134.662, 20.0444) (144.662, 80.0444)]
               label (text "1") [(150.662, 74.5996) (154.323, 85.4893)]
@@ -569,7 +591,7 @@ let glyphs =
           let l = lay (Size.panels 50. 50.) f in
           match Layout.warnings l with
           | [ (id, msg) ] ->
-              equal string "legend.color"
+              equal string "legend.color.cat"
                 (Format.asprintf "%a" Nx.Ptree.Path.pp id);
               is_true (contains msg "U+10FFFD")
           | ws -> failf "%d warnings" (List.length ws));

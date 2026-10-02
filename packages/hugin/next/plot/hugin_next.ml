@@ -4510,9 +4510,17 @@ let build r scales uses =
            | Legend_of { side; block; show = true; bar }
              when Nx.Ptree.Path.equal block id ->
                let (F f) = scales.(i) in
+               let kind =
+                 match f.kind with
+                 | Scale.Quantitative -> "num"
+                 | Scale.Categorical -> "cat"
+                 | Scale.Temporal -> "time"
+               in
                let ls_id =
                  Nx.Ptree.Path.(
-                   add (Field f.sid.sname) (add (Field "legend") id))
+                   v
+                     (segments id
+                     @ [ Field "legend"; Field f.sid.sname; Field kind ]))
                in
                [
                  ( side,
