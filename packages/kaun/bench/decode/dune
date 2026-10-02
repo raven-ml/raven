@@ -1,6 +1,13 @@
+; gpt-oss's model is examples/06-gpt-oss's: kaun ships no model.
+
+(copy_files#
+ (files ../../examples/06-gpt-oss/{moe,gpt_oss,layer_loop}.{ml,mli}))
+
 (executable
  (name bench_decode)
- (libraries nx rune kaun thumper unix))
+ (modules bench_decode moe gpt_oss layer_loop)
+ (libraries nx nx.device nx.quant nx.cuda.device rune kaun kaun.hf jsont
+  thumper unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`.
 

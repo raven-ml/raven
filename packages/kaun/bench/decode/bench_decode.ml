@@ -10,7 +10,12 @@
    values, and kaun ships no model to depend on.
 
    The cache lengths show how the step scales with the cache it carries, not
-   only with the single position it writes. *)
+   only with the single position it writes.
+
+   On CUDA, gpt-oss-20b at its own shapes, the model of examples/06-gpt-oss
+   compiled one layer kind at a time ([Layer_loop]): a decode step and a prefill
+   of 512 tokens, over random weights at bfloat16 with the experts packed as
+   MXFP4. Building the 13.8 GB of weights takes most of a case's setup. *)
 
 open Kaun
 
@@ -142,31 +147,207 @@ let case len =
 
 let lens = [ 256; 1024 ]
 
+(* gpt-oss-20b *)
+
+let gpt_oss =
+  {
+    Gpt_oss.vocab_size = 201088;
+    dim = 2880;
+    layers =
+      List.init 24 (fun i -> if i mod 2 = 0 then Gpt_oss.Sliding else Full);
+    window = 128;
+    n_heads = 64;
+    n_kv_heads = 8;
+    head_dim = 64;
+    hidden_dim = 2880;
+    experts = 32;
+    experts_per_token = 4;
+    swiglu_limit = 7.0;
+    norm_eps = 1e-5;
+    rope =
+      Rope.yarn ~theta:150000.0 ~head_dim:64 ~factor:32.0 ~beta_fast:32.0
+        ~beta_slow:1.0 ~original_context:4096 ~context:131072;
+    attention_scale = (((0.1 *. log 32.0) +. 1.0) ** 2.0) /. 8.0;
+    tied = false;
+  }
+
+let context = 1024
+let prompt = 512
+
+(* Bytes in [lo, lo + span) from a linear congruential generator: the expert
+   blocks and their scales, in the range a trained checkpoint's scales take. *)
+let random_bytes seed shape lo span =
+  let n = Array.fold_left ( * ) 1 shape in
+  let a = Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n in
+  let s = ref !seed in
+  for i = 0 to n - 1 do
+    s := ((!s * 1103515245) + 12345) land 0x7fffffff;
+    Bigarray.Array1.unsafe_set a i (lo + ((!s lsr 16) mod span))
+  done;
+  seed := !s;
+  Nx.of_bigarray (Bigarray.reshape (Bigarray.genarray_of_array1 a) shape)
+
+(* Uniform values in [-scale, scale), 256 rows repeated to the shape's first
+   axis. *)
+let floats ~scale shape =
+  let rows = shape.(0) in
+  let rest = Array.sub shape 1 (Array.length shape - 1) in
+  let base_rows = min rows 256 in
+  let base =
+    Nx.cast Nx.bfloat16
+      (Nx.mul_s
+         (Nx.sub_s (Nx.rand Nx.float32 (Array.append [| base_rows |] rest)) 0.5)
+         (2.0 *. scale))
+  in
+  if base_rows = rows then base
+  else
+    let reps = (rows + base_rows - 1) / base_rows in
+    let tiled = Nx.concatenate ~axis:0 (List.init reps (fun _ -> base)) in
+    Nx.contiguous (Nx.slice [ R (0, rows) ] tiled)
+
+let gpt_oss_params placement =
+  let c = gpt_oss and seed = ref 12345 in
+  let f ~scale shape = Nx.place placement (floats ~scale shape) in
+  let linear ?(bias = true) i o =
+    {
+      Linear.w = f ~scale:0.02 [| i; o |];
+      b = (if bias then Some (f ~scale:0.02 [| o |]) else None);
+    }
+  in
+  let packed ~inputs ~outputs =
+    let groups = inputs / 32 in
+    let scales = random_bytes seed [| c.experts; outputs; groups |] 118 6 in
+    let blocks = random_bytes seed [| c.experts; outputs; inputs / 2 |] 0 256 in
+    Moe.Quant (Nx_quant.place placement (Nx_quant.mxfp4 ~scales blocks))
+  in
+  let gamma () = { Rms_norm.gamma = f ~scale:1.0 [| c.dim |] } in
+  let q_dim = c.n_heads * c.head_dim and kv = c.n_kv_heads * c.head_dim in
+  let block _ =
+    let b =
+      {
+        Gpt_oss.attn_norm = gamma ();
+        attn =
+          {
+            Attention.q = linear c.dim q_dim;
+            k = linear c.dim kv;
+            v = linear c.dim kv;
+            out = linear q_dim c.dim;
+          };
+        sinks = f ~scale:1.0 [| c.n_heads |];
+        ffn_norm = gamma ();
+        router = linear c.dim c.experts;
+        moe =
+          {
+            Moe.gate_up = packed ~inputs:c.dim ~outputs:(2 * c.hidden_dim);
+            gate_up_bias = f ~scale:0.02 [| c.experts; 2 * c.hidden_dim |];
+            down = packed ~inputs:c.hidden_dim ~outputs:c.dim;
+            down_bias = f ~scale:0.02 [| c.experts; c.dim |];
+          };
+      }
+    in
+    (* The host copies of a block are garbage once it is placed. *)
+    Gc.full_major ();
+    b
+  in
+  {
+    Gpt_oss.tok = { Embedding.table = f ~scale:0.02 [| c.vocab_size; c.dim |] };
+    blocks = List.map block c.layers;
+    norm = gamma ();
+    head = Some (linear ~bias:false c.dim c.vocab_size);
+  }
+
+(* A gpt-oss step on CUDA warmed past its compilations: [`Decode] feeds back the
+   token it predicts at a fixed position in the middle of the cache, [`Prefill]
+   runs the [prompt] tokens at positions 0 onwards. Each call takes the caches
+   of the one before and reads its token back on the host. *)
+let gpt_oss_step kind =
+  let device = Nx_cuda_device.v 0 in
+  let placement = Nx.Placement.device device in
+  let step = Layer_loop.greedy ~placement gpt_oss (gpt_oss_params placement) in
+  let caches =
+    ref
+      (Gpt_oss.cache
+         ~placement:(fun _ ~axis:_ -> placement)
+         gpt_oss ~slots:context Nx.bfloat16)
+  in
+  let index, ids =
+    match kind with
+    | `Decode ->
+        ( Cache_index.advance (Cache_index.rows ~context [| context / 2 |]),
+          ref (Nx.zeros Nx.int64 [| 1; 1 |]) )
+    | `Prefill ->
+        ( Cache_index.rows ~context [| prompt |],
+          ref
+            (Nx.init Nx.int64 [| 1; prompt |] (fun i ->
+                 Int64.of_int (17 + i.(1)))) )
+  in
+  let call () =
+    let token, c = step !caches index !ids in
+    caches := c;
+    let token = Nx.item [ 0 ] token in
+    match kind with
+    | `Decode -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
+    | `Prefill -> ()
+  in
+  call ();
+  call
+
+let gpt_oss_kinds = [ `Decode; `Prefill ]
+
+let gpt_oss_case kind =
+  let name =
+    match kind with
+    | `Decode -> Printf.sprintf "decode step, cache %d" context
+    | `Prefill -> Printf.sprintf "prefill %d" prompt
+  in
+  Thumper.bench_with_setup
+    ~setup:(fun () -> gpt_oss_step kind)
+    name
+    (fun call -> call ())
+
+(* CUDA's driver must not be initialized before the fork that isolates a case,
+   so a fresh process says whether a device opens. *)
+let run_self flag =
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe [| exe; flag |] Unix.stdin Unix.stdout Unix.stderr
+  in
+  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+
 (* A forked worker cannot reach the GPU's compiler service either. A child
    process compiles the kernels first; the workers then load them from tolk's
    kernel cache. This process never touches the device. *)
-let warm () =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; "--warm" |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with
-  | _, Unix.WEXITED 0 -> ()
-  | _ -> failwith "bench_decode: compiling the decode kernels failed"
+let warm flag =
+  if not (run_self flag) then
+    failwith "bench_decode: compiling the decode kernels failed"
 
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--warm" ] -> List.iter (fun len -> (decoder (model ()) ~len) ()) lens
+  | [ _; "--warm-gpt-oss" ] ->
+      List.iter (fun kind -> (gpt_oss_step kind) ()) gpt_oss_kinds
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
   | argv ->
       let measures =
         match argv with
         | _ :: ("list" | "-h" | "--help" | "-V" | "--version") :: _ -> false
         | _ -> true
       in
-      if measures then warm ();
+      let cuda = run_self "--cuda" in
+      if measures then begin
+        warm "--warm";
+        if cuda then warm "--warm-gpt-oss"
+      end;
       let budgets =
         [ Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05 ]
       in
-      Thumper.run "kaun_decode" ~budgets
-        [ Thumper.group "Gpt2" (List.map case lens) ]
+      (* A gpt-oss case builds its weights in its setup. *)
+      Thumper.run "kaun_decode"
+        ~config:Thumper.Config.(default |> deadline 1200.)
+        ~budgets
+        (Thumper.group "Gpt2" (List.map case lens)
+        ::
+        (if cuda then
+           [ Thumper.group "GptOss" (List.map gpt_oss_case gpt_oss_kinds) ]
+         else []))
