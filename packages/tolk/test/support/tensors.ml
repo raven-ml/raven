@@ -386,6 +386,14 @@ let rec run m params u =
         let v = compute u in
         Ops.Tbl.replace values u v;
         v
+  (* [call read c] runs the body of the call [c] on its arguments, as [read]
+     gives them. The body's parameter of a sharded argument holds its parts. *)
+  and call read c =
+    let part a = if Ops.op a = Unshard then Ops.nth a 0 else a in
+    let args =
+      List.mapi (fun k a -> (k, read (part a))) (Ops.src_without_body c)
+    in
+    ignore (run m args (Ops.body c))
   and compute u =
     let src = Ops.src u in
     match (Ops.op u, Ops.arg u) with
@@ -456,11 +464,20 @@ let rec run m params u =
         List.iter (fun s -> ignore (value s)) src;
         []
     | Call, _ ->
-        (* The body's parameter of a sharded argument holds its parts. *)
-        let part a = if Ops.op a = Unshard then Ops.nth a 0 else a in
-        let args = List.mapi (fun k a -> (k, value (part a))) (List.tl src) in
-        ignore (run m args (List.hd src));
+        call value u;
         []
+    | End, _ -> (
+        (* A loop calls its body once a trip, each trip reading what the
+           previous ones stored. *)
+        match src with
+        | [ c; r ] when Ops.op c = Call ->
+            for k = 0 to count r - 1 do
+              call
+                (fun a -> reread m (value a))
+                (Ops.substitute c [ (r, Ops.int k) ])
+            done;
+            []
+        | _ -> fail "cannot evaluate an end of %d sources" (List.length src))
     | Bitcast, _
       when Dtype.itemsize (Ops.dtype u)
            <> Dtype.itemsize (Ops.dtype (List.hd src)) ->

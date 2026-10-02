@@ -201,6 +201,14 @@ let effects =
           equal write
             [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2) ]
             (writes (Ops.sink [ Ops.call body [ out; p 1 3 ] ])));
+      test "a loop calls its body once a trip, each reading the last's stores"
+        (fun () ->
+          let x = Ops.param ~shape:[ Int 3 ] 0 Int32 in
+          let body = Ops.sink [ Ops.store x Ops.O.(x + x) ] in
+          let trips = Ops.range ~axis_type:Loop (Int 3) [ 0 ] in
+          equal write
+            [ (0, 0, z 0); (0, 1, z 8); (0, 2, z 16) ]
+            (writes (Ops.sink [ Ops.end_ (Ops.call body [ out ]) [ trips ] ])));
       test "a symbolic shape is refused" (fun () ->
           let n = Ops.variable "n" (z 1) (z 3) in
           rejects (fun () -> eval (Ops.shrink (p 1 6) [ Some (Int 0, Sym n) ])));
