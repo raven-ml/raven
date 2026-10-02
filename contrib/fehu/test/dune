@@ -10,7 +10,6 @@
   test_gae
   test_eval
   test_vec_env
-  test_render
-  test_envs)
+  test_render)
  (package fehu)
- (libraries fehu fehu.envs nx windtrap))
+ (libraries fehu nx windtrap))
