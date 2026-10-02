@@ -111,6 +111,22 @@ jobs:
           WINDTRAP_PROP_COUNT: 1000
         run: opam exec -- dune build --profile sanitize @packages/talon/next/test/parquet/runtest
 
+      # Talon's benchmark questions at the CI size (H2O at 1e6 rows, TPC-H at
+      # scale factor 0.1) must answer as DuckDB's committed answers do. The
+      # suite's uv scripts generate the data; one OS suffices, since the
+      # answers depend on talon's semantics, which runtest covers per OS.
+      - name: Set-up uv
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Check talon's benchmark answers
+        if: runner.os == 'Linux'
+        env:
+          DATA: ${{ runner.temp }}/talon-bench
+        run: |
+          (cd packages/talon/next/bench && uv run h2o_data.py 1e6 "$DATA" && uv run tpch_data.py 0.1 "$DATA")
+          opam exec -- dune exec --release packages/talon/next/bench/runner.exe -- check packages/talon/next/bench/answers "$DATA"
+
       - name: Build and test rune
         run: |
           opam exec -- dune build --release packages/rune

@@ -161,7 +161,9 @@ TPC-H's talon queries state their joins in a committed order, since talon does
 not reorder joins; the baselines use each engine's own planning.
 
 `check` runs every question at the CI size and compares its answer with the
-committed one, as `answers.py` does.
+committed one, as `answers.py` does. CI runs it on Linux after generating the
+data, so it needs uv, Python, and network access: uv fetches the pinned
+packages, and DuckDB's `INSTALL tpch` downloads the extension.
 
 The comparison reads talon's section and the baselines' section with the same
 machine key. A question passes when the median of `…/talon` is at most the
