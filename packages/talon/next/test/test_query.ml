@@ -174,7 +174,7 @@ let binding () =
            derive [ "k" := Col.float "n" +. f ];
            derive [ "k" := Col.float "nope" +. f +. Col.float "nope" ];
            derive [ "k" := over (min (Ext.col epoch "x8")) ];
-           aggregate [ "k" := ewm ~alpha:0.5 (Ext.col epoch "t") ];
+           aggregate [ "k" := mean (Ext.col epoch "t") ];
            derive [ "k" := over (min (Col.v Record.kind "r")) ];
            derive [ "k" := over ~order:[ Order.asc "t" ] (rank n) ];
            derive
@@ -275,8 +275,8 @@ let binding () =
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     aggregate: 1 problem
-      "k" := ewm ~alpha:0.5 t
-        ewm takes integers or floats, not ext[ymir.epoch, float64]: use Ext.storage.
+      "k" := mean t
+        mean takes integers or floats, not ext[ymir.epoch, float64].
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     derive: 1 problem
@@ -286,7 +286,7 @@ let binding () =
 
     derive: 1 problem
       "k" := over ~order:[asc "t"] (rank n)
-        "t" is ext[ymir.epoch, float64], which orders only through its declaration: order by its storage, derived first.
+        "t" is ext[ymir.epoch, float64], which orders only through its declaration.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     derive: 1 problem
@@ -440,14 +440,14 @@ let verbs () =
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     sort: 4 problems
-      asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration: order by its storage, derived first. For example: derive [ "k" := Ext.storage e (Ext.col e "t") ] |> sort [ asc "k" ] |> select [ keep Sel.(all - names [ "k" ]) ].
+      asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration.
       desc "r": "r" is record[e ext[ymir.epoch, float64]], which holds an extension type and has no order.
       asc "nope": no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       nulls_first (desc "f"): the column "f" is already a key.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     sort: 2 problems
-      asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration: order by its storage, derived first. For example: derive [ "k" := Ext.storage e (Ext.col e "t") ] |> sort [ asc "k" ] |> select [ keep Sel.(all - names [ "k" ]) ].
+      asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration.
       desc "t": the column "t" is already a key.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
@@ -673,9 +673,8 @@ let joins () =
     |}
 
 (* A value outside a dictionary has no order: binding reports it, each time,
-   instead of comparing it. Repeated record fields are reported in the order
-   they repeat. *)
-let values_and_fields () =
+   instead of comparing it. *)
+let values_outside () =
   let q =
     Query.of_source
       (source "cats"
@@ -686,21 +685,10 @@ let values_and_fields () =
              ("y", Any int64);
            ])
   in
-  let c = Col.string "c" and x = Col.int "x" and y = Col.int "y" in
+  let c = Col.string "c" in
   let zzz () = String.make 3 'z' in
   let held () = Query.filter Expr.(is_in [ zzz () ] c) q in
-  expect
-    (messages
-       Expr.
-         [
-           held;
-           held;
-           (fun () -> Query.derive [ "k" := cut [| zzz (); "a" |] c ] q);
-           (fun () ->
-             Query.derive
-               [ "r" := record [ "b" := x; "a" := y; "b" := y; "a" := x ] ]
-               q);
-         ])
+  expect (messages [ held; held ])
   @@ __POS_OF__
        {|
     filter: 1 problem
@@ -712,17 +700,6 @@ let values_and_fields () =
       is_in […] c
         categorical["a", "b"] does not hold the value "zzz".
       input (3 columns): c categorical["a", "b"], x int64, y int64
-
-    derive: 1 problem
-      "k" := cut […] c
-        categorical["a", "b"] does not hold the edge "zzz".
-      input (3 columns): c categorical["a", "b"], x int64, y int64
-
-    derive: 2 problems
-      "r" := record ["b" := x; "a" := y; "b" := y; "a" := x]
-        record: the output "b" appears twice.
-        record: the output "a" appears twice.
-      input (3 columns): c categorical["a", "b"], x int64, y int64
     |}
 
 let reports =
@@ -731,8 +708,7 @@ let reports =
       test "binding problems, in each verb's report" binding;
       test "problems of each verb's arguments" verbs;
       test "problems of join conditions" joins;
-      test "values outside a dictionary and repeated record fields"
-        values_and_fields;
+      test "values outside a dictionary, each time" values_outside;
     ]
 
 (* Join conditions *)
@@ -1093,7 +1069,6 @@ let expression_variants =
   in
   let x = Col.int "x" and y = Col.int "y" and f = Col.float "f" in
   let g = Col.float "g" and b = Col.bool "b" and s = Col.string "s" in
-  let window n = Window.rows ~before:n ~after:0 in
   Expr.
     [
       row "+ and -" (fun () -> x + y) (fun () -> x - y);
@@ -1104,9 +1079,6 @@ let expression_variants =
       agg "arg_min and arg_max" (fun () -> arg_min x) (fun () -> arg_max x);
       agg "first and last" (fun () -> first x) (fun () -> last x);
       agg "quantiles" (fun () -> quantile 0.25 x) (fun () -> quantile 0.75 x);
-      agg "ewm alphas"
-        (fun () -> ewm ~alpha:0.25 f)
-        (fun () -> ewm ~alpha:0.5 f);
       row "shifts" (fun () -> shift 1 x) (fun () -> shift 2 x);
       row "slice offsets"
         (fun () -> Str.slice ~offset:0 ~length:2 s)
@@ -1123,22 +1095,15 @@ let expression_variants =
       row "is_in values"
         (fun () -> is_in [ 1; 2 ] x)
         (fun () -> is_in [ 1; 3 ] x);
-      row "cut edges" (fun () -> cut [| 1; 2 |] x) (fun () -> cut [| 1; 3 |] x);
       row "over keys"
         (fun () -> over ~by:[ "x" ] (sum y))
         (fun () -> over ~by:[ "y" ] (sum y));
       row "over orders"
         (fun () -> over ~order:[ Order.asc "x" ] (sum y))
         (fun () -> over ~order:[ Order.desc "x" ] (sum y));
-      row "rolling windows"
-        (fun () -> rolling (window 3) (sum y))
-        (fun () -> rolling (window 4) (sum y));
       row "nx functions"
         (fun () -> nx { f = Nx.exp } f)
         (fun () -> nx { f = Nx.neg } f);
-      row "record field names"
-        (fun () -> record [ "p" := x; "q" := y ])
-        (fun () -> record [ "p" := x; "r" := y ]);
       row "format strings"
         (fun () -> Temporal.format "%Y" (Col.instant "ts"))
         (fun () -> Temporal.format "%m" (Col.instant "ts"));
@@ -1388,15 +1353,9 @@ let accepted =
     [
       test "an extension output has its extension type" (fun () ->
           equal schema_w
-            (Schema.v Type.[ ("t2", Any epoch_t); ("w", Any epoch_t) ])
+            (Schema.v Type.[ ("t2", Any epoch_t) ])
             (Query.schema
-               (Query.select
-                  Expr.
-                    [
-                      "t2" := Ext.col epoch "t";
-                      "w" := Ext.wrap epoch (Col.float "f");
-                    ]
-                  of_kinds)));
+               (Query.select Expr.[ "t2" := Ext.col epoch "t" ] of_kinds)));
       test "filter takes a predicate that is an OCaml value" (fun () ->
           let p = Expr.(const (fun x -> Stdlib.( > ) x 1.) $ Col.float "f") in
           equal schema_w (Query.schema of_kinds)
@@ -1411,8 +1370,31 @@ let accepted =
                {|
             filter: 1 problem
               fl
-                fl is ext[flag, bool], where bool is expected: use Ext.storage.
+                fl is ext[flag, bool], where bool is expected.
               input (1 column): fl ext[flag, bool]
+            |});
+      test "a calendar reads the wall clock of UTC, not of another zone"
+        (fun () ->
+          let q =
+            Query.of_source
+              (source "zoned"
+                 Type.
+                   [
+                     ("u", Any (datetime ~zone:"UTC" Ns));
+                     ("p", Any (datetime ~zone:"Europe/Paris" Ns));
+                   ])
+          in
+          let hour c = Expr.Temporal.field `Hour (Col.instant c) in
+          equal schema_w
+            (Schema.v Type.[ ("h", Any int64) ])
+            (Query.schema (Query.select Expr.[ "h" := hour "u" ] q));
+          expect (message (fun () -> Query.select Expr.[ "h" := hour "p" ] q))
+          @@ __POS_OF__
+               {|
+            select: 1 problem
+              "h" := Temporal.field `Hour p
+                Temporal.field reads the wall clock of the zone "Europe/Paris", and talon reads UTC's only.
+              input (2 columns): u datetime[ns, UTC], p datetime[ns, Europe/Paris]
             |});
       test "an output name must be UTF-8" (fun () ->
           raises (Invalid_argument {|Expr.( := ): "\255" is not valid UTF-8|})
@@ -1505,7 +1487,7 @@ let rejected_sources () =
     Source.v: ~sorted:
       asc "nope": no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       desc "f": the column "f" is already a key.
-      asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration: order by its storage, derived first.
+      asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration.
       asc "r": "r" is record[e ext[ymir.epoch, float64]], which holds an extension type and has no order.
     |}
 

@@ -118,48 +118,14 @@ let kept (n, Expr.Packed e) =
   | Read (_, n') when String.equal n n' -> Some n
   | _ -> None
 
-(* [field_of (n, e)] is [Some r] iff [e] reads the field [n] of the record
-   [r]. *)
-let field_of (n, Expr.Packed e) =
-  match Expr.node e with
-  | Field (_, n', r) when String.equal n n' -> Some (Expr.Packed r)
-  | _ -> None
-
-(* [unpacked outputs] is [Some (r, rest)] iff [outputs] starts with every field
-   of the record [r], in order, under their names, as [unpack r] binds. *)
-let unpacked outputs =
-  match outputs with
-  | [] -> None
-  | o :: _ -> (
-      match field_of o with
-      | None -> None
-      | Some (Expr.Packed r as packed) ->
-          let fields =
-            match Expr.typing r with
-            | Column (Record fields) -> List.map fst fields
-            | _ -> []
-          in
-          let of_r o =
-            match field_of o with
-            | Some (Expr.Packed r') -> Expr.same r r'
-            | None -> false
-          in
-          let n = List.length fields in
-          let run = List.filteri (fun i _ -> i < n) outputs in
-          if
-            n > 0 && List.for_all of_r run
-            && List.equal String.equal (List.map fst run) fields
-          then Some (packed, List.filteri (fun i _ -> i >= n) outputs)
-          else None)
-
-(* [pp_outputs] formats bound outputs, each run of kept columns as one [keep],
-   and each run of a record's fields as the [unpack] that binds them. *)
+(* [pp_outputs] formats bound outputs, each run of kept columns as one
+   [keep]. *)
 let pp_outputs ppf outputs =
   let rec groups = function
     | [] -> []
-    | o :: os as outputs -> (
-        match (kept o, unpacked outputs) with
-        | Some n, _ ->
+    | o :: os -> (
+        match kept o with
+        | Some n ->
             let rec run ns = function
               | o :: os when Option.is_some (kept o) -> run (fst o :: ns) os
               | os -> (List.rev ns, os)
@@ -169,11 +135,7 @@ let pp_outputs ppf outputs =
               Format.fprintf ppf "@[<hov 2>keep@ (names@ %a)@]"
                 (Type.pp_list pp_name) ns)
             :: groups os
-        | None, Some (Expr.Packed r, os) ->
-            (fun ppf ->
-              Format.fprintf ppf "@[<hov 2>unpack@ %a@]" Expr.pp_arg r)
-            :: groups os
-        | None, None ->
+        | None ->
             let n, Expr.Packed e = o in
             (fun ppf ->
               Format.fprintf ppf "@[<hov 2>%a :=@ %a@]" pp_name n Expr.pp e)
@@ -439,24 +401,9 @@ let filter p q =
   | Error ps ->
       fail "filter" (input q) [ Written ((fun ppf -> Expr.pp ppf p), ps) ]
 
-(* The first problem of a key on an extension column says how to sort by its
-   storage; a later one is that the key is repeated. *)
 let sort keys q =
-  let entry seen ((k : Order.t), p) =
-    let recipe =
-      match Schema.find q.schema k.name with
-      | Some (Any (Ext _)) when not (List.mem k.name seen) ->
-          Format.asprintf
-            " For example: derive [ \"k\" := Ext.storage e (Ext.col e %a) ] |> \
-             sort [ asc \"k\" ] |> select [ keep Sel.(all - names [ \"k\" ]) \
-             ]."
-            pp_name k.name
-      | _ -> ""
-    in
-    (k.name :: seen, arg "%a: %a%s" Order.pp k Problem.pp p recipe)
-  in
-  check "sort" (input q)
-    (snd (List.fold_left_map entry [] (Order.check keys q.schema)));
+  let entry ((k : Order.t), p) = arg "%a: %a" Order.pp k Problem.pp p in
+  check "sort" (input q) (List.map entry (Order.check keys q.schema));
   make (Sort { keys; input = q })
 
 let slice ~offset ~length q =

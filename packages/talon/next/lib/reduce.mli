@@ -53,9 +53,7 @@ val reduce :
     type [ty], with the first segment where [r] fails and the reason: [only]
     over two values, a [duration] sum that overflows. [sum] takes integers at
     [int64], and floats and durations at [ty]. Over no values [count], [sum] and
-    [n_unique] are [0], and the others null.
-
-    Raises [Invalid_argument] for [ewm] and [collect]. *)
+    [n_unique] are [0], and the others null. *)
 
 val shift : segments -> int -> Column.t -> Column.t
 (** [shift s n c] is, on each row, [c] at the row [n] places earlier in its

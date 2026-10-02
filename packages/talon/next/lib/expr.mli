@@ -55,7 +55,6 @@ val if_ : (bool, 's) t -> ('a, 's) t -> ('a, 's) t -> ('a, 's) t
 val is_null : ('a, 's) t -> (bool, 's) t
 val coalesce : ('a, 's) t list -> ('a, 's) t
 val is_in : 'a list -> ('a, 's) t -> (bool, 's) t
-val cut : 'a array -> ('a, 's) t -> (int, 's) t
 val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
 
 type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
@@ -78,13 +77,10 @@ val std : ('a, row) t -> (float, agg) t
 val var : ('a, row) t -> (float, agg) t
 val median : ('a, row) t -> (float, agg) t
 val quantile : float -> ('a, row) t -> (float, agg) t
-val ewm : alpha:float -> ('a, row) t -> (float, agg) t
 val n_unique : ('a, row) t -> (int, agg) t
 val arg_min : ('a, row) t -> (int, agg) t
 val arg_max : ('a, row) t -> (int, agg) t
-val collect : ('a, row) t -> ('a array, agg) t
 val over : ?by:string list -> ?order:Order.t list -> ('a, 's) t -> ('a, row) t
-val rolling : Window.t -> ('a, agg) t -> ('a, row) t
 val shift : int -> ('a, row) t -> ('a, row) t
 val rank : ('a, row) t -> (int, row) t
 val const : 'a -> ('a, 's) t
@@ -92,15 +88,6 @@ val ( $ ) : ('a -> 'b, 's) t -> ('a, 's) t -> ('b, 's) t
 val option : ('a, 's) t -> ('a option, 's) t
 val of_option : ('a option, 's) t -> ('a, 's) t
 val store : 'b Type.t -> ('b, 's) t -> ('b, 's) t
-
-val batch :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  (('a, 'b) Nx.t, row) t ->
-  (('c, 'd) Nx.t, row) t
-
-val record : 's out list -> (Record.t, 's) t
-val field : 'a Kind.t -> string -> (Record.t, 's) t -> ('a, 's) t
-val unpack : (Record.t, row) t -> row out
 
 module Str : sig
   type pattern = Strings.pattern
@@ -111,8 +98,6 @@ module Str : sig
   val pieces : string list -> pattern
   val length : (string, 's) t -> (int, 's) t
   val slice : offset:int -> length:int -> (string, 's) t -> (string, 's) t
-  val lower : (string, 's) t -> (string, 's) t
-  val upper : (string, 's) t -> (string, 's) t
   val matches : pattern -> (string, 's) t -> (bool, 's) t
   val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
 end
@@ -132,35 +117,17 @@ module Temporal : sig
     | `Weekday
     | `Yearday ]
 
-  val field : field -> ?zone:Tz.zone -> ('a, 's) t -> (int, 's) t
-  val floor : ?zone:Tz.zone -> Time.step -> ('a, 's) t -> ('a, 's) t
-  val offset : ?zone:Tz.zone -> Time.step -> ('a, 's) t -> ('a, 's) t
-
-  type policy = [ `Earlier | `Later | `Null | `Fail ]
-
-  val localize :
-    Tz.zone ->
-    ambiguous:policy ->
-    gap:policy ->
-    (Time.instant, 's) t ->
-    (Time.instant, 's) t
-
-  val windows :
-    ?zone:Tz.zone ->
-    every:Time.step ->
-    period:Time.step ->
-    ('a, 's) t ->
-    ('a array, 's) t
-
+  val field : field -> ('a, 's) t -> (int, 's) t
+  val floor : Time.step -> ('a, 's) t -> ('a, 's) t
+  val offset : Time.step -> ('a, 's) t -> ('a, 's) t
   val parse : string -> 'a Type.t -> (string, 's) t -> ('a, 's) t
   val format : string -> ('a, 's) t -> (string, 's) t
 end
 
 val pp : Format.formatter -> ('a, 's) t -> unit
 (** [pp] formats an expression as [Talon_next.Expr.pp] says. Besides, a bound
-    expression formats as written: its typings format as nothing, {!cut} edges
-    format sorted, and a traced lift formats as the nx operations it records, by
-    their names: [exp x]. *)
+    expression formats as written: its typings format as nothing, and a traced
+    lift formats as the nx operations it records, by their names: [exp x]. *)
 
 val pp_arg : Format.formatter -> ('a, 's) t -> unit
 (** [pp_arg ppf e] formats [e] as a function's argument: as {!pp} does, in
@@ -177,11 +144,11 @@ val pp_out : Format.formatter -> 's out -> unit
     identity of its own: nothing compares unbound expressions. Bound expressions
     are hash-consed: two live bound expressions are {!same} iff they are
     structurally equal, so comparing them is O(1). Literal values compare by
-    value, floats by their bits. An {!is_in} value list and {!cut} edges compare
-    by {!Type.compare_value} when their operand has a column typing, and
-    physically otherwise. Every other OCaml value inside a node (functions,
-    {!const} values, extension declarations, zones) compares physically. The
-    table is weak and safe to use from any domain. *)
+    value, floats by their bits. An {!is_in} value list compares by
+    {!Type.compare_value} when its operand has a column typing, and physically
+    otherwise. Every other OCaml value inside a node (functions, {!const}
+    values, extension declarations) compares physically. The table is weak and
+    safe to use from any domain. *)
 
 (** The type for arithmetic: [Mod] applies to [int]s only, and [Pow] to [float]s
     only. *)
@@ -206,11 +173,9 @@ type (_, _) reduction =
   | Var : ('a, float) reduction
   | Median : ('a, float) reduction
   | Quantile : float -> ('a, float) reduction
-  | Ewm : float -> ('a, float) reduction
   | N_unique : ('a, int) reduction
   | Arg_min : ('a, int) reduction
   | Arg_max : ('a, int) reduction
-  | Collect : ('a, 'a array) reduction
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;  (** The extension type, an [Ext] type. *)
@@ -251,9 +216,6 @@ type 'a node =
   | Is_null : ('a, 's) t -> bool node
   | Coalesce : ('a, 's) t list -> 'a node
   | Is_in : 'a list * ('a, 's) t -> bool node
-  | Cut : 'a array * ('a, 's) t -> int node
-      (** Edges as given, never mutated; sorted and distinct once bound at a
-          column type. *)
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
@@ -266,7 +228,6 @@ type 'a node =
   | Nx_cast : 'a Type.t * ('b, 's) t -> 'a node
   | Reduce : ('a, 'b) reduction * ('a, 's) t -> 'b node
   | Over : { by : string list; order : Order.t list; e : ('a, 's) t } -> 'a node
-  | Rolling : Window.t * ('a, 's) t -> 'a node
   | Shift : int * ('a, 's) t -> 'a node
   | Rank : ('a, 's) t -> int node
   | Const : 'a -> 'a node
@@ -274,14 +235,6 @@ type 'a node =
   | Option : ('a, 's) t -> 'a option node
   | Of_option : ('a option, 's) t -> 'a node
   | Store : 'a Type.t * ('a, 's) t -> 'a node
-  | Batch :
-      (('a, 'b) Nx.t -> ('c, 'd) Nx.t) * (('a, 'b) Nx.t, 's) t
-      -> ('c, 'd) Nx.t node
-  | Record_outs : 's out list -> Record.t node  (** A record as written. *)
-  | Fields : (string * packed) list -> Record.t node  (** A bound record. *)
-  | Field : 'a Kind.t * string * (Record.t, 's) t -> 'a node
-  | Storage : ('e, 'a) ext * ('e, 's) t -> 'a node
-  | Wrap : ('a, 'st) ext * ('st, 's) t -> 'a node
   | Text : 'a text_op * (string, 's) t -> 'a node
   | Calendar : 'a calendar_op -> 'a node
 
@@ -289,8 +242,6 @@ type 'a node =
 and 'a text_op =
   | Length : int text_op
   | Slice : { offset : int; length : int } -> string text_op
-  | Lower : string text_op
-  | Upper : string text_op
   | Matches : Str.pattern -> bool text_op
   | Parse : 'a Type.t -> 'a text_op
 
@@ -298,23 +249,9 @@ and 'a text_op =
 and 'a calendar_op =
   | Add_span : ('a, 's0) t * (Time.span, 's1) t -> 'a calendar_op
   | Diff : ('a, 's0) t * ('a, 's1) t -> Time.span calendar_op
-  | Part : Temporal.field * Tz.zone option * ('a, 's) t -> int calendar_op
-  | Floor : Tz.zone option * Time.step * ('a, 's) t -> 'a calendar_op
-  | Offset : Tz.zone option * Time.step * ('a, 's) t -> 'a calendar_op
-  | Localize : {
-      zone : Tz.zone;
-      ambiguous : Temporal.policy;
-      gap : Temporal.policy;
-      a : (Time.instant, 's) t;
-    }
-      -> Time.instant calendar_op
-  | Windows : {
-      zone : Tz.zone option;
-      every : Time.step;
-      period : Time.step;
-      a : ('a, 's) t;
-    }
-      -> 'a array calendar_op
+  | Part : Temporal.field * ('a, 's) t -> int calendar_op
+  | Floor : Time.step * ('a, 's) t -> 'a calendar_op
+  | Offset : Time.step * ('a, 's) t -> 'a calendar_op
   | Parse_with : string * 'a Type.t * (string, 's) t -> 'a calendar_op
   | Format_with : string * ('a, 's) t -> string calendar_op
 
@@ -340,14 +277,11 @@ val same : ('a, 's0) t -> ('b, 's1) t -> bool
     A verb binds each expression to the schema of its frame. Binding checks the
     expression, infers the type of each of its values, and rewrites it into a
     {e bound} expression, every node of which has a {!typing} that follows from
-    its operands' alone:
-    - each record is {!Fields}, its outputs named and bound;
-    - {!cut}'s edges are sorted and distinct over a column type;
-    - each {!Lift} and {!Lift2} is replaced by the operations it records: [f]
-      runs once under [Nx.Op.intercept] on a traced value of the operand's
-      dtype, and the constants it creates become literals. An [f] that performs
-      any other operation on its argument, or computes in a dtype that talon has
-      no type for, is a problem. *)
+    its operands' alone: each {!Lift} and {!Lift2} is replaced by the operations
+    it records: [f] runs once under [Nx.Op.intercept] on a traced value of the
+    operand's dtype, and the constants it creates become literals. An [f] that
+    performs any other operation on its argument, or computes in a dtype that
+    talon has no type for, is a problem. *)
 
 val bind_predicate :
   Schema.t -> (bool, row) t -> ((bool, row) t, Problem.t list) result
@@ -358,17 +292,15 @@ val bind_predicate :
     - a missing column, and a handle whose kind does not bind its column;
     - operands whose types do not meet, and an operation that a type does not
       support, such as [sum] of a string;
-    - a literal, a {!const} value, an {!is_in} value, a {!cut} edge, or the
-      value of an integer operation of literals, that its type does not hold;
+    - a literal, a {!const} value, an {!is_in} value, or the value of an integer
+      operation of literals, that its type does not hold;
     - a [null] that nothing types; an {!option} result, and a [const] or [$]
       result that nothing types, anywhere but as an argument of {!( $ )}; and an
       operand of {!cast}, {!option}, a reduction or a frame that has no column
       type;
     - an order-dependent operation on an extension type whose declaration is not
       ordered, or that is read without its declaration;
-    - a lift outside its rules, and one whose function ignores an argument;
-    - a {!batch} function whose result on an empty batch is not an empty batch
-      of cells.
+    - a lift outside its rules, and one whose function ignores an argument.
 
     An OCaml value takes the type [bool], and an extension's values are a
     problem. An exception that a function of [p] raises when binding applies it
@@ -414,30 +346,30 @@ val out_name : 's out -> string option
 
 val reads : ('a, 's) t -> string list
 (** [reads b] is the columns that [b] reads, distinct, in order of first
-    appearance: the columns of its handles and reads, of {!over}'s [~by] and
-    [~order] keys, and of its time windows' keys. *)
+    appearance: the columns of its handles and reads, and of {!over}'s [~by] and
+    [~order] keys. *)
 
 val row_local : ('a, 's) t -> bool
 (** [row_local b] is [true] iff [b]'s value at a row depends on that row alone:
-    [b] has no {!over}, {!rolling}, {!shift} or {!rank}. A filter, a slice or a
-    reordering of the frame therefore does not change the values of a row-local
-    expression on the rows it keeps. *)
+    [b] has no {!over}, {!shift} or {!rank}. A filter, a slice or a reordering
+    of the frame therefore does not change the values of a row-local expression
+    on the rows it keeps. *)
 
 val reduces : ('a, 's) t -> bool
 (** [reduces b] is [true] iff [b] has one value per frame: it holds {!rows} or a
-    reduction outside every {!over} and {!rolling}. *)
+    reduction outside every {!over}. *)
 
 val can_fail : ('a, 's) t -> bool
 (** [can_fail b] is [true] iff evaluating the {{!row_local}row-local} [b] can
     fail a run or call a user function: [b] holds a {!cast} that does not widen
     its operand to a type that contains it, {!Str.parse}, a {!Temporal}
-    operation other than {!Temporal.field} and {!Temporal.format}, {!of_option},
-    {!( $ )} or {!batch}. *)
+    operation other than {!Temporal.field} and {!Temporal.format}, {!of_option}
+    or {!( $ )}. *)
 
 val rename : (string -> string) -> ('a, 's) t -> ('a, 's) t
 (** [rename f b] is [b] reading the column [f n] wherever it reads the column
-    [n]: handles, reads, {!over}'s keys and time windows' keys. Typings are
-    kept, so [f] maps each column that [b] reads to one of the same type. *)
+    [n]: handles, reads and {!over}'s keys. Typings are kept, so [f] maps each
+    column that [b] reads to one of the same type. *)
 
 type evaluator = { eval : 'a. ('a, row) t -> 'a option option }
 (** The type for evaluators of constants: [eval b] is the value of the bound

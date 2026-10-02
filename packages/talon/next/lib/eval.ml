@@ -574,8 +574,6 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       unary a (fun a ->
           lifted ty [ a ] (Nx.Op.eval (Convert (Cast, dt, tensor from a))))
   | Rows, _ -> fun env -> Reduce.rows env.frame.segments
-  | Reduce ((Ewm _ | Collect), _), _ ->
-      not_lowered (Format.asprintf "%a" Expr.pp e)
   | Reduce (r, a), _ ->
       let a = compile st a and ty = type_of typing in
       fun env ->
@@ -622,12 +620,11 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
           let wa = widen (t a) m and wb = widen (t b) m in
           let diff = Kernels.diff m in
           binary_checked a b (fun a b -> diff (wa a) (wb b))
-      | Part (f, None, a) -> unary a (Kernels.field f (t a))
-      | Floor (None, step, a) -> unary_checked a (Kernels.floor step (t a))
-      | Offset (None, step, a) -> unary_checked a (Kernels.offset step (t a))
+      | Part (f, a) -> unary a (Kernels.field f (t a))
+      | Floor (step, a) -> unary_checked a (Kernels.floor step (t a))
+      | Offset (step, a) -> unary_checked a (Kernels.offset step (t a))
       | Parse_with (fmt, ty, a) -> textual a (Kernels.parse_with fmt (Any ty))
-      | Format_with (fmt, a) -> unary a (Form.format_with fmt)
-      | _ -> not_lowered (Format.asprintf "%a" Expr.pp e))
+      | Format_with (fmt, a) -> unary a (Form.format_with fmt))
   | _ -> not_lowered (Format.asprintf "%a" Expr.pp e)
 
 (* [ocaml st e] computes [e]'s values as OCaml values, [None] where [e] is

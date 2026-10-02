@@ -35,14 +35,6 @@ A reduction combined with a row expression:
            (int, Talon_next.Expr.agg) Talon_next.Expr.t
          Type Talon_next.Expr.row is not compatible with type
 
-A window over a row expression:
-
-  $ compile rolling_row.ml
-  Error: This expression has type
-           (float, Talon_next.Expr.row) Talon_next.Expr.t
-         but an expression was expected of type
-           (float, Talon_next.Expr.agg) Talon_next.Expr.t
-
 A cast read at another kind:
 
   $ compile cast_kind.ml
@@ -58,8 +50,8 @@ An integer where a float belongs:
          but an expression was expected of type (float, 'b) Talon_next.Expr.t
          Type int is not compatible with type float
 
-Literals generalize over shapes, a time window is a value, a date has a year,
-and [each] takes a function of every type:
+Literals generalize over shapes, a datetime has an hour and a date a year, and
+[each] takes a function of every type:
 
   $ ocamlc_talon accepted.ml && echo compiled
   compiled

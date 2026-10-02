@@ -109,7 +109,7 @@ let names =
           ("let", {|"let"|});
           ("rows", {|"rows"|});
           ("sum", {|"sum"|});
-          ("ewm", {|"ewm"|});
+          ("over", {|"over"|});
           ("délai", {|"délai"|});
           ({|a"b\c|}, {|"a\"b\\c"|});
           ("a\nb", {|"a\x0ab"|});
@@ -119,29 +119,14 @@ let names =
           equal Windtrap.string expected (str Expr.pp (Col.float name)));
     ]
 
-(* Outputs print only inside a record. *)
-let pp_out_public ppf o = Expr.pp ppf (Expr.record [ o ])
-
 let print_operations () =
   let open Expr in
   let per_user e = over ~by:[ "user" ] ~order:[ Order.asc "ts" ] e in
-  let week = Window.time ~before:(Time.Span.days 7) "ts" in
-  let paris = Tz.utc in
-  let epoch =
-    Ext.v ~name:"ymir.epoch" ~ordered:true Type.float64 ~dec:Fun.id ~enc:Fun.id
-  in
   let exprs =
     [
       str pp ((x -. over (mean x)) /. over (std x));
-      str pp (per_user (rolling week (sum x)));
-      str pp (rolling (Window.rows ~before:3 ~after:(-1)) (count x));
-      str pp
-        (rolling
-           (Window.time ~after:(Time.Span.hours 1) ~before:(Time.Span.hours 2)
-              "ts")
-           (max x));
+      str pp (per_user (shift 1 x));
       str pp (over ~order:[ Order.nulls_first (Order.desc "x") ] (rank x));
-      str pp (ewm ~alpha:0.1 n -. ewm ~alpha:1. x);
       str pp (cast Type.float32 n);
       str pp (store Type.int8 (const (fun a -> a) $ n));
       str pp
@@ -149,31 +134,21 @@ let print_operations () =
         $ n $ option m);
       str pp (of_option (const (fun a -> Some a) $ n));
       str pp (is_in [ 1; 2 ] n);
-      str pp (cut [| 3.; 1. |] x);
       str pp (coalesce [ x; y; float 0. ]);
       str pp (nx { f = Nx.exp } x);
       str pp (nx2 { f2 = Nx.atan2 } y x);
-      str pp (batch Fun.id (Col.v (Kind.tensor Nx.float32) "img"));
       str pp (quantile 0.9 x +. median x);
-      str pp (record [ "a" := n; keep Sel.(prefix "wk" - names [ "wk76" ]) ]);
-      str pp (field Kind.int "a" (Col.v Record.kind "r"));
-      str pp
-        (collect (record [ each Sel.all { column = (fun n x -> n := x) } ]));
-      str pp
-        (Ext.wrap epoch (Ext.storage epoch (Ext.col epoch "t") +. float 1.));
       str pp (Str.length s + int 1);
-      str pp (Str.slice ~offset:(-3) ~length:2 (Str.lower (Str.upper s)));
+      str pp (Str.slice ~offset:(-3) ~length:2 s);
       str pp (Str.matches (Str.pieces [ "special"; "requests" ]) s);
       str pp (Str.matches (Str.literal ",") s || Str.matches (Str.suffix "!") s);
       str pp (Str.matches (Str.prefix "wk") s);
       str pp (Str.parse Type.int8 s);
-      str pp (Temporal.field `Hour ~zone:paris ts);
+      str pp (Temporal.field `Hour ts);
       str pp (Temporal.field `Year (Col.date "d"));
       str pp (Temporal.floor (Time.Days 1) ts);
-      str pp (Temporal.offset ~zone:paris (Time.Months (-1)) ts);
+      str pp (Temporal.offset (Time.Months (-1)) ts);
       str pp (Temporal.diff ts (Temporal.add ts (span (Time.Span.s 90))));
-      str pp (Temporal.localize paris ~ambiguous:`Earlier ~gap:`Fail ts);
-      str pp (Temporal.windows ~every:(Time.Days 1) ~period:(Time.Weeks 1) ts);
       str pp (Temporal.parse "%Y-%m-%d" Type.date s);
       str pp (Temporal.format "%H:%M" ts);
       str pp (rows - count x);
@@ -188,40 +163,28 @@ let print_operations () =
   @@ __POS_OF__
        {|
             (x -. over (mean x)) /. over (std x)
-            over ~by:["user"] ~order:[asc "ts"]
-              (rolling (time ~before:168h "ts") (sum x))
-            rolling (rows ~before:3 ~after:(-1)) (count x)
-            rolling (time ~after:1h ~before:2h "ts") (max x)
+            over ~by:["user"] ~order:[asc "ts"] (shift 1 x)
             over ~order:[nulls_first (desc "x")] (rank x)
-            ewm ~alpha:0.1 n -. ewm ~alpha:1. x
             cast float32 n
             store int8 (<const> $ n)
             <const> $ n $ option m
             of_option (<const> $ n)
             is_in […] n
-            cut […] x
             coalesce [x; y; 0.]
             nx <fn> x
             nx2 <fn> y x
-            batch <fn> img
             quantile 0.9 x +. median x
-            record ["a" := n; keep (prefix "wk" - names ["wk76"])]
-            field int "a" r
-            collect (record [each all <fn>])
-            Ext.wrap <ymir.epoch> (Ext.storage <ymir.epoch> t +. 1.)
             Str.length s + 1
-            Str.slice ~offset:(-3) ~length:2 (Str.lower (Str.upper s))
+            Str.slice ~offset:(-3) ~length:2 s
             Str.matches (pieces ["special"; "requests"]) s
             Str.matches (literal ",") s || Str.matches (suffix "!") s
             Str.matches (prefix "wk") s
             Str.parse int8 s
-            Temporal.field `Hour ~zone:"UTC" ts
+            Temporal.field `Hour ts
             Temporal.field `Year d
             Temporal.floor 1d ts
-            Temporal.offset ~zone:"UTC" (-1mo) ts
+            Temporal.offset (-1mo) ts
             Temporal.diff ts (Temporal.add ts 1m30s)
-            Temporal.localize "UTC" ~ambiguous:`Earlier ~gap:`Fail ts
-            Temporal.windows ~every:1d ~period:1w ts
             Temporal.parse "%Y-%m-%d" date s
             Temporal.format "%H:%M" ts
             rows - count x
@@ -232,35 +195,9 @@ let print_operations () =
             n + null
             |}
 
-let print_outputs () =
-  let open Expr in
-  let outs =
-    [
-      str pp_out_public ("z" := x);
-      str pp_out_public (keep Sel.all);
-      str pp_out_public
-        (across Kind.float Sel.(of_kind Kind.float) (fun n x -> n := x));
-      str pp_out_public (unpack (Col.v Record.kind "r"));
-      str pp_out_public
-        (keep Sel.(suffix "_x" + inter all (where (fun _ _ -> true))));
-    ]
-  in
-  expect (String.concat "\n" outs)
-  @@ __POS_OF__
-       {|
-            record ["z" := x]
-            record [keep all]
-            record [across float (of_kind float) <fn>]
-            record [unpack r]
-            record [keep (suffix "_x" + inter all (where <fn>))]
-            |}
-
 let catalogue =
   group "Expr.pp catalogue"
-    [
-      test "prints every operation as written" print_operations;
-      test "prints outputs inside a record as written" print_outputs;
-    ]
+    [ test "prints every operation as written" print_operations ]
 
 (* Construction *)
 
@@ -277,32 +214,10 @@ let construction =
         "quantile outside"
         [ -0.1; 1.1; Float.nan; Float.infinity ]
         (fun p -> rejects (fun () -> quantile p x));
-      cases
-        ~name:(fun a -> Printf.sprintf "ewm accepts an alpha of %.17g" a)
-        "ewm bounds"
-        [ Float.min_float; 0.5; 1. ]
-        (fun a -> ignore (ewm ~alpha:a x));
-      cases
-        ~name:(fun a -> Printf.sprintf "ewm rejects an alpha of %.17g" a)
-        "ewm outside"
-        [ 0.; -0.; -0.5; Float.succ 1.; Float.nan; Float.infinity ]
-        (fun a -> rejects (fun () -> ewm ~alpha:a x));
       test "Str.slice accepts a zero length and rejects a negative one"
         (fun () ->
           ignore (Str.slice ~offset:0 ~length:0 s);
           rejects (fun () -> Str.slice ~offset:0 ~length:(-1) s));
-      test "Window.rows accepts a single-row window and rejects an empty one"
-        (fun () ->
-          ignore (Window.rows ~before:0 ~after:0);
-          ignore (Window.rows ~before:3 ~after:(-3));
-          rejects (fun () -> Window.rows ~before:3 ~after:(-4));
-          rejects (fun () -> Window.rows ~before:max_int ~after:min_int));
-      test "Window.time rejects a window that holds no time" (fun () ->
-          ignore (Window.time ~before:(Time.Span.ns 1) "ts");
-          rejects (fun () -> Window.time ~before:(Time.Span.ns 0) "ts");
-          rejects (fun () ->
-              Window.time ~after:(Time.Span.ns (-5)) ~before:(Time.Span.ns 5)
-                "ts"));
       test "reports each invalid argument" (fun () ->
           expect
             (messages
@@ -313,18 +228,11 @@ let construction =
                  (fun () -> ignore (Str.suffix ""));
                  (fun () -> ignore (Str.pieces []));
                  (fun () -> ignore (Str.pieces [ "a"; "" ]));
-                 (fun () -> ignore (ewm ~alpha:1.5 x));
                  (fun () -> ignore (Temporal.parse "%Y-%q" Type.date s));
                  (fun () -> ignore (Temporal.format "%H%" ts));
                  (fun () -> ignore (Temporal.floor (Time.Days 0) ts));
                  (fun () ->
                    ignore (Temporal.floor (Time.Exact (Time.Span.s (-1))) ts));
-                 (fun () ->
-                   ignore
-                     (Temporal.windows ~every:(Time.Days 1)
-                        ~period:(Time.Months 0) ts));
-                 (fun () -> ignore (Window.rows ~before:(-1) ~after:0));
-                 (fun () -> ignore (Window.time ~before:(Time.Span.ns 0) "ts"));
                  (fun () ->
                    ignore
                      (Ext.v ~name:"" ~ordered:true Type.int8 ~dec:Fun.id
@@ -343,14 +251,10 @@ let construction =
             Expr.Str.suffix: empty pattern
             Expr.Str.pieces: no pieces
             Expr.Str.pieces: empty pattern
-            Expr.ewm: ~alpha:1.5 is not in (0;1]
             Expr.Temporal.parse: "%Y-%q" holds the unknown directive %q
             Expr.Temporal.format: "%H%" ends with %
             Expr.Temporal.floor: 0d is not positive
             Expr.Temporal.floor: -1s is not positive
-            Expr.Temporal.windows: 0mo is not positive
-            Window.rows: ~before:-1 ~after:0 is empty for every row
-            Window.time: ~before:0s ~after:0s is empty for every row
             Type.ext: empty name
             Type.ext: "a" is stored as an extension type
             |});

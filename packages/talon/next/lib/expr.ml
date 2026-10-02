@@ -29,11 +29,9 @@ type (_, _) reduction =
   | Var : ('a, float) reduction
   | Median : ('a, float) reduction
   | Quantile : float -> ('a, float) reduction
-  | Ewm : float -> ('a, float) reduction
   | N_unique : ('a, int) reduction
   | Arg_min : ('a, int) reduction
   | Arg_max : ('a, int) reduction
-  | Collect : ('a, 'a array) reduction
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;
@@ -60,8 +58,6 @@ type field =
   | `Weekday
   | `Yearday ]
 
-type policy = [ `Earlier | `Later | `Null | `Fail ]
-
 type ('a, 's) t = { id : int; node : 'a node; typing : 'a typing option }
 and 's out = out_repr
 
@@ -70,7 +66,6 @@ and out_repr =
   | Keep of Sel.t
   | Across : 'a Kind.t * Sel.t * (string -> ('a, row) t -> out_repr) -> out_repr
   | Each : Sel.t * 's column -> out_repr
-  | Unpack of (Record.t, row) t
 
 and 's column = { column : 'a. string -> ('a, row) t -> 's out }
 and packed = Packed : ('a, 's) t -> packed
@@ -96,7 +91,6 @@ and 'a node =
   | Is_null : ('a, 's) t -> bool node
   | Coalesce : ('a, 's) t list -> 'a node
   | Is_in : 'a list * ('a, 's) t -> bool node
-  | Cut : 'a array * ('a, 's) t -> int node
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
@@ -107,7 +101,6 @@ and 'a node =
   | Nx_cast : 'a Type.t * ('b, 's) t -> 'a node
   | Reduce : ('a, 'b) reduction * ('a, 's) t -> 'b node
   | Over : { by : string list; order : Order.t list; e : ('a, 's) t } -> 'a node
-  | Rolling : Window.t * ('a, 's) t -> 'a node
   | Shift : int * ('a, 's) t -> 'a node
   | Rank : ('a, 's) t -> int node
   | Const : 'a -> 'a node
@@ -115,45 +108,21 @@ and 'a node =
   | Option : ('a, 's) t -> 'a option node
   | Of_option : ('a option, 's) t -> 'a node
   | Store : 'a Type.t * ('a, 's) t -> 'a node
-  | Batch :
-      (('a, 'b) Nx.t -> ('c, 'd) Nx.t) * (('a, 'b) Nx.t, 's) t
-      -> ('c, 'd) Nx.t node
-  | Record_outs : 's out list -> Record.t node
-  | Fields : (string * packed) list -> Record.t node
-  | Field : 'a Kind.t * string * (Record.t, 's) t -> 'a node
-  | Storage : ('e, 'a) ext * ('e, 's) t -> 'a node
-  | Wrap : ('a, 'st) ext * ('st, 's) t -> 'a node
   | Text : 'a text_op * (string, 's) t -> 'a node
   | Calendar : 'a calendar_op -> 'a node
 
 and 'a text_op =
   | Length : int text_op
   | Slice : { offset : int; length : int } -> string text_op
-  | Lower : string text_op
-  | Upper : string text_op
   | Matches : pattern -> bool text_op
   | Parse : 'a Type.t -> 'a text_op
 
 and 'a calendar_op =
   | Add_span : ('a, 's0) t * (Time.span, 's1) t -> 'a calendar_op
   | Diff : ('a, 's0) t * ('a, 's1) t -> Time.span calendar_op
-  | Part : field * Tz.zone option * ('a, 's) t -> int calendar_op
-  | Floor : Tz.zone option * Time.step * ('a, 's) t -> 'a calendar_op
-  | Offset : Tz.zone option * Time.step * ('a, 's) t -> 'a calendar_op
-  | Localize : {
-      zone : Tz.zone;
-      ambiguous : policy;
-      gap : policy;
-      a : (Time.instant, 's) t;
-    }
-      -> Time.instant calendar_op
-  | Windows : {
-      zone : Tz.zone option;
-      every : Time.step;
-      period : Time.step;
-      a : ('a, 's) t;
-    }
-      -> 'a array calendar_op
+  | Part : field * ('a, 's) t -> int calendar_op
+  | Floor : Time.step * ('a, 's) t -> 'a calendar_op
+  | Offset : Time.step * ('a, 's) t -> 'a calendar_op
   | Parse_with : string * 'a Type.t * (string, 's) t -> 'a calendar_op
   | Format_with : string * ('a, 's) t -> string calendar_op
 
@@ -179,33 +148,22 @@ let operands : type a. a node -> packed list = function
   | Option a -> [ Packed a ]
   | Of_option a -> [ Packed a ]
   | Is_in (_, a) -> [ Packed a ]
-  | Cut (_, a) -> [ Packed a ]
   | Lift (_, a) -> [ Packed a ]
   | Nx_unary (_, a) -> [ Packed a ]
   | Shift (_, a) -> [ Packed a ]
   | Cast (_, a) -> [ Packed a ]
   | Nx_cast (_, a) -> [ Packed a ]
   | Reduce (_, a) -> [ Packed a ]
-  | Rolling (_, a) -> [ Packed a ]
   | Store (_, a) -> [ Packed a ]
-  | Batch (_, a) -> [ Packed a ]
-  | Field (_, _, r) -> [ Packed r ]
-  | Storage (_, a) -> [ Packed a ]
-  | Wrap (_, a) -> [ Packed a ]
   | Text (_, a) -> [ Packed a ]
   | Over { e; _ } -> [ Packed e ]
-  (* An unbound node, which no bound expression holds. *)
-  | Record_outs _ -> []
-  | Fields fs -> List.map snd fs
   | Calendar op -> (
       match op with
       | Add_span (a, d) -> [ Packed a; Packed d ]
       | Diff (a, b) -> [ Packed a; Packed b ]
-      | Part (_, _, a) -> [ Packed a ]
-      | Floor (_, _, a) -> [ Packed a ]
-      | Offset (_, _, a) -> [ Packed a ]
-      | Localize { a; _ } -> [ Packed a ]
-      | Windows { a; _ } -> [ Packed a ]
+      | Part (_, a) -> [ Packed a ]
+      | Floor (_, a) -> [ Packed a ]
+      | Offset (_, a) -> [ Packed a ]
       | Parse_with (_, _, a) -> [ Packed a ]
       | Format_with (_, a) -> [ Packed a ])
 
@@ -224,17 +182,13 @@ let reduction_name : type a b. (a, b) reduction -> string = function
   | Var -> "var"
   | Median -> "median"
   | Quantile _ -> "quantile"
-  | Ewm _ -> "ewm"
   | N_unique -> "n_unique"
   | Arg_min -> "arg_min"
   | Arg_max -> "arg_max"
-  | Collect -> "collect"
 
 let text_op_name : type a. a text_op -> string = function
   | Length -> "Str.length"
   | Slice _ -> "Str.slice"
-  | Lower -> "Str.lower"
-  | Upper -> "Str.upper"
   | Matches _ -> "Str.matches"
   | Parse _ -> "Str.parse"
 
@@ -244,15 +198,13 @@ let calendar_op_name : type a. a calendar_op -> string = function
   | Part _ -> "Temporal.field"
   | Floor _ -> "Temporal.floor"
   | Offset _ -> "Temporal.offset"
-  | Localize _ -> "Temporal.localize"
-  | Windows _ -> "Temporal.windows"
   | Parse_with _ -> "Temporal.parse"
   | Format_with _ -> "Temporal.format"
 
 (* Hash-consing *)
 
-(* Functions, [const] values, declarations and zones compare physically, at
-   whatever types they are held. *)
+(* Functions, [const] values and declarations compare physically, at whatever
+   types they are held. *)
 let same_value x y = Obj.repr x == Obj.repr y
 let same a b = Int.equal a.id b.id
 
@@ -311,31 +263,23 @@ let pattern_equal p0 p1 =
   | Pieces ss0, Pieces ss1 -> List.equal String.equal ss0 ss1
   | (Literal _ | Prefix _ | Suffix _ | Pieces _), _ -> false
 
-let zone_equal z0 z1 =
-  match (z0, z1) with
-  | None, None -> true
-  | Some z0, Some z1 -> z0 == z1
-  | (None | Some _), _ -> false
-
-(* Reductions of one name differ only by a quantile's probability or an ewm's
-   alpha. *)
+(* Reductions of one name differ only by a quantile's probability. *)
 let reduction_equal : type a b c d. (a, b) reduction -> (c, d) reduction -> bool
     =
  fun r0 r1 ->
   match (r0, r1) with
   | Quantile p0, Quantile p1 -> Float.equal p0 p1
-  | Ewm a0, Ewm a1 -> Float.equal a0 a1
   | _ -> String.equal (reduction_name r0) (reduction_name r1)
 
 let text_op_equal : type a b. a text_op -> b text_op -> bool =
  fun op0 op1 ->
   match (op0, op1) with
-  | Length, Length | Lower, Lower | Upper, Upper -> true
+  | Length, Length -> true
   | Slice s0, Slice s1 ->
       Int.equal s0.offset s1.offset && Int.equal s0.length s1.length
   | Matches p0, Matches p1 -> pattern_equal p0 p1
   | Parse ty0, Parse ty1 -> Type.equal ty0 ty1
-  | (Length | Slice _ | Lower | Upper | Matches _ | Parse _), _ -> false
+  | (Length | Slice _ | Matches _ | Parse _), _ -> false
 
 (* [calendar_equal op0 op1] is [true] iff [op0] and [op1] are one operation with
    equal attributes, whatever their operands. *)
@@ -343,28 +287,21 @@ let calendar_equal : type a b. a calendar_op -> b calendar_op -> bool =
  fun op0 op1 ->
   match (op0, op1) with
   | Add_span _, Add_span _ | Diff _, Diff _ -> true
-  | Part (f0, z0, _), Part (f1, z1, _) -> f0 = f1 && zone_equal z0 z1
-  | Floor (z0, s0, _), Floor (z1, s1, _) | Offset (z0, s0, _), Offset (z1, s1, _)
-    ->
-      zone_equal z0 z1 && step_equal s0 s1
-  | Localize l0, Localize l1 ->
-      l0.zone == l1.zone && l0.ambiguous = l1.ambiguous && l0.gap = l1.gap
-  | Windows w0, Windows w1 ->
-      zone_equal w0.zone w1.zone
-      && step_equal w0.every w1.every
-      && step_equal w0.period w1.period
+  | Part (f0, _), Part (f1, _) -> f0 = f1
+  | Floor (s0, _), Floor (s1, _) | Offset (s0, _), Offset (s1, _) ->
+      step_equal s0 s1
   | Parse_with (f0, ty0, _), Parse_with (f1, ty1, _) ->
       String.equal f0 f1 && Type.equal ty0 ty1
   | Format_with (f0, _), Format_with (f1, _) -> String.equal f0 f1
-  | ( ( Add_span _ | Diff _ | Part _ | Floor _ | Offset _ | Localize _
-      | Windows _ | Parse_with _ | Format_with _ ),
+  | ( ( Add_span _ | Diff _ | Part _ | Floor _ | Offset _ | Parse_with _
+      | Format_with _ ),
       _ ) ->
       false
 
 (* [node_equal n0 n1] is [true] iff [n0] and [n1] are one operation with equal
    attributes on the same operands. The operands are compared first: they type
-   the values of [is_in] and [cut]. Unbound nodes, which binding rewrites, are
-   never hash-consed. *)
+   the values of [is_in]. Unbound nodes, which binding rewrites, are never
+   hash-consed. *)
 let node_equal : type a b. a node -> b node -> bool =
  fun n0 n1 ->
   List.equal (fun (Packed a) (Packed b) -> same a b) (operands n0) (operands n1)
@@ -389,9 +326,6 @@ let node_equal : type a b. a node -> b node -> bool =
   | Nx_compare (o0, _, _), Nx_compare (o1, _, _) -> o0 = o1
   | Is_in (vs0, a0), Is_in (vs1, a1) ->
       same_value vs0 vs1 || values_equal a0 vs0 a1 vs1
-  | Cut (es0, a0), Cut (es1, a1) ->
-      same_value es0 es1
-      || values_equal a0 (Array.to_list es0) a1 (Array.to_list es1)
   | Cast (ty0, _), Cast (ty1, _)
   | Nx_cast (ty0, _), Nx_cast (ty1, _)
   | Store (ty0, _), Store (ty1, _) ->
@@ -402,15 +336,7 @@ let node_equal : type a b. a node -> b node -> bool =
   | Over o0, Over o1 ->
       List.equal String.equal o0.by o1.by
       && List.equal Order.equal o0.order o1.order
-  | Rolling (w0, _), Rolling (w1, _) -> Window.equal w0 w1
   | Const v0, Const v1 -> same_value v0 v1
-  | Batch (f0, _), Batch (f1, _) -> same_value f0 f1
-  | Fields fs0, Fields fs1 ->
-      List.equal (fun (n0, _) (n1, _) -> String.equal n0 n1) fs0 fs1
-  | Field (k0, n0, _), Field (k1, n1, _) ->
-      String.equal n0 n1 && Option.is_some (Kind.equal_witness k0 k1)
-  | Storage (d0, _), Storage (d1, _) -> same_value d0 d1
-  | Wrap (d0, _), Wrap (d1, _) -> same_value d0 d1
   | Text (op0, _), Text (op1, _) -> text_op_equal op0 op1
   | Calendar op0, Calendar op1 -> calendar_equal op0 op1
   | Null, Null
@@ -427,11 +353,9 @@ let node_equal : type a b. a node -> b node -> bool =
       true
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
-      | Cut _ | Cast _ | Lift _ | Lift2 _ | Nx_unary _ | Nx_binary _
-      | Nx_compare _ | Nx_where _ | Nx_cast _ | Reduce _ | Over _ | Rolling _
-      | Shift _ | Rank _ | Const _ | App _ | Option _ | Of_option _ | Store _
-      | Batch _ | Record_outs _ | Fields _ | Field _ | Storage _ | Wrap _
-      | Text _ | Calendar _ ),
+      | Cast _ | Lift _ | Lift2 _ | Nx_unary _ | Nx_binary _ | Nx_compare _
+      | Nx_where _ | Nx_cast _ | Reduce _ | Over _ | Shift _ | Rank _ | Const _
+      | App _ | Option _ | Of_option _ | Store _ | Text _ | Calendar _ ),
       _ ) ->
       false
 
@@ -515,11 +439,10 @@ let keywords =
 (* The values of this module, which a bare column name would shadow. *)
 let values =
   String.split_on_char ' '
-    "across agg arg_max arg_min batch bool cast coalesce collect const count \
-     cut date each ewm field first float if_ instant int is_in is_null keep \
-     last max mean median min n_unique not null nx nx2 of_option only option \
-     over pp pp_out quantile rank record rolling rows shift span std store \
-     string sum unpack var"
+    "across agg arg_max arg_min bool cast coalesce const count date each first \
+     float if_ instant int is_in is_null keep last max mean median min \
+     n_unique not null nx nx2 of_option only option over pp pp_out quantile \
+     rank rows shift span std store string sum var"
 
 let is_lowercase_ident n =
   String.length n > 0
@@ -540,14 +463,6 @@ let pp_pattern ppf = function
   | Prefix s -> Format.fprintf ppf "prefix %a" Type.pp_quoted s
   | Suffix s -> Format.fprintf ppf "suffix %a" Type.pp_quoted s
   | Pieces ss -> Format.fprintf ppf "pieces %a" (Type.pp_list Type.pp_quoted) ss
-
-let pp_zone ppf z = Type.pp_quoted ppf (Tz.name z)
-
-let pp_policy ppf = function
-  | `Earlier -> Format.pp_print_string ppf "`Earlier"
-  | `Later -> Format.pp_print_string ppf "`Later"
-  | `Null -> Format.pp_print_string ppf "`Null"
-  | `Fail -> Format.pp_print_string ppf "`Fail"
 
 let field_name : field -> string = function
   | `Year -> "`Year"
@@ -605,9 +520,6 @@ let compare_name : Nx_backend.compare -> string = function
   | Not_equal -> "not_equal"
   | Less -> "less"
   | Less_equal -> "less_equal"
-
-let ext_name d =
-  match d.type_ with Type.Ext { name; _ } -> name | _ -> assert false
 
 (* Precedences, loosest first: [||] 1, [&&] 2, comparisons and [$] 3, additive
    operators 4, multiplicative ones 5, [**] 6, application 7, atoms 8. *)
@@ -686,7 +598,6 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | Is_null a -> app "is_null" [ arg a ]
   | Coalesce es -> app "coalesce" [ (fun ppf -> Type.pp_list (pp_at 0) ppf es) ]
   | Is_in (vs, a) -> app "is_in" [ pp_values a vs; arg a ]
-  | Cut (edges, a) -> app "cut" [ pp_values a (Array.to_list edges); arg a ]
   | Cast (ty, a) -> app "cast" [ (fun ppf -> Type.pp ppf ty); arg a ]
   | Lift (_, a) -> app "nx" [ str "<fn>"; arg a ]
   | Lift2 (_, a, b) -> app "nx2" [ str "<fn>"; arg a; arg b ]
@@ -697,12 +608,6 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | Nx_cast (ty, a) -> app "convert" [ (fun ppf -> Type.pp ppf ty); arg a ]
   | Reduce (Quantile p, a) ->
       app "quantile" [ (fun ppf -> Type.pp_lit Float ppf p); arg a ]
-  | Reduce (Ewm alpha, a) ->
-      app "ewm"
-        [
-          (fun ppf -> Format.fprintf ppf "~alpha:%a" (Type.pp_lit Float) alpha);
-          arg a;
-        ]
   | Reduce (r, a) -> app (reduction_name r) [ arg a ]
   | Over { by; order; e } ->
       let labelled label pp = function
@@ -717,35 +622,12 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
         (labelled "by" Type.pp_quoted by
         @ labelled "order" Order.pp order
         @ [ arg e ])
-  | Rolling (w, e) ->
-      app "rolling"
-        [ (fun ppf -> Format.fprintf ppf "(%a)" Window.pp w); arg e ]
   | Shift (n, a) -> app "shift" [ str (signed n); arg a ]
   | Rank a -> app "rank" [ arg a ]
   | Const _ -> Format.pp_print_string ppf "<const>"
   | Option a -> app "option" [ arg a ]
   | Of_option a -> app "of_option" [ arg a ]
   | Store (ty, a) -> app "store" [ (fun ppf -> Type.pp ppf ty); arg a ]
-  | Batch (_, a) -> app "batch" [ str "<fn>"; arg a ]
-  | Record_outs os -> app "record" [ (fun ppf -> Type.pp_list pp_out ppf os) ]
-  | Fields fs ->
-      let pp_field ppf (n, Packed e) =
-        Format.fprintf ppf "@[<hov 2>%a :=@ %a@]" Type.pp_quoted n (pp_at 0) e
-      in
-      app "record" [ (fun ppf -> Type.pp_list pp_field ppf fs) ]
-  | Field (k, name, r) ->
-      app "field"
-        [
-          (fun ppf -> Kind.pp ppf k);
-          (fun ppf -> Type.pp_quoted ppf name);
-          arg r;
-        ]
-  | Storage (d, a) ->
-      app "Ext.storage"
-        [ (fun ppf -> Format.fprintf ppf "<%s>" (ext_name d)); arg a ]
-  | Wrap (d, a) ->
-      app "Ext.wrap"
-        [ (fun ppf -> Format.fprintf ppf "<%s>" (ext_name d)); arg a ]
   | Text (op, a) ->
       let attributes =
         match op with
@@ -756,14 +638,10 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
             ]
         | Matches p -> [ pattern p ]
         | Parse ty -> [ (fun ppf -> Type.pp ppf ty) ]
-        | Length | Lower | Upper -> []
+        | Length -> []
       in
       app (text_op_name op) (attributes @ [ arg a ])
   | Calendar op ->
-      let zone = function
-        | None -> []
-        | Some z -> [ (fun ppf -> Format.fprintf ppf "~zone:%a" pp_zone z) ]
-      in
       let step s ppf =
         let printed = strf "%a" Time.pp_step s in
         if String.starts_with ~prefix:"-" printed then
@@ -774,24 +652,9 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
         (match op with
         | Add_span (a, d) -> [ arg a; arg d ]
         | Diff (a, b) -> [ arg a; arg b ]
-        | Part (f, z, a) -> (str (field_name f) :: zone z) @ [ arg a ]
-        | Floor (z, s, a) -> zone z @ [ step s; arg a ]
-        | Offset (z, s, a) -> zone z @ [ step s; arg a ]
-        | Localize { zone = z; ambiguous; gap; a } ->
-            [
-              (fun ppf -> pp_zone ppf z);
-              (fun ppf ->
-                Format.fprintf ppf "~ambiguous:%a" pp_policy ambiguous);
-              (fun ppf -> Format.fprintf ppf "~gap:%a" pp_policy gap);
-              arg a;
-            ]
-        | Windows { zone = z; every; period; a } ->
-            zone z
-            @ [
-                (fun ppf -> Format.fprintf ppf "~every:%a" Time.pp_step every);
-                (fun ppf -> Format.fprintf ppf "~period:%a" Time.pp_step period);
-                arg a;
-              ]
+        | Part (f, a) -> [ str (field_name f); arg a ]
+        | Floor (s, a) -> [ step s; arg a ]
+        | Offset (s, a) -> [ step s; arg a ]
         | Parse_with (fmt, ty, a) ->
             [
               (fun ppf -> Type.pp_quoted ppf fmt);
@@ -809,7 +672,6 @@ and pp_out ppf = function
         sel
   | Each (sel, _) ->
       Format.fprintf ppf "@[<hov 2>each@ %a@ <fn>@]" Sel.pp_arg sel
-  | Unpack r -> Format.fprintf ppf "@[<hov 2>unpack@ %a@]" (pp_at 8) r
 
 let pp ppf e = pp_at 0 ppf e
 let pp_arg ppf e = pp_at 8 ppf e
@@ -1002,11 +864,7 @@ let expect : type a s.
           None)
   | Known (Extension d, b), Extension d' when same_value d d' -> Some b
   | Known (t', _), _ ->
-      let remedy =
-        match (t', t) with
-        | Extension _, Column _ -> ": use Ext.storage"
-        | _ -> ""
-      in
+      let remedy = match (t', t) with _ -> "" in
       report env "%a is %a, where %a is expected%s." pp e pp_typing t' pp_typing
         t remedy;
       None
@@ -1092,18 +950,11 @@ let reduction_typing : type a b.
     match t with
     | Column ty when is_int_or_float ty -> Some (Column Type.float64)
     | _ ->
-        let remedy =
-          match t with Extension _ -> ": use Ext.storage" | _ -> ""
-        in
-        report env "%s takes integers or floats, not %a%s." name pp_typing t
-          remedy;
+        report env "%s takes integers or floats, not %a." name pp_typing t;
         None
   in
   let no_type () =
-    report env
-      "%s has no type over %a: apply it to Ext.storage, or read the column \
-       with each."
-      name pp_typing t;
+    report env "%s has no type over %a." name pp_typing t;
     None
   in
   (match r with Min | Max | Arg_min | Arg_max -> ordered env name t | _ -> ());
@@ -1132,11 +983,6 @@ let reduction_typing : type a b.
   | Var -> float_of ()
   | Median -> float_of ()
   | Quantile _ -> float_of ()
-  | Ewm _ -> float_of ()
-  | Collect -> (
-      match t with
-      | Column ty -> Some (Column (Type.list ty))
-      | Extension _ | Value -> no_type ())
 
 (* [castable ty0 ty1] is [Ok ()] iff [cast] converts [ty0] to [ty1], and
    otherwise names the function that does, if one does. *)
@@ -1158,7 +1004,7 @@ let rec castable : type a b.
   | _ when text ty0 && text ty1 -> Ok ()
   | Datetime d0, Datetime d1 ->
       if Bool.equal (Option.is_some d0.zone) (Option.is_some d1.zone) then Ok ()
-      else Error (Some "Temporal.localize")
+      else Error None
   | Duration _, Duration _ | Clock _, Clock _ | Date, Date | Binary, Binary ->
       Ok ()
   | List t0, List t1 -> castable t0 t1
@@ -1169,7 +1015,6 @@ let rec castable : type a b.
           Result.bind acc (fun () -> castable t0 t1))
         (Ok ()) fs0 fs1
   | Tensor (_, s0), Tensor (_, s1) when Iarray.equal Int.equal s0 s1 -> Ok ()
-  | Ext _, _ | _, Ext _ -> Error (Some "Ext.storage and Ext.wrap")
   | _, Clock _ when text ty0 -> Error (Some "Temporal.parse")
   | ( _,
       ( Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
@@ -1179,10 +1024,6 @@ let rec castable : type a b.
   | (Date | Clock _ | Datetime _), _ when text ty1 ->
       Error (Some "Temporal.format")
   | _ -> Error None
-
-let is_temporal_key : type a. a Type.t -> bool = function
-  | Datetime _ | Date | Clock _ | Duration _ -> true
-  | _ -> false
 
 let unit_rank : Type.unit_ -> int = function
   | S -> 0
@@ -1200,21 +1041,14 @@ let has_zone_directive fmt =
   in
   loop 0
 
-(* [zone_rule env what zone ty_zone] checks that [zone] is given exactly when
-   the datetime type's zone [ty_zone] is. *)
-let zone_rule env what zone ty_zone =
-  match (zone, ty_zone) with
-  | None, Some z ->
+(* A datetime with a zone holds instants, whose wall clock in UTC is the instant
+   itself; another zone's wall clock needs that zone's rules. *)
+let wall_clock env what = function
+  | Some z when not (String.equal z "UTC") ->
       report env
-        "%s reads a datetime with the zone %a on a wall clock, which needs \
-         ~zone."
+        "%s reads the wall clock of the zone %a, and talon reads UTC's only."
         what Type.pp_quoted z
-  | Some _, None ->
-      report env
-        "%s reads a wall-clock value, which takes no ~zone: only a datetime \
-         with a zone does."
-        what
-  | None, None | Some _, Some _ -> ()
+  | Some _ | None -> ()
 
 let not_temporal : type a b. env -> string -> a Type.t -> b elab =
  fun env what ty ->
@@ -1468,8 +1302,7 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
  fun env e ->
   match e.node with
   | _ when Option.is_some e.typing -> err "Expr: %a is bound" pp e
-  | Fields _ | Nx_unary _ | Nx_binary _ | Nx_compare _ | Nx_where _ | Nx_cast _
-    ->
+  | Nx_unary _ | Nx_binary _ | Nx_compare _ | Nx_where _ | Nx_cast _ ->
       err "Expr: %a is bound" pp e
   | Handle (k, n) -> (
       match Schema.find env.schema n with
@@ -1579,12 +1412,6 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
       on_operand env a (fun t a ->
           if all_hold env "value" t vs then known bool_typing (Is_in (vs, a))
           else Broken)
-  | Cut (edges, a) ->
-      on_operand env a (fun t a ->
-          ordered env "cut" t;
-          if all_hold env "edge" t (Array.to_list edges) then
-            known int64 (Cut (sorted_edges t edges, a))
-          else Broken)
   | Cast (ty, a) ->
       on_operand env a (fun t a ->
           match t with
@@ -1599,8 +1426,8 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
                     Type.pp ty pp_use converter;
                   Broken)
           | t ->
-              report env "cast does not convert %a to %a: use Ext.storage."
-                pp_typing t Type.pp ty;
+              report env "cast does not convert %a to %a." pp_typing t Type.pp
+                ty;
               Broken)
   | Lift (fn, a) -> (
       let lift_at t a =
@@ -1662,19 +1489,6 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
       keys [] by;
       List.iter (fun (_, p) -> problem env p) (Order.check order env.schema);
       on_operand env x (fun t x -> known t (Over { by; order; e = x }))
-  | Rolling (w, x) ->
-      (match w with
-      | Window.Rows _ -> ()
-      | Window.Times { on; _ } -> (
-          match Schema.find env.schema on with
-          | None -> missing env on
-          | Some (Any ty) when is_temporal_key ty -> ()
-          | Some (Any ty) ->
-              report env
-                "a time window reads datetime, date, clock or duration keys, \
-                 but %a is %a."
-                Type.pp_quoted on Type.pp ty));
-      on_operand env x (fun t x -> known t (Rolling (w, x)))
   | Shift (n, x) -> on_operand env x (fun t x -> known t (Shift (n, x)))
   | Rank x ->
       on_operand env x (fun t x ->
@@ -1704,45 +1518,6 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
       match expect env a (Column ty) (elab env a) with
       | Some a -> known (Column ty) (Store (ty, a))
       | None -> Broken)
-  | Batch (f, x) ->
-      on_operand env x (fun t x ->
-          match t with
-          | Column ty -> (
-              match batch_type env f ty with
-              | Some rt -> known (Column rt) (Batch (f, x))
-              | None -> Broken)
-          | t ->
-              report env "batch takes a tensor column, not %a." pp_typing t;
-              Broken)
-  | Record_outs os -> record env (List.concat_map (outs env) os)
-  | Field (k, name, r) ->
-      on_operand env r (fun t r : a elab ->
-          match t with
-          | Column (Record fields) -> (
-              match List.assoc_opt name fields with
-              | None ->
-                  report env "the record has no field %a: its fields are %a."
-                    Type.pp_quoted name (pp_and Type.pp_quoted)
-                    (List.map fst fields);
-                  Broken
-              | Some (Any fty) -> (
-                  match Kind.provably_equal k (Type.kind fty) with
-                  | Some Equal -> known (Column fty) (Field (k, name, r))
-                  | None ->
-                      report env "field %a reads %s, but the field %a is %a."
-                        Kind.pp k (kind_types k) Type.pp_quoted name Type.pp fty;
-                      Broken))
-          | t ->
-              report env "field reads a record, not %a." pp_typing t;
-              Broken)
-  | Storage (d, x) -> (
-      match expect env x (Extension d) (elab env x) with
-      | Some x -> known (Column d.storage) (Storage (d, x))
-      | None -> Broken)
-  | Wrap (d, x) -> (
-      match expect env x (Column d.storage) (elab env x) with
-      | Some x -> known (Extension d) (Wrap (d, x))
-      | None -> Broken)
   | Text (op, a) -> text env op a
   | Calendar op -> calendar env op
 
@@ -1752,57 +1527,6 @@ and on_operand : type a s r.
     env -> (a, s) t -> (a typing -> (a, erased) t -> r elab) -> r elab =
  fun env a k ->
   match resolve env a (elab env a) with Some (t, b) -> k t b | None -> Broken
-
-(* An extension's edges stay as given, so that binding twice gives one
-   expression: the evaluator sorts them by their encodings. *)
-and sorted_edges : type a. a typing -> a array -> a array =
- fun t edges ->
-  match t with
-  | Column ty ->
-      Array.of_list
-        (List.sort_uniq (Type.compare_value ty) (Array.to_list edges))
-  | Extension _ | Value -> edges
-
-and batch_type : type a b c d.
-    env ->
-    ((a, b) Nx.t -> (c, d) Nx.t) ->
-    (a, b) Nx.t Type.t ->
-    (c, d) Nx.t Type.t option =
- fun env f ty ->
-  match ty with
-  | Tensor (dt, shape) ->
-      let empty = Nx.zeros dt (Array.append [| 0 |] (Iarray.to_array shape)) in
-      let r = f empty in
-      let rs = Nx.shape r in
-      if Array.length rs < 2 || rs.(0) <> 0 then begin
-        report env
-          "batch's function returns shape %a on an empty batch, which is not \
-           an empty batch of cells."
-          Nx.pp_shape rs;
-        None
-      end
-      else
-        Some (Type.tensor (Nx.dtype r) (Array.sub rs 1 (Array.length rs - 1)))
-  | _ ->
-      report env "batch takes a tensor column, not %a." Type.pp ty;
-      None
-
-and record : env -> (string * packed) list -> Record.t elab =
- fun env fields ->
-  match Problem.repeated (List.map fst fields) with
-  | _ :: _ as twice ->
-      List.iter
-        (report env "record: the output %a appears twice." Type.pp_quoted)
-        twice;
-      Broken
-  | [] ->
-      let field_type (n, Packed b) =
-        match b.typing with
-        | Some (Column ty) -> (n, Type.Any ty)
-        | Some (Extension d) -> (n, Type.Any d.type_)
-        | Some Value | None -> assert false
-      in
-      known (Column (Type.record (List.map field_type fields))) (Fields fields)
 
 (* [outs env o] is the named, bound outputs of [o]. *)
 and outs : env -> out_repr -> (string * packed) list =
@@ -1837,17 +1561,6 @@ and outs : env -> out_repr -> (string * packed) list =
       List.concat_map
         (fun (n, Type.Any ty) -> outs env (column n (make (Read (ty, n)))))
         (select sel)
-  | Unpack r -> (
-      match resolve env r (elab env r) with
-      | Some (Column (Record fields), r) ->
-          List.map
-            (fun (n, Type.Any fty) ->
-              (n, Packed (typed (Column fty) (Field (Type.kind fty, n, r)))))
-            fields
-      | Some (t, _) ->
-          report env "unpack reads a record, not %a." pp_typing t;
-          []
-      | None -> [])
 
 and text : type a s. env -> a text_op -> (string, s) t -> a elab =
  fun env op a ->
@@ -1858,8 +1571,6 @@ and text : type a s. env -> a text_op -> (string, s) t -> a elab =
           match op with
           | Length -> known int64
           | Slice _ -> known (Column Type.string)
-          | Lower -> known (Column Type.string)
-          | Upper -> known (Column Type.string)
           | Matches _ -> known bool_typing
           | Parse ty -> (
               match ty with
@@ -1939,7 +1650,7 @@ and calendar : type a. env -> a calendar_op -> a elab =
           report env "%s does not take %a." what pp_typing t;
           Broken
       | None -> Broken)
-  | Part (f, zone, a) -> (
+  | Part (f, a) -> (
       match column a with
       | None -> Broken
       | Some (ta, a') -> (
@@ -1948,7 +1659,7 @@ and calendar : type a. env -> a calendar_op -> a elab =
             | `Hour | `Minute | `Second | `Nanosecond -> true
             | _ -> false
           in
-          let ok () = known int64 (Part (f, zone, a')) in
+          let ok () = known int64 (Part (f, a')) in
           match ta with
           | Date when time_field ->
               report env "a date has no %s." (field_name f);
@@ -1956,43 +1667,22 @@ and calendar : type a. env -> a calendar_op -> a elab =
           | Clock _ when not time_field ->
               report env "a clock has no %s." (field_name f);
               Broken
-          | Date | Clock _ ->
-              zone_rule env what zone None;
-              ok ()
-          | Datetime { zone = z; _ } ->
-              zone_rule env what zone z;
+          | Date | Clock _ -> ok ()
+          | Datetime { zone; _ } ->
+              wall_clock env what zone;
               ok ()
           | _ -> not_temporal env what ta))
-  | Floor (zone, step, a) -> (
-      match dated env what zone a with
+  | Floor (step, a) -> (
+      match dated env what a with
       | Some (ta, a') ->
           calendar_step env what ta step;
-          known (Column ta) (Floor (zone, step, a'))
+          known (Column ta) (Floor (step, a'))
       | None -> Broken)
-  | Offset (zone, step, a) -> (
-      match dated env what zone a with
+  | Offset (step, a) -> (
+      match dated env what a with
       | Some (ta, a') ->
           calendar_step env what ta step;
-          known (Column ta) (Offset (zone, step, a'))
-      | None -> Broken)
-  | Localize { zone; ambiguous; gap; a } -> (
-      match column a with
-      | Some (Datetime { zone = None; unit_ }, a') ->
-          let t = Column (Type.datetime ~zone:(Tz.name zone) unit_) in
-          known t (Localize { zone; ambiguous; gap; a = a' })
-      | Some (ta, _) ->
-          report env "%s takes a datetime without a zone, not %a." what Type.pp
-            ta;
-          Broken
-      | None -> Broken)
-  | Windows { zone; every; period; a } -> (
-      match dated env what zone a with
-      | Some (ta, a') ->
-          calendar_step env what ta every;
-          calendar_step env what ta period;
-          known
-            (Column (Type.list ta))
-            (Windows { zone; every; period; a = a' })
+          known (Column ta) (Offset (step, a'))
       | None -> Broken)
   | Parse_with (fmt, ty, a) ->
       on_operand env a (fun t a' ->
@@ -2031,21 +1721,15 @@ and calendar : type a. env -> a calendar_op -> a elab =
           | Date | Clock _ | Datetime _ -> ok ()
           | _ -> not_temporal env what ta))
 
-(* [dated env what zone a] binds [a], a date or a datetime whose calendar [zone]
+(* [dated env what a] binds [a], a date or a datetime whose wall clock talon
    reads. *)
 and dated : type a s.
-    env ->
-    string ->
-    Tz.zone option ->
-    (a, s) t ->
-    (a Type.t * (a, erased) t) option =
- fun env what zone a ->
+    env -> string -> (a, s) t -> (a Type.t * (a, erased) t) option =
+ fun env what a ->
   match resolve env a (elab env a) with
-  | Some (Column (Date as ta), a') ->
-      zone_rule env what zone None;
-      Some (ta, a')
-  | Some (Column (Datetime { zone = z; _ } as ta), a') ->
-      zone_rule env what zone z;
+  | Some (Column (Date as ta), a') -> Some (ta, a')
+  | Some (Column (Datetime { zone; _ } as ta), a') ->
+      wall_clock env what zone;
       Some (ta, a')
   | Some (t, _) ->
       report env "%s takes a date or a datetime, not %a." what pp_typing t;
@@ -2095,7 +1779,6 @@ let reads e =
         walk
           (List.fold_left (fun acc (k : Order.t) -> add acc k.name) acc order)
           e
-    | Rolling (Window.Times { on; _ }, a) -> walk (add acc on) a
     | n -> List.fold_left (fun acc (Packed e) -> walk acc e) acc (operands n)
   in
   List.rev (walk [] e)
@@ -2105,7 +1788,7 @@ let row_local e =
   let rec local : type a s. (a, s) t -> bool =
    fun e ->
     match e.node with
-    | Over _ | Rolling _ | Shift _ | Rank _ -> false
+    | Over _ | Shift _ | Rank _ -> false
     | n -> List.for_all (fun (Packed e) -> local e) (operands n)
   in
   local e
@@ -2116,7 +1799,7 @@ let reduces e =
    fun e ->
     match e.node with
     | Rows | Reduce _ -> true
-    | Over _ | Rolling _ -> false
+    | Over _ -> false
     | n -> List.exists (fun (Packed e) -> per_frame e) (operands n)
   in
   per_frame e
@@ -2142,10 +1825,8 @@ let can_fail e =
     match e.node with
     | Cast (ty, a) when not (widens a ty) -> true
     | Text (Parse _, _)
-    | Calendar
-        ( Add_span _ | Diff _ | Floor _ | Offset _ | Localize _ | Windows _
-        | Parse_with _ )
-    | Of_option _ | App _ | Batch _ ->
+    | Calendar (Add_span _ | Diff _ | Floor _ | Offset _ | Parse_with _)
+    | Of_option _ | App _ ->
         true
     | n -> List.exists (fun (Packed e) -> fails e) (operands n)
   in
@@ -2159,8 +1840,6 @@ let map_node : type a. mapper -> a node -> a node =
  fun { map } n ->
   match n with
   | Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Const _ -> n
-  (* An unbound node, which no bound expression holds. *)
-  | Record_outs _ -> n
   | Int (op, a, b) -> Int (op, map a, map b)
   | Float (op, a, b) -> Float (op, map a, map b)
   | Compare (op, a, b) -> Compare (op, map a, map b)
@@ -2170,7 +1849,6 @@ let map_node : type a. mapper -> a node -> a node =
   | Is_null a -> Is_null (map a)
   | Coalesce es -> Coalesce (List.map map es)
   | Is_in (vs, a) -> Is_in (vs, map a)
-  | Cut (edges, a) -> Cut (edges, map a)
   | Cast (ty, a) -> Cast (ty, map a)
   | Lift (fn, a) -> Lift (fn, map a)
   | Lift2 (fn, a, b) -> Lift2 (fn, map a, map b)
@@ -2181,31 +1859,21 @@ let map_node : type a. mapper -> a node -> a node =
   | Nx_cast (ty, a) -> Nx_cast (ty, map a)
   | Reduce (r, a) -> Reduce (r, map a)
   | Over { by; order; e } -> Over { by; order; e = map e }
-  | Rolling (w, a) -> Rolling (w, map a)
   | Shift (k, a) -> Shift (k, map a)
   | Rank a -> Rank (map a)
   | App (f, a) -> App (map f, map a)
   | Option a -> Option (map a)
   | Of_option a -> Of_option (map a)
   | Store (ty, a) -> Store (ty, map a)
-  | Batch (f, a) -> Batch (f, map a)
-  | Fields fs -> Fields (List.map (fun (n, Packed e) -> (n, Packed (map e))) fs)
-  | Field (k, name, r) -> Field (k, name, map r)
-  | Storage (d, a) -> Storage (d, map a)
-  | Wrap (d, a) -> Wrap (d, map a)
   | Text (op, a) -> Text (op, map a)
   | Calendar op ->
       Calendar
         (match op with
         | Add_span (a, d) -> Add_span (map a, map d)
         | Diff (a, b) -> Diff (map a, map b)
-        | Part (f, z, a) -> Part (f, z, map a)
-        | Floor (z, s, a) -> Floor (z, s, map a)
-        | Offset (z, s, a) -> Offset (z, s, map a)
-        | Localize { zone; ambiguous; gap; a } ->
-            Localize { zone; ambiguous; gap; a = map a }
-        | Windows { zone; every; period; a } ->
-            Windows { zone; every; period; a = map a }
+        | Part (f, a) -> Part (f, map a)
+        | Floor (s, a) -> Floor (s, map a)
+        | Offset (s, a) -> Offset (s, map a)
         | Parse_with (fmt, ty, a) -> Parse_with (fmt, ty, map a)
         | Format_with (fmt, a) -> Format_with (fmt, map a))
 
@@ -2224,8 +1892,6 @@ let rename f e =
       | Read (ty, n) -> Read (ty, f n)
       | Over { by; order; e } ->
           Over { by = List.map f by; order = List.map key order; e = go e }
-      | Rolling (Window.Times { on; before; after }, a) ->
-          Rolling (Window.time ~after ~before (f on), go a)
       | n -> map_node { map = go } n)
   in
   go e
@@ -2353,12 +2019,6 @@ let instant t = make (Lit (Kind.instant, t))
 let span d = make (Lit (Kind.span, d))
 let date d = make (Lit (Kind.date, d))
 
-(* Nested values *)
-
-let record os = make (Record_outs os)
-let field k name r = make (Field (k, name, r))
-let unpack r = Unpack r
-
 (* Text *)
 
 module Str = struct
@@ -2392,8 +2052,6 @@ module Str = struct
     if length < 0 then err "Expr.Str.slice: ~length:%d is negative" length;
     text (Slice { offset; length }) a
 
-  let lower a = text Lower a
-  let upper a = text Upper a
   let matches p a = text (Matches p) a
   let parse ty a = text (Parse ty) a
 end
@@ -2402,7 +2060,6 @@ end
 
 module Temporal = struct
   type nonrec field = field
-  type nonrec policy = policy
 
   let calendar op = make (Calendar op)
 
@@ -2432,21 +2089,13 @@ module Temporal = struct
 
   let add a d = calendar (Add_span (a, d))
   let diff a b = calendar (Diff (a, b))
-  let field f ?zone a = calendar (Part (f, zone, a))
+  let field f a = calendar (Part (f, a))
 
-  let floor ?zone step a =
+  let floor step a =
     check_step "floor" step;
-    calendar (Floor (zone, step, a))
+    calendar (Floor (step, a))
 
-  let offset ?zone step a = calendar (Offset (zone, step, a))
-
-  let localize zone ~ambiguous ~gap a =
-    calendar (Localize { zone; ambiguous; gap; a })
-
-  let windows ?zone ~every ~period a =
-    check_step "windows" every;
-    check_step "windows" period;
-    calendar (Windows { zone; every; period; a })
+  let offset step a = calendar (Offset (step, a))
 
   let parse fmt ty a =
     check_format "parse" fmt;
@@ -2476,20 +2125,13 @@ let quantile p a =
   if not (0. <= p && p <= 1.) then err "Expr.quantile: %g is not in [0;1]" p;
   reduce (Quantile p) a
 
-let ewm ~alpha a =
-  if not (0. < alpha && alpha <= 1.) then
-    err "Expr.ewm: ~alpha:%g is not in (0;1]" alpha;
-  reduce (Ewm alpha) a
-
 let n_unique a = reduce N_unique a
 let arg_min a = reduce Arg_min a
 let arg_max a = reduce Arg_max a
-let collect a = reduce Collect a
 
 (* Frames *)
 
 let over ?(by = []) ?(order = []) e = make (Over { by; order; e })
-let rolling w e = make (Rolling (w, e))
 let shift n a = make (Shift (n, a))
 let rank a = make (Rank a)
 
@@ -2500,7 +2142,6 @@ let ( $ ) f a = make (App (f, a))
 let option a = make (Option a)
 let of_option a = make (Of_option a)
 let store ty a = make (Store (ty, a))
-let batch f x = make (Batch (f, x))
 
 (* Elementwise operations *)
 
@@ -2530,7 +2171,6 @@ let if_ c a b = make (If (c, a, b))
 let is_null a = make (Is_null a)
 let coalesce es = make (Coalesce es)
 let is_in vs a = make (Is_in (vs, a))
-let cut edges a = make (Cut (Array.copy edges, a))
 let cast ty a = make (Cast (ty, a))
 let nx fn a = make (Lift (fn, a))
 let nx2 fn a b = make (Lift2 (fn, a, b))

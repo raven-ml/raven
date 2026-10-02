@@ -44,7 +44,6 @@ module Error = Error
 module Tz = Tz
 module Sel = Sel
 module Order = Order
-module Window = Window
 module Expr = Expr
 
 module Col = struct
@@ -66,8 +65,6 @@ module Ext = struct
     { type_ = Type.ext ~name ?metadata storage; storage; ordered; dec; enc }
 
   let col e name = Expr.make (Expr.Ext_handle (e, name))
-  let storage e x = Expr.make (Expr.Storage (e, x))
-  let wrap e x = Expr.make (Expr.Wrap (e, x))
 end
 
 module Source = Source
@@ -251,11 +248,4 @@ module Kit = struct
               run (o :: outputs) rest)
     in
     run [] queries
-
-  (* Expressions *)
-
-  let cumulative r = Expr.rolling (Window.rows ~before:max_int ~after:0) r
-  let index = Expr.(cumulative rows - int 1)
-  let arg p v = Expr.(first (if_ (index = over p) v null))
-  let fill_forward x = cumulative (Expr.last x)
 end

@@ -188,8 +188,6 @@ let reduce : type a b.
       let g = Nx.unique (keyed s (Key.identity [ c ])) in
       let ones = Nx.ones Nx.int64 [| Nx.dim 0 g.first |] in
       ok (fixed int64 (segment_sum s (Nx.take ~indices:g.first s.ids) ones))
-  | Ewm _ | Collect ->
-      invalid_arg "Reduce.reduce: ewm and collect are not lowered"
 
 let shift s k c =
   let r = view s and n = Column.length c in

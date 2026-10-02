@@ -270,8 +270,6 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
         let m = Strings.matches ~by ?mask:(Column.valid c) p (bytes c) in
         kept (Any Type.bool) c (Fixed (P m))
   | Parse ty -> fun c -> read_text c (Form.parse (Any ty))
-  | Lower -> not_lowered "Str.lower"
-  | Upper -> not_lowered "Str.upper"
 
 let parse_with fmt ty c = read_text c (Form.parse_with fmt ty)
 

@@ -18,9 +18,7 @@ let check ks s =
       | None -> Some (Problem.missing k.name s)
       | Some (Any (Ext _ as ty)) ->
           Some
-            (Problem.v
-               "%a is %a, which orders only through its declaration: order by \
-                its storage, derived first."
+            (Problem.v "%a is %a, which orders only through its declaration."
                Type.pp_quoted k.name Type.pp ty)
       | Some (Any ty) when Type.has_ext ty ->
           Some

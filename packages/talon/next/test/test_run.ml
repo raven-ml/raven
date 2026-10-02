@@ -1975,15 +1975,132 @@ let refusals =
             (message (fun () ->
                  Query.run (Query.unnest [ "l" ] (Query.of_table t))))
           @@ __POS_OF__ {| unnest ["l"] is not implemented yet |});
-      test "an ewm is refused, naming the expression" (fun () ->
-          expect
-            (message (fun () ->
-                 Query.run
-                   (Query.aggregate ~by:[]
-                      Expr.[ "e" := ewm ~alpha:0.5 (Col.int "a") ]
-                      (Query.of_table t))))
-          @@ __POS_OF__ {| ewm ~alpha:0.5 a is not implemented yet |});
     ]
+
+(* Every expression constructor runs, so that one that comes to refuse at run
+   time fails here. *)
+
+type case =
+  | Row : string * ('a, Expr.row) Expr.t -> case
+  | Agg : string * ('a, Expr.agg) Expr.t -> case
+
+let constructors =
+  let day15 = Option.get (Time.Date.of_civil (2024, 3, 15)) in
+  let ten = Time.of_ns 1_710_496_800_000_000_000L in
+  let epoch =
+    Ext.v ~name:"ymir.epoch" ~ordered:true Type.float64 ~dec:Fun.id ~enc:Fun.id
+  in
+  let t =
+    v
+      [
+        ("i", Column.v Type.int64 [| 3 |]);
+        ("f", Column.v Type.float64 [| 2.5 |]);
+        ("b", Column.v Type.bool [| true |]);
+        ("s", Column.v Type.string [| "2024-03-15" |]);
+        ("d", Column.v Type.date [| day15 |]);
+        ("t", Column.v (Type.datetime ~zone:"UTC" Us) [| ten |]);
+        ( "e",
+          Result.get_ok
+            (Column.of_layout
+               (Any (Type.ext ~name:"ymir.epoch" Type.float64))
+               (Column.layout (Column.v Type.float64 [| 1. |]))) );
+      ]
+  in
+  let i = Col.int "i" and f = Col.float "f" and b = Col.bool "b" in
+  let s = Col.string "s" and d = Col.date "d" and ts = Col.instant "t" in
+  let day = Time.Span.days 1 in
+  let succ = Expr.const Stdlib.succ in
+  let run c =
+    let q = Query.of_table t in
+    let q =
+      match c with
+      | Row (_, e) -> Query.select Expr.[ "e" := e ] q
+      | Agg (_, e) -> Query.aggregate ~by:[] Expr.[ "e" := e ] q
+    in
+    equal int 1 (rows (run_ok q))
+  in
+  cases
+    ~name:(function Row (n, _) | Agg (n, _) -> n)
+    "constructors run"
+    Expr.
+      [
+        Row ("int", int 1);
+        Row ("float", float 1.);
+        Row ("bool", bool true);
+        Row ("string", string "a");
+        Row ("instant", instant ten);
+        Row ("span", span day);
+        Row ("date", date day15);
+        Row ("null", store Type.int64 null);
+        Row ("integer arithmetic", (i + i - i) * i / i mod i);
+        Row ("float arithmetic", ((f +. f -. f) *. f /. f) ** f);
+        Row
+          ( "comparisons",
+            (i = i && i <> i) || (i < i && i > i) || i <= i || i >= i );
+        Row ("not", not b);
+        Row ("if_", if_ b i (int 0));
+        Row ("is_null", is_null i);
+        Row ("coalesce", coalesce [ store Type.int64 null; i ]);
+        Row ("is_in", is_in [ 3 ] i);
+        Row ("cast", cast Type.int8 i);
+        Row ("nx", nx { f = Nx.exp } f);
+        Row ("nx2", nx2 { f2 = Nx.atan2 } f f);
+        Agg ("rows", rows);
+        Agg ("count", count i);
+        Agg ("sum", sum i);
+        Agg ("min", min i);
+        Agg ("max", max i);
+        Agg ("first", first i);
+        Agg ("last", last i);
+        Agg ("only", only i);
+        Agg ("mean", mean f);
+        Agg ("std", std f);
+        Agg ("var", var f);
+        Agg ("median", median f);
+        Agg ("quantile", quantile 0.5 f);
+        Agg ("n_unique", n_unique i);
+        Agg ("arg_min", arg_min i);
+        Agg ("arg_max", arg_max i);
+        Row ("over", over ~by:[ "b" ] ~order:[ Order.asc "i" ] (sum i));
+        Row ("shift", shift 1 i);
+        Row ("rank", rank i);
+        Row ("const and $", store Type.int64 (succ $ i));
+        Row
+          ( "option and of_option",
+            store Type.int64 (of_option (const Fun.id $ option i)) );
+        Row ("Str.length", Str.length s);
+        Row ("Str.slice", Str.slice ~offset:0 ~length:4 s);
+        Row ("Str.matches", Str.matches (Str.pieces [ "2024"; "15" ]) s);
+        Row ("Str.parse", Str.parse Type.date s);
+        Row ("Temporal.add", Temporal.add d (span day));
+        Row ("Temporal.diff", Temporal.diff ts ts);
+        Row ("Temporal.field", Temporal.field `Hour ts);
+        Row ("Temporal.floor", Temporal.floor (Time.Days 1) ts);
+        Row ("Temporal.offset", Temporal.offset (Time.Months 1) d);
+        Row ("Temporal.parse", Temporal.parse "%Y-%m-%d" Type.date s);
+        Row ("Temporal.format", Temporal.format "%Y" ts);
+        Row ("Ext.col", Ext.col epoch "e");
+      ]
+    run
+
+let utc_wall_clock =
+  test "a datetime in UTC reads its calendar on UTC's wall clock" (fun () ->
+      let t =
+        v
+          [
+            ( "t",
+              Column.v
+                (Type.datetime ~zone:"UTC" Us)
+                [| Time.of_ns 1_710_496_800_000_000_000L |] );
+          ]
+      in
+      let field f =
+        Query.values
+          Expr.(Temporal.field f (Col.instant "t"))
+          (Query.of_table t)
+      in
+      equal (array int) [| 10 |] (require_ok ~pp:Error.pp (field `Hour));
+      equal (array int) [| 15 |] (require_ok ~pp:Error.pp (field `Day)))
 
 (* Sorts and top-k *)
 
@@ -2365,5 +2482,7 @@ let () =
          sorting;
          sources;
          refusals;
+         constructors;
+         utc_wall_clock;
          kit_runs;
        ])

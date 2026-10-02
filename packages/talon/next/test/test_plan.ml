@@ -387,10 +387,6 @@ let stops () =
            );
            ( "a frame-dependent derive",
              src |> derive Expr.[ "s" := over (sum a) ] |> filter p );
-           ( "a cumulative ewm",
-             src
-             |> derive Expr.[ "e" := Kit.cumulative (ewm ~alpha:0.5 b) ]
-             |> filter p );
            ( "a frame-dependent filter",
              src |> filter Expr.(b > over (mean b)) |> filter p );
            ( "a frame-dependent filter over an exact source",
@@ -468,11 +464,6 @@ let stops () =
     query → a int64, b float64, c string, k int8, l list[int64], s int64
     filter (a > 1)
     └ derive ["s" := over (sum a)]
-      └ u (5 columns)
-    # a cumulative ewm
-    query → a int64, b float64, c string, k int8, l list[int64], e float64
-    filter (a > 1)
-    └ derive ["e" := rolling (rows ~before:max_int ~after:0) (ewm ~alpha:0.5 b)]
       └ u (5 columns)
     # a frame-dependent filter
     query → a int64, b float64, c string, k int8, l list[int64]
@@ -627,7 +618,6 @@ let can_fail =
     [
       ("Str.parse", Str.parse Type.int64 c = a);
       ("of_option", of_option (option a) = a);
-      ("batch", is_null (batch Fun.id (Col.v (Kind.tensor Nx.float32) "x")));
       ("Temporal.add", Temporal.add t (span (Time.Span.days 1)) > t);
     ]
 
@@ -676,9 +666,7 @@ let folds_inside () =
     (plans
        Query.
          [
-           ( "a window",
-             src |> derive Expr.[ "e" := Kit.cumulative (ewm ~alpha:0.5 three) ]
-           );
+           ("a frame", src |> derive Expr.[ "e" := over (mean three) ]);
            ( "a calendar operation",
              src
              |> derive
@@ -690,10 +678,9 @@ let folds_inside () =
          ])
   @@ __POS_OF__
        {|
-    # a window
+    # a frame
     query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], e float64
-    derive ["e" :=
-              rolling (rows ~before:max_int ~after:0) (ewm ~alpha:0.5 (b +. 3.))]
+    derive ["e" := over (mean (b +. 3.))]
     └ v (8 columns)
     # a calendar operation
     query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], y string
@@ -976,11 +963,6 @@ let folds =
 
 let projections () =
   let src = of_source s_unsupported in
-  let unpacked =
-    src
-    |> Query.select Expr.[ "r" := record [ "x" := a; "y" := b; "z" := c ] ]
-    |> Query.select Expr.[ unpack (Col.v Record.kind "r") ]
-  in
   expect
     (plans
        Query.
@@ -1016,33 +998,12 @@ let projections () =
                   Expr.
                     [ "s" := over ~by:[ "c" ] ~order:[ Order.asc "b" ] (sum a) ]
              |> select Expr.[ keep Sel.(names [ "s" ]) ] );
-           ( "a time window's key",
-             of_source
-               (source "ts"
-                  Type.
-                    [
-                      ("t", Any (datetime ~zone:"UTC" Ns));
-                      ("x", Any float64);
-                      ("z", Any bool);
-                    ])
-             |> derive
-                  Expr.
-                    [
-                      "s" :=
-                        rolling
-                          (Window.time ~before:(Time.Span.days 1) "t")
-                          (sum (Col.float "x"));
-                    ]
-             |> select Expr.[ keep Sel.(names [ "s" ]) ] );
            ( "a replaced column stays in place",
              src |> derive Expr.[ "a" := int 1 ] );
            ( "a replaced column under a select",
              src
              |> derive Expr.[ "a" := k + int 1 ]
              |> select Expr.[ keep Sel.(names [ "a" ]) ] );
-           ("an unpacked record", unpacked);
-           ( "some fields of an unpacked record",
-             unpacked |> select Expr.[ keep Sel.(names [ "x"; "z" ]) ] );
          ])
   @@ __POS_OF__
        {|
@@ -1085,11 +1046,6 @@ let projections () =
     select [keep (names ["s"])]
     └ derive ["s" := over ~by:["c"] ~order:[asc "b"] (sum a)]
       └ u (5 columns) ~columns:["a"; "b"; "c"]
-    # a time window's key
-    query → s float64
-    select [keep (names ["s"])]
-    └ derive ["s" := rolling (time ~before:24h "t") (sum x)]
-      └ ts (3 columns) ~columns:["t"; "x"]
     # a replaced column stays in place
     query → a int64, b float64, c string, k int8, l list[int64]
     derive ["a" := 1]
@@ -1099,16 +1055,6 @@ let projections () =
     select [keep (names ["a"])]
     └ derive ["a" := k + 1]
       └ u (5 columns) ~columns:["k"]
-    # an unpacked record
-    query → x int64, y float64, z string
-    select [unpack r]
-    └ select ["r" := record ["x" := a; "y" := b; "z" := c]]
-      └ u (5 columns) ~columns:["a"; "b"; "c"]
-    # some fields of an unpacked record
-    query → x int64, z string
-    select ["x" := field int "x" r; "z" := field string "z" r]
-    └ select ["r" := record ["x" := a; "y" := b; "z" := c]]
-      └ u (5 columns) ~columns:["a"; "b"; "c"]
     |}
 
 let sharing () =
@@ -1200,7 +1146,7 @@ let printed =
       test "a conjunct renamed through a select reads the input's name" renamed;
       test "slices move toward the sources" slices;
       test "constants fold where the literal is exact" constants;
-      test "constants fold inside windows, calendar operations and lifts"
+      test "constants fold inside frames, calendar operations and lifts"
         folds_inside;
       test "steps keep the columns read above them" projections;
       cases
@@ -1872,83 +1818,10 @@ let kit_queries =
       test "describe has one row per numeric column" describe;
     ]
 
-(* Kit: expressions *)
-
-let kit_expressions () =
-  let typed =
-    source "t"
-      Type.
-        [
-          ("x8", Any int8);
-          ("f32", Any float32);
-          ("f", Any float64);
-          ("d", Any (duration Ms));
-          ("g", Any string);
-          ("t", Any epoch_t);
-          ("score", Any float64);
-        ]
-  in
-  let derived os = Query.schema (Query.derive os (of_source typed)) in
-  let column n = Col.v Kind.float n in
-  equal schema_w
-    (Schema.v
-       (Schema.columns (Query.schema (of_source typed))
-       @ Type.
-           [
-             ("i", Any int64);
-             ("cs8", Any int64);
-             ("cs32", Any float32);
-             ("csms", Any (duration Ms));
-             ("cm", Any float32);
-             ("cc", Any int64);
-             ("ff", Any string);
-             ("fft", Any epoch_t);
-             ("e", Any float64);
-           ]))
-    (derived
-       Expr.
-         [
-           "i" := Kit.index;
-           "cs8" := Kit.cumulative (sum (Col.int "x8"));
-           "cs32" := Kit.cumulative (sum (column "f32"));
-           "csms" := Kit.cumulative (sum (Col.span "d"));
-           "cm" := Kit.cumulative (max (column "f32"));
-           "cc" := Kit.cumulative (count (Col.string "g"));
-           "ff" := Kit.fill_forward (Col.string "g");
-           each
-             Sel.(names [ "t" ])
-             { column = (fun _ x -> "fft" := Kit.fill_forward x) };
-           "e" := Kit.cumulative (ewm ~alpha:0.5 (Col.int "x8"));
-         ]);
-  equal schema_w
-    (Schema.v Type.[ ("g", Any string); ("best", Any float32) ])
-    (Query.schema
-       (Query.aggregate ~by:[ "g" ]
-          Expr.
-            [ "best" := Kit.arg (arg_max (Col.float "score")) (column "f32") ]
-          (of_source typed)))
-
-let kit_printed () =
-  let x = Col.float "x" in
-  expect
-    (String.concat "\n"
-       (str Expr.pp Kit.index
-        :: List.map (str Expr.pp)
-             [ Kit.cumulative (Expr.sum x); Kit.fill_forward x ]
-       @ [ str Expr.pp (Kit.arg (Expr.arg_max x) (Col.string "name")) ]))
-  @@ __POS_OF__
-       {|
-    rolling (rows ~before:max_int ~after:0) rows - 1
-    rolling (rows ~before:max_int ~after:0) (sum x)
-    rolling (rows ~before:max_int ~after:0) (last x)
-    first
-      (if_ (rolling (rows ~before:max_int ~after:0) rows - 1 = over (arg_max x))
-         name null)
-    |}
+(* Kit: mistakes *)
 
 let kit_errors () =
   let q = of_source s_unsupported in
-  let ext = of_source (source "x" Type.[ ("t", Any epoch_t) ]) in
   expect
     (String.concat "\n\n"
        (List.map message
@@ -1960,15 +1833,6 @@ let kit_errors () =
             (fun () -> Kit.complete [ "c"; "k"; "c" ] q);
             (fun () -> Kit.one_hot "cc" q);
             (fun () -> Kit.one_hot "c" q);
-            (fun () -> Query.derive Expr.[ "s" := Kit.cumulative (sum c) ] q);
-            (fun () ->
-              Query.derive
-                Expr.
-                  [
-                    each Sel.all
-                      { column = (fun n x -> n := Kit.cumulative (max x)) };
-                  ]
-                ext);
           ]))
   @@ __POS_OF__
        {|
@@ -1993,27 +1857,10 @@ let kit_errors () =
       input (5 columns): a int64, b float64, c string, k int8, l list[int64]
 
     Kit.one_hot: "c" is string, not categorical: cast it to a categorical type first
-
-    derive: 1 problem
-      "s" := rolling (rows ~before:max_int ~after:0) (sum c)
-        sum takes integers, floats or durations, not string.
-      input (5 columns): a int64, b float64, c string, k int8, l list[int64]
-
-    derive: 1 problem
-      each all <fn>
-        max orders values, and ext[ymir.epoch, float64] is an extension read without its declaration: read it with an Ext.t declared ~ordered:true.
-      input (1 column): t ext[ymir.epoch, float64]
     |}
 
-let kit_expressions_group =
-  group "Kit expressions"
-    [
-      test "each takes the type its definition gives" kit_expressions;
-      test "each prints as its definition" kit_printed;
-      test "mistakes raise or are their verbs' reports" kit_errors;
-    ]
+let kit_mistakes =
+  test "Kit's mistakes raise or are their verbs' reports" kit_errors
 
 let () =
-  exit
-    (run "plan"
-       [ printed; laws; comparing; kit_queries; kit_expressions_group ])
+  exit (run "plan" [ printed; laws; comparing; kit_queries; kit_mistakes ])

@@ -8,14 +8,13 @@
     {!Type}s say what columns store and {!Kind}s what their cells read as in
     OCaml. {!Binary}, {!Time} and {!Record} are the OCaml values that cells read
     as, {!Schema}s name and type a table's columns, and {!Tz} reads the time
-    zone database that zoned operations take.
+    zone database.
 
     A {!Query} is the centre: a plan over a table or a {!Source}, transformed by
     verbs, whose schema is known before any data is read. Its verbs take
     {!Expr}essions, read through {!Col} handles and {!Ext} declarations; {!Sel}
-    chooses columns, {!Order} sorts, {!Window} cuts the rows that
-    {!Expr.rolling} reduces, and {!Join} conditions pair rows. Plan problems
-    raise [Invalid_argument]; failures in data are {!Error} values. *)
+    chooses columns, {!Order} sorts, and {!Join} conditions pair rows. Plan
+    problems raise [Invalid_argument]; failures in data are {!Error} values. *)
 
 type t
 (** The type for tables: named, typed columns of equal length. *)
@@ -204,10 +203,9 @@ module Type : sig
         (** Instants, stored as int64 ticks of [unit_] since 1970-01-01
             00:00:00. With [zone = Some z], the ticks count UTC and [z] names
             the zone the data belongs to, as in Arrow's timestamp with a time
-            zone; temporal operations still take their zone explicitly. With
-            [zone = None], the ticks count a wall clock in no particular zone,
-            as in Arrow's timestamp without one. A tick outside the range of
-            {!Time.instant} fails when it is read. *)
+            zone. With [zone = None], the ticks count a wall clock in no
+            particular zone, as in Arrow's timestamp without one. A tick outside
+            the range of {!Time.instant} fails when it is read. *)
     | List : 'a t -> 'a array t
         (** Lists of values of the element type, read as arrays. *)
     | Record : (string * any) list -> Record.t t
@@ -286,8 +284,7 @@ module Type : sig
 
   val datetime : ?zone:string -> unit_ -> Time.instant t
   (** [datetime ?zone u] is {!Datetime} in the unit [u], with the zone [zone],
-      or without a zone when [zone] is absent. The zone is not looked up: a
-      zoned operation resolves it in the {!Tz} database it is given.
+      or without a zone when [zone] is absent. The zone is not looked up.
 
       Raises [Invalid_argument] if [zone] is empty or not valid UTF-8. *)
 
@@ -948,41 +945,6 @@ module Order : sig
   (** [nulls_first k] is [k] with its nulls before every value. *)
 end
 
-module Window : sig
-  (** Windows: the rows around a row.
-
-      A window cuts, for each row i of a frame, the rows that [Expr.rolling]
-      reduces: a range of positions around i, or a range of times around the
-      time of i. Positions and times are those of the enclosing frame, in its
-      order. *)
-
-  type t
-  (** The type for windows. *)
-
-  val rows : before:int -> after:int -> t
-  (** [rows ~before ~after] holds, for row i, the rows j of its frame with
-      [i - before <= j <= i + after]: [rows ~before:6 ~after:0] is the last
-      seven rows, the row included. A negative bound excludes rows on its side:
-      [rows ~before:3 ~after:(-1)] is the three rows before, without the row
-      itself. Rows past the frame's edges are absent, so a window near an edge
-      holds fewer rows.
-
-      Raises [Invalid_argument] if [before + after < 0], a window that is empty
-      for every row. *)
-
-  val time : ?after:Time.span -> before:Time.span -> string -> t
-  (** [time ?after ~before on] holds the rows whose time in the column [on] is
-      later than [before] before the row's own time and at most [after] past it:
-      [time ~before:(Time.Span.days 7) "ts"] is the last seven days, the row's
-      own time included. [after] defaults to the zero span. The column [on] is a
-      datetime, date, clock or duration column, a date counting 86,400 seconds a
-      day, and its values must ascend within each frame: a violation is a data
-      error that suggests sorting (see [Expr.over]'s [~order]).
-
-      Raises [Invalid_argument] if [before + after] is not positive, a window
-      that is empty for every row. *)
-end
-
 module Expr : sig
   (** Expressions: typed computations over the columns of a frame.
 
@@ -1022,16 +984,14 @@ module Expr : sig
       - [select], [derive] and [filter]: the input's rows;
       - [aggregate ~by]: one group's rows, in input order;
       - {!over}[ ~by ~order e]: the enclosing frame, partitioned by [by], each
-        partition in [order]; results return to their rows;
-      - {!rolling}[ w e]: each row's window, cut from the enclosing frame.
+        partition in [order]; results return to their rows.
 
       A frame's order is its input order, and no expression reorders values
       without returning them to their rows.
 
       {b Nulls.} Elementwise operations are null where an operand is null,
       except where stated. Comparisons are Kleene: a comparison with null is
-      null. Reductions skip nulls except {!rows}, {!count}, {!n_unique} and
-      {!collect}. *)
+      null. Reductions skip nulls except {!rows}, {!count} and {!n_unique}. *)
 
   (** {1:types Expressions and outputs} *)
 
@@ -1046,7 +1006,7 @@ module Expr : sig
 
   type +'s out
   (** The type for outputs of shape ['s]: named expressions, as [select],
-      [derive], [aggregate] and {!record} take them. *)
+      [derive] and [aggregate] take them. *)
 
   (** {1:outputs Outputs} *)
 
@@ -1202,14 +1162,6 @@ module Expr : sig
       null. [a]'s type must hold each of [vs]; an extension's values are encoded
       with its declaration. *)
 
-  val cut : 'a array -> ('a, 's) t -> (int, 's) t
-  (** [cut edges a] is the number of [edges] at or below [a] in talon's total
-      order, as [int64]: bins are half-open, a value below every edge is [0] and
-      one at or above every edge is the number of distinct edges. [edges] need
-      not be sorted, and a repeated edge counts once. [a]'s type must hold each
-      edge, and an extension type needs an ordered declaration. [edges] is
-      copied. *)
-
   val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
   (** [cast ty a] converts [a]'s values to [ty]:
       - between [bool], integer and float types: integers take exact values
@@ -1226,10 +1178,9 @@ module Expr : sig
         does.
 
       Any other pair is a problem that names the function that converts it, if
-      one does: {!Str.parse} and {!Temporal.parse} for text to values,
-      {!Temporal.format} for dates, clocks and datetimes to text,
-      {!Temporal.localize} for zones, [Ext.storage] and [Ext.wrap] for
-      extensions. [a] needs a column type. *)
+      one does: {!Str.parse} and {!Temporal.parse} for text to values, and
+      {!Temporal.format} for dates, clocks and datetimes to text. [a] needs a
+      column type. *)
 
   type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
   (** The type for elementwise nx functions of one argument that preserve its
@@ -1254,8 +1205,8 @@ module Expr : sig
   (** {1:reductions Reductions}
 
       A reduction takes a [row] expression to one value per frame. Over no
-      values, {!sum}, {!count} and {!n_unique} are [0], {!collect} is the empty
-      list, and every other reduction is null. *)
+      values, {!sum}, {!count} and {!n_unique} are [0], and every other
+      reduction is null. *)
 
   val rows : (int, agg) t
   (** [rows] is the number of rows of the frame, as [int64]. *)
@@ -1306,15 +1257,6 @@ module Expr : sig
 
       Raises [Invalid_argument] if [p] is not in \[[0];[1]\]. *)
 
-  val ewm : alpha:float -> ('a, row) t -> (float, agg) t
-  (** [ewm ~alpha a] is the exponentially weighted mean of [a]'s values in frame
-      order, as [float64]: y is the first value, then (1 − [alpha])·y +
-      [alpha]·x at each next value x, and [ewm ~alpha a] is the last y. A NaN
-      propagates to every later y. [Kit.cumulative (ewm ~alpha a)] is the
-      smoothed series.
-
-      Raises [Invalid_argument] unless [0. < alpha && alpha <= 1.]. *)
-
   val n_unique : ('a, row) t -> (int, agg) t
   (** [n_unique a] is the number of distinct keys of [a], null being one key, as
       [int64]. *)
@@ -1326,10 +1268,6 @@ module Expr : sig
   val arg_max : ('a, row) t -> (int, agg) t
   (** [arg_max a] is the position of [a]'s first greatest value, like
       {!arg_min}. *)
-
-  val collect : ('a, row) t -> ('a array, agg) t
-  (** [collect a] is the list of [a]'s values in frame order, nulls included, of
-      type [list[t]] for [a]'s type [t]. *)
 
   (** {1:frames Frames} *)
 
@@ -1343,15 +1281,7 @@ module Expr : sig
       [filter], [over (mean x)] is the mean of the whole input, and it blocks
       the pipeline. Its type is [e]'s. A column named twice in [by] or in
       [order] is a problem, and so is an [order] key on a column whose type is
-      or holds an extension type: order by its storage, derived first. *)
-
-  val rolling : Window.t -> ('a, agg) t -> ('a, row) t
-  (** [rolling w e] is, for each row, [e] over the row's window [w], as if the
-      window were [e]'s frame:
-      [rolling (Window.rows ~before:6 ~after:0) (mean x)]. A window with too few
-      values is a comparison away:
-      [if_ (rolling w (count x) >= int 7) (rolling w (mean x)) null]. Its type
-      is [e]'s. *)
+      or holds an extension type. *)
 
   val shift : int -> ('a, row) t -> ('a, row) t
   (** [shift n a] is [a]'s value [n] rows earlier in the frame, or [-n] rows
@@ -1396,41 +1326,12 @@ module Expr : sig
       value that [ty] does not hold is a problem, and a [$] or {!of_option}
       result that it does not hold a data error. *)
 
-  val batch :
-    (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-    (('a, 'b) Nx.t, row) t ->
-    (('c, 'd) Nx.t, row) t
-  (** [batch f x] applies [f] to batches of the tensor expression [x], its cells
-      stacked as [(n, …shape)], for a model's forward pass. [f] must be
-      row-separable: [f (a ++ b)] is [f a ++ f b]. It sees zeros under nulls,
-      and its result is null where [x] is. When the verb is applied, talon calls
-      [f] on an empty batch to learn the result's dtype and cell shape, which
-      give its type. *)
-
-  (** {1:nested Nested values}
-
-      No expression reads a list's elements. A computation on them is
-      [Query.unnest], then expressions, then [Query.aggregate ~by] the row's id,
-      where {!collect} rebuilds a list. *)
-
-  val record : 's out list -> (Record.t, 's) t
-  (** [record os] is the record whose fields are the outputs [os], in order. An
-      output name that appears twice is a problem. *)
-
-  val field : 'a Kind.t -> string -> (Record.t, 's) t -> ('a, 's) t
-  (** [field k name r] is the field [name] of the record [r], which [k] must
-      bind, null where [r] is null. *)
-
-  val unpack : (Record.t, row) t -> row out
-  (** [unpack r] outputs each field of the record [r] as a column named after
-      it, in order. *)
-
   (** {1:text Text} *)
 
   (** Text.
 
-      Text counts and slices Unicode scalar values and maps case with the full
-      Unicode mappings. Categorical values are text. *)
+      Text counts and slices Unicode scalar values. Categorical values are text.
+  *)
   module Str : sig
     type pattern
     (** The type for patterns: what text is matched against. *)
@@ -1465,13 +1366,6 @@ module Expr : sig
 
         Raises [Invalid_argument] if [length < 0]. *)
 
-    val lower : (string, 's) t -> (string, 's) t
-    (** [lower a] is [a] mapped to lowercase with the full Unicode mapping. *)
-
-    val upper : (string, 's) t -> (string, 's) t
-    (** [upper a] is [a] mapped to uppercase with the full Unicode mapping:
-        ["ß"] gives ["SS"]. *)
-
     val matches : pattern -> (string, 's) t -> (bool, 's) t
     (** [matches p a] is [true] iff [p] matches [a]. *)
 
@@ -1491,11 +1385,9 @@ module Expr : sig
   (** Temporal values.
 
       Dates, clocks and datetimes without a zone are wall-clock values: their
-      calendar is read as it is, and they take no zone. A datetime with a zone
-      holds instants, and reading its calendar takes the [~zone] whose wall
-      clock reads them. Where a zone's wall clock reads a time twice or never,
-      {!floor} and {!offset} keep the instant's offset when it applies and
-      otherwise move past the gap; {!localize} takes the policy explicitly. *)
+      calendar is read as it is. A datetime with a zone holds instants, whose
+      calendar talon reads on the wall clock of the zone [UTC] only: the
+      calendar of another zone is a problem. *)
   module Temporal : sig
     val add : ('a, 's) t -> (Time.span, 's) t -> ('a, 's) t
     (** [add a d] is [a] advanced by [d], of [a]'s type: a datetime, a duration
@@ -1527,65 +1419,27 @@ module Expr : sig
         - [`Weekday], the ISO day of the week, [1] for Monday to [7];
         - [`Yearday], the day of the year, [1] to [366]. *)
 
-    val field : field -> ?zone:Tz.zone -> ('a, 's) t -> (int, 's) t
-    (** [field f ?zone a] is the field [f] of [a], as [int64]:
-        [field `Year orderdate], [field `Hour ~zone:paris ts]. [a] is a date, a
-        clock or a datetime. A datetime with a zone holds instants, read on
-        [zone]'s wall clock, which it requires; dates, clocks and datetimes
-        without a zone are wall-clock values and take no [zone]. A date has no
-        time-of-day field and a clock no calendar field: asking for one is a
-        problem. *)
+    val field : field -> ('a, 's) t -> (int, 's) t
+    (** [field f a] is the field [f] of [a], as [int64]:
+        [field `Year orderdate]. [a] is a date, a clock or a datetime. A date
+        has no time-of-day field and a clock no calendar field: asking for one
+        is a problem. *)
 
-    val floor : ?zone:Tz.zone -> Time.step -> ('a, 's) t -> ('a, 's) t
-    (** [floor ?zone step a] is the first instant of the period of [step] that
-        holds [a], a date or a datetime, on [zone]'s wall clock when [a] has a
-        zone, which then requires [zone]. Periods are counted from 1970-01-01
-        00:00, and weeks from Monday 1970-01-05. Where the period's first
-        wall-clock time is skipped, it is the first instant after the gap. A
-        date floors by calendar steps only, and a datetime by exact steps of
-        whole ticks of its unit. Its type is [a]'s.
+    val floor : Time.step -> ('a, 's) t -> ('a, 's) t
+    (** [floor step a] is the first instant of the period of [step] that holds
+        [a], a date or a datetime. Periods are counted from 1970-01-01 00:00,
+        and weeks from Monday 1970-01-05. A date floors by calendar steps only,
+        and a datetime by exact steps of whole ticks of its unit. Its type is
+        [a]'s.
 
         Raises [Invalid_argument] if [step] is not positive. *)
 
-    val offset : ?zone:Tz.zone -> Time.step -> ('a, 's) t -> ('a, 's) t
-    (** [offset ?zone step a] is [a], a date or a datetime, moved by [step]: an
-        exact step moves the instant, and a calendar step moves the wall clock,
-        on [zone]'s when [a] has a zone, as for {!floor}; a day of the month
-        past the month's end becomes its last day. A date moves by calendar
-        steps only, and a datetime by exact steps of whole ticks of its unit.
-        Its type is [a]'s. *)
-
-    type policy = [ `Earlier | `Later | `Null | `Fail ]
-    (** The type for resolutions of a wall-clock time that a zone reads twice or
-        never. A time read twice has two instants; a skipped time has the two
-        instants that the offsets before and after the skip give it, the later
-        being the time moved past the gap. [`Earlier] and [`Later] pick one,
-        [`Null] gives null, and [`Fail] is a data error. *)
-
-    val localize :
-      Tz.zone ->
-      ambiguous:policy ->
-      gap:policy ->
-      (Time.instant, 's) t ->
-      (Time.instant, 's) t
-    (** [localize zone ~ambiguous ~gap a] is the instant at which [zone]'s wall
-        clock reads [a], resolved by [ambiguous] where it reads [a] twice and by
-        [gap] where it never does. [a] is a datetime without a zone, and the
-        result has [a]'s unit and [zone]'s name. *)
-
-    val windows :
-      ?zone:Tz.zone ->
-      every:Time.step ->
-      period:Time.step ->
-      ('a, 's) t ->
-      ('a array, 's) t
-    (** [windows ?zone ~every ~period a] is the starts of the windows that hold
-        [a], a date or a datetime, in ascending order: windows start every
-        [every], as {!floor} places them, and last [period], as {!offset} moves.
-        Its type is [list[t]] for [a]'s type [t]. [unnest], then [aggregate],
-        gives hopping windows.
-
-        Raises [Invalid_argument] if [every] or [period] is not positive. *)
+    val offset : Time.step -> ('a, 's) t -> ('a, 's) t
+    (** [offset step a] is [a], a date or a datetime, moved by [step]: an exact
+        step moves the instant, and a calendar step moves the wall clock; a day
+        of the month past the month's end becomes its last day. A date moves by
+        calendar steps only, and a datetime by exact steps of whole ticks of its
+        unit. Its type is [a]'s. *)
 
     val parse : string -> 'a Type.t -> (string, 's) t -> ('a, 's) t
     (** [parse fmt ty a] reads the text [a] in the format [fmt] as a value of
@@ -1622,9 +1476,9 @@ module Expr : sig
       - a literal formats as its value: [15], [15.], [nan], ["text"], [true],
         [2024-03-15], [2024-03-15T09:30:00], [15m];
       - an OCaml value of {!const} formats as [<const>], and the functions of
-        {!nx}, {!nx2} and {!batch} as [<fn>];
-      - an {!is_in} list and {!cut} edges format with their operand's type once
-        bound, and as [[…]] before. *)
+        {!nx} and {!nx2} as [<fn>];
+      - an {!is_in} list formats with its operand's type once bound, and as
+        [[…]] before. *)
 end
 
 module Col : sig
@@ -1704,10 +1558,9 @@ module Ext : sig
         {!Expr.is_in} values encode with it. It must be injective;
       - [ordered], a promise that the order of stored values is the order of the
         values, as for an epoch stored normalized. With [~ordered:false],
-        {!Expr.min}, {!Expr.max}, {!Expr.arg_min}, {!Expr.arg_max},
-        {!Expr.rank}, {!Expr.cut} and [<] are problems on its values. Sort and
-        join keys are names, which no declaration binds: sort an extension
-        column by its storage, derived first.
+        {!Expr.min}, {!Expr.max}, {!Expr.arg_min}, {!Expr.arg_max}, {!Expr.rank}
+        and [<] are problems on its values. Sort and join keys are names, which
+        no declaration binds.
 
       [metadata] defaults to [""].
 
@@ -1717,15 +1570,6 @@ module Ext : sig
   (** [col e name] is the column [name] read through [e]. It binds only a column
       whose type is [e]'s: the same name, metadata and storage type, so a
       declaration of metres never binds a column of kilograms. *)
-
-  val storage : ('e, 's) t -> ('e, 'sh) Expr.t -> ('s, 'sh) Expr.t
-  (** [storage e x] is the stored values of [x], an expression of [e]'s type, as
-      [e]'s storage type. *)
-
-  val wrap : ('e, 's) t -> ('s, 'sh) Expr.t -> ('e, 'sh) Expr.t
-  (** [wrap e x] is [x]'s values as values of [e]'s type: [x] meets [e]'s
-      storage type, which must contain [x]'s type. [wrap e (storage e x)] has
-      [x]'s values. *)
 end
 
 module Source : sig
@@ -2074,9 +1918,9 @@ module Query : sig
       within edit distance 2, or else with all of them.
 
       {b User functions.} The functions inside a verb's expressions and
-      selectors ([Expr.across], [Expr.each], [Sel.where], [Expr.nx],
-      [Expr.batch]) run when the verb is applied. They must be pure, and an
-      exception they raise propagates from the verb. *)
+      selectors ([Expr.across], [Expr.each], [Sel.where], [Expr.nx]) run when
+      the verb is applied. They must be pure, and an exception they raise
+      propagates from the verb. *)
 
   type t
   (** The type for queries. *)
@@ -2103,9 +1947,9 @@ module Query : sig
         Expr.[ keep Sel.(names [ "carrier" ]); "late" := delay > float 15. ]
       ]}
       It keeps [q]'s row count and order. Each output reads [q]'s columns, never
-      another output. It streams in O(n), except that {!Expr.over},
-      {!Expr.rolling} and {!Expr.rank} over the input's rows need the whole
-      input: the verb then blocks.
+      another output. It streams in O(n), except that {!Expr.over} and
+      {!Expr.rank} over the input's rows need the whole input: the verb then
+      blocks.
 
       Its problems are those of binding [os], and two outputs of one name. *)
 
@@ -2114,9 +1958,8 @@ module Query : sig
       [os]: an output replaces the column of its name in place, with the
       output's type, and the others follow [q]'s columns, in order. It keeps
       [q]'s row count and order. Each output reads [q]'s columns, never another
-      output. It streams in O(n), except that {!Expr.over}, {!Expr.rolling} and
-      {!Expr.rank} over the input's rows need the whole input: the verb then
-      blocks.
+      output. It streams in O(n), except that {!Expr.over} and {!Expr.rank} over
+      the input's rows need the whole input: the verb then blocks.
 
       Its problems are those of binding [os], and two outputs of one name. *)
 
@@ -2124,11 +1967,11 @@ module Query : sig
   (** [filter p q] is the rows of [q] on which [p] is [true], in order, so a row
       on which [p] is null is dropped. Its schema is [q]'s. [p] is a [bool]
       column: an OCaml value, as [const f $ x] is, takes that type. It streams
-      in O(n), except that {!Expr.over}, {!Expr.rolling} and {!Expr.rank} over
-      the input's rows need the whole input: the verb then blocks.
+      in O(n), except that {!Expr.over} and {!Expr.rank} over the input's rows
+      need the whole input: the verb then blocks.
 
       Its problems are those of binding [p], and an extension's values, even
-      when they read as [bool]: compute [p] from [Ext.storage]. *)
+      when they read as [bool]. *)
 
   val sort : Order.t list -> t -> t
   (** [sort ks q] is [q]'s rows ordered by the keys [ks] in turn, each by
@@ -2139,13 +1982,7 @@ module Query : sig
       Its problems are a key that names no column, a key that names the column
       of an earlier key, a key on a column whose type holds an extension type,
       which has no order, and a key on an extension column, which orders only
-      through its declaration: sort its storage, derived first, as the problem's
-      message shows:
-      {[
-      derive Expr.[ "k" := Ext.storage e (Ext.col e "t") ]
-      |> sort [ Order.asc "k" ]
-      |> select Expr.[ keep Sel.(all - names [ "k" ]) ]
-      ]} *)
+      through its declaration. *)
 
   val slice : offset:int -> length:int -> t -> t
   (** [slice ~offset ~length q] is [q]'s rows at the positions [offset] to
@@ -2300,8 +2137,8 @@ module Query : sig
       {b Predicates.} A filter's predicate splits into its {e conjuncts}, the
       operands of its [&&]s. A conjunct moves toward the sources when it is
       {e row-local}, its value at a row depending on that row alone: it has no
-      {!Expr.over}, {!Expr.rolling}, {!Expr.shift} or {!Expr.rank}. It moves
-      past each step that keeps the rows it sees and the values it reads:
+      {!Expr.over}, {!Expr.shift} or {!Expr.rank}. It moves past each step that
+      keeps the rows it sees and the values it reads:
       - a [sort];
       - a [filter] whose predicate is row-local, with which it merges;
       - a [select] or a [derive] whose outputs are row-local, when each column
@@ -2325,10 +2162,10 @@ module Query : sig
       input changes the matches of the other input's rows, and so could make
       that side's assertion fail on rows the plan shows it. A conjunct that can
       fail, one with a [cast] that narrows, [Str.parse], temporal arithmetic or
-      parsing, [of_option], [$] or [batch], passes only the steps that show it
-      the rows they receive: a [sort], a [select] or a [derive], an
-      [aggregate]'s keys and an [append]. Below a [filter], a [join] or an
-      [unnest] it would meet rows that [q] never shows it.
+      parsing, [of_option] or [$], passes only the steps that show it the rows
+      they receive: a [sort], a [select] or a [derive], an [aggregate]'s keys
+      and an [append]. Below a [filter], a [join] or an [unnest] it would meet
+      rows that [q] never shows it.
 
       When it reaches a source, a conjunct that compares a column with a
       literal, tests it with {!Expr.is_in} or {!Expr.is_null}, or combines such
@@ -2409,9 +2246,8 @@ module Query : sig
       module paths, its expressions as {!Expr.pp} formats them, its keys as they
       are written inside [Order.( … )] and its condition as it is written inside
       [Join.( … )]:
-      - outputs as ["name" := e], with selectors resolved, a run of columns kept
-        unchanged under their names as one [keep (names ["a"; "b"])], and a run
-        of every field of a record [r], in order, as [unpack r];
+      - outputs as ["name" := e], with selectors resolved, and a run of columns
+        kept unchanged under their names as one [keep (names ["a"; "b"])];
       - [~kind], [~each_left] and [~each_right] after [~on], when they are not
         their defaults;
       - a table as [table (4 columns, 16 rows)], and a source as its name and
@@ -2484,9 +2320,7 @@ module Kit : sig
       | [] -> head 1 q
       | names -> Query.aggregate ~by:names [] q
       ]}
-      A query without columns has one distinct row if it has rows. The first of
-      each set of rows that are the same on the columns [ks] alone is
-      [Query.filter Expr.(over ~by:ks Kit.index = int 0) q]. *)
+      A query without columns has one distinct row if it has rows. *)
 
   val count_by : string list -> Query.t -> Query.t
   (** [count_by ks q] is one row per group of [q]'s rows that have the same keys
@@ -2668,44 +2502,4 @@ module Kit : sig
       distinct strings, the most a dictionary holds.
 
       Raises [Invalid_argument] if [cs] names a column twice. *)
-
-  (** {1:expressions Expressions} *)
-
-  val cumulative : ('a, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t
-  (** [cumulative r] is, at each row of the frame, the reduction [r] over the
-      frame's rows from the first to that one: [cumulative (sum x)] is a running
-      sum. It takes [r]'s type and null rules: a null row adds nothing to a
-      reduction that skips nulls, and a row before the frame's first value has
-      [r] over no values, [0] for a sum and null for a maximum. Inside
-      [Expr.over ~by ~order] the frame is each partition, in its order.
-      {[
-      Expr.rolling (Window.rows ~before:max_int ~after:0) r
-      ]}
-      A growing [rows], [count], [sum], [min], [max], [first], [last] or [ewm]
-      costs one pass over the frame; over the input's rows it blocks, as
-      [Expr.rolling] does. *)
-
-  val index : (int, Expr.row) Expr.t
-  (** [index] is each row's position in its frame, from [0], as [int64]: the
-      position that [Expr.arg_min] and [Expr.arg_max] give.
-      {[
-      Expr.(cumulative rows - int 1)
-      ]} *)
-
-  val arg :
-    (int, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t -> ('a, Expr.agg) Expr.t
-  (** [arg p v] is [v] at the position [p] of the frame, and null where [p] or
-      that value is null: [arg (arg_max score) name] is the name with the best
-      score.
-      {[
-      Expr.(first (if_ (index = over p) v null))
-      ]} *)
-
-  val fill_forward : ('a, Expr.row) Expr.t -> ('a, Expr.row) Expr.t
-  (** [fill_forward x] is [x] with each null replaced by the last value before
-      it in the frame, and null before the first value. It applies to every
-      type, an extension read with [Expr.each] included.
-      {[
-      cumulative (Expr.last x)
-      ]} *)
 end
