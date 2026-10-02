@@ -1086,6 +1086,10 @@ type t = {
 
 exception Needs of float * float
 
+(* [up x] is [x] rounded up to the hundredth of a point that sizes are named
+   in. *)
+let up x = Float.ceil (x *. 100.) /. 100.
+
 (* [solve em unit size ~final root] is the data hulls of [root] at [size] and
    the page's size. In the [final] solve, a figure too small for [root] raises
    [Needs] with a larger size. *)
@@ -1099,7 +1103,6 @@ let solve em unit size ~final root =
     | Size.Figure (w, h) ->
         let cw = w -. ow and ch = h -. oh in
         if final && (w < ow +. nw || h < oh +. nh) then begin
-          let up x = Float.ceil (x *. 100.) /. 100. in
           raise
             (Needs (Float.max w (up (ow +. nw)), Float.max h (up (oh +. nh))))
         end;
@@ -1223,6 +1226,8 @@ let layout ?prev ?(theme = Theme.default) size r =
          more than the changes of choice up to the widest need: at most three
          retries over 15,000 random figures. *)
       let rec fits w h =
+        (* The size tried is the one named, to the hundredth printed. *)
+        let w = up w and h = up h in
         match attempt theme (Size.figure w h) r with
         | _ -> (w, h)
         | exception Needs (w, h) -> fits w h

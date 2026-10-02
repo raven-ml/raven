@@ -888,25 +888,29 @@ let least_sizes =
       (Gen.pair gen_case (Gen.float_range 0.3 1.))
       names_law
   in
-  (* Found at 15,000 cases: the size named is itself too small. *)
-  let named_too_small =
-    {
-      base with
-      cols = 2;
-      exps = [ (0, -4); (7, 5) ];
-      colour = Categories;
-      shared = true;
-      aspect = true;
-      top = true;
-      titles = Some ("two\nlines", "a", "a");
-    }
+  (* Figures too small at a factor of their least size, whose named size the law
+     once found too small itself. *)
+  let near_least =
+    [
+      ( "a shared, titled pair of aspect panels",
+        ( {
+            base with
+            cols = 2;
+            exps = [ (0, -4); (7, 5) ];
+            colour = Categories;
+            shared = true;
+            aspect = true;
+            top = true;
+            titles = Some ("two\nlines", "a", "a");
+          },
+          0.9788345544751399 ) );
+    ]
   in
   group "least sizes"
     [
       named;
-      xfail ~reason:"the size named can itself be too small"
-        (test "a shared, titled pair of aspect panels names a size that fits"
-           (fun () -> names_law (named_too_small, 0.9788345544751399)));
+      cases ~name:fst "a figure too small names a size that lays it out:"
+        near_least (fun (_, c) -> names_law c);
       cases ~name:(Printf.sprintf "%g pt")
         "a long y title lays out or names a size that does at"
         [ 120.; 155.; 160.; 181.; 182.; 182.2; 182.29; 182.3 ] (fun w ->
