@@ -299,6 +299,20 @@ let errors =
           resolve
             (layer [ dot1 [| 1. |] [| 1. |]; axis "x"; axis ~grid:true "x" ])),
         [ "root"; "x" ] );
+      ( "an x axis on the left",
+        (fun () ->
+          resolve
+            (layer [ dot1 [| 1. |] [| 1. |]; axis ~side:`Left "x" |> name "a" ])),
+        [ "the axis a of \"x\""; "left" ] );
+      ( "a y axis of a user's name at the top",
+        (fun () ->
+          resolve
+            (layer
+               [
+                 dot ~x:(num x) ~y:(num ~scale:lr x) ();
+                 axis ~side:`Top "lr" |> name "a";
+               ])),
+        [ "the axis a of \"lr\""; "top" ] );
       ( "a legend of no scale with a legend",
         (fun () -> resolve (layer [ dot1 [| 1. |] [| 1. |]; legend "x" ])),
         [ "1"; "x" ] );

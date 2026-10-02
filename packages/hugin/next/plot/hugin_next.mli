@@ -933,8 +933,9 @@ val axis : ?side:side -> ?grid:bool -> ?show:bool -> string -> t
     - [show] says whether it is drawn at all. Defaults to [true].
 
     {!resolve} raises [Invalid_argument] if [name] names no position or facet
-    scale of the panels it is layered with, or if a panel holds two different
-    axes for one scale. *)
+    scale of the panels it is layered with, if [side] is [`Left] or [`Right] for
+    a scale that [x] reads or [`Top] or [`Bottom] for one that [y] reads, or if
+    a panel holds two different axes for one scale. *)
 
 val legend : ?side:side -> ?show:bool -> string -> t
 (** [legend ~side ~show name] is the legend of the scales named [name] in the

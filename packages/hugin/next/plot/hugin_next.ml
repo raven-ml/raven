@@ -576,6 +576,14 @@ let equal_side (s : side) (s' : side) =
   | `Left, `Left | `Right, `Right | `Top, `Top | `Bottom, `Bottom -> true
   | _ -> false
 
+let pp_side ppf (side : side) =
+  Format.pp_print_string ppf
+    (match side with
+    | `Left -> "left"
+    | `Right -> "right"
+    | `Top -> "top"
+    | `Bottom -> "bottom")
+
 let equal_halign (a : Text.Layout.halign) (a' : Text.Layout.halign) =
   match (a, a') with
   | `Left, `Left | `Center, `Center | `Right, `Right -> true
@@ -1899,18 +1907,31 @@ let check_axes cells readings =
                 err "resolve" "the panel %a holds two different axes for %S"
                   pp_id pid a.scale)
             axes;
-          let ok =
-            List.exists
+          let roles =
+            List.filter_map
               (fun (R r) ->
-                Nx.Ptree.Path.equal r.pid pid
-                && positional (axis_role r.role)
-                && String.equal r.sid.sname a.scale)
+                let role = axis_role r.role in
+                if
+                  Nx.Ptree.Path.equal r.pid pid
+                  && positional role
+                  && String.equal r.sid.sname a.scale
+                then Some role
+                else None)
               readings
           in
-          if not ok then
+          if roles = [] then
             err "resolve"
               "the axis %a names %S, no position or facet scale of its panel"
-              pp_id a.gid a.scale)
+              pp_id a.gid a.scale;
+          (* An axis runs along the direction of its scale's position. *)
+          match a.side with
+          | Some ((`Left | `Right) as side) when List.mem "x" roles ->
+              err "resolve" "the axis %a of %S is on the %a side" pp_id a.gid
+                a.scale pp_side side
+          | Some ((`Top | `Bottom) as side) when List.mem "y" roles ->
+              err "resolve" "the axis %a of %S is on the %a side" pp_id a.gid
+                a.scale pp_side side
+          | _ -> ())
         axes)
     cells
 
@@ -3097,14 +3118,6 @@ module Resolved = struct
 
   (* Formatting *)
 
-  let pp_side ppf (side : side) =
-    Format.pp_print_string ppf
-      (match side with
-      | `Left -> "left"
-      | `Right -> "right"
-      | `Top -> "top"
-      | `Bottom -> "bottom")
-
   let pp_guide ppf = function
     | G_axis a ->
         Format.fprintf ppf "axis %S%a%s%s" a.scale
@@ -4271,11 +4284,6 @@ let axis_spec r scales c pid p role =
         | Some { side = Some s; _ } -> s
         | _ -> default_side role
       in
-      (match (role, horizontal side) with
-      | Gx, false | Gy, true ->
-          err "layout" "the axis of %S of the panel %a is on its %a side" sname
-            pp_id p.pnid Resolved.pp_side side
-      | _ -> ());
       {
         a_id = Nx.Ptree.Path.(add (Field sname) (add (Field "axis") p.pnid));
         a_scale = i;
@@ -4870,16 +4878,14 @@ module Layout = struct
       (if p.turned then " turned" else "")
 
   let pp_axis ppf a =
-    Format.fprintf ppf "@[<v 2>axis %a %a%s" pp_id a.ax_id Resolved.pp_side
-      a.ax_side
+    Format.fprintf ppf "@[<v 2>axis %a %a%s" pp_id a.ax_id pp_side a.ax_side
       (if a.ax_grid then " grid" else "");
     List.iter (Format.fprintf ppf "@,label %a" pp_placed) a.ax_labels;
     Option.iter (Format.fprintf ppf "@,title %a" pp_placed) a.ax_title;
     Format.fprintf ppf "@]"
 
   let pp_legend ppf g =
-    Format.fprintf ppf "@[<v 2>legend %a %a" pp_id g.lg_id Resolved.pp_side
-      g.lg_side;
+    Format.fprintf ppf "@[<v 2>legend %a %a" pp_id g.lg_id pp_side g.lg_side;
     Option.iter (Format.fprintf ppf "@,title %a" pp_placed) g.lg_title;
     (match g.lg_body with
     | Bar { bar; labels } ->
