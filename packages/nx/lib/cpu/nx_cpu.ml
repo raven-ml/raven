@@ -250,6 +250,14 @@ external caml_argsort :
 let sort ~descending ~axis x ~dst = caml_sort dst x axis descending policy
 let argsort ~descending ~axis x ~dst = caml_argsort dst x axis descending policy
 
+(* Group (nx_c_group.c) *)
+
+external caml_group :
+  (int64, Nx_dtype.int64_elt) t -> (int64, Nx_dtype.uint64_elt) t -> int -> unit
+  = "caml_nx_c_group"
+
+let group x ~dst = caml_group dst x policy
+
 (* Move family (nx_c_move.c): the strided copy, and the kernels that write their
    operands into the destination. The pad value crosses to C as a one-element
    array. *)

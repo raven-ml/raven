@@ -232,6 +232,11 @@ module type S = sig
       its real part, then its imaginary part; a complex number with a NaN part
       ranks as a NaN. So NaN comes last ascending and first descending. *)
 
+  val group : (int64, Nx_dtype.uint64_elt) Nx_array.t -> dst:index_array -> unit
+  (** [group x ~dst] writes, for each row [i] of the matrix [x], the number of
+      distinct rows whose first occurrence comes before that of row [i]'s words
+      into [dst], of shape [[|n|]]. These ids depend on the rows alone. *)
+
   (** {1:assembly Assembly} *)
 
   val pad :

@@ -1088,6 +1088,11 @@ module Op = struct
         x : ('a, 'b) Types.t;
       }
         -> int64_t t
+    | Group : {
+        by : string;
+        x : (int64, Nx_dtype.uint64_elt) Types.t;
+      }
+        -> int64_t t
     | Pad : (int * int) array * 'a * ('a, 'b) Types.t -> ('a, 'b) Types.t t
     | Cat : int * ('a, 'b) Types.t list -> ('a, 'b) Types.t t
     | Convert :
@@ -1255,6 +1260,7 @@ module Op = struct
         match k with Argmax -> "argmax" | Argmin -> "argmin")
     | Sort _ -> "sort"
     | Argsort _ -> "argsort"
+    | Group _ -> "group"
     | Pad _ -> "pad"
     | Cat _ -> "concatenate"
     | Convert (k, _, _) -> (
@@ -1302,6 +1308,7 @@ module Op = struct
     | Arg_reduce (_, _, x) -> [ P x ]
     | Sort { x; _ } -> [ P x ]
     | Argsort { x; _ } -> [ P x ]
+    | Group { x; _ } -> [ P x ]
     | Pad (_, _, x) -> [ P x ]
     | Cat (_, xs) -> List.map (fun x -> P x) xs
     | Convert (_, _, x) -> [ P x ]
@@ -1344,6 +1351,7 @@ module Op = struct
     | Arg_reduce (k, axis, x) -> Arg_reduce (k, axis, f x)
     | Sort s -> Sort { s with x = f s.x }
     | Argsort s -> Argsort { s with x = f s.x }
+    | Group g -> Group { g with x = f g.x }
     | Pad (padding, v, x) -> Pad (padding, v, f x)
     | Cat (axis, xs) -> Cat (axis, List.map f xs)
     | Convert (c, dtype, x) -> Convert (c, dtype, f x)
@@ -1629,6 +1637,7 @@ let routing : type r. r Op.t -> routing =
   | Scan (_, axis, _) -> along_axes [ axis ]
   | Sort { axis; _ } -> along_axes [ axis ]
   | Argsort { axis; _ } -> along_axes [ axis ]
+  | Group _ -> along_axes [ 0; 1 ]
   | Pad (padding, _, _) -> along_axes (padded padding)
   | Cat (axis, _) -> along_axes [ axis ]
   | Gather (axis, _, _) -> computes (Gather axis)
@@ -2005,6 +2014,7 @@ let result_shape : type a b. (a, b) t Op.t -> int array =
   | Arg_reduce (_, axis, x) -> Shape.reduce_output_shape (s x) [| axis |] false
   | Sort { x; _ } -> s x
   | Argsort { x; _ } -> s x
+  | Group { x; _ } -> [| (s x).(0) |]
   | Pad (padding, _, x) -> pad_shape padding (s x)
   | Cat (axis, xs) -> cat_shape axis (List.map s xs)
   | Convert (Cast, _, x) -> s x
@@ -2042,6 +2052,7 @@ let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
   | Arg_reduce _ -> Nx_dtype.Int64
   | Sort { x; _ } -> dtype x
   | Argsort _ -> Nx_dtype.Int64
+  | Group _ -> Nx_dtype.Int64
   | Pad (_, _, x) -> dtype x
   | Cat (_, x :: _) -> dtype x
   | Cat (_, []) -> invalid_arg "Nx.concatenate: no value to concatenate"
@@ -2274,6 +2285,18 @@ let k_argsort (e : env) descending axis a =
   let dst = e.alloc Nx_dtype.Int64 (shape_of a) in
   claim a;
   (match K.argsort ~descending ~axis a ~dst with
+  | () -> release a
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      release a;
+      Printexc.raise_with_backtrace e bt);
+  dst
+
+let k_group (e : env) a =
+  let (module K) = e.kernels in
+  let dst = e.alloc Nx_dtype.Int64 [| (shape_of a).(0) |] in
+  claim a;
+  (match K.group a ~dst with
   | () -> release a
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
@@ -2659,6 +2682,7 @@ let compute : type r. env list -> settle -> r Op.t -> r =
       each (fun e -> k_sort e descending axis (e.arr x))
   | Argsort { descending; axis; x } ->
       each (fun e -> k_argsort e descending axis (e.arr x))
+  | Group { x; _ } -> each (fun e -> k_group e (e.arr x))
   | Pad (padding, v, x) -> each (fun e -> k_pad e padding v (e.arr x))
   | Cat (axis, xs) -> each (fun e -> k_cat e axis (List.map e.arr xs))
   | Convert (Cast, dtype, x) -> each (fun e -> k_cast e dtype (e.arr x))
@@ -2924,6 +2948,11 @@ let direct_argsort descending axis x =
   | Host a -> Host (k_argsort host_env descending axis a)
   | _ -> on_devices (Argsort { descending; axis; x })
 
+let direct_group by x =
+  match x with
+  | Host a -> Host (k_group host_env a)
+  | _ -> on_devices (Group { by; x })
+
 let direct_pad padding v x =
   match x with
   | Host a -> Host (k_pad host_env padding v a)
@@ -3046,6 +3075,7 @@ let direct : type r. r Op.t -> r =
   | Arg_reduce (k, axis, x) -> direct_arg_reduce k axis x
   | Sort { descending; axis; x } -> direct_sort descending axis x
   | Argsort { descending; axis; x } -> direct_argsort descending axis x
+  | Group { by; x } -> direct_group by x
   | Pad (padding, v, x) -> direct_pad padding v x
   | Cat (axis, xs) -> direct_cat axis xs
   | Convert (c, dtype, x) -> direct_convert c dtype x
@@ -3165,6 +3195,9 @@ let sort ~descending ~axis x =
 let argsort ~descending ~axis x =
   if intercepting () then perform (Argsort { descending; axis; x })
   else direct_argsort descending axis x
+
+let group ~by x =
+  if intercepting () then perform (Group { by; x }) else direct_group by x
 
 let pad padding v x =
   if intercepting () then perform (Pad (padding, v, x))

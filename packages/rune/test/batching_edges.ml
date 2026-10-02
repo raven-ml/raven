@@ -92,6 +92,14 @@ let integer_operands =
           (Rune.vmap
              Nx.Ptree.(tensor @-> tensor @-> returns tensor)
              write starts values));
+    is_the_loop "batched rows are numbered within their lane"
+      (fun x -> Op.eval (Group { by = "Batching_edges"; x }))
+      (Nx.create Nx.uint64 [| 3; 4; 2 |]
+         (Array.map Int64.of_int
+            [|
+              5; 1; 5; 1; 2; 2; 5; 1; 2; 2; 2; 2; 5; 1; 7; 0; 0; 0; 0; 0; 0; 0;
+              0; 0;
+            |]));
     is_the_loop "a batched key draws each lane's words"
       (fun key -> Op.eval (Threefry (key, int32s [| 2 |] [| 5; 6 |])))
       (int32s [| 3; 2 |] [| 1; 2; 3; 4; 5; 6 |]);

@@ -141,6 +141,22 @@ let update m x starts v =
   end
   else eval (Update (x, Nx.pad [| (1, 0) |] 0L starts, v))
 
+(* Every lane's rows, lane-major, behind a leading word of their lane: a lane's
+   groups take a contiguous range of ids in order of first appearance, which
+   starts at its first row's id. *)
+let group m by x =
+  let p = physical m x in
+  let lanes = m.size and n = Nx.dim 1 p and w = Nx.dim 2 p in
+  let lane =
+    Nx.broadcast_to [| lanes; n; 1 |]
+      (Nx.reshape [| lanes; 1; 1 |] (Nx.arange Nx.uint64 0 lanes 1))
+  in
+  let rows =
+    Nx.reshape [| lanes * n; w + 1 |] (Nx.concatenate ~axis:2 [ lane; p ])
+  in
+  let ids = Nx.reshape [| lanes; n |] (eval (Group { by; x = rows })) in
+  if n = 0 then ids else Nx.sub ids (Nx.slice [ A; R (0, 1) ] ids)
+
 (* A product broadcasts its operands' leading axes positionally, so an operand
    with leading axes of its own lifts both to one leading rank, the map's axis
    first. *)
@@ -179,6 +195,7 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Sort s -> lane (eval (Sort { s with axis = shifted s.axis; x = p s.x }))
   | Argsort s ->
       lane (eval (Argsort { s with axis = shifted s.axis; x = p s.x }))
+  | Group { by; x } -> lane (group m by x)
   | Pad (padding, v, x) ->
       lane (eval (Pad (Array.append [| (0, 0) |] padding, v, p x)))
   | Cat (axis, xs) -> lane (eval (Cat (shifted axis, List.map b xs)))

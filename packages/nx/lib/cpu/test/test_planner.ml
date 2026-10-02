@@ -51,6 +51,9 @@ external sort : ('a, 'b) arr -> ('a, 'b) arr -> int -> bool -> int -> unit
 external argsort : index -> ('a, 'b) arr -> int -> bool -> int -> unit
   = "caml_nx_c_argsort"
 
+external group_rows : index -> (int64, Nx_dtype.uint64_elt) arr -> int -> unit
+  = "caml_nx_c_group"
+
 (* Thread counts. [None] is nx.cpu's policy, through Nx_cpu; the last runs on
    every core. *)
 
@@ -91,6 +94,9 @@ let sort_with ~arg ~descending threads ~axis x ~dst ~idx =
   | None, true -> Nx_cpu.argsort ~descending ~axis x ~dst:idx
   | Some n, false -> sort dst x axis descending n
   | Some n, true -> argsort idx x axis descending n
+
+let group_with threads x ~dst =
+  match threads with None -> Nx_cpu.group x ~dst | Some n -> group_rows dst x n
 
 (* Arrays *)
 
@@ -452,5 +458,48 @@ let sorts =
            layouts)
        [ (false, false); (false, true); (true, false); (true, true) ])
 
+(* Groups: rows past one block of 2^16, so that the blocks' groups merge. Keys
+   are drawn among [distinct] words, a few repeated in every block or most of
+   them unique. *)
+
+let groups =
+  let layouts =
+    [
+      contiguous [| 200_000; 1 |];
+      contiguous [| 140_000; 2 |];
+      flipped (contiguous [| 140_000; 2 |]);
+      transposed [| 3; 70_000 |];
+    ]
+  in
+  let law l distinct (seed, _) =
+    let st = Random.State.make [| seed |] in
+    let n = Array.fold_left ( * ) 1 l.base in
+    let buffer = Nx_array.Elements.create Nx_dtype.UInt64 n in
+    let set = Nx_array.Elements.set Nx_dtype.UInt64 buffer in
+    for i = 0 to n - 1 do
+      set i (Random.State.int64 st distinct)
+    done;
+    let x =
+      {
+        Nx_array.dtype = Nx_dtype.UInt64;
+        view = l.view (View.create l.base);
+        buffer;
+      }
+    in
+    let run threads =
+      let dst = fresh Nx_dtype.Int64 [| (View.shape x.view).(0) |] in
+      group_with threads x ~dst;
+      bytes_of dst
+    in
+    same_bytes (Printf.sprintf "%Ld distinct words, %s" distinct l.name) run
+  in
+  group "groups"
+    (List.map
+       (fun l ->
+         case ("group of " ^ l.name) (fun v ->
+             List.iter (fun d -> law l d v) [ 3L; 5_000L; Int64.max_int ]))
+       layouts)
+
 let () =
-  exit (run "nx.cpu planner" [ reductions; arg_reductions; scans; sorts ])
+  exit
+    (run "nx.cpu planner" [ reductions; arg_reductions; scans; sorts; groups ])

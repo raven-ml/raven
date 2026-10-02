@@ -18,6 +18,7 @@ type t =
   | Arg_reduce of Nx_backend.arg_reduce
   | Sort
   | Argsort
+  | Group
   | Pad
   | Cat
   | Cast

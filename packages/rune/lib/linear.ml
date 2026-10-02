@@ -171,8 +171,8 @@ let run : type r. tape -> r Nx.Op.t -> r =
            "%s: a custom_jvp tangent map reads a tangent's value with %s; \
             under reverse mode a tangent has none"
            t.entry by)
-  | Compare _ | Arg_reduce _ | Sort _ | Argsort _ | Threefry _ | Cholesky _
-  | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Check _ ->
+  | Compare _ | Arg_reduce _ | Sort _ | Argsort _ | Group _ | Threefry _
+  | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Check _ ->
       nonlinear t op
 
 (* Gathering across the lanes of the map named [axis] is linear: its transpose
@@ -559,7 +559,7 @@ let transpose_op : type a b.
         add b (unbroadcast (Nx.matmul (Nx.matrix_transpose a) ct) (Nx.shape b))
   | Place (_, x) -> add x (Nx.place (Nx.placement x) ct)
   | Compare _ | Sort _ | Threefry _ | Cholesky _ | Arg_reduce _ | Argsort _
-  | Read _ ->
+  | Group _ | Read _ ->
       assert false (* Never recorded. *)
 
 let transpose_call cts i inputs like pullback =

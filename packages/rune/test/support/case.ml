@@ -489,6 +489,23 @@ let argsort_case =
   case ~kind:Plain Argsort (fun (D d) ->
       sort_instance ~indices:true (tensor d tied))
 
+(* Grouping: rows of words among a few, so that rows repeat. *)
+
+let group_case =
+  case ~kind:Integer ~dtypes:[ float64 ] Group (fun _ ->
+      let* s = shape 2 2 in
+      let+ x = tensor Nx.float64 (of_list [ 0.; 1.; 2. ]) s in
+      instance
+        ~extra:(Some [ Row.Cast; Row.Cast ])
+        "group"
+        (fun x ->
+          [
+            Nx.cast Nx.float64
+              (Op.eval
+                 (Group { by = "Case.group"; x = Nx.cast Nx.uint64 (one x) }));
+          ])
+        [ x ])
+
 (* Assembly *)
 
 let pad_instance d g =
@@ -1349,6 +1366,7 @@ let of_row : Row.t -> t = function
   | Arg_reduce k -> arg_reduce_case k
   | Sort -> sort_case
   | Argsort -> argsort_case
+  | Group -> group_case
   | Pad -> pad_case
   | Cat -> cat_case
   | Cast -> cast_case

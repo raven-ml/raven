@@ -942,6 +942,142 @@ let searchsorts =
                   (Nx.zeros Nx.complex64 [| 1 |])));
       ])
 
+(* Grouping *)
+
+let group_rows x = Nx.Op.eval (Group { by = "test_sorting"; x })
+
+(* [rows] numbered in order of first appearance. *)
+let first_appearance rows =
+  let seen = Hashtbl.create 16 in
+  Array.map
+    (fun r ->
+      match Hashtbl.find_opt seen r with
+      | Some id -> id
+      | None ->
+          let id = Int64.of_int (Hashtbl.length seen) in
+          Hashtbl.add seen r id;
+          id)
+    rows
+
+let pp_word ppf w = Format.fprintf ppf "%Lu" w
+
+(* Words among a few, so that rows repeat: the extremes and their neighbours. *)
+let tied_words = Gen.of_list ~pp:pp_word [ 0L; 1L; 2L; -1L; Int64.min_int ]
+
+(* Rows past one block of 2^16 rows, so that the blocks' groups merge: [n] rows
+   of [w] words drawn by [seed] among [distinct] rows, then laid out. *)
+type many = {
+  n : int;
+  w : int;
+  distinct : int;
+  layout : [ `Contiguous | `Flipped | `Every_other_row ];
+  seed : int;
+}
+
+let pp_many ppf m =
+  Format.fprintf ppf "%d rows of %d words among %d, %s, seed %d" m.n m.w
+    m.distinct
+    (match m.layout with
+    | `Contiguous -> "contiguous"
+    | `Flipped -> "flipped"
+    | `Every_other_row -> "every other row")
+    m.seed
+
+let many =
+  let open Gen in
+  let+ n = int_range 65_537 200_000
+  and+ w = int_range 1 3
+  and+ distinct = of_list [ 1; 7; 5_000; 1_000_000 ]
+  and+ layout = of_list [ `Contiguous; `Flipped; `Every_other_row ]
+  and+ seed = int_range 0 0x3fff_ffff in
+  { n; w; distinct; layout; seed }
+
+(* [m]'s rows of [value k j], word [j] of the [k]th distinct row. *)
+let many_of dtype value m =
+  let st = Random.State.make [| m.seed |] in
+  let rows = match m.layout with `Every_other_row -> 2 * m.n | _ -> m.n in
+  let x = Array.make (rows * m.w) (Nx_dtype.zero dtype) in
+  for i = 0 to rows - 1 do
+    let k = Random.State.int st m.distinct in
+    for j = 0 to m.w - 1 do
+      x.((i * m.w) + j) <- value k j
+    done
+  done;
+  let x = Nx.create dtype [| rows; m.w |] x in
+  match m.layout with
+  | `Contiguous -> x
+  | `Flipped -> Nx.flip ~axes:[ 0 ] x
+  | `Every_other_row ->
+      Nx.squeeze ~axes:[ 2 ] (Nx.sliding_window ~axis:0 ~window:1 ~step:2 x)
+
+(* Words that spread a row's number over all 64 bits. *)
+let many_rows =
+  many_of Nx.uint64 (fun k j ->
+      Int64.mul (Int64.of_int (k + j)) 0x9E3779B97F4A7C15L)
+
+(* Floats with NaNs of two payloads and both zeros among them, one column for
+   rows of one word. *)
+let many_floats m =
+  let specials =
+    [|
+      Float.nan; Int64.float_of_bits 0xfff8_0000_0000_0002L; -0.; 0.; infinity;
+    |]
+  in
+  let x =
+    many_of Nx.float64
+      (fun k j ->
+        let k = k + j in
+        if k < Array.length specials then specials.(k) else float_of_int k)
+      m
+  in
+  if m.w = 1 then Nx.reshape [| Nx.dim 0 x |] x else x
+
+(* unique's reference composition: a stable sort of the keys' order keys, then
+   each run of equal keys and its first row in input order. *)
+let unique_by_sorting keys : Nx.groups =
+  let n = Nx.dim 0 keys in
+  if n = 0 then
+    let none = Nx.zeros Nx.int64 [| 0 |] in
+    { ids = none; first = none; counts = none }
+  else
+    let k = Nx.order_key Nx.uint64 keys in
+    let perm = Nx.lexsort k in
+    let sorted = Nx.take ~axis:0 ~indices:perm k in
+    let starts =
+      let differs =
+        Nx.not_equal
+          (Nx.slice [ R (1, n) ] sorted)
+          (Nx.slice [ R (0, n - 1) ] sorted)
+      in
+      let differs =
+        if Nx.ndim k = 2 then Nx.any ~axes:[ 1 ] differs else differs
+      in
+      Nx.pad [| (1, 0) |] true differs
+    in
+    let iota = Nx.arange Nx.int64 0 n 1 in
+    let run = Nx.cummax (Nx.where starts iota (Nx.zeros_like iota)) in
+    let inverse =
+      Nx.scatter ~unique_indices:true ~axis:0 ~indices:perm ~values:iota
+        (Nx.zeros Nx.int64 [| n |])
+    in
+    (* The sort is stable, so a run's first row in input order is the first
+       occurrence of its key. *)
+    let firsts = Nx.take ~indices:inverse starts in
+    let earlier =
+      let f = Nx.cast Nx.int64 firsts in
+      Nx.sub (Nx.cumsum f) f
+    in
+    let ids =
+      Nx.take ~indices:inverse
+        (Nx.take ~indices:(Nx.take ~indices:run perm) earlier)
+    in
+    let first = Nx.positions firsts in
+    let counts =
+      Nx.reduce_segments `Add ~segments:(Nx.dim 0 first) ids
+        (Nx.ones Nx.int64 [| n |])
+    in
+    { ids; first; counts }
+
 let uniques =
   let groups (S s) =
     prop
@@ -983,6 +1119,29 @@ let uniques =
   let arrays = triple (array int64) (array int64) (array int64) in
   group "unique"
     (List.map groups ordered
+    @ [
+        prop "Group numbers rows of words in order of first appearance"
+          (let open Gen in
+           let* n = int_range 0 12 in
+           let* w = int_range 0 3 in
+           keys_of ~pp:pp_word Nx.uint64 tied_words n (Some w))
+          (fun x ->
+            equal (array int64)
+              (first_appearance (rows_of x))
+              (Nx.to_array (group_rows x)));
+        prop ~count:12 "Group numbers rows across blocks"
+          (Gen.with_pp pp_many many) (fun m ->
+            let x = many_rows m in
+            equal (array int64)
+              (first_appearance (rows_of x))
+              (Nx.to_array (group_rows x)));
+        prop ~count:12 "unique groups as the sort composition does"
+          (Gen.with_pp pp_many many) (fun m ->
+            let keys = many_floats m in
+            equal arrays
+              (to_arrays (unique_by_sorting keys))
+              (to_arrays (Nx.unique keys)));
+      ]
     @ [
         test "NaNs of every payload form one group, and -0 and 0 two" (fun () ->
             let x =

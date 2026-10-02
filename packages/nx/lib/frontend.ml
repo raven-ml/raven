@@ -2991,35 +2991,19 @@ let unique keys =
     { ids = none; first = none; counts = none }
   else
     let k = order_key UInt64 keys in
-    let perm = lexsort k in
-    let sorted = take ~axis:0 ~indices:perm k in
-    (* Whether each sorted row starts a run of equal rows. *)
-    let starts =
-      let differs =
-        not_equal (slice [ R (1, n) ] sorted) (slice [ R (0, n - 1) ] sorted)
-      in
-      let differs = if ndim k = 2 then any ~axes:[ 1 ] differs else differs in
-      pad [| (1, 0) |] true differs
-    in
-    let iota = arange ctx Int64 0 n 1 in
-    let run = cummax (where starts iota (zeros_like iota)) in
-    let inverse =
-      scatter ~unique_indices:true ~axis:0 ~indices:perm ~values:iota
-        (zeros ctx Int64 [| n |])
-    in
-    (* The sort is stable, so a run's first row in input order is the first
-       occurrence of its key. *)
-    let firsts = take ~indices:inverse starts in
-    let earlier =
-      let f = cast Int64 firsts in
-      sub (cumsum f) f
-    in
     let ids =
-      take ~indices:inverse (take ~indices:(take ~indices:run perm) earlier)
+      B.group ~by:"Nx.unique" (if ndim k = 1 then reshape [| n; 1 |] k else k)
     in
-    let first = positions' ~by:"Nx.unique" firsts in
-    let counts =
-      reduce_segments `Add ~segments:(dim 0 first) ids
+    (* Groups are numbered in order of first appearance, from 0. *)
+    let segments = Int64.to_int (read_item ~by:"Nx.unique" (max ids)) + 1 in
+    (* [`Set] keeps the last update in index order, so over the rows reversed
+       it keeps each group's first. *)
+    let first =
+      scatter ~axis:0 ~indices:(flip ids)
+        ~values:(flip (arange ctx Int64 0 n 1))
+        (zeros ctx Int64 [| segments |])
+    and counts =
+      reduce_segments `Add ~segments ids
         (broadcast_to [| n |] (scalar ctx Int64 1L))
     in
     { ids; first; counts }

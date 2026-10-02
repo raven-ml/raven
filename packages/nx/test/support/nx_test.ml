@@ -46,6 +46,7 @@ let described : type r. r Nx.Op.t -> r -> unit =
   | Arg_reduce _ -> value op r
   | Sort _ -> value op r
   | Argsort _ -> value op r
+  | Group _ -> value op r
   | Pad _ -> value op r
   | Cat _ -> value op r
   | Convert _ -> value op r

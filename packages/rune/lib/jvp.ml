@@ -655,6 +655,7 @@ let run : type r. t -> r Nx.Op.t -> r =
         (eval (Sort { descending; axis; x }))
         (eval (Gather (axis, indices, dx)))
   | Argsort s -> eval (Argsort { s with x = primal i s.x })
+  | Group g -> eval (Group { g with x = primal i g.x })
   | Pad (padding, v, x) ->
       let x, dx = unwrap i x in
       dual i

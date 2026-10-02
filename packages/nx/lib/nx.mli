@@ -3156,8 +3156,9 @@ val unique : ('a, 'b) t -> groups
       ([|0L; 1L; 0L; 0L; 2L; 1L|], [|0L; 1L; 4L|], [|3L; 2L; 1L|])
     ]}
 
-    It sorts the keys' {!order_key}s with {!lexsort}, then makes about a dozen
-    passes over them: gathers, a scatter, cumulative sums and maxima.
+    It groups the keys' {!order_key}s in hash tables, an expected pass over
+    them whose ids depend on the keys alone, then scatters [first] and
+    [counts].
 
     Raises [Invalid_argument] if [keys] is not 1-D or 2-D, or is complex.
 
@@ -4415,6 +4416,18 @@ module Op : sig
         x : ('a, 'b) Nx_effect.t;
       }
         -> (int64, Nx_dtype.int64_elt) Nx_effect.t t
+    | Group : {
+        by : string;
+        x : (int64, Nx_dtype.uint64_elt) Nx_effect.t;
+      }
+        -> (int64, Nx_dtype.int64_elt) Nx_effect.t t
+        (** [Group { by; x }] numbers the rows of the matrix [x] in order of
+            first appearance: element [i] of its result, of shape [[|dim 0 x|]],
+            is the number of distinct rows whose first occurrence comes before
+            that of row [i]'s words. [by] is the qualified name of the function
+            that groups, such as ["Nx.unique"]; every such function reads the
+            number of groups, so an interpreter that cannot compute [Group]
+            raises a message that starts with [by]. *)
     | Pad :
         (int * int) array * 'a * ('a, 'b) Nx_effect.t
         -> ('a, 'b) Nx_effect.t t

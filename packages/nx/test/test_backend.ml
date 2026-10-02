@@ -67,6 +67,7 @@ module Refusing = struct
   let arg_reduce _ ~axis:_ _ ~dst:_ = no ()
   let sort ~descending:_ ~axis:_ _ ~dst:_ = no ()
   let argsort ~descending:_ ~axis:_ _ ~dst:_ = no ()
+  let group _ ~dst:_ = no ()
   let pad _ _ _ ~dst:_ = no ()
   let cat ~axis:_ _ ~dst:_ = no ()
   let contiguous _ ~dst:_ = no ()

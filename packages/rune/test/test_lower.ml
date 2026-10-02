@@ -340,6 +340,21 @@ let reads =
           let x = grid 2 2 in
           let _, v = trace (fun () -> Nx.to_array x) in
           equal (array float_exact) [| 0.; 1.; 2.; 3. |] v);
+      test "a capture's rows are grouped eagerly" (fun () ->
+          let x = Nx.create Nx.uint64 [| 3; 1 |] [| 4L; 2L; 4L |] in
+          let _, ids =
+            trace (fun () -> Nx.Op.eval (Group { by = "Caller.f"; x }))
+          in
+          equal (array int64) [| 0L; 1L; 0L |] (Nx.to_array ids));
+      test "a traced value's rows cannot be grouped" (fun () ->
+          let x = Nx.create Nx.uint64 [| 3; 1 |] [| 4L; 2L; 4L |] in
+          raises
+            (Lower.Jit_error
+               "Caller.f: cannot group a traced tensor inside jit, as the \
+                number of groups is read; group outside the compiled function \
+                instead") (fun () ->
+              trace (fun () ->
+                  Nx.Op.eval (Group { by = "Caller.f"; x = Nx.copy x }))));
       test "a traced value's elements cannot be read" (fun () ->
           raises
             (Lower.Jit_error

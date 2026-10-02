@@ -40,6 +40,7 @@
    nx_c_eig
    nx_c_fft
    nx_c_sort
+   nx_c_group
    nx_c_move
    nx_c_random)
   (flags

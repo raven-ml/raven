@@ -26,6 +26,7 @@ let results : type r. r Nx.Op.t -> r -> Nx.packed list =
   | Arg_reduce _ -> one r
   | Sort _ -> one r
   | Argsort _ -> one r
+  | Group _ -> one r
   | Pad _ -> one r
   | Cat _ -> one r
   | Convert _ -> one r
@@ -161,10 +162,10 @@ let recipe : type r. r Nx.Op.t -> r -> recipe option =
   | Move (x, m) -> Some (Recipe (r, fun s -> eval (Move (s.f x, m))))
   | Place (p, x) -> Some (Recipe (r, fun s -> eval (Place (p, s.f x))))
   | Unary _ | Binary _ | Compare _ | Where _ | Fma _ | Reduce _ | Scan _
-  | Arg_reduce _ | Sort _ | Argsort _ | Pad _ | Cat _ | Convert _ | Threefry _
-  | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _ | Matmul _ | Fft _
-  | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _
-  | Eigh _ | Solve_triangular _ | Read _ | Check _ ->
+  | Arg_reduce _ | Sort _ | Argsort _ | Group _ | Pad _ | Cat _ | Convert _
+  | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _ | Matmul _
+  | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _ | Svd _
+  | Eig _ | Eigh _ | Solve_triangular _ | Read _ | Check _ ->
       None
 
 let id x =

@@ -16,6 +16,7 @@ type t =
   | Arg_reduce of Nx_backend.arg_reduce
   | Sort
   | Argsort
+  | Group
   | Pad
   | Cat
   | Cast
@@ -56,6 +57,7 @@ let of_op : type r. r Nx.Op.t -> t =
   | Arg_reduce (k, _, _) -> Arg_reduce k
   | Sort _ -> Sort
   | Argsort _ -> Argsort
+  | Group _ -> Group
   | Pad _ -> Pad
   | Cat _ -> Cat
   | Convert (Cast, _, _) -> Cast
@@ -145,6 +147,7 @@ let all =
       [
         Sort;
         Argsort;
+        Group;
         Pad;
         Cat;
         Cast;
@@ -238,6 +241,7 @@ let name = function
   | Arg_reduce Argmin -> "arg_reduce argmin"
   | Sort -> "sort"
   | Argsort -> "argsort"
+  | Group -> "group"
   | Pad -> "pad"
   | Cat -> "cat"
   | Cast -> "cast"

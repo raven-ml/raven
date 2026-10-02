@@ -198,67 +198,85 @@ let keys (type a b) op (x : (a, b) Nx.t) =
   | UInt64 | Int64 | Float64 -> P (order_key uint64 x)
   | Complex64 | Complex128 -> err op "complex numbers have no order"
 
+(* [rows op r] is the rows of [r] prepared to be told apart in rounds of up to
+   64 bytes of keys, through [op]: [round ~seen ~active ~m ~longest] is the
+   rows [active], [m] of them, from their [seen]th key, as [e] keys in uint64
+   words, the first key most significant and keys past a row's end zero, then
+   [count], the number of keys of the round each row holds, plus one if it
+   holds more, which separates a row from its prefixes, and [rem], the keys
+   each holds from the [seen]th. [longest] is the most keys any active row
+   holds from there. *)
+let rows op r =
+  let n = length r in
+  let values, offsets = elements r in
+  let (P keys) = keys op values in
+  let w = itemsize keys in
+  (* Every window of up to 64 bytes from an element of a row lies in
+     [keys]. *)
+  let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero (dtype keys)) keys in
+  let start = shrink [| (0, n) |] offsets in
+  let len = sub (shrink [| (1, n + 1) |] offsets) start in
+  let round ~seen ~active ~m ~longest =
+    let width =
+      List.find_opt (fun b -> b >= longest * w) [ 8; 16; 32 ]
+      |> Option.value ~default:64
+    in
+    let e = width / w and q = 8 / w and words = width / 8 in
+    let rem = sub_s (take ~indices:active len) (Int64.of_int seen) in
+    let count = minimum_s rem (Int64.of_int (e + 1)) in
+    let chunk =
+      take ~axis:0
+        ~indices:(add_s (take ~indices:active start) (Int64.of_int seen))
+        (sliding_window ~window:e keys)
+    in
+    (* Keys past a row's end are zero. A word's first key is its most
+       significant, so a little-endian machine reverses each word's keys. *)
+    let position = create Int64 [| words; q |] (Array.init e Int64.of_int) in
+    let chunk = reshape [| m; words; q |] chunk in
+    let chunk, position =
+      if Sys.big_endian then (chunk, position)
+      else (flip ~axes:[ 2 ] chunk, flip ~axes:[ 1 ] position)
+    in
+    let chunk =
+      where
+        (less
+           (reshape [| 1; words; q |] position)
+           (reshape [| m; 1; 1 |] count))
+        chunk (zeros_like chunk)
+    in
+    (e, reshape [| m; words |] (bitcast UInt64 chunk), count, rem)
+  in
+  let read =
+    read ~by:op
+      (concatenate ~axis:0
+         [ reshape [| 1 |] (max len); reshape [| 1 |] (min len) ])
+  in
+  (round, Int64.to_int read.(0), Int64.to_int read.(1))
+
+let column m x = reshape [| m; 1 |] (bitcast UInt64 x)
+
 (* [ranks op r] is the dense rank of each row of [r] in the sort order, a prefix
-   first, and the number of distinct rows. Rows are told apart in rounds of up
-   to 64 bytes of keys: a round reads the rows still to tell apart as uint64
-   words, most significant key first, and ranks them by their rank so far, their
-   words and the number of keys of the round they hold, which separates a row
-   from its prefixes. A row is done once it is alone in its class or has no keys
-   left. Each round reads once, through [op]. *)
+   first, and the number of distinct rows. A round ranks the rows still to tell
+   apart by their rank so far, their words and their count. A row is done once
+   it is alone in its class or has no keys left. Each round reads once, through
+   [op]. *)
 let ranks op r =
   let n = length r in
   if n = 0 then (full_as r.offsets [| 0 |] 0L, 0)
   else
-    let values, offsets = elements r in
-    let (P keys) = keys op values in
-    let w = itemsize keys in
-    (* Every window of up to 64 bytes from an element of a row lies in
-       [keys]. *)
-    let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero (dtype keys)) keys in
-    let start = shrink [| (0, n) |] offsets in
-    let len = sub (shrink [| (1, n + 1) |] offsets) start in
+    let round_keys, longest, shortest = rows op r in
     let rec round ~seen ~classes ~active ~m ~longest ~shortest rank =
       if m = 0 || longest = 0 then (rank, classes)
       else
-        let width =
-          List.find_opt (fun b -> b >= longest * w) [ 8; 16; 32 ]
-          |> Option.value ~default:64
-        in
-        let e = width / w and q = 8 / w and words = width / 8 in
-        let rem = sub_s (take ~indices:active len) (Int64.of_int seen) in
-        (* The keys of the round a row holds, and one more if it holds more. *)
-        let count = minimum_s rem (Int64.of_int (e + 1)) in
-        let chunk =
-          take ~axis:0
-            ~indices:(add_s (take ~indices:active start) (Int64.of_int seen))
-            (sliding_window ~window:e keys)
-        in
-        (* Keys past a row's end are zero. A word's first key is its most
-           significant, so a little-endian machine reverses each word's keys. *)
-        let position =
-          create Int64 [| words; q |] (Array.init e Int64.of_int)
-        in
-        let chunk = reshape [| m; words; q |] chunk in
-        let chunk, position =
-          if Sys.big_endian then (chunk, position)
-          else (flip ~axes:[ 2 ] chunk, flip ~axes:[ 1 ] position)
-        in
-        let chunk =
-          where
-            (less
-               (reshape [| 1; words; q |] position)
-               (reshape [| m; 1; 1 |] count))
-            chunk (zeros_like chunk)
-        in
-        let column x = reshape [| m; 1 |] (bitcast UInt64 x) in
+        let e, words, count, rem = round_keys ~seen ~active ~m ~longest in
         let row_rank = take ~indices:active rank in
         let key =
           concatenate ~axis:1
-            ((if classes > 1 then [ column row_rank ] else [])
-            @ [ reshape [| m; words |] (bitcast UInt64 chunk) ]
+            ((if classes > 1 then [ column m row_rank ] else [])
+            @ [ words ]
             @
-            if shortest > e || shortest = longest then [] else [ column count ]
-            )
+            if shortest > e || shortest = longest then []
+            else [ column m count ])
         in
         let perm = lexsort key in
         let sorted = take ~axis:0 ~indices:perm key in
@@ -342,29 +360,89 @@ let ranks op r =
           ~shortest:(Int64.to_int read.(2))
           rank
     in
-    let read =
-      read ~by:op
-        (concatenate ~axis:0
-           [ reshape [| 1 |] (max len); reshape [| 1 |] (min len) ])
-    in
-    round ~seen:0 ~classes:1 ~active:(arange Int64 0 n 1) ~m:n
-      ~longest:(Int64.to_int read.(0))
-      ~shortest:(Int64.to_int read.(1))
+    round ~seen:0 ~classes:1 ~active:(arange Int64 0 n 1) ~m:n ~longest
+      ~shortest
       (full_as r.offsets [| n |] 0L)
 
 let rank r = fst (ranks "Nx_ragged.rank" r)
 
+(* A round groups the rows still to tell apart by their code so far, their
+   words and their count, and codes each by its group, past every earlier
+   round's codes. A row is done once no other shares its code or it has no
+   keys left. Codes tell rows apart but number them in no order, so after
+   rounds that refine codes, the rows are grouped once more by their code. *)
 let ids r =
-  let rank, classes = ranks "Nx_ragged.ids" r in
+  let op = "Nx_ragged.ids" in
   let n = length r in
-  let row = arange Int64 0 n 1 in
-  (* Each row's class's first row, and the number of classes that start before
-     it. *)
-  let first =
-    take ~indices:rank (reduce_segments `Min ~segments:classes rank row)
-  in
-  let firsts = cast Int64 (equal first row) in
-  take ~indices:first (sub (cumsum firsts) firsts)
+  let group x = Op.eval (Group { by = op; x }) in
+  if n = 0 then full_as r.offsets [| 0 |] 0L
+  else
+    let round_keys, longest, shortest = rows op r in
+    let rec round ~rounds ~seen ~base ~active ~m ~longest ~shortest code =
+      if m = 0 || longest = 0 then (rounds, code)
+      else
+        let e, words, count, rem = round_keys ~seen ~active ~m ~longest in
+        let key =
+          concatenate ~axis:1
+            ((if rounds > 0 then [ column m (take ~indices:active code) ]
+              else [])
+            @ [ words ]
+            @
+            if shortest > e || shortest = longest then []
+            else [ column m count ])
+        in
+        let g = group key in
+        let code =
+          if rounds = 0 then g
+          else
+            scatter ~unique_indices:true ~axis:0 ~indices:active
+              ~values:(add_s g (Int64.of_int base))
+              code
+        in
+        if longest <= e then (rounds + 1, code)
+        else
+          (* Rows still to tell apart: with keys past the round, sharing their
+             code. *)
+          let shared =
+            greater_s
+              (take ~indices:g
+                 (reduce_segments `Add ~segments:m g (full_as g [| m |] 1L)))
+              1L
+          in
+          let left = sub_s rem (Int64.of_int e) in
+          let keep = logical_and (greater_s left 0L) shared in
+          let kept = cast Int64 keep in
+          let read =
+            read ~by:op
+              (concatenate ~axis:0
+                 (List.map
+                    (fun x -> reshape [| 1 |] x)
+                    [
+                      sum kept;
+                      max (where keep left (zeros_like left));
+                      min (where keep left (full_like left Int64.max_int));
+                    ]))
+          in
+          let m' = Int64.to_int read.(0) in
+          let place =
+            where keep (sub (cumsum kept) kept) (scalar_like kept read.(0))
+          in
+          let active =
+            scatter ~unique_indices:true ~axis:0 ~indices:place ~values:active
+              (full_as kept [| m' |] 0L)
+          in
+          round ~rounds:(rounds + 1) ~seen:(seen + e) ~base:(base + m) ~active
+            ~m:m'
+            ~longest:(Int64.to_int read.(1))
+            ~shortest:(Int64.to_int read.(2))
+            code
+    in
+    let rounds, code =
+      round ~rounds:0 ~seen:0 ~base:0 ~active:(arange Int64 0 n 1) ~m:n
+        ~longest ~shortest
+        (full_as r.offsets [| n |] 0L)
+    in
+    if rounds <= 1 then code else group (column n code)
 
 let take ~indices r =
   if ndim indices <> 1 then

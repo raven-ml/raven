@@ -3046,6 +3046,17 @@ thread.
 
 ### Nx
 
+- `Nx.unique` groups its keys in hash tables where it sorted them, on every
+  core, and `Nx_ragged.ids` groups each round's rows the same way: both now
+  cost an expected pass over their keys, and their results are unchanged.
+  `unique` of 10⁷ int64 keys takes 39 ms with 10² distinct values and 97 ms
+  with 10⁶, where it took 316 ms and 513 ms, and `Nx_ragged.ids` of 10⁷
+  twelve-byte strings 283 ms, where it took 1.5 s (Apple M1 Max).
+- Add `Nx.Op.Group { by; x }`, the rows of a uint64 matrix numbered in order
+  of first appearance, ids that depend on the rows alone. `Rune.jit` refuses
+  it with a message that starts with `by`, as every caller reads the number of
+  groups, and `Rune.vmap` numbers each lane's rows on their own.
+  **Breaking** for backends: `Nx_backend.S` gains `group`.
 - **Breaking:** files of named tensors are read and written as
   `Nx_io.Archive.t`, an immutable collection with distinct, non-empty names,
   in place of the mutable `Nx_io.archive` table. `load_npz`,

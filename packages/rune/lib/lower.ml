@@ -881,6 +881,14 @@ let op : type r. scope -> r Nx.Op.t -> r =
       match Repr.v x with
       | Repr.Traced _ -> like x (place s what (Nx.placement x) q x)
       | Repr.Host _ | Repr.Placed _ -> like x (placed s what q x))
+  | Group { by; x } -> (
+      match Repr.v x with
+      | Repr.Traced _ ->
+          jit_error
+            "%s: cannot group a traced tensor inside jit, as the number of \
+             groups is read; group outside the compiled function instead"
+            by
+      | Repr.Host _ | Repr.Placed _ -> Nx.Op.eval o)
   | Read { by; x } -> (
       match Repr.v x with
       | Repr.Traced _ ->

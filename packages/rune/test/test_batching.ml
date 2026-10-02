@@ -76,7 +76,7 @@ let accumulates : Row.t -> bool = function
   | Solve_triangular ->
       true
   | Unary _ | Binary _ | Compare _ | Where | Fma | Arg_reduce _ | Sort | Argsort
-  | Pad | Cat | Cast | Bitcast | Threefry | Gather
+  | Group | Pad | Cat | Cast | Bitcast | Threefry | Gather
   | Scatter (`Set | `Max | `Min)
   | Update | Unfold | Contiguous | Move _ | Place | Read | Check ->
       false
