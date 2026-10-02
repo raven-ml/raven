@@ -208,6 +208,14 @@ let mark_v =
                   Mark.bind (Role.value ~name:"a") (num v);
                 ]
                 draw_nothing );
+          ( "two parameters of one name",
+            fun () ->
+              Mark.v ~name:"m"
+                [
+                  Mark.bind (Role.param ~name:"a" ~equal:Int.equal) (const 0);
+                  Mark.bind (Role.param ~name:"a" ~equal:Int.equal) (const 0);
+                ]
+                draw_nothing );
           ( "x2 without x",
             fun () ->
               Mark.v ~name:"m" [ Mark.bind Role.x2 (num v) ] draw_nothing );
@@ -256,6 +264,17 @@ let mark_v =
                   Mark.bind Role.fill (strings [| "a"; "b"; "c" |]);
                 ]
                 draw_nothing );
+        ];
+      rejects "Role.param refuses"
+        [
+          ( "an empty name",
+            fun () ->
+              ignore (Role.param ~name:"" ~equal:Int.equal);
+              layer [] );
+          ( "the name of a built-in role",
+            fun () ->
+              ignore (Role.param ~name:"x" ~equal:Int.equal);
+              layer [] );
         ];
       rejects "Role.value refuses"
         [
@@ -619,6 +638,37 @@ let equality =
             (Hugin_next.equal (bind k fn) (bind (View.number "k" ~init:2.) fn));
           equal bool false
             (Hugin_next.equal (bind k fn) (bind (View.number "j" ~init:1.) fn)));
+      cases ~name:fst "a built-in mark rebuilt is equal"
+        [
+          ("dot", fun () -> dot ~x:(num v) ~y:(num v) ~size:(num v) ());
+          ( "line with a curve",
+            fun () -> line ~curve:Curve.natural ~stroke:(dim 0) ~y:(num m) () );
+          ("bars", fun () -> rect ~x:(dim 0) ~y:(num v) ());
+          ("a reference line", fun () -> rule ~y:(floats [| 0. |]) ());
+          ( "text with offsets",
+            fun () ->
+              Hugin_next.text ~dx:2. ~dy:(-1.) ~x:(num v) ~y:(num v)
+                ~text:(num v) () );
+          ("an image", fun () -> image m);
+          ("a contour", fun () -> contour ~fill:(num m) ());
+        ]
+        (fun (_, f) -> equal bool true (Hugin_next.equal (f ()) (f ())));
+      test "a parameter's constants compare by its role's equality" (fun () ->
+          let parity =
+            Role.param ~name:"k" ~equal:(fun a b -> a mod 2 = b mod 2)
+          in
+          let mark k =
+            Mark.v ~name:"m" [ Mark.bind parity (const k) ] draw_nothing
+          in
+          equal bool true (Hugin_next.equal (mark 1) (mark 3));
+          equal bool false (Hugin_next.equal (mark 1) (mark 2)));
+      test "a parameter made by another call is another role" (fun () ->
+          let mark () =
+            Mark.v ~name:"m"
+              [ Mark.bind (Role.param ~name:"k" ~equal:Int.equal) (const 0) ]
+              draw_nothing
+          in
+          equal bool false (Hugin_next.equal (mark ()) (mark ())));
       test "line's default curve is linear" (fun () ->
           equal bool true
             (Hugin_next.equal

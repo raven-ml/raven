@@ -6,9 +6,10 @@
 module Color = Hugin_next_gg.Color
 module Text = Hugin_next_text.Text
 module Symbol = Hugin_next_kit.Symbol
-module Curve = Hugin_next_kit.Curve
 module Scale = Hugin_next_kit.Scale
 open Common
+
+type 'r param = { id : 'r Type.Id.t; equal : 'r -> 'r -> bool }
 
 type _ range =
   | Floats : float range
@@ -16,8 +17,7 @@ type _ range =
   | Symbols : Symbol.t range
   | Texts : Text.t range
   | Panels : string range
-  | Curves : Curve.t range
-  | Pixels : Nx.packed range
+  | Param : 'r param -> 'r range
 
 let equal_range : type r s. r range -> s range -> (r, s) Type.eq option =
  fun r s ->
@@ -27,8 +27,7 @@ let equal_range : type r s. r range -> s range -> (r, s) Type.eq option =
   | Symbols, Symbols -> Some Type.Equal
   | Texts, Texts -> Some Type.Equal
   | Panels, Panels -> Some Type.Equal
-  | Curves, Curves -> Some Type.Equal
-  | Pixels, Pixels -> Some Type.Equal
+  | Param p, Param q -> Type.Id.provably_equal p.id q.id
   | _ -> None
 
 let equal_in : type r. r range -> r -> r -> bool =
@@ -39,11 +38,7 @@ let equal_in : type r. r range -> r -> r -> bool =
   | Symbols -> Symbol.equal v v'
   | Texts -> Text.equal v v'
   | Panels -> String.equal v v'
-  | Curves -> Curve.equal v v'
-  | Pixels ->
-      let (Nx.P px) = v in
-      let (Nx.P px') = v' in
-      equal_tensor px px'
+  | Param p -> p.equal v v'
 
 type axis = X | Y
 type map = Color | Opacity | Area | Width | Shape
@@ -104,10 +99,17 @@ let names =
     fy.name;
   ]
 
+let check_name fn name =
+  if name = "" then err fn "the name is empty";
+  if List.mem name names then err fn "%S names a built-in role" name
+
 let value ~name =
-  if name = "" then err "Role.value" "the name is empty";
-  if List.mem name names then err "Role.value" "%S names a built-in role" name;
+  check_name "Role.value" name;
   make name Floats Value
+
+let param ~name ~equal =
+  check_name "Role.param" name;
+  make name (Param { id = Type.Id.make (); equal }) Value
 
 (* Meaning *)
 
@@ -142,9 +144,3 @@ let by_cell n = List.exists (reads n) [ x.use; y.use; fx.use; fy.use ]
 let by_kind n =
   List.exists (reads n)
     [ fill.use; opacity.use; size.use; width.use; symbol.use ]
-
-(* The parameters of built-in marks. *)
-let curve = make "curve" Curves Value
-let dx = make "dx" Floats Value
-let dy = make "dy" Floats Value
-let pixels = make "pixels" Pixels Value

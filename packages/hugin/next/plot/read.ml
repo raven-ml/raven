@@ -235,7 +235,7 @@ let base : type r.
       | Categories ->
           Some (By_index (Array.of_list (category_names f.scale)), "")
       | Quantities -> None)
-  | Role.Texts | Role.Curves | Role.Pixels -> None
+  | Role.Texts | Role.Param _ -> None
 
 (* [index_at s] is the index of the category of the band scale [s] whose step
    holds a normalised value, if any. *)
@@ -372,7 +372,7 @@ let unscaled ctx rd (B b as bd) index sel =
   | Role.Texts ->
       let g i t = if miss.(i) then t else g t in
       (column b.role (Array.mapi g (Lazy.force texts)), miss)
-  | Role.Colors | Role.Symbols | Role.Panels | Role.Curves | Role.Pixels ->
+  | Role.Colors | Role.Symbols | Role.Panels | Role.Param _ ->
       err "draw" "the role %s reads no scale" b.role.name
 
 let rows ?only ctx rd ~id projection ~warn reads sel =

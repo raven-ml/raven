@@ -395,6 +395,21 @@ let rows =
             (list (triple (array int) (array int) id))
             (List.init 3 (fun k -> ([| 3 |], [| k |], legend)))
             (List.rev !swatches));
+      test "get gives a parameter's constant per row, under its role only"
+        (fun () ->
+          let k = Role.param ~name:"k" ~equal:Int.equal in
+          let k' = Role.param ~name:"k" ~equal:Int.equal in
+          let got =
+            rows_of
+              [
+                Mark.bind Role.x (num (f64 [| 0.; 1. |])); Mark.bind k (const 7);
+              ]
+              (fun r -> (Mark.get r k, Mark.get r k'))
+          in
+          equal
+            (pair (option (array int)) (option (array int)))
+            (Some [| 7; 7 |], None)
+            got);
       test "Mark.warn warns under the mark's id" (fun () ->
           let m =
             Mark.v ~name:"probe" [] (fun r ->

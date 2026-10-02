@@ -8,24 +8,29 @@
 module Color := Hugin_next_gg.Color
 module Text := Hugin_next_text.Text
 module Symbol := Hugin_next_kit.Symbol
-module Curve := Hugin_next_kit.Curve
 module Scale := Hugin_next_kit.Scale
 
 (** {1:ranges Ranges} *)
 
-(** The ranges roles map into. [Curves] and [Pixels] are the ranges of roles the
-    built-in marks keep their parameters in. *)
+type 'r param = { id : 'r Type.Id.t; equal : 'r -> 'r -> bool }
+(** The range of a parameter role, minted by {!param}. *)
+
+(** The ranges roles map into. *)
 type _ range =
   | Floats : float range
   | Colors : Color.t range
   | Symbols : Symbol.t range
   | Texts : Text.t range
   | Panels : string range
-  | Curves : Curve.t range
-  | Pixels : Nx.packed range
+  | Param : 'r param -> 'r range
 
 val equal_range : 'r range -> 's range -> ('r, 's) Type.eq option
+(** [equal_range r s] is a witness that [r] and [s] are one range. Two [Param]
+    ranges are one iff they share their id. *)
+
 val equal_in : 'r range -> 'r -> 'r -> bool
+(** [equal_in r v v'] compares two values of [r], a parameter's with the
+    equality it was made with. *)
 
 (** {1:roles Roles} *)
 
@@ -45,10 +50,11 @@ type use =
   | Facet of axis  (** [fx], [fy]. *)
   | Encoding of { scale : string; map : map }
       (** [scale] is the role's default scale. *)
-  | Value  (** [text], {!value} and the parameters: reads no scale. *)
+  | Value  (** [text], {!value} and {!param}: reads no scale. *)
 
 type ('d, 'r) t = { name : string; range : 'r range; use : use }
-(** Roles are identified by their names. *)
+(** Roles are identified by their names, and a parameter role by its name and
+    its range's id. *)
 
 val x : ('d, float) t
 val x2 : ('d, float) t
@@ -64,6 +70,7 @@ val text : ('d, Text.t) t
 val fx : (string, string) t
 val fy : (string, string) t
 val value : name:string -> (float, float) t
+val param : name:string -> equal:('r -> 'r -> bool) -> (unit, 'r) t
 
 (** {1:meaning Meaning} *)
 
@@ -91,10 +98,3 @@ val by_cell : string -> bool
 val by_kind : string -> bool
 (** [by_kind n] is [true] iff [n] is the default scale of an encoding, which a
     scope holds once per kind. *)
-
-(** {1:parameters Parameters of built-in marks} *)
-
-val curve : ('d, Curve.t) t
-val dx : ('d, float) t
-val dy : ('d, float) t
-val pixels : ('d, Nx.packed) t

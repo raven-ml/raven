@@ -22,6 +22,19 @@ open Figure
 let on = Mark.bind
 let opt role = Option.map (on role)
 
+(* Parameters, made once so that a mark rebuilt binds the same roles. *)
+
+let curve_param = Role.param ~name:"curve" ~equal:Curve.equal
+let dx_param = Role.param ~name:"dx" ~equal:Float.equal
+let dy_param = Role.param ~name:"dy" ~equal:Float.equal
+
+let same_tensor (Nx.P a) (Nx.P b) =
+  match Nx_dtype.equal_witness (Nx.dtype a) (Nx.dtype b) with
+  | Some Type.Equal -> a == b
+  | None -> false
+
+let pixels_param = Role.param ~name:"pixels" ~equal:same_tensor
+
 (* Derived lengths, in em *)
 
 let line_em = 0.15
@@ -240,7 +253,7 @@ let draw_series rows xs path =
 
 let draw_line rows =
   let curve =
-    Option.value (first_value rows Role.curve) ~default:Curve.linear
+    Option.value (first_value rows curve_param) ~default:Curve.linear
   in
   let series s =
     let us, vs = Mark.positions s in
@@ -273,7 +286,7 @@ let line ?x ?stroke ?fill ?width ?opacity ?(curve = Curve.linear) ?fx ?fy ~y ()
           opt Role.fill fill;
           opt Role.width width;
           opt Role.opacity opacity;
-          Some (on Role.curve (const curve));
+          Some (on curve_param (const curve));
         ]
        @ facets fx fy)
        draw_line)
@@ -396,8 +409,8 @@ let rule ?x ?x2 ?y ?y2 ?stroke ?width ?opacity ?fx ?fy () =
 (* [draw_texts rows texts] sets [texts.(i)] at the point of each row. *)
 let draw_texts rows texts =
   let xs, ys = Mark.points rows in
-  let dx = Option.value (first_value rows Role.dx) ~default:0.
-  and dy = Option.value (first_value rows Role.dy) ~default:0. in
+  let dx = Option.value (first_value rows dx_param) ~default:0.
+  and dy = Option.value (first_value rows dy_param) ~default:0. in
   let fills =
     faded rows (or_const rows Role.fill (Theme.ink (Mark.theme rows)))
   in
@@ -421,8 +434,8 @@ let text ?fill ?opacity ?(dx = 0.) ?(dy = 0.) ?fx ?fy ~x ~y ~text () =
           Some (on Role.text text);
           opt Role.fill fill;
           opt Role.opacity opacity;
-          Some (on Role.dx (const dx));
-          Some (on Role.dy (const dy));
+          Some (on dx_param (const dx));
+          Some (on dy_param (const dy));
         ]
        @ facets fx fy)
        draw_text)
@@ -456,7 +469,7 @@ let unit_square = Box2.v 0. 0. 1. 1.
 (* An image is placed by its positions, which a zoom can take beyond the domain,
    and then clipped to the domain: it has no ink beyond its box. *)
 let draw_image rows =
-  match first_value rows Role.pixels with
+  match first_value rows pixels_param with
   | None -> Picture.empty
   | Some (Nx.P px) ->
       let at = Coord.point (Mark.projection rows) in
@@ -515,7 +528,7 @@ let image ?fx ?fy px =
                ~imply:(Scale.linear ~nice:false ~reverse:true ())
                ~guide:false Role.y (at 0.));
           Some (on Role.y2 (at (float h)));
-          Some (on Role.pixels (const (Nx.P px)));
+          Some (on pixels_param (const (Nx.P px)));
         ]
        @ facets fx fy)
        draw_image)

@@ -198,11 +198,13 @@ val pp_warning : Format.formatter -> warning -> unit
 val equal : t -> t -> bool
 (** [equal f f'] is [true] iff [f] and [f'] are made by the same combinators
     from equal arguments: tensors and functions compared physically, string and
-    float arrays element by element, and the values of the lower libraries by
-    their [equal]. A figure rebuilt from the same tensors by the same code is
-    equal to the first unless it holds a new function, as a {!map_range} or
-    {!bind} of a fresh closure does. [layer [ layer [ a; b ]; c ]] draws what
-    [layer [ a; b; c ]] draws and is not equal to it. *)
+    float arrays element by element, the constant of a parameter by the equality
+    of its role ({!Role.param}), and the values of the lower libraries by their
+    [equal]. A figure rebuilt from the same tensors by the same code is equal to
+    the first unless it holds a new function, as a {!map_range} or {!bind} of a
+    fresh closure does, so a built-in mark is equal to itself rebuilt.
+    [layer [ layer [ a; b ]; c ]] draws what [layer [ a; b; c ]] draws and is
+    not equal to it. *)
 
 (** {1:channels Channels} *)
 
@@ -368,10 +370,10 @@ val map_range : ('r -> 'r) -> ('d, 'r) channel -> ('d, 'r) channel
     makes marks, from bindings and a draw function, and take their channels as
     labelled arguments named after their roles ({!section-roles}). {!dot},
     {!rect}, {!rule} and {!contour} use only what {!Mark} offers. {!line},
-    {!text} and {!image} also keep parameters in roles a user cannot bind, a
-    curve, text offsets and pixels, and {!image} gathers its pixels at the
-    density {!draw} is given. Every mark takes the facet channels [fx] and [fy],
-    and every mark but {!image} takes [opacity], [1.] by default.
+    {!text} and {!image} keep their curve, text offsets and pixels in parameters
+    ({!Role.param}), and {!image} gathers its pixels at the density {!draw} is
+    given. Every mark takes the facet channels [fx] and [fy], and every mark but
+    {!image} takes [opacity], [1.] by default.
 
     A mark without a colour channel paints with the theme's accent
     ({!Theme.accent}), except {!rule} and {!text}, which paint with its ink
@@ -1162,7 +1164,8 @@ end
 (** Roles.
 
     A role is a mark's slot for a channel ({!section-roles}). It is identified
-    by its name. *)
+    by its name, and a parameter ({!param}) by its name and the call that made
+    it. *)
 module Role : sig
   type ('d, 'r) t
   (** The type for roles taking channels of domain values ['d] and range ['r].
@@ -1221,6 +1224,22 @@ module Role : sig
       to no domain and yields no guide, so a channel given to it has neither a
       [scale] nor a [title] ({!Mark.v}). It gives a draw function values that
       are neither positions nor colours, such as a cart's angle.
+
+      Raises [Invalid_argument] if [name] is empty or is the name of a role
+      above. *)
+
+  val param : name:string -> equal:('r -> 'r -> bool) -> (unit, 'r) t
+  (** [param ~name ~equal] is a new role [name] for a parameter of a mark, a
+      value of any type: its domain [unit] holds no data, so only {!const} binds
+      it, and {!Mark.get} gives the constant once per row. It reads no scale,
+      contributes to no domain and yields no guide. Figure equality ({!equal})
+      compares its constants with [equal], so a mark keeps a curve or a tensor
+      this way and is equal to itself rebuilt, where a parameter captured by its
+      draw function would make every rebuilt mark another.
+
+      Each call makes another role, which {!Mark.get} does not confuse with one
+      of the same name: a mark makes its parameters once, at the top level, and
+      a role made per call costs only reuse ({!section-stages}).
 
       Raises [Invalid_argument] if [name] is empty or is the name of a role
       above. *)
