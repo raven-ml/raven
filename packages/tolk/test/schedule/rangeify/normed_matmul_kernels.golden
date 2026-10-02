@@ -1,0 +1,40 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256, device="CPU") tag=()
+1 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256, device="CPU")
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.RANGE dtypes.weakint [2] (1, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 32
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (2, AxisType.WEAK)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.float [1, 7]
+9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=512, device="CPU")
+10 Ops.CONST dtypes.weakint [] 64
+11 Ops.MUL dtypes.weakint [3, 10]
+12 Ops.RANGE dtypes.weakint [10] (0, AxisType.REDUCE)
+13 Ops.ADD dtypes.weakint [11, 12]
+14 Ops.INDEX dtypes.float [9, 13]
+15 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=8, device="CPU")
+16 Ops.INDEX dtypes.float [15, 3]
+17 Ops.RECIPROCAL dtypes.float [16]
+18 Ops.MUL dtypes.float [14, 17]
+19 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU")
+20 Ops.INDEX dtypes.float [19, 12]
+21 Ops.MUL dtypes.float [18, 20]
+22 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=2048, device="CPU")
+23 Ops.MUL dtypes.weakint [12, 4]
+24 Ops.ADD dtypes.weakint [23, 6]
+25 Ops.INDEX dtypes.float [22, 24]
+26 Ops.MUL dtypes.float [21, 25]
+27 Ops.REDUCE dtypes.float [26, 12] (Ops.ADD, 0)
+28 Ops.STORE dtypes.void [8, 27]
+29 Ops.END dtypes.void [28, 3, 6]
+30 Ops.SINK dtypes.void [29] KernelInfo()
+31 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=512, device="CPU") tag=()
+32 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=8, device="CPU") tag=()
+33 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU") tag=()
+34 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=2048, device="CPU") tag=()
+35 Ops.CALL dtypes.void [30, 0, 31, 32, 33, 34] CallInfo()
+36 Ops.AFTER dtypes.float [0, 35]
+37 Ops.SINK dtypes.void [36]
+

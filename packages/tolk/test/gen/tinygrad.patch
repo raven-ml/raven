@@ -1221,7 +1221,15 @@ index 228ec4e..636cb63 100644
      if x in rctx.realize_map:
        # if this is in the realize_map, we create new ranges (at the output)
        out_rngs = tuple(rctx.new_range(s) for s in x.shape)
-@@ -269,10 +293,12 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -265,14 +289,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+       out_rngs = tuple(_out_rngs)
+ 
+       # we have to (partially) realize here if there's new ranges
+-      if len(_realize_axis): rctx.realize_map[x] = _realize_axis
++      if len(_realize_axis):
++        rctx.realize_map[x] = _realize_axis
++        # stored for consumers that read it at different indices, a value they broadcast is read where it is broadcast
++        if broadcast_ending_ranges: rctx.broadcast[x] = None
  
      # if this element is a reduce and there's ended ranges, we might have to end some other ranges
      if len(ending_ranges[x]) and x.op in GroupOp.Elementwise.union({Ops.REDUCE}):
@@ -1450,7 +1458,7 @@ index 0239aa4..2e2e110 100644
  from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo, ParamArg
  from tinygrad.uop.ops import graph_rewrite, sint, AxisType, BottomUpGate, rewrite_group
  from tinygrad.uop.symbolic import symbolic
-@@ -77,13 +77,18 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -77,13 +77,23 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
        indexes.append(x)
      if x.op is Ops.REDUCE: reduces.append(x)
      return True
@@ -1466,6 +1474,11 @@ index 0239aa4..2e2e110 100644
 +  # along: one whose computing runs a transcendental function stays stored. its producers are already stored or inlined,
 +  # so the walk sees what inlining would compute
 +  if buf.arg.broadcast and any(u.op in {Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.POW} for u in computed): return None
++
++  # read by every output of a reduction, as a matrix-vector product reads its vector, the value would be computed again
++  # for each output and each of its buffers loaded again: one that reads more than one buffer stays stored
++  read = [r for x in idx.src[1:] for r in x.ranges]
++  if buf.arg.broadcast and len(accessed_buffers) > 1 and read and all(r.axis_type is AxisType.REDUCE for r in read): return None
 +
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False

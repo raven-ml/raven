@@ -112,7 +112,22 @@ let remove_bufferize src buf idx =
       (opts buf).keep = Broadcast
       && List.exists (fun x -> Op.Set.mem (op x) transcendental) computed
     in
-    if Tbl.length accessed > 3 || recomputes then None
+    (* Read by every output of a reduction, as a matrix-vector product reads its
+       vector, the value would be computed again for each output and each of its
+       buffers loaded again: one that reads more than one buffer stays
+       stored. *)
+    let read_by_every_output =
+      let read =
+        List.concat_map
+          (fun x -> Nodes.to_list (ranges x))
+          (List.tl (Ops.src idx))
+      in
+      (opts buf).keep = Broadcast
+      && read <> []
+      && List.for_all (fun r -> Axis_type.equal (axis_type r) Reduce) read
+      && Tbl.length accessed > 1
+    in
+    if Tbl.length accessed > 3 || recomputes || read_by_every_output then None
     else
       let reads_buffer x = List.mem (op x) Op.[ Param; Stage; After ] in
       if

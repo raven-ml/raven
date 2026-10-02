@@ -458,7 +458,13 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
       match consumer_rngs with
       | [] -> None
       | [ rngs ] -> Some rngs
-      | _ -> Some (merge_consumer_rngs rctx x consumer_rngs)
+      | _ ->
+          let rngs = merge_consumer_rngs rctx x consumer_rngs in
+          (* Stored for consumers that read it at different indices, a value
+             they broadcast is read where it is broadcast. *)
+          if Tbl.mem rctx.realize_map x && broadcast_ending_ranges <> [] then
+            Tbl.replace rctx.broadcast x ();
+          Some rngs
   in
   Option.iter
     (fun out_rngs ->

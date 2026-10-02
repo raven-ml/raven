@@ -131,6 +131,8 @@ KERNELS = {
     # matrix, and four experts' MXFP4 products, gate and up of the normalised activation, then down of each expert's own
     # activation, scaled and summed over the experts
     "gpt_oss_qkv": lambda: last(normed(2880) @ empty(2880, 4096, dtype=dtypes.bfloat16).float()),
+    "gpt_oss_kv": lambda: last(normed(2880) @ empty(2880, 512, dtype=dtypes.bfloat16).float()),
+    "gpt_oss_router": lambda: last(normed(2880) @ empty(2880, 32, dtype=dtypes.bfloat16).float()),
     "gpt_oss_gate_up": lambda: last(normed(2880) @ decoded(4 * 5760, 2880).T),
     "gpt_oss_down": lambda: last(((empty(4, 1, 2880) @ decoded(4 * 2880, 2880).reshape(4, 2880, 2880).transpose(1, 2)).relu()
                                   * empty(4, 1, 1)).sum(0)),

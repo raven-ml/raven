@@ -2909,7 +2909,7 @@ stores through a pad.
 - **tinygrad:** `schedule/indexing.py:271-276` (`run_rangeify`, which stores
   an elementwise value or reduction whose ranges a broadcast ends by
   realizing each of its axes, so a value of no axes is not stored).
-- **tolk:** `lib/schedule/indexing.ml:467` (`assign_ranges`);
+- **tolk:** `lib/schedule/indexing.ml:478` (`assign_ranges`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the
   goldens are recorded.
 - **Differs:** a value of no axes whose consumers broadcast it, and whose
@@ -3067,6 +3067,44 @@ stores through a pad.
   (the second choice of a matmul makes its `in1` the core's A); rune's
   `Rune.quant › gpus › CUDA › on CUDA, a prompt's routes in blocks are
   eager's`, blocks of 16 and of 8 (slow, on the GPU).
+
+## D106. A value every output of a reduction reads stays stored
+
+- **tinygrad:** `schedule/rangeify.py:50-102` (`remove_bufferize`, which
+  inlines a stored value that reads at most three buffers and no reduction
+  reading a buffer, whoever reads it) and `schedule/indexing.py:267`
+  (`run_rangeify`, which stores a value its consumers read at different
+  indices without marking it broadcast).
+- **tolk:** `lib/schedule/rangeify.ml:119` (`read_by_every_output`, in
+  `remove_bufferize`) and `lib/schedule/indexing.ml:463` (`assign_ranges`,
+  which marks such a value `Broadcast` when its consumers broadcast it);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
+- **Differs:** a stored value that is broadcast, read only through the
+  reduce ranges of its consumer, and reads more than one buffer stays
+  stored. Its consumer is a reduction that every output of reads it, as a
+  matrix-vector product reads its vector, so inlined it would be computed,
+  and each of its buffers loaded, once per output. A value read through an
+  output range, as a matrix's rows are, is inlined as before: a tiled
+  product computes it once for the outputs a thread holds. A value stored
+  for consumers that read it at different indices, as the query, key and
+  value projections read one normalised activation, is marked broadcast
+  when they broadcast it, as D77 marks a value that a broadcast ends.
+- **Reason:** (b): gpt-oss-20b's decode on CUDA (RTX 5000 Ada). The
+  normalised activation, the residual divided by its root mean square and
+  scaled by its gain, reads three buffers and divides, and every projection
+  of a decode step computed it again for each of its outputs: the router's
+  32, the key and value projections' 512, the experts' 23040 gate and up
+  rows. Stored, one 2880-element kernel per normalisation (1.2 us), the
+  router went from 37.1 us to 6.8 us, the key and value projections from
+  22.1 us to 9.4 us, the gate and up product from 113.9 us to 73.1 us (54%
+  to 84% of the bandwidth), and the step's kernels from 11.94 ms to 9.73 ms.
+  The 512-token prefill keeps its kernels and its 0.71 s.
+- **Pinned by:** the Rangeify suite's `normed_vecmat` (a normalised vector
+  read by a product), `normed_vecmats` (by two products, stored once) and
+  `normed_matmul` (a normalised matrix, inlined) rows of
+  `kernel_counts.golden` and their kernel goldens, and `variable_read_twice`
+  (a value two full reductions read, inlined), from the equally patched
+  tinygrad.
 
 ## D107. A batch submits a streamed queue after the queues it waits for
 

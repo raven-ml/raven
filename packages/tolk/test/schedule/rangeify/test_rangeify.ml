@@ -78,6 +78,9 @@ let programs =
     "exp_dead_axis";
     "exp_cheap_consumer";
     "rope_decode";
+    "normed_vecmat";
+    "normed_vecmats";
+    "normed_matmul";
     "gather_broadcast";
     "gather_read_twice";
     "gather_rotary";

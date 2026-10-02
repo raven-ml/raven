@@ -23,6 +23,9 @@ argmax	2
 swiglu_down	3
 exp_dead_axis	2
 exp_cheap_consumer	2
+normed_vecmat	2
+normed_vecmats	2
+normed_matmul	1
 rope_decode	3
 gather_broadcast	2
 gather_read_twice	2

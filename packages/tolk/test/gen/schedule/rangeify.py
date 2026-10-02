@@ -200,6 +200,12 @@ PROGRAMS = {
     # the same way, which reads the stored exponential
     "exp_cheap_consumer": lambda: (lambda p: (p[:, None] * empty(8, 4)).sum(0) + ((p + 1)[:, None] * empty(8, 4)).sum(0))(
         empty(8).exp()),
+    # a normalised vector read by every output of a product, alone and by two products, which store it once, and a
+    # normalised matrix, which a product's outputs read by rows and which stays inlined
+    "normed_vecmat": lambda: (empty(1, 64) / empty(1, 1) * empty(64)) @ empty(64, 32),
+    "normed_vecmats": lambda: (lambda h: Tensor.cat(h @ empty(64, 32), h @ empty(64, 16), dim=1))(
+        empty(1, 64) / empty(1, 1) * empty(64)),
+    "normed_matmul": lambda: (empty(8, 64) / empty(8, 1) * empty(64)) @ empty(64, 32),
     # a decode step's rotated query: rows of a cosine table gathered at the
     # token's position, multiplied into each head and read by the scores
     "rope_decode": lambda: (lambda rows: ((empty(4, 1, 8) * rows) @ empty(4, 8, 9)))(

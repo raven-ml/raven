@@ -954,6 +954,10 @@ thread.
 
 ### Tolk (new)
 
+- A value that every output of a reduction reads, such as the normalised
+  vector of a matrix-vector product, is stored once instead of computed again
+  for each output when it reads more than one buffer. gpt-oss-20b's decode
+  step on an RTX 5000 Ada spends 9.7 ms in kernels, from 11.9 ms.
 - On the host, the hand-coded optimisations fill a kernel's 32 lanes with an
   upcast by 2 when 3 or 4 overflow, and a kernel of several reduces is not
   unrolled past them. sofo-raven's lorenz_simple step without a beam search
