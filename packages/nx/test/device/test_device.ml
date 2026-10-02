@@ -1241,12 +1241,20 @@ module Pools = struct
   let own d (m : B.memory) = m = Device || (m = Mapped && d.window <> None)
   let windowed d (m : B.memory) = m = Mapped && d.window <> None
   let pinned d m = not (own d m)
-  let code_memory d : B.memory = if d.window = None then Pinned else Mapped
+
+  (* A binary named ["h..."] has code the host addresses, which lies in mapped
+     memory; other code lies in the device's own memory. *)
+  let hosted binary = binary.[0] = 'h'
+
+  let code_memory d i : B.memory =
+    if not (hosted i.binary) then Device
+    else if d.window = None then Pinned
+    else Mapped
 
   let used d counts =
     let buffers n b = if b.live && counts b.memory then n + b.bytes else n in
     let code n i =
-      if i.holders > 0 && counts (code_memory d) then n + i.code else n
+      if i.holders > 0 && counts (code_memory d i) then n + i.code else n
     in
     List.fold_left code (List.fold_left buffers 0 d.buffers) d.images
 
@@ -1398,8 +1406,8 @@ module Pools = struct
 end
 
 (* A far device that loads binaries whose code is as many bytes as the number
-   their name ends with, and the regions its driver held once made: its
-   timeline's. *)
+   their name ends with, which the host addresses when their name starts with
+   ['h'], and the regions its driver held once made: its timeline's. *)
 type pool_device = { pools : fake; timeline : (int * B.memory) list }
 type pool_buffer = { on : fake; mutable pb : B.t option }
 type loaded = { by : fake; mutable p : Nx_device.Program.t option }
@@ -1415,7 +1423,8 @@ let code_loads = ref 0
 let load_code ~binary =
   incr code_loads;
   let at = Nativeint.of_int (0x10000 * !code_loads) in
-  let code = Region.v at (Pools.code_of binary) in
+  let host = if Pools.hosted binary then Some at else None in
+  let code = Region.v ?host at (Pools.code_of binary) in
   Ok { Driver.code = Some code; entry = (fun _ -> Ok 1n); unload = ignore }
 
 let pools_invariant (r : Pools.device) { pools; timeline } =
@@ -1506,7 +1515,7 @@ let pool_commands =
     drop;
     command "load"
       (pdev
-      ^-> Gen.of_list ~pp:Format.pp_print_string [ "a16"; "b48"; "c160" ]
+      ^-> Gen.of_list ~pp:Format.pp_print_string [ "a16"; "h48"; "c160"; "h96" ]
       @-> makes prog)
       Pools.load
       (fun d binary ->

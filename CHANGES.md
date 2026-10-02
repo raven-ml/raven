@@ -3110,9 +3110,11 @@ thread.
 
 ### Nx
 
-- `Nx_amd_device` loads programs and gives mapped memory on a GPU without
-  Resizable BAR under the kernel driver: code and mapped buffers live in
-  system memory, as over PCI. Loading any program failed there before.
+- `Nx_amd_device` uploads programs' code into the GPU's own memory through the
+  copy engine, whatever the size of the memory BAR, and counts it there. On a
+  GPU without Resizable BAR, programs now load under the kernel driver, where
+  every load failed, and over PCI their code no longer runs from uncached
+  system memory. Mapped memory there is pinned memory under both interfaces.
 - `Nx.unique` over rows of several words, and `Nx_ragged.ids`, merge their
   blocks' groups without reading rows across the whole input. Ids of 10⁷ text
   rows of 12 bytes take 0.7× the time.
@@ -3442,8 +3444,8 @@ thread.
   `Nx_device.Driver.image`: the region of its code, how it finds a function, and
   how it unloads. A driver with no memory for the code raises `Out_of_memory`,
   and `Program.load` collects unreachable programs and tries again, as
-  `Buffer.create` does. AMD and NV refuse code larger than the memory the host
-  can map at once, with an `Error` that names Resizable BAR.
+  `Buffer.create` does. NV refuses code larger than the memory the host can
+  map at once, with an `Error` that names Resizable BAR.
 - A complete `Nx.qr` of an m x 0 matrix and an `Nx.svd` with
   `~full_matrices:true` of a matrix with an empty dimension return the identity
   as their square orthogonal factors (Q, and U or Vt). They returned all zeros,

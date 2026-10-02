@@ -298,6 +298,8 @@ let test_programs () =
       is_true ~msg:"inside the code"
         (k.descriptor >= code && k.descriptor < end_);
       equal ~msg:"on the device" bool true (Nx_device.equal (B.device k.code) d);
+      equal ~msg:"in memory the host does not address" (option nativeint) None
+        (hosted k.code);
       match Nx_device.Program.load d ~binary ~name:"absent" with
       | Ok _ -> fail "loaded an absent function"
       | Error why -> contains ~msg:"refused" ~sub:"no kernel" why)

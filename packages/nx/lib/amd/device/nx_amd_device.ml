@@ -161,12 +161,9 @@ let alloc_mem a kind n =
   with_hw a (fun () ->
       match a.gpu with
       | Kfd_gpu k ->
-          (* Without a large BAR the driver maps the host no VRAM, and memory
-             the host writes is system memory, as under PCI. *)
           let kind =
             match kind with
             | Vram -> Kfd.Vram
-            | Visible when k.visible = 0 -> Kfd.Host
             | Visible -> Kfd.Visible
             | Host -> Kfd.Host
             | Uncached -> Kfd.Uncached
@@ -351,23 +348,25 @@ let flush_hdp a =
   | Kfd_gpu k -> Kfd.flush_hdp k
   | Am_gpu g -> with_hw a (fun () -> Am.flush_hdp g.am.d)
 
+let timeout a =
+  Option.fold ~none:Driver.default_timeout ~some:Nx_device.timeout a.dev
+
+(* Appends [words] to the first SDMA queue. *)
+let enqueue a words =
+  let q =
+    match a.queues with
+    | Some (_, _, sdma) -> sdma_queue a (List.hd sdma)
+    | None -> failwith "the SDMA queue is not set up"
+  in
+  (* The copy engine reads what the host wrote to mapped memory. *)
+  flush_hdp a;
+  Sdma.submit q ~timeout_ms:(timeout a) words
+
 let queue a ~timeline =
   let signal = Nativeint.to_int (Region.address timeline) in
   let props = a.props in
   let family = sdma_family props and max = max_copy props in
-  let enqueue words =
-    let q =
-      match a.queues with
-      | Some (_, _, sdma) -> sdma_queue a (List.hd sdma)
-      | None -> failwith "the SDMA queue is not set up"
-    in
-    let timeout_ms =
-      Option.fold ~none:Driver.default_timeout ~some:Nx_device.timeout a.dev
-    in
-    (* The copy engine reads what the host wrote to mapped memory. *)
-    flush_hdp a;
-    Sdma.submit q ~timeout_ms words
-  in
+  let enqueue = enqueue a in
   let submit ~dst ~src n ~signal:v =
     enqueue
       (Sdma.packets ~family ~max ~signal ~dst:(Nativeint.to_int dst)
@@ -414,36 +413,51 @@ let dma a r =
 
 (* Programs *)
 
-(* The most memory the host can map for code: the part of the GPU's memory it
-   maps under the kernel driver, unless it maps none; under PCI the memory BAR,
-   unless it is small. Without that memory, code is in system memory. *)
-let code_window a =
-  match a.gpu with
-  | Kfd_gpu k -> if k.visible = 0 then max_int else k.visible
-  | Am_gpu g ->
-      if Pci_memory.small_bar g.memory then max_int else snd (Pci.bar g.pci 0)
+(* Code lies in the GPU's own memory, under both interfaces and whatever the
+   size of the memory BAR, so that instruction fetches stay in VRAM: the host
+   writes it into system memory, [staging], and the SDMA queue copies it from
+   there. The copy then writes the word after the code in [staging], a fence of
+   the upload's own, so it waits on nothing of the timeline. The work that runs
+   the code starts by invalidating the shader caches it reaches the code
+   through. *)
+let fence_at n = round_up n 8
 
-(* The code object [binary], relocated and uploaded to memory of the device the
-   host writes, which it frees once unloaded. A code object the device cannot
-   run, or larger than that memory could ever hold, is refused, and the device
-   stays usable. *)
-let load a ~binary =
+let upload a ~sleep ~staging dst img =
+  let n = String.length img and fence = fence_at (String.length img) in
+  let host = Option.get (host_view staging) in
+  Mmio.write host 0 img;
+  Mmio.set64 host fence 0L;
+  Mmio.barrier ();
+  enqueue a
+    (Sdma.packets ~family:(sdma_family a.props) ~max:(max_copy a.props)
+       ~signal:(va staging + fence)
+       ~dst:(va dst) ~src:(va staging) n 1);
+  let timeout_ms = timeout a and start = Amdev.now_ms () in
+  (* A GPU that does not copy is lost, and may still read [staging], which is
+     then never freed. *)
+  while Mmio.get32 host fence <> 1 do
+    if Amdev.now_ms () - start > timeout_ms then
+      failwith "hang detected: the copy engine did not upload the code";
+    sleep 1
+  done;
+  free_mem a staging
+
+(* The code object [binary], relocated and uploaded to the device's memory,
+   which it frees once unloaded. A code object the device cannot run is refused,
+   and the device stays usable. *)
+let load a ~sleep ~binary =
   match Code_object.image binary with
   | exception Failure why -> Error why
   | obj, img -> (
       let bytes = String.length img in
-      match alloc_mem a Visible bytes with
-      | None when bytes > code_window a ->
-          Error
-            (Printf.sprintf
-               "%d bytes of code, more than the %d the host can map (enable \
-                Resizable BAR in the firmware settings)"
-               bytes (code_window a))
-      | None -> raise (Nx_device.Out_of_memory (Option.get a.dev, bytes))
-      | Some mem ->
+      match (alloc_mem a Vram bytes, alloc_mem a Host (fence_at bytes + 8)) with
+      | (None, _ | _, None) as got ->
+          Option.iter (free_mem a) (fst got);
+          Option.iter (free_mem a) (snd got);
+          raise (Nx_device.Out_of_memory (Option.get a.dev, bytes))
+      | Some mem, Some staging ->
           register a mem;
-          Mmio.write (Option.get (host_view mem)) 0 img;
-          Mmio.barrier ();
+          upload a ~sleep ~staging mem img;
           let image = ref () and found = ref [] in
           let entry name =
             match
@@ -998,12 +1012,22 @@ let report a () =
   Mutex.protect a.profile_lock (fun () ->
       Hashtbl.fold (fun _ p events -> events @ read_runs a p) a.profiles [])
 
+(* Mapped memory and the window it lies in: the part of the GPU's memory that
+   the host maps under the kernel driver, which must also give the process the
+   HDP's flush register, and the memory BAR under PCI, unless it is small. *)
+let mapped a =
+  match a.gpu with
+  | Am_gpu g when Pci_memory.small_bar g.memory -> None
+  | Am_gpu g -> Some (allocator a Visible, snd (Pci.bar g.pci 0))
+  | Kfd_gpu k when k.visible = 0 || not (Kfd.flushes_hdp k) -> None
+  | Kfd_gpu k -> Some (allocator a Visible, k.visible)
+
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
     Driver.device ~name:(gpu_name a) ~arch:(arch a.props.target) ~host:a.machine
       ~budget
       ~completion:(Sleep (fun ~timeline:_ -> sleep))
-      ~load:(load a) ~peer:(peer a)
+      ~load:(load a ~sleep) ~peer:(peer a)
       ~reaches:(fun d' ->
         match amd_of d' with Some peer -> reaches a peer | None -> false)
       ~dma:(dma a) ~room:(room a) ~report:(report a) ?finalize
@@ -1011,11 +1035,7 @@ let make_device a ~budget ~sleep ?finalize () =
          {
            memory = allocator a Vram;
            host_memory = allocator a Host;
-           mapped =
-             (match a.gpu with
-             | Am_gpu g when Pci_memory.small_bar g.memory -> None
-             | Kfd_gpu k when k.visible = 0 || not (Kfd.flushes_hdp k) -> None
-             | _ -> Some (allocator a Visible, code_window a));
+           mapped = mapped a;
            mapping = mapping a;
            queue = queue a;
          })

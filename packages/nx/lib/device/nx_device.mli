@@ -1317,9 +1317,10 @@ module Driver : sig
               and the bytes of the window it lies in: its own memory that the
               host addresses through that window, whose regions have a host
               address. The window holds at most that many bytes of mapped memory
-              and of loaded programs' code ({!Program.code}). With [None], or
-              when the window has no room left, mapped memory is pinned memory,
-              and code counts in pinned memory.
+              and of the loaded programs' code that the host addresses
+              ({!Program.code}). With [None], or when the window has no room
+              left, mapped memory is pinned memory, and such code counts in
+              pinned memory. Code the host does not address counts in [memory].
             - [mapping] maps host memory for {!Buffer.borrow} and for the host's
               staging memory.
             - [queue ~timeline] is its copy queue, given the region of its

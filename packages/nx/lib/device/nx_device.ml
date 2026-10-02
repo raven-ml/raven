@@ -1337,14 +1337,16 @@ let free_all d ~wait v memories =
 
 let free_of d kind = (Option.get (allocator_of d kind)).free
 
-(* The memory a binary's code lies in on [d]: memory the host writes and [d]'s
-   work reads, its mapped memory where it has a window, and pinned memory where
-   it has none, as a small BAR leaves it. *)
-let code_kind d =
-  match d.kind with
-  | Local { mapped = Some _; _ } -> Mapped
-  | Local _ -> Pinned
-  | Machine _ | Shared _ | Disk -> Device
+(* The memory the code of [i] lies in on [d]. On a device with memory of its
+   own, it is that memory where the host does not address the code, and
+   otherwise memory the host writes and [d]'s work reads: its mapped memory
+   where it has a window, and pinned memory where it has none. *)
+let code_kind d (i : image) =
+  match (d.kind, i.code) with
+  | Local _, Some { host = None; _ } -> Device
+  | Local { mapped = Some _; _ }, _ -> Mapped
+  | Local _, _ -> Pinned
+  | (Machine _ | Shared _ | Disk), _ -> Device
 
 (* The bytes of [i]'s code in its device's memory, [0] for a driver that keeps
    it elsewhere. *)
@@ -1596,7 +1598,7 @@ let release d (b : base) =
    only [d]'s queues run its code, and a launch may run it without listing its
    memory. The host's programs return before the image can be unreachable. *)
 let unload d (i : image) =
-  let v = submitted d and bytes = code_bytes i and space = code_kind d in
+  let v = submitted d and bytes = code_bytes i and space = code_kind d i in
   d.retiring <-
     {
       until = (fun () -> [ (d, v) ]);
@@ -3054,11 +3056,11 @@ module Program = struct
                pace the collector by the binary's size. *)
             let code = code_bytes image in
             if code > 0 then begin
-              allocate_bytes d (code_kind d) code;
+              allocate_bytes d (code_kind d image) code;
               memory_changed d
             end;
             let bytes = if code > 0 then code else String.length binary in
-            let token = release_token d (code_kind d) (Code image) bytes
+            let token = release_token d (code_kind d image) (Code image) bytes
             and entries = Hashtbl.create 4 in
             let rec l = { binary; image; entries; kept = Keep (token, l) } in
             index d key l;
