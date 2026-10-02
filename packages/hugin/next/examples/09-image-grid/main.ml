@@ -5,7 +5,9 @@ open Hugin_next
 
 let classes = [| "ring"; "bar"; "dot"; "wave" |]
 
-(* [picture k] is a 32 × 32 RGB image of class [k mod 4]. *)
+(* [picture k] is a 32 × 32 RGB image of class [k mod 4]. Its background drifts
+   from blue towards red with [k], so each row of the grid has a tint of its
+   own: an image is painted from its pixels, never through a colour scale. *)
 let picture k =
   let c = k mod 4 and hue = float k /. 16. in
   Nx.init Nx.float32 [| 32; 32; 3 |] (fun i ->
