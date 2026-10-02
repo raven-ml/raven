@@ -76,7 +76,8 @@
    (run %{exe:embed.exe} %{graphs}))))
 
 ; Benchmarks serialize across the workspace, since concurrent suites contend for
-; cores and distort what they measure.
+; cores and distort what they measure. [--warm] fills tolk's disk cache with the
+; kernels the cases compile, so the measurement compiles nothing.
 
 (rule
  (alias bench)
@@ -84,4 +85,6 @@
  (deps
   (glob_files *.thumper))
  (action
-  (run %{exe:bench_tolk.exe})))
+  (progn
+   (run %{exe:bench_tolk.exe} --warm)
+   (run %{exe:bench_tolk.exe}))))

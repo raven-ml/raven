@@ -116,9 +116,9 @@ let program name =
 
 (* Decode products *)
 
-(* An element of a buffer a timed kernel reads: a small float, a small
-   integer, and 127 in a byte, which is 1 as an E8M0 scale and +-6 as two FP4
-   codes. Uninitialised memory would time NaN and subnormal arithmetic. *)
+(* An element of a buffer a timed kernel reads: a small float, a small integer,
+   and 127 in a byte, which is 1 as an E8M0 scale and +-6 as two FP4 codes.
+   Uninitialised memory would time NaN and subnormal arithmetic. *)
 let element dt i : Dtype.value =
   if Dtype.is_float dt then `Float (Float.of_int ((i mod 7) - 3) *. 0.25)
   else if Dtype.is_bool dt then `Bool (i mod 2 = 0)
@@ -141,7 +141,8 @@ let compiled name d sink =
   in
   match (devices name).compiler.queues with
   | None ->
-      let p = Tolk_engine.Program.load d prg and buffers = List.map scratch params in
+      let p = Tolk_engine.Program.load d prg
+      and buffers = List.map scratch params in
       fun () -> Tolk_engine.Program.run p buffers
   | Some _ ->
       let slots = 1 + List.fold_left max 0 info.globals in
@@ -174,8 +175,9 @@ let decode name open_device =
        (fun (kernel, text) ->
          Thumper.bench_with_setup
            ~setup:(fun () ->
-             compiled (String.uppercase_ascii name) (open_device ())
-               (Graph.of_string text))
+             compiled
+               (String.uppercase_ascii name)
+               (open_device ()) (Graph.of_string text))
            kernel
            (fun run -> run ()))
        Kernels.all)
@@ -215,17 +217,29 @@ let cuda () =
           match Nx_cuda_device.get 0 with Ok d -> d | Error e -> failwith e);
     ]
 
+let suite () =
+  List.map (fun (name, _) -> program name) Programs.all
+  @ (decode "cpu" (fun () -> Nx_device.host) :: lorenz :: cuda ())
+
 let () =
-  (match Array.to_list Sys.argv with
+  match Array.to_list Sys.argv with
   | [ _; "--cuda" ] ->
       exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
-  | _ -> ());
-  Thumper.run "tolk"
-    ~budgets:
-      [
-        Thumper.Budget.no_slower_than 0.05;
-        Thumper.Budget.no_more_alloc_than 0.01;
-      ]
-    (List.map (fun (name, _) -> program name) Programs.all
-    @ (decode "cpu" (fun () -> Nx_device.host) :: lorenz :: cuda ()))
-  |> exit
+  | [ _; "--warm" ] ->
+      (* Each case that compiles, once, in as few calls as a trial takes: the
+         kernels its setup compiles land in tolk's disk cache, which a
+         measurement then reads. *)
+      ignore
+        (Thumper.measure
+           ~config:Thumper.Config.(default |> samples 3 |> warmup 0.)
+           ~filter:(`Or [ `Id "cpu/"; `Id "cuda/"; `Id "lorenz/" ])
+           (suite ()))
+  | _ ->
+      Thumper.run "tolk"
+        ~budgets:
+          [
+            Thumper.Budget.no_slower_than 0.05;
+            Thumper.Budget.no_more_alloc_than 0.01;
+          ]
+        (suite ())
+      |> exit
