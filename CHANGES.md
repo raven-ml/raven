@@ -178,6 +178,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `jit` of `Nx.eigh`, `Nx.svd` and `Nx.qr` compiles in one to four seconds at
+  any size: the program holds one Jacobi round or Householder step, which a
+  loop repeats. It held every step, so an 8 x 8 `eigh` took 35 s to compile, a
+  16 x 16 one 280 s, and a 32 x 32 one ten minutes. A round of `svd` is now
+  O(n^2), where it multiplied matrices: 64 matrices of 16 x 16 take 2.9 ms,
+  where they took 41 ms.
 - `jit` compiles `Nx.eigh` and `Nx.eigvalsh` of real matrices, by two-sided
   Jacobi rotations for a sweep count fixed by the size and dtype, so a step
   that solves with a symmetric eigendecomposition runs as one program. Before,

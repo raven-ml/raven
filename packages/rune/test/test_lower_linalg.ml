@@ -899,12 +899,45 @@ let parity =
       case "matmul_batched" (fun () ->
           let a = x [| 2; 1; 4; 3 |] and b = x [| 3; 3; 5 |] in
           fun () -> Nx.matmul a b);
-      case "qr_q" (fun () ->
-          let a = x [| 4; 3 |] in
-          fun () -> fst (Nx.qr a));
-      case "qr_r" (fun () ->
-          let a = x [| 4; 3 |] in
-          fun () -> snd (Nx.qr a));
+    ]
+
+(* Loops
+
+   A factorization that repeats a step as many times as its shapes fix holds the
+   step once, in a loop: its graph, the loop's body included, grows with the
+   matrices only through its other parts, such as the sort of the eigenvalues,
+   and so does what compiling it costs. A graph that held every step would more
+   than double from [n] rows to [2 n], as the steps do. *)
+
+let nodes f =
+  let s, ys = trace f in
+  List.length
+    (Ops.toposort
+       (Ops.sink (List.map (fun (Nx.P y) -> Rune_internals.Lower.uop s y) ys)))
+
+let loops =
+  let x n = Nx.copy (Nx.zeros Nx.float32 [| n; n |]) in
+  let grows_by_less_than_half name f =
+    test name (fun () ->
+        List.iter
+          (fun n ->
+            let small = nodes (f (x n)) in
+            less ~msg:(string_of_int n) int
+              ~than:(small + (small / 2))
+              (nodes (f (x (2 * n)))))
+          [ 8; 16; 32 ])
+  in
+  group "loops"
+    [
+      grows_by_less_than_half "eigh" (fun a () ->
+          let w, v = Nx.eigh a in
+          [ Nx.P w; Nx.P v ]);
+      grows_by_less_than_half "svd" (fun a () ->
+          let u, s, vt = Nx.svd a in
+          [ Nx.P u; Nx.P s; Nx.P vt ]);
+      grows_by_less_than_half "qr" (fun a () ->
+          let q, r = Nx.qr a in
+          [ Nx.P q; Nx.P r ]);
     ]
 
 (* Integers *)
@@ -953,6 +986,7 @@ let () =
          qr;
          svd;
          eigh;
+         loops;
          integers;
          on_the_host;
          parity;

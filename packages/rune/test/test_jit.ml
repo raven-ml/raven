@@ -3825,12 +3825,32 @@ let eigh_gradient () =
   equal ~msg:"jit (grad f)" tolerance g
     (host (Rune.jit' (Rune.grad' eigen_loss) a))
 
+(* A factorization's loop runs on every device of a batch split over several,
+   each on its own matrices. *)
+let split_batch () =
+  let a = spectral Nx.float64 [| 4; 3; 3 |] [| -1.; 0.5; 2. |] in
+  let split x = Nx.place (Nx.Placement.sharded ~axis:0 [ d1; d2 ]) x in
+  let bound = 32. *. 3. *. 0x1p-53 in
+  let w', _ =
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+      Nx.eigh (split a)
+  in
+  within ~bound (fst (Nx.eigh a)) (host w');
+  let singular a =
+    let _, s, _ = Nx.svd a in
+    s
+  in
+  within ~bound (singular a)
+    (host (Rune.jit Nx.Ptree.(tensor @-> returns tensor) singular (split a)))
+
 let eighs =
   group "symmetric eigendecompositions"
     [
       compiled_eigh "float32" Nx.float32 0x1p-24;
       compiled_eigh "float64" Nx.float64 0x1p-53;
       test "a gradient through a compiled eigh is eager's" eigh_gradient;
+      test "eigh and svd of a batch split over devices are eager's" split_batch;
     ]
 
 (* One device *)

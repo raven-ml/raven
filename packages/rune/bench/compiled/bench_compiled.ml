@@ -210,29 +210,48 @@ let select_zero =
           fun g -> g x);
     ]
 
-(* Symmetric eigendecompositions of 64 float32 matrices of 8 x 8, eagerly and
-   compiled for the host. Compiled, it is 56 rounds of Jacobi rotations, each
-   one pass over the matrices and one over their vectors. Its first call
-   compiles for some 40 s without the disk cache. *)
-let eigh =
+(* Symmetric eigendecompositions and singular value decompositions of 64 float32
+   matrices of 8 x 8, eagerly and compiled for the host. Compiled, an eigh is 56
+   rounds of Jacobi rotations and an svd 42, each round a kernel that computes
+   its rotations and one for each rotated value, which a loop runs; svd also
+   runs two Householder QRs of 8 steps. *)
+let factorizations =
   let batch = 64 and n = 8 in
   let a () =
     let x = uniform [| batch; n; n |] in
     Nx.add x (Nx.matrix_transpose x)
   in
   let id = Printf.sprintf "float32-%dx%dx%d" batch n n in
-  Thumper.group ~id:"eigh" "eigh"
-    [
-      Thumper.bench_with_setup ~setup:a (id ^ "-eager") (fun a ->
-          ignore (Sys.opaque_identity (Nx.eigh a));
-          Nx_device.synchronize Nx_device.host);
-      compiled_call (id ^ "-host")
-        Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-        (fun a -> Nx.eigh a)
-        (fun () ->
-          let a = a () in
-          fun g -> g a);
-    ]
+  let svd a =
+    let u, s, vt = Nx.svd a in
+    (u, (s, vt))
+  in
+  [
+    Thumper.group ~id:"eigh" "eigh"
+      [
+        Thumper.bench_with_setup ~setup:a (id ^ "-eager") (fun a ->
+            ignore (Sys.opaque_identity (Nx.eigh a));
+            Nx_device.synchronize Nx_device.host);
+        compiled_call (id ^ "-host")
+          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+          (fun a -> Nx.eigh a)
+          (fun () ->
+            let a = a () in
+            fun g -> g a);
+      ];
+    Thumper.group ~id:"svd" "svd"
+      [
+        Thumper.bench_with_setup ~setup:a (id ^ "-eager") (fun a ->
+            ignore (Sys.opaque_identity (svd a));
+            Nx_device.synchronize Nx_device.host);
+        compiled_call (id ^ "-host")
+          Nx.Ptree.(tensor @-> returns (pair tensor (pair tensor tensor)))
+          svd
+          (fun () ->
+            let a = a () in
+            fun g -> g a);
+      ];
+  ]
 
 (* Reverse mode of a two-layer perceptron's loss over a batch of 32 rows of 64
    inputs, 128 hidden units and 10 outputs: the gradient of the compiled loss, a
@@ -447,21 +466,22 @@ let () =
             Thumper.Budget.no_more_alloc_than 0.01;
           ]
         (topk ~k:4 ~n:32 ~rows:512
-        :: Thumper.group ~id:"searchsorted" "searchsorted"
-             [
-               searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
-               searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000
-                 ~m:1_000_000;
-             ]
-        :: split :: indexed :: rope :: select_zero :: eigh :: reverse
-        :: Thumper.group ~id:"finite" "finite"
-             [
-               finite_checks ~place:Fun.id
-                 ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
-                 (Printf.sprintf "checks-%d-leaves-host" finite_leaves);
-             ]
-        :: Thumper.group ~id:"launch" "launch"
-             (launches ~place:Fun.id
-                ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
-                ())
-        :: (cuda () @ metal ()))
+         :: Thumper.group ~id:"searchsorted" "searchsorted"
+              [
+                searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
+                searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000
+                  ~m:1_000_000;
+              ]
+         :: split :: indexed :: rope :: select_zero :: factorizations
+        @ reverse
+          :: Thumper.group ~id:"finite" "finite"
+               [
+                 finite_checks ~place:Fun.id
+                   ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+                   (Printf.sprintf "checks-%d-leaves-host" finite_leaves);
+               ]
+          :: Thumper.group ~id:"launch" "launch"
+               (launches ~place:Fun.id
+                  ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+                  ())
+          :: (cuda () @ metal ()))

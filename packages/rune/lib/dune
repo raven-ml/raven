@@ -14,6 +14,7 @@
   lower_linalg
   lower_reduce
   lower
+  loop
   memo
   scan
   staged

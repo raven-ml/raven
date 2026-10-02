@@ -13,7 +13,11 @@
     A factorization takes a number of steps that its shapes fix, and none fails:
     where nx raises [Linalg_error], the result holds the non-finite values its
     steps produce, as each function states. [float16] computes at [float32] and
-    rounds each result once. *)
+    rounds each result once.
+
+    The factorizations that take [~device] hold their step once, in a loop that
+    runs on [device], the device of their result ({!Loop.repeat}): their graphs
+    do not grow with the number of steps. *)
 
 open Tolk
 
@@ -31,13 +35,14 @@ val cholesky : upper:bool -> Ops.t -> Ops.t
     positive, where nx raises, is NaN: the column it heads and every later one
     are NaN on and below the diagonal. *)
 
-val qr : reduced:bool -> Ops.t -> Ops.t * Ops.t
-(** [qr ~reduced a] is [(q, r)] with [a = q r], [q] orthogonal and [r] upper
-    triangular, by Householder reflections. For [a] of [m] rows, [n] columns and
-    [k = min m n], [q] has [k] columns and [r] [k] rows under [reduced], and [q]
-    is square otherwise. The signs of the factors are unspecified. A column's
-    norm is the square root of its sum of squares, so the factors lose accuracy
-    where squares of elements overflow or fall below the normal range. *)
+val qr : device:Ops.device -> reduced:bool -> Ops.t -> Ops.t * Ops.t
+(** [qr ~device ~reduced a] is [(q, r)] with [a = q r], [q] orthogonal and [r]
+    upper triangular, by Householder reflections. For [a] of [m] rows, [n]
+    columns and [k = min m n], [q] has [k] columns and [r] [k] rows under
+    [reduced], and [q] is square otherwise. The signs of the factors are
+    unspecified. A column's norm is the square root of its sum of squares, so
+    the factors lose accuracy where squares of elements overflow or fall below
+    the normal range. *)
 
 val lu : Ops.t -> Ops.t * Ops.t * Ops.t
 (** [lu a] is [(lu, pivots, perm)], the factorization of [a] with partial
@@ -47,26 +52,27 @@ val lu : Ops.t -> Ops.t * Ops.t * Ops.t
     magnitude on or below the diagonal; an element below the diagonal that is
     NaN is never the pivot. A zero pivot leaves its column unscaled. *)
 
-val svd : full_matrices:bool -> Ops.t -> Ops.t * Ops.t * Ops.t
-(** [svd ~full_matrices a] is [(u, s, vt)] with [a = u diag(s) vt], by one-sided
-    Jacobi rotations after a QR factorization: the [float64] singular values [s]
-    in descending order, a zero one [+0.], and [u] and [vt] with orthonormal
-    columns and rows, square under [full_matrices] and of [min m n] columns and
-    rows otherwise. It rotates for a number of sweeps that grows as the
-    logarithm of [min m n], and has [qr]'s range of accuracy. The signs of the
-    vectors are unspecified. *)
+val svd :
+  device:Ops.device -> full_matrices:bool -> Ops.t -> Ops.t * Ops.t * Ops.t
+(** [svd ~device ~full_matrices a] is [(u, s, vt)] with [a = u diag(s) vt], by
+    one-sided Jacobi rotations after a QR factorization: the [float64] singular
+    values [s] in descending order, a zero one [+0.], and [u] and [vt] with
+    orthonormal columns and rows, square under [full_matrices] and of [min m n]
+    columns and rows otherwise. It rotates for a number of sweeps that grows as
+    the logarithm of [min m n], and has [qr]'s range of accuracy. The signs of
+    the vectors are unspecified. *)
 
-val eigh : vectors:bool -> Ops.t -> Ops.t * Ops.t option
-(** [eigh ~vectors a] is [(w, v)] with [a v = v diag(w)], reading only the lower
-    triangle of [a]: the [float64] eigenvalues [w] in ascending order and, under
-    [vectors], the orthonormal eigenvectors [v] as columns, by two-sided Jacobi
-    rotations. For [n] rows it rotates for [⌈p ⌈log2 n⌉ / 10⌉] sweeps of the
-    pairs of rows, [p] the precision in bits at which it computes, enough for
-    the slowest spectra, of repeated eigenvalues, to reach [n] units of roundoff
-    of [a]'s norm. Every element of [v diag(w) vᵀ] and [vᵀ v] is then within
-    some ten [n] units of roundoff of [a]'s and the identity's. The signs of the
-    vectors, and the basis of the space of a repeated eigenvalue, are
-    unspecified. *)
+val eigh : device:Ops.device -> vectors:bool -> Ops.t -> Ops.t * Ops.t option
+(** [eigh ~device ~vectors a] is [(w, v)] with [a v = v diag(w)], reading only
+    the lower triangle of [a]: the [float64] eigenvalues [w] in ascending order
+    and, under [vectors], the orthonormal eigenvectors [v] as columns, by
+    two-sided Jacobi rotations. For [n] rows it rotates for [⌈p ⌈log2 n⌉ / 10⌉]
+    sweeps of the pairs of rows, [p] the precision in bits at which it computes,
+    enough for the slowest spectra, of repeated eigenvalues, to reach [n] units
+    of roundoff of [a]'s norm. Every element of [v diag(w) vᵀ] and [vᵀ v] is
+    then within some ten [n] units of roundoff of [a]'s and the identity's. The
+    signs of the vectors, and the basis of the space of a repeated eigenvalue,
+    are unspecified. *)
 
 val solve_triangular :
   upper:bool -> transpose:bool -> unit_diag:bool -> Ops.t -> Ops.t -> Ops.t

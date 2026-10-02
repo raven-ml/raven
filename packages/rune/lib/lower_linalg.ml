@@ -30,6 +30,22 @@ let block u rows cols =
          else if i = r - 1 then bound cols
          else None))
 
+(* The diagonal of the matrices of [u]: the first column of their elements laid
+   out in rows of one more element. *)
+let diagonal u =
+  let batch, n, _ = matrix u in
+  let flat = Ops.reshape u (ints (batch @ [ n * n ])) in
+  let padded =
+    Ops.pad flat
+      (List.map (fun _ -> None) batch @ [ Some (Ops.Int 0, Ops.Int n) ])
+  in
+  Ops.reshape
+    (block
+       (Ops.reshape padded (ints (batch @ [ n; n + 1 ])))
+       None
+       (Some (0, 1)))
+    (ints (batch @ [ n ]))
+
 let row u i = block u (Some (i, i + 1)) None
 let column u j = block u None (Some (j, j + 1))
 let entry u i j = block u (Some (i, i + 1)) (Some (j, j + 1))
@@ -70,19 +86,26 @@ let matmul a b =
    and accumulated in [q] on the right. Column [i] itself takes its reflected
    value, the diagonal element and zeros below it. The diagonal takes the sign
    opposite to [x]'s first element, so that no cancellation occurs, and a column
-   already zero below the diagonal takes no reflection. *)
+   already zero below the diagonal takes no reflection. A loop repeats the step
+   ({!Loop.repeat}), which reads [i] from a count it carries. *)
 
 let sum_last u = Ops.unsqueeze (Ops.rop u Op.Add [ Ops.ndim u - 1 ]) (-1)
 let max_last u = Ops.unsqueeze (Ops.rop u Op.Max [ Ops.ndim u - 1 ]) (-1)
 
-let householder a =
+let householder ~device a =
   let batch, m, n = matrix a in
   let idx = Ops.arange ~dtype:Int32 m in
   let rows = row_index m and columns = column_index n in
-  let reflect (q, r) i =
-    let at_i = is idx i in
-    let c = Ops.squeeze ~axis:(-1) (column r i) in
-    let x = Ops.where (Ops.ge idx (Ops.int i)) c (zero c) in
+  let reflect q r i =
+    let at_i = Ops.eq idx i in
+    let c =
+      Ops.squeeze ~axis:(-1)
+        (Lower_index.gather
+           (Ops.ndim r - 1)
+           (Ops.expand i (ints (batch @ [ m; 1 ])))
+           r)
+    in
+    let x = Ops.where (Ops.ge idx i) c (zero c) in
     (* The reflector is built from the column divided by its largest magnitude,
        so that no square, sum or quotient overflows or underflows; only the
        diagonal element takes the column's scale back. *)
@@ -100,9 +123,7 @@ let householder a =
     let sgn = direction x0 in
     (* A column already zero below the diagonal takes no reflection, and keeps
        its diagonal element's sign. *)
-    let below =
-      sum_last (Ops.where (Ops.gt idx (Ops.int i)) magnitude (zero x))
-    in
+    let below = sum_last (Ops.where (Ops.gt idx i) magnitude (zero x)) in
     let active = Ops.ne below (zero below) in
     let u0 = Ops.O.(s0 + (sgn * norm)) in
     let v =
@@ -121,35 +142,45 @@ let householder a =
         x0
     in
     let reflected =
-      Ops.where
-        (Ops.eq rows (Ops.int i))
+      Ops.where (Ops.eq rows i)
         (Ops.unsqueeze diagonal (-1))
-        (Ops.where (Ops.lt rows (Ops.int i)) r (zero r))
+        (Ops.where (Ops.lt rows i) r (zero r))
     in
-    let applied = Ops.sub r (dot w (dot (transpose v) r)) in
+    let applied = Ops.sub r (dot w (Ops.contiguous (dot (transpose v) r))) in
     (* A column that takes no reflection leaves q and r as they are: its v holds
        what the column held, and a NaN or an infinity there would spread through
        a product with a zero tau. *)
     let on = Ops.unsqueeze active (-1) in
-    ( Ops.where on (Ops.sub q (dot (dot q v) (transpose w))) q,
-      Ops.where
-        (Ops.eq columns (Ops.int i))
-        reflected
-        (Ops.where (Ops.ge rows (Ops.int i)) (Ops.where on applied r) r) )
+    [
+      Ops.where on (Ops.sub q (dot (Ops.contiguous (dot q v)) (transpose w))) q;
+      Ops.where (Ops.eq columns i) reflected
+        (Ops.where (Ops.ge rows i) (Ops.where on applied r) r);
+      Ops.add i (Ops.const_like i (`Int Bigint.one));
+    ]
+  in
+  let step = function
+    | [ q; r; i ] -> reflect q r i
+    | _ -> invalid_arg "Lower_linalg.householder"
   in
   let q = Ops.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
-  List.fold_left reflect (q, a) (List.init (Int.min m n) Fun.id)
+  match
+    Loop.repeat device (Int.min m n)
+      [ q; a; Ops.const ~dtype:Int32 (`Int Bigint.zero) ]
+      step
+  with
+  | q :: r :: _ -> (q, r)
+  | _ -> invalid_arg "Lower_linalg.householder"
 
 (* The upper triangle of the matrices of [u], zeros below it. *)
 let triu u =
   let _, m, n = matrix u in
   Ops.where (Ops.le (row_index m) (column_index n)) u (zero u)
 
-let qr ~reduced a =
+let qr ~device ~reduced a =
   let dt = dtype a in
   let _, m, n = matrix a in
   let k = Int.min m n in
-  let q, r = householder (Lower_arith.widen a) in
+  let q, r = householder ~device (Lower_arith.widen a) in
   let r = triu r in
   let q, r =
     if reduced then (block q None (Some (0, k)), block r (Some (0, k)) None)
@@ -157,51 +188,39 @@ let qr ~reduced a =
   in
   (Ops.cast q dt, Ops.cast r dt)
 
-(* Singular values by one-sided Jacobi rotations
+(* Jacobi rotations
 
-   The columns of [u], [r]'s leading square, are made orthogonal by rotating
-   pairs of them, [num / 2] disjoint pairs a round, each by the angle that
-   zeroes their inner product; [v] accumulates the rotations. The pairing [p]
-   moves as in a round-robin tournament, so that each pair meets once every [num
-   - 1] rounds, and a round rotates the pairs [p] selects by one matrix
-   product. *)
+   A round rotates [n / 2] disjoint pairs of positions of an axis, each by the
+   angle that zeroes the pair's off-diagonal element. The pairs are a
+   round-robin tournament's by the circle method: position [k] meets position [n
+   - 1 - k], the middle one of an odd [n] sitting the round out, and after the
+   round each position but the first moves one place along the others, every
+   position for an odd [n]. Values are kept in the order of the positions, so
+   that a round reads and writes each element once; the sort of the result
+   undoes it. For six positions, the first round meets [(0, 5)], [(1, 4)] and
+   [(2, 3)], and the positions then hold [0 5 1 2 3 4], so that the second meets
+   [(0, 4)], [(5, 3)] and [(1, 2)].
 
-let pairs num =
-  let h = num / 2 in
-  Ops.cat
-    (Ops.arange ~dtype:Int32 h)
-    [ Ops.flip (Ops.arange ~start:h ~dtype:Int32 num) [ 0 ] ]
-
-(* The next round's pairing: every column but the first moves one place. *)
-let next_pairs num p =
-  if num mod 2 = 1 then Ops.O.((p - int 1) % int num)
-  else
-    let others = num - 1 in
-    let parts = Ops.split p [ 1; others ] in
-    Ops.cat (List.nth parts 0)
-      [ Ops.O.(((List.nth parts 1 - int 2) % int others) + int 1) ]
+   A program holds one round, which a loop repeats ({!Loop.repeat}): compiling
+   costs a round whatever the count. A round's kernels compute its rotations,
+   then rotate each value once. *)
 
 (* The least [k] with [2^k >= n]. *)
 let ceil_log2 n =
   let rec go k = if 1 lsl k >= n then k else go (k + 1) in
   go 0
 
-(* The rounds of a sweep, which meets every pair of [num] once: [num - 1], or
-   [num] for an odd [num], whose rounds each leave one out. *)
-let sweep num = num - 1 + (num mod 2)
+(* The rounds of a sweep, which meets every pair of [n] positions once: [n - 1],
+   or [n] for an odd [n], whose rounds each leave one out. *)
+let sweep n = n - 1 + (n mod 2)
 
-(* The rounds that bring [num] columns to orthogonality. The rotations converge
-   quadratically once the columns are nearly orthogonal, and the sweeps it takes
-   to get there grow as the logarithm of [num]. *)
-let rounds num = if num < 2 then 0 else (ceil_log2 num + 3) * sweep num
-
-(* [angle ~alpha ~beta ~gamma] is the cosine and the sine of the rotation that
-   zeroes the off-diagonal element of each symmetric [[alpha, gamma], [gamma,
-   beta]], of an angle at most a quarter turn in magnitude: its tangent [t] is
-   the root of [t² + 2 tau t - 1] of least magnitude, [tau = (beta - alpha) / 2
-   gamma], and is zero where [gamma] is, or where [tau²] overflows, as its limit
-   [1 / 2 tau] is then below the roundoff. *)
-let angle ~alpha ~beta ~gamma =
+(* [tangents ~alpha ~beta ~gamma] is the tangent [t] of the rotation that zeroes
+   the off-diagonal element of each symmetric [[alpha, gamma], [gamma, beta]],
+   of an angle at most a quarter turn in magnitude: the root of [t² + 2 tau t -
+   1] of least magnitude, [tau = (beta - alpha) / 2 gamma]. It is zero where
+   [gamma] is, or where [tau²] overflows, as its limit [1 / 2 tau] is then below
+   the roundoff. *)
+let tangents ~alpha ~beta ~gamma =
   let rot = Ops.ne gamma (zero gamma) in
   let one = float gamma 1. and two = float gamma 2. in
   let tau = fdiv Ops.O.(beta - alpha) Ops.O.(two * Ops.where rot gamma one) in
@@ -209,71 +228,137 @@ let angle ~alpha ~beta ~gamma =
     fdiv (direction tau)
       Ops.O.(Lower_arith.unary Abs tau + Ops.sqrt (one + (tau * tau)))
   in
-  let t = Ops.where rot t (zero t) in
+  Ops.where rot t (zero t)
+
+(* [part u axis lo hi] is the elements [lo] to [hi], excluded, of [axis]. *)
+let part u axis lo hi =
+  Ops.shrink u
+    (List.init (Ops.ndim u) (fun d ->
+         if d = axis then Some (Ops.Int lo, Ops.Int hi) else None))
+
+(* [rotations n t] is the cosines and the sines, along the last axis, of a round
+   of [n] positions whose pairs [(k, n - 1 - k)] turn by the tangents [t] at
+   [k], computed into storage of their own: the cosines hold [c = 1 / sqrt (1 +
+   t²)] at both positions of a pair, the sines [-c t] at [k] and [c t] at its
+   mirror image, and the middle position of an odd [n] [1] and [0]. Each
+   position reads its pair's tangent once. *)
+let rotations n t =
+  let r = Ops.ndim t and h = n / 2 in
+  let k = Ops.arange ~dtype:Int32 n in
+  let first = Ops.lt k (Ops.int h) and mirror = Ops.ge k (Ops.int (n - h)) in
+  let along u =
+    let shape = List.mapi (fun d s -> if d = r - 1 then Ops.Int n else s) in
+    Ops.expand
+      (Ops.reshape u (ints (List.init r (fun d -> if d = r - 1 then n else 1))))
+      (shape (Ops.shape t))
+  in
+  let pair =
+    Ops.where mirror
+      (Ops.sub (Ops.int (n - 1)) k)
+      (Ops.where first k (Ops.int 0))
+  in
+  let constant x = Ops.const ~dtype:(dtype t) (`Float x) in
+  let sign =
+    Ops.where first (constant (-1.))
+      (Ops.where mirror (constant 1.) (constant 0.))
+  in
+  let t = Ops.mul (Lower_index.gather (r - 1) (along pair) t) (along sign) in
+  let one = float t 1. in
   let c = fdiv one (Ops.sqrt Ops.O.(one + (t * t))) in
-  (c, Ops.O.(c * t))
+  let both =
+    Ops.contiguous
+      (Ops.cat ~axis:(r - 1)
+         (Ops.unsqueeze c (r - 1))
+         [ Ops.unsqueeze (Ops.mul c t) (r - 1) ])
+  in
+  let row k = Ops.squeeze ~axis:(r - 1) (part both (r - 1) k (k + 1)) in
+  (row 0, row 1)
 
-let rotate (u, v, p) =
-  let batch, num, _ = matrix u in
-  let h = num / 2 and dt = dtype u in
-  let halves x axis =
-    let parts = Ops.split ~axis x [ h; h ] in
-    (List.nth parts 0, List.nth parts 1)
-  in
-  (* The first [h] columns select each pair's first column, the next [h] its
-     second. *)
-  let selected =
-    block
-      (Ops.cast (Ops.eq (row_index num) (Ops.unsqueeze p 0)) dt)
-      None
-      (Some (0, 2 * h))
-  in
-  let paired = dot u selected in
-  let left, right = halves paired (-1) in
-  let column_sums x = Ops.rop x Op.Add [ Ops.ndim x - 2 ] in
-  let gamma =
-    Ops.reshape (column_sums Ops.O.(left * right)) (ints (batch @ [ 1; h ]))
-  in
-  let alpha, beta =
-    halves (Ops.unsqueeze (column_sums Ops.O.(paired * paired)) (-2)) (-1)
-  in
-  let c, s = angle ~alpha ~beta ~gamma in
-  let mi, mj = halves (transpose selected) (-2) in
-  let col x = Ops.unsqueeze x (-1) and row x = Ops.unsqueeze x (-2) in
-  let per_pair x = Ops.reshape x (ints (batch @ [ h; 1; 1 ])) in
-  let cc = per_pair (Ops.sub c (float c 1.)) and ss = per_pair s in
-  let delta =
-    Ops.O.(
-      (cc * ((col mi * row mi) + (col mj * row mj)))
-      + (ss * ((col mi * row mj) - (col mj * row mi))))
-  in
-  let r =
-    Ops.add (eye dt num num) (Ops.rop delta Op.Add [ Ops.ndim delta - 3 ])
-  in
-  (dot u r, dot v r, next_pairs num p)
+(* [turn u axis (cosines, sines)] rotates each pair of positions [k] and [n - 1
+   - k] of [axis] of [u], each the other's mirror image, to [c u_k - s u_j] and
+   [s u_k + c u_j]: [cosines] and [sines] multiply [u] and its mirror image. *)
+let turn u axis (cosines, sines) =
+  Ops.O.((cosines * u) + (sines * Ops.flip u [ axis ]))
 
-let svd ~full_matrices a =
+(* [advance u axis] moves each position of [axis] but the first one place along
+   the others, the last to the second: every position, the last to the first,
+   for an odd size. Position [k] reads the one it moves from, a gather that each
+   element reads once. *)
+let advance u axis =
+  let n = List.nth (Ops.max_shape u) axis in
+  let k = Ops.arange ~dtype:Int32 n in
+  let from =
+    if n mod 2 = 1 then Ops.O.((k + int (Int.pred n)) % int n)
+    else
+      let others = n - 1 and back = n - 3 in
+      Ops.where (is k 0) k Ops.O.(((k + int back) % int others) + int 1)
+  in
+  let along = List.init (Ops.ndim u) (fun d -> if d = axis then n else 1) in
+  Lower_index.gather axis
+    (Ops.expand (Ops.reshape from (ints along)) (Ops.shape u))
+    u
+
+(* [rotate u axis (cosines, sines)] is a round's rotation of [axis] of [u],
+   whose positions then advance. *)
+let rotate u axis rotations = advance (turn u axis rotations) axis
+
+(* Singular values by one-sided Jacobi rotations
+
+   The columns of [u], [r]'s leading square, are made orthogonal by rotating
+   pairs of them, each by the angle that zeroes their inner product; [v]
+   accumulates the rotations. [u] and [v] are square and are kept stacked, [u]
+   above [v], so that a round rotates the columns of both at once. *)
+
+(* The rounds that bring [num] columns to orthogonality. The rotations converge
+   quadratically once the columns are nearly orthogonal, and the sweeps it takes
+   to get there grow as the logarithm of [num]. *)
+let rounds num = if num < 2 then 0 else (ceil_log2 num + 3) * sweep num
+
+let svd ~device ~full_matrices a =
   let dt = dtype a in
   let batch, m, n = matrix a in
   let num = Int.min m n and q_num = Int.max m n in
   let x = Lower_arith.widen a in
   let wdt = dtype x in
-  let q, r = householder (if m >= n then x else transpose x) in
+  let q, r = householder ~device (if m >= n then x else transpose x) in
   let square k = Ops.expand (eye wdt k k) (ints (batch @ [ k; k ])) in
-  let u = Ops.contiguous (block (triu r) (Some (0, num)) (Some (0, num))) in
-  let v = Ops.contiguous (square num) in
-  let u, v, _ =
-    List.fold_left
-      (fun uvp _ -> rotate uvp)
-      (u, v, pairs num)
-      (List.init (rounds num) Fun.id)
+  let rank = Ops.ndim r in
+  let columns x = Ops.unsqueeze x (-2) in
+  let round = function
+    | [ y ] ->
+        (* The columns of the pairs, each one's mate alongside it: one kernel
+           sums their products and computes the tangents from the sums. *)
+        let u = part y (rank - 2) 0 num in
+        let first x = part x (rank - 1) 0 (num / 2) in
+        let a = first u and b = first (Ops.flip u [ rank - 1 ]) in
+        let sums x = Ops.rop x Op.Add [ rank - 2 ] in
+        let cosines, sines =
+          rotations num
+            (Ops.contiguous
+               (tangents
+                  ~alpha:(sums (Ops.mul a a))
+                  ~beta:(sums (Ops.mul b b))
+                  ~gamma:(sums (Ops.mul a b))))
+        in
+        [ rotate y (rank - 1) (columns cosines, columns sines) ]
+    | _ -> invalid_arg "Lower_linalg.svd"
   in
-  let r = Ops.ndim u in
-  let norms = Ops.sqrt (Ops.rop (Ops.mul u u) Op.Add [ r - 2 ]) in
-  let order = Lower_reduce.argsort ~descending:true ~axis:(r - 2) norms in
-  let s = Lower_index.gather (r - 2) order norms in
+  let y =
+    List.hd
+      (Loop.repeat device (rounds num)
+         [
+           Ops.cat ~axis:(rank - 2)
+             (block (triu r) (Some (0, num)) (Some (0, num)))
+             [ square num ];
+         ]
+         round)
+  in
+  let u = part y (rank - 2) 0 num and v = part y (rank - 2) num (2 * num) in
+  let norms = Ops.sqrt (Ops.rop (Ops.mul u u) Op.Add [ rank - 2 ]) in
+  let order = Lower_reduce.argsort ~descending:true ~axis:(rank - 2) norms in
+  let s = Lower_index.gather (rank - 2) order norms in
   let by_order x =
-    Lower_index.gather (r - 1)
+    Lower_index.gather (rank - 1)
       (Ops.expand (Ops.unsqueeze order (-2)) (ints (batch @ [ num; num ])))
       x
   in
@@ -281,14 +366,8 @@ let svd ~full_matrices a =
      are an orthogonal basis of which each column, with the sign it takes on the
      diagonal, is the direction, and which completes the columns of zero
      norm. *)
-  let q_u, r_u = householder (by_order u) in
-  let diagonal =
-    Ops.rop
-      (Ops.where (Ops.eq (row_index num) (column_index num)) r_u (zero r_u))
-      Op.Add
-      [ r - 2 ]
-  in
-  let u = Ops.mul q_u (Ops.unsqueeze (direction diagonal) (-2)) in
+  let q_u, r_u = householder ~device (by_order u) in
+  let u = Ops.mul q_u (Ops.unsqueeze (direction (diagonal r_u)) (-2)) in
   let v = by_order v in
   let inside =
     Ops.bitwise_and
@@ -309,65 +388,9 @@ let svd ~full_matrices a =
 
 (* Symmetric eigenvalues by two-sided Jacobi rotations
 
-   A round rotates [h = n / 2] disjoint pairs of rows and of the same columns of
-   the symmetric [x], each by the angle that zeroes the pair's off-diagonal
-   element, and the same columns of [v], which accumulates the rotations. The
-   pairs are a round-robin tournament's by the circle method: position [k] meets
-   position [n - 1 - k], the middle one of an odd [n] sitting the round out, and
-   after the round each position but the first moves one place along the others,
-   every position for an odd [n]. [x] and [v] are kept in the order of the
-   positions, so that a round reads and writes each element once; the sort by
-   eigenvalue undoes it. For six rows, the first round meets the rows [(0, 5)],
-   [(1, 4)] and [(2, 3)], and the positions then hold the rows [0 5 1 2 3 4], so
-   that the second meets [(0, 4)], [(5, 3)] and [(1, 2)]. *)
-
-(* The diagonal of the matrices of [u], each row's sum over its diagonal element
-   alone. *)
-let diagonal u =
-  let _, n, _ = matrix u in
-  Ops.rop
-    (Ops.where (Ops.eq (row_index n) (column_index n)) u (zero u))
-    Op.Add
-    [ Ops.ndim u - 1 ]
-
-(* [part u axis lo hi] is the elements [lo] to [hi], excluded, of [axis]. *)
-let part u axis lo hi =
-  Ops.shrink u
-    (List.init (Ops.ndim u) (fun d ->
-         if d = axis then Some (Ops.Int lo, Ops.Int hi) else None))
-
-let joined axis = function
-  | [] -> invalid_arg "Lower_linalg.joined"
-  | u :: rest -> Ops.cat ~axis u rest
-
-(* [turn u axis (cosines, sines)] rotates each pair of positions [k] and [j = n
-   - 1 - k] of [axis] of [u], each the other's mirror image, to [c u_k - s u_j]
-   and [s u_k + c u_j]: [cosines] holds [c] at both positions and [sines] [-s]
-   at [k] and [s] at [j], each multiplying [u] and its mirror image. *)
-let turn u axis (cosines, sines) =
-  Ops.O.((cosines * u) + (sines * Ops.flip u [ axis ]))
-
-(* [mirrored n first middle second] is the [n] values along the last axis of
-   [first], of the first [n / 2] positions, [middle] at the middle one of an odd
-   [n], and [second] at their mirror images. *)
-let mirrored n first middle second =
-  let r = Ops.ndim first in
-  joined (r - 1)
-    ((first :: (if n mod 2 = 1 then [ middle ] else []))
-    @ [ Ops.flip second [ r - 1 ] ])
-
-(* [advance u axis] moves each position of [axis] but the first one place along
-   the others, the last to the second: every position, the last to the first,
-   for an odd size. *)
-let advance u axis =
-  let n = List.nth (Ops.max_shape u) axis in
-  if n mod 2 = 1 then
-    joined axis [ part u axis (n - 1) n; part u axis 0 (n - 1) ]
-  else
-    joined axis
-      (List.filter
-         (fun p -> List.nth (Ops.max_shape p) axis > 0)
-         [ part u axis 0 1; part u axis (n - 1) n; part u axis 1 (n - 1) ])
+   A round rotates pairs of rows and the same columns of the symmetric [x], each
+   by the angle that zeroes the pair's off-diagonal element, and the same
+   columns of [v], which accumulates the rotations. *)
 
 (* The sweeps that bring a matrix of [n] rows to diagonal, for a precision of
    [p] bits. Two-sided Jacobi converges quadratically on distinct eigenvalues,
@@ -378,57 +401,50 @@ let advance u axis =
    [float64]. *)
 let sweeps n p = if n < 2 then 0 else ((p * ceil_log2 n) + 9) / 10
 
-let eigh ~vectors a =
+let eigh ~device ~vectors a =
   let x = Lower_arith.widen a in
   let wdt = dtype x in
   let batch, n, _ = matrix x in
   let r = Ops.ndim x in
   (* The lower triangle, mirrored: the upper one is never read. *)
   let x = Ops.where (Ops.ge (row_index n) (column_index n)) x (transpose x) in
-  let v =
-    if vectors then
-      Some (Ops.contiguous (Ops.expand (eye wdt n n) (ints (batch @ [ n; n ]))))
-    else None
-  in
-  let h = n / 2 in
-  let round (x, v) _ =
-    let first u = part u (r - 2) 0 h in
-    let d = diagonal x in
-    let alpha = first d and beta = first (Ops.flip d [ r - 2 ]) in
-    let gamma = first (diagonal (Ops.flip x [ r - 1 ])) in
-    let c, s = angle ~alpha ~beta ~gamma in
-    let middle = block c None (Some (0, 1)) in
-    let cosines = mirrored n c (float middle 1.) c
-    and sines = mirrored n (Ops.mul s (float s (-1.))) (zero middle) s in
-    let rows u = Ops.unsqueeze u (-1) and columns u = Ops.unsqueeze u (-2) in
-    let pairs u axis per = turn u axis (per cosines, per sines) in
-    let x = pairs (pairs x (r - 2) rows) (r - 1) columns in
-    let x = Ops.contiguous (advance (advance x (r - 2)) (r - 1)) in
-    let v =
-      Option.map
-        (fun v -> Ops.contiguous (advance (pairs v (r - 1) columns) (r - 1)))
-        v
-    in
-    (x, v)
+  let rows u = Ops.unsqueeze u (-1) and columns u = Ops.unsqueeze u (-2) in
+  let round = function
+    | x :: v ->
+        let d = diagonal x and first u = part u (r - 2) 0 (n / 2) in
+        let cosines, sines =
+          rotations n
+            (tangents ~alpha:(first d)
+               ~beta:(first (Ops.flip d [ r - 2 ]))
+               ~gamma:(first (diagonal (Ops.flip x [ r - 1 ]))))
+        in
+        let along axis per u = rotate u axis (per cosines, per sines) in
+        along (r - 1) columns (along (r - 2) rows x)
+        :: List.map (along (r - 1) columns) v
+    | [] -> []
   in
   let _, mantissa = Dtype.finfo wdt in
-  let x, v =
-    List.fold_left round
-      (Ops.contiguous x, v)
-      (List.init (sweeps n (mantissa + 1) * sweep n) Fun.id)
+  let v =
+    if vectors then [ Ops.expand (eye wdt n n) (ints (batch @ [ n; n ])) ]
+    else []
   in
-  let w = diagonal x in
+  let rotated =
+    Loop.repeat device (sweeps n (mantissa + 1) * sweep n) (x :: v) round
+  in
+  let w = diagonal (List.hd rotated) in
   let order = Lower_reduce.argsort ~descending:false ~axis:(r - 2) w in
   let w = Lower_index.gather (r - 2) order w in
   let v =
-    Option.map
+    List.map
       (fun v ->
-        Lower_index.gather (r - 1)
-          (Ops.expand (Ops.unsqueeze order (-2)) (ints (batch @ [ n; n ])))
-          v)
-      v
+        Ops.cast
+          (Lower_index.gather (r - 1)
+             (Ops.expand (Ops.unsqueeze order (-2)) (ints (batch @ [ n; n ])))
+             v)
+          (dtype a))
+      (List.tl rotated)
   in
-  (Ops.cast w Float64, Option.map (fun v -> Ops.cast v (dtype a)) v)
+  (Ops.cast w Float64, List.nth_opt v 0)
 
 (* LU with partial pivoting
 

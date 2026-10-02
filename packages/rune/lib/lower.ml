@@ -872,20 +872,26 @@ let op : type r. scope -> r Nx.Op.t -> r =
   | Matmul (x, y) -> like x (Lower_linalg.matmul (n x) (n y))
   | Cholesky { upper; x } -> like x (Lower_linalg.cholesky ~upper (factored x))
   | Qr { reduced; x } ->
-      let q, r = Lower_linalg.qr ~reduced (factored x) in
+      let q, r =
+        Lower_linalg.qr ~device:(device_of s p) ~reduced (factored x)
+      in
       (like x q, like x r)
   | Lu x ->
       let lu, pivots, perm = Lower_linalg.lu (factored x) in
       (like x lu, ret Nx_dtype.int64 pivots, ret Nx_dtype.int64 perm)
   | Svd { full_matrices; x } ->
-      let u, sv, vt = Lower_linalg.svd ~full_matrices (factored x) in
+      let u, sv, vt =
+        Lower_linalg.svd ~device:(device_of s p) ~full_matrices (factored x)
+      in
       (like x u, ret Nx_dtype.float64 sv, like x vt)
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       like b
         (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag (factored a)
            (factored b))
   | Eigh { vectors; x } ->
-      let w, v = Lower_linalg.eigh ~vectors (factored x) in
+      let w, v =
+        Lower_linalg.eigh ~device:(device_of s p) ~vectors (factored x)
+      in
       (ret Nx_dtype.float64 w, Option.map (like x) v)
   | Fft _ | Rfft _ | Irfft _ | Eig _ -> jit_error "cannot compile %s" what
   | Contiguous x -> like x (Ops.contiguous (n x))
