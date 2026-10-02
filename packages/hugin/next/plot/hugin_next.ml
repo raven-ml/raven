@@ -3847,9 +3847,15 @@ and measure_grid cx (uw, uh) g =
             (fun d (c, p, _) -> if sel c then Float.max d (f p) else d)
             0. cells
         in
+        (* A title sits a pad from what it titles, other cells a gap apart. *)
+        let meets c = last c = j || first c = j + 1 in
+        let titles (c, _, _) =
+          meets c && match c.it with Heading _ -> true | _ -> false
+        in
+        let sep = if List.exists titles cells then pad_em else gap_em in
         most before (fun c -> last c = j)
         +. most after (fun c -> first c = j + 1)
-        +. em cx gap_em)
+        +. em cx sep)
   in
   let cgaps =
     gaps (Array.length g.gcols)

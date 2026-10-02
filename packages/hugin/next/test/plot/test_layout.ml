@@ -268,7 +268,7 @@ let sizes =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
             |> title (Text.v "t")
           in
-          let least = title_h "t" +. em in
+          let least = title_h "t" +. pad in
           let b = List.hd (boxes (lay (Size.figure 100. least) f)) in
           equal (pair close close) (100., 0.) (Box2.w b, Box2.h b);
           fails_naming [ "needs" ] (fun () ->
@@ -803,6 +803,22 @@ let guides =
               (String.split_on_char '\n' (printed l))
           in
           in_order ~subs:[ t; "[(" ] line);
+      test "a title is a quarter em above what it titles" (fun () ->
+          let f =
+            layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
+            |> title (Text.v "T")
+          in
+          let l = lay (Size.panels 50. 40.) f in
+          let _, _, _, y1 = text_box l {|(text "T")|} in
+          equal (float 1e-3) pad (Box2.miny (List.hd (boxes l)) -. y1));
+      test "a facet title is a quarter em above the headers" (fun () ->
+          let fx = strings ~title:(Text.v "model") [| "a"; "b"; "a"; "b" |] in
+          let l =
+            lay (Size.panels 50. 40.) (dot ~x:(num ramp) ~y:(num ramp) ~fx ())
+          in
+          let _, _, _, y1 = text_box l {|(text "model")|} in
+          let _, y0, _, _ = text_box l {|(text "a")|} in
+          equal (float 1e-3) pad (y0 -. y1));
       test "a hidden axis takes no room" (fun () ->
           let l =
             lay (Size.panels 50. 40.)
