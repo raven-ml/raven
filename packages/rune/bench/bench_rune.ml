@@ -431,6 +431,47 @@ let jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20 =
       "rnn-grad h20 replay" (fun f -> f rnn20);
   ]
 
+(* Warm start: a fresh process's first call of a jitted training step, one SGD
+   step of the MLP, while tolk's disk cache holds its schedules and programs. A
+   process starts for each call, so no cache of the measuring process serves it;
+   the warmup's first process fills the disk cache. The time includes the
+   process's start. *)
+let sgd_lr = 1e-3
+
+let train_step x y p =
+  let g = Rune.grad mlp_ptree (fun p -> loss p x y) p in
+  let step w dw = Nx.sub w (Nx.mul_s dw sgd_lr) in
+  {
+    w1 = step p.w1 g.w1;
+    b1 = step p.b1 g.b1;
+    w2 = step p.w2 g.w2;
+    b2 = step p.b2 g.b2;
+    w3 = step p.w3 g.w3;
+    b3 = step p.b3 g.b3;
+  }
+
+let first_train_step () =
+  let p = init_mlp () in
+  let x = Nx.randn Nx.float32 [| batch; d_in |] in
+  let y = Nx.randn Nx.float32 [| batch; d_out |] in
+  let f =
+    Rune.jit Nx.Ptree.(mlp_ptree @-> returns mlp_ptree) (train_step x y)
+  in
+  ignore (Sys.opaque_identity (Nx.item [ 0 ] (f p).b3))
+
+let warm_start_benchmarks () =
+  let exe = Sys.executable_name in
+  [
+    Thumper.bench "mlp sgd-step warm first-call" (fun () ->
+        let pid =
+          Unix.create_process exe [| exe; "--first-call" |] Unix.stdin
+            Unix.stdout Unix.stderr
+        in
+        match Unix.waitpid [] pid with
+        | _, Unix.WEXITED 0 -> ()
+        | _ -> failwith "bench_rune: the first call failed");
+  ]
+
 (* Process-isolated cold compile: one fresh jit of the given workload, timed by
    wall clock (the compile shells out to the kernel compiler). Driven one fresh
    process per call so the program cache starts empty. *)
@@ -483,6 +524,7 @@ let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   match Array.to_list Sys.argv with
   | _ :: "--cold" :: rest -> cold_compile rest
+  | [ _; "--first-call" ] -> first_train_step ()
   | _ ->
       let params = init_mlp () in
       let x = Nx.randn Nx.float32 [| batch; d_in |] in
@@ -493,7 +535,9 @@ let () =
       let rnn2 = init_rnn 2 in
       let rnn10 = init_rnn 10 in
       let rnn20 = init_rnn 20 in
+      (* A warm-start sample is a process's start and first call. *)
       Thumper.run "rune"
+        ~config:Thumper.Config.(default |> deadline 120.)
         ~budgets:
           [
             Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
@@ -509,4 +553,5 @@ let () =
           Thumper.group "Jit" (jit_benchmarks params x x0);
           Thumper.group "JitFootprint"
             (jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20);
+          Thumper.group "WarmStart" (warm_start_benchmarks ());
         ]
