@@ -592,6 +592,18 @@ let with_server ?(key = key) ?programs f =
 let connect ?(key = key) ?timeout_ms s =
   Remote.connect ?timeout_ms ~key "127.0.0.1" (port s)
 
+(* [admitted s] is a client of [s], connected once [s] stops refusing one: it
+   serves one client at a time, and runs a bounded number of handshakes. *)
+let admitted s =
+  let rec retry k =
+    match connect s with
+    | r -> r
+    | exception Failure _ when k > 0 ->
+        Unix.sleepf 0.01;
+        retry (k - 1)
+  in
+  retry 500
+
 let test_handshake () =
   with_server @@ fun s ->
   let r = connect s in
@@ -623,14 +635,7 @@ let test_busy () =
   Remote.ping r;
   Remote.close r;
   (* The server frees the session once the client has gone. *)
-  let rec retry k =
-    match connect s with
-    | r -> r
-    | exception Failure _ when k > 0 ->
-        Unix.sleepf 0.01;
-        retry (k - 1)
-  in
-  Remote.close (retry 500)
+  Remote.close (admitted s)
 
 let test_memory () =
   with_server @@ fun s ->
@@ -677,6 +682,11 @@ let test_posted_failure () =
   (* A posted write outside the connection's memory has no answer: the next
      command reads the error, and the connection is gone for good. *)
   Remote.write r ~dst:0x1000n ~src:local 16;
+  (* The server answers, then closes the stream with the write's payload unread,
+     which resets it. Once another client is admitted, the session has ended and
+     the reset has reached [r]: the ping's own send fails, and the answer waits
+     unread behind it. *)
+  Remote.close (admitted s);
   raises_match (Exn.failure ~substring:"no memory of this connection")
     (fun () -> Remote.ping r);
   is_some ~msg:"failed" (Remote.failed r);
@@ -688,14 +698,7 @@ let test_cleanup () =
   let r = connect s in
   let a = Option.get (Remote.alloc r 4096) in
   Remote.close r;
-  let rec retry k =
-    match connect s with
-    | r -> r
-    | exception Failure _ when k > 0 ->
-        Unix.sleepf 0.01;
-        retry (k - 1)
-  in
-  let r = retry 500 in
+  let r = admitted s in
   raises_match (Exn.failure ~substring:"no memory of this connection")
     (fun () -> Remote.read r ~src:a ~dst:(alloc 8) 8);
   Remote.close r
@@ -771,14 +774,7 @@ let test_remote_sysmem () =
   Remote.close r;
   (* The reservation went with its client: another range over it can be
      reserved. *)
-  let rec retry k =
-    match connect s with
-    | r -> r
-    | exception Failure _ when k > 0 ->
-        Unix.sleepf 0.01;
-        retry (k - 1)
-  in
-  let r = retry 300 in
+  let r = admitted s in
   Remote.reserve r ~base:(base + (2 lsl 20)) (4 lsl 20);
   Remote.close r
 
@@ -968,14 +964,7 @@ let test_handshake_cap () =
   equal ~msg:"too many" int 1 (hello_status extra);
   Unix.close extra;
   List.iter Unix.close idle;
-  let rec retry k =
-    match connect s with
-    | r -> r
-    | exception Failure _ when k > 0 ->
-        Unix.sleepf 0.01;
-        retry (k - 1)
-  in
-  Remote.close (retry 300)
+  Remote.close (admitted s)
 
 (* A scan naming many ids answers, and the connection stays usable. *)
 let test_large_probe () =
@@ -1001,14 +990,7 @@ let test_unexpected_exception () =
   let p = Remote.load r ~binary:"" ~name:"f" in
   Remote.call r p [||] [||];
   raises_match (Exn.failure ~substring:"Exit") (fun () -> Remote.ping r);
-  let rec retry k =
-    match connect s with
-    | r -> r
-    | exception Failure _ when k > 0 ->
-        Unix.sleepf 0.01;
-        retry (k - 1)
-  in
-  let r = retry 300 in
+  let r = admitted s in
   Remote.ping r;
   Remote.close r
 

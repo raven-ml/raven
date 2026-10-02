@@ -41,9 +41,27 @@ let with_connection r f =
       | exception Wire.Closed -> lost r "the server closed the connection"
       | exception Unix.Unix_error (e, _, _) -> lost r (transport_error r e))
 
+(* The reason the server gave before it closed the stream, if it gave one. A
+   server that fails a posted command answers why and ends the session; the
+   command after it may then find the stream reset while sending, with that
+   answer still unread. [r] is taken. *)
+let last_word r =
+  let read () =
+    let s = Wire.recv r.fd Wire.response in
+    let n = Wire.int64 s 1 in
+    if Char.code s.[0] = Wire.ok || n < 0 || n > 1 lsl 20 then None
+    else Some (Wire.recv r.fd n)
+  in
+  try read () with Wire.Closed | Unix.Unix_error _ -> None
+
 let send_request r cmd a0 a1 a2 a3 payload =
-  Wire.send r.fd (Wire.encode_header cmd a0 a1 a2 a3);
-  payload r.fd
+  match
+    Wire.send r.fd (Wire.encode_header cmd a0 a1 a2 a3);
+    payload r.fd
+  with
+  | () -> ()
+  | exception (Unix.Unix_error ((Unix.EPIPE | Unix.ECONNRESET), _, _) as e) -> (
+      match last_word r with Some why -> lost r why | None -> raise e)
 
 (* [n], a count the server sent, if it is at most [limit]: the stream is out of
    step otherwise. [r] is taken. *)

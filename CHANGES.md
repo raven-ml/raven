@@ -3052,6 +3052,9 @@ thread.
 
 ### Nx
 
+- A `Nx_device_support.Remote` command after a failed posted one reports the
+  server's reason, such as "no memory of this connection", where it could
+  report `connection lost: Broken pipe` once the server had closed the stream.
 - Add GGUF's Q8_0, Q4_K and Q6_K block formats to `Nx_quant`: `Nx_quant.q8_0`,
   `q4_k` and `q6_k` take a tensor's bytes as `Nx_io.load_gguf` loads them.
   `dequant` gives ggml's values bit for bit, and `apply`, `~ids` included,
