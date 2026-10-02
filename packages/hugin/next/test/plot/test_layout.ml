@@ -654,6 +654,119 @@ let guides =
           equal (float 1e-3) 0. x0;
           let l, _, x1 = at `Right in
           equal (float 1e-3) (fst (Layout.size l)) x1);
+      test "a legend on top or at the bottom holds its title" (fun () ->
+          let cats =
+            strings
+              ~title:(Text.v "A long legend title")
+              [| "a"; "b"; "a"; "b" |]
+          in
+          let nums = num ~title:(Text.v "A long legend title") ramp in
+          let at side f = layer [ f; legend ~side "color" ] in
+          List.iter
+            (fun side ->
+              apart
+                (lay (Size.panels 30. 30.) (at side (plain ~fill:cats ramp)));
+              apart
+                (lay (Size.panels 30. 30.) (at side (plain ~fill:nums ramp))))
+            [ `Top; `Bottom ]);
+      test "legends on each side" (fun () ->
+          let f side =
+            layer
+              [
+                plain
+                  ~fill:
+                    (strings ~title:(Text.v "kind") [| "a"; "b"; "a"; "b" |])
+                  ramp;
+                rect ~x:(num ramp) ~fill:(num ~title:(Text.v "load") ramp) ();
+                legend ~side "color";
+              ]
+          in
+          let l side = printed (lay (Size.panels 80. 60.) (f side)) in
+          expect (String.concat "\n" [ l `Left; l `Top; l `Bottom ])
+          @@ __POS_OF__
+               {|
+            layout 156.476 × 96.9341
+            panel root [(73.5693, 20.0444) (153.569, 80.0444)] cartesian
+              axis axis.x bottom
+                label (text "0") [(70.7305, 86.0444) (76.4082, 96.9341)]
+                label (text "4") [(150.662, 86.0444) (156.476, 96.9341)]
+              axis axis.y left
+                label (text "1") [(63.9087, 74.5996) (67.5693, 85.4893)]
+                label (text "4") [(61.7554, 14.5996) (67.5693, 25.4893)]
+            legend legend.color.num left
+              title (text "load") [(0, 0) (20.2539, 12.0996)]
+              bar [(0, 20.0444) (10, 80.0444)]
+              label (text "1") [(16, 74.5996) (19.6606, 85.4893)]
+              label (text "4") [(16, 14.5996) (21.814, 25.4893)]
+            legend legend.color.cat left
+              title (text "kind") [(31.814, 5.44482) (51.7554, 17.5444)]
+              entry 0.25 [(31.814, 20.4893) (41.814, 30.4893)] (text "a") [(44.314, 20.0444) (49.3677, 30.9341)]
+              entry 0.75 [(31.814, 31.3789) (41.814, 41.3789)] (text "b") [(44.314, 30.9341) (49.8247, 41.8237)]
+            ticks
+              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.25 0.5 0.75))
+              "y" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
+              "color" categorical (ticks (0.25 "a") (0.75 "b"))
+              "color" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
+            layout 94.7209 × 169.313
+            panel root [(11.814, 92.4233) (91.814, 152.423)] cartesian
+              axis axis.x bottom
+                label (text "0") [(8.9751, 158.423) (14.6528, 169.313)]
+                label (text "4") [(88.907, 158.423) (94.7209, 169.313)]
+              axis axis.y left
+                label (text "1") [(2.15332, 146.979) (5.81396, 157.868)]
+                label (text "4") [(0, 86.9785) (5.81396, 97.8682)]
+            legend legend.color.num top
+              title (text "load") [(11.814, 0) (32.0679, 12.0996)]
+              bar [(11.814, 14.5996) (91.814, 24.5996)]
+              label (text "1") [(9.98364, 30.5996) (13.6443, 41.4893)]
+              label (text "4") [(88.907, 30.5996) (94.7209, 41.4893)]
+            legend legend.color.cat top
+              title (text "kind") [(11.814, 51.4893) (31.7554, 63.5889)]
+              entry 0.25 [(11.814, 66.5337) (21.814, 76.5337)] (text "a") [(24.314, 66.0889) (29.3677, 76.9785)]
+              entry 0.75 [(34.8247, 66.5337) (44.8247, 76.5337)] (text "b") [(47.3247, 66.0889) (52.8354, 76.9785)]
+            ticks
+              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.25 0.5 0.75))
+              "y" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
+              "color" categorical (ticks (0.25 "a") (0.75 "b"))
+              "color" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
+            layout 94.7209 × 169.313
+            panel root [(11.814, 5.44482) (91.814, 65.4448)] cartesian
+              axis axis.x bottom
+                label (text "0") [(8.9751, 71.4448) (14.6528, 82.3345)]
+                label (text "4") [(88.907, 71.4448) (94.7209, 82.3345)]
+              axis axis.y left
+                label (text "1") [(2.15332, 60) (5.81396, 70.8896)]
+                label (text "4") [(0, 0) (5.81396, 10.8896)]
+            legend legend.color.cat bottom
+              title (text "kind") [(11.814, 92.3345) (31.7554, 104.434)]
+              entry 0.25 [(11.814, 107.379) (21.814, 117.379)] (text "a") [(24.314, 106.934) (29.3677, 117.824)]
+              entry 0.75 [(34.8247, 107.379) (44.8247, 117.379)] (text "b") [(47.3247, 106.934) (52.8354, 117.824)]
+            legend legend.color.num bottom
+              title (text "load") [(11.814, 127.824) (32.0679, 139.923)]
+              bar [(11.814, 142.423) (91.814, 152.423)]
+              label (text "1") [(9.98364, 158.423) (13.6443, 169.313)]
+              label (text "4") [(88.907, 158.423) (94.7209, 169.313)]
+            ticks
+              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.25 0.5 0.75))
+              "y" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
+              "color" categorical (ticks (0.25 "a") (0.75 "b"))
+              "color" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
+            |});
+      test "bottom entries wrap at their panels' width" (fun () ->
+          let n = 40 in
+          let cats = Array.init n (Printf.sprintf "category %d") in
+          let f =
+            layer
+              [
+                dot
+                  ~x:(num (f64 (Array.init n Float.of_int)))
+                  ~y:(num (f64 (Array.init n Float.of_int)))
+                  ~fill:(strings cats) ();
+                legend ~side:`Bottom "color";
+              ]
+          in
+          let l = lay (Size.figure 360. 240.) f in
+          apart l);
       test "a centred title beside a left legend stays on the page" (fun () ->
           let f =
             layer

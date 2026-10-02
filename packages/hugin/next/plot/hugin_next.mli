@@ -981,7 +981,8 @@ module Size : sig
   (** [panels w h] gives each flexible column of weight [k] ({!grid}) a data
       area [k *. w] points wide and each flexible row of weight [k] one [k *. h]
       points high, the figure being as large as its tracks, gaps and protrusions
-      need.
+      need. A track grows past that to hold a title, header or legend longer
+      than it ({!layout}).
 
       Raises [Invalid_argument] if [w] or [h] is not finite and positive. *)
 
@@ -1564,10 +1565,11 @@ val layout :
     the ticks of each guide by their measured labels
     ({!Hugin_next_kit.Ticks.choose}) at the lengths a solve with empty
     protrusions gives, then again at those that a solve with the first choice's
-    protrusions gives, and freezes the second choice for a final solve; builds
-    axes, legends, headers and titles; solves the grid; and builds each panel's
-    projection. An axis too short for its labels drops alternate ones, which
-    never widens a protrusion.
+    protrusions gives, and freezes the second choice; wraps the entries of
+    legends above or below their panels into rows at the lengths a solve with
+    the frozen ticks gives; builds axes, legends, headers and titles; solves the
+    grid a last time; and builds each panel's projection. An axis too short for
+    its labels drops alternate ones, which never widens a protrusion.
 
     The grid sizes fixed and aspect tracks first, makes each gap the largest
     protrusions that meet it from either side plus the theme's gap

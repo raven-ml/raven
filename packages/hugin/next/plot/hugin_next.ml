@@ -3362,6 +3362,7 @@ type cx = {
   scales : fitted array;
   uses : use list array; (* Per scale. *)
   ticks : Ticks.t option array; (* None before the first choice. *)
+  lengths : float list array; (* Per use, those of the previous pass. *)
   final : bool;
   notes : warning list ref; (* The category labels that lack glyphs. *)
 }
@@ -3540,6 +3541,21 @@ let legend_title cx ls (t : Ticks.t) =
 let entry_labels cx (t : Ticks.t) =
   List.map (fun tk -> set cx ~valign:`Middle label_em (tick_text tk)) t.major
 
+(* [per_row cx ls labels] is how many entries of a horizontal legend share a
+   row, as many as fit along its length in [cx], each as wide as the widest. *)
+let per_row cx ls labels =
+  let n = List.length labels in
+  let cell =
+    em cx swatch_em +. em cx pad_em +. longest width labels +. em cx clear_em
+  in
+  let length =
+    List.fold_left2
+      (fun l u l' -> match u with Legend_of _ -> l' | _ -> l)
+      Float.nan cx.uses.(ls.ls_scale) cx.lengths.(ls.ls_scale)
+  in
+  if not (Float.is_finite length) then max 1 n
+  else max 1 (min n (Float.to_int ((length +. em cx clear_em) /. cell)))
+
 let dims cx ls =
   match cx.ticks.(ls.ls_scale) with
   | None -> { thick = 0.; least = 0.; above = 0. }
@@ -3564,7 +3580,7 @@ let dims cx ls =
             least = 0.;
             above = title_h +. (most height /. 2.);
           }
-        else { thick = title_h +. thick; least = 0.; above = 0. }
+        else { thick = title_h +. thick; least = title_w; above = 0. }
       else
         let row = Float.max sw (most height) in
         let entry l = sw +. pad +. width l in
@@ -3575,11 +3591,11 @@ let dims cx ls =
             above = title_h;
           }
         else
-          let n = List.length labels in
-          let total = List.fold_left (fun s l -> s +. entry l) 0. labels in
+          let n = List.length labels and per = per_row cx ls labels in
+          let rows = (n + per - 1) / per in
           {
-            thick = title_h +. row;
-            least = total +. (float (max 0 (n - 1)) *. em cx clear_em);
+            thick = title_h +. (float rows *. row);
+            least = Float.max title_w (most entry);
             above = 0.;
           }
 
@@ -4107,20 +4123,23 @@ let place_legend cx acc ls cell span =
                     t.major;
               }
         else
-          let row = Float.max sw (longest height (entry_labels cx t)) in
-          let entry (x, y, es) (tk : Ticks.tick) =
+          let labels = entry_labels cx t in
+          let row = Float.max sw (longest height labels) in
+          (* A vertical legend stacks its entries; a horizontal one sets them in
+             rows of columns as wide as the widest entry. *)
+          let per = if vert then 1 else per_row cx ls labels in
+          let col = sw +. pad +. longest width labels +. em cx clear_em in
+          let entry k (tk : Ticks.tick) =
+            let x = x0 +. (float (k mod per) *. col) in
+            let y = y0 +. (float (k / per) *. row) in
             let swatch = Box2.v x (y +. ((row -. sw) /. 2.)) sw sw in
             let label =
               label ~valign:`Middle tk
                 (P2.v (x +. sw +. pad) (y +. (row /. 2.)))
             in
-            let e = { u = tk.position; swatch; label } in
-            if vert then (x, y +. row, e :: es)
-            else
-              (x +. sw +. pad +. width label.set +. em cx clear_em, y, e :: es)
+            { u = tk.position; swatch; label }
           in
-          let _, _, es = List.fold_left entry (x0, y0, []) t.major in
-          Entries (List.rev es)
+          Entries (List.mapi entry t.major)
       in
       acc.legends <-
         {
@@ -4815,18 +4834,24 @@ let layout ?prev ?(theme = Theme.default) size (r : resolved) =
       scales;
       uses;
       ticks = Array.make (Array.length scales) None;
+      lengths = Array.map (List.map (fun _ -> Float.nan)) uses;
       final = false;
       notes = ref [];
     }
   in
   (* Without guides, then with the first choice's; the second is frozen. *)
   let next cx acc =
-    { cx with ticks = Array.map Option.some (choose cx (lengths cx acc)) }
+    let lengths = lengths cx acc in
+    { cx with ticks = Array.map Option.some (choose cx lengths); lengths }
   in
   let acc, _ = pass cx unit size root in
   let cx = next cx acc in
   let acc, _ = pass cx unit size root in
-  let cx = { (next cx acc) with final = true } in
+  let cx = next cx acc in
+  (* Horizontal legends wrap at the lengths of a solve with the frozen ticks,
+     which their rows do not change. *)
+  let acc, _ = pass cx unit size root in
+  let cx = { cx with lengths = lengths cx acc; final = true } in
   let frozen = Array.map Option.get cx.ticks in
   let acc, page = pass cx unit size root in
   {
