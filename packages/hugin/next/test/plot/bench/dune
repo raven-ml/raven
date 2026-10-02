@@ -1,0 +1,14 @@
+(executable
+ (name bench_plot)
+ (libraries hugin.next nx thumper))
+
+; Not attached to runtest on purpose: run with
+; `dune build --profile release @packages/hugin/next/test/plot/bench/bench`.
+
+(rule
+ (alias bench)
+ (locks %{project_root}/bench)
+ (action
+  (progn
+   (run %{exe:bench_plot.exe})
+   (diff? hugin_next_plot.thumper hugin_next_plot.thumper.corrected))))
