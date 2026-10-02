@@ -40,64 +40,134 @@ let pow10 neg k = { neg; digits = "1"; exp = k }
    [10^e <= |d| < 10^(e+1)]. *)
 let mag d = String.length d.digits - 1 + d.exp
 
+(* Naturals *)
+
+(* Natural numbers in little-endian limbs of 30 bits, without a zero limb last;
+   [[||]] is zero. *)
+
+let limb_bits = 30
+let limb_mask = (1 lsl limb_bits) - 1
+
+let nat n =
+  let rec limbs n =
+    if n = 0 then [] else (n land limb_mask) :: limbs (n lsr limb_bits)
+  in
+  Array.of_list (limbs n)
+
+let nat_trim a =
+  let n = ref (Array.length a) in
+  while !n > 0 && a.(!n - 1) = 0 do
+    decr n
+  done;
+  Array.sub a 0 !n
+
+(* [nat_mul_add a k c] is [a × k + c], for [k] and [c] below [2^30]. Each sum
+   stays below [2^60], so each carry below [2^30]. *)
+let nat_mul_add a k c =
+  let la = Array.length a in
+  let r = Array.make (la + 1) 0 in
+  let carry = ref c in
+  for i = 0 to la - 1 do
+    let t = (a.(i) * k) + !carry in
+    r.(i) <- t land limb_mask;
+    carry := t lsr limb_bits
+  done;
+  r.(la) <- !carry;
+  nat_trim r
+
+let nat_mul a b =
+  let la = Array.length a and lb = Array.length b in
+  let r = Array.make (la + lb + 1) 0 in
+  for i = 0 to la - 1 do
+    (* Each sum stays below [2^30 + 2^60 + 2^32], within an [int]. *)
+    let carry = ref 0 in
+    for j = 0 to lb - 1 do
+      let t = r.(i + j) + (a.(i) * b.(j)) + !carry in
+      r.(i + j) <- t land limb_mask;
+      carry := t lsr limb_bits
+    done;
+    let k = ref (i + lb) in
+    while !carry > 0 do
+      let t = r.(!k) + !carry in
+      r.(!k) <- t land limb_mask;
+      carry := t lsr limb_bits;
+      incr k
+    done
+  done;
+  nat_trim r
+
+let nat_shift a s =
+  let q = s / limb_bits and r = s mod limb_bits in
+  let la = Array.length a in
+  let res = Array.make (la + q + 1) 0 in
+  for i = 0 to la - 1 do
+    let v = a.(i) lsl r in
+    res.(i + q) <- res.(i + q) lor (v land limb_mask);
+    res.(i + q + 1) <- v lsr limb_bits
+  done;
+  nat_trim res
+
+let nat_compare a b =
+  let la = Array.length a and lb = Array.length b in
+  if la <> lb then Int.compare la lb
+  else
+    let rec loop i =
+      if i < 0 then 0
+      else
+        let c = Int.compare a.(i) b.(i) in
+        if c <> 0 then c else loop (i - 1)
+    in
+    loop (la - 1)
+
+(* [5^12], the greatest power of five below [2^30]. *)
+let pow5_12 = 244_140_625
+
+let nat_pow5 k =
+  let r = ref (nat 1) in
+  for _ = 1 to k / 12 do
+    r := nat_mul_add !r pow5_12 0
+  done;
+  let rest = ref 1 in
+  for _ = 1 to k mod 12 do
+    rest := !rest * 5
+  done;
+  nat_mul_add !r !rest 0
+
+(* [nat_of_digits s] is the natural number the decimal digits [s] write. *)
+let nat_of_digits s =
+  String.fold_left (fun a c -> nat_mul_add a 10 (Char.code c - 48)) [||] s
+
+let billion = 1_000_000_000
+
+(* [nat_digits a] is the decimal digits of [a], with leading zeros, by repeated
+   division by [10^9]. A remainder is below [10^9 < 2^30], so each dividend is
+   below [2^60]. *)
+let nat_digits a =
+  let a = Array.copy a in
+  let len = ref (Array.length a) and chunks = ref [] in
+  while !len > 0 do
+    let r = ref 0 in
+    for i = !len - 1 downto 0 do
+      let v = (!r lsl limb_bits) lor a.(i) in
+      a.(i) <- v / billion;
+      r := v mod billion
+    done;
+    while !len > 0 && a.(!len - 1) = 0 do
+      decr len
+    done;
+    chunks := Printf.sprintf "%09d" !r :: !chunks
+  done;
+  String.concat "" !chunks
+
 (* Binary values *)
-
-let limb = 1_000_000_000
-
-(* [mul_small a len k] multiplies the [len] little-endian limbs of [a] by [k <=
-   5^13] in place and is the new number of limbs. *)
-let mul_small a len k =
-  let carry = ref 0 in
-  for i = 0 to len - 1 do
-    let v = (Array.unsafe_get a i * k) + !carry in
-    Array.unsafe_set a i (v mod limb);
-    carry := v / limb
-  done;
-  let len = ref len in
-  while !carry > 0 do
-    a.(!len) <- !carry mod limb;
-    carry := !carry / limb;
-    incr len
-  done;
-  !len
-
-let pow5_13 = 1_220_703_125
 
 let rec of_binary neg m e =
   if m = 0 then zero
   else if e < 0 && m land 1 = 0 then of_binary neg (m lsr 1) (e + 1)
+  else if e >= 0 then make neg (nat_digits (nat_shift (nat m) e)) 0
   else
-    let n = Int.abs e in
-    let a = Array.make (((19 + n) / 9) + 3) 0 in
-    a.(0) <- m mod limb;
-    a.(1) <- m / limb mod limb;
-    a.(2) <- m / limb / limb;
-    let len = ref 3 in
-    if e >= 0 then begin
-      for _ = 1 to n / 30 do
-        len := mul_small a !len (1 lsl 30)
-      done;
-      len := mul_small a !len (1 lsl (n mod 30))
-    end
-    else begin
-      for _ = 1 to n / 13 do
-        len := mul_small a !len pow5_13
-      done;
-      let r = ref 1 in
-      for _ = 1 to n mod 13 do
-        r := !r * 5
-      done;
-      len := mul_small a !len !r
-    end;
-    let b = Bytes.create (9 * !len) in
-    for i = 0 to !len - 1 do
-      let v = ref a.(!len - 1 - i) in
-      for k = 8 downto 0 do
-        Bytes.unsafe_set b ((9 * i) + k) (Char.unsafe_chr (48 + (!v mod 10)));
-        v := !v / 10
-      done
-    done;
-    make neg (Bytes.unsafe_to_string b) (Int.min e 0)
+    (* [m × 2^e] is [m × 5^-e × 10^e]. *)
+    make neg (nat_digits (nat_mul (nat m) (nat_pow5 (-e)))) e
 
 let of_float x =
   if x = 0. then zero
@@ -244,150 +314,54 @@ let round_to_format f x =
   in
   Float.copy_sign y x
 
-(* [rounds_to f c y] is [true] iff the decimal [c], zero or of the sign of [y],
-   rounds to [y], a finite value of [f], in [f], with ties to even. *)
-let rounds_to f c y =
+(* [versus a k b f] compares [a × 10^k] with [b × 2^f], for naturals [a] and
+   [b]: negative, zero or positive as it is less, equal or greater. [versus a k]
+   may be applied once and reused. *)
+let versus a k =
+  let p5 = nat_pow5 (Int.abs k) in
+  let big = if k >= 0 then nat_mul a p5 else p5 in
+  fun b f ->
+    let e = f - k in
+    let l, r = if k >= 0 then (big, b) else (a, nat_mul b big) in
+    if e >= 0 then nat_compare l (nat_shift r e)
+    else nat_compare (nat_shift l (-e)) r
+
+(* [place f vs y] is negative, zero or positive as the number that [vs]
+   compares, which is not negative, rounds in [f], ties to even, below [y], to
+   [y] or above [y], a value of [f] that is zero or positive. It compares the
+   number with the midpoints between [y] and its neighbours. *)
+let place f vs y =
   let u_min = f.emin - f.precision + 1 in
-  if y = 0. then compare_mag c (of_binary false 1 (u_min - 1)) <= 0
+  if y = 0. then if vs (nat 1) (u_min - 1) <= 0 then 0 else 1
   else
-    let y = Float.abs y in
     let _, e = Float.frexp y in
     let u = Int.max (e - f.precision) u_min in
     let m = Float.to_int (Float.ldexp y (-u)) in
     let even = m land 1 = 0 in
     let lo =
       if m = 1 lsl (f.precision - 1) && u > u_min then
-        of_binary false ((4 * m) - 1) (u - 2)
-      else of_binary false ((2 * m) - 1) (u - 1)
+        vs (nat ((4 * m) - 1)) (u - 2)
+      else vs (nat ((2 * m) - 1)) (u - 1)
     in
-    let above_lo =
-      let k = compare_mag c lo in
-      k > 0 || (even && k = 0)
-    in
-    above_lo
-    && ((y = f.max && f.saturates)
-       ||
-       let k = compare_mag c (of_binary false ((2 * m) + 1) (u - 1)) in
-       k < 0 || (even && k = 0))
+    if lo < 0 || (lo = 0 && not even) then -1
+    else if y = f.max && f.saturates then 0
+    else
+      let hi = vs (nat ((2 * m) + 1)) (u - 1) in
+      if hi > 0 || (hi = 0 && not even) then 1 else 0
 
-(* Floats of decimal multiples *)
+(* [rounds_to f c y] is [true] iff the decimal [c], zero or of the sign of [y],
+   rounds to [y], a finite value of [f], in [f], with ties to even. *)
+let rounds_to f c y =
+  place f (versus (nat_of_digits c.digits) c.exp) (Float.abs y) = 0
 
-(* Natural numbers in little-endian limbs of 30 bits, without a zero limb last;
-   [[||]] is zero. *)
-
-let limb_bits = 30
-let limb_mask = (1 lsl limb_bits) - 1
-
-let nat n =
-  let rec limbs n =
-    if n = 0 then [] else (n land limb_mask) :: limbs (n lsr limb_bits)
-  in
-  Array.of_list (limbs n)
-
-let nat_trim a =
-  let n = ref (Array.length a) in
-  while !n > 0 && a.(!n - 1) = 0 do
-    decr n
-  done;
-  Array.sub a 0 !n
-
-let nat_mul a b =
-  let la = Array.length a and lb = Array.length b in
-  let r = Array.make (la + lb + 1) 0 in
-  for i = 0 to la - 1 do
-    (* Each sum stays below [2^30 + 2^60 + 2^32], within an [int]. *)
-    let carry = ref 0 in
-    for j = 0 to lb - 1 do
-      let t = r.(i + j) + (a.(i) * b.(j)) + !carry in
-      r.(i + j) <- t land limb_mask;
-      carry := t lsr limb_bits
-    done;
-    let k = ref (i + lb) in
-    while !carry > 0 do
-      let t = r.(!k) + !carry in
-      r.(!k) <- t land limb_mask;
-      carry := t lsr limb_bits;
-      incr k
-    done
-  done;
-  nat_trim r
-
-let nat_shift a s =
-  let q = s / limb_bits and r = s mod limb_bits in
-  let la = Array.length a in
-  let res = Array.make (la + q + 1) 0 in
-  for i = 0 to la - 1 do
-    let v = a.(i) lsl r in
-    res.(i + q) <- res.(i + q) lor (v land limb_mask);
-    res.(i + q + 1) <- v lsr limb_bits
-  done;
-  nat_trim res
-
-let nat_compare a b =
-  let la = Array.length a and lb = Array.length b in
-  if la <> lb then Int.compare la lb
-  else
-    let rec loop i =
-      if i < 0 then 0
-      else
-        let c = Int.compare a.(i) b.(i) in
-        if c <> 0 then c else loop (i - 1)
-    in
-    loop (la - 1)
-
-let pow5_13_nat = nat pow5_13
-
-let nat_pow5 k =
-  let r = ref (nat 1) in
-  for _ = 1 to k / 13 do
-    r := nat_mul !r pow5_13_nat
-  done;
-  let rest = ref 1 in
-  for _ = 1 to k mod 13 do
-    rest := !rest * 5
-  done;
-  nat_mul !r (nat !rest)
-
-(* [nearest n k] is the float nearest [n × 10^k], ties to even. [near], within a
-   few floats of it, is moved to it: [n × 10^k] is compared exactly, in binary,
-   with the midpoints between [near] and its neighbours. *)
+(* [nearest n k near] is the float nearest [n × 10^k], ties to even. [near],
+   within a few floats of it, is moved to it. *)
 let nearest n k near =
   if n = 0 then 0.
   else
-    let m = nat (Int.abs n) and p5 = nat_pow5 (Int.abs k) in
-    let big = if k >= 0 then nat_mul m p5 else p5 in
-    (* [vs d f] compares [|n| × 10^k] with [d × 2^f], [d >= 1]. *)
-    let vs d f =
-      let e = f - k in
-      let l, r = if k >= 0 then (big, nat d) else (m, nat_mul (nat d) big) in
-      if e >= 0 then nat_compare l (nat_shift r e)
-      else nat_compare (nat_shift l (-e)) r
-    in
-    (* [place y] is negative, zero or positive as [|n| × 10^k] rounds below [y
-       >= 0], to it, or above it. *)
-    let place y =
-      if y = 0. then
-        (* No integer below 2^62 has the factor 5^324 a tie needs here. *)
-        if vs 1 (-1075) <= 0 then 0 else 1
-      else
-        let mant, e =
-          if y < Float.min_float then (Float.to_int (Float.ldexp y 1074), -1074)
-          else
-            let f, e = Float.frexp y in
-            (Float.to_int (Float.ldexp f 53), e - 53)
-        in
-        let even = mant land 1 = 0 in
-        let lo =
-          if mant = 1 lsl 52 && e > -1074 then vs ((4 * mant) - 1) (e - 2)
-          else vs ((2 * mant) - 1) (e - 1)
-        in
-        if lo < 0 || (lo = 0 && not even) then -1
-        else
-          let hi = vs ((2 * mant) + 1) (e - 1) in
-          if hi > 0 || (hi = 0 && not even) then 1 else 0
-    in
+    let vs = versus (nat (Int.abs n)) k in
     let rec fix y =
-      match place y with
+      match place binary64 vs y with
       | 0 -> y
       | c when c < 0 -> fix (Float.pred y)
       | _ -> if y = Float.max_float then Float.infinity else fix (Float.succ y)
