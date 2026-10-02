@@ -75,6 +75,13 @@ type codec =
   | Lz4_raw
   | Unknown_codec of int
 
+type stats = {
+  nulls : int option;
+  nans : int option;
+  min : string option;
+  max : string option;
+}
+
 type column_meta = {
   physical : physical;
   path : string list;
@@ -84,6 +91,7 @@ type column_meta = {
   compressed_size : int;
   data_page : int;
   dictionary_page : int option;
+  stats : stats;
 }
 
 type chunk = {
@@ -282,11 +290,26 @@ let element r ty =
     logical = !logical';
   }
 
+let stats r ty =
+  let nulls = ref None and nans = ref None in
+  let min = ref None and max = ref None in
+  Thrift.structure r ty (fun id ty ->
+      match id with
+      | 3 -> nulls := Some (Thrift.i64 r ty)
+      | 5 -> max := Some (Thrift.binary r ty)
+      | 6 -> min := Some (Thrift.binary r ty)
+      | 9 -> nans := Some (Thrift.i64 r ty)
+      | _ -> Thrift.skip r ty);
+  { nulls = !nulls; nans = !nans; min = !min; max = !max }
+
+let no_stats = { nulls = None; nans = None; min = None; max = None }
+
 let column_meta r ty =
   let start = Thrift.pos r in
   let physical' = ref None and path = ref None and codec' = ref None in
   let values = ref None and uncompressed = ref None and compressed = ref None in
   let data_page = ref None and dictionary_page = ref None in
+  let stats' = ref no_stats in
   Thrift.structure r ty (fun id ty ->
       match id with
       | 1 -> physical' := Some (enum r ty "physical type" physical)
@@ -297,6 +320,7 @@ let column_meta r ty =
       | 7 -> compressed := Some (count Thrift.i64 r ty)
       | 9 -> data_page := Some (count Thrift.i64 r ty)
       | 11 -> dictionary_page := Some (count Thrift.i64 r ty)
+      | 12 -> stats' := stats r ty
       | _ -> Thrift.skip r ty);
   let get field v = required start "ColumnMetaData" field v in
   let physical = get "1 (type)" !physical' in
@@ -318,6 +342,7 @@ let column_meta r ty =
     compressed_size;
     data_page;
     dictionary_page;
+    stats = !stats';
   }
 
 let chunk r ty =

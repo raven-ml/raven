@@ -96,38 +96,33 @@ val pp_format : Format.formatter -> format -> unit
       "departs at" datetime[us, UTC] ← optional int64 (TIMESTAMP(MICROS,true))
     v} *)
 
-(**/**)
+(** {1:reading Reading} *)
 
-(** Not part of the API: talon's tests read decoded columns through it until
-    sources read Parquet. *)
-module Private : sig
-  (** The type for columns in Arrow's layouts. A row's value is zero, or the
-      empty byte string, under a null. *)
-  type column =
-    | Fixed of { valid : Nx.bool_t option; values : Nx.packed }
-        (** One value per row, of the storage of the column's talon type.
-            [valid] is [true] at the rows that hold a value, and [None] when
-            every row does. *)
-    | Varsize of {
-        valid : Nx.bool_t option;
-        offsets : Nx.int64_t;
-        data : Nx.uint8_t;
-      }
-        (** Byte strings: row [i] is [data] from [offsets.{i}] to
-            [offsets.{i + 1}]. *)
+val source : format -> Nx_device.Buffer.t -> Talon_next.Source.t
+(** [source f b] is the source, named [parquet], of the rows of the Parquet file
+    whose bytes are [b], read as [f] says. [b] is a buffer as {!sniff} takes.
+    Each read of the source reads [b]'s footer again.
 
-  val read_column :
-    format ->
-    Nx_device.Buffer.t ->
-    row_group:int ->
-    string ->
-    (column, Talon_next.Error.t) result
-  (** [read_column f b ~row_group name] is the column [name] of [f] in the row
-      group [row_group] of the file [b], read as [f] says.
+    Its parts are the file's row groups, each one batch of the request's
+    columns, with its number of rows. Only the request's columns are decoded.
+    The source answers {!Talon_next.Source.Inexact} for a conjunct that row
+    group statistics can decide, and skips a row group whose statistics show
+    that no row of it passes a conjunct: a column of nulls passes no comparison,
+    and a minimum and a maximum bound a comparison or [In] for integers but
+    [uint64], dates, datetimes, byte strings, and floats in a row group that the
+    file states holds no NaN.
 
-      [Error e] as for {!sniff}, if the file has no row group [row_group] or no
-      column [name], if that column does not read as [f]'s type, or if its
-      column chunk fails to decode.
+    A read fails with [Error e] as {!sniff} does, if the file has no column of
+    the request or one that does not read as [f]'s type, or if a column chunk
+    fails to decode: [e] names the row group and the bytes of the page, or the
+    column and the row of the row group where the value is not one its type
+    holds. *)
 
-      Raises [Invalid_argument] if [f] has no column [name]. *)
-end
+val file :
+  ?format:format -> string -> (Talon_next.Source.t, Talon_next.Error.t) result
+(** [file ?format path] maps the file [path] ({!Nx_device.Buffer.of_file}),
+    reads its footer, and is its {!source}, read as [format], or as {!sniff}
+    gives when [format] is absent, named [parquet "path"], with its number of
+    rows. Its errors name the file.
+
+    [Error e] if the file cannot be mapped, or as {!sniff}. *)

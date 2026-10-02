@@ -107,6 +107,15 @@ type codec =
   | Lz4_raw
   | Unknown_codec of int  (** A value Parquet does not define. *)
 
+type stats = {
+  nulls : int option;  (** [null_count]. *)
+  nans : int option;  (** [nan_count]. *)
+  min : string option;  (** [min_value], in [PLAIN] encoding. *)
+  max : string option;  (** [max_value], in [PLAIN] encoding. *)
+}
+(** The type for column chunk statistics, [Statistics]. The legacy [min] and
+    [max] fields, whose order is undefined for byte arrays, are not read. *)
+
 type column_meta = {
   physical : physical;  (** [type]. *)
   path : string list;  (** [path_in_schema]. *)
@@ -122,6 +131,7 @@ type column_meta = {
   dictionary_page : int option;
       (** [dictionary_page_offset] when it is positive. Some writers write [0]
           for none. *)
+  stats : stats;  (** [statistics], each field [None] when absent. *)
 }
 (** The type for column chunk metadata, [ColumnMetaData]. *)
 

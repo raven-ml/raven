@@ -5,6 +5,7 @@
   talon.next
   nx
   nx.device
+  nx.bits
   compress.deflate
   compress.snappy
   compress.zstd

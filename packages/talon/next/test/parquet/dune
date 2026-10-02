@@ -1,7 +1,7 @@
 (test
  (name test_parquet)
  (package talon)
- (libraries windtrap talon.next talon.next.parquet nx nx.device)
+ (libraries windtrap talon.next talon.next.parquet nx nx.device nx.bits)
  (deps
   values.txt
   overrides.txt

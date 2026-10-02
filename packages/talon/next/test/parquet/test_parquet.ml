@@ -28,8 +28,15 @@ let format_text f = Format.asprintf "%a" P.pp_format f
 let error_text e = Format.asprintf "%a" Error.pp e
 let outcome = function Ok _ -> "ok" | Error e -> error_text e
 
-let read f name ~row_group column =
-  P.Private.read_column f (buffer name) ~row_group column
+(* [read_from f b column] is the column [column] of the file [b], read as [f],
+   through a query of its source. *)
+let read_from f b column =
+  Query.of_source (P.source f b)
+  |> Query.select Expr.[ keep (Sel.names [ column ]) ]
+  |> Query.run
+  |> Result.map (fun t -> Talon_next.column t column)
+
+let read f name column = read_from f (buffer name) column
 
 (* Rendering, as fixtures.py renders pyarrow's values *)
 
@@ -62,25 +69,28 @@ let cells ty (Nx.P x) =
   | "float64" -> map (Printf.sprintf "0x%016Lx") (Nx.bitcast Nx.int64 x)
   | _ -> map Int64.to_string (Nx.cast Nx.int64 x)
 
-let render ty (c : P.Private.column) =
-  let nulls valid cells =
-    match valid with
+let render ty c =
+  let nulls validity cells =
+    match validity with
     | None -> cells
     | Some v ->
-        Array.map2 (fun ok s -> if ok then s else "null") (Nx.to_array v) cells
+        let valid = Nx.to_array (Nx_bits.to_bool v) in
+        Array.map2 (fun ok s -> if ok then s else "null") valid cells
   in
-  match c with
-  | Fixed { valid; values = Nx.P x as values } ->
+  match Column.layout c with
+  | Fixed { validity; values = Nx.P x as values } ->
       let dtype = Format.asprintf "%a" Nx.pp_dtype (Nx.dtype x) in
       equal string ~msg:"storage dtype" (storage ty) dtype;
-      nulls valid (cells ty values)
-  | Varsize { valid; offsets; data } ->
-      let o = Nx.to_array offsets and d = Nx.to_array data in
+      nulls validity (cells ty values)
+  | Varsize { validity; offsets; child } ->
+      let o = Nx.to_array offsets in
+      let d = Nx.to_array (Column.to_tensor Nx.uint8 child) in
       let cell i =
         let first = Int64.to_int o.(i) and last = Int64.to_int o.(i + 1) in
         quote (String.init (last - first) (fun k -> Char.chr d.(first + k)))
       in
-      nulls valid (Array.init (Array.length o - 1) cell)
+      nulls validity (Array.init (Array.length o - 1) cell)
+  | Children _ -> fail "a record column"
 
 let line file g column ty values =
   let values = Array.to_list values in
@@ -118,21 +128,58 @@ let expected name =
 
 let files lines = List.sort_uniq String.compare (List.map fst lines)
 
+(* Each column of [file] is read whole, then cut into its row groups' lines. A
+   column that fails fails at the first row group whose line is [error]. *)
 let agree ?(retype = fun f _ _ -> f) lines file =
   let f = sniff file in
-  let check l =
-    Scanf.sscanf l "%s %d %S %[^\n]" @@ fun _ g column rest ->
-    if rest = "error" then
-      is_error ~msg:column (read f file ~row_group:g column)
-    else
-      let ty = Scanf.sscanf rest "%S" Fun.id in
-      let f = retype f column ty in
-      equal string ~msg:column ty (format_type f column);
-      match read f file ~row_group:g column with
-      | Error e -> failf "%s: %s" column (error_text e)
-      | Ok c -> equal string l (line file g column ty (render ty c))
+  let lines =
+    List.filter_map
+      (fun (name, l) -> if name = file then Some l else None)
+      lines
   in
-  List.iter (fun (name, l) -> if name = file then check l) lines
+  let fields l =
+    Scanf.sscanf l "%_s %d %S %[^\n]" (fun g c rest -> (g, c, rest))
+  in
+  let check column =
+    let groups =
+      List.filter_map
+        (fun l ->
+          let g, c, rest = fields l in
+          if c = column then Some (g, l, rest) else None)
+        lines
+    in
+    match List.find_opt (fun (_, _, rest) -> rest = "error") groups with
+    | Some (g, _, _) -> (
+        match read f file column with
+        | Ok _ -> failf "%s: read a column that fails" column
+        | Error e ->
+            let place = List.hd (String.split_on_char ':' (error_text e)) in
+            equal string ~msg:column (Printf.sprintf "row group %d" g) place)
+    | None -> (
+        let _, _, rest = List.hd groups in
+        let ty = Scanf.sscanf rest "%S" Fun.id in
+        let f = retype f column ty in
+        equal string ~msg:column ty (format_type f column);
+        match read f file column with
+        | Error e -> failf "%s: %s" column (error_text e)
+        | Ok c ->
+            let cells = render ty c in
+            let cut first (g, l, rest) =
+              let rows = Scanf.sscanf rest "%_S %d" Fun.id in
+              equal string l
+                (line file g column ty (Array.sub cells first rows));
+              first + rows
+            in
+            let rows = List.fold_left cut 0 groups in
+            equal ~msg:column int (Array.length cells) rows)
+  in
+  List.iter check
+    (List.sort_uniq String.compare
+       (List.map
+          (fun l ->
+            let _, c, _ = fields l in
+            c)
+          lines))
 
 (* Agreement *)
 
@@ -318,14 +365,14 @@ let robustness =
           let n = String.length s and first = footer s in
           let at = if at < 0 then n + at else first + (at mod (n - first)) in
           ignore (P.sniff (of_string (changed s at byte))));
-      prop "read_column on pages with one byte changed"
+      prop "reading pages with one byte changed"
         Gen.(triple (pick fuzzed) nat (int_range 0 255))
         (fun (name, at, byte) ->
           let s = file_bytes name in
           let s = of_string (changed s (4 + (at mod (footer s - 4))) byte) in
           let f = sniff name in
           List.iter
-            (fun c -> ignore (P.Private.read_column f s ~row_group:0 c))
+            (fun c -> ignore (read_from f s c))
             [ "bool"; "i32"; "f64"; "string"; "fsb"; "req_string" ]);
     ]
 
@@ -340,7 +387,7 @@ let categorical () =
   let name = "fallback.parquet" in
   let f = sniff name in
   let strings =
-    match read f name ~row_group:0 "string" with
+    match read f name "string" with
     | Ok c -> render "string" c
     | Error e -> failf "%s" (error_text e)
   in
@@ -352,9 +399,7 @@ let categorical () =
     |> Array.of_list
   in
   let read_as d =
-    read
-      (P.with_type "string" (any (Type.categorical d)) f)
-      name ~row_group:0 "string"
+    read (P.with_type "string" (any (Type.categorical d)) f) name "string"
   in
   (match read_as (Array.sub dict 1 (Array.length dict - 1)) with
   | Ok _ -> fail "read a value outside the dictionary"
@@ -445,12 +490,6 @@ let formats =
             timestamp_col reads as datetime[s]
             |});
       test "a categorical reads codes into its dictionary" categorical;
-      test "read_column refuses a column the format lacks" (fun () ->
-          raises
-            (Invalid_argument
-               "Talon_next_parquet.Private.read_column: no column \"nope\" in \
-                the format.") (fun () ->
-              read (sniff "types.parquet") "types.parquet" ~row_group:0 "nope"));
       cases ~name:fst "pp_format"
         [
           ( "alltypes_plain.parquet",
@@ -682,47 +721,53 @@ let page ?(header = []) ?(data_page = []) values data =
        (set [ (1, I32 0); (2, size); (3, size); (5, Struct data_page) ] header))
   ^ data
 
-(* [parquet ?column ?chunk ~rows pages] is a file of a required int32 column of
-   [rows] rows in [pages], with the changes [column] to its schema element and
-   [chunk] to its column metadata. *)
-let parquet ?(column = []) ?(chunk = []) ~rows pages =
+(* [row_groups ?column groups] is a file of a required int32 column with a row
+   group [(rows, chunk, pages)] of [rows] rows in [pages] for each of [groups],
+   with the changes [column] to its schema element and [chunk] to the group's
+   column metadata. *)
+let row_groups ?(column = []) groups =
   let column = set [ (1, I32 1); (3, I32 0); (4, Bin "x") ] column in
-  let size = I64 (String.length pages) in
-  let chunk =
-    set
-      [
-        (1, List.assoc 1 column);
-        (3, List [ Bin "x" ]);
-        (4, I32 0);
-        (5, I64 rows);
-        (6, size);
-        (7, size);
-        (9, I64 4);
-      ]
-      chunk
+  let group (pos, gs) (rows, chunk, pages) =
+    let size = I64 (String.length pages) in
+    let chunk =
+      set
+        [
+          (1, List.assoc 1 column);
+          (3, List [ Bin "x" ]);
+          (4, I32 0);
+          (5, I64 rows);
+          (6, size);
+          (7, size);
+          (9, I64 pos);
+        ]
+        chunk
+    in
+    let g =
+      Struct [ (1, List [ Struct [ (3, Struct chunk) ] ]); (3, I64 rows) ]
+    in
+    (pos + String.length pages, g :: gs)
   in
+  let _, gs = List.fold_left group (4, []) groups in
+  let rows = List.fold_left (fun n (r, _, _) -> n + r) 0 groups in
   let meta =
     thrift
       (Struct
          [
            (2, List [ Struct [ (4, Bin "schema"); (5, I32 1) ]; Struct column ]);
            (3, I64 rows);
-           ( 4,
-             List
-               [
-                 Struct
-                   [ (1, List [ Struct [ (3, Struct chunk) ] ]); (3, I64 rows) ];
-               ] );
+           (4, List (List.rev gs));
          ])
   in
   let len = Bytes.create 4 in
   Bytes.set_int32_le len 0 (Int32.of_int (String.length meta));
+  let pages = String.concat "" (List.map (fun (_, _, p) -> p) groups) in
   of_string ("PAR1" ^ pages ^ meta ^ Bytes.to_string len ^ "PAR1")
 
+let parquet ?column ?(chunk = []) ~rows pages =
+  row_groups ?column [ (rows, chunk, pages) ]
+
 let read_x b =
-  match P.sniff b with
-  | Error e -> Error e
-  | Ok f -> P.Private.read_column f b ~row_group:0 "x"
+  match P.sniff b with Error e -> Error e | Ok f -> read_from f b "x"
 
 let i32_max = 0x7FFF_FFFF
 
@@ -792,13 +837,195 @@ let synthesized =
             |});
     ]
 
+(* Sources *)
+
+let float32s vs =
+  let b = Bytes.create (4 * List.length vs) in
+  List.iteri
+    (fun i v -> Bytes.set_int32_le b (4 * i) (Int32.bits_of_float v))
+    vs;
+  Bytes.to_string b
+
+(* [stats ?nulls ?nans bytes] is a chunk's [Statistics] of minimum and maximum
+   [bytes] ([min ^ max]), split in two halves. *)
+let stats ?nulls ?nans bytes =
+  let half = String.length bytes / 2 in
+  let opt id = Option.map (fun n -> (id, I64 n)) in
+  ( 12,
+    Struct
+      (List.filter_map Fun.id
+         [
+           opt 3 nulls;
+           Some (5, Bin (String.sub bytes half half));
+           Some (6, Bin (String.sub bytes 0 half));
+           opt 9 nans;
+         ]) )
+
+(* A file of two row groups: the first holds 1 and 2 with their statistics, and
+   the second has statistics but a page that overruns its chunk, so the query
+   reads it only if they do not exclude it. [~column] makes [x] optional and
+   changes its type, [values] are the first group's values, [ints] the encoding
+   of a pair of statistics. *)
+let pruned ?(column = []) ~values ~bytes second =
+  let levels = "\x02\x00\x00\x00\x04\x01" in
+  let first = (2, [ stats (bytes 1 2) ], page 2 (levels ^ values)) in
+  let bad = page ~header:[ (3, I32 1000) ] 2 (levels ^ values) in
+  row_groups ~column:([ (3, I32 1) ] @ column) [ first; (2, [ second ], bad) ]
+
+let outcome_of to_string = function
+  | Ok vs -> String.concat " " (Array.to_list (Array.map to_string vs))
+  | Error e -> error_text e
+
+let filtered show b x ps =
+  let f = Error.get_ok (P.sniff b) in
+  List.iter
+    (fun (name, p) ->
+      let q = Query.filter p (Query.of_source (P.source f b)) in
+      Printf.printf "%s: %s\n" name (outcome_of show (Query.values x q)))
+    ps
+
+let sources =
+  group "Sources"
+    [
+      test "statistics skip the row groups no row of which passes" (fun () ->
+          let ints a b = int32s [ a; b ] in
+          let b =
+            pruned ~values:(ints 1 2) ~bytes:ints (stats ~nulls:0 (ints 10 20))
+          in
+          let x = Col.int "x" in
+          filtered string_of_int b x
+            Expr.
+              [
+                ("x < 10", x < int 10);
+                ("x <= 10", x <= int 10);
+                ("x > 20", x > int 20);
+                ("x >= 20", x >= int 20);
+                ("x = 5", x = int 5);
+                ("x = 15", x = int 15);
+                ("x <> 10", x <> int 10);
+                ("x in [3; 25]", is_in [ 3; 25 ] x);
+                ("x in []", is_in [] x);
+                ("not (x >= 10)", not (x >= int 10));
+                ("x < 10 || x > 20", x < int 10 || x > int 20);
+                ("x > 1 && x < 10", x > int 1 && x < int 10);
+                ("x > 1 && not (x >= 10)", x > int 1 && not (x >= int 10));
+                ("x is null", is_null x);
+                ("x is not null", not (is_null x));
+              ];
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            x < 10: 1 2
+            x <= 10: row group 1: bytes 33-62: the page overruns its column chunk
+            x > 20:
+            x >= 20: row group 1: bytes 33-62: the page overruns its column chunk
+            x = 5:
+            x = 15: row group 1: bytes 33-62: the page overruns its column chunk
+            x <> 10: row group 1: bytes 33-62: the page overruns its column chunk
+            x in [3; 25]:
+            x in []:
+            not (x >= 10): row group 1: bytes 33-62: the page overruns its column chunk
+            x < 10 || x > 20: 1 2
+            x > 1 && x < 10: 2
+            x > 1 && not (x >= 10): row group 1: bytes 33-62: the page overruns its column chunk
+            x is null:
+            x is not null: row group 1: bytes 33-62: the page overruns its column chunk
+            |});
+      test "a row group of nulls passes no comparison" (fun () ->
+          let ints a b = int32s [ a; b ] in
+          let nulls = (12, Struct [ (3, I64 2) ]) in
+          let b = pruned ~values:(ints 1 2) ~bytes:ints nulls in
+          let x = Col.int "x" in
+          filtered string_of_int b x
+            Expr.
+              [
+                ("x > 0", x > int 0);
+                ("x <> 0", x <> int 0);
+                ("x is not null", not (is_null x));
+                ("x is null", is_null x);
+              ];
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            x > 0: 1 2
+            x <> 0: 1 2
+            x is not null: 1 2
+            x is null: row group 1: bytes 33-62: the page overruns its column chunk
+            |});
+      test "float statistics skip a row group only without NaN" (fun () ->
+          let floats a b = float32s [ float_of_int a; float_of_int b ] in
+          let x = Col.float "x" in
+          List.iter
+            (fun (name, nans) ->
+              let second = stats ~nulls:0 ?nans (floats 10 20) in
+              let b =
+                pruned
+                  ~column:[ (1, I32 4) ]
+                  ~values:(floats 1 2) ~bytes:floats second
+              in
+              print_endline name;
+              filtered string_of_float b x
+                Expr.[ ("x < 5.", x < float 5.); ("x > 15.", x > float 15.) ])
+            [ ("no NaN count", None); ("no NaN", Some 0); ("a NaN", Some 1) ];
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            no NaN count
+            x < 5.: row group 1: bytes 33-62: the page overruns its column chunk
+            x > 15.: row group 1: bytes 33-62: the page overruns its column chunk
+            no NaN
+            x < 5.: 1. 2.
+            x > 15.: row group 1: bytes 33-62: the page overruns its column chunk
+            a NaN
+            x < 5.: row group 1: bytes 33-62: the page overruns its column chunk
+            x > 15.: row group 1: bytes 33-62: the page overruns its column chunk
+            |});
+      test "a read decodes only the request's columns" (fun () ->
+          let name = "nation.dict-malformed.parquet" in
+          let f = sniff name in
+          List.iter
+            (fun c ->
+              Printf.printf "%s: %s\n" c
+                (outcome (Result.map Column.length (read f name c))))
+            [ "nation_key"; "name" ];
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            nation_key: ok
+            name: row group 0: bytes 421-450: the page overruns its column chunk
+            |});
+      test "file names its source and counts its rows" (fun () ->
+          let plan s = Format.asprintf "%a" Query.pp (Query.of_source s) in
+          print_endline (plan (Error.get_ok (P.file (path "names.parquet"))));
+          print_endline
+            (plan (P.source (sniff "names.parquet") (buffer "names.parquet")));
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            query → "a b" int64, "\"q\"" int64, é int64, "" int64
+            parquet "fixtures/names.parquet" (4 columns, 2 rows)
+            query → "a b" int64, "\"q\"" int64, é int64, "" int64
+            parquet (4 columns)
+            |});
+      test "file refuses what sniff refuses, naming the file" (fun () ->
+          List.iter
+            (fun name -> print_endline (outcome (P.file (path name))))
+            [ "brotli.parquet"; "map_no_value.parquet"; "missing.parquet" ];
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            fixtures/brotli.parquet: row group 0: column "i32" is compressed with Brotli, which talon does not read
+            fixtures/map_no_value.parquet: column "my_map" is a map: talon reads flat Parquet files only
+            fixtures/missing.parquet: No such file or directory
+            |});
+    ]
+
 (* Decoding errors *)
 
 let decoding =
   test "Columns that fail to read" (fun () ->
       let show name ?(f = sniff name) column =
-        Printf.printf "%s %s: %s\n" name column
-          (outcome (read f name ~row_group:0 column))
+        Printf.printf "%s %s: %s\n" name column (outcome (read f name column))
       in
       show "datapage_v1-corrupt-checksum.parquet" "a";
       show "rle-dict-uncompressed-corrupt-checksum.parquet" "binary_field";
@@ -815,9 +1042,6 @@ let decoding =
         ~f:
           (P.with_type "ts_ns" (any (Type.datetime Us)) (sniff "int96.parquet"));
       show "bad_encoding.parquet" "i32";
-      Printf.printf "row group 3: %s\n"
-        (outcome
-           (read (sniff "types.parquet") "types.parquet" ~row_group:3 "i32"));
       show "types.parquet" "a b" ~f:(sniff "names.parquet");
       expect (output ())
       @@ __POS_OF__
@@ -831,11 +1055,18 @@ let decoding =
         int96_from_spark.parquet a: row group 0: an int96 timestamp is outside the range of datetime[us]. Read the column as a datetime of a coarser unit (with_type).
         int96.parquet ts_ns: row group 0: an int96 timestamp is not a whole number of microseconds. Read the column as a datetime of a finer unit (with_type).
         bad_encoding.parquet i32: row group 0: bytes 4-360: the values are in encoding 15, which Parquet does not define
-        row group 3: the file has no row group 3
         types.parquet a b: the file has no column "a b"
         |})
 
 let () =
   exit
     (run "talon.next.parquet"
-       [ agreement; sniffing; formats; synthesized; decoding; robustness ])
+       [
+         agreement;
+         sniffing;
+         formats;
+         synthesized;
+         sources;
+         decoding;
+         robustness;
+       ])
