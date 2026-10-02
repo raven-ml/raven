@@ -325,6 +325,18 @@ let time =
                   ]))
           @@ __POS_OF__
                {| select ["out" := Temporal.add d x]: row 0: 36h is not whole days. |});
+      test "add to a time of day" (fun () ->
+          let t = one "c" (Column.v (Type.clock Ms) [| Time.Span.hours 9 |]) in
+          equal
+            (array (option int64))
+            [| Some (Time.Span.to_ns (Time.Span.minutes 630)) |]
+            (Array.map
+               (Option.map Time.Span.to_ns)
+               (Column.options Kind.span
+                  (result
+                     Expr.(
+                       Temporal.add (Col.span "c") (span (Time.Span.minutes 90)))
+                     t))));
       test "floor and offset" (fun () ->
           let t = dates [| Some (date 2024 1 31); Some (date 2024 3 15) |] in
           let on e = Array.map (Option.map Time.Date.to_days) (days e t) in
@@ -460,6 +472,58 @@ let extreme_ticks =
   in
   (u, zoned, xs)
 
+(* A datetime or a duration of a unit, and a duration of that unit or a coarser
+   one, with ticks whose sum cannot overflow. *)
+let spans =
+  let per : Type.unit_ -> int = function
+    | S -> 1
+    | Ms -> 1_000
+    | Us -> 1_000_000
+    | Ns -> 1_000_000_000
+  in
+  let open Gen in
+  let* u = of_list Type.[ S; Ms; Us; Ns ] in
+  let* du =
+    of_list (List.filter (fun d -> per d <= per u) Type.[ S; Ms; Us; Ns ])
+  in
+  let* datetime = bool in
+  let bound = 1 lsl 50 in
+  let+ pairs =
+    array ~size:(int_range 0 20)
+      (pair (int_range (-bound) bound)
+         (int_range (-bound / (per u / per du)) (bound / (per u / per du))))
+  in
+  (u, du, datetime, pairs, per u / per du)
+
+let adds_ticks =
+  prop "add moves a datetime or a duration by the span's ticks" spans
+    (fun (u, du, datetime, pairs, factor) ->
+      let ints xs = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
+      let column ty xs =
+        match
+          Column.of_layout ty (Fixed { validity = None; values = ints xs })
+        with
+        | Ok c -> c
+        | Error (row, why) -> failf "row %d: %s" row why
+      in
+      let a = Array.map (fun (x, _) -> Int64.of_int x) pairs in
+      let k = Array.map (fun (_, k) -> Int64.of_int k) pairs in
+      let ty : Type.any =
+        if datetime then Any (Type.datetime u) else Any (Type.duration u)
+      in
+      let t =
+        v [ ("a", column ty a); ("k", column (Any (Type.duration du)) k) ]
+      in
+      let k_span = Col.span "k" in
+      let sum =
+        if datetime then result Expr.(Temporal.add (Col.instant "a") k_span) t
+        else result Expr.(Temporal.add (Col.span "a") k_span) t
+      in
+      let expected =
+        Array.map2 (fun x k -> Int64.(add x (mul k (of_int factor)))) a k
+      in
+      equal (array int64) expected (Nx.to_array (Column.to_tensor Nx.int64 sum)))
+
 let formats_round_trip =
   prop "parse reads back what format writes, at every tick" extreme_ticks
     (fun (u, zoned, xs) ->
@@ -488,5 +552,6 @@ let () =
          slices;
          time;
          fields_agree;
+         adds_ticks;
          formats_round_trip;
        ])

@@ -421,9 +421,15 @@ let add (Type.Any ta as t) (Type.Any td) =
     | _ ->
         let u = Option.get (unit_of ta) in
         let factor = Int64.div n_d (Type.ns_per_unit u) in
-        let fits = within (Int64.succ (Int64.div Int64.max_int factor)) k in
         let r, ok = plus x (Nx.mul_s k factor) in
-        let ok = Nx.logical_and fits ok in
+        (* A span of the operand's unit is its ticks already; a coarser one must
+           not overflow when scaled to them. *)
+        let ok =
+          if factor = 1L then ok
+          else
+            let fits = within (Int64.succ (Int64.div Int64.max_int factor)) k in
+            Nx.logical_and fits ok
+        in
         let ok =
           match ta with
           | Clock u ->
