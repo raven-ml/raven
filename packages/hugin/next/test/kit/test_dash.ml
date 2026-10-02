@@ -44,6 +44,10 @@ let patterns =
           ("a zero gap", [ 1.; 0. ]);
         ]
         (fun (_, l) -> equal lengths l (Dash.lengths (Dash.v l)));
+      test "v names a bad length as negative or not finite" (fun () ->
+          raises
+            (Invalid_argument "Dash.v: the length -1 is negative or not finite")
+            (fun () -> Dash.v [ 4.; -1. ]));
       test "v of no length is solid" (fun () ->
           equal dash Dash.solid (Dash.v []));
       test "the presets have the lengths they state" (fun () ->

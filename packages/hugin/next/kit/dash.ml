@@ -10,8 +10,7 @@ let v lengths =
     (fun l ->
       if not (Float.is_finite l && l >= 0.) then
         invalid_arg
-          (Printf.sprintf "Dash.v: the length %g is not finite and not negative"
-             l))
+          (Printf.sprintf "Dash.v: the length %g is negative or not finite" l))
     lengths;
   match lengths with
   | [] -> lengths
