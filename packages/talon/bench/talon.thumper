@@ -5,14 +5,14 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-Talon/Filter-high_value	alloc_words	exact	421341
-Talon/Filter-high_value	wall_time	batch=1	n=20	1.873e-03	1.350e-03 1.384e-03 1.390e-03 1.447e-03 1.478e-03 1.722e-03 1.772e-03 1.818e-03 1.839e-03 1.870e-03 1.877e-03 1.882e-03 1.894e-03 1.929e-03 1.934e-03 1.958e-03 2.021e-03 2.052e-03 2.066e-03 2.242e-03
-Talon/Group-category_region	alloc_words	exact	1878348
-Talon/Group-category_region	wall_time	batch=1	n=20	1.265e-02	1.163e-02 1.188e-02 1.203e-02 1.206e-02 1.209e-02 1.217e-02 1.220e-02 1.239e-02 1.251e-02 1.257e-02 1.273e-02 1.301e-02 1.316e-02 1.320e-02 1.324e-02 1.330e-02 1.333e-02 1.334e-02 1.337e-02 1.379e-02
-Talon/Join-customer_lookup	alloc_words	exact	2929785
-Talon/Join-customer_lookup	wall_time	batch=1	n=20	1.643e-02	1.545e-02 1.552e-02 1.580e-02 1.611e-02 1.616e-02 1.622e-02 1.627e-02 1.633e-02 1.639e-02 1.640e-02 1.646e-02 1.649e-02 1.654e-02 1.656e-02 1.673e-02 1.680e-02 1.681e-02 1.699e-02 1.751e-02 1.786e-02
-Talon/Sort-amount_desc	alloc_words	exact	1830680
-Talon/Sort-amount_desc	wall_time	batch=1	n=20	2.046e-02	1.988e-02 2.005e-02 2.011e-02 2.023e-02 2.023e-02 2.037e-02 2.041e-02 2.041e-02 2.042e-02 2.044e-02 2.047e-02 2.049e-02 2.052e-02 2.056e-02 2.058e-02 2.078e-02 2.107e-02 2.123e-02 2.151e-02 2.160e-02
+Talon/Filter-high_value	alloc_words	exact	421461
+Talon/Filter-high_value	wall_time	batch=1	n=20	1.962e-03	1.368e-03 1.410e-03 1.441e-03 1.550e-03 1.607e-03 1.770e-03 1.902e-03 1.914e-03 1.915e-03 1.956e-03 1.969e-03 1.969e-03 2.021e-03 2.025e-03 2.075e-03 2.084e-03 2.088e-03 2.126e-03 2.160e-03 2.304e-03
+Talon/Group-category_region	alloc_words	exact	1880508
+Talon/Group-category_region	wall_time	batch=1	n=20	1.283e-02	1.185e-02 1.188e-02 1.197e-02 1.208e-02 1.214e-02 1.221e-02 1.226e-02 1.230e-02 1.231e-02 1.280e-02 1.287e-02 1.294e-02 1.300e-02 1.317e-02 1.319e-02 1.321e-02 1.346e-02 1.346e-02 1.356e-02 1.389e-02
+Talon/Join-customer_lookup	alloc_words	exact	2929935
+Talon/Join-customer_lookup	wall_time	batch=1	n=20	1.571e-02	1.500e-02 1.546e-02 1.547e-02 1.552e-02 1.555e-02 1.555e-02 1.558e-02 1.561e-02 1.562e-02 1.568e-02 1.573e-02 1.576e-02 1.589e-02 1.589e-02 1.597e-02 1.601e-02 1.603e-02 1.621e-02 1.622e-02 1.678e-02
+Talon/Sort-amount_desc	alloc_words	exact	1830785
+Talon/Sort-amount_desc	wall_time	batch=1	n=20	2.062e-02	1.990e-02 2.017e-02 2.034e-02 2.042e-02 2.044e-02 2.047e-02 2.050e-02 2.053e-02 2.054e-02 2.061e-02 2.064e-02 2.066e-02 2.066e-02 2.067e-02 2.068e-02 2.073e-02 2.075e-02 2.079e-02 2.104e-02 2.111e-02
 
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
