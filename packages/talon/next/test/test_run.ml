@@ -2192,6 +2192,98 @@ let sources =
           raises (Boom (0, 5)) (fun () -> Query.run (shared 6)));
     ]
 
+(* Kit's runs *)
+
+let words = [| Some "b"; Some "a"; None; Some "\xc3\xa9"; Some "B"; Some "a" |]
+
+let categorized ?(table = v [ ("s", Column.of_options Type.string words) ]) cs =
+  require_ok ~pp:Error.pp (Kit.categorize cs (Query.of_table table))
+
+let kit_runs =
+  group "Kit runs"
+    [
+      test "categorize makes the dictionary of the values in byte order"
+        (fun () ->
+          let q = categorized [ "s" ] in
+          expect (Format.asprintf "%a" Schema.pp (Query.schema q))
+          @@ __POS_OF__ {| s categorical["B", "a", "b", "é"] |};
+          equal
+            (array (option string))
+            words
+            (Column.options Kind.string (column (run_ok q) "s")));
+      test "categorize's dictionary is blind to order and batches" (fun () ->
+          let half a b = Column.of_options Type.string (Array.sub words a b) in
+          let table =
+            of_batches [ v [ ("s", half 3 3) ]; v [ ("s", half 0 3) ] ]
+          in
+          equal schema_w
+            (Query.schema (categorized [ "s" ]))
+            (Query.schema (categorized ~table [ "s" ])));
+      test "categorize of a categorical keeps only the values it holds"
+        (fun () ->
+          let table =
+            v
+              [
+                ( "c",
+                  Column.v
+                    (Type.categorical [| "z"; "y"; "x" |])
+                    [| "y"; "z"; "y" |] );
+              ]
+          in
+          expect
+            (Format.asprintf "%a" Schema.pp
+               (Query.schema (categorized ~table [ "c" ])))
+          @@ __POS_OF__ {| c categorical["y", "z"] |});
+      test "categorize of no column is the query" (fun () ->
+          let q =
+            Query.of_table (v [ ("s", Column.v Type.string [| "a" |]) ])
+          in
+          equal
+            (Testable.make ~pp:Query.pp ~equal:Query.equal)
+            q
+            (require_ok ~pp:Error.pp (Kit.categorize [] q)));
+      test "categorize refuses a column it cannot categorize" (fun () ->
+          let table =
+            v
+              [
+                ("s", Column.v Type.string [| "a" |]);
+                ("n", Column.v Type.int64 [| 1 |]);
+              ]
+          in
+          expect
+            (String.concat "\n"
+               [
+                 message (fun () -> categorized ~table [ "s"; "s" ]);
+                 message (fun () -> categorized ~table [ "s"; "n" ]);
+                 message (fun () -> categorized ~table [ "nope" ]);
+               ])
+          @@ __POS_OF__
+               {|
+            Kit.categorize: "s" is named twice
+            select: 1 problem
+              "n" := cast string n
+                Col.string reads string or categorical, but "n" is int64.
+              input (2 columns): s string, n int64
+            select: 1 problem
+              "nope" := cast string nope
+                no column "nope". The columns are "s" and "n".
+              input (2 columns): s string, n int64
+            |});
+      test "categorize returns a failing run's error" (fun () ->
+          let q =
+            Query.of_table (v [ ("s", Column.v Type.string [| "1"; "x" |]) ])
+            |> Query.derive
+                 Expr.[ "s" := Str.slice ~offset:0 ~length:1 (Col.string "s") ]
+            |> Query.filter Expr.(Str.parse Type.int64 (Col.string "s") > int 0)
+          in
+          match Kit.categorize [ "s" ] q with
+          | Ok _ -> fail "no error"
+          | Error e ->
+              expect (Format.asprintf "%a" Error.pp e)
+              @@ __POS_OF__
+                   {| filter (Str.parse int64 s > 0): row 1: "x": not an integer. |});
+    ]
+
 let () =
   exit
     (run "Run"
@@ -2210,4 +2302,5 @@ let () =
          sorting;
          sources;
          refusals;
+         kit_runs;
        ])

@@ -2661,6 +2661,38 @@ module Kit : sig
       ]}
       A column that both have, of two types, is a problem of the [append]. *)
 
+  (** {1:runs Runs} *)
+
+  val categorize : string list -> Query.t -> (Query.t, Error.t) result
+  (** [categorize cs q] is [q] with each text column of [cs] cast, in place, to
+      the categorical type whose dictionary is the column's distinct non-null
+      values in byte order, the order of {!Order.asc} on text, which does not
+      depend on the order or the batches of [q]'s rows. It runs one query per
+      column, after building them all:
+      {[
+      let words c =
+        let x = Col.string c in
+        Query.select Expr.[ c := cast Type.string x ] q
+        |> Query.filter Expr.(not (is_null x))
+        |> distinct
+        |> Query.sort [ Order.asc c ]
+        |> Query.values x
+      in
+      Query.derive
+        (List.map
+           (fun (c, ws) -> Expr.(c := cast (Type.categorical ws) (Col.string c)))
+           dictionaries)                     (* the [(c, words c)] of each [c] *)
+        q
+      ]}
+      [cs] empty is [Ok q]. A column of [q] that is missing or is not text is a
+      problem of the [select]. A categorical column takes the dictionary of the
+      values it holds, in byte order, since it is read as text.
+
+      [Error e] if a run fails, or if a column holds more than 2{^ 31} - 1
+      distinct strings, the most a dictionary holds.
+
+      Raises [Invalid_argument] if [cs] names a column twice. *)
+
   (** {1:expressions Expressions} *)
 
   val cumulative : ('a, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t

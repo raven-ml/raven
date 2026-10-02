@@ -216,6 +216,44 @@ module Kit = struct
     let s = Query.schema q and r = Query.schema rest in
     Query.append (pad (nulls s r) rest) (pad (nulls r s) q)
 
+  (* Runs *)
+
+  (* A dictionary's codes are int32. *)
+  let max_categories = 0x7fff_ffff
+
+  let categorize cs q =
+    Option.iter
+      (err "Kit.categorize: %a is named twice" Type.pp_quoted)
+      (repeated cs);
+    (* Every plan is built, and so checked, before any runs. *)
+    let words c =
+      let x = Col.string c in
+      let plan =
+        Query.select Expr.[ c := cast Type.string x ] q
+        |> Query.filter Expr.(not (is_null x))
+        |> distinct
+        |> Query.sort [ Order.asc c ]
+      in
+      fun () -> Query.values x plan
+    in
+    let queries = List.map (fun c -> (c, words c)) cs in
+    let rec run outputs = function
+      | [] -> Ok (if outputs = [] then q else Query.derive (List.rev outputs) q)
+      | (c, words) :: rest -> (
+          match words () with
+          | Error e -> Error e
+          | Ok ws when Array.length ws > max_categories ->
+              Error
+                (Error.v
+                   (Format.asprintf
+                      "Kit.categorize: %a holds more than 2^31 - 1 strings"
+                      Type.pp_quoted c))
+          | Ok ws ->
+              let o = Expr.(c := cast (Type.categorical ws) (Col.string c)) in
+              run (o :: outputs) rest)
+    in
+    run [] queries
+
   (* Expressions *)
 
   let cumulative r = Expr.rolling (Window.rows ~before:max_int ~after:0) r
