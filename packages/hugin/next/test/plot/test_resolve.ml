@@ -608,18 +608,38 @@ let scopes =
           let line = name "r" (filled [| 2.; 3. |]) in
           let r = resolve (layer [ two; line ]) in
           let at = path [ field "r" ] in
-          fails_naming [ "r"; "x" ] (fun () -> quant ~at r "x");
+          fails_naming [ "no scope of the scale \"x\" holds r" ] (fun () ->
+              quant ~at r "x");
           equal floats (0., 6.) (hull ~at r "color"));
       test "a grid names no position" (fun () ->
           let r = resolve two in
-          fails_naming [ "x" ] (fun () -> quant r "x");
+          fails_naming [ "no scope of the scale \"x\" holds root" ] (fun () ->
+              quant r "x");
           equal floats (0., 6.) (hull r "color"));
       test "a grid names the position its cells share" (fun () ->
           equal floats (0., 6.)
             (hull (resolve (share [ ("x", `Shared) ] two)) "x"));
       test "a grid names no colour its cells keep apart" (fun () ->
           let r = resolve (share [ ("color", `Independent) ] two) in
-          fails_naming [ "color" ] (fun () -> quant r "color"));
+          fails_naming [ "no scope of the scale \"color\" holds root" ]
+            (fun () -> quant r "color"));
+      test "a grid names no colour its cells keep apart beside another scope"
+        (fun () ->
+          let apart = share [ ("color", `Independent) ] two |> name "g" in
+          let r = resolve (grid [ [ apart; filled [| 7.; 8. |] ] ]) in
+          equal floats (7., 8.) (hull ~at:(path [ index 1 ]) r "color");
+          fails_naming [ "no scope of the scale \"color\" holds g" ] (fun () ->
+              quant ~at:(path [ field "g" ]) r "color"));
+      test "a layer names no colour its children keep apart" (fun () ->
+          let apart =
+            share
+              [ ("color", `Independent) ]
+              (layer [ filled [| 1.; 2. |]; filled [| 5.; 6. |] ])
+            |> name "l"
+          in
+          let r = resolve (grid [ [ apart; filled [| 7.; 8. |] ] ]) in
+          fails_naming [ "no scope of the scale \"color\" holds l" ] (fun () ->
+              quant ~at:(path [ field "l" ]) r "color"));
       test "a cell of a layered grid names its broadcast cell" (fun () ->
           let r = resolve (layer [ two; name "r" (filled [| 2.; 3. |]) ]) in
           equal floats (0., 3.) (hull ~at:(path [ index 0; index 0 ]) r "x");

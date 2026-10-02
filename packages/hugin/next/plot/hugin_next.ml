@@ -1622,18 +1622,22 @@ let rec arrange nodes (env : env) ~in_cell n =
       if not in_cell then
         err "resolve" "%a spans cells outside a grid" pp_id n.id;
       arrange nodes env ~in_cell f
+  | E_layer [] ->
+      record ();
+      single { no_content with held = here }
   | E_layer cs ->
       record ();
+      (* A layer lies where its children lie, reading the scopes a channel of
+         each child reads there. *)
       layer_shaped n.id env.shares
         (List.map
            (fun c ->
-             arrange nodes (child_env env ~cell:false c.id) ~in_cell:false c)
+             let env = child_env env ~cell:false c.id in
+             arrange nodes env ~in_cell:false c |> hold (n.id, env.shares))
            cs)
-      |> hold (n.id, env.shares)
   | E_grid g ->
       record ();
       arrange_grid nodes env n g.rows g.widths g.heights
-      |> hold (n.id, env.shares)
 
 and arrange_grid nodes (env : env) n rows widths heights =
   let nrows = List.length rows in
@@ -1657,8 +1661,9 @@ and arrange_grid nodes (env : env) n rows widths heights =
               Hashtbl.add covered (i, j) ()
             done
           done;
+          let env = child_env env ~cell:true c.id in
           let s =
-            arrange nodes (child_env env ~cell:true c.id) ~in_cell:true c
+            arrange nodes env ~in_cell:true c |> hold (n.id, env.shares)
           in
           cells :=
             { row = r; col = !col; rows = rs; cols = cs; cid = c.id; s }
