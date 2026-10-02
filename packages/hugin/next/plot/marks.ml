@@ -435,6 +435,12 @@ let is_pixel : type a b. (a, b) Nx.dtype -> bool = function
       true
   | _ -> false
 
+(* [lead px] is the leading axes of the image tensor [px], its datum axes. *)
+let lead px =
+  let shape = Nx.shape px in
+  let rank = Array.length shape in
+  if rank = 2 then [||] else Array.sub shape 0 (rank - 3)
+
 (* [datum px lead k] is the image of the datum [k] of the leading axes [lead] of
    [px]. *)
 let datum px lead k =
@@ -457,7 +463,7 @@ let draw_image rows =
       let get role = Option.get (Mark.get rows role) in
       let x0 = get Role.x and x1 = get Role.x2 in
       let y0 = get Role.y and y1 = get Role.y2 in
-      let index = Mark.index rows and lead = Mark.shape rows in
+      let index = Mark.index rows and lead = lead px in
       let within u = 0. <= u && u <= 1. in
       let image i =
         if not (finite x0.(i) && finite y0.(i)) then Picture.empty
@@ -496,22 +502,19 @@ let image ?fx ?fy px =
       | c -> err "image" "the last axis has %d channels, not 1, 3 or 4" c
   in
   let fixed = Scale.linear ~nice:false () in
-  let x = Data { lift = Scalar 0.; spec = None; title = None } in
-  let x2 = Data { lift = Scalar (float w); spec = None; title = None } in
-  let y = Data { lift = Scalar 0.; spec = None; title = None } in
-  let y2 = Data { lift = Scalar (float h); spec = None; title = None } in
+  let at v = floats [| v |] in
   Mark
     (make "image"
        ~coord:(Coord.cartesian ~aspect:1. ())
        ~base:lead
        ([
-          Some (on ~imply:fixed ~guide:false Role.x x);
-          Some (on Role.x2 x2);
+          Some (on ~imply:fixed ~guide:false Role.x (at 0.));
+          Some (on Role.x2 (at (float w)));
           Some
             (on
                ~imply:(Scale.linear ~nice:false ~reverse:true ())
-               ~guide:false Role.y y);
-          Some (on Role.y2 y2);
+               ~guide:false Role.y (at 0.));
+          Some (on Role.y2 (at (float h)));
           Some (on Role.pixels (const (Nx.P px)));
         ]
        @ facets fx fy)
@@ -532,8 +535,8 @@ let varies shape (B b) a =
       | Num { x; _ } -> along (Nx.shape x)
       | Cat { codes; _ } -> along (Nx.shape codes)
       | Strings s -> along [| Array.length s |]
-      | Index k | Dim { axis = k; _ } -> axis_of shape k = Some a
-      | Scalar _ -> false)
+      | Floats s -> along [| Array.length s |]
+      | Index k | Dim { axis = k; _ } -> axis_of shape k = Some a)
 
 (* Contours *)
 

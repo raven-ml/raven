@@ -22,13 +22,11 @@ val of_scale_kind : 'd Scale.kind -> 'd kind option
 
 (** {1:lifts Lifts} *)
 
-(** How a channel lifts its data into its scale's domain. [Scalar v] is the
-    quantity [v] for every row: it contributes [v] to its scale's domain without
-    taking part in broadcasting. *)
+(** How a channel lifts its data into its scale's domain. *)
 type _ lift =
   | Num : { x : ('a, 'b) Nx.t; valid : Nx.bool_t option } -> float lift
   | Index : int -> float lift
-  | Scalar : float -> float lift
+  | Floats : float array -> float lift
   | Cat : {
       codes : ('a, 'b) Nx.t;
       valid : Nx.bool_t option;
@@ -91,6 +89,9 @@ val cat :
 
 val strings :
   ?scale:string Scale.t -> ?title:Text.t -> string array -> (string, 'r) t
+
+val floats :
+  ?scale:float Scale.t -> ?title:Text.t -> float array -> (float, 'r) t
 
 val dim :
   ?scale:string Scale.t ->

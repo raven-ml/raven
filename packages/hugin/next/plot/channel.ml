@@ -29,7 +29,7 @@ let of_scale_kind : type d. d Scale.kind -> d kind option = function
 type _ lift =
   | Num : { x : ('a, 'b) Nx.t; valid : Nx.bool_t option } -> float lift
   | Index : int -> float lift
-  | Scalar : float -> float lift
+  | Floats : float array -> float lift
   | Cat : {
       codes : ('a, 'b) Nx.t;
       valid : Nx.bool_t option;
@@ -58,7 +58,7 @@ type ('d, 'r) t =
 let kind : type d. d lift -> d kind = function
   | Num _ -> Quantities
   | Index _ -> Quantities
-  | Scalar _ -> Quantities
+  | Floats _ -> Quantities
   | Cat _ -> Categories
   | Strings _ -> Categories
   | Dim _ -> Categories
@@ -70,7 +70,7 @@ let equal_lift : type d e. d lift -> e lift -> (d, e) Type.eq option =
   | Num a, Num b ->
       ok (equal_tensor a.x b.x && Option.equal ( == ) a.valid b.valid)
   | Index k, Index k' -> ok (Int.equal k k')
-  | Scalar v, Scalar v' -> ok (Float.equal v v')
+  | Floats a, Floats b -> ok (Array.equal Float.equal a b)
   | Cat a, Cat b ->
       ok
         (equal_tensor a.codes b.codes
@@ -170,6 +170,9 @@ let cat ?scale ?valid ?title ?labels codes =
 let strings ?scale ?title a =
   Data { lift = Strings (Array.copy a); spec = scale; title }
 
+let floats ?scale ?title a =
+  Data { lift = Floats (Array.copy a); spec = scale; title }
+
 let dim ?scale ?valid ?title ?labels axis =
   let labels = Option.map Array.copy labels in
   Data { lift = Dim { axis; valid; labels }; spec = scale; title }
@@ -187,5 +190,6 @@ let lift_shape : type d. d lift -> int array option = function
   | Num { x; _ } -> Some (Nx.shape x)
   | Cat { codes; _ } -> Some (Nx.shape codes)
   | Strings a -> Some [| Array.length a |]
+  | Floats a -> Some [| Array.length a |]
   | Dim { valid = Some v; _ } -> Some (Nx.shape v)
-  | Dim { valid = None; _ } | Index _ | Scalar _ -> None
+  | Dim { valid = None; _ } | Index _ -> None

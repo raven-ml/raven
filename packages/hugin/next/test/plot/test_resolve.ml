@@ -943,6 +943,18 @@ let categories =
                  ~y:(num at0) ~fill:(dim 0) ())
           in
           equal index_w [ (0, "0"); (1, "1") ] (indices (categ r "color")));
+      test "floats fit their finite values" (fun () ->
+          let r =
+            resolve
+              (dot
+                 ~x:
+                   (Hugin_next.floats ~scale:exact
+                      [|
+                        2.; Float.nan; Float.infinity; -1.; Float.neg_infinity;
+                      |])
+                 ~y:(num at0) ())
+          in
+          equal floats (-1., 2.) (hull r "x"));
       test "strings of dropped rows are categories" (fun () ->
           let r =
             resolve

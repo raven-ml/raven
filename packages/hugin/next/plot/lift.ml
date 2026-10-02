@@ -117,7 +117,7 @@ let eval : type d. int array -> role:string -> d lift -> d Scale.t -> d t =
   | Index k ->
       let a = axis k in
       quantities role s (along shape a (Nx.cast Nx.float64 (arange shape.(a))))
-  | Scalar x -> quantities role s (Nx.scalar Nx.float64 x)
+  | Floats a -> quantities role s (Nx.create Nx.float64 [| Array.length a |] a)
   | Cat { codes; valid; labels = Some labels } ->
       let c = Nx.cast Nx.int64 codes in
       let n = Array.length labels in

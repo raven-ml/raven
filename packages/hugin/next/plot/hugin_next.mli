@@ -197,11 +197,11 @@ val pp_warning : Format.formatter -> warning -> unit
 
 val equal : t -> t -> bool
 (** [equal f f'] is [true] iff [f] and [f'] are made by the same combinators
-    from equal arguments: tensors and functions compared physically, string
-    arrays element by element, and the values of the lower libraries by their
-    [equal]. A figure rebuilt from the same tensors by the same code is equal to
-    the first unless it holds a new function, as a {!map_range} or {!bind} of a
-    fresh closure does. [layer [ layer [ a; b ]; c ]] draws what
+    from equal arguments: tensors and functions compared physically, string and
+    float arrays element by element, and the values of the lower libraries by
+    their [equal]. A figure rebuilt from the same tensors by the same code is
+    equal to the first unless it holds a new function, as a {!map_range} or
+    {!bind} of a fresh closure does. [layer [ layer [ a; b ]; c ]] draws what
     [layer [ a; b; c ]] draws and is not equal to it. *)
 
 (** {1:channels Channels} *)
@@ -303,6 +303,15 @@ val strings :
     of [a], one datum per element, with [scale] and [title] as for {!num}: its
     shape is [[|Array.length a|]], and it contributes its distinct strings to
     its scale's domain in order of first appearance. [a] is copied. *)
+
+val floats :
+  ?scale:float Scale.t -> ?title:Text.t -> float array -> (float, 'r) channel
+(** [floats ~scale ~title a] is the quantities of the elements of [a], one datum
+    per element, with [scale] and [title] as for {!num}: its shape is
+    [[|Array.length a|]], and NaN and infinities are missing. [a] is copied, and
+    two channels of equal arrays are equal ({!equal}), so
+    [rule ~y:(floats [| 0. |]) ()] is a reference line equal to itself rebuilt.
+*)
 
 val dim :
   ?scale:string Scale.t ->

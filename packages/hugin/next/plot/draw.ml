@@ -291,7 +291,7 @@ let m4 cx m (panel : Layout.panel) reads =
     | _, Some d -> (
         match d.lift with
         | Index k | Dim { axis = k; _ } -> axis_of shape k <> Some (rank - 1)
-        | Num _ | Cat _ | Strings _ | Scalar _ -> (
+        | Num _ | Cat _ | Strings _ | Floats _ -> (
             match lift_shape d.lift with
             | Some s when Array.length s > 0 -> s.(Array.length s - 1) = 1
             | _ -> true))

@@ -75,6 +75,12 @@ let lifts =
           let f = fill a in
           a.(0) <- "z";
           equal bool true (Hugin_next.equal f (fill [| "a"; "b"; "c" |])));
+      test "floats are copied" (fun () ->
+          let at a = rule ~y:(floats a) () in
+          let a = [| 0.; 1. |] in
+          let f = at a in
+          a.(0) <- 2.;
+          equal bool true (Hugin_next.equal f (at [| 0.; 1. |])));
       test "dim labels are copied" (fun () ->
           let fill labels =
             dot ~x:(num v) ~y:(num v) ~fill:(dim ~labels 0) ()
@@ -308,6 +314,7 @@ type recipe =
   | R_line of int * bool
   | R_bar of int
   | R_mapped of int * int
+  | R_level of float (* A reference line at a level given as a float. *)
   | R_custom of float option (* The aspect of the coordinate system implied. *)
   | R_axis of string * bool
   | R_legend of string * bool
@@ -323,6 +330,7 @@ type recipe =
 let tensors = Array.init 3 (fun _ -> f32 [| 3 |])
 let masks = Array.init 2 (fun _ -> mask [| 3 |])
 let colours = [| Color.contrast; (fun c -> Color.with_alpha 0.5 c) |]
+let levels = [| 0.; 1.; Float.nan |]
 let aligns : Text.Layout.halign array = [| `Center; `Left; `Right |]
 let custom_draw (_ : Mark.rows) = Picture.empty
 let bound = Array.init 2 (fun i _ -> dot ~x:(num tensors.(i)) ~y:(const 0.5) ())
@@ -342,6 +350,7 @@ let rec build = function
         ~y:(num tensors.(i))
         ~fill:(map_range colours.(k) (num tensors.(i)))
         ()
+  | R_level v -> rule ~y:(floats [| v |]) ()
   | R_custom aspect ->
       let coord =
         Option.map (fun aspect -> Coord.cartesian ~aspect ()) aspect
@@ -376,6 +385,7 @@ let rec pp_recipe ppf = function
   | R_line (i, t) -> Format.fprintf ppf "line %d %b" i t
   | R_bar i -> Format.fprintf ppf "bar %d" i
   | R_mapped (i, k) -> Format.fprintf ppf "mapped %d %d" i k
+  | R_level v -> Format.fprintf ppf "level %g" v
   | R_custom a -> Format.fprintf ppf "custom %a" pp_aspect a
   | R_axis (s, g) -> Format.fprintf ppf "axis %S %b" s g
   | R_legend (s, show) -> Format.fprintf ppf "legend %S %b" s show
@@ -411,6 +421,7 @@ let rec gen_recipe depth =
         map (fun (i, t) -> R_line (i, t)) (pair idx bool);
         map (fun i -> R_bar i) idx;
         map (fun (i, k) -> R_mapped (i, k)) (pair idx (int_range 0 1));
+        map (fun v -> R_level v) (of_list (Array.to_list levels));
         map (fun a -> R_custom a) aspect;
         map (fun (s, g) -> R_axis (s, g)) (pair (of_list [ "x"; "y" ]) bool);
         map (fun (s, show) -> R_legend (s, show)) (pair word bool);
@@ -459,6 +470,7 @@ let rec variants r =
     | R_line (i, t) -> [ R_line (i, not t) ]
     | R_bar i -> [ R_bar ((i + 1) mod 3) ]
     | R_mapped (i, k) -> [ R_mapped (i, 1 - k) ]
+    | R_level v -> [ R_level (if Float.equal v 0. then Float.nan else 0.) ]
     | R_custom a -> [ R_custom (other_aspect a) ]
     | R_axis (s, g) -> [ R_axis (s, not g) ]
     | R_legend (s, show) -> [ R_legend (s, not show) ]
@@ -498,8 +510,8 @@ let rec variants r =
     | R_name (s, x) -> List.map (fun x -> R_name (s, x)) (variants x)
     | R_share (s, i, x) -> List.map (fun x -> R_share (s, i, x)) (variants x)
     | R_coord (a, x) -> List.map (fun x -> R_coord (a, x)) (variants x)
-    | R_dot _ | R_line _ | R_bar _ | R_mapped _ | R_custom _ | R_axis _
-    | R_legend _ | R_bind _ ->
+    | R_dot _ | R_line _ | R_bar _ | R_mapped _ | R_level _ | R_custom _
+    | R_axis _ | R_legend _ | R_bind _ ->
         []
   in
   here @ below
@@ -524,11 +536,13 @@ let equality =
   group "equal"
     [
       prop "figures are equal iff their recipes are" gen_pair (fun (r, r') ->
-          let same = r = r' in
+          (* [compare] equates the nan of a level with itself, as [Float.equal]
+             does. *)
+          let same = compare r r' = 0 in
           cover "equal recipes" same;
           cover "different recipes" (not same);
           cover "recipes that differ in one argument"
-            (List.exists (( = ) r') (variants r));
+            (List.exists (fun v -> compare v r' = 0) (variants r));
           equal bool same (Hugin_next.equal (build r) (build r')));
       cases
         ~name:(Format.asprintf "%a" pp_recipe)
@@ -538,6 +552,8 @@ let equality =
           R_dot (0, 1, Some 0);
           R_line (0, false);
           R_mapped (0, 0);
+          R_level 0.;
+          R_level Float.nan;
           R_custom None;
           R_custom (Some 2.);
           R_axis ("x", false);

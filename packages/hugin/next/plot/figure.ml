@@ -221,7 +221,7 @@ let check_binding fn shape (B b) =
               err fn "the role %s has %d labels for an axis of length %d"
                 b.role.name (Array.length l) shape.(a)
           | _ -> ())
-      | Num _ | Scalar _ | Cat _ | Strings _ -> ())
+      | Num _ | Floats _ | Cat _ | Strings _ -> ())
 
 let make_mark fn ~name ?reduce ?coord ?swatch ?(base = [||]) bindings draw =
   let rec distinct = function

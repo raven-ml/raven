@@ -315,7 +315,7 @@ let scaled ctx ~stroked rd (B b as bd) index sel i =
 (* [decimals l] is the decimals that write a quantity of [l]. *)
 let decimals : type d. d lift -> float -> int = function
   | Num { x; _ } -> Number.decimals (Nx.dtype x)
-  | Scalar _ -> Number.decimals Nx.float64
+  | Floats _ -> Number.decimals Nx.float64
   | Index _ | Cat _ | Strings _ | Dim _ -> fun _ -> 0
 
 (* [label l] is the text that shows the category of a code of [l]. *)

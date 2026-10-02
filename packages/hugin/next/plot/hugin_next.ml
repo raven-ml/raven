@@ -36,6 +36,7 @@ type ('d, 'r) channel = ('d, 'r) Channel.t
 let num = Channel.num
 let cat = Channel.cat
 let strings = Channel.strings
+let floats = Channel.floats
 let dim = Channel.dim
 let index = Channel.index
 let const = Channel.const
