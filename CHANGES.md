@@ -3083,6 +3083,14 @@ thread.
 
 ### Nx
 
+- `Nx_quant.apply ~ids` on a prompt groups positions in blocks of up to 16,
+  the most that keep the padding below half the positions, where it took
+  blocks of 4, and with `bfloat16` rows an MXFP4 weight is its `bfloat16`
+  values widened, which hold them exactly. A compiled product of `bfloat16`
+  rows then runs on a GPU's tensor cores: gpt-oss-20b's 512-token gate and up
+  product on an RTX 5000 Ada takes 2.9 ms, from 13.3 ms. A product of 512
+  tokens' `float32` rows, which no tensor core takes, pays the padding: 25.7
+  ms on that GPU, from 23.2 ms.
 - **Breaking** for backends: a backend is a value, `Nx_backend.t`, which its
   library makes once with `Nx_backend.v (module K)` and exports, as
   `Nx_cpu.backend`. Two backends are equal only when one `v` made them, so

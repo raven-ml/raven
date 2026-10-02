@@ -212,7 +212,7 @@
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries windtrap rune nx_test nx nx.quant nx.device nx.metal)
+ (libraries windtrap rune nx_test nx nx.quant nx.device nx.metal nx.cuda)
  (action
   (run %{test} --exclude-tag slow)))
 

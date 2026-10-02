@@ -23,13 +23,14 @@
     the experts [ids] selects and one product. Their results live where their
     operands join ({!Nx.place}).
 
-    With [ids], a product whose positions number fewer than twice the weight's
+    With [ids], a product whose positions number at most twice the weight's
     experts, those of all its lanes, multiplies each position by its expert.
     With more, as when a prompt's tokens each choose a few of the experts, the
     positions are sorted by expert, each expert's run is padded to whole blocks
-    of 2 positions, and each block is one product with its expert, whose matrix
-    is then read once per block. Positions split over devices are grouped on
-    each device.
+    of positions, and each block is one product with its expert, whose matrix is
+    then read once per block. A block holds 16 positions, or 8, 4 or 2, the most
+    that keep the padding below half the positions. Positions split over devices
+    are grouped on each device.
 
     Run eagerly, the composition holds the matrices it multiplies, decoded at
     float32: {!dequant} holds the whole weight, and {!apply} with [ids] holds

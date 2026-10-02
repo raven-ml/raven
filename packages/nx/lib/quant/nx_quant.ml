@@ -215,6 +215,13 @@ let mxfp4_values codes scales =
     (Nx.bitcast Nx.float32 (code_bits nibbles))
     (Nx.bitcast Nx.float32 (scale_bits (Nx.cast Nx.uint32 scales)))
 
+(* [bfloat16 v] is the MXFP4 values [v] at bfloat16. A value has at most two
+   significant bits, so its float32 bits end in 16 zeros, subnormal values
+   included, and their high half is its bfloat16. *)
+let bfloat16 v =
+  Nx.bitcast Nx.bfloat16
+    (Nx.cast Nx.uint16 (Nx.rshift (Nx.bitcast Nx.uint32 v) 16))
+
 (* The GGUF formats, decoded as ggml's dequantize_row_q8_0, _q4_K and _q6_K
    decode them: the scales at float32, each product left to right. Each block's
    fields are views of its bytes, so a compiled product reads the bytes
@@ -445,8 +452,17 @@ let matrices t g =
   Nx.reshape [| g; s.(r - 2); s.(r - 1) |] (Nx.contiguous t)
 
 (* [product x w] is [x] times each matrix of the weight [w] of contiguous parts,
-   transposed, at float32. *)
-let product x w = Nx.matmul x (Nx.matrix_transpose (values w))
+   transposed, at float32. With bfloat16 rows, an MXFP4 weight is its bfloat16
+   values widened, so the product multiplies bfloat16 operands, which a GPU's
+   tensor cores take; other rows keep the float32 values, which take fewer
+   operations to decode. *)
+let product (type b) (x : (float, b) Nx.t) w =
+  let v =
+    match (Nx.dtype x, w) with
+    | Nx.BFloat16, Mxfp4 _ -> Nx.cast Nx.float32 (bfloat16 (values w))
+    | _ -> values w
+  in
+  Nx.matmul (Nx.cast Nx.float32 x) (Nx.matrix_transpose v)
 
 (* Grouped products. When a product's instances outnumber the matrices they
    meet, each matrix is multiplied once by the rows of many of its instances,
@@ -458,11 +474,21 @@ let product x w = Nx.matmul x (Nx.matrix_transpose (values w))
    Instances split over devices are grouped on each device: a sort cannot run
    along a split axis, and a device's instances are its own rows. *)
 
-(* A block holds 4 instances, the size measured fastest on every device:
-   gpt-oss-20b's gate and up product of 512 tokens takes 21.9 ms in blocks of 4
-   and 25.3 ms in blocks of 2 on an RTX 5000 Ada, and 162 ms and 167 ms on an
-   M1 Max's Metal; of 64 tokens on the host, 203 ms and 281 ms. *)
-let block = 4
+(* A block holds as many instances as its padding allows, up to 16: padding
+   costs at most [block - 1] slots per matrix, which stay below half the
+   instances. Larger blocks decode each matrix fewer times, and 16 rows are the
+   tile a GPU's tensor core multiplies at once. gpt-oss-20b's gate and up
+   product of 512 tokens takes 2.9 ms in blocks of 16 on an RTX 5000 Ada, 4.1 ms
+   in blocks of 32 and 7.5 ms in blocks of 8; of 64 tokens on the host, whose
+   rows share a decoded weight four at a time, 220 ms in blocks of 4, 289 ms in
+   blocks of 8 and 440 ms in blocks of 16. *)
+let largest_block = 16
+
+(* [block ~g j] is the block of [j] instances over [g] matrices, 1 when no block
+   of 2 or more keeps the padding below half of them. *)
+let block ~g j =
+  let rec go b = if b < 2 || 2 * (b - 1) * g < j then b else go (b / 2) in
+  go largest_block
 
 (* [shards t] is the number of devices' windows that split [t]'s first axis. *)
 let shards t =
@@ -477,7 +503,7 @@ let shards t =
    of [i] instances over [r] devices' shards, the instance [j] with the matrix
    [at.(j)] among [g] if [named.(j)], [[| i; m; n |]]. The product of an
    instance that names no matrix is left to the caller's mask. *)
-let grouped ~g ~r at named x w =
+let grouped ~block ~g ~r at named x w =
   let i = Nx.dim 0 x and m = Nx.dim 1 x and k = Nx.dim 2 x in
   let j = i / r in
   let int64 = Int64.of_int in
@@ -569,9 +595,8 @@ let dequant dt w = Nx.cast dt (values (map Nx.contiguous w))
 let apply (type b) ?ids w (x : (float, b) Nx.t) : (float, b) Nx.t =
   let ws = shape w in
   let wb, rb = batch ?ids:(Option.map Nx.shape ids) ws (Nx.shape x) in
-  let x32 = Nx.cast Nx.float32 x in
   match ids with
-  | None -> Nx.cast (Nx.dtype x) (product x32 (map Nx.contiguous w))
+  | None -> Nx.cast (Nx.dtype x) (product x (map Nx.contiguous w))
   | Some ids ->
       let wr = Array.length ws in
       let lanes = Array.sub ws 0 (wr - 3) and e = ws.(wr - 3) in
@@ -587,24 +612,23 @@ let apply (type b) ?ids w (x : (float, b) Nx.t) : (float, b) Nx.t =
         Nx.reshape [| i; m; k |]
           (Nx.broadcast_to
              (Array.append rb [| m; k |])
-             (if vector then Nx.reshape [| 1; k |] x32 else x32))
+             (if vector then Nx.reshape [| 1; k |] x else x))
       in
       (* The routes and rows join where one of them is split. *)
       let r = if i = 0 then 1 else max (shards (flat at)) (shards rows) in
-      (* Grouped, the padding, at most a slot per matrix, stays below half the
-         instances. *)
+      let block = block ~g (i / r) in
       let y =
-        if i / r >= block * g && m * n * k > 0 then
+        if block >= 2 && m * n * k > 0 then
           Nx.reshape
             (Array.append rb (if vector then [| n |] else [| m; n |]))
-            (grouped ~g ~r (flat at) (flat named) rows w)
+            (grouped ~block ~g ~r (flat at) (flat named) rows w)
         else
           let take t =
             let matrix = Array.sub (Nx.shape t) (wr - 2) 2 in
             Nx.reshape (Array.append wb matrix)
               (Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] at) (matrices t g))
           in
-          product x32 (map take w)
+          product x (map take w)
       in
       Nx.cast (Nx.dtype x)
         (Nx.where

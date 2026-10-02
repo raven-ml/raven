@@ -6,8 +6,8 @@
 (* Quantised products under rune. Compiled, Nx_quant.apply and dequant compute
    eager's values, which nx's suite checks against the format: on the host, on
    test devices over the host's memory with the weight, its routes and its rows
-   placed, and on Metal (slow). The derivatives of apply in its rows, and its
-   maps, are those of the product with the dequantised weight. *)
+   placed, and on Metal and CUDA (slow). The derivatives of apply in its rows,
+   and its maps, are those of the product with the dequantised weight. *)
 
 open Windtrap
 open Nx_test
@@ -274,6 +274,35 @@ let largest =
         (floats [| 2; k |]))
     formats
 
+(* A prompt's routes at bfloat16, as a model's activations are: more positions
+   than the experts, so the product sorts them by expert into blocks, of 16
+   positions for 64 of them and of 8 for 48. A GPU's tensor core takes a block
+   of 16 as its A's rows and one of 8 as its B's columns. *)
+let prompts =
+  List.map
+    (fun positions ->
+      case
+        (Printf.sprintf "%d positions' bfloat16 routes, in blocks" positions)
+        ~ids:
+          (ints [| positions; 1 |]
+             (Array.init positions (fun i ->
+                  if i mod 11 = 5 then -1 else i * 7 mod 3 mod 2)))
+        (weight ~scale:moderate [| 2; 16; 64 |])
+        (floats [| positions; 1; 1; 64 |]))
+    [ 64; 48 ]
+
+(* [blocked ?placement c] is [c]'s product of its rows at bfloat16, eager and
+   compiled with its routes and rows placed at [placement]. *)
+let blocked ?(placement = Nx.Placement.host) c =
+  let x = Nx.cast Nx.bfloat16 c.x and ids = Option.get c.ids in
+  let compiled =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun ids x -> Nx_quant.apply ~ids c.w x)
+      (Nx.place placement ids) (Nx.place placement x)
+  in
+  (Nx_quant.apply ~ids c.w x, Nx.place Nx.Placement.host compiled)
+
 (* [compiled c] is [c]'s product compiled, its routes and rows arguments. *)
 let compiled c =
   match c.ids with
@@ -320,6 +349,12 @@ let values =
               equal ~msg:(format_name format) (tensor float_exact) (f w)
                 (Rune.jit Nx.Ptree.(Nx_quant.ptree @-> returns tensor) f w))
             formats);
+      cases
+        ~name:(fun c -> c.name)
+        "compiled, a prompt's routes in blocks are eager's" prompts
+        (fun c ->
+          let eager, compiled = blocked c in
+          agrees c eager compiled);
       test "compiled, one token's four experts among 32 are its product"
         (fun () ->
           let c =
@@ -670,28 +705,40 @@ let undifferentiated =
         (Nx.zeros Nx.float32 [| 5; 32 |])
         (Rune.grad' (fun v -> Nx.sum (Nx_quant.apply (built v) x)) v))
 
-(* Metal *)
+(* GPUs *)
 
-let metal =
-  match Result.to_option (Nx_metal.get 0) with
-  | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
-  | Some m ->
-      let p = Nx.Placement.on m in
-      cases
-        ~name:(fun c -> c.name)
-        "on Metal, a product is eager's"
-        (every_format ~scale:moderate)
-        (fun c ->
-          let r =
-            match c.ids with
-            | None -> Rune.jit' (product c c.w) (Nx.place p c.x)
-            | Some ids ->
-                Rune.jit
-                  Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-                  (fun ids x -> product { c with ids = Some ids } c.w x)
-                  (Nx.place p ids) (Nx.place p c.x)
-          in
-          agrees c (product c c.w c.x) (host r))
+(* [on_device name device] runs the products on the GPU [device] opens, where
+   its kernels take the GPU's own layouts and tensor cores. *)
+let on_device name device =
+  match Result.to_option device with
+  | None -> slow name (fun () -> skip ~reason:("no " ^ name ^ " device") ())
+  | Some d ->
+      let p = Nx.Placement.on d in
+      group name
+        [
+          cases
+            ~name:(fun c -> c.name)
+            ("on " ^ name ^ ", a product is eager's")
+            (every_format ~scale:moderate)
+            (fun c ->
+              let r =
+                match c.ids with
+                | None -> Rune.jit' (product c c.w) (Nx.place p c.x)
+                | Some ids ->
+                    Rune.jit
+                      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                      (fun ids x -> product { c with ids = Some ids } c.w x)
+                      (Nx.place p ids) (Nx.place p c.x)
+              in
+              agrees c (product c c.w c.x) (host r));
+          cases
+            ~name:(fun c -> c.name)
+            ("on " ^ name ^ ", a prompt's routes in blocks are eager's")
+            prompts
+            (fun c ->
+              let eager, compiled = blocked ~placement:p c in
+              agrees c eager compiled);
+        ]
 
 let () =
   exit
@@ -703,5 +750,9 @@ let () =
          transformations;
          empty;
          undifferentiated;
-         group ~tags:[ "slow" ] "metal" [ metal ];
+         group ~tags:[ "slow" ] "gpus"
+           [
+             on_device "Metal" (Nx_metal.get 0);
+             on_device "CUDA" (Nx_cuda.get 0);
+           ];
        ])
