@@ -1,7 +1,0 @@
-(test
- (name test_host)
- (package nx)
- (foreign_stubs
-  (language c)
-  (names test_host_stubs))
- (libraries nx nx.device nx.dtype unix windtrap))

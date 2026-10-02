@@ -12,4 +12,4 @@
   windtrap
   compress.deflate)
  (deps
-  (glob_files fixtures/*)))
+  (glob_files support/*)))

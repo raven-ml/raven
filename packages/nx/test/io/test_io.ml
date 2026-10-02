@@ -6,7 +6,7 @@
 (* Tensor I/O. Each format reads back what it writes, bit for bit where it is
    lossless, over every dtype it holds, every layout and the bit patterns that
    break codecs: NaN payloads, infinities, signed zeros and subnormals. Files
-   that other tools wrote, in fixtures/ with generate.py, pin the formats
+   that other tools wrote, in support/ by gen/generate.py, pin the formats
    themselves. *)
 
 open Windtrap
@@ -31,7 +31,7 @@ let saved suffix save x =
   path
 
 let missing name = Filename.concat (temp_dir ()) name
-let fixture name = Filename.concat "fixtures" name
+let fixture name = Filename.concat "support" name
 let cut s n = String.sub s 0 (String.length s - n)
 
 let flip_byte s i =

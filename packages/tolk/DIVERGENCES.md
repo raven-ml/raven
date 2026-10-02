@@ -3244,7 +3244,7 @@ stores through a pad.
   raises, naming the device and the fault, and reopening gives a fresh device
   with a new identity. An in-process reset would only be how AM reopens.
 - **Pinned by:** nx.amd.device's hardware suite
-  (`packages/nx/test/device/amd/test_amd_hw.ml`): `failures › work that
+  (`packages/nx/test/amd/device/test_amd_hw.ml`): `failures › work that
   never signals loses the device`, on a GPU.
 
 ## D112. An AMD memory barrier leaves the host data path to the host

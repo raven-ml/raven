@@ -12,7 +12,7 @@ the GPU wrote them, kernels numbered in the order they ran.
   next end of the same compute unit, SIMD and slot, in shader time.
 
 Usage, from the repository root:
-    uv run packages/nx/test/device/amd/gen/thread_trace.py
+    uv run packages/nx/test/amd/device/gen/thread_trace.py
 """
 
 import glob

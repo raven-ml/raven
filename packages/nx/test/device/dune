@@ -4,6 +4,7 @@
 
 (executable
  (name test_device)
+ (modules test_device)
  (foreign_stubs
   (language c)
   (names test_device_stubs))
@@ -44,3 +45,12 @@
  (package nx)
  (action
   (run %{exe:test_device.exe} --shard 6/6)))
+
+(test
+ (name test_host)
+ (modules test_host)
+ (package nx)
+ (foreign_stubs
+  (language c)
+  (names test_host_stubs))
+ (libraries nx nx.device nx.dtype unix windtrap))

@@ -9,9 +9,9 @@ picks on its own. Each image has a sibling .npy of the pixels Pillow decodes
 from it.
 
 Usage:
-    cd packages/nx/test/io/fixtures
+    cd packages/nx/test/io/support
     uv run --with numpy --with pillow --with safetensors --with torch \\
-      python generate.py
+      python ../gen/generate.py
 """
 
 import gzip
