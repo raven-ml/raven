@@ -623,6 +623,18 @@ let d3_log_nice =
 
 let ends_w = pair float_exact float_exact
 
+(* A step rounds to 1, 2, 5 or 10 times a power of ten by the ratio of its
+   leading digits to them: below sqrt 2 to 1 and from sqrt 50 to 10. Rounding by
+   1 then 2, or by 5 then 10, is rounding by the larger, so only the bands (1.4,
+   1.5] and (7, 7.5] where those two thresholds lie can be observed. *)
+let threshold_bands =
+  [
+    ("[-5;9] stays: sqrt 2 is above 1.4", (-5., 9., -5., 9.));
+    ("[0;15] takes steps of 2: sqrt 2 is at most 1.5", (0., 15., 0., 16.));
+    ("[-5;65] stays: sqrt 50 is above 7", (-5., 65., -5., 65.));
+    ("[0;75] takes steps of 10: sqrt 50 is at most 7.5", (0., 75., 0., 80.));
+  ]
+
 let nice =
   group "nice"
     [
@@ -636,6 +648,9 @@ let nice =
         "d3 log" d3_log_nice
         (fun (a, b, a', b') ->
           equal ends_w (a', b') (ends (fit_floats a b (Scale.log ()))));
+      cases ~name:fst "the bands of the step thresholds" threshold_bands
+        (fun (_, (a, b, a', b')) ->
+          equal ends_w (a', b') (ends (fit_floats a b (Scale.linear ()))));
       test "d3's time domains" (fun () ->
           let nice a b =
             instants (Scale.fit (Some (Scale.Instants (a, b))) (Scale.time ()))
