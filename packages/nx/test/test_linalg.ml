@@ -1220,6 +1220,37 @@ let over_dtypes ?(large = []) ~pp title sizes check =
     (if large = [] then []
      else [ cases ~tags:[ "slow" ] ~name "at large orders" (rows large) run ]))
 
+(* Singular value spectra a backward-stable SVD must resolve: graded down to a
+   thousand roundoffs of the compute type, rank-deficient, and clustered within
+   a few roundoffs. *)
+type spectrum = Graded | Rank_deficient | Clustered
+
+let pp_spectrum ppf s =
+  Format.pp_print_string ppf
+    (match s with
+    | Graded -> "graded"
+    | Rank_deficient -> "rank-deficient"
+    | Clustered -> "clustered")
+
+let sigmas (F d) spectrum k =
+  Array.init k (fun i ->
+      match spectrum with
+      | Graded ->
+          let kappa = 1. /. (1e3 *. d.compute) in
+          if k = 1 then 1.
+          else kappa ** (-.float_of_int i /. float_of_int (k - 1))
+      | Rank_deficient -> if i < k / 2 then 1. else 0.
+      | Clustered -> 1. +. (float_of_int (i mod 3) *. 4. *. d.compute))
+
+(* Q1 diag(sigmas) Q2ᴴ, m×n, with Q1, Q2 the Q of a QR of a seeded matrix. *)
+let with_spectrum ~seed (F d as fd) spectrum (m, n) =
+  let k = Int.min m n in
+  let q s r = fst (Nx.qr (parts ~seed:s ~complex:d.complex [| r; r |])) in
+  let q1 = Nx.slice [ A; R (0, k) ] (q seed m)
+  and q2 = Nx.slice [ A; R (0, k) ] (q (seed + 1) n) in
+  let s = c128 (Nx.create Nx.float64 [| k |] (sigmas fd spectrum k)) in
+  Nx.mul q1 (Nx.unsqueeze ~axes:[ -2 ] s) *@ adjoint q2
+
 let at_scale =
   group "factorizations at scale"
     [
@@ -1250,6 +1281,40 @@ let at_scale =
           let a = parts ~complex:d.complex [| m; n |] in
           check_svd fd a;
           check_svd ~full:true fd a);
+      prop
+        "svd of a graded, rank-deficient or clustered matrix factors it, and S \
+         squared is the eigenvalues of the Gram matrix"
+        Gen.(
+          quad
+            (of_list
+               ~pp:(fun ppf fd -> Format.pp_print_string ppf (fname fd))
+               fdtypes)
+            (of_list ~pp:pp_spectrum [ Graded; Rank_deficient; Clustered ])
+            (of_list ~pp:pp_dims
+               [ (31, 31); (33, 33); (64, 64); (65, 40); (40, 65); (130, 129) ])
+            (int_range 0 250))
+        (fun ((F d as fd), spectrum, (m, n), seed) ->
+          cover "graded" (spectrum = Graded);
+          cover "rank-deficient" (spectrum = Rank_deficient);
+          cover "clustered" (spectrum = Clustered);
+          cover "wide" (m < n);
+          cover "past the blocked Q formation" (Int.min m n > 128);
+          let a = with_spectrum ~seed fd spectrum (m, n) in
+          check_svd fd a;
+          (* The Gram matrix of the matrix the SVD is given, at complex128: each
+             |s_i² - λ_i| is within 3 ‖a‖² times the SVD's backward error, since
+             |s_i - σ_i| <= ‖Δa‖ and s_i + σ_i <= 3 ‖a‖. *)
+          let held = c128 (Nx.cast d.dtype a) in
+          let gram =
+            if m >= n then adjoint held *@ held else held *@ adjoint held
+          in
+          let lambda = Nx.flip (Nx.eigvalsh gram) in
+          let s = Nx.svdvals (Nx.cast d.dtype a) in
+          let smax = Nx.item [ 0 ] s in
+          small ~msg:"max |s² - λ| over ‖a‖²"
+            (3. *. bound fd (Int.max m n))
+            (Nx.item [] (Nx.max (Nx.abs (Nx.sub (Nx.square s) lambda)))
+            /. (smax *. smax)));
       over_dtypes ~pp:pp_dims
         "qr: a = Q R with orthonormal Q and upper-triangular R"
         [ (3, 5); (5, 3); (40, 30); (64, 100); (100, 64) ]

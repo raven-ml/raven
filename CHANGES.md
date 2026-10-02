@@ -3072,6 +3072,9 @@ thread.
 
 ### Nx
 
+- `Nx.svd` and `Nx.svdvals` bidiagonalize with vectorized panel products:
+  a float64 128 x 128 SVD takes 1.65 ms on one kimchi core where it took
+  2.43, and 512 x 512 56 ms where it took 130.
 - `Nx.qr` forms Q only over the columns its reflectors change: a float64
   256 x 256 factorization takes 1.8 ms on one kimchi core where it took 2.9.
 - `Nx.matmul` shares a large product among threads by row blocks when whole

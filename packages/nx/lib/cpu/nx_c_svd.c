@@ -180,185 +180,162 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
    la_cpc / la_cpct: plain and conjugate-transpose compute-buffer copies used to
    build P from the unpacked A and to assemble the outputs in the m<n case.
 
-   la_gebrd_unb is the unblocked (BLAS-2) reduction — the exact pre-blocking
-   kernel, and the small-n / trailing-block path. la_gebrd blocks it (dgebrd/
-   dlabrd) once pc exceeds LA_SVD_NB: la_labrd reduces a LA_SVD_NB-wide panel,
-   accumulating the two auxiliary matrices X (pr×nb) and Y (pc×nb) so that the
-   trailing update A22 -= V·Yᴴ + X·Uᴴ is TWO GEMMs; la_gebrd_unb finishes the last
-   block. la_labrd generates each reflector with the same code as the unblocked
-   kernel (so d/e/tauq/taup and the reflector storage that la_qrq/la_formp/la_bdsvd
-   consume are unchanged — residual gates cover the reordered arithmetic). X, Y,
-   the conj panel Yc for the Yᴴ GEMM operand, the product Pm, and the GEMM panels
-   are caller scratch. */
+   la_gebrd_unb is the unblocked reduction, the small-n / trailing-block path;
+   its left reflector is the QR panel kernel's. la_gebrd blocks it (dgebrd/
+   dlabrd) once pc exceeds LA_SVD_NB: la_labrd reduces a LA_SVD_NB-wide panel
+   and the trailing block takes the panel's update as one GEMM; la_gebrd_unb
+   finishes the last block. The panel buffers, the GEMM's right operand Mc,
+   its product Pm and its packing panels are caller scratch.
+
+   Half of the reduction's flops are two matrix-vector products per column, so
+   their loops decide its speed. P is row-major: a product with Aᴴ runs as
+   row-by-row updates of a contiguous accumulator, a product with A as stride-1
+   dot products. Both vectorize under strict IEEE semantics. */
+#define LA_LANE(i) s[i]
+#define LA_ADD(a, b) ((a) + (b))
 #define LA_GEN_SVD(sfx, T, R, DT, CONJ, NORM2, REAL, FROMR, SQRT)               \
+  /* Σ a[q]·b[q] (la_dotu) or Σ conj(a[q])·b[q] (la_dotc) over n stride-1       \
+     entries, in nx_c.h's summation order: lane q accumulates the entries q     \
+     mod NX_C_LANES, so the lanes vectorize without reassociating anything. */   \
+  static inline T la_dotu_##sfx(const T *a, const T *b, int64_t n) {          \
+    T s[NX_C_LANES];                                                           \
+    for (int q = 0; q < NX_C_LANES; q++) s[q] = (T)0;                          \
+    int64_t c = 0;                                                             \
+    for (; c + NX_C_LANES <= n; c += NX_C_LANES)                               \
+      for (int q = 0; q < NX_C_LANES; q++) s[q] += a[c + q] * b[c + q];        \
+    for (int q = 0; c + q < n; q++) s[q] += a[c + q] * b[c + q];               \
+    return NX_C_LANE_TREE(LA_LANE, LA_ADD);                                    \
+  }                                                                            \
+  static inline T la_dotc_##sfx(const T *a, const T *b, int64_t n) {          \
+    T s[NX_C_LANES];                                                           \
+    for (int q = 0; q < NX_C_LANES; q++) s[q] = (T)0;                          \
+    int64_t c = 0;                                                             \
+    for (; c + NX_C_LANES <= n; c += NX_C_LANES)                               \
+      for (int q = 0; q < NX_C_LANES; q++) s[q] += CONJ(a[c + q]) * b[c + q];  \
+    for (int q = 0; c + q < n; q++) s[q] += CONJ(a[c + q]) * b[c + q];         \
+    return NX_C_LANE_TREE(LA_LANE, LA_ADD);                                    \
+  }                                                                            \
   static void la_gebrd_unb_##sfx(void *vP, int64_t pr, int64_t pc, int64_t ld,  \
                                  void *vd, void *ve, void *vtauq, void *vtaup) { \
     T *P = (T *)vP;                                                             \
     R *d = (R *)vd;                                                            \
     R *e = (R *)ve;                                                            \
-    T *tauq = (T *)vtauq;                                                      \
     T *taup = (T *)vtaup;                                                      \
     for (int64_t i = 0; i < pc; i++) {                                         \
-      R beta;                                                                  \
-      tauq[i] = la_larfg_##sfx(P[i * ld + i], &P[(i + 1) * ld + i],            \
-                                pr - i - 1, ld, &beta);                        \
-      d[i] = beta;                                                             \
-      if (tauq[i] != (T)0) {                                                   \
-        for (int64_t c = i + 1; c < pc; c++) {                                 \
-          T w = P[i * ld + c];                                                 \
-          for (int64_t r = i + 1; r < pr; r++)                                 \
-            w += CONJ(P[r * ld + i]) * P[r * ld + c];                          \
-          T tw = CONJ(tauq[i]) * w;                                            \
-          P[i * ld + c] -= tw;                                                 \
-          for (int64_t r = i + 1; r < pr; r++)                                 \
-            P[r * ld + c] -= tw * P[r * ld + i];                               \
-        }                                                                      \
-      }                                                                        \
-      if (i < pc - 1) {                                                        \
-        for (int64_t c = i + 2; c < pc; c++) P[i * ld + c] = CONJ(P[i * ld + c]); \
-        R rbeta;                                                               \
-        T tauc = la_larfg_##sfx(CONJ(P[i * ld + (i + 1)]), &P[i * ld + i + 2], \
-                                pc - i - 2, 1, &rbeta);                        \
-        taup[i] = tauc;                                                        \
-        e[i] = rbeta;                                                          \
-        if (tauc != (T)0) {                                                    \
-          for (int64_t a = i + 1; a < pr; a++) {                               \
-            T s = P[a * ld + (i + 1)];                                         \
-            for (int64_t c = i + 2; c < pc; c++)                               \
-              s += P[a * ld + c] * P[i * ld + c];                              \
-            s = tauc * s;                                                      \
-            P[a * ld + (i + 1)] -= s;                                          \
-            for (int64_t c = i + 2; c < pc; c++)                               \
-              P[a * ld + c] -= s * CONJ(P[i * ld + c]);                        \
-          }                                                                    \
-          P[i * ld + (i + 1)] = LA_MK_##sfx(rbeta, (R)0);                      \
-        }                                                                      \
-      } else {                                                                 \
+      /* Left reflector: generated and applied to columns i+1.. as QR's        \
+         column i; it leaves beta (real) on the diagonal. */                   \
+      nx_c_la_qr_panel_##sfx(vP, pr, ld, i, 1, vtauq, pc);                      \
+      d[i] = REAL(P[i * ld + i]);                                              \
+      if (i == pc - 1) {                                                       \
         taup[i] = (T)0;                                                        \
+        break;                                                                 \
+      }                                                                        \
+      /* Right reflector from the conjugated row tail, applied to rows i+1.. */ \
+      T *Pi = &P[i * ld + i + 1];                                              \
+      int64_t nr = pc - i - 1;                                                 \
+      for (int64_t c = 1; c < nr; c++) Pi[c] = CONJ(Pi[c]);                    \
+      R rbeta;                                                                 \
+      T tauc = la_larfg_##sfx(CONJ(Pi[0]), &Pi[1], nr - 1, 1, &rbeta);         \
+      taup[i] = tauc;                                                          \
+      e[i] = rbeta;                                                            \
+      if (tauc != (T)0) {                                                      \
+        Pi[0] = (T)1;                                                          \
+        for (int64_t a = i + 1; a < pr; a++) {                                 \
+          T *Pa = &P[a * ld + i + 1];                                          \
+          T s = tauc * la_dotu_##sfx(Pa, Pi, nr);                              \
+          for (int64_t c = 0; c < nr; c++) Pa[c] -= s * CONJ(Pi[c]);           \
+        }                                                                      \
+        Pi[0] = LA_MK_##sfx(rbeta, (R)0);                                      \
       }                                                                        \
     }                                                                          \
   }                                                                            \
-  /* dlabrd/zlabrd (pr>=pc): reduce the first `nb` columns/rows of the trailing  \
-     block P[off:,off:], accumulating X (mp×nb) and Y (np×nb) so the trailing     \
-     rank-updates defer to two GEMMs. Reflector generation and storage mirror     \
-     la_gebrd_unb exactly (left tail in the column, right tail conj/scal in the    \
-     row); Y[cl][i] = tauq·conj(wᴸ) and X carries the right coefficients, so the   \
-     deferred update is A22 -= V·Yᴴ + X·conj(U). */                               \
-  static void la_labrd_##sfx(void *vP, int64_t pr, int64_t pc, int64_t ld,      \
-                             int64_t off, int64_t nb, void *vd, void *ve,        \
-                             void *vtauq, void *vtaup, void *vX, void *vY) {      \
-    T *P = (T *)vP;                                                             \
-    R *d = (R *)vd;                                                            \
-    R *e = (R *)ve;                                                            \
-    T *tauq = (T *)vtauq;                                                      \
-    T *taup = (T *)vtaup;                                                      \
-    T *X = (T *)vX;                                                            \
-    T *Y = (T *)vY;                                                            \
-    int64_t mp = pr - off, np = pc - off;                                      \
-    T ytmp[LA_SVD_NB];                                                         \
+  /* dlabrd/zlabrd (pr>=pc): reduce the first nb columns and rows of the       \
+     trailing block A = P[off:,off:] (mp×np), so that the rest of the block      \
+     takes the update A22 -= V·Yᴴ + X·conj(U) as one GEMM. V (the left          \
+     reflectors, unit diagonal), X (mp×nb) and Y (np×nb) are column-major in VX   \
+     = [V | X] (ld mp) and Yt (ld np): every product with the panel's earlier     \
+     columns then runs along contiguous columns. Reflector storage in P matches   \
+     la_gebrd_unb (left tail in the column, right tail conjugated in the row,    \
+     which holds 1 at the superdiagonal of a nonzero reflector). w and g are np  \
+     long; t2 holds the products with the panel's earlier rows. */               \
+  static void la_labrd_##sfx(T *P, int64_t ld, int64_t off, int64_t mp,         \
+                             int64_t np, int64_t nb, R *d, R *e, T *tauq,        \
+                             T *taup, T *VX, T *Yt, T *w, T *g) {                \
+    T *A = P + off * ld + off;                                                 \
+    T t2[LA_SVD_NB];                                                           \
     for (int64_t i = 0; i < nb; i++) {                                         \
-      int64_t gi = off + i;                                                    \
-      for (int64_t rl = i; rl < mp; rl++) {                                    \
-        T s = (T)0;                                                            \
-        for (int64_t l = 0; l < i; l++)                                        \
-          s += P[(off + rl) * ld + (off + l)] * CONJ(Y[i * nb + l]) +          \
-               X[rl * nb + l] * CONJ(P[(off + l) * ld + gi]);                  \
-        P[(off + rl) * ld + gi] -= s;                                          \
+      T *Ai = &A[i * ld];                                                      \
+      T *v = &VX[i * mp];                                                      \
+      T *x = &VX[(nb + i) * mp];                                               \
+      T *y = &Yt[i * np];                                                      \
+      int64_t nr = np - i - 1;                                                 \
+      /* Column i: A(i:, i) -= V(i:, :i)·Y(i, :i)ᴴ + X(i:, :i)·conj(A(:i, i)). */ \
+      for (int64_t r = i; r < mp; r++) v[r] = A[r * ld + i];                   \
+      for (int64_t l = 0; l < i; l++) {                                        \
+        const T *vl = &VX[l * mp], *xl = &VX[(nb + l) * mp];                   \
+        T cy = CONJ(Yt[l * np + i]), ca = CONJ(A[l * ld + i]);                 \
+        for (int64_t r = i; r < mp; r++) v[r] -= vl[r] * cy + xl[r] * ca;      \
       }                                                                        \
       R beta;                                                                  \
-      tauq[gi] = la_larfg_##sfx(P[gi * ld + gi], &P[(gi + 1) * ld + gi],       \
-                                pr - gi - 1, ld, &beta);                       \
-      d[gi] = beta;                                                            \
-      if (tauq[gi] != (T)0) {                                                  \
-        P[gi * ld + gi] = (T)1;                                               \
-      }                                                                        \
-      /* Y(i+1:np, i) = tauq · conj(A(i:mp, i+1:np)ᴴ vᴸ) with the panel-column  \
-         corrections; ytmp is the shared (i-length) GEMV temp. */              \
-      for (int64_t cl = i + 1; cl < np; cl++) {                                \
-        T s = (T)0;                                                            \
-        for (int64_t rl = i; rl < mp; rl++)                                    \
-          s += CONJ(P[(off + rl) * ld + (off + cl)]) * P[(off + rl) * ld + gi]; \
-        Y[cl * nb + i] = s;                                                    \
+      tauq[off + i] = la_larfg_##sfx(v[i], &v[i + 1], mp - i - 1, 1, &beta);   \
+      d[off + i] = beta;                                                       \
+      if (tauq[off + i] != (T)0) v[i] = (T)1;                                  \
+      for (int64_t r = i; r < mp; r++) A[r * ld + i] = v[r];                   \
+      /* Y(i+1:, i) = tauq·(A(i:, i+1:)ᴴ v − Y(i+1:, :i)·(V(i:, :i)ᴴ v)          \
+                           − A(:i, i+1:)ᵀ·(X(i:, :i)ᴴ v)). */                   \
+      for (int64_t c = 0; c < nr; c++) w[c] = (T)0;                            \
+      for (int64_t r = i; r < mp; r++) {                                       \
+        const T *Ar = &A[r * ld + i + 1];                                      \
+        T vr = v[r];                                                           \
+        for (int64_t c = 0; c < nr; c++) w[c] += CONJ(Ar[c]) * vr;             \
       }                                                                        \
       for (int64_t l = 0; l < i; l++) {                                        \
-        T s = (T)0;                                                            \
-        for (int64_t rl = i; rl < mp; rl++)                                    \
-          s += CONJ(P[(off + rl) * ld + (off + l)]) * P[(off + rl) * ld + gi]; \
-        ytmp[l] = s;                                                           \
+        T s1 = la_dotc_##sfx(&VX[l * mp + i], &v[i], mp - i);                  \
+        T s2 = la_dotc_##sfx(&VX[(nb + l) * mp + i], &v[i], mp - i);           \
+        const T *yl = &Yt[l * np + i + 1], *Al = &A[l * ld + i + 1];           \
+        for (int64_t c = 0; c < nr; c++) w[c] -= yl[c] * s1 + Al[c] * s2;      \
       }                                                                        \
-      for (int64_t cl = i + 1; cl < np; cl++) {                                \
-        T s = (T)0;                                                            \
-        for (int64_t l = 0; l < i; l++) s += Y[cl * nb + l] * ytmp[l];         \
-        Y[cl * nb + i] -= s;                                                   \
+      for (int64_t c = 0; c < nr; c++) y[i + 1 + c] = tauq[off + i] * w[c];    \
+      /* Row i: A(i, i+1:) -= conj(Y(i+1:, :i+1))·A(i, :i+1)                    \
+                              + X(i, :i)·conj(A(:i, i+1:)). */                  \
+      T *u = &Ai[i + 1];                                                       \
+      for (int64_t l = 0; l <= i; l++) {                                       \
+        const T *yl = &Yt[l * np + i + 1];                                     \
+        T a = Ai[l];                                                           \
+        for (int64_t c = 0; c < nr; c++) u[c] -= CONJ(yl[c]) * a;              \
       }                                                                        \
       for (int64_t l = 0; l < i; l++) {                                        \
-        T s = (T)0;                                                            \
-        for (int64_t rl = i; rl < mp; rl++)                                    \
-          s += CONJ(X[rl * nb + l]) * P[(off + rl) * ld + gi];                 \
-        ytmp[l] = s;                                                           \
+        const T *Al = &A[l * ld + i + 1];                                      \
+        T xl = VX[(nb + l) * mp + i];                                          \
+        for (int64_t c = 0; c < nr; c++) u[c] -= xl * CONJ(Al[c]);             \
       }                                                                        \
-      for (int64_t cl = i + 1; cl < np; cl++) {                                \
-        T s = (T)0;                                                            \
-        for (int64_t l = 0; l < i; l++)                                        \
-          s += P[(off + l) * ld + (off + cl)] * ytmp[l];                       \
-        Y[cl * nb + i] -= s;                                                   \
-      }                                                                        \
-      for (int64_t cl = i + 1; cl < np; cl++)                                  \
-        Y[cl * nb + i] = tauq[gi] * Y[cl * nb + i];                            \
-      /* Update row gi (cols i+1:np) with the left + right deferred pieces. */  \
-      for (int64_t cl = i + 1; cl < np; cl++) {                                \
-        T s = (T)0;                                                            \
-        for (int64_t l = 0; l <= i; l++)                                       \
-          s += CONJ(Y[cl * nb + l]) * P[gi * ld + (off + l)];                  \
-        for (int64_t l = 0; l < i; l++)                                        \
-          s += X[i * nb + l] * CONJ(P[(off + l) * ld + (off + cl)]);           \
-        P[gi * ld + (off + cl)] -= s;                                          \
-      }                                                                        \
-      /* Right reflector P_i on row gi (cols gi+1:pc) [our storage]. */         \
-      for (int64_t cl = i + 2; cl < np; cl++)                                  \
-        P[gi * ld + (off + cl)] = CONJ(P[gi * ld + (off + cl)]);               \
+      /* Right reflector on row i, columns i+1.. (conjugated tail). */         \
+      for (int64_t c = 1; c < nr; c++) u[c] = CONJ(u[c]);                      \
       R rbeta;                                                                 \
-      T tauc = la_larfg_##sfx(CONJ(P[gi * ld + (gi + 1)]),                     \
-                              &P[gi * ld + (off + i + 2)], np - i - 2, 1, &rbeta); \
-      taup[gi] = tauc;                                                         \
-      e[gi] = rbeta;                                                           \
+      T tauc = la_larfg_##sfx(CONJ(u[0]), &u[1], nr - 1, 1, &rbeta);           \
+      taup[off + i] = tauc;                                                    \
+      e[off + i] = rbeta;                                                      \
       if (tauc == (T)0) {                                                      \
-        for (int64_t rl = i + 1; rl < mp; rl++) X[rl * nb + i] = (T)0;         \
-      } else {                                                                 \
-        P[gi * ld + (gi + 1)] = (T)1;                                          \
-        /* X(i+1:mp, i) = taup · (A(i+1:mp, i+1:np) v_R with corrections). */   \
-        for (int64_t rl = i + 1; rl < mp; rl++) {                             \
-          T s = (T)0;                                                          \
-          for (int64_t cl = i + 1; cl < np; cl++)                             \
-            s += P[(off + rl) * ld + (off + cl)] * P[gi * ld + (off + cl)];    \
-          X[rl * nb + i] = s;                                                  \
-        }                                                                      \
-        for (int64_t l = 0; l <= i; l++) {                                    \
-          T s = (T)0;                                                          \
-          for (int64_t cl = i + 1; cl < np; cl++)                             \
-            s += CONJ(Y[cl * nb + l]) * P[gi * ld + (off + cl)];               \
-          ytmp[l] = s;                                                         \
-        }                                                                      \
-        for (int64_t rl = i + 1; rl < mp; rl++) {                             \
-          T s = (T)0;                                                          \
-          for (int64_t l = 0; l <= i; l++)                                    \
-            s += P[(off + rl) * ld + (off + l)] * ytmp[l];                     \
-          X[rl * nb + i] -= s;                                                 \
-        }                                                                      \
-        for (int64_t l = 0; l < i; l++) {                                     \
-          T s = (T)0;                                                          \
-          for (int64_t cl = i + 1; cl < np; cl++)                             \
-            s += CONJ(P[(off + l) * ld + (off + cl)]) * P[gi * ld + (off + cl)]; \
-          ytmp[l] = s;                                                         \
-        }                                                                      \
-        for (int64_t rl = i + 1; rl < mp; rl++) {                             \
-          T s = (T)0;                                                          \
-          for (int64_t l = 0; l < i; l++) s += X[rl * nb + l] * ytmp[l];       \
-          X[rl * nb + i] -= s;                                                 \
-        }                                                                      \
-        for (int64_t rl = i + 1; rl < mp; rl++)                               \
-          X[rl * nb + i] = tauc * X[rl * nb + i];                              \
+        for (int64_t r = i + 1; r < mp; r++) x[r] = (T)0;                      \
+        continue;                                                              \
       }                                                                        \
+      u[0] = (T)1;                                                             \
+      /* X(i+1:, i) = taup·(A(i+1:, :)·[−Y(i+1:, :i+1)ᴴ u ; u]                   \
+                            − X(i+1:, :i)·(conj(A(:i, i+1:)) u)): one dot per row \
+         over the whole row, the panel's columns against g's head. */          \
+      for (int64_t l = 0; l <= i; l++)                                         \
+        g[l] = -la_dotc_##sfx(&Yt[l * np + i + 1], u, nr);                     \
+      for (int64_t c = 0; c < nr; c++) g[i + 1 + c] = u[c];                    \
+      for (int64_t l = 0; l < i; l++)                                          \
+        t2[l] = la_dotc_##sfx(&A[l * ld + i + 1], u, nr);                      \
+      for (int64_t r = i + 1; r < mp; r++)                                     \
+        x[r] = la_dotu_##sfx(&A[r * ld], g, np);                               \
+      for (int64_t l = 0; l < i; l++) {                                        \
+        const T *xl = &VX[(nb + l) * mp];                                      \
+        T s = t2[l];                                                           \
+        for (int64_t r = i + 1; r < mp; r++) x[r] -= xl[r] * s;                \
+      }                                                                        \
+      for (int64_t r = i + 1; r < mp; r++) x[r] = tauc * x[r];                 \
     }                                                                          \
   }                                                                            \
   static void la_gebrd_##sfx(void *vP, int64_t pr, int64_t pc, int64_t ld,      \
@@ -370,37 +347,32 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
       la_gebrd_unb_##sfx(vP, pr, pc, ld, vd, ve, vtauq, vtaup);                \
       return;                                                                  \
     }                                                                          \
-    T *X = (T *)vX;                                                            \
-    T *Y = (T *)vY;                                                            \
+    T *VX = (T *)vX;                                                           \
+    T *Yt = (T *)vY;                                                           \
     T *Mc = (T *)vMc;                                                          \
+    T *w = Mc + 2 * LA_SVD_NB * pc;                                            \
     T *Pm = (T *)vPm;                                                          \
     int64_t off = 0;                                                           \
     while (pc - off > LA_SVD_NB) {                                             \
-      int64_t nb = LA_SVD_NB;                                                  \
-      la_labrd_##sfx(vP, pr, pc, ld, off, nb, vd, ve, vtauq, vtaup, X, Y);      \
-      int64_t mt = pr - off - nb, nt = pc - off - nb;                          \
-      if (mt > 0 && nt > 0) {                                                  \
-        /* GEMM 1: A22 -= V · Yᴴ (materialize conj(Y[nb:]) as Mc, transposed). */ \
-        for (int64_t b = 0; b < nt; b++)                                       \
-          for (int64_t il = 0; il < nb; il++)                                  \
-            Mc[b * nb + il] = CONJ(Y[(nb + b) * nb + il]);                      \
-        nx_c_gemm2d_ct_ws(DT, mt, nt, nb,                                       \
-                         (const char *)&P[(off + nb) * ld + off], ld, 1,       \
-                         (const char *)Mc, 1, nb, (char *)Pm, nt, 1,           \
-                         (char *)vg);                                          \
-        for (int64_t a = 0; a < mt; a++)                                       \
-          for (int64_t b = 0; b < nt; b++)                                     \
-            P[(off + nb + a) * ld + (off + nb + b)] -= Pm[a * nt + b];         \
-        /* GEMM 2: A22 -= X · conj(U) (materialize conj(U) rows as Mc). */      \
-        for (int64_t il = 0; il < nb; il++)                                    \
-          for (int64_t b = 0; b < nt; b++)                                     \
-            Mc[il * nt + b] = CONJ(P[(off + il) * ld + (off + nb + b)]);       \
-        nx_c_gemm2d_ct_ws(DT, mt, nt, nb, (const char *)&X[nb * LA_SVD_NB],     \
-                         LA_SVD_NB, 1, (const char *)Mc, nt, 1, (char *)Pm, nt, \
-                         1, (char *)vg);                                       \
-        for (int64_t a = 0; a < mt; a++)                                       \
-          for (int64_t b = 0; b < nt; b++)                                     \
-            P[(off + nb + a) * ld + (off + nb + b)] -= Pm[a * nt + b];         \
+      int64_t nb = LA_SVD_NB, mp = pr - off, np = pc - off;                    \
+      la_labrd_##sfx(P, ld, off, mp, np, nb, (R *)vd, (R *)ve, (T *)vtauq,     \
+                     (T *)vtaup, VX, Yt, w, w + np);                           \
+      int64_t mt = mp - nb, nt = np - nb;                                      \
+      /* A22 -= [V X]·[Yᴴ; conj(U)]: one GEMM over the 2nb panel columns. */   \
+      for (int64_t l = 0; l < nb; l++) {                                       \
+        const T *yl = &Yt[l * np + nb];                                        \
+        const T *ul = &P[(off + l) * ld + off + nb];                           \
+        for (int64_t b = 0; b < nt; b++) {                                     \
+          Mc[l * nt + b] = CONJ(yl[b]);                                        \
+          Mc[(nb + l) * nt + b] = CONJ(ul[b]);                                 \
+        }                                                                      \
+      }                                                                        \
+      nx_c_gemm2d_ct_ws(DT, mt, nt, 2 * nb, (const char *)&VX[nb], 1, mp,      \
+                       (const char *)Mc, nt, 1, (char *)Pm, nt, 1, (char *)vg); \
+      for (int64_t a = 0; a < mt; a++) {                                       \
+        T *Pa = &P[(off + nb + a) * ld + off + nb];                            \
+        const T *Pma = &Pm[a * nt];                                            \
+        for (int64_t b = 0; b < nt; b++) Pa[b] -= Pma[b];                      \
       }                                                                        \
       off += nb;                                                               \
     }                                                                          \
@@ -2775,14 +2747,16 @@ static nx_c_status nx_c_svd_run(const nx_c_ndarray *in, const nx_c_ndarray *u,
   int64_t qg1 = nx_c_gemm2d_ct_scratch(cd->gemm_dt, LA_QR_NB, ncu_p, pr);
   int64_t qg2 = nx_c_gemm2d_ct_scratch(cd->gemm_dt, pr, ncu_p, LA_QR_NB);
   int64_t a_qg = LA_ALN(qg1 > qg2 ? qg1 : qg2);
-  /* Blocked cd->gebrd (dlabrd): X (pr×NB), Y (pc×NB), the conj materialization
-     panel Mc (max(pr,pc)×NB), the trailing GEMM product Pm (pr×pc), and the GEMM
-     panels. Unused below LA_SVD_NB. */
-  int64_t a_gX = LA_ALN(pr * (int64_t)LA_SVD_NB * cd->csize);
+  /* Blocked cd->gebrd (dlabrd): [V X] (pr×2NB), Y (pc×NB), the GEMM's right
+     operand Mc (2NB×pc) followed by la_labrd's two pc-long vectors, the
+     trailing GEMM product Pm (pr×pc), and the GEMM panels. Unused below
+     LA_SVD_NB. */
+  int64_t a_gX = LA_ALN(pr * 2 * (int64_t)LA_SVD_NB * cd->csize);
   int64_t a_gY = LA_ALN(pc * (int64_t)LA_SVD_NB * cd->csize);
-  int64_t a_gMc = LA_ALN((pr > pc ? pr : pc) * (int64_t)LA_SVD_NB * cd->csize);
+  int64_t a_gMc = LA_ALN((2 * (int64_t)LA_SVD_NB + 2) * pc * cd->csize);
   int64_t a_gPm = LA_ALN(pr * pc * cd->csize);
-  int64_t a_gg = LA_ALN(nx_c_gemm2d_ct_scratch(cd->gemm_dt, pr, pc, LA_SVD_NB));
+  int64_t a_gg =
+      LA_ALN(nx_c_gemm2d_ct_scratch(cd->gemm_dt, pr, pc, 2 * LA_SVD_NB));
   /* D&C scratch (0 below the SMLSIZ crossover): widened double d/e, the double
      column-major U_s/V_sᴴ, the dlasd workspace (4pc²+8pc+8 doubles: z + dsigma
      + U2 + VT2 + Q + the beta=1 accumulation temp) + iwork (5pc: idxq + 4pc),
