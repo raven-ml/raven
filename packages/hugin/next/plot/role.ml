@@ -119,6 +119,14 @@ let scale = function
   | Encoding e -> Some e.scale
   | Value -> None
 
+type shown = [ `Axis of axis | `Header of axis | `Legend ]
+
+let shown_on : use -> shown option = function
+  | Position p -> Some (`Axis p.axis)
+  | Facet a -> Some (`Header a)
+  | Encoding _ -> Some `Legend
+  | Value -> None
+
 let implied : type d. use -> d Scale.kind -> d Scale.t option =
  fun u k ->
   match (u, k) with

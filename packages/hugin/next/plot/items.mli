@@ -14,7 +14,7 @@ module Ticks := Hugin_next_kit.Ticks
 type axis_spec = {
   a_id : Common.id;
   a_scale : int;  (** Its index in the resolved figure's scales. *)
-  a_use : Role.use;  (** A position or a facet. *)
+  a_on : [ `Axis of Role.axis | `Header of Role.axis ];
   a_side : Figure.side;
   a_guide : Figure.guide;  (** Explicit, or else the default. *)
   a_labelled : bool;  (** False where the next panel on its side labels it. *)

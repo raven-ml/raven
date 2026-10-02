@@ -72,6 +72,13 @@ val scale : use -> string option
     for [x] and [x2], ["fx"] for [fx], an encoding's [scale], [None] for
     [Value]. *)
 
+type shown = [ `Axis of axis | `Header of axis | `Legend ]
+
+val shown_on : use -> shown option
+(** [shown_on u] is the guide that shows the scale a role of use [u] reads: an
+    axis for a position, a header for a facet, a legend for an encoding, [None]
+    for a value. *)
+
 val implied : use -> 'd Scale.kind -> 'd Scale.t option
 (** [implied u k] is what a role of use [u] implies on a scale of kind [k]
     beyond what its mark does: [zero] for an area on quantities, [reverse] for a

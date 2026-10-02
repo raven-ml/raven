@@ -218,11 +218,7 @@ let legends s =
    or facet role reads it. *)
 let reads s =
   let read (B b as bd) =
-    let placing =
-      match b.role.use with
-      | Position _ | Facet _ -> true
-      | Encoding _ | Value -> false
-    in
+    let placing = Role.shown_on b.role.use <> Some `Legend in
     Option.map (fun s -> (s, placing)) (scale_name bd)
   in
   List.concat_map

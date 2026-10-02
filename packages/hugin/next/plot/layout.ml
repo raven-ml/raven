@@ -240,13 +240,13 @@ let depth cx a =
   | false, _ | _, None -> 0.
   | true, Some t -> (
       let _, _, turned = outer_align a.a_side in
-      match a.a_use with
-      | Facet _ -> (
+      match a.a_on with
+      | `Header _ -> (
           match a.a_category with
           | Some c when a.a_labelled ->
               em cx pad_em +. across a.a_side ~turned (header cx a c)
           | _ -> 0.)
-      | Position _ | Encoding _ | Value ->
+      | `Axis _ ->
           let tick = em cx tick_em in
           if not a.a_labelled then tick
           else
@@ -351,8 +351,8 @@ let widest p q =
 (* [reach cx a] is how far the tick labels of [a] reach past the ends of its
    panel's side. *)
 let reach cx a =
-  match (a.a_guide.show, a.a_labelled, a.a_use, cx.ticks.(a.a_scale)) with
-  | true, true, Position _, Some t ->
+  match (a.a_guide.show, a.a_labelled, a.a_on, cx.ticks.(a.a_scale)) with
+  | true, true, `Axis _, Some t ->
       let along = if horizontal a.a_side then width else height in
       ends a.a_side (longest along (axis_labels cx a t))
   | _ -> no_sides
@@ -366,11 +366,10 @@ let spans cx a =
       let along l =
         if horizontal a.a_side <> turned then width l else height l
       in
-      match (a.a_use, a.a_category) with
-      | Facet _, Some c -> along (header cx a c)
-      | Facet _, None -> 0.
-      | (Position _ | Encoding _ | Value), _ ->
-          Option.fold ~none:0. ~some:along (axis_title cx a t))
+      match (a.a_on, a.a_category) with
+      | `Header _, Some c -> along (header cx a c)
+      | `Header _, None -> 0.
+      | `Axis _, _ -> Option.fold ~none:0. ~some:along (axis_title cx a t))
   | _ -> 0.
 
 let legend_prot cx ls =
@@ -745,8 +744,8 @@ let place_axis cx acc l proj box a offset =
   | true, Some t -> (
       let pad = em cx pad_em and s = cx.scales.(a.a_scale) in
       let halign, valign, turned = outer_align a.a_side in
-      match a.a_use with
-      | Facet _ -> (
+      match a.a_on with
+      | `Header _ -> (
           match a.a_category with
           | Some c when a.a_labelled ->
               let at =
@@ -760,11 +759,11 @@ let place_axis cx acc l proj box a offset =
                 { hd_id = a.a_id; hd_panel = l.l_id; hd_label = label }
                 :: acc.headers
           | _ -> ())
-      | Position _ | Encoding _ | Value ->
+      | `Axis axis ->
           let along u =
-            match a.a_use with
-            | Position { axis = X; _ } -> P2.x (Coord.point proj u 0.)
-            | _ -> P2.y (Coord.point proj 0. u)
+            match axis with
+            | Role.X -> P2.x (Coord.point proj u 0.)
+            | Role.Y -> P2.y (Coord.point proj 0. u)
           in
           let labels, title =
             if not a.a_labelled then ([], None)
@@ -809,12 +808,12 @@ let place_leaf cx acc l box =
   let reached = ref no_sides in
   List.iter
     (fun a ->
-      (match a.a_use with
-      | Position { axis = X; _ } ->
+      (match a.a_on with
+      | `Axis Role.X ->
           acc.along <- (a.a_scale, Role.X, Box2.w box) :: acc.along
-      | Position { axis = Y; _ } ->
+      | `Axis Role.Y ->
           acc.along <- (a.a_scale, Role.Y, Box2.h box) :: acc.along
-      | Facet _ | Encoding _ | Value -> ());
+      | `Header _ -> ());
       let offset =
         match a.a_side with
         | `Left -> !reached.left

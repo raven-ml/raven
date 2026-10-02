@@ -784,7 +784,7 @@ let readers cx s =
   let (F f) = cx.ctx.scales.(s) in
   let add acc m =
     let same (o, _) = Nx.Ptree.Path.equal o.mid m.m_occ.mid in
-    if Option.is_some (Resolved.placed m) then acc
+    if Role.shown_on m.m_use <> Some `Legend then acc
     else if List.exists same acc then
       List.map
         (fun (o, is) -> if same (o, is) then (o, m.m_index :: is) else (o, is))

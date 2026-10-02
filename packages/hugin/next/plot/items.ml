@@ -16,7 +16,7 @@ open Resolved
 type axis_spec = {
   a_id : id;
   a_scale : int;
-  a_use : Role.use; (* A position or a facet. *)
+  a_on : [ `Axis of Role.axis | `Header of Role.axis ];
   a_side : side;
   a_guide : guide; (* Explicit, or else the default. *)
   a_labelled : bool; (* False where the next panel on its side labels it. *)
@@ -110,16 +110,16 @@ let units (F f) =
   let u = Scale.length f.scale in
   if Float.is_finite u && u > 0. then u else 1.
 
-(* [scale_index r pid pnid use] is the scale that a role of [use], a position or
-   facet, reads in the facet panel [pnid] of the cell [pid]. *)
-let scale_index (r : Resolved.t) pid pnid use =
+(* [scale_index r pid pnid on] is the scale that the guide [on] shows in the
+   facet panel [pnid] of the cell [pid]. *)
+let scale_index (r : Resolved.t) pid pnid on =
   let rec go i = function
     | [] -> None
     | F f :: rest ->
         let reads =
           List.exists
             (fun m ->
-              Nx.Ptree.Path.equal m.m_pid pid && placed m = Role.scale use)
+              Nx.Ptree.Path.equal m.m_pid pid && Role.shown_on m.m_use = Some on)
             f.members
         in
         let here =
@@ -148,14 +148,14 @@ let axis_guide c (F f as s) =
          if is_axis g && String.equal g.scale f.name then Some g else None)
        c.guides)
 
-let default_side : Role.use -> side = function
-  | Position { axis = X; _ } -> `Bottom
-  | Position { axis = Y; _ } -> `Left
-  | Facet X -> `Top
-  | Facet Y -> `Right
-  | Encoding _ | Value -> assert false (* An axis shows a position or facet. *)
+let default_side : [ `Axis of Role.axis | `Header of Role.axis ] -> side =
+  function
+  | `Axis Role.X -> `Bottom
+  | `Axis Role.Y -> `Left
+  | `Header Role.X -> `Top
+  | `Header Role.Y -> `Right
 
-let axis_spec r scales c pid p use =
+let axis_spec r scales c pid p on =
   Option.map
     (fun i ->
       let (F f as s) = scales.(i) in
@@ -163,23 +163,23 @@ let axis_spec r scales c pid p use =
       {
         a_id = Nx.Ptree.Path.(add (Field f.name) (add (Field "axis") p.pnid));
         a_scale = i;
-        a_use = use;
-        a_side = Option.value g.side ~default:(default_side use);
+        a_on = on;
+        a_side = Option.value g.side ~default:(default_side on);
         a_guide = g;
         a_labelled = true;
         a_category =
-          (match use with
-          | Facet X -> p.pfx
-          | Facet Y -> p.pfy
-          | Position _ | Encoding _ | Value -> None);
+          (match on with
+          | `Header Role.X -> p.pfx
+          | `Header Role.Y -> p.pfy
+          | `Axis _ -> None);
       })
-    (scale_index r pid p.pnid use)
+    (scale_index r pid p.pnid (on :> Role.shown))
 
 let leaf r scales pid c p =
   let axes =
     List.filter_map
       (axis_spec r scales c pid p)
-      [ Role.x.use; Role.y.use; Role.fx.use; Role.fy.use ]
+      [ `Axis Role.X; `Axis Role.Y; `Header Role.X; `Header Role.Y ]
   in
   let coord =
     match c.coords with
@@ -189,8 +189,8 @@ let leaf r scales pid c p =
         | Some k -> k
         | None -> Coord.cartesian ())
   in
-  let units (role : _ Role.t) =
-    match List.find_opt (fun a -> a.a_use = role.use) axes with
+  let units on =
+    match List.find_opt (fun a -> a.a_on = on) axes with
     | Some a -> units scales.(a.a_scale)
     | None -> 1.
   in
@@ -198,7 +198,10 @@ let leaf r scales pid c p =
   {
     l_id = p.pnid;
     l_coord = coord;
-    l_ratio = Option.map (fun k -> k *. units Role.y /. units Role.x) aspect;
+    l_ratio =
+      Option.map
+        (fun k -> k *. units (`Axis Role.Y) /. units (`Axis Role.X))
+        aspect;
     l_axes = axes;
   }
 
@@ -334,8 +337,7 @@ let block_of r blocks key =
 let uses_of (r : Resolved.t) blocks =
   let legends = legends r.shaped in
   let uses (F f as s) =
-    let uses = List.map (fun m -> m.m_use) f.members in
-    let is p = List.exists p uses in
+    let on = List.filter_map (fun m -> Role.shown_on m.m_use) f.members in
     let legend () =
       let g =
         guide Legend s ~show:f.legend
@@ -346,7 +348,12 @@ let uses_of (r : Resolved.t) blocks =
              legends)
       in
       let colour =
-        is (function Encoding { map = Color; _ } -> true | _ -> false)
+        List.exists
+          (fun m ->
+            match m.m_use with
+            | Encoding { map = Color; _ } -> true
+            | _ -> false)
+          f.members
       in
       Legend_of
         {
@@ -359,18 +366,12 @@ let uses_of (r : Resolved.t) blocks =
     let when_ b u = if b then [ u () ] else [] in
     List.concat
       [
+        when_ (List.mem (`Axis Role.X) on) (fun () -> Axis_of X);
+        when_ (List.mem (`Axis Role.Y) on) (fun () -> Axis_of Y);
         when_
-          (is (function Position { axis = X; _ } -> true | _ -> false))
-          (fun () -> Axis_of X);
-        when_
-          (is (function Position { axis = Y; _ } -> true | _ -> false))
-          (fun () -> Axis_of Y);
-        when_
-          (is (function Facet _ -> true | _ -> false))
+          (List.exists (function `Header _ -> true | _ -> false) on)
           (fun () -> Header_of);
-        when_
-          (List.exists (fun m -> Option.is_none (placed m)) f.members)
-          legend;
+        when_ (List.mem `Legend on) legend;
       ]
   in
   Array.of_list (List.map uses r.scales)
@@ -409,10 +410,10 @@ let build r scales uses =
     (side, Heading { owner; align; head; hside = side })
   in
   (* The title of a facet scale goes beside its headers. *)
-  let facet_title pid c (i, use) =
+  let facet_title pid c (i, on) =
     let (F f as s) = scales.(i) in
     let g = axis_guide c s in
-    let side = Option.value g.side ~default:(default_side use) in
+    let side = Option.value g.side ~default:(default_side on) in
     match guide_title s None with
     | Some t when g.show ->
         let owner =
@@ -430,8 +431,8 @@ let build r scales uses =
         (* A facet panel is a block of its own, beside which the legends of its
            own scales go. *)
         let one p = wrap p.pnid (legends_at p.pnid) (one p) in
-        let fx = scale_index r pid pid Role.fx.use
-        and fy = scale_index r pid pid Role.fy.use in
+        let fx = scale_index r pid pid (`Header Role.X)
+        and fy = scale_index r pid pid (`Header Role.Y) in
         let names = Option.fold ~none:[] ~some:(fun i -> names_of scales.(i)) in
         let xs = names fx and ys = names fy in
         let pos l = function
@@ -465,11 +466,11 @@ let build r scales uses =
           let r0, c0 = at p in
           { r0; c0; nr = 1; nc = 1; it = one p }
         in
-        let facets = [ (fx, Role.fx.use); (fy, Role.fy.use) ] in
+        let facets = [ (fx, `Header Role.X); (fy, `Header Role.Y) ] in
         let titles =
           List.concat_map
-            (fun (i, use) ->
-              Option.fold ~none:[] ~some:(fun i -> facet_title pid c (i, use)) i)
+            (fun (i, on) ->
+              Option.fold ~none:[] ~some:(fun i -> facet_title pid c (i, on)) i)
             facets
         in
         wrap pid titles

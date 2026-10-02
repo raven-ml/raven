@@ -21,10 +21,6 @@ type 'd member = {
 }
 (** A channel that reads a scale, in one cell. *)
 
-val placed : 'd member -> string option
-(** [placed m] is the position or facet scale whose axis shows the role of [m]:
-    ["x"] for [x] and [x2]. *)
-
 val by_order : 'd member list -> 'd member list
 (** [by_order ms] is [ms] in the order of the figure. *)
 

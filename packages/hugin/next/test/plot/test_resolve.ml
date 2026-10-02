@@ -755,6 +755,14 @@ let merging =
           in
           let y = categ r "y" in
           greater float_exact ~than:0.5 (Scale.normalize y "a"));
+      test "a band scale read by x is not reversed" (fun () ->
+          let r =
+            resolve
+              (dot
+                 ~x:(cat ~labels:[| "a"; "b" |] (i32 [| 0; 1 |]))
+                 ~y:(const 0.5) ())
+          in
+          less float_exact ~than:0.5 (Scale.normalize (categ r "x") "a"));
       test "a contour's x and y domains are its grid's hull" (fun () ->
           let r =
             resolve

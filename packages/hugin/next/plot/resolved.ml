@@ -57,7 +57,11 @@ let readings_of pid occ =
          match (data b.ch, Role.scale b.role.use) with
          | Some d, Some default ->
              let name = Option.value ~default (Option.bind d.spec Scale.name) in
-             let facet = match b.role.use with Facet _ -> true | _ -> false in
+             let facet =
+               match Role.shown_on b.role.use with
+               | Some (`Header _) -> true
+               | _ -> false
+             in
              let key =
                if not (List.mem name occ.per_panel) then key_of env name
                else if facet then
@@ -101,16 +105,9 @@ type group =
     }
       -> group
 
-(* [placed m] is the position or facet scale whose axis shows the role of [m]:
-   ["x"] for [x] and [x2]. *)
-let placed m =
-  match m.m_use with
-  | Position _ | Facet _ -> Role.scale m.m_use
-  | Encoding _ | Value -> None
-
 let group readings =
   let add groups (R r) =
-    let legend = Option.is_none (placed r.m) && not r.mapped in
+    let legend = Role.shown_on r.m.m_use = Some `Legend && not r.mapped in
     let rec go = function
       | [] ->
           [
@@ -160,19 +157,21 @@ let check_panel_scales readings =
   let rec go seen = function
     | [] -> ()
     | (R r as rd) :: rest ->
-        (match placed r.m with
-        | None -> ()
-        | Some axis -> (
+        (match Role.shown_on r.m.m_use with
+        | None | Some `Legend -> ()
+        | Some on -> (
             match
               List.find_opt
                 (fun (R r') ->
                   Nx.Ptree.Path.equal r'.m.m_pid r.m.m_pid
-                  && placed r'.m = Some axis)
+                  && Role.shown_on r'.m.m_use = Some on)
                 seen
             with
             | Some (R o as other) when not (same other rd) ->
                 err "resolve" "%a and %a read two %s scales in the panel %a"
-                  pp_id o.m.m_occ.mid pp_id r.m.m_occ.mid axis pp_id r.m.m_pid
+                  pp_id o.m.m_occ.mid pp_id r.m.m_occ.mid
+                  (Option.get (Role.scale r.m.m_use))
+                  pp_id r.m.m_pid
             | _ -> ()));
         go (rd :: seen) rest
   in
@@ -220,32 +219,27 @@ let check_axes cells readings =
                 err "resolve" "the panel %a holds two different axes for %S"
                   pp_id pid a.scale)
             axes;
-          let uses =
+          let on =
             List.filter_map
               (fun (R r) ->
-                if
-                  Nx.Ptree.Path.equal r.m.m_pid pid
-                  && Option.is_some (placed r.m)
-                  && String.equal r.name a.scale
-                then Some r.m.m_use
-                else None)
+                match Role.shown_on r.m.m_use with
+                | Some ((`Axis _ | `Header _) as on)
+                  when Nx.Ptree.Path.equal r.m.m_pid pid
+                       && String.equal r.name a.scale ->
+                    Some on
+                | _ -> None)
               readings
           in
-          let along axis =
-            List.exists
-              (function Role.Position p -> p.axis = axis | _ -> false)
-              uses
-          in
-          if uses = [] then
+          if on = [] then
             err "resolve"
               "the axis %a names %S, no position or facet scale of its panel"
               pp_id gid a.scale;
           (* An axis runs along the direction of its scale's position. *)
           match a.side with
-          | Some ((`Left | `Right) as side) when along Role.X ->
+          | Some ((`Left | `Right) as side) when List.mem (`Axis Role.X) on ->
               err "resolve" "the axis %a of %S is on the %a side" pp_id gid
                 a.scale pp_side side
-          | Some ((`Top | `Bottom) as side) when along Role.Y ->
+          | Some ((`Top | `Bottom) as side) when List.mem (`Axis Role.Y) on ->
               err "resolve" "the axis %a of %S is on the %a side" pp_id gid
                 a.scale pp_side side
           | _ -> ())
@@ -533,8 +527,7 @@ let facet_scale fitted pid role : string Scale.t option =
           if
             List.exists
               (fun m ->
-                Nx.Ptree.Path.equal m.m_pid pid
-                && String.equal m.m_role role.Role.name)
+                Nx.Ptree.Path.equal m.m_pid pid && m.m_use = role.Role.use)
               f.members
           then Some f.scale
           else None
