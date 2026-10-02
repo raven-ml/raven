@@ -48,11 +48,7 @@ function renderDisplay(mime, data) {
     div.appendChild(wrapper);
   } else if (mime.startsWith('image/')) {
     const img = document.createElement('img');
-    if (mime === 'image/svg+xml') {
-      img.src = 'data:image/svg+xml;base64,' + btoa(data);
-    } else {
-      img.src = 'data:' + mime + ';base64,' + data;
-    }
+    img.src = 'data:' + mime + ';base64,' + data;
     img.style.maxWidth = '100%';
     div.appendChild(img);
   } else if (mime === 'application/json') {

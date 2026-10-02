@@ -5975,6 +5975,9 @@ thread.
 
 ### Quill
 
+- The web notebook shows SVG displays holding any UTF-8. `Cell.Display` holds
+  every image type in base64, SVG included, so the notebook no longer encodes
+  SVG with `btoa`, which threw on characters such as `η`.
 - The terminal notebook's footer shows `Ctrl-C Interrupt` again while a cell
   runs, in place of the run action. The footer redesign had dropped it, so
   interrupting was only discoverable from the help screen.
