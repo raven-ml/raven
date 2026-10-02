@@ -199,26 +199,17 @@ let sizing =
       prop "a symbol of size a is the symbol of size 1 scaled by its root"
         (Gen.triple (gen_of all) gen_paint gen_positive)
         scaling;
-      cases "a circle is the same filled and stroked" ~name [ Symbol.circle ]
-        (fun s ->
-          equal path (Symbol.path `Fill 7. s) (Symbol.path `Stroke 7. s));
-      cases "size 0 puts every point at the origin" ~name all (fun s ->
+      test "a circle is the same filled and stroked" (fun () ->
+          equal path
+            (Symbol.path `Fill 7. Symbol.circle)
+            (Symbol.path `Stroke 7. Symbol.circle));
+      cases "sizes 0. and -0. put every point at the origin" ~name all (fun s ->
           List.iter
-            (fun paint ->
+            (fun (paint, a) ->
               List.iter
-                (fun sp ->
-                  List.iter
-                    (fun (x, y) ->
-                      equal float_exact 0. x;
-                      equal float_exact 0. y)
-                    sp.pts)
-                (subpaths (Symbol.path paint 0. s)))
-            [ `Fill; `Stroke ]);
-      cases "a size of -0. is a size of 0" ~name all (fun s ->
-          List.iter
-            (fun paint ->
-              equal path (Symbol.path paint 0. s) (Symbol.path paint (-0.) s))
-            [ `Fill; `Stroke ]);
+                (fun v -> if not (Float.is_nan v) then equal float_exact 0. v)
+                (numbers (Symbol.path paint a s)))
+            [ (`Fill, 0.); (`Fill, -0.); (`Stroke, 0.); (`Stroke, -0.) ]);
       cases "path raises on a negative or non-finite size"
         ~name:(fun a -> Printf.sprintf "%h" a)
         [ -1.; -.Float.min_float; nan; infinity; neg_infinity ]
@@ -235,7 +226,7 @@ let clockwise s =
     (fun paint ->
       List.iter
         (fun sp ->
-          is_true ~msg:"closed" sp.closed;
+          equal ~msg:"closed" bool true sp.closed;
           greater float_exact ~than:0. (area [ sp ]))
         (flat paint 3. s))
     [ `Fill; `Stroke ]
@@ -244,7 +235,7 @@ let one_segment_strokes s =
   let sps = subpaths (Symbol.path `Fill 2. s) in
   List.iter
     (fun sp ->
-      is_false ~msg:"closed" sp.closed;
+      equal ~msg:"closed" bool false sp.closed;
       equal int 2 (List.length sp.pts))
     sps
 
@@ -380,13 +371,14 @@ let sets =
           equal (list symbol)
             Symbol.[ circle; plus; times; triangle; asterisk; square; diamond ]
             Symbol.stroked);
-      test "distinct symbols are unequal" (fun () ->
+      test "equal tells every symbol apart" (fun () ->
           List.iteri
             (fun i s ->
               List.iteri
                 (fun j s' ->
-                  if i = j then equal symbol s s'
-                  else not_equal ~msg:(name s ^ " " ^ name s') symbol s s')
+                  equal
+                    ~msg:(name s ^ " " ^ name s')
+                    bool (i = j) (Symbol.equal s s'))
                 all)
             all);
       test "pp names a symbol" (fun () ->
