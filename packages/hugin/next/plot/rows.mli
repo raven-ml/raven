@@ -60,6 +60,10 @@ val extent : t -> [ `X | `Y ] -> float array * float array
 val project : t -> Path.t -> Path.t
 val series : t -> t list
 
+val glyphs : Color.t -> P2.t -> Text.Layout.t -> Picture.t
+(** [glyphs c at l] is the glyph runs of [l] with its anchor at [at], in [c]
+    where its text sets no colour. *)
+
 val text :
   ?halign:Text.Layout.halign ->
   ?valign:Text.Layout.valign ->

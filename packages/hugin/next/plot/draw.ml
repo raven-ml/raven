@@ -630,18 +630,11 @@ let quarter = { Affine.xx = 0.; yx = -1.; xy = 1.; yy = 0.; x0 = 0.; y0 = 0. }
 
 (* [placed c p] draws [p], in [c] where its text sets no colour. *)
 let placed c (p : Layout.placed) =
-  let origin = if p.turned then P2.v 0. 0. else p.at in
-  let run acc colour o run =
-    let c = Option.value colour ~default:c in
-    Picture.glyphs c (P2.v (P2.x origin +. P2.x o) (P2.y origin +. P2.y o)) run
-    :: acc
-  in
-  let glyphs = Picture.group (List.rev (Text.Layout.fold run [] p.set)) in
-  if not p.turned then glyphs
+  if not p.turned then Rows.glyphs c p.at p.set
   else
     Picture.transform
       Affine.(translate (P2.x p.at) (P2.y p.at) * quarter)
-      glyphs
+      (Rows.glyphs c (P2.v 0. 0.) p.set)
 
 let tag_node id p = Picture.tag { Picture.id; rows = Picture.Rows [||] } p
 

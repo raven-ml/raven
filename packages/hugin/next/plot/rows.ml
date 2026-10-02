@@ -206,6 +206,14 @@ let series r =
     r.index;
   List.rev_map (fun l -> select r (Array.of_list (List.rev !l))) !order
 
+let glyphs c at l =
+  let run acc colour o run =
+    let colour = Option.value colour ~default:c in
+    Picture.glyphs colour (P2.v (P2.x at +. P2.x o) (P2.y at +. P2.y o)) run
+    :: acc
+  in
+  Picture.group (List.rev (Text.Layout.fold run [] l))
+
 let text ?(halign = `Center) ?(valign = `Middle) r c at s =
   let l =
     Text.Layout.v ~halign ~valign ~fonts:(Theme.fonts r.theme)
@@ -219,9 +227,4 @@ let text ?(halign = `Center) ?(valign = `Middle) r c at s =
            Text.pp s
            (String.concat ", "
               (List.map (fun u -> Printf.sprintf "U+%04X" (Uchar.to_int u)) us))));
-  let run acc colour o run =
-    let colour = Option.value colour ~default:c in
-    Picture.glyphs colour (P2.v (P2.x at +. P2.x o) (P2.y at +. P2.y o)) run
-    :: acc
-  in
-  Picture.group (List.rev (Text.Layout.fold run [] l))
+  glyphs c at l
