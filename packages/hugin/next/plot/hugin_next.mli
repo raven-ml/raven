@@ -843,8 +843,9 @@ val grid : ?widths:float list -> ?heights:float list -> t list list -> t
 
     Raises [Invalid_argument] if a weight is not finite and positive. {!resolve}
     raises [Invalid_argument] if the rows cover different numbers of columns, if
-    a span reaches past the last row, or if [widths] or [heights] differs in
-    length from the number of columns or rows. *)
+    a span reaches past the last row or covers a column of a row that a span of
+    a row above covers, or if [widths] or [heights] differs in length from the
+    number of columns or rows. *)
 
 val span : ?rows:int -> ?cols:int -> t -> t
 (** [span ~rows ~cols f] is [f] as a grid cell that covers [rows] rows and
