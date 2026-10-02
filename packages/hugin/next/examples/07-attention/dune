@@ -1,0 +1,21 @@
+(executable
+ (name main)
+ (libraries hugin.next nx))
+
+; The image is committed; the rule is off unless asked for so that an
+; ordinary build does not run every example.
+; Refresh with REFRESH_ASSETS=true dune build @assets
+
+(rule
+ (targets attention.png)
+ (deps main.exe)
+ (enabled_if
+  (= %{env:REFRESH_ASSETS=false} true))
+ (action
+  (run ./main.exe))
+ (mode
+  (promote (until-clean))))
+
+(alias
+ (name assets)
+ (deps attention.png))
