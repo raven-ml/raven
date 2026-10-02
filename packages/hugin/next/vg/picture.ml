@@ -279,8 +279,7 @@ let rec equal p p' =
   | Image i, Image i' ->
       Box2.equal i.box i'.box
       && (i.pixels == i'.pixels
-         || Array.equal Int.equal (Nx.shape i.pixels) (Nx.shape i'.pixels)
-            && Nx.item [] (Nx.array_equal i.pixels i'.pixels))
+         || Nx.item [] (Nx.array_equal i.pixels i'.pixels))
   | Group ps, Group ps' -> List.equal equal ps ps'
   | Clip c, Clip c' ->
       rule_equal c.rule c'.rule && Path.equal c.path c'.path

@@ -3091,6 +3091,9 @@ thread.
 
 ### Nx
 
+- `Nx.array_equal` is `false` for tensors of different shapes, as it states.
+  It compared tensors whose shapes broadcast, so a `[|1; 2|]` and a `[|2; 1|]`
+  tensor of one value were equal.
 - `Nx_quant.apply ~ids` on a prompt groups positions in blocks of up to 16,
   the most that keep the padding below half the positions, where it took
   blocks of 4, and with `bfloat16` rows an MXFP4 weight is its `bfloat16`

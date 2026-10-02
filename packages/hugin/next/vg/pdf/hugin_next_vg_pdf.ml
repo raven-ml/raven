@@ -417,10 +417,7 @@ let image_object doc pixels =
 
 (* Equal pictures write equal bytes, so an image is written once for tensors
    that are equal as [Picture.equal] compares them. *)
-let same_pixels a b =
-  a == b
-  || Array.equal Int.equal (Nx.shape a) (Nx.shape b)
-     && Nx.item [] (Nx.array_equal a b)
+let same_pixels a b = a == b || Nx.item [] (Nx.array_equal a b)
 
 let image doc b (ctx : Vector.ctx) (im : Vector.image) =
   let c0, r0, c1, r1 = im.window and x = im.x and y = im.y in

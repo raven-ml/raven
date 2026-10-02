@@ -1855,10 +1855,45 @@ let range_reductions =
                 Nx.reduce_ranges `Add ~lo:two ~hi:two (Nx.zeros Nx.bool [| 2 |])));
       ])
 
+(* array_equal *)
+
+let array_equal_cases =
+  let t shape v = Nx.full Nx.int32 shape v in
+  [
+    ("equal tensors", t [| 2; 3 |] 7l, t [| 2; 3 |] 7l, true);
+    ( "an element differs",
+      t [| 2; 3 |] 7l,
+      Nx.create Nx.int32 [| 2; 3 |] [| 7l; 7l; 7l; 7l; 7l; 8l |],
+      false );
+    ( "transposed shapes that broadcast",
+      t [| 1; 2 |] 7l,
+      t [| 2; 1 |] 7l,
+      false );
+    ("a row against a matrix", t [| 3 |] 7l, t [| 2; 3 |] 7l, false);
+    ("a scalar against a vector", t [||] 7l, t [| 3 |] 7l, false);
+    ("a leading axis of one", t [| 1; 3 |] 7l, t [| 3 |] 7l, false);
+    ("empty tensors of one shape", t [| 0; 2 |] 7l, t [| 0; 2 |] 7l, true);
+    ("empty tensors of other shapes", t [| 0 |] 7l, t [| 0; 2 |] 7l, false);
+  ]
+
+let array_equal =
+  group "array_equal"
+    [
+      cases
+        ~name:(fun (n, _, _, _) -> n)
+        "array_equal is true iff shapes and elements are equal"
+        array_equal_cases
+        (fun (_, a, b, expected) ->
+          equal bool expected (Nx.item [] (Nx.array_equal a b));
+          equal bool ~msg:"swapped" expected
+            (Nx.item [] (Nx.array_equal b a)));
+    ]
+
 let () =
   exit
     (run "nx reductions"
        [
+         array_equal;
          integer_reductions;
          integer_dtypes;
          float_reductions;

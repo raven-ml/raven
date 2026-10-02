@@ -984,13 +984,8 @@ let any ?axes ?(keepdims = false) x =
     ~keepdims x
 
 let array_equal x y =
-  let can_broadcast =
-    try
-      ignore (Shape.broadcast (shape x) (shape y));
-      true
-    with _ -> false
-  in
-  if not can_broadcast then zeros (Value.context x) Nx_dtype.bool [||]
+  if not (Array.equal Int.equal (shape x) (shape y)) then
+    zeros (Value.context x) Nx_dtype.bool [||]
   else all (equal x y)
 
 (* ───── Shape Manipulation ───── *)
