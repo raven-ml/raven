@@ -8,8 +8,7 @@ open Hugin_gg
 open Hugin_font
 open Hugin_vg
 
-let svg ?(w = 100.) ?(h = 100.) p =
-  Hugin_vg_svg.render (Renderable.v w h p)
+let svg ?(w = 100.) ?(h = 100.) p = Hugin_vg_svg.render (Renderable.v w h p)
 
 (* Reading documents *)
 
@@ -1393,7 +1392,7 @@ let goldens =
          test (name ^ " writes its golden document") (fun () ->
              expect_file
                (masked (Hugin_vg_svg.render r))
-               ("packages/hugin/test/golden/" ^ name ^ ".svg")))
+               ("packages/hugin/test/vg/svg/golden/" ^ name ^ ".svg")))
        Vg_corpus.pages)
 
 let () =

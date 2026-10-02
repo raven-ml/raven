@@ -1,0 +1,23 @@
+(test
+ (name test_pdf)
+ (modules test_pdf)
+ (package hugin)
+ (libraries
+  hugin.gg
+  hugin.font
+  hugin.vg
+  hugin.vg.pdf
+  hugin.vg.svg
+  vg_corpus
+  nx
+  compress.deflate
+  windtrap)
+ (deps
+  (glob_files golden/*.pdf.txt))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_pdf.ml test_pdf.ml.corrected)
+   (diff? golden/shapes.pdf.txt golden/shapes.pdf.txt.corrected)
+   (diff? golden/strokes.pdf.txt golden/strokes.pdf.txt.corrected)
+   (diff? golden/marks.pdf.txt golden/marks.pdf.txt.corrected))))

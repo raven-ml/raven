@@ -1,0 +1,21 @@
+(test
+ (name test_raster)
+ (modules test_raster)
+ (package hugin)
+ (libraries
+  hugin.gg
+  hugin.font
+  hugin.vg
+  hugin.vg.raster
+  vg_corpus
+  nx
+  nx.io
+  windtrap)
+ (deps
+  (glob_files golden/*.png))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? golden/shapes.png golden/shapes.png.corrected)
+   (diff? golden/strokes.png golden/strokes.png.corrected)
+   (diff? golden/marks.png golden/marks.png.corrected))))

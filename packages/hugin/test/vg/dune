@@ -1,0 +1,15 @@
+(test
+ (name test_picture)
+ (modules test_picture)
+ (package hugin)
+ (libraries
+  hugin.gg
+  hugin.font
+  hugin.vg
+  vg_corpus
+  nx
+  windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_picture.ml test_picture.ml.corrected))))

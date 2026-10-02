@@ -8,8 +8,7 @@ open Hugin_gg
 open Hugin_font
 open Hugin_vg
 
-let pdf ?(w = 100.) ?(h = 100.) p =
-  Hugin_vg_pdf.render (Renderable.v w h p)
+let pdf ?(w = 100.) ?(h = 100.) p = Hugin_vg_pdf.render (Renderable.v w h p)
 
 (* Reading documents *)
 
@@ -1339,7 +1338,7 @@ let goldens =
          test (name ^ " writes its golden document") (fun () ->
              expect_file
                (dump (Hugin_vg_pdf.render r))
-               ("packages/hugin/test/golden/" ^ name ^ ".pdf.txt")))
+               ("packages/hugin/test/vg/pdf/golden/" ^ name ^ ".pdf.txt")))
        Vg_corpus.pages)
 
 let () =

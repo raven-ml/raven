@@ -1,0 +1,22 @@
+(test
+ (name test_svg)
+ (modules test_svg)
+ (package hugin)
+ (libraries
+  hugin.gg
+  hugin.font
+  hugin.vg
+  hugin.vg.raster
+  hugin.vg.svg
+  vg_corpus
+  nx
+  windtrap)
+ (deps
+  (glob_files golden/*.svg))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_svg.ml test_svg.ml.corrected)
+   (diff? golden/shapes.svg golden/shapes.svg.corrected)
+   (diff? golden/strokes.svg golden/strokes.svg.corrected)
+   (diff? golden/marks.svg golden/marks.svg.corrected))))

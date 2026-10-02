@@ -1,0 +1,10 @@
+(library
+ (name text_support)
+ (wrapped false)
+ (modules text_support)
+ (libraries
+  hugin.gg
+  hugin.font
+  hugin.text
+  hugin_test_build
+  windtrap))

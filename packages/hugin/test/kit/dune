@@ -1,0 +1,71 @@
+(tests
+ (names test_locale test_number test_time)
+ (modules test_locale test_number test_time)
+ (package hugin)
+ (libraries hugin.kit nx windtrap))
+
+(test
+ (name test_scale)
+ (modules test_scale)
+ (package hugin)
+ (libraries hugin.gg hugin.kit nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_scale.ml test_scale.ml.corrected))))
+
+(test
+ (name test_ticks)
+ (modules test_ticks)
+ (package hugin)
+ (libraries hugin.kit nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_ticks.ml test_ticks.ml.corrected))))
+
+(test
+ (name test_scheme)
+ (modules test_scheme)
+ (package hugin)
+ (libraries hugin.gg hugin.kit windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_scheme.ml test_scheme.ml.corrected))))
+
+(test
+ (name test_curve)
+ (modules test_curve)
+ (package hugin)
+ (libraries hugin.gg hugin.kit windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_curve.ml test_curve.ml.corrected))))
+
+(test
+ (name test_dash)
+ (modules test_dash)
+ (package hugin)
+ (libraries hugin.kit windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_dash.ml test_dash.ml.corrected))))
+
+(test
+ (name test_symbol)
+ (modules test_symbol)
+ (package hugin)
+ (libraries hugin.gg hugin.kit windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_symbol.ml test_symbol.ml.corrected))))
+
+(tests
+ (names test_stack test_stats)
+ (modules test_stack test_stats)
+ (package hugin)
+ (libraries hugin.kit nx windtrap))

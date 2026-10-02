@@ -1,0 +1,4 @@
+(library
+ (name vg_corpus)
+ (modules vg_corpus)
+ (libraries hugin.gg hugin.font hugin.vg nx nx.io windtrap))
