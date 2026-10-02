@@ -6,6 +6,29 @@
 open Windtrap
 open Munin
 
+(* Sessions *)
+
+(* [Session.start] defaults its provenance to [Provenance.detect ()], which runs
+   git twice: in this repository, most of the suite's time. Sessions here record
+   [provenance] unless a test passes its own. *)
+let provenance =
+  {
+    Provenance.command = [ "test_munin" ];
+    cwd = "/";
+    hostname = None;
+    pid = 0;
+    git_commit = None;
+    git_dirty = None;
+    env = [];
+  }
+
+module Session = struct
+  include Session
+
+  let start ?(provenance = provenance) = start ~provenance
+  let with_run ?(provenance = provenance) = with_run ~provenance
+end
+
 (* Helpers *)
 
 let rec rm_rf path =
@@ -610,9 +633,25 @@ let test_explicit_env () =
     [ ("KEY", "value") ]
     prov.env
 
+let test_detected_by_default () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Munin.Session.start ~store ~experiment:"exp" () in
+  Session.finish session;
+  let prov = Run.provenance (Session.run session) in
+  let detected = Provenance.detect () in
+  (* git_dirty can change between the two detections. *)
+  equal ~msg:"command" (list string) detected.command prov.command;
+  equal ~msg:"cwd" string detected.cwd prov.cwd;
+  equal ~msg:"hostname" (option string) detected.hostname prov.hostname;
+  equal ~msg:"pid" int detected.pid prov.pid;
+  equal ~msg:"git_commit" (option string) detected.git_commit prov.git_commit
+
 let provenance_tests =
   [
     test "all fields round-trip" test_provenance_fields;
+    test "start without one records the detected provenance"
+      test_detected_by_default;
     test "capture_env" test_capture_env;
     test "capture_env missing var" test_capture_env_missing;
     test "explicit env" test_explicit_env;
@@ -1638,7 +1677,14 @@ let test_system_monitor_logs_metrics () =
   let store = Store.open_ ~root () in
   let session = Session.start ~store ~experiment:"exp" () in
   let monitor = Munin_sys.start ~interval:0.1 session in
-  Thread.delay 0.35;
+  let rec sampled () =
+    if not (List.mem "sys/cpu_user" (Run.metric_keys (Session.run session)))
+    then begin
+      Thread.delay 0.01;
+      sampled ()
+    end
+  in
+  sampled ();
   Munin_sys.stop monitor;
   Session.finish session;
   let run = Session.run session in
