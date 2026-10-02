@@ -864,17 +864,19 @@ let gen_spec =
   let some l = Gen.option (Gen.of_list l) in
   Gen.map
     (fun ( (log, name, domain, nice),
-           (zero, clamp, reverse),
+           (zero, clamp, reverse, stepped),
            (scheme, areas, unknown) ) ->
       let make = if log then Scale.symlog ?constant:None else Scale.linear in
-      make ?name ?domain ?nice ?zero ?clamp ?reverse ?scheme ?areas ?unknown ())
+      make ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?scheme ?areas
+        ?unknown ())
     (Gen.triple
        (Gen.quad
           (Gen.frequency [ (5, Gen.constant false); (1, Gen.constant true) ])
           (some [ "x"; "y" ])
           (some [ (0., 1.); (0., 2.) ])
           (some [ true; false ]))
-       (Gen.triple
+       (Gen.quad
+          (some [ true; false ])
           (some [ true; false ])
           (some [ true; false ])
           (some [ true; false ]))
@@ -904,6 +906,8 @@ let conflicts =
     Conflict (Clamp, Scale.linear ~clamp:true (), Scale.linear ~clamp:false ());
     Conflict
       (Reverse, Scale.linear ~reverse:true (), Scale.linear ~reverse:false ());
+    Conflict
+      (Stepped, Scale.linear ~stepped:true (), Scale.linear ~stepped:false ());
     Conflict (Padding, band ~padding:0.1 (), band ~padding:0.2 ());
     Conflict (Wrap, band ~wrap:1 (), band ~wrap:2 ());
     Conflict (Tz_offset_s, time ~tz_offset_s:0 (), time ~tz_offset_s:60 ());
@@ -1092,6 +1096,7 @@ let comparing =
                 Zero;
                 Clamp;
                 Reverse;
+                Stepped;
                 Padding;
                 Wrap;
                 Tz_offset_s;
@@ -1110,6 +1115,7 @@ let comparing =
               "zero";
               "clamp";
               "reverse";
+              "stepped";
               "padding";
               "wrap";
               "tz_offset_s";
@@ -1126,7 +1132,7 @@ let comparing =
                [
                  pp (Scale.linear ~name:"y" ~domain:(0., 0.5) ~nice:false ());
                  pp (Scale.linear ~domain:(0.1 +. 0.2, 1e17 +. 16.) ());
-                 pp (Scale.log ~base:2. ~reverse:true ());
+                 pp (Scale.log ~base:2. ~reverse:true ~stepped:true ());
                  pp (asinh ~areas:(1., 9.) ());
                  pp
                    (Scale.time ~tz_offset_s:3600
@@ -1146,7 +1152,7 @@ let comparing =
                {|
             (linear (name "y") (domain 0 0.5) (nice false))
             (linear (domain 0.30000000000000004 1.0000000000000002e+17))
-            (log 2 (reverse true))
+            (log 2 (reverse true) (stepped true))
             (custom asinh (areas 1 9))
             (time (domain 1970-01-01T00:00:00Z 1970-01-01T00:01:00Z) (tz_offset_s 3600))
             (band (domain (indices (3 "the"))) (padding 0.1) (wrap 2))
@@ -1169,6 +1175,7 @@ let all_properties =
       Zero;
       Clamp;
       Reverse;
+      Stepped;
       Padding;
       Wrap;
       Tz_offset_s;
@@ -1209,6 +1216,11 @@ let observers =
           ("custom", ln (), Scale.Custom "ln");
         ]
         (fun (_, s, tf) -> equal transform_w tf (Scale.transform s));
+      test "stepped holds only when set to true" (fun () ->
+          equal bool false (Scale.stepped (Scale.log ()));
+          equal bool false
+            (Scale.stepped (Scale.pow ~exponent:2. ~stepped:false ()));
+          equal bool true (Scale.stepped (Scale.symlog ~stepped:true ())));
       test "tz_offset_s is 0 unset" (fun () ->
           equal int 0 (Scale.tz_offset_s (Scale.time ()));
           equal int (-3600)

@@ -1796,6 +1796,112 @@ let areas =
             (page (area ~y:(num ys) ())));
     ]
 
+(* Steps *)
+
+let stepped = Scale.linear ~stepped:true ~domain:(0., 10.) ()
+
+(* [mid_step levels u] is the middle of the interval of [levels] holding [u],
+   searched in order: the last interval holds its upper level, and a value
+   beyond the levels takes the interval at its nearer end. *)
+let mid_step levels u =
+  let n = Array.length levels in
+  let k = ref 0 in
+  for i = 1 to n - 2 do
+    if levels.(i) <= u then k := i
+  done;
+  (levels.(!k) +. levels.(!k + 1)) /. 2.
+
+let levels ticks =
+  Array.of_list (List.sort_uniq Float.compare (0. :: 1. :: Array.to_list ticks))
+
+let reads_steps values =
+  let read rows =
+    let get r = Option.get (r rows Role.fill) in
+    (get Mark.normalized, get Mark.get, get Mark.ticks)
+  in
+  let norm, colours, ticks =
+    rows_of [ Mark.bind Role.fill (num ~scale:stepped (f64 values)) ] read
+  in
+  cover "a value on a level" (Array.exists (fun u -> Array.mem u ticks) norm);
+  cover "a value beyond the domain"
+    (Array.exists (fun u -> u < 0. || u > 1.) norm);
+  let scheme = Theme.scheme Theme.default in
+  Array.iteri
+    (fun i u ->
+      let msg = Printf.sprintf "row %d at %g" i u in
+      equal ~msg color
+        (Scheme.color scheme (mid_step (levels ticks) u))
+        colours.(i))
+    norm
+
+let bar_fills d =
+  let id = path [ Field "legend"; Field "color"; Field "num" ] in
+  List.concat_map
+    (fun (_, p) ->
+      List.rev
+        (fold
+           (fun acc -> function
+             | Picture.Fill f -> (f.color, Path.bounds f.path) :: acc | _ -> acc)
+           [] p))
+    (tags id d)
+
+let steps =
+  group "Steps"
+    [
+      prop "a reader of a stepped scale takes the range at its step's middle"
+        (Gen.array ~size:(Gen.int_range 1 8)
+           (Gen.frequency
+              [
+                (4, Gen.float_range (-2.) 12.);
+                (1, Gen.of_list ~pp:Format.pp_print_float [ 0.; 2.; 5.; 10. ]);
+              ]))
+        reads_steps;
+      test "a stepped colour bar paints each step from its level to the top"
+        (fun () ->
+          let m, seen =
+            probe
+              [ Mark.bind Role.fill (num ~scale:stepped (f64 [| 5. |])) ]
+              (fun rows -> Option.get (Mark.ticks rows Role.fill))
+          in
+          let dots =
+            dot ~x:(const 0.5) ~y:(const 0.5)
+              ~fill:(num ~scale:stepped (f64 [| 0.; 10. |]))
+              ()
+          in
+          let fills = bar_fills (drawn (layer [ dots; m ])) in
+          let levels = levels (only seen) in
+          let n = Array.length levels - 1 in
+          let scheme = Theme.scheme Theme.default in
+          equal (list color)
+            (List.init n (fun k ->
+                 Scheme.color scheme ((levels.(k) +. levels.(k + 1)) /. 2.)))
+            (List.map fst fills);
+          match List.map snd fills with
+          | Some bar :: _ as boxes ->
+              List.iteri
+                (fun k b ->
+                  let b = Option.get b in
+                  let msg = Printf.sprintf "step %d" k in
+                  equal ~msg close (Box2.miny bar) (Box2.miny b);
+                  equal ~msg close ((1. -. levels.(k)) *. Box2.h bar) (Box2.h b))
+                boxes
+          | _ -> fail "no steps");
+      test "contour implies stepped on its fill scale" (fun () ->
+          let z =
+            Nx.init Nx.float64 [| 3; 4 |] (fun i ->
+                Float.of_int (i.(0) * i.(1)))
+          in
+          let fill s = Scale.linear ~name:"z" ?stepped:s () in
+          let stepped_with s =
+            Scale.stepped
+              (Resolved.scale
+                 (resolve (contour ~fill:(num ~scale:(fill s) z) ()))
+                 (fill None))
+          in
+          equal bool true (stepped_with None);
+          equal bool false (stepped_with (Some false)));
+    ]
+
 (* The built-in marks on the public interface *)
 
 module Copy = Hugin_next_test_marks.Marks
@@ -1869,6 +1975,7 @@ let () =
          output;
          reducers;
          areas;
+         steps;
          public_marks;
          goldens;
        ])

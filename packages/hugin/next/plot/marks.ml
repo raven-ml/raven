@@ -688,7 +688,7 @@ let contour ?x ?y ?opacity ?fx ?fy ~fill () =
       [
         Some on_x;
         Some on_y;
-        Some (on Role.fill fill);
+        Some (on ~imply:(Scale.linear ~stepped:true ()) Role.fill fill);
         opt Role.opacity opacity;
         opt Role.fx fx;
         opt Role.fy fy;

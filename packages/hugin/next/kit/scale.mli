@@ -128,6 +128,14 @@ type _ domain =
       counts as [false].
     - [reverse], whether normalised values run from [1] to [0]. Unset counts as
       [false].
+    - [stepped], whether the roles reading a quantitative scale take a range
+      that is constant between consecutive {e levels}: the normalised ends of
+      the domain and the normalised ticks between them that the figure drawing
+      the scale chooses. A value takes the range at the middle of the interval
+      between consecutive levels that holds it, each interval holding its lower
+      level and the last also its upper one, and a value beyond the domain the
+      range of the step at its nearer end. It leaves {!normalize} unchanged.
+      Unset counts as [false].
     - [scheme], the colours that colour roles paint with. A continuous scale
       colours a value with {!Scheme.color} of its normalised value, and a band
       scale over [n] categories colours category [i] with colour [i] of
@@ -155,6 +163,7 @@ val linear :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?stepped:bool ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -169,6 +178,7 @@ val log :
   ?nice:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?stepped:bool ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -192,6 +202,7 @@ val symlog :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?stepped:bool ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -209,6 +220,7 @@ val pow :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?stepped:bool ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -227,6 +239,7 @@ val custom :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?stepped:bool ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -318,6 +331,9 @@ val areas : float t -> (float * float) option
 
 val symbols : string t -> Symbol.t array option
 (** [symbols s] is the symbols of [s], if set, as a fresh array. *)
+
+val stepped : float t -> bool
+(** [stepped s] is [true] iff [s] sets [stepped] to [true]. *)
 
 val unknown : 'd t -> Color.t option
 (** [unknown s] is the colour of the missing values of [s], if set. *)
@@ -418,6 +434,7 @@ type property =
   | Zero
   | Clamp
   | Reverse
+  | Stepped
   | Padding
   | Wrap
   | Tz_offset_s

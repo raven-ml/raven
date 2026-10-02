@@ -58,5 +58,10 @@ val swatch :
 
 (** {1:ranges Ranges} *)
 
-val colors : ctx -> Resolved.fitted -> float -> Hugin_next_gg.Color.t
-(** [colors ctx s u] is the colour a colour role gives [u] on [s]. *)
+val colors : ctx -> int -> float -> Hugin_next_gg.Color.t
+(** [colors ctx i u] is the colour a colour role gives [u] on the scale [i]. *)
+
+val levels : ctx -> int -> float array option
+(** [levels ctx i] is the levels of the scale [i] if it is stepped: the
+    normalised ends of its domain and its frozen major ticks between them, in
+    increasing order. Its ranges are constant between consecutive levels. *)

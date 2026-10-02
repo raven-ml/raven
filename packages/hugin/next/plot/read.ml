@@ -161,18 +161,46 @@ let lerp (a, b) u = a +. (u *. (b -. a))
    a band scale by the category's index in its domain. *)
 type 'r range = By_value of (float -> 'r option) | By_index of 'r array
 
-(* [base ctx ~stroked use range s] is how a role of [use] maps the values of
-   [s], [None] where they are missing, and the value of a missing one. *)
+(* Steps *)
+
+let levels ctx i =
+  match ctx.scales.(i) with
+  | F { kind = Quantities; scale; _ } when Scale.stepped scale ->
+      let inner (t : Ticks.tick) =
+        if t.position > 0. && t.position < 1. then Some t.position else None
+      in
+      let ticks = List.filter_map inner ctx.frozen.(i).major in
+      Some (Array.of_list (List.sort_uniq Float.compare (0. :: 1. :: ticks)))
+  | F _ -> None
+
+(* [step levels u] is the middle of the interval between consecutive [levels]
+   that holds [u], each holding its lower level and the last also its upper one,
+   or of the interval at the nearer end if [u] lies beyond them. *)
+let step levels u =
+  (* The greatest [k] below [n - 1] with [levels.(k) <= u], or [0]. *)
+  let rec find lo hi =
+    if hi - lo <= 1 then lo
+    else
+      let mid = (lo + hi) / 2 in
+      if levels.(mid) <= u then find mid hi else find lo mid
+  in
+  let k = find 0 (Array.length levels - 1) in
+  (levels.(k) +. levels.(k + 1)) /. 2.
+
+(* [base ctx ~stroked use range i] is how a role of [use] maps the values of the
+   scale [i], [None] where they are missing, and the value of a missing one. *)
 let base : type r.
     ctx ->
     stroked:bool ->
     Role.use ->
     r Role.range ->
-    fitted ->
+    int ->
     (r range * r) option =
- fun ctx ~stroked use range (F f) ->
+ fun ctx ~stroked use range i ->
+  let (F f) = ctx.scales.(i) in
+  let step = match levels ctx i with None -> Fun.id | Some l -> step l in
   let finite g =
-    By_value (fun u -> if Float.is_nan u then None else Some (g u))
+    By_value (fun u -> if Float.is_nan u then None else Some (g (step u)))
   in
   let n () =
     match f.kind with
@@ -254,10 +282,10 @@ let at (F f) = function
           fun u -> Option.map (Array.get t) (index_at u)
       | Quantities -> fun _ -> None)
 
-let colors ctx s =
-  match base ctx ~stroked:false Role.fill.use Role.Colors s with
+let colors ctx i =
+  match base ctx ~stroked:false Role.fill.use Role.Colors i with
   | Some (range, missing) ->
-      let at = at s range in
+      let at = at ctx.scales.(i) range in
       fun u -> Option.value (at u) ~default:missing
   | None -> fun _ -> Color.transparent
 
@@ -286,7 +314,7 @@ let ticks ctx i =
    misses. *)
 let scaled ctx ~stroked rd (B b as bd) index sel i =
   let (F f as s) = ctx.scales.(i) in
-  match base ctx ~stroked b.role.use b.role.range s with
+  match base ctx ~stroked b.role.use b.role.range i with
   | None -> None
   | Some (range, missing) -> (
       let g = mapping b.ch and ticks = ticks ctx i in
@@ -423,7 +451,7 @@ let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
     | Some v -> Some (column b.role [| v |])
     | None when reads index -> (
         let (F f as s) = ctx.scales.(scale) in
-        match base ctx ~stroked b.role.use b.role.range s with
+        match base ctx ~stroked b.role.use b.role.range scale with
         | None -> None
         | Some (range, missing) ->
             let fn = fn s range missing (mapping b.ch) in

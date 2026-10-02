@@ -45,7 +45,12 @@
 </g>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;num&quot;]">
 <text x="324.735 327.157 333.153 338.432" y="14.688" font-family="hfbcd8af9df3f885dc" font-size="10" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">loss</text>
-<image x="324.735" y="25.044" width="10" height="193.066" preserveAspectRatio="none" style="image-rendering:pixelated" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAAA50lEQVR4nJVT243EIAx00sv2X9ZWQXwevyEL0v2M5mWDEkHj++H7oYfuwQIPMUClMoFhHph55N5gYS4vYZDKXAYbdE+SIeF1Gb2W2gQkPE/F8xRBLuhnKFMP5YUBaqxPoGKbtawAabMhfTalsqWyejPsAlaWqcmV6Rd/eyq3nihn8tsyKC9kpQsjHGnMYJpQec2yl8NrFVzI5VTuW0pGpdKfPSzdpzM7yzX4z+ZDRd7My9syKTdPntkh3XryJk8VpNhcV+sVMDs3Uu8B2tjR+xXYrWYwDw9wX8nUpADrRJWzwlXOzfxmf8dugKa5wOIOAAAAAElFTkSuQmCC"/>
+<path d="M324.735 25.044L334.735 25.044L334.735 218.11L324.735 218.11Z" fill="#481c6e"/>
+<path d="M324.735 25.044L334.735 25.044L334.735 189.051L324.735 189.051Z" fill="#3b518b"/>
+<path d="M324.735 25.044L334.735 25.044L334.735 150.637L324.735 150.637Z" fill="#277e8e"/>
+<path d="M324.735 25.044L334.735 25.044L334.735 121.577L324.735 121.577Z" fill="#1fa287"/>
+<path d="M324.735 25.044L334.735 25.044L334.735 92.518L324.735 92.518Z" fill="#5ec962"/>
+<path d="M324.735 25.044L334.735 25.044L334.735 54.104L324.735 54.104Z" fill="#cde11d"/>
 <path d="M334.735 218.11L338.235 218.11M334.735 189.051L338.235 189.051M334.735 150.637L338.235 150.637M334.735 121.577L338.235 121.577M334.735 92.518L338.235 92.518M334.735 54.104L338.235 54.104M334.735 25.044L338.235 25.044" fill="none" stroke="#1a1a1a" stroke-opacity="0.6" stroke-width="0.8" stroke-linejoin="round"/>
 <text x="340.735 346.571 349.164" y="221.384" font-family="hfbcd8af9df3f885dc" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0.1</text>
 <text x="340.735 346.571 349.164" y="192.325" font-family="hfbcd8af9df3f885dc" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0.2</text>

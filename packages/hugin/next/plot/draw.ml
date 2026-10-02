@@ -632,6 +632,22 @@ let segments pairs =
 
 let bar_steps = 256
 
+(* [stepped box ~vertical colour levels] is a colour bar in [box] that steps at
+   [levels]. Each step is painted from its start to the bar's far end, over the
+   steps before it, so that no seam shows the paper between two steps. *)
+let stepped box ~vertical colour levels =
+  let x = Box2.minx box and y = Box2.miny box in
+  let w = Box2.w box and h = Box2.h box in
+  let step k =
+    let a = levels.(k) in
+    let rest =
+      if vertical then Box2.v x y w ((1. -. a) *. h)
+      else Box2.v (x +. (a *. w)) y ((1. -. a) *. w) h
+    in
+    Picture.fill (colour ((a +. levels.(k + 1)) /. 2.)) (Path.rect rest)
+  in
+  Picture.group (List.init (Array.length levels - 1) step)
+
 (* [readers cx s] is each mark that reads the scale [s] through a role with a
    legend, with the indices of its bindings that read it, in the order of the
    figure. *)
@@ -661,14 +677,18 @@ let paint cx notes (g : Guide.t) =
           (Stroke.v ~cap:`Butt (em cx rule_em))
           (faded cx rule_alpha) (segments l)
     | Grid_lines _ -> Picture.empty
-    | Bar { box; scale; vertical } ->
-        let colour = Read.colors cx.ctx cx.ctx.scales.(scale) in
-        let at k = colour ((float k +. 0.5) /. float bar_steps) in
-        let px =
-          if vertical then image bar_steps 1 (fun i _ -> at (bar_steps - 1 - i))
-          else image 1 bar_steps (fun _ j -> at j)
-        in
-        Picture.image box px
+    | Bar { box; scale; vertical } -> (
+        let colour = Read.colors cx.ctx scale in
+        match Read.levels cx.ctx scale with
+        | Some levels -> stepped box ~vertical colour levels
+        | None ->
+            let at k = colour ((float k +. 0.5) /. float bar_steps) in
+            let px =
+              if vertical then
+                image bar_steps 1 (fun i _ -> at (bar_steps - 1 - i))
+              else image 1 bar_steps (fun _ j -> at j)
+            in
+            Picture.image box px)
     | Swatch { box; scale; entry; entries; u } ->
         let proj = Coord.project (Coord.cartesian ()) box in
         let swatch (occ, is) =

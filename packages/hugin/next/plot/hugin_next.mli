@@ -622,13 +622,14 @@ val contour :
 
     The levels are [0.] and [1.], the normalised ends of the fill scale's
     domain, and the normalised ticks {!layout} froze for it ({!Mark.ticks}), in
-    increasing order without repeats, so the bands are the intervals of its
-    colour bar. Between two consecutive levels [lo] and [hi], the isoband
-    ({!Hugin_next_gg_kit.Field2.isoband}) of the field's normalised values is
-    filled with [f ((lo +. hi) /. 2.)], where [Mark.range rows Role.fill] is
-    [Some f] ({!Mark.range}). Missing samples cut holes. A field whose columns'
-    x or rows' y are not strictly monotone once normalised draws nothing, with a
-    warning.
+    increasing order without repeats. [contour] implies [stepped] on its fill
+    scale ({!Scale.linear}), so every reader of that scale paints the same steps
+    and its colour bar steps at the levels. Between two consecutive levels [lo]
+    and [hi], the isoband ({!Hugin_next_gg_kit.Field2.isoband}) of the field's
+    normalised values is filled with [f ((lo +. hi) /. 2.)], where
+    [Mark.range rows Role.fill] is [Some f] ({!Mark.range}). Missing samples cut
+    holes. A field whose columns' x or rows' y are not strictly monotone once
+    normalised draws nothing, with a warning.
 
     Raises [Invalid_argument] if the mark's shape has fewer than two axes, if
     [fill] is a constant, if [x] or [y] can vary along the axis it must not vary
@@ -721,13 +722,14 @@ val contour :
     the facet scales are the panels' headers. Every scale that a role other than
     a position or a facet reads, other than only through {!map_range}, yields
     one legend at its scope unless the scope holds an explicit {!legend} for it:
-    a colour bar for a continuous colour scale, and otherwise one entry per
-    guide value, drawn by the swatch ({!Mark.v}) of every mark that reads the
-    scale. A guide is titled by the distinct titles of the channels that read
-    its scale, in the order the figure is written, separated by commas, and is
-    untitled if they have none. These rules are defaults: marks can imply that a
-    scale has a guide or none ({!Mark.bind}), and an explicit {!axis} or
-    {!legend} decides over both ({!section-merging}).
+    a colour bar for a continuous colour scale, stepped at the levels of a
+    stepped scale ({!Scale.linear}), and otherwise one entry per guide value,
+    drawn by the swatch ({!Mark.v}) of every mark that reads the scale. A guide
+    is titled by the distinct titles of the channels that read its scale, in the
+    order the figure is written, separated by commas, and is untitled if they
+    have none. These rules are defaults: marks can imply that a scale has a
+    guide or none ({!Mark.bind}), and an explicit {!axis} or {!legend} decides
+    over both ({!section-merging}).
 
     A guide serving several panels stands beside the smallest panel or grid
     holding them. An axis shared by the panels of a column, for x, or of a row,
@@ -1624,9 +1626,11 @@ module Resolved : sig
       implied ones included. Given to another figure, it normalises as it does
       in [r] and carries the ranges it states. So a zoomed scale has its zoomed
       domain ({!View.zoom}), and a band scale read by [y] has the [reverse] that
-      [y] implies, which reverses x where the scale is given to [x]. Only the
-      name and kind of [s] are read: [scale r (Scale.linear ~name:"color" ())]
-      is the fitted quantitative ["color"].
+      [y] implies, which reverses x where the scale is given to [x]. A stepped
+      scale steps at the ticks of the figure that draws it, so another figure,
+      of another size or theme, may step it elsewhere. Only the name and kind of
+      [s] are read: [scale r (Scale.linear ~name:"color" ())] is the fitted
+      quantitative ["color"].
 
       Raises [Invalid_argument] if [s] is unnamed, if no node of [r] has the id
       [at], if no scope of the name of [s] holds [at], or if its scope has no
