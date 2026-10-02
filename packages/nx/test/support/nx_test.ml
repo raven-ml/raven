@@ -1453,3 +1453,50 @@ module Profiles = struct
                     hosted queued))
           ds
 end
+
+(* Test memories that a test loses: ["FAULTY:k"] holds its values in the host's
+   memory, which nx.cpu computes on, as [Nx.Device.cpu k] does, and its driver
+   reports the fault a test names at its next synchronization, as a GPU's driver
+   reports one at a wait. [device k] is one memory until it is lost, and a fresh
+   one after, as a vendor's library reopens a lost GPU. *)
+module Faulty = struct
+  type memory = { memory : Nx_device.t; fault : string option Atomic.t }
+
+  let lock = Mutex.create ()
+  let current : (int, memory) Hashtbl.t = Hashtbl.create 4
+  let made = ref []
+
+  let open_memory k =
+    let fault = Atomic.make None in
+    let memory =
+      Nx_device.Driver.device
+        ~name:(Printf.sprintf "FAULTY:%d" k)
+        ~arch:"test" ~budget:max_int
+        ~synchronized:(fun () -> Option.iter failwith (Atomic.get fault))
+        (Host_visible
+           { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
+    in
+    let m = { memory; fault } in
+    Hashtbl.replace current k m;
+    made := m :: !made;
+    m
+
+  let device k =
+    Mutex.protect lock @@ fun () ->
+    match Hashtbl.find_opt current k with
+    | Some m when Nx_device.lost m.memory = None -> Nx.Device.make m.memory
+    | Some _ | None -> Nx.Device.make (open_memory k).memory
+
+  (* [lose d why] loses [d]'s memory with the fault [why], which its driver
+     reports at the synchronization this runs. *)
+  let lose d why =
+    let memory = Nx.Device.memory d in
+    match
+      Mutex.protect lock (fun () ->
+          List.find_opt (fun m -> m.memory == memory) !made)
+    with
+    | None -> invalid_arg "Nx_test.Faulty.lose: not a faulty memory"
+    | Some m -> (
+        Atomic.set m.fault (Some why);
+        try Nx_device.synchronize memory with Nx_device.Lost _ -> ())
+end

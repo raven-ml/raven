@@ -269,6 +269,17 @@ val to_array : ('a, 'b) t -> 'a array
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
 
+    A device whose hardware faults or hangs is lost for good
+    ({!Nx_device.Lost}). From then on, every operation that reads or computes on
+    a value whose storage the lost device can reach raises
+    [Nx_device.Lost (m, why)], [m] its memory and [why] the fault: eager
+    operations, constants beside it, reads, {!place} from it and compiled calls
+    with arguments or captures on it. Shapes, dtypes and movements answer.
+    Values the lost device cannot reach compute as before, copies {!place} made
+    elsewhere before the loss included. Opening the device again through its
+    library gives a fresh device, unequal to the lost one; the lost one's values
+    stay lost.
+
     The disk ({!Nx_device.disk}) holds values in files, such as the tensors
     [Nx_io.load_safetensors] loads, and computes nothing: a value on it takes
     part in an operation as a host value, which the host reads in the file's
@@ -308,7 +319,8 @@ module Device : sig
   val cpu : int -> t
   (** [cpu k], [k >= 1], is the test device ["CPU:k"]: a memory inside the
       host's that nx.cpu computes on, distinct from the host and from every
-      other [k], so a program runs multi-device work on one machine.
+      other [k], so a program runs multi-device work on one machine. Once that
+      memory is lost ({!Nx_device.Lost}), [cpu k] is a fresh one.
 
       Raises [Invalid_argument] if [k < 1]. *)
 

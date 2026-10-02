@@ -4144,6 +4144,54 @@ let on_gpu kind = function
       let why = "no " ^ kind ^ " device" in
       [ slow why (fun () -> skip ~reason:why ()) ]
 
+(* Lost devices: memories of [Nx_test.Faulty], whose driver reports a fault a
+   test names. *)
+
+let lost_on d why = function
+  | Nx_device.Lost (m, why') -> m == Nx.Device.memory d && why' = why
+  | _ -> false
+
+let lost_devices =
+  group "lost devices"
+    [
+      test "a call with an argument on a lost device raises Lost naming it"
+        (fun () ->
+          let d = Faulty.device 1 in
+          let g = Rune.jit' poly in
+          let a = placed d (x ()) in
+          equal ~msg:"before the loss" close (poly (x ())) (host (g a));
+          Faulty.lose d "fault";
+          raises_match (lost_on d "fault") (fun () -> g a);
+          raises_match (lost_on d "fault") (fun () -> Rune.jit' Nx.neg a));
+      test "a call whose capture is on a lost device raises Lost naming it"
+        (fun () ->
+          let d = Faulty.device 2 in
+          let w = placed d (y ()) in
+          let g = Rune.jit' (fun a -> Nx.mul a w)
+          and h = Rune.jit' (fun (_ : (float, Nx.float32_elt) Nx.t) -> w) in
+          equal ~msg:"before the loss" close
+            (Nx.mul (x ()) (y ()))
+            (host (g (x ())));
+          Faulty.lose d "fault";
+          raises_match (lost_on d "fault") (fun () -> g (x ()));
+          raises_match (lost_on d "fault") (fun () -> h (x ())));
+      test
+        "a reopened device compiles anew, and devices the loss does not reach \
+         compute as before" (fun () ->
+          let d = Faulty.device 3 and other = Faulty.device 4 in
+          let g = Rune.jit' poly in
+          ignore (g (placed d (x ())));
+          let b = placed other (x ()) in
+          ignore (g b);
+          Faulty.lose d "fault";
+          let d' = Faulty.device 3 in
+          equal ~msg:"another device" close (poly (x ())) (host (g b));
+          equal ~msg:"the reopened device" close
+            (poly (x ()))
+            (host (g (placed d' (x ()))));
+          equal ~msg:"on the host" close (poly (x ())) (g (x ())));
+    ]
+
 let () =
   exit
     (run "Rune_internals.Jit"
@@ -4170,6 +4218,7 @@ let () =
          disk;
          on_one_device ~name:"one device" d4;
          sums_fuse_products Nx.Device.host;
+         lost_devices;
          group ~tags:[ "slow" ] "metal" (on_gpu "Metal" (opened Nx_metal.get));
          group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened Nx_cuda.get));
          group ~tags:[ "slow" ] "nv" (on_gpu "NV" (opened Nx_nv.get));

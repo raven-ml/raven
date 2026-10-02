@@ -24,7 +24,8 @@
   test_conformance
   test_buffers
   test_intercept
-  test_allocation)
+  test_allocation
+  test_lost)
  (package nx)
  (modules :standard \ test_format links_no_metal)
  (libraries

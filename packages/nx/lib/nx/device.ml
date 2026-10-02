@@ -55,7 +55,8 @@ let pp ppf d = Format.pp_print_string ppf (name d)
 
 (* Test memories: ["CPU:k"] holds its values in the host's memory, which it maps
    as it is, and loads no programs, so the host computes on it. Each [k] is one
-   memory, minted by its first use: nx.device mints a name once. *)
+   memory, minted by its first use, until it is lost: nx.device then mints its
+   name again for a fresh memory. *)
 
 let tests = Hashtbl.create 4
 let tests_lock = Mutex.create ()
@@ -63,8 +64,8 @@ let tests_lock = Mutex.create ()
 let test_memory k =
   Mutex.protect tests_lock @@ fun () ->
   match Hashtbl.find_opt tests k with
-  | Some m -> m
-  | None ->
+  | Some m when Nx_device.lost m = None -> m
+  | Some _ | None ->
       let m =
         Nx_device.Driver.device
           ~name:(Printf.sprintf "CPU:%d" k)
@@ -72,7 +73,7 @@ let test_memory k =
           (Host_visible
              { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
       in
-      Hashtbl.add tests k m;
+      Hashtbl.replace tests k m;
       m
 
 let cpu k =

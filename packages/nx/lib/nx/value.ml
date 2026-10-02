@@ -124,11 +124,18 @@ module Cell = struct
     Mutex.unlock c.lock;
     if not valid then invalid_arg "Nx: unbalanced storage borrow"
 
+  (* A borrow reads the storage, so it also claims the memory of its buffers for
+     reading: the claim raises before [f] if a buffer is dead, or if a lost
+     device can reach its memory ([Nx_device.Lost]), even for no elements. *)
   let with_borrow c f =
     borrow c;
     Fun.protect
       ~finally:(fun () -> release c)
-      (fun () -> match c.state with Live _ -> f () | Consumed k -> consumed k)
+      (fun () ->
+        match c.state with
+        | Live bufs ->
+            Nx_device.Buffer.Claim.with_ ~read:bufs ~donate:[] (fun _ -> f ())
+        | Consumed k -> consumed k)
 
   let upgrade c =
     Mutex.lock c.lock;
