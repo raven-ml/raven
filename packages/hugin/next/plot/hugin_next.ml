@@ -3363,7 +3363,8 @@ type use =
 
 type cx = {
   theme : Theme.t;
-  measures : Text.Layout.t Measures.t ref;
+  measures : Text.Layout.t Measures.t ref; (* Those this layout set. *)
+  reused : Text.Layout.t Measures.t; (* Those of the previous layout. *)
   scales : fitted array;
   uses : use list array; (* Per scale. *)
   ticks : Ticks.t option array; (* None before the first choice. *)
@@ -3380,8 +3381,14 @@ let set cx ?(halign = `Left) ?(valign = `Baseline) k text =
   match Measures.find_opt key !(cx.measures) with
   | Some l -> l
   | None ->
+      (* A layout keeps the measurements it uses, so a chain of layouts each
+         given the previous one holds no more than one does. *)
       let l =
-        Text.Layout.v ~halign ~valign ~fonts:(Theme.fonts cx.theme) ~size text
+        match Measures.find_opt key cx.reused with
+        | Some l -> l
+        | None ->
+            Text.Layout.v ~halign ~valign ~fonts:(Theme.fonts cx.theme) ~size
+              text
       in
       cx.measures := Measures.add key l !(cx.measures);
       l
@@ -4839,7 +4846,7 @@ let layout ?prev ?(theme = Theme.default) size (r : resolved) =
         gbody = None;
       }
   in
-  let measures =
+  let reused =
     match prev with
     | Some l when Theme.equal l.theme theme -> l.measures
     | _ -> Measures.empty
@@ -4850,7 +4857,8 @@ let layout ?prev ?(theme = Theme.default) size (r : resolved) =
   let cx =
     {
       theme;
-      measures = ref measures;
+      measures = ref Measures.empty;
+      reused;
       scales;
       uses;
       ticks = Array.make (Array.length scales) None;
