@@ -3,8 +3,32 @@
 ; plan thread count. test_planner.ml redeclares those externals; the type
 ; checker cannot compare them with the C stubs, so a drift between the two is
 ; undefined behaviour, not a compile error. Keep them in step with kernels.ml.
+; The suite runs as four shards, which dune runs in parallel.
 
-(test
+(executable
  (name test_planner)
- (package nx)
  (libraries nx.cpu nx.array nx.backend nx.dtype nx.device windtrap))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_planner.exe} --shard 1/4)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_planner.exe} --shard 2/4)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_planner.exe} --shard 3/4)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_planner.exe} --shard 4/4)))

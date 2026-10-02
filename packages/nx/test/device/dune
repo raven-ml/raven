@@ -1,7 +1,46 @@
-(test
+; The suite runs as six shards, which dune runs in parallel. nx.device keeps a
+; device for the life of its process, so each shard also collects only the
+; devices of its own tests.
+
+(executable
  (name test_device)
- (package nx)
  (foreign_stubs
   (language c)
   (names test_device_stubs))
  (libraries nx.device nx.dtype unix windtrap))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_device.exe} --shard 1/6)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_device.exe} --shard 2/6)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_device.exe} --shard 3/6)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_device.exe} --shard 4/6)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_device.exe} --shard 5/6)))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (run %{exe:test_device.exe} --shard 6/6)))

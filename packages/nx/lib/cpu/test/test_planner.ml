@@ -118,7 +118,7 @@ let fresh dtype shape =
 
 let bytes_of (a : (_, _) arr) =
   let b = Nx_device.Buffer.bigarray Bigarray.char a.buffer in
-  String.init (Bigarray.Array1.dim b) (Bigarray.Array1.get b)
+  String.init (Bigarray.Array1.dim b) (fun i -> Bigarray.Array1.unsafe_get b i)
 
 (* Values. Floats are uniform in [-1, 1), or near 1 for products, so that a long
    sum's or product's last bits depend on its association. With [specials],
@@ -148,7 +148,7 @@ let value : type a b.
     Random.State.t -> specials:bool -> prod:bool -> (a, b) Nx_dtype.t -> a =
  fun st ~specials ~prod dtype ->
   let float () = float_value st ~specials ~prod in
-  let extreme = Random.State.int st 32 in
+  let extreme () = Random.State.int st 32 in
   match dtype with
   | Float16 -> float ()
   | Float32 -> float ()
@@ -156,12 +156,12 @@ let value : type a b.
   | BFloat16 -> float ()
   | Complex64 -> { Complex.re = float (); im = float () }
   | Int32 -> (
-      match extreme with
+      match extreme () with
       | 0 -> Int32.min_int
       | 1 -> Int32.max_int
       | _ -> Random.State.bits32 st)
   | Int64 -> (
-      match extreme with
+      match extreme () with
       | 0 -> Int64.min_int
       | 1 -> Int64.max_int
       | _ -> Random.State.bits64 st)

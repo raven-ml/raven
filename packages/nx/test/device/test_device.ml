@@ -366,7 +366,12 @@ module Model = struct
   exception No_memory
   exception Refused
 
-  type memory = { cells : int array; on_page : bool }
+  (* A cell is a byte that something wrote, or -1. Out of the heap, so that the
+     collections that drops force do not scan it. *)
+  type cells =
+    (int, Bigarray.int16_signed_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+  type memory = { cells : cells; on_page : bool }
 
   (* The buffers over some memory, the bytes owned, whether they count in the
      device's budget, and for a borrow the host memory it maps. *)
@@ -434,7 +439,9 @@ module Model = struct
     if n < 0 || too_big s n then invalid_arg "create";
     let holding = { owned; budgeted; holders = 1; maps = None } in
     Option.iter (fun d -> d.owns <- holding :: d.owns) device;
-    let memory = { cells = Array.make (nbytes s n) (-1); on_page } in
+    let cells = Bigarray.(Array1.create int16_signed c_layout (nbytes s n)) in
+    Bigarray.Array1.fill cells (-1);
+    let memory = { cells; on_page } in
     let borrowed = false and dropped = false in
     {
       memory;
@@ -512,7 +519,7 @@ module Model = struct
   let holder r = if r.borrowed then None else r.device
 
   let fill r s =
-    String.iteri (fun i c -> r.memory.cells.(r.off + i) <- Char.code c) s
+    String.iteri (fun i c -> r.memory.cells.{r.off + i} <- Char.code c) s
 
   let write seed r =
     alive r;
@@ -528,8 +535,10 @@ module Model = struct
     if n <> size dst then invalid_arg "copy";
     let overlap = src.off < dst.off + n && dst.off < src.off + n in
     if n > 0 && src.memory == dst.memory && overlap then invalid_arg "copy";
-    let cells = Array.sub src.memory.cells src.off n in
-    Array.blit cells 0 dst.memory.cells dst.off n;
+    let sub r = Bigarray.Array1.sub r.memory.cells r.off n in
+    let cells = Bigarray.(Array1.create int16_signed c_layout n) in
+    Bigarray.Array1.blit (sub src) cells;
+    Bigarray.Array1.blit cells (sub dst);
     let between =
       match (holder src, holder dst) with
       | Some a, Some b -> a != b
@@ -557,21 +566,22 @@ module Model = struct
 
   (* Whether [ba] holds the bytes of [r] that something wrote. *)
   let holds r (ba : chars) =
+    let n = size r and cells = r.memory.cells and off = r.off in
     let rec from i =
-      i = size r
+      i = n
       ||
-      let c = r.memory.cells.(r.off + i) in
+      let c = cells.{off + i} in
       (c < 0 || Char.code ba.{i} = c) && from (i + 1)
     in
     from 0
 
   (* [s] with the bytes of [r] that nothing wrote masked. *)
   let masked r s =
-    String.mapi (fun i c -> if r.memory.cells.(r.off + i) < 0 then '?' else c) s
+    String.mapi (fun i c -> if r.memory.cells.{r.off + i} < 0 then '?' else c) s
 
   let contents r =
     String.init (size r) (fun i ->
-        let c = r.memory.cells.(r.off + i) in
+        let c = r.memory.cells.{r.off + i} in
         if c < 0 then '?' else Char.chr c)
 
   let drop r =

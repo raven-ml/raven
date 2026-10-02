@@ -1,6 +1,7 @@
 ; nx links no vendor runtime: these suites link nx, and the build refuses them
 ; if any vendor's library reaches them. Metal's runtime exists on macOS alone,
-; and links_no_metal checks it there.
+; and links_no_metal checks it there. Each suite's default run excludes its
+; slow tests; the slow alias runs them.
 
 (tests
  (names
@@ -41,7 +42,39 @@
   nx.nv.device
   nx.amd.device
   nx.remote.device
-  nx.rdma.device))
+  nx.rdma.device)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package nx)
+ (action
+  (run %{exe:test_elementwise.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package nx)
+ (action
+  (run %{exe:test_indexing.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package nx)
+ (action
+  (run %{exe:test_linalg.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package nx)
+ (action
+  (run %{exe:test_reductions.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package nx)
+ (action
+  (run %{exe:test_rng.exe} --tag slow)))
 
 (test
  (name test_format)
