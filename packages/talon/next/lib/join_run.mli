@@ -30,7 +30,5 @@ type t =
               [n] is [0]. *)
     }  (** A join on {!Join.all}, which streams its left. *)
 
-val compile : Query.t -> t option
-(** [compile q] compiles the join step [q], or is [None] if no unit lowers its
-    condition yet. Raises as {!Eval.widen} does when the columns of an equality
-    atom meet through a conversion not lowered yet. *)
+val compile : Query.t -> t
+(** [compile q] compiles the join step [q]. *)

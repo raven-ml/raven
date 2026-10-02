@@ -332,8 +332,7 @@ let join q left right l r =
     | Error f -> failed (line Query.pp_step q) f
   in
   match Join_run.compile q with
-  | None -> Eval.not_lowered (line Query.pp_step q)
-  | Some (Blocking f) ->
+  | Blocking f ->
       let ran = ref false in
       let next () =
         if !ran then None
@@ -344,7 +343,7 @@ let join q left right l r =
         end
       in
       { next; close }
-  | Some (Streaming { batch; last }) ->
+  | Streaming { batch; last } ->
       let held = lazy (gather right r) in
       let rows = ref 0 and ended = ref false in
       let next () =
@@ -468,7 +467,6 @@ let compile q =
     | Append { input; rest } ->
         append q (stream input) (stream rest) (Query.schema rest)
     | Join { left; right; _ } -> join q left right (stream left) (stream right)
-    | Unnest _ -> Eval.not_lowered (line Query.pp_step q)
   in
   stream q
 

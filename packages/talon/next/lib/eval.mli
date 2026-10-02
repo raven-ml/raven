@@ -83,12 +83,4 @@ val values :
 
 val widen : Type.any -> Type.any -> Column.t -> Column.t
 (** [widen from t] converts a column of type [from] to the type [t] that
-    contains it ({!Type.common}), exactly. The conversion is chosen when
-    [widen from t] is applied, so one that no unit lowers yet raises then
-    ({!not_lowered}), before any data is read. *)
-
-val not_lowered : string -> 'a
-(** [not_lowered what] raises [Invalid_argument] saying that running [what], a
-    step or an expression, is not implemented yet. It is the one place a plan
-    the planning layer accepts is refused, and it goes with the last unit that
-    lowers a step or an expression (RFC issue Core-1). *)
+    contains it ({!Type.common}), exactly. *)

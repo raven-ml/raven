@@ -279,7 +279,6 @@ let passes () =
              src
              |> aggregate ~by:[ "a"; "c" ] Expr.[ "n" := rows ]
              |> filter Expr.(p && c = string "x") );
-           ("an unnest", src |> unnest [ "l" ] |> filter p);
            ("an append", src |> append src |> filter p);
            ( "an inner join, both sides",
              src
@@ -325,11 +324,6 @@ let passes () =
     aggregate ~by:["a"; "c"] ["n" := rows]
     └ filter (a > 1 && c = "x")
       └ u (5 columns) ~columns:["a"; "c"]
-    # an unnest
-    query → a int64, b float64, c string, k int8, l int64
-    unnest ["l"]
-    └ filter (a > 1)
-      └ u (5 columns)
     # an append
     query → a int64, b float64, c string, k int8, l list[int64]
     append
@@ -377,14 +371,6 @@ let stops () =
            ( "position",
              joined ~on:Join.position
                (of_source (source "w" Type.[ ("w", Any float64) ])) );
-           ( "closest, right side",
-             joined
-               ~on:Join.(keys [ "k" ] && closest (ge "a" "t"))
-               (of_source
-                  (source "t"
-                     Type.
-                       [ ("k", Any int8); ("t", Any int64); ("w", Any float64) ]))
-           );
            ( "a frame-dependent derive",
              src |> derive Expr.[ "s" := over (sum a) ] |> filter p );
            ( "a frame-dependent filter",
@@ -425,8 +411,6 @@ let stops () =
              src
              |> select Expr.[ "y" := a + int 1 ]
              |> filter Expr.(Col.int "y" > int 1) );
-           ( "an unnested column",
-             src |> unnest [ "l" ] |> filter Expr.(Col.int "l" > int 1) );
          ])
   @@ __POS_OF__
        {|
@@ -453,13 +437,6 @@ let stops () =
     └ join ~on:position
       ├ u (5 columns)
       └ w (1 column)
-    # closest, right side
-    query → a int64, b float64, c string, k int8, l list[int64], t int64, w float64
-    filter (w > 0.)
-    └ join ~on:(keys ["k"] && closest (ge "a" "t"))
-      ├ filter (a > 1)
-      │ └ u (5 columns)
-      └ t (3 columns)
     # a frame-dependent derive
     query → a int64, b float64, c string, k int8, l list[int64], s int64
     filter (a > 1)
@@ -507,11 +484,6 @@ let stops () =
     filter (y > 1)
     └ select ["y" := a + 1]
       └ u (5 columns) ~columns:["a"]
-    # an unnested column
-    query → a int64, b float64, c string, k int8, l int64
-    filter (l > 1)
-    └ unnest ["l"]
-      └ u (5 columns)
     |}
 
 let failing () =
@@ -523,7 +495,6 @@ let failing () =
       ("above a filter", src |> Query.filter Expr.(b > float 0.) |> f);
       ( "above a join",
         src |> Query.join ~on:(Join.keys [ "k" ]) (of_source other) |> f );
-      ("above an unnest", src |> Query.unnest [ "l" ] |> f);
       ( "through a sort and a select",
         src
         |> Query.select Expr.[ keep Sel.(names [ "a"; "b" ]) ]
@@ -553,11 +524,6 @@ let failing () =
     └ join ~on:(keys ["k"])
       ├ u (5 columns)
       └ other (2 columns)
-    # a cast above an unnest
-    query → a int64, b float64, c string, k int8, l int64
-    filter (cast int8 a = 1)
-    └ unnest ["l"]
-      └ u (5 columns)
     # a cast through a sort and a select
     query → a int64, b float64
     sort [asc "b"]
@@ -581,11 +547,6 @@ let failing () =
     └ join ~on:(keys ["k"])
       ├ u (5 columns)
       └ other (2 columns)
-    # a user function above an unnest
-    query → a int64, b float64, c string, k int8, l int64
-    filter (<const> $ a)
-    └ unnest ["l"]
-      └ u (5 columns)
     # a user function through a sort and a select
     query → a int64, b float64
     sort [asc "b"]
@@ -1215,7 +1176,6 @@ let steps =
             q );
       ("append itself", fun q -> append q q);
       ("append a source", append (of_source s_exact));
-      ("unnest", unnest [ "l" ]);
     ]
 
 let starts =

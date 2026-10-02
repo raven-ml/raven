@@ -25,8 +25,6 @@ let groups b segments = { (frame b) with segments; reduced = true }
 type cause = Data of Error.t | Raised of exn * Printexc.raw_backtrace
 type failure = { row : int; cause : cause }
 
-let not_lowered = Kernels.not_lowered
-
 (* Columns
 
    A value is a column of the frame's rows, or of one row where it computes from
@@ -625,7 +623,12 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       | Offset (step, a) -> unary_checked a (Kernels.offset step (t a))
       | Parse_with (fmt, ty, a) -> textual a (Kernels.parse_with fmt (Any ty))
       | Format_with (fmt, a) -> unary a (Form.format_with fmt))
-  | _ -> not_lowered (Format.asprintf "%a" Expr.pp e)
+  (* Binding traces lifts away, an option stands only where [ocaml] reads it,
+     and arithmetic and nx operations have a column type. *)
+  | (Lift _ | Lift2 _ | Option _), _
+  | ( (Int _ | Float _ | Nx_unary _ | Nx_binary _ | Nx_where _),
+      (Extension _ | Value) ) ->
+      invalid_arg (Format.asprintf "Eval: %a is not bound" Expr.pp e)
 
 (* [ocaml st e] computes [e]'s values as OCaml values, [None] where [e] is
    null. *)

@@ -311,15 +311,6 @@ let rec push pending q =
         (fun c -> if keys c then Some c else None)
         (fun input -> Query.make (Aggregate { r with input }))
         input
-  | Unnest { columns; input } ->
-      let passes c =
-        (not (Expr.can_fail c))
-        && not (List.exists (fun n -> List.mem n columns) (Expr.reads c))
-      in
-      past_one ~slices:false
-        (fun c -> if passes c then Some c else None)
-        (fun input -> Query.make (Unnest { columns; input }))
-        input
   | Append { input; rest } ->
       let passing, staying =
         settle ~slices:false (fun c -> Some (`Input, c)) pending
@@ -340,17 +331,12 @@ let rec push pending q =
                  (on :> Join.atom list)) ->
       let lefts = Schema.names (Query.schema left)
       and rights = Schema.names (Query.schema right) in
-      let ordering =
-        List.exists
-          (function Join.Closest _ | Nearest _ -> true | _ -> false)
-          (on :> Join.atom list)
-      in
       let route c =
         let reads = Expr.reads c in
         if Expr.can_fail c then None
         else if subset reads lefts then Some (`Left, c)
         else if
-          kind = Join.Inner && (not ordering) && subset reads rights
+          kind = Join.Inner && subset reads rights
           && not (List.exists (fun n -> List.mem n lefts) reads)
         then Some (`Right, c)
         else None
@@ -417,12 +403,7 @@ let unkept q =
 let cond_columns (on : Join.cond) =
   List.fold_left
     (fun (ls, rs) -> function
-      | Join.Eq (l, r)
-      | Compare (_, l, r)
-      | Closest { left = l; right = r; _ }
-      | Nearest { left = l; right = r; _ } ->
-          (l :: ls, r :: rs)
-      | Position -> (ls, rs))
+      | Join.Eq (l, r) -> (l :: ls, r :: rs) | Position -> (ls, rs))
     ([], [])
     (on :> Join.atom list)
 
@@ -497,10 +478,7 @@ let rec prune ~ordered need q =
           Query.make
             (Append
                { input = side ~ordered input; rest = side ~ordered:false rest })
-      | Unnest { columns; input } ->
-          Query.make
-            (Unnest
-               { columns; input = prune ~ordered (union need columns) input }))
+      )
 
 (* [place need fs leaf] is the filters of the conjuncts [fs] over [leaf], a
    source, read with this place's request. The place offers the source the

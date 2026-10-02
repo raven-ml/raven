@@ -1712,9 +1712,9 @@ module Source : sig
       - [rows], the number of rows the source yields for a request without
         filters, which plans print, and which turns a slice from the end into
         one from the start. Defaults to unknown.
-      - [sorted], the order the rows come in, by talon's total order, which lets
-        an ordered join skip a sort. Talon checks it as rows arrive, and a row
-        out of order fails the run. Defaults to no order.
+      - [sorted], the order the rows come in, by talon's total order. Talon
+        checks it as rows arrive, and a row out of order fails the run. Defaults
+        to no order.
       - [pushdown], which answers for one conjunct whether the source applies
         it. Talon calls it when it plans a run, any number of times: it must be
         pure and do no IO. Defaults to {!Unsupported} for every conjunct.
@@ -1742,26 +1742,19 @@ module Join : sig
       [left |> Query.join ~on right] pairs the rows of [left] and [right] that
       the condition [on] matches. A condition is a value, a conjunction of
       {e atoms} built with {!( && )} inside [Join.( … )]:
-      [Join.(keys [ "ticker" ] && closest (ge "ts" "quote_ts"))]. Atoms name a
-      left column, then a right column.
+      [Join.(keys [ "ticker" ] && eq "day" "date")]. Atoms name a left column,
+      then a right column.
 
       {b Algorithms.} Each condition runs as one algorithm, with the cost that
       [Query.join] states, and a conjunction that no algorithm runs raises when
       it is built. The conditions are:
       - {e equality}: one or more equality atoms ({!keys}, {!eq});
-      - {e inequality}: equality atoms and one or more inequality atoms ({!lt},
-        {!le}, {!gt}, {!ge}), which all compare to one right column. A range on
-        two right columns is a join on one of them, then a [filter];
-      - {e closest} and {e nearest}: equality atoms and one {!closest} or
-        {!nearest} atom;
       - {!position}, alone;
       - {!all}, every pair, which is also the condition with no atom: [all && c]
         is [c].
 
       {b Keys.} Equality atoms match by key identity ({!Type.compare_value},
-      null being one key), so null keys match. The columns of an inequality,
-      {!closest} or {!nearest} atom order by talon's total order, and a null in
-      one of them fails the run.
+      null being one key), so null keys match.
 
       {b Columns.} A {!Semi} or {!Anti} join has the left columns. Another join
       has the left columns, then the right columns but those of equality atoms,
@@ -1787,46 +1780,6 @@ module Join : sig
   (** [eq l r] matches the rows whose left column [l] and right column [r] are
       the same key. [l] and [r] must meet ({!Type.common}). *)
 
-  val lt : string -> string -> cond
-  (** [lt l r] matches the rows whose left column [l] is less than the right
-      column [r]. [l] and [r] must meet, at a type that orders: one that neither
-      is nor contains an extension type. *)
-
-  val le : string -> string -> cond
-  (** [le l r] matches where [l] is at most [r], like {!lt}. *)
-
-  val gt : string -> string -> cond
-  (** [gt l r] matches where [l] is greater than [r], like {!lt}. *)
-
-  val ge : string -> string -> cond
-  (** [ge l r] matches where [l] is at least [r], like {!lt}. *)
-
-  val closest : ?within:('a, Expr.row) Expr.t -> cond -> cond
-  (** [closest ?within c] matches each left row with the right row that best
-      satisfies the inequality [c]: [closest (ge "ts" "quote_ts")] is the latest
-      quote at or before [ts]. Under {!ge} and {!gt} that is the right row with
-      the greatest right column, and under {!le} and {!lt} the one with the
-      least. Among right rows tied on it, the last in right order wins. [within]
-      keeps the match only if the two columns differ by at most [within], a
-      literal of the columns' difference:
-      - the columns' common type for integer and float columns, [Expr.int 5],
-        [Expr.float 0.5];
-      - a span of the columns' unit for datetimes, durations and clocks, and of
-        whole days for dates, [Expr.span (Time.Span.s 5)].
-
-      [within] defaults to no bound. Over other types there is no difference, so
-      [within] is a problem. A [within] that is not a literal, or that is
-      negative, is a problem.
-
-      Raises [Invalid_argument] if [c] is not one inequality atom. *)
-
-  val nearest : ?within:('a, Expr.row) Expr.t -> string -> string -> cond
-  (** [nearest ?within l r] matches each left row with the right row whose
-      column [r] is nearest to its column [l], in either direction. A tie in
-      distance goes to the smaller key, and among right rows tied on the key the
-      last in right order wins. [within] bounds the distance as for {!closest}.
-      [l] and [r] must have a difference, as for {!closest}'s [within]. *)
-
   val position : cond
   (** [position] matches row i of the left with row i of the right. *)
 
@@ -1836,10 +1789,9 @@ module Join : sig
   val ( && ) : cond -> cond -> cond
   (** [c0 && c1] matches the pairs that both [c0] and [c1] match.
 
-      Raises [Invalid_argument] if no algorithm runs the conjunction: one that
-      holds {!position} and another atom, two {!closest} or {!nearest} atoms,
-      one of them and an inequality atom, or inequality atoms on two right
-      columns; or if it holds one equality atom twice. *)
+      Raises [Invalid_argument] if no algorithm runs the conjunction, one that
+      holds {!position} and another atom, or if it holds one equality atom
+      twice. *)
 
   (** {1:kinds Kinds and counts} *)
 
@@ -2029,19 +1981,14 @@ module Query : sig
       min(n, m) rows, {!Join.Left} keeps n, {!Join.Full} max(n, m), and
       {!Join.Anti} [left]'s rows past m. Its columns are those {!Join}
       describes. An equality or {!Join.position} join blocks on both inputs; a
-      join on {!Join.all} blocks on [right] and streams [left]. It runs in:
-      - O(n + m + matches) for an equality join;
-      - O((n + m) log m + matches log matches) for an inequality join;
-      - O((n + m) log m) for {!Join.closest} and {!Join.nearest}.
+      join on {!Join.all} blocks on [right] and streams [left]. An equality join
+      runs in O(n + m + matches).
 
       Its problems are, for each atom of [on] in order: a column missing on its
-      side; columns that do not meet, or, outside equality, do not order; a
-      [within] or a {!Join.nearest} over columns without a difference; and a
-      [within] that is not a literal, is negative, is not of the difference's
-      kind, or that the difference's type does not hold. Then, in a {!Join.Full}
-      join, a left column that is the left of two equality atoms, and, except in
-      a {!Join.Semi} or {!Join.Anti} join, the joined columns that have one
-      name. *)
+      side, and columns that do not meet. Then, in a {!Join.Full} join, a left
+      column that is the left of two equality atoms, and, except in a
+      {!Join.Semi} or {!Join.Anti} join, the joined columns that have one name.
+  *)
 
   val append : t -> t -> t
   (** [append rest q] is [q]'s rows, then [rest]'s, written [q |> append rest].
@@ -2051,17 +1998,6 @@ module Query : sig
 
       Its problems are a column that only [q] has, one that only [rest] has, and
       a column whose types differ. *)
-
-  val unnest : string list -> t -> t
-  (** [unnest cs q] is one row per element of the list columns [cs], in order,
-      each column of [cs] replaced in place by its elements, of the list's
-      element type, and [q]'s other columns repeated. Several columns zip: their
-      lists have one length in each row, a null list counting as empty, and
-      unequal lengths fail the run. A row whose lists are null or empty gives no
-      row. It streams in O(n + elements).
-
-      Its problems are an empty [cs], a name that names no column or is named
-      twice, and a column that is not a list. *)
 
   (** {1:running Running} *)
 
@@ -2147,14 +2083,12 @@ module Query : sig
       - an [aggregate] with keys, when the conjunct reads only keys and none of
         their types holds floats, since [-0.] and [0.] are one key with two
         values;
-      - an [unnest], when the conjunct reads no unnested column;
       - an [append], into both inputs;
       - a [join] whose [~each_left] and [~each_right] are [Any], on a condition
         other than {!Join.position}: into the left input when the conjunct reads
         only left columns and the join is [Inner], [Left], [Semi] or [Anti], and
-        into the right input when it reads only right columns, the join is
-        [Inner] and the condition has no {!Join.closest} or {!Join.nearest}
-        atom.
+        into the right input when it reads only right columns and the join is
+        [Inner].
 
       It stops at a [slice], at a [Full] join, at a join with an assertion, at a
       step with an output or predicate that is not row-local, and at a table.
@@ -2164,8 +2098,8 @@ module Query : sig
       fail, one with a [cast] that narrows, [Str.parse], temporal arithmetic or
       parsing, [of_option] or [$], passes only the steps that show it the rows
       they receive: a [sort], a [select] or a [derive], an [aggregate]'s keys
-      and an [append]. Below a [filter], a [join] or an [unnest] it would meet
-      rows that [q] never shows it.
+      and an [append]. Below a [filter] or a [join] it would meet rows that [q]
+      never shows it.
 
       When it reaches a source, a conjunct that compares a column with a
       literal, tests it with {!Expr.is_in} or {!Expr.is_null}, or combines such

@@ -3,10 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A step's expressions are bound to its input's schema, and a join's condition
-   is bound by [Join.check]: the evaluator reads types from them, and the plan
-   prints and compares them. Steps keep only bound arguments, so that a step the
-   optimizer builds is a step like any other. *)
+(* A step's expressions are bound to its input's schema: the evaluator reads
+   types from them, and the plan prints and compares them. Steps keep only bound
+   arguments, so that a step the optimizer builds is a step like any other. *)
 type node =
   | Of_table of Table.t
   | Of_source of {
@@ -34,7 +33,6 @@ type node =
       right : t;
     }
   | Append of { input : t; rest : t }
-  | Unnest of { columns : string list; input : t }
 
 and t = { node : node; schema : Schema.t }
 
@@ -84,13 +82,6 @@ let make node =
         Schema.v (List.map key by @ columns outputs)
     | Join { kind; on; left; right; _ } ->
         Join.columns kind left.schema right.schema on
-    | Unnest { columns; input } ->
-        let element (n, (Type.Any t as a)) =
-          match t with
-          | List e when List.mem n columns -> (n, Type.Any e)
-          | _ -> (n, a)
-        in
-        Schema.v (List.map element (Schema.columns input.schema))
   in
   { node; schema }
 
@@ -199,8 +190,6 @@ let pp_step ppf q =
         pf "@ ~each_right:%s" (count_name each_right);
       pf "@]"
   | Append _ -> pf "append"
-  | Unnest { columns; _ } ->
-      pf "@[<hov 2>unnest %a@]" (Type.pp_list pp_name) columns
 
 let inputs q =
   match q.node with
@@ -210,8 +199,7 @@ let inputs q =
   | Filter { input; _ }
   | Sort { input; _ }
   | Slice { input; _ }
-  | Aggregate { input; _ }
-  | Unnest { input; _ } ->
+  | Aggregate { input; _ } ->
       [ input ]
   | Join { left; right; _ } -> [ left; right ]
   | Append { input; rest } -> [ input; rest ]
@@ -226,7 +214,6 @@ let map_inputs f = function
   | Aggregate r -> Aggregate { r with input = f r.input }
   | Join r -> Join { r with left = f r.left; right = f r.right }
   | Append { input; rest } -> Append { input = f input; rest = f rest }
-  | Unnest r -> Unnest { r with input = f r.input }
 
 (* [lines width pp] is what [pp] formats at the margin [width], line by line.
    Below 40 columns, as deep in a tree, Format would break a step at every
@@ -431,9 +418,9 @@ let aggregate ~by os q =
 let join ?(kind = Join.Inner) ?(each_left = Join.Any) ?(each_right = Join.Any)
     ~on right left =
   let inputs = [ ("left", left.schema); ("right", right.schema) ] in
-  match Join.check kind left.schema right.schema on with
-  | Ok on -> make (Join { kind; each_left; each_right; on; left; right })
-  | Error ps -> fail "join" inputs (List.map (fun p -> Arg p) ps)
+  check "join" inputs
+    (List.map (fun p -> Arg p) (Join.check kind left.schema right.schema on));
+  make (Join { kind; each_left; each_right; on; left; right })
 
 let append rest q =
   let change : Schema.change -> entry = function
@@ -447,19 +434,6 @@ let append rest q =
     [ ("input", q.schema); ("rest", rest.schema) ]
     (List.map change (Schema.diff q.schema rest.schema));
   make (Append { input = q; rest })
-
-let unnest columns q =
-  let column n =
-    match Schema.find q.schema n with
-    | None -> missing "" q.schema n
-    | Some (Any (List _)) -> []
-    | Some (Any t) -> [ arg "%a is %a, not a list." pp_name n Type.pp t ]
-  in
-  check "unnest" (input q)
-    ((if List.is_empty columns then [ arg "no column to unnest." ] else [])
-    @ List.concat_map column (first columns)
-    @ List.map (arg "%a is named twice." pp_name) (Problem.repeated columns));
-  make (Unnest { columns; input = q })
 
 let check_values e q =
   match Expr.bind_value q.schema e with
@@ -502,9 +476,8 @@ let step_equal ~input ~table q0 q1 =
         && j0.each_right = j1.each_right
         && Join.equal j0.on j1.on
     | Append _, Append _ -> true
-    | Unnest u0, Unnest u1 -> List.equal String.equal u0.columns u1.columns
     | ( ( Of_table _ | Of_source _ | Select _ | Derive _ | Filter _ | Sort _
-        | Slice _ | Aggregate _ | Join _ | Append _ | Unnest _ ),
+        | Slice _ | Aggregate _ | Join _ | Append _ ),
         _ ) ->
         false)
   && List.equal input (inputs q0) (inputs q1)

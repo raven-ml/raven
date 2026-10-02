@@ -31,7 +31,6 @@ val join :
   t
 
 val append : t -> t -> t
-val unnest : string list -> t -> t
 val equal : t -> t -> bool
 val pp : Format.formatter -> t -> unit
 
@@ -83,7 +82,6 @@ type node =
       right : t;
     }
   | Append of { input : t; rest : t }
-  | Unnest of { columns : string list; input : t }
 
 val node : t -> node
 (** [node q] is [q]'s last step. *)

@@ -18,9 +18,7 @@
     join blocks on both inputs, the left pulled first, except a join on
     [Join.all], which pulls its right to its end and then streams its left. A
     source's parts are opened in order, each when the one before ends, and its
-    batches are checked against the request and the source's order. A step or an
-    expression that no unit lowers yet is refused by {!Eval.not_lowered} before
-    any data is read.
+    batches are checked against the request and the source's order.
 
     {b Failures as one row at a time.} A run fails exactly where evaluating its
     optimized plan one row at a time would: at the first row, in that order,

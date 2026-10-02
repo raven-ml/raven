@@ -1961,22 +1961,6 @@ let joins =
           equal (list int) [ 4; 2 ] (List.rev (require_ok ~pp:Error.pp seen)));
     ]
 
-let refusals =
-  let t = v [ ("a", Column.v Type.int64 [| 2; 1 |]) ] in
-  group "Not yet lowered"
-    [
-      test "an inequality join is refused, naming the step" (fun () ->
-          let r = v [ ("b", Column.v Type.int64 [| 1 |]) ] in
-          expect (message (fun () -> Query.run (join (Join.lt "a" "b") t r)))
-          @@ __POS_OF__ {| join ~on:(lt "a" "b") is not implemented yet |});
-      test "an unnest is refused, naming the step" (fun () ->
-          let t = v [ ("l", Column.v Type.(list int64) [| [| 1 |]; [||] |]) ] in
-          expect
-            (message (fun () ->
-                 Query.run (Query.unnest [ "l" ] (Query.of_table t))))
-          @@ __POS_OF__ {| unnest ["l"] is not implemented yet |});
-    ]
-
 (* Every expression constructor runs, so that one that comes to refuse at run
    time fails here. *)
 
@@ -2481,7 +2465,6 @@ let () =
          lifts;
          sorting;
          sources;
-         refusals;
          constructors;
          utc_wall_clock;
          kit_runs;

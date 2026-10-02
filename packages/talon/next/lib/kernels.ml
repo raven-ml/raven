@@ -5,8 +5,6 @@
 
 type checked = Column.t * (int * Error.t) option
 
-let not_lowered what = invalid_arg (what ^ " is not implemented yet")
-
 (* Columns *)
 
 let tensor dt c =
@@ -237,8 +235,9 @@ let rec convert (Type.Any from) (Type.Any into as t) :
               let ok = Nx.equal_s (Nx.mod_s x k) 0L in
               checked t [ c ] ~live ~ok (Nx.div_s x k) (cannot c)
       | _ ->
-          not_lowered
-            (Format.asprintf "cast %a to %a" Type.pp from Type.pp into))
+          invalid_arg
+            (Format.asprintf "Kernels.cast: binding does not cast %a to %a"
+               Type.pp from Type.pp into))
 
 let cast from into =
   let k = convert from into in

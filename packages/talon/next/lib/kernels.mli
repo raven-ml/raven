@@ -5,24 +5,22 @@
 
 (** Kernels of casts, text and temporal operations.
 
-    Each function analyses its types when applied to them, and refuses there,
-    with {!not_lowered}, what no unit lowers yet; the function it returns maps
-    columns of those types, of the frame's rows or of one row that nx
-    broadcasts. A kernel that can fail returns the failure at the first row
+    Each function analyses its types when applied to them; the function it
+    returns maps columns of those types, of the frame's rows or of one row that
+    nx broadcasts. A kernel that can fail returns the failure at the first row
     where it fails, with its column, which is computed as if that row had not
     failed and is null where it does. *)
 
 type checked = Column.t * (int * Error.t) option
 (** The type for a column and the failure, if any: the row and the error. *)
 
-val not_lowered : string -> 'a
-(** [not_lowered what] raises [Invalid_argument] saying that running [what], a
-    step or an expression, is not implemented yet. *)
-
 val cast : Type.any -> Type.any -> Column.t -> checked
 (** [cast from ty c] is [Talon_next.Expr.cast ty] of [c], a column of [from],
     which binding lets [cast] convert to [ty]. A value that [ty] cannot hold
-    fails, as [cannot cast 3.5 to int32]. *)
+    fails, as [cannot cast 3.5 to int32].
+
+    Raises [Invalid_argument] if binding does not let [cast] convert [from] to
+    [ty]. *)
 
 val text : 'a Expr.text_op -> Column.t -> checked
 (** [text op c] is [op] of the [string] column [c]. A text that [Str.parse] does

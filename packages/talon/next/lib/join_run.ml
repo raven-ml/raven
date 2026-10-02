@@ -18,8 +18,8 @@ let ints n k = Nx.full Nx.int64 [| n |] (Int64.of_int k)
 (* [exclusive c] is the sum of the entries of [c] before each one. *)
 let exclusive c = Nx.sub (Nx.cumsum c) c
 
-(* [assemble q l li r ri keys] is [q]'s rows: each column is the one [keys]
-   give it, or else [l]'s taken at [li], or else [r]'s taken at [ri]. *)
+(* [assemble q l li r ri keys] is [q]'s rows: each column is the one [keys] give
+   it, or else [l]'s taken at [li], or else [r]'s taken at [ri]. *)
 let assemble q l li r ri keys =
   let column n =
     match List.assoc_opt n keys with
@@ -192,12 +192,11 @@ let compile q =
   match Query.node q with
   | Join { kind; each_left; each_right; on; left; right } -> (
       let counts = (each_left, each_right) in
-      let eq = function Join.Eq (l, r) -> Some (l, r) | _ -> None in
+      let eq = function Join.Eq (l, r) -> Some (l, r) | Position -> None in
       match (on :> Join.atom list) with
-      | [] -> Some (cross q kind counts)
-      | [ Position ] -> Some (Blocking (position q kind counts))
-      | atoms when List.for_all (fun a -> Option.is_some (eq a)) atoms ->
+      | [] -> cross q kind counts
+      | [ Position ] -> Blocking (position q kind counts)
+      | atoms ->
           let eqs = List.filter_map eq atoms in
-          Some (Blocking (equality q kind counts left right eqs))
-      | _ -> None)
+          Blocking (equality q kind counts left right eqs))
   | _ -> invalid_arg "Join_run.compile: not a join"

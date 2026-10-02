@@ -388,9 +388,6 @@ let verbs () =
            (fun () -> slice ~offset:0 ~length:(-1) (of_columns 1));
            (fun () -> slice ~offset:0 ~length:(-1) (of_columns 0));
            (fun () -> of_kinds |> append (of_source rest));
-           (fun () -> unnest [] of_kinds);
-           (fun () -> unnest [ "l"; "f"; "nope"; "l" ] of_kinds);
-           (fun () -> unnest [ "nope"; "nope" ] of_kinds);
          ])
   @@ __POS_OF__
        {|
@@ -473,21 +470,6 @@ let verbs () =
       "extra" (bool) is only in rest.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       rest (13 columns): x8 int16, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-
-    unnest: 1 problem
-      no column to unnest.
-      input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-
-    unnest: 3 problems
-      "f" is float64, not a list.
-      no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
-      "l" is named twice.
-      input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-
-    unnest: 2 problems
-      no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
-      "nope" is named twice.
-      input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
     |}
 
 let joins () =
@@ -522,29 +504,8 @@ let joins () =
          [
            join (keys [ "nope" ]);
            join (eq "g" "y8");
-           join (eq "t" "t2" && lt "x8" "y8");
-           join (lt "t" "t2");
-           join (closest ~within:(Col.float "f") (ge "f" "f2"));
-           join (closest ~within:Expr.(float (-1.)) (ge "f" "f2"));
-           join (closest ~within:Expr.(int 1) (ge "g" "g2"));
-           join (closest ~within:Expr.(int 5) (ge "ts" "ts2"));
-           join (closest ~within:Expr.(span (Time.Span.hours 1)) (ge "d" "d2"));
-           join (nearest "g" "g2");
            join (eq "t" "t3");
            join (eq "f" "t2");
-           join (closest ~within:Expr.(float Float.nan) (ge "f" "f2"));
-           join
-             (closest
-                ~within:
-                  Expr.(date (Option.get (Time.Date.of_civil (2024, 1, 1))))
-                (ge "d" "d2"));
-           join (lt "r" "r2");
-           join (closest ~within:(Col.float "f") (ge "nope" "f2"));
-           join (closest ~within:Expr.(int 300) (ge "x8" "y8"));
-           join (closest ~within:Expr.(span (Time.Span.s (-5))) (ge "ts" "ts2"));
-           join (nearest ~within:Expr.(float (-1.)) "f" "f2");
-           join (nearest ~within:Expr.(float 0.5) "f" "f2");
-           join (nearest ~within:Expr.(int 1) "g" "g2");
            join ~right:shared_f (eq "x8" "y8");
            join ~kind:Full (eq "x8" "y8" && eq "x8" "f2");
            join ~right:shared (eq "x8" "y8");
@@ -563,43 +524,6 @@ let joins () =
       left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
 
-    no exception
-
-    join: 1 problem
-      "t" and "t2" are ext[ymir.epoch, float64], which orders only through its declaration: compare their storage, derived first.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:f is not a literal.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:(-1.) is not at least zero.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:1: "g" and "g2" are string, which has no difference.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:5 is int, where the difference of "ts" and "ts2" is duration[ns].
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:1h is not a whole number of days.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      nearest "g" "g2": string has no difference.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
     join: 1 problem
       "t" is ext[ymir.epoch, float64] and "t3" is ext[ymir.epoch "v2", float64], which do not meet: cast one first.
       left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
@@ -607,49 +531,6 @@ let joins () =
 
     join: 1 problem
       "f" is float64 and "t2" is ext[ymir.epoch, float64], which do not meet: cast one first.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:nan is not at least zero.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:2024-01-01 is date, where the difference of "d" and "d2" is duration[s].
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      "r" and "r2" are record[e ext[ymir.epoch, float64]], which holds an extension type and has no order.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 2 problems
-      left: no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
-      ~within:f is not a literal.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:300: int8 does not hold it.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:(-5s) is not at least zero.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    join: 1 problem
-      ~within:(-1.) is not at least zero.
-      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
-
-    no exception
-
-    join: 1 problem
-      nearest "g" "g2": string has no difference.
       left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
 
@@ -719,10 +600,6 @@ let rejected_conditions () =
        Join.
          [
            (fun () -> position && keys [ "a" ]);
-           (fun () -> closest (ge "a" "b") && nearest "c" "d");
-           (fun () -> closest (ge "a" "b") && lt "c" "d");
-           (fun () -> ge "ts" "start" && lt "ts" "end");
-           (fun () -> closest (keys [ "a" ]));
            (fun () -> keys []);
            (fun () -> keys [ "a"; "b"; "a" ]);
            (fun () -> keys [ "a" ] && keys [ "a" ]);
@@ -732,14 +609,6 @@ let rejected_conditions () =
   @@ __POS_OF__
        {|
     Join.( && ): position && keys ["a"]: position joins row i with row i and takes no other atom
-
-    Join.( && ): closest (ge "a" "b") && nearest "c" "d": a join takes one closest or nearest atom
-
-    Join.( && ): closest (ge "a" "b") && lt "c" "d": a closest or nearest join takes no inequality: filter after it
-
-    Join.( && ): ge "ts" "start" && lt "ts" "end": an inequality join compares to one right column: join on one, then filter
-
-    Join.closest: keys ["a"] is not one inequality atom
 
     Join.keys: no key; a join on no key is Join.all
 
@@ -761,36 +630,10 @@ let semi_on =
 
 (* [atom_variants] pairs conditions that differ in one part of one atom. *)
 let atom_variants =
-  let five = Expr.int 5 and six = Expr.int 6 in
   Join.
     [
       ("the left columns of eq", eq "a" "b", eq "b" "b");
       ("the right columns of eq", eq "a" "a", eq "a" "b");
-      ("lt and le", lt "a" "b", le "a" "b");
-      ("gt and ge", gt "a" "b", ge "a" "b");
-      ("lt and gt", lt "a" "b", gt "a" "b");
-      ("the left columns of an inequality", lt "a" "b", lt "b" "b");
-      ("the right columns of an inequality", lt "a" "a", lt "a" "b");
-      ("the orders of closest", closest (ge "a" "b"), closest (gt "a" "b"));
-      ("the left columns of closest", closest (ge "a" "b"), closest (ge "b" "b"));
-      ( "the right columns of closest",
-        closest (ge "a" "a"),
-        closest (ge "a" "b") );
-      ( "closest with and without within",
-        closest (ge "a" "b"),
-        closest ~within:five (ge "a" "b") );
-      ( "the withins of closest",
-        closest ~within:five (ge "a" "b"),
-        closest ~within:six (ge "a" "b") );
-      ("closest and nearest", closest (ge "a" "b"), nearest "a" "b");
-      ("the left columns of nearest", nearest "a" "b", nearest "b" "b");
-      ("the right columns of nearest", nearest "a" "a", nearest "a" "b");
-      ( "nearest with and without within",
-        nearest "a" "b",
-        nearest ~within:five "a" "b" );
-      ( "the withins of nearest",
-        nearest ~within:five "a" "b",
-        nearest ~within:six "a" "b" );
       ("position and all", position, all);
       ("position and keys", position, keys [ "a" ]);
       ("one atom and two", keys [ "a" ], keys [ "a"; "b" ]);
@@ -800,8 +643,6 @@ let conditions =
   group "Join conditions"
     [
       test "refuses each conjunction that no algorithm runs" rejected_conditions;
-      test "accepts a range on one right column" (fun () ->
-          ignore Join.(ge "ts" "start" && lt "ts2" "start" && keys [ "k" ]));
       test "accepts two equality atoms on one left column" (fun () ->
           ignore Join.(eq "a" "b" && eq "a" "c"));
       test "all is the unit of &&" (fun () ->
@@ -925,21 +766,6 @@ let aggregate_by (s, by) =
     (Schema.v (List.map key by @ [ ("rows_", Type.Any Type.int64) ]))
     (Query.schema (Query.aggregate ~by Expr.[ "rows_" := rows ] (of_schema s)))
 
-let unnest_lists s =
-  let lists =
-    List.filter_map
-      (fun (n, Type.Any t) -> match t with Type.List _ -> Some n | _ -> None)
-      (Schema.columns s)
-  in
-  cover "has a list column" (lists <> []);
-  if lists <> [] then
-    let element (n, (Type.Any t as a)) =
-      match t with Type.List e -> (n, Type.Any e) | _ -> (n, a)
-    in
-    equal schema_w
-      (Schema.v (List.map element (Schema.columns s)))
-      (Query.schema (Query.unnest lists (of_schema s)))
-
 let join_gen =
   Gen.(
     let+ left = columns_gen [ "a"; "b"; "c" ]
@@ -976,8 +802,6 @@ let resolution =
         derive_one;
       prop "select has its outputs' names, in order" subset_gen select_names;
       prop "aggregate has its keys, then its outputs" subset_gen aggregate_by;
-      prop "unnest replaces lists by their elements in place" schema_gen
-        unnest_lists;
       prop "a join has the left columns, then the right ones but the keys"
         join_gen joined;
     ]
@@ -988,11 +812,7 @@ let resolution =
 let variants =
   let q = Query.of_source flights and c = Query.of_source carriers in
   let c' = Query.of_source (source "c'" (Schema.columns (Query.schema c))) in
-  let x = delay
-  and l =
-    Query.of_source
-      (source "l" Type.[ ("l", Any (list int64)); ("m", Any (list int64)) ])
-  in
+  let x = delay in
   let semi ?(kind = Join.Semi) ?(each_left = Join.Any) ?(each_right = Join.Any)
       right () =
     Query.join ~kind ~each_left ~each_right ~on:(Join.keys [ "carrier" ]) right
@@ -1033,9 +853,6 @@ let variants =
         fun () -> join ~kind:Semi ~on:(Join.eq "carrier" "name") c q );
       ("append rests", (fun () -> append c c), fun () -> append c' c);
       ("append inputs", (fun () -> append c c), fun () -> append c c');
-      ( "unnest columns",
-        (fun () -> unnest [ "l" ] l),
-        fun () -> unnest [ "m" ] l );
     ]
 
 (* [expression_variants] pairs expressions that differ in one attribute: a wrong
@@ -1210,24 +1027,12 @@ let steps () =
               sort Order.[ asc "f"; nulls_first (desc "n") ] q;
               slice ~offset:(-10) ~length:5 q;
               slice ~offset:0 ~length:0 q;
-              unnest [ "l" ] q;
               join ~kind:Left ~each_left:At_most_one ~each_right:At_least_one
                 ~on:Join.all other q;
               join ~on:Join.position other q;
               join ~kind:Full ~on:(Join.eq "f" "y") other q;
-              join ~kind:Semi ~on:(Join.le "f" "y") other q;
-              join ~kind:Anti ~on:(Join.gt "f" "y") other q;
-              join
-                ~on:
-                  Join.(
-                    nearest ~within:Expr.(float 0.5) "f" "y" && keys [ "n" ])
-                (Query.derive Expr.[ "n" := int 1 ] other)
-                q;
-              join
-                ~on:
-                  Join.(
-                    closest ~within:Expr.(span (Time.Span.s 5)) (ge "ts" "ys"))
-                other q;
+              join ~kind:Semi ~on:(Join.eq "f" "y") other q;
+              join ~kind:Anti ~on:(Join.eq "f" "y") other q;
               append q q |> append q;
             ]))
   @@ __POS_OF__
@@ -1250,9 +1055,6 @@ let steps () =
     query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64]
     slice ~offset:0 ~length:0
     └ small (5 columns)
-    query → f float64, n int64, g string, ts datetime[ns, UTC], l int64
-    unnest ["l"]
-    └ small (5 columns)
     query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64], y float64, ys datetime[ns, UTC]
     join ~on:all ~kind:Left ~each_left:At_most_one ~each_right:At_least_one
     ├ small (5 columns)
@@ -1266,20 +1068,11 @@ let steps () =
     ├ small (5 columns)
     └ other (2 columns, 1 row)
     query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64]
-    join ~on:(le "f" "y") ~kind:Semi
+    join ~on:(eq "f" "y") ~kind:Semi
     ├ small (5 columns)
     └ other (2 columns, 1 row)
     query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64]
-    join ~on:(gt "f" "y") ~kind:Anti
-    ├ small (5 columns)
-    └ other (2 columns, 1 row)
-    query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64], y float64, ys datetime[ns, UTC]
-    join ~on:(nearest ~within:0.5 "f" "y" && keys ["n"])
-    ├ small (5 columns)
-    └ derive ["n" := 1]
-      └ other (2 columns, 1 row)
-    query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64], y float64, ys datetime[ns, UTC]
-    join ~on:(closest ~within:5s (ge "ts" "ys"))
+    join ~on:(eq "f" "y") ~kind:Anti
     ├ small (5 columns)
     └ other (2 columns, 1 row)
     query → f float64, n int64, g string, ts datetime[ns, UTC], l list[int64]
