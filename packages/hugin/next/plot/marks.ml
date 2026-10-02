@@ -126,10 +126,20 @@ let draw_dot rows =
   let fills = fills rows ~default:(Theme.accent th)
   and strokes = strokes rows in
   let paint = match fills with Some _ -> `Fill | None -> `Stroke in
-  let scales = Array.map Float.sqrt (or_const rows Role.size (dot_area rows)) in
+  (* Dots of one size draw a glyph of that size, so that the stamp's instances
+     are copies of it, which renderers draw fastest; dots of several sizes scale
+     a glyph of unit area. *)
+  let area, scales =
+    match Mark.get rows Role.size with
+    | Some areas
+      when Array.exists (fun a -> not (Float.equal a areas.(0))) areas ->
+        (1., Some (Array.map Float.sqrt areas))
+    | Some areas when Array.length areas > 0 -> (areas.(0), None)
+    | Some _ | None -> (dot_area rows, None)
+  in
   let pen = Stroke.v (em rows outline_em) in
   let glyph symbol =
-    let path = Symbol.path paint 1. symbol in
+    let path = Symbol.path paint area symbol in
     Picture.group
       [
         (match fills with
@@ -140,11 +150,11 @@ let draw_dot rows =
         | None -> Picture.empty);
       ]
   in
-  let stamp ?fills ?strokes ~scales xs ys symbol =
-    Picture.stamp ?fills ?strokes ~scales xs ys (glyph symbol)
+  let stamp ?fills ?strokes ?scales xs ys symbol =
+    Picture.stamp ?fills ?strokes ?scales xs ys (glyph symbol)
   in
   match Mark.get rows Role.symbol with
-  | None -> stamp ?fills ?strokes ~scales xs ys Symbol.circle
+  | None -> stamp ?fills ?strokes ?scales xs ys Symbol.circle
   | Some symbols ->
       (* One stamp per symbol, each tagged with its rows. *)
       let groups = ref [] in
@@ -163,8 +173,8 @@ let draw_dot rows =
              Picture.tag
                { Picture.id = Mark.id rows; rows = Picture.Rows (sub index) }
                (stamp ?fills:(Option.map sub fills)
-                  ?strokes:(Option.map sub strokes) ~scales:(sub scales)
-                  (sub xs) (sub ys) s))
+                  ?strokes:(Option.map sub strokes)
+                  ?scales:(Option.map sub scales) (sub xs) (sub ys) s))
            !groups)
 
 let dot ?fill ?stroke ?opacity ?size ?symbol ?fx ?fy ~x ~y () =
