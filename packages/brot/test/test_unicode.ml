@@ -578,7 +578,7 @@ let test_word_scans () =
 (* The span every character of the normalized text reports on the input, in the
    order the characters come out. Expectations are what HuggingFace reports for
    one-character tokens; regenerate them with [uv run --with tokenizers python3
-   test/scripts/hf_alignments.py]. *)
+   test/gen/hf_alignments.py]. *)
 let char_spans normalizer input =
   let normalized, alignment = Normalizer.apply_aligned normalizer input in
   let buffer = Buffer.create 64 in
@@ -974,8 +974,8 @@ let alignment_corpus =
     "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA6";
     "Hello" ^ String.make 1 '\xFF' ^ String.make 1 '\xFE' ^ "World";
     "\x00\x07\x7F a\xC2\xADb";
-    Fixture.read "fixtures/parity/edge_cases.txt";
-    Fixture.read "fixtures/parity/sample.txt";
+    Fixture.read "support/parity/edge_cases.txt";
+    Fixture.read "support/parity/sample.txt";
   ]
 
 let alignment_normalizers =

@@ -527,7 +527,7 @@ let args () =
 
 let () =
   let against_stdin, (k, n), corpus_arg = args () in
-  let fixture name = read_opt (Filename.concat "fixtures/parity" name) in
+  let fixture name = read_opt (Filename.concat "support/parity" name) in
   let data name = read_opt (Filename.concat "../bench/data" name) in
   let file_tok name =
     let path = Filename.concat "../bench/data" (name ^ ".json") in

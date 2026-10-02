@@ -3,7 +3,7 @@
 
 Run from anywhere, with the version the committed fixtures were generated with:
 
-    uv run --with tokenizers==0.23.1 python3 packages/brot/test/scripts/gen_parity_expected.py
+    uv run --with tokenizers==0.23.1 python3 packages/brot/test/gen/gen_parity_expected.py
 
 The reference is the HuggingFace `tokenizers` library. `test_parity.ml` reads
 the files this writes and requires brot to produce exactly the same encodings,
@@ -63,14 +63,14 @@ vocabulary; the ids `from_file` gives differ from these only on such ties.
 Corpora
 -------
 
-`fixtures/parity/sample.txt` is ordinary prose: the unique block of
+`support/parity/sample.txt` is ordinary prose: the unique block of
 `bench/data/wiki_64k.txt` (that file is a 2533-byte block repeated to fill
 64 KB), `bench/data/news_1k.txt`, and a few of the project's own English
 documentation pages, which add code identifiers, URLs and punctuation.
-`fixtures/parity/edge_cases.txt` is hand-written and covers whitespace runs,
+`support/parity/edge_cases.txt` is hand-written and covers whitespace runs,
 contractions, digits, scripts, combining marks, emoji, over-long words, special
 tokens, and spans whose byte and character extents differ.
-`fixtures/parity/unicode_code.txt` is for the tokenizers that split on a
+`support/parity/unicode_code.txt` is for the tokenizers that split on a
 regular expression, and only they are run on it: text in scripts with and
 without spaces and combining marks, emoji sequences, source code with tabs and
 CRLF line ends, every kind of whitespace and number, and punctuation runs
@@ -91,7 +91,7 @@ Expected-encoding format
 ------------------------
 
 For corpus `<corpus>.txt` and tokenizer `<name>` this writes
-`fixtures/parity/<corpus>.<name>.ids`:
+`support/parity/<corpus>.<name>.ids`:
 
     # a header comment, recording the reference version
     IDS <ids of document 0, add_special_tokens=False>
@@ -207,7 +207,7 @@ def load_tokenizer(path: Path) -> Tokenizer:
 
 def main() -> int:
     test_root = Path(__file__).resolve().parents[1]
-    parity_dir = test_root / "fixtures" / "parity"
+    parity_dir = test_root / "support" / "parity"
     models_dir = test_root.parent / "bench" / "data"
 
     for name, corpora in TOKENIZERS.items():

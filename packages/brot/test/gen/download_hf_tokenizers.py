@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Download selected HuggingFace tokenizer JSON files into brot/test/fixtures/hf.
+Download selected HuggingFace tokenizer JSON files into brot/test/support/hf.
 
 Run this script whenever you need to refresh the fixtures:
 
-    python3 brot/test/scripts/download_hf_tokenizers.py
+    python3 brot/test/gen/download_hf_tokenizers.py
 
 The files are ignored by git, so each developer/machine maintains its own cache.
 """
@@ -71,7 +71,7 @@ def summarize(path: Path) -> None:
 
 def main() -> int:
     test_root = Path(__file__).resolve().parents[1]
-    fixtures_dir = test_root / "fixtures" / "hf"
+    fixtures_dir = test_root / "support" / "hf"
     fixtures_dir.mkdir(parents=True, exist_ok=True)
 
     for model, url in FIXTURES:

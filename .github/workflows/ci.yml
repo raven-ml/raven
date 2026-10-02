@@ -97,7 +97,7 @@ jobs:
           BROT_REQUIRE_FIXTURES: 1
         run: |
           packages/brot/bench/download_data.sh
-          python3 packages/brot/test/scripts/download_hf_tokenizers.py
+          python3 packages/brot/test/gen/download_hf_tokenizers.py
           opam exec -- dune build --release packages/brot
           opam exec -- dune build --release @packages/brot/runtest
 

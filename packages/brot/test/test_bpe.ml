@@ -718,8 +718,8 @@ let trained_merges tokenizer =
    both corpora to the same ids whatever the cache holds. [0] disables caching
    and is the reference. *)
 let test_cache_capacities_on_parity_corpus () =
-  let sample = Fixture.read "fixtures/parity/sample.txt" in
-  let edge_cases = Fixture.read "fixtures/parity/edge_cases.txt" in
+  let sample = Fixture.read "support/parity/sample.txt" in
+  let edge_cases = Fixture.read "support/parity/edge_cases.txt" in
   let trained =
     train_bpe ~pre:split ~vocab_size:300 (`Seq (List.to_seq [ sample ]))
   in

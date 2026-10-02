@@ -8,10 +8,10 @@ open Windtrap
 
 let with_hf_tokenizer model f =
   let relative =
-    Filename.concat "fixtures/hf" (Filename.concat model "tokenizer.json")
+    Filename.concat "support/hf" (Filename.concat model "tokenizer.json")
   in
   Fixture.with_download relative
-    ~from:"packages/brot/test/scripts/download_hf_tokenizers.py" (fun path ->
+    ~from:"packages/brot/test/gen/download_hf_tokenizers.py" (fun path ->
       match from_file path with
       | Ok tok -> f tok
       | Error msg -> failf "Failed to load tokenizer %s: %s" model msg)

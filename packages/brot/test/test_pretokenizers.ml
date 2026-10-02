@@ -624,7 +624,7 @@ let test_split_patterns () =
 
 (* Regular expression patterns. The expected pieces are those of HuggingFace
    [pre_tokenizers.Split(Regex(pattern), behavior, invert)]; regenerate them
-   with [scripts/gen_split_regex_expected.py]. *)
+   with [gen/gen_split_regex_expected.py]. *)
 
 (* Compiling a pattern costs more than running it on these texts. *)
 let split_regexes = Hashtbl.create 64
@@ -1259,7 +1259,7 @@ let split_regex_walker_props =
 let test_split_regex_walkers_on_corpora () =
   List.iter
     (fun corpus ->
-      let text = Fixture.read ("fixtures/parity/" ^ corpus ^ ".txt") in
+      let text = Fixture.read ("support/parity/" ^ corpus ^ ".txt") in
       List.iter
         (fun (name, walker, regex) ->
           equal

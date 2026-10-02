@@ -4,7 +4,7 @@
 The expectations of the "alignment" group in test/test_unicode.ml come from
 this script. Run it with:
 
-    uv run --with tokenizers python3 packages/brot/test/scripts/hf_alignments.py
+    uv run --with tokenizers python3 packages/brot/test/gen/hf_alignments.py
 
 `NormalizedString` keeps, for every byte of the normalized text, the byte range
 of the original it stands for, and reports a span of normalized bytes as the
