@@ -299,11 +299,12 @@
  (name test_layout)
  (modules test_layout)
  (package hugin)
- (libraries hugin hugin.kit nx windtrap)
+ (libraries hugin hugin.kit hugin_test_figures nx windtrap)
+ (deps golden/layout.expected)
  (action
   (progn
    (run %{test} --corrected)
-   (diff? test_layout.ml test_layout.ml.corrected))))
+   (diff? golden/layout.expected golden/layout.expected.corrected))))
 
 (test
  (name test_draw)

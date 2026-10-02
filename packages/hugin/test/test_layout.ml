@@ -169,7 +169,7 @@ type case = {
   titles : (string * string * string) option;
       (* The titles of y and fx, and of the figure. *)
   align : Text.Layout.halign;
-  size : [ `Size of Size.t | `Near of float ];
+  size : [ `Figure of float * float | `Panels of float * float | `Near of float ];
       (* A size, or a factor of the figure's least size. *)
 }
 
@@ -187,7 +187,7 @@ let base =
     top = false;
     titles = None;
     align = `Center;
-    size = `Size (Size.panels 50. 50.);
+    size = `Panels (50., 50.);
   }
 
 let pp_case ppf c =
@@ -220,7 +220,8 @@ let pp_case ppf c =
     | Some (y, f, t) ->
         Printf.sprintf ", titled %S %S %S %s" y f t (align c.align))
     (fun ppf -> function
-      | `Size s -> Size.pp ppf s
+      | `Figure (w, h) -> Format.fprintf ppf "figure %g × %g" w h
+      | `Panels (w, h) -> Format.fprintf ppf "panels %g × %g" w h
       | `Near k -> Format.fprintf ppf "%g of its least size" k)
     c.size
 
@@ -228,10 +229,10 @@ let gen_size =
   Gen.one_of
     [
       Gen.map
-        (fun (w, h) -> Size.figure w h)
+        (fun s -> `Figure s)
         (Gen.pair (Gen.float_range 300. 700.) (Gen.float_range 250. 600.));
       Gen.map
-        (fun (w, h) -> Size.panels w h)
+        (fun s -> `Panels s)
         (Gen.pair (Gen.float_range 20. 150.) (Gen.float_range 20. 150.));
     ]
 
@@ -262,10 +263,7 @@ let gen_case =
       let align = Gen.of_list [ `Center; `Left; `Right ] in
       let size =
         Gen.one_of
-          [
-            Gen.map (fun s -> `Size s) gen_size;
-            Gen.map (fun k -> `Near k) (Gen.float_range 0.98 1.2);
-          ]
+          [ gen_size; Gen.map (fun k -> `Near k) (Gen.float_range 0.98 1.2) ]
       in
       Gen.map
         (fun ( (exps, colour, side),
@@ -357,15 +355,22 @@ let needs size f =
         "the figure needs %f × %f pt"
         (fun w h -> Some (w, h))
 
-(* [size_of c] is the size of [c]: a factor of a least size is that of the size
-   a figure of one point names. *)
-let size_of c =
+(* [page_of c] is the page size [c] fixes, if it fixes one: a factor of a least
+   size is that of the size a figure of one point names. *)
+let page_of c =
   match c.size with
-  | `Size s -> s
+  | `Figure s -> Some s
+  | `Panels _ -> None
   | `Near k -> (
       match needs (Size.figure 1. 1.) (figure_of c) with
-      | Some (w, h) -> Size.figure (k *. w) (k *. h)
-      | None -> Size.figure 1. 1.)
+      | Some (w, h) -> Some (k *. w, k *. h)
+      | None -> Some (1., 1.))
+
+let size_of c =
+  match (c.size, page_of c) with
+  | `Panels (w, h), _ -> Size.panels w h
+  | _, Some (w, h) -> Size.figure w h
+  | _, None -> assert false
 
 (* [laid c] is the layout of [c], discarding a figure too small for it. *)
 let laid c =
@@ -448,15 +453,6 @@ let overhangs l =
 let sizes =
   group "sizes"
     [
-      test "a figure size is the page size" (fun () ->
-          let check f =
-            equal (pair close close) (360., 240.)
-              (Layout.size (lay (Size.figure 360. 240.) f))
-          in
-          check (plain ramp);
-          check
-            (grid [ [ plain ramp; plain ramp ]; [ plain ramp; plain ramp ] ]);
-          check (title "t" (plain ~fill:(num ramp) ramp)));
       test "panels sizes give each flexible track its weight's data area"
         (fun () ->
           let hidden = [ axis ~show:false "x"; axis ~show:false "y" ] in
@@ -480,7 +476,8 @@ let sizes =
             ~than:(fst (Layout.size short))
             (fst (Layout.size long));
           equal close 100. (Box2.w (List.hd (boxes long))));
-      test "a page has a half em margin" (fun () ->
+      test "a page has a half em margin, and a hidden axis takes no room"
+        (fun () ->
           let l =
             lay (Size.panels 50. 40.)
               (layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ])
@@ -522,6 +519,16 @@ let spines =
       let f = if c.facets then 2 else 1 in
       let bs = Array.of_list (boxes (laid c)) in
       equal int (c.rows * c.cols * f) (Array.length bs);
+      (* Panel sizes are least data areas, and an aspect sets the height. *)
+      (match c.size with
+      | `Panels (w, h) ->
+          Array.iter
+            (fun b ->
+              at_least ~msg:"width" float_exact ~than:(w -. 1e-6) (Box2.w b);
+              if not c.aspect then
+                at_least ~msg:"height" float_exact ~than:(h -. 1e-6) (Box2.h b))
+            bs
+      | `Figure _ | `Near _ -> ());
       let at r q j = bs.((((r * c.cols) + q) * f) + j) in
       (* The edges a facet grid places and the middles of panels with an aspect
          are sums of lengths, some huge, so they agree up to rounding. *)
@@ -614,25 +621,6 @@ let grids =
       spines;
       equal_shares;
       pinned_share;
-      test "titled facet blocks side by side align their panels" (fun () ->
-          let block x =
-            layer
-              [
-                dot
-                  ~fx:(strings ~title:"run" [| "a"; "b" |])
-                  ~x:(num (f64 x))
-                  ~y:(num (f64 x))
-                  ();
-                axis ~side:`Top "x";
-              ]
-          in
-          let l =
-            lay (Size.figure 400. 200.)
-              (grid [ [ block [| 0.; 1. |]; block [| 0.; 1e6 |] ] ])
-          in
-          match boxes l with
-          | [ a; _; b; _ ] -> equal float_exact (Box2.miny a) (Box2.miny b)
-          | _ -> fail "four panels");
       test "a gap is one em when nothing protrudes into it" (fun () ->
           let cell =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
@@ -793,7 +781,7 @@ let no_overlap =
         cols = 2;
         exps = [ (0, 0); (0, 0); (4, 0); (0, 0); (-3, -3); (0, 0) ];
         facets = true;
-        size = `Size (Size.panels 20. 20.);
+        size = `Panels (20., 20.);
       };
       {
         base with
@@ -802,7 +790,7 @@ let no_overlap =
         exps = [ (0, 0); (0, 3); (0, 0) ];
         facets = true;
         shared = true;
-        size = `Size (Size.panels 134.474 20.);
+        size = `Panels (134.474, 20.);
       };
       {
         base with
@@ -810,14 +798,14 @@ let no_overlap =
         cols = 1;
         exps = [ (0, 0); (0, 6) ];
         colour = Quantities;
-        size = `Size (Size.figure 300. 250.);
+        size = `Figure (300., 250.);
       };
       {
         base with
         rows = 1;
         cols = 3;
         exps = [ (0, 0); (0, 0); (-1, -2) ];
-        size = `Size (Size.figure 300. 250.);
+        size = `Figure (300., 250.);
       };
       (* Legend entries taller than the panel with an aspect they stand
          beside. *)
@@ -826,7 +814,7 @@ let no_overlap =
         colour = Categories;
         aspect = true;
         top = true;
-        size = `Size (Size.panels 20. 20.);
+        size = `Panels (20., 20.);
       };
       (* Titles that share a band at some lengths and part at shorter ones. *)
       {
@@ -839,7 +827,7 @@ let no_overlap =
         aspect = true;
         top = true;
         titles = Some ("value", "value", "A figure");
-        size = `Size (Size.figure 300. 300.609);
+        size = `Figure (300., 300.609);
       };
       {
         base with
@@ -849,20 +837,25 @@ let no_overlap =
         facets = true;
         aspect = true;
         titles = Some ("value", "value", "A figure");
-        size = `Size (Size.figure 300. 364.662);
+        size = `Figure (300., 364.662);
       };
     ]
   in
-  prop "no text overlaps another, a data area or the page's edge" ~count:150
-    ~examples gen_case (fun c ->
+  prop
+    "a figure meets its size, and no text overlaps another, a data area or the \
+     page's edge"
+    ~count:150 ~examples gen_case (fun c ->
       cover "titled facets" (c.facets && Option.is_some c.titles);
       cover "legend" (c.colour <> No_colour);
       cover "near its least size"
-        (match c.size with `Near _ -> true | `Size _ -> false);
+        (match c.size with `Near _ -> true | `Figure _ | `Panels _ -> false);
       let l = laid c in
       cover "titles part" (parts l);
       cover "a title reaches past the data areas" (overhangs l);
-      apart l)
+      apart l;
+      match page_of c with
+      | Some page -> equal (pair float_exact float_exact) page (Layout.size l)
+      | None -> ())
 
 (* The reach of a long y title wider than its panel. *)
 let long_title =
@@ -873,27 +866,47 @@ let long_title =
          (f64 [| 0.; 1.; 2.; 4. |]))
     ()
 
+(* [names_law (c, k)] states that [c] laid out at [k] times the least size it
+   names at one point, if too small for that, names a size that lays it out. *)
+let names_law (c, k) =
+  let f = figure_of c in
+  match needs (Size.figure 1. 1.) f with
+  | None -> assume false
+  | Some (w, h) -> (
+      match needs (Size.figure (k *. w) (k *. h)) f with
+      | None -> ()
+      | Some (w', h') ->
+          equal
+            (option (pair float_exact float_exact))
+            None
+            (needs (Size.figure w' h') f);
+          apart (lay (Size.figure w' h') f))
+
 let least_sizes =
   let named =
     prop "a figure too small names a size that lays it out" ~count:40
       (Gen.pair gen_case (Gen.float_range 0.3 1.))
-      (fun (c, k) ->
-        let f = figure_of c in
-        match needs (Size.figure 1. 1.) f with
-        | None -> assume false
-        | Some (w, h) -> (
-            match needs (Size.figure (k *. w) (k *. h)) f with
-            | None -> ()
-            | Some (w', h') ->
-                equal
-                  (option (pair float_exact float_exact))
-                  None
-                  (needs (Size.figure w' h') f);
-                apart (lay (Size.figure w' h') f)))
+      names_law
+  in
+  (* Found at 15,000 cases: the size named is itself too small. *)
+  let named_too_small =
+    {
+      base with
+      cols = 2;
+      exps = [ (0, -4); (7, 5) ];
+      colour = Categories;
+      shared = true;
+      aspect = true;
+      top = true;
+      titles = Some ("two\nlines", "a", "a");
+    }
   in
   group "least sizes"
     [
       named;
+      xfail ~reason:"the size named can itself be too small"
+        (test "a shared, titled pair of aspect panels names a size that fits"
+           (fun () -> names_law (named_too_small, 0.9788345544751399)));
       cases ~name:(Printf.sprintf "%g pt")
         "a long y title lays out or names a size that does at"
         [ 120.; 155.; 160.; 181.; 182.; 182.2; 182.29; 182.3 ] (fun w ->
@@ -1346,60 +1359,6 @@ let legends =
                   less float_exact ~than:(Box2.minx b) x1)
                 (swatches l)
           | _ -> fail "two panels");
-      test "legends: entries for categories, a bar for quantities" (fun () ->
-          let f =
-            layer
-              [
-                plain
-                  ~fill:(strings ~title:"kind" [| "a"; "b"; "a"; "b" |])
-                  ramp;
-                rect ~x:(num ramp) ~fill:(num ~title:"load" ramp) ();
-              ]
-          in
-          expect (printed (lay (Size.panels 80. 60.) f))
-          @@ __POS_OF__
-               {|
-            layout 166.531 × 106.934
-            panel root [(16.8359, 25.0444) (96.8359, 85.0444)] cartesian
-            axis axis.x bottom
-              rules 4
-              label (text "0") [(13.918, 91.0444) (19.7539, 101.934)]
-              label (text "2") [(53.918, 91.0444) (59.7539, 101.934)]
-              label (text "4") [(93.918, 91.0444) (99.7539, 101.934)]
-            axis axis.y left
-              rules 5
-              label (text "1") [(5, 79.5996) (10.8359, 90.4893)]
-              label (text "2") [(5, 59.5996) (10.8359, 70.4893)]
-              label (text "3") [(5, 39.5996) (10.8359, 50.4893)]
-              label (text "4") [(5, 19.5996) (10.8359, 30.4893)]
-            legend legend.color.cat right
-              text (text "kind") [(109.754, 10.4448) (129.695, 22.5444)]
-              swatch 0.25 [(109.754, 27.0444) (117.754, 35.0444)]
-              swatch 0.75 [(109.754, 39.0444) (117.754, 47.0444)]
-              label (text "a") [(120.254, 25.5996) (125.308, 36.4893)]
-              label (text "b") [(120.254, 37.5996) (125.765, 48.4893)]
-            legend legend.color.num right
-              text (text "load") [(139.695, 5) (159.949, 17.0996)]
-              bar [(139.695, 25.0444) (149.695, 85.0444)]
-              rules 4
-              label (text "1") [(155.695, 79.5996) (161.531, 90.4893)]
-              label (text "2") [(155.695, 59.5996) (161.531, 70.4893)]
-              label (text "3") [(155.695, 39.5996) (161.531, 50.4893)]
-              label (text "4") [(155.695, 19.5996) (161.531, 30.4893)]
-            ticks
-              "x" quantitative
-                (ticks (0 "0") (0.5 "2") (1 "4")
-                 (minor 0.125 0.25 0.375 0.625 0.75 0.875))
-              "y" quantitative
-                (ticks (0 "1") (0.333333 "2") (0.666667 "3") (1 "4")
-                 (minor 0.0666667 0.133333 0.2 0.266667 0.4 0.466667 0.533333 0.6
-                  0.733333 0.8 0.866667 0.933333))
-              "color" categorical (ticks (0.25 "a") (0.75 "b"))
-              "color" quantitative
-                (ticks (0 "1") (0.333333 "2") (0.666667 "3") (1 "4")
-                 (minor 0.0666667 0.133333 0.2 0.266667 0.4 0.466667 0.533333 0.6
-                  0.733333 0.8 0.866667 0.933333))
-            |});
       test "legend rows are a swatch and 0.4 em apart" (fun () ->
           let f = plain ~fill:(strings [| "a"; "b"; "c"; "d" |]) ramp in
           match swatches (lay (Size.panels 80. 60.) f) with
@@ -1496,34 +1455,6 @@ let guides =
           match text_lines l t with
           | [ line ] -> in_order ~subs:[ t; "[(" ] line
           | lines -> failf "%d lines" (List.length lines));
-      test "ticks are frozen as chosen at the lengths of the second solve"
-        (fun () ->
-          (* Without guides x is 100 points long and takes three ticks; the
-             first choice's y labels leave it room for two. *)
-          let f =
-            plain ~y:(f64 [| 0.; 2e6; 1e6; 5e5 |]) (f64 [| 0.; 1.; 0.5; 0.25 |])
-          in
-          let p = printed (lay (Size.figure 100. 100.) f) in
-          let rec ticks i =
-            if String.sub p i 6 = "\nticks" then i else ticks (i + 1)
-          in
-          let i = ticks 0 in
-          expect (String.sub p i (String.length p - i))
-          @@ __POS_OF__
-               {|
-            ticks
-              "x" quantitative (ticks (0 "0") (1 "1") (minor 0.2 0.4 0.6 0.8))
-              "y" quantitative
-                (ticks (0 "0") (1 "2") (minor 0.25 0.5 0.75) (note "×10⁶"))
-            |});
-      test "a hidden axis takes no room" (fun () ->
-          let l =
-            lay (Size.panels 50. 40.)
-              (layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ])
-          in
-          equal (pair close close)
-            (50. +. (2. *. margin), 40. +. (2. *. margin))
-            (Layout.size l));
     ]
 
 (* Explicit ticks and notations *)
@@ -2046,6 +1977,19 @@ let projections =
           | None -> fail "no position");
     ]
 
+(* Baselines *)
+
+let baselines =
+  test "the benchmark figures lay out as their baseline" (fun () ->
+      let open Hugin_test_figures in
+      let one (name, f, theme, size) =
+        Format.asprintf "%s@\n%a@\n" name Layout.pp
+          (layout ~theme size (resolve (f ())))
+      in
+      expect_file
+        (String.concat "\n" (List.map one Figures.goldens))
+        "packages/hugin/test/golden/layout.expected")
+
 let () =
   exit
     (run "Layout"
@@ -2063,4 +2007,5 @@ let () =
          glyphs;
          reuse;
          projections;
+         baselines;
        ])
