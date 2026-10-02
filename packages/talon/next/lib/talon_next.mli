@@ -1386,6 +1386,24 @@ module Expr : sig
     val matches : pattern -> (string, 's) t -> (bool, 's) t
     (** [matches p a] is [true] iff [p] matches [a]. *)
 
+    val split : string -> (string, 's) t -> (string array, 's) t
+    (** [split sep a] is the pieces of [a] between the occurrences of the
+        literal [sep], found left to right without overlap, as a [list[string]]:
+        k occurrences give k + 1 pieces, so a leading, trailing or repeated
+        [sep] gives an empty piece, and the empty text one empty piece.
+        [split "_" s] of ["sub-01_ses-02"] is [["sub-01"; "ses-02"]], and the
+        pieces joined by [sep] are [a].
+
+        Raises [Invalid_argument] if [sep] is empty or not valid UTF-8. *)
+
+    val replace : string -> by:string -> (string, 's) t -> (string, 's) t
+    (** [replace sub ~by a] is [a] with each occurrence of the literal [sub]
+        replaced by [by], found left to right without overlap:
+        [replace "aa" ~by:"b"] of ["aaa"] is ["ba"].
+
+        Raises [Invalid_argument] if [sub] is empty, or if [sub] or [by] is not
+        valid UTF-8. *)
+
     val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
     (** [parse ty a] is the value of type [ty] that the text [a] writes, in the
         forms that [talon.csv] reads: [true] and [false]; decimal integers with

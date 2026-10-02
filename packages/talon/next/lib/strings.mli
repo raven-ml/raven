@@ -6,10 +6,10 @@
 (** Kernels over the bytes of text.
 
     What is not an array operation over text: UTF-8 validation, counting,
-    slicing and matching scalar values. Each kernel reads its operand's bytes on
-    the host, once, as a read named by its caller's function [by], and loops
-    over them row by row. Comparisons and grouping of text compare codes
-    elsewhere; {!compare}, against one text, needs none.
+    slicing and matching scalar values, splitting and replacing. Each kernel
+    reads its operand's bytes on the host, once, as a read named by its caller's
+    function [by], and loops over them row by row. Comparisons and grouping of
+    text compare codes elsewhere; {!compare}, against one text, needs none.
 
     Rows are those of an [Nx_ragged.t]; a row outside [mask], where one is
     given, is not read. *)
@@ -57,6 +57,20 @@ type pattern =
 val matches : by:string -> ?mask:Nx.bool_t -> pattern -> bytes -> Nx.bool_t
 (** [matches ~by p b] is [true] where [p] matches the row of [b], and [false]
     outside [mask]. *)
+
+val split :
+  by:string -> ?mask:Nx.bool_t -> string -> bytes -> Nx.int64_t * bytes
+(** [split ~by sep b] is [(lists, pieces)]: the pieces of each row of [b], valid
+    UTF-8, between the matches of [sep], valid UTF-8 and not empty, left to
+    right without overlap, so a row of k matches has k + 1 pieces; row [i]'s
+    pieces are the rows [lists.{i}] to [lists.{i + 1} - 1] of [pieces]. A row
+    outside [mask] has no piece. *)
+
+val replace :
+  by:string -> ?mask:Nx.bool_t -> sub:string -> into:string -> bytes -> bytes
+(** [replace ~by ~sub ~into b] is each row of [b], valid UTF-8, with each match
+    of [sub], valid UTF-8 and not empty, replaced by [into], left to right
+    without overlap. A row outside [mask] is empty. *)
 
 val compare : by:string -> bytes -> bytes -> Nx.int8_t
 (** [compare ~by b one] is [-1], [0] or [1] where the row of [b] orders before,

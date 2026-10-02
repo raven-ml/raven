@@ -2055,6 +2055,8 @@ let constructors =
         Row ("Str.length", Str.length s);
         Row ("Str.slice", Str.slice ~offset:0 ~length:4 s);
         Row ("Str.matches", Str.matches (Str.pieces [ "2024"; "15" ]) s);
+        Row ("Str.split", Str.split "-" s);
+        Row ("Str.replace", Str.replace "-" ~by:"/" s);
         Row ("Str.parse", Str.parse Type.date s);
         Row ("Temporal.add", Temporal.add d (span day));
         Row ("Temporal.diff", Temporal.diff ts ts);
@@ -2129,6 +2131,130 @@ let appending =
         (array (option (G.witness c)))
         (Array.append (rows a) (rows b))
         (rows r))
+
+(* Splitting and replacing *)
+
+(* Text of tokens that separators and replaced texts match, partly, in a row and
+   across scalar values. *)
+let token_text =
+  Gen.map (String.concat "")
+    (Gen.list ~size:(Gen.int_range 0 8)
+       (Gen.of_list ~pp:Format.pp_print_string
+          [ "a"; "b"; ","; ",,"; "\xc3\xa9"; "\xe6\x97\xa5"; "ab" ]))
+
+let literal =
+  Gen.of_list ~pp:Format.pp_print_string
+    [ "a"; ","; ",,"; "aa"; "ab"; "\xc3\xa9"; "\xe6\x97\xa5\xe6\x97\xa5" ]
+
+(* [over e rows] is [e] of the text column [s] of [rows]. *)
+let over_text k e rows =
+  let t = v [ ("s", Column.of_options Type.string rows) ] in
+  Column.options k
+    (column (run_ok (Query.select Expr.[ "e" := e ] (Query.of_table t))) "e")
+
+(* [replaced sub ~by s] replaces [sub] in [s] left to right without overlap,
+   byte by byte. *)
+let replaced sub ~by s =
+  let n = String.length sub and b = Buffer.create (String.length s) in
+  let rec go i =
+    if i > String.length s - n then
+      Buffer.add_string b (String.sub s i (String.length s - i))
+    else if String.equal (String.sub s i n) sub then begin
+      Buffer.add_string b by;
+      go (i + n)
+    end
+    else begin
+      Buffer.add_char b s.[i];
+      go (i + 1)
+    end
+  in
+  go 0;
+  Buffer.contents b
+
+let split sep rows =
+  over_text Kind.(list string) Expr.(Str.split sep (Col.string "s")) rows
+
+let pieces = array (option (array string))
+
+let splitting =
+  group "Str.split and Str.replace"
+    [
+      prop "split's pieces joined by the separator are the text"
+        (Gen.pair literal (Gen.array ~size:(Gen.int_range 0 6) token_text))
+        (fun (sep, ss) ->
+          cover "a row that holds the separator"
+            (Array.exists
+               (fun s -> not (String.equal (replaced sep ~by:"" s) s))
+               ss);
+          let got = split sep (Array.map Option.some ss) in
+          equal
+            (array (option string))
+            (Array.map Option.some ss)
+            (Array.map
+               (Option.map (fun p -> String.concat sep (Array.to_list p)))
+               got));
+      prop "replace is the text with each match replaced, left to right"
+        (Gen.triple literal literal
+           (Gen.array ~size:(Gen.int_range 0 6) token_text))
+        (fun (sub, by, ss) ->
+          equal
+            (array (option string))
+            (Array.map (fun s -> Some (replaced sub ~by s)) ss)
+            (over_text Kind.string
+               Expr.(Str.replace sub ~by (Col.string "s"))
+               (Array.map Option.some ss)));
+      cases
+        ~name:(fun (what, _, _, _) -> what)
+        "split"
+        [
+          ( "leading, trailing and adjacent separators",
+            ",",
+            ",a,,b,",
+            [| ""; "a"; ""; "b"; "" |] );
+          ("k occurrences give k + 1 pieces", ",", "a,b,c", [| "a"; "b"; "c" |]);
+          ("no occurrence gives the text", ",", "ab", [| "ab" |]);
+          ("the empty text is one empty piece", ",", "", [| "" |]);
+          ("the text alone is two empty pieces", "ab", "ab", [| ""; "" |]);
+          ( "a multi-byte separator",
+            "\xc3\xa9",
+            "a\xc3\xa9b\xc3\xa9",
+            [| "a"; "b"; "" |] );
+          ("occurrences do not overlap", "aa", "aaa", [| ""; "a" |]);
+        ]
+        (fun (_, sep, s, expected) ->
+          equal pieces [| Some expected |] (split sep [| Some s |]));
+      cases
+        ~name:(fun (what, _, _, _, _) -> what)
+        "replace"
+        [
+          ("occurrences do not overlap", "aa", "b", "aaa", "ba");
+          ("every occurrence", ",", ";", ",a,,b,", ";a;;b;");
+          ("by the empty text", ",", "", "a,b", "ab");
+          ( "a multi-byte text by a longer one",
+            "\xc3\xa9",
+            "e\xcc\x81",
+            "\xc3\xa9t\xc3\xa9",
+            "e\xcc\x81te\xcc\x81" );
+          ("the empty text", "a", "b", "", "");
+        ]
+        (fun (_, sub, by, s, expected) ->
+          equal
+            (array (option string))
+            [| Some expected |]
+            (over_text Kind.string
+               Expr.(Str.replace sub ~by (Col.string "s"))
+               [| Some s |]));
+      test "nulls stay null" (fun () ->
+          equal pieces
+            [| None; Some [| "a"; "" |]; None |]
+            (split "," [| None; Some "a,"; None |]);
+          equal
+            (array (option string))
+            [| None; Some "b" |]
+            (over_text Kind.string
+               Expr.(Str.replace "a" ~by:"b" (Col.string "s"))
+               [| None; Some "a" |]));
+    ]
 
 (* Sorts and top-k *)
 
@@ -2512,5 +2638,6 @@ let () =
          constructors;
          utc_wall_clock;
          appending;
+         splitting;
          kit_runs;
        ])

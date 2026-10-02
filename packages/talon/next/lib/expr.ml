@@ -115,6 +115,8 @@ and 'a text_op =
   | Length : int text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : pattern -> bool text_op
+  | Split : string -> string array text_op
+  | Replace : { sub : string; by : string } -> string text_op
   | Parse : 'a Type.t -> 'a text_op
 
 and 'a calendar_op =
@@ -190,6 +192,8 @@ let text_op_name : type a. a text_op -> string = function
   | Length -> "Str.length"
   | Slice _ -> "Str.slice"
   | Matches _ -> "Str.matches"
+  | Split _ -> "Str.split"
+  | Replace _ -> "Str.replace"
   | Parse _ -> "Str.parse"
 
 let calendar_op_name : type a. a calendar_op -> string = function
@@ -278,8 +282,11 @@ let text_op_equal : type a b. a text_op -> b text_op -> bool =
   | Slice s0, Slice s1 ->
       Int.equal s0.offset s1.offset && Int.equal s0.length s1.length
   | Matches p0, Matches p1 -> pattern_equal p0 p1
+  | Split s0, Split s1 -> String.equal s0 s1
+  | Replace r0, Replace r1 ->
+      String.equal r0.sub r1.sub && String.equal r0.by r1.by
   | Parse ty0, Parse ty1 -> Type.equal ty0 ty1
-  | (Length | Slice _ | Matches _ | Parse _), _ -> false
+  | (Length | Slice _ | Matches _ | Split _ | Replace _ | Parse _), _ -> false
 
 (* [calendar_equal op0 op1] is [true] iff [op0] and [op1] are one operation with
    equal attributes, whatever their operands. *)
@@ -637,6 +644,12 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
               (fun ppf -> Format.fprintf ppf "~length:%d" length);
             ]
         | Matches p -> [ pattern p ]
+        | Split sep -> [ (fun ppf -> Type.pp_quoted ppf sep) ]
+        | Replace { sub; by } ->
+            [
+              (fun ppf -> Type.pp_quoted ppf sub);
+              (fun ppf -> Format.fprintf ppf "~by:%a" Type.pp_quoted by);
+            ]
         | Parse ty -> [ (fun ppf -> Type.pp ppf ty) ]
         | Length -> []
       in
@@ -1572,6 +1585,8 @@ and text : type a s. env -> a text_op -> (string, s) t -> a elab =
           | Length -> known int64
           | Slice _ -> known (Column Type.string)
           | Matches _ -> known bool_typing
+          | Split _ -> known (Column (Type.list Type.string))
+          | Replace _ -> known (Column Type.string)
           | Parse ty -> (
               match ty with
               | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32
@@ -2053,6 +2068,18 @@ module Str = struct
     text (Slice { offset; length }) a
 
   let matches p a = text (Matches p) a
+
+  let split sep a =
+    if String.equal sep "" then err "Expr.Str.split: empty separator";
+    check_utf_8 "Expr.Str.split" sep;
+    text (Split sep) a
+
+  let replace sub ~by a =
+    if String.equal sub "" then err "Expr.Str.replace: empty text to replace";
+    check_utf_8 "Expr.Str.replace" sub;
+    check_utf_8 "Expr.Str.replace" by;
+    text (Replace { sub; by }) a
+
   let parse ty a = text (Parse ty) a
 end
 

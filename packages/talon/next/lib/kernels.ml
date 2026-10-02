@@ -268,6 +268,20 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
         let by = "Str.matches" in
         let m = Strings.matches ~by ?mask:(Column.valid c) p (bytes c) in
         kept (Any Type.bool) c (Fixed (P m))
+  | Split sep ->
+      fun c ->
+        let by = "Str.split" and mask = Column.valid c in
+        let offsets, pieces = Strings.split ~by ?mask sep (bytes c) in
+        let child =
+          Column.make (Any Type.string) ~length:(Nx_ragged.length pieces)
+            (Bytes pieces)
+        in
+        kept (Any (Type.list Type.string)) c (List { offsets; child })
+  | Replace { sub; by = into } ->
+      fun c ->
+        let by = "Str.replace" and mask = Column.valid c in
+        let r = Strings.replace ~by ?mask ~sub ~into (bytes c) in
+        kept (Any Type.string) c (Bytes r)
   | Parse ty -> fun c -> read_text c (Form.parse (Any ty))
 
 let parse_with fmt ty c = read_text c (Form.parse_with fmt ty)

@@ -99,6 +99,8 @@ module Str : sig
   val length : (string, 's) t -> (int, 's) t
   val slice : offset:int -> length:int -> (string, 's) t -> (string, 's) t
   val matches : pattern -> (string, 's) t -> (bool, 's) t
+  val split : string -> (string, 's) t -> (string array, 's) t
+  val replace : string -> by:string -> (string, 's) t -> (string, 's) t
   val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
 end
 
@@ -243,6 +245,8 @@ and 'a text_op =
   | Length : int text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : Str.pattern -> bool text_op
+  | Split : string -> string array text_op
+  | Replace : { sub : string; by : string } -> string text_op
   | Parse : 'a Type.t -> 'a text_op
 
 (** Temporal operations. *)

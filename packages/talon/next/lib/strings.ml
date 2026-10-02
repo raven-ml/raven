@@ -196,6 +196,94 @@ let matches ~by ?mask p r =
       if matches v first stop then A.unsafe_set hits i 1);
   Nx.cast Nx.bool (tensor hits)
 
+(* Literals
+
+   A literal of valid UTF-8 found in valid UTF-8 starts and ends on scalar
+   boundaries, so a byte search finds exactly its scalar matches. Matches are
+   left to right, without overlap. *)
+
+(* [occurrences v i stop s] is the number of matches of [s] in [i, stop). *)
+let occurrences v i stop s =
+  let rec go i k =
+    match find v i stop s with -1 -> k | j -> go (j + String.length s) (k + 1)
+  in
+  go i 0
+
+(* [cumulative n f] is the [n + 1] offsets of rows of sizes [f 0] to [f (n -
+   1)]. *)
+let cumulative n f =
+  let o = A.create Bigarray.int64 Bigarray.c_layout (n + 1) in
+  A.unsafe_set o 0 0L;
+  for i = 0 to n - 1 do
+    A.unsafe_set o (i + 1) (Int64.add (A.unsafe_get o i) (Int64.of_int (f i)))
+  done;
+  o
+
+let last o = Int64.to_int (A.unsafe_get o (A.dim o - 1))
+
+let split ~by ?mask sep r =
+  let n = Nx_ragged.length r and m = String.length sep in
+  let matches = Array.make n (-1) and kept = Array.make n 0 in
+  rows ~by ?mask r (fun i v first stop ->
+      let k = occurrences v first stop sep in
+      matches.(i) <- k;
+      kept.(i) <- stop - first - (k * m));
+  let lists = cumulative n (fun i -> matches.(i) + 1) in
+  let pieces = A.create Bigarray.int64 Bigarray.c_layout (last lists + 1) in
+  let bytes =
+    A.create Bigarray.int8_unsigned Bigarray.c_layout
+      (Array.fold_left ( + ) 0 kept)
+  in
+  A.unsafe_set pieces 0 0L;
+  let piece = ref 0 and at = ref 0 in
+  let emit v lo hi =
+    A.blit (A.sub v lo (hi - lo)) (A.sub bytes !at (hi - lo));
+    at := !at + hi - lo;
+    incr piece;
+    A.unsafe_set pieces !piece (Int64.of_int !at)
+  in
+  rows ~by ?mask r (fun _ v first stop ->
+      let rec go i =
+        match find v i stop sep with
+        | -1 -> emit v i stop
+        | j ->
+            emit v i j;
+            go (j + m)
+      in
+      go first);
+  (tensor lists, Nx_ragged.v ~offsets:(tensor pieces) (tensor bytes))
+
+let replace ~by ?mask ~sub ~into r =
+  let n = Nx_ragged.length r
+  and grow = String.length into - String.length sub in
+  let sizes = Array.make n 0 in
+  rows ~by ?mask r (fun i v first stop ->
+      sizes.(i) <- stop - first + (grow * occurrences v first stop sub));
+  let offsets = cumulative n (Array.get sizes) in
+  let bytes =
+    A.create Bigarray.int8_unsigned Bigarray.c_layout (last offsets)
+  in
+  let put = ref 0 in
+  let copy v lo hi =
+    A.blit (A.sub v lo (hi - lo)) (A.sub bytes !put (hi - lo));
+    put := !put + hi - lo
+  in
+  rows ~by ?mask r (fun i v first stop ->
+      put := Int64.to_int (A.unsafe_get offsets i);
+      let rec go j =
+        match find v j stop sub with
+        | -1 -> copy v j stop
+        | h ->
+            copy v j h;
+            String.iteri
+              (fun k c -> A.unsafe_set bytes (!put + k) (Char.code c))
+              into;
+            put := !put + String.length into;
+            go (h + String.length sub)
+      in
+      go first);
+  Nx_ragged.v ~offsets:(tensor offsets) (tensor bytes)
+
 let compare ~by r one =
   let s = ref "" in
   rows ~by one (fun _ v first stop ->

@@ -144,6 +144,8 @@ let print_operations () =
       str pp (Str.matches (Str.literal ",") s || Str.matches (Str.suffix "!") s);
       str pp (Str.matches (Str.prefix "wk") s);
       str pp (Str.parse Type.int8 s);
+      str pp (Str.split ", " s);
+      str pp (Str.replace "\"" ~by:"'" s);
       str pp (Temporal.field `Hour ts);
       str pp (Temporal.field `Year (Col.date "d"));
       str pp (Temporal.floor (Time.Days 1) ts);
@@ -180,6 +182,8 @@ let print_operations () =
             Str.matches (literal ",") s || Str.matches (suffix "!") s
             Str.matches (prefix "wk") s
             Str.parse int8 s
+            Str.split ", " s
+            Str.replace "\"" ~by:"'" s
             Temporal.field `Hour ts
             Temporal.field `Year d
             Temporal.floor 1d ts
@@ -228,6 +232,10 @@ let construction =
                  (fun () -> ignore (Str.suffix ""));
                  (fun () -> ignore (Str.pieces []));
                  (fun () -> ignore (Str.pieces [ "a"; "" ]));
+                 (fun () -> ignore (Str.split "" s));
+                 (fun () -> ignore (Str.split "\xff" s));
+                 (fun () -> ignore (Str.replace "" ~by:"a" s));
+                 (fun () -> ignore (Str.replace "a" ~by:"\xc3" s));
                  (fun () -> ignore (Temporal.parse "%Y-%q" Type.date s));
                  (fun () -> ignore (Temporal.format "%H%" ts));
                  (fun () -> ignore (Temporal.floor (Time.Days 0) ts));
@@ -251,6 +259,10 @@ let construction =
             Expr.Str.suffix: empty pattern
             Expr.Str.pieces: no pieces
             Expr.Str.pieces: empty pattern
+            Expr.Str.split: empty separator
+            Expr.Str.split: "\255" is not valid UTF-8
+            Expr.Str.replace: empty text to replace
+            Expr.Str.replace: "\195" is not valid UTF-8
             Expr.Temporal.parse: "%Y-%q" holds the unknown directive %q
             Expr.Temporal.format: "%H%" ends with %
             Expr.Temporal.floor: 0d is not positive
