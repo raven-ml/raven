@@ -7,7 +7,6 @@ open Windtrap
 open Hugin_next_kit
 
 let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
-let floats = array float_exact
 
 (* Floats ordered as IEEE 754 orders them, [-0.] equal to [0.]. *)
 let ieee = float Float.min_float
@@ -67,9 +66,6 @@ let gen_moderate =
   Gen.map
     (fun (c, w) -> (c, c +. w))
     (Gen.pair (Gen.float_range (-1e6) 1e6) (Gen.float_range 1e-3 1e6))
-
-let gen_count =
-  Gen.frequency [ (4, Gen.int_range 1 20); (1, Gen.int_range 21 200) ]
 
 (* A quantitative specification, unfitted, and the scale it gives over a domain
    drawn for its transform. *)
@@ -601,479 +597,6 @@ let inversion =
           equal (option string) (Some "7") (Scale.invert s 0.75));
     ]
 
-(* Guide values *)
-
-let ticks ?(count = 10) s = Scale.ticks ~count s
-let linear_ticks count (a, b) = ticks ~count (Scale.linear ~domain:(a, b) ())
-
-(* Rows [(a, b, count, expected)] from d3-array's ticks-test.js. *)
-let d3_linear =
-  [
-    (0., 1., 10, [| 0.0; 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0 |]);
-    (0., 1., 9, [| 0.0; 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0 |]);
-    (0., 1., 8, [| 0.0; 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0 |]);
-    (0., 1., 7, [| 0.0; 0.2; 0.4; 0.6; 0.8; 1.0 |]);
-    (0., 1., 4, [| 0.0; 0.2; 0.4; 0.6; 0.8; 1.0 |]);
-    (0., 1., 3, [| 0.0; 0.5; 1.0 |]);
-    (0., 1., 2, [| 0.0; 0.5; 1.0 |]);
-    (0., 1., 1, [| 0.0; 1.0 |]);
-    (0., 10., 10, [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10. |]);
-    (0., 10., 7, [| 0.; 2.; 4.; 6.; 8.; 10. |]);
-    (0., 10., 3, [| 0.; 5.; 10. |]);
-    (0., 10., 1, [| 0.; 10. |]);
-    (-10., 10., 10, [| -10.; -8.; -6.; -4.; -2.; 0.; 2.; 4.; 6.; 8.; 10. |]);
-    (-10., 10., 6, [| -10.; -5.; 0.; 5.; 10. |]);
-    (-10., 10., 2, [| -10.; 0.; 10. |]);
-    (-10., 10., 1, [| 0. |]);
-    (0., 2.2, 3, [| 0.; 1.; 2. |]);
-    (0.98, 1.14, 10, [| 0.98; 1.; 1.02; 1.04; 1.06; 1.08; 1.1; 1.12; 1.14 |]);
-    (1., 364., 1, [| 200. |]);
-    (1., 499., 1, [| 200.; 400. |]);
-    ( -100.,
-      100.,
-      10,
-      [| -100.; -80.; -60.; -40.; -20.; 0.; 20.; 40.; 60.; 80.; 100. |] );
-    (-100., 100., 5, [| -100.; -50.; 0.; 50.; 100. |]);
-  ]
-
-(* Rows [(base, a, b, count, expected)] from d3-scale's log-test.js. *)
-let d3_log =
-  [
-    (10., 0.15, 0.68, 10, [| 0.2; 0.3; 0.4; 0.5; 0.6 |]);
-    ( 10.,
-      0.1,
-      10.,
-      10,
-      [|
-        0.1;
-        0.2;
-        0.3;
-        0.4;
-        0.5;
-        0.6;
-        0.7;
-        0.8;
-        0.9;
-        1.;
-        2.;
-        3.;
-        4.;
-        5.;
-        6.;
-        7.;
-        8.;
-        9.;
-        10.;
-      |] );
-    (10., 1., 5., 10, [| 1.; 2.; 3.; 4.; 5. |]);
-    (10., 286.9252014, 329.4978332, 1, [| 300. |]);
-    (10., 286.9252014, 329.4978332, 2, [| 300. |]);
-    (10., 286.9252014, 329.4978332, 3, [| 300.; 320. |]);
-    (10., 286.9252014, 329.4978332, 4, [| 290.; 300.; 310.; 320. |]);
-    ( 10.,
-      286.9252014,
-      329.4978332,
-      10,
-      [| 290.; 295.; 300.; 305.; 310.; 315.; 320.; 325. |] );
-    ( 10.,
-      41.,
-      42.,
-      10,
-      [| 41.; 41.1; 41.2; 41.3; 41.4; 41.5; 41.6; 41.7; 41.8; 41.9; 42. |] );
-    ( 10.,
-      1400.,
-      1600.,
-      10,
-      [|
-        1400.;
-        1420.;
-        1440.;
-        1460.;
-        1480.;
-        1500.;
-        1520.;
-        1540.;
-        1560.;
-        1580.;
-        1600.;
-      |] );
-    (2., 1., 32., 10, [| 1.; 2.; 4.; 8.; 16.; 32. |]);
-    ( 10.,
-      1.,
-      1e10,
-      10,
-      Array.init 11 (fun i -> Float.of_string ("1e" ^ string_of_int i)) );
-    ( 10.,
-      1e-29,
-      1e-1,
-      10,
-      Array.init 14 (fun i ->
-          Float.of_string ("1e" ^ string_of_int (-28 + (2 * i)))) );
-  ]
-
-let d3_tables =
-  group "d3"
-    [
-      cases
-        ~name:(fun (a, b, c, _) -> Printf.sprintf "linear [%g;%g] for %d" a b c)
-        "linear" d3_linear
-        (fun (a, b, count, e) -> equal floats e (linear_ticks count (a, b)));
-      cases
-        ~name:(fun (base, a, b, c, _) ->
-          Printf.sprintf "log %g [%g;%g] for %d" base a b c)
-        "log" d3_log
-        (fun (base, a, b, count, e) ->
-          equal floats e (ticks ~count (Scale.log ~base ~domain:(a, b) ())));
-      test "log in base e takes the powers of e" (fun () ->
-          let e = Float.exp 1. in
-          equal floats
-            [| 1.; e; Float.pow e 2.; Float.pow e 3. |]
-            (ticks ~count:6 (Scale.log ~base:e ~domain:(1., 32.) ()));
-          equal int 7
-            (Array.length (ticks (Scale.log ~base:e ~domain:(0.1, 100.) ()))));
-      test "log ticks cover a domain of six decades in multiples" (fun () ->
-          let t = ticks ~count:20 (Scale.log ~domain:(0.01, 10000.) ()) in
-          equal int 55 (Array.length t);
-          equal float_exact 0.03 t.(2);
-          equal float_exact 10000. t.(54));
-      test "a tick at zero is positive zero" (fun () ->
-          let t = linear_ticks 5 (-1., 0.) in
-          equal float_exact Float.infinity (1. /. t.(Array.length t - 1)));
-    ]
-
-let time_ticks count (a, b) = Scale.ticks ~count (Scale.time ~domain:(a, b) ())
-
-(* Rows from d3-scale's utcTime-test.js, d3's months counted from 1. Weeks start
-   on Monday and two-day steps on even days since the epoch, where d3 counts
-   from Sunday and from the first of the month. *)
-let d3_time =
-  let at d t = utc d t in
-  [
-    ( "sub-second",
-      4,
-      (at (2011, 1, 1) (12, 0, 0), at (2011, 1, 1) (12, 0, 1)),
-      List.map
-        (fun ms -> utc ~ms (2011, 1, 1) (12, 0, 0))
-        [ 0; 200; 400; 600; 800; 1000 ] );
-    ( "1-second",
-      4,
-      (at (2011, 1, 1) (12, 0, 0), at (2011, 1, 1) (12, 0, 4)),
-      List.map (fun s -> at (2011, 1, 1) (12, 0, s)) [ 0; 1; 2; 3; 4 ] );
-    ( "5-second",
-      4,
-      (at (2011, 1, 1) (12, 0, 0), at (2011, 1, 1) (12, 0, 20)),
-      List.map (fun s -> at (2011, 1, 1) (12, 0, s)) [ 0; 5; 10; 15; 20 ] );
-    ( "15-second",
-      4,
-      (at (2011, 1, 1) (12, 0, 0), at (2011, 1, 1) (12, 0, 50)),
-      List.map (fun s -> at (2011, 1, 1) (12, 0, s)) [ 0; 15; 30; 45 ] );
-    ( "30-second",
-      4,
-      (at (2011, 1, 1) (12, 0, 0), at (2011, 1, 1) (12, 1, 50)),
-      [
-        at (2011, 1, 1) (12, 0, 0);
-        at (2011, 1, 1) (12, 0, 30);
-        at (2011, 1, 1) (12, 1, 0);
-        at (2011, 1, 1) (12, 1, 30);
-      ] );
-    ( "1-minute",
-      4,
-      (at (2011, 1, 1) (12, 0, 27), at (2011, 1, 1) (12, 4, 12)),
-      List.map (fun m -> at (2011, 1, 1) (12, m, 0)) [ 1; 2; 3; 4 ] );
-    ( "5-minute",
-      4,
-      (at (2011, 1, 1) (12, 3, 27), at (2011, 1, 1) (12, 21, 12)),
-      List.map (fun m -> at (2011, 1, 1) (12, m, 0)) [ 5; 10; 15; 20 ] );
-    ( "15-minute",
-      4,
-      (at (2011, 1, 1) (12, 8, 27), at (2011, 1, 1) (13, 4, 12)),
-      [
-        at (2011, 1, 1) (12, 15, 0);
-        at (2011, 1, 1) (12, 30, 0);
-        at (2011, 1, 1) (12, 45, 0);
-        at (2011, 1, 1) (13, 0, 0);
-      ] );
-    ( "30-minute",
-      4,
-      (at (2011, 1, 1) (12, 28, 27), at (2011, 1, 1) (14, 4, 12)),
-      [
-        at (2011, 1, 1) (12, 30, 0);
-        at (2011, 1, 1) (13, 0, 0);
-        at (2011, 1, 1) (13, 30, 0);
-        at (2011, 1, 1) (14, 0, 0);
-      ] );
-    ( "1-hour",
-      4,
-      (at (2011, 1, 1) (12, 28, 27), at (2011, 1, 1) (16, 34, 12)),
-      List.map (fun h -> at (2011, 1, 1) (h, 0, 0)) [ 13; 14; 15; 16 ] );
-    ( "3-hour",
-      4,
-      (at (2011, 1, 1) (14, 28, 27), at (2011, 1, 2) (1, 34, 12)),
-      [
-        at (2011, 1, 1) (15, 0, 0);
-        at (2011, 1, 1) (18, 0, 0);
-        at (2011, 1, 1) (21, 0, 0);
-        at (2011, 1, 2) (0, 0, 0);
-      ] );
-    ( "6-hour",
-      4,
-      (at (2011, 1, 1) (16, 28, 27), at (2011, 1, 2) (14, 34, 12)),
-      [
-        at (2011, 1, 1) (18, 0, 0);
-        at (2011, 1, 2) (0, 0, 0);
-        at (2011, 1, 2) (6, 0, 0);
-        at (2011, 1, 2) (12, 0, 0);
-      ] );
-    ( "12-hour",
-      4,
-      (at (2011, 1, 1) (16, 28, 27), at (2011, 1, 3) (21, 34, 12)),
-      [
-        at (2011, 1, 2) (0, 0, 0);
-        at (2011, 1, 2) (12, 0, 0);
-        at (2011, 1, 3) (0, 0, 0);
-        at (2011, 1, 3) (12, 0, 0);
-      ] );
-    ( "1-day",
-      4,
-      (at (2011, 1, 1) (16, 28, 27), at (2011, 1, 5) (21, 34, 12)),
-      List.map (fun d -> at (2011, 1, d) (0, 0, 0)) [ 2; 3; 4; 5 ] );
-    ( "2-day, on even days",
-      4,
-      (at (2011, 1, 2) (16, 28, 27), at (2011, 1, 9) (21, 34, 12)),
-      List.map (fun d -> at (2011, 1, d) (0, 0, 0)) [ 4; 6; 8 ] );
-    ( "1-week, on Mondays",
-      4,
-      (at (2011, 1, 1) (16, 28, 27), at (2011, 1, 23) (21, 34, 12)),
-      List.map (fun d -> at (2011, 1, d) (0, 0, 0)) [ 3; 10; 17 ] );
-    ( "1-month",
-      4,
-      (at (2011, 1, 18) (0, 0, 0), at (2011, 5, 2) (0, 0, 0)),
-      List.map (fun m -> at (2011, m, 1) (0, 0, 0)) [ 2; 3; 4; 5 ] );
-    ( "3-month",
-      4,
-      (at (2010, 12, 18) (0, 0, 0), at (2011, 11, 2) (0, 0, 0)),
-      List.map (fun m -> at (2011, m, 1) (0, 0, 0)) [ 1; 4; 7; 10 ] );
-    ( "1-year",
-      4,
-      (at (2010, 12, 18) (0, 0, 0), at (2014, 3, 2) (0, 0, 0)),
-      List.map (fun y -> at (y, 1, 1) (0, 0, 0)) [ 2011; 2012; 2013; 2014 ] );
-    ( "multi-year",
-      6,
-      (at (0, 12, 18) (0, 0, 0), at (2014, 3, 2) (0, 0, 0)),
-      List.map (fun y -> at (y, 1, 1) (0, 0, 0)) [ 500; 1000; 1500; 2000 ] );
-  ]
-
-let time_tables =
-  group "time"
-    [
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "d3" d3_time
-        (fun (_, count, d, e) ->
-          equal (array instant) (Array.of_list e) (time_ticks count d));
-      test "an empty domain has one tick" (fun () ->
-          let t = utc (2014, 3, 2) (0, 0, 0) in
-          equal (array instant) [| t |] (time_ticks 6 (t, t)));
-      test "a count of one with no boundary takes the next finer interval"
-        (fun () ->
-          let a = Time.v S 788918401L in
-          let b = Time.add (Time.seconds 1) 99725589 a in
-          equal (array instant)
-            [| Time.of_date (1996, 1, 1); Time.of_date (1998, 1, 1) |]
-            (time_ticks 1 (a, b)));
-      test "boundaries follow the scale's offset" (fun () ->
-          let tz_offset_s = 3600 in
-          let a = Time.of_date ~tz_offset_s (2026, 1, 1)
-          and b = Time.of_date ~tz_offset_s (2026, 1, 5) in
-          equal (array instant)
-            (Array.init 5 (fun d -> Time.of_date ~tz_offset_s (2026, 1, 1 + d)))
-            (Scale.ticks ~count:4 (Scale.time ~tz_offset_s ~domain:(a, b) ())));
-    ]
-
-let band_ticks count n =
-  Scale.ticks ~count
-    (Scale.band ~domain:(Labels (Array.init n string_of_int)) ())
-
-let guide_laws =
-  let inside_and_increasing (a, b) t =
-    Array.iteri
-      (fun i v ->
-        at_least ieee ~than:a v;
-        at_most ieee ~than:b v;
-        if i > 0 then less ieee ~than:v t.(i - 1))
-      t
-  in
-  group "laws"
-    [
-      prop "guide values are inside the domain and strictly increasing"
-        (Gen.pair gen_scale gen_count) (fun ({ s; _ }, count) ->
-          inside_and_increasing (ends s) (Scale.ticks ~count s));
-      prop "a linear domain has between 1 and 2 count + 1 guide values"
-        (Gen.pair gen_domain gen_count) (fun (d, count) ->
-          let n = Array.length (linear_ticks count d) in
-          at_least int ~than:1 n;
-          at_most int ~than:((2 * count) + 1) n);
-      prop "decimal guide values are the floats nearest short decimals"
-        (Gen.pair gen_moderate (Gen.int_range 1 50))
-        (fun (d, count) ->
-          Array.iter
-            (fun v ->
-              equal float_exact v (float_of_string (Printf.sprintf "%.15g" v)))
-            (linear_ticks count d));
-      prop "symlog guide values are at most max count 3 signed powers"
-        (Gen.pair gen_domain gen_count) (fun (d, count) ->
-          let t = Scale.ticks ~count (Scale.symlog ~domain:d ()) in
-          let signed v =
-            v = 0.
-            || Float.equal (Float.abs v)
-                 (Float.of_string
-                    (Printf.sprintf "1e%d"
-                       (Float.to_int (Float.round (Float.log10 (Float.abs v))))))
-          in
-          if Array.length t >= 2 && Array.for_all signed t then
-            at_most int ~than:(Int.max count 3) (Array.length t)
-          else equal floats (linear_ticks count d) t);
-      prop "temporal guide values are inside the domain and increasing"
-        (Gen.triple
-           (Gen.int_range (-2_000_000_000) 2_000_000_000)
-           (Gen.int_range 1 2_000_000_000)
-           gen_count)
-        (fun (s0, w, count) ->
-          let a = Time.v S (Int64.of_int s0) in
-          let b = Time.add (Time.seconds 1) w a in
-          let t = time_ticks count (a, b) in
-          at_least int ~than:1 (Array.length t);
-          Array.iteri
-            (fun i v ->
-              at_least instant ~than:a v;
-              at_most instant ~than:b v;
-              if i > 0 then less instant ~than:v t.(i - 1))
-            t);
-      prop "band guide values are every kth category, at most count"
-        (Gen.pair (Gen.int_range 0 500) gen_count)
-        (fun (n, count) ->
-          let t = band_ticks count n in
-          if n > 0 then begin
-            at_most int ~than:count (Array.length t);
-            equal string "0" t.(0);
-            if Array.length t > 1 then begin
-              let k = int_of_string t.(1) in
-              is_true ~msg:(string_of_int k)
-                (List.mem k [ 1; 2; 5; 10; 20; 50; 100; 200; 500 ]);
-              Array.iteri (fun i c -> equal string (string_of_int (i * k)) c) t
-            end
-          end
-          else equal (array string) [||] t);
-    ]
-
-let guide_cases =
-  group "values"
-    [
-      test "the 1e17 domain whose step is below the float spacing ends"
-        (fun () ->
-          equal floats
-            [| 1e17; 1e17 +. 16.; 1e17 +. 32. |]
-            (linear_ticks 10 (1e17, 1e17 +. 32.)));
-      test "a domain of the least subnormal ends" (fun () ->
-          equal floats [| 0.; 5e-324 |] (linear_ticks 10 (0., 5e-324)));
-      test "a multiple that underflows is positive zero" (fun () ->
-          equal floats [| 0.; 5e-324 |] (linear_ticks 10 (-0., 5e-324)));
-      test "the widest domain has finite guide values" (fun () ->
-          equal floats
-            [| -1.5e308; -1e308; -5e307; 0.; 5e307; 1e308; 1.5e308 |]
-            (linear_ticks 10 (-.Float.max_float, Float.max_float)));
-      test "a step finer than the floats gives every float" (fun () ->
-          let a = 1. and b = Float.succ (Float.succ 1.) in
-          equal floats [| a; Float.succ 1.; b |] (linear_ticks 1000 (a, b)));
-      test "a single tick reaches for a count of two" (fun () ->
-          equal floats [| 0.15 |] (linear_ticks 1 (0.11, 0.19)));
-      test "a constant domain has its one value" (fun () ->
-          equal floats [| 3. |] (linear_ticks 10 (3., 3.));
-          equal floats [| 1e308 |]
-            (ticks (Scale.log ~domain:(1e308, 1.0000000000000002e308) ())));
-      test "a log domain within a decade has guide values" (fun () ->
-          equal floats
-            [| 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
-            (ticks (Scale.log ~domain:(2., 8.) ())));
-      test "a log domain falls back to linear values in every base" (fun () ->
-          equal floats
-            [| 1.6; 1.8; 2.; 2.2; 2.4 |]
-            (ticks ~count:4
-               (Scale.log ~base:(Float.exp 1.) ~domain:(1.5, 2.5) ())));
-      test "a large integer base follows the rule of other bases" (fun () ->
-          equal floats [| 1.; 1000.; 1e6 |]
-            (ticks ~count:3 (Scale.log ~base:1000. ~domain:(1., 1e6) ())));
-      test "base 16 takes multiples of its powers" (fun () ->
-          let t = ticks (Scale.log ~base:16. ~domain:(1., 256.) ()) in
-          equal int 31 (Array.length t);
-          equal float_exact 15. t.(14);
-          equal float_exact 240. t.(29));
-      test "log values reach the greatest and least powers of ten" (fun () ->
-          let t = ticks (Scale.log ~domain:(1e300, 1e308) ()) in
-          equal float_exact 1e308 t.(Array.length t - 1);
-          let t = ticks (Scale.log ~domain:(1e-323, 1e-322) ()) in
-          equal float_exact 1e-323 t.(0);
-          equal float_exact 1e-322 t.(Array.length t - 1));
-      test "multiples are the floats nearest their decimals" (fun () ->
-          equal floats [| -1e308; 0.; 1e308 |]
-            (linear_ticks 3 (-.Float.max_float, Float.max_float));
-          equal floats
-            (Array.init 11 (fun i ->
-                 float_of_string (Printf.sprintf "%de-308" i)))
-            (linear_ticks 10 (0., 1e-307));
-          equal floats
-            (Array.init 10 (fun i ->
-                 float_of_string (Printf.sprintf "%de-300" (i + 1))))
-            (linear_ticks 10 (1e-300, 1e-299));
-          equal floats
-            [| 1.7e15; 1.7e15 +. 0.25; 1.7e15 +. 0.5 |]
-            (linear_ticks 5 (1.7e15, 1.7e15 +. 0.5)));
-      test "a multiple halfway between two floats rounds to even" (fun () ->
-          (* 10^23 is an odd multiple of 2^23 and the floats there are 2^24
-             apart. *)
-          equal floats [| 0.; 1e23; 2e23 |] (linear_ticks 2 (0., 2e23)));
-      test "a multiple beyond 10^22 is the float nearest it" (fun () ->
-          (* 3 × 10^23 is not 3 times the float nearest 10^23. *)
-          equal floats [| 0.; 1e23; 2e23; 3e23 |] (linear_ticks 3 (0., 3e23)));
-      test "the least power of ten is a symlog value" (fun () ->
-          equal floats [| 0.; 1e-323; 1e-322 |]
-            (ticks (Scale.symlog ~constant:1e-323 ~domain:(0., 1e-322) ())));
-      test "a step chosen at each threshold is the larger" (fun () ->
-          equal floats [| 0. |] (linear_ticks 1 (0., Float.sqrt 50.));
-          equal floats [| 0. |] (linear_ticks 1 (0., Float.sqrt 10.));
-          equal floats [| 0. |] (linear_ticks 1 (0., Float.sqrt 2.)));
-      test "symlog values are signed powers and zero" (fun () ->
-          equal floats
-            [| -1000.; -100.; -10.; -1.; 0.; 1.; 10.; 100.; 1000. |]
-            (ticks (Scale.symlog ~domain:(-1000., 1000.) ())));
-      test "symlog values keep the fewest when none fits the count" (fun () ->
-          equal floats [| -1.; 0.; 1. |]
-            (ticks ~count:2 (Scale.symlog ~domain:(-10., 10.) ())));
-      test "symlog skips exponents to fit the count" (fun () ->
-          equal floats [| 1.; 100.; 10000. |]
-            (ticks ~count:3 (Scale.symlog ~domain:(1., 10000.) ())));
-      test "symlog values include zero at an end of the domain" (fun () ->
-          equal floats [| 0.; 1.; 10.; 100. |]
-            (ticks (Scale.symlog ~domain:(0., 100.) ()));
-          equal floats [| -100.; -10.; -1.; 0. |]
-            (ticks (Scale.symlog ~domain:(-100., 0.) ())));
-      test "two symlog values are kept" (fun () ->
-          equal floats [| 1.; 10. |] (ticks (Scale.symlog ~domain:(1., 10.) ())));
-      test "symlog without powers falls back to linear values" (fun () ->
-          equal floats [| 0.; 1.; 2.; 3. |]
-            (ticks ~count:3 (Scale.symlog ~constant:5. ~domain:(0., 3.) ())));
-      test "band strides" (fun () ->
-          equal (array string) [| "0"; "5" |] (band_ticks 4 10);
-          equal (array string) (Array.init 10 string_of_int) (band_ticks 10 10);
-          equal (array string) [||] (band_ticks 3 0));
-      test "indexed bands give their decimal names" (fun () ->
-          equal (array string) [| "3"; "7" |]
-            (Scale.ticks ~count:5
-               (Scale.band ~domain:(Indices [| (3, "the"); (7, "cat") |]) ())));
-      test "a count below 1 is refused" (fun () ->
-          invalid (fun () -> Scale.ticks ~count:0 (Scale.linear ())));
-    ]
-
 (* Specifications and fitting *)
 
 let d3_nice =
@@ -1171,6 +694,37 @@ let nice =
       test "zero never reaches a log scale" (fun () ->
           let s = Scale.imply (Scale.linear ~zero:true ()) (Scale.log ()) in
           equal ends_w (1., 10.) (ends (fit_floats 2. 8. s)));
+      (* The lexer gives the float nearest a decimal literal, ties to even:
+         [1e23] lies halfway between two floats. *)
+      cases "a multiple is the float nearest it"
+        ~name:(fun (a, b, _, _) -> Printf.sprintf "[%g;%g]" a b)
+        [
+          (0., 7.3e30, 0., 8e30);
+          (0., 7.3e-30, 0., 8e-30);
+          (-1.1e24, 9.5e22, -1.1e24, 1e23);
+        ]
+        (fun (a, b, a', b') ->
+          equal ends_w (a', b') (ends (fit_floats a b (Scale.linear ()))));
+      (* A tenth of each domain is [√10] times a power of ten, where the step
+         [5] begins: its ends round to multiples of [5], not of [2]. *)
+      cases "a tenth at the √10 threshold takes the step 5"
+        ~name:(fun (a, b, _, _, _) -> Printf.sprintf "[%g;%.17g]" a b)
+        [
+          (5., 36.622776601683796, Float.sqrt 10., 5., 40.);
+          (0.3, 3.4622776601683793, Float.sqrt 10. /. 10., 0., 3.5);
+        ]
+        (fun (a, b, tenth, a', b') ->
+          equal float_exact tenth ((b -. a) /. 10.);
+          equal ends_w (a', b') (ends (fit_floats a b (Scale.linear ()))));
+      prop "a custom scale fits as a linear one" gen_moderate (fun (a, b) ->
+          let cube =
+            Scale.custom ~transform:"cube"
+              ~forward:(fun x -> x *. x *. x)
+              ~inverse:Float.cbrt ()
+          in
+          equal ends_w
+            (ends (fit_floats a b (Scale.linear ())))
+            (ends (fit_floats a b cube)));
       test "nice false keeps the hull" (fun () ->
           equal ends_w (0.3, 9.7)
             (ends (fit_floats 0.3 9.7 (Scale.linear ~nice:false ()))));
@@ -1553,79 +1107,85 @@ let comparing =
             |});
     ]
 
-(* Hulls *)
-
-let hull_w = option (pair float_exact float_exact)
 let f64 a = Nx.create Nx.float64 [| Array.length a |] a
 
-let hulls =
-  group "hull"
+(* Observers *)
+
+let all_properties =
+  Scale.
     [
-      test "missing values are left out" (fun () ->
-          equal hull_w
-            (Some (-2., 7.))
-            (Scale.hull (Scale.linear ())
-               (f64
-                  [|
-                    3.; Float.nan; -2.; Float.infinity; 7.; Float.neg_infinity;
-                  |])));
-      test "a log hull leaves out values that are not positive" (fun () ->
-          equal hull_w
-            (Some (0.5, 8.))
-            (Scale.hull (Scale.log ()) (f64 [| 0.; -1.; 0.5; 8. |]));
-          equal hull_w None (Scale.hull (Scale.log ()) (f64 [| 0.; -3. |])));
-      test "a custom hull leaves out values its transform cannot take"
-        (fun () ->
-          equal hull_w
-            (Some (2., 5.))
-            (Scale.hull (ln ()) (f64 [| -1.; 2.; 0.; 5. |])));
-      test "valid keeps elements and broadcasts" (fun () ->
-          let x =
-            Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-          in
-          let valid = Nx.create Nx.bool [| 3 |] [| false; true; false |] in
-          equal hull_w (Some (2., 5.)) (Scale.hull ~valid (Scale.linear ()) x);
-          let valid = Nx.create Nx.bool [| 2; 1 |] [| false; true |] in
-          equal hull_w (Some (4., 6.)) (Scale.hull ~valid (Scale.linear ()) x);
-          let valid = Nx.create Nx.bool [| 3 |] [| false; false; false |] in
-          equal hull_w None (Scale.hull ~valid (Scale.linear ()) x);
-          let valid =
-            Nx.create Nx.bool [| 2; 3 |]
-              [| true; false; false; false; false; true |]
-          in
-          equal hull_w (Some (1., 6.)) (Scale.hull ~valid (Scale.linear ()) x));
-      test "one element is its own hull" (fun () ->
-          equal hull_w
-            (Some (3., 3.))
-            (Scale.hull (Scale.linear ()) (f64 [| 3. |]));
-          equal hull_w (Some (3., 3.)) (Scale.hull (ln ()) (f64 [| 3. |])));
-      test "valid must broadcast without growing the tensor" (fun () ->
-          let x = f64 [| 1.; 2.; 3. |] in
-          let invalid f =
-            raises_match (Exn.invalid_arg ~substring:"broadcast") f
-          in
-          invalid (fun () ->
-              Scale.hull
-                ~valid:(Nx.create Nx.bool [| 2 |] [| true; true |])
-                (Scale.linear ()) x);
-          invalid (fun () ->
-              Scale.hull
-                ~valid:(Nx.create Nx.bool [| 2; 3 |] (Array.make 6 true))
-                (Scale.linear ()) x));
-      test "an empty tensor has no hull" (fun () ->
-          equal hull_w None (Scale.hull (Scale.linear ()) (f64 [||])));
-      test "integers are read as floats" (fun () ->
-          equal hull_w
-            (Some (-4., 9.))
-            (Scale.hull (Scale.linear ())
-               (Nx.create Nx.int32 [| 3 |] [| 9l; -4l; 0l |])));
-      test "complex and boolean tensors are refused" (fun () ->
-          invalid (fun () ->
-              Scale.hull (Scale.linear ())
-                (Nx.create Nx.complex64 [| 1 |] [| Complex.one |]));
-          invalid (fun () ->
-              Scale.hull (Scale.linear ())
-                (Nx.create Nx.bool [| 1 |] [| true |])));
+      Name;
+      Transform;
+      Domain;
+      Nice;
+      Zero;
+      Clamp;
+      Reverse;
+      Padding;
+      Wrap;
+      Tz_offset_s;
+      Scheme;
+      Areas;
+      Symbols;
+      Unknown;
+    ]
+
+let pp_transform ppf = function
+  | Scale.Linear -> Format.pp_print_string ppf "Linear"
+  | Log b -> Format.fprintf ppf "Log %g" b
+  | Symlog c -> Format.fprintf ppf "Symlog %g" c
+  | Pow e -> Format.fprintf ppf "Pow %g" e
+  | Custom n -> Format.fprintf ppf "Custom %S" n
+
+let transform_w = Testable.make ~pp:pp_transform ~equal:( = )
+
+(* [sets_only p s] states that [s] sets [p] and [Transform] and nothing else. *)
+let sets_only p s =
+  List.iter
+    (fun p' ->
+      let msg = Format.asprintf "%a" Scale.pp_property p' in
+      equal ~msg bool (p' = p || p' = Scale.Transform) (Scale.sets p' s))
+    all_properties
+
+let observers =
+  group "observers"
+    [
+      cases "transform names the constructor's"
+        ~name:(fun (n, _, _) -> n)
+        [
+          ("linear", Scale.linear (), Scale.Linear);
+          ("log", Scale.log (), Scale.Log 10.);
+          ("log in base 2", Scale.log ~base:2. (), Scale.Log 2.);
+          ("symlog", Scale.symlog ~constant:3. (), Scale.Symlog 3.);
+          ("pow", Scale.pow ~exponent:0.5 (), Scale.Pow 0.5);
+          ("custom", ln (), Scale.Custom "ln");
+        ]
+        (fun (_, s, tf) -> equal transform_w tf (Scale.transform s));
+      test "tz_offset_s is 0 unset" (fun () ->
+          equal int 0 (Scale.tz_offset_s (Scale.time ()));
+          equal int (-3600)
+            (Scale.tz_offset_s (Scale.time ~tz_offset_s:(-3600) ())));
+      test "a constructor without properties sets the transform alone"
+        (fun () -> sets_only Scale.Transform (Scale.linear ()));
+      cases "a constructor sets the properties it is given" ~name:conflict_name
+        conflicts (fun (Conflict (p, s, s')) ->
+          sets_only p s;
+          sets_only p s');
+      test "fit sets the domain and unsets nice and zero" (fun () ->
+          let s = fit_floats 1. 2. (Scale.linear ~nice:true ~zero:true ()) in
+          sets_only Scale.Domain s);
+      prop "a merge sets what either sets" (Gen.pair gen_spec gen_spec)
+        (fun (s, s') ->
+          match Scale.merge s s' with
+          | Error _ -> ()
+          | Ok m ->
+              List.iter
+                (fun p ->
+                  let msg = Format.asprintf "%a" Scale.pp_property p in
+                  equal ~msg bool
+                    (Scale.sets p s || Scale.sets p s')
+                    (Scale.sets p m))
+                all_properties);
     ]
 
 (* Missing values *)
@@ -1688,14 +1248,10 @@ let () =
          constructors;
          normalisation;
          inversion;
-         d3_tables;
-         time_tables;
-         guide_laws;
-         guide_cases;
          nice;
          fit;
          merging;
          comparing;
-         hulls;
+         observers;
          missings;
        ])

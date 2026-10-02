@@ -11,8 +11,7 @@
     against, such as a shared power of ten. {!choose} picks the ticks of an axis
     of a given length so that their labels read well, measuring the labels of
     every candidate with a function the caller gives, since the kit measures no
-    text. {!of_values} labels guide values the caller picked, such as those of
-    {!Scale.ticks}.
+    text. {!of_values} labels guide values the caller picked.
 
     Labels are a function of the values they label, the scale, and the notation
     and locale asked for ({!section-labels}), so the ticks {!choose} picks and
@@ -87,82 +86,77 @@ val of_values :
     lie in the domain of [s] and are not missing for it, each once, labelled
     with the strings of [locale], which defaults to {!Locale.default}, and in
     [notation] if given ({!section-labels}). It has no minor ticks.
-    [of_values s (Scale.ticks ~count s)] is the ticks a fixed count gives.
 
     Raises [Invalid_argument] if [notation] is given and [s] is not
     quantitative. *)
 
-(** {2:candidates Candidates and score}
+(** {2:candidates Candidates}
 
     A candidate is a set of guide values inside the domain, drawn from one of
-    the families below. Each scored family has a preference list [Q]; a
-    candidate has a rank [i] in [Q], from [1], and a skip [j]:
-    - {b Decimal steps}, on linear, pow, custom, symlog and log scales: for [q]
-      in [Q = [1; 5; 2; 2.5; 4; 3]], an integer [z], a skip [j >= 1] and an
-      offset [r] in \[[0];[j - 1]\], the multiples of [q × 10^z] inside the
-      domain whose integer index is [r] modulo [j], computed as {!Scale.ticks}
-      computes multiples, from their integer index. Steps below a 32nd of the
-      distance from each end of the domain to the next float towards zero are
-      left out. A step finer than the floats gives ticks at the floats its
-      multiples round to, labelled by the decimals of those floats: on
-      \[[1e17];[1e17 + 32]\], whose floats are 16 apart, the step [10] gives
+    these families, each with a skip [j >= 1] that keeps every [j]th value, from
+    an offset [r] in \[[0];[j - 1]\]:
+    - {b Decimal steps}, on linear, pow, custom, symlog and log scales: the
+      multiples inside the domain of a step [q × 10^z], for [q] in [1], [5],
+      [2], [2.5], [4] and [3], in this order of preference, and an integer [z].
+      A multiple is the float nearest its integer index times the step, as nice
+      domains compute them ({!Scale.section-nice}), so [3 × 0.1] is [0.3]. Steps
+      below a 32nd of the distance from each end of the domain to the next float
+      towards zero are left out. A step finer than the floats gives ticks at the
+      floats its multiples round to, labelled by the decimals of those floats:
+      on \[[1e17];[1e17 + 32]\], whose floats are 16 apart, the step [10] gives
       ticks at the positions [0], [0.5] and [1] that read [0], [20] and [30]
       against the note [+10¹⁷].
-    - {b Powers}, on log scales of base [b]: for a skip [j >= 1] and an offset
-      [r] in \[[0];[j - 1]\], the integer powers of [b] inside the domain whose
-      exponents are [r] modulo [j]; for [j = 1] also the powers with their
-      multiples by [2] and [5], in base [10], and with their multiples by every
-      integer from [2] to [b - 1], in an {{!Scale.log}integer base}. [Q] lists
-      these three forms in this order.
+    - {b Powers}, on log scales of base [b]: the integer powers [b^i] inside the
+      domain; for [j = 1] also the powers with their multiples by [2] and [5],
+      in base [10], and with their multiples by every integer from [2] to
+      [b - 1], in an {{!Scale.log}integer base}. In base [10], [10^i] is the
+      float nearest it and [n × 10^i] a decimal multiple; in another base [b^i]
+      is [Float.pow b (float i)] and [n × b^i] is
+      [float n *. Float.pow b (float i)].
     - {b Signed powers}, on symlog scales of constant [c]: [0.] if it is inside
       the domain, and the powers of ten and their negations of magnitude at
-      least [c] inside the domain whose exponents are [r] modulo [j], for a skip
-      [j >= 1] and an offset [r] in \[[0];[j - 1]\]; [Q = [1]].
-    - {b Calendar intervals}, on temporal scales: for a skip [j >= 1] and an
-      offset [r] in \[[0];[j - 1]\], every [j]th boundary from the [(r + 1)]th
-      of the boundaries inside the domain, at the scale's offset, of one of the
-      {{!Scale.section-time_intervals}time intervals}; [Q] lists the strides of
-      its unit (such as [[1; 5; 15; 30]] for seconds, and [[1; 2; 5]] for the
-      decimal steps of nanoseconds and of years).
+      least [c] inside the domain.
+    - {b Calendar intervals}, on temporal scales: the boundaries inside the
+      domain, at the scale's offset, of one of the
+      {{!Scale.section-time_intervals}time intervals}.
     - {b Strides}, on band scales: every [k]th category from the first, for [k]
-      in [1], [2], [5], [10], [20], [50], …. Strides are not scored: a reader
-      cannot place a category between two labels, so the candidate is the one of
-      the least [k] that gives at most a hundred ticks and whose labels do not
-      overlap (below).
-
-    With [n] ticks at positions [p_1 < … < p_n], and
-    [m = min (length / (2 ē)) 100], where [ē] is the mean extent of the labels
-    of [of_values ~locale ~notation s (Scale.ticks ~count:10 s)], the number of
-    ticks at which such labels fill half the axis, but no more than a hundred,
-    which a reader cannot take in on one axis, a candidate scores
-
-    {[
-    0.25 S + 0.2 C + 0.5 D
-    ]}
-
-    after Talbot, Lin and Hanrahan, with:
-    - the simplicity [S = 1 - (i - 1) / (|Q| - 1) - j + v], the middle term
-      being [0] when [|Q| = 1], where [v] is [1] if [0.] is a tick ([1.] on a
-      log scale) and [0] otherwise, and always [0] on temporal scales;
-    - the coverage [C = 1 - 50 ((1 - p_n)² + p_1²)];
-    - the density [D = 2 - max (ρ / ρt) (ρt / ρ)], where
-      [ρ = (n - 1) / (p_n - p_1)], or [1] if [n = 1], and [ρt = max 1 (m - 1)].
+      in [1], [2], [5], [10], [20], [50], ….
 
     A candidate is discarded if two adjacent labels, centred on their ticks,
-    overlap: [(p_(k+1) - p_k) × length < (e_k + e_(k+1)) / 2] for their extents
-    [e_k] and [e_(k+1)]. A candidate of one tick never overlaps, and every
-    family has such candidates on a domain that is not constant and whose values
+    overlap: [(p_(k+1) - p_k) × length < (e_k + e_(k+1)) / 2] for their
+    positions [p_k] and extents [e_k]. A candidate of one tick never overlaps,
+    and every family has one on a domain that is not constant and whose values
     normalise, so a candidate is always chosen.
 
-    Candidates are ordered by family as listed, then by skip [j], then by rank
-    [i] in [Q], then from the coarsest step to the finest, then by offset [r].
-    The candidate with the highest score is chosen, ties going to the one with
-    fewer ticks, then to the earlier in this order. [ρt] is fixed before the
-    search, so a candidate with [n - 1 > ρt] has a density of at most
-    [2 - (n - 1) / ρt]; with the bound [2 - j] on the simplicity, this ends the
-    search on every domain, as in the paper, and, since [ρt < 100], bounds the
-    ticks of the candidates it makes by a constant whatever [length], as the
-    hundred does for strides. *)
+    On a band scale the candidate is the stride of the least [k] that gives at
+    most a hundred ticks and whose labels do not overlap: a reader cannot place
+    a category between two labels. Otherwise the candidate chosen balances, as
+    Talbot, Lin and Hanrahan score it, its {e simplicity} (a preferred step, a
+    small skip, and [0.] among the ticks, [1.] on a log scale), its {e coverage}
+    of the domain by the span of its ticks, and its {e density}, near the number
+    of ticks at which labels fill half the axis, but no more than a hundred,
+    which a reader cannot take in on one axis. Those labels are the labels of
+    about ten values of the scale's family inside the domain:
+    - on linear, pow and custom scales, the multiples of the decimal step for a
+      tenth of the domain's length, the step its nice domain rounds to
+      ({!Scale.section-nice});
+    - on log scales of base [b], in an {{!Scale.log}integer base} over fewer
+      than ten powers, the powers with their multiples by [1] to [b - 1];
+      otherwise the powers whose exponents are multiples of the decimal step for
+      a tenth of the span of the exponents of the domain's ends, a step of at
+      least [1]; and the multiples of the first rule if these are fewer than
+      five;
+    - on symlog scales of constant [c], [0.] if it is inside the domain, and the
+      powers of ten and their negations of magnitude at least [c] whose
+      exponents are multiples of the least [k] in [1], [2], [5], [10], … that
+      gives at most ten values or, if none does, of the [k] that gives the
+      fewest; and the multiples of the first rule if these are fewer than two;
+    - on temporal scales, the boundaries of the time interval for a tenth of the
+      domain's length, or of the next finer one that has one in the domain, the
+      interval its nice domain rounds to.
+
+    The search makes candidates of a number of ticks bounded whatever [length].
+*)
 
 (** {1:labels Labels}
 
@@ -171,9 +165,9 @@ val of_values :
     {e quantities}. So are those of log scales, unless every value is an integer
     power of the base or, in an {{!Scale.log}integer base} [b], such a power
     times an integer from [2] to [b - 1], and those of symlog scales, unless
-    every value is [0.], a power of ten or its negation, each computed as
-    {!Scale.ticks} computes powers and their multiples: such values are labelled
-    as {e logarithms}. Instants and categories have rules of their own.
+    every value is [0.], a power of ten or its negation, each computed as the
+    powers family computes them ({!section-candidates}): such values are
+    labelled as {e logarithms}. Instants and categories have rules of their own.
 
     {2:quantities Quantities}
 

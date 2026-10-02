@@ -17,7 +17,8 @@ type _ domain =
   | Instants : Time.t * Time.t -> Time.t domain
   | Categories : categories -> string domain
 
-type transform =
+(* The transform of a quantitative scale, a custom one with its functions. *)
+type tf =
   | Linear
   | Log of float
   | Symlog of float
@@ -32,7 +33,7 @@ type transform =
    scales have the transform [Linear], which they never read. *)
 type 'd t = {
   kind : 'd kind;
-  transform : transform;
+  transform : tf;
   name : string option;
   domain : 'd domain option;
   nice : bool option;
@@ -147,7 +148,7 @@ let copy_categories = function
   | Labels l -> Labels (Array.copy l)
   | Indices ix -> Indices (Array.copy ix)
 
-let check_domain : type d. string -> transform -> d domain -> d domain =
+let check_domain : type d. string -> tf -> d domain -> d domain =
  fun fn tf d ->
   match d with
   | Floats (a, b) ->
@@ -435,119 +436,6 @@ let invert : type d. d t -> float -> d option =
             | Labels l -> l.(i)
             | Indices ix -> string_of_int (fst ix.(i)))
 
-(* Guide values *)
-
-let log_ticks base count a b =
-  let lb = Float.log base in
-  let ea = Float.log a /. lb and eb = Float.log b /. lb in
-  let i0 = Float.to_int (Float.floor ea) - 1
-  and i1 = Float.to_int (Float.ceil eb) + 1 in
-  let inside v = a <= v && v <= b in
-  let vs =
-    if Steps.is_integer_base base && eb -. ea < Float.of_int count then
-      Steps.collect (fun push ->
-          for i = i0 to i1 do
-            for j = 1 to Float.to_int base - 1 do
-              let v = Steps.multiple base j i in
-              if inside v then push v
-            done
-          done)
-    else
-      let st = Steps.step ea eb count in
-      let st = if st.k < 0 then { Steps.m = 1; k = 0 } else st in
-      Steps.collect (fun push ->
-          Array.iter
-            (fun e ->
-              let v = Steps.power base (Float.to_int e) in
-              if inside v then push v)
-            (Steps.multiples st (Float.of_int i0) (Float.of_int i1)))
-  in
-  if 2 * Array.length vs < count then Steps.linear a b count else vs
-
-(* The exponents [i] of the powers of ten of magnitude at least [c] whose values
-   [sign × 10^i] lie in \[[a];[b]\]. *)
-let signed_exponents c a b sign =
-  let acc = ref [] in
-  for i = 308 downto -323 do
-    let p = Steps.pow10 i in
-    let v = sign *. p in
-    if p >= c && a <= v && v <= b then acc := i :: !acc
-  done;
-  !acc
-
-let symlog_ticks c count a b =
-  let pos = signed_exponents c a b 1. and neg = signed_exponents c a b (-1.) in
-  let zero = a <= 0. && 0. <= b in
-  let span = List.fold_left (fun m i -> Int.max m (Int.abs i)) 0 (pos @ neg) in
-  let size k =
-    let n l = List.length (List.filter (fun i -> i mod k = 0) l) in
-    (if zero then 1 else 0) + n pos + n neg
-  in
-  let rec choose r best =
-    let k = Steps.stride r in
-    let n = size k in
-    if n <= count then k
-    else
-      let best =
-        match best with Some (_, m) when m <= n -> best | _ -> Some (k, n)
-      in
-      if k > span then fst (Option.get best) else choose (r + 1) best
-  in
-  let k = choose 0 None in
-  let keep l = List.filter (fun i -> i mod k = 0) l in
-  let vs =
-    Array.of_list
-      (List.concat
-         [
-           List.rev_map (fun i -> -.Steps.pow10 i) (keep neg);
-           (if zero then [ 0. ] else []);
-           List.map Steps.pow10 (keep pos);
-         ])
-  in
-  if Array.length vs < 2 then Steps.linear a b count else vs
-
-let band_ticks count c =
-  let names = names c in
-  let n = Array.length names in
-  let rec find r =
-    let k = Steps.stride r in
-    if (n + k - 1) / k <= count then k else find (r + 1)
-  in
-  if n = 0 then [||]
-  else
-    let k = find 0 in
-    Array.init ((n + k - 1) / k) (fun i -> names.(i * k))
-
-let time_step count a b =
-  Steps.time_steps.(Steps.nearest_time_step
-                      (Steps.ns_diff b a /. Float.of_int count))
-
-(* [time_ticks tz count a b] is the boundaries of the interval of [time_step],
-   or of the next finer interval that has one in \[[a];[b]\]. *)
-let time_ticks tz count a b =
-  let rec loop i =
-    let t = Time.range ~tz_offset_s:tz Steps.time_steps.(i).interval a b in
-    (* The finest interval has a boundary in every domain that is not
-       constant. *)
-    if Array.length t = 0 then loop (i - 1) else t
-  in
-  loop (Steps.nearest_time_step (Steps.ns_diff b a /. Float.of_int count))
-
-let ticks : type d. count:int -> d t -> d array =
- fun ~count s ->
-  if count < 1 then err "ticks" "count %d below 1" count;
-  match domain_of s with
-  | Floats (a, b) -> (
-      if is_constant s.transform a b then [| a |]
-      else
-        match s.transform with
-        | Linear | Pow _ | Custom _ -> Steps.linear a b count
-        | Log base -> log_ticks base count a b
-        | Symlog c -> symlog_ticks c count a b)
-  | Instants (a, b) ->
-      if Time.equal a b then [| a |] else time_ticks (tz_offset_s s) count a b
-  | Categories c -> band_ticks count c
-
 (* Specifications and fitting *)
 
 (* [below b x] and [above b x] are the greatest power of [b] not above [x > 0]
@@ -602,7 +490,8 @@ let nice_instants tz a b =
     match f x with x' -> x' | exception Invalid_argument _ -> x
   in
   let rec loop rounds prev a b =
-    let i = (time_step 10 a b).interval in
+    let tenth = Steps.ns_diff b a /. 10. in
+    let i = Steps.time_steps.(Steps.nearest_time_step tenth).interval in
     let same =
       match prev with Some p -> Time.equal_interval p i | None -> false
     in
@@ -760,7 +649,7 @@ let imply : type d. d t -> d t -> d t =
 
 let equal s s' = List.for_all snd (agreements { holds = equal_opt } s s')
 
-(* Hulls *)
+(* Missing values *)
 
 let is_real (type a b) (dtype : (a, b) Nx.dtype) =
   match dtype with
@@ -779,35 +668,6 @@ let missing s x =
   | Log _ ->
       Nx.logical_not (Nx.logical_and (Nx.isfinite xf) (Nx.greater_s xf 0.))
   | Linear | Symlog _ | Pow _ -> Nx.logical_not (Nx.isfinite xf)
-
-let hull ?valid s x =
-  if not (is_real (Nx.dtype x)) then err "hull" "the tensor is not real";
-  let shape = Nx.shape x in
-  let valid =
-    Option.map
-      (fun v ->
-        let vs = Nx.shape v in
-        let n = Array.length shape and nv = Array.length vs in
-        let fits =
-          nv <= n
-          && Array.for_all Fun.id
-               (Array.mapi (fun i d -> d = 1 || d = shape.(n - nv + i)) vs)
-        in
-        if not fits then err "hull" "valid does not broadcast to the tensor";
-        Nx.broadcast_to shape v)
-      valid
-  in
-  if Nx.numel x = 0 then None
-  else
-    let xf = Nx.cast Nx.float64 x in
-    let keep = Nx.logical_not (missing s x) in
-    let keep =
-      match valid with None -> keep | Some v -> Nx.logical_and keep v
-    in
-    let lo = Nx.min (Nx.where keep xf (Nx.full_like xf Float.infinity)) in
-    let hi = Nx.max (Nx.where keep xf (Nx.full_like xf Float.neg_infinity)) in
-    let lo = Nx.item [] lo and hi = Nx.item [] hi in
-    if lo <= hi then Some (lo, hi) else None
 
 (* Formatting *)
 
@@ -887,18 +747,37 @@ let pp (type d) ppf (s : d t) =
        (Format.pp_print_array ~pp_sep:Format.pp_print_space Symbol.pp))
     s.symbols (field "unknown" Color.pp) s.unknown
 
-module Private = struct
-  type nonrec transform = transform =
-    | Linear
-    | Log of float
-    | Symlog of float
-    | Pow of float
-    | Custom of {
-        name : string;
-        forward : float -> float;
-        inverse : float -> float;
-      }
+(* Observers *)
 
-  let transform s = s.transform
-  let tz_offset_s = tz_offset_s
-end
+let sets (type d) p (s : d t) =
+  match p with
+  | Name -> Option.is_some s.name
+  | Transform -> true
+  | Domain -> Option.is_some s.domain
+  | Nice -> Option.is_some s.nice
+  | Zero -> Option.is_some s.zero
+  | Clamp -> Option.is_some s.clamp
+  | Reverse -> Option.is_some s.reverse
+  | Padding -> Option.is_some s.padding
+  | Wrap -> Option.is_some s.wrap
+  | Tz_offset_s -> Option.is_some s.tz_offset_s
+  | Scheme -> Option.is_some s.scheme
+  | Areas -> Option.is_some s.areas
+  | Symbols -> Option.is_some s.symbols
+  | Unknown -> Option.is_some s.unknown
+
+(* Defined last, so that the constructors above are those of [tf]. *)
+type transform =
+  | Linear
+  | Log of float
+  | Symlog of float
+  | Pow of float
+  | Custom of string
+
+let transform s : transform =
+  match s.transform with
+  | Linear -> Linear
+  | Log b -> Log b
+  | Symlog c -> Symlog c
+  | Pow e -> Pow e
+  | Custom c -> Custom c.name

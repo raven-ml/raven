@@ -640,9 +640,9 @@ val contour :
 
     {!resolve} fits every scale with {!Scale.fit}, categorical scales first. A
     continuous domain is the hull of its channels' values over the rows that are
-    not dropped ({!Scale.hull}), widened by [zero] and rounded outward by
-    [nice]; {!layout} chooses ticks inside it and never widens it. A categorical
-    domain holds labelled or indexed categories ({!Scale.type-categories}):
+    not dropped, widened by [zero] and rounded outward by [nice]; {!layout}
+    chooses ticks inside it and never widens it. A categorical domain holds
+    labelled or indexed categories ({!Scale.type-categories}):
     - Its labelled categories are the union, in the order the figure is written,
       before {!layer} broadcasts, of every label of each channel [cat ~labels],
       used or not, and of the distinct strings of each {!strings} channel in

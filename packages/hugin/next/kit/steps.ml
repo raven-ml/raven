@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Decimal steps and their exact multiples, powers, and the steps of time: the
-   guide values Scale gives and the candidates Ticks scores. *)
+   ends Scale rounds nice domains to and the candidates Ticks scores. *)
 
 (* Powers of ten *)
 
@@ -164,12 +164,6 @@ let ceil_multiple s x =
     decr i
   done;
   value s !i
-
-(* The linear rule: the multiples of the step for [count], or for [2] when that
-   gives none and [count = 1]. *)
-let linear a b count =
-  let v = multiples (step a b count) a b in
-  if Array.length v = 0 && count = 1 then multiples (step a b 2) a b else v
 
 (* Powers *)
 

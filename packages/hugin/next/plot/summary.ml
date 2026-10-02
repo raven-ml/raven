@@ -6,14 +6,8 @@
 module Scale = Hugin_next_kit.Scale
 open Channel
 
-let explicit_domain : type d. d Scale.t -> d Scale.domain option =
- fun s ->
-  (* A set property differs from the same property unset, so [s] sets its domain
-     iff setting it again changes nothing. *)
-  let d = Scale.domain s in
-  match Scale.with_domain d s with
-  | s' -> if Scale.equal s s' then Some d else None
-  | exception Invalid_argument _ -> None
+let explicit_domain s =
+  if Scale.sets Domain s then Some (Scale.domain s) else None
 
 type input =
   | In : {

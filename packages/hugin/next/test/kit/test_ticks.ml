@@ -21,9 +21,179 @@ let contexts t = List.map (fun (k : Ticks.tick) -> k.context) t.Ticks.major
 let of_values ?locale ?notation s vs = Ticks.of_values ?locale ?notation s vs
 let linear a b = Scale.linear ~domain:(a, b) ()
 
+(* Axes of every kind, one line each: the labels, with their contexts and note,
+   and the number of minor ticks. *)
+type row = Row : string * 'd Scale.t * float -> row
+
+let axis_line (Row (name, s, length)) =
+  let t = Ticks.choose ~length ~measure s in
+  let tick (k : Ticks.tick) =
+    match k.context with None -> k.label | Some c -> k.label ^ " (" ^ c ^ ")"
+  in
+  Printf.sprintf "%s: %s%s, %d minor" name
+    (String.concat " " (List.map tick t.major))
+    (match t.note with Some n -> " [" ^ n ^ "]" | None -> "")
+    (List.length t.minor)
+
+let axes () =
+  let at d t = Time.of_date_time (d, t) in
+  let linear a b = Scale.linear ~domain:(a, b) () in
+  let log ?(base = 10.) a b = Scale.log ~base ~domain:(a, b) () in
+  let sym ?(constant = 1.) a b = Scale.symlog ~constant ~domain:(a, b) () in
+  let time ?(tz_offset_s = 0) a b = Scale.time ~tz_offset_s ~domain:(a, b) () in
+  let band n =
+    Scale.band
+      ~domain:(Labels (Array.init n (fun i -> "c" ^ string_of_int i)))
+      ()
+  in
+  let day d = at d (0, 0, 0) in
+  let march h m s = at (2026, 3, 2) (h, m, s) in
+  expect
+    (String.concat "\n"
+       (List.map axis_line
+          [
+            Row ("linear [0;1] at 300", linear 0. 1., 300.);
+            Row ("linear [0;100] at 120", linear 0. 100., 120.);
+            Row ("linear [-1;1] at 600", linear (-1.) 1., 600.);
+            Row ("linear [1;4] at 100", linear 1. 4., 100.);
+            Row ("linear [-25;25] at 30", linear (-25.) 25., 30.);
+            Row ("linear [0.62;0.97] at 180", linear 0.62 0.97, 180.);
+            Row ("log [1;1000] at 300", log 1. 1000., 300.);
+            Row ("log [1;1000] at 3000", log 1. 1000., 3000.);
+            Row ("log [1;1e6] at 200", log 1. 1e6, 200.);
+            Row ("log [0.01;100] at 500", log 0.01 100., 500.);
+            Row ("log [2;8] at 300", log 2. 8., 300.);
+            Row ("log [10;1e9] at 150", log 10. 1e9, 150.);
+            Row ("log [1;1e9] at 800", log 1. 1e9, 800.);
+            Row ("log [1;1e12] at 300", log 1. 1e12, 300.);
+            Row ("log [1e-300;1e300] at 500", log 1e-300 1e300, 500.);
+            Row ("log [1;10] at 300", log 1. 10., 300.);
+            Row ("log [1;100] at 1500", log 1. 100., 1500.);
+            Row ("log 2 [1;1024] at 300", log ~base:2. 1. 1024., 300.);
+            Row ("log 2 [0.5;64] at 120", log ~base:2. 0.5 64., 120.);
+            Row ("log 3 [1;81] at 300", log ~base:3. 1. 81., 300.);
+            Row ("log 3 [1;81] at 1500", log ~base:3. 1. 81., 1500.);
+            Row ("log 16 [1;4096] at 300", log ~base:16. 1. 4096., 300.);
+            Row ("log 16 [1;256] at 800", log ~base:16. 1. 256., 800.);
+            Row ("log 16 [1;256] at 4000", log ~base:16. 1. 256., 4000.);
+            Row ("log e [1;100] at 300", log ~base:(Float.exp 1.) 1. 100., 300.);
+            Row ("symlog [-1;1] at 60", sym (-1.) 1., 60.);
+            Row ("symlog [-10;10] at 100", sym (-10.) 10., 100.);
+            Row ("symlog [-1000;1000] at 300", sym (-1000.) 1000., 300.);
+            Row ("symlog [0;1e4] at 300", sym 0. 1e4, 300.);
+            Row ("symlog [-1e4;0] at 200", sym (-1e4) 0., 200.);
+            Row ("symlog [-1e5;1e3] at 500", sym (-1e5) 1e3, 500.);
+            Row
+              ("symlog [-0.00776;83771] at 172.6", sym (-0.00776) 83771., 172.6);
+            Row ("symlog 10 [-50;50] at 300", sym ~constant:10. (-50.) 50., 300.);
+            Row
+              ("symlog 10 [-1e6;1e6] at 400", sym ~constant:10. (-1e6) 1e6, 400.);
+            Row
+              ( "a year at 400",
+                time (day (2026, 1, 1)) (day (2026, 12, 31)),
+                400. );
+            Row
+              ( "three days at 300",
+                time (day (2026, 3, 2)) (day (2026, 3, 5)),
+                300. );
+            Row
+              ( "an hour at 200",
+                time ~tz_offset_s:3600 (march 10 0 0) (march 11 0 0),
+                200. );
+            Row
+              ( "ten years at 300",
+                time (day (2020, 1, 1)) (day (2030, 1, 1)),
+                300. );
+            Row
+              ( "five seconds at 600",
+                time ~tz_offset_s:(-18000) (march 10 0 0) (march 10 0 5),
+                600. );
+            Row
+              ( "two weeks at 500",
+                time (day (2026, 3, 1)) (day (2026, 3, 15)),
+                500. );
+            Row
+              ( "half a day ending at midnight at 300",
+                time (at (2026, 3, 4) (12, 0, 0)) (day (2026, 3, 5)),
+                300. );
+            Row ("two minutes at 300", time (march 10 0 7) (march 10 2 7), 300.);
+            Row
+              ( "ninety seconds at 200",
+                time (march 10 0 0) (march 10 1 30),
+                200. );
+            Row ("seven hours at 250", time (march 9 30 0) (march 16 30 0), 250.);
+            Row
+              ( "forty days at 300",
+                time (day (2026, 3, 2)) (day (2026, 4, 11)),
+                300. );
+            Row
+              ( "three months at 300",
+                time (day (2026, 3, 2)) (day (2026, 6, 2)),
+                300. );
+            Row ("seven categories at 100", band 7, 100.);
+            Row ("ten categories at 400", band 10, 400.);
+            Row ("ten categories at 2000", band 10, 2000.);
+            Row ("thirty categories at 300", band 30, 300.);
+            Row ("one category at 50", band 1, 50.);
+          ]))
+  @@ __POS_OF__ {|
+    linear [0;1] at 300: 0.0 0.2 0.4 0.6 0.8 1.0, 15 minor
+    linear [0;100] at 120: 0 50 100, 8 minor
+    linear [-1;1] at 600: −1.0 −0.8 −0.6 −0.4 −0.2 0.0 0.2 0.4 0.6 0.8 1.0, 30 minor
+    linear [1;4] at 100: 1 4, 2 minor
+    linear [-25;25] at 30: −25 25, 1 minor
+    linear [0.62;0.97] at 180: 0.65 0.80 0.95, 4 minor
+    log [1;1000] at 300: 1 2 5 10 20 50 100 200 500 1000, 18 minor
+    log [1;1000] at 3000: 1 2 3 4 5 6 7 8 9 10 20 30 40 50 60 70 80 90 100 200 300 400 500 600 700 800 900 1000, 0 minor
+    log [1;1e6] at 200: 10⁰ 10² 10⁴ 10⁶, 3 minor
+    log [0.01;100] at 500: 0.01 0.02 0.05 0.1 0.2 0.5 1 2 5 10 20 50 100, 24 minor
+    log [2;8] at 300: 2 3 4 5 6 7 8, 24 minor
+    log [10;1e9] at 150: 10¹ 10⁵ 10⁹, 6 minor
+    log [1;1e9] at 800: 10⁰ 10¹ 10² 10³ 10⁴ 10⁵ 10⁶ 10⁷ 10⁸ 10⁹, 72 minor
+    log [1;1e12] at 300: 10⁰ 10² 10⁴ 10⁶ 10⁸ 10¹⁰ 10¹², 6 minor
+    log [1e-300;1e300] at 500: 10⁻²⁹⁴ 10⁻²⁴⁵ 10⁻¹⁹⁶ 10⁻¹⁴⁷ 10⁻⁹⁸ 10⁻⁴⁹ 10⁰ 10⁴⁹ 10⁹⁸ 10¹⁴⁷ 10¹⁹⁶ 10²⁴⁵ 10²⁹⁴, 588 minor
+    log [1;10] at 300: 1 2 3 4 5 6 7 8 9 10, 36 minor
+    log [1;100] at 1500: 1 2 3 4 5 6 7 8 9 10 20 30 40 50 60 70 80 90 100, 0 minor
+    log 2 [1;1024] at 300: 2⁰ 2¹ 2² 2³ 2⁴ 2⁵ 2⁶ 2⁷ 2⁸ 2⁹ 2¹⁰, 0 minor
+    log 2 [0.5;64] at 120: 2⁰ 2² 2⁴ 2⁶, 4 minor
+    log 3 [1;81] at 300: 3⁰ 3¹ 3² 3³ 3⁴, 4 minor
+    log 3 [1;81] at 1500: 2 6 10 14 18 22 26 30 34 38 42 46 50 54 58 62 66 70 74 78, 20 minor
+    log 16 [1;4096] at 300: 16⁰ 16¹ 16² 16³, 42 minor
+    log 16 [1;256] at 800: 16⁰ 16¹ 16², 28 minor
+    log 16 [1;256] at 4000: 16⁰ 2×16⁰ 3×16⁰ 4×16⁰ 5×16⁰ 6×16⁰ 7×16⁰ 8×16⁰ 9×16⁰ 10×16⁰ 11×16⁰ 12×16⁰ 13×16⁰ 14×16⁰ 15×16⁰ 16¹ 2×16¹ 3×16¹ 4×16¹ 5×16¹ 6×16¹ 7×16¹ 8×16¹ 9×16¹ 10×16¹ 11×16¹ 12×16¹ 13×16¹ 14×16¹ 15×16¹ 16², 0 minor
+    log e [1;100] at 300: e⁰ e¹ e² e³ e⁴, 0 minor
+    symlog [-1;1] at 60: −1 0 1, 8 minor
+    symlog [-10;10] at 100: −10 0 10, 8 minor
+    symlog [-1000;1000] at 300: −1000 −100 −10 −1 0 1 10 100 1000, 0 minor
+    symlog [0;1e4] at 300: 0 1 10 100 1,000 10,000, 0 minor
+    symlog [-1e4;0] at 200: −10,000 −100 −1 0, 2 minor
+    symlog [-1e5;1e3] at 500: −10⁵ −10³ −10¹ 0 10¹ 10³, 5 minor
+    symlog [-0.00776;83771] at 172.6: 0 1 100 10,000, 2 minor
+    symlog 10 [-50;50] at 300: −40 −20 0 20 40, 16 minor
+    symlog 10 [-1e6;1e6] at 400: −10⁶ −10⁴ −10² 0 10² 10⁴ 10⁶, 6 minor
+    a year at 400: Jan (2026) Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec, 0 minor
+    three days at 300: 2 (Mar 2026) 3 4 5, 9 minor
+    an hour at 200: 11:00 (2 Mar) 11:30 12:00, 10 minor
+    ten years at 300: 2020 2022 2024 2026 2028 2030, 15 minor
+    five seconds at 600: :00 (05:00) :01 :02 :03 :04 :05, 20 minor
+    two weeks at 500: 1 (Mar 2026) 2 3 4 5 6 7 8 9 10 11 12 13 14 15, 42 minor
+    half a day ending at midnight at 300: 12:00 (4 Mar) 15:00 18:00 21:00 00:00 (5 Mar), 20 minor
+    two minutes at 300: :15 (10:00) :30 :45 :00 (10:01) :15 :30 :45 :00 (10:02), 16 minor
+    ninety seconds at 200: :00 (10:00) :30 :00 (10:01) :30, 15 minor
+    seven hours at 250: 10:00 (2 Mar) 12:00 14:00 16:00, 3 minor
+    forty days at 300: 2 (Mar 2026) 9 16 23 30 6 (Apr 2026), 35 minor
+    three months at 300: 9 (Mar 2026) 23 6 (Apr 2026) 20 4 (May 2026) 18 1 (Jun 2026), 7 minor
+    seven categories at 100: c0 c2 c4 c6, 0 minor
+    ten categories at 400: c0 c1 c2 c3 c4 c5 c6 c7 c8 c9, 0 minor
+    ten categories at 2000: c0 c1 c2 c3 c4 c5 c6 c7 c8 c9, 0 minor
+    thirty categories at 300: c0 c5 c10 c15 c20 c25, 0 minor
+    one category at 50: c0, 0 minor
+    |}
+
 let baselines =
   group "baselines"
     [
+      test "axes of every kind" axes;
       test "a loss on a log axis" (fun () ->
           let s = Scale.log ~domain:(0.0123, 4.2) () in
           expect (show (Ticks.choose ~length:180. ~measure s))
@@ -235,29 +405,41 @@ let quantity_labels =
     ]
 
 (* Rows from d3-scale's tickFormat-test.js: the label of one value among the
-   ticks of a linear domain, by tick count and notation. *)
+   multiples [i × m × 10^k] of a step, for [i] from [i0] to [i1], in a linear
+   domain, by notation. *)
 let d3_formats =
   [
-    ("[0;1] for 10", None, (0., 1.), 10, 0.2, "0.2");
-    ("[0;1] for 20", None, (0., 1.), 20, 0.2, "0.20");
-    ("[-100;100] for 10", None, (-100., 100.), 10, -20., "−20");
-    ("[0;1] for 10 in percent", Some Number.Percent, (0., 1.), 10, 0.2, "20%");
-    ( "[0.19;0.21] in percent",
+    ("[0;1] by 0.1", None, (0., 1.), (1, -1), (0, 10), 0.2, "0.2");
+    ("[0;1] by 0.05", None, (0., 1.), (5, -2), (0, 20), 0.2, "0.20");
+    ("[-100;100] by 20", None, (-100., 100.), (2, 1), (-5, 5), -20., "−20");
+    ( "[0;1] by 0.1 in percent",
+      Some Number.Percent,
+      (0., 1.),
+      (1, -1),
+      (0, 10),
+      0.2,
+      "20%" );
+    ( "[0.19;0.21] by 0.002 in percent",
       Some Number.Percent,
       (0.19, 0.21),
-      10,
+      (2, -3),
+      (95, 105),
       0.2,
       "20.0%" );
   ]
 
 let d3_labels =
   cases
-    ~name:(fun (n, _, _, _, _, _) -> n)
+    ~name:(fun (n, _, _, _, _, _, _) -> n)
     "d3" d3_formats
-    (fun (_, notation, (a, b), count, x, expected) ->
-      let s = linear a b in
-      let t = of_values ?notation s (Scale.ticks ~count s) in
-      let i = Array.find_index (Float.equal x) (Scale.ticks ~count s) in
+    (fun (_, notation, (a, b), (m, k), (i0, i1), x, expected) ->
+      let vs =
+        Array.init
+          (i1 - i0 + 1)
+          (fun i -> float_of_string (Printf.sprintf "%de%d" ((i0 + i) * m) k))
+      in
+      let t = of_values ?notation (linear a b) vs in
+      let i = Array.find_index (Float.equal x) vs in
       equal string expected (List.nth (labels t) (Option.get i)))
 
 (* Logarithms *)
@@ -290,7 +472,10 @@ let log_labels =
       test "base e is written e" (fun () ->
           let s = Scale.log ~base:(Float.exp 1.) ~domain:(1., 10.) () in
           equal (list string) [ "e⁰"; "e¹"; "e²" ]
-            (labels (of_values s (Scale.ticks ~count:2 s))));
+            (labels
+               (of_values s
+                  (Array.init 3 (fun i ->
+                       Float.pow (Float.exp 1.) (Float.of_int i))))));
       row "multiples in base 16"
         (Scale.log ~base:16. ~domain:(1., 1000.) ())
         [| 256.; 768. |] [ "16²"; "3×16²" ];
@@ -792,9 +977,35 @@ let choice =
 
 (* Minor ticks *)
 
+(* Rows [(q, b, length, ticks, minor)]: on [[0;b]] at [length], the step [q] is
+   chosen, with the [ticks], and cuts into the parts its minor rule states, the
+   [minor] values. *)
+let q_minors =
+  [
+    ("1", 1., 60., [ "0"; "1" ], [ 0.2; 0.4; 0.6; 0.8 ]);
+    ("5", 6., 60., [ "0"; "5" ], [ 1.; 2.; 3.; 4.; 6. ]);
+    ( "2.5",
+      7.5,
+      80.,
+      [ "0.0"; "2.5"; "5.0"; "7.5" ],
+      [ 0.5; 1.; 1.5; 2.; 3.; 3.5; 4.; 4.5; 5.5; 6.; 6.5; 7. ] );
+    ("2", 2., 60., [ "0"; "2" ], [ 0.5; 1.; 1.5 ]);
+    ("4", 4., 60., [ "0"; "4" ], [ 1.; 2.; 3. ]);
+    ("3", 3., 60., [ "0"; "3" ], [ 1.; 2. ]);
+  ]
+
+let q_minor (_, b, length, ticks, minor) =
+  let s = linear 0. b in
+  let t = Ticks.choose ~length ~measure s in
+  equal (list string) ticks (labels t);
+  equal (list (float 1e-12)) (List.map (Scale.normalize s) minor) t.minor
+
 let minor_ticks =
   group "minor"
     [
+      cases "each step cuts into its parts"
+        ~name:(fun (q, _, _, _, _) -> "q = " ^ q)
+        q_minors q_minor;
       test "a step of one cuts into fifths" (fun () ->
           let t =
             Ticks.choose ~length:200. ~measure:(fun _ -> 40.) (linear 0. 2.)
@@ -872,553 +1083,6 @@ let comparing =
           not_equal w (of_values s [| 0.; 1.; 2. |]) chosen);
     ]
 
-(* A reference for choose: every candidate of the families a scale has, within
-   bounds that hold the choice, made and scored as the candidates section
-   states, without pruning. Decimals are read to the floats nearest them by
-   float_of_string. *)
-
-type 'd candidate = {
-  s_term : float;
-  key : int list;
-  values : 'd array;
-  minor : unit -> 'd array;
-}
-
-type 'd chosen = { score : float; n : int; c : 'd candidate; ticks : Ticks.t }
-
-let extent_of measure (k : Ticks.tick) =
-  match k.context with
-  | None -> measure k.label
-  | Some c -> Float.max (measure k.label) (measure c)
-
-(* [reference ~length s candidates] is the best candidate whose labels do not
-   overlap, with its score, ties to fewer ticks then to the lesser key. *)
-let reference ~length s candidates =
-  let extent = extent_of measure in
-  let reference = of_values s (Scale.ticks ~count:10 s) in
-  let mean =
-    List.fold_left (fun m k -> m +. extent k) 0. reference.major
-    /. Float.of_int (List.length reference.major)
-  in
-  let m = Float.min (length /. (2. *. mean)) 100. in
-  let rho_t = Float.max 1. (m -. 1.) in
-  let norm = Scale.normalize s in
-  let best = ref None in
-  let consider c =
-    let n = Array.length c.values in
-    if n > 0 then begin
-      let ps = Array.map norm c.values in
-      Array.sort Float.compare ps;
-      let p1 = ps.(0) and pn = ps.(n - 1) in
-      let cover = 1. -. (50. *. (((1. -. pn) *. (1. -. pn)) +. (p1 *. p1))) in
-      let rho = if n = 1 then 1. else Float.of_int (n - 1) /. (pn -. p1) in
-      let d = 2. -. Float.max (rho /. rho_t) (rho_t /. rho) in
-      let score = (0.25 *. c.s_term) +. (0.2 *. cover) +. (0.5 *. d) in
-      let better =
-        match !best with
-        | None -> true
-        | Some b ->
-            score > b.score
-            || score = b.score
-               && (n < b.n
-                  || (n = b.n && List.compare Int.compare c.key b.c.key < 0))
-      in
-      if better then
-        let t = of_values s c.values in
-        let rec overlaps = function
-          | (k : Ticks.tick) :: (k' :: _ as rest) ->
-              (k'.position -. k.position) *. length
-              < (extent k +. extent k') /. 2.
-              || overlaps rest
-          | _ -> false
-        in
-        if not (overlaps t.major) then best := Some { score; n; c; ticks = t }
-    end
-  in
-  List.iter consider candidates;
-  Option.get !best
-
-(* [agrees ~minor ~length s best t] checks that [t] has the major ticks and note
-   of [best] and, if [minor], the minor ticks the candidates section gives
-   it. *)
-let agrees ~minor s best (t : Ticks.t) =
-  let majors (t : Ticks.t) =
-    List.map (fun (k : Ticks.tick) -> (k.position, k.label, k.context)) t.major
-  in
-  equal
-    (list (triple float_exact string (option string)))
-    (majors best.ticks) (majors t);
-  equal (option string) best.ticks.note t.note;
-  if minor then
-    let ps = List.map (fun (k : Ticks.tick) -> k.position) best.ticks.major in
-    let expected =
-      List.map
-        (fun (k : Ticks.tick) -> k.position)
-        (of_values s (best.c.minor ())).major
-      |> List.filter (fun p -> not (List.mem p ps))
-      |> List.sort_uniq Float.compare
-    in
-    equal (list float_exact) expected t.minor
-
-let residue i j = ((i mod j) + j) mod j
-let decimal m k i = float_of_string (Printf.sprintf "%de%d" (i * m) k)
-
-(* [q] of [Q] as [m × 10^(z + dk)], with its minor step as [mm × 10^(z + mk)]: a
-   fifth of [1], [2.5] and [5], a quarter of [2] and [4], a third of [3]. *)
-let q_table =
-  [|
-    (1, 0, 2, -1);
-    (5, 0, 1, 0);
-    (2, 0, 5, -1);
-    (25, -1, 5, -1);
-    (4, 0, 1, 0);
-    (3, 0, 1, 0);
-  |]
-
-(* [multiples m k ~j ~r (a, b)] is the distinct floats of the [i × m × 10^k] in
-   \[[a];[b]\] whose index [i] is [r] modulo [j], increasing. *)
-let multiples m k ~j ~r (a, b) =
-  let step = decimal m k 1 in
-  let lo = Float.to_int (Float.floor (a /. step)) - 1
-  and hi = Float.to_int (Float.ceil (b /. step)) + 1 in
-  let first = lo + residue (r - lo) j in
-  List.init (((hi - first) / j) + 1) (fun t -> first + (t * j))
-  |> List.map (decimal m k)
-  |> List.filter (fun v -> a <= v && v <= b)
-  |> List.sort_uniq Float.compare
-  |> Array.of_list
-
-let max_skip = 30
-
-(* No axis of [length] points holds more labels, each at least 10 points. *)
-let max_ticks length = (length /. 10.) +. 2.
-let v_of one vs = if Array.exists (Float.equal one) vs then 1. else 0.
-
-let decimal_candidates ~length ~one (a, b) =
-  let max_ticks = max_ticks length in
-  let top =
-    Float.to_int
-      (Float.floor (Float.log10 (Float.max (Float.abs a) (Float.abs b))))
-    + 2
-  in
-  (* Below [bottom], even every 30th multiple of 4 × 10^z is more than
-     [max_ticks]. *)
-  let bottom =
-    Float.to_int (Float.floor (Float.log10 ((b -. a) /. (max_ticks *. 120.))))
-  in
-  List.concat_map
-    (fun j ->
-      List.concat_map
-        (fun i ->
-          let m, dk, mm, mk = q_table.(i) in
-          List.concat_map
-            (fun z ->
-              let k = z + dk in
-              if (b -. a) /. decimal m k 1 /. Float.of_int j > max_ticks then []
-              else
-                List.init j (fun r ->
-                    let values = multiples m k ~j ~r (a, b) in
-                    let minor () =
-                      if j > 1 then multiples m k ~j:1 ~r:0 (a, b)
-                      else multiples mm (z + mk) ~j:1 ~r:0 (a, b)
-                    in
-                    let s_term =
-                      1.
-                      -. (Float.of_int i /. 5.)
-                      -. Float.of_int j +. v_of one values
-                    in
-                    { s_term; key = [ 0; j; i; -z; r ]; values; minor }))
-            (List.init (top - bottom + 1) (fun d -> top - d)))
-        (List.init 6 Fun.id))
-    (List.init max_skip (fun j -> j + 1))
-
-let powers_candidates base (a, b) =
-  let power i =
-    if base = 10. then float_of_string ("1e" ^ string_of_int i)
-    else Float.pow base (Float.of_int i)
-  in
-  let times n i =
-    if base = 10. then decimal n i 1 else Float.of_int n *. power i
-  in
-  let lb = Float.log base in
-  let e_lo = Float.to_int (Float.floor (Float.log a /. lb)) - 2
-  and e_hi = Float.to_int (Float.ceil (Float.log b /. lb)) + 2 in
-  let exps = List.init (e_hi - e_lo + 1) (fun i -> e_lo + i) in
-  let make ns keep =
-    List.concat_map
-      (fun i ->
-        if keep i then
-          List.map (fun n -> if n = 1 then power i else times n i) ns
-        else [])
-      exps
-    |> List.filter (fun x -> a <= x && x <= b)
-    |> List.sort_uniq Float.compare
-    |> Array.of_list
-  in
-  let integer = Float.is_integer base && base >= 2. && base <= 16. in
-  let by =
-    if integer then List.init (Float.to_int base - 2) (fun n -> n + 2) else []
-  in
-  let skips =
-    List.concat_map
-      (fun j ->
-        List.init j (fun r ->
-            let values = make [ 1 ] (fun i -> residue i j = r) in
-            let minor () =
-              if j > 1 then make [ 1 ] (fun _ -> true)
-              else make by (fun _ -> true)
-            in
-            {
-              s_term = 1. -. Float.of_int j +. v_of 1. values;
-              key = [ 1; j; 0; 0; r ];
-              values;
-              minor;
-            }))
-      (List.init max_skip (fun j -> j + 1))
-  in
-  let forms =
-    (if base = 10. then
-       let values = make [ 1; 2; 5 ] (fun _ -> true) in
-       [
-         {
-           s_term = 1. -. 0.5 -. 1. +. v_of 1. values;
-           key = [ 1; 1; 1; 0; 0 ];
-           values;
-           minor = (fun () -> make [ 3; 4; 6; 7; 8; 9 ] (fun _ -> true));
-         };
-       ]
-     else [])
-    @
-    if by = [] then []
-    else
-      let values = make (1 :: by) (fun _ -> true) in
-      [
-        {
-          s_term = 1. -. 1. -. 1. +. v_of 1. values;
-          key = [ 1; 1; 2; 0; 0 ];
-          values;
-          minor = (fun () -> [||]);
-        };
-      ]
-  in
-  skips @ forms
-
-let signed_candidates c (a, b) =
-  let exps sign =
-    List.filter
-      (fun i ->
-        let p = float_of_string ("1e" ^ string_of_int i) in
-        p >= c && a <= sign *. p && sign *. p <= b)
-      (List.init 632 (fun i -> i - 323))
-  in
-  let pos = exps 1. and neg = exps (-1.) in
-  let make keep =
-    List.map
-      (fun i -> -.float_of_string ("1e" ^ string_of_int i))
-      (List.filter keep neg)
-    @ (if a <= 0. && 0. <= b then [ 0. ] else [])
-    @ List.map
-        (fun i -> float_of_string ("1e" ^ string_of_int i))
-        (List.filter keep pos)
-    |> List.sort_uniq Float.compare
-    |> Array.of_list
-  in
-  List.concat_map
-    (fun j ->
-      List.init j (fun r ->
-          let values = make (fun i -> residue i j = r) in
-          {
-            s_term = 1. -. Float.of_int j +. v_of 0. values;
-            key = [ 2; j; 0; 0; r ];
-            values;
-            minor = (fun () -> if j > 1 then make (fun _ -> true) else [||]);
-          }))
-    (List.init max_skip (fun j -> j + 1))
-
-(* The time intervals, finest first, with their ranks among the strides of their
-   units and the number of those strides. *)
-let time_table =
-  let unit make strides =
-    let n = List.length strides in
-    List.mapi (fun i k -> (make k, i + 1, n)) strides
-  in
-  let decades make first last =
-    List.concat_map
-      (fun e ->
-        unit
-          (fun k -> make (k * int_of_float (10. ** Float.of_int e)))
-          [ 1; 2; 5 ])
-      (List.init (last - first + 1) (fun e -> first + e))
-  in
-  Array.of_list
-    (List.concat
-       [
-         decades Time.nanoseconds 0 8;
-         unit Time.seconds [ 1; 5; 15; 30 ];
-         unit Time.minutes [ 1; 5; 15; 30 ];
-         unit Time.hours [ 1; 3; 6; 12 ];
-         unit Time.days [ 1; 2 ];
-         unit Time.weeks [ 1; 2 ];
-         unit Time.months [ 1; 3; 6 ];
-         decades Time.years 0 11;
-       ])
-
-let calendar_candidates ~length ?tz_offset_s (a, b) =
-  let max_ticks = max_ticks length in
-  let count = Array.length time_table in
-  let ns (t : Time.t) = (Int64.to_float t.sec *. 1e9) +. Float.of_int t.nsec in
-  List.concat
-    (List.init count (fun idx ->
-         let interval, i, n = time_table.(idx) in
-         let duration =
-           match Time.add interval 1 Time.epoch with
-           | t -> ns t
-           | exception Invalid_argument _ -> Float.infinity
-         in
-         if (ns b -. ns a) /. duration > 30. *. max_ticks then []
-         else
-           let all = Time.range ?tz_offset_s interval a b in
-           let len = Array.length all in
-           List.concat_map
-             (fun j ->
-               if Float.of_int (len / j) > max_ticks then []
-               else
-                 List.init j (fun r ->
-                     let values =
-                       Array.init
-                         (Int.max 0 ((len - r + j - 1) / j))
-                         (fun t -> all.(r + (t * j)))
-                     in
-                     let s_term =
-                       1.
-                       -. (Float.of_int (i - 1) /. Float.of_int (n - 1))
-                       -. Float.of_int j
-                     in
-                     {
-                       s_term;
-                       key = [ 3; j; i; count - 1 - idx; r ];
-                       values;
-                       minor = (fun () -> if j > 1 then all else [||]);
-                     }))
-             (List.init max_skip (fun j -> j + 1))))
-
-let stride r =
-  [| 1; 2; 5 |].(r mod 3) * int_of_float (10. ** Float.of_int (r / 3))
-
-(* [least_stride ~length s names] is the ticks at every [k]th of [names] for the
-   least [k] in 1, 2, 5, 10, … that gives at most a hundred ticks and whose
-   labels do not overlap. *)
-let least_stride ~length s names =
-  let n = Array.length names in
-  let extent = extent_of measure in
-  let rec go r =
-    let k = stride r in
-    let values = Array.init ((n + k - 1) / k) (fun i -> names.(i * k)) in
-    let t = of_values s values in
-    let rec overlaps = function
-      | (a : Ticks.tick) :: (b :: _ as rest) ->
-          (b.position -. a.position) *. length < (extent a +. extent b) /. 2.
-          || overlaps rest
-      | _ -> false
-    in
-    if k < n && (Array.length values > 100 || overlaps t.major) then go (r + 1)
-    else
-      let c = { s_term = 0.; key = []; values; minor = (fun () -> [||]) } in
-      { score = 0.; n = Array.length values; c; ticks = t }
-  in
-  go 0
-
-(* Skips beyond [max_skip] score at most this. *)
-let skip_bound = (0.25 *. (2. -. Float.of_int (max_skip + 1))) +. 0.7
-let gen_length = Gen.float_range 50. 800.
-
-let agreement =
-  group "agreement"
-    [
-      prop ~tags:[ "slow" ] ~count:40 "a linear choice is the best decimal step"
-        (Gen.quad
-           (Gen.float_range (-1e4) 1e4)
-           (Gen.float_range 1e-3 1e5) gen_length Gen.bool)
-        (fun (a, w, length, reverse) ->
-          let s = Scale.linear ~reverse ~domain:(a, a +. w) () in
-          let best =
-            reference ~length s (decimal_candidates ~length ~one:0. (a, a +. w))
-          in
-          assume (best.score > skip_bound);
-          agrees ~minor:true s best (Ticks.choose ~length ~measure s));
-      prop ~tags:[ "slow" ] ~count:40
-        "a log choice is the best power or decimal step"
-        (Gen.quad (Gen.float_range (-3.) 3.) (Gen.float_range 0.05 6.)
-           gen_length
-           (Gen.of_list [ 10.; 2.; 16.; Float.exp 1. ]))
-        (fun (e, span, length, base) ->
-          let a = 10. ** e in
-          let b = a *. (10. ** span) in
-          let s = Scale.log ~base ~domain:(a, b) () in
-          let best =
-            reference ~length s
-              (decimal_candidates ~length ~one:1. (a, b)
-              @ powers_candidates base (a, b))
-          in
-          assume (best.score > skip_bound);
-          agrees ~minor:true s best (Ticks.choose ~length ~measure s));
-      prop ~tags:[ "slow" ] ~count:40
-        "a symlog choice is the best signed power or decimal step"
-        (Gen.quad
-           (Gen.float_range (-1e5) 1e3)
-           (Gen.float_range 1e-2 1e7) gen_length
-           (Gen.of_list [ 1.; 0.5; 10. ]))
-        (fun (a, w, length, c) ->
-          let s = Scale.symlog ~constant:c ~domain:(a, a +. w) () in
-          let best =
-            reference ~length s
-              (decimal_candidates ~length ~one:0. (a, a +. w)
-              @ signed_candidates c (a, a +. w))
-          in
-          assume (best.score > skip_bound);
-          agrees ~minor:true s best (Ticks.choose ~length ~measure s));
-      prop ~tags:[ "slow" ] ~count:40
-        "a temporal choice is the best calendar interval"
-        (Gen.quad
-           (Gen.int_range (-2_000_000_000) 2_000_000_000)
-           (Gen.int_range 1 13) gen_length
-           (Gen.of_list [ 0; 3600; -18000 ]))
-        (fun (s0, e, length, tz_offset_s) ->
-          let a = Time.v S (Int64.of_int s0) in
-          let b =
-            Time.add (Time.nanoseconds 1)
-              (int_of_float (10. ** (Float.of_int e *. 1.4)))
-              a
-          in
-          let s = Scale.time ~tz_offset_s ~domain:(a, b) () in
-          let best =
-            reference ~length s
-              (calendar_candidates ~length ~tz_offset_s (a, b))
-          in
-          assume
-            (best.score > (0.25 *. (1. -. Float.of_int (max_skip + 1))) +. 0.7);
-          agrees ~minor:false s best (Ticks.choose ~length ~measure s));
-      prop
-        "a band choice is the least stride of at most a hundred ticks whose \
-         labels do not overlap"
-        (Gen.triple (Gen.int_range 1 400)
-           (Gen.frequency
-              [ (3, Gen.float_range 20. 1000.); (1, Gen.float_range 1e4 1e6) ])
-           Gen.bool)
-        (fun (n, length, reverse) ->
-          cover "more categories than ticks on a long axis"
-            (n > 100 && length > 1e4);
-          let names = Array.init n (fun i -> "c" ^ string_of_int i) in
-          let s = Scale.band ~reverse ~domain:(Labels names) () in
-          agrees ~minor:true s
-            (least_stride ~length s names)
-            (Ticks.choose ~length ~measure s));
-    ]
-
-(* Chosen axes, each against the reference: domains whose ends are powers, zero
-   or boundaries, short and long axes. *)
-let reference_cases =
-  let at d t = Time.of_date_time (d, t) in
-  let linear (a, b, length) () =
-    let s = Scale.linear ~domain:(a, b) () in
-    agrees ~minor:true s
-      (reference ~length s (decimal_candidates ~length ~one:0. (a, b)))
-      (Ticks.choose ~length ~measure s)
-  in
-  let log (base, a, b, length) () =
-    let s = Scale.log ~base ~domain:(a, b) () in
-    agrees ~minor:true s
-      (reference ~length s
-         (decimal_candidates ~length ~one:1. (a, b)
-         @ powers_candidates base (a, b)))
-      (Ticks.choose ~length ~measure s)
-  in
-  let symlog (c, a, b, length) () =
-    let s = Scale.symlog ~constant:c ~domain:(a, b) () in
-    agrees ~minor:true s
-      (reference ~length s
-         (decimal_candidates ~length ~one:0. (a, b) @ signed_candidates c (a, b)))
-      (Ticks.choose ~length ~measure s)
-  in
-  let time (tz_offset_s, a, b, length) () =
-    let s = Scale.time ~tz_offset_s ~domain:(a, b) () in
-    agrees ~minor:false s
-      (reference ~length s (calendar_candidates ~length ~tz_offset_s (a, b)))
-      (Ticks.choose ~length ~measure s)
-  in
-  let band (n, length) () =
-    let names = Array.init n (fun i -> "c" ^ string_of_int i) in
-    let s = Scale.band ~domain:(Labels names) () in
-    agrees ~minor:true s
-      (least_stride ~length s names)
-      (Ticks.choose ~length ~measure s)
-  in
-  let row name f = (name, f) in
-  cases ~name:fst "reference cases"
-    [
-      row "linear [0;1] at 300" (linear (0., 1., 300.));
-      row "linear [0;100] at 120" (linear (0., 100., 120.));
-      row "linear [-1;1] at 600" (linear (-1., 1., 600.));
-      row "linear [1;4] at 100" (linear (1., 4., 100.));
-      row "linear [-25;25] at 30" (linear (-25., 25., 30.));
-      row "linear [0.62;0.97] at 180" (linear (0.62, 0.97, 180.));
-      row "log [1;1000] at 300" (log (10., 1., 1000., 300.));
-      row "log [1;1e6] at 200" (log (10., 1., 1e6, 200.));
-      row "log [0.01;100] at 500" (log (10., 0.01, 100., 500.));
-      row "log [2;8] at 300" (log (10., 2., 8., 300.));
-      row "log [10;1e9] at 150" (log (10., 10., 1e9, 150.));
-      row "log [1;1e9] at 800" (log (10., 1., 1e9, 800.));
-      row "log 2 [1;1024] at 300" (log (2., 1., 1024., 300.));
-      row "log 2 [0.5;64] at 120" (log (2., 0.5, 64., 120.));
-      row "log 16 [1;4096] at 300" (log (16., 1., 4096., 300.));
-      row "log 16 [1;256] at 800" (log (16., 1., 256., 800.));
-      row "log e [1;100] at 300" (log (Float.exp 1., 1., 100., 300.));
-      row "log [1;10] at 300" (log (10., 1., 10., 300.));
-      row "log [1;100] at 1500" (log (10., 1., 100., 1500.));
-      row "log 16 [1;256] at 4000" (log (16., 1., 256., 4000.));
-      row "log 3 [1;81] at 1500" (log (3., 1., 81., 1500.));
-      row "symlog [-1000;1000] at 300" (symlog (1., -1000., 1000., 300.));
-      row "symlog [0;1e4] at 300" (symlog (1., 0., 1e4, 300.));
-      row "symlog [-1e4;0] at 200" (symlog (1., -1e4, 0., 200.));
-      row "symlog [-1e5;1e3] at 500" (symlog (1., -1e5, 1e3, 500.));
-      row "symlog [-10;10] at 100" (symlog (1., -10., 10., 100.));
-      row "symlog 10 [-1e6;1e6] at 400" (symlog (10., -1e6, 1e6, 400.));
-      row "a year at 400"
-        (time (0, at (2026, 1, 1) (0, 0, 0), at (2026, 12, 31) (0, 0, 0), 400.));
-      row "three days at 300"
-        (time (0, at (2026, 3, 2) (0, 0, 0), at (2026, 3, 5) (0, 0, 0), 300.));
-      row "an hour at 200"
-        (time
-           (3600, at (2026, 3, 2) (10, 0, 0), at (2026, 3, 2) (11, 0, 0), 200.));
-      row "ten years at 300"
-        (time (0, at (2020, 1, 1) (0, 0, 0), at (2030, 1, 1) (0, 0, 0), 300.));
-      row "five seconds at 600"
-        (time
-           (-18000, at (2026, 3, 2) (10, 0, 0), at (2026, 3, 2) (10, 0, 5), 600.));
-      row "two weeks at 500"
-        (time (0, at (2026, 3, 1) (0, 0, 0), at (2026, 3, 15) (0, 0, 0), 500.));
-      row "half a day ending at midnight at 300"
-        (time (0, at (2026, 3, 4) (12, 0, 0), at (2026, 3, 5) (0, 0, 0), 300.));
-      row "two minutes at 300"
-        (time (0, at (2026, 3, 2) (10, 0, 7), at (2026, 3, 2) (10, 2, 7), 300.));
-      row "ninety seconds at 200"
-        (time
-           (0, at (2026, 3, 2) (10, 0, 0), at (2026, 3, 2) (10, 1, 30), 200.));
-      row "seven hours at 250"
-        (time
-           (0, at (2026, 3, 2) (9, 30, 0), at (2026, 3, 2) (16, 30, 0), 250.));
-      row "forty days at 300"
-        (time (0, at (2026, 3, 2) (0, 0, 0), at (2026, 4, 11) (0, 0, 0), 300.));
-      row "three months at 300"
-        (time (0, at (2026, 3, 2) (0, 0, 0), at (2026, 6, 2) (0, 0, 0), 300.));
-      row "seven categories at 100" (band (7, 100.));
-      row "ten categories at 400" (band (10, 400.));
-      row "ten categories at 2000" (band (10, 2000.));
-      row "thirty categories at 300" (band (30, 300.));
-      row "one category at 50" (band (1, 50.));
-    ]
-    (fun (_, f) -> f ())
-
 let () =
   exit
     (run "Ticks"
@@ -1431,7 +1095,5 @@ let () =
          choice;
          minor_ticks;
          comparing;
-         agreement;
-         reference_cases;
          baselines;
        ])

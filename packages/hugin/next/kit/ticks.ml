@@ -174,7 +174,7 @@ let is_signed_power x =
   || match log_parts 10. (Float.abs x) with Some (1, _) -> true | _ -> false
 
 let is_logarithms tf vs =
-  match (tf : Scale.Private.transform) with
+  match (tf : Scale.transform) with
   | Log b -> Array.for_all (fun x -> Option.is_some (log_parts b x)) vs
   | Symlog _ -> Array.for_all is_signed_power vs
   | Linear | Pow _ | Custom _ -> false
@@ -282,7 +282,7 @@ let label : type d.
  fun ~shortest locale notation s vs ->
   match Scale.kind s with
   | Quantitative ->
-      let tf = Scale.Private.transform s in
+      let tf = Scale.transform s in
       if is_logarithms tf vs then
         let base = match tf with Log b -> b | _ -> 10. in
         ( Array.map
@@ -292,7 +292,7 @@ let label : type d.
       else
         let labels, note = quantities locale notation (Array.map shortest vs) in
         (Array.map (fun l -> (l, None)) labels, note)
-  | Temporal -> (times locale (Scale.Private.tz_offset_s s) vs, None)
+  | Temporal -> (times locale (Scale.tz_offset_s s) vs, None)
   | Categorical ->
       let (Categories c) = Scale.domain s in
       let text =
@@ -401,6 +401,28 @@ let can_beat st ub = match st.best with None -> true | Some b -> ub >= b.score
 let density_bound st n =
   if n -. 1. > st.rho_t then 2. -. ((n -. 1.) /. st.rho_t) else 1.
 
+(* The weights of simplicity, coverage and density in a score, after Talbot, Lin
+   and Hanrahan. *)
+let w_simplicity = 0.25
+let w_coverage = 0.2
+let w_density = 0.5
+let score s c d = (w_simplicity *. s) +. (w_coverage *. c) +. (w_density *. d)
+
+(* [worth st s_max n] is [true] iff a candidate of simplicity at most [s_max]
+   and at least [n] ticks may be chosen: its coverage is at most [1]. *)
+let worth st s_max n = can_beat st (score s_max 1. (density_bound st n))
+
+(* [skips st ~simplest ~last f] calls [f j] for the skips [j] from [1], up to
+   [last], while a candidate of simplicity [simplest - j] may be chosen. *)
+let skips st ~simplest ?(last = max_int) f =
+  let rec loop j =
+    if j <= last && worth st (simplest -. Float.of_int j) 0. then begin
+      f j;
+      loop (j + 1)
+    end
+  in
+  loop 1
+
 let overlaps st positions labels =
   let rec loop k =
     k + 1 < Array.length positions
@@ -433,7 +455,7 @@ let consider st ~s_term ~key ~minor vs =
     let c = 1. -. (50. *. (sq (1. -. pn) +. sq p1)) in
     let rho = if n = 1 then 1. else Float.of_int (n - 1) /. (pn -. p1) in
     let d = 2. -. Float.max (rho /. st.rho_t) (st.rho_t /. rho) in
-    let score = (0.25 *. s_term) +. (0.2 *. c) +. (0.5 *. d) in
+    let score = score s_term c d in
     if beats st score n key then
       let labels, note =
         label ~shortest:st.shortest st.locale st.notation st.s vs
@@ -492,8 +514,7 @@ let decimal_steps st ~v (a, b) =
       ((half -. delta -. (ulp /. 2.)) /. ((ulp +. delta) /. 2.)) +. 1.
     in
     let s_max = 2. -. (Float.of_int i /. 5.) -. Float.of_int j in
-    if can_beat st ((0.25 *. s_max) +. 0.2 +. (0.5 *. density_bound st n_lb))
-    then
+    if worth st s_max n_lb then
       if not (Steps.is_fine s a b) then begin
         for r = 0 to j - 1 do
           candidate j i z r
@@ -501,16 +522,14 @@ let decimal_steps st ~v (a, b) =
         descend j i (z - 1)
       end
   in
-  let rec skips j =
-    if can_beat st ((0.25 *. (2. -. Float.of_int j)) +. 0.7) then begin
-      for i = 0 to Array.length q_steps - 1 do
-        let s_max = 2. -. (Float.of_int i /. 5.) -. Float.of_int j in
-        if can_beat st ((0.25 *. s_max) +. 0.7) then descend j i z_top
-      done;
-      skips (j + 1)
-    end
+  let search () =
+    skips st ~simplest:2. (fun j ->
+        for i = 0 to Array.length q_steps - 1 do
+          let s_max = 2. -. (Float.of_int i /. 5.) -. Float.of_int j in
+          if worth st s_max 0. then descend j i z_top
+        done)
   in
-  ((fun () -> seed z_top), fun () -> skips 1)
+  ((fun () -> seed z_top), search)
 
 let powers_family st ~v base (a, b) =
   let lb = Float.log base in
@@ -539,79 +558,73 @@ let powers_family st ~v base (a, b) =
   let inside =
     Float.floor (Float.log b /. lb) -. Float.ceil (Float.log a /. lb) -. 1.
   in
-  let worth s_max n =
-    can_beat st ((0.25 *. s_max) +. 0.2 +. (0.5 *. density_bound st n))
-  in
   let form i ns ~minor =
     let per = Float.of_int (List.length ns) in
-    if worth (2. -. (Float.of_int i /. 2.) -. 1.) (per *. (inside -. 1.)) then
+    if worth st (2. -. (Float.of_int i /. 2.) -. 1.) (per *. (inside -. 1.))
+    then
       let vs = multiples ns all in
       let s_term = 1. -. (Float.of_int i /. 2.) -. 1. +. v vs in
       consider st ~s_term ~key:[ 1; 1; i; 0; 0 ] ~minor vs
   in
-  (* Beyond a skip of [e_hi - e_lo + 1], each offset keeps one power at most, as
-     a smaller skip did. *)
-  let rec skips j =
-    if
-      j <= e_hi - e_lo + 1
-      && can_beat st ((0.25 *. (2. -. Float.of_int j)) +. 0.7)
-    then begin
-      if worth (2. -. Float.of_int j) (Float.floor (inside /. Float.of_int j))
-      then
-        for r = 0 to j - 1 do
-          let vs = multiples [ 1 ] (fun i -> residue i j = r) in
-          let minor () =
-            if j > 1 then multiples [ 1 ] all else multiples by all
-          in
-          consider st
-            ~s_term:(1. -. Float.of_int j +. v vs)
-            ~key:[ 1; j; 0; 0; r ] ~minor vs
-        done;
-      skips (j + 1)
-    end
+  let powers j =
+    if worth st (2. -. Float.of_int j) (Float.floor (inside /. Float.of_int j))
+    then
+      for r = 0 to j - 1 do
+        let vs = multiples [ 1 ] (fun i -> residue i j = r) in
+        let minor () =
+          if j > 1 then multiples [ 1 ] all else multiples by all
+        in
+        consider st
+          ~s_term:(1. -. Float.of_int j +. v vs)
+          ~key:[ 1; j; 0; 0; r ] ~minor vs
+      done
   in
   if base = 10. then
     form 1 [ 1; 2; 5 ] ~minor:(fun () -> multiples [ 3; 4; 6; 7; 8; 9 ] all);
   if by <> [] then form 2 (1 :: by) ~minor:(fun () -> [||]);
-  skips 1
+  (* Beyond a skip of [e_hi - e_lo + 1], each offset keeps one power at most, as
+     a smaller skip did. *)
+  skips st ~simplest:2. ~last:(e_hi - e_lo + 1) powers
+
+(* [signed_exponents c (a, b) sign] is the exponents [i], increasing, of the
+   powers of ten of magnitude at least [c] whose values [sign × 10^i] lie in
+   \[[a];[b]\]. *)
+let signed_exponents c (a, b) sign =
+  List.filter
+    (fun i ->
+      let p = Steps.pow10 i in
+      p >= c && a <= sign *. p && sign *. p <= b)
+    (List.init 632 (fun i -> i - 323))
+
+(* [signed_powers (a, b) ~pos ~neg keep] is, increasing, the negated powers of
+   the exponents [neg], [0.] if it lies in \[[a];[b]\], and the powers of the
+   exponents [pos], of the exponents that [keep] keeps. *)
+let signed_powers (a, b) ~pos ~neg keep =
+  Array.of_list
+    (List.concat
+       [
+         List.rev_map (fun i -> -.Steps.pow10 i) (List.filter keep neg);
+         (if a <= 0. && 0. <= b then [ 0. ] else []);
+         List.map Steps.pow10 (List.filter keep pos);
+       ])
 
 let signed_family st ~v c (a, b) =
-  let exponents sign =
-    List.filter
-      (fun i ->
-        let p = Steps.pow10 i in
-        p >= c && a <= sign *. p && sign *. p <= b)
-      (List.init 632 (fun i -> i - 323))
-  in
-  let pos = exponents 1. and neg = exponents (-1.) in
-  let zero = a <= 0. && 0. <= b in
+  let pos = signed_exponents c (a, b) 1. in
+  let neg = signed_exponents c (a, b) (-1.) in
   let width =
     match List.sort Int.compare (pos @ neg) with
     | [] -> 1
     | first :: _ as l -> List.nth l (List.length l - 1) - first + 1
   in
-  let values keep =
-    Array.of_list
-      (List.concat
-         [
-           List.rev_map (fun i -> -.Steps.pow10 i) (List.filter keep neg);
-           (if zero then [ 0. ] else []);
-           List.map Steps.pow10 (List.filter keep pos);
-         ])
-  in
-  let rec skips j =
-    if j <= width && can_beat st ((0.25 *. (2. -. Float.of_int j)) +. 0.7) then begin
+  let values = signed_powers (a, b) ~pos ~neg in
+  skips st ~simplest:2. ~last:width (fun j ->
       for r = 0 to j - 1 do
         let vs = values (fun i -> residue i j = r) in
         let minor () = if j > 1 then values (fun _ -> true) else [||] in
         consider st
           ~s_term:(1. -. Float.of_int j +. v vs)
           ~key:[ 2; j; 0; 0; r ] ~minor vs
-      done;
-      skips (j + 1)
-    end
-  in
-  skips 1
+      done)
 
 let calendar_family st tz ((a : Time.t), (b : Time.t)) =
   let steps = Steps.time_steps in
@@ -656,37 +669,98 @@ let calendar_family st tz ((a : Time.t), (b : Time.t)) =
     | Some f ->
         ignore (candidate (Array.length (pick steps.(idx) f 1 0)) idx f 0)
   in
-  let rec skips j =
-    if can_beat st ((0.25 *. (1. -. Float.of_int j)) +. 0.7) then begin
-      for rank = 1 to 4 do
-        for idx = count - 1 downto 0 do
-          let e = steps.(idx) in
-          let s_max =
-            1.
-            -. (Float.of_int (e.i - 1) /. Float.of_int (e.n - 1))
-            -. Float.of_int j
-          in
-          let span = Float.of_int j *. e.longest in
-          let n_lb = ((length -. (2. *. span)) /. span) +. 1. in
-          if
-            e.i = rank
-            && can_beat st
-                 ((0.25 *. s_max) +. 0.2 +. (0.5 *. density_bound st n_lb))
-          then
-            match first e with
-            | None -> ()
-            | Some f ->
-                let rec offsets r =
-                  if r < j && candidate j idx f r then offsets (r + 1)
-                in
-                offsets 0
-        done
-      done;
-      skips (j + 1)
-    end
+  let intervals j =
+    for rank = 1 to 4 do
+      for idx = count - 1 downto 0 do
+        let e = steps.(idx) in
+        let s_max =
+          1.
+          -. (Float.of_int (e.i - 1) /. Float.of_int (e.n - 1))
+          -. Float.of_int j
+        in
+        let span = Float.of_int j *. e.longest in
+        let n_lb = ((length -. (2. *. span)) /. span) +. 1. in
+        if e.i = rank && worth st s_max n_lb then
+          match first e with
+          | None -> ()
+          | Some f ->
+              let rec offsets r =
+                if r < j && candidate j idx f r then offsets (r + 1)
+              in
+              offsets 0
+      done
+    done
   in
   seed (count - 1);
-  skips 1
+  skips st ~simplest:1. intervals
+
+(* Density references *)
+
+(* About ten values of the scale's own family, whose labels set the density
+   target of [choose]. *)
+let reference_count = 10
+
+(* The multiples of the decimal step for a tenth of \[[a];[b]\], the step a nice
+   domain rounds to. *)
+let decimal_reference a b = Steps.multiples (Steps.step a b reference_count) a b
+
+(* In an integer base over fewer than ten powers, the powers with their
+   multiples; otherwise the powers whose exponents are multiples of the decimal
+   step for a tenth of the exponents' span, at least [1]; and the decimal
+   reference if that gives fewer than half of ten values. *)
+let log_reference base a b =
+  let lb = Float.log base in
+  let ea = Float.log a /. lb and eb = Float.log b /. lb in
+  let i0 = Float.to_int (Float.floor ea) - 1
+  and i1 = Float.to_int (Float.ceil eb) + 1 in
+  let inside v = a <= v && v <= b in
+  let vs =
+    if Steps.is_integer_base base && eb -. ea < Float.of_int reference_count
+    then
+      Steps.collect (fun push ->
+          for i = i0 to i1 do
+            for j = 1 to Float.to_int base - 1 do
+              let v = Steps.multiple base j i in
+              if inside v then push v
+            done
+          done)
+    else
+      let st = Steps.step ea eb reference_count in
+      let st = if st.k < 0 then { Steps.m = 1; k = 0 } else st in
+      Steps.collect (fun push ->
+          Array.iter
+            (fun e ->
+              let v = Steps.power base (Float.to_int e) in
+              if inside v then push v)
+            (Steps.multiples st (Float.of_int i0) (Float.of_int i1)))
+  in
+  if 2 * Array.length vs < reference_count then decimal_reference a b else vs
+
+(* The signed powers whose exponents are multiples of the least stride [k] that
+   gives at most ten values, or of the one that gives the fewest; and the
+   decimal reference if that gives fewer than two values. *)
+let symlog_reference c a b =
+  let pos = signed_exponents c (a, b) 1. in
+  let neg = signed_exponents c (a, b) (-1.) in
+  let zero = a <= 0. && 0. <= b in
+  let span = List.fold_left (fun m i -> Int.max m (Int.abs i)) 0 (pos @ neg) in
+  let size k =
+    let n l = List.length (List.filter (fun i -> i mod k = 0) l) in
+    (if zero then 1 else 0) + n pos + n neg
+  in
+  let rec stride r best =
+    let k = Steps.stride r in
+    let n = size k in
+    if n <= reference_count then k
+    else
+      let best =
+        match best with Some (_, m) when m <= n -> best | _ -> Some (k, n)
+      in
+      if k > span then fst (Option.get best) else stride (r + 1) best
+  in
+  let k = stride 0 None in
+  let vs = signed_powers (a, b) ~pos ~neg (fun i -> i mod k = 0) in
+  if Array.length vs < 2 then decimal_reference a b else vs
 
 (* The most ticks [choose] aims for, however long the axis, and the most a band
    axis shows. A reader takes in no more on one axis, and the cap bounds the
@@ -755,57 +829,21 @@ let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
     let exact = memo (fun (m, k, i) -> Steps.value { m; k } i) in
     fun (s : Steps.step) i -> exact (s.m, s.k, i)
   in
-  let norm = Scale.normalize s in
-  let reference, positions = arrange s (Scale.ticks ~count:10 s) in
-  let labels, note = label ~shortest locale notation s reference in
-  let degenerate =
-    Array.length reference = 0
-    ||
-    match Scale.domain s with
-    | Floats (a, _) -> Float.equal (norm a) 0.5
-    | Instants (a, _) -> Float.equal (norm a) 0.5
-    | Categories _ -> false
+  let st =
+    {
+      s;
+      norm = Scale.normalize s;
+      length;
+      rho_t = 1.;
+      locale;
+      notation;
+      extent;
+      shortest;
+      value;
+      best = None;
+    }
   in
-  if degenerate then ticks_of positions labels note []
-  else
-    let st =
-      {
-        s;
-        norm;
-        length;
-        rho_t = 1.;
-        locale;
-        notation;
-        extent;
-        shortest;
-        value;
-        best = None;
-      }
-    in
-    let mean =
-      Array.fold_left (fun m l -> m +. tick_extent st l) 0. labels
-      /. Float.of_int (Array.length labels)
-    in
-    let m = Float.min (length /. (2. *. mean)) most_ticks in
-    let st = { st with rho_t = Float.max 1. (m -. 1.) } in
-    (match Scale.domain s with
-    | Floats (a, b) ->
-        let tf = Scale.Private.transform s in
-        let one = match tf with Log _ -> 1. | _ -> 0. in
-        let v vs = if Array.exists (Float.equal one) vs then 1. else 0. in
-        (* A lone tick, then the powers, bound the decimal steps; the order keys
-           keep ties as the order of candidates states. *)
-        let seed, search = decimal_steps st ~v (a, b) in
-        seed ();
-        (match tf with
-        | Linear | Pow _ | Custom _ -> ()
-        | Log base -> powers_family st ~v base (a, b)
-        | Symlog c -> signed_family st ~v c (a, b));
-        search ()
-    | Instants (a, b) -> calendar_family st (Scale.Private.tz_offset_s s) (a, b)
-    | Categories (Labels names) -> strides st names
-    | Categories (Indices ix) ->
-        strides st (Array.map (fun (i, _) -> string_of_int i) ix));
+  let chosen st =
     match st.best with
     | None -> assert false
     | Some best ->
@@ -817,6 +855,74 @@ let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
         in
         ticks_of best.positions best.labels best.note
           (List.sort_uniq Float.compare minor)
+  in
+  (* [continuous a reference search] is the ticks of a continuous domain from
+     [a]. The labels of the values [reference ()], those a nice domain rounds
+     to, set the density target: [m] ticks of their mean extent fill half the
+     axis. *)
+  let continuous a reference search =
+    let u = st.norm a in
+    if Float.is_nan u then ticks_of [||] [||] None []
+    else if Float.equal u 0.5 then
+      (* Only a constant domain normalises an end to [0.5]. *)
+      let labels, note = label ~shortest locale notation s [| a |] in
+      ticks_of [| 0.5 |] labels note []
+    else
+      (* Every reference holds a value of a domain that is not constant, so
+         [mean] is a number. *)
+      let reference, _ = arrange s (reference ()) in
+      let labels, _ = label ~shortest locale notation s reference in
+      let mean =
+        Array.fold_left (fun m l -> m +. tick_extent st l) 0. labels
+        /. Float.of_int (Array.length labels)
+      in
+      let m = Float.min (length /. (2. *. mean)) most_ticks in
+      let st = { st with rho_t = Float.max 1. (m -. 1.) } in
+      search st;
+      chosen st
+  in
+  match Scale.domain s with
+  | Floats (a, b) ->
+      let tf = Scale.transform s in
+      let one = match tf with Log _ -> 1. | _ -> 0. in
+      let v vs = if Array.exists (Float.equal one) vs then 1. else 0. in
+      let reference () =
+        match tf with
+        | Linear | Pow _ | Custom _ -> decimal_reference a b
+        | Log base -> log_reference base a b
+        | Symlog c -> symlog_reference c a b
+      in
+      continuous a reference (fun st ->
+          (* A lone tick, then the powers, bound the decimal steps; the order
+             keys keep ties as the order of candidates states. *)
+          let seed, search = decimal_steps st ~v (a, b) in
+          seed ();
+          (match tf with
+          | Linear | Pow _ | Custom _ -> ()
+          | Log base -> powers_family st ~v base (a, b)
+          | Symlog c -> signed_family st ~v c (a, b));
+          search ())
+  | Instants (a, b) ->
+      let tz = Scale.tz_offset_s s in
+      (* The boundaries of the nice interval, or of the next finer one that has
+         one in the domain: the finest has one in every domain that is not
+         constant. *)
+      let rec reference i () =
+        let i' = Steps.time_steps.(i).interval in
+        match Time.range ~tz_offset_s:tz i' a b with
+        | [||] -> reference (i - 1) ()
+        | vs -> vs
+      in
+      let tenth = Steps.ns_diff b a /. Float.of_int reference_count in
+      continuous a
+        (reference (Steps.nearest_time_step tenth))
+        (fun st -> calendar_family st tz (a, b))
+  | Categories (Labels names) ->
+      strides st names;
+      chosen st
+  | Categories (Indices ix) ->
+      strides st (Array.map (fun (i, _) -> string_of_int i) ix);
+      chosen st
 
 (* Comparing and formatting *)
 

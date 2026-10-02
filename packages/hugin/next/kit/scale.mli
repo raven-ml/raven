@@ -7,9 +7,9 @@
 
     A scale denotes a {e normalisation}, a function from a domain of data values
     to the reals that maps the domain onto \[[0];[1]\], with an inverse where
-    one exists, and the {e guide values} its axis or legend shows. Positions,
-    colours and sizes are functions of normalised values; points, pixels and
-    projections belong to the figure.
+    one exists. Positions, colours and sizes are functions of normalised values;
+    points, pixels and projections belong to the figure, and the ticks of its
+    axes and legends to {!Ticks}.
 
     There are three kinds of scales ({!type-kind}): quantitative scales over
     floats ({!linear}, {!log}, {!symlog}, {!pow}, {!custom}), temporal scales
@@ -21,9 +21,9 @@
     {{!section-specs}specifications}, or unset, and the scale means the
     normalisation its properties give once each unset one takes its default. A
     figure merges the specifications of the channels that read one scale
-    ({!merge}, {!imply}) and fits the domain to their data ({!hull}, {!fit}). A
-    fitted scale sets its domain, so given to another figure it normalises as it
-    did in the first.
+    ({!merge}, {!imply}) and fits the domain to their data ({!fit}). A fitted
+    scale sets its domain, so given to another figure it normalises as it did in
+    the first.
 
     {1:normalisation Normalisation}
 
@@ -188,7 +188,7 @@ val log :
     and its default domain is \[[1];[base]\]. It takes no [zero]: [0.] is
     missing on a log scale, so {!fit} never widens a log domain to it.
 
-    The rules for guide values, tick labels and minor ticks that name an
+    The rules for ticks, tick labels and minor ticks ({!Ticks}) that name an
     {e integer base} mean a base that is an integer from [2] to [16]; a greater
     integer base, whose powers hold more multiples than an axis can show,
     follows the rules of other bases. *)
@@ -244,13 +244,14 @@ val custom :
   float t
 (** [custom ~transform ~forward ~inverse ()] is a quantitative scale with
     transform [forward], whose inverse is [inverse], and which [transform] names
-    in printed forms. Its default domain is \[[0];[1]\], and its guide values
-    and nice domains are those of a linear scale over the same domain. [forward]
-    must be strictly monotone where it is finite, [inverse] must be its inverse
-    there, and neither may read mutable state; results are unspecified
-    otherwise. A set domain must have ends that are not missing, where [forward]
-    is finite. An unfitted custom scale whose default ends are missing, such as
-    a logit, normalises every value to [nan]. *)
+    in printed forms. Its default domain is \[[0];[1]\], its nice domains are
+    those of a linear scale over the same domain, and its tick candidates the
+    decimal steps of one ({!Ticks}). [forward] must be strictly monotone where
+    it is finite, [inverse] must be its inverse there, and neither may read
+    mutable state; results are unspecified otherwise. A set domain must have
+    ends that are not missing, where [forward] is finite. An unfitted custom
+    scale whose default ends are missing, such as a logit, normalises every
+    value to [nan]. *)
 
 val time :
   ?name:string ->
@@ -263,7 +264,7 @@ val time :
   ?unknown:Color.t ->
   unit ->
   Time.t t
-(** [time ()] is a temporal scale whose guide values and nice domains follow the
+(** [time ()] is a temporal scale whose ticks and nice domains follow the
     calendar at the offset [tz_offset_s] (see {!Time.type-tz_offset_s}); unset
     counts as [0]. Its default domain is the first day of 1970 UTC, from
     {!Time.epoch} to one day later. *)
@@ -333,6 +334,21 @@ val symbols : string t -> Symbol.t array option
 val unknown : 'd t -> Color.t option
 (** [unknown s] is the colour of the missing values of [s], if set. *)
 
+(** The type for the transforms of quantitative scales ({!section-continuous}).
+    A custom transform is known by its name. *)
+type transform =
+  | Linear  (** {!linear}. *)
+  | Log of float  (** {!log} in the given base. *)
+  | Symlog of float  (** {!symlog} with the given constant. *)
+  | Pow of float  (** {!pow} with the given exponent. *)
+  | Custom of string  (** {!custom} with the given name. *)
+
+val transform : float t -> transform
+(** [transform s] is the transform of [s]. *)
+
+val tz_offset_s : Time.t t -> Time.tz_offset_s
+(** [tz_offset_s s] is the offset of the calendar of [s], [0] if unset. *)
+
 (** {1:mapping Normalising and inverting} *)
 
 val normalize : 'd t -> 'd -> float
@@ -355,58 +371,9 @@ val invert : 'd t -> float -> 'd option
       step contains [u]: in the outer padding, outside \[[0];[1]\], or without
       categories. *)
 
-(** {1:guides Guide values} *)
+(** {1:time_intervals Time intervals}
 
-val ticks : count:int -> 'd t -> 'd array
-(** [ticks ~count s] is about [count] guide values of [s] inside its domain, in
-    increasing order, or in domain order on a band scale:
-    - On linear, pow and custom scales, the multiples inside the domain of the
-      {e step} [m × 10^k] nearest by ratio to [t], the domain's length over
-      [count]: with [t] written [f × 10^k], [1 <= f < 10], [m] is [10] if
-      [f >= √50], [5] if [f >= √10], [2] if [f >= √2] and [1] otherwise. For the
-      domain \[[a];[b]\], [t] is [(b -. a) /. float count], or twice
-      [(b /. 2. -. a /. 2.) /. float count] if [b -. a] overflows. If no
-      multiple lies in the domain and [count = 1], the values are those for a
-      [count] of [2]. Each multiple is computed from its integer index [i],
-      never by accumulating the step: it is the float nearest [i × m × 10^k], so
-      [3 × 0.1] is [0.3]. If the step is below a 32nd of the distance from each
-      end of the domain to the next float towards zero (the least subnormal at
-      [0.]), the values are every float of the domain. Multiples that round to
-      the same float give one value.
-    - On log scales in an {{!log}integer base} [b] whose domain's ends have
-      exponents [log_b] that differ by less than [count], the multiples
-      [j × b^i] inside the domain for [j] from [1] to [b - 1]. Otherwise, and in
-      any other base, the powers [b^i] inside the domain whose exponents [i] are
-      the multiples of the step the linear rule gives over the exponents of the
-      domain's ends, a step of at least [1]. In every base, the values of the
-      linear rule if these are fewer than half of [count]. In base [10], [10^i]
-      is the float nearest it and [j × 10^i] is computed as the linear rule
-      computes multiples; in another base, [b^i] is [Float.pow b (float i)] and
-      [j × b^i] is [float j *. Float.pow b (float i)].
-    - On symlog scales of constant [c], [0.] if it is inside the domain, and the
-      powers of ten and their negations of magnitude at least [c] inside the
-      domain whose exponents are multiples of the least [k] in [1], [2], [5],
-      [10], … that gives at most [count] values or, if none does, of the least
-      [k] that gives the fewest; the values of the linear rule if that gives
-      fewer than two values.
-    - On temporal scales, the boundaries inside the domain, at the scale's
-      offset, of the interval of the {{!section-time_intervals}time intervals}
-      whose duration is nearest by ratio to the domain's length over [count],
-      the coarser of two equally near, or, if none of its boundaries lies in the
-      domain, of the next finer interval that has one.
-    - On band scales, every [k]th category from the first, for the least [k] in
-      [1], [2], [5], [10], [20], [50], … that gives at most [count] categories.
-
-    A {{!section-continuous}constant} domain \[[a];[b]\] has the one guide value
-    [a], and a band scale without categories none. Their number is at most a
-    multiple of [max count 3] fixed by the kind of scale and its base, and they
-    are computed in time proportional to [count].
-
-    Raises [Invalid_argument] if [count < 1]. *)
-
-(** {2:time_intervals Time intervals}
-
-    Temporal guide values and nice domains fall on the boundaries
+    Temporal ticks and nice domains fall on the boundaries
     ({!Time.type-interval}) of one of these intervals, finest first:
     - [1], [2] and [5] times [10^k] nanoseconds for [k] from [0] to [8];
     - [1], [5], [15] and [30] seconds, and as many minutes;
@@ -427,17 +394,22 @@ val ticks : count:int -> 'd t -> 'd array
     include [0.] if [0.] is not {{!section-missing}missing} for the scale: never
     on a log scale. [nice] then rounds the ends of a domain that is not
     {{!section-continuous}constant} outward:
-    - on linear and pow scales, to multiples of the step {!ticks} uses for a
-      [count] of [10] over the domain, repeated until that step stops changing,
-      at most ten times;
-    - on custom scales, likewise;
+    - on linear, pow and custom scales, to multiples of the {e step} [m × 10^k]
+      nearest by ratio to [t], a tenth of the domain's length, repeated until
+      that step stops changing, at most ten times. With [t] written [f × 10^k],
+      [1 <= f < 10], [m] is [10] if [f >= √50], [5] if [f >= √10], [2] if
+      [f >= √2] and [1] otherwise. For the domain \[[a];[b]\], [t] is
+      [(b -. a) /. 10.], or twice [(b /. 2. -. a /. 2.) /. 10.] if [b -. a]
+      overflows. A multiple is the float nearest [i × m × 10^k] for its integer
+      index [i], so [3 × 0.1] is [0.3];
     - on log scales, to integer powers of the base;
     - on symlog scales of constant [c], an end farther than [c] from zero to a
       power of ten or its negation, or to [c] or [-c] if that power is within
       [c] of zero, and an end within [c] of zero to [0.], [c] or [-c];
-    - on temporal scales, to boundaries of the interval {!ticks} uses for a
-      [count] of [10] over the domain, repeated until that interval stops
-      changing, at most ten times.
+    - on temporal scales, to boundaries of the
+      {{!section-time_intervals}time interval} whose duration is nearest by
+      ratio to a tenth of the domain's length, the coarser of two equally near,
+      repeated until that interval stops changing, at most ten times.
 
     On every kind, an end whose rounded value is not finite, is missing for the
     scale or, for an instant, is not representable stays as it is. *)
@@ -461,6 +433,10 @@ type property =
   | Symbols
   | Unknown
 
+val sets : property -> 'd t -> bool
+(** [sets p s] is [true] iff [s] sets [p]. Every constructor sets [Transform].
+*)
+
 val merge : 'd t -> 'd t -> ('d t, property) result
 (** [merge s s'] is [Ok m] if no property is set to different values in [s] and
     [s'], where [m] sets each property that [s] or [s'] sets to its value there,
@@ -480,26 +456,13 @@ val imply : 'd t -> 'd t -> 'd t
     satisfies the constraints the constructor of [s] states on domains:
     [imply (linear ~domain:(-1., 1.) ()) (log ())] leaves the domain unset. *)
 
-val hull :
-  ?valid:Nx.bool_t -> float t -> ('a, 'b) Nx.t -> (float * float) option
-(** [hull ~valid s x] is [Some (lo, hi)] for the least and greatest elements of
-    [x] that [valid] keeps and that are not {{!section-missing}missing} for [s],
-    and [None] if there is none. [valid] broadcasts to the shape of [x] without
-    growing it and keeps the elements where it is [true]; by default every
-    element is kept. Elements are converted to floats first, so an integer
-    beyond 2{^ 53} is rounded. Only the transform of [s] is read. The reductions
-    run where [x] lives and two floats are read back, except on a custom scale,
-    whose transform is an OCaml function: [x] is then read to the host.
-
-    Raises [Invalid_argument] if [x] has a complex or boolean dtype or [valid]
-    does not broadcast to the shape of [x]. *)
-
 val missing : float t -> ('a, 'b) Nx.t -> Nx.bool_t
 (** [missing s x] is [true] where an element of [x] is
     {{!section-missing}missing} for [s], and has the shape of [x]. Elements are
-    converted to floats first, as {!hull} converts them, and only the transform
-    of [s] is read. It is computed where [x] lives, except on a custom scale,
-    whose transform is an OCaml function: [x] is then read to the host.
+    converted to floats first, so an integer beyond 2{^ 53} is rounded, and only
+    the transform of [s] is read. It is computed where [x] lives, except on a
+    custom scale, whose transform is an OCaml function: [x] is then read to the
+    host.
 
     Raises [Invalid_argument] if [x] has a complex or boolean dtype. *)
 
@@ -507,8 +470,8 @@ val fit : 'd domain option -> 'd t -> 'd t
 (** [fit observed s] is [s] with [nice] and [zero] unset and its domain set to:
     - the domain of [s], if set;
     - otherwise, for [Some (Floats (lo, hi))], \[[lo];[hi]\], the hull of the
-      observed values as {!hull} computes it, widened by [zero] and rounded by
-      [nice] ({!section-nice});
+      observed values, widened by [zero] and rounded by [nice]
+      ({!section-nice});
     - for [Some (Instants (lo, hi))], the hull \[[lo];[hi]\] of the observed
       instants, rounded by [nice];
     - for [Some (Categories c)], [c];
@@ -544,22 +507,3 @@ val equal : 'd t -> 'd t -> bool
 val pp : Format.formatter -> 'd t -> unit
 (** [pp ppf s] formats the properties [s] sets, for debugging and tests, a
     custom transform by its name. *)
-
-(**/**)
-
-(** For the kit's own modules; not part of the API. *)
-module Private : sig
-  type transform =
-    | Linear
-    | Log of float
-    | Symlog of float
-    | Pow of float
-    | Custom of {
-        name : string;
-        forward : float -> float;
-        inverse : float -> float;
-      }
-
-  val transform : float t -> transform
-  val tz_offset_s : Time.t t -> Time.tz_offset_s
-end
