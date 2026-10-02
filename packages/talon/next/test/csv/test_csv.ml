@@ -639,12 +639,6 @@ let values =
       ( any Type.float16,
         "1.00048828125000000001\n1.00048828125\n65519.99999\n65520\n",
         "float16 [1.0009765625; 1; 65504; inf]" );
-      ( any (Type.decimal ~precision:5 ~scale:2),
-        "123.45\n-1.5\n1.500\n0\n.5\n-0.00\n",
-        "int64 [12345; -150; 150; 0; 50; 0]" );
-      ( any (Type.decimal ~precision:18 ~scale:0),
-        "999999999999999999\n",
-        "int64 [999999999999999999]" );
       ( any Type.date,
         "1970-01-01\n2000-02-29\n0000-01-01\n9999-12-31\n1969-12-31\n",
         "int32 [0; 11016; -719528; 2932896; -1]" );
@@ -895,8 +889,8 @@ let of_table t = Query.of_table t
 let csv_type (Type.Any t) =
   match t with
   | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-  | Float16 | Float32 | Float64 | Decimal _ | String | Binary | Categorical _
-  | Date | Datetime _ ->
+  | Float16 | Float32 | Float64 | String | Binary | Categorical _ | Date
+  | Datetime _ ->
       true
   | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
 
@@ -1022,13 +1016,6 @@ let writing =
               [
                 ("b", Column.v Type.bool [| true; false |]);
                 ("i", Column.v Type.int8 [| -128; 127 |]);
-                ( "d",
-                  Column.v
-                    (Type.decimal ~precision:4 ~scale:2)
-                    [|
-                      Decimal.v ~unscaled:150L ~scale:2;
-                      Decimal.v ~unscaled:(-5L) ~scale:2;
-                    |] );
                 ( "c",
                   Column.v (Type.categorical [| ""; "u,v" |]) [| ""; "u,v" |] );
                 ( "t",
@@ -1049,8 +1036,8 @@ let writing =
           expect (written f (of_table t))
           @@ __POS_OF__
                {|
-            true;-128;1.50;"";1970-01-01T00:00:01.5Z;b
-            false;127;-0.05;u,v;1970-01-01T00:00:00Z;""
+            true;-128;"";1970-01-01T00:00:01.5Z;b
+            false;127;u,v;1970-01-01T00:00:00Z;""
             |});
       test "one column writes a null as its first null token" (fun () ->
           let t =

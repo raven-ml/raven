@@ -576,8 +576,6 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Rows, _ -> fun env -> Reduce.rows env.frame.segments
   | Reduce ((Ewm _ | Collect), _), _ ->
       not_lowered (Format.asprintf "%a" Expr.pp e)
-  | Reduce (Sum, _), Column (Decimal _) ->
-      not_lowered (Format.asprintf "%a" Expr.pp e)
   | Reduce (r, a), _ ->
       let a = compile st a and ty = type_of typing in
       fun env ->

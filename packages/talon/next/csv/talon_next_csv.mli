@@ -41,9 +41,9 @@
     the format's null tokens. A quoted field is never null: [""] is the empty
     string. Every other field's text, without its quotes and with its doubled
     quotes undoubled, reads as its column's type as {!Talon_next.Column.parse}
-    reads it. CSV reads [bool], the integer, float and decimal types, [string],
-    [binary], categoricals, [date] and [datetime]: read a time of day as
-    [string], then convert it with [Expr.Temporal.parse].
+    reads it. CSV reads [bool], the integer and float types, [string], [binary],
+    categoricals, [date] and [datetime]: read a time of day as [string], then
+    convert it with [Expr.Temporal.parse].
 
     A field that does not read as its type fails the read, with its line and
     column, its text and the fix.

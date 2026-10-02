@@ -50,12 +50,6 @@ type 'a scalar =
 let cell ?outside dtype store load =
   Some (Scalar { dtype; store; load; outside })
 
-(* A held decimal is exact at the type's scale. *)
-let rescale scale d =
-  let u = Decimal.unscaled d and s = Decimal.scale d in
-  if s <= scale then Int64.mul u (Type.pow10 (scale - s))
-  else Int64.div u (Type.pow10 (s - scale))
-
 let fits_int x = Int64.equal (Int64.of_int (Int64.to_int x)) x
 let check_int pp ok x = if ok x then None else Some (pp x ^ " is outside int")
 
@@ -101,8 +95,6 @@ let scalar : type a. a Type.t -> a scalar option = function
   | Float16 -> cell Nx.float16 Fun.id Fun.id
   | Float32 -> cell Nx.float32 Fun.id Fun.id
   | Float64 -> cell Nx.float64 Fun.id Fun.id
-  | Decimal { scale; _ } ->
-      cell Nx.int64 (rescale scale) (fun unscaled -> Decimal.v ~unscaled ~scale)
   | Categorical d as ty ->
       let index =
         lazy
@@ -881,13 +873,6 @@ let unheld : type a. a Type.t -> t -> (int * string) option =
       Some (r, Format.asprintf "%a %s" Type.pp ty (why (Nx.item [ r ] x)))
   in
   match ty with
-  | Decimal { precision; _ } ->
-      let bound = Type.pow10 precision in
-      let why = Printf.sprintf "unscaled value %Ld has more than %d digits" in
-      first Nx.int64
-        (Int64.neg (Int64.pred bound))
-        bound
-        (fun u -> why u precision)
   | Categorical d ->
       let n = Int32.of_int (Iarray.length d) in
       first Nx.int32 0l n (Printf.sprintf "has no code %ld")

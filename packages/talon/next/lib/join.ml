@@ -187,7 +187,6 @@ let difference : type a. a Type.t -> (Type.any * bool) option = function
   | (Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64) as t ->
       Some (Any t, false)
   | (Float16 | Float32 | Float64) as t -> Some (Any t, false)
-  | Decimal _ as t -> Some (Any t, false)
   | Datetime { unit_; _ } | Duration unit_ | Clock unit_ ->
       Some (Any (Type.duration unit_), false)
   | Date -> Some (Any (Type.duration Type.S), true)
@@ -200,7 +199,6 @@ let is_negative : type a. a Kind.t -> a -> bool =
   match k with
   | Int -> v < 0
   | Float -> Float.is_nan v || v < 0.
-  | Decimal -> Int64.compare (Decimal.unscaled v) 0L < 0
   | Span -> Int64.compare (Time.Span.to_ns v) 0L < 0
   | _ -> false
 

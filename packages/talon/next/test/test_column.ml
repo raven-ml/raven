@@ -120,13 +120,6 @@ let edges =
           float16,
           [| Some (-0.); Some 65504. |] );
       Edge
-        ( "decimal digits at the precision",
-          decimal ~precision:4 ~scale:2,
-          [|
-            Some (Decimal.v ~unscaled:(-9999L) ~scale:2);
-            Some (Decimal.v ~unscaled:1L ~scale:0);
-          |] );
-      Edge
         ("date bounds", date, [| Some (day (fst i32)); Some (day (snd i32)) |]);
       Edge
         ( "clock bounds",
@@ -203,8 +196,7 @@ let float_bits =
 let storage =
   group "Storage"
     [
-      test
-        "to_tensor is the storage of temporal, decimal and categorical values"
+      test "to_tensor is the storage of temporal and categorical values"
         (fun () ->
           let tensor dt ty vs =
             Nx.to_array (Column.to_tensor dt (Column.v ty vs))
@@ -214,10 +206,6 @@ let storage =
           equal (array int64) [| -1L; 3L |]
             (tensor Nx.int64 (Type.datetime Type.Ms)
                [| instant (-1_000_000L); instant 3_000_000L |]);
-          equal (array int64) [| 1250L |]
-            (tensor Nx.int64
-               (Type.decimal ~precision:5 ~scale:3)
-               [| Decimal.v ~unscaled:125L ~scale:2 |]);
           equal (array int32) [| 1l; 0l |]
             (tensor Nx.int32 (Type.categorical [| "x"; "y" |]) [| "y"; "x" |]);
           equal (array bool) [| true; false |]
@@ -233,11 +221,6 @@ let storage =
           satisfies ~claim:"the same tensor" pass
             (fun y -> y == x)
             (Column.to_tensor Nx.float64 (Column.of_tensor x)));
-      test "a decimal is stored unscaled at its type's scale" (fun () ->
-          let d = Decimal.v ~unscaled:(-99990L) ~scale:3 in
-          let c = Column.v (Type.decimal ~precision:4 ~scale:2) [| d |] in
-          equal (array int64) [| -9999L |]
-            (Nx.to_array (Column.to_tensor Nx.int64 c)));
       test "of_tensor reads strided, broadcast and transposed views" (fun () ->
           let x = Nx.create Nx.int32 [| 6 |] [| 0l; 1l; 2l; 3l; 4l; 5l |] in
           equal (array int) [| 0; 2; 4 |]
@@ -364,11 +347,6 @@ let refusals =
     refuse "a string outside the dictionary" (fun () ->
         Column.v (categorical [| "x" |]) [| "y" |])
     @@ __POS_OF__ {| Column.v: row 0: categorical["x"] does not hold "y" |};
-    refuse "a decimal of too many digits" (fun () ->
-        Column.v
-          (decimal ~precision:3 ~scale:1)
-          [| Decimal.v ~unscaled:1234L ~scale:2 |])
-    @@ __POS_OF__ {| Column.v: row 0: decimal[3, 1] does not hold 12.34 |};
     refuse "a clock past the day" (fun () ->
         Column.v (clock S) [| Time.Span.hours 24 |])
     @@ __POS_OF__ {| Column.v: row 0: clock[s] does not hold 24h |};
@@ -539,8 +517,7 @@ let bytes ?validity rows =
 
 let unheld =
   let open Type in
-  let code = categorical [| "x"; "y" |]
-  and dec = decimal ~precision:3 ~scale:1 in
+  let code = categorical [| "x"; "y" |] in
   [
     ( "the first and last scalar values of each length",
       Any string,
@@ -594,18 +571,6 @@ let unheld =
       Any code,
       fixed ~validity:(bits [| false |]) Nx.int32 [| 2l |],
       None );
-    ( "a decimal at its precision",
-      Any dec,
-      fixed Nx.int64 [| -999L; 999L |],
-      None );
-    ( "a decimal past its precision",
-      Any dec,
-      fixed Nx.int64 [| 999L; 1000L |],
-      Some (1, "decimal[3, 1] unscaled value 1000 has more than 3 digits") );
-    ( "a negative decimal past its precision",
-      Any dec,
-      fixed Nx.int64 [| -1000L |],
-      Some (0, "decimal[3, 1] unscaled value -1000 has more than 3 digits") );
     ( "the last clock tick of the day",
       Any (clock S),
       fixed Nx.int64 [| 0L; 86_399L |],

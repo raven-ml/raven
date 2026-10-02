@@ -41,7 +41,6 @@ let day n = Option.get (Time.Date.of_days n)
 type case = Case : 'a Type.t * string list * 'a list -> case
 
 let values =
-  let dec ~scale us = List.map (fun u -> Decimal.v ~unscaled:u ~scale) us in
   let dict = [| "a"; "b\"c"; "" |] in
   Type.
     [
@@ -102,14 +101,6 @@ let values =
         ( float16,
           [ "1.00048828125000000001"; "1.00048828125"; "65519.99999"; "65520" ],
           [ 1.0009765625; 1.; 65504.; infinity ] );
-      Case
-        ( decimal ~precision:5 ~scale:2,
-          [ "123.45"; "-1.5"; "1.500"; "0"; ".5"; "-0.00" ],
-          dec ~scale:2 [ 12345L; -150L; 150L; 0L; 50L; 0L ] );
-      Case
-        ( decimal ~precision:18 ~scale:0,
-          [ "999999999999999999" ],
-          dec ~scale:0 [ 999999999999999999L ] );
       Case
         ( date,
           [
@@ -239,12 +230,6 @@ let refusals =
       (Any float64, "nan1", "not a number");
       (Any float64, "--1", "not a number");
       (Any float32, "", "not a number");
-      ( Any (decimal ~precision:5 ~scale:2),
-        "1.234",
-        "more than 2 digits after the point" );
-      (Any (decimal ~precision:5 ~scale:2), "1234.5", "more than 5 digits");
-      (Any (decimal ~precision:5 ~scale:2), "1e2", "not a decimal number");
-      (Any (decimal ~precision:5 ~scale:2), ".", "not a decimal number");
       (Any date, "2023-02-29", "not a day of the calendar");
       (Any date, "2024-1-01", "not YYYY-MM-DD");
       (Any date, "2024-13-01", "not a day of the calendar");
@@ -472,16 +457,6 @@ let laws =
           Law.round_trip (G.witness utc) string
             (Format.asprintf "%aZ" Time.pp)
             (read_one utc) t);
-      prop "decimal reads a decimal written by Decimal.pp as itself"
-        Gen.(
-          pair (int_range 0 18)
-            (map (fun x -> Int64.rem x 1_000_000_000_000_000_000L) int64))
-        (fun (scale, unscaled) ->
-          let ty = Type.decimal ~precision:18 ~scale in
-          Law.round_trip (G.witness ty) string
-            (Format.asprintf "%a" Decimal.pp)
-            (read_one ty)
-            (Decimal.v ~unscaled ~scale));
     ]
 
 (* Printing *)
@@ -651,8 +626,8 @@ let extreme_ticks =
 let readable (G.Sample (ty, _)) =
   match ty with
   | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-  | Float16 | Float32 | Float64 | Decimal _ | String | Binary | Categorical _
-  | Date | Datetime _ ->
+  | Float16 | Float32 | Float64 | String | Binary | Categorical _ | Date
+  | Datetime _ ->
       true
   | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
 
@@ -733,13 +708,6 @@ let printing =
                (Column.of_tensor (Nx.create Nx.uint64 [| 2 |] [| -1L; 0L |]))));
       test "other types write the text parse reads" (fun () ->
           printed Type.bool [ true; false ] [ "true"; "false" ];
-          printed
-            (Type.decimal ~precision:5 ~scale:2)
-            [
-              Decimal.v ~unscaled:150L ~scale:2;
-              Decimal.v ~unscaled:(-5L) ~scale:2;
-            ]
-            [ "1.50"; "-0.05" ];
           printed (Type.categorical [| "a"; "b" |]) [ "b"; "a" ] [ "b"; "a" ];
           printed Type.date
             [ day 0; day (-719529) ]

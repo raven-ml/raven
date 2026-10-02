@@ -25,7 +25,6 @@ type 'a t = private
   | Float16 : float t
   | Float32 : float t
   | Float64 : float t
-  | Decimal : { precision : int; scale : int } -> Decimal.t t
   | String : string t
   | Binary : Binary.t t
   | Categorical : string iarray -> string t
@@ -52,7 +51,6 @@ val uint64 : int t
 val float16 : float t
 val float32 : float t
 val float64 : float t
-val decimal : precision:int -> scale:int -> Decimal.t t
 val string : string t
 val binary : Binary.t t
 val categorical : string array -> string t
@@ -84,10 +82,6 @@ val has_float : 'a t -> bool
     element, a record field, a tensor's element dtype (complex dtypes included)
     or an extension's storage, at any depth. A key of such a type has distinct
     values that are one key, such as [-0.] and [0.]. *)
-
-val pow10 : int -> int64
-(** [pow10 k] is 10{^ [k]}, for [k] in \[[0];[18]\]: the factor between a
-    decimal's unscaled values at two scales. *)
 
 val ns_per_unit : unit_ -> int64
 (** [ns_per_unit u] is the nanoseconds of one tick of the unit [u]. *)

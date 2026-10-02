@@ -6,9 +6,9 @@
 (** Tables: named, typed columns.
 
     {!Type}s say what columns store and {!Kind}s what their cells read as in
-    OCaml. {!Binary}, {!Decimal}, {!Time} and {!Record} are the OCaml values
-    that cells read as, {!Schema}s name and type a table's columns, and {!Tz}
-    reads the time zone database that zoned operations take.
+    OCaml. {!Binary}, {!Time} and {!Record} are the OCaml values that cells read
+    as, {!Schema}s name and type a table's columns, and {!Tz} reads the time
+    zone database that zoned operations take.
 
     A {!Query} is the centre: a plan over a table or a {!Source}, transformed by
     verbs, whose schema is known before any data is read. Its verbs take
@@ -23,7 +23,6 @@ type t
 type table := t
 
 module Binary = Binary
-module Decimal = Decimal
 module Time = Time
 
 module Kind : sig
@@ -64,9 +63,6 @@ module Kind : sig
   val binary : Binary.t t
   (** [binary] reads [binary] columns. *)
 
-  val decimal : Decimal.t t
-  (** [decimal] reads [decimal] columns of every precision and scale. *)
-
   val date : Time.date t
   (** [date] reads [date] columns. *)
 
@@ -95,10 +91,10 @@ module Kind : sig
 
   val pp : Format.formatter -> 'a t -> unit
   (** [pp ppf k] formats [k] by the name of the value that builds it: [bool],
-      [int], [float], [string], [binary], [decimal], [date], [instant] and
-      [span]. The record kind formats as [record] and the extension kind as
-      [ext]. A list kind formats its element kind in brackets, as in
-      [list[float]], and a tensor kind its dtype, as in [tensor[float32]]. *)
+      [int], [float], [string], [binary], [date], [instant] and [span]. The
+      record kind formats as [record] and the extension kind as [ext]. A list
+      kind formats its element kind in brackets, as in [list[float]], and a
+      tensor kind its dtype, as in [tensor[float32]]. *)
 end
 
 module Record : sig
@@ -190,10 +186,6 @@ module Type : sig
     | Float16 : float t  (** IEEE 754 binary16 floats. *)
     | Float32 : float t  (** IEEE 754 binary32 floats. *)
     | Float64 : float t  (** IEEE 754 binary64 floats. *)
-    | Decimal : { precision : int; scale : int } -> Decimal.t t
-        (** Decimals of at most [precision] digits, [scale] of them after the
-            point, stored as int64 unscaled values. Here [1 <= precision <= 18]
-            and [0 <= scale <= precision]. *)
     | String : string t
         (** UTF-8 text. Text is validated when it enters talon, and invalid
             bytes belong in {!Binary}. *)
@@ -270,12 +262,6 @@ module Type : sig
   val float64 : float t
   (** [float64] is {!Float64}. *)
 
-  val decimal : precision:int -> scale:int -> Decimal.t t
-  (** [decimal ~precision ~scale] is {!Decimal} with [precision] and [scale].
-
-      Raises [Invalid_argument] if [precision] is not in \[[1];[18]\] or [scale]
-      is not in \[[0];[precision]\]. *)
-
   val string : string t
   (** [string] is {!String}. *)
 
@@ -333,12 +319,12 @@ module Type : sig
 
   val kind : 'a t -> 'a Kind.t
   (** [kind t] is the kind that [t]'s cells read as: {!Kind.bool}, {!Kind.int}
-      for the integer types, {!Kind.float} for the float types, {!Kind.decimal},
-      {!Kind.string} for [String] and [Categorical], {!Kind.binary},
-      {!Kind.date}, {!Kind.span} for [Clock] and [Duration], {!Kind.instant} for
-      [Datetime], [Kind.list (kind e)] for [List e], {!Record.kind} for every
-      [Record], and [Kind.tensor dt] for [Tensor (dt, _)]. For [Ext] it is the
-      extension kind, which reads nothing (see {!Kind.provably_equal}). *)
+      for the integer types, {!Kind.float} for the float types, {!Kind.string}
+      for [String] and [Categorical], {!Kind.binary}, {!Kind.date}, {!Kind.span}
+      for [Clock] and [Duration], {!Kind.instant} for [Datetime],
+      [Kind.list (kind e)] for [List e], {!Record.kind} for every [Record], and
+      [Kind.tensor dt] for [Tensor (dt, _)]. For [Ext] it is the extension kind,
+      which reads nothing (see {!Kind.provably_equal}). *)
 
   (** {1:values Values} *)
 
@@ -348,8 +334,6 @@ module Type : sig
       - an integer is in the type's range;
       - a float is NaN, infinite, or rounds to a finite value at the type's
         precision;
-      - a decimal is exact with the type's scale, in at most its precision
-        digits;
       - a string is valid UTF-8, and for [Categorical] it is in the dictionary;
       - an instant or a span is a whole number of the type's unit, and for
         [Clock] it is at least zero and less than one day;
@@ -371,7 +355,7 @@ module Type : sig
       values of [t], the order that sorting, comparisons and grouping use:
       - floats order [neg_infinity] < … < [infinity] < [nan]. [-0.] equals [0.],
         and every NaN equals every other;
-      - integers, decimals, dates, spans and instants order by value;
+      - integers, dates, spans and instants order by value;
       - [false] comes before [true];
       - strings and byte strings order by their bytes, which for UTF-8 text is
         code point order;
@@ -420,8 +404,6 @@ module Type : sig
         in [uint64], and [uint8] in [int16], [uint16] in [int32], [uint32] in
         [int64];
       - [float16] in [float32] in [float64];
-      - [decimal[p0, s0]] in [decimal[p1, s1]] when [s0 <= s1] and
-        [p0 - s0 <= p1 - s1];
       - a [Categorical] in [String], and in a categorical whose dictionary
         begins with its own;
       - a [Clock] in a clock of a finer unit.
@@ -445,7 +427,6 @@ module Type : sig
   (** [pp ppf t] formats [t] as schemas and plans show it:
       - [bool], [int8] to [uint64], [float16] to [float64], [string], [binary]
         and [date];
-      - [decimal[10, 2]] for a precision and a scale;
       - [categorical["AA", "B6"]], with at most the first eight strings of the
         dictionary, followed by an ellipsis and the dictionary's size when it
         holds more: [categorical["a", "b", "c", "d", "e", "f", "g", "h", … 26]];
@@ -538,10 +519,9 @@ module Column : sig
       ({!Nx_bits.t}) with the bit of each row that holds a value set; it is
       absent when no row is null. Its values are laid out by its type:
       - one element per row of a primitive nx array: [bool] (one byte per
-        value), the integer and float types, [int64] unscaled values for
-        decimals, [int32] positions in the dictionary for categoricals, [int32]
-        days for dates and [int64] ticks for clocks, durations and datetimes. A
-        tensor column is one [(rows, …shape)] array;
+        value), the integer and float types, [int32] positions in the dictionary
+        for categoricals, [int32] days for dates and [int64] ticks for clocks,
+        durations and datetimes. A tensor column is one [(rows, …shape)] array;
       - offsets into a child for byte strings, text and lists: text is a list of
         bytes;
       - one child per field for records.
@@ -609,9 +589,8 @@ module Column : sig
   val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
   (** [to_tensor dt c] is [c]'s values as stored, in O(1): numbers and booleans,
       the days or ticks of temporal values, the codes of a categorical (its
-      dictionary is in its type), the unscaled values of decimals, and
-      [(rows, …shape)] for a tensor column. It shares [c]'s buffer, which must
-      not be written.
+      dictionary is in its type), and [(rows, …shape)] for a tensor column. It
+      shares [c]'s buffer, which must not be written.
 
       Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
       converts the result), if [c] is not stored one element per row, or if [c]
@@ -657,10 +636,9 @@ module Column : sig
   (** [of_layout ty l] is the column of type [ty] laid out as [l], without a
       copy, or [Error (row, reason)] for the first row whose value [ty] does not
       hold: text that is not UTF-8, a code outside a categorical's dictionary, a
-      decimal of more digits than its precision, a time of day outside the day.
-      A row is checked only where it is not null. [reason] is a phrase, as in
-      [invalid UTF-8 at byte 3]. A child holds its own values, so only [l]'s own
-      values are checked.
+      time of day outside the day. A row is checked only where it is not null.
+      [reason] is a phrase, as in [invalid UTF-8 at byte 3]. A child holds its
+      own values, so only [l]'s own values are checked.
 
       Raises [Invalid_argument] if [l] does not lay out [ty]: values of another
       dtype or cell shape than [ty]'s storage, a validity of another length,
@@ -683,8 +661,6 @@ module Column : sig
         [inf], [infinity] or [nan] in any case with an optional sign, rounded to
         the nearest value of the type, ties to even, beyond its range to an
         infinity;
-      - [decimal[p, s]]: a decimal number with an optional sign, exact at the
-        scale [s] and of at most [p] digits;
       - [string]: the bytes, valid UTF-8; [binary]: the bytes;
       - a categorical: one of the dictionary's strings;
       - [date]: [YYYY-MM-DD], a year outside [0000] to [9999] signed and of at
@@ -706,7 +682,6 @@ module Column : sig
       - a float in the fewest significant digits that read back to it at its
         type's width, without an exponent from [1e-7] up to [1e21] ([150],
         [0.0015], [-0], [1e+21]), or [nan], [inf] or [-inf];
-      - a decimal with its type's scale of digits after the point;
       - a datetime with the fewest fraction digits that are exact, and [Z] when
         its type has a zone, every tick of its unit included, past
         {!Time.Date}'s years;
@@ -815,9 +790,9 @@ val pp_with : limits -> Format.formatter -> t -> unit
     show with one number of decimals, the fewest, up to six, that give each
     shown value six significant digits, or in scientific notation when a shown
     value needs it. Other values show in the text that {!Column.parse} reads,
-    such as [2024-03-15T09:30:00.5Z] for a zoned datetime and [12.50] for a
-    decimal of scale 2; durations and clocks as {!Time.Span.pp} formats them,
-    lists as OCaml lists, and records and tensors as [<record>] and [<tensor>].
+    such as [2024-03-15T09:30:00.5Z] for a zoned datetime; durations and clocks
+    as {!Time.Span.pp} formats them, lists as OCaml lists, and records and
+    tensors as [<record>] and [<tensor>].
 
     Raises [Invalid_argument] if a limit is negative or [l.width] is [0]. *)
 
@@ -1237,11 +1212,10 @@ module Expr : sig
 
   val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
   (** [cast ty a] converts [a]'s values to [ty]:
-      - between [bool], integer, float and decimal types: integers take exact
-        values only, so a fractional, infinite or NaN float, or a value out of
-        range, is a data error; floats round to nearest; decimals round to
-        nearest at their scale, ties away from zero; [bool] takes [0] and [1]
-        only, and gives [0] and [1];
+      - between [bool], integer and float types: integers take exact values
+        only, so a fractional, infinite or NaN float, or a value out of range,
+        is a data error; floats round to nearest; [bool] takes [0] and [1] only,
+        and gives [0] and [1];
       - between [string] and categorical types: the text is kept, and a
         categorical takes only the strings of its dictionary;
       - between datetimes that both have a zone, or both have none, between
@@ -1291,9 +1265,8 @@ module Expr : sig
 
   val sum : ('a, row) t -> ('a, agg) t
   (** [sum a] is the sum of [a]'s values: [int64] over integers, [a]'s type over
-      floats and durations, and [decimal[18, s]] over decimals of scale [s].
-      Integer sums wrap as nx's integers do; a duration or decimal sum that
-      overflows is a data error. Other types are a problem. *)
+      floats and durations. Integer sums wrap as nx's integers do; a duration
+      sum that overflows is a data error. Other types are a problem. *)
 
   val min : ('a, row) t -> ('a, agg) t
   (** [min a] is the least of [a]'s values in talon's total order, of [a]'s
@@ -1506,11 +1479,11 @@ module Expr : sig
     (** [parse ty a] is the value of type [ty] that the text [a] writes, in the
         forms that [talon.csv] reads: [true] and [false]; decimal integers with
         an optional sign; decimal or scientific floats, [inf], [-inf] and [nan];
-        decimals; ISO 8601 dates; and ISO 8601 datetimes, with an offset or [Z]
-        exactly when [ty] has a zone. Any other text, and a value that [ty] does
-        not hold, is a data error. [ty] is a [bool], integer, float, decimal,
-        [date] or [datetime] type, or a categorical, which takes only the
-        strings of its dictionary. *)
+        ISO 8601 dates; and ISO 8601 datetimes, with an offset or [Z] exactly
+        when [ty] has a zone. Any other text, and a value that [ty] does not
+        hold, is a data error. [ty] is a [bool], integer, float, [date] or
+        [datetime] type, or a categorical, which takes only the strings of its
+        dictionary. *)
   end
 
   (** {1:time Time} *)
@@ -1683,9 +1656,6 @@ module Col : sig
 
   val binary : string -> (Binary.t, Expr.row) Expr.t
   (** [binary name] is [v Kind.binary name]. *)
-
-  val decimal : string -> (Decimal.t, Expr.row) Expr.t
-  (** [decimal name] is [v Kind.decimal name]. *)
 
   val date : string -> (Time.date, Expr.row) Expr.t
   (** [date name] is [v Kind.date name]. *)
@@ -1995,8 +1965,8 @@ module Join : sig
       least. Among right rows tied on it, the last in right order wins. [within]
       keeps the match only if the two columns differ by at most [within], a
       literal of the columns' difference:
-      - the columns' common type for integer, float and decimal columns,
-        [Expr.int 5], [Expr.float 0.5];
+      - the columns' common type for integer and float columns, [Expr.int 5],
+        [Expr.float 0.5];
       - a span of the columns' unit for datetimes, durations and clocks, and of
         whole days for dates, [Expr.span (Time.Span.s 5)].
 
@@ -2317,15 +2287,15 @@ module Query : sig
       happen. Of the failures that remain, a run reports the one at the earliest
       row of the optimized plan.
 
-      {b Constants.} Arithmetic, comparisons and [not] of literals are
-      evaluated as a run evaluates them, and become the literal they compute.
-      One whose evaluation fails, or gives a value OCaml's type does not hold
-      (an [int64] past [max_int]), stays and evaluates at run time. [&&], [||],
-      [is_null], [if_], [coalesce], and [store] of a literal fold alike.
-      [a && false], [a || true], [a && true], [a || false], an [if_] on a
-      literal and a [coalesce] with literals simplify alike. A filter whose
-      predicate is [true] goes, and one whose predicate is [false] or null
-      becomes [slice ~offset:0 ~length:0].
+      {b Constants.} Arithmetic, comparisons and [not] of literals are evaluated
+      as a run evaluates them, and become the literal they compute. One whose
+      evaluation fails, or gives a value OCaml's type does not hold (an [int64]
+      past [max_int]), stays and evaluates at run time. [&&], [||], [is_null],
+      [if_], [coalesce], and [store] of a literal fold alike. [a && false],
+      [a || true], [a && true], [a || false], an [if_] on a literal and a
+      [coalesce] with literals simplify alike. A filter whose predicate is
+      [true] goes, and one whose predicate is [false] or null becomes
+      [slice ~offset:0 ~length:0].
 
       {b Predicates.} A filter's predicate splits into its {e conjuncts}, the
       operands of its [&&]s. A conjunct moves toward the sources when it is
@@ -2684,8 +2654,10 @@ module Kit : sig
       in
       Query.derive
         (List.map
-           (fun (c, ws) -> Expr.(c := cast (Type.categorical ws) (Col.string c)))
-           dictionaries)                     (* the [(c, words c)] of each [c] *)
+           (fun (c, ws) ->
+             Expr.(c := cast (Type.categorical ws) (Col.string c)))
+           dictionaries)
+        (* the [(c, words c)] of each [c] *)
         q
       ]}
       [cs] empty is [Ok q]. A column of [q] that is missing or is not text is a

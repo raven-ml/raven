@@ -241,42 +241,6 @@ let narrow w b pos len a k =
         A1.unsafe_set a k
           (if c > 0 = (x > 0.) then Float.succ x else Float.pred x)
 
-let int_pow10 = Array.init 19 (fun e -> int_of_float pow10.(e))
-
-let too_many precision =
-  invalid (Printf.sprintf "more than %d digits" precision)
-
-(* [decimal ~precision ~scale] reads a decimal number without an exponent, exact
-   at [scale] digits after the point and of at most [precision <= 18] digits, as
-   its unscaled value. *)
-let decimal ~precision ~scale b pos len =
-  let stop = pos + len in
-  let limit = int_pow10.(precision) in
-  let i = ref (after_sign b pos len) and v = ref 0 and frac = ref (-1) in
-  let any = ref false in
-  while !i < stop do
-    let c = get b !i in
-    if c = '.' && !frac < 0 then frac := 0
-    else if is_digit c then begin
-      any := true;
-      if !frac >= 0 then incr frac;
-      if !frac <= scale then begin
-        v := (10 * !v) + digit b !i;
-        if !v >= limit then too_many precision
-      end
-      else if c <> '0' then
-        invalid (Printf.sprintf "more than %d digits after the point" scale)
-    end
-    else invalid "not a decimal number";
-    incr i
-  done;
-  if not !any then invalid "not a decimal number";
-  for _ = Int.max 0 !frac + 1 to scale do
-    if !v >= limit / 10 then too_many precision;
-    v := 10 * !v
-  done;
-  if is_minus b pos len then - !v else !v
-
 (* Dates and datetimes *)
 
 let two_digits b i =
@@ -629,8 +593,6 @@ let parse (Type.Any ty as any) c =
   | Float16 -> Result.map (cast Nx.float16) (floats (narrow half))
   | Float32 -> Result.map (cast Nx.float32) (floats (narrow single))
   | Float64 -> Result.map keep (floats float)
-  | Decimal { precision; scale } ->
-      Result.map keep (of_int (decimal ~precision ~scale))
   | Date -> Result.map (cast Nx.int32) (of_int date)
   | Datetime { unit_; zone } ->
       Result.map keep (ints (datetime unit_ ~zoned:(zone <> None)))
@@ -756,18 +718,6 @@ let float_text ty x =
   let x = if Float.is_finite x then nearest w x else x in
   Bytes.sub_string b 0 (text x w.p w.emin b)
 
-let rec pow10_64 k = if k = 0 then 1L else Int64.mul 10L (pow10_64 (k - 1))
-
-(* [at_scale scale d] is [d], which is exact at [scale], written with [scale]
-   digits after the point. *)
-let at_scale scale d =
-  let u = Decimal.unscaled d and s = Decimal.scale d in
-  let unscaled =
-    if s <= scale then Int64.mul u (pow10_64 (scale - s))
-    else Int64.div u (pow10_64 (s - scale))
-  in
-  Decimal.v ~unscaled ~scale
-
 (* [add_date b days] writes the day [days] after 1970-01-01 as [Time.Date.pp]
    does. *)
 let add_date b days =
@@ -807,7 +757,6 @@ let pp_instant ~zoned ppf t =
 let pp : type a. a Type.t -> Format.formatter -> a -> unit =
  fun ty ppf v ->
   match (ty, Type.kind ty) with
-  | Decimal { scale; _ }, _ -> Decimal.pp ppf (at_scale scale v)
   | Binary, _ -> pp_text ppf (v :> string)
   | Datetime { zone; _ }, _ -> pp_instant ~zoned:(zone <> None) ppf v
   | (Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _), k ->
@@ -839,11 +788,6 @@ let fixed_writer : type a b c.
       let v = Nx.to_array (Nx.cast Nx.float64 x) in
       let w = width ty and s = Bytes.create 32 in
       fun b i -> Buffer.add_subbytes b s 0 (text v.(i) w.p w.emin s)
-  | Decimal { scale; _ } ->
-      let v = ints () in
-      fun b i ->
-        Buffer.add_string b
-          (Format.asprintf "%a" Decimal.pp (Decimal.v ~unscaled:v.(i) ~scale))
   | Categorical d ->
       let v = ints () in
       fun b i -> Buffer.add_string b (Iarray.get d (Int64.to_int v.(i)))
@@ -940,8 +884,6 @@ and pp_row : type a. a Type.t -> Column.t -> int -> Format.formatter -> unit =
       | Uint64, _ ->
           let bits = Nx.item [] (Nx.bitcast Nx.int64 (Nx.get [ i ] x)) in
           Format.fprintf ppf "%Lu" bits
-      | Decimal { scale; _ }, _ ->
-          Decimal.pp ppf (Decimal.v ~unscaled:(row_int64 x i) ~scale)
       | Categorical d, _ ->
           Type.pp_quoted ppf (Iarray.get d (Int64.to_int (row_int64 x i)))
       | Date, _ ->

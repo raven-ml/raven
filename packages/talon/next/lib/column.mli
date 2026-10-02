@@ -39,9 +39,9 @@ val of_layout : Type.any -> layout -> (t, int * string) result
 
 (** The type for a column's values, by its type's storage:
     - [Fixed x] for [bool] ([Nx.bool], one byte per value), the integer and
-      float types, decimals ([int64] unscaled), categoricals ([int32] codes),
-      dates ([int32] days), clocks, durations and datetimes ([int64] ticks), and
-      tensors ([x] of shape [(length, …shape)]);
+      float types, categoricals ([int32] codes), dates ([int32] days), clocks,
+      durations and datetimes ([int64] ticks), and tensors ([x] of shape
+      [(length, …shape)]);
     - [Bytes r] for [string] and [binary], one row of [r] per row;
     - [List] for lists: row [i] is the child's rows [offsets.{i}] to
       [offsets.{i + 1} - 1];

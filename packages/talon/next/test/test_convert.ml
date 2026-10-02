@@ -34,10 +34,7 @@ let casts_of name ty vs into expected =
       rows_are into expected
         (result (Expr.cast into x) (one "x" (Column.of_options ty vs))))
 
-let decimal s u = Decimal.v ~unscaled:(Int64.of_int u) ~scale:s
-
 let casts =
-  let dec = Type.decimal in
   group "Casts"
     [
       casts_of "an integer in range is kept" Type.int64
@@ -54,19 +51,6 @@ let casts =
         (some [| false; true |]);
       casts_of "an integer rounds to the nearest float" Type.int64
         (some [| 16_777_217 |]) Type.float32 (some [| 16_777_216. |]);
-      casts_of "a decimal rounds to its scale, ties away from zero" Type.float64
-        (some [| 0.125; -0.125; 2.675; 1.005 |])
-        (dec ~precision:4 ~scale:2)
-        (some [| decimal 2 13; decimal 2 (-13); decimal 2 267; decimal 2 100 |]);
-      casts_of "a float scaled past 2^52 keeps its exact digits" Type.float64
-        (some [| 0.5; -2.5; 45035996273704.96 |])
-        (dec ~precision:18 ~scale:2)
-        (some [| decimal 2 50; decimal 2 (-250); decimal 2 4503599627370496 |]);
-      casts_of "a float rounds to its decimal scale, ties away from zero"
-        Type.float64
-        (some [| 0.5; -2.5; 2.4999 |])
-        (dec ~precision:3 ~scale:0)
-        (some [| decimal 0 1; decimal 0 (-3); decimal 0 2 |]);
       test "an unsigned integer takes floats up to 2^64" (fun () ->
           let c =
             result
@@ -78,23 +62,6 @@ let casts =
           equal (array int64)
             [| -8_446_744_073_709_551_616L |]
             (Nx.to_array bits));
-      casts_of "a decimal rescales, ties away from zero"
-        (dec ~precision:6 ~scale:4)
-        (some [| decimal 4 12345; decimal 4 (-12345); decimal 4 12344 |])
-        (dec ~precision:5 ~scale:3)
-        (some [| decimal 3 1235; decimal 3 (-1235); decimal 3 1234 |]);
-      casts_of "a decimal becomes the nearest float"
-        (dec ~precision:5 ~scale:2)
-        (some [| decimal 2 10; decimal 2 (-12345) |])
-        Type.float32
-        (some [| 0.1; -123.45 |]
-        |> Array.map
-             (Option.map (fun x -> Int32.float_of_bits (Int32.bits_of_float x)))
-        );
-      casts_of "a whole decimal becomes an integer"
-        (dec ~precision:5 ~scale:2)
-        (some [| decimal 2 1200 |])
-        Type.int16 (some [| 12 |]);
       casts_of "text in the dictionary becomes categorical" Type.string
         (some [| "b"; "a" |])
         (Type.categorical [| "a"; "b" |])
@@ -160,11 +127,6 @@ let cast_failures =
       fails "2 to bool" Type.int8 (some [| 2 |]) Type.bool
       @@ __POS_OF__
            {| select ["out" := cast bool x]: row 0: cannot cast 2 to bool. |};
-      fails "too many digits for a decimal" Type.int32
-        (some [| 99; 100 |])
-        (Type.decimal ~precision:4 ~scale:2)
-      @@ __POS_OF__
-           {| select ["out" := cast decimal[4, 2] x]: row 1: cannot cast 100 to decimal[4, 2]. |};
       fails "text outside the dictionary" Type.string
         (some [| "a"; "z" |])
         (Type.categorical [| "a" |])

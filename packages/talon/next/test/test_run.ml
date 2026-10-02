@@ -53,8 +53,6 @@ let palette =
       Any (categorical [| "b"; "a" |]);
       Any (categorical [| "b"; "a"; "é" |]);
       Any binary;
-      Any (decimal ~precision:10 ~scale:2);
-      Any (decimal ~precision:12 ~scale:4);
       Any date;
       Any (clock Us);
       Any (clock Ns);
@@ -1195,18 +1193,6 @@ let widening =
             (Type.categorical [| "x"; "y" |])
             [| Some "y"; Some "x"; None |] );
         ("s", Column.v Type.string [| "y"; "z"; "x" |]);
-        ( "d2",
-          Column.v
-            (Type.decimal ~precision:10 ~scale:2)
-            (Array.map
-               (fun u -> Decimal.v ~unscaled:u ~scale:2)
-               [| 150L; -1L; 0L |]) );
-        ( "d4",
-          Column.v
-            (Type.decimal ~precision:12 ~scale:4)
-            (Array.map
-               (fun u -> Decimal.v ~unscaled:u ~scale:4)
-               [| 15000L; -101L; 1L |]) );
       ]
   in
   let i = Col.int and s = Col.string in
@@ -1230,22 +1216,6 @@ let widening =
       compares "a categorical < a string compares as text"
         Expr.(s "k" < s "s")
         [| f; t; None |];
-      compares "decimals of two scales compare at the finer"
-        Expr.(Col.decimal "d2" = Col.decimal "d4")
-        [| t; f; f |];
-      compares "decimal[10, 2] < decimal[12, 4] compares at decimal[12, 4]"
-        Expr.(Col.decimal "d2" < Col.decimal "d4")
-        [| f; f; t |];
-      test "decimals meet at the finer scale, which OCaml functions read"
-        (fun () ->
-          let scale e =
-            ints Expr.(store Type.int8 (const Decimal.scale $ e)) mixed
-          in
-          let d2 = Col.decimal "d2" and d4 = Col.decimal "d4" in
-          rows_are Type.int8 (Array.make 3 (Some 4))
-            (scale Expr.(coalesce [ d2; d4 ]));
-          rows_are Type.int8 (Array.make 3 (Some 4))
-            (scale Expr.(if_ (bool true) d2 d4)));
     ]
 
 (* NaN equals NaN and orders after every other value, and -0. equals 0. *)

@@ -54,7 +54,7 @@ let fit width s =
     { text = String.concat "" kept ^ "…"; width = n + 1 }
 
 let is_number : type a. a Type.t -> bool =
- fun ty -> match Type.kind ty with Int | Float | Decimal -> true | _ -> false
+ fun ty -> match Type.kind ty with Int | Float -> true | _ -> false
 
 (* [cells width c] is the cells of [c]'s rows. Text shows unquoted, and the
    floats of a column share their decimals. *)

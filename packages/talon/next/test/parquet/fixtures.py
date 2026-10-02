@@ -11,8 +11,10 @@ so the suite itself needs neither Python nor the network.
 - values.txt: one line per file, row group and column, as pyarrow reads it:
   `file group "column" "type" rows md5 first-values`, or `file group "column"
   error` for a column that does not read. The type is talon's, computed here
-  from the Parquet schema; md5 is of all values joined by spaces.
-- overrides.txt: the same for columns read as another type than their own.
+  from the Parquet schema, and float64 for a decimal, which has none; md5 is of
+  all values joined by spaces.
+- overrides.txt: the same for columns read as another type than their own, and
+  for decimals of at most 18 digits read as int64.
 """
 
 import hashlib
@@ -173,6 +175,24 @@ def types_table():
     return pa.table(list(cols.values()), schema=pa.schema(fields))
 
 
+def decimals_table():
+    """Decimals of 9, 18 and 38 digits at scale 0 and above, with the extremes of
+    each precision, zero, a value of each sign and nulls."""
+    r = np.random.default_rng(11)
+
+    def drawn(p):
+        digits = "".join(str(d) for d in r.integers(0, 10, int(r.integers(1, p + 1))))
+        return int(digits) * (1 if r.random() < 0.5 else -1)
+
+    def column(p, s):
+        top = 10**p - 1
+        units = [top, -top, 0, 1, -1, None] + [drawn(p) for _ in range(ROWS - 6)]
+        values = [None if u is None else Decimal(f"{u}E-{s}") for u in units]
+        return pa.array(values, pa.decimal128(p, s))
+
+    return pa.table({f"d{p}_{s}": column(p, s) for p, s in [(9, 0), (9, 2), (18, 0), (18, 6), (38, 0), (38, 10)]})
+
+
 def write(name, table, **kw):
     kw = dict(store_schema=False, row_group_size=100, write_batch_size=16, data_page_size=256) | kw
     pq.write_table(table, OUT / name, **kw)
@@ -201,6 +221,8 @@ def generate():
     names = pa.table({"a b": [1, 2], '"q"': [3, 4], "é": [5, 6], "": [7, 8]})
     write("names.parquet", names)
     write("empty.parquet", t.slice(0, 0))
+    write("decimals_int.parquet", decimals_table(), store_decimal_as_integer=True)
+    write("decimals_bytes.parquet", decimals_table())
     write("decimal38.parquet", pa.table({"d": pa.array([Decimal("1.5")], pa.decimal128(38, 10))}))
     write("brotli.parquet", t.select(["i32"]), compression="brotli")
     write("int96.parquet", t.select(["ts_ns"]), use_deprecated_int96_timestamps=True)
@@ -329,7 +351,7 @@ def talon_type(c):
         p, s = lt["precision"], lt["scale"]
         ok = {"INT32": p <= 9, "INT64": p <= 18, "BYTE_ARRAY": True, "FIXED_LEN_BYTE_ARRAY": True}.get(phys, False)
         if ok and 1 <= p and 0 <= s <= p:
-            return f"decimal[{p}, {s}]" if p <= 18 else None
+            return "float64"
     if kind == "Date" and phys == "INT32":
         return "date"
     if kind == "Time":
@@ -353,9 +375,11 @@ def render(ty, a):
     """The values of the pyarrow array [a] as talon stores [ty]."""
     if isinstance(a, pa.ExtensionArray):
         a = a.storage
-    if ty.startswith("decimal"):
-        s = int(ty.split(", ")[1][:-1])
-        return [None if v is None else str(int(v.scaleb(s))) for v in a.to_pylist()]
+    if pa.types.is_decimal(a.type):
+        if ty == "int64":
+            return [None if v is None else str(int(v.scaleb(a.type.scale))) for v in a.to_pylist()]
+        bits = lambda v: struct.unpack("<Q", struct.pack("<d", float(v)))[0]
+        return [None if v is None else f"0x{bits(v):016x}" for v in a.to_pylist()]
     if ty.startswith(("date", "clock", "datetime")):
         a = a.view(pa.int32() if a.type.bit_width == 32 else pa.int64())
     if ty.startswith("float"):
@@ -411,7 +435,7 @@ def expect(name):
 READ = [p.removeprefix("data/") for p, _ in CORPUS if not p.endswith(".encrypted")] + [
     "types.parquet", "types_v2_zstd.parquet", "types_gzip.parquet", "types_lz4.parquet",
     "types_plain.parquet", "encodings.parquet", "fallback.parquet", "names.parquet", "empty.parquet",
-    "int96.parquet",
+    "int96.parquet", "decimals_int.parquet", "decimals_bytes.parquet", "decimal38.parquet",
 ]
 # Refused by talon when sniffed; read with errors by talon where pyarrow guesses
 # (nation.dict-malformed's chunks are longer than their metadata say); or not
@@ -421,7 +445,6 @@ SKIP = {
     "hadoop_lz4_compressed.parquet", "non_hadoop_lz4_compressed.parquet", "large_string_map.brotli.parquet",
     "map_no_value.parquet", "incorrect_map_schema.parquet", "datapage_v2.snappy.parquet",
     "list_columns.parquet", "nulls.snappy.parquet", "repeated_primitive_no_list.parquet",
-    "fixed_length_decimal.parquet",
     "bad_data/PARQUET-1481.parquet", "int32_with_uuid_logical_type.parquet", "flba12_timestamp.parquet",
 }
 
@@ -435,6 +458,21 @@ def by_hand():
     return lines
 
 
+def unscaled(name):
+    """The lines of the decimals of at most 18 digits of [name], read as int64."""
+    pf = pq.ParquetFile(OUT / name)
+    md = pf.metadata
+    lines = []
+    for g in range(md.num_row_groups):
+        for i in range(md.num_columns):
+            c = md.schema.column(i)
+            lt = json.loads(c.logical_type.to_json()) if c.logical_type.type != "NONE" else {"Type": None}
+            if talon_type(c) == "float64" and lt["Type"] == "Decimal" and lt["precision"] <= 18:
+                a = pf.read_row_group(g, columns=[c.name]).column(0).combine_chunks()
+                lines.append(line(name, g, c.name, "int64", render("int64", a)))
+    return lines
+
+
 def overrides():
     us = pq.ParquetFile(OUT / "alltypes_plain.parquet", coerce_int96_timestamp_unit="us").read()
     plain = pq.read_table(OUT / "alltypes_plain.parquet")
@@ -442,7 +480,7 @@ def overrides():
     return [
         line("alltypes_plain.parquet", 0, "timestamp_col", "datetime[us]", render("datetime[us]", column(us, "timestamp_col"))),
         line("alltypes_plain.parquet", 0, "string_col", "string", render("string", column(plain, "string_col"))),
-    ]
+    ] + [l for name in READ if name not in SKIP for l in unscaled(name)]
 
 
 def main():

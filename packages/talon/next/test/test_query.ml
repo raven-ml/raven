@@ -76,7 +76,7 @@ let kinds =
         ("t", Any epoch_t);
         ("l", Any (list int64));
         ("r", Any (record [ ("e", Any epoch_t) ]));
-        ("price", Any (decimal ~precision:10 ~scale:2));
+        ("wait", Any (duration Ms));
       ]
 
 let late_by_carrier () =
@@ -182,7 +182,7 @@ let binding () =
            derive [ "k" := over ~by:[ "g"; "nope"; "g"; "nope" ] (sum n) ];
            derive [ "k" := nx { f = (fun a -> Nx.sum a) } f ];
            derive [ "k" := nx { f = Nx.zeros_like } f ];
-           derive [ "k" := nx { f = Nx.exp } (Col.v Kind.decimal "price") ];
+           derive [ "k" := nx { f = Nx.exp } (Col.span "wait") ];
            derive [ "k" := if_ (Col.int "nope" > int 1) x8 u8 ];
            derive [ "k" := Temporal.field `Hour (Col.date "d") ];
            derive [ "k" := cast Type.string (Col.date "d") ];
@@ -246,7 +246,7 @@ let binding () =
         across float: "t" is ext[ymir.epoch, float64], which float does not read: narrow the selector with Sel.of_kind.
         across float: "l" is list[int64], which float does not read: narrow the selector with Sel.of_kind.
         across float: "r" is record[e ext[ymir.epoch, float64]], which float does not read: narrow the selector with Sel.of_kind.
-        across float: "price" is decimal[10, 2], which float does not read: narrow the selector with Sel.of_kind.
+        across float: "wait" is duration[ms], which float does not read: narrow the selector with Sel.of_kind.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     derive: 1 problem
@@ -266,7 +266,7 @@ let binding () =
 
     derive: 1 problem
       "k" := nope +. f +. nope
-        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     derive: 1 problem
@@ -297,7 +297,7 @@ let binding () =
     derive: 3 problems
       "k" := over ~by:["g"; "nope"; "g"; "nope"] (sum n)
         over ~by: "g" is named twice.
-        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
         over ~by: "nope" is named twice.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
@@ -312,13 +312,13 @@ let binding () =
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     derive: 1 problem
-      "k" := nx <fn> price
-        nx takes integer, float and boolean operands, not decimal[10, 2].
+      "k" := nx <fn> wait
+        nx takes integer, float and boolean operands, not duration[ms].
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     derive: 2 problems
       "k" := if_ (nope > 1) x8 u8
-        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
         int8 and uint8 do not meet: cast first.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
@@ -343,7 +343,7 @@ let verbs () =
   let rest =
     let column = function
       | "x8", _ -> Some ("x8", Type.Any Type.int16)
-      | "price", _ -> None
+      | "wait", _ -> None
       | c -> Some c
     in
     source "rest"
@@ -400,7 +400,7 @@ let verbs () =
 
     select: 2 problems
       "a" := nope
-        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       the output "a" appears twice.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
@@ -420,7 +420,7 @@ let verbs () =
 
     aggregate: 2 problems
       "g" := sum nope
-        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       the output "g" has the name of a key.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
@@ -436,13 +436,13 @@ let verbs () =
 
     filter: 1 problem
       f > 1. && nope
-        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+        no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     sort: 4 problems
       asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration: order by its storage, derived first. For example: derive [ "k" := Ext.storage e (Ext.col e "t") ] |> sort [ asc "k" ] |> select [ keep Sel.(all - names [ "k" ]) ].
       desc "r": "r" is record[e ext[ymir.epoch, float64]], which holds an extension type and has no order.
-      asc "nope": no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+      asc "nope": no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       nulls_first (desc "f"): the column "f" is already a key.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
@@ -469,7 +469,7 @@ let verbs () =
 
     append: 3 problems
       "x8" is int8 in the input and int16 in rest.
-      "price" (decimal[10, 2]) is not in rest.
+      "wait" (duration[ms]) is not in rest.
       "extra" (bool) is only in rest.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       rest (13 columns): x8 int16, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
@@ -480,12 +480,12 @@ let verbs () =
 
     unnest: 3 problems
       "f" is float64, not a list.
-      no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+      no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       "l" is named twice.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     unnest: 2 problems
-      no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+      no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       "nope" is named twice.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
     |}
@@ -515,10 +515,6 @@ let joins () =
     Query.of_source
       (source "shared_f" Type.[ ("y8", Any int8); ("f", Any float64) ])
   in
-  let decimals =
-    Query.of_source
-      (source "decimals" Type.[ ("p2", Any (decimal ~precision:10 ~scale:2)) ])
-  in
   let join ?kind ?(right = other) on () = Query.join ?kind ~on right of_kinds in
   expect
     (messages
@@ -542,7 +538,6 @@ let joins () =
                 ~within:
                   Expr.(date (Option.get (Time.Date.of_civil (2024, 1, 1))))
                 (ge "d" "d2"));
-           join ~right:decimals (nearest "price" "p2");
            join (lt "r" "r2");
            join (closest ~within:(Col.float "f") (ge "nope" "f2"));
            join (closest ~within:Expr.(int 300) (ge "x8" "y8"));
@@ -558,7 +553,7 @@ let joins () =
   @@ __POS_OF__
        {|
     join: 2 problems
-      left: no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+      left: no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       right: no column "nope". The columns are "y8", "g2", "t2", "d2", "ts2", "f2", "t3" and "r2".
       left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
@@ -625,15 +620,13 @@ let joins () =
       left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
 
-    no exception
-
     join: 1 problem
       "r" and "r2" are record[e ext[ymir.epoch, float64]], which holds an extension type and has no order.
       left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
 
     join: 2 problems
-      left: no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+      left: no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       ~within:f is not a literal.
       left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
       right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
@@ -1510,7 +1503,7 @@ let rejected_sources () =
     Source.v: the row count -1 is negative
 
     Source.v: ~sorted:
-      asc "nope": no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "price".
+      asc "nope": no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
       desc "f": the column "f" is already a key.
       asc "t": "t" is ext[ymir.epoch, float64], which orders only through its declaration: order by its storage, derived first.
       asc "r": "r" is record[e ext[ymir.epoch, float64]], which holds an extension type and has no order.

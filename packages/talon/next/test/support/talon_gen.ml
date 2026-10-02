@@ -30,9 +30,6 @@ let scalars =
       Any float16;
       Any float32;
       Any float64;
-      Any (decimal ~precision:5 ~scale:2);
-      Any (decimal ~precision:18 ~scale:0);
-      Any (decimal ~precision:18 ~scale:18);
       Any string;
       Any binary;
       Any (categorical [| "a"; "é"; "" |]);
@@ -143,10 +140,6 @@ let rec value : type a. a Type.t -> a Gen.t option = function
   | Float16 -> Some (Gen.map half (Gen.int_range 0 0xffff))
   | Float32 -> Some (Gen.map Int32.float_of_bits Gen.int32)
   | Float64 -> Some (edges Format.pp_print_float (-0.) Float.nan Gen.any_float)
-  | Decimal { precision; scale } ->
-      let max = Int64.pred (Int64.of_float (10. ** Float.of_int precision)) in
-      let unscaled = Gen.int64_range (Int64.neg max) max in
-      Some (Gen.map (fun unscaled -> Decimal.v ~unscaled ~scale) unscaled)
   | String -> Some text
   | Binary -> Some (Gen.map Binary.of_string Gen.string)
   | Categorical d when Iarray.length d = 0 -> None
@@ -262,7 +255,6 @@ let rec pp_value : type a. a Type.t -> Format.formatter -> a -> unit =
   | Float16 -> float ppf v
   | Float32 -> float ppf v
   | Float64 -> float ppf v
-  | Decimal _ -> Decimal.pp ppf v
   | String -> Type.pp_quoted ppf v
   | Categorical _ -> Type.pp_quoted ppf v
   | Binary -> Binary.pp ppf v

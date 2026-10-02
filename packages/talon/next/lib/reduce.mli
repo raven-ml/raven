@@ -55,7 +55,7 @@ val reduce :
     [int64], and floats and durations at [ty]. Over no values [count], [sum] and
     [n_unique] are [0], and the others null.
 
-    Raises [Invalid_argument] for [ewm], [collect], and [sum] of decimals. *)
+    Raises [Invalid_argument] for [ewm] and [collect]. *)
 
 val shift : segments -> int -> Column.t -> Column.t
 (** [shift s n c] is, on each row, [c] at the row [n] places earlier in its

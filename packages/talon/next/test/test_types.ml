@@ -11,10 +11,6 @@ let rejects f = raises_match (fun e -> Exn.invalid_arg e) f
 
 (* Witnesses *)
 
-let decimal_w =
-  Testable.make ~pp:Decimal.pp ~equal:Decimal.equal
-  |> Testable.with_compare Decimal.compare
-
 let instant_w =
   Testable.make ~pp:Time.pp ~equal:Time.equal
   |> Testable.with_compare Time.compare
@@ -52,127 +48,6 @@ let binary =
         (fun (s, expected) ->
           equal string expected (str Binary.pp (Binary.of_string s)));
     ]
-
-(* Decimal *)
-
-let max_unscaled = 999_999_999_999_999_999L
-
-let decimal_v =
-  group "Decimal.v"
-    [
-      cases
-        ~name:(fun (u, s) -> Printf.sprintf "rejects %Ld at scale %d" u s)
-        "rejects"
-        [
-          (1L, -1);
-          (1L, 19);
-          (Int64.succ max_unscaled, 0);
-          (Int64.neg (Int64.succ max_unscaled), 0);
-          (Int64.min_int, 0);
-          (Int64.max_int, 0);
-        ]
-        (fun (unscaled, scale) ->
-          rejects (fun () -> Decimal.v ~unscaled ~scale));
-      cases
-        ~name:(fun (u, s) -> Printf.sprintf "keeps %Ld at scale %d" u s)
-        "keeps"
-        [ (max_unscaled, 0); (Int64.neg max_unscaled, 18); (0L, 0); (-5L, 3) ]
-        (fun (unscaled, scale) ->
-          let d = Decimal.v ~unscaled ~scale in
-          equal int64 unscaled (Decimal.unscaled d);
-          equal int scale (Decimal.scale d));
-    ]
-
-(* Small decimals, so that a test can compare them exactly in [int]. *)
-let small_decimal =
-  Gen.map
-    (fun (u, scale) -> Decimal.v ~unscaled:(Int64.of_int u) ~scale)
-    (Gen.pair (Gen.int_range (-1_000_000) 1_000_000) (Gen.int_range 0 6))
-  |> Gen.with_pp Decimal.pp
-
-let any_decimal =
-  let unscaled =
-    Gen.frequency
-      [
-        (4, Gen.int64_range (Int64.neg max_unscaled) max_unscaled);
-        (2, Gen.map Int64.of_int Gen.small_int);
-        ( 1,
-          Gen.of_list
-            ~pp:(fun ppf -> Format.fprintf ppf "%LdL")
-            [ max_unscaled; Int64.neg max_unscaled; 0L; 1L; -1L ] );
-      ]
-  in
-  Gen.map
-    (fun (unscaled, scale) -> Decimal.v ~unscaled ~scale)
-    (Gen.pair unscaled (Gen.int_range 0 18))
-  |> Gen.with_pp Decimal.pp
-
-(* An equal decimal at the next scale, when there is one. *)
-let respell_decimal d =
-  let u = Decimal.unscaled d and s = Decimal.scale d in
-  let u10 = Int64.mul u 10L in
-  if s < 18 && Int64.compare (Int64.abs u10) max_unscaled <= 0 then
-    Decimal.v ~unscaled:u10 ~scale:(s + 1)
-  else d
-
-(* [exact d] is [d * 10^6], an integer for the scales [small_decimal] draws. *)
-let exact d =
-  let rec pow10 k = if k = 0 then 1 else 10 * pow10 (k - 1) in
-  Int64.to_int (Decimal.unscaled d) * pow10 (6 - Decimal.scale d)
-
-let decimal_order =
-  group "Decimal order"
-    [
-      test "equates equal numbers of different scales" (fun () ->
-          equal decimal_w
-            (Decimal.v ~unscaled:1L ~scale:0)
-            (Decimal.v ~unscaled:10L ~scale:1));
-      prop "is a total order that ignores the scale"
-        (Gen.triple any_decimal any_decimal any_decimal)
-        (Law.order ~respell:respell_decimal decimal_w);
-      prop "agrees with exact integer comparison"
-        (Gen.pair small_decimal small_decimal) (fun (d0, d1) ->
-          equal int (Int.compare (exact d0) (exact d1)) (Decimal.compare d0 d1));
-      cases
-        ~name:(fun (a, b, _) ->
-          Printf.sprintf "orders %s against %s" (str Decimal.pp a)
-            (str Decimal.pp b))
-        "extremes"
-        [
-          ( Decimal.v ~unscaled:max_unscaled ~scale:0,
-            Decimal.v ~unscaled:1L ~scale:18,
-            1 );
-          ( Decimal.v ~unscaled:(-5L) ~scale:1,
-            Decimal.v ~unscaled:(-49L) ~scale:2,
-            -1 );
-          ( Decimal.v ~unscaled:(-1L) ~scale:18,
-            Decimal.v ~unscaled:0L ~scale:0,
-            -1 );
-          ( Decimal.v ~unscaled:(Int64.neg max_unscaled) ~scale:0,
-            Decimal.v ~unscaled:(Int64.neg max_unscaled) ~scale:18,
-            -1 );
-        ]
-        (fun (a, b, expected) ->
-          equal int expected (Decimal.compare a b);
-          equal int (-expected) (Decimal.compare b a));
-    ]
-
-let decimal_pp =
-  cases
-    ~name:(fun (u, s, _) ->
-      Printf.sprintf "Decimal.pp formats %Ld at scale %d" u s)
-    "Decimal.pp"
-    [
-      (1234L, 2, "12.34");
-      (-50L, 3, "-0.050");
-      (7L, 0, "7");
-      (-7L, 0, "-7");
-      (1L, 18, "0.000000000000000001");
-      (Int64.neg max_unscaled, 9, "-999999999.999999999");
-      (0L, 2, "0.00");
-    ]
-    (fun (unscaled, scale, expected) ->
-      equal string expected (str Decimal.pp (Decimal.v ~unscaled ~scale)))
 
 (* Instants *)
 
@@ -507,7 +382,6 @@ let kinds =
           is_some (Kind.provably_equal Kind.float Kind.float);
           is_some (Kind.provably_equal Kind.string Kind.string);
           is_some (Kind.provably_equal Kind.binary Kind.binary);
-          is_some (Kind.provably_equal Kind.decimal Kind.decimal);
           is_some (Kind.provably_equal Kind.date Kind.date);
           is_some (Kind.provably_equal Kind.instant Kind.instant);
           is_some (Kind.provably_equal Kind.span Kind.span);
@@ -538,7 +412,6 @@ let kinds =
           (str Kind.pp Kind.float, "float");
           (str Kind.pp Kind.string, "string");
           (str Kind.pp Kind.binary, "binary");
-          (str Kind.pp Kind.decimal, "decimal");
           (str Kind.pp Kind.date, "date");
           (str Kind.pp Kind.instant, "instant");
           (str Kind.pp Kind.span, "span");
@@ -609,18 +482,6 @@ let records =
 let type_constructors =
   group "Type constructors"
     [
-      cases
-        ~name:(fun (p, s) ->
-          Printf.sprintf "decimal refuses precision %d and scale %d" p s)
-        "decimal"
-        [ (0, 0); (19, 0); (5, -1); (5, 6) ]
-        (fun (precision, scale) ->
-          rejects (fun () -> Type.decimal ~precision ~scale));
-      test "decimal accepts its bounds" (fun () ->
-          equal string "decimal[18, 18]"
-            (str Type.pp (Type.decimal ~precision:18 ~scale:18));
-          equal string "decimal[1, 0]"
-            (str Type.pp (Type.decimal ~precision:1 ~scale:0)));
       test "categorical refuses a duplicate or non-UTF-8 string" (fun () ->
           rejects (fun () -> Type.categorical [| "a"; "b"; "a" |]);
           rejects (fun () -> Type.categorical [| "\xc3" |]));
@@ -683,7 +544,6 @@ let type_kind =
       (Any Type.uint64, "int");
       (Any Type.float16, "float");
       (Any Type.float64, "float");
-      (Any (Type.decimal ~precision:4 ~scale:2), "decimal");
       (Any Type.string, "string");
       (Any (Type.categorical [| "a" |]), "string");
       (Any Type.binary, "binary");
@@ -710,8 +570,6 @@ let int_bounds : (string * int Type.t * int * int) list =
     ("uint16", Type.uint16, 0, 65535);
     ("uint32", Type.uint32, 0, 4294967295);
   ]
-
-let dec u s = Decimal.v ~unscaled:u ~scale:s
 
 let holds_scalars =
   group "Type.holds scalars"
@@ -751,41 +609,6 @@ let holds_scalars =
           ("float64", Type.float64, Float.max_float, true);
         ]
         (fun (_, t, v, expected) -> equal bool expected (Type.holds t v));
-      cases
-        ~name:(fun (d, b) ->
-          Printf.sprintf "decimal[5, 2] %s %s"
-            (if b then "holds" else "does not hold")
-            (str Decimal.pp d))
-        "decimals"
-        [
-          (dec 12345L 2, true);
-          (dec 99999L 2, true);
-          (dec (-99999L) 2, true);
-          (dec 100000L 2, false);
-          (dec 12345L 1, false);
-          (dec 1234L 3, false);
-          (dec 1230L 3, true);
-          (dec 7L 0, true);
-          (dec 1000L 0, false);
-          (dec 999L 0, true);
-          (dec 1L 18, false);
-          (dec 100_000_000_000_000_000L 18, true);
-          (dec 9_999_900L 4, true);
-          (dec 10_000_000L 4, false);
-        ]
-        (fun (d, expected) ->
-          equal bool expected
-            (Type.holds (Type.decimal ~precision:5 ~scale:2) d));
-      test "decimal[18, 0] holds 18 digits and decimal[18, 18] one in 10^18"
-        (fun () ->
-          is_true
-            (Type.holds
-               (Type.decimal ~precision:18 ~scale:0)
-               (dec max_unscaled 0));
-          is_true
-            (Type.holds (Type.decimal ~precision:18 ~scale:18) (dec 1L 18));
-          is_false
-            (Type.holds (Type.decimal ~precision:18 ~scale:18) (dec 1L 0)));
       test "strings must be UTF-8 and categories in the dictionary" (fun () ->
           is_true (Type.holds Type.string "é");
           is_false (Type.holds Type.string "\xe9");
@@ -1032,11 +855,6 @@ let compare_values =
           less int ~than:0
             (Type.compare_value Type.binary (Binary.of_string "\x7f")
                (Binary.of_string "\x80")));
-      test "decimals order by value whatever their scale" (fun () ->
-          equal int 0
-            (Type.compare_value
-               (Type.decimal ~precision:5 ~scale:2)
-               (dec 10L 1) (dec 100L 2)));
       test "false comes before true" (fun () ->
           less int ~than:0 (Type.compare_value Type.bool false true));
       test "integers, dates, spans and instants order by value" (fun () ->
@@ -1182,12 +1000,6 @@ let common_cases =
       test "floats meet at the wider" (fun () ->
           equal (option any_w) (some Type.float32)
             (common [ Type.float16; Type.float32 ]));
-      test "decimals meet when one holds the other's scale and integer digits"
-        (fun () ->
-          let d p s = Type.decimal ~precision:p ~scale:s in
-          equal (option any_w) (some (d 10 4)) (common [ d 5 2; d 10 4 ]);
-          equal (option any_w) none (common [ d 5 2; d 5 3 ]);
-          equal (option any_w) none (common [ d 10 1; d 10 4 ]));
       test
         "a categorical meets string, and a categorical extending its dictionary"
         (fun () ->
@@ -1296,8 +1108,6 @@ let type_gen =
       Any (Type.tensor Nx.float64 [| 2 |]);
       Any ext_type;
       Any (Type.ext ~name:"units.mass" Type.float64);
-      Any (Type.decimal ~precision:5 ~scale:2);
-      Any (Type.decimal ~precision:5 ~scale:1);
     ]
 
 let type_equal =
@@ -1319,10 +1129,6 @@ let type_equal =
             (Type.equal
                (Type.record [ ("a", Any Type.int8); ("b", Any Type.int8) ])
                (Type.record [ ("b", Any Type.int8); ("a", Any Type.int8) ])));
-      test "compares precisions and scales" (fun () ->
-          let d p s = Type.decimal ~precision:p ~scale:s in
-          is_false (Type.equal (d 5 2) (d 5 1));
-          is_false (Type.equal (d 5 2) (d 4 2)));
       test "types of different kinds are not equal" (fun () ->
           is_false (Type.equal Type.int8 Type.float32));
     ]
@@ -1348,7 +1154,6 @@ let type_pp =
       (Any Type.string, "string");
       (Any Type.binary, "binary");
       (Any Type.date, "date");
-      (Any (Type.decimal ~precision:10 ~scale:2), "decimal[10, 2]");
       (Any (Type.categorical [| "AA"; "B6" |]), {|categorical["AA", "B6"]|});
       ( Any (Type.categorical alphabet),
         {|categorical["a", "b", "c", "d", "e", "f", "g", "h", … 26]|} );
@@ -1475,10 +1280,6 @@ let errors =
           let messages =
             List.map message
               [
-                (fun () -> ignore (Decimal.v ~unscaled:1L ~scale:19));
-                (fun () -> ignore (Decimal.v ~unscaled:Int64.max_int ~scale:0));
-                (fun () -> ignore (Type.decimal ~precision:19 ~scale:0));
-                (fun () -> ignore (Type.decimal ~precision:5 ~scale:6));
                 (fun () -> ignore (Type.categorical [| "a"; "a" |]));
                 (fun () -> ignore (Type.categorical [| "\xc3" |]));
                 (fun () -> ignore (Type.datetime ~zone:"" Type.S));
@@ -1534,10 +1335,6 @@ let errors =
           expect (String.concat "\n" messages)
           @@ __POS_OF__
                {|
-            Decimal.v: scale 19 is not in [0;18]
-            Decimal.v: 9223372036854775807 has more than 18 digits
-            Type.decimal: precision 19 is not in [1;18]
-            Type.decimal: scale 6 is not in [0;5]
             Type.categorical: "a" appears twice
             Type.categorical: "\195" is not UTF-8
             Type.datetime: empty zone
@@ -1571,9 +1368,6 @@ let () =
     (run "types"
        [
          binary;
-         decimal_v;
-         decimal_order;
-         decimal_pp;
          instant_conversions;
          instant_pp;
          span_constructors;

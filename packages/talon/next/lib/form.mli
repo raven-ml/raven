@@ -14,8 +14,8 @@ val parse : Type.any -> Column.t -> (Column.t, int * string) result
     whose rows are the values that [c]'s rows write, [c] a [string] or [binary]
     column, null where [c] is, or [Error (row, reason)] at the first non-null
     row that is not [ty]'s form or holds a value [ty] does not. [ty] is [bool],
-    an integer, float or decimal type, [string] (the bytes, checked as UTF-8),
-    [binary], a categorical, [date] or a [datetime].
+    an integer or float type, [string] (the bytes, checked as UTF-8), [binary],
+    a categorical, [date] or a [datetime].
 
     Raises [Invalid_argument] if [c] is not a [string] or [binary] column, or
     [ty] is another type. *)
@@ -37,10 +37,10 @@ val pp : 'a Type.t -> Format.formatter -> 'a -> unit
 (** [pp ty ppf v] writes [v]'s canonical text, which {!parse} reads back to [v]:
     a float in the fewest significant digits that round to it at [ty]'s width,
     without an exponent from [1e-7] up to [1e21] ([150], [0.0015], [1e+21]), or
-    [nan], [inf] or [-inf]; a decimal with [ty]'s scale of digits after the
-    point; a datetime with the fewest fraction digits that are exact, and [Z]
-    when [ty] has a zone. Text and byte strings are written as they are. Types
-    that {!parse} does not read write as {!Type.pp_lit} writes their values. *)
+    [nan], [inf] or [-inf]; a datetime with the fewest fraction digits that are
+    exact, and [Z] when [ty] has a zone. Text and byte strings are written as
+    they are. Types that {!parse} does not read write as {!Type.pp_lit} writes
+    their values. *)
 
 val print : Column.t -> Column.t
 (** [print c] is [Talon_next.Column.print c]: the column of the canonical texts

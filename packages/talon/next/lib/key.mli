@@ -12,9 +12,9 @@
     here, so key identity and the total order have one implementation.
 
     {b One word per value.} A column's value word, zero under a null, is:
-    - for a number, a boolean, a temporal value, a decimal or a categorical
-      code: [Nx.order_key uint64] of its value, a float with [-0.] made [0.]
-      first, so that every NaN is one word, the greatest;
+    - for a number, a boolean, a temporal value or a categorical code:
+      [Nx.order_key uint64] of its value, a float with [-0.] made [0.] first, so
+      that every NaN is one word, the greatest;
     - for a compound value (text, a byte string, a tensor, a record, a list):
       the code of its row of element words, [Nx_ragged.ids] of the rows for
       identity and [Nx_ragged.rank] for order. Text's elements are its bytes; a

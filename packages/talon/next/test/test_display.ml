@@ -31,14 +31,6 @@ let numbers =
           (Nx.create Nx.int64 [| 3 |] [| Int64.min_int; Int64.max_int; 0L |]) );
       ( "uint64",
         Column.of_tensor (Nx.create Nx.uint64 [| 3 |] [| -1L; 0L; 1L |]) );
-      ( "decimal",
-        Column.of_options
-          (Type.decimal ~precision:5 ~scale:2)
-          [|
-            Some (Decimal.v ~unscaled:(-150L) ~scale:2);
-            Some (Decimal.v ~unscaled:5L ~scale:1);
-            None;
-          |] );
     ]
 
 let texts =
@@ -156,12 +148,12 @@ let types =
           expect (show numbers)
           @@ __POS_OF__
                {|
-            table 3 rows × 6 columns
-             bool   int8  int64                 wide                  uint64                decimal
-             bool   int8  int64                 int64                 uint64                decimal[5, 2]
-             true   -128  -4611686018427387904  -9223372036854775808  18446744073709551615          -1.50
-             false   127   4611686018427387903   9223372036854775807                     0           0.50
-             ∅         ∅                     ∅                     0                     1              ∅
+            table 3 rows × 5 columns
+             bool   int8  int64                 wide                  uint64
+             bool   int8  int64                 int64                 uint64
+             true   -128  -4611686018427387904  -9223372036854775808  18446744073709551615
+             false   127   4611686018427387903   9223372036854775807                     0
+             ∅         ∅                     ∅                     0                     1
             |});
       test "text shows as it reads, controls and non-UTF-8 bytes escaped"
         (fun () ->
@@ -435,9 +427,6 @@ let forms =
       drawn uint16;
       drawn uint32;
       drawn uint64;
-      drawn (decimal ~precision:5 ~scale:2);
-      drawn (decimal ~precision:18 ~scale:0);
-      drawn (decimal ~precision:18 ~scale:18);
       Form (string, readable);
       Form (binary, Gen.map Binary.of_string readable);
       drawn (categorical [| "a"; "é"; ""; " x " |]);

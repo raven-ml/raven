@@ -24,7 +24,6 @@ type _ t =
   | Float : float t
   | String : string t
   | Binary : Binary.t t
-  | Decimal : Decimal.t t
   | Date : Time.date t
   | Instant : Time.instant t
   | Span : Time.span t
@@ -54,7 +53,6 @@ val int : int t
 val float : float t
 val string : string t
 val binary : Binary.t t
-val decimal : Decimal.t t
 val date : Time.date t
 val instant : Time.instant t
 val span : Time.span t

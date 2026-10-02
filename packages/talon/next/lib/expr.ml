@@ -264,7 +264,6 @@ let rec lit_equal : type a. a Kind.t -> a -> a -> bool =
   | Bool -> Bool.equal v0 v1
   | String -> String.equal v0 v1
   | Binary -> String.equal (v0 :> string) (v1 :> string)
-  | Decimal -> Decimal.equal v0 v1
   | Date -> Time.Date.equal v0 v1
   | Instant -> Time.equal v0 v1
   | Span -> Time.Span.equal v0 v1
@@ -446,7 +445,7 @@ let lit_hash : type a. a Kind.t -> a -> int =
   | Date -> Hashtbl.hash (Time.Date.to_days v)
   | Instant -> Hashtbl.hash (Time.to_ns v)
   | Span -> Hashtbl.hash (Time.Span.to_ns v)
-  | Binary | Decimal | List _ | Record | Tensor _ | Ext -> 0
+  | Binary | List _ | Record | Tensor _ | Ext -> 0
 
 (* A hash agrees with [node_equal]: it reads the identities of operands and only
    leaves that [node_equal] compares by value, never the values it compares with
@@ -873,7 +872,7 @@ let default_type : type a. a Kind.t -> a Type.t option = function
   | Date -> Some Type.date
   | Instant -> Some (Type.datetime ~zone:"UTC" Type.Ns)
   | Span -> Some (Type.duration Type.Ns)
-  | Decimal | List _ | Record | Tensor _ | Ext -> None
+  | List _ | Record | Tensor _ | Ext -> None
 
 (* [kind_types k] says which types [k] binds. *)
 let kind_types : type a. a Kind.t -> string = function
@@ -887,7 +886,7 @@ let kind_types : type a. a Kind.t -> string = function
 let handle_name : type a. a Kind.t -> string =
  fun k ->
   match k with
-  | Bool | Int | Float | String | Binary | Decimal | Date | Instant | Span ->
+  | Bool | Int | Float | String | Binary | Date | Instant | Span ->
       strf "Col.%a" Kind.pp k
   | List _ | Record | Tensor _ | Ext -> strf "Col.v %a" Kind.pp k
 
@@ -1083,7 +1082,6 @@ let sum_type : type a. a Type.t -> a Type.t option =
   | _, Int -> Some Type.int64
   | _, Float -> Some ty
   | Duration _, _ -> Some ty
-  | Decimal { scale; _ }, _ -> Some (Type.decimal ~precision:18 ~scale)
   | _ -> None
 
 let reduction_typing : type a b.
@@ -1125,8 +1123,7 @@ let reduction_typing : type a b.
           match sum_type ty with
           | Some ty -> Some (Column ty)
           | None ->
-              report env
-                "sum takes integers, floats, durations or decimals, not %a."
+              report env "sum takes integers, floats or durations, not %a."
                 Type.pp ty;
               None)
       | Extension _ | Value -> no_type ())
@@ -1148,7 +1145,7 @@ let rec castable : type a b.
  fun ty0 ty1 ->
   let numeric : type c. c Type.t -> bool = function
     | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-    | Float16 | Float32 | Float64 | Decimal _ ->
+    | Float16 | Float32 | Float64 ->
         true
     | _ -> false
   in
@@ -1176,7 +1173,7 @@ let rec castable : type a b.
   | _, Clock _ when text ty0 -> Error (Some "Temporal.parse")
   | ( _,
       ( Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-      | Float16 | Float32 | Float64 | Decimal _ | Date | Datetime _ ) )
+      | Float16 | Float32 | Float64 | Date | Datetime _ ) )
     when text ty0 ->
       Error (Some "Str.parse")
   | (Date | Clock _ | Datetime _), _ when text ty1 ->
@@ -1867,13 +1864,13 @@ and text : type a s. env -> a text_op -> (string, s) t -> a elab =
           | Parse ty -> (
               match ty with
               | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32
-              | Uint64 | Float16 | Float32 | Float64 | Decimal _ | Date
-              | Datetime _ | Categorical _ ->
+              | Uint64 | Float16 | Float32 | Float64 | Date | Datetime _
+              | Categorical _ ->
                   known (Column ty)
               | _ ->
                   report env
-                    "Str.parse reads bool, integer, float, decimal, date, \
-                     datetime and categorical types, not %a."
+                    "Str.parse reads bool, integer, float, date, datetime and \
+                     categorical types, not %a."
                     Type.pp ty;
                   Broken))
       | t ->

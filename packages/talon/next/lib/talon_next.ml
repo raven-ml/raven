@@ -6,7 +6,6 @@
 type t = Table.t
 
 module Binary = Binary
-module Decimal = Decimal
 module Time = Time
 module Kind = Kind
 module Record = Record
@@ -55,7 +54,6 @@ module Col = struct
   let float name = v Kind.float name
   let string name = v Kind.string name
   let binary name = v Kind.binary name
-  let decimal name = v Kind.decimal name
   let date name = v Kind.date name
   let instant name = v Kind.instant name
   let span name = v Kind.span name

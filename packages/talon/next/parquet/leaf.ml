@@ -60,14 +60,7 @@ let annotation (e : Meta.element) physical =
   let l =
     match e.logical with None | Some (Other _) -> of_converted e | l -> l
   in
-  match l with
-  | Some (Decimal { precision; scale } as a)
-    when applies physical e.length a && precision > 18 ->
-      Meta.fail
-        "column %S is decimal(%d,%d): talon's decimals hold at most 18 digits"
-        e.name precision scale
-  | Some a when applies physical e.length a -> l
-  | _ -> None
+  match l with Some a when applies physical e.length a -> l | _ -> None
 
 (* Schemas *)
 
@@ -143,41 +136,46 @@ let holds_bytes l =
   | (Byte_array | Fixed_len_byte_array), _ -> true
   | _ -> false
 
-let default l : Type.any =
+let int64_digits = 18
+
+let default l : Type.any option =
   match (l.annotation, l.physical) with
-  | Some (String | Enum | Json), _ -> Any Type.string
-  | Some (Decimal { precision; scale }), _ ->
-      Any (Type.decimal ~precision ~scale)
-  | Some Date, _ -> Any Type.date
-  | Some (Time { unit_; _ }), _ -> Any (Type.clock unit_)
+  | Some (Decimal _), _ -> None
+  | Some (String | Enum | Json), _ -> Some (Any Type.string)
+  | Some Date, _ -> Some (Any Type.date)
+  | Some (Time { unit_; _ }), _ -> Some (Any (Type.clock unit_))
   | Some (Timestamp { unit_; utc }), _ ->
-      Any (Type.datetime ?zone:(if utc then Some "UTC" else None) unit_)
+      Some (Any (Type.datetime ?zone:(if utc then Some "UTC" else None) unit_))
   | Some (Integer { bits; signed }), _ -> (
       match (bits, signed) with
-      | 8, true -> Any Type.int8
-      | 16, true -> Any Type.int16
-      | 32, true -> Any Type.int32
-      | 64, true -> Any Type.int64
-      | 8, false -> Any Type.uint8
-      | 16, false -> Any Type.uint16
-      | 32, false -> Any Type.uint32
-      | _ -> Any Type.uint64)
-  | Some Float16, _ -> Any Type.float16
-  | _, Boolean -> Any Type.bool
-  | _, Int32 -> Any Type.int32
-  | _, Int64 -> Any Type.int64
-  | _, Int96 -> Any (Type.datetime Ns)
-  | _, Float -> Any Type.float32
-  | _, Double -> Any Type.float64
-  | _, (Byte_array | Fixed_len_byte_array) -> Any Type.binary
+      | 8, true -> Some (Any Type.int8)
+      | 16, true -> Some (Any Type.int16)
+      | 32, true -> Some (Any Type.int32)
+      | 64, true -> Some (Any Type.int64)
+      | 8, false -> Some (Any Type.uint8)
+      | 16, false -> Some (Any Type.uint16)
+      | 32, false -> Some (Any Type.uint32)
+      | _ -> Some (Any Type.uint64))
+  | Some Float16, _ -> Some (Any Type.float16)
+  | _, Boolean -> Some (Any Type.bool)
+  | _, Int32 -> Some (Any Type.int32)
+  | _, Int64 -> Some (Any Type.int64)
+  | _, Int96 -> Some (Any (Type.datetime Ns))
+  | _, Float -> Some (Any Type.float32)
+  | _, Double -> Some (Any Type.float64)
+  | _, (Byte_array | Fixed_len_byte_array) -> Some (Any Type.binary)
 
 let reads_as l (Type.Any t) =
-  let (Any d) = default l in
-  Type.equal d t
-  || (holds_bytes l
-     && match t with String | Binary | Categorical _ -> true | _ -> false)
-  || l.physical = Int96
-     && match t with Datetime { zone = None; _ } -> true | _ -> false
+  match (l.annotation, t) with
+  | Some (Decimal _), Float64 -> true
+  | Some (Decimal { precision; _ }), Int64 -> precision <= int64_digits
+  | Some (Decimal _), _ -> false
+  | _ -> (
+      (match default l with Some (Any d) -> Type.equal d t | None -> false)
+      || (holds_bytes l
+         && match t with String | Binary | Categorical _ -> true | _ -> false)
+      || l.physical = Int96
+         && match t with Datetime { zone = None; _ } -> true | _ -> false)
 
 (* Formatting *)
 
@@ -222,10 +220,12 @@ let pp ppf l =
   Option.iter (Format.fprintf ppf " (%a)" pp_annotation) l.annotation
 
 let pp_reads ppf l =
-  if holds_bytes l then
-    Format.pp_print_string ppf "string, binary or a categorical"
-  else if l.physical = Int96 then
-    Format.pp_print_string ppf "datetime of any unit, without a zone"
-  else
-    let (Any t) = default l in
-    Type.pp ppf t
+  let str = Format.pp_print_string ppf in
+  match (default l, l.annotation) with
+  | None, Some (Decimal { precision; _ }) when precision <= int64_digits ->
+      str "float64 or int64"
+  | None, _ -> str "float64"
+  | Some _, _ when holds_bytes l -> str "string, binary or a categorical"
+  | Some _, _ when l.physical = Int96 ->
+      str "datetime of any unit, without a zone"
+  | Some (Any t), _ -> Type.pp ppf t

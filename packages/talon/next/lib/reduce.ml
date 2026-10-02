@@ -164,7 +164,6 @@ let reduce : type a b.
   | Sum -> (
       match (rty, Column.data c) with
       | Duration _, _ -> exact_sum rty s ids (tensor Nx.int64 c)
-      | Decimal _, _ -> invalid_arg "Reduce.reduce: no decimal sum"
       | Int64, _ -> ok (fixed ty (sum Nx.int64))
       | _, Fixed (P x) -> ok (fixed ty (segment_sum s ids x))
       | _ -> invalid_arg "Reduce.reduce: no sum")

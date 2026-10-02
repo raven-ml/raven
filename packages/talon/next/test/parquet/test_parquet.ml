@@ -54,7 +54,7 @@ let quote s =
 (* The nx dtype that stores a talon type, by the type's printed form. *)
 let storage ty =
   let starts p = String.starts_with ~prefix:p ty in
-  if starts "decimal" || starts "clock" || starts "datetime" then "int64"
+  if starts "clock" || starts "datetime" then "int64"
   else if ty = "date" then "int32"
   else ty
 
@@ -127,19 +127,36 @@ let expected name =
   |> List.map (fun l -> (List.hd (String.split_on_char ' ' l), l))
 
 let files lines = List.sort_uniq String.compare (List.map fst lines)
+let values = expected "values.txt"
+let overrides = expected "overrides.txt"
+let fields l = Scanf.sscanf l "%_s %d %S %[^\n]" (fun g c rest -> (g, c, rest))
+
+let lines_of lines file =
+  List.filter_map (fun (name, l) -> if name = file then Some l else None) lines
+
+(* [declared name] is the format of the file [name], whose every column has a
+   line in values.txt, with its decimals declared as float64. *)
+let declared name =
+  let columns =
+    List.sort_uniq String.compare
+      (List.map
+         (fun l ->
+           let _, c, _ = fields l in
+           c)
+         (lines_of values name))
+  in
+  let declare f c =
+    if format_type f c = "undeclared" then
+      P.with_type c (Type.Any Type.float64) f
+    else f
+  in
+  List.fold_left declare (sniff name) columns
 
 (* Each column of [file] is read whole, then cut into its row groups' lines. A
    column that fails fails at the first row group whose line is [error]. *)
 let agree ?(retype = fun f _ _ -> f) lines file =
-  let f = sniff file in
-  let lines =
-    List.filter_map
-      (fun (name, l) -> if name = file then Some l else None)
-      lines
-  in
-  let fields l =
-    Scanf.sscanf l "%_s %d %S %[^\n]" (fun g c rest -> (g, c, rest))
-  in
+  let f = declared file in
+  let lines = lines_of lines file in
   let check column =
     let groups =
       List.filter_map
@@ -183,12 +200,10 @@ let agree ?(retype = fun f _ _ -> f) lines file =
 
 (* Agreement *)
 
-let values = expected "values.txt"
-let overrides = expected "overrides.txt"
-
 let override f column = function
   | "string" -> P.with_type column (Type.Any Type.string) f
   | "datetime[us]" -> P.with_type column (Type.Any (Type.datetime Us)) f
+  | "int64" -> P.with_type column (Type.Any Type.int64) f
   | ty -> failf "no override for %s" ty
 
 let agreement =
@@ -240,8 +255,6 @@ let sniffing =
               "list_columns.parquet";
               "nulls.snappy.parquet";
               "repeated_primitive_no_list.parquet";
-              "decimal38.parquet";
-              "fixed_length_decimal.parquet";
               "uniform_encryption.parquet.encrypted";
               "encrypt_columns_plaintext_footer.parquet.encrypted";
               "bad_data/PARQUET-1481.parquet";
@@ -265,8 +278,6 @@ let sniffing =
             list_columns.parquet: column "int64_list" is a list: talon reads flat Parquet files only
             nulls.snappy.parquet: column "b_struct" is a record: talon reads flat Parquet files only
             repeated_primitive_no_list.parquet: column "Int32_list" is a repeated field: talon reads flat Parquet files only
-            decimal38.parquet: column "d" is decimal(38,10): talon's decimals hold at most 18 digits
-            fixed_length_decimal.parquet: column "value" is decimal(25,2): talon's decimals hold at most 18 digits
             uniform_encryption.parquet.encrypted: the file is encrypted, which talon does not read
             encrypt_columns_plaintext_footer.parquet.encrypted: the file is encrypted, which talon does not read
             bad_data/PARQUET-1481.parquet: byte 307: the footer is malformed: an undefined physical type, -7
@@ -370,7 +381,7 @@ let robustness =
         (fun (name, at, byte) ->
           let s = file_bytes name in
           let s = of_string (changed s (4 + (at mod (footer s - 4))) byte) in
-          let f = sniff name in
+          let f = declared name in
           List.iter
             (fun c -> ignore (read_from f s c))
             [ "bool"; "i32"; "f64"; "string"; "fsb"; "req_string" ]);
@@ -423,6 +434,9 @@ let retype f column t =
   | f -> Printf.sprintf "%s reads as %s" column (format_type f column)
   | exception Invalid_argument msg -> msg
 
+let refusal f =
+  match f () with _ -> "no refusal" | exception Invalid_argument msg -> msg
+
 let formats =
   group "Formats"
     [
@@ -450,7 +464,7 @@ let formats =
             Talon_next_parquet.with_type: column "i32" (optional int32) reads as int32, not int64. Cast it once read (Expr.cast).
             Talon_next_parquet.with_type: column "f64" (optional double) reads as float64, not float32. Cast it once read (Expr.cast).
             Talon_next_parquet.with_type: column "string" (optional binary (STRING)) reads as string, binary or a categorical, not int64. Cast it once read (Expr.cast).
-            Talon_next_parquet.with_type: column "d9" (optional fixed_len_byte_array(4) (DECIMAL(9,2))) reads as decimal[9, 2], not binary. Cast it once read (Expr.cast).
+            Talon_next_parquet.with_type: column "d9" (optional fixed_len_byte_array(4) (DECIMAL(9,2))) reads as float64 or int64, not binary. Cast it once read (Expr.cast).
             Talon_next_parquet.with_type: column "timestamp_col" (optional int96) reads as datetime of any unit, without a zone, not date. Cast it once read (Expr.cast).
             Talon_next_parquet.with_type: column "timestamp_col" (optional int96) reads as datetime of any unit, without a zone, not datetime[us, UTC]. Cast it once read (Expr.cast).
             Talon_next_parquet.with_type: column "ts_us_utc" (optional int64 (TIMESTAMP(MICROS,true))) reads as datetime[us, UTC], not datetime[us]. Cast it once read (Expr.cast).
@@ -464,7 +478,6 @@ let formats =
           in
           same "i8" (any Type.int8);
           same "u64" (any Type.uint64);
-          same "d18" (any (Type.decimal ~precision:18 ~scale:6));
           same "clock_ms" (any (Type.clock Ms));
           same "ts_us_utc" (any (Type.datetime ~zone:"UTC" Us));
           same "string" (any Type.string);
@@ -490,6 +503,37 @@ let formats =
             timestamp_col reads as datetime[s]
             |});
       test "a categorical reads codes into its dictionary" categorical;
+      test "with_type declares a decimal as float64, or int64 to 18 digits"
+        (fun () ->
+          let f = sniff "decimals_int.parquet" in
+          List.iter print_endline
+            [
+              retype f "d9_2" (any Type.float64);
+              retype f "d18_6" (any Type.int64);
+              retype f "d38_10" (any Type.float64);
+              retype f "d38_0" (any Type.int64);
+              retype f "d9_0" (any Type.int32);
+            ];
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            d9_2 reads as float64
+            d18_6 reads as int64
+            d38_10 reads as float64
+            Talon_next_parquet.with_type: column "d38_0" (optional fixed_len_byte_array(16) (DECIMAL(38,0))) reads as float64, not int64. Cast it once read (Expr.cast).
+            Talon_next_parquet.with_type: column "d9_0" (optional int32 (DECIMAL(9,0))) reads as float64 or int64, not int32. Cast it once read (Expr.cast).
+            |});
+      test "source and file refuse a decimal left undeclared" (fun () ->
+          let name = "decimals_bytes.parquet" in
+          let f = P.with_type "d9_0" (any Type.float64) (sniff name) in
+          print_endline (refusal (fun () -> P.source f (buffer name)));
+          print_endline (refusal (fun () -> P.file (path name)));
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            Talon_next_parquet.source: column "d9_2" (optional fixed_len_byte_array(4) (DECIMAL(9,2))) is a decimal, which reads as float64, or as its unscaled int64 integers up to 18 digits. Declare one with with_type.
+            Talon_next_parquet.file: column "d9_0" (optional fixed_len_byte_array(4) (DECIMAL(9,0))) is a decimal, which reads as float64, or as its unscaled int64 integers up to 18 digits. Declare one with with_type.
+            |});
       cases ~name:fst "pp_format"
         [
           ( "alltypes_plain.parquet",
@@ -512,22 +556,22 @@ let formats =
           ( "byte_stream_split_extended.gzip.parquet",
             __POS_OF__
               {|
-            parquet (14 columns)
-              float16_plain float16                   ← optional fixed_len_byte_array(2) (FLOAT16)
-              float16_byte_stream_split float16       ← optional fixed_len_byte_array(2) (FLOAT16)
-              float_plain float32                     ← optional float
-              float_byte_stream_split float32         ← optional float
-              double_plain float64                    ← optional double
-              double_byte_stream_split float64        ← optional double
-              int32_plain int32                       ← optional int32
-              int32_byte_stream_split int32           ← optional int32
-              int64_plain int64                       ← optional int64
-              int64_byte_stream_split int64           ← optional int64
-              flba5_plain binary                      ← optional fixed_len_byte_array(5)
-              flba5_byte_stream_split binary          ← optional fixed_len_byte_array(5)
-              decimal_plain decimal[7, 3]             ← optional fixed_len_byte_array(4) (DECIMAL(7,3))
-              decimal_byte_stream_split decimal[7, 3] ← optional fixed_len_byte_array(4) (DECIMAL(7,3))
-            |}
+              parquet (14 columns)
+                float16_plain float16                ← optional fixed_len_byte_array(2) (FLOAT16)
+                float16_byte_stream_split float16    ← optional fixed_len_byte_array(2) (FLOAT16)
+                float_plain float32                  ← optional float
+                float_byte_stream_split float32      ← optional float
+                double_plain float64                 ← optional double
+                double_byte_stream_split float64     ← optional double
+                int32_plain int32                    ← optional int32
+                int32_byte_stream_split int32        ← optional int32
+                int64_plain int64                    ← optional int64
+                int64_byte_stream_split int64        ← optional int64
+                flba5_plain binary                   ← optional fixed_len_byte_array(5)
+                flba5_byte_stream_split binary       ← optional fixed_len_byte_array(5)
+                decimal_plain undeclared             ← optional fixed_len_byte_array(4) (DECIMAL(7,3))
+                decimal_byte_stream_split undeclared ← optional fixed_len_byte_array(4) (DECIMAL(7,3))
+              |}
           );
           ( "unknown-logical-type.parquet",
             __POS_OF__
@@ -556,37 +600,61 @@ let formats =
           ( "types.parquet",
             __POS_OF__
               {|
-            parquet (30 columns)
-              bool bool                     ← optional boolean
-              i8 int8                       ← optional int32 (INTEGER(8,true))
-              i16 int16                     ← optional int32 (INTEGER(16,true))
-              i32 int32                     ← optional int32
-              i64 int64                     ← optional int64
-              u8 uint8                      ← optional int32 (INTEGER(8,false))
-              u16 uint16                    ← optional int32 (INTEGER(16,false))
-              u32 uint32                    ← optional int32 (INTEGER(32,false))
-              u64 uint64                    ← optional int64 (INTEGER(64,false))
-              f16 float16                   ← optional fixed_len_byte_array(2) (FLOAT16)
-              f32 float32                   ← optional float
-              f64 float64                   ← optional double
-              d9 decimal[9, 2]              ← optional fixed_len_byte_array(4) (DECIMAL(9,2))
-              d18 decimal[18, 6]            ← optional fixed_len_byte_array(8) (DECIMAL(18,6))
-              date date                     ← optional int32 (DATE)
-              clock_ms clock[ms]            ← optional int32 (TIME(MILLIS,false))
-              clock_us clock[us]            ← optional int64 (TIME(MICROS,false))
-              clock_ns clock[ns]            ← optional int64 (TIME(NANOS,false))
-              ts_ms datetime[ms]            ← optional int64 (TIMESTAMP(MILLIS,false))
-              ts_us_utc datetime[us, UTC]   ← optional int64 (TIMESTAMP(MICROS,true))
-              ts_us_paris datetime[us, UTC] ← optional int64 (TIMESTAMP(MICROS,true))
-              ts_ns datetime[ns]            ← optional int64 (TIMESTAMP(NANOS,false))
-              string string                 ← optional binary (STRING)
-              binary binary                 ← optional binary
-              fsb binary                    ← optional fixed_len_byte_array(5)
-              uuid binary                   ← optional fixed_len_byte_array(16) (UUID)
-              all_null int32                ← optional int32
-              no_null int64                 ← optional int64
-              req_i32 int32                 ← required int32
-              req_string string             ← required binary (STRING)
+              parquet (30 columns)
+                bool bool                     ← optional boolean
+                i8 int8                       ← optional int32 (INTEGER(8,true))
+                i16 int16                     ← optional int32 (INTEGER(16,true))
+                i32 int32                     ← optional int32
+                i64 int64                     ← optional int64
+                u8 uint8                      ← optional int32 (INTEGER(8,false))
+                u16 uint16                    ← optional int32 (INTEGER(16,false))
+                u32 uint32                    ← optional int32 (INTEGER(32,false))
+                u64 uint64                    ← optional int64 (INTEGER(64,false))
+                f16 float16                   ← optional fixed_len_byte_array(2) (FLOAT16)
+                f32 float32                   ← optional float
+                f64 float64                   ← optional double
+                d9 undeclared                 ← optional fixed_len_byte_array(4) (DECIMAL(9,2))
+                d18 undeclared                ← optional fixed_len_byte_array(8) (DECIMAL(18,6))
+                date date                     ← optional int32 (DATE)
+                clock_ms clock[ms]            ← optional int32 (TIME(MILLIS,false))
+                clock_us clock[us]            ← optional int64 (TIME(MICROS,false))
+                clock_ns clock[ns]            ← optional int64 (TIME(NANOS,false))
+                ts_ms datetime[ms]            ← optional int64 (TIMESTAMP(MILLIS,false))
+                ts_us_utc datetime[us, UTC]   ← optional int64 (TIMESTAMP(MICROS,true))
+                ts_us_paris datetime[us, UTC] ← optional int64 (TIMESTAMP(MICROS,true))
+                ts_ns datetime[ns]            ← optional int64 (TIMESTAMP(NANOS,false))
+                string string                 ← optional binary (STRING)
+                binary binary                 ← optional binary
+                fsb binary                    ← optional fixed_len_byte_array(5)
+                uuid binary                   ← optional fixed_len_byte_array(16) (UUID)
+                all_null int32                ← optional int32
+                no_null int64                 ← optional int64
+                req_i32 int32                 ← required int32
+                req_string string             ← required binary (STRING)
+              |}
+          );
+          ( "decimals_int.parquet",
+            __POS_OF__
+              {|
+            parquet (6 columns)
+              d9_0 undeclared   ← optional int32 (DECIMAL(9,0))
+              d9_2 undeclared   ← optional int32 (DECIMAL(9,2))
+              d18_0 undeclared  ← optional int64 (DECIMAL(18,0))
+              d18_6 undeclared  ← optional int64 (DECIMAL(18,6))
+              d38_0 undeclared  ← optional fixed_len_byte_array(16) (DECIMAL(38,0))
+              d38_10 undeclared ← optional fixed_len_byte_array(16) (DECIMAL(38,10))
+            |}
+          );
+          ( "decimals_bytes.parquet",
+            __POS_OF__
+              {|
+            parquet (6 columns)
+              d9_0 undeclared   ← optional fixed_len_byte_array(4) (DECIMAL(9,0))
+              d9_2 undeclared   ← optional fixed_len_byte_array(4) (DECIMAL(9,2))
+              d18_0 undeclared  ← optional fixed_len_byte_array(8) (DECIMAL(18,0))
+              d18_6 undeclared  ← optional fixed_len_byte_array(8) (DECIMAL(18,6))
+              d38_0 undeclared  ← optional fixed_len_byte_array(16) (DECIMAL(38,0))
+              d38_10 undeclared ← optional fixed_len_byte_array(16) (DECIMAL(38,10))
             |}
           );
           ( "names.parquet",
@@ -602,38 +670,38 @@ let formats =
           ( "empty.parquet",
             __POS_OF__
               {|
-            parquet (30 columns)
-              bool bool                     ← optional boolean
-              i8 int8                       ← optional int32 (INTEGER(8,true))
-              i16 int16                     ← optional int32 (INTEGER(16,true))
-              i32 int32                     ← optional int32
-              i64 int64                     ← optional int64
-              u8 uint8                      ← optional int32 (INTEGER(8,false))
-              u16 uint16                    ← optional int32 (INTEGER(16,false))
-              u32 uint32                    ← optional int32 (INTEGER(32,false))
-              u64 uint64                    ← optional int64 (INTEGER(64,false))
-              f16 float16                   ← optional fixed_len_byte_array(2) (FLOAT16)
-              f32 float32                   ← optional float
-              f64 float64                   ← optional double
-              d9 decimal[9, 2]              ← optional fixed_len_byte_array(4) (DECIMAL(9,2))
-              d18 decimal[18, 6]            ← optional fixed_len_byte_array(8) (DECIMAL(18,6))
-              date date                     ← optional int32 (DATE)
-              clock_ms clock[ms]            ← optional int32 (TIME(MILLIS,false))
-              clock_us clock[us]            ← optional int64 (TIME(MICROS,false))
-              clock_ns clock[ns]            ← optional int64 (TIME(NANOS,false))
-              ts_ms datetime[ms]            ← optional int64 (TIMESTAMP(MILLIS,false))
-              ts_us_utc datetime[us, UTC]   ← optional int64 (TIMESTAMP(MICROS,true))
-              ts_us_paris datetime[us, UTC] ← optional int64 (TIMESTAMP(MICROS,true))
-              ts_ns datetime[ns]            ← optional int64 (TIMESTAMP(NANOS,false))
-              string string                 ← optional binary (STRING)
-              binary binary                 ← optional binary
-              fsb binary                    ← optional fixed_len_byte_array(5)
-              uuid binary                   ← optional fixed_len_byte_array(16) (UUID)
-              all_null int32                ← optional int32
-              no_null int64                 ← optional int64
-              req_i32 int32                 ← required int32
-              req_string string             ← required binary (STRING)
-            |}
+              parquet (30 columns)
+                bool bool                     ← optional boolean
+                i8 int8                       ← optional int32 (INTEGER(8,true))
+                i16 int16                     ← optional int32 (INTEGER(16,true))
+                i32 int32                     ← optional int32
+                i64 int64                     ← optional int64
+                u8 uint8                      ← optional int32 (INTEGER(8,false))
+                u16 uint16                    ← optional int32 (INTEGER(16,false))
+                u32 uint32                    ← optional int32 (INTEGER(32,false))
+                u64 uint64                    ← optional int64 (INTEGER(64,false))
+                f16 float16                   ← optional fixed_len_byte_array(2) (FLOAT16)
+                f32 float32                   ← optional float
+                f64 float64                   ← optional double
+                d9 undeclared                 ← optional fixed_len_byte_array(4) (DECIMAL(9,2))
+                d18 undeclared                ← optional fixed_len_byte_array(8) (DECIMAL(18,6))
+                date date                     ← optional int32 (DATE)
+                clock_ms clock[ms]            ← optional int32 (TIME(MILLIS,false))
+                clock_us clock[us]            ← optional int64 (TIME(MICROS,false))
+                clock_ns clock[ns]            ← optional int64 (TIME(NANOS,false))
+                ts_ms datetime[ms]            ← optional int64 (TIMESTAMP(MILLIS,false))
+                ts_us_utc datetime[us, UTC]   ← optional int64 (TIMESTAMP(MICROS,true))
+                ts_us_paris datetime[us, UTC] ← optional int64 (TIMESTAMP(MICROS,true))
+                ts_ns datetime[ns]            ← optional int64 (TIMESTAMP(NANOS,false))
+                string string                 ← optional binary (STRING)
+                binary binary                 ← optional binary
+                fsb binary                    ← optional fixed_len_byte_array(5)
+                uuid binary                   ← optional fixed_len_byte_array(16) (UUID)
+                all_null int32                ← optional int32
+                no_null int64                 ← optional int64
+                req_i32 int32                 ← required int32
+                req_string string             ← required binary (STRING)
+              |}
           );
         ]
         (fun (name, baseline) -> expect (format_text (sniff name)) baseline);
@@ -778,6 +846,14 @@ let synthesized =
           match read_x (parquet ~rows:2 (page 2 (int32s [ 7; -8 ]))) with
           | Ok c -> equal (array string) [| "7"; "-8" |] (render "int32" c)
           | Error e -> failf "%s" (error_text e));
+      test "a decimal annotation of a negative scale is ignored" (fun () ->
+          let b =
+            parquet ~rows:2
+              ~column:[ (6, I32 5); (7, I32 (-2)); (8, I32 5) ]
+              (page 2 (int32s [ 7; -8 ]))
+          in
+          equal text "parquet (1 column)\n  x int32 ← required int32"
+            (format_text (Error.get_ok (P.sniff b))));
       test "an int8 that does not fit names its row" (fun () ->
           (* Rows 0, 2 and 3 hold 1, 2 and 300: the levels are a bit-packed run
              of 1, 0, 1, 1. *)

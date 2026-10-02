@@ -22,8 +22,8 @@
     delta encodings and [PLAIN] byte arrays decode in C
     ([talon_next_parquet_stubs.c]). Fixed-width gathers, the spread and dtype
     changes are nx operations; [BYTE_STREAM_SPLIT], [PLAIN] booleans, the
-    conversions of [int96] and of decimals stored as bytes, categorical lookups
-    and the gather of dictionary-encoded byte strings are OCaml loops.
+    conversions of [int96] and of decimals, categorical lookups and the gather
+    of dictionary-encoded byte strings are OCaml loops.
 
     Encodings read: [PLAIN], [PLAIN_DICTIONARY] and [RLE_DICTIONARY], [RLE] for
     booleans, [DELTA_BINARY_PACKED], [DELTA_LENGTH_BYTE_ARRAY],
@@ -36,10 +36,9 @@
 type t =
   | Fixed of { valid : Nx.bool_t option; values : Nx.packed }
       (** One value per row, in the storage of the column's type: [bool],
-          integers of the type's width, [float16] to [float64], [int64] unscaled
-          decimals, [int32] days, [int64] ticks, [int32] codes of a categorical.
-          [valid] is [true] at the rows that hold a value, and [None] when every
-          row does. *)
+          integers of the type's width, [float16] to [float64], [int32] days,
+          [int64] ticks, [int32] codes of a categorical. [valid] is [true] at
+          the rows that hold a value, and [None] when every row does. *)
   | Varsize of {
       valid : Nx.bool_t option;
       offsets : Nx.int64_t;

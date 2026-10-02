@@ -617,7 +617,6 @@ let s_typed =
         [
           ("t", Any (datetime Ns));
           ("dl", Any (list (duration Ns)));
-          ("dc", Any (list (decimal ~precision:10 ~scale:2)));
           ("x", Any (tensor Nx.float32 [| 2 |]));
         ])
 
@@ -692,18 +691,18 @@ let folds_inside () =
   @@ __POS_OF__
        {|
     # a window
-    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], dc list[decimal[10, 2]], x tensor[float32, 2], e float64
+    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], e float64
     derive ["e" :=
               rolling (rows ~before:max_int ~after:0) (ewm ~alpha:0.5 (b +. 3.))]
-    └ v (9 columns)
+    └ v (8 columns)
     # a calendar operation
-    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], dc list[decimal[10, 2]], x tensor[float32, 2], y string
+    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], y string
     derive ["y" := Temporal.format "%Y" t]
-    └ v (9 columns)
+    └ v (8 columns)
     # an nx lift
-    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], dc list[decimal[10, 2]], x tensor[float32, 2], z float64
+    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], z float64
     derive ["z" := add (b +. 3.) (b +. 3.)]
-    └ v (9 columns)
+    └ v (8 columns)
     |}
 
 let slices () =
@@ -1883,7 +1882,6 @@ let kit_expressions () =
           ("x8", Any int8);
           ("f32", Any float32);
           ("f", Any float64);
-          ("price", Any (decimal ~precision:10 ~scale:2));
           ("d", Any (duration Ms));
           ("g", Any string);
           ("t", Any epoch_t);
@@ -1900,7 +1898,6 @@ let kit_expressions () =
              ("i", Any int64);
              ("cs8", Any int64);
              ("cs32", Any float32);
-             ("csd", Any (decimal ~precision:18 ~scale:2));
              ("csms", Any (duration Ms));
              ("cm", Any float32);
              ("cc", Any int64);
@@ -1914,7 +1911,6 @@ let kit_expressions () =
            "i" := Kit.index;
            "cs8" := Kit.cumulative (sum (Col.int "x8"));
            "cs32" := Kit.cumulative (sum (column "f32"));
-           "csd" := Kit.cumulative (sum (Col.decimal "price"));
            "csms" := Kit.cumulative (sum (Col.span "d"));
            "cm" := Kit.cumulative (max (column "f32"));
            "cc" := Kit.cumulative (count (Col.string "g"));
@@ -2000,7 +1996,7 @@ let kit_errors () =
 
     derive: 1 problem
       "s" := rolling (rows ~before:max_int ~after:0) (sum c)
-        sum takes integers, floats, durations or decimals, not string.
+        sum takes integers, floats or durations, not string.
       input (5 columns): a int64, b float64, c string, k int8, l list[int64]
 
     derive: 1 problem

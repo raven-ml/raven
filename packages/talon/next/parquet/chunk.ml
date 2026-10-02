@@ -239,9 +239,15 @@ let int96 ~row_group t ty (u : Type.unit_) =
   done;
   Values (P (tensor out))
 
-(* [decimal ~row_group t ty] is the big-endian two's complement integers of
-   [t]. *)
-let decimal ~row_group t ty =
+(* Decimals
+
+   A decimal is an integer, unscaled, and a scale: an [int32] or [int64], or a
+   big-endian two's complement byte string. It reads as its unscaled [int64]
+   integer, or as the [float64] nearest its value, which the float parser rounds
+   once from the exact text [unscaled]e-[scale]. *)
+
+(* [unscaled ~row_group t] is the byte strings of [t] as [int64]s. *)
+let unscaled ~row_group t =
   let out = int64s t.n in
   for i = 0 to t.n - 1 do
     let first, len = span t i in
@@ -251,15 +257,67 @@ let decimal ~row_group t ty =
       if
         Int64.compare !v 0x7F_FFFF_FFFF_FFFFL > 0
         || Int64.compare !v (-0x80_0000_0000_0000L) < 0
-      then
-        Meta.fail ~row_group "a decimal value is outside the range of %s"
-          (type_name ty);
+      then Meta.fail ~row_group "a decimal value is outside the range of int64";
       v :=
         Int64.logor (Int64.shift_left !v 8) (Int64.of_int t.bytes.{first + k})
     done;
     out.{i} <- !v
   done;
   Values (P (tensor out))
+
+let billion = 1_000_000_000
+
+(* [big_digits t i] is the decimal text of the byte string [i] of [t], a
+   big-endian two's complement integer of any length. Its magnitude is divided
+   by 10^9 until it is zero, each remainder giving nine digits. *)
+let big_digits ~row_group t i =
+  let first, len = span t i in
+  if len = 0 then Meta.fail ~row_group "a decimal value has no bytes";
+  let negative = t.bytes.{first} land 0x80 <> 0 in
+  let m =
+    Array.init len (fun k ->
+        if negative then t.bytes.{first + k} lxor 0xFF else t.bytes.{first + k})
+  in
+  if negative then begin
+    let k = ref (len - 1) in
+    while !k >= 0 && m.(!k) = 0xFF do
+      m.(!k) <- 0;
+      decr k
+    done;
+    if !k >= 0 then m.(!k) <- m.(!k) + 1
+  end;
+  let groups = ref [] in
+  while Array.exists (fun d -> d <> 0) m do
+    let r = ref 0 in
+    for k = 0 to len - 1 do
+      let x = (!r lsl 8) lor m.(k) in
+      m.(k) <- x / billion;
+      r := x mod billion
+    done;
+    groups := !r :: !groups
+  done;
+  match !groups with
+  | [] -> "0"
+  | g :: gs ->
+      String.concat ""
+        ((if negative then "-" else "")
+        :: string_of_int g
+        :: List.map (Printf.sprintf "%09d") gs)
+
+(* [floats ~row_group (l : Leaf.t) scale t] is the decimals of [t], of scale
+   [scale], as the nearest [float64]s. *)
+let floats ~row_group (l : Leaf.t) scale t =
+  let digits i =
+    match l.physical with
+    | Int32 -> Int32.to_string (Int64.to_int32 (le t.bytes (4 * i) 4))
+    | Int64 -> Int64.to_string (le t.bytes (8 * i) 8)
+    | _ -> big_digits ~row_group t i
+  in
+  let text i = Printf.sprintf "%se-%d" (digits i) scale in
+  let texts = Column.v Type.string (Array.init t.n text) in
+  match Column.parse (Any Type.float64) texts with
+  | Ok c -> Values (P (Column.to_tensor Nx.float64 c))
+  | Error (_, why) -> Meta.fail ~row_group "a decimal value %s" why
 
 let categorical ~row_group t dict =
   let codes = Hashtbl.create (Iarray.length dict) in
@@ -300,20 +358,22 @@ let fixed t dt =
 let convert (type a) ~row_group (l : Leaf.t) (ty : a Type.t) t =
   let any = Type.Any ty in
   let values dt = Values (P (fixed t dt)) in
-  match (l.physical, ty) with
-  | Boolean, _ -> Values (P (Nx.cast Nx.bool (tensor (A1.sub t.bytes 0 t.n))))
-  | Int32, Uint32 -> values Nx.uint32
-  | Int32, (Clock _ | Decimal _) ->
+  match (l.physical, l.annotation, ty) with
+  | _, Some (Decimal { scale; _ }), Float64 -> floats ~row_group l scale t
+  | (Byte_array | Fixed_len_byte_array), _, Int64 -> unscaled ~row_group t
+  | Boolean, _, _ ->
+      Values (P (Nx.cast Nx.bool (tensor (A1.sub t.bytes 0 t.n))))
+  | Int32, _, Uint32 -> values Nx.uint32
+  | Int32, _, (Clock _ | Int64) ->
       Values (P (Nx.cast Nx.int64 (fixed t Nx.int32)))
-  | Int32, _ -> values Nx.int32
-  | Int64, Uint64 -> values Nx.uint64
-  | Int64, _ -> values Nx.int64
-  | Float, _ -> values Nx.float32
-  | Double, _ -> values Nx.float64
-  | Int96, Datetime { unit_; _ } -> int96 ~row_group t any unit_
-  | Fixed_len_byte_array, Float16 -> values Nx.float16
-  | _, Decimal _ -> decimal ~row_group t any
-  | _, Categorical dict -> categorical ~row_group t dict
+  | Int32, _, _ -> values Nx.int32
+  | Int64, _, Uint64 -> values Nx.uint64
+  | Int64, _, _ -> values Nx.int64
+  | Float, _, _ -> values Nx.float32
+  | Double, _, _ -> values Nx.float64
+  | Int96, _, Datetime { unit_; _ } -> int96 ~row_group t any unit_
+  | Fixed_len_byte_array, _, Float16 -> values Nx.float16
+  | _, _, Categorical dict -> categorical ~row_group t dict
   | _ -> strings t
 
 (* [gather s idx] is the values of [s] at the positions [idx]. *)

@@ -43,8 +43,8 @@ let check_names fn names =
 let reads (Type.Any t) =
   match t with
   | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-  | Float16 | Float32 | Float64 | Decimal _ | String | Binary | Categorical _
-  | Date | Datetime _ ->
+  | Float16 | Float32 | Float64 | String | Binary | Categorical _ | Date
+  | Datetime _ ->
       true
   | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
 

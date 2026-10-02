@@ -19,7 +19,6 @@ type 'a t =
   | Float16 : float t
   | Float32 : float t
   | Float64 : float t
-  | Decimal : { precision : int; scale : int } -> Decimal.t t
   | String : string t
   | Binary : Binary.t t
   | Categorical : string iarray -> string t
@@ -50,14 +49,6 @@ let uint64 = Uint64
 let float16 = Float16
 let float32 = Float32
 let float64 = Float64
-
-let decimal ~precision ~scale =
-  if precision < 1 || precision > 18 then
-    err "Type.decimal: precision %d is not in [1;18]" precision;
-  if scale < 0 || scale > precision then
-    err "Type.decimal: scale %d is not in [0;%d]" scale precision;
-  Decimal { precision; scale }
-
 let string = String
 let binary = Binary
 
@@ -131,7 +122,6 @@ let rec kind : type a. a t -> a Kind.t = function
   | Float16 -> Kind.Float
   | Float32 -> Kind.Float
   | Float64 -> Kind.Float
-  | Decimal _ -> Kind.Decimal
   | String -> Kind.String
   | Categorical _ -> Kind.String
   | Binary -> Kind.Binary
@@ -244,7 +234,6 @@ let rec pp_lit : type a. a Kind.t -> Format.formatter -> a -> unit =
   | Bool -> Format.pp_print_bool ppf v
   | String -> pp_quoted ppf v
   | Binary -> Binary.pp ppf v
-  | Decimal -> Decimal.pp ppf v
   | Date -> Time.Date.pp ppf v
   | Instant -> Time.pp ppf v
   | Span -> Time.Span.pp ppf v
@@ -272,19 +261,6 @@ let in_range (lo : int) hi v = lo <= v && v <= hi
    largest finite value and the next power of two, ties going to the even
    significand: 65520 for binary16, 2^128 - 2^103 for binary32. *)
 let float_holds limit v = (not (Float.is_finite v)) || Float.abs v < limit
-let rec pow10 k = if k = 0 then 1L else Int64.mul 10L (pow10 (k - 1))
-
-(* [d] is exact at [scale] in [precision] digits. Its unscaled value has at most
-   18 digits, so [abs] cannot overflow, and scaling up compares against a
-   smaller bound instead of multiplying. *)
-let decimal_holds ~precision ~scale d =
-  let u = Int64.abs (Decimal.unscaled d) and s = Decimal.scale d in
-  if (s <= scale) [@mutate off "at s = scale both branches agree"] then
-    Int64.compare u (pow10 (precision - (scale - s))) < 0
-  else
-    let p = pow10 (s - scale) in
-    Int64.equal (Int64.rem u p) 0L
-    && Int64.compare (Int64.div u p) (pow10 precision) < 0
 
 let dictionary_index d =
   let index = Hashtbl.create (Iarray.length d) in
@@ -319,7 +295,6 @@ let rec holds : type a. a t -> a -> bool = function
   | Uint64 -> fun v -> v >= 0
   | Float16 -> float_holds 65520.
   | Float32 -> float_holds 0x1.ffffffp127
-  | Decimal { precision; scale } -> decimal_holds ~precision ~scale
   | String -> String.is_valid_utf_8
   | Categorical d -> Hashtbl.mem (dictionary_index d)
   | Clock u ->
@@ -430,7 +405,6 @@ let rec compare_value : type a. a t -> a -> a -> int = function
   | Float16 -> compare_float
   | Float32 -> compare_float
   | Float64 -> compare_float
-  | Decimal _ -> Decimal.compare
   | String -> String.compare
   | Binary -> fun b0 b1 -> String.compare (b0 :> string) (b1 :> string)
   | Categorical d ->
@@ -562,8 +536,6 @@ let rec equal : type a b. a t -> b t -> bool =
   | String, String -> true
   | Binary, Binary -> true
   | Date, Date -> true
-  | Decimal d0, Decimal d1 ->
-      Int.equal d0.precision d1.precision && Int.equal d0.scale d1.scale
   | Categorical d0, Categorical d1 -> Iarray.equal String.equal d0 d1
   | Clock u0, Clock u1 -> u0 = u1
   | Duration u0, Duration u1 -> u0 = u1
@@ -590,8 +562,6 @@ let is_prefix d0 d1 =
 let contains : type a. a t -> a t -> bool =
  fun t u ->
   match (t, u) with
-  | Decimal d1, Decimal d0 ->
-      d0.scale <= d1.scale && d0.precision - d0.scale <= d1.precision - d1.scale
   | String, Categorical _ -> true
   | Categorical d1, Categorical d0 -> is_prefix d0 d1
   | Clock u1, Clock u0 -> fineness u0 <= fineness u1
@@ -681,8 +651,6 @@ let rec pp : type a. Format.formatter -> a t -> unit =
   | String -> str "string"
   | Binary -> str "binary"
   | Date -> str "date"
-  | Decimal { precision; scale } ->
-      Format.fprintf ppf "decimal[%d, %d]" precision scale
   | Categorical d ->
       let n = Iarray.length d in
       let shown = Iarray.to_list (Iarray.sub d ~pos:0 ~len:(min n 8)) in

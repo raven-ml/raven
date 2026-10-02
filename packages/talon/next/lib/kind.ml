@@ -11,7 +11,6 @@ type _ t =
   | Float : float t
   | String : string t
   | Binary : Binary.t t
-  | Decimal : Decimal.t t
   | Date : Time.date t
   | Instant : Time.instant t
   | Span : Time.span t
@@ -31,7 +30,6 @@ let int = Int
 let float = Float
 let string = String
 let binary = Binary
-let decimal = Decimal
 let date = Date
 let instant = Instant
 let span = Span
@@ -46,7 +44,6 @@ let rec equal_witness : type a b. a t -> b t -> (a, b) Stdlib.Type.eq option =
   | Float, Float -> Some Equal
   | String, String -> Some Equal
   | Binary, Binary -> Some Equal
-  | Decimal, Decimal -> Some Equal
   | Date, Date -> Some Equal
   | Instant, Instant -> Some Equal
   | Span, Span -> Some Equal
@@ -74,7 +71,6 @@ let rec pp : type a. Format.formatter -> a t -> unit =
   | Float -> Format.pp_print_string ppf "float"
   | String -> Format.pp_print_string ppf "string"
   | Binary -> Format.pp_print_string ppf "binary"
-  | Decimal -> Format.pp_print_string ppf "decimal"
   | Date -> Format.pp_print_string ppf "date"
   | Instant -> Format.pp_print_string ppf "instant"
   | Span -> Format.pp_print_string ppf "span"

@@ -82,8 +82,7 @@ let read_text c p =
 
 type number =
   | Integer : ('a, 'b) Nx.dtype * float * float -> number
-  | Floating : ('a, 'b) Nx.dtype * Type.any -> number
-  | Fixed_point of { precision : int; scale : int }
+  | Floating : ('a, 'b) Nx.dtype -> number
 
 let number : type a. a Type.t -> number option = function
   | Bool -> Some (Integer (Nx.bool, 0., 2.))
@@ -95,10 +94,9 @@ let number : type a. a Type.t -> number option = function
   | Uint16 -> Some (Integer (Nx.uint16, 0., 0x1p16))
   | Uint32 -> Some (Integer (Nx.uint32, 0., 0x1p32))
   | Uint64 -> Some (Integer (Nx.uint64, 0., 0x1p64))
-  | Float16 -> Some (Floating (Nx.float16, Any Type.float16))
-  | Float32 -> Some (Floating (Nx.float32, Any Type.float32))
-  | Float64 -> Some (Floating (Nx.float64, Any Type.float64))
-  | Decimal { precision; scale } -> Some (Fixed_point { precision; scale })
+  | Float16 -> Some (Floating Nx.float16)
+  | Float32 -> Some (Floating Nx.float32)
+  | Float64 -> Some (Floating Nx.float64)
   | _ -> None
 
 let negative x = Nx.less x (Nx.zeros_like x)
@@ -107,91 +105,27 @@ let negative x = Nx.less x (Nx.zeros_like x)
 let within bound x =
   Nx.logical_and (Nx.greater_s x (Int64.neg bound)) (Nx.less_s x bound)
 
-(* [scaled s v] is [v × 10^s] rounded to the nearest integer, ties away from
-   zero, or [None] where [v] is not finite or the result reaches [10^18]. The
-   product of doubles decides, unless its rounding may have crossed a tie: then
-   [v]'s exact decimal digits do, which 1100 digits after the point write. *)
-let scaled s v =
-  let y = v *. Int64.to_float (Type.pow10 s) in
-  let a = Float.abs y in
-  if not (a < 1e18) then None
-  else if
-    a < 0x1p52 && Float.abs (a -. Float.trunc a -. 0.5) > Float.succ a -. a
-  then Some (Int64.of_float (Float.round y))
-  else
-    let digits = Printf.sprintf "%.*f" (s + 1100) (Float.abs v) in
-    let point = String.index digits '.' in
-    let u =
-      Int64.of_string
-        (String.sub digits 0 point ^ String.sub digits (point + 1) s)
-    in
-    let u = if digits.[point + 1 + s] >= '5' then Int64.succ u else u in
-    Some (if v < 0. then Int64.neg u else u)
-
 (* [numeric from into c] is [c]'s values, of [from], converted to [into], and
    where they are exact. *)
-let rec numeric from into c : Nx.packed * Nx.bool_t =
+let numeric from into c : Nx.packed * Nx.bool_t =
   match (from, into) with
   | Integer (df, _, _), Integer (dt, _, _) ->
       let x = tensor df c in
       let y = Nx.cast dt x in
       let back = Nx.equal (Nx.cast df y) x in
       (P y, Nx.logical_and back (Nx.equal (negative x) (negative y)))
-  | Integer (df, _, _), Floating (dt, _) ->
+  | Integer (df, _, _), Floating dt ->
       let y = Nx.cast dt (tensor df c) in
       (P y, Nx.isfinite y)
-  | Integer (df, _, _), Fixed_point { precision; scale } ->
-      let x = tensor df c in
-      let w = Nx.cast Nx.int64 x in
-      let fits = within (Type.pow10 (precision - scale)) w in
-      ( P (Nx.mul_s w (Type.pow10 scale)),
-        Nx.logical_and fits (Nx.equal (negative x) (negative w)) )
   | Floating _, Integer (dt, lo, hi) ->
       let f = tensor Nx.float64 c in
       let range = Nx.logical_and (Nx.greater_equal_s f lo) (Nx.less_s f hi) in
       let ok = Nx.logical_and range (Nx.equal (Nx.floor f) f) in
       (P (Nx.cast dt (Nx.where ok f (Nx.zeros_like f))), ok)
-  | Floating (df, _), Floating (dt, _) ->
+  | Floating df, Floating dt ->
       let x = tensor df c in
       let y = Nx.cast dt x in
       (P y, Nx.logical_or (Nx.logical_not (Nx.isfinite x)) (Nx.isfinite y))
-  | Floating _, Fixed_point { precision; scale } ->
-      let us = Array.map (scaled scale) (Nx.to_array (tensor Nx.float64 c)) in
-      let bound = Type.pow10 precision and n = Array.length us in
-      let fits = function
-        | Some u -> Int64.compare (Int64.abs u) bound < 0
-        | None -> false
-      in
-      ( P (Nx.create Nx.int64 [| n |] (Array.map (Option.value ~default:0L) us)),
-        Nx.create Nx.bool [| n |] (Array.map fits us) )
-  | Fixed_point { scale; _ }, Integer _ ->
-      let u = int64s c and k = Type.pow10 scale in
-      let q = Column.with_data (Any Type.int64) (Fixed (P (Nx.div_s u k))) c in
-      let y, ok = numeric (Integer (Nx.int64, -0x1p63, 0x1p63)) into q in
-      (y, Nx.logical_and ok (Nx.equal_s (Nx.mod_s u k) 0L))
-  | Fixed_point { precision; scale }, Floating (dt, ty) ->
-      (* The text forms round a decimal to a float once, at any width. *)
-      let text =
-        Format.asprintf "%a" (Form.pp (Type.decimal ~precision ~scale))
-      in
-      let s = Array.map (Option.map text) (Column.options Kind.decimal c) in
-      let f = Result.get_ok (Form.parse ty (Column.of_options Type.string s)) in
-      let y = tensor dt f in
-      (P y, Nx.isfinite y)
-  | Fixed_point { scale = s0; _ }, Fixed_point { precision; scale = s1 }
-    when s1 >= s0 ->
-      let u = int64s c and k = s1 - s0 in
-      let bound = if precision >= k then Type.pow10 (precision - k) else 1L in
-      (P (Nx.mul_s u (Type.pow10 k)), within bound u)
-  | Fixed_point { scale = s0; _ }, Fixed_point { precision; scale = s1 } ->
-      let u = int64s c and k = Type.pow10 (s0 - s1) in
-      let away = Nx.greater_equal_s (Nx.mul_s (Nx.abs (Nx.mod_s u k)) 2L) k in
-      let sign =
-        Nx.where (negative u) (Nx.full_like u (-1L)) (Nx.ones_like u)
-      in
-      let q = Nx.div_s u k in
-      let q = Nx.where away (Nx.add q sign) q in
-      (P q, within (Type.pow10 precision) q)
 
 (* Casts *)
 

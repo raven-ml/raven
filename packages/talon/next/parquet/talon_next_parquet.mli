@@ -20,7 +20,6 @@
     - [boolean] as [bool], [float] as [float32] and [double] as [float64];
     - [int32] and [int64] as [int32] and [int64], or as the type their [INTEGER]
       annotation names, [int8] to [uint64];
-    - [DECIMAL(p,s)] as [decimal[p, s]], whatever its physical type;
     - [DATE] as [date], [TIME] as [clock] of its unit, and [TIMESTAMP] as
       [datetime] of its unit, in the zone [UTC] when the timestamp is adjusted
       to UTC and in no zone otherwise;
@@ -33,6 +32,11 @@
     [UUID] on an [int32], or that talon does not know, is ignored, as Parquet
     asks of its readers: the column reads as its physical type.
 
+    A [DECIMAL(p,s)] column, the number [unscaled × 10{^-s}] of at most [p]
+    digits, has no talon type of its own: {!sniff} leaves it undeclared, and
+    {!with_type} declares it as [float64], the float nearest each value, or, up
+    to 18 digits, as [int64], each value's [unscaled] integer.
+
     {1:refusals Refusals}
 
     {!sniff} refuses a file that talon cannot read in full:
@@ -40,7 +44,7 @@
     - a file whose column chunks are stored in other files;
     - a nested column: a group, such as a list or a record, or a repeated field.
       Talon reads flat files only;
-    - a map, an interval, a variant, or a decimal of more than 18 digits;
+    - a map, an interval or a variant;
     - a column chunk compressed with LZO, Brotli, Hadoop's LZ4 framing (the
       codec [LZ4]; [LZ4_RAW] is read) or a codec Parquet does not define. Talon
       reads uncompressed, Snappy, gzip, Zstandard and [LZ4_RAW] chunks. *)
@@ -76,7 +80,9 @@ val with_type : string -> Talon_next.Type.any -> format -> format
       a [string], its values must be valid UTF-8, and as a categorical, in the
       categorical's dictionary;
     - a [datetime] of any unit without a zone, for an [int96] column. Its values
-      must be whole numbers of the unit.
+      must be whole numbers of the unit;
+    - [float64], for a [DECIMAL] column, and [int64] for one of at most 18
+      digits.
 
     Values that break these rules fail when the column is read. Any other type
     is a computation on the column once read, such as [Expr.cast].
@@ -88,12 +94,14 @@ val pp_format : Format.formatter -> format -> unit
 (** [pp_format ppf f] formats [f] for people: a line that counts its columns,
     then one line per column, with its name and the type it reads as, as
     {!Talon_next.Schema.pp} formats a column, and its Parquet type, as Parquet's
-    schema language writes it, aligned after an arrow:
+    schema language writes it, aligned after an arrow. A decimal that no
+    {!with_type} declared reads as [undeclared]:
     {v
-    parquet (3 columns)
+    parquet (4 columns)
       id int32                       ← required int32
       name string                    ← optional binary (STRING)
       "departs at" datetime[us, UTC] ← optional int64 (TIMESTAMP(MICROS,true))
+      price undeclared               ← optional int64 (DECIMAL(12,2))
     v} *)
 
 (** {1:reading Reading} *)
@@ -116,7 +124,10 @@ val source : format -> Nx_device.Buffer.t -> Talon_next.Source.t
     the request or one that does not read as [f]'s type, or if a column chunk
     fails to decode: [e] names the row group and the bytes of the page, or the
     column and the row of the row group where the value is not one its type
-    holds. *)
+    holds.
+
+    Raises [Invalid_argument] if [f] leaves a decimal undeclared; the message
+    names the column and the types it reads as. *)
 
 val file :
   ?format:format -> string -> (Talon_next.Source.t, Talon_next.Error.t) result
@@ -125,4 +136,7 @@ val file :
     gives when [format] is absent, named [parquet "path"], with its number of
     rows. Its errors name the file.
 
-    [Error e] if the file cannot be mapped, or as {!sniff}. *)
+    [Error e] if the file cannot be mapped, or as {!sniff}.
+
+    Raises [Invalid_argument] as {!source} does, which a file with a decimal
+    column does when [format] is absent. *)

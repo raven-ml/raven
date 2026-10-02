@@ -312,17 +312,12 @@ let read : type a. a Type.t -> cell -> a option =
   | Some Equal -> v
   | None -> invalid_arg "Reference: a cell of another kind"
 
-let rec pow10 k = if k = 0 then 1L else Int64.mul 10L (pow10 (k - 1))
-
 (* [stored ty v] is the value [v], of a type that [ty] contains, has once stored
-   as [ty]: a decimal reads at [ty]'s scale. *)
+   as [ty]. *)
 let stored : type a. a Type.t -> a -> a =
  fun ty v ->
   match ty with
   | Float32 -> Int32.float_of_bits (Int32.bits_of_float v)
-  | Decimal { scale; _ } ->
-      let finer = pow10 (scale - Decimal.scale v) in
-      Decimal.v ~unscaled:(Int64.mul (Decimal.unscaled v) finer) ~scale
   | _ -> v
 
 let signed bits v =

@@ -5,7 +5,8 @@
 
 open Talon_next
 
-type column = { leaf : Leaf.t; ty : Type.any }
+(* [ty] is [None] for a decimal that no [with_type] declared. *)
+type column = { leaf : Leaf.t; ty : Type.any option }
 type format = column array
 
 (* [with_bytes ?file b f] is [f] applied to the bytes of [b], mapped on the
@@ -63,7 +64,7 @@ let with_type name t f =
           Cast it once read (Expr.cast)."
          name Leaf.pp leaf Leaf.pp_reads leaf (type_name t));
   let f = Array.copy f in
-  f.(i) <- { leaf; ty = t };
+  f.(i) <- { leaf; ty = Some t };
   f
 
 (* [scalars s] is the number of Unicode scalar values of the UTF-8 [s]. *)
@@ -76,7 +77,10 @@ let pp_format ppf f =
   let left =
     Array.map
       (fun c ->
-        Format.asprintf "%a" Schema.pp (Schema.v [ (c.leaf.name, c.ty) ]))
+        match c.ty with
+        | Some ty ->
+            Format.asprintf "%a" Schema.pp (Schema.v [ (c.leaf.name, ty) ])
+        | None -> Format.asprintf "%a undeclared" Type.pp_name c.leaf.name)
       f
   in
   let width = Array.fold_left (fun w s -> max w (scalars s)) 0 left in
@@ -235,28 +239,31 @@ let part ?file b m leaves g columns : Source.part =
   in
   { rows = Some m.Meta.row_groups.(g).rows; open_ }
 
-let parts ?file f b (r : Source.request) =
+(* [parts ?file types b r] are the parts of [b] for the request [r], whose
+   columns read as [types] say. *)
+let parts ?file types b (r : Source.request) =
   with_bytes ?file b @@ fun bytes ->
   let m, leaves = open_ bytes in
   let leaf name =
     Array.find_index (fun (l : Leaf.t) -> String.equal l.name name) leaves
   in
+  let ty name = List.assoc_opt name types in
   let requested name =
-    let c = Option.get (find f name) in
+    let ty = Option.get (ty name) in
     match leaf name with
     | None -> Meta.fail "the file has no column %S" name
-    | Some i when not (Leaf.reads_as leaves.(i) c.ty) ->
+    | Some i when not (Leaf.reads_as leaves.(i) ty) ->
         Meta.fail "column %S reads as %s, not as the format's %s" name
           (Format.asprintf "%a" Leaf.pp_reads leaves.(i))
-          (type_name c.ty)
-    | Some i -> (name, i, c.ty)
+          (type_name ty)
+    | Some i -> (name, i, ty)
   in
   let columns = List.map requested r.columns in
   let stats g name =
-    match (leaf name, find f name) with
-    | Some i, Some c ->
+    match (leaf name, ty name) with
+    | Some i, Some ty ->
         Option.map
-          (fun (cm : Meta.column_meta) -> (leaves.(i), c.ty, cm.stats))
+          (fun (cm : Meta.column_meta) -> (leaves.(i), ty, cm.stats))
           m.row_groups.(g).chunks.(i).meta
     | _ -> None
   in
@@ -267,19 +274,30 @@ let parts ?file f b (r : Source.request) =
   in
   List.filter_map Fun.id (Array.to_list (Array.mapi kept m.row_groups))
 
-let make ?file ?rows f b =
+(* [declared fn c] is [c]'s name and type, which a decimal must have been
+   given. *)
+let declared fn c =
+  match c.ty with
+  | Some ty -> (c.leaf.name, ty)
+  | None ->
+      invalid_arg
+        (Format.asprintf
+           "Talon_next_parquet.%s: column %S (%a) is a decimal, which reads as \
+            float64, or as its unscaled int64 integers up to 18 digits. \
+            Declare one with with_type."
+           fn c.leaf.name Leaf.pp c.leaf)
+
+let make fn ?file ?rows f b =
   let name =
     match file with
     | None -> "parquet"
     | Some p -> Format.asprintf "parquet %a" Type.pp_quoted p
   in
-  let schema =
-    Schema.v (Array.to_list (Array.map (fun c -> (c.leaf.name, c.ty)) f))
-  in
+  let types = Array.to_list (Array.map (declared fn) f) in
   let pushdown p = if usable f p then Source.Inexact else Unsupported in
-  Source.v ~name ~schema ?rows ~pushdown (parts ?file f b)
+  Source.v ~name ~schema:(Schema.v types) ?rows ~pushdown (parts ?file types b)
 
-let source f b = make f b
+let source f b = make "source" f b
 
 let file ?format path =
   match Nx_device.Buffer.of_file path with
@@ -288,4 +306,4 @@ let file ?format path =
       with_bytes ~file:path b (fun bytes ->
           let m, leaves = open_ bytes in
           let f = match format with Some f -> f | None -> sniffed leaves in
-          make ~file:path ~rows:m.rows f b)
+          make "file" ~file:path ~rows:m.rows f b)
