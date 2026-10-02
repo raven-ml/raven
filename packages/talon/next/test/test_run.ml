@@ -699,9 +699,38 @@ let starved p =
               (Gen.of_list Join.[ Inner; Left; Full ]))
            (Gen.of_list Join.[ One; At_least_one ]))
 
+(* [converting] parses texts that no integer writes, or casts integers to
+   [int8], which holds few of them, under up to two random steps. Random plans
+   parse a text or cast out of range too rarely to fail there in every run, so
+   the plans draw these directly. *)
+let converting =
+  let rows = Gen.int_range 1 12 in
+  let column n ty o gen =
+    Gen.map (fun vs -> (n, Column.v ty vs, o)) (Gen.array ~size:rows gen)
+  in
+  let parse =
+    column "s" Type.string
+      (R.Out ("p", R.Parse (Type.int8, R.Col (Type.string, "s"))))
+      (Gen.map (( ^ ) "x") (value Type.string))
+  in
+  let cast =
+    column "i" Type.int64
+      (R.Out ("c", R.Cast (Type.int8, R.Col (Type.int64, "i"))))
+      (Gen.int_range (-1000) 1000)
+  in
+  let base (n, c, o) = R.Select ([ R.Keep [ n ]; o ], R.Table (v [ (n, c) ])) in
+  let rec above level p =
+    if level > 2 then Gen.constant p
+    else
+      Gen.bind Gen.bool (fun more ->
+          if more then Gen.bind (step level p) (above (level + 1))
+          else Gen.constant p)
+  in
+  Gen.bind (Gen.one_of [ parse; cast ]) (fun x -> above 1 (base x))
+
 let plans =
   let drawn = Gen.bind (Gen.int_range 0 3) plan in
-  Gen.frequency [ (9, drawn); (1, Gen.bind drawn starved) ]
+  Gen.frequency [ (18, drawn); (2, Gen.bind drawn starved); (1, converting) ]
 
 let split_plans =
   Gen.with_pp pp_plan
