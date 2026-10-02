@@ -1,7 +1,7 @@
 ; White-box tests of the TUI: its implementation compiled again without its
 ; interface, so that the tests reach the model and the views.
 
-(copy_files ../../lib/quill-tui/quill_tui.ml)
+(copy_files ../../lib/tui/quill_tui.ml)
 
 (library
  (name quill_tui_internal)
