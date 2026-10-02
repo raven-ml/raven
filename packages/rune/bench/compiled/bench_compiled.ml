@@ -241,6 +241,66 @@ let select_zero =
           fun g -> g x);
     ]
 
+(* Launches
+
+   Compiled functions of many small kernels, whose time is mostly the cost of
+   launching them: a chain of 64 dependent products of 16 x 16 matrices, one
+   kernel each, and a scan of 256 such steps, four kernels each, run as a loop
+   of the compiled program. On the host, and on a GPU, where each call
+   synchronizes the device. *)
+
+let launch_dim = 16
+let chain_kernels = 64
+let scan_steps = 256
+
+let product_chain x =
+  let x = ref x in
+  for _ = 1 to chain_kernels do
+    x := Nx.tanh (Nx.matmul !x !x)
+  done;
+  !x
+
+let product_scan h xs =
+  fst
+    (Rune.scan'
+       ~f:(fun h x ->
+         let h = Nx.tanh (Nx.add (Nx.matmul h h) x) in
+         (h, Nx.sum h))
+       ~init:h xs)
+
+let launches ?(prefix = "") ~place ~sync () =
+  let st = Random.State.make [| 15 |] in
+  let uniform shape =
+    place
+      (Nx.init Nx.float32 shape (fun _ -> Random.State.float st 0.1))
+  in
+  let h () = uniform [| launch_dim; launch_dim |] in
+  [
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let f = Rune.jit' product_chain and x = h () in
+        ignore (f x);
+        sync ();
+        (f, x))
+      (Printf.sprintf "%schain-%d" prefix chain_kernels)
+      (fun (f, x) ->
+        ignore (f x);
+        sync ());
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let f =
+          Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) product_scan
+        in
+        let x = h () and xs = uniform [| scan_steps; launch_dim; launch_dim |] in
+        ignore (f x xs);
+        sync ();
+        (f, x, xs))
+      (Printf.sprintf "%sscan-%d" prefix scan_steps)
+      (fun (f, x, xs) ->
+        ignore (f x xs);
+        sync ());
+  ]
+
 (* Chains on a GPU *)
 
 type chain = {
@@ -304,12 +364,24 @@ let chains open_device =
 
 let teardown c = Nx_device.synchronize c.device
 
-let group name open_device =
+let group ?(more = []) name open_device =
   Thumper.group ~id:name name
     (List.map
        (fun c ->
          Thumper.bench_with_setup c.name ~setup:c.setup ~teardown c.call)
-       (chains open_device))
+       (chains open_device)
+    @ more)
+
+(* The launches on a GPU's device, which opens in the measuring worker. *)
+let gpu_launches open_device =
+  let device = lazy (open_device ()) in
+  launches ~prefix:"jit-"
+    ~place:(fun x ->
+      Nx.place
+        (Nx.Placement.device ~backend:Rune.compiled (Lazy.force device))
+        x)
+    ~sync:(fun () -> Nx_device.synchronize (Lazy.force device))
+    ()
 
 let run_self flag =
   Sys.command (Filename.quote_command Sys.executable_name [ flag ])
@@ -324,7 +396,9 @@ let metal args =
 
 let cuda () =
   if run_self "--cuda" <> 0 then []
-  else [ group "cuda" (fun () -> Nx_cuda_device.v 0) ]
+  else
+    let open_device () = Nx_cuda_device.v 0 in
+    [ group "cuda" open_device ~more:(gpu_launches open_device) ]
 
 let () =
   match (Array.to_list Sys.argv, Metal.device) with
@@ -349,4 +423,8 @@ let () =
                  ~m:1_000_000;
              ]
         :: split :: indexed :: rope :: select_zero
+        :: Thumper.group ~id:"launch" "launch"
+             (launches ~place:Fun.id
+                ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+                ())
         :: (metal args @ cuda ()))
