@@ -118,12 +118,13 @@ let widen (Type.Any from as f) (Type.Any ty as t) =
         | c, None -> c
         | _, Some _ -> assert false (* A widening keeps every value. *))
 
-(* [words a b] is the order words ({!Key.value}) of the rows of the compound
-   columns [a] and [b], of one type, which compare as their values do. A
-   compound value's word is a code relative to the rows it is computed over, so
-   those of both columns are computed at once. *)
-let words a b =
-  let w = Key.value Order (Column.concat [ a; b ]) in
+(* [words use a b] is the words ({!Key.value}) of the rows of the compound
+   columns [a] and [b], of one type, which compare as their values do for [use].
+   A compound value's word is a code relative to the rows it is computed over,
+   so those of both columns are computed at once. Equality needs only
+   [Identity], which hashes the rows where [Order] sorts them. *)
+let words use a b =
+  let w = Key.value use (Column.concat [ a; b ]) in
   let n = Column.length a in
   (Nx.shrink [| (0, n) |] w, Nx.shrink [| (n, Nx.dim 0 w) |] w)
 
@@ -215,7 +216,10 @@ let compare op a b =
         let s = Strings.compare ~by:(text_name op) r one in
         ordered op (Nx.zeros_like s) s
     | _ ->
-        let x, y = words a b in
+        let use : Key.use =
+          match op with `Eq | `Ne -> Identity | `Lt | `Le | `Gt | `Ge -> Order
+        in
+        let x, y = words use a b in
         ordered op x y
   in
   boolean ?valid:(valid [ a; b ]) r
@@ -304,7 +308,7 @@ let is_in vs =
       fun a -> found s (Key.value Order a) a
   | _ ->
       fun a ->
-        let x, w = words a vs in
+        let x, w = words Identity a vs in
         found (fst (Nx.sort w)) x a
 
 (* [lifted ty cs x] is the column of [ty] stored as [x], which an nx operation

@@ -118,3 +118,28 @@ value talon_find_byte(value b, value i, value stop, value s)
 {
   return Val_long(talon_find(b, Long_val(i), Long_val(stop), s));
 }
+
+/* [talon_compare(b, o, n, s, out)] writes to [out] -1, 0 or 1 where each of
+   the [n] rows of [b], cut by [o], orders before, as or after [s]: bytes
+   compare as unsigned numbers, and a row orders before every row it is a
+   prefix of. */
+value talon_compare(value b, value o, intnat n, value s, value out)
+{
+  const uint8_t *v = Bytes_ba(b);
+  const int64_t *off = Offsets_ba(o);
+  const uint8_t *str = (const uint8_t *)String_val(s);
+  size_t len = caml_string_length(s);
+  int8_t *signs = (int8_t *)Caml_ba_data_val(out);
+  for (intnat r = 0; r < n; r++) {
+    size_t m = (size_t)(off[r + 1] - off[r]);
+    int c = memcmp(v + off[r], str, m < len ? m : len);
+    if (c == 0) c = (m > len) - (m < len);
+    signs[r] = (int8_t)((c > 0) - (c < 0));
+  }
+  return Val_unit;
+}
+
+value talon_compare_byte(value b, value o, value n, value s, value out)
+{
+  return talon_compare(b, o, Long_val(n), s, out);
+}

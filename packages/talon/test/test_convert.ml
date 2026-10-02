@@ -224,6 +224,39 @@ let pieces_law =
       in
       equal (array (option bool)) (Array.map (Option.map hit) vs) got)
 
+let literal_law =
+  let gen =
+    Gen.pair
+      (Gen.list ~size:(Gen.int_range 0 8) (letters ~min:0 ~max:6))
+      (letters ~min:0 ~max:4)
+  in
+  let ops =
+    [
+      (Expr.( = ), Int.equal 0);
+      (Expr.( <> ), fun c -> c <> 0);
+      (Expr.( < ), fun c -> c < 0);
+      (Expr.( <= ), fun c -> c <= 0);
+      (Expr.( > ), fun c -> c > 0);
+      (Expr.( >= ), fun c -> c >= 0);
+    ]
+  in
+  prop "text compares with a literal as its bytes do" gen (fun (vs, lit) ->
+      cover "a row equal to the literal" (List.mem lit vs);
+      cover "a row the literal is a prefix of"
+        (List.exists (fun v -> v <> lit && String.starts_with ~prefix:lit v) vs);
+      let vs = Array.of_list (List.map Option.some vs) in
+      List.iter
+        (fun (op, holds) ->
+          let got =
+            Column.options Kind.bool
+              (result (op s (Expr.string lit)) (texts vs))
+          in
+          let expected =
+            Array.map (Option.map (fun v -> holds (String.compare v lit))) vs
+          in
+          equal (array (option bool)) expected got)
+        ops)
+
 let text =
   let ints e vs = Column.options Kind.int (result e (texts vs)) in
   let strings e vs = Column.options Kind.string (result e (texts vs)) in
@@ -267,6 +300,7 @@ let text =
             [| Some true; Some true; None |]
             (m (Expr.Str.literal "q")));
       pieces_law;
+      literal_law;
       test "parse fails with the text" (fun () ->
           expect
             (error

@@ -6045,6 +6045,9 @@ thread.
 
 ### Talon
 
+- Text compares faster: `Expr.( = )` and `( <> )` between text columns and
+  `Expr.is_in` over text hash the rows where they sorted them, and comparisons
+  with a text literal scan in C. TPC-H queries 12 and 19 run 1.4–1.6× faster.
 - `Expr.min`, `max`, `first`, `last`, `arg_min` and `arg_max` find each
   group's row without sorting the rows. H2O's group-by question 7 (`max v1 -
   min v2` over 10⁷ rows) runs 2.1× faster.

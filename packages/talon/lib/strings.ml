@@ -276,29 +276,24 @@ let replace ~by ?mask ~sub ~into r =
       go first);
   Nx_ragged.v ~offsets:(tensor offsets) (tensor bytes)
 
+(* [compare_rows v o n s signs] writes to [signs] -1, 0 or 1 where each of the
+   [n] rows of [v], cut by [o], orders before, as or after [s]. *)
+external compare_rows :
+  buf ->
+  int64s ->
+  (int[@untagged]) ->
+  string ->
+  (int, Bigarray.int8_signed_elt, Bigarray.c_layout) A.t ->
+  unit = "talon_compare_byte" "talon_compare"
+[@@noalloc]
+
 let compare ~by r one =
   let s = ref "" in
   rows ~by one (fun _ v first stop ->
       s :=
         String.init (stop - first) (fun k ->
             Char.unsafe_chr (A.unsafe_get v (first + k))));
-  let s = !s in
-  let n = String.length s in
-  let signs =
-    A.create Bigarray.int8_signed Bigarray.c_layout (Nx_ragged.length r)
-  in
-  rows ~by r (fun i v first stop ->
-      let m = Int.min (stop - first) n and k = ref 0 in
-      while
-        !k < m
-        && A.unsafe_get v (first + !k) = Char.code (String.unsafe_get s !k)
-      do
-        incr k
-      done;
-      let c =
-        if !k < m then
-          A.unsafe_get v (first + !k) - Char.code (String.unsafe_get s !k)
-        else stop - first - n
-      in
-      A.unsafe_set signs i (Int.compare c 0));
+  let n = Nx_ragged.length r in
+  let signs = A.create Bigarray.int8_signed Bigarray.c_layout n in
+  host ~by r (fun o v _ -> compare_rows v o n !s signs);
   tensor signs
