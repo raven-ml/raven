@@ -63,6 +63,8 @@ let id kind content =
 type doc = {
   defs : Buffer.t;  (** Definitions, in the order of first use. *)
   defined : (string, unit) Hashtbl.t;
+  text : (Font.t * Font.glyph list) list;
+      (** The glyphs each font shows as text. *)
   mutable families : (Font.t * string) list;
 }
 
@@ -72,12 +74,14 @@ let define doc id content =
     Buffer.add_string doc.defs content
   end
 
-(* [family doc font] is the family under which [doc] embeds [font]. *)
+(* [family doc font] is the family under which [doc] embeds the subset of [font]
+   it shows as text. *)
 let family doc font =
   match List.assq_opt font doc.families with
   | Some f -> f
   | None ->
-      let bytes = Font.bytes font in
+      let shown (f, _) = f == font || Font.equal f font in
+      let bytes = Font.subset font (snd (List.find shown doc.text)) in
       let f = id "f" bytes in
       let b = Buffer.create ((String.length bytes * 4 / 3) + 128) in
       Printf.bprintf b
@@ -256,6 +260,36 @@ let text_of run =
         else None
   in
   loop 0
+
+(* [text_glyphs p] is, for each font of the runs of [p] written as text, the
+   glyphs of those runs. A stamp's picture counts once, and runs outside the
+   page count too. *)
+let text_glyphs p =
+  let fonts = ref [] in
+  let add run =
+    let font = Run.font run in
+    let glyphs = List.init (Run.length run) (Run.glyph run) in
+    let rec merge = function
+      | [] -> [ (font, glyphs) ]
+      | (f, gs) :: rest when f == font || Font.equal f font ->
+          (f, List.rev_append glyphs gs) :: rest
+      | entry :: rest -> entry :: merge rest
+    in
+    fonts := merge !fonts
+  in
+  let rec walk : Picture.t -> unit = function
+    | Glyphs { run; _ } -> if Option.is_some (text_of run) then add run
+    | Group ps -> List.iter walk ps
+    | Clip { picture; _ }
+    | Transform { picture; _ }
+    | Opacity { picture; _ }
+    | Stamp { picture; _ }
+    | Tag { picture; _ } ->
+        walk picture
+    | Empty | Fill _ | Stroke _ | Image _ -> ()
+  in
+  walk p;
+  !fonts
 
 (* Turns off the viewer's shaping, so that it draws the glyphs the cmap gives
    where the run puts them. *)
@@ -545,7 +579,12 @@ let target doc =
 let render r =
   let w = Renderable.w r and h = Renderable.h r in
   let doc =
-    { defs = Buffer.create 1024; defined = Hashtbl.create 16; families = [] }
+    {
+      defs = Buffer.create 1024;
+      defined = Hashtbl.create 16;
+      text = text_glyphs (Renderable.picture r);
+      families = [];
+    }
   in
   let body = Buffer.create 4096 in
   Vector.walk (target doc) (Vector.page r) body (Renderable.picture r);

@@ -234,7 +234,9 @@ let leaves =
           let s = svg (Picture.glyphs red (P2.v 5. 50.) r) in
           equal string "5 11" (attr "x" s);
           equal string "50 52.5" (attr "y" s));
-      test "a font is embedded once, under a name from its bytes" (fun () ->
+      test
+        "a font is embedded once, as the subset of its text, under a name from \
+         its bytes" (fun () ->
           let a = Picture.glyphs red (P2.v 5. 20.) (Vg_corpus.typeset "a" 10.)
           and b =
             Picture.glyphs red (P2.v 5. 40.) (Vg_corpus.typeset "b" 10.)
@@ -242,9 +244,14 @@ let leaves =
           let s = svg (Picture.group [ a; b ]) in
           equal int 1 (count s "@font-face");
           let family = attr "font-family" s in
-          is_true ~msg:"a data URI"
-            (contains s
-               ("font-family:" ^ family ^ ";src:url(data:font/ttf;base64,"));
+          let uri =
+            "font-family:" ^ family ^ ";src:url(data:font/ttf;base64,"
+          in
+          let start = Option.get (find_from s 0 uri) + String.length uri in
+          let stop = Option.get (find_from s start ")") in
+          equal ~msg:"the subset of a and b" string
+            (Font.subset Font.regular [ glyph 'a'; glyph 'b' ])
+            (Vg_corpus.of_base64 (String.sub s start (stop - start)));
           equal (list string) [ family; family ] (attrs "font-family" s));
       test "a run with a glyph the cmap does not give is outlines" (fun () ->
           let font = Font.regular in

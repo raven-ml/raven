@@ -23,13 +23,14 @@
       to turn off the viewer's ligatures, kerning and other shaping features, so
       that the viewer draws the run's glyphs where the run puts them and the
       text can be searched and copied. Each font is embedded once, by an
-      [@font-face] rule whose source is a data URI of the font file. A run is
-      written as text only if each of its glyphs renders one character of the
-      Basic Multilingual Plane, which XML can hold and which the font maps to
-      that glyph, other than glyph [0], which stands for the characters the font
-      lacks. Any other run is written as the filled outlines of its glyphs, in a
-      group whose [aria-label] is the run's text, its characters that XML cannot
-      hold replaced by U+FFFD.
+      [@font-face] rule whose source is a data URI of its
+      {{!Hugin_next_font.Font.subset}subset} of the glyphs of the picture's runs
+      written as text. A run is written as text only if each of its glyphs
+      renders one character of the Basic Multilingual Plane, which XML can hold
+      and which the font maps to that glyph, other than glyph [0], which stands
+      for the characters the font lacks. Any other run is written as the filled
+      outlines of its glyphs, in a group whose [aria-label] is the run's text,
+      its characters that XML cannot hold replaced by U+FFFD.
     - An image is an [image] element holding a PNG data URI of its pixels,
       stretched over its box and drawn with [image-rendering: pixelated].
     - A clip is a [clipPath] element and a group that refers to it; a transform
