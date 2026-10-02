@@ -353,11 +353,14 @@ val map_range : ('r -> 'r) -> ('d, 'r) channel -> ('d, 'r) channel
 (** {1:marks Marks}
 
     A mark is a figure that draws its rows in each panel its facet channels
-    select ({!section-facets}). The built-in marks below are written with
-    {!Mark.v}, as any mark can be, and take their channels as labelled arguments
-    named after their roles ({!section-roles}). Every mark takes the facet
-    channels [fx] and [fy], and every mark but {!image} takes [opacity], [1.] by
-    default.
+    select ({!section-facets}). The built-in marks below are made as {!Mark.v}
+    makes marks, from bindings and a draw function, and take their channels as
+    labelled arguments named after their roles ({!section-roles}). {!dot},
+    {!rect}, {!rule} and {!contour} use only what {!Mark} offers. {!line},
+    {!text} and {!image} also keep parameters in roles a user cannot bind, a
+    curve, text offsets and pixels, and {!image} gathers its pixels at the
+    density {!draw} is given. Every mark takes the facet channels [fx] and [fy],
+    and every mark but {!image} takes [opacity], [1.] by default.
 
     A mark without a colour channel paints with the theme's accent
     ({!Theme.accent}), except {!rule} and {!text}, which paint with its ink

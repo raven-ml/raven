@@ -582,6 +582,13 @@ let equality =
             (Hugin_next.equal
                (dot ~x:(num v) ~y:(num v) ())
                (dot ~x:(num w) ~y:(num v) ())));
+      cases ~name:fst "an image rebuilt from the same tensor is equal"
+        [
+          ("one grey image", f32 [| 2; 3 |]);
+          ("a batch of RGB images", f32 [| 4; 2; 3; 3 |]);
+        ]
+        (fun (_, px) ->
+          equal bool true (Hugin_next.equal (image px) (image px)));
       test "a title's default alignment is centre" (fun () ->
           equal bool true
             (Hugin_next.equal

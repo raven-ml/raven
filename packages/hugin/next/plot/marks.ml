@@ -452,7 +452,7 @@ let unit_square = Box2.v 0. 0. 1. 1.
 
 (* An image is placed by its positions, which a zoom can take beyond the domain,
    and then clipped to the domain: it has no ink beyond its box. *)
-let draw_image lead rows =
+let draw_image rows =
   match first_value rows Role.pixels with
   | None -> Picture.empty
   | Some (Nx.P px) ->
@@ -460,7 +460,7 @@ let draw_image lead rows =
       let get role = Option.get (Mark.get rows role) in
       let x0 = get Role.x and x1 = get Role.x2 in
       let y0 = get Role.y and y1 = get Role.y2 in
-      let index = Mark.index rows in
+      let index = Mark.index rows and lead = Mark.shape rows in
       let within u = 0. <= u && u <= 1. in
       let image i =
         if not (finite x0.(i) && finite y0.(i)) then Picture.empty
@@ -518,7 +518,7 @@ let image ?fx ?fy px =
           Some (on Role.pixels (const (Nx.P px)));
         ]
        @ facets fx fy)
-       (draw_image lead))
+       draw_image)
 
 (* [varies shape b a] is [true] iff the channel of [b] can vary along axis [a]
    of [shape]. *)
