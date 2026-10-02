@@ -3095,6 +3095,19 @@ thread.
 
 ### Nx
 
+- **Breaking:** opening a GPU over PCI changes nothing on the machine.
+  `Nx_nv.get_pci`, `Nx_amd.get_pci`, their `device_pci` forms, the runtimes'
+  `get ~interface:Pci` and `Nx_rdma_device.get` no longer unbind kernel
+  drivers, remove sibling functions, resize BARs, download firmware, reset
+  GPUs or set `vm.compact_unevictable_allowed`; they fail naming the call that
+  does. New `detach`, `attach`, `reset` and `fetch_firmware` in
+  `Nx_nv_device` and `Nx_amd_device`, re-exported by `Nx_nv` and `Nx_amd`, and
+  `Nx_rdma_device.detach` and `attach`, each documented with its privileges
+  and what persists. In `nx.device.support`, `Firmware.get` becomes `find`,
+  which downloads nothing, and `fetch`; `Pci.take` takes only a function that
+  `Pci.detach` detached (`Pci.detached`), and `Pci.attach` gives it back.
+  `Nx_amd_device` documents that AMD-PCI holds a GPU's clocks at their highest
+  state while open.
 - **Breaking:** `Nx_nv_device.get` and `Nx_amd_device.get` take the
   interface, `~interface:Kernel` or `~interface:Pci`, with no default. They
   took a GPU over PCI, detaching it from its kernel driver, whenever

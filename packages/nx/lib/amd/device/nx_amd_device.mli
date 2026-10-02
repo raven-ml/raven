@@ -9,9 +9,10 @@
     names tell apart:
     - {!Kernel}, the compute interface of Linux's [amdgpu] kernel driver. The
       driver owns the GPU and shares it with other programs.
-    - {!Pci}, the runtime's own driver: it takes the GPU's PCI function from its
-      kernel driver, loads the GPU's firmware, boots its blocks, and manages its
-      memory and page tables itself. The GPU is this process's until it exits.
+    - {!Pci}, the runtime's own driver: it takes the GPU's PCI function, which
+      {!detach} detached from its kernel driver, loads the GPU's firmware, boots
+      its blocks, and manages its memory and page tables itself. The GPU is this
+      process's until it exits.
 
     The two differ in what a program observes: who else may use the GPU, what a
     fault or a crash leaves behind, how much memory the host maps, and which
@@ -77,17 +78,25 @@
     seconds unless {!Nx_device.set_timeout} sets another, loses it too. Nothing
     recovers a lost device in the process. Under {!Pci}, the process stops the
     engines of a lost GPU at exit and takes its bus mastering away, so that it
-    cannot reach the memory the process releases; the next process that opens
-    the GPU finds it was not closed cleanly, and resets it before booting it.
+    cannot reach the memory the process releases; an open then refuses the GPU,
+    which was not closed cleanly, until {!reset} resets it.
 
-    {b Under {!Pci}}, opening a GPU needs root, or the capabilities and file
-    permissions to take PCI functions ({!Nx_device_support.Pci}) and to lock
-    memory and read its physical addresses ({!Nx_device_support.Sysmem}). It
-    detaches the GPU's kernel driver, including the display driver of a GPU that
-    drives a screen. It boots the GPU with the firmware it was validated with,
-    which it downloads once and verifies by digest ({!get}). A GPU that the
-    previous process closed cleanly boots in a fraction of a second; otherwise
-    it is reset and fully booted, which takes seconds. *)
+    {b Under {!Pci}}, opening a GPU changes nothing outside the process. The GPU
+    must be detached from its kernel driver ({!detach}), reset if its kernel
+    driver or a process that did not close it cleanly booted it ({!reset}), and
+    its firmware at hand ({!fetch_firmware}): {!get} fails otherwise, naming the
+    call. Opening needs root, or the capabilities and file permissions to take
+    PCI functions ({!Nx_device_support.Pci}) and to lock memory and read its
+    physical addresses ({!Nx_device_support.Sysmem}). It boots the GPU with the
+    firmware it was validated with, verified by digest ({!get}). A GPU that the
+    previous process closed cleanly boots in a fraction of a second; a reset one
+    boots fully, which takes seconds.
+
+    While the process holds a GPU open under {!Pci}, the runtime keeps its
+    memory, fabric and SoC clocks at their highest state, and its graphics clock
+    too unless the GPU's MP0 block is 13.0.6, 13.0.12 or 13.0.15, where [amdgpu]
+    scales them with the load: the GPU runs at full speed and draws full power
+    even while idle. At exit it sets them to their lowest state. *)
 
 (** The type for the interfaces that reach AMD GPUs. *)
 type interface =
@@ -119,23 +128,70 @@ val get :
     it was validated with. An image is read from the directory [firmware], if
     given, which suits a machine without network access; then from
     [/lib/firmware], plain or compressed, when the distribution ships that
-    version; then from the user's cache, [$XDG_CACHE_HOME/raven/firmware]
-    ([~/.cache/raven/firmware] by default, [$RAVEN_CACHE_ROOT/firmware] when
-    set), where it is otherwise downloaded from linux-firmware, once, with the
-    system's [libcurl]. A file of [firmware] or a download with another digest
-    is refused. Under {!Kernel}, [firmware] is ignored: the kernel driver loads
-    the firmware.
+    version; then from the user's cache, where {!fetch_firmware} downloads it. A
+    file of [firmware] with another digest is refused. Under {!Kernel},
+    [firmware] is ignored: the kernel driver loads the firmware. An open
+    downloads nothing.
 
     [Error msg] says why the GPU cannot be opened, for example that
     [i >= count ()], that the process's interface is the other one, that another
     machine's GPU was asked for under {!Kernel}, that the [amdgpu] driver does
     not hold the GPU, that {!Pci} does not support the GPU's family, that a
-    privilege is missing, or that a firmware image is missing or differs, naming
-    the file. [msg] starts with the GPU's name under [interface], such as
-    ["AMD:2: no GPU 2; there are 2 AMD GPUs"].
+    privilege is missing, or that a firmware image differs, naming the file. A
+    precondition of {!Pci} that does not hold names the call that establishes
+    it: a GPU not detached names {!detach}, one booted by another {!reset}, a
+    missing firmware image {!fetch_firmware}. [msg] starts with the GPU's name
+    under [interface], such as ["AMD:2: no GPU 2; there are 2 AMD GPUs"].
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
     {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)
+
+(** {1:machine Changes to the machine}
+
+    Each function below makes one change to this machine, which persists after
+    the process, and prepares or undoes the preconditions of {!Pci}. Each acts
+    on GPU [i] of this machine, numbered as for {!get}, refuses a GPU a device
+    of the process holds, and needs Linux. [Error msg] says why it failed, and
+    starts with the GPU's name: under {!Pci}, but under {!Kernel} for {!attach}.
+    Another machine's GPUs are detached and reset by a program on that machine;
+    they boot with this machine's firmware images. *)
+
+val detach : int -> (unit, string) result
+(** [detach i] detaches GPU [i] from its kernel driver, for {!Pci}: it unbinds
+    the driver, unless that is [vfio-pci], removes the GPU's other PCI
+    functions, such as its audio function, enables the GPU's function, and makes
+    its memory window (BAR0) as large as the platform allows. The kernel
+    driver's users lose the GPU, a screen it drives among them, and so does
+    {!Kernel}. This persists until {!attach} or a reboot. It needs root, or
+    write access to the files {!Nx_device_support.Pci.detach} writes. *)
+
+val attach : int -> (unit, string) result
+(** [attach i] gives GPU [i] back to its kernel driver, for {!Kernel}: Linux
+    rescans the PCI bus, which brings back the functions {!detach} removed, and
+    binds the GPU's driver. This persists. It needs root, or write access to
+    [/sys/bus/pci/rescan] and [/sys/bus/pci/drivers_probe]. [Error msg] says if
+    no driver takes the GPU, such as when the [amdgpu] module is not loaded. *)
+
+val reset : int -> (unit, string) result
+(** [reset i] resets GPU [i], which must be detached, if firmware runs on it: it
+    stops the GPU's queues and engines, then resets the whole GPU (a mode 1
+    reset), which clears what its kernel driver or an earlier process booted.
+    The GPU then boots fully at its next open. A virtual function is left as it
+    is: its physical function resets it. A GPU of a hive is refused: the hive is
+    reset as a whole, outside this process. This persists. It needs the
+    privileges of an open under {!Pci}. *)
+
+val fetch_firmware : int -> (unit, string) result
+(** [fetch_firmware i] downloads the firmware images GPU [i] boots with under
+    {!Pci} into the user's cache, [$XDG_CACHE_HOME/raven/firmware]
+    ([~/.cache/raven/firmware] by default, [$RAVEN_CACHE_ROOT/firmware] when
+    set), from linux-firmware with the system's [libcurl], verified by digest.
+    Images [/lib/firmware] or the cache already holds are not downloaded. The
+    images are named by the versions of the GPU's blocks, which the [amdgpu]
+    driver lists while it holds the GPU: call it before {!detach}. This
+    persists. It needs network access and write access to the cache, and no
+    privilege. [Error msg] says if {!Pci} does not support the GPU's family, if
+    [amdgpu] does not hold the GPU, or which download failed. *)
 
 (** {1:low Low-level}
 

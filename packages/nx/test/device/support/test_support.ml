@@ -523,16 +523,16 @@ let with_cache f =
     ~finally:(fun () -> Unix.putenv "RAVEN_CACHE_ROOT" "")
     (fun () -> f cache)
 
-let nowhere = "file:///nonexistent-raven-firmware/"
-
 let test_firmware_dir () =
   with_cache @@ fun _ ->
   let dir = temp_dir () in
   write dir "amdgpu/plain.bin" image;
-  equal ~msg:"plain" (result string string) (Ok image)
-    (Firmware.get ~dir ~url:nowhere "amdgpu/plain.bin" ~sha256:digest);
+  equal ~msg:"plain"
+    (result (option string) string)
+    (Ok (Some image))
+    (Firmware.find ~dir "amdgpu/plain.bin" ~sha256:digest);
   write dir "amdgpu/other.bin" "another image";
-  match Firmware.get ~dir ~url:nowhere "amdgpu/other.bin" ~sha256:digest with
+  match Firmware.find ~dir "amdgpu/other.bin" ~sha256:digest with
   | Error why -> contains ~msg:"names the file" ~sub:"amdgpu/other.bin" why
   | Ok _ -> fail "a file with another digest was loaded"
 
@@ -543,37 +543,57 @@ let test_firmware_compressed () =
   write dir "amdgpu/z.bin.zst" zst;
   List.iter
     (fun name ->
-      match Firmware.get ~dir ~url:nowhere name ~sha256:digest with
-      | Ok s -> equal ~msg:name string image s
-      | Error why ->
-          if has why "downloading" then
-            skip ~reason:"the system has no decompression library" ()
-          else fail why)
+      match Firmware.find ~dir name ~sha256:digest with
+      | Ok (Some s) -> equal ~msg:name string image s
+      | Ok None -> skip ~reason:"the system has no decompression library" ()
+      | Error why -> fail why)
     [ "amdgpu/x.bin"; "amdgpu/z.bin" ]
 
-let test_firmware_download () =
+(* An origin the test serves images from, as file:// URLs. *)
+let origin () =
+  let dir = temp_dir () in
+  (dir, "file://" ^ dir ^ "/")
+
+let test_find_downloads_nothing () =
   with_cache @@ fun cache ->
-  let origin = temp_dir () in
-  write origin "amdgpu/remote.bin" image;
-  let url = "file://" ^ origin ^ "/" in
-  (match Firmware.get ~url "amdgpu/remote.bin" ~sha256:digest with
-  | Ok s -> equal ~msg:"downloaded" string image s
+  let dir, _ = origin () in
+  write dir "amdgpu/remote.bin" image;
+  equal ~msg:"nothing local"
+    (result (option string) string)
+    (Ok None)
+    (Firmware.find "amdgpu/remote.bin" ~sha256:digest);
+  equal ~msg:"the cache untouched" bool false
+    (Sys.file_exists (Filename.concat cache "firmware/amdgpu/remote.bin"))
+
+let fetched ~url name =
+  match Firmware.fetch ~url name ~sha256:digest with
+  | Ok () -> ()
   | Error why when has why "libcurl" -> skip ~reason:why ()
-  | Error why -> fail why);
+  | Error why -> fail why
+
+let test_firmware_fetch () =
+  with_cache @@ fun cache ->
+  let dir, url = origin () in
+  write dir "amdgpu/remote.bin" image;
+  fetched ~url "amdgpu/remote.bin";
   equal ~msg:"kept in the cache" string image
     (In_channel.with_open_bin
        (Filename.concat cache "firmware/amdgpu/remote.bin")
        In_channel.input_all);
-  Sys.remove (Filename.concat origin "amdgpu/remote.bin");
-  equal ~msg:"read from the cache" (result string string) (Ok image)
-    (Firmware.get ~url "amdgpu/remote.bin" ~sha256:digest);
-  write origin "amdgpu/bad.bin" "tampered";
-  (match Firmware.get ~url "amdgpu/bad.bin" ~sha256:digest with
+  Sys.remove (Filename.concat dir "amdgpu/remote.bin");
+  equal ~msg:"found in the cache"
+    (result (option string) string)
+    (Ok (Some image))
+    (Firmware.find "amdgpu/remote.bin" ~sha256:digest);
+  equal ~msg:"a cached image needs no download" (result unit string) (Ok ())
+    (Firmware.fetch ~url "amdgpu/remote.bin" ~sha256:digest);
+  write dir "amdgpu/bad.bin" "tampered";
+  (match Firmware.fetch ~url "amdgpu/bad.bin" ~sha256:digest with
   | Error why -> contains ~msg:"refused, naming it" ~sub:"bad.bin" why
-  | Ok _ -> fail "a download with another digest was loaded");
-  match Firmware.get ~url "amdgpu/missing.bin" ~sha256:digest with
+  | Ok () -> fail "a download with another digest was kept");
+  match Firmware.fetch ~url "amdgpu/missing.bin" ~sha256:digest with
   | Error why -> contains ~msg:"a failed download" ~sub:"downloading" why
-  | Ok _ -> fail "nothing to download"
+  | Ok () -> fail "nothing to download"
 
 (* Pci *)
 
@@ -623,6 +643,16 @@ let not_addresses =
     (fun s ->
       raises_match (Exn.invalid_arg ~substring:"no PCI bus address") (fun () ->
           Pci.compare_address s "0000:00:00.0"))
+
+(* An address at which no machine the tests run on has a function. *)
+let no_function = "ffff:ff:1f.7"
+
+let test_no_function () =
+  let why = no_function ^ " is no PCI function of this machine" in
+  equal ~msg:"not detached" (result unit string) (Error why)
+    (Pci.detached no_function);
+  raises ~msg:"detach" (Failure why) (fun () -> Pci.detach no_function);
+  raises ~msg:"attach" (Failure why) (fun () -> Pci.attach no_function)
 
 (* Remote: a server in this process, on the loopback. *)
 
@@ -1075,7 +1105,13 @@ let () =
              test "allocated memory stays locked" test_sysmem_pins;
              test "contiguous memory" test_sysmem_contiguous;
            ];
-         group "pci" [ spelled; test_bus_order; not_addresses ];
+         group "pci"
+           [
+             spelled;
+             test_bus_order;
+             not_addresses;
+             test "a function the machine lacks is refused" test_no_function;
+           ];
          group "remote"
            [
              test "handshake" test_handshake;
@@ -1103,6 +1139,7 @@ let () =
              test "sha256" test_sha256;
              test "a directory" test_firmware_dir;
              test "compressed files" test_firmware_compressed;
-             test "downloads and the cache" test_firmware_download;
+             test "a lookup downloads nothing" test_find_downloads_nothing;
+             test "fetches and the cache" test_firmware_fetch;
            ];
        ])

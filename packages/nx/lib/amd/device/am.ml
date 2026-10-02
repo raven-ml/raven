@@ -1416,11 +1416,9 @@ let main_blocks =
       let i = 27 - k in
       (1 lsl (i + 12), if i >= 9 then 2 lsl 20 else 0x1000))
 
-(* Boots the GPU of [pci]. A GPU this runtime left cleanly boots partially: only
-   its GFX and SDMA blocks start again, from the boot memory the last session
-   left. Any other GPU is reset, then fully booted. *)
-let boot ?firmware pci =
-  let d = open_hw pci in
+(* The state of the GPU [d] with its firmware [fw], before any block starts: its
+   page tables and boot memory, laid out as every session lays them out. *)
+let prepare ~fw d =
   let flush () =
     flush_tlb d "GC" ~vmid:0;
     flush_tlb d "MM" ~vmid:0
@@ -1430,7 +1428,6 @@ let boot ?firmware pci =
       ~memory:(d.vram_size - d.reserved_vram)
       ~boot:(3 lsl 20) ~tables:(not d.large_bar) ~pages:main_blocks
   in
-  let fw = load_firmware ?dir:firmware d in
   let boot_alloc ?align ?(zero = false) n =
     palloc ?align ~zero ~boot:true mm n
   in
@@ -1454,57 +1451,61 @@ let boot ?firmware pci =
     Array.init (2 + Bool.to_int d.is_vf) (fun _ -> boot_alloc (0x1000 * d.xccs))
   in
   let partial = partial_boot d in
+  {
+    d;
+    mm;
+    fw;
+    partial;
+    memscratch;
+    dummy_page;
+    ih;
+    ih_view = Mmio.sub d.vram (List.hd ih).ring ih_bytes;
+    psp =
+      (if lt mp0 (14, 0, 0) then "regMP0_SMN_C2PMSG" else "regMPASP_SMN_C2PMSG");
+    msg1 = Mmio.sub d.vram msg1_pa D.psp_1_meg;
+    msg1_addr = paddr2mc d msg1_pa;
+    cmd;
+    fence;
+    psp_ring;
+    tmr_size = 0;
+    tmr = 0;
+    boot_time_tmr =
+      List.mem mp0 [ (13, 0, 6); (13, 0, 14); (14, 0, 2); (14, 0, 3) ];
+    autoload_tmr = not (List.mem mp0 [ (13, 0, 6); (13, 0, 14) ]);
+    smu = Am_reg.family "smu" (version d D.mp1_hwip);
+    driver_table;
+    clocks = Hashtbl.create 4;
+    mqd;
+    sdma_regs = [];
+    sdma_name = (if lt (version d D.sdma0_hwip) (7, 0, 0) then "F32" else "MCU");
+  }
+
+(* Whether firmware runs on [t]'s GPU: its kernel driver or an earlier session
+   booted it. A virtual function's is its physical function's. *)
+let alive t = (not t.d.is_vf) && sos_alive t && smu_alive t
+
+let hive_refused d =
+  failwith
+    (d.bus
+   ^ " is in a hive left in an unknown state; reset the hive outside this \
+      process")
+
+(* Raised with the bus address of a GPU that needs a reset before it boots. *)
+exception Booted of string
+
+(* Boots the GPU of [pci]. A GPU this runtime left cleanly boots partially: only
+   its GFX and SDMA blocks start again, from the boot memory the last session
+   left. A GPU booted otherwise needs {!reset} first; any other GPU fully boots.
+   Its firmware is read before the GPU is touched. *)
+let boot ?firmware pci =
+  let d = open_hw pci in
+  let fw = load_firmware ~load:(find_image ?dir:firmware) d.ip_ver in
+  let t = prepare ~fw d in
+  let partial = t.partial in
   (* A partial boot that fails midway must not be trusted by the next open. *)
   if partial && not d.is_vf then write d ~value:1 "regSCRATCH_REG6" [];
-  let t =
-    {
-      d;
-      mm;
-      fw;
-      partial;
-      memscratch;
-      dummy_page;
-      ih;
-      ih_view = Mmio.sub d.vram (List.hd ih).ring ih_bytes;
-      psp =
-        (if lt mp0 (14, 0, 0) then "regMP0_SMN_C2PMSG"
-         else "regMPASP_SMN_C2PMSG");
-      msg1 = Mmio.sub d.vram msg1_pa D.psp_1_meg;
-      msg1_addr = paddr2mc d msg1_pa;
-      cmd;
-      fence;
-      psp_ring;
-      tmr_size = 0;
-      tmr = 0;
-      boot_time_tmr =
-        List.mem mp0 [ (13, 0, 6); (13, 0, 14); (14, 0, 2); (14, 0, 3) ];
-      autoload_tmr = not (List.mem mp0 [ (13, 0, 6); (13, 0, 14) ]);
-      smu = Am_reg.family "smu" (version d D.mp1_hwip);
-      driver_table;
-      clocks = Hashtbl.create 4;
-      mqd;
-      sdma_regs = [];
-      sdma_name =
-        (if lt (version d D.sdma0_hwip) (7, 0, 0) then "F32" else "MCU");
-    }
-  in
   if not partial then begin
-    if (not d.is_vf) && sos_alive t && smu_alive t then begin
-      set_bus_master pci false;
-      if is_hive d then
-        failwith
-          (d.bus
-         ^ " is in a hive left in an unknown state; reset the hive before \
-            opening it");
-      (* Quiesce before the reset: a mode1 reset over live engines at full
-         clocks can wedge the GPU until it is power cycled. *)
-      dequeue_hqds d;
-      set_clocks t 0;
-      halt_mec d;
-      sdma_halt t;
-      sleep_ms 100;
-      mode1_reset t
-    end;
+    if alive t then if is_hive d then hive_refused d else raise (Booted d.bus);
     set_bus_master pci true;
     soc_init d;
     init_hub t "MM" d.mm_insts;
@@ -1520,7 +1521,7 @@ let boot ?firmware pci =
     set_bus_master pci true;
     if not d.is_vf then tmr_init t
   end;
-  Page_table.booted mm;
+  Page_table.booted t.mm;
   gfx_init t;
   sdma_init t;
   if not d.is_vf then begin
@@ -1559,6 +1560,28 @@ let fini t ~failed =
   | exception e ->
       set_bus_master d.pci false;
       raise e
+
+(* Stops what runs on the GPU of [pci] and resets it with a mode 1 reset, which
+   clears the session marker, so that it next boots fully. A GPU on which no
+   firmware runs needs none; a virtual function is reset by its physical one. *)
+let reset pci =
+  let d = open_hw pci in
+  if d.is_vf then release_vf_access d
+  else
+    let t = prepare ~fw:Amdev.no_firmware d in
+    if alive t then begin
+      set_bus_master pci false;
+      if is_hive d then hive_refused d;
+      write d ~value:0 "regSCRATCH_REG7" [];
+      (* Quiesce before the reset: a mode1 reset over live engines at full
+         clocks can wedge the GPU until it is power cycled. *)
+      dequeue_hqds d;
+      set_clocks t 0;
+      halt_mec d;
+      sdma_halt t;
+      sleep_ms 100;
+      mode1_reset t
+    end
 
 (* Waits at most [ms] for an interrupt, then reads the interrupt ring; raises
    the reports of a device that faulted. *)

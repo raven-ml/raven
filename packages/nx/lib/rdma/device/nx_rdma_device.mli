@@ -10,11 +10,12 @@
     ["RDMA@HOST:PORT"], ["RDMA:1@HOST:PORT"], ... for another machine's
     ([nx.remote.device]). The runtime drives an adapter itself, as
     [nx.amd.device] and [nx.nv.device] drive GPUs under their PCI interface: it
-    takes the adapter's PCI function from its kernel driver, sets up its
-    firmware's queues and the RoCE engine's context memory, and gives it an
-    address on the fabric, [10.x.y.z] from the last three bytes of its MAC
-    address. It needs Linux and the privileges of {!Nx_device_support.Pci} and
-    {!Nx_device_support.Sysmem} on the adapter's machine.
+    takes the adapter's PCI function, which {!detach} detached from its kernel
+    driver, sets up its firmware's queues and the RoCE engine's context memory,
+    and gives it an address on the fabric, [10.x.y.z] from the last three bytes
+    of its MAC address. It needs Linux and the privileges of
+    {!Nx_device_support.Pci} and {!Nx_device_support.Sysmem} on the adapter's
+    machine.
 
     {b Copies between machines.} Once an adapter is open on each of two
     machines, {!Nx_device.Buffer.copy} between the memory of GPUs of those
@@ -53,10 +54,10 @@ val get : ?host:Nx_device.t -> int -> (Nx_device.t, string) result
     returns the same value.
 
     [Error msg] says why the adapter cannot be opened, for example that
-    [i >= count ()], that a privilege is missing, or that its firmware refused a
-    request, after the adapter's name, such as
-    ["RDMA:2: no adapter 2; there are 2"]. A failed open gives the function
-    back, its bus mastering off.
+    [i >= count ()], that the adapter is not detached, naming {!detach}, that a
+    privilege is missing, or that its firmware refused a request, after the
+    adapter's name, such as ["RDMA:2: no adapter 2; there are 2"]. A failed open
+    gives the function back, its bus mastering off.
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
     {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)
@@ -64,3 +65,19 @@ val get : ?host:Nx_device.t -> int -> (Nx_device.t, string) result
 val v : ?host:Nx_device.t -> int -> Nx_device.t
 (** [v i] is like {!get} but raises [Failure] with [get]'s message when the
     adapter cannot be opened. *)
+
+(** {1:machine Changes to the machine}
+
+    Each acts on adapter [i] of this machine, refuses one the process has open,
+    and persists after the process. [Error msg] starts with the adapter's name.
+*)
+
+val detach : int -> (unit, string) result
+(** [detach i] detaches adapter [i] from its kernel driver, which loses it, its
+    network interfaces among them, so that {!get} can take it: see
+    {!Nx_device_support.Pci.detach}, whose privileges it needs. It persists
+    until {!attach} or a reboot. *)
+
+val attach : int -> (unit, string) result
+(** [attach i] gives adapter [i] back to its kernel driver: see
+    {!Nx_device_support.Pci.attach}, whose privileges it needs. *)

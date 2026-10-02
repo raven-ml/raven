@@ -6,16 +6,18 @@
 (** PCI functions driven by the process itself.
 
     A runtime that drives a GPU without its kernel driver takes the GPU's PCI
-    function: it detaches the function from its kernel driver, then reads and
-    writes its configuration space and maps its BARs, the windows through which
-    the process reaches the function's registers and memory.
+    function, once {!detach} has detached it from its kernel driver: it reads
+    and writes its configuration space and maps its BARs, the windows through
+    which the process reaches the function's registers and memory. Taking a
+    function changes nothing on the machine; {!detach} and {!attach} do, and
+    what they change persists after the process.
 
     This works through Linux's [/sys/bus/pci] and, for interrupts, VFIO, and
     needs the privileges to write there: root, or file permissions and
     capabilities granted for it. The process takes nothing it lacks the rights
     for, and asks for none: a missing privilege raises [Failure] naming the file
-    and the command that grants it. On other systems {!scan} finds nothing and
-    {!take} raises.
+    and the command that grants it. On other systems {!scan} finds nothing, and
+    {!detach}, {!attach} and {!take} raise.
 
     A function may also be another machine's, taken through a {!Remote}
     connection to that machine's server, which does the same there. Its BARs and
@@ -56,21 +58,48 @@ val scan :
     machine of [remote] if given, on this one otherwise. It is [[]] where the
     system has no [/sys/bus/pci]. *)
 
+val detach : string -> unit
+(** [detach bus] detaches the function at [bus] of this machine, so that a
+    process can take it ({!take}): it unbinds the function's kernel driver,
+    unless that is [vfio-pci], removes the other functions of its device, such
+    as its audio function, and enables it. Its kernel driver's users, a display
+    among them, lose it. This persists after the process, until {!attach} or a
+    reboot. It needs root, or write access to the files under [/sys/bus/pci] it
+    writes.
+
+    Raises [Failure] if [bus] is no function of this machine, if a process has
+    it taken, if the process may not write a file, naming it, or if the driver
+    stays bound. *)
+
+val attach : string -> unit
+(** [attach bus] gives the function at [bus] of this machine back to its kernel
+    driver: Linux rescans the PCI bus, which brings back the functions {!detach}
+    removed, and binds the function's driver. This persists after the process.
+    It needs root, or write access to [/sys/bus/pci/rescan] and
+    [/sys/bus/pci/drivers_probe].
+
+    Raises [Failure] if [bus] is no function of this machine, if a process has
+    it taken, if it is bound to [vfio-pci], or if no driver takes it, such as
+    when the driver's module is not loaded. *)
+
+val detached : string -> (unit, string) result
+(** [detached bus] is [Ok ()] if the function at [bus] of this machine is as
+    {!detach} leaves it: bound to no kernel driver but [vfio-pci], alone on its
+    device, and enabled unless [vfio-pci] holds it. [Error why] says what
+    differs, such as ["0000:01:00.0 is bound to the driver nvidia"]. *)
+
 val take : ?remote:Remote.t -> lock:string -> string -> t
 (** [take ~lock bus] takes the function at [bus], of the machine of [remote] if
-    given: it locks it for this process through the files [nx_BUS.lock], which
-    every process of this library takes, and [LOCK_BUS.lock], which every
-    process driving such a GPU takes, in the temporary directory. A lock file
-    that is a link or no regular file is refused. It then removes the other
-    functions of its device, such as its audio function, and enables it. A
-    function bound to [vfio-pci] in VFIO's no-IOMMU mode stays bound, and
-    delivers its interrupts to {!wait_interrupt}; any other kernel driver is
-    detached.
+    given, which must be {!detached} there: it locks it for this process through
+    the files [nx_BUS.lock], which every process of this library takes, and
+    [LOCK_BUS.lock], which every process driving such a GPU takes, in the
+    temporary directory. A lock file that is a link or no regular file is
+    refused. A function bound to [vfio-pci] in VFIO's no-IOMMU mode delivers its
+    interrupts to {!wait_interrupt}. Taking it changes nothing on the machine.
 
-    Raises [Failure] if another process holds the function, if a lock file
-    cannot be opened, such as one another user created, if the process may not
-    detach or enable it, or if a driver stays bound to it, each naming what to
-    change. *)
+    Raises [Failure] if the function is not {!detached}, saying why, if another
+    process holds it, if a lock file cannot be opened, such as one another user
+    created, or if the process may not access it, each naming what to change. *)
 
 val bus : t -> string
 (** [bus p] is [p]'s bus address on its machine. *)
@@ -104,7 +133,8 @@ val unmap_bar : Mmio.t -> unit
 
 val resize_bar : t -> int -> unit
 (** [resize_bar p i] makes [p]'s BAR [i] as large as the function allows, so
-    that it covers all of a GPU's memory where the platform permits.
+    that it covers all of a GPU's memory where the platform permits. The size
+    persists after the process.
 
     Raises [Failure] if the system refuses. *)
 

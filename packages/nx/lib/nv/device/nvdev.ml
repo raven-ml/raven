@@ -161,14 +161,15 @@ let create pci =
   ignore (chip_name d);
   d
 
-(* Readies [d] for its boot: a GPU whose WPR2 is up, left by its kernel driver
-   or a process that did not finish, is reset first; then it masters the bus,
-   and the size of its memory is read. *)
+(* Raised with the bus address of a GPU that was booted before. *)
+exception Booted of string
+
+(* Readies [d] for its boot: a GPU whose WPR2 is up, booted by its kernel driver
+   or an earlier process, needs a reset first, which only the caller may ask
+   for; then it masters the bus, and the size of its memory is read. *)
 let start d =
-  if read d "NV_PFB_PRI_MMU_WPR2_ADDR_HI" <> 0 then begin
-    set_bus_master d.pci false;
-    Pci.reset d.pci
-  end;
+  if read d "NV_PFB_PRI_MMU_WPR2_ADDR_HI" <> 0 then
+    raise (Booted (Pci.bus d.pci));
   set_bus_master d.pci true;
   let vram_size = read d "NV_PGC6_AON_SECURE_SCRATCH_GROUP_42" lsl 20 in
   { d with vram_size; large_bar = Mmio.length d.vram >= vram_size }

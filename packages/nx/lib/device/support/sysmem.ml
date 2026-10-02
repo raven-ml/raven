@@ -41,9 +41,6 @@ let check_setting () =
       try In_channel.with_open_text setting In_channel.input_all |> String.trim
       with Sys_error _ -> "0"
     in
-    (if read () <> "0" then
-       try Out_channel.with_open_text setting (fun oc -> output_string oc "0")
-       with Sys_error _ -> ());
     if read () <> "0" then
       failwith
         (Printf.sprintf

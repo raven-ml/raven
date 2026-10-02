@@ -423,19 +423,37 @@ type firmware = {
 
 let fmt_ver (a, b, c) = Printf.sprintf "%d_%d_%d" a b c
 
-let load_firmware ?dir d =
-  let load name =
-    let path = "amdgpu/" ^ name in
-    match List.assoc_opt name D.firmware_sha256 with
-    | None ->
-        failwith (Printf.sprintf "no pinned firmware %s for this GPU" name)
-    | Some sha256 -> (
-        match
-          Nx_device_support.Firmware.get ?dir ~url:firmware_url path ~sha256
-        with
-        | Ok blob -> blob
-        | Error why -> failwith why)
-  in
+(* Raised with the path of a firmware image no local file holds. *)
+exception Missing_firmware of string
+
+let pinned name =
+  match List.assoc_opt name D.firmware_sha256 with
+  | Some sha256 -> sha256
+  | None -> failwith (Printf.sprintf "no pinned firmware %s for this GPU" name)
+
+let find_image ?dir name =
+  let path = "amdgpu/" ^ name in
+  match Nx_device_support.Firmware.find ?dir path ~sha256:(pinned name) with
+  | Ok (Some blob) -> blob
+  | Ok None -> raise (Missing_firmware path)
+  | Error why -> failwith why
+
+let fetch_image name =
+  let path = "amdgpu/" ^ name in
+  match
+    Nx_device_support.Firmware.fetch ~url:firmware_url path
+      ~sha256:(pinned name)
+  with
+  | Ok () -> find_image name
+  | Error why -> failwith why
+
+let no_firmware = { sos = []; descs = []; smu_psp = None; ucode_start = [] }
+
+(* The firmware of a GPU whose blocks have the versions [ip_ver], each image
+   read with [load]. *)
+let load_firmware ~load ip_ver =
+  let version = ip_version ip_ver in
+  let gc = version D.gc_hwip in
   let desc blob off n types = (types, String.sub blob off n) in
   let common blob f = get blob 0 f in
   let hmajor blob = common blob D.Common_firmware_header.header_version_major in
@@ -446,7 +464,7 @@ let load_firmware ?dir d =
   let ucode_size blob = common blob D.Common_firmware_header.ucode_size_bytes in
   (* SOS *)
   let blob =
-    load (Printf.sprintf "psp_%s_sos.bin" (fmt_ver (version d D.mp0_hwip)))
+    load (Printf.sprintf "psp_%s_sos.bin" (fmt_ver (version D.mp0_hwip)))
   in
   let count, bins =
     match hminor blob with
@@ -469,11 +487,11 @@ let load_firmware ?dir d =
   let descs = ref [] and smu_psp = ref None and ucode_start = ref [] in
   let add ds = descs := !descs @ ds in
   (* SMU *)
-  if version d D.mp1_hwip <> (13, 0, 12) then begin
+  if version D.mp1_hwip <> (13, 0, 12) then begin
     let blob =
-      load (Printf.sprintf "smu_%s.bin" (fmt_ver (version d D.mp1_hwip)))
+      load (Printf.sprintf "smu_%s.bin" (fmt_ver (version D.mp1_hwip)))
     in
-    if compare (gc d) (11, 0, 0) >= 0 then
+    if compare gc (11, 0, 0) >= 0 then
       smu_psp :=
         Some
           (desc blob (ucode_off blob) (ucode_size blob) [ D.gfx_fw_type_smu ])
@@ -494,7 +512,7 @@ let load_firmware ?dir d =
   end;
   (* SDMA *)
   let blob =
-    load (Printf.sprintf "sdma_%s.bin" (fmt_ver (version d D.sdma0_hwip)))
+    load (Printf.sprintf "sdma_%s.bin" (fmt_ver (version D.sdma0_hwip)))
   in
   (match hmajor blob with
   | 1 ->
@@ -531,7 +549,7 @@ let load_firmware ?dir d =
   (* PFP, ME, MEC *)
   (* Version 1 images carry a jump table, which only the MEC's has. *)
   let engines =
-    (if compare (gc d) (12, 0, 0) >= 0 then
+    (if compare gc (12, 0, 0) >= 0 then
        [
          ( "PFP",
            D.gfx_fw_type_cp_pfp,
@@ -557,8 +575,7 @@ let load_firmware ?dir d =
     (fun (name, code, jt, rs64, stack) ->
       let blob =
         load
-          (Printf.sprintf "gc_%s_%s.bin"
-             (fmt_ver (gc d))
+          (Printf.sprintf "gc_%s_%s.bin" (fmt_ver gc)
              (String.lowercase_ascii name))
       in
       let off = ucode_off blob in
@@ -594,8 +611,8 @@ let load_firmware ?dir d =
       end)
     engines;
   (* IMU *)
-  if compare (gc d) (11, 0, 0) >= 0 then begin
-    let blob = load (Printf.sprintf "gc_%s_imu.bin" (fmt_ver (gc d))) in
+  if compare gc (11, 0, 0) >= 0 then begin
+    let blob = load (Printf.sprintf "gc_%s_imu.bin" (fmt_ver gc)) in
     let open D.Imu_firmware_header_v1_0 in
     let off = ucode_off blob in
     let i = get blob 0 imu_iram_ucode_size_bytes in
@@ -608,7 +625,7 @@ let load_firmware ?dir d =
       ]
   end;
   (* RLC *)
-  let blob = load (Printf.sprintf "gc_%s_rlc.bin" (fmt_ver (gc d))) in
+  let blob = load (Printf.sprintf "gc_%s_rlc.bin" (fmt_ver gc)) in
   let minor = hminor blob in
   if minor = 1 then begin
     let open D.Rlc_firmware_header_v2_1 in

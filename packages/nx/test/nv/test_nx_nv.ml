@@ -30,6 +30,19 @@ let opening =
             skip ~reason:"/dev/nvidiactl exists" ();
           let why = require_error (Nx_nv.get 0) in
           raises (Failure why) (fun () -> ignore (Nx_nv.device 0)));
+      test "the changes to the machine are the runtime's" (fun () ->
+          let n = Nx_nv_device.count () in
+          List.iter
+            (fun (call, f, g) ->
+              equal ~msg:call (result unit string) (g n) (f n))
+            [
+              ("detach", Nx_nv.detach, Nx_nv_device.detach);
+              ("attach", Nx_nv.attach, Nx_nv_device.attach);
+              ("reset", Nx_nv.reset, Nx_nv_device.reset);
+              ( "fetch_firmware",
+                Nx_nv.fetch_firmware,
+                Nx_nv_device.fetch_firmware );
+            ]);
       test "a negative index raises Invalid_argument" (fun () ->
           List.iter
             (fun f -> raises_match Exn.invalid_arg (fun () -> ignore (f (-1))))

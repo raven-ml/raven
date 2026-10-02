@@ -9,9 +9,9 @@
    through each kind of memory, programs, scratch, nx's runtime laws over the
    devices, and last, work that never signals, which loses the device. Every
    test skips without a GPU, and the peer tests without two. GPUs are reached
-   through the kernel driver when it is loaded; over PCI the runtime takes a GPU
-   from its kernel driver, so the suite does only when NX_AMD_PCI_TEST names the
-   index of a GPU it may take. *)
+   through the kernel driver when it is loaded; over PCI the suite detaches a
+   GPU from its kernel driver and resets it, so it does only when
+   NX_AMD_PCI_TEST names the index of a GPU it may take. *)
 
 open Windtrap
 module B = Nx_device.Buffer
@@ -46,11 +46,31 @@ let pci_first () = Option.map int_of_string (Sys.getenv_opt "NX_AMD_PCI_TEST")
 let kernel_gpus () =
   if Sys.file_exists "/dev/kfd" then Nx_amd_device.count () else 0
 
+(* GPU [i] over PCI, prepared as an open needs it: given back to its kernel
+   driver, which names its firmware, the firmware fetched, then detached and
+   reset. Once per process, since an open GPU refuses them. *)
+let pci_opens = Hashtbl.create 2
+
+let open_pci i =
+  match Hashtbl.find_opt pci_opens i with
+  | Some r -> r
+  | None ->
+      let ( let* ) = Result.bind in
+      let r =
+        let* () = Nx_amd_device.attach i in
+        let* () = Nx_amd_device.fetch_firmware i in
+        let* () = Nx_amd_device.detach i in
+        let* () = Nx_amd_device.reset i in
+        Nx_amd_device.get ~interface:Pci i
+      in
+      Hashtbl.replace pci_opens i r;
+      r
+
 (* The GPU [i] under test, or a skip. *)
 let device ?(i = 0) () =
   match pci_first () with
   | Some first -> (
-      match Nx_amd_device.get ~interface:Pci (first + i) with
+      match open_pci (first + i) with
       | Ok d -> d
       | Error msg -> skip ~reason:msg ())
   | None -> (
@@ -68,10 +88,7 @@ let device ?(i = 0) () =
 (* The GPUs nx's runtime laws run on. *)
 let gpus =
   match pci_first () with
-  | Some first -> (
-      match Nx_amd_device.get ~interface:Pci first with
-      | Ok d -> [ d ]
-      | Error _ -> [])
+  | Some first -> ( match open_pci first with Ok d -> [ d ] | Error _ -> [])
   | None ->
       List.init (kernel_gpus ()) (fun i ->
           match Nx_amd_device.get ~interface:Kernel i with

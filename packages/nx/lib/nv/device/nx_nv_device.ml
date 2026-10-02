@@ -925,22 +925,17 @@ let open_kernel ~index bus =
       List.iter (fun f -> try f () with Failure _ -> ()) !undo;
       raise e
 
-let pci_ids =
+(* The families the PCI interface supports: the directory of their firmware
+   under linux-firmware's nvidia/, and the device ids of their GPUs, masked by
+   0xff00. *)
+let families =
   [
-    ( 0xff00,
-      [
-        0x2200;
-        0x2400;
-        0x2500;
-        0x2600;
-        0x2700;
-        0x2800;
-        0x2b00;
-        0x2c00;
-        0x2d00;
-        0x2f00;
-      ] );
+    ("ga102", [ 0x2200; 0x2400; 0x2500 ]);
+    ("ad102", [ 0x2600; 0x2700; 0x2800 ]);
+    ("gb202", [ 0x2b00; 0x2c00; 0x2d00; 0x2f00 ]);
   ]
+
+let pci_ids = [ (0xff00, List.concat_map snd families) ]
 
 (* The machine's NVIDIA GPUs, the display controllers of NVIDIA's functions, in
    bus order: GPU [i] is the [i]th under both interfaces, whatever driver holds
@@ -955,29 +950,40 @@ let firmware_url =
   "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/" ^ D.firmware_commit
   ^ "/"
 
-let fetch ?dir path =
+(* Raised with the path of a firmware image no local file holds. *)
+exception Missing_firmware of string
+
+let sha256 path =
   match List.assoc_opt path D.firmware_sha256 with
+  | Some sha256 -> sha256
   | None -> failwith ("no pinned firmware " ^ path)
-  | Some sha256 -> (
-      match Firmware.get ?dir ~url:firmware_url ("nvidia/" ^ path) ~sha256 with
-      | Ok s -> s
-      | Error why -> failwith why)
+
+let load ?dir path =
+  match Firmware.find ?dir ("nvidia/" ^ path) ~sha256:(sha256 path) with
+  | Ok (Some s) -> s
+  | Ok None -> raise (Missing_firmware ("nvidia/" ^ path))
+  | Error why -> failwith why
+
+(* The images a GPU of the family whose firmware is under [dir] boots with: the
+   GSP's, its bootloader's, and the image that starts the boot, a falcon's
+   booter or, on Blackwell, the FMC. *)
+let images dir =
+  ( "ga102/gsp/gsp-570.144.bin",
+    dir ^ "/gsp/bootloader-570.144.bin",
+    dir
+    ^
+    if dir = "gb202" then "/gsp/fmc-570.144.bin"
+    else "/gsp/booter_load-570.144.bin" )
 
 (* Boots the GPU at [pci]: its firmware first, so that a missing image fails
    before the GPU is touched, then the memory below the GSP's region, the
    falcons and the GSP. *)
 let boot ?firmware pci =
   let d = Nvdev.create pci in
-  let dir = Nvdev.firmware_dir d in
-  let gsp_fw = fetch ?dir:firmware "ga102/gsp/gsp-570.144.bin" in
-  let bootloader_fw =
-    fetch ?dir:firmware (dir ^ "/gsp/bootloader-570.144.bin")
-  in
-  let falcon_fw =
-    fetch ?dir:firmware
-      (if d.fmc_boot then dir ^ "/gsp/fmc-570.144.bin"
-       else dir ^ "/gsp/booter_load-570.144.bin")
-  in
+  let gsp, bootloader, falcon = images (Nvdev.firmware_dir d) in
+  let load = load ?dir:firmware in
+  let gsp_fw = load gsp and bootloader_fw = load bootloader in
+  let falcon_fw = load falcon in
   let layout = Gsp.images ~chip:(Nvdev.chip_name d) ~gsp_fw ~bootloader_fw in
   let d = Nvdev.start d in
   Falcon.wait_for_reset d;
@@ -1009,7 +1015,6 @@ let open_taken ?firmware ~machine ~index pci =
     Pci.reserve pci
       ~base:(Page_table.Space.base Nvdev.space)
       (Page_table.Space.length Nvdev.space);
-    (try Pci.resize_bar pci 1 with Failure _ -> ());
     let nvdev, gsp = boot ?firmware pci in
     let memory = Pci_memory.create pci (Nvdev.mm nvdev) ~bar:1 in
     let rm = Gsp.rm gsp ~root:0xc1000000 in
@@ -1035,6 +1040,7 @@ let open_taken ?firmware ~machine ~index pci =
     n
   with
   | n -> n
+  | exception ((Nvdev.Booted _ | Missing_firmware _) as e) -> raise e
   | exception e ->
       (try Nvdev.set_bus_master pci false with Failure _ -> ());
       raise e
@@ -1044,6 +1050,14 @@ let open_pci ?firmware ~machine ~index bus =
   let remote = Nx_remote_device.remote machine in
   if not (List.mem bus (supported ?remote ())) then
     failwith (bus ^ " is of no GPU family the PCI interface supports");
+  (match remote with
+  | Some _ -> ()
+  | None -> (
+      match Pci.detached bus with
+      | Ok () -> ()
+      | Error why ->
+          failwith
+            (Printf.sprintf "%s; Nx_nv_device.detach %d detaches it" why index)));
   let pci = Pci.take ?remote ~lock:"nv" bus in
   match open_taken ?firmware ~machine ~index pci with
   | n -> n
@@ -1106,6 +1120,20 @@ let open_gpu ~machine ~iface ?firmware i =
               Ok (Option.get n.dev)
           | exception (Failure why | Sys_error why | Invalid_argument why) ->
               refuse ~machine iface i why
+          | exception Nvdev.Booted bus ->
+              refuse ~machine iface i
+                (Printf.sprintf
+                   "%s was booted before, by its kernel driver or another \
+                    process; Nx_nv_device.reset %d resets it"
+                   bus i)
+          | exception Missing_firmware path ->
+              refuse ~machine iface i
+                (Printf.sprintf
+                   "no firmware image %s in %s/lib/firmware or the cache; \
+                    Nx_nv_device.fetch_firmware %d fetches it"
+                   path
+                   (match firmware with Some dir -> dir ^ ", " | None -> "")
+                   i)
           | exception Unix.Unix_error (e, f, arg) ->
               refuse ~machine iface i
                 (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e))))
@@ -1126,6 +1154,74 @@ let get ?(host = Nx_device.host) ~interface ?firmware i =
                    "this process reaches NVIDIA GPUs through %s, not %s"
                    (interface_name c) (interface_name interface))
           | _ -> open_gpu ~machine:host ~iface:interface ?firmware i))
+
+(* Changes to the machine *)
+
+(* [f bus] for GPU [i] of this machine, which no device of the process holds, or
+   why not, starting with the GPU's name through [iface]. *)
+let on_gpu iface i f =
+  if i < 0 then invalid_arg (Printf.sprintf "Nx_nv_device: %d < 0" i);
+  let fail why = Error (name iface i ^ ": " ^ why) in
+  Mutex.protect lock @@ fun () ->
+  if not (linux ()) then fail "NVIDIA GPUs need Linux"
+  else
+    let gpus = gpus () in
+    match List.nth_opt gpus i with
+    | None ->
+        fail
+          (Printf.sprintf "no GPU %d; there are %d NVIDIA GPUs" i
+             (List.length gpus))
+    | Some bus when List.mem_assoc (Nx_device.host, bus) (Atomic.get opened) ->
+        fail (bus ^ " is open in this process")
+    | Some bus -> (
+        match f bus with
+        | r -> Result.map_error (fun why -> name iface i ^ ": " ^ why) r
+        | exception (Failure why | Sys_error why) -> fail why
+        | exception Unix.Unix_error (e, fn, arg) ->
+            fail (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e)))
+
+(* With BAR1 as large as the platform allows, the host maps all of the GPU's
+   memory; where it refuses, mapped memory falls back to pinned memory. *)
+let detach i =
+  on_gpu Pci i @@ fun bus ->
+  Pci.detach bus;
+  let p = Pci.take ~lock:"nv" bus in
+  Fun.protect
+    ~finally:(fun () -> Pci.release p)
+    (fun () -> try Pci.resize_bar p 1 with Failure _ -> ());
+  Ok ()
+
+let attach i = on_gpu Kernel i @@ fun bus -> Ok (Pci.attach bus)
+
+let reset i =
+  on_gpu Pci i @@ fun bus ->
+  match Pci.detached bus with
+  | Error why ->
+      Error (Printf.sprintf "%s; Nx_nv_device.detach %d detaches it" why i)
+  | Ok () ->
+      let p = Pci.take ~lock:"nv" bus in
+      Fun.protect
+        ~finally:(fun () -> Pci.release p)
+        (fun () ->
+          Nvdev.set_bus_master p false;
+          Ok (Pci.reset p))
+
+let fetch_firmware i =
+  on_gpu Pci i @@ fun bus ->
+  let of_family (_, ids) =
+    List.mem bus (Pci.scan ~vendor:0x10de ~class_:0x03 [ (0xff00, ids) ])
+  in
+  match List.find_opt of_family families with
+  | None -> Error (bus ^ " is of no GPU family the PCI interface supports")
+  | Some (dir, _) ->
+      let gsp, bootloader, falcon = images dir in
+      List.fold_left
+        (fun r path ->
+          Result.bind r (fun () ->
+              Firmware.fetch ~url:firmware_url ("nvidia/" ^ path)
+                ~sha256:(sha256 path)))
+        (Ok ())
+        [ gsp; bootloader; falcon ]
 
 let of_device = nv_of
 let compute n = fst (Option.get n.public)

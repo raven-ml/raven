@@ -61,8 +61,8 @@ let closest host bus =
 (* Regions *)
 
 (* The region of [n] over the allocation [b] lies in, registered at its first
-   use at the allocation's device address, and deregistered once the
-   allocation is released. [n] is locked. *)
+   use at the allocation's device address, and deregistered once the allocation
+   is released. [n] is locked. *)
 let key n (b : B.t) (dma : Driver.dma) =
   let alloc = Nativeint.to_int (Region.address (Region.of_buffer b)) in
   let owner = Nx_device.name (B.device b) in
@@ -225,6 +225,15 @@ let open_nic ~machine ~remote index =
           (Printf.sprintf "no adapter %d; there are %d" index
              (List.length buses))
   in
+  (match remote with
+  | Some _ -> ()
+  | None -> (
+      match Pci.detached bus with
+      | Ok () -> ()
+      | Error why ->
+          failwith
+            (Printf.sprintf "%s; Nx_rdma_device.detach %d detaches it" why index)
+      ));
   let pci = Pci.take ?remote ~lock:"bnxt" bus in
   match
     let bnxt = Bnxt.boot pci in
@@ -289,3 +298,23 @@ let get ?(host = Nx_device.host) i =
               refuse (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e))))
 
 let v ?host i = match get ?host i with Ok d -> d | Error msg -> failwith msg
+
+(* [f bus] for adapter [i] of this machine, which the process has not opened, or
+   why not. *)
+let on_nic i f =
+  if i < 0 then invalid_arg (Printf.sprintf "Nx_rdma_device: %d < 0" i);
+  let fail why = Error (name i ^ ": " ^ why) in
+  Mutex.protect lock @@ fun () ->
+  let buses = buses () in
+  match List.nth_opt buses i with
+  | None ->
+      fail (Printf.sprintf "no adapter %d; there are %d" i (List.length buses))
+  | Some _ when List.mem_assoc (Nx_device.host, i) (Atomic.get opened) ->
+      fail "it is open in this process"
+  | Some bus -> (
+      match f bus with
+      | () -> Ok ()
+      | exception (Failure why | Sys_error why) -> fail why)
+
+let detach i = on_nic i Pci.detach
+let attach i = on_nic i Pci.attach

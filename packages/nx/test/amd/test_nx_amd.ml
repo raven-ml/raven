@@ -29,6 +29,19 @@ let opening =
           if Sys.file_exists "/dev/kfd" then skip ~reason:"/dev/kfd exists" ();
           let why = require_error (Nx_amd.get 0) in
           raises (Failure why) (fun () -> ignore (Nx_amd.device 0)));
+      test "the changes to the machine are the runtime's" (fun () ->
+          let n = Nx_amd_device.count () in
+          List.iter
+            (fun (call, f, g) ->
+              equal ~msg:call (result unit string) (g n) (f n))
+            [
+              ("detach", Nx_amd.detach, Nx_amd_device.detach);
+              ("attach", Nx_amd.attach, Nx_amd_device.attach);
+              ("reset", Nx_amd.reset, Nx_amd_device.reset);
+              ( "fetch_firmware",
+                Nx_amd.fetch_firmware,
+                Nx_amd_device.fetch_firmware );
+            ]);
       test "a negative index raises Invalid_argument" (fun () ->
           List.iter
             (fun f -> raises_match Exn.invalid_arg (fun () -> ignore (f (-1))))

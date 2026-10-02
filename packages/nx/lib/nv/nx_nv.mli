@@ -8,8 +8,10 @@
     A device of this library is an NVIDIA GPU's memory, which {!Nx_nv_device}
     opens, through one of two interfaces: NVIDIA's kernel driver ({!get}, named
     [NV:i]), or nx's own driver over PCI ({!get_pci}, named [NV-PCI:i]), which
-    detaches the GPU's kernel driver and keeps the GPU for the process. Only a
-    call of {!get_pci} or {!device_pci} takes a GPU over PCI. The first open of
+    keeps the GPU for the process. Opening changes nothing on the machine: a GPU
+    opened over PCI must first be detached from its kernel driver ({!detach}),
+    reset ({!reset}), and have its firmware at hand ({!fetch_firmware}), each a
+    change to the machine that persists after the process. The first open of
     either fixes the interface for the process: the other then fails with that
     reason. Both number the machine's NVIDIA GPUs in bus order, so [NV:i] and
     [NV-PCI:i] are the same GPU.
@@ -36,10 +38,11 @@ val device : int -> Nx.Device.t
     does. *)
 
 val get_pci : int -> (Nx.Device.t, string) result
-(** [get_pci i] is NVIDIA GPU [i], taken from its kernel driver and opened over
-    PCI by nx's own driver, or [Error msg] with the reason, such as a missing
-    privilege or firmware image. See {!Nx_nv_device} for the privileges, the
-    GPUs supported and the firmware it boots them with.
+(** [get_pci i] is NVIDIA GPU [i] opened over PCI by nx's own driver, or
+    [Error msg] with the reason, such as a missing privilege, or a GPU not
+    detached, not reset or without its firmware, naming {!detach}, {!reset} or
+    {!fetch_firmware}. See {!Nx_nv_device} for the privileges, the GPUs
+    supported and the firmware it boots them with.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -48,3 +51,22 @@ val device_pci : int -> Nx.Device.t
 
     Raises [Failure] with {!get_pci}'s reason if it does not open, and as
     {!get_pci} does. *)
+
+(** {1:machine Changes to the machine}
+
+    Each is {!Nx_nv_device}'s, which documents the privileges it needs. *)
+
+val detach : int -> (unit, string) result
+(** [detach i] detaches GPU [i] from its kernel driver, which loses it, for
+    {!get_pci}. It persists until {!attach} or a reboot. *)
+
+val attach : int -> (unit, string) result
+(** [attach i] gives GPU [i] back to its kernel driver, for {!get}. *)
+
+val reset : int -> (unit, string) result
+(** [reset i] resets detached GPU [i], clearing what an earlier boot left on it,
+    for {!get_pci}. *)
+
+val fetch_firmware : int -> (unit, string) result
+(** [fetch_firmware i] downloads the firmware images GPU [i] boots with under
+    {!get_pci} into the user's cache. *)

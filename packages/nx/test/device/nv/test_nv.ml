@@ -47,6 +47,28 @@ let test_past_the_gpus () =
         (Printf.sprintf "%s: no GPU %d; there are %d NVIDIA GPUs" name n n)
         msg
 
+(* The changes to the machine refuse an index past the GPUs, which needs no GPU,
+   naming the GPU under the interface each prepares. *)
+let test_changes_past_the_gpus () =
+  let n = Nx_nv_device.count () in
+  let name kind = if n = 0 then kind else Printf.sprintf "%s:%d" kind n in
+  let why kind =
+    if Sys.file_exists "/proc/version" then
+      Printf.sprintf "%s: no GPU %d; there are %d NVIDIA GPUs" (name kind) n n
+    else name kind ^ ": NVIDIA GPUs need Linux"
+  in
+  List.iter
+    (fun (call, f, kind) ->
+      equal ~msg:call (result unit string) (Error (why kind)) (f n);
+      raises_match ~msg:call (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->
+          f (-1)))
+    [
+      ("detach", Nx_nv_device.detach, "NV-PCI");
+      ("attach", Nx_nv_device.attach, "NV");
+      ("reset", Nx_nv_device.reset, "NV-PCI");
+      ("fetch_firmware", Nx_nv_device.fetch_firmware, "NV-PCI");
+    ]
+
 let no_gpu () =
   if Nx_nv_device.count () > 0 then
     skip ~reason:"this machine has an NVIDIA GPU" ()
@@ -111,6 +133,8 @@ let () =
              equal int (linux_gpus ()) (Nx_nv_device.count ()));
          test "an index past the GPUs is refused with their count"
            test_past_the_gpus;
+         test "the changes to the machine refuse an index past the GPUs"
+           test_changes_past_the_gpus;
          test "another machine's GPUs are opened over PCI" test_other_machine;
          test "a negative index is refused" (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->

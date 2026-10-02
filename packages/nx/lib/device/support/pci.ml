@@ -129,6 +129,67 @@ let lock_file bus name =
       (Printf.sprintf "%s is held by another process (see: lsof %s)" bus file);
   fd
 
+let exists bus = Sys.file_exists (Filename.concat root bus)
+
+(* The other functions of [bus]'s device, such as its audio function. *)
+let siblings bus =
+  let prefix = String.sub bus 0 (String.length bus - 1) in
+  List.filter
+    (fun s -> s <> bus && exists s)
+    (List.init 8 (fun fn -> prefix ^ string_of_int fn))
+
+let enabled bus = read (path bus "enable") <> "0"
+
+let detached bus =
+  if not (exists bus) then
+    Error (Printf.sprintf "%s is no PCI function of this machine" bus)
+  else
+    match (driver bus, siblings bus) with
+    | Some d, _ when d <> "vfio-pci" ->
+        Error (Printf.sprintf "%s is bound to the driver %s" bus d)
+    | _, s :: _ -> Error (Printf.sprintf "%s shares its device with %s" bus s)
+    | Some _, [] -> Ok ()
+    | None, [] when enabled bus -> Ok ()
+    | None, [] -> Error (Printf.sprintf "%s is disabled" bus)
+
+(* [f ()] while holding [bus]'s own lock, so that no process has it taken. *)
+let with_lock bus f =
+  if not (exists bus) then
+    failwith (Printf.sprintf "%s is no PCI function of this machine" bus);
+  let own = lock_file bus "nx" in
+  Fun.protect ~finally:(fun () -> file_close own) f
+
+let detach bus =
+  with_lock bus @@ fun () ->
+  (match driver bus with
+  | Some d when d <> "vfio-pci" ->
+      write (path bus "driver/unbind") bus;
+      if driver bus <> None then
+        failwith (Printf.sprintf "the driver %s stays bound to %s" d bus)
+  | _ -> ());
+  List.iter (fun s -> write (path s "remove") "1") (siblings bus);
+  if driver bus = None && not (enabled bus) then write (path bus "enable") "1"
+
+(* A rescan brings back the functions [detach] removed. The function itself is
+   on the bus already, so its driver is probed for it. *)
+let attach bus =
+  with_lock bus @@ fun () ->
+  match driver bus with
+  | Some "vfio-pci" ->
+      failwith
+        (Printf.sprintf
+           "%s is bound to vfio-pci; unbind it and clear its driver_override \
+            first"
+           bus)
+  | Some _ -> ()
+  | None ->
+      if enabled bus then write (path bus "enable") "0";
+      write "/sys/bus/pci/rescan" "1";
+      write "/sys/bus/pci/drivers_probe" bus;
+      if driver bus = None then
+        failwith
+          (Printf.sprintf "no kernel driver took %s; load its module first" bus)
+
 (* The function's own lock, which every driver of this library takes whatever
    its name, then the driver's, which other drivers of the same GPU take. *)
 let take_local ~lock bus =
@@ -136,25 +197,13 @@ let take_local ~lock bus =
   let files = ref [ own ] in
   match
     files := lock_file bus lock :: !files;
+    (match detached bus with Ok () -> () | Error why -> failwith why);
     (try Out_channel.with_open_gen [ Open_wronly ] 0 (path bus "enable") ignore
      with Sys_error _ ->
        failwith
          (Printf.sprintf "cannot access the PCI function %s: run as root" bus));
-    let vfio = driver bus = Some "vfio-pci" in
-    (match driver bus with
-    | Some d when d <> "vfio-pci" ->
-        write (path bus "driver/unbind") bus;
-        if driver bus <> None then
-          failwith (Printf.sprintf "the driver %s stays bound to %s" d bus)
-    | _ -> ());
-    (* The other functions of the device, such as its audio function. *)
-    let prefix = String.sub bus 0 (String.length bus - 1) in
-    for fn = 1 to 7 do
-      let sibling = Printf.sprintf "%s/%s%d" root prefix fn in
-      if Sys.file_exists sibling then write (sibling ^ "/remove") "1"
-    done;
     let interrupts =
-      if vfio then begin
+      if driver bus = Some "vfio-pci" then begin
         let group = Filename.basename (readlink (path bus "iommu_group")) in
         let container, group, dev, efd =
           vfio_open ("/dev/vfio/noiommu-" ^ group) bus
@@ -162,10 +211,7 @@ let take_local ~lock bus =
         files := efd :: dev :: group :: container :: !files;
         Some efd
       end
-      else begin
-        write (path bus "enable") "1";
-        None
-      end
+      else None
     in
     let config = file_open (path bus "config") true in
     files := config :: !files;

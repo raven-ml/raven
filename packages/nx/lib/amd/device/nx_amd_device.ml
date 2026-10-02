@@ -1153,7 +1153,6 @@ let open_taken ?firmware ~machine ~buses ~index pci =
   Pci.reserve pci
     ~base:(Page_table.Space.base Am.space)
     (Page_table.Space.length Am.space);
-  (try Pci.resize_bar pci 0 with Failure _ -> ());
   let am = Am.boot ?firmware pci in
   match open_booted ~machine ~buses ~index pci am with
   | a -> a
@@ -1167,6 +1166,15 @@ let open_am ?firmware ~machine ~index bus =
   let supported = Am.buses ?remote () in
   if not (List.mem bus supported) then
     failwith (bus ^ " is of no GPU family the PCI interface supports");
+  (match remote with
+  | Some _ -> ()
+  | None -> (
+      match Pci.detached bus with
+      | Ok () -> ()
+      | Error why ->
+          failwith
+            (Printf.sprintf "%s; Nx_amd_device.detach %d detaches it" why index)
+      ));
   let pci = Pci.take ?remote ~lock:"am" bus in
   match
     open_taken ?firmware ~machine ~buses:(List.length supported) ~index pci
@@ -1236,6 +1244,20 @@ let open_gpu ~machine ~iface ?firmware i =
               Ok (Option.get a.dev)
           | exception (Failure why | Sys_error why | Invalid_argument why) ->
               refuse ~machine iface i why
+          | exception Am.Booted bus ->
+              refuse ~machine iface i
+                (Printf.sprintf
+                   "%s was booted by its kernel driver or another process; \
+                    Nx_amd_device.reset %d resets it"
+                   bus i)
+          | exception Amdev.Missing_firmware path ->
+              refuse ~machine iface i
+                (Printf.sprintf
+                   "no firmware image %s in %s/lib/firmware or the cache; \
+                    Nx_amd_device.fetch_firmware %d fetches it"
+                   path
+                   (match firmware with Some dir -> dir ^ ", " | None -> "")
+                   i)
           | exception Unix.Unix_error (e, fn, arg) ->
               refuse ~machine iface i
                 (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e))
@@ -1258,6 +1280,94 @@ let get ?(host = Nx_device.host) ~interface ?firmware i =
                    "this process reaches AMD GPUs through %s, not %s"
                    (interface_name c) (interface_name interface))
           | _ -> open_gpu ~machine:host ~iface:interface ?firmware i))
+
+(* Changes to the machine *)
+
+(* [f bus] for GPU [i] of this machine, which no device of the process holds, or
+   why not, starting with the GPU's name through [iface]. *)
+let on_gpu iface i f =
+  if i < 0 then invalid_arg (Printf.sprintf "Nx_amd_device: %d < 0" i);
+  let fail why = Error (name iface i ^ ": " ^ why) in
+  Mutex.protect lock @@ fun () ->
+  if not (linux ()) then fail "AMD GPUs need Linux"
+  else
+    let gpus = gpus () in
+    match List.nth_opt gpus i with
+    | None ->
+        fail
+          (Printf.sprintf "no GPU %d; there are %d AMD GPUs" i
+             (List.length gpus))
+    | Some bus when List.mem_assoc (Nx_device.host, bus) (Atomic.get opened) ->
+        fail (bus ^ " is open in this process")
+    | Some bus -> (
+        match f bus with
+        | r -> Result.map_error (fun why -> name iface i ^ ": " ^ why) r
+        | exception (Failure why | Sys_error why) -> fail why
+        | exception Unix.Unix_error (e, fn, arg) ->
+            fail (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e)))
+
+(* With BAR0 as large as the platform allows, the host maps all of the GPU's
+   memory, and the runtime keeps no page tables in system memory. *)
+let detach i =
+  on_gpu Pci i @@ fun bus ->
+  Pci.detach bus;
+  let p = Pci.take ~lock:"am" bus in
+  Fun.protect
+    ~finally:(fun () -> Pci.release p)
+    (fun () -> try Pci.resize_bar p 0 with Failure _ -> ());
+  Ok ()
+
+let attach i = on_gpu Kernel i @@ fun bus -> Ok (Pci.attach bus)
+
+let reset i =
+  on_gpu Pci i @@ fun bus ->
+  match Pci.detached bus with
+  | Error why ->
+      Error (Printf.sprintf "%s; Nx_amd_device.detach %d detaches it" why i)
+  | Ok () ->
+      let p = Pci.take ~lock:"am" bus in
+      Fun.protect
+        ~finally:(fun () -> Pci.release p)
+        (fun () ->
+          Pci.reserve p
+            ~base:(Page_table.Space.base Am.space)
+            (Page_table.Space.length Am.space);
+          Ok (Am.reset p))
+
+(* The versions of the blocks the GPU's firmware images are named by, which the
+   amdgpu driver lists while it holds the GPU. *)
+let block_versions bus =
+  let dir hwip =
+    Printf.sprintf "/sys/bus/pci/devices/%s/ip_discovery/die/0/%d/0" bus
+      (List.assoc hwip D.hw_id_map)
+  in
+  let version hwip =
+    let read f =
+      In_channel.with_open_text
+        (Filename.concat (dir hwip) f)
+        In_channel.input_all
+      |> String.trim |> int_of_string
+    in
+    (hwip, (read "major", read "minor", read "revision"))
+  in
+  List.map version D.[ gc_hwip; sdma0_hwip; mp0_hwip; mp1_hwip ]
+
+let fetch_firmware i =
+  on_gpu Pci i @@ fun bus ->
+  if not (List.mem bus (Am.buses ())) then
+    Error (bus ^ " is of no GPU family the PCI interface supports")
+  else
+    match block_versions bus with
+    | exception (Sys_error _ | Failure _) ->
+        Error
+          (Printf.sprintf
+             "the amdgpu driver names %s's firmware while it holds the GPU; \
+              fetch it before Nx_amd_device.detach %d, or after \
+              Nx_amd_device.attach %d"
+             bus i i)
+    | ip_ver ->
+        ignore (Amdev.load_firmware ~load:Amdev.fetch_image ip_ver);
+        Ok ()
 
 let of_device = amd_of
 let queues a = Option.get a.queues

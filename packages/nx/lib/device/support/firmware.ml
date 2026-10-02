@@ -56,45 +56,44 @@ let keep file s =
   Out_channel.with_open_bin tmp (fun oc -> output_string oc s);
   Sys.rename tmp file
 
-let get ?dir ~url name ~sha256:digest =
+let wrong ~digest file s =
+  Error
+    (Printf.sprintf "%s has SHA-256 %s, not the pinned %s" file (sha256 s)
+       digest)
+
+(* The image from /lib/firmware, where distributions ship other versions, then
+   from the cache. *)
+let installed name ~digest =
   let matches s = sha256 s = digest in
-  let wrong file s =
-    Error
-      (Printf.sprintf "%s has SHA-256 %s, not the pinned %s" file (sha256 s)
-         digest)
-  in
-  let from_dir () =
+  match local (Filename.concat "/lib/firmware" name) with
+  | Some s when matches s -> Some s
+  | _ -> (
+      match read (Filename.concat (cache ()) name) with
+      | Some s when matches s -> Some s
+      | _ -> None)
+
+let find ?dir name ~sha256:digest =
+  let in_dir =
     match dir with
     | None -> None
     | Some d -> (
         let file = Filename.concat d name in
         match local file with
-        | Some s when matches s -> Some (Ok s)
-        | Some s -> Some (wrong file s)
+        | Some s when sha256 s = digest -> Some (Ok (Some s))
+        | Some s -> Some (wrong ~digest file s)
         | None -> None)
   in
-  let from_system () =
-    match local (Filename.concat "/lib/firmware" name) with
-    | Some s when matches s -> Some (Ok s)
-    | _ -> None
-  in
-  let cached = Filename.concat (cache ()) name in
-  let from_cache () =
-    match read cached with Some s when matches s -> Some (Ok s) | _ -> None
-  in
-  let fetch () =
-    match download (url ^ name) with
-    | Error why -> Error (Printf.sprintf "downloading %s%s: %s" url name why)
-    | Ok s when matches s ->
-        (* The cache only saves the next download. *)
-        (try keep cached s with Sys_error _ -> ());
-        Ok s
-    | Ok s -> wrong (url ^ name) s
-  in
-  match
-    List.find_map
-      (fun source -> source ())
-      [ from_dir; from_system; from_cache ]
-  with
-  | Some r -> r
-  | None -> fetch ()
+  match in_dir with Some r -> r | None -> Ok (installed name ~digest)
+
+let fetch ~url name ~sha256:digest =
+  match installed name ~digest with
+  | Some _ -> Ok ()
+  | None -> (
+      match download (url ^ name) with
+      | Error why -> Error (Printf.sprintf "downloading %s%s: %s" url name why)
+      | Ok s when sha256 s <> digest -> wrong ~digest (url ^ name) s
+      | Ok s -> (
+          let file = Filename.concat (cache ()) name in
+          try Ok (keep file s)
+          with Sys_error why ->
+            Error (Printf.sprintf "keeping %s in the cache: %s" name why)))

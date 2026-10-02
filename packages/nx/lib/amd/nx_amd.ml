@@ -11,3 +11,7 @@ let get i = open_ Kernel i
 let device i = ok (get i)
 let get_pci i = open_ Pci i
 let device_pci i = ok (get_pci i)
+let detach = Nx_amd_device.detach
+let attach = Nx_amd_device.attach
+let reset = Nx_amd_device.reset
+let fetch_firmware = Nx_amd_device.fetch_firmware

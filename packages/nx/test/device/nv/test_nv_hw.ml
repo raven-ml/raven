@@ -10,9 +10,9 @@
    each kind of memory, programs and local memory, nx's runtime laws over the
    devices, and last, work that never signals, which loses the device. Every
    test skips without a GPU, and the peer tests without two. GPUs are reached
-   through the kernel driver when it is loaded; over PCI the runtime takes a GPU
-   from its kernel driver, so the suite does only when NX_NV_PCI_TEST names the
-   index of a GPU it may take. *)
+   through the kernel driver when it is loaded; over PCI the suite detaches a
+   GPU from its kernel driver and resets it, so it does only when NX_NV_PCI_TEST
+   names the index of a GPU it may take. *)
 
 open Windtrap
 module B = Nx_device.Buffer
@@ -47,11 +47,30 @@ let pci_first () = Option.map int_of_string (Sys.getenv_opt "NX_NV_PCI_TEST")
 let kernel_gpus () =
   if Sys.file_exists "/dev/nvidiactl" then Nx_nv_device.count () else 0
 
+(* GPU [i] over PCI, prepared as an open needs it: its firmware fetched, then
+   detached from its kernel driver and reset. Once per process, since an open
+   GPU refuses them. *)
+let pci_opens = Hashtbl.create 2
+
+let open_pci i =
+  match Hashtbl.find_opt pci_opens i with
+  | Some r -> r
+  | None ->
+      let ( let* ) = Result.bind in
+      let r =
+        let* () = Nx_nv_device.fetch_firmware i in
+        let* () = Nx_nv_device.detach i in
+        let* () = Nx_nv_device.reset i in
+        Nx_nv_device.get ~interface:Pci i
+      in
+      Hashtbl.replace pci_opens i r;
+      r
+
 (* The GPU [i] under test, or a skip. *)
 let device ?(i = 0) () =
   match pci_first () with
   | Some first -> (
-      match Nx_nv_device.get ~interface:Pci (first + i) with
+      match open_pci (first + i) with
       | Ok d -> d
       | Error msg -> skip ~reason:msg ())
   | None -> (
@@ -75,7 +94,7 @@ let gpus =
   | Some first ->
       Ok
         (List.filter_map
-           (fun i -> Result.to_option (Nx_nv_device.get ~interface:Pci i))
+           (fun i -> Result.to_option (open_pci i))
            [ first; first + 1 ])
   | None -> (
       try
