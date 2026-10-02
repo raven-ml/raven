@@ -266,6 +266,11 @@ let refusals =
     refuse "v of columns of other lengths" (fun () ->
         v [ ("a", Column.v Type.int8 [| 1 |]); ("b", Column.v Type.int8 [||]) ])
     @@ __POS_OF__ {| Talon.v: column "b" has 0 rows, not 1 |};
+    refuse "v of no column without rows" (fun () -> v []) @@ __POS_OF__ {| Talon.v: no column and no rows |};
+    refuse "v of rows other than the columns'" (fun () ->
+        v ~rows:2 [ ("a", Column.v Type.int8 [| 1 |]) ])
+    @@ __POS_OF__ {| Talon.v: column "a" has 1 rows, not 2 |};
+    refuse "v of negative rows" (fun () -> v ~rows:(-1) []) @@ __POS_OF__ {| Talon.v: rows is -1, below 0 |};
     refuse "v of a duplicate name" (fun () ->
         v [ ("a", Column.v Type.int8 [||]); ("a", Column.v Type.int8 [||]) ])
     @@ __POS_OF__ {| Talon.v: duplicate column "a" |};
@@ -312,6 +317,16 @@ let () =
            [
              prop "column reads the rows of every split" split column_of_split;
              take_of_split;
+             test "a table of rows without columns keeps them through a run"
+               (fun () ->
+                 let t = v ~rows:3 [] in
+                 equal (pair int int) (3, 2)
+                   ( rows (Error.get_ok (Query.run (Query.of_table t))),
+                     rows
+                       (Error.get_ok
+                          (Query.run
+                             (Query.slice ~offset:1 ~length:5 (Query.of_table t))))
+                   ));
              test "a table without rows has no batch" (fun () ->
                  equal int 0
                    (List.length (batches (one (Column.v Type.int8 [||])))));

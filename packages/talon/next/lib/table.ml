@@ -19,11 +19,17 @@ let columns t =
   | [ b ] -> b.columns
   | bs -> err "Table.columns: a table of %d batches" (List.length bs)
 
-let v cs =
+let v ?rows cs =
   let schema =
     Schema.make ~by:"Talon.v" (List.map (fun (n, c) -> (n, Column.type_ c)) cs)
   in
-  let rows = match cs with [] -> 0 | (_, c) :: _ -> Column.length c in
+  let rows =
+    match (rows, cs) with
+    | Some n, _ when n < 0 -> err "Talon.v: rows is %d, below 0" n
+    | Some n, _ -> n
+    | None, (_, c) :: _ -> Column.length c
+    | None, [] -> invalid_arg "Talon.v: no column and no rows"
+  in
   let check (n, c) =
     if Column.length c <> rows then
       err "Talon.v: column %a has %d rows, not %d" Type.pp_quoted n

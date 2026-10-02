@@ -994,6 +994,13 @@ let sources =
             nation_key: ok
             name: row group 0: bytes 421-450: the page overruns its column chunk
             |});
+      test "a read of no column has the rows of the file" (fun () ->
+          let name = "names.parquet" in
+          let q =
+            Query.select []
+              (Query.of_source (P.source (sniff name) (buffer name)))
+          in
+          equal int 2 (Talon_next.rows (Error.get_ok (Query.run q))));
       test "file names its source and counts its rows" (fun () ->
           let plan s = Format.asprintf "%a" Query.pp (Query.of_source s) in
           print_endline (plan (Error.get_ok (P.file (path "names.parquet"))));

@@ -699,11 +699,16 @@ end
 
 (** {1:tables Tables} *)
 
-val v : (string * Column.t) list -> t
-(** [v cs] is the table of the columns [cs], in order, as one batch.
+val v : ?rows:int -> (string * Column.t) list -> t
+(** [v ?rows cs] is the table of the columns [cs], in order, as one batch of
+    [rows] rows. [rows] defaults to the length of the columns, and gives the
+    rows of a table without columns, such as the batch a source yields for a
+    request that reads none.
 
-    Raises [Invalid_argument] if two columns have the same name, a name is not
-    valid UTF-8, or the columns have different lengths. *)
+    Raises [Invalid_argument] if [cs] is empty and [rows] is not given, if
+    [rows] is negative or is not the columns' length, if two columns have the
+    same name, if a name is not valid UTF-8, or if the columns have different
+    lengths. *)
 
 val of_batches : t list -> t
 (** [of_batches ts] is the rows of [ts] one after the other, without a copy, in

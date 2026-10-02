@@ -1862,12 +1862,13 @@ let one_key =
         (List.length (batches t)))
     (Gen.bind G.sample (fun (G.Sample (ty, vs) as sample) ->
          let x =
-           if has_ext ty then [] else [ ("x", Column.of_options ty vs) ]
+           if has_ext ty then v ~rows:0 []
+           else v [ ("x", Column.of_options ty vs) ]
          in
          Gen.map
            (fun ((desc, nulls_first), t) ->
              (sample, { R.name = "x"; desc; nulls_first }, t))
-           (Gen.pair (Gen.pair Gen.bool Gen.bool) (G.split (v x)))))
+           (Gen.pair (Gen.pair Gen.bool Gen.bool) (G.split x))))
 
 (* An extension type, or one that holds one, has no order: its sample has no
    column. *)

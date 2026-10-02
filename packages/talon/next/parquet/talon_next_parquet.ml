@@ -226,7 +226,9 @@ let part ?file b m leaves g columns : Source.part =
         let column (name, i, ty) =
           (name, decode bytes m g i leaves.(i) name ty)
         in
-        Some (Talon_next.v (List.map column columns))
+        Some
+          (Talon_next.v ~rows:m.Meta.row_groups.(g).rows
+             (List.map column columns))
       end
     in
     Ok { Source.next; close = ignore }

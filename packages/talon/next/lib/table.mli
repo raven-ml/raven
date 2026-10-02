@@ -12,7 +12,7 @@
 
 type t
 
-val v : (string * Column.t) list -> t
+val v : ?rows:int -> (string * Column.t) list -> t
 val of_batches : t list -> t
 val batches : t -> t list
 val schema : t -> Schema.t

@@ -348,7 +348,8 @@ let elision =
              abcd  [3]
             |});
       test "a table without columns or rows" (fun () ->
-          expect (show (v [])) @@ __POS_OF__ {| table 0 rows × 0 columns |});
+          expect (show (v ~rows:0 []))
+          @@ __POS_OF__ {| table 0 rows × 0 columns |});
       test "a column without rows" (fun () ->
           expect (show (v [ ("", int8s 0) ]))
           @@ __POS_OF__
