@@ -87,13 +87,28 @@ let on_page l =
       at_most float_exact ~msg:"bottom" ~than:(h +. tol) (Box2.maxy b))
     (boxes l)
 
-(* [apart l] states that no text of [l] overlaps another, a data area or the
-   page's edge. *)
+(* [swatches l] is the box of every legend swatch and colour bar of [l], read
+   from its printed form. *)
+let swatches l =
+  let first line =
+    let i = String.index line '[' in
+    box_of (String.sub line 0 (String.index_from line i ']' + 1))
+  in
+  String.split_on_char '\n' (printed l)
+  |> List.filter_map (fun line ->
+      match String.split_on_char ' ' (String.trim line) with
+      | ("bar" | "entry") :: _ -> Some (first line)
+      | _ -> None)
+
+(* [apart l] states that the data areas of [l] lie on its page, and that no
+   text, swatch or colour bar of [l] overlaps another, a data area or the page's
+   edge. *)
 let apart l =
+  on_page l;
   let w, h = Layout.size l in
   (* Printed boxes have six significant digits. *)
   let tol = 1e-5 *. Float.max 100. (Float.max w h) in
-  let ts = texts l in
+  let ts = texts l @ swatches l in
   let overlaps (a0, b0, a1, b1) (c0, d0, c1, d1) =
     Float.min a1 c1 -. Float.max a0 c0 > tol
     && Float.min b1 d1 -. Float.max b0 d0 > tol
@@ -102,15 +117,15 @@ let apart l =
     (fun i t ->
       let x0, y0, x1, y1 = t in
       if x0 < -.tol || y0 < -.tol || x1 > w +. tol || y1 > h +. tol then
-        failf "a text leaves the page: %g %g %g %g" x0 y0 x1 y1;
+        failf "a box leaves the page: %g %g %g %g" x0 y0 x1 y1;
       List.iteri
         (fun j t' ->
-          if j > i && overlaps t t' then failf "texts %d and %d overlap" i j)
+          if j > i && overlaps t t' then failf "boxes %d and %d overlap" i j)
         ts;
       List.iter
         (fun b ->
           let p = (Box2.minx b, Box2.miny b, Box2.maxx b, Box2.maxy b) in
-          if overlaps t p then failf "text %d overlaps a data area" i)
+          if overlaps t p then failf "box %d overlaps a data area" i)
         (boxes l))
     ts
 
@@ -135,25 +150,59 @@ type case = {
   cols : int;
   exps : (int * int) list; (* Per cell, the magnitudes of x and y. *)
   colour : colour;
+  side : side; (* The colour legend's. *)
   facets : bool;
   shared : bool;
+  aspect : bool;
+  top : bool; (* Whether x axes are on top. *)
   titled : bool;
+  align : Text.Layout.halign;
   size : Size.t;
 }
 
+(* The case all others vary. *)
+let base =
+  {
+    rows = 1;
+    cols = 1;
+    exps = [ (0, 0) ];
+    colour = No_colour;
+    side = `Right;
+    facets = false;
+    shared = false;
+    aspect = false;
+    top = false;
+    titled = false;
+    align = `Center;
+    size = Size.panels 50. 50.;
+  }
+
 let pp_case ppf c =
-  Format.fprintf ppf "%d × %d, exponents [%a]%s%s%s%s, %a" c.rows c.cols
+  let side : side -> string = function
+    | `Left -> "left"
+    | `Right -> "right"
+    | `Top -> "top"
+    | `Bottom -> "bottom"
+  in
+  let align : Text.Layout.halign -> string = function
+    | `Left -> "left"
+    | `Center -> "centre"
+    | `Right -> "right"
+  in
+  Format.fprintf ppf "%d × %d, exponents [%a]%s%s%s%s%s%s, %a" c.rows c.cols
     (Format.pp_print_list
        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
        (fun ppf (a, b) -> Format.fprintf ppf "(%d, %d)" a b))
     c.exps
     (match c.colour with
     | No_colour -> ""
-    | Categories -> ", categories"
-    | Quantities -> ", quantities")
+    | Categories -> ", categories on the " ^ side c.side
+    | Quantities -> ", quantities on the " ^ side c.side)
     (if c.facets then ", facets" else "")
     (if c.shared then ", shared x" else "")
-    (if c.titled then ", titled" else "")
+    (if c.aspect then ", aspect 1" else "")
+    (if c.top then ", x on top" else "")
+    (if c.titled then ", titled " ^ align c.align else "")
     Size.pp c.size
 
 let gen_size =
@@ -173,28 +222,62 @@ let gen_case =
     (fun (rows, cols) ->
       let exp = Gen.int_range (-4) 8 in
       let colour = Gen.of_list [ No_colour; Categories; Quantities ] in
+      let side = Gen.of_list [ `Right; `Left; `Top; `Bottom ] in
+      let align = Gen.of_list [ `Center; `Left; `Right ] in
       Gen.map
-        (fun ((exps, colour), (facets, shared, titled), size) ->
-          { rows; cols; exps; colour; facets; shared; titled; size })
+        (fun ( (exps, colour, side),
+               ((facets, shared, aspect), (top, titled, align)),
+               size ) ->
+          {
+            rows;
+            cols;
+            exps;
+            colour;
+            side;
+            facets;
+            shared;
+            aspect;
+            top;
+            titled;
+            align;
+            size;
+          })
         (Gen.triple
-           (Gen.pair
+           (Gen.triple
               (Gen.list ~size:(Gen.constant (rows * cols)) (Gen.pair exp exp))
-              colour)
-           (Gen.triple Gen.bool Gen.bool Gen.bool)
+              colour side)
+           (Gen.pair
+              (Gen.triple Gen.bool Gen.bool Gen.bool)
+              (Gen.triple Gen.bool Gen.bool align))
            gen_size))
   |> Gen.with_pp pp_case
 
 let figure_of c =
   let cell (a, b) =
-    let x = f64 [| -.(10. ** Float.of_int a); 10. ** Float.of_int b |] in
+    (* Under an aspect, x spans what y does, or one axis's title could ask the
+       other for a length of many billions of points. *)
+    let x =
+      if c.aspect then f64 [| 0.; 10. ** Float.of_int b |]
+      else f64 [| -.(10. ** Float.of_int a); 10. ** Float.of_int b |]
+    in
     let y = f64 [| 0.; 10. ** Float.of_int b |] in
     let title = if c.titled then Some (Text.v "value") else None in
-    let fx = if c.facets then Some (strings [| "left"; "right" |]) else None in
+    let fx =
+      if c.facets then Some (strings ?title [| "left"; "right" |]) else None
+    in
     let mark ?fill () = dot ?fill ?fx ~x:(num x) ~y:(num ?title y) () in
-    match c.colour with
-    | No_colour -> mark ()
-    | Categories -> mark ~fill:(strings [| "alpha"; "b" |]) ()
-    | Quantities -> mark ~fill:(num y) ()
+    let mark =
+      match c.colour with
+      | No_colour -> mark ()
+      | Categories -> mark ~fill:(strings [| "alpha"; "b" |]) ()
+      | Quantities -> mark ~fill:(num y) ()
+    in
+    let guides =
+      (if c.top then [ axis ~side:`Top "x" ] else [])
+      @ if c.colour = No_colour then [] else [ legend ~side:c.side "color" ]
+    in
+    let cell = layer (mark :: guides) in
+    if c.aspect then coord (Coord.cartesian ~aspect:1. ()) cell else cell
   in
   let rec rows = function
     | [] -> []
@@ -212,14 +295,16 @@ let figure_of c =
         row :: rows rest
   in
   let g = grid (rows (List.map cell c.exps)) in
-  let g = if c.shared then share [ ("x", `Shared) ] g else g in
-  if c.titled then title (Text.v "A figure") g else g
+  (* A shared x under an aspect would span cells of other magnitudes. *)
+  let g = if c.shared && not c.aspect then share [ ("x", `Shared) ] g else g in
+  if c.titled then title ~align:c.align (Text.v "A figure") g else g
 
 (* [laid c] is the layout of [c], discarding a figure too small for it. *)
 let laid c =
   match layout c.size (resolve (figure_of c)) with
   | l -> l
-  | exception Invalid_argument _ ->
+  | exception (Invalid_argument m as e) ->
+      if not (contains m "needs") then raise e;
       assume false;
       assert false
 
@@ -278,8 +363,10 @@ let sizes =
 (* Grids *)
 
 let spines =
-  prop "spines align across rows and columns" ~count:60 gen_case (fun c ->
-      assume (not c.facets);
+  let plain_grids =
+    Gen.map (fun c -> { c with facets = false; aspect = false }) gen_case
+  in
+  prop "spines align across rows and columns" ~count:60 plain_grids (fun c ->
       let bs = Array.of_list (boxes (laid c)) in
       equal int (c.rows * c.cols) (Array.length bs);
       Array.iteri
@@ -462,6 +549,7 @@ let no_overlap =
       (* Panels 20 points wide leave the last axis too short for its frozen
          labels, which drop alternate ones. *)
       {
+        base with
         rows = 3;
         cols = 2;
         exps = [ (0, 0); (0, 0); (4, 0); (0, 0); (-3, -3); (0, 0) ];
@@ -472,6 +560,7 @@ let no_overlap =
         size = Size.panels 20. 20.;
       };
       {
+        base with
         rows = 1;
         cols = 3;
         exps = [ (0, 0); (0, 3); (0, 0) ];
@@ -482,6 +571,7 @@ let no_overlap =
         size = Size.panels 134.474 20.;
       };
       {
+        base with
         rows = 2;
         cols = 1;
         exps = [ (0, 0); (0, 6) ];
@@ -492,6 +582,7 @@ let no_overlap =
         size = Size.figure 300. 250.;
       };
       {
+        base with
         rows = 1;
         cols = 3;
         exps = [ (0, 0); (0, 0); (-1, -2) ];
@@ -819,6 +910,27 @@ let guides =
           let _, _, _, y1 = text_box l {|(text "model")|} in
           let _, y0, _, _ = text_box l {|(text "a")|} in
           equal (float 1e-3) pad (y0 -. y1));
+      test "ticks are frozen as chosen at the lengths of the second solve"
+        (fun () ->
+          (* Without guides x is 120 points long and takes three ticks; the
+             first choice's y labels and title leave it room for two. *)
+          let f =
+            plain ~y:(f64 [| 0.; 2e6; 1e6; 5e5 |]) (f64 [| 0.; 1.; 0.5; 0.25 |])
+          in
+          let p = printed (lay (Size.figure 120. 100.) f) in
+          let rec ticks i =
+            if String.sub p i 6 = "\nticks" then i else ticks (i + 1)
+          in
+          let i = ticks 0 in
+          expect (String.sub p i (String.length p - i))
+          @@ __POS_OF__
+               {|
+            ticks
+              "x" quantitative (ticks (0 "0") (1 "1") (minor 0.2 0.4 0.6 0.8))
+              "y" quantitative
+                (ticks (0 "0") (0.5 "1") (1 "2") (minor 0.1 0.2 0.3 0.4 0.6 0.7 0.8 0.9)
+                 (note "×10⁶"))
+            |});
       test "a hidden axis takes no room" (fun () ->
           let l =
             lay (Size.panels 50. 40.)
@@ -885,7 +997,9 @@ let reuse =
           let r = resolve (figure_of c) in
           match layout c.size r with
           | l -> equal layout_t l (layout c.size r)
-          | exception Invalid_argument _ -> assume false);
+          | exception (Invalid_argument m as e) ->
+              if not (contains m "needs") then raise e;
+              assume false);
       cases
         ~name:(fun (n, _, _, _) -> n)
         "a previous layout reuses to the fresh one" cases_
@@ -918,6 +1032,20 @@ let projections =
           equal (pair close close)
             (Box2.maxx p.box, Box2.miny p.box)
             (P2.x (at 1. 1.), P2.y (at 1. 1.)));
+      test "a panel of no height has no inverse" (fun () ->
+          let f =
+            layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
+            |> title (Text.v "t")
+          in
+          let p =
+            List.hd
+              (Layout.panels (lay (Size.figure 100. (title_h "t" +. pad)) f))
+          in
+          equal float_exact 0. (Box2.h p.box);
+          equal
+            (option (pair float_exact float_exact))
+            None
+            (Coord.invert p.projection (P2.v 1. 1.)));
       prop "inverting a projection undoes it"
         (Gen.pair (Gen.float_range (-2.) 2.) (Gen.float_range (-2.) 2.))
         (fun (x, y) ->
