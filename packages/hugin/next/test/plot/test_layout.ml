@@ -1537,6 +1537,134 @@ let ticks =
             (axis_labels (lay (Size.panels 100. 60.) f) "axis.x"));
     ]
 
+(* Inside legends *)
+
+let corners =
+  [
+    ("top left", `Top_left);
+    ("top right", `Top_right);
+    ("bottom left", `Bottom_left);
+    ("bottom right", `Bottom_right);
+  ]
+
+let kinds = [| "cat"; "dog"; "bird" |]
+
+(* Figures whose colour legend may stand inside: categories and a bar. *)
+let inside_figures =
+  let data = f64 [| 1.; 2.; 3. |] in
+  [
+    ( "categories",
+      dot ~x:(num data) ~y:(num data)
+        ~fill:(strings ~title:(Text.v "kind") kinds)
+        () );
+    ( "a colour bar",
+      dot ~x:(num data) ~y:(num data) ~fill:(num ~title:(Text.v "z") data) () );
+  ]
+
+let named l = Gen.of_list ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n) l
+
+let gen_inside =
+  Gen.triple (named inside_figures) (named corners)
+    (named
+       [
+         ("panels", Size.panels 200. 150.);
+         ("figure", Size.figure 360. 240.);
+         ("wide figure", Size.figure 600. 200.);
+       ])
+
+let unmoved_law ((_, f), (_, c), (_, size)) =
+  let with_legend g = boxes (lay size (layer [ f; g ])) in
+  equal
+    (list (Testable.make ~pp:Box2.pp ~equal:Box2.equal))
+    (with_legend (legend ~show:false "color"))
+    (with_legend (legend ~side:(`Inside c) "color"))
+
+(* [legend_box l] is the hull of the boxes of the elements of the one legend of
+   [l], read from its printed form. *)
+let legend_box l =
+  match guide_lines l "legend" with
+  | [ _ :: lines ] ->
+      List.fold_left
+        (fun (a0, b0, a1, b1) line ->
+          if String.contains line '[' then
+            let x0, y0, x1, y1 = box_of line in
+            (Float.min a0 x0, Float.min b0 y0, Float.max a1 x1, Float.max b1 y1)
+          else (a0, b0, a1, b1))
+        (infinity, infinity, neg_infinity, neg_infinity)
+        lines
+  | gs -> failf "%d legends" (List.length gs)
+
+let corner_case (_, c) =
+  let l =
+    lay (Size.panels 200. 150.)
+      (layer [ snd (List.hd inside_figures); legend ~side:(`Inside c) "color" ])
+  in
+  let box = List.hd (boxes l) in
+  let x0, y0, x1, y1 = legend_box l in
+  (* Printed boxes have six significant digits. *)
+  let near = float 1e-3 in
+  let inset = 0.25 *. em in
+  (match c with
+  | `Top_left | `Bottom_left ->
+      equal ~msg:"left" near (Box2.minx box +. inset) x0;
+      at_most ~msg:"right" float_exact ~than:(Box2.maxx box -. inset) x1
+  | `Top_right | `Bottom_right ->
+      equal ~msg:"right" near (Box2.maxx box -. inset) x1;
+      at_least ~msg:"left" float_exact ~than:(Box2.minx box +. inset) x0);
+  match c with
+  | `Top_left | `Top_right ->
+      equal ~msg:"top" near (Box2.miny box +. inset) y0;
+      at_most ~msg:"bottom" float_exact ~than:(Box2.maxy box -. inset) y1
+  | `Bottom_left | `Bottom_right ->
+      equal ~msg:"bottom" near (Box2.maxy box -. inset) y1;
+      at_least ~msg:"top" float_exact ~than:(Box2.miny box +. inset) y0
+
+let many = Array.init 8 (Printf.sprintf "kind %d")
+
+(* Two marks of four categories each, with the legend [g]. *)
+let crowded_with g =
+  layer
+    [
+      dot ~x:(num ramp) ~y:(num ramp) ~fill:(strings (Array.sub many 0 4)) ();
+      dot ~x:(num ramp) ~y:(num ramp) ~fill:(strings (Array.sub many 4 4)) ();
+      g;
+    ]
+
+let crowded = crowded_with (legend ~side:(`Inside `Top_left) "color")
+
+let inside_legends =
+  group "inside legends"
+    [
+      prop "an inside legend leaves the data areas as a hidden one does"
+        gen_inside unmoved_law;
+      cases "an inside legend lies in its corner, a pad from both edges"
+        ~name:fst corners corner_case;
+      test "an inside legend keeps the id of a legend" (fun () ->
+          equal (list string) [ "legend.color.cat" ]
+            (legend_ids
+               (layer
+                  [
+                    snd (List.hd inside_figures);
+                    legend ~side:(`Inside `Bottom_left) "color";
+                  ])));
+      test "panels grow to hold an inside legend and its pads" (fun () ->
+          let l = lay (Size.panels 40. 40.) crowded in
+          let box = List.hd (boxes l) in
+          let x0, y0, x1, y1 = legend_box l in
+          let pads = 2. *. 0.25 *. em in
+          at_least ~msg:"width" float_exact
+            ~than:(x1 -. x0 +. pads -. 1e-3)
+            (Box2.w box);
+          at_least ~msg:"height" float_exact
+            ~than:(y1 -. y0 +. pads -. 1e-3)
+            (Box2.h box));
+      test "a figure too small for an inside legend names a size that fits"
+        (fun () ->
+          let size = Size.figure 120. 100. in
+          ignore (lay size (crowded_with (legend ~show:false "color")));
+          fails_naming [ "needs"; "120" ] (fun () -> lay size crowded));
+    ]
+
 (* Theme presets *)
 
 (* [luminance c] is the WCAG relative luminance of the opaque colour [c]. *)
@@ -1760,6 +1888,7 @@ let () =
          titles;
          legends;
          ticks;
+         inside_legends;
          themes;
          glyphs;
          reuse;

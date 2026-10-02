@@ -18,6 +18,7 @@ let label_em = 0.9 (* Tick labels, legend entries and facet headers. *)
 let head_em = 1.2 (* Figure titles, in bold. *)
 let tick_em = 0.35
 let pad_em = 0.25 (* From ticks, panels and swatches to their texts. *)
+let inside_bar_em = 8.
 let clear_em = 0.5 (* Between the labels of one axis or legend. *)
 let title_gap_em = 0.5 (* Between a title and what it titles. *)
 let gap_em = 1.
@@ -110,6 +111,11 @@ let tier = function
   | Title _ -> Figure_titles
 
 type spec = { id : id; side : side; kind : kind }
+
+let inside g =
+  match g.kind with
+  | Legend { guide = { side = Some (`Inside c); _ }; _ } -> Some c
+  | Legend _ | Axis _ | Title _ -> None
 
 type t = {
   spec : spec;

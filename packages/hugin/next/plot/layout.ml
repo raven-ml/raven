@@ -22,6 +22,9 @@
    content          the protrusions of a grid's boundary cells
    v}
 
+   An inside legend is in no tier: laid out as a legend on the right, it moves
+   into a corner of its node's data hull, which must hold it.
+
    A guide serving several panels is on the smallest node holding them. A grid
    makes each gap the protrusions that meet it plus a gap, gives each track what
    its cells and guides need at least, and shares the rest among its tracks by
@@ -162,7 +165,10 @@ let panel scales (c : content) p =
           (fun part ->
             {
               Guide.id = path p.pnid [ Field "axis"; Field f.name ];
-              side = Option.value guide.side ~default:(default_side on);
+              side =
+                (match guide.side with
+                | Some (#side as s) -> s
+                | Some (`Inside _) | None -> default_side on);
               kind = Axis { guide; scale = i; part };
             })
           part)
@@ -430,7 +436,10 @@ let build (r : Resolved.t) scales =
       let spec id =
         {
           Guide.id = path id [ Field "legend"; Field f.name; Field kind ];
-          side = Option.value guide.side ~default:`Right;
+          side =
+            (match guide.side with
+            | Some (#side as s) -> s
+            | Some (`Inside _) | None -> `Right);
           kind = Legend { guide; scale = i };
         }
       in
@@ -461,8 +470,13 @@ let along (g : Guide.t) =
   if horizontal g.spec.side then (Box2.minx b, Box2.maxx b)
   else (Box2.miny b, Box2.maxy b)
 
-(* [bands em node] is the offset of each laid guide of [node] beyond its side of
-   the hull of the node's data areas, and the protrusions of [node]. On a side
+(* [stacked l] is [true] iff [l] has bounds and stands beyond its side: an
+   inside legend takes no band and protrudes nowhere. *)
+let stacked (l : laid) =
+  Option.is_some l.guide.bounds && Option.is_none (Guide.inside l.guide.spec)
+
+(* [bands em node] is the offset of each stacked guide of [node] beyond its side
+   of the hull of the node's data areas, and the protrusions of [node]. On a side
    the node protrudes by its content, then by each tier of guides, innermost
    first, in its bands, each as deep as its deepest guide.
 
@@ -472,9 +486,7 @@ let along (g : Guide.t) =
    beyond the reach there of the lower tiers' guides on the adjacent side. The
    node protrudes by its bands, or by every such reach if larger. *)
 let rec bands em node =
-  let gs =
-    List.filter (fun l -> Option.is_some l.guide.bounds) (guides_of node)
-  in
+  let gs = List.filter stacked (guides_of node) in
   let on_side s (l : laid) = equal_side l.guide.spec.side s in
   let reach s adjacent below =
     longest
@@ -557,8 +569,7 @@ let rec part em node =
   in
   let put placed (l : laid) =
     let mate b (m : laid) =
-      m.band = b
-      && Option.is_some m.guide.bounds
+      m.band = b && stacked m
       && equal_side m.guide.spec.side l.guide.spec.side
       && tier m = tier l
     in
@@ -566,7 +577,7 @@ let rec part em node =
       if List.for_all (apart l) (List.filter (mate b) placed) then b
       else first (b + 1)
     in
-    let band = if Option.is_some l.guide.bounds then first 0 else 0 in
+    let band = if stacked l then first 0 else 0 in
     placed @ [ { l with band } ]
   in
   let guides = List.fold_left put [] (guides_of node) in
@@ -683,19 +694,26 @@ type tracks = {
   y_off : float;
 }
 
-(* [needs guides] is the width and the height that [guides] need. *)
-let needs guides =
+(* [needs em guides] is the width and the height that [guides] need: an inside
+   legend needs its box and a pad on each side. *)
+let needs em guides =
+  let pad = 2. *. em *. Guide.pad_em in
   List.fold_left
     (fun (w, h) { guide = g; _ } ->
-      if horizontal g.spec.side then (Float.max w g.least, h)
-      else (w, Float.max h g.least))
+      match (Guide.inside g.spec, g.bounds) with
+      | Some _, Some b ->
+          (Float.max w (Box2.w b +. pad), Float.max h (Box2.h b +. pad))
+      | Some _, None -> (w, h)
+      | None, _ ->
+          if horizontal g.spec.side then (Float.max w g.least, h)
+          else (w, Float.max h g.least))
     (0., 0.) guides
 
 (* [natural em unit node] is the least width and height of [node], [unit] being
    the data area a track of weight [1.] has at least. *)
 let rec natural em unit = function
   | Panel p -> (
-      let w, h = needs p.guides in
+      let w, h = needs em p.guides in
       (* A panel with an aspect fits its box in its cell, so the box holds what
          the cell must hold only if both lengths ask for it. *)
       match p.ratio with
@@ -747,7 +765,7 @@ and measure em (uw, uh) g =
       cells
   in
   (* The node's own guides need lengths that span all its tracks. *)
-  let w, h = needs g.guides in
+  let w, h = needs em g.guides in
   let cols_least =
     least g.widths (Array.make nc uw)
       ((0, nc, w) :: List.map (fun (c, _, (w, _)) -> (c.c0, c.nc, w)) cells)
@@ -879,17 +897,44 @@ let origin hull (side : side) o =
   | `Left -> P2.v (Box2.minx hull -. o) (Box2.miny hull)
   | `Right -> P2.v (Box2.maxx hull +. o) (Box2.miny hull)
 
+(* [corner em hull c g] is the origin of the frame of the inside legend [g]
+   that puts its bounds in the corner [c] of [hull], a pad from both edges. *)
+let corner em hull c (g : Guide.t) =
+  let b = Option.get g.bounds and pad = em *. Guide.pad_em in
+  let left = Box2.minx hull +. pad -. Box2.minx b
+  and right = Box2.maxx hull -. pad -. Box2.maxx b
+  and top = Box2.miny hull +. pad -. Box2.miny b
+  and bottom = Box2.maxy hull -. pad -. Box2.maxy b in
+  match c with
+  | `Top_left -> P2.v left top
+  | `Top_right -> P2.v right top
+  | `Bottom_left -> P2.v left bottom
+  | `Bottom_right -> P2.v right bottom
+
 (* [placed em node geo] is each laid guide of [node] with the origin of its
    frame on the page, those of its cells first. *)
 let placed em node geo =
   let add hull acc ((g : Guide.t), o) = (g, origin hull g.spec.side o) :: acc in
-  List.rev
-    (fold
-       (fun acc n hull -> List.fold_left (add hull) acc (fst (bands em n)))
-       [] node geo)
+  let inside hull acc (l : laid) =
+    match (Guide.inside l.guide.spec, l.guide.bounds) with
+    | Some c, Some _ -> (l.guide, corner em hull c l.guide) :: acc
+    | _ -> acc
+  in
+  let node_guides acc n hull =
+    let acc = List.fold_left (add hull) acc (fst (bands em n)) in
+    List.fold_left (inside hull) acc (guides_of n)
+  in
+  List.rev (fold node_guides [] node geo)
 
 let side_length hull side = if horizontal side then Box2.w hull else Box2.h hull
 let across hull side = if horizontal side then Box2.h hull else Box2.w hull
+
+(* [guide_length em hull g] is the length of the side [g] is laid along: an
+   inside legend is set beside a side of its own length. *)
+let guide_length em hull (g : Guide.spec) =
+  match Guide.inside g with
+  | Some _ -> em *. Guide.inside_bar_em
+  | None -> side_length hull g.side
 
 (* Laying out guides *)
 
@@ -954,7 +999,7 @@ let rec strip = function
 let lay em cx slot node geo =
   let one hull shown k x =
     let spec, wrap, band = slot x in
-    let length = side_length hull spec.Guide.side in
+    let length = guide_length em hull spec in
     let wrap = Option.value wrap ~default:length in
     let across = across hull spec.side in
     let span = span shown hull spec length in
@@ -1073,7 +1118,7 @@ let attempt ?prev theme size (r : Resolved.t) =
   let lengths spec node geo =
     let add hull acc x =
       let (g : Guide.spec) = spec x in
-      (g, side_length hull g.side) :: acc
+      (g, guide_length em hull g) :: acc
     in
     fold
       (fun acc n hull -> List.fold_left (add hull) acc (guides_of n))

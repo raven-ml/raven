@@ -1107,12 +1107,25 @@ val axis : ?side:side -> ?grid:bool -> ?show:bool -> string -> t
     a scale that [x] reads or [`Top] or [`Bottom] for one that [y] reads, or if
     a panel holds two different axes for one scale. *)
 
-val legend : ?side:side -> ?show:bool -> string -> t
+type corner = [ `Top_left | `Top_right | `Bottom_left | `Bottom_right ]
+(** The type for the corners of a panel or of a scope's figure. *)
+
+val legend : ?side:[< side | `Inside of corner ] -> ?show:bool -> string -> t
 (** [legend ~side ~show name] is the legend of the scales named [name] in the
     scope of the figures it is layered with, in place of the one generated for
     each ({!section-guides}), placed on [side] of the panels that read the
     scales, [`Right] by default, and drawn iff [show], [true] by default. It
     draws nothing itself.
+
+    With [`Inside c], the legend lies in the corner [c] of the hull of the data
+    areas of those panels, [0.25] em from both edges, its entries in one column
+    and its colour bar [8] em long. It takes no tier and protrudes nowhere
+    ({!layout}): the panels must be as large as the legend and its pads, so
+    under {!Size.panels} their tracks grow to hold it, and a {!Size.figure} too
+    small for it raises in {!layout}. It is drawn under the marks, with the grid
+    lines, so the data stays visible over it; no corner is chosen for being
+    empty, so pick the corner the data leaves empty, or widen the domain
+    ({!Scale.linear}): [layer [ f; legend ~side:(`Inside `Top_right) "color" ]].
 
     {!resolve} raises [Invalid_argument] if [name] names no scale with a legend
     in that scope, or if the scope holds two different legends for one scale. *)
@@ -1866,6 +1879,8 @@ val layout :
     data areas by its boundary cells' protrusions, then by its bands, or by what
     its guides reach past the ends of the adjacent sides if that is more.
     Titles, headers and legends need their side to be as long as they are.
+    Inside legends are no tier: their node needs their width and height, each
+    with a pad on both sides, as its least width and height.
 
     Each grid makes each gap the largest protrusions that meet it from either
     side plus the theme's gap ({!Theme.section-lengths}), and shares the length

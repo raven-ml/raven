@@ -35,12 +35,14 @@ type mark = {
 
 type sharing = [ `Shared | `Independent ]
 type side = [ `Left | `Right | `Top | `Bottom ]
+type corner = [ `Top_left | `Top_right | `Bottom_left | `Bottom_right ]
+type place = [ side | `Inside of corner ]
 type guide_kind = Axis of { grid : bool } | Legend
 
 type guide = {
   kind : guide_kind;
   scale : string;
-  side : side option;
+  side : place option;
   show : bool;
 }
 
@@ -108,13 +110,37 @@ let pp_side ppf (side : side) =
     | `Top -> "top"
     | `Bottom -> "bottom")
 
+let equal_place (p : place) (p' : place) =
+  match (p, p') with
+  | (#side as s), (#side as s') -> equal_side s s'
+  | `Inside c, `Inside c' -> (
+      match (c, c') with
+      | `Top_left, `Top_left
+      | `Top_right, `Top_right
+      | `Bottom_left, `Bottom_left
+      | `Bottom_right, `Bottom_right ->
+          true
+      | _ -> false)
+  | (#side | `Inside _), _ -> false
+
+let pp_place ppf (p : place) =
+  match p with
+  | #side as s -> pp_side ppf s
+  | `Inside c ->
+      Format.fprintf ppf "inside %s"
+        (match c with
+        | `Top_left -> "top left"
+        | `Top_right -> "top right"
+        | `Bottom_left -> "bottom left"
+        | `Bottom_right -> "bottom right")
+
 let equal_guide g g' =
   (match (g.kind, g'.kind) with
     | Axis a, Axis a' -> Bool.equal a.grid a'.grid
     | Legend, Legend -> true
     | Axis _, Legend | Legend, Axis _ -> false)
   && String.equal g.scale g'.scale
-  && Option.equal equal_side g.side g'.side
+  && Option.equal equal_place g.side g'.side
   && Bool.equal g.show g'.show
 
 let is_axis g = match g.kind with Axis _ -> true | Legend -> false
@@ -123,7 +149,7 @@ let pp_guide ppf g =
   Format.fprintf ppf "%s %S%a%s%s"
     (match g.kind with Axis _ -> "axis" | Legend -> "legend")
     g.scale
-    (Format.pp_print_option (fun ppf s -> Format.fprintf ppf " %a" pp_side s))
+    (Format.pp_print_option (fun ppf s -> Format.fprintf ppf " %a" pp_place s))
     g.side
     (match g.kind with Axis { grid = true } -> " grid" | _ -> "")
     (if g.show then "" else " hidden")
@@ -305,7 +331,14 @@ let name s f =
 let bind k fn = Bind (k, fn)
 
 let axis ?side ?(grid = false) ?(show = true) scale =
+  let side = Option.map (fun s -> (s : side :> place)) side in
   Guide { kind = Axis { grid }; scale; side; show }
 
+(* A legend's place may be given as a [side], whose type is closed. *)
+let place : [< place ] -> place = function
+  | (`Left | `Right | `Top | `Bottom) as s -> s
+  | `Inside c -> `Inside c
+
 let legend ?side ?(show = true) scale =
+  let side = Option.map place side in
   Guide { kind = Legend; scale; side; show }

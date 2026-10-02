@@ -61,12 +61,18 @@ val make_mark :
 
 type sharing = [ `Shared | `Independent ]
 type side = [ `Left | `Right | `Top | `Bottom ]
+type corner = [ `Top_left | `Top_right | `Bottom_left | `Bottom_right ]
+
+type place = [ side | `Inside of corner ]
+(** Where a guide stands: on a side of what it serves, or inside a legend's
+    corner of it. Only legends stand inside. *)
+
 type guide_kind = Axis of { grid : bool } | Legend
 
 type guide = {
   kind : guide_kind;
   scale : string;
-  side : side option;
+  side : place option;
   show : bool;
 }
 
@@ -89,6 +95,7 @@ type t =
 val equal : t -> t -> bool
 val equal_side : side -> side -> bool
 val pp_side : Format.formatter -> side -> unit
+val equal_place : place -> place -> bool
 val equal_guide : guide -> guide -> bool
 val pp_guide : Format.formatter -> guide -> unit
 val is_axis : guide -> bool
@@ -105,4 +112,4 @@ val coord : Coord.t -> t -> t
 val name : string -> t -> t
 val bind : 'a View.key -> ('a -> t) -> t
 val axis : ?side:side -> ?grid:bool -> ?show:bool -> string -> t
-val legend : ?side:side -> ?show:bool -> string -> t
+val legend : ?side:[< place ] -> ?show:bool -> string -> t

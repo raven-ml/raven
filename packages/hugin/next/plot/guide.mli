@@ -21,6 +21,14 @@ val gap_em : float
 (** [gap_em] is the gap, in em, between grid cells and between a legend and what
     it stands beside. *)
 
+val pad_em : float
+(** [pad_em] is the pad, in em, between ticks, panels and swatches and their
+    texts, and between an inside legend and the edges of its corner. *)
+
+val inside_bar_em : float
+(** [inside_bar_em] is the length, in em, of the colour bar of an inside legend.
+*)
+
 type sides = { left : float; right : float; top : float; bottom : float }
 (** Lengths beyond each side of a box, in points. *)
 
@@ -82,6 +90,11 @@ val tier : kind -> tier
     the axis proper innermost. *)
 
 type spec = { id : Common.id; side : Figure.side; kind : kind }
+
+val inside : spec -> Figure.corner option
+(** [inside g] is the corner of [g] if it is an inside legend, laid out as a
+    legend on the right and then moved into that corner of its node's data hull.
+*)
 
 (** {1:laid Laid-out guides} *)
 

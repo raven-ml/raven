@@ -6,12 +6,12 @@
 (* Drawing
 
    [draw] paints a laid-out figure: the paper, then each panel's marks over its
-   grid lines, then the axes, headers, legends and titles. Marks clip their
-   positions to the panel's domain, not their ink, so the stage clips nothing. A
-   mark is drawn one cell at a time: its facet channels put each of its rows in
-   a panel, and in each panel its reducer may draw the rows in its stead,
-   reading only what it draws; its draw function draws the others, and the large
-   images of what it draws are gathered. *)
+   grid lines and inside legends, then the axes, headers, legends and titles.
+   Marks clip their positions to the panel's domain, not their ink, so the stage
+   clips nothing. A mark is drawn one cell at a time: its facet channels put
+   each of its rows in a panel, and in each panel its reducer may draw the rows
+   in its stead, reading only what it draws; its draw function draws the others,
+   and the large images of what it draws are gathered. *)
 
 module P2 = Hugin_next_gg.P2
 module Box2 = Hugin_next_gg.Box2
@@ -763,7 +763,14 @@ let afresh ~density l =
   let drawn = panels cx in
   let notes = ref [] in
   let guides = Layout.guides l in
-  let painted = List.map (paint cx notes) guides in
+  (* Inside legends lie under the marks, which stay visible over them. *)
+  let under, over =
+    List.partition
+      (fun (g : Guide.t) -> Option.is_some (Guide.inside g.spec))
+      guides
+  in
+  let painted = List.map (paint cx notes) over in
+  let beneath = List.map (paint cx notes) under in
   let w, h = Layout.size l in
   let paper = Theme.paper ctx.theme in
   let paper =
@@ -772,7 +779,8 @@ let afresh ~density l =
   in
   let picture =
     Picture.group
-      ((paper :: List.map (lines cx) guides) @ List.map fst drawn @ painted)
+      ((paper :: List.map (lines cx) guides)
+      @ beneath @ List.map fst drawn @ painted)
   in
   let warnings =
     dedupe (Layout.warnings l @ List.concat_map snd drawn @ List.rev !notes)

@@ -2295,6 +2295,47 @@ let frames =
                (tags line_id d)));
     ]
 
+(* Inside legends *)
+
+(* [first_tag id d] is the place of the first tag of [id] in the drawing order
+   of [d]. *)
+let first_tag id d =
+  let order =
+    collect (function Picture.Tag { tag; _ } -> Some tag.id | _ -> None) d
+  in
+  let rec find i = function
+    | [] -> failf "no tag %s" (Nx.Ptree.Path.to_string id)
+    | x :: rest -> if Nx.Ptree.Path.equal x id then i else find (i + 1) rest
+  in
+  find 0 order
+
+let inside_legend side =
+  let f =
+    layer
+      [
+        dot
+          ~x:(num (f64 [| 1.; 2. |]))
+          ~y:(num (f64 [| 1.; 2. |]))
+          ~fill:(strings [| "a"; "b" |])
+          ();
+        legend ~side "color";
+      ]
+  in
+  let d = drawn ~size:(Size.panels 150. 100.) f in
+  let legend = path [ Field "legend"; Field "color"; Field "cat" ] in
+  (first_tag legend d, first_tag mark_id d)
+
+let inside_legends =
+  group "Inside legends"
+    [
+      test "an inside legend is drawn under the marks" (fun () ->
+          let l, m = inside_legend (`Inside `Top_right) in
+          less int ~than:m l);
+      test "a legend on a side is drawn over them" (fun () ->
+          let l, m = inside_legend `Right in
+          greater int ~than:m l);
+    ]
+
 (* Explicit ticks *)
 
 let gen_ticks =
@@ -2459,6 +2500,7 @@ let () =
          dashes;
          ablines;
          frames;
+         inside_legends;
          legend_swatches;
          public_marks;
          goldens;
