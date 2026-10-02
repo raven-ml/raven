@@ -199,6 +199,49 @@ let scatters =
             [ false; true ];
           equal ~msg:"duplicates" (tensor float_exact) (v [| 0.; -0.; -0. |])
             (add ~unique_indices:false [| 0L; 0L |] [| -0.; -0. |]));
+      group "scatter Add of integers wraps at their width"
+        (List.map
+           (fun (Int_dtype d) ->
+             let value = int_value ~bits:d.bits ~signed:d.signed in
+             let drawn =
+               let open Gen in
+               let* m = int_range 0 12 in
+               let+ updates = array ~size:(constant m) value
+               and+ idx = array ~size:(constant m) (int_range (-2) 4)
+               and+ into = array ~size:(constant 4) value
+               and+ flipped = bool in
+               (updates, idx, into, flipped)
+             in
+             prop d.name drawn (fun (updates, idx, into, flipped) ->
+                 let expected = Array.copy into in
+                 Array.iteri
+                   (fun i k ->
+                     if k >= 0 && k < 4 then
+                       expected.(k) <-
+                         wrap ~bits:d.bits ~signed:d.signed
+                           (Int64.add expected.(k) updates.(i)))
+                   idx;
+                 let m = Array.length updates in
+                 (* Flipped operands are the same arrays through negative
+                    strides. *)
+                 let flip x =
+                   if flipped then Nx.flip (Nx.contiguous (Nx.flip x)) else x
+                 in
+                 let vector a =
+                   flip (Nx.create d.dtype [| m |] (Array.map d.of_i64 a))
+                 in
+                 let indices =
+                   flip
+                     (Nx.create Nx.int64 [| m |] (Array.map Int64.of_int idx))
+                 in
+                 equal (array d.exact)
+                   (Array.map d.of_i64 expected)
+                   (Nx.to_array
+                      (Nx.scatter ~mode:`Add ~axis:0 ~indices
+                         ~values:(vector updates)
+                         (Nx.create d.dtype [| 4 |]
+                            (Array.map d.of_i64 into))))))
+           int_dtypes);
       test "scatter refuses indices of another rank" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.scatter ~axis:0 ~indices:(indices_tensor [| 0 |])

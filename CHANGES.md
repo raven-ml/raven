@@ -3046,6 +3046,9 @@ thread.
 
 ### Nx
 
+- `Nx.scatter ~mode:`Add` of integers along one axis, and so
+  `Nx.reduce_segments `Add` and `Nx.unique`'s counts, adds in a loop typed by
+  the elements' width, where it called a function per update.
 - `Nx.unique` groups its keys in hash tables where it sorted them, on every
   core, and `Nx_ragged.ids` groups each round's rows the same way: both now
   cost an expected pass over their keys, and their results are unchanged.

@@ -635,6 +635,7 @@ typedef struct {
   uint8_t *hit;
   int axis;
   int64_t esize;
+  bool int_add; /* `Add of integers, which wrap in their storage width */
 } nx_c_scatter_ctx;
 
 /* `Set along one axis of elements of 1, 2, 4 or 8 bytes, in that unsigned
@@ -666,6 +667,31 @@ NX_C_SCATTER_SET_LINE(uint32_t)
 NX_C_SCATTER_SET_LINE(uint64_t)
 #undef NX_C_SCATTER_SET_LINE
 
+/* `Add of integers along one axis, in the unsigned type of their width, whose
+   sum wraps as the signed one does in two's complement. A dropped update adds
+   0 to element 0, so that kept and dropped updates take no branch each. */
+#define NX_C_SCATTER_ADD_LINE(T)                                               \
+  static void nx_c_scatter_add_line_##T(const nx_c_scatter_ctx *sc,            \
+                                        int64_t lo, int64_t hi) {              \
+    const nx_c_ndarray *out = sc->out, *ix = sc->indices, *up = sc->updates;  \
+    const int64_t *index = (const int64_t *)ix->data + ix->offset;            \
+    const T *u = (const T *)up->data + up->offset;                            \
+    T *o = (T *)out->data + out->offset;                                      \
+    int64_t n = out->shape[0], is = ix->strides[0], us = up->strides[0],      \
+            os = out->strides[0];                                             \
+    if (n == 0) return;                                                       \
+    for (int64_t it = lo; it < hi; it++) {                                    \
+      int64_t k = index[it * is];                                             \
+      bool kept = (uint64_t)k < (uint64_t)n;                                  \
+      o[(kept ? k : 0) * os] += kept ? u[it * us] : (T)0;                     \
+    }                                                                          \
+  }
+NX_C_SCATTER_ADD_LINE(uint8_t)
+NX_C_SCATTER_ADD_LINE(uint16_t)
+NX_C_SCATTER_ADD_LINE(uint32_t)
+NX_C_SCATTER_ADD_LINE(uint64_t)
+#undef NX_C_SCATTER_ADD_LINE
+
 static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
   const nx_c_scatter_ctx *sc = vctx;
@@ -675,6 +701,15 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     case 2: nx_c_scatter_set_line_uint16_t(sc, lo, hi); return;
     case 4: nx_c_scatter_set_line_uint32_t(sc, lo, hi); return;
     case 8: nx_c_scatter_set_line_uint64_t(sc, lo, hi); return;
+    default: break;
+    }
+  }
+  if (sc->indices->ndim == 1 && sc->int_add) {
+    switch (sc->esize) {
+    case 1: nx_c_scatter_add_line_uint8_t(sc, lo, hi); return;
+    case 2: nx_c_scatter_add_line_uint16_t(sc, lo, hi); return;
+    case 4: nx_c_scatter_add_line_uint32_t(sc, lo, hi); return;
+    case 8: nx_c_scatter_add_line_uint64_t(sc, lo, hi); return;
     default: break;
     }
   }
@@ -751,8 +786,9 @@ static nx_c_status nx_c_scatter_run(const nx_c_ndarray *out,
   int nd = indices->ndim;
   int64_t total = nx_c_prod(nd, indices->shape);
   if (total == 0) return NX_C_OK;
-  nx_c_scatter_ctx sc = {out,  indices, updates, combine, NULL,
-                         NULL, NULL,    axis,    esize};
+  nx_c_scatter_ctx sc = {out,  indices, updates, combine,
+                         NULL, NULL,    NULL,    axis,
+                         esize, mode == 1 && nx_c_dtype_is_int(dt)};
   /* A narrow float sum keeps 5 bytes of scratch per position of out. With
      distinct positions each sum has one update, which the per-update add
      already rounds once. out is C-contiguous from its first element, so a
