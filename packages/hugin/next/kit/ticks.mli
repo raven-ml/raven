@@ -138,11 +138,12 @@ val of_values :
     a category between two labels. Otherwise the candidate chosen balances, as
     Talbot, Lin and Hanrahan score it, its {e simplicity} (a preferred step, a
     small skip, and [0.] among the ticks, [1.] on a log scale), its {e coverage}
-    of the domain by the span of its ticks, and its {e density}, near the number
-    of ticks that lie the greater of [spacing] and twice the mean extent of
-    their labels apart, so that labels fill at most half the axis, but no more
-    than a hundred, which a reader cannot take in on one axis. Those labels are
-    the labels of about ten values of the scale's family inside the domain:
+    of the domain by the span of its ticks, and its {e density}, near the lesser
+    of two numbers of ticks: the number whose labels fill half the axis, but no
+    more than a hundred, which a reader cannot take in on one axis; and the
+    number [spacing] apart from one end of the axis to the other. The labels
+    that fill the axis are those of about ten values of the scale's family
+    inside the domain:
     - on linear, pow and custom scales, the multiples of the decimal step for a
       tenth of the domain's length, the step its nice domain rounds to
       ({!Scale.section-nice});

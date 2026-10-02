@@ -870,8 +870,9 @@ let choose (type d) ?(locale = Locale.default) ?notation ?(spacing = 0.) ~length
   in
   (* [continuous a reference search] is the ticks of a continuous domain from
      [a]. The labels of the values [reference ()], those a nice domain rounds
-     to, set the density target: [m] ticks the greater of [spacing] and twice
-     their mean extent apart. *)
+     to, set the density target: [m] ticks of their mean extent fill half the
+     axis, and [ρt] is the lesser of their [m - 1] intervals and the [length /
+     spacing] intervals that fit at the spacing. *)
   let continuous a reference search =
     let u = st.norm a in
     if Float.is_nan u then ticks_of [||] [||] None []
@@ -888,8 +889,9 @@ let choose (type d) ?(locale = Locale.default) ?notation ?(spacing = 0.) ~length
         Array.fold_left (fun m l -> m +. tick_extent st l) 0. labels
         /. Float.of_int (Array.length labels)
       in
-      let m = Float.min (length /. Float.max spacing (2. *. mean)) most_ticks in
-      let st = { st with rho_t = Float.max 1. (m -. 1.) } in
+      let m = Float.min (length /. (2. *. mean)) most_ticks in
+      let rho_t = Float.min (m -. 1.) (length /. spacing) in
+      let st = { st with rho_t = Float.max 1. rho_t } in
       search st;
       chosen st
   in

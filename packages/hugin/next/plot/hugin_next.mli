@@ -1108,7 +1108,7 @@ module Theme : sig
       [0.25] em from their labels, the labels of one axis or legend at least
       [0.5] em apart, and titles [0.25] em from what they title; ticks aiming to
       lie [5] em apart on x axes and colour bars and [3.5] em apart on y axes,
-      or twice the mean extent of their labels if that is more
+      fewer if their labels would fill more than half the axis
       ({!Hugin_next_kit.Ticks.choose}); legend swatches [1] em square and [0.25]
       em from their labels, and colour bars [1] em wide; axis lines, ticks and
       the outlines of marks [0.08] em wide, and grid lines [0.06] em wide; lines

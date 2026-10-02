@@ -912,16 +912,23 @@ let choice =
             (Ticks.choose ~length ~measure s)
             (Ticks.choose ~spacing ~length ~measure s));
       test "a spacing of a fifth of the axis aims for five steps" (fun () ->
-          (* [m] is [5], so [ρt = 4]: the step [0.25] has [ρ = 4], a density of
-             [1], the tick [0] and full coverage, and beats the simpler steps
-             [0.2], of density [0.75], and [0.5], of density [0]. Without the
-             spacing the step is [0.1]. *)
+          (* [ρt] is [500 / 100 = 5] intervals: the step [0.2] has [ρ = 5], a
+             density of [1], the tick [0] and full coverage, and beats the step
+             [0.25], of density [0.75] and lower simplicity. Without the spacing
+             the step is [0.1]. *)
           let s = linear 0. 1. in
           equal (list string)
-            [ "0.00"; "0.25"; "0.50"; "0.75"; "1.00" ]
+            [ "0.0"; "0.2"; "0.4"; "0.6"; "0.8"; "1.0" ]
             (labels (Ticks.choose ~spacing:100. ~length:500. ~measure s));
           equal int 11
             (List.length (Ticks.choose ~length:500. ~measure s).major));
+      test "three ticks that fit at the spacing beat two" (fun () ->
+          (* A facet panel's x axis: [ρt] is [120 / 50 = 2.4] intervals, so [0],
+             [5], [10], of density [0.8], beat [0], [10], of density [-0.4],
+             whose step is simpler. *)
+          equal (list string) [ "0"; "5"; "10" ]
+            (labels
+               (Ticks.choose ~spacing:50. ~length:120. ~measure (linear 0. 10.))));
       prop "every step of a linear axis is 1, 2, 2.5 or 5 times a power of ten"
         (Gen.quad
            (Gen.float_range (-1e4) 1e4)

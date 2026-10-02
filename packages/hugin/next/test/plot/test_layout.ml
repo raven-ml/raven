@@ -1150,12 +1150,12 @@ let guides =
             [ (300., 500.); (600., 200.) ]);
       test "ticks are frozen as chosen at the lengths of the second solve"
         (fun () ->
-          (* Without guides x is 130 points long and takes three ticks; the
+          (* Without guides x is 100 points long and takes three ticks; the
              first choice's y labels and title leave it room for two. *)
           let f =
             plain ~y:(f64 [| 0.; 2e6; 1e6; 5e5 |]) (f64 [| 0.; 1.; 0.5; 0.25 |])
           in
-          let p = printed (lay (Size.figure 130. 100.) f) in
+          let p = printed (lay (Size.figure 100. 100.) f) in
           let rec ticks i =
             if String.sub p i 6 = "\nticks" then i else ticks (i + 1)
           in
@@ -1166,7 +1166,8 @@ let guides =
             ticks
               "x" quantitative (ticks (0 "0") (1 "1") (minor 0.2 0.4 0.6 0.8))
               "y" quantitative
-                (ticks (0 "0") (1 "2") (minor 0.25 0.5 0.75) (note "×10⁶"))
+                (ticks (0 "0") (0.5 "1") (1 "2") (minor 0.1 0.2 0.3 0.4 0.6 0.7 0.8 0.9)
+                 (note "×10⁶"))
             |});
       test "a hidden axis takes no room" (fun () ->
           let l =
