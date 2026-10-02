@@ -288,11 +288,12 @@
  (name test_resolve)
  (modules test_resolve)
  (package hugin)
- (libraries hugin hugin.kit nx windtrap)
+ (libraries hugin hugin.kit hugin_test_figures nx windtrap)
+ (deps golden/resolved.expected)
  (action
   (progn
    (run %{test} --corrected)
-   (diff? test_resolve.ml test_resolve.ml.corrected))))
+   (diff? golden/resolved.expected golden/resolved.expected.corrected))))
 
 (test
  (name test_layout)

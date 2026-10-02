@@ -1,0 +1,164 @@
+confusion
+figure
+  panel root
+    coord cartesian ~aspect:1
+    rect 0
+    text 1
+scales
+  "x" categorical, read by 0:x, 1:x
+    (band (domain (indices (0 "plane") (1 "car") (2 "bird") (3 "cat"))))
+  "y" categorical, read by 0:y, 1:y
+    (band (domain (indices (0 "plane") (1 "car") (2 "bird") (3 "cat")))
+     (reverse true))
+  "color" quantitative, read by 0:fill, 1:fill
+    (linear (domain 0 1))
+
+attention
+figure
+  panel root
+    rect root
+    facets panel.0.0, panel.0.1, panel.1.0, panel.1.1
+scales
+  "x" categorical, read by root:x
+    (band (domain (indices (0 "a") (1 "b") (2 "c") (3 "d"))))
+  "y" categorical, read by root:y
+    (band (domain (indices (0 "a") (1 "b") (2 "c") (3 "d"))) (reverse true))
+  "color" quantitative, read by root:fill
+    (linear (domain 0 1))
+  "fx" categorical, read by root:fx
+    (band (domain (indices (0 "0") (1 "1"))))
+  "fy" categorical, read by root:fy
+    (band (domain (indices (0 "0") (1 "1"))))
+
+embedding
+figure
+  panel root
+    dot root
+scales
+  "x" quantitative, read by root:x
+    (linear (domain -10 10))
+  "y" quantitative, read by root:y
+    (linear (domain -10 10))
+  "color" categorical, read by root:fill
+    (band (domain (labels "0" "1" "2" "3" "4" "5" "6" "7" "8" "9")))
+
+embedding-dense
+figure
+  panel root
+    dot root
+scales
+  "x" quantitative, read by root:x
+    (linear (domain -10 10))
+  "y" quantitative, read by root:y
+    (linear (domain -10 10))
+  "color" categorical, read by root:fill
+    (band (domain (labels "0" "1" "2" "3" "4" "5" "6" "7" "8" "9")))
+
+images
+figure
+  panel root
+    image 0
+    rect 1
+    facets panel.0, panel.1, panel.2, panel.3, panel.4, panel.5
+scales
+  "x" quantitative, read by 0:x, 0:x2
+    (linear (domain 0 8))
+    guide false
+  "y" quantitative, read by 0:y, 0:y2
+    (linear (domain 0 8) (reverse true))
+    guide false
+  "fx" categorical, read by 0:fx, 1:fx
+    (band
+     (domain (indices (0 "dark \226\134\146 dark")
+              (1 "light \226\134\146 light") (2 "dark \226\134\146 light")
+              (3 "light \226\134\146 light") (4 "dark \226\134\146 dark")
+              (5 "light \226\134\146 dark")))
+     (wrap 3))
+
+landscape
+figure
+  panel root
+    contour 0
+    line 1
+    dot 2
+scales
+  "x" quantitative, read by 0:x, 1:x, 2:x
+    (linear (domain -2 2))
+  "y" quantitative, read by 0:y, 1:y, 2:y
+    (linear (domain -1 1))
+  "color" quantitative, read by 0:fill
+    (log 10 (domain 0.1 10) (stepped true))
+
+dashboard
+figure
+  grid root, 2 × 1
+    cell (0, 0)
+      panel 0
+        rule 0.0
+        line 0.1
+        line 0.2
+    cell (1, 0)
+      panel 1
+        dot 1.0
+        text 1.1
+scales
+  "x" quantitative, read by 0.0:x, 0.1:x, 0.2:x, 1.0:x, 1.1:x
+    (linear (domain 0 200))
+  "y" quantitative, read by 0.1:y, 0.2:y
+    (log 10 (domain 0.01 10))
+  "y" quantitative, read by 1.0:y, 1.1:y
+    (linear (domain 0.62 0.84))
+
+paper
+figure
+  grid root, 2 × 2
+    cell (0, 0)
+      panel 0
+        title (text "(a)") left
+        line 0
+    cell (0, 1)
+      panel 1
+        title (text "(b)") left
+        dot 1
+    cell (1, 0)
+      panel 2
+        title (text "(c)") left
+        rect 2
+    cell (1, 1)
+      panel 3
+        title (text "(d)") left
+        rect 3
+scales
+  "x" quantitative, read by 0:x
+    (linear (domain 0 6))
+  "y" quantitative, read by 0:y
+    (linear (domain -1 1))
+  "color" categorical, read by 0:stroke
+    (band (domain (indices (0 "1st") (1 "2nd"))))
+  "x" quantitative, read by 1:x
+    (log 10 (domain 10 10000))
+  "y" quantitative, read by 1:y
+    (linear (domain 0.2 0.9))
+  "x" categorical, read by 2:x
+    (band (domain (labels "ours" "base")) (padding 0.2))
+  "y" quantitative, read by 2:y
+    (linear (domain 0 0.9))
+  "x" categorical, read by 3:x
+    (band (domain (indices (0 "0") (1 "1") (2 "2") (3 "3") (4 "4"))))
+  "y" categorical, read by 3:y
+    (band (domain (indices (0 "0") (1 "1") (2 "2") (3 "3"))) (reverse true))
+  "color" quantitative, read by 3:fill
+    (linear (domain 0 12))
+
+bands
+figure
+  panel root
+    area 0
+    line 1
+scales
+  "x" quantitative, read by 0:x, 1:x
+    (linear (domain 0 24))
+  "y" quantitative, read by 0:y, 0:y2, 1:y
+    (linear (domain -0.1 1.1))
+  "color" categorical, read by 0:fill, 1:stroke
+    (band (domain (indices (0 "a") (1 "b"))))
