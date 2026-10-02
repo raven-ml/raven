@@ -3110,6 +3110,9 @@ thread.
 
 ### Nx
 
+- `Nx.unique` over rows of several words, and `Nx_ragged.ids`, merge their
+  blocks' groups without reading rows across the whole input. Ids of 10⁷ text
+  rows of 12 bytes take 0.7× the time.
 - **Breaking:** opening a GPU over PCI changes nothing on the machine.
   `Nx_nv.get_pci`, `Nx_amd.get_pci`, their `device_pci` forms, the runtimes'
   `get ~interface:Pci` and `Nx_rdma_device.get` no longer unbind kernel

@@ -21,7 +21,9 @@
    2. Partitioning. The blocks' groups are scattered into NX_C_GROUP_PARTS
       partitions, stably: a partition holds its groups in block order, then in
       block-local order, which is the order of their first rows. The groups of
-      block b in partition p are the segment (b, p).
+      block b in partition p are the segment (b, p). Rows of several words
+      carry their first row's words along, so that the merge compares rows
+      within the partition instead of across the whole input.
    3. Merging, per partition in parallel. A second table merges the partition's
       groups. The block group that makes a merged group holds its first row,
       so it is flagged.
@@ -144,6 +146,11 @@ typedef struct {
   int64_t *firsts; /* per block: merged groups first met, then their first id */
   int64_t poff[NX_C_GROUP_PARTS + 1];
   nx_c_group_pair *pairs; /* partition p's from poff[p] */
+  /* With several words, the words of each pair's first row, copied in pair
+     order so that the merge compares rows within the partition: pair k's are
+     row k of [paired]. With one, [paired] is the rows. */
+  uint64_t *words;
+  nx_c_group_rows paired;
   nx_c_group_rep *merged; /* per merged group: its number, its first row */
   int nregions;
   nx_c_group_region *regions; /* per worker */
@@ -351,10 +358,13 @@ static void nx_c_group_scatter(int64_t lo, int64_t hi, int worker,
     const nx_c_group_rep *reps = e->reps + b * NX_C_GROUP_BLOCK;
     for (int64_t g = 0; g < e->ngroups[b]; g++) {
       uint64_t key = reps[g].key;
-      nx_c_group_pair *p =
-          &e->pairs[cursor[nx_c_group_hash(&e->r, key, one) >> 56]++];
-      p->key = key;
-      p->rep = b * NX_C_GROUP_BLOCK + g;
+      int64_t k = cursor[nx_c_group_hash(&e->r, key, one) >> 56]++;
+      e->pairs[k].key = key;
+      e->pairs[k].rep = b * NX_C_GROUP_BLOCK + g;
+      if (!one) {
+        for (int64_t j = 0; j < e->r.w; j++)
+          e->words[k * e->r.w + j] = nx_c_group_word(&e->r, reps[g].row, j);
+      }
     }
   }
 }
@@ -363,7 +373,7 @@ static void nx_c_group_scatter(int64_t lo, int64_t hi, int worker,
 
 NX_C_GROUP_HOT void nx_c_group_partition(const nx_c_group_exec *e, int worker,
                                         int64_t p, const int one) {
-  const nx_c_group_rows r = e->r;
+  const nx_c_group_rows r = e->paired;
   int64_t first = e->poff[p], end = e->poff[p + 1];
   nx_c_group_table t;
   nx_c_group_table_of(e, worker, e->regions[worker].size, e->merged + first,
@@ -377,8 +387,7 @@ NX_C_GROUP_HOT void nx_c_group_partition(const nx_c_group_exec *e, int worker,
     }
     for (int64_t j = 0; j < m; j++) {
       nx_c_group_pair *pair = &e->pairs[k + j];
-      int64_t row = one ? 0 : e->reps[pair->rep].row;
-      int64_t id = nx_c_group_find(&r, &t, pair->key, hs[j], row, one);
+      int64_t id = nx_c_group_find(&r, &t, pair->key, hs[j], k + j, one);
       /* The flat index, complemented for the block group that made it. */
       pair->key = (uint64_t)(id < 0 ? ~(first + ~id) : first + id);
     }
@@ -478,6 +487,14 @@ static nx_c_status nx_c_group_merge_blocks(nx_c_group_exec *e) {
   e->pairs = malloc((size_t)total * sizeof *e->pairs);
   e->merged = malloc((size_t)total * sizeof *e->merged);
   if (!e->pairs || !e->merged) return NX_C_ERR_ALLOC;
+  e->paired = e->r;
+  if (e->r.w > 1) {
+    e->words = malloc((size_t)(total * e->r.w) * sizeof *e->words);
+    if (!e->words) return NX_C_ERR_ALLOC;
+    e->paired.base = (const char *)e->words;
+    e->paired.rs = e->r.w * (int64_t)sizeof *e->words;
+    e->paired.cs = sizeof *e->words;
+  }
   int64_t traffic = total * (int64_t)(2 * sizeof *e->pairs);
   nx_c_parallel_for(nth, e->nblocks, traffic, nx_c_group_scatter, e, NULL);
 
@@ -554,6 +571,7 @@ static nx_c_status nx_c_group_drive(const nx_c_ndarray *in,
   free(e.cursor);
   free(e.pairs);
   free(e.merged);
+  free(e.words);
   return s;
 }
 
