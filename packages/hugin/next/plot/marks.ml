@@ -576,18 +576,37 @@ let draw_contour rows =
   in
   Picture.group (List.init (Mark.length rows / (n * m)) field)
 
+(* [grid role ch] binds [ch], a position of a sampled field, to [role]: the
+   field's extent is its grid, so it implies [nice] off. *)
+let grid : type d r. (d, r) Role.t -> (d, r) Channel.t -> binding =
+ fun role ch ->
+  match data ch with
+  | Some { lift; _ } -> (
+      match lift_kind lift with
+      | Scale.Quantitative -> on ~imply:(Scale.linear ~nice:false ()) role ch
+      | Scale.Temporal -> on ~imply:(Scale.time ~nice:false ()) role ch
+      | Scale.Categorical -> on role ch)
+  | None -> on role ch
+
 let contour ?x ?y ?opacity ?fx ?fy ~fill () =
   let x =
-    match x with Some x -> on Role.x x | None -> on Role.x (index (-1))
+    match x with Some x -> grid Role.x x | None -> grid Role.x (index (-1))
   in
   let y =
-    match y with Some y -> on Role.y y | None -> on Role.y (index (-2))
+    match y with Some y -> grid Role.y y | None -> grid Role.y (index (-2))
   in
   if Option.is_none (data fill) then err "contour" "fill is a constant";
+  let fx = opt Role.fx fx and fy = opt Role.fy fy in
   let m =
     make "contour"
-      ([ Some x; Some y; Some (on Role.fill fill); opt Role.opacity opacity ]
-      @ facets fx fy)
+      [
+        Some x;
+        Some y;
+        Some (on Role.fill fill);
+        opt Role.opacity opacity;
+        fx;
+        fy;
+      ]
       draw_contour
   in
   let shape = m.shape in
@@ -598,4 +617,11 @@ let contour ?x ?y ?opacity ?fx ?fy ~fill () =
     err "contour" "x can vary along the rows of the grid";
   if varies shape y (rank - 1) then
     err "contour" "y can vary along the columns of the grid";
+  List.iter
+    (fun (name, b) ->
+      match b with
+      | Some b when varies shape b (rank - 2) || varies shape b (rank - 1) ->
+          err "contour" "%s can vary along the grid" name
+      | _ -> ())
+    [ ("fx", fx); ("fy", fy) ];
   Mark m

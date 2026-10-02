@@ -752,6 +752,17 @@ let merging =
           in
           let y = categ r "y" in
           greater float_exact ~than:0.5 (Scale.normalize y "a"));
+      test "a contour's x and y domains are its grid's hull" (fun () ->
+          let r =
+            resolve
+              (contour
+                 ~x:(num (f64 [| -1.5; 0.; 1.5 |]))
+                 ~y:(num (Nx.create Nx.float64 [| 2; 1 |] [| -0.3; 0.7 |]))
+                 ~fill:(num (Nx.zeros Nx.float64 [| 2; 3 |]))
+                 ())
+          in
+          equal floats (-1.5, 1.5) (hull r "x");
+          equal floats (-0.3, 0.7) (hull r "y"));
       test "an image fixes its pixel domains" (fun () ->
           let r = resolve (image (Nx.zeros Nx.float32 [| 2; 3 |])) in
           equal floats (0., 3.) (hull r "x");

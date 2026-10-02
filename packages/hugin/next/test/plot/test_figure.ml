@@ -143,6 +143,11 @@ let marks =
             fun () -> contour ~x:(index 0) ~fill:(num m) () );
           ( "contour with y the index of the columns",
             fun () -> contour ~y:(index 1) ~fill:(num m) () );
+          ( "contour faceted along the rows of its grid",
+            fun () -> contour ~fx:(dim 0) ~fill:(num m) () );
+          ( "contour faceted along the columns of its grid",
+            fun () -> contour ~fy:(strings [| "a"; "b"; "c" |]) ~fill:(num m) ()
+          );
         ];
       accepts "accept"
         [

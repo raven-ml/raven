@@ -551,7 +551,11 @@ val contour :
     have size [1] there, or their {!dim} or {!index} names another axis.
     [~x:(num alphas)] with [alphas] of shape [[|m|]] and [~y:(num betas)] with
     [betas] of shape [[|n; 1|]] place a field of shape [[|n; m|]]. [x] defaults
-    to [index (-1)] and [y] to [index (-2)] ({!index}).
+    to [index (-1)] and [y] to [index (-2)] ({!index}). A field's extent is its
+    grid, as an image's is its pixels: [contour] implies [nice] off on the
+    continuous scales of [x] and [y] ({!Mark.bind}), so the field fills its
+    panel, and marks layered over it fit its domain unless they reach outside
+    it.
 
     The levels are [0.] and [1.], the normalised ends of the fill scale's
     domain, and the normalised ticks {!layout} froze for it ({!Mark.ticks}), in
@@ -564,8 +568,9 @@ val contour :
     warning.
 
     Raises [Invalid_argument] if the mark's shape has fewer than two axes, if
-    [fill] is a constant, or if [x] or [y] can vary along the axis it must not
-    vary along. *)
+    [fill] is a constant, if [x] or [y] can vary along the axis it must not vary
+    along, or if [fx] or [fy] can vary along either axis of the grid, which
+    would put one field in several panels. *)
 
 (** {1:scales Scales}
 
