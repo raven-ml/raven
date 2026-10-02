@@ -199,13 +199,14 @@ let keys (type a b) op (x : (a, b) Nx.t) =
   | Complex64 | Complex128 -> err op "complex numbers have no order"
 
 (* [rows op r] is the rows of [r] prepared to be told apart in rounds of up to
-   64 bytes of keys, through [op]: [round ~seen ~active ~m ~longest] is the
-   rows [active], [m] of them, from their [seen]th key, as [e] keys in uint64
-   words, the first key most significant and keys past a row's end zero, then
-   [count], the number of keys of the round each row holds, plus one if it
+   64 bytes of keys, through [op]: [round ~ordered ~seen ~active ~m ~longest]
+   is the rows [active], [m] of them, every row in order for [None], from
+   their [seen]th key, as [e] keys in uint64 words, keys past a row's end zero,
+   then [count], the number of keys of the round each row holds, plus one if it
    holds more, which separates a row from its prefixes, and [rem], the keys
    each holds from the [seen]th. [longest] is the most keys any active row
-   holds from there. *)
+   holds from there. Words compare as their rows only when [ordered], which
+   makes a word's first key its most significant. *)
 let rows op r =
   let n = length r in
   let values, offsets = elements r in
@@ -216,25 +217,28 @@ let rows op r =
   let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero (dtype keys)) keys in
   let start = shrink [| (0, n) |] offsets in
   let len = sub (shrink [| (1, n + 1) |] offsets) start in
-  let round ~seen ~active ~m ~longest =
+  let round ~ordered ~seen ~active ~m ~longest =
     let width =
       List.find_opt (fun b -> b >= longest * w) [ 8; 16; 32 ]
       |> Option.value ~default:64
     in
     let e = width / w and q = 8 / w and words = width / 8 in
-    let rem = sub_s (take ~indices:active len) (Int64.of_int seen) in
+    let of_active x =
+      match active with None -> x | Some active -> take ~indices:active x
+    in
+    let rem = sub_s (of_active len) (Int64.of_int seen) in
     let count = minimum_s rem (Int64.of_int (e + 1)) in
     let chunk =
       take ~axis:0
-        ~indices:(add_s (take ~indices:active start) (Int64.of_int seen))
+        ~indices:(add_s (of_active start) (Int64.of_int seen))
         (sliding_window ~window:e keys)
     in
-    (* Keys past a row's end are zero. A word's first key is its most
+    (* Keys past a row's end are zero. Ordered, a word's first key is its most
        significant, so a little-endian machine reverses each word's keys. *)
     let position = create Int64 [| words; q |] (Array.init e Int64.of_int) in
     let chunk = reshape [| m; words; q |] chunk in
     let chunk, position =
-      if Sys.big_endian then (chunk, position)
+      if Sys.big_endian || not ordered then (chunk, position)
       else (flip ~axes:[ 2 ] chunk, flip ~axes:[ 1 ] position)
     in
     let chunk =
@@ -268,7 +272,9 @@ let ranks op r =
     let rec round ~seen ~classes ~active ~m ~longest ~shortest rank =
       if m = 0 || longest = 0 then (rank, classes)
       else
-        let e, words, count, rem = round_keys ~seen ~active ~m ~longest in
+        let e, words, count, rem =
+          round_keys ~ordered:true ~seen ~active:(Some active) ~m ~longest
+        in
         let row_rank = take ~indices:active rank in
         let key =
           concatenate ~axis:1
@@ -381,23 +387,30 @@ let ids r =
     let rec round ~rounds ~seen ~base ~active ~m ~longest ~shortest code =
       if m = 0 || longest = 0 then (rounds, code)
       else
-        let e, words, count, rem = round_keys ~seen ~active ~m ~longest in
+        let e, words, count, rem =
+          round_keys ~ordered:false ~seen ~active ~m ~longest
+        in
         let key =
-          concatenate ~axis:1
-            ((if rounds > 0 then [ column m (take ~indices:active code) ]
-              else [])
+          match
+            (match active with
+            | Some active -> [ column m (take ~indices:active code) ]
+            | None -> [])
             @ [ words ]
             @
             if shortest > e || shortest = longest then []
-            else [ column m count ])
+            else [ column m count ]
+          with
+          | [ words ] -> words
+          | columns -> concatenate ~axis:1 columns
         in
         let g = group key in
         let code =
-          if rounds = 0 then g
-          else
-            scatter ~unique_indices:true ~axis:0 ~indices:active
-              ~values:(add_s g (Int64.of_int base))
-              code
+          match active with
+          | None -> g
+          | Some active ->
+              scatter ~unique_indices:true ~axis:0 ~indices:active
+                ~values:(add_s g (Int64.of_int base))
+                code
         in
         if longest <= e then (rounds + 1, code)
         else
@@ -428,17 +441,21 @@ let ids r =
             where keep (sub (cumsum kept) kept) (scalar_like kept read.(0))
           in
           let active =
-            scatter ~unique_indices:true ~axis:0 ~indices:place ~values:active
+            scatter ~unique_indices:true ~axis:0 ~indices:place
+              ~values:
+                (match active with
+                | Some active -> active
+                | None -> arange Int64 0 n 1)
               (full_as kept [| m' |] 0L)
           in
-          round ~rounds:(rounds + 1) ~seen:(seen + e) ~base:(base + m) ~active
-            ~m:m'
+          round ~rounds:(rounds + 1) ~seen:(seen + e) ~base:(base + m)
+            ~active:(Some active) ~m:m'
             ~longest:(Int64.to_int read.(1))
             ~shortest:(Int64.to_int read.(2))
             code
     in
     let rounds, code =
-      round ~rounds:0 ~seen:0 ~base:0 ~active:(arange Int64 0 n 1) ~m:n
+      round ~rounds:0 ~seen:0 ~base:0 ~active:None ~m:n
         ~longest ~shortest
         (full_as r.offsets [| n |] 0L)
     in

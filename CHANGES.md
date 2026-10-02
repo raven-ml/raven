@@ -3052,6 +3052,10 @@ thread.
 
 ### Nx
 
+- `Nx_ragged.ids` builds each round's words in the elements' memory order,
+  which tells rows apart as well as the sort order does, and reads every row
+  in place on its first round, where it reordered each word's bytes and
+  gathered the rows' bounds.
 - Add `Nx_array.View.within`, whether a view reaches only the first `n`
   positions of its storage, exact for every offset, stride and shape.
   `Nx_array.Elements.gather` and `contiguous` check views with it: a view
