@@ -10,8 +10,8 @@
    devices, and last, work that never signals, which loses the device. Every
    test skips without a GPU, and the peer tests without two. GPUs are reached
    through the kernel driver when it is loaded; over PCI the suite detaches a
-   GPU from its kernel driver and resets it, so it does only when
-   NX_AMD_PCI_TEST names the index of a GPU it may take. *)
+   GPU from its kernel driver, unless it is detached already, and resets it, so
+   it does only when NX_AMD_PCI_TEST names the index of a GPU it may take. *)
 
 open Windtrap
 module B = Nx_device.Buffer
@@ -46,9 +46,11 @@ let pci_first () = Option.map int_of_string (Sys.getenv_opt "NX_AMD_PCI_TEST")
 let kernel_gpus () =
   if Sys.file_exists "/dev/kfd" then Nx_amd_device.count () else 0
 
-(* GPU [i] over PCI, prepared as an open needs it: given back to its kernel
-   driver, which names its firmware, the firmware fetched, then detached and
-   reset. Once per process, since an open GPU refuses them. *)
+(* GPU [i] over PCI, prepared as an open needs it: reset, if it is detached
+   already, as when an administrator bound it to vfio-pci, whose firmware was
+   fetched before; otherwise given back to its kernel driver, which names its
+   firmware, the firmware fetched, then detached and reset. Once per process,
+   since an open GPU refuses them. *)
 let pci_opens = Hashtbl.create 2
 
 let open_pci i =
@@ -56,11 +58,18 @@ let open_pci i =
   | Some r -> r
   | None ->
       let ( let* ) = Result.bind in
-      let r =
+      let prepare () =
         let* () = Nx_amd_device.attach i in
         let* () = Nx_amd_device.fetch_firmware i in
         let* () = Nx_amd_device.detach i in
-        let* () = Nx_amd_device.reset i in
+        Nx_amd_device.reset i
+      in
+      let r =
+        let* () =
+          match Nx_amd_device.reset i with
+          | Ok () -> Ok ()
+          | Error _ -> prepare ()
+        in
         Nx_amd_device.get ~interface:Pci i
       in
       Hashtbl.replace pci_opens i r;
