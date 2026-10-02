@@ -337,6 +337,10 @@ let nan_ops =
     };
   ]
 
+(* The operations whose NaN results nx.mli states: a NaN result is the first NaN
+   operand. *)
+let arithmetic = [ "add"; "sub"; "mul"; "div"; "fma" ]
+
 (* How an operand of [n] elements reaches the kernel: contiguous, every other
    element of a longer run, or one element broadcast to [n]. *)
 type laid = Full | Every_other | Scalar
@@ -385,10 +389,18 @@ let nan_case (F f) arity =
      and+ step = int_range 0 15 in
      (n, operands, step))
 
-(* [op]'s result over every offset of its operands, from 0 to 15 elements, is
-   word for word the result of each element computed alone. *)
-let alone_and_together (type a b c d) (dtype : (a, b) Nx.dtype)
-    (word : (c, d) Nx.dtype) ~width ~words op (n, operands, step) =
+(* A float dtype's arrays, made from their elements' words and read back as
+   words. *)
+type ('a, 'b) codec = {
+  of_words : int array -> int64 array -> ('a, 'b) Nx.t;
+  to_words : ('a, 'b) Nx.t -> int64 array;
+  laid_out : n:int -> off:int -> laid * int64 array -> ('a, 'b) Nx.t;
+      (** [laid_out ~n ~off operand] is [operand]'s [n] elements, laid out after
+          [off] elements of padding. *)
+}
+
+let codec (type a b c d) (dtype : (a, b) Nx.dtype) (word : (c, d) Nx.dtype)
+    ~width ~words : (a, b) codec =
   let unsigned v =
     if width = 64 then v
     else Int64.logand v (Int64.pred (Int64.shift_left 1L width))
@@ -406,7 +418,7 @@ let alone_and_together (type a b c d) (dtype : (a, b) Nx.dtype)
   let to_words t =
     Array.map unsigned (Nx.to_array (Nx.cast Nx.int64 (Nx.bitcast word t)))
   in
-  let laid_out ~off (laid, ws) =
+  let laid_out ~n ~off (laid, ws) =
     match laid with
     | Scalar -> of_words [||] ws
     | Full ->
@@ -425,27 +437,82 @@ let alone_and_together (type a b c d) (dtype : (a, b) Nx.dtype)
           [ Rs (off, len, 2) ]
           (of_words [| len |] (Array.init (len * words) at))
   in
-  let all_scalar = Array.for_all (fun (laid, _) -> laid = Scalar) operands in
+  { of_words; to_words; laid_out }
+
+let all_scalar operands =
+  Array.for_all (fun (laid, _) -> laid = Scalar) operands
+
+(* [op]'s result over every offset of its operands, from 0 to 15 elements, is
+   word for word the result of each element computed alone. *)
+let alone_and_together c ~words op (n, operands, step) =
   let element i (laid, ws) =
-    of_words [||] (if laid = Scalar then ws else Array.sub ws (i * words) words)
+    c.of_words [||]
+      (if laid = Scalar then ws else Array.sub ws (i * words) words)
   in
   let expected =
     Array.concat
       (List.init
-         (if all_scalar then 1 else n)
-         (fun i -> to_words (op.run (Array.map (element i) operands))))
+         (if all_scalar operands then 1 else n)
+         (fun i -> c.to_words (op.run (Array.map (element i) operands))))
   in
   for off = 0 to 15 do
     let operands =
       Array.mapi
-        (fun k o -> laid_out ~off:((off + (k * step)) mod 16) o)
+        (fun k o -> c.laid_out ~n ~off:((off + (k * step)) mod 16) o)
         operands
     in
     equal
       ~msg:(Printf.sprintf "at offset %d" off)
       (array bits_exact) expected
-      (to_words (op.run operands))
+      (c.to_words (op.run operands))
   done
+
+(* Long runs: [n] up to 3000, each operand's layout and its elements' words,
+   rarely special, and the lengths, from 1 to 40, of the pieces that cut the
+   run. *)
+let long_case (F f) arity =
+  let open Gen in
+  let finite =
+    if f.width = 64 then int64
+    else int64_range 0L (Int64.pred (Int64.shift_left 1L f.width))
+  in
+  let word = frequency [ (1, f.special); (40, finite) ] in
+  let operand n =
+    let* laid = of_list ~pp:pp_laid [ Full; Every_other; Scalar ] in
+    let size = f.words * if laid = Scalar then 1 else n in
+    let+ words = array ~size:(constant size) word in
+    (laid, words)
+  in
+  let pp ppf (n, operands, cuts) =
+    Format.fprintf ppf "n = %d, %d pieces at most" n (Array.length cuts);
+    Array.iter
+      (fun (laid, _) -> Format.fprintf ppf "@ %a" pp_laid laid)
+      operands
+  in
+  with_pp pp
+    (let* n = int_range 0 3000 in
+     let+ operands = array ~size:(constant arity) (operand n)
+     and+ cuts = array ~size:(constant n) (int_range 1 40) in
+     (n, operands, cuts))
+
+(* [op]'s result over a long run is word for word its results over the pieces
+   that cut it, each a run of at most 40 elements. *)
+let whole_and_pieces c op (n, operands, cuts) =
+  let whole = Array.map (c.laid_out ~n ~off:0) operands in
+  let piece lo hi =
+    Array.map2
+      (fun (laid, _) t ->
+        if laid = Scalar then t else Nx.shrink [| (lo, hi) |] t)
+      operands whole
+  in
+  let rec pieces k lo acc =
+    if lo >= n then Array.concat (List.rev acc)
+    else
+      let hi = min n (lo + cuts.(k)) in
+      pieces (k + 1) hi (c.to_words (op.run (piece lo hi)) :: acc)
+  in
+  if not (all_scalar operands) then
+    equal (array bits_exact) (pieces 0 0 []) (c.to_words (op.run whole))
 
 (* The rule itself, on fixed operands: a NaN result is the first NaN operand. q1
    and q2 are quiet NaNs of payloads 1 and 2, q2 negative, and s1 a signaling
@@ -539,18 +606,29 @@ let nan_operands =
   group "NaN operands"
     (List.concat_map
        (fun (F f as format) ->
-         List.filter_map
+         List.concat_map
            (fun op ->
-             if Nx_dtype.is_complex f.dtype && not op.complex then None
+             if Nx_dtype.is_complex f.dtype && not op.complex then []
              else
-               Some
-                 (prop
-                    (Printf.sprintf
-                       "%s at %s gives each element the bits it has alone"
-                       op.oname f.fname)
-                    (nan_case format op.arity)
-                    (alone_and_together f.dtype f.word ~width:f.width
-                       ~words:f.words op)))
+               let c = codec f.dtype f.word ~width:f.width ~words:f.words in
+               let alone =
+                 prop
+                   (Printf.sprintf
+                      "%s at %s gives each element the bits it has alone"
+                      op.oname f.fname)
+                   (nan_case format op.arity)
+                   (alone_and_together c ~words:f.words op)
+               in
+               let long =
+                 prop ~count:10
+                   (Printf.sprintf
+                      "%s at %s gives a long run the bits of its pieces"
+                      op.oname f.fname)
+                   (long_case format op.arity)
+                   (whole_and_pieces c op)
+               in
+               if List.mem op.oname arithmetic then [ alone; long ]
+               else [ alone ])
            nan_ops)
        formats
     @ [ first_nan ])

@@ -411,15 +411,27 @@ static inline nx_c_complex64 nx_c_cdiv64(nx_c_complex64 a, nx_c_complex64 b) {
    depends on how the compiler fused and negated them. float16, bfloat16 and
    float8 compute in float, and widening quiets a signaling NaN.
 
-   The rule lives in functions: a call evaluates the operation on every
-   element, so clang emits plain selects and the loop vectorizes, where a `?:`
-   macro let it branch around the operation and the loop stayed scalar. */
+   Each NaN test selects over the computed result. Under its default
+   -ftrapping-math, gcc moves an operation that a test can skip onto the
+   branch that uses it, will not evaluate it unconditionally there, and leaves
+   the loop scalar. Beside a splat operand the compiler makes that operand's
+   test once.
+
+   Where every operand is an array, the two tests cost more than the
+   operation. There a float or complex kernel (NX_C_BKN, NX_C_FMAKN) computes
+   blocks of NX_C_NAN_BLOCK elements by the plain operation, noting whether a
+   result is NaN, and computes again by the rule only a block that has one.
+   The rule changes nothing but NaN results, and the second pass reads the
+   operands as the first did, since a destination shares no memory with
+   them. */
 #define NX_C_DEFINE_NAN(T, sfx)                                                \
   static inline T nx_c_nan2_##sfx(T a, T b, T r) {                             \
-    return a != a ? a : b != b ? b : r;                                        \
+    r = isnan(b) ? b : r;                                                      \
+    return isnan(a) ? a : r;                                                   \
   }                                                                            \
   static inline T nx_c_nan3_##sfx(T a, T b, T c, T r) {                        \
-    return a != a ? a : nx_c_nan2_##sfx(b, c, r);                              \
+    r = isnan(c) ? c : r;                                                      \
+    return nx_c_nan2_##sfx(a, b, r);                                           \
   }
 NX_C_DEFINE_NAN(float, f)
 NX_C_DEFINE_NAN(double, d)
@@ -441,6 +453,97 @@ NX_C_DEFINE_CNAN(nx_c_complex64, double, creal, cimag, CMPLX)
 #define NX_C_CNAN(a, b, r)                                                     \
   _Generic((a), nx_c_complex32: nx_c_cnan_nx_c_complex32,                       \
       nx_c_complex64: nx_c_cnan_nx_c_complex64)(a, b, r)
+
+/* Whether a result is NaN, or has a NaN part. An int, as is the flag that a
+   plain loop ors it into: gcc leaves a loop scalar whose bool flag is
+   narrower than its floats. A complex test is a bitwise or, which evaluates
+   both parts and leaves the loop no branch. */
+static inline int nx_c_isnan_f(float r) { return isnan(r); }
+static inline int nx_c_isnan_d(double r) { return isnan(r); }
+static inline int nx_c_isnan_c32(nx_c_complex32 r) {
+  return isnan(crealf(r)) | isnan(cimagf(r));
+}
+static inline int nx_c_isnan_c64(nx_c_complex64 r) {
+  return isnan(creal(r)) | isnan(cimag(r));
+}
+#define NX_C_ISNAN(r)                                                          \
+  _Generic((r), float: nx_c_isnan_f, double: nx_c_isnan_d,                     \
+      nx_c_complex32: nx_c_isnan_c32, nx_c_complex64: nx_c_isnan_c64)(r)
+
+#define NX_C_NAN_BLOCK 1024
+
+/* Kept out of line: merged into the kernel below, the block loop's frame was
+   built on every call, and a run beside a splat operand, which never enters
+   the loop, took 1.5 times as long (1024-element runs on an M1 Max). */
+#if defined(__GNUC__) || defined(__clang__)
+#define NX_C_NOINLINE __attribute__((noinline))
+#else
+#define NX_C_NOINLINE
+#endif
+
+/* The kernel [op]. A run beside a splat operand, whose NaN test the compiler
+   makes once, takes [op]_nan whole. Any other run goes by blocks: [op]_plain
+   computes a block and says whether a result is NaN, and [op]_nan computes
+   such a block again. */
+#define NX_C_NANK(op, sfx, nin) NX_C_NANK_I(op, sfx, nin)
+#define NX_C_NANK_I(op, sfx, nin)                                              \
+  NX_C_NOINLINE static void nx_c_##op##_blocks_##sfx(                          \
+      char *const *pp, const int64_t *ssx, int64_t nn, void *ctx) {            \
+    for (int64_t s = 0; s < nn; s += NX_C_NAN_BLOCK) {                         \
+      const int64_t n = nn - s < NX_C_NAN_BLOCK ? nn - s : NX_C_NAN_BLOCK;    \
+      char *q[nin + 1];                                                        \
+      for (int k = 0; k <= nin; k++) q[k] = pp[k] + s * ssx[k];               \
+      if (nx_c_##op##_plain_##sfx(q, ssx, n))                                  \
+        nx_c_##op##_nan_##sfx(q, ssx, n, ctx);                                 \
+    }                                                                          \
+  }                                                                            \
+  static void nx_c_##op##_##sfx(char *const *pp, const int64_t *ssx,           \
+                               int64_t nn, void *ctx) {                        \
+    for (int k = 1; k <= nin; k++)                                             \
+      if (ssx[k] == 0) {                                                       \
+        nx_c_##op##_nan_##sfx(pp, ssx, nn, ctx);                               \
+        return;                                                                \
+      }                                                                        \
+    nx_c_##op##_blocks_##sfx(pp, ssx, nn, ctx);                                \
+  }
+
+/* Binary float or complex arithmetic: EXPR is the plain operation, RULE the
+   same with the NaN rule. */
+#define NX_C_BKN(op, sfx, storage, compute, ld, st, EXPR, RULE)               \
+  NX_C_BKN_I(op, sfx, storage, compute, ld, st, EXPR, RULE)
+#define NX_C_BKN_I(op, sfx, storage, compute, ld, st, EXPR, RULE)             \
+  NX_C_BK_I(op##_nan, sfx, storage, compute, ld, st, RULE)                    \
+  static int nx_c_##op##_plain_##sfx(char *const *pp, const int64_t *ssx,     \
+                                     int64_t nn) {                             \
+    char *out = pp[0];                                                         \
+    const char *in0 = pp[1];                                                   \
+    const char *in1 = pp[2];                                                   \
+    const int64_t so = ssx[0], sa = ssx[1], sb = ssx[2];                       \
+    const int64_t es = (int64_t)sizeof(storage);                              \
+    int has_nan = 0;                                                           \
+    if (so == es && sa == es && sb == es) {                                   \
+      storage *pO = (storage *)out;                                           \
+      const storage *pA = (const storage *)in0;                               \
+      const storage *pB = (const storage *)in1;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = (compute)ld(pA[i]);                                       \
+        compute vb = (compute)ld(pB[i]);                                       \
+        compute r = EXPR;                                                      \
+        has_nan |= NX_C_ISNAN(r);                                              \
+        pO[i] = (storage)st(r);                                                \
+      }                                                                        \
+    } else {                                                                   \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = nx_c_ld_##sfx(in0 + i * sa);                              \
+        compute vb = nx_c_ld_##sfx(in1 + i * sb);                              \
+        compute r = EXPR;                                                      \
+        has_nan |= NX_C_ISNAN(r);                                              \
+        nx_c_st_##sfx(out + i * so, r);                                        \
+      }                                                                        \
+    }                                                                          \
+    return has_nan;                                                            \
+  }                                                                            \
+  NX_C_NANK_I(op, sfx, 2)
 
 #define NX_C_RECIP_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                  \
   NX_C_UK(recip, sfx, storage, compute, ld, st, ((vx) == 0 ? 0 : 1 / (vx)))
@@ -638,11 +741,11 @@ NX_C_ROUNDOP(round)
 #define NX_C_ARK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
   NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)))
 #define NX_C_ARK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
-  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
-         NX_C_NAN2(va, vb, (va)NX_C_CURSYM(vb)))
+  NX_C_BKN(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)),     \
+          NX_C_NAN2(va, vb, (va)NX_C_CURSYM(vb)))
 #define NX_C_ARK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
-  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
-         NX_C_CNAN(va, vb, (va)NX_C_CURSYM(vb)))
+  NX_C_BKN(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)),     \
+          NX_C_CNAN(va, vb, (va)NX_C_CURSYM(vb)))
 #define NX_C_ARK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_ARITH_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_ARK_##cat(sfx, storage, compute, ld, st)
@@ -692,10 +795,11 @@ static const nx_c_map_table nx_c_idiv_table = {
 
 /* fdiv: true division for float and complex (int div routes to idiv). */
 #define NX_C_FDIV_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                  \
-  NX_C_BK(fdiv, sfx, storage, compute, ld, st, NX_C_NAN2(va, vb, (va) / (vb)))
+  NX_C_BKN(fdiv, sfx, storage, compute, ld, st, ((va) / (vb)),                  \
+          NX_C_NAN2(va, vb, (va) / (vb)))
 #define NX_C_FDIV_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                \
-  NX_C_BK(fdiv, sfx, storage, compute, ld, st,                                  \
-         NX_C_CNAN(va, vb, NX_C_CDIV(va, vb)))
+  NX_C_BKN(fdiv, sfx, storage, compute, ld, st, NX_C_CDIV(va, vb),              \
+          NX_C_CNAN(va, vb, NX_C_CDIV(va, vb)))
 #define NX_C_FDIV_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
@@ -1021,9 +1125,9 @@ static const nx_c_map_table nx_c_where_table = {
    wraps, its signed forms running in the unsigned width as add and mul do. As
    in NX_C_BK, a contiguous run with one operand broadcast (a 0 step) loads that
    operand once, outside a loop that still vectorizes. */
-#define NX_C_FMAK(sfx, storage, compute, ld, st, EXPR)                          \
-  static void nx_c_fma_##sfx(char *const *pp, const int64_t *ssx, int64_t nn,   \
-                            void *ctx) {                                       \
+#define NX_C_FMAK(op, sfx, storage, compute, ld, st, EXPR)                      \
+  static void nx_c_##op##_##sfx(char *const *pp, const int64_t *ssx,            \
+                               int64_t nn, void *ctx) {                        \
     (void)ctx;                                                                 \
     char *out = pp[0];                                                         \
     const char *in0 = pp[1], *in1 = pp[2], *in2 = pp[3];                       \
@@ -1079,14 +1183,49 @@ static const nx_c_map_table nx_c_where_table = {
       }                                                                        \
     }                                                                          \
   }
+
+/* fma over floats, as NX_C_BKN. */
+#define NX_C_FMAKN(sfx, storage, compute, ld, st)                               \
+  NX_C_FMAK(fma_nan, sfx, storage, compute, ld, st,                             \
+           NX_C_NAN3(va, vb, vc, NX_C_MFN(fma, compute)(va, vb, vc)))            \
+  static int nx_c_fma_plain_##sfx(char *const *pp, const int64_t *ssx,         \
+                                  int64_t nn) {                                \
+    char *out = pp[0];                                                         \
+    const char *in0 = pp[1], *in1 = pp[2], *in2 = pp[3];                       \
+    const int64_t so = ssx[0], sa = ssx[1], sb = ssx[2], sc = ssx[3];          \
+    const int64_t es = (int64_t)sizeof(storage);                              \
+    int has_nan = 0;                                                           \
+    if (so == es && sa == es && sb == es && sc == es) {                       \
+      storage *pO = (storage *)out;                                           \
+      const storage *pA = (const storage *)in0;                               \
+      const storage *pB = (const storage *)in1;                               \
+      const storage *pC = (const storage *)in2;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute r = NX_C_MFN(fma, compute)((compute)ld(pA[i]),                 \
+                                           (compute)ld(pB[i]),                 \
+                                           (compute)ld(pC[i]));                \
+        has_nan |= NX_C_ISNAN(r);                                              \
+        pO[i] = (storage)st(r);                                                \
+      }                                                                        \
+    } else {                                                                   \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute r = NX_C_MFN(fma, compute)(nx_c_ld_##sfx(in0 + i * sa),        \
+                                           nx_c_ld_##sfx(in1 + i * sb),        \
+                                           nx_c_ld_##sfx(in2 + i * sc));       \
+        has_nan |= NX_C_ISNAN(r);                                              \
+        nx_c_st_##sfx(out + i * so, r);                                        \
+      }                                                                        \
+    }                                                                          \
+    return has_nan;                                                            \
+  }                                                                            \
+  NX_C_NANK(fma, sfx, 3)
 #define NX_C_FMA_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                    \
-  NX_C_FMAK(sfx, storage, compute, ld, st,                                      \
+  NX_C_FMAK(fma, sfx, storage, compute, ld, st,                                 \
            (compute)((uint64_t)(va) * (uint64_t)(vb) + (uint64_t)(vc)))
 #define NX_C_FMA_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
-  NX_C_FMAK(sfx, storage, compute, ld, st, ((va) * (vb) + (vc)))
+  NX_C_FMAK(fma, sfx, storage, compute, ld, st, ((va) * (vb) + (vc)))
 #define NX_C_FMA_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
-  NX_C_FMAK(sfx, storage, compute, ld, st,                                      \
-           NX_C_NAN3(va, vb, vc, NX_C_MFN(fma, compute)(va, vb, vc)))
+  NX_C_FMAKN(sfx, storage, compute, ld, st)
 #define NX_C_FMA_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_FMA_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_FMA_KROW(sfx, storage, compute, ld, st, cat)                       \
