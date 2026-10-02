@@ -1576,7 +1576,8 @@ val layout :
     The grid sizes fixed and aspect tracks first, makes each gap the largest
     protrusions that meet it from either side plus the theme's gap
     ({!Theme.section-lengths}), and shares what remains among flexible tracks by
-    weight, never below zero. A panel protrudes by its guides, and by half its
+    weight: each takes its weight's share, or what it needs if that is more, the
+    others sharing the rest. A panel protrudes by its guides, and by half its
     longest tick label past the ends of each labelled axis, where a label
     centred on an end tick reaches; the titles and headers of its axes need its
     data area to be as long as they are, which for a panel with an aspect sizes

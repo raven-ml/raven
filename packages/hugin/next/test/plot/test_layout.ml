@@ -357,26 +357,140 @@ let sizes =
 (* Grids *)
 
 let spines =
-  let plain_grids =
-    Gen.map (fun c -> { c with facets = false; aspect = false }) gen_case
+  (* Titled facet blocks are left to [titled_blocks]. *)
+  let cases =
+    Gen.map
+      (fun c -> if c.facets then { c with titled = false } else c)
+      gen_case
+    |> Gen.with_pp pp_case
   in
-  prop "spines align across rows and columns" ~count:60 plain_grids (fun c ->
+  prop "spines align across rows and columns" ~count:60 cases (fun c ->
+      cover "facets" c.facets;
+      cover "aspect" c.aspect;
+      (* A cell's facet panels are a grid of their own, side by side. A panel
+         with an aspect is centred in its cell, and the aspects of cells
+         differ. *)
+      let f = if c.facets then 2 else 1 in
       let bs = Array.of_list (boxes (laid c)) in
-      equal int (c.rows * c.cols) (Array.length bs);
-      Array.iteri
-        (fun k b ->
-          let r = k / c.cols and q = k mod c.cols in
-          let first_of_col = bs.(q) and first_of_row = bs.(r * c.cols) in
-          equal float_exact ~msg:"left" (Box2.minx first_of_col) (Box2.minx b);
-          equal float_exact ~msg:"right" (Box2.maxx first_of_col) (Box2.maxx b);
-          equal float_exact ~msg:"top" (Box2.miny first_of_row) (Box2.miny b);
-          equal float_exact ~msg:"bottom" (Box2.maxy first_of_row) (Box2.maxy b))
-        bs)
+      equal int (c.rows * c.cols * f) (Array.length bs);
+      let at r q j = bs.((((r * c.cols) + q) * f) + j) in
+      (* The edges a facet grid places and the middles of panels with an aspect
+         are sums of lengths, some huge, so they agree up to rounding. *)
+      let near = float_rel ~rel:1e-12 ~abs:1e-9 in
+      let edge = if c.facets then near else float_exact in
+      let hull r q = Box2.union (at r q 0) (at r q (f - 1)) in
+      for r = 0 to c.rows - 1 do
+        for q = 0 to c.cols - 1 do
+          for j = 0 to f - 1 do
+            let b = at r q j and row = at r 0 0 in
+            if c.aspect then
+              equal near ~msg:"middle" (P2.y (Box2.mid row)) (P2.y (Box2.mid b))
+            else begin
+              equal edge ~msg:"top" (Box2.miny row) (Box2.miny b);
+              equal edge ~msg:"bottom" (Box2.maxy row) (Box2.maxy b)
+            end
+          done;
+          if c.aspect then
+            equal near ~msg:"centre"
+              (P2.x (Box2.mid (hull 0 q)))
+              (P2.x (Box2.mid (hull r q)))
+          else begin
+            equal edge ~msg:"left" (Box2.minx (hull 0 q)) (Box2.minx (hull r q));
+            equal edge ~msg:"right"
+              (Box2.maxx (hull 0 q))
+              (Box2.maxx (hull r q))
+          end
+        done
+      done)
+
+(* [names ws] is a header per element of [ws], the [k]th one [k] followed by
+   [ws.(k)] wide letters, so that headers differ in width. *)
+let names ws = Array.mapi (fun k w -> string_of_int k ^ String.make w 'W') ws
+
+(* [headed ws] is panels faceted by [names ws], over hidden axes. *)
+let headed ws =
+  let x = f64 (Array.init (Array.length ws) Float.of_int) in
+  layer
+    [
+      dot ~fx:(strings (names ws)) ~x:(num x) ~y:(num x) ();
+      axis ~show:false "x";
+      axis ~show:false "y";
+    ]
+
+let equal_shares =
+  prop "flexible tracks of equal weight above their least lengths are equal"
+    (Gen.pair
+       (Gen.array ~size:(Gen.int_range 2 5) (Gen.int_range 0 4))
+       (Gen.float_range 400. 700.))
+    (fun (ws, w) ->
+      let l = lay (Size.figure w 100.) (headed ws) in
+      let widths = List.map Box2.w (boxes l) in
+      let share =
+        List.fold_left ( +. ) 0. widths /. Float.of_int (List.length widths)
+      in
+      let widest =
+        Array.fold_left (fun m s -> Float.max m (label_w s)) 0. (names ws)
+      in
+      assume (widest < share);
+      List.iter (equal ~msg:"width" (float 1e-9) share) widths)
+
+(* The first header takes more than half the page, and the others are narrow.
+   Hidden axes protrude nowhere, so the panels' lengths sum to that of panels
+   whose headers all fit, whatever their headers. *)
+let pinned_share =
+  prop "a track that needs more than its share keeps it, the others share"
+    (Gen.triple (Gen.int_range 2 5)
+       (Gen.float_range 0.55 0.75)
+       (Gen.float_range 400. 900.))
+    (fun (n, part, w) ->
+      let long = truncate (part *. w /. label_w "W") in
+      let ws = Array.init n (fun k -> if k = 0 then long else k mod 2) in
+      let need = Array.map label_w (names ws) in
+      let fitting = lay (Size.figure w 100.) (headed (Array.make n 0)) in
+      let total = List.fold_left ( +. ) 0. (List.map Box2.w (boxes fitting)) in
+      let rest = (total -. need.(0)) /. Float.of_int (n - 1) in
+      assume (need.(0) > total /. Float.of_int n);
+      assume (Array.for_all (fun m -> m < rest) (Array.sub need 1 (n - 1)));
+      match boxes (lay (Size.figure w 100.) (headed ws)) with
+      | [] -> fail "no panel"
+      | first :: others ->
+          equal (float 1e-9) ~msg:"pinned" need.(0) (Box2.w first);
+          List.iter
+            (fun b -> equal (float 1e-9) ~msg:"shared" rest (Box2.w b))
+            others)
+
+(* A title beside a block takes a track inside the block's cell, a gap from the
+   block's panels, so blocks whose panels protrude differently put their panels
+   at different depths of their cells. *)
+let titled_blocks =
+  xfail ~reason:"a block's title takes a track of its cell"
+    (test "titled facet blocks side by side align their panels" (fun () ->
+         let block x =
+           layer
+             [
+               dot
+                 ~fx:(strings ~title:(Text.v "run") [| "a"; "b" |])
+                 ~x:(num (f64 x))
+                 ~y:(num (f64 x))
+                 ();
+               axis ~side:`Top "x";
+             ]
+         in
+         let l =
+           lay (Size.figure 400. 200.)
+             (grid [ [ block [| 0.; 1. |]; block [| 0.; 1e6 |] ] ])
+         in
+         match boxes l with
+         | [ a; _; b; _ ] -> equal float_exact (Box2.miny a) (Box2.miny b)
+         | _ -> fail "four panels"))
 
 let grids =
   group "grids"
     [
       spines;
+      titled_blocks;
+      equal_shares;
+      pinned_share;
       test "a gap is one em when nothing protrudes into it" (fun () ->
           let cell =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]

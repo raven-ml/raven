@@ -459,30 +459,38 @@ let least tracks unit cells gaps =
     cells;
   m
 
-(* [spread tracks pinned m avail] is [m] with the excess of [avail] over it
-   shared by weight among the flexible tracks that are not [pinned], and the
-   excess that no track takes. *)
+(* [spread tracks pinned m avail] is the lengths of [tracks] in [avail], and the
+   excess that no track takes. A flexible track that is not [pinned] has the
+   greater of its least length in [m] and its weight's share of what the other
+   tracks leave; every other track has its least length. The share is found by
+   water-filling: a track whose least length is above its share keeps it, and
+   the others share again what it leaves, until none is left below its least
+   length. *)
 let spread tracks pinned m avail =
-  let l = Array.copy m in
-  let excess = avail -. sum l in
-  let weight = ref 0. in
-  Array.iteri
-    (fun i t ->
-      match t with
-      | Flex k when not pinned.(i) -> weight := !weight +. k
-      | _ -> ())
-    tracks;
-  if excess <= 0. || !weight = 0. then (l, Float.max 0. excess)
-  else begin
-    Array.iteri
-      (fun i t ->
-        match t with
-        | Flex k when not pinned.(i) ->
-            l.(i) <- l.(i) +. (excess *. k /. !weight)
-        | _ -> ())
-      tracks;
-    (l, 0.)
-  end
+  let n = Array.length tracks in
+  let free =
+    Array.init n (fun i ->
+        match tracks.(i) with Flex _ -> not pinned.(i) | Fixed -> false)
+  in
+  let weight i = match tracks.(i) with Flex k -> k | Fixed -> 0. in
+  (* [share free] is the length per weight that the [free] tracks share. *)
+  let share free =
+    let rest = ref avail and weights = ref 0. in
+    for i = 0 to n - 1 do
+      if free.(i) then weights := !weights +. weight i
+      else rest := !rest -. m.(i)
+    done;
+    if !weights > 0. then !rest /. !weights else 0.
+  in
+  let rec fill free =
+    let u = share free in
+    let next = Array.mapi (fun i f -> f && weight i *. u >= m.(i)) free in
+    if Array.for_all2 Bool.equal next free then (free, u) else fill next
+  in
+  let free, u = fill free in
+  let l = Array.mapi (fun i b -> if free.(i) then weight i *. u else b) m in
+  if Array.exists Fun.id free then (l, 0.)
+  else (l, Float.max 0. (avail -. sum l))
 
 (* [shrink base need target] is the greatest [s] in \[[0];[1]\] such that the
    rows of lengths [max base.(i) (s *. need.(i))] fit in [target]. *)
