@@ -3052,6 +3052,10 @@ thread.
 
 ### Nx
 
+- `Nx.matmul` and the products built on it run on AVX2 and FMA on x86-64
+  CPUs that have them, picked at run time: a float32 512 x 512 product takes
+  2.1 ms on one Lion Cove core where it took 14.4, and float64 4.1 ms where
+  it took 11.8.
 - A `Nx_device_support.Remote` command after a failed posted one reports the
   server's reason, such as "no memory of this connection", where it could
   report `connection lost: Broken pipe` once the server had closed the stream.

@@ -6,8 +6,9 @@
 /* nx_c_matmul.c — the backend's owned GEMM.
 
    The owned path has no external dependency or OpenMP. It is a
-   Goto/BLIS-structured blocked kernel over packed panels, with one NEON
-   microkernel (f32 + f64) and a portable-C fallback that autovectorizes.
+   Goto/BLIS-structured blocked kernel over packed panels, with NEON
+   microkernels (f32 + f64) on arm64, AVX2+FMA microkernels (f32 + f64) on
+   x86-64 CPUs that have them, and a portable-C fallback that autovectorizes.
 
    How the dtype universe is served with a handful of microkernels:
 
@@ -19,8 +20,9 @@
      microkernel at near-f32 speed; small ints run through the int64 microkernel;
      the store converts back (nx_c.h's STORE column, modular wrap for integers)
      exactly once per output element.
-   - The microkernel is the only compute-type-specific code: f32 (NEON 8x12),
-     f64 (NEON 8x4), int64/uint64 and complex32/complex64 (portable 8xNR). Each
+   - The microkernel is the only compute-type-specific code: f32 (NEON 8x12,
+     AVX2 6x16), f64 (NEON 8x4, AVX2 6x8), int64/uint64 and complex32/complex64
+     (portable 8xNR). Each
      computes a full MR x NR register tile over one k-block in the compute type;
      for k up to MM_KC_FULLK_MAX the block is the whole k (register accumulation,
      one store), and beyond it the k dimension is sub-blocked (KC panels) with the
@@ -52,6 +54,18 @@
 #include <arm_neon.h>
 #endif
 
+/* x86-64 compiles its AVX2 microkernels with a function target attribute,
+   not a global -mavx2, so the library still runs on any x86-64 CPU; cpuid
+   picks them at run time (mm_avx2). */
+#if !defined(__ARM_NEON) && defined(__x86_64__) && \
+    (defined(__GNUC__) || defined(__clang__))
+#define MM_AVX2 1
+#include <cpuid.h>
+#include <immintrin.h>
+#else
+#define MM_AVX2 0
+#endif
+
 /* Accelerate is the only platform-specific compute route in this backend.
    It ships with macOS and its AMX-backed sgemm/dgemm
    reach a throughput no portable NEON kernel matches, so the top-level matmul
@@ -69,30 +83,58 @@
 #include <limits.h>
 #endif
 
-/* ── Block sizes (Apple M-series L1/L2) ────────────────────────────────────
+/* ── Block sizes ──────────────────────────────────────────────────────────
 
    Blocking: MC rows of A and NC columns of B per macro-block, and — for large k
    — KC-deep sub-blocks of the contraction. MC/NC need not be multiples of a
    register tile — the pack zero-pads and the macrokernel handles the partial
-   trailing MR/NR block — but 256 divides evenly by MR (8) and by NR for f64/int
-   (4/8); f32's NR is 12, so the last NC column-block is partial (4 of 12 used),
-   a ~2% edge tax on one of 22 blocks. The owned-GEMM benchmark guards these
-   choices. */
+   trailing MR/NR block. MC x NC is also the unit of work the pool shares out
+   (nx_c_matmul_run). The owned-GEMM benchmark guards these choices.
+
+   KC (contraction) sub-blocking. For k <= MM_KC_FULLK_MAX the whole k is one
+   block: the microkernel accumulates the full-k MR x NR tile in registers and
+   stores it once. Above that, the micro is re-streamed over MM_KC-deep
+   sub-panels and the partial tiles are summed into a compute-typed MC x NC
+   accumulator, flushed to storage once after the last KC panel. The owned-GEMM
+   benchmark and large-k correctness fixtures guard both regimes. */
+#if MM_AVX2
+/* x86-64, sized for an Arrow Lake P-core (Lion Cove: 48 KiB L1D, 3 MiB L2).
+
+   KC: across the MC/MR micro calls of one column block the same KC x NR B
+   micro-panel is re-read, so it should stay in L1 while A's micro-panels
+   stream past it. One k step of B is NR elements, 64 bytes for both kernels
+   (16 x 4 for f32, 8 x 8 for f64); half of L1D keeps it resident beside the
+   A stream: KC = 24 KiB / 64 B = 384. Above KC the contraction sub-blocks:
+   full k would put a 128 KiB B micro-panel in L2 at k = 2048. KC from 256 to
+   512 measured alike.
+
+   MC: the MC x KC A block is re-read across the NC/NR column blocks of a
+   panel, so it should stay in L2: at f64, 96 x 384 x 8 B is 288 KiB, a tenth
+   of L2, which leaves room for the packed B panel. MC is a multiple of both
+   register heights (6 and 8), and small enough that a 512 x 512 product
+   splits into 12 jobs, two per P-core. MC from 48 to 192 measured alike.
+
+   NC: a multiple of every NR (16, 8); the KC x NC block of packed B (384 KiB
+   at f32, 768 KiB at f64) stays in L2 beside A's. */
+#define MM_MC 96
+#define MM_NC 256
+#define MM_KC 384
+#define MM_KC_FULLK_MAX MM_KC
+#else
+/* Apple M-series. 256 divides evenly by MR (8) and by NR for f64/int (4/8);
+   f32's NR is 12, so the last NC column-block is partial (4 of 12 used), a
+   ~2% edge tax on one of 22 blocks.
+
+   Up to MM_KC_FULLK_MAX the full-k path is the compute-bound one the
+   single-thread gate measures, which must not regress. Above that, a single
+   (MC x k) A-panel or (k x NC) B-panel overflows the shared L2; MM_KC keeps
+   one A sub-panel (MC x KC) and one B sub-panel (KC x NC) plus the
+   accumulator resident. */
 #define MM_MC 256
 #define MM_NC 256
-
-/* KC (contraction) sub-blocking. For k <= MM_KC_FULLK_MAX the whole k is one
-   block: the microkernel accumulates the full-k MR x NR tile in registers and
-   stores it once — the compute-bound path the single-thread gate measures, which
-   must not regress. Above that, a single (MC x k) A-panel or (k x NC) B-panel
-   overflows the shared L2, so the micro is re-streamed over MM_KC-deep sub-panels
-   and the partial tiles are summed into a compute-typed MC x NC accumulator,
-   flushed to storage once after the last KC panel. MM_KC keeps one A sub-panel
-   (MC x KC) and one B sub-panel (KC x NC) plus the accumulator resident; the
-   FULLK cap keeps the common full-k regime untouched. The owned-GEMM benchmark
-   and large-k correctness fixtures guard both regimes. */
 #define MM_KC 512
 #define MM_KC_FULLK_MAX 2048
+#endif
 
 /* The linalg entry's serial GEMM (nx_c_gemm2d_ct) runs the direct loop below
    this many multiply-adds, where the pack setup does not pay. */
@@ -116,8 +158,12 @@
    (sixteen rows of this many compute values, 16 KiB at complex64). */
 #define MM_DIRECT_TILE 64
 
-/* Register tile height, shared by every microkernel; NR is per compute type. */
+/* Register tile height of the portable microkernels (integer, complex). */
 #define MM_MR 8
+
+/* The largest register tile in bytes, MR x NR x compute size over every
+   microkernel: complex64's 8 x 8 x 16. */
+#define MM_TILE_BYTES 1024
 
 /* ── Aligned scratch ──────────────────────────────────────────────────────
    Packed panels are allocated ONCE per matmul call (per thread when threaded),
@@ -134,6 +180,149 @@ static int64_t mm_ceil_div(int64_t a, int64_t b) { return (a + b - 1) / b; }
    B panel, both packed compute-typed and p-major (see the pack layout). The tile
    is a caller-owned MR*NR compute buffer. Edge tiles compute full MR x NR over
    zero-padded panels; the store writes only the valid mr x nr corner. */
+
+/* Register tiles of the f32 and f64 microkernels, per target: the shape is
+   fixed at compile time, so x86-64's portable fallback computes the AVX2
+   shape. */
+#if MM_AVX2
+#define MM_F32_MR 6
+#define MM_F32_NR 16
+#define MM_F64_MR 6
+#define MM_F64_NR 8
+#else
+#define MM_F32_MR 8
+#define MM_F32_NR 12
+#define MM_F64_MR 8
+#define MM_F64_NR 4
+#endif
+
+#if MM_AVX2
+/* Whether the AVX2 microkernels may run: the CPU has AVX2
+   (CPUID.(7,0):EBX[5]) and FMA (CPUID.1:ECX[12]), and the OS saves the YMM
+   registers across context switches (CPUID.1:ECX[27] OSXSAVE, then XCR0 bits 1
+   and 2). Probed once; threads that race on the first call store the same
+   answer. */
+static _Atomic int mm_avx2_state; /* 0 unprobed, 1 absent, 2 present */
+
+static int mm_avx2_probe(void) {
+  unsigned a, b, c, d;
+  if (!__get_cpuid(1, &a, &b, &c, &d)) return 0;
+  if (!(c & bit_FMA) || !(c & bit_AVX) || !(c & bit_OSXSAVE)) return 0;
+  unsigned xcr0_lo, xcr0_hi;
+  __asm__("xgetbv" : "=a"(xcr0_lo), "=d"(xcr0_hi) : "c"(0));
+  if ((xcr0_lo & 6) != 6) return 0;
+  if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;
+  return (b & bit_AVX2) != 0;
+}
+
+static int mm_avx2(void) {
+  int s = atomic_load_explicit(&mm_avx2_state, memory_order_relaxed);
+  if (s == 0) {
+    s = mm_avx2_probe() ? 2 : 1;
+    atomic_store_explicit(&mm_avx2_state, s, memory_order_relaxed);
+  }
+  return s == 2;
+}
+
+/* MR=6, NR=16 (f32) and MR=6, NR=8 (f64): the tile is 6 rows of two 256-bit
+   vectors, 12 accumulator registers, plus 2 for the B row and 1 for the
+   broadcast A element: 15 of the 16 YMM registers. An FMA has a 4-cycle
+   latency and two issue each cycle, so 4 x 2 = 8 independent accumulators
+   keep both FMA pipes full; 12 leaves slack. Each k step issues 12 FMAs (6
+   cycles at two a cycle) against 8 loads (2 B vectors, 6 A broadcasts), which
+   three load ports serve in under 3 cycles: the kernel is FMA-bound. The
+   wider 8 x 12 tile of the NEON kernel needs 24 accumulators, more registers
+   than AVX2 has. */
+__attribute__((target("avx2,fma"))) static void mm_micro_f32_avx2(
+    float *tile, const float *ap, const float *bp, int64_t k) {
+  __m256 c0a = _mm256_setzero_ps(), c0b = _mm256_setzero_ps();
+  __m256 c1a = _mm256_setzero_ps(), c1b = _mm256_setzero_ps();
+  __m256 c2a = _mm256_setzero_ps(), c2b = _mm256_setzero_ps();
+  __m256 c3a = _mm256_setzero_ps(), c3b = _mm256_setzero_ps();
+  __m256 c4a = _mm256_setzero_ps(), c4b = _mm256_setzero_ps();
+  __m256 c5a = _mm256_setzero_ps(), c5b = _mm256_setzero_ps();
+  for (int64_t p = 0; p < k; p++) {
+    const float *a = ap + p * 6;
+    __m256 b0 = _mm256_loadu_ps(bp + p * 16);
+    __m256 b1 = _mm256_loadu_ps(bp + p * 16 + 8);
+    __m256 x = _mm256_broadcast_ss(a + 0);
+    c0a = _mm256_fmadd_ps(x, b0, c0a);
+    c0b = _mm256_fmadd_ps(x, b1, c0b);
+    x = _mm256_broadcast_ss(a + 1);
+    c1a = _mm256_fmadd_ps(x, b0, c1a);
+    c1b = _mm256_fmadd_ps(x, b1, c1b);
+    x = _mm256_broadcast_ss(a + 2);
+    c2a = _mm256_fmadd_ps(x, b0, c2a);
+    c2b = _mm256_fmadd_ps(x, b1, c2b);
+    x = _mm256_broadcast_ss(a + 3);
+    c3a = _mm256_fmadd_ps(x, b0, c3a);
+    c3b = _mm256_fmadd_ps(x, b1, c3b);
+    x = _mm256_broadcast_ss(a + 4);
+    c4a = _mm256_fmadd_ps(x, b0, c4a);
+    c4b = _mm256_fmadd_ps(x, b1, c4b);
+    x = _mm256_broadcast_ss(a + 5);
+    c5a = _mm256_fmadd_ps(x, b0, c5a);
+    c5b = _mm256_fmadd_ps(x, b1, c5b);
+  }
+  _mm256_storeu_ps(tile + 0, c0a);
+  _mm256_storeu_ps(tile + 8, c0b);
+  _mm256_storeu_ps(tile + 16, c1a);
+  _mm256_storeu_ps(tile + 24, c1b);
+  _mm256_storeu_ps(tile + 32, c2a);
+  _mm256_storeu_ps(tile + 40, c2b);
+  _mm256_storeu_ps(tile + 48, c3a);
+  _mm256_storeu_ps(tile + 56, c3b);
+  _mm256_storeu_ps(tile + 64, c4a);
+  _mm256_storeu_ps(tile + 72, c4b);
+  _mm256_storeu_ps(tile + 80, c5a);
+  _mm256_storeu_ps(tile + 88, c5b);
+}
+
+__attribute__((target("avx2,fma"))) static void mm_micro_f64_avx2(
+    double *tile, const double *ap, const double *bp, int64_t k) {
+  __m256d c0a = _mm256_setzero_pd(), c0b = _mm256_setzero_pd();
+  __m256d c1a = _mm256_setzero_pd(), c1b = _mm256_setzero_pd();
+  __m256d c2a = _mm256_setzero_pd(), c2b = _mm256_setzero_pd();
+  __m256d c3a = _mm256_setzero_pd(), c3b = _mm256_setzero_pd();
+  __m256d c4a = _mm256_setzero_pd(), c4b = _mm256_setzero_pd();
+  __m256d c5a = _mm256_setzero_pd(), c5b = _mm256_setzero_pd();
+  for (int64_t p = 0; p < k; p++) {
+    const double *a = ap + p * 6;
+    __m256d b0 = _mm256_loadu_pd(bp + p * 8);
+    __m256d b1 = _mm256_loadu_pd(bp + p * 8 + 4);
+    __m256d x = _mm256_broadcast_sd(a + 0);
+    c0a = _mm256_fmadd_pd(x, b0, c0a);
+    c0b = _mm256_fmadd_pd(x, b1, c0b);
+    x = _mm256_broadcast_sd(a + 1);
+    c1a = _mm256_fmadd_pd(x, b0, c1a);
+    c1b = _mm256_fmadd_pd(x, b1, c1b);
+    x = _mm256_broadcast_sd(a + 2);
+    c2a = _mm256_fmadd_pd(x, b0, c2a);
+    c2b = _mm256_fmadd_pd(x, b1, c2b);
+    x = _mm256_broadcast_sd(a + 3);
+    c3a = _mm256_fmadd_pd(x, b0, c3a);
+    c3b = _mm256_fmadd_pd(x, b1, c3b);
+    x = _mm256_broadcast_sd(a + 4);
+    c4a = _mm256_fmadd_pd(x, b0, c4a);
+    c4b = _mm256_fmadd_pd(x, b1, c4b);
+    x = _mm256_broadcast_sd(a + 5);
+    c5a = _mm256_fmadd_pd(x, b0, c5a);
+    c5b = _mm256_fmadd_pd(x, b1, c5b);
+  }
+  _mm256_storeu_pd(tile + 0, c0a);
+  _mm256_storeu_pd(tile + 4, c0b);
+  _mm256_storeu_pd(tile + 8, c1a);
+  _mm256_storeu_pd(tile + 12, c1b);
+  _mm256_storeu_pd(tile + 16, c2a);
+  _mm256_storeu_pd(tile + 20, c2b);
+  _mm256_storeu_pd(tile + 24, c3a);
+  _mm256_storeu_pd(tile + 28, c3b);
+  _mm256_storeu_pd(tile + 32, c4a);
+  _mm256_storeu_pd(tile + 36, c4b);
+  _mm256_storeu_pd(tile + 40, c5a);
+  _mm256_storeu_pd(tile + 44, c5b);
+}
+#endif
 
 /* MR=8, NR=12: 24 accumulator registers (8 rows x 3 vectors of 4) plus 3 B and
    2 A vectors = 29 of the 32 NEON registers. The wide tile amortizes the B/A
@@ -210,17 +399,24 @@ static void nx_c_micro_f32(void *vtile, const void *vap, const void *vbp,
   vst1q_f32(tile + 88, c7b);
   vst1q_f32(tile + 92, c7c);
 #else
-  float acc[96];
-  for (int i = 0; i < 96; i++) acc[i] = 0.0f;
+#if MM_AVX2
+  if (mm_avx2()) {
+    mm_micro_f32_avx2(tile, ap, bp, k);
+    return;
+  }
+#endif
+  enum { MR = MM_F32_MR, NR = MM_F32_NR };
+  float acc[MR * NR];
+  for (int i = 0; i < MR * NR; i++) acc[i] = 0.0f;
   for (int64_t p = 0; p < k; p++) {
-    const float *a = ap + p * 8;
-    const float *b = bp + p * 12;
-    for (int r = 0; r < 8; r++) {
+    const float *a = ap + p * MR;
+    const float *b = bp + p * NR;
+    for (int r = 0; r < MR; r++) {
       float av = a[r];
-      for (int col = 0; col < 12; col++) acc[r * 12 + col] += av * b[col];
+      for (int col = 0; col < NR; col++) acc[r * NR + col] += av * b[col];
     }
   }
-  for (int i = 0; i < 96; i++) tile[i] = acc[i];
+  for (int i = 0; i < MR * NR; i++) tile[i] = acc[i];
 #endif
 }
 
@@ -279,17 +475,24 @@ static void nx_c_micro_f64(void *vtile, const void *vap, const void *vbp,
   vst1q_f64(tile + 28, c7l);
   vst1q_f64(tile + 30, c7h);
 #else
-  double acc[32];
-  for (int i = 0; i < 32; i++) acc[i] = 0.0;
+#if MM_AVX2
+  if (mm_avx2()) {
+    mm_micro_f64_avx2(tile, ap, bp, k);
+    return;
+  }
+#endif
+  enum { MR = MM_F64_MR, NR = MM_F64_NR };
+  double acc[MR * NR];
+  for (int i = 0; i < MR * NR; i++) acc[i] = 0.0;
   for (int64_t p = 0; p < k; p++) {
-    const double *a = ap + p * 8;
-    const double *b = bp + p * 4;
-    for (int r = 0; r < 8; r++) {
+    const double *a = ap + p * MR;
+    const double *b = bp + p * NR;
+    for (int r = 0; r < MR; r++) {
       double av = a[r];
-      for (int col = 0; col < 4; col++) acc[r * 4 + col] += av * b[col];
+      for (int col = 0; col < NR; col++) acc[r * NR + col] += av * b[col];
     }
   }
-  for (int i = 0; i < 32; i++) tile[i] = acc[i];
+  for (int i = 0; i < MR * NR; i++) tile[i] = acc[i];
 #endif
 }
 
@@ -338,8 +541,15 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
 #define MM_MICRO_nx_c_complex32 nx_c_micro_c32
 #define MM_MICRO_nx_c_complex64 nx_c_micro_c64
 #define MM_MICRO_uint8_t NULL
-#define MM_NR_float 12
-#define MM_NR_double 4
+#define MM_MR_float MM_F32_MR
+#define MM_MR_double MM_F64_MR
+#define MM_MR_int64_t MM_MR
+#define MM_MR_uint64_t MM_MR
+#define MM_MR_nx_c_complex32 MM_MR
+#define MM_MR_nx_c_complex64 MM_MR
+#define MM_MR_uint8_t MM_MR
+#define MM_NR_float MM_F32_NR
+#define MM_NR_double MM_F64_NR
 #define MM_NR_int64_t 8
 #define MM_NR_uint64_t 8
 #define MM_NR_nx_c_complex32 8
@@ -606,7 +816,7 @@ typedef struct {
                        mm_row_tile_##sfx,                                      \
                        MM_MICRO_##compute,                                     \
                        mm_acc_##sfx,                                           \
-                       MM_MR,                                                  \
+                       MM_MR_##compute,                                        \
                        MM_NR_##compute,                                        \
                        (int64_t)sizeof(compute)},
 static const nx_c_mm_desc mm_desc[NX_C_DTYPE_COUNT] = {
@@ -620,6 +830,13 @@ static const nx_c_mm_desc mm_desc[NX_C_DTYPE_COUNT] = {
 #undef MM_MICRO_nx_c_complex32
 #undef MM_MICRO_nx_c_complex64
 #undef MM_MICRO_uint8_t
+#undef MM_MR_float
+#undef MM_MR_double
+#undef MM_MR_int64_t
+#undef MM_MR_uint64_t
+#undef MM_MR_nx_c_complex32
+#undef MM_MR_nx_c_complex64
+#undef MM_MR_uint8_t
 #undef MM_NR_float
 #undef MM_NR_double
 #undef MM_NR_int64_t
@@ -656,7 +873,7 @@ static void nx_c_gemm_macrotile(const nx_c_mm_desc *d, const char *Ap,
   int64_t cs_ = d->csize;
   int64_t nmb = mm_ceil_div(mc, MR);
   int64_t nnb = mm_ceil_div(nc, NR);
-  _Alignas(16) char tile[MM_MR * 8 * 16]; /* MR * max(NR) * max(compute size) */
+  _Alignas(32) char tile[MM_TILE_BYTES];
 
   if (k <= MM_KC_FULLK_MAX || Cacc == NULL) {
     for (int64_t jr = 0; jr < nnb; jr++) {
