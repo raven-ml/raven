@@ -472,57 +472,142 @@ let extreme_ticks =
   in
   (u, zoned, xs)
 
-(* A datetime or a duration of a unit, and a duration of that unit or a coarser
-   one, with ticks whose sum cannot overflow. *)
-let spans =
-  let per : Type.unit_ -> int = function
-    | S -> 1
-    | Ms -> 1_000
-    | Us -> 1_000_000
-    | Ns -> 1_000_000_000
-  in
+(* Temporal.add over every operand type and every pairing of its unit with a
+   span's unit that it takes, ticks drawn at their bounds as well as anywhere.
+   The model computes each row in exact int64 arithmetic: a row whose span does
+   not scale to the operand's ticks, whose sum overflows, or whose result leaves
+   the operand's range fails the run, at the first such row. *)
+
+type operand = Datetime | Duration | Clock | Date
+
+let per_s : Type.unit_ -> int64 = function
+  | S -> 1L
+  | Ms -> 1_000L
+  | Us -> 1_000_000L
+  | Ns -> 1_000_000_000L
+
+let int32_days = (Int64.of_int32 Int32.min_int, Int64.of_int32 Int32.max_int)
+
+let adds =
   let open Gen in
-  let* u = of_list Type.[ S; Ms; Us; Ns ] in
+  let units = Type.[ S; Ms; Us; Ns ] in
+  let* op = of_list [ Datetime; Duration; Clock; Date ] in
+  let* u = of_list units in
+  (* A span finer than the operand's unit is a problem of the verb, and a date's
+     unit is the second. *)
   let* du =
-    of_list (List.filter (fun d -> per d <= per u) Type.[ S; Ms; Us; Ns ])
+    let unit_ = if op = Date then Type.S else u in
+    of_list (List.filter (fun d -> per_s d <= per_s unit_) units)
   in
-  let* datetime = bool in
-  let bound = 1 lsl 50 in
-  let+ pairs =
-    array ~size:(int_range 0 20)
-      (pair (int_range (-bound) bound)
-         (int_range (-bound / (per u / per du)) (bound / (per u / per du))))
+  let edges =
+    [ Int64.min_int; Int64.succ Int64.min_int; -1L; 0L; 1L ]
+    @ [ Int64.pred Int64.max_int; Int64.max_int ]
   in
-  (u, du, datetime, pairs, per u / per du)
+  let operand =
+    match op with
+    | Datetime | Duration -> frequency [ (1, of_list edges); (1, int64) ]
+    | Clock ->
+        let last = Int64.pred (Int64.mul 86_400L (per_s u)) in
+        frequency [ (1, of_list [ 0L; 1L; last ]); (1, int64_range 0L last) ]
+    | Date ->
+        let lo, hi = int32_days in
+        frequency
+          [
+            (1, of_list [ lo; Int64.succ lo; 0L; Int64.pred hi; hi ]);
+            (1, int64_range lo hi);
+          ]
+  in
+  let span =
+    frequency
+      [
+        (2, of_list edges);
+        (2, int64);
+        ( 1,
+          map
+            (Int64.mul (Int64.mul 86_400L (per_s du)))
+            (int64_range (-1000L) 1000L) );
+        (1, int64_range (-1000L) 1000L);
+      ]
+  in
+  let+ rows = array ~size:(int_range 0 12) (pair operand span) in
+  (op, u, du, rows)
+
+(* [mul_exact k f] is [k * f] for [f > 0], or [None] if it overflows. *)
+let mul_exact k f =
+  let r = Int64.mul k f in
+  if Int64.div r f = k then Some r else None
+
+(* [add_exact x s] is [x + s], or [None] if it overflows. *)
+let add_exact x s =
+  let r = Int64.add x s in
+  if Int64.compare s 0L >= 0 = (Int64.compare r x >= 0) then Some r else None
+
+let model op u du x k =
+  let ( let* ) = Option.bind in
+  match op with
+  | Date ->
+      let day = Int64.mul 86_400L (per_s du) in
+      let r = Int64.add x (Int64.div k day) in
+      let lo, hi = int32_days in
+      if Int64.rem k day <> 0L || r < lo || r > hi then None else Some r
+  | Datetime | Duration | Clock ->
+      let* s = mul_exact k (Int64.div (per_s u) (per_s du)) in
+      let* r = add_exact x s in
+      let day = Int64.mul 86_400L (per_s u) in
+      if op = Clock && (r < 0L || r >= day) then None else Some r
 
 let adds_ticks =
-  prop "add moves a datetime or a duration by the span's ticks" spans
-    (fun (u, du, datetime, pairs, factor) ->
-      let ints xs = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
-      let column ty xs =
-        match
-          Column.of_layout ty (Fixed { validity = None; values = ints xs })
-        with
+  prop
+    "add moves a temporal value by the span's ticks, failing at the first row \
+     out of range"
+    adds (fun (op, u, du, rows) ->
+      let column ty dt xs =
+        let values = Nx.P (Nx.create dt [| Array.length xs |] xs) in
+        match Column.of_layout ty (Fixed { validity = None; values }) with
         | Ok c -> c
         | Error (row, why) -> failf "row %d: %s" row why
       in
-      let a = Array.map (fun (x, _) -> Int64.of_int x) pairs in
-      let k = Array.map (fun (_, k) -> Int64.of_int k) pairs in
-      let ty : Type.any =
-        if datetime then Any (Type.datetime u) else Any (Type.duration u)
+      let x = Array.map fst rows and k = Array.map snd rows in
+      let a =
+        match op with
+        | Datetime -> column (Any (Type.datetime ~zone:"UTC" u)) Nx.int64 x
+        | Duration -> column (Any (Type.duration u)) Nx.int64 x
+        | Clock -> column (Any (Type.clock u)) Nx.int64 x
+        | Date -> column (Any Type.date) Nx.int32 (Array.map Int64.to_int32 x)
       in
       let t =
-        v [ ("a", column ty a); ("k", column (Any (Type.duration du)) k) ]
+        v [ ("a", a); ("k", column (Any (Type.duration du)) Nx.int64 k) ]
       in
-      let k_span = Col.span "k" in
-      let sum =
-        if datetime then result Expr.(Temporal.add (Col.instant "a") k_span) t
-        else result Expr.(Temporal.add (Col.span "a") k_span) t
+      let d = Col.span "k" in
+      let out =
+        match op with
+        | Datetime -> compute Expr.(Temporal.add (Col.instant "a") d) t
+        | Duration | Clock -> compute Expr.(Temporal.add (Col.span "a") d) t
+        | Date -> compute Expr.(Temporal.add (Col.date "a") d) t
       in
-      let expected =
-        Array.map2 (fun x k -> Int64.(add x (mul k (of_int factor)))) a k
+      let ticks c =
+        match op with
+        | Date ->
+            Array.map Int64.of_int32 (Nx.to_array (Column.to_tensor Nx.int32 c))
+        | _ -> Nx.to_array (Column.to_tensor Nx.int64 c)
       in
-      equal (array int64) expected (Nx.to_array (Column.to_tensor Nx.int64 sum)))
+      let expected = Array.map2 (model op u du) x k in
+      cover "the span's unit is the operand's" (op <> Date && u = du);
+      cover "a coarser span" (op <> Date && per_s du < per_s u);
+      cover "every row in range"
+        (Array.for_all Option.is_some expected && rows <> [||]);
+      cover "a row out of range" (Array.exists Option.is_none expected);
+      cover "a date" (op = Date && Array.exists Option.is_some expected);
+      cover "a clock" (op = Clock && Array.exists Option.is_some expected);
+      match Array.find_index Option.is_none expected with
+      | None ->
+          equal (array int64)
+            (Array.map Option.get expected)
+            (ticks (require_ok ~pp:Error.pp out))
+      | Some row ->
+          contains
+            ~sub:(Printf.sprintf ": row %d: " row)
+            (Format.asprintf "%a" Error.pp (require_error out)))
 
 let formats_round_trip =
   prop "parse reads back what format writes, at every tick" extreme_ticks
