@@ -1520,10 +1520,14 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
 
   /* Blocked path. Two disjoint job spaces over the engine's one pool:
        panel:     (batch x NC-panel), a worker owns whole panels — best locality.
-       M-parallel:(batch x NC-panel x MC-block), used only when panels < the
-                  threads the work wants, so a narrow matrix (the extreme n <= NC
-                  gives one panel, otherwise serial) still fills the pool. B is
-                  pre-packed once into a shared buffer; workers pack only A.
+       M-parallel:(batch x NC-panel x MC-block), B pre-packed once into a shared
+                  buffer; workers pack only A.
+     A worker that runs out of jobs idles until the last one ends, so J equal
+     jobs on T threads take ceil(J / T) rounds. M-parallel is taken when its
+     rounds, counted in MC x NC blocks, are fewer than the panel path's: a
+     narrow matrix (n <= NC gives one panel) then still fills the pool, and 8
+     panels on 6 threads no longer leave 4 threads idle for a second round.
+     On a tie the panel path keeps its locality.
      The KC accumulator (Cacc) is per-worker and shared by both, allocated only
      when k forces contraction sub-blocking. */
   int64_t n_jc = mm_ceil_div(n, MM_NC);
@@ -1543,7 +1547,9 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
       n_ic > 1 ? nx_c_threads_for(NX_C_COST_HEAVY, fine, mcm * ncm * k, bytes)
                : nth_panel;
   if (nth_fine > fine) nth_fine = (int)fine;
-  if (n_ic > 1 && nth_fine > nth_panel) {
+  int64_t panel_rounds = mm_ceil_div(panels, nth_panel) * n_ic;
+  int64_t fine_rounds = mm_ceil_div(fine, nth_fine);
+  if (n_ic > 1 && fine_rounds < panel_rounds) {
     use_mpar = 1;
     nth = nth_fine;
     total_jobs = fine;

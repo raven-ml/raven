@@ -3052,6 +3052,9 @@ thread.
 
 ### Nx
 
+- `Nx.matmul` shares a large product among threads by row blocks when whole
+  column panels would leave threads idle: a float32 2048 x 2048 product on
+  6 cores takes 25 ms where it took 33.
 - `Nx.matmul` and the products built on it run on AVX2 and FMA on x86-64
   CPUs that have them, picked at run time: a float32 512 x 512 product takes
   2.1 ms on one Lion Cove core where it took 14.4, and float64 4.1 ms where
