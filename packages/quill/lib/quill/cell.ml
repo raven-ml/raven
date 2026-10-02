@@ -28,7 +28,51 @@ type output =
   | Error of string
   | Display of { mime : string; data : string }
 
-type Format.stag += Display_tag of { mime : string; data : string }
+(* ───── Display protocol ───── *)
+
+let display_prefix = "quill.display\n"
+
+let base64_alphabet =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+let base64_encode s =
+  let len = String.length s in
+  let out = Bytes.create ((len + 2) / 3 * 4) in
+  let digit n = String.unsafe_get base64_alphabet (n land 0x3f) in
+  let byte i = if i < len then Char.code (String.unsafe_get s i) else 0 in
+  for g = 0 to ((len + 2) / 3) - 1 do
+    let i = 3 * g and j = 4 * g in
+    let n = (byte i lsl 16) lor (byte (i + 1) lsl 8) lor byte (i + 2) in
+    Bytes.unsafe_set out j (digit (n lsr 18));
+    Bytes.unsafe_set out (j + 1) (digit (n lsr 12));
+    Bytes.unsafe_set out (j + 2) (if i + 1 < len then digit (n lsr 6) else '=');
+    Bytes.unsafe_set out (j + 3) (if i + 2 < len then digit n else '=')
+  done;
+  Bytes.unsafe_to_string out
+
+let malformed what = Some (Error ("malformed display tag: " ^ what))
+
+let output_of_tag tag =
+  if not (String.starts_with ~prefix:display_prefix tag) then None
+  else
+    let mime_start = String.length display_prefix in
+    match String.index_from_opt tag mime_start '\n' with
+    | None -> malformed "no line ends the MIME type"
+    | Some mime_end -> (
+        match String.index_from_opt tag (mime_end + 1) '\n' with
+        | None -> malformed "no line ends the display id"
+        | Some _ when mime_end = mime_start ->
+            malformed "the MIME type is empty"
+        | Some id_end ->
+            let mime = String.sub tag mime_start (mime_end - mime_start) in
+            let start = id_end + 1 in
+            let content = String.sub tag start (String.length tag - start) in
+            let data =
+              if String.starts_with ~prefix:"image/" mime then
+                base64_encode content
+              else content
+            in
+            Some (Display { mime; data }))
 
 (* ───── Attributes ───── *)
 

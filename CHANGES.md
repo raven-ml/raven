@@ -5975,6 +5975,10 @@ thread.
 
 ### Quill
 
+- A value displays as rich content when its printer opens a
+  `Format.String_tag` holding a display tag: the lines `quill.display`, the
+  MIME type and a display id, then the raw content (`Quill.Cell.output_of_tag`).
+  Libraries display without linking Quill; `Quill.Cell.Display_tag` is removed.
 - The web notebook shows SVG displays holding any UTF-8. `Cell.Display` holds
   every image type in base64, SVG included, so the notebook no longer encodes
   SVG with `btoa`, which threw on characters such as `η`.

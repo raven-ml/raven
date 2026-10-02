@@ -30,16 +30,50 @@ type output =
           - [Stderr s] is captured standard error.
           - [Error s] is an execution error message.
           - [Display {mime; data}] is rich content identified by MIME type (e.g.
-            ["text/html"], ["image/png"]). Binary data is base64-encoded in
-            [data]. *)
+            ["text/html"], ["image/png"]). For an [image/] MIME type, [data] is
+            the base64 encoding of the content; for any other, [data] is the
+            content itself. *)
 
-type Format.stag +=
-  | Display_tag of { mime : string; data : string }
-        (** Semantic tag for rich display output. When a pretty-printer opens
-            this tag on a formatter configured by the notebook kernel, the
-            payload is emitted as a {!Display} output. On other formatters the
-            tag is silently ignored and only the text content between the
-            open/close tags is printed. *)
+(** {1:display Display protocol}
+
+    A value displays as rich content in a notebook when its printer opens a
+    [Format.String_tag] holding a {e display tag} around a plain-text rendering
+    of the value. For a figure rendered as the SVG document [svg]:
+    {[
+    let pp ppf fig =
+      let tag = "quill.display\nimage/svg+xml\n\n" ^ svg fig in
+      Format.pp_open_stag ppf (Format.String_tag tag);
+      Format.pp_print_string ppf "a figure";
+      Format.pp_close_stag ppf ()
+    ]}
+    The protocol is a textual convention, so a library displays in a notebook
+    without depending on Quill.
+
+    A display tag is the concatenation of:
+    + the line [quill.display];
+    + the line of the content's MIME type, such as [image/svg+xml];
+    + the line of the display id, empty for none;
+    + the content's bytes, up to the end of the tag.
+
+    Each line ends with ['\n']. The content is not encoded: it is every byte
+    after the third ['\n'], newlines and NUL bytes included.
+
+    A non-empty display id names the display, so that a later display with the
+    same id can replace it in place. Quill does not act on ids yet: it shows
+    every display.
+
+    Formatters ignore tags by default and print only the plain-text rendering,
+    which is what a terminal toplevel or a log shows. Quill's OCaml kernel turns
+    each display tag in the values a cell evaluates to, such as those printed by
+    a printer installed with [#install_printer], into a {!Display} output, and
+    still prints the plain-text rendering in the value's line. *)
+
+val output_of_tag : string -> output option
+(** [output_of_tag s] is the output Quill shows for the tag [s]:
+    - [None] if [s] does not start with the line [quill.display].
+    - [Some (Display {mime; data})] if [s] is a {{!display}display tag}.
+    - [Some (Error msg)] otherwise, where [msg] says how [s] is malformed: a
+      missing line, or an empty MIME type. *)
 
 (** {1:attrs Cell attributes} *)
 

@@ -6,9 +6,9 @@
 (** OCaml toplevel kernel for Quill.
 
     Provides an in-process OCaml toplevel as a {!Quill.Kernel.t}. Stdout and
-    stderr are streamed in real time during execution. Rich outputs (images,
-    HTML) are emitted via {!Quill.Cell.Display_tag} semantic tags on the
-    toplevel formatter. *)
+    stderr are streamed in real time during execution. A cell's values whose
+    printers open {{!Quill.Cell.display}display tags} produce
+    {!Quill.Cell.Display} outputs. *)
 
 val initialize_if_needed : unit -> unit
 (** [initialize_if_needed ()] ensures the OCaml toplevel environment is

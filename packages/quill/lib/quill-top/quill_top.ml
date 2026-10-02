@@ -180,18 +180,17 @@ let capture ~on_stdout ~on_stderr ~on_display f =
   let buf_err = Buffer.create 256 in
   let ppf_out = Format.formatter_of_buffer buf_out in
   let ppf_err = Format.formatter_of_buffer buf_err in
-  (* Intercept Display_tag semantic tags on the toplevel formatter *)
+  (* Turn display tags opened on the toplevel formatter into outputs *)
   Format.pp_set_print_tags ppf_out true;
   Format.pp_set_formatter_stag_functions ppf_out
     {
       mark_open_stag = (fun _ -> "");
       mark_close_stag = (fun _ -> "");
       print_open_stag =
-        (fun stag ->
-          match stag with
-          | Quill.Cell.Display_tag { mime; data } ->
-              on_display (Quill.Cell.Display { mime; data })
-          | _ -> ());
+        (function
+        | Format.String_tag s ->
+            Option.iter on_display (Quill.Cell.output_of_tag s)
+        | _ -> ());
       print_close_stag = (fun _ -> ());
     };
   (* Pipes for raw stdout/stderr from user code (e.g. print_string) *)
