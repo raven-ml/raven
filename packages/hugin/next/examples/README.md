@@ -1,10 +1,13 @@
 # hugin.next examples
 
 Each example is a directory holding `main.ml` and the image it renders. The
-images are committed; refresh them with
+images are committed, and a build compiles the examples without running them.
+To render them again into `_build` and replace the committed images that
+differ from their renders, run
 
 ```sh
-REFRESH_ASSETS=true dune build @packages/hugin/next/examples/assets
+dune build @packages/hugin/next/examples/assets
+dune promote
 ```
 
 or run one example from its directory:
