@@ -1,6 +1,29 @@
 # thumper baseline v1
 # suite: hugin_next_vg
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+pdf/100k-stamps	alloc_words	exact	10080243
+pdf/100k-stamps	wall_time	batch=1	n=20	5.994e-02	5.936e-02 5.960e-02 5.967e-02 5.976e-02 5.979e-02 5.983e-02 5.983e-02 5.983e-02 5.986e-02 5.992e-02 5.995e-02 6.002e-02 6.009e-02 6.024e-02 6.029e-02 6.043e-02 6.059e-02 6.079e-02 6.286e-02 6.341e-02
+pdf/1M-point-polyline	alloc_words	exact	58433597
+pdf/1M-point-polyline	wall_time	batch=1	n=20	3.616e-01	3.566e-01 3.582e-01 3.591e-01 3.594e-01 3.595e-01 3.598e-01 3.605e-01 3.605e-01 3.611e-01 3.614e-01 3.617e-01 3.619e-01 3.622e-01 3.628e-01 3.631e-01 3.637e-01 3.641e-01 3.657e-01 3.658e-01 3.701e-01
+raster/100k-coloured-stamps	alloc_words	exact	18407460
+raster/100k-coloured-stamps	wall_time	batch=1	n=20	6.031e-02	5.981e-02 5.987e-02 5.988e-02 5.992e-02 5.997e-02 6.001e-02 6.003e-02 6.009e-02 6.022e-02 6.028e-02 6.034e-02 6.052e-02 6.053e-02 6.057e-02 6.073e-02 6.076e-02 6.077e-02 6.078e-02 6.087e-02 6.094e-02
+raster/100k-dot-scatter-to-PNG	alloc_words	exact	11344296
+raster/100k-dot-scatter-to-PNG	wall_time	batch=1	n=20	4.037e-02	3.947e-02 3.966e-02 4.000e-02 4.010e-02 4.010e-02 4.014e-02 4.026e-02 4.027e-02 4.029e-02 4.037e-02 4.037e-02 4.052e-02 4.086e-02 4.098e-02 4.106e-02 4.115e-02 4.123e-02 4.196e-02 4.202e-02 4.228e-02
+raster/100k-scaled-faded-stamps	alloc_words	exact	313191944
+raster/100k-scaled-faded-stamps	wall_time	batch=1	n=20	5.062e-01	5.050e-01 5.051e-01 5.053e-01 5.056e-01 5.056e-01 5.057e-01 5.058e-01 5.059e-01 5.061e-01 5.062e-01 5.063e-01 5.064e-01 5.064e-01 5.065e-01 5.065e-01 5.066e-01 5.073e-01 5.073e-01 5.079e-01 5.150e-01
+raster/100k-stamps	alloc_words	exact	16307828
+raster/100k-stamps	wall_time	batch=1	n=20	6.038e-02	5.986e-02 5.991e-02 5.995e-02 6.002e-02 6.005e-02 6.014e-02 6.024e-02 6.032e-02 6.037e-02 6.037e-02 6.039e-02 6.052e-02 6.056e-02 6.056e-02 6.061e-02 6.078e-02 6.087e-02 6.110e-02 6.121e-02 6.162e-02
+raster/1M-point-polyline	alloc_words	exact	60614744
+raster/1M-point-polyline	wall_time	batch=1	n=20	1.346e-01	1.312e-01 1.314e-01 1.319e-01 1.327e-01 1.337e-01 1.338e-01 1.339e-01 1.342e-01 1.342e-01 1.342e-01 1.351e-01 1.351e-01 1.364e-01 1.367e-01 1.370e-01 1.380e-01 1.387e-01 1.397e-01 1.403e-01 1.568e-01
+svg/100k-stamps	alloc_words	exact	16334887
+svg/100k-stamps	wall_time	batch=1	n=20	1.484e-02	1.444e-02 1.452e-02 1.458e-02 1.469e-02 1.469e-02 1.471e-02 1.474e-02 1.475e-02 1.477e-02 1.477e-02 1.491e-02 1.504e-02 1.514e-02 1.525e-02 1.679e-02 1.713e-02 1.714e-02 1.732e-02 1.813e-02 1.918e-02
+svg/1M-point-polyline	alloc_words	exact	50598897
+svg/1M-point-polyline	wall_time	batch=1	n=20	9.064e-02	8.413e-02 8.483e-02 8.575e-02 8.624e-02 8.751e-02 8.877e-02 8.912e-02 8.927e-02 8.968e-02 8.995e-02 9.133e-02 9.133e-02 9.134e-02 9.190e-02 9.415e-02 9.461e-02 9.463e-02 9.469e-02 9.680e-02 9.782e-02
+
 # machine: ca352e279bc47cb1
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
