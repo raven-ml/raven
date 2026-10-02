@@ -1485,6 +1485,26 @@ let reducers =
                 (Nx.to_array (cells_image 2 3 at))
                 (Nx.to_array px)
           | l -> failf "%d images" (List.length l));
+      test "cells paints each cell at its row's opacity" (fun () ->
+          let z =
+            Nx.create Nx.float64 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]
+          in
+          let opacity = num ~scale:(Scale.linear ~domain:(0., 5.) ()) z in
+          let f =
+            layer [ rect ~x:(dim 1) ~y:(dim 0) ~fill:(num z) ~opacity () ]
+          in
+          let r = resolve f in
+          match cells (drawn f) with
+          | [ (_, px) ] ->
+              let at i j =
+                let k = Float.of_int ((i * 3) + j) in
+                let c = viridis_of r k in
+                Color.with_alpha (Color.alpha c *. (k /. 5.)) c
+              in
+              equal (array int)
+                (Nx.to_array (cells_image 2 3 at))
+                (Nx.to_array px)
+          | l -> failf "%d images" (List.length l));
       test "a cell no row covers paints nothing" (fun () ->
           let f =
             layer
