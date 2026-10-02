@@ -337,11 +337,11 @@ let figure_of c =
   let g = if c.shared then share [ ("x", `Shared) ] g else g in
   match c.titles with None -> g | Some (_, _, t) -> title ~align:c.align t g
 
-(* [needs size f] is the size that [layout] names when [f] is too small for
-   [size], if it is. *)
-let needs size f =
+(* [tried size f] is the layout of [f] at [size], or the size that [layout]
+   names when [f] is too small for [size]. *)
+let tried size f =
   match layout size (resolve f) with
-  | _ -> None
+  | l -> Ok l
   | exception (Invalid_argument m as e) ->
       let key = "the figure needs " in
       let rec at i =
@@ -353,7 +353,12 @@ let needs size f =
       Scanf.sscanf
         (String.sub m i (String.length m - i))
         "the figure needs %f × %f pt"
-        (fun w h -> Some (w, h))
+        (fun w h -> Error (w, h))
+
+(* [needs size f] is the size that [layout] names when [f] is too small for
+   [size], if it is. *)
+let needs size f =
+  Result.fold ~ok:(fun _ -> None) ~error:Option.some (tried size f)
 
 (* [page_of c] is the page size [c] fixes, if it fixes one: a factor of a least
    size is that of the size a figure of one point names. *)
@@ -374,12 +379,11 @@ let size_of c =
 
 (* [laid c] is the layout of [c], discarding a figure too small for it. *)
 let laid c =
-  let f = figure_of c in
-  match needs (size_of c) f with
-  | Some _ ->
+  match tried (size_of c) (figure_of c) with
+  | Ok l -> l
+  | Error _ ->
       assume false;
       assert false
-  | None -> layout (size_of c) (resolve f)
 
 (* [lines l kind] is the printed lines of the guides of [l] of [kind], such as
    ["axis"] or ["scale title"], each with the lines of its elements. *)
@@ -886,6 +890,19 @@ let least_sizes =
   let named =
     prop "a figure too small names a size that lays it out" ~count:40
       (Gen.pair gen_case (Gen.float_range 0.3 1.))
+      (fun (c, k) ->
+        let f = figure_of c in
+        match needs (Size.figure 1. 1.) f with
+        | None -> assume false
+        | Some (w, h) -> (
+            match needs (Size.figure (k *. w) (k *. h)) f with
+            | None -> ()
+            | Some (w', h') -> (
+                match tried (Size.figure w' h') f with
+                | Ok l -> apart l
+                | Error s ->
+                    equal (option (pair float_exact float_exact)) None (Some s))
+            ))
       names_law
   in
   (* Figures too small at a factor of their least size, whose named size the law
@@ -914,12 +931,9 @@ let least_sizes =
       cases ~name:(Printf.sprintf "%g pt")
         "a long y title lays out or names a size that does at"
         [ 120.; 155.; 160.; 181.; 182.; 182.2; 182.29; 182.3 ] (fun w ->
-          let size =
-            match needs (Size.figure w 200.) long_title with
-            | None -> Size.figure w 200.
-            | Some (w, h) -> Size.figure w h
-          in
-          apart (lay size long_title));
+          match tried (Size.figure w 200.) long_title with
+          | Ok l -> apart l
+          | Error (w, h) -> apart (lay (Size.figure w h) long_title));
     ]
 
 (* [box_mid_x (x0, _, x1, _)] is the middle of a printed box along x. *)
@@ -1915,9 +1929,9 @@ let reuse =
   group "reuse"
     [
       prop "laying out twice gives equal layouts" ~count:30 gen_case (fun c ->
-          let r = resolve (figure_of c) in
-          match layout (size_of c) r with
-          | l -> equal layout_t l (layout (size_of c) r)
+          let r = resolve (figure_of c) and size = size_of c in
+          match layout size r with
+          | l -> equal layout_t l (layout size r)
           | exception (Invalid_argument m as e) ->
               if not (contains m "needs") then raise e;
               assume false);

@@ -1136,9 +1136,11 @@ let images =
    not zero and whose square does not meet [Picture.bounds p], grown by the
    eighth of a pixel by which stamps move their instances. *)
 let ink_outside p =
-  let img = render 100. 100. p in
+  let n = 100 in
+  let px = Nx.to_array (render (Float.of_int n) (Float.of_int n) p) in
+  let bounds = Picture.bounds p in
   let meets i j =
-    match Picture.bounds p with
+    match bounds with
     | None -> false
     | Some b ->
         let e = 0.125 +. 1e-9 in
@@ -1148,9 +1150,10 @@ let ink_outside p =
         && Box2.miny b -. e <= Float.of_int (i + 1)
   in
   let outside = ref [] in
-  for i = 99 downto 0 do
-    for j = 99 downto 0 do
-      if alpha img i j > 0 && not (meets i j) then outside := (i, j) :: !outside
+  for i = n - 1 downto 0 do
+    for j = n - 1 downto 0 do
+      let alpha = px.((((i * n) + j) * 4) + 3) in
+      if alpha > 0 && not (meets i j) then outside := (i, j) :: !outside
     done
   done;
   !outside
