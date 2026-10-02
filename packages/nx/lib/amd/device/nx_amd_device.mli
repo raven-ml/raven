@@ -13,8 +13,12 @@
       kernel driver, loads the GPU's firmware, boots its blocks, and manages its
       memory and page tables itself. The GPU is this process's until it exits.
 
-    Through {!Kernel} the GPUs are named ["AMD"], ["AMD:1"], ["AMD:2"], ..., and
-    through {!Pci} ["AMD-PCI"], ["AMD-PCI:1"], .... A process uses one
+    {b Numbering.} GPU [i] is the [i]th of the machine's AMD GPUs, its display
+    controllers and processing accelerators in bus order
+    ({!Nx_device_support.Pci.compare_address}), under both interfaces: index [i]
+    names the same GPU through either, and taking a GPU over {!Pci} renumbers
+    none. Through {!Kernel} the GPUs are named ["AMD"], ["AMD:1"], ["AMD:2"],
+    ..., and through {!Pci} ["AMD-PCI"], ["AMD-PCI:1"], .... A process uses one
     interface, chosen by its first open. Both need Linux: elsewhere {!count} is
     [0] and {!get} says why.
 
@@ -86,14 +90,10 @@ type interface =
       (** The compute interface of the [amdgpu] kernel driver, [/dev/kfd]. *)
   | Pci  (** The runtime's own driver, over the GPU's PCI function. *)
 
-val count : ?host:Nx_device.t -> ?interface:interface -> unit -> int
-(** [count ()] is the number of AMD GPUs that [interface] reaches: under
-    {!Kernel}, those of the [amdgpu] driver; under {!Pci}, the PCI functions of
-    the GPUs it supports, whatever driver they have. [interface] defaults to the
-    process's interface once a device is open, and before that to {!Kernel} if
-    [/dev/kfd] exists and {!Pci} otherwise. [0] on systems other than Linux.
-    Given another machine's [host], it is the number of that machine's GPUs
-    under {!Pci}.
+val count : ?host:Nx_device.t -> unit -> int
+(** [count ()] is the number of AMD GPUs of the machine of [host] (defaults to
+    {!Nx_device.host}), whatever driver holds them: the indices [0], ...,
+    [count () - 1] of both interfaces. [0] on systems other than Linux.
 
     Raises [Invalid_argument] if [host] is no host, and {!Nx_device.Lost} with
     [host] if [host]'s machine cannot be reached. *)
@@ -104,11 +104,12 @@ val get :
   ?firmware:string ->
   int ->
   (Nx_device.t, string) result
-(** [get i] is the AMD GPU [i] of [interface] (defaults as for {!count}), opened
-    by the first call that succeeds; every later call returns the same value.
-    The first successful open fixes the process's interface. Given another
-    machine's [host] (defaults to {!Nx_device.host}), it is that machine's GPU
-    [i], under {!Pci}.
+(** [get i] is AMD GPU [i] through [interface], opened by the first call that
+    succeeds; every later call returns the same value. The first successful open
+    fixes the process's interface. Given another machine's [host] (defaults to
+    {!Nx_device.host}), it is that machine's GPU [i], which only {!Pci} reaches.
+    [interface] defaults to the process's interface once a device is open, and
+    before that to {!Kernel} if [/dev/kfd] exists and {!Pci} otherwise.
 
     Under {!Pci}, each of the GPU's firmware images must have the SHA-256 digest
     it was validated with. An image is read from the directory [firmware], if
@@ -122,10 +123,11 @@ val get :
     the firmware.
 
     [Error msg] says why the GPU cannot be opened, for example that
-    [i >= count ~interface ()], that the process's interface is the other one,
-    that another machine's GPU was asked for under {!Kernel}, that a privilege
-    is missing, or that a firmware image is missing or differs, naming the file.
-    [msg] starts with the GPU's name, such as
+    [i >= count ()], that the process's interface is the other one, that another
+    machine's GPU was asked for under {!Kernel}, that the [amdgpu] driver does
+    not hold the GPU, that {!Pci} does not support the GPU's family, that a
+    privilege is missing, or that a firmware image is missing or differs, naming
+    the file. [msg] starts with the GPU's name, such as
     ["AMD:2: no GPU 2; there are 2 AMD GPUs"].
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and

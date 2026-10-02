@@ -15,10 +15,13 @@
       firmware, and manages the GPU's memory and page tables itself. The GPU is
       this process's until it exits.
 
-    Through {!Kernel} the GPUs are named ["NV"], ["NV:1"], ["NV:2"], ..., and
-    through {!Pci} ["NV-PCI"], ["NV-PCI:1"], .... A process uses one interface,
-    chosen by its first open. Both need Linux: elsewhere {!count} is [0] and
-    {!get} says why.
+    {b Numbering.} GPU [i] is the [i]th of the machine's NVIDIA GPUs, its
+    display controllers in bus order ({!Nx_device_support.Pci.compare_address}),
+    under both interfaces: index [i] names the same GPU through either, and
+    taking a GPU over {!Pci} renumbers none. Through {!Kernel} the GPUs are
+    named ["NV"], ["NV:1"], ["NV:2"], ..., and through {!Pci} ["NV-PCI"],
+    ["NV-PCI:1"], .... A process uses one interface, chosen by its first open.
+    Both need Linux: elsewhere {!count} is [0] and {!get} says why.
 
     {b Other machines.} Given the host of another machine ([nx.remote.device]),
     {!count} and {!get} reach that machine's GPUs, over {!Pci} through the
@@ -33,9 +36,9 @@
     it. An NV device and a CUDA device are two devices even when they are the
     same GPU: each has its own memory, timeline and budget, and
     {!Nx_device.Buffer.copy} between them goes through the host's staging
-    memory. Each library numbers GPUs its own way, so ["NV:1"] and ["CUDA:1"]
-    need not be the same GPU. Under {!Pci} the kernel driver lets go of the GPU,
-    which CUDA then cannot open.
+    memory. Both number GPUs in bus order, so ["NV:1"] and ["CUDA:1"] are the
+    same GPU when CUDA sees every NVIDIA GPU of the machine. Under {!Pci} the
+    kernel driver lets go of the GPU, which CUDA then cannot open.
 
     {b Memory.} Buffers are GPU memory, which the host does not address.
     {!Nx_device.Buffer.copy} moves their bytes on the GPU's copy engine:
@@ -97,14 +100,10 @@ type interface =
   | Kernel  (** NVIDIA's kernel driver, [/dev/nvidiactl]. *)
   | Pci  (** The runtime's own driver, over PCI. *)
 
-val count : ?host:Nx_device.t -> ?interface:interface -> unit -> int
-(** [count ()] is the number of NVIDIA GPUs that [interface] reaches: under
-    {!Kernel}, those of NVIDIA's kernel driver; under {!Pci}, the PCI functions
-    of the GPUs it supports, whatever driver they have. [interface] defaults to
-    the process's interface once a device is open, and before that to {!Kernel}
-    if [/dev/nvidiactl] exists and {!Pci} otherwise. [0] on systems other than
-    Linux. Given another machine's [host], it is the number of that machine's
-    GPUs under {!Pci}.
+val count : ?host:Nx_device.t -> unit -> int
+(** [count ()] is the number of NVIDIA GPUs of the machine of [host] (defaults
+    to {!Nx_device.host}), whatever driver holds them: the indices [0], ...,
+    [count () - 1] of both interfaces. [0] on systems other than Linux.
 
     Raises [Invalid_argument] if [host] is no host, and {!Nx_device.Lost} with
     [host] if [host]'s machine cannot be reached. *)
@@ -115,11 +114,12 @@ val get :
   ?firmware:string ->
   int ->
   (Nx_device.t, string) result
-(** [get i] is the NVIDIA GPU [i] of [interface] (defaults as for {!count}),
-    opened by the first call that succeeds; every later call returns the same
-    value. The first successful open fixes the process's interface. Given
-    another machine's [host] (defaults to {!Nx_device.host}), it is that
-    machine's GPU [i], under {!Pci}.
+(** [get i] is NVIDIA GPU [i] through [interface], opened by the first call that
+    succeeds; every later call returns the same value. The first successful open
+    fixes the process's interface. Given another machine's [host] (defaults to
+    {!Nx_device.host}), it is that machine's GPU [i], which only {!Pci} reaches.
+    [interface] defaults to the process's interface once a device is open, and
+    before that to {!Kernel} if [/dev/nvidiactl] exists and {!Pci} otherwise.
 
     Under {!Pci}, each of the GPU's firmware images must have the SHA-256 digest
     it was validated with. An image is read from the directory [firmware], if
@@ -133,13 +133,13 @@ val get :
     the firmware.
 
     [Error msg] says why the GPU cannot be opened, for example that
-    [i >= count ~interface ()], that the process's interface is the other one,
-    that another machine's GPU was asked for under {!Kernel}, that the kernel
-    driver is of another release, naming it, that a privilege is missing, or
-    that a firmware image is missing or differs, naming the file. [msg] starts
-    with the GPU's name, such as ["NV:2: no GPU 2; there are 2 NVIDIA GPUs"].
-    Under {!Kernel}, a failed open gives back what it took, so a later [get] may
-    open the GPU.
+    [i >= count ()], that the process's interface is the other one, that another
+    machine's GPU was asked for under {!Kernel}, that the kernel driver does not
+    hold the GPU or is of another release, naming it, that {!Pci} does not
+    support the GPU's family, that a privilege is missing, or that a firmware
+    image is missing or differs, naming the file. [msg] starts with the GPU's
+    name, such as ["NV:2: no GPU 2; there are 2 NVIDIA GPUs"]. Under {!Kernel},
+    a failed open gives back what it took, so a later [get] may open the GPU.
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
     {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)

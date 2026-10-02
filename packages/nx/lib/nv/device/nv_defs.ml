@@ -178,6 +178,9 @@ let nv2080_ctrl_perf_boost_flags_cuda_priority = (6, 1)
 module Card_info = struct
   let sizeof = 72
   let valid = (0, 1)
+  let pci_info_domain = (4, 4)
+  let pci_info_bus = (8, 1)
+  let pci_info_slot = (9, 1)
   let gpu_id = (0x10, 4)
   let minor_number = (0x38, 4)
 end

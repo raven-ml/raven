@@ -292,8 +292,8 @@ let max_copy (props : props) =
   then 0x40000000
   else 0x400000
 
-(* The opened GPUs, by the host of their machine and index there. *)
-let opened : ((Nx_device.t * int) * t) list Atomic.t = Atomic.make []
+(* The opened GPUs, by the host of their machine and bus address there. *)
+let opened : ((Nx_device.t * string) * t) list Atomic.t = Atomic.make []
 
 let amd_of d =
   List.find_map
@@ -1080,8 +1080,8 @@ let finish a dev (compute, aql, sdma) =
   let q = queue_buffers dev in
   a.queues <- Some (q compute, aql, List.map q sdma)
 
-let open_kfd index =
-  let k = Kfd.open_gpu index in
+let open_kfd ~index bus =
+  let k = Kfd.open_gpu bus in
   let pr = Kfd.prop k in
   let target = target_of (pr "gfx_target_version") in
   supported target;
@@ -1162,19 +1162,15 @@ let open_taken ?firmware ~machine ~buses ~index pci =
       raise e
 
 (* A failed open gives the function back, so that a later one can take it. *)
-let open_am ?firmware ~machine index =
+let open_am ?firmware ~machine ~index bus =
   let remote = Nx_remote_device.remote machine in
-  let buses = Am.buses ?remote () in
-  let bus =
-    match List.nth_opt buses index with
-    | Some b -> b
-    | None ->
-        failwith
-          (Printf.sprintf "no GPU %d; there are %d AMD GPUs" index
-             (List.length buses))
-  in
+  let supported = Am.buses ?remote () in
+  if not (List.mem bus supported) then
+    failwith (bus ^ " is of no GPU family the PCI interface supports");
   let pci = Pci.take ?remote ~lock:"am" bus in
-  match open_taken ?firmware ~machine ~buses:(List.length buses) ~index pci with
+  match
+    open_taken ?firmware ~machine ~buses:(List.length supported) ~index pci
+  with
   | a -> a
   | exception e ->
       Pci.release pci;
@@ -1196,20 +1192,25 @@ let check_reach host =
   | Some r when Remote.failed r <> None -> Nx_device.synchronize host
   | Some _ | None -> ()
 
-let count ?(host = Nx_device.host) ?interface () =
+(* The machine's AMD GPUs, its display controllers and processing accelerators
+   (such as the Instinct GPUs) of AMD's functions, in bus order: GPU [i] is the
+   [i]th under both interfaces, whatever driver holds it. *)
+let gpus ?remote () =
+  let scan class_ = Pci.scan ?remote ~vendor:0x1002 ~class_ [ (0, [ 0 ]) ] in
+  List.merge Pci.compare_address (scan 0x03) (scan 0x12)
+
+(* The GPUs of the machine of [host]. *)
+let gpus_of host =
   match Nx_remote_device.remote host with
   | Some remote -> (
-      try List.length (Am.buses ~remote ())
+      try gpus ~remote ()
       with Failure _ as e ->
         check_reach host;
         raise e)
-  | None when not (linux ()) -> 0
-  | None ->
-      Mutex.protect lock (fun () ->
-          match Option.value interface ~default:(default ()) with
-          | Kernel -> ( try Kfd.count () with Sys_error _ | Failure _ -> 0)
-          | Pci -> List.length (Am.buses ()))
+  | None when not (linux ()) -> []
+  | None -> gpus ()
 
+let count ?(host = Nx_device.host) () = List.length (gpus_of host)
 let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
 
 (* Why GPU [i] of the machine of [machine] cannot be opened. *)
@@ -1217,27 +1218,34 @@ let refuse ~machine iface i why =
   check_reach machine;
   Error (Driver.name ~host:machine (name iface i) ^ ": " ^ why)
 
-(* Opens [i] through [iface] on the machine of [machine], once. *)
+(* Opens [i] through [iface] on the machine of [machine], once: an open is keyed
+   by the GPU's bus address. *)
 let open_gpu ~machine ~iface ?firmware i =
-  match List.assoc_opt (machine, i) (Atomic.get opened) with
-  | Some a -> Ok (Option.get a.dev)
-  | None -> (
-      match
-        match iface with
-        | Kernel -> open_kfd i
-        | Pci -> open_am ?firmware ~machine i
-      with
-      | a ->
-          if machine == Nx_device.host then chosen := Some iface;
-          Atomic.set opened (((machine, i), a) :: Atomic.get opened);
-          Ok (Option.get a.dev)
-      | exception (Failure why | Sys_error why | Invalid_argument why) ->
-          refuse ~machine iface i why
-      | exception Unix.Unix_error (e, fn, arg) ->
-          refuse ~machine iface i
-            (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e))
-      | exception Not_found ->
-          refuse ~machine iface i "opening failed: Not_found")
+  let gpus = gpus_of machine in
+  match List.nth_opt gpus i with
+  | None ->
+      refuse ~machine iface i
+        (Printf.sprintf "no GPU %d; there are %d AMD GPUs" i (List.length gpus))
+  | Some bus -> (
+      match List.assoc_opt (machine, bus) (Atomic.get opened) with
+      | Some a -> Ok (Option.get a.dev)
+      | None -> (
+          match
+            match iface with
+            | Kernel -> open_kfd ~index:i bus
+            | Pci -> open_am ?firmware ~machine ~index:i bus
+          with
+          | a ->
+              if machine == Nx_device.host then chosen := Some iface;
+              Atomic.set opened (((machine, bus), a) :: Atomic.get opened);
+              Ok (Option.get a.dev)
+          | exception (Failure why | Sys_error why | Invalid_argument why) ->
+              refuse ~machine iface i why
+          | exception Unix.Unix_error (e, fn, arg) ->
+              refuse ~machine iface i
+                (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e))
+          | exception Not_found ->
+              refuse ~machine iface i "opening failed: Not_found"))
 
 let get ?(host = Nx_device.host) ?interface ?firmware i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_amd_device.get: %d < 0" i);

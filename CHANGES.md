@@ -3095,6 +3095,13 @@ thread.
 
 ### Nx
 
+- `Nx_nv_device` and `Nx_amd_device` number a vendor's GPUs in PCI bus order
+  under both interfaces, so `NV:i` and `NV-PCI:i` (`AMD:i`, `AMD-PCI:i`) are
+  one GPU, and taking a GPU over PCI renumbers none. The kernel interface
+  followed the driver's list, which is in bind order and leaves out GPUs it
+  does not hold. `count` is every GPU of the vendor, whatever driver holds it,
+  and takes no interface. New `Nx_device_support.Pci.address` and
+  `compare_address`; `Pci.scan` sorts addresses as numbers.
 - Another machine's GPUs, which are driven over PCI, are named
   `NV-PCI@HOST:PORT`, `AMD-PCI:1@HOST:PORT`, and so on.
 - `Nx.array_equal` is `false` for tensors of different shapes, as it states.

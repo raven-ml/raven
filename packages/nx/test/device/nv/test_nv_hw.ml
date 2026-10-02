@@ -43,6 +43,10 @@ let hung d = function
 (* The index of the first GPU the suite may take over PCI, if any. *)
 let pci_first () = Option.map int_of_string (Sys.getenv_opt "NX_NV_PCI_TEST")
 
+(* The number of GPUs the kernel driver may hold: none without it. *)
+let kernel_gpus () =
+  if Sys.file_exists "/dev/nvidiactl" then Nx_nv_device.count () else 0
+
 (* The GPU [i] under test, or a skip. *)
 let device ?(i = 0) () =
   match pci_first () with
@@ -51,7 +55,7 @@ let device ?(i = 0) () =
       | Ok d -> d
       | Error msg -> skip ~reason:msg ())
   | None -> (
-      if Nx_nv_device.count ~interface:Kernel () <= i then
+      if kernel_gpus () <= i then
         skip
           ~reason:
             "no NVIDIA GPU through the kernel driver; set NX_NV_PCI_TEST=i to \
@@ -76,7 +80,7 @@ let gpus =
   | None -> (
       try
         Ok
-          (List.init (Nx_nv_device.count ~interface:Kernel ()) (fun i ->
+          (List.init (kernel_gpus ()) (fun i ->
                match Nx_nv_device.get ~interface:Kernel i with
                | Ok d -> d
                | Error e -> failwith e))
@@ -122,7 +126,14 @@ let low d = Option.get (Nx_nv_device.of_device d)
 let test_open () =
   let d = device () in
   is_true ~msg:"memoized" (Nx_device.equal d (device ()));
-  starts_with ~msg:"name" ~affix:"NV" (Nx_device.name d);
+  let name =
+    match pci_first () with
+    | Some 0 -> "NV-PCI"
+    | Some i -> Printf.sprintf "NV-PCI:%d" i
+    | None -> "NV"
+  in
+  equal ~msg:"the name of GPU 0 or of the GPU the suite may take" string name
+    (Nx_device.name d);
   starts_with ~msg:"arch" ~affix:"sm_" (Nx_device.arch d);
   let n = low d in
   let props = Nx_nv_device.props n in

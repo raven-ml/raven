@@ -11,6 +11,7 @@ module D = Nv_defs
 module P = Params
 module Space = Nx_device_support.Page_table.Space
 module Sysmem = Nx_device_support.Sysmem
+module Pci = Nx_device_support.Pci
 
 external open_file : string -> int = "caml_nx_nv_open"
 external close_file : int -> unit = "caml_nx_nv_close"
@@ -31,7 +32,11 @@ let escape fd nr p what =
   in
   ioctl_raw fd request p what
 
-(* The cards, as (GPU id, minor number), from the driver's table. *)
+(* The cards, as (bus address, GPU id, minor number), in the driver's table. The
+   table follows the order in which the driver took its GPUs, which a GPU given
+   back and bound again leaves last, and leaves out the GPUs it does not hold:
+   GPUs are numbered by bus address instead. It reports no function number,
+   which is 0 for NVIDIA's GPUs. *)
 let ctl = lazy (open_file ctl_path)
 
 let cards () =
@@ -43,10 +48,16 @@ let cards () =
     (fun i ->
       let at (off, size) = (off + (i * C.sizeof), size) in
       if P.get t (at C.valid) = 0 then None
-      else Some (P.get t (at C.gpu_id), P.get t (at C.minor_number)))
+      else
+        let bus =
+          Pci.address
+            ~domain:(P.get t (at C.pci_info_domain))
+            ~bus:(P.get t (at C.pci_info_bus))
+            ~device:(P.get t (at C.pci_info_slot))
+            ~fn:0
+        in
+        Some (bus, P.get t (at C.gpu_id), P.get t (at C.minor_number)))
     (List.init n Fun.id)
-
-let count () = List.length (cards ())
 
 (* The process's client *)
 
@@ -228,15 +239,12 @@ let gpu_file c minor =
     (fun () -> escape fd D.nv_esc_register_fd r "registering a GPU file");
   fd
 
-let open_gpu index =
+let open_gpu bus =
   let c = Lazy.force client in
   let gpu_id, minor =
-    match List.nth_opt (cards ()) index with
-    | Some g -> g
-    | None ->
-        failwith
-          (Printf.sprintf "no GPU %d; NVIDIA's kernel driver reports %d" index
-             (count ()))
+    match List.find_opt (fun (b, _, _) -> b = bus) (cards ()) with
+    | Some (_, id, minor) -> (id, minor)
+    | None -> failwith (bus ^ " is not held by NVIDIA's kernel driver")
   in
   let file = gpu_file c minor in
   let module I = D.Id_info in

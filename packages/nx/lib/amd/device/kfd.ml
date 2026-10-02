@@ -7,6 +7,7 @@
 
 module D = Amd_defs
 module Mmio = Nx_device_support.Mmio
+module Pci = Nx_device_support.Pci
 
 external open_file : string -> int = "caml_nx_amd_open"
 external close_file : int -> unit = "caml_nx_amd_close"
@@ -80,7 +81,25 @@ let gpu_nodes () =
       | None | (exception Sys_error _) -> false)
 
 let available () = Sys.file_exists "/dev/kfd"
-let count () = if available () then List.length (gpu_nodes ()) else 0
+
+(* The topology node of the GPU at the bus address [bus], if the driver holds
+   it. Nodes follow the order in which the driver took its GPUs and leave out
+   those it does not hold: GPUs are numbered by bus address instead. A node's
+   [location_id] is its function's bus number and device-function byte. A GPU
+   split into partitions has a node per partition, which share its address: its
+   first is the GPU. *)
+let node_of bus =
+  List.find_opt
+    (fun n ->
+      let p = properties (Printf.sprintf "%s/%d/properties" topology n) in
+      match (List.assoc_opt "domain" p, List.assoc_opt "location_id" p) with
+      | Some domain, Some loc ->
+          Pci.address ~domain ~bus:(loc lsr 8)
+            ~device:((loc lsr 3) land 0x1f)
+            ~fn:(loc land 7)
+          = bus
+      | _ -> false)
+    (gpu_nodes ())
 
 (* The process's KFD, opened once. *)
 let kfd = lazy (open_file "/dev/kfd")
@@ -204,13 +223,9 @@ let open_new node =
     hdp = remap_hdp fd gpu_id;
   }
 
-let open_gpu i =
-  let nodes = gpu_nodes () in
-  match List.nth_opt nodes i with
-  | None ->
-      failwith
-        (Printf.sprintf "no GPU %d; the amdgpu driver reports %d" i
-           (List.length nodes))
+let open_gpu bus =
+  match node_of bus with
+  | None -> failwith (bus ^ " is not held by the amdgpu driver")
   | Some node -> (
       match Hashtbl.find_opt acquired node with
       | Some t -> t

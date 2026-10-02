@@ -11,7 +11,8 @@
     detaches the GPU's kernel driver and keeps the GPU for the process. Only a
     call of {!get_pci} or {!device_pci} takes a GPU over PCI. The first open of
     either fixes the interface for the process: the other then fails with that
-    reason.
+    reason. Both number the machine's NVIDIA GPUs in bus order, so [NV:i] and
+    [NV-PCI:i] are the same GPU.
 
     A device computes eagerly with no backend: [Rune.jit] compiles for it, and
     an eager operation on its values raises [Invalid_argument] naming the

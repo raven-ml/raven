@@ -9,11 +9,47 @@
 
 open Windtrap
 
+(* The machine's AMD display controllers and processing accelerators, as Linux
+   lists its PCI functions. *)
+let linux_gpus () =
+  let root = "/sys/bus/pci/devices" in
+  let read f file =
+    In_channel.with_open_text
+      (Filename.concat (Filename.concat root f) file)
+      In_channel.input_all
+    |> String.trim
+  in
+  if not (Sys.file_exists root) then 0
+  else
+    Array.fold_left
+      (fun n f ->
+        let class_ = read f "class" in
+        if
+          read f "vendor" = "0x1002"
+          && List.exists
+               (fun prefix -> String.starts_with ~prefix class_)
+               [ "0x03"; "0x12" ]
+        then n + 1
+        else n)
+      0 (Sys.readdir root)
+
+(* Both interfaces number the machine's GPUs, so the kernel driver refuses an
+   index past them with their count, whatever GPUs it holds. The test opens no
+   GPU, so it runs on a machine with GPUs too. *)
+let test_past_the_gpus () =
+  if not (Sys.file_exists "/sys/bus/pci") then skip ~reason:"no PCI devices" ();
+  let n = Nx_amd_device.count () in
+  match Nx_amd_device.get ~interface:Kernel n with
+  | Ok _ -> fail "a GPU past the count opened"
+  | Error msg ->
+      let name = if n = 0 then "AMD" else Printf.sprintf "AMD:%d" n in
+      equal string
+        (Printf.sprintf "%s: no GPU %d; there are %d AMD GPUs" name n n)
+        msg
+
 let no_gpu () =
-  if
-    Nx_amd_device.count ~interface:Kernel () > 0
-    || Nx_amd_device.count ~interface:Pci () > 0
-  then skip ~reason:"this machine has an AMD GPU" ()
+  if Nx_amd_device.count () > 0 then
+    skip ~reason:"this machine has an AMD GPU" ()
 
 (* Another machine without GPUs: this process serves it on the loopback, then
    stops serving it. *)
@@ -160,6 +196,12 @@ let () =
                        (String.starts_with ~prefix:name msg))
                [ Nx_amd_device.Kernel; Pci; Kernel ];
              is_error (Nx_amd_device.get 0));
+         test
+           "the GPUs are the machine's display controllers and processing \
+            accelerators" (fun () ->
+             equal int (linux_gpus ()) (Nx_amd_device.count ()));
+         test "an index past the GPUs is refused with their count"
+           test_past_the_gpus;
          test "another machine's GPUs are opened over PCI" test_other_machine;
          test "a negative index is refused" (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->

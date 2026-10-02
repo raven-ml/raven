@@ -169,7 +169,8 @@ RM_FIELDS_PER_RELEASE = {"NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_WRITE_BACK",
 # Structs, by C name: the module they become and the fields read ("a__b" for a
 # nested field). An array field is (offset, bytes of an element, count).
 RM_STRUCTS = {
-    "nv_ioctl_card_info_t": ("Card_info", ["valid", "gpu_id", "minor_number"]),
+    "nv_ioctl_card_info_t": ("Card_info", ["valid", "pci_info__domain", "pci_info__bus", "pci_info__slot",
+                                           "gpu_id", "minor_number"]),
     "nv_ioctl_register_fd_t": ("Register_fd", ["ctl_fd"]),
     "NVOS00_PARAMETERS": ("Nvos00", ["hRoot", "hObjectParent", "hObjectOld", "status"]),
     "NVOS02_PARAMETERS": ("Nvos02", ["hRoot", "hObjectParent", "hObjectNew", "hClass", "flags", "pMemory",
