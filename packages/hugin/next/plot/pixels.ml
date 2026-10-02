@@ -72,7 +72,8 @@ let gather p px =
   |> Nx.take ~axis:1 ~indices:(indices w p.cols)
 
 (* Images under a transform or a stamp are not on the page's device pixels, and
-   are left as they are. *)
+   are left as they are. A picture holding no image to gather is returned as it
+   is, without a copy. *)
 let rec gathered ~density (p : Picture.t) =
   match p with
   | Image { box; pixels } -> (
@@ -80,10 +81,24 @@ let rec gathered ~density (p : Picture.t) =
       match plan ~density box ~rows:shape.(0) ~cols:shape.(1) with
       | None -> p
       | Some plan -> Picture.image plan.window (gather plan pixels))
-  | Group ps -> Picture.group (List.map (gathered ~density) ps)
+  | Group ps ->
+      let ps' = gathered_list ~density ps in
+      if ps' == ps then p else Picture.group ps'
   | Clip { rule; path; picture } ->
-      Picture.clip ~rule path (gathered ~density picture)
+      let q = gathered ~density picture in
+      if q == picture then p else Picture.clip ~rule path q
   | Opacity { opacity; picture } ->
-      Picture.opacity opacity (gathered ~density picture)
-  | Tag { tag; picture } -> Picture.tag tag (gathered ~density picture)
+      let q = gathered ~density picture in
+      if q == picture then p else Picture.opacity opacity q
+  | Tag { tag; picture } ->
+      let q = gathered ~density picture in
+      if q == picture then p else Picture.tag tag q
   | Empty | Fill _ | Stroke _ | Glyphs _ | Transform _ | Stamp _ -> p
+
+(* [gathered_list ~density ps] is [ps] gathered, [ps] itself if no element
+   changes. *)
+and gathered_list ~density = function
+  | [] as ps -> ps
+  | q :: rest as ps ->
+      let q' = gathered ~density q and rest' = gathered_list ~density rest in
+      if q' == q && rest' == rest then ps else q' :: rest'
