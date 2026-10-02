@@ -9,9 +9,9 @@
     one to the next, in steps, or smoothly. {!path} draws a curve through
     points, as a line mark does, and {!area} draws the region between two
     curves, as an area mark or a stacked layer does. Points are given as arrays
-    of x and y coordinates in the plane the path is drawn in, which for a figure
-    is after projection. Paths are made of lines and cubic Béziers, so every
-    renderer draws a curve the same way.
+    of x and y coordinates in the plane the path is drawn in, which for a line
+    mark is that of the panel's normalised positions. Paths are made of lines
+    and cubic Béziers, so every renderer draws a curve the same way.
 
     Drawing a curve then mapping the path by an affine map is, up to rounding,
     the same as mapping the points then drawing the curve: for {!linear},

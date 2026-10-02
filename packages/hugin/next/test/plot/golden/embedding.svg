@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="360pt" height="240pt" viewBox="0 0 360 240">
 <defs>
-<clipPath id="hc2e73e30c8b71e244"><path d="M21.293 5.445L324.04 5.445L324.04 223.11L21.293 223.11Z"/></clipPath>
 <g id="hsba8bb47ab660ac74">
 <path d="M0.56419 0C0.56419 0.31159 0.31159 0.56419 0 0.56419C-0.31159 0.56419 -0.56419 0.31159 -0.56419 0C-0.56419 -0.31159 -0.31159 -0.56419 0 -0.56419C0.31159 -0.56419 0.56419 -0.31159 0.56419 0Z"/>
 </g>
@@ -9,7 +8,6 @@
 </defs>
 <path d="M0 0L360 0L360 240L0 240Z" fill="#ffffff"/>
 <g data-id="[]">
-<g clip-path="url(#hc2e73e30c8b71e244)">
 <g data-id="[]">
 <use href="#hsba8bb47ab660ac74" transform="translate(187.804 114.278) scale(4.43113462726379)" fill="#4e79a7" fill-opacity="0.3" data-row="0"/>
 <use href="#hsba8bb47ab660ac74" transform="translate(161.253 106.761) scale(4.43113462726379)" fill="#f28e2c" fill-opacity="0.3" data-row="1"/>
@@ -411,7 +409,6 @@
 <use href="#hsba8bb47ab660ac74" transform="translate(77.049 197.699) scale(4.43113462726379)" fill="#ff9da7" fill-opacity="0.3" data-row="397"/>
 <use href="#hsba8bb47ab660ac74" transform="translate(321.886 99.168) scale(4.43113462726379)" fill="#9c755f" fill-opacity="0.3" data-row="398"/>
 <use href="#hsba8bb47ab660ac74" transform="translate(48.16 52.81) scale(4.43113462726379)" fill="#bab0ab" fill-opacity="0.3" data-row="399"/>
-</g>
 </g>
 </g>
 <g data-id="[&quot;axis&quot;,&quot;x&quot;]">

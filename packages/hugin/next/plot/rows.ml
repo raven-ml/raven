@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 module P2 = Hugin_next_gg.P2
+module Box2 = Hugin_next_gg.Box2
 module Path = Hugin_next_gg.Path
 module Color = Hugin_next_gg.Color
 module Text = Hugin_next_text.Text
@@ -112,7 +113,7 @@ let position r name : position option =
             }
       | None -> None)
 
-let points r =
+let positions r =
   let n = length r in
   let at name =
     match position r name with Some p -> p.us | None -> Array.make n 0.5
@@ -121,6 +122,21 @@ let points r =
   let xs = Array.make n Float.nan and ys = Array.make n Float.nan in
   for i = 0 to n - 1 do
     if not r.dropped.(i) then begin
+      xs.(i) <- us.(i);
+      ys.(i) <- vs.(i)
+    end
+  done;
+  (xs, ys)
+
+(* The domain is the unit square, its edges included. *)
+let in_domain u = 0. <= u && u <= 1.
+
+let points r =
+  let us, vs = positions r in
+  let n = length r in
+  let xs = Array.make n Float.nan and ys = Array.make n Float.nan in
+  for i = 0 to n - 1 do
+    if in_domain us.(i) && in_domain vs.(i) then begin
       let p = Coord.point r.projection us.(i) vs.(i) in
       xs.(i) <- P2.x p;
       ys.(i) <- P2.y p
@@ -133,6 +149,8 @@ let points r =
 let ends p i =
   let u = p.us.(i) in
   match p.band with Some w -> (u -. (w /. 2.), u +. (w /. 2.)) | None -> (u, u)
+
+let clamp u = Float.min 1. (Float.max 0. u)
 
 let extent r axis =
   let n = length r in
@@ -153,13 +171,19 @@ let extent r axis =
   for i = 0 to n - 1 do
     if not r.dropped.(i) then begin
       let a, b = cover i in
-      lo.(i) <- a;
-      hi.(i) <- b
+      (* An extent wholly on one side of the domain covers none of it. *)
+      if not ((a < 0. && b < 0.) || (a > 1. && b > 1.)) then begin
+        lo.(i) <- clamp a;
+        hi.(i) <- clamp b
+      end
     end
   done;
   (lo, hi)
 
-let project r p = Path.transform (Coord.affine r.projection) p
+let unit_square = Box2.v 0. 0. 1. 1.
+
+let project r p =
+  Path.transform (Coord.affine r.projection) (Path.crop unit_square p)
 
 (* Two rows are in one series iff they share their index along every axis but
    the last and their category in every band channel that is not a position. *)

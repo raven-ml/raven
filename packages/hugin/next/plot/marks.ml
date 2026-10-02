@@ -178,7 +178,22 @@ let style rows xs role ~default equal =
              role.Role.name);
       if !first < 0 then default else vs.(!first)
 
-(* [draw_series rows path] paints the series [rows] along [path]. *)
+(* [closed p] is [p] with every subpath closed. *)
+let closed path =
+  let close (p, open_) = if open_ then Path.close p else p in
+  close
+    (Path.fold
+       ~move:(fun acc x y -> (Path.move_to (P2.v x y) (close acc), false))
+       ~line:(fun (p, _) x y -> (Path.line_to (P2.v x y) p, true))
+       ~cubic:(fun (p, _) a b c d x y ->
+         (Path.cubic_to (P2.v a b) (P2.v c d) (P2.v x y) p, true))
+       ~close:(fun (p, _) -> (Path.close p, false))
+       (Path.empty, false) path)
+
+(* [draw_series rows xs path] paints the series [rows] along [path], given in
+   normalised positions, a row at [xs.(i)] being dropped where that is [nan]. A
+   fill fills the region [path] closes within the domain, and a stroke strokes
+   [path] within it. *)
 let draw_series rows xs path =
   let th = Mark.theme rows in
   let o = style rows xs Role.opacity ~default:1. Float.equal in
@@ -196,22 +211,25 @@ let draw_series rows xs path =
       in
       Picture.group
         [
-          Picture.fill ~rule:`Even_odd (fade o fill) path;
+          Picture.fill ~rule:`Even_odd (fade o fill)
+            (Mark.project rows (closed path));
           (match stroke with
-          | Some c -> Picture.stroke (Stroke.v width) (fade o c) path
+          | Some c ->
+              Picture.stroke (Stroke.v width) (fade o c)
+                (Mark.project rows path)
           | None -> Picture.empty);
         ]
   | None ->
       let c = Option.value stroke ~default:(Theme.accent th) in
-      Picture.stroke (Stroke.v width) (fade o c) path
+      Picture.stroke (Stroke.v width) (fade o c) (Mark.project rows path)
 
 let draw_line rows =
   let curve =
     Option.value (first_value rows Role.curve) ~default:Curve.linear
   in
   let series s =
-    let xs, ys = Mark.points s in
-    draw_series s xs (Curve.path curve xs ys)
+    let us, vs = Mark.positions s in
+    draw_series s us (Curve.path curve us vs)
   in
   Picture.group (List.map series (Mark.series rows))
 
@@ -221,12 +239,10 @@ let swatch_line rows =
   match Mark.get rows Role.fill with
   | Some _ ->
       let y0, y1 = Mark.extent rows `Y in
-      draw_series rows x0 (box_path rows (x0, x1) (y0, y1) 0)
+      let box = Box2.of_pts (P2.v x0.(0) y0.(0)) (P2.v x1.(0) y1.(0)) in
+      draw_series rows x0 (Path.rect box)
   | None ->
-      let path =
-        Mark.project rows (Path.polyline [| x0.(0); x1.(0) |] [| 0.5; 0.5 |])
-      in
-      draw_series rows x0 path
+      draw_series rows x0 (Path.polyline [| x0.(0); x1.(0) |] [| 0.5; 0.5 |])
 
 let line ?x ?stroke ?fill ?width ?opacity ?(curve = Curve.linear) ?fx ?fy ~y ()
     =
@@ -288,7 +304,8 @@ let rect ?x ?x2 ?y ?y2 ?fill ?stroke ?opacity ?fx ?fy () =
 
 (* Rules *)
 
-(* [segments rows] is each row's segment, in normalised positions. *)
+(* [segments rows] is each row's segment, in normalised positions, [nan] where
+   the row is dropped. *)
 let segments rows =
   let get r = Mark.get rows r in
   match (get Role.x, get Role.x2, get Role.y, get Role.y2) with
@@ -298,7 +315,9 @@ let segments rows =
   | _, _, Some ys, None ->
       let x0, x1 = Mark.extent rows `X in
       (x0, ys, x1, ys)
-  | Some x, Some x2, Some y, Some y2 -> (x, y, x2, y2)
+  | Some _, Some x2, Some _, Some y2 ->
+      let x, y = Mark.positions rows in
+      (x, y, x2, y2)
   | _ ->
       (* The swatch of a rule binds no position: a segment across its box. *)
       let x0, x1 = Mark.extent rows `X in
@@ -309,18 +328,16 @@ let segments rows =
 
 let draw_rule rows =
   let n = Mark.length rows and th = Mark.theme rows in
-  let px, _ = Mark.points rows in
   let ax, ay, bx, by = segments rows in
   let colours = faded rows (or_const rows Role.stroke (Theme.ink th)) in
   let widths = or_const rows Role.width (em rows line_em) in
   let segment i =
-    if not (finite px.(i)) then Picture.empty
-    else
-      Picture.stroke
-        (Stroke.v ~cap:`Butt widths.(i))
-        colours.(i)
-        (Mark.project rows
-           (Path.polyline [| ax.(i); bx.(i) |] [| ay.(i); by.(i) |]))
+    let path =
+      Mark.project rows
+        (Path.polyline [| ax.(i); bx.(i) |] [| ay.(i); by.(i) |])
+    in
+    if Option.is_none (Path.bounds path) then Picture.empty
+    else Picture.stroke (Stroke.v ~cap:`Butt widths.(i)) colours.(i) path
   in
   Picture.group (List.init n segment)
 

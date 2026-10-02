@@ -56,6 +56,7 @@ val get : t -> ('d, 'r) Role.t -> 'r array option
 val normalized : t -> ('d, 'r) Role.t -> float array option
 val range : t -> ('d, 'r) Role.t -> (float -> 'r) option
 val ticks : t -> ('d, 'r) Role.t -> float array option
+val positions : t -> float array * float array
 val points : t -> float array * float array
 val extent : t -> [ `X | `Y ] -> float array * float array
 val project : t -> Path.t -> Path.t

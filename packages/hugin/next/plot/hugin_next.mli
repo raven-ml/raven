@@ -96,8 +96,15 @@
     value is {e dropped}: it is drawn nowhere and no scale is fitted to it.
     Colours are the exception: a missing colour paints its scale's unknown
     colour ({!Scale.unknown}), by default no paint, and leaves its row drawn and
-    fitted. Lines break where rows are dropped. Values outside a domain are
-    drawn, and clipped to their panel.
+    fitted. Lines break where rows are dropped.
+
+    Positions are clipped to their domains, and ink is not. A position outside
+    its scale's domain is drawn and cut at the domain's edge: a line or a
+    segment ends there, an extent stops there, and a symbol or a text whose
+    point lies outside is not drawn. What a row inside the domain draws, its
+    symbol, the half of its line's width beyond the edge, its text, is drawn
+    whole, over the panel's edges. Domains do not grow to make room for ink, so
+    axes keep their ends.
 
     {1:ids Ids}
 
@@ -1218,9 +1225,15 @@ module Mark : sig
 
       The rows of a mark in one panel are those its facet channels put there, in
       the order of their data. A {e dropped} row ({!Hugin_next.section-missing})
-      keeps its place. {!points} and {!extent} put it at [nan], so that a draw
-      function skips it or breaks a line there, as {!Picture.stamp},
+      keeps its place. {!positions}, {!points} and {!extent} put it at [nan], so
+      that a draw function skips it or breaks a line there, as {!Picture.stamp},
       {!Curve.path} and the gaps of {!Path} do with non-finite coordinates.
+
+      The domain of a panel is the unit square of normalised positions, its
+      edges included. A draw function clips positions to it and leaves ink whole
+      ({!Hugin_next.section-missing}): it joins {!positions} into paths and
+      gives them to {!project}, which cuts them at the domain's edges, and
+      places symbols and texts at {!points}, which are [nan] outside it.
       {!index} gives its datum, and {!get} and {!normalized} its own values,
       missing only where they are missing, so that a contour knows the x of a
       column one of whose samples is dropped. Rows are valid only during the
@@ -1276,12 +1289,18 @@ module Mark : sig
       constant or reads no scale. On a reversed scale the ticks' values decrease
       along [us]. The array is fresh. *)
 
+  val positions : rows -> float array * float array
+  (** [positions rows] is [(us, vs)], row [i] being at the normalised position
+      [(us.(i), vs.(i))]: its normalised [x] and [y], [0.5] for a position the
+      mark does not bind and the centre of its band on a band scale. A dropped
+      row is at [(nan, nan)], and a position outside the domain is kept. The
+      arrays are fresh. *)
+
   val points : rows -> float array * float array
   (** [points rows] is [(xs, ys)], row [i] being at [(xs.(i), ys.(i))] in points
-      on the page: its normalised [x] and [y], [0.5] for a position the mark
-      does not bind and the centre of its band on a band scale, mapped by the
-      panel's projection. A dropped row is at [(nan, nan)]. The arrays are
-      fresh. *)
+      on the page: its {!positions} mapped by the panel's projection. A dropped
+      row and a row whose position lies outside the domain are at [(nan, nan)].
+      The arrays are fresh. *)
 
   val extent : rows -> [ `X | `Y ] -> float array * float array
   (** [extent rows `X] is [(a, b)], the normalised interval each row covers
@@ -1295,19 +1314,23 @@ module Mark : sig
       - for a constant [x], from [x] to [x];
       - if the mark binds no [x], from [0.] to [1.].
 
-      A dropped row covers [(nan, nan)]. [extent rows `Y] is likewise along y,
-      with [y] and [y2]. The arrays are fresh. *)
+      Ends outside the domain are clamped into \[[0];[1]\], and an interval
+      wholly below [0.] or wholly above [1.] covers [(nan, nan)], as does a
+      dropped row. [extent rows `Y] is likewise along y, with [y] and [y2]. The
+      arrays are fresh. *)
 
   val projection : rows -> Coord.projection
   (** [projection rows] is the panel's projection, which puts the normalised
       position [(x, y)] at [Coord.point (projection rows) x y] on the page. *)
 
   val project : rows -> Path.t -> Path.t
-  (** [project rows p] is [p], given in the panel's normalised positions, mapped
-      into points on the page by the panel's projection. Where the projection is
-      not affine, segments are subdivided so that the path follows it. Under
-      {!Coord.cartesian} it is [p] mapped by one affine map ({!Path.transform}).
-  *)
+  (** [project rows p] is [p], given in the panel's normalised positions, cut at
+      the domain's edges ({!Path.crop}) and mapped into points on the page by
+      the panel's projection: an open subpath keeps its pieces within the
+      domain, and a closed one the part of its region there, so fill a path
+      closed. Where the projection is not affine, segments are subdivided so
+      that the path follows it. Under {!Coord.cartesian} the cut path is mapped
+      by one affine map ({!Path.transform}). *)
 
   val series : rows -> rows list
   (** [series rows] is [rows] split into {e series}: two rows are in one series
@@ -1372,11 +1395,11 @@ module Mark : sig
 
   val raster : reducer
   (** [raster] draws a panel's picture of the mark as one image painted by the
-      raster renderer at the density, aligned with the device pixels, when the
-      mark has more than 20,000 rows in the panel or more rows than the panel
-      has device pixels, whatever the output. Rows are painted in their order,
-      so the image is what the picture paints, up to the rounding of compositing
-      it once. *)
+      raster renderer at the density, over the device pixels the picture reaches
+      ({!Picture.bounds}), when the mark has more than 20,000 rows in the panel
+      or more rows than the panel has device pixels, whatever the output. Rows
+      are painted in their order, so the image is what the picture paints, up to
+      the rounding of compositing it once. *)
 
   (** {1:making Making marks} *)
 
@@ -1391,10 +1414,11 @@ module Mark : sig
   (** [v ~name ~reduce ~coord ~swatch bindings draw] is the mark [name] of the
       channels [bindings], where [draw rows] is its picture in a panel for that
       panel's rows, in points on the page. [draw] applies every role it binds,
-      [opacity] included. {!draw} only selects each panel's rows, clips the
-      picture to the panel and tags it with the mark's id and rows
-      ({!Picture.tag}), instance by instance if it is a stamp of one instance
-      per row. Other arguments are:
+      [opacity] included, and clips positions to the domain ({!section-rows}).
+      {!draw} only selects each panel's rows and tags the picture with the
+      mark's id and rows ({!Picture.tag}), instance by instance if it is a stamp
+      of one instance per row: it clips nothing, so ink drawn from a row inside
+      the domain shows whole. Other arguments are:
       - [name], the kind of mark in messages and printed forms, such as ["dot"]
         or ["fehu.cart"].
       - [reduce], the reducer that may draw the mark's rows. Unset, rows are

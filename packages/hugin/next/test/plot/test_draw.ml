@@ -187,6 +187,19 @@ let extents =
       [ Mark.bind Role.x (const 0.3) ],
       ([| 0.3 |], [| 0.3 |]) );
     ("without x a row covers the panel", [], ([| 0. |], [| 1. |]));
+    ( "an end beyond the domain is clamped into it",
+      [
+        Mark.bind Role.x
+          (num ~scale:(Scale.linear ~domain:(0., 4.) ()) (f64 [| 2. |]));
+        Mark.bind Role.x2 (num (f64 [| 6. |]));
+      ],
+      ([| 0.5 |], [| 1. |]) );
+    ( "a length beyond the domain stops at its edge",
+      [
+        Mark.bind Role.x
+          (num ~scale:(Scale.linear ~domain:(-4., 4.) ()) (f64 [| -6. |]));
+      ],
+      ([| 0.5 |], [| 0. |]) );
   ]
 
 let extent_case (_, bindings, expected) =
@@ -403,6 +416,124 @@ let rows =
                  ())
           in
           equal int 1 (List.length (Drawing.warnings d)));
+    ]
+
+(* The domain: positions are clipped to it, ink is not *)
+
+let unit = Scale.linear ~domain:(0., 1.) ()
+
+(* [clips d] is the number of clips in [d]. *)
+let clips d =
+  List.length (collect (function Picture.Clip _ -> Some () | _ -> None) d)
+
+let page_box =
+  Testable.make
+    ~pp:(Format.pp_print_option Box2.pp)
+    ~equal:
+      (Option.equal (fun a b ->
+           let near x y = Float.abs (x -. y) <= 1e-9 in
+           near (Box2.minx a) (Box2.minx b)
+           && near (Box2.miny a) (Box2.miny b)
+           && near (Box2.maxx a) (Box2.maxx b)
+           && near (Box2.maxy a) (Box2.maxy b)))
+
+let domain =
+  group "Domain"
+    [
+      test "positions keep a position outside the domain, points drop it"
+        (fun () ->
+          let (us, _), (xs, _) =
+            rows_of
+              [
+                Mark.bind Role.x (num ~scale:unit (f64 [| 0.5; 1.5; 1.; nan |]));
+                Mark.bind Role.y (const 0.5);
+              ]
+              (fun r -> (Mark.positions r, Mark.points r))
+          in
+          equal floats [| 0.5; 1.5; 1.; nan |] us;
+          equal (array bool)
+            [| false; true; false; true |]
+            (Array.map is_nan xs));
+      test "an extent wholly beyond the domain covers nothing" (fun () ->
+          let ext =
+            rows_of
+              [
+                Mark.bind Role.x
+                  (num ~scale:(Scale.linear ~domain:(0., 4.) ()) (f64 [| 5. |]));
+                Mark.bind Role.x2 (num (f64 [| 6. |]));
+              ]
+              (fun r -> Mark.extent r `X)
+          in
+          equal (pair floats floats) ([| nan |], [| nan |]) ext);
+      test "project cuts a path at the domain's edges" (fun () ->
+          let got, edge, start =
+            rows_of [] (fun r ->
+                let p = Path.polyline [| 0.5; 2. |] [| 0.5; 0.5 |] in
+                ( Path.bounds (Mark.project r p),
+                  Coord.point (Mark.projection r) 1. 0.5,
+                  Coord.point (Mark.projection r) 0.5 0.5 ))
+          in
+          equal page_box (Some (Box2.of_pts start edge)) got);
+      test "a dot at the domain's corner is drawn whole, one outside not at all"
+        (fun () ->
+          let d =
+            drawn
+              (layer
+                 [
+                   dot
+                     ~x:(num ~scale:unit (f64 [| 1.; 1.5 |]))
+                     ~y:(num ~scale:unit (f64 [| 1.; 0.5 |]))
+                     ();
+                 ])
+          in
+          equal int 0 (clips d);
+          match stamps d with
+          | [ xs ] -> equal (array bool) [| false; true |] (Array.map is_nan xs)
+          | l -> failf "%d stamps" (List.length l));
+      test "a line is cut at the domain's edge, its stroke drawn whole"
+        (fun () ->
+          let f =
+            layer
+              [
+                line
+                  ~x:(num ~scale:unit (f64 [| 0.; 2. |]))
+                  ~y:(num ~scale:unit (f64 [| 0.5; 0.5 |]))
+                  ();
+              ]
+          in
+          let size = Size.panels 100. 100. in
+          let box = (List.hd (Layout.panels (layout size (resolve f)))).box in
+          let strokes =
+            List.concat_map
+              (fun (_, p) ->
+                fold
+                  (fun acc p ->
+                    match p with
+                    | Picture.Stroke { path; _ } -> Path.bounds path :: acc
+                    | _ -> acc)
+                  [] p)
+              (tags (path [ Index 0 ]) (drawn ~size f))
+          in
+          equal int 0 (clips (drawn ~size f));
+          let mid = (Box2.miny box +. Box2.maxy box) /. 2. in
+          equal (list page_box)
+            [ Some (Box2.v (Box2.minx box) mid (Box2.w box) 0.) ]
+            strokes);
+      test "a text anchored at the domain's corner is drawn whole" (fun () ->
+          let d =
+            drawn
+              (layer
+                 [
+                   Hugin_next.text ~dy:5.
+                     ~x:(num ~scale:unit (f64 [| 1. |]))
+                     ~y:(num ~scale:unit (f64 [| 1. |]))
+                     ~text:(strings [| "0.851" |]) ();
+                 ])
+          in
+          equal int 0 (clips d);
+          greater int ~than:0
+            (List.length
+               (collect (function Picture.Glyphs _ -> Some () | _ -> None) d)));
     ]
 
 (* Drawings *)
@@ -745,8 +876,8 @@ let reducers =
           equal bool image (images d <> []);
           equal bool (not image) (stamps d <> []));
       test
-        "raster paints the panel's picture at the density, aligned with the \
-         device pixels" (fun () ->
+        "raster paints the panel's picture at the density, over the device \
+         pixels it reaches" (fun () ->
           let density = 2. and size = Size.panels 60.3 40.7 in
           let pictures = ref [] in
           let f =
@@ -777,24 +908,22 @@ let reducers =
               ]
           in
           let d = drawn ~density ~size f in
-          let box = (List.hd (Layout.panels (layout size (resolve f)))).box in
-          let snap g v = g (v *. density) /. density in
-          let x0 = snap Float.floor (Box2.minx box)
-          and y0 = snap Float.floor (Box2.miny box) in
-          let window =
-            Box2.v x0 y0
-              (snap Float.ceil (Box2.maxx box) -. x0)
-              (snap Float.ceil (Box2.maxy box) -. y0)
-          in
           match (images d, !pictures) with
           | [ (b, px) ], [ p ] ->
+              let bounds = Option.get (Picture.bounds p) in
+              let snap g v = g (v *. density) /. density in
+              let x0 = snap Float.floor (Box2.minx bounds)
+              and y0 = snap Float.floor (Box2.miny bounds) in
+              let window =
+                Box2.v x0 y0
+                  (snap Float.ceil (Box2.maxx bounds) -. x0)
+                  (snap Float.ceil (Box2.maxy bounds) -. y0)
+              in
               equal (Testable.make ~pp:Box2.pp ~equal:Box2.equal) window b;
               let painted =
                 Raster.render ~density
                   (Renderable.v (Box2.w window) (Box2.h window)
-                     (Picture.transform
-                        (Affine.translate (-.x0) (-.y0))
-                        (Picture.clip (Path.rect box) p)))
+                     (Picture.transform (Affine.translate (-.x0) (-.y0)) p))
               in
               equal (array int) (Nx.to_array painted) (Nx.to_array px)
           | is, ps ->
@@ -908,4 +1037,4 @@ let goldens =
         (Nx_io.load_image (golden (name ^ ".png")))
         (Raster.render ~density:Figures.density r))
 
-let () = exit (run "Draw" [ rows; drawings; output; reducers; goldens ])
+let () = exit (run "Draw" [ rows; domain; drawings; output; reducers; goldens ])

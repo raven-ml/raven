@@ -6,10 +6,11 @@
 (* Drawing
 
    [draw] paints a laid-out figure: the paper, then each panel's marks over its
-   grid lines, clipped to its data area, then the axes, headers, legends and
-   titles. A mark is drawn one cell at a time: its facet channels put each of
-   its rows in a panel, and in each panel its reducer may draw the rows in its
-   stead, reading only what it draws; its draw function draws the others. *)
+   grid lines, then the axes, headers, legends and titles. Marks clip their
+   positions to the panel's domain, not their ink, so the stage clips nothing. A
+   mark is drawn one cell at a time: its facet channels put each of its rows in
+   a panel, and in each panel its reducer may draw the rows in its stead,
+   reading only what it draws; its draw function draws the others. *)
 
 module P2 = Hugin_next_gg.P2
 module Box2 = Hugin_next_gg.Box2
@@ -207,18 +208,11 @@ let members rd m fps =
 
 (* Tagging *)
 
-let clip_to box p = Picture.clip (Path.rect box) p
-
-(* [tagged id index box p] is [p] clipped to [box] and tagged with [id] and the
-   rows [index], instance by instance if it is a stamp of one instance per
-   row. *)
-let tagged id index box p =
+(* [tagged id index p] is [p] tagged with [id] and the rows [index], instance by
+   instance if it is a stamp of one instance per row. *)
+let tagged id index p =
   let tag = { Picture.id; rows = Picture.Rows index } in
-  match p with
-  | Picture.Empty -> Picture.empty
-  | Picture.Stamp { xs; _ } when Array.length xs = Array.length index ->
-      clip_to box (Picture.tag tag p)
-  | _ -> Picture.tag tag (clip_to box p)
+  match p with Picture.Empty -> Picture.empty | _ -> Picture.tag tag p
 
 (* Reducers *)
 
@@ -233,20 +227,25 @@ let aligned cx box =
   let x0 = lo (Box2.minx box) and y0 = lo (Box2.miny box) in
   Box2.v x0 y0 (hi (Box2.maxx box) -. x0) (hi (Box2.maxy box) -. y0)
 
-(* [rasterised cx box p] is [p], drawn within [box], as one image painted by the
-   raster renderer at the density and aligned with the device pixels. *)
-let rasterised cx box p =
-  let window = aligned cx box in
-  let w = Box2.w window and h = Box2.h window in
-  if w <= 0. || h <= 0. then Picture.empty
-  else
-    let moved =
-      Picture.transform
-        (Affine.translate (-.Box2.minx window) (-.Box2.miny window))
-        p
-    in
-    let px = Raster.render ~density:cx.ctx.density (Renderable.v w h moved) in
-    Picture.image window px
+(* [rasterised cx p] is [p] as one image painted by the raster renderer at the
+   density, over the device pixels its bounds reach. *)
+let rasterised cx p =
+  match Picture.bounds p with
+  | None -> Picture.empty
+  | Some b ->
+      let window = aligned cx b in
+      let w = Box2.w window and h = Box2.h window in
+      if w <= 0. || h <= 0. then Picture.empty
+      else
+        let moved =
+          Picture.transform
+            (Affine.translate (-.Box2.minx window) (-.Box2.miny window))
+            p
+        in
+        let px =
+          Raster.render ~density:cx.ctx.density (Renderable.v w h moved)
+        in
+        Picture.image window px
 
 (* [band_cells cx scale_of index] is the number of categories of the band scale
    that the binding [index] reads, if it has no padding. *)
@@ -562,7 +561,7 @@ let draw_occ cx pid occ targets =
     in
     let drawn rd sel =
       let r = rows None rd sel in
-      tagged occ.mid r.index box (m.draw r)
+      tagged occ.mid r.index (m.draw r)
     in
     let n =
       match sel with
@@ -572,12 +571,11 @@ let draw_occ cx pid occ targets =
     match m.reduce with
     | Some Cells -> (
         match cells cx m t.panel scale_of ~rows ~full ~few sel with
-        | Some p -> clip_to box p
+        | Some p -> p
         | None -> drawn full sel)
     | Some Raster when n > raster_rows || float n > device_pixels cx box ->
         let r = rows None full sel in
-        let p = rasterised cx box (clip_to box (m.draw r)) in
-        Picture.tag { Picture.id = occ.mid; rows = Picture.Rows r.index } p
+        tagged occ.mid r.index (rasterised cx (m.draw r))
     | Some M4 -> (
         match sel with
         | Read.Rows _ -> drawn full sel
