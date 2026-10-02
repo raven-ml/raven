@@ -1809,7 +1809,11 @@ let readable (name, th) =
   let ink = Theme.ink th and paper = Theme.paper th in
   at_least ~msg:(name ^ " ink") float_exact ~than:7. (contrast ink paper);
   at_least ~msg:(name ^ " axes") float_exact ~than:3.
-    (contrast (over 0.6 ink paper) paper)
+    (contrast (over 0.6 ink paper) paper);
+  at_least
+    ~msg:(name ^ " the scheme's low end")
+    float_exact ~than:3.
+    (contrast (Scheme.color (Theme.scheme th) 0.) paper)
 
 let homogeneous_figures =
   let fill = strings ~title:(Text.v "kind") [| "a"; "b"; "a"; "b" |] in
@@ -1846,13 +1850,18 @@ let homogeneity ((name, f), (k, (w, h))) =
 let themes =
   group "themes"
     [
-      cases "ink reads on paper, and axes at their opacity" ~name:fst
+      cases "ink, axes and the scheme's low end read on paper" ~name:fst
         [ ("default", Theme.default); ("dark", Theme.dark) ]
         readable;
       test "the presets are the themes of v they state" (fun () ->
           let theme = Testable.make ~pp:Theme.pp ~equal:Theme.equal in
+          let upper =
+            Array.init 13 (fun i ->
+                Scheme.color Scheme.viridis (0.4 +. (0.05 *. Float.of_int i)))
+          in
           equal theme
-            (Theme.v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ())
+            (Theme.v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1)
+               ~scheme:(Scheme.ramp upper) ())
             Theme.dark;
           equal theme (Theme.v ~size:16. ()) Theme.talk;
           equal theme (Theme.v ~size:20. ()) Theme.poster);

@@ -1235,9 +1235,13 @@ module Theme : sig
       dark theme for slides. *)
 
   val dark : t
-  (** [dark] is [v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ()]: light ink
-      on dark paper. Labels, axes and grid lines take parts of the ink
-      ({!section-lengths}), so they lighten with it. *)
+  (** [dark] is [v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ~scheme ()]:
+      light ink on dark paper. Labels, axes and grid lines take parts of the ink
+      ({!section-lengths}), so they lighten with it. [scheme] is
+      {!Scheme.viridis} from its normalised value [0.4] up, the ramp
+      ({!Scheme.ramp}) of its colours at [0.4], [0.45], …, [1.]: the darker
+      colours below fade into the paper, and these contrast with it at [3:1] or
+      more, so the lowest cells of a heatmap stay visible. *)
 
   val talk : t
   (** [talk] is [v ~size:16. ()], for slides: text and every length derived from

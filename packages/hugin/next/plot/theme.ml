@@ -32,7 +32,17 @@ let v ?(ink = Color.gray 0.1) ?(paper = Color.white) ?accent ?(size = 10.)
   { ink; paper; accent; size; fonts; palette; scheme; locale }
 
 let default = v ()
-let dark = v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ()
+
+(* Viridis from 0.4 up: below, its colours fade into dark paper, down to about
+   1.1:1 at its low end; from 0.4 they read on gray 0.1 at 3:1 or more. *)
+let dark_scheme =
+  Scheme.ramp
+    (Array.init 13 (fun i ->
+         Scheme.color Scheme.viridis (0.4 +. (0.05 *. Float.of_int i))))
+
+let dark =
+  v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ~scheme:dark_scheme ()
+
 let talk = v ~size:16. ()
 let poster = v ~size:20. ()
 let ink th = th.ink
