@@ -724,12 +724,15 @@ val contour :
     one legend at its scope unless the scope holds an explicit {!legend} for it:
     a colour bar for a continuous colour scale, stepped at the levels of a
     stepped scale ({!Scale.linear}), and otherwise one entry per guide value,
-    drawn by the swatch ({!Mark.v}) of every mark that reads the scale. A guide
-    is titled by the distinct titles of the channels that read its scale, in the
-    order the figure is written, separated by commas, and is untitled if they
-    have none. These rules are defaults: marks can imply that a scale has a
-    guide or none ({!Mark.bind}), and an explicit {!axis} or {!legend} decides
-    over both ({!section-merging}).
+    drawn by the swatch ({!Mark.v}) of every mark that reads the scale. A
+    categorical scale yields no legend when each channel that reads it has the
+    data of a position channel of its mark whose axis is shown in the channel's
+    panels: that axis names the categories already, so bars coloured by their
+    own x category have no legend. A guide is titled by the distinct titles of
+    the channels that read its scale, in the order the figure is written,
+    separated by commas, and is untitled if they have none. These rules are
+    defaults: marks can imply that a scale has a guide or none ({!Mark.bind}),
+    and an explicit {!axis} or {!legend} decides over both ({!section-merging}).
 
     A guide serving several panels stands beside the smallest panel or grid
     holding them. An axis shared by the panels of a column, for x, or of a row,

@@ -334,7 +334,10 @@ let showing node =
 
 (* [build r scales] is the node of [r]: the title of an axis or of headers is on
    the smallest node holding the panels showing them, and a legend on the
-   smallest node holding the panels its readers lie in. *)
+   smallest node holding the panels its readers lie in. A categorical legend
+   whose readers each have the data of a position channel of their mark, whose
+   axis is shown in their panels, is left out: the axis names its categories.
+   An explicit legend, or a mark's, keeps it. *)
 let build (r : Resolved.t) scales =
   let tree = of_shaped r scales Nx.Ptree.Path.root r.shaped in
   let titled tree ((scale, side), (guide, pids)) =
@@ -348,34 +351,76 @@ let build (r : Resolved.t) scales =
         })
       tree
   in
-  let tree = List.fold_left titled (labelled tree) (showing tree) in
+  let shown = showing tree in
+  let tree = List.fold_left titled (labelled tree) shown in
   let explicit = Arrange.legends r.shaped in
   let panels pid =
     match find_path pid r.cells with
     | Some c -> List.map (fun p -> p.pnid) c.panels
     | None -> [ pid ]
   in
+  let on_axis pid i =
+    List.exists
+      (fun ((s, _), (_, pids)) ->
+        s = i && List.exists (Nx.Ptree.Path.equal pid) pids)
+      shown
+  in
+  (* [named pids m] is [true] iff a position channel of the mark of [m], with
+     the data of [m], reads a scale shown by an axis in each of the panels
+     [pids] that [m] lies in. *)
+  let named pids m =
+    let position j (B b) =
+      match (b.role.use, Channel.data b.ch) with
+      | Role.Position _, Some d
+        when Option.is_some
+               (Channel.equal_lift d.Channel.lift m.m_d.Channel.lift) ->
+          Some j
+      | _ -> None
+    in
+    let positions =
+      List.filter_map Fun.id (List.mapi position m.m_occ.mark.bindings)
+    in
+    let shows (p : Resolved.panel) =
+      match find_path m.m_occ.mid p.reads with
+      | None -> false
+      | Some reads ->
+          List.exists
+            (fun j -> Option.fold ~none:false ~some:(on_axis p.pnid) reads.(j))
+            positions
+    in
+    let cell = Option.get (find_path m.m_pid r.cells) in
+    List.for_all
+      (fun (p : Resolved.panel) ->
+        (not (List.exists (Nx.Ptree.Path.equal p.pnid) pids)) || shows p)
+      cell.panels
+  in
   let legend (tree, i) (F f) =
     let readers =
       List.filter (fun m -> Role.shown_on m.m_use = Some `Legend) f.members
     in
-    if readers = [] then (tree, i + 1)
+    let pids =
+      match panel_of f.key with
+      | Some p -> [ p ]
+      | None -> List.concat_map (fun m -> panels m.m_pid) readers
+    in
+    let mine (_, (g : guide), key) =
+      if String.equal g.scale f.name && equal_key key f.key then Some g
+      else None
+    in
+    let explicit = List.find_map mine explicit in
+    let named () =
+      match (f.kind, explicit, f.guide) with
+      | Channel.Categories, None, None -> List.for_all (named pids) readers
+      | (Channel.Categories | Channel.Quantities), _, _ -> false
+    in
+    if readers = [] || named () then (tree, i + 1)
     else
       let guide =
-        let mine (_, (g : guide), key) =
-          if String.equal g.scale f.name && equal_key key f.key then Some g
-          else None
-        in
-        match List.find_map mine explicit with
+        match explicit with
         | Some g -> g
         | None ->
             let show = Option.value f.guide ~default:f.legend in
             { kind = Legend; scale = f.name; side = None; show }
-      in
-      let pids =
-        match panel_of f.key with
-        | Some p -> [ p ]
-        | None -> List.concat_map (fun m -> panels m.m_pid) readers
       in
       let kind =
         match f.kind with

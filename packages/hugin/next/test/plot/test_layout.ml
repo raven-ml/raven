@@ -1102,9 +1102,66 @@ let titles =
           apart l);
     ]
 
+(* [legend_ids f] is the ids of the legends of [f] laid out. *)
+let legend_ids f =
+  String.split_on_char '\n' (printed (lay (Size.panels 80. 60.) f))
+  |> List.filter_map (fun line ->
+      match String.split_on_char ' ' line with
+      | "legend" :: id :: _ -> Some id
+      | _ -> None)
+
+let classes = [| "cat"; "dog"; "cat"; "bird" |]
+
+(* Figures whose categorical colours a shown axis may name, and whether each
+   keeps its legend. *)
+let named_by_axis =
+  let bars ?fill ?(x = strings classes) () =
+    rect ~x ~y:(num ramp)
+      ~fill:(Option.value fill ~default:(strings classes))
+      ()
+  in
+  [
+    ("colours of the x data", bars (), false);
+    ( "colours of the y data",
+      rect ~x:(num ramp) ~y:(strings classes) ~fill:(strings classes) (),
+      false );
+    ( "facets labelling their axis on the outer panels",
+      rect ~x:(strings classes) ~y:(num ramp) ~fill:(strings classes)
+        ~fy:(strings [| "p"; "q"; "p"; "q" |])
+        (),
+      false );
+    ( "colours of other data",
+      bars ~fill:(strings [| "a"; "b"; "a"; "b" |]) (),
+      true );
+    ("a hidden axis", layer [ bars (); axis ~show:false "x" ], true);
+    ("an explicit legend", layer [ bars (); legend "color" ], true);
+    ( "a mark implying a legend",
+      Mark.v ~name:"bars"
+        [
+          Mark.bind Role.x (strings classes);
+          Mark.bind ~guide:true Role.fill (strings classes);
+        ]
+        (fun _ -> Picture.empty),
+      true );
+    ( "a second reader the axis does not name",
+      layer
+        [
+          bars ();
+          dot
+            ~x:(strings [| "a"; "b"; "a"; "b" |])
+            ~y:(num ramp) ~fill:(strings classes) ();
+        ],
+      true );
+    ("quantities of the x data", plain ~fill:(num ramp) ramp, true);
+  ]
+
 let legends =
   group "legends"
     [
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "a categorical legend a shown axis names is left out" named_by_axis
+        (fun (_, f, kept) -> equal bool kept (legend_ids f <> []));
       test "a scale on x in one cell and a colour in another has both guides"
         (fun () ->
           let rate = Scale.linear ~name:"rate" () in

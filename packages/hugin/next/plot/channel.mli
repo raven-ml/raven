@@ -46,6 +46,11 @@ val kind : 'd lift -> 'd kind
 val lift_shape : 'd lift -> int array option
 (** [lift_shape l] is the shape [l] takes part in broadcasting with, if any. *)
 
+val equal_lift : 'd lift -> 'e lift -> ('d, 'e) Type.eq option
+(** [equal_lift l l'] is [Some Type.Equal] iff [l] and [l'] lift the same data
+    alike: tensors and validity masks physically equal, arrays and labels equal
+    by value. *)
+
 (** {1:channels Channels} *)
 
 type 'd data = {
