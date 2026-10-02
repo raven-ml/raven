@@ -293,25 +293,21 @@ let label_align : side -> Text.Layout.halign * Text.Layout.valign = function
   | `Left -> (`Right, `Middle)
   | `Right -> (`Left, `Middle)
 
-(* [thin cx side labels] drops alternate labels until no two adjacent ones
-   overlap with their clearance. *)
+(* [thin cx side labels] keeps, in order, each label that clears the last one
+   kept with their clearance: a label is dropped only where it would meet a kept
+   one, so an uneven set of explicit ticks keeps its lone labels. *)
 let thin cx side labels =
   let centre p = if horizontal side then P2.x p.at else P2.y p.at in
   let extent p =
     (if horizontal side then width p.set else height p.set) +. em cx clear_em
   in
-  let rec overlap = function
-    | a :: (b :: _ as rest) ->
-        Float.abs (centre b -. centre a) < (extent a +. extent b) /. 2.
-        || overlap rest
-    | _ -> false
+  let clears a b =
+    Float.abs (centre b -. centre a) >= (extent a +. extent b) /. 2.
   in
-  let rec alternate = function
-    | a :: _ :: rest -> a :: alternate rest
-    | l -> l
+  let keep acc p =
+    match acc with last :: _ when not (clears last p) -> acc | _ -> p :: acc
   in
-  let rec go l = if overlap l then go (alternate l) else l in
-  go labels
+  List.rev (List.fold_left keep [] labels)
 
 (* [ends side length labels] is the longest of [labels] along [side] moved to
    each end of the side: a label centred on a tick may lie there at another

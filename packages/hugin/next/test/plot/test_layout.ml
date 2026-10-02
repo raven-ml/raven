@@ -1504,9 +1504,67 @@ let quantities_labels ~notation ~ticks =
     (List.map (fun (t : Hugin_next_kit.Ticks.tick) -> t.label) expected.major)
     (axis_labels (layout (Size.panels 300. 60.) r) "axis.x")
 
+(* Thinning: explicit ticks of an axis 120 points long, labelled as
+   [Ticks.of_values] labels them, of which those [thin] keeps print. Two labels
+   overlap iff their centres are closer than half their widths and the
+   clearance. *)
+let thinning_law vs =
+  let scale = Scale.linear ~name:"x" ~domain:(0., 10.) ~ticks:vs () in
+  let unit = f64 [| 0.; 10. |] in
+  let r = resolve (dot ~x:(num ~scale unit) ~y:(num unit) ()) in
+  let all =
+    (Hugin_next_kit.Ticks.of_values (Resolved.scale r scale) vs).major
+    |> List.map (fun (t : Hugin_next_kit.Ticks.tick) ->
+        (t.label, 120. *. t.position, label_w t.label))
+  in
+  let kept = axis_labels (layout (Size.panels 120. 60.) r) "axis.x" in
+  let clear = 0.5 *. em in
+  let overlap (_, a, wa) (_, b, wb) =
+    Float.abs (b -. a) < ((wa +. wb) /. 2.) +. clear
+  in
+  let mem (l, _, _) = List.mem l kept in
+  let kept = List.filter mem all
+  and dropped = List.filter (Fun.negate mem) all in
+  cover "a dropped label" (dropped <> []);
+  let rec apart = function
+    | a :: (b :: _ as rest) ->
+        let (la, _, _), (lb, _, _) = (a, b) in
+        equal ~msg:(la ^ " and " ^ lb) bool false (overlap a b);
+        apart rest
+    | _ -> ()
+  in
+  apart kept;
+  List.iter
+    (fun ((l, _, _) as d) ->
+      equal
+        ~msg:(l ^ " overlaps a kept label")
+        bool true
+        (List.exists (overlap d) kept))
+    dropped
+
+let gen_tick_values =
+  Gen.array ~size:(Gen.int_range 1 12)
+    (Gen.frequency
+       [
+         (3, Gen.float_range 0. 10.);
+         (2, Gen.map (fun i -> Float.of_int i /. 10.) (Gen.int_range 0 100));
+       ])
+
 let ticks =
   group "ticks"
     [
+      prop "thinning keeps labels apart and drops only those that meet one"
+        gen_tick_values thinning_law;
+      test "thinning keeps an explicit label far from the others" (fun () ->
+          let scale =
+            Scale.linear ~ticks:[| 0.; 0.1; 0.2; 0.3; 5.; 10.; 10. |] ()
+          in
+          let unit = f64 [| 0.; 10. |] in
+          let l =
+            lay (Size.panels 120. 60.)
+              (dot ~x:(num ~scale unit) ~y:(num unit) ())
+          in
+          equal (list string) [ "0.0"; "5.0"; "10.0" ] (axis_labels l "axis.x"));
       test "explicit ticks are labelled as of_values labels them" (fun () ->
           quantities_labels ~notation:Percent
             ~ticks:[| 1.; 0.; 0.25; 2.; Float.nan |];

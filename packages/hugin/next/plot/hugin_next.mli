@@ -1870,7 +1870,8 @@ val layout :
     entries into rows and decides which guides share a band; solves a last time;
     and lays each guide out at the final lengths, which leave it the room it
     needs, and builds each panel's projection. An axis or colour bar too short
-    for its labels drops alternate ones, which never widens a protrusion.
+    for its labels keeps, in order, each label that clears the last one it kept,
+    and drops the others, which never widens a protrusion.
 
     Panels and grids are nodes, and only their data areas take tracks. Axes,
     headers, legends and titles are guides on a side of a node
