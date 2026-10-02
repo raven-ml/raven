@@ -652,6 +652,13 @@ val contour :
     ({!Mark.bind}), and an explicit {!axis} or {!legend} decides over both
     ({!section-merging}).
 
+    A scale read by several roles has a guide for each: a scale named by a user
+    and read by [x] in one panel and by [fill] in another has an axis there and
+    a legend. Its ticks are one set, which every guide of the scale shows: those
+    of a facet scale and of a categorical scale with a legend are its
+    categories, and the others are chosen so that their labels overlap on none
+    of its guides ({!layout}).
+
     {1:facets Facets}
 
     The facet channels [fx] and [fy] read band scales whose categories are

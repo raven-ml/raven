@@ -3350,7 +3350,7 @@ and grid = {
 
 and gcell = { r0 : int; c0 : int; nr : int; nc : int; it : item }
 
-(* How layout chooses a scale's ticks. *)
+(* The guides that show a scale's ticks. *)
 type use =
   | Axis_of of guide_role
   | Header_of
@@ -3360,7 +3360,7 @@ type cx = {
   theme : Theme.t;
   measures : Text.Layout.t Measures.t ref;
   scales : fitted array;
-  uses : use array;
+  uses : use list array; (* Per scale. *)
   ticks : Ticks.t option array; (* None before the first choice. *)
   final : bool;
   notes : warning list ref; (* The category labels that lack glyphs. *)
@@ -3914,7 +3914,8 @@ type acc = {
   mutable legends : legend_out list;
   mutable titles : placed list;
   mutable spans : (id * Box2.t) list; (* The hull of each block's panels. *)
-  mutable along : (int * float) list; (* Each axis's scale and length. *)
+  mutable along : (int * guide_role * float) list;
+      (* Each axis's scale, role and length. *)
 }
 
 let fit_aspect r box =
@@ -4026,8 +4027,8 @@ let place_leaf cx acc l box =
   List.iter
     (fun a ->
       (match a.a_role with
-      | Gx -> acc.along <- (a.a_scale, Box2.w box) :: acc.along
-      | Gy -> acc.along <- (a.a_scale, Box2.h box) :: acc.along
+      | Gx -> acc.along <- (a.a_scale, Gx, Box2.w box) :: acc.along
+      | Gy -> acc.along <- (a.a_scale, Gy, Box2.h box) :: acc.along
       | Gfx | Gfy -> ());
       let offset =
         match a.a_side with
@@ -4457,13 +4458,10 @@ let uses_of (r : resolved) blocks =
           c.guides)
       (panels Nx.Ptree.Path.root r.shaped)
   in
-  let use (F f as s) =
+  let uses (F f as s) =
     let roles = List.map (fun m -> axis_role m.m_role) f.members in
     let is n = List.exists (String.equal n) roles in
-    if is "x" then Axis_of Gx
-    else if is "y" then Axis_of Gy
-    else if is "fx" || is "fy" then Header_of
-    else
+    let legend () =
       let explicit =
         List.find_opt
           (fun l -> String.equal l.lscale f.sid.sname && equal_key l.lkey f.key)
@@ -4490,37 +4488,50 @@ let uses_of (r : resolved) blocks =
           block = block_of r blocks f.key;
           show;
         }
+    in
+    let when_ b u = if b then [ u () ] else [] in
+    List.concat
+      [
+        when_ (is "x") (fun () -> Axis_of Gx);
+        when_ (is "y") (fun () -> Axis_of Gy);
+        when_ (is "fx" || is "fy") (fun () -> Header_of);
+        when_ (List.exists (fun r -> not (positional r)) roles) legend;
+      ]
   in
-  Array.of_list (List.map use r.scales)
+  Array.of_list (List.map uses r.scales)
 
 let build r scales uses =
-  let legends_at id =
+  let legend i = function
+    | Legend_of { side; block; show = true; bar } ->
+        let (F f) = scales.(i) in
+        let kind =
+          match f.kind with
+          | Scale.Quantitative -> "num"
+          | Scale.Categorical -> "cat"
+          | Scale.Temporal -> "time"
+        in
+        let ls_id =
+          Nx.Ptree.Path.(
+            v
+              (segments block
+              @ [ Field "legend"; Field f.sid.sname; Field kind ]))
+        in
+        Some
+          ( block,
+            (side, Legend { ls_id; ls_scale = i; ls_side = side; ls_bar = bar })
+          )
+    | Legend_of { show = false; _ } | Axis_of _ | Header_of -> None
+  in
+  let legends =
     List.concat
       (List.mapi
-         (fun i u ->
-           match u with
-           | Legend_of { side; block; show = true; bar }
-             when Nx.Ptree.Path.equal block id ->
-               let (F f) = scales.(i) in
-               let kind =
-                 match f.kind with
-                 | Scale.Quantitative -> "num"
-                 | Scale.Categorical -> "cat"
-                 | Scale.Temporal -> "time"
-               in
-               let ls_id =
-                 Nx.Ptree.Path.(
-                   v
-                     (segments id
-                     @ [ Field "legend"; Field f.sid.sname; Field kind ]))
-               in
-               [
-                 ( side,
-                   Legend { ls_id; ls_scale = i; ls_side = side; ls_bar = bar }
-                 );
-               ]
-           | _ -> [])
+         (fun i us -> List.filter_map (legend i) us)
          (Array.to_list uses))
+  in
+  let legends_at id =
+    List.filter_map
+      (fun (b, l) -> if Nx.Ptree.Path.equal b id then Some l else None)
+      legends
   in
   let heading side (align, head) =
     (side, Heading { align; head; hside = side })
@@ -4640,56 +4651,73 @@ let all_ticks locale (F f) =
       Ticks.of_values ~locale f.scale (Array.of_list (category_names f.scale))
   | Scale.Quantitative | Scale.Temporal -> Ticks.of_values ~locale f.scale [||]
 
-(* [lengths cx acc] is the length of the guides of each scale in [acc]: the
-   shortest of its axes, or the span of the panels its legend stands beside. *)
+(* [lengths cx acc] is, for each scale, the length in [acc] of each guide that
+   shows it: the shortest of its axes along one direction, or the span of the
+   panels its legend stands beside. *)
 let lengths cx acc =
   Array.mapi
-    (fun i u ->
-      match u with
-      | Header_of -> Float.nan
-      | Axis_of _ ->
-          List.fold_left
-            (fun m (j, l) -> if j = i then Float.min m l else m)
-            Float.infinity acc.along
-      | Legend_of { side; block; _ } -> (
-          match find_path block acc.spans with
-          | None -> 0.
-          | Some b -> if vertical side then Box2.h b else Box2.w b))
+    (fun i us ->
+      List.map
+        (fun u ->
+          match u with
+          | Header_of -> Float.nan
+          | Axis_of role ->
+              List.fold_left
+                (fun m (j, r, l) ->
+                  if j = i && r = role then Float.min m l else m)
+                Float.infinity acc.along
+          | Legend_of { side; block; _ } -> (
+              match find_path block acc.spans with
+              | None -> 0.
+              | Some b -> if vertical side then Box2.h b else Box2.w b))
+        us)
     cx.uses
 
-(* [choose cx lengths] is the ticks of each scale at its length. *)
+(* [choose cx lengths] is the ticks of each scale. A facet scale and a
+   categorical one with a legend show every category. Otherwise the ticks are
+   chosen once against every guide that shows them, at its length: a label's
+   extent is the greatest fraction of a guide's length it takes, so that no two
+   labels overlap on any of them. *)
 let choose cx lengths =
   let locale = Theme.locale cx.theme in
   let label t = set cx label_em (Text.v t) in
   let clear = em cx clear_em and sw = em cx swatch_em in
+  let measure u t =
+    let l = label t in
+    match u with
+    | Axis_of Gx -> width l +. clear
+    | Axis_of (Gy | Gfx | Gfy) -> height l +. clear
+    | Legend_of { bar; side; _ } -> (
+        match (bar, vertical side) with
+        | true, true -> height l +. clear
+        | true, false -> width l +. clear
+        | false, true -> Float.max sw (height l)
+        | false, false -> sw +. em cx pad_em +. width l +. clear)
+    | Header_of -> 0.
+  in
   Array.mapi
     (fun i (F f as s) ->
-      let length = lengths.(i) in
-      let pick measure =
-        if Float.is_finite length && length > 0. then
-          Ticks.choose ~locale ~length ~measure f.scale
-        else Ticks.of_values ~locale f.scale [||]
+      let us = cx.uses.(i) in
+      let every =
+        List.exists
+          (function
+            | Header_of -> true
+            | Legend_of _ -> categorical s
+            | Axis_of _ -> false)
+          us
       in
-      match cx.uses.(i) with
-      | Header_of -> all_ticks locale s
-      | Axis_of role ->
-          let measure t =
-            (match role with Gx -> width (label t) | _ -> height (label t))
-            +. clear
-          in
-          pick measure
-      | Legend_of _ when categorical s -> all_ticks locale s
-      | Legend_of { bar; side; _ } ->
-          let vert = vertical side in
-          let measure t =
-            let l = label t in
-            match (bar, vert) with
-            | true, true -> height l +. clear
-            | true, false -> width l +. clear
-            | false, true -> Float.max sw (height l)
-            | false, false -> sw +. em cx pad_em +. width l +. clear
-          in
-          pick measure)
+      let guides =
+        List.filter
+          (fun (_, l) -> Float.is_finite l && l > 0.)
+          (List.combine us lengths.(i))
+      in
+      if every then all_ticks locale s
+      else
+        match guides with
+        | [] -> Ticks.of_values ~locale f.scale [||]
+        | guides ->
+            let measure t = longest (fun (u, l) -> measure u t /. l) guides in
+            Ticks.choose ~locale ~length:1. ~measure f.scale)
     cx.scales
 
 (* Laid-out figures *)

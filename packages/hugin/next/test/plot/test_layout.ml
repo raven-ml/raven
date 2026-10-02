@@ -453,6 +453,23 @@ let guides =
   group "guides"
     [
       no_overlap;
+      test "a scale on x in one cell and a colour in another has both guides"
+        (fun () ->
+          let rate = Scale.linear ~name:"rate" () in
+          let f =
+            grid
+              [
+                [
+                  dot ~x:(num ~scale:rate ramp) ~y:(num ramp) ();
+                  dot ~x:(num ramp) ~y:(num ramp) ~fill:(num ~scale:rate ramp)
+                    ();
+                ];
+              ]
+          in
+          let p = printed (lay (Size.panels 80. 60.) f) in
+          in_order
+            ~subs:[ "axis 0.axis.rate bottom"; "legend legend.rate.num" ]
+            p);
       test "a legend's id is its scale's name and kind" (fun () ->
           let f =
             layer
