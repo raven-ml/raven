@@ -724,15 +724,17 @@ val contour :
     one legend at its scope unless the scope holds an explicit {!legend} for it:
     a colour bar for a continuous colour scale, stepped at the levels of a
     stepped scale ({!Scale.linear}), and otherwise one entry per guide value,
-    drawn by the swatch ({!Mark.v}) of every mark that reads the scale. A
-    categorical scale yields no legend when each channel that reads it has the
-    data of a position channel of its mark whose axis is shown in the channel's
-    panels: that axis names the categories already, so bars coloured by their
-    own x category have no legend. A guide is titled by the distinct titles of
-    the channels that read its scale, in the order the figure is written,
-    separated by commas, and is untitled if they have none. These rules are
-    defaults: marks can imply that a scale has a guide or none ({!Mark.bind}),
-    and an explicit {!axis} or {!legend} decides over both ({!section-merging}).
+    drawn by the swatch ({!Mark.v}) of every mark that reads the scale: every
+    category of a categorical scale, and about four values of a continuous one,
+    none of which a role of area draws with an area of [0.]. A categorical scale
+    yields no legend when each channel that reads it has the data of a position
+    channel of its mark whose axis is shown in the channel's panels: that axis
+    names the categories already, so bars coloured by their own x category have
+    no legend. A guide is titled by the distinct titles of the channels that
+    read its scale, in the order the figure is written, separated by commas, and
+    is untitled if they have none. These rules are defaults: marks can imply
+    that a scale has a guide or none ({!Mark.bind}), and an explicit {!axis} or
+    {!legend} decides over both ({!section-merging}).
 
     A guide serving several panels stands beside the smallest panel or grid
     holding them. An axis shared by the panels of a column, for x, or of a row,
@@ -1182,13 +1184,14 @@ module Theme : sig
       em from what they title; ticks aiming to lie [5] em apart on x axes and
       colour bars and [3.5] em apart on y axes, fewer if their labels would fill
       more than half the axis ({!Hugin_next_kit.Ticks.choose}); legend swatches
-      [0.8] em square, or [1.5] em long for a legend of [stroke] colours, [0.25]
-      em from their labels, in rows [0.4] em apart, and colour bars [1] em wide;
-      axis lines, ticks and the outlines of marks [0.08] em wide, and grid lines
-      [0.06] em wide; lines and rules [0.15] em wide; dots of the area of a
-      circle [0.6] em across; [1] em between a legend and what it stands beside,
-      and added to the protrusions that meet a gap between grid cells; and a
-      margin of [0.5] em around the page.
+      [0.8] em square, or [1.5] em long for a legend of [stroke] colours, or as
+      large as the largest circle of a legend of areas, [0.25] em from their
+      labels, in rows [0.4] em apart, and colour bars [1] em wide; axis lines,
+      ticks and the outlines of marks [0.08] em wide, and grid lines [0.06] em
+      wide; lines and rules [0.15] em wide; dots of the area of a circle [0.6]
+      em across; [1] em between a legend and what it stands beside, and added to
+      the protrusions that meet a gap between grid cells; and a margin of [0.5]
+      em around the page.
 
       Text and axes are in the ink, their lesser parts at a fraction of its
       opacity: tick and legend labels at [0.75], axis lines and ticks at [0.6],
@@ -1587,9 +1590,10 @@ module Mark : sig
       - [swatch], the picture of a legend entry. It is called with one row in a
         box one em square, onto which the projection maps the unit square, and
         in which the roles that read the legend's scale take the entry's value,
-        constants keep theirs and other roles are unbound, so that its point is
-        the box's centre ({!points}) and its extents span the box ({!extent}).
-        For the entry [k] of a legend of [n] entries, the rows have the shape
+        constants keep theirs, colour roles bound to other data take the ink at
+        half its opacity, and other roles are unbound, so that its point is the
+        box's centre ({!points}) and its extents span the box ({!extent}). For
+        the entry [k] of a legend of [n] entries, the rows have the shape
         [[|n|]], the index [[|k|]] and the legend's id
         ({!Hugin_next.section-ids}), with which {!draw} tags the swatch. Unset,
         it is [draw].

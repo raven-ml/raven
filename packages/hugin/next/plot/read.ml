@@ -15,12 +15,7 @@ open Channel
 open Figure
 open Resolved
 
-type ctx = {
-  theme : Theme.t;
-  density : float;
-  scales : fitted array;
-  frozen : Ticks.t array;
-}
+type ctx = { theme : Theme.t; scales : fitted array; frozen : Ticks.t array }
 
 (* Theme ranges, in em *)
 
@@ -289,6 +284,12 @@ let colors ctx i =
       fun u -> Option.value (at u) ~default:missing
   | None -> fun _ -> Color.transparent
 
+let area ctx i u =
+  match base ctx ~stroked:false Role.size.use Role.Floats i with
+  | Some (range, _) ->
+      Option.value (at ctx.scales.(i) range u) ~default:Float.nan
+  | None -> Float.nan
+
 (* Columns *)
 
 let column ?norm ?fn ?ticks ?cats ?band ?zero role values =
@@ -444,6 +445,10 @@ let rows ?only ctx rd ~id projection ~warn reads sel =
     warn;
   }
 
+(* A colour role bound to data a legend does not show swatches in the ink at
+   this fraction of its opacity. *)
+let neutral_alpha = 0.5
+
 let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
   let stroked = stroked m in
   let col index (B b) =
@@ -467,7 +472,15 @@ let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
               (column b.role
                  [| fn u |]
                  ~norm:[| u |] ~fn ~ticks ?cats ?band ?zero))
-    | None -> None
+    | None -> (
+        match b.role.range with
+        | Role.Colors ->
+            let ink = Theme.ink ctx.theme in
+            let alpha = Color.alpha ink *. neutral_alpha in
+            Some (column b.role [| Color.with_alpha alpha ink |])
+        | Role.Floats | Role.Texts | Role.Symbols | Role.Panels | Role.Param _
+          ->
+            None)
   in
   {
     Rows.id;

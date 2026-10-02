@@ -1155,9 +1155,84 @@ let named_by_axis =
     ("quantities of the x data", plain ~fill:(num ramp) ramp, true);
   ]
 
+(* [entries l] is the value and box of every legend swatch of [l], read from its
+   printed form, where each is [swatch u [(x0, y0) (x1, y1)]]. *)
+let entries l =
+  String.split_on_char '\n' (printed l)
+  |> List.filter_map (fun line ->
+      match String.split_on_char ' ' (String.trim line) with
+      | "swatch" :: u :: _ -> Some (float_of_string u, box_of line)
+      | _ -> None)
+
+let pp_areas ppf (a0, a1) = Format.fprintf ppf "(%g, %g)" a0 a1
+
+(* Size legends: the areas of a scale, from a pool with an end of area 0, and
+   data, some on a set domain. *)
+let gen_sizes =
+  Gen.triple
+    (Gen.of_list ~pp:pp_areas [ (0., 100.); (0., 400.); (64., 0.); (9., 200.) ])
+    (Gen.pair (Gen.int_range (-50) 50) (Gen.int_range 1 200))
+    Gen.bool
+
+let sizes_law (areas, (lo, span), set) =
+  let lo = Float.of_int lo and hi = Float.of_int (lo + span) in
+  let domain = if set then Some (lo, hi) else None in
+  let data = f64 [| lo; (lo +. hi) /. 2.; hi |] in
+  let size = num ~scale:(Scale.linear ~areas ?domain ()) data in
+  let l =
+    lay (Size.panels 80. 60.) (dot ~x:(num data) ~y:(num data) ~size ())
+  in
+  let a0, a1 = areas in
+  let es = entries l in
+  cover "an end of area 0 is a tick" (fst areas = 0. && List.length es > 0);
+  greater int ~than:0 (List.length es);
+  List.iter
+    (fun (u, (x0, y0, x1, y1)) ->
+      let area = a0 +. (u *. (a1 -. a0)) in
+      let msg = Printf.sprintf "entry at %g" u in
+      greater ~msg float_exact ~than:0. area;
+      let across = 2. *. Float.sqrt (area /. Float.pi) in
+      at_least ~msg float_exact ~than:(across -. 1e-3)
+        (Float.min (x1 -. x0) (y1 -. y0)))
+    es;
+  apart l
+
+(* The ticks [Ticks.choose] gives a guide nine labels long, with no least
+   spacing, without those of area 0. *)
+let size_ticks_law (areas, (lo, span), set) =
+  let lo = Float.of_int lo and hi = Float.of_int (lo + span) in
+  let domain = if set then Some (lo, hi) else None in
+  let data = f64 [| lo; (lo +. hi) /. 2.; hi |] in
+  let f =
+    dot ~x:(num data) ~y:(num data)
+      ~size:(num ~scale:(Scale.linear ~areas ?domain ()) data)
+      ()
+  in
+  let r = resolve f in
+  let fitted = Resolved.scale r (Scale.linear ~name:"size" ()) in
+  let ticks =
+    Hugin_next_kit.Ticks.choose ~length:1. ~measure:(fun _ -> 1. /. 9.) fitted
+  in
+  let a0, a1 = areas in
+  let expected =
+    List.filter_map
+      (fun (t : Hugin_next_kit.Ticks.tick) ->
+        if a0 +. (t.position *. (a1 -. a0)) > 0. then Some t.position else None)
+      ticks.major
+  in
+  (* Printed values have six significant digits. *)
+  equal
+    (list (float 1e-5))
+    expected
+    (List.map fst (entries (layout (Size.panels 80. 60.) r)))
+
 let legends =
   group "legends"
     [
+      prop "a size legend leaves out area 0 and holds its circles" gen_sizes
+        sizes_law;
+      prop "a size legend's entries are the ticks of a guide nine labels long"
+        gen_sizes size_ticks_law;
       cases
         ~name:(fun (n, _, _) -> n)
         "a categorical legend a shown axis names is left out" named_by_axis

@@ -11,7 +11,6 @@ module Ticks := Hugin_next_kit.Ticks
 
 type ctx = {
   theme : Theme.t;
-  density : float;
   scales : Resolved.fitted array;
   frozen : Ticks.t array;  (** Per scale. *)
 }
@@ -54,12 +53,18 @@ val swatch :
   Rows.t
 (** [swatch ctx m ~id proj ~warn ~scale ~reads ~n ~k u] is the one row of the
     swatch of [m] for entry [k] of [n] at the normalised value [u] of the scale
-    [scale], which the bindings of the indices [reads] read. *)
+    [scale], which the bindings of the indices [reads] read. A colour role bound
+    to other data takes the ink at half its opacity, so that the swatch shows
+    only what the legend does. *)
 
 (** {1:ranges Ranges} *)
 
 val colors : ctx -> int -> float -> Hugin_next_gg.Color.t
 (** [colors ctx i u] is the colour a colour role gives [u] on the scale [i]. *)
+
+val area : ctx -> int -> float -> float
+(** [area ctx i u] is the area in square points that a role of area gives the
+    normalised value [u] of the scale [i], [nan] if [u] is. *)
 
 val levels : ctx -> int -> float array option
 (** [levels ctx i] is the levels of the scale [i] if it is stepped: the

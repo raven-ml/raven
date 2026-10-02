@@ -28,6 +28,11 @@ let bar_em = 1. (* The width of colour bars. *)
 let x_spacing_em = 5. (* The spacing ticks aim for across. *)
 let y_spacing_em = 3.5 (* Up. *)
 
+(* A continuous legend of entries chooses its ticks as a guide this many labels
+   long would, which aims at half as many ticks: four entries, whether or not a
+   legend of areas leaves out an end of area 0. *)
+let legend_span = 9.
+
 type sides = { left : float; right : float; top : float; bottom : float }
 
 let no_sides = { left = 0.; right = 0.; top = 0.; bottom = 0. }
@@ -238,6 +243,15 @@ let bar (F f as s) =
          | _ -> false)
        f.members
 
+(* [sized s] is [true] iff the legend of [s] shows an area. *)
+let sized (F f) =
+  List.exists
+    (fun m ->
+      match m.m_use with
+      | Role.Encoding { map = Area; _ } -> true
+      | Role.Encoding _ | Position _ | Facet _ | Value -> false)
+    f.members
+
 (* [stroked s] is [true] iff every channel the legend of [s] shows is a
    [stroke], which lines and rules draw: its swatches are line swatches. *)
 let stroked (F f) =
@@ -423,12 +437,30 @@ let bar_body cx g ~length ~top s scale (t : Ticks.t) =
 
 (* [entries_body cx g ~wrap ~top s scale t] is the swatches of a legend, its
    labels, and the length of its rows: stacked if vertical, else in rows of
-   columns as wide as the widest entry, as many as fit in [wrap]. *)
+   columns as wide as the widest entry, as many as fit in [wrap]. A legend of
+   areas leaves out an entry of area 0, and its swatches hold the circle of the
+   largest. *)
 let entries_body cx g ~wrap ~top s scale (t : Ticks.t) =
-  let pad = em cx pad_em and sh = em cx swatch_em in
-  let sw = if stroked s then em cx line_em else sh in
-  let texts = List.map (fun tk -> set cx label_em (tick_text tk)) t.major in
-  let n = List.length t.major in
+  let area =
+    Read.area
+      { Read.theme = cx.theme; scales = cx.scales; frozen = cx.ticks }
+      scale
+  in
+  let major, circle =
+    if not (sized s) then (t.major, 0.)
+    else
+      let major =
+        List.filter (fun (tk : Ticks.tick) -> area tk.position > 0.) t.major
+      in
+      let across (tk : Ticks.tick) =
+        2. *. Float.sqrt (area tk.position /. Float.pi)
+      in
+      (major, longest across major)
+  in
+  let pad = em cx pad_em and sh = Float.max (em cx swatch_em) circle in
+  let sw = if stroked s then Float.max (em cx line_em) sh else sh in
+  let texts = List.map (fun tk -> set cx label_em (tick_text tk)) major in
+  let n = List.length major in
   let row = Float.max (sh +. em cx row_gap_em) (longest height texts) in
   let entry = sw +. pad +. longest width texts in
   let col = entry +. em cx clear_em in
@@ -444,7 +476,7 @@ let entries_body cx g ~wrap ~top s scale (t : Ticks.t) =
       place cx ~valign:`Middle ~data:(categorical s) label_em (tick_text tk) at
     )
   in
-  let entries = List.mapi one t.major in
+  let entries = List.mapi one major in
   let labels = List.map snd entries in
   let least = if horizontal g.side then entry else float n *. row in
   (List.map fst entries, labels, labels, least)
@@ -561,15 +593,14 @@ let all_ticks locale (F f) =
 let choose cx gs =
   let locale = Theme.locale cx.theme in
   let clear = em cx clear_em in
-  let measure g t =
-    let l = set cx label_em (Text.v t) in
-    let vertical = not (horizontal g.side) in
+  (* Entries never overlap their labels, which have rows or columns of their
+     own. *)
+  let measure g length t =
     match g.kind with
-    | Legend { scale; _ } when not (bar cx.scales.(scale)) ->
-        if vertical then Float.max (em cx (swatch_em +. row_gap_em)) (height l)
-        else em cx (swatch_em +. pad_em) +. width l +. clear
+    | Legend { scale; _ } when not (bar cx.scales.(scale)) -> 1. /. legend_span
     | Axis _ | Legend _ | Title _ ->
-        (if vertical then height l else width l) +. clear
+        let l = set cx label_em (Text.v t) in
+        ((if horizontal g.side then width l else height l) +. clear) /. length
   in
   let spacing g =
     match g.kind with
@@ -610,7 +641,7 @@ let choose cx gs =
         match guides with
         | [] -> Ticks.of_values ~locale f.scale [||]
         | guides ->
-            let measure t = longest (fun (g, l) -> measure g t /. l) guides in
+            let measure t = longest (fun (g, l) -> measure g l t) guides in
             let spacing = longest (fun (g, l) -> spacing g /. l) guides in
             Ticks.choose ~locale ~spacing ~length:1. ~measure f.scale)
     cx.scales

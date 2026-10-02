@@ -1902,6 +1902,49 @@ let steps =
           equal bool false (stepped_with (Some false)));
     ]
 
+(* Swatches *)
+
+(* [swatch_fills fill] is the fill of each swatch of the size legend of a mark
+   whose fill is [fill], if bound. *)
+let swatch_fills fill =
+  let sizes = path [ Field "legend"; Field "size"; Field "num" ] in
+  let seen = ref [] in
+  let m =
+    Mark.v ~name:"probe"
+      ~swatch:(fun rows ->
+        if Nx.Ptree.Path.equal (Mark.id rows) sizes then
+          seen := Mark.get rows Role.fill :: !seen;
+        Picture.empty)
+      (Mark.bind Role.size (num (f64 [| 1.; 2.; 3.; 4. |]))
+      :: Option.to_list (Option.map (Mark.bind Role.fill) fill))
+      (fun _ -> Picture.empty)
+  in
+  ignore (drawn m);
+  List.rev !seen
+
+let neutral =
+  let ink = Theme.ink Theme.default in
+  Color.with_alpha (0.5 *. Color.alpha ink) ink
+
+let legend_swatches =
+  group "Swatches"
+    [
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "a size legend's swatches show their fill neutral or as bound"
+        [
+          ( "data the legend does not show",
+            Some (strings [| "a"; "b"; "a"; "b" |]),
+            Some [| neutral |] );
+          ("a constant", Some (const Color.red), Some [| Color.red |]);
+          ("no binding", None, None);
+        ]
+        (fun (_, fill, expected) ->
+          let fills = swatch_fills fill in
+          greater int ~than:0 (List.length fills);
+          List.iter (equal (option (array color)) expected) fills);
+    ]
+
 (* The built-in marks on the public interface *)
 
 module Copy = Hugin_next_test_marks.Marks
@@ -1976,6 +2019,7 @@ let () =
          reducers;
          areas;
          steps;
+         legend_swatches;
          public_marks;
          goldens;
        ])

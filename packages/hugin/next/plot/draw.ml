@@ -56,7 +56,12 @@ type t = {
 
 (* Context *)
 
-type cx = { ctx : Read.ctx; layout : Layout.t; resolved : Resolved.t }
+type cx = {
+  ctx : Read.ctx;
+  density : float;
+  layout : Layout.t;
+  resolved : Resolved.t;
+}
 
 let em cx k = k *. Theme.size cx.ctx.theme
 let ink cx = Theme.ink cx.ctx.theme
@@ -82,12 +87,12 @@ let tagged id index p =
 (* Reducers *)
 
 let device_pixels cx box =
-  let d = cx.ctx.density in
+  let d = cx.density in
   Box2.w box *. d *. Box2.h box *. d
 
 (* [aligned cx box] is the smallest box of whole device pixels holding [box]. *)
 let aligned cx box =
-  let d = cx.ctx.density in
+  let d = cx.density in
   let lo v = Float.floor (v *. d) /. d and hi v = Float.ceil (v *. d) /. d in
   let x0 = lo (Box2.minx box) and y0 = lo (Box2.miny box) in
   Box2.v x0 y0 (hi (Box2.maxx box) -. x0) (hi (Box2.maxy box) -. y0)
@@ -107,9 +112,7 @@ let rasterised cx p =
             (Affine.translate (-.Box2.minx window) (-.Box2.miny window))
             p
         in
-        let px =
-          Raster.render ~density:cx.ctx.density (Renderable.v w h moved)
-        in
+        let px = Raster.render ~density:cx.density (Renderable.v w h moved) in
         Picture.image window px
 
 (* [band_cells cx reads index] is the number of categories of the band scale
@@ -221,7 +224,7 @@ let cells cx m (panel : Layout.panel) reads ~rows ~full ~few sel =
               let k = cell.((i * nx) + j) in
               if k < 0 then Color.transparent else cs k
             in
-            match Pixels.plan ~density:cx.ctx.density box ~rows:ny ~cols:nx with
+            match Pixels.plan ~density:cx.density box ~rows:ny ~cols:nx with
             | None ->
                 let cs = colours cx (rows paint full sel) in
                 let px = image ny nx (at_cell (fun k -> cs.(k))) in
@@ -383,7 +386,7 @@ let m4 cx m (panel : Layout.panel) reads mask =
   let shape = m.shape in
   let rank = Array.length shape in
   let last = if rank = 0 then 0 else shape.(rank - 1) in
-  let d = cx.ctx.density and box = panel.box in
+  let d = cx.density and box = panel.box in
   let p0 = Float.floor (Box2.minx box *. d) in
   let w = Float.to_int (Float.ceil (Box2.maxx box *. d) -. p0) in
   let constant (B b) =
@@ -543,8 +546,7 @@ let draw_occ cx occ part targets =
     in
     let drawn rd sel =
       let r = rows None rd sel in
-      tagged occ.mid r.index
-        (Pixels.gathered ~density:cx.ctx.density (m.draw r))
+      tagged occ.mid r.index (Pixels.gathered ~density:cx.density (m.draw r))
     in
     let selected f =
       Option.map f (reading occ.mid (fun () -> selection m mask))
@@ -727,12 +729,11 @@ let afresh ~density l =
   let ctx =
     {
       Read.theme = Layout.theme l;
-      density;
       scales = Array.of_list r.scales;
       frozen = Layout.frozen l;
     }
   in
-  let cx = { ctx; layout = l; resolved = r } in
+  let cx = { ctx; density; layout = l; resolved = r } in
   let drawn = panels cx in
   let notes = ref [] in
   let guides = Layout.guides l in
@@ -756,7 +757,9 @@ let afresh ~density l =
    [prev]. *)
 let draw ?prev ~density l =
   match prev with
-  | Some d when Float.equal d.density density && Layout.equal d.layout l -> d
+  | Some (d : t) when Float.equal d.density density && Layout.equal d.layout l
+    ->
+      d
   | _ -> afresh ~density l
 
 (* Comparing and formatting *)
