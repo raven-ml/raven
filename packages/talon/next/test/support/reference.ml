@@ -996,10 +996,12 @@ let rec rows : plan -> row Seq.t = function
         in
         Seq.drop offset (Seq.take stop (rows plan))
   | Slice { offset; length; plan } ->
-      let rs = List.of_seq (rows plan) in
-      let start = List.length rs + offset in
-      List.to_seq
-        (List.filteri (fun i _ -> i >= start && i - start < length) rs)
+      fun () ->
+        let rs = List.of_seq (rows plan) in
+        let start = List.length rs + offset in
+        List.to_seq
+          (List.filteri (fun i _ -> i >= start && i - start < length) rs)
+          ()
   | Append (p, rest) -> Seq.append (rows p) (rows rest)
   | Aggregate (by, os, p) -> aggregate by os (rows p)
   | Join { kind; each_left; each_right; on; left; right } ->

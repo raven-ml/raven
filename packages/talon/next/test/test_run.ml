@@ -677,7 +677,31 @@ let rec split read (p : R.plan) : R.plan Gen.t =
         (split j.left) (split j.right)
 
 let pp_plan ppf p = Query.pp ppf (R.query p)
-let plans = Gen.bind (Gen.int_range 0 3) plan
+
+(* [starved p] joins [p] with none of its rows, asserting that each left row has
+   a match: it fails at [p]'s first row, if [p] has one. Random joins rarely
+   fail an assertion, so the plans draw this one directly. Its kinds keep the
+   right's columns, which the optimizer would otherwise prune. *)
+let starved p =
+  let renamed i (n, Type.Any ty) =
+    R.Out (Printf.sprintf "u%d" i, R.Col (ty, n))
+  in
+  match List.mapi renamed (expressible (R.schema p)) with
+  | [] -> Gen.constant p
+  | os ->
+      let right = R.Select (os, R.Slice { offset = 0; length = 0; plan = p }) in
+      Gen.map
+        (fun ((on, kind), each_left) ->
+          R.Join { kind; each_left; each_right = Any; on; left = p; right })
+        (Gen.pair
+           (Gen.pair
+              (Gen.of_list R.[ Position; All ])
+              (Gen.of_list Join.[ Inner; Left; Full ]))
+           (Gen.of_list Join.[ One; At_least_one ]))
+
+let plans =
+  let drawn = Gen.bind (Gen.int_range 0 3) plan in
+  Gen.frequency [ (9, drawn); (1, Gen.bind drawn starved) ]
 
 let split_plans =
   Gen.with_pp pp_plan
