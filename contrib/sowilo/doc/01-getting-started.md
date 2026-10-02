@@ -200,7 +200,8 @@ let save result path =
 
 ## Displaying with Hugin
 
-Use Hugin for visualization:
+Hugin's `image` mark draws a tensor of shape `[H; W; C]` with values in
+`[0, 1]` as an image. Titled and placed side by side in a grid:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -208,23 +209,9 @@ let () =
   let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
   let edges = canny ~low:0.2 ~high:0.6 gray in
-
-  let fig = Hugin.figure ~width:1000 ~height:500 () in
-
-  let ax1 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:1 fig in
-  ignore
-    (ax1
-    |> Hugin.Plotting.imshow ~data:img
-    |> Hugin.Axes.set_title "Original");
-
-  let ax2 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:2 fig in
-  ignore
-    (ax2
-    |> Hugin.Plotting.imshow ~data:edges
-         ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Canny Edges");
-
-  Hugin.render_png "edges.png" fig
+  let panel label px = Hugin.(image px |> title (Text.v label)) in
+  Hugin.grid [ [ panel "Original" img; panel "Canny Edges" edges ] ]
+  |> Hugin.save ~size:(Hugin.Size.panels 240. 240.) "edges.png"
 ```
 
 ## Next Steps

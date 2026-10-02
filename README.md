@@ -40,7 +40,7 @@ let df = Talon.v [
 let top = Talon.(Query.of_table df |> Kit.top_k 2 [ Order.desc "score" ] |> Query.run)
 
 (* hugin — plotting *)
-let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
+let () = Hugin.(line ~x:(num x) ~y:(num y) () |> save "sine.png")
 ```
 
 ## Packages

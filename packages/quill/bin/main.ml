@@ -83,16 +83,13 @@ let y = Nx.sin x
 
 ## Plotting with Hugin
 
-Hugin renders plots directly in the notebook.
+Hugin draws figures directly in the notebook.
 
 ```ocaml
 let x = Nx.linspace Nx.float32 0. 6.28 200
 let y = Nx.sin x
 
-let _fig =
-  Hugin.line ~x ~y ()
-  |> Hugin.title "A sine wave"
-  |> Hugin.xlabel "x" |> Hugin.ylabel "y"
+let _fig = Hugin.(line ~x:(num x) ~y:(num y) () |> title (Text.v "A sine wave"))
 ```
 
 ## Automatic Differentiation with Rune
@@ -119,12 +116,9 @@ let ys = f xs
 let gs = Rune.vmap' (Rune.grad' f) xs
 
 let _fig =
-  Hugin.layers [
-    Hugin.line ~x:xs ~y:ys ~label:"f(x) = x³" ();
-    Hugin.line ~x:xs ~y:gs ~label:"f'(x) = 3x²" ();
-  ]
-  |> Hugin.xlabel "x" |> Hugin.ylabel "y"
-  |> Hugin.legend
+  let open Hugin in
+  line ~x:(num ~title:(Text.v "x") xs) ~y:(num (Nx.stack [ ys; gs ]))
+    ~stroke:(dim ~labels:[| "f(x) = x³"; "f'(x) = 3x²" |] 0) ()
 ```
 |}
 

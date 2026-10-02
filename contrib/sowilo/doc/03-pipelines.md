@@ -172,7 +172,8 @@ let extract_features img =
 
 ## Visualization
 
-Display processing results side by side with Hugin:
+Stack images of one shape and give each its own panel: the facet channel
+`fx` puts image `i` of the stack in the column of label `i`.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -182,31 +183,9 @@ let visualize_pipeline img =
   let gray = to_grayscale img in
   let blurred = gaussian_blur ~sigma:2.0 gray in
   let edges = canny ~low:0.2 ~high:0.6 gray in
-
-  let fig = Hugin.figure ~width:1200 ~height:400 () in
-
-  let ax1 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:1 fig in
-  ignore
-    (ax1
-    |> Hugin.Plotting.imshow ~data:gray
-         ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Grayscale");
-
-  let ax2 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:2 fig in
-  ignore
-    (ax2
-    |> Hugin.Plotting.imshow ~data:blurred
-         ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Gaussian Blur");
-
-  let ax3 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:3 fig in
-  ignore
-    (ax3
-    |> Hugin.Plotting.imshow ~data:edges
-         ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Canny Edges");
-
-  Hugin.render_png "pipeline.png" fig
+  let labels = [| "Grayscale"; "Gaussian Blur"; "Canny Edges" |] in
+  Hugin.(image ~fx:(dim ~labels 0) (Nx.stack [ gray; blurred; edges ]))
+  |> Hugin.save ~size:(Hugin.Size.panels 240. 240.) "pipeline.png"
 ```
 
 ## Color Space Manipulation

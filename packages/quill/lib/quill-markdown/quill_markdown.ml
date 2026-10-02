@@ -240,7 +240,7 @@ let parse_image_display ?base_dir mime content =
                   (fun () -> really_input_string ic (in_channel_length ic))
               in
               let data =
-                (* Reuse the base64_encode from Hugin's image_util convention *)
+                (* Base64, as an inline data URI carries it. *)
                 let alphabet =
                   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
                 in

@@ -154,19 +154,20 @@ let mean_score =
 
 ## Hugin: Visualization
 
-Publication-quality 2D and 3D plots using Cairo rendering. Takes Nx
-tensors as input. Line plots, scatter, bar charts, contour plots,
-image display.
+Figures as values. Marks (lines, dots, rects, areas, text, images, contours)
+read Nx tensors through channels, compose into layers, grids and facets, and
+render to PNG, SVG or PDF with a bundled font.
 
 <!-- $MDX skip -->
 ```ocaml
 open Hugin
-open Nx
 
-let fig = figure () in
-let ax = subplot fig in
-let _ = Plotting.plot ax ~x ~y ~label:"sin(x)" in
-show fig
+let x = Nx.linspace Nx.float32 0. 6.28 100
+
+let () =
+  line ~x:(num x) ~y:(num (Nx.sin x)) ()
+  |> title (Text.v "sin(x)")
+  |> save "sine.svg"
 ```
 
 [Hugin documentation →](../packages/hugin/doc/index.md)

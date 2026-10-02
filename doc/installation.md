@@ -46,11 +46,7 @@ dune build packages/kaun          # kaun + its dependencies
 
 ## System Dependencies
 
-Most Raven libraries have no system dependencies beyond OCaml. The exceptions:
-
-| Library | Requires | macOS | Ubuntu/Debian |
-|---------|----------|-------|---------------|
-| **hugin** | Cairo, SDL2 | `brew install cairo sdl2` | `apt install libcairo2-dev libsdl2-dev` |
+Raven libraries have no system dependencies beyond OCaml.
 
 ## Using Raven in Your Project
 
@@ -103,8 +99,6 @@ For the best development experience, use an editor with OCaml LSP support:
 - **Vim/Neovim**: Use [ocaml-lsp](https://github.com/ocaml/ocaml-lsp) with your LSP client
 
 ## Troubleshooting
-
-**Missing system libraries**: If Hugin fails to build, ensure Cairo and SDL2 development headers are installed.
 
 **Opam switch issues**: Run `eval $(opam env)` after creating or switching opam switches.
 

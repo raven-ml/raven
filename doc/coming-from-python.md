@@ -11,7 +11,7 @@ This page maps Python scientific computing concepts to their Raven equivalents. 
 | PyTorch / Flax | [Kaun](../packages/kaun/doc/index.md) | Layers, optimizers, training loops |
 | HuggingFace Tokenizers | [Brot](../packages/brot/doc/index.md) | BPE, WordPiece, Unigram; HF-compatible |
 | pandas / Polars | [Talon](../packages/talon/doc/index.md) | Typed tables and queries; CSV and Parquet |
-| Matplotlib | [Hugin](../packages/hugin/doc/index.md) | 2D/3D plotting with Cairo |
+| Matplotlib | [Hugin](../packages/hugin/doc/index.md) | Figures from tensors, rendered to PNG, SVG and PDF |
 | Jupyter + IPython | [Quill](../packages/quill/doc/index.md) | Interactive REPL and markdown notebooks |
 
 ## Key Differences

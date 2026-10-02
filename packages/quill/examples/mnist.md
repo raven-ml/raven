@@ -39,13 +39,9 @@ Let's look at the first 10 training images and their labels.
 <!-- quill:cell id="c_mnist_viz_code" -->
 ```ocaml
 let _fig =
-  List.init 10 (fun i ->
-    let img = Nx.get [i; 0] x_train |> Nx.reshape [|28; 28|] in
-    let label = Nx.item [i] y_train in
-    Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
-    |> Hugin.title (Printf.sprintf "%Ld" label)
-    |> Hugin.no_axes)
-  |> Hugin.hstack ~gap:0.
+  let images = Nx.reshape [|10; 28; 28; 1|] (Nx.slice [Nx.R (0, 10)] x_train) in
+  let labels = Array.init 10 (fun i -> Int64.to_string (Nx.item [i] y_train)) in
+  Hugin.(image ~fx:(dim ~scale:(Scale.band ~wrap:5 ()) ~labels 0) images)
 ```
 
 <!-- quill:cell id="c_mnist_model_text" -->
@@ -139,13 +135,12 @@ show the true label and the predicted label.
 <!-- quill:cell id="c_mnist_eval_code" -->
 ```ocaml
 let _fig =
-  List.init 10 (fun i ->
-    let img = Nx.get [i; 0] x_test |> Nx.reshape [|28; 28|] in
-    let true_l = Nx.item [i] y_test in
-    let logits = Model.apply (fst !st) (Nx.get [i] x_test |> Nx.expand_dims [0]) in
-    let pred_l = Nx.item [0] (Nx.argmax ~axis:1 logits) in
-    Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
-    |> Hugin.title (Printf.sprintf "%Ld->%Ld" true_l pred_l)
-    |> Hugin.no_axes)
-  |> Hugin.hstack ~gap:0.
+  let images = Nx.reshape [|10; 28; 28; 1|] (Nx.slice [Nx.R (0, 10)] x_test) in
+  let logits = Model.apply (fst !st) (Nx.slice [Nx.R (0, 10)] x_test) in
+  let pred = Nx.argmax ~axis:1 logits in
+  let captions =
+    Array.init 10 (fun i ->
+      Printf.sprintf "%Ld->%Ld" (Nx.item [i] y_test) (Nx.item [i] pred))
+  in
+  Hugin.(image ~fx:(dim ~scale:(Scale.band ~wrap:5 ()) ~labels:captions 0) images)
 ```

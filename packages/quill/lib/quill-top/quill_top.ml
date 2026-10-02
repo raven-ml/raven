@@ -621,134 +621,6 @@ let is_complete_phrase code =
     | exception End_of_file -> false
     | exception _ -> true
 
-(* ───── Rich display detection ───── *)
-
-let base64_decode_table =
-  let t = Array.make 256 (-1) in
-  String.iteri
-    (fun i c -> t.(Char.code c) <- i)
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  t
-
-let base64_decode s =
-  let len = String.length s in
-  let valid = ref 0 in
-  for i = 0 to len - 1 do
-    if base64_decode_table.(Char.code (String.unsafe_get s i)) >= 0 then
-      incr valid
-  done;
-  let out_len = !valid * 3 / 4 in
-  let out = Bytes.create out_len in
-  let j = ref 0 in
-  let acc = ref 0 in
-  let bits = ref 0 in
-  for i = 0 to len - 1 do
-    let v = base64_decode_table.(Char.code (String.unsafe_get s i)) in
-    if v >= 0 then begin
-      acc := (!acc lsl 6) lor v;
-      bits := !bits + 6;
-      if !bits >= 8 then begin
-        bits := !bits - 8;
-        if !j < out_len then begin
-          Bytes.unsafe_set out !j (Char.chr ((!acc lsr !bits) land 0xff));
-          incr j
-        end
-      end
-    end
-  done;
-  Bytes.sub_string out 0 !j
-
-(** Scan [s] for markdown data-URI patterns [![...](data:MIME;base64,DATA)] and
-    emit each as a Display output. Surrounding text is emitted as Stdout. Only
-    the old [Hugin.pp] still prints such URIs; this goes with it.
-
-    For text MIME types, the base64 data is decoded so that Display.data
-    contains raw text. For binary types (image), data remains base64-encoded. *)
-let emit_with_images ~emit s =
-  let len = String.length s in
-  let text_start = ref 0 in
-  let i = ref 0 in
-  while !i < len - 1 do
-    if
-      Char.equal (String.unsafe_get s !i) '!'
-      && Char.equal (String.unsafe_get s (!i + 1)) '['
-    then begin
-      let start = !i in
-      (* Skip past alt text to find ]( *)
-      let j = ref (!i + 2) in
-      while !j < len && not (Char.equal (String.unsafe_get s !j) ']') do
-        incr j
-      done;
-      if
-        !j < len - 1
-        && Char.equal (String.unsafe_get s !j) ']'
-        && Char.equal (String.unsafe_get s (!j + 1)) '('
-      then begin
-        let paren_start = !j + 2 in
-        (* Check for data: URI *)
-        let prefix = "data:" in
-        let prefix_len = String.length prefix in
-        if
-          paren_start + prefix_len < len
-          && String.sub s paren_start prefix_len = prefix
-        then begin
-          (* Find ;base64, *)
-          let k = ref (paren_start + prefix_len) in
-          let base64_marker = ";base64," in
-          let marker_len = String.length base64_marker in
-          let found_marker = ref false in
-          let mime_end = ref 0 in
-          while !k < len - marker_len && not !found_marker do
-            if String.sub s !k marker_len = base64_marker then begin
-              found_marker := true;
-              mime_end := !k
-            end
-            else incr k
-          done;
-          if !found_marker then begin
-            let data_start = !mime_end + marker_len in
-            (* Find closing ) *)
-            let m = ref data_start in
-            while !m < len && not (Char.equal (String.unsafe_get s !m) ')') do
-              incr m
-            done;
-            if !m < len then begin
-              let mime =
-                String.sub s (paren_start + prefix_len)
-                  (!mime_end - paren_start - prefix_len)
-              in
-              let raw_data = String.sub s data_start (!m - data_start) in
-              (* For text MIME types, decode base64 to raw text *)
-              let data =
-                if String.length mime >= 5 && String.sub mime 0 5 = "text/" then
-                  base64_decode raw_data
-                else raw_data
-              in
-              (* Emit text before this image *)
-              if start > !text_start then
-                emit
-                  (Quill.Cell.Stdout
-                     (String.sub s !text_start (start - !text_start)));
-              emit (Quill.Cell.Display { mime; id = None; data });
-              i := !m + 1;
-              text_start := !i
-            end
-            else incr i
-          end
-          else incr i
-        end
-        else incr i
-      end
-      else incr i
-    end
-    else incr i
-  done;
-  (* Emit remaining text *)
-  if !text_start < len then begin
-    let rest = String.sub s !text_start (len - !text_start) in
-    if String.trim rest <> "" then emit (Quill.Cell.Stdout rest)
-  end
-
 (* ───── Kernel interface ───── *)
 
 let status_ref = ref Quill.Kernel.Idle
@@ -773,9 +645,8 @@ let create ?setup ~on_event () =
         ~on_display:emit
         (fun ppf_out ppf_err -> execute_code ppf_out ppf_err code)
     in
-    (* Emit toplevel formatter output (val bindings, type info). Scan for
-       markdown data-URI images and convert to Display outputs. *)
-    if toplevel_out <> "" then emit_with_images ~emit toplevel_out;
+    (* Emit toplevel formatter output (val bindings, type info). *)
+    if String.trim toplevel_out <> "" then emit (Quill.Cell.Stdout toplevel_out);
     if toplevel_err <> "" then emit (Quill.Cell.Stderr toplevel_err);
     (* Signal completion *)
     on_event (Quill.Kernel.Finished { cell_id; success = ok });
