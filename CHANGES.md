@@ -946,6 +946,9 @@ thread.
 
 ### Tolk (new)
 
+- A host kernel of more than 2^31 operations runs on all the host's cores.
+  Its count of operations wrapped in 32 bits, sometimes below one block's
+  worth, and it ran as one block.
 - Compiling a long chain of operations no longer takes time growing with the
   square of its length: a jitted chain of 100 `Nx.sin` compiles from a cold
   cache in 21 s on an M1 Max, from 698 s. The node table's shards grew to 22

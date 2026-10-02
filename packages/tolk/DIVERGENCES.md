@@ -2441,8 +2441,8 @@ stores through a pad.
   (`do_estimates`); `uop/ops.py:1330` (`KernelInfo`) and `:1359`
   (`ProgramInfo.from_sink`); `engine/realize.py:16` (`get_call_var_uops`) and
   `:160` (`exec_kernel`).
-- **tolk:** `lib/codegen/codegen.ml:705` (`split_blocks`), `:921` (its place
-  in the pipeline) and `:1025` (`whole_loop`); `lib/uop/ops.ml:340`
+- **tolk:** `lib/codegen/codegen.ml:708` (`split_blocks`), `:924` (its place
+  in the pipeline) and `:1030` (`whole_loop`); `lib/uop/ops.ml:340`
   (`kernel_info.split`) and `:4729` (`program_info_of_sink`);
   `lib/engine/realize.ml:27` (`get_call_var_uops`);
   `engine/tolk_engine.ml:202` (`block_ops`) and `:230` (`Program.split`);
@@ -2460,7 +2460,8 @@ stores through a pad.
   where the kernel has a variable of either name. The kernel's `KernelInfo`
   records `split = (n, lo, hi)`, the iterations and the two slots, by which
   each launch finds the bounds; `n` is its program's first global size, and
-  its estimates count the whole loop. A host launch cuts
+  its estimates count the whole loop, exactly when they read no other
+  variable: counted in the loop's 32-bit type, a count past 2^31 would wrap. A host launch cuts
   `[0, n)` into `min(n, 4 × workers, ops / 2^18)` blocks, at least one, that
   nx.device's thread pool runs (`Nx_device.Program.call ~split`); a queue's
   launch (`get_call_var_uops`) and tinygrad's own (`whole_loop` in
@@ -2472,7 +2473,8 @@ stores through a pad.
   (r_256_3_3_100_4) and 17.8 and 2.83 (r_128_64_3_4_400_100_4). tinygrad
   deleted its CPU threading at 4197f7423, after the pin.
 - **Pinned by:** the Codegen suite: `host programs in blocks › a host program
-  splits the loop each store's address reads`, `› stores of separate loops
+  splits the loop each store's address reads`, `› a split loop's estimates
+  count its whole loop past 2^31`, `› stores of separate loops
   split none`, `› a store of no loop splits none`, `› a reduction's loop is
   never split`, `› a serial loop is never split`, `› a loop shrunk by its
   guard splits at its shrunk end, unguarded` and `› a split loop of 2^25 iterations keeps 32-bit indices`; the

@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..eb1457e 100644
+index efb2e82..5028dcf 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,7 +2,7 @@ from dataclasses import replace
@@ -157,7 +157,7 @@ index efb2e82..eb1457e 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -432,9 +489,19 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -432,9 +489,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -167,7 +167,11 @@ index efb2e82..eb1457e 100644
 +  n, lo, hi = k.split
 +  lo, hi = [next(u for u in lin if u.is_variable and u.arg.slot == s) for s in (lo, hi)]
 +  n = n if isinstance(n, UOp) else hi.const_like(n)
-+  def fill(x): return x.substitute({lo: lo.const_like(0), hi: n}).ssimplify() if isinstance(x, UOp) else x
++  # the counts are in the index's type, which a whole loop's count outgrows past 2^31 operations: a count of only the bounds is exact
++  def fill(x):
++    if not isinstance(x, UOp): return x
++    if n.op is Ops.CONST and all(v is lo or v is hi for v in x.toposort() if v.is_variable): return x.sym_infer({lo.expr: 0, hi.expr: n.arg})
++    return x.substitute({lo: lo.const_like(0), hi: n}).ssimplify()
 +  return Estimates(fill(e.ops), fill(e.lds), fill(e.mem))
 +
  def do_estimates(prg:UOp, sink:UOp, lin:UOp) -> UOp|None:

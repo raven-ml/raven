@@ -1024,7 +1024,9 @@ let do_linearize prg sink =
   replace prg ~src:[ last lst; v Op.Linear ~src:lst ]
 
 (* A split kernel's estimates count all its blocks: its loop's variables span
-   the whole loop. *)
+   the whole loop. The counts are in the index's type, which a whole loop's
+   count outgrows past 2^31 operations, so a count that reads no other variable
+   is evaluated exactly. *)
 let whole_loop (k : kernel_info) lin (e : estimates) =
   match k.split with
   | None -> e
@@ -1038,10 +1040,20 @@ let whole_loop (k : kernel_info) lin (e : estimates) =
       in
       let lo = var s.lo and hi = var s.hi in
       let n = sint_to_uop ~dtype:(dtype hi) s.iterations in
+      let bounds_only u =
+        List.for_all
+          (fun v -> (not (is_variable v)) || v == lo || v == hi)
+          (toposort u)
+      in
       let fill = function
         | Int _ as i -> i
-        | Sym u ->
-            ssimplify (substitute u [ (lo, int ~dtype:(dtype lo) 0); (hi, n) ])
+        | Sym u as count -> (
+            match s.iterations with
+            | Int whole when bounds_only u ->
+                Int (sym_infer count [ (expr lo, 0); (expr hi, whole) ])
+            | _ ->
+                ssimplify
+                  (substitute u [ (lo, int ~dtype:(dtype lo) 0); (hi, n) ]))
       in
       { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
 

@@ -2517,6 +2517,24 @@ let keeps_narrow_indices () =
   in
   equal (list Uops.uop) [] (List.filter wide (Ops.toposort (Ops.nth prg 0)))
 
+(* 2^16 sums of 2^16 products count at least a product and a sum each, 2^33
+   operations: past the 32-bit index type a block's count is kept in. *)
+let counts_a_large_loop () =
+  let n = 1 lsl 16 in
+  let i = Ops.range (Int n) [ 0 ] in
+  let j = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
+  let x =
+    Ops.mul (Ops.index (floats n 1) [ i ]) (Ops.index (floats n 2) [ j ])
+  in
+  let sum = Ops.reduce x Op.Add [ j ] in
+  let prg =
+    in_blocks [ Ops.end_ (Ops.store (Ops.index (floats n 0) [ i ]) sum) [ i ] ]
+  in
+  match (kernel_info (Ops.nth prg 0)).estimates with
+  | Some { ops = Int ops; _ } -> at_least int ~than:(1 lsl 33) ops
+  | Some { ops = Sym u; _ } -> failf "the operations count %a" Ops.pp u
+  | None -> failf "a program has estimates"
+
 let blocks =
   group "host programs in blocks"
     [
@@ -2530,6 +2548,8 @@ let blocks =
         keeps_a_shrunk_loop;
       test "a split loop of 2^25 iterations keeps 32-bit indices"
         keeps_narrow_indices;
+      test "a split loop's estimates count its whole loop past 2^31"
+        counts_a_large_loop;
     ]
 
 let () =
