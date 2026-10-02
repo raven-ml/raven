@@ -494,6 +494,126 @@ let printed ty vs expected =
     (Array.of_list (List.map Option.some expected))
     (texts (Column.v ty (Array.of_list vs)))
 
+(* The reference printer is the one Column.print had before Schubfach: the first
+   of C's [%e] texts of 1 to 17 digits that reads back, written without its
+   exponent from [1e-7] up to [1e21]. Where an interval is lopsided, at a power
+   of two, the nearest text of the fewest digits can fall outside it while the
+   other one reads back; the reference then writes one digit more. *)
+
+let positional s =
+  let e = String.index s 'e' in
+  let exp = int_of_string (String.sub s (e + 1) (String.length s - e - 1)) in
+  if exp < -7 || exp >= 21 then s
+  else
+    let negative = s.[0] = '-' in
+    let mantissa =
+      String.sub s (Bool.to_int negative) (e - Bool.to_int negative)
+    in
+    let digits = String.concat "" (String.split_on_char '.' mantissa) in
+    let n = String.length digits in
+    let text =
+      if exp >= n - 1 then digits ^ String.make (exp - n + 1) '0'
+      else if exp >= 0 then
+        String.sub digits 0 (exp + 1)
+        ^ "."
+        ^ String.sub digits (exp + 1) (n - exp - 1)
+      else "0." ^ String.make (-exp - 1) '0' ^ digits
+    in
+    if negative then "-" ^ text else text
+
+(* [reference ty xs] is the reference text of each of [xs], values of the float
+   type [ty]. The texts of [p] digits of all values still without one are read
+   back at once. *)
+let reference ty xs =
+  let text x =
+    if Float.is_nan x then Some "nan"
+    else if Float.is_finite x then None
+    else Some (if x > 0. then "inf" else "-inf")
+  in
+  let out = Array.map text xs in
+  for p = 1 to 17 do
+    let open_ =
+      Array.of_seq
+        (Seq.filter
+           (fun i -> out.(i) = None)
+           (Seq.init (Array.length xs) Fun.id))
+    in
+    let ss = Array.map (fun i -> Printf.sprintf "%.*e" (p - 1) xs.(i)) open_ in
+    let back = rows ty (List.map Option.some (Array.to_list ss)) in
+    Array.iteri
+      (fun k i ->
+        if p = 17 || Float.equal (Option.get back.(k)) xs.(i) then
+          out.(i) <- Some (positional ss.(k)))
+      open_
+  done;
+  Array.map Option.get out
+
+let printer ty xs = Array.map Option.get (texts (Column.v ty xs))
+
+(* [digits s] is the number of significant digits of the text [s]. *)
+let digits s =
+  let mantissa =
+    match String.index_opt s 'e' with Some e -> String.sub s 0 e | None -> s
+  in
+  let d =
+    String.to_seq mantissa
+    |> Seq.filter (fun c -> '0' <= c && c <= '9')
+    |> String.of_seq
+  in
+  let lead = ref 0 and stop = ref (String.length d) in
+  while !lead < !stop && d.[!lead] = '0' do
+    incr lead
+  done;
+  while !stop > !lead && d.[!stop - 1] = '0' do
+    decr stop
+  done;
+  !stop - !lead
+
+let is_power_of_two x = x <> 0. && Float.abs (fst (Float.frexp x)) = 0.5
+
+(* [agrees ty x expected got] holds iff the printer's text [got] of [x] is the
+   reference text [expected], or, at a power of two where the reference writes
+   one digit too many, has one digit fewer and reads back. *)
+let agrees ty x expected got =
+  if is_power_of_two x && got <> expected then begin
+    equal float_exact x (read_one ty got);
+    equal int (digits expected - 1) (digits got)
+  end
+  else equal string expected got
+
+let prints_reference ty x =
+  cover "power of two" (is_power_of_two x);
+  agrees ty x (reference ty [| x |]).(0) (printer ty [| x |]).(0)
+
+(* [fewer ty lo hi] checks the powers of two [2^lo] to [2^hi] of the type [ty]
+   and is the number where the printer writes fewer digits than the
+   reference. *)
+let fewer ty lo hi =
+  let xs = Array.init (hi - lo + 1) (fun k -> Float.ldexp 1. (lo + k)) in
+  let expected = reference ty xs and got = printer ty xs in
+  Array.iteri (fun i x -> agrees ty x expected.(i) got.(i)) xs;
+  Array.fold_left ( + ) 0
+    (Array.map2 (fun e g -> Bool.to_int (e <> g)) expected got)
+
+(* [floats ~p ~emin of_bits] draws the floats of [p] significant bits and least
+   normal exponent [emin], of the bits [of_bits] reads: any bits, subnormals,
+   powers of two and ties, [o / 4] for an odd [o] of [p] bits, which lies
+   halfway between the two texts of its fewest digits. *)
+let floats ~p ~emin of_bits =
+  let open Gen in
+  let mantissa = Int64.pred (Int64.shift_left 1L (p - 1)) in
+  let any = map of_bits int64 in
+  let subnormal = map (fun m -> of_bits (Int64.logand m mantissa)) int64 in
+  let power = map (Float.ldexp 1.) (int_range (emin - p + 1) (1 - emin)) in
+  let tie =
+    map
+      (fun o -> Float.of_int (o lor 1 lor (1 lsl (p - 1))) /. 4.)
+      (int_range 0 ((1 lsl p) - 1))
+  in
+  let* x = frequency [ (4, any); (1, subnormal); (1, power); (1, tie) ] in
+  let+ negative = bool in
+  if negative then -.x else x
+
 (* [of_ticks ty xs] is the column of [ty] whose values are the int64 [xs]. *)
 let of_ticks ty xs =
   let values = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
@@ -561,6 +681,45 @@ let printing =
         (fun () ->
           printed Type.float32 [ 0.1; 16777216. ] [ "0.1"; "16777216" ];
           printed Type.float16 [ 65504.; 0.1; 6e-8 ] [ "65500"; "0.1"; "6e-08" ]);
+      test "a power of two is the fewest digits, even unrounded" (fun () ->
+          printed Type.float16 [ 0x1p-6 ] [ "0.01563" ];
+          printed Type.float32 [ 0x1p-96 ] [ "1.2621775e-29" ];
+          printed Type.float64 [ 0x1p-1017 ] [ "7.120236347223045e-307" ]);
+      test
+        "the reference writes one digit too many at 1, 3 and 46 powers of two"
+        (fun () ->
+          equal (list int) [ 1; 3; 46 ]
+            [
+              fewer Type.float16 (-24) 15;
+              fewer Type.float32 (-149) 127;
+              fewer Type.float64 (-1074) 1023;
+            ]);
+      test "every float16 is the reference text, except 2^-6" (fun () ->
+          let n = 0x7c00 in
+          let xs =
+            Array.init (2 * n) (fun m ->
+                if m < n then half_of_bits m else -.half_of_bits (m - n))
+          in
+          let expected = reference Type.float16 xs
+          and got = printer Type.float16 xs in
+          let differ =
+            List.filter
+              (fun i -> expected.(i) <> got.(i))
+              (List.init (2 * n) Fun.id)
+          in
+          equal
+            (list (triple float_exact string string))
+            [
+              (0x1p-6, "0.015625", "0.01563"); (-0x1p-6, "-0.015625", "-0.01563");
+            ]
+            (List.map (fun i -> (xs.(i), expected.(i), got.(i))) differ));
+      prop "a float64 is the reference text"
+        (floats ~p:53 ~emin:(-1022) Int64.float_of_bits)
+        (prints_reference Type.float64);
+      prop "a float32 is the reference text"
+        (floats ~p:24 ~emin:(-126) (fun m ->
+             Int32.float_of_bits (Int64.to_int32 m)))
+        (prints_reference Type.float32);
       test "integers are written in full" (fun () ->
           printed Type.int8 [ -128; 127 ] [ "-128"; "127" ];
           equal

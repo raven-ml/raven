@@ -729,68 +729,32 @@ let format_with fmt c =
 
 let pp_text ppf s = Format.pp_print_string ppf s
 
-(* Floats write without an exponent from 10^-7 up to 10^21. *)
-let min_positional = -7
-let max_positional = 21
+(* [text x p emin b] writes at the start of [b], 32 bytes or more, the text of
+   [x], a float of [p] significant bits and least normal exponent [emin], and is
+   its length: the fewest significant digits that read back as [x] at that
+   width, the nearest of them to [x], ties to even, without an exponent from
+   [1e-7] up to [1e21] ([150], [0.0015]) and as C's [%e] writes them otherwise
+   ([1e+21], [1.5e-08]), or [nan], [inf] or [-inf]. *)
+external text :
+  (float[@unboxed]) ->
+  (int[@untagged]) ->
+  (int[@untagged]) ->
+  Bytes.t ->
+  (int[@untagged]) = "talon_next_float_text_byte" "talon_next_float_text"
+[@@noalloc]
 
-(* [exponent_of s] is the exponent of the [%e] text [s]. *)
-let exponent_of s =
-  let e = String.index s 'e' in
-  int_of_string (String.sub s (e + 1) (String.length s - e - 1))
+let double = { p = 53; emin = -1022; max = Float.max_float }
 
-(* [positional s] is the [%e] text [s] without its exponent when the exponent is
-   in [min_positional, max_positional): [1.5e+02] is [150], [1.5e-03] is
-   [0.0015]. *)
-let positional s =
-  let e = String.index s 'e' and exp = exponent_of s in
-  if exp < min_positional || exp >= max_positional then s
-  else
-    let negative = s.[0] = '-' in
-    let mantissa =
-      String.sub s (Bool.to_int negative) (e - Bool.to_int negative)
-    in
-    let digits = String.concat "" (String.split_on_char '.' mantissa) in
-    let n = String.length digits in
-    let text =
-      if exp >= n - 1 then digits ^ String.make (exp - n + 1) '0'
-      else if exp >= 0 then
-        String.sub digits 0 (exp + 1)
-        ^ "."
-        ^ String.sub digits (exp + 1) (n - exp - 1)
-      else "0." ^ String.make (-exp - 1) '0' ^ digits
-    in
-    if negative then "-" ^ text else text
-
-(* [shortest reads x] is the text of [x] in the fewest significant digits that
-   [reads] reads back as [x]. *)
-let shortest reads x =
-  let rec loop p =
-    let s = Printf.sprintf "%.*e" (p - 1) x in
-    if p = 17 || Float.equal (reads s) x then positional s else loop (p + 1)
-  in
-  loop 1
-
-(* [read reader s] is the float64 that [reader] stores for the text [s]. *)
-let read reader s =
-  let n = String.length s in
-  let b = A1.create Bigarray.int8_unsigned Bigarray.c_layout n in
-  String.iteri (fun i c -> A1.unsafe_set b i (Char.code c)) s;
-  let a = A1.create Bigarray.float64 Bigarray.c_layout 1 in
-  reader b 0 n a 0;
-  A1.unsafe_get a 0
-
-let read_narrow w s = nearest w (read (narrow w) s)
+let width : type a. a Type.t -> width = function
+  | Float16 -> half
+  | Float32 -> single
+  | _ -> double
 
 (* [float_text ty x] is the canonical text of [x] at the width of [ty]. *)
-let float_text : type a. a Type.t -> float -> string =
- fun ty x ->
-  if Float.is_nan x then "nan"
-  else if not (Float.is_finite x) then if x > 0. then "inf" else "-inf"
-  else
-    match ty with
-    | Float16 -> shortest (read_narrow half) (nearest half x)
-    | Float32 -> shortest (read_narrow single) (nearest single x)
-    | _ -> shortest (read float) x
+let float_text ty x =
+  let w = width ty and b = Bytes.create 32 in
+  let x = if Float.is_finite x then nearest w x else x in
+  Bytes.sub_string b 0 (text x w.p w.emin b)
 
 let rec pow10_64 k = if k = 0 then 1L else Int64.mul 10L (pow10_64 (k - 1))
 
@@ -873,7 +837,8 @@ let fixed_writer : type a b c.
       fun b i -> Printf.bprintf b "%Lu" v.(i)
   | Float16 | Float32 | Float64 ->
       let v = Nx.to_array (Nx.cast Nx.float64 x) in
-      fun b i -> Buffer.add_string b (float_text ty v.(i))
+      let w = width ty and s = Bytes.create 32 in
+      fun b i -> Buffer.add_subbytes b s 0 (text v.(i) w.p w.emin s)
   | Decimal { scale; _ } ->
       let v = ints () in
       fun b i ->
@@ -1003,7 +968,10 @@ let max_fixed = 1e16
 
 (* [exponent x] is the decimal exponent of [x] rounded to six significant
    digits: [2] for [99.99996], which rounds to [100.000]. *)
-let exponent x = exponent_of (Printf.sprintf "%.*e" (significant - 1) x)
+let exponent x =
+  let s = Printf.sprintf "%.*e" (significant - 1) x in
+  let e = String.index s 'e' in
+  int_of_string (String.sub s (e + 1) (String.length s - e - 1))
 
 let pp_floats xs =
   let decimals = ref 0 and scientific = ref false in

@@ -27,6 +27,11 @@
   tee
   eval
   run)
+ (foreign_stubs
+  (language c)
+  (names talon_next_stubs)
+  (flags
+   (:standard -std=c11 -O3 -Wall -Wextra -Wpedantic)))
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
