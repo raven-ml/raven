@@ -830,8 +830,22 @@ let place_legend cx acc ls cell span =
       let sw = em cx swatch_em and pad = em cx pad_em in
       let s = cx.scales.(ls.ls_scale) and vert = vertical ls.ls_side in
       let span = Option.value span ~default:cell in
-      let x0 = if vert then Box2.minx cell else Box2.minx span in
-      let y0 = if vert then Box2.miny span else Box2.miny cell in
+      (* Entries start where the panels do, but no later than leaves them their
+         least length in the cell: panels with an aspect may sit inside their
+         track, which is only as long as the entries need. A bar runs along the
+         panels. *)
+      let start lo cell_lo cell_hi =
+        if ls.ls_bar then lo
+        else Float.max cell_lo (Float.min lo (cell_hi -. (dims cx ls).least))
+      in
+      let x0 =
+        if vert then Box2.minx cell
+        else start (Box2.minx span) (Box2.minx cell) (Box2.maxx cell)
+      in
+      let y0 =
+        if vert then start (Box2.miny span) (Box2.miny cell) (Box2.maxy cell)
+        else Box2.miny cell
+      in
       let title text =
         let reach =
           if ls.ls_bar then longest height (entry_labels cx t) /. 2. else 0.

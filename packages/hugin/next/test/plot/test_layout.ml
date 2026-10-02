@@ -705,10 +705,31 @@ let no_overlap =
   prop "no text overlaps another, a data area or the page's edge" ~count:60
     ~examples gen_case (fun c -> apart (laid c))
 
+(* Figures the property once failed on. *)
+let kept_apart =
+  let cases_ =
+    [
+      (* Legend entries taller than the panel with an aspect they stand
+         beside. *)
+      {
+        base with
+        colour = Categories;
+        side = `Right;
+        aspect = true;
+        top = true;
+        size = Size.panels 20. 20.;
+      };
+    ]
+  in
+  cases ~name:(Format.asprintf "%a" pp_case)
+    "no text overlaps another, a data area or the page's edge in" cases_
+    (fun c -> apart (laid c))
+
 let guides =
   group "guides"
     [
       no_overlap;
+      kept_apart;
       test "a scale on x in one cell and a colour in another has both guides"
         (fun () ->
           let rate = Scale.linear ~name:"rate" () in
