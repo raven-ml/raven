@@ -1,4 +1,4 @@
-File "compiler_cases/ptree_other_type.ml", line 21, characters 28-36:
+File "golden/compiler_cases/ptree_other_type.ml", line 21, characters 28-36:
 21 | type 'a t = { w : 'a; cfg : Config.t } [@@deriving ptree]
                                  ^^^^^^^^
 Error: The value Config.ptree has type int Nx.Ptree.t

@@ -121,7 +121,7 @@ let read_file path = In_channel.with_open_bin path In_channel.input_all
 let cases_dir =
   match Sys.getenv_opt "PPX_PTREE_CASE" with
   | Some path -> Filename.dirname path
-  | None -> Filename.concat (Filename.dirname __FILE__) "cases"
+  | None -> Filename.concat (Filename.dirname __FILE__) "support/cases"
 
 let diagnostic_lines path =
   let source = read_file path in

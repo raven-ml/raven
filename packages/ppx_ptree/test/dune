@@ -13,11 +13,11 @@
  (libraries ppxlib ppx_ptree windtrap)
  (link_flags -linkall)
  (deps
-  (glob_files cases/*.ml))
+  (glob_files support/cases/*.ml))
  (action
   (setenv
    PPX_PTREE_CASE
-   %{dep:cases/abstract.ml}
+   %{dep:support/cases/abstract.ml}
    (run %{test}))))
 
 (executable
@@ -30,7 +30,7 @@
  (package ppx_ptree)
  (deps
   %{exe:pp.exe}
-  (glob_files cases/*.ml)))
+  (glob_files support/cases/*.ml)))
 
 ; The expansions a reader can check by eye.
 
@@ -43,16 +43,16 @@
   (progn
    (with-stdout-to
     record.actual
-    (run ./%{pp} -impl %{dep:expansion_cases/record.ml}))
+    (run ./%{pp} -impl %{dep:golden/expansion_cases/record.ml}))
    (with-stdout-to
     variant.actual
-    (run ./%{pp} -impl %{dep:expansion_cases/variant.ml}))
+    (run ./%{pp} -impl %{dep:golden/expansion_cases/variant.ml}))
    (with-stdout-to
     group.actual
-    (run ./%{pp} -impl %{dep:expansion_cases/group.ml}))
-   (diff expansion_cases/record.expected record.actual)
-   (diff expansion_cases/variant.expected variant.actual)
-   (diff expansion_cases/group.expected group.actual))))
+    (run ./%{pp} -impl %{dep:golden/expansion_cases/group.ml}))
+   (diff golden/expansion_cases/record.expected record.actual)
+   (diff golden/expansion_cases/variant.expected variant.actual)
+   (diff golden/expansion_cases/group.expected group.actual))))
 
 ; Errors the compiler reports in generated code, at the source part. ocamlc
 ; hands -ppx to the platform shell, and cmd.exe cannot start a "./" program,
@@ -85,7 +85,7 @@
       -c
       -ppx
       "./%{pp} --as-ppx"
-      %{dep:compiler_cases/missing_walk.ml}
+      %{dep:golden/compiler_cases/missing_walk.ml}
       -o
       missing_walk.cmo)))
    (with-stderr-to
@@ -99,7 +99,7 @@
       -c
       -ppx
       "./%{pp} --as-ppx"
-      %{dep:compiler_cases/missing_ptree.ml}
+      %{dep:golden/compiler_cases/missing_ptree.ml}
       -o
       missing_ptree.cmo)))
    (with-stderr-to
@@ -113,7 +113,7 @@
       -c
       -ppx
       "./%{pp} --as-ppx"
-      %{dep:compiler_cases/walk_mistyped.ml}
+      %{dep:golden/compiler_cases/walk_mistyped.ml}
       -o
       walk_mistyped.cmo)))
    (with-stderr-to
@@ -127,7 +127,7 @@
       -c
       -ppx
       "./%{pp} --as-ppx"
-      %{dep:compiler_cases/walk_wrong_type.ml}
+      %{dep:golden/compiler_cases/walk_wrong_type.ml}
       -o
       walk_wrong_type.cmo)))
    (with-stderr-to
@@ -141,11 +141,11 @@
       -c
       -ppx
       "./%{pp} --as-ppx"
-      %{dep:compiler_cases/ptree_other_type.ml}
+      %{dep:golden/compiler_cases/ptree_other_type.ml}
       -o
       ptree_other_type.cmo)))
-   (diff compiler_cases/missing_walk.expected missing_walk.actual)
-   (diff compiler_cases/missing_ptree.expected missing_ptree.actual)
-   (diff compiler_cases/walk_mistyped.expected walk_mistyped.actual)
-   (diff compiler_cases/walk_wrong_type.expected walk_wrong_type.actual)
-   (diff compiler_cases/ptree_other_type.expected ptree_other_type.actual))))
+   (diff golden/compiler_cases/missing_walk.expected missing_walk.actual)
+   (diff golden/compiler_cases/missing_ptree.expected missing_ptree.actual)
+   (diff golden/compiler_cases/walk_mistyped.expected walk_mistyped.actual)
+   (diff golden/compiler_cases/walk_wrong_type.expected walk_wrong_type.actual)
+   (diff golden/compiler_cases/ptree_other_type.expected ptree_other_type.actual))))
