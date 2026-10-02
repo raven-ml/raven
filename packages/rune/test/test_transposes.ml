@@ -192,9 +192,8 @@ let rows ~count =
 let () =
   exit
     (run "rune transposes"
-       (rows ~count:10
+       (rows ~count:300
        @ [
            group "edges" Transpose_edges.tests;
            group "compositions" Transpose_compositions.tests;
-           group ~tags:[ "slow" ] "swept" (rows ~count:300);
          ]))

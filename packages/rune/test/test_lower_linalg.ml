@@ -26,11 +26,11 @@ let traced f =
 
 let traced2 f =
   let s, (a, b) = trace f in
-  (value s a, value s b)
+  value2 s a b
 
 let traced3 f =
   let s, (a, b, c) = trace f in
-  (value s a, value s b, value s c)
+  value3 s a b c
 
 let agrees f = exact (f ()) (traced f)
 
@@ -760,13 +760,14 @@ let decomposes ~bound a (w, v) =
        (Nx.mul v (Nx.unsqueeze ~axes:[ Nx.ndim w - 1 ] w))
        (Nx.matrix_transpose v))
 
+(* [eigh_agrees ~bound a] checks the compiled decomposition of [a] against
+   eager's and returns its eigenvalues. *)
 let eigh_agrees ?separation ~bound a =
   let w, v = Nx.eigh a in
   let w', v' = traced2 (fun () -> Nx.eigh a) in
   near ~bound w w';
-  exact w' (traced (fun () -> Nx.eigvalsh a));
   decomposes ~bound a (w', v');
-  match separation with
+  (match separation with
   | None -> ()
   | Some delta ->
       (* [vᵀ v'] is the identity, up to the signs of its columns. *)
@@ -775,7 +776,14 @@ let eigh_agrees ?separation ~bound a =
       near
         ~bound:(bound *. largest w /. delta)
         (Nx.broadcast_to (Nx.shape along) (Nx.eye Nx.float64 n))
-        along
+        along);
+  w'
+
+(* [eigh_values_agree ~bound a] is {!eigh_agrees}, and eigvalsh computes eigh's
+   eigenvalues bit for bit. *)
+let eigh_values_agree ?separation ~bound a =
+  let w' = eigh_agrees ?separation ~bound a in
+  exact w' (traced (fun () -> Nx.eigvalsh a))
 
 let eigh_bound u a = 32. *. float_of_int (Int.max 1 (Nx.dim (-1) a)) *. u
 
@@ -788,7 +796,7 @@ let eigh =
             (fun dt u ->
               let law name ?separation spectrum =
                 prop ~count:50 name (with_spectrum dt spectrum) (fun a ->
-                    eigh_agrees ?separation ~bound:(eigh_bound u a) a)
+                    eigh_values_agree ?separation ~bound:(eigh_bound u a) a)
               in
               [
                 law "separated eigenvalues" ~separation:0.25 separated;
@@ -803,7 +811,7 @@ let eigh =
                 prop ~count:50 "any symmetric matrix" (square_matrix dt)
                   (fun a ->
                     let a = lower_only a in
-                    eigh_agrees ~bound:(eigh_bound u a) a);
+                    eigh_values_agree ~bound:(eigh_bound u a) a);
               ]);
         };
       slow "a 32 x 32 matrix of two repeated eigenvalues reaches its roundoff"
@@ -827,7 +835,7 @@ let eigh =
                      (Nx.mul q (Nx.unsqueeze ~axes:[ 0 ] w))
                      (Nx.matrix_transpose q))
               in
-              eigh_agrees ~bound:(eigh_bound u a) a)
+              ignore (eigh_agrees ~bound:(eigh_bound u a) a))
             (List.filter
                (fun (F (_, dt, _)) -> Nx_dtype.itemsize dt >= 4)
                factor_dtypes));

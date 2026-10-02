@@ -44,6 +44,19 @@ val value : Lower.scope -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     Raises [Invalid_argument] if [y] is not traced, and as [Tensors.eval] does.
 *)
 
+val value2 :
+  Lower.scope -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t * ('c, 'd) Nx.t
+(** [value2 s y z] is [(value s y, value s z)], from one evaluation, in which
+    the nodes [y] and [z] share run once. *)
+
+val value3 :
+  Lower.scope ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t ->
+  ('e, 'f) Nx.t ->
+  ('a, 'b) Nx.t * ('c, 'd) Nx.t * ('e, 'f) Nx.t
+(** [value3 s x y z] is {!value2} for three values. *)
+
 val exact : ?__POS__:Windtrap.pos -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> unit
 (** [exact expected actual] asserts that [actual] has the dtype, the shape and
     the bits of each element of [expected]: [-0.] is not [0.], and every NaN

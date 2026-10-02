@@ -151,20 +151,17 @@ type agreement = Exact | Exact_up_to_zero | Rounded
 type family = {
   name : string;
   agreement : agreement;
-  light : bool;  (** Whether the default run takes it. *)
   apply : Nx.float32_t -> Nx.float32_t -> Nx.float32_t;
 }
 
 let families =
-  let f ?(agreement = Exact) ?(light = false) name apply =
-    { name; agreement; light; apply }
-  in
+  let f ?(agreement = Exact) name apply = { name; agreement; apply } in
   [
-    f ~agreement:Exact_up_to_zero ~light:true "neg, abs, max" (fun a b ->
+    f ~agreement:Exact_up_to_zero "neg, abs, max" (fun a b ->
         Nx.maximum (Nx.neg a) (Nx.abs b));
     f "where a less than b" (fun a b -> Nx.where (Nx.less a b) a b);
     f ~agreement:Rounded "exp and sin" (fun a b -> Nx.add (Nx.exp a) (Nx.sin b));
-    f ~agreement:Rounded ~light:true "a sum over the last axis" (fun a b ->
+    f ~agreement:Rounded "a sum over the last axis" (fun a b ->
         Nx.add a (Nx.sum ~axes:[ -1 ] ~keepdims:true b));
     f ~agreement:Exact_up_to_zero "a maximum over every axis" (fun a b ->
         Nx.mul a (Nx.max b));
@@ -172,7 +169,7 @@ let families =
         Nx.add a (Nx.cumsum ~axis:0 b));
     f "a transpose made contiguous" (fun a b ->
         Nx.add a (Nx.transpose (Nx.contiguous (Nx.transpose b))));
-    f ~light:true "a flip and a pad" (fun a b ->
+    f "a flip and a pad" (fun a b ->
         Nx.add a
           (Nx.shrink
              (Array.map (fun n -> (1, n + 1)) (Nx.shape b))
@@ -271,11 +268,10 @@ let far_index =
         i + (k * far) );
     ]
 
-(* The laws of values, [count] cases each; [heavy] adds the families the default
-   run leaves out, and the tests whose programs take longest to compile. *)
-let values ~count ~heavy =
-  let law { name; agreement; apply; _ } =
-    prop ~count name laid (fun (a, b) ->
+(* The laws of values, 25 cases each. *)
+let values =
+  let law { name; agreement; apply } =
+    prop ~count:25 name laid (fun (a, b) ->
         match apply a b with
         | expected -> (
             let actual = Rune.jit two apply a b in
@@ -289,220 +285,218 @@ let values ~count ~heavy =
                 Rune.jit two apply a b))
   in
   group "values"
-    ([
-       group "one operation per family equals eager"
-         (List.map law (List.filter (fun f -> heavy || f.light) families));
-       test "a replay reads its new arguments, and an earlier call's again"
-         (fun () ->
-           let g = Rune.jit' poly in
-           equal floats (poly (x ())) (g (x ()));
-           equal floats (poly (y ())) (g (y ()));
-           equal floats (poly (x ())) (g (x ())));
-       test "a structured result equals eager's leaf by leaf" (fun () ->
-           let s = Nx.Ptree.(pair tensor (list (option tensor))) in
-           let f a = (Nx.neg a, [ Some (poly a); None; Some a ]) in
-           equal (Oracle.structure s)
-             (f (x ()))
-             (Rune.jit Nx.Ptree.(tensor @-> returns s) f (x ())));
-       test "64-bit integer constants keep every bit" (fun () ->
-           let a = Nx.create Nx.int64 [| 2 |] [| 1L; -1L |] in
-           let f a =
-             Nx.add a
-               (Nx.create Nx.int64 [| 2 |] [| Int64.max_int; Int64.min_int |])
-           in
-           equal (tensor int64) (f a) (Rune.jit' f a));
-       test "integer constants wrap at the operand's width" (fun () ->
-           let a = Nx.create Nx.int8 [| 3 |] [| 127; -128; 100 |] in
-           let f a = Nx.add (Nx.mul_s a 3) (Nx.full Nx.int8 [| 3 |] 100) in
-           equal (tensor int) (f a) (Rune.jit' f a));
-       test "float identities hold only where IEEE keeps them" (fun () ->
-           let a =
-             Nx.create Nx.float32 [| 4 |]
-               [| -0.; 0.; Float.infinity; Float.nan |]
-           in
-           let f a =
-             Nx.stack ~axis:0
-               [
-                 Nx.add a (Nx.zeros_like a);
-                 Nx.div a a;
-                 Nx.mul a (Nx.zeros_like a);
-               ]
-           in
-           equal floats (f a) (Rune.jit' f a));
-       test "a bitcast's result has its dtype and its argument's bits"
-         (fun () ->
-           let a = Nx.create Nx.float32 [| 3 |] [| 1.; -0.; Float.nan |] in
-           let r = Rune.jit' (Nx.bitcast Nx.int32) a in
-           equal (tensor int32)
-             (Nx.create Nx.int32 [| 3 |]
-                [| 0x3f800000l; Int32.min_int; Int32.bits_of_float Float.nan |])
-             r);
-       test "a bitcast between widths reads the bytes eager reads" (fun () ->
-           let bytes =
-             Nx.init Nx.uint8 [| 2; 8 |] (fun i ->
-                 ((i.(0) * 8) + i.(1)) * 29 mod 256)
-           in
-           let words = Nx.bitcast Nx.uint64 bytes in
-           equal (tensor int64)
-             (Nx.bitcast Nx.int64 words)
-             (Nx.bitcast Nx.int64 (Rune.jit' (Nx.bitcast Nx.uint64) bytes));
-           equal (tensor int) bytes (Rune.jit' (Nx.bitcast Nx.uint8) words));
-       cases ~name:fst "an arange inside a compiled call equals eager's"
-         [
-           ("1 element", (0, 1, 1));
-           ("257 elements", (0, 257, 1));
-           ("513 elements", (0, 513, 1));
-           ("2^20 elements", (0, 1 lsl 20, 1));
-           ("down by 2 from 1000", (1000, -26, -2));
-           ( "from 2^40 by more than 2^34",
-             ( 1 lsl 40,
-               (1 lsl 40) + (8 * ((1 lsl 34) + 12345)),
-               (1 lsl 34) + 12345 ) );
-         ]
-         (fun (_, (start, stop, step)) ->
-           let arange () = Nx.arange Nx.int64 start stop step in
-           let eager = arange () in
-           equal (tensor int64) eager
-             (Rune.jit' (fun z -> Nx.add z (arange ())) (Nx.zeros_like eager)));
-       test "an int32 and a float32 arange inside a compiled call equal eager's"
-         (fun () ->
-           let i () = Nx.arange Nx.int32 0 513 1 in
-           equal (tensor int32) (i ())
-             (Rune.jit' (fun z -> Nx.add z (i ())) (Nx.zeros_like (i ())));
-           let f () = Nx.arange Nx.float32 0 513 1 in
-           equal floats (f ())
-             (Rune.jit' (fun z -> Nx.add z (f ())) (Nx.zeros_like (f ()))));
-       test "a bfloat16 arange from 2^40 inside a compiled call equals eager's"
-         (fun () ->
-           let a () =
-             Nx.arange Nx.bfloat16 (1 lsl 40)
-               ((1 lsl 40) + (8 * ((1 lsl 31) + 12345)))
-               ((1 lsl 31) + 12345)
-           in
-           equal floats
-             (Nx.cast Nx.float32 (a ()))
-             (Nx.cast Nx.float32
-                (Rune.jit' (fun z -> Nx.add z (a ())) (Nx.zeros_like (a ())))));
-       test "top_k puts NaN first, as eager does" (fun () ->
-           let scores =
-             Nx.init Nx.float32 [| 2; 24 |] (fun i ->
-                 let i = (i.(0) * 24) + i.(1) in
-                 if i mod 5 = 3 then Float.nan else float_of_int (i * 7 mod 11))
-           in
-           List.iter
-             (fun k ->
-               let indices x = snd (Nx.top_k ~k x) in
-               let eager = indices scores in
-               equal ~msg:"the first NaN first" (tensor int64)
-                 (Nx.scalar Nx.int64 3L)
-                 (Nx.slice [ I 0; I 0 ] eager);
-               equal
-                 ~msg:(Printf.sprintf "top %d" k)
-                 (tensor int64) eager (Rune.jit' indices scores))
-             [ 2; 17 ]);
-       test "top_k of a short row ranked by counting is eager's" (fun () ->
-           let x =
-             Nx.create Nx.float32 [| 2; 6 |]
-               [|
-                 1.; -0.; Float.nan; 0.; 1.; -1.; 2.; 2.; -0.; Float.nan; 0.; 2.;
-               |]
-           in
-           List.iter
-             (fun k ->
-               let top x = Nx.top_k ~k ~axis:1 x in
-               let v, i = top x in
-               let v', i' =
-                 Rune.jit
-                   Nx.Ptree.(tensor @-> returns (pair tensor tensor))
-                   top x
-               in
-               equal ~msg:(Printf.sprintf "values, top %d" k) floats v v';
-               equal
-                 ~msg:(Printf.sprintf "indices, top %d" k)
-                 (tensor int64) i i')
-             [ 1; 3; 6 ]);
-       prop "gather and scatter at indices 2^32 from a position equal eager's"
-         ~examples:[ [| far + 1; 1 - far; 2; -1; 4; far |] ]
-         (Gen.array ~size:(Gen.constant 6) far_index)
-         (fun idx ->
-           let indices =
-             Nx.create Nx.int64 [| 6 |] (Array.map Int64.of_int idx)
-           in
-           let t = Nx.reshape [| 4; 2 |] (Nx.arange_f Nx.float32 1. 9. 1.) in
-           let scatter mode indices t =
-             Nx.scatter ~mode ~axis:0
-               ~indices:
-                 (Nx.broadcast_to [| 6; 2 |] (Nx.reshape [| 6; 1 |] indices))
-               ~values:
-                 (Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 10. 22. 1.))
-               t
-           in
-           List.iter
-             (fun (msg, f) ->
-               equal ~msg floats (f indices t)
-                 (Rune.jit
-                    Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-                    f indices t))
-             [
-               ("take", fun indices t -> Nx.take ~axis:0 ~indices t);
-               ("scatter set", scatter `Set);
-               ("scatter add", scatter `Add);
-             ]);
-       test "quantiles inside a compiled call equal eager's" (fun () ->
-           let a =
-             Nx.create Nx.float32 [| 2; 5 |]
-               [| 3.; Float.nan; -0.; 1.; 2.; 4.; 4.; Float.infinity; 0.; -1. |]
-           in
-           let f = Nx.quantile ~axis:1 [| 0.; 0.3; 0.5; 0.9; 1. |] in
-           equal floats (f a) (Rune.jit' f a);
-           let g = Nx.quantile [| 0.25; 0.75 |] in
-           let b = Nx.cast Nx.float64 a in
-           equal (tensor float_exact) (g b) (Rune.jit' g b));
-       test "a bitmap packed and read inside a compiled call is eager's"
-         (fun () ->
-           let m =
-             Nx.init Nx.bool [| 21 |] (fun i -> i.(0) mod 3 = 0 || i.(0) = 7)
-           in
-           let packed m = fst (Nx_bits.bytes (Nx_bits.of_bool m)) in
-           equal (tensor int) (packed m) (Rune.jit' packed m);
-           let b = Nx_bits.sub (Nx_bits.of_bool m) ~offset:3 ~length:15 in
-           let bytes, offset = Nx_bits.bytes b in
-           let read f bytes = f (Nx_bits.v ~offset ~length:15 bytes) in
-           equal (tensor bool) (Nx_bits.to_bool b)
-             (Rune.jit' (read Nx_bits.to_bool) bytes);
-           equal (tensor int64) (Nx_bits.count b)
-             (Rune.jit' (read Nx_bits.count) bytes));
-       test "a ragged array grouped by ids inside a compiled call is eager's"
-         (fun () ->
-           let ids = Nx.create Nx.int64 [| 6 |] [| 2L; 0L; -1L; 2L; 3L; 0L |] in
-           let x = Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 0. 12. 1.) in
-           let grouped ids x =
-             let r = Nx_ragged.of_ids ~segments:3 ids x in
-             (Nx_ragged.offsets r, Nx_ragged.values (Nx_ragged.map Nx.neg r))
-           in
-           let offsets, values = grouped ids x in
-           let offsets', values' =
-             Rune.jit
-               Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
-               grouped ids x
-           in
-           equal (tensor int64) offsets offsets';
-           equal floats values values';
-           let medians ids x =
-             Nx_ragged.quantile [| 0.; 0.5; 1. |]
-               (Nx_ragged.of_ids ~segments:3 ids (Nx.flatten x))
-           in
-           let ids = Nx.concatenate ~axis:0 [ ids; ids ] in
-           equal floats (medians ids x)
-             (Rune.jit
-                Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-                medians ids x));
-       test "a zero-size result is an empty tensor" (fun () ->
-           let a = Nx.zeros Nx.float32 [| 0; 3 |] in
-           let r = Rune.jit' poly a in
-           equal (array int) [| 0; 3 |] (Nx.shape r));
-     ]
-    @ if heavy then [ wide_solve ] else [])
+    [
+      group "one operation per family equals eager" (List.map law families);
+      test "a replay reads its new arguments, and an earlier call's again"
+        (fun () ->
+          let g = Rune.jit' poly in
+          equal floats (poly (x ())) (g (x ()));
+          equal floats (poly (y ())) (g (y ()));
+          equal floats (poly (x ())) (g (x ())));
+      test "a structured result equals eager's leaf by leaf" (fun () ->
+          let s = Nx.Ptree.(pair tensor (list (option tensor))) in
+          let f a = (Nx.neg a, [ Some (poly a); None; Some a ]) in
+          equal (Oracle.structure s)
+            (f (x ()))
+            (Rune.jit Nx.Ptree.(tensor @-> returns s) f (x ())));
+      test "64-bit integer constants keep every bit" (fun () ->
+          let a = Nx.create Nx.int64 [| 2 |] [| 1L; -1L |] in
+          let f a =
+            Nx.add a
+              (Nx.create Nx.int64 [| 2 |] [| Int64.max_int; Int64.min_int |])
+          in
+          equal (tensor int64) (f a) (Rune.jit' f a));
+      test "integer constants wrap at the operand's width" (fun () ->
+          let a = Nx.create Nx.int8 [| 3 |] [| 127; -128; 100 |] in
+          let f a = Nx.add (Nx.mul_s a 3) (Nx.full Nx.int8 [| 3 |] 100) in
+          equal (tensor int) (f a) (Rune.jit' f a));
+      test "float identities hold only where IEEE keeps them" (fun () ->
+          let a =
+            Nx.create Nx.float32 [| 4 |]
+              [| -0.; 0.; Float.infinity; Float.nan |]
+          in
+          let f a =
+            Nx.stack ~axis:0
+              [
+                Nx.add a (Nx.zeros_like a);
+                Nx.div a a;
+                Nx.mul a (Nx.zeros_like a);
+              ]
+          in
+          equal floats (f a) (Rune.jit' f a));
+      test "a bitcast's result has its dtype and its argument's bits" (fun () ->
+          let a = Nx.create Nx.float32 [| 3 |] [| 1.; -0.; Float.nan |] in
+          let r = Rune.jit' (Nx.bitcast Nx.int32) a in
+          equal (tensor int32)
+            (Nx.create Nx.int32 [| 3 |]
+               [| 0x3f800000l; Int32.min_int; Int32.bits_of_float Float.nan |])
+            r);
+      test "a bitcast between widths reads the bytes eager reads" (fun () ->
+          let bytes =
+            Nx.init Nx.uint8 [| 2; 8 |] (fun i ->
+                ((i.(0) * 8) + i.(1)) * 29 mod 256)
+          in
+          let words = Nx.bitcast Nx.uint64 bytes in
+          equal (tensor int64)
+            (Nx.bitcast Nx.int64 words)
+            (Nx.bitcast Nx.int64 (Rune.jit' (Nx.bitcast Nx.uint64) bytes));
+          equal (tensor int) bytes (Rune.jit' (Nx.bitcast Nx.uint8) words));
+      cases ~name:fst "an arange inside a compiled call equals eager's"
+        [
+          ("1 element", (0, 1, 1));
+          ("257 elements", (0, 257, 1));
+          ("513 elements", (0, 513, 1));
+          ("2^20 elements", (0, 1 lsl 20, 1));
+          ("down by 2 from 1000", (1000, -26, -2));
+          ( "from 2^40 by more than 2^34",
+            ( 1 lsl 40,
+              (1 lsl 40) + (8 * ((1 lsl 34) + 12345)),
+              (1 lsl 34) + 12345 ) );
+        ]
+        (fun (_, (start, stop, step)) ->
+          let arange () = Nx.arange Nx.int64 start stop step in
+          let eager = arange () in
+          equal (tensor int64) eager
+            (Rune.jit' (fun z -> Nx.add z (arange ())) (Nx.zeros_like eager)));
+      test "an int32 and a float32 arange inside a compiled call equal eager's"
+        (fun () ->
+          let i () = Nx.arange Nx.int32 0 513 1 in
+          equal (tensor int32) (i ())
+            (Rune.jit' (fun z -> Nx.add z (i ())) (Nx.zeros_like (i ())));
+          let f () = Nx.arange Nx.float32 0 513 1 in
+          equal floats (f ())
+            (Rune.jit' (fun z -> Nx.add z (f ())) (Nx.zeros_like (f ()))));
+      test "a bfloat16 arange from 2^40 inside a compiled call equals eager's"
+        (fun () ->
+          let a () =
+            Nx.arange Nx.bfloat16 (1 lsl 40)
+              ((1 lsl 40) + (8 * ((1 lsl 31) + 12345)))
+              ((1 lsl 31) + 12345)
+          in
+          equal floats
+            (Nx.cast Nx.float32 (a ()))
+            (Nx.cast Nx.float32
+               (Rune.jit' (fun z -> Nx.add z (a ())) (Nx.zeros_like (a ())))));
+      test "top_k puts NaN first, as eager does" (fun () ->
+          let scores =
+            Nx.init Nx.float32 [| 2; 24 |] (fun i ->
+                let i = (i.(0) * 24) + i.(1) in
+                if i mod 5 = 3 then Float.nan else float_of_int (i * 7 mod 11))
+          in
+          List.iter
+            (fun k ->
+              let indices x = snd (Nx.top_k ~k x) in
+              let eager = indices scores in
+              equal ~msg:"the first NaN first" (tensor int64)
+                (Nx.scalar Nx.int64 3L)
+                (Nx.slice [ I 0; I 0 ] eager);
+              equal
+                ~msg:(Printf.sprintf "top %d" k)
+                (tensor int64) eager (Rune.jit' indices scores))
+            [ 2; 17 ]);
+      test "top_k of a short row ranked by counting is eager's" (fun () ->
+          let x =
+            Nx.create Nx.float32 [| 2; 6 |]
+              [|
+                1.; -0.; Float.nan; 0.; 1.; -1.; 2.; 2.; -0.; Float.nan; 0.; 2.;
+              |]
+          in
+          List.iter
+            (fun k ->
+              let top x = Nx.top_k ~k ~axis:1 x in
+              let v, i = top x in
+              let v', i' =
+                Rune.jit
+                  Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+                  top x
+              in
+              equal ~msg:(Printf.sprintf "values, top %d" k) floats v v';
+              equal
+                ~msg:(Printf.sprintf "indices, top %d" k)
+                (tensor int64) i i')
+            [ 1; 3; 6 ]);
+      prop "gather and scatter at indices 2^32 from a position equal eager's"
+        ~examples:[ [| far + 1; 1 - far; 2; -1; 4; far |] ]
+        (Gen.array ~size:(Gen.constant 6) far_index)
+        (fun idx ->
+          let indices =
+            Nx.create Nx.int64 [| 6 |] (Array.map Int64.of_int idx)
+          in
+          let t = Nx.reshape [| 4; 2 |] (Nx.arange_f Nx.float32 1. 9. 1.) in
+          let scatter mode indices t =
+            Nx.scatter ~mode ~axis:0
+              ~indices:
+                (Nx.broadcast_to [| 6; 2 |] (Nx.reshape [| 6; 1 |] indices))
+              ~values:
+                (Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 10. 22. 1.))
+              t
+          in
+          List.iter
+            (fun (msg, f) ->
+              equal ~msg floats (f indices t)
+                (Rune.jit
+                   Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                   f indices t))
+            [
+              ("take", fun indices t -> Nx.take ~axis:0 ~indices t);
+              ("scatter set", scatter `Set);
+              ("scatter add", scatter `Add);
+            ]);
+      test "quantiles inside a compiled call equal eager's" (fun () ->
+          let a =
+            Nx.create Nx.float32 [| 2; 5 |]
+              [| 3.; Float.nan; -0.; 1.; 2.; 4.; 4.; Float.infinity; 0.; -1. |]
+          in
+          let f = Nx.quantile ~axis:1 [| 0.; 0.3; 0.5; 0.9; 1. |] in
+          equal floats (f a) (Rune.jit' f a);
+          let g = Nx.quantile [| 0.25; 0.75 |] in
+          let b = Nx.cast Nx.float64 a in
+          equal (tensor float_exact) (g b) (Rune.jit' g b));
+      test "a bitmap packed and read inside a compiled call is eager's"
+        (fun () ->
+          let m =
+            Nx.init Nx.bool [| 21 |] (fun i -> i.(0) mod 3 = 0 || i.(0) = 7)
+          in
+          let packed m = fst (Nx_bits.bytes (Nx_bits.of_bool m)) in
+          equal (tensor int) (packed m) (Rune.jit' packed m);
+          let b = Nx_bits.sub (Nx_bits.of_bool m) ~offset:3 ~length:15 in
+          let bytes, offset = Nx_bits.bytes b in
+          let read f bytes = f (Nx_bits.v ~offset ~length:15 bytes) in
+          equal (tensor bool) (Nx_bits.to_bool b)
+            (Rune.jit' (read Nx_bits.to_bool) bytes);
+          equal (tensor int64) (Nx_bits.count b)
+            (Rune.jit' (read Nx_bits.count) bytes));
+      test "a ragged array grouped by ids inside a compiled call is eager's"
+        (fun () ->
+          let ids = Nx.create Nx.int64 [| 6 |] [| 2L; 0L; -1L; 2L; 3L; 0L |] in
+          let x = Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 0. 12. 1.) in
+          let grouped ids x =
+            let r = Nx_ragged.of_ids ~segments:3 ids x in
+            (Nx_ragged.offsets r, Nx_ragged.values (Nx_ragged.map Nx.neg r))
+          in
+          let offsets, values = grouped ids x in
+          let offsets', values' =
+            Rune.jit
+              Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+              grouped ids x
+          in
+          equal (tensor int64) offsets offsets';
+          equal floats values values';
+          let medians ids x =
+            Nx_ragged.quantile [| 0.; 0.5; 1. |]
+              (Nx_ragged.of_ids ~segments:3 ids (Nx.flatten x))
+          in
+          let ids = Nx.concatenate ~axis:0 [ ids; ids ] in
+          equal floats (medians ids x)
+            (Rune.jit
+               Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+               medians ids x));
+      test "a zero-size result is an empty tensor" (fun () ->
+          let a = Nx.zeros Nx.float32 [| 0; 3 |] in
+          let r = Rune.jit' poly a in
+          equal (array int) [| 0; 3 |] (Nx.shape r));
+      wide_solve;
+    ]
 
 (* Keys *)
 
@@ -3855,8 +3849,8 @@ let eighs =
 
 (* One device *)
 
-(* The calls whose bytes and memory a device counts, on [d]: the test devices by
-   default, Metal in the slow run. *)
+(* The calls whose bytes and memory a device counts, on [d]: the test devices,
+   and Metal where the machine has it. *)
 let on_one_device ~name d =
   let block (w1, w2) a = Nx.add a (Nx.matmul (Nx.relu (Nx.matmul a w1)) w2) in
   group name
@@ -4196,7 +4190,7 @@ let () =
   exit
     (run "Rune_internals.Jit"
        [
-         values ~count:1 ~heavy:false;
+         values;
          keys;
          results;
          consumption;
@@ -4223,5 +4217,4 @@ let () =
          group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened Nx_cuda.get));
          group ~tags:[ "slow" ] "nv" (on_gpu "NV" (opened Nx_nv.get));
          group ~tags:[ "slow" ] "amd" (on_gpu "AMD" (opened Nx_amd.get));
-         group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
        ])

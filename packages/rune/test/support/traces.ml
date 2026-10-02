@@ -148,12 +148,52 @@ let contents s =
     (Lower.captures s)
   @ List.map (fun (slot, x) -> (slot, run x)) args
 
-let value s y =
-  let buffers = contents s in
+(* The elements of the first device of each of [us], from one run of the
+   interpreter, so that a node they share, such as a loop that computes several
+   results, runs once: each is stored into memory of its own, which
+   [Tensors.writes] reads back. An element left unwritten is [`Invalid]. *)
+let evaluate s us =
+  let output u =
+    match Ops.numel u with
+    | Ops.Int n ->
+        let slot = Ops.unique_num () in
+        let p = Ops.param ~shape:[ Ops.Int n ] slot (Ops.dtype u) in
+        (slot, Array.make n `Invalid, Ops.store p (Ops.reshape u [ Ops.Int n ]))
+    | Ops.Sym _ -> invalid_arg "a value of symbolic shape"
+  in
+  let outputs = List.map output us in
+  let stores =
+    List.filter_map
+      (fun (_, a, st) -> if Array.length a = 0 then None else Some st)
+      outputs
+  in
+  let elements = List.map (fun (slot, a, _) -> (slot, a)) outputs in
+  List.iter
+    (fun (slot, i, v) ->
+      match List.assoc_opt slot elements with
+      | Some a -> a.(i) <- (v :> Dtype.const)
+      | None -> ())
+    (Tensors.writes ~buffers:(contents s) (Ops.sink stores));
+  List.map snd elements
+
+let read y elements =
   let dt = Nx.dtype y in
-  match Tensors.eval ~buffers (Lower.uop s y) with
-  | first :: _ -> Nx.create dt (Nx.shape y) (Array.map (of_const dt) first)
-  | [] -> invalid_arg "a value on no device"
+  Nx.create dt (Nx.shape y) (Array.map (of_const dt) elements)
+
+let value s y =
+  match evaluate s [ Lower.uop s y ] with
+  | [ a ] -> read y a
+  | _ -> assert false
+
+let value2 s y z =
+  match evaluate s [ Lower.uop s y; Lower.uop s z ] with
+  | [ a; b ] -> (read y a, read z b)
+  | _ -> assert false
+
+let value3 s x y z =
+  match evaluate s [ Lower.uop s x; Lower.uop s y; Lower.uop s z ] with
+  | [ a; b; c ] -> (read x a, read y b, read z c)
+  | _ -> assert false
 
 (* Bits *)
 

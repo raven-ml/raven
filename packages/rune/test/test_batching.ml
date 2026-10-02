@@ -244,8 +244,4 @@ let rows ~count =
 let () =
   exit
     (run "rune batching"
-       (rows ~count:10
-       @ [
-           group "edges" Batching_edges.tests;
-           group ~tags:[ "slow" ] "swept" (rows ~count:300);
-         ]))
+       (rows ~count:300 @ [ group "edges" Batching_edges.tests ]))

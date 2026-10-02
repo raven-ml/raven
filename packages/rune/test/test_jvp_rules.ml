@@ -202,10 +202,9 @@ let edges =
 let () =
   exit
     (run "rune jvp rules"
-       (rows ~count:10
+       (rows ~count:500
        @ [
            group "edges" edges;
            group "cumulative" Jvp_cumulative.tests;
            group "factorisations" Jvp_factorisations.tests;
-           group ~tags:[ "slow" ] "swept" (rows ~count:500);
          ]))

@@ -6,8 +6,9 @@
 (* Quantised products under rune. Compiled, Nx_quant.apply and dequant compute
    eager's values, which nx's suite checks against the format: on the host, on
    test devices over the host's memory with the weight, its routes and its rows
-   placed, and on Metal, CUDA and AMD (slow). The derivatives of apply in its
-   rows, and its maps, are those of the product with the dequantised weight. *)
+   placed, and on the Metal, CUDA and AMD devices the machine has. The
+   derivatives of apply in its rows, and its maps, are those of the product with
+   the dequantised weight. *)
 
 open Windtrap
 open Nx_test
