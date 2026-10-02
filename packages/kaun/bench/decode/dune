@@ -9,6 +9,7 @@
  (libraries
   nx
   nx.cuda
+  nx.amd
   nx.metal
   nx.device
   nx.io

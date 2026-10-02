@@ -14,10 +14,11 @@
    The cache lengths show how the step scales with the cache it carries, not
    only with the single position it writes.
 
-   On CUDA, gpt-oss-20b at its own shapes, the model of examples/06-gpt-oss
-   compiled one layer kind at a time ([Layer_loop]): a decode step and a prefill
-   of 512 tokens, over random weights at bfloat16 with the experts packed as
-   MXFP4. Building the 13.8 GB of weights takes most of a case's setup. *)
+   On a CUDA or AMD GPU, gpt-oss-20b at its own shapes, the model of
+   examples/06-gpt-oss compiled one layer kind at a time ([Layer_loop]): a
+   decode step and a prefill of 512 tokens, over random weights at bfloat16 with
+   the experts packed as MXFP4. Building the 13.8 GB of weights takes most of a
+   case's setup. *)
 
 open Kaun
 
@@ -252,8 +253,13 @@ let host () =
      ]
     @ List.map (format_product ~device) formats)
 
-let cuda_quant () =
-  quant "cuda" ~device:(fun () -> Nx_cuda.device 0) ~prompt:512
+(* The GPU of the gpt-oss cases and of the GPU's quantised products, opened
+   where a case runs: CUDA's first, else AMD's first. *)
+let gpu =
+  lazy (match Nx_cuda.get 0 with Ok d -> d | Error _ -> Nx_amd.device 0)
+
+let gpu () = Lazy.force gpu
+let gpu_quant vendor = quant vendor ~device:gpu ~prompt:512
 
 (* Metal's pipelines are made by [--warm], as the decode kernels are (below). *)
 let metal_prompt = 512
@@ -387,12 +393,12 @@ let gpt_oss_params placement =
     head = Some (linear ~bias:false c.dim c.vocab_size);
   }
 
-(* A gpt-oss step on CUDA warmed past its compilations: [`Decode] feeds back the
-   token it predicts at a fixed position in the middle of the cache, [`Prefill]
-   runs the [prompt] tokens at positions 0 onwards. Each call takes the caches
-   of the one before and reads its token back on the host. *)
+(* A gpt-oss step on the GPU warmed past its compilations: [`Decode] feeds back
+   the token it predicts at a fixed position in the middle of the cache,
+   [`Prefill] runs the [prompt] tokens at positions 0 onwards. Each call takes
+   the caches of the one before and reads its token back on the host. *)
 let gpt_oss_step kind =
-  let placement = Nx.Placement.on (Nx_cuda.device 0) in
+  let placement = Nx.Placement.on (gpu ()) in
   let step = Layer_loop.greedy ~placement gpt_oss (gpt_oss_params placement) in
   let caches =
     ref
@@ -435,7 +441,7 @@ let gpt_oss_case kind =
     name
     (fun call -> call ())
 
-(* CUDA's driver must not be initialized before the fork that isolates a case,
+(* A GPU's driver must not be initialized before the fork that isolates a case,
    so a fresh process says whether a device opens. *)
 let run_self flag =
   let exe = Sys.executable_name in
@@ -459,16 +465,20 @@ let () =
   | [ _; "--warm-gpt-oss" ] ->
       List.iter (fun kind -> (gpt_oss_step kind) ()) gpt_oss_kinds
   | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
+  | [ _; "--amd" ] -> exit (if Result.is_ok (Nx_amd.get 0) then 0 else 1)
   | argv ->
       let measures =
         match argv with
         | _ :: ("list" | "-h" | "--help" | "-V" | "--version") :: _ -> false
         | _ -> true
       in
-      let cuda = run_self "--cuda" in
+      let vendor =
+        List.find_opt (fun v -> run_self ("--" ^ v)) [ "cuda"; "amd" ]
+      in
+      let gpu = Option.is_some vendor in
       if measures then begin
         warm "--warm";
-        if cuda then warm "--warm-gpt-oss"
+        if gpu then warm "--warm-gpt-oss"
       end;
       let budgets =
         [ Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05 ]
@@ -480,8 +490,9 @@ let () =
         ~budgets
         (Thumper.group "Gpt2" (List.map case lens)
         :: Thumper.group "Quant"
-             ((host () :: metal ()) @ if cuda then [ cuda_quant () ] else [])
+             ((host () :: metal ())
+             @ Option.to_list (Option.map gpu_quant vendor))
         ::
-        (if cuda then
+        (if gpu then
            [ Thumper.group "GptOss" (List.map gpt_oss_case gpt_oss_kinds) ]
          else []))
