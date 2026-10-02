@@ -15,11 +15,8 @@
 
     Schemes are {{!section-sequential}sequential}, for quantities from low to
     high; {{!section-diverging}diverging}, for quantities on either side of a
-    midpoint at the normalised value [0.5]; {{!section-cyclic}cyclic}, for
-    angles and phases; or {{!section-qualitative}qualitative}, for categories
-    without order. {!simulate} gives a colour as a viewer with a colour vision
-    deficiency sees it, so that tests can check that a scheme's colours stay
-    apart.
+    midpoint at the normalised value [0.5]; or
+    {{!section-qualitative}qualitative}, for categories without order.
 
     {1:continuous Continuous reading}
 
@@ -60,8 +57,6 @@
       [r] are the quotient and the remainder of the integer division of
       [i × (m - 1)] by [n - 1]. For one class it gives class [1] of three, the
       middle of the ramp. Thus [colors m (ramp cs)] is [cs].
-    + A cyclic scheme and its {!reverse} give their continuous reading at
-      [i / n], since [0] and [1] are one angle.
     + Any other scheme and its {!reverse} give their continuous reading at
       [i / (n - 1)], ends included, or at [0.5] for one class.
 
@@ -81,11 +76,7 @@
     - Anton Mikhailov.
       {e Turbo, an improved rainbow colormap for visualization}. Google, 2019.
       Apache License 2.0.
-    - Masataka Okabe and Kei Ito. {e Color Universal Design}. 2008.
-    - Gustavo M. Machado, Manuel M. Oliveira and Leandro A. F. Fernandes.
-      {e A physiologically-based model for simulation of color vision
-         deficiency}. IEEE Transactions on Visualization and Computer Graphics
-      15(6), 2009. *)
+    - Masataka Okabe and Kei Ito. {e Color Universal Design}. 2008. *)
 
 open Hugin_next_gg
 
@@ -116,8 +107,7 @@ val reverse : t -> t
     the colours [s] gives to high ones: [reverse rdbu] colours high values red.
     Its discrete reading is that of [s] in reverse order for a Brewer scheme or
     a ramp, and is otherwise read from the reversed table ({!section-discrete}),
-    so that a reversed palette keeps each class's colour as classes are added
-    and a reversed cyclic scheme keeps the colour of angle [0].
+    so that a reversed palette keeps each class's colour as classes are added.
     [reverse (reverse s)] is [s]. *)
 
 (** {1:readings Readings} *)
@@ -144,7 +134,8 @@ val colors : int -> t -> Color.t array
     The first five are perceptually uniform: lightness rises steadily from [0]
     to [1], so that equal steps of data look like equal steps of colour, and
     they read in greyscale. Their tables are their published tables of [256]
-    colours. *)
+    colours, each component rounded to the nearest multiple of [1/255], which
+    can swap the lightness of neighbouring entries. *)
 
 val viridis : t
 (** [viridis] runs from dark purple through blue and green to yellow (van der
@@ -167,10 +158,10 @@ val cividis : t
 
 val turbo : t
 (** [turbo] is a rainbow from dark blue through cyan, green, yellow and red to
-    dark red (Mikhailov), with its published table of [256] colours. Its
-    lightness rises then falls, so it shows bands that are not in the data and
-    misreads in greyscale; it suits finding fine detail more than reading
-    values. Hugin uses it only when asked. *)
+    dark red (Mikhailov), with its published table of [256] colours rounded as
+    those above. Its lightness rises then falls, so it shows bands that are not
+    in the data and misreads in greyscale; it suits finding fine detail more
+    than reading values. Hugin uses it only when asked. *)
 
 (** {2:brewer_sequential Brewer sequential schemes}
 
@@ -269,13 +260,6 @@ val rdylgn : t
 val spectral : t
 (** [spectral] is Brewer's Spectral, red through yellow to blue. *)
 
-(** {1:cyclic Cyclic schemes} *)
-
-val twilight : t
-(** [twilight] is the perceptually uniform cyclic scheme of Matplotlib 3.0:
-    light at [0] and [1], dark at [0.5], blue in between on one side and red on
-    the other. Its table is the published table of [510] colours. *)
-
 (** {1:qualitative Qualitative schemes}
 
     Palettes for categories. Each is the {!palette} of the colours listed. *)
@@ -315,40 +299,6 @@ val set2 : t
 
 val set3 : t
 (** [set3] is Brewer's Set3, twelve colours. *)
-
-(** {1:cvd Colour vision deficiency}
-
-    A viewer with a colour vision deficiency lacks one kind of cone, or has one
-    whose response is shifted. {!simulate} gives the colour such a viewer
-    perceives, so that a test can check that a scheme's colours stay apart for
-    them: that the Oklab distances ({!Color.to_oklab}) between the colours of
-    [colors 8 okabe_ito], each mapped by [simulate Deutan], stay above a bound.
-*)
-
-(** The type for colour vision deficiencies, by the cone they affect. *)
-type deficiency =
-  | Protan
-      (** Long-wavelength (red) cones: protanomaly, and protanopia at full
-          severity. *)
-  | Deutan
-      (** Medium-wavelength (green) cones: deuteranomaly, and deuteranopia at
-          full severity. The most common. *)
-  | Tritan
-      (** Short-wavelength (blue) cones: tritanomaly, and tritanopia at full
-          severity. The rarest. *)
-
-val simulate : ?severity:float -> deficiency -> Color.t -> Color.t
-(** [simulate ~severity d c] is [c] as a viewer with deficiency [d] of severity
-    [severity] perceives it, by the model of Machado, Oliveira and Fernandes:
-    the linear-light sRGB components of [c] times the model's matrix for [d] at
-    [severity], each clamped to \[[0];[1]\], then encoded. The authors tabulate
-    the matrices at the multiples of [0.1]; between two of them the matrix is
-    interpolated linearly. [severity] defaults to [1.], a dichromat, and
-    [simulate ~severity:0.] is the identity up to rounding. The alpha of [c] is
-    kept.
-
-    Raises [Invalid_argument] if [severity] is not in \[[0];[1]\], [nan]
-    included. *)
 
 (** {1:comparing Comparing and formatting} *)
 

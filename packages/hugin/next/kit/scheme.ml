@@ -10,7 +10,6 @@ open Hugin_next_gg
    three classes up and its table once [unreversed] has made it. *)
 type kind =
   | Listed of Color.t array
-  | Cyclic of Color.t array
   | Palette of Color.t array
   | Ramp of { stops : Color.t array; table : Color.t array }
   | Brewer of {
@@ -28,16 +27,15 @@ let reversed cs =
 
 (* Decoding the data *)
 
-let of_floats xs =
-  Array.init
-    (Array.length xs / 3)
-    (fun i -> Color.v xs.(3 * i) xs.((3 * i) + 1) xs.((3 * i) + 2))
-
+(* [of_hex s] is the colours of the hexadecimal digits [s], six per colour. The
+   tables of [Scheme_data] are well formed. *)
 let of_hex s =
-  let byte i = float (int_of_string ("0x" ^ String.sub s i 2)) /. 255. in
-  Array.init
-    (String.length s / 6)
-    (fun i -> Color.v (byte (6 * i)) (byte ((6 * i) + 2)) (byte ((6 * i) + 4)))
+  let color i =
+    match Color.of_hex ("#" ^ String.sub s (6 * i) 6) with
+    | Ok c -> c
+    | Error _ -> assert false
+  in
+  Array.init (String.length s / 6) color
 
 (* Ramps *)
 
@@ -66,7 +64,7 @@ let brewer_colors n tables diverging =
    that read it first together may each make it; they make equal tables. *)
 let unreversed s =
   match s.kind with
-  | Listed t | Cyclic t | Palette t | Ramp { table = t; _ } -> t
+  | Listed t | Palette t | Ramp { table = t; _ } -> t
   | Brewer { tables; table; _ } -> (
       match Atomic.get table with
       | Some t -> t
@@ -122,14 +120,13 @@ let colors n s =
       Array.init n (fun i ->
           let j = i mod k in
           t.(if s.reversed then k - 1 - j else j))
-  | Cyclic _ -> Array.init n (fun i -> at s (float i /. float n))
   | Listed _ ->
       if n = 1 then [| at s 0.5 |]
       else Array.init n (fun i -> at s (float i /. float (n - 1)))
 
 (* Named schemes *)
 
-let listed name data = make ~name (Listed (of_floats data))
+let listed name data = make ~name (Listed (of_hex data))
 
 let brewer name ~diverging specs =
   let tables = Array.map of_hex specs in
@@ -178,10 +175,6 @@ let rdylbu = diverging "rdylbu" Scheme_data.rdylbu
 let rdylgn = diverging "rdylgn" Scheme_data.rdylgn
 let spectral = diverging "spectral" Scheme_data.spectral
 
-(* Cyclic schemes *)
-
-let twilight = make ~name:"twilight" (Cyclic (of_floats Scheme_data.twilight))
-
 (* Qualitative schemes *)
 
 let okabe_ito = qualitative "okabe_ito" Scheme_data.okabe_ito
@@ -194,50 +187,6 @@ let pastel2 = qualitative "pastel2" Scheme_data.pastel2
 let set1 = qualitative "set1" Scheme_data.set1
 let set2 = qualitative "set2" Scheme_data.set2
 let set3 = qualitative "set3" Scheme_data.set3
-
-(* Colour vision deficiency *)
-
-type deficiency = Protan | Deutan | Tritan
-
-(* The sRGB transfer functions, the encoding clamped so that rounding cannot
-   leave [0;1]. *)
-let to_linear c =
-  if c <= 0.04045 then c /. 12.92 else Float.pow ((c +. 0.055) /. 1.055) 2.4
-
-let of_linear c =
-  let c = Float.min 1. (Float.max 0. c) in
-  let e =
-    if c <= 0.0031308 then 12.92 *. c
-    else (1.055 *. Float.pow c (1. /. 2.4)) -. 0.055
-  in
-  Float.min 1. (Float.max 0. e)
-
-let simulate ?(severity = 1.) d c =
-  if not (0. <= severity && severity <= 1.) then
-    invalid_arg
-      (Printf.sprintf "Scheme.simulate: severity %g not in [0, 1]" severity);
-  let m =
-    match d with
-    | Protan -> Scheme_data.protan
-    | Deutan -> Scheme_data.deutan
-    | Tritan -> Scheme_data.tritan
-  in
-  (* The matrices at the tabulated severities [k / 10] and [(k + 1) / 10] around
-     [severity], weighted [1 - f] and [f]. *)
-  let x = 10. *. severity in
-  let k = Int.min 9 (truncate x) in
-  let f = x -. float k in
-  let r = to_linear (Color.r c) in
-  let g = to_linear (Color.g c) in
-  let b = to_linear (Color.b c) in
-  let row i =
-    let a j =
-      let at k = m.((9 * k) + (3 * i) + j) in
-      ((1. -. f) *. at k) +. (f *. at (k + 1))
-    in
-    of_linear ((a 0 *. r) +. (a 1 *. g) +. (a 2 *. b))
-  in
-  Color.v ~alpha:(Color.alpha c) (row 0) (row 1) (row 2)
 
 (* Comparing and formatting *)
 
