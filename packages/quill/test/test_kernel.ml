@@ -208,4 +208,46 @@ let kernel_tests =
           (figure "bold"));
   ]
 
-let () = exit (run "Kernel" [ group "Display tags" kernel_tests ])
+(* Printers *)
+
+(* [installed name cell] is the outcome of installing the printer [name] after
+   running [cell] in a kernel, and the outputs of the cell [T] then. *)
+let installed name cell =
+  let outputs = ref [] in
+  let on_event = function
+    | Kernel.Output { output; _ } -> outputs := output :: !outputs
+    | _ -> ()
+  in
+  let kernel = Quill_top.create ~on_event () in
+  kernel.execute ~cell_id:"c" ~code:cell;
+  let r = Quill_top.install_printer name in
+  outputs := [];
+  kernel.execute ~cell_id:"c" ~code:"T";
+  kernel.shutdown ();
+  (r, List.rev !outputs)
+
+let tee =
+  {|type t = T
+let pp_t ppf T = Format.pp_print_string ppf "tee"
+let n = 3|}
+
+let printer_tests =
+  [
+    test "a printer installs and prints values of its type" (fun () ->
+        let r, outputs = installed "pp_t" tee in
+        is_ok ~pp:Format.pp_print_string r;
+        equal (list output) [ Cell.Stdout "- : t = tee\n" ] outputs);
+    test "an unbound printer is reported" (fun () ->
+        let r, _ = installed "no_such_printer" tee in
+        expect (require_error r)
+        @@ __POS_OF__ {| Unbound value no_such_printer. |});
+    test "a value that is not a printer is reported" (fun () ->
+        let r, _ = installed "n" tee in
+        expect (require_error r)
+        @@ __POS_OF__ {| n has the wrong type for a printing function. |});
+  ]
+
+let () =
+  exit
+    (run "Kernel"
+       [ group "Display tags" kernel_tests; group "Printers" printer_tests ])

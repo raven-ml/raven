@@ -12,4 +12,8 @@
  (modes byte)
  (link_flags -linkall)
  (package quill)
- (libraries quill quill.top windtrap))
+ (libraries quill quill.top windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_kernel.ml test_kernel.ml.corrected))))

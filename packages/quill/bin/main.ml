@@ -3,24 +3,25 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* The raven packages a notebook can use, each with the toplevel printers to
+   install once it loads. *)
 let raven_packages =
   [
-    "nx.cpu";
-    "nx.io";
-    "rune";
-    "vega";
-    "norn";
-    "kaun";
-    "kaun.datasets";
-    "hugin";
-    "sowilo";
-    "talon";
-    "talon.csv";
-    "brot";
-    "fehu";
+    ("nx", [ "Nx.pp" ]);
+    ("nx.io", []);
+    ("rune", []);
+    ("vega", []);
+    ("norn", []);
+    ("kaun", []);
+    ("kaun.datasets", []);
+    ("hugin", [ "Hugin.pp" ]);
+    ("sowilo", []);
+    ("talon", [ "Talon.pp"; "Talon.Query.pp" ]);
+    ("talon.csv", []);
+    ("talon.parquet", []);
+    ("brot", []);
+    ("fehu", []);
   ]
-
-let raven_printers = [ "Nx.pp"; "Hugin.pp"; "Talon.pp_display" ]
 
 let load_optional pkg =
   match Quill_top.load_package pkg with
@@ -30,6 +31,13 @@ let load_optional pkg =
       Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg
         (Printexc.to_string exn);
       false
+
+let install_printer name =
+  match Quill_top.install_printer name with
+  | Ok () -> ()
+  | Error report ->
+      Printf.eprintf "[quill] failed to install the printer %s: %s\n%!" name
+        report
 
 let setup () =
   (* Mark packages already linked into the quill executable so that load_package
@@ -46,11 +54,13 @@ let setup () =
       "threads";
       "threads.posix";
     ];
-  (* Load raven packages individually. We skip the .top packages (nx.top,
-     hugin.top) — they only install printers during module init, which fails
-     inside dir_load. We install printers ourselves below. *)
-  List.iter (fun pkg -> ignore (load_optional pkg)) raven_packages;
-  List.iter Quill_top.install_printer raven_printers
+  (* Load raven packages individually, and install the printers of each one that
+     loads. We skip the .top packages (nx.top, hugin.top): they only install
+     printers during module init, which fails inside dir_load. *)
+  List.iter
+    (fun (pkg, printers) ->
+      if load_optional pkg then List.iter install_printer printers)
+    raven_packages
 
 let create_kernel ~on_event = Quill_top.create ~setup ~on_event ()
 

@@ -133,15 +133,45 @@ let initialize_if_needed () =
         Sys.interactive := true;
         initialized := true))
 
+(* [printed b f] is [f ()] with what the standard formatters print going to [b]:
+   a directive reports its errors there, on the standard output when the
+   toplevel is interactive and on the standard error otherwise. *)
+let printed b f =
+  let redirect ppf =
+    Format.pp_print_flush ppf ();
+    let out, flush = Format.pp_get_formatter_output_functions ppf () in
+    Format.pp_set_formatter_output_functions ppf (Buffer.add_substring b) ignore;
+    fun () ->
+      Format.pp_print_flush ppf ();
+      Format.pp_set_formatter_output_functions ppf out flush
+  in
+  let restore_out = redirect Format.std_formatter in
+  let restore_err = redirect Format.err_formatter in
+  Fun.protect f ~finally:(fun () ->
+      restore_out ();
+      restore_err ())
+
 let install_printer name =
-  try
-    let phrase =
+  let b = Buffer.create 256 in
+  let ok =
+    printed b @@ fun () ->
+    let ppf = Format.err_formatter in
+    match
       Printf.sprintf "#install_printer %s;;" name
       |> Lexing.from_string
       |> !Toploop.parse_toplevel_phrase
-    in
-    ignore (Toploop.execute_phrase false Format.err_formatter phrase)
-  with _ -> ()
+      |> Toploop.execute_phrase false ppf
+    with
+    | ok -> ok
+    | exception exn ->
+        (try Location.report_exception ppf exn
+         with exn -> Format.pp_print_string ppf (Printexc.to_string exn));
+        false
+  in
+  match String.trim (Buffer.contents b) with
+  | "" when ok -> Ok ()
+  | "" -> Error (Printf.sprintf "the toplevel cannot install %s" name)
+  | report -> Error report
 
 (* ───── Output capture ───── *)
 

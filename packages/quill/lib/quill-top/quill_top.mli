@@ -25,11 +25,14 @@ val load_package : string -> unit
     archives. Packages already loaded or marked in-core via {!add_packages} are
     skipped. Raises if the package is not found. *)
 
-val install_printer : string -> unit
+val install_printer : string -> (unit, string) result
 (** [install_printer name] installs a toplevel pretty-printer by evaluating
     [#install_printer name;;]. The printer must be resolvable in the current
     toplevel environment (i.e. its module directory was previously added via
-    {!add_packages}). Silently does nothing on failure. *)
+    {!add_packages}).
+
+    [Error report] if the toplevel does not install it, with the toplevel's
+    report: [name] is unbound, or is not a printer. *)
 
 val create :
   ?setup:(unit -> unit) ->

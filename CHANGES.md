@@ -6028,6 +6028,9 @@ thread.
 
 ### Quill
 
+- `Quill_top.install_printer` returns the toplevel's report when a printer does
+  not install, and quill prints it instead of ignoring it. Quill installs
+  `Talon.pp` and `Talon.Query.pp`, and loads `talon.parquet`.
 - A cell displays the display tags it prints with `Format.printf` or
   `Format.eprintf` where it prints them, so one cell can show several values.
 - A display with a non-empty id replaces the session's display with that id in

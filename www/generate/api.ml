@@ -41,7 +41,12 @@ let libraries =
         ("munin.tui", "Munin_tui");
       ] );
     ("brot", [ ("brot", "Brot") ]);
-    ("talon", [ ("talon", "Talon"); ("talon.csv", "Talon_csv") ]);
+    ( "talon",
+      [
+        ("talon", "Talon");
+        ("talon.csv", "Talon_csv");
+        ("talon.parquet", "Talon_parquet");
+      ] );
     ("hugin", [ ("hugin", "Hugin") ]);
     ("quill", [ ("quill", "Quill") ]);
   ]
