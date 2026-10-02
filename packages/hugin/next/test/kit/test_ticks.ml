@@ -141,9 +141,9 @@ let axes () =
     linear [0;1] at 300: 0.0 0.2 0.4 0.6 0.8 1.0, 15 minor
     linear [0;100] at 120: 0 50 100, 8 minor
     linear [-1;1] at 600: −1.0 −0.8 −0.6 −0.4 −0.2 0.0 0.2 0.4 0.6 0.8 1.0, 30 minor
-    linear [1;4] at 100: 1 4, 2 minor
+    linear [1;4] at 100: 1 2 3 4, 12 minor
     linear [-25;25] at 30: −25 25, 1 minor
-    linear [0.62;0.97] at 180: 0.65 0.80 0.95, 4 minor
+    linear [0.62;0.97] at 180: 0.65 0.75 0.85 0.95, 3 minor
     log [1;1000] at 300: 1 2 5 10 20 50 100 200 500 1000, 18 minor
     log [1;1000] at 3000: 1 2 3 4 5 6 7 8 9 10 20 30 40 50 60 70 80 90 100 200 300 400 500 600 700 800 900 1000, 0 minor
     log [1;1e6] at 200: 10⁰ 10² 10⁴ 10⁶, 3 minor
@@ -158,7 +158,7 @@ let axes () =
     log 2 [1;1024] at 300: 2⁰ 2¹ 2² 2³ 2⁴ 2⁵ 2⁶ 2⁷ 2⁸ 2⁹ 2¹⁰, 0 minor
     log 2 [0.5;64] at 120: 2⁰ 2² 2⁴ 2⁶, 4 minor
     log 3 [1;81] at 300: 3⁰ 3¹ 3² 3³ 3⁴, 4 minor
-    log 3 [1;81] at 1500: 1 5 9 13 17 21 25 29 33 37 41 45 49 53 57 61 65 69 73 77 81, 60 minor
+    log 3 [1;81] at 1500: 1 6 11 16 21 26 31 36 41 46 51 56 61 66 71 76 81, 64 minor
     log 16 [1;4096] at 300: 16⁰ 16¹ 16² 16³, 42 minor
     log 16 [1;256] at 800: 16⁰ 16¹ 16², 28 minor
     log 16 [1;256] at 4000: 16⁰ 2×16⁰ 3×16⁰ 4×16⁰ 5×16⁰ 6×16⁰ 7×16⁰ 8×16⁰ 9×16⁰ 10×16⁰ 11×16⁰ 12×16⁰ 13×16⁰ 14×16⁰ 15×16⁰ 16¹ 2×16¹ 3×16¹ 4×16¹ 5×16¹ 6×16¹ 7×16¹ 8×16¹ 9×16¹ 10×16¹ 11×16¹ 12×16¹ 13×16¹ 14×16¹ 15×16¹ 16², 0 minor
@@ -922,6 +922,37 @@ let choice =
             (labels (Ticks.choose ~spacing:100. ~length:500. ~measure s));
           equal int 11
             (List.length (Ticks.choose ~length:500. ~measure s).major));
+      prop "every step of a linear axis is 1, 2, 2.5 or 5 times a power of ten"
+        (Gen.quad
+           (Gen.float_range (-1e4) 1e4)
+           (Gen.float_range 1e-3 1e4)
+           (Gen.float_range 20. 2000.)
+           (Gen.float_range 0. 100.))
+        (fun (a, w, length, spacing) ->
+          let s = linear a (a +. w) in
+          let t = Ticks.choose ~spacing ~length ~measure s in
+          let values =
+            List.map
+              (fun (k : Ticks.tick) -> Option.get (Scale.invert s k.position))
+              t.major
+          in
+          let rec steps = function
+            | x :: (y :: _ as rest) -> (y -. x) :: steps rest
+            | _ -> []
+          in
+          List.iter
+            (fun d ->
+              (* The mantissa in \[[1];[10]\], with 10 for a step rounded up to
+                 the next power. *)
+              let mantissa = d /. Float.pow 10. (Float.floor (Float.log10 d)) in
+              let in_q q =
+                List.exists
+                  (fun q' -> Float.abs (q -. q') <= 1e-6 *. q')
+                  [ 1.; 2.; 2.5; 5.; 10. ]
+              in
+              satisfies ~claim:"a mantissa of 1, 2, 2.5 or 5" float_exact in_q
+                mantissa)
+            (steps values));
       test "the spacing must be finite and non-negative" (fun () ->
           let choose spacing =
             Ticks.choose ~spacing ~length:100. ~measure (linear 0. 1.)

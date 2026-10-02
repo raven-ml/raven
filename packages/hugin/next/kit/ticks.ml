@@ -475,6 +475,13 @@ let q_minor_steps = [| (2, -1); (1, 0); (5, -1); (5, -1) |]
 (* [q_rank i] is the simplicity [q_steps.(i)] loses to the first. *)
 let q_rank i = Float.of_int i /. Float.of_int (Array.length q_steps - 1)
 
+(* [skips_to_q j i] is [true] iff [j] times the step [q_steps.(i)] is a step of
+   [Q] at some power of ten: the skip [2] turns the step [0.1] into [0.2], a
+   step of [Q], and the skip [3] into [0.3], which is not. *)
+let skips_to_q j i =
+  let rec mantissa n = if n mod 10 = 0 then mantissa (n / 10) else n in
+  Array.exists (fun (m, _) -> m = mantissa (j * fst q_steps.(i))) q_steps
+
 (* [decimal_steps st ~v (a, b)] is the search of the decimal steps in two parts:
    a candidate of one tick, then every other. *)
 let decimal_steps st ~v (a, b) =
@@ -529,7 +536,7 @@ let decimal_steps st ~v (a, b) =
     skips st ~simplest:2. (fun j ->
         for i = 0 to Array.length q_steps - 1 do
           let s_max = 2. -. q_rank i -. Float.of_int j in
-          if worth st s_max 0. then descend j i z_top
+          if skips_to_q j i && worth st s_max 0. then descend j i z_top
         done)
   in
   ((fun () -> seed z_top), search)

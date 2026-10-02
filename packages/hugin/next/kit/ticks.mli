@@ -99,14 +99,16 @@ val of_values :
     these families, each with a skip [j >= 1] that keeps every [j]th value, from
     an offset [r] in \[[0];[j - 1]\]:
     - {b Decimal steps}, on linear, pow, custom, symlog and log scales: the
-      multiples inside the domain of a step [q × 10^z], for [q] in [1], [5], [2]
-      and [2.5], in this order of preference, and an integer [z]. A multiple is
-      the float nearest its integer index times the step, as nice domains
-      compute them ({!Scale.section-nice}), so [3 × 0.1] is [0.3]. Steps below a
-      32nd of the distance from each end of the domain to the next float towards
-      zero are left out. A step finer than the floats gives ticks at the floats
-      its multiples round to, labelled by the decimals of those floats: on
-      \[[1e17];[1e17 + 32]\], whose floats are 16 apart, the step [10] gives
+      multiples inside the domain of a step [q × 10^z], for [q] in [Q], that is
+      [1], [5], [2] and [2.5] in this order of preference, and an integer [z],
+      with the skips [j] for which [j × q] is again in [Q] times a power of ten,
+      so that ticks are [1], [2], [2.5] or [5] times a power of ten apart. A
+      multiple is the float nearest its integer index times the step, as nice
+      domains compute them ({!Scale.section-nice}), so [3 × 0.1] is [0.3]. Steps
+      below a 32nd of the distance from each end of the domain to the next float
+      towards zero are left out. A step finer than the floats gives ticks at the
+      floats its multiples round to, labelled by the decimals of those floats:
+      on \[[1e17];[1e17 + 32]\], whose floats are 16 apart, the step [10] gives
       ticks at the positions [0], [0.5] and [1] that read [0], [20] and [30]
       against the note [+10¹⁷].
     - {b Powers}, on log scales of base [b]: the integer powers [b^i] inside the
