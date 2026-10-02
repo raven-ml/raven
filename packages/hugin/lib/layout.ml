@@ -520,17 +520,50 @@ let along (g : Guide.t) =
 let stacked (l : laid) =
   Option.is_some l.guide.bounds && Option.is_none (Guide.inside l.guide.spec)
 
-(* [bands em node] is the offset of each stacked guide of [node] beyond its side
-   of the hull of the node's data areas, and the protrusions of [node]. On a side
-   the node protrudes by its content, then by each tier of guides, innermost
-   first, in its bands, each as deep as its deepest guide.
+(* The bands of a node: the offset of each stacked guide beyond its side of the
+   hull of the node's data areas, the node's protrusions, and the bands of its
+   cells. A tree's bands are computed once, bottom up, for each solve. *)
+type bands = {
+  offsets : (Guide.t * float) list;
+  prot : Guide.sides;
+  inner : bands list; (* Of the cells of a grid. *)
+}
+
+(* [content node inner] is the protrusion of the boundary cells of [node],
+   whose bands are [inner]. *)
+let content node inner =
+  match node with
+  | Panel _ -> Guide.no_sides
+  | Grid g ->
+      let nc = Array.length g.widths and nr = Array.length g.heights in
+      List.fold_left2
+        (fun (p : Guide.sides) c b ->
+          let (q : Guide.sides) = b.prot in
+          let most edge a b = if edge then Float.max a b else a in
+          {
+            left = most (c.c0 = 0) p.left q.left;
+            right = most (c.c0 + c.nc = nc) p.right q.right;
+            top = most (c.r0 = 0) p.top q.top;
+            bottom = most (c.r0 + c.nr = nr) p.bottom q.bottom;
+          })
+        Guide.no_sides g.cells inner
+
+(* [bands node] is the bands of [node]. On a side the node protrudes by its
+   content, then by each tier of guides, innermost first, in its bands, each
+   as deep as its deepest guide.
 
    A guide within its side cannot meet the guides of the adjacent sides, which
    lie beyond the hull; one reaching past an end can. Lower tiers own the
    corner: past the axis proper, a tier with a guide reaching past an end starts
    beyond the reach there of the lower tiers' guides on the adjacent side. The
    node protrudes by its bands, or by every such reach if larger. *)
-let rec bands em node =
+let rec bands node =
+  let inner =
+    match node with
+    | Panel _ -> []
+    | Grid g -> List.map (fun c -> bands c.node) g.cells
+  in
+  let content = content node inner in
   let gs = List.filter stacked (guides_of node) in
   let on_side s (l : laid) = equal_side l.guide.spec.side s in
   let reach s adjacent below =
@@ -570,36 +603,19 @@ let rec bands em node =
           (offs.(n), List.map (fun l -> (l, offs.(l.band))) here @ acc)
     in
     let off, acc =
-      List.fold_left tier_bands (on (content em node) s, []) [ 0; 1; 2; 3; 4 ]
+      List.fold_left tier_bands (on content s, []) [ 0; 1; 2; 3; 4 ]
     in
     (Float.max off (Float.max (reach s first 5) (reach s last 5)), acc)
   in
   let l, gl = side `Left and r, gr = side `Right in
   let t, gt = side `Top and b, gb = side `Bottom in
   let offs = gl @ gr @ gt @ gb in
-  ( List.filter_map
+  let offsets =
+    List.filter_map
       (fun g -> Option.map (fun o -> (g.guide, o)) (List.assq_opt g offs))
-      gs,
-    { Guide.left = l; right = r; top = t; bottom = b } )
-
-(* [content em node] is the protrusion of the boundary cells of [node]. *)
-and content em = function
-  | Panel _ -> Guide.no_sides
-  | Grid g ->
-      let nc = Array.length g.widths and nr = Array.length g.heights in
-      List.fold_left
-        (fun (p : Guide.sides) c ->
-          let (q : Guide.sides) = prot em c.node in
-          let most edge a b = if edge then Float.max a b else a in
-          {
-            left = most (c.c0 = 0) p.left q.left;
-            right = most (c.c0 + c.nc = nc) p.right q.right;
-            top = most (c.r0 = 0) p.top q.top;
-            bottom = most (c.r0 + c.nr = nr) p.bottom q.bottom;
-          })
-        Guide.no_sides g.cells
-
-and prot em node = snd (bands em node)
+      gs
+  in
+  { offsets; prot = { left = l; right = r; top = t; bottom = b }; inner }
 
 (* [part em node] is [node] with each guide in the first band of its side and
    tier whose guides it lies a gap apart from. Titles are anchored at the start,
@@ -754,9 +770,10 @@ let needs em guides =
           else (w, Float.max h g.least))
     (0., 0.) guides
 
-(* [natural em unit node] is the least width and height of [node], [unit] being
-   the data area a track of weight [1.] has at least. *)
-let rec natural em unit = function
+(* [natural em unit node b] is the least width and height of [node], of bands
+   [b], [unit] being the data area a track of weight [1.] has at least. *)
+let rec natural em unit node b =
+  match node with
   | Panel p -> (
       let w, h = needs em p.guides in
       (* A panel with an aspect fits its box in its cell, so the box holds what
@@ -765,13 +782,15 @@ let rec natural em unit = function
       | None -> (w, h)
       | Some r -> (Float.max w (h /. r), Float.max h (r *. w)))
   | Grid g ->
-      let m = measure em unit g in
+      let m = measure em unit g b in
       let rows = aspect_rows m m.cols_least in
       (sum m.cols_least +. sum m.cgaps, sum rows +. sum m.rgaps)
 
-and measure em (uw, uh) g =
+and measure em (uw, uh) g b =
   let cells =
-    List.map (fun c -> (c, prot em c.node, natural em (uw, uh) c.node)) g.cells
+    List.map2
+      (fun c b -> (c, b.prot, natural em (uw, uh) c.node b))
+      g.cells b.inner
   in
   let gaps n first last before after =
     Array.init
@@ -839,8 +858,8 @@ and aspect_need m cols =
     m.aspects;
   need
 
-let solve_grid em unit g w h =
-  let m = measure em unit g in
+let solve_grid em unit g b w h =
+  let m = measure em unit g b in
   let avail_w = w -. sum m.cgaps and avail_h = h -. sum m.rgaps in
   let nc = Array.length g.widths in
   let cols, slack_x =
@@ -894,13 +913,14 @@ let fit_aspect r box =
     (Box2.miny box +. ((h -. h') /. 2.))
     w' h'
 
-(* [geometry em unit node box] is the data hulls of [node] placed in [box]. *)
-let rec geometry em unit node box =
+(* [geometry em unit node b box] is the data hulls of [node], of bands [b],
+   placed in [box]. *)
+let rec geometry em unit node b box =
   match node with
   | Panel { ratio = None; _ } -> { hull = box; kids = [] }
   | Panel { ratio = Some r; _ } -> { hull = fit_aspect r box; kids = [] }
   | Grid g ->
-      let t = solve_grid em unit g (Box2.w box) (Box2.h box) in
+      let t = solve_grid em unit g b (Box2.w box) (Box2.h box) in
       let starts len gap o =
         let a = Array.make (Array.length len) o in
         for i = 1 to Array.length len - 1 do
@@ -925,7 +945,8 @@ let rec geometry em unit node box =
           (extent t.col_len t.col_gap c.c0 c.nc)
           (extent t.row_len t.row_gap c.r0 c.nr)
       in
-      let kids = List.map (fun c -> geometry em unit c.node (cell c)) g.cells in
+      let kid c b = geometry em unit c.node b (cell c) in
+      let kids = List.map2 kid g.cells b.inner in
       let hull =
         match kids with
         | [] -> box
@@ -965,11 +986,20 @@ let placed em node geo =
     | Some c, Some _ -> (l.guide, corner em hull c l.guide) :: acc
     | _ -> acc
   in
-  let node_guides acc n hull =
-    let acc = List.fold_left (add hull) acc (fst (bands em n)) in
-    List.fold_left (inside hull) acc (guides_of n)
+  let rec go acc node geo b =
+    let acc =
+      match node with
+      | Panel _ -> acc
+      | Grid g ->
+          List.fold_left2
+            (fun acc c (k, b) -> go acc c.node k b)
+            acc g.cells
+            (List.combine geo.kids b.inner)
+    in
+    let acc = List.fold_left (add geo.hull) acc b.offsets in
+    List.fold_left (inside geo.hull) acc (guides_of node)
   in
-  List.rev (fold node_guides [] node geo)
+  List.rev (go [] node geo (bands node))
 
 let side_length hull side = if horizontal side then Box2.w hull else Box2.h hull
 let across hull side = if horizontal side then Box2.h hull else Box2.w hull
@@ -1094,7 +1124,8 @@ let up x = Float.ceil (x *. 100.) /. 100.
    the page's size. In the [final] solve, a figure too small for [root] raises
    [Needs] with a larger size. *)
 let solve em unit size ~final root =
-  let p = prot em root and nw, nh = natural em unit root in
+  let b = bands root in
+  let p = b.prot and nw, nh = natural em unit root b in
   let m = em *. margin_em in
   let ow = m +. p.left +. p.right +. m and oh = m +. p.top +. p.bottom +. m in
   let page, cw, ch =
@@ -1108,7 +1139,7 @@ let solve em unit size ~final root =
         end;
         ((w, h), Float.max cw nw, Float.max ch nh)
   in
-  (geometry em unit root (Box2.v (m +. p.left) (m +. p.top) cw ch), page)
+  (geometry em unit root b (Box2.v (m +. p.left) (m +. p.top) cw ch), page)
 
 (* [check guides] raises if figure text of [guides] lacks a glyph, and is the
    warnings of category labels that do. *)

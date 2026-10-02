@@ -354,6 +354,9 @@ let of_values ?(locale = Locale.default) ?notation s vs =
 
 (* Choosing *)
 
+module Strings = Hashtbl.Make (String)
+module Floats = Hashtbl.Make (Float)
+
 type 'd best = {
   score : float;
   n : int;
@@ -814,32 +817,41 @@ let choose (type d) ?(locale = Locale.default) ?notation ?(spacing = 0.) ~length
     err "choose" "spacing %g is not finite and non-negative" spacing;
   check_notation "choose" notation s;
   let notation = Option.map decimal_notation notation in
-  let extents = Hashtbl.create 64 in
+  let extents = Strings.create 64 in
   let extent l =
-    match Hashtbl.find_opt extents l with
+    match Strings.find_opt extents l with
     | Some e -> e
     | None ->
         let e = measure l in
         if not (Float.is_finite e && e > 0.) then
           err "choose" "the extent %g of %S is not finite and positive" e l;
-        Hashtbl.add extents l e;
+        Strings.add extents l e;
         e
   in
-  (* The exact values and decimals one search reads again and again. *)
-  let memo f =
-    let table = Hashtbl.create 64 in
+  (* The decimals and the exactly rounded multiples one search reads again and
+     again. A multiple that one float operation rounds is cheaper to compute
+     than to look up. *)
+  let shortest =
+    let table = Floats.create 64 in
     fun x ->
-      match Hashtbl.find_opt table x with
+      match Floats.find_opt table x with
+      | Some d -> d
+      | None ->
+          let d = Decimal.shortest x in
+          Floats.add table x d;
+          d
+  in
+  let value =
+    let table = Hashtbl.create 64 in
+    let exact n k approx =
+      match Hashtbl.find_opt table (n, k) with
       | Some y -> y
       | None ->
-          let y = f x in
-          Hashtbl.add table x y;
+          let y = Decimal.nearest n k approx in
+          Hashtbl.add table (n, k) y;
           y
-  in
-  let shortest = memo Decimal.shortest in
-  let value =
-    let exact = memo (fun (m, k, i) -> Steps.value { m; k } i) in
-    fun (s : Steps.step) i -> exact (s.m, s.k, i)
+    in
+    Steps.value ~exact
   in
   let st =
     {

@@ -31,16 +31,16 @@ let scale x k =
 (* The step [m × 10^k], [m >= 1]. *)
 type step = { m : int; k : int }
 
-(* [nearest n k] is the float nearest [n × 10^k]. Where [n] and [10^|k|] are
-   floats, one multiplication or division rounds once; elsewhere that
-   approximation is moved to the float the exact value rounds to. *)
-let nearest n k =
+(* [nearest ~exact n k] is the float nearest [n × 10^k]. Where [n] and [10^|k|]
+   are floats, one multiplication or division rounds once; elsewhere [exact n k
+   approx] moves that approximation to the float the exact value rounds to, as
+   {!Decimal.nearest} does. *)
+let nearest ?(exact = Decimal.nearest) n k =
   let approx = scale (Float.of_int n) k in
-  if Int.abs n <= 1 lsl 53 && Int.abs k <= 22 then approx
-  else Decimal.nearest n k approx
+  if Int.abs n <= 1 lsl 53 && Int.abs k <= 22 then approx else exact n k approx
 
 (* Adding [0.] turns a negative multiple that underflows to [-0.] into [0.]. *)
-let value s i = nearest (i * s.m) s.k +. 0.
+let value ?exact s i = nearest ?exact (i * s.m) s.k +. 0.
 let width s = value s 1
 
 (* [decompose t] is [(f, k)] with [t = f × 10^k] and [1 <= f < 10] for a
@@ -123,7 +123,7 @@ let every_float a b =
    multiples of [s] in \[[a];[b]\] whose index is [offset] modulo [skip],
    [offset] in \[[0];[skip - 1]\], increasing, or every float of the domain if
    [s] is fine there. [value] computes multiples as {!value} does. *)
-let multiples ?(value = value) ?(skip = 1) ?(offset = 0) s a b =
+let multiples ?(value = fun s i -> value s i) ?(skip = 1) ?(offset = 0) s a b =
   if is_fine s a b then every_float a b
   else
     let i0 = Float.to_int (Float.floor (index s a)) - 1

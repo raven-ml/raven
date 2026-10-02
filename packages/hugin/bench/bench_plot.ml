@@ -65,6 +65,27 @@ let live =
     ~setup:(fun () -> show (dashboard at))
     (fun prev -> redraw prev (dashboard (at + 1)))
 
+(* A 3 × 3 grid of cells of magnitudes from 10^-4 to 10^4, each a pair of facet
+   panels with a colour legend, under a title: grids nested three deep, whose
+   guides the layout stacks and aligns. *)
+let facet_pairs =
+  let cell k =
+    let v = 10. ** float k in
+    let x = Nx.create Nx.float64 [| 2 |] [| -.v; v |] in
+    dot
+      ~fx:(strings [| "left"; "right" |])
+      ~fill:(strings [| "alpha"; "b" |])
+      ~x:(num x)
+      ~y:(num ~title:(Text.v "value") x)
+      ()
+  in
+  grid (List.init 3 (fun r -> List.init 3 (fun c -> cell ((3 * r) + c - 4))))
+  |> title (Text.v "A figure")
+
+let nested =
+  let r = resolve facet_pairs in
+  Thumper.bench "layout of nested grids" (fun () -> layout size r)
+
 (* The budgets of large data: each figure is drawn from its tensors to a PNG
    file at density 2, every stage included. *)
 
@@ -116,5 +137,7 @@ let budgets =
 let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
+  Thumper.run ~config "hugin_next_plot"
+    [ Thumper.group "stages" [ live; nested ]; budgets ]
   Thumper.run ~config "hugin_plot" [ Thumper.group "stages" [ live ]; budgets ]
   |> exit
