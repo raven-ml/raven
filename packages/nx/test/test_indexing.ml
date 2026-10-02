@@ -95,6 +95,32 @@ let gathers =
                  src.(axis) <- idx.(i.(axis));
                  read r src))
             (Ref.of_nx (Nx.take ~axis ~indices:(indices_tensor idx) t)));
+      prop "take of rows of a window view copies each window"
+        (let open Gen in
+         let* n = int_range 1 20 in
+         let* window = int_range 1 n in
+         let+ bytes = array ~size:(constant n) (int_range 0 255)
+         and+ idx =
+           array ~size:(int_range 0 8) (int_range (-2) (n - window + 2))
+         in
+         (bytes, window, idx))
+        (fun (bytes, window, idx) ->
+          let n = Array.length bytes in
+          let windows = n - window + 1 in
+          equal (array int)
+            (Array.concat
+               (List.map
+                  (fun k ->
+                    if k >= 0 && k < windows then Array.sub bytes k window
+                    else Array.make window 0)
+                  (Array.to_list idx)))
+            (Nx.to_array
+               (Nx.take ~axis:0
+                  ~indices:
+                    (Nx.create Nx.int64 [| Array.length idx |]
+                       (Array.map Int64.of_int idx))
+                  (Nx.sliding_window ~window
+                     (Nx.create Nx.uint8 [| n |] bytes)))));
       prop "take_along_axis reads, at each position, the index found there"
         positioned (fun (s, axis, idx) ->
           let r, t = tensor_of s in

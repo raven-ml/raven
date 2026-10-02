@@ -3052,6 +3052,10 @@ thread.
 
 ### Nx
 
+- `Nx.take ~axis:0` of whole rows copies each row, now also from data whose
+  rows overlap or lie apart, such as a window view, where it moved one element
+  at a time: `Nx_ragged.ids` of 10⁷ twelve-byte strings takes 167 ms where it
+  took 297 ms.
 - `Nx.arange` past 1024 values adds a column of row starts to a row of
   offsets, one elementwise pass, where it summed every value in a running sum:
   10⁷ int64 values take 1.3 ms where they took about 6 ms.

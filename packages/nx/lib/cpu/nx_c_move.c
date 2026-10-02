@@ -416,9 +416,10 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 }
 
 /* Fast path: axis-0 2-D gather with a column-broadcast index (indices stride 1
-   == 0) over contiguous data/out — every output row is a whole source row, so
-   copy rows, not elements. The stride-0 column axis makes the index constant
-   across a row, so the body reads one index per row. */
+   == 0) into a contiguous out, from data whose rows are each one run, at any
+   row stride (a window view's rows overlap) — every output row is a whole
+   source row, so copy rows, not elements. The stride-0 column axis makes the
+   index constant across a row, so the body reads one index per row. */
 typedef struct {
   const nx_c_ndarray *data;
   const nx_c_ndarray *indices;
@@ -469,7 +470,8 @@ static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
     nx_c_gather_ctx g = {data, indices, out, axis, esize};
     nx_c_parallel_for(1, total, total, nx_c_gather_body, &g, NULL);
   } else if (axis == 0 && data->ndim == 2 && indices->strides[1] == 0 &&
-      data->shape[1] == out->shape[1] && nx_c_is_contiguous_off0(data) &&
+      data->shape[1] == out->shape[1] &&
+      (data->shape[1] == 1 || data->strides[1] == 1) &&
       nx_c_is_contiguous_off0(out)) {
     int64_t rows = out->shape[0], row_elems = out->shape[1];
     nx_c_gather_rows_ctx g = {data, indices, out, esize, row_elems};
