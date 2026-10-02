@@ -809,15 +809,16 @@ val contour :
 
     A scale read by several roles has a guide for each: a scale named by a user
     and read by [x] in one panel and by [fill] in another has an axis there and
-    a legend. Its ticks are one set, which every guide of the scale shows: the
-    scale's explicit ticks if it sets some ({!Scale.linear}); otherwise, those
-    of a facet scale and of a categorical scale with a legend are its
-    categories, and the others are chosen so that their labels overlap on none
-    of its guides ({!layout}). Their labels are in the scale's notation if it
-    sets one: [num ~scale:(Scale.linear ~notation:Percent ()) acc] labels its
-    ticks as percentages, and the guides of
-    [Scale.log ~ticks:[| 1.; 10.; 100. |] ()] show those of the three values
-    that its domain holds.
+    a legend. Its ticks are one set, which its axes, legend entries and colour
+    bars show: the scale's explicit ticks if it sets some ({!Scale.linear}),
+    which limit a band axis and a categorical legend to the categories they
+    name; otherwise, those of a facet scale and of a categorical scale with a
+    legend are its categories, and the others are chosen so that their labels
+    overlap on none of its guides ({!layout}). Facet headers name every panel,
+    whatever the ticks. Their labels are in the scale's notation if it sets one:
+    [num ~scale:(Scale.linear ~notation:Percent ()) acc] labels its ticks as
+    percentages, and the guides of [Scale.log ~ticks:[| 1.; 10.; 100. |] ()]
+    show those of the three values that its domain holds.
 
     {1:facets Facets}
 

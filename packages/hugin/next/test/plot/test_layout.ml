@@ -1555,6 +1555,21 @@ let ticks =
     [
       prop "thinning keeps labels apart and drops only those that meet one"
         gen_tick_values thinning_law;
+      test "facet headers name every panel whatever the ticks" (fun () ->
+          let scale = Scale.band ~ticks:[| "a" |] () in
+          let f =
+            dot ~x:(num ramp) ~y:(num ramp)
+              ~fx:(strings ~scale [| "a"; "b"; "c"; "a" |])
+              ()
+          in
+          equal (list string) [ "a"; "b"; "c" ]
+            (List.map
+               (fun g ->
+                 let line = List.nth g 1 in
+                 let i = String.index line '"' in
+                 String.sub line (i + 1)
+                   (String.index_from line (i + 1) '"' - i - 1))
+               (guide_lines (lay (Size.panels 40. 30.) f) "header")));
       test "thinning keeps an explicit label far from the others" (fun () ->
           let scale =
             Scale.linear ~ticks:[| 0.; 0.1; 0.2; 0.3; 5.; 10.; 10. |] ()

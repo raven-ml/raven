@@ -136,11 +136,13 @@ type _ domain =
       level and the last also its upper one, and a value beyond the domain the
       range of the step at its nearer end. It leaves {!normalize} unchanged.
       Unset counts as [false].
-    - [ticks], the guide values that every guide of the scale shows, in place of
-      those {!Ticks.choose} picks, and that stepped ranges step at: those of its
-      values that lie in the domain and are not missing for the scale, each
-      once, without minor ticks ({!Ticks.of_values}). The array is copied in and
-      out. Unset, the figure drawing the scale chooses them.
+    - [ticks], the guide values that the ticks, legend entries and colour bars
+      of the scale show, in place of those {!Ticks.choose} picks, and that
+      stepped ranges step at: those of its values that lie in the domain and are
+      not missing for the scale, each once, without minor ticks
+      ({!Ticks.of_values}). On a band scale they limit the labels of an axis and
+      the entries of a legend to the categories named. The array is copied in
+      and out. Unset, the figure drawing the scale chooses them.
     - [notation], the notation tick labels of a quantitative scale are written
       in ({!Ticks.section-labels}). Unset, they follow the rules for quantities
       and logarithms.
