@@ -49,11 +49,11 @@ let loss p x y = Nx.mean (Nx.square (Nx.sub (forward p x) y))
 let init_mlp () =
   {
     w1 = Nx.randn Nx.float32 [| d_in; d_h1 |];
-    b1 = Nx.zeros Nx.float32 [| d_h1 |];
+    b1 = Nx.copy (Nx.zeros Nx.float32 [| d_h1 |]);
     w2 = Nx.randn Nx.float32 [| d_h1; d_h2 |];
-    b2 = Nx.zeros Nx.float32 [| d_h2 |];
+    b2 = Nx.copy (Nx.zeros Nx.float32 [| d_h2 |]);
     w3 = Nx.randn Nx.float32 [| d_h2; d_out |];
-    b3 = Nx.zeros Nx.float32 [| d_out |];
+    b3 = Nx.copy (Nx.zeros Nx.float32 [| d_out |]);
   }
 
 (* MLP value_and_grad: one optimizer-less training step. *)
@@ -67,7 +67,7 @@ let mlp_grad_benchmarks params x y =
 
 (* MLP jvp: forward-mode directional derivative of the loss. *)
 let mlp_jvp_benchmarks params x y =
-  let tangents = Nx.Ptree.map mlp_ptree (fun _ t -> Nx.ones_like t) params in
+  let tangents = Nx.Ptree.map mlp_ptree (fun _ t -> Nx.copy (Nx.ones_like t)) params in
   let f p = loss p x y in
   [
     Thumper.bench "mlp jvp" (fun () ->
@@ -104,7 +104,7 @@ let chain x =
   Nx.sum !t
 
 let chain_benchmarks x0 =
-  let v = Nx.ones_like x0 in
+  let v = Nx.copy (Nx.ones_like x0) in
   [
     Thumper.bench "chain fwd (nx eager)" (fun () -> chain x0);
     Thumper.bench ~tags:[ "lab" ] "chain grad" (fun () -> Rune.grad' chain x0);
@@ -221,7 +221,7 @@ let jit_benchmarks params x x0 =
       ~setup:(fun () ->
         let n = 1 lsl 20 in
         let f = Rune.jit' (fun x -> Nx.add x (Nx.arange Nx.int64 0 n 1)) in
-        let x = Nx.zeros Nx.int64 [| n |] in
+        let x = Nx.copy (Nx.zeros Nx.int64 [| n |]) in
         ignore (Sys.opaque_identity (f x));
         (f, x))
       "arange int64 1Mi replay"

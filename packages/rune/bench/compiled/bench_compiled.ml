@@ -224,9 +224,9 @@ let reverse =
   in
   let init () =
     ( ( Nx.mul_s (uniform [| inputs; hidden |]) 0.1,
-        Nx.zeros Nx.float32 [| hidden |] ),
+        Nx.copy (Nx.zeros Nx.float32 [| hidden |]) ),
       ( Nx.mul_s (uniform [| hidden; outputs |]) 0.1,
-        Nx.zeros Nx.float32 [| outputs |] ) )
+        Nx.copy (Nx.zeros Nx.float32 [| outputs |]) ) )
   in
   let x () = uniform [| batch; inputs |] in
   let timed id step =

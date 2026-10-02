@@ -104,7 +104,7 @@ let scatter_case ~runs ~n ~k =
     Nx.create Nx.int64 [| k |]
       (Array.init k (fun i -> Int64.of_int (i * (n / k))))
   in
-  let values = Nx.ones Nx.float32 [| k; heads; width |] in
+  let values = Nx.copy (Nx.ones Nx.float32 [| k; heads; width |]) in
   let state = ref (written (Nx.zeros Nx.float32 [| n; heads; width |])) in
   let once () =
     state := step { rows; values } !state;
@@ -117,7 +117,7 @@ let scatter_case ~runs ~n ~k =
 
 (* One row written at a run-time position into a consumed cache. *)
 let window_case ~runs ~n =
-  let row = Nx.ones Nx.float32 [| 1; width |] in
+  let row = Nx.copy (Nx.ones Nx.float32 [| 1; width |]) in
   let step =
     Rune.jit
       Nx.Ptree.(tensor @-> consumes written_ptree @@ returns written_ptree)
@@ -126,7 +126,7 @@ let window_case ~runs ~n =
   let state = ref (written (Nx.zeros Nx.float32 [| n; width |])) in
   let at = ref 0 in
   let once () =
-    let pos = Nx.scalar Nx.int64 (Int64.of_int (!at mod n)) in
+    let pos = Nx.create Nx.int64 [||] [| Int64.of_int (!at mod n) |] in
     incr at;
     state := step pos !state;
     ignore (Nx.item [] !state.probe : float)
@@ -147,7 +147,7 @@ let take_grad_case ~runs ~vocab ~dim ~tokens =
   in
   let probe table = Nx.sum (Nx.slice [ Nx.R (0, 1) ] (Rune.grad' loss table)) in
   let step = Rune.jit' probe in
-  let table = Nx.ones Nx.float32 [| vocab; dim |] in
+  let table = Nx.copy (Nx.ones Nx.float32 [| vocab; dim |]) in
   let once () = ignore (Nx.item [] (step table) : float) in
   let med, best, words = timed ~warmup:2 ~runs once in
   Printf.printf
