@@ -1,0 +1,20 @@
+; Talon's side of the benchmark suite. Nothing here is attached to runtest but
+; the answer checker's own test: the data comes from the uv scripts (see
+; README.md).
+
+(library
+ (name d7)
+ (wrapped false)
+ (modules answer workload)
+ (libraries talon.next talon.next.csv talon.next.parquet bytesrw nx))
+
+(executable
+ (name runner)
+ (modules runner)
+ (libraries d7 talon.next))
+
+(test
+ (name test_answer)
+ (modules test_answer)
+ (package talon)
+ (libraries windtrap d7 talon.next))

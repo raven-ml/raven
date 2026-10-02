@@ -23,6 +23,8 @@ and compares their answers with the committed DuckDB answers.
 | `thumper.py` | Thumper's baseline format and machine key |
 | `h2o-baselines.thumper`, `tpch-baselines.thumper` | The baselines, once recorded |
 | `answers/` | DuckDB's answers at the CI size |
+| `runner.ml` | Write talon's answer to a question, check talon's answers |
+| `answer.ml`, `workload.ml` | The OCaml twins of `answer.py` and `workload.py` |
 
 Every script pins the same environment in its inline metadata: Python 3.13,
 DuckDB 1.5.6, Polars 1.44.2, numpy 2.5.3 and pyarrow 25.0.1, resolved with
@@ -126,20 +128,17 @@ nulls and NaN with NaN; every other value agrees exactly.
 
 ## Talon's queries
 
-They go in this directory, in OCaml, once talon can run them: one thumper
-executable per workload family, named so that its baseline is `h2o.thumper` or
-`tpch.thumper`, with case ids that end in `/talon`, such as
-`groupby/1e8/q03/talon`. Talon loads H2O's tables with the same declared schema
-as the baselines, identifiers as `String`, never as `Categorical`.
+`runner.exe` writes and checks talon's answers:
 
-TPC-H's talon queries state their joins in a committed order, since talon does
-not reorder joins; the baselines use each engine's own planning.
+```sh
+R=_build/default/packages/talon/next/bench/runner.exe
+$R questions groupby/1e7                      # the ids of a workload's questions
+$R answer DATA tpch/sf1/q21 q21.csv           # write one canonical answer
+$R check packages/talon/next/bench/answers DATA   # check every CI answer
+```
 
-The suite also gets a CI test that runs every question at the CI size and
-checks the answers against `answers/` as `answers.py` does. Its data comes from
-the generators, so raven's CI then needs uv, Python, and network access: uv
-fetches the pinned packages, and DuckDB's `INSTALL tpch` downloads the
-extension.
+`check` runs every question at the CI size and compares its answer with the
+committed one, as `answers.py` does.
 
 The comparison reads talon's section and the baselines' section with the same
 machine key. A question passes when the median of `…/talon` is at most the
