@@ -151,8 +151,6 @@ let ends p i =
   let u = p.us.(i) in
   match p.band with Some w -> (u -. (w /. 2.), u +. (w /. 2.)) | None -> (u, u)
 
-let clamp u = Float.min 1. (Float.max 0. u)
-
 let extent r axis =
   let n = length r in
   let near, far =
@@ -174,11 +172,8 @@ let extent r axis =
   for i = 0 to n - 1 do
     if not r.dropped.(i) then begin
       let a, b = cover i in
-      (* An extent wholly on one side of the domain covers none of it. *)
-      if not ((a < 0. && b < 0.) || (a > 1. && b > 1.)) then begin
-        lo.(i) <- clamp a;
-        hi.(i) <- clamp b
-      end
+      lo.(i) <- a;
+      hi.(i) <- b
     end
   done;
   (lo, hi)

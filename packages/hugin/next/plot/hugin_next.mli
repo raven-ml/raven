@@ -469,7 +469,8 @@ val rect :
     Likewise along y. So [rect] draws bars, cells, heatmaps, spans and, with
     [stroke] and no [fill], frames. It is filled with [fill], or with the accent
     unless [stroke] alone is given, and outlined with [stroke] at the theme's
-    outline width.
+    outline width. A rectangle is cut at the domain's edges ({!Mark.project}),
+    so the outline of one that reaches beyond the domain runs along its edge.
 
     A rect whose [x] and [y] read band scales without padding, with neither
     [x2], [y2] nor [stroke], and no two of whose rows in a panel share a cell,
@@ -1290,6 +1291,9 @@ module Mark : sig
       ({!Hugin_next.section-missing}): it joins {!positions} into paths and
       gives them to {!project}, which cuts them at the domain's edges, and
       places symbols and texts at {!points}, which are [nan] outside it.
+      {!positions} and {!extent} are not clipped: the domain applies where a
+      value enters the page. Ink is clipped only where it has no geometry to
+      cut: {!image} clips an image that reaches beyond the domain to it.
       {!index} gives its datum, and {!get} and {!normalized} its own values,
       missing only where they are missing, so that a contour knows the x of a
       column one of whose samples is dropped. Rows are valid only during the
@@ -1370,10 +1374,11 @@ module Mark : sig
       - for a constant [x], from [x] to [x];
       - if the mark binds no [x], from [0.] to [1.].
 
-      Ends outside the domain are clamped into \[[0];[1]\], and an interval
-      wholly below [0.] or wholly above [1.] covers [(nan, nan)], as does a
-      dropped row. [extent rows `Y] is likewise along y, with [y] and [y2]. The
-      arrays are fresh. *)
+      Ends outside the domain are kept, as {!positions} keeps positions: a box
+      given to {!project} is cut there, so the stroke of a box the domain cuts
+      runs along the domain's edge. A dropped row covers [(nan, nan)].
+      [extent rows `Y] is likewise along y, with [y] and [y2]. The arrays are
+      fresh. *)
 
   val projection : rows -> Coord.projection
   (** [projection rows] is the panel's projection, which puts the normalised

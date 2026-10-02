@@ -466,18 +466,20 @@ let datum px lead k =
 
 let unit_square = Box2.v 0. 0. 1. 1.
 
-(* An image is placed by its positions, which a zoom can take beyond the domain,
-   and then clipped to the domain: it has no ink beyond its box. *)
+(* [inside (a, b) i] is [true] iff the extent of row [i] lies in the domain. *)
+let inside (a, b) i = Float.min a.(i) b.(i) >= 0. && Float.max a.(i) b.(i) <= 1.
+
+(* An image is placed by its extents, which a zoom can take beyond the domain.
+   Pixels have no geometry to crop, so an image reaching beyond the domain is
+   clipped to it, the one clip of ink. *)
 let draw_image rows =
   match first_value rows pixels_param with
   | None -> Picture.empty
   | Some (Nx.P px) ->
       let at = Coord.point (Mark.projection rows) in
-      let get role = Option.get (Mark.get rows role) in
-      let x0 = get Role.x and x1 = get Role.x2 in
-      let y0 = get Role.y and y1 = get Role.y2 in
+      let ((x0, x1) as xe) = Mark.extent rows `X
+      and ((y0, y1) as ye) = Mark.extent rows `Y in
       let index = Mark.index rows and lead = lead px in
-      let within u = 0. <= u && u <= 1. in
       let image i =
         if not (finite x0.(i) && finite y0.(i)) then Picture.empty
         else
@@ -492,7 +494,7 @@ let draw_image rows =
             | None -> Picture.image box px
             | Some plan -> Picture.image plan.window (Pixels.gather plan px)
           in
-          if List.for_all within [ x0.(i); x1.(i); y0.(i); y1.(i) ] then picture
+          if inside xe i && inside ye i then picture
           else Picture.clip (Mark.project rows (Path.rect unit_square)) picture
       in
       Picture.group (List.init (Mark.length rows) image)

@@ -187,19 +187,26 @@ let extents =
       [ Mark.bind Role.x (const 0.3) ],
       ([| 0.3 |], [| 0.3 |]) );
     ("without x a row covers the panel", [], ([| 0. |], [| 1. |]));
-    ( "an end beyond the domain is clamped into it",
+    ( "an end beyond the domain is kept",
       [
         Mark.bind Role.x
           (num ~scale:(Scale.linear ~domain:(0., 4.) ()) (f64 [| 2. |]));
         Mark.bind Role.x2 (num (f64 [| 6. |]));
       ],
-      ([| 0.5 |], [| 1. |]) );
-    ( "a length beyond the domain stops at its edge",
+      ([| 0.5 |], [| 1.5 |]) );
+    ( "a length beyond the domain is kept",
       [
         Mark.bind Role.x
           (num ~scale:(Scale.linear ~domain:(-4., 4.) ()) (f64 [| -6. |]));
       ],
-      ([| 0.5 |], [| 0. |]) );
+      ([| 0.5 |], [| -0.25 |]) );
+    ( "an extent wholly beyond the domain is kept",
+      [
+        Mark.bind Role.x
+          (num ~scale:(Scale.linear ~domain:(0., 4.) ()) (f64 [| 5. |]));
+        Mark.bind Role.x2 (num (f64 [| 6. |]));
+      ],
+      ([| 1.25 |], [| 1.5 |]) );
   ]
 
 let extent_case (_, bindings, expected) =
@@ -490,17 +497,23 @@ let domain =
           equal (array bool)
             [| false; true; false; true |]
             (Array.map is_nan xs));
-      test "an extent wholly beyond the domain covers nothing" (fun () ->
-          let ext =
-            rows_of
-              [
-                Mark.bind Role.x
-                  (num ~scale:(Scale.linear ~domain:(0., 4.) ()) (f64 [| 5. |]));
-                Mark.bind Role.x2 (num (f64 [| 6. |]));
-              ]
-              (fun r -> Mark.extent r `X)
+      test "project drops a box wholly beyond the domain" (fun () ->
+          let got =
+            rows_of [] (fun r ->
+                Path.bounds
+                  (Mark.project r (Path.rect (Box2.v 1.25 0.25 0.25 0.5))))
           in
-          equal (pair floats floats) ([| nan |], [| nan |]) ext);
+          equal page_box None got);
+      test "project cuts a box at the domain's edge" (fun () ->
+          let got, corner, edge =
+            rows_of [] (fun r ->
+                let at = Coord.point (Mark.projection r) in
+                ( Path.bounds
+                    (Mark.project r (Path.rect (Box2.v 0.5 0.25 1. 0.5))),
+                  at 0.5 0.25,
+                  at 1. 0.75 ))
+          in
+          equal page_box (Some (Box2.of_pts corner edge)) got);
       test "project cuts a path at the domain's edges" (fun () ->
           let got, edge, start =
             rows_of [] (fun r ->
