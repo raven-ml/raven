@@ -226,6 +226,10 @@ let validate (type b) ~device ~tol ~exact fx cfg
     (floats (mem "short_top_values" fx))
     (row 1 "short_top_ids")
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let weights = ref "" and config = ref "" in
   let fixture = ref "fixtures/llama-3.2-1b.json" in
@@ -247,9 +251,9 @@ let () =
   let repo = string (mem "repo" fx) in
   Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
     (string (mem "weights_sha256" fx));
-  let device = if !jit = "" then None else Some (Devices.of_name !jit) in
+  let device = if !jit = "" then None else Some (List.hd (devices_of !jit)) in
   let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.on [ d ]) device
   in
   let (Llama.Dtype dt) = Llama.dtype_of_string !dtype in
   let cfg, p =

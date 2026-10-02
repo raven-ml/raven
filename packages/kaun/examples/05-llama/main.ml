@@ -19,7 +19,7 @@ open Kaun
    whole there. *)
 let parallel ds role ~axis =
   match role with
-  | Llama.Whole -> Nx.Placement.replicated ds
+  | Llama.Whole -> Nx.Placement.on ds
   | Column | Row | Kv_heads -> Nx.Placement.sharded ~axis ds
 
 (* The sampling parameters are tensors, so a compiled step reads them as
@@ -125,6 +125,10 @@ let load_tokenizer () =
   | Ok t -> t
   | Error e -> failwith ("tokenizer: " ^ e)
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let prompt = ref "The capital of France is" in
   let count = ref 24 and devices = ref "" in
@@ -137,8 +141,8 @@ let () =
       ( "--devices",
         Arg.Set_string devices,
         "Compile the decode step over these devices, tensor-parallel over \
-         several: a device (METAL), a CPU count (4 = CPU:1..CPU:4) or a \
-         comma-separated list" );
+         several: a device (METAL) or a comma-separated list \
+         (CPU:1,CPU:2,CPU:3,CPU:4)" );
       ( "--dtype",
         Arg.Set_string dtype,
         "float32, float16 or bfloat16 (default: the checkpoint's own)" );
@@ -157,7 +161,7 @@ let () =
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
   let devices =
     if !devices = "" then None
-    else Some (Devices.parse !devices)
+    else Some (devices_of !devices)
   in
   (* At the checkpoint's own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =

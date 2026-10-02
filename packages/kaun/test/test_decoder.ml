@@ -406,12 +406,21 @@ let test_generation_matches_recomputation () =
   let index = ref (Cache_index.rows ~context [| Array.length start |]) in
   let placed =
     Nx.Ptree.map caches
-      (fun _ t -> Nx.place (Nx.Placement.device Devices.cpu1) t)
+      (fun _ t -> Nx.place (Nx.Placement.on [ Nx.Device.cpu 1 ]) t)
       (cache ~slots:context)
   in
   let s = ref (step (ids [| start |]) !index placed) in
+  (* Where each pool's storage starts: a call that wrote the pools in their own
+     storage returns them at the addresses it was given. *)
   let addresses kv =
-    Nx.Ptree.fold caches (fun _ t acc -> acc @ Devices.addresses t) kv []
+    let of_leaf x =
+      match Nx.Repr.v x with
+      | Placed p ->
+          List.map Nx_device.Buffer.address
+            (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
+      | Host _ | Traced _ -> invalid_arg "addresses: not a placed value"
+    in
+    Nx.Ptree.fold caches (fun _ t acc -> acc @ of_leaf t) kv []
   in
   let sampled () = fst (fst !s) and sampled_from () = snd (fst !s) in
   List.iteri

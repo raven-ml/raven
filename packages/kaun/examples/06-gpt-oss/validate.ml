@@ -136,7 +136,7 @@ let compiled devices f x =
   | None -> f x
   | Some ds ->
       Nx.place Nx.Placement.host
-        (Rune.jit' f (Nx.place (Nx.Placement.replicated ds) x))
+        (Rune.jit' f (Nx.place (Nx.Placement.on ds) x))
 
 let number j =
   match j with
@@ -556,7 +556,7 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
   Option.iter
     (fun devices ->
       let whole = compiled_cached cfg p
-      and placement = Nx.Placement.replicated devices in
+      and placement = Nx.Placement.on devices in
       close ~tol:1e-6
         (name "one program per layer kind is the whole-model program")
         (flat (chunked whole))
@@ -617,6 +617,10 @@ let models ~devices ~dtype ~label fx path =
         ~exact ~label fx case cfg p dt)
     (members (mem "cases" fx))
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let fixtures = ref "fixtures" and devices = ref "" in
   let dtype = ref "float32" in
@@ -633,8 +637,8 @@ let () =
       ( "--devices",
         Arg.Set_string devices,
         "Compile the functions under test over these devices, expert-parallel \
-         over several: a device (METAL), a CPU count (4 = CPU:1..CPU:4) or a \
-         comma-separated list" );
+         over several: a device (METAL) or a comma-separated list \
+         (CPU:1,CPU:2,CPU:3,CPU:4)" );
       ("--dtype", Arg.Set_string dtype, "float32 (default) or bfloat16");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
@@ -642,7 +646,7 @@ let () =
      FILE] [--devices LIST] [--dtype DT]";
   let devices =
     if !devices = "" then None
-    else Some (Devices.parse !devices)
+    else Some (devices_of !devices)
   in
   let weights fx given =
     let repo = string (mem "repo" fx) in

@@ -11,11 +11,5 @@
   jsont.bytesrw
   nx
   nx.device
-  nx.cuda.device
   rune
-  unix
-  (select
-   metal.ml
-   from
-   (nx.metal.device -> metal.macos.ml)
-   (-> metal.other.ml))))
+  unix))

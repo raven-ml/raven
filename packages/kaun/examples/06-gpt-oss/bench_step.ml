@@ -69,7 +69,7 @@ let floats dt ~scale shape =
     Nx.contiguous (Nx.slice [ R (0, rows) ] tiled)
 
 let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
-  let placement = Option.map Nx.Placement.device device in
+  let placement = Option.map (fun d -> Nx.Placement.on [ d ]) device in
   let place x = match placement with None -> x | Some p -> Nx.place p x in
   let f ~scale shape = place (floats dt ~scale shape) in
   let linear ?(bias = true) i o =
@@ -125,10 +125,12 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
 
 let run ?device c params dt ~tokens ~steps ~context =
   let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.on [ d ]) device
   in
   let step =
-    Layer_loop.greedy ?placement:(Option.map Nx.Placement.device device) c
+    Layer_loop.greedy
+      ?placement:(Option.map (fun d -> Nx.Placement.on [ d ]) device)
+      c
       params
   in
   let timed (caches, index, ids) =
@@ -180,6 +182,10 @@ let run ?device c params dt ~tokens ~steps ~context =
     (1e3 *. times.(steps / 2))
     (1e3 *. times.(steps - 1))
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let jit = ref "METAL" and layers = ref 1 and steps = ref 5 in
   let tokens = ref 1 and context = ref 64 and dtype = ref "bfloat16" in
@@ -199,7 +205,7 @@ let () =
      [--context N] [--dtype DT] [--small-vocab]";
   let c = cfg !layers in
   let c = if !skip_tables then { c with Gpt_oss.vocab_size = 1024 } else c in
-  let device = if !jit = "" then None else Some (Devices.of_name !jit) in
+  let device = if !jit = "" then None else Some (List.hd (devices_of !jit)) in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
   let t0 = Unix.gettimeofday () in
   let p = params ?device c dt ~skip_tables:!skip_tables in

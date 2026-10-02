@@ -38,7 +38,7 @@ let cpu1_device =
     (Host_visible
        { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
 
-let cpu1 = Nx.Placement.device cpu1_device
+let cpu1 = Nx.Placement.on [ cpu1_device ]
 
 let params () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->

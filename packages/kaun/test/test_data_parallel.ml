@@ -17,7 +17,7 @@
 open Windtrap
 open Kaun
 
-let rows = Nx.Placement.sharded ~axis:0 [ Devices.cpu1; Devices.cpu2 ]
+let rows = Nx.Placement.sharded ~axis:0 [ Nx.Device.cpu 1; Nx.Device.cpu 2 ]
 
 let batch = 8
 let seq = 4

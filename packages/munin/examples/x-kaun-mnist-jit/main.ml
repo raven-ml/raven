@@ -89,15 +89,11 @@ let () =
       }
   in
   (* The parameters start on the device, so the compiled step runs there and
-     keeps them there. On a GPU, Rune.compiled computes the evaluation's eager
-     operations there too. *)
+     keeps them there. *)
   let on_device =
-    let gpu d = Nx.Placement.device ~backend:Rune.compiled d in
-    match String.uppercase_ascii !device with
-    | "METAL" -> gpu (Metal.device ())
-    | "CUDA" -> gpu (Nx_cuda_device.v 0)
-    | "CPU" -> Nx.Placement.host
-    | d -> failwith (d ^ ": not METAL, CPU or CUDA")
+    match Nx.Device.of_string !device with
+    | Ok ws -> Nx.Placement.on (Nx.Device.all ws)
+    | Error e -> failwith e
   in
   params := Nx.Ptree.map cnn (fun _ t -> Nx.place on_device t) !params;
   let state = Vega.sgd_init cnn !params in
@@ -164,7 +160,9 @@ let () =
       Data.batches2 ~batch_size:500 (x_test, y_test)
       |> Seq.fold_left
            (fun (correct, total) (x, y) ->
-             let acc = Metric.accuracy (forward params x) y in
+             (* The logits are read back: eager metrics compute on the host. *)
+             let logits = Nx.place Nx.Placement.host (forward params x) in
+             let acc = Metric.accuracy logits y in
              let n = (Nx.shape x).(0) in
              (correct +. (acc *. float_of_int n), total + n))
            (0., 0)

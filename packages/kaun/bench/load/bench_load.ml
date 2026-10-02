@@ -9,6 +9,10 @@
    It prints the wall time to the end of each phase; [run.sh] measures the
    process's peak memory around it, one process per configuration. *)
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let repo = ref Llama.default_repo in
   let dtype = ref "" and device = ref "" in
@@ -33,9 +37,11 @@ let () =
     if !dtype = "" then Llama.stored_dtype ckpt
     else Llama.dtype_of_string !dtype
   in
-  let device = if !device = "" then None else Some (Devices.of_name !device) in
+  let device =
+    if !device = "" then None else Some (List.hd (devices_of !device))
+  in
   let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+    Option.map (fun d _ ~axis:_ -> Nx.Placement.on [ d ]) device
   in
   let params = Llama.of_hf ?placement cfg dt ckpt in
   let imported = since () in

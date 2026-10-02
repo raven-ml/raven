@@ -68,7 +68,7 @@ let profiled file f =
    With [devices], the step compiles for them and the caches are placed there as
    the parameters are. Under [profile], the prompt's call is profiled. *)
 let generate ?devices ?profile cfg params dt ~log ~count ~on_token prompt =
-  let placement = Option.map Nx.Placement.replicated devices in
+  let placement = Option.map Nx.Placement.on devices in
   let step = Layer_loop.greedy ?placement cfg params in
   let timed caches index ids =
     let t0 = Unix.gettimeofday () in
@@ -143,6 +143,10 @@ let effort_of_string = function
   | "high" -> Harmony.High
   | s -> invalid_arg ("reasoning " ^ s ^ ": expected low, medium or high")
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let repo = ref "tiny-random/gpt-oss-mxfp4" in
   let devices = ref "" and count = ref 0 and dtype = ref "" in
@@ -157,8 +161,7 @@ let () =
       ( "--devices",
         Arg.Set_string devices,
         "Compile the step over these devices, expert-parallel over several: a \
-         device (METAL), a CPU count (4 = CPU:1..CPU:4) or a comma-separated \
-         list" );
+         device (METAL) or a comma-separated list (CPU:1,CPU:2,CPU:3,CPU:4)" );
       ( "--dtype",
         Arg.Set_string dtype,
         "float32 or bfloat16 (default: the checkpoint's own)" );
@@ -189,7 +192,7 @@ let () =
     else Gpt_oss.dtype_of_string !dtype
   in
   let devices =
-    if !devices = "" then None else Some (Devices.parse !devices)
+    if !devices = "" then None else Some (devices_of !devices)
   in
   let count default = if !count > 0 then !count else default in
   let profile = if !profile = "" then None else Some !profile in

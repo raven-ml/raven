@@ -10,7 +10,7 @@ let device =
   Nx_device.Driver.device ~name:"TEST" ~arch:"test" ~budget:max_int
     (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
-let place x = Nx.place (Nx.Placement.device device) x
+let place x = Nx.place (Nx.Placement.on [ device ]) x
 
 (* The bytes read from the device so far. *)
 let bytes_read () = Nx_device.Stats.bytes_out (Nx_device.stats device)

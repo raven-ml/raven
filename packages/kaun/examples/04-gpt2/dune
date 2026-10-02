@@ -1,6 +1,6 @@
 (executables
  (names main train)
- (modules gpt2 devices metal main train)
+ (modules gpt2 main train)
  (libraries
   kaun
   kaun.hf
@@ -11,11 +11,5 @@
   nx
   nx.dtype
   nx.device
-  nx.cuda.device
   rune
-  unix
-  (select
-   metal.ml
-   from
-   (nx.metal.device -> metal.macos.ml)
-   (-> metal.other.ml))))
+  unix))

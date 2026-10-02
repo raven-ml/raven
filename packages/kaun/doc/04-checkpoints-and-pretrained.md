@@ -152,7 +152,7 @@ Each name is written at the field it fills. A rename is a different string at th
 
 ## Placing Weights on a Device
 
-A compiled function that captures host weights uploads them at its first call, once per compiled function, and the host copy stays alive beside the device copy. `Nx.place` copies a tensor into a device buffer and returns the copy, a value with the same elements, on a device (an `Nx_device.t`, such as `Nx_metal_device.v 0`); the source is unchanged. A compiled function that captures such a value uses its buffer directly: nothing is uploaded, and prefill, decode and any other compiled function over the model share one copy. An importer places each leaf as it builds it, through a let-bound `place` that serves leaves of any dtype:
+A compiled function that captures host weights uploads them at its first call, once per compiled function, and the host copy stays alive beside the device copy. `Nx.place` copies a tensor into a device buffer and returns the copy, a value with the same elements, on a device (an `Nx.Device.t`, such as `Nx.Device.gpu ()`); the source is unchanged. A compiled function that captures such a value uses its buffer directly: nothing is uploaded, and prefill, decode and any other compiled function over the model share one copy. An importer places each leaf as it builds it, through a let-bound `place` that serves leaves of any dtype:
 
 ```ocaml
 let mlp_of_file ?placement dt ckpt =
@@ -173,7 +173,7 @@ let mlp_of_file ?placement dt ckpt =
   }
 ```
 
-Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on Metal is `mlp_of_file ~placement:(Nx.Placement.device (Nx_metal_device.v 0)) dt ckpt`. The examples' importers take `?placement` as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. A view of a placed value, such as a transpose or a slice, stays placed and a compiled function reads it in place; any other nx operation on a placed value outside a compiled function computes with the placement's backend, which on a GPU must be `Rune.compiled` (`Nx.Placement.device ~backend:Rune.compiled d`), so place the final form of each leaf.
+Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU is `mlp_of_file ~placement:(Nx.Placement.on [ Nx.Device.gpu () ]) dt ckpt`. The examples' importers take `?placement` as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. A view of a placed value, such as a transpose or a slice, stays placed and a compiled function reads it in place; any other nx operation on a GPU value outside a compiled function raises, so place the final form of each leaf.
 
 ## Fetching From the Hub: kaun.hf
 

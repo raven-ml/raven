@@ -53,7 +53,7 @@ let load_tokenizer () =
 
 (* The placement that holds every leaf and cache pool whole on [device]. *)
 let whole_on device =
-  Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+  Option.map (fun d _ ~axis:_ -> Nx.Placement.on [ d ]) device
 
 (* Greedy decoding with a key-value cache. One step function serves the whole
    generation: it reads the tokens its index places, consumes the caches, fills
@@ -162,6 +162,10 @@ let check cfg params dt ids =
     worst;
   if not (worst < 1e-4) then exit 1
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let prompt = ref default_prompt in
   let count = ref 10 in
@@ -178,8 +182,8 @@ let () =
          the prompt, and exit" );
       ( "--jit",
         Arg.Set_string jit,
-        "Compile the forward pass for this device (CPU or CUDA); eager when \
-         omitted" );
+        "Compile the forward pass for this device (CPU, METAL or CUDA:i); \
+         eager when omitted" );
       ( "--dtype",
         Arg.Set_string dtype,
         "Model dtype: float32, float16 or bfloat16 (default: the checkpoint's \
@@ -194,7 +198,7 @@ let () =
   let (Gpt2.Dtype dt) =
     if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
   in
-  let device = if !jit = "" then None else Some (Devices.of_name !jit) in
+  let device = if !jit = "" then None else Some (List.hd (devices_of !jit)) in
   let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in

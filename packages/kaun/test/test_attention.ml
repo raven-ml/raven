@@ -1695,7 +1695,7 @@ let test_one_storage_behind_two_caches_raises () =
   let c =
     Nx.Ptree.map
       (Nx.Ptree.instantiate (module Attention.Cache))
-      (fun _ t -> Nx.place (Nx.Placement.device Devices.cpu1) t)
+      (fun _ t -> Nx.place (Nx.Placement.on [ Nx.Device.cpu 1 ]) t)
       (cache 4)
   in
   raises_match

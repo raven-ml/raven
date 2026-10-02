@@ -351,6 +351,10 @@ let emit_metrics buf ~device ~steps ~n_params ~initial_loss records =
     records;
   Buffer.add_string buf "\n ]\n}\n"
 
+(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
+let devices_of s =
+  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+
 let () =
   let device = ref "CPU" in
   let devices = ref "" in
@@ -370,11 +374,13 @@ let () =
   let save_weights = ref "" in
   Arg.parse
     [
-      ("--device", Arg.Set_string device, "Device to jit for (CPU or CUDA)");
+      ( "--device",
+        Arg.Set_string device,
+        "Device to jit for (CPU, METAL or CUDA:i)" );
       ( "--devices",
         Arg.Set_string devices,
-        "Data-parallel device list: a CPU count (2 = CPU:1,CPU:2) or a \
-         comma-separated list (CUDA:0,CUDA:1)" );
+        "Data-parallel device list, comma-separated (CPU:1,CPU:2 or \
+         CUDA:0,CUDA:1)" );
       ( "--compute-dtype",
         Arg.Set_string compute_dtype,
         "Forward/backward dtype: float32 (default), bfloat16 or float16. \
@@ -441,7 +447,7 @@ let () =
       (* The batch, the same every step, is placed on the device once, so the
          step runs there; the parameters start on the host and stay on the
          device after the first step. *)
-      let on_device = Nx.Placement.device (Devices.of_name !device) in
+      let on_device = Nx.Placement.on (devices_of !device) in
       let inputs = Nx.place on_device inputs
       and targets = Nx.place on_device targets in
       if !compute_dtype = "float16" then begin
@@ -470,7 +476,7 @@ let () =
     else begin
       if !compute_dtype = "float16" then
         failwith "--compute-dtype float16 does not support --devices";
-      let devs = Devices.parse !devices in
+      let devs = devices_of !devices in
       device := String.concat "," (List.map Nx_device.name devs);
       (* The batch, the same every step, is split on axis 0 once; the key and
          the parameters start on the host and enter as a copy on each device. *)

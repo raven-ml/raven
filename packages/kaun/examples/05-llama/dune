@@ -1,6 +1,6 @@
 (executables
  (names main validate)
- (modules llama devices metal main validate)
+ (modules llama main validate)
  (libraries
   kaun
   kaun.hf
@@ -9,11 +9,5 @@
   brot
   nx
   nx.device
-  nx.cuda.device
   rune
-  unix
-  (select
-   metal.ml
-   from
-   (nx.metal.device -> metal.macos.ml)
-   (-> metal.other.ml))))
+  unix))

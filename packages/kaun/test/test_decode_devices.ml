@@ -30,13 +30,7 @@ let caches : Nx.float32_t Attention.Cache.t list Nx.Ptree.t =
   Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
 
 (* Test devices over the host's memory, which the host addresses as it is. *)
-let cpus =
-  List.init 4 (fun i ->
-      Nx_device.Driver.device
-        ~name:(Printf.sprintf "CPU:%d" (i + 1))
-        ~arch:"test" ~budget:max_int
-        (Host_visible
-           { memory = Nx_device.Driver.host_memory; mapping = Some Identity }))
+let cpus = Nx.Device.all [ Cpu 1; Cpu 2; Cpu 3; Cpu 4 ]
 
 (* Where each pool's storage starts on each device: a call that wrote the pools
    in their own storage returns them at the addresses it was given. *)
@@ -105,8 +99,7 @@ let parallel m =
   in
   {
     m with
-    tok =
-      { Embedding.table = Nx.place (Nx.Placement.replicated cpus) m.tok.table };
+    tok = { Embedding.table = Nx.place (Nx.Placement.on cpus) m.tok.table };
     blocks = List.map block m.blocks;
   }
 
