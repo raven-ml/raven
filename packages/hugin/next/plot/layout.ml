@@ -37,6 +37,7 @@ let pad_em = 0.25 (* Between ticks, labels and titles, swatches and labels. *)
 let clear_em = 0.5 (* Between the labels of one axis or legend. *)
 let gap_em = 1.
 let swatch_em = 1. (* Swatches and the width of colour bars. *)
+let title_em = 1.2 (* Figure titles, in bold. *)
 let x_spacing_em = 5. (* The spacing ticks aim for on x axes and colour bars. *)
 let y_spacing_em = 3.5 (* On y axes. *)
 
@@ -231,6 +232,12 @@ let axis_title cx a (t : Ticks.t) =
   Option.map
     (set cx ~halign ~valign 1.)
     (guide_title cx.scales.(a.a_scale) t.note)
+
+(* [heading_text kind head] is the size, in em, and the text of a heading. *)
+let heading_text kind head =
+  match kind with
+  | Figure_title -> (title_em, Text.bold head)
+  | Facet_title -> (1., head)
 
 let header cx a cat =
   let halign, valign, _ = outer_align a.a_side in
@@ -558,8 +565,9 @@ let rec natural cx unit = function
       let m = measure_grid cx unit g in
       let rows = aspect_rows m m.cols_least in
       (sum m.cols_least +. sum m.cgaps, sum rows +. sum m.rgaps)
-  | Heading { head; hside; _ } ->
-      let l = set cx 1. head in
+  | Heading { kind; head; hside; _ } ->
+      let k, head = heading_text kind head in
+      let l = set cx k head in
       if vertical hside then (height l, width l) else (width l, height l)
   | Legend ls ->
       let d = dims cx ls in
@@ -931,12 +939,13 @@ let place_legend cx acc ls cell span =
         }
         :: acc.legends
 
-let place_heading cx ~owner ~align ~head ~side cell span outer =
+let place_heading cx ~owner ~kind ~align ~head ~side cell span outer =
   let span = Option.value span ~default:cell in
   let _, valign, turned = outer_align side in
+  let k, head = heading_text kind head in
   if turned then
     let x = match side with `Left -> Box2.maxx cell | _ -> Box2.minx cell in
-    place_text cx owner ~halign:`Center ~valign ~turned ~data:false 1. head
+    place_text cx owner ~halign:`Center ~valign ~turned ~data:false k head
       (P2.v x (P2.y (Box2.mid span)))
   else
     let x =
@@ -944,14 +953,14 @@ let place_heading cx ~owner ~align ~head ~side cell span outer =
       | `Center ->
           (* Centred on the data areas, but within the figure it titles, which
              its track makes at least as wide as itself. *)
-          let half = width (set cx ~halign:align ~valign 1. head) /. 2. in
+          let half = width (set cx ~halign:align ~valign k head) /. 2. in
           let lo = Box2.minx outer +. half and hi = Box2.maxx outer -. half in
           Float.max lo (Float.min hi (P2.x (Box2.mid span)))
       | `Left -> Box2.minx outer
       | `Right -> Box2.maxx outer
     in
     let y = match side with `Bottom -> Box2.miny cell | _ -> Box2.maxy cell in
-    place_text cx owner ~halign:align ~valign ~turned ~data:false 1. head
+    place_text cx owner ~halign:align ~valign ~turned ~data:false k head
       (P2.v x y)
 
 let union h h' =
@@ -969,9 +978,9 @@ let rec place cx acc unit item box ~span ~outer =
       let b = place_leaf cx acc l box in
       (Some b, b)
   | Grid g -> place_grid cx acc unit g box
-  | Heading { owner; align; head; hside } ->
+  | Heading { owner; kind; align; head; hside } ->
       acc.titles <-
-        place_heading cx ~owner ~align ~head ~side:hside box span outer
+        place_heading cx ~owner ~kind ~align ~head ~side:hside box span outer
         :: acc.titles;
       (None, box)
   | Legend ls ->

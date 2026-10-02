@@ -913,12 +913,13 @@ val share : (string * sharing) list -> t -> t
     that its [fx] or [fy] reads, since that scale makes the panels. *)
 
 val title : ?align:Text.Layout.halign -> Text.t -> t -> t
-(** [title ~align s f] is [f] with the title [s] above it, set in the theme's
-    faces at its base size. [align] defaults to [`Center], which centres the
-    title on the data areas of [f], moved as little as keeps it within [f] with
-    its protrusions and legends; [`Left] and [`Right] align it with the left or
-    right edge of [f] with its protrusions, where panel labels such as (a) go.
-    Titles nest: [title a (title b f)] draws [a] above [b]. *)
+(** [title ~align s f] is [f] with the title [s] above it, set bold in the
+    theme's faces at [1.2] em ({!Theme.section-lengths}). [align] defaults to
+    [`Center], which centres the title on the data areas of [f], moved as little
+    as keeps it within [f] with its protrusions and legends; [`Left] and
+    [`Right] align it with the left or right edge of [f] with its protrusions,
+    where panel labels such as (a) go. Titles nest: [title a (title b f)] draws
+    [a] above [b]. *)
 
 val coord : Coord.t -> t -> t
 (** [coord c f] draws the panels of [f] in the coordinate system [c]. A panel
@@ -1045,7 +1046,8 @@ module Theme : sig
     t
   (** [v ~ink ~paper ~accent ~size ~fonts ~palette ~scheme ~locale ()] is the
       theme with:
-      - [ink], the colour of text, axes and rules. Defaults to [Color.gray 0.1].
+      - [ink], the colour of text, axes and rules, of which labels and axes take
+        a part ({!section-lengths}). Defaults to [Color.gray 0.1].
       - [paper], the colour {!draw} paints under the figure;
         {!Color.transparent} paints nothing. Defaults to {!Color.white}.
       - [accent], the colour of marks without a colour channel. Defaults to the
@@ -1101,18 +1103,21 @@ module Theme : sig
 
       Every other length a figure needs is a multiple of the base size, so a
       theme of size [8.] sets a figure for a paper column: tick labels, legend
-      entries and facet headers at [0.9] em, and the titles of channels and
-      figures at [1] em; ticks [0.35] em long and [0.25] em from their labels,
-      the labels of one axis or legend at least [0.5] em apart, and titles
-      [0.25] em from what they title; ticks aiming to lie [5] em apart on x
-      axes and colour bars and [3.5] em apart on y axes, or twice the mean
-      extent of their labels if that is more
+      entries and facet headers at [0.9] em, the titles of channels at [1] em,
+      and the titles of figures at [1.2] em in bold; ticks [0.35] em long and
+      [0.25] em from their labels, the labels of one axis or legend at least
+      [0.5] em apart, and titles [0.25] em from what they title; ticks aiming to
+      lie [5] em apart on x axes and colour bars and [3.5] em apart on y axes,
+      or twice the mean extent of their labels if that is more
       ({!Hugin_next_kit.Ticks.choose}); legend swatches [1] em square and [0.25]
       em from their labels, and colour bars [1] em wide; axis lines, ticks and
-      the outlines of marks [0.08] em wide, and grid lines [0.06] em wide in the
-      ink at a fifth of its opacity; lines and rules [0.15] em wide; dots of the
-      area of a circle [0.5] em across; and [1] em added to the protrusions that
-      meet a gap between grid cells.
+      the outlines of marks [0.08] em wide, and grid lines [0.06] em wide; lines
+      and rules [0.15] em wide; dots of the area of a circle [0.5] em across;
+      and [1] em added to the protrusions that meet a gap between grid cells.
+
+      Text and axes are in the ink, their lesser parts at a fraction of its
+      opacity: tick and legend labels at [0.75], axis lines and ticks at [0.6],
+      and grid lines at [0.2]. Titles and facet headers take the ink whole.
 
       {1:ranges Ranges}
 

@@ -32,12 +32,14 @@ type leaf = {
 
 type legend_spec = { ls_id : id; ls_scale : int; ls_side : side; ls_bar : bool }
 type track = Flex of float | Fixed
+type heading = Figure_title | Facet_title
 
 type item =
   | Leaf of leaf
   | Grid of grid
   | Heading of {
       owner : id; (* The titled node, or a facet scale's axis. *)
+      kind : heading;
       align : Text.Layout.halign;
       head : Text.t;
       hside : side;
@@ -406,8 +408,8 @@ let build r scales uses =
       (fun (b, l) -> if Nx.Ptree.Path.equal b id then Some l else None)
       legends
   in
-  let heading owner side (align, head) =
-    (side, Heading { owner; align; head; hside = side })
+  let heading kind owner side (align, head) =
+    (side, Heading { owner; kind; align; head; hside = side })
   in
   (* The title of a facet scale goes beside its headers. *)
   let facet_title pid c (i, on) =
@@ -419,7 +421,7 @@ let build r scales uses =
         let owner =
           Nx.Ptree.Path.(add (Field f.name) (add (Field "axis") pid))
         in
-        [ heading owner side (`Center, t) ]
+        [ heading Facet_title owner side (`Center, t) ]
     | _ -> []
   in
   let content pid c =
@@ -506,7 +508,7 @@ let build r scales uses =
               gbody = None;
             }
     in
-    let titles = List.rev_map (heading id `Top) s.titles in
+    let titles = List.rev_map (heading Figure_title id `Top) s.titles in
     wrap id titles (wrap id (legends_at id) body)
   in
   block Nx.Ptree.Path.root r.shaped

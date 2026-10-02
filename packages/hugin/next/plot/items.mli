@@ -36,12 +36,14 @@ type legend_spec = {
 }
 
 type track = Flex of float | Fixed
+type heading = Figure_title | Facet_title
 
 type item =
   | Leaf of leaf
   | Grid of grid
   | Heading of {
       owner : Common.id;  (** The titled node, or a facet scale's axis. *)
+      kind : heading;
       align : Text.Layout.halign;
       head : Text.t;
       hside : Figure.side;

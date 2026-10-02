@@ -13,61 +13,61 @@
 </g>
 </g>
 <g data-id="[&quot;axis&quot;,&quot;x&quot;]">
-<path d="M21.293 223.11L324.04 223.11M21.293 223.11L21.293 226.61M96.98 223.11L96.98 226.61M172.666 223.11L172.666 226.61M248.353 223.11L248.353 226.61M324.04 223.11L324.04 226.61" fill="none" stroke="#1a1a1a" stroke-width="0.8" stroke-linejoin="round"/>
-<text x="13.646 19.601 23.262" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−10</text>
-<text x="91.333 97.287" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−5</text>
-<text x="169.827" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
-<text x="245.683" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">5</text>
-<text x="319.37 323.031" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">10</text>
+<path d="M21.293 223.11L324.04 223.11M21.293 223.11L21.293 226.61M96.98 223.11L96.98 226.61M172.666 223.11L172.666 226.61M248.353 223.11L248.353 226.61M324.04 223.11L324.04 226.61" fill="none" stroke="#1a1a1a" stroke-opacity="0.6" stroke-width="0.8" stroke-linejoin="round"/>
+<text x="13.646 19.601 23.262" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−10</text>
+<text x="91.333 97.287" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−5</text>
+<text x="169.827" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
+<text x="245.683" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">5</text>
+<text x="319.37 323.031" y="237.829" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">10</text>
 </g>
 <g data-id="[&quot;axis&quot;,&quot;y&quot;]">
-<path d="M21.293 5.445L21.293 223.11M21.293 223.11L17.793 223.11M21.293 168.694L17.793 168.694M21.293 114.278L17.793 114.278M21.293 59.861L17.793 59.861M21.293 5.445L17.793 5.445" fill="none" stroke="#1a1a1a" stroke-width="0.8" stroke-linejoin="round"/>
-<text x="0 5.955 9.615" y="226.384" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−10</text>
-<text x="3.999 9.954" y="171.968" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−5</text>
-<text x="9.615" y="117.552" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
-<text x="9.954" y="63.135" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">5</text>
-<text x="5.955 9.615" y="8.719" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">10</text>
+<path d="M21.293 5.445L21.293 223.11M21.293 223.11L17.793 223.11M21.293 168.694L17.793 168.694M21.293 114.278L17.793 114.278M21.293 59.861L17.793 59.861M21.293 5.445L17.793 5.445" fill="none" stroke="#1a1a1a" stroke-opacity="0.6" stroke-width="0.8" stroke-linejoin="round"/>
+<text x="0 5.955 9.615" y="226.384" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−10</text>
+<text x="3.999 9.954" y="171.968" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">−5</text>
+<text x="9.615" y="117.552" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
+<text x="9.954" y="63.135" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">5</text>
+<text x="5.955 9.615" y="8.719" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">10</text>
 </g>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 10.89) scale(4.43113462726379)" fill="#4e79a7" fill-opacity="0.3" data-row="0"/>
 </g>
-<text x="354.186" y="14.164" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
+<text x="354.186" y="14.164" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 21.779) scale(4.43113462726379)" fill="#f28e2c" fill-opacity="0.3" data-row="1"/>
 </g>
-<text x="354.186" y="25.053" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">1</text>
+<text x="354.186" y="25.053" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">1</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 32.669) scale(4.43113462726379)" fill="#e15759" fill-opacity="0.3" data-row="2"/>
 </g>
-<text x="354.186" y="35.943" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">2</text>
+<text x="354.186" y="35.943" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">2</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 43.559) scale(4.43113462726379)" fill="#76b7b2" fill-opacity="0.3" data-row="3"/>
 </g>
-<text x="354.186" y="46.833" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">3</text>
+<text x="354.186" y="46.833" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">3</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 54.448) scale(4.43113462726379)" fill="#59a14f" fill-opacity="0.3" data-row="4"/>
 </g>
-<text x="354.186" y="57.722" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">4</text>
+<text x="354.186" y="57.722" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">4</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 65.338) scale(4.43113462726379)" fill="#edc949" fill-opacity="0.3" data-row="5"/>
 </g>
-<text x="354.186" y="68.612" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">5</text>
+<text x="354.186" y="68.612" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">5</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 76.228) scale(4.43113462726379)" fill="#af7aa1" fill-opacity="0.3" data-row="6"/>
 </g>
-<text x="354.186" y="79.501" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">6</text>
+<text x="354.186" y="79.501" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">6</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 87.117) scale(4.43113462726379)" fill="#ff9da7" fill-opacity="0.3" data-row="7"/>
 </g>
-<text x="354.186" y="90.391" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">7</text>
+<text x="354.186" y="90.391" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">7</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 98.007) scale(4.43113462726379)" fill="#9c755f" fill-opacity="0.3" data-row="8"/>
 </g>
-<text x="354.186" y="101.281" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">8</text>
+<text x="354.186" y="101.281" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">8</text>
 <g data-id="[&quot;legend&quot;,&quot;color&quot;,&quot;cat&quot;]">
 <use href="#hsba8bb47ab660ac74" transform="translate(346.686 108.896) scale(4.43113462726379)" fill="#bab0ab" fill-opacity="0.3" data-row="9"/>
 </g>
-<text x="354.186" y="112.17" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">9</text>
+<text x="354.186" y="112.17" font-family="hf0252a7cf48244b9e" font-size="9" fill="#1a1a1a" fill-opacity="0.75" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">9</text>
 </g>
 </svg>

@@ -71,6 +71,16 @@ let measure ~size s =
 
 let label_w s = Box2.w (measure ~size:(0.9 *. em) s)
 let title_h s = Box2.h (measure ~size:em s)
+
+(* The height of a figure title, set bold at 1.2 em. *)
+let head_h s =
+  Box2.h
+    (Text.Layout.box
+       (Text.Layout.v
+          ~fonts:(Theme.fonts Theme.default)
+          ~size:(1.2 *. em)
+          (Text.bold (Text.v s))))
+
 let tick = 0.35 *. em
 let pad = 0.25 *. em
 let close = float 1e-9
@@ -347,7 +357,7 @@ let sizes =
             layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
             |> title (Text.v "t")
           in
-          let least = title_h "t" +. pad in
+          let least = head_h "t" +. pad in
           let b = List.hd (boxes (lay (Size.figure 100. least) f)) in
           equal (pair close close) (100., 0.) (Box2.w b, Box2.h b);
           fails_naming [ "needs" ] (fun () ->
@@ -1029,8 +1039,14 @@ let guides =
             |> title (Text.v "T")
           in
           let l = lay (Size.panels 50. 40.) f in
-          let _, _, _, y1 = text_box l {|(text "T")|} in
+          let _, _, _, y1 = text_box l {|(text ("T" bold))|} in
           equal (float 1e-3) pad (Box2.miny (List.hd (boxes l)) -. y1));
+      test "a figure title is set bold at 1.2 em" (fun () ->
+          let l =
+            lay (Size.panels 50. 40.) (title (Text.v "Tg") (plain ramp))
+          in
+          let _, y0, _, y1 = text_box l {|(text ("Tg" bold))|} in
+          equal (float 1e-3) (head_h "Tg") (y1 -. y0));
       test "a facet title is a quarter em above the headers" (fun () ->
           let fx = strings ~title:(Text.v "model") [| "a"; "b"; "a"; "b" |] in
           let l =
@@ -1190,7 +1206,7 @@ let projections =
           in
           let p =
             List.hd
-              (Layout.panels (lay (Size.figure 100. (title_h "t" +. pad)) f))
+              (Layout.panels (lay (Size.figure 100. (head_h "t" +. pad)) f))
           in
           equal float_exact 0. (Box2.h p.box);
           equal

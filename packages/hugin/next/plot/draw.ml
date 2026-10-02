@@ -34,6 +34,11 @@ open Resolved
 
 let rule_em = 0.08 (* Axis lines and ticks. *)
 let grid_em = 0.06
+
+(* Opacities of the ink *)
+
+let label_alpha = 0.75 (* Tick and legend labels. *)
+let rule_alpha = 0.6 (* Axis lines and ticks. *)
 let grid_alpha = 0.2
 
 (* Reducer thresholds *)
@@ -56,6 +61,11 @@ type cx = { ctx : Read.ctx; layout : Layout.t; resolved : Resolved.t }
 
 let em cx k = k *. Theme.size cx.ctx.theme
 let ink cx = Theme.ink cx.ctx.theme
+
+(* [faded cx a] is the ink at [a] times its opacity. *)
+let faded cx a =
+  let ink = ink cx in
+  Color.with_alpha (Color.alpha ink *. a) ink
 
 (* [scale_of cx occ pid pnid] is the index of the scale each binding of [occ]
    reads in the panel [pnid] of the cell [pid]. *)
@@ -597,10 +607,11 @@ let panels cx =
 (* A quarter turn counterclockwise on the page: (u, v) to (v, -u). *)
 let quarter = { Affine.xx = 0.; yx = -1.; xy = 1.; yy = 0.; x0 = 0.; y0 = 0. }
 
-let placed cx (p : Layout.placed) =
+(* [placed c p] draws [p], in [c] where its text sets no colour. *)
+let placed c (p : Layout.placed) =
   let origin = if p.turned then P2.v 0. 0. else p.at in
   let run acc colour o run =
-    let c = Option.value colour ~default:(ink cx) in
+    let c = Option.value colour ~default:c in
     Picture.glyphs c (P2.v (P2.x origin +. P2.x o) (P2.y origin +. P2.y o)) run
     :: acc
   in
@@ -664,9 +675,9 @@ let draw_axis cx (a : Layout.axis_out) =
   let pen = Stroke.v ~cap:`Butt (em cx rule_em) in
   tag_node a.ax_id
     (Picture.group
-       (Picture.stroke pen (ink cx) (segments lines)
-        :: List.map (placed cx) a.ax_labels
-       @ Option.to_list (Option.map (placed cx) a.ax_title)))
+       (Picture.stroke pen (faded cx rule_alpha) (segments lines)
+        :: List.map (placed (faded cx label_alpha)) a.ax_labels
+       @ Option.to_list (Option.map (placed (ink cx)) a.ax_title)))
 
 let draw_grid cx (a : Layout.axis_out) =
   if not a.ax_grid then Picture.empty
@@ -685,9 +696,10 @@ let draw_grid cx (a : Layout.axis_out) =
               ((Box2.minx b, y), (Box2.maxx b, y)))
         (ticks_of cx a.ax_scale)
     in
-    let c = Color.with_alpha (Color.alpha (ink cx) *. grid_alpha) (ink cx) in
     tag_node a.ax_id
-      (Picture.stroke (Stroke.v ~cap:`Butt (em cx grid_em)) c (segments lines))
+      (Picture.stroke
+         (Stroke.v ~cap:`Butt (em cx grid_em))
+         (faded cx grid_alpha) (segments lines))
 
 (* Legends *)
 
@@ -740,8 +752,8 @@ let draw_legend cx notes (g : Layout.legend_out) =
         Picture.image bar px
         :: Picture.stroke
              (Stroke.v ~cap:`Butt (em cx rule_em))
-             (ink cx) (segments lines)
-        :: List.map (placed cx) labels
+             (faded cx rule_alpha) (segments lines)
+        :: List.map (placed (faded cx label_alpha)) labels
     | Entries es ->
         let n = List.length es in
         let marks = readers cx g.lg_scale in
@@ -765,12 +777,13 @@ let draw_legend cx notes (g : Layout.legend_out) =
                  Picture.tag
                    { Picture.id = g.lg_id; rows = Picture.Rows [| k |] }
                    (Picture.group (List.map swatch marks));
-                 placed cx e.label;
+                 placed (faded cx label_alpha) e.label;
                ])
              es)
   in
   tag_node g.lg_id
-    (Picture.group (Option.to_list (Option.map (placed cx) g.lg_title) @ body))
+    (Picture.group
+       (Option.to_list (Option.map (placed (ink cx)) g.lg_title) @ body))
 
 (* Drawing *)
 
@@ -805,10 +818,10 @@ let afresh ~density l =
       @ List.map (draw_axis cx) axes
       @ List.map
           (fun (hd : Layout.header_out) ->
-            tag_node hd.hd_id (placed cx hd.hd_label))
+            tag_node hd.hd_id (placed (ink cx) hd.hd_label))
           (Layout.headers l)
       @ legends
-      @ List.map (placed cx) (Layout.titles l))
+      @ List.map (placed (ink cx)) (Layout.titles l))
   in
   let warnings =
     dedupe (Layout.warnings l @ List.concat_map snd drawn @ List.rev !notes)

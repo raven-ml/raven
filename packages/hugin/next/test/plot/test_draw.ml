@@ -599,6 +599,35 @@ let reuse =
         (again ~prev f, fresh f) );
   ]
 
+(* Dots fill and draw no text, so every stroke is an axis line or tick and every
+   run of glyphs a title or label: the figure's, the axes' and the legend's
+   titles are four runs. *)
+let inked () =
+  let ink = Color.v ~alpha:0.8 0.2 0.1 0.3 in
+  let part a = Color.with_alpha (0.8 *. a) ink in
+  let title t = Text.v t in
+  let f =
+    dot
+      ~x:(num ~title:(title "x") (f64 [| 0.; 1.; 2. |]))
+      ~y:(num ~title:(title "y") (f64 [| 0.; 1.; 2. |]))
+      ~fill:(strings ~title:(title "kind") [| "a"; "b"; "a" |])
+      ()
+    |> Hugin_next.title (title "T")
+  in
+  let d = drawn ~theme:(Theme.v ~ink ()) f in
+  let strokes =
+    collect (function Picture.Stroke s -> Some s.color | _ -> None) d
+  in
+  let titles, labels =
+    List.partition (Color.equal ink)
+      (collect (function Picture.Glyphs g -> Some g.color | _ -> None) d)
+  in
+  at_least int ~than:2 (List.length strokes);
+  List.iter (equal color (part 0.6)) strokes;
+  equal int 4 (List.length titles);
+  at_least int ~than:2 (List.length labels);
+  List.iter (equal color (part 0.75)) labels
+
 let drawings =
   group "Drawing"
     [
@@ -678,6 +707,7 @@ let drawings =
                     m;
                   ]));
           equal (list (array int)) [ [| 0 |] ] !seen);
+      test "titles take the ink, labels and axes a part of its opacity" inked;
       test "the paper is painted first, and a transparent one not at all"
         (fun () ->
           let first theme =
