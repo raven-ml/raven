@@ -65,4 +65,37 @@ let live =
     ~setup:(fun () -> show (dashboard at))
     (fun prev -> redraw prev (dashboard (at + 1)))
 
-let () = Thumper.run "hugin_next_plot" [ Thumper.group "stages" [ live ] ]
+(* The budgets of large data: each figure is drawn from its tensors to a PNG
+   file at density 2, every stage included. *)
+
+let png size f =
+  Hugin_next_vg_raster.png ~density:2. (Drawing.renderable (render size f))
+
+let walk = Nx.cumsum (Nx.Rng.normal (Nx.Rng.key 1) Nx.float32 [| 10_000_000 |])
+let cloud = Nx.Rng.normal (Nx.Rng.key 2) Nx.float32 [| 100_000; 2 |]
+
+(* Attention weights of 12 layers by 12 heads over 128 tokens. *)
+let weights = Nx.Rng.uniform (Nx.Rng.key 3) Nx.float32 [| 12; 12; 128; 128 |]
+
+let budgets =
+  Thumper.group "budgets"
+    [
+      Thumper.bench "10M-step line to PNG" (fun () ->
+          png (Size.figure 360. 240.) (line ~y:(num walk) ()));
+      Thumper.bench "100k dots to PNG" (fun () ->
+          png (Size.figure 360. 240.)
+            (dot
+               ~x:(num Nx.(slice [ A; I 0 ] cloud))
+               ~y:(num Nx.(slice [ A; I 1 ] cloud))
+               ()));
+      Thumper.bench "attention at T = 128 to PNG" (fun () ->
+          png (Size.figure 800. 800.)
+            (rect ~fy:(dim 0) ~fx:(dim 1) ~y:(dim 2) ~x:(dim 3)
+               ~fill:(num weights) ()));
+    ]
+
+let config = Thumper.Config.(default |> deadline 60.)
+
+let () =
+  Thumper.run ~config "hugin_next_plot"
+    [ Thumper.group "stages" [ live ]; budgets ]

@@ -1,6 +1,6 @@
 (executable
  (name bench_plot)
- (libraries hugin.next nx thumper))
+ (libraries hugin.next hugin.next.vg.raster nx thumper))
 
 ; Not attached to runtest on purpose: run with
 ; `dune build --profile release @packages/hugin/next/test/plot/bench/bench`.
