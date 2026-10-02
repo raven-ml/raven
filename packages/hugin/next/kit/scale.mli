@@ -136,6 +136,14 @@ type _ domain =
       level and the last also its upper one, and a value beyond the domain the
       range of the step at its nearer end. It leaves {!normalize} unchanged.
       Unset counts as [false].
+    - [ticks], the guide values that every guide of the scale shows, in place of
+      those {!Ticks.choose} picks, and that stepped ranges step at: those of its
+      values that lie in the domain and are not missing for the scale, each
+      once, without minor ticks ({!Ticks.of_values}). The array is copied in and
+      out. Unset, the figure drawing the scale chooses them.
+    - [notation], the notation tick labels of a quantitative scale are written
+      in ({!Ticks.section-labels}). Unset, they follow the rules for quantities
+      and logarithms.
     - [scheme], the colours that colour roles paint with. A continuous scale
       colours a value with {!Scheme.color} of its normalised value, and a band
       scale over [n] categories colours category [i] with colour [i] of
@@ -164,6 +172,8 @@ val linear :
   ?clamp:bool ->
   ?reverse:bool ->
   ?stepped:bool ->
+  ?ticks:float array ->
+  ?notation:Number.notation ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -179,6 +189,8 @@ val log :
   ?clamp:bool ->
   ?reverse:bool ->
   ?stepped:bool ->
+  ?ticks:float array ->
+  ?notation:Number.notation ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -203,6 +215,8 @@ val symlog :
   ?clamp:bool ->
   ?reverse:bool ->
   ?stepped:bool ->
+  ?ticks:float array ->
+  ?notation:Number.notation ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -221,6 +235,8 @@ val pow :
   ?clamp:bool ->
   ?reverse:bool ->
   ?stepped:bool ->
+  ?ticks:float array ->
+  ?notation:Number.notation ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -240,6 +256,8 @@ val custom :
   ?clamp:bool ->
   ?reverse:bool ->
   ?stepped:bool ->
+  ?ticks:float array ->
+  ?notation:Number.notation ->
   ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
@@ -263,6 +281,7 @@ val time :
   ?clamp:bool ->
   ?reverse:bool ->
   ?tz_offset_s:Time.tz_offset_s ->
+  ?ticks:Time.t array ->
   ?scheme:Scheme.t ->
   ?unknown:Color.t ->
   unit ->
@@ -278,6 +297,7 @@ val band :
   ?padding:float ->
   ?reverse:bool ->
   ?wrap:int ->
+  ?ticks:string array ->
   ?scheme:Scheme.t ->
   ?symbols:Symbol.t array ->
   ?unknown:Color.t ->
@@ -334,6 +354,12 @@ val symbols : string t -> Symbol.t array option
 
 val stepped : float t -> bool
 (** [stepped s] is [true] iff [s] sets [stepped] to [true]. *)
+
+val ticks : 'd t -> 'd array option
+(** [ticks s] is the guide values of [s], if set, as a fresh array. *)
+
+val notation : float t -> Number.notation option
+(** [notation s] is the notation of the tick labels of [s], if set. *)
 
 val unknown : 'd t -> Color.t option
 (** [unknown s] is the colour of the missing values of [s], if set. *)
@@ -435,6 +461,8 @@ type property =
   | Clamp
   | Reverse
   | Stepped
+  | Ticks
+  | Notation
   | Padding
   | Wrap
   | Tz_offset_s
@@ -505,10 +533,11 @@ val pp_property : Format.formatter -> property -> unit
 
 val equal : 'd t -> 'd t -> bool
 (** [equal s s'] is [true] iff [s] and [s'] set the same properties to equal
-    values: floats by [Float.equal], colours by {!Color.equal}, schemes by
-    {!Scheme.equal}, symbols element by element by {!Symbol.equal}, and the
-    functions of custom transforms physically. A property unset differs from the
-    same property set to its default. *)
+    values: floats by [Float.equal], instants by {!Time.equal}, colours by
+    {!Color.equal}, schemes by {!Scheme.equal}, arrays element by element,
+    symbols by {!Symbol.equal}, and the functions of custom transforms
+    physically. A property unset differs from the same property set to its
+    default. *)
 
 val pp : Format.formatter -> 'd t -> unit
 (** [pp ppf s] formats the properties [s] sets, for debugging and tests, a

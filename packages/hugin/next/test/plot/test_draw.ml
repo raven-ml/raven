@@ -1886,6 +1886,40 @@ let steps =
                   equal ~msg close ((1. -. levels.(k)) *. Box2.h bar) (Box2.h b))
                 boxes
           | _ -> fail "no steps");
+      test "a stepped scale steps at its explicit ticks" (fun () ->
+          let scale =
+            Scale.linear ~domain:(0., 1.) ~stepped:true ~ticks:[| 0.5; 0.25 |]
+              ()
+          in
+          let f =
+            rows_of
+              [ Mark.bind Role.fill (num ~scale (f64 [| 0.; 1. |])) ]
+              (fun r -> Option.get (Mark.range r Role.fill))
+          in
+          let scheme = Theme.scheme Theme.default in
+          List.iter
+            (fun (u, mid) ->
+              let msg = Printf.sprintf "at %g" u in
+              equal ~msg color (Scheme.color scheme mid) (f u))
+            [ (0.1, 0.125); (0.3, 0.375); (0.9, 0.75) ]);
+      test "contour fills one band between consecutive explicit ticks"
+        (fun () ->
+          let z =
+            Nx.init Nx.float64 [| 3; 4 |] (fun i ->
+                Float.of_int (i.(0) * i.(1)))
+          in
+          let scale = Scale.linear ~domain:(0., 6.) ~ticks:[| 2.; 4. |] () in
+          let d = drawn (layer [ contour ~fill:(num ~scale z) () ]) in
+          let fills =
+            List.concat_map
+              (fun (_, p) ->
+                fold
+                  (fun acc -> function Picture.Fill _ -> acc + 1 | _ -> acc)
+                  0 p
+                :: [])
+              (tags (path [ Index 0 ]) d)
+          in
+          equal (list int) [ 3 ] fills);
       test "contour implies stepped on its fill scale" (fun () ->
           let z =
             Nx.init Nx.float64 [| 3; 4 |] (fun i ->
@@ -1900,6 +1934,49 @@ let steps =
           in
           equal bool true (stepped_with None);
           equal bool false (stepped_with (Some false)));
+    ]
+
+(* Explicit ticks *)
+
+let gen_ticks =
+  Gen.array ~size:(Gen.int_range 0 8)
+    (Gen.frequency
+       [
+         (4, Gen.float_range (-2.) 12.);
+         ( 2,
+           Gen.of_list ~pp:Format.pp_print_float
+             [ 0.; -0.; 10.; 5.; 5.; nan; Float.infinity; Float.neg_infinity ]
+         );
+         (1, Gen.any_float);
+       ])
+
+let ticks_law vs =
+  let scale = Scale.linear ~domain:(0., 10.) ~ticks:vs () in
+  let inside v = Float.is_finite v && 0. <= v && v <= 10. in
+  cover "a value outside the domain" (Array.exists (fun v -> not (inside v)) vs);
+  cover "a repeated value"
+    (Array.exists
+       (fun v -> List.length (List.filter (( = ) v) (Array.to_list vs)) > 1)
+       vs);
+  (* Distinct values, which may normalise to one position. *)
+  let expected =
+    Array.to_list vs |> List.filter inside
+    |> List.sort_uniq Float.compare
+    |> List.map (fun v -> v /. 10.)
+    |> Array.of_list
+  in
+  let ticks =
+    rows_of
+      [ Mark.bind Role.x (num ~scale (f64 [| 1. |])) ]
+      (fun r -> Option.get (Mark.ticks r Role.x))
+  in
+  equal (array (float Float.min_float)) expected ticks
+
+let explicit_ticks =
+  group "Explicit ticks"
+    [
+      prop "the ticks are the increasing distinct values in the domain"
+        gen_ticks ticks_law;
     ]
 
 (* Swatches *)
@@ -2019,6 +2096,7 @@ let () =
          reducers;
          areas;
          steps;
+         explicit_ticks;
          legend_swatches;
          public_marks;
          goldens;

@@ -1475,6 +1475,68 @@ let guides =
             (Layout.size l));
     ]
 
+(* Explicit ticks and notations *)
+
+(* [axis_labels l id] is the text of each label of the axis [id] of [l], read
+   from its printed form, where each is [label (text "…") …]. *)
+let axis_labels l id =
+  match guide_lines l ("axis " ^ id) with
+  | [ _ :: lines ] ->
+      List.filter_map
+        (fun line ->
+          match String.index_opt line '"' with
+          | Some i when contains line "label (text" ->
+              Some
+                (String.sub line (i + 1)
+                   (String.index_from line (i + 1) '"' - i - 1))
+          | _ -> None)
+        lines
+  | gs -> failf "%d axes %s" (List.length gs) id
+
+let quantities_labels ~notation ~ticks =
+  let scale = Scale.linear ~name:"x" ~ticks ~notation () in
+  let unit = f64 [| 0.; 1. |] in
+  let r = resolve (dot ~x:(num ~scale unit) ~y:(num unit) ()) in
+  let expected =
+    Hugin_next_kit.Ticks.of_values ~notation (Resolved.scale r scale) ticks
+  in
+  equal (list string)
+    (List.map (fun (t : Hugin_next_kit.Ticks.tick) -> t.label) expected.major)
+    (axis_labels (layout (Size.panels 300. 60.) r) "axis.x")
+
+let ticks =
+  group "ticks"
+    [
+      test "explicit ticks are labelled as of_values labels them" (fun () ->
+          quantities_labels ~notation:Percent
+            ~ticks:[| 1.; 0.; 0.25; 2.; Float.nan |];
+          quantities_labels ~notation:Si ~ticks:[| 0.5; 0.5; 1. |]);
+      test "chosen ticks are labelled in the scale's notation" (fun () ->
+          let scale = Scale.linear ~notation:Percent () in
+          let data = f64 [| 0.; 0.37; 1. |] in
+          let l =
+            lay (Size.panels 200. 60.)
+              (dot ~x:(num ~scale data) ~y:(num data) ())
+          in
+          let labels = axis_labels l "axis.x" in
+          greater int ~than:1 (List.length labels);
+          List.iter
+            (fun s ->
+              equal ~msg:s string "%" (String.sub s (String.length s - 1) 1))
+            labels);
+      test "explicit ticks of a band scale are its categories among them"
+        (fun () ->
+          let scale = Scale.band ~ticks:[| "c"; "z"; "a"; "c" |] () in
+          let f =
+            rect
+              ~x:(strings ~scale [| "a"; "b"; "c" |])
+              ~y:(num (f64 [| 1.; 2.; 3. |]))
+              ()
+          in
+          equal (list string) [ "a"; "c" ]
+            (axis_labels (lay (Size.panels 100. 60.) f) "axis.x"));
+    ]
+
 (* Glyphs *)
 
 let glyphs =
@@ -1607,6 +1669,7 @@ let () =
          guides;
          titles;
          legends;
+         ticks;
          glyphs;
          reuse;
          projections;

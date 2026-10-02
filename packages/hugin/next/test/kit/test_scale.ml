@@ -21,6 +21,10 @@ let instant =
   Testable.with_compare Time.compare
     (Testable.make ~pp:Time.pp ~equal:Time.equal)
 
+let notation =
+  Testable.make ~pp:Number.pp_notation ~equal:(fun (n : Number.notation) n' ->
+      n = n')
+
 let property =
   Testable.make ~pp:Scale.pp_property ~equal:(fun (p : Scale.property) q ->
       p = q)
@@ -865,11 +869,12 @@ let gen_spec =
   Gen.map
     (fun ( (log, name, domain, nice),
            (zero, clamp, reverse, stepped),
-           (scheme, areas, unknown) ) ->
+           (scheme, areas, unknown),
+           (ticks, notation) ) ->
       let make = if log then Scale.symlog ?constant:None else Scale.linear in
-      make ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?scheme ?areas
-        ?unknown ())
-    (Gen.triple
+      make ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?ticks ?notation
+        ?scheme ?areas ?unknown ())
+    (Gen.quad
        (Gen.quad
           (Gen.frequency [ (5, Gen.constant false); (1, Gen.constant true) ])
           (some [ "x"; "y" ])
@@ -883,7 +888,10 @@ let gen_spec =
        (Gen.triple
           (some [ Scheme.viridis; Scheme.reverse Scheme.viridis ])
           (some [ (0., 4.); (1., 4.) ])
-          (some [ red; blue ])))
+          (some [ red; blue ]))
+       (Gen.pair
+          (some [ [| 0.; 1. |]; [| 1.; 0. |]; [| 0.5 |] ])
+          (some [ Number.Percent; Number.Si ])))
   |> Gen.with_pp Scale.pp
 
 let merged = result fscale property
@@ -908,6 +916,14 @@ let conflicts =
       (Reverse, Scale.linear ~reverse:true (), Scale.linear ~reverse:false ());
     Conflict
       (Stepped, Scale.linear ~stepped:true (), Scale.linear ~stepped:false ());
+    Conflict
+      ( Ticks,
+        Scale.log ~ticks:[| 1.; 10. |] (),
+        Scale.log ~ticks:[| 10.; 1. |] () );
+    Conflict
+      ( Notation,
+        Scale.linear ~notation:Percent (),
+        Scale.linear ~notation:Plain () );
     Conflict (Padding, band ~padding:0.1 (), band ~padding:0.2 ());
     Conflict (Wrap, band ~wrap:1 (), band ~wrap:2 ());
     Conflict (Tz_offset_s, time ~tz_offset_s:0 (), time ~tz_offset_s:60 ());
@@ -1078,6 +1094,22 @@ let comparing =
           equal tscale
             (Scale.time ~domain:(a, c) ())
             (Scale.time ~domain:(a, c) ()));
+      test "ticks of every kind compare element by element" (fun () ->
+          let a = Time.v S 1L in
+          equal tscale
+            (Scale.time ~ticks:[| a |] ())
+            (Scale.time ~ticks:[| a |] ());
+          not_equal tscale
+            (Scale.time ~ticks:[| Time.epoch |] ())
+            (Scale.time ~ticks:[| a |] ());
+          let band = Testable.make ~pp:Scale.pp ~equal:Scale.equal in
+          equal band
+            (Scale.band ~ticks:[| "a" |] ())
+            (Scale.band ~ticks:[| "a" |] ());
+          not_equal band
+            (Scale.band ~ticks:[| "a" |] ())
+            (Scale.band ~ticks:[| "a"; "b" |] ());
+          not_equal fscale (Scale.linear ~ticks:[||] ()) (Scale.linear ()));
       test "custom transforms compare their functions physically" (fun () ->
           let make forward =
             Scale.custom ~transform:"asinh" ~forward ~inverse:Float.sinh ()
@@ -1097,6 +1129,8 @@ let comparing =
                 Clamp;
                 Reverse;
                 Stepped;
+                Ticks;
+                Notation;
                 Padding;
                 Wrap;
                 Tz_offset_s;
@@ -1116,6 +1150,8 @@ let comparing =
               "clamp";
               "reverse";
               "stepped";
+              "ticks";
+              "notation";
               "padding";
               "wrap";
               "tz_offset_s";
@@ -1147,6 +1183,9 @@ let comparing =
                    (Scale.band ~scheme:Scheme.okabe_ito
                       ~symbols:[| Symbol.circle; Symbol.triangle |]
                       ());
+                 pp (Scale.linear ~ticks:[| 0.; 0.1 +. 0.2 |] ~notation:Si ());
+                 pp (Scale.time ~ticks:[| Time.epoch |] ());
+                 pp (Scale.band ~ticks:[| "a"; "b c" |] ());
                ])
           @@ __POS_OF__
                {|
@@ -1158,6 +1197,9 @@ let comparing =
             (band (domain (indices (3 "the"))) (padding 0.1) (wrap 2))
             (linear (scheme reverse(rdbu)))
             (band (scheme okabe_ito) (symbols circle triangle))
+            (linear (ticks 0 0.30000000000000004) (notation si))
+            (time (ticks 1970-01-01T00:00:00Z))
+            (band (ticks "a" "b c"))
             |});
     ]
 
@@ -1176,6 +1218,8 @@ let all_properties =
       Clamp;
       Reverse;
       Stepped;
+      Ticks;
+      Notation;
       Padding;
       Wrap;
       Tz_offset_s;
@@ -1221,6 +1265,23 @@ let observers =
           equal bool false
             (Scale.stepped (Scale.pow ~exponent:2. ~stepped:false ()));
           equal bool true (Scale.stepped (Scale.symlog ~stepped:true ())));
+      test "ticks are copied in and out" (fun () ->
+          let vs = [| 1.; 2. |] in
+          let s = Scale.linear ~ticks:vs () in
+          vs.(0) <- 5.;
+          let out = Option.get (Scale.ticks s) in
+          equal (array float_exact) [| 1.; 2. |] out;
+          out.(1) <- 5.;
+          equal (option (array float_exact)) (Some [| 1.; 2. |]) (Scale.ticks s));
+      test "ticks and notation are None unset" (fun () ->
+          equal (option (array string)) None (Scale.ticks (Scale.band ()));
+          equal (option notation) None (Scale.notation (Scale.log ())));
+      test "notation is the one set" (fun () ->
+          equal (option notation) (Some Exponent)
+            (Scale.notation (Scale.pow ~exponent:2. ~notation:Exponent ())));
+      test "fit keeps the ticks" (fun () ->
+          let s = fit_floats 0. 3. (Scale.linear ~ticks:[| 1.; 7. |] ()) in
+          equal (option (array float_exact)) (Some [| 1.; 7. |]) (Scale.ticks s));
       test "tz_offset_s is 0 unset" (fun () ->
           equal int 0 (Scale.tz_offset_s (Scale.time ()));
           equal int (-3600)

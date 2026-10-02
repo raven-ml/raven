@@ -105,9 +105,10 @@ val with_ticks : Ticks.t array -> cx -> cx
 (** [with_ticks ts cx] is [cx] with the ticks of each scale. *)
 
 val choose : cx -> (spec * float) list -> Ticks.t array
-(** [choose cx gs] is the ticks of each scale, chosen once against every guide
-    of [gs] showing it, at its length, so that labels overlap on none: every
-    category for a facet scale and a categorical legend. *)
+(** [choose cx gs] is the ticks of each scale: its explicit ticks if it sets
+    some, and otherwise chosen once against every guide of [gs] showing it, at
+    its length, so that labels overlap on none: every category for a facet scale
+    and a categorical legend. Labels are in the scale's notation. *)
 
 val lay :
   cx ->

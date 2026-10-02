@@ -41,6 +41,8 @@ type 'd t = {
   clamp : bool option;
   reverse : bool option;
   stepped : bool option;
+  ticks : 'd array option;
+  notation : Number.notation option;
   padding : float option;
   wrap : int option;
   tz_offset_s : int option;
@@ -59,6 +61,8 @@ type property =
   | Clamp
   | Reverse
   | Stepped
+  | Ticks
+  | Notation
   | Padding
   | Wrap
   | Tz_offset_s
@@ -174,7 +178,8 @@ let check_areas fn (a0, a1) =
 (* Constructors *)
 
 let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
-    ?padding ?wrap ?tz_offset_s ?scheme ?areas ?symbols ?unknown () =
+    ?ticks ?notation ?padding ?wrap ?tz_offset_s ?scheme ?areas ?symbols
+    ?unknown () =
   Option.iter (check_areas fn) areas;
   Option.iter
     (fun ss -> if Array.length ss = 0 then err fn "no symbols")
@@ -196,6 +201,8 @@ let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
     clamp;
     reverse;
     stepped;
+    ticks = Option.map Array.copy ticks;
+    notation;
     padding;
     wrap;
     tz_offset_s;
@@ -207,48 +214,51 @@ let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
 
 let floats = Option.map (fun (a, b) -> Floats (a, b))
 
-let linear ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?scheme ?areas
-    ?unknown () =
+let linear ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?ticks ?notation
+    ?scheme ?areas ?unknown () =
   make "linear" Quantitative Linear ?name ?domain:(floats domain) ?nice ?zero
-    ?clamp ?reverse ?stepped ?scheme ?areas ?unknown ()
+    ?clamp ?reverse ?stepped ?ticks ?notation ?scheme ?areas ?unknown ()
 
-let log ?(base = 10.) ?name ?domain ?nice ?clamp ?reverse ?stepped ?scheme
-    ?areas ?unknown () =
+let log ?(base = 10.) ?name ?domain ?nice ?clamp ?reverse ?stepped ?ticks
+    ?notation ?scheme ?areas ?unknown () =
   if not (Float.is_finite base && base > 1.) then
     err "log" "base %g is not finite above 1" base;
   make "log" Quantitative (Log base) ?name ?domain:(floats domain) ?nice ?clamp
-    ?reverse ?stepped ?scheme ?areas ?unknown ()
+    ?reverse ?stepped ?ticks ?notation ?scheme ?areas ?unknown ()
 
 let symlog ?(constant = 1.) ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
-    ?scheme ?areas ?unknown () =
+    ?ticks ?notation ?scheme ?areas ?unknown () =
   if not (Float.is_finite constant && constant > 0.) then
     err "symlog" "constant %g is not finite and positive" constant;
   make "symlog" Quantitative (Symlog constant) ?name ?domain:(floats domain)
-    ?nice ?zero ?clamp ?reverse ?stepped ?scheme ?areas ?unknown ()
+    ?nice ?zero ?clamp ?reverse ?stepped ?ticks ?notation ?scheme ?areas
+    ?unknown ()
 
-let pow ~exponent ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?scheme
-    ?areas ?unknown () =
+let pow ~exponent ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?ticks
+    ?notation ?scheme ?areas ?unknown () =
   if not (Float.is_finite exponent && exponent > 0.) then
     err "pow" "exponent %g is not finite and positive" exponent;
   make "pow" Quantitative (Pow exponent) ?name ?domain:(floats domain) ?nice
-    ?zero ?clamp ?reverse ?stepped ?scheme ?areas ?unknown ()
+    ?zero ?clamp ?reverse ?stepped ?ticks ?notation ?scheme ?areas ?unknown ()
 
 let custom ~transform ~forward ~inverse ?name ?domain ?nice ?zero ?clamp
-    ?reverse ?stepped ?scheme ?areas ?unknown () =
+    ?reverse ?stepped ?ticks ?notation ?scheme ?areas ?unknown () =
   make "custom" Quantitative
     (Custom { name = transform; forward; inverse })
-    ?name ?domain:(floats domain) ?nice ?zero ?clamp ?reverse ?stepped ?scheme
-    ?areas ?unknown ()
+    ?name ?domain:(floats domain) ?nice ?zero ?clamp ?reverse ?stepped ?ticks
+    ?notation ?scheme ?areas ?unknown ()
 
-let time ?name ?domain ?nice ?clamp ?reverse ?tz_offset_s ?scheme ?unknown () =
+let time ?name ?domain ?nice ?clamp ?reverse ?tz_offset_s ?ticks ?scheme
+    ?unknown () =
   make "time" Temporal Linear ?name
     ?domain:(Option.map (fun (a, b) -> Instants (a, b)) domain)
-    ?nice ?clamp ?reverse ?tz_offset_s ?scheme ?unknown ()
+    ?nice ?clamp ?reverse ?tz_offset_s ?ticks ?scheme ?unknown ()
 
-let band ?name ?domain ?padding ?reverse ?wrap ?scheme ?symbols ?unknown () =
+let band ?name ?domain ?padding ?reverse ?wrap ?ticks ?scheme ?symbols ?unknown
+    () =
   make "band" Categorical Linear ?name
     ?domain:(Option.map (fun c -> Categories c) domain)
-    ?padding ?reverse ?wrap ?scheme ?symbols ?unknown ()
+    ?padding ?reverse ?wrap ?ticks ?scheme ?symbols ?unknown ()
 
 (* Properties *)
 
@@ -311,6 +321,8 @@ let length : type d. d t -> float =
 let wrap s = s.wrap
 let scheme s = s.scheme
 let stepped s = is_set s.stepped
+let ticks s = Option.map Array.copy s.ticks
+let notation s = s.notation
 let areas s = s.areas
 let symbols s = Option.map Array.copy s.symbols
 let unknown s = s.unknown
@@ -587,8 +599,17 @@ let equal_domain : type d. d domain -> d domain -> bool =
   | Instants (a, b), Instants (a', b') -> Time.equal a a' && Time.equal b b'
   | Categories c, Categories c' -> equal_categories c c'
 
-let equal_symbols ss ss' =
-  Array.length ss = Array.length ss' && Array.for_all2 Symbol.equal ss ss'
+let equal_array eq a a' =
+  Array.length a = Array.length a' && Array.for_all2 eq a a'
+
+let equal_symbols = equal_array Symbol.equal
+
+let equal_value : type d. d kind -> d -> d -> bool = function
+  | Quantitative -> Float.equal
+  | Temporal -> Time.equal
+  | Categorical -> String.equal
+
+let equal_notation (n : Number.notation) n' = n = n'
 
 (* A relation between the values of a property set or unset in two scales. *)
 type relation = {
@@ -607,6 +628,8 @@ let agreements r s s' =
     (Clamp, r.holds Bool.equal s.clamp s'.clamp);
     (Reverse, r.holds Bool.equal s.reverse s'.reverse);
     (Stepped, r.holds Bool.equal s.stepped s'.stepped);
+    (Ticks, r.holds (equal_array (equal_value s.kind)) s.ticks s'.ticks);
+    (Notation, r.holds equal_notation s.notation s'.notation);
     (Padding, r.holds Float.equal s.padding s'.padding);
     (Wrap, r.holds Int.equal s.wrap s'.wrap);
     (Tz_offset_s, r.holds Int.equal s.tz_offset_s s'.tz_offset_s);
@@ -628,6 +651,8 @@ let union s s' =
     clamp = first s.clamp s'.clamp;
     reverse = first s.reverse s'.reverse;
     stepped = first s.stepped s'.stepped;
+    ticks = first s.ticks s'.ticks;
+    notation = first s.notation s'.notation;
     padding = first s.padding s'.padding;
     wrap = first s.wrap s'.wrap;
     tz_offset_s = first s.tz_offset_s s'.tz_offset_s;
@@ -692,6 +717,8 @@ let property_name = function
   | Clamp -> "clamp"
   | Reverse -> "reverse"
   | Stepped -> "stepped"
+  | Ticks -> "ticks"
+  | Notation -> "notation"
   | Padding -> "padding"
   | Wrap -> "wrap"
   | Tz_offset_s -> "tz_offset_s"
@@ -744,12 +771,21 @@ let pp (type d) ppf (s : d t) =
     | Some v -> Format.fprintf ppf "@ @[<1>(%s %a)@]" name pp_v v
   in
   let bool ppf b = Format.pp_print_bool ppf b in
-  Format.fprintf ppf "@[<1>(%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a)@]" head s
+  let value : Format.formatter -> d -> unit =
+    match s.kind with
+    | Quantitative -> pp_float
+    | Temporal -> Time.pp
+    | Categorical -> fun ppf -> Format.fprintf ppf "%S"
+  in
+  let values = Format.pp_print_array ~pp_sep:Format.pp_print_space value in
+  Format.fprintf ppf "@[<1>(%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a%a)@]" head s
     (field "name" (fun ppf -> Format.fprintf ppf "%S"))
     s.name (field "domain" pp_domain) s.domain (field "nice" bool) s.nice
     (field "zero" bool) s.zero (field "clamp" bool) s.clamp
     (field "reverse" bool) s.reverse (field "stepped" bool) s.stepped
-    (field "padding" pp_float) s.padding
+    (field "ticks" values) s.ticks
+    (field "notation" Number.pp_notation)
+    s.notation (field "padding" pp_float) s.padding
     (field "wrap" Format.pp_print_int)
     s.wrap
     (field "tz_offset_s" Format.pp_print_int)
@@ -773,6 +809,8 @@ let sets (type d) p (s : d t) =
   | Clamp -> Option.is_some s.clamp
   | Reverse -> Option.is_some s.reverse
   | Stepped -> Option.is_some s.stepped
+  | Ticks -> Option.is_some s.ticks
+  | Notation -> Option.is_some s.notation
   | Padding -> Option.is_some s.padding
   | Wrap -> Option.is_some s.wrap
   | Tz_offset_s -> Option.is_some s.tz_offset_s

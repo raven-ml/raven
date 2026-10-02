@@ -101,3 +101,6 @@ val equal : t -> t -> bool
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf f] formats [f] for debugging, such as [plain 2 decimals trim]. *)
+
+val pp_notation : Format.formatter -> notation -> unit
+(** [pp_notation ppf n] formats [n] in lowercase, such as [percent]. *)

@@ -16,6 +16,7 @@ module Text = Hugin_next_text.Text
 module Picture = Hugin_next_vg.Picture
 module Renderable = Hugin_next_vg.Renderable
 module Locale = Hugin_next_kit.Locale
+module Number = Hugin_next_kit.Number
 module Scale = Hugin_next_kit.Scale
 module Scheme = Hugin_next_kit.Scheme
 module Symbol = Hugin_next_kit.Symbol

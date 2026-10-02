@@ -588,8 +588,14 @@ let all_ticks locale (F f) =
       Ticks.of_values ~locale f.scale (Array.of_list (category_names f.scale))
   | Channel.Quantities -> Ticks.of_values ~locale f.scale [||]
 
-(* A label's extent, and the spacing of ticks, are the greatest fractions of a
-   guide's length they take, so that no two labels overlap on any guide. *)
+let notation (F f) =
+  match f.kind with
+  | Channel.Quantities -> Scale.notation f.scale
+  | Channel.Categories -> None
+
+(* A scale's explicit ticks are its guide values. Otherwise, a label's extent,
+   and the spacing of ticks, are the greatest fractions of a guide's length they
+   take, so that no two labels overlap on any guide. *)
 let choose cx gs =
   let locale = Theme.locale cx.theme in
   let clear = em cx clear_em in
@@ -636,14 +642,15 @@ let choose cx gs =
             | _ -> false)
           mine
       in
-      if every then all_ticks locale s
-      else
-        match guides with
-        | [] -> Ticks.of_values ~locale f.scale [||]
-        | guides ->
-            let measure t = longest (fun (g, l) -> measure g l t) guides in
-            let spacing = longest (fun (g, l) -> spacing g /. l) guides in
-            Ticks.choose ~locale ~spacing ~length:1. ~measure f.scale)
+      let notation = notation s in
+      match (Scale.ticks f.scale, guides) with
+      | Some vs, _ -> Ticks.of_values ~locale ?notation f.scale vs
+      | None, _ when every -> all_ticks locale s
+      | None, [] -> Ticks.of_values ~locale f.scale [||]
+      | None, guides ->
+          let measure t = longest (fun (g, l) -> measure g l t) guides in
+          let spacing = longest (fun (g, l) -> spacing g /. l) guides in
+          Ticks.choose ~locale ?notation ~spacing ~length:1. ~measure f.scale)
     cx.scales
 
 (* Comparing and formatting *)

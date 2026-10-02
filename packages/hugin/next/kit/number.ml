@@ -71,6 +71,8 @@ let notation_name = function
   | Si -> "si"
   | Percent -> "percent"
 
+let pp_notation ppf n = Format.pp_print_string ppf (notation_name n)
+
 let equal f f' =
   f.notation = f'.notation && f.precision = f'.precision
   && Bool.equal f.trim f'.trim

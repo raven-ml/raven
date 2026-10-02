@@ -166,6 +166,9 @@ module Renderable = Hugin_next_vg.Renderable
 module Locale = Hugin_next_kit.Locale
 (** Locales. *)
 
+module Number = Hugin_next_kit.Number
+(** Number formats: the notations of tick labels. *)
+
 module Scale = Hugin_next_kit.Scale
 (** Scale specifications and fitted scales. *)
 
@@ -621,15 +624,16 @@ val contour :
     it.
 
     The levels are [0.] and [1.], the normalised ends of the fill scale's
-    domain, and the normalised ticks {!layout} froze for it ({!Mark.ticks}), in
-    increasing order without repeats. [contour] implies [stepped] on its fill
-    scale ({!Scale.linear}), so every reader of that scale paints the same steps
-    and its colour bar steps at the levels. Between two consecutive levels [lo]
-    and [hi], the isoband ({!Hugin_next_gg_kit.Field2.isoband}) of the field's
-    normalised values is filled with [f ((lo +. hi) /. 2.)], where
-    [Mark.range rows Role.fill] is [Some f] ({!Mark.range}). Missing samples cut
-    holes. A field whose columns' x or rows' y are not strictly monotone once
-    normalised draws nothing, with a warning.
+    domain, and the normalised ticks {!layout} froze for it, its explicit ticks
+    if it sets some ({!Mark.ticks}), in increasing order without repeats.
+    [contour] implies [stepped] on its fill scale ({!Scale.linear}), so every
+    reader of that scale paints the same steps and its colour bar steps at the
+    levels. Between two consecutive levels [lo] and [hi], the isoband
+    ({!Hugin_next_gg_kit.Field2.isoband}) of the field's normalised values is
+    filled with [f ((lo +. hi) /. 2.)], where [Mark.range rows Role.fill] is
+    [Some f] ({!Mark.range}). Missing samples cut holes. A field whose columns'
+    x or rows' y are not strictly monotone once normalised draws nothing, with a
+    warning.
 
     Raises [Invalid_argument] if the mark's shape has fewer than two axes, if
     [fill] is a constant, if [x] or [y] can vary along the axis it must not vary
@@ -750,10 +754,15 @@ val contour :
 
     A scale read by several roles has a guide for each: a scale named by a user
     and read by [x] in one panel and by [fill] in another has an axis there and
-    a legend. Its ticks are one set, which every guide of the scale shows: those
+    a legend. Its ticks are one set, which every guide of the scale shows: the
+    scale's explicit ticks if it sets some ({!Scale.linear}); otherwise, those
     of a facet scale and of a categorical scale with a legend are its
     categories, and the others are chosen so that their labels overlap on none
-    of its guides ({!layout}).
+    of its guides ({!layout}). Their labels are in the scale's notation if it
+    sets one: [num ~scale:(Scale.linear ~notation:Percent ()) acc] labels its
+    ticks as percentages, and the guides of
+    [Scale.log ~ticks:[| 1.; 10.; 100. |] ()] show those of the three values
+    that its domain holds.
 
     {1:facets Facets}
 
