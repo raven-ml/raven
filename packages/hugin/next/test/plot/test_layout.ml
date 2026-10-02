@@ -1018,6 +1018,29 @@ let guides =
           let _, _, _, y1 = text_box l {|(text "model")|} in
           let _, y0, _, _ = text_box l {|(text "a")|} in
           equal (float 1e-3) pad (y0 -. y1));
+      test "facet titles are a quarter em beyond the headers of square panels"
+        (fun () ->
+          let f =
+            rect
+              ~x:(strings [| "a"; "b"; "a"; "b" |])
+              ~y:(strings [| "p"; "p"; "q"; "q" |])
+              ~fx:(strings ~title:(Text.v "head") [| "h0"; "h1"; "h0"; "h1" |])
+              ~fy:(strings ~title:(Text.v "layer") [| "l0"; "l0"; "l1"; "l1" |])
+              ()
+            |> coord (Coord.cartesian ~aspect:1. ())
+          in
+          (* The panels leave room below them in a tall figure, and beside them
+             in a wide one. *)
+          List.iter
+            (fun (w, h) ->
+              let l = lay (Size.figure w h) f in
+              let _, _, _, above = text_box l {|(text "head")|} in
+              let _, top, _, _ = text_box l {|(text "h0")|} in
+              equal ~msg:"head" (float 1e-3) pad (top -. above);
+              let beside, _, _, _ = text_box l {|(text "layer")|} in
+              let _, _, right, _ = text_box l {|(text "l0")|} in
+              equal ~msg:"layer" (float 1e-3) pad (beside -. right))
+            [ (300., 500.); (600., 200.) ]);
       test "ticks are frozen as chosen at the lengths of the second solve"
         (fun () ->
           (* Without guides x is 120 points long and takes three ticks; the

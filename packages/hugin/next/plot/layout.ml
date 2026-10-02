@@ -941,20 +941,23 @@ let union h h' =
   | Some b, Some b' -> Some (Box2.union b b')
 
 (* [place cx acc unit item box ~span ~outer] places [item] in [box] and is the
-   hull of its panels, [span] being that of the panels a heading or legend
-   stands beside, and [outer] the box with protrusions of their grid. *)
+   hull of its panels and the part of [box] it fills, [span] being the hull of
+   the panels a heading or legend stands beside, and [outer] the box with
+   protrusions of their grid. *)
 let rec place cx acc unit item box ~span ~outer =
   match item with
-  | Leaf l -> Some (place_leaf cx acc l box)
+  | Leaf l ->
+      let b = place_leaf cx acc l box in
+      (Some b, b)
   | Grid g -> place_grid cx acc unit g box
   | Heading { owner; align; head; hside } ->
       acc.titles <-
         place_heading cx ~owner ~align ~head ~side:hside box span outer
         :: acc.titles;
-      None
+      (None, box)
   | Legend ls ->
       place_legend cx acc ls box span;
-      None
+      (None, box)
 
 and place_grid cx acc unit g box =
   let t = solve_grid cx unit g (Box2.w box) (Box2.h box) in
@@ -991,24 +994,49 @@ and place_grid cx acc unit g box =
       (Box2.h box +. p.top +. p.bottom)
   in
   let is_body k = Option.equal Int.equal (Some k) g.gbody in
+  let body_cell = Option.map (List.nth g.gcells) g.gbody in
   let body =
-    match g.gbody with
-    | None -> None
-    | Some k ->
-        let c = List.nth g.gcells k in
-        place cx acc unit c.it (cell_box c) ~span:None ~outer
+    Option.map
+      (fun c -> place cx acc unit c.it (cell_box c) ~span:None ~outer)
+      body_cell
   in
-  let _, hull =
+  let span = Option.bind body fst in
+  (* The body may leave part of its cell empty, such as the room around panels
+     with an aspect. A title or legend beside the body moves across that part,
+     so that the gap between them stays what the grid made it. *)
+  let beside c =
+    let box = cell_box c in
+    match (body_cell, body) with
+    | Some b, Some (_, used) ->
+        let cell = cell_box b in
+        let dx =
+          if c.c0 + c.nc <= b.c0 then Box2.minx used -. Box2.minx cell
+          else if c.c0 >= b.c0 + b.nc then Box2.maxx used -. Box2.maxx cell
+          else 0.
+        in
+        let dy =
+          if c.r0 + c.nr <= b.r0 then Box2.miny used -. Box2.miny cell
+          else if c.r0 >= b.r0 + b.nr then Box2.maxy used -. Box2.maxy cell
+          else 0.
+        in
+        Box2.v
+          (Box2.minx box +. dx)
+          (Box2.miny box +. dy)
+          (Box2.w box) (Box2.h box)
+    | _ -> box
+  in
+  let _, hull, used =
     List.fold_left
-      (fun (k, h) c ->
-        if is_body k then (k + 1, h)
+      (fun (k, h, u) c ->
+        if is_body k then (k + 1, h, u)
         else
-          ( k + 1,
-            union h (place cx acc unit c.it (cell_box c) ~span:body ~outer) ))
-      (0, body) g.gcells
+          let h', u' = place cx acc unit c.it (beside c) ~span ~outer in
+          (k + 1, union h h', union u (Some u')))
+      (0, span, Option.map snd body)
+      g.gcells
   in
   Option.iter (fun h -> acc.spans <- (g.gid, h) :: acc.spans) hull;
-  hull
+  (hull, Option.value used ~default:box)
 
 (* Choosing ticks *)
 
