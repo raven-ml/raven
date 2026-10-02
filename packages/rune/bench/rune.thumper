@@ -27,8 +27,8 @@ Jit/arange-int64-1Mi-replay	alloc_words	batch=16	n=20	1.116e+03	1.114e+03 1.114e
 Jit/arange-int64-1Mi-replay	wall_time	batch=16	n=20	4.401e-04	4.070e-04 4.199e-04 4.232e-04 4.297e-04 4.314e-04 4.327e-04 4.365e-04 4.375e-04 4.380e-04 4.392e-04 4.410e-04 4.449e-04 4.450e-04 4.474e-04 4.482e-04 4.495e-04 4.505e-04 4.515e-04 4.616e-04 4.670e-04
 Jit/eager-run-mlp	alloc_words	exact	1511
 Jit/eager-run-mlp	wall_time	batch=1	n=20	3.452e-03	3.443e-03 3.444e-03 3.444e-03 3.445e-03 3.445e-03 3.446e-03 3.448e-03 3.451e-03 3.451e-03 3.452e-03 3.453e-03 3.456e-03 3.457e-03 3.483e-03 3.610e-03 3.612e-03 3.613e-03 3.616e-03 3.646e-03 3.646e-03
-Jit/jit-run-chain	alloc_words	exact	924
-Jit/jit-run-chain	wall_time	batch=32	n=20	2.170e-04	2.163e-04 2.163e-04 2.164e-04 2.164e-04 2.164e-04 2.164e-04 2.164e-04 2.165e-04 2.165e-04 2.169e-04 2.172e-04 2.174e-04 2.174e-04 2.175e-04 2.175e-04 2.179e-04 2.181e-04 2.184e-04 2.185e-04 2.196e-04
+Jit/jit-run-chain	alloc_words	exact	817
+Jit/jit-run-chain	wall_time	batch=32	n=20	2.163e-04	2.161e-04 2.162e-04 2.162e-04 2.162e-04 2.162e-04 2.162e-04 2.162e-04 2.162e-04 2.163e-04 2.163e-04 2.163e-04 2.163e-04 2.164e-04 2.165e-04 2.168e-04 2.171e-04 2.174e-04 2.185e-04 2.191e-04 2.195e-04
 Jit/jit-run-mlp	alloc_words	exact	3457
 Jit/jit-run-mlp	wall_time	batch=32	n=20	2.911e-04	2.871e-04 2.895e-04 2.899e-04 2.900e-04 2.902e-04 2.903e-04 2.905e-04 2.905e-04 2.907e-04 2.910e-04 2.912e-04 2.913e-04 2.914e-04 2.915e-04 2.927e-04 4.275e-04 5.097e-04 5.352e-04 5.659e-04 5.717e-04
 JitFootprint/elementwise-first-call	alloc_words	batch=1	n=20	6.289e+04	6.286e+04 6.286e+04 6.286e+04 6.286e+04 6.286e+04 6.286e+04 6.286e+04 6.286e+04 6.286e+04 6.289e+04 6.289e+04 6.291e+04 6.291e+04 6.434e+04 7.359e+04 7.380e+04 7.380e+04 8.051e+04 8.051e+04 8.208e+04
@@ -78,8 +78,8 @@ DeepChain/chain-grad	alloc_words	exact	38364
 DeepChain/chain-grad	wall_time	batch=32	n=20	2.617e-04	2.479e-04 2.530e-04 2.550e-04 2.554e-04 2.567e-04 2.577e-04 2.582e-04 2.594e-04 2.600e-04 2.601e-04 2.633e-04 2.638e-04 2.652e-04 2.658e-04 2.666e-04 2.666e-04 2.696e-04 2.713e-04 2.719e-04 2.775e-04
 Jit/eager-run-mlp	alloc_words	exact	2341
 Jit/eager-run-mlp	wall_time	batch=16	n=20	4.976e-04	4.558e-04 4.666e-04 4.800e-04 4.831e-04 4.836e-04 4.884e-04 4.911e-04 4.940e-04 4.963e-04 4.971e-04 4.981e-04 5.008e-04 5.026e-04 5.062e-04 5.062e-04 5.104e-04 5.138e-04 5.179e-04 5.240e-04 5.272e-04
-Jit/jit-run-chain	alloc_words	exact	842
-Jit/jit-run-chain	wall_time	batch=64	n=20	6.728e-05	6.226e-05 6.352e-05 6.365e-05 6.403e-05 6.428e-05 6.434e-05 6.644e-05 6.705e-05 6.706e-05 6.719e-05 6.738e-05 6.775e-05 6.788e-05 6.804e-05 6.956e-05 7.580e-05 7.819e-05 9.692e-05 1.413e-04 4.311e-04
+Jit/jit-run-chain	alloc_words	exact	817
+Jit/jit-run-chain	wall_time	batch=16	n=20	3.225e-04	3.101e-04 3.120e-04 3.124e-04 3.134e-04 3.141e-04 3.145e-04 3.149e-04 3.156e-04 3.200e-04 3.206e-04 3.243e-04 3.245e-04 3.246e-04 3.251e-04 3.253e-04 3.262e-04 3.267e-04 3.273e-04 3.295e-04 3.325e-04
 Jit/jit-run-mlp	alloc_words	exact	2295
 Jit/jit-run-mlp	wall_time	batch=8	n=20	7.059e-04	6.390e-04 6.436e-04 6.458e-04 6.562e-04 6.671e-04 6.845e-04 6.851e-04 6.923e-04 6.941e-04 6.985e-04 7.133e-04 7.169e-04 7.176e-04 7.239e-04 7.342e-04 7.437e-04 7.781e-04 7.802e-04 8.102e-04 9.356e-04
 JitFootprint/elementwise-first-call	alloc_words	exact	550618
