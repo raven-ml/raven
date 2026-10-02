@@ -76,11 +76,11 @@ let facet_pairs =
       ~fx:(strings [| "left"; "right" |])
       ~fill:(strings [| "alpha"; "b" |])
       ~x:(num x)
-      ~y:(num ~title:(Text.v "value") x)
+      ~y:(num ~title:"value" x)
       ()
   in
   grid (List.init 3 (fun r -> List.init 3 (fun c -> cell ((3 * r) + c - 4))))
-  |> title (Text.v "A figure")
+  |> title "A figure"
 
 let nested =
   let r = resolve facet_pairs in
