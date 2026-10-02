@@ -123,12 +123,9 @@ let dropped_rows () =
           Mark.normalized r Role.y,
           Mark.get r Role.x ))
   in
-  List.iter
-    (fun (name, v) -> is_true ~msg:name (is_nan v))
-    [ ("x", xs.(1)); ("y", ys.(1)); ("lo", a.(1)); ("hi", b.(1)) ];
-  List.iter
-    (fun i -> is_false ~msg:(string_of_int i) (is_nan xs.(i) || is_nan ys.(i)))
-    [ 0; 2; 3 ];
+  equal floats [| nan; nan; nan; nan |] [| xs.(1); ys.(1); a.(1); b.(1) |];
+  equal (array bool) [| false; false; false |]
+    (Array.map (fun i -> is_nan xs.(i) || is_nan ys.(i)) [| 0; 2; 3 |]);
   (* The x domain is [0, 3], and the dropped row keeps its x. *)
   equal (option floats) (Some [| 0.; 1. /. 3.; 2. /. 3.; 1. |]) nx;
   equal (option floats) nx gx;
@@ -151,8 +148,7 @@ let missing_drops (_, y) =
       [ Mark.bind Role.x (num (f64 [| 0.; 1.; 2. |])); Mark.bind Role.y y ]
       Mark.points
   in
-  is_true (is_nan ys.(1));
-  is_false (is_nan ys.(0) || is_nan ys.(2))
+  equal (array bool) [| false; true; false |] (Array.map is_nan ys)
 
 (* Extents, from the spec of [Mark.extent]. *)
 let extents =
@@ -214,46 +210,99 @@ let extent_case (_, bindings, expected) =
   let got = rows_of bindings (fun r -> Mark.extent r `X) in
   equal (pair (array close) (array close)) expected got
 
-let series_lengths bindings =
-  rows_of bindings (fun r -> List.map Mark.index (Mark.series r))
+(* Law: [series] splits the rows of a line by their index along the leading axes
+   and their category in every channel on a band scale other than the positions,
+   a missing category being one of its own, in order of first rows. Here [m]
+   series of [n] rows each, coloured by codes of two labels, some outside them,
+   beside a categorical x. *)
+let gen_series =
+  let open Gen in
+  let* m = int_range 1 3 and+ n = int_range 1 4 in
+  let+ codes = array ~size:(constant (m * n)) (int_range (-1) 2) in
+  (m, n, codes)
 
-let series =
-  [
-    test "a categorical x does not split a series" (fun () ->
-        equal
-          (list (array int))
-          [ [| 0; 1; 2 |] ]
-          (series_lengths
-             [
-               Mark.bind Role.x (strings [| "a"; "b"; "c" |]);
-               Mark.bind Role.y (num (f64 [| 1.; 2.; 3. |]));
-             ]));
-    test "a categorical stroke splits the rows" (fun () ->
-        equal
-          (list (array int))
-          [ [| 0; 2 |]; [| 1; 3 |] ]
-          (series_lengths
-             [
-               Mark.bind Role.y (num (f64 [| 1.; 2.; 3.; 4. |]));
-               Mark.bind Role.stroke
-                 (cat ~labels:[| "p"; "q" |] (i32 [| 0; 1; 0; 1 |]));
-             ]));
-    test "the leading axes split the rows" (fun () ->
-        equal
-          (list (array int))
-          [ [| 0; 1; 2 |]; [| 3; 4; 5 |] ]
-          (series_lengths
-             [ Mark.bind Role.y (num (Nx.zeros Nx.float64 [| 2; 3 |])) ]));
-    test "a missing category is a series of its own" (fun () ->
-        equal
-          (list (array int))
-          [ [| 0; 2 |]; [| 1 |] ]
-          (series_lengths
-             [
-               Mark.bind Role.y (num (f64 [| 1.; 2.; 3. |]));
-               Mark.bind Role.stroke (cat ~labels:[| "p" |] (i32 [| 0; 5; 0 |]));
-             ]));
-  ]
+let series_law (m, n, codes) =
+  let category k = if codes.(k) = 0 || codes.(k) = 1 then codes.(k) else -1 in
+  let key k = (k / n, category k) in
+  let expected =
+    List.fold_left
+      (fun acc k ->
+        match List.assoc_opt (key k) acc with
+        | Some ks -> (key k, k :: ks) :: List.remove_assoc (key k) acc
+        | None -> (key k, [ k ]) :: acc)
+      []
+      (List.init (m * n) Fun.id)
+    |> List.map (fun (_, ks) -> Array.of_list (List.rev ks))
+    |> List.sort (fun a b -> compare a.(0) b.(0))
+  in
+  cover "a missing category" (Array.exists (fun c -> c < 0 || c > 1) codes);
+  cover "a series split by its stroke" (List.length expected > m);
+  let got =
+    rows_of
+      [
+        Mark.bind Role.x (strings (Array.init n string_of_int));
+        Mark.bind Role.y (num (Nx.zeros Nx.float64 [| m; n |]));
+        Mark.bind Role.stroke
+          (cat ~labels:[| "p"; "q" |]
+             (Nx.create Nx.int32 [| m; n |] (Array.map Int32.of_int codes)));
+      ]
+      (fun r -> List.map Mark.index (Mark.series r))
+  in
+  equal (list (array int)) expected got
+
+(* Law: positions are normalised and kept outside the domain, points are their
+   projection inside it and [nan] elsewhere, and the extent of an x alone runs
+   from zero to it; a dropped row is at [nan] in all three. *)
+let gen_positions =
+  let value =
+    Gen.frequency
+      [
+        (4, Gen.float_range (-2.) 6.);
+        ( 1,
+          Gen.of_list ~pp:Format.pp_print_float [ 0.; 4.; nan; Float.infinity ]
+        );
+      ]
+  in
+  Gen.(
+    let* n = int_range 1 6 in
+    pair (array ~size:(constant n) value) (array ~size:(constant n) value))
+
+let positions_law (xs, ys) =
+  let unit4 = Scale.linear ~domain:(0., 4.) () in
+  let (us, vs), (px, py), (a, b), proj =
+    rows_of
+      [
+        Mark.bind Role.x (num ~scale:unit4 (f64 xs));
+        Mark.bind Role.y (num ~scale:unit4 (f64 ys));
+      ]
+      (fun r ->
+        (Mark.positions r, Mark.points r, Mark.extent r `X, Mark.projection r))
+  in
+  let near = float 1e-9 in
+  Array.iteri
+    (fun i x ->
+      let msg = Printf.sprintf "row %d" i in
+      let y = ys.(i) in
+      if not (Float.is_finite x && Float.is_finite y) then begin
+        cover "a dropped row" true;
+        equal ~msg floats (Array.make 6 nan)
+          [| us.(i); vs.(i); px.(i); py.(i); a.(i); b.(i) |]
+      end
+      else begin
+        let u = x /. 4. and v = y /. 4. in
+        equal ~msg (pair near near) (u, v) (us.(i), vs.(i));
+        equal ~msg (pair near near) (0., u) (a.(i), b.(i));
+        if 0. <= u && u <= 1. && 0. <= v && v <= 1. then begin
+          cover "a row in the domain" true;
+          let p = Coord.point proj u v in
+          equal ~msg (pair near near) (P2.x p, P2.y p) (px.(i), py.(i))
+        end
+        else begin
+          cover "a row outside the domain" true;
+          equal ~msg floats [| nan; nan |] [| px.(i); py.(i) |]
+        end
+      end)
+    xs
 
 let missing_values =
   [
@@ -280,7 +329,10 @@ let missing_values =
             ]
             (fun r -> Mark.get r Role.symbol)
         in
-        is_true (Symbol.equal Symbol.square (Option.get s).(1)));
+        equal
+          (Testable.make ~pp:Symbol.pp ~equal:Symbol.equal)
+          Symbol.square
+          (Option.get s).(1));
     test "a missing text is empty" (fun () ->
         let t =
           rows_of
@@ -354,7 +406,9 @@ let rows =
       cases ~name:fst "a missing value drops its row" missing_kinds
         missing_drops;
       cases ~name:(fun (n, _, _) -> n) "extent" extents extent_case;
-      group "series" series;
+      prop "series split rows by leading axes and categories" gen_series
+        series_law;
+      prop "positions, points and extents agree" gen_positions positions_law;
       group "missing values" missing_values;
       prop "get is the range of normalized on a continuous scale"
         (Gen.pair (Gen.list ~size:(Gen.int_range 1 6) value_gen) Gen.bool)
@@ -610,20 +664,6 @@ let page_box =
 let domain =
   group "Domain"
     [
-      test "positions keep a position outside the domain, points drop it"
-        (fun () ->
-          let (us, _), (xs, _) =
-            rows_of
-              [
-                Mark.bind Role.x (num ~scale:unit (f64 [| 0.5; 1.5; 1.; nan |]));
-                Mark.bind Role.y (const 0.5);
-              ]
-              (fun r -> (Mark.positions r, Mark.points r))
-          in
-          equal floats [| 0.5; 1.5; 1.; nan |] us;
-          equal (array bool)
-            [| false; true; false; true |]
-            (Array.map is_nan xs));
       test "project drops a box wholly beyond the domain" (fun () ->
           let got =
             rows_of [] (fun r ->
@@ -803,6 +843,44 @@ let inked () =
   at_least int ~than:2 (List.length labels);
   List.iter (equal color (part 0.75)) labels
 
+(* [panel_rows ~around bindings] is the rows a probe of [bindings] draws in each
+   panel of [around probe]. *)
+let panel_rows ?(around = Fun.id) bindings () =
+  let m, seen = probe bindings Mark.index in
+  ignore (drawn (around m));
+  !seen
+
+let facets =
+  let y shape = Mark.bind Role.y (num (Nx.zeros Nx.float64 shape)) in
+  let beside ?fx ?fy m =
+    layer [ dot ~x:(const 0.5) ~y:(const 0.5) ?fx ?fy (); m ]
+  in
+  [
+    ( "a facet channel puts each row in its panel",
+      panel_rows [ y [| 2; 3 |]; Mark.bind Role.fx (dim 0) ],
+      [ [| 0; 1; 2 |]; [| 3; 4; 5 |] ] );
+    ( "a facet on a middle axis puts each block of rows in its panel",
+      panel_rows [ y [| 2; 3; 2 |]; Mark.bind Role.fx (dim 1) ],
+      [ [| 0; 1; 6; 7 |]; [| 2; 3; 8; 9 |]; [| 4; 5; 10; 11 |] ] );
+    ( "a facet a mark leaves unbound puts its rows in every panel",
+      panel_rows
+        ~around:(beside ~fy:(strings [| "p"; "q" |]))
+        [ Mark.bind Role.fx (strings [| "a"; "b"; "a" |]) ],
+      [ [| 0; 2 |]; [| 0; 2 |]; [| 1 |]; [| 1 |] ] );
+    ( "a row whose facet value is missing is in no panel",
+      panel_rows
+        [
+          y [| 3 |];
+          Mark.bind Role.fx (dim ~valid:(bools [| true; false; true |]) 0);
+        ],
+      [ [| 0 |]; [| 2 |] ] );
+    ( "a facet constant draws in its panel only",
+      panel_rows
+        ~around:(beside ~fx:(strings [| "a"; "b" |]))
+        [ Mark.bind Role.fx (const "b") ],
+      [ [| 0 |] ] );
+  ]
+
 let drawings =
   group "Drawing"
     [
@@ -856,70 +934,11 @@ let drawings =
           | [ (Picture.Rows rows, Picture.Stamp _) ] ->
               equal (array int) [| 0; 1; 2 |] rows
           | _ -> fail "no tagged stamp");
-      test "a facet channel puts each row in its panel" (fun () ->
-          let m, seen =
-            probe
-              [
-                Mark.bind Role.y (num (Nx.zeros Nx.float64 [| 2; 3 |]));
-                Mark.bind Role.fx (dim 0);
-              ]
-              Mark.index
-          in
-          ignore (drawn m);
-          equal
-            (slist (array int) compare)
-            [ [| 0; 1; 2 |]; [| 3; 4; 5 |] ]
-            !seen);
-      test "a facet on a middle axis puts each block of rows in its panel"
-        (fun () ->
-          let m, seen =
-            probe
-              [
-                Mark.bind Role.y (num (Nx.zeros Nx.float64 [| 2; 3; 2 |]));
-                Mark.bind Role.fx (dim 1);
-              ]
-              Mark.index
-          in
-          ignore (drawn m);
-          equal
-            (slist (array int) compare)
-            [ [| 0; 1; 6; 7 |]; [| 2; 3; 8; 9 |]; [| 4; 5; 10; 11 |] ]
-            !seen);
-      test "a facet a mark leaves unbound puts its rows in every panel"
-        (fun () ->
-          let m, seen =
-            probe [ Mark.bind Role.fx (strings [| "a"; "b"; "a" |]) ] Mark.index
-          in
-          let rows = dot ~x:(const 0.5) ~y:(const 0.5) in
-          ignore (drawn (layer [ rows ~fy:(strings [| "p"; "q" |]) (); m ]));
-          equal
-            (slist (array int) compare)
-            [ [| 0; 2 |]; [| 0; 2 |]; [| 1 |]; [| 1 |] ]
-            !seen);
-      test "a row whose facet value is missing is in no panel" (fun () ->
-          let valid = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
-          let m, seen =
-            probe
-              [
-                Mark.bind Role.y (num (Nx.zeros Nx.float64 [| 3 |]));
-                Mark.bind Role.fx (dim ~valid 0);
-              ]
-              Mark.index
-          in
-          ignore (drawn m);
-          equal (slist (array int) compare) [ [| 0 |]; [| 2 |] ] !seen);
-      test "a facet constant draws in its panel only" (fun () ->
-          let m, seen = probe [ Mark.bind Role.fx (const "b") ] Mark.index in
-          ignore
-            (drawn
-               (layer
-                  [
-                    dot ~x:(const 0.5) ~y:(const 0.5)
-                      ~fx:(strings [| "a"; "b" |])
-                      ();
-                    m;
-                  ]));
-          equal (list (array int)) [ [| 0 |] ] !seen);
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "facets" facets
+        (fun (_, f, expected) ->
+          equal (slist (array int) compare) expected (f ()));
       test "titles take the ink, labels and axes a part of its opacity" inked;
       test "a dot is a circle 0.6 em across, a copy of one glyph" (fun () ->
           (* A circle 6 points across at the default size of 10 points, drawn at
@@ -963,7 +982,7 @@ let output =
           let dir = temp_dir () in
           let file = Filename.concat dir "f.jpg" in
           raises_match Exn.invalid_arg (fun () -> save file (other ()));
-          is_false (Sys.file_exists file));
+          equal bool false (Sys.file_exists file));
       cases ~name:fst "save writes the format its extension names"
         [ ("f.png", "\x89PNG"); ("f.SVG", "<svg"); ("f.pdf", "%PDF") ]
         (fun (name, magic) ->
@@ -985,7 +1004,7 @@ let output =
           save ~view
             ~warn:(fun w ->
               seen := w :: !seen;
-              is_false (Sys.file_exists file))
+              equal bool false (Sys.file_exists file))
             file (other ());
           equal int 1 (List.length !seen));
       test "pp prints a summary where tags are not shown" (fun () ->
@@ -1363,9 +1382,10 @@ let one_panel = function
   | boxes, kept ->
       failf "%d panels, %d draws" (List.length boxes) (List.length kept)
 
-let m4_columns () =
-  let n = 1001 in
-  let x = xs n and y = ys n in
+(* [m4_series (x, y)] states that M4 keeps of one series what the reference
+   keeps, on the x domain [0, 1000] at density 1. *)
+let m4_series (_, x, y) =
+  let n = (Nx.shape x).(0) in
   let box, kept = one_panel (m4_kept x y) in
   let x = Nx.to_array x in
   equal (array int)
@@ -1374,44 +1394,20 @@ let m4_columns () =
        (Nx.to_array y) (List.init n Fun.id))
     kept
 
-(* A series over [-300, 1300] on the domain [0, 1000], as in a zoom. *)
-let m4_zoom () =
-  let n = 2001 in
-  let x = Nx.linspace Nx.float64 (-300.) 1300. n and y = ys n in
-  let box, kept = one_panel (m4_kept x y) in
-  let x = Nx.to_array x in
-  equal (array int)
-    (m4_reference
-       (fun i -> columns ~density:1. box (0., 1000.) x.(i))
-       (Nx.to_array y) (List.init n Fun.id))
-    kept
-
-let m4_gaps () =
+let m4_cases =
   let n = 1001 in
-  let x = xs n and y = with_gaps (ys n) in
-  let box, kept = one_panel (m4_kept x y) in
-  let x = Nx.to_array x in
-  less int ~than:(n / 2) (Array.length kept);
-  equal (array int)
-    (m4_reference
-       (fun i -> columns ~density:1. box (0., 1000.) x.(i))
-       (Nx.to_array y) (List.init n Fun.id))
-    kept
-
-let m4_turns () =
-  let n = 1001 in
-  let x =
+  let turning =
     Nx.init Nx.float64 [| n |] (fun i ->
         Float.of_int (Int.min i.(0) (n - 1 - i.(0))) *. 2.)
   in
-  let y = ys n in
-  let box, kept = one_panel (m4_kept x y) in
-  let x = Nx.to_array x in
-  equal (array int)
-    (m4_reference
-       (fun i -> columns ~density:1. box (0., 1000.) x.(i))
-       (Nx.to_array y) (List.init n Fun.id))
-    kept
+  [
+    ("each column's first, last, lowest and highest rows", xs n, ys n);
+    ( "columns cut at the domain's ends",
+      Nx.linspace Nx.float64 (-300.) 1300. 2001,
+      ys 2001 );
+    ("the first row of each run of dropped rows", xs n, with_gaps (ys n));
+    ("each run of a column when x turns back", turning, ys n);
+  ]
 
 (* Two facet panels of three series each, on the middle axis, so that a panel's
    series are not consecutive. *)
@@ -1468,13 +1464,7 @@ let reducers =
       test "m4 keeps every row at four rows per column" (fun () ->
           let _, kept = m4_kept (xs 200) (ys 200) in
           equal (list int) [ 200 ] (List.map Array.length kept));
-      test
-        "m4 keeps each device-pixel column's first, last, lowest and highest \
-         rows"
-        m4_columns;
-      test "m4 cuts the columns at the domain's ends" m4_zoom;
-      test "m4 keeps the first row of each run of dropped rows" m4_gaps;
-      test "m4 keeps each run of a column when x turns back" m4_turns;
+      cases ~name:(fun (n, _, _) -> n) "m4 keeps" m4_cases m4_series;
       test "m4 keeps every row when x is in no order" (fun () ->
           let n = 1001 in
           let x = Nx.Rng.uniform (Nx.Rng.key 7) Nx.float64 [| n |] in
@@ -1816,13 +1806,32 @@ let mid_step levels u =
 let levels ticks =
   Array.of_list (List.sort_uniq Float.compare (0. :: 1. :: Array.to_list ticks))
 
-let reads_steps values =
+(* A stepped scale exported from a figure of other data, whose ticks a figure of
+   another size chooses afresh. *)
+let exported =
+  let z = Scale.linear ~name:"z" ~stepped:true () in
+  let f =
+    dot ~x:(const 0.5) ~y:(const 0.5)
+      ~fill:(num ~scale:z (f64 [| 0.3; 7.1 |]))
+      ()
+  in
+  Resolved.scale (resolve f) z
+
+let steppings =
+  Gen.of_list
+    ~pp:(fun ppf (n, _, _) -> Format.pp_print_string ppf n)
+    [
+      ("a stepped scale", stepped, Size.panels 100. 100.);
+      ("an exported stepped scale", exported, Size.panels 30. 230.);
+    ]
+
+let reads_steps ((_, scale, size), values) =
   let read rows =
     let get r = Option.get (r rows Role.fill) in
     (get Mark.normalized, get Mark.get, get Mark.ticks)
   in
   let norm, colours, ticks =
-    rows_of [ Mark.bind Role.fill (num ~scale:stepped (f64 values)) ] read
+    rows_of ~size [ Mark.bind Role.fill (num ~scale (f64 values)) ] read
   in
   cover "a value on a level" (Array.exists (fun u -> Array.mem u ticks) norm);
   cover "a value beyond the domain"
@@ -1850,13 +1859,16 @@ let bar_fills d =
 let steps =
   group "Steps"
     [
-      prop "a reader of a stepped scale takes the range at its step's middle"
-        (Gen.array ~size:(Gen.int_range 1 8)
-           (Gen.frequency
-              [
-                (4, Gen.float_range (-2.) 12.);
-                (1, Gen.of_list ~pp:Format.pp_print_float [ 0.; 2.; 5.; 10. ]);
-              ]))
+      prop
+        "a reader of a stepped scale takes the range at the middle of its step \
+         between the ticks of the figure drawing it"
+        (Gen.pair steppings
+           (Gen.array ~size:(Gen.int_range 1 8)
+              (Gen.frequency
+                 [
+                   (4, Gen.float_range (-2.) 12.);
+                   (1, Gen.of_list ~pp:Format.pp_print_float [ 0.; 2.; 5.; 10. ]);
+                 ])))
         reads_steps;
       test "a stepped colour bar paints each step from its level to the top"
         (fun () ->
