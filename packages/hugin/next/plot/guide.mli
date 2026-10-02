@@ -93,8 +93,8 @@ type spec = { id : Common.id; side : Figure.side; kind : kind }
 
 val inside : spec -> Figure.corner option
 (** [inside g] is the corner of [g] if it is an inside legend, laid out as a
-    legend on the right and then moved into that corner of its node's data hull.
-*)
+    legend on the right and then moved into that corner of the data area of the
+    panel it is on. *)
 
 (** {1:laid Laid-out guides} *)
 

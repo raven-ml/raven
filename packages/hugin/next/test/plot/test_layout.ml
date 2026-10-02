@@ -1632,9 +1632,54 @@ let crowded_with g =
 
 let crowded = crowded_with (legend ~side:(`Inside `Top_left) "color")
 
+(* 2 × 2 facets of eight categories, with an inside legend in [c]. *)
+let facet_case (_, c) =
+  let data = f64 (Array.init 8 Float.of_int) in
+  let f =
+    layer
+      [
+        dot ~x:(num data) ~y:(num data) ~fill:(strings many)
+          ~fx:
+            (strings (Array.init 8 (fun i -> if i mod 2 = 0 then "p" else "q")))
+          ~fy:(strings (Array.init 8 (fun i -> if i < 4 then "r" else "s")))
+          ();
+        legend ~side:(`Inside c) "color";
+      ]
+  in
+  let l = lay (Size.panels 60. 60.) f in
+  let pick better =
+    List.fold_left
+      (fun b b' -> if better b' b then b' else b)
+      (List.hd (boxes l))
+      (boxes l)
+  in
+  let box =
+    match c with
+    | `Top_left ->
+        pick (fun b b' ->
+            Box2.minx b < Box2.minx b' || Box2.miny b < Box2.miny b')
+    | `Top_right ->
+        pick (fun b b' ->
+            Box2.maxx b > Box2.maxx b' || Box2.miny b < Box2.miny b')
+    | `Bottom_left ->
+        pick (fun b b' ->
+            Box2.minx b < Box2.minx b' || Box2.maxy b > Box2.maxy b')
+    | `Bottom_right ->
+        pick (fun b b' ->
+            Box2.maxx b > Box2.maxx b' || Box2.maxy b > Box2.maxy b')
+  in
+  let x0, y0, x1, y1 = legend_box l in
+  let inset = (0.25 *. em) -. 1e-3 in
+  at_least ~msg:"left" float_exact ~than:(Box2.minx box +. inset) x0;
+  at_least ~msg:"top" float_exact ~than:(Box2.miny box +. inset) y0;
+  at_most ~msg:"right" float_exact ~than:(Box2.maxx box -. inset) x1;
+  at_most ~msg:"bottom" float_exact ~than:(Box2.maxy box -. inset) y1
+
 let inside_legends =
   group "inside legends"
     [
+      cases "an inside legend of facets lies in its corner panel" ~name:fst
+        corners facet_case;
       prop "an inside legend leaves the data areas as a hidden one does"
         gen_inside unmoved_law;
       cases "an inside legend lies in its corner, a pad from both edges"

@@ -1118,15 +1118,18 @@ val legend : ?side:[< side | `Inside of corner ] -> ?show:bool -> string -> t
     scales, [`Right] by default, and drawn iff [show], [true] by default. It
     draws nothing itself.
 
-    With [`Inside c], the legend lies in the corner [c] of the hull of the data
-    areas of those panels, [0.25] em from both edges, its entries in one column
-    and its colour bar [8] em long. It takes no tier and protrudes nowhere
-    ({!layout}): the panels must be as large as the legend and its pads, so
-    under {!Size.panels} their tracks grow to hold it, and a {!Size.figure} too
-    small for it raises in {!layout}. It is drawn under the marks, with the grid
-    lines, so the data stays visible over it; no corner is chosen for being
-    empty, so pick the corner the data leaves empty, or widen the domain
-    ({!Scale.linear}): [layer [ f; legend ~side:(`Inside `Top_right) "color" ]].
+    With [`Inside c], the legend lies in the corner [c] of the data area of the
+    panel in that corner of those panels, the top-right panel of a grid of
+    facets for [`Top_right], [0.25] em from both edges, its entries in one
+    column and its colour bar [8] em long. In a grid whose last row is short,
+    the last panel of that row stands for its bottom corner on that side. It
+    takes no tier and protrudes nowhere ({!layout}): that panel must be as large
+    as the legend and its pads, so under {!Size.panels} its tracks grow to hold
+    it, and a {!Size.figure} too small for it raises in {!layout}. It is drawn
+    under the marks, with the grid lines, so the data stays visible over it; no
+    corner is chosen for being empty, so pick the corner the data leaves empty,
+    or widen the domain ({!Scale.linear}):
+    [layer [ f; legend ~side:(`Inside `Top_right) "color" ]].
 
     {!resolve} raises [Invalid_argument] if [name] names no scale with a legend
     in that scope, or if the scope holds two different legends for one scale. *)
@@ -1880,8 +1883,8 @@ val layout :
     data areas by its boundary cells' protrusions, then by its bands, or by what
     its guides reach past the ends of the adjacent sides if that is more.
     Titles, headers and legends need their side to be as long as they are.
-    Inside legends are no tier: their node needs their width and height, each
-    with a pad on both sides, as its least width and height.
+    Inside legends are no tier: the panel in their corner needs their width and
+    height, each with a pad on both sides, as its least width and height.
 
     Each grid makes each gap the largest protrusions that meet it from either
     side plus the theme's gap ({!Theme.section-lengths}), and shares the length

@@ -23,7 +23,8 @@
    v}
 
    An inside legend is in no tier: laid out as a legend on the right, it moves
-   into a corner of its node's data hull, which must hold it.
+   into its corner of the data area of the panel in that corner of its node,
+   which must hold it.
 
    A guide serving several panels is on the smallest node holding them. A grid
    makes each gap the protrusions that meet it plus a gap, gives each track what
@@ -88,19 +89,52 @@ let rec holds node pid =
   | Panel p -> Nx.Ptree.Path.equal p.id pid
   | Grid g -> List.exists (fun c -> holds c.node pid) g.cells
 
-(* [attach pids spec node] is [node] with the guide [spec id] on the smallest
-   node [id] of it that holds the panels [pids]. *)
-let rec attach pids spec node =
+(* [corner_cell c g] is the cell of [g] in its corner [c]: of the cells in its
+   top or bottom row, the leftmost or rightmost. A wrapped grid's last row may
+   be short, and its cell farthest along that row stands in. *)
+let corner_cell (c : corner) g =
+  let bottom = match c with `Bottom_left | `Bottom_right -> true | _ -> false
+  and right = match c with `Top_right | `Bottom_right -> true | _ -> false in
+  let row k = if bottom then -(k.r0 + k.nr) else k.r0
+  and col k = if right then -(k.c0 + k.nc) else k.c0 in
+  let first k k' =
+    let o = Int.compare (row k) (row k') in
+    if o < 0 || (o = 0 && col k < col k') then k else k'
+  in
+  match g.cells with [] -> None | k :: ks -> Some (List.fold_left first k ks)
+
+(* [cornered c spec node] is [node] with [spec] on its panel in the corner
+   [c]. *)
+let rec cornered c spec node =
+  match node with
+  | Panel p -> Panel { p with guides = p.guides @ [ spec ] }
+  | Grid g -> (
+      match corner_cell c g with
+      | None -> Grid { g with guides = g.guides @ [ spec ] }
+      | Some k ->
+          let cell k' =
+            if k' == k then { k with node = cornered c spec k.node } else k'
+          in
+          Grid { g with cells = List.map cell g.cells })
+
+(* [attach ~corner pids spec node] is [node] with the guide [spec id] on the
+   smallest node [id] of it that holds the panels [pids], or with [corner] on
+   that node's panel in that corner. *)
+let rec attach ?corner pids spec node =
   match node with
   | Panel p -> Panel { p with guides = p.guides @ [ spec p.id ] }
   | Grid g -> (
       match
         List.find_opt (fun c -> List.for_all (holds c.node) pids) g.cells
       with
-      | None -> Grid { g with guides = g.guides @ [ spec g.id ] }
+      | None -> (
+          match corner with
+          | None -> Grid { g with guides = g.guides @ [ spec g.id ] }
+          | Some c -> cornered c (spec g.id) node)
       | Some c ->
           let cell c' =
-            if c' == c then { c with node = attach pids spec c.node } else c'
+            if c' == c then { c with node = attach ?corner pids spec c.node }
+            else c'
           in
           Grid { g with cells = List.map cell g.cells })
 
@@ -340,7 +374,8 @@ let showing node =
 
 (* [build r scales] is the node of [r]: the title of an axis or of headers is on
    the smallest node holding the panels showing them, and a legend on the
-   smallest node holding the panels its readers lie in. A categorical legend
+   smallest node holding the panels its readers lie in, or an inside one on
+   that node's panel in its corner. A categorical legend
    whose readers each have the data of a position channel of their mark, whose
    axis is shown in their panels, is left out: the axis names its categories.
    An explicit legend, or a mark's, keeps it. *)
@@ -443,7 +478,10 @@ let build (r : Resolved.t) scales =
           kind = Legend { guide; scale = i };
         }
       in
-      (attach pids spec tree, i + 1)
+      let corner =
+        match guide.side with Some (`Inside c) -> Some c | _ -> None
+      in
+      (attach ?corner pids spec tree, i + 1)
   in
   fst (List.fold_left legend (tree, 0) r.scales)
 
