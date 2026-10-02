@@ -447,6 +447,29 @@ let metal () =
         ];
     ]
 
+let suite () =
+  topk ~k:4 ~n:32 ~rows:512
+  :: Thumper.group ~id:"searchsorted" "searchsorted"
+       [
+         searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
+         searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000 ~m:1_000_000;
+       ]
+  :: split :: indexed :: rope :: select_zero :: factorizations
+  @ reverse
+    :: Thumper.group ~id:"finite" "finite"
+         [
+           finite_checks ~place:Fun.id
+             ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+             (Printf.sprintf "checks-%d-leaves-host" finite_leaves);
+         ]
+    :: Thumper.group ~id:"launch" "launch"
+         (launches ~place:Fun.id
+            ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+            ())
+    :: (cuda () @ metal ())
+
+let config = Thumper.Config.(default |> deadline 120.)
+
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
@@ -457,32 +480,19 @@ let () =
           let place, sync = on_metal () in
           ignore (finite_setup ~place ~sync ());
           exit 0)
+  | [ _; "--warm" ] ->
+      (* Each case once, in as few calls as a trial takes: what the setups
+         compile lands in tolk's disk cache, which a measurement then reads. *)
+      ignore
+        (Thumper.measure
+           ~config:Thumper.Config.(config |> samples 3 |> warmup 0.)
+           (suite ()))
   | _ ->
-      Thumper.run "compiled"
-        ~config:Thumper.Config.(default |> deadline 120.)
+      Thumper.run "compiled" ~config
         ~budgets:
           [
             Thumper.Budget.no_slower_than 0.05;
             Thumper.Budget.no_more_alloc_than 0.01;
           ]
-        (topk ~k:4 ~n:32 ~rows:512
-         :: Thumper.group ~id:"searchsorted" "searchsorted"
-              [
-                searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
-                searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000
-                  ~m:1_000_000;
-              ]
-         :: split :: indexed :: rope :: select_zero :: factorizations
-        @ reverse
-          :: Thumper.group ~id:"finite" "finite"
-               [
-                 finite_checks ~place:Fun.id
-                   ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
-                   (Printf.sprintf "checks-%d-leaves-host" finite_leaves);
-               ]
-          :: Thumper.group ~id:"launch" "launch"
-               (launches ~place:Fun.id
-                  ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
-                  ())
-          :: (cuda () @ metal ()))
+        (suite ())
       |> exit
