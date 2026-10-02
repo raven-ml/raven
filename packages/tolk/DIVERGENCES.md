@@ -2758,8 +2758,8 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:115-120` (`hand_coded_optimizations`:
   more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
   can take a kernel to 64 lanes or more).
-- **tolk:** `lib/codegen/opt/heuristic.ml:417-421` (`host_lanes`,
-  `beyond_host_lanes`), `:441` (`upcast_more`).
+- **tolk:** `lib/codegen/opt/heuristic.ml:419-423` (`host_lanes`,
+  `beyond_host_lanes`), `:451` (`upcast_more`).
 - **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
   take an upcast that would make the kernel's upcast and unrolled lanes more
   than 32. Other devices upcast as tinygrad does.
@@ -2769,8 +2769,8 @@ stores through a pad.
   tinygrad's heuristic optimises it (64 lanes) and 1.51 ms within 32 (six
   P-cores of an Intel Core Ultra 5 235, the tolk bench's `lorenz` cases).
 - **Pinned by:** `Tolk.Heuristic`'s `paired_products` cases (on `cpu` two
-  upcasts by 4, on `metal`, `cuda` and `amd` three); the goldens, from tinygrad
-  with D91 applied by its generator.
+  upcasts by 4 and D108's by 2, on `metal`, `cuda` and `amd` three by 4); the
+  goldens, from tinygrad with D91 applied by its generator.
 
 ## D92. A decoded operand shared by a run of an output axis is decoded once a run
 
@@ -3098,3 +3098,63 @@ stores through a pad.
   each other runs to the end`, on a model of streamed queues that hold two
   commands (`Batches.run ~capacity`); `Tolk.Ops_cuda`'s `execution › kernels
   after a copy into the GPU that they read all run` on a GPU.
+
+## D108. On the host, a load a reduce reads fills the lanes by 2
+
+- **tinygrad:** `codegen/opt/heuristic.py:115-138` (`hand_coded_optimizations`'
+  upcasts of output axes: by 3 or 4, of an axis that some access does not
+  read while it reads every upcast axis, until the kernel has 32 lanes).
+- **tolk:** `lib/codegen/opt/heuristic.ml:59` (`reads`), `:432` (`choice
+  ~fill`) and `:487` (the fill); `test/gen/tinygrad.patch`, which gives
+  tinygrad the same before the goldens are recorded.
+- **Differs:** on the host (`target.device = "CPU"`), when no upcast by 3 or 4
+  is left, an output axis not yet upcast is upcast by 2 if the kernel's lanes
+  stay within D91's 32 and some access that a reduce reads does not read the
+  axis. A range counts as read by an index that is the range itself. Among
+  such axes the order is tinygrad's: fewest accesses reading the axis, then
+  the least sum of their strides.
+- **Reason:** (b): lorenz_simple's step (sofo-raven), measured on kimchi's
+  P-cores (cores 0-5 of an Intel Core Ultra 5 235). Its kernel of four sums
+  into a `[128 tangents, 256, 3]` output stopped at 12 lanes: once its axis of
+  3 is upcast whole, no access reads every upcast axis and not another, so
+  tinygrad finds no axis to upcast next. Upcast by 2 along the
+  tangents, whose lanes then share each load of the hidden activations and
+  the weights in the 400-long sums, it takes 1.36 ms instead of 1.84 ms
+  (`r_128_64_3_4_3_3_400_100_4` to `r_64_64_3_4_2_3_3_400_400`); a beam search
+  of width 2 finds 1.36 ms with 48 lanes. The step's other tangent kernel
+  fills its 32 lanes the same way (`r_32_128_100_4_4_2_4_4`, D109). Of the
+  recorded kernels, `conv` on the host goes from 35 us to 27 us and
+  `paired_products` from 21 us to 19 us.
+- **Pinned by:** the Heuristic suite: `the optimisations chosen are
+  tinygrad's › applied_opts`, cases `tangent_products_cpu`, `conv_cpu`,
+  `conv_half_cpu` and `paired_products_cpu`, recorded from the equally
+  patched tinygrad; the tolk bench's `lorenz` rows.
+
+## D109. On the host, a kernel of several reduces unrolls within 32 lanes
+
+- **tinygrad:** `codegen/opt/heuristic.py:140-154` (the unroll of the last
+  reduce axis: whole when it is at most 32, by 4 otherwise, while the kernel
+  has fewer than 64 lanes).
+- **tolk:** `lib/codegen/opt/heuristic.ml:505` (`unroll`, its `fits`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
+- **Differs:** on the host, a kernel with more than one reduce does not take
+  an unroll that would make its upcast and unrolled lanes more than D91's 32.
+  A kernel of one reduce unrolls as tinygrad's does.
+- **Reason:** (b): lorenz_simple's step, measured as in D108. Its hidden
+  layer's tangent, two sums of 4 into a `[128, 256, 400]` output, had 16
+  upcast lanes and tinygrad's whole unroll of one of the sums took it to 64:
+  1.42 ms (`r_32_256_100_4_4_4_4`). The unrolled sum folds into the store's
+  code for each lane, which clang leaves scalar. Within 32 lanes it takes
+  0.79 ms with no unroll, and 0.85 ms with D108's upcast by 2 that the
+  heuristic now takes (`r_32_128_100_4_4_2_4_4`); a beam search finds 0.72
+  ms. The four-sum kernel of D108, unrolled by 4 at its 24 lanes, takes 1.52
+  ms instead of 1.36 ms. Kernels of one reduce keep tinygrad's unroll past 32
+  lanes, which they need: `max_rows` on the host takes 2.1 us unrolled to 64
+  lanes and 6.2 us within 32, `matmul` 14.8 us and 19.1 us, and lorenz_simple's
+  `r_64_100_4_4_4` 2.0 ms and 3.0 ms a step. With D108, the step goes from
+  117 ms to 83 ms, against 80 ms with the beam search, which takes 65 s cold.
+- **Pinned by:** the Heuristic suite: `the optimisations chosen are
+  tinygrad's › applied_opts`, case `tangent_products_cpu` (no unroll; on
+  `metal`, `cuda` and `amd` the sum is unrolled), recorded from the equally
+  patched tinygrad; the tolk bench's `lorenz` rows.

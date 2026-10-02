@@ -1282,6 +1282,11 @@ codegen/opt/heuristic/sum_two_axes_amd.golden
 codegen/opt/heuristic/sum_two_axes_cpu.golden
 codegen/opt/heuristic/sum_two_axes_cuda.golden
 codegen/opt/heuristic/sum_two_axes_metal.golden
+codegen/opt/heuristic/tangent_products.golden
+codegen/opt/heuristic/tangent_products_amd.golden
+codegen/opt/heuristic/tangent_products_cpu.golden
+codegen/opt/heuristic/tangent_products_cuda.golden
+codegen/opt/heuristic/tangent_products_metal.golden
 codegen/opt/heuristic/transpose.golden
 codegen/opt/heuristic/transpose_amd.golden
 codegen/opt/heuristic/transpose_cpu.golden

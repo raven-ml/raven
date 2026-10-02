@@ -158,6 +158,9 @@ KERNELS = {
     "softmax": lambda: last(empty(32, 256).softmax(-1)),
     # each pair of axes indexes a buffer that the third does not: on a GPU three axes upcast by 4, 64 lanes
     "paired_products": lambda: last((empty(32, 32, 1, 16) * empty(1, 32, 32, 16) + empty(32, 1, 32, 16) * empty(32, 32, 1, 16)).sum(3)),
+    # two products each summed over 4, as a tangent of a layer sums its input's tangent by the weights and its input by the
+    # weights' tangent: on the host the lanes are filled by an upcast by 2, and the kernel of two reduces is not unrolled past them
+    "tangent_products": lambda: last((empty(32, 64, 1, 4) * empty(1, 1, 100, 4)).sum(3) + (empty(1, 64, 1, 4) * empty(32, 1, 100, 4)).sum(3)),
     "variable": lambda: with_vars(empty(1024)[:UOp.variable("n", 1, 1024).bind(512)].contiguous() + 1),
 }
 

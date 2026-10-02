@@ -954,6 +954,10 @@ thread.
 
 ### Tolk (new)
 
+- On the host, the hand-coded optimisations fill a kernel's 32 lanes with an
+  upcast by 2 when 3 or 4 overflow, and a kernel of several reduces is not
+  unrolled past them. sofo-raven's lorenz_simple step without a beam search
+  goes from 117 ms to 83 ms on 6 cores (80 ms with `BEAM=2`).
 - A compiled program on CUDA no longer hangs when a kernel waits for a copy
   queued after it in the program: CUDA's streams take commands as the host
   issues them, so `Hcq2.sched_batches` now submits each streamed queue after

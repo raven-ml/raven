@@ -56,6 +56,7 @@ let index_of x l =
 
 let idx b = get_idx (nth b 1)
 let indexes r b = Nodes.mem r (backward_slice (idx b))
+let reads r b = Nodes.mem r (backward_slice_with_self (idx b))
 
 (* Whether [r] is a term of the index [i], alone or times a constant. *)
 let term_of r i =
@@ -413,12 +414,13 @@ let upcast_masked k =
 
 (* On the host, an upcast of [amount] that would take the kernel past
    [host_lanes] lanes: each lane holds a value across the loops, and past the
-   registers they spill. *)
+   registers they spill. An unroll of a kernel of several reduces is held to the
+   same lanes. *)
 let host_lanes = 32
+let on_host k = (K.ren k).target.device = "CPU"
 
 let beyond_host_lanes k amount =
-  (K.ren k).target.device = "CPU"
-  && not (holds Sint.(K.upcast_size k * Int amount <= Int host_lanes))
+  on_host k && not (holds Sint.(K.upcast_size k * Int amount <= Int host_lanes))
 
 (* potentially do more upcasts of non reduce axes based on a heuristic *)
 let upcast_more k =
@@ -427,24 +429,27 @@ let upcast_more k =
       Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
       && holds Sint.(K.upcast_size k < Int 32)
     then begin
-      (* consider all upcastable axes with 3 or 4 upcast *)
-      let amounts = [ 3; 4 ] in
-      let choice axis upcast_amount =
+      let choice ~fill axis upcast_amount =
         (* if we haven't upcasted it, it mods, and buffer has stride 0 on axis
-           while having no stride 0 in the upcasted axis already *)
+           while having no stride 0 in the upcasted axis already; a fill asks
+           for a buffer of stride 0 on the axis that a reduce reads, a load each
+           lane of the axis shares in every iteration of the reduce *)
         let rng = List.nth (K.rngs k) axis in
         let upcast = K.ranges_of k [ Upcast; Unroll ] in
         let bufs = K.bufs k in
+        let reuses b =
+          if fill then
+            (not (reads rng b))
+            && List.exists (fun r -> reads r b) (K.ranges_of k [ Reduce ])
+          else
+            (not (indexes rng b))
+            && List.for_all (fun r2 -> indexes r2 b) upcast
+        in
         if
           List.mem axis upcasted_axis
           || (not (divisible (shape_at k axis) upcast_amount))
           || beyond_host_lanes k upcast_amount
-          || not
-               (List.exists
-                  (fun b ->
-                    (not (indexes rng b))
-                    && List.for_all (fun r2 -> indexes r2 b) upcast)
-                  bufs)
+          || not (List.exists reuses bufs)
         then None
         else
           let stride c =
@@ -472,10 +477,17 @@ let upcast_more k =
           in
           Some (num_strides, sum_strides, axis, upcast_amount)
       in
-      let xb_choices =
+      let choices ~fill amounts =
         List.concat_map
-          (fun axis -> List.filter_map (choice axis) amounts)
+          (fun axis -> List.filter_map (choice ~fill axis) amounts)
           (K.upcastable_dims k)
+      in
+      (* consider all upcastable axes with 3 or 4 upcast; on the host, when none
+         is left, fill its lanes with 2 *)
+      let xb_choices =
+        match choices ~fill:false [ 3; 4 ] with
+        | [] when on_host k -> choices ~fill:true [ 2 ]
+        | xb_choices -> xb_choices
       in
       match List.sort Stdlib.compare xb_choices with
       | (_, _, axis, amount) :: _ ->
@@ -499,18 +511,25 @@ let unroll k =
   then
     let s = size_at k (last (K.unrollable_dims k)) in
     let at_most n x = Bigint.(leq x (of_int n)) in
+    let fits n =
+      List.length (K.reduceops k) < 2 || not (beyond_host_lanes k n)
+    in
     if at_most 32 s then
-      begin if try_split k (last (K.unrollable_dims k)) 0 Opt.Unroll then
+      begin if
+        fits (Bigint.to_int s)
+        && try_split k (last (K.unrollable_dims k)) 0 Opt.Unroll
+      then
         (* if it's small, upcast a second reduce dimension too *)
         match K.unrollable_dims k with
         | [] -> ()
         | dims ->
-            if at_most 3 s && at_most 3 (size_at k (last dims)) then
-              ignore (try_split k (last dims) 0 Opt.Unroll)
+            let s2 () = size_at k (last dims) in
+            if at_most 3 s && at_most 3 (s2 ()) && fits (Bigint.to_int (s2 ()))
+            then ignore (try_split k (last dims) 0 Opt.Unroll)
       end
     else
       let axis = last (K.unrollable_dims k) in
-      if divisible (shape_at k axis) 4 then
+      if divisible (shape_at k axis) 4 && fits 4 then
         ignore (try_split k axis 4 Opt.Unroll)
 
 (* if nothing at all is upcasted and it's easy to, do an upcast *)
