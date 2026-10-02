@@ -868,11 +868,11 @@ let constants () =
     └ f32 (1 column)
     # NaN
     query → a int64, b float64, c string, k int8, l list[int64], y float64
-    derive ["y" := b +. 0. /. 0.]
+    derive ["y" := b +. nan]
     └ e (5 columns)
     # a power
     query → a int64, b float64, c string, k int8, l list[int64], y float64
-    derive ["y" := b +. 2. ** 3.]
+    derive ["y" := b +. 8.]
     └ e (5 columns)
     # comparisons
     query → a int64, b float64, c string, k int8, l list[int64], y bool, z bool
@@ -940,16 +940,16 @@ let folds =
       ( "an overflowing quotient stays",
         p (int min_int / int (-1)),
         "-4611686018427387904 / -1" );
-      ( "a sum its type does not hold stays",
+      ( "an int8 sum wraps",
         p (store Type.int8 (int 100) + store Type.int8 (int 100)),
-        "100 + 100" );
+        "-56" );
       ("an operand null is null", p (int 1 + store Type.int64 null), "null");
       ("floats subtract", p (float 1.5 -. float 0.25), "1.25");
       ("floats multiply", p (float 2. *. float 3.), "6.");
       ("a quotient by zero is infinite", p (float 1. /. float 0.), "infinity");
-      ( "float16 stays",
+      ( "float16 folds",
         p (Col.float "h" +. (float 0.5 +. float 0.25)),
-        "h +. (0.5 +. 0.25)" );
+        "h +. 0.75" );
       ("not equal", p (int 1 <> int 2), "true");
       ("at most", p (int 2 <= int 2), "true");
       ("NaN comes after every number", p (float 3. > float Float.nan), "false");

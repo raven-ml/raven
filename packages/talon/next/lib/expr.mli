@@ -439,21 +439,18 @@ val rename : (string -> string) -> ('a, 's) t -> ('a, 's) t
     [n]: handles, reads, {!over}'s keys and time windows' keys. Typings are
     kept, so [f] maps each column that [b] reads to one of the same type. *)
 
-val fold_constants : ('a, 's) t -> ('a, 's) t
-(** [fold_constants b] is [b] with each operation of literals replaced by the
-    literal it computes, with the same typing, where that literal is exactly the
-    value that evaluating the operation gives:
-    - [+], [-], [*], [/] and [mod] of integers whose result the type holds
-      without wrapping, a division by zero being null;
-    - [+.], [-.], [*.] and [/.] of [float32] and [float64] values, rounded once
-      to their type, unless the result is NaN, whose bits nx's kernels define
-      (as they define [**] and nx lifts, which are kept);
-    - comparisons, by talon's total order at their operands' common type;
-    - [&&], [||] and [not], [is_null], [if_] and [coalesce];
-    - {!store} of a literal of its type.
+type evaluator = { eval : 'a. ('a, row) t -> 'a option option }
+(** The type for evaluators of constants: [eval b] is the value of the bound
+    operation of literals [b] on one row, [Some None] for null, or [None] if
+    evaluating [b] fails. *)
 
-    A literal is read as the value it has at its type ({!Type.value}), so an
-    operation of [float16] literals, arithmetic or comparison, is kept.
+val fold_constants : evaluator -> ('a, 's) t -> ('a, 's) t
+(** [fold_constants ev b] is [b] with each operation of literals replaced by the
+    literal it computes, with the same typing:
+    - arithmetic, comparisons and [not], by the value [ev] gives, unless it
+      gives none;
+    - [&&], [||], [is_null], [if_] and [coalesce];
+    - {!store} of a literal of its type.
 
     Besides, with one operand a literal: [a && false] and [a || true] become the
     literal, [a && true] and [a || false] become [a], [if_] with a literal

@@ -2292,11 +2292,11 @@ module Query : sig
       happen. Of the failures that remain, a run reports the one at the earliest
       row of the optimized plan.
 
-      {b Constants.} An operation of literals becomes the literal it computes,
-      where that is exactly the value its evaluation gives: integer arithmetic
-      that does not wrap; [+.], [-.], [*.] and [/.] of [float32] and [float64]
-      values, rounded to their type, unless the result is NaN; comparisons;
-      [&&], [||], [not], [is_null], [if_], [coalesce], and [store] of a literal.
+      {b Constants.} Arithmetic, comparisons and [not] of literals are
+      evaluated as a run evaluates them, and become the literal they compute.
+      One whose evaluation fails, or gives a value OCaml's type does not hold
+      (an [int64] past [max_int]), stays and evaluates at run time. [&&], [||],
+      [is_null], [if_], [coalesce], and [store] of a literal fold alike.
       [a && false], [a || true], [a && true], [a || false], an [if_] on a
       literal and a [coalesce] with literals simplify alike. A filter whose
       predicate is [true] goes, and one whose predicate is [false] or null

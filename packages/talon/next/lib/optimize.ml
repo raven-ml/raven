@@ -133,9 +133,21 @@ let truth (p : conjunct) =
   | Null -> Some None
   | _ -> None
 
+(* [evaluator] evaluates an operation of literals as a run does, on a frame of
+   one row and no column. *)
+let evaluator =
+  let eval e =
+    let row = Table.batch (Schema.v []) ~rows:1 [||] in
+    match Eval.values (Schema.v []) e (Eval.frame row) with
+    | [| v |], None -> Some v
+    | _ -> None
+  in
+  { Expr.eval }
+
 let fold_outputs outputs =
   List.map
-    (fun (n, Expr.Packed e) -> (n, Expr.Packed (Expr.fold_constants e)))
+    (fun (n, Expr.Packed e) ->
+      (n, Expr.Packed (Expr.fold_constants evaluator e)))
     outputs
 
 (* [fold q] is [q] with the constants of its expressions folded, a filter of
@@ -143,7 +155,8 @@ let fold_outputs outputs =
 let rec fold q =
   match Query.node q with
   | Filter { predicate; input } -> (
-      let predicate = Expr.fold_constants predicate and input = fold input in
+      let predicate = Expr.fold_constants evaluator predicate
+      and input = fold input in
       match truth predicate with
       | Some (Some true) -> input
       | Some (Some false | None) ->

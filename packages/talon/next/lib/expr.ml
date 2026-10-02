@@ -2255,82 +2255,26 @@ let with_typing : type a s0 s1. a typing -> (a, s0) t -> (a, s1) t option =
   | Some t' when typing_equal t t' -> Some (typed t' e.node)
   | _ -> None
 
-(* [exact op x y] is [Some r] with [r] the exact value of [op] on [x] and [y],
-   [None] for null, or [None] if the value overflows OCaml's [int]. *)
-let exact op x y =
-  match op with
-  | Add ->
-      let r = x + y in
-      if Bool.equal (x >= 0) (y >= 0) && not (Bool.equal (r >= 0) (x >= 0)) then
-        None
-      else Some (Some r)
-  | Sub ->
-      let r = x - y in
-      if
-        (not (Bool.equal (x >= 0) (y >= 0)))
-        && not (Bool.equal (r >= 0) (x >= 0))
-      then None
-      else Some (Some r)
-  | Mul ->
-      let r = x * y in
-      if x <> 0 && (r / x <> y || (x = -1 && y = min_int)) then None
-      else Some (Some r)
-  | Div when y = 0 -> Some None
-  | Div -> if x = min_int && y = -1 then None else Some (Some (x / y))
-  | Mod when y = 0 -> Some None
-  | Mod -> Some (Some (x mod y))
-  | Pow -> None
+type evaluator = { eval : 'a. ('a, row) t -> 'a option option }
 
-let float_value op x y =
-  match op with
-  | Add -> Some (x +. y)
-  | Sub -> Some (x -. y)
-  | Mul -> Some (x *. y)
-  | Div -> Some (x /. y)
-  | Mod | Pow -> None
+(* [is_constant e] is [true] iff [e] is a literal or null of a column type. *)
+let is_constant e =
+  match (e.node, e.typing) with
+  | (Lit _ | Null), Some (Column _) -> true
+  | _ -> false
 
-let compares (op : compare) n =
-  match op with
-  | `Eq -> n = 0
-  | `Ne -> n <> 0
-  | `Lt -> n < 0
-  | `Le -> n <= 0
-  | `Gt -> n > 0
-  | `Ge -> n >= 0
-
-(* [folded e] is the literal or the operand that the bound operation [e] is, if
-   it is one, with [e]'s typing. *)
-let folded : type a s0 s. (a, s0) t -> (a, s) t option =
- fun e ->
+(* [folded ev e] is the literal or the operand that the bound operation [e] is,
+   if it is one, with [e]'s typing. *)
+let folded : type a s0 s. evaluator -> (a, s0) t -> (a, s) t option =
+ fun ev e ->
   let t = typing e in
   let null () = Some (at_typing t None) in
+  let constants () =
+    List.for_all (fun (Packed e) -> is_constant e) (operands e.node)
+  in
   match e.node with
-  | Int (o, a, b) -> (
-      match (t, literal a, literal b) with
-      | _, Some (_, None), Some _ | _, Some _, Some (_, None) -> null ()
-      | Column ty, Some (_, Some x), Some (_, Some y) -> (
-          match exact o x y with
-          | Some None -> null ()
-          | Some (Some r) when Type.holds ty r -> Some (at_typing t (Some r))
-          | Some (Some _) | None -> None)
-      | _ -> None)
-  | Float (o, a, b) -> (
-      match (t, literal a, literal b) with
-      | _, Some (_, None), Some _ | _, Some _, Some (_, None) -> null ()
-      | Column ty, Some (_, Some x), Some (_, Some y) -> (
-          match Option.bind (float_value o x y) (Type.value ty) with
-          | Some r when not (Float.is_nan r) -> Some (at_typing t (Some r))
-          | Some _ | None -> None)
-      | _ -> None)
-  | Compare (o, a, b) -> (
-      match (literal a, literal b) with
-      | Some (_, None), Some _ | Some _, Some (_, None) -> null ()
-      | Some (ta, Some x), Some (tb, Some y) ->
-          Option.map
-            (fun c ->
-              at_typing t (Some (compares o (Type.compare_value c x y))))
-            (Type.common [ ta; tb ])
-      | _ -> None)
+  | (Int _ | Float _ | Compare _ | Not _) when constants () ->
+      Option.map (at_typing t) (ev.eval (typed t e.node))
   | Logic (o, a, b) -> (
       let truth e = Option.map snd (literal e) in
       match (o, truth a, truth b) with
@@ -2342,11 +2286,6 @@ let folded : type a s0 s. (a, s0) t -> (a, s) t option =
       | And, _, Some (Some true) | Or, _, Some (Some false) -> with_typing t a
       | _, Some None, Some None -> null ()
       | _ -> None)
-  | Not a -> (
-      match literal a with
-      | Some (_, Some v) -> Some (at_typing t (Some (not v)))
-      | Some (_, None) -> null ()
-      | None -> None)
   | Is_null a ->
       if is_lit a then Some (at_typing t (Some false))
       else if is_null_lit a then Some (at_typing t (Some true))
@@ -2373,12 +2312,12 @@ let folded : type a s0 s. (a, s0) t -> (a, s) t option =
       | _ -> None)
   | _ -> None
 
-let fold_constants e =
+let fold_constants ev e =
   check_bound "fold_constants" e;
   let rec fold : type a s. (a, s) t -> (a, s) t =
    fun e ->
     let e = typed (typing e) (map_node { map = fold } e.node) in
-    Option.value ~default:e (folded e)
+    Option.value ~default:e (folded ev e)
   in
   fold e
 
