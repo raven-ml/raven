@@ -20,9 +20,10 @@
    must not be initialized before the fork: a fresh process of this executable
    ([--cuda]) says whether a CUDA device opens.
 
-   [lorenz] runs lorenz_simple's two costliest kernels on the host (sofo-raven's
-   tangent step), each compiled with the optimisations a beam search chose for
-   it ([searched]) and with the hand-coded ones ([heuristic]). *)
+   [lorenz] runs the kernels of lorenz_simple's step (sofo-raven's tangent step)
+   on the host where the hand-coded optimisations lost most to a beam search,
+   each compiled with the optimisations the search chose for it ([searched]) and
+   with the hand-coded ones ([heuristic]). *)
 
 open Tolk
 

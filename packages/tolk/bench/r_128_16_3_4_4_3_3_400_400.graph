@@ -59,22 +59,24 @@
 58 Ops.RANGE dtypes.weakint [42] (3, AxisType.REDUCE)
 59 Ops.ADD dtypes.weakint [43, 58]
 60 Ops.INDEX dtypes.float [57, 59]
-61 Ops.CMPLT dtypes.bool [24, 60]
-62 Ops.CMPNE dtypes.bool [60, 60]
-63 Ops.OR dtypes.bool [61, 62]
-64 Ops.WHERE dtypes.float [63, 60, 24]
-65 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=153600, device="CPU")
-66 Ops.MUL dtypes.weakint [58, 3]
-67 Ops.ADD dtypes.weakint [66, 5]
-68 Ops.CONST dtypes.weakint [] 1200
-69 Ops.MUL dtypes.weakint [8, 68]
-70 Ops.ADD dtypes.weakint [67, 69]
-71 Ops.INDEX dtypes.float [65, 70]
-72 Ops.MUL dtypes.float [64, 71]
-73 Ops.REDUCE dtypes.float [72, 58] (Ops.ADD, 0)
-74 Ops.ADD dtypes.float [73, 24]
-75 Ops.ADD dtypes.float [56, 74]
-76 Ops.ADD dtypes.float [40, 75]
-77 Ops.STORE dtypes.void [12, 76]
-78 Ops.END dtypes.void [77, 8, 2, 5]
-79 Ops.SINK dtypes.void [78] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=6, arg=(2, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=5, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST))))
+61 Ops.CMPLT dtypes.bool [60, 24]
+62 Ops.CMPNE dtypes.bool [60, 24]
+63 Ops.CONST dtypes.bool [] True
+64 Ops.CMPNE dtypes.bool [62, 63]
+65 Ops.OR dtypes.bool [61, 64]
+66 Ops.WHERE dtypes.float [65, 24, 60]
+67 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=153600, device="CPU")
+68 Ops.MUL dtypes.weakint [58, 3]
+69 Ops.ADD dtypes.weakint [68, 5]
+70 Ops.CONST dtypes.weakint [] 1200
+71 Ops.MUL dtypes.weakint [8, 70]
+72 Ops.ADD dtypes.weakint [69, 71]
+73 Ops.INDEX dtypes.float [67, 72]
+74 Ops.MUL dtypes.float [66, 73]
+75 Ops.REDUCE dtypes.float [74, 58] (Ops.ADD, 0)
+76 Ops.ADD dtypes.float [75, 24]
+77 Ops.ADD dtypes.float [56, 76]
+78 Ops.ADD dtypes.float [40, 77]
+79 Ops.STORE dtypes.void [12, 78]
+80 Ops.END dtypes.void [79, 8, 2, 5]
+81 Ops.SINK dtypes.void [80] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST))))

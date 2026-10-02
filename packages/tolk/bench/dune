@@ -64,7 +64,10 @@
 (rule
  (target lorenz.ml)
  (deps
-  (:graphs r_128_64_3_4_3_3_100_200_2_4.graph r_32_256_400_4_2_4_2.graph))
+  (:graphs
+   r_128_16_3_4_4_3_3_400_400.graph
+   r_32_256_50_4_4_2_4_4.graph
+   r_32_3_2_4_3_400.graph))
  (action
   (with-stdout-to
    %{target}
