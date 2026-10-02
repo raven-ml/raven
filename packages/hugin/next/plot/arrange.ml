@@ -12,8 +12,6 @@ open Expand
 
 (* Scopes *)
 
-let positional = function "x" | "y" | "fx" | "fy" -> true | _ -> false
-
 type key =
   | Figure
   | Node of id
@@ -40,7 +38,7 @@ type env = {
 let key_of (env : env) name =
   match List.assoc_opt name env.shares with
   | Some k -> k
-  | None -> if positional name then Cell env.cell else Figure
+  | None -> if Role.by_cell name then Cell env.cell else Figure
 
 (* Contents *)
 
@@ -164,7 +162,7 @@ let rec span_of n =
 
 (* [scale_name b] is the name of the scale the channel of [b] reads, if any. *)
 let scale_name (B b) =
-  match (data b.ch, b.role.scale) with
+  match (data b.ch, Role.scale b.role.use) with
   | Some d, Some default ->
       Some (Option.value ~default (Option.bind d.spec Scale.name))
   | _ -> None
@@ -174,11 +172,13 @@ let scale_name (B b) =
 let rec reads n =
   match n.n with
   | E_mark { mark; _ } ->
+      let placing (B b) =
+        match b.role.use with
+        | Position _ | Facet _ -> true
+        | Encoding _ | Value -> false
+      in
       List.filter_map
-        (fun (B b as bd) ->
-          Option.map
-            (fun s -> (s, positional (Option.get b.role.scale)))
-            (scale_name bd))
+        (fun bd -> Option.map (fun s -> (s, placing bd)) (scale_name bd))
         mark.bindings
   | E_layer cs -> List.concat_map reads cs
   | E_grid g -> List.concat_map (List.concat_map reads) g.rows
@@ -218,7 +218,7 @@ let share_env (env : env) node pairs =
     env pairs
 
 let child_env (env : env) ~cell id =
-  let key name = if cell && positional name then Cell id else Node id in
+  let key name = if cell && Role.by_cell name then Cell id else Node id in
   let shares = List.map (fun n -> (n, key n)) env.pending @ env.shares in
   { shares; pending = []; cell = (if cell then id else env.cell) }
 

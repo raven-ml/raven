@@ -16,8 +16,7 @@ module Picture := Hugin_next_vg.Picture
 (** The values of one binding, one per row. *)
 type col =
   | Col : {
-      name : string;  (** The role's name. *)
-      range : 'r Role.range;
+      role : ('d, 'r) Role.t;
       values : 'r array;  (** In the range, missing values as {!Mark.get}. *)
       norm : float array option;  (** Normalised, if it reads a scale. *)
       fn : (float -> 'r) option;  (** The range, if it reads a scale. *)

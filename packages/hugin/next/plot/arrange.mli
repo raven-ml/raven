@@ -10,9 +10,6 @@ module Text := Hugin_next_text.Text
 
 (** {1:scopes Scopes} *)
 
-val positional : string -> bool
-(** [positional r] is [true] iff [r] is a position or facet role. *)
-
 (** The scope of a scale. *)
 type key =
   | Figure

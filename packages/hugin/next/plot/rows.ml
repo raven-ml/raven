@@ -14,8 +14,7 @@ module Picture = Hugin_next_vg.Picture
 
 type col =
   | Col : {
-      name : string;
-      range : 'r Role.range;
+      role : ('d, 'r) Role.t;
       values : 'r array;
       norm : float array option;
       fn : (float -> 'r) option;
@@ -62,31 +61,33 @@ let select r ks =
 (* Observing *)
 
 let length r = Array.length r.index
-let find r name = List.find_opt (fun (Col c) -> String.equal c.name name) r.cols
+
+let find r (role : _ Role.t) =
+  List.find_opt (fun (Col c) -> String.equal c.role.name role.name) r.cols
 
 let get : type d v. t -> (d, v) Role.t -> v array option =
  fun r role ->
-  match find r role.name with
+  match find r role with
   | None -> None
   | Some (Col c) -> (
-      match Role.equal_range c.range role.range with
+      match Role.equal_range c.role.range role.range with
       | Some Type.Equal -> Some (Array.copy c.values)
       | None -> None)
 
 let normalized r (role : _ Role.t) =
-  Option.bind (find r role.name) (fun (Col c) -> Option.map Array.copy c.norm)
+  Option.bind (find r role) (fun (Col c) -> Option.map Array.copy c.norm)
 
 let range : type d v. t -> (d, v) Role.t -> (float -> v) option =
  fun r role ->
-  match find r role.name with
+  match find r role with
   | None -> None
   | Some (Col c) -> (
-      match Role.equal_range c.range role.range with
+      match Role.equal_range c.role.range role.range with
       | Some Type.Equal -> c.fn
       | None -> None)
 
 let ticks r (role : _ Role.t) =
-  Option.bind (find r role.name) (fun (Col c) -> Option.map Array.copy c.ticks)
+  Option.bind (find r role) (fun (Col c) -> Option.map Array.copy c.ticks)
 
 (* A position: the normalised value of each row, the bandwidth of its band scale
    or the normalised zero of its continuous one, and whether it reads a
@@ -98,11 +99,11 @@ type position = {
   scaled : bool;
 }
 
-let position r name : position option =
-  match find r name with
+let position r role : position option =
+  match find r role with
   | None -> None
   | Some (Col c) -> (
-      match Role.equal_range c.range Role.Floats with
+      match Role.equal_range c.role.range Role.Floats with
       | Some Type.Equal ->
           Some
             {
@@ -115,10 +116,10 @@ let position r name : position option =
 
 let positions r =
   let n = length r in
-  let at name =
-    match position r name with Some p -> p.us | None -> Array.make n 0.5
+  let at role =
+    match position r role with Some p -> p.us | None -> Array.make n 0.5
   in
-  let us = at "x" and vs = at "y" in
+  let us = at Role.x and vs = at Role.y in
   let xs = Array.make n Float.nan and ys = Array.make n Float.nan in
   for i = 0 to n - 1 do
     if not r.dropped.(i) then begin
@@ -154,10 +155,12 @@ let clamp u = Float.min 1. (Float.max 0. u)
 
 let extent r axis =
   let n = length r in
-  let name, name2 = match axis with `X -> ("x", "x2") | `Y -> ("y", "y2") in
+  let near, far =
+    match axis with `X -> (Role.x, Role.x2) | `Y -> (Role.y, Role.y2)
+  in
   let lo = Array.make n Float.nan and hi = Array.make n Float.nan in
   let cover i =
-    match (position r name, position r name2) with
+    match (position r near, position r far) with
     | None, _ -> (0., 1.)
     | Some p, Some p2 ->
         let a, b = ends p i and a', b' = ends p2 i in
@@ -193,8 +196,7 @@ let series r =
   in
   let cats =
     List.filter_map
-      (fun (Col c) ->
-        match c.name with "x" | "x2" | "y" | "y2" -> None | _ -> c.cats)
+      (fun (Col c) -> match c.role.use with Position _ -> None | _ -> c.cats)
       r.cols
   in
   let groups = Hashtbl.create 16 and order = ref [] in

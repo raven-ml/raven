@@ -625,10 +625,10 @@ let contour ?x ?y ?opacity ?fx ?fy ~fill () =
   if varies shape y (rank - 1) then
     err "contour" "y can vary along the columns of the grid";
   List.iter
-    (fun (name, b) ->
-      match b with
-      | Some b when varies shape b (rank - 2) || varies shape b (rank - 1) ->
-          err "contour" "%s can vary along the grid" name
+    (function
+      | Some (B f as b)
+        when varies shape b (rank - 2) || varies shape b (rank - 1) ->
+          err "contour" "%s can vary along the grid" f.role.name
       | _ -> ())
-    [ ("fx", fx); ("fy", fy) ];
+    [ fx; fy ];
   Mark m

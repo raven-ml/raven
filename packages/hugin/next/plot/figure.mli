@@ -34,7 +34,7 @@ type mark = {
 }
 
 val equal_mark : mark -> mark -> bool
-val find_binding : string -> binding list -> binding option
+val find_binding : ('d, 'r) Role.t -> binding list -> binding option
 
 val make_mark :
   string ->

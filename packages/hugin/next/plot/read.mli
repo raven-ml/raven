@@ -30,7 +30,7 @@ val reader : whole:bool -> Figure.mark -> reader
 
 type sel = All | Rows of int array  (** Flat indices of the mark's shape. *)
 
-val facet : reader -> string -> (int array * (int -> string)) option
+val facet : reader -> ('d, 'r) Role.t -> (int array * (int -> string)) option
 (** [facet rd role] is, if the mark binds the facet [role] to data, an identity
     of each row's category, [min_int] where it is missing, and the name of the
     category of an identity. *)

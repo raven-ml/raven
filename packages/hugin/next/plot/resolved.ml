@@ -22,14 +22,6 @@ open Expand
 open Arrange
 open Summary
 
-(* Scale identities *)
-
-(* The default scales of roles other than positions and facets are told apart by
-   their kinds too. *)
-let kind_scoped = function
-  | "color" | "opacity" | "size" | "width" | "symbol" -> true
-  | _ -> false
-
 (* Readings: the channels that read scales, each with its scale's identity and
    scope. *)
 
@@ -38,6 +30,7 @@ type 'd member = {
   m_pid : id;
   m_index : int;
   m_role : string;
+  m_use : Role.use;
   m_d : 'd data;
   m_imply : 'd Scale.t option;
   m_guide : bool option;
@@ -62,12 +55,13 @@ let readings_of pid occ =
   List.concat
     (List.mapi
        (fun index (B b) ->
-         match (data b.ch, b.role.scale) with
+         match (data b.ch, Role.scale b.role.use) with
          | Some d, Some default ->
              let name = Option.value ~default (Option.bind d.spec Scale.name) in
+             let facet = match b.role.use with Facet _ -> true | _ -> false in
              let key =
                if not (List.mem name occ.per_panel) then key_of env name
-               else if b.role.name = "fx" || b.role.name = "fy" then
+               else if facet then
                  err "resolve"
                    "%a makes its facet scale %S independent per panel" pp_id
                    occ.mid name
@@ -82,6 +76,7 @@ let readings_of pid occ =
                        m_pid = pid;
                        m_index = index;
                        m_role = b.role.name;
+                       m_use = b.role.use;
                        m_d = d;
                        m_imply = b.imply;
                        m_guide = b.guide;
@@ -107,11 +102,16 @@ type group =
     }
       -> group
 
-let axis_role = function "x" | "x2" -> "x" | "y" | "y2" -> "y" | r -> r
+(* [placed m] is the position or facet scale whose axis shows the role of [m]:
+   ["x"] for [x] and [x2]. *)
+let placed m =
+  match m.m_use with
+  | Position _ | Facet _ -> Role.scale m.m_use
+  | Encoding _ | Value -> None
 
 let group readings =
   let add groups (R r) =
-    let legend = (not (positional (axis_role r.m.m_role))) && not r.mapped in
+    let legend = Option.is_none (placed r.m) && not r.mapped in
     let rec go = function
       | [] ->
           [
@@ -137,7 +137,7 @@ let group readings =
                     legend = g.legend || legend;
                   }
                 :: rest
-            | None when kind_scoped r.name -> gr :: go rest
+            | None when Role.by_kind r.name -> gr :: go rest
             | None ->
                 let m = List.hd g.members in
                 err "resolve" "the scale %S is read as %a by %a and as %a by %a"
@@ -154,26 +154,27 @@ let group readings =
 let same (R r) (R r') =
   String.equal r.name r'.name
   && equal_key r.key r'.key
-  && ((not (kind_scoped r.name)) || Option.is_some (equal_kind r.kind r'.kind))
+  && ((not (Role.by_kind r.name)) || Option.is_some (equal_kind r.kind r'.kind))
 
 (* In a panel, the channels on x read one scale, and likewise y, fx and fy. *)
 let check_panel_scales readings =
   let rec go seen = function
     | [] -> ()
     | (R r as rd) :: rest ->
-        let axis = axis_role r.m.m_role in
-        (if positional axis then
-           match
-             List.find_opt
-               (fun (R r') ->
-                 Nx.Ptree.Path.equal r'.m.m_pid r.m.m_pid
-                 && String.equal (axis_role r'.m.m_role) axis)
-               seen
-           with
-           | Some (R o as other) when not (same other rd) ->
-               err "resolve" "%a and %a read two %s scales in the panel %a"
-                 pp_id o.m.m_occ.mid pp_id r.m.m_occ.mid axis pp_id r.m.m_pid
-           | _ -> ());
+        (match placed r.m with
+        | None -> ()
+        | Some axis -> (
+            match
+              List.find_opt
+                (fun (R r') ->
+                  Nx.Ptree.Path.equal r'.m.m_pid r.m.m_pid
+                  && placed r'.m = Some axis)
+                seen
+            with
+            | Some (R o as other) when not (same other rd) ->
+                err "resolve" "%a and %a read two %s scales in the panel %a"
+                  pp_id o.m.m_occ.mid pp_id r.m.m_occ.mid axis pp_id r.m.m_pid
+            | _ -> ()));
         go (rd :: seen) rest
   in
   go [] readings
@@ -224,28 +225,32 @@ let check_axes cells readings =
                 err "resolve" "the panel %a holds two different axes for %S"
                   pp_id pid a.scale)
             axes;
-          let roles =
+          let uses =
             List.filter_map
               (fun (R r) ->
-                let role = axis_role r.m.m_role in
                 if
                   Nx.Ptree.Path.equal r.m.m_pid pid
-                  && positional role
+                  && Option.is_some (placed r.m)
                   && String.equal r.name a.scale
-                then Some role
+                then Some r.m.m_use
                 else None)
               readings
           in
-          if roles = [] then
+          let along axis =
+            List.exists
+              (function Role.Position p -> p.axis = axis | _ -> false)
+              uses
+          in
+          if uses = [] then
             err "resolve"
               "the axis %a names %S, no position or facet scale of its panel"
               pp_id a.gid a.scale;
           (* An axis runs along the direction of its scale's position. *)
           match a.side with
-          | Some ((`Left | `Right) as side) when List.mem "x" roles ->
+          | Some ((`Left | `Right) as side) when along Role.X ->
               err "resolve" "the axis %a of %S is on the %a side" pp_id a.gid
                 a.scale pp_side side
-          | Some ((`Top | `Bottom) as side) when List.mem "y" roles ->
+          | Some ((`Top | `Bottom) as side) when along Role.Y ->
               err "resolve" "the axis %a of %S is on the %a side" pp_id a.gid
                 a.scale pp_side side
           | _ -> ())
@@ -300,19 +305,13 @@ let merged : type d. d kind -> string -> d member list -> d Scale.t =
   let explicit =
     List.filter_map (fun m -> Option.map (fun s -> (m, s)) m.m_d.spec) ms
   in
-  (* What a role implies, beyond what its mark does. *)
-  let role m : d Scale.t option =
-    match (kind, m.m_role) with
-    | Quantities, "size" -> Some (Scale.linear ~zero:true ())
-    | Categories, ("y" | "y2") -> Some (Scale.band ~reverse:true ())
-    | _ -> None
-  in
   let implied : (d member * d Scale.t) list =
     List.concat_map
       (fun m ->
         List.map
           (fun i -> (m, i))
-          (Option.to_list m.m_imply @ Option.to_list (role m)))
+          (Option.to_list m.m_imply
+          @ Option.to_list (Role.implied m.m_use (Scale.kind base))))
       ms
   in
   (* [imply] keeps the name and transform of the explicit specification, so an
@@ -539,7 +538,8 @@ let facet_scale fitted pid role : string Scale.t option =
           if
             List.exists
               (fun m ->
-                Nx.Ptree.Path.equal m.m_pid pid && String.equal m.m_role role)
+                Nx.Ptree.Path.equal m.m_pid pid
+                && String.equal m.m_role role.Role.name)
               f.members
           then Some f.scale
           else None
@@ -547,7 +547,8 @@ let facet_scale fitted pid role : string Scale.t option =
     fitted
 
 let facet_panels fitted pid =
-  let fx = facet_scale fitted pid "fx" and fy = facet_scale fitted pid "fy" in
+  let fx = facet_scale fitted pid Role.fx
+  and fy = facet_scale fitted pid Role.fy in
   (match (fx, fy) with
   | Some s, Some _ when Option.is_some (Scale.wrap s) ->
       err "resolve" "the fx scale of %a wraps, but the cell has an fy scale"
@@ -977,10 +978,10 @@ let resolve ?prev ?(view = View.empty) figure =
                           ( o.mid,
                             Format.asprintf
                               "the facet constant %S of %s names no panel" v
-                              role )))
+                              role.Role.name )))
         in
         List.concat_map
-          (fun o -> List.filter_map (check o) [ "fx"; "fy" ])
+          (fun o -> List.filter_map (check o) [ Role.fx; Role.fy ])
           c.occs)
       cells
   in
@@ -996,7 +997,7 @@ let resolve ?prev ?(view = View.empty) figure =
         in
         List.filter_map
           (fun p ->
-            match both (at p.pfy "fy") (at p.pfx "fx") with
+            match both (at p.pfy Role.fy) (at p.pfx Role.fx) with
             | Nowhere -> None
             | rows ->
                 let mask =

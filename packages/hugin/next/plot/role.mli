@@ -9,6 +9,7 @@ module Color := Hugin_next_gg.Color
 module Text := Hugin_next_text.Text
 module Symbol := Hugin_next_kit.Symbol
 module Curve := Hugin_next_kit.Curve
+module Scale := Hugin_next_kit.Scale
 
 (** {1:ranges Ranges} *)
 
@@ -28,9 +29,26 @@ val equal_in : 'r range -> 'r -> 'r -> bool
 
 (** {1:roles Roles} *)
 
-type ('d, 'r) t = { name : string; range : 'r range; scale : string option }
-(** [scale] is the name of the scale the role reads by default, [None] for a
-    role that reads none. *)
+type axis = X | Y
+
+(** How an encoding maps a normalised value into its range. *)
+type map =
+  | Color  (** [fill], [stroke]: the scale's scheme. *)
+  | Opacity  (** Clamped into \[[0];[1]\]. *)
+  | Area  (** [size]: an area in pt², from the scale's areas. *)
+  | Width  (** A line width, from the theme. *)
+  | Shape  (** [symbol]: the scale's symbols, cycling. *)
+
+(** What a role is. *)
+type use =
+  | Position of { axis : axis; far : bool }  (** [x], [y]; far: [x2], [y2]. *)
+  | Facet of axis  (** [fx], [fy]. *)
+  | Encoding of { scale : string; map : map }
+      (** [scale] is the role's default scale. *)
+  | Value  (** [text], {!value} and the parameters: reads no scale. *)
+
+type ('d, 'r) t = { name : string; range : 'r range; use : use }
+(** Roles are identified by their names. *)
 
 val x : ('d, float) t
 val x2 : ('d, float) t
@@ -46,6 +64,26 @@ val text : ('d, Text.t) t
 val fx : (string, string) t
 val fy : (string, string) t
 val value : name:string -> (float, float) t
+
+(** {1:meaning Meaning} *)
+
+val scale : use -> string option
+(** [scale u] is the name of the scale a role of use [u] reads by default: ["x"]
+    for [x] and [x2], ["fx"] for [fx], an encoding's [scale], [None] for
+    [Value]. *)
+
+val implied : use -> 'd Scale.kind -> 'd Scale.t option
+(** [implied u k] is what a role of use [u] implies on a scale of kind [k]
+    beyond what its mark does: [zero] for an area on quantities, [reverse] for a
+    vertical position on categories. *)
+
+val by_cell : string -> bool
+(** [by_cell n] is [true] iff [n] is the default scale of a position or facet,
+    which the innermost grid cell scopes. *)
+
+val by_kind : string -> bool
+(** [by_kind n] is [true] iff [n] is the default scale of an encoding, which a
+    scope holds once per kind. *)
 
 (** {1:parameters Parameters of built-in marks} *)
 

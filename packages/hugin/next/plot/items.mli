@@ -11,12 +11,10 @@ module Ticks := Hugin_next_kit.Ticks
 
 (** {1:items Items} *)
 
-type guide_role = Gx | Gy | Gfx | Gfy
-
 type axis_spec = {
   a_id : Common.id;
   a_scale : int;  (** Its index in the resolved figure's scales. *)
-  a_role : guide_role;
+  a_use : Role.use;  (** A position or a facet. *)
   a_side : Figure.side;
   a_grid : bool;
   a_show : bool;
@@ -63,7 +61,7 @@ and gcell = { r0 : int; c0 : int; nr : int; nc : int; it : item }
 
 (** The guides that show a scale's ticks. *)
 type use =
-  | Axis_of of guide_role
+  | Axis_of of Role.axis
   | Header_of
   | Legend_of of {
       bar : bool;

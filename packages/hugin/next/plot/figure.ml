@@ -158,20 +158,20 @@ let broadcast s s' =
   if !ok then Some out else None
 
 let role_name (B b) = b.role.name
-let binds name bindings = List.exists (fun b -> role_name b = name) bindings
 
-let find_binding name bindings =
-  List.find_opt (fun b -> String.equal (role_name b) name) bindings
+let find_binding (role : _ Role.t) bindings =
+  List.find_opt (fun b -> String.equal (role_name b) role.name) bindings
 
-let check_ends fn bindings a b =
+let check_ends fn bindings (a : _ Role.t) (b : _ Role.t) =
   match (find_binding a bindings, find_binding b bindings) with
-  | None, Some _ -> err fn "%s is bound without %s" b a
+  | None, Some _ -> err fn "%s is bound without %s" b.name a.name
   | Some (B ba), Some (B bb) -> (
       match (data ba.ch, data bb.ch) with
       | Some d, Some d'
         when Option.is_none (equal_kind (kind d.lift) (kind d'.lift)) ->
           err fn
-            "%s and %s hold one channel of quantities and one of categories" a b
+            "%s and %s hold one channel of quantities and one of categories"
+            a.name b.name
       | _ -> ())
   | _, None -> ()
 
@@ -179,7 +179,7 @@ let check_binding fn shape (B b) =
   match data b.ch with
   | None -> ()
   | Some d -> (
-      (match (b.role.scale, d.spec, d.title) with
+      (match (Role.scale b.role.use, d.spec, d.title) with
       | None, Some _, _ ->
           err fn "the role %s reads no scale but has a scale" b.role.name
       | None, _, Some _ ->
@@ -207,13 +207,14 @@ let make_mark fn ~name ?reduce ?coord ?swatch ?(base = [||]) bindings draw =
   let rec distinct = function
     | [] -> ()
     | b :: rest ->
-        if binds (role_name b) rest then
-          err fn "the role %s is bound twice" (role_name b);
+        if
+          List.exists (fun b' -> String.equal (role_name b') (role_name b)) rest
+        then err fn "the role %s is bound twice" (role_name b);
         distinct rest
   in
   distinct bindings;
-  check_ends fn bindings "x" "x2";
-  check_ends fn bindings "y" "y2";
+  check_ends fn bindings Role.x Role.x2;
+  check_ends fn bindings Role.y Role.y2;
   let shape =
     List.fold_left
       (fun shape (B b) ->

@@ -270,8 +270,8 @@ let normalize (F f) h =
 (* Ranges *)
 
 let stroked m =
-  Option.is_some (find_binding "stroke" m.bindings)
-  && Option.is_none (find_binding "fill" m.bindings)
+  Option.is_some (find_binding Role.stroke m.bindings)
+  && Option.is_none (find_binding Role.fill m.bindings)
 
 (* [categories s] maps the name of each category of [s] to its index. *)
 let categories s =
@@ -298,17 +298,17 @@ let band : string Scale.t -> (int -> 'r) -> float -> 'r option =
 
 let lerp (a, b) u = a +. (u *. (b -. a))
 
-(* [base ctx ~stroked name range s] is the value the role [name] gives a
+(* [base ctx ~stroked use range s] is the value a role of [use] gives a
    normalised value on [s], [None] where it is missing, and the value of a
    missing one. *)
 let base : type r.
     ctx ->
     stroked:bool ->
-    string ->
+    Role.use ->
     r Role.range ->
     fitted ->
     ((float -> r option) * r) option =
- fun ctx ~stroked name range (F f) ->
+ fun ctx ~stroked use range (F f) ->
   let finite g u = if Float.is_nan u then None else Some (g u) in
   match range with
   | Role.Colors -> (
@@ -338,11 +338,14 @@ let base : type r.
         | Categories -> (0., circle)
       in
       let g =
-        match name with
-        | "opacity" -> fun u -> Float.min 1. (Float.max 0. u)
-        | "size" -> lerp areas
-        | "width" -> lerp (em ctx (fst width_em), em ctx (snd width_em))
-        | _ -> Fun.id
+        match use with
+        | Encoding { map = Opacity; _ } ->
+            fun u -> Float.min 1. (Float.max 0. u)
+        | Encoding { map = Area; _ } -> lerp areas
+        | Encoding { map = Width; _ } ->
+            lerp (em ctx (fst width_em), em ctx (snd width_em))
+        | Encoding { map = Color | Shape; _ } | Position _ | Facet _ | Value ->
+            Fun.id
       in
       Some (finite g, Float.nan)
   | Role.Symbols -> (
@@ -367,7 +370,7 @@ let base : type r.
   | Role.Texts | Role.Curves | Role.Pixels -> None
 
 let colors ctx s =
-  match base ctx ~stroked:false "fill" Role.Colors s with
+  match base ctx ~stroked:false Role.fill.use Role.Colors s with
   | Some (at, missing) -> fun u -> Option.value (at u) ~default:missing
   | None -> fun _ -> Color.transparent
 
@@ -377,8 +380,7 @@ let constant : type d r. (d, r) Role.t -> int -> r -> Rows.col =
  fun role n v ->
   Rows.Col
     {
-      name = role.name;
-      range = role.range;
+      role;
       values = Array.make n v;
       norm = None;
       fn = None;
@@ -398,7 +400,7 @@ let zero (s : float Scale.t) =
    band scale. *)
 let scaled ctx ~stroked (B b) norm ids i =
   let (F f as s) = ctx.scales.(i) in
-  match base ctx ~stroked b.role.name b.role.range s with
+  match base ctx ~stroked b.role.use b.role.range s with
   | None -> None
   | Some (at, missing) ->
       let g = mapping b.ch in
@@ -416,8 +418,7 @@ let scaled ctx ~stroked (B b) norm ids i =
       Some
         (Rows.Col
            {
-             name = b.role.name;
-             range = b.role.range;
+             role = b.role;
              values = Array.map fn norm;
              norm = Some norm;
              fn = Some fn;
@@ -452,8 +453,7 @@ let unscaled : type d r.
   let col values =
     Rows.Col
       {
-        name = role.name;
-        range = role.range;
+        role;
         values;
         norm = None;
         fn = None;
@@ -494,8 +494,8 @@ let rows ?only ctx rd ~id projection ~warn scale_of sel =
         let d = Option.get (data b.ch) in
         let h = host rd d.lift sel in
         let scaled =
-          match (b.role.scale, scale_of index) with
-          | Some _, Some i ->
+          match scale_of index with
+          | Some i ->
               let norm = normalize ctx.scales.(i) h in
               Option.map
                 (fun c -> (c, Array.map Float.is_nan norm))

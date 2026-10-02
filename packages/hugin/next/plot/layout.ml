@@ -240,13 +240,13 @@ let depth cx a =
   | false, _ | _, None -> 0.
   | true, Some t -> (
       let _, _, turned = outer_align a.a_side in
-      match a.a_role with
-      | Gfx | Gfy -> (
+      match a.a_use with
+      | Facet _ -> (
           match a.a_category with
           | Some c when a.a_labelled ->
               em cx pad_em +. across a.a_side ~turned (header cx a c)
           | _ -> 0.)
-      | Gx | Gy ->
+      | Position _ | Encoding _ | Value ->
           let tick = em cx tick_em in
           if not a.a_labelled then tick
           else
@@ -351,8 +351,8 @@ let widest p q =
 (* [reach cx a] is how far the tick labels of [a] reach past the ends of its
    panel's side. *)
 let reach cx a =
-  match (a.a_show, a.a_labelled, a.a_role, cx.ticks.(a.a_scale)) with
-  | true, true, (Gx | Gy), Some t ->
+  match (a.a_show, a.a_labelled, a.a_use, cx.ticks.(a.a_scale)) with
+  | true, true, Position _, Some t ->
       let along = if horizontal a.a_side then width else height in
       ends a.a_side (longest along (axis_labels cx a t))
   | _ -> no_sides
@@ -366,10 +366,11 @@ let spans cx a =
       let along l =
         if horizontal a.a_side <> turned then width l else height l
       in
-      match (a.a_role, a.a_category) with
-      | (Gfx | Gfy), Some c -> along (header cx a c)
-      | (Gfx | Gfy), None -> 0.
-      | (Gx | Gy), _ -> Option.fold ~none:0. ~some:along (axis_title cx a t))
+      match (a.a_use, a.a_category) with
+      | Facet _, Some c -> along (header cx a c)
+      | Facet _, None -> 0.
+      | (Position _ | Encoding _ | Value), _ ->
+          Option.fold ~none:0. ~some:along (axis_title cx a t))
   | _ -> 0.
 
 let legend_prot cx ls =
@@ -694,7 +695,7 @@ type acc = {
   mutable legends : legend_out list;
   mutable titles : placed list;
   mutable spans : (id * Box2.t) list; (* The hull of each block's panels. *)
-  mutable along : (int * guide_role * float) list;
+  mutable along : (int * Role.axis * float) list;
       (* Each axis's scale, role and length. *)
 }
 
@@ -744,8 +745,8 @@ let place_axis cx acc l proj box a offset =
   | true, Some t -> (
       let pad = em cx pad_em and s = cx.scales.(a.a_scale) in
       let halign, valign, turned = outer_align a.a_side in
-      match a.a_role with
-      | Gfx | Gfy -> (
+      match a.a_use with
+      | Facet _ -> (
           match a.a_category with
           | Some c when a.a_labelled ->
               let at =
@@ -759,11 +760,11 @@ let place_axis cx acc l proj box a offset =
                 { hd_id = a.a_id; hd_panel = l.l_id; hd_label = label }
                 :: acc.headers
           | _ -> ())
-      | Gx | Gy ->
+      | Position _ | Encoding _ | Value ->
           let along u =
-            match a.a_role with
-            | Gx -> P2.x (Coord.point proj u 0.)
-            | Gy | Gfx | Gfy -> P2.y (Coord.point proj 0. u)
+            match a.a_use with
+            | Position { axis = X; _ } -> P2.x (Coord.point proj u 0.)
+            | _ -> P2.y (Coord.point proj 0. u)
           in
           let labels, title =
             if not a.a_labelled then ([], None)
@@ -807,10 +808,12 @@ let place_leaf cx acc l box =
   let reached = ref no_sides in
   List.iter
     (fun a ->
-      (match a.a_role with
-      | Gx -> acc.along <- (a.a_scale, Gx, Box2.w box) :: acc.along
-      | Gy -> acc.along <- (a.a_scale, Gy, Box2.h box) :: acc.along
-      | Gfx | Gfy -> ());
+      (match a.a_use with
+      | Position { axis = X; _ } ->
+          acc.along <- (a.a_scale, Role.X, Box2.w box) :: acc.along
+      | Position { axis = Y; _ } ->
+          acc.along <- (a.a_scale, Role.Y, Box2.h box) :: acc.along
+      | Facet _ | Encoding _ | Value -> ());
       let offset =
         match a.a_side with
         | `Left -> !reached.left
@@ -1094,8 +1097,8 @@ let choose cx lengths =
   let measure u t =
     let l = label t in
     match u with
-    | Axis_of Gx -> width l +. clear
-    | Axis_of (Gy | Gfx | Gfy) -> height l +. clear
+    | Axis_of X -> width l +. clear
+    | Axis_of Y -> height l +. clear
     | Legend_of { bar; side; _ } -> (
         match (bar, vertical side) with
         | true, true -> height l +. clear

@@ -137,9 +137,9 @@ let members rd m fps =
       | None -> true
       | Some v -> Option.equal String.equal (Some v) cat
     in
-    ok "fx" p.pfx && ok "fy" p.pfy
+    ok Role.fx p.pfx && ok Role.fy p.pfy
   in
-  match (Read.facet rd "fx", Read.facet rd "fy") with
+  match (Read.facet rd Role.fx, Read.facet rd Role.fy) with
   | None, None -> List.map (fun p -> if gate p then Some Read.All else None) fps
   | fx, fy ->
       let n = Array.fold_left ( * ) 1 m.shape in
@@ -257,11 +257,11 @@ let band_cells cx scale_of index =
           else None
       | Quantities -> None)
 
-let binding_index m role =
+let binding_index m (role : _ Role.t) =
   let rec go i = function
     | [] -> None
     | B b :: rest ->
-        if String.equal b.role.name role then Some i else go (i + 1) rest
+        if String.equal b.role.name role.name then Some i else go (i + 1) rest
   in
   go 0 m.bindings
 
@@ -309,13 +309,13 @@ let image h w at =
    rows share a cell. Past 4 × 4 cells per device pixel, only the rows of the
    cells that raster output samples are read. *)
 let cells cx m (panel : Layout.panel) scale_of ~rows ~full ~few sel =
-  match (binding_index m "x", binding_index m "y") with
-  | Some xi, Some yi when not (binds m "x2" || binds m "y2" || binds m "stroke")
-    -> (
+  match (binding_index m Role.x, binding_index m Role.y) with
+  | Some xi, Some yi
+    when not (binds m Role.x2 || binds m Role.y2 || binds m Role.stroke) -> (
       match (band_cells cx scale_of xi, band_cells cx scale_of yi) with
       | Some nx, Some ny -> (
-          let pos = rows (Some [ "x"; "y" ]) full sel in
-          let paint = Some [ "fill"; "opacity" ] in
+          let pos = rows (Some [ Role.x.name; Role.y.name ]) full sel in
+          let paint = Some [ Role.fill.name; Role.opacity.name ] in
           let us = Option.get (Rows.normalized pos Role.x)
           and vs = Option.get (Rows.normalized pos Role.y) in
           let cell = Array.make (nx * ny) (-1) and shared = ref false in
@@ -415,8 +415,8 @@ let m4 cx m (panel : Layout.panel) scale_of =
   let w = Float.to_int (Float.ceil (Box2.w panel.box *. cx.ctx.density)) in
   let last = if rank = 0 then 0 else shape.(rank - 1) in
   let constant_along (B b) =
-    match (b.role.name, data b.ch) with
-    | ("x" | "y"), _ | _, None -> true
+    match (b.role.use, data b.ch) with
+    | Position { far = false; _ }, _ | _, None -> true
     | _, Some d -> (
         match d.lift with
         | Index k | Dim { axis = k; _ } -> axis_of shape k <> Some (rank - 1)
@@ -449,7 +449,7 @@ let m4 cx m (panel : Layout.panel) scale_of =
     && last > m4_rows * w
     && List.for_all constant_along m.bindings
   in
-  let xi = binding_index m "x" and yi = binding_index m "y" in
+  let xi = binding_index m Role.x and yi = binding_index m Role.y in
   match (applies, xi, yi) with
   | true, Some xi, Some yi -> (
       match
@@ -784,7 +784,7 @@ let readers cx s =
   let (F f) = cx.ctx.scales.(s) in
   let add acc m =
     let same (o, _) = Nx.Ptree.Path.equal o.mid m.m_occ.mid in
-    if Arrange.positional (axis_role m.m_role) then acc
+    if Option.is_some (Resolved.placed m) then acc
     else if List.exists same acc then
       List.map
         (fun (o, is) -> if same (o, is) then (o, m.m_index :: is) else (o, is))
