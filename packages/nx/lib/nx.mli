@@ -4718,7 +4718,8 @@ module Repr : sig
         each device, are those [view] reaches in its storage [s].
 
         Raises [Invalid_argument] if [p] is {!Placement.host}, if [view] reaches
-        an element outside [s], or if [s]'s devices do not hold [p]'s. *)
+        an element outside [s], if [s]'s buffers are not of [dtype]'s format, or
+        if [s]'s devices do not hold [p]'s. *)
 
     val id : ('a, 'b) t -> int
     (** [id x] is [x]'s identity, for hashing: every placed value has its own.

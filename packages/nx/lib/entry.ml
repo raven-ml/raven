@@ -242,44 +242,6 @@ let run (type a b) (x : (a, b) t) =
 
 (* Values over runtime buffers *)
 
-let of_shards (type a b) p (dtype : (a, b) Nx_dtype.t) view buffers : (a, b) t =
-  let what = "Nx.of_shards" in
-  if Placement.is_host p then
-    match buffers with
-    | [ b ] -> host_value what dtype view b
-    | _ ->
-        invalid_arg
-          (Printf.sprintf "%s: %d buffers for 1 device" what
-             (List.length buffers))
-  else begin
-    List.iter (check_format what dtype) buffers;
-    placed_value what p dtype view (shard_storage what p buffers)
-  end
-
-let shards (type a b) (x : (a, b) t) =
-  match x with
-  | Host a -> ([ a.buffer ], a.view)
-  | Placed r -> (
-      match Cell.state r.r_cell with
-      | Live buffers ->
-          ( List.map
-              (Place.buffer_on r.r_cell buffers)
-              (Placement.devices r.r_placement),
-            r.r_view )
-      | Consumed k -> consumed k)
-  | Traced _ -> outside_trace ()
-
-let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
-  let what = "Nx.of_buffer" in
-  let n = Nx_device.Buffer.length b in
-  if Array.fold_left ( * ) 1 shape <> n then
-    invalid_arg
-      (Printf.sprintf "%s: shape %s for %d elements" what
-         (Shape.to_string shape) n);
-  check_format what dtype b;
-  let p = Placement.on (Device.of_memory (Nx_device.Buffer.device b)) in
-  of_shards p dtype (View.create shape) [ b ]
-
 (* An empty buffer of [x]'s dtype on its device. *)
 let empty (type a b) (x : (a, b) t) =
   let s = Nx_dtype.Scalar.of_dtype (dtype x) in

@@ -3656,7 +3656,8 @@ thread.
   `intercepted`), where their results live (`placement`), and their `operands`,
   `name` and `pp`; and `Nx.Repr`, the representation of a value (host arrays,
   placed values over `Nx.Repr.Storage`, traced values with their `node`), whose
-  constructors check that a view stays within its storage.
+  constructors check that a view stays within its storage and that the
+  buffers are of the value's format.
   `Nx.Placement.with_leading_axis` and `without_leading_axis` serve
   transformations over a leading axis.
 - **Breaking:** `Nx_device.submit` takes a set of devices and the buffers the

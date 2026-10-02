@@ -210,18 +210,6 @@ let file_windows v ds windows b =
 
 (* Reading placed values *)
 
-(* The buffer, of [bufs], one per device of [c]'s placement, that holds [c]'s
-   storage in [d]'s memory. A value's devices hold their memories' buffers of
-   its storage, whichever device over that memory made it. *)
-let buffer_on (c : cell) bufs d =
-  match
-    List.find_index
-      (fun h -> Device.memory h == Device.memory d)
-      (Placement.devices c.placement)
-  with
-  | Some i -> List.nth bufs i
-  | None -> invalid_arg ("Nx: no storage on " ^ Device.name d)
-
 (* The elements of a placed value's view. *)
 let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
   Cell.with_borrow r.r_cell (fun () ->

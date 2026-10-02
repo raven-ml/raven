@@ -17,10 +17,12 @@ module Placement = Placement
 
 let place = Entry.place
 let placement = Value.placement
-let of_buffer = Entry.of_buffer
+let of_buffer = Value.of_buffer
 let to_buffer = Entry.to_buffer
-let shards = Entry.shards
-let of_shards = Entry.of_shards
+let shards = Value.shards
+
+let of_shards p dtype view buffers =
+  Value.of_shards "Nx.of_shards" p dtype view buffers
 
 module Ptree = Ptree
 

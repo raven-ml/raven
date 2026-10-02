@@ -549,7 +549,7 @@ let local (type a b) d (x : (a, b) t) : (a, b) Nx_array.t =
           {
             dtype = r.r_dtype;
             view = r.r_view;
-            buffer = Place.buffer_on r.r_cell bufs d;
+            buffer = buffer_on r.r_cell bufs d;
           }
       | Consumed k -> consumed k)
   | Host _ -> invalid_arg "Nx: a host value has no device array"

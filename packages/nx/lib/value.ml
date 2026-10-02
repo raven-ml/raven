@@ -234,23 +234,23 @@ let placed what placement dtype view cell =
       r_cell = cell;
     }
 
+(* Raises unless [b] is of [dtype]'s format. *)
+let check_format what dtype b =
+  let s = Nx_device.Buffer.dtype b in
+  if not (Nx_dtype.Scalar.equal s (Nx_dtype.Scalar.of_dtype dtype)) then
+    invalid_arg
+      (Printf.sprintf "%s: a %s buffer read as %s" what
+         (Nx_dtype.Scalar.to_string s)
+         (Nx_dtype.to_string dtype))
+
 (* Raises unless [buffer] is a host buffer of [dtype]'s format, as nx.cpu reads
    it: through its host address, [dtype]'s elements at a time. *)
-let check_host fn dtype buffer =
+let check_host what dtype buffer =
   if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
     invalid_arg
-      (Printf.sprintf "%s: the buffer is on %s, not CPU" fn
+      (Printf.sprintf "%s: the buffer is on %s, not CPU" what
          (Nx_device.name (Nx_device.Buffer.device buffer)));
-  if
-    not
-      (Nx_dtype.Scalar.equal
-         (Nx_device.Buffer.dtype buffer)
-         (Nx_dtype.Scalar.of_dtype dtype))
-  then
-    invalid_arg
-      (Printf.sprintf "%s: a %s buffer read as %s" fn
-         (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
-         (Nx_dtype.to_string dtype))
+  check_format what dtype buffer
 
 (* Traced constructor *)
 
@@ -348,17 +348,64 @@ let host_value what dtype view b =
     invalid_arg (what ^ ": the view reaches outside the buffer");
   Host { dtype; view; buffer = b }
 
-let check_format what dtype b =
-  let s = Nx_device.Buffer.dtype b in
-  if not (Nx_dtype.Scalar.equal s (Nx_dtype.Scalar.of_dtype dtype)) then
-    invalid_arg
-      (Printf.sprintf "%s: a %s buffer read as %s" what
-         (Nx_dtype.Scalar.to_string s)
-         (Nx_dtype.to_string dtype))
-
-(* [placed_value what p dtype view c] is the value at [p] of [c] under
-   [view]. *)
+(* [placed_value what p dtype view c] is the value at [p] of [c] under [view].
+   Kernels read [view]'s elements of [c]'s buffers as [dtype]'s, so the view
+   lies within them and they are of [dtype]'s format. Consumed storage has no
+   bytes to reach. *)
 let placed_value what p dtype view c =
   if not (fits view c.length) then
     invalid_arg (what ^ ": the view reaches outside the storage");
+  (match Cell.state c with
+  | Live bufs -> List.iter (check_format what dtype) bufs
+  | Consumed _ -> ());
   placed what p dtype view c
+
+(* [of_shards what p dtype view buffers] is the value at [p] whose elements, on
+   each device, are those [view] reaches in its buffer of [buffers]. *)
+let of_shards (type a b) what p (dtype : (a, b) Nx_dtype.t) view buffers :
+    (a, b) t =
+  if Placement.is_host p then
+    match buffers with
+    | [ b ] -> host_value what dtype view b
+    | _ ->
+        invalid_arg
+          (Printf.sprintf "%s: %d buffers for 1 device" what
+             (List.length buffers))
+  else placed_value what p dtype view (shard_storage what p buffers)
+
+(* [of_buffer dtype shape b] is the value of [shape] over [b]'s elements in C
+   order. *)
+let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
+  let what = "Nx.of_buffer" in
+  let n = Nx_device.Buffer.length b in
+  if Array.fold_left ( * ) 1 shape <> n then
+    invalid_arg
+      (Printf.sprintf "%s: shape %s for %d elements" what
+         (Shape.to_string shape) n);
+  let p = Placement.on (Device.of_memory (Nx_device.Buffer.device b)) in
+  of_shards what p dtype (View.create shape) [ b ]
+
+(* The buffer, of [bufs], one per device of [c]'s placement, that holds [c]'s
+   storage in [d]'s memory. A value's devices hold their memories' buffers of
+   its storage, whichever device over that memory made it. *)
+let buffer_on (c : cell) bufs d =
+  match
+    List.find_index
+      (fun h -> Device.memory h == Device.memory d)
+      (Placement.devices c.placement)
+  with
+  | Some i -> List.nth bufs i
+  | None -> invalid_arg ("Nx: no storage on " ^ Device.name d)
+
+let shards (type a b) (x : (a, b) t) =
+  match x with
+  | Host a -> ([ a.buffer ], a.view)
+  | Placed r -> (
+      match Cell.state r.r_cell with
+      | Live buffers ->
+          ( List.map
+              (buffer_on r.r_cell buffers)
+              (Placement.devices r.r_placement),
+            r.r_view )
+      | Consumed k -> consumed k)
+  | Traced _ -> outside_trace ()

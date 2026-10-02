@@ -51,6 +51,83 @@ let host_buffers =
           raises_match other_format (fun () -> from_host float64));
     ]
 
+(* The representation's constructors build no value that a kernel would read
+   outside its buffers: every element a view reaches lies in them, and they are
+   of the value's format. *)
+let representation =
+  let outside = Exn.invalid_arg ~substring:"reaches outside"
+  and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
+  and p = Nx.Placement.on (Nx.Device.of_memory r1) in
+  (* Whether every position [view] reaches is in [0, n), by enumerating them. *)
+  let inside view n =
+    let shape = Nx_array.View.shape view
+    and strides = Nx_array.View.strides view in
+    let rec go axis pos =
+      if axis = Array.length shape then pos >= 0 && pos < n
+      else
+        let rec each i =
+          i = shape.(axis)
+          || (go (axis + 1) (pos + (i * strides.(axis))) && each (i + 1))
+        in
+        each 0
+    in
+    go 0 (Nx_array.View.offset view)
+  in
+  let pp ppf (n, view) =
+    Format.fprintf ppf "%d elements, offset %d, strides %a, shape %a" n
+      (Nx_array.View.offset view)
+      Nx.pp_shape
+      (Nx_array.View.strides view)
+      Nx.pp_shape (Nx_array.View.shape view)
+  in
+  let views =
+    Gen.with_pp pp
+      Gen.(
+        let* rank = int_range 0 2 in
+        let+ n = int_range 0 8
+        and+ shape = array ~size:(constant rank) (int_range 0 3)
+        and+ strides = array ~size:(constant rank) (int_range (-2) 3)
+        and+ offset = int_range (-3) 8 in
+        (n, Nx_array.View.create ~offset ~strides shape))
+  in
+  let host n view =
+    Nx.Repr.host
+      {
+        dtype = Nx.float32;
+        view;
+        buffer = Nx_array.Elements.create Nx.float32 n;
+      }
+  and placed n view =
+    let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 n in
+    Nx.Repr.Placed.v p Nx.float32 view (Nx.Repr.Storage.v p [ b ])
+  in
+  group "representation"
+    [
+      prop
+        "Nx.Repr.host and Nx.Repr.Placed.v build a value exactly when its view \
+         reaches only elements of its buffers"
+        views (fun (n, view) ->
+          let ok = inside view n in
+          cover "a view inside its buffers" ok;
+          cover "a view reaching outside them" (not ok);
+          cover "a zero-size view" (Nx_array.View.numel view = 0);
+          cover "a negative stride"
+            (Array.exists (fun s -> s < 0) (Nx_array.View.strides view));
+          if ok then begin
+            ignore (host n view);
+            ignore (placed n view)
+          end
+          else begin
+            raises_match ~msg:"host" outside (fun () -> host n view);
+            raises_match ~msg:"placed" outside (fun () -> placed n view)
+          end);
+      test "Nx.Repr.Placed.v refuses storage of another format" (fun () ->
+          let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float64 4 in
+          let s = Nx.Repr.Storage.v p [ b ] in
+          raises_match other_format (fun () ->
+              Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 4 |]) s));
+    ]
+
 (* Values on the disk: files, which the host reads where they lie, in their
    pages, and other devices read into their memory. *)
 let disk =
@@ -167,4 +244,5 @@ let claims =
 let () =
   exit
     (run "nx runtime devices"
-       (devices :: host_buffers :: disk :: claims :: Runtimes.laws [ r1; r2 ]))
+       (devices :: host_buffers :: representation :: disk :: claims
+       :: Runtimes.laws [ r1; r2 ]))
