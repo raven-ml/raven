@@ -5975,17 +5975,15 @@ thread.
 
 ### Quill
 
-- A display whose display id is not empty replaces the session's earlier
-  display with that id in place, in whichever cell holds it, so a figure can
-  update as a computation runs. `Cell.Display` gains `id`, which notebook files
-  never record; `Doc.add_output` and `Doc.find_display` route outputs by id.
-- A value displays as rich content when its printer opens a
-  `Format.String_tag` holding a display tag: the lines `quill.display`, the
-  MIME type and a display id, then the raw content (`Quill.Cell.output_of_tag`).
-  Libraries display without linking Quill; `Quill.Cell.Display_tag` is removed.
-- The web notebook shows SVG displays holding any UTF-8. `Cell.Display` holds
-  every image type in base64, SVG included, so the notebook no longer encodes
-  SVG with `btoa`, which threw on characters such as `η`.
+- A cell displays the display tags it prints with `Format.printf` or
+  `Format.eprintf` where it prints them, so one cell can show several values.
+- A display with a non-empty id replaces the session's display with that id in
+  place, in any cell (`Quill.Cell.Display`'s `id`, `Quill.Doc.add_output`).
+- Printers display by opening a `Format.String_tag` display tag
+  (`Quill.Cell.output_of_tag`), without linking Quill.
+  `Quill.Cell.Display_tag` is removed.
+- The web notebook shows SVG displays holding any UTF-8: `Quill.Cell.Display`
+  holds images in base64, and the notebook no longer encodes SVG with `btoa`.
 - The terminal notebook's footer shows `Ctrl-C Interrupt` again while a cell
   runs, in place of the run action. The footer redesign had dropped it, so
   interrupting was only discoverable from the help screen.

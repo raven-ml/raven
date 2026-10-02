@@ -175,29 +175,71 @@ let drain_remaining fd =
   Unix.close fd;
   Buffer.contents buf
 
+(* [display_stags display] are stag functions that call [display] on the output
+   of each display tag. The tag is handled as a mark, which Format emits when
+   the tag reaches the output, after the text printed before it; a print hook
+   runs as the tag is opened, while that text may still wait in Format's
+   queue. *)
+let display_stags display =
+  {
+    Format.mark_open_stag =
+      (function
+      | Format.String_tag s ->
+          Option.iter display (Quill.Cell.output_of_tag s);
+          ""
+      | _ -> "");
+    mark_close_stag = (fun _ -> "");
+    print_open_stag = (fun _ -> ());
+    print_close_stag = (fun _ -> ());
+  }
+
+(* [with_displays display ppf f] is [f ()] with the display tags opened on [ppf]
+   going to [display]. *)
+let with_displays display ppf f =
+  let mark_tags = Format.pp_get_mark_tags ppf () in
+  let stags = Format.pp_get_formatter_stag_functions ppf () in
+  Format.pp_set_mark_tags ppf true;
+  Format.pp_set_formatter_stag_functions ppf (display_stags display);
+  Fun.protect f ~finally:(fun () ->
+      Format.pp_print_flush ppf ();
+      Format.pp_set_mark_tags ppf mark_tags;
+      Format.pp_set_formatter_stag_functions ppf stags)
+
 let capture ~on_stdout ~on_stderr ~on_display f =
   let buf_out = Buffer.create 256 in
   let buf_err = Buffer.create 256 in
   let ppf_out = Format.formatter_of_buffer buf_out in
   let ppf_err = Format.formatter_of_buffer buf_err in
-  (* Turn display tags opened on the toplevel formatter into outputs *)
-  Format.pp_set_print_tags ppf_out true;
-  Format.pp_set_formatter_stag_functions ppf_out
-    {
-      mark_open_stag = (fun _ -> "");
-      mark_close_stag = (fun _ -> "");
-      print_open_stag =
-        (function
-        | Format.String_tag s ->
-            Option.iter on_display (Quill.Cell.output_of_tag s)
-        | _ -> ());
-      print_close_stag = (fun _ -> ());
-    };
   (* Pipes for raw stdout/stderr from user code (e.g. print_string) *)
   let rd_out, wr_out = Unix.pipe ~cloexec:true () in
   let rd_err, wr_err = Unix.pipe ~cloexec:true () in
   let stdout_backup = Unix.dup ~cloexec:true Unix.stdout in
   let stderr_backup = Unix.dup ~cloexec:true Unix.stderr in
+  let emit fd s = if fd == rd_out then on_stdout s else on_stderr s in
+  (* [lock] orders pipe text and displays: a display first emits the text the
+     cell wrote before it. *)
+  let lock = Mutex.create () in
+  (* [drain fd] emits what [fd] holds, reading only while a select without
+     timeout finds it ready, so that it never blocks. *)
+  let rec drain fd =
+    match Unix.select [ fd ] [] [] 0. with
+    | [], _, _ -> ()
+    | _ -> (
+        match read_available fd poll_buf with
+        | Some s when s <> "" ->
+            emit fd s;
+            drain fd
+        | _ -> ())
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> drain fd
+  in
+  let display o =
+    flush stdout;
+    flush stderr;
+    Mutex.protect lock (fun () ->
+        drain rd_out;
+        drain rd_err;
+        on_display o)
+  in
   (* Poll pipes in a background thread, streaming output as it arrives. Uses
      Unix.select with a 50ms timeout so training progress prints (Printf.printf
      "\rstep %d loss: %.4f%!" ...) appear in real time. *)
@@ -210,13 +252,7 @@ let capture ~on_stdout ~on_stderr ~on_display f =
             try Unix.select [ rd_out; rd_err ] [] [] 0.05
             with Unix.Unix_error (Unix.EINTR, _, _) -> ([], [], [])
           in
-          List.iter
-            (fun fd ->
-              match read_available fd poll_buf with
-              | Some s when s <> "" ->
-                  if fd == rd_out then on_stdout s else on_stderr s
-              | _ -> ())
-            ready
+          Mutex.protect lock (fun () -> List.iter drain ready)
         done)
       ()
   in
@@ -227,6 +263,9 @@ let capture ~on_stdout ~on_stderr ~on_display f =
       flush stderr;
       Unix.dup2 ~cloexec:false wr_out Unix.stdout;
       Unix.dup2 ~cloexec:false wr_err Unix.stderr;
+      with_displays display ppf_out @@ fun () ->
+      with_displays display Format.std_formatter @@ fun () ->
+      with_displays display Format.err_formatter @@ fun () ->
       result := Some (f ppf_out ppf_err))
     ~finally:(fun () ->
       Format.pp_print_flush ppf_out ();

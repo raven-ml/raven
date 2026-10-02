@@ -66,10 +66,17 @@ type output =
     runs. Ids last as long as the session; notebook files never record them.
 
     Formatters ignore tags by default and print only the plain-text rendering,
-    which is what a terminal toplevel or a log shows. Quill's OCaml kernel turns
-    each display tag in the values a cell evaluates to, such as those printed by
-    a printer installed with [#install_printer], into a {!Display} output, and
-    still prints the plain-text rendering in the value's line. *)
+    which is what a terminal toplevel or a log shows. While a cell runs, Quill's
+    OCaml kernel turns into a {!Display} output each display tag opened on:
+    - the formatter of the values the cell evaluates to, as by a printer
+      installed with [#install_printer];
+    - [Format.std_formatter] and [Format.err_formatter], so that
+      [Format.printf "%a@." pp v] displays [v] and a cell can display several
+      values.
+
+    A display takes its place in each of the cell's standard output and error
+    where the cell printed it, after the text printed before it, even on the
+    same line. The plain-text rendering is still printed, after the display. *)
 
 val output_of_tag : string -> output option
 (** [output_of_tag s] is the output Quill shows for the tag [s]:
