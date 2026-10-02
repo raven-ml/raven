@@ -30,3 +30,4 @@ dune exec packages/hugin/next/examples/01-line/main.exe
 | [`10-loss-landscape`](10-loss-landscape/main.ml) | Filled contours on a log scale and an optimiser's path | ![](10-loss-landscape/landscape.png) |
 | [`11-dashboard`](11-dashboard/main.ml) | A training dashboard: loss on a log scale over epochs, and validation accuracy, sharing x | ![](11-dashboard/dashboard.png) |
 | [`12-paper-figure`](12-paper-figure/main.ml) | A two-column paper figure at 8 points, panels labelled (a) to (d) | ![](12-paper-figure/paper.png) |
+| [`13-histogram`](13-histogram/main.ml) | Two histograms over shared bins from `Stats.histogram`, drawn as rects from their edges | ![](13-histogram/histogram.png) |
