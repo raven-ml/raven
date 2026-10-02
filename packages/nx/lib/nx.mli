@@ -227,14 +227,14 @@ val to_array : ('a, 'b) t -> 'a array
 
     Where a value lives is a value too. A {e memory} is storage nx.device opens
     ({!Nx_device.t}): the host, test memories inside the host's, a GPU through
-    one interface, the disk. A {e backend} ({!Nx_backend.S}) is eager kernels
-    for some memories. A device ({!Device.t}) is a memory and the backend that
-    computes on it eagerly, if any: {!Device.host} and test devices compute with
-    nx.cpu, and a GPU computes eagerly with nothing until {!Device.with_backend}
-    pairs it with a backend. A placement ({!Placement.t}) is one device, a full
-    copy on each of a list of devices, or an equal slice on each along one axis.
-    Values start on the host; {!place} moves them, and is the only thing that
-    moves them between devices.
+    one interface, the disk. A {e backend} ({!Nx_backend.t}) is eager kernels
+    for some memories, made once by the library that writes them. A device
+    ({!Device.t}) is a memory and the backend that computes on it eagerly, if
+    any: {!Device.host} and test devices compute with nx.cpu, and a GPU computes
+    eagerly with nothing until {!Device.with_backend} pairs it with a backend. A
+    placement ({!Placement.t}) is one device, a full copy on each of a list of
+    devices, or an equal slice on each along one axis. Values start on the host;
+    {!place} moves them, and is the only thing that moves them between devices.
 
     Who computes an eager operation is read off its operands alone:
     + A value on {!Placement.host} or on the disk joins the placement of the
@@ -297,9 +297,8 @@ val to_array : ('a, 'b) t -> 'a array
 (** Devices: a memory and the backend that computes on it eagerly. *)
 module Device : sig
   type t
-  (** The type for devices. There is one value per memory and backend: opening a
-      memory twice, or pairing it twice with one backend, gives the same value.
-  *)
+  (** The type for devices. Devices are plain values: two are {!equal} when they
+      have one memory and one backend, however they were made. *)
 
   (** The type for devices wanted, as plain data. *)
   type want =
@@ -327,6 +326,13 @@ module Device : sig
   val host : t
   (** [host] is the host's memory, computed by nx.cpu. *)
 
+  val cpu : int -> t
+  (** [cpu k], [k >= 1], is the test device ["CPU:k"]: a memory inside the
+      host's that nx.cpu computes on, distinct from the host and from every
+      other [k], so a program runs multi-device work on one machine.
+
+      Raises [Invalid_argument] if [k < 1]. *)
+
   val get : want -> (t, string) result
   (** [get w] is the device [w] names, opened now, with its memory's default
       backend, or [Error msg] with the reason it does not open. A failed open is
@@ -334,6 +340,7 @@ module Device : sig
       driver library failed to load. A vendor's first open fixes its interface
       for the process: a want of the other interface, {!Gpu} included, then
       fails with that reason. [CUDA:0] and [NV:0] over one GPU are two memories.
+      Every [get w] that succeeds gives an equal device.
 
       Raises [Invalid_argument] for a negative index or a [Cpu k] with [k < 1].
   *)
@@ -374,25 +381,26 @@ module Device : sig
       as {!name} names its device: [of_string (Format.asprintf "%a" pp_want w)]
       is [Ok [ w ]] for every [w] {!get} accepts. *)
 
-  (** {1:pairing Memories and backends} *)
+  val with_backend : Nx_backend.t -> t -> t
+  (** [with_backend b d] is [d]'s memory computed eagerly by [b]. Values on it
+      and on [d] share their storage: {!place} between them is a view. It
+      replaces [d]'s backend, so [with_backend b (with_backend b' d)] equals
+      [with_backend b d], and [with_backend Nx_cpu.backend host] equals {!host}.
 
-  val of_memory : Nx_device.t -> t
-  (** [of_memory m] is the device over [m] with [m]'s default backend: nx.cpu on
-      the host and test memories, none on others. It is the value {!get} returns
-      for the want that opens [m], and [of_memory (memory d) == d] for every [d]
-      no {!with_backend} made. Memories no want names, such as another machine's
-      GPU or the disk, reach placements through it. *)
+      Raises [Invalid_argument] unless [b] computes on [d]'s memory. *)
 
-  val with_backend : (module Nx_backend.S) -> t -> t
-  (** [with_backend k d] is [d]'s memory computed eagerly by [k]. Values on it
-      and on [d] share their storage: {!place} between them is a view. A backend
-      is identified by its name ([K.name]): pairs are one value per memory and
-      name, [with_backend k (with_backend k' d) == with_backend k d] and
-      [with_backend (module Nx_cpu) host == host], and a module of a name
-      already paired with [d]'s memory gives that pair, computed by the module
-      first paired.
+  (** {1:libraries For device libraries} *)
 
-      Raises [Invalid_argument] unless [k] runs on [d]'s memory. *)
+  val make : ?backend:Nx_backend.t -> Nx_device.t -> t
+  (** [make ~backend m] is the device over the memory [m] computed eagerly by
+      [backend]. [backend] defaults to [m]'s own: nx.cpu on the host and test
+      memories, none on others. It is the device {!get} opens, and a program
+      makes with it a device over a memory no want names, such as the disk
+      ({!Nx_device.disk}) or another machine's GPU.
+
+      Raises [Invalid_argument] unless [backend] computes on [m]. *)
+
+  (** {1:queries Queries} *)
 
   val memory : t -> Nx_device.t
   (** [memory d] is [d]'s memory. *)
@@ -405,8 +413,9 @@ module Device : sig
       {!of_string}. *)
 
   val equal : t -> t -> bool
-  (** [equal d d'] is [true] iff [d] and [d'] are one device: one memory and one
-      backend. *)
+  (** [equal d d'] is [true] iff [d] and [d'] have one memory
+      ({!Nx_device.equal}) and one backend ({!Nx_backend.equal}), or both have
+      none. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a device's {!name}. *)
@@ -3158,9 +3167,8 @@ val unique : ('a, 'b) t -> groups
       ([|0L; 1L; 0L; 0L; 2L; 1L|], [|0L; 1L; 4L|], [|3L; 2L; 1L|])
     ]}
 
-    It groups the keys' {!order_key}s in hash tables, an expected pass over
-    them whose ids depend on the keys alone, then scatters [first] and
-    [counts].
+    It groups the keys' {!order_key}s in hash tables, an expected pass over them
+    whose ids depend on the keys alone, then scatters [first] and [counts].
 
     Raises [Invalid_argument] if [keys] is not 1-D or 2-D, or is complex.
 
@@ -4767,8 +4775,8 @@ module Repr : sig
         (** The type for the representation of values. *)
 
   val v : ('a, 'b) value -> ('a, 'b) t
-  (** [v x] is [x]'s representation. A host array's buffer is [x]'s own
-      memory, read-only by contract: [x] and its views read it. *)
+  (** [v x] is [x]'s representation. A host array's buffer is [x]'s own memory,
+      read-only by contract: [x] and its views read it. *)
 
   val host : ('a, 'b) Nx_array.t -> ('a, 'b) value
   (** [host a] is the value at {!Placement.host} of array [a].

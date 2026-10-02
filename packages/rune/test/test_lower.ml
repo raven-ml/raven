@@ -183,11 +183,11 @@ let captures =
 
 (* Devices *)
 
-let d1 = Nx.Device.v (Cpu 1)
-let d2 = Nx.Device.v (Cpu 2)
+let d1 = Nx.Device.cpu 1
+let d2 = Nx.Device.cpu 2
 
 (* nx.cpu under another name, paired with [d1]'s memory. *)
-let paired = Nx.Device.with_backend (module Nx_test.Renamed) d1
+let paired = Nx.Device.with_backend Nx_test.renamed d1
 let names s = List.map fst (Lower.devices s)
 
 (* Parameters *)

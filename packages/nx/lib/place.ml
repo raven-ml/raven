@@ -129,6 +129,8 @@ let assemble (type a b) (r : (a, b) resident) window
 
 (* Runtime buffers *)
 
+module Cpu = (val Nx_backend.kernels Nx_cpu.backend)
+
 (* The elements of view [v] of [b], of [dtype]. Int4 storage is read whole: its
    elements may not start on a byte. A strided view is gathered by nx.cpu. *)
 let read_view dtype b v =
@@ -156,7 +158,7 @@ let read_view dtype b v =
     if View.is_c_contiguous view then Elements.contiguous span view
     else
       let dst = alloc dtype (View.shape view) in
-      Nx_cpu.contiguous { dtype; view; buffer = span } ~dst;
+      Cpu.contiguous { dtype; view; buffer = span } ~dst;
       dst.buffer
 
 (* [run_in b v] is the elements of the view [v] of [b], in C order, as a view of

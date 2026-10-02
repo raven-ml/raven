@@ -18,7 +18,7 @@ let map_axes = Grid.map_axes
 let select = Grid.select
 
 let is_host p =
-  match Grid.devices p with [ d ] -> d == Device.host | _ -> false
+  match Grid.devices p with [ d ] -> Device.equal d Device.host | _ -> false
 
 (* The disk holds values and computes on none. *)
 let on_disk p =
@@ -28,9 +28,10 @@ let on_disk p =
 
 let same_devices p q =
   let dp = devices p and dq = devices q in
-  List.compare_lengths dp dq = 0 && List.for_all (fun d -> List.memq d dq) dp
+  List.compare_lengths dp dq = 0
+  && List.for_all (fun d -> List.exists (Device.equal d) dq) dp
 
-let equal p q = Grid.equal ( == ) p q
+let equal p q = Grid.equal Device.equal p q
 
 (* Whether [p] and [q] hold each window of a value in one memory, whichever of
    that memory's devices compute on it. *)
@@ -48,7 +49,8 @@ let check what ds =
   let rec distinct = function
     | [] -> ()
     | d :: rest ->
-        if List.memq d rest then fail "%s appears twice" (Device.name d);
+        if List.exists (Device.equal d) rest then
+          fail "%s appears twice" (Device.name d);
         (match
            List.find_opt (fun d' -> Device.memory d' == Device.memory d) rest
          with
@@ -85,7 +87,7 @@ let check_shape what p shape =
     (Grid.cuts p)
 
 let window p shape d =
-  match List.find_index (( == ) d) (devices p) with
+  match List.find_index (Device.equal d) (devices p) with
   | None ->
       invalid_arg
         (Printf.sprintf "Nx.Placement.window: %s holds no window"

@@ -11,5 +11,6 @@
     the host and test devices. Programs use [Nx], whose values on the host are
     these kernels' arrays. *)
 
-include Nx_backend.S
-(** @inline *)
+val backend : Nx_backend.t
+(** [backend] is nx.cpu, the backend of [Nx.Device.host] and of the test
+    devices. *)

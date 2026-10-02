@@ -29,8 +29,8 @@ let host_settle =
   }
 
 (* A kernel that refuses its operands raises [Refused] to nx, which names the
-   backend, the device, the operation and the remedies: nothing falls through
-   to another backend. *)
+   backend, the device, the operation and the remedies: nothing falls through to
+   another backend. *)
 let refused op (e : Kernels.env) reason =
   let (module K) = e.kernels in
   invalid_arg
@@ -213,7 +213,7 @@ let on_devices : type r. r Op.t -> r =
             List.map
               (fun d ->
                 match d.Device.backend with
-                | Some k -> k
+                | Some b -> Nx_backend.kernels b
                 | None -> no_kernels (Op.name op) d)
               ds
           in

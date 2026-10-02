@@ -3072,6 +3072,11 @@ thread.
 
 ### Nx
 
+- **Breaking** for backends: a backend is a value, `Nx_backend.t`, which its
+  library makes once with `Nx_backend.v (module K)` and exports, as
+  `Nx_cpu.backend`. Two backends are equal only when one `v` made them, so
+  backends of one name no longer collide. `Nx_cpu` exports its kernels
+  through `Nx_backend.kernels Nx_cpu.backend` alone.
 - `Nx.svd` and `Nx.svdvals` bidiagonalize with vectorized panel products:
   a float64 128 x 128 SVD takes 1.65 ms on one kimchi core where it took
   2.43, and 512 x 512 56 ms where it took 130.
@@ -3167,12 +3172,12 @@ thread.
   named `NV-PCI:i` and `AMD-PCI:i`, so a name says which interface reaches
   the GPU.
 - **Breaking:** a device (`Nx.Device.t`) is a memory and the backend that
-  computes on it eagerly, if any. `Nx.Device.host` and the test devices
-  `Nx.Device.v (Cpu k)` compute with nx.cpu; a GPU computes eagerly with
-  nothing until `Nx.Device.with_backend k d` pairs it with a backend `k`.
-  Placing a value between devices over one memory is a view, so it changes
-  only who computes. `Nx.Device.of_memory` and `memory` cross to the
-  `Nx_device.t` nx.device opens.
+  computes on it eagerly, if any, as a plain value: `Nx.Device.equal`
+  compares the two. `Nx.Device.host` and the test devices `Nx.Device.cpu k`
+  compute with nx.cpu; a GPU computes eagerly with nothing until
+  `Nx.Device.with_backend b d` pairs it with a backend `b`. Placing a value
+  between devices over one memory is a view, so it changes only who computes.
+  `Nx.Device.make` and `memory` cross to the `Nx_device.t` nx.device opens.
 - Add `Nx.Device` wants, plain data that names a device: `Host`, `Cpu k`,
   `Gpu`, `Metal`, `Cuda i`, `Nv i`, `Amd i`, `Nv_pci i` and `Amd_pci i`.
   `Nx.Device.v`, `get`, `first` and `all` open them now, `of_string` reads
@@ -3180,7 +3185,7 @@ thread.
   `Gpu` and `Nx.Device.gpu ()` are the Metal GPU of a Mac, and elsewhere the
   first GPU a kernel driver opens, CUDA's before nx's own; only `Nv_pci` and
   `Amd_pci` take a GPU from its kernel driver. Opening a device twice gives
-  the same value. nx links the vendor device runtimes.
+  an equal device. nx links the vendor device runtimes.
 - **Breaking:** who computes an eager operation is read off its operands: the
   backend of their devices computes, in every domain and under every
   transformation, and a host operand joins the placed ones for the call. A
@@ -3847,7 +3852,7 @@ thread.
 - `Nx_io.save_safetensors` writes each tensor into the file from its own
   storage, wherever it lives: a device writes its memory to the file, and a
   value on the disk is copied from its file.
-- A value on the disk (`Nx.Device.of_memory Nx_device.disk`) takes part in
+- A value on the disk (`Nx.Device.make Nx_device.disk`) takes part in
   an operation as a host value: the operation reads it through a mapping of
   its file, or a copy when its bytes are not aligned to its elements, and
   computes on the host. A constant made beside it is the host's, and a

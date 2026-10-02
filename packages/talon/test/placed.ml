@@ -6,7 +6,7 @@
 (* A test device: its values live in memory of their own, whose statistics count
    the bytes read from it. *)
 
-let device = Nx.Device.v (Cpu 1)
+let device = Nx.Device.cpu 1
 let place x = Nx.place (Nx.Placement.on device) x
 
 (* The bytes read from the device so far. *)

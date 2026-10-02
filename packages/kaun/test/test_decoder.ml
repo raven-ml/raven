@@ -406,7 +406,7 @@ let test_generation_matches_recomputation () =
   let index = ref (Cache_index.rows ~context [| Array.length start |]) in
   let placed =
     Nx.Ptree.map caches
-      (fun _ t -> Nx.place (Nx.Placement.on (Nx.Device.v (Cpu 1))) t)
+      (fun _ t -> Nx.place (Nx.Placement.on (Nx.Device.cpu 1)) t)
       (cache ~slots:context)
   in
   let s = ref (step (ids [| start |]) !index placed) in

@@ -2,7 +2,7 @@
 ; count invisible from Nx, so the test calls the C entry points with an explicit
 ; plan thread count. test_planner.ml redeclares those externals; the type
 ; checker cannot compare them with the C stubs, so a drift between the two is
-; undefined behaviour, not a compile error. Keep them in step with nx_cpu.ml.
+; undefined behaviour, not a compile error. Keep them in step with kernels.ml.
 
 (test
  (name test_planner)

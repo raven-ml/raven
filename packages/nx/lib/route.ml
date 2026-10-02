@@ -177,7 +177,7 @@ let whole_shards xs =
      others only through [Nx.place]. *)
   let own (c : Value.cell) p =
     match Placement.devices p with
-    | [ d ] -> List.memq d (Placement.devices c.placement)
+    | [ d ] -> List.exists (Device.equal d) (Placement.devices c.placement)
     | _ -> false
   in
   match views with

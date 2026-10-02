@@ -19,7 +19,7 @@ let elements x = Array.to_list (Nx.to_array x)
 (* A memory the host addresses that loads programs, as a GPU: it has no default
    backend. *)
 let gpu =
-  Nx.Device.of_memory
+  Nx.Device.make
     (Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
        ~load:(fun ~binary:_ -> Error "no programs")
        (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None }))
@@ -29,24 +29,26 @@ let gpu =
 let made = Atomic.make 0
 
 (* A backend of nx.cpu's kernels that counts its additions and refuses products,
-   named afresh, so that each is a backend of its own. *)
+   each a backend of its own. *)
 type counting = { device : Nx.Device.t; name : string; adds : int Atomic.t }
 
 let counting on =
   let adds = Atomic.make 0 in
   let label = Printf.sprintf "counting %d" (Atomic.fetch_and_add made 1) in
+  let module Cpu = (val Nx_backend.kernels Nx_cpu.backend) in
   let k =
-    (module struct
-      include (Nx_cpu : Nx_backend.S)
+    Nx_backend.v
+      (module struct
+        include Cpu
 
-      let name = label
+        let name = label
 
-      let binary k a b ~dst =
-        if k = Nx_backend.Add then Atomic.incr adds;
-        Nx_cpu.binary k a b ~dst
+        let binary k a b ~dst =
+          if k = Nx_backend.Add then Atomic.incr adds;
+          Cpu.binary k a b ~dst
 
-      let matmul _ _ ~dst:_ = raise (Nx_backend.Refused "no products here")
-    end : Nx_backend.S)
+        let matmul _ _ ~dst:_ = raise (Nx_backend.Refused "no products here")
+      end)
   in
   { device = Nx.Device.with_backend k on; name = label; adds }
 
@@ -92,6 +94,8 @@ module Refusing = struct
   let eigh _ ~values:_ ~vectors:_ = no ()
   let solve_triangular ~upper:_ ~transpose:_ ~unit_diag:_ _ _ ~dst:_ = no ()
 end
+
+let refusing = Nx_backend.v (module Refusing)
 
 let product_refused name =
   Printf.sprintf
@@ -142,7 +146,7 @@ let commands =
     command "pair"
       (Gen.unit @-> makes backend)
       (fun () -> { Model.adds = 0 })
-      (fun () -> counting (Nx.Device.v (Cpu 1)));
+      (fun () -> counting (Nx.Device.cpu 1));
     command "add on the paired device"
       (backend ^-> small @-> returns outcome)
       (fun m xs ->
@@ -164,7 +168,7 @@ let commands =
     command "add on the unpaired device"
       (backend ^-> small @-> returns outcome)
       (fun _ xs -> (sums xs, "CPU:1"))
-      (fun s xs -> added s (Nx.Placement.on (Nx.Device.v (Cpu 1))) xs);
+      (fun s xs -> added s (Nx.Placement.on (Nx.Device.cpu 1)) xs);
     command "a product the backend refuses"
       (backend ^-> returns (result values string))
       (fun _ -> Error "refused, naming the paired backend")
@@ -214,10 +218,8 @@ let who_computes =
       test
         "operands on two devices over one memory raise, naming both and \
          Nx.place" (fun () ->
-          let k = counting (Nx.Device.v (Cpu 1)) in
-          let x =
-            Nx.place (Nx.Placement.on (Nx.Device.v (Cpu 1))) (vec [| 1. |])
-          in
+          let k = counting (Nx.Device.cpu 1) in
+          let x = Nx.place (Nx.Placement.on (Nx.Device.cpu 1)) (vec [| 1. |]) in
           let y = Nx.place (Nx.Placement.on k.device) x in
           raises_match (Exn.invalid_arg ~substring:"CPU:1 and CPU:1/counting")
             (fun () -> Nx.add x y);
@@ -284,7 +286,7 @@ let movement_on (name, d) =
       equal ~msg:"placed on the host" floats host
         (Nx.place Nx.Placement.host (Nx.transpose (Nx.transpose x)));
       equal ~msg:"placed on another memory" floats host
-        (Nx.place (Nx.Placement.on (Nx.Device.v (Cpu 2))) x))
+        (Nx.place (Nx.Placement.on (Nx.Device.cpu 2)) x))
 
 let movement =
   group "movement is total"
@@ -292,7 +294,7 @@ let movement =
        [
          ( "beside a device whose backend refuses every kernel, while another \
             domain is intercepting",
-           Nx.Device.with_backend (module Refusing) (Nx.Device.v (Cpu 1)) );
+           Nx.Device.with_backend refusing (Nx.Device.cpu 1) );
          ( "beside a device without a backend, while another domain is \
             intercepting",
            gpu );
@@ -301,9 +303,7 @@ let movement =
         test
           "a refused kernel raises naming the backend, the device and remedies"
           (fun () ->
-            let d =
-              Nx.Device.with_backend (module Refusing) (Nx.Device.v (Cpu 1))
-            in
+            let d = Nx.Device.with_backend refusing (Nx.Device.cpu 1) in
             let x = Nx.place (Nx.Placement.on d) (vec [| 1.; 2. |]) in
             raises
               (Invalid_argument

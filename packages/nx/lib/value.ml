@@ -379,7 +379,7 @@ let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
     invalid_arg
       (Printf.sprintf "%s: shape %s for %d elements" what
          (Shape.to_string shape) n);
-  let p = Placement.on (Device.of_memory (Nx_device.Buffer.device b)) in
+  let p = Placement.on (Device.make (Nx_device.Buffer.device b)) in
   of_shards what p dtype view [ b ]
 
 (* The buffer, of [bufs], one per device of [c]'s placement, that holds [c]'s

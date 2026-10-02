@@ -13,7 +13,7 @@ type ('a, 'b) arr = ('a, 'b) Nx_array.t
 type index = (int64, Nx_dtype.int64_elt) arr
 
 (* The planner's entry points, with the plan's thread count last, under
-   nx_cpu.ml's C names. *)
+   kernels.ml's C names. *)
 
 external reduce_sum : ('a, 'b) arr -> ('a, 'b) arr -> int array -> int -> unit
   = "caml_nx_c_reduce_sum"
@@ -54,8 +54,10 @@ external argsort : index -> ('a, 'b) arr -> int -> bool -> int -> unit
 external group_rows : index -> (int64, Nx_dtype.uint64_elt) arr -> int -> unit
   = "caml_nx_c_group"
 
-(* Thread counts. [None] is nx.cpu's policy, through Nx_cpu; the last runs on
-   every core. *)
+(* Thread counts. [None] is nx.cpu's policy, through its kernels; the last runs
+   on every core. *)
+
+module Cpu = (val Nx_backend.kernels Nx_cpu.backend)
 
 let reference = Some 1
 
@@ -68,7 +70,7 @@ let label = function
 
 let reduce (op : Nx_backend.reduce) threads ~axes x ~dst =
   match (threads, op) with
-  | None, _ -> Nx_cpu.reduce op ~axes x ~dst
+  | None, _ -> Cpu.reduce op ~axes x ~dst
   | Some n, Sum -> reduce_sum dst x axes n
   | Some n, Prod -> reduce_prod dst x axes n
   | Some n, Max -> reduce_max dst x axes n
@@ -76,7 +78,7 @@ let reduce (op : Nx_backend.reduce) threads ~axes x ~dst =
 
 let scan (op : Nx_backend.reduce) threads ~axis x ~dst =
   match (threads, op) with
-  | None, _ -> Nx_cpu.scan op ~axis x ~dst
+  | None, _ -> Cpu.scan op ~axis x ~dst
   | Some n, Sum -> cumsum dst x axis n
   | Some n, Prod -> cumprod dst x axis n
   | Some n, Max -> cummax dst x axis n
@@ -84,19 +86,19 @@ let scan (op : Nx_backend.reduce) threads ~axis x ~dst =
 
 let arg_reduce (op : Nx_backend.arg_reduce) threads ~axis x ~dst =
   match (threads, op) with
-  | None, _ -> Nx_cpu.arg_reduce op ~axis x ~dst
+  | None, _ -> Cpu.arg_reduce op ~axis x ~dst
   | Some n, Argmax -> argmax dst x axis n
   | Some n, Argmin -> argmin dst x axis n
 
 let sort_with ~arg ~descending threads ~axis x ~dst ~idx =
   match (threads, arg) with
-  | None, false -> Nx_cpu.sort ~descending ~axis x ~dst
-  | None, true -> Nx_cpu.argsort ~descending ~axis x ~dst:idx
+  | None, false -> Cpu.sort ~descending ~axis x ~dst
+  | None, true -> Cpu.argsort ~descending ~axis x ~dst:idx
   | Some n, false -> sort dst x axis descending n
   | Some n, true -> argsort idx x axis descending n
 
 let group_with threads x ~dst =
-  match threads with None -> Nx_cpu.group x ~dst | Some n -> group_rows dst x n
+  match threads with None -> Cpu.group x ~dst | Some n -> group_rows dst x n
 
 (* Arrays *)
 

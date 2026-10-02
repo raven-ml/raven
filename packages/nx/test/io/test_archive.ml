@@ -440,7 +440,7 @@ let by_name =
           let w = Archive.float ~shape:[| 2 |] f32 "w" a in
           equal ~msg:"bytes read" int 0 (disk_reads () - before);
           equal ~msg:"on the disk" placement
-            (Nx.Placement.on (Nx.Device.of_memory Nx_device.disk))
+            (Nx.Placement.on (Nx.Device.make Nx_device.disk))
             (Nx.placement w));
       cases ~name:fst "float refuses what it does not convert"
         [

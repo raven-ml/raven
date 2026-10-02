@@ -21,9 +21,7 @@
 open Windtrap
 open Kaun
 
-let rows =
-  Nx.Placement.sharded ~axis:0 [ Nx.Device.v (Cpu 1); Nx.Device.v (Cpu 2) ]
-
+let rows = Nx.Placement.sharded ~axis:0 [ Nx.Device.cpu 1; Nx.Device.cpu 2 ]
 let batch = 8
 let inputs = 8
 let hidden = 16

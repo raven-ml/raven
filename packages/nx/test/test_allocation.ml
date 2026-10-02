@@ -87,9 +87,10 @@ let host_path =
             { Nx_array.dtype = Nx.float32; view; buffer }
           in
           let x = alloc () and y = alloc () in
+          let module Cpu = (val Nx_backend.kernels Nx_cpu.backend) in
           let kernel () =
             let dst = alloc () in
-            Nx_cpu.binary Add x y ~dst;
+            Cpu.binary Add x y ~dst;
             dst
           in
           equal int (words kernel + 2) (words (fun () -> Nx.add a b)));

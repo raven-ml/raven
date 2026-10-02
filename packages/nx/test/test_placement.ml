@@ -115,7 +115,7 @@ let placements =
          negative axis, and windows of a device they lack or an axis that does \
          not divide" (fun () ->
           let s = Nx.Placement.sharded ~axis:1 [ d1; d2; d3 ] in
-          let d1' = Nx.Device.with_backend (module Renamed) d1 in
+          let d1' = Nx.Device.with_backend renamed d1 in
           refuses
             [
               (fun () -> ignore (Nx.Placement.replicated []));
@@ -129,7 +129,7 @@ let placements =
             ]);
     ]
 
-(* Devices *)
+(* Wants *)
 
 let want = Testable.make ~pp:Nx.Device.pp_want ~equal:( = )
 let pp_want_list = Format.pp_print_list Nx.Device.pp_want
@@ -159,8 +159,8 @@ let wants =
 (* The wants that open on any machine: the host and test memories. *)
 let opening = Nx.Device.[ Host; Cpu 1; Cpu 2; Cpu 7 ]
 
-let devices =
-  group "devices"
+let wants_group =
+  group "wants"
     [
       cases ~name:fst "of_string reads"
         [
@@ -205,60 +205,6 @@ let devices =
               match Nx.Device.of_string (Nx.Device.name d) with
               | Ok [ w' ] -> equal device d (Nx.Device.v w')
               | _ -> fail ("unreadable name " ^ Nx.Device.name d)));
-      test "a test device is one device per index, computed by nx.cpu"
-        (fun () ->
-          let d = Nx.Device.v (Cpu 3) in
-          equal device d (Result.get_ok (Nx.Device.get (Cpu 3)));
-          equal string "CPU:3" (Nx.Device.name d);
-          equal bool true (Nx_device.runs_on_host (Nx.Device.memory d));
-          not_equal device d (Nx.Device.v (Cpu 4)));
-      test "opening is one value per memory, and of_memory finds it" (fun () ->
-          List.iter
-            (fun w ->
-              let d = Nx.Device.v w in
-              equal device d (Nx.Device.v w);
-              equal device d (Nx.Device.of_memory (Nx.Device.memory d)))
-            opening;
-          equal device Nx.Device.host (Nx.Device.of_memory Nx_device.host));
-      test "a memory nx opened is not made again by its vendor interface"
-        (fun () ->
-          ignore (Nx.Device.v (Cpu 5));
-          raises_match (Exn.invalid_arg ~substring:"CPU:5") (fun () ->
-              Nx_device.Driver.device ~name:"CPU:5" ~arch:"test" ~budget:max_int
-                (Host_visible
-                   { memory = Nx_device.Driver.host_memory; mapping = None })));
-      test "pairing is one value per memory and backend, defaults included"
-        (fun () ->
-          let d = Nx.Device.v (Cpu 1) in
-          let r = Nx.Device.with_backend (module Renamed) d in
-          equal device r (Nx.Device.with_backend (module Renamed) d);
-          equal device r (Nx.Device.with_backend (module Renamed) r);
-          equal device d (Nx.Device.with_backend (module Nx_cpu) r);
-          equal device Nx.Device.host
-            (Nx.Device.with_backend (module Nx_cpu) Nx.Device.host);
-          not_equal device d r;
-          equal device d (Nx.Device.of_memory (Nx.Device.memory r));
-          equal string "CPU:1/nx.cpu renamed" (Nx.Device.name r));
-      test
-        "pairing refuses a backend that does not run on the memory, and knows \
-         a backend by its name" (fun () ->
-          let module Impostor = struct
-            include (Nx_cpu : Nx_backend.S)
-
-            let name = "nx.cpu renamed"
-            let unary _ _ ~dst:_ = ()
-          end in
-          let module Elsewhere = struct
-            include (Nx_cpu : Nx_backend.S)
-
-            let name = "elsewhere"
-            let runs_on _ = false
-          end in
-          let d = Nx.Device.v (Cpu 2) in
-          let r = Nx.Device.with_backend (module Renamed) d in
-          equal device r (Nx.Device.with_backend (module Impostor) d);
-          raises_invalid_arg (fun () ->
-              ignore (Nx.Device.with_backend (module Elsewhere) d)));
       test "Gpu never takes a GPU from its kernel driver" (fun () ->
           match Nx.Device.get Gpu with
           | Error e -> starts_with ~affix:"no GPU opens: " e
@@ -300,6 +246,197 @@ let devices =
               (fun () -> ignore (Nx.Device.get (Cuda (-1))));
               (fun () -> ignore (Nx.Device.get (Nv_pci (-1))));
             ]);
+    ]
+
+(* Devices *)
+
+(* A device as plain data: a memory and a backend. [Default] is the memory's own
+   backend, which is nx.cpu on the memories here but [Gpu]. *)
+type memory = Host | Cpu of int | Gpu
+type backend = Default | Cpu_backend | Renamed_a | Renamed_b
+
+(* A memory the host addresses that loads programs, as a GPU: it has no default
+   backend, and nx.cpu does not compute on it. *)
+let gpu_memory =
+  Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
+    ~load:(fun ~binary:_ -> Error "no programs")
+    (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
+
+(* Two backends of the same kernels and name, each made once. *)
+let renamed_a = renamed
+let renamed_b = Nx_backend.v (module Renamed)
+
+let backend_value = function
+  | Default -> None
+  | Cpu_backend -> Some Nx_cpu.backend
+  | Renamed_a -> Some renamed_a
+  | Renamed_b -> Some renamed_b
+
+let memory_value = function
+  | Host -> Nx_device.host
+  | Cpu k -> Nx.Device.memory (Nx.Device.cpu k)
+  | Gpu -> gpu_memory
+
+(* The device a description names, spelt three ways: by its constructor, by
+   pairing an unpaired device, and by pairing a device paired before. *)
+let made (m, b) = Nx.Device.make ?backend:(backend_value b) (memory_value m)
+
+let paired (m, b) =
+  let d =
+    match m with
+    | Host -> Nx.Device.host
+    | Cpu k -> Nx.Device.cpu k
+    | Gpu -> Nx.Device.make gpu_memory
+  in
+  match backend_value b with Some b -> Nx.Device.with_backend b d | None -> d
+
+let repaired (m, b) =
+  match (m, backend_value b) with
+  | Gpu, _ | _, None -> paired (m, b)
+  | _, Some b -> Nx.Device.with_backend b (paired (m, Renamed_b))
+
+(* A description's normal form: the memory's default backend named. *)
+let normal = function
+  | Gpu, _ -> (Gpu, Default)
+  | m, Default -> (m, Cpu_backend)
+  | d -> d
+
+let pp_description ppf (m, b) =
+  Format.fprintf ppf "%s/%s"
+    (match m with
+    | Host -> "host"
+    | Cpu k -> Printf.sprintf "cpu %d" k
+    | Gpu -> "gpu")
+    (match b with
+    | Default -> "default"
+    | Cpu_backend -> "nx.cpu"
+    | Renamed_a -> "renamed a"
+    | Renamed_b -> "renamed b")
+
+let backends = Gen.of_list [ Default; Cpu_backend; Renamed_a; Renamed_b ]
+
+let descriptions =
+  let open Gen in
+  with_pp pp_description
+    (one_of
+       [
+         pair (of_list [ Host; Cpu 1; Cpu 2 ]) backends; constant (Gpu, Default);
+       ])
+
+(* Two descriptions, mostly of one memory, so that their backends decide. *)
+let related =
+  let open Gen in
+  let* a = descriptions in
+  let+ b =
+    match a with
+    | Gpu, _ -> descriptions
+    | m, _ ->
+        frequency
+          [
+            (1, descriptions);
+            (3, with_pp pp_description (map (fun k -> (m, k)) backends));
+          ]
+  in
+  (a, b)
+
+let spellings =
+  Gen.of_list
+    ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n)
+    [ ("make", made); ("with_backend", paired); ("re-paired", repaired) ]
+
+let devices =
+  group "devices"
+    [
+      prop ~count:300
+        "two devices are equal iff they have one memory and one backend, \
+         however they were made"
+        Gen.(triple related spellings spellings)
+        (fun ((a, b), (_, spell_a), (_, spell_b)) ->
+          let same = normal a = normal b in
+          cover "equal descriptions" same;
+          cover "one memory, distinct backends" (fst a = fst b && not same);
+          cover "one memory, two backends of one name"
+            (fst a = fst b
+            && List.mem
+                 (snd a, snd b)
+                 [ (Renamed_a, Renamed_b); (Renamed_b, Renamed_a) ]);
+          equal bool same (Nx.Device.equal (spell_a a) (spell_b b)));
+      prop "equal is an equivalence" (Gen.pair descriptions descriptions)
+        (fun (a, b) -> Law.equivalence device (made a, repaired b));
+      prop "with_backend b (with_backend b' d) equals with_backend b d"
+        Gen.(
+          triple descriptions
+            (of_list [ Nx_cpu.backend; renamed_a; renamed_b ])
+            (of_list [ Nx_cpu.backend; renamed_a; renamed_b ]))
+        (fun (d, b, b') ->
+          match fst d with
+          | Gpu -> assume false
+          | _ ->
+              let d = made d in
+              equal device
+                (Nx.Device.with_backend b d)
+                (Nx.Device.with_backend b (Nx.Device.with_backend b' d)));
+      test "distinct backend values never collide, even of one name" (fun () ->
+          let d = Nx.Device.cpu 1 in
+          let a = Nx.Device.with_backend renamed_a d
+          and b = Nx.Device.with_backend renamed_b d in
+          equal string (Nx.Device.name a) (Nx.Device.name b);
+          not_equal device a b;
+          let module Cpu = (val Nx_backend.kernels Nx_cpu.backend) in
+          let twin = Nx_backend.v (module Cpu) in
+          is_false (Nx_backend.equal twin Nx_cpu.backend);
+          not_equal device Nx.Device.host
+            (Nx.Device.with_backend twin Nx.Device.host));
+      test "the host is nx.cpu over the host's memory" (fun () ->
+          equal device Nx.Device.host (Nx.Device.make Nx_device.host);
+          equal device Nx.Device.host
+            (Nx.Device.make ~backend:Nx_cpu.backend Nx_device.host);
+          equal device Nx.Device.host
+            (Nx.Device.with_backend Nx_cpu.backend Nx.Device.host);
+          equal string "CPU" (Nx.Device.name Nx.Device.host));
+      test "a test device is one memory per index, computed by nx.cpu"
+        (fun () ->
+          let d = Nx.Device.cpu 3 in
+          equal device d (Nx.Device.cpu 3);
+          equal string "CPU:3" (Nx.Device.name d);
+          equal bool true (Nx_device.runs_on_host (Nx.Device.memory d));
+          not_equal device d (Nx.Device.cpu 4);
+          not_equal device d Nx.Device.host;
+          List.iter
+            (fun k -> raises_invalid_arg (fun () -> Nx.Device.cpu k))
+            [ 0; -1; min_int ]);
+      test "a memory nx opened is not made again by its vendor interface"
+        (fun () ->
+          ignore (Nx.Device.cpu 5);
+          raises_match (Exn.invalid_arg ~substring:"CPU:5") (fun () ->
+              Nx_device.Driver.device ~name:"CPU:5" ~arch:"test" ~budget:max_int
+                (Host_visible
+                   { memory = Nx_device.Driver.host_memory; mapping = None })));
+      cases
+        ~name:(fun (d, _) -> Format.asprintf "%a" pp_description d)
+        "a name shows a backend other than its memory's default"
+        [
+          ((Cpu 1, Default), "CPU:1");
+          ((Cpu 1, Cpu_backend), "CPU:1");
+          ((Cpu 1, Renamed_a), "CPU:1/nx.cpu renamed");
+          ((Gpu, Default), "GPU");
+        ]
+        (fun (d, name) -> equal string name (Nx.Device.name (made d)));
+      test "pairing refuses a backend that does not compute on the memory"
+        (fun () ->
+          let module Elsewhere = struct
+            include Renamed
+
+            let name = "elsewhere"
+            let runs_on _ = false
+          end in
+          let elsewhere = Nx_backend.v (module Elsewhere) in
+          raises_invalid_arg (fun () ->
+              Nx.Device.with_backend elsewhere (Nx.Device.cpu 2));
+          raises_invalid_arg (fun () ->
+              Nx.Device.make ~backend:elsewhere Nx_device.host);
+          raises_invalid_arg (fun () ->
+              Nx.Device.with_backend Nx_cpu.backend (Nx.Device.make gpu_memory)));
       test "Ptree.place places every tensor of a structure" (fun () ->
           let s = Nx.Ptree.(pair tensor (list tensor)) in
           let x = (iota [| 2 |], [ iota [| 3 |]; iota [| 1; 2 |] ]) in
@@ -1070,6 +1207,7 @@ let () =
     (run "nx placement"
        [
          placements;
+         wants_group;
          devices;
          place_tests;
          movements;

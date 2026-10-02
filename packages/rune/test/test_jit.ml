@@ -93,10 +93,7 @@ let opened w = Result.to_option (Nx.Device.get w)
 (* Test devices over the host's memory, whose programs are the host's *)
 
 let d1, d2, d3, d4 =
-  ( Nx.Device.v (Cpu 1),
-    Nx.Device.v (Cpu 2),
-    Nx.Device.v (Cpu 3),
-    Nx.Device.v (Cpu 4) )
+  (Nx.Device.cpu 1, Nx.Device.cpu 2, Nx.Device.cpu 3, Nx.Device.cpu 4)
 
 let on d = Nx.Placement.on d
 
@@ -104,7 +101,7 @@ let on d = Nx.Placement.on d
    host's memory, so its programs are the host's, and loads programs, so nx.cpu
    does not compute there. *)
 let gpu =
-  Nx.Device.of_memory
+  Nx.Device.make
     (Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
        ~load:(fun ~binary:_ -> Error "programs run on the host")
        (Host_visible
@@ -870,10 +867,8 @@ let consumption =
       test
         "a consumed argument on a paired device consumes the value it views, \
          on every device over its memory" (fun () ->
-          let k =
-            Nx.Device.with_backend (module Nx_test.Renamed) Nx.Device.host
-          in
-          let paired = Nx.Device.with_backend (module Nx_test.Renamed) d1 in
+          let k = Nx.Device.with_backend Nx_test.renamed Nx.Device.host in
+          let paired = Nx.Device.with_backend Nx_test.renamed d1 in
           List.iter
             (fun (origin, d) ->
               let a = Nx.place origin (x ()) in
@@ -1738,7 +1733,7 @@ let captures =
 
 (* Two devices of one name. *)
 (* [d1]'s memory, computed by another backend. *)
-let paired = Nx.Device.with_backend (module Nx_test.Renamed) d1
+let paired = Nx.Device.with_backend Nx_test.renamed d1
 
 let errors =
   let leaked = ref None in
@@ -2130,16 +2125,17 @@ let transformations =
         "a compiled function over a paired device compiles for its memory, its \
          results on that device" (fun () ->
           let adds = Atomic.make 0 in
+          let module Cpu = (val Nx_backend.kernels Nx_cpu.backend) in
           let module Counting = struct
-            include (Nx_cpu : Nx_backend.S)
+            include Cpu
 
             let name = "counting adds"
 
             let binary k a b ~dst =
               if k = Nx_backend.Add then Atomic.incr adds;
-              Nx_cpu.binary k a b ~dst
+              Cpu.binary k a b ~dst
           end in
-          let d = Nx.Device.with_backend (module Counting) d2 in
+          let d = Nx.Device.with_backend (Nx_backend.v (module Counting)) d2 in
           let g = Rune.jit' poly in
           let r = ref None in
           let n = traces (fun () -> r := Some (g (placed d (x ())))) in
@@ -3499,7 +3495,7 @@ let device_lists =
 let on_disk_at_read path =
   let module B = Nx_device.Buffer in
   let pp = Format.pp_print_string in
-  let p = Nx.Placement.on (Nx.Device.of_memory Nx_device.disk) in
+  let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
   Nx.Repr.Placed.v p Nx.float32
     (Nx_array.View.create [| 4 |])
     (Nx.Repr.Storage.v p
@@ -3515,7 +3511,7 @@ let on_disk_at path x =
   let src = elements x in
   let pp = Format.pp_print_string in
   B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
-  let p = Nx.Placement.on (Nx.Device.of_memory Nx_device.disk) in
+  let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
   Nx.Repr.Placed.v p (Nx.dtype x)
     (Nx_array.View.create (Nx.shape x))
     (Nx.Repr.Storage.v p
@@ -3542,7 +3538,7 @@ let unaligned_on_disk v =
           land 255)
   in
   ignore (on_disk_at path bytes);
-  let p = Nx.Placement.on (Nx.Device.of_memory Nx_device.disk) in
+  let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
   Nx.Repr.Placed.v p Nx.int32
     (Nx_array.View.create [| n |])
     (Nx.Repr.Storage.v p
@@ -3580,7 +3576,7 @@ let disk =
           let module B = Nx_device.Buffer in
           let path = temp_file () in
           ignore (on_disk_at path (Nx.concatenate ~axis:0 [ x (); y () ]));
-          let p = Nx.Placement.on (Nx.Device.of_memory Nx_device.disk) in
+          let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
           let file = require_ok ~pp:Format.pp_print_string (B.of_file path) in
           let weight first =
             Nx.Repr.Placed.v p Nx.float32

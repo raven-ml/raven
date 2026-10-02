@@ -33,7 +33,7 @@ let cfg =
     tied = false;
   }
 
-let cpu1_device = Nx.Device.v (Cpu 1)
+let cpu1_device = Nx.Device.cpu 1
 let cpu1 = Nx.Placement.on cpu1_device
 
 let params () =

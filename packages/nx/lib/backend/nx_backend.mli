@@ -11,13 +11,36 @@
     element. A kernel never sees nx's values, a placement or another device.
     Every backend, and jit's compiled programs, compute by this contract:
     nx.cpu, which computes eager operations on the host and test devices, and
-    every backend a program pairs with a device ([Nx.Device.with_backend]). The
-    kinds of nx's operations are here too: operations of one kind share their
-    operands' and results' types, and the kind names the mathematical function,
-    after the [Nx] function it implements. *)
+    every backend a program pairs with a device ([Nx.Device.with_backend]). A
+    kernel library makes its backend ({!type-t}) once, with {!v}, and exports
+    it, as [Nx_cpu.backend]. The kinds of nx's operations are here too:
+    operations of one kind share their operands' and results' types, and the
+    kind names the mathematical function, after the [Nx] function it implements.
+*)
 
 include module type of Nx_backend_intf
 (** @inline *)
+
+(** {1:backends Backends} *)
+
+type t
+(** The type for backends: the kernels of one library, as a value devices carry.
+    A backend is equal only to itself: two calls of {!v} make two backends, even
+    over one module. *)
+
+val v : (module S) -> t
+(** [v (module K)] is a new backend computed by [K]'s kernels. A kernel library
+    calls it once and exports the result, so that every device it computes on
+    carries one backend. *)
+
+val kernels : t -> (module S)
+(** [kernels b] is the kernels [b] was made from. *)
+
+val name : t -> string
+(** [name b] is the name of [b]'s kernels ([K.name]). *)
+
+val equal : t -> t -> bool
+(** [equal b b'] is [true] iff one call of {!v} made [b] and [b']. *)
 
 (** {1:errors Errors} *)
 

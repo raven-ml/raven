@@ -16,7 +16,7 @@ let d1 = Devices.d1
 let d2 = Devices.d2
 let r1 = Nx.Device.memory d1
 let placement = Devices.placement
-let disk = Nx.Placement.on (Nx.Device.of_memory Nx_device.disk)
+let disk = Nx.Placement.on (Nx.Device.make Nx_device.disk)
 
 let device =
   Testable.make

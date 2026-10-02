@@ -24,7 +24,7 @@ let devices =
         "the host shares the runtimes' memory: a copy on it and on a runtime \
          computes and reads back" (fun () ->
           let p =
-            Nx.Placement.replicated [ Nx.Device.of_memory r1; Nx.Device.host ]
+            Nx.Placement.replicated [ Nx.Device.make r1; Nx.Device.host ]
           in
           let x = Nx.place p (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]) in
           let y = Nx.add x x in
@@ -61,7 +61,7 @@ let representation =
   let outside = Exn.invalid_arg ~substring:"reaches outside"
   and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
   and other_count = Exn.invalid_arg ~substring:"Nx.of_buffer: shape"
-  and p = Nx.Placement.on (Nx.Device.of_memory r1) in
+  and p = Nx.Placement.on (Nx.Device.make r1) in
   let shapes =
     Gen.(
       let* rank = int_range 0 3 in
@@ -162,7 +162,7 @@ let representation =
    pages, and other devices read into their memory. *)
 let disk =
   let on_disk = Runtimes.on_disk in
-  let disk = Nx.Placement.on (Nx.Device.of_memory Nx_device.disk) in
+  let disk = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
   let read () = Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk) in
   let reads f =
     let before = read () in
@@ -204,17 +204,15 @@ let disk =
       test
         "beside a value on a device, it joins that device as a host value does"
         (fun () ->
-          let on_d1 = Nx.place (Nx.Placement.on (Nx.Device.of_memory r1)) x in
+          let on_d1 = Nx.place (Nx.Placement.on (Nx.Device.make r1)) x in
           let y = Nx.add on_d1 (on_disk x) in
-          equal placement
-            (Nx.Placement.on (Nx.Device.of_memory r1))
-            (Nx.placement y);
+          equal placement (Nx.Placement.on (Nx.Device.make r1)) (Nx.placement y);
           equal (array int32) (Nx.to_array (Nx.add x x)) (Nx.to_array y));
       test "placed on a device apart from the host, it is read into it"
         (fun () ->
           let y, bytes =
             reads (fun () ->
-                Nx.place (Nx.Placement.on (Nx.Device.of_memory r1)) (on_disk x))
+                Nx.place (Nx.Placement.on (Nx.Device.make r1)) (on_disk x))
           in
           equal ~msg:"bytes read" int 48 bytes;
           equal (array int32) (Nx.to_array x) (Nx.to_array y));

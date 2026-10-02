@@ -1,8 +1,8 @@
 # Nx C backend
 
-This directory contains `nx.cpu`, nx's kernels over host memory: the `Nx_cpu`
-module, the backend that computes eager operations on the host and on test
-devices. Each kernel writes a destination array that nx allocated. It is self-contained C11 on every
+This directory contains `nx.cpu`, nx's kernels over host memory:
+`Nx_cpu.backend`, the backend that computes eager operations on the host and on
+test devices. Each kernel writes a destination array that nx allocated. It is self-contained C11 on every
 supported platform. On macOS, eligible floating-point matrix multiplications are routed
 automatically to the system Accelerate framework; all other operations use the
 owned kernels in this directory.

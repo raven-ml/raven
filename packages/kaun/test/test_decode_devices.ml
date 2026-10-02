@@ -30,7 +30,7 @@ let caches : Nx.float32_t Attention.Cache.t list Nx.Ptree.t =
   Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
 
 (* Test devices over the host's memory, which the host addresses as it is. *)
-let cpus = Nx.Device.all [ Cpu 1; Cpu 2; Cpu 3; Cpu 4 ]
+let cpus = List.map Nx.Device.cpu [ 1; 2; 3; 4 ]
 
 (* Where each pool's storage starts on each device: a call that wrote the pools
    in their own storage returns them at the addresses it was given. *)

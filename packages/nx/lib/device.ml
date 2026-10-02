@@ -5,102 +5,62 @@
 
 (* A device is a memory, which nx.device opens, and the backend that computes
    eagerly on it, if any. Several devices may share one memory: their values
-   share storage, and only who computes on them differs. *)
-type t = {
-  memory : Nx_device.t;
-  backend : (module Nx_backend.S) option;
-  name : string; (* the memory's, then the backend's when not its default *)
-}
+   share storage, and only who computes on them differs. Devices are plain
+   values, equal when their memories and backends are. *)
+type t = { memory : Nx_device.t; backend : Nx_backend.t option }
 
-(* Pairing
-
-   There is one device per memory and backend, so devices compare physically:
-   [of_memory] and [with_backend] find a pair in [paired] before they make it. A
-   memory's default backend is a fixed match over its kind: nx.cpu on the
+(* A memory's default backend is a fixed match over its kind: nx.cpu on the
    memories the host computes on (the host and test memories), none on the
-   others. A backend is known by its name, which a device's name carries: a
-   module of a name already paired with a memory is that pair's backend. *)
+   others. *)
+let default_backend m =
+  if Nx_device.runs_on_host m then Some Nx_cpu.backend else None
 
-module Memories = Map.Make (struct
-  type t = Nx_device.t
-
-  let compare = Nx_device.compare
-end)
-
-let default_backend m : (module Nx_backend.S) option =
-  if Nx_device.runs_on_host m then Some (module Nx_cpu) else None
-
-let backend_name (module K : Nx_backend.S) = K.name
-
-(* The devices over each memory, the default one first. *)
-let paired : t list Memories.t Atomic.t = Atomic.make Memories.empty
-let paired_lock = Mutex.create ()
-
-(* [over m] is the devices over [m], made with the default one if there are
-   none. Called with [paired_lock] held. *)
-let over m =
-  match Memories.find_opt m (Atomic.get paired) with
-  | Some ds -> ds
-  | None ->
-      let d =
-        { memory = m; backend = default_backend m; name = Nx_device.name m }
-      in
-      Atomic.set paired (Memories.add m [ d ] (Atomic.get paired));
-      [ d ]
-
-let of_memory m =
-  match Memories.find_opt m (Atomic.get paired) with
-  | Some (d :: _) -> d
-  | Some [] | None -> List.hd (Mutex.protect paired_lock (fun () -> over m))
-
-let with_backend k d =
-  let m = d.memory and name = backend_name k in
-  let (module K) = k in
+let check_runs_on what b m =
+  let (module K) = Nx_backend.kernels b in
   if not (K.runs_on m) then
     invalid_arg
-      (Printf.sprintf "Nx.Device.with_backend: %s does not compute on %s" name
-         (Nx_device.name m));
-  Mutex.protect paired_lock @@ fun () ->
-  let ds = over m in
-  let named d' =
-    match d'.backend with Some k' -> backend_name k' = name | None -> false
-  in
-  match List.find_opt named ds with
-  | Some d' -> d'
-  | None ->
-      let d' =
-        { memory = m; backend = Some k; name = Nx_device.name m ^ "/" ^ name }
-      in
-      Atomic.set paired (Memories.add m (ds @ [ d' ]) (Atomic.get paired));
-      d'
+      (Printf.sprintf "Nx.Device.%s: %s does not compute on %s" what K.name
+         (Nx_device.name m))
 
-let host = of_memory Nx_device.host
+let make ?backend memory =
+  match backend with
+  | None -> { memory; backend = default_backend memory }
+  | Some b ->
+      check_runs_on "make" b memory;
+      { memory; backend }
+
+let with_backend b d =
+  check_runs_on "with_backend" b d.memory;
+  { d with backend = Some b }
+
+let host = make Nx_device.host
 let memory d = d.memory
-let name d = d.name
-let equal (d : t) d' = d == d'
-let pp ppf d = Format.pp_print_string ppf d.name
 
-(* Wants *)
+let equal d d' =
+  Nx_device.equal d.memory d'.memory
+  && Option.equal Nx_backend.equal d.backend d'.backend
 
-type want =
-  | Host
-  | Cpu of int
-  | Gpu
-  | Metal
-  | Cuda of int
-  | Nv of int
-  | Amd of int
-  | Nv_pci of int
-  | Amd_pci of int
+(* A device's name is its memory's, then its backend's when it is not the
+   memory's default, as in ["CPU:1/nx-oxcaml"]. *)
+let name d =
+  let m = Nx_device.name d.memory in
+  let default =
+    Option.equal Nx_backend.equal d.backend (default_backend d.memory)
+  in
+  match d.backend with
+  | Some b when not default -> m ^ "/" ^ Nx_backend.name b
+  | Some _ | None -> m
+
+let pp ppf d = Format.pp_print_string ppf (name d)
 
 (* Test memories: ["CPU:k"] holds its values in the host's memory, which it maps
    as it is, and loads no programs, so the host computes on it. Each [k] is one
-   memory, made by its first use. *)
+   memory, minted by its first use: nx.device mints a name once. *)
 
 let tests = Hashtbl.create 4
 let tests_lock = Mutex.create ()
 
-let test k =
+let test_memory k =
   Mutex.protect tests_lock @@ fun () ->
   match Hashtbl.find_opt tests k with
   | Some m -> m
@@ -114,6 +74,23 @@ let test k =
       in
       Hashtbl.add tests k m;
       m
+
+let cpu k =
+  if k < 1 then invalid_arg (Printf.sprintf "Nx.Device.cpu: %d < 1" k);
+  make (test_memory k)
+
+(* Wants *)
+
+type want =
+  | Host
+  | Cpu of int
+  | Gpu
+  | Metal
+  | Cuda of int
+  | Nv of int
+  | Amd of int
+  | Nv_pci of int
+  | Amd_pci of int
 
 (* [Gpu] is the Mac's Metal GPU, and elsewhere the first GPU that opens through
    a kernel driver, the vendor's runtime before nx's own. Selection never takes
@@ -143,7 +120,7 @@ let memory_of = function
   | Cpu k ->
       if k < 1 then
         invalid_arg (Printf.sprintf "Nx.Device.get: CPU:%d needs k >= 1" k);
-      Ok (test k)
+      Ok (test_memory k)
   | Gpu -> gpu_memory ()
   | Metal -> Device_metal.get ()
   | Cuda i ->
@@ -162,7 +139,7 @@ let memory_of = function
       index "AMD-PCI" i;
       Nx_amd_device.get ~interface:Pci i
 
-let get w = Result.map of_memory (memory_of w)
+let get w = Result.map (fun m -> make m) (memory_of w)
 let v w = match get w with Ok d -> d | Error e -> failwith e
 
 let gpu () =

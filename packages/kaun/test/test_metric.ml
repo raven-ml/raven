@@ -233,7 +233,7 @@ let auc_tests =
 (* Metrics compute on the host: a placed input is read once, and nothing is
    placed on its device. *)
 let placed_tests =
-  let device = Nx.Device.v (Cpu 1) in
+  let device = Nx.Device.cpu 1 in
   let on_device x = Nx.place (Nx.Placement.on device) x in
   let stats () = Nx_device.stats (Nx.Device.memory device) in
   let uploads f =

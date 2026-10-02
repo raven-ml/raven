@@ -7,10 +7,10 @@
    function agrees with the transformation of the function: grad, vjp, jvp,
    vmap, a total collected around them and their compositions, over shapes with
    no element and two dtypes, for functions whose backward pass reads computed
-   values, arguments, movements of arguments and captures, constants, a remat,
-   a scan and a map's collectives. Reverse mode through a compiled call fixes
-   its residuals, of which no capture or movement of an argument is one, and
-   traces its forward pass once per key and set of tracked arguments, traces its
+   values, arguments, movements of arguments and captures, constants, a remat, a
+   scan and a map's collectives. Reverse mode through a compiled call fixes its
+   residuals, of which no capture or movement of an argument is one, and traces
+   its forward pass once per key and set of tracked arguments, traces its
    backward pass once per layout of the cotangents, and never runs the function
    there. A compiled function refuses, under every transformation, a value the
    transformation tracks that it reads through its closure, and refuses a traced
@@ -408,7 +408,7 @@ let one_forward =
 (* Residuals *)
 
 (* A device over the host's memory whose allocations the tests count. *)
-let device = Nx.Device.v (Cpu 3)
+let device = Nx.Device.cpu 3
 let on_device x = Nx.place (Nx.Placement.on device) x
 
 let settled () =

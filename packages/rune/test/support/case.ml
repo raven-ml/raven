@@ -1323,8 +1323,8 @@ let move_case m =
     (fun (D d) -> move_instance m (tensor d (range (-3.) 3.)))
 
 (* Test devices over host memory, so that a value can be placed off the host. *)
-let d1 = Nx.Device.v (Cpu 1)
-let d2 = Nx.Device.v (Cpu 2)
+let d1 = Nx.Device.cpu 1
+let d2 = Nx.Device.cpu 2
 
 let placements =
   [

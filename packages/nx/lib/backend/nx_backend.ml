@@ -51,6 +51,20 @@ type index_array = Nx_backend_intf.index_array
 
 module type S = Nx_backend_intf.S
 
+(* A backend is known by an identifier [v] draws once, so that two backends are
+   equal only when one [v] made them, whatever their kernels. *)
+type t = { id : int; kernels : (module S) }
+
+let next = Atomic.make 0
+let v kernels = { id = Atomic.fetch_and_add next 1; kernels }
+let kernels b = b.kernels
+
+let name b =
+  let (module K) = b.kernels in
+  K.name
+
+let equal b b' = b.id = b'.id
+
 exception Refused of string
 
 exception

@@ -9,7 +9,7 @@
 ; no explicit link flag — the OCaml 5 runtime already links it for its domain
 ; support, which satisfies the engine pool's pthread_create/mutex/cond symbols.
 ;
-; Nx_cpu implements Nx_backend.S over Nx_array's arrays, so nx_array and
+; Nx_cpu's kernels implement Nx_backend.S over Nx_array's arrays, so nx_array and
 ; nx_backend join nx_device. The C needs just nx_c.h, nx_device.h and
 ; nx_dtype.h.
 ;

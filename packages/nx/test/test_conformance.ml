@@ -268,7 +268,7 @@ let backends =
   [
     ("nx.cpu on a test memory", Devices.d1);
     ( "a backend paired with the host's memory",
-      Nx.Device.with_backend (module Renamed) Nx.Device.host );
+      Nx.Device.with_backend renamed Nx.Device.host );
   ]
 
 let conformance (backend, d) =

@@ -994,10 +994,12 @@ let int_compare ~signed a b =
 (* nx.cpu's kernels under another name: a backend of its own, which a test pairs
    with a device whose default backend is nx.cpu. *)
 module Renamed = struct
-  include (Nx_cpu : Nx_backend.S)
+  include (val Nx_backend.kernels Nx_cpu.backend)
 
   let name = "nx.cpu renamed"
 end
+
+let renamed = Nx_backend.v (module Renamed)
 
 (* Test devices: nx.cpu over memories of the host's, whose statistics count the
    bytes they receive and send. *)
@@ -1007,7 +1009,7 @@ module Devices = struct
       (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
   let memories = List.map memory [ "TEST:1"; "TEST:2"; "TEST:3"; "TEST:4" ]
-  let runtimes = List.map Nx.Device.of_memory memories
+  let runtimes = List.map Nx.Device.make memories
 
   let d1, d2, d3, d4 =
     match runtimes with
@@ -1015,7 +1017,7 @@ module Devices = struct
     | _ -> assert false
 
   (* A device beside the four. *)
-  let other = Nx.Device.of_memory (memory "OTHER")
+  let other = Nx.Device.make (memory "OTHER")
 
   let total count =
     List.fold_left (fun n r -> n + count (Nx_device.stats r)) 0 memories
@@ -1264,7 +1266,7 @@ module Runtimes = struct
   let laws = function
     | [] -> [ test "on no runtime" (fun () -> skip ~reason:"no device" ()) ]
     | ms ->
-        let ds = List.map Nx.Device.of_memory ms in
+        let ds = List.map Nx.Device.make ms in
         let received f =
           let before = List.map Nx_device.stats ms in
           let y = f () in
@@ -1312,7 +1314,7 @@ module Runtimes = struct
           | _ -> false
         in
         let computing =
-          match List.for_all Nx_cpu.runs_on ms with
+          match List.for_all Nx_device.runs_on_host ms with
           | true ->
               [
                 prop

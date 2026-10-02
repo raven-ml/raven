@@ -23,7 +23,7 @@ type env = {
 let host =
   {
     device = Device.host;
-    kernels = (module Nx_cpu);
+    kernels = Nx_backend.kernels Nx_cpu.backend;
     alloc;
     arr = Place.host_of;
   }
