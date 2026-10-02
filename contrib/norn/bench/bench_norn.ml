@@ -6,7 +6,7 @@
 let f64 = Nx.float64
 
 let make_log_prob dim =
-  let mean = Nx.zeros f64 [| dim |] in
+  let mean = Nx.copy (Nx.zeros f64 [| dim |]) in
   fun x ->
     let d = Nx.sub x mean in
     Nx.mul_s (Nx.sum (Nx.mul d d)) (-0.5)
