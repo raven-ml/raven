@@ -1917,21 +1917,24 @@ let top_k_cases =
         ks pp t)
     (Gen.bind (Gen.bind schemas table) (fun t ->
          let n = rows t in
+         (* [k = offset + length] is drawn first, so that each edge has a branch
+            of its own. *)
+         let k =
+           Gen.frequency
+             [
+               (1, Gen.constant 0);
+               (1, Gen.constant 1);
+               (1, Gen.constant n);
+               (1, Gen.int_range (n + 1) (n + 3));
+               (3, Gen.int_range 0 (n + 3));
+             ]
+         in
          Gen.bind
-           (Gen.pair
-              (Gen.int_range 0 (n + 1))
-              (keys (Schema.columns (schema t))))
-           (fun (offset, ks) ->
+           (Gen.pair k (keys (Schema.columns (schema t))))
+           (fun (k, ks) ->
              Gen.map
-               (fun (length, t) -> (t, ks, offset, length))
-               (Gen.pair
-                  (Gen.one_of
-                     [
-                       Gen.int_range 0 2;
-                       Gen.constant (Int.max 0 (n - offset));
-                       Gen.int_range 0 (n + 3);
-                     ])
-                  (G.split t)))))
+               (fun (offset, t) -> (t, ks, offset, k - offset))
+               (Gen.pair (Gen.int_range 0 k) (G.split t)))))
 
 (* A slice from the start over a sort is a top-k; over the sort's result read as
    a table, it is a slice. *)
