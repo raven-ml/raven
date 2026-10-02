@@ -7,9 +7,7 @@
 
     A scale denotes a {e normalisation}, a function from a domain of data values
     to the reals that maps the domain onto \[[0];[1]\], with an inverse where
-    one exists. Positions, colours and sizes are functions of normalised values;
-    points, pixels and projections belong to the figure, and the ticks of its
-    axes and legends to {!Ticks}.
+    one exists. {!Ticks} chooses the ticks of a scale.
 
     There are three kinds of scales ({!type-kind}): quantitative scales over
     floats ({!linear}, {!log}, {!symlog}, {!pow}, {!custom}), temporal scales
@@ -19,11 +17,9 @@
     A scale value is a {e specification}. Each of its properties is either set,
     by an argument of its constructor or by the functions of
     {{!section-specs}specifications}, or unset, and the scale means the
-    normalisation its properties give once each unset one takes its default. A
-    figure merges the specifications of the channels that read one scale
-    ({!merge}, {!imply}) and fits the domain to their data ({!fit}). A fitted
-    scale sets its domain, so given to another figure it normalises as it did in
-    the first.
+    normalisation its properties give once each unset one takes its default.
+    Specifications combine with {!merge} and {!imply}, and {!fit} sets the
+    domain from observed data.
 
     {1:normalisation Normalisation}
 
@@ -48,12 +44,9 @@
     \[[0];[1]\], after reversing. The transforms are:
     - {!linear}: [T x = x];
     - {!log} in base [b]: [T x = log x / log b], defined for [x > 0];
-    - {!symlog} with constant [c]: [T x = sign x * log1p (|x| / c)], nearly
-      linear within [c] of zero, logarithmic far from it, and smooth through
-      zero;
+    - {!symlog} with constant [c]: [T x = sign x * log1p (|x| / c)];
     - {!pow} with exponent [e]: [T x = sign x * |x / m| ** e], where [m] is the
-      greater magnitude of the domain's ends, or [1.] if both are [0.]: dividing
-      by [m] leaves [N] unchanged and keeps [T] in \[[-1];[1]\] on the domain;
+      greater magnitude of the domain's ends, or [1.] if both are [0.];
     - {!custom}: the caller's [forward] function.
 
     A temporal scale normalises instants by the same formula with [T] the
@@ -79,8 +72,7 @@
     A value is {e missing} for a scale, and normalises to [nan], if it is [nan]
     or infinite, not positive on a log scale, a value at which a custom
     transform is not finite, or a string that names no category of a band scale.
-    Figures drop the rows whose positions are missing and paint missing colours
-    with {!unknown}. *)
+*)
 
 open Hugin_next_gg
 
@@ -98,9 +90,8 @@ type _ kind =
 
 (** The type for the categories of band scales. Wherever a scale takes or
     returns a category, a labelled category is named by its label and an indexed
-    one by its integer in decimal, as [string_of_int] writes it: the category of
-    [Indices [| (3, "the") |]] is named ["3"] and shown as [the]. Arrays are
-    copied where they enter or leave a scale. *)
+    one by its integer as [string_of_int] writes it. Arrays are copied where
+    they enter or leave a scale. *)
 type categories =
   | Labels of string array
       (** Labelled categories, in domain order, each identified by its label.
@@ -110,8 +101,8 @@ type categories =
           each identified by its integer and shown by its text. Texts may
           repeat. *)
 
-(** The type for domains, one case per kind. A ['d domain] has one possible
-    case, so [let Floats (a, b) = domain s] needs no other. *)
+(** The type for domains, one case per kind, so [let Floats (a, b) = domain s]
+    is exhaustive. *)
 type _ domain =
   | Floats : float * float -> float domain  (** A quantitative domain. *)
   | Instants : Time.t * Time.t -> Time.t domain  (** A temporal domain. *)
@@ -185,8 +176,8 @@ val log :
   float t
 (** [log ~base ()] is a logarithmic scale in base [base], which defaults to
     [10.] and must be finite and greater than [1.]. Its domain must be positive,
-    and its default domain is \[[1];[base]\]. It takes no [zero]: [0.] is
-    missing on a log scale, so {!fit} never widens a log domain to it.
+    and its default domain is \[[1];[base]\]. It takes no [zero], since [0.] is
+    missing on a log scale.
 
     The rules for ticks, tick labels and minor ticks ({!Ticks}) that name an
     {e integer base} mean a base that is an integer from [2] to [16]; a greater
@@ -224,8 +215,7 @@ val pow :
   unit ->
   float t
 (** [pow ~exponent ()] is a power scale with exponent [exponent], which must be
-    finite and positive; [0.5] is the square-root scale, which makes areas
-    proportional to values. Its default domain is \[[0];[1]\]. *)
+    finite and positive. Its default domain is \[[0];[1]\]. *)
 
 val custom :
   transform:string ->
@@ -314,10 +304,8 @@ val length : 'd t -> float
     divides: [|T b - T a|] for a continuous domain \[[a];[b]\] and the transform
     [T] ({!section-continuous}), in seconds on a temporal scale, and [n + p] on
     a band scale of [n] categories and padding [p], the steps that \[[0];[1]\]
-    holds ({!section-categorical}), or [0.] without categories, as for
-    {!bandwidth}. So a log scale in base [10] over \[[1];[1000]\] spans [3.]. It
-    is [infinity] if the difference overflows and [nan] if an end of the domain
-    is missing. *)
+    holds ({!section-categorical}), or [0.] without categories. It is [infinity]
+    if the difference overflows and [nan] if an end of the domain is missing. *)
 
 val wrap : string t -> int option
 (** [wrap s] is the number of facet panels per row of [s], if set. *)
@@ -448,13 +436,10 @@ val merge : 'd t -> 'd t -> ('d t, property) result
 
 val imply : 'd t -> 'd t -> 'd t
 (** [imply i s] is [s] with each property that [s] leaves unset taken from [i],
-    except the name: a figure implies the properties a mark asks for, such as
-    [zero] for a length, on the specification the mark's channels give, and a
-    name is the identity of a scale, which no mark implies, so [imply] keeps the
-    name of [s] or its absence. Every constructor sets the transform, so [imply]
-    keeps the transform of [s], and a domain that [i] sets is taken only if it
-    satisfies the constraints the constructor of [s] states on domains:
-    [imply (linear ~domain:(-1., 1.) ()) (log ())] leaves the domain unset. *)
+    except the name, which [imply] keeps from [s] or keeps absent. Since every
+    constructor sets the transform, the transform is that of [s]. A domain that
+    [i] sets is taken only if it satisfies the constraints the constructor of
+    [s] states on domains. *)
 
 val missing : float t -> ('a, 'b) Nx.t -> Nx.bool_t
 (** [missing s x] is [true] where an element of [x] is
@@ -479,14 +464,13 @@ val fit : 'd domain option -> 'd t -> 'd t
 
     Once the domain is set [nice] and [zero] have no effect, so the result
     normalises as [s] does with that domain, and fitting it again changes
-    nothing: [fit o (fit o' s)] is [fit o' s]. This is the form a figure exports
-    a fitted scale in.
+    nothing: [fit o (fit o' s)] is [fit o' s].
 
     Raises [Invalid_argument] if the domain of [s] is unset and [observed]
     breaks the constraints the constructor of [s] states on domains. *)
 
 val with_domain : 'd domain -> 'd t -> 'd t
-(** [with_domain d s] is [s] with its domain set to [d], as a zoom sets it.
+(** [with_domain d s] is [s] with its domain set to [d].
 
     Raises [Invalid_argument] if [d] breaks the constraints the constructor of
     [s] states on domains. *)
@@ -501,8 +485,8 @@ val equal : 'd t -> 'd t -> bool
 (** [equal s s'] is [true] iff [s] and [s'] set the same properties to equal
     values: floats by [Float.equal], colours by {!Color.equal}, schemes by
     {!Scheme.equal}, symbols element by element by {!Symbol.equal}, and the
-    functions of custom transforms physically. A property unset and the same
-    property set to its default differ, since they merge differently. *)
+    functions of custom transforms physically. A property unset differs from the
+    same property set to its default. *)
 
 val pp : Format.formatter -> 'd t -> unit
 (** [pp ppf s] formats the properties [s] sets, for debugging and tests, a
