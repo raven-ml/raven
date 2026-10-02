@@ -360,6 +360,7 @@
    (and
     :with-test
     (>= 0.2.0)))
+  (mdx :with-test)
   (thumper :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
