@@ -3,7 +3,9 @@
  (libraries nx rune thumper unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
-; (or run the built exe directly; `list` prints case ids).
+; (or run the built exe directly; `list` prints case ids). [--warm] fills
+; tolk's disk cache with what the cases compile, so the measurement compiles
+; nothing.
 
 (rule
  (alias bench)
@@ -13,4 +15,6 @@
  (deps
   (glob_files *.thumper))
  (action
-  (run %{exe:bench_rune.exe})))
+  (progn
+   (run %{exe:bench_rune.exe} --warm)
+   (run %{exe:bench_rune.exe}))))

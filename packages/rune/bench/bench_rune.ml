@@ -67,7 +67,9 @@ let mlp_grad_benchmarks params x y =
 
 (* MLP jvp: forward-mode directional derivative of the loss. *)
 let mlp_jvp_benchmarks params x y =
-  let tangents = Nx.Ptree.map mlp_ptree (fun _ t -> Nx.copy (Nx.ones_like t)) params in
+  let tangents =
+    Nx.Ptree.map mlp_ptree (fun _ t -> Nx.copy (Nx.ones_like t)) params
+  in
   let f p = loss p x y in
   [
     Thumper.bench "mlp jvp" (fun () ->
@@ -228,26 +230,17 @@ let jit_benchmarks params x x0 =
       (fun (f, x) -> f x);
   ]
 
-(* Jit footprint: the trace-plus-compile cost of a first Rune.jit Nx.Ptree.(call
-   @-> returns tensor) on the campaign's compile-heavy workloads, and the
-   steady-state replay cost.
+(* Jit footprint: the steady-state replay cost of a Rune.jit Nx.Ptree.(call @->
+   returns tensor) on the compile-heavy workloads of tolk's stage suite:
+   [elementwise] a+b*c (one kernel, the control), [lorenz] an Euler fold (one
+   fused kernel of ~9 ops/step), and [rnn] an affine recurrence h <- x_t@W + h@U
+   with a sum-of-squares loss (one kernel per step), forward and — the real
+   user-shaped case, which exists only on the rune side — reverse through
+   [Rune.grad]. Each case compiles once in its setup and times one replay call.
 
-   The workloads mirror the tolk-direct compile graphs so the first-call number
-   sits alongside tolk's per-stage totals: [elementwise] a+b*c (one kernel, the
-   control), [lorenz] an Euler fold (one fused kernel of ~9 ops/step), and [rnn]
-   an affine recurrence h <- x_t@W + h@U with a sum-of-squares loss (one kernel
-   per step), forward and — the real user-shaped case, which exists only on the
-   rune side — reverse through [Rune.grad].
-
-   Two measurements. [replay] compiles once in setup and times one replay call.
-   [first-call] builds a fresh jit and drives the one call that traces, lowers,
-   and compiles. Repeating an identical compile in a live process is served by
-   tolk's process-global program cache (not reachable from here to clear), so
-   the first-call gate cases scale the output by a distinct constant each
-   iteration: a fresh kernel body, a genuine recompile. That perturbation
-   reaches a single fused kernel but not a matmul kernel's body, so the absolute
-   cold cost of the matmul-heavy sizes is taken process-isolated through
-   [--cold] instead, one fresh process per measurement. *)
+   No case compiles while measured: tolk's stage suite times the compiler, and
+   [WarmStart] a first call served by the disk cache. [--cold] times one cold
+   compile of a workload, one fresh process per measurement. *)
 
 type ew = { a : Nx.float32_t; b : Nx.float32_t; c : Nx.float32_t }
 
@@ -357,18 +350,6 @@ let init_rnn horizon =
       List.init horizon (fun _ -> Nx.randn Nx.float32 [| rnn_batch; rnn_in |]);
   }
 
-(* A distinct scalar per recompile — and, through a per-process seed, per
-   process — so neither the in-process program cache nor the on-disk compile
-   caches (keyed by a kernel's semantic key and source) can serve a first-call
-   measurement with an earlier compile. The value is immaterial, only its
-   uniqueness; kept small so the scaled output cannot overflow. *)
-let recompile_seed = int_of_float (Unix.gettimeofday () *. 1e6) land 0xffff
-let recompile_ctr = ref 0
-
-let fresh_scale () =
-  incr recompile_ctr;
-  1.0 +. (float_of_int ((recompile_seed lsl 14) + !recompile_ctr) *. 1e-9)
-
 let jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20 =
   let replay_ew () =
     let f = Rune.jit Nx.Ptree.(ew_ptree @-> returns tensor) ew_forward in
@@ -393,22 +374,6 @@ let jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20 =
     f
   in
   [
-    Thumper.bench ~tags:[ "lab" ] "elementwise first-call" (fun () ->
-        let s = fresh_scale () in
-        let f =
-          Rune.jit
-            Nx.Ptree.(ew_ptree @-> returns tensor)
-            (fun p -> Nx.mul_s (ew_forward p) s)
-        in
-        Sys.opaque_identity (f ew_params));
-    Thumper.bench ~tags:[ "lab" ] "lorenz n10 first-call" (fun () ->
-        let s = fresh_scale () in
-        let f =
-          Rune.jit
-            Nx.Ptree.(lorenz_ptree @-> returns tensor)
-            (fun p -> Nx.mul_s (lorenz 10 p) s)
-        in
-        Sys.opaque_identity (f lorenz_params));
     Thumper.bench_with_setup ~setup:replay_ew "elementwise replay" (fun f ->
         f ew_params);
     Thumper.bench_with_setup ~setup:(replay_lorenz 10) "lorenz n10 replay"
@@ -520,39 +485,49 @@ let cold_compile spec =
   in
   Printf.printf "%.3f\n" ms
 
+let suite () =
+  let params = init_mlp () in
+  let x = Nx.randn Nx.float32 [| batch; d_in |] in
+  let y = Nx.randn Nx.float32 [| batch; d_out |] in
+  let x0 = Nx.randn Nx.float32 [| 64 |] in
+  let ew_params = init_ew () in
+  let lorenz_params = init_lorenz () in
+  let rnn2 = init_rnn 2 in
+  let rnn10 = init_rnn 10 in
+  let rnn20 = init_rnn 20 in
+  [
+    Thumper.group "MlpGrad" (mlp_grad_benchmarks params x y);
+    Thumper.group "MlpJvp" (mlp_jvp_benchmarks params x y);
+    Thumper.group "PerSampleGrads" (vmap_benchmarks params x);
+    Thumper.group "DeepChain" (chain_benchmarks x0);
+    Thumper.group "Hmc" (hmc_benchmarks ());
+    Thumper.group "Declined" (declined_benchmarks ());
+    Thumper.group "Jit" (jit_benchmarks params x x0);
+    Thumper.group "JitFootprint"
+      (jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20);
+    Thumper.group "WarmStart" (warm_start_benchmarks ());
+  ]
+
+let config = Thumper.Config.(default |> deadline 120.)
+
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   match Array.to_list Sys.argv with
   | _ :: "--cold" :: rest -> cold_compile rest
   | [ _; "--first-call" ] -> first_train_step ()
+  | [ _; "--warm" ] ->
+      (* Each case once, in as few calls as a trial takes: what the setups
+         compile lands in tolk's disk cache, which a measurement then reads. *)
+      ignore
+        (Thumper.measure
+           ~config:Thumper.Config.(config |> samples 3 |> warmup 0.)
+           (suite ()))
   | _ ->
-      let params = init_mlp () in
-      let x = Nx.randn Nx.float32 [| batch; d_in |] in
-      let y = Nx.randn Nx.float32 [| batch; d_out |] in
-      let x0 = Nx.randn Nx.float32 [| 64 |] in
-      let ew_params = init_ew () in
-      let lorenz_params = init_lorenz () in
-      let rnn2 = init_rnn 2 in
-      let rnn10 = init_rnn 10 in
-      let rnn20 = init_rnn 20 in
-      (* A warm-start sample is a process's start and first call. *)
-      Thumper.run "rune"
-        ~config:Thumper.Config.(default |> deadline 120.)
+      Thumper.run "rune" ~config
         ~budgets:
           [
             Thumper.Budget.no_slower_than 0.05;
             Thumper.Budget.no_more_alloc_than 0.01;
           ]
-        [
-          Thumper.group "MlpGrad" (mlp_grad_benchmarks params x y);
-          Thumper.group "MlpJvp" (mlp_jvp_benchmarks params x y);
-          Thumper.group "PerSampleGrads" (vmap_benchmarks params x);
-          Thumper.group "DeepChain" (chain_benchmarks x0);
-          Thumper.group "Hmc" (hmc_benchmarks ());
-          Thumper.group "Declined" (declined_benchmarks ());
-          Thumper.group "Jit" (jit_benchmarks params x x0);
-          Thumper.group "JitFootprint"
-            (jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20);
-          Thumper.group "WarmStart" (warm_start_benchmarks ());
-        ]
+        (suite ())
       |> exit
