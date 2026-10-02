@@ -35,7 +35,11 @@ let fail fmt =
 (* CI checks a family of workloads at one size. *)
 type family = { ci : string; workload : data:string -> string -> Workload.t }
 
-let families : (string * family) list = []
+let families =
+  [
+    ("groupby", { ci = "1e6"; workload = H2o.groupby });
+    ("join", { ci = "1e6"; workload = H2o.join });
+  ]
 
 let family name =
   match List.assoc_opt name families with

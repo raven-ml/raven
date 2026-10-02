@@ -18,11 +18,13 @@ and compares their answers with the committed DuckDB answers.
 | `baseline.py` | Time DuckDB and Polars into a thumper file |
 | `answers.py` | Check both engines against the committed answers, or record them |
 | `h2o.py`, `tpch.py` | The questions, in DuckDB SQL and as Polars queries |
+| `h2o.ml` | The H2O questions in talon |
 | `workload.py` | Tables, questions, and the two engines |
 | `answer.py` | The canonical form of an answer, its files, and comparison |
 | `thumper.py` | Thumper's baseline format and machine key |
 | `h2o-baselines.thumper`, `tpch-baselines.thumper` | The baselines, once recorded |
 | `answers/` | DuckDB's answers at the CI size |
+| `bench_h2o.ml`, `cases.ml` | Time talon into `h2o.thumper` |
 | `runner.ml` | Write talon's answer to a question, check talon's answers |
 | `answer.ml`, `workload.ml` | The OCaml twins of `answer.py` and `workload.py` |
 
@@ -127,6 +129,23 @@ sample. Floats agree within a relative 1e-9 (or an absolute 1e-12), nulls with
 nulls and NaN with NaN; every other value agrees exactly.
 
 ## Talon's queries
+
+`bench_h2o.exe` is a thumper suite over the data under `$TALON_BENCH_DATA`, one
+case per question of each size whose data exists, with case ids that end in `/talon`, such as `groupby/1e8/q03/talon`:
+
+```sh
+export TALON_BENCH_DATA=DATA
+dune exec packages/talon/next/bench/bench_h2o.exe -- list
+dune exec packages/talon/next/bench/bench_h2o.exe -- check -f groupby/1e7
+dune exec packages/talon/next/bench/bench_h2o.exe -- bless -f join/1e7
+```
+
+Each case loads its workload's tables before thumper measures it, and each
+measured call runs the question to its answer, materialized as one table.
+Thumper writes `h2o.thumper` under the machine key the baselines use, with its
+own protocol of calibrated batches and a collection between samples. Talon
+loads H2O's tables with the same declared schema as the baselines, identifiers
+as `String`, never as `Categorical`.
 
 `runner.exe` writes and checks talon's answers:
 
