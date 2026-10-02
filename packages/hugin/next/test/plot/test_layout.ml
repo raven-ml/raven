@@ -39,19 +39,30 @@ let fails_naming subs f =
       | Invalid_argument m -> List.for_all (contains m) subs | _ -> false)
     f
 
+let box_of line =
+  let i = String.rindex line '[' in
+  Scanf.sscanf
+    (String.sub line i (String.length line - i))
+    "[(%f, %f) (%f, %f)]"
+    (fun x0 y0 x1 y1 -> (x0, y0, x1, y1))
+
 (* [texts l] is the box of every text [l] places, read from its printed form,
    where each text is [(text …) [(x0, y0) (x1, y1)]] on one line. *)
 let texts l =
-  let box line =
-    let i = String.rindex line '[' in
-    Scanf.sscanf
-      (String.sub line i (String.length line - i))
-      "[(%f, %f) (%f, %f)]"
-      (fun x0 y0 x1 y1 -> (x0, y0, x1, y1))
-  in
   String.split_on_char '\n' (printed l)
   |> List.filter (fun line -> contains line "(text")
-  |> List.map box
+  |> List.map box_of
+
+(* [text_box l s] is the box of the first text of [l] whose printed line holds
+   [s]. *)
+let text_box l s =
+  match
+    List.find_opt
+      (fun line -> contains line s)
+      (String.split_on_char '\n' (printed l))
+  with
+  | None -> failf "no text %s" s
+  | Some line -> box_of line
 
 (* The extents of a text set as layout sets tick labels and titles. *)
 let measure ~size s =
@@ -75,6 +86,33 @@ let on_page l =
       at_most float_exact ~msg:"right" ~than:(w +. tol) (Box2.maxx b);
       at_most float_exact ~msg:"bottom" ~than:(h +. tol) (Box2.maxy b))
     (boxes l)
+
+(* [apart l] states that no text of [l] overlaps another, a data area or the
+   page's edge. *)
+let apart l =
+  let w, h = Layout.size l in
+  (* Printed boxes have six significant digits. *)
+  let tol = 1e-5 *. Float.max 100. (Float.max w h) in
+  let ts = texts l in
+  let overlaps (a0, b0, a1, b1) (c0, d0, c1, d1) =
+    Float.min a1 c1 -. Float.max a0 c0 > tol
+    && Float.min b1 d1 -. Float.max b0 d0 > tol
+  in
+  List.iteri
+    (fun i t ->
+      let x0, y0, x1, y1 = t in
+      if x0 < -.tol || y0 < -.tol || x1 > w +. tol || y1 > h +. tol then
+        failf "a text leaves the page: %g %g %g %g" x0 y0 x1 y1;
+      List.iteri
+        (fun j t' ->
+          if j > i && overlaps t t' then failf "texts %d and %d overlap" i j)
+        ts;
+      List.iter
+        (fun b ->
+          let p = (Box2.minx b, Box2.miny b, Box2.maxx b, Box2.maxy b) in
+          if overlaps t p then failf "text %d overlaps a data area" i)
+        (boxes l))
+    ts
 
 (* A panel with an aspect of one and no axes. *)
 let square =
@@ -367,6 +405,35 @@ let aspects =
           List.iter
             (fun h -> on_page (lay (Size.panels 40. h) f))
             [ 45.; 50.; 60.; 61. ]);
+      test "an aspect panel's box holds its axis titles" (fun () ->
+          let m = Nx.zeros Nx.float64 [| 2; 50 |] in
+          let f =
+            rect
+              ~x:(dim ~title:(Text.v "token") 1)
+              ~y:(dim ~title:(Text.v "layer") 0)
+              ~fill:(num m) ()
+            |> coord (Coord.cartesian ~aspect:1. ())
+          in
+          let l = lay (Size.panels 100. 100.) f in
+          let b = List.hd (boxes l) in
+          let _, y0, _, y1 = text_box l {|(text "layer")|} in
+          at_least float_exact ~than:(Box2.miny b -. 1e-3) y0;
+          at_most float_exact ~than:(Box2.maxy b +. 1e-3) y1);
+      test "an aspect panel's box holds its headers" (fun () ->
+          let cat = "a very long facet category" in
+          let f =
+            rect
+              ~x:(strings (Array.init 4 string_of_int))
+              ~y:(strings (Array.make 4 "p"))
+              ~fy:(strings (Array.make 4 cat))
+              ()
+            |> coord (Coord.cartesian ~aspect:1. ())
+          in
+          let l = lay (Size.panels 30. 30.) f in
+          let b = List.hd (boxes l) in
+          let _, y0, _, y1 = text_box l (Printf.sprintf "(text %S)" cat) in
+          at_least float_exact ~than:(Box2.miny b -. 1e-3) y0;
+          at_most float_exact ~than:(Box2.maxy b +. 1e-3) y1);
       test "images have square pixels" (fun () ->
           let px = Nx.zeros Nx.uint8 [| 3; 6 |] in
           let l = lay (Size.figure 300. 300.) (image px) in
@@ -423,31 +490,7 @@ let no_overlap =
     ]
   in
   prop "no text overlaps another, a data area or the page's edge" ~count:60
-    ~examples gen_case (fun c ->
-      let l = laid c in
-      let w, h = Layout.size l in
-      (* Printed boxes have six significant digits. *)
-      let tol = 1e-5 *. Float.max 100. (Float.max w h) in
-      let ts = texts l in
-      let overlaps (a0, b0, a1, b1) (c0, d0, c1, d1) =
-        Float.min a1 c1 -. Float.max a0 c0 > tol
-        && Float.min b1 d1 -. Float.max b0 d0 > tol
-      in
-      List.iteri
-        (fun i t ->
-          let x0, y0, x1, y1 = t in
-          if x0 < -.tol || y0 < -.tol || x1 > w +. tol || y1 > h +. tol then
-            failf "a text leaves the page: %g %g %g %g" x0 y0 x1 y1;
-          List.iteri
-            (fun j t' ->
-              if j > i && overlaps t t' then failf "texts %d and %d overlap" i j)
-            ts;
-          List.iter
-            (fun b ->
-              let p = (Box2.minx b, Box2.miny b, Box2.maxx b, Box2.maxy b) in
-              if overlaps t p then failf "text %d overlaps a data area" i)
-            (boxes l))
-        ts)
+    ~examples gen_case (fun c -> apart (laid c))
 
 let guides =
   group "guides"
@@ -611,6 +654,18 @@ let guides =
           equal (float 1e-3) 0. x0;
           let l, _, x1 = at `Right in
           equal (float 1e-3) (fst (Layout.size l)) x1);
+      test "a laid-out text prints on one line" (fun () ->
+          let t =
+            "A title long enough, with a box after it, to reach past the right \
+             margin of a formatter"
+          in
+          let l = lay (Size.panels 300. 60.) (title (Text.v t) (plain ramp)) in
+          let line =
+            List.find
+              (fun line -> contains line "title (text")
+              (String.split_on_char '\n' (printed l))
+          in
+          in_order ~subs:[ t; "[(" ] line);
       test "a hidden axis takes no room" (fun () ->
           let l =
             lay (Size.panels 50. 40.)

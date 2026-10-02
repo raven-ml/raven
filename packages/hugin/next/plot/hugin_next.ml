@@ -3777,12 +3777,20 @@ type tracks = {
 (* [natural cx unit item] is the least width and height of [item], [unit] being
    the data area a flexible track of weight [1.] has at least. *)
 let rec natural cx unit = function
-  | Leaf l ->
-      List.fold_left
-        (fun (w, h) a ->
-          let n = spans cx a in
-          if horizontal a.a_side then (Float.max w n, h) else (w, Float.max h n))
-        (0., 0.) l.l_axes
+  | Leaf l -> (
+      let w, h =
+        List.fold_left
+          (fun (w, h) a ->
+            let n = spans cx a in
+            if horizontal a.a_side then (Float.max w n, h)
+            else (w, Float.max h n))
+          (0., 0.) l.l_axes
+      in
+      (* A panel with an aspect fits its box in its cell, so the box holds what
+         the cell must hold only if both lengths ask for it. *)
+      match l.l_ratio with
+      | None -> (w, h)
+      | Some r -> (Float.max w (h /. r), Float.max h (r *. w)))
   | Grid g ->
       let m = measure_grid cx unit g in
       let rows = aspect_rows m m.cols_least in
@@ -4896,13 +4904,17 @@ module Layout = struct
 
   (* Formatting *)
 
-  (* Boxes are on one line, so each guide's text and box are. *)
   let pp_box ppf b =
     Format.fprintf ppf "[(%g, %g) (%g, %g)]" (Box2.minx b) (Box2.miny b)
       (Box2.maxx b) (Box2.maxy b)
 
+  (* A text and its box are on one line, whatever its length. *)
   let pp_placed ppf p =
-    Format.fprintf ppf "%a %a%s" Text.pp p.text pp_box (placed_box p)
+    let b = Buffer.create 64 in
+    let line = Format.formatter_of_buffer b in
+    Format.pp_set_geometry line ~max_indent:999_999 ~margin:1_000_000;
+    Format.fprintf line "%a@?" Text.pp p.text;
+    Format.fprintf ppf "%s %a%s" (Buffer.contents b) pp_box (placed_box p)
       (if p.turned then " turned" else "")
 
   let pp_axis ppf a =

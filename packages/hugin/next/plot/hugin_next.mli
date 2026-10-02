@@ -1574,10 +1574,11 @@ val layout :
     weight, never below zero. A panel protrudes by its guides, and by half its
     longest tick label past the ends of each labelled axis, where a label
     centred on an end tick reaches; the titles and headers of its axes need its
-    track to be as long as they are. A legend stands beside the panels of its
-    scope, as long as their data areas, and a title above the figure it titles.
-    A panel with an aspect that its cell cannot hold is drawn in the largest box
-    of its aspect, centred in its cell.
+    data area to be as long as they are, which for a panel with an aspect sizes
+    both its column and its row. A legend stands beside the panels of its scope,
+    as long as their data areas, and a title above the figure it titles. A panel
+    with an aspect that its cell cannot hold is drawn in the largest box of its
+    aspect, centred in its cell.
 
     With [prev], the measurements of labels of equal text in an equal theme are
     reused and the grid is solved again: the result is {!Layout.equal} to
