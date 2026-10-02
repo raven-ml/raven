@@ -388,7 +388,7 @@ let file_meta r ~footer =
   let row_groups = required start "FileMetaData" "4 (row_groups)" !row_groups in
   { rows; schema; row_groups; footer }
 
-let magic b pos s =
+let magic (b : bigbytes) pos s =
   let ok = ref true in
   String.iteri (fun i c -> if b.{pos + i} <> Char.code c then ok := false) s;
   !ok

@@ -8,6 +8,11 @@ module A = Bigarray.Array1
 
 type bytes = (int, Nx.uint8_elt) Nx_ragged.t
 
+(* Every helper takes its bytes at this type, so that the compiler reads each
+   byte inline rather than through the runtime's generic accessor. *)
+type buf = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) A.t
+type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
+
 (* [reading ~by x f] is [f b] for [b] a host buffer of [x]'s elements in C
    order, under a read claim so that no compiled call lends its memory while [f]
    reads it. *)
@@ -16,93 +21,82 @@ let reading ~by x f =
   B.Claim.read b;
   Fun.protect ~finally:(fun () -> B.Claim.release b) (fun () -> f b)
 
-(* UTF-8 *)
+(* Host bytes *)
 
-(* [within a j stop lo hi] is [true] iff byte [j] lies before [stop] and in [lo,
-   hi]. *)
-let within a j stop lo hi =
-  j < stop
-  &&
-  let c = A.unsafe_get a j in
-  lo <= c && c <= hi
-
-(* [sequence a i stop] is the length of the valid UTF-8 sequence that starts at
-   byte [i], or [0]. The ranges of the second byte exclude overlong forms,
-   surrogates and values past U+10FFFF (RFC 3629, section 4). *)
-let sequence a i stop =
-  let b = A.unsafe_get a i in
-  let tail j = within a j stop 0x80 0xbf in
-  if b < 0x80 then 1
-  else if b < 0xc2 then 0
-  else if b < 0xe0 then if tail (i + 1) then 2 else 0
-  else if b < 0xf0 then
-    let lo, hi =
-      match b with
-      | 0xe0 -> (0xa0, 0xbf)
-      | 0xed -> (0x80, 0x9f)
-      | _ -> (0x80, 0xbf)
-    in
-    if within a (i + 1) stop lo hi && tail (i + 2) then 3 else 0
-  else if b < 0xf5 then
-    let lo, hi =
-      match b with
-      | 0xf0 -> (0x90, 0xbf)
-      | 0xf4 -> (0x80, 0x8f)
-      | _ -> (0x80, 0xbf)
-    in
-    if within a (i + 1) stop lo hi && tail (i + 2) && tail (i + 3) then 4 else 0
-  else 0
-
-(* [invalid a i stop] is the first byte of [i, stop) that starts no valid
-   sequence, or [-1]. *)
-let rec invalid a i stop =
-  if i >= stop then -1
-  else match sequence a i stop with 0 -> i | n -> invalid a (i + n) stop
+(* [host ~by ?mask r f] is [f o v m] for [o] the offsets of [r], [v] its bytes
+   and [m] the bytes of [mask], read on the host. *)
+let host ~by ?mask r f =
+  let read x f = reading ~by x f in
+  read (Nx_ragged.offsets r) @@ fun o ->
+  read (Nx_ragged.values r) @@ fun v ->
+  let o : int64s = B.bigarray Bigarray.int64 o
+  and v : buf = B.bigarray Bigarray.int8_unsigned v in
+  match mask with
+  | None -> f o v None
+  | Some mask ->
+      read mask @@ fun m -> f o v (Some (B.bigarray Bigarray.int8_unsigned m))
 
 (* [rows ~by ?mask r f] calls [f i v first stop] on each row [i] of [r] that
    [mask] holds, [v] the bytes and [\[first, stop)] the row's. *)
 let rows ~by ?mask r f =
-  let n = Nx_ragged.length r and read x f = reading ~by x f in
-  read (Nx_ragged.offsets r) @@ fun o ->
-  read (Nx_ragged.values r) @@ fun v ->
-  let o = B.bigarray Bigarray.int64 o
-  and v = B.bigarray Bigarray.int8_unsigned v in
-  let loop skip =
-    for i = 0 to n - 1 do
-      if not (skip i) then
-        f i v
-          (Int64.to_int (A.unsafe_get o i))
-          (Int64.to_int (A.unsafe_get o (i + 1)))
-    done
+  host ~by ?mask r @@ fun o v m ->
+  let row i =
+    f i v
+      (Int64.to_int (A.unsafe_get o i))
+      (Int64.to_int (A.unsafe_get o (i + 1)))
   in
-  match mask with
-  | None -> loop (Fun.const false)
-  | Some mask ->
-      read mask @@ fun m ->
-      let m = B.bigarray Bigarray.int8_unsigned m in
-      loop (fun i -> A.unsafe_get m i = 0)
+  match m with
+  | None ->
+      for i = 0 to Nx_ragged.length r - 1 do
+        row i
+      done
+  | Some (m : buf) ->
+      for i = 0 to Nx_ragged.length r - 1 do
+        if A.unsafe_get m i <> 0 then row i
+      done
 
-exception Invalid_row of int * string
+(* UTF-8, in C ([talon_strings.c]): validation runs over every byte of a column,
+   as Parquet pages and parsed text are built. *)
+
+(* [utf_8_invalid v i stop] is the first byte of [i, stop) that starts no valid
+   sequence, or [-1]. *)
+external utf_8_invalid :
+  buf -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  = "talon_utf_8_invalid_byte" "talon_utf_8_invalid"
+[@@noalloc]
+
+(* [utf_8_row v o m n] is the first of the [n] rows of [v], cut by [o], that is
+   not valid UTF-8, or [-1]. A row whose byte in [m] is zero is not read. *)
+external utf_8_row :
+  buf -> int64s -> buf option -> (int[@untagged]) -> (int[@untagged])
+  = "talon_utf_8_row_byte" "talon_utf_8_row"
+[@@noalloc]
 
 let utf_8 ~by ?mask r =
-  let check i v first stop =
-    match invalid v first stop with
-    | -1 -> ()
-    | j ->
-        let why = Printf.sprintf "invalid UTF-8 at byte %d" (j - first) in
-        raise_notrace (Invalid_row (i, why))
-  in
-  match rows ~by ?mask r check with
-  | () -> None
-  | exception Invalid_row (i, why) -> Some (i, why)
+  host ~by ?mask r @@ fun o v m ->
+  match utf_8_row v o m (Nx_ragged.length r) with
+  | -1 -> None
+  | i ->
+      let first = Int64.to_int (A.unsafe_get o i)
+      and stop = Int64.to_int (A.unsafe_get o (i + 1)) in
+      let j = utf_8_invalid v first stop in
+      Some (i, Printf.sprintf "invalid UTF-8 at byte %d" (j - first))
 
 (* Scalar values *)
 
 let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
-let starts_scalar v j = A.unsafe_get v j land 0xc0 <> 0x80
+
+(* [blit src lo dst at len] copies the bytes [lo, lo + len) of [src] to [dst]
+   from [at]. A loop: [A.blit] of [A.sub]s allocates two proxies per row. *)
+let blit (src : buf) lo (dst : buf) at len =
+  for k = 0 to len - 1 do
+    A.unsafe_set dst (at + k) (A.unsafe_get src (lo + k))
+  done
+
+let starts_scalar (v : buf) j = A.unsafe_get v j land 0xc0 <> 0x80
 
 (* [count v i stop] is the number of scalar values in the bytes [i, stop). *)
-let count v i stop =
+let count (v : buf) i stop =
   let n = ref 0 in
   for j = i to stop - 1 do
     if starts_scalar v j then incr n
@@ -111,7 +105,7 @@ let count v i stop =
 
 (* [skip v i stop k] is the byte at which scalar value [k] of [i, stop) starts,
    or [stop] past the last. *)
-let rec skip v i stop k =
+let rec skip (v : buf) i stop k =
   if i >= stop || (k = 0 && starts_scalar v i) then i
   else skip v (i + 1) stop (if starts_scalar v i then k - 1 else k)
 
@@ -145,9 +139,7 @@ let slice ~by ?mask ~offset ~length r =
       let v = B.bigarray Bigarray.int8_unsigned v in
       for i = 0 to n - 1 do
         let at = Int64.to_int (A.unsafe_get offsets i) in
-        A.blit
-          (A.sub v lo.(i) (hi.(i) - lo.(i)))
-          (A.sub bytes at (hi.(i) - lo.(i)))
+        blit v lo.(i) bytes at (hi.(i) - lo.(i))
       done);
   Nx_ragged.v ~offsets:(tensor offsets) (tensor bytes)
 
@@ -158,7 +150,7 @@ type pattern =
   | Pieces of string list
 
 (* [at v j s] is [true] iff the bytes of [s] start at byte [j]. *)
-let at v j s =
+let at (v : buf) j s =
   let n = String.length s in
   let rec loop k =
     k = n || (A.unsafe_get v (j + k) = Char.code s.[k] && loop (k + 1))
@@ -167,10 +159,10 @@ let at v j s =
 
 (* [find v i stop s] is the first byte of [i, stop) at which [s] lies whole, or
    [-1]. *)
-let rec find v i stop s =
-  if i + String.length s > stop then -1
-  else if at v i s then i
-  else find v (i + 1) stop s
+external find :
+  buf -> (int[@untagged]) -> (int[@untagged]) -> string -> (int[@untagged])
+  = "talon_find_byte" "talon_find"
+[@@noalloc]
 
 let matches ~by ?mask p r =
   let hits =
@@ -203,7 +195,7 @@ let matches ~by ?mask p r =
    left to right, without overlap. *)
 
 (* [occurrences v i stop s] is the number of matches of [s] in [i, stop). *)
-let occurrences v i stop s =
+let occurrences (v : buf) i stop s =
   let rec go i k =
     match find v i stop s with -1 -> k | j -> go (j + String.length s) (k + 1)
   in
@@ -219,7 +211,7 @@ let cumulative n f =
   done;
   o
 
-let last o = Int64.to_int (A.unsafe_get o (A.dim o - 1))
+let last (o : int64s) = Int64.to_int (A.unsafe_get o (A.dim o - 1))
 
 let split ~by ?mask sep r =
   let n = Nx_ragged.length r and m = String.length sep in
@@ -237,7 +229,7 @@ let split ~by ?mask sep r =
   A.unsafe_set pieces 0 0L;
   let piece = ref 0 and at = ref 0 in
   let emit v lo hi =
-    A.blit (A.sub v lo (hi - lo)) (A.sub bytes !at (hi - lo));
+    blit v lo bytes !at (hi - lo);
     at := !at + hi - lo;
     incr piece;
     A.unsafe_set pieces !piece (Int64.of_int !at)
@@ -265,7 +257,7 @@ let replace ~by ?mask ~sub ~into r =
   in
   let put = ref 0 in
   let copy v lo hi =
-    A.blit (A.sub v lo (hi - lo)) (A.sub bytes !put (hi - lo));
+    blit v lo bytes !put (hi - lo);
     put := !put + hi - lo
   in
   rows ~by ?mask r (fun i v first stop ->

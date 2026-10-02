@@ -622,10 +622,69 @@ let unheld_cases =
       in
       equal (option (pair int string)) expected got)
 
+(* [first_invalid s] is the first byte of [s] that starts no valid UTF-8
+   sequence, as the standard library decodes it. *)
+let first_invalid s =
+  let rec go i =
+    if i >= String.length s then None
+    else
+      let d = String.get_utf_8_uchar s i in
+      if Uchar.utf_decode_is_valid d then go (i + Uchar.utf_decode_length d)
+      else Some i
+  in
+  go 0
+
+(* Rows of ASCII runs long and short, scalar values of each length, and bytes
+   that start no valid sequence: lone continuations, overlong leads, cut
+   sequences, surrogates, values past U+10FFFF. *)
+let text_rows =
+  let ascii =
+    Gen.string_of ~size:(Gen.int_range 0 20) (Gen.char_range ' ' '~')
+  in
+  let valid = Gen.of_list [ "\x7f"; "é"; "日"; "𝄞"; "\xf4\x8f\xbf\xbf" ] in
+  let bad =
+    Gen.of_list
+      [
+        "\x80";
+        "\xbf";
+        "\xc0\xaf";
+        "\xc1";
+        "\xc3";
+        "\xe0\x80\x80";
+        "\xe2\x82";
+        "\xed\xa0\x80";
+        "\xf0\x80";
+        "\xf4\x90\x80\x80";
+        "\xf5";
+        "\xff";
+      ]
+  in
+  let piece = Gen.frequency [ (6, ascii); (3, valid); (1, bad) ] in
+  let row =
+    Gen.map (String.concat "") (Gen.list ~size:(Gen.int_range 0 6) piece)
+  in
+  Gen.list ~size:(Gen.int_range 0 6) row
+
+let utf_8_law rows =
+  let firsts = List.map first_invalid rows in
+  cover "valid text" (List.for_all Option.is_none firsts);
+  cover "an invalid byte past eight ASCII bytes"
+    (List.exists (function Some i -> i >= 8 | None -> false) firsts);
+  let why r i = (r, Printf.sprintf "invalid UTF-8 at byte %d" i) in
+  let expected = List.find_mapi (fun r -> Option.map (why r)) firsts in
+  let got =
+    match Column.of_layout (Any Type.string) (bytes rows) with
+    | Ok _ -> None
+    | Error e -> Some e
+  in
+  equal (option (pair int string)) expected got
+
 let layouts =
   group "Layouts"
     [
       prop "of_layout reads back a column's layout" G.sample layout_round_trip;
+      prop "of_layout refuses the first row of text that is not UTF-8" text_rows
+        utf_8_law;
       prop "a record field of an extension type reads and writes its storage"
         G.sample ext_in_record;
       test "of_layout shares its values" (fun () ->

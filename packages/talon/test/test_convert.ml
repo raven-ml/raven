@@ -187,6 +187,43 @@ let held_casts =
 let s = Col.string "s"
 let texts vs = one "s" (Column.of_options Type.string vs)
 
+(* [index s sub i] is the first byte from [i] at which [sub] lies whole in
+   [s]. *)
+let rec index s sub i =
+  let n = String.length sub in
+  if i + n > String.length s then None
+  else if String.sub s i n = sub then Some i
+  else index s sub (i + 1)
+
+let rec pieces_in s i = function
+  | [] -> true
+  | p :: ps -> (
+      match index s p i with
+      | Some j -> pieces_in s (j + String.length p) ps
+      | None -> false)
+
+(* Text and needles over few letters, so that partial matches abound. *)
+let letters ~min ~max =
+  Gen.map (String.concat "")
+    (Gen.list ~size:(Gen.int_range min max) (Gen.of_list [ "a"; "b"; "é" ]))
+
+let pieces_law =
+  let gen =
+    Gen.pair
+      (Gen.list ~size:(Gen.int_range 0 8) (letters ~min:0 ~max:40))
+      (Gen.list ~size:(Gen.int_range 1 3) (letters ~min:1 ~max:3))
+  in
+  prop "matches finds pieces in order, without overlap" gen (fun (vs, ps) ->
+      let hit v = pieces_in v 0 ps in
+      cover "a match" (List.exists hit vs);
+      cover "a miss" (List.exists (fun v -> not (hit v)) vs);
+      let vs = Array.of_list (List.map Option.some vs) in
+      let got =
+        Column.options Kind.bool
+          (result (Expr.Str.matches (Expr.Str.pieces ps) s) (texts vs))
+      in
+      equal (array (option bool)) (Array.map (Option.map hit) vs) got)
+
 let text =
   let ints e vs = Column.options Kind.int (result e (texts vs)) in
   let strings e vs = Column.options Kind.string (result e (texts vs)) in
@@ -229,6 +266,7 @@ let text =
             (array (option bool))
             [| Some true; Some true; None |]
             (m (Expr.Str.literal "q")));
+      pieces_law;
       test "parse fails with the text" (fun () ->
           expect
             (error

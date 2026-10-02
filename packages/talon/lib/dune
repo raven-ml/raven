@@ -28,7 +28,7 @@
   run)
  (foreign_stubs
   (language c)
-  (names talon_stubs)
+  (names talon_stubs talon_strings)
   (flags
    (:standard -std=c11 -O3 -Wall -Wextra -Wpedantic)))
  (instrumentation

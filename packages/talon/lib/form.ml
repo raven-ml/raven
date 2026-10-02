@@ -8,6 +8,7 @@ module B = Nx_device.Buffer
 
 type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A1.t
 type float64s = (float, Bigarray.float64_elt, Bigarray.c_layout) A1.t
+type buf = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) A1.t
 
 (* Each reader reads the [len] bytes at [pos] of [b] as its type's text, and
    raises [Invalid] when they are not that text or their value is outside the
@@ -18,9 +19,9 @@ type float64s = (float, Bigarray.float64_elt, Bigarray.c_layout) A1.t
 exception Invalid of string
 
 let invalid why = raise_notrace (Invalid why)
-let[@inline] get b i = Char.unsafe_chr (A1.unsafe_get b i)
+let[@inline] get (b : buf) i = Char.unsafe_chr (A1.unsafe_get b i)
 let is_digit c = '0' <= c && c <= '9'
-let digit b i = A1.unsafe_get b i - 48
+let digit (b : buf) i = A1.unsafe_get b i - 48
 let sub_string b pos len = String.init len (fun k -> get b (pos + k))
 
 let rec equals_from ~caseless b pos s i =
@@ -525,7 +526,7 @@ let err fmt = Format.kasprintf invalid_arg fmt
    [Invalid] with the reason. *)
 let rows r valid read =
   let n = Nx_ragged.length r in
-  let scan o b is_null =
+  let scan (o : int64s) b is_null =
     let i = ref 0 in
     try
       while !i < n do

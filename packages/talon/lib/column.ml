@@ -393,7 +393,7 @@ let flags c = Option.map Nx.to_array (valid c)
 let is_valid flags i = match flags with None -> true | Some f -> f.(i)
 let int_offsets o = Array.map Int64.to_int (Nx.to_array o)
 
-let bytes_reader r =
+let bytes_reader (r : Strings.bytes) =
   let o = int_offsets (Nx_ragged.offsets r) in
   let a = Bigarray.array1_of_genarray (Nx.to_bigarray (Nx_ragged.values r)) in
   let get i =
@@ -854,7 +854,7 @@ let check_validity validity n =
 
 (* [rows_of offsets child] is the number of rows that [offsets] cut from the
    rows of [child]. *)
-let rows_of offsets child =
+let rows_of (offsets : Nx.int64_t) child =
   let shape = Nx.shape offsets in
   if Array.length shape <> 1 || shape.(0) = 0 then
     refuse "offsets of shape %a, not 1-D with an entry" Nx.pp_shape shape;

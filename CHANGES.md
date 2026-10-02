@@ -6000,6 +6000,9 @@ thread.
 
 ### Talon
 
+- Text reads faster: UTF-8 validation of Parquet and parsed text, and the
+  literal search of `Expr.Str.matches`, `split` and `replace`, scan bytes in C.
+  TPC-H at scale factor 1 runs 1.25× faster, query 13 2.9×.
 - **Breaking:** talon is rewritten, and the previous API (`Col`, `Row`, `Agg`,
   `pp_display`, `to_html` and the old `Talon_csv`) is removed. A `Talon.t` holds
   typed columns in Arrow layouts over nx buffers, with nulls as validity, never
