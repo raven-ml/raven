@@ -1,6 +1,6 @@
 # Structures
 
-A model, an optimizer state or a decoding cache is an ordinary OCaml record of tensors. `Nx.Ptree` lets code that knows nothing about your record walk its tensors: gradients, optimizer updates, checkpoint names, dtype casts and compiled functions all work on it once the record has a `walk`. This page shows how to write that function, how to use the structure it defines, and how to test it.
+A model, an optimizer state or a decoding cache is an ordinary OCaml record of tensors. `Nx.Ptree` lets code that knows nothing about your record walk its tensors: gradients, optimizer updates, saved files, dtype casts and compiled functions all work on it once the record has a `walk`. This page shows how to write that function, how to use the structure it defines, and how to test it.
 
 ## A Record Is One Function
 
@@ -30,7 +30,7 @@ Every other operation of `Nx.Ptree` runs this function, so they all visit the pa
 
 ## Using a Structure
 
-`Nx.Ptree.instantiate` fixes the parameter to tensors and gives a value that transformations, optimizers and checkpoints take:
+`Nx.Ptree.instantiate` fixes the parameter to tensors and gives a value that transformations, optimizers and saving take:
 
 ```ocaml
 let linear = Nx.Ptree.instantiate (module Linear)
@@ -48,7 +48,7 @@ let layer =
 - : (string * int) list = [("b", 2); ("w", 6)]
 ```
 
-A path is a list of segments, `Field name` for a named part and `Index i` for a numbered one. `Path.to_string` joins them with `"."`, which is the name a checkpoint gives the tensor.
+A path is a list of segments, `Field name` for a named part and `Index i` for a numbered one. `Path.to_string` joins them with `"."`, which is the name of the tensor in a saved file (see [Input/Output](04-io.md)).
 
 ## Nesting, Lists and Options
 
@@ -189,7 +189,7 @@ let out =
 
 ## Records of Structures
 
-A record whose names matter, such as a training state saved as one checkpoint, is a module. Its parts often have a structure at one type and no module of their own: an optimizer state over a model (`Vega.adam_ptree mlp`), a cache index, or a list of models. `structure` walks such a part at the cursor's path. The record has no parameter, so its type is `_ t`:
+A record whose names matter, such as a training state saved as one file, is a module. Its parts often have a structure at one type and no module of their own: an optimizer state over a model (`Vega.adam_ptree mlp`), a cache index, or a list of models. `structure` walks such a part at the cursor's path. The record has no parameter, so its type is `_ t`:
 
 ```ocaml
 type train = {

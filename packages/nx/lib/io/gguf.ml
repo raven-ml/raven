@@ -57,8 +57,8 @@ type tensor_info = { dtype : dtype; shape : int array }
 type t = {
   version : int;
   metadata : (string * value) list;
-  tensors : (string, Nx.packed) Hashtbl.t;
-  tensor_infos : (string, tensor_info) Hashtbl.t;
+  tensors : Archive.t;
+  infos : tensor_info Archive.Names.t;
 }
 
 open Error
@@ -307,13 +307,12 @@ let layout name dtype shape =
       if rank > 0 then stored.(rank - 1) <- row_bytes;
       (K Nx_dtype.UInt8, stored, mul name rows row_bytes)
 
-let tensors file ~data_start ~alignment infos =
+let read_tensors file ~data_start ~alignment infos =
   let file_len = B.length file in
-  let tensors = Hashtbl.create (Array.length infos) in
-  let tensor_infos = Hashtbl.create (Array.length infos) in
-  Array.iter
-    (fun (name, dtype, dims, offset) ->
-      if Hashtbl.mem tensors name then fail_msg "tensor %S is named twice" name;
+  Array.fold_left
+    (fun (tensors, infos) (name, dtype, dims, offset) ->
+      if name = "" then failwith "a tensor has an empty name";
+      if Archive.mem name tensors then fail_msg "tensor %S is named twice" name;
       if offset mod alignment <> 0 then
         fail_msg "tensor %S is at offset %d, not a multiple of %d" name offset
           alignment;
@@ -322,10 +321,11 @@ let tensors file ~data_start ~alignment infos =
       if offset > file_len - data_start || len > file_len - data_start - offset
       then fail_msg "the file ends before tensor %S's data" name;
       let off = data_start + offset in
-      Hashtbl.add tensors name (Storage.mapped file kind stored ~off ~len);
-      Hashtbl.add tensor_infos name { dtype; shape })
-    infos;
-  (tensors, tensor_infos)
+      let tensor = Storage.mapped file kind stored ~off ~len in
+      ( Archive.add name tensor tensors,
+        Archive.Names.add name { dtype; shape } infos ))
+    (Archive.empty, Archive.Names.empty)
+    infos
 
 let read file =
   let file_len = B.length file in
@@ -345,8 +345,8 @@ let read file =
   let alignment = alignment metadata in
   let infos = Array.init n_tensors (fun _ -> tensor_info c) in
   let data_start = (c.pos + alignment - 1) / alignment * alignment in
-  let tensors, tensor_infos = tensors file ~data_start ~alignment infos in
-  { version; metadata; tensors; tensor_infos }
+  let tensors, infos = read_tensors file ~data_start ~alignment infos in
+  { version; metadata; tensors; infos }
 
 let load path =
   match B.of_file path with
@@ -355,3 +355,15 @@ let load path =
       try read file with
       | Failure msg -> fail_msg "%s: %s" path msg
       | Sys_error msg -> failwith msg)
+
+(* Contents *)
+
+let version g = g.version
+let metadata g = g.metadata
+let tensors g = g.tensors
+
+let info name g =
+  match Archive.Names.find_opt name g.infos with
+  | Some info -> info
+  | None ->
+      Printf.ksprintf failwith "Nx_io.Gguf.info: %s: no tensor in the file" name

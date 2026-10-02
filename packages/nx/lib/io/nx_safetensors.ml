@@ -74,9 +74,9 @@ let load_safetensors path =
   | Ok file -> (
       try
         let (metadata : Safetensors.metadata), data_start = read_header file in
-        let archive = Hashtbl.create (Array.length metadata.tensors) in
-        Hashtbl.iter
-          (fun name index ->
+        Hashtbl.fold
+          (fun name index archive ->
+            if name = "" then failwith "a tensor has an empty name";
             let info = metadata.tensors.(index) in
             let start, stop = info.data_offsets in
             let len = stop - start in
@@ -87,23 +87,25 @@ let load_safetensors path =
               | F4 | F6_E2M3 | F6_E3M2 -> [| len |]
               | _ -> Array.of_list info.shape
             in
-            Hashtbl.replace archive name
-              (Storage.mapped file kind shape ~off:(data_start + start) ~len))
-          metadata.index_map;
-        archive
+            Archive.add name
+              (Storage.mapped file kind shape ~off:(data_start + start) ~len)
+              archive)
+          metadata.index_map Archive.empty
       with
       | Failure msg -> fail_msg "%s: %s" path msg
       | Sys_error msg -> failwith msg)
 
 (* Saving *)
 
-(* [tensor_data t] is the SafeTensors dtype of [t] and a buffer of its elements'
-   bytes, in row-major order and little-endian, as stored: on a little-endian
-   host, a value with one device's buffer is written from that device, from its
-   own storage when its elements are a contiguous run of it. Any other value, a
-   traced one included, is read to the host. A float's bits are copied, never
-   read as a float. [save_safetensors] claims the buffer while it writes it. *)
-let tensor_data (type a b) (t : (a, b) Nx.t) =
+(* [tensor_data name t] is the SafeTensors dtype of [t] and a buffer of its
+   elements' bytes, in row-major order and little-endian, as stored: on a
+   little-endian host, a value with one device's buffer is written from that
+   device, from its own storage when its elements are a contiguous run of it.
+   Any other value, a traced one included, is read to the host. A float's bits
+   are copied, never read as a float. [save_safetensors] claims the buffer while
+   it writes it. It fails naming the entry [name] if SafeTensors has no dtype
+   for [t]'s. *)
+let tensor_data (type a b) name (t : (a, b) Nx.t) =
   let dtype : Safetensors.dtype =
     match Nx.dtype t with
     | Bool -> BOOL
@@ -122,8 +124,7 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
     | Float32 -> F32
     | Float64 -> F64
     | dtype ->
-        fail_msg "unsupported dtype for safetensors: %s"
-          (Nx_dtype.to_string dtype)
+        fail_msg "%s: SafeTensors has no %s" name (Nx_dtype.to_string dtype)
   in
   let size = Nx.itemsize t in
   if Sys.big_endian && size > 1 then begin
@@ -181,19 +182,14 @@ let write temp header parts =
           (B.view file ~offset:(hlen + off) Nx_dtype.Scalar.UInt8 (B.nbytes src)))
     parts
 
-let save_safetensors ?(overwrite = true) path items =
+let save_safetensors ?(overwrite = true) path archive =
   check_overwrite overwrite path;
-  let names = Hashtbl.create (List.length items) in
-  List.iter
-    (fun (name, _) ->
-      if Hashtbl.mem names name then fail_msg "tensor %S is named twice" name;
-      Hashtbl.add names name ())
-    items;
+  let items = Archive.bindings archive in
   let tensors =
     List.map
       (fun (name, Nx.P arr) ->
         let shape = Array.to_list (Nx.shape arr) in
-        let dtype, src = tensor_data arr in
+        let dtype, src = tensor_data name arr in
         match
           Safetensors.tensor_view_new ~dtype ~shape ~nbytes:(B.nbytes src)
         with

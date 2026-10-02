@@ -1,5 +1,5 @@
-(test
- (name test_io)
+(tests
+ (names test_io test_archive)
  (package nx)
  (libraries
   nx

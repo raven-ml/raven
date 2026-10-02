@@ -47,14 +47,13 @@ let load_npz path =
   wrap_exn @@ fun () ->
   let zi = Zip_archive.open_in path in
   let entries = Zip_archive.npy_entries zi in
-  let archive = Hashtbl.create (List.length entries) in
-  List.iter
-    (fun name ->
-      if Hashtbl.mem archive name then
-        failwith (strf "duplicate NPZ entry %S" name);
-      Hashtbl.add archive name (npy_to_nx (Zip_archive.read_npy zi name)))
-    entries;
-  Ok archive
+  let add archive name =
+    if name = "" then failwith "an NPZ entry has an empty name";
+    if Archive.mem name archive then
+      failwith (strf "duplicate NPZ entry %S" name);
+    Archive.add name (npy_to_nx (Zip_archive.read_npy zi name)) archive
+  in
+  Ok (List.fold_left add Archive.empty entries)
 
 let load_npz_entry ~name path =
   wrap_exn @@ fun () ->
@@ -63,15 +62,18 @@ let load_npz_entry ~name path =
   | packed -> Ok (npy_to_nx packed)
   | exception Not_found -> Error (Missing_entry name)
 
-let save_npz ?(overwrite = true) path items =
+(* [add_npy zo name t] adds [t] to [zo] as entry [name], naming [name] if NPY
+   has no dtype for [t]'s. *)
+let add_npy zo name (Nx.P t) =
+  try with_npy ~by:"Nx_io.save_npz" t (Zip_archive.add_npy zo name)
+  with Invalid_argument msg -> failwith (strf "%s: %s" name msg)
+
+let save_npz ?(overwrite = true) path archive =
   wrap_exn @@ fun () ->
   let write ~exclusive output =
     let zo = Zip_archive.open_out ~exclusive output in
     try
-      List.iter
-        (fun (name, Nx.P nx) ->
-          with_npy ~by:"Nx_io.save_npz" nx (Zip_archive.add_npy zo name))
-        items;
+      List.iter (fun (name, t) -> add_npy zo name t) (Archive.bindings archive);
       Zip_archive.close_out zo
     with exn ->
       Zip_archive.abort_out zo;

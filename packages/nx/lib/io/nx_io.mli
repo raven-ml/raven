@@ -6,13 +6,134 @@
 (** Tensor I/O.
 
     Load and save {!Nx} tensors in common formats: images (PNG and JPEG), NumPy
-    ([.npy] and [.npz]), SafeTensors, and delimited text, and load GGUF. *)
+    ([.npy] and [.npz]), SafeTensors, and delimited text, and load GGUF. A file
+    of named tensors is read and written as an {!Archive.t}, and every format's
+    functions are named after it.
+
+    See doc/04-io.md for saving and loading structured values. *)
 
 (** {1:archives Archives} *)
 
-type archive = (string, Nx.packed) Hashtbl.t
-(** The type for named tensors, as {!load_npz}, {!load_safetensors} and
-    {!load_gguf} return them. Read an entry with {!Nx.unpack}. *)
+(** Archives of named tensors.
+
+    An archive is an immutable collection of tensors keyed by distinct,
+    non-empty names. Each format of named tensors reads and writes one:
+    {!load_safetensors} and {!save_safetensors}, {!load_npz} and {!save_npz},
+    and the tensors of {!load_gguf}.
+
+    A value enters and leaves an archive through its structure ({!Nx.Ptree.t}).
+    {!of_value} names each tensor by its path, and {!to_value} reads a value
+    back into the shape of one the program already has:
+
+    {[
+    Nx_io.save_safetensors path (Nx_io.Archive.of_value train state);
+    let state =
+      Nx_io.Archive.to_value train ~like:state (Nx_io.load_safetensors path)
+    ]}
+
+    A file written elsewhere has its own names and layouts. Its importer asks
+    for each entry by name, shape and dtype with {!tensor} and {!float}, and
+    rearranges it with nx:
+
+    {[
+    let linear a ~inputs ~outputs name =
+      (* The file stores the weight as [outputs; inputs]. *)
+      Nx.matrix_transpose
+        (Nx_io.Archive.float ~shape:[| outputs; inputs |] Nx.float32 name a)
+    ]}
+
+    Asking for an entry reads none of its bytes: it is returned as stored, and
+    an archive a format loads holds its entries where they lie in the file.
+    Bytes are never reinterpreted: only {!float} converts, and a block-quantised
+    or sub-byte entry is read as [uint8] with {!tensor}.
+
+    An archive is input data, so a mismatch between an archive and what is asked
+    of it raises [Failure], naming the entry. *)
+module Archive : sig
+  type t
+  (** The type for archives: tensors keyed by distinct, non-empty names. *)
+
+  (** {1:constructors Constructors} *)
+
+  val of_list : (string * Nx.packed) list -> t
+  (** [of_list entries] is the archive of [entries].
+
+      Raises [Invalid_argument] if a name is empty or given twice. *)
+
+  val union : t list -> t
+  (** [union ts] is the archive of the entries of all [ts].
+
+      Raises [Invalid_argument] if a name is in two of [ts]. *)
+
+  (** {1:queries Queries} *)
+
+  val names : t -> string list
+  (** [names a] is the names of [a]'s entries, sorted. *)
+
+  val find : string -> t -> Nx.packed option
+  (** [find name a] is [a]'s entry [name], if any. *)
+
+  val tensor :
+    shape:int array -> ('a, 'b) Nx.dtype -> string -> t -> ('a, 'b) Nx.t
+  (** [tensor ~shape dtype name a] is [a]'s entry [name], as stored.
+
+      Raises [Failure] naming the entry if [a] has no entry [name], or if its
+      shape is not [shape] or its dtype is not [dtype], as in
+      ["Nx_io.Archive.tensor: h.0.w: shape [3] in the archive, [2; 3] asked
+       for"]. *)
+
+  val float :
+    shape:int array -> (float, 'b) Nx.dtype -> string -> t -> (float, 'b) Nx.t
+  (** [float ~shape dtype name a] is [a]'s entry [name] at [dtype]: the entry as
+      stored when its dtype is [dtype], and otherwise its cast, which allocates.
+      Both dtypes are float16, bfloat16, float32 or float64. An importer that
+      ties two weights binds the result once and uses it twice.
+
+      Raises [Invalid_argument] if [dtype] is not one of the four. Raises
+      [Failure] naming the entry if [a] has no entry [name], if its shape is not
+      [shape], or if its dtype is not one of the four. An 8-bit float entry is
+      read with {!tensor}, since its scales are other entries. *)
+
+  (** {1:values Values} *)
+
+  val of_value : 's Nx.Ptree.t -> 's -> t
+  (** [of_value s x] has one entry for each tensor [s] walks in [x], fixed
+      tensors included, named by its path ({!Nx.Ptree.Path.to_string}). The
+      entries are [x]'s tensors; nothing is copied. A section of a file is a
+      value under {!Nx.Ptree.field}, and {!union} puts sections together.
+
+      Raises [Invalid_argument] if two tensors of [x] have one name, as in
+      ["Nx_io.Archive.of_value: w: two leaves have this name"], or if a tensor
+      is at the root, whose name is empty. *)
+
+  val to_value : 's Nx.Ptree.t -> like:'s -> t -> 's
+  (** [to_value s ~like a] is [like] with each tensor replaced by [a]'s entry of
+      its name, as stored. [like] gives the structure, the dtypes and the
+      shapes, and its tensors are discarded: a value is read back with [like]'s
+      list lengths, option presences and cases. For values [x] and [y] with
+      equal {!Nx.Ptree.visits}, dtypes and shapes,
+      [to_value s ~like:y (of_value s x)] is [x].
+
+      [s] owns the names under its {!Nx.Ptree.prefix}, every name when that is
+      the root. Raises [Failure], naming the entry, before any entry is read:
+      - if an entry [like] names is missing, as in
+        ["Nx_io.Archive.to_value: model.l1.w: no entry in the archive, a leaf in
+         the value"];
+      - if its shape or dtype differs, as in
+        ["Nx_io.Archive.to_value: model.l1.w: shape [3] in the archive, [2; 3]
+         in the value"];
+      - if an entry under the prefix is named by no tensor of [like], as in
+        ["Nx_io.Archive.to_value: blocks.12.w: an entry in the archive, no leaf
+         in the value"]: a model of 12 blocks refuses a file of 24.
+
+      Entries outside the prefix are ignored, so one file holds several
+      sections. Nothing is converted: a value that states another dtype than the
+      archive fails instead of narrowing its state, and {!float} converts by
+      name.
+
+      Raises [Invalid_argument] as {!of_value} does if [like]'s names are not
+      distinct and non-empty. *)
+end
 
 (** {1:image Images} *)
 
@@ -87,7 +208,7 @@ val save_npy : ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
       if [path] cannot be written, already exists when [overwrite] is [false],
       or [t]'s dtype has no standard NPY representation. *)
 
-val load_npz : string -> archive
+val load_npz : string -> Archive.t
 (** [load_npz path] loads all tensors from an [.npz] archive.
 
     The keys are entry names without the [.npy] suffix.
@@ -104,18 +225,18 @@ val load_npz_entry : name:string -> string -> Nx.packed
       if [path] cannot be read, [name] is missing, or the archive or entry is
       malformed. *)
 
-val save_npz : ?overwrite:bool -> string -> (string * Nx.packed) list -> unit
-(** [save_npz ?overwrite path entries] writes named tensors to an [.npz]
-    archive.
+val save_npz : ?overwrite:bool -> string -> Archive.t -> unit
+(** [save_npz ?overwrite path a] writes [a]'s tensors to an [.npz] archive.
 
-    Names must be unique, valid UTF-8, relative, and free of empty, [.], and
-    [..] path components. Compression is selected independently for each entry.
+    Names must be valid UTF-8, relative, and free of empty, [.], and [..] path
+    components. Compression is selected independently for each entry.
     [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
     exist.
 
     @raise Failure
-      if a name is invalid or duplicated, a tensor dtype has no standard NPY
-      representation, or [path] cannot be written. *)
+      if a name is invalid, a tensor's dtype has no standard NPY representation
+      (bfloat16, the 8-bit floats, int4 and uint4), naming the entry, or [path]
+      cannot be written. *)
 
 val gunzip : src:string -> dst:string -> unit
 (** [gunzip ~src ~dst] decompresses a gzip file to [dst]. Existing [dst] is
@@ -129,7 +250,7 @@ val gunzip : src:string -> dst:string -> unit
 
 (** {1:safetensors SafeTensors} *)
 
-val load_safetensors : string -> archive
+val load_safetensors : string -> Archive.t
 (** [load_safetensors path] is the tensors of the SafeTensors file [path], by
     name.
 
@@ -162,14 +283,13 @@ val load_safetensors : string -> archive
 
     @raise Failure
       naming [path], if it is not a regular file that can be read, if its header
-      is malformed, longer than 100 MB or names a tensor twice, or if the file's
-      length differs from the one its header describes, as a partial download's
-      does. *)
+      is malformed, longer than 100 MB, names a tensor twice or gives a tensor
+      an empty name, or if the file's length differs from the one its header
+      describes, as a partial download's does. *)
 
-val save_safetensors :
-  ?overwrite:bool -> string -> (string * Nx.packed) list -> unit
-(** [save_safetensors ?overwrite path entries] writes named tensors to a
-    SafeTensors file.
+val save_safetensors : ?overwrite:bool -> string -> Archive.t -> unit
+(** [save_safetensors ?overwrite path a] writes [a]'s tensors to a SafeTensors
+    file.
 
     The tensors are written to a temporary file in [path]'s directory, which is
     synced to disk and then renamed to [path]: a reader sees the previous file
@@ -184,10 +304,10 @@ val save_safetensors :
     exist.
 
     @raise Failure
-      if [path] cannot be written, a name is given twice, or a tensor's dtype
-      has no SafeTensors equivalent (complex and int4 dtypes). If the rename is
-      refused twice, the message names the temporary file, which is kept and
-      holds [entries]. *)
+      if [path] cannot be written, or if a tensor's dtype has no SafeTensors
+      equivalent (the complex dtypes, int4 and uint4), naming the entry. If the
+      rename is refused twice, the message names the temporary file, which is
+      kept and holds [a]'s tensors. *)
 
 (** {1:gguf GGUF} *)
 
@@ -260,14 +380,22 @@ module Gguf : sig
   }
   (** The type for a tensor's description in the file. *)
 
-  type t = {
-    version : int;  (** The format version, [2] or [3]. *)
-    metadata : (string * value) list;  (** The key-values, in file order. *)
-    tensors : archive;  (** The tensors, by name. *)
-    tensor_infos : (string, tensor_info) Hashtbl.t;
-        (** The description of each tensor of [tensors], by name. *)
-  }
+  type t
   (** The type for the contents of a GGUF file. *)
+
+  val version : t -> int
+  (** [version g] is [g]'s format version, [2] or [3]. *)
+
+  val metadata : t -> (string * value) list
+  (** [metadata g] is [g]'s key-values, in file order. *)
+
+  val tensors : t -> Archive.t
+  (** [tensors g] is [g]'s tensors, by name. *)
+
+  val info : string -> t -> tensor_info
+  (** [info name g] is the description of [g]'s tensor [name].
+
+      Raises [Failure] if [g] has no tensor [name]. *)
 end
 
 val load_gguf : string -> Gguf.t
@@ -303,9 +431,10 @@ val load_gguf : string -> Gguf.t
       naming [path], if it is not a regular file that can be read, if it does
       not start with the GGUF magic, if its version is not 2 or 3 or its byte
       order is big-endian, if its header is malformed or cut short, names a key
-      or a tensor twice, or gives a tensor a type this function does not know, a
-      row that is not a whole number of blocks or a position that is not a
-      multiple of the alignment, or if the file ends before a tensor's data. *)
+      or a tensor twice, or gives a tensor an empty name, a type this function
+      does not know, a row that is not a whole number of blocks or a position
+      that is not a multiple of the alignment, or if the file ends before a
+      tensor's data. *)
 
 (** {1:text Text format} *)
 

@@ -51,7 +51,13 @@ let unix_error err f =
 
 (* An archive compares as a set of named tensors. *)
 let entries = slist (pair string packed) (fun (a, _) (b, _) -> compare a b)
-let listed archive = List.of_seq (Hashtbl.to_seq archive)
+
+let listed a =
+  List.map
+    (fun name -> (name, Option.get (Nx_io.Archive.find name a)))
+    (Nx_io.Archive.names a)
+
+let find a name = Option.get (Nx_io.Archive.find name a)
 
 let round_trips ~save ~load cases =
   List.map
@@ -92,7 +98,7 @@ let npy_cases =
   (bool :: ints) @ [ float16; float32; float64; complex64; complex128 ]
 
 let save_npy path (Nx.P t) = Nx_io.save_npy path t
-let save_npz path l = Nx_io.save_npz path l
+let save_npz path l = Nx_io.save_npz path (Nx_io.Archive.of_list l)
 
 let npy =
   let loads name expected =
@@ -153,7 +159,7 @@ let npz =
       archive_round_trip ~save:save_npz names npy_cases ~load:(fun path ->
           let archive = Nx_io.load_npz path in
           let entry name p = equal packed p (Nx_io.load_npz_entry ~name path) in
-          Hashtbl.iter entry archive;
+          List.iter (fun (name, p) -> entry name p) (listed archive);
           fails (fun () -> Nx_io.load_npz_entry ~name:"absent" path);
           archive);
       test "an archive written by numpy loads" (fun () ->
@@ -164,7 +170,7 @@ let npz =
             ]
             (listed (Nx_io.load_npz (fixture "archive.npz"))));
       cases ~name:Fun.id "an invalid name is refused"
-        [ ""; "/w"; "a//b"; "./w"; "a/../b"; "\xff" ] (fun name ->
+        [ "/w"; "a//b"; "./w"; "a/../b"; "\xff" ] (fun name ->
           fails (fun () -> save_npz (temp_file ()) [ (name, one) ]));
       test "an incompressible entry is stored and a compressible one deflated"
         (fun () ->
@@ -264,12 +270,16 @@ let safetensors_cases =
   (bool :: ints)
   @ [ float16; bfloat16; float32; float64; float8_e4m3; float8_e5m2 ]
 
-let save_safetensors path p = Nx_io.save_safetensors path [ ("t", p) ]
+let save_safetensors path p =
+  Nx_io.save_safetensors path (Nx_io.Archive.of_list [ ("t", p) ])
+
+let save_safetensors_list path l =
+  Nx_io.save_safetensors path (Nx_io.Archive.of_list l)
 
 (* Not inlined, so that once it returns nothing but its result keeps the file
    open. *)
 let[@inline never] load_entry path name =
-  Hashtbl.find (Nx_io.load_safetensors path) name
+  find (Nx_io.load_safetensors path) name
 
 let with_header header =
   let b = Bytes.create 8 in
@@ -336,7 +346,7 @@ let loads_typed_entries path =
       equal ~msg:name
         (triple string (array int) string)
         (dtype, shape, data)
-        (storage (Hashtbl.find archive name)))
+        (storage (find archive name)))
     typed_entries
 
 let payload path =
@@ -371,8 +381,7 @@ let safetensors =
         (round_trips ~save:save_safetensors
            ~load:(fun path -> load_entry path "t")
            safetensors_cases);
-      archive_round_trip
-        ~save:(fun path l -> Nx_io.save_safetensors path l)
+      archive_round_trip ~save:save_safetensors_list
         ~load:Nx_io.load_safetensors
         ("w" :: "model.layers.0.weight" :: json_names)
         safetensors_cases;
@@ -388,7 +397,7 @@ let safetensors =
           let (Nx.P t as p) = load_entry path entry in
           equal (array int) bits (Nx.to_array (Nx.bitcast Nx.uint16 t));
           let again = temp_file () in
-          Nx_io.save_safetensors again [ (entry, p) ];
+          save_safetensors_list again [ (entry, p) ];
           equal string (payload path) (payload again));
       test "a save that cannot read its traced tensor names itself" (fun () ->
           let module N = struct
@@ -408,7 +417,7 @@ let safetensors =
           raises_match (Exn.invalid_arg ~substring:"Nx_io.save_safetensors")
             (fun () ->
               Nx.Op.intercept refusing (fun () ->
-                  Nx_io.save_safetensors path [ ("t", Nx.P t) ])));
+                  save_safetensors path (Nx.P t))));
       test "a header's JSON string escapes are decoded" (fun () ->
           let name = "aé🚀\"\\/\b\012\r\n\t" in
           let p = Nx.P (Nx.create Nx.uint8 [| 1 |] [| 42 |]) in
@@ -445,7 +454,7 @@ let safetensors =
               reads (fun () -> Nx_io.load_safetensors path)
             in
             equal ~msg:"the header" int header bytes;
-            let (Nx.P t) = Hashtbl.find archive "u32" in
+            let (Nx.P t) = find archive "u32" in
             snd (reads (fun () -> Nx.to_array (Nx.bitcast Nx.int32 t)))
           in
           equal ~msg:"an aligned entry" int 0 (used 0);
@@ -482,6 +491,8 @@ let safetensors =
            ( "a header that is no JSON",
              contents (with_header "{\"w\":" ^ "\000") );
            ("a name twice", contents (raw_safetensors twice));
+           ( "an empty name",
+             contents (raw_safetensors [ ("", "U8", [ 1 ], "a") ]) );
            ("a directory", fun () -> temp_dir ());
            ("a FIFO", fifo);
          ]
@@ -697,16 +708,16 @@ let tensor_info =
 let loads_gguf_tensors (g : Gguf.t) =
   let names = List.map (fun (n, _, _, _, _, _, _) -> n) gguf_tensors in
   equal ~msg:"names" (slist string compare) names
-    (List.map fst (listed g.tensors));
+    (Nx_io.Archive.names (Gguf.tensors g));
   List.iter
     (fun (name, _, shape, data, dtype, stored, ty) ->
       equal ~msg:name
         (triple string (array int) string)
         (dtype, stored, data)
-        (storage (Hashtbl.find g.tensors name));
+        (storage (find (Gguf.tensors g) name));
       equal ~msg:name tensor_info
         { dtype = ty; shape = Array.of_list shape }
-        (Hashtbl.find g.tensor_infos name))
+        (Gguf.info name g))
     gguf_tensors
 
 (* The GGUF files in the caches of the Hugging Face hub and llama.cpp. *)
@@ -738,14 +749,14 @@ let gguf_group =
     List.filter_map
       (fun (name, Nx.P t) ->
         if Nx.Placement.equal disk (Nx.placement t) then None else Some name)
-      (listed g.tensors)
+      (listed (Gguf.tensors g))
   in
   group "gguf"
     [
       test "metadata of every value type loads as it was written" (fun () ->
           let g = Nx_io.load_gguf (file "" (gguf_file ())) in
-          equal ~msg:"version" int 3 g.version;
-          equal gguf_metadata metadata g.metadata);
+          equal ~msg:"version" int 3 (Gguf.version g);
+          equal gguf_metadata metadata (Gguf.metadata g));
       cases
         ~name:(fun (v, a, s) ->
           Printf.sprintf "version %d, alignment %s, shift %d" v
@@ -764,7 +775,7 @@ let gguf_group =
           let g =
             Nx_io.load_gguf (file "" (gguf_file ~version ?alignment ~shift ()))
           in
-          equal ~msg:"version" int version g.version;
+          equal ~msg:"version" int version (Gguf.version g);
           loads_gguf_tensors g;
           equal ~msg:"off the disk" (list string) [] (off_disk g));
       test "every proper prefix of a file fails, naming it" (fun () ->
@@ -795,6 +806,7 @@ let gguf_group =
            ("a tensor count's high bit", fun () -> file "" (count (-1)));
            ("a key twice", raw [ kv "k" (Uint8 1); kv "k" (Uint8 2) ] one);
            ("a tensor twice", raw [] (one @ one));
+           ("a tensor with an empty name", raw [] [ ("", 0, [ 1 ], "abcd") ]);
            ("a value type unknown", raw [ gstring "k" ^ le 13 4 ^ "\000" ] one);
            ("a bool of 2", raw [ gstring "k" ^ le 7 4 ^ "\002" ] one);
            ( "a string past the end",
@@ -824,24 +836,23 @@ let gguf_group =
           | None -> skip ~reason:"no GGUF file in the model caches" ()
           | Some path ->
               let g = Nx_io.load_gguf path in
-              (match List.assoc_opt "general.architecture" g.metadata with
+              (match
+                 List.assoc_opt "general.architecture" (Gguf.metadata g)
+               with
               | Some (String _) -> ()
               | v ->
                   failf "general.architecture is %a"
                     (Format.pp_print_option pp_value)
                     v);
-              equal ~msg:"described tensors" (slist string compare)
-                (List.map fst (listed g.tensors))
-                (List.of_seq (Hashtbl.to_seq_keys g.tensor_infos));
               equal ~msg:"off the disk" (list string) [] (off_disk g);
-              Hashtbl.iter
-                (fun name (i : Gguf.tensor_info) ->
-                  let (Nx.P t) = Hashtbl.find g.tensors name in
+              List.iter
+                (fun (name, Nx.P t) ->
+                  let i = Gguf.info name g in
                   let n = Array.length i.shape in
                   equal ~msg:name (array int)
                     (Array.sub i.shape 0 (n - 1))
                     (Array.sub (Nx.shape t) 0 (n - 1)))
-                g.tensor_infos);
+                (listed (Gguf.tensors g)));
     ]
 
 (* Text *)
@@ -1241,11 +1252,13 @@ let formats =
       (fun ?overwrite p -> Nx_io.save_npy ?overwrite p v)
       (fun p -> ignore (Nx_io.load_npy p));
     format "npz"
-      (fun ?overwrite p -> Nx_io.save_npz ?overwrite p [ ("v", Nx.P v) ])
+      (fun ?overwrite p ->
+        Nx_io.save_npz ?overwrite p (Nx_io.Archive.of_list [ ("v", Nx.P v) ]))
       (fun p -> ignore (Nx_io.load_npz p));
     format "safetensors"
       (fun ?overwrite p ->
-        Nx_io.save_safetensors ?overwrite p [ ("v", Nx.P v) ])
+        Nx_io.save_safetensors ?overwrite p
+          (Nx_io.Archive.of_list [ ("v", Nx.P v) ]))
       (fun p -> ignore (Nx_io.load_safetensors p));
     format ~overwrite:false ~binary:false "text"
       (fun ?overwrite:_ p -> Nx_io.save_txt p v)
@@ -1268,11 +1281,11 @@ let refusals =
   and f8 = [ z Nx.float8_e4m3; z Nx.float8_e5m2 ] in
   let complex = [ z Nx.complex64; z Nx.complex128 ] in
   let int4 = [ z Nx.int4; z Nx.uint4 ] in
-  let saves save p =
+  let saves ?naming save p =
     let dir = temp_dir () in
     let path = Filename.concat dir "old" in
     write path "old";
-    fails (fun () -> save path p);
+    fails ?naming (fun () -> save path p);
     equal ~msg:"the file" string "old" (read path);
     equal ~msg:"the directory" (array string) [| "old" |] (Sys.readdir dir)
   in
@@ -1289,7 +1302,11 @@ let refusals =
         dtypes)
     [
       ("npy", bf16 @ f8 @ int4, saves save_npy);
-      ("safetensors", complex @ int4, saves save_safetensors);
+      ( "npz",
+        bf16 @ f8 @ int4,
+        saves ~naming:"entry w" (fun path p -> save_npz path [ ("entry w", p) ])
+      );
+      ("safetensors", complex @ int4, saves ~naming:"t" save_safetensors);
       ("text", f8 @ complex @ int4, text);
     ]
 
@@ -1331,14 +1348,6 @@ let every_format =
       cases ~name:fst
         "a dtype the format does not hold is refused, the previous file kept"
         refusals (fun (_, check) -> check ());
-      cases ~name:fst "an archive refuses a name given twice"
-        [
-          ("npz", save_npz);
-          ("safetensors", fun path l -> Nx_io.save_safetensors path l);
-        ]
-        (fun (_, save) ->
-          let p = Nx.P (Nx.zeros Nx.int8 [| 1 |]) in
-          fails (fun () -> save (temp_file ()) [ ("w", p); ("w", p) ]));
     ]
 
 (* Malformed streams *)

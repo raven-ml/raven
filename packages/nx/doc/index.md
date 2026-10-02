@@ -37,6 +37,6 @@ let () =
 - [Getting Started](01-getting-started.md) — installation, dtypes, slicing, broadcasting
 - [Array Operations](02-array-operations.md) — reshaping, views, joining, splitting
 - [Linear Algebra](03-linear-algebra.md) — decompositions, solvers, FFT
-- [Input/Output](04-io.md) — images, npy, npz files
+- [Input/Output](04-io.md) — images, NumPy, SafeTensors and GGUF files, and saving and loading values
 - [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference
-- [Structures](06-structures.md) — records of tensors that transformations, optimizers and checkpoints walk
+- [Structures](06-structures.md) — records of tensors that transformations, optimizers and saving walk

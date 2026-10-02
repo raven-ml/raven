@@ -3046,8 +3046,20 @@ thread.
 
 ### Nx
 
+- **Breaking:** files of named tensors are read and written as
+  `Nx_io.Archive.t`, an immutable collection with distinct, non-empty names,
+  in place of the mutable `Nx_io.archive` table. `load_npz`,
+  `load_safetensors` and `Nx_io.Gguf.tensors` return one, and `save_npz` and
+  `save_safetensors` take one; `Archive.of_list` and `union` build one.
+  `Nx_io.Gguf.t` is abstract: `Gguf.info` replaces `tensor_infos`.
+- Add `Nx_io.Archive.of_value` and `to_value`, which save and read back a
+  value through its `Nx.Ptree.t`. Reading back fails, naming the entry, on a
+  missing entry, another dtype or shape, or an entry under the structure's
+  fields that no tensor names, so a 12-block model refuses a 24-block file.
+  `Archive.tensor` and `float` read one entry by name; only `float` converts.
 - Add `Nx.Ptree.field`, which puts a structure under a name, and
   `Nx.Ptree.prefix`, the path a structure's fields put it under.
+- `save_safetensors` and `save_npz` name the entry whose dtype they refuse.
 - `Nx_quant.apply ~ids` with at least twice as many positions as experts sorts
   them by expert and multiplies each expert once per pair of its positions,
   where it read every expert's weights once per position. A prompt's compiled

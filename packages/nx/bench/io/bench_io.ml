@@ -111,13 +111,17 @@ let jpeg_input = temporary ".jpg"
 let jpeg_output = temporary ".jpg"
 let gzip_input = temporary ".gz"
 let gzip_output = temporary ".raw"
+let archive name t = Nx_io.Archive.of_list [ (name, Nx.P t) ]
+let structured_archive = archive "structured" structured
+let random_archive = archive "random" random
+let weights_archive = archive "weights" weights
 
 let () =
   Nx_io.save_npy npy_input structured;
-  Nx_io.save_npz npz_deflate_input [ ("structured", Nx.P structured) ];
-  Nx_io.save_npz npz_store_input [ ("random", Nx.P random) ];
-  Nx_io.save_safetensors safetensors_input [ ("structured", Nx.P structured) ];
-  Nx_io.save_safetensors weights_input [ ("weights", Nx.P weights) ];
+  Nx_io.save_npz npz_deflate_input structured_archive;
+  Nx_io.save_npz npz_store_input random_archive;
+  Nx_io.save_safetensors safetensors_input structured_archive;
+  Nx_io.save_safetensors weights_input weights_archive;
   Nx_io.save_image png_input image;
   Nx_io.save_image jpeg_input image;
   write_file gzip_input (stored_gzip (String.make (1024 * 1024) '\x5a'))
@@ -138,24 +142,23 @@ let benchmarks =
         Thumper.bench "Load NPZ Store 1 MiB u8" (fun () ->
             Nx_io.load_npz npz_store_input);
         Thumper.bench "Save NPZ adaptive 1 MiB u8" (fun () ->
-            Nx_io.save_npz npz_output [ ("random", Nx.P random) ]);
+            Nx_io.save_npz npz_output random_archive);
         Thumper.bench "Save NPZ Deflate 1 MiB f32" (fun () ->
-            Nx_io.save_npz npz_deflate_output
-              [ ("structured", Nx.P structured) ]);
+            Nx_io.save_npz npz_deflate_output structured_archive);
       ];
     Thumper.group "safetensors"
       [
         Thumper.bench "Load SafeTensors 1 MiB f32" (fun () ->
             Nx_io.load_safetensors safetensors_input);
         Thumper.bench "Save SafeTensors 1 MiB f32" (fun () ->
-            Nx_io.save_safetensors safetensors_output
-              [ ("structured", Nx.P structured) ]);
+            Nx_io.save_safetensors safetensors_output structured_archive);
         Thumper.bench "Load and sum SafeTensors 64 MiB f32" (fun () ->
             Nx.sum
-              (Nx.unpack Nx.float32
-                 (Hashtbl.find (Nx_io.load_safetensors weights_input) "weights")));
+              (Nx_io.Archive.tensor ~shape:(Nx.shape weights) Nx.float32
+                 "weights"
+                 (Nx_io.load_safetensors weights_input)));
         Thumper.bench "Save SafeTensors 64 MiB f32" (fun () ->
-            Nx_io.save_safetensors weights_output [ ("weights", Nx.P weights) ]);
+            Nx_io.save_safetensors weights_output weights_archive);
       ];
     Thumper.group "png"
       [

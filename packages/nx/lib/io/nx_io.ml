@@ -10,7 +10,7 @@ let strf = Printf.sprintf
 let err_unsupported_ext ext = strf "unsupported image format: %s" ext
 let err_bad_dims n s = strf "expected 2 or 3 dimensions, got %d (%s)" n s
 
-type archive = (string, Nx.packed) Hashtbl.t
+module Archive = Archive
 
 (* Result unwrapping *)
 
