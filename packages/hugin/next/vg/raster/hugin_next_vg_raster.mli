@@ -41,7 +41,7 @@
       its edges are not antialiased. Where an image is shown smaller than its
       pixels, a pixel averages the image pixels under [k] by [k] points spread
       evenly over its square, [k] being the ratio of image pixels to device
-      pixels rounded up, at most [4].
+      pixels rounded up, at most {!image_samples}.
     - An {{!Hugin_next_vg.Picture.opacity}opacity} is drawn into a layer of its
       own, then composited as one primitive.
     - The instances of a {{!Hugin_next_vg.Picture.stamp}stamp} are placed at
@@ -52,6 +52,12 @@
     - Tags are ignored. *)
 
 (** {1:render Rendering} *)
+
+val image_samples : int
+(** [image_samples] is [4], the most points per axis that a pixel averages an
+    image shown smaller than its pixels at: the image pixels under
+    [(p + (i + 0.5) / 4)], for device pixel [p] and [i] in \[[0];[3]\], along
+    each axis ({!section-accuracy}). *)
 
 val render : density:float -> Hugin_next_vg.Renderable.t -> Nx.uint8_t
 (** [render ~density r] is [r] drawn as a [[|h; w; 4|]] tensor of RGBA pixels

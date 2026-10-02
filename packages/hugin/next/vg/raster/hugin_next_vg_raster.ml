@@ -74,12 +74,14 @@ let glyph_map m at run i =
 
 (* Images *)
 
+let image_samples = 4
+
 (* [samples clip m box pixels] is the window [(x0, y0, w, h)] of the device
    pixels within [clip] that the image [pixels] over [box], mapped through [m],
    reaches, and the premultiplied colour of each, four floats in \[0;255\] per
    pixel, row by row. A pixel takes the image pixel under its centre, or, where
-   the image is shown smaller than its pixels, the average of up to [4] by [4]
-   samples. *)
+   the image is shown smaller than its pixels, the average of up to
+   [image_samples] by [image_samples] samples. *)
 let samples (clip : Surface.clip) m box pixels =
   let shape = Nx.shape pixels in
   let rows = shape.(0) and cols = shape.(1) and chans = shape.(2) in
@@ -124,7 +126,9 @@ let samples (clip : Surface.clip) m box pixels =
           (float cols /. Float.max 1. shown_w)
           (float rows /. Float.max 1. shown_h)
       in
-      let k = Int.max 1 (Int.min 4 (int_of_float (Float.ceil ratio))) in
+      let k =
+        Int.max 1 (Int.min image_samples (int_of_float (Float.ceil ratio)))
+      in
       let n = float (k * k) in
       let buf = Array.make (w * h * 4) 0. in
       let get i = float (Bigarray.Array1.unsafe_get data i) in

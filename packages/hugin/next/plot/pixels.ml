@@ -10,12 +10,13 @@ module Picture = Hugin_next_vg.Picture
 
 type plan = { window : Box2.t; rows : int array; cols : int array }
 
-(* The raster renderer shows an image smaller than its cells by averaging 4 by 4
-   samples per device pixel, at [(p + (i + 0.5) / 4)] for pixel [p] and sample
-   [i], each reading the cell under it. A gathered image holds exactly those
-   cells, one per sample, over the device pixels the box reaches, so that it is
-   shown at 4 cells per pixel and each sample reads its own. *)
-let samples = 4
+(* The raster renderer shows an image smaller than its cells by averaging
+   [samples] by [samples] points per device pixel, at [(p + (i + 0.5) /
+   samples)] for pixel [p] and sample [i], each reading the cell under it. A
+   gathered image holds exactly those cells, one per sample, over the device
+   pixels the box reaches, so that it is shown at [samples] cells per pixel and
+   each sample reads its own. *)
+let samples = Hugin_next_vg_raster.image_samples
 
 let sampled ~density lo hi n =
   let p0 = Float.to_int (Float.floor (lo *. density))
