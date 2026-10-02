@@ -865,7 +865,7 @@ let guides =
               label (text "1") [(150.662, 74.5996) (154.323, 85.4893)]
               label (text "4") [(150.662, 14.5996) (156.476, 25.4893)]
             ticks
-              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.25 0.5 0.75))
+              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.5))
               "y" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
               "color" categorical (ticks (0.25 "a") (0.75 "b"))
               "color" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
@@ -937,7 +937,7 @@ let guides =
               entry 0.25 [(31.814, 20.4893) (41.814, 30.4893)] (text "a") [(44.314, 20.0444) (49.3677, 30.9341)]
               entry 0.75 [(31.814, 31.3789) (41.814, 41.3789)] (text "b") [(44.314, 30.9341) (49.8247, 41.8237)]
             ticks
-              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.25 0.5 0.75))
+              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.5))
               "y" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
               "color" categorical (ticks (0.25 "a") (0.75 "b"))
               "color" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
@@ -959,7 +959,7 @@ let guides =
               entry 0.25 [(11.814, 66.5337) (21.814, 76.5337)] (text "a") [(24.314, 66.0889) (29.3677, 76.9785)]
               entry 0.75 [(34.8247, 66.5337) (44.8247, 76.5337)] (text "b") [(47.3247, 66.0889) (52.8354, 76.9785)]
             ticks
-              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.25 0.5 0.75))
+              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.5))
               "y" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
               "color" categorical (ticks (0.25 "a") (0.75 "b"))
               "color" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
@@ -981,7 +981,7 @@ let guides =
               label (text "1") [(9.98364, 158.423) (13.6443, 169.313)]
               label (text "4") [(88.907, 158.423) (94.7209, 169.313)]
             ticks
-              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.25 0.5 0.75))
+              "x" quantitative (ticks (0 "0") (1 "4") (minor 0.5))
               "y" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))
               "color" categorical (ticks (0.25 "a") (0.75 "b"))
               "color" quantitative (ticks (0 "1") (1 "4") (minor 0.333333 0.666667))

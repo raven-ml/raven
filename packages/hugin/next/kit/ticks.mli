@@ -99,14 +99,14 @@ val of_values :
     these families, each with a skip [j >= 1] that keeps every [j]th value, from
     an offset [r] in \[[0];[j - 1]\]:
     - {b Decimal steps}, on linear, pow, custom, symlog and log scales: the
-      multiples inside the domain of a step [q × 10^z], for [q] in [1], [5],
-      [2], [2.5], [4] and [3], in this order of preference, and an integer [z].
-      A multiple is the float nearest its integer index times the step, as nice
-      domains compute them ({!Scale.section-nice}), so [3 × 0.1] is [0.3]. Steps
-      below a 32nd of the distance from each end of the domain to the next float
-      towards zero are left out. A step finer than the floats gives ticks at the
-      floats its multiples round to, labelled by the decimals of those floats:
-      on \[[1e17];[1e17 + 32]\], whose floats are 16 apart, the step [10] gives
+      multiples inside the domain of a step [q × 10^z], for [q] in [1], [5], [2]
+      and [2.5], in this order of preference, and an integer [z]. A multiple is
+      the float nearest its integer index times the step, as nice domains
+      compute them ({!Scale.section-nice}), so [3 × 0.1] is [0.3]. Steps below a
+      32nd of the distance from each end of the domain to the next float towards
+      zero are left out. A step finer than the floats gives ticks at the floats
+      its multiples round to, labelled by the decimals of those floats: on
+      \[[1e17];[1e17 + 32]\], whose floats are 16 apart, the step [10] gives
       ticks at the positions [0], [0.5] and [1] that read [0], [20] and [30]
       against the note [+10¹⁷].
     - {b Powers}, on log scales of base [b]: the integer powers [b^i] inside the
@@ -256,8 +256,8 @@ val of_values :
     and continue beyond the outer major ticks to the ends of the domain. By the
     family of the chosen candidate, they are:
     - decimal steps: the multiples the skip leaves out if [j > 1]; otherwise the
-      step divided into [5] parts for [q] in [1], [2.5] and [5], into [4] parts
-      for [q] in [2] and [4], and into [3] parts for [q = 3];
+      step divided into [5] parts for [q] in [1], [2.5] and [5], and into [4]
+      parts for [q = 2];
     - powers: the powers the skip leaves out if [j > 1]; otherwise, in an
       {{!Scale.log}integer base} [b], the multiples by [2] to [b - 1] of the
       powers that are not ticks;

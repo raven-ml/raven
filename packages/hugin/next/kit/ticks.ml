@@ -469,8 +469,11 @@ let residue i j = ((i mod j) + j) mod j
 
 (* Decimal steps: [q] of [Q] as a step [m × 10^(z + dk)] at the exponent [z],
    and the step of its minor ticks. *)
-let q_steps = [| (1, 0); (5, 0); (2, 0); (25, -1); (4, 0); (3, 0) |]
-let q_minor_steps = [| (2, -1); (1, 0); (5, -1); (5, -1); (1, 0); (1, 0) |]
+let q_steps = [| (1, 0); (5, 0); (2, 0); (25, -1) |]
+let q_minor_steps = [| (2, -1); (1, 0); (5, -1); (5, -1) |]
+
+(* [q_rank i] is the simplicity [q_steps.(i)] loses to the first. *)
+let q_rank i = Float.of_int i /. Float.of_int (Array.length q_steps - 1)
 
 (* [decimal_steps st ~v (a, b)] is the search of the decimal steps in two parts:
    a candidate of one tick, then every other. *)
@@ -488,7 +491,7 @@ let decimal_steps st ~v (a, b) =
         (if j > 1 then s else step q_minor_steps.(i) z)
         a b
     in
-    let s_term = 1. -. (Float.of_int i /. 5.) -. Float.of_int j +. v vs in
+    let s_term = 1. -. q_rank i -. Float.of_int j +. v vs in
     consider st ~s_term ~key:[ 0; j; i; -z; r ] ~minor vs
   in
   (* A lone tick: [j] beyond the multiples of the coarsest power of ten that has
@@ -513,7 +516,7 @@ let decimal_steps st ~v (a, b) =
     let n_lb =
       ((half -. delta -. (ulp /. 2.)) /. ((ulp +. delta) /. 2.)) +. 1.
     in
-    let s_max = 2. -. (Float.of_int i /. 5.) -. Float.of_int j in
+    let s_max = 2. -. q_rank i -. Float.of_int j in
     if worth st s_max n_lb then
       if not (Steps.is_fine s a b) then begin
         for r = 0 to j - 1 do
@@ -525,7 +528,7 @@ let decimal_steps st ~v (a, b) =
   let search () =
     skips st ~simplest:2. (fun j ->
         for i = 0 to Array.length q_steps - 1 do
-          let s_max = 2. -. (Float.of_int i /. 5.) -. Float.of_int j in
+          let s_max = 2. -. q_rank i -. Float.of_int j in
           if worth st s_max 0. then descend j i z_top
         done)
   in
