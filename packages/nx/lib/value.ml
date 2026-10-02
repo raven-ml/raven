@@ -314,13 +314,6 @@ let placement (type a b) (x : (a, b) t) : Placement.t =
 
 (* Values over runtime buffers *)
 
-(* Whether the view [v] reaches only elements [0] to [n - 1]. *)
-let fits v n =
-  View.numel v = 0
-  ||
-  let lo, hi = View.extent v in
-  lo >= 0 && hi <= n
-
 (* [shard_storage what p buffers] is the storage of [buffers], one per device of
    [p], in order, of one length, each in the memory of its device. *)
 let shard_storage what p buffers =
@@ -344,7 +337,7 @@ let shard_storage what p buffers =
 (* [host_value what dtype view b] is the host value of [b] under [view]. *)
 let host_value what dtype view b =
   check_host what dtype b;
-  if not (fits view (Nx_device.Buffer.length b)) then
+  if not (View.within view (Nx_device.Buffer.length b)) then
     invalid_arg (what ^ ": the view reaches outside the buffer");
   Host { dtype; view; buffer = b }
 
@@ -353,7 +346,7 @@ let host_value what dtype view b =
    lies within them and they are of [dtype]'s format. Consumed storage has no
    bytes to reach. *)
 let placed_value what p dtype view c =
-  if not (fits view c.length) then
+  if not (View.within view c.length) then
     invalid_arg (what ^ ": the view reaches outside the storage");
   (match Cell.state c with
   | Live bufs -> List.iter (check_format what dtype) bufs
@@ -374,16 +367,20 @@ let of_shards (type a b) what p (dtype : (a, b) Nx_dtype.t) view buffers :
   else placed_value what p dtype view (shard_storage what p buffers)
 
 (* [of_buffer dtype shape b] is the value of [shape] over [b]'s elements in C
-   order. *)
+   order. [View.create] reads a negative dimension as [0] in a shape that has a
+   [0], so [shape]'s own dimensions are checked. *)
 let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
   let what = "Nx.of_buffer" in
-  let n = Nx_device.Buffer.length b in
-  if Array.fold_left ( * ) 1 shape <> n then
+  let n = Nx_device.Buffer.length b and view = View.create shape in
+  if
+    Array.exists (fun d -> d < 0) shape
+    || not (View.within view n && View.numel view = n)
+  then
     invalid_arg
       (Printf.sprintf "%s: shape %s for %d elements" what
          (Shape.to_string shape) n);
   let p = Placement.on (Device.of_memory (Nx_device.Buffer.device b)) in
-  of_shards what p dtype (View.create shape) [ b ]
+  of_shards what p dtype view [ b ]
 
 (* The buffer, of [bufs], one per device of [c]'s placement, that holds [c]'s
    storage in [d]'s memory. A value's devices hold their memories' buffers of

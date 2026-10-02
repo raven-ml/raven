@@ -115,6 +115,101 @@ let ravel shape idx =
   Array.iteri (fun d k -> i := (!i * shape.(d)) + k) idx;
   !i
 
+(* Views at the edges of the ints *)
+
+(* [sat_add a b] is [a + b] and [sat_scale s k], for [k > 0], is [s * k], each
+   clamped to [min_int] and [max_int]. *)
+let sat_add a b =
+  if b > 0 && a > max_int - b then max_int
+  else if b < 0 && a < min_int - b then min_int
+  else a + b
+
+let sat_scale s k =
+  if s > max_int / k then max_int
+  else if s < min_int / k then min_int
+  else s * k
+
+(* Whether [shape] has no [0] and more than [max_int] elements. *)
+let count_overflows shape =
+  let count = ref 1 and over = ref false in
+  Array.iter
+    (fun d ->
+      if d > 0 && !count > max_int / d then over := true
+      else count := !count * d)
+    shape;
+  !over && not (Array.exists (( = ) 0) shape)
+
+(* Whether [view] has no negative dimension, at most [max_int] elements, and
+   reaches only positions [0] to [n - 1], for an [n] far below [max_int]. Its
+   lowest and highest positions are summed in saturating arithmetic: a sum past
+   the ints clamps to an extreme, which no position below [n] is. *)
+let view_inside view n =
+  let shape = Nx_array.View.shape view
+  and strides = Nx_array.View.strides view
+  and offset = Nx_array.View.offset view in
+  if Array.exists (fun d -> d < 0) shape then false
+  else if Array.exists (( = ) 0) shape then true
+  else if count_overflows shape then false
+  else
+    let lo = ref offset and hi = ref offset in
+    Array.iteri
+      (fun a d ->
+        if d > 1 then
+          let t = sat_scale strides.(a) (d - 1) in
+          if t < 0 then lo := sat_add !lo t else hi := sat_add !hi t)
+      shape;
+    !lo >= 0 && !hi < n
+
+(* Offsets and strides near [lo] to [hi] and at the edges of the ints: their
+   extremes, their neighbours, and powers of two whose products wrap. *)
+let edge_ints lo hi =
+  Gen.frequency
+    [
+      (6, Gen.int_range lo hi);
+      (1, Gen.int);
+      ( 2,
+        Gen.of_list ~pp:Format.pp_print_int
+          [
+            min_int;
+            min_int + 1;
+            -(1 lsl 32);
+            1 lsl 31;
+            1 lsl 32;
+            1 lsl 61;
+            max_int - 1;
+            max_int;
+          ] );
+    ]
+
+(* Dimensions of up to 3 elements, negative ones, and ones whose products
+   wrap. *)
+let edge_dims =
+  Gen.frequency
+    [
+      (6, Gen.int_range 0 3);
+      ( 2,
+        Gen.of_list ~pp:Format.pp_print_int
+          [ -2; -1; 1 lsl 31; 1 lsl 32; 1 lsl 61; max_int - 1; max_int ] );
+    ]
+
+let pp_bounded_view ppf (n, view) =
+  Format.fprintf ppf "%d elements, offset %d, strides %a, shape %a" n
+    (Nx_array.View.offset view)
+    pp_shape
+    (Nx_array.View.strides view)
+    pp_shape (Nx_array.View.shape view)
+
+(* A storage of up to 8 elements and a view of rank up to 3 over it. *)
+let edge_views =
+  Gen.with_pp pp_bounded_view
+    Gen.(
+      let* rank = int_range 0 3 in
+      let+ n = int_range 0 8
+      and+ shape = array ~size:(constant rank) edge_dims
+      and+ strides = array ~size:(constant rank) (edge_ints (-2) 3)
+      and+ offset = edge_ints (-3) 8 in
+      (n, Nx_array.View.create ~offset ~strides shape))
+
 (* Layouts: ways to hold the same kind of values in a view, composed to reach
    strides, offsets and broadcasts that no single movement gives. *)
 

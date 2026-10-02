@@ -277,5 +277,28 @@ let refusals =
     ]
     (fun (_, f) -> raises_match Exn.invalid_arg f)
 
+(* Views whose lowest or highest position, or element count, wraps past the
+   ints, and the buffer each looks inside of when it does. *)
+let wrapping =
+  let row (offset, strides, shape, n) =
+    (V.create ~offset ~strides shape, E.create Nx_dtype.float32 n)
+  in
+  cases
+    ~name:(fun (v, b) -> Format.asprintf "%a" pp_view (v, B.length b))
+    "gather and contiguous refuse a view whose bounds wrap"
+    (List.map row
+       [
+         (max_int, [| 1 |], [| 2 |], 4);
+         (0, [| max_int; max_int |], [| 2; 2 |], 4);
+         (0, [| 1; 1 |], [| 1 lsl 32; 1 lsl 32 |], 1);
+         (0, [| -1; -1 |], [| -2; -2 |], 7);
+       ])
+    (fun (v, b) ->
+      raises_match ~msg:"gather" Exn.invalid_arg (fun () -> E.gather b v);
+      raises_match ~msg:"contiguous" Exn.invalid_arg (fun () ->
+          E.contiguous b v))
+
 let () =
-  exit (run "Nx_array.Elements" [ stores; fills; gather; contiguous; refusals ])
+  exit
+    (run "Nx_array.Elements"
+       [ stores; fills; gather; contiguous; refusals; wrapping ])

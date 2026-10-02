@@ -3052,6 +3052,11 @@ thread.
 
 ### Nx
 
+- Add `Nx_array.View.within`, whether a view reaches only the first `n`
+  positions of its storage, exact for every offset, stride and shape.
+  `Nx_array.Elements.gather` and `contiguous` check views with it: a view
+  whose positions or element count wrap past `max_int` read outside the
+  buffer.
 - **Breaking:** `Nx.t` is abstract, where it was `Nx_effect.t`, and the
   `nx.effect` library is gone: transformations match on `Nx.Op` and read and
   build representations with `Nx.Repr`.

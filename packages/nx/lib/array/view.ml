@@ -75,6 +75,31 @@ let extent v =
     v.shape;
   (!lo, !hi + 1)
 
+(* Each product and sum is bounded before it is formed, so none wraps. A stride
+   [s] over [d > 1] elements stays within [n - 1] positions only if [s] is at
+   most [m = (n - 1) / (d - 1)] in magnitude, and the positions reached so far
+   stay in [0, n - 1]. *)
+let within v n =
+  let shape = v.shape and strides = v.strides in
+  let rank = Array.length shape in
+  let rec go a count lo hi =
+    if a = rank then true
+    else
+      let d = Array.unsafe_get shape a in
+      if count > max_int / d then false
+      else if d = 1 then go (a + 1) count lo hi
+      else
+        let m = (n - 1) / (d - 1) and s = Array.unsafe_get strides a in
+        if s < -m || s > m then false
+        else
+          let t = s * (d - 1) in
+          if t < 0 then t >= -lo && go (a + 1) (count * d) (lo + t) hi
+          else t <= n - 1 - hi && go (a + 1) (count * d) lo (hi + t)
+  in
+  if Array.exists (fun d -> d < 0) shape then false
+  else if has_zero shape then true
+  else v.offset >= 0 && v.offset < n && go 0 1 v.offset v.offset
+
 (* ───── View Creation ───── *)
 
 let create ?(offset = 0) ?strides shape =

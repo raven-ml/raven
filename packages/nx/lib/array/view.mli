@@ -49,6 +49,12 @@ val extent : t -> int * int
 (** [extent v] is [(lo, hi)], [lo] the lowest storage position [v] reaches and
     [hi] one past the highest. [v] must have at least one element. *)
 
+val within : t -> int -> bool
+(** [within v n] is [true] iff [v] has no negative dimension, has at most
+    [max_int] elements, and reaches only storage positions [0] to [n - 1]. A
+    view without elements reaches none. It is exact for every offset, stride and
+    shape: no product or sum in it wraps. *)
+
 val dim : int -> t -> int
 (** [dim axis v] is dimension [axis] of [v].
 

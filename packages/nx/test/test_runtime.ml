@@ -51,44 +51,21 @@ let host_buffers =
           raises_match other_format (fun () -> from_host float64));
     ]
 
+(* Whether [x] is far from the offsets and strides of small buffers. *)
+let big x = x > 1 lsl 30 || x < -(1 lsl 30)
+
 (* The representation's constructors build no value that a kernel would read
    outside its buffers: every element a view reaches lies in them, and they are
    of the value's format. *)
 let representation =
   let outside = Exn.invalid_arg ~substring:"reaches outside"
   and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
+  and other_count = Exn.invalid_arg ~substring:"Nx.of_buffer: shape"
   and p = Nx.Placement.on (Nx.Device.of_memory r1) in
-  (* Whether every position [view] reaches is in [0, n), by enumerating them. *)
-  let inside view n =
-    let shape = Nx_array.View.shape view
-    and strides = Nx_array.View.strides view in
-    let rec go axis pos =
-      if axis = Array.length shape then pos >= 0 && pos < n
-      else
-        let rec each i =
-          i = shape.(axis)
-          || (go (axis + 1) (pos + (i * strides.(axis))) && each (i + 1))
-        in
-        each 0
-    in
-    go 0 (Nx_array.View.offset view)
-  in
-  let pp ppf (n, view) =
-    Format.fprintf ppf "%d elements, offset %d, strides %a, shape %a" n
-      (Nx_array.View.offset view)
-      Nx.pp_shape
-      (Nx_array.View.strides view)
-      Nx.pp_shape (Nx_array.View.shape view)
-  in
-  let views =
-    Gen.with_pp pp
-      Gen.(
-        let* rank = int_range 0 2 in
-        let+ n = int_range 0 8
-        and+ shape = array ~size:(constant rank) (int_range 0 3)
-        and+ strides = array ~size:(constant rank) (int_range (-2) 3)
-        and+ offset = int_range (-3) 8 in
-        (n, Nx_array.View.create ~offset ~strides shape))
+  let shapes =
+    Gen.(
+      let* rank = int_range 0 3 in
+      pair (int_range 0 8) (array ~size:(constant rank) edge_dims))
   in
   let host n view =
     Nx.Repr.host
@@ -100,27 +77,80 @@ let representation =
   and placed n view =
     let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 n in
     Nx.Repr.Placed.v p Nx.float32 view (Nx.Repr.Storage.v p [ b ])
+  and shards n view =
+    let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 n in
+    Nx.of_shards p Nx.float32 view [ b ]
+  in
+  let of_buffer n shape =
+    let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 n in
+    Nx.of_buffer Nx.float32 shape b
+  in
+  (* Each constructor that takes a view builds a value exactly when the view is
+     inside its buffers. *)
+  let law (n, view) =
+    let build = [ ("host", host); ("placed", placed); ("of_shards", shards) ] in
+    if view_inside view n then
+      List.iter (fun (_, make) -> ignore (make n view)) build
+    else
+      List.iter
+        (fun (msg, make) -> raises_match ~msg outside (fun () -> make n view))
+        build
+  in
+  let row (offset, strides, shape, n) =
+    (n, Nx_array.View.create ~offset ~strides shape)
   in
   group "representation"
     [
       prop
-        "Nx.Repr.host and Nx.Repr.Placed.v build a value exactly when its view \
-         reaches only elements of its buffers"
-        views (fun (n, view) ->
-          let ok = inside view n in
+        "Nx.Repr.host, Nx.Repr.Placed.v and Nx.of_shards build a value exactly \
+         when its view reaches only elements of its buffers"
+        edge_views (fun (n, view) ->
+          let ok = view_inside view n
+          and shape = Nx_array.View.shape view
+          and strides = Nx_array.View.strides view in
           cover "a view inside its buffers" ok;
           cover "a view reaching outside them" (not ok);
-          cover "a zero-size view" (Nx_array.View.numel view = 0);
-          cover "a negative stride"
-            (Array.exists (fun s -> s < 0) (Nx_array.View.strides view));
-          if ok then begin
-            ignore (host n view);
-            ignore (placed n view)
-          end
-          else begin
-            raises_match ~msg:"host" outside (fun () -> host n view);
-            raises_match ~msg:"placed" outside (fun () -> placed n view)
-          end);
+          cover "a zero-size view" (Array.exists (( = ) 0) shape);
+          cover "a negative stride" (Array.exists (fun s -> s < 0) strides);
+          cover "a negative dimension" (Array.exists (fun d -> d < 0) shape);
+          cover "an element count past max_int" (count_overflows shape);
+          cover "an extreme offset or stride"
+            (big (Nx_array.View.offset view) || Array.exists big strides);
+          law (n, view));
+      cases
+        ~name:(fun (n, view) -> Format.asprintf "%a" pp_bounded_view (n, view))
+        "views whose bounds wrap reach outside their buffers"
+        (List.map row
+           [
+             (max_int, [| 1 |], [| 2 |], 4);
+             (0, [| max_int; max_int |], [| 2; 2 |], 4);
+             (0, [| 1; 1 |], [| 1 lsl 32; 1 lsl 32 |], 1);
+             (0, [| -1; -1 |], [| -2; -2 |], 7);
+           ])
+        (fun (n, view) ->
+          equal bool false (view_inside view n);
+          law (n, view));
+      prop
+        "Nx.of_buffer builds a value exactly when its shape has the buffer's \
+         number of elements"
+        shapes (fun (n, shape) ->
+          let ok =
+            (not (Array.exists (fun d -> d < 0) shape))
+            && (not (count_overflows shape))
+            && Array.fold_left ( * ) 1 shape = n
+          in
+          cover "a shape of the buffer's elements" ok;
+          cover "a negative dimension" (Array.exists (fun d -> d < 0) shape);
+          cover "an element count past max_int" (count_overflows shape);
+          if ok then ignore (of_buffer n shape)
+          else raises_match other_count (fun () -> of_buffer n shape));
+      cases
+        ~name:(fun (n, shape) ->
+          Format.asprintf "shape %a, %d elements" Nx.pp_shape shape n)
+        "Nx.of_buffer refuses a shape whose product wraps to the buffer's count"
+        [ (0, [| 1 lsl 32; 1 lsl 32 |]); (4, [| -2; -2 |]); (1, [| -1; -1 |]) ]
+        (fun (n, shape) ->
+          raises_match other_count (fun () -> of_buffer n shape));
       test "Nx.Repr.Placed.v refuses storage of another format" (fun () ->
           let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float64 4 in
           let s = Nx.Repr.Storage.v p [ b ] in

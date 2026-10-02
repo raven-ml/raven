@@ -274,20 +274,23 @@ let copy_view v ~copy_run ~copy =
 
 let blit s d src dst n = A.blit (A.sub s src n) (A.sub d dst n)
 
+(* Raises unless [v] reaches only elements of [b]. *)
+let check_view fn b v =
+  if not (View.within v (B.length b)) then
+    invalid_arg
+      (Printf.sprintf
+         "Nx_array.Elements.%s: the view reaches outside %d elements" fn
+         (B.length b))
+
 let gather b v =
   check_host "gather" b;
+  check_view "gather" b v;
   let n = View.numel v in
   let dst = B.create Nx_device.host (B.dtype b) n in
-  if n > 0 then begin
-    let lo, hi = View.extent v in
-    if lo < 0 || hi > B.length b then
-      invalid_arg
-        (Printf.sprintf
-           "Nx_array.Elements.gather: the view reaches elements %d to %d of %d"
-           lo (hi - 1) (B.length b));
+  if n > 0 then
     (* Each width is its own loop, over its own kind, which the compiler
        specializes. *)
-    match S.bitsize (B.dtype b) with
+    begin match S.bitsize (B.dtype b) with
     | 4 ->
         let s = bytes b and d = bytes dst in
         iter_view v ~run:1 (fun src dst -> set_nibble d dst (nibble s src))
@@ -312,11 +315,12 @@ let gather b v =
           (in_words v (bits / 64))
           ~copy_run:(blit s d)
           ~copy:(fun src dst -> A.unsafe_set d dst (A.unsafe_get s src))
-  end;
+    end;
   dst
 
 let contiguous b v =
   check_host "contiguous" b;
+  check_view "contiguous" b v;
   let s = B.dtype b and n = View.numel v in
   let bits = View.offset v * S.bitsize s in
   if n > 0 && View.is_c_contiguous v && bits mod 8 = 0 then

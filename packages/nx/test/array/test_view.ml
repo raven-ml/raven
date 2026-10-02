@@ -106,4 +106,56 @@ let layout =
           is_false (V.is_c_contiguous (V.expand (V.create [||]) [| 3 |])));
     ]
 
-let () = exit (run "Nx_array.View" [ layout ])
+(* Whether every position [v] reaches is in [0, n - 1], by enumerating them. *)
+let reaches_inside v n =
+  let shape = V.shape v and strides = V.strides v in
+  let rec go axis pos =
+    if axis = Array.length shape then pos >= 0 && pos < n
+    else
+      let rec each i =
+        i = shape.(axis)
+        || (go (axis + 1) (pos + (i * strides.(axis))) && each (i + 1))
+      in
+      each 0
+  in
+  go 0 (V.offset v)
+
+let small_views =
+  Gen.with_pp Nx_test.pp_bounded_view
+    Gen.(
+      let* rank = int_range 0 3 in
+      let+ n = int_range 0 8
+      and+ shape = array ~size:(constant rank) (int_range 0 3)
+      and+ strides = array ~size:(constant rank) (int_range (-3) 3)
+      and+ offset = int_range (-3) 8 in
+      (n, V.create ~offset ~strides shape))
+
+let big x = x > 1 lsl 30 || x < -(1 lsl 30)
+
+let bounds =
+  group "bounds"
+    [
+      prop "within holds exactly when every position the view reaches is inside"
+        small_views (fun (n, v) ->
+          let ok = reaches_inside v n in
+          cover "inside" ok;
+          cover "outside" (not ok);
+          equal bool ok (V.within v n));
+      prop
+        "within holds exactly when the view has no negative dimension, at most \
+         max_int elements, and its extreme positions are inside"
+        Nx_test.edge_views (fun (n, v) ->
+          let ok = Nx_test.view_inside v n
+          and shape = V.shape v
+          and strides = V.strides v in
+          cover "inside" ok;
+          cover "outside" (not ok);
+          cover "a zero-size view" (Array.exists (( = ) 0) shape);
+          cover "a negative dimension" (Array.exists (fun d -> d < 0) shape);
+          cover "an element count past max_int" (Nx_test.count_overflows shape);
+          cover "an extreme offset or stride"
+            (big (V.offset v) || Array.exists big strides);
+          equal bool ok (V.within v n));
+    ]
+
+let () = exit (run "Nx_array.View" [ layout; bounds ])
