@@ -1,0 +1,32 @@
+table 5 rows × 4 columns
+ station  day         temp      rain
+ string   date        float32   bool
+ oslo     2024-03-01  -3.50000  false
+ oslo     2024-03-02  -1.25000  true
+ lima     2024-03-01  22.00000  false
+ lima     2024-03-02         ∅  false
+ pune     2024-03-01  31.50000  true
+
+temp: 1 null of 5
+  -3.5
+  -1.25
+  22
+  null
+  31.5
+
+query → station string, day date, temp float32, rain bool, temp_f float32
+derive ["temp_f" := temp *. 1.8 +. 32.]
+└ filter (temp > 0.)
+  └ table (4 columns, 5 rows)
+
+table 2 rows × 5 columns
+ station  day         temp     rain   temp_f
+ string   date        float32  bool   float32
+ lima     2024-03-01  22.0000  false  71.6000
+ pune     2024-03-01  31.5000  true   88.7000
+
+lima: 22.0°C
+pune: 31.5°C
+float32 [2,2] 
+[[22, 71.6],
+ [31.5, 88.7]]

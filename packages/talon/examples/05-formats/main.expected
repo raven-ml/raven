@@ -1,0 +1,36 @@
+csv (4 columns, separator ',', quote '"', header, nulls ["NA"]), types sniffed from 3 rows
+  station string
+  day date
+  temp float64
+  note string
+
+table 3 rows × 4 columns
+ station  day         temp      note
+ string   date        float32   string
+ oslo     2024-03-01  -3.50000  ∅
+ oslo     2024-03-02         ∅  sensor "B" offline
+ lima     2024-03-01  22.00000  humid, calm
+
+station,day,temp,note
+oslo,2024-03-01,-3.5,
+oslo,2024-03-02,,"sensor ""B"" offline"
+lima,2024-03-01,22,"humid, calm"
+
+line 3, column 6: "warm": column "temp": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
+
+parquet (2 columns)
+  carrier string ← optional binary (STRING)
+  name string    ← optional binary (STRING)
+
+query → carrier string, name string
+filter (carrier >= "F")
+└ parquet (2 columns) ~filters:[carrier >= "F"]
+
+table 5 rows × 2 columns
+ carrier  name
+ string   string
+ F9       Frontier Airlines Inc.
+ HA       Hawaiian Airlines Inc.
+ OO       ∅
+ UA       United Air Lines Inc.
+ WN       Southwest Airlines Co.

@@ -1,0 +1,47 @@
+inner:
+table 3 rows × 4 columns
+ subject  trial  rt        age
+ string   int16  float64   uint8
+ s1           1  0.412000     24
+ s1           2  0.388000     24
+ s2           1  0.501000     31
+
+left:
+table 5 rows × 4 columns
+ subject  trial  rt        age
+ string   int16  float64   uint8
+ s1           1  0.412000     24
+ s1           2  0.388000     24
+ s2           1  0.501000     31
+ s3           1  0.450000      ∅
+ s3           2  0.433000      ∅
+
+full:
+table 6 rows × 4 columns
+ subject  trial  rt        age
+ string   int16  float64   uint8
+ s1           1  0.412000     24
+ s1           2  0.388000     24
+ s2           1  0.501000     31
+ s3           1  0.450000      ∅
+ s3           2  0.433000      ∅
+ s4           ∅         ∅     27
+
+semi:
+table 3 rows × 3 columns
+ subject  trial  rt
+ string   int16  float64
+ s1           1  0.412000
+ s1           2  0.388000
+ s2           1  0.501000
+
+anti:
+table 2 rows × 3 columns
+ subject  trial  rt
+ string   int16  float64
+ s3           1  0.450000
+ s3           2  0.433000
+
+each_left:One:
+join ~on:(eq "subject" "id") ~each_left:One: row 3: the left row whose "subject" is "s3" matches 0 rows, not one.
+

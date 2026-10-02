@@ -1,0 +1,12 @@
+aggregate: 3 problems
+  ~by: no column "carier". Did you mean "carrier"?
+  "mean_delay" := mean dep_dly
+    no column "dep_dly". Did you mean "dep_delay"?
+  "late" := mean carrier
+    Col.float reads float16, float32 or float64, but "carrier" is string.
+  input (3 columns): carrier string, origin string, dep_delay int64
+
+derive ["delay" := cast int8 dep_delay]: row 1: cannot cast 130 to int8.
+
+aggregate ~by:["carrier"] ["origin" := only origin]: row 0: only finds several values.
+

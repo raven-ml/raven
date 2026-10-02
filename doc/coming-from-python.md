@@ -10,7 +10,7 @@ This page maps Python scientific computing concepts to their Raven equivalents. 
 | JAX | [Rune](../packages/rune/doc/index.md) | Functional transformations: `grad`, `jvp`, `vmap` |
 | PyTorch / Flax | [Kaun](../packages/kaun/doc/index.md) | Layers, optimizers, training loops |
 | HuggingFace Tokenizers | [Brot](../packages/brot/doc/index.md) | BPE, WordPiece, Unigram; HF-compatible |
-| pandas / Polars | [Talon](../packages/talon/doc/index.md) | Type-safe DataFrames |
+| pandas / Polars | [Talon](../packages/talon/doc/index.md) | Typed tables and queries; CSV and Parquet |
 | Matplotlib | [Hugin](../packages/hugin/doc/index.md) | 2D/3D plotting with Cairo |
 | Jupyter + IPython | [Quill](../packages/quill/doc/index.md) | Interactive REPL and markdown notebooks |
 
@@ -139,19 +139,23 @@ Parameters are plain data (records of Nx tensors), not hidden inside objects.
 
 ### DataFrames
 
-pandas uses string-based column access. Talon provides type-safe row operations via an applicative.
+pandas computes each operation as it is called, and finds a wrong column name
+when the line that uses it runs. Talon builds a query from typed column
+handles, checks every verb against its input's columns before reading any
+data, and computes the query when it runs.
 
 ```python
 # pandas
-df['bmi'] = df['weight'] / df['height'] ** 2
+df["bmi"] = df["weight"] / df["height"] ** 2
 ```
 
 <!-- $MDX skip -->
 ```ocaml
-(* Talon: type-safe row computation *)
-let df = Talon.with_column df "bmi" Nx.Float64
-  Talon.Row.(map2 (number "weight") (number "height")
-    ~f:(fun w h -> w /. (h *. h)))
+(* Talon: a typed expression in a query *)
+let weight = Talon.Col.float "weight" and height = Talon.Col.float "height"
+
+let with_bmi df =
+  Talon.Query.(df |> derive Talon.Expr.[ "bmi" := weight /. (height *. height) ])
 ```
 
 ## Detailed Comparisons
@@ -162,7 +166,7 @@ Each library has a dedicated comparison page with side-by-side code examples:
 - [Rune vs JAX](../packages/rune/doc/04-jax-comparison.md)
 - [Kaun vs PyTorch/Flax](../packages/kaun/doc/05-pytorch-comparison.md)
 - [Brot vs HuggingFace Tokenizers](../packages/brot/doc/06-hf-tokenizers-comparison.md)
-- [Talon vs pandas](../packages/talon/doc/03-pandas-comparison.md)
+- [Talon vs pandas](../packages/talon/doc/05-pandas-comparison.md)
 - [Hugin vs Matplotlib](../packages/hugin/doc/05-matplotlib-comparison.md)
 - [Sowilo vs OpenCV](https://github.com/raven-ml/raven/blob/main/contrib/sowilo/doc/04-opencv-comparison.md) (contrib)
 - [Fehu vs Gymnasium](https://github.com/raven-ml/raven/blob/main/contrib/fehu/doc/04-gymnasium-comparison.md) (contrib)

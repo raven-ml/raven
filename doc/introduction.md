@@ -59,7 +59,7 @@ Raven is a comprehensive ecosystem that spans the entire scientific computing st
 **Foundation**
 - **Nx**: N-dimensional arrays with pluggable backends (NumPy equivalent)
 - **Brot**: Fast, HuggingFace-compatible tokenization (HF Tokenizers equivalent)
-- **Talon**: Type-safe DataFrames (pandas/Polars equivalent)
+- **Talon**: Dataframes with typed queries (pandas/Polars equivalent)
 
 **Differentiable Computing**
 - **Rune**: Automatic differentiation using OCaml's effect system (JAX equivalent)

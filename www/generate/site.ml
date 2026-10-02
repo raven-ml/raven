@@ -72,7 +72,7 @@ let libraries =
       name = "talon";
       display = {|<span class="rune-symbol">ᛃ</span> talon|};
       color = "color-pink";
-      description = "Fast and elegant dataframes with type-safe operations";
+      description = "Dataframes with typed queries, CSV and Parquet";
       tagline = "Dataframes for OCaml";
       symbol = {|ᛃ|};
     };

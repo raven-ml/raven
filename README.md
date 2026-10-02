@@ -33,10 +33,11 @@ let layer = Kaun.Linear.init ~inputs:768 ~outputs:10
 let logits = Kaun.Linear.apply layer x
 
 (* talon — dataframes *)
-let df = Talon.create [
-  "name", Talon.Col.string_list [ "Alice"; "Bob"; "Charlie" ];
-  "score", Talon.Col.float64_list [ 85.5; 92.0; 78.5 ];
+let df = Talon.v [
+  "name", Talon.Column.v Talon.Type.string [| "Alice"; "Bob"; "Charlie" |];
+  "score", Talon.Column.v Talon.Type.float64 [| 85.5; 92.0; 78.5 |];
 ]
+let top = Talon.(Query.of_table df |> Kit.top_k 2 [ Order.desc "score" ] |> Query.run)
 
 (* hugin — plotting *)
 let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
@@ -52,7 +53,7 @@ let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
 | ᚲ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |
 | ᚹ   | [**vega**](packages/vega/)     | Optax             | Composable gradient-based optimizers                     |
 | ᚨ   | [**brot**](packages/brot/)     | HF Tokenizers     | Fast, HuggingFace-compatible tokenization                |
-| ᛃ   | [**talon**](packages/talon/)   | Polars            | Fast and elegant dataframes with type-safe operations    |
+| ᛃ   | [**talon**](packages/talon/)   | pandas / Polars   | Dataframes with typed queries, CSV and Parquet           |
 | ᛞ   | [**hugin**](packages/hugin/)   | Matplotlib        | Publication-quality plotting                             |
 | ᛈ   | [**quill**](packages/quill/)   | Jupyter + IPython | Interactive REPL and markdown notebooks                  |
 | ᛗ   | [**munin**](packages/munin/)  | W&B / MLFlow      | Local experiment tracking with live TUI dashboard        |

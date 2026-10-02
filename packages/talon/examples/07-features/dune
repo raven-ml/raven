@@ -1,0 +1,15 @@
+(executable
+ (name main)
+ (libraries talon talon.csv nx))
+
+(rule
+ (deps flights.csv)
+ (action
+  (with-stdout-to
+   main.output
+   (run ./main.exe))))
+
+(rule
+ (alias runtest)
+ (action
+  (diff main.expected main.output)))

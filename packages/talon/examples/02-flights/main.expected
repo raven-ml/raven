@@ -1,0 +1,28 @@
+query → carrier string, mean_delay float64, flights int64, name string
+sort [desc "mean_delay"]
+└ join ~on:(keys ["carrier"]) ~each_left:One
+  ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
+  │                            "flights" := rows]
+  │ └ filter (dep_delay > 15)
+  │   └ csv "flights.csv" (11 columns)
+  └ parquet "carriers.parquet" (2 columns, 8 rows)
+
+query → carrier string, mean_delay float64, flights int64, name string
+sort [desc "mean_delay"]
+└ join ~on:(keys ["carrier"]) ~each_left:One
+  ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
+  │                            "flights" := rows]
+  │ └ filter (dep_delay > 15)
+  │   └ csv "flights.csv" (11 columns) ~columns:["carrier"; "dep_delay"]
+  └ parquet "carriers.parquet" (2 columns, 8 rows)
+
+table 7 rows × 4 columns
+ carrier  mean_delay  flights  name
+ string   float64     int64    string
+ DL          38.0000        5  Delta Air Lines Inc.
+ HA          36.6667        3  Hawaiian Airlines Inc.
+ B6          31.0000        1  JetBlue Airways
+ OO          29.0000        3  ∅
+ F9          27.0000        2  Frontier Airlines Inc.
+ AA          27.0000        1  American Airlines Inc.
+ WN          26.0000        1  Southwest Airlines Co.

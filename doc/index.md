@@ -17,7 +17,7 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 | ᚲ | [**kaun**](../packages/kaun/doc/index.md) | PyTorch / Flax | Neural networks and training |
 | ᚹ | [**vega**](../packages/vega/doc/index.md) | Optax | Gradient-based optimizers and schedules |
 | ᚨ | [**brot**](../packages/brot/doc/index.md) | HF Tokenizers | Fast tokenization for language models |
-| ᛃ | [**talon**](../packages/talon/doc/index.md) | Pandas / Polars | DataFrames with type-safe columns |
+| ᛃ | [**talon**](../packages/talon/doc/index.md) | pandas / Polars | Dataframes with typed queries, CSV and Parquet |
 | ᛞ | [**hugin**](../packages/hugin/doc/index.md) | Matplotlib | Data visualization and plotting |
 | ᛈ | [**quill**](../packages/quill/doc/index.md) | Jupyter + IPython | Interactive REPL and markdown notebooks |
 

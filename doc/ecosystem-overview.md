@@ -134,19 +134,20 @@ let ids = Encoding.ids encoding
 
 ## Talon: DataFrames
 
-Type-safe tabular data with heterogeneous columns, an applicative Row
-system for row-wise operations, and vectorized aggregations backed by
-Nx.
+Tables of named, typed columns, with one null state for every type. A query
+is a plan of verbs (`filter`, `derive`, `aggregate`, `join`, `sort`) over a
+table or a CSV or Parquet file, checked against the columns before any data
+is read. A numeric column becomes an Nx tensor without a copy.
 
+<!-- $MDX skip -->
 ```ocaml
 open Talon
 
-let df = create [
-  "name", Col.string_list ["Alice"; "Bob"; "Charlie"];
-  "score", Col.float64_list [85.5; 92.0; 78.5];
-]
-
-let () = print df
+let mean_score =
+  Query.(
+    of_table df
+    |> aggregate ~by:[ "team" ] Expr.[ "mean" := mean (Col.float "score") ]
+    |> run)
 ```
 
 [Talon documentation →](../packages/talon/doc/index.md)

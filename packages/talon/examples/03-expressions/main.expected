@@ -1,0 +1,23 @@
+table 8 rows × 6 columns
+ run     step   loss     change     rank   late
+ string  int32  float64  float64    int64  bool
+ a         100  2.31000          ∅      4  false
+ a         200  1.87000  -0.440000      2  false
+ a         300  1.98000   0.110000      3  true
+ a         400  1.55000  -0.430000      1  true
+ b         100  2.40000          ∅      3  false
+ b         200        ∅          ∅      ∅  false
+ b         300  1.71000          ∅      2  true
+ b         400  1.52000  -0.190000      1  true
+
+table 2 rows × 5 columns
+ run     evals  best     best_step  improved
+ string  int64  float64  int32      bool
+ a           4  1.55000        400  true
+ b           3  1.52000        400  true
+
+table 1 row × 3 columns
+ rows   mean     p90
+ int64  float64  float64
+     8  1.90571  2.34600
+
