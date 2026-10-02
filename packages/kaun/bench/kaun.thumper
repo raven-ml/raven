@@ -5,18 +5,18 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-Conv/conv-train-step	alloc_words	exact	27841
-Conv/conv-train-step	wall_time	batch=1	n=20	7.859e-03	6.776e-03 7.030e-03 7.352e-03 7.375e-03 7.561e-03 7.661e-03 7.702e-03 7.782e-03 7.793e-03 7.849e-03 7.869e-03 8.024e-03 8.045e-03 8.049e-03 8.168e-03 8.184e-03 8.217e-03 8.240e-03 8.393e-03 8.750e-03
-Forward/apply	alloc_words	exact	919
-Forward/apply	wall_time	batch=1	n=20	3.275e-03	3.272e-03 3.273e-03 3.274e-03 3.274e-03 3.274e-03 3.274e-03 3.274e-03 3.274e-03 3.275e-03 3.275e-03 3.275e-03 3.278e-03 3.279e-03 3.279e-03 3.280e-03 3.281e-03 3.284e-03 3.290e-03 3.494e-03 3.495e-03
-Linear/linear-fwd	alloc_words	batch=2	n=20	2.165e+02	2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.165e+02 2.180e+02 2.180e+02 2.180e+02 2.180e+02 2.180e+02 2.180e+02
-Linear/linear-fwd	wall_time	batch=2	n=20	1.849e-03	1.840e-03 1.841e-03 1.842e-03 1.843e-03 1.843e-03 1.843e-03 1.843e-03 1.844e-03 1.844e-03 1.845e-03 1.853e-03 1.950e-03 1.952e-03 1.953e-03 1.955e-03 1.956e-03 1.956e-03 1.973e-03 2.039e-03 2.039e-03
-Linear/linear-fwd-bwd	alloc_words	exact	1830
-Linear/linear-fwd-bwd	wall_time	batch=1	n=20	3.317e-03	3.109e-03 3.117e-03 3.130e-03 3.152e-03 3.163e-03 3.198e-03 3.231e-03 3.260e-03 3.305e-03 3.309e-03 3.324e-03 3.347e-03 3.357e-03 3.360e-03 3.364e-03 3.376e-03 3.517e-03 3.569e-03 3.572e-03 3.635e-03
-TrainStep/sgd-train-step	alloc_words	exact	11388
-TrainStep/sgd-train-step	wall_time	batch=1	n=20	6.467e-03	6.097e-03 6.106e-03 6.269e-03 6.289e-03 6.339e-03 6.391e-03 6.425e-03 6.435e-03 6.459e-03 6.461e-03 6.474e-03 6.487e-03 6.662e-03 6.800e-03 6.837e-03 6.902e-03 6.965e-03 7.008e-03 7.013e-03 7.143e-03
-TrainStep/train-step	alloc_words	exact	22460
-TrainStep/train-step	wall_time	batch=1	n=20	8.245e-03	7.486e-03 7.492e-03 7.564e-03 7.977e-03 8.019e-03 8.019e-03 8.034e-03 8.054e-03 8.175e-03 8.196e-03 8.293e-03 8.327e-03 8.383e-03 8.435e-03 8.446e-03 8.475e-03 8.484e-03 8.594e-03 8.816e-03 8.959e-03
+Conv/conv-train-step	alloc_words	exact	35520
+Conv/conv-train-step	wall_time	batch=1	n=20	9.690e-03	9.103e-03 9.103e-03 9.367e-03 9.384e-03 9.464e-03 9.545e-03 9.602e-03 9.622e-03 9.659e-03 9.664e-03 9.716e-03 9.754e-03 9.762e-03 9.779e-03 9.787e-03 9.816e-03 9.871e-03 1.020e-02 1.038e-02 1.048e-02
+Forward/apply	alloc_words	exact	1511
+Forward/apply	wall_time	batch=1	n=20	3.443e-03	3.435e-03 3.437e-03 3.437e-03 3.437e-03 3.438e-03 3.438e-03 3.438e-03 3.439e-03 3.439e-03 3.441e-03 3.444e-03 3.444e-03 3.445e-03 3.445e-03 3.451e-03 3.452e-03 3.455e-03 3.536e-03 3.537e-03 3.538e-03
+Linear/linear-fwd	alloc_words	exact	201
+Linear/linear-fwd	wall_time	batch=4	n=20	2.003e-03	1.901e-03 1.922e-03 1.940e-03 1.952e-03 1.955e-03 1.963e-03 1.967e-03 1.982e-03 1.996e-03 2.000e-03 2.006e-03 2.018e-03 2.020e-03 2.024e-03 2.032e-03 2.035e-03 2.041e-03 2.047e-03 2.051e-03 2.068e-03
+Linear/linear-fwd-bwd	alloc_words	exact	2254
+Linear/linear-fwd-bwd	wall_time	batch=1	n=20	3.306e-03	3.135e-03 3.136e-03 3.141e-03 3.153e-03 3.160e-03 3.172e-03 3.200e-03 3.256e-03 3.271e-03 3.288e-03 3.325e-03 3.329e-03 3.333e-03 3.391e-03 3.397e-03 3.430e-03 3.468e-03 3.484e-03 3.497e-03 3.590e-03
+TrainStep/sgd-train-step	alloc_words	exact	16484
+TrainStep/sgd-train-step	wall_time	batch=1	n=20	7.122e-03	6.380e-03 6.558e-03 6.618e-03 6.630e-03 6.734e-03 6.775e-03 6.835e-03 6.968e-03 7.026e-03 7.035e-03 7.209e-03 7.218e-03 7.315e-03 7.349e-03 7.398e-03 7.398e-03 7.412e-03 7.450e-03 7.461e-03 7.635e-03
+TrainStep/train-step	alloc_words	exact	28086
+TrainStep/train-step	wall_time	batch=1	n=20	9.023e-03	8.105e-03 8.534e-03 8.599e-03 8.722e-03 8.791e-03 8.836e-03 8.873e-03 8.898e-03 8.908e-03 9.005e-03 9.041e-03 9.054e-03 9.067e-03 9.118e-03 9.126e-03 9.155e-03 9.161e-03 9.279e-03 9.408e-03 9.426e-03
 
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
