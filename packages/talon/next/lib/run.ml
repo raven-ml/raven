@@ -217,9 +217,13 @@ let aggregate q by outputs input =
       f )
 
 (* [head ~offset ~length s] is [s]'s rows [offset] to [offset + length - 1]; it
-   closes [s] past them. *)
+   closes [s] past them, and pulls nothing when it keeps no row. *)
 let head ~offset ~length s =
-  let stop = if length > max_int - offset then max_int else offset + length in
+  let stop =
+    if length = 0 then 0
+    else if length > max_int - offset then max_int
+    else offset + length
+  in
   let seen = ref 0 and closed = ref false in
   let close () =
     if not !closed then begin
@@ -456,7 +460,7 @@ let compile q =
         step input false (fun b -> (Order_run.sort keys b, None))
     | Slice { offset; length; input } when offset >= 0 -> (
         match Query.node input with
-        | Sort { keys; input = sorted } when readers input = 1 ->
+        | Sort { keys; input = sorted } when readers input = 1 && length > 0 ->
             step sorted false (fun b ->
                 (Order_run.top_k ~offset ~length keys b, None))
         | _ -> head ~offset ~length (stream input))

@@ -312,11 +312,17 @@ let read : type a. a Type.t -> cell -> a option =
   | Some Equal -> v
   | None -> invalid_arg "Reference: a cell of another kind"
 
-(* [stored ty v] is the value [v] has once stored as [ty]. *)
+let rec pow10 k = if k = 0 then 1L else Int64.mul 10L (pow10 (k - 1))
+
+(* [stored ty v] is the value [v], of a type that [ty] contains, has once stored
+   as [ty]: a decimal reads at [ty]'s scale. *)
 let stored : type a. a Type.t -> a -> a =
  fun ty v ->
   match ty with
   | Float32 -> Int32.float_of_bits (Int32.bits_of_float v)
+  | Decimal { scale; _ } ->
+      let finer = pow10 (scale - Decimal.scale v) in
+      Decimal.v ~unscaled:(Int64.mul (Decimal.unscaled v) finer) ~scale
   | _ -> v
 
 let signed bits v =
@@ -616,12 +622,16 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
       let c = eval fr c in
       let a = eval fr a in
       let b = eval fr b in
-      Array.mapi (fun i c -> if c = Some true then a.(i) else b.(i)) c
+      let at = stored (type_of e) in
+      Array.mapi
+        (fun i c -> Option.map at (if c = Some true then a.(i) else b.(i)))
+        c
   | Is_null a -> Array.map (fun v -> Some (Option.is_none v)) (eval fr a)
   | Coalesce es ->
-      let vs = List.map (eval fr) es in
-      Array.init (size fr) (fun i -> List.find_map (fun v -> v.(i)) vs)
-  | Store (_, a) -> eval fr a
+      let vs = List.map (eval fr) es and at = stored (type_of e) in
+      Array.init (size fr) (fun i ->
+          Option.map at (List.find_map (fun v -> v.(i)) vs))
+  | Store (ty, a) -> Array.map (Option.map (stored ty)) (eval fr a)
   | Is_in (vs, a) ->
       let ty = type_of a in
       let same x v = Type.compare_value ty x (stored ty v) = 0 in
@@ -872,7 +882,7 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
             let (Type.Any t) =
               meet (List.assoc n lschema) (List.assoc rn rschema)
             in
-            (n, Cell (t, read t c))
+            (n, Cell (t, Option.map (stored t) (read t c)))
         | None -> (n, c))
       row
   in
@@ -979,10 +989,12 @@ let rec rows : plan -> row Seq.t = function
       in
       step (local e) keep (rows p)
   | Slice { offset; length; plan } when offset >= 0 ->
-      let stop =
-        if length > max_int - offset then max_int else offset + length
-      in
-      Seq.drop offset (Seq.take stop (rows plan))
+      if length = 0 then Seq.empty
+      else
+        let stop =
+          if length > max_int - offset then max_int else offset + length
+        in
+        Seq.drop offset (Seq.take stop (rows plan))
   | Slice { offset; length; plan } ->
       let rs = List.of_seq (rows plan) in
       let start = List.length rs + offset in

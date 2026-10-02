@@ -22,16 +22,16 @@
 
     {b Failures.} Rows flow through the plan, each step pulling the rows it
     needs from its input: a slice from the start pulls its input's first
-    [offset + length] rows, and a slice from the end, a {!Sort} and a step that
-    is not local all of them. A {!Sort} orders its rows stably, each key by
-    {!Talon_next.Type.compare_value} in its direction, nulls last unless first.
-    A frame fails at the earliest row where a node fails, and of two failures at
-    a row, at the first evaluated: a value that a {!Map}, {!Bind} or {!Cast}
-    type does not hold, a text that {!Parse} does not read, or an exception that
-    a function raises, at its row of the step's input; [Only] over two values at
-    the frame's first row. A failed value is null. A step emits its rows before
-    a frame that fails, and the run ends with the failure: an error at the row,
-    or the exception. *)
+    [offset + length] rows, none when [length] is [0], and a slice from the end,
+    a {!Sort} and a step that is not local all of them. A {!Sort} orders its
+    rows stably, each key by {!Talon_next.Type.compare_value} in its direction,
+    nulls last unless first. A frame fails at the earliest row where a node
+    fails, and of two failures at a row, at the first evaluated: a value that a
+    {!Map}, {!Bind} or {!Cast} type does not hold, a text that {!Parse} does not
+    read, or an exception that a function raises, at its row of the step's
+    input; [Only] over two values at the frame's first row. A failed value is
+    null. A step emits its rows before a frame that fails, and the run ends with
+    the failure: an error at the row, or the exception. *)
 
 open Talon_next
 

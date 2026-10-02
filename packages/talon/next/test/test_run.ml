@@ -1077,6 +1077,16 @@ let widening =
       compares "decimal[10, 2] < decimal[12, 4] compares at decimal[12, 4]"
         Expr.(Col.decimal "d2" < Col.decimal "d4")
         [| f; f; t |];
+      test "decimals meet at the finer scale, which OCaml functions read"
+        (fun () ->
+          let scale e =
+            ints Expr.(store Type.int8 (const Decimal.scale $ e)) mixed
+          in
+          let d2 = Col.decimal "d2" and d4 = Col.decimal "d4" in
+          rows_are Type.int8 (Array.make 3 (Some 4))
+            (scale Expr.(coalesce [ d2; d4 ]));
+          rows_are Type.int8 (Array.make 3 (Some 4))
+            (scale Expr.(if_ (bool true) d2 d4)));
     ]
 
 (* NaN equals NaN and orders after every other value, and -0. equals 0. *)
@@ -1293,6 +1303,12 @@ let failure_order =
           expect (ends q)
           @@ __POS_OF__
                {| derive ["b" := store int8 (<const> $ x)]: row 2: int8 does not hold 1000. |});
+      test "a slice from the start that keeps no row reads none" (fun () ->
+          let fails_at_0 = Expr.(store Type.int8 (const (fun _ -> 1000) $ x)) in
+          let q = Query.derive Expr.[ "b" := fails_at_0 ] (Query.of_table t) in
+          equal string "no failure" (ends (Query.slice ~offset:1 ~length:0 q));
+          equal string "no failure"
+            (ends (Query.slice ~offset:0 ~length:0 (Query.sort [] q))));
     ]
 
 (* Lifts *)
