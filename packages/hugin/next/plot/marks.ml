@@ -271,12 +271,22 @@ let swatch_line rows =
   | None ->
       draw_series rows x0 (Path.polyline [| x0.(0); x1.(0) |] [| 0.5; 0.5 |])
 
+(* The curves whose piece between two points depends on those two points alone
+   and stays within their bounding box, which M4 draws as the whole curve
+   does. *)
+let boxed = Curve.[ linear; step_after; step_before; step_mid ]
+
 let line ?x ?stroke ?fill ?width ?opacity ?(curve = Curve.linear) ?fx ?fy ~y ()
     =
   let x =
     match x with Some x -> on Role.x x | None -> on Role.x (index (-1))
   in
-  make "line" ~reduce:Mark.m4 ~swatch:swatch_line
+  let reduce =
+    match fill with
+    | None when List.exists (Curve.equal curve) boxed -> Some Mark.m4
+    | _ -> None
+  in
+  make "line" ?reduce ~swatch:swatch_line
     ([
        Some x;
        Some (on Role.y y);

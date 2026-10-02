@@ -1136,53 +1136,67 @@ type trace = {
   width : float;  (** The panel's. *)
   density : float;
   pen : float;
+  curve : Curve.t;
   signal : [ `Noise | `Walk | `Sine ];
   gaps : bool;
-  turns : bool;  (** [x] turns back halfway. *)
+  along : [ `Rising | `Turning | `Waving ];
+      (** [x] rises, turns back halfway, or goes back and forth 7 times. *)
+  zoom : bool;  (** The x domain holds the middle 80% of the data. *)
+  facets : bool;  (** Two facet panels of two series each. *)
 }
 
 let pp_trace ppf t =
   Format.fprintf ppf
-    "{ n = %d; width = %g; density = %g; pen = %g; signal = %s; gaps = %b; \
-     turns = %b }"
-    t.n t.width t.density t.pen
+    "{ n = %d; width = %g; density = %g; pen = %g; curve = %a; signal = %s; \
+     gaps = %b; along = %s; zoom = %b; facets = %b }"
+    t.n t.width t.density t.pen Curve.pp t.curve
     (match t.signal with
     | `Noise -> "noise"
     | `Walk -> "walk"
     | `Sine -> "sine")
-    t.gaps t.turns
+    t.gaps
+    (match t.along with
+    | `Rising -> "rising"
+    | `Turning -> "turning"
+    | `Waving -> "waving")
+    t.zoom t.facets
 
 let gen_trace =
   let open Gen in
   with_pp pp_trace
     (map
-       (fun ((n, width, density), (pen, signal), (gaps, turns)) ->
-         { n; width; density; pen; signal; gaps; turns })
+       (fun ( (n, width, density),
+              (pen, curve, signal),
+              (gaps, along, zoom, facets) ) ->
+         { n; width; density; pen; curve; signal; gaps; along; zoom; facets })
        (triple
           (triple (int_range 1_000 6_000)
              (of_list [ 50.; 50.37; 33.3 ])
              (of_list [ 1.; 1.3; 2. ]))
-          (pair (of_list [ 0.5; 2. ]) (of_list [ `Noise; `Walk; `Sine ]))
-          (pair bool bool)))
+          (triple
+             (of_list [ 0.5; 2.; 7. ])
+             (of_list Curve.[ linear; step_after; step_before; step_mid ])
+             (of_list [ `Noise; `Walk; `Sine ]))
+          (quad bool (of_list [ `Rising; `Turning; `Waving ]) bool bool)))
 
-(* [traced ~pen reduce] strokes each series through its points at [pen],
-   breaking where a row is dropped. *)
-let traced ~pen reduce bindings =
-  Mark.v ~name:"trace" ?reduce bindings (fun r ->
-      Picture.group
-        (List.map
-           (fun s ->
-             let us, vs = Mark.positions s in
-             Picture.stroke (Stroke.v pen) Color.black
-               (Mark.project s (Curve.path Curve.linear us vs)))
-           (Mark.series r)))
+(* [line_at ~pen ~curve ~whole x y] is a line of [x] and [y] stroked at [pen]
+   along [curve]. When [whole], its stroke is bound to one category per row, a
+   channel that varies along the series, so that the line is not reduced, yet
+   draws one series in one colour. *)
+let line_at ?fx ~pen ~curve ~whole x y =
+  let shape = if whole then Nx.shape y else [| 1 |] in
+  let stroke = cat (Nx.zeros Nx.int32 shape) in
+  line ?fx ~x ~y:(num y) ~stroke ~width:(const pen) ~curve ()
 
 let m4_inks_alike =
-  prop "m4 inks what the whole drawing inks, within a pixel" ~count:40 gen_trace
-    (fun t ->
+  prop ~tags:[ "slow" ] "m4 inks what the whole line inks, within a pixel"
+    ~count:40 gen_trace (fun t ->
       cover "a line thinner than a column" (t.pen *. t.density < 1.);
+      cover "a line wider than four device pixels" (t.pen *. t.density > 4.);
       cover "dropped rows" t.gaps;
-      cover "x turning back" t.turns;
+      cover "x going back and forth" (t.along = `Waving);
+      cover "x beyond the domain" t.zoom;
+      cover "facet panels" t.facets;
       let y =
         match t.signal with
         | `Noise -> ys t.n
@@ -1191,17 +1205,36 @@ let m4_inks_alike =
       in
       let y = if t.gaps then with_gaps y else y in
       let x =
-        if t.turns then
-          Nx.init Nx.float64 [| t.n |] (fun i ->
-              Float.of_int (Int.min i.(0) (t.n - i.(0))))
-        else xs t.n
+        let at f = Nx.init Nx.float64 [| t.n |] (fun i -> f i.(0)) in
+        match t.along with
+        | `Rising -> xs t.n
+        | `Turning -> at (fun i -> Float.of_int (Int.min i (t.n - i)))
+        | `Waving ->
+            let period = t.n / 7 in
+            at (fun i ->
+                let k = i mod period in
+                Float.of_int (Int.min k (period - k)))
       in
-      let page reduce =
+      let hi = Nx.item [] (Nx.max x) in
+      let x, y, fx =
+        if not t.facets then (x, y, None)
+        else
+          let shape = [| 2; 2; t.n |] in
+          let ys = [ y; Nx.neg y; Nx.mul_s y 0.5; Nx.add_s y 1. ] in
+          ( Nx.broadcast_to shape x,
+            Nx.reshape shape (Nx.stack ~axis:0 ys),
+            Some (dim 0) )
+      in
+      let x =
+        if t.zoom then
+          num ~scale:(Scale.linear ~domain:(0.1 *. hi, 0.9 *. hi) ()) x
+        else num x
+      in
+      let page ~whole =
         let f =
           layer
             [
-              traced ~pen:t.pen reduce
-                [ Mark.bind Role.x (num x); Mark.bind Role.y (num y) ];
+              line_at ?fx ~pen:t.pen ~curve:t.curve ~whole x y;
               axis ~show:false "x";
               axis ~show:false "y";
             ]
@@ -1220,7 +1253,34 @@ let m4_inks_alike =
              (Renderable.h r +. (2. *. m))
              (Picture.transform (Affine.translate m m) (Renderable.picture r)))
       in
-      equal (list (pair int int)) [] (stray (page None) (page (Some Mark.m4))))
+      equal
+        (list (pair int int))
+        []
+        (stray (page ~whole:true) (page ~whole:false)))
+
+(* [line_rows f] is the number of rows the line [f] draws. *)
+let line_rows f =
+  List.fold_left
+    (fun acc -> function
+      | Picture.Rows rows, _ -> acc + Array.length rows | _ -> acc)
+    0
+    (tags (path [ Index 0 ]) (drawn ~size:(Size.panels 50. 50.) (layer [ f ])))
+
+let m4_lines =
+  let y = ys 2000 in
+  cases
+    ~name:(fun (name, _, _) -> name)
+    "a line is reduced only if each piece depends on its two points alone"
+    [
+      ("linear", line ~y:(num y) (), true);
+      ("monotone_x", line ~curve:Curve.monotone_x ~y:(num y) (), false);
+      ("step_mid", line ~curve:Curve.step_mid ~y:(num y) (), true);
+      ("natural", line ~curve:Curve.natural ~y:(num y) (), false);
+      ("catmull_rom", line ~curve:Curve.catmull_rom ~y:(num y) (), false);
+      ("basis", line ~curve:Curve.basis ~y:(num y) (), false);
+      ("filled", line ~fill:(const Color.red) ~y:(num y) (), false);
+    ]
+    (fun (_, f, reduced) -> equal bool reduced (line_rows f < 2000))
 
 (* [dots_with ~alpha reduce n] is a mark of [n] dots filled at [alpha], reduced
    by [reduce]. *)
@@ -1420,6 +1480,7 @@ let reducers =
       test "m4 joins a series' rows across the rows of other facet panels"
         m4_split_facets;
       m4_inks_alike;
+      m4_lines;
       raster_as_drawn;
       cases
         ~name:(fun (n, _, _) -> Printf.sprintf "%d dots in %s" n "a panel")

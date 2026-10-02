@@ -451,8 +451,10 @@ val line :
     A series takes its colours, width and opacity from its first row that is not
     dropped, with a warning if one of them varies along it.
 
-    A line with more than four rows per device-pixel column is reduced
-    ({!Mark.m4}). *)
+    A line without [fill] drawn with {!Curve.linear} or a step, whose piece
+    between two points depends on those two points alone and stays within their
+    bounding box, is reduced when it has more than four rows per device-pixel
+    column ({!Mark.m4}). *)
 
 val area :
   ?x:('x, float) channel ->
@@ -1499,12 +1501,14 @@ module Mark : sig
       neither join nor split them. It applies when [x] and [y] read continuous
       scales and the projection is affine.
 
-      A mark naming it draws each series as a path through its points that
-      breaks at dropped rows. The reduced path keeps every break and, in each
-      column, its end points and its vertical extent, so it inks the pixels the
-      whole path inks, within one pixel. The coverage inside that extent may
-      differ for a line thinner than a column: a dense scribble covers more of
-      each pixel than the four rows kept. *)
+      A mark naming it strokes each series as a path through its points, whose
+      piece between two consecutive points depends on those two points alone and
+      stays within their bounding box, and that breaks at dropped rows. The
+      reduced path keeps every break and, in each column, its end points and its
+      vertical extent, so it inks the pixels the whole path inks, within one
+      pixel. The coverage inside that extent may differ for a line thinner than
+      a column: a dense scribble covers more of each pixel than the four rows
+      kept. *)
 
   val cells : reducer
   (** [cells] draws a panel's rows as one image whose pixels are their cells,
