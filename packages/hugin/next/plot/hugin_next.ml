@@ -1269,13 +1269,13 @@ and children st parent fs =
 (* Arranging: shares give scopes, layers broadcast over grids, and every panel's
    content becomes a list of occurrences. *)
 
+type shares = (string * key) list
+
 type env = {
-  shares : (string * key) list; (* Innermost first. *)
+  shares : shares; (* Innermost first. *)
   pending : string list; (* Independent names awaiting the node's children. *)
   cell : id; (* The innermost grid cell, or the root. *)
 }
-
-type shares = (string * key) list
 
 let key_of (env : env) name =
   match List.assoc_opt name env.shares with
@@ -1286,7 +1286,7 @@ type occ = {
   mid : id;
   mark : mark;
   order : int;
-  shares : (string * key) list;
+  shares : shares;
   per_panel : string list;
 }
 
@@ -1712,16 +1712,20 @@ let panels root s =
 (* Readings: the channels that read scales, each with its scale's identity and
    scope. *)
 
+type 'd member = {
+  m_occ : occ;
+  m_pid : id;
+  m_index : int;
+  m_role : string;
+  m_d : 'd data;
+  m_imply : float Scale.t option;
+  m_guide : bool option;
+}
+
 type reading =
   | R : {
-      occ : occ;
-      pid : id;
-      index : int;
-      role : string;
-      d : 'd data;
+      m : 'd member;
       kind : 'd Scale.kind;
-      imply : float Scale.t option;
-      guide : bool option;
       mapped : bool;
       sid : sid;
       key : key;
@@ -1752,14 +1756,17 @@ let readings_of pid occ =
              [
                R
                  {
-                   occ;
-                   pid;
-                   index;
-                   role = b.role.name;
-                   d;
+                   m =
+                     {
+                       m_occ = occ;
+                       m_pid = pid;
+                       m_index = index;
+                       m_role = b.role.name;
+                       m_d = d;
+                       m_imply = b.imply;
+                       m_guide = b.guide;
+                     };
                    kind;
-                   imply = b.imply;
-                   guide = b.guide;
                    mapped = is_map b.ch;
                    sid = sid name (tag kind);
                    key;
@@ -1767,16 +1774,6 @@ let readings_of pid occ =
              ]
          | _ -> [])
        occ.mark.bindings)
-
-type 'd member = {
-  m_occ : occ;
-  m_pid : id;
-  m_index : int;
-  m_role : string;
-  m_d : 'd data;
-  m_imply : float Scale.t option;
-  m_guide : bool option;
-}
 
 type group =
   | G : {
@@ -1794,18 +1791,7 @@ let axis_role = function "x" | "x2" -> "x" | "y" | "y2" -> "y" | r -> r
 
 let group readings =
   let add groups (R r) =
-    let member =
-      {
-        m_occ = r.occ;
-        m_pid = r.pid;
-        m_index = r.index;
-        m_role = r.role;
-        m_d = r.d;
-        m_imply = r.imply;
-        m_guide = r.guide;
-      }
-    in
-    let legend = (not (positional (axis_role r.role))) && not r.mapped in
+    let legend = (not (positional (axis_role r.m.m_role))) && not r.mapped in
     let rec go = function
       | [] ->
           [
@@ -1814,7 +1800,7 @@ let group readings =
                 sid = r.sid;
                 key = r.key;
                 kind = r.kind;
-                members = [ member ];
+                members = [ r.m ];
                 legend;
               };
           ]
@@ -1827,7 +1813,7 @@ let group readings =
                 G
                   {
                     g with
-                    members = member :: g.members;
+                    members = r.m :: g.members;
                     legend = g.legend || legend;
                   }
                 :: rest
@@ -1835,7 +1821,7 @@ let group readings =
                 let m = List.hd g.members in
                 err "resolve" "the scale %S is read as %a by %a and as %a by %a"
                   r.sid.sname pp_tag (tag g.kind) pp_id m.m_occ.mid pp_tag
-                  (tag r.kind) pp_id r.occ.mid)
+                  (tag r.kind) pp_id r.m.m_occ.mid)
     in
     go groups
   in
@@ -1848,19 +1834,19 @@ let check_panel_scales readings =
   let rec go seen = function
     | [] -> ()
     | (R r as rd) :: rest ->
-        let axis = axis_role r.role in
+        let axis = axis_role r.m.m_role in
         (if positional axis then
            match
              List.find_opt
                (fun (R r') ->
-                 Nx.Ptree.Path.equal r'.pid r.pid
-                 && String.equal (axis_role r'.role) axis)
+                 Nx.Ptree.Path.equal r'.m.m_pid r.m.m_pid
+                 && String.equal (axis_role r'.m.m_role) axis)
                seen
            with
            | Some (R r')
              when not (equal_sid r'.sid r.sid && equal_key r'.key r.key) ->
                err "resolve" "%a and %a read two %s scales in the panel %a"
-                 pp_id r'.occ.mid pp_id r.occ.mid axis pp_id r.pid
+                 pp_id r'.m.m_occ.mid pp_id r.m.m_occ.mid axis pp_id r.m.m_pid
            | _ -> ());
         go (rd :: seen) rest
   in
@@ -1915,9 +1901,9 @@ let check_axes cells readings =
           let roles =
             List.filter_map
               (fun (R r) ->
-                let role = axis_role r.role in
+                let role = axis_role r.m.m_role in
                 if
-                  Nx.Ptree.Path.equal r.pid pid
+                  Nx.Ptree.Path.equal r.m.m_pid pid
                   && positional role
                   && String.equal r.sid.sname a.scale
                 then Some role
@@ -1985,16 +1971,16 @@ let merge_level sid level specs =
   in
   go None [] specs
 
+let default_spec : type d. d Scale.kind -> d Scale.t = function
+  | Scale.Quantitative -> Scale.linear ()
+  | Scale.Temporal -> Scale.time ()
+  | Scale.Categorical -> Scale.band ()
+
 (* [merged kind sid ms] is the specification of the scale [ms] read: their
    explicit specifications merged, then implied ones under them. *)
 let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
  fun kind sid ms ->
-  let base : d Scale.t =
-    match kind with
-    | Scale.Quantitative -> Scale.linear ()
-    | Scale.Temporal -> Scale.time ()
-    | Scale.Categorical -> Scale.band ()
-  in
+  let base = default_spec kind in
   let explicit =
     List.filter_map (fun m -> Option.map (fun s -> (m, s)) m.m_d.spec) ms
   in
@@ -2580,11 +2566,6 @@ let equal_input (In i) (In i') =
 let equal_filter =
   Option.equal (fun (a, b) (a', b') ->
       Option.equal String.equal a a' && Option.equal String.equal b b')
-
-let default_spec : type d. d Scale.kind -> d Scale.t = function
-  | Scale.Quantitative -> Scale.linear ()
-  | Scale.Temporal -> Scale.time ()
-  | Scale.Categorical -> Scale.band ()
 
 let inputs_of specs occ pid =
   List.concat
