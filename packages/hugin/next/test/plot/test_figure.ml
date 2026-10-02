@@ -59,13 +59,30 @@ let lifts =
           ignore (cat (Nx.zeros Nx.uint64 [| 2 |]) : (string, string) channel));
       test "dim labels may repeat" (fun () ->
           ignore (line ~y:(num m) ~stroke:(dim ~labels:[| "a"; "a" |] 0) () : t));
+      (* A lift that kept the caller's array would change with it. *)
       test "labels are copied" (fun () ->
-          let labels = [| "a"; "b" |] in
           let c = i32 [| 3 |] in
-          let f = dot ~x:(num v) ~y:(num v) ~fill:(cat ~labels c) () in
-          let g = dot ~x:(num v) ~y:(num v) ~fill:(cat ~labels c) () in
+          let fill labels =
+            dot ~x:(num v) ~y:(num v) ~fill:(cat ~labels c) ()
+          in
+          let labels = [| "a"; "b" |] in
+          let f = fill labels in
           labels.(0) <- "z";
-          equal bool true (Hugin_next.equal f g));
+          equal bool true (Hugin_next.equal f (fill [| "a"; "b" |])));
+      test "strings are copied" (fun () ->
+          let fill a = dot ~x:(num v) ~y:(num v) ~fill:(strings a) () in
+          let a = [| "a"; "b"; "c" |] in
+          let f = fill a in
+          a.(0) <- "z";
+          equal bool true (Hugin_next.equal f (fill [| "a"; "b"; "c" |])));
+      test "dim labels are copied" (fun () ->
+          let fill labels =
+            dot ~x:(num v) ~y:(num v) ~fill:(dim ~labels 0) ()
+          in
+          let labels = [| "a"; "b"; "c" |] in
+          let f = fill labels in
+          labels.(0) <- "z";
+          equal bool true (Hugin_next.equal f (fill [| "a"; "b"; "c" |])));
     ]
 
 (* Marks *)
@@ -282,22 +299,33 @@ let composing =
    index in fixed pools, so that two recipes are equal iff they build figures
    from the same combinators and equal arguments. *)
 type recipe =
-  | R_dot of int * int
+  | R_dot of int * int * int option (* x, y, x's mask. *)
   | R_line of int * bool
   | R_bar of int
   | R_mapped of int * int
+  | R_custom of float option (* The aspect of the coordinate system implied. *)
+  | R_axis of string * bool
+  | R_legend of string * bool
+  | R_bind of string * int
   | R_layer of recipe list
-  | R_grid of recipe list list
-  | R_title of string * recipe
+  | R_grid of float list option * recipe list list
+  | R_span of int * int * recipe
+  | R_title of string * int * recipe
   | R_name of string * recipe
   | R_share of string * bool * recipe
   | R_coord of float option * recipe
 
 let tensors = Array.init 3 (fun _ -> f32 [| 3 |])
+let masks = Array.init 2 (fun _ -> mask [| 3 |])
 let colours = [| Color.contrast; (fun c -> Color.with_alpha 0.5 c) |]
+let aligns : Text.Layout.halign array = [| `Center; `Left; `Right |]
+let custom_draw (_ : Mark.rows) = Picture.empty
+let bound = Array.init 2 (fun i _ -> dot ~x:(num tensors.(i)) ~y:(const 0.5) ())
 
 let rec build = function
-  | R_dot (i, j) -> dot ~x:(num tensors.(i)) ~y:(num tensors.(j)) ()
+  | R_dot (i, j, k) ->
+      let valid = Option.map (fun k -> masks.(k)) k in
+      dot ~x:(num ?valid tensors.(i)) ~y:(num tensors.(j)) ()
   | R_line (i, titled) ->
       let x =
         if titled then index ~title:(Text.v "step") (-1) else index (-1)
@@ -309,88 +337,183 @@ let rec build = function
         ~y:(num tensors.(i))
         ~fill:(map_range colours.(k) (num tensors.(i)))
         ()
+  | R_custom aspect ->
+      let coord =
+        Option.map (fun aspect -> Coord.cartesian ~aspect ()) aspect
+      in
+      Mark.v ~name:"custom" ?coord
+        [ Mark.bind Role.x (num tensors.(0)) ]
+        custom_draw
+  | R_axis (s, grid) -> axis ~grid s
+  | R_legend (s, show) -> legend ~show s
+  | R_bind (s, i) -> bind (View.number s ~init:0.) bound.(i)
   | R_layer rs -> layer (List.map build rs)
-  | R_grid rows -> grid (List.map (List.map build) rows)
-  | R_title (s, r) -> title (Text.v s) (build r)
+  | R_grid (widths, rows) -> grid ?widths (List.map (List.map build) rows)
+  | R_span (rows, cols, r) -> span ~rows ~cols (build r)
+  | R_title (s, k, r) -> title ~align:aligns.(k) (Text.v s) (build r)
   | R_name (s, r) -> name s (build r)
   | R_share (s, indep, r) ->
       share [ (s, if indep then `Independent else `Shared) ] (build r)
   | R_coord (aspect, r) -> coord (Coord.cartesian ?aspect ()) (build r)
 
+let pp_list pp ppf l =
+  Format.fprintf ppf "[%a]"
+    (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ") pp)
+    l
+
+let pp_aspect = Format.pp_print_option Format.pp_print_float
+
 let rec pp_recipe ppf = function
-  | R_dot (i, j) -> Format.fprintf ppf "dot %d %d" i j
+  | R_dot (i, j, k) ->
+      Format.fprintf ppf "dot %d %d %a" i j
+        (Format.pp_print_option Format.pp_print_int)
+        k
   | R_line (i, t) -> Format.fprintf ppf "line %d %b" i t
   | R_bar i -> Format.fprintf ppf "bar %d" i
   | R_mapped (i, k) -> Format.fprintf ppf "mapped %d %d" i k
-  | R_layer rs ->
-      Format.fprintf ppf "@[layer [%a]@]"
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
-           pp_recipe)
-        rs
-  | R_grid rows ->
-      Format.fprintf ppf "@[grid [%a]@]"
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
-           (fun ppf r ->
-             Format.fprintf ppf "[%a]"
-               (Format.pp_print_list
-                  ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
-                  pp_recipe)
-               r))
+  | R_custom a -> Format.fprintf ppf "custom %a" pp_aspect a
+  | R_axis (s, g) -> Format.fprintf ppf "axis %S %b" s g
+  | R_legend (s, show) -> Format.fprintf ppf "legend %S %b" s show
+  | R_bind (s, i) -> Format.fprintf ppf "bind %S %d" s i
+  | R_layer rs -> Format.fprintf ppf "@[layer %a@]" (pp_list pp_recipe) rs
+  | R_grid (ws, rows) ->
+      Format.fprintf ppf "@[grid %a %a@]"
+        (Format.pp_print_option (pp_list Format.pp_print_float))
+        ws
+        (pp_list (pp_list pp_recipe))
         rows
-  | R_title (s, r) -> Format.fprintf ppf "@[title %S (%a)@]" s pp_recipe r
+  | R_span (rows, cols, r) ->
+      Format.fprintf ppf "@[span %d %d (%a)@]" rows cols pp_recipe r
+  | R_title (s, k, r) ->
+      Format.fprintf ppf "@[title %S %d (%a)@]" s k pp_recipe r
   | R_name (s, r) -> Format.fprintf ppf "@[name %S (%a)@]" s pp_recipe r
   | R_share (s, i, r) ->
       Format.fprintf ppf "@[share %S %b (%a)@]" s i pp_recipe r
   | R_coord (a, r) ->
-      Format.fprintf ppf "@[coord %a (%a)@]"
-        (Format.pp_print_option Format.pp_print_float)
-        a pp_recipe r
+      Format.fprintf ppf "@[coord %a (%a)@]" pp_aspect a pp_recipe r
 
 let rec gen_recipe depth =
   let open Gen in
   let idx = int_range 0 2 in
+  let word = of_list [ "a"; "b" ] in
+  let aspect = option (of_list [ 1.; 2. ]) in
   let leaf =
     one_of
       [
-        map (fun (i, j) -> R_dot (i, j)) (pair idx idx);
+        map
+          (fun (i, (j, k)) -> R_dot (i, j, k))
+          (pair idx (pair idx (option (int_range 0 1))));
         map (fun (i, t) -> R_line (i, t)) (pair idx bool);
         map (fun i -> R_bar i) idx;
         map (fun (i, k) -> R_mapped (i, k)) (pair idx (int_range 0 1));
+        map (fun a -> R_custom a) aspect;
+        map (fun (s, g) -> R_axis (s, g)) (pair (of_list [ "x"; "y" ]) bool);
+        map (fun (s, show) -> R_legend (s, show)) (pair word bool);
+        map (fun (s, i) -> R_bind (s, i)) (pair word (int_range 0 1));
       ]
   in
   if depth = 0 then leaf
   else
     let sub = gen_recipe (depth - 1) in
-    let word = of_list [ "a"; "b" ] in
     frequency
       [
         (3, leaf);
         (1, map (fun rs -> R_layer rs) (list ~size:(int_range 0 3) sub));
         ( 1,
           map
-            (fun rows -> R_grid rows)
-            (list ~size:(int_range 1 2) (list ~size:(int_range 1 2) sub)) );
-        (1, map (fun (s, r) -> R_title (s, r)) (pair word sub));
+            (fun (ws, rows) -> R_grid (ws, rows))
+            (pair
+               (option (list ~size:(int_range 1 2) (of_list [ 1.; 2. ])))
+               (list ~size:(int_range 1 2) (list ~size:(int_range 1 2) sub))) );
+        ( 1,
+          map
+            (fun ((rows, cols), r) -> R_span (rows, cols, r))
+            (pair (pair (int_range 1 2) (int_range 1 2)) sub) );
+        ( 1,
+          map
+            (fun (s, (k, r)) -> R_title (s, k, r))
+            (pair word (pair (int_range 0 2) sub)) );
         (1, map (fun (s, r) -> R_name (s, r)) (pair word sub));
         ( 1,
           map
             (fun (s, (i, r)) -> R_share (s, i, r))
             (pair (of_list [ "x"; "color" ]) (pair bool sub)) );
-        ( 1,
-          map
-            (fun (a, r) -> R_coord (a, r))
-            (pair (option (of_list [ 1.; 2. ])) sub) );
+        (1, map (fun (a, r) -> R_coord (a, r)) (pair aspect sub));
       ]
 
 let gen_recipe = Gen.with_pp pp_recipe (gen_recipe 3)
 
+(* [variants r] is every recipe that differs from [r] in one argument of one
+   node, the near misses an equality that ignores an argument confuses. *)
+let rec variants r =
+  let other_aspect = function None -> Some 1. | Some _ -> None in
+  let here =
+    match r with
+    | R_dot (i, j, k) ->
+        [ R_dot (i, j, match k with None -> Some 0 | Some _ -> None) ]
+    | R_line (i, t) -> [ R_line (i, not t) ]
+    | R_bar i -> [ R_bar ((i + 1) mod 3) ]
+    | R_mapped (i, k) -> [ R_mapped (i, 1 - k) ]
+    | R_custom a -> [ R_custom (other_aspect a) ]
+    | R_axis (s, g) -> [ R_axis (s, not g) ]
+    | R_legend (s, show) -> [ R_legend (s, not show) ]
+    | R_bind (s, i) -> [ R_bind (s, 1 - i) ]
+    | R_layer rs -> [ R_layer (R_bar 0 :: rs) ]
+    | R_grid (ws, rows) ->
+        [
+          R_grid ((match ws with None -> Some [ 1. ] | Some _ -> None), rows);
+        ]
+    | R_span (rows, cols, x) -> [ R_span (3 - rows, cols, x) ]
+    | R_title (s, k, x) -> [ R_title (s, (k + 1) mod 3, x) ]
+    | R_name (s, x) -> [ R_name ((if s = "a" then "b" else "a"), x) ]
+    | R_share (s, i, x) -> [ R_share (s, not i, x) ]
+    | R_coord (a, x) -> [ R_coord (other_aspect a, x) ]
+  in
+  (* [each l] is [l] with one element replaced by one of its variants. *)
+  let rec each = function
+    | [] -> []
+    | x :: rest ->
+        List.map (fun x' -> x' :: rest) (variants x)
+        @ List.map (fun rest' -> x :: rest') (each rest)
+  in
+  let rec each_row = function
+    | [] -> []
+    | row :: rest ->
+        List.map (fun row' -> row' :: rest) (each row)
+        @ List.map (fun rest' -> row :: rest') (each_row rest)
+  in
+  let below =
+    match r with
+    | R_layer rs -> List.map (fun rs -> R_layer rs) (each rs)
+    | R_grid (ws, rows) ->
+        List.map (fun rows -> R_grid (ws, rows)) (each_row rows)
+    | R_span (rows, cols, x) ->
+        List.map (fun x -> R_span (rows, cols, x)) (variants x)
+    | R_title (s, k, x) -> List.map (fun x -> R_title (s, k, x)) (variants x)
+    | R_name (s, x) -> List.map (fun x -> R_name (s, x)) (variants x)
+    | R_share (s, i, x) -> List.map (fun x -> R_share (s, i, x)) (variants x)
+    | R_coord (a, x) -> List.map (fun x -> R_coord (a, x)) (variants x)
+    | R_dot _ | R_line _ | R_bar _ | R_mapped _ | R_custom _ | R_axis _
+    | R_legend _ | R_bind _ ->
+        []
+  in
+  here @ below
+
+(* Pairs of equal recipes, of near misses, and of unrelated recipes. *)
 let gen_pair =
-  Gen.(
-    map
-      (fun (r, (r', same)) -> (r, if same then r else r'))
-      (pair gen_recipe (pair gen_recipe bool)))
+  let pp ppf (r, r') =
+    Format.fprintf ppf "@[<v>%a@,%a@]" pp_recipe r pp_recipe r'
+  in
+  Gen.with_pp pp
+    Gen.(
+      let* r = gen_recipe in
+      let vs = variants r in
+      let* k = int_range 0 (List.length vs - 1) in
+      let+ r' =
+        frequency
+          [ (1, constant r); (2, constant (List.nth vs k)); (1, gen_recipe) ]
+      in
+      (r, r'))
 
 let equality =
   group "equal"
@@ -399,7 +522,39 @@ let equality =
           let same = r = r' in
           cover "equal recipes" same;
           cover "different recipes" (not same);
+          cover "recipes that differ in one argument"
+            (List.exists (( = ) r') (variants r));
           equal bool same (Hugin_next.equal (build r) (build r')));
+      cases
+        ~name:(Format.asprintf "%a" pp_recipe)
+        "a figure differs from each of its near misses"
+        [
+          R_dot (0, 1, None);
+          R_dot (0, 1, Some 0);
+          R_line (0, false);
+          R_mapped (0, 0);
+          R_custom None;
+          R_custom (Some 2.);
+          R_axis ("x", false);
+          R_legend ("a", true);
+          R_bind ("a", 0);
+          R_layer [ R_bar 0 ];
+          R_grid (None, [ [ R_bar 0; R_bar 1 ] ]);
+          R_grid (Some [ 2. ], [ [ R_bar 0 ] ]);
+          R_span (1, 1, R_bar 0);
+          R_title ("a", 0, R_bar 0);
+          R_name ("a", R_bar 0);
+          R_share ("x", false, R_bar 0);
+          R_coord (None, R_bar 0);
+        ]
+        (fun r ->
+          List.iter
+            (fun r' ->
+              equal
+                ~msg:(Format.asprintf "%a" pp_recipe r')
+                bool false
+                (Hugin_next.equal (build r) (build r')))
+            (variants r));
       test "a nested layer is not the flat layer" (fun () ->
           let b = rule ~x:(num v) () in
           equal bool false

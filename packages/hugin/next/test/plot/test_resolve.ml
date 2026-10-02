@@ -857,6 +857,94 @@ let categories =
                  ())
           in
           equal floats (2., 2.) (hull r "x"));
+      test "an explicit domain drops the labelled codes outside it" (fun () ->
+          let s = Scale.band ~domain:(Scale.Labels [| "b" |]) () in
+          let r =
+            resolve
+              (dot
+                 ~x:(num ~scale:exact (f64 [| 1.; 2.; 3. |]))
+                 ~y:(num at0)
+                 ~symbol:
+                   (cat ~scale:s ~labels:[| "a"; "b" |] (i32 [| 0; 1; 0 |]))
+                 ())
+          in
+          equal floats (2., 2.) (hull r "x"));
+      test "an explicit domain drops the indexed codes outside it" (fun () ->
+          let s =
+            Scale.band ~domain:(Scale.Indices [| (2, "two"); (5, "five") |]) ()
+          in
+          let r =
+            resolve
+              (dot
+                 ~x:(num ~scale:exact (f64 [| 1.; 2.; 3.; 4. |]))
+                 ~y:(num at0)
+                 ~symbol:(cat ~scale:s (i32 [| 2; 3; 5; 9 |]))
+                 ())
+          in
+          equal floats (1., 3.) (hull r "x"));
+      test "an explicit domain drops the indices of a dim outside it" (fun () ->
+          let s = Scale.band ~domain:(Scale.Indices [| (1, "one") |]) () in
+          let r =
+            resolve
+              (dot
+                 ~x:(num ~scale:exact (f64 [| 1.; 2.; 3. |]))
+                 ~y:(num at0) ~symbol:(dim ~scale:s 0) ())
+          in
+          equal floats (2., 2.) (hull r "x"));
+    ]
+
+(* Facet panels *)
+
+(* Each panel of a facetted mark whose y is independent per panel fits its y to
+   the rows the panel draws. *)
+let facet_panels =
+  let ys = [| 1.; 5.; 3.; 9. |] in
+  let per fx =
+    share
+      [ ("y", `Independent) ]
+      (dot ~x:(const 0.5) ~y:(num ~scale:exact (f64 ys)) ~fx ())
+  in
+  let per2 ?fy fx =
+    let y = num ~scale:exact (Nx.create Nx.float64 [| 2; 2 |] ys) in
+    share [ ("y", `Independent) ] (dot ~x:(const 0.5) ~y ?fy ~fx ())
+  in
+  let panel cs = path (field "panel" :: List.map field cs) in
+  let hulls f cats =
+    let r = resolve f in
+    List.map (fun cs -> hull ~at:(panel cs) r "y") cats
+  in
+  let rows = list floats in
+  group "facet panels"
+    [
+      test "labelled codes select their panels" (fun () ->
+          equal rows
+            [ (1., 3.); (5., 9.) ]
+            (hulls
+               (per (cat ~labels:[| "p"; "q" |] (i32 [| 0; 1; 0; 1 |])))
+               [ [ "p" ]; [ "q" ] ]));
+      test "indexed codes select their panels" (fun () ->
+          equal rows
+            [ (5., 9.); (1., 3.) ]
+            (hulls (per (cat (i32 [| 7; 2; 7; 2 |]))) [ [ "2" ]; [ "7" ] ]));
+      test "strings select their panels" (fun () ->
+          equal rows
+            [ (1., 3.); (5., 9.) ]
+            (hulls
+               (per (strings [| "p"; "q"; "p"; "q" |]))
+               [ [ "p" ]; [ "q" ] ]));
+      test "a dim selects the panel of its index" (fun () ->
+          equal rows
+            [ (1., 5.); (3., 9.) ]
+            (hulls (per2 (dim 0)) [ [ "0" ]; [ "1" ] ]);
+          equal rows
+            [ (1., 3.); (5., 9.) ]
+            (hulls (per2 (dim (-1))) [ [ "0" ]; [ "1" ] ]));
+      test "a panel's id names its fy category, then its fx one" (fun () ->
+          equal rows
+            [ (1., 1.); (5., 5.); (3., 3.); (9., 9.) ]
+            (hulls
+               (per2 ~fy:(dim 0) (dim 1))
+               [ [ "0"; "0" ]; [ "0"; "1" ]; [ "1"; "0" ]; [ "1"; "1" ] ]));
     ]
 
 (* Nulls *)
@@ -1084,6 +1172,31 @@ let views =
           equal (list warning)
             [ (path [ index 1 ], "x: 1 finite value is missing for its scale") ]
             (warnings r));
+      test "a uint64 code beyond int is missing, with a warning" (fun () ->
+          let codes = Nx.create Nx.uint64 [| 2 |] [| -1L; 1L |] in
+          let r =
+            resolve (dot ~x:(const 0.5) ~y:(const 0.5) ~fill:(cat codes) ())
+          in
+          equal
+            (list (pair int string))
+            [ (1, "1") ]
+            (indices (categ r "color"));
+          equal (list warning)
+            [ (Nx.Ptree.Path.root, "fill: 1 code is beyond the range of int") ]
+            (warnings r));
+      test "a masked code outside the labels is not warned about" (fun () ->
+          let r =
+            resolve
+              (dot ~x:(const 0.5) ~y:(const 0.5)
+                 ~fill:
+                   (cat ~labels:[| "a" |]
+                      ~valid:(mask [| true; false; true |])
+                      (i32 [| 3; 5; 0 |]))
+                 ())
+          in
+          equal (list warning)
+            [ (Nx.Ptree.Path.root, "fill: 1 code is outside its 1 labels") ]
+            (warnings r));
       test "data problems are warned about under the mark's id" (fun () ->
           let r =
             resolve
@@ -1107,6 +1220,29 @@ let views =
                 "the facet constant \"nowhere\" of fx names no panel" );
             ]
             (warnings r));
+    ]
+
+(* Equality *)
+
+let equality =
+  let f x = dot1 x [| 0. |] ~fill:(num (f64 [| 1. |])) in
+  let a = f [| 1. |] in
+  group "Resolved.equal"
+    [
+      test "a figure resolved twice is equal to itself" (fun () ->
+          equal resolved (resolve a) (resolve a));
+      test "figures fitting equal scales differ" (fun () ->
+          let r = resolve a and r' = resolve (f [| 1. |]) in
+          equal bool true
+            (Scale.equal (quant r "x") (quant r' "x")
+            && Scale.equal (quant r "color") (quant r' "color"));
+          not_equal resolved r r');
+      test "views that change nothing differ" (fun () ->
+          let k = View.number "k" ~init:0. in
+          let g = bind k (fun _ -> a) in
+          let view = View.set k 1. View.empty in
+          equal (list warning) [] (warnings (resolve ~view g));
+          not_equal resolved (resolve g) (resolve ~view g));
     ]
 
 (* Reuse *)
@@ -1235,9 +1371,11 @@ let () =
          scopes;
          merging;
          categories;
+         facet_panels;
          law15;
          export;
          views;
+         equality;
          reuse;
          baselines;
        ])
