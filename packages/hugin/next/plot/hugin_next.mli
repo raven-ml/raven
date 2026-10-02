@@ -1487,12 +1487,16 @@ module Mark : sig
 
   val m4 : reducer
   (** [m4] keeps, of each series ({!series}) with more than four rows per
-      device-pixel column, each column's first, last, lowest and highest rows,
-      when the series' [x] is monotone and its other channels constant, and the
-      projection is affine. A mark naming it draws each series as a path through
-      its points: the reduced drawing keeps each column's end points and
-      vertical extent, and differs from the whole one only in antialiased edge
-      pixels, by the coverage of the dropped segments. *)
+      device-pixel column of the panel, each column's first, last, lowest and
+      highest rows, when the series' [x] is monotone and its other channels
+      constant, and the projection is affine. Columns are the device pixels at
+      the density {!draw} is given.
+
+      A mark naming it draws each series as a path through its points. The
+      reduced path keeps, in each column, its end points and its vertical
+      extent, so it inks the pixels the whole path inks, within one pixel. The
+      coverage inside that extent may differ for a line thinner than a column: a
+      dense scribble covers more of each pixel than the four rows kept. *)
 
   val cells : reducer
   (** [cells] draws a panel's rows as one image whose pixels are their cells,

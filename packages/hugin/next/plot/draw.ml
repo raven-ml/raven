@@ -279,12 +279,14 @@ let quantities m index =
    highest rows, when the series have more than [m4_rows] rows per column, their
    [x] is monotone and their other channels constant along them, and no value of
    [x] or [y] is missing. Columns are found where the data lives, as the bins
-   that the values of [x] at the columns' edges make, with one more bin on each
-   side for the rows outside the panel. *)
+   that the values of [x] at the device-pixel edges make, with one more bin on
+   each side for the rows beyond them. *)
 let m4 cx m (panel : Layout.panel) reads =
   let shape = m.shape in
   let rank = Array.length shape in
-  let w = Float.to_int (Float.ceil (Box2.w panel.box *. cx.ctx.density)) in
+  let d = cx.ctx.density and box = panel.box in
+  let p0 = Float.floor (Box2.minx box *. d) in
+  let w = Float.to_int (Float.ceil (Box2.maxx box *. d) -. p0) in
   let last = if rank = 0 then 0 else shape.(rank - 1) in
   let constant_along (B b) =
     match b.role.use with
@@ -332,9 +334,13 @@ let m4 cx m (panel : Layout.panel) reads =
                 let xt = flat x in
                 if missing sx xt || not (monotone xt) then None else Some xt
           in
-          let edges =
-            List.init (w + 1) (fun c -> Scale.invert sx (float c /. float w))
+          let edge c =
+            let x = (p0 +. float c) /. d in
+            Option.bind
+              (Coord.invert panel.projection (P2.v x (Box2.miny box)))
+              (fun (u, _) -> Scale.invert sx u)
           in
+          let edges = List.init (w + 1) edge in
           match xt with
           | Some xt
             when (not (missing sy yt)) && List.for_all Option.is_some edges ->

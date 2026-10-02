@@ -1010,41 +1010,194 @@ let output =
 
 (* Reducers *)
 
-(* [m4_reference w us ys] is what M4 keeps of one series: in each of the [w]
-   columns, and in the bins beyond each side, the first and last rows and the
-   first rows of the lowest and highest values. *)
-let m4_reference column ys =
-  let n = Array.length ys in
-  let bins = Hashtbl.create 64 in
-  for i = 0 to n - 1 do
-    let c = column i in
-    let first, last, lo, hi =
-      match Hashtbl.find_opt bins c with
-      | None -> (i, i, i, i)
-      | Some (f, _, lo, hi) ->
-          ( f,
-            i,
-            (if ys.(i) < ys.(lo) then i else lo),
-            if ys.(i) > ys.(hi) then i else hi )
-    in
-    Hashtbl.replace bins c (first, last, lo, hi)
-  done;
-  Hashtbl.fold (fun _ (a, b, c, d) acc -> a :: b :: c :: d :: acc) bins []
-  |> List.sort_uniq Int.compare |> Array.of_list
+(* [m4_reference column ys rows] is what M4 keeps of the rows [rows] of one
+   series in one panel, given in order: of each run of consecutive rows in one
+   column, [column i], its first and last rows and the first rows of its lowest
+   and highest values; of each run of rows dropped, where [ys] is [nan], its
+   first row. *)
+let m4_reference column ys rows =
+  let gap = -1 in
+  let kept = ref [] and bin = ref None in
+  let flush () =
+    match !bin with
+    | None -> ()
+    | Some (key, first, _, _, _) when key = gap -> kept := first :: !kept
+    | Some (_, first, final, lo, hi) ->
+        kept := first :: final :: lo :: hi :: !kept
+  in
+  List.iter
+    (fun i ->
+      let key = if Float.is_nan ys.(i) then gap else column i in
+      match !bin with
+      | Some (k, first, _, lo, hi) when k = key ->
+          let lo = if ys.(i) < ys.(lo) then i else lo
+          and hi = if ys.(i) > ys.(hi) then i else hi in
+          bin := Some (k, first, i, lo, hi)
+      | _ ->
+          flush ();
+          bin := Some (key, i, i, i, i))
+    rows;
+  flush ();
+  Array.of_list (List.sort_uniq Int.compare !kept)
 
-(* A series on x in [0, 1000] in a panel 50 device pixels wide: column [i / 20]
-   holds row [i]. *)
-let m4_series ys =
-  let x = index ~scale:(Scale.linear ~domain:(0., 1000.) ()) (-1) in
+(* [columns ~density box domain] maps a quantity of [domain], on a linear x
+   scale, to its device-pixel column in a panel of [box]. *)
+let columns ~density box (a, b) v =
+  let x = Box2.minx box +. ((v -. a) /. (b -. a) *. Box2.w box) in
+  Float.to_int (Float.floor (x *. density))
+
+let panel_boxes size f =
+  List.map
+    (fun (p : Layout.panel) -> p.box)
+    (Layout.panels (layout size (resolve f)))
+
+(* [m4_kept ~size ~facets x ys] is the box of each panel of a mark of [x], [ys]
+   and [facets] reduced by M4, and the rows its draw function reads in each, in
+   the panels' order. The x scale's domain is [(0, 1000)]. *)
+let m4_kept ?(size = Size.panels 50. 50.) ?(facets = []) x ys =
+  let x = num ~scale:(Scale.linear ~domain:(0., 1000.) ()) x in
   let m, seen =
     probe ~reduce:Mark.m4
-      [ Mark.bind Role.x x; Mark.bind Role.y (num ys) ]
+      ([ Mark.bind Role.x x; Mark.bind Role.y (num ys) ] @ facets)
       Mark.index
   in
-  ignore (drawn ~size:(Size.panels 50. 50.) m);
-  only seen
+  ignore (drawn ~size m);
+  (panel_boxes size m, List.rev !seen)
 
+let xs n = Nx.linspace Nx.float64 0. 1000. n
 let ys n = Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| n |]
+
+(* [with_gaps y] is [y] with dropped runs of 1 to 5 rows, one of them first and
+   one last. *)
+let with_gaps y =
+  let a = Nx.to_array y in
+  let n = Array.length a in
+  List.iter
+    (fun (at, len) ->
+      for i = at to Int.min (n - 1) (at + len - 1) do
+        a.(i) <- nan
+      done)
+    [ (0, 2); (97, 1); (250, 5); (251 + (n / 3), 3); (n - 1, 1) ];
+  f64 a
+
+(* Inked pixels *)
+
+(* [stray a b] is the pixels that one of the raster images [a] and [b] inks with
+   no pixel the other inks among the 3 by 3 they centre. A pixel is inked if its
+   alpha is not [0]. *)
+let stray a b =
+  let s = Nx.shape a in
+  let h = s.(0) and w = s.(1) in
+  let a = Nx.to_array a and b = Nx.to_array b in
+  let inked t i j = t.((((i * w) + j) * 4) + 3) > 0 in
+  let near t i j =
+    let found = ref false in
+    for i' = Int.max 0 (i - 1) to Int.min (h - 1) (i + 1) do
+      for j' = Int.max 0 (j - 1) to Int.min (w - 1) (j + 1) do
+        if inked t i' j' then found := true
+      done
+    done;
+    !found
+  in
+  let acc = ref [] in
+  for i = h - 1 downto 0 do
+    for j = w - 1 downto 0 do
+      if (inked a i j && not (near b i j)) || (inked b i j && not (near a i j))
+      then acc := (i, j) :: !acc
+    done
+  done;
+  !acc
+
+type trace = {
+  n : int;
+  width : float;  (** The panel's. *)
+  density : float;
+  pen : float;
+  signal : [ `Noise | `Walk | `Sine ];
+  gaps : bool;
+  turns : bool;  (** [x] turns back halfway. *)
+}
+
+let pp_trace ppf t =
+  Format.fprintf ppf
+    "{ n = %d; width = %g; density = %g; pen = %g; signal = %s; gaps = %b; \
+     turns = %b }"
+    t.n t.width t.density t.pen
+    (match t.signal with
+    | `Noise -> "noise"
+    | `Walk -> "walk"
+    | `Sine -> "sine")
+    t.gaps t.turns
+
+let gen_trace =
+  let open Gen in
+  with_pp pp_trace
+    (map
+       (fun ((n, width, density), (pen, signal), (gaps, turns)) ->
+         { n; width; density; pen; signal; gaps; turns })
+       (triple
+          (triple (int_range 1_000 6_000)
+             (of_list [ 50.; 50.37; 33.3 ])
+             (of_list [ 1.; 1.3; 2. ]))
+          (pair (of_list [ 0.5; 2. ]) (of_list [ `Noise; `Walk; `Sine ]))
+          (pair bool bool)))
+
+(* [traced ~pen reduce] strokes each series through its points at [pen],
+   breaking where a row is dropped. *)
+let traced ~pen reduce bindings =
+  Mark.v ~name:"trace" ?reduce bindings (fun r ->
+      Picture.group
+        (List.map
+           (fun s ->
+             let us, vs = Mark.positions s in
+             Picture.stroke (Stroke.v pen) Color.black
+               (Mark.project s (Curve.path Curve.linear us vs)))
+           (Mark.series r)))
+
+let m4_inks_alike =
+  prop "m4 inks what the whole drawing inks, within a pixel" ~count:40 gen_trace
+    (fun t ->
+      cover "a line thinner than a column" (t.pen *. t.density < 1.);
+      cover "dropped rows" t.gaps;
+      cover "x turning back" t.turns;
+      let y =
+        match t.signal with
+        | `Noise -> ys t.n
+        | `Walk -> Nx.cumsum (ys t.n)
+        | `Sine -> Nx.sin (Nx.linspace Nx.float64 0. 6. t.n)
+      in
+      let y = if t.gaps then with_gaps y else y in
+      let x =
+        if t.turns then
+          Nx.init Nx.float64 [| t.n |] (fun i ->
+              Float.of_int (Int.min i.(0) (t.n - i.(0))))
+        else xs t.n
+      in
+      let page reduce =
+        let f =
+          layer
+            [
+              traced ~pen:t.pen reduce
+                [ Mark.bind Role.x (num x); Mark.bind Role.y (num y) ];
+              axis ~show:false "x";
+              axis ~show:false "y";
+            ]
+        in
+        let theme = Theme.v ~paper:Color.transparent () in
+        let r =
+          Drawing.renderable
+            (drawn ~theme ~density:t.density ~size:(Size.panels t.width 50.) f)
+        in
+        (* Two device pixels of margin on every side, so that no ink is cut by
+           the page's edge. *)
+        let m = 2. /. t.density in
+        Raster.render ~density:t.density
+          (Renderable.v
+             (Renderable.w r +. (2. *. m))
+             (Renderable.h r +. (2. *. m))
+             (Picture.transform (Affine.translate m m) (Renderable.picture r)))
+      in
+      equal (list (pair int int)) [] (stray (page None) (page (Some Mark.m4))))
 
 (* [dots_with ~alpha reduce n] is a mark of [n] dots filled at [alpha], reduced
    by [reduce]. *)
@@ -1115,21 +1268,37 @@ let same_raster (w, h) a b =
   let r p = Raster.render ~density:1. (Renderable.v w h p) in
   equal (array int) (Nx.to_array (r a)) (Nx.to_array (r b))
 
+(* [one_panel kept] is the rows read in the only panel. *)
+let one_panel = function
+  | [ box ], [ kept ] -> (box, kept)
+  | boxes, kept ->
+      failf "%d panels, %d draws" (List.length boxes) (List.length kept)
+
+let m4_columns () =
+  let n = 1001 in
+  let x = xs n and y = ys n in
+  let box, kept = one_panel (m4_kept x y) in
+  let x = Nx.to_array x in
+  equal (array int)
+    (m4_reference
+       (fun i -> columns ~density:1. box (0., 1000.) x.(i))
+       (Nx.to_array y) (List.init n Fun.id))
+    kept
+
 let reducers =
   group "Reducers"
     [
       test "m4 keeps every row at four rows per column" (fun () ->
-          equal int 200 (Array.length (m4_series (ys 200))));
-      test "m4 keeps each column's first, last, lowest and highest rows"
-        (fun () ->
-          let n = 1001 in
-          let y = ys n in
-          equal (array int)
-            (m4_reference (fun i -> i / 20) (Nx.to_array y))
-            (m4_series y));
+          let _, kept = m4_kept (xs 200) (ys 200) in
+          equal (list int) [ 200 ] (List.map Array.length kept));
+      test
+        "m4 keeps each device-pixel column's first, last, lowest and highest \
+         rows"
+        m4_columns;
       test "m4 keeps every row of a series with a missing value" (fun () ->
           let y = Nx.concatenate ~axis:0 [ ys 1000; f64 [| nan |] ] in
-          equal int 1001 (Array.length (m4_series y)));
+          let _, kept = m4_kept (xs 1001) y in
+          equal (list int) [ 1001 ] (List.map Array.length kept));
       test "m4 keeps every row of a series whose x is not monotone" (fun () ->
           let x =
             Nx.concatenate ~axis:0
@@ -1142,6 +1311,7 @@ let reducers =
           in
           ignore (drawn ~size:(Size.panels 50. 50.) m);
           equal int 1001 (only seen));
+      m4_inks_alike;
       raster_as_drawn;
       cases
         ~name:(fun (n, _, _) -> Printf.sprintf "%d dots in %s" n "a panel")
