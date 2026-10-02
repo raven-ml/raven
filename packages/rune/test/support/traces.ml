@@ -7,14 +7,7 @@ open Rune_internals
 open Tolk
 
 let host =
-  let clang =
-    lazy
-      (match
-         Device.renderer ~arch:(Tolk_engine.target Nx_device.host).arch "CPU"
-       with
-      | Ok r -> r
-      | Error e -> failwith e)
-  in
+  let clang = lazy (Tolk_engine.renderer Nx_device.host) in
   fun _ -> Lazy.force clang
 
 let scope ?(renderer = host) () = Lower.scope ~renderer

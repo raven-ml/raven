@@ -277,9 +277,11 @@ let multiplies_on_tensor_cores ren dt =
       then fail "no tensor core multiplies the product")
     (Ops.src (Programs.kernels y))
 
+let target s = Result.get_ok (Helpers.Target.of_string s)
+
 let tensor_cores =
-  let metal = Cstyle.metal (Helpers.target ~arch:"Apple9" "METAL") in
-  let cuda = Cstyle.cuda (Helpers.target ~arch:"sm_89" "CUDA") in
+  let metal = Cstyle.metal (target "METAL::Apple9") in
+  let cuda = Cstyle.cuda (target "CUDA::sm_89") in
   group "tensor cores"
     [
       group "metal"
@@ -686,7 +688,7 @@ let svd =
           exact (Nx.zeros Nx.float64 [| 0 |]) s;
           exact (Nx.eye Nx.float32 3) vt);
       test "a target without float64 refuses it" (fun () ->
-          let metal = Cstyle.metal (Helpers.target ~arch:"Apple9" "METAL") in
+          let metal = Cstyle.metal (target "METAL::Apple9") in
           let a = Nx.ones Nx.float32 [| 2; 2 |] in
           raises_match
             (function Rune_internals.Lower.Jit_error _ -> true | _ -> false)

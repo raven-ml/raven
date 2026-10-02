@@ -17,26 +17,26 @@ let vendor d =
   else if Option.is_some (Nx_nv_device.of_device d) then Some "NV"
   else None
 
+(* The target of a device kind, which names no interface and no indices. *)
+let of_kind ?(renderer = "") ?(arch = "") device =
+  { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
+
 let target d =
   match vendor d with
-  | Some kind -> Helpers.target ~arch:(Nx_device.arch d) kind
+  | Some kind -> of_kind ~arch:(Nx_device.arch d) kind
   | None
     when d != Nx_device.disk
          && (Nx_device.host_of d == d || Nx_device.shares_host_memory d) ->
       let host = Nx_device.host_of d in
       let cpu = if host == Nx_device.host then "native" else "generic" in
-      let t = Helpers.target ~arch:(Nx_device.arch host ^ "," ^ cpu) "CPU" in
-      { t with renderer = "CLANG" }
+      of_kind ~renderer:"CLANG" ~arch:(Nx_device.arch host ^ "," ^ cpu) "CPU"
   | None ->
       invalid_arg
         (Printf.sprintf "Tolk_engine.target: %s runs no program"
            (Nx_device.name d))
 
 let renderer d =
-  let t = target d in
-  match Device.renderer ~arch:t.arch t.device with
-  | Ok r -> r
-  | Error why -> failwith why
+  match Device.renderer (target d) with Ok r -> r | Error why -> failwith why
 
 let find fn devices name =
   match List.assoc_opt name devices with
@@ -86,9 +86,7 @@ let device devices name =
   let devices = with_hosts devices in
   let d = find "device" devices name in
   (* The disk runs no program: its copies are the runtime's. *)
-  let target =
-    if d == Nx_device.disk then Helpers.target "DISK" else target d
-  in
+  let target = if d == Nx_device.disk then of_kind "DISK" else target d in
   (* Any name of the host names it: the first one serves. The host is missing
      only when another device has its name. *)
   let host =

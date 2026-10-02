@@ -156,20 +156,6 @@ module Target : sig
       separators. *)
 end
 
-val dev : Target.t list Context_var.t
-(** [dev] is the targets requested for devices, from the variable [DEV]: a
-    [;]-separated list of targets in {!Target.of_string}'s syntax. It defaults
-    to a single empty target.
-
-    Raises [Invalid_argument] at initialization if [DEV] holds a malformed
-    target. *)
-
-val target : ?arch:string -> string -> Target.t
-(** [target ~arch device] is the target for [device]: the first target of {!dev}
-    that names [device] or no device, or an empty one, with its device set to
-    [device] and its architecture to [arch] if it has none. [arch] defaults to
-    [""]. *)
-
 (** {2:list List of settings}
 
     Levels and counts are integers; switches are [true] when their variable

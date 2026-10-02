@@ -133,11 +133,8 @@ let get_call_to_compile targets c =
   let ast = body c in
   match (op ast, arg ast) with
   | (Op.Sink, Kernel _ | Op.Program, _) when not (compiled ast) ->
-      let t : Helpers.Target.t = targets (List.hd (devices c)) in
-      Some
-        ( ast,
-          Result.fold ~ok:Fun.id ~error:invalid_arg
-            (Device.renderer ~arch:t.arch t.device) )
+      let t = targets (List.hd (devices c)) in
+      Some (ast, Result.fold ~ok:Fun.id ~error:invalid_arg (Device.renderer t))
   | _ -> None
 
 let lower_and_compile ?search ~targets linear =

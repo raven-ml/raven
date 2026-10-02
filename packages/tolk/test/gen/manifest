@@ -2117,7 +2117,6 @@ engine/realize/variable_shrink_compiled.golden
 engine/realize/variable_two.golden
 engine/realize/variable_two_compiled.golden
 helpers/colors.golden
-helpers/device_targets.golden
 helpers/division.golden
 helpers/durations.golden
 helpers/env.golden

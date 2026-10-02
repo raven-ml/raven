@@ -2269,16 +2269,13 @@ thread.
   each call's device and optimization metadata. It uses the source-based
   compiler cache, avoiding unsafe reuse of aligned kernels for unaligned inputs.
 
-- `DEV` selects lazy renderer factories and exact compiler architectures,
-  including CPU tuning and feature flags. Program caches distinguish targets;
+- A device's target selects lazy renderer factories and exact compiler
+  architectures, including CPU tuning and feature flags. Program caches
+  distinguish targets;
   CUDA compilation uses the exact GPU architecture instead of a rendering tier.
 
 - `Device.Renderer_set.make` accepts named target-aware factories. Superseded
   renderer controls and GPU architecture environment readers are removed.
-
-- `DEV` accepts tinygrad target strings and per-backend configurations.
-  AMD/NV interface selection and visible-device lists use this shared setting;
-  legacy `*_IFACE` and `HCQ_VISIBLE_DEVICES` settings report replacements.
 
 - `Op.getitem` preserves symbolic dimensions outside advanced-index axes and
   accepts symbolically sized index tensors. Both combined and separate index
@@ -2525,11 +2522,11 @@ thread.
   no fault to report. Stalled waits also back off to the driver's event
   sleep after 200ms instead of 2s, surfacing faults sooner.
 
-- NVIDIA GPUs are now a hardware-queue runtime target: `DEV=NV` (or
-  `Tolk_nv.create`) drives the kernel driver's channels directly, with
+- NVIDIA GPUs are now a hardware-queue runtime target: the device
+  `Nx.Device.Nv i` drives the kernel driver's channels directly, with
   kernels compiled straight to cubin by nvrtc, covering the Ampere, Ada,
-  and Blackwell generations. The userspace CUDA backend (`DEV=CUDA`)
-  remains available unchanged.
+  and Blackwell generations. The userspace CUDA backend
+  (`Nx.Device.Cuda i`) remains available unchanged.
 
 - Driver-less AMD devices can now sleep on interrupts instead of spinning:
   with `VFIO=1` (and the `vfio-pci` kernel module), the device's MSI vector
@@ -2542,7 +2539,7 @@ thread.
   RDNA3/RDNA4 consumer parts. Opt-in and unvalidated on real hardware so
   far; the kernel driver remains the default.
 
-- AMD GPUs are now a runtime target: `DEV=AMD` (or `Tolk_amd.create`) drives
+- AMD GPUs are now a runtime target: the device `Nx.Device.Amd i` drives
   the GPU through the Linux kernel driver's hardware queues, with kernels
   compiled by the ROCm comgr library. Supports gfx942, gfx950, and the
   gfx11/gfx12 generations (single-die), with DMA-engine host transfers and
@@ -2959,9 +2956,6 @@ thread.
   on NVIDIA GPUs. The driver and NVRTC libraries are loaded dynamically at
   run time, so builds do not require a CUDA toolkit and fail cleanly at
   device creation when no GPU is present.
-- The default device is now chosen by scanning available backends in
-  priority order (`METAL`, `CUDA`, `CPU`); set the `DEV` environment
-  variable (e.g. `DEV=CUDA`, `DEV=cpu`) to force one.
 - Fix gated vectorized loads: the masked fallback rendered a scalar zero
   for a vector access, which the CUDA compiler rejects; the zero is now
   stacked to the access width.
@@ -4908,12 +4902,6 @@ thread.
   pullbacks' `diag` use read host bytes and refused to trace, so the QR and
   Cholesky pullbacks (and the triangular-solve JVP rule) form the diagonal
   terms from the identity instead.
-
-- **Breaking:** when `~devices` is omitted, `Rune.jit` and `jit'` now
-  run on the best available backend — the `DEV` environment variable selects
-  one by name, otherwise METAL, AMD, NV, CUDA are probed in order with CPU as
-  the fallback — instead of always CPU. Pass `~devices:[ Rune.device "CPU" ]`
-  or set `DEV=CPU` to keep the old behavior.
 
 - `Rune.jit` and `Rune.pmap` run on `Rune.device "NV"` — NVIDIA GPUs driven on
   the kernel driver's hardware queues (Linux), with kernels compiled straight

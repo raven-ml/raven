@@ -141,12 +141,11 @@ let cached name make target () =
           Ok r
       | exception Invalid_argument e -> Error e)
 
-let renderer ?arch device =
-  let candidates = renderers device in
-  let t = Helpers.target ?arch device in
-  let error = strf "%s has no renderer '%s'" device t.renderer in
+let renderer (t : Helpers.Target.t) =
+  let candidates = renderers t.device in
+  let error = strf "%s has no renderer '%s'" t.device t.renderer in
   Result.bind (Helpers.select_by_name ~error fst t.renderer candidates)
   @@ fun named ->
   Helpers.select_first_inited
-    ~error:(strf "No renderer for %s is available" device)
+    ~error:(strf "No renderer for %s is available" t.device)
     (List.map (fun (name, make) -> cached name make t) named)

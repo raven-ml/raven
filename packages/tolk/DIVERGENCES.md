@@ -239,10 +239,10 @@ the Exclusions of `README.md`.
 ## D6. Devices are named, never parsed
 
 - **tinygrad:** `device.py:26,36,395,491` (device strings split at `:`).
-- **tolk:** `lib/device.ml:122` (`renderers`), `:145` (`renderer`).
-- **Differs:** the caller gives a target, a device name and its `arch`;
-  tolk picks the renderer and compiler from the `arch` and never parses
-  the name, with one exception: a name starting with `DISK` is a disk, as
+- **tolk:** `lib/device.ml:121` (`renderers`), `:144` (`renderer`).
+- **Differs:** the caller gives a target, whose device is a kind and whose
+  `arch` is the device's; tolk picks the renderer and compiler from the
+  target and never parses the name, with one exception: a name starting with `DISK` is a disk, as
   tinygrad reserves it and nx.device names its disk devices
   (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
@@ -250,7 +250,7 @@ the Exclusions of `README.md`.
   name as it is (D6)` (a name with an index, in lower case, or a disk's, is no
   device, and a name gives no renderer or architecture) and `Tolk.Device ›
   renderer › picks a device's renderer as tinygrad does` (the architecture
-  comes from DEV or the caller); for the disk, `Tolk.Ops › several
+  comes from the target); for the disk, `Tolk.Ops › several
   devices › on_disk holds for one disk device`, `Tolk.Ops › several
   devices › copy_to_device rejects a disk and a weak type` and `Tolk.Ops ›
   storage › clone rejects a disk`.
@@ -2818,3 +2818,25 @@ stores through a pad.
   op_in_backward_slice_with_self is an operation of the slice` and `›
   op_in_backward_slice_with_self does not enter call bodies`; the rune bench's
   `Jit/jit-run-chain`.
+
+## D95. A device's target follows from the device alone
+
+- **tinygrad:** `helpers.py:221-236` (`_DEV`, the `DEV` setting, and
+  `DEV.target`); `device.py:483-486` (`_select_renderer`, which renders for
+  `DEV.target` of the device's kind).
+- **tolk:** `engine/tolk_engine.ml:24` (`target`); `lib/device.ml:144`
+  (`renderer`); `lib/helpers.ml:188` (`Target`).
+- **Differs:** there is no `DEV` setting. `Tolk_engine.target` is a function
+  of the device: its vendor's kind and its `arch`, or the host's CPU target.
+  `Device.renderer` takes the target and renders for it, the first renderer
+  of its kind that suits it when it names none. `Helpers.Target` keeps the
+  record and its syntax, which tests and the goldens' generator write.
+- **Reason:** (c). nx.device places values on devices, and the compiler
+  compiles for the device the values live on. A target read from the
+  environment applies to every device of the process, so it compiles for a
+  device the values do not live on, and a malformed `DEV`, meant for another
+  program, failed every program linking tolk when it started.
+- **Pinned by:** `Tolk.Helpers › startup › starts whatever DEV holds`;
+  `Tolk.Device › renderer › picks a device's renderer as tinygrad does`
+  (each row renders for the target tinygrad's `DEV` gives the device) and
+  `renders for the target it is given`.

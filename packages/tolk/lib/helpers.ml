@@ -239,31 +239,6 @@ module Target = struct
     Format.pp_print_string ppf (join [ t.device; t.renderer; t.arch ])
 end
 
-let parse_targets s =
-  let add t acc =
-    Result.bind acc (fun ts ->
-        Result.map (fun t -> t :: ts) (Target.of_string t))
-  in
-  List.fold_right add (String.split_on_char ';' s) (Ok [])
-
-let dev =
-  match getenv_string "DEV" "" |> parse_targets with
-  | Ok targets ->
-      let show ts =
-        String.concat ";" (List.map (Format.asprintf "%a" Target.pp) ts)
-      in
-      Context_var.v ~reach:Process ~show "DEV" targets
-  | Error e -> invalid_arg ("DEV: " ^ e)
-
-let target ?(arch = "") device =
-  let matches (t : Target.t) = t.device = "" || t.device = device in
-  let t =
-    Option.value
-      (List.find_opt matches (Context_var.value dev))
-      ~default:Target.empty
-  in
-  { t with device; arch = (if t.arch = "" then arch else t.arch) }
-
 let debug = Context_var.int ~reach:Process "DEBUG" 0
 let beam = Context_var.int ~reach:Process "BEAM" 0
 let noopt = Context_var.bool "NOOPT" false

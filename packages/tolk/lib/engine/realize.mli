@@ -66,10 +66,8 @@ val lower_and_compile :
 (** [lower_and_compile ~search ~targets linear] is [linear] with the body of
     each call that is a kernel ({!Op.Sink} with {!Ops.kernel_info}) or a program
     not yet compiled replaced by its compiled program ({!Codegen.to_program}),
-    for the renderer {!Device.renderer} picks for the device kind and
-    architecture of the target [targets d] of the call's device [d] (its first,
-    on several). The target's other fields are not read: the renderer is the one
-    the setting {!Helpers.dev} names for that kind, as for any device.
+    for the renderer {!Device.renderer} picks for the target [targets d] of the
+    call's device [d] (its first, on several).
 
     Each kernel is compiled once, the kernels in parallel on {!Worker.map},
     except when there is only one, or when one asks for a beam search: the

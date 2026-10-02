@@ -62,9 +62,9 @@ below.
 | tinygrad: null/test_disk_cache.py::DiskCache::test_dict_key | keys of several columns | dropped: keys are strings, which callers encode (D8) |
 | tinygrad: null/test_disk_cache.py::DiskCache::test_table_name | a table name with `:` and `-` | Helpers › Diskcache › behaves as a table of entries per table (table `test_gfx1010:xnack-`) |
 | tinygrad: null/test_disk_cache.py::DiskCache::test_clear_cache | clear empties every table, and runs again | Helpers › Diskcache › clear removes the entries of every table |
-| tinygrad: null/test_device.py::TestDevVar::test_parse | DEV parses targets and prints them back | Helpers › Target › of_string reads a target as tinygrad does (`targets.golden`, every input of the test); Helpers › startup › reads DEV as targets separated by semicolons |
-| tinygrad: null/test_device.py::TestDevVar::test_target | the target of a device under DEV | Helpers › Target › target picks a device's target as tinygrad does (`device_targets.golden`, every DEV of the test) |
-| tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | dropped: the renderer belongs to `Device`'s suite; `target`'s arch is pinned by `device_targets.golden` |
+| tinygrad: null/test_device.py::TestDevVar::test_parse | DEV parses targets and prints them back | Helpers › Target › of_string reads a target as tinygrad does (`targets.golden`, every input of the test); the DEV setting is dropped (D95): Helpers › startup › starts whatever DEV holds |
+| tinygrad: null/test_device.py::TestDevVar::test_target | the target of a device under DEV | dropped: a device's target follows from the device alone (D95) |
+| tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | dropped: the renderer belongs to `Device`'s suite, and there is no DEV (D95) |
 | tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | "did you mean: 'CLANG'" | Helpers › selection › select_by_name selects as tinygrad does (`candidates=CLANG,LLVM query=CLANGJIT`); the renderer lookup belongs to `Device`'s suite |
 | tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache follows CCACHE | dropped: `Compiler` belongs to `Device`'s suite |
 | tinygrad: null/test_hashing.py::TestKeccak::test_shape_keeping | `Tensor.keccak` | dropped: the `Tensor` surface; the frontend is nx |
@@ -86,7 +86,7 @@ below.
 | old: unit/test_helpers.ml:222 target strings preserve architecture and interface spelling | case kept in arch and interface | Helpers › Target › of_string reads a target as tinygrad does (`input=remote:host:2+nv:cuda:sm_89`) |
 | old: unit/test_helpers.ml:230 target strings normalize empty fields without inventing defaults | empty fields print as nothing | Helpers › Target › of_string reads a target as tinygrad does (the six inputs of the test); Helpers › Target › of_string reads back what pp writes |
 | old: unit/test_helpers.ml:236 target strings reject excess separators | two `+`, three `:` | Helpers › Target › of_string reads a target as tinygrad does (`input=PCI+NV+CUDA`, `input=CPU:CLANG:arm64:extra`) |
-| old: unit/test_helpers.ml:240 per-backend targets and defaults do not leak between contexts | per-device targets, arch default, restore | Helpers › Target › target picks a device's target as tinygrad does; Helpers › Target › target keeps a target's interface and indices; Helpers › context › restores a setting when its function raises. The device name with an index (`NV:1`) is dropped: `target` takes a device name (D6) |
+| old: unit/test_helpers.ml:240 per-backend targets and defaults do not leak between contexts | per-device targets, arch default, restore | Helpers › context › restores a setting when its function raises. Per-device targets are dropped: a device's target follows from the device alone (D95) |
 | old: unit/test_helpers.ml:250 the first matching wildcard supplies the target | first wildcard wins | Helpers › Target › target picks a device's target as tinygrad does (`dev=PCI+;NV:CUDA device=NV`) |
 | old: unit/test_helpers.ml:253 DEV selects one interface without trying alternatives | interface selection | dropped: interface selection belongs to the device layer; `select_by_name` is pinned by `selection.golden` |
 | old: unit/test_helpers.ml:259 an unknown interface fails before initialization | unknown interface | dropped: as the row above |
@@ -2092,15 +2092,14 @@ their own; and that held buffers stay.
 The suite is `Tolk.Device` (`device/`), written `DV` below.
 `renderers.golden` holds `Compiled._select_renderer` for 36 DEV settings, each
 device and each architecture the device reports (its own and none): the target
-it renders for, and the renderer it picks, the error of a target that names a
+it renders for, which the suite gives `Device.renderer` (D95), and the renderer it picks, the error of a target that names a
 renderer the device lacks, or the failure of the renderer itself, whose text
 is the renderer's own. A device lists the renderers of its `Compiled` that
 tolk ports. `<case>_program.golden` holds programs that `to_program`
 compiles for Clang and Metal, with the empty compiler so that no toolchain
 shapes them, and `elfs.golden`, `signatures.golden` and `layouts.golden` what
 `to_elf` and `TinyELF.iter_sig` give for each; `signatures.golden` and
-`reprs.golden` also hold tinygrad's repr, which the printers match. DEV is bound with
-`Helpers.context`, so every setting runs in one process. The test that two
+`reprs.golden` also hold tinygrad's repr, which the printers match. The test that two
 domains share a renderer cannot run under mutation testing, which forks.
 
 ### tinygrad
@@ -2108,8 +2107,8 @@ domains share a renderer cannot run under mutation testing, which forks.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | `CPU:TYPO` has no renderer; `CPU:CLANGJIT` suggests `CLANG` | `DV › renderer › picks a device's renderer as tinygrad does › renderers.golden` (`dev=CPU:TYPO`, `dev=CPU:CLANGJIT`, and a misspelling for each device); `DV › renderer › names the renderer a target misspells` |
-| tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | `renderers.golden` (`dev=::gfx942`, `dev=CUDA::sm_75`, ...); `DV › renderer › renders for the setting's target of the device` (the NULL device of the test is excluded) |
-| tinygrad: null/test_device.py::TestDevice::test_env_online | the renderer follows DEV within a context, and is remembered | `renderers.golden` under `Helpers.context`; `DV › renderer's memory › returns the same renderer to a second call`, `returns one renderer per target, whatever the order of the calls` |
+| tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | `renderers.golden` (`dev=::gfx942`, `dev=CUDA::sm_75`, ...), each row's target given to `Device.renderer`; `DV › renderer › renders for the target it is given` (the NULL device of the test is excluded) |
+| tinygrad: null/test_device.py::TestDevice::test_env_online | the renderer follows DEV within a context, and is remembered | dropped: there is no DEV (D95); `DV › renderer's memory › returns the same renderer to a second call`, `returns one renderer per target, whatever the order of the calls` |
 | tinygrad: null/test_device.py::TestDevice::test_env_overwrite_default_compiler | `DEV=CPU:LLVM`, `AMD:LLVM` pick another compiler | dropped: the LLVM renderers are excluded (README); `renderers.golden` pins that `CPU:LLVM` has no renderer and `CPU:CLANG` and `AMD:HIP` pick theirs |
 | tinygrad: null/test_device.py::TestDevice::test_compiler_autodetect_fallback | a renderer that fails to make gives way to the next | dropped here: each device has one ported renderer, so the fallback never runs; `Helpers.select_first_inited` is `Helpers › selection`'s. A failing renderer's own message is `DV › renderer › fails with the renderer's own message on an architecture it refuses` |
 | tinygrad: null/test_device.py::TestDevice::test_old_renderer_env_raises | `CPU_LLVM=1` is refused | dropped: the `{DEV}_{RENDERER}` migration check is not ported (README exclusions) |

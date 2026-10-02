@@ -119,22 +119,6 @@ def targets():
         (s, *fields(s)) for s in TARGETS]
 
 
-DEVS = ["", "CPU", "CPU:LLVM", ":LLVM", "AMD:LLVM", "QCOM:IR3;AMD:LLVM", "PCI+;NV:CUDA", "NV:CUDA;PCI+",
-        "CPU:CLANG;PCI:2,0+NV:CUDA:sm_89", "AMD::gfx1100", "::gfx90a", "USB+AMD:LLVM;:LLVM:x86"]
-
-
-def target(dev, device, arch):
-    with Context(DEV=dev):
-        return repr(DEV.target(device, arch=arch))
-
-
-@table
-def device_targets():
-    return ["dev", "device", "arch", "target"], [(dev, device, arch, target(dev, device, arch))
-                                                 for dev in DEVS for device in ["CPU", "AMD", "NV", "QCOM"]
-                                                 for arch in ["", "arm64"]]
-
-
 # Selection
 
 CANDIDATES = [

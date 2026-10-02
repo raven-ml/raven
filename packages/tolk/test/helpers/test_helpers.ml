@@ -23,14 +23,6 @@ let pp_target ppf (t : Target.t) =
 
 let target_w = Testable.make ~pp:pp_target ~equal:( = )
 
-let no_target =
-  Target.{ device = ""; renderer = ""; arch = ""; interface = ""; indices = "" }
-
-let parse_targets s =
-  List.map
-    (fun t -> require_ok ~pp:Format.pp_print_string (Target.of_string t))
-    (String.split_on_char ';' s)
-
 (* An integer drawn across the edges of [int]. *)
 let any_int =
   Gen.frequency
@@ -385,10 +377,6 @@ let word v = S (v, Fun.id)
 
 let settings =
   [
-    S
-      ( dev,
-        fun ts ->
-          String.concat ";" (List.map (Format.asprintf "%a" Target.pp) ts) );
     number debug;
     number beam;
     switch noopt;
@@ -430,6 +418,8 @@ let not_ported =
   @ [ "CAPTURING"; "MAX_BUFFER_SIZE"; "VALIDATE_WITH_CPU" ]
   (* tolk cannot open a device. *)
   @ [ "ALLOW_DEVICE_USAGE" ]
+  (* A device's target follows from the device alone (D95). *)
+  @ [ "DEV" ]
   (* Their other readers are not ported. *)
   @ [
       "IMAGE";
@@ -530,9 +520,6 @@ let library_settings =
       test "no_color is off when NO_COLOR is unset" (fun () ->
           unless_set "NO_COLOR";
           equal bool false (value no_color));
-      test "dev is a single empty target when DEV is unset" (fun () ->
-          unless_set "DEV";
-          equal (list target_w) [ no_target ] (value dev));
       test "parallel is between one and the domains the runtime recommends"
         (fun () ->
           unless_set "PARALLEL";
@@ -668,18 +655,16 @@ let startup =
               ("DEFAULT_FLOAT", "half");
               ("PARALLEL", "0");
             ]);
-      test "reads DEV as targets separated by semicolons" (fun () ->
-          read_at_start
-            [ ("DEV", Some "QCOM;usb+amd:llvm") ]
-            [ ("DEV", "QCOM;usb+AMD:LLVM") ]);
       test
         "reads EMULATED_DTYPES as names separated by commas, dropping empty \
          ones" (fun () ->
           read_at_start
             [ ("EMULATED_DTYPES", Some ",half,,bfloat16, ") ]
             [ ("EMULATED_DTYPES", "half,bfloat16, ") ]);
-      test "fails on a malformed DEV" (fun () ->
-          fails_at_start [ ("DEV", Some "PCI+NV+CUDA") ]);
+      test "starts whatever DEV holds" (fun () ->
+          read_at_start
+            [ ("DEV", Some "PCI+NV+CUDA"); ("DEBUG", Some "3") ]
+            [ ("DEBUG", "3") ]);
       test "fails on a setting that is no integer" (fun () ->
           fails_at_start [ ("DEBUG", Some "two") ]);
       test "puts the cache in tolk under XDG_CACHE_HOME" (fun () ->
@@ -749,14 +734,6 @@ let parsed_like_tinygrad cell =
         t;
       equal string (cell "to_string") (Format.asprintf "%a" Target.pp t)
 
-let target_like_tinygrad cell =
-  context
-    [ B (dev, parse_targets (cell "dev")) ]
-    (fun () ->
-      equal string (cell "target")
-        (Format.asprintf "%a" Target.pp
-           (target ~arch:(cell "arch") (cell "device"))))
-
 let targets =
   group "Target"
     [
@@ -765,23 +742,6 @@ let targets =
       prop "of_string reads back what pp writes" gen_target
         (Law.round_trip target_w string (Format.asprintf "%a" Target.pp)
            (fun s -> require_ok ~pp:Format.pp_print_string (Target.of_string s)));
-      as_tinygrad
-        ~key:[ "dev"; "device"; "arch" ]
-        "target picks a device's target as tinygrad does"
-        "device_targets.golden" target_like_tinygrad;
-      test "target defaults the architecture to none" (fun () ->
-          context
-            [ B (dev, parse_targets "AMD:LLVM") ]
-            (fun () ->
-              equal target_w
-                { no_target with device = "AMD"; renderer = "LLVM" }
-                (target "AMD")));
-      test "target keeps a target's interface and indices" (fun () ->
-          context
-            [ B (dev, parse_targets "PCI:2,0+NV:CUDA:sm_89") ]
-            (fun () ->
-              equal string "PCI:2,0+NV:CUDA:sm_89"
-                (Format.asprintf "%a" Target.pp (target ~arch:"sm_90" "NV"))));
     ]
 
 (* Integers and lists *)

@@ -18,7 +18,7 @@ let estimates =
 let counts ops lds mem : Ops.estimates =
   { ops = Int ops; lds = Int lds; mem = Int mem }
 
-let cpu = Helpers.target "CPU"
+let cpu = Result.get_ok (Helpers.Target.of_string "CPU")
 
 (* Kernels *)
 
@@ -792,7 +792,7 @@ let defaults () =
     (Ops.Pattern_matcher.rewrite r.extra_matcher () (f32 1.))
 
 let given () =
-  let target = Helpers.target ~arch:"sm_80" "CUDA" in
+  let target = Result.get_ok (Helpers.Target.of_string "CUDA::sm_80") in
   let render uops = string_of_int (List.length uops) in
   let r =
     Renderer.v ~name:"CUDA" ~suffix:"cu" ~supports_float4:false ~has_local:false

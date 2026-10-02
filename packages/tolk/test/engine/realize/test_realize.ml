@@ -564,8 +564,7 @@ let parallel =
           let alone =
             List.map
               (fun k ->
-                Codegen.to_program k
-                  (Device.renderer ~arch:clang.arch "CPU" |> Result.get_ok))
+                Codegen.to_program k (Device.renderer clang |> Result.get_ok))
               distinct_kernels
           in
           equal uops alone

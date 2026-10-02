@@ -29,14 +29,17 @@ open Tolk
 (** {1:devices Devices} *)
 
 val target : Nx_device.t -> Helpers.Target.t
-(** [target d] is what [d]'s programs are compiled for. A Metal, CUDA, AMD or NV
-    device ([Nx_metal_device.of_device] and the others) has its vendor's device
-    kind and its {!Nx_device.arch}. A host, of this machine or another, and a
-    device that shares its host's memory ({!Nx_device.shares_host_memory}), such
-    as a test device over the host's memory ({!Nx_device.Driver.host_memory})
-    that maps the host's, run host programs: device ["CPU"], renderer ["CLANG"],
-    and architecture its host's {!Nx_device.arch} with the processor [native] on
-    this machine and [generic] on another.
+(** [target d] is what [d]'s programs are compiled for, a function of [d] alone.
+    A Metal, CUDA, AMD or NV device ([Nx_metal_device.of_device] and the others)
+    has its vendor's device kind and its {!Nx_device.arch}, and names no
+    renderer: its programs are rendered by the first of its kind's renderers
+    that suits it ({!Tolk.Device.renderer}). A host, of this machine or another,
+    and a device that shares its host's memory
+    ({!Nx_device.shares_host_memory}), such as a test device over the host's
+    memory ({!Nx_device.Driver.host_memory}) that maps the host's, run host
+    programs: device ["CPU"], renderer ["CLANG"], and architecture its host's
+    {!Nx_device.arch} with the processor [native] on this machine and [generic]
+    on another.
 
     Raises [Invalid_argument] if [d] runs no program: the disk, or a device no
     vendor claims that is no host and does not share its host's memory. *)

@@ -72,12 +72,9 @@ end
 
 (** {1:renderers Renderers} *)
 
-val renderer : ?arch:string -> string -> (Renderer.t, string) result
-(** [renderer ~arch device] is the renderer of [device]'s programs, made for the
-    target {!Helpers.target}[ ~arch device]: the first target of the setting
-    {!Helpers.dev} that names [device] or no device, with [arch] as its
-    architecture if it names none. [arch] is the architecture of the device at
-    hand, as the device reports it; it defaults to [""].
+val renderer : Helpers.Target.t -> (Renderer.t, string) result
+(** [renderer t] is the renderer of programs for [t]: a renderer of [t]'s
+    device, made for [t].
 
     Each device has these renderers, in order of preference, named as a target's
     [RENDERER] field names them:
@@ -97,4 +94,4 @@ val renderer : ?arch:string -> string -> (Renderer.t, string) result
     message of the only renderer tried, or ["No renderer for D is available"]
     followed by each renderer's message, one per line.
 
-    Raises [Invalid_argument] if [device] is not one of these devices. *)
+    Raises [Invalid_argument] if [t]'s device is not one of these devices. *)

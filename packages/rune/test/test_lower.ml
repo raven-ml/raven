@@ -425,7 +425,8 @@ let staged_scans =
 (* Refusals *)
 
 let metal _ =
-  match Tolk.Device.renderer "METAL" with Ok r -> r | Error e -> failwith e
+  let target = Result.get_ok (Tolk.Helpers.Target.of_string "METAL") in
+  match Tolk.Device.renderer target with Ok r -> r | Error e -> failwith e
 
 let refusals =
   group "refusals"

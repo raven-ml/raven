@@ -9,8 +9,15 @@ let refuses ?substring f = raises_match (Exn.invalid_arg ?substring) f
 let target_of_string s =
   require_ok ~pp:Format.pp_print_string (Helpers.Target.of_string s)
 
-let targets_of_cell s = List.map target_of_string (String.split_on_char ';' s)
-let under dev f = Helpers.context [ B (Helpers.dev, targets_of_cell dev) ] f
+(* The target of [device], with no other field: [device] is taken as it is. *)
+let on device =
+  {
+    Helpers.Target.device;
+    renderer = "";
+    arch = "";
+    interface = "";
+    indices = "";
+  }
 
 let renderer_named = function
   | "CLANG" -> Cstyle.clang
@@ -41,23 +48,20 @@ let message_of_renderer name target =
       failf "%s makes a renderer for %s" name
         (Format.asprintf "%a" Helpers.Target.pp target)
 
+(* The golden's target is the one tinygrad's DEV setting gives the device. *)
 let selected_like_tinygrad cell =
-  under (cell "dev") (fun () ->
-      let target = target_of_string (cell "target") in
-      let expected =
-        match cell "outcome" with
-        | "ok" -> Ok (renderer_named (cell "renderer") target)
-        | "no renderer" -> Error (cell "error")
-        | "renderer fails" ->
-            Error (message_of_renderer (cell "renderer") target)
-        | outcome -> failf "no outcome %s" outcome
-      in
-      equal renderer_or_error expected
-        (Device.renderer ~arch:(cell "arch") (cell "device")))
+  let target = target_of_string (cell "target") in
+  let expected =
+    match cell "outcome" with
+    | "ok" -> Ok (renderer_named (cell "renderer") target)
+    | "no renderer" -> Error (cell "error")
+    | "renderer fails" -> Error (message_of_renderer (cell "renderer") target)
+    | outcome -> failf "no outcome %s" outcome
+  in
+  equal renderer_or_error expected (Device.renderer target)
 
-let chosen ?arch ?(dev = "") device =
-  under dev (fun () ->
-      require_ok ~pp:Format.pp_print_string (Device.renderer ?arch device))
+let chosen s =
+  require_ok ~pp:Format.pp_print_string (Device.renderer (target_of_string s))
 
 let every_device = [ "CPU"; "METAL"; "CUDA"; "NV"; "AMD" ]
 
@@ -70,35 +74,24 @@ let selection =
             ~key:[ "dev"; "device"; "arch" ]
             "renderers.golden" selected_like_tinygrad;
         ];
-      test "renders for the setting's target of the device" (fun () ->
+      test "renders for the target it is given" (fun () ->
           equal string "PCI:1+AMD:HIP:gfx942"
             (Format.asprintf "%a" Helpers.Target.pp
-               (chosen ~dev:"CPU::x86_64,x86-64;PCI:1+AMD:HIP:gfx942"
-                  ~arch:"gfx1100" "AMD")
-                 .target));
-      test "takes the architecture the caller gives when the setting names none"
-        (fun () ->
-          equal string "sm_75"
-            (chosen ~dev:"CUDA" ~arch:"sm_75" "CUDA").target.arch);
-      test "defaults the architecture to none" (fun () ->
-          equal string "" (chosen ~dev:"METAL" "METAL").target.arch);
+               (chosen "PCI:1+AMD:HIP:gfx942").target));
       test "names the renderer a target misspells" (fun () ->
-          under "AMD:HIPP" (fun () ->
-              equal renderer_or_error
-                (Error "AMD has no renderer 'HIPP', did you mean: 'HIP'?")
-                (Device.renderer ~arch:"gfx1100" "AMD")));
+          equal renderer_or_error
+            (Error "AMD has no renderer 'HIPP', did you mean: 'HIP'?")
+            (Device.renderer (target_of_string "AMD:HIPP:gfx1100")));
       test "fails with the renderer's own message on an architecture it refuses"
         (fun () ->
-          under "CPU::sparc,v9" (fun () ->
-              equal renderer_or_error
-                (Error
-                   (message_of_renderer "CLANG"
-                      (target_of_string "CPU::sparc,v9")))
-                (Device.renderer "CPU")));
+          let target = target_of_string "CPU::sparc,v9" in
+          equal renderer_or_error
+            (Error (message_of_renderer "CLANG" target))
+            (Device.renderer target));
       test "raises on a name that is no device" (fun () ->
           List.iter
             (fun device ->
-              refuses ~substring:device (fun () -> Device.renderer device))
+              refuses ~substring:device (fun () -> Device.renderer (on device)))
             [ "QCOM"; "CL"; "PYTHON"; "NULL"; "" ]);
     ]
 
@@ -110,67 +103,51 @@ let named_never_parsed =
       test "refuses a device name with an index" (fun () ->
           List.iter
             (fun device ->
-              refuses ~substring:device (fun () -> Device.renderer device))
+              refuses ~substring:device (fun () -> Device.renderer (on device)))
             [ "CPU:0"; "CPU:1"; "AMD:0"; "NV:1" ]);
       test "refuses a device name in lower case" (fun () ->
           List.iter
             (fun device ->
-              refuses ~substring:device (fun () -> Device.renderer device))
+              refuses ~substring:device (fun () -> Device.renderer (on device)))
             [ "cpu"; "metal"; "cuda"; "nv"; "amd"; "Cuda" ]);
       test "refuses a disk, which renders nothing" (fun () ->
           List.iter
             (fun device ->
-              refuses ~substring:device (fun () -> Device.renderer device))
+              refuses ~substring:device (fun () -> Device.renderer (on device)))
             [ "DISK"; "DISK:/tmp/weights" ]);
       test "reads no renderer or architecture from the name" (fun () ->
-          refuses (fun () -> Device.renderer "CUDA:CUDA:sm_89");
-          refuses (fun () -> Device.renderer "CPU::arm64,apple-m1"));
+          refuses (fun () -> Device.renderer (on "CUDA:CUDA:sm_89"));
+          refuses (fun () -> Device.renderer (on "CPU::arm64,apple-m1")));
     ]
 
 (* Memoisation *)
 
 let pp_target = Helpers.Target.pp
 
-(* The settings and architectures a query draws from, so that queries often
-   share a target and often differ by one field. *)
-let gen_query =
+(* Targets drawn so that they often coincide and often differ by one field. *)
+let gen_target =
   let open Gen in
-  let+ dev =
-    of_list ~pp:Format.pp_print_string
-      [
-        "";
-        "CPU";
-        "CPU:CLANG";
-        ":CLANG";
-        "AMD";
-        "NV::sm_89";
-        "CUDA::sm_80;AMD::gfx942";
-      ]
-  and+ device = of_list ~pp:Format.pp_print_string every_device
+  let+ device = of_list ~pp:Format.pp_print_string every_device
+  and+ renderer =
+    of_list ~pp:Format.pp_print_string [ ""; "CLANG"; "METAL"; "CUDA"; "HIP" ]
   and+ arch =
     of_list ~pp:Format.pp_print_string
       [
         "arm64,apple-m1"; "x86_64,x86-64"; "Apple9"; "sm_89"; "sm_75"; "gfx1100";
       ]
   in
-  (dev, device, arch)
+  { (on device) with renderer; arch }
 
-let pp_query ppf (dev, device, arch) =
-  Format.fprintf ppf "DEV=%S %s ~arch:%S" dev device arch
-
-let gen_queries =
+let gen_targets =
   Gen.with_pp
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_query)
-    (Gen.list ~size:(Gen.int_range 2 12) gen_query)
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_target)
+    (Gen.list ~size:(Gen.int_range 2 12) gen_target)
 
-(* Each query's target, and its renderer when it has one. *)
-let answer (dev, device, arch) =
-  under dev (fun () ->
-      ( Helpers.target ~arch device,
-        Result.to_option (Device.renderer ~arch device) ))
+(* Each target, and its renderer when it has one. *)
+let answer t = (t, Result.to_option (Device.renderer t))
 
-let one_renderer_per_target queries =
-  let answers = List.map answer queries in
+let one_renderer_per_target targets =
+  let answers = List.map answer targets in
   cover "two queries share a target"
     (List.exists
        (fun (t0, _) ->
@@ -193,47 +170,38 @@ let memoisation =
   group "renderer's memory"
     [
       test "returns the same renderer to a second call" (fun () ->
+          is_true (chosen "CPU::arm64,apple-m1" == chosen "CPU::arm64,apple-m1"));
+      test "returns one renderer to two equal targets" (fun () ->
           is_true
-            (chosen ~arch:"arm64,apple-m1" "CPU"
-            == chosen ~arch:"arm64,apple-m1" "CPU"));
-      test "returns one renderer to two settings that give one target"
-        (fun () ->
-          is_true
-            (chosen ~dev:"" ~arch:"gfx1100" "AMD"
-            == chosen ~dev:"CPU:CLANG;AMD" ~arch:"gfx1100" "AMD"));
+            (chosen "AMD::gfx1100"
+            == require_ok ~pp:Format.pp_print_string
+                 (Device.renderer { (on "AMD") with arch = "gfx1100" })));
       test "makes a renderer for each architecture" (fun () ->
-          let arm = chosen ~arch:"arm64,apple-m1" "CPU"
-          and x86 = chosen ~arch:"x86_64,x86-64" "CPU" in
+          let arm = chosen "CPU::arm64,apple-m1"
+          and x86 = chosen "CPU::x86_64,x86-64" in
           is_true (arm != x86);
           equal (pair string string)
             ("arm64,apple-m1", "x86_64,x86-64")
             (arm.target.arch, x86.target.arch));
       test "makes a renderer for a target that names its renderer" (fun () ->
           is_true
-            (chosen ~dev:"CPU:CLANG" ~arch:"arm64,apple-m1" "CPU"
-            != chosen ~dev:"CPU" ~arch:"arm64,apple-m1" "CPU"));
+            (chosen "CPU:CLANG:arm64,apple-m1" != chosen "CPU::arm64,apple-m1"));
       test "makes renderers of their own for CUDA and NV" (fun () ->
-          let cuda = chosen ~arch:"sm_89" "CUDA"
-          and nv = chosen ~arch:"sm_89" "NV" in
+          let cuda = chosen "CUDA::sm_89" and nv = chosen "NV::sm_89" in
           is_true (cuda != nv);
           equal (pair string string) ("CUDA", "NV")
             (cuda.target.device, nv.target.device));
       test "returns one renderer to two domains asking at once" (fun () ->
-          under "" (fun () ->
-              (* No other test asks for this target, so the two domains race to
-                 make its renderer. *)
-              let ask () =
-                List.init 50 (fun _ ->
-                    require_ok ~pp:Format.pp_print_string
-                      (Device.renderer ~arch:"sm_87" "NV"))
-              in
-              let other = Domain.spawn ask in
-              let mine = ask () in
-              match mine @ Domain.join other with
-              | first :: rest -> List.iter (fun r -> is_true (r == first)) rest
-              | [] -> fail "no renderer"));
+          (* No other test asks for this target, so the two domains race to make
+             its renderer. *)
+          let ask () = List.init 50 (fun _ -> chosen "NV::sm_87") in
+          let other = Domain.spawn ask in
+          let mine = ask () in
+          match mine @ Domain.join other with
+          | first :: rest -> List.iter (fun r -> is_true (r == first)) rest
+          | [] -> fail "no renderer");
       prop "returns one renderer per target, whatever the order of the calls"
-        gen_queries one_renderer_per_target;
+        gen_targets one_renderer_per_target;
     ]
 
 (* Compiled programs *)

@@ -111,7 +111,7 @@ let renderer_of_row cell =
     ~has_shared:(bool_of_cell (cell "has_shared"))
     ~shared_max:(int_of_string (cell "shared_max"))
     ~tensor_cores
-    (Helpers.target ~arch device)
+    { Helpers.Target.device; renderer = ""; arch; interface = ""; indices = "" }
 
 (* Writes *)
 

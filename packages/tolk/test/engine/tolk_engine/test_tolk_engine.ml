@@ -80,7 +80,7 @@ let remote =
 let target = Testable.make ~pp:Helpers.Target.pp ~equal:( = )
 
 let host_target arch cpu =
-  { (Helpers.target ~arch:(arch ^ "," ^ cpu) "CPU") with renderer = "CLANG" }
+  Result.get_ok (Helpers.Target.of_string ("CPU:CLANG:" ^ arch ^ "," ^ cpu))
 
 let targets =
   group "target"
@@ -135,7 +135,9 @@ let describing =
       test "the disk is described as a DISK target without queues" (fun () ->
           let d = devices "DISK:/tmp/tolk-schedule" in
           is_true (Nx_device.equal Nx_device.disk d.device);
-          equal target (Helpers.target "DISK") d.compiler.target;
+          equal target
+            (Result.get_ok (Helpers.Target.of_string "DISK"))
+            d.compiler.target;
           is_true (Option.is_none d.compiler.queues));
       test "a name the map does not hold is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () -> devices "CPU:9"));
@@ -2229,8 +2231,7 @@ let computes_on_metal name =
 (* A kernel of Metal, [out = a * n + b] over [2^18] floats, as [measure] runs it
    on scratch buffers. *)
 let metal_axpy () =
-  let t = (on_metal "CPU:1").compiler.target in
-  match Device.renderer ~arch:t.arch t.device with
+  match Device.renderer (on_metal "CPU:1").compiler.target with
   | Error why -> fail why
   | Ok r -> Codegen.to_program (kernel ~name:"metal_axpy" ~size:(1 lsl 18) ()) r
 
