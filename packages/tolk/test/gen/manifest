@@ -1197,6 +1197,16 @@ codegen/opt/heuristic/paired_products_cpu.golden
 codegen/opt/heuristic/paired_products_cuda.golden
 codegen/opt/heuristic/paired_products_metal.golden
 codegen/opt/heuristic/renderers.golden
+codegen/opt/heuristic/routed_blocks.golden
+codegen/opt/heuristic/routed_blocks_amd.golden
+codegen/opt/heuristic/routed_blocks_cpu.golden
+codegen/opt/heuristic/routed_blocks_cuda.golden
+codegen/opt/heuristic/routed_blocks_metal.golden
+codegen/opt/heuristic/shared_keys.golden
+codegen/opt/heuristic/shared_keys_amd.golden
+codegen/opt/heuristic/shared_keys_cpu.golden
+codegen/opt/heuristic/shared_keys_cuda.golden
+codegen/opt/heuristic/shared_keys_metal.golden
 codegen/opt/heuristic/softmax.golden
 codegen/opt/heuristic/softmax_amd.golden
 codegen/opt/heuristic/softmax_cpu.golden

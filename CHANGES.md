@@ -946,6 +946,11 @@ thread.
 
 ### Tolk (new)
 
+- A decoded operand of a summed product that an output axis reads only
+  through its quotient by a block is decoded once per block. `Nx_quant.apply
+  ~ids` on a prompt decodes each expert's matrix once per block of 2
+  positions: gpt-oss-20b's 512-token prefill on an RTX 5000 Ada takes 1.11 s,
+  from 1.49 s.
 - A host kernel of more than 2^31 operations runs on all the host's cores.
   Its count of operations wrapped in 32 bits, sometimes below one block's
   worth, and it ran as one block.
@@ -3044,7 +3049,7 @@ thread.
 - `Nx_quant.apply ~ids` with at least twice as many positions as experts sorts
   them by expert and multiplies each expert once per pair of its positions,
   where it read every expert's weights once per position. A prompt's compiled
-  expert products run about 3 times faster on CUDA, and slower on Metal and the
+  expert products run about 4 times faster on CUDA, and faster on Metal and the
   host.
 - **Breaking:** `Nx_quant.apply` and `Nx_quant.dequant` are compositions of
   `Nx` operations everywhere, and `Nx_quant.Effect` is removed. Their results

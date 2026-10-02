@@ -390,10 +390,18 @@ index 62c3191..fb2d746 100644
  def xpow(base:UOp, exponent:UOp) -> UOp:
    # start with b ** e = exp2(e * log2(b))
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index 712a2b7..aa90243 100644
+index 712a2b7..a78ae66 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -58,25 +58,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -2,6 +2,7 @@ import itertools
+ from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
+ from tinygrad.helpers import getenv, DEBUG, prod, TC_OPT, TC_SELECT, TC_MIN_GLOBALS, USE_TC, IMAGE
+ from tinygrad.uop.ops import Ops, resolve, AxisType
++from tinygrad.dtype import dtypes
+ from tinygrad.codegen.late.coalesce import image_valid_dims
+ from tinygrad.codegen.opt.postrange import Scheduler
+ 
+@@ -58,25 +59,75 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
            if (axis:=unit_stride_axes_mul_4[0]) in (upd:=k.upcastable_dims)+k.unrollable_dims:
              k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST if axis in upd else AxisType.UNROLL)))
  
@@ -416,6 +424,25 @@ index 712a2b7..aa90243 100644
 -            if MV_BLOCKSIZE > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_BLOCKSIZE, AxisType.LOCAL)))
 -            if MV_ROWS_PER_THREAD > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_ROWS_PER_THREAD, AxisType.UPCAST)))
 -            return k
++  # an operand of a product that reads an output axis only through its quotient by d takes one value over each run of d consecutive
++  # values of the axis: when it is decoded, converting integers it reads into floats, upcast by d, up to RUN_CAP, the axis's lanes
++  # decode it once, as a matrix a block of rows shares is decoded once
++  RUN_CAP = 4
++  def decoded(o):
++    return any(u.op in (Ops.CAST, Ops.BITCAST) and dtypes.is_float(u.dtype) and dtypes.is_int(u.src[0].dtype)
++               for u in o.toposort(gate=lambda u: u.op is not Ops.INDEX))
++  def run(o, r):
++    divs = [u.src[1].arg if u.op is Ops.FLOORDIV and u.src[1].op is Ops.CONST else None for u in o.toposort() if any(s is r for s in u.src)]
++    return divs[0] if divs and divs[0] is not None and all(d == divs[0] for d in divs) else 1
++  if k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and k.reduceop.src[0].op is Ops.MUL:
++    to_upcast = []
++    for axis in k.upcastable_dims:
++      if not isinstance(n:=k.full_shape[axis], int): continue
++      a = max([next((a for a in range(RUN_CAP, 1, -1) if run(o, k.rngs[axis]) % a == 0 and n % a == 0), 1) for o in k.reduceop.src[0].src
++               if decoded(o)], default=1)
++      if a > 1: to_upcast.append((axis, a))
++    for axis, a in to_upcast[::-1]: k.apply_opt(Opt(OptOps.SPLIT, axis, (a, AxisType.UPCAST)))
++
 +  # matrix-vector products read each matrix element once, as fast as memory feeds them: adjacent threads read adjacent elements, each
 +  # thread keeps several loads in flight, and enough threads run to keep the memory busy. A matrix of rows along the reduce gives each
 +  # row LANES threads that read it in turn, ROWS rows to a workgroup, unrolled by up to IN_FLIGHT; one of columns along an output gives

@@ -254,6 +254,92 @@ let matvec k =
               (columns_layout first))
   | _ -> None
 
+(* Shared operands
+
+   An operand of a product that reads an output axis only through its quotient
+   by [d] takes one value over each run of [d] consecutive values of the axis.
+   When the operand is decoded from integer codes, upcasting the axis by [d]
+   decodes it once for the run's lanes. A matrix that a block of rows shares is
+   such an operand: each block's rows read their block's matrix, so the matrix
+   reads the row axis only through the row's block
+
+     row     0  1 | 2  3 | 4  5        W[owner[row / 2]]
+     owner   e0   | e3   | e1          runs of 2 rows
+
+   and upcast by 2 along the rows, a matrix decoded from codes and scales is
+   decoded once for both rows of a block. An operand of floats is a load that
+   the cache serves each lane, and sharing it costs threads: the keys and
+   values that attention's query heads share ran slower upcast. *)
+
+(* The most values an upcast of one axis takes: the largest of upcast_more's
+   amounts. *)
+let run_cap = 4
+
+(* The run of [o] along the range [r]: [d] if [o] reads [r] only as [r / d], 1
+   otherwise. *)
+let run o r =
+  let readers =
+    List.filter
+      (fun u -> List.memq r (src u))
+      (Nodes.to_list (backward_slice_with_self o))
+  in
+  let divisor u =
+    if op u = Op.Floordiv && op (nth u 1) = Op.Const then
+      known_size (Sym (nth u 1))
+    else None
+  in
+  match List.map divisor readers with
+  | Some d :: rest when List.for_all (Option.equal Bigint.equal (Some d)) rest
+    ->
+      d
+  | _ -> Bigint.one
+
+(* Whether [o] is decoded: its value converts integers it reads into floats,
+   by a cast or a bitcast, outside any access's address. *)
+let decoded o =
+  let converts u =
+    (op u = Op.Cast || op u = Op.Bitcast)
+    && Dtype.is_float (dtype u)
+    && Dtype.is_int (dtype (nth u 0))
+  in
+  List.exists converts (toposort ~gate:(fun u -> op u <> Op.Index) o)
+
+(* The largest amount from [a] down that divides both [run] and [n]. *)
+let rec within run n a =
+  let divides x = Bigint.(equal (rem x (of_int a)) zero) in
+  if a <= 1 then 1
+  else if divides run && divides n then a
+  else within run n (a - 1)
+
+let upcast_shared k =
+  let amount operands axis =
+    let r = List.nth (K.rngs k) axis in
+    match known_size (shape_at k axis) with
+    | None -> 1
+    | Some n ->
+        List.fold_left
+          (fun a o -> max a (within (run o r) n run_cap))
+          1 operands
+  in
+  match K.reduceop k with
+  | Some r
+    when (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+         && op (nth r 0) = Op.Mul ->
+      let operands = List.filter decoded (src (nth r 0)) in
+      let to_upcast =
+        List.filter_map
+          (fun axis ->
+            match amount operands axis with
+            | a when a > 1 -> Some (axis, a)
+            | _ -> None)
+          (K.upcastable_dims k)
+      in
+      (* later axes first, as an upcast of a whole axis removes it *)
+      List.iter
+        (fun (axis, a) -> ignore (split k axis a Opt.Upcast))
+        (List.rev to_upcast)
+  | _ -> ()
+
 (* are we grouping? (requires local shape support) *)
 let group k =
   if
@@ -465,6 +551,7 @@ let hand_coded_optimizations k =
   | None -> (
       (* make a copy so it does not mutate the input *)
       let k = K.copy k in
+      upcast_shared k;
       match matvec k with
       | Some k -> k
       | None ->

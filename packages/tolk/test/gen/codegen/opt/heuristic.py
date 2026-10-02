@@ -63,6 +63,19 @@ def decoded(n, k):
     return (values.reshape(n, k // 32, 32) * scales.reshape(n, k // 32, 1)).reshape(n, k)
 
 
+def routed(blocks, rows, n, k, experts):
+    """Blocks of `rows` rows, each block's rows multiplied by the [n, k] matrix of its expert among `experts`, decoded from 4-bit
+    codes, two a byte, and a scale per 32: a product of positions sorted by expert, the expert of row r its block's, at r // rows."""
+    owner = empty(blocks, dtype=dtypes.int).maximum(0).minimum(experts - 1).cast(dtypes.weakint)
+    owner = owner.reshape(blocks, 1).expand(blocks, rows).reshape(blocks * rows)
+    def gather(t, m): return Tensor(t.reshape(experts, m).uop.index(owner.uop))
+    codes = gather(empty(experts * n * k // 2, dtype=dtypes.uint8), n * k // 2)
+    scales = gather(empty(experts * n * k // 32), n * k // 32)
+    values = Tensor.stack(codes & 15, codes >> 4, dim=-1).cast(dtypes.float).reshape(blocks * rows, n, k // 32, 32)
+    w = (values * scales.reshape(blocks * rows, n, k // 32, 1)).reshape(blocks * rows, n, k)
+    return empty(blocks * rows, 1, k) @ w.transpose(1, 2)
+
+
 def normed(k):
     """A [1, k] activation divided by its scale and multiplied by a gain, as a normalisation leaves it."""
     return empty(1, k) / empty(1, 1) * empty(k)
@@ -108,6 +121,10 @@ KERNELS = {
     "gpt_oss_gate_up": lambda: last(normed(2880) @ decoded(4 * 5760, 2880).T),
     "gpt_oss_down": lambda: last(((empty(4, 1, 2880) @ decoded(4 * 2880, 2880).reshape(4, 2880, 2880).transpose(1, 2)).relu()
                                   * empty(4, 1, 1)).sum(0)),
+    # a prompt's routed product, its positions sorted by expert into blocks of 2 rows that share their expert's matrix
+    "routed_blocks": lambda: last(routed(8, 2, 64, 64, 4)),
+    # attention's scores, 8 query heads sharing 2 key heads: an operand read through h // 4 that one buffer holds
+    "shared_keys": lambda: last(empty(8, 1, 64) @ empty(2, 1, 64, 16).expand(2, 4, 64, 16).reshape(8, 64, 16)),
     "experts_down": lambda: last(((empty(2, 1, 32) @ empty(2, 16, 32).transpose(1, 2)).relu() * empty(2, 1, 1)).sum(0)),
     "conv": lambda: last(empty(1, 16, 32, 32).conv2d(empty(32, 16, 3, 3), padding=1)),
     "conv_half": lambda: last(empty(1, 16, 32, 32, dtype=dtypes.half).conv2d(empty(32, 16, 3, 3, dtype=dtypes.half), padding=1)),

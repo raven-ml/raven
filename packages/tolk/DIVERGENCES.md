@@ -2758,8 +2758,8 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:115-120` (`hand_coded_optimizations`:
   more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
   can take a kernel to 64 lanes or more).
-- **tolk:** `lib/codegen/opt/heuristic.ml:308-312` (`host_lanes`,
-  `beyond_host_lanes`), `:332` (`upcast_more`).
+- **tolk:** `lib/codegen/opt/heuristic.ml:394-398` (`host_lanes`,
+  `beyond_host_lanes`), `:418` (`upcast_more`).
 - **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
   take an upcast that would make the kernel's upcast and unrolled lanes more
   than 32. Other devices upcast as tinygrad does.
@@ -2771,6 +2771,41 @@ stores through a pad.
 - **Pinned by:** `Tolk.Heuristic`'s `paired_products` cases (on `cpu` two
   upcasts by 4, on `metal`, `cuda` and `amd` three); the goldens, from tinygrad
   with D91 applied by its generator.
+
+## D92. A decoded operand shared by a run of an output axis is decoded once a run
+
+- **tinygrad:** `codegen/opt/heuristic.py:112-138` (`hand_coded_optimizations`'
+  upcasts of output axes, which find reuse only on an axis that some access
+  does not read, take 3 or 4 values of it, and come after the matrix-vector
+  layout of `:61-79` has returned).
+- **tolk:** `lib/codegen/opt/heuristic.ml:276` (`run_cap`), `:280` (`run`),
+  `:299` (`decoded`), `:314` (`upcast_shared`) and `:554` (its place, before
+  `matvec`); `test/gen/tinygrad.patch`, which gives tinygrad the same before
+  the goldens are recorded.
+- **Differs:** before the matrix-vector layout, an output axis that an operand
+  of a summed product reads only as `r / d` is upcast by the largest amount up
+  to 4 that divides both `d` and the axis, when that operand is decoded: its
+  value converts integers it reads into floats, by a cast or a bitcast,
+  outside any access's address. The axis's lanes then share the operand's
+  value. With several such axes, each is upcast.
+- **Reason:** (b): `Nx_quant.apply ~ids` on a prompt, which sorts positions by
+  expert into blocks of 2 rows that read their block's matrix,
+  `owner[row / 2]`. Every row decoded the matrix's MXFP4 codes and scales
+  again: the row axis reaches the matrix through the gather, so tinygrad sees
+  no reuse. Upcast by 2, a block's rows decode once. The 512-token gate and up
+  product's kernel on an RTX 5000 Ada, from 42.5 ms to 26.2 ms
+  (`r_520_5760_32_4_9_2_5` to `r_260_5760_32_4_2_9_2_5`), against 34.4 ms
+  for one matrix per position; on the Mac's Metal, from 275.9 ms to 225.5 ms,
+  against 258.5 ms. gpt-oss-20b's 512-token prefill on CUDA, from 1.49 s to
+  1.11 s. An operand of floats is left alone: upcasting the query heads that
+  share a key and value head (`h / 8`), whose cache a select joins to the new
+  position's, made gpt-oss-20b's decode on CUDA 3.4% slower, as the lanes'
+  shared load is one the cache serves and the upcast costs threads.
+- **Pinned by:** the Heuristic suite: `the optimisations chosen are
+  tinygrad's › applied_opts`, cases `routed_blocks_*` and `shared_keys_*`
+  (keys of floats, left alone), recorded from the equally patched
+  tinygrad, and `the hand-coded optimisations keep a kernel's writes › large
+  kernels › routed_blocks_*` (slow).
 
 ## D93. The where-closure rule searches for its condition
 
