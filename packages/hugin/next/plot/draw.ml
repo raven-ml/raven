@@ -287,15 +287,9 @@ let m4 cx m (panel : Layout.panel) reads =
   let w = Float.to_int (Float.ceil (Box2.w panel.box *. cx.ctx.density)) in
   let last = if rank = 0 then 0 else shape.(rank - 1) in
   let constant_along (B b) =
-    match (b.role.use, data b.ch) with
-    | Position { far = false; _ }, _ | _, None -> true
-    | _, Some d -> (
-        match d.lift with
-        | Index k | Dim { axis = k; _ } -> axis_of shape k <> Some (rank - 1)
-        | Num _ | Cat _ | Strings _ | Floats _ -> (
-            match lift_shape d.lift with
-            | Some s when Array.length s > 0 -> s.(Array.length s - 1) = 1
-            | _ -> true))
+    match b.role.use with
+    | Position { far = false; _ } -> true
+    | _ -> not (Channel.varies shape b.ch (-1))
   in
   let float_scale index : float Scale.t option =
     Option.bind reads.(index) (fun i : float Scale.t option ->
