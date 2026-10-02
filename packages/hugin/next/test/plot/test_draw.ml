@@ -791,14 +791,14 @@ let m4_reference column ys =
 
 (* A series on x in [0, 1000] in a panel 50 device pixels wide: column [i / 20]
    holds row [i]. *)
-let m4_series n ys =
+let m4_series ys =
   let x = index ~scale:(Scale.linear ~domain:(0., 1000.) ()) (-1) in
   let m, seen =
     probe ~reduce:Mark.m4
       [ Mark.bind Role.x x; Mark.bind Role.y (num ys) ]
       Mark.index
   in
-  ignore (n, drawn ~size:(Size.panels 50. 50.) m);
+  ignore (drawn ~size:(Size.panels 50. 50.) m);
   only seen
 
 let ys n = Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| n |]
@@ -855,17 +855,17 @@ let reducers =
   group "Reducers"
     [
       test "m4 keeps every row at four rows per column" (fun () ->
-          equal int 200 (Array.length (m4_series 200 (ys 200))));
+          equal int 200 (Array.length (m4_series (ys 200))));
       test "m4 keeps each column's first, last, lowest and highest rows"
         (fun () ->
           let n = 1001 in
           let y = ys n in
           equal (array int)
             (m4_reference (fun i -> i / 20) (Nx.to_array y))
-            (m4_series n y));
+            (m4_series y));
       test "m4 keeps every row of a series with a missing value" (fun () ->
           let y = Nx.concatenate ~axis:0 [ ys 1000; f64 [| nan |] ] in
-          equal int 1001 (Array.length (m4_series 1001 y)));
+          equal int 1001 (Array.length (m4_series y)));
       test "m4 keeps every row of a series whose x is not monotone" (fun () ->
           let x =
             Nx.concatenate ~axis:0
