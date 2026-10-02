@@ -6,67 +6,67 @@
 # ocaml: 5.5.1 · 64-bit · release
 
 Declined/add-1-beside-grad-on-another-domain	alloc_words	exact	7700
-Declined/add-1-beside-grad-on-another-domain	wall_time	batch=512	n=20	1.849e-05	1.810e-05 1.811e-05 1.815e-05 1.830e-05 1.832e-05 1.839e-05 1.839e-05 1.843e-05 1.846e-05 1.846e-05 1.853e-05 1.857e-05 1.864e-05 1.876e-05 1.882e-05 1.922e-05 1.924e-05 1.937e-05 2.034e-05 2.080e-05
+Declined/add-1-beside-grad-on-another-domain	wall_time	batch=512	n=20	1.861e-05	1.837e-05 1.839e-05 1.841e-05 1.845e-05 1.845e-05 1.854e-05 1.854e-05 1.857e-05 1.857e-05 1.861e-05 1.861e-05 1.870e-05 1.877e-05 1.881e-05 1.885e-05 1.886e-05 1.887e-05 1.898e-05 1.927e-05 2.022e-05
 Declined/add-1-nx-eager	alloc_words	exact	6400
-Declined/add-1-nx-eager	wall_time	batch=512	n=20	1.103e-05	1.088e-05 1.089e-05 1.089e-05 1.092e-05 1.092e-05 1.094e-05 1.094e-05 1.099e-05 1.099e-05 1.102e-05 1.103e-05 1.104e-05 1.104e-05 1.105e-05 1.107e-05 1.108e-05 1.109e-05 1.110e-05 1.120e-05 1.121e-05
-Declined/add-1-under-grad	alloc_words	exact	8492
-Declined/add-1-under-grad	wall_time	batch=512	n=20	1.735e-05	1.716e-05 1.717e-05 1.720e-05 1.723e-05 1.724e-05 1.725e-05 1.727e-05 1.728e-05 1.731e-05 1.734e-05 1.735e-05 1.735e-05 1.736e-05 1.737e-05 1.739e-05 1.739e-05 1.739e-05 1.740e-05 1.745e-05 1.748e-05
-Declined/add-1-under-grad-vmap	alloc_words	exact	8745
-Declined/add-1-under-grad-vmap	wall_time	batch=512	n=20	1.869e-05	1.854e-05 1.856e-05 1.856e-05 1.857e-05 1.858e-05 1.861e-05 1.863e-05 1.864e-05 1.865e-05 1.867e-05 1.872e-05 1.872e-05 1.874e-05 1.879e-05 1.880e-05 1.884e-05 1.885e-05 1.888e-05 1.890e-05 1.896e-05
-Declined/add-1-under-vmap	alloc_words	exact	7954
-Declined/add-1-under-vmap	wall_time	batch=512	n=20	1.537e-05	1.521e-05 1.524e-05 1.524e-05 1.525e-05 1.534e-05 1.534e-05 1.535e-05 1.536e-05 1.536e-05 1.537e-05 1.537e-05 1.538e-05 1.539e-05 1.542e-05 1.542e-05 1.543e-05 1.545e-05 1.547e-05 1.549e-05 1.550e-05
+Declined/add-1-nx-eager	wall_time	batch=512	n=20	1.114e-05	1.103e-05 1.105e-05 1.106e-05 1.106e-05 1.106e-05 1.108e-05 1.109e-05 1.109e-05 1.110e-05 1.112e-05 1.115e-05 1.116e-05 1.122e-05 1.126e-05 1.131e-05 1.132e-05 1.138e-05 1.139e-05 1.141e-05 1.141e-05
+Declined/add-1-under-grad	alloc_words	exact	8527
+Declined/add-1-under-grad	wall_time	batch=512	n=20	1.763e-05	1.737e-05 1.750e-05 1.754e-05 1.754e-05 1.755e-05 1.756e-05 1.759e-05 1.759e-05 1.759e-05 1.763e-05 1.764e-05 1.764e-05 1.765e-05 1.767e-05 1.768e-05 1.773e-05 1.775e-05 1.778e-05 1.780e-05 1.790e-05
+Declined/add-1-under-grad-vmap	alloc_words	exact	8796
+Declined/add-1-under-grad-vmap	wall_time	batch=512	n=20	1.900e-05	1.887e-05 1.888e-05 1.890e-05 1.894e-05 1.894e-05 1.896e-05 1.897e-05 1.898e-05 1.898e-05 1.899e-05 1.902e-05 1.908e-05 1.909e-05 1.909e-05 1.911e-05 1.913e-05 1.918e-05 1.924e-05 1.925e-05 1.957e-05
+Declined/add-1-under-vmap	alloc_words	exact	7970
+Declined/add-1-under-vmap	wall_time	batch=512	n=20	1.556e-05	1.528e-05 1.538e-05 1.547e-05 1.549e-05 1.551e-05 1.552e-05 1.553e-05 1.554e-05 1.555e-05 1.556e-05 1.557e-05 1.558e-05 1.559e-05 1.565e-05 1.565e-05 1.567e-05 1.569e-05 1.577e-05 1.585e-05 1.589e-05
 DeepChain/chain-fwd-nx-eager	alloc_words	exact	6514
-DeepChain/chain-fwd-nx-eager	wall_time	batch=512	n=20	1.622e-05	1.601e-05 1.613e-05 1.614e-05 1.616e-05 1.618e-05 1.618e-05 1.618e-05 1.620e-05 1.621e-05 1.622e-05 1.622e-05 1.622e-05 1.622e-05 1.624e-05 1.624e-05 1.630e-05 1.636e-05 1.638e-05 1.668e-05 1.692e-05
-DeepChain/chain-grad	alloc_words	exact	35639
-DeepChain/chain-grad	wall_time	batch=64	n=20	8.577e-05	8.272e-05 8.426e-05 8.450e-05 8.453e-05 8.457e-05 8.484e-05 8.498e-05 8.528e-05 8.552e-05 8.566e-05 8.587e-05 8.656e-05 8.658e-05 8.711e-05 8.736e-05 8.759e-05 8.785e-05 8.795e-05 8.924e-05 8.961e-05
-DeepChain/chain-jvp	alloc_words	exact	27371
-DeepChain/chain-jvp	wall_time	batch=128	n=20	6.674e-05	6.547e-05 6.558e-05 6.588e-05 6.594e-05 6.616e-05 6.618e-05 6.650e-05 6.666e-05 6.671e-05 6.673e-05 6.674e-05 6.683e-05 6.695e-05 6.696e-05 6.696e-05 6.703e-05 6.725e-05 6.730e-05 6.742e-05 6.748e-05
-Hmc/leapfrog	alloc_words	exact	61221
-Hmc/leapfrog	wall_time	batch=64	n=20	9.595e-05	9.492e-05 9.527e-05 9.542e-05 9.546e-05 9.551e-05 9.556e-05 9.579e-05 9.581e-05 9.587e-05 9.593e-05 9.596e-05 9.612e-05 9.622e-05 9.627e-05 9.634e-05 9.644e-05 9.675e-05 9.683e-05 9.722e-05 9.813e-05
-Jit/arange-int64-1Mi-replay	alloc_words	exact	843
-Jit/arange-int64-1Mi-replay	wall_time	batch=16	n=20	4.423e-04	4.036e-04 4.257e-04 4.294e-04 4.340e-04 4.341e-04 4.347e-04 4.370e-04 4.387e-04 4.400e-04 4.412e-04 4.435e-04 4.457e-04 4.472e-04 4.489e-04 4.497e-04 4.509e-04 4.519e-04 4.538e-04 4.539e-04 4.621e-04
-Jit/eager-run-mlp	alloc_words	exact	1511
-Jit/eager-run-mlp	wall_time	batch=1	n=20	3.484e-03	3.464e-03 3.464e-03 3.465e-03 3.468e-03 3.468e-03 3.471e-03 3.473e-03 3.476e-03 3.477e-03 3.481e-03 3.486e-03 3.490e-03 3.500e-03 3.521e-03 3.529e-03 3.644e-03 3.667e-03 3.680e-03 3.686e-03 3.693e-03
-Jit/jit-run-chain	alloc_words	exact	817
-Jit/jit-run-chain	wall_time	batch=32	n=20	2.165e-04	2.163e-04 2.163e-04 2.164e-04 2.164e-04 2.165e-04 2.165e-04 2.165e-04 2.165e-04 2.165e-04 2.165e-04 2.165e-04 2.165e-04 2.172e-04 2.175e-04 2.175e-04 2.177e-04 2.178e-04 2.179e-04 2.185e-04 2.197e-04
-Jit/jit-run-mlp	alloc_words	exact	2349
-Jit/jit-run-mlp	wall_time	batch=32	n=20	2.775e-04	2.759e-04 2.763e-04 2.764e-04 2.766e-04 2.767e-04 2.770e-04 2.770e-04 2.770e-04 2.771e-04 2.772e-04 2.779e-04 2.779e-04 2.780e-04 2.780e-04 2.785e-04 2.786e-04 2.788e-04 2.789e-04 2.795e-04 2.806e-04
-JitFootprint/elementwise-first-call	alloc_words	batch=1	n=20	6.316e+04	6.313e+04 6.313e+04 6.313e+04 6.313e+04 6.313e+04 6.313e+04 6.313e+04 6.313e+04 6.313e+04 6.315e+04 6.316e+04 6.317e+04 6.317e+04 6.468e+04 7.388e+04 7.409e+04 7.411e+04 8.083e+04 8.083e+04 8.238e+04
-JitFootprint/elementwise-first-call	wall_time	batch=1	n=20	1.187e-04	9.996e-05 1.011e-04 1.027e-04 1.050e-04 1.107e-04 1.129e-04 1.142e-04 1.158e-04 1.181e-04 1.186e-04 1.188e-04 1.195e-04 1.200e-04 1.304e-04 1.315e-04 1.356e-04 1.498e-04 1.726e-04 4.123e-04 4.300e-04
-JitFootprint/elementwise-replay	alloc_words	exact	1410
-JitFootprint/elementwise-replay	wall_time	batch=128	n=20	5.038e-05	4.996e-05 5.000e-05 5.004e-05 5.008e-05 5.019e-05 5.022e-05 5.024e-05 5.027e-05 5.028e-05 5.037e-05 5.040e-05 5.055e-05 5.060e-05 5.066e-05 5.077e-05 5.084e-05 5.084e-05 5.098e-05 5.216e-05 5.289e-05
-JitFootprint/lorenz-n10-first-call	alloc_words	batch=1	n=20	5.079e+05	5.078e+05 5.078e+05 5.078e+05 5.078e+05 5.078e+05 5.078e+05 5.079e+05 5.079e+05 5.079e+05 5.079e+05 5.079e+05 5.080e+05 5.080e+05 5.080e+05 5.081e+05 5.083e+05 5.083e+05 5.086e+05 5.089e+05 7.117e+05
-JitFootprint/lorenz-n10-first-call	wall_time	batch=1	n=20	9.132e-04	8.467e-04 8.478e-04 8.482e-04 8.486e-04 8.646e-04 8.726e-04 8.743e-04 8.786e-04 9.055e-04 9.082e-04 9.182e-04 9.325e-04 9.368e-04 9.466e-04 9.586e-04 9.703e-04 9.903e-04 9.905e-04 1.025e-03 1.145e-03
-JitFootprint/lorenz-n10-replay	alloc_words	exact	1367
-JitFootprint/lorenz-n10-replay	wall_time	batch=4096	n=20	1.846e-06	1.833e-06 1.834e-06 1.838e-06 1.839e-06 1.841e-06 1.842e-06 1.843e-06 1.843e-06 1.843e-06 1.846e-06 1.846e-06 1.848e-06 1.849e-06 1.850e-06 1.850e-06 1.854e-06 1.854e-06 1.863e-06 1.863e-06 1.877e-06
-JitFootprint/lorenz-n100-replay	alloc_words	exact	1367
-JitFootprint/lorenz-n100-replay	wall_time	batch=1024	n=20	9.115e-06	9.091e-06 9.099e-06 9.099e-06 9.099e-06 9.100e-06 9.101e-06 9.104e-06 9.106e-06 9.112e-06 9.113e-06 9.116e-06 9.116e-06 9.117e-06 9.117e-06 9.119e-06 9.125e-06 9.125e-06 9.147e-06 9.247e-06 9.248e-06
-JitFootprint/lorenz-n50-replay	alloc_words	exact	1367
-JitFootprint/lorenz-n50-replay	wall_time	batch=1024	n=20	5.051e-06	5.027e-06 5.034e-06 5.034e-06 5.035e-06 5.036e-06 5.036e-06 5.041e-06 5.041e-06 5.043e-06 5.050e-06 5.051e-06 5.053e-06 5.054e-06 5.055e-06 5.059e-06 5.060e-06 5.076e-06 5.084e-06 5.195e-06 5.258e-06
-JitFootprint/rnn-fwd-h10-replay	alloc_words	exact	4830
-JitFootprint/rnn-fwd-h10-replay	wall_time	batch=128	n=20	5.804e-05	5.786e-05 5.788e-05 5.791e-05 5.793e-05 5.793e-05 5.795e-05 5.796e-05 5.797e-05 5.799e-05 5.800e-05 5.808e-05 5.808e-05 5.811e-05 5.812e-05 5.813e-05 5.816e-05 5.817e-05 5.817e-05 5.824e-05 5.863e-05
-JitFootprint/rnn-fwd-h2-replay	alloc_words	exact	2025
-JitFootprint/rnn-fwd-h2-replay	wall_time	batch=512	n=20	1.594e-05	1.591e-05 1.591e-05 1.591e-05 1.591e-05 1.592e-05 1.592e-05 1.592e-05 1.593e-05 1.593e-05 1.594e-05 1.594e-05 1.594e-05 1.594e-05 1.595e-05 1.596e-05 1.596e-05 1.596e-05 1.597e-05 1.600e-05 1.603e-05
-JitFootprint/rnn-fwd-h20-replay	alloc_words	exact	8355
-JitFootprint/rnn-fwd-h20-replay	wall_time	batch=64	n=20	1.119e-04	1.111e-04 1.113e-04 1.114e-04 1.115e-04 1.115e-04 1.116e-04 1.117e-04 1.117e-04 1.119e-04 1.119e-04 1.119e-04 1.121e-04 1.121e-04 1.122e-04 1.123e-04 1.127e-04 1.131e-04 1.133e-04 1.134e-04 1.137e-04
-JitFootprint/rnn-grad-h10-replay	alloc_words	exact	8966
-JitFootprint/rnn-grad-h10-replay	wall_time	batch=32	n=20	1.581e-04	1.549e-04 1.564e-04 1.565e-04 1.567e-04 1.571e-04 1.571e-04 1.574e-04 1.576e-04 1.581e-04 1.581e-04 1.582e-04 1.584e-04 1.587e-04 1.589e-04 1.589e-04 1.594e-04 1.594e-04 1.596e-04 1.645e-04 1.912e-04
-JitFootprint/rnn-grad-h2-replay	alloc_words	exact	3337
-JitFootprint/rnn-grad-h2-replay	wall_time	batch=256	n=20	3.251e-05	3.224e-05 3.231e-05 3.231e-05 3.240e-05 3.241e-05 3.243e-05 3.246e-05 3.248e-05 3.248e-05 3.250e-05 3.251e-05 3.252e-05 3.264e-05 3.266e-05 3.269e-05 3.269e-05 3.270e-05 3.281e-05 3.302e-05 3.335e-05
-JitFootprint/rnn-grad-h20-replay	alloc_words	exact	16021
-JitFootprint/rnn-grad-h20-replay	wall_time	batch=32	n=20	3.097e-04	2.781e-04 2.813e-04 2.864e-04 2.868e-04 2.905e-04 2.931e-04 2.954e-04 3.004e-04 3.016e-04 3.059e-04 3.135e-04 3.194e-04 3.211e-04 3.249e-04 3.288e-04 3.288e-04 3.289e-04 3.291e-04 3.322e-04 3.568e-04
-MlpGrad/mlp-forward-nx-eager	alloc_words	exact	1912
-MlpGrad/mlp-forward-nx-eager	wall_time	batch=1	n=20	3.463e-03	3.441e-03 3.443e-03 3.443e-03 3.444e-03 3.444e-03 3.444e-03 3.447e-03 3.448e-03 3.451e-03 3.461e-03 3.464e-03 3.465e-03 3.466e-03 3.480e-03 3.486e-03 3.533e-03 3.542e-03 3.554e-03 3.574e-03 3.577e-03
-MlpGrad/mlp-value_and_grad	alloc_words	exact	9813
-MlpGrad/mlp-value_and_grad	wall_time	batch=1	n=20	6.575e-03	6.155e-03 6.173e-03 6.193e-03 6.200e-03 6.343e-03 6.400e-03 6.426e-03 6.485e-03 6.499e-03 6.531e-03 6.620e-03 6.629e-03 6.792e-03 6.818e-03 6.824e-03 7.095e-03 7.176e-03 7.216e-03 7.256e-03 9.244e-03
-MlpJvp/mlp-jvp	alloc_words	exact	6528
-MlpJvp/mlp-jvp	wall_time	batch=1	n=20	7.451e-03	7.375e-03 7.378e-03 7.381e-03 7.381e-03 7.384e-03 7.387e-03 7.389e-03 7.395e-03 7.397e-03 7.407e-03 7.496e-03 7.496e-03 7.499e-03 7.501e-03 7.510e-03 7.513e-03 7.520e-03 7.522e-03 7.526e-03 7.648e-03
-PerSampleGrads/per-sample-grads-ew	alloc_words	exact	3745
-PerSampleGrads/per-sample-grads-ew	wall_time	batch=1	n=20	1.206e-03	1.172e-03 1.172e-03 1.174e-03 1.175e-03 1.187e-03 1.188e-03 1.189e-03 1.189e-03 1.194e-03 1.205e-03 1.207e-03 1.283e-03 1.283e-03 1.295e-03 1.301e-03 1.303e-03 1.305e-03 1.311e-03 1.316e-03 1.332e-03
-PerSampleGrads/per-sample-mlp-w3-grads	alloc_words	exact	8265
-PerSampleGrads/per-sample-mlp-w3-grads	wall_time	batch=8	n=20	8.944e-04	7.269e-04 7.392e-04 7.406e-04 7.638e-04 7.733e-04 8.017e-04 8.092e-04 8.696e-04 8.703e-04 8.873e-04 9.015e-04 9.039e-04 9.170e-04 9.218e-04 9.376e-04 9.621e-04 9.670e-04 9.742e-04 9.760e-04 9.821e-04
+DeepChain/chain-fwd-nx-eager	wall_time	batch=512	n=20	1.648e-05	1.601e-05 1.624e-05 1.624e-05 1.626e-05 1.629e-05 1.629e-05 1.631e-05 1.635e-05 1.639e-05 1.645e-05 1.651e-05 1.651e-05 1.651e-05 1.652e-05 1.654e-05 1.658e-05 1.661e-05 1.663e-05 1.693e-05 1.717e-05
+DeepChain/chain-grad	alloc_words	exact	35674
+DeepChain/chain-grad	wall_time	batch=64	n=20	8.381e-05	7.966e-05 8.157e-05 8.216e-05 8.257e-05 8.264e-05 8.274e-05 8.287e-05 8.338e-05 8.341e-05 8.378e-05 8.384e-05 8.386e-05 8.388e-05 8.463e-05 8.469e-05 8.526e-05 8.545e-05 8.572e-05 8.644e-05 8.709e-05
+DeepChain/chain-jvp	alloc_words	exact	27387
+DeepChain/chain-jvp	wall_time	batch=128	n=20	6.411e-05	6.326e-05 6.333e-05 6.350e-05 6.367e-05 6.368e-05 6.370e-05 6.374e-05 6.393e-05 6.403e-05 6.407e-05 6.414e-05 6.415e-05 6.421e-05 6.439e-05 6.440e-05 6.452e-05 6.467e-05 6.474e-05 6.488e-05 6.517e-05
+Hmc/leapfrog	alloc_words	exact	63798
+Hmc/leapfrog	wall_time	batch=64	n=20	9.919e-05	9.747e-05 9.775e-05 9.798e-05 9.822e-05 9.827e-05 9.835e-05 9.843e-05 9.874e-05 9.899e-05 9.917e-05 9.920e-05 9.920e-05 9.923e-05 9.983e-05 9.985e-05 9.995e-05 1.004e-04 1.004e-04 1.005e-04 1.008e-04
+Jit/arange-int64-1Mi-replay	alloc_words	exact	849
+Jit/arange-int64-1Mi-replay	wall_time	batch=32	n=20	2.535e-04	2.370e-04 2.427e-04 2.440e-04 2.444e-04 2.444e-04 2.455e-04 2.476e-04 2.478e-04 2.514e-04 2.528e-04 2.541e-04 2.548e-04 2.549e-04 2.565e-04 2.579e-04 2.600e-04 2.608e-04 2.613e-04 2.614e-04 2.648e-04
+Jit/eager-run-mlp	alloc_words	exact	1191
+Jit/eager-run-mlp	wall_time	batch=2	n=20	3.294e-03	3.287e-03 3.287e-03 3.287e-03 3.287e-03 3.288e-03 3.289e-03 3.290e-03 3.291e-03 3.291e-03 3.293e-03 3.296e-03 3.316e-03 3.343e-03 3.343e-03 3.344e-03 3.347e-03 3.348e-03 3.349e-03 3.351e-03 3.363e-03
+Jit/jit-run-chain	alloc_words	exact	823
+Jit/jit-run-chain	wall_time	batch=32	n=20	2.169e-04	2.166e-04 2.166e-04 2.167e-04 2.167e-04 2.167e-04 2.168e-04 2.168e-04 2.168e-04 2.169e-04 2.169e-04 2.169e-04 2.169e-04 2.170e-04 2.171e-04 2.171e-04 2.173e-04 2.175e-04 2.189e-04 2.196e-04 2.200e-04
+Jit/jit-run-mlp	alloc_words	exact	2355
+Jit/jit-run-mlp	wall_time	batch=32	n=20	2.700e-04	2.692e-04 2.693e-04 2.694e-04 2.696e-04 2.697e-04 2.697e-04 2.698e-04 2.699e-04 2.700e-04 2.700e-04 2.701e-04 2.701e-04 2.702e-04 2.703e-04 2.703e-04 2.704e-04 2.704e-04 2.707e-04 2.708e-04 2.733e-04
+JitFootprint/elementwise-first-call	alloc_words	batch=1	n=20	6.319e+04	6.317e+04 6.317e+04 6.317e+04 6.317e+04 6.317e+04 6.317e+04 6.317e+04 6.317e+04 6.317e+04 6.319e+04 6.319e+04 6.320e+04 6.320e+04 6.485e+04 7.392e+04 7.392e+04 7.392e+04 8.087e+04 8.087e+04 8.242e+04
+JitFootprint/elementwise-first-call	wall_time	batch=1	n=20	1.173e-04	1.013e-04 1.017e-04 1.024e-04 1.081e-04 1.115e-04 1.124e-04 1.136e-04 1.140e-04 1.151e-04 1.155e-04 1.191e-04 1.192e-04 1.217e-04 1.257e-04 1.296e-04 1.325e-04 1.362e-04 1.624e-04 4.143e-04 4.174e-04
+JitFootprint/elementwise-replay	alloc_words	exact	1416
+JitFootprint/elementwise-replay	wall_time	batch=256	n=20	3.272e-05	3.196e-05 3.205e-05 3.209e-05 3.209e-05 3.228e-05 3.259e-05 3.267e-05 3.270e-05 3.270e-05 3.272e-05 3.273e-05 3.274e-05 3.277e-05 3.279e-05 3.279e-05 3.283e-05 3.284e-05 3.286e-05 3.291e-05 3.301e-05
+JitFootprint/lorenz-n10-first-call	alloc_words	exact	515792
+JitFootprint/lorenz-n10-first-call	wall_time	batch=1	n=20	8.693e-04	8.121e-04 8.147e-04 8.195e-04 8.254e-04 8.304e-04 8.355e-04 8.369e-04 8.397e-04 8.489e-04 8.672e-04 8.714e-04 8.735e-04 9.035e-04 9.276e-04 9.429e-04 9.597e-04 1.000e-03 1.032e-03 1.043e-03 1.113e-03
+JitFootprint/lorenz-n10-replay	alloc_words	exact	1373
+JitFootprint/lorenz-n10-replay	wall_time	batch=4096	n=20	1.827e-06	1.805e-06 1.811e-06 1.812e-06 1.816e-06 1.817e-06 1.820e-06 1.823e-06 1.824e-06 1.825e-06 1.827e-06 1.828e-06 1.831e-06 1.834e-06 1.834e-06 1.834e-06 1.839e-06 1.840e-06 1.843e-06 1.846e-06 1.850e-06
+JitFootprint/lorenz-n100-replay	alloc_words	exact	1373
+JitFootprint/lorenz-n100-replay	wall_time	batch=1024	n=20	9.101e-06	9.079e-06 9.091e-06 9.092e-06 9.093e-06 9.095e-06 9.096e-06 9.097e-06 9.097e-06 9.098e-06 9.099e-06 9.102e-06 9.103e-06 9.103e-06 9.110e-06 9.114e-06 9.115e-06 9.115e-06 9.116e-06 9.141e-06 9.263e-06
+JitFootprint/lorenz-n50-replay	alloc_words	exact	1373
+JitFootprint/lorenz-n50-replay	wall_time	batch=1024	n=20	5.046e-06	5.016e-06 5.022e-06 5.023e-06 5.025e-06 5.026e-06 5.026e-06 5.028e-06 5.028e-06 5.040e-06 5.044e-06 5.048e-06 5.049e-06 5.066e-06 5.067e-06 5.147e-06 6.706e-06 7.096e-06 7.570e-06 7.623e-06 1.140e-05
+JitFootprint/rnn-fwd-h10-replay	alloc_words	exact	4836
+JitFootprint/rnn-fwd-h10-replay	wall_time	batch=128	n=20	5.789e-05	5.778e-05 5.784e-05 5.784e-05 5.785e-05 5.785e-05 5.785e-05 5.785e-05 5.786e-05 5.786e-05 5.788e-05 5.789e-05 5.792e-05 5.795e-05 5.796e-05 5.797e-05 5.800e-05 5.801e-05 5.802e-05 5.804e-05 5.812e-05
+JitFootprint/rnn-fwd-h2-replay	alloc_words	exact	2031
+JitFootprint/rnn-fwd-h2-replay	wall_time	batch=512	n=20	1.586e-05	1.583e-05 1.584e-05 1.584e-05 1.584e-05 1.584e-05 1.585e-05 1.585e-05 1.586e-05 1.586e-05 1.586e-05 1.586e-05 1.587e-05 1.587e-05 1.587e-05 1.588e-05 1.588e-05 1.591e-05 1.591e-05 1.591e-05 1.592e-05
+JitFootprint/rnn-fwd-h20-replay	alloc_words	exact	8361
+JitFootprint/rnn-fwd-h20-replay	wall_time	batch=64	n=20	1.113e-04	1.109e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.111e-04 1.111e-04 1.111e-04 1.111e-04 1.112e-04 1.114e-04 1.115e-04 1.115e-04 1.115e-04 1.116e-04 1.117e-04 1.120e-04 1.121e-04 1.124e-04 1.138e-04
+JitFootprint/rnn-grad-h10-replay	alloc_words	exact	8972
+JitFootprint/rnn-grad-h10-replay	wall_time	batch=32	n=20	1.578e-04	1.533e-04 1.545e-04 1.563e-04 1.565e-04 1.566e-04 1.568e-04 1.571e-04 1.574e-04 1.577e-04 1.578e-04 1.578e-04 1.582e-04 1.582e-04 1.582e-04 1.585e-04 1.594e-04 1.597e-04 1.600e-04 1.604e-04 1.789e-04
+JitFootprint/rnn-grad-h2-replay	alloc_words	exact	3343
+JitFootprint/rnn-grad-h2-replay	wall_time	batch=256	n=20	3.232e-05	3.207e-05 3.212e-05 3.215e-05 3.215e-05 3.217e-05 3.219e-05 3.220e-05 3.224e-05 3.226e-05 3.227e-05 3.237e-05 3.243e-05 3.245e-05 3.248e-05 3.249e-05 3.250e-05 3.250e-05 3.254e-05 3.255e-05 3.336e-05
+JitFootprint/rnn-grad-h20-replay	alloc_words	exact	16027
+JitFootprint/rnn-grad-h20-replay	wall_time	batch=32	n=20	3.217e-04	2.914e-04 2.988e-04 3.038e-04 3.051e-04 3.079e-04 3.101e-04 3.153e-04 3.190e-04 3.202e-04 3.208e-04 3.226e-04 3.236e-04 3.241e-04 3.269e-04 3.318e-04 3.328e-04 3.332e-04 3.332e-04 3.347e-04 3.454e-04
+MlpGrad/mlp-forward-nx-eager	alloc_words	exact	1594
+MlpGrad/mlp-forward-nx-eager	wall_time	batch=1	n=20	3.288e-03	3.282e-03 3.286e-03 3.286e-03 3.286e-03 3.287e-03 3.287e-03 3.287e-03 3.288e-03 3.288e-03 3.288e-03 3.289e-03 3.289e-03 3.290e-03 3.290e-03 3.290e-03 3.291e-03 3.294e-03 3.395e-03 3.396e-03 3.403e-03
+MlpGrad/mlp-value_and_grad	alloc_words	exact	9320
+MlpGrad/mlp-value_and_grad	wall_time	batch=1	n=20	6.110e-03	5.603e-03 5.673e-03 5.685e-03 5.725e-03 5.800e-03 5.809e-03 5.980e-03 6.001e-03 6.099e-03 6.101e-03 6.118e-03 6.132e-03 6.152e-03 6.227e-03 6.333e-03 6.362e-03 6.453e-03 6.454e-03 6.621e-03 6.649e-03
+MlpJvp/mlp-jvp	alloc_words	exact	6094
+MlpJvp/mlp-jvp	wall_time	batch=1	n=20	7.072e-03	7.055e-03 7.059e-03 7.061e-03 7.061e-03 7.065e-03 7.067e-03 7.067e-03 7.070e-03 7.071e-03 7.072e-03 7.072e-03 7.073e-03 7.119e-03 7.128e-03 7.167e-03 7.171e-03 7.173e-03 7.174e-03 7.188e-03 7.198e-03
+PerSampleGrads/per-sample-grads-ew	alloc_words	exact	3876
+PerSampleGrads/per-sample-grads-ew	wall_time	batch=1	n=20	1.045e-03	1.028e-03 1.029e-03 1.032e-03 1.033e-03 1.034e-03 1.035e-03 1.035e-03 1.036e-03 1.039e-03 1.041e-03 1.048e-03 1.141e-03 1.142e-03 1.143e-03 1.145e-03 1.146e-03 1.147e-03 1.147e-03 1.150e-03 1.155e-03
+PerSampleGrads/per-sample-mlp-w3-grads	alloc_words	exact	7923
+PerSampleGrads/per-sample-mlp-w3-grads	wall_time	batch=16	n=20	5.519e-04	5.451e-04 5.456e-04 5.461e-04 5.467e-04 5.467e-04 5.472e-04 5.476e-04 5.503e-04 5.514e-04 5.518e-04 5.520e-04 5.530e-04 5.537e-04 5.540e-04 5.541e-04 5.544e-04 5.574e-04 5.633e-04 5.700e-04 5.737e-04
 WarmStart/mlp-sgd-step-warm-first-call	alloc_words	exact	33
-WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	2.873e-02	2.745e-02 2.757e-02 2.777e-02 2.778e-02 2.784e-02 2.797e-02 2.832e-02 2.842e-02 2.845e-02 2.854e-02 2.892e-02 2.896e-02 2.899e-02 2.940e-02 2.947e-02 2.948e-02 2.958e-02 3.004e-02 3.011e-02 3.014e-02
+WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	2.812e-02	2.709e-02 2.731e-02 2.760e-02 2.766e-02 2.769e-02 2.773e-02 2.782e-02 2.783e-02 2.790e-02 2.807e-02 2.816e-02 2.819e-02 2.824e-02 2.830e-02 2.856e-02 2.861e-02 2.870e-02 2.896e-02 2.908e-02 2.958e-02
 
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
