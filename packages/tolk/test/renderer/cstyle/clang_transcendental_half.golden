@@ -17,7 +17,7 @@ void E(__fp16* restrict data0_1, __fp16* restrict data1_1) {
   short cast0 = ((short)(((__fp16)((alu10+alu11)))));
   float cast1 = ((float)(((__fp16)(cast0))));
   unsigned short cast2 = __builtin_bit_cast(unsigned short, (__fp16)(alu9));
-  int alu12 = (((int)(((unsigned short)((((unsigned short)((((unsigned short)((((unsigned short)((cast2>>((unsigned short)(10u)))))&((unsigned short)(31u)))))+((unsigned short)(-15u)))))+((unsigned short)(1u)))))))+104);
+  int alu12 = (((int)(((unsigned short)((((unsigned short)((((unsigned short)((((unsigned short)((cast2>>((unsigned short)(10u)))))&((unsigned short)(31u)))))+((unsigned short)(65521u)))))+((unsigned short)(1u)))))))+104);
   int alu13 = ((alu12<0)?0:alu12);
   unsigned long cast3 = ((unsigned long)((alu13&31)));
   int alu14 = (alu13>>5);

@@ -950,6 +950,11 @@ thread.
   passes as its constant. `Rune.jit` of a scan whose carry has no element
   and whose step reads its rows failed verification, as under `vmap (grad
   (jit f))` over no lane.
+- The C-style renderers write an integer constant as the value its type
+  holds, the integer part of a float wrapped to the type's width. A constant
+  past 64 bits, such as a large float padding value converted to an integer,
+  was written as a literal C refuses.
+
 - A matrix-vector product's workgroup takes rows of its matrix, which share
   the vector's loads, before rows that each read a vector of their own.
   `Nx_quant.apply ~ids` on a prompt laid its workgroups over blocks of

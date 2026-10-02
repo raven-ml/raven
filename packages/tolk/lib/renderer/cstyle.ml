@@ -184,6 +184,34 @@ let rule_ctx = Pattern_matcher.rule_ctx
 let cast_of ?dtype ?name p = Upat.op ?dtype ?name ~src:[ p ] Op.Cast
 let c = Upat.cvar "c"
 
+let special l v =
+  if Float.is_nan v then l.nan
+  else if Float.sign_bit v then "-" ^ l.infinity
+  else l.infinity
+
+(* An integer constant is the value its type holds, the integer part of a float
+   wrapped to the type's width, written as a literal of the type: a suffix
+   states a 64-bit or unsigned type, a cast a narrower one, and the least int64
+   is a difference, its magnitude being no signed literal. An infinity or a NaN
+   has no integer value, and converts as the program runs. *)
+let int_const ctx x (v : Dtype.value) =
+  let dt = dtype x in
+  match v with
+  | `Float f when not (Float.is_finite f) ->
+      strf "(%s)" (render_cast ctx x (special ctx.lang f))
+  | _ -> (
+      let n = Dtype.truncate dt (`Int (Dtype.Value.to_z v)) in
+      let s = Format.asprintf "%a" Dtype.pp_const n in
+      match dt with
+      | Int64 when Dtype.Value.(n = Dtype.min Int64) ->
+          "(-9223372036854775807l-1)"
+      | Int64 -> s ^ "l"
+      | Uint64 -> s ^ "ul"
+      | Uint32 -> s ^ "u"
+      | Uint8 | Uint16 -> strf "(%s)" (render_cast ctx x (s ^ "u"))
+      | Int8 | Int16 -> strf "(%s)" (render_cast ctx x s)
+      | _ -> s)
+
 let base_rewrite =
   let r = rule_ctx in
   let str p s = r p (fun _ _ -> Some s) in
@@ -226,26 +254,12 @@ let base_rewrite =
       r (cast_of ~dtype:Dtype.floats ~name:"x" c) (fun ctx m ->
           match value (m "c") with
           | `Float v when not (Float.is_finite v) ->
-              let l = ctx.lang in
-              let s =
-                if Float.is_nan v then l.nan
-                else if Float.sign_bit v then "-" ^ l.infinity
-                else l.infinity
-              in
-              Some (strf "(%s)" (render_cast ctx (m "x") s))
+              Some (strf "(%s)" (render_cast ctx (m "x") (special ctx.lang v)))
           | _ -> None);
       r (cast_of ~dtype:[ Dtype.Float32 ] c) (fun _ m ->
           Some (const_str (m "c") ^ "f"));
-      r (cast_of ~dtype:[ Dtype.Int64 ] c) (fun _ m ->
-          Some (const_str (m "c") ^ "l"));
-      r
-        (cast_of ~dtype:[ Dtype.Uint64; Dtype.Uint32 ] ~name:"x" c)
-        (fun _ m ->
-          let dt = dtype (m "x") in
-          let t = Dtype.truncate dt (cval (m "c")) in
-          Some
-            (Format.asprintf "%a%s" Dtype.pp_const t
-               (if Dtype.equal dt Dtype.Uint64 then "ul" else "u")));
+      r (cast_of ~dtype:Dtype.ints ~name:"x" c) (fun ctx m ->
+          Some (int_const ctx (m "x") (cval (m "c"))));
       r (cast_of ~dtype:[ Dtype.Bool ] c) (fun _ m ->
           Some (if Dtype.Value.to_bool (cval (m "c")) then "1" else "0"));
       (* consts are rendered to larger type and casted *)
@@ -255,14 +269,6 @@ let base_rewrite =
            ~name:"x" c)
         (fun ctx m ->
           Some (strf "(%s)" (render_cast ctx (m "x") (const_str (m "c") ^ "f"))));
-      r
-        (cast_of ~dtype:[ Dtype.Uint8; Dtype.Uint16 ] ~name:"x" c)
-        (fun ctx m ->
-          Some (strf "(%s)" (render_cast ctx (m "x") (const_str (m "c") ^ "u"))));
-      r
-        (cast_of ~dtype:[ Dtype.Int8; Dtype.Int16 ] ~name:"x" c)
-        (fun ctx m ->
-          Some (strf "(%s)" (render_cast ctx (m "x") (const_str (m "c")))));
       (* default const render *)
       r (cast_of c) (fun _ m -> Some (const_str (m "c")));
       (* casting *)

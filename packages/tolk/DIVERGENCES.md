@@ -2929,3 +2929,24 @@ stores through a pad.
   is the identity under a transformation › a scan`, whose mapped shapes hold
   no lane.
 
+## D103. An integer constant is written as the value its type holds
+
+- **tinygrad:** `renderer/cstyle.py:26-35` (the constant rules: an `int64` is
+  its value with `l`, a `uint32` or a `uint64` its truncated value with `u` or
+  `ul`, an 8- or 16-bit integer a cast of its value, any other its value).
+- **tolk:** `lib/renderer/cstyle.ml:197` (`int_const`); `test/gen/tinygrad.patch`,
+  which gives tinygrad the same before the goldens are recorded.
+- **Differs:** a constant of an integer type is written as the value the type
+  holds: the integer part of a float, wrapped to the type's width, with the
+  suffix or cast of its type. The least `int64` is written
+  `(-9223372036854775807l-1)`. An infinity or a NaN, which has no integer
+  value, is a conversion of the float as the program runs. tinygrad writes a
+  signed or 8- or 16-bit constant unwrapped, so a value past 64 bits is no C
+  literal, and the least `int64` is an unsigned literal negated.
+- **Reason:** (b): rune's `test_jit_programs` property, where a float padding
+  constant converted to an integer was written as a literal past 64 bits, which
+  C refuses.
+- **Pinned by:** the Cstyle suite: `execution on the host › stores each
+  integer constant as its type holds it` and `› converts an infinity or a NaN
+  to an integer type`; `clang_transcendental_half.golden`, recorded from the
+  equally patched tinygrad.

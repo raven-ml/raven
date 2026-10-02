@@ -781,10 +781,46 @@ index deb9684..8bc2d81 100644
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 0dd26d2..d89e6e5 100644
+index 0dd26d2..b1e8132 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
-@@ -64,7 +64,9 @@ base_rewrite = PatternMatcher([
+@@ -8,6 +8,19 @@ from tinygrad.helpers import strip_parens, getenv, prod, dedup, Target, IMAGE, F
+ from tinygrad.dtype import dtypes, DType, AddrSpace, truncate, to_storage_scalar
+ from tinygrad.renderer import Renderer
+ 
++# an integer constant is the value its type holds, the integer part of a float wrapped to the type's width, written as a
++# literal of the type: the least int64 is a difference, its magnitude being no signed literal. an infinity or a NaN has
++# no integer value, and converts as the program runs
++def _int_const(ctx, x, c):
++  if isinstance(c.val, float) and not math.isfinite(c.val):
++    return f"({ctx.render_cast(x, ctx.nan if math.isnan(c.val) else ctx.infinity if c.val > 0 else f'-{ctx.infinity}')})"
++  v = truncate[x.dtype](int(c.val))
++  if x.dtype == dtypes.int64: return "(-9223372036854775807l-1)" if v == -2**63 else f"{v}l"
++  if x.dtype in (dtypes.uint64, dtypes.uint32): return f"{v}{'ul' if x.dtype == dtypes.uint64 else 'u'}"
++  if x.dtype in (dtypes.uint8, dtypes.uint16): return f"({ctx.render_cast(x, f'{v}u')})"
++  if x.dtype in (dtypes.int8, dtypes.int16): return f"({ctx.render_cast(x, str(v))})"
++  return str(v)
++
+ base_rewrite = PatternMatcher([
+   # local/reg buffers
+   (UPat(Ops.BUFFER, name="x"), lambda ctx,x: ctx.render_buffer(x)),
+@@ -25,14 +38,10 @@ base_rewrite = PatternMatcher([
+   (UPat.cvar("c").cast(dtypes.floats, name="x"), lambda ctx,x,c: None if math.isfinite(v:=c.val) else \
+     f"({ctx.render_cast(x, ctx.nan if math.isnan(v) else ctx.infinity if v > 0 else f'-{ctx.infinity}')})"),
+   (UPat.cvar("c").cast(dtypes.float), lambda ctx,c: f"{c.val}f"),
+-  (UPat.cvar("c").cast(dtypes.int64), lambda ctx,c: f"{c.val}l"),
+-  (UPat.cvar("c").cast(dtypes.uint64, name="x"), lambda ctx,x,c: f"{truncate[x.dtype](c.val)}ul"),
+-  (UPat.cvar("c").cast(dtypes.uint32, name="x"), lambda ctx,x,c: f"{truncate[x.dtype](c.val)}u"),
++  (UPat.cvar("c").cast(dtypes.ints, name="x"), _int_const),
+   (UPat.cvar("c").cast(dtypes.bool), lambda ctx,c: "1" if c.val else "0"),
+   # consts are rendered to larger type and casted
+   (UPat.cvar("c").cast((*dtypes.fp8s, dtypes.bfloat16, dtypes.half), name="x"), lambda ctx,x,c: f"({ctx.render_cast(x, f'{c.val}f')})"),
+-  (UPat.cvar("c").cast((dtypes.uint8, dtypes.uint16), name="x"), lambda ctx,x,c: f"({ctx.render_cast(x, f'{c.val}u')})"),
+-  (UPat.cvar("c").cast((dtypes.int8, dtypes.int16), name="x"), lambda ctx,x,c: f"({ctx.render_cast(x, str(c.val))})"),
+   # default const render
+   (UPat.cvar("c").cast(), lambda ctx,c: str(c.val)),
+ 
+@@ -64,7 +73,9 @@ base_rewrite = PatternMatcher([
    # alu/gep
    (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]})"),
    (UPat(GroupOp.ALU, name="x"), lambda ctx,x: ctx.code_for_op[x.op](
@@ -795,7 +831,7 @@ index 0dd26d2..d89e6e5 100644
  
    # call an external function: the CUSTOM_FUNCTION body holds the callee (a function pointer), the other srcs are the args
    (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, src=(UPat(name="fptr"),)),), allow_any_len=True, name="x"), lambda ctx,x,fptr:
-@@ -144,7 +146,8 @@ class CStyleLanguage(Renderer):
+@@ -144,7 +155,8 @@ class CStyleLanguage(Renderer):
      Ops.ADD: lambda a,b,dtype: f"({a}+{b})", Ops.SUB: lambda a,b,dtype: f"({a}-{b})", Ops.MUL: lambda a,b,dtype: f"({a}*{b})",
      Ops.CMOD: lambda a,b,dtype: f"({a}%{b})", Ops.CDIV: lambda a,b,dtype: f"({a}/{b})", Ops.CMPNE: lambda a,b,dtype: f"({a}!={b})",
      Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
@@ -805,7 +841,7 @@ index 0dd26d2..d89e6e5 100644
  
    string_rewrite = base_rewrite
  
-@@ -261,7 +264,16 @@ class CStyleLanguage(Renderer):
+@@ -261,7 +273,16 @@ class CStyleLanguage(Renderer):
      return (name, kernel, list(bufs.values()))
    def render(self, uops:list[UOp]) -> str: return self.render_kernel(*self._render(uops), uops)
  
@@ -822,7 +858,7 @@ index 0dd26d2..d89e6e5 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -277,7 +289,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -277,7 +298,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.TRUNC, Ops.RECIPROCAL]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -832,7 +868,7 @@ index 0dd26d2..d89e6e5 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -424,7 +437,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -424,7 +446,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -842,7 +878,7 @@ index 0dd26d2..d89e6e5 100644
    type_map = {dtypes.uint32: "uint", dtypes.bfloat16: "nv_bfloat16", dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
      (UPat(Ops.CAST, dtypes.fp8s, UPat.var("x", dtypes.fp8s), name='y'), lambda x,y: x.cast(dtypes.float).cast(y.dtype) if x.dtype!=y.dtype else None),
-@@ -519,7 +533,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -519,7 +542,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),

@@ -720,6 +720,127 @@ let stores_each_constant_as_its_type_holds_it () =
         (List.assoc slot out))
     literals
 
+(* Integer constants *)
+
+(* [held dt v] is the integer [dt] holds for the constant [v]: its integer part,
+   rounded toward zero, wrapped to [dt]'s width. *)
+let held dt (v : Dtype.value) : Dtype.value =
+  let n =
+    match v with
+    | `Int n -> n
+    | `Float x -> Bigint.of_float x
+    | `Bool b -> Bigint.of_int (Bool.to_int b)
+  in
+  let bits = 8 * Dtype.itemsize dt in
+  let modulus = Bigint.shift_left Bigint.one bits in
+  let r = Bigint.erem n modulus in
+  if
+    Dtype.is_unsigned dt
+    || Bigint.lt r (Bigint.shift_left Bigint.one (bits - 1))
+  then `Int r
+  else `Int (Bigint.sub r modulus)
+
+(* Each constant stored twice: as the constant of [dt] ([Ops.const]), and as a
+   conversion of its own literal to [dt]. *)
+let stores_constants dt (cs : Dtype.value list) =
+  let n = 2 * List.length cs in
+  let at i =
+    Ops.index (Ops.param ~shape:[ Int n ] 0 dt) [ Ops.int ~dtype:Int32 i ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"constants" ())
+    (List.concat
+       (List.mapi
+          (fun i c ->
+            let c = (c :> Dtype.const) in
+            [
+              Ops.store (at (2 * i)) (Ops.const ~dtype:dt c);
+              Ops.store (at ((2 * i) + 1)) (Ops.cast (Ops.const c) dt);
+            ])
+          cs))
+
+(* The extremes of every integer type and their neighbours, integers beyond 64
+   bits, and floats past the integer types' ranges. *)
+let int_constant =
+  let open Gen in
+  let ints = List.map (fun n -> `Int n) in
+  let extremes =
+    List.concat_map
+      (fun dt ->
+        let lo = Dtype.Value.to_z (Dtype.min dt)
+        and hi = Dtype.Value.to_z (Dtype.max dt) in
+        ints Bigint.[ pred lo; lo; succ lo; pred hi; hi; succ hi ])
+      Dtype.ints
+  in
+  let power k = Bigint.shift_left Bigint.one k in
+  let beyond =
+    map
+      (fun (k, sign) -> `Int (Bigint.mul (Bigint.of_int sign) (power k)))
+      (pair (int_range 60 130) (of_list [ 1; -1 ]))
+  in
+  let large_float =
+    map
+      (fun ((e, m), sign) -> `Float (sign *. Float.ldexp (1. +. m) e))
+      (pair (pair (int_range 7 1023) (float_range 0. 1.)) (of_list [ 1.; -1. ]))
+  in
+  let float_edges =
+    of_list
+      (List.concat_map
+         (fun x -> [ `Float x; `Float (Float.pred x); `Float (Float.succ x) ])
+         [ 0x1p31; -0x1p31; 0x1p32; 0x1p63; -0x1p63; 0x1p64; 1e20; -1e20 ])
+  in
+  frequency
+    [
+      (3, of_list extremes);
+      (2, beyond);
+      (3, large_float);
+      (2, float_edges);
+      (1, map (fun n -> `Int (Bigint.of_int n)) (int_range (-1000) 1000));
+    ]
+
+let int_dtypes = Gen.of_list ~pp:Dtype.pp Dtype.ints
+
+let pp_constants ppf (dt, cs) =
+  Format.fprintf ppf "%a [%a]" Dtype.pp dt
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+       Dtype.pp_const)
+    (cs :> Dtype.const list)
+
+let constants_of_ints =
+  Gen.with_pp pp_constants
+    (Gen.pair int_dtypes (Gen.list ~size:(Gen.int_range 1 8) int_constant))
+
+let stores_ints_as_their_type_holds_them (dt, cs) =
+  let beyond_64_bits = function
+    | `Int n -> not (Bigint.fits_int64 n)
+    | `Float x -> Float.abs x >= 0x1p64
+    | `Bool _ -> false
+  in
+  cover "a constant beyond 64 bits" (List.exists beyond_64_bits cs);
+  cover "a float" (List.exists (function `Float _ -> true | _ -> false) cs);
+  cover "a 64-bit type" (Dtype.itemsize dt = 8);
+  cover "an unsigned type" (Dtype.is_unsigned dt);
+  let k =
+    Run.program (Lazy.force host)
+      (Linearizer.linearize (stores_constants dt cs))
+  in
+  let expected = List.concat_map (fun c -> [ held dt c; held dt c ]) cs in
+  equal values (Array.of_list expected) (slot 0 (Run.on_host k []))
+
+(* An infinity or a NaN has no integer value: its conversion to an integer type
+   is the program's to run, and the source compiles. *)
+let converts_a_special_to_an_int (dt, x) =
+  let at =
+    Ops.index (Ops.param ~shape:[ Int 1 ] 0 dt) [ Ops.int ~dtype:Int32 0 ]
+  in
+  let sink =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"special" ())
+      [ Ops.store at (Ops.cast (Ops.float x) dt) ]
+  in
+  ignore (Run.program (Lazy.force host) (Linearizer.linearize sink))
+
 (* The kernel reads the four chars 1, 2, 3 and 4 as one little-endian uint,
    clears its low byte and stores it to the first char. *)
 let reads_chars_as_a_uint name () =
@@ -1018,6 +1139,16 @@ let execution =
       test "accesses volatile buffers" accesses_volatile_buffers;
       test "stores each constant as its type holds it"
         stores_each_constant_as_its_type_holds_it;
+      prop ~count:30 "stores each integer constant as its type holds it"
+        constants_of_ints stores_ints_as_their_type_holds_them;
+      cases
+        ~name:(fun (dt, x) -> Format.asprintf "%a %h" Dtype.pp dt x)
+        "converts an infinity or a NaN to an integer type"
+        (List.concat_map
+           (fun dt ->
+             List.map (fun x -> (dt, x)) [ infinity; neg_infinity; nan ])
+           Dtype.[ Int8; Uint16; Int32; Uint64 ])
+        converts_a_special_to_an_int;
       test "reads four chars as a uint through a cast of their address"
         (reads_chars_as_a_uint "clang_packed_cast");
       test "reads four chars as a uint through a bitcast of their address"
