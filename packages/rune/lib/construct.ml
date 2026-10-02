@@ -24,9 +24,11 @@ type 'q rule =
       -> 'q rule
 
 type (_, _, _, _) step =
-  | Primal : ('p, 'q, 'p, 'q) step
+  | Forward : bool list -> ('p, 'q, 'p, 'q * Nx.packed list) step
+  | Backward :
+      bool list
+      -> ('p, 'q, Nx.packed list * Nx.packed list, Nx.packed list) step
   | Jvp : bool list -> ('p, 'q, 'p * 'p, 'q * 'q) step
-  | Vjp : bool list -> ('p, 'q, 'p * Nx.packed list, Nx.packed list) step
   | Vmap : {
       lanes : bool list;
       size : int;
@@ -48,9 +50,9 @@ let same_step : type p q a b c d.
     (p, q, a, b) step -> (p, q, c, d) step -> (a * b, c * d) Type.eq option =
  fun s s' ->
   match (s, s') with
-  | Primal, Primal -> Some Equal
+  | Forward f, Forward f' when f = f' -> Some Equal
+  | Backward f, Backward f' when f = f' -> Some Equal
   | Jvp f, Jvp f' when f = f' -> Some Equal
-  | Vjp f, Vjp f' when f = f' -> Some Equal
   | Vmap v, Vmap v'
     when v.lanes = v'.lanes && v.size = v'.size && same_axis v.axis v'.axis ->
       Some Equal
@@ -59,13 +61,28 @@ let same_step : type p q a b c d.
       | Some Equal -> Some Equal
       | None -> None)
   | Discarding, Discarding -> Some Equal
-  | ( (Primal | Jvp _ | Vjp _ | Vmap _ | Totals _ | Discarding),
-      (Primal | Jvp _ | Vjp _ | Vmap _ | Totals _ | Discarding) ) ->
+  | ( (Forward _ | Backward _ | Jvp _ | Vmap _ | Totals _ | Discarding),
+      (Forward _ | Backward _ | Jvp _ | Vmap _ | Totals _ | Discarding) ) ->
       None
+
+type ('p, 'q) split = {
+  forward : 'p -> 'q * Nx.packed list;
+  backward : Nx.packed list * Nx.packed list -> Nx.packed list;
+  residuals : 'p -> Nx.packed list -> Nx.packed list;
+}
+
+type ('p, 'q) vjp = 'p -> 'q * (Nx.packed list -> Nx.packed list)
 
 type ('p, 'q) compiler = {
   run : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q;
   derive : 'p2 'q2. ('p, 'q, 'p2, 'q2) step -> ('p2, 'q2) compiler;
+  split :
+    bool list ->
+    'p Nx.Ptree.t ->
+    'q Nx.Ptree.t ->
+    ('p, 'q) vjp ->
+    'p ->
+    ('p, 'q) split;
 }
 
 module Packed = struct

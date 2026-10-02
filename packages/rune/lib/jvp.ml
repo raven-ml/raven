@@ -1137,24 +1137,26 @@ and remat_values : type p q.
   Nx.Ptree.rebuild q ~like:y (duals i !dependent ys (pick !dependent dys))
 
 (* With value tangents a compiled call passes on as the compiled call of its
-   function's jvp over the arguments' primals and tangents, as a remat does:
-   the function runs under [i] reinstalled when the jvp is traced. Every real
-   or complex result comes out a dual, its tangent zero where it depends on no
-   tracked argument, so that the result is the same whether or not the program
-   was traced on this call. *)
+   function's jvp over the arguments' primals and tangents: the function runs
+   under a fresh installation that owns only the duals of the arguments, so a
+   dual [i] tracks that the function reads through its closure reaches the
+   trace, which refuses it. Every real or complex result comes out a dual, its
+   tangent zero where it depends on no tracked argument, so that the result is
+   the same whether or not the program was traced on this call. *)
 and compiled_values : type p q.
     t -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p ->
     (p, q) Construct.compiler -> q =
  fun i p q f args compiler ->
   let tracked = owned i (fst (Nx.Ptree.flatten p args)) in
   let f (a, da) =
-    install i (fun () ->
+    let j = create i.entry in
+    install j (fun () ->
         let a_leaves, _ = Nx.Ptree.flatten p a
         and da_leaves, _ = Nx.Ptree.flatten p da in
-        let leaves = duals i tracked a_leaves (pick tracked da_leaves) in
+        let leaves = duals j tracked a_leaves (pick tracked da_leaves) in
         let y = f (Nx.Ptree.rebuild p ~like:a leaves) in
-        ( Nx.Ptree.map q (fun _ y -> primal i y) y,
-          Nx.Ptree.map q (fun _ y -> tangent i y) y ))
+        ( Nx.Ptree.map q (fun _ y -> primal j y) y,
+          Nx.Ptree.map q (fun _ y -> tangent j y) y ))
   in
   let args =
     ( Nx.Ptree.map p (fun _ x -> primal i x) args,
@@ -1175,15 +1177,13 @@ and compiled_values : type p q.
   let outputs = List.map (fun (Nx.P y) -> Linear.differentiable y) ys in
   Nx.Ptree.rebuild q ~like:y (duals i outputs ys (pick outputs dys))
 
-(* Under reverse mode a compiled call passes on as the compiled call of its
-   function's values at the arguments' primals, which consumes nothing: the
-   function runs under a child of [i] on a scratch tape it drops, as a remat's
-   forward run does, so that the child answers the custom rules it calls. The
-   tape gains a linear call from the tracked arguments' tangents to the real
-   or complex results', whose transpose is the compiled call of the function's
-   pullback: it runs the function again at the arguments, so no intermediate
-   is kept. A function that reads a value [i] tracks through its closure
-   raises, as its pullback cannot return that value's cotangent. *)
+(* Under reverse mode a compiled call is split in two plain functions
+   ({!Split}): the call of the forward one, from the arguments' primals to the
+   results and the residuals, and a linear call from the tracked arguments'
+   tangents to the real or complex results' whose transpose is the call of the
+   backward one, from the residuals and the cotangents. Neither consumes
+   anything, so an argument that is a residual is still readable when the
+   transpose runs. *)
 and compiled_slots : type p q.
     t -> Linear.tape -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p ->
     (p, q) Construct.compiler -> q =
@@ -1191,44 +1191,74 @@ and compiled_slots : type p q.
   let leaves, _ = Nx.Ptree.flatten p args in
   let tracked = owned i leaves in
   let a = Nx.Ptree.map p (fun _ x -> primal i x) args in
-  let run a l = f (Nx.Ptree.rebuild p ~like:a l) in
-  let forward a =
-    let c, _, y =
-      region i (Linear.create i.entry) [] tracked
-        (fst (Nx.Ptree.flatten p a))
-        (run a)
-    in
-    Nx.Ptree.map q (fun _ y -> primal c y) y
-  in
-  let y =
+  let split = compiler.split tracked p q (linearized i.entry p q tracked f) a in
+  let y, residuals =
     Construct.perform
       (Compiled
-         { p; q; f = forward; args = a; compiler = compiler.derive Primal })
+         {
+           p;
+           q = Nx.Ptree.pair q Construct.packed;
+           f = split.forward;
+           args = a;
+           compiler = compiler.derive (Forward tracked);
+         })
   in
   let ys, _ = Nx.Ptree.flatten q y in
   let outputs = List.map (fun (Nx.P y) -> Linear.differentiable y) ys in
   if not (List.mem true outputs) then y
   else
-    let pullback (a, cts) =
-      Total.discarding @@ fun () ->
-      let rerun l = fst (Nx.Ptree.flatten q (run a l)) in
-      fst (pullback i [] tracked (fst (Nx.Ptree.flatten p a)) rerun outputs cts)
-    in
+    let residuals = split.residuals a residuals in
     let transpose cts =
       Construct.perform
         (Compiled
            {
-             p = Nx.Ptree.pair p Construct.packed;
+             p = Nx.Ptree.pair Construct.packed Construct.packed;
              q = Construct.packed;
-             f = pullback;
-             args = (a, cts);
-             compiler = compiler.derive (Vjp tracked);
+             f = split.backward;
+             args = (residuals, cts);
+             compiler = compiler.derive (Backward tracked);
            })
     in
     let slots =
       Linear.call tape (tangents i tracked leaves) transpose (pick outputs ys)
     in
     Nx.Ptree.rebuild q ~like:y (duals i outputs ys slots)
+
+(* [linearized entry p q tracked f a] is [f]'s results at [a] and the transpose
+   of their derivative, recorded on a fresh tape by a fresh installation that
+   owns only the leaves of [a] that [tracked] marks: from the cotangents of the
+   real or complex results to those of the tracked leaves, zeros for a leaf that
+   receives none. *)
+and linearized : type p q.
+    string -> p Nx.Ptree.t -> q Nx.Ptree.t -> bool list -> (p -> q) ->
+    (p, q) Construct.vjp =
+ fun entry p q tracked f a ->
+  let tape = Linear.create entry in
+  let c = create ~slots:tape entry in
+  let leaves, inputs = seed c tape tracked (fst (Nx.Ptree.flatten p a)) in
+  let y =
+    Linear.install tape (fun () ->
+        install c (fun () -> f (Nx.Ptree.rebuild p ~like:a leaves)))
+  in
+  let ys, _ = Nx.Ptree.flatten q y in
+  let outputs = List.filter (fun (Nx.P y) -> Linear.differentiable y) ys in
+  let transpose cts =
+    let received = Linear.cotangents tape in
+    List.iter2
+      (fun (Nx.P y) ct ->
+        Option.iter
+          (fun (_, dy) -> Linear.add received dy (Nx.unpack (Nx.dtype y) ct))
+          (own c y))
+      outputs cts;
+    Linear.transpose received;
+    List.map
+      (fun (Nx.P s) ->
+        match Linear.cotangent received s with
+        | Some g -> Nx.P g
+        | None -> Nx.P (Nx.zeros_like s))
+      inputs
+  in
+  (Nx.Ptree.map q (fun _ y -> primal c y) y, transpose)
 
 (* [region i tape captures flags leaves f] is [f] run at [leaves] under a child
    of [i] recording on [tape], each leaf [flags] marks a dual of the child with

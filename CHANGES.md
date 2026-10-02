@@ -181,8 +181,12 @@ All notable changes to this project will be documented in this file.
 - **Breaking:** `grad`, `jvp` and `vmap` of a `jit` function, and a
   `Total.collect` around one, compile: each runs programs for the derived
   function, kept in the compiled function. Before, `jit` ran its function as
-  plain code under a transformation. A compiled function that reads a tracked
-  value through its closure raises; pass it as an argument.
+  plain code under a transformation. Under `grad` and `vjp`, a forward program
+  returns the values the backward program reads, so the function's forward
+  work runs once per call; a transpose that cannot be traced raises `Jit_error`
+  at the forward call. Under every transformation, a compiled function that
+  reads a tracked value through its closure raises (pass it as an argument),
+  and so does one that reads a traced value another compiled function leaked.
 - `jit` writes `Nx.scatter` into a consumed value in place with one indexed
   store, in every mode, unless it has more repeated updates than rows: a
   key-value cache's rows from a page table take one kernel, with no kernel

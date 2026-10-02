@@ -180,6 +180,17 @@
  (action
   (run %{exe:test_jit.exe} --tag slow)))
 
+; Transformations of compiled functions against the same transformations of
+; the functions, and reverse mode's traces through a compiled call.
+
+(test
+ (name test_jit_transformations)
+ (modules test_jit_transformations)
+ (package rune)
+ (libraries windtrap rune rune_test nx nx.dtype nx.device)
+ (action
+  (run %{test} --exclude-tag slow)))
+
 ; Generated programs, compiled on the host against eager nx.
 
 (test

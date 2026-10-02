@@ -54,16 +54,20 @@ type 'q rule =
 (** The type for the transformations a compiled function's programs derive from:
     a step turns a function from ['p] to ['q] into one from ['p2] to ['q2]. *)
 type (_, _, _, _) step =
-  | Primal : ('p, 'q, 'p, 'q) step
-      (** The function's values for reverse mode, which consume nothing. *)
+  | Forward : bool list -> ('p, 'q, 'p, 'q * Nx.packed list) step
+      (** [Forward tracked] is the forward half of the function's reverse mode,
+          the leaves [tracked] marks being differentiated: from the arguments to
+          the results and the residuals the forward computes ({!split}). *)
+  | Backward :
+      bool list
+      -> ('p, 'q, Nx.packed list * Nx.packed list, Nx.packed list) step
+      (** [Backward tracked] is the backward half: from the residuals and the
+          cotangents of the results that are real or complex to the cotangents
+          of the leaves [tracked] marks. *)
   | Jvp : bool list -> ('p, 'q, 'p * 'p, 'q * 'q) step
       (** [Jvp tracked] is the function's forward derivative, from the arguments
           and their tangents to the results and theirs, the leaves [tracked]
           marks being differentiated. *)
-  | Vjp : bool list -> ('p, 'q, 'p * Nx.packed list, Nx.packed list) step
-      (** [Vjp tracked] is the function's pullback, from the arguments and the
-          cotangents of the results that are real or complex, to the cotangents
-          of the leaves [tracked] marks. It runs the function again. *)
   | Vmap : {
       lanes : bool list;
       size : int;
@@ -88,6 +92,26 @@ val same_step :
 (** [same_step s s'] is [Some Equal] iff [s] and [s'] derive the same function.
 *)
 
+type ('p, 'q) split = {
+  forward : 'p -> 'q * Nx.packed list;
+      (** [forward args] is the function's results at [args] and the residuals
+          its forward pass computes. *)
+  backward : Nx.packed list * Nx.packed list -> Nx.packed list;
+      (** [backward (residuals, cts)] is the cotangents of the tracked
+          arguments, from the residuals and the cotangents of the results that
+          are real or complex. It does not run the function. *)
+  residuals : 'p -> Nx.packed list -> Nx.packed list;
+      (** [residuals args computed] is the residuals [backward] takes, from the
+          arguments and the residuals [forward] computed: an argument the
+          backward pass reads is a residual as it is. *)
+}
+(** The type for a function's reverse mode split in two plain functions. *)
+
+type ('p, 'q) vjp = 'p -> 'q * (Nx.packed list -> Nx.packed list)
+(** The type for a function's reverse mode: [vjp args] is the results at [args]
+    and the transpose of the derivative, from the cotangents of the results that
+    are real or complex to those of the tracked arguments. *)
+
 type ('p, 'q) compiler = {
   run : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q;
       (** [run p q f args] is [f args] computed by a program compiled for the
@@ -95,6 +119,17 @@ type ('p, 'q) compiler = {
   derive : 'p2 'q2. ('p, 'q, 'p2, 'q2) step -> ('p2, 'q2) compiler;
       (** [derive s] is the compiler of the functions [s] derives, which keeps
           their programs. *)
+  split :
+    bool list ->
+    'p Nx.Ptree.t ->
+    'q Nx.Ptree.t ->
+    ('p, 'q) vjp ->
+    'p ->
+    ('p, 'q) split;
+      (** [split tracked p q vjp args] is the function's reverse mode, the
+          leaves [tracked] marks being differentiated, split in two at residuals
+          that tracing [vjp] fixes once per [tracked] and per dtype, shape and
+          placement of [args]' leaves. *)
 }
 (** The type for compilers of a compiled function and of the functions
     transformations derive from it. *)
@@ -183,6 +218,9 @@ val install : interpreter -> (unit -> 'a) -> 'a
     operation they issue the interpretation around it. [o] runs inside the
     construct handler: a construct it performs reaches [i.call] first, and an
     operation it issues the interpretation around [install]. *)
+
+val default : 'r t -> 'r
+(** [default c] is [c]'s default: its answer when no installation takes it. *)
 
 val perform : 'r t -> 'r
 (** [perform c] is the answer of the nearest installation that takes [c], or

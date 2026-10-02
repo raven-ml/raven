@@ -28,6 +28,10 @@ val trace :
   ?renderer:(Nx_device.t -> Tolk.Renderer.t) -> (unit -> 'a) -> Lower.scope * 'a
 (** [trace ~renderer f] is [f ()] traced under a new scope, and that scope. *)
 
+val node : ('a, 'b) Nx.t -> Tolk.Ops.t
+(** [node y] is the graph of [y], a value of a scope these helpers made: such a
+    scope stays live, so another reads its values' own nodes. *)
+
 val argument : Lower.scope -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [argument s x] is the traced parameter that stands for the host value [x] in
     [s] ({!Lower.param}), in a slot of its own, which {!value} binds to [x]. *)

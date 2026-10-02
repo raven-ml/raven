@@ -80,7 +80,7 @@ let square = Rune.jit' ~beam:2 ~parallel:8 (fun x -> Nx.mul x x)
 
 ## Transformations of a Compiled Function
 
-`grad`, `jvp` and `vmap` of a compiled function compile, and so does a `Total.collect` around one. Each runs programs compiled for the function the transformation derives, kept in the compiled function by key as its own programs are, so a `grad (jit f)` in a loop compiles once. Under `grad`, the forward pass is `f`'s program and the backward pass a program that runs `f` again before its pullback. `jit (grad f)` compiles both passes as one program and runs the forward work once, so it stays the fast form.
+`grad`, `jvp` and `vmap` of a compiled function compile, and so does a `Total.collect` around one. Each runs programs compiled for the function the transformation derives, kept in the compiled function by key as its own programs are, so a `grad (jit f)` in a loop compiles once. Under `grad`, the call splits at its residuals, the values `f` computes that the backward pass reads: the forward pass is a program that returns `f`'s results and the residuals, and the backward pass a program that reads the residuals and the cotangents and never runs `f`. `jit (grad f)` compiles both passes as one program, which keeps no residual between them, so it stays the fast form.
 
 A compiled function that reads, through its closure, a value a transformation around it tracks raises `Invalid_argument`: pass the value as an argument.
 

@@ -9,8 +9,7 @@ open Tolk
    captures. *)
 let ours x =
   match Nx.Repr.v x with
-  | Traced t -> (
-      match Nx.Repr.Traced.node t with Lower.Uop _ -> true | _ -> false)
+  | Traced _ -> Lower.is_traced x
   | Host _ | Placed _ -> true
 
 (* The node of [x] if the trace computes it: neither storage it reads, nor a
@@ -27,7 +26,7 @@ let computed s x =
 let kept s (Nx.P x) =
   match computed s x with
   | Some u ->
-      Nx.P (Lower.traced (Nx.placement x) (Nx.dtype x) (Ops.contiguous u))
+      Nx.P (Lower.traced s (Nx.placement x) (Nx.dtype x) (Ops.contiguous u))
   | None -> Nx.P x
 
 (* [after s values deps] is each of [values] the trace computes read through a
@@ -49,7 +48,7 @@ let after s values deps =
             Lower.output s ~slot:(Ops.unique_num ()) at dt (Nx.shape x)
           in
           Nx.P
-            (Lower.traced at dt
+            (Lower.traced s at dt
                (Ops.after copy
                   [ Ops.store copy (Ops.after (Ops.contiguous u) deps) ])))
     values
@@ -240,7 +239,7 @@ let stage trace s (r : Scan.request) =
   let node (Nx.P x) =
     let u =
       if Nx.Placement.equal (Nx.placement x) p then Lower.value s x
-      else Lower.uop (Lower.op s (Nx.Op.Place (p, x)))
+      else Lower.uop s (Lower.op s (Nx.Op.Place (p, x)))
     in
     if Option.is_none (Ops.device u) then Ops.copy_to_device u device else u
   in
@@ -258,7 +257,7 @@ let stage trace s (r : Scan.request) =
   let parameter at dt shape =
     let slot = next () in
     let v = Lower.parameter s ~slot:(-2 - Ops.unique_num ()) at dt shape in
-    let u = Ops.buf_uop (Lower.uop v) in
+    let u = Ops.buf_uop (Lower.uop s v) in
     Ops.Tbl.replace own u ();
     let arg =
       match Ops.arg u with Ops.Param a -> Ops.Param { a with slot } | a -> a
@@ -306,15 +305,15 @@ let stage trace s (r : Scan.request) =
       (fun (c : Lower.check) ->
         let count = numel c.shape in
         let slot, v = parameter p Nx.int64 [||] in
-        let u = Lower.uop v in
+        let u = Lower.uop s v in
         let next =
           Ops.where
             (Ops.lt u (Ops.const_like u (`Int (Bigint.of_int count))))
-            u (Lower.uop c.first)
+            u (Lower.uop s c.first)
         in
         ( Nx.P (Nx.scalar Nx.int64 (Int64.of_int count)),
           (slot, Nx.P v),
-          Nx.P (Lower.traced p Nx.int64 next) ))
+          Nx.P (Lower.traced s p Nx.int64 next) ))
       checks
   in
   let init = r.req_carry @ List.map (fun (i, _, _) -> i) failures
@@ -337,7 +336,7 @@ let stage trace s (r : Scan.request) =
      first, since a kernel computing it would read what it overwrites. Carries
      whose next values read each other have no such order: the latest of each
      cycle is copied, each trip, into a buffer of its own first. *)
-  let params = Array.of_list (List.map (fun (_, Nx.P c) -> Lower.uop c) carry)
+  let params = Array.of_list (List.map (fun (_, Nx.P c) -> Lower.uop s c) carry)
   and nexts = Array.of_list (List.map node carry') in
   let reads = Array.map (fun u -> reach ~from:u) params in
   let k = Array.length params in
@@ -372,7 +371,7 @@ let stage trace s (r : Scan.request) =
           if copied.(i) then begin
             let slot, w = parameter p (Nx.dtype c) (Nx.shape c) in
             pass slot (Ops.new_buffer device (numel (Nx.shape c)) (Ops.dtype u));
-            let w = Lower.uop w in
+            let w = Lower.uop s w in
             Ops.after w [ Ops.store w v ]
           end
           else if reads.(i) v = Other then Ops.contiguous v
@@ -415,7 +414,7 @@ let stage trace s (r : Scan.request) =
           let b = Ops.new_buffer device (n * k) (Ops.dtype u) in
           let slot, w = parameter p (Nx.dtype y) (Nx.shape y) in
           pass slot (window b Ops.O.(trip * int k) m);
-          stores := Ops.store (Lower.uop w) u :: !stores;
+          stores := Ops.store (Lower.uop s w) u :: !stores;
           fun e ->
             Ops.reshape
               (Ops.shrink
@@ -458,7 +457,7 @@ let stage trace s (r : Scan.request) =
   let e = call !args in
   let finals =
     List.map2
-      (fun (Nx.P c) final -> Nx.P (Lower.traced p (Nx.dtype c) (final e)))
+      (fun (Nx.P c) final -> Nx.P (Lower.traced s p (Nx.dtype c) (final e)))
       init carries
   in
   let r_carry, firsts = Scan.split (List.length r.req_carry) finals in
@@ -466,7 +465,7 @@ let stage trace s (r : Scan.request) =
   List.iter2
     (fun (c : Lower.check) (Nx.P first) ->
       let count = numel c.shape in
-      let u = Lower.uop first in
+      let u = Lower.uop s first in
       let ok =
         Ops.reshape
           (Ops.ne
@@ -474,7 +473,7 @@ let stage trace s (r : Scan.request) =
              (Lower.broadcast u [| count |]))
           (ints (Array.to_list c.shape))
       in
-      Lower.op s (Nx.Op.Check { ok = Lower.traced p Nx.bool ok; msg = c.msg }))
+      Lower.op s (Nx.Op.Check { ok = Lower.traced s p Nx.bool ok; msg = c.msg }))
     checks firsts;
   {
     Scan.r_carry;
@@ -484,7 +483,7 @@ let stage trace s (r : Scan.request) =
       List.map2
         (fun (Nx.P y) final ->
           let stacked =
-            Lower.traced
+            Lower.traced s
               (Nx.Placement.with_leading_axis p)
               (Nx.dtype y) (final e)
           in

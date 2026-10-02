@@ -207,13 +207,13 @@ let parameters =
           let x = past_boundary 12 in
           let s = scope () in
           let y = Lower.param s ~slot:0 x in
-          equal int 4 (phase (Lower.uop y));
+          equal int 4 (phase (Lower.uop s y));
           exact x (parameter x));
       test "a parameter of a slice is where its run starts within 16 bytes"
         (fun () ->
           let x = Nx.slice [ R (5, 12) ] (past_boundary 12) in
           let s = scope () in
-          equal int 4 (phase (Lower.uop (Lower.param s ~slot:0 x)));
+          equal int 4 (phase (Lower.uop s (Lower.param s ~slot:0 x)));
           exact x (parameter x));
       test
         "a program over an argument 4 bytes past a 16-byte boundary computes \
@@ -386,7 +386,7 @@ let kernel_buffers y =
       (Ops.sink
          [
            Ops.after view
-             [ Ops.store view (Ops.reshape (Lower.uop y) [ Ops.Int n ]) ];
+             [ Ops.store view (Ops.reshape (Traces.node y) [ Ops.Int n ]) ];
          ])
   in
   let rec bodies u =

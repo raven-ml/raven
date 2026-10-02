@@ -430,8 +430,11 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
   in
   let y =
     span "trace" (fun () ->
-        Staged.install s (fun () ->
-            g (Ptree.rebuild args_s ~like:args (Array.to_list params))))
+        Fun.protect
+          ~finally:(fun () -> Lower.finish s)
+          (fun () ->
+            Staged.install s (fun () ->
+                g (Ptree.rebuild args_s ~like:args (Array.to_list params)))))
   in
   let named =
     Array.of_list
@@ -458,14 +461,14 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
     && List.for_all (( = ) 0) l.phases
   in
   let reads =
-    Array.map (fun (Nx.P t) -> lazy (Staged.reach ~from:(Lower.uop t))) params
+    Array.map (fun (Nx.P t) -> lazy (Staged.reach ~from:(Lower.uop s t))) params
   in
   let lent =
     lend ~leaves:(Array.length leaves) ~fits
       ~reads:(fun i -> Lazy.force reads.(i))
       ~writes:(Lower.writes s) nodes ys
   in
-  let leaf_nodes = Array.map (fun (Nx.P t) -> Lower.uop t) params in
+  let leaf_nodes = Array.map (fun (Nx.P t) -> Lower.uop s t) params in
   let lent, order = ordered ~leaves:leaf_nodes nodes lent in
   (* A result lent to the leaf its write writes into stores only the regions the
      write writes. *)
@@ -827,6 +830,26 @@ module Programs = Memo.Make (struct
   let hash = hash
 end)
 
+(* What a split depends on of a call: the leaves it tracks, the arguments'
+   visits, and each leaf's dtype, shape and placement. The lane counts of the
+   maps around the call that the split read select among a key's splits. *)
+type dtype = Dtype : ('a, 'b) Nx_dtype.t -> dtype
+
+module Plans = Memo.Make (struct
+  type t = bool list * Ptree.Skeleton.t * (dtype * int array * Placement.t) list
+
+  let equal (t, s, l) (t', s', l') =
+    List.equal Bool.equal t t' && Ptree.Skeleton.equal s s'
+    && List.equal
+         (fun (Dtype d, shape, at) (Dtype d', shape', at') ->
+           Nx_dtype.equal d d' && shape = shape' && Placement.equal at at')
+         l l'
+
+  let hash (t, s, l) =
+    Hashtbl.hash_param 256 512
+      (t, Ptree.Skeleton.hash s, List.map (fun (_, shape, _) -> shape) l)
+end)
+
 (* A compiler keeps the programs of one function, the compiled function's own or
    one a transformation derives from it, by key, and the compilers of the
    functions derived from it, by step. *)
@@ -854,6 +877,7 @@ let rec compiler : type a r.
     (a, r) Construct.compiler =
  fun beam parallel entry roles ->
   let table = Programs.create () and last = Atomic.make None in
+  let plans = Plans.create () in
   let children = ref [] and lock = Mutex.create () in
   let call (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r) (args : a) :
       r =
@@ -894,7 +918,31 @@ let rec compiler : type a r.
         children := Child (step, c) :: !children;
         c
   in
-  { run = call; derive }
+  let split tracked p q vjp args =
+    let ts, skeleton = Ptree.flatten p args in
+    let leaves =
+      List.map
+        (fun (Nx.P t) -> (Dtype (Nx.dtype t), Nx.shape t, Nx.placement t))
+        ts
+    in
+    let lock, splits =
+      Plans.find plans (tracked, skeleton, leaves) ~miss:ignore (fun () ->
+          (Mutex.create (), ref []))
+    in
+    let current (axis, n) = Construct.perform (Lane_count axis) = n in
+    Mutex.protect lock @@ fun () ->
+    match
+      List.find_opt (fun (counts, _) -> List.for_all current counts) !splits
+    with
+    | Some (_, split) -> split
+    | None ->
+        let counts, split =
+          span "residuals" (fun () -> Split.plan p q vjp args)
+        in
+        splits := (counts, split) :: !splits;
+        split
+  in
+  { run = call; derive; split }
 
 let jit ?beam ?parallel entry s f =
   let (Structure.Signature u) = Structure.signature entry s in

@@ -19,6 +19,8 @@ let trace ?renderer f =
   let s = scope ?renderer () in
   (s, within s f)
 
+let node y = Lower.uop (scope ()) y
+
 (* Elements as values *)
 
 type dtype = Dtype : ('a, 'b) Nx_dtype.t -> dtype
@@ -149,7 +151,7 @@ let contents s =
 let value s y =
   let buffers = contents s in
   let dt = Nx.dtype y in
-  match Tensors.eval ~buffers (Lower.uop y) with
+  match Tensors.eval ~buffers (Lower.uop s y) with
   | first :: _ -> Nx.create dt (Nx.shape y) (Array.map (of_const dt) first)
   | [] -> invalid_arg "a value on no device"
 

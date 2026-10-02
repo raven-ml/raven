@@ -310,12 +310,17 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
   | Compiled { p; q; f; args; compiler } ->
       (* The compiled call of the mapped function, whose results all carry the
          lanes, so that they are the same whether or not it was traced on this
-         call. *)
+         call. The function runs under a fresh map of the same name and size
+         that owns only the lanes of the arguments, so a lane of [m] that the
+         function reads through its closure reaches the trace, which refuses
+         it. *)
       Some
         (fun () ->
           let lanes = lanes_of m p args in
           let f args =
-            all_batched m q (install m (fun () -> f (relanes m p lanes args)))
+            let m' = create ?axis:m.axis m.entry m.size in
+            all_batched m' q
+              (install m' (fun () -> f (relanes m' p lanes args)))
           in
           let derived =
             Construct.Vmap { lanes; size = m.size; axis = m.axis }

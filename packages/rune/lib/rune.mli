@@ -517,8 +517,8 @@ module Total : sig
       placement.
 
       A {!scan} inside [f] that no compiled function stages folds inside the
-      scope. A {!val-jit} inside [f] runs its function eagerly: to compile, open
-      the scope inside the function {!val-jit} compiles and return the total.
+      scope. A {!val-jit} inside [f] compiles the function that also returns the
+      sum of its additions.
 
       The scope checks each addition's shape against [zero]'s when it receives
       it, where every map inside the scope has summed its lanes.
@@ -738,13 +738,30 @@ val jit :
     [grad (jit s f)], [jvp], [vmap] of it and a {!Total.collect} around it each
     run programs compiled for the function the transformation derives from [f],
     kept in the compiled function by key as its own are, and consume nothing.
-    Under {!grad} the forward pass is [f]'s program, and the backward pass a
-    program that runs [f] again before its pullback, so [f]'s forward work runs
-    twice: [jit (grad f)], differentiating {e inside} the compiled function as
-    [step] above does, compiles the two passes together. Inside an outer [jit],
-    [jit s f] is [f], traced into the outer program. A compiled function that
-    reads, through its closure, a value a transformation around it tracks raises
-    [Invalid_argument]: pass the value as an argument.
+    Under {!grad} and {!vjp}, a forward program computes [f]'s results and its
+    {e residuals}, the values [f] computes that the backward pass reads; a
+    backward program, compiled when the pullback runs, once per layout of the
+    cotangents, reads the residuals, [f]'s arguments and captures, and never
+    runs [f]. [f]'s forward work runs once per call, except where {!remat} and
+    {!scan} recompute it. The residuals are fixed by tracing [f] and its
+    transpose once per set of differentiated arguments, per dtype, shape and
+    placement of the arguments, and per lane count of each map around the call
+    that [f] reads through {!lanes} and {!lane_index}, and live until the
+    pullback runs: [jit (grad f)], differentiating {e inside} the compiled
+    function as [step] above does, compiles the two passes together and keeps no
+    residual. Inside an outer [jit], [jit s f] is [f], traced into the outer
+    program. Under {!grad} and {!vjp}, [f] must compute the same operations on
+    every call at one key: a forward call that computes other values than the
+    traced run raises {!Jit_error}.
+
+    Under every transformation, a compiled function that reads, through its
+    closure, a value the transformation tracks raises [Invalid_argument], as in
+    ["Rune.jit: the function reads, through its closure, a value a
+     transformation tracks (float32[784,128] on CPU). Pass it as an argument."].
+    A traced value that escaped the function that traced it, through a reference
+    or a closure, raises [Invalid_argument] when another compiled function reads
+    it. A transpose that cannot be traced raises {!Jit_error} at the forward
+    call, also for a {!vjp} whose pullback never runs.
 
     Raises {!Jit_error} when tracing fails, and [Invalid_argument] if [s] has no
     argument, for a misplaced leaf or capture, for a name met with two devices,

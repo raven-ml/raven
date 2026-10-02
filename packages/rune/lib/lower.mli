@@ -25,11 +25,6 @@ exception Jit_error of string
 (** [Jit_error why] is raised when a traced function cannot be compiled. [why]
     names the operation and the reason. *)
 
-type (_, _) Nx.Repr.node +=
-  | Uop : Ops.t -> ('a, 'b) Nx.Repr.node
-        (** [Uop u] is the payload of a traced value whose elements [u]
-            computes. *)
-
 (** {1:dtypes Dtypes} *)
 
 val dtype : ('a, 'b) Nx_dtype.t -> Dtype.t option
@@ -86,7 +81,11 @@ val scope : renderer:(Nx_device.t -> Renderer.t) -> scope
 (** [scope ~renderer] is an empty trace in which the programs of a device [d]
     are rendered by [renderer d], which decides the dtypes [d] computes
     ({!Decomp_dtype.computes}). [renderer] is called once per device of the
-    trace. *)
+    trace. The trace is live until {!finish}. *)
+
+val finish : scope -> unit
+(** [finish s] ends the trace [s]: a value it traced that another trace meets
+    has escaped it ({!uop}). *)
 
 val op : scope -> 'r Nx.Op.t -> 'r
 (** [op s o] is [o] in the trace [s]. Each result is a traced value at the
@@ -158,6 +157,19 @@ val parameter :
 
     Raises as {!param} does. *)
 
+val argument :
+  scope ->
+  slot:int ->
+  Nx.Placement.t ->
+  ('a, 'b) Nx_dtype.t ->
+  int array ->
+  ('a, 'b) Nx.t
+(** [argument s ~slot p dt shape] is a traced value that stands for an argument
+    of [dt] and [shape] at [p] in C order over the storage of slot [slot], which
+    [s] counts among its arguments: a value with no element is zeros.
+
+    Raises as {!param} does. *)
+
 val engine : scope -> string -> Tolk_engine.device
 (** [engine s] is the engine's device of each name [s]'s nodes carry, and of the
     host of each, which submits its work ({!Tolk_engine.device}). *)
@@ -166,14 +178,31 @@ val value : scope -> ('a, 'b) Nx.t -> Ops.t
 (** [value s x] is the node of [x] in [s] at [x]'s placement: its own if [x] is
     traced, and its capture ({!op}) otherwise. *)
 
-val traced : Nx.Placement.t -> ('a, 'b) Nx_dtype.t -> Ops.t -> ('a, 'b) Nx.t
-(** [traced p dt u] is the traced value at [p] of [dt] whose elements [u]
+val traced :
+  scope -> Nx.Placement.t -> ('a, 'b) Nx_dtype.t -> Ops.t -> ('a, 'b) Nx.t
+(** [traced s p dt u] is the value of [s] at [p] of [dt] whose elements [u]
     computes, of [u]'s shape. *)
 
-val uop : ('a, 'b) Nx.t -> Ops.t
-(** [uop x] is the node of the traced value [x].
+val traces : scope -> ('a, 'b) Nx.t -> bool
+(** [traces s x] is [true] iff [x] is a value of [s]. *)
 
-    Raises [Invalid_argument] if [x] is not a value traced by a scope. *)
+val is_traced : ('a, 'b) Nx.t -> bool
+(** [is_traced x] is [true] iff [x] is a value of a trace. *)
+
+val is_constant : ('a, 'b) Nx.t -> bool
+(** [is_constant x] is [true] iff [x] is a value of a trace whose node reads no
+    storage: one every trace reads as it is, finished or not ({!uop}). *)
+
+val uop : scope -> ('a, 'b) Nx.t -> Ops.t
+(** [uop s x] is the node in [s] of the traced value [x], its own: [x] is a
+    value of [s], of another trace that is live, an input of [s], or a constant
+    ({!is_constant}).
+
+    Raises [Invalid_argument] if [x] is a value of a trace that is finished,
+    naming [Rune.jit] and saying a traced value escaped the function that traced
+    it; if [x] is a value another transformation tracks, naming [Rune.jit] and
+    saying the function reads it through its closure; and if [x] is not traced.
+*)
 
 val devices : scope -> (string * Nx_device.t) list
 (** [devices s] is the device of each name that [s]'s nodes carry, in the order

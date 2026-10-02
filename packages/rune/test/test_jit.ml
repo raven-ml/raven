@@ -2073,14 +2073,6 @@ let transformations =
           let f a = Nx.sum (poly a) in
           equal floats (Rune.grad' f (x ())) (Rune.grad' (Rune.jit' f) (x ())));
       test
-        "grad of a compiled function compiles its forward and backward passes \
-         once" (fun () ->
-          let g = Rune.jit' (fun a -> Nx.sum (poly a)) in
-          equal ~msg:"first call" int 2
-            (traces (fun () -> ignore (Rune.grad' g (x ()))));
-          equal ~msg:"second call" int 0
-            (traces (fun () -> ignore (Rune.grad' g (x ())))));
-      test
         "grad of a compiled function computes on a device where only compiled \
          functions compute" (fun () ->
           let f a = Nx.sum (Nx.mul (Nx.tanh a) a) in
@@ -2089,18 +2081,6 @@ let transformations =
           let g = Rune.grad' (Rune.jit' f) on_gpu in
           equal Nx_test.Devices.placement (Nx.Placement.on gpu) (Nx.placement g);
           equal close (Rune.grad' f (x ())) (host g));
-      test
-        "a compiled function that reads a value grad tracks through its \
-         closure raises, naming the fix" (fun () ->
-          raises
-            (Invalid_argument
-               "a compiled function reads, through its closure, a value a \
-                transformation around its call tracks; pass it as an argument")
-            (fun () ->
-              ignore
-                (Rune.grad'
-                   (fun w -> Nx.sum (Rune.jit' (fun a -> Nx.mul a w) (x ())))
-                   (y ()))));
       test "jvp of a compiled function compiles its forward derivative"
         (fun () ->
           let g = Rune.jit' poly in

@@ -12,8 +12,6 @@ exception Jit_error of string
 
 let jit_error fmt = Printf.ksprintf (fun s -> raise (Jit_error s)) fmt
 
-type (_, _) Repr.node += Uop : Ops.t -> ('a, 'b) Repr.node
-
 (* Dtypes *)
 
 let dtype : type a b. (a, b) Nx_dtype.t -> Dtype.t option = function
@@ -220,7 +218,10 @@ type scope = {
       (* Nodes that read an argument, a write, a copy or storage that is no
          capture: they cannot follow their use. *)
   followed : (Placement.t * Ops.t option) list Ops.Tbl.t;
+  mutable live : bool;
 }
+
+type (_, _) Repr.node += Uop : scope * Ops.t -> ('a, 'b) Repr.node
 
 let scope ~renderer =
   {
@@ -233,8 +234,10 @@ let scope ~renderer =
     arguments = [];
     stuck = Ops.Tbl.create 64;
     followed = Ops.Tbl.create 16;
+    live = true;
   }
 
+let finish s = s.live <- false
 let devices s = List.rev s.names
 let captures s = List.rev_map (fun c -> (c.buffer, c.buffers)) s.captures
 let writes s = s.writes
@@ -377,26 +380,22 @@ let settled s what p u =
       in
       Ops.shard ~axis:a whole (List.map (name s) (memories p))
 
-let traced p dt u =
+let traced s p dt u =
   Repr.Traced.v ~context:(context p) p dt
     (Array.of_list (Ops.max_shape u))
-    (Uop u)
+    (Uop (s, u))
 
-let uop : type a b. (a, b) Nx.t -> Ops.t =
- fun x ->
+let traces s x =
   match Repr.v x with
   | Repr.Traced t -> (
-      match Repr.Traced.node t with
-      | Uop u -> u
-      | _ ->
-          (* An operand of the trace that no installation inside it owns is a
-             value a transformation around the call traced: the function
-             captured it. *)
-          invalid_arg
-            "a compiled function reads, through its closure, a value a \
-             transformation around its call tracks; pass it as an argument")
-  | Repr.Host _ | Repr.Placed _ ->
-      invalid_arg "not a value traced by a compiled function"
+      match Repr.Traced.node t with Uop (s', _) -> s' == s | _ -> false)
+  | Repr.Host _ | Repr.Placed _ -> false
+
+let is_traced x =
+  match Repr.v x with
+  | Repr.Traced t -> (
+      match Repr.Traced.node t with Uop _ -> true | _ -> false)
+  | Repr.Host _ | Repr.Placed _ -> false
 
 (* Storage *)
 
@@ -485,7 +484,7 @@ let param s ~slot x =
       s.arguments <- buffer :: s.arguments;
       viewed what buffer p shape v start
   in
-  traced p (Nx.dtype x) u
+  traced s p (Nx.dtype x) u
 
 (* [laid s what storage p dt shape] is a value of [dt] and [shape] at [p] in C
    order over the node [storage d n tdt] makes of [n] elements on [d]: each
@@ -504,10 +503,74 @@ let output s ~slot p dt shape =
   laid s "a result" (fun d n tdt -> Ops.new_buffer ~slot d n tdt) p dt shape
 
 let parameter s ~slot p dt shape =
-  traced p dt
+  traced s p dt
     (laid s "a loop's value"
        (fun d n tdt -> Ops.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
        p dt shape)
+
+let argument s ~slot p dt shape =
+  if Array.fold_left ( * ) 1 shape = 0 then
+    let tdt = check s "an argument" p dt in
+    traced s p dt (broadcast (Ops.const ~dtype:tdt (`Int Bigint.zero)) shape)
+  else
+    let storage d n tdt =
+      let b = Ops.new_buffer ~slot d n tdt in
+      s.arguments <- b :: s.arguments;
+      b
+    in
+    traced s p dt (laid s "an argument" storage p dt shape)
+
+(* Scopes
+
+   A traced value belongs to the scope that traced it. A value of another scope
+   is an input while that scope traces, as when a compiled call's trace encloses
+   the one that meets it, and has escaped once that trace is done; a constant
+   belongs to no scope. *)
+
+(* Whether [u] reads no storage: a constant, which every scope may read. *)
+let constant u =
+  not
+    (List.exists
+       (fun v ->
+         match Ops.op v with
+         | Op.Buffer | Op.Param | Op.Alloc | Op.After | Op.Store | Op.Call ->
+             true
+         | _ -> false)
+       (Ops.toposort u))
+
+let is_constant x =
+  match Repr.v x with
+  | Repr.Traced t -> (
+      match Repr.Traced.node t with Uop (_, u) -> constant u | _ -> false)
+  | Repr.Host _ | Repr.Placed _ -> false
+
+let describe x =
+  Format.asprintf "%a%a on %a" Nx.pp_dtype (Nx.dtype x) Nx.pp_shape (Nx.shape x)
+    Placement.pp (Nx.placement x)
+
+let uop : type a b. scope -> (a, b) Nx.t -> Ops.t =
+ fun s x ->
+  match Repr.v x with
+  | Repr.Traced t -> (
+      match Repr.Traced.node t with
+      | Uop (s', u) when s' == s -> u
+      | Uop (s', u) ->
+          if s'.live || constant u then u
+          else
+            invalid_arg
+              "Rune.jit: a traced value escaped the function that traced it; \
+               return it from that function instead"
+      | _ ->
+          (* An operand of the trace that no installation inside it owns is a
+             value a transformation around the call traced: the function
+             captured it. *)
+          invalid_arg
+            (Printf.sprintf
+               "Rune.jit: the function reads, through its closure, a value a \
+                transformation tracks (%s). Pass it as an argument."
+               (describe x)))
+  | Repr.Host _ | Repr.Placed _ ->
+      invalid_arg "not a value traced by a compiled function"
 
 (* The engine's devices *)
 
@@ -669,7 +732,7 @@ let rec copied u d =
 let node s what p x =
   match Repr.v x with
   | Repr.Traced _ -> (
-      let u = uop x in
+      let u = uop s x in
       if same_devices (Nx.placement x) p then u
       else
         match followed s (context p) u with
@@ -697,7 +760,7 @@ let move u : Nx.Op.move -> Ops.t = function
 (* [place s what p q x] is the traced [x], at [p], at [q]: the same node where
    [q] lays it out alike, copied to [q]'s devices, or split over them. *)
 let place s what p q x =
-  let u = uop x and shape = Nx.shape x in
+  let u = uop s x and shape = Nx.shape x in
   if same_layout p q shape then u
   else
     match layout what q shape with
@@ -721,7 +784,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
   in
   let ret dt u =
     ignore (check s what p dt);
-    traced p dt (settled s what p u)
+    traced s p dt (settled s what p u)
   in
   let like x u = ret (Nx.dtype x) u in
   let write ~into regions result =
@@ -852,6 +915,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
             in
             ignore (check s what at Nx_dtype.int64);
             s.checks <-
-              { first = traced at Nx_dtype.int64 first; shape; msg } :: s.checks
+              { first = traced s at Nx_dtype.int64 first; shape; msg }
+              :: s.checks
           end
       | Repr.Host _ | Repr.Placed _ -> Nx.Op.eval o)

@@ -65,7 +65,9 @@
 
     While a profile is taken ({!Nx_device.Profile}), a first call's phases are
     host spans: ["rune.jit: trace"], ["rune.jit: schedule"],
-    ["rune.jit: compile"] and ["rune.jit: link"]. *)
+    ["rune.jit: compile"] and ["rune.jit: link"]; and the traces that fix the
+    residuals of reverse mode through a call ({!Split}),
+    ["rune.jit: residuals"]. *)
 
 val jit :
   ?beam:int ->
@@ -80,7 +82,9 @@ val jit :
     call performs {!Construct.Compiled}: a transformation around it passes on
     the call of the function it derives, whose programs the compiler that
     [derive] gives keeps, and with none the call runs the program of its key. A
-    derived function consumes nothing.
+    derived function consumes nothing. Reverse mode splits the function at its
+    residuals ({!Split.plan}) once per tracked set and per dtype, shape and
+    placement of the arguments' leaves.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument; and at
     a call, before any work, for a consumed leaf that does not cover its whole

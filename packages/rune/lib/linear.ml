@@ -221,7 +221,9 @@ let rec answer : type r. tape -> r Construct.t -> (unit -> r) option =
   | Lanes (axis, x) ->
       if owns t x then Some (fun () -> lanes t axis x) else None
   | Compiled { p; f; args; _ } ->
-      (* A compiled function of tangents is linear: it runs under the tape. *)
+      (* A tangent reaches a compiled call only through a custom_jvp tangent
+         map, whose contract makes it linear in its tangents: the call runs
+         under the tape, which records its operations. *)
       if Nx.Ptree.fold p (fun _ x any -> any || owns t x) args false then
         Some (fun () -> install t (fun () -> f args))
       else None
