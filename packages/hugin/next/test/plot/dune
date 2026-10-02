@@ -46,6 +46,7 @@
   hugin.next.vg.raster
   hugin.next.vg.svg
   hugin_next_test_figures
+  hugin_next_test_marks
   nx
   nx.io
   windtrap)

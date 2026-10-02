@@ -4,7 +4,8 @@
  (libraries hugin.next nx))
 
 ; The built-in marks, compiled against the public interface alone: a mark
-; that names a private module of the library fails this build.
+; that names a private module of the library fails this build, which
+; test_draw links.
 
 (copy_files#
  (files ../../../plot/marks.{ml,mli}))

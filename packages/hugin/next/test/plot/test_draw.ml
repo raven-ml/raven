@@ -1403,6 +1403,40 @@ let areas =
             (page (area ~y:(num ys) ())));
     ]
 
+(* The built-in marks on the public interface *)
+
+module Copy = Hugin_next_test_marks.Marks
+
+let builtins =
+  let v = f64 [| 1.; 3.; 2. |]
+  and z = Nx.init Nx.float64 [| 3; 4 |] (fun i -> Float.of_int (i.(0) * i.(1))) in
+  let px =
+    Nx.init Nx.float32 [| 2; 3; 3 |] (fun i ->
+        Float.of_int (i.(0) + i.(1) + i.(2)) /. 6.)
+  in
+  [
+    ( "dot",
+      dot ~x:(num v) ~y:(num v) ~fill:(dim 0) (),
+      Copy.dot ~x:(num v) ~y:(num v) ~fill:(dim 0) () );
+    ( "line",
+      line ~curve:Curve.natural ~y:(num v) (),
+      Copy.line ~curve:Curve.natural ~y:(num v) () );
+    ("area", area ~y:(num v) (), Copy.area ~y:(num v) ());
+    ("rect", rect ~x:(dim 0) ~y:(num v) (), Copy.rect ~x:(dim 0) ~y:(num v) ());
+    ("rule", rule ~y:(num v) (), Copy.rule ~y:(num v) ());
+    ( "text",
+      Hugin_next.text ~dx:2. ~x:(num v) ~y:(num v) ~text:(num v) (),
+      Copy.text ~dx:2. ~x:(num v) ~y:(num v) ~text:(num v) () );
+    ("image", image px, Copy.image px);
+    ("contour", contour ~fill:(num z) (), Copy.contour ~fill:(num z) ());
+  ]
+
+let public_marks =
+  cases
+    ~name:(fun (n, _, _) -> n)
+    "a built-in compiled against the public interface draws alike" builtins
+    (fun (_, f, copy) -> equal drawing (drawn f) (drawn copy))
+
 (* Goldens *)
 
 let golden name = Filename.concat "golden" name
@@ -1432,4 +1466,14 @@ let goldens =
 let () =
   exit
     (run "Draw"
-       [ rows; channels; domain; drawings; output; reducers; areas; goldens ])
+       [
+         rows;
+         channels;
+         domain;
+         drawings;
+         output;
+         reducers;
+         areas;
+         public_marks;
+         goldens;
+       ])
