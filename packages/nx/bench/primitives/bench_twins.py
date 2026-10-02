@@ -40,6 +40,7 @@ TWINS = HERE / "twins.tsv"
 THUMPER = HERE / "nx_primitives.thumper"
 SEED = 15
 S = 40_000
+M = 1_000_000
 L = 10_000_000
 
 
@@ -97,7 +98,7 @@ twin("arange/int32-1e7", "numpy", lambda: L,
 twin("arange/int32-1e7", "polars", lambda: L,
      lambda n: pl.int_range(0, n, dtype=pl.Int32, eager=True))
 
-for n, name in [(S, "4e4"), (L, "1e7")]:
+for n, name in [(S, "4e4"), (M, "1e6")]:
     for dtype, make in [("float64", uniform), ("uint64", words)]:
         id = f"argsort/{dtype}-{name}"
         twin(id, "numpy", lambda n=n, make=make: make(n),
@@ -156,22 +157,20 @@ for id, n in [("gather/float32-rows-4e4x8", S),
          lambda a: a[0][a[1]])
 
 BOX = [0.0, 0.25, 0.5, 0.75, 1.0]
-for n, name in [(S, "4e4"), (L, "1e7")]:
+for n, name in [(S, "4e4"), (M, "1e6")]:
     twin(f"quantile/float64-{name}", "numpy", lambda n=n: uniform(n),
          lambda x: np.quantile(x, BOX))
     twin(f"quantile/float64-{name}", "pandas",
          lambda n=n: pd.Series(uniform(n)), lambda s: s.quantile(BOX))
 
 W = 1_000
-for n, name in [(S, "4e4"), (L, "1e7")]:
-    row = f"ranges/add-float64-{name}-w1e3"
-    twin(row, "pandas", lambda n=n: pd.Series(uniform(n)),
-         lambda s: s.rolling(W, min_periods=1).sum())
-    twin(row, "polars", lambda n=n: pl.Series(uniform(n)),
-         lambda s: s.rolling_sum(W, min_samples=1))
-twin("ranges/max-float64-1e7-w1e3", "pandas", lambda: pd.Series(uniform(L)),
+twin("ranges/add-float64-4e4-w1e3", "pandas", lambda: pd.Series(uniform(S)),
+     lambda s: s.rolling(W, min_periods=1).sum())
+twin("ranges/add-float64-4e4-w1e3", "polars", lambda: pl.Series(uniform(S)),
+     lambda s: s.rolling_sum(W, min_samples=1))
+twin("ranges/max-float64-4e4-w1e3", "pandas", lambda: pd.Series(uniform(S)),
      lambda s: s.rolling(W, min_periods=1).max())
-twin("ranges/max-float64-1e7-w1e3", "polars", lambda: pl.Series(uniform(L)),
+twin("ranges/max-float64-4e4-w1e3", "polars", lambda: pl.Series(uniform(S)),
      lambda s: s.rolling_max(W, min_samples=1))
 
 
@@ -203,7 +202,7 @@ def strings(n, w):
 
 
 for n, w, name in [(S, 6, "strings6-4e4-permuted"),
-                   (L, 12, "strings12-1e7-permuted")]:
+                   (M, 12, "strings12-1e6-permuted")]:
     twin(f"ragged-take/{name}", "polars", lambda n=n, w=w: strings(n, w),
          lambda a: a[0].gather(a[1]))
 
@@ -226,7 +225,7 @@ for n, name in [(S, "4e4"), (L, "1e7")]:
     twin(id, "polars", lambda n=n: (pl.Series(uniform(n)), pl.Series(mask(n))),
          lambda a: a[0].filter(a[1]))
 
-for n, name in [(S, "4e4"), (L, "1e7")]:
+for n, name in [(S, "4e4"), (M, "1e6")]:
     id = f"lexsort/int64-float64-{name}"
     twin(id, "numpy", lambda n=n: (ints(n, 1000), uniform(n)),
          lambda a: np.lexsort((a[1], a[0])))
@@ -238,32 +237,32 @@ for n, name in [(S, "4e4"), (L, "1e7")]:
          lambda d: d.sort(["a", "b"], maintain_order=True))
 
 for m, name in [(1_000, "1e3"), (1_000_000, "1e6")]:
-    twin(f"searchsorted/float64-1e7-into-{name}", "numpy",
-         lambda m=m: (np.sort(uniform(m)), uniform(L)),
+    twin(f"searchsorted/float64-1e6-into-{name}", "numpy",
+         lambda m=m: (np.sort(uniform(m)), uniform(M)),
          lambda a: np.searchsorted(a[0], a[1], side="right"))
 
 for n, name, d, dname in [(S, "4e4", 100, "1e2"), (S, "4e4", 10_000, "1e4"),
-                          (L, "1e7", 100, "1e2"), (L, "1e7", 1_000_000, "1e6")]:
+                          (M, "1e6", 100, "1e2"), (M, "1e6", 100_000, "1e5")]:
     id = f"unique/int64-{name}-{dname}"
     twin(id, "pandas", lambda n=n, d=d: ints(n, d), pd.factorize)
     twin(id, "numpy", lambda n=n, d=d: ints(n, d),
          lambda k: np.unique(k, return_index=True, return_inverse=True,
                              return_counts=True))
 
-for n, w, name in [(S, 6, "strings6-4e4"), (L, 12, "strings12-1e7")]:
+for n, w, name in [(S, 6, "strings6-4e4"), (M, 12, "strings12-1e6")]:
     twin(f"ragged/ids-{name}", "pandas",
          lambda n=n, w=w: pd.Series(words_of(n, w), dtype=object),
          lambda s: pd.factorize(s, sort=False)[0])
-twin("ragged/rank-strings12-1e7", "polars", lambda: pl.Series(words_of(L, 12)),
+twin("ragged/rank-strings12-1e6", "polars", lambda: pl.Series(words_of(M, 12)),
      lambda s: s.rank("dense"))
-twin("ragged/rank-strings12-1e7", "numpy",
-     lambda: words_of(L, 12),
+twin("ragged/rank-strings12-1e6", "numpy",
+     lambda: words_of(M, 12),
      lambda a: np.unique(a, return_inverse=True)[1])
-twin("ragged/quantile-float64-1e7-into-1e3", "pandas",
-     lambda: pd.Series(uniform(L)).groupby(ints(L, 1000)),
+twin("ragged/quantile-float64-1e6-into-1e3", "pandas",
+     lambda: pd.Series(uniform(M)).groupby(ints(M, 1000)),
      lambda g: g.quantile(0.5))
-twin("ragged/quantile-float64-1e7-into-1e3", "polars",
-     lambda: pl.DataFrame({"id": ints(L, 1000), "x": uniform(L)}),
+twin("ragged/quantile-float64-1e6-into-1e3", "polars",
+     lambda: pl.DataFrame({"id": ints(M, 1000), "x": uniform(M)}),
      lambda df: df.group_by("id").agg(pl.col("x").quantile(0.5, "linear")))
 
 

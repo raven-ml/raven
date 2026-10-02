@@ -3,10 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx's array primitives at a talon morsel, 4e4 rows, and at 1e7 rows, under the
-   ids bench_twins.py measures numpy, pandas and polars by. Inputs come from
-   OCaml's [Random], so they are the same in every run and do not depend on
-   [Nx.Rng].
+(* nx's array primitives at a talon morsel, 4e4 rows, and at a whole column,
+   under the ids bench_twins.py measures numpy, pandas and polars by. Inputs
+   come from OCaml's [Random], so they are the same in every run and do not
+   depend on [Nx.Rng].
+
+   A whole column is 1e7 rows for an operation that streams its operands, which
+   then cross main memory. Sorts, hashes, searches and gathers of strings run at
+   1e6: a regression in their algorithms shows there as it would at 1e7, where
+   one call takes 0.25 to 2 s and a trial makes about 30 of them.
 
    [--transient] prints, instead of timing, the bytes of host arrays each row's
    call allocates beyond its results', or [-] for a call that allocates enough
@@ -58,6 +63,7 @@ let monotone n = fst (Nx.sort (indices n n))
 
 (* The sizes a row is named after. *)
 let s = 40_000
+let m = 1_000_000
 let l = 10_000_000
 
 let arange =
@@ -70,9 +76,9 @@ let arange =
 let argsort =
   [
     row "float64-4e4" s (fun () -> uniform_float64 s) Nx.argsort;
-    row "float64-1e7" l (fun () -> uniform_float64 l) Nx.argsort;
+    row "float64-1e6" m (fun () -> uniform_float64 m) Nx.argsort;
     row "uint64-4e4" s (fun () -> words s) Nx.argsort;
-    row "uint64-1e7" l (fun () -> words l) Nx.argsort;
+    row "uint64-1e6" m (fun () -> words m) Nx.argsort;
   ]
 
 let cumsum =
@@ -148,15 +154,15 @@ let lexsort =
   in
   [
     row "int64-float64-4e4" s (two_keys s) sort;
-    row "int64-float64-1e7" l (two_keys l) sort;
+    row "int64-float64-1e6" m (two_keys m) sort;
   ]
 
 let searchsorted =
-  let into m () = (fst (Nx.sort (uniform_float64 m)), uniform_float64 l) in
+  let into k () = (fst (Nx.sort (uniform_float64 k)), uniform_float64 m) in
   let search (knots, q) = Nx.searchsorted ~side:`Right knots q in
   [
-    row "float64-1e7-into-1e3" l (into 1_000) search;
-    row "float64-1e7-into-1e6" l (into 1_000_000) search;
+    row "float64-1e6-into-1e3" m (into 1_000) search;
+    row "float64-1e6-into-1e6" m (into 1_000_000) search;
   ]
 
 let unique =
@@ -173,19 +179,21 @@ let unique =
   [
     keys "int64-4e4-1e2" s 100;
     keys "int64-4e4-1e4" s 10_000;
-    keys "int64-1e7-1e2" l 100;
-    keys "int64-1e7-1e6" l 1_000_000;
+    keys "int64-1e6-1e2" m 100;
+    keys "int64-1e6-1e5" m 100_000;
   ]
 
 let quantile =
   let box = Nx.quantile [| 0.; 0.25; 0.5; 0.75; 1. |] in
   [
     row "float64-4e4" s (fun () -> uniform_float64 s) box;
-    row "float64-1e7" l (fun () -> uniform_float64 l) box;
+    row "float64-1e6" m (fun () -> uniform_float64 m) box;
   ]
 
 (* Trailing windows of 1e3 rows, the first ones shorter, as pandas'
-   [rolling(1000, min_periods=1)] cuts them. *)
+   [rolling(1000, min_periods=1)] cuts them. A window's 8 KB stay in the first
+   cache level whatever the column's length, so a morsel shows the cost of a
+   row. *)
 let ranges =
   let windows n () =
     ( Nx.arange Nx.int64 (1 - 1000) (n + 1 - 1000) 1,
@@ -195,8 +203,7 @@ let ranges =
   let reduce op (lo, hi, x) = Nx.reduce_ranges op ~lo ~hi x in
   [
     row "add-float64-4e4-w1e3" s (windows s) (reduce `Add);
-    row "add-float64-1e7-w1e3" l (windows l) (reduce `Add);
-    row "max-float64-1e7-w1e3" l (windows l) (reduce `Max);
+    row "max-float64-4e4-w1e3" s (windows s) (reduce `Max);
   ]
 
 let bits =
@@ -274,9 +281,9 @@ let ragged_take =
   let take (r, indices) = Nx_ragged.values (Nx_ragged.take ~indices r) in
   [
     row "strings6-4e4-permuted" s (ragged s 6) take;
-    row "strings12-1e7-permuted" l (ragged l 12) take;
+    row "strings12-1e6-permuted" m (ragged m 12) take;
     row "strings6-4e4-permuted-runcopy" s (fun () -> strings s 6) copy_runs;
-    row "strings12-1e7-permuted-runcopy" l (fun () -> strings l 12) copy_runs;
+    row "strings12-1e6-permuted-runcopy" m (fun () -> strings m 12) copy_runs;
   ]
 
 let ragged_rows =
@@ -309,11 +316,11 @@ let ragged_rows =
       (fun () -> (ragged (l / 2) 12 (), ragged (l / 2) 12 ()))
       (fun (a, b) -> Nx_ragged.values (Nx_ragged.concat [ a; b ]));
     row "ids-strings6-4e4" s (ragged s 6) Nx_ragged.ids;
-    row "ids-strings12-1e7" l (ragged l 12) Nx_ragged.ids;
-    row "rank-strings12-1e7" l (ragged l 12) Nx_ragged.rank;
-    row "quantile-float64-1e7-into-1e3" l
+    row "ids-strings12-1e6" m (ragged m 12) Nx_ragged.ids;
+    row "rank-strings12-1e6" m (ragged m 12) Nx_ragged.rank;
+    row "quantile-float64-1e6-into-1e3" m
       (fun () ->
-        Nx_ragged.of_ids ~segments:1000 (int64s l 1000) (uniform_float64 l))
+        Nx_ragged.of_ids ~segments:1000 (int64s m 1000) (uniform_float64 m))
       (Nx_ragged.quantile [| 0.5 |]);
   ]
 
@@ -394,10 +401,10 @@ let () =
   match Sys.argv with
   | [| _; "--transient" |] -> print_transient ()
   | _ ->
-      (* A row of 1e7 elements takes up to a second a call, so its 20 batches
-         take longer than the default deadline. *)
+      (* Building a column of 1e7 strings takes seconds, which leave the default
+         deadline too little for the samples. *)
       Thumper.run "nx_primitives"
-        ~config:Thumper.Config.(default |> deadline 600.)
+        ~config:Thumper.Config.(default |> deadline 60.)
         ~budgets:
           [
             Thumper.Budget.no_slower_than 0.05;

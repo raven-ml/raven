@@ -8,7 +8,8 @@ Additional focused suites live under subdirectories:
 - `einsum/` for tensor contractions
 - `matmul/` for dense matrix multiplication
 - `io/` for end-to-end tensor, image, archive, and gzip I/O
-- `primitives/` for the array primitives at 4·10⁴ and 10⁷ elements, with the
+- `primitives/` for the array primitives at 4·10⁴ elements and at a whole
+  column (10⁷ elements, 10⁶ for sorts, hashes and searches), with the
   bytes each call allocates and numpy, pandas and polars twins
   (`bench_twins.py`)
 
