@@ -1,0 +1,21 @@
+(test
+ (name test_parquet)
+ (modules test_parquet)
+ (package talon)
+ (libraries windtrap talon talon.parquet nx nx.device nx.bits)
+ (deps
+  values.txt
+  overrides.txt
+  (source_tree fixtures))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_parquet.ml test_parquet.ml.corrected))))
+
+(test
+ (name test_fuzz)
+ (modules test_fuzz)
+ (package talon)
+ (libraries windtrap talon talon.parquet nx.device)
+ (deps
+  (source_tree fixtures)))

@@ -125,7 +125,7 @@
  (dir packages/talon)
  (synopsis "Dataframes for OCaml")
  (description
-  "Fast and elegant dataframes with type-safe operations. Heterogeneous columns, applicative row operations, vectorized aggregations, and CSV I/O, built on Nx.")
+  "Typed columns and expressions whose shape is in their type, queries that fail on their schema before reading data, and CSV and Parquet files read and written in batches, built on Nx.")
  (depends
   (ocaml
    (>= 5.2.0))

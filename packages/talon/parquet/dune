@@ -1,0 +1,20 @@
+(library
+ (name talon_parquet)
+ (public_name talon.parquet)
+ (libraries
+  talon
+  nx
+  nx.device
+  nx.bits
+  compress.deflate
+  compress.snappy
+  compress.zstd
+  compress.lz4)
+ (private_modules thrift meta leaf chunk)
+ (foreign_stubs
+  (language c)
+  (names talon_parquet_stubs)
+  (flags
+   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic)))
+ (instrumentation
+  (backend ppx_windtrap.coverage)))

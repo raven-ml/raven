@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Dataframes for OCaml"
 description:
-  "Fast and elegant dataframes with type-safe operations. Heterogeneous columns, applicative row operations, vectorized aggregations, and CSV I/O, built on Nx."
+  "Typed columns and expressions whose shape is in their type, queries that fail on their schema before reading data, and CSV and Parquet files read and written in batches, built on Nx."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"

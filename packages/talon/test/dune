@@ -1,11 +1,120 @@
 (test
- (name test_talon)
+ (name test_error)
+ (modules test_error)
  (package talon)
- (modules test_talon placed)
- (libraries talon windtrap nx nx.device))
+ (libraries windtrap talon))
 
 (test
- (name test_talon_csv)
+ (name test_expr)
+ (modules test_expr)
  (package talon)
- (modules test_talon_csv)
- (libraries talon talon.csv windtrap nx))
+ (libraries windtrap talon nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_expr.ml test_expr.ml.corrected))))
+
+(test
+ (name test_plan)
+ (modules test_plan)
+ (package talon)
+ (libraries windtrap talon nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_plan.ml test_plan.ml.corrected))))
+
+(test
+ (name test_query)
+ (modules test_query)
+ (package talon)
+ (libraries windtrap talon nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_query.ml test_query.ml.corrected))))
+
+(test
+ (name test_types)
+ (modules test_types)
+ (package talon)
+ (libraries windtrap talon nx unix)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_types.ml test_types.ml.corrected))))
+
+(test
+ (name test_tz)
+ (modules test_tz)
+ (package talon)
+ (libraries windtrap talon unix)
+ (deps
+  (source_tree golden/tz))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_tz.ml test_tz.ml.corrected))))
+
+(cram
+ (applies_to shape)
+ (package talon)
+ (deps
+  (package talon)
+  (package nx)))
+
+(test
+ (name test_column)
+ (modules test_column)
+ (package talon)
+ (libraries windtrap talon talon_gen nx nx.dtype nx.bits nx.ragged)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_column.ml test_column.ml.corrected))))
+
+(test
+ (name test_parse)
+ (modules test_parse)
+ (package talon)
+ (libraries windtrap talon talon_gen nx))
+
+(test
+ (name test_table)
+ (modules test_table)
+ (package talon)
+ (libraries windtrap talon talon_gen nx nx.dtype nx.bits)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_table.ml test_table.ml.corrected))))
+
+(test
+ (name test_display)
+ (modules test_display)
+ (package talon)
+ (libraries windtrap talon talon_gen nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_display.ml test_display.ml.corrected))))
+
+(test
+ (name test_run)
+ (modules test_run)
+ (package talon)
+ (libraries windtrap talon talon_gen talon_reference nx nx.bits)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_run.ml test_run.ml.corrected))))
+
+(test
+ (name test_convert)
+ (modules test_convert)
+ (package talon)
+ (libraries windtrap talon talon_gen nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_convert.ml test_convert.ml.corrected))))

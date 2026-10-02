@@ -5997,29 +5997,27 @@ thread.
 
 ### Talon
 
-- `Talon.pp_display` opens Quill's display tag around the text table, so
-  outside a notebook it prints the table, no longer a base64 data URI.
-- `Col.of_tensor` and `of_nx` read a value placed on a device to the host once,
-  so a dataframe's columns are host values. A placed column was read one
-  element at a time, and eager operations on it ran through the device.
-- Fix `cast_column` and mixed-dtype `concat` leaving a source dtype's null
-  sentinel in the cast tensor. Casting a nullable integer column to a float
-  dtype made `to_array` read its nulls as `Int64.min_int` converted to float
-  instead of `nan`; null positions now hold the target dtype's sentinel.
-  `cast_column` also raises `Not_found` for a missing column, as documented.
-- `to_nx` now takes the target dtype and an optional `?columns` selection,
-  `to_nx ?columns dtype df`, instead of always producing a float32 tensor of
-  every numeric column. Nulls become `nan` for float dtypes and raise for
-  integer dtypes; before, an integer column's nulls silently came through as
-  the sentinel value `Int64.min_int` cast to float.
-- Add `to_html` and `pp_display` for rich table rendering in Quill notebooks.
-  Tables display as styled HTML in the web UI and published books, and as inline
-  HTML in markdown output files.
-- Add `Talon.take` for selecting rows by an array of indices. Indices may repeat
-  and need not be sorted.
-- Fix CSV auto-detection defaulting numeric columns to float32. Parsed values go
-  through `float_of_string` which produces 64-bit floats; defaulting to float32
-  silently truncated precision. Now defaults to float64.
+- **Breaking:** talon is rewritten, and the previous API (`Col`, `Row`, `Agg`,
+  `pp_display`, `to_html` and the old `Talon_csv`) is removed. A `Talon.t` holds
+  typed columns in Arrow layouts over nx buffers, with nulls as validity, never
+  as sentinels. A `Talon.Query.t` is built by verbs (`select`, `filter`,
+  `sort`, `slice`, `aggregate`, `join`, `append`, `derive`) over expressions
+  `('a, 's) Talon.Expr.t`, whose type says whether they hold a value per row or
+  per group. Each verb checks its input's schema when applied and reports every
+  problem at once, before any data is read; `Query.run` runs the plan as nx
+  operations over batches.
+- The rewrite fixes the old talon's wrong answers: duplicates and pivots
+  compared rows by their printed text, `sort_values` put nulls first,
+  `cumsum`, `diff` and `shift` dropped nulls, and the CSV reader split lines
+  before quotes, read `0` and `1` as booleans and read a bad field as null.
+  `talon.csv` now reads RFC 4180 strictly, fails with the line and column of a
+  bad field, and writes with `Talon_csv.encode`.
+- Add `talon.parquet`, which reads flat Parquet files mapped in memory, with
+  row-group pruning from statistics.
+- Later releases add windows, `ewm` and `cut`; ordered, as-of and interval
+  joins; zoned time; hashing, sampling and folds; nested columns, `unnest`
+  and records; Parquet writing; Arrow IPC and JSON; Unicode case mapping; and
+  HTML display in Quill.
 
 ### Hugin
 
@@ -6053,7 +6051,6 @@ thread.
   render as inline `<img>` tags with data URIs, visible in any markdown viewer.
 - Add `--figures-dir` flag to `quill run` for writing images to disk and
   referencing them by path instead of inlining base64 data.
-- Add rich table display for Talon dataframes in liveview and published books.
 - Improve table styling in the web notebook and book build with clean borders,
   monospace font, and proper header treatment.
 - Resolve relative notebook paths to absolute and change into the notebook

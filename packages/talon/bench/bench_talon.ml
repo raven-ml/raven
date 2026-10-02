@@ -6,7 +6,7 @@
 (* Filter, group, join and sort over the 40k-row fixture, the same work as
    bench_talon.py does in pandas. *)
 
-open Talon_next
+open Talon
 
 (* Resolve fixtures next to the executable, not the working directory: the bench
    rule runs with the bench dir as cwd, dune exec with the project root — the
@@ -16,9 +16,9 @@ let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
 (* [load name columns categories] reads the fixture [name] as [columns], its
    text columns [categories] as categoricals, as pandas reads them. *)
 let load name columns categories =
-  let format = Talon_next_csv.format columns in
+  let format = Talon_csv.format columns in
   let path = Filename.concat data_dir name in
-  let source = Error.get_ok (Talon_next_csv.file ~format path) in
+  let source = Error.get_ok (Talon_csv.file ~format path) in
   let q = Error.get_ok (Kit.categorize categories (Query.of_source source)) in
   Error.get_ok (Query.run q)
 

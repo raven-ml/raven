@@ -1,0 +1,10 @@
+(library
+ (name talon_gen)
+ (modules talon_gen)
+ (libraries windtrap talon nx))
+
+(library
+ (name talon_reference)
+ (wrapped false)
+ (modules reference)
+ (libraries talon))

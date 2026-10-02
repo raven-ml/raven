@@ -1,6 +1,6 @@
 (executable
  (name bench_talon)
- (libraries talon.next talon.next.csv thumper))
+ (libraries talon talon.csv thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
 ; (or run the built exe directly; `list` prints case ids).

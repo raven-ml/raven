@@ -103,13 +103,13 @@ jobs:
       # The CSV and Parquet decoders parse untrusted bytes: their suites, the
       # fuzz suites included, run with the C built under AddressSanitizer and
       # UndefinedBehaviorSanitizer, each property over 1000 files.
-      - name: Test talon.next's decoders under the sanitizers
+      - name: Test talon's decoders under the sanitizers
         if: runner.os != 'Windows'
         env:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --profile sanitize @packages/talon/next/test/csv/runtest @packages/talon/next/test/parquet/runtest
+        run: opam exec -- dune build --profile sanitize @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
 
       # Talon's benchmark questions at the CI size (H2O at 1e6 rows, TPC-H at
       # scale factor 0.1) must answer as DuckDB's committed answers do. The
@@ -124,8 +124,8 @@ jobs:
         env:
           DATA: ${{ runner.temp }}/talon-bench
         run: |
-          (cd packages/talon/next/bench && uv run h2o_data.py 1e6 "$DATA" && uv run tpch_data.py 0.1 "$DATA")
-          opam exec -- dune exec --release packages/talon/next/bench/runner.exe -- check packages/talon/next/bench/answers "$DATA"
+          (cd packages/talon/bench/d7 && uv run h2o_data.py 1e6 "$DATA" && uv run tpch_data.py 0.1 "$DATA")
+          opam exec -- dune exec --release packages/talon/bench/d7/runner.exe -- check packages/talon/bench/d7/answers "$DATA"
 
       - name: Build and test rune
         run: |

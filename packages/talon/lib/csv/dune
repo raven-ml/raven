@@ -1,4 +1,0 @@
-(library
- (name talon_csv)
- (public_name talon.csv)
- (libraries talon nx))

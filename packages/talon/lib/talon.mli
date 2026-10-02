@@ -3,990 +3,2477 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Dataframe library for tabular data manipulation.
+(** Tables: named, typed columns.
 
-    Dataframes are immutable collections of named, typed columns with equal
-    length. Columns can hold numeric tensors (via {!Nx}), strings, or booleans,
-    each with explicit null semantics. *)
+    {!Type}s say what columns store and {!Kind}s what their cells read as in
+    OCaml. {!Binary}, {!Time} and {!Record} are the OCaml values that cells read
+    as, {!Schema}s name and type a table's columns, and {!Tz} reads the time
+    zone database.
+
+    A {!Query} is the centre: a plan over a table or a {!Source}, transformed by
+    verbs, whose schema is known before any data is read. Its verbs take
+    {!Expr}essions, read through {!Col} handles and {!Ext} declarations; {!Sel}
+    chooses columns, {!Order} sorts, and {!Join} conditions pair rows. Plan
+    problems raise [Invalid_argument]; failures in data are {!Error} values. *)
 
 type t
-(** The type for dataframes.
+(** The type for tables: named, typed columns of equal length. *)
 
-    Dataframes are immutable tabular data structures with named, typed columns.
-    All columns in a dataframe have the same length. *)
+type table := t
 
-type 'a row
-(** The type for row-wise computations producing values of type ['a].
+module Binary = Binary
+module Time = Time
 
-    Row computations form an applicative functor, allowing composition of
-    independent computations from multiple columns. *)
+module Kind : sig
+  (** Kinds: the OCaml types that cells read as.
 
-(** {1:columns Columns} *)
+      A column's {!Type.t} is what it stores, and its kind is the OCaml type its
+      cells read as. Several types share a kind: [int8] through [uint64] all
+      read as [int]. Handles name a kind, never a type, so storage width never
+      appears in user code.
 
-module Col : sig
-  (** Column creation and manipulation.
+      {b Binding.} A handle of kind [k] binds a column of type [t] iff
+      [provably_equal k (Type.kind t)] is [Some Equal]. An extension column's
+      kind is the extension kind, which no kind is provably equal to, so a
+      handle never binds one: only an extension's declaration reads its cells.
+  *)
 
-      Columns are the building blocks of dataframes, each storing a homogeneous
-      sequence of values with consistent null handling. *)
+  type 'a t
+  (** The type for kinds whose cells read as OCaml values of type ['a]. *)
+
+  (** {1:kinds Kinds}
+
+      Record columns read through {!Record.kind}. *)
+
+  val bool : bool t
+  (** [bool] reads [bool] columns. *)
+
+  val int : int t
+  (** [int] reads the integer columns, [int8] through [int64] and [uint8]
+      through [uint64]. A value outside OCaml's [int] range fails when it is
+      read. *)
+
+  val float : float t
+  (** [float] reads [float16], [float32] and [float64] columns. *)
+
+  val string : string t
+  (** [string] reads [string] and [categorical] columns. *)
+
+  val binary : Binary.t t
+  (** [binary] reads [binary] columns. *)
+
+  val date : Time.date t
+  (** [date] reads [date] columns. *)
+
+  val instant : Time.instant t
+  (** [instant] reads [datetime] columns of every unit and zone. A value outside
+      the range of {!Time.instant} fails when it is read. *)
+
+  val span : Time.span t
+  (** [span] reads [duration] and [clock] columns of every unit. A time of day
+      reads as its span from midnight. A value outside the range of {!Time.span}
+      fails when it is read. *)
+
+  val list : 'a t -> 'a array t
+  (** [list k] reads list columns whose elements [k] reads. *)
+
+  val tensor : ('a, 'b) Nx.dtype -> ('a, 'b) Nx.t t
+  (** [tensor dt] reads tensor columns of dtype [dt] and any cell shape. *)
+
+  (** {1:comparing Comparing and formatting} *)
+
+  val provably_equal : 'a t -> 'b t -> ('a, 'b) Stdlib.Type.eq option
+  (** [provably_equal k0 k1] is [Some Equal] iff [k0] and [k1] are the same
+      kind, neither being nor containing the extension kind: lists are equal
+      when their elements are, and tensors when their dtypes are. It is [None]
+      otherwise, in particular for two extension kinds. *)
+
+  val pp : Format.formatter -> 'a t -> unit
+  (** [pp ppf k] formats [k] by the name of the value that builds it: [bool],
+      [int], [float], [string], [binary], [date], [instant] and [span]. The
+      record kind formats as [record] and the extension kind as [ext]. A list
+      kind formats its element kind in brackets, as in [list[float]], and a
+      tensor kind its dtype, as in [tensor[float32]]. *)
+end
+
+module Record : sig
+  (** Record cells.
+
+      A record cell is the value of one row of a record column ({!Type.record}):
+      named fields in order, each holding a value or null. Record columns read
+      as {!t} through {!kind}. *)
 
   type t
-  (** The type for columns.
+  (** The type for record cells. A record cell's field names are distinct. *)
+
+  val kind : t Kind.t
+  (** [kind] reads record columns of every field list. *)
+
+  val empty : t
+  (** [empty] is the record cell with no fields. *)
+
+  val add : 'a Kind.t -> string -> 'a option -> t -> t
+  (** [add k name v r] is [r] with a last field [name] of kind [k] holding [v],
+      or null if [v] is [None].
+
+      Raises [Invalid_argument] if [r] has a field [name], if [name] is not
+      valid UTF-8, or if [k] is or contains the extension kind. *)
+
+  val field : 'a Kind.t -> string -> t -> 'a option
+  (** [field k name r] is the field [name] of [r] read as [k]: [Some v] if it
+      holds [v], and [None] if it is null.
+
+      Raises [Invalid_argument] if [r] has no field [name], or if [k] does not
+      read it: a field whose type is or contains an extension, or a field of
+      another kind. *)
+
+  val names : t -> string list
+  (** [names r] is the names of [r]'s fields, in order. *)
+end
+
+module Type : sig
+  (** Column types.
+
+      A column's type is what it stores: [float32], [datetime[ms, UTC]],
+      [list[string]]. A type is indexed by its {e kind}, the OCaml type its
+      cells read as ({!Kind}): {!float32} is a [float t]. Whatever fixes what a
+      column stores therefore also fixes what OCaml reads from it. Collections
+      of types of several kinds, such as a {!Schema.t}, hold them as {!any}.
+
+      The set of types is closed. A new type is an extension: a named type
+      stored as one of these, identified by its name, its metadata and its
+      storage type together, as in Arrow. Computing on an extension column takes
+      its declaration, a value of the [Ext] module.
+
+      The constructors of {!t} are exposed for matching and private: types are
+      built with the {{!constructors}constructors} below, which check their
+      arguments.
+
+      Under [open Talon], this module shadows [Stdlib.Type]. *)
+
+  (** {1:types Types} *)
+
+  (** The type for the units of temporal ticks. *)
+  type unit_ =
+    | S  (** Seconds. *)
+    | Ms  (** Milliseconds. *)
+    | Us  (** Microseconds. *)
+    | Ns  (** Nanoseconds. *)
+
+  type ext
+  (** The type that extension cells read as. It has no values: an extension
+      column is read only through the extension's declaration, and its kind
+      binds no handle. *)
+
+  (** The type for column types whose cells read as ['a]. *)
+  type 'a t = private
+    | Bool : bool t  (** Booleans. *)
+    | Int8 : int t  (** Signed 8-bit integers. *)
+    | Int16 : int t  (** Signed 16-bit integers. *)
+    | Int32 : int t  (** Signed 32-bit integers. *)
+    | Int64 : int t
+        (** Signed 64-bit integers. A value outside OCaml's [int] range fails
+            when it is read as [int]. *)
+    | Uint8 : int t  (** Unsigned 8-bit integers. *)
+    | Uint16 : int t  (** Unsigned 16-bit integers. *)
+    | Uint32 : int t
+        (** Unsigned 32-bit integers. A value outside OCaml's [int] range fails
+            when it is read as [int]. *)
+    | Uint64 : int t
+        (** Unsigned 64-bit integers. A value outside OCaml's [int] range fails
+            when it is read as [int]. *)
+    | Float16 : float t  (** IEEE 754 binary16 floats. *)
+    | Float32 : float t  (** IEEE 754 binary32 floats. *)
+    | Float64 : float t  (** IEEE 754 binary64 floats. *)
+    | String : string t
+        (** UTF-8 text. Text is validated when it enters talon, and invalid
+            bytes belong in {!Binary}. *)
+    | Binary : Binary.t t  (** Byte strings. *)
+    | Categorical : string iarray -> string t
+        (** Strings from a dictionary, stored as int32 positions in it. The
+            dictionary holds distinct UTF-8 strings, and its order is the order
+            of the values. *)
+    | Date : Time.date t  (** Dates, stored as int32 days since 1970-01-01. *)
+    | Clock : unit_ -> Time.span t
+        (** Times of day, stored as int64 ticks of the unit since midnight. A
+            time of day reads as its span from midnight. *)
+    | Duration : unit_ -> Time.span t
+        (** Signed durations, stored as int64 ticks of the unit. *)
+    | Datetime : { unit_ : unit_; zone : string option } -> Time.instant t
+        (** Instants, stored as int64 ticks of [unit_] since 1970-01-01
+            00:00:00. With [zone = Some z], the ticks count UTC and [z] names
+            the zone the data belongs to, as in Arrow's timestamp with a time
+            zone. With [zone = None], the ticks count a wall clock in no
+            particular zone, as in Arrow's timestamp without one. A tick outside
+            the range of {!Time.instant} fails when it is read. *)
+    | List : 'a t -> 'a array t
+        (** Lists of values of the element type, read as arrays. *)
+    | Record : (string * any) list -> Record.t t
+        (** Records with the given fields in order, Arrow's struct. Field names
+            are distinct UTF-8 strings. *)
+    | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b) Nx.t t
+        (** Tensors of one dtype and one shape, one per cell, stored as Arrow's
+            canonical [arrow.fixed_shape_tensor]. The shape has at least one
+            dimension, and no dimension is negative. *)
+    | Ext : { name : string; metadata : string; storage : 's t } -> ext t
+        (** Extension types: values stored as [storage] and identified by
+            [name], [metadata] and [storage] together. The name is non-empty
+            UTF-8, and [storage] is not an extension type. *)
 
-      Columns store homogeneous data with consistent null handling:
-      - Numeric data backed by 1D {!Nx} tensors with an optional null mask.
-      - String data as [string option array].
-      - Boolean data as [bool option array]. *)
+  and any = Any : 'a t -> any  (** The type for types of any kind. *)
 
-  (** {2:generic_constructors Generic constructors} *)
+  (** {1:constructors Constructors} *)
 
-  val numeric : ('a, 'b) Nx.dtype -> 'a array -> t
-  (** [numeric dtype arr] is a numeric column from [arr] with dtype [dtype]. *)
+  val bool : bool t
+  (** [bool] is {!Bool}. *)
 
-  val numeric_opt : ('a, 'b) Nx.dtype -> 'a option array -> t
-  (** [numeric_opt dtype arr] is a nullable numeric column from [arr] with dtype
-      [dtype]. [None] values are recorded in the null mask. *)
+  val int8 : int t
+  (** [int8] is {!Int8}. *)
 
-  (** {2:non_nullable From arrays (non-nullable)}
+  val int16 : int t
+  (** [int16] is {!Int16}. *)
 
-      Create columns from arrays without introducing null masks. Values are
-      taken literally; to represent missing data, use the [_opt] constructors
-      instead. *)
+  val int32 : int t
+  (** [int32] is {!Int32}. *)
 
-  val float32 : float array -> t
-  (** [float32 arr] is a non-nullable float32 column from [arr].
+  val int64 : int t
+  (** [int64] is {!Int64}. *)
 
-      The resulting column has no null mask. All values, including [nan], are
-      treated as regular data. *)
+  val uint8 : int t
+  (** [uint8] is {!Uint8}. *)
 
-  val float64 : float array -> t
-  (** [float64 arr] is a non-nullable float64 column from [arr].
+  val uint16 : int t
+  (** [uint16] is {!Uint16}. *)
 
-      The resulting column has no null mask. All values, including [nan], are
-      treated as regular data. *)
+  val uint32 : int t
+  (** [uint32] is {!Uint32}. *)
 
-  val int32 : int32 array -> t
-  (** [int32 arr] is a non-nullable int32 column from [arr].
+  val uint64 : int t
+  (** [uint64] is {!Uint64}. *)
 
-      The resulting column has no null mask. *)
-
-  val int64 : int64 array -> t
-  (** [int64 arr] is a non-nullable int64 column from [arr].
-
-      The resulting column has no null mask. *)
-
-  val bool : bool array -> t
-  (** [bool arr] is a non-nullable boolean column from [arr].
-
-      All values are wrapped as [Some value], creating a column with no nulls.
-  *)
-
-  val string : string array -> t
-  (** [string arr] is a non-nullable string column from [arr].
-
-      All values are wrapped as [Some value], creating a column with no nulls.
-  *)
-
-  (** {2:nullable From option arrays (nullable)}
-
-      Create columns from option arrays with explicit null representation.
-      Numeric types attach a null mask (while storing placeholder values in the
-      tensor), whereas string and boolean types preserve the option structure.
-  *)
-
-  val float32_opt : float option array -> t
-  (** [float32_opt arr] is a nullable float32 column from [arr].
-
-      [None] values are recorded in the null mask. Placeholder [nan] values are
-      stored in the tensor; callers must rely on the mask (via option accessors
-      or {!module:Agg} helpers) to detect nulls. *)
-
-  val float64_opt : float option array -> t
-  (** [float64_opt arr] is a nullable float64 column from [arr].
-
-      [None] values are recorded in the null mask. Placeholder [nan] values are
-      stored in the tensor; callers must rely on the mask to detect nulls. *)
-
-  val int32_opt : int32 option array -> t
-  (** [int32_opt arr] is a nullable int32 column from [arr].
-
-      [None] values are recorded in the null mask. The tensor stores
-      [Int32.min_int] as placeholder, but the mask is authoritative when
-      checking for nulls. *)
-
-  val int64_opt : int64 option array -> t
-  (** [int64_opt arr] is a nullable int64 column from [arr].
-
-      [None] values are recorded in the null mask. The tensor stores
-      [Int64.min_int] as placeholder, but the mask is authoritative when
-      checking for nulls. *)
-
-  val bool_opt : bool option array -> t
-  (** [bool_opt arr] is a nullable boolean column from [arr].
-
-      The option array is used directly without conversion. O(1). *)
-
-  val string_opt : string option array -> t
-  (** [string_opt arr] is a nullable string column from [arr].
-
-      The option array is used directly without conversion. O(1). *)
-
-  (** {2:properties Properties} *)
-
-  val length : t -> int
-  (** [length col] is the number of elements in [col]. *)
-
-  val null_mask : t -> bool array option
-  (** [null_mask col] is the null mask of [col], if any.
-
-      Returns [Some mask] when an explicit mask was attached via a nullable
-      constructor, [None] otherwise. *)
-
-  val dtype :
-    t -> [ `Float32 | `Float64 | `Int32 | `Int64 | `Bool | `String | `Other ]
-  (** [dtype col] is the column's data type as a poly-variant tag. *)
-
-  val is_null_at : t -> int -> bool
-  (** [is_null_at col i] is [true] iff the value at index [i] is null.
-
-      Checks the null mask for numeric columns, or tests for [None] in
-      string/boolean columns. *)
-
-  (** {2:of_tensor From tensors} *)
-
-  val of_tensor : ('a, 'b) Nx.t -> t
-  (** [of_tensor t] is a non-nullable column from the 1D tensor [t].
-
-      The tensor's dtype is preserved. Existing payload values (including NaNs
-      or extremal integers) remain regular data.
-
-      Raises [Invalid_argument] if [t] is not 1D. O(1) — the tensor is used
-      directly without copying. *)
-
-  (** {2:nulls Null handling} *)
-
-  val has_nulls : t -> bool
-  (** [has_nulls col] is [true] iff [col] contains at least one null value.
-
-      Checks the null mask for numeric columns, or scans for [None] in
-      string/boolean columns. *)
-
-  val null_count : t -> int
-  (** [null_count col] is the number of null values in [col]. *)
-
-  val drop_nulls : t -> t
-  (** [drop_nulls col] is [col] with all null values removed.
-
-      The column type is preserved. *)
-
-  val fill_nulls : t -> value:t -> t
-  (** [fill_nulls col ~value] is [col] with null values replaced by the first
-      element of [value].
-
-      [value] must be a single-element column of the same type as [col]. Raises
-      [Invalid_argument] if column types don't match.
-
-      See also {!Talon.fill_null} for a more convenient scalar-based API at the
-      dataframe level. *)
-
-  (** {2:col_transforms Column transforms} *)
-
-  val cumsum : t -> t
-  (** [cumsum col] is the cumulative sum of [col], preserving the dtype. *)
-
-  val cumprod : t -> t
-  (** [cumprod col] is the cumulative product of [col], preserving the dtype. *)
-
-  val diff : ?periods:int -> t -> t
-  (** [diff ?periods col] is the element-wise difference between consecutive
-      values. [periods] defaults to [1]. *)
-
-  val pct_change : ?periods:int -> t -> t
-  (** [pct_change ?periods col] is the fractional change between consecutive
-      values. [nan] where the previous value is zero. [periods] defaults to [1].
-      Result is always float64. *)
-
-  val shift : periods:int -> t -> t
-  (** [shift ~periods col] is [col] with values shifted by [periods] positions.
-      Positive shifts move values down (inserting nulls at the top), negative
-      shifts move values up. *)
-
-  (** {2:extraction Extraction} *)
-
-  val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t option
-  (** [to_tensor dtype col] is the underlying tensor if [col] is numeric and its
-      dtype matches [dtype]. *)
-
-  val to_string_array : t -> string option array option
-  (** [to_string_array col] is the underlying string option array if [col] is a
-      string column. *)
-
-  val to_bool_array : t -> bool option array option
-  (** [to_bool_array col] is the underlying bool option array if [col] is a
-      boolean column. *)
-
-  val to_string_fn : ?null:string -> t -> int -> string
-  (** [to_string_fn ?null col] is a function that formats the value at index [i]
-      as a string.
-
-      The underlying array is extracted once so repeated calls are O(1). [null]
-      defaults to ["<null>"]. *)
+  val float16 : float t
+  (** [float16] is {!Float16}. *)
+
+  val float32 : float t
+  (** [float32] is {!Float32}. *)
+
+  val float64 : float t
+  (** [float64] is {!Float64}. *)
+
+  val string : string t
+  (** [string] is {!String}. *)
+
+  val binary : Binary.t t
+  (** [binary] is {!Binary}. *)
+
+  val categorical : string array -> string t
+  (** [categorical d] is {!Categorical} with a copy of the dictionary [d], which
+      may be empty.
+
+      Raises [Invalid_argument] if [d] holds a string twice or a string that is
+      not valid UTF-8, or holds more than 2{^ 31} - 1 strings. *)
+
+  val date : Time.date t
+  (** [date] is {!Date}. *)
+
+  val clock : unit_ -> Time.span t
+  (** [clock u] is {!Clock} in the unit [u]. *)
+
+  val duration : unit_ -> Time.span t
+  (** [duration u] is {!Duration} in the unit [u]. *)
+
+  val datetime : ?zone:string -> unit_ -> Time.instant t
+  (** [datetime ?zone u] is {!Datetime} in the unit [u], with the zone [zone],
+      or without a zone when [zone] is absent. The zone is not looked up.
+
+      Raises [Invalid_argument] if [zone] is empty or not valid UTF-8. *)
+
+  val list : 'a t -> 'a array t
+  (** [list t] is {!List} of [t]. *)
+
+  val record : (string * any) list -> Record.t t
+  (** [record fields] is {!Record} with [fields], in order. A record type may
+      have no fields, and a field's name may be empty.
+
+      Raises [Invalid_argument] if two fields have the same name, or a name is
+      not valid UTF-8. *)
+
+  val tensor : ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t t
+  (** [tensor dt shape] is {!Tensor} of [dt] with a copy of [shape].
+
+      Raises [Invalid_argument] if [shape] is empty or holds a negative
+      dimension. *)
+
+  val ext : name:string -> ?metadata:string -> 'a t -> ext t
+  (** [ext ~name ?metadata storage] is {!Ext} named [name], with [metadata]
+      (defaults to [""]) and stored as [storage]. Format readers build the types
+      of extension columns with it.
+
+      Raises [Invalid_argument] if [name] is empty or not valid UTF-8, or if
+      [storage] is an extension type. *)
+
+  (** {1:kinds Kinds} *)
+
+  val kind : 'a t -> 'a Kind.t
+  (** [kind t] is the kind that [t]'s cells read as: {!Kind.bool}, {!Kind.int}
+      for the integer types, {!Kind.float} for the float types, {!Kind.string}
+      for [String] and [Categorical], {!Kind.binary}, {!Kind.date}, {!Kind.span}
+      for [Clock] and [Duration], {!Kind.instant} for [Datetime],
+      [Kind.list (kind e)] for [List e], {!Record.kind} for every [Record], and
+      [Kind.tensor dt] for [Tensor (dt, _)]. For [Ext] it is the extension kind,
+      which reads nothing (see {!Kind.provably_equal}). *)
+
+  (** {1:values Values} *)
+
+  val holds : 'a t -> 'a -> bool
+  (** [holds t v] is [true] iff [t] holds [v], that is iff [v] can be stored as
+      [t]:
+      - an integer is in the type's range;
+      - a float is NaN, infinite, or rounds to a finite value at the type's
+        precision;
+      - a string is valid UTF-8, and for [Categorical] it is in the dictionary;
+      - an instant or a span is a whole number of the type's unit, and for
+        [Clock] it is at least zero and less than one day;
+      - each element of a list is held by the element type;
+      - a record has the type's field names in order, and each of its non-null
+        fields has the kind of the field's type and is held by it, an extension
+        field by its storage value;
+      - a tensor has the type's shape.
+
+      Booleans, byte strings and dates are always held. [Ext] has no values.
+      This is the test a literal passes when it takes the type of the operand it
+      meets, and the test values pass when they become a column.
+
+      [holds t] does its work on [t] once, such as indexing a categorical's
+      dictionary: apply it to [t] once and use the result for many values. *)
+
+  val compare_value : 'a t -> 'a -> 'a -> int
+  (** [compare_value t v0 v1] orders [v0] and [v1] by talon's total order on the
+      values of [t], the order that sorting, comparisons and grouping use:
+      - floats order [neg_infinity] < … < [infinity] < [nan]. [-0.] equals [0.],
+        and every NaN equals every other;
+      - integers, dates, spans and instants order by value;
+      - [false] comes before [true];
+      - strings and byte strings order by their bytes, which for UTF-8 text is
+        code point order;
+      - [Categorical] values order by their position in the dictionary;
+      - lists order lexicographically, a list coming before every list it is a
+        proper prefix of;
+      - records order lexicographically by their fields, in the type's order;
+      - tensors order lexicographically by their elements in row-major order:
+        floats as above, complex numbers by their real then their imaginary
+        part, each as a float, and other elements by value, unsigned integers as
+        unsigned.
+
+      A null record field comes after every value and equals another null field;
+      talon's order puts nulls last at the top level and inside lists too, where
+      this function does not see them. An extension field orders by its storage
+      value. That order serves key identity; sort keys and ordering reductions
+      over a type that is or contains an extension not declared ordered are
+      refused when the verb is applied.
+
+      {b Key identity.} Two non-null values are the same key iff
+      [compare_value t v0 v1 = 0]. Null is one more key, the same as itself
+      only.
+
+      [compare_value t] does its work on [t] once, such as indexing a
+      categorical's dictionary: apply it to [t] once and use the result for many
+      comparisons.
+
+      Raises [Invalid_argument] if a [Categorical] value is not in the
+      dictionary, a record does not have the type's field names in order or
+      holds a non-null field of another kind, or a tensor does not have the
+      type's shape. *)
+
+  (** {1:operands Operands} *)
+
+  val common : 'a t list -> 'a t option
+  (** [common ts] is the type at which operands of the types [ts] meet in an
+      operation, and [None] if they do not meet or [ts] is empty. The result
+      does not depend on the order of [ts]. Scalar types meet at the one of them
+      that contains all the others: a type contains another when it can store
+      every value the other can store, with the same meaning. Lists meet at the
+      list of their elements' common type, and records with the same field names
+      in the same order at the record of their fields' common types. One type
+      contains another when:
+      - they are equal;
+      - [int8] in [int16] in [int32] in [int64], [uint8] in [uint16] in [uint32]
+        in [uint64], and [uint8] in [int16], [uint16] in [int32], [uint32] in
+        [int64];
+      - [float16] in [float32] in [float64];
+      - a [Categorical] in [String], and in a categorical whose dictionary
+        begins with its own;
+      - a [Clock] in a clock of a finer unit.
+
+      So [int8] and [uint8] do not meet, while [int8], [uint8] and [int16] meet
+      at [int16]. [uint64] does not meet [int64], although every [uint64] that
+      OCaml reads is an [int64]. [Clock] and [Duration] never meet, and neither
+      do datetimes or durations that differ in unit, since a coarser unit stores
+      ticks a finer one cannot, or in zone: cast first. *)
+
+  (** {1:predicates Equality and formatting} *)
+
+  val equal : 'a t -> 'b t -> bool
+  (** [equal t0 t1] is [true] iff [t0] and [t1] are the same type: the same
+      constructor with equal arguments. Dictionaries are equal when they hold
+      the same strings in the same order, zones when they are the same string,
+      and record types when they have the same field names with equal types in
+      the same order. *)
+
+  val pp : Format.formatter -> 'a t -> unit
+  (** [pp ppf t] formats [t] as schemas and plans show it:
+      - [bool], [int8] to [uint64], [float16] to [float64], [string], [binary]
+        and [date];
+      - [categorical["AA", "B6"]], with at most the first eight strings of the
+        dictionary, followed by an ellipsis and the dictionary's size when it
+        holds more: [categorical["a", "b", "c", "d", "e", "f", "g", "h", … 26]];
+      - [clock[ns]], [duration[ms]], [datetime[us]] and [datetime[us, UTC]],
+        with the units [s], [ms], [us] and [ns];
+      - [list[float64]], [record[carrier string, delay float64]] and
+        [tensor[float32, 3×4]];
+      - [ext[ymir.epoch, float64]], and [ext[units.mass "kg", float64]] when the
+        metadata is not empty.
+
+      A field name, an extension name or a zone formats as is when it is
+      non-empty and holds no ASCII space, comma, bracket, double quote,
+      backslash or ASCII control byte. Otherwise it is quoted, as categories and
+      metadata always are: between double quotes, with double quotes and
+      backslashes preceded by a backslash, and control bytes and bytes that are
+      not part of valid UTF-8 written as [\x] and two hexadecimal digits. *)
+
+  val pp_name : Format.formatter -> string -> unit
+  (** [pp_name ppf n] formats the name [n] of a field or a column as {!pp}
+      formats a field name: as is, or quoted when it must be. Formats print
+      their columns' names with it. *)
+
+  val pp_quoted : Format.formatter -> string -> unit
+  (** [pp_quoted ppf s] formats [s] quoted, as {!pp} quotes a category. Messages
+      quote names and texts with it. *)
+end
+
+module Schema : sig
+  (** Schemas: the names and types of a table's columns.
+
+      A schema is an ordered list of columns, each a name and a {!Type.t}, with
+      distinct names. Tables, queries and format descriptions each have one, and
+      a query's is known before any data is read. *)
+
+  type t
+  (** The type for schemas. *)
+
+  val v : (string * Type.any) list -> t
+  (** [v columns] is the schema of [columns], in order. A schema may have no
+      columns, and a column's name may be empty.
+
+      Raises [Invalid_argument] if two columns have the same name, or a name is
+      not valid UTF-8. *)
+
+  val columns : t -> (string * Type.any) list
+  (** [columns s] is the columns of [s], in order. [columns (v cs)] is [cs]. *)
+
+  val find : t -> string -> Type.any option
+  (** [find s name] is the type of the column [name] of [s], or [None] if [s]
+      has no such column. It costs O(log n) for a schema of n columns. *)
+
+  (** {1:comparing Comparing} *)
+
+  val equal : t -> t -> bool
+  (** [equal s0 s1] is [true] iff [s0] and [s1] have the same names with equal
+      types ({!Type.equal}) in the same order. *)
+
+  (** The type for the differences between two schemas [s0] and [s1]. *)
+  type change =
+    | Added of string * Type.any
+        (** [Added (name, t)]: [s1] has the column [name] of type [t], and [s0]
+            has none. *)
+    | Removed of string * Type.any
+        (** [Removed (name, t)]: [s0] has the column [name] of type [t], and
+            [s1] has none. *)
+    | Retyped of string * Type.any * Type.any
+        (** [Retyped (name, t0, t1)]: the column [name] has the type [t0] in
+            [s0] and a different type [t1] in [s1]. *)
+
+  val diff : t -> t -> change list
+  (** [diff s0 s1] is the changes from [s0] to [s1]: first the {!Removed} and
+      {!Retyped} columns in the order of [s0], then the {!Added} ones in the
+      order of [s1]. It ignores order, so it is empty iff [s0] and [s1] have the
+      same names with equal types, in any order; then [equal s0 s1] holds iff
+      the order is also the same. *)
+
+  (** {1:fmt Formatting} *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp] formats a column for inspection. Shows the dtype, length, and up to 5
-      values. *)
+  (** [pp ppf s] formats the columns of [s] in order, separated by commas, each
+      as its name and its type: [carrier string, delay float64]. Names are
+      quoted as {!Type.pp} quotes field names, and types format with {!Type.pp}.
+      The empty schema formats as nothing. *)
 end
 
-(** {1:creation DataFrame creation} *)
-
-val empty : t
-(** [empty] is an empty dataframe with no rows or columns.
-
-    Neutral element for {!concat}. *)
-
-val create : (string * Col.t) list -> t
-(** [create pairs] is a dataframe from [(name, column)] pairs.
-
-    Column names must be unique (case-sensitive) and all columns must have the
-    same length.
-
-    Raises [Invalid_argument] if duplicate column names exist or column lengths
-    differ. *)
-
-val of_tensors : ?names:string list -> ('a, 'b) Nx.t list -> t
-(** [of_tensors ?names tensors] is a dataframe from 1D tensors.
-
-    All tensors must have the same shape and dtype. [names] defaults to
-    ["col0"], ["col1"], etc.
-
-    Raises [Invalid_argument] if tensors have inconsistent shapes, any tensor is
-    not 1D, names are not unique, or the wrong number of names is provided. *)
-
-val of_nx : ?names:string list -> ('a, 'b) Nx.t -> t
-(** [of_nx ?names tensor] is a dataframe from a 2D tensor.
-
-    Each column of the tensor becomes a dataframe column. [names] defaults to
-    ["col0"], ["col1"], etc.
-
-    Raises [Invalid_argument] if [tensor] is not 2D or names are not unique. *)
-
-(** {1:inspection Shape and inspection} *)
-
-val shape : t -> int * int
-(** [shape df] is [(rows, columns)]. *)
-
-val num_rows : t -> int
-(** [num_rows df] is the number of rows in [df]. *)
-
-val num_columns : t -> int
-(** [num_columns df] is the number of columns in [df]. *)
-
-val column_names : t -> string list
-(** [column_names df] is the column names of [df] in order. *)
-
-val column_types :
-  t ->
-  (string
-  * [ `Float32 | `Float64 | `Int32 | `Int64 | `Bool | `String | `Other ])
-  list
-(** [column_types df] is the column names paired with their detected types. *)
-
-val select_columns :
-  t -> [ `Numeric | `Float | `Int | `Bool | `String ] -> string list
-(** [select_columns df category] is the column names matching [category].
-
-    Categories:
-    - [`Numeric]: all numeric types (float32, float64, int32, int64)
-    - [`Float]: floating-point types only (float32, float64)
-    - [`Int]: integer types only (int32, int64)
-    - [`Bool]: boolean columns
-    - [`String]: string columns *)
-
-val is_empty : t -> bool
-(** [is_empty df] is [true] iff [df] has no rows.
-
-    {b Note.} A dataframe can have columns but zero rows and still be considered
-    empty. *)
-
-(** {1:col_access Column access and manipulation} *)
-
-val get_column : t -> string -> Col.t option
-(** [get_column df name] is the column named [name] in [df], if any. *)
-
-val get_column_exn : t -> string -> Col.t
-(** [get_column_exn df name] is the column named [name] in [df].
-
-    Raises [Not_found] if the column does not exist. *)
-
-val to_array : ('a, 'b) Nx.dtype -> t -> string -> 'a array option
-(** [to_array dtype df name] is the numeric column [name] as a typed array if
-    the column exists and matches [dtype].
-
-    Null values retain their placeholder representation (NaN for floats,
-    sentinel values for integers). See {!to_opt_array} to distinguish nulls from
-    data. *)
-
-val to_opt_array : ('a, 'b) Nx.dtype -> t -> string -> 'a option array option
-(** [to_opt_array dtype df name] is the numeric column [name] as an option array
-    if the column exists and matches [dtype]. [None] for null elements, [Some v]
-    for present values. *)
-
-val to_bool_array : t -> string -> bool option array option
-(** [to_bool_array df name] is the bool option array for column [name] if it
-    exists and is bool type. *)
-
-val to_string_array : t -> string -> string option array option
-(** [to_string_array df name] is the string option array for column [name] if it
-    exists and is string type. *)
-
-val has_column : t -> string -> bool
-(** [has_column df name] is [true] iff [df] has a column named [name]. *)
-
-val add_column : t -> string -> Col.t -> t
-(** [add_column df name col] is [df] with column [name] added or replaced.
-
-    Raises [Invalid_argument] if [Col.length col] differs from [num_rows df]. *)
-
-val drop_column : t -> string -> t
-(** [drop_column df name] is [df] without column [name].
-
-    {b Note.} Returns [df] unchanged if the column does not exist. *)
-
-val drop_columns : t -> string list -> t
-(** [drop_columns df names] is [df] without the named columns.
-
-    Non-existent columns are silently ignored. *)
-
-val rename_column : t -> old_name:string -> new_name:string -> t
-(** [rename_column df ~old_name ~new_name] is [df] with column [old_name]
-    renamed to [new_name].
-
-    Raises [Not_found] if [old_name] does not exist. Raises [Invalid_argument]
-    if [new_name] already exists as a different column. *)
-
-val select : ?strict:bool -> t -> string list -> t
-(** [select ?strict df names] is the sub-dataframe with only the named columns,
-    in the order given by [names].
-
-    [strict] defaults to [true]: raises [Not_found] if any name is missing. When
-    [false], missing columns are silently skipped. *)
-
-val reorder_columns : t -> string list -> t
-(** [reorder_columns df names] is [df] with columns reordered so that [names]
-    appear first (in that order), followed by any remaining columns in their
-    original relative order.
-
-    Raises [Not_found] if any name in the list does not exist. *)
-
-(** {1:row_ops Row-wise operations}
-
-    The {!Row} module provides a declarative way to express computations over
-    dataframe rows. *)
-
-module Row : sig
-  (** Row-wise computations using an applicative interface. *)
-
-  (** {2:applicative Applicative interface} *)
-
-  val return : 'a -> 'a row
-  (** [return x] is a computation that produces [x] for every row. *)
-
-  val apply : ('a -> 'b) row -> 'a row -> 'b row
-  (** [apply f x] is the computation that applies [f] to [x] for each row. *)
-
-  val map : 'a row -> f:('a -> 'b) -> 'b row
-  (** [map x ~f] is the computation that applies [f] to each row's value from
-      [x]. *)
-
-  val map2 : 'a row -> 'b row -> f:('a -> 'b -> 'c) -> 'c row
-  (** [map2 x y ~f] is the computation that applies [f] to corresponding values
-      from [x] and [y]. *)
-
-  val map3 : 'a row -> 'b row -> 'c row -> f:('a -> 'b -> 'c -> 'd) -> 'd row
-  (** [map3 x y z ~f] combines three computations with [f]. *)
-
-  val both : 'a row -> 'b row -> ('a * 'b) row
-  (** [both x y] is the computation that pairs values from [x] and [y]. *)
-
-  (** {2:accessors Column accessors} *)
-
-  val float32 : string -> float row
-  (** [float32 name] extracts float32 values from column [name].
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not float32 type. *)
-
-  val float64 : string -> float row
-  (** [float64 name] extracts float64 values from column [name].
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not float64 type. *)
-
-  val int32 : string -> int32 row
-  (** [int32 name] extracts int32 values from column [name].
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not int32 type. *)
-
-  val int64 : string -> int64 row
-  (** [int64 name] extracts int64 values from column [name].
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not int64 type. *)
-
-  val string : string -> string row
-  (** [string name] extracts string values from column [name].
-
-      {b Note.} Null values are converted to empty strings.
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not string type. *)
-
-  val bool : string -> bool row
-  (** [bool name] extracts boolean values from column [name].
-
-      {b Note.} Null values are converted to [false].
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not boolean type. *)
-
-  val number : string -> float row
-  (** [number name] extracts numeric values from column [name], coercing all
-      numeric types to float.
-
-      {b Note.} Null values become [nan].
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not a numeric type. *)
-
-  (** {2:row_info Row information} *)
-
-  val index : int row
-  (** [index] is the current row index (0-based). *)
-
-  val sequence : 'a row list -> 'a list row
-  (** [sequence xs] is the computation that collects values from all
-      computations in [xs] into a list. *)
-
-  val fold_list : 'a row list -> init:'b -> f:('b -> 'a -> 'b) -> 'b row
-  (** [fold_list xs ~init ~f] folds [f] over the computations in [xs] without
-      creating an intermediate list. *)
-
-  (** {2:opt_accessors Option-based accessors}
-
-      These accessors return [None] for null values instead of using placeholder
-      values. Use these when you need to distinguish genuine values from missing
-      data. *)
-
-  val float32_opt : string -> float option row
-  (** [float32_opt name] extracts float32 values as options from column [name].
-      [None] for null values.
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not float32 type. *)
-
-  val float64_opt : string -> float option row
-  (** [float64_opt name] extracts float64 values as options from column [name].
-      [None] for null values.
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not float64 type. *)
-
-  val int32_opt : string -> int32 option row
-  (** [int32_opt name] extracts int32 values as options from column [name].
-      [None] for null values.
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not int32 type. *)
-
-  val int64_opt : string -> int64 option row
-  (** [int64_opt name] extracts int64 values as options from column [name].
-      [None] for null values.
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not int64 type. *)
-
-  val string_opt : string -> string option row
-  (** [string_opt name] extracts string values as options from column [name].
-      [None] for null values.
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not string type. *)
-
-  val bool_opt : string -> bool option row
-  (** [bool_opt name] extracts boolean values as options from column [name].
-      [None] for null values.
-
-      Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-      if the column is not boolean type. *)
+module Column : sig
+  (** Columns: one typed array of values, some of them null.
+
+      A column is an Arrow array over nx buffers. Its {e validity} is a bitmap
+      ({!Nx_bits.t}) with the bit of each row that holds a value set; it is
+      absent when no row is null. Its values are laid out by its type:
+      - one element per row of a primitive nx array: [bool] (one byte per
+        value), the integer and float types, [int32] positions in the dictionary
+        for categoricals, [int32] days for dates and [int64] ticks for clocks,
+        durations and datetimes. A tensor column is one [(rows, …shape)] array;
+      - offsets into a child for byte strings, text and lists: text is a list of
+        bytes;
+      - one child per field for records.
+
+      An extension column is laid out as its storage. The values under a null
+      are unspecified; talon writes zeros, and empty rows, under the nulls it
+      makes. Columns are immutable, and share their buffers with the tensors and
+      layouts that read them. *)
+
+  type t
+  (** The type for columns. *)
+
+  val type_ : t -> Type.any
+  (** [type_ c] is the type of [c]'s values. *)
+
+  val length : t -> int
+  (** [length c] is the number of rows of [c]. *)
+
+  val null_count : t -> int
+  (** [null_count c] is the number of null rows of [c]. It costs O(1). *)
+
+  (** {1:ocaml OCaml values} *)
+
+  val v : 'a Type.t -> 'a array -> t
+  (** [v ty vs] is the column of type [ty] holding [vs], without nulls. A
+      [float32] or [float16] value is stored rounded to the nearest value of the
+      type, ties to even.
+
+      Raises [Invalid_argument] naming the row if [ty] does not hold a value of
+      [vs] ({!Type.holds}): text that is not UTF-8, a string outside a
+      categorical's dictionary, an integer outside the type's range, a span that
+      is not a whole number of the unit, a record of other fields. An extension
+      type has no values, so a column of it holds only nulls. *)
+
+  val of_options : 'a Type.t -> 'a option array -> t
+  (** [of_options ty vs] is like {!v}, with a null for each [None]. *)
+
+  val values : 'a Kind.t -> t -> 'a array
+  (** [values k c] is [c]'s values read as [k].
+
+      Raises [Invalid_argument] if [k] does not read [c]'s type (see
+      {!Kind.provably_equal}: no kind reads an extension column), if a row of
+      [c] is null, or, naming the row, if a value is outside what [k] reads: an
+      integer outside OCaml's [int], an instant or a span outside {!Time}'s
+      range, a list with a null element. *)
+
+  val options : 'a Kind.t -> t -> 'a option array
+  (** [options k c] is like {!values}, with [None] for each null. *)
+
+  (** {1:tensors Tensors and ragged arrays} *)
+
+  val of_tensor : ?validity:Nx_bits.t -> ('a, 'b) Nx.t -> t
+  (** [of_tensor ?validity x] is the column of [x]'s rows, without a copy:
+      - for a 1-D [x], of the type of [x]'s dtype: [bool], [int8] to [uint64],
+        [float16] to [float64];
+      - for [x] of shape [(n, …shape)], a tensor column of [x]'s dtype and cell
+        shape [shape].
+
+      [validity] marks the rows that hold a value; it defaults to every row.
+
+      Raises [Invalid_argument] if [x] is a scalar, if [x] is 1-D of a dtype
+      that no scalar type stores ([bfloat16], the float8 and int4 dtypes,
+      complex), or if [validity]'s length is not [x]'s rows. *)
+
+  val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
+  (** [to_tensor dt c] is [c]'s values as stored, in O(1): numbers and booleans,
+      the days or ticks of temporal values, the codes of a categorical (its
+      dictionary is in its type), and [(rows, …shape)] for a tensor column. It
+      shares [c]'s buffer, which must not be written.
+
+      Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
+      converts the result), if [c] is not stored one element per row, or if [c]
+      has a null. *)
+
+  val validity : t -> Nx_bits.t option
+  (** [validity c] is [c]'s validity, [None] iff [c] has no null. *)
+
+  val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
+  (** [ragged dt c] is [c]'s rows as a ragged array without a copy, one row per
+      row of [c]: a list column's offsets and its elements, stored as [dt], or a
+      [string] or [binary] column's offsets and bytes, [dt] being {!Nx.uint8}.
+      An extension of such a type is read as its storage. It reads the offsets
+      once, as {!Nx_ragged.v} checks them, and no element. It shares [c]'s
+      buffers, which must not be written.
+
+      Raises [Invalid_argument] if [c] is neither a list whose elements are
+      stored as [dt] nor text or bytes with [dt] {!Nx.uint8}, or if a row of [c]
+      or an element of a row is null. *)
+
+  val of_ragged : ?validity:Nx_bits.t -> ('a, 'b) Nx_ragged.t -> t
+  (** [of_ragged ?validity r] is the list column whose rows are [r]'s rows, null
+      where [validity] has no bit set, without a copy: a [list] of the element
+      type {!of_tensor} gives [r]'s values, such as [list[int32]] for
+      {!Nx.int32} values, and of a tensor type for values of more than one axis.
+      [validity] defaults to every row valid. [ragged dt (of_ragged r)] has
+      [r]'s rows.
+
+      Raises [Invalid_argument] if [validity]'s length is not [r]'s number of
+      rows, or if [r]'s dtype has no talon type, as {!of_tensor} does. *)
+
+  (** {1:layout Layouts}
+
+      A layout is a column's Arrow buffers, as formats read and write them. *)
+
+  (** The type for layouts. *)
+  type layout =
+    | Fixed of { validity : Nx_bits.t option; values : Nx.packed }
+        (** One element per row, or one cell for a tensor column. *)
+    | Varsize of {
+        validity : Nx_bits.t option;
+        offsets : Nx.int64_t;
+        child : t;
+      }
+        (** Row [r] is the child's rows [offsets.{r}] to [offsets.{r + 1} - 1]:
+            the elements of a list, or, for [string] and [binary], the bytes, a
+            [uint8] child without nulls. *)
+    | Children of {
+        validity : Nx_bits.t option;
+        length : int;
+        fields : (string * t) list;
+      }
+        (** [length] rows, with one child per field of a record, in the record
+            type's order. *)
+
+  val layout : t -> layout
+  (** [layout c] is [c]'s layout, in O(1). *)
+
+  val of_layout : Type.any -> layout -> (t, int * string) result
+  (** [of_layout ty l] is the column of type [ty] laid out as [l], without a
+      copy, or [Error (row, reason)] for the first row whose value [ty] does not
+      hold: text that is not UTF-8, a code outside a categorical's dictionary, a
+      time of day outside the day. A row is checked only where it is not null.
+      [reason] is a phrase, as in [invalid UTF-8 at byte 3]. A child holds its
+      own values, so only [l]'s own values are checked.
+
+      Raises [Invalid_argument] if [l] does not lay out [ty]: values of another
+      dtype or cell shape than [ty]'s storage, a validity of another length,
+      offsets that are not 1-D, start below [0], decrease or reach past the
+      child, a child of another type (for text, a [uint8] column with a null),
+      or fields of other names, types or lengths than [ty]'s. *)
+
+  val parse : Type.any -> t -> (t, int * string) result
+  (** [parse ty c] is the column of type [ty] whose rows are the values that the
+      rows of the [string] or [binary] column [c] write, null where [c] is null,
+      or [Error (row, reason)] at the first non-null row that is not [ty]'s text
+      or holds a value [ty] does not, [reason] a phrase such as [not a number].
+      Formats that read text call it, mapping [row] to their own location. The
+      text of each type is:
+      - [bool]: [true] or [false];
+      - [int8] to [uint64]: a decimal integer with an optional sign, in the
+        type's range;
+      - [float16] to [float64]: a decimal number with an optional sign, digits
+        on at least one side of an optional point and an optional exponent, or
+        [inf], [infinity] or [nan] in any case with an optional sign, rounded to
+        the nearest value of the type, ties to even, beyond its range to an
+        infinity;
+      - [string]: the bytes, valid UTF-8; [binary]: the bytes;
+      - a categorical: one of the dictionary's strings;
+      - [date]: [YYYY-MM-DD], a year outside [0000] to [9999] signed and of at
+        least four digits, as {!Time.Date.pp} writes it: [-0044-03-15];
+      - [datetime[u]] and [datetime[u, z]]: a date of any year, [T] or a space,
+        [hh:mm:ss] and an optional fraction of one to nine digits, then, with a
+        zone only, [Z] or [±hh:mm]; a whole number of [u] in [u]'s range, the
+        int64 ticks, which bound the year.
+
+      Raises [Invalid_argument] if [c] is neither [string] nor [binary], or [ty]
+      is another type. *)
+
+  val print : t -> t
+  (** [print c] is the column of the canonical texts of [c]'s rows, null where
+      [c] is null, which {!parse} reads back: [parse (type_ c) (print c)] is
+      [c]. Formats that write text call it. It is [c] itself for [string] and
+      [binary], and a [string] column otherwise. Each value is written in the
+      text {!parse} reads:
+      - a float in the fewest significant digits that read back to it at its
+        type's width, without an exponent from [1e-7] up to [1e21] ([150],
+        [0.0015], [-0], [1e+21]), or [nan], [inf] or [-inf];
+      - a datetime with the fewest fraction digits that are exact, and [Z] when
+        its type has a zone, every tick of its unit included, past
+        {!Time.Date}'s years;
+      - an integer in full, past OCaml's [int] included.
+
+      Raises [Invalid_argument] if [c]'s type is not one {!parse} reads. *)
 end
 
-(** {1:filtering Row filtering and transformation} *)
+(** {1:tables Tables} *)
 
-val head : ?n:int -> t -> t
-(** [head ?n df] is the first [n] rows of [df]. [n] defaults to [5].
+val v : ?rows:int -> (string * Column.t) list -> t
+(** [v ?rows cs] is the table of the columns [cs], in order, as one batch of
+    [rows] rows. [rows] defaults to the length of the columns, and gives the
+    rows of a table without columns, such as the batch a source yields for a
+    request that reads none.
 
-    If [n] exceeds the number of rows, returns the entire dataframe. *)
+    Raises [Invalid_argument] if [cs] is empty and [rows] is not given, if
+    [rows] is negative or is not the columns' length, if two columns have the
+    same name, if a name is not valid UTF-8, or if the columns have different
+    lengths. *)
 
-val tail : ?n:int -> t -> t
-(** [tail ?n df] is the last [n] rows of [df]. [n] defaults to [5].
+val of_batches : t list -> t
+(** [of_batches ts] is the rows of [ts] one after the other, without a copy, in
+    O(number of batches). Each table's batches become the result's.
 
-    If [n] exceeds the number of rows, returns the entire dataframe. *)
+    Raises [Invalid_argument] if [ts] is empty or the tables' schemas differ
+    ({!Schema.equal}). *)
 
-val slice : t -> start:int -> stop:int -> t
-(** [slice df ~start ~stop] is the rows from [start] (inclusive) to [stop]
-    (exclusive).
+val batches : t -> t list
+(** [batches t] is [t]'s batches, each a table of one batch, in order. A table
+    without rows has none. *)
 
-    Raises [Invalid_argument] if [start < 0], [stop < start], or indices are out
-    of bounds. *)
+val schema : t -> Schema.t
+(** [schema t] is the names and types of [t]'s columns. *)
 
-val take : t -> int array -> t
-(** [take df indices] is the rows of [df] at the given 0-based [indices].
+val rows : t -> int
+(** [rows t] is the number of rows of [t]. *)
 
-    Indices may repeat (to duplicate rows) and need not be sorted.
+val column : t -> string -> Column.t
+(** [column t name] is the column [name] of [t]: its own when [t] is one batch
+    of a column whose buffers hold exactly its rows, else one copy that holds
+    exactly them.
 
-    Raises [Invalid_argument] if any index is out of bounds. *)
+    Raises [Invalid_argument] if [t] has no column [name]. *)
 
-val sample : ?n:int -> ?frac:float -> ?replace:bool -> ?seed:int -> t -> t
-(** [sample ?n ?frac ?replace ?seed df] is a random sample of rows from [df].
+val take : Nx.int64_t -> t -> t
+(** [take indices t] is the rows of [t] at [indices], in order, as one batch:
+    [take (Nx.Rng.permutation key (rows t)) t] shuffles every column.
 
-    Exactly one of [n] or [frac] must be specified:
-    - [n]: exact number of rows to sample.
-    - [frac]: fraction of rows to sample (in \[[0];[1]\]).
-    - [replace] defaults to [false].
-    - [seed]: random seed for reproducible sampling.
+    Raises [Invalid_argument] if [indices] is not 1-D or holds an index outside
+    \[[0];[rows t - 1]\]. *)
 
-    Raises [Invalid_argument] if both [n] and [frac] are specified, neither is
-    specified, [frac] is outside \[[0];[1]\], or [n > num_rows df] when
-    [replace] is [false]. *)
+val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b) Nx.t
+(** [to_tensor dt names t] is the [(rows t, List.length names)] matrix whose
+    column [j] is the column [List.nth names j] of [t], each value converted to
+    [dt] as {!Nx.cast} converts it. It is the one copy a columnar layout forces.
+    The columns are numeric or boolean, and have no null.
 
-val filter : t -> bool array -> t
-(** [filter df mask] is the rows of [df] where [mask] is [true].
+    Raises [Invalid_argument] if a name is not a column of [t], if a column is
+    neither numeric nor boolean, or has a null. *)
 
-    Raises [Invalid_argument] if [Array.length mask] differs from [num_rows df].
-*)
+val equal : t -> t -> bool
+(** [equal t0 t1] is [true] iff [t0] and [t1] have equal schemas and the same
+    keys row by row, by key identity ({!Type.compare_value}, null being one more
+    key), whatever their batches. *)
 
-val filter_by : t -> bool row -> t
-(** [filter_by df pred] is the rows of [df] where [pred] is [true].
+(** {1:display Display} *)
 
-    Raises the same exceptions as the column accessors used in [pred]. *)
+type limits = {
+  head : int;  (** The rows shown from the start. *)
+  tail : int;  (** The rows shown from the end. *)
+  columns : int;  (** The columns shown, from the first. *)
+  width : int;  (** The widest cell, in Unicode scalar values. *)
+}
+(** The type for display limits. A table of at most [head + tail] rows shows all
+    of them. *)
 
-val drop_nulls : ?subset:string list -> t -> t
-(** [drop_nulls ?subset df] is [df] with rows containing null values removed.
+val limits : limits
+(** [limits] is [{ head = 5; tail = 5; columns = 12; width = 32 }], the limits
+    of {!pp}. *)
 
-    When [subset] is provided, only those columns are checked for nulls.
-    Otherwise all columns are checked. A row is dropped if any checked column is
-    null at that position. *)
+val pp : Format.formatter -> t -> unit
+(** [pp] is [pp_with limits]. *)
 
-val fill_null :
-  t ->
-  string ->
-  with_value:
-    [ `Float of float
-    | `Int32 of int32
-    | `Int64 of int64
-    | `String of string
-    | `Bool of bool ] ->
-  t
-(** [fill_null df col_name ~with_value] is [df] with null values in column
-    [col_name] replaced by [with_value].
+val pp_with : limits -> Format.formatter -> t -> unit
+(** [pp_with l ppf t] formats [t] for people, reading only the rows it shows.
+    With [{ limits with head = 2; tail = 1 }]:
+    {v
+    table 16 rows × 4 columns
+     carrier  mean_delay  flights  name
+     string   float64     int64    string
+     OO          58.0000        9  ∅
+     F9          53.4214      280  Frontier Airlines Inc.
+     ⋮
+     HA          29.0000        1  Hawaiian Airlines Inc.
+     13 rows not shown
+    v}
+    - a header, then the names and types of the shown columns;
+    - all rows, or the first [l.head], a [⋮] line, the last [l.tail], and the
+      number of rows not shown;
+    - with more than [l.columns] columns, a last line naming those not shown.
 
-    The value type must match the column type. Raises [Invalid_argument] if the
-    column does not exist or the types do not match. *)
+    A null is [∅]. Text shows as it reads, its control characters and bytes that
+    are not UTF-8 escaped as {!Type.pp_quoted} escapes them, cut with […] past
+    [l.width] scalar values. Numbers are right-aligned; the floats of a column
+    show with one number of decimals, the fewest, up to six, that give each
+    shown value six significant digits, or in scientific notation when a shown
+    value needs it. Other values show in the text that {!Column.parse} reads,
+    such as [2024-03-15T09:30:00.5Z] for a zoned datetime; durations and clocks
+    as {!Time.Span.pp} formats them, lists as OCaml lists, and records and
+    tensors as [<record>] and [<tensor>].
 
-val drop_duplicates : ?subset:string list -> t -> t
-(** [drop_duplicates ?subset df] is [df] with duplicate rows removed, keeping
-    the first occurrence.
+    Raises [Invalid_argument] if a limit is negative or [l.width] is [0]. *)
 
-    When [subset] is provided, only those columns are considered for equality.
-    Raises [Not_found] if any column in [subset] does not exist. *)
+module Error : sig
+  (** Failures found in data and in the environment.
 
-val concat : axis:[ `Rows | `Columns ] -> t list -> t
-(** [concat ~axis dfs] is the concatenation of [dfs].
+      Reading a file that is missing or malformed, or data that breaks a query's
+      contract, is not a programming error, so talon returns it as [Error e],
+      where [e] says what failed and where it was found: in which file, at which
+      line and column of its text, in which row group, at which bytes, and on
+      which raw text. Formats and sources build errors with {!v}; programs print
+      them with {!pp}. *)
 
-    - [`Rows]: all dataframes must have the same columns; rows are stacked.
-    - [`Columns]: all dataframes must have the same number of rows; columns are
-      combined. Column names must be unique across dataframes.
+  type t = Error.t
+  (** The type for errors. An error is a message and the places it was found at,
+      each of which may be unknown. *)
 
-    Raises [Invalid_argument] if [dfs] is empty or the dataframes are
-    incompatible for the chosen axis. *)
+  val v :
+    ?file:string ->
+    ?line:int ->
+    ?column:int ->
+    ?row_group:int ->
+    ?bytes:int * int ->
+    ?text:string ->
+    string ->
+    t
+  (** [v ?file ?line ?column ?row_group ?bytes ?text msg] is the error [msg],
+      found:
+      - in [file], a path as the program named it;
+      - at [line] of [file]'s text and at [column] of that line, both counted
+        from [1], the column in bytes;
+      - in the row group [row_group] of a Parquet file, counted from [0];
+      - at the bytes [bytes] of [file], [(first, last)], the zero-based
+        positions of the first and the last byte of the range, both included;
+      - on [text], the raw bytes that failed to read, which need not be valid
+        UTF-8.
 
-val map : t -> ('a, 'b) Nx.dtype -> 'a row -> ('a, 'b) Nx.t
-(** [map df dtype f] is a 1D tensor of the given [dtype] obtained by applying
-    [f] to each row of [df]. *)
+      [msg] says what failed and, when there is one, how to fix it, in one or
+      more sentences: [cannot read as float64. Declare the null token (~nulls).]
 
-val with_column : t -> string -> ('a, 'b) Nx.dtype -> 'a row -> t
-(** [with_column df name dtype f] is [df] with a column [name] whose values are
-    produced by applying [f] to each row. If a column named [name] already
-    exists, it is replaced. *)
+      Raises [Invalid_argument] if [line < 1], [column < 1], [column] is given
+      without [line], [row_group < 0], or [bytes] is given and [first < 0] or
+      [last < first]. *)
 
-val with_string_column : t -> string -> string row -> t
-(** [with_string_column df name f] is [df] with a string column [name] whose
-    values are produced by [f]. *)
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf e] formats [e] for people: the places [e] was found at, coarsest
+      first, then its message, separated by [": "]:
+      - the file, followed by [:line] and [:line:column] as compilers write
+        them, [flights.csv:48213:12]; without a file, [line 48213] or
+        [line 48213, column 12];
+      - the row group, [row group 3];
+      - the bytes, [bytes 106-113], or [byte 106] for a range of one byte;
+      - the text, between double quotes, with double quotes and backslashes
+        preceded by a backslash. Each byte of a control character (U+0000 to
+        U+001F, U+007F to U+009F), of a bidirectional formatting control (U+202A
+        to U+202E, U+2066 to U+2069), which could reorder the text around it,
+        and each byte that is not part of valid UTF-8, is written as [\x] and
+        two hexadecimal digits. A text longer than 64 bytes is cut before the
+        first byte past its 64th, or before a valid UTF-8 sequence that this
+        byte would split, and an ellipsis follows the closing quote: ["aaaa"…].
 
-val with_bool_column : t -> string -> bool row -> t
-(** [with_bool_column df name f] is [df] with a boolean column [name] whose
-    values are produced by [f]. *)
+      As in [flights.csv:48213:12: "NA": cannot read as float64.] and
+      [zoneinfo/Europe/Paris: bytes 106-113: transition 1 is not after the
+       previous one].
 
-val with_columns : t -> (string * Col.t) list -> t
-(** [with_columns df cols] is [df] with the given columns added or replaced.
+      A failure that a run finds in the data starts with the plan step that
+      found it, as [Query.pp] prints it, and the row of the step's input it was
+      found at, counted from [0]; a text that fails to read follows them:
+      [filter (cast int32 x > 0): row 48212: cannot cast 3.5 to int32.] and
+      [derive ["n" := Str.parse int32 s]: row 3: "x1": not an integer.] *)
 
-    Raises [Invalid_argument] if any column length differs from [num_rows df].
-*)
+  val get_ok : ('a, t) result -> 'a
+  (** [get_ok r] is [v] if [r] is [Ok v].
 
-val iter : t -> unit row -> unit
-(** [iter df f] applies [f] to each row of [df] for side effects. *)
+      Raises [Failure] with [e] formatted by {!pp} if [r] is [Error e]. *)
+end
 
-val fold : t -> init:'acc -> f:('acc -> 'acc) row -> 'acc
-(** [fold df ~init ~f] folds [f] over the rows of [df] with accumulator [init].
-*)
+module Tz = Tz
 
-(** {1:sorting Sorting and grouping} *)
+module Sel : sig
+  (** Column selectors.
 
-val sort : t -> 'a row -> compare:('a -> 'a -> int) -> t
-(** [sort df key ~compare] is [df] with rows sorted by the values produced by
-    [key], ordered according to [compare].
+      A selector chooses a set of columns by name, type or kind, without naming
+      a schema. A verb resolves it against its input schema when it is applied,
+      to an ordered list of distinct names. [Expr.keep], [Expr.across],
+      [Expr.each], the pivot's [~cols] and [Kit.drop] take selectors; keys stay
+      [string list].
 
-    O(n log n) in the number of rows. *)
+      Selectors combine with {!( + )}, {!( - )} and {!inter}, written inside
+      [Sel.( … )]: [Sel.(prefix "wk" - names [ "wk76" ])]. *)
 
-val sort_values : ?ascending:bool -> t -> string -> t
-(** [sort_values ?ascending df name] is [df] with rows sorted by column [name].
+  type t
+  (** The type for selectors. *)
 
-    [ascending] defaults to [true]. Null values are always sorted to the end
-    regardless of direction.
+  (** {1:constructors Constructors} *)
 
-    Raises [Not_found] if the column does not exist. O(n log n). *)
+  val all : t
+  (** [all] selects every column, in schema order. *)
 
-val group_by : t -> 'key row -> ('key * t) list
-(** [group_by df key] is the list of [(k, sub_df)] pairs obtained by grouping
-    the rows of [df] by the values produced by [key].
+  val names : string list -> t
+  (** [names ns] selects the columns [ns], in the order of [ns]. A name that
+      appears twice is selected once, at its first position. A name the schema
+      lacks is a problem. *)
 
-    The order of groups is not guaranteed. Rows within each group maintain their
-    original relative order. *)
+  val prefix : string -> t
+  (** [prefix p] selects the columns whose name starts with [p], in schema
+      order. *)
 
-(** {1:transforms Column transforms} *)
-
-val cumsum : t -> string -> t
-(** [cumsum df name] is [df] with column [name] replaced by its cumulative sum,
-    preserving the column's dtype.
-
-    Raises [Not_found] if the column does not exist. *)
-
-val cumprod : t -> string -> t
-(** [cumprod df name] is [df] with column [name] replaced by its cumulative
-    product, preserving the column's dtype.
-
-    Raises [Not_found] if the column does not exist. *)
-
-val diff : t -> string -> ?periods:int -> unit -> t
-(** [diff df name ?periods ()] is [df] with column [name] replaced by the
-    element-wise difference between consecutive values. [periods] defaults to
-    [1].
-
-    Raises [Not_found] if the column does not exist. *)
-
-val pct_change : t -> string -> ?periods:int -> unit -> t
-(** [pct_change df name ?periods ()] is [df] with column [name] replaced by the
-    fractional change between consecutive values. [nan] where the previous value
-    is zero. [periods] defaults to [1]. Result column is always float64.
-
-    Raises [Not_found] if the column does not exist. *)
-
-val shift : t -> string -> periods:int -> t
-(** [shift df name ~periods] is [df] with column [name] shifted by [periods]
-    positions. Positive shifts move values down (inserting nulls at the top),
-    negative shifts move values up.
-
-    Raises [Not_found] if the column does not exist. *)
-
-(** {1:col_inspect Column inspection} *)
-
-val is_null : t -> string -> Col.t
-(** [is_null df name] is a boolean column where [true] indicates a null value at
-    that position. *)
-
-val value_counts : t -> string -> t
-(** [value_counts df name] is a two-column dataframe with columns ["value"] and
-    ["count"], containing the unique non-null values and their frequencies,
-    sorted by count descending. *)
-
-(** {1:aggregations Aggregations} *)
-
-module Agg : sig
-  (** Column-wise aggregation operations.
-
-      All numeric aggregations coerce any numeric column to float, eliminating
-      the need for type-specific sub-modules. *)
-
-  (** {2:scalar Scalar aggregations}
-
-      These reduce a column to a single scalar value. *)
-
-  val sum : t -> string -> float
-  (** [sum df name] is the sum of non-null values in column [name] as float. *)
-
-  val mean : t -> string -> float
-  (** [mean df name] is the arithmetic mean of non-null values in column [name].
+  val suffix : string -> t
+  (** [suffix s] selects the columns whose name ends with [s], in schema order.
   *)
 
-  val std : t -> string -> float
-  (** [std df name] is the population standard deviation of column [name]
-      (divides by [n], not [n-1]). *)
+  val of_kind : 'a Kind.t -> t
+  (** [of_kind k] selects the columns that a handle of kind [k] binds (see
+      {!Kind.provably_equal}), in schema order. It selects no extension column.
+  *)
 
-  val var : t -> string -> float
-  (** [var df name] is the population variance of column [name] (divides by [n],
-      not [n-1]). *)
+  val where : (string -> Type.any -> bool) -> t
+  (** [where p] selects the columns [(n, t)] for which [p n t] is [true], in
+      schema order. [p] must be pure; it runs when a verb is applied. *)
 
-  val min : t -> string -> float option
-  (** [min df name] is the minimum non-null value, or [None] if the column is
-      empty or all null. *)
+  val ( + ) : t -> t -> t
+  (** [s0 + s1] selects [s0]'s columns, then [s1]'s columns not in [s0]. *)
 
-  val max : t -> string -> float option
-  (** [max df name] is the maximum non-null value, or [None] if the column is
-      empty or all null. *)
+  val ( - ) : t -> t -> t
+  (** [s0 - s1] selects [s0]'s columns that are not in [s1], in [s0]'s order. *)
 
-  val median : t -> string -> float
-  (** [median df name] is the median (50th percentile) of column [name]. *)
-
-  val quantile : t -> string -> q:float -> float
-  (** [quantile df name ~q] is the [q]-th quantile of column [name] ([q] in
-      \[[0];[1]\]). *)
-
-  (** {2:generic Generic aggregations} *)
-
-  val count : t -> string -> int
-  (** [count df name] is the number of non-null values in column [name]. *)
-
-  val nunique : t -> string -> int
-  (** [nunique df name] is the number of unique non-null values in column
-      [name]. *)
-
-  (** {2:row_agg Row-wise (horizontal) aggregations}
-
-      These compute aggregations across columns for each row. *)
-
-  val row_sum : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [row_sum ?skipna df ~names] is the row-wise sum across the named columns.
-      [skipna] defaults to [true]: skip null values. When [false], any null in a
-      row makes the entire row result null. *)
-
-  val row_mean : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [row_mean ?skipna df ~names] is the row-wise mean across the named
-      columns. [skipna] defaults to [true]. *)
-
-  val row_min : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [row_min ?skipna df ~names] is the row-wise minimum across the named
-      columns. [skipna] defaults to [true]. *)
-
-  val row_max : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [row_max ?skipna df ~names] is the row-wise maximum across the named
-      columns. [skipna] defaults to [true]. *)
-
-  val dot : t -> names:string list -> weights:float array -> Col.t
-  (** [dot df ~names ~weights] is the weighted sum (dot product) across the
-      named columns for each row.
-
-      [weights] must have the same length as [names]. Raises [Invalid_argument]
-      if lengths differ or columns are not numeric. *)
-
-  val row_all : t -> names:string list -> Col.t
-  (** [row_all df ~names] is the row-wise logical AND across the named boolean
-      columns.
-
-      Each row is [true] only if all values are [Some true]. [None] and
-      [Some false] both count as false. Raises [Invalid_argument] if any column
-      is not boolean or does not exist. *)
-
-  val row_any : t -> names:string list -> Col.t
-  (** [row_any df ~names] is the row-wise logical OR across the named boolean
-      columns.
-
-      Each row is [true] if any value is [Some true]. Raises [Invalid_argument]
-      if any column is not boolean or does not exist. *)
-
-  (** {2:string_agg String aggregations} *)
-
-  module String : sig
-    val min : t -> string -> string option
-    (** [min df name] is the lexicographically smallest non-null string, or
-        [None] if the column is empty or all null. *)
-
-    val max : t -> string -> string option
-    (** [max df name] is the lexicographically largest non-null string, or
-        [None] if the column is empty or all null. *)
-
-    val concat : t -> string -> ?sep:string -> unit -> string
-    (** [concat df name ?sep ()] is the concatenation of all non-null strings.
-        [sep] defaults to [""]. Empty string if all values are null. *)
-
-    val unique : t -> string -> string array
-    (** [unique df name] is the array of unique non-null values.
-
-        Order is not guaranteed. *)
-
-    val nunique : t -> string -> int
-    (** [nunique df name] is the number of unique non-null values. *)
-
-    val mode : t -> string -> string option
-    (** [mode df name] is the most frequent non-null value, or [None] if the
-        column is empty or all null. *)
-  end
-
-  (** {2:bool_agg Boolean aggregations} *)
-
-  module Bool : sig
-    val all : t -> string -> bool
-    (** [all df name] is [true] iff all non-null values are [true].
-
-        Returns [true] for columns with only null values (vacuous truth). *)
-
-    val any : t -> string -> bool
-    (** [any df name] is [true] iff any non-null value is [true].
-
-        Returns [false] for columns with only null values. *)
-
-    val sum : t -> string -> int
-    (** [sum df name] is the number of [true] values. Nulls are excluded. *)
-
-    val mean : t -> string -> float
-    (** [mean df name] is the proportion of [true] values among non-null. [nan]
-        if all values are null. *)
-  end
+  val inter : t -> t -> t
+  (** [inter s0 s1] selects [s0]'s columns that are in [s1], in [s0]'s order. *)
 end
 
-(** {1:joins Joins and merges} *)
+module Order : sig
+  (** Sort keys.
 
-val join :
-  t ->
-  t ->
-  on:string ->
-  ?right_on:string ->
-  how:[ `Inner | `Left | `Right | `Outer ] ->
-  ?suffixes:string * string ->
-  unit ->
-  t
-(** [join df1 df2 ~on ?right_on ~how ?suffixes ()] joins two dataframes on key
-    columns.
+      A sort key names a column, a direction and where its nulls go.
+      [Query.sort] and [Expr.over]'s [~order] take a list of keys, compared in
+      turn; a source's [~sorted] claim is one.
 
-    [on] names the key column in [df1]. [right_on] names the key column in
-    [df2]; defaults to [on] when both dataframes share the same column name.
+      Each key orders by talon's total order (see {!Type.compare_value}):
+      ascending puts NaN after every number, and descending reverses it, putting
+      NaN first. Nulls go last in both directions unless {!nulls_first}. *)
 
-    Join types:
-    - [`Inner]: rows where key exists in both dataframes.
-    - [`Left]: all rows from [df1], null-filled for missing [df2] rows.
-    - [`Right]: all rows from [df2], null-filled for missing [df1] rows.
-    - [`Outer]: all rows from both, null-filled where missing.
+  type t
+  (** The type for sort keys. *)
 
-    Null keys never match (null != null). Duplicate column names receive
-    [suffixes] (default: ["_x"], ["_y"]).
+  val asc : string -> t
+  (** [asc name] orders the column [name] ascending, nulls last. *)
 
-    Raises [Not_found] if a key column is missing. Raises [Invalid_argument] if
-    key columns have incompatible types. *)
+  val desc : string -> t
+  (** [desc name] orders the column [name] descending, nulls last. *)
 
-(** {1:reshape Pivot and reshape} *)
+  val nulls_first : t -> t
+  (** [nulls_first k] is [k] with its nulls before every value. *)
+end
 
-val pivot :
-  t ->
-  index:string ->
-  columns:string ->
-  values:string ->
-  ?agg_func:[ `Sum | `Mean | `Count | `Min | `Max ] ->
-  unit ->
-  t
-(** [pivot df ~index ~columns ~values ?agg_func ()] is a pivot table from [df].
+module Expr : sig
+  (** Expressions: typed computations over the columns of a frame.
 
-    - [index]: column whose values become row identifiers.
-    - [columns]: column whose unique values become new column names.
-    - [values]: column containing the data to fill the table.
-    - [agg_func] defaults to [`Sum] for numeric, [`Count] for others.
+      An expression [('a, 's) t] computes values that read as ['a] from the
+      columns of a {e frame}, the ordered rows a verb or an enclosing expression
+      gives it. Its {e shape} ['s] is {!row}, one value per row of the frame, or
+      {!agg}, one value per frame. Handles ([Col]) are [row], reductions take
+      [row] to [agg], and literals and elementwise operations keep their
+      operands' shape, so [sum (w *. x) /. sum w] is [agg]. ['s] is a covariant
+      phantom, so [let cutoff = Expr.float 15.] generalizes, and no call site
+      writes a shape.
 
-    Raises [Not_found] if any specified column does not exist. Raises
-    [Invalid_argument] if [values] is incompatible with [agg_func]. *)
+      Expressions are data. Building one reads nothing; a verb binds it to its
+      input schema when the verb is applied, checks it and infers its type,
+      reporting every problem at once. Write them inside [Expr.( … )], where the
+      operators below shadow OCaml's.
 
-val melt :
-  t ->
-  ?id_vars:string list ->
-  ?value_vars:string list ->
-  ?var_name:string ->
-  ?value_name:string ->
-  unit ->
-  t
-(** [melt df ?id_vars ?value_vars ?var_name ?value_name ()] unpivots [df] from
-    wide to long format.
+      {b Types.} Whatever a value meets fixes its type:
+      - A handle of kind [k] binds a column whose type [k] reads (see
+        {!Kind.provably_equal}).
+      - Operands meet at the one of their types that contains the others
+        ({!Type.common}). Types that do not meet are a problem: [cast] first.
+      - A literal, or an expression of literals such as [int 2 * int 50], takes
+        the type of the operand it meets, which must hold each literal and the
+        value of each integer operation of literals ({!Type.holds}). Where it
+        meets none, it takes its kind's default type: [int64], [float64],
+        [bool], [string], [date], [datetime[ns, UTC]] or [duration[ns]].
+      - {!null}, a {!const} and a {!( $ )} result take the type of the operand
+        they meet. Where they meet none, {!store} gives them one. Without it, a
+        [const] or [$] result stands only as an argument of {!( $ )} or as what
+        [Query.values] decodes, so [if_ c (const a) (const b)] is a problem, and
+        a [null] stands nowhere.
+      - Result types follow from operand types alone: each function below states
+        its result's type.
 
-    - [id_vars]: columns to keep as identifiers (default: all non-[value_vars]).
-    - [value_vars]: columns to melt (default: all non-[id_vars]).
-    - [var_name] defaults to ["variable"].
-    - [value_name] defaults to ["value"].
+      {b Frames.} A context supplies a frame, and frames nest:
+      - [select], [derive] and [filter]: the input's rows;
+      - [aggregate ~by]: one group's rows, in input order;
+      - {!over}[ ~by ~order e]: the enclosing frame, partitioned by [by], each
+        partition in [order]; results return to their rows.
 
-    Raises [Not_found] if any specified column does not exist. Raises
-    [Invalid_argument] if [id_vars] and [value_vars] overlap. *)
+      A frame's order is its input order, and no expression reorders values
+      without returning them to their rows.
 
-(** {1:converting Converting} *)
+      {b Nulls.} Elementwise operations are null where an operand is null,
+      except where stated. Comparisons are Kleene: a comparison with null is
+      null. Reductions skip nulls except {!rows}, {!count} and {!n_unique}. *)
 
-val to_nx : ?columns:string list -> ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
-(** [to_nx ?columns dtype df] is a 2D tensor of [dtype] with one row per
-    dataframe row and one column per selected column, in selection order.
+  (** {1:types Expressions and outputs} *)
 
-    [columns] defaults to the numeric columns of [df] in dataframe order. Each
-    column is cast to [dtype]. When [dtype] is a float dtype, null positions
-    become [nan].
+  type row
+  (** The shape of expressions with one value per row of their frame. *)
 
-    Raises [Not_found] if a name in [columns] does not exist. Raises
-    [Invalid_argument] if no column is selected, if a selected column is not
-    numeric, or if a selected column contains nulls and [dtype] is not a float
-    dtype. *)
+  type agg
+  (** The shape of expressions with one value per frame. *)
 
-(** {1:fmt Formatting and inspecting} *)
+  type ('a, +'s) t
+  (** The type for expressions of shape ['s] whose values read as ['a]. *)
 
-val pp : ?max_rows:int -> ?max_cols:int -> Format.formatter -> t -> unit
-(** [pp ?max_rows ?max_cols ppf df] formats [df] as a table on [ppf].
+  type +'s out
+  (** The type for outputs of shape ['s]: named expressions, as [select],
+      [derive] and [aggregate] take them. *)
 
-    [max_rows] defaults to [10]. [max_cols] defaults to [10]. *)
+  (** {1:outputs Outputs} *)
 
-val to_string : ?max_rows:int -> ?max_cols:int -> t -> string
-(** [to_string ?max_rows ?max_cols df] is [df] formatted as a table string. *)
+  val ( := ) : string -> ('a, 's) t -> 's out
+  (** [name := e] outputs [e] as the column [name]. It binds more loosely than
+      every operator, so ["late" := delay > float 15.] needs no parentheses. [e]
+      needs a column type: a {!const} or {!( $ )} result needs {!store}, and an
+      {!option} result is never one.
 
-val print : ?max_rows:int -> ?max_cols:int -> t -> unit
-(** [print ?max_rows ?max_cols df] is
-    [pp ?max_rows ?max_cols Format.std_formatter df]. *)
+      Raises [Invalid_argument] if [name] is not valid UTF-8. *)
 
-val describe : t -> t
-(** [describe df] is a dataframe of summary statistics for the numeric columns
-    of [df].
+  val keep : Sel.t -> row out
+  (** [keep sel] outputs the columns that [sel] selects, unchanged and under
+      their names. It keeps a column of any type, extensions included. *)
 
-    Rows are: count, mean, std, min, 25%, 50%, 75%, max. String and boolean
-    columns are ignored. *)
+  val across : 'a Kind.t -> Sel.t -> (string -> ('a, row) t -> 's out) -> 's out
+  (** [across k sel f] is the outputs [f n (Col.v k n)] for each name [n] that
+      [sel] selects, in order:
+      [across Kind.float Sel.(prefix "wk") (fun n x -> n := over (rank x))]. A
+      selected column that [k] does not bind is a problem: narrow [sel] with
+      {!Sel.of_kind}. [f] runs when the verb is applied and must be pure. *)
 
-val cast_column : t -> string -> ('a, 'b) Nx.dtype -> t
-(** [cast_column df name dtype] is [df] with column [name] converted to the
-    numeric [dtype].
+  type 's column = { column : 'a. string -> ('a, row) t -> 's out }
+  (** The type for functions of one column of any type. *)
 
-    Null values are preserved through the conversion.
+  val each : Sel.t -> 's column -> 's out
+  (** [each sel { column }] is the outputs [column n x] for each name [n] that
+      [sel] selects, in order, where [x] reads the column [n] at its own type,
+      extensions included:
+      [each Sel.all { column = (fun n x -> n := rows - count x) }]. [column] is
+      polymorphic, so it applies only operations that take every type; each is
+      checked against the column's type when the verb is applied: {!sum} of a
+      string column is a problem. An extension column is read without its
+      declaration, so operations that order its values ({!min}, {!( < )},
+      {!rank}, …) or compute with them ({!sum}, {!mean}, …) are problems, and
+      those that count, move, select or compare them for equality apply.
+      [column] runs when the verb is applied and must be pure. *)
 
-    Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
-    if the source column is not numeric. *)
+  (** {1:literals Literals} *)
 
-val to_html : ?max_rows:int -> ?max_cols:int -> t -> string
-(** [to_html ?max_rows ?max_cols df] is [df] formatted as an HTML table string.
+  val int : int -> (int, 's) t
+  (** [int n] is the integer [n]. *)
 
-    Generates a [<table>] element with [<thead>] and [<tbody>]. Truncated rows
-    and columns show ellipsis markers. A trailing [<p>] shows the shape when the
-    table is truncated.
+  val float : float -> (float, 's) t
+  (** [float x] is the float [x]. It may round to the type it takes. *)
 
-    [max_rows] defaults to [20]. [max_cols] defaults to [10]. *)
+  val bool : bool -> (bool, 's) t
+  (** [bool b] is the boolean [b]. *)
 
-val pp_display : Format.formatter -> t -> unit
-(** [pp_display ppf df] displays [df] in a Quill notebook: it prints on [ppf]
-    the table {!pp} prints inside a [Format.String_tag]. The tag's string is the
-    line [quill.display], the line [text/html], an empty display id line, then
-    {!to_html}[ df]: a display tag of the display protocol documented in Quill's
-    [Quill.Cell] module. Formatters ignore the tag by default and print the
-    table alone. Both tables show at most 20 rows and 10 columns; for other
-    limits, use {!to_html} directly. *)
+  val string : string -> (string, 's) t
+  (** [string s] is the text [s].
 
-val pp_info : Format.formatter -> t -> unit
-(** [pp_info ppf df] formats detailed information about [df] on [ppf]: shape,
-    column names and types, null counts, and memory usage. *)
+      Raises [Invalid_argument] if [s] is not valid UTF-8. *)
 
-val info : t -> unit
-(** [info df] is [pp_info Format.std_formatter df]. *)
+  val instant : Time.instant -> (Time.instant, 's) t
+  (** [instant t] is the instant [t]. *)
+
+  val span : Time.span -> (Time.span, 's) t
+  (** [span d] is the span [d]. *)
+
+  val date : Time.date -> (Time.date, 's) t
+  (** [date d] is the date [d]. *)
+
+  val null : ('a, 's) t
+  (** [null] is null, typed by what it meets. *)
+
+  (** {1:elementwise Elementwise operations} *)
+
+  val ( + ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a + b] is the sum of [a] and [b], wrapping on overflow as nx's integers
+      do. Its type is the operands' common type, as for {!( - )}, {!( * )},
+      {!( / )} and {!( mod )}. *)
+
+  val ( - ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a - b] is the difference of [a] and [b]. *)
+
+  val ( * ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a * b] is the product of [a] and [b]. *)
+
+  val ( / ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a / b] is the quotient of [a] by [b], truncated toward zero, and null
+      where [b] is zero. *)
+
+  val ( mod ) : (int, 's) t -> (int, 's) t -> (int, 's) t
+  (** [a mod b] is the remainder of [a] by [b], of [a]'s sign, and null where
+      [b] is zero. *)
+
+  val ( +. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a +. b] is the IEEE 754 sum of [a] and [b]. Its type is the operands'
+      common type, as for {!( -. )}, {!( *. )}, {!( /. )} and {!( ** )}. *)
+
+  val ( -. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a -. b] is the difference of [a] and [b]. *)
+
+  val ( *. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a *. b] is the product of [a] and [b]. *)
+
+  val ( /. ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a /. b] is the quotient of [a] by [b]. *)
+
+  val ( ** ) : (float, 's) t -> (float, 's) t -> (float, 's) t
+  (** [a ** b] is [a] to the power [b]. *)
+
+  val ( = ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a = b] is [true] iff [a] and [b] are equal in talon's total order
+      ({!Type.compare_value}), so [nan = nan] and [-0. = 0.], and null if either
+      is null. The operands meet at their common type. *)
+
+  val ( <> ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a <> b] is [not (a = b)]. *)
+
+  val ( < ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a < b] is [true] iff [a] comes before [b] in talon's total order, so
+      [x > float 15.] holds for NaN, and null if either is null. Operands of an
+      extension type need a declaration made with [~ordered:true]. *)
+
+  val ( > ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a > b] is [b < a]. *)
+
+  val ( <= ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a <= b] is [a < b || a = b]. *)
+
+  val ( >= ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
+  (** [a >= b] is [b <= a]. *)
+
+  val ( && ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
+  (** [a && b] is Kleene's conjunction: [false] if either is [false], else null
+      if either is null. Both operands are computed. *)
+
+  val ( || ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
+  (** [a || b] is Kleene's disjunction: [true] if either is [true], else null if
+      either is null. *)
+
+  val not : (bool, 's) t -> (bool, 's) t
+  (** [not a] is the negation of [a], null where [a] is. *)
+
+  val if_ : (bool, 's) t -> ('a, 's) t -> ('a, 's) t -> ('a, 's) t
+  (** [if_ c a b] is [a] where [c] is [true] and [b] where [c] is [false] or
+      null. [a] and [b] meet at their common type. *)
+
+  val is_null : ('a, 's) t -> (bool, 's) t
+  (** [is_null a] is [true] where [a] is null and [false] elsewhere. It is never
+      null. *)
+
+  val coalesce : ('a, 's) t list -> ('a, 's) t
+  (** [coalesce es] is the first of [es] that is not null, or null. [es] meet at
+      their common type. *)
+
+  val is_in : 'a list -> ('a, 's) t -> (bool, 's) t
+  (** [is_in vs a] is [true] iff [a] is the same key as one of [vs] (see
+      {!Type.compare_value}), so it is [false], never null, where [a] is null:
+      [not (is_in vs a)] is [true] there, whereas [not (a = v0 || a = v1)] is
+      null. [a]'s type must hold each of [vs]; an extension's values are encoded
+      with its declaration. *)
+
+  val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
+  (** [cast ty a] converts [a]'s values to [ty]:
+      - between [bool], integer and float types: integers take exact values
+        only, so a fractional, infinite or NaN float, or a value out of range,
+        is a data error; floats round to nearest; [bool] takes [0] and [1] only,
+        and gives [0] and [1];
+      - between [string] and categorical types: the text is kept, and a
+        categorical takes only the strings of its dictionary;
+      - between datetimes that both have a zone, or both have none, between
+        durations, and between clocks: values are kept, and a value that is not
+        a whole number of the new unit is a data error;
+      - lists element by element, records with the same field names field by
+        field, and tensors of the same shape element by element, as [Nx.cast]
+        does.
+
+      Any other pair is a problem that names the function that converts it, if
+      one does: {!Str.parse} and {!Temporal.parse} for text to values, and
+      {!Temporal.format} for dates, clocks and datetimes to text. [a] needs a
+      column type. *)
+
+  type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+  (** The type for elementwise nx functions of one argument that preserve its
+      dtype, such as [Nx.exp]. *)
+
+  val nx : fn -> ('a, 's) t -> ('a, 's) t
+  (** [nx { f } a] applies [f] to [a]'s values with nx's semantics, IEEE's for
+      floats: [nx { f = Nx.exp } x]. [a] has an nx dtype: an integer, float or
+      [bool] type. When the verb is applied, talon calls [f] once on a traced
+      value of that dtype and records the operations [f] performs; an [f] that
+      moves, reduces or reshapes its argument is a problem, and so is one that
+      ignores it, which would lose its nulls. *)
+
+  type fn2 = { f2 : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+  (** The type for elementwise nx functions of two arguments of one dtype that
+      preserve it, such as [Nx.atan2]. *)
+
+  val nx2 : fn2 -> ('a, 's) t -> ('a, 's) t -> ('a, 's) t
+  (** [nx2 { f2 } a b] is like {!nx} for two arguments, which meet at their
+      common type: [nx2 { f2 = Nx.atan2 } y x]. *)
+
+  (** {1:reductions Reductions}
+
+      A reduction takes a [row] expression to one value per frame. Over no
+      values, {!sum}, {!count} and {!n_unique} are [0], and every other
+      reduction is null. *)
+
+  val rows : (int, agg) t
+  (** [rows] is the number of rows of the frame, as [int64]. *)
+
+  val count : ('a, row) t -> (int, agg) t
+  (** [count a] is the number of non-null values of [a], as [int64]. *)
+
+  val sum : ('a, row) t -> ('a, agg) t
+  (** [sum a] is the sum of [a]'s values: [int64] over integers, [a]'s type over
+      floats and durations. Integer sums wrap as nx's integers do; a duration
+      sum that overflows is a data error. Other types are a problem. *)
+
+  val min : ('a, row) t -> ('a, agg) t
+  (** [min a] is the least of [a]'s values in talon's total order, of [a]'s
+      type. An extension type needs an ordered declaration. *)
+
+  val max : ('a, row) t -> ('a, agg) t
+  (** [max a] is the greatest of [a]'s values, like {!min}. *)
+
+  val first : ('a, row) t -> ('a, agg) t
+  (** [first a] is [a]'s first non-null value in frame order. *)
+
+  val last : ('a, row) t -> ('a, agg) t
+  (** [last a] is [a]'s last non-null value in frame order. *)
+
+  val only : ('a, row) t -> ('a, agg) t
+  (** [only a] is [a]'s one distinct non-null value, and a data error naming the
+      frame when [a] has several. *)
+
+  val mean : ('a, row) t -> (float, agg) t
+  (** [mean a] is the arithmetic mean of [a]'s values, as [float64]. [a] is an
+      integer or float expression, as for {!std}, {!var}, {!median} and
+      {!quantile}; other types are a problem. *)
+
+  val std : ('a, row) t -> (float, agg) t
+  (** [std a] is the sample standard deviation of [a]'s values, dividing by n -
+      1, and null for fewer than two values. *)
+
+  val var : ('a, row) t -> (float, agg) t
+  (** [var a] is the sample variance of [a]'s values, like {!std}. *)
+
+  val median : ('a, row) t -> (float, agg) t
+  (** [median a] is [quantile 0.5 a]. *)
+
+  val quantile : float -> ('a, row) t -> (float, agg) t
+  (** [quantile p a] is the [p]-quantile of [a]'s values, interpolating linearly
+      between the two nearest ranks.
+
+      Raises [Invalid_argument] if [p] is not in \[[0];[1]\]. *)
+
+  val n_unique : ('a, row) t -> (int, agg) t
+  (** [n_unique a] is the number of distinct keys of [a], null being one key, as
+      [int64]. *)
+
+  val arg_min : ('a, row) t -> (int, agg) t
+  (** [arg_min a] is the zero-based position in the frame of [a]'s first least
+      value, as [int64]. An extension type needs an ordered declaration. *)
+
+  val arg_max : ('a, row) t -> (int, agg) t
+  (** [arg_max a] is the position of [a]'s first greatest value, like
+      {!arg_min}. *)
+
+  (** {1:frames Frames} *)
+
+  val over : ?by:string list -> ?order:Order.t list -> ('a, 's) t -> ('a, row) t
+  (** [over ~by ~order e] evaluates [e] in the enclosing frame, partitioned by
+      the columns [by] (key identity, null being one key) and each partition
+      ordered by [order]. A reduction is broadcast over its partition's rows,
+      and a row expression such as {!shift} or {!rank} runs within its partition
+      and returns its values to their rows. [by] defaults to no columns, one
+      partition; [order] to none, the frame's order. At the top of [derive] or
+      [filter], [over (mean x)] is the mean of the whole input, and it blocks
+      the pipeline. Its type is [e]'s. A column named twice in [by] or in
+      [order] is a problem, and so is an [order] key on a column whose type is
+      or holds an extension type. *)
+
+  val shift : int -> ('a, row) t -> ('a, row) t
+  (** [shift n a] is [a]'s value [n] rows earlier in the frame, or [-n] rows
+      later if [n] is negative, and null past the frame's edges. *)
+
+  val rank : ('a, row) t -> (int, row) t
+  (** [rank a] is the 1-based rank of [a]'s value among the frame's non-null
+      values in talon's total order, ties taking the lowest rank (SQL's [RANK]),
+      as [int64], and null where [a] is null. An extension type needs an ordered
+      declaration. *)
+
+  (** {1:ocaml OCaml values}
+
+      These functions compute in OCaml, once per row, at native speed. They must
+      be pure; an exception they raise propagates from the run. *)
+
+  val const : 'a -> ('a, 's) t
+  (** [const v] is [v] on every row. It is typed by what it meets, an
+      extension's value being encoded with its declaration; a type that does not
+      hold [v] is a problem. *)
+
+  val ( $ ) : ('a -> 'b, 's) t -> ('a, 's) t -> ('b, 's) t
+  (** [f $ a] applies [f]'s function to [a]'s value, once per row where no
+      argument is null, and is null elsewhere: [const mk $ carrier $ delay]. An
+      argument is decoded with its column type, so it needs one, unless it is
+      itself an OCaml value: a [const], a [$] result or an {!option}. The result
+      is typed by what it meets, or by {!store}. *)
+
+  val option : ('a, 's) t -> ('a option, 's) t
+  (** [option a] is [Some v] where [a] is [v] and [None] where [a] is null. It
+      is never null, and is an argument of {!( $ )} or what [Query.values]
+      decodes. [a] needs a column type. *)
+
+  val of_option : ('a option, 's) t -> ('a, 's) t
+  (** [of_option a] is [v] where [a] is [Some v] and null where it is [None]. It
+      is typed by what it meets, or by {!store}. *)
+
+  val store : 'b Type.t -> ('b, 's) t -> ('b, 's) t
+  (** [store ty a] is [a] typed as [ty], as if [a] met an operand of type [ty]:
+      a literal, [null], [const], [$] or {!of_option} result takes [ty], and an
+      [a] of a type that [ty] contains is widened to it. A literal or {!const}
+      value that [ty] does not hold is a problem, and a [$] or {!of_option}
+      result that it does not hold a data error. *)
+
+  (** {1:text Text} *)
+
+  (** Text.
+
+      Text counts and slices Unicode scalar values. Categorical values are text.
+  *)
+  module Str : sig
+    type pattern
+    (** The type for patterns: what text is matched against. *)
+
+    val literal : string -> pattern
+    (** [literal s] matches [s] anywhere in the text.
+
+        Raises [Invalid_argument] if [s] is empty or not valid UTF-8, as
+        {!prefix} and {!suffix} do. *)
+
+    val prefix : string -> pattern
+    (** [prefix s] matches [s] at the start of the text. *)
+
+    val suffix : string -> pattern
+    (** [suffix s] matches [s] at the end of the text. *)
+
+    val pieces : string list -> pattern
+    (** [pieces ss] matches the strings [ss] in order without overlap:
+        [matches (pieces [ "special"; "requests" ])] is SQL's
+        [LIKE '%special%requests%'].
+
+        Raises [Invalid_argument] if [ss] is empty or holds an empty or
+        non-UTF-8 string. *)
+
+    val length : (string, 's) t -> (int, 's) t
+    (** [length a] is the number of Unicode scalar values of [a], as [int64]. *)
+
+    val slice : offset:int -> length:int -> (string, 's) t -> (string, 's) t
+    (** [slice ~offset ~length a] is the at most [length] scalar values of [a]
+        from [offset], counted from the end when [offset] is negative, as
+        [Query.slice] counts rows.
+
+        Raises [Invalid_argument] if [length < 0]. *)
+
+    val matches : pattern -> (string, 's) t -> (bool, 's) t
+    (** [matches p a] is [true] iff [p] matches [a]. *)
+
+    val split : string -> (string, 's) t -> (string array, 's) t
+    (** [split sep a] is the pieces of [a] between the occurrences of the
+        literal [sep], found left to right without overlap, as a [list[string]]:
+        k occurrences give k + 1 pieces, so a leading, trailing or repeated
+        [sep] gives an empty piece, and the empty text one empty piece.
+        [split "_" s] of ["sub-01_ses-02"] is [["sub-01"; "ses-02"]], and the
+        pieces joined by [sep] are [a].
+
+        Raises [Invalid_argument] if [sep] is empty or not valid UTF-8. *)
+
+    val replace : string -> by:string -> (string, 's) t -> (string, 's) t
+    (** [replace sub ~by a] is [a] with each occurrence of the literal [sub]
+        replaced by [by], found left to right without overlap:
+        [replace "aa" ~by:"b"] of ["aaa"] is ["ba"].
+
+        Raises [Invalid_argument] if [sub] is empty, or if [sub] or [by] is not
+        valid UTF-8. *)
+
+    val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
+    (** [parse ty a] is the value of type [ty] that the text [a] writes, in the
+        forms that [talon.csv] reads: [true] and [false]; decimal integers with
+        an optional sign; decimal or scientific floats, [inf], [-inf] and [nan];
+        ISO 8601 dates; and ISO 8601 datetimes, with an offset or [Z] exactly
+        when [ty] has a zone. Any other text, and a value that [ty] does not
+        hold, is a data error. [ty] is a [bool], integer, float, [date] or
+        [datetime] type, or a categorical, which takes only the strings of its
+        dictionary. *)
+  end
+
+  (** {1:time Time} *)
+
+  (** Temporal values.
+
+      Dates, clocks and datetimes without a zone are wall-clock values: their
+      calendar is read as it is. A datetime with a zone holds instants, whose
+      calendar talon reads on the wall clock of the zone [UTC] only: the
+      calendar of another zone is a problem. *)
+  module Temporal : sig
+    val add : ('a, 's) t -> (Time.span, 's) t -> ('a, 's) t
+    (** [add a d] is [a] advanced by [d], of [a]'s type: a datetime, a duration
+        or a clock, [d] being a duration of [a]'s unit or a coarser one, or a
+        date, [d] being whole days. A literal [d] that is not whole days is a
+        problem, and another a data error. A result out of range, or a clock
+        outside its day, is a data error. *)
+
+    val diff : ('a, 's) t -> ('a, 's) t -> (Time.span, 's) t
+    (** [diff a b] is the span from [b] to [a]: a duration of their common unit
+        for datetimes, durations and clocks, which meet as {!Type.common} says,
+        and [duration[s]] for dates. *)
+
+    type field =
+      [ `Year
+      | `Month
+      | `Day
+      | `Hour
+      | `Minute
+      | `Second
+      | `Nanosecond
+      | `Weekday
+      | `Yearday ]
+    (** The type for calendar fields:
+        - [`Year], astronomical: year [0] is 1 BC;
+        - [`Month], [1] to [12], and [`Day], the day of the month, [1] to [31];
+        - [`Hour], [0] to [23], [`Minute] and [`Second], [0] to [59];
+        - [`Nanosecond], the nanosecond within the second;
+        - [`Weekday], the ISO day of the week, [1] for Monday to [7];
+        - [`Yearday], the day of the year, [1] to [366]. *)
+
+    val field : field -> ('a, 's) t -> (int, 's) t
+    (** [field f a] is the field [f] of [a], as [int64]:
+        [field `Year orderdate]. [a] is a date, a clock or a datetime. A date
+        has no time-of-day field and a clock no calendar field: asking for one
+        is a problem. *)
+
+    val floor : Time.step -> ('a, 's) t -> ('a, 's) t
+    (** [floor step a] is the first instant of the period of [step] that holds
+        [a], a date or a datetime. Periods are counted from 1970-01-01 00:00,
+        and weeks from Monday 1970-01-05. A date floors by calendar steps only,
+        and a datetime by exact steps of whole ticks of its unit. Its type is
+        [a]'s.
+
+        Raises [Invalid_argument] if [step] is not positive. *)
+
+    val offset : Time.step -> ('a, 's) t -> ('a, 's) t
+    (** [offset step a] is [a], a date or a datetime, moved by [step]: an exact
+        step moves the instant, and a calendar step moves the wall clock; a day
+        of the month past the month's end becomes its last day. A date moves by
+        calendar steps only, and a datetime by exact steps of whole ticks of its
+        unit. Its type is [a]'s. *)
+
+    val parse : string -> 'a Type.t -> (string, 's) t -> ('a, 's) t
+    (** [parse fmt ty a] reads the text [a] in the format [fmt] as a value of
+        [ty], a [date], [datetime] or [clock] type. [fmt] holds the directives
+        [%Y] (the year), [%m], [%d], [%H], [%M], [%S] (two digits each), [%f]
+        (one to nine digits of a fraction of a second), [%z] ([Z] or a [±hh:mm]
+        offset) and [%%]; other characters match themselves. A year is four
+        digits, or a sign and at least four digits, as {!Time.Date.pp} writes
+        it. A field that [fmt] leaves out is that of 1970-01-01 00:00:00; a date
+        reads the day alone, and a clock the time of day. A datetime with [%z]
+        needs a zone in [ty], and one without needs none. Text that does not
+        match, and a value that [ty] does not hold, are data errors.
+
+        Raises [Invalid_argument] if [fmt] holds another directive. *)
+
+    val format : string -> ('a, 's) t -> (string, 's) t
+    (** [format fmt a] writes [a], a date, datetime or clock, in the format
+        [fmt], as {!parse} reads it: a datetime in UTC, a clock on 1970-01-01;
+        [%f] writes nine digits and [%z] writes [Z]. [%z] needs a datetime with
+        a zone.
+
+        Raises [Invalid_argument] as {!parse} does. *)
+  end
+
+  (** {1:fmt Formatting} *)
+
+  val pp : Format.formatter -> ('a, 's) t -> unit
+  (** [pp ppf e] formats [e] as it is written inside [Expr.( … )], with fewest
+      parentheses: [(amount -. over (mean amount)) /. over (std amount)].
+      Besides:
+      - a handle formats as its column name, quoted as an OCaml string unless it
+        is an OCaml lowercase identifier that is neither a keyword nor a value
+        of this module;
+      - a literal formats as its value: [15], [15.], [nan], ["text"], [true],
+        [2024-03-15], [2024-03-15T09:30:00], [15m];
+      - an OCaml value of {!const} formats as [<const>], and the functions of
+        {!nx} and {!nx2} as [<fn>];
+      - an {!is_in} list formats with its operand's type once bound, and as
+        [[…]] before. *)
+end
+
+module Col : sig
+  (** Column handles.
+
+      A handle names a column and the kind its values read as. It is bound to no
+      table: a verb binds it to its input when it is applied, so a module of
+      handles serves as a schema. A handle of kind [k] binds a column whose type
+      [k] reads ({!Kind.provably_equal}); a missing column, or one of another
+      kind, is a problem the verb reports. No handle binds an extension column:
+      [Ext.col] does. *)
+
+  val v : 'a Kind.t -> string -> ('a, Expr.row) Expr.t
+  (** [v k name] is the column [name] read as [k]:
+      [v (Kind.list Kind.int) "tokens"]. *)
+
+  val bool : string -> (bool, Expr.row) Expr.t
+  (** [bool name] is [v Kind.bool name]. *)
+
+  val int : string -> (int, Expr.row) Expr.t
+  (** [int name] is [v Kind.int name], which binds every integer type. *)
+
+  val float : string -> (float, Expr.row) Expr.t
+  (** [float name] is [v Kind.float name], which binds every float type. *)
+
+  val string : string -> (string, Expr.row) Expr.t
+  (** [string name] is [v Kind.string name], which binds [string] and
+      categorical types. *)
+
+  val binary : string -> (Binary.t, Expr.row) Expr.t
+  (** [binary name] is [v Kind.binary name]. *)
+
+  val date : string -> (Time.date, Expr.row) Expr.t
+  (** [date name] is [v Kind.date name]. *)
+
+  val instant : string -> (Time.instant, Expr.row) Expr.t
+  (** [instant name] is [v Kind.instant name], which binds every datetime type.
+  *)
+
+  val span : string -> (Time.span, Expr.row) Expr.t
+  (** [span name] is [v Kind.span name], which binds every duration and clock
+      type. *)
+end
+
+module Ext : sig
+  (** Extension declarations.
+
+      An extension type is a named type stored as another ({!Type.ext}). A
+      declaration gives it OCaml values ['e], converted to and from its storage
+      values ['s]. It is the only way to read an extension column's values or
+      compute on them: no {!Col} handle binds one. A library's claim to an
+      extension's name is a convention, as in Arrow; what it controls is ['e],
+      whose values come only from [dec] and [enc].
+
+      Without a declaration, an extension column moves through the order-free
+      structural operations: [keep], [Expr.each], filtering, gathering,
+      appending, joining and grouping by key identity on its storage. Its order,
+      and computation on its values, need a declaration. *)
+
+  type ('e, 's) t
+  (** The type for declarations of extensions whose values read as ['e] and are
+      stored as ['s]. *)
+
+  val v :
+    name:string ->
+    ?metadata:string ->
+    ordered:bool ->
+    's Type.t ->
+    dec:('s -> 'e) ->
+    enc:('e -> 's) ->
+    ('e, 's) t
+  (** [v ~name ~metadata ~ordered storage ~dec ~enc] declares the extension type
+      [Type.ext ~name ~metadata storage] with:
+      - [dec], which reads a stored value as ['e]: [Query.values] and
+        [Column.values] decode with it;
+      - [enc], which stores an ['e]: literals, {!Expr.const} values and
+        {!Expr.is_in} values encode with it. It must be injective;
+      - [ordered], a promise that the order of stored values is the order of the
+        values, as for an epoch stored normalized. With [~ordered:false],
+        {!Expr.min}, {!Expr.max}, {!Expr.arg_min}, {!Expr.arg_max}, {!Expr.rank}
+        and [<] are problems on its values. Sort and join keys are names, which
+        no declaration binds.
+
+      [metadata] defaults to [""].
+
+      Raises [Invalid_argument] as {!Type.ext} does. *)
+
+  val col : ('e, 's) t -> string -> ('e, Expr.row) Expr.t
+  (** [col e name] is the column [name] read through [e]. It binds only a column
+      whose type is [e]'s: the same name, metadata and storage type, so a
+      declaration of metres never binds a column of kilograms. *)
+end
+
+module Source : sig
+  (** Sources: tables read in batches.
+
+      A source is data that a query reads when it runs, such as a file: its
+      schema is known when it is built, and its rows arrive in batches. Formats
+      build sources with {!v}, and a program's own format is a peer of the
+      shipped ones. [Query.of_source] makes a query of one.
+
+      A source is a contract between talon and its author:
+      - {b Pushdown.} Before reading, talon asks the source about each conjunct
+        of the filters on it, translated into a {!Pred.t}, and the source
+        answers with no IO whether it can apply it ({!answer}).
+      - {b Request.} Talon then asks for the source's parts with a {!request}:
+        the columns it reads, the conjuncts the source can use, and a limit.
+        Each place in a plan that reads the source is a read of its own, with
+        its own request.
+      - {b Pull.} Talon opens a part's {!reader}, pulls batches with [next], and
+        calls [close] once it has no more use for the reader.
+
+      The rows of a source are those of its parts in part order, then batch
+      order. They are fixed by the data and the request, never by the machine's
+      core count. *)
+
+  (** {1:pushdown Pushdown} *)
+
+  (** The type for a source's answers about a conjunct. *)
+  type answer =
+    | Exact
+        (** The source applies the conjunct exactly: it yields no row that fails
+            it, so talon removes the conjunct from the plan. *)
+    | Inexact
+        (** The source may use the conjunct to skip rows that fail it, as row
+            group statistics do, and never skips a row that passes it. Talon
+            applies the conjunct again. *)
+    | Unsupported  (** The source ignores the conjunct. Talon applies it. *)
+
+  (** Predicates on one row: the filters that sources apply.
+
+      A predicate compares columns of the source against values. It means what
+      its filter means in talon: a comparison uses talon's total order
+      ({!Type.compare_value}) and is null when the column's value is null, and
+      {!Not}, {!And} and {!Or} are Kleene's, so a row passes a predicate iff the
+      predicate is [true] on it. A source answers {!Exact} only for a predicate
+      whose meaning it honours entirely: for example, a float column's minimum
+      and maximum prune a row group only when the source knows the group holds
+      no NaN, since NaN passes [>], [>=] and [<>]. *)
+  module Pred : sig
+    type value =
+      | Value : 'a Type.t * 'a -> value
+          (** The type for values. [Value (ty, v)] is [v] at the type [ty] that
+              the comparison is made in, which holds [v] ({!Type.holds}). It is
+              the column's type, or a type that contains it ({!Type.common}),
+              such as [string] for a categorical column, which then compares by
+              text rather than by dictionary position. For an extension column
+              it is the storage type, and [v] is the value's storage. [v] is a
+              value of [ty] exactly, as [ty] stores it: a [float32] value is
+              rounded to [float32]. *)
+
+    (** The type for predicates. *)
+    type t =
+      | Cmp of string * [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ] * value
+          (** [Cmp (c, op, v)] compares the column [c] to [v] with [op]: [`Eq]
+              is [=], [`Ne] is [<>], [`Lt] is [<], [`Le] is [<=], [`Gt] is [>]
+              and [`Ge] is [>=]. It is null where [c] is null. *)
+      | In of string * value list
+          (** [In (c, vs)] is [true] iff the column [c] is the same key as one
+              of [vs], which have one type, and [false] elsewhere, null [c]
+              included. [In (c, [])] is [false]. *)
+      | Null of string  (** [Null c] is [true] iff the column [c] is null. *)
+      | Valid of string
+          (** [Valid c] is [true] iff the column [c] is not null. *)
+      | And of t list
+          (** [And ps] is [false] if one of [ps] is, else null if one is null,
+              else [true]. [And []] is [true]. *)
+      | Or of t list
+          (** [Or ps] is [true] if one of [ps] is, else null if one is null,
+              else [false]. [Or []] is [false]. *)
+      | Not of t  (** [Not p] is the negation of [p], null where [p] is. *)
+  end
+
+  (** {1:reading Reading} *)
+
+  type request = {
+    columns : string list;
+        (** The columns talon reads, distinct, in schema order. It may be empty,
+            as when a query only counts rows. *)
+    filters : Pred.t list;
+        (** The conjuncts that the source answered {!Exact} or {!Inexact}, in
+            plan order. The source applies each it answered {!Exact}. *)
+    limit : int option;
+        (** [Some n] when talon reads no more than the first [n] rows that the
+            request yields, so the source may stop after them. It is [None]
+            unless every conjunct of the filters on the source is {!Exact}. *)
+  }
+  (** The type for what talon asks of a source when it runs. *)
+
+  type reader = {
+    next : unit -> (table option, Error.t) result;
+        (** [next ()] is [Ok (Some b)] with the next batch [b] of the part,
+            whose columns are the request's, in its order, with the source's
+            types; [Ok None] at the end of the part; or [Error e]. A batch may
+            have no rows. A batch with other columns or types raises
+            [Invalid_argument] when talon reads it. *)
+    close : unit -> unit;
+        (** [close ()] releases the reader. Talon calls it once, when [next] has
+            returned [Ok None] or [Error _], when it needs no more of the part's
+            rows, or when the run fails, and calls [next] no more afterwards. *)
+  }
+  (** The type for readers of a part's batches. *)
+
+  type part = {
+    rows : int option;
+        (** [Some n] promises that the part yields exactly [n] rows for the
+            request, and talon trusts it to skip the part without reading it;
+            [None] if unknown. *)
+    open_ : unit -> (reader, Error.t) result;
+        (** [open_ ()] opens a reader on the part. Talon opens a part at most
+            once, and parts must not depend on one another. *)
+  }
+  (** The type for parts: the units a source reads, such as files or row groups.
+  *)
+
+  (** {1:sources Sources} *)
+
+  type t
+  (** The type for sources. Two sources are the same iff they are one value. *)
+
+  val v :
+    name:string ->
+    schema:Schema.t ->
+    ?rows:int ->
+    ?sorted:Order.t list ->
+    ?pushdown:(Pred.t -> answer) ->
+    (request -> (part list, Error.t) result) ->
+    t
+  (** [v ~name ~schema ?rows ?sorted ?pushdown parts] is the source called
+      [name] that yields rows of the columns [schema], with:
+      - [rows], the number of rows the source yields for a request without
+        filters, which plans print, and which turns a slice from the end into
+        one from the start. Defaults to unknown.
+      - [sorted], the order the rows come in, by talon's total order. Talon
+        checks it as rows arrive, and a row out of order fails the run. Defaults
+        to no order.
+      - [pushdown], which answers for one conjunct whether the source applies
+        it. Talon calls it when it plans a run, any number of times: it must be
+        pure and do no IO. Defaults to {!Unsupported} for every conjunct.
+
+      Talon calls [parts] once for each place in the optimized plan that reads
+      the source, with that place's request, and [parts] gives the source's
+      parts in order, or the [Error] that fails the run. A source that can be
+      read only once, such as a stream, documents that it reads once, and its
+      [parts] is an [Error] after its first call: a plan that needs it in
+      several places reads a table that [run] makes of it first.
+
+      Plans print a source as [name] followed by its number of columns, and by
+      [rows] when given, as in [parquet "carriers.parquet" (2 columns)], so
+      [name] says what the source reads: [csv "flights.csv"].
+
+      Raises [Invalid_argument] if [name] is empty, is not valid UTF-8 or holds
+      a control character, if [rows] is negative, or if a key of [sorted] names
+      no column of [schema], names a column twice, or names a column whose type
+      is or contains an extension type, which has no order of its own. *)
+end
+
+module Join : sig
+  (** Joins: conditions, kinds and counts.
+
+      [left |> Query.join ~on right] pairs the rows of [left] and [right] that
+      the condition [on] matches. A condition is a value, a conjunction of
+      {e atoms} built with {!( && )} inside [Join.( … )]:
+      [Join.(keys [ "ticker" ] && eq "day" "date")]. Atoms name a left column,
+      then a right column.
+
+      {b Algorithms.} Each condition runs as one algorithm, with the cost that
+      [Query.join] states, and a conjunction that no algorithm runs raises when
+      it is built. The conditions are:
+      - {e equality}: one or more equality atoms ({!keys}, {!eq});
+      - {!position}, alone;
+      - {!all}, every pair, which is also the condition with no atom: [all && c]
+        is [c].
+
+      {b Keys.} Equality atoms match by key identity ({!Type.compare_value},
+      null being one key), so null keys match.
+
+      {b Columns.} A {!Semi} or {!Anti} join has the left columns. Another join
+      has the left columns, then the right columns but those of equality atoms,
+      in order: the key of [eq l r] appears once, as [l]. In a {!Full} join that
+      key has the common type of [l] and [r] ({!Type.common}), since an
+      unmatched right row gives it [r]'s value; every other column keeps its
+      type. A name on both sides is a problem, and talon adds no suffixes:
+      rename one side first. *)
+
+  (** {1:conditions Conditions} *)
+
+  type cond
+  (** The type for conditions: conjunctions of atoms that an algorithm runs. *)
+
+  val keys : string list -> cond
+  (** [keys ns] matches the rows whose columns [ns] are the same keys on both
+      sides: it is [eq n n] for each [n] of [ns].
+
+      Raises [Invalid_argument] if [ns] is empty, since a join on no key is
+      {!all}, written so, or if [ns] names a column twice. *)
+
+  val eq : string -> string -> cond
+  (** [eq l r] matches the rows whose left column [l] and right column [r] are
+      the same key. [l] and [r] must meet ({!Type.common}). *)
+
+  val position : cond
+  (** [position] matches row i of the left with row i of the right. *)
+
+  val all : cond
+  (** [all] matches every pair of rows. *)
+
+  val ( && ) : cond -> cond -> cond
+  (** [c0 && c1] matches the pairs that both [c0] and [c1] match.
+
+      Raises [Invalid_argument] if no algorithm runs the conjunction, one that
+      holds {!position} and another atom, or if it holds one equality atom
+      twice. *)
+
+  (** {1:kinds Kinds and counts} *)
+
+  (** The type for join kinds: which rows a join keeps. *)
+  type kind =
+    | Inner  (** The matched pairs. *)
+    | Left
+        (** The matched pairs, and each left row without a match, the right
+            columns null. *)
+    | Full
+        (** As {!Left}, then each right row without a match, the left columns
+            null except the keys, which take the right row's. *)
+    | Semi  (** Each left row with a match, once, with the left columns only. *)
+    | Anti  (** Each left row without a match, with the left columns only. *)
+
+  (** The type for the number of matches each row of a side must have. A row
+      with another number fails the run, naming the side, the key and the count.
+  *)
+  type count =
+    | Any  (** No constraint. *)
+    | At_most_one  (** Zero or one. *)
+    | One  (** Exactly one. *)
+    | At_least_one  (** One or more. *)
+end
+
+module Query : sig
+  (** Queries: descriptions of tables to compute.
+
+      A query is a plan: a table or a {!Source.t}, transformed by verbs.
+      Building one reads no data. A pipeline is written inside [Query.( … )],
+      and the expressions of its verbs inside [Expr.( … )]:
+      {[
+      Query.(
+        of_source flights
+        |> filter Expr.(delay > float 15.)
+        |> aggregate ~by:[ "carrier" ] Expr.[ "mean_delay" := mean delay ]
+        |> join
+             ~on:(Join.keys [ "carrier" ])
+             ~each_left:One (of_source carriers)
+        |> sort [ Order.desc "mean_delay" ])
+      ]}
+
+      {b Order is contract.} Each verb states the order of its rows, and no verb
+      has an ordering flag. Where a verb states a cost, n is the number of rows
+      of its input and m that of a join's right input. A verb that {e streams}
+      transforms its input batch by batch; one that {e blocks} holds the columns
+      it reads until its input ends.
+
+      {b Problems.} A verb checks its arguments against its input's schema when
+      it is applied: it binds its expressions ({!Expr} says how), resolves its
+      names and selectors, and infers its schema, which {!schema} then returns.
+      It collects every problem it finds and raises one [Invalid_argument] whose
+      message reports them all:
+      {v
+      aggregate: 3 problems
+        ~by: no column "carier". Did you mean "carrier"?
+        "mean_delay" := mean dep_dly
+          no column "dep_dly". Did you mean "dep_delay"?
+        "late" := mean carrier
+          Col.float reads float16, float32 or float64, but "carrier" is string.
+        input (19 columns): year int16, month int8, day int8, dep_time int32, sched_dep_time int32, dep_delay float64, arr_time int32, sched_arr_time int32, …
+      v}
+      - The first line names the verb and counts its problems.
+      - An output or a predicate with problems follows, as it was written, with
+        its problems below it.
+      - A problem of another argument starts with that argument, as [~by:] does.
+      - A problem between arguments, such as two outputs of one name, stands
+        alone.
+      - Problems come in the order of the verb's arguments.
+      - The last lines give each input's schema: its number of columns and its
+        first eight columns, as {!Schema.pp} formats them, then […] if there are
+        more. A join's inputs are [left] and [right], and [append]'s are [input]
+        and [rest].
+
+      A name that the input lacks comes with the input's names nearest to it,
+      within edit distance 2, or else with all of them.
+
+      {b User functions.} The functions inside a verb's expressions and
+      selectors ([Expr.across], [Expr.each], [Sel.where], [Expr.nx]) run when
+      the verb is applied. They must be pure, and an exception they raise
+      propagates from the verb. *)
+
+  type t
+  (** The type for queries. *)
+
+  (** {1:leaves Tables and sources} *)
+
+  val of_table : table -> t
+  (** [of_table t] is the query of the rows of the table [t]. It costs O(1). *)
+
+  val of_source : Source.t -> t
+  (** [of_source s] is the query of the rows of the source [s], which it reads
+      when it runs. It costs O(1). *)
+
+  val schema : t -> Schema.t
+  (** [schema q] is the names and types of the columns of [q]'s rows. The verb
+      that made [q] resolved it, so it costs O(1) and reads no data. *)
+
+  (** {1:verbs Verbs} *)
+
+  val select : Expr.row Expr.out list -> t -> t
+  (** [select os q] is [q]'s rows with exactly the columns [os], in order:
+      {[
+      select
+        Expr.[ keep Sel.(names [ "carrier" ]); "late" := delay > float 15. ]
+      ]}
+      It keeps [q]'s row count and order. Each output reads [q]'s columns, never
+      another output. It streams in O(n), except that {!Expr.over} and
+      {!Expr.rank} over the input's rows need the whole input: the verb then
+      blocks.
+
+      Its problems are those of binding [os], and two outputs of one name. *)
+
+  val derive : Expr.row Expr.out list -> t -> t
+  (** [derive os q] is [q]'s rows with each of [q]'s columns and the outputs
+      [os]: an output replaces the column of its name in place, with the
+      output's type, and the others follow [q]'s columns, in order. It keeps
+      [q]'s row count and order. Each output reads [q]'s columns, never another
+      output. It streams in O(n), except that {!Expr.over} and {!Expr.rank} over
+      the input's rows need the whole input: the verb then blocks.
+
+      Its problems are those of binding [os], and two outputs of one name. *)
+
+  val filter : (bool, Expr.row) Expr.t -> t -> t
+  (** [filter p q] is the rows of [q] on which [p] is [true], in order, so a row
+      on which [p] is null is dropped. Its schema is [q]'s. [p] is a [bool]
+      column: an OCaml value, as [const f $ x] is, takes that type. It streams
+      in O(n), except that {!Expr.over} and {!Expr.rank} over the input's rows
+      need the whole input: the verb then blocks.
+
+      Its problems are those of binding [p], and an extension's values, even
+      when they read as [bool]. *)
+
+  val sort : Order.t list -> t -> t
+  (** [sort ks q] is [q]'s rows ordered by the keys [ks] in turn, each by
+      talon's total order in its direction, nulls last unless
+      {!Order.nulls_first} (see {!Order}). It is stable: rows equal on every key
+      keep [q]'s order. Its schema is [q]'s. It blocks, in O(n log n).
+
+      Its problems are a key that names no column, a key that names the column
+      of an earlier key, a key on a column whose type holds an extension type,
+      which has no order, and a key on an extension column, which orders only
+      through its declaration. *)
+
+  val slice : offset:int -> length:int -> t -> t
+  (** [slice ~offset ~length q] is [q]'s rows at the positions [offset] to
+      [offset + length - 1] that [q] has, in order, a negative [offset] counting
+      from the end: [slice ~offset:0 ~length:10 q] is [q]'s first ten rows, and
+      [slice ~offset:(-10) ~length:10 q] its last ten. Its schema is [q]'s. With
+      [offset >= 0] it stops reading at the last row it keeps; with a negative
+      [offset] it holds [q]'s last [-offset] rows.
+
+      Its problem is a negative [length]. *)
+
+  val aggregate : by:string list -> Expr.agg Expr.out list -> t -> t
+  (** [aggregate ~by os q] is one row per group of [q]'s rows that have the same
+      keys in the columns [by], by key identity (null is one key, and NaN is
+      one), in order of first appearance. Each row holds the columns [by], then
+      the outputs [os] reduced over the group's rows in [q]'s order. [~by:[]]
+      makes one group of every row, so one row, even when [q] has none. It
+      blocks, in O(n) expected time, holding the columns [by] and those that
+      [os] read.
+
+      Its problems are a key that names no column or is named twice, those of
+      binding [os], two outputs of one name, and an output of a key's name. *)
+
+  val join :
+    ?kind:Join.kind ->
+    ?each_left:Join.count ->
+    ?each_right:Join.count ->
+    on:Join.cond ->
+    t ->
+    t ->
+    t
+  (** [join ?kind ?each_left ?each_right ~on right left] pairs [left]'s rows
+      with the rows of [right] that [on] matches, written
+      [left |> join ~on right], with:
+      - [kind], the rows kept ({!Join.kind}). Defaults to {!Join.Inner}. A right
+        join is a left join with the arguments swapped.
+      - [each_left] and [each_right], the number of matches each row of [left]
+        and of [right] must have; another number fails the run. Both default to
+        {!Join.Any}.
+
+      The rows come in [left]'s order, each left row followed by its matches in
+      [right]'s order; a {!Join.Full} join then appends [right]'s unmatched rows
+      in order. Over {!Join.position}, {!Join.Inner} and {!Join.Semi} keep
+      min(n, m) rows, {!Join.Left} keeps n, {!Join.Full} max(n, m), and
+      {!Join.Anti} [left]'s rows past m. Its columns are those {!Join}
+      describes. An equality or {!Join.position} join blocks on both inputs; a
+      join on {!Join.all} blocks on [right] and streams [left]. An equality join
+      runs in O(n + m + matches).
+
+      Its problems are, for each atom of [on] in order: a column missing on its
+      side, and columns that do not meet. Then, in a {!Join.Full} join, a left
+      column that is the left of two equality atoms, and, except in a
+      {!Join.Semi} or {!Join.Anti} join, the joined columns that have one name.
+  *)
+
+  val append : t -> t -> t
+  (** [append rest q] is [q]'s rows, then [rest]'s, written [q |> append rest].
+      The two have the same columns, matched by name. Its schema is [q]'s names,
+      in order, each at the type where the column's two types meet
+      ({!Type.common}): an [int32] column and an [int64] one append as [int64],
+      a categorical and a [string] as [string]. Each side's values widen to it
+      exactly. Appending other columns is [Kit.union], which derives the missing
+      ones as nulls. It costs O(1) over tables of one schema and streams over
+      sources.
+
+      Its problems are a column that only [q] has, one that only [rest] has, and
+      each column whose two types do not meet, such as [int8] and [uint8]. *)
+
+  (** {1:running Running} *)
+
+  val fold : t -> init:'a -> ('a -> table -> 'a) -> ('a, Error.t) result
+  (** [fold q ~init f] runs [q]: it reads [q]'s sources, computes [q]'s rows in
+      batches and folds [f] over them, in order, from [init]. Each batch has at
+      least one row. The batches [f] sees depend on the batches of [q]'s inputs;
+      their rows in order do not. It optimizes [q] first ({!optimize}).
+
+      [Error e] where the run fails: a source's error, or one found in the data,
+      such as a cast that loses a value, [only] with two values or a join
+      assertion. A run fails as evaluating its optimized plan one row at a time
+      would, at the first row, in that order, where a step fails, whether an
+      error or an exception. Which failure is reported depends on the plan and
+      its inputs' values in order, never on batches or cores. [e] names the
+      step, as {!pp} prints it, and the row of the step's input.
+
+      A function of [q]'s expressions may be called on rows past a limit. Every
+      reader [fold] opens is closed when it returns, also when [f], a function
+      of [q]'s expressions or a source raises; the exception then propagates.
+
+      Running under a transformation of nx, such as compilation or
+      vectorization, is not specified yet: talon runs on the caller's fiber, and
+      a step that reads values on the host, such as a filter, a sort, a group, a
+      join or text, raises whatever nx raises when those values are traced. *)
+
+  val run : t -> (table, Error.t) result
+  (** [run q] is [q]'s rows as one batch: [fold] into a table, then one copy
+      into a single batch. Its columns are canonical: offsets from [0], values
+      that are exactly the rows', validities at bit offset [0], so their
+      {!Column.layout}s do not depend on batches either. *)
+
+  val values : ('a, Expr.row) Expr.t -> t -> ('a array, Error.t) result
+  (** [values e q] is [e] on each row of [q], decoded to OCaml:
+      [values Expr.(const mk $ carrier $ option origin) q]. An extension value
+      is decoded with its declaration's [dec]. [q] reads only the columns [e]
+      reads.
+
+      [Error e] as for {!run}, and where [e] is null on a row, or a value is
+      outside what OCaml reads ({!Column.values}): read nullable values through
+      {!Expr.option}. [e] then names the step [values] followed by [e].
+
+      Raises [Invalid_argument] with a report like a verb's, named [values], if
+      [e] does not bind against [q]'s schema. *)
+
+  (** {1:optimizing Optimizing} *)
+
+  val optimize : t -> t
+  (** [optimize q] is the plan that running [q] runs: [q] with the same schema
+      and the same rows, rewritten to read and compute less. Running a query
+      optimizes it first, so [optimize] serves to print the plan that runs and
+      to compare plans. It reads no data, it calls the sources' [pushdown], and
+      [optimize (optimize q)] is [optimize q].
+
+      {b Results.} The rewrites change no byte of a result, including those
+      under its nulls, and add no failure: an operation that can fail meets only
+      rows that [q] shows it. They may remove failures: a value that no row and
+      no column of the result reads is not computed, so a failure, or an
+      exception from a user function, that only such a value meets does not
+      happen. Of the failures that remain, a run reports the one at the earliest
+      row of the optimized plan.
+
+      {b Constants.} Arithmetic, comparisons and [not] of literals are evaluated
+      as a run evaluates them, and become the literal they compute. One whose
+      evaluation fails, or gives a value OCaml's type does not hold (an [int64]
+      past [max_int]), stays and evaluates at run time. [&&], [||], [is_null],
+      [if_], [coalesce], and [store] of a literal fold alike. [a && false],
+      [a || true], [a && true], [a || false], an [if_] on a literal and a
+      [coalesce] with literals simplify alike. A filter whose predicate is
+      [true] goes, and one whose predicate is [false] or null becomes
+      [slice ~offset:0 ~length:0].
+
+      {b Predicates.} A filter's predicate splits into its {e conjuncts}, the
+      operands of its [&&]s. A conjunct moves toward the sources when it is
+      {e row-local}, its value at a row depending on that row alone: it has no
+      {!Expr.over}, {!Expr.shift} or {!Expr.rank}. It moves past each step that
+      keeps the rows it sees and the values it reads:
+      - a [sort];
+      - a [filter] whose predicate is row-local, with which it merges;
+      - a [select] or a [derive] whose outputs are row-local, when each column
+        the conjunct reads is a column of the step's input kept unchanged, under
+        its name or another ([select ["y" := x]]);
+      - an [aggregate] with keys, when the conjunct reads only keys and none of
+        their types holds floats, since [-0.] and [0.] are one key with two
+        values;
+      - an [append], into both inputs;
+      - a [join] whose [~each_left] and [~each_right] are [Any], on a condition
+        other than {!Join.position}: into the left input when the conjunct reads
+        only left columns and the join is [Inner], [Left], [Semi] or [Anti], and
+        into the right input when it reads only right columns and the join is
+        [Inner].
+
+      It stops at a [slice], at a [Full] join, at a join with an assertion, at a
+      step with an output or predicate that is not row-local, and at a table.
+      Pushdown never crosses a join with an assertion: a conjunct entering one
+      input changes the matches of the other input's rows, and so could make
+      that side's assertion fail on rows the plan shows it. A conjunct that can
+      fail, one with a [cast] that narrows, [Str.parse], temporal arithmetic or
+      parsing, [of_option] or [$], passes only the steps that show it the rows
+      they receive: a [sort], a [select] or a [derive], an [aggregate]'s keys
+      and an [append]. Below a [filter] or a [join] it would meet rows that [q]
+      never shows it.
+
+      When it reaches a source, a conjunct that compares a column with a
+      literal, tests it with {!Expr.is_in} or {!Expr.is_null}, or combines such
+      tests with [&&], [||] and [not], is a {!Source.Pred.t}, and it is offered
+      to the source's [pushdown]: an [Exact] conjunct leaves the plan and goes
+      into the source's request, an [Inexact] one goes into the request and
+      stays, and an [Unsupported] one stays. The conjuncts that stay at one
+      place form filters in plan order, a conjunct that can fail in a filter
+      above those it must not pass.
+
+      {b Slices.} A slice moves below a [select] or a [derive] whose outputs are
+      row-local, and above the conjuncts that move. Two slices from the start,
+      [offset >= 0], merge into one. A slice from the start of an [append]
+      limits both its inputs to [offset + length] rows. A slice from the start
+      directly above a source gives it a limit of [offset + length] rows. A
+      conjunct that stays is a filter between them, so a source with an
+      [Inexact] or [Unsupported] conjunct gets no limit. A slice from the end
+      gets one too when the source states its rows and is handed no conjunct,
+      the slice then counting from the start. A slice from the start directly
+      above a [sort] runs as a selection of its first [offset + length] rows,
+      which sorts only the rows whose first key is at most the
+      [offset + length]th row's: [sort] then [slice] is a top-k.
+
+      {b Projections.} Each source reads only the columns that a step reads or
+      that the result has, and each [select], [derive] and [aggregate] drops the
+      outputs that nothing reads. A [select] that keeps its input's columns
+      unchanged, in order, goes, and so does a [derive] left without outputs,
+      and a [select] that only keeps columns below a [select] or an [aggregate],
+      which read their input by name. Where an input of an [append] has columns
+      that the [append] does not take, [select [keep (names …)]] keeps those it
+      takes.
+
+      {b Sharing.} Subplans that are the same steps with equal arguments over
+      physically the same tables and sources become one value, which a run runs
+      once; equal subexpressions of one step are one expression, which it
+      computes once. Each place that reads a source is a read of its own, with
+      the columns and the conjuncts of that place, so places with equal requests
+      are one read. A step that a plan reaches more than once runs once: a run
+      computes it as far as its furthest reader reads, and holds its rows, of
+      the columns its readers read, from its slowest reader to its furthest.
+
+      The guide's pipeline, optimized, reads two of the CSV file's columns,
+      which answers [Unsupported] to every conjunct:
+      {v
+      query → carrier string, mean_delay float64, flights int64, name string
+      sort [desc "mean_delay"]
+      └ join ~on:(keys ["carrier"]) ~each_left:One
+        ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
+        │                            "flights" := rows]
+        │ └ filter (dep_delay > 15.)
+        │   └ csv "flights.csv" (19 columns) ~columns:["dep_delay"; "carrier"]
+        └ parquet "carriers.parquet" (2 columns)
+      v} *)
+
+  (** {1:comparing Comparing and formatting} *)
+
+  val equal : t -> t -> bool
+  (** [equal q0 q1] is [true] iff [q0] and [q1] are the same plan: the same
+      steps with equal arguments, expressions compared by their identity, tables
+      by key identity row by row, and sources physically, with equal requests
+      (see {!pp}). Equal queries have equal schemas. *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf q] formats [q]'s plan, which reads no data: the line [query →] and
+      [q]'s schema as {!Schema.pp} formats it, then [q]'s last step, with the
+      steps it reads below it in a tree:
+      {v
+      query → carrier string, mean_delay float64, flights int64, name string
+      sort [desc "mean_delay"]
+      └ join ~on:(keys ["carrier"]) ~each_left:One
+        ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
+        │                            "flights" := rows]
+        │ └ filter (dep_delay > 15.)
+        │   └ csv "flights.csv" (19 columns)
+        └ parquet "carriers.parquet" (2 columns)
+      v}
+      A step formats as the call of the verb that made it, without its input or
+      module paths, its expressions as {!Expr.pp} formats them, its keys as they
+      are written inside [Order.( … )] and its condition as it is written inside
+      [Join.( … )]:
+      - outputs as ["name" := e], with selectors resolved, and a run of columns
+        kept unchanged under their names as one [keep (names ["a"; "b"])];
+      - [~kind], [~each_left] and [~each_right] after [~on], when they are not
+        their defaults;
+      - a table as [table (4 columns, 16 rows)], and a source as its name and
+        its number of columns, then its number of rows when it states one:
+        [parquet "carriers.parquet" (2 columns, 1491 rows)];
+      - a source that is asked for less than all of it, as an optimized plan
+        asks ({!optimize}), then as its request: [~columns] when it reads fewer
+        than all its columns, [~filters] when it is handed conjuncts, and
+        [~limit] when it has one:
+        [parquet "f.parquet" (19 columns) ~columns:["dep_delay"; "carrier"]
+         ~filters:[dep_delay > 15.] ~limit:10].
+
+      A join's left input comes before its right, and [append]'s [q] before
+      [rest]. A step that the plan reaches more than once, as equal subplans are
+      after {!optimize}, is labelled [#1], [#2], … in the order the printer
+      first meets them: the first time as [#1] followed by the step and its
+      inputs, and each later time as [#1] alone:
+      {v
+      query → k string, n int64, m int64
+      join ~on:(keys ["k"])
+      ├ #1 aggregate ~by:["k"] ["n" := rows]
+      │ └ csv "x.csv" (3 columns) ~columns:["k"]
+      └ select [keep (names ["k"]); "m" := n]
+        └ #1
+      v}
+      A step too long for the margin continues on the next lines, indented under
+      it. Lines fit the formatter's margin counted from column 0, since a
+      formatter does not tell its current indentation: inside an indented box
+      they overrun the margin by that indentation. *)
+end
+
+module Kit : sig
+  (** Compositions of the verbs and expressions.
+
+      Each value of [Kit] is a composition written against talon's public
+      signature alone, and its documentation shows the definition. A plan built
+      with [Kit] prints as the verbs that make it, and its problems are those of
+      its verbs, which report them as they report any other plan's. A function
+      raises [Invalid_argument] itself only for an argument that is wrong
+      whatever the schema, or for a requirement that no verb states. *)
+
+  (** {1:queries Queries} *)
+
+  val head : int -> Query.t -> Query.t
+  (** [head n q] is the first [n] rows of [q]:
+      {[
+      Query.slice ~offset:0 ~length:n q
+      ]} *)
+
+  val tail : int -> Query.t -> Query.t
+  (** [tail n q] is the last [n] rows of [q]:
+      {[
+      Query.slice ~offset:(-n) ~length:n q
+      ]} *)
+
+  val top_k : int -> Order.t list -> Query.t -> Query.t
+  (** [top_k k keys q] is the first [k] rows of [q] in the order of [keys]:
+      {[
+      Query.(q |> sort keys |> slice ~offset:0 ~length:k)
+      ]}
+      A slice from the start of a sort runs as a selection of its first rows,
+      which sorts only the rows that precede or tie with the [k]th on the first
+      key. *)
+
+  val distinct : Query.t -> Query.t
+  (** [distinct q] is the first of each set of [q]'s rows that are the same on
+      every column, by key identity (null is one key, and NaN is one), in order:
+      {[
+      match List.map fst (Schema.columns (Query.schema q)) with
+      | [] -> head 1 q
+      | names -> Query.aggregate ~by:names [] q
+      ]}
+      A query without columns has one distinct row if it has rows. *)
+
+  val count_by : string list -> Query.t -> Query.t
+  (** [count_by ks q] is one row per group of [q]'s rows that have the same keys
+      in the columns [ks], in order of first appearance: the columns [ks], then
+      ["count"], the group's number of rows as [int64]:
+      {[
+      Query.aggregate ~by:ks Expr.[ "count" := rows ] q
+      ]} *)
+
+  val value_counts : string -> Query.t -> Query.t
+  (** [value_counts c q] is each distinct value of [q]'s column [c], null
+      included, with its number of rows, most frequent first and ties in order
+      of first appearance:
+      {[
+      count_by [ c ] q |> Query.sort [ Order.desc "count" ]
+      ]} *)
+
+  val describe : Query.t -> Query.t
+  (** [describe q] summarizes each integer or float column of [q], in order, as
+      one row of the columns ["column"], its name; ["count"], its number of
+      values that are not null; ["nulls"], its number of nulls; ["mean"];
+      ["std"]; ["min"]; ["q25"], ["median"] and ["q75"], its quartiles; and
+      ["max"]. ["count"] and ["nulls"] are [int64] and the others [float64]. The
+      statistics are {!Expr}'s reductions, which skip nulls:
+      {[
+      let stats name x =
+        Query.aggregate ~by:[]
+          Expr.
+            [
+              "column" := string name;
+              "count" := count x;
+              "nulls" := rows - count x;
+              "mean" := mean x;
+              "std" := std x;
+              "min" := cast Type.float64 (min x);
+              "q25" := quantile 0.25 x;
+              "median" := median x;
+              "q75" := quantile 0.75 x;
+              "max" := cast Type.float64 (max x);
+            ]
+          q
+      in
+      s0 |> Query.append s1 |> … |> Query.append sk
+      ]}
+      where [s0] to [sk] are [stats n (Col.int n)] or [stats n (Col.float n)]
+      for each integer or float column [n]. Without such a column, [describe q]
+      is [head 0 (stats "" Expr.(store Type.float64 null))], which has no rows.
+      It reads [q] once per integer or float column. *)
+
+  val null_count : Query.t -> Query.t
+  (** [null_count q] is one row with, for each column of [q], in order and under
+      its name, its number of nulls as [int64]:
+      {[
+      Query.aggregate ~by:[]
+        Expr.[ each Sel.all { column = (fun n x -> n := rows - count x) } ]
+        q
+      ]} *)
+
+  val drop : Sel.t -> Query.t -> Query.t
+  (** [drop sel q] is [q] without the columns that [sel] selects:
+      {[
+      Query.select Expr.[ keep Sel.(all - sel) ] q
+      ]} *)
+
+  val rename : (string * string) list -> Query.t -> Query.t
+  (** [rename pairs q] is [q] with each column [old] of [pairs] renamed to the
+      [name] it pairs with, in place:
+      {[
+      let name n = Option.value ~default:n (List.assoc_opt n pairs) in
+      Query.select
+        Expr.
+          [
+            each
+              Sel.(all + names (List.map fst pairs))
+              { column = (fun n x -> name n := x) };
+          ]
+        q
+      ]}
+      An [old] that [q] lacks is a problem of the [select], through
+      {!Sel.names}, and so is a name that two columns would take.
+
+      Raises [Invalid_argument] if [pairs] renames a column twice. *)
+
+  val complete : string list -> Query.t -> Query.t
+  (** [complete ks q] is [q] with a row for each combination of the values of
+      the columns [ks] that [q] lacks, its other columns null. Each column's
+      values come in order of first appearance, combinations vary the last
+      column fastest, and each combination is followed by its rows of [q], in
+      order:
+      {[
+      let values k = Query.select Expr.[ keep Sel.(names [ k ]) ] q |> distinct in
+      let combos =
+        List.fold_left
+          (fun acc k -> acc |> Query.join ~on:Join.all (values k))
+          (values k0) ks'                               (* ks = k0 :: ks' *)
+      in
+      combos
+      |> Query.join ~kind:Left ~on:(Join.keys ks) q
+      |> Query.select Expr.[ keep (Sel.names (columns of q)) ]
+      ]}
+      It has [q]'s schema. Its key columns hold the combinations' values, so
+      where a key holds floats, a row of [q] holds the first of its equal values
+      to appear in [q]: [-0.] or [0.].
+
+      Raises [Invalid_argument] if [ks] is empty or names a column twice. *)
+
+  val one_hot : string -> Query.t -> Query.t
+  (** [one_hot c q] is [q] with its categorical column [c] replaced, in place,
+      by one [bool] column per category, in dictionary order, named
+      [c ^ "_" ^ category]: [true] where [c] is that category, [false] where it
+      is another, and null where [c] is null:
+      {[
+      Query.select
+        Expr.(
+          [ keep (Sel.names before) ]
+          @ List.map
+              (fun cat -> c ^ "_" ^ cat := Col.string c = string cat)
+              categories
+          @ [ keep (Sel.names after) ])
+        q
+      ]}
+      The categories are in [c]'s type, so the columns are known before any data
+      is read; a string column is cast to a categorical type first.
+
+      If [q] lacks [c], it is [Query.select Expr.[ keep Sel.(names [ c ]) ] q]'s
+      problem, reported with the nearest names.
+
+      Raises [Invalid_argument] if [c] is not categorical. *)
+
+  val union : Query.t -> Query.t -> Query.t
+  (** [union rest q] is [q]'s rows, then [rest]'s, written
+      [q |> Kit.union rest], with [q]'s columns, then those that only [rest]
+      has, in order; a column is null on the side that lacks it:
+      {[
+      let nulls from into =
+        List.filter_map
+          (fun (n, Type.Any t) ->
+            match Schema.find into n with
+            | Some _ -> None
+            | None -> Some Expr.(n := store t null))
+          (Schema.columns from)
+      in
+      let pad os q = if os = [] then q else Query.derive os q in
+      let s = Query.schema q and r = Query.schema rest in
+      pad (nulls r s) q |> Query.append (pad (nulls s r) rest)
+      ]}
+      A column that both have, of two types, takes the type where they meet, and
+      one whose types do not meet is a problem of the [append]. *)
+
+  (** {1:runs Runs} *)
+
+  val categorize : string list -> Query.t -> (Query.t, Error.t) result
+  (** [categorize cs q] is [q] with each text column of [cs] cast, in place, to
+      the categorical type whose dictionary is the column's distinct non-null
+      values in byte order, the order of {!Order.asc} on text, which does not
+      depend on the order or the batches of [q]'s rows. It runs one query per
+      column, after building them all:
+      {[
+      let words c =
+        let x = Col.string c in
+        Query.select Expr.[ c := cast Type.string x ] q
+        |> Query.filter Expr.(not (is_null x))
+        |> distinct
+        |> Query.sort [ Order.asc c ]
+        |> Query.values x
+      in
+      Query.derive
+        (List.map
+           (fun (c, ws) ->
+             Expr.(c := cast (Type.categorical ws) (Col.string c)))
+           dictionaries)
+        (* the [(c, words c)] of each [c] *)
+        q
+      ]}
+      [cs] empty is [Ok q]. A column of [q] that is missing or is not text is a
+      problem of the [select]. A categorical column takes the dictionary of the
+      values it holds, in byte order, since it is read as text.
+
+      [Error e] if a run fails, or if a column holds more than 2{^ 31} - 1
+      distinct strings, the most a dictionary holds.
+
+      Raises [Invalid_argument] if [cs] names a column twice. *)
+end
