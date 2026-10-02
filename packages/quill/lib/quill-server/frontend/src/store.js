@@ -77,6 +77,14 @@ export class Store {
     }
   }
 
+  setOutputs(cellId, outputs) {
+    const cell = this.findCell(cellId);
+    if (cell) {
+      cell.outputs = outputs;
+      this.emit('cell:outputs', { cellId, outputs });
+    }
+  }
+
   clearOutputs(cellId) {
     const cell = this.findCell(cellId);
     if (cell && cell.outputs) {

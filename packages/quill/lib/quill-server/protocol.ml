@@ -172,7 +172,7 @@ let output_to_json (o : Cell.output) =
         [
           ("kind", Jsont.Json.string "error"); ("text", Jsont.Json.string text);
         ]
-  | Display { mime; data } ->
+  | Display { mime; data; _ } ->
       json_obj
         [
           ("kind", Jsont.Json.string "display");
@@ -230,6 +230,15 @@ let cell_output_to_json ~cell_id output =
          ("type", Jsont.Json.string "cell_output");
          ("cell_id", Jsont.Json.string cell_id);
          ("output", output_to_json output);
+       ])
+
+let cell_outputs_to_json ~cell_id outputs =
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "cell_outputs");
+         ("cell_id", Jsont.Json.string cell_id);
+         ("outputs", Jsont.Json.list (List.map output_to_json outputs));
        ])
 
 let cell_status_to_json ~cell_id status =

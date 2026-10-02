@@ -129,7 +129,7 @@ let mark_idle cell_id s =
   { s with statuses = Id_map.add cell_id Idle s.statuses }
 
 let apply_output cell_id output s =
-  let doc = Doc.update cell_id (Cell.append_output output) s.doc in
+  let doc = Doc.add_output cell_id output s.doc in
   { s with doc }
 
 let finish_execution cell_id ~success:_ s =

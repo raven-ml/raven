@@ -26,7 +26,7 @@ type output =
   | Stdout of string
   | Stderr of string
   | Error of string
-  | Display of { mime : string; data : string }
+  | Display of { mime : string; id : string option; data : string }
 
 (* ───── Display protocol ───── *)
 
@@ -65,6 +65,10 @@ let output_of_tag tag =
             malformed "the MIME type is empty"
         | Some id_end ->
             let mime = String.sub tag mime_start (mime_end - mime_start) in
+            let id =
+              if id_end = mime_end + 1 then None
+              else Some (String.sub tag (mime_end + 1) (id_end - mime_end - 1))
+            in
             let start = id_end + 1 in
             let content = String.sub tag start (String.length tag - start) in
             let data =
@@ -72,7 +76,7 @@ let output_of_tag tag =
                 base64_encode content
               else content
             in
-            Some (Display { mime; data }))
+            Some (Display { mime; id; data }))
 
 (* ───── Attributes ───── *)
 
@@ -135,9 +139,19 @@ let rec append_or_coalesce o acc = function
       end
   | out :: rest -> append_or_coalesce o (out :: acc) rest
 
+let same_display d = function
+  | Display { id = Some d'; _ } -> String.equal d d'
+  | _ -> false
+
 let append_output o = function
-  | Code c -> Code { c with outputs = append_or_coalesce o [] c.outputs }
   | Text _ as t -> t
+  | Code c -> (
+      match o with
+      | Display { id = Some d; _ } when List.exists (same_display d) c.outputs
+        ->
+          let replace out = if same_display d out then o else out in
+          Code { c with outputs = List.map replace c.outputs }
+      | _ -> Code { c with outputs = append_or_coalesce o [] c.outputs })
 
 let clear_outputs = function
   | Code c -> Code { c with outputs = [] }

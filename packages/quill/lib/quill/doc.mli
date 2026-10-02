@@ -43,6 +43,10 @@ val find : Cell.id -> t -> Cell.t option
 val find_index : Cell.id -> t -> int option
 (** [find_index id d] is the zero-based index of cell [id] in [d]. *)
 
+val find_display : string -> t -> Cell.t option
+(** [find_display id d] is the first cell of [d] holding a
+    {{!Cell.display}display} with id [id], or [None]. *)
+
 (** {1:modifications Modifications} *)
 
 val insert : pos:int -> Cell.t -> t -> t
@@ -62,6 +66,11 @@ val move : Cell.id -> pos:int -> t -> t
 
 val update : Cell.id -> (Cell.t -> Cell.t) -> t -> t
 (** [update id f d] applies [f] to the cell identified by [id]. *)
+
+val add_output : Cell.id -> Cell.output -> t -> t
+(** [add_output id o d] appends [o] to cell [id] with {!Cell.append_output},
+    except that a display with id [Some s] replaces in place the display with id
+    [Some s] of {!find_display}[ s d], in whichever cell it is. *)
 
 val clear_all_outputs : t -> t
 (** [clear_all_outputs d] clears outputs from all code cells. *)

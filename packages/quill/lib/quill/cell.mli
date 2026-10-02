@@ -22,17 +22,19 @@ type output =
   | Stdout of string
   | Stderr of string
   | Error of string
-  | Display of { mime : string; data : string }
+  | Display of { mime : string; id : string option; data : string }
       (** The type for cell execution outputs. A single execution may produce
           multiple outputs (e.g. stdout text followed by a displayed image).
 
           - [Stdout s] is captured standard output.
           - [Stderr s] is captured standard error.
           - [Error s] is an execution error message.
-          - [Display {mime; data}] is rich content identified by MIME type (e.g.
-            ["text/html"], ["image/png"]). For an [image/] MIME type, [data] is
-            the base64 encoding of the content; for any other, [data] is the
-            content itself. *)
+          - [Display {mime; id; data}] is rich content identified by MIME type
+            (e.g. ["text/html"], ["image/png"]). For an [image/] MIME type,
+            [data] is the base64 encoding of the content; for any other, [data]
+            is the content itself. [id] is the display's id, if any (see
+            {{!display}the display protocol}): it lives as long as the session
+            and notebook files never record it. *)
 
 (** {1:display Display protocol}
 
@@ -58,9 +60,10 @@ type output =
     Each line ends with ['\n']. The content is not encoded: it is every byte
     after the third ['\n'], newlines and NUL bytes included.
 
-    A non-empty display id names the display, so that a later display with the
-    same id can replace it in place. Quill does not act on ids yet: it shows
-    every display.
+    An empty display id line makes a plain display. A non-empty one names the
+    display: a later display with the same id replaces it in place, in whichever
+    cell of the session holds it, so that a figure can update as a computation
+    runs. Ids last as long as the session; notebook files never record them.
 
     Formatters ignore tags by default and print only the plain-text rendering,
     which is what a terminal toplevel or a log shows. Quill's OCaml kernel turns
@@ -71,7 +74,8 @@ type output =
 val output_of_tag : string -> output option
 (** [output_of_tag s] is the output Quill shows for the tag [s]:
     - [None] if [s] does not start with the line [quill.display].
-    - [Some (Display {mime; data})] if [s] is a {{!display}display tag}.
+    - [Some (Display {mime; id; data})] if [s] is a {{!display}display tag},
+      where [id] is [None] for an empty display id line.
     - [Some (Error msg)] otherwise, where [msg] says how [s] is malformed: a
       missing line, or an empty MIME type. *)
 
@@ -151,8 +155,9 @@ val set_outputs : output list -> t -> t
     returned unchanged. *)
 
 val append_output : output -> t -> t
-(** [append_output o c] appends [o] to the outputs of [c]. Text cells are
-    returned unchanged. *)
+(** [append_output o c] appends [o] to the outputs of [c], except that a display
+    with id [Some d] replaces in place a display of [c] with id [Some d], if
+    there is one. Text cells are returned unchanged. *)
 
 val clear_outputs : t -> t
 (** [clear_outputs c] is [c] with an empty output list. Text cells are returned

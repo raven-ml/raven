@@ -178,7 +178,16 @@ let on_kernel_event st = function
       | _ -> ());
       locked st (fun () ->
           st.session <- Session.apply_output cell_id output st.session;
-          send st (Protocol.cell_output_to_json ~cell_id output))
+          (* A display with an id may have replaced one in another cell: send
+             the outputs of the cell holding it, leaving its editor alone. *)
+          let doc = Session.doc st.session in
+          match output with
+          | Cell.Display { id = Some id; _ } -> (
+              match Doc.find_display id doc with
+              | Some (Cell.Code { id; outputs; _ }) ->
+                  send st (Protocol.cell_outputs_to_json ~cell_id:id outputs)
+              | Some (Cell.Text _) | None -> ())
+          | _ -> send st (Protocol.cell_output_to_json ~cell_id output))
   | Kernel.Finished { cell_id; success } ->
       log "[exec] %s %s\n%!" cell_id (if success then "done" else "failed");
       locked st (fun () ->

@@ -10,8 +10,12 @@ let pp_output ppf = function
   | Cell.Stdout s -> Format.fprintf ppf "Stdout %S" s
   | Cell.Stderr s -> Format.fprintf ppf "Stderr %S" s
   | Cell.Error s -> Format.fprintf ppf "Error %S" s
-  | Cell.Display { mime; data } ->
-      Format.fprintf ppf "Display {mime = %S; data = %S}" mime data
+  | Cell.Display { mime; id; data } ->
+      Format.fprintf ppf "Display {mime = %S; id = %s; data = %S}" mime
+        (match id with
+        | None -> "None"
+        | Some id -> Printf.sprintf "Some %S" id)
+        data
 
 let output = Testable.make ~pp:pp_output ~equal:( = )
 
@@ -48,10 +52,19 @@ let kernel_tests =
     test "a value's display tag is a display output" (fun () ->
         equal (list output)
           [
-            Cell.Display { mime = "image/svg+xml"; data = "PHN2Zy8+" };
+            Cell.Display
+              { mime = "image/svg+xml"; id = None; data = "PHN2Zy8+" };
             Cell.Stdout "- : fig = a figure\n";
           ]
           (figure "quill.display\nimage/svg+xml\n\n<svg/>"));
+    test "a display id reaches the display output" (fun () ->
+        equal (list output)
+          [
+            Cell.Display
+              { mime = "image/svg+xml"; id = Some "loss"; data = "PHN2Zy8+" };
+            Cell.Stdout "- : fig = a figure\n";
+          ]
+          (figure "quill.display\nimage/svg+xml\nloss\n<svg/>"));
     test "a malformed display tag is an error output" (fun () ->
         equal (list output)
           [

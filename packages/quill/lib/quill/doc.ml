@@ -44,6 +44,17 @@ let find_index id d =
   in
   loop 0 d.order
 
+let holds_display id = function
+  | Cell.Code { outputs; _ } ->
+      List.exists
+        (function
+          | Cell.Display { id = Some id'; _ } -> String.equal id id'
+          | _ -> false)
+        outputs
+  | Cell.Text _ -> false
+
+let find_display id d = List.find_opt (holds_display id) (cells d)
+
 (* ───── Modifications ───── *)
 
 let insert ~pos cell d =
@@ -94,6 +105,15 @@ let move id ~pos d =
 
 let update id f d =
   match find id d with None -> d | Some c -> replace id (f c) d
+
+let add_output id o d =
+  let target =
+    match o with
+    | Cell.Display { id = Some s; _ } -> (
+        match find_display s d with Some c -> Cell.id c | None -> id)
+    | _ -> id
+  in
+  update target (Cell.append_output o) d
 
 let clear_all_outputs d =
   let by_id = Id_map.map Cell.clear_outputs d.by_id in

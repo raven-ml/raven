@@ -69,6 +69,9 @@ export class WsClient {
       case 'cell_output':
         this.store.appendOutput(msg.cell_id, msg.output);
         break;
+      case 'cell_outputs':
+        this.store.setOutputs(msg.cell_id, msg.outputs);
+        break;
       case 'cell_updated': {
         // Detect execution completion: cell was running/queued, now idle
         const oldCell = this.store.findCell(msg.cell_id);

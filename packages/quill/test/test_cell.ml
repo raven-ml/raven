@@ -109,11 +109,16 @@ let pp_output ppf = function
   | Cell.Stdout s -> Format.fprintf ppf "Stdout %S" s
   | Cell.Stderr s -> Format.fprintf ppf "Stderr %S" s
   | Cell.Error s -> Format.fprintf ppf "Error %S" s
-  | Cell.Display { mime; data } ->
-      Format.fprintf ppf "Display {mime = %S; data = %S}" mime data
+  | Cell.Display { mime; id; data } ->
+      Format.fprintf ppf "Display {mime = %S; id = %a; data = %S}" mime
+        Format.(
+          pp_print_option
+            ~none:(fun ppf () -> pp_print_string ppf "None")
+            (fun ppf -> fprintf ppf "Some %S"))
+        id data
 
 let output = Testable.make ~pp:pp_output ~equal:( = )
-let display mime data = Some (Cell.Display { mime; data })
+let display ?id mime data = Some (Cell.Display { mime; id; data })
 let tag mime content = "quill.display\n" ^ mime ^ "\n\n" ^ content
 
 (* [base64_decode s] is the bytes that the RFC 4648 base64 text [s] encodes. *)
@@ -162,10 +167,14 @@ let display_tests =
         equal (option output)
           (display "image/png" "iVBORw0KGgo=")
           (Cell.output_of_tag (tag "image/png" "\x89PNG\r\n\x1a\n")));
-    test "the display id is not part of the content" (fun () ->
+    test "a display id line names the display" (fun () ->
+        equal (option output)
+          (display ~id:"fig-1" "image/svg+xml" "PHN2Zy8+")
+          (Cell.output_of_tag "quill.display\nimage/svg+xml\nfig-1\n<svg/>"));
+    test "an empty display id line is no id" (fun () ->
         equal (option output)
           (display "image/svg+xml" "PHN2Zy8+")
-          (Cell.output_of_tag "quill.display\nimage/svg+xml\nfig-1\n<svg/>"));
+          (Cell.output_of_tag "quill.display\nimage/svg+xml\n\n<svg/>"));
     test "an empty content is a display" (fun () ->
         equal (option output) (display "text/plain" "")
           (Cell.output_of_tag (tag "text/plain" "")));
@@ -204,6 +213,38 @@ let display_tests =
           (Cell.output_of_tag s));
   ]
 
+let outputs = function
+  | Cell.Code { outputs; _ } -> outputs
+  | Cell.Text _ -> fail "expected Code cell"
+
+let svg ?id data = Cell.Display { mime = "image/svg+xml"; id; data }
+
+let append_tests =
+  [
+    test "a display with an id replaces the cell's display in place" (fun () ->
+        let c =
+          Cell.code "x"
+          |> Cell.append_output (svg ~id:"a" "1")
+          |> Cell.append_output (Cell.Stderr "e")
+          |> Cell.append_output (svg ~id:"a" "2")
+        in
+        equal (list output) [ svg ~id:"a" "2"; Cell.Stderr "e" ] (outputs c));
+    test "a display with another id appends" (fun () ->
+        let c =
+          Cell.code "x"
+          |> Cell.append_output (svg ~id:"a" "1")
+          |> Cell.append_output (svg ~id:"b" "2")
+        in
+        equal (list output) [ svg ~id:"a" "1"; svg ~id:"b" "2" ] (outputs c));
+    test "a display without an id appends" (fun () ->
+        let c =
+          Cell.code "x"
+          |> Cell.append_output (svg "1")
+          |> Cell.append_output (svg "1")
+        in
+        equal (list output) [ svg "1"; svg "1" ] (outputs c));
+  ]
+
 let () =
   exit
     (run "Cell"
@@ -212,4 +253,5 @@ let () =
          group "Transformations" transformation_tests;
          group "Attributes" attrs_tests;
          group "Display protocol" display_tests;
+         group "Displays with ids" append_tests;
        ])

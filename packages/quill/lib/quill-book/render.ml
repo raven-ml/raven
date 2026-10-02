@@ -263,7 +263,7 @@ let render_output buf (output : Quill.Cell.output) =
       Buffer.add_string buf {|<pre class="output error">|};
       buf_add_escaped buf s;
       Buffer.add_string buf "</pre>\n"
-  | Display { mime; data } ->
+  | Display { mime; data; _ } ->
       if String.length mime >= 6 && String.sub mime 0 6 = "image/" then (
         Buffer.add_string buf {|<div class="output"><img src="data:|};
         Buffer.add_string buf mime;

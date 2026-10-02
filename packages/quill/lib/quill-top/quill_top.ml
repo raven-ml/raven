@@ -661,7 +661,7 @@ let emit_with_images ~emit s =
                 emit
                   (Quill.Cell.Stdout
                      (String.sub s !text_start (start - !text_start)));
-              emit (Quill.Cell.Display { mime; data });
+              emit (Quill.Cell.Display { mime; id = None; data });
               i := !m + 1;
               text_start := !i
             end

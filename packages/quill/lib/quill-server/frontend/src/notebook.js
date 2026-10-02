@@ -37,6 +37,11 @@ export class NotebookRenderer {
       const container = document.querySelector(`[data-cell-id="${cellId}"] .cell-outputs`);
       if (container) appendOutputToContainer(container, output);
     });
+    this.store.on('cell:outputs', ({ cellId, outputs }) => {
+      clearCellOutputs(cellId);
+      const container = document.querySelector(`[data-cell-id="${cellId}"] .cell-outputs`);
+      if (container) for (const output of outputs) appendOutputToContainer(container, output);
+    });
     this.store.on('cell:outputs-cleared', ({ cellId }) => {
       clearCellOutputs(cellId);
     });

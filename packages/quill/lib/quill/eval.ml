@@ -7,7 +7,7 @@ let run ~create_kernel doc =
   let doc = ref doc in
   let on_event = function
     | Kernel.Output { cell_id; output } ->
-        doc := Doc.update cell_id (Cell.append_output output) !doc
+        doc := Doc.add_output cell_id output !doc
     | _ -> ()
   in
   let (kernel : Kernel.t) = create_kernel ~on_event in

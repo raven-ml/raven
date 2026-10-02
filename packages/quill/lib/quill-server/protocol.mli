@@ -70,6 +70,10 @@ val cell_output_to_json : cell_id:string -> Quill.Cell.output -> string
 (** [cell_output_to_json ~cell_id output] is a ["cell_output"] JSON message for
     [output] of cell [cell_id]. *)
 
+val cell_outputs_to_json : cell_id:string -> Quill.Cell.output list -> string
+(** [cell_outputs_to_json ~cell_id outputs] is a ["cell_outputs"] JSON message
+    replacing the outputs of cell [cell_id] with [outputs]. *)
+
 val cell_status_to_json : cell_id:string -> Quill.Session.cell_status -> string
 (** [cell_status_to_json ~cell_id status] is a ["cell_status"] JSON message for
     cell [cell_id]. *)

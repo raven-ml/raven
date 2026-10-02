@@ -227,7 +227,7 @@ let parse_image_display ?base_dir mime content =
       begin match extract_data_uri_base64 src with
       | Some base64 ->
           (* Inline data URI: extract base64 directly *)
-          Quill.Cell.Display { mime; data = base64 }
+          Quill.Cell.Display { mime; id = None; data = base64 }
       | None ->
           (* File reference: read and base64-encode *)
           begin match base_dir with
@@ -280,15 +280,15 @@ let parse_image_display ?base_dir mime content =
                 loop 0 0;
                 Bytes.unsafe_to_string out
               in
-              Quill.Cell.Display { mime; data }
+              Quill.Cell.Display { mime; id = None; data }
           | None ->
               (* No base_dir, store src as placeholder *)
-              Quill.Cell.Display { mime; data = "" }
+              Quill.Cell.Display { mime; id = None; data = "" }
           end
       end
   | None ->
       (* No <img> tag — treat as raw data *)
-      Quill.Cell.Display { mime; data = content }
+      Quill.Cell.Display { mime; id = None; data = content }
 
 let parse_output_sections ?base_dir content =
   let lines = String.split_on_char '\n' content in
@@ -322,7 +322,7 @@ let parse_output_sections ?base_dir content =
                 String.sub display_tag plen (String.length display_tag - plen)
               in
               if is_image mime then parse_image_display ?base_dir mime trimmed
-              else Quill.Cell.Display { mime; data = trimmed }
+              else Quill.Cell.Display { mime; id = None; data = trimmed }
             else (* Unknown tag, treat as stdout *)
               Quill.Cell.Stdout trimmed
       in
@@ -519,7 +519,7 @@ let render_output ?figures_dir ~cell_id ~img_counter buf = function
   | Quill.Cell.Error s ->
       Buffer.add_string buf "<!-- out:error -->\n";
       add_content buf s
-  | Quill.Cell.Display { mime; data } ->
+  | Quill.Cell.Display { mime; data; _ } ->
       Buffer.add_string buf "<!-- out:display ";
       Buffer.add_string buf mime;
       Buffer.add_string buf " -->\n";

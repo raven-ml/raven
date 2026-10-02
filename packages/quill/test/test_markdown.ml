@@ -6,6 +6,19 @@
 open Windtrap
 open Quill
 
+let pp_output ppf = function
+  | Cell.Stdout s -> Format.fprintf ppf "Stdout %S" s
+  | Cell.Stderr s -> Format.fprintf ppf "Stderr %S" s
+  | Cell.Error s -> Format.fprintf ppf "Error %S" s
+  | Cell.Display { mime; id; data } ->
+      Format.fprintf ppf "Display {mime = %S; id = %s; data = %S}" mime
+        (match id with
+        | None -> "None"
+        | Some id -> Printf.sprintf "Some %S" id)
+        data
+
+let output = Testable.make ~pp:pp_output ~equal:( = )
+
 let parsing_tests =
   [
     test "empty document" (fun () ->
@@ -242,7 +255,10 @@ let structured_output_tests =
         let c =
           Cell.code "plot ()"
           |> Cell.set_outputs
-               [ Cell.Display { mime = "image/png"; data = "iVBORw0KGgo=" } ]
+               [
+                 Cell.Display
+                   { mime = "image/png"; id = None; data = "iVBORw0KGgo=" };
+               ]
         in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string_with_outputs doc in
@@ -251,10 +267,27 @@ let structured_output_tests =
         | Some (Cell.Code { outputs; _ }) -> (
             equal int 1 (List.length outputs);
             match List.hd outputs with
-            | Cell.Display { mime; data } ->
+            | Cell.Display { mime; data; _ } ->
                 equal string "image/png" mime;
                 equal string "iVBORw0KGgo=" data
             | _ -> fail "expected Display output")
+        | _ -> fail "expected Code cell");
+    test "saving drops display ids" (fun () ->
+        let displays id =
+          [
+            Cell.Display { mime = "image/png"; id; data = "iVBORw0KGgo=" };
+            Cell.Display { mime = "text/html"; id; data = "<b>hello</b>" };
+          ]
+        in
+        let save outputs =
+          Cell.code ~id:"c" "plot ()" |> Cell.set_outputs outputs |> fun c ->
+          Quill_markdown.to_string_with_outputs (Doc.of_cells [ c ])
+        in
+        let md = save (displays (Some "fig")) in
+        equal text (save (displays None)) md;
+        match Doc.nth 0 (Quill_markdown.of_string md) with
+        | Some (Cell.Code { outputs; _ }) ->
+            equal (list output) (displays None) outputs
         | _ -> fail "expected Code cell");
     test "roundtrip mixed outputs" (fun () ->
         let c =
@@ -263,7 +296,8 @@ let structured_output_tests =
                [
                  Cell.Stdout "val x : int = 1";
                  Cell.Stderr "Warning 26: unused";
-                 Cell.Display { mime = "text/html"; data = "<b>hello</b>" };
+                 Cell.Display
+                   { mime = "text/html"; id = None; data = "<b>hello</b>" };
                ]
         in
         let doc = Doc.of_cells [ c ] in
@@ -273,7 +307,8 @@ let structured_output_tests =
         | Some (Cell.Code { outputs; _ }) -> (
             equal int 3 (List.length outputs);
             match outputs with
-            | [ Cell.Stdout s; Cell.Stderr e; Cell.Display { mime; data } ] ->
+            | [ Cell.Stdout s; Cell.Stderr e; Cell.Display { mime; data; _ } ]
+              ->
                 equal string "val x : int = 1" s;
                 equal string "Warning 26: unused" e;
                 equal string "text/html" mime;

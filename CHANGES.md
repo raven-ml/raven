@@ -5975,6 +5975,10 @@ thread.
 
 ### Quill
 
+- A display whose display id is not empty replaces the session's earlier
+  display with that id in place, in whichever cell holds it, so a figure can
+  update as a computation runs. `Cell.Display` gains `id`, which notebook files
+  never record; `Doc.add_output` and `Doc.find_display` route outputs by id.
 - A value displays as rich content when its printer opens a
   `Format.String_tag` holding a display tag: the lines `quill.display`, the
   MIME type and a display id, then the raw content (`Quill.Cell.output_of_tag`).

@@ -1070,7 +1070,7 @@ let view_output output =
         ~style:(Ansi.Style.make ~fg:warning_fg ~italic:true ())
         ("\xe2\x96\xb6 " ^ trim_trailing_newlines s)
   | Cell.Error s -> view_error_bar s
-  | Cell.Display { mime; data } ->
+  | Cell.Display { mime; data; _ } ->
       if String.starts_with ~prefix:"text/" mime then
         text ~style:(Ansi.Style.make ~fg:output_fg ()) data
       else

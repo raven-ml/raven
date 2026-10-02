@@ -95,8 +95,9 @@ val mark_idle : Cell.id -> t -> t
 (** [mark_idle id s] marks cell [id] as idle. *)
 
 val apply_output : Cell.id -> Cell.output -> t -> t
-(** [apply_output id output s] appends [output] to cell [id] in the document.
-    The output is visible immediately via {!doc}. *)
+(** [apply_output id output s] adds [output] to cell [id] in the document with
+    {!Doc.add_output}, so that a display with an id replaces the earlier display
+    with that id. The output is visible immediately via {!doc}. *)
 
 val finish_execution : Cell.id -> success:bool -> t -> t
 (** [finish_execution id ~success s] marks cell [id] as idle and increments its
