@@ -36,9 +36,10 @@
    weights included, and takes 9 minutes.
 
    Usage: validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT]
-   [--tol X]. With [--blocks] only the first [N] blocks run and the head is
-   skipped. Not part of the test suite: it needs the download, 13.8 GB for
-   gpt-oss-20b. *)
+   [--tol X] [--device DEV]. With [--blocks] only the first [N] blocks run and
+   the head is skipped. With [--device] each compiled block runs on [DEV], its
+   weights and stream copied there for the call. Not part of the test suite: it
+   needs the download, 13.8 GB for gpt-oss-20b. *)
 
 open Kaun
 
@@ -179,7 +180,7 @@ let routing ~k ~margin recorded experts =
       "experts: %d of %d tokens differ as sets, %d in order, margin %.1e" !sets
       tokens (!orders - !sets) margin )
 
-let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
+let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~device fx
     (dt : (float, c) Nx.dtype) =
   let repo = string (mem "repo" fx) in
   List.iter
@@ -257,7 +258,19 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
                  (Nx.reshape [| tokens; dim |]
                     (Rms_norm.apply ~eps:cfg.norm_eps b'.ffn_norm middle)))
           in
-          let y = Nx.reshape [| tokens; dim |] (hidden layer m rows) in
+          let y =
+            match device with
+            | None -> hidden layer m rows
+            | Some d ->
+                let on = Nx.Placement.on d in
+                Nx.place Nx.Placement.host
+                  (hidden layer
+                     (Nx.Ptree.place
+                        (Nx.Ptree.instantiate (module Gpt_oss.Params))
+                        on m)
+                     (Nx.place on rows))
+          in
+          let y = Nx.reshape [| tokens; dim |] y in
           let block = Printf.sprintf "block %d" i in
           let e =
             summaries_error ~signs ~dim ~positions (mem "after_attention" rb)
@@ -368,6 +381,7 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
 
 let () =
   let fixture = ref "" and blocks = ref 0 and only = ref [] in
+  let device = ref "" in
   let dtype = ref "float32" and tol = ref 0.0 in
   Arg.parse
     [
@@ -377,10 +391,13 @@ let () =
         "Run this prompt only; may be repeated" );
       ("--dtype", Arg.Set_string dtype, "float32 (default) or bfloat16");
       ("--tol", Arg.Set_float tol, "Tolerance, in units of a stream's rms");
+      ( "--device",
+        Arg.Set_string device,
+        "Run each compiled block on this device, as CUDA" );
     ]
     (fun a -> fixture := a)
     "validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT] \
-     [--tol X]";
+     [--tol X] [--device DEV]";
   if !fixture = "" then failwith "validate_stream.exe: no fixture given";
   let fx = json_of_file !fixture in
   (* Float32 against float32 differs by the kernels and the order of
@@ -398,7 +415,8 @@ let () =
   let tol = if given then !tol else if exact then 2e-4 else 1.0 in
   let logits_tol = if given || exact then tol else 0.25 in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
-  run ~tol ~logits_tol ~exact
+  let device = if !device = "" then None else Some (Devices.first !device) in
+  run ~tol ~logits_tol ~exact ~device
     ~blocks:(if !blocks > 0 then Some !blocks else None)
     ~only:!only fx dt;
   match !first_failure with
