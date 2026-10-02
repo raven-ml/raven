@@ -939,6 +939,9 @@ thread.
 
 ### Tolk (new)
 
+- A sum unrolled beside upcast axes adds its products as multiply-adds, as
+  other sums of products do. The unrolled products reached the reduce through
+  a permuted view, which the fusion rule did not look through.
 - `Tolk_engine.link` resolves each host program's launch once: the buffers,
   offsets and variables a run passes it, including those that move with the
   trips of a range, are not looked up and simplified again on each run. A

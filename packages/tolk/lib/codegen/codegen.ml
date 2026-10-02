@@ -428,10 +428,13 @@ let merge_reduce_ends sink =
    in the order it adds them unfused. [fuses ren r x] is [true] iff the
    reduce [r] of [x] adds products that way. Its additions are tagged [fusable]
    while the products are indexed down to their operands, and [pm_fuse_products]
-   fuses them. *)
+   fuses them. A reduce of unrolled lanes beside upcast ones sums a view of the
+   products, a permute that brings the unrolled axes first, so the product is
+   looked for under [x]'s movements. *)
 let fuses (ren : Renderer.t) r x =
   let op, _ = reduce_arg r and dt = dtype r in
-  Op.equal op Op.Add && is Op.Mul x
+  Op.equal op Op.Add
+  && is Op.Mul (base x)
   && List.mem_assoc Op.Mulacc ren.code_for_op
   && List.exists (Dtype.equal dt) Dtype.[ Float32; Float64 ]
   && ren.native dt

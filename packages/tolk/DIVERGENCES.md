@@ -872,7 +872,11 @@ the Exclusions of `README.md`.
     sum as one multiply-add (`Op.Mulacc`), rounded once, in the order it adds
     them unfused: an accumulator's `acc + a*b` is `fma(a, b, acc)`, and a
     horizontal reduce's `a0*b0 + a1*b1 + ...` is `fma(a1, b1, a0*b0)` and so
-    on, which the accumulator then adds.
+    on, which the accumulator then adds. A horizontal reduce of unrolled lanes
+    beside upcast ones sums a permuted view of the products, which the
+    expander makes to bring the unrolled axes first; its products fuse too
+    (`fuses` looks under the source's movements, as the generator's `fuses`
+    looks under `x.base`).
   - `Decomp_op`'s `a * b + c` rule never applies: decomposition takes the
     renderer's operations without `Mulacc`. Every other product and sum keeps
     the two roundings the graph states.
@@ -906,8 +910,11 @@ the Exclusions of `README.md`.
   `Tolk.Codegen › multiply-adds (D25) › a sum of products adds each into
   its running sum rounded once, of 2` and `› of 64` (the sum of `-(1 +
   2^-11)` and `(1 + 2^-12)^2` is `2^-24`, with a multiply-add in the source)
-  and `› a product and a sum outside a reduction are not fused`; the Codegen
-  and C-style goldens, from tinygrad with D25 applied by its generator.
+  and `› a sum of products unrolled beside upcast lanes adds each into its
+  running sum rounded once` (four running sums of a loop unrolled by 4, three
+  multiply-adds each, and the same `2^-24`) and `› a product and a sum outside a reduction are not
+  fused`; the Codegen and C-style goldens, from tinygrad with D25 applied by
+  its generator.
   `Tolk.Ops › exec_alu › a float multiply-add folds rounded once (D25)` (its
   float32 case past a double's rounding ties to the wrong float32 when the sum
   is not rounded to odd); `Tolk.Symbolic › invalid values › a multiply-add

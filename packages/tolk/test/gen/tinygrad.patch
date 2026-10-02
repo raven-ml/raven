@@ -53,7 +53,7 @@ index efb2e82..eb1457e 100644
 +# A sum adds each product of its source into its running sum as one multiply-add, where the renderer writes one for its
 +# type, in the order it adds them unfused: its additions are tagged "fusable" while the products are indexed down to their operands
 +def fuses(ren:Renderer, r:UOp, x:UOp) -> bool:
-+  return r.arg[0] is Ops.ADD and x.op is Ops.MUL and Ops.MULACC in ren.code_for_op and r.dtype in (dtypes.float32, dtypes.float64) \
++  return r.arg[0] is Ops.ADD and x.base.op is Ops.MUL and Ops.MULACC in ren.code_for_op and r.dtype in (dtypes.float32, dtypes.float64) \
 +    and r.dtype in ren.supported_dtypes()
 +
 +def fuse_product(s:UOp) -> UOp|None:

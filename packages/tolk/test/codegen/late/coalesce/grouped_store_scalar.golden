@@ -108,7 +108,7 @@
 106 Ops.INDEX dtypes.float [88, 105]
 107 Ops.LOAD dtypes.float [106]
 108 Ops.MUL dtypes.float [102, 107]
-109 Ops.ADD dtypes.float [98, 108]
+109 Ops.ADD dtypes.float [98, 108] tag="fusable"
 110 Ops.ADD dtypes.weakint [83, 51]
 111 Ops.WHERE dtypes.weakint [5, 110, 20]
 112 Ops.INDEX dtypes.float [80, 111]
@@ -118,7 +118,7 @@
 116 Ops.INDEX dtypes.float [88, 115]
 117 Ops.LOAD dtypes.float [116]
 118 Ops.MUL dtypes.float [113, 117]
-119 Ops.ADD dtypes.float [109, 118]
+119 Ops.ADD dtypes.float [109, 118] tag="fusable"
 120 Ops.CONST dtypes.weakint [] 24
 121 Ops.ADD dtypes.weakint [83, 120]
 122 Ops.WHERE dtypes.weakint [5, 121, 20]
@@ -130,7 +130,7 @@
 128 Ops.INDEX dtypes.float [88, 127]
 129 Ops.LOAD dtypes.float [128]
 130 Ops.MUL dtypes.float [124, 129]
-131 Ops.ADD dtypes.float [119, 130]
+131 Ops.ADD dtypes.float [119, 130] tag="fusable"
 132 Ops.ADD dtypes.float [79, 131]
 133 Ops.STORE dtypes.void [78, 132]
 134 Ops.INDEX dtypes.float [77, 27]
@@ -146,21 +146,21 @@
 144 Ops.INDEX dtypes.float [88, 143]
 145 Ops.LOAD dtypes.float [144]
 146 Ops.MUL dtypes.float [102, 145]
-147 Ops.ADD dtypes.float [140, 146]
+147 Ops.ADD dtypes.float [140, 146] tag="fusable"
 148 Ops.CONST dtypes.weakint [] 1025
 149 Ops.ADD dtypes.weakint [93, 148]
 150 Ops.WHERE dtypes.weakint [5, 149, 20]
 151 Ops.INDEX dtypes.float [88, 150]
 152 Ops.LOAD dtypes.float [151]
 153 Ops.MUL dtypes.float [113, 152]
-154 Ops.ADD dtypes.float [147, 153]
+154 Ops.ADD dtypes.float [147, 153] tag="fusable"
 155 Ops.CONST dtypes.weakint [] 1537
 156 Ops.ADD dtypes.weakint [93, 155]
 157 Ops.WHERE dtypes.weakint [5, 156, 20]
 158 Ops.INDEX dtypes.float [88, 157]
 159 Ops.LOAD dtypes.float [158]
 160 Ops.MUL dtypes.float [124, 159]
-161 Ops.ADD dtypes.float [154, 160]
+161 Ops.ADD dtypes.float [154, 160] tag="fusable"
 162 Ops.ADD dtypes.float [135, 161]
 163 Ops.STORE dtypes.void [134, 162]
 164 Ops.INDEX dtypes.float [77, 1]
@@ -177,32 +177,32 @@
 175 Ops.INDEX dtypes.float [80, 174]
 176 Ops.LOAD dtypes.float [175]
 177 Ops.MUL dtypes.float [176, 107]
-178 Ops.ADD dtypes.float [171, 177]
+178 Ops.ADD dtypes.float [171, 177] tag="fusable"
 179 Ops.CONST dtypes.weakint [] 272
 180 Ops.ADD dtypes.weakint [83, 179]
 181 Ops.WHERE dtypes.weakint [5, 180, 20]
 182 Ops.INDEX dtypes.float [80, 181]
 183 Ops.LOAD dtypes.float [182]
 184 Ops.MUL dtypes.float [183, 117]
-185 Ops.ADD dtypes.float [178, 184]
+185 Ops.ADD dtypes.float [178, 184] tag="fusable"
 186 Ops.CONST dtypes.weakint [] 280
 187 Ops.ADD dtypes.weakint [83, 186]
 188 Ops.WHERE dtypes.weakint [5, 187, 20]
 189 Ops.INDEX dtypes.float [80, 188]
 190 Ops.LOAD dtypes.float [189]
 191 Ops.MUL dtypes.float [190, 129]
-192 Ops.ADD dtypes.float [185, 191]
+192 Ops.ADD dtypes.float [185, 191] tag="fusable"
 193 Ops.ADD dtypes.float [165, 192]
 194 Ops.STORE dtypes.void [164, 193]
 195 Ops.INDEX dtypes.float [77, 32]
 196 Ops.LOAD dtypes.float [195]
 197 Ops.MUL dtypes.float [170, 139]
 198 Ops.MUL dtypes.float [176, 145]
-199 Ops.ADD dtypes.float [197, 198]
+199 Ops.ADD dtypes.float [197, 198] tag="fusable"
 200 Ops.MUL dtypes.float [183, 152]
-201 Ops.ADD dtypes.float [199, 200]
+201 Ops.ADD dtypes.float [199, 200] tag="fusable"
 202 Ops.MUL dtypes.float [190, 159]
-203 Ops.ADD dtypes.float [201, 202]
+203 Ops.ADD dtypes.float [201, 202] tag="fusable"
 204 Ops.ADD dtypes.float [196, 203]
 205 Ops.STORE dtypes.void [195, 204]
 206 Ops.INDEX dtypes.float [77, 7]
@@ -218,32 +218,32 @@
 216 Ops.INDEX dtypes.float [80, 215]
 217 Ops.LOAD dtypes.float [216]
 218 Ops.MUL dtypes.float [217, 107]
-219 Ops.ADD dtypes.float [212, 218]
+219 Ops.ADD dtypes.float [212, 218] tag="fusable"
 220 Ops.CONST dtypes.weakint [] 528
 221 Ops.ADD dtypes.weakint [83, 220]
 222 Ops.WHERE dtypes.weakint [5, 221, 20]
 223 Ops.INDEX dtypes.float [80, 222]
 224 Ops.LOAD dtypes.float [223]
 225 Ops.MUL dtypes.float [224, 117]
-226 Ops.ADD dtypes.float [219, 225]
+226 Ops.ADD dtypes.float [219, 225] tag="fusable"
 227 Ops.CONST dtypes.weakint [] 536
 228 Ops.ADD dtypes.weakint [83, 227]
 229 Ops.WHERE dtypes.weakint [5, 228, 20]
 230 Ops.INDEX dtypes.float [80, 229]
 231 Ops.LOAD dtypes.float [230]
 232 Ops.MUL dtypes.float [231, 129]
-233 Ops.ADD dtypes.float [226, 232]
+233 Ops.ADD dtypes.float [226, 232] tag="fusable"
 234 Ops.ADD dtypes.float [207, 233]
 235 Ops.STORE dtypes.void [206, 234]
 236 Ops.INDEX dtypes.float [77, 37]
 237 Ops.LOAD dtypes.float [236]
 238 Ops.MUL dtypes.float [211, 139]
 239 Ops.MUL dtypes.float [217, 145]
-240 Ops.ADD dtypes.float [238, 239]
+240 Ops.ADD dtypes.float [238, 239] tag="fusable"
 241 Ops.MUL dtypes.float [224, 152]
-242 Ops.ADD dtypes.float [240, 241]
+242 Ops.ADD dtypes.float [240, 241] tag="fusable"
 243 Ops.MUL dtypes.float [231, 159]
-244 Ops.ADD dtypes.float [242, 243]
+244 Ops.ADD dtypes.float [242, 243] tag="fusable"
 245 Ops.ADD dtypes.float [237, 244]
 246 Ops.STORE dtypes.void [236, 245]
 247 Ops.INDEX dtypes.float [77, 40]
@@ -260,32 +260,32 @@
 258 Ops.INDEX dtypes.float [80, 257]
 259 Ops.LOAD dtypes.float [258]
 260 Ops.MUL dtypes.float [259, 107]
-261 Ops.ADD dtypes.float [254, 260]
+261 Ops.ADD dtypes.float [254, 260] tag="fusable"
 262 Ops.CONST dtypes.weakint [] 784
 263 Ops.ADD dtypes.weakint [83, 262]
 264 Ops.WHERE dtypes.weakint [5, 263, 20]
 265 Ops.INDEX dtypes.float [80, 264]
 266 Ops.LOAD dtypes.float [265]
 267 Ops.MUL dtypes.float [266, 117]
-268 Ops.ADD dtypes.float [261, 267]
+268 Ops.ADD dtypes.float [261, 267] tag="fusable"
 269 Ops.CONST dtypes.weakint [] 792
 270 Ops.ADD dtypes.weakint [83, 269]
 271 Ops.WHERE dtypes.weakint [5, 270, 20]
 272 Ops.INDEX dtypes.float [80, 271]
 273 Ops.LOAD dtypes.float [272]
 274 Ops.MUL dtypes.float [273, 129]
-275 Ops.ADD dtypes.float [268, 274]
+275 Ops.ADD dtypes.float [268, 274] tag="fusable"
 276 Ops.ADD dtypes.float [248, 275]
 277 Ops.STORE dtypes.void [247, 276]
 278 Ops.INDEX dtypes.float [77, 43]
 279 Ops.LOAD dtypes.float [278]
 280 Ops.MUL dtypes.float [253, 139]
 281 Ops.MUL dtypes.float [259, 145]
-282 Ops.ADD dtypes.float [280, 281]
+282 Ops.ADD dtypes.float [280, 281] tag="fusable"
 283 Ops.MUL dtypes.float [266, 152]
-284 Ops.ADD dtypes.float [282, 283]
+284 Ops.ADD dtypes.float [282, 283] tag="fusable"
 285 Ops.MUL dtypes.float [273, 159]
-286 Ops.ADD dtypes.float [284, 285]
+286 Ops.ADD dtypes.float [284, 285] tag="fusable"
 287 Ops.ADD dtypes.float [279, 286]
 288 Ops.STORE dtypes.void [278, 287]
 289 Ops.GROUP dtypes.void [133, 163, 194, 205, 235, 246, 277, 288]

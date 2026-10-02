@@ -1785,6 +1785,23 @@ let dot n =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.store (Ops.index out [ Ops.int 0 ]) sum ]
 
+(* [out[i] = sum_k a[i, k] * b[k]] for [i] below [rows] and [k] below [n], with
+   [i] upcast by 4 and [k] unrolled by 4: the reduce sums a view of its
+   products, its unrolled lanes first. *)
+let matvec ~rows n =
+  let out = Ops.param ~shape:[ Int rows ] 0 Float32 in
+  let a = Ops.param ~shape:[ Int (rows * n) ] 1 Float32 in
+  let b = Ops.param ~shape:[ Int n ] 2 Float32 in
+  let i = Ops.range (Int rows) [ 0 ] in
+  let k = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
+  let a_ik = Ops.index a [ Ops.O.((i * Ops.int n) + k) ] in
+  let sum = Ops.reduce (Ops.mul a_ik (Ops.index b [ k ])) Op.Add [ k ] in
+  let split axis target = Opt.Split { axis; amount = 4; target; top = false } in
+  Ops.sink
+    ~kernel:
+      (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Unroll ] ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+
 let muladd n =
   let out = Ops.param ~shape:[ Int n ] 0 Float32 in
   let x k = Ops.index (Ops.param ~shape:[ Int n ] k Float32) in
@@ -1799,6 +1816,14 @@ let mentions sub s =
     i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
   in
   go 0
+
+let occurrences sub s =
+  let n = String.length sub in
+  let rec go i count =
+    if i + n > String.length s then count
+    else go (i + 1) (if String.sub s i n = sub then count + 1 else count)
+  in
+  go 0 0
 
 let multiply_adds =
   group "multiply-adds"
@@ -1819,6 +1844,30 @@ let multiply_adds =
               [ (1, terms (-.(1. +. 0x1p-11)) x); (2, terms 1. x) ]
           in
           equal (array Dtypes.value) [| `Float 0x1p-24 |] (List.assoc 0 out));
+      test
+        "a sum of products unrolled beside upcast lanes adds each into its \
+         running sum rounded once"
+        (fun () ->
+          let rows = 8 and n = 16 in
+          let prg = Codegen.to_program (matvec ~rows n) (Lazy.force host) in
+          (* each of the 4 running sums adds a product and 3 multiply-adds *)
+          equal int ~msg:"multiply-adds in the source" 12
+            (occurrences "__builtin_fmaf(" (source prg));
+          let x = 1. +. 0x1p-12 in
+          let row first second =
+            List.init n (fun k ->
+                `Float (match k with 0 -> first | 1 -> second | _ -> 0.))
+          in
+          let a =
+            List.init rows (fun _ -> row (-.(1. +. 0x1p-11)) x)
+            |> List.concat |> Array.of_list
+          in
+          let out =
+            Run.on_host prg [ (1, a); (2, Array.of_list (row 1. x)) ]
+          in
+          equal (array Dtypes.value)
+            (Array.make rows (`Float 0x1p-24))
+            (List.assoc 0 out));
       test "a product and a sum outside a reduction are not fused" (fun () ->
           let prg = Codegen.to_program (muladd 4) (Lazy.force host) in
           is_false ~msg:"fma" (mentions "fma" (source prg)));

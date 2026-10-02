@@ -99,7 +99,7 @@
 97 Ops.INDEX dtypes.float [83, 96]
 98 Ops.LOAD dtypes.float [97]
 99 Ops.MUL dtypes.float [94, 98]
-100 Ops.ADD dtypes.float [91, 99]
+100 Ops.ADD dtypes.float [91, 99] tag="fusable"
 101 Ops.ADD dtypes.weakint [80, 50]
 102 Ops.INDEX dtypes.float [77, 101]
 103 Ops.LOAD dtypes.float [102]
@@ -107,7 +107,7 @@
 105 Ops.INDEX dtypes.float [83, 104]
 106 Ops.LOAD dtypes.float [105]
 107 Ops.MUL dtypes.float [103, 106]
-108 Ops.ADD dtypes.float [100, 107]
+108 Ops.ADD dtypes.float [100, 107] tag="fusable"
 109 Ops.CONST dtypes.weakint [] 24
 110 Ops.ADD dtypes.weakint [80, 109]
 111 Ops.INDEX dtypes.float [77, 110]
@@ -117,7 +117,7 @@
 115 Ops.INDEX dtypes.float [83, 114]
 116 Ops.LOAD dtypes.float [115]
 117 Ops.MUL dtypes.float [112, 116]
-118 Ops.ADD dtypes.float [108, 117]
+118 Ops.ADD dtypes.float [108, 117] tag="fusable"
 119 Ops.ADD dtypes.float [76, 118]
 120 Ops.STORE dtypes.void [75, 119]
 121 Ops.INDEX dtypes.float [74, 26]
@@ -131,19 +131,19 @@
 129 Ops.INDEX dtypes.float [83, 128]
 130 Ops.LOAD dtypes.float [129]
 131 Ops.MUL dtypes.float [94, 130]
-132 Ops.ADD dtypes.float [126, 131]
+132 Ops.ADD dtypes.float [126, 131] tag="fusable"
 133 Ops.CONST dtypes.weakint [] 1025
 134 Ops.ADD dtypes.weakint [88, 133]
 135 Ops.INDEX dtypes.float [83, 134]
 136 Ops.LOAD dtypes.float [135]
 137 Ops.MUL dtypes.float [103, 136]
-138 Ops.ADD dtypes.float [132, 137]
+138 Ops.ADD dtypes.float [132, 137] tag="fusable"
 139 Ops.CONST dtypes.weakint [] 1537
 140 Ops.ADD dtypes.weakint [88, 139]
 141 Ops.INDEX dtypes.float [83, 140]
 142 Ops.LOAD dtypes.float [141]
 143 Ops.MUL dtypes.float [112, 142]
-144 Ops.ADD dtypes.float [138, 143]
+144 Ops.ADD dtypes.float [138, 143] tag="fusable"
 145 Ops.ADD dtypes.float [122, 144]
 146 Ops.STORE dtypes.void [121, 145]
 147 Ops.INDEX dtypes.float [74, 1]
@@ -158,30 +158,30 @@
 156 Ops.INDEX dtypes.float [77, 155]
 157 Ops.LOAD dtypes.float [156]
 158 Ops.MUL dtypes.float [157, 98]
-159 Ops.ADD dtypes.float [153, 158]
+159 Ops.ADD dtypes.float [153, 158] tag="fusable"
 160 Ops.CONST dtypes.weakint [] 272
 161 Ops.ADD dtypes.weakint [80, 160]
 162 Ops.INDEX dtypes.float [77, 161]
 163 Ops.LOAD dtypes.float [162]
 164 Ops.MUL dtypes.float [163, 106]
-165 Ops.ADD dtypes.float [159, 164]
+165 Ops.ADD dtypes.float [159, 164] tag="fusable"
 166 Ops.CONST dtypes.weakint [] 280
 167 Ops.ADD dtypes.weakint [80, 166]
 168 Ops.INDEX dtypes.float [77, 167]
 169 Ops.LOAD dtypes.float [168]
 170 Ops.MUL dtypes.float [169, 116]
-171 Ops.ADD dtypes.float [165, 170]
+171 Ops.ADD dtypes.float [165, 170] tag="fusable"
 172 Ops.ADD dtypes.float [148, 171]
 173 Ops.STORE dtypes.void [147, 172]
 174 Ops.INDEX dtypes.float [74, 31]
 175 Ops.LOAD dtypes.float [174]
 176 Ops.MUL dtypes.float [152, 125]
 177 Ops.MUL dtypes.float [157, 130]
-178 Ops.ADD dtypes.float [176, 177]
+178 Ops.ADD dtypes.float [176, 177] tag="fusable"
 179 Ops.MUL dtypes.float [163, 136]
-180 Ops.ADD dtypes.float [178, 179]
+180 Ops.ADD dtypes.float [178, 179] tag="fusable"
 181 Ops.MUL dtypes.float [169, 142]
-182 Ops.ADD dtypes.float [180, 181]
+182 Ops.ADD dtypes.float [180, 181] tag="fusable"
 183 Ops.ADD dtypes.float [175, 182]
 184 Ops.STORE dtypes.void [174, 183]
 185 Ops.INDEX dtypes.float [74, 7]
@@ -195,30 +195,30 @@
 193 Ops.INDEX dtypes.float [77, 192]
 194 Ops.LOAD dtypes.float [193]
 195 Ops.MUL dtypes.float [194, 98]
-196 Ops.ADD dtypes.float [190, 195]
+196 Ops.ADD dtypes.float [190, 195] tag="fusable"
 197 Ops.CONST dtypes.weakint [] 528
 198 Ops.ADD dtypes.weakint [80, 197]
 199 Ops.INDEX dtypes.float [77, 198]
 200 Ops.LOAD dtypes.float [199]
 201 Ops.MUL dtypes.float [200, 106]
-202 Ops.ADD dtypes.float [196, 201]
+202 Ops.ADD dtypes.float [196, 201] tag="fusable"
 203 Ops.CONST dtypes.weakint [] 536
 204 Ops.ADD dtypes.weakint [80, 203]
 205 Ops.INDEX dtypes.float [77, 204]
 206 Ops.LOAD dtypes.float [205]
 207 Ops.MUL dtypes.float [206, 116]
-208 Ops.ADD dtypes.float [202, 207]
+208 Ops.ADD dtypes.float [202, 207] tag="fusable"
 209 Ops.ADD dtypes.float [186, 208]
 210 Ops.STORE dtypes.void [185, 209]
 211 Ops.INDEX dtypes.float [74, 36]
 212 Ops.LOAD dtypes.float [211]
 213 Ops.MUL dtypes.float [189, 125]
 214 Ops.MUL dtypes.float [194, 130]
-215 Ops.ADD dtypes.float [213, 214]
+215 Ops.ADD dtypes.float [213, 214] tag="fusable"
 216 Ops.MUL dtypes.float [200, 136]
-217 Ops.ADD dtypes.float [215, 216]
+217 Ops.ADD dtypes.float [215, 216] tag="fusable"
 218 Ops.MUL dtypes.float [206, 142]
-219 Ops.ADD dtypes.float [217, 218]
+219 Ops.ADD dtypes.float [217, 218] tag="fusable"
 220 Ops.ADD dtypes.float [212, 219]
 221 Ops.STORE dtypes.void [211, 220]
 222 Ops.INDEX dtypes.float [74, 39]
@@ -233,30 +233,30 @@
 231 Ops.INDEX dtypes.float [77, 230]
 232 Ops.LOAD dtypes.float [231]
 233 Ops.MUL dtypes.float [232, 98]
-234 Ops.ADD dtypes.float [228, 233]
+234 Ops.ADD dtypes.float [228, 233] tag="fusable"
 235 Ops.CONST dtypes.weakint [] 784
 236 Ops.ADD dtypes.weakint [80, 235]
 237 Ops.INDEX dtypes.float [77, 236]
 238 Ops.LOAD dtypes.float [237]
 239 Ops.MUL dtypes.float [238, 106]
-240 Ops.ADD dtypes.float [234, 239]
+240 Ops.ADD dtypes.float [234, 239] tag="fusable"
 241 Ops.CONST dtypes.weakint [] 792
 242 Ops.ADD dtypes.weakint [80, 241]
 243 Ops.INDEX dtypes.float [77, 242]
 244 Ops.LOAD dtypes.float [243]
 245 Ops.MUL dtypes.float [244, 116]
-246 Ops.ADD dtypes.float [240, 245]
+246 Ops.ADD dtypes.float [240, 245] tag="fusable"
 247 Ops.ADD dtypes.float [223, 246]
 248 Ops.STORE dtypes.void [222, 247]
 249 Ops.INDEX dtypes.float [74, 42]
 250 Ops.LOAD dtypes.float [249]
 251 Ops.MUL dtypes.float [227, 125]
 252 Ops.MUL dtypes.float [232, 130]
-253 Ops.ADD dtypes.float [251, 252]
+253 Ops.ADD dtypes.float [251, 252] tag="fusable"
 254 Ops.MUL dtypes.float [238, 136]
-255 Ops.ADD dtypes.float [253, 254]
+255 Ops.ADD dtypes.float [253, 254] tag="fusable"
 256 Ops.MUL dtypes.float [244, 142]
-257 Ops.ADD dtypes.float [255, 256]
+257 Ops.ADD dtypes.float [255, 256] tag="fusable"
 258 Ops.ADD dtypes.float [250, 257]
 259 Ops.STORE dtypes.void [249, 258]
 260 Ops.GROUP dtypes.void [120, 146, 173, 184, 210, 221, 248, 259]
