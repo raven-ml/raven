@@ -1,0 +1,14 @@
+(mdx
+ (files *.md)
+ (package hugin)
+ (libraries
+  hugin
+  hugin.gg
+  hugin.gg.kit
+  hugin.font
+  hugin.text
+  hugin.vg
+  hugin.vg.raster
+  hugin.vg.svg
+  hugin.kit
+  nx))

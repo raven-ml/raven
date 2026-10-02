@@ -1,36 +1,41 @@
 # Hugin
 
-Declarative plotting and visualization library for OCaml.
+Figures from nx tensors, for OCaml.
 
-Hugin is part of the Raven ecosystem, providing a functional API to create
-publication-quality charts and figures from Nx arrays. You build immutable
-plot specifications with mark constructors, compose them with `|>` pipelines,
-and render to PNG, SVG, or PDF.
+Hugin is part of the Raven ecosystem. A figure is an immutable value: marks
+read tensors through channels, scales place their values, and axes and
+legends follow from the scales. Figures compose into layers, grids and
+facets, and render to PNG, SVG and PDF with a bundled font.
 
 ## Features
 
-- Line, scatter, bar, histogram, error bar, fill-between, hline/vline, hspan/vspan
-- Heatmap, colormapped image display (`imshow`), contour plots
-- Multi-panel layouts with `Layout.grid`, `Layout.hstack`, `Layout.vstack`
-- Perceptually uniform OKLCH colors with colorblind-friendly Okabe-Ito palette
-- Predefined colormaps: viridis, plasma, inferno, magma, cividis, coolwarm
-- Themes with context scaling (paper, notebook, talk, poster)
-- Axis scales: linear, log, sqrt, asinh, symlog
-- Pure OCaml rendering to PNG, SVG, and PDF with a bundled font, so figures
-  are identical on every machine and need no system libraries
-- Format printer for Quill notebooks (`#install_printer`)
+- Marks: dots, lines, areas, rectangles (bars, heatmaps, histograms, spans),
+  rules, text, images and filled contours, and `Mark.v` to write your own
+- Channels that broadcast like nx operands: one tensor of shape `[5; 200]`
+  is five curves
+- Linear, logarithmic, symmetric-log, power and band scales, shared by name
+  across a figure
+- Facets, grids with aligned data areas, spans, titles and fixed aspect ratios
+- Sequential, diverging and qualitative colour schemes, and colours mixed in
+  Oklab
+- Large data reduced where it lives: dense lines, scatters and images draw
+  only what the output's pixels can show
+- PNG, SVG and PDF written in pure OCaml, the same bytes on every run
+- Display in Quill notebooks through `Hugin.pp`
 
 ## Quick Start
 
-<!-- $MDX skip -->
 ```ocaml
 open Hugin
 
 let () =
-  let x = Nx.linspace Nx.float32 0. 6.28 100 in
-  let y = Nx.sin x in
-  line ~x ~y () |> title "Sine wave" |> render_png "sine.png"
+  let x = Nx.linspace Nx.float64 0. 6.28 100 in
+  line ~x:(num x) ~y:(num (Nx.sin x)) ()
+  |> title (Text.v "Sine wave")
+  |> save "sine.png"
 ```
+
+See the [documentation](doc/index.md) and the [examples](examples/README.md).
 
 ## Contributing
 

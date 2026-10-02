@@ -167,6 +167,5 @@ Each library has a dedicated comparison page with side-by-side code examples:
 - [Kaun vs PyTorch/Flax](../packages/kaun/doc/05-pytorch-comparison.md)
 - [Brot vs HuggingFace Tokenizers](../packages/brot/doc/06-hf-tokenizers-comparison.md)
 - [Talon vs pandas](../packages/talon/doc/05-pandas-comparison.md)
-- [Hugin vs Matplotlib](../packages/hugin/doc/05-matplotlib-comparison.md)
 - [Sowilo vs OpenCV](https://github.com/raven-ml/raven/blob/main/contrib/sowilo/doc/04-opencv-comparison.md) (contrib)
 - [Fehu vs Gymnasium](https://github.com/raven-ml/raven/blob/main/contrib/fehu/doc/04-gymnasium-comparison.md) (contrib)

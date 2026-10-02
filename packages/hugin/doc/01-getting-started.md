@@ -1,25 +1,17 @@
 # Getting Started
 
-This guide covers installation, your first plot, and the key concepts behind Hugin.
+This page draws a first figure, explains how a mark turns tensors into rows,
+saves figures to files, shows them in a notebook, and reads the errors and
+warnings Hugin reports.
 
 ## Installation
-
-Hugin has no system dependencies. Install it with opam:
 
 <!-- $MDX skip -->
 ```bash
 opam install hugin
 ```
 
-Or build from source:
-
-<!-- $MDX skip -->
-```bash
-git clone https://github.com/raven-ml/raven
-cd raven && dune build dev/hugin
-```
-
-Add to your `dune` file:
+Add the library to your `dune` file:
 
 <!-- $MDX skip -->
 ```dune
@@ -28,151 +20,153 @@ Add to your `dune` file:
  (libraries hugin))
 ```
 
-## Your First Plot
+Hugin needs no system library: it draws text with its bundled Inter faces
+and writes PNG, SVG and PDF itself.
 
-<!-- $MDX skip -->
+## A First Figure
+
 ```ocaml
 open Hugin
 
+let x = Nx.linspace Nx.float64 0. 6.28 100
+
+let () = line ~x:(num x) ~y:(num (Nx.sin x)) () |> save "sine.png"
+```
+
+`line` is a mark. Its labelled arguments are its *roles*, the slots it reads
+data from, and each takes a *channel*: here `num x` and `num (Nx.sin x)`,
+the elements of two tensors read as quantities. A mark is already a figure,
+so it can be saved as it is. `save` picks the format from the file's
+extension.
+
+Wrappers take the figure last, so they chain with `|>`:
+
+```ocaml
 let () =
-  let x = Nx.linspace Nx.float32 0. (2. *. Float.pi) 100 in
-  let y = Nx.sin x in
-  line ~x ~y () |> title "Sine wave" |> render_png "sine.png"
+  line ~x:(num ~title:(Text.v "x") x) ~y:(num ~title:(Text.v "sin x") (Nx.sin x)) ()
+  |> title (Text.v "A sine wave")
+  |> save "sine-titled.svg"
 ```
 
-This creates a 1-D array of 100 points, computes the sine, builds a line specification, adds a title, and writes a PNG file.
+The `title` of a channel titles the axis or legend of the scale it reads.
+Text is a `Text.t`, so a title can mix styles:
+`Text.concat [ Text.v "x"; Text.sup (Text.v "2") ]` writes x².
 
-## Key Concepts
+## Channels
 
-### Marks
+A channel says how a mark reads its data:
 
-A mark constructor (`line`, `point`, `bar`, `hist`, `heatmap`, etc.) takes data arrays and optional visual properties and returns an immutable plot specification of type `t`. A mark is already a complete spec — you can render it directly:
+| Channel | Reads | Example |
+|---|---|---|
+| `num t` | the elements of a tensor, as quantities | `num losses` |
+| `cat ~labels t` | the integer codes of a tensor, as categories | `cat ~labels:[\| "cat"; "dog" \|] ys` |
+| `strings a` | the strings of an array, as categories | `strings [\| "adam"; "sgd" \|]` |
+| `floats a` | the floats of an array, as quantities | `floats [\| 0.5 \|]` |
+| `dim k` | the index along axis `k` of the mark's shape, as a category | `dim 0` |
+| `index k` | the index along axis `k`, as a quantity | `index (-1)` |
+| `const v` | one value for every row | `const Color.red` |
+
+`num` and `cat` read nothing when the channel is made: the tensor stays where
+it lives until the figure is rendered. A constant takes the range of its
+role, so `~stroke:(const Color.red)` is a colour and `~x:(const 0.5)` is the
+middle of the panel.
+
+## Rows and Shapes
+
+The channels of a mark broadcast together, as the operands of an nx
+operation do, into the mark's *shape*. Each element of the shape is one
+*row*. One tensor holding five curves of 200 points is 1,000 rows of one
+`line`:
+
+```ocaml
+let steps = Nx.linspace Nx.float64 0. 1. 200
+let rates = Nx.create Nx.float64 [| 5; 1 |] [| 2.; 2.5; 3.; 3.5; 4. |]
+let curves = Nx.exp (Nx.neg (Nx.mul rates steps))
+
+let () =
+  line ~x:(num steps) ~y:(num curves) ~stroke:(dim ~title:(Text.v "rate") 0) ()
+  |> save "curves.png"
+```
+
+`steps` has shape `[200]` and `curves` shape `[5; 200]`, so the mark has
+shape `[5; 200]`. A line draws one curve per index of its leading axes, in
+order along the last axis. `dim 0` reads the index along axis 0, the curve,
+as a category: each curve takes its own colour and the legend lists them.
+Without `~x`, a line reads `index (-1)`, the position along the last axis.
+
+A value is *missing* if it is NaN or infinite, if the `valid` mask of its
+channel is false there, or if its scale cannot place it, such as a value
+that is not positive on a log scale. A row with a missing value is dropped,
+and a line breaks there:
+
+```ocaml
+let wave = Nx.sin (Nx.mul_s steps 12.)
+
+let () =
+  line ~y:(num ~valid:(Nx.greater_s wave 0.) wave) ()
+  |> save "positive-half.png"
+```
+
+## Saving
+
+`save` writes PNG for `.png`, SVG for `.svg` and PDF for `.pdf`. A figure is
+360 by 240 points by default, a point being 1/72 inch, and raster output is
+drawn at 2 pixels per point. `Size` changes the page:
+
+```ocaml
+let () =
+  line ~y:(num curves) ()
+  |> save ~size:(Size.figure (Size.mm 85.) (Size.mm 60.)) "column.pdf"
+
+let () =
+  line ~y:(num curves) ()
+  |> save ~size:(Size.panels 200. 120.) ~density:(Size.dpi 300.) "panel.png"
+```
+
+`Size.figure w h` fixes the whole page. `Size.panels w h` fixes each data
+area instead, and the page grows to hold the axes, titles and legends around
+it. `Size.dpi 300.` is a density of 300 pixels per inch.
+
+## Notebooks
+
+In a Quill notebook, a cell whose value is a figure shows the figure:
 
 <!-- $MDX skip -->
 ```ocaml
-line ~x ~y () |> render_png "plot.png"
+let fig = Hugin.(line ~y:(num curves) ())
 ```
 
-### Decorations
+`Hugin.pp` renders the figure as SVG and hands it to the notebook. Printed
+anywhere else, such as in a terminal toplevel, it is a one-line summary:
+`hugin figure`.
 
-Decoration functions add metadata to a spec. They are designed for the `|>` pipeline:
+## Errors and Warnings
 
-<!-- $MDX skip -->
+Mistakes in a figure's structure raise `Invalid_argument` as early as they
+can be found: a tensor of the wrong dtype when the channel is made, channels
+that do not broadcast when the mark is made, two marks putting one panel on
+two different x scales when the figure is resolved. Messages name the part
+of the figure at fault.
+
+Problems with data values are *warnings*. Nothing is substituted for the
+values at fault, and the figure is still drawn. `save` prints each warning
+on standard error, or gives it to `~warn`:
+
 ```ocaml
-line ~x ~y ()
-|> title "My Plot"
-|> xlabel "Time (s)"
-|> ylabel "Amplitude"
-|> xlim 0. 10.
-|> grid_lines true
+let warnings = ref []
+
+let () =
+  let codes = Nx.create Nx.int32 [| 3 |] [| 0l; 1l; 7l |] in
+  dot ~x:(index 0) ~y:(num (Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |]))
+    ~fill:(cat ~labels:[| "train"; "test" |] codes) ()
+  |> save ~warn:(fun w -> warnings := w :: !warnings) "codes.png"
 ```
 
-Decorations include `title`, `xlabel`, `ylabel`, `xlim`, `ylim`, `xscale`, `yscale`, `grid_lines`, `legend`, `xticks`, `yticks`, `xinvert`, `yinvert`, `with_theme`, and tick formatting.
-
-### Composition
-
-`layers` overlays multiple marks on shared axes:
-
-<!-- $MDX skip -->
 ```ocaml
-layers [
-  line ~x ~y:(Nx.sin x) ~label:"sin" ();
-  line ~x ~y:(Nx.cos x) ~label:"cos" ~line_style:`Dashed ();
-]
-|> legend |> render_png "overlay.png"
+# List.iter (Format.printf "%a@." pp_warning) !warnings;;
+root: fill: 1 code is outside its 2 labels
+- : unit = ()
 ```
 
-You can mix mark types freely. A `line` with `point` markers, a `bar` chart with `hline` reference lines — anything goes.
-
-### Layout
-
-`Layout.grid` arranges specs in rows and columns:
-
-<!-- $MDX skip -->
-```ocaml
-let p1 = line ~x ~y:(Nx.sin x) () |> title "sin" in
-let p2 = line ~x ~y:(Nx.cos x) () |> title "cos" in
-Layout.grid [ [ p1; p2 ] ] |> render_png "grid.png"
-```
-
-`Layout.hstack` and `Layout.vstack` are shorthands for single-row and single-column grids.
-
-### Rendering
-
-Three output formats:
-
-| Function | Output |
-|----------|--------|
-| `render_png "file.png" t` | PNG image file |
-| `render_svg "file.svg" t` | SVG document file |
-| `render_pdf "file.pdf" t` | PDF document file |
-
-All renderers accept optional `~width` and `~height` (default 1600×1200) and `~theme`.
-
-`render_svg_to_string` and `render_to_buffer` return the output as a string instead of writing a file.
-
-## Common Marks
-
-### Line
-
-<!-- $MDX skip -->
-```ocaml
-line ~x ~y ()
-line ~x ~y ~color:Color.blue ~line_style:`Dashed ~line_width:2.0 ()
-line ~x ~y ~step:`Post ()  (* staircase plot *)
-```
-
-### Scatter
-
-<!-- $MDX skip -->
-```ocaml
-point ~x ~y ()
-point ~x ~y ~color_by:values ~size:8. ~marker:Star ()
-point ~x ~y ~size_by:weights ()  (* variable marker size *)
-```
-
-### Bar Chart
-
-<!-- $MDX skip -->
-```ocaml
-bar ~x:categories ~height:values ()
-bar ~x:categories ~height:values ~width:0.5 ~color:Color.orange ()
-```
-
-### Histogram
-
-<!-- $MDX skip -->
-```ocaml
-hist ~x:data ()
-hist ~x:data ~bins:(`Num 30) ~density:true ~color:Color.green ()
-```
-
-### Heatmap
-
-<!-- $MDX skip -->
-```ocaml
-(* data has shape [|rows; cols|] *)
-heatmap ~data ()
-heatmap ~data ~annotate:true ~cmap:Cmap.viridis ()
-```
-
-### Fill Between
-
-<!-- $MDX skip -->
-```ocaml
-fill_between ~x ~y1:(Nx.sub y err) ~y2:(Nx.add y err) ~alpha:0.3 ()
-```
-
-### Error Bars
-
-<!-- $MDX skip -->
-```ocaml
-errorbar ~x ~y ~yerr:(`Symmetric err) ()
-errorbar ~x ~y ~yerr:(`Asymmetric (lo, hi)) ~xerr:(`Symmetric xerr) ()
-```
-
-## Next Steps
-
-- [Marks and Styling](02-marks-and-styling.md) — full mark catalog and visual properties
-- [Layout and Decorations](03-layout-and-decorations.md) — axes, scales, themes, multi-panel
-- [Colors and Colormaps](04-colors-and-colormaps.md) — OKLCH colors and colormap reference
+A warning names the node of the figure it concerns by its id, a path from
+the root of the figure: here the root, since the figure is one mark.
