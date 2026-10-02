@@ -225,52 +225,47 @@ val to_array : ('a, 'b) t -> 'a array
       - : int32 array = [|1l; 2l; 3l; 4l|]
     ]} *)
 
-(** {1:placement Devices, backends and placement}
+(** {1:placement Devices, placement and backends}
 
-    Where a value lives is a value too. A device ({!Nx_device.t}) holds memory;
-    the library that drives it opens it (for example [Nx_metal_device.v 0]), and
-    {!Nx_device.host} is the host. A backend ({!Nx_backend.t}) is kernels that
-    compute nx's operations on arrays. A placement is one device, a list of
-    devices each holding a full copy, or a list of devices each holding an
-    equal slice along one axis, together with the one backend that computes on
-    values there: [Nx_cpu.backend] unless the placement names another.
+    Where a value lives is a value too. A device ({!Device.t}) holds memory:
+    the host, test devices over the host's memory, and GPUs. A placement
+    ({!Placement.t}) is one device, a list of devices each holding a full copy,
+    or a list of devices each holding an equal slice along one axis. Values
+    start on the host; {!place} moves them.
 
-    The host device holds values in two ways. A value at {!Placement.host}, the
-    host device with [Nx_cpu.backend], is an array in host memory: operations
-    on it call nx.cpu's kernels directly, which keeps the default path as cheap
-    as the kernels allow.
-    A value at any other placement that includes the host device, with another
-    backend or beside other devices, is a placed value like one on a GPU: its
-    storage carries what compiled calls need to bind and consume it. Creating
-    at {!Placement.host}, operating on host values only, and placing on
-    {!Placement.host} give the first; everything else gives the second, and
-    moving between them copies.
+    Who computes an eager operation follows from its operands' devices:
+    + Its placed operands share their devices, and host operands join them, or
+      it raises [Invalid_argument].
+    + The innermost backend run around the call ({!Op.kernels}) that covers
+      those devices computes it. A backend that lacks the operation raises
+      {!Nx_backend.Refused} naming itself and the operation; the operation never
+      reaches another backend.
+    + With no such backend, nx.cpu computes on the host and on test devices,
+      and an operation on any other device, such as a GPU, raises
+      [Invalid_argument] before any work, naming the remedies: compile it with
+      [Rune.jit], run it under a backend that covers the device, or {!place}
+      the value on {!Placement.host}.
+    + Inside a compiled function nothing is eager: the compiler computes, for
+      the devices of the function's arguments.
 
-    The result of an operation lives where its placed operands live, computed
-    by their placement's backend: operands on the host join them, and operands
-    on two different device sets, or with two different backends, raise. The
-    backend computes on each device, on that device's arrays, after nx copies
-    there the operands that are not: host values, values on the disk, and the
-    parts of a split value a device needs whole. nx.cpu computes on the host
-    and on devices that have no processor of their own
-    ({!Nx_device.runs_on_host}): a value on a GPU computes with a backend that
-    runs there, and an
-    operation on a device its placement's backend does not run on raises
-    {!Nx_backend.Refused} before any work, naming the remedies. Over split
-    operands, an elementwise result keeps their split, which must be the same
-    for all of them (copies take it); a reduction over the split axis, and a
-    {!take} along it, give a full copy on each device; and an operation along
-    the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along it,
-    linear algebra on its last two axes, {!fft} over it) raises. A read
+    Constants, movements, reads and {!place} work on every placement. A
+    constant made beside a value on a GPU, such as {!zeros_like}, is one
+    element on the device, expanded as a view.
+
+    Over split operands, an elementwise result keeps their split, which must be
+    the same for all of them (copies take it); a reduction over the split axis,
+    and a {!take} along it, give a full copy on each device; and an operation
+    along the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along
+    it, linear algebra on its last two axes, {!fft} over it) raises. A read
     ({!item}, {!to_array}, {!to_bigarray}, {!pp}, a save) copies the elements it
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
 
-    The disk ({!Nx_device.disk}) holds values in files, such as
-    the tensors [Nx_io.load_safetensors] loads, and computes nothing: a value on
-    it takes part in an operation as a host value, which the host reads in the
-    file's pages, and a movement of it stays on the disk. {!place} onto the host
-    or a device whose memory is the host's borrows the file's pages, and onto
+    The disk ({!Nx_device.disk}) holds values in files, such as the tensors
+    [Nx_io.load_safetensors] loads, and computes nothing: a value on it takes
+    part in an operation as a host value, which the host reads in the file's
+    pages, and a movement of it stays on the disk. {!place} onto the host or a
+    device whose memory is the host's borrows the file's pages, and onto
     another device reads the bytes into it; a placement onto the disk raises.
 
     Reads and placements keep their source storage in use until they return. If
@@ -289,48 +284,121 @@ val to_array : ('a, 'b) t -> 'a array
     [Invalid_argument]: any other reshape, a cut of the split axis across
     shards, a flip of it, or windows along it. Functions built from movements
     ({!roll}, {!flatten}, {!diagonal}, {!array_split}) raise the same way. Place
-    the value replicated or on one device first. A cut inside one shard (a row
-    of a value split by rows, {!item}) is a view of that shard on its device
+    the value on every device or on one device first. A cut inside one shard (a
+    row of a value split by rows, {!item}) is a view of that shard on its device
     alone, so {!item} reads one element. *)
+
+(** Devices. *)
+module Device : sig
+  type t = Nx_device.t
+  (** The type for devices. There is one value per device: opening a device
+      twice gives the same value. *)
+
+  (** The type for devices wanted, as plain data. *)
+  type want =
+    | Host  (** The host. *)
+    | Cpu of int
+        (** [Cpu k], [k >= 1], is the test device ["CPU:k"]: memory of the
+            host's that the host computes on, so a program runs multi-device
+            work on one machine. [Cpu 0] is [Host]. *)
+    | Metal  (** The Metal GPU of a Mac. *)
+    | Cuda of int  (** CUDA GPU [i], through NVIDIA's driver. *)
+    | Nv of int  (** NVIDIA GPU [i], driven by nx itself. *)
+    | Amd of int  (** AMD GPU [i]. *)
+
+  val host : t
+  (** [host] is the host, ["CPU"]. *)
+
+  val cpu : int -> t
+  (** [cpu k] is the test device ["CPU:k"] ({!Cpu}).
+
+      Raises [Invalid_argument] if [k < 0]. *)
+
+  val metal : unit -> t
+  (** [metal ()] is the Metal GPU.
+
+      Raises [Failure] with the reason it does not open, such as on a machine
+      other than a Mac. *)
+
+  val cuda : int -> t
+  (** [cuda i] is CUDA GPU [i].
+
+      Raises [Failure] with the driver's reason if it does not open, and
+      [Invalid_argument] if [i < 0]. *)
+
+  val nv : int -> t
+  (** [nv i] is NVIDIA GPU [i], driven by nx.
+
+      Raises as {!cuda}. *)
+
+  val amd : int -> t
+  (** [amd i] is AMD GPU [i].
+
+      Raises as {!cuda}. *)
+
+  val gpu : unit -> t
+  (** [gpu ()] is the default GPU: the first that opens of {!Metal},
+      [Cuda 0], [Nv 0] and [Amd 0].
+
+      Raises [Failure] with each one's reason if none opens. *)
+
+  val get : want -> (t, string) result
+  (** [get w] is the device [w] names, opened now, or [Error msg] with the
+      reason it does not open.
+
+      Raises [Invalid_argument] for a negative index. *)
+
+  val first : want list -> t
+  (** [first ws] is the first device of [ws] that opens; it opens none after
+      it.
+
+      Raises [Failure] with each one's reason if none opens, and
+      [Invalid_argument] if [ws] is empty. *)
+
+  val all : want list -> t list
+  (** [all ws] is each device of [ws], opened.
+
+      Raises [Failure] naming each one that does not open, with its reason. *)
+
+  val of_string : string -> (want list, string) result
+  (** [of_string s] is the devices the comma-separated names of [s] want:
+      [CPU], [CPU:k], [METAL], [CUDA:i], [NV:i] and [AMD:i], in any case, with
+      [CUDA], [NV] and [AMD] for index [0]. As in [of_string "CUDA:0,CUDA:1"].
+      [Error msg] names the first that is no device. *)
+
+  val name : t -> string
+  (** [name d] is [d]'s name, as in ["CUDA:1"]. *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp] formats a device's name. *)
+end
 
 (** Placements. *)
 module Placement : sig
   type t = Nx_effect.placement
-  (** The type for placements: where each device's window of a value lies, and
-      the backend that computes on it. Only the functions below build one, and
-      a placement is in normal form: a list of one device is that device, and a
-      list never repeats a device. *)
+  (** The type for placements: where each device's window of a value lies. Only
+      the functions below build one, and a placement is in normal form: a list
+      of one device is that device, and a list never repeats a device. *)
 
   val host : t
-  (** [host] is [device Nx_device.host]: the host device with [Nx_cpu.backend],
-      whose values are arrays in host memory (see {{!placement}above}). *)
+  (** [host] is [on [Device.host]], whose values are arrays in host memory. *)
 
-  val device : ?backend:Nx_backend.t -> Nx_device.t -> t
-  (** [device ~backend d] is placement on [d] alone, computed by [backend]
-      (defaults to [Nx_cpu.backend]). A backend that does not run on [d] is
-      allowed, as a compiled call needs only the devices; an operation there
-      raises {!Nx_backend.Refused}. *)
-
-  val replicated : ?backend:Nx_backend.t -> Nx_device.t list -> t
-  (** [replicated ~backend ds] is a full copy on each device of [ds], computed
-      by [backend] (defaults to [Nx_cpu.backend]).
+  val on : Device.t list -> t
+  (** [on ds] is a full copy on each device of [ds]; [on [d]] is [d] alone.
 
       Raises [Invalid_argument] if [ds] is empty or repeats a device. *)
 
-  val sharded : ?backend:Nx_backend.t -> axis:int -> Nx_device.t list -> t
-  (** [sharded ~backend ~axis ds] is equal slices of [axis] on the devices of
-      [ds], in order, computed by [backend] (defaults to [Nx_cpu.backend]).
+  val sharded : axis:int -> Device.t list -> t
+  (** [sharded ~axis ds] is equal slices of [axis] on the devices of [ds], in
+      order.
 
-      Raises [Invalid_argument] if [axis] is negative, or as {!replicated}. *)
+      Raises [Invalid_argument] if [axis] is negative, or as {!on}. *)
 
-  val devices : t -> Nx_device.t list
+  val devices : t -> Device.t list
   (** [devices p] is the devices of [p], in the order that decides which window
       each holds. *)
 
-  val backend : t -> Nx_backend.t
-  (** [backend p] is the backend that computes on values at [p]. *)
-
-  val window : t -> int array -> Nx_device.t -> (int * int) array
+  val window : t -> int array -> Device.t -> (int * int) array
   (** [window p shape d] is the window of a value of shape [shape] that [d]
       holds at [p], as [(start, stop)] per axis, [stop] exclusive, as {!shrink}
       takes it: [shrink (window p (shape x) d) x] is [d]'s part of [x].
@@ -350,22 +418,18 @@ module Placement : sig
       axis. *)
 
   val equal : t -> t -> bool
-  (** [equal p p'] is [true] iff [p] and [p'] have the same backend and every
-      device holds the same window of any value at [p] and at [p']. A list of
-      full copies is equal to the same devices in another order. *)
+  (** [equal p p'] is [true] iff every device holds the same window of any
+      value at [p] and at [p']. A list of full copies is equal to the same
+      devices in another order. *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp] formats a placement: its devices and layout, followed by
-      [with <name>] when its backend is not [Nx_cpu.backend], as in
-      ["CPU with counting"]. *)
+  (** [pp] formats a placement: its devices and layout. *)
 end
 
 val place : Placement.t -> ('a, 'b) t -> ('a, 'b) t
 (** [place p x] is [x] held at [p]. It equals [x] in shape, dtype and elements,
     and [x] is unchanged and stays where it was. It is [x] itself when [x] is
-    already at [p]. When [x] is placed and [p] differs from [x]'s placement
-    only in its backend, the result is a view of [x]'s storage and copies
-    nothing.
+    already at [p]. {!Ptree.place} places every tensor of a structure.
 
     Raises [Invalid_argument] if [p] splits an axis [x] does not have or does
     not divide evenly, or if [p]'s devices cannot hold [x]'s dtype. *)
@@ -1430,20 +1494,14 @@ val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
     A value's elements in a device's memory, as file formats read and write
     them, without a copy when they already lie there in C order. *)
 
-val of_buffer :
-  ?backend:Nx_backend.t ->
-  ('a, 'b) dtype ->
-  int array ->
-  Nx_device.Buffer.t ->
-  ('a, 'b) t
+val of_buffer : ('a, 'b) dtype -> int array -> Nx_device.Buffer.t -> ('a, 'b) t
 (** [of_buffer dtype shape b] is the value of [shape] whose elements, in C
-    order, are [b]'s, without a copy, at [Placement.device ~backend d] for [b]'s
-    device [d]. [backend] defaults to [Nx_cpu.backend], with which a buffer of
-    the host gives a value at {!Placement.host}. [b] is shared with its other
-    holders, which must not write it while the value lives.
+    order, are [b]'s, without a copy, at [Placement.on [d]] for [b]'s device
+    [d]: a buffer of the host gives a value at {!Placement.host}. [b] is shared
+    with its other holders, which must not write it while the value lives.
 
     Raises [Invalid_argument] if [shape] does not have [b]'s number of elements,
-    if [b]'s format is not [dtype]'s, or as {!Placement.device}. *)
+    or if [b]'s format is not [dtype]'s. *)
 
 val to_buffer : ('a, 'b) t -> Nx_device.Buffer.t
 (** [to_buffer x] is a buffer of exactly [x]'s elements in C order, on [x]'s
@@ -4254,10 +4312,10 @@ val of_shards :
 
 (** Operations as values.
 
-    Every operation nx computes or answers is a constructor of {!t}: those
-    computed by the placement's backend, and {!Move}, {!Place}, {!Read} and
-    {!Check}, which nx answers itself. A transformation is an interpreter of
-    these values, installed with {!intercept}. *)
+    Every operation nx computes or answers is a constructor of {!t}: those a
+    backend computes, and {!Move}, {!Place}, {!Read} and {!Check}, which nx
+    answers itself. A transformation is an interpreter of these values,
+    installed with {!intercept}, and so is a backend run ({!kernels}). *)
 module Op : sig
   type move = Nx_effect.move =
     | Reshape of int array
@@ -4460,7 +4518,7 @@ module Op : sig
       {!Read} is on the host.
 
       Raises [Invalid_argument] as {!eval} does when the operands cannot meet:
-      placed operands with different backends or device sets, operands split
+      placed operands on different device sets, operands split
       differently, an operation along a split axis, or a movement that would
       move elements between devices. *)
 
@@ -4503,6 +4561,28 @@ module Op : sig
       interpretation around [intercept] as if [i] were not installed, without
       being performed again. Fibers, threads and domains [f] starts are outside
       the extent. *)
+
+  val kernels : (module Nx_backend.S) -> interpreter
+  (** [kernels k] runs the backend [k]. It claims an operation that computes
+      ({!Move}, {!Place}, {!Read} and {!Check} excepted) over values whose
+      placed operands are all on devices [k] runs on, or over host values alone
+      when [k] runs on the host, and computes it with [k]'s kernels as nx
+      computes with nx.cpu. A kernel [k] lacks raises {!Nx_backend.Refused}
+      naming [k] and the operation; the operation never reaches the
+      interpretation around. Other operations, such as those on devices [k]
+      does not cover, pass through. A compiled function inside it compiles.
+
+      A backend library's [run f] is [intercept (kernels (module K)) f], meant
+      to wrap the whole program:
+
+      {v
+let () = Nx_oxcaml.run main
+let () = Nx_oxcaml.run @@ fun () -> Nx_metal.run main
+      v}
+
+      It covers what it wraps, transformations included, so it goes outermost.
+      A domain does not inherit it: work in a domain [f] spawns runs with
+      nx.cpu unless its body is wrapped in [run] too. *)
 
   val intercepted : unit -> bool
   (** [intercepted ()] is [true] iff the calling fiber is inside the extent of

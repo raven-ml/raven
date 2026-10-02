@@ -71,11 +71,3 @@ let () =
         in
         Some (Printf.sprintf "Nx.Linalg_error(%s): %s" op detail)
     | _ -> None)
-
-type t = { kernels : (module S) }
-
-let make kernels = { kernels }
-let kernels b = b.kernels
-let name { kernels = (module B) } = B.name
-let runs_on { kernels = (module B) } d = B.runs_on d
-let equal = ( == )

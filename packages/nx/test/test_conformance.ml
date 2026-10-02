@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx's operations at a placement of nx.cpu's kernels on a test device: each
-   computing operation, on operands placed on a test device that holds its own
-   memory, gives the host's result bit for bit, placed on that device. *)
+(* nx's operations on a test device, computed by each backend: each computing
+   operation, on operands placed on a test device that holds its own memory,
+   gives the host's result bit for bit, placed on that device. *)
 
 open Windtrap
 open Nx_test
@@ -13,7 +13,7 @@ open Nx_test
 (* How a case receives its operands: as they are, or placed. *)
 type at = { at : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 
-let p = Nx.Placement.device Devices.d1
+let p = Nx.Placement.on [ Devices.d1 ]
 let host = { at = Fun.id }
 let placed = { at = (fun x -> Nx.place p x) }
 let f64 shape xs = Nx.create Nx.float64 shape xs
@@ -246,15 +246,26 @@ let placed_result (Nx.P y) =
   is_true ~msg:"placed on the device" (Nx.Placement.equal (Nx.placement y) p);
   Nx.P (Nx.place Nx.Placement.host y)
 
-let conformance =
-  group "at a placement of nx.cpu on a device of its own memory"
+(* Each backend runs the cases: nx.cpu as nx calls it, and each backend under
+   its run ([Nx.Op.kernels]). A backend added to raven joins this list. *)
+let backends : (string * ((unit -> Nx.packed list) -> Nx.packed list)) list =
+  [
+    ("nx.cpu", fun f -> f ());
+    ( "nx.cpu run as a backend",
+      fun f -> Nx.Op.intercept (Nx.Op.kernels (module Nx_cpu)) f );
+  ]
+
+let conformance (backend, run_with) =
+  group
+    (backend ^ " at a placement on a device of its own memory")
     (List.map
        (fun (name, f) ->
          test name (fun () ->
              List.iter2
                (fun expected got ->
                  equal Stored.packed expected (placed_result got))
-               (f host) (f placed)))
+               (f host)
+               (run_with (fun () -> f placed))))
        cases)
 
-let () = exit (run "nx conformance" [ conformance ])
+let () = exit (run "nx conformance" (List.map conformance backends))

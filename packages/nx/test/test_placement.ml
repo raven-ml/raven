@@ -15,7 +15,7 @@ open Devices
 
 let four = [ d1; d2; d3; d4 ]
 let values = array float_exact
-let on1 = Nx.Placement.device d1
+let on1 = Nx.Placement.on [ d1 ]
 
 let iota shape =
   Nx.create Nx.float32 shape
@@ -30,8 +30,8 @@ type where =
   | Split of int * Nx_device.t list
 
 let to_placement = function
-  | One d -> Nx.Placement.device d
-  | Copies ds -> Nx.Placement.replicated ds
+  | One d -> Nx.Placement.on [ d ]
+  | Copies ds -> Nx.Placement.on ds
   | Split (axis, ds) -> Nx.Placement.sharded ~axis ds
 
 let pp_where ppf w = Nx.Placement.pp ppf (to_placement w)
@@ -57,7 +57,7 @@ let window_of shape (ds, axis) d =
 
 let make (ds, axis) =
   match axis with
-  | None -> Nx.Placement.replicated ds
+  | None -> Nx.Placement.on ds
   | Some axis -> Nx.Placement.sharded ~axis ds
 
 let placement_args =
@@ -74,11 +74,10 @@ let placements =
           List.iter
             (fun (a, b) -> equal placement a b)
             [
-              (on1, Nx.Placement.replicated [ d1 ]);
+              (on1, Nx.Placement.on [ d1 ]);
               (on1, Nx.Placement.sharded ~axis:3 [ d1 ]);
-              (Nx.Placement.host, Nx.Placement.device Nx_device.host);
-              ( Nx.Placement.replicated [ d1; d2 ],
-                Nx.Placement.replicated [ d2; d1 ] );
+              (Nx.Placement.host, Nx.Placement.on [ Nx_device.host ]);
+              (Nx.Placement.on [ d1; d2 ], Nx.Placement.on [ d2; d1 ]);
             ];
           not_equal placement
             (Nx.Placement.sharded ~axis:0 [ d1; d2 ])
@@ -115,13 +114,90 @@ let placements =
           let s = Nx.Placement.sharded ~axis:1 [ d1; d2; d3 ] in
           refuses
             [
-              (fun () -> ignore (Nx.Placement.replicated []));
-              (fun () -> ignore (Nx.Placement.replicated [ d1; d1 ]));
+              (fun () -> ignore (Nx.Placement.on []));
+              (fun () -> ignore (Nx.Placement.on [ d1; d1 ]));
               (fun () -> ignore (Nx.Placement.sharded ~axis:(-1) [ d1; d2 ]));
               (fun () -> ignore (Nx.Placement.window s [| 2; 6 |] d4));
               (fun () -> ignore (Nx.Placement.window s [| 2; 5 |] d1));
               (fun () -> ignore (Nx.Placement.window s [| 6 |] d1));
             ]);
+    ]
+
+(* Devices *)
+
+let pp_want ppf (w : Nx.Device.want) =
+  match w with
+  | Host -> Format.pp_print_string ppf "Host"
+  | Cpu k -> Format.fprintf ppf "Cpu %d" k
+  | Metal -> Format.pp_print_string ppf "Metal"
+  | Cuda i -> Format.fprintf ppf "Cuda %d" i
+  | Nv i -> Format.fprintf ppf "Nv %d" i
+  | Amd i -> Format.fprintf ppf "Amd %d" i
+
+let pp_want_list = Format.pp_print_list pp_want
+let want = Testable.make ~pp:pp_want ~equal:( = )
+let device = Testable.make ~pp:Nx_device.pp ~equal:Nx_device.equal
+let failure = function Failure _ -> true | _ -> false
+
+let devices =
+  group "devices"
+    [
+      cases ~name:fst "of_string reads"
+        [
+          ("CPU", [ Nx.Device.Host ]);
+          ("cpu:2, CUDA:1", [ Cpu 2; Cuda 1 ]);
+          ("METAL,NV:3,AMD", [ Metal; Nv 3; Amd 0 ]);
+          ("CUDA,NV", [ Cuda 0; Nv 0 ]);
+        ]
+        (fun (s, ws) ->
+          equal (result (list want) string) (Ok ws) (Nx.Device.of_string s));
+      cases ~name:(Printf.sprintf "%S") "of_string refuses"
+        [ ""; "GPU"; "CUDA:-1"; "CPU:x"; "CPU,"; "METAL:0:1" ] (fun s ->
+          ignore (require_error ~pp:pp_want_list (Nx.Device.of_string s)));
+      test "a test device is one device per index, on which the host computes"
+        (fun () ->
+          let d = Nx.Device.cpu 3 in
+          equal device d (Nx.Device.cpu 3);
+          equal device d (Result.get_ok (Nx.Device.get (Cpu 3)));
+          equal string "CPU:3" (Nx.Device.name d);
+          equal bool true (Nx_device.runs_on_host d);
+          not_equal device d (Nx.Device.cpu 4));
+      test "Host and Cpu 0 are the host" (fun () ->
+          equal device Nx_device.host Nx.Device.host;
+          equal device Nx.Device.host (Nx.Device.cpu 0);
+          equal device Nx.Device.host (Nx.Device.first [ Host ]));
+      test "first opens the first device that opens" (fun () ->
+          equal device (Nx.Device.cpu 1)
+            (Nx.Device.first [ Cuda 99; Cpu 1; Cpu 2 ]));
+      test "first raises Failure when none opens, and on no device" (fun () ->
+          raises_match failure (fun () -> ignore (Nx.Device.first [ Cuda 99 ]));
+          raises_invalid_arg (fun () -> ignore (Nx.Device.first [])));
+      test "all opens every device, and raises Failure when one does not open"
+        (fun () ->
+          equal (list device)
+            [ Nx.Device.cpu 1; Nx.Device.cpu 2 ]
+            (Nx.Device.all [ Cpu 1; Cpu 2 ]);
+          raises_match failure (fun () ->
+              ignore (Nx.Device.all [ Cpu 1; Cuda 99 ])));
+      test "a constructor raises Failure for a device that does not open"
+        (fun () ->
+          raises_match failure (fun () -> ignore (Nx.Device.cuda 99));
+          raises_match failure (fun () -> ignore (Nx.Device.nv 99));
+          raises_match failure (fun () -> ignore (Nx.Device.amd 99)));
+      test "indices are not negative" (fun () ->
+          refuses
+            [
+              (fun () -> ignore (Nx.Device.cpu (-1)));
+              (fun () -> ignore (Nx.Device.cuda (-1)));
+            ]);
+      test "Ptree.place places every tensor of a structure" (fun () ->
+          let s = Nx.Ptree.(pair tensor (list tensor)) in
+          let x = (iota [| 2 |], [ iota [| 3 |]; iota [| 1; 2 |] ]) in
+          let a, l = Nx.Ptree.place s on1 x in
+          List.iter
+            (fun p -> equal placement on1 p)
+            (Nx.placement a :: List.map Nx.placement l);
+          equal values (Nx.to_array (fst x)) (Nx.to_array a));
     ]
 
 (* Values at a placement *)
@@ -378,10 +454,10 @@ let movements =
               and storage = Nx.Repr.Placed.storage r in
               raises_invalid_arg (fun () ->
                   Nx.Repr.Placed.v
-                    (Nx.Placement.device other)
+                    (Nx.Placement.on [ other ])
                     Nx.float32 view storage);
               ignore
-                (Nx.Repr.Placed.v (Nx.Placement.device d2) Nx.float32 view
+                (Nx.Repr.Placed.v (Nx.Placement.on [ d2 ]) Nx.float32 view
                    storage)
           | Host _ | Traced _ -> fail "expected a placed value");
     ]
@@ -459,7 +535,7 @@ let results =
   let ds = [ d1; d2 ] in
   let rows = Nx.Placement.sharded ~axis:0 ds
   and cols = Nx.Placement.sharded ~axis:1 ds
-  and copies = Nx.Placement.replicated ds in
+  and copies = Nx.Placement.on ds in
   let x = iota [| 8; 6 |] and w = iota [| 6; 4 |] in
   let s () = Nx.place rows x
   and t () = Nx.place cols x
@@ -621,7 +697,7 @@ let results =
             copies,
             fun () -> (Nx.roll ~axis:0 4 x, Nx.roll ~axis:0 4 (s ())) );
           ( "a sum of two whole shards of four",
-            Nx.Placement.replicated four,
+            Nx.Placement.on four,
             fun () ->
               let s4 = Nx.place (Nx.Placement.sharded ~axis:0 four) x in
               ( Nx.add (Nx.slice [ R (0, 2) ] x) (Nx.slice [ R (2, 4) ] x),
@@ -651,7 +727,7 @@ let results =
                    ignore
                      (Nx.add
                         (Nx.slice [ R (0, 4) ] s)
-                        (Nx.place (Nx.Placement.device d2)
+                        (Nx.place (Nx.Placement.on [ d2 ])
                            (Nx.slice [ R (4, 8) ] x))));
                ]));
       prop
@@ -713,7 +789,7 @@ let results =
               (4, on1);
               (4, on1);
               (4, on1);
-              (4 * 4, Nx.Placement.replicated four);
+              (4 * 4, Nx.Placement.on four);
               ((4 * 4) + 192, Nx.Placement.sharded ~axis:1 four);
             ]
             (List.map (fun (n, y) -> (n, Nx.placement y)) made);
@@ -885,5 +961,12 @@ let () =
   exit
     (run "nx placement"
        [
-         placements; place_tests; movements; results; reads; claims; identities;
+         placements;
+         devices;
+         place_tests;
+         movements;
+         results;
+         reads;
+         claims;
+         identities;
        ])

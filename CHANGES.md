@@ -178,6 +178,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `grad`, `jvp` and `vmap` of a `jit` function, and a
+  `Total.collect` around one, compile: each runs programs for the derived
+  function, kept in the compiled function. Before, `jit` ran its function as
+  plain code under a transformation. A compiled function that reads a tracked
+  value through its closure raises; pass it as an argument.
+- **Breaking:** remove `Rune.compiled`. On a GPU, compile with `Rune.jit`.
 - `jit` writes `Nx.scatter` into a consumed value in place with one indexed
   store, in every mode, unless it has more repeated updates than rows: a
   key-value cache's rows from a page table take one kernel, with no kernel
@@ -3037,6 +3043,22 @@ thread.
 
 ### Nx
 
+- **Breaking:** a placement holds devices only. `Nx.Placement.on ds` replaces
+  `Placement.device` and `replicated`; `Nx_backend.t` and its `make`,
+  `kernels`, `name`, `runs_on` and `equal`, `Nx_cpu.backend`,
+  `Placement.backend` and every `?backend` are gone.
+- **Breaking:** an eager operation on a GPU value raises `Invalid_argument`
+  before any work, naming `Rune.jit`, a backend's run and `Nx.place` to the
+  host. nx.cpu computes on the host and on test devices. Constants, views,
+  reads and `Nx.place` work on every device.
+- Add `Nx.Device`: `host`, `cpu`, `metal`, `cuda`, `nv`, `amd` and `gpu ()`,
+  the first GPU that opens, and the plain data `want` with `get`, `first`,
+  `all` and `of_string` (`"CUDA:0,CUDA:1"`). nx links the vendor device
+  runtimes.
+- Add `Nx.Ptree.place`, which places every tensor of a structure.
+- Add `Nx.Op.kernels`, which runs an `Nx_backend.S` backend for the eager
+  operations on the devices it covers; a backend library's `run` wraps a
+  program in it.
 - The host's thread pool, which runs the blocks of `Nx_device.Program.call`
   and nx.cpu's parallel kernels, keeps a thread spinning for up to 100 us after
   the last job it took part in, instead of parking it after each. A compiled

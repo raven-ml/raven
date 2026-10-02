@@ -16,7 +16,7 @@ let d1 = Devices.d1
 let d2 = Devices.d2
 let r1 = d1
 let placement = Devices.placement
-let disk = Nx.Placement.device Nx_device.disk
+let disk = Nx.Placement.on [ Nx_device.disk ]
 
 let device =
   Testable.make
@@ -33,7 +33,7 @@ let wheres =
       { name = "on the host"; at = Fun.id };
       {
         name = "on a device";
-        at = (fun x -> Nx.place (Nx.Placement.device d1) x);
+        at = (fun x -> Nx.place (Nx.Placement.on [ d1 ]) x);
       };
     ]
 
@@ -108,7 +108,7 @@ let to_buffer =
               (Nx.to_array (Nx.of_buffer Nx.int32 [| 3; 2 |] b)));
         test "a value on a device in no run is copied on that device" (fun () ->
             let t = Nx.reshape [| 2; 3 |] (Nx.arange Nx.int32 0 6 1) in
-            let x = Nx.transpose (Nx.place (Nx.Placement.device d1) t) in
+            let x = Nx.transpose (Nx.place (Nx.Placement.on [ d1 ]) t) in
             let b = Nx.to_buffer x in
             equal device r1 (B.device b);
             is_false (share_memory b (storage x));
@@ -117,16 +117,14 @@ let to_buffer =
               (Nx.to_array (Nx.of_buffer Nx.int32 [| 3; 2 |] b)));
         test "an empty value gives an empty buffer on its device" (fun () ->
             let x =
-              Nx.place (Nx.Placement.device d1) (Nx.zeros Nx.int8 [| 0; 3 |])
+              Nx.place (Nx.Placement.on [ d1 ]) (Nx.zeros Nx.int8 [| 0; 3 |])
             in
             let b = Nx.to_buffer x in
             equal int 0 (B.length b);
             equal device r1 (B.device b));
         test "refuses a value copied on several devices" (fun () ->
             let x =
-              Nx.place
-                (Nx.Placement.replicated [ d1; d2 ])
-                (Nx.ones Nx.int8 [| 4 |])
+              Nx.place (Nx.Placement.on [ d1; d2 ]) (Nx.ones Nx.int8 [| 4 |])
             in
             raises_invalid_arg (fun () -> Nx.to_buffer x));
         test "refuses a value split over several devices" (fun () ->
@@ -142,7 +140,7 @@ let to_buffer =
               (fun () -> Nx.to_buffer (traced ())));
         test "refuses a consumed value, naming where it was consumed" (fun () ->
             let x =
-              Nx.place (Nx.Placement.device d1) (Nx.ones Nx.int8 [| 4 |])
+              Nx.place (Nx.Placement.on [ d1 ]) (Nx.ones Nx.int8 [| 4 |])
             in
             Devices.consume (Devices.storage_of x) ~path:"0.weights";
             raises_match (Exn.invalid_arg ~substring:"0.weights") (fun () ->
@@ -195,14 +193,6 @@ let reads =
 
 (* of_buffer *)
 
-let backend =
-  Nx_backend.make
-    (module struct
-      include (Nx_cpu : Nx_backend.S)
-
-      let name = "other"
-    end)
-
 let of_buffer =
   let ints n = Nx_array.Elements.create Nx.int32 n in
   group "of_buffer"
@@ -218,14 +208,9 @@ let of_buffer =
           let b = B.create r1 Nx_dtype.Scalar.Int32 6 in
           B.copy ~src:(Nx.to_buffer (Nx.arange Nx.int32 0 6 1)) ~dst:b;
           let x = Nx.of_buffer Nx.int32 [| 3; 2 |] b in
-          equal placement (Nx.Placement.device d1) (Nx.placement x);
+          equal placement (Nx.Placement.on [ d1 ]) (Nx.placement x);
           is_true (share_memory b (storage x));
           equal (array int32) [| 0l; 1l; 2l; 3l; 4l; 5l |] (Nx.to_array x));
-      test "places the value with the backend it names" (fun () ->
-          let x = Nx.of_buffer ~backend Nx.int32 [| 4 |] (ints 4) in
-          equal placement
-            (Nx.Placement.device ~backend Nx_device.host)
-            (Nx.placement x));
       test "reads a file's bytes as a value on the disk" (fun () ->
           let x = Runtimes.on_disk (Nx.arange Nx.int32 0 6 1) in
           equal placement disk (Nx.placement x));
@@ -296,7 +281,7 @@ let shards =
           (fun () ->
             let x = x () in
             let row = Nx.slice [ R (3, 4) ] x in
-            equal placement (Nx.Placement.device d2) (Nx.placement row);
+            equal placement (Nx.Placement.on [ d2 ]) (Nx.placement row);
             is_true
               (List.for_all2 ( == )
                  (fst (Nx.shards row))
@@ -309,7 +294,7 @@ let shards =
       ])
 
 let of_shards =
-  let p = Nx.Placement.replicated [ d1; d2 ] in
+  let p = Nx.Placement.on [ d1; d2 ] in
   let view = Nx_array.View.create [| 4 |] in
   let on r ?(scalar = Nx_dtype.Scalar.Int32) n = B.create r scalar n in
   let r2 = d2 in

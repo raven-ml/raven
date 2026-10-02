@@ -314,6 +314,9 @@ val map :
 (** [map s f x] is [x] with each tensor [t] at path [p] replaced by [f p t]. [f]
     is applied in walk order. *)
 
+val place : 's t -> Nx_effect.placement -> 's -> 's
+(** [place s p x] is [x] with each tensor held at [p] ([Nx.place]). *)
+
 val map2 :
   's t ->
   ('a 'b.

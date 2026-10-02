@@ -23,7 +23,7 @@ let devices =
       test
         "the host shares the runtimes' memory: a copy on it and on a runtime \
          computes and reads back" (fun () ->
-          let p = Nx.Placement.replicated [ r1; Nx_device.host ] in
+          let p = Nx.Placement.on [ r1; Nx_device.host ] in
           let x = Nx.place p (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]) in
           let y = Nx.add x x in
           is_true (Nx.Placement.equal (Nx.placement y) p);
@@ -53,7 +53,7 @@ let host_buffers =
    pages, and other devices read into their memory. *)
 let disk =
   let on_disk = Runtimes.on_disk in
-  let disk = Nx.Placement.device Nx_device.disk in
+  let disk = Nx.Placement.on [ Nx_device.disk ] in
   let read () = Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk) in
   let reads f =
     let before = read () in
@@ -95,14 +95,14 @@ let disk =
       test
         "beside a value on a device, it joins that device as a host value does"
         (fun () ->
-          let on_d1 = Nx.place (Nx.Placement.device r1) x in
+          let on_d1 = Nx.place (Nx.Placement.on [ r1 ]) x in
           let y = Nx.add on_d1 (on_disk x) in
-          equal placement (Nx.Placement.device r1) (Nx.placement y);
+          equal placement (Nx.Placement.on [ r1 ]) (Nx.placement y);
           equal (array int32) (Nx.to_array (Nx.add x x)) (Nx.to_array y));
       test "placed on a device apart from the host, it is read into it"
         (fun () ->
           let y, bytes =
-            reads (fun () -> Nx.place (Nx.Placement.device r1) (on_disk x))
+            reads (fun () -> Nx.place (Nx.Placement.on [ r1 ]) (on_disk x))
           in
           equal ~msg:"bytes read" int 48 bytes;
           equal (array int32) (Nx.to_array x) (Nx.to_array y));

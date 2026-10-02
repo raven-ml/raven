@@ -12,6 +12,7 @@ exception Linalg_error = Nx_backend.Linalg_error
 
 let context = Nx_effect.Placement.host
 
+module Device = Device
 module Placement = Nx_effect.Placement
 
 let place = Nx_effect.place
@@ -132,6 +133,7 @@ module Op = struct
     claims : 'r. 'r t -> bool;
   }
 
+  let kernels = Nx_effect.kernels
   let intercept = Nx_effect.intercept
   let intercepted = Nx_effect.intercepted
 end

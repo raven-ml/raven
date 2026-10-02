@@ -353,7 +353,7 @@ let safetensors =
       ("{\"" ^ name ^ {|":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|})
     ^ "\042"
   in
-  let disk = Nx.Placement.device Nx_device.disk in
+  let disk = Nx.Placement.on [ Nx_device.disk ] in
   let on_disk archive =
     List.for_all
       (fun (_, Nx.P t) -> Nx.Placement.equal disk (Nx.placement t))
@@ -733,7 +733,7 @@ let cached_gguf () =
   List.find_map find dirs
 
 let gguf_group =
-  let disk = Nx.Placement.device Nx_device.disk in
+  let disk = Nx.Placement.on [ Nx_device.disk ] in
   let off_disk (g : Gguf.t) =
     List.filter_map
       (fun (name, Nx.P t) ->

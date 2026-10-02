@@ -3,180 +3,142 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Backends carried by placements: backends that include nx.cpu's kernels and
-   change one, on the host device and on a runtime device; refusals, mixed
-   operands, the devices a backend runs on, moves between backends, and the two
-   ways the host device holds values. *)
+(* Backends run with Nx.Op.kernels: which eager operations a backend computes,
+   the innermost covering one, a backend that lacks an operation, devices it
+   does not cover, the operations nx answers itself, and domains. *)
 
 open Windtrap
 open Nx_test
 
-module Counting = struct
-  include (Nx_cpu : Nx_backend.S)
-
-  let name = "counting"
-  let adds = ref 0
-
-  let binary k a b ~dst =
-    if k = Nx_backend.Add then incr adds;
-    Nx_cpu.binary k a b ~dst
-end
-
-module Refusing = struct
-  include (Nx_cpu : Nx_backend.S)
-
-  let name = "refusing"
-  let matmul _ _ ~dst:_ = raise (Nx_backend.Refused "refusing: matmul: none")
-end
-
-module Hostless = struct
-  include (Nx_cpu : Nx_backend.S)
-
-  let name = "hostless"
-  let runs_on _ = false
-end
-
-let counting = Nx_backend.make (module Counting)
-let refusing = Nx_backend.make (module Refusing)
-let hostless = Nx_backend.make (module Hostless)
-
-(* A runtime over host memory. *)
-let runtime name =
-  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+(* A device the host does not compute on, as a GPU: memory the host addresses,
+   and a driver that loads programs. *)
+let gpu =
+  Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
+    ~load:(fun ~binary:_ -> Error "no programs")
     (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
-let r1 = runtime "R1"
+(* [counting label covers] is a backend of nx.cpu's kernels named [label] over
+   the devices [covers] accepts, counting its additions. *)
+let counting label covers =
+  let adds = ref 0 in
+  let k =
+    (module struct
+      include (Nx_cpu : Nx_backend.S)
+
+      let name = label
+      let runs_on = covers
+
+      let binary k a b ~dst =
+        if k = Nx_backend.Add then incr adds;
+        Nx_cpu.binary k a b ~dst
+    end : Nx_backend.S)
+  in
+  (k, adds)
+
+let under k f = Nx.Op.intercept (Nx.Op.kernels k) f
+let on_host d = Nx_device.equal d Nx_device.host
+let on_gpu d = Nx_device.equal d gpu
+
+module Lacking = struct
+  include (Nx_cpu : Nx_backend.S)
+
+  let name = "lacking"
+
+  let matmul _ _ ~dst:_ =
+    raise (Nx_backend.Refused "lacking does not implement matmul")
+end
+
 let vec a = Nx.create Nx.float32 [| Array.length a |] a
 let floats = tensor float_exact
+let refused = function Nx_backend.Refused _ -> true | _ -> false
 
-let is_placed (type a b) (x : (a, b) Nx.t) =
-  match Nx.Repr.v x with Placed _ -> true | Host _ | Traced _ -> false
-
-let backends =
-  group "backends"
+let runs =
+  group "run"
     [
-      test
-        "a backend that includes the host's runs its operations and keeps its \
-         placement, on the host device and on a runtime device" (fun () ->
-          List.iter
-            (fun d ->
-              let p = Nx.Placement.device ~backend:counting d in
-              let x = Nx.place p (vec [| 1.; 2.; 3. |]) in
-              let before = !Counting.adds in
-              let y = Nx.add x x in
-              equal ~msg:"one add through the backend" int (before + 1)
-                !Counting.adds;
-              is_true ~msg:"the result keeps the placement"
-                (Nx.Placement.equal (Nx.placement y) p);
-              equal floats (vec [| 2.; 4.; 6. |]) y;
-              let z = Nx.mul y x in
-              equal ~msg:"an operation it does not change is the host's" floats
-                (vec [| 2.; 8.; 18. |])
-                z)
-            [ Nx_device.host; r1 ]);
-      test "an operation on host values does not reach another backend"
+      test "a backend computes the eager operations on host values it wraps"
         (fun () ->
-          let before = !Counting.adds in
+          let k, adds = counting "counting" on_host in
+          let y =
+            under k (fun () -> Nx.add (vec [| 1.; 2. |]) (vec [| 3.; 4. |]))
+          in
+          equal ~msg:"one addition through the backend" int 1 !adds;
+          equal floats (vec [| 4.; 6. |]) y);
+      test "outside its run, a backend computes nothing" (fun () ->
+          let k, adds = counting "counting" on_host in
+          ignore (under k (fun () -> ()));
           ignore (Nx.add (vec [| 1. |]) (vec [| 2. |]));
-          equal int before !Counting.adds);
-      test "a refused operation raises Refused" (fun () ->
-          let p = Nx.Placement.device ~backend:refusing Nx_device.host in
-          let x = Nx.place p (Nx.ones Nx.float32 [| 2; 2 |]) in
-          raises_match
-            (function Nx_backend.Refused _ -> true | _ -> false)
-            (fun () -> ignore (Nx.matmul x x));
-          equal floats (Nx.full Nx.float32 [| 2; 2 |] 2.) (Nx.add x x));
-      test "operands with two backends raise, naming both placements" (fun () ->
-          let x =
-            Nx.place
-              (Nx.Placement.device ~backend:counting Nx_device.host)
-              (vec [| 1. |])
-          and y =
-            Nx.place
-              (Nx.Placement.device ~backend:refusing Nx_device.host)
-              (vec [| 1. |])
-          in
-          raises_match
-            (function
-              | Invalid_argument msg ->
-                  String.equal msg
-                    "Nx.add: operands on CPU with counting and CPU with \
-                     refusing; place one of them"
-              | _ -> false)
-            (fun () -> ignore (Nx.add x y)));
-      test "a host operand joins a placement of another backend" (fun () ->
-          let p = Nx.Placement.device ~backend:counting Nx_device.host in
-          let y = Nx.add (Nx.place p (vec [| 1. |])) (vec [| 2. |]) in
-          is_true (Nx.Placement.equal (Nx.placement y) p);
-          equal floats (vec [| 3. |]) y);
-      test
-        "a placement takes a backend that does not run on its devices, and its \
-         first operation there refuses before any work, naming the remedies"
+          equal int 0 !adds);
+      test "the innermost backend that covers the operands computes" (fun () ->
+          let outer, outer_adds = counting "outer" on_host in
+          let inner, inner_adds = counting "inner" on_host in
+          ignore
+            (under outer (fun () ->
+                 under inner (fun () -> Nx.add (vec [| 1. |]) (vec [| 2. |]))));
+          equal ~msg:"inner" int 1 !inner_adds;
+          equal ~msg:"outer" int 0 !outer_adds);
+      test "a backend passes operations on devices it does not cover outward"
         (fun () ->
-          let p =
-            Nx.Placement.replicated ~backend:hostless [ Nx_device.host; r1 ]
+          let outer, outer_adds = counting "outer" on_host in
+          let inner, inner_adds = counting "inner" on_gpu in
+          ignore
+            (under outer (fun () ->
+                 under inner (fun () -> Nx.add (vec [| 1. |]) (vec [| 2. |]))));
+          equal ~msg:"inner" int 0 !inner_adds;
+          equal ~msg:"outer" int 1 !outer_adds);
+      test
+        "a backend that lacks an operation raises Refused, and the operation \
+         reaches no outer backend" (fun () ->
+          let outer, _ = counting "outer" on_host in
+          let x = Nx.ones Nx.float32 [| 2; 2 |] in
+          raises_match refused (fun () ->
+              under outer (fun () ->
+                  under (module Lacking) (fun () -> ignore (Nx.matmul x x)))));
+      test
+        "constants, movements, reads and place work under a backend that \
+         computes nothing" (fun () ->
+          let x = vec [| 1.; 2.; 3.; 4. |] in
+          let y =
+            under
+              (module Lacking)
+              (fun () ->
+                let z = Nx.zeros Nx.float32 [| 2 |] in
+                let t = Nx.transpose (Nx.reshape [| 2; 2 |] x) in
+                let p = Nx.place (Nx.Placement.on [ Nx.Device.cpu 1 ]) t in
+                equal (list float_exact) [ 0.; 0. ]
+                  (Array.to_list (Nx.to_array z));
+                Nx.place Nx.Placement.host p)
           in
+          equal floats (Nx.create Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |]) y);
+      test
+        "an eager operation on a device no backend covers raises before any \
+         work, naming the remedies" (fun () ->
+          let x = Nx.place (Nx.Placement.on [ gpu ]) (vec [| 1.; 2. |]) in
+          raises
+            (Invalid_argument
+               "Nx.add: an operand is on GPU, where nx.cpu does not compute; \
+                apply it under Rune.jit, run it under a backend's run that \
+                covers GPU, or Nx.place it on Nx.Placement.host") (fun () ->
+              ignore (Nx.add x x));
+          equal ~msg:"reads work" floats (vec [| 1.; 2. |]) x);
+      test
+        "a backend that covers a device computes its eager operations, keeping \
+         the placement" (fun () ->
+          let k, adds = counting "gpu" on_gpu in
+          let p = Nx.Placement.on [ gpu ] in
           let x = Nx.place p (vec [| 1.; 2. |]) in
-          equal ~msg:"placed and read back" floats (vec [| 1.; 2. |]) x;
-          raises_match
-            (function
-              | Nx_backend.Refused why ->
-                  String.equal why
-                    "add: hostless does not compute on CPU; place with a \
-                     backend that runs on CPU, or compute under a compiled \
-                     call"
-              | _ -> false)
-            (fun () -> Nx.add x x));
-      test "nx.cpu subtracts values placed on CPU:1, keeping their placement"
-        (fun () ->
-          let p = Nx.Placement.device (runtime "CPU:1") in
-          let a = Nx.place p (vec [| 5.; 7. |])
-          and b = Nx.place p (vec [| 2.; 3. |]) in
-          let d = Nx.sub a b in
-          is_true (Nx.Placement.equal (Nx.placement d) p);
-          equal floats (vec [| 3.; 4. |]) d);
-      test "placements differ by backend, and print it" (fun () ->
-          let p = Nx.Placement.device ~backend:counting Nx_device.host in
-          is_false (Nx.Placement.equal p Nx.Placement.host);
-          is_true (Nx_backend.equal (Nx.Placement.backend p) counting);
-          is_true
-            (Nx_backend.equal
-               (Nx.Placement.backend Nx.Placement.host)
-               Nx_cpu.backend);
-          equal string "counting" (Nx_backend.name counting);
-          equal string "CPU with counting"
-            (Format.asprintf "%a" Nx.Placement.pp p);
-          equal string "CPU"
-            (Format.asprintf "%a" Nx.Placement.pp Nx.Placement.host));
-      test "a move between backends on the same devices views the storage"
-        (fun () ->
-          let x =
-            Nx.place
-              (Nx.Placement.device ~backend:counting r1)
-              (vec [| 1.; 2. |])
+          let y = under k (fun () -> Nx.add x (vec [| 3.; 4. |])) in
+          equal ~msg:"one addition through the backend" int 1 !adds;
+          equal Devices.placement p (Nx.placement y);
+          equal floats (vec [| 4.; 6. |]) y);
+      test "a domain spawned inside a run computes with nx.cpu" (fun () ->
+          let k, adds = counting "counting" on_host in
+          let y =
+            under k (fun () ->
+                Domain.join
+                  (Domain.spawn (fun () -> Nx.add (vec [| 1. |]) (vec [| 2. |]))))
           in
-          let q = Nx.Placement.device r1 in
-          let y = Nx.place q x in
-          is_true (Nx.Placement.equal (Nx.placement y) q);
-          (match (Nx.Repr.v x, Nx.Repr.v y) with
-          | Placed a, Placed b ->
-              is_true ~msg:"one storage"
-                (Nx.Repr.Placed.storage a == Nx.Repr.Placed.storage b)
-          | _ -> fail "expected placed values");
-          equal floats (vec [| 1.; 2. |]) y);
-      test
-        "the host device holds a value of the host placement as a host tensor, \
-         and one of another placement as a placed value" (fun () ->
-          let x = vec [| 1.; 2. |] in
-          is_false ~msg:"created on the host" (is_placed x);
-          let p = Nx.Placement.device ~backend:counting Nx_device.host in
-          let y = Nx.place p x in
-          is_true ~msg:"another backend on the host device" (is_placed y);
-          is_true ~msg:"its results" (is_placed (Nx.add y y));
-          is_true ~msg:"created there" (is_placed (Nx.zeros_like y));
-          let z = Nx.place Nx.Placement.host y in
-          is_false ~msg:"moved back to the host placement" (is_placed z);
-          equal floats x z);
+          equal int 0 !adds;
+          equal floats (vec [| 3. |]) y);
     ]
 
-let () = exit (run "nx backends" [ backends ])
+let () = exit (run "nx backends" [ runs ])

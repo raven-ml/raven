@@ -315,6 +315,8 @@ let map (type s) (s : s t)
     (f : 'a 'b. Path.t -> ('a, 'b) tensor -> ('a, 'b) tensor) (x : s) : s =
   s.walk { tensor = f; report = ignore_report } Path.Root x
 
+let place s p x = map s (fun _ t -> Nx_effect.place p t) x
+
 type recorded = Recorded_leaf of Path.t * Nx_effect.packed | Recorded of visit
 
 let map2 (type s) (s : s t)

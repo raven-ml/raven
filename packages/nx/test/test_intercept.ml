@@ -301,7 +301,7 @@ let cases () =
     C (Move (x, Shrink [| (0, 1); (1, 3); (0, 4) |]));
     C (Move (x, Flip [| true; false; true |]));
     C (Move (x, Window { axis = 2; size = 2; step = 1 }));
-    C (Place (Nx.Placement.device Nx_test.Devices.d1, x));
+    C (Place (Nx.Placement.on [ Nx_test.Devices.d1 ], x));
   ]
 
 (* Operations that change their operands' shapes, drawn over shapes with empty

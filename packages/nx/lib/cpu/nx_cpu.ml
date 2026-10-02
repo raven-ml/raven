@@ -20,7 +20,7 @@ external set_pool : nativeint -> unit = "caml_nx_c_set_pool"
 
 (* The kernels run on the host's one thread pool, nx.device's. *)
 let () = set_pool (device_pool ())
-let name = "cpu"
+let name = "nx.cpu"
 let runs_on = Nx_device.runs_on_host
 let shape (t : ('a, 'b) t) = View.shape t.view
 let of_view (t : ('a, 'b) t) view = { t with view }
@@ -481,41 +481,3 @@ let eigh x ~values ~vectors =
   match vectors with
   | None -> reraise_linalg ~op:"eigvalsh" (fun () -> caml_eigh values x x false)
   | Some v -> reraise_linalg ~op:"eigh" (fun () -> caml_eigh values v x true)
-
-let backend =
-  Nx_backend.make
-    (module struct
-      let name = name
-      let runs_on = runs_on
-      let unary = unary
-      let binary = binary
-      let fma = fma
-      let compare = compare
-      let where = where
-      let reduce = reduce
-      let scan = scan
-      let arg_reduce = arg_reduce
-      let sort = sort
-      let argsort = argsort
-      let pad = pad
-      let cat = cat
-      let cast = cast
-      let threefry = threefry
-      let gather = gather
-      let scatter = scatter
-      let update = update
-      let unfold = unfold
-      let fold = fold
-      let matmul = matmul
-      let fft = fft
-      let rfft = rfft
-      let irfft = irfft
-      let contiguous = contiguous
-      let cholesky = cholesky
-      let qr = qr
-      let lu = lu
-      let svd = svd
-      let eig = eig
-      let eigh = eigh
-      let solve_triangular = solve_triangular
-    end)

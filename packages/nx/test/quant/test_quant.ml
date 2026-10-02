@@ -501,7 +501,7 @@ let placements =
       let r = Array.length s in
       let p =
         match axis with
-        | None -> Nx.Placement.replicated devices
+        | None -> Nx.Placement.on devices
         | Some axis -> Nx.Placement.sharded ~axis devices
       in
       let refused =
@@ -534,7 +534,7 @@ let others =
         "construction, maps, visits and ids that select no expert read no byte"
         (fun () ->
           let place s =
-            Nx.place (Nx.Placement.device d1) (Nx.zeros Nx.uint8 s)
+            Nx.place (Nx.Placement.on [ d1 ]) (Nx.zeros Nx.uint8 s)
           in
           let codes = place [| 4; 6; 32 |]
           and scales = place [| 4; 6; 2 |]

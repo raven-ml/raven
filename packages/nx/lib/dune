@@ -1,8 +1,25 @@
+; nx links the vendors' device runtimes, so that Nx.Device opens every device.
+; Metal exists on macOS alone.
+
 (library
  (name nx)
  (public_name nx)
  (modules :standard \ prelude)
- (libraries nx_dtype nx_array nx_backend nx_cpu nx_device nx_effect)
+ (libraries
+  nx_dtype
+  nx_array
+  nx_backend
+  nx_cpu
+  nx_device
+  nx_effect
+  nx.cuda.device
+  nx.nv.device
+  nx.amd.device
+  (select
+   device_metal.ml
+   from
+   (nx.metal.device -> device_metal.macos.ml)
+   (-> device_metal.other.ml)))
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

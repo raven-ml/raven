@@ -1103,8 +1103,8 @@ module Runtimes = struct
         (List.init (Array.length shape) Fun.id)
     in
     Gen.of_list ~pp:Nx.Placement.pp
-      (List.map Nx.Placement.device ds
-      @ (if n > 1 then [ Nx.Placement.replicated ds ] else [])
+      (List.map (fun d -> Nx.Placement.on [ d ]) ds
+      @ (if n > 1 then [ Nx.Placement.on ds ] else [])
       @ List.map (fun axis -> Nx.Placement.sharded ~axis ds) splits)
 
   let placed ds tensors =
@@ -1195,11 +1195,11 @@ module Runtimes = struct
               | _ -> equal packed (Nx.P x) (Nx.P (host y)))
         in
         let ops =
-          List.map Nx.Placement.device ds
-          @ if List.length ds > 1 then [ Nx.Placement.replicated ds ] else []
+          List.map (fun d -> Nx.Placement.on [ d ]) ds
+          @ if List.length ds > 1 then [ Nx.Placement.on ds ] else []
         in
         let d = List.hd ds in
-        let on_d = Nx.Placement.device d in
+        let on_d = Nx.Placement.on [ d ] in
         let out_of_memory n = function
           | Nx_device.Out_of_memory (d', m) -> Nx_device.equal d d' && m = n
           | _ -> false
@@ -1236,15 +1236,17 @@ module Runtimes = struct
           | false ->
               [
                 test
-                  "nx.cpu refuses an operation on the runtime, naming it, \
-                   before any work" (fun () ->
+                  "an operation on the runtime raises before any work, naming \
+                   the remedies" (fun () ->
                     let x = Nx.place on_d (Nx.ones Nx.float32 [| 4 |]) in
                     raises_match
                       (function
-                        | Nx_backend.Refused why ->
-                            String.starts_with ~prefix:"add: cpu" why
+                        | Invalid_argument why ->
+                            String.starts_with
+                              ~prefix:"Nx.add: an operand is on" why
                             && String.ends_with
-                                 ~suffix:"or compute under a compiled call" why
+                                 ~suffix:"or Nx.place it on Nx.Placement.host"
+                                 why
                         | _ -> false)
                       (fun () -> Nx.add x x));
               ]

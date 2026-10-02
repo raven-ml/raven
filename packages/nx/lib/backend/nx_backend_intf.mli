@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The kinds of nx's operations and the signature of backends' kernels, written
-   once: [Nx_backend] includes this signature and its implementation names [S]
-   from here. *)
+(* The kinds of nx's operations and the signature of backends, written once:
+   [Nx_backend] includes this signature and its implementation names [S] from
+   here. *)
 
 (** {1:kinds Kinds} *)
 
@@ -96,11 +96,11 @@ type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
     an array. A kernel accepts axes of any length, and decides whether an index
     is inside its axis from all 64 bits. *)
 
-(** The type for backend implementations.
+(** The type for backends.
 
     Every function but [name] and [runs_on] is a kernel. Its operands and its
-    destinations are arrays in the memory of one device the backend runs on; it
-    writes each destination whole, or raises {!Nx_backend.Refused} before it
+    destinations are arrays in the memory of one device the kernels compute on;
+    it writes each destination whole, or raises {!Nx_backend.Refused} before it
     writes anything. Operands may be strided, broadcast (zero strides) or
     offset; destinations are C-contiguous from their first element and share no
     memory with the operands. A kernel may submit its work and return: the
@@ -114,7 +114,8 @@ type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
     destination has the result's shape and dtype. *)
 module type S = sig
   val name : string
-  (** [name] is the backend's name, as placements print it. *)
+  (** [name] is the backend's name, as its errors name it, such as ["nx.cpu"].
+  *)
 
   val runs_on : Nx_device.t -> bool
   (** [runs_on d] is [true] iff the kernels compute on arrays in [d]'s memory.
@@ -181,7 +182,7 @@ module type S = sig
   (** [threefry key counter ~dst] writes the Threefry-2x32 hash of each word
       pair of [counter] under [key] into [dst]. This is normative: 20 rounds,
       with the standard rotation constants and key schedule, so that a
-      [(key, counter)] pair gives bit-identical words on every backend and under
+      [(key, counter)] pair gives bit-identical words from every backend and
       every lowering, eager or compiled. *)
 
   (** {1:reductions Reductions and scans} *)

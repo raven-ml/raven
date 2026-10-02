@@ -1,4 +1,4 @@
-; nx.cpu: nx's kernels over host memory, Nx_cpu.backend.
+; nx.cpu: nx's kernels over host memory.
 ;
 ; The include paths for nx_device.h and nx_dtype.h come from the nx_device
 ; and nx_dtype dependencies (install_c_headers). No OpenMP and no -ffast-math: the engine owns its own
