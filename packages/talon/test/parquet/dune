@@ -4,9 +4,8 @@
  (package talon)
  (libraries windtrap talon talon.parquet nx nx.device nx.bits)
  (deps
-  values.txt
-  overrides.txt
-  (source_tree fixtures))
+  (source_tree golden)
+  (source_tree support))
  (action
   (progn
    (run %{test} --corrected)
@@ -18,4 +17,4 @@
  (package talon)
  (libraries windtrap talon talon.parquet nx.device)
  (deps
-  (source_tree fixtures)))
+  (source_tree support)))

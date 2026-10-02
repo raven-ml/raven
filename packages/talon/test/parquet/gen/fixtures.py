@@ -6,14 +6,15 @@
 Run from this directory with `uv run fixtures.py`. The fixtures are committed,
 so the suite itself needs neither Python nor the network.
 
-- fixtures/: files of apache/parquet-testing at COMMIT, checked against their
-  SHA-256 (Apache-2.0, see fixtures/LICENSE.txt), and files written by pyarrow.
-- values.txt: one line per file, row group and column, as pyarrow reads it:
+- ../support/: files of apache/parquet-testing at COMMIT, checked against
+  their SHA-256 (Apache-2.0, see ../support/LICENSE.txt), and files written by
+  pyarrow.
+- ../golden/values.txt: one line per file, row group and column, as pyarrow reads it:
   `file group "column" "type" rows md5 first-values`, or `file group "column"
   error` for a column that does not read. The type is talon's, computed here
   from the Parquet schema, and float64 for a decimal, which has none; md5 is of
   all values joined by spaces.
-- overrides.txt: the same for columns read as another type than their own, and
+- ../golden/overrides.txt: the same for columns read as another type than their own, and
   for decimals of at most 18 digits read as int64.
 """
 
@@ -31,7 +32,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 HERE = Path(__file__).parent
-OUT = HERE / "fixtures"
+OUT = HERE.parent / "support"
 COMMIT = "56653c437c8092f704a092d0d1d4e600124cd49f"
 RAW = f"https://raw.githubusercontent.com/apache/parquet-testing/{COMMIT}/"
 CORPUS = [
@@ -114,7 +115,7 @@ def fetch():
     (OUT / "README.md").write_text(
         f"Files of [apache/parquet-testing](https://github.com/apache/parquet-testing) at commit\n"
         f"`{COMMIT}`, under the Apache License 2.0 (`LICENSE.txt`):\n\n{names}\n\n"
-        "The other files are written by `../fixtures.py` with pyarrow.\n"
+        "The other files are written by `../gen/fixtures.py` with pyarrow.\n"
     )
 
 
@@ -488,8 +489,8 @@ def main():
     fetch()
     generate()
     lines = [l for name in READ if name not in SKIP for l in expect(name)] + by_hand()
-    (HERE / "values.txt").write_text("\n".join(lines) + "\n")
-    (HERE / "overrides.txt").write_text("\n".join(overrides()) + "\n")
+    (HERE.parent / "golden" / "values.txt").write_text("\n".join(lines) + "\n")
+    (HERE.parent / "golden" / "overrides.txt").write_text("\n".join(overrides()) + "\n")
 
 
 if __name__ == "__main__":

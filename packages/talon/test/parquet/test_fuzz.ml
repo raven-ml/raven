@@ -41,7 +41,7 @@ let file_bytes =
   let files =
     List.map
       (fun (name, _) ->
-        let path = Filename.concat "fixtures" name in
+        let path = Filename.concat "support" name in
         (name, In_channel.with_open_bin path In_channel.input_all))
       corpus
   in

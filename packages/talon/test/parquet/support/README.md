@@ -65,4 +65,4 @@ Files of [apache/parquet-testing](https://github.com/apache/parquet-testing) at 
 - `bad_data/ARROW-RS-GH-6229-DICTHEADER.parquet`
 - `bad_data/PARQUET-1481.parquet`
 
-The other files are written by `../fixtures.py` with pyarrow.
+The other files are written by `../gen/fixtures.py` with pyarrow.

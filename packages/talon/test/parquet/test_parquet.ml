@@ -9,7 +9,7 @@ module P = Talon_parquet
 
 (* Fixtures *)
 
-let path name = Filename.concat "fixtures" name
+let path name = Filename.concat "support" name
 
 let buffer name =
   match Nx_device.Buffer.of_file (path name) with
@@ -127,8 +127,8 @@ let expected name =
   |> List.map (fun l -> (List.hd (String.split_on_char ' ' l), l))
 
 let files lines = List.sort_uniq String.compare (List.map fst lines)
-let values = expected "values.txt"
-let overrides = expected "overrides.txt"
+let values = expected "golden/values.txt"
+let overrides = expected "golden/overrides.txt"
 let fields l = Scanf.sscanf l "%_s %d %S %[^\n]" (fun g c rest -> (g, c, rest))
 
 let lines_of lines file =
@@ -1017,7 +1017,7 @@ let sources =
           @@ __POS_OF__
                {|
             query → "a b" int64, "\"q\"" int64, é int64, "" int64
-            parquet "fixtures/names.parquet" (4 columns, 2 rows)
+            parquet "support/names.parquet" (4 columns, 2 rows)
             query → "a b" int64, "\"q\"" int64, é int64, "" int64
             parquet (4 columns)
             |});
@@ -1028,9 +1028,9 @@ let sources =
           expect (output ())
           @@ __POS_OF__
                {|
-            fixtures/brotli.parquet: row group 0: column "i32" is compressed with Brotli, which talon does not read
-            fixtures/map_no_value.parquet: column "my_map" is a map: talon reads flat Parquet files only
-            fixtures/missing.parquet: No such file or directory
+            support/brotli.parquet: row group 0: column "i32" is compressed with Brotli, which talon does not read
+            support/map_no_value.parquet: column "my_map" is a map: talon reads flat Parquet files only
+            support/missing.parquet: No such file or directory
             |});
     ]
 
