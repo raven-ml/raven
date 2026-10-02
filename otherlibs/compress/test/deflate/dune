@@ -1,6 +1,45 @@
-(test
+; The suite runs as five shards, which dune runs in parallel.
+
+(executable
  (name test_deflate)
+ (libraries windtrap compress.deflate compress_fixtures))
+
+(rule
+ (alias runtest)
  (package compress)
- (libraries windtrap compress.deflate compress_fixtures)
  (deps
-  (glob_files ../fixtures/*)))
+  (glob_files ../fixtures/*))
+ (action
+  (run %{exe:test_deflate.exe} --shard 1/5)))
+
+(rule
+ (alias runtest)
+ (package compress)
+ (deps
+  (glob_files ../fixtures/*))
+ (action
+  (run %{exe:test_deflate.exe} --shard 2/5)))
+
+(rule
+ (alias runtest)
+ (package compress)
+ (deps
+  (glob_files ../fixtures/*))
+ (action
+  (run %{exe:test_deflate.exe} --shard 3/5)))
+
+(rule
+ (alias runtest)
+ (package compress)
+ (deps
+  (glob_files ../fixtures/*))
+ (action
+  (run %{exe:test_deflate.exe} --shard 4/5)))
+
+(rule
+ (alias runtest)
+ (package compress)
+ (deps
+  (glob_files ../fixtures/*))
+ (action
+  (run %{exe:test_deflate.exe} --shard 5/5)))

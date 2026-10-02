@@ -1,6 +1,21 @@
-(test
+; The suite runs as two shards, which dune runs in parallel.
+
+(executable
  (name test_snappy)
+ (libraries windtrap compress.snappy compress_fixtures))
+
+(rule
+ (alias runtest)
  (package compress)
- (libraries windtrap compress.snappy compress_fixtures)
  (deps
-  (glob_files ../fixtures/*)))
+  (glob_files ../fixtures/*))
+ (action
+  (run %{exe:test_snappy.exe} --shard 1/2)))
+
+(rule
+ (alias runtest)
+ (package compress)
+ (deps
+  (glob_files ../fixtures/*))
+ (action
+  (run %{exe:test_snappy.exe} --shard 2/2)))
