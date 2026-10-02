@@ -3,99 +3,117 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Talon dataframe benchmarks using realistic CSV fixtures. *)
+(* Filter, group, join and sort over the 40k-row fixture, the same work as
+   bench_talon.py does in pandas. *)
 
-module Row = Talon.Row
+open Talon_next
 
-module Fixtures = struct
-  (* Resolve fixtures next to the executable, not the working directory: the
-     bench rule runs with the bench dir as cwd, dune exec with the project root
-     — the exe path is the one stable anchor in both. *)
-  let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
+(* Resolve fixtures next to the executable, not the working directory: the bench
+   rule runs with the bench dir as cwd, dune exec with the project root — the
+   exe path is the one stable anchor in both. *)
+let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
 
-  let load_csv name dtype_spec =
-    Talon_csv.read ~dtype_spec (Filename.concat data_dir name)
+(* [load name columns categories] reads the fixture [name] as [columns], its
+   text columns [categories] as categoricals, as pandas reads them. *)
+let load name columns categories =
+  let format = Talon_next_csv.format columns in
+  let path = Filename.concat data_dir name in
+  let source = Error.get_ok (Talon_next_csv.file ~format path) in
+  let q = Error.get_ok (Kit.categorize categories (Query.of_source source)) in
+  Error.get_ok (Query.run q)
 
-  let transactions =
-    lazy
-      (load_csv "transactions.csv"
-         [
-           ("transaction_id", `Int32);
-           ("customer_id", `Int32);
-           ("region", `String);
-           ("category", `String);
-           ("channel", `String);
-           ("amount", `Float64);
-           ("quantity", `Int32);
-           ("discount", `Float64);
-           ("promo", `String);
-           ("event_date", `String);
-         ])
+let string = Type.Any Type.string
+let int32 = Type.Any Type.int32
+let float64 = Type.Any Type.float64
 
-  let customers =
-    lazy
-      (load_csv "customers.csv"
-         [
-           ("customer_id", `Int32);
-           ("segment", `String);
-           ("region", `String);
-           ("status", `String);
-           ("loyalty_score", `Float64);
-           ("tenure_years", `Int32);
-         ])
+let transactions =
+  load "transactions.csv"
+    [
+      ("transaction_id", int32);
+      ("customer_id", int32);
+      ("region", string);
+      ("category", string);
+      ("channel", string);
+      ("amount", float64);
+      ("quantity", int32);
+      ("discount", float64);
+      ("promo", string);
+      ("event_date", string);
+    ]
+    [ "region"; "category"; "channel"; "promo" ]
 
-  let transactions () = Lazy.force transactions
-  let customers () = Lazy.force customers
-end
+let customers =
+  load "customers.csv"
+    [
+      ("customer_id", int32);
+      ("segment", string);
+      ("region", string);
+      ("status", string);
+      ("loyalty_score", float64);
+      ("tenure_years", int32);
+    ]
+    [ "segment"; "region"; "status" ]
 
-let force_float_sum df column =
-  let total = Talon.Agg.sum df column in
-  total
+let amount = Col.float "amount"
 
-let bench_filter df =
-  let filtered =
-    Talon.filter_by df
-      Row.(
-        map3 (float64 "amount") (int32 "quantity") (string "region")
-          ~f:(fun amount quantity region ->
-            amount > 120.
-            && Int32.compare quantity 3l >= 0
-            && String.equal region "EMEA"))
-  in
-  force_float_sum filtered "amount"
+(* [total q] is the sum of [q]'s amounts. *)
+let total q =
+  let sums = Query.aggregate ~by:[] Expr.[ "amount" := sum amount ] q in
+  (Column.values Kind.float (column (Error.get_ok (Query.run sums)) "amount")).(0)
 
-let bench_group df =
-  let groups =
-    Talon.group_by df
-      Row.(
-        map2 (string "category") (string "region") ~f:(fun category region ->
-            category ^ "|" ^ region))
-  in
-  let total =
-    List.fold_left
-      (fun acc (_key, group_df) -> acc +. Talon.Agg.sum group_df "amount")
-      0. groups
-  in
-  total
+let filtered () =
+  Query.(
+    of_table transactions
+    |> filter
+         Expr.(
+           amount > float 120.
+           && Col.int "quantity" >= int 3
+           && Col.string "region" = string "EMEA"))
 
-let bench_join df customers =
-  let joined = Talon.join df customers ~on:"customer_id" ~how:`Left () in
-  force_float_sum joined "amount"
+let grouped () =
+  Query.(
+    of_table transactions
+    |> aggregate ~by:[ "category"; "region" ] Expr.[ "amount" := sum amount ])
 
-let bench_sort df =
-  let sorted = Talon.sort_values ~ascending:false df "amount" in
-  force_float_sum sorted "amount"
+(* Both tables have a [region]; talon adds no suffixes, so the customers' is
+   renamed. *)
+let joined () =
+  Query.(
+    of_table transactions
+    |> join ~kind:Left
+         ~on:(Join.keys [ "customer_id" ])
+         (of_table customers |> Kit.rename [ ("region", "customer_region") ]))
 
-let all_benchmarks =
-  let transactions = Fixtures.transactions () in
-  let customers = Fixtures.customers () in
-  [
-    Thumper.bench "Filter/high_value" (fun () -> bench_filter transactions);
-    Thumper.bench "Group/category_region" (fun () -> bench_group transactions);
-    Thumper.bench "Join/customer_lookup" (fun () ->
-        bench_join transactions customers);
-    Thumper.bench "Sort/amount_desc" (fun () -> bench_sort transactions);
-  ]
-  |> fun benches -> [ Thumper.group "Talon" benches ]
+let sorted () = Query.(of_table transactions |> sort [ Order.desc "amount" ])
 
-let () = Thumper.run "talon" all_benchmarks
+let first_amount q =
+  (Column.values Kind.float (column (Error.get_ok (Query.run q)) "amount")).(0)
+
+(* Checks *)
+
+let check name ~rows:expected_rows ~amount:expected q value =
+  let got_rows = rows (Error.get_ok (Query.run q)) in
+  let close = Float.abs (value -. expected) <= 1e-9 *. Float.abs expected in
+  if got_rows <> expected_rows || not close then
+    failwith
+      (Printf.sprintf "%s: %d rows and %.17g, expected %d and %.17g" name
+         got_rows value expected_rows expected)
+
+(* The rows and amounts that bench_talon.py's pandas computes. *)
+let () =
+  check "filter" ~rows:511 ~amount:80012.63 (filtered ()) (total (filtered ()));
+  check "group" ~rows:24 ~amount:2587546.84 (grouped ()) (total (grouped ()));
+  check "join" ~rows:40000 ~amount:2587546.84 (joined ()) (total (joined ()));
+  check "sort" ~rows:40000 ~amount:450.51 (sorted ()) (first_amount (sorted ()))
+
+let () =
+  Thumper.run "talon"
+    [
+      Thumper.group "Talon"
+        [
+          Thumper.bench "Filter/high_value" (fun () -> total (filtered ()));
+          Thumper.bench "Group/category_region" (fun () -> total (grouped ()));
+          Thumper.bench "Join/customer_lookup" (fun () -> total (joined ()));
+          Thumper.bench "Sort/amount_desc" (fun () -> first_amount (sorted ()));
+        ];
+    ]
