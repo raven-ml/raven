@@ -59,3 +59,9 @@
  (modules test_stack)
  (package hugin)
  (libraries hugin.next.kit windtrap))
+
+(test
+ (name test_stats)
+ (modules test_stats)
+ (package hugin)
+ (libraries hugin.next.kit nx windtrap))

@@ -177,6 +177,9 @@ module Symbol = Hugin_next_kit.Symbol
 module Curve = Hugin_next_kit.Curve
 (** Curves through points. *)
 
+module Stats = Hugin_next_kit.Stats
+(** Statistics: histograms. *)
+
 (** {1:figures Figures} *)
 
 type t

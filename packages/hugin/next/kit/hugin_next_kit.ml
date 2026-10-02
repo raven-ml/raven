@@ -12,3 +12,4 @@ module Scheme = Scheme
 module Symbol = Symbol
 module Curve = Curve
 module Stack = Stack
+module Stats = Stats

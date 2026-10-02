@@ -11,9 +11,9 @@
     ticks of an axis, {!Number} writes numbers, {!Time} puts instants on the
     calendar and {!Locale} holds the strings numbers and dates are written with.
     {!Scheme} colours normalised values and categories, {!Symbol} draws marker
-    shapes, {!Curve} draws lines through points and {!Stack} lays lengths end to
-    end. The kit measures no text: choosing ticks takes a function that measures
-    labels.
+    shapes, {!Curve} draws lines through points, {!Stack} lays lengths end to
+    end and {!Stats} summarises data, as histograms. The kit measures no text:
+    choosing ticks takes a function that measures labels.
 
     {1:conventions Conventions}
 
@@ -28,9 +28,9 @@
       and {!Scale.invert} returns [None] where no value exists; neither raises.
       Downstream, {!Scheme.color} paints a normalised [nan] with the colour
       given for unknown values, curves break at points with a non-finite
-      coordinate, and stacks skip non-finite lengths. Functions raise
-      [Invalid_argument] only on arguments that are programming errors, as each
-      states.
+      coordinate, stacks skip non-finite lengths and histograms count no
+      non-finite value. Functions raise [Invalid_argument] only on arguments
+      that are programming errors, as each states.
     - {b Argument order, equality and printing} follow
       {{!Hugin_next_gg.section-conventions}[hugin.next.gg]}: the value a
       function reads or transforms comes last, [equal] compares structure with
@@ -54,3 +54,4 @@ module Scheme = Scheme
 module Symbol = Symbol
 module Curve = Curve
 module Stack = Stack
+module Stats = Stats
