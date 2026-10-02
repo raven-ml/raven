@@ -2785,6 +2785,29 @@ let dedupe ws =
   List.rev
     (List.fold_left (fun acc w -> if seen w acc then acc else w :: acc) [] ws)
 
+(* [in_order order ws] is [ws] sorted by the position in [order] of the node
+   each is about, a generated node's being that of the innermost node of [order]
+   it lies under. *)
+let in_order order ws =
+  let position id =
+    let rec go i = function
+      | [] -> None
+      | id' :: rest ->
+          if Nx.Ptree.Path.equal id id' then Some i else go (i + 1) rest
+    in
+    go 0 order
+  in
+  (* [rank rsegs] is the rank of the id of the reversed segments [rsegs]. *)
+  let rec rank = function
+    | [] -> 0
+    | _ :: outer as rsegs -> (
+        match position (Nx.Ptree.Path.v (List.rev rsegs)) with
+        | Some i -> i
+        | None -> rank outer)
+  in
+  let key (id, _) = rank (List.rev (Nx.Ptree.Path.segments id)) in
+  List.stable_sort (fun w w' -> Int.compare (key w) (key w')) ws
+
 let resolve ?prev ?(view = View.empty) figure =
   let st = { view; reads = []; marks = 0 } in
   let f = force st figure in
@@ -2797,6 +2820,7 @@ let resolve ?prev ?(view = View.empty) figure =
   let shaped =
     arrange nodes { shares = []; pending = []; cell = root } ~in_cell:false tree
   in
+  let order = List.rev !nodes in
   let cells = panels root shaped in
   check_coords cells;
   let occs =
@@ -2997,7 +3021,9 @@ let resolve ?prev ?(view = View.empty) figure =
   in
   let scales, zooms = zoom view nodes fitted in
   check_legends cells scales;
-  let warnings = dedupe (notes @ constants @ zooms @ unread view st.reads) in
+  let warnings =
+    dedupe (in_order order (notes @ constants @ zooms) @ unread view st.reads)
+  in
   {
     figure;
     view;

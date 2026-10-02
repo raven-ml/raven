@@ -1437,7 +1437,9 @@ module Resolved : sig
       scale of that name and kind. *)
 
   val warnings : t -> warning list
-  (** [warnings r] is the warnings of resolving, in the order of the figure. *)
+  (** [warnings r] is the warnings of resolving, in the order of the nodes they
+      are about in the figure, a generated node in the place of the node it lies
+      under, then those about values of the view that no key reads. *)
 
   val equal : t -> t -> bool
   (** [equal r r'] is [true] iff [r] and [r'] resolve {!Hugin_next.equal}

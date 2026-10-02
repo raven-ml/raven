@@ -1011,6 +1011,49 @@ let views =
           let r = resolve ~view:(View.set k 4. View.empty) f in
           equal int 1 !calls;
           equal floats (4., 4.) (hull r "x"));
+      test "warnings follow the figure, then the view's" (fun () ->
+          let lg = Scale.log ~name:"lg" () in
+          let f =
+            layer
+              [
+                dot ~x:(const 0.5) ~y:(const 0.5) ~fx:(const "nowhere") ();
+                dot
+                  ~x:(num ~scale:exact_log (f64 [| -1.; 2. |]))
+                  ~y:(const 0.5) ();
+                name "z"
+                  (dot ~x:(const 0.5) ~y:(const 0.5)
+                     ~fill:(num ~scale:lg (f64 [| 1.; 10. |]))
+                     ());
+                dot ~x:(const 0.5) ~y:(const 0.5) ~fx:(const "nowhere") ();
+              ]
+          in
+          let view =
+            View.empty
+            |> View.set (View.number "k" ~init:0.) 1.
+            |> View.set (View.zoom ~at:(path [ field "z" ]) lg) (Some (-1., 1.))
+          in
+          equal (list warning)
+            [
+              ( path [ index 0 ],
+                "the facet constant \"nowhere\" of fx names no panel" );
+              (path [ index 1 ], "x: 1 finite value is missing for its scale");
+              ( path [ field "z" ],
+                "the zoom of the scale \"lg\" sets a domain it cannot take" );
+              ( path [ index 3 ],
+                "the facet constant \"nowhere\" of fx names no panel" );
+              ( Nx.Ptree.Path.root,
+                "the view sets \"k\", which no key of its sort reads" );
+            ]
+            (warnings (resolve ~view f)));
+      test "a mark repeated over the cells of a grid is warned about once"
+        (fun () ->
+          let m =
+            dot ~x:(num ~scale:exact_log (f64 [| -1.; 2. |])) ~y:(const 0.5) ()
+          in
+          let r = resolve (layer [ grid [ [ layer []; layer [] ] ]; m ]) in
+          equal (list warning)
+            [ (path [ index 1 ], "x: 1 finite value is missing for its scale") ]
+            (warnings r));
       test "data problems are warned about under the mark's id" (fun () ->
           let r =
             resolve
