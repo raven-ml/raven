@@ -895,9 +895,10 @@ val share : (string * sharing) list -> t -> t
 val title : ?align:Text.Layout.halign -> Text.t -> t -> t
 (** [title ~align s f] is [f] with the title [s] above it, set in the theme's
     faces at its base size. [align] defaults to [`Center], which centres the
-    title on the data areas of [f]; [`Left] and [`Right] align it with the left
-    or right edge of [f] with its protrusions, where panel labels such as (a)
-    go. Titles nest: [title a (title b f)] draws [a] above [b]. *)
+    title on the data areas of [f], moved as little as keeps it within [f] with
+    its protrusions and legends; [`Left] and [`Right] align it with the left or
+    right edge of [f] with its protrusions, where panel labels such as (a) go.
+    Titles nest: [title a (title b f)] draws [a] above [b]. *)
 
 val coord : Coord.t -> t -> t
 (** [coord c f] draws the panels of [f] in the coordinate system [c]. A panel

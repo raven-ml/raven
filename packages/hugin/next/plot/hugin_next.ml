@@ -4143,7 +4143,12 @@ let place_heading cx ~align ~head ~side cell span outer =
   else
     let x =
       match align with
-      | `Center -> P2.x (Box2.mid span)
+      | `Center ->
+          (* Centred on the data areas, but within the figure it titles, which
+             its track makes at least as wide as itself. *)
+          let half = width (set cx ~halign:align ~valign 1. head) /. 2. in
+          let lo = Box2.minx outer +. half and hi = Box2.maxx outer -. half in
+          Float.max lo (Float.min hi (P2.x (Box2.mid span)))
       | `Left -> Box2.minx outer
       | `Right -> Box2.maxx outer
     in

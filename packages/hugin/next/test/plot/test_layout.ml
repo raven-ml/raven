@@ -654,6 +654,16 @@ let guides =
           equal (float 1e-3) 0. x0;
           let l, _, x1 = at `Right in
           equal (float 1e-3) (fst (Layout.size l)) x1);
+      test "a centred title beside a left legend stays on the page" (fun () ->
+          let f =
+            layer
+              [
+                plain ~fill:(strings [| "a"; "b"; "a"; "b" |]) ramp;
+                legend ~side:`Left "color";
+              ]
+            |> title (Text.v "A centred title")
+          in
+          apart (lay (Size.panels 22. 79.) f));
       test "a laid-out text prints on one line" (fun () ->
           let t =
             "A title long enough, with a box after it, to reach past the right \
