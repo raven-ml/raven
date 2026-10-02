@@ -880,6 +880,277 @@ let round_trip =
       in
       equal (list (list (option string))) (List.map (List.map fst) t.rows) got)
 
+(* Writing *)
+
+module G = Talon_gen
+
+let written f q =
+  let b = Buffer.create 256 in
+  match Csv.encode f q (Bytesrw.Bytes.Writer.of_buffer b) with
+  | Ok () -> Buffer.contents b
+  | Error e -> Buffer.contents b ^ "error: " ^ error_text e
+
+let of_table t = Query.of_table t
+
+let csv_type (Type.Any t) =
+  match t with
+  | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+  | Float16 | Float32 | Float64 | Decimal _ | String | Binary | Categorical _
+  | Date | Datetime _ ->
+      true
+  | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
+
+(* A table to write: up to four columns of the types CSV reads, named to need
+   quoting, cut into batches, and a dialect. One column with a null takes a null
+   token. *)
+type written = { f : Csv.format; t : Talon_next.t; slice : int }
+
+let pool = [ "a"; ""; "x,y"; "q\"t"; "NA"; "l\nm"; "s;t" ]
+
+let writable =
+  let open Gen in
+  let* samples =
+    list ~size:(int_range 1 4)
+      (such_that (fun (G.Sample (ty, _)) -> csv_type (Any ty)) G.sample)
+  in
+  let n =
+    List.fold_left
+      (fun n (G.Sample (_, vs)) -> Int.min n (Array.length vs))
+      max_int samples
+  in
+  let* k = int_range 0 (List.length pool - 1) in
+  let names =
+    List.filteri (fun i _ -> i >= k) pool @ List.filteri (fun i _ -> i < k) pool
+  in
+  let columns =
+    List.mapi
+      (fun i (G.Sample (ty, vs)) ->
+        (List.nth names i, Column.of_options ty (Array.sub vs 0 n)))
+      samples
+  in
+  let t = Talon_next.v ~rows:n columns in
+  let* sep = of_list [ ','; ';'; '\t'; '|'; '.'; ' ' ] in
+  let* header = bool in
+  let* tokens = of_list [ []; [ "NA" ]; [ "NA"; "-" ] ] in
+  let nulls =
+    match columns with
+    | [ (_, c) ] when Column.null_count c > 0 && tokens = [] -> [ "NA" ]
+    | _ -> tokens
+  in
+  let* t = G.split t in
+  let+ slice = int_range 1 16 in
+  let types = List.map (fun (n, c) -> (n, Column.type_ c)) columns in
+  { f = Csv.format ~sep ~header ~nulls types; t; slice }
+
+let pp_written ppf w =
+  Format.fprintf ppf "@[<v>%a@,%a@,%S@]" Csv.pp_format w.f Talon_next.pp w.t
+    (written w.f (of_table w.t))
+
+let same_column a b =
+  let (Type.Any ty) = Column.type_ a in
+  equal
+    (array (option (G.witness ty)))
+    (Column.options (Type.kind ty) a)
+    (Column.options (Type.kind ty) b)
+
+let writing =
+  group "encode"
+    [
+      prop "decode reads back the rows encode writes"
+        (Gen.with_pp pp_written writable) (fun w ->
+          let text = written w.f (of_table w.t) in
+          let back = Error.get_ok (read ~slice_length:w.slice w.f text) in
+          equal int (rows w.t) (rows back);
+          List.iter2 same_column (all_columns w.t) (all_columns back));
+      test "fields are quoted only when reading needs it" (fun () ->
+          let t =
+            v
+              [
+                ( "s",
+                  Column.of_options Type.string
+                    [|
+                      Some "plain";
+                      Some "";
+                      None;
+                      Some "a,b";
+                      Some "say \"hi\"";
+                      Some "\"lead";
+                      Some "two\nlines";
+                      Some "semi;colon";
+                      Some "NA";
+                      Some " spaced ";
+                    |] );
+                ( "x",
+                  Column.of_options Type.float64
+                    [|
+                      Some 0.1;
+                      Some (-0.);
+                      Some nan;
+                      None;
+                      Some 1e21;
+                      Some infinity;
+                      Some 150.;
+                      Some 1e-8;
+                      Some 2.5;
+                      Some 1.;
+                    |] );
+              ]
+          in
+          let f =
+            Csv.format ~nulls:[ "NA" ]
+              [ ("s", any Type.string); ("x", any Type.float64) ]
+          in
+          expect (written f (of_table t))
+          @@ __POS_OF__
+               {|
+            s,x
+            plain,0.1
+            "",-0
+            ,nan
+            "a,b",
+            "say ""hi""",1e+21
+            """lead",inf
+            "two
+            lines",150
+            semi;colon,1e-08
+            "NA",2.5
+             spaced ,1
+            |});
+      test "the other types write the text Column.parse reads" (fun () ->
+          let t =
+            v
+              [
+                ("b", Column.v Type.bool [| true; false |]);
+                ("i", Column.v Type.int8 [| -128; 127 |]);
+                ( "d",
+                  Column.v
+                    (Type.decimal ~precision:4 ~scale:2)
+                    [|
+                      Decimal.v ~unscaled:150L ~scale:2;
+                      Decimal.v ~unscaled:(-5L) ~scale:2;
+                    |] );
+                ( "c",
+                  Column.v (Type.categorical [| ""; "u,v" |]) [| ""; "u,v" |] );
+                ( "t",
+                  Column.v
+                    (Type.datetime ~zone:"UTC" Ms)
+                    [|
+                      Option.get (Time.of_ms 1500L); Option.get (Time.of_ms 0L);
+                    |] );
+                ( "y",
+                  Column.v Type.binary
+                    [| Binary.of_string "b"; Binary.of_string "" |] );
+              ]
+          in
+          let f =
+            Csv.format ~sep:';' ~header:false
+              (List.map (fun (n, ty) -> (n, ty)) (Schema.columns (schema t)))
+          in
+          expect (written f (of_table t))
+          @@ __POS_OF__
+               {|
+            true;-128;1.50;"";1970-01-01T00:00:01.5Z;b
+            false;127;-0.05;u,v;1970-01-01T00:00:00Z;""
+            |});
+      test "one column writes a null as its first null token" (fun () ->
+          let t =
+            v [ ("a", Column.of_options Type.int64 [| Some 1; None |]) ]
+          in
+          let f nulls = Csv.format ?nulls [ ("a", any Type.int64) ] in
+          expect
+            (written (f (Some [ "NA"; "null" ])) (of_table t)
+            ^ "--\n"
+            ^ written (f None) (of_table t))
+          @@ __POS_OF__
+               {|
+            a
+            1
+            NA
+            --
+            a
+            1
+            error: line 3, column 1: column "a": a null in the only column is an empty line, which is no record. Declare a null token (~nulls).
+            |});
+      test "a failing run is the error, after the rows before it" (fun () ->
+          let t =
+            of_batches
+              [
+                v [ ("a", Column.v Type.string [| "1" |]) ];
+                v [ ("a", Column.v Type.string [| "x" |]) ];
+              ]
+          in
+          let q =
+            Query.select
+              Expr.[ "a" := Str.parse Type.int64 (Col.string "a") ]
+              (of_table t)
+          in
+          expect (written (Csv.format [ ("a", any Type.int64) ]) q)
+          @@ __POS_OF__
+               {|
+            a
+            1
+            error: select ["a" := Str.parse int64 a]: row 1: "x": not an integer.
+            |});
+      test "eod ends the writer when asked and every record is written"
+        (fun () ->
+          let ends ?eod q =
+            let eods = ref 0 in
+            let w =
+              Bytesrw.Bytes.Writer.make (fun s ->
+                  if Bytesrw.Bytes.Slice.is_eod s then incr eods)
+            in
+            ignore (Csv.encode ?eod (Csv.format [ ("a", any Type.int64) ]) q w);
+            !eods
+          in
+          let ok = of_table (v [ ("a", Column.v Type.int64 [| 1 |]) ]) in
+          let failing =
+            Query.select
+              Expr.[ "a" := Str.parse Type.int64 (Col.string "a") ]
+              (of_table (v [ ("a", Column.v Type.string [| "x" |]) ]))
+          in
+          equal (list int) [ 0; 0; 1; 0 ]
+            [
+              ends ok;
+              ends ~eod:false ok;
+              ends ~eod:true ok;
+              ends ~eod:true failing;
+            ]);
+      test "the query's columns must be the format's" (fun () ->
+          let q = of_table (v [ ("a", Column.v Type.int64 [| 1 |]) ]) in
+          let refused f =
+            match
+              Csv.encode f q (Bytesrw.Bytes.Writer.of_buffer (Buffer.create 1))
+            with
+            | _ -> "no exception"
+            | exception Invalid_argument m -> m
+          in
+          expect
+            (String.concat "\n"
+               [
+                 refused (Csv.format [ ("a", any Type.int32) ]);
+                 refused (Csv.format [ ("b", any Type.int64) ]);
+               ])
+          @@ __POS_OF__
+               {|
+            Talon_next_csv.encode: the query's columns are not the format's: a int64, against a int32
+            Talon_next_csv.encode: the query's columns are not the format's: a int64, against b int64
+            |});
+      test "a carriage return and bytes that are not UTF-8 are quoted as needed"
+        (fun () ->
+          let t =
+            v
+              [
+                ( "y",
+                  Column.v Type.binary
+                    [| Binary.of_string "cr\r"; Binary.of_string "\xff" |] );
+              ]
+          in
+          equal string "\"cr\r\"\n\xff\n"
+            (written
+               (Csv.format ~header:false [ ("y", any Type.binary) ])
+               (of_table t)));
+    ]
+
 (* Sources *)
 
 let run_ok q = Error.get_ok (Query.run q)
@@ -1089,6 +1360,7 @@ let () =
          test "data errors are as baselined" data_errors;
          batches;
          round_trip;
+         writing;
          sources;
          files;
        ])

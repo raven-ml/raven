@@ -641,3 +641,121 @@ let file ?format ?nulls path =
       | r, close ->
           Fun.protect ~finally:close @@ fun () ->
           Result.map source (sniff_from ~file:path ~rows:sample_rows ~nulls r))
+
+(* Writing *)
+
+(* A field's bytes: [get k] is its byte [k] of [len]. *)
+type field = { get : int -> char; len : int }
+
+let of_string s = { get = String.unsafe_get s; len = String.length s }
+
+(* A field is quoted when reading it unquoted would not give it back: empty
+   text, which is null unquoted, a null token, a leading quote, and the bytes
+   that end or break an unquoted field. *)
+let needs_quote f { get; len } =
+  let token t =
+    String.length t = len
+    &&
+    let rec same k =
+      k = len || (get k = String.unsafe_get t k && same (k + 1))
+    in
+    same 0
+  in
+  let rec special k =
+    k < len
+    &&
+    let c = get k in
+    c = f.sep || c = f.quote || is_break c || special (k + 1)
+  in
+  len = 0 || special 0 || List.exists token f.nulls
+
+let add_field b f ({ get; len } as x) =
+  if not (needs_quote f x) then
+    for k = 0 to len - 1 do
+      Buffer.add_char b (get k)
+    done
+  else begin
+    Buffer.add_char b f.quote;
+    for k = 0 to len - 1 do
+      let c = get k in
+      if c = f.quote then Buffer.add_char b c;
+      Buffer.add_char b c
+    done;
+    Buffer.add_char b f.quote
+  end
+
+(* [cells c] is the field of each row of the text column [c], [None] where it is
+   null. *)
+let cells c =
+  match Column.layout c with
+  | Fixed _ | Children _ -> assert false (* [Column.print] makes text. *)
+  | Varsize { validity; offsets; child } ->
+      let valid = Option.map (fun v -> Nx.to_array (Nx_bits.to_bool v)) validity
+      and o = Nx.to_array offsets
+      and a =
+        Bigarray.array1_of_genarray
+          (Nx.to_bigarray (Column.to_tensor Nx.uint8 child))
+      in
+      fun i ->
+        if Option.fold ~none:false ~some:(fun v -> not v.(i)) valid then None
+        else
+          let pos = Int64.to_int o.(i) in
+          let get k = Char.unsafe_chr (A1.unsafe_get a (pos + k)) in
+          Some { get; len = Int64.to_int o.(i + 1) - pos }
+
+let encode ?(eod = false) f q w =
+  let s = schema f in
+  if not (Schema.equal (Query.schema q) s) then
+    invalid "encode" "the query's columns are not the format's: %s, against %s"
+      (Format.asprintf "%a" Schema.pp (Query.schema q))
+      (Format.asprintf "%a" Schema.pp s);
+  protect @@ fun () ->
+  let b = Buffer.create 65536 and line = ref 1 in
+  let flush () =
+    Bytesrw.Bytes.Writer.write_string w (Buffer.contents b);
+    Buffer.clear b
+  in
+  (* A null is an empty field, but a record of one empty field is an empty line,
+     which is no record: one column writes a null as a null token. *)
+  let null =
+    match (f.columns, f.nulls) with
+    | [| _ |], t :: _ -> fun () -> Buffer.add_string b t
+    | [| c |], [] ->
+        fun () ->
+          flush ();
+          fail ~at:(!line, 1)
+            (Printf.sprintf
+               "column %s: a null in the only column is an empty line, which \
+                is no record. Declare a null token (~nulls)."
+               (quoted c.name))
+    | _ -> ignore
+  in
+  if f.header then begin
+    Array.iteri
+      (fun j c ->
+        if j > 0 then Buffer.add_char b f.sep;
+        add_field b f (of_string c.name))
+      f.columns;
+    Buffer.add_char b '\n';
+    incr line
+  end;
+  let batch () t =
+    let cells =
+      Array.map
+        (fun c -> cells (Column.print (Talon_next.column t c.name)))
+        f.columns
+    in
+    for i = 0 to Talon_next.rows t - 1 do
+      for j = 0 to Array.length cells - 1 do
+        if j > 0 then Buffer.add_char b f.sep;
+        match cells.(j) i with None -> null () | Some x -> add_field b f x
+      done;
+      Buffer.add_char b '\n';
+      incr line
+    done;
+    flush ()
+  in
+  let r = Query.fold q ~init:() batch in
+  flush ();
+  if eod && Result.is_ok r then Bytesrw.Bytes.Writer.write_eod w;
+  r

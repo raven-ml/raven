@@ -199,3 +199,31 @@ val file :
 
     Raises [Invalid_argument] if both [format] and [nulls] are given, since a
     format holds its null tokens ({!format}), or as {!sniff} does on [nulls]. *)
+
+(** {1:writing Writing} *)
+
+val encode :
+  ?eod:bool ->
+  format ->
+  Talon_next.Query.t ->
+  Bytesrw.Bytes.Writer.t ->
+  (unit, Talon_next.Error.t) result
+(** [encode ?eod f q w] runs [q] and writes its rows to [w] as the records of a
+    file of format [f], which {!decode}[ f] reads back to [q]'s rows. It writes
+    [f]'s header when [f] has one, then one record per row, each ending with a
+    line feed. Each field is the text {!Talon_next.Column.print} writes, and a
+    null is an unquoted empty field. A field is quoted when it is empty text,
+    equals one of [f]'s null tokens, or holds the separator, the quote or a line
+    break, and a quote inside it is doubled. A format of one column writes a
+    null as its first null token, since a record of one empty field is an empty
+    line, which is no record. [eod] indicates whether {!Bytesrw.Bytes.Slice.eod}
+    is written on [w] after the records, when they are all written: the caller
+    decides when [w] ends. Defaults to [false].
+
+    [Error e] if running [q] fails, if a null is to be written in a format of
+    one column without a null token, at the line it would be on, or if writing
+    to [w] raises {!Bytesrw.Bytes.Stream.Error} or [Sys_error]. The records
+    before the failure are written.
+
+    Raises [Invalid_argument] if [q]'s columns are not [f]'s, names and types,
+    in order. *)

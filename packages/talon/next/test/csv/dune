@@ -1,7 +1,7 @@
 (test
  (name test_csv)
  (package talon)
- (libraries windtrap talon.next talon.next.csv nx nx.bits bytesrw)
+ (libraries windtrap talon.next talon.next.csv talon_gen nx nx.bits bytesrw)
  (action
   (progn
    (run %{test} --corrected)
