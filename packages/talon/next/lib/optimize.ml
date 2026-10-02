@@ -312,9 +312,19 @@ let rec push pending q =
         (fun input -> Query.make (Aggregate { r with input }))
         input
   | Append { input; rest } ->
-      let passing, staying =
-        settle ~slices:false (fun c -> Some (`Input, c)) pending
+      (* A conjunct reads the columns at the appended types, so it enters only
+         inputs that store them at those types. *)
+      let stored n =
+        let at q = Schema.find (Query.schema q) n in
+        match (at input, at rest, Schema.find (Query.schema q) n) with
+        | Some (Type.Any a), Some (Type.Any b), Some (Type.Any t) ->
+            Type.equal a t && Type.equal b t
+        | _ -> false
       in
+      let route c =
+        if List.for_all stored (Expr.reads c) then Some (`Input, c) else None
+      in
+      let passing, staying = settle ~slices:false route pending in
       let limit =
         match staying with
         | Sliced (o, l) :: _ when o >= 0 -> [ Sliced (0, sat_add o l) ]

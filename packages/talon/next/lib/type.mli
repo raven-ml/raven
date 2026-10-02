@@ -71,6 +71,10 @@ val pp : Format.formatter -> 'a t -> unit
 
 (** {1:internal Internal} *)
 
+val common_any : any list -> any option
+(** [common_any ts] is {!common} of [ts] when they are of one kind, and [None]
+    otherwise. *)
+
 val has_ext : 'a t -> bool
 (** [has_ext t] is [true] iff [t] is or contains an extension type, as a list
     element or a record field at any depth. An extension type orders only

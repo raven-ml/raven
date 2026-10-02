@@ -72,11 +72,13 @@ let make node =
              (Schema.columns source.schema))
     | Select { outputs; _ } -> Schema.v (columns outputs)
     | Derive { outputs; input } -> Schema.v (derived input.schema outputs)
-    | Filter { input; _ }
-    | Sort { input; _ }
-    | Slice { input; _ }
-    | Append { input; _ } ->
+    | Filter { input; _ } | Sort { input; _ } | Slice { input; _ } ->
         input.schema
+    | Append { input; rest } ->
+        let met (n, a) =
+          (n, Option.get (Type.common_any [ a; Option.get (Schema.find rest.schema n) ]))
+        in
+        Schema.v (List.map met (Schema.columns input.schema))
     | Aggregate { by; outputs; input } ->
         let key n = (n, Option.get (Schema.find input.schema n)) in
         Schema.v (List.map key by @ columns outputs)
@@ -423,16 +425,23 @@ let join ?(kind = Join.Inner) ?(each_left = Join.Any) ?(each_right = Join.Any)
   make (Join { kind; each_left; each_right; on; left; right })
 
 let append rest q =
-  let change : Schema.change -> entry = function
-    | Removed (n, Any t) -> arg "%a (%a) is not in rest." pp_name n Type.pp t
-    | Added (n, Any t) -> arg "%a (%a) is only in rest." pp_name n Type.pp t
+  let change : Schema.change -> entry option = function
+    | Removed (n, Any t) ->
+        Some (arg "%a (%a) is not in rest." pp_name n Type.pp t)
+    | Added (n, Any t) ->
+        Some (arg "%a (%a) is only in rest." pp_name n Type.pp t)
+    | Retyped (_, a0, a1) when Option.is_some (Type.common_any [ a0; a1 ]) ->
+        None
     | Retyped (n, Any t0, Any t1) ->
-        arg "%a is %a in the input and %a in rest." pp_name n Type.pp t0 Type.pp
-          t1
+        Some
+          (arg
+             "%a is %a in the input and %a in rest, which do not meet: cast \
+              one first."
+             pp_name n Type.pp t0 Type.pp t1)
   in
   check "append"
     [ ("input", q.schema); ("rest", rest.schema) ]
-    (List.map change (Schema.diff q.schema rest.schema));
+    (List.filter_map change (Schema.diff q.schema rest.schema));
   make (Append { input = q; rest })
 
 let check_values e q =

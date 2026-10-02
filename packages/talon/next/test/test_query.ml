@@ -342,7 +342,7 @@ let verbs () =
   let x = Col.float "f" in
   let rest =
     let column = function
-      | "x8", _ -> Some ("x8", Type.Any Type.int16)
+      | "x8", _ -> Some ("x8", Type.Any Type.uint8)
       | "wait", _ -> None
       | c -> Some c
     in
@@ -465,11 +465,11 @@ let verbs () =
       input (0 columns)
 
     append: 3 problems
-      "x8" is int8 in the input and int16 in rest.
+      "x8" is int8 in the input and uint8 in rest, which do not meet: cast one first.
       "wait" (duration[ms]) is not in rest.
       "extra" (bool) is only in rest.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
-      rest (13 columns): x8 int16, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      rest (13 columns): x8 uint8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
     |}
 
 let joins () =
@@ -1165,6 +1165,31 @@ let accepted =
               fl
                 fl is ext[flag, bool], where bool is expected.
               input (1 column): fl ext[flag, bool]
+            |});
+      test "append meets each column's types" (fun () ->
+          let appended t0 t1 =
+            let side t = Query.of_source (source "s" [ ("x", t) ]) in
+            Query.schema (Query.append (side t1) (side t0))
+          in
+          let open Type in
+          let cat = Any (categorical [| "a" |]) in
+          expect
+            (String.concat "\n"
+               (List.map
+                  (fun (t0, t1) ->
+                    Format.asprintf "%a" Schema.pp (appended t0 t1))
+                  [
+                    (Any int32, Any int64);
+                    (Any uint8, Any int16);
+                    (cat, Any string);
+                    (Any string, cat);
+                  ]))
+          @@ __POS_OF__
+               {|
+            x int64
+            x int16
+            x string
+            x string
             |});
       test "a calendar reads the wall clock of UTC, not of another zone"
         (fun () ->

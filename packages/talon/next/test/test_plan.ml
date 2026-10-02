@@ -371,6 +371,16 @@ let stops () =
            ( "position",
              joined ~on:Join.position
                (of_source (source "w" Type.[ ("w", Any float64) ])) );
+           ( "an append that widens",
+             src
+             |> append
+                  (of_source
+                     (source "n"
+                        (List.map
+                           (function
+                             | "a", _ -> ("a", Type.Any Type.int32) | c -> c)
+                           columns)))
+             |> filter p );
            ( "a frame-dependent derive",
              src |> derive Expr.[ "s" := over (sum a) ] |> filter p );
            ( "a frame-dependent filter",
@@ -437,6 +447,12 @@ let stops () =
     └ join ~on:position
       ├ u (5 columns)
       └ w (1 column)
+    # an append that widens
+    query → a int64, b float64, c string, k int8, l list[int64]
+    filter (a > 1)
+    └ append
+      ├ u (5 columns)
+      └ n (5 columns)
     # a frame-dependent derive
     query → a int64, b float64, c string, k int8, l list[int64], s int64
     filter (a > 1)

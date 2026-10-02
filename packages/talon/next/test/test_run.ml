@@ -2086,6 +2086,50 @@ let utc_wall_clock =
       equal (array int) [| 10 |] (require_ok ~pp:Error.pp (field `Hour));
       equal (array int) [| 15 |] (require_ok ~pp:Error.pp (field `Day)))
 
+(* Appending *)
+
+(* The pairs of palette types that meet, among those a handle reads, with the
+   type where they meet: a column of either type reads its values at that type's
+   kind. *)
+let meeting_pairs =
+  let common (Type.Any t0) (Type.Any t1) =
+    match Kind.provably_equal (Type.kind t0) (Type.kind t1) with
+    | Some Equal -> Option.map (fun c -> Type.Any c) (Type.common [ t0; t1 ])
+    | None -> None
+  in
+  let readable = expressible (List.map (fun t -> ("", t)) palette) in
+  List.concat_map
+    (fun (_, a0) ->
+      List.filter_map
+        (fun (_, a1) -> Option.map (fun c -> (a0, a1, c)) (common a0 a1))
+        readable)
+    readable
+
+let appended =
+  let side a = Gen.bind (table [ ("x", a) ]) G.split in
+  Gen.with_pp
+    (fun ppf (Type.Any t0, Type.Any t1, _, a, b) ->
+      Format.fprintf ppf "@[<v>%a ⊕ %a@,%a@,%a@]" Type.pp t0 Type.pp t1 pp a pp
+        b)
+    (Gen.bind (Gen.of_list meeting_pairs) (fun (a0, a1, c) ->
+         map2 (fun a b -> (a0, a1, c, a, b)) (side a0) (side a1)))
+
+let appending =
+  prop "append is each side at the common type, one after the other" appended
+    (fun (Type.Any t0, Type.Any t1, Type.Any c, a, b) ->
+      cover "two types" (not (Type.equal t0 t1));
+      let k = Type.kind c in
+      let rows t = Column.options k (column t "x") in
+      let r = run_ok (Query.append (Query.of_table b) (Query.of_table a)) in
+      equal schema_w (Schema.v [ ("x", Type.Any c) ]) (schema r);
+      equal schema_w
+        (Schema.v [ ("x", Type.Any c) ])
+        (Schema.v [ ("x", Column.type_ (column r "x")) ]);
+      equal
+        (array (option (G.witness c)))
+        (Array.append (rows a) (rows b))
+        (rows r))
+
 (* Sorts and top-k *)
 
 let pp_key ppf (k : R.key) =
@@ -2467,5 +2511,6 @@ let () =
          sources;
          constructors;
          utc_wall_clock;
+         appending;
          kit_runs;
        ])

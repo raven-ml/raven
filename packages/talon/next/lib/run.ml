@@ -289,24 +289,28 @@ let tail ~offset ~length s =
 
 (* [append q a r rest] is [a]'s batches, then [r]'s, whose columns, those of the
    schema [rest], are put in [q]'s order. *)
-let append q a r rest =
-  let names = Schema.names rest in
-  let order =
-    List.map
-      (fun n -> Option.get (List.find_index (String.equal n) names))
-      (Schema.names (Query.schema q))
+(* [conform q s] maps a batch of the columns [s] to one of [q]'s: its columns in
+   [q]'s order, each widened to [q]'s type. *)
+let conform q s =
+  let schema = Query.schema q and names = Schema.names s in
+  let column (n, t) =
+    let i = Option.get (List.find_index (String.equal n) names) in
+    (i, Eval.widen (Option.get (Schema.find s n)) t)
   in
-  let reorder b =
+  let columns = List.map column (Schema.columns schema) in
+  fun b ->
     let cs = Table.columns b in
-    Table.batch (Query.schema q) ~rows:(Table.rows b)
-      (Array.of_list (List.map (Array.get cs) order))
-  in
+    Table.batch schema ~rows:(Table.rows b)
+      (Array.of_list (List.map (fun (i, widen) -> widen cs.(i)) columns))
+
+let append q a r ~input ~rest =
+  let left = conform q input and right = conform q rest in
   let first = ref true in
   let rec next () =
-    if not !first then Option.map reorder (r.next ())
+    if not !first then Option.map right (r.next ())
     else
       match a.next () with
-      | Some _ as b -> b
+      | Some b -> Some (left b)
       | None ->
           first := false;
           next ()
@@ -465,7 +469,8 @@ let compile q =
         | _ -> head ~offset ~length (stream input))
     | Slice { offset; length; input } -> tail ~offset ~length (stream input)
     | Append { input; rest } ->
-        append q (stream input) (stream rest) (Query.schema rest)
+        append q (stream input) (stream rest) ~input:(Query.schema input)
+          ~rest:(Query.schema rest)
     | Join { left; right; _ } -> join q left right (stream left) (stream right)
   in
   stream q

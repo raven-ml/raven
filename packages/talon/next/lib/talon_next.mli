@@ -1992,12 +1992,16 @@ module Query : sig
 
   val append : t -> t -> t
   (** [append rest q] is [q]'s rows, then [rest]'s, written [q |> append rest].
-      The two have the same columns, matched by name, of equal types, and the
-      schema is [q]'s. Appending other columns is [Kit.union], which derives the
-      missing ones as nulls. It costs O(1) over tables and streams over sources.
+      The two have the same columns, matched by name. Its schema is [q]'s names,
+      in order, each at the type where the column's two types meet
+      ({!Type.common}): an [int32] column and an [int64] one append as [int64],
+      a categorical and a [string] as [string]. Each side's values widen to it
+      exactly. Appending other columns is [Kit.union], which derives the missing
+      ones as nulls. It costs O(1) over tables of one schema and streams over
+      sources.
 
       Its problems are a column that only [q] has, one that only [rest] has, and
-      a column whose types differ. *)
+      each column whose two types do not meet, such as [int8] and [uint8]. *)
 
   (** {1:running Running} *)
 
@@ -2401,7 +2405,8 @@ module Kit : sig
       let s = Query.schema q and r = Query.schema rest in
       pad (nulls r s) q |> Query.append (pad (nulls s r) rest)
       ]}
-      A column that both have, of two types, is a problem of the [append]. *)
+      A column that both have, of two types, takes the type where they meet,
+      and one whose types do not meet is a problem of the [append]. *)
 
   (** {1:runs Runs} *)
 
