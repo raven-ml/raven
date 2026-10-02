@@ -647,6 +647,27 @@ let scopes =
           let r = resolve (grid [ [ apart; filled [| 7.; 8. |] ] ]) in
           fails_naming [ "no scope of the scale \"color\" holds l" ] (fun () ->
               quant ~at:(path [ field "l" ]) r "color"));
+      test "an independent x on a grid of grids is one x per outer cell"
+        (fun () ->
+          let inner =
+            grid [ [ dot1 [| 0. |] [| 0. |]; dot1 [| 5. |] [| 0. |] ] ]
+          in
+          let at = path [ index 0; index 0 ] in
+          equal floats (0., 0.) (hull ~at (resolve (grid [ [ inner ] ])) "x");
+          equal floats (0., 5.)
+            (hull ~at
+               (resolve (share [ ("x", `Independent) ] (grid [ [ inner ] ])))
+               "x"));
+      test "a mark whose facet constant names no panel still fits x" (fun () ->
+          let r =
+            resolve
+              (layer
+                 [
+                   dot1 [| 0.; 1. |] [| 0.; 0. |] ~fx:(strings [| "a"; "a" |]);
+                   dot1 [| 100. |] [| 0. |] ~fx:(const "z");
+                 ])
+          in
+          equal floats (0., 100.) (hull r "x"));
       test "a cell of a layered grid names its broadcast cell" (fun () ->
           let r = resolve (layer [ two; name "r" (filled [| 2.; 3. |]) ]) in
           equal floats (0., 3.) (hull ~at:(path [ index 0; index 0 ]) r "x");
@@ -873,6 +894,16 @@ let categories =
                  ~y:(num at0) ~fill:(dim 0) ())
           in
           equal index_w [ (0, "0"); (1, "1") ] (indices (categ r "color")));
+      test "strings of dropped rows are categories" (fun () ->
+          let r =
+            resolve
+              (dot
+                 ~x:(num (f64 [| 1.; Float.nan |]))
+                 ~y:(num at0)
+                 ~fill:(strings [| "kept"; "dropped" |])
+                 ())
+          in
+          equal (list string) [ "kept"; "dropped" ] (labels (categ r "color")));
       test "an explicit domain drops the categories outside it" (fun () ->
           let s = Scale.band ~domain:(Scale.Labels [| "b" |]) () in
           let r =

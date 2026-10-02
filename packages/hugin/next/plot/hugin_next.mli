@@ -626,7 +626,7 @@ val contour :
     - Its labelled categories are the union, in the order the figure is written,
       before {!layer} broadcasts, of every label of each channel [cat ~labels],
       used or not, and of the distinct strings of each {!strings} channel in
-      order of first appearance.
+      order of first appearance, those of dropped rows included.
     - Its indexed categories are the increasing union of every index of the axis
       of each {!dim} channel and of the codes in the rows of each {!cat} channel
       without labels. A category is shown by the labels of the [dim] channels
@@ -661,11 +661,11 @@ val contour :
     top. A mark without facet channels draws all its rows in every panel of its
     layer, so a reference line layered over facets is drawn in each. A facet
     constant draws its mark in the panel of its category only, and nowhere, with
-    a warning, if there is no such panel. [Scale.band ~wrap] on the ["fx"] scale
-    wraps its panels into rows of that many panels; a [wrap] with an ["fy"]
-    scale in the same scope raises [Invalid_argument] in {!resolve}. Facet
-    panels share every scale of their scope, so 144 attention panels have one
-    colour bar. *)
+    a warning, if there is no such panel; its rows still fit the other scales
+    its channels read. [Scale.band ~wrap] on the ["fx"] scale wraps its panels
+    into rows of that many panels; a [wrap] with an ["fy"] scale in the same
+    scope raises [Invalid_argument] in {!resolve}. Facet panels share every
+    scale of their scope, so 144 attention panels have one colour bar. *)
 
 (** {1:coordinates Coordinate systems} *)
 
@@ -874,7 +874,9 @@ val share : (string * sharing) list -> t -> t
 
     A pair that leaves a scale's scope as it is changes nothing, so
     [share p (share p f)] means [share p f] and [share [ ("x", `Shared) ]] on a
-    grid of one cell is that grid.
+    grid of one cell is that grid. [share [ ("x", `Independent) ]] on a grid
+    whose cells hold grids gives each of its cells one x, which the cells of the
+    grid it holds share, where each innermost cell has its own by default.
 
     Raises [Invalid_argument] if [pairs] names a scale twice. {!resolve} raises
     [Invalid_argument] for a pair whose name no channel in [f] reads; for
