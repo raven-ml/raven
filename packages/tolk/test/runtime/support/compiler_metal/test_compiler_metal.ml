@@ -53,12 +53,28 @@ let metal_version () =
 
 let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
 
+(* [named ~prefix table] checks that [table] is [prefix] then a digest. *)
+let named ~prefix table =
+  let n = Int.min (String.length prefix) (String.length table) in
+  equal string ~msg:"the name" prefix (String.sub table 0 n);
+  equal int ~msg:"the digest's length" 32 (String.length table - n)
+
+let table () = Option.get (Compiler.cachekey (Compiler_metal.compiler ()))
+
 let cache =
   group "cache"
     [
-      test "libraries are cached in the table compile_metal_direct" (fun () ->
-          equal (option string) (Some "compile_metal_direct")
-            (Compiler.cachekey (Compiler_metal.compiler ())));
+      test "libraries are cached in the table compile_metal_direct and a digest"
+        (fun () -> named ~prefix:"compile_metal_direct_" (table ()));
+      test "the table names the file MTLCOMPILER_PATH names" (fun () ->
+          let default = table () in
+          let file = Filename.concat (temp_dir ()) "MTLCompiler" in
+          Out_channel.with_open_bin file (fun oc -> output_string oc "a");
+          setenv "MTLCOMPILER_PATH" (Some file);
+          let named_file = table () in
+          not_equal string default named_file;
+          Out_channel.with_open_bin file (fun oc -> output_string oc "changed");
+          not_equal string ~msg:"once the file changed" named_file (table ()));
       test "libraries are not cached without ccache" (fun () ->
           is_none (Compiler.cachekey (ccache_off Compiler_metal.compiler)));
     ]
@@ -79,8 +95,8 @@ let without_mtlcompiler =
           | Some msg -> in_order ~subs:[ "MTLCompiler"; "MTLCOMPILER_PATH" ] msg);
     ]
 
-(* A library that does not load: these tests run in a process of their
-   own, where MTLCOMPILER_PATH names a file that is no library. *)
+(* A library that does not load: these tests run in a process of their own,
+   where MTLCOMPILER_PATH names a file that is no library. *)
 
 let load_failure () =
   rejection (fun () ->

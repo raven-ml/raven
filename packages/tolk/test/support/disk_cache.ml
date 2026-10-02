@@ -73,14 +73,24 @@ let rec files dir =
       let path = Filename.concat dir f in
       if Sys.is_directory path then files path else [ path ])
 
-let entries cachedb = if Sys.file_exists cachedb then files cachedb else []
+(* A table's entries are in the directory named by the digest of its name. *)
+let entries ?table cachedb =
+  let in_table path =
+    match table with
+    | None -> true
+    | Some t ->
+        String.starts_with
+          ~prefix:(Digest.to_hex (Digest.string t))
+          (Filename.basename (Filename.dirname path))
+  in
+  if Sys.file_exists cachedb then List.filter in_table (files cachedb) else []
 
-let damage cachedb f =
+let damage ?table cachedb f =
   List.iter
     (fun path ->
       let contents = In_channel.with_open_bin path In_channel.input_all in
       Out_channel.with_open_bin path (fun oc -> output_string oc (f contents)))
-    (entries cachedb)
+    (entries ?table cachedb)
 
 let truncated e = String.sub e 0 (String.length e / 2)
 

@@ -591,6 +591,22 @@ let cache =
       equal opts first (K.applied_opts (cached ~ignore:true measure));
       is_true ~msg:"measured again" (calls () <> []))
 
+(* A search kept under one value of a setting that shapes compilation is not
+   used under another. *)
+let cache_settings =
+  test "a search kept under one setting measures again under another" (fun () ->
+      let cached ?(settings = []) measure =
+        ignore
+          (search
+             ~settings:(B (Helpers.cachelevel, 1) :: settings)
+             ~measure 2
+             (scheduled "sum_rows" "metal"))
+      in
+      cached (fst (recording (golden_time ~failing:false)));
+      let measure, calls = recording (golden_time ~failing:false) in
+      cached ~settings:[ B (Helpers.transcendental, 2) ] measure;
+      greater int ~than:0 (List.length (calls ())))
+
 (* A measurement that favours tensor cores, then swaps, with an optimum at two
    optimisations. *)
 let kinds_time ~vars:_ prg =
@@ -777,6 +793,7 @@ let () =
          failures;
          width;
          cache;
+         cache_settings;
          cache_kinds;
          uncompilable;
          progress;

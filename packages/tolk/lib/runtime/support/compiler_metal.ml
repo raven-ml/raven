@@ -7,6 +7,7 @@
 
 external metal_load : string -> (unit, string) result = "caml_tolk_metal_load"
 external macos_major : unit -> int = "caml_tolk_metal_macos_major"
+external macos_build : unit -> string = "caml_tolk_metal_macos_build"
 
 external metal_compile : string -> (string, string) result
   = "caml_tolk_metal_compile"
@@ -33,38 +34,42 @@ let mtl_compiler =
         loaded := Some l;
         l
 
-(* MTLCompiler re-parses its options into LLVM's global option registry on
-   every build, which is not thread-safe: one build runs at a time. *)
+(* MTLCompiler re-parses its options into LLVM's global option registry on every
+   build, which is not thread-safe: one build runs at a time. *)
 let build =
   let lock = Mutex.create () in
   fun request -> Mutex.protect lock (fun () -> metal_compile request)
 
 (* MetalCompiler *)
 
+(* No changes for compute in 2.0 - 2.4 specs, use 2.0 as default for old
+   versions. *)
+let metal_version () =
+  match macos_major () with
+  | m when m >= 26 -> "metal4.0"
+  | m when m >= 14 -> "metal3.1"
+  | m when m >= 13 -> "metal3.0"
+  | _ -> "macos-metal2.0"
+
+let options () =
+  Printf.sprintf "-fno-fast-math -std=%s --driver-mode=metal -x metal"
+    (metal_version ())
+
+(* Metal fuses a product and a sum into one multiply-add unless the source asks
+   it not to; its option -ffp-contract=off does not reach the code. *)
+let prologue = "#pragma METAL fp contract(off)\n"
+
 let compile src =
   (match mtl_compiler () with
   | Ok () -> ()
   | Error e -> raise (Renderer.Compiler.Compile_error e));
-  (* No changes for compute in 2.0 - 2.4 specs, use 2.0 as default for old
-     versions. *)
-  let metal_version =
-    match macos_major () with
-    | m when m >= 26 -> "metal4.0"
-    | m when m >= 14 -> "metal3.1"
-    | m when m >= 13 -> "metal3.0"
-    | _ -> "macos-metal2.0"
-  in
   (* llvm creates modules.timestamp in the cache path and caches the compilation
      of Metal's standard library there (250 ms to 8 ms). *)
   let params =
-    Printf.sprintf
-      "-fno-fast-math -std=%s --driver-mode=metal -x metal \
-       -fmodules-cache-path=\"%s\" -fno-caret-diagnostics"
-      metal_version Helpers.cache_dir
+    Printf.sprintf "%s -fmodules-cache-path=\"%s\" -fno-caret-diagnostics"
+      (options ()) Helpers.cache_dir
   in
-  (* Metal fuses a product and a sum into one multiply-add unless the source
-     asks it not to; its option -ffp-contract=off does not reach the code. *)
-  let src = "#pragma METAL fp contract(off)\n" ^ src in
+  let src = prologue ^ src in
   (* The source is padded to a multiple of 4 bytes with at least one NUL; the
      parameters just end with one. *)
   let n = String.length src in
@@ -87,4 +92,19 @@ let compile src =
       then failwith ("Invalid Metal library. " ^ String.escaped lib);
       lib
 
-let compiler () = Renderer.Compiler.v ~cachekey:"compile_metal_direct" compile
+(* MTLCompiler is part of macOS: its build names the framework, unless
+   MTLCOMPILER_PATH names another, whose file then does. The options and the
+   prologue are the rest of what a library is a function of. *)
+let table () =
+  let identity =
+    String.concat "\n"
+      [
+        macos_build ();
+        C.identity (C.findlib "MTLCompiler" [ "MTLCompiler" ]);
+        options ();
+        prologue;
+      ]
+  in
+  "compile_metal_direct_" ^ Digest.to_hex (Digest.string identity)
+
+let compiler () = Renderer.Compiler.v ~cachekey:table compile

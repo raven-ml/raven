@@ -66,6 +66,15 @@ value caml_tolk_metal_macos_major(value unit) {
   return Val_int(atoi(version));
 }
 
+/* The build of macOS, as 25D125: MTLCompiler is part of it. */
+value caml_tolk_metal_macos_build(value unit) {
+  char build[64];
+  size_t size = sizeof build;
+  if (sysctlbyname("kern.osversion", build, &size, NULL, 0) != 0)
+    return caml_copy_string("");
+  return caml_copy_string(build);
+}
+
 /* The reply comes through the block, before the request returns. Compiling
    runs without the runtime lock, on a copy of the request. */
 value caml_tolk_metal_compile(value v_request) {
@@ -113,6 +122,10 @@ value caml_tolk_metal_load(value v_path) {
 
 value caml_tolk_metal_macos_major(value unit) {
   return Val_int(0);
+}
+
+value caml_tolk_metal_macos_build(value unit) {
+  return caml_copy_string("");
 }
 
 value caml_tolk_metal_compile(value v_request) {

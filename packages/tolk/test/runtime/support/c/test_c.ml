@@ -255,7 +255,38 @@ let multiarch =
           contains ~sub:"-linux-" C.multiarch);
     ]
 
+(* Identities *)
+
+let identity =
+  group "identity"
+    [
+      test "no library is none" (fun () ->
+          equal string "none" (C.identity None));
+      test "a library names its path" (fun () ->
+          let file = Filename.concat (temp_dir ()) "libx.so" in
+          write file elf;
+          contains ~sub:file (C.identity (Some file)));
+      test "a library that changes changes its identity" (fun () ->
+          let file = Filename.concat (temp_dir ()) "libx.so" in
+          write file elf;
+          let before = C.identity (Some file) in
+          write file (elf ^ elf);
+          not_equal string before (C.identity (Some file)));
+      test "a library that cannot be read is its path" (fun () ->
+          let link = Filename.concat (temp_dir ()) "libx.so" in
+          Unix.symlink "/nonexistent/libx.so" link;
+          equal string link (C.identity (Some link)));
+    ]
+
 let () =
   exit
     (run "Tolk.C"
-       [ tinygrad; one_directory; search_order; absent; system; multiarch ])
+       [
+         tinygrad;
+         one_directory;
+         search_order;
+         absent;
+         system;
+         multiarch;
+         identity;
+       ])

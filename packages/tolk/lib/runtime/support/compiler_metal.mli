@@ -21,8 +21,11 @@ val compiler : unit -> Renderer.Compiler.t
     later compiles faster.
 
     With {!Helpers.ccache}, libraries are cached in the table
-    [compile_metal_direct]. {!Renderer.Compiler.compile} raises
-    {!Renderer.Compiler.Compile_error} with the compiler's message if it rejects
-    the source, and with the reason if MTLCompiler cannot be loaded, and
-    [Failure] if the compiler replies with no Metal library.
-    {!Renderer.Compiler.disassemble} prints nothing. *)
+    [compile_metal_direct_D], where [D] is the digest of the build of macOS,
+    which MTLCompiler is part of, MTLCompiler's file ({!C.identity}), the
+    language and the options: a library is read back only for its source,
+    compiled by the same MTLCompiler with the same options.
+    {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
+    the compiler's message if it rejects the source, and with the reason if
+    MTLCompiler cannot be loaded, and [Failure] if the compiler replies with no
+    Metal library. {!Renderer.Compiler.disassemble} prints nothing. *)

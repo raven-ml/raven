@@ -24,11 +24,13 @@ val nvrtc : ?ptx:bool -> ?cache_key:string -> string -> Renderer.Compiler.t
     version 12.4, NVRTC compiles faster without textures, surfaces and the
     device runtime API ([--minimal]), which rendered kernels do not use.
 
-    With {!Helpers.ccache}, binaries are cached in the table [compile_K_A],
-    where [K] is [cache_key] (default ["cuda"]) and [A] is [arch]: compilers
-    that make PTX and cubins of one [arch] must have different [cache_key]s.
-    {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
-    NVRTC's error and log if NVRTC rejects the source, and with the reason if
-    NVRTC cannot be loaded or reports no version.
-    {!Renderer.Compiler.disassemble} prints the GPU's instructions, which the
-    CUDA toolkit's [ptxas] and [nvdisasm] find, or else why they could not. *)
+    With {!Helpers.ccache}, binaries are cached in the table [compile_K_A_D],
+    where [K] is [cache_key] (default ["cuda"]), [A] is [arch], and [D] the
+    digest of NVRTC's library ({!C.identity}), whether it makes PTX, and its
+    options: a binary is read back only for its source, compiled by the same
+    NVRTC with the same options. {!Renderer.Compiler.compile} raises
+    {!Renderer.Compiler.Compile_error} with NVRTC's error and log if NVRTC
+    rejects the source, and with the reason if NVRTC cannot be loaded or reports
+    no version. {!Renderer.Compiler.disassemble} prints the GPU's instructions,
+    which the CUDA toolkit's [ptxas] and [nvdisasm] find, or else why they could
+    not. *)

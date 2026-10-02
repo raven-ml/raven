@@ -304,23 +304,29 @@ let without_clang =
               Compiler.compile
                 (Compiler_cpu.clang (host_machine ^ ",native"))
                 increment));
-      test "a cached object is served without running Clang" (fun () ->
+      test "a cached object is served without a Clang that runs" (fun () ->
           let clang = Compiler_cpu.clang (host_machine ^ ",native") in
           let table = Option.get (Compiler.cachekey clang) in
           Helpers.Diskcache.put ~table increment "cached object";
           equal string "cached object" (Compiler.compile_cached clang increment));
       test "an object cached by the default compiler is not served under CC"
         (fun () ->
-          let arch = host_machine ^ ",native" in
+          let cachedb = Helpers.cachedb in
           let table =
-            "compile_clang_obj_"
-            ^ String.map (function ',' -> '_' | c -> c) arch
+            match
+              Disk_cache.child ~env:[ ("CC", "clang") ] ~cachedb "table"
+            with
+            | Ok table -> table
+            | Error err -> failf "the default compiler named no table: %s" err
           in
           let src = increment ^ "\n/* compiled by clang */\n" in
           Helpers.Diskcache.put ~table src "clang's object";
           raises_match
             (function Compiler.Compile_error _ -> true | _ -> false)
-            (fun () -> Compiler.compile_cached (Compiler_cpu.clang arch) src));
+            (fun () ->
+              Compiler.compile_cached
+                (Compiler_cpu.clang (host_machine ^ ",native"))
+                src));
     ]
 
 (* Disassembly *)
@@ -337,19 +343,48 @@ let disassembly_ =
 
 let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
 
+(* The table of the host's compiler, as a process of its own names it. *)
+let host_table () =
+  print_string
+    (Option.get
+       (Compiler.cachekey (Compiler_cpu.clang (host_machine ^ ",native"))))
+
+let parts = [ ("table", host_table) ]
+
+(* [table_in ()] is the table a process names, from a directory of its own. *)
+let table_in () =
+  let cachedb = Filename.concat (Sys.getcwd ()) "unused_cache" in
+  chdir (temp_dir ());
+  Disk_cache.child ~cachedb "table"
+
+let is_hex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+
+(* [named ~prefix table] checks that [table] is [prefix] then a digest. *)
+let named ~prefix table =
+  let n = Int.min (String.length prefix) (String.length table) in
+  equal string ~msg:"the name" prefix (String.sub table 0 n);
+  let digest = String.sub table n (String.length table - n) in
+  equal int ~msg:"the digest's length" 32 (String.length digest);
+  equal (list char) ~msg:"the digest's other characters" []
+    (List.filter (fun c -> not (is_hex c)) (List.of_seq (String.to_seq digest)))
+
 let cache =
   group "cache"
     [
-      cases ~name:fst "objects are cached in the table of the architecture"
+      cases ~name:fst
+        "objects are cached in the table of the architecture and a digest"
         [
-          ("x86_64,znver2", "compile_clang_obj_x86_64_znver2");
+          ("x86_64,znver2", "compile_clang_obj_x86_64_znver2_");
           ( "x86_64,znver2,avx,-avx512f",
-            "compile_clang_obj_x86_64_znver2_avx_-avx512f" );
-          ("arm64,native", "compile_clang_obj_arm64_native");
+            "compile_clang_obj_x86_64_znver2_avx_-avx512f_" );
+          ("arm64,native", "compile_clang_obj_arm64_native_");
         ]
-        (fun (arch, table) ->
-          equal (option string) (Some table)
-            (Compiler.cachekey (Compiler_cpu.clang arch)));
+        (fun (arch, prefix) ->
+          named ~prefix
+            (Option.get (Compiler.cachekey (Compiler_cpu.clang arch))));
+      test "the table does not depend on the working directory" (fun () ->
+          let a = table_in () in
+          equal Disk_cache.outcome a (table_in ()));
       test "objects are not cached without ccache" (fun () ->
           is_none
             (Compiler.cachekey
@@ -357,6 +392,7 @@ let cache =
     ]
 
 let () =
+  Disk_cache.play parts;
   exit
     (run "Tolk.Compiler_cpu"
        [

@@ -37,12 +37,13 @@ val outcome : (string, string) result Windtrap.Testable.t
 (** [outcome] tells outcomes apart: two [Ok] by their outputs, and two [Error]
     when one's text holds the other's. *)
 
-val entries : string -> string list
-(** [entries cachedb] is the files of the entries of [cachedb]. *)
+val entries : ?table:string -> string -> string list
+(** [entries ~table cachedb] is the files of the entries of [cachedb], those of
+    the table [table] if given. *)
 
-val damage : string -> (string -> string) -> unit
-(** [damage cachedb f] replaces the contents of each entry of [cachedb] by [f]
-    of them. *)
+val damage : ?table:string -> string -> (string -> string) -> unit
+(** [damage ~table cachedb f] replaces the contents of each entry of [cachedb],
+    of the table [table] if given, by [f] of them. *)
 
 val truncated : string -> string
 (** [truncated e] is the first half of the entry [e]. *)

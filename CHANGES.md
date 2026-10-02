@@ -939,6 +939,11 @@ thread.
 
 ### Tolk (new)
 
+- A compiled binary is read back from the disk cache only for the compiler,
+  version and options that made it: `Renderer.Compiler.v` takes the table as a
+  function, which Clang's, Metal's, NVRTC's and comgr's compilers derive from
+  their toolchain. A changed flag or an upgraded toolchain was answered with a
+  stale binary. Beam searches are kept under their settings and compiler too.
 - A compiled call run back to back on a GFX12 AMD GPU no longer hangs it,
   which made the driver reset the GPU for every process on it: a batch's
   memory barrier only invalidates the GPU's caches, and the host flushes the

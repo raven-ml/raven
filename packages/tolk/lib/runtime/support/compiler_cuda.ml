@@ -21,6 +21,9 @@ let cuda_targets =
         [ machine ^ "-linux"; "sbsa-linux" ])
     [ "opt"; "usr/local" ]
 
+(* NVRTC's library. *)
+let library () = C.findlib ~extra_paths:cuda_targets "nvrtc" [ "nvrtc" ]
+
 (* The library is loaded once, by whichever domain first compiles. *)
 let nvrtc_version =
   let lock = Mutex.create () and version = ref None in
@@ -30,7 +33,7 @@ let nvrtc_version =
     | Some v -> v
     | None ->
         let v =
-          match C.findlib ~extra_paths:cuda_targets "nvrtc" [ "nvrtc" ] with
+          match library () with
           | None ->
               Error "failed to load library nvrtc: try setting NVRTC_PATH?"
           | Some path ->
@@ -74,19 +77,28 @@ let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
         [ "-I/usr/local/cuda/include"; "-I/usr/include"; "-I/opt/cuda/include" ]
     | cuda_path -> [ "-I" ^ cuda_path ^ "/include" ]
   in
+  let options = ("--gpu-architecture=" ^ arch) :: "--fmad=false" :: includes in
   let compile src =
     match nvrtc_version () with
     | Error e -> raise (Renderer.Compiler.Compile_error e)
     | Ok version -> (
         let options =
-          (("--gpu-architecture=" ^ arch) :: "--fmad=false" :: includes)
-          @ if version >= (12, 4) then [ "--minimal" ] else []
+          options @ if version >= (12, 4) then [ "--minimal" ] else []
         in
         match nvrtc_compile src (Array.of_list options) ptx with
         | Ok lib -> lib
         | Error e -> raise (Renderer.Compiler.Compile_error e))
   in
-  Renderer.Compiler.v
-    ~cachekey:(Printf.sprintf "compile_%s_%s" cache_key arch)
+  (* NVRTC's library, whose version picks the options it is given beyond
+     [options], and whether it makes PTX, name a binary with its source. *)
+  let table () =
+    let identity =
+      String.concat "\n"
+        (C.identity (library ()) :: string_of_bool ptx :: options)
+    in
+    Printf.sprintf "compile_%s_%s_%s" cache_key arch
+      (Digest.to_hex (Digest.string identity))
+  in
+  Renderer.Compiler.v ~cachekey:table
     ~disassemble:(cuda_disassemble ~ptx arch)
     compile

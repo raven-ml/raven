@@ -26,7 +26,10 @@ val hip : string -> Renderer.Compiler.t
     kernels stay visible.
 
     With {!Helpers.ccache}, code objects are cached in the table
-    [compile_hip_A], where [A] is [arch]. {!Renderer.Compiler.compile} raises
+    [compile_hip_A_D], where [A] is [arch] and [D] the digest of comgr's library
+    ({!C.identity}) and the options it compiles and links with: a code object is
+    read back only for its source, compiled by the same comgr with the same
+    options. {!Renderer.Compiler.compile} raises
     {!Renderer.Compiler.Compile_error} with comgr's status and log if comgr
     rejects the source, and with the reason if comgr cannot be loaded, and
     {!Renderer.Compiler.disassemble} prints what [llvm-objdump -d] prints

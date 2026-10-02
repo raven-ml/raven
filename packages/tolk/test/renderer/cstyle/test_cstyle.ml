@@ -72,10 +72,10 @@ let sources =
       group ~tags:[ "unaligned" ] "with ALIGNED=0" (sources_under "ALIGNED=0");
     ]
 
-(* C computes an operation on a char, a short or Clang's __fp16 in a wider
-   type, so the source casts each such operation back to its type: an operation
-   on a scalar of one of these types, inlined into its one user, which does not
-   store it. The source of a kernel is then tinygrad's for the kernel with those
+(* C computes an operation on a char, a short or Clang's __fp16 in a wider type,
+   so the source casts each such operation back to its type: an operation on a
+   scalar of one of these types, inlined into its one user, which does not store
+   it. The source of a kernel is then tinygrad's for the kernel with those
    casts, which [with_d17_casts row uops] builds and cases.golden's column
    narrowed names. *)
 
@@ -204,8 +204,13 @@ let declarations =
       declared "supported" (fun r cell ->
           equal string cell (joined " " Dtype.pp (Renderer.supported_dtypes r)));
       declared "cachekey" (fun r cell ->
-          equal (option string) (Some cell)
-            (Renderer.Compiler.cachekey r.compiler));
+          (* tinygrad's table, then the digest of the toolchain and its
+             options. *)
+          let table = Option.get (Renderer.Compiler.cachekey r.compiler) in
+          let prefix = cell ^ "_" in
+          let n = Int.min (String.length prefix) (String.length table) in
+          equal string ~msg:"the name" prefix (String.sub table 0 n);
+          equal int ~msg:"the digest's length" 32 (String.length table - n));
     ]
 
 (* Operations *)
@@ -510,8 +515,8 @@ let lacks_toolchain why =
   String.starts_with ~prefix:"failed to load library" why
   || String.starts_with ~prefix:"comgr not available" why
 
-(* The sources the toolchain rejects as tinygrad writes them. CUDA's vectors
-   are structs, so a kernel that casts one or picks its lane by a value is no
+(* The sources the toolchain rejects as tinygrad writes them. CUDA's vectors are
+   structs, so a kernel that casts one or picks its lane by a value is no
    program (Spec.program) and never reaches the renderer. *)
 let rejected =
   [
@@ -1313,7 +1318,11 @@ let grouping =
           let big = Float.ldexp 1. 126 in
           let out =
             Run.on_host k
-              [ (1, [| `Float 4. |]); (2, [| `Float big |]); (3, [| `Float 0.25 |]) ]
+              [
+                (1, [| `Float 4. |]);
+                (2, [| `Float big |]);
+                (3, [| `Float 0.25 |]);
+              ]
           in
           equal values [| `Float big |] (List.assoc 0 out));
     ]
@@ -1361,8 +1370,7 @@ let zeros_on_arm64 =
         (fun () ->
           let k = Run.program (Lazy.force host) (zero_select Float32) in
           match List.assoc 0 (Run.on_host k [ (1, [| `Float (-0.) |]) ]) with
-          | [| `Float z |] ->
-              equal float_exact 0. z
+          | [| `Float z |] -> equal float_exact 0. z
           | _ -> failf "one float");
     ]
 

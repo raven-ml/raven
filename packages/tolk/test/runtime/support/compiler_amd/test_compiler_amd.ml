@@ -34,13 +34,20 @@ let with_comgr f =
 
 let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
 
+(* [named ~prefix table] checks that [table] is [prefix] then a digest. *)
+let named ~prefix table =
+  let n = Int.min (String.length prefix) (String.length table) in
+  equal string ~msg:"the name" prefix (String.sub table 0 n);
+  equal int ~msg:"the digest's length" 32 (String.length table - n)
+
 let cache =
   group "cache"
     [
-      test "code objects are cached in the table of hip and the architecture"
-        (fun () ->
-          equal (option string) (Some "compile_hip_gfx1100")
-            (Compiler.cachekey (Compiler_amd.hip "gfx1100")));
+      test
+        "code objects are cached in the table of hip, the architecture and a \
+         digest" (fun () ->
+          named ~prefix:"compile_hip_gfx1100_"
+            (Option.get (Compiler.cachekey (Compiler_amd.hip "gfx1100"))));
       test "code objects are not cached without ccache" (fun () ->
           is_none
             (Compiler.cachekey
@@ -62,8 +69,8 @@ let without_comgr =
           | Some msg -> in_order ~subs:[ "comgr"; "COMGR_PATH" ] msg);
     ]
 
-(* A library that does not load: these tests run in a process of their
-   own, where COMGR_PATH names a file that is no library. *)
+(* A library that does not load: these tests run in a process of their own,
+   where COMGR_PATH names a file that is no library. *)
 
 let load_failure () =
   rejection (fun () -> Compiler.compile (Compiler_amd.hip "gfx1100") kernel)

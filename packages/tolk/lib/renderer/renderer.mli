@@ -84,16 +84,26 @@ module Compiler : sig
   (** The type for compilers. *)
 
   val v :
-    ?cachekey:string -> ?disassemble:(string -> unit) -> (string -> string) -> t
+    ?cachekey:(unit -> string) ->
+    ?disassemble:(string -> unit) ->
+    (string -> string) ->
+    t
   (** [v ~cachekey ~disassemble compile] is the compiler that compiles a source
       with [compile]. [disassemble] prints a binary as instructions on standard
       output; it defaults to printing nothing. With [cachekey], binaries are
-      kept in the {!Helpers.Diskcache} table [cachekey], unless the setting
-      {!Helpers.ccache} is [false] when the compiler is made. *)
+      kept in the {!Helpers.Diskcache} table [cachekey ()], unless the setting
+      {!Helpers.ccache} is [false] when the compiler is made.
+
+      A binary is read back for the source it was compiled from, so the table
+      must name everything else that determines it: the toolchain, its version
+      and its options. [cachekey] is called when the table is first needed, and
+      again only after it raised. *)
 
   val cachekey : t -> string option
   (** [cachekey c] is the disk cache table of [c]'s binaries, if they are
-      cached. *)
+      cached.
+
+      Raises what [c]'s [cachekey] function raises. *)
 
   val compile : t -> string -> string
   (** [compile c src] is [src] compiled by [c].
@@ -102,11 +112,13 @@ module Compiler : sig
 
   val compile_cached : t -> string -> string
   (** [compile_cached c src] is the binary of [src] held in [c]'s disk cache
-      table, or else [compile c src] ({!compile}), which is then kept there.
+      table, or else [compile c src] ({!compile}), which is then kept there. An
+      entry that does not read is compiled anew and replaced.
 
-      Raises {!Compile_error} as {!compile}, and [Invalid_argument] naming [src]
-      if it must be compiled while the environment variable [ASSERT_COMPILE]
-      holds a nonzero integer ({!Helpers.getenv}, which reads it once). *)
+      Raises {!Compile_error} as {!compile}, what {!cachekey} raises, and
+      [Invalid_argument] naming [src] if it must be compiled while the
+      environment variable [ASSERT_COMPILE] holds a nonzero integer
+      ({!Helpers.getenv}, which reads it once). *)
 
   val disassemble : t -> string -> unit
   (** [disassemble c lib] prints the binary [lib] as instructions on standard

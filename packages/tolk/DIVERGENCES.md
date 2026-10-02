@@ -3290,3 +3290,42 @@ stores through a pad.
   patched as `test/gen/runtime/ops_amd.py` says; and on a GPU,
   `test_ops_amd_exec`'s `execution › a thousand runs back to back while the
   host allocates`.
+
+## D113. A compiled binary is kept under its compiler's identity
+
+- **tinygrad:** `device.py:335-341` (`Compiler.__init__`, `compile_cached`:
+  a binary is kept under its source in the table `cachekey`);
+  `runtime/support/compiler_cpu.py:16`, `runtime/ops_metal.py:40`,
+  `runtime/support/compiler_cuda.py:54` and
+  `runtime/support/compiler_amd.py:84` (the tables, named by the compiler,
+  the architecture and a key); `codegen/opt/search.py:107` (the beam search's
+  key: the kernel, the width, `allow_test_size`, the device and the suffix).
+- **tolk:** `lib/renderer/renderer.ml:141-166` (`Compiler.v`'s `cachekey`, a
+  function asked once, and `compile_cached`);
+  `lib/runtime/support/compiler_cpu.ml:38` (`statement`)
+  and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
+  `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
+  (`C.identity`); `lib/codegen/codegen.ml:1175-1191` (`program_key`, `kept`);
+  `lib/codegen/opt/search.ml:22` and `:272` (the beam search's key).
+- **Differs:** a table also names everything besides the source that
+  determines a binary: for Clang, the digest of what `clang -###` states it
+  runs (its version and installation, the processor and features `native`
+  resolves to, every option), with `-ffile-compilation-dir=.` keeping the
+  working directory out; for MTLCompiler, NVRTC and comgr, the build of macOS
+  or the library's file, size and modification time, and the options, PTX or
+  cubin included. A program is kept on disk under its compiler's table, and
+  only if that compiler caches its binaries. The beam search's key adds the
+  library's sources, the renderer, its compiler's table, the settings that
+  shape compilation and the `BEAM_*` settings that pick its candidates.
+- **Reason:** (b): raven's test suites and rune share the default cache, so a
+  hit must answer the compilation it stands for. tinygrad's key answers a
+  changed flag in `compiler_cpu.py`, an upgraded toolchain, a program of
+  another compiler of the same renderer name, or a search under other
+  settings, with a binary or a search made for something else.
+- **Pinned by:** `Tolk.Compiler_cpu › cache`, `Tolk.Compiler_metal › cache`,
+  `Tolk.Compiler_cuda › cache`, `Tolk.Compiler_amd › cache`,
+  `Tolk.Renderer › Compiler › the table is asked for once, when first
+  needed`, `Tolk.C › identity`, `Tolk.Codegen › programs are kept on disk
+  › a program is not read back for a compiler of another table`, and
+  `Tolk.Search › a search kept under one setting measures again under
+  another`.

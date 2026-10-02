@@ -1165,10 +1165,10 @@ let to_program_cache = Hashtbl.create 64
 let to_program_lock = Mutex.create ()
 
 (* The key of a program, in memory and on disk: the kernel, the renderer and its
-   target, every setting and variable that shapes what compilation makes
+   target, the table of its compiler's binaries, which names the compiler and
+   its options, every setting and variable that shapes what compilation makes
    ([Helpers.shaping]), and the digest of this library's sources, of which a
-   program is a function. A kernel that asks for a beam search is not kept on
-   disk, since its program is what the search found. *)
+   program is a function. *)
 let program_key ast (ren : Renderer.t) =
   String.concat "\n"
     ([
@@ -1176,11 +1176,16 @@ let program_key ast (ren : Renderer.t) =
        key ast;
        ren.name;
        Format.asprintf "%a" Helpers.Target.pp ren.target;
+       Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
      ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
 
-let kept ast =
-  match (op ast, arg ast) with Op.Sink, Kernel k -> k.beam = 0 | _ -> true
+(* A program holds its binary: it is kept on disk only if its compiler's
+   binaries are, under a table that names the compiler. A kernel that asks for a
+   beam search is not kept, since its program is what the search found. *)
+let kept ast (ren : Renderer.t) =
+  Option.is_some (Renderer.Compiler.cachekey ren.compiler)
+  && match (op ast, arg ast) with Op.Sink, Kernel k -> k.beam = 0 | _ -> true
 
 let program prg = op prg = Op.Program && List.length (src prg) = 4
 
@@ -1195,7 +1200,7 @@ let show_kept (ren : Renderer.t) prg =
   | _ -> ()
 
 let made_program ?beam ~key ast ren =
-  if not (kept ast) then do_to_program ?beam ast ren
+  if not (kept ast ren) then do_to_program ?beam ast ren
   else
     let prg, hit =
       Graph.cached ~table:"to_program" ~key ~valid:program (fun () ->

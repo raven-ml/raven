@@ -31,20 +31,29 @@ let with_nvrtc f =
 
 let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
 
+(* [named ~prefix table] checks that [table] is [prefix] then a digest. *)
+let named ~prefix table =
+  let n = Int.min (String.length prefix) (String.length table) in
+  equal string ~msg:"the name" prefix (String.sub table 0 n);
+  equal int ~msg:"the digest's length" 32 (String.length table - n)
+
+let table c = Option.get (Compiler.cachekey c)
+
 let cache =
   group "cache"
     [
-      test "binaries are cached in the table of cuda and the architecture"
-        (fun () ->
-          equal (option string) (Some "compile_cuda_sm_89")
-            (Compiler.cachekey (Compiler_cuda.nvrtc "sm_89")));
-      test "cubins are cached under the same key as PTX" (fun () ->
-          equal (option string) (Some "compile_cuda_sm_89")
-            (Compiler.cachekey (Compiler_cuda.nvrtc ~ptx:false "sm_89")));
+      test
+        "binaries are cached in the table of cuda, the architecture and a \
+         digest" (fun () ->
+          named ~prefix:"compile_cuda_sm_89_"
+            (table (Compiler_cuda.nvrtc "sm_89")));
+      test "cubins and PTX are cached in different tables" (fun () ->
+          not_equal string
+            (table (Compiler_cuda.nvrtc "sm_89"))
+            (table (Compiler_cuda.nvrtc ~ptx:false "sm_89")));
       test "cache_key names the table" (fun () ->
-          equal (option string) (Some "compile_nv_sm_120")
-            (Compiler.cachekey
-               (Compiler_cuda.nvrtc ~ptx:false ~cache_key:"nv" "sm_120")));
+          named ~prefix:"compile_nv_sm_120_"
+            (table (Compiler_cuda.nvrtc ~ptx:false ~cache_key:"nv" "sm_120")));
       test "binaries are not cached without ccache" (fun () ->
           is_none
             (Compiler.cachekey
@@ -66,8 +75,8 @@ let without_nvrtc =
           | Some msg -> in_order ~subs:[ "nvrtc"; "NVRTC_PATH" ] msg);
     ]
 
-(* A library that does not load: these tests run in a process of their
-   own, where NVRTC_PATH names a file that is no library. *)
+(* A library that does not load: these tests run in a process of their own,
+   where NVRTC_PATH names a file that is no library. *)
 
 let load_failure () =
   rejection (fun () -> Compiler.compile (Compiler_cuda.nvrtc "sm_89") kernel)

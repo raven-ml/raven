@@ -547,7 +547,7 @@ let fresh_table () =
 
 let cached ?(t = toolchain ()) () =
   let table = fresh_table () in
-  (Renderer.Compiler.v ~cachekey:table (build t), table, t)
+  (Renderer.Compiler.v ~cachekey:(fun () -> table) (build t), table, t)
 
 let get table src = Helpers.Diskcache.get ~table src
 let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
@@ -566,10 +566,25 @@ let a_cached_binary_wins () =
   equal string "held" (Renderer.Compiler.compile_cached c "a");
   equal int ~msg:"runs of the toolchain" 0 t.runs
 
+let a_damaged_entry_is_compiled_anew () =
+  let c, table, t = cached () in
+  let before = Disk_cache.entries Helpers.cachedb in
+  Helpers.Diskcache.put ~table "a" "held";
+  let entry =
+    List.find
+      (fun e -> not (List.mem e before))
+      (Disk_cache.entries Helpers.cachedb)
+  in
+  Out_channel.with_open_bin entry (fun oc -> output_string oc "damaged");
+  equal string "lib:a" (Renderer.Compiler.compile_cached c "a");
+  equal int ~msg:"runs of the toolchain" 1 t.runs;
+  equal (option string) ~msg:"replaced" (Some "lib:a") (get table "a")
+
 let without_ccache () =
   let t = toolchain () and table = fresh_table () in
   let c =
-    ccache_off (fun () -> Renderer.Compiler.v ~cachekey:table (build t))
+    ccache_off (fun () ->
+        Renderer.Compiler.v ~cachekey:(fun () -> table) (build t))
   in
   equal (option string) None (Renderer.Compiler.cachekey c);
   equal string "lib:a" (Renderer.Compiler.compile_cached c "a");
@@ -579,7 +594,9 @@ let without_ccache () =
 
 let ccache_is_read_when_made () =
   let table = fresh_table () in
-  let c = Renderer.Compiler.v ~cachekey:table (build (toolchain ())) in
+  let c =
+    Renderer.Compiler.v ~cachekey:(fun () -> table) (build (toolchain ()))
+  in
   ccache_off (fun () ->
       equal (option string) (Some table) (Renderer.Compiler.cachekey c);
       ignore (Renderer.Compiler.compile_cached c "a"));
@@ -610,16 +627,48 @@ let tables_are_apart () =
 
 let binaries_are_bytes () =
   let lib = "\x00\xff\n\x7fELF" in
-  let c = Renderer.Compiler.v ~cachekey:(fresh_table ()) (fun _ -> lib) in
+  let table = fresh_table () in
+  let c = Renderer.Compiler.v ~cachekey:(fun () -> table) (fun _ -> lib) in
   equal string lib (Renderer.Compiler.compile_cached c "a");
   equal string lib (Renderer.Compiler.compile_cached c "a")
+
+(* The table is asked for when first needed: making the compiler asks nothing,
+   and compiles after the first ask nothing more. *)
+let asks_for_its_table_once () =
+  let asked = ref 0 and table = fresh_table () in
+  let cachekey () =
+    incr asked;
+    table
+  in
+  let c = Renderer.Compiler.v ~cachekey (build (toolchain ())) in
+  equal int ~msg:"made" 0 !asked;
+  ignore (Renderer.Compiler.compile_cached c "a");
+  ignore (Renderer.Compiler.compile_cached c "b");
+  equal (option string) (Some table) (Renderer.Compiler.cachekey c);
+  equal int ~msg:"compiled twice" 1 !asked
+
+(* A table that could not be named is asked for again, and nothing is compiled
+   meanwhile. *)
+let asks_again_after_a_failure () =
+  let fails = ref true and table = fresh_table () and t = toolchain () in
+  let cachekey () =
+    if !fails then raise (Renderer.Compiler.Compile_error "no toolchain")
+    else table
+  in
+  let c = Renderer.Compiler.v ~cachekey (build t) in
+  raises (Renderer.Compiler.Compile_error "no toolchain") (fun () ->
+      Renderer.Compiler.compile_cached c "a");
+  equal int ~msg:"runs of the toolchain" 0 t.runs;
+  fails := false;
+  equal string "lib:a" (Renderer.Compiler.compile_cached c "a");
+  equal (option string) (Some "lib:a") (get table "a")
 
 let rejected src = raise (Renderer.Compiler.Compile_error ("rejected " ^ src))
 
 let errors_are_not_cached () =
   let table = fresh_table () and fails = ref true in
   let compile src = if !fails then rejected src else "lib:" ^ src in
-  let c = Renderer.Compiler.v ~cachekey:table compile in
+  let c = Renderer.Compiler.v ~cachekey:(fun () -> table) compile in
   raises (Renderer.Compiler.Compile_error "rejected a") (fun () ->
       Renderer.Compiler.compile_cached c "a");
   equal (option string) None (get table "a");
@@ -715,6 +764,8 @@ let compilers =
         compiles_once;
       test "compile_cached returns the binary the table holds"
         a_cached_binary_wins;
+      test "compile_cached compiles a damaged entry anew and replaces it"
+        a_damaged_entry_is_compiled_anew;
       test "compile_cached compiles every time with ccache off when made"
         without_ccache;
       test "ccache is read when the compiler is made" ccache_is_read_when_made;
@@ -723,6 +774,9 @@ let compilers =
       test "compile_cached compiles every time without a cachekey"
         uncached_compiler;
       test "compile_cached keeps two tables apart" tables_are_apart;
+      test "the table is asked for once, when first needed"
+        asks_for_its_table_once;
+      test "a table that raised is asked for again" asks_again_after_a_failure;
       test "compile_cached keeps any bytes" binaries_are_bytes;
       test "compile_cached raises and caches nothing when the toolchain rejects"
         errors_are_not_cached;

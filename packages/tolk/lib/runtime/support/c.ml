@@ -104,3 +104,10 @@ let findlib ?(extra_paths = []) name paths =
               else None)
             (dirs p))
       paths
+
+let identity = function
+  | None -> "none"
+  | Some path -> (
+      match Unix.stat path with
+      | st -> Printf.sprintf "%s %d %.0f" path st.st_size st.st_mtime
+      | exception Unix.Unix_error _ -> path)

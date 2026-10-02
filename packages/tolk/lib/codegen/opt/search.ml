@@ -10,6 +10,25 @@ module K = Postrange.Scheduler
 
 let debug () = Helpers.Context_var.value Helpers.debug
 let log_surpass_max () = Helpers.getenv "BEAM_LOG_SURPASS_MAX" 0 <> 0
+
+(* The settings that pick a search's candidates and when it stops. *)
+let padto () = Helpers.getenv "BEAM_PADTO" 0 <> 0
+let uops_max () = Helpers.getenv "BEAM_UOPS_MAX" 3000
+let strict_mode () = Helpers.getenv "BEAM_STRICT_MODE" 0 <> 0
+let upcast_max () = Helpers.getenv "BEAM_UPCAST_MAX" 256
+let local_max () = Helpers.getenv "BEAM_LOCAL_MAX" 1024
+let min_progress () = Helpers.getenv_float "BEAM_MIN_PROGRESS" 0.01
+
+let search_settings () =
+  [
+    ("BEAM_PADTO", string_of_bool (padto ()));
+    ("BEAM_UOPS_MAX", string_of_int (uops_max ()));
+    ("BEAM_STRICT_MODE", string_of_bool (strict_mode ()));
+    ("BEAM_UPCAST_MAX", string_of_int (upcast_max ()));
+    ("BEAM_LOCAL_MAX", string_of_int (local_max ()));
+    ("BEAM_MIN_PROGRESS", string_of_float (min_progress ()));
+  ]
+
 let upto n = List.init n Fun.id
 
 let actions =
@@ -28,7 +47,7 @@ let actions =
       split Unroll [ 0; 2; 3; 4; 5; 7 ] (upto 10);
       split Local [ 0; 2; 3; 4; 8; 13; 16; 29 ] (upto 8);
       split ~top:true Local [ 13; 16; 28; 29; 32; 49; 64; 256 ] (upto 8);
-      (if Helpers.getenv "BEAM_PADTO" 0 <> 0 then
+      (if padto () then
          List.map (fun axis -> Opt.Padto { axis; amount = 32 }) (upto 7)
        else []);
       split Local [ 32 ] [ 0 ];
@@ -99,7 +118,7 @@ let try_compile k =
         ren
     in
     let uops = List.length (src (nth prg 1)) in
-    let uops_max = Helpers.getenv "BEAM_UOPS_MAX" 3000 in
+    let uops_max = uops_max () in
     if uops_max > 0 && uops >= uops_max then (
       if log_surpass_max () then
         Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
@@ -112,7 +131,7 @@ let try_compile k =
   | exception (Failure _ as e) ->
       if debug () >= 4 then print_endline (Printexc.to_string e);
       None
-  | exception e when Helpers.getenv "BEAM_STRICT_MODE" 0 <> 0 -> raise e
+  | exception e when strict_mode () -> raise e
   | exception _ -> None
 
 (* The least and greatest product of [sizes] over their variables' values. *)
@@ -171,11 +190,9 @@ let redundant k = function
 
 let get_kernel_actions ?(include_0 = true) ?max_up k =
   let max_up =
-    match max_up with
-    | Some max_up -> max_up
-    | None -> Helpers.getenv "BEAM_UPCAST_MAX" 256
+    match max_up with Some max_up -> max_up | None -> upcast_max ()
   in
-  let max_lcl = Helpers.getenv "BEAM_LOCAL_MAX" 1024 in
+  let max_lcl = local_max () in
   let act i a =
     if redundant k a then None
     else
@@ -249,15 +266,23 @@ let beam_search ~measure ?allow_test_size amt s =
   in
   let beam_debug = Helpers.getenv "BEAM_DEBUG" 0 in
   let ren = K.ren s in
+  (* What a search's result is a function of, but the times it measures: the
+     kernel, the search and its settings, the renderer, its compiler and what
+     shapes compilation, and this library's sources. *)
   let key =
     String.concat "\x00"
-      [
-        key (K.ast s);
-        string_of_int amt;
-        string_of_bool allow_test_size;
-        ren.target.device;
-        ren.suffix;
-      ]
+      ([
+         Source_digest.digest;
+         key (K.ast s);
+         string_of_int amt;
+         string_of_bool allow_test_size;
+         ren.name;
+         Format.asprintf "%a" Helpers.Target.pp ren.target;
+         Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
+       ]
+      @ List.map
+          (fun (k, v) -> k ^ "=" ^ v)
+          (Helpers.shaping () @ search_settings ()))
   in
   let cached =
     if Helpers.Context_var.value Helpers.ignore_beam_cache then None
@@ -276,7 +301,7 @@ let beam_search ~measure ?allow_test_size amt s =
       let vars =
         List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
-      let min_progress = Helpers.getenv_float "BEAM_MIN_PROGRESS" 0.01 /. 1e6 in
+      let min_progress = min_progress () /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
       let st = Unix.gettimeofday () in
       let elapsed () = Unix.gettimeofday () -. st in

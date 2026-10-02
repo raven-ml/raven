@@ -120,33 +120,49 @@ module Compiler = struct
   exception Compile_error of string
 
   type t = {
-    cachekey : string option;
+    cachekey : (unit -> string) option;
     compile : string -> string;
     disassemble : string -> unit;
   }
 
+  (* [once f] is [f ()], computed at the first call that returns, by one domain
+     at a time. *)
+  let once f =
+    let lock = Mutex.create () and value = ref None in
+    fun () ->
+      Mutex.protect lock @@ fun () ->
+      match !value with
+      | Some v -> v
+      | None ->
+          let v = f () in
+          value := Some v;
+          v
+
   let v ?cachekey ?(disassemble = ignore) compile =
     let cachekey =
-      if Helpers.Context_var.value Helpers.ccache then cachekey else None
+      if Helpers.Context_var.value Helpers.ccache then Option.map once cachekey
+      else None
     in
     { cachekey; compile; disassemble }
 
-  let cachekey c = c.cachekey
+  let cachekey c = Option.map (fun table -> table ()) c.cachekey
   let compile c src = c.compile src
   let disassemble c lib = c.disassemble lib
 
+  (* An entry that does not read, as a damaged one, is compiled anew and
+     replaced. *)
   let compile_cached c src =
-    match
-      Option.bind c.cachekey (fun table -> Helpers.Diskcache.get ~table src)
-    with
+    let table = cachekey c in
+    let kept table =
+      try Helpers.Diskcache.get ~table src with Failure _ -> None
+    in
+    match Option.bind table kept with
     | Some lib -> lib
     | None ->
         if Helpers.getenv "ASSERT_COMPILE" 0 <> 0 then
           invalid_arg ("tried to compile with ASSERT_COMPILE set\n" ^ src);
         let lib = c.compile src in
-        Option.iter
-          (fun table -> Helpers.Diskcache.put ~table src lib)
-          c.cachekey;
+        Option.iter (fun table -> Helpers.Diskcache.put ~table src lib) table;
         lib
 end
 

@@ -34,3 +34,10 @@ val findlib : ?extra_paths:string list -> string -> string list -> string option
     link); elsewhere, a file [libp.so] or [libp.so.V], with [V] made of digits
     and dots, that starts as an ELF file does, the first in the order of their
     names. It is [None] if there is none. *)
+
+val identity : string option -> string
+(** [identity file] names the library [file], as {!findlib} finds it: its path,
+    size and time of last modification, or its path alone if it cannot be read,
+    as a library of macOS's shared cache, and ["none"] for [None]. A library
+    that changes changes its identity, so that what was compiled with it can be
+    told from what another compiles. *)

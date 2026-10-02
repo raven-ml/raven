@@ -166,10 +166,10 @@ let launches_as_tinygrad row =
     (program_info (recorded_program row))
     (program_info (program row))
 
-(* CUDA keeps a float8 infinity special; the source compares with
-   tinygrad's once the guard is written back as tinygrad writes it. A
-   narrowed program's source is tinygrad's for its instructions with the casts
-   that narrow, its golden <name>_narrowed. *)
+(* CUDA keeps a float8 infinity special; the source compares with tinygrad's
+   once the guard is written back as tinygrad writes it. A narrowed program's
+   source is tinygrad's for its instructions with the casts that narrow, its
+   golden <name>_narrowed. *)
 let writes_as_tinygrad row =
   let src = source (program row) in
   let src =
@@ -317,17 +317,18 @@ let host = lazy (Cstyle.clang host_target)
 let host_uncompiled = lazy (renderer_for host_target)
 
 (* The elements of each buffer that the run wrote: those it changed, and those
-   the kernel writes, whose values may equal what they held. *)
-let written_by_run k outputs =
+   the kernel writes ([expected]), whose values may equal what they held. *)
+let written_by_run k ~expected outputs =
   let inputs = Kernel_opts.inputs k in
-  let expected = Kernel_opts.writes k in
+  let kernel_writes = Hashtbl.create (List.length expected) in
+  List.iter (fun (s, j, _) -> Hashtbl.replace kernel_writes (s, j) ()) expected;
   List.concat_map
     (fun (slot, after) ->
       let before = List.assoc slot inputs in
       List.filteri
         (fun i _ ->
           (not (Testable.equal Dtypes.value before.(i) after.(i)))
-          || List.exists (fun (s, j, _) -> s = slot && j = i) expected)
+          || Hashtbl.mem kernel_writes (slot, i))
         (Array.to_list (Array.mapi (fun i v -> (slot, i, v)) after)))
     outputs
 
@@ -419,8 +420,9 @@ let runs_as_interpreted name () =
       (Run.program (Lazy.force host) uops)
       (stored ~kernel ~program (Kernel_opts.inputs k))
   in
-  equal (list Kernel_opts.write) (Kernel_opts.writes k)
-    (written_by_run k (read_back ~kernel ~program outputs))
+  let expected = Kernel_opts.writes k in
+  equal (list Kernel_opts.write) expected
+    (written_by_run k ~expected (read_back ~kernel ~program outputs))
 
 (* Each kernel is compiled by the host's C compiler, so the default run runs a
    few of them. *)
@@ -695,8 +697,7 @@ let caching =
     [
       test "a second call with an equal kernel compiles nothing"
         keeps_its_programs;
-      test
-        "calls from several domains at once make one program, compiled once"
+      test "calls from several domains at once make one program, compiled once"
         compiles_once_across_domains;
       test "a program made under one setting is not returned under another"
         separates_settings;
@@ -728,58 +729,91 @@ let caching =
 
    A child makes the program of add_clang's kernel and prints it. With
    ASSERT_COMPILE set, a program it would compile fails it instead, so a child
-   that succeeds under ASSERT_COMPILE read its program from the disk. *)
+   that succeeds under ASSERT_COMPILE read its program from the disk. Programs
+   are kept on disk only for a compiler that caches its binaries: [kept]'s
+   binaries are their sources' bytes, kept in a table of their own. *)
+
+let bytes_in table = Renderer.Compiler.v ~cachekey:(fun () -> table) Fun.id
+let kept = renderer_for ~compiler:(bytes_in "test_codegen_bytes") clang_target
+
+let printed ren () =
+  print_string
+    (Graph.to_string (Codegen.to_program (Lazy.force add_kernel) ren))
 
 let parts =
   [
-    ( "program",
-      fun () ->
-        print_string
-          (Graph.to_string (Codegen.to_program (Lazy.force add_kernel) clang))
-    );
+    ("program", printed kept);
+    ("uncached", printed clang);
+    ( "other compiler",
+      printed
+        (renderer_for ~compiler:(bytes_in "test_codegen_other") clang_target) );
   ]
 
-let made ?env db = Disk_cache.child ?env ~cachedb:db "program"
+let made ?env ?(part = "program") db = Disk_cache.child ?env ~cachedb:db part
 
-let read_from_disk ?(env = []) db =
-  made ~env:(("ASSERT_COMPILE", "1") :: env) db
+let read_from_disk ?(env = []) ?part db =
+  made ~env:(("ASSERT_COMPILE", "1") :: env) ?part db
 
 let compiled = Error "tried to compile with ASSERT_COMPILE set"
 let outcome = Disk_cache.outcome
 
 let the_program () =
-  Ok (Graph.to_string (Codegen.to_program (Lazy.force add_kernel) clang))
+  Ok (Graph.to_string (Codegen.to_program (Lazy.force add_kernel) kept))
 
 let reads_back () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
   equal outcome ~msg:"read back" (the_program ()) (read_from_disk db)
 
+(* A program made anew is kept beside the first; the binary of its source may be
+   read back. *)
 let misses_on env () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
-  equal outcome compiled (read_from_disk ~env db)
+  (match made ~env db with
+  | Ok _ -> ()
+  | Error err -> failf "the child failed: %s" err);
+  equal int ~msg:"programs kept" 2
+    (List.length (Disk_cache.entries ~table:"to_program" db))
 
 let recovers damage () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
-  Disk_cache.damage db damage;
+  Disk_cache.damage ~table:"to_program" db damage;
   equal outcome ~msg:"made again" (the_program ()) (made db);
   equal outcome ~msg:"then read back" (the_program ()) (read_from_disk db)
 
 let shows_its_source () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
-  let prg = Codegen.to_program (Lazy.force add_kernel) clang in
+  let prg = Codegen.to_program (Lazy.force add_kernel) kept in
   match read_from_disk ~env:[ ("DEBUG", "4") ] db with
   | Ok out -> contains ~sub:(source prg) out
   | Error err -> failf "the child failed: %s" err
 
+(* An entry of another build is made anew, and replaced by this build's. *)
 let ignores_other_builds () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
-  Disk_cache.damage db Disk_cache.of_another_build;
-  equal outcome compiled (read_from_disk db)
+  let programs () =
+    List.map
+      (fun e -> In_channel.with_open_bin e In_channel.input_all)
+      (Disk_cache.entries ~table:"to_program" db)
+  in
+  let kept = programs () in
+  Disk_cache.damage ~table:"to_program" db Disk_cache.of_another_build;
+  equal outcome ~msg:"made again" (the_program ()) (made db);
+  equal (list string) ~msg:"replaced" kept (programs ())
+
+let keeps_no_uncached () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made ~part:"uncached" db);
+  equal outcome compiled (read_from_disk ~part:"uncached" db)
+
+let other_compiler () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  equal outcome compiled (read_from_disk ~part:"other compiler" db)
 
 let races () =
   let db = Disk_cache.fresh () in
@@ -828,6 +862,10 @@ let on_disk =
         ];
       test "an entry of another build of the library is not read back"
         ignores_other_builds;
+      test "a program of a compiler that caches no binaries is not kept"
+        keeps_no_uncached;
+      test "a program is not read back for a compiler of another table"
+        other_compiler;
       test "processes making one program at once all get it" races;
     ]
 
@@ -1851,8 +1889,7 @@ let multiply_adds =
           equal (array Dtypes.value) [| `Float 0x1p-24 |] (List.assoc 0 out));
       test
         "a sum of products unrolled beside upcast lanes adds each into its \
-         running sum rounded once"
-        (fun () ->
+         running sum rounded once" (fun () ->
           let rows = 8 and n = 16 in
           let prg = Codegen.to_program (matvec ~rows n) (Lazy.force host) in
           (* each of the 4 running sums adds a product and 3 multiply-adds *)
@@ -1867,9 +1904,7 @@ let multiply_adds =
             List.init rows (fun _ -> row (-.(1. +. 0x1p-11)) x)
             |> List.concat |> Array.of_list
           in
-          let out =
-            Run.on_host prg [ (1, a); (2, Array.of_list (row 1. x)) ]
-          in
+          let out = Run.on_host prg [ (1, a); (2, Array.of_list (row 1. x)) ] in
           equal (array Dtypes.value)
             (Array.make rows (`Float 0x1p-24))
             (List.assoc 0 out));

@@ -26,12 +26,18 @@ val clang : string -> Renderer.Compiler.t
     not set [errno], so that a square root is one instruction. On [arm64] the
     register [x18] is left alone, since macOS and Windows clobber it.
 
-    With {!Helpers.ccache}, objects are cached in the table
-    [compile_clang_obj_A], where [A] is [arch] with its commas replaced by
-    underscores. {!Renderer.Compiler.compile} raises
-    {!Renderer.Compiler.Compile_error} with Clang's diagnostics if Clang rejects
-    the source or does not run, and {!Renderer.Compiler.disassemble} prints what
-    [objdump -d] prints ({!Helpers.cpu_objdump}).
+    Objects do not depend on the working directory. With {!Helpers.ccache}, they
+    are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
+    is [arch] with its commas replaced by underscores, and [D] the digest of
+    what that Clang states it runs to compile ([clang -###]): its version and
+    installation, the processor and features it compiles for, and every option,
+    or why it rejects them or does not run. An object is read back only for its
+    source, compiled by the same Clang with the same options. Clang is asked
+    once per process, when the table is first needed.
+    {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
+    Clang's diagnostics if Clang rejects the source or does not run, and
+    {!Renderer.Compiler.disassemble} prints what [objdump -d] prints
+    ({!Helpers.cpu_objdump}).
 
     Raises [Invalid_argument] naming [arch] if it has fewer than two fields, and
     naming its [MACHINE] if that is another. *)

@@ -123,10 +123,17 @@ val beam_search :
 
     While the setting {!Helpers.cachelevel} is positive, each search keeps the
     optimisations it finds in the {!Helpers.Diskcache} table ["beam_search"],
-    keyed by [k]'s kernel ({!Ops.key}), [amt], [allow_test_size], and the device
-    and suffix of [k]'s renderer. Unless {!Helpers.ignore_beam_cache} holds, a
-    search whose key is kept measures nothing, and applies the optimisations
-    kept beyond as many as [k] has to a copy of [k].
+    keyed by what the search is a function of but the times it measures: [k]'s
+    kernel ({!Ops.key}), [amt], [allow_test_size], the name and target of [k]'s
+    renderer and the table of its compiler's binaries
+    ({!Renderer.Compiler.cachekey}), the settings and variables that shape
+    compilation ({!Helpers.shaping}), the environment variables [BEAM_PADTO],
+    [BEAM_UOPS_MAX], [BEAM_STRICT_MODE], [BEAM_UPCAST_MAX], [BEAM_LOCAL_MAX] and
+    [BEAM_MIN_PROGRESS], and the sources of this library. Unless
+    {!Helpers.ignore_beam_cache} holds, a search whose key is kept measures
+    nothing, and applies the optimisations kept beyond as many as [k] has to a
+    copy of [k]. A kept result is what an earlier search measured fastest:
+    another search may measure otherwise.
 
     When the setting {!Helpers.debug} is [2] or more, the progress of the search
     is printed on standard output. When the environment variable [BEAM_DEBUG]
