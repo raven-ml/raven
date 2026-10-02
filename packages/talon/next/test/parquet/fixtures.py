@@ -207,16 +207,17 @@ def generate():
     write("types_lz4.parquet", codecs, data_page_version="2.0", compression="lz4")
     write("types_plain.parquet", t, use_dictionary=False, compression="none", store_decimal_as_integer=True)
     enc = t.select(["bool", "i8", "i32", "i64", "u64", "f16", "f32", "f64", "d9", "string", "fsb", "req_string"])
-    write(
-        "encodings.parquet", enc, data_page_version="2.0", use_dictionary=False, compression="zstd",
-        store_decimal_as_integer=True,
-        column_encoding={
-            "i8": "DELTA_BINARY_PACKED", "i32": "DELTA_BINARY_PACKED", "i64": "DELTA_BINARY_PACKED",
-            "u64": "BYTE_STREAM_SPLIT", "f16": "BYTE_STREAM_SPLIT", "f32": "BYTE_STREAM_SPLIT",
-            "f64": "BYTE_STREAM_SPLIT", "d9": "BYTE_STREAM_SPLIT", "string": "DELTA_BYTE_ARRAY",
-            "fsb": "DELTA_BYTE_ARRAY", "req_string": "DELTA_LENGTH_BYTE_ARRAY",
-        },
-    )
+    column_encoding = {
+        "i8": "DELTA_BINARY_PACKED", "i32": "DELTA_BINARY_PACKED", "i64": "DELTA_BINARY_PACKED",
+        "u64": "BYTE_STREAM_SPLIT", "f16": "BYTE_STREAM_SPLIT", "f32": "BYTE_STREAM_SPLIT",
+        "f64": "BYTE_STREAM_SPLIT", "d9": "BYTE_STREAM_SPLIT", "string": "DELTA_BYTE_ARRAY",
+        "fsb": "DELTA_BYTE_ARRAY", "req_string": "DELTA_LENGTH_BYTE_ARRAY",
+    }
+    for name, compression in [("encodings.parquet", "zstd"), ("encodings_uncompressed.parquet", "none")]:
+        write(
+            name, enc, data_page_version="2.0", use_dictionary=False, compression=compression,
+            store_decimal_as_integer=True, column_encoding=column_encoding,
+        )
     write("fallback.parquet", t.select(["i8", "f64", "string", "binary"]), dictionary_pagesize_limit=64, compression="lz4")
     names = pa.table({"a b": [1, 2], '"q"': [3, 4], "é": [5, 6], "": [7, 8]})
     write("names.parquet", names)
@@ -434,7 +435,7 @@ def expect(name):
 
 READ = [p.removeprefix("data/") for p, _ in CORPUS if not p.endswith(".encrypted")] + [
     "types.parquet", "types_v2_zstd.parquet", "types_gzip.parquet", "types_lz4.parquet",
-    "types_plain.parquet", "encodings.parquet", "fallback.parquet", "names.parquet", "empty.parquet",
+    "types_plain.parquet", "encodings.parquet", "encodings_uncompressed.parquet", "fallback.parquet", "names.parquet", "empty.parquet",
     "int96.parquet", "decimals_int.parquet", "decimals_bytes.parquet", "decimal38.parquet",
 ]
 # Refused by talon when sniffed; read with errors by talon where pyarrow guesses

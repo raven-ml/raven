@@ -211,6 +211,7 @@ let sniff_errors () =
     [
       ("empty", Reader.of_string "");
       ("a byte order mark", Reader.of_string "\xEF\xBB\xBF");
+      ("only empty lines", Reader.of_string "\n\r\n\n");
       ("ragged", Reader.of_string "a,b\n1,2\n3\n");
       ("ragged with a tab", Reader.of_string "a\tb\n1\t2\t3\n");
       ("unterminated quote", Reader.of_string "a,b\n1,\"2\n3,4\n");
@@ -223,6 +224,7 @@ let sniff_errors () =
        {|
     empty: the input holds no record
     a byte order mark: the input holds no record
+    only empty lines: the input holds no record
     ragged: line 3, column 1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2
     ragged with a tab: line 2, column 1: no separator splits every record into the same number of fields: with '\t', the record has 3 fields, and the first one 2
     unterminated quote: line 2, column 3: a quoted field does not end
@@ -481,6 +483,9 @@ let syntax_errors () =
       ( "a byte order mark and no header",
         Csv.format [ ("a", any Type.string) ],
         "\xEF\xBB\xBF" );
+      ( "only empty lines and a header",
+        Csv.format [ ("a", any Type.string) ],
+        "\n\r\n\n" );
       ("a column after a byte order mark", texts 2, "\xEF\xBB\xBFa,\"b\"c\n");
     ];
   expect (output ())
@@ -498,6 +503,7 @@ let syntax_errors () =
     the header has too few fields: line 1, column 2: the record has 1 field, and the format 2 columns
     no header: the input is empty, and the format has a header
     a byte order mark and no header: the input is empty, and the format has a header
+    only empty lines and a header: the input is empty, and the format has a header
     a column after a byte order mark: line 1, column 6: a quoted field's closing quote is followed by a byte other than a separator or a line break
     |}
 

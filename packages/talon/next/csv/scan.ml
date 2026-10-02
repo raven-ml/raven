@@ -227,7 +227,7 @@ let split s stop =
   s.rows <- !rows;
   s.lines <- !lines
 
-let next s =
+let rec next s =
   Option.iter raise s.pending;
   if s.line = 0 then begin
     s.line <- 1;
@@ -243,8 +243,9 @@ let next s =
   if stop = s.start then false
   else begin
     split s stop;
-    if s.rows = 0 then Option.iter raise s.pending;
-    true
+    (* A batch of empty lines holds no record: the next batch follows it. *)
+    if s.rows > 0 then true
+    else match s.pending with Some e -> raise e | None -> next s
   end
 
 let rows s = s.rows

@@ -318,75 +318,6 @@ let sniffing =
             |});
     ]
 
-(* Robustness *)
-
-let changed s pos byte =
-  let b = Bytes.of_string s in
-  Bytes.set b pos (Char.chr byte);
-  Bytes.to_string b
-
-let sniffed =
-  [
-    "alltypes_plain.parquet";
-    "alltypes_dictionary.parquet";
-    "types.parquet";
-    "types_v2_zstd.parquet";
-    "names.parquet";
-    "empty.parquet";
-    "byte_stream_split_extended.gzip.parquet";
-    "delta_binary_packed.parquet";
-    "nation.dict-malformed.parquet";
-    "int96_from_spark.parquet";
-    "data_index_bloom_encoding_stats.parquet";
-    "unknown-logical-type.parquet";
-  ]
-
-let pick names = Gen.of_list ~pp:Format.pp_print_string names
-
-(* One file per codec, page version and encoding family, which all have the
-   columns that the property reads. *)
-let fuzzed =
-  [
-    "types.parquet";
-    "types_v2_zstd.parquet";
-    "types_gzip.parquet";
-    "types_lz4.parquet";
-    "types_plain.parquet";
-    "encodings.parquet";
-  ]
-
-let robustness =
-  group "Malformed files return errors"
-    [
-      prop "sniff on a footer cut short"
-        Gen.(pair (pick sniffed) nat)
-        (fun (name, k) ->
-          let s = file_bytes name in
-          let len = String.length s - 8 - footer s in
-          is_error (P.sniff (of_string (cut_footer s (1 + (k mod len))))));
-      (* A third of the changes hit the eight bytes that end the file: the
-         footer's length and the magic. *)
-      prop "sniff on a footer with one byte changed"
-        Gen.(
-          triple (pick sniffed)
-            (frequency [ (2, nat); (1, int_range (-8) (-1)) ])
-            (int_range 0 255))
-        (fun (name, at, byte) ->
-          let s = file_bytes name in
-          let n = String.length s and first = footer s in
-          let at = if at < 0 then n + at else first + (at mod (n - first)) in
-          ignore (P.sniff (of_string (changed s at byte))));
-      prop "reading pages with one byte changed"
-        Gen.(triple (pick fuzzed) nat (int_range 0 255))
-        (fun (name, at, byte) ->
-          let s = file_bytes name in
-          let s = of_string (changed s (4 + (at mod (footer s - 4))) byte) in
-          let f = declared name in
-          List.iter
-            (fun c -> ignore (read_from f s c))
-            [ "bool"; "i32"; "f64"; "string"; "fsb"; "req_string" ]);
-    ]
-
 (* Formats *)
 
 let any t = Type.Any t
@@ -1144,12 +1075,4 @@ let decoding =
 let () =
   exit
     (run "talon.next.parquet"
-       [
-         agreement;
-         sniffing;
-         formats;
-         synthesized;
-         sources;
-         decoding;
-         robustness;
-       ])
+       [ agreement; sniffing; formats; synthesized; sources; decoding ])

@@ -100,16 +100,16 @@ jobs:
           opam exec -- dune build --release packages/talon
           opam exec -- dune build --release @packages/talon/runtest
 
-      # The Parquet decoders parse untrusted bytes: their suite runs with the C
-      # built under AddressSanitizer and UndefinedBehaviorSanitizer, each
-      # property over 1000 files.
-      - name: Test talon.next.parquet under the sanitizers
+      # The CSV and Parquet decoders parse untrusted bytes: their suites, the
+      # fuzz suites included, run with the C built under AddressSanitizer and
+      # UndefinedBehaviorSanitizer, each property over 1000 files.
+      - name: Test talon.next's decoders under the sanitizers
         if: runner.os != 'Windows'
         env:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --profile sanitize @packages/talon/next/test/parquet/runtest
+        run: opam exec -- dune build --profile sanitize @packages/talon/next/test/csv/runtest @packages/talon/next/test/parquet/runtest
 
       # Talon's benchmark questions at the CI size (H2O at 1e6 rows, TPC-H at
       # scale factor 0.1) must answer as DuckDB's committed answers do. The
