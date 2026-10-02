@@ -19,6 +19,7 @@ let get = Rows.get
 let normalized = Rows.normalized
 let range = Rows.range
 let ticks = Rows.ticks
+let scale = Rows.scale
 let positions = Rows.positions
 let points = Rows.points
 let extent = Rows.extent

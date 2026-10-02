@@ -34,3 +34,4 @@ dune exec packages/hugin/next/examples/01-line/main.exe
 | [`13-histogram`](13-histogram/main.ml) | Two histograms over shared bins from `Stats.histogram`, drawn as rects from their edges | ![](13-histogram/histogram.png) |
 | [`14-area`](14-area/main.ml) | A band between the lowest and highest of eight seeds (`area` with `y2`), under their mean | ![](14-area/area.png) |
 | [`15-errorbars`](15-errorbars/main.ml) | Error bars as a composition: a `rule` from `y` to `y2` under each `dot` | ![](15-errorbars/errorbars.png) |
+| [`17-calibration`](17-calibration/main.ml) | A calibration plot over the dashed diagonal `abline` y = x, its axes in percent | ![](17-calibration/calibration.png) |

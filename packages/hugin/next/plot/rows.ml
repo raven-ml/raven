@@ -9,6 +9,7 @@ module Path = Hugin_next_gg.Path
 module Color = Hugin_next_gg.Color
 module Text = Hugin_next_text.Text
 module Picture = Hugin_next_vg.Picture
+module Scale = Hugin_next_kit.Scale
 
 (* Columns *)
 
@@ -27,12 +28,15 @@ type col =
 
 (* Rows *)
 
+type fitted = Fitted : 'd Scale.t -> fitted
+
 type t = {
   id : Common.id;
   shape : int array;
   index : int array;
   theme : Theme.t;
   projection : Coord.projection;
+  axes : fitted option * fitted option;
   cols : col list;
   dropped : bool array;
   warn : string -> unit;
@@ -87,6 +91,15 @@ let range : type d v. t -> (d, v) Role.t -> (float -> v) option =
 
 let ticks r (role : _ Role.t) =
   Option.bind (find r role) (fun (Col c) -> Option.map Array.copy c.ticks)
+
+let scale : type d. t -> [ `X | `Y ] -> d Scale.kind -> d Scale.t option =
+ fun r axis kind ->
+  match match axis with `X -> fst r.axes | `Y -> snd r.axes with
+  | None -> None
+  | Some (Fitted s) -> (
+      match Scale.equal_kind (Scale.kind s) kind with
+      | Some Type.Equal -> Some s
+      | None -> None)
 
 (* A position: the normalised value of each row, the bandwidth of its band scale
    or the normalised zero of its continuous one, and whether it reads a

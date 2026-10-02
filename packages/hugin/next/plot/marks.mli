@@ -73,6 +73,18 @@ val rule :
   unit ->
   t
 
+val abline :
+  ?stroke:('s, Color.t) channel ->
+  ?width:('w, float) channel ->
+  ?dash:(string, Dash.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  slope:(float, float) channel ->
+  intercept:(float, float) channel ->
+  unit ->
+  t
+
 val text :
   ?fill:('f, Color.t) channel ->
   ?opacity:('o, float) channel ->

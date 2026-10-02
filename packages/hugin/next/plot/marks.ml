@@ -481,6 +481,76 @@ let rule ?x ?x2 ?y ?y2 ?stroke ?width ?dash ?opacity ?fx ?fy () =
     @ facets fx fy)
     draw_rule
 
+(* Lines of equations *)
+
+let slope_role = Role.value ~name:"slope"
+let intercept_role = Role.value ~name:"intercept"
+
+(* [equation_path rows sx sy m c] is the line y = m x + c across the x domain of
+   [sx], in normalised positions: a segment between its ends if [sx] and [sy]
+   are linear, and otherwise a curve through points one point of the page apart
+   along x. *)
+let equation_path rows sx sy m c =
+  let nx = Scale.normalize sx and ny = Scale.normalize sy in
+  let y x = ny ((m *. x) +. c) in
+  match (Scale.transform sx, Scale.transform sy) with
+  | Scale.Linear, Scale.Linear ->
+      let (Scale.Floats (a, b)) = Scale.domain sx in
+      Path.polyline [| nx a; nx b |] [| y a; y b |]
+  | _ ->
+      let at u = Coord.point (Mark.projection rows) u 0. in
+      let w = Float.abs (P2.x (at 1.) -. P2.x (at 0.)) in
+      let n = Int.max 1 (Float.to_int (Float.ceil w)) in
+      let us = Array.init (n + 1) (fun j -> Float.of_int j /. Float.of_int n) in
+      let vs =
+        Array.map
+          (fun u ->
+            match Scale.invert sx u with Some x -> y x | None -> Float.nan)
+          us
+      in
+      Curve.path Curve.linear us vs
+
+let draw_abline rows =
+  match
+    ( Mark.scale rows `X Scale.Quantitative,
+      Mark.scale rows `Y Scale.Quantitative )
+  with
+  | Some sx, Some sy ->
+      let th = Mark.theme rows in
+      let slopes = or_const rows slope_role Float.nan
+      and intercepts = or_const rows intercept_role Float.nan in
+      let colours = faded rows (or_const rows Role.stroke (Theme.ink th)) in
+      let widths = or_const rows Role.width (em rows line_em) in
+      let dashes = or_const rows Role.dash Dash.solid in
+      let line i =
+        let m = slopes.(i) and c = intercepts.(i) in
+        if not (finite m && finite c) then Picture.empty
+        else
+          let path = Mark.project rows (equation_path rows sx sy m c) in
+          if Option.is_none (Path.bounds path) then Picture.empty
+          else
+            Picture.stroke
+              (pen ~cap:`Butt widths.(i) dashes.(i))
+              colours.(i) path
+      in
+      Picture.group (List.init (Mark.length rows) line)
+  | _ ->
+      Mark.warn rows "an abline needs quantitative x and y scales";
+      Picture.empty
+
+let abline ?stroke ?width ?dash ?opacity ?fx ?fy ~slope ~intercept () =
+  make "abline" ~swatch:draw_rule
+    ([
+       Some (on slope_role slope);
+       Some (on intercept_role intercept);
+       opt Role.stroke stroke;
+       opt Role.width width;
+       opt Role.dash dash;
+       opt Role.opacity opacity;
+     ]
+    @ facets fx fy)
+    draw_abline
+
 (* Texts *)
 
 (* [draw_texts rows texts] sets [texts.(i)] at the point of each row. *)

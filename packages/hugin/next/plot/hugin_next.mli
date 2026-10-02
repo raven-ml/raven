@@ -569,6 +569,33 @@ val rule :
     Raises [Invalid_argument] if [x2] is given without [x] or [y2] without [y],
     or if the channels given match none of these cases. *)
 
+val abline :
+  ?stroke:('s, Color.t) channel ->
+  ?width:('w, float) channel ->
+  ?dash:(string, Dash.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  slope:(float, float) channel ->
+  intercept:(float, float) channel ->
+  unit ->
+  t
+(** [abline ~slope ~intercept ()] draws, for each row, the line
+    [y = slope × x + intercept] across the x domain of each panel, cut at the
+    domain's edges: a straight segment if the panel's x and y scales are both
+    linear, and otherwise a curve through points one point of the page apart
+    along x. [slope] and [intercept] are values ({!Role.value}): they read no
+    scale and contribute to no domain, so an abline never widens the domain it
+    is drawn across. The line is stroked as {!rule} strokes, with [stroke], the
+    ink by default, at [width], the theme's line width by default, broken by
+    [dash]. [abline ~slope:(const 1.) ~intercept:(const 0.) ()] is the diagonal
+    of a calibration plot, and
+    [abline ~slope:(num s) ~intercept:(num b) ~stroke:(dim 0) ()] one fitted
+    line per seed.
+
+    A panel whose x or y is not quantitative, or that has no x or y, draws no
+    abline, with a warning. *)
+
 val text :
   ?fill:('f, Color.t) channel ->
   ?opacity:('o, float) channel ->
@@ -1450,6 +1477,13 @@ module Mark : sig
       {!get} gives a missing value. With [range rows r = Some f], [get rows r]
       is [Option.map (Array.map f) (normalized rows r)], and a contour fills the
       band between two levels with [f] at their midpoint. *)
+
+  val scale : rows -> [ `X | `Y ] -> 'd Scale.kind -> 'd Scale.t option
+  (** [scale rows `X k] is [Some s], the fitted scale ({!Resolved.scale}) that
+      the channels on x of the panel read, if it has kind [k], whether or not
+      the mark binds [x], and [None] if they read none or one of another kind,
+      as in a swatch. So a mark draws across a panel's domain from values alone:
+      {!abline} reads the domain of [s]. [scale rows `Y k] is likewise on y. *)
 
   val ticks : rows -> ('d, 'r) Role.t -> float array option
   (** [ticks rows r] is [Some us], the normalised positions of the major ticks

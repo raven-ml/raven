@@ -2082,6 +2082,167 @@ let dashes =
             (List.map Stroke.dash (strokes_of (List.hd legends) d)));
     ]
 
+(* Ablines *)
+
+let points_of path =
+  List.rev
+    (Path.fold
+       ~move:(fun acc x y -> P2.v x y :: acc)
+       ~line:(fun acc x y -> P2.v x y :: acc)
+       ~cubic:(fun acc _ _ _ _ x y -> P2.v x y :: acc)
+       ~close:Fun.id [] path)
+
+let line_id = path [ Index 1 ]
+
+(* Position scales of each transform, the data a line [y = 2x + 1] spans without
+   leaving their domains. *)
+let transforms =
+  let lin name = Scale.linear ~name () and log name = Scale.log ~name () in
+  [
+    ("linear", (lin "x", lin "y"));
+    ("log x", (log "x", lin "y"));
+    ("log y", (lin "x", log "y"));
+    ("log x and y", (log "x", log "y"));
+  ]
+
+let equation_case (name, (sx, sy)) =
+  let f =
+    layer
+      [
+        dot
+          ~x:(num ~scale:sx (f64 [| 1.; 100. |]))
+          ~y:(num ~scale:sy (f64 [| 3.; 201. |]))
+          ();
+        abline ~slope:(const 2.) ~intercept:(const 1.) ();
+      ]
+  in
+  let r = resolve f in
+  let l = layout (Size.panels 100. 100.) r in
+  let proj = (List.hd (Layout.panels l)).projection in
+  let fx = Resolved.scale r sx and fy = Resolved.scale r sy in
+  let pts =
+    List.concat_map
+      (fun s -> points_of s)
+      (List.map
+         (fun (st : Picture.t) ->
+           match st with Stroke s -> s.path | _ -> Path.empty)
+         (List.concat_map
+            (fun (_, p) ->
+              fold
+                (fun acc p ->
+                  match p with Picture.Stroke _ -> p :: acc | _ -> acc)
+                [] p)
+            (tags line_id (draw ~density:1. l))))
+  in
+  let n = List.length pts in
+  if name = "linear" then equal ~msg:"a segment" int 2 n
+  else greater ~msg:"a curve" int ~than:50 n;
+  let us =
+    List.map
+      (fun p ->
+        let u, v = Option.get (Coord.invert proj p) in
+        let x = Option.get (Scale.invert fx u)
+        and y = Option.get (Scale.invert fy v) in
+        equal
+          ~msg:(Format.asprintf "%a" P2.pp p)
+          (float_rel ~rel:1e-9 ~abs:0.)
+          ((2. *. x) +. 1.)
+          y;
+        u)
+      pts
+  in
+  equal ~msg:"from the domain's start" (float 1e-9) 0.
+    (List.fold_left Float.min 1. us);
+  equal ~msg:"to its end" (float 1e-9) 1. (List.fold_left Float.max 0. us)
+
+let gen_coefficient =
+  Gen.frequency
+    [
+      (4, Gen.float_range (-10.) 10.);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_float
+          [ 0.; nan; Float.infinity; 1e300; -1e300 ] );
+    ]
+
+let unchanged_law (m, c) =
+  let dots = dot ~x:(num (f64 [| 1.; 4. |])) ~y:(num (f64 [| -2.; 7. |])) () in
+  let scales f =
+    let r = resolve f in
+    ( Resolved.scale r (Scale.linear ~name:"x" ()),
+      Resolved.scale r (Scale.linear ~name:"y" ()) )
+  in
+  let fscale = Testable.make ~pp:Scale.pp ~equal:Scale.equal in
+  equal (pair fscale fscale)
+    (scales (layer [ dots ]))
+    (scales
+       (layer
+          [
+            dots; abline ~slope:(const m) ~intercept:(num (f64 [| c; 0. |])) ();
+          ]))
+
+let ablines =
+  group "Ablines"
+    [
+      cases "the points of an abline satisfy its equation" ~name:fst transforms
+        equation_case;
+      prop "an abline leaves every fitted scale as it was"
+        (Gen.pair gen_coefficient gen_coefficient)
+        unchanged_law;
+      cases "an abline of slope 0 draws the rule at its intercept"
+        ~name:string_of_float [ 1.5; 2.; 3.25 ] (fun c ->
+          let dots =
+            dot ~x:(num (f64 [| 1.; 4. |])) ~y:(num (f64 [| 1.; 4. |])) ()
+          in
+          equal drawing
+            (drawn (layer [ dots; rule ~y:(Hugin_next.floats [| c |]) () ]))
+            (drawn
+               (layer
+                  [ dots; abline ~slope:(const 0.) ~intercept:(const c) () ])));
+      test "an abline over a band x draws nothing, with a warning" (fun () ->
+          let f =
+            layer
+              [
+                dot ~x:(strings [| "a"; "b" |]) ~y:(num (f64 [| 1.; 4. |])) ();
+                abline ~slope:(const 1.) ~intercept:(const 0.) ();
+              ]
+          in
+          let d = drawn f in
+          equal int 0 (List.length (strokes_of line_id d));
+          equal (list string)
+            [ "an abline needs quantitative x and y scales" ]
+            (List.filter_map
+               (fun (id, msg) ->
+                 if Nx.Ptree.Path.equal id line_id then Some msg else None)
+               (Drawing.warnings d)));
+      test "Mark.scale is the panel's fitted position scale of its kind"
+        (fun () ->
+          let x = Scale.log ~name:"x" () in
+          let m, seen =
+            probe
+              [ Mark.bind Role.fill (num (f64 [| 1. |])) ]
+              (fun rows ->
+                ( Mark.scale rows `X Scale.Quantitative,
+                  Mark.scale rows `X Scale.Categorical,
+                  Mark.scale rows `Y Scale.Quantitative ))
+          in
+          let dots =
+            dot
+              ~x:(num ~scale:x (f64 [| 1.; 50. |]))
+              ~y:(num (f64 [| 1.; 2. |]))
+              ()
+          in
+          let f = layer [ dots; m ] in
+          ignore (drawn f);
+          let qx, cx, qy = only seen in
+          let r = resolve f in
+          let fscale = Testable.make ~pp:Scale.pp ~equal:Scale.equal in
+          equal (option fscale) (Some (Resolved.scale r x)) qx;
+          equal (option (Testable.make ~pp:Scale.pp ~equal:Scale.equal)) None cx;
+          equal (option fscale)
+            (Some (Resolved.scale r (Scale.linear ~name:"y" ())))
+            qy);
+    ]
+
 (* Explicit ticks *)
 
 let gen_ticks =
@@ -2244,6 +2405,7 @@ let () =
          steps;
          explicit_ticks;
          dashes;
+         ablines;
          legend_swatches;
          public_marks;
          goldens;

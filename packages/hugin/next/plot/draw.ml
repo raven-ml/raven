@@ -510,6 +510,7 @@ let m4 cx m (panel : Layout.panel) reads mask =
 type target = {
   fp : Resolved.panel;
   panel : Layout.panel;
+  axes : Rows.fitted option * Rows.fitted option;
   mutable pictures : Picture.t list;
   mutable notes : warning list;
 }
@@ -558,7 +559,8 @@ let draw_occ cx occ part targets =
     let box = t.panel.box and proj = t.panel.projection in
     let rows only rd sel =
       reading occ.mid (fun () ->
-          Read.rows ?only cx.ctx rd ~id:occ.mid proj ~warn reads sel)
+          Read.rows ?only cx.ctx rd ~id:occ.mid proj ~axes:t.axes ~warn reads
+            sel)
     in
     let drawn rd sel =
       let r = rows None rd sel in
@@ -609,6 +611,13 @@ let panels cx =
   let targets =
     List.concat_map
       (fun (_, (c : Resolved.cell)) ->
+        let axis (fp : Resolved.panel) on =
+          Option.map
+            (fun i ->
+              let (F f) = cx.ctx.scales.(i) in
+              Rows.Fitted f.scale)
+            (shown c.content fp.reads on)
+        in
         let targets =
           List.filter_map
             (fun (fp : Resolved.panel) ->
@@ -616,7 +625,8 @@ let panels cx =
                 (fun (p : Layout.panel) -> Nx.Ptree.Path.equal p.id fp.pnid)
                 laid
               |> Option.map (fun panel ->
-                  { fp; panel; pictures = []; notes = [] }))
+                  let axes = (axis fp (`Axis Role.X), axis fp (`Axis Role.Y)) in
+                  { fp; panel; axes; pictures = []; notes = [] }))
             c.panels
         in
         (match targets with

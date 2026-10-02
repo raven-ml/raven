@@ -10,6 +10,7 @@ module Path := Hugin_next_gg.Path
 module Color := Hugin_next_gg.Color
 module Text := Hugin_next_text.Text
 module Picture := Hugin_next_vg.Picture
+module Scale := Hugin_next_kit.Scale
 
 (** {1:columns Columns} *)
 
@@ -33,12 +34,17 @@ type col =
 
 (** {1:rows Rows} *)
 
+(** A fitted scale of any kind. *)
+type fitted = Fitted : 'd Scale.t -> fitted
+
 type t = {
   id : Common.id;
   shape : int array;
   index : int array;
   theme : Theme.t;
   projection : Coord.projection;
+  axes : fitted option * fitted option;
+      (** The fitted scales that the panel's channels on x and y read. *)
   cols : col list;
   dropped : bool array;
   warn : string -> unit;
@@ -54,6 +60,7 @@ val get : t -> ('d, 'r) Role.t -> 'r array option
 val normalized : t -> ('d, 'r) Role.t -> float array option
 val range : t -> ('d, 'r) Role.t -> (float -> 'r) option
 val ticks : t -> ('d, 'r) Role.t -> float array option
+val scale : t -> [ `X | `Y ] -> 'd Scale.kind -> 'd Scale.t option
 val positions : t -> float array * float array
 val points : t -> float array * float array
 val extent : t -> [ `X | `Y ] -> float array * float array

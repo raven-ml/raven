@@ -35,6 +35,7 @@ val get : rows -> ('d, 'r) Role.t -> 'r array option
 val normalized : rows -> ('d, 'r) Role.t -> float array option
 val range : rows -> ('d, 'r) Role.t -> (float -> 'r) option
 val ticks : rows -> ('d, 'r) Role.t -> float array option
+val scale : rows -> [ `X | `Y ] -> 'd Scale.kind -> 'd Scale.t option
 val positions : rows -> float array * float array
 val points : rows -> float array * float array
 val extent : rows -> [ `X | `Y ] -> float array * float array

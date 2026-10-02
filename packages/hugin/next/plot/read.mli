@@ -31,13 +31,15 @@ val rows :
   reader ->
   id:Common.id ->
   Coord.projection ->
+  axes:Rows.fitted option * Rows.fitted option ->
   warn:(string -> unit) ->
   int option array ->
   sel ->
   Rows.t
-(** [rows ~only ctx rd ~id proj ~warn reads sel] is the rows [sel] of the mark
-    of [rd], whose binding [i] reads the scale [reads.(i)], with the bindings of
-    the roles [only], all by default. *)
+(** [rows ~only ctx rd ~id proj ~axes ~warn reads sel] is the rows [sel] of the
+    mark of [rd], in a panel whose x and y read the scales [axes], whose binding
+    [i] reads the scale [reads.(i)], with the bindings of the roles [only], all
+    by default. *)
 
 val swatch :
   ctx ->

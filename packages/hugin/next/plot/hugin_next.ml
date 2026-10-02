@@ -20,6 +20,7 @@ let line = Marks.line
 let area = Marks.area
 let rect = Marks.rect
 let rule = Marks.rule
+let abline = Marks.abline
 let text = Marks.text
 let image = Marks.image
 let contour = Marks.contour

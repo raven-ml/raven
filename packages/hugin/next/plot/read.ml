@@ -419,7 +419,7 @@ let unscaled ctx rd (B b as bd) index sel =
   | Role.Colors | Role.Symbols | Role.Dashes | Role.Panels | Role.Param _ ->
       err "draw" "the role %s reads no scale" b.role.name
 
-let rows ?only ctx rd ~id projection ~warn reads sel =
+let rows ?only ctx rd ~id projection ~axes ~warn reads sel =
   let m = rd.mark and stroked = stroked rd.mark in
   let n = count m.shape sel in
   let dropped = Array.make n false in
@@ -455,6 +455,7 @@ let rows ?only ctx rd ~id projection ~warn reads sel =
     index;
     theme = ctx.theme;
     projection;
+    axes;
     cols;
     dropped;
     warn;
@@ -503,6 +504,7 @@ let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
     index = [| k |];
     theme = ctx.theme;
     projection;
+    axes = (None, None);
     cols = List.filter_map Fun.id (List.mapi col m.bindings);
     dropped = [| false |];
     warn;
