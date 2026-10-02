@@ -667,11 +667,11 @@ let where cond if_true if_false =
     B.where (broadcast_to target cond) (broadcast_to target if_true)
       (broadcast_to target if_false)
 
-(* [x] where it is positive or NaN, and zero elsewhere, [-0.] included. *)
+(* [x] where it is positive or NaN, and zero elsewhere, [-0.] included: there
+   [x <= 0] is false. *)
 let relu x =
-  where
-    (logical_or (greater_s x (Nx_dtype.zero (dtype x))) (cmpne x x))
-    x (zeros_like x)
+  let zero = scalar_like x (Nx_dtype.zero (dtype x)) in
+  where (less_equal x zero) zero x
 
 let fma a b c =
   let dt = dtype a in
