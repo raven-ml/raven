@@ -285,6 +285,38 @@ let missing_law =
       let u = Scale.normalize (Scale.log ~domain:d ()) x in
       equal bool (Float.is_finite x && x > 0.) (not (Float.is_nan u)))
 
+(* Band scales of up to six labelled or indexed categories, padded and reversed
+   or not. *)
+let gen_band =
+  Gen.map
+    (fun (n, padding, reverse, indexed) ->
+      let domain =
+        if indexed then
+          Scale.Indices (Array.init n (fun i -> ((3 * i) - 4, "t")))
+        else Scale.Labels (Array.init n (fun i -> "c" ^ string_of_int i))
+      in
+      Scale.band ~domain ~padding ~reverse ())
+    (Gen.quad (Gen.int_range 0 6) (Gen.float_range 0. 1.) Gen.bool Gen.bool)
+  |> Gen.with_pp Scale.pp
+
+let index_law =
+  prop "a category's index normalises as the category, and no other index does"
+    (Gen.pair gen_band (Gen.int_range (-2) 8))
+    (fun (s, k) ->
+      let names =
+        match Scale.domain s with
+        | Scale.Categories (Labels l) -> l
+        | Scale.Categories (Indices ix) ->
+            Array.map (fun (i, _) -> string_of_int i) ix
+      in
+      let inside = 0 <= k && k < Array.length names in
+      cover "an index of the domain" inside;
+      cover "an index off the domain" (not inside);
+      let expected =
+        if inside then Scale.normalize s names.(k) else Float.nan
+      in
+      equal float_exact expected (Scale.normalize_index s k))
+
 let normalisation =
   group "normalisation"
     [
@@ -293,6 +325,7 @@ let normalisation =
       monotone_law;
       reverse_law;
       clamp_law;
+      index_law;
       test "a clamped value just below the domain is positive zero" (fun () ->
           let s = Scale.linear ~clamp:true ~domain:(0., 2.) () in
           equal float_exact 0. (Scale.normalize s (-5e-324)));

@@ -9,9 +9,11 @@
    scopes and broadcasting layers over grids; reads the channels of each
    occurrence and merges the specifications of each scale; summarises each
    occurrence's data where it lives; and fits the scales, categorical ones first
-   since facets make panels. An occurrence is a mark in one cell: a mark that a
-   layer broadcasts over a grid occurs once per cell, and reads the scales of
-   each. *)
+   since facets make panels. Each occurrence's rows are put among its cell's
+   panels once, by category index, and each panel records the scale every
+   binding reads in it, which layout and drawing look up. An occurrence is a
+   mark in one cell: a mark that a layer broadcasts over a grid occurs once per
+   cell, and reads the scales of each. *)
 
 module Scale = Hugin_next_kit.Scale
 module Text = Hugin_next_text.Text
@@ -19,7 +21,6 @@ open Common
 open Channel
 open Figure
 open Arrange
-open Summary
 
 (* Readings: the channels that read scales, each with its scale's identity and
    scope. *)
@@ -248,11 +249,6 @@ let check_axes cells readings =
 
 (* Merging specifications *)
 
-let labelled : type d. d lift -> bool = function
-  | Cat { labels = Some _; _ } | Strings _ -> true
-  | Cat { labels = None; _ } | Dim _ -> false
-  | Num _ | Index _ | Scalar _ -> false
-
 let merge_level name level specs =
   let rec go acc prior = function
     | [] -> acc
@@ -318,7 +314,7 @@ let merged : type d. d kind -> string -> d member list -> d Scale.t =
   (* Labelled and indexed categories identify categories differently. *)
   (match kind with
   | Categories -> (
-      let sort m = labelled m.m_d.lift in
+      let sort m = Lift.labelled m.m_d.lift in
       (match ms with
       | m :: rest -> (
           match List.find_opt (fun m' -> sort m' <> sort m) rest with
@@ -328,8 +324,8 @@ let merged : type d. d kind -> string -> d member list -> d Scale.t =
                 pp_id m.m_occ.mid pp_id m'.m_occ.mid name
           | None -> ())
       | [] -> ());
-      match (explicit_domain spec, ms) with
-      | Some (Scale.Categories c), m :: _ ->
+      match (Scale.domain spec, ms) with
+      | Scale.Categories c, m :: _ when Scale.sets Domain spec ->
           let domain_labelled =
             match c with Scale.Labels _ -> true | Scale.Indices _ -> false
           in
@@ -368,7 +364,7 @@ let by_order ms =
 
 let categories name (ms : string member list) summary_of =
   match ms with
-  | m :: _ when labelled m.m_d.lift ->
+  | m :: _ when Lift.labelled m.m_d.lift ->
       let seen = Hashtbl.create 16 and labels = ref [] in
       let add l =
         if not (Hashtbl.mem seen l) then (
@@ -407,7 +403,8 @@ let categories name (ms : string member list) summary_of =
           | Cat { labels = None; _ } ->
               Option.iter
                 (List.iter (fun i -> Hashtbl.replace ints i ()))
-                (List.assoc_opt m.m_index (summary_of m.m_occ m.m_pid).codes)
+                (List.assoc_opt m.m_index
+                   (summary_of m.m_occ m.m_pid).Summary.codes)
           | Cat { labels = Some _; _ } | Strings _ -> ())
         (by_order ms);
       let ints =
@@ -425,14 +422,15 @@ let fit_scale : type d.
     string ->
     d member list ->
     d Scale.t ->
-    (occ -> id -> summary) ->
+    (occ -> id -> Summary.t) ->
     d Scale.t =
  fun kind name ms spec summary_of ->
   match kind with
   | Quantities ->
       let hull acc m =
         match
-          (List.assoc_opt m.m_index (summary_of m.m_occ m.m_pid).hulls, acc)
+          ( List.assoc_opt m.m_index (summary_of m.m_occ m.m_pid).Summary.hulls,
+            acc )
         with
         | None, acc -> acc
         | Some h, None -> Some h
@@ -458,177 +456,192 @@ type fitted =
     }
       -> fitted
 
+(* Facets *)
+
+let find_path id l =
+  List.find_map
+    (fun (id', v) -> if Nx.Ptree.Path.equal id id' then Some v else None)
+    l
+
+type facet = Every | One of int option | Each of Nx.int64_t
+type part = { px : facet; py : facet }
+
+type panel = {
+  pnid : id;
+  pfx : int option;
+  pfy : int option;
+  reads : (id * int option array) list;
+}
+
+type cell = {
+  content : content;
+  fx : int option;
+  fy : int option;
+  panels : panel list;
+  parts : (id * part) list;
+}
+
+(* [reads_in scales pid pnid occs] is, per mark of [occs] in the cell [pid], the
+   index in [scales] of the scale each binding reads in the panel [pnid]. A
+   scale independent per panel is read in its panel only. *)
+let reads_in scales pid pnid occs =
+  let reads =
+    List.map
+      (fun o -> (o.mid, Array.make (List.length o.mark.bindings) None))
+      occs
+  in
+  List.iteri
+    (fun i (F f) ->
+      let here =
+        match f.key with
+        | Panel (_, p) -> Nx.Ptree.Path.equal p pnid
+        | Figure | Node _ | Cell _ | Panels_of _ -> true
+      in
+      if here then
+        List.iter
+          (fun m ->
+            if Nx.Ptree.Path.equal m.m_pid pid then
+              match find_path m.m_occ.mid reads with
+              | Some a when Option.is_none a.(m.m_index) ->
+                  a.(m.m_index) <- Some i
+              | Some _ | None -> ())
+          f.members)
+    scales;
+  reads
+
+let shown c reads on =
+  let read o =
+    match find_path o.mid reads with
+    | None -> None
+    | Some reads ->
+        List.find_map Fun.id
+          (List.mapi
+             (fun i (B b) ->
+               if Role.shown_on b.role.use = Some on then reads.(i) else None)
+             o.mark.bindings)
+  in
+  List.find_map read c.occs
+
+(* [facet_index scales c pid on] is the index in [scales] of the scale the facet
+   [on] reads in the cell [pid] of content [c]. A facet scale is never
+   independent per panel, so every panel of the cell reads it. *)
+let facet_index scales c pid on = shown c (reads_in scales pid pid c.occs) on
+
 let category_names (s : string Scale.t) =
   match Scale.domain s with
   | Scale.Categories (Scale.Labels l) -> Array.to_list l
   | Scale.Categories (Scale.Indices ix) ->
       List.map (fun (i, _) -> string_of_int i) (Array.to_list ix)
 
-(* Facets *)
-
-type facet_panel = { pnid : id; pfy : string option; pfx : string option }
-type presence = Everywhere | Nowhere | Rows of Nx.bool_t
-
-(* [presence shape mark role cat] is where the rows of [mark] are in the panels
-   of the category [cat] of the facet [role]. *)
-let presence shape mark role cat =
-  match find_binding role mark.bindings with
-  | None -> Everywhere
-  | Some (B b) -> (
-      match Role.equal_range b.role.range Role.Panels with
-      | None -> Everywhere
-      | Some Type.Equal -> (
-          match (constant b.ch, data b.ch) with
-          | Some v, _ -> if String.equal v cat then Everywhere else Nowhere
-          | None, None -> Everywhere
-          | None, Some d -> (
-              let index = int_of_string_opt cat in
-              let equal_code codes i =
-                Rows (Nx.equal_s (Nx.cast Nx.int64 codes) (Int64.of_int i))
-              in
-              match d.lift with
-              | Dim { axis; _ } ->
-                  let a = Option.get (axis_of shape axis) in
-                  let n = shape.(a) in
-                  let rows = Array.init n (fun i -> index = Some i) in
-                  Rows (along shape a (Nx.create Nx.bool [| n |] rows))
-              | Cat { codes; labels = Some l; _ } -> (
-                  let rec find i =
-                    if i >= Array.length l then None
-                    else if String.equal l.(i) cat then Some i
-                    else find (i + 1)
-                  in
-                  match find 0 with
-                  | Some i -> equal_code codes i
-                  | None -> Nowhere)
-              | Cat { codes; labels = None; _ } -> (
-                  match index with
-                  | Some i -> equal_code codes i
-                  | None -> Nowhere)
-              | Strings a ->
-                  Rows
-                    (Nx.create Nx.bool
-                       [| Array.length a |]
-                       (Array.map (String.equal cat) a))
-              | Num _ | Index _ | Scalar _ -> Everywhere)))
-
-let both p p' =
-  match (p, p') with
-  | Nowhere, _ | _, Nowhere -> Nowhere
-  | Everywhere, p | p, Everywhere -> p
-  | Rows r, Rows r' -> Rows (Nx.logical_and r r')
-
-(* The scale of the facet [role] read in the cell [pid]. *)
-let facet_scale fitted pid role : string Scale.t option =
-  List.find_map
-    (fun (F f) : string Scale.t option ->
-      match equal_kind f.kind Categories with
-      | Some Type.Equal ->
-          if
-            List.exists
-              (fun m ->
-                Nx.Ptree.Path.equal m.m_pid pid && m.m_use = role.Role.use)
-              f.members
-          then Some f.scale
-          else None
-      | None -> None)
-    fitted
-
-let facet_panels fitted pid =
-  let fx = facet_scale fitted pid Role.fx
-  and fy = facet_scale fitted pid Role.fy in
+(* [panels_of pid fx fy] is the panels of the cell [pid] whose facets read [fx]
+   and [fy], by [fy] category then [fx] category. *)
+let panels_of pid fx fy =
   (match (fx, fy) with
   | Some s, Some _ when Option.is_some (Scale.wrap s) ->
       err "resolve" "the fx scale of %a wraps, but the cell has an fy scale"
         pp_id pid
   | _ -> ());
   let cats = function
-    | None -> [ None ]
-    | Some s -> List.map Option.some (category_names s)
+    | None -> [ (None, None) ]
+    | Some s -> List.mapi (fun k c -> (Some k, Some c)) (category_names s)
+  in
+  let add c id =
+    match c with None -> id | Some c -> Nx.Ptree.Path.add (Field c) id
   in
   match (fx, fy) with
-  | None, None -> [ { pnid = pid; pfy = None; pfx = None } ]
+  | None, None -> [ { pnid = pid; pfx = None; pfy = None; reads = [] } ]
   | _ ->
       List.concat_map
-        (fun pfy ->
+        (fun (pfy, cy) ->
           List.map
-            (fun pfx ->
-              let add c id =
-                match c with
-                | None -> id
-                | Some c -> Nx.Ptree.Path.add (Field c) id
-              in
+            (fun (pfx, cx) ->
               let pnid =
-                Nx.Ptree.Path.add (Field "panel") pid |> add pfy |> add pfx
+                Nx.Ptree.Path.add (Field "panel") pid |> add cy |> add cx
               in
-              { pnid; pfy; pfx })
+              { pnid; pfx; pfy; reads = [] })
             (cats fx))
         (cats fy)
 
-(* Resolved figures *)
+(* [facet_of o role s] is where the rows of [o] go along the facet [role] whose
+   scale in the cell is [s], with the warning of a constant that names no
+   category of [s]. *)
+let facet_of o (role : (string, string) Role.t) s =
+  match find_binding role o.mark.bindings with
+  | None -> (Every, [])
+  | Some (B b) -> (
+      match
+        (constant b.ch, data b.ch, Role.equal_range b.role.range Role.Panels)
+      with
+      | Some v, _, Some Type.Equal -> (
+          let names = Option.fold ~none:[] ~some:category_names s in
+          match List.find_index (String.equal v) names with
+          | Some k -> (One (Some k), [])
+          | None ->
+              ( One None,
+                [
+                  ( o.mid,
+                    Format.asprintf "the facet constant %S of %s names no panel"
+                      v role.name );
+                ] ))
+      | None, Some d, _ -> (
+          match (kind d.lift, s) with
+          | Categories, Some s ->
+              let lift = Lift.eval o.mark.shape ~role:role.name d.lift s in
+              (Each (Lift.positions s lift), [])
+          | Quantities, _ | Categories, None -> (Every, []))
+      | _ -> (Every, []))
 
-type spec = Sp : 'd kind * 'd Scale.t -> spec
+let mask part p =
+  let along f k =
+    match (f, k) with
+    | Every, _ -> `All
+    | One (Some c), Some k when c = k -> `All
+    | Each r, Some k -> `Mask (Nx.equal_s r (Int64.of_int k))
+    | One _, _ | Each _, None -> `None
+  in
+  match (along part.px p.pfx, along part.py p.pfy) with
+  | `None, _ | _, `None -> `None
+  | `All, m | m, `All -> m
+  | `Mask m, `Mask m' -> `Mask (Nx.logical_and m m')
+
+(* Resolved figures *)
 
 type t = {
   figure : Figure.t;
   view : View.t;
   shaped : shaped;
-  facets : (id * facet_panel list) list;
+  cells : (id * cell) list;
   scales : fitted list; (* In the order of their first readers. *)
   nodes : (id * (id * shares) list) list;
       (* Each node with the cells it lies in and the scopes it reads there. *)
   warnings : warning list;
 }
 
-let inputs_of specs occ pid =
-  List.concat
-    (List.mapi
-       (fun index (B b) ->
-         match data b.ch with
-         | None -> []
-         | Some d ->
-             let colour =
-               match b.role.range with Role.Colors -> true | _ -> false
-             in
-             let kind = kind d.lift in
-             let found =
-               List.find_map
-                 (fun ((mid, pid', i), sp) ->
-                   if
-                     Int.equal i index
-                     && Nx.Ptree.Path.equal mid occ.mid
-                     && Nx.Ptree.Path.equal pid pid'
-                   then Some sp
-                   else None)
-                 specs
-             in
-             let spec, fitted =
-               match found with
-               | None -> (default_spec kind, false)
-               | Some (Sp (k, s)) -> (
-                   match equal_kind k kind with
-                   | Some Type.Equal -> (s, true)
-                   | None ->
-                       assert
-                         false (* A reading's scale has the reading's kind. *))
-             in
-             [
-               In
-                 {
-                   index;
-                   role = b.role.name;
-                   colour;
-                   lift = d.lift;
-                   spec;
-                   fitted;
-                 };
-             ])
-       occ.mark.bindings)
-
-let find_path id l =
-  List.find_map
-    (fun (id', v) -> if Nx.Ptree.Path.equal id id' then Some v else None)
-    l
+(* [inputs_of scales reads occ] is what summarising reads of [occ], whose
+   binding [i] reads the scale [reads.(i)] of [scales]. *)
+let inputs_of scales reads occ =
+  let input index (B b) =
+    match data b.ch with
+    | None -> None
+    | Some d ->
+        let keeps_row =
+          match b.role.range with Role.Colors -> true | _ -> false
+        in
+        let kind = kind d.lift in
+        let spec, fitted =
+          match reads.(index) with
+          | None -> (default_spec kind, false)
+          | Some i -> (
+              let (F f) = scales.(i) in
+              match equal_kind f.kind kind with
+              | Some Type.Equal -> (f.spec, true)
+              | None ->
+                  assert false (* A reading's scale has the reading's kind. *))
+        in
+        let lift = Lift.eval occ.mark.shape ~role:b.role.name d.lift spec in
+        Some (Summary.In { index; keeps_row; fitted; lift })
+  in
+  List.filter_map Fun.id (List.mapi input occ.mark.bindings)
 
 type lookup =
   | No_node
@@ -834,17 +847,11 @@ let afresh view figure =
           })
       (group readings)
   in
-  let specs =
-    List.concat_map
-      (fun (F f) ->
-        List.map
-          (fun m -> ((m.m_occ.mid, m.m_pid, m.m_index), Sp (f.kind, f.spec)))
-          f.members)
-      unfitted
-  in
+  let groups = Array.of_list unfitted in
   let summary occ pid mask =
-    let inputs = inputs_of specs occ pid in
-    reading occ.mid (fun () -> summarise occ.mark.shape inputs mask)
+    let reads = snd (List.hd (reads_in unfitted pid pid [ occ ])) in
+    reading occ.mid (fun () ->
+        Summary.summarise occ.mark.shape (inputs_of groups reads occ) mask)
   in
   let base =
     List.map (fun (pid, o) -> ((o.mid, pid), summary o pid None)) occs
@@ -858,7 +865,7 @@ let afresh view figure =
   in
   let notes =
     List.concat_map
-      (fun ((mid, _), s) -> List.map (fun n -> (mid, n)) s.notes)
+      (fun ((mid, _), (s : Summary.t)) -> List.map (fun n -> (mid, n)) s.notes)
       base
   in
   let fit summary_of (F f) =
@@ -874,63 +881,50 @@ let afresh view figure =
         | _ -> s)
       unfitted
   in
-  let facets =
-    List.map (fun (pid, _) -> (pid, facet_panels fitted pid)) cells
-  in
-  let constants =
-    List.concat_map
+  let parted =
+    List.map
       (fun (pid, c) ->
-        let check o role =
-          match find_binding role o.mark.bindings with
-          | None -> None
-          | Some (B b) -> (
-              match Role.equal_range b.role.range Role.Panels with
-              | None -> None
-              | Some Type.Equal -> (
-                  match constant b.ch with
-                  | None -> None
-                  | Some v ->
-                      let cats =
-                        Option.fold ~none:[] ~some:category_names
-                          (facet_scale fitted pid role)
-                      in
-                      if List.mem v cats then None
-                      else
-                        Some
-                          ( o.mid,
-                            Format.asprintf
-                              "the facet constant %S of %s names no panel" v
-                              role.Role.name )))
+        let scale on =
+          Option.bind (facet_index fitted c pid on)
+            (fun i : string Scale.t option ->
+              let (F f) = List.nth fitted i in
+              match f.kind with
+              | Categories -> Some f.scale
+              | Quantities -> None)
         in
-        List.concat_map
-          (fun o -> List.filter_map (check o) [ Role.fx; Role.fy ])
-          c.occs)
+        let fx = scale (`Header Role.X) and fy = scale (`Header Role.Y) in
+        let parts =
+          List.map
+            (fun o ->
+              reading o.mid (fun () ->
+                  let px, wx = facet_of o Role.fx fx
+                  and py, wy = facet_of o Role.fy fy in
+                  ((o.mid, { px; py }), wx @ wy)))
+            c.occs
+        in
+        ( (pid, (c, panels_of pid fx fy, List.map fst parts)),
+          List.concat_map snd parts ))
       cells
   in
+  let constants = List.concat_map snd parted and parted = List.map fst parted in
   let panel_scales (F f as s) =
     match f.key with
     | Panels_of (mid, pid) ->
         let occ = (List.hd f.members).m_occ in
-        let at c role =
-          match c with
-          | None -> Everywhere
-          | Some c ->
-              reading mid (fun () -> presence occ.mark.shape occ.mark role c)
-        in
+        let _, panels, parts = Option.get (find_path pid parted) in
+        let part = Option.get (find_path mid parts) in
         List.filter_map
           (fun p ->
-            match both (at p.pfy Role.fy) (at p.pfx Role.fx) with
-            | Nowhere -> None
-            | rows ->
-                let mask =
-                  match rows with
-                  | Rows r -> Some r
-                  | Everywhere | Nowhere -> None
-                in
-                let s = lazy (summary occ pid mask) in
-                let summary_of _ _ = Lazy.force s in
-                Some (fit summary_of (F { f with key = Panel (mid, p.pnid) })))
-          (Option.value ~default:[] (find_path pid facets))
+            let fit_in mask =
+              let s = lazy (summary occ pid mask) in
+              let summary_of _ _ = Lazy.force s in
+              Some (fit summary_of (F { f with key = Panel (mid, p.pnid) }))
+            in
+            match mask part p with
+            | `None -> None
+            | `All -> fit_in None
+            | `Mask m -> fit_in (Some m))
+          panels
     | _ -> [ s ]
   in
   let fitted = List.concat_map panel_scales fitted in
@@ -952,17 +946,14 @@ let afresh view figure =
     in
     let panels =
       List.concat_map
-        (fun (pid, ps) ->
-          let shares =
-            Option.value ~default:[]
-              (Option.bind (find_path pid cells) (fun c -> find_path pid c.held))
-          in
+        (fun (pid, (c, panels, _)) ->
+          let shares = Option.value ~default:[] (find_path pid c.held) in
           List.filter_map
             (fun p ->
               if Nx.Ptree.Path.equal p.pnid pid then None
               else Some (p.pnid, (pid, shares)))
-            ps)
-        facets
+            panels)
+        parted
     in
     let places = held @ panels in
     let ids =
@@ -986,7 +977,18 @@ let afresh view figure =
   let warnings =
     dedupe (in_order order (notes @ constants @ zooms) @ unread view reads)
   in
-  { figure; view; shaped; facets; scales; nodes; warnings }
+  let cells =
+    List.map
+      (fun (pid, (content, panels, parts)) ->
+        let read p =
+          { p with reads = reads_in scales pid p.pnid content.occs }
+        in
+        let facet on = facet_index scales content pid on in
+        let fx = facet (`Header Role.X) and fy = facet (`Header Role.Y) in
+        (pid, { content; fx; fy; panels = List.map read panels; parts }))
+      parted
+  in
+  { figure; view; shaped; cells; scales; nodes; warnings }
 
 (* A figure equal to the one [prev] resolved, under an equal view, resolves to
    [prev]. *)
@@ -1069,7 +1071,7 @@ let pp_weights name ppf = function
 let pp_ids =
   Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf ",@ ") pp_id
 
-let rec pp_shaped facets ppf (pid, s) =
+let rec pp_shaped cells ppf (pid, s) =
   match s.body with
   | Single c ->
       Format.fprintf ppf "@[<v 2>panel %a" pp_id pid;
@@ -1081,7 +1083,7 @@ let rec pp_shaped facets ppf (pid, s) =
         (fun o -> Format.fprintf ppf "@,%s %a" o.mark.kind pp_id o.mid)
         c.occs;
       List.iter (fun (_, g, _) -> Format.fprintf ppf "@,%a" pp_guide g) c.guides;
-      (match find_path pid facets with
+      (match Option.map (fun c -> c.panels) (find_path pid cells) with
       | Some [ p ] when Nx.Ptree.Path.equal p.pnid pid -> ()
       | Some ps ->
           Format.fprintf ppf "@,@[<hov 2>facets %a@]" pp_ids
@@ -1097,7 +1099,7 @@ let rec pp_shaped facets ppf (pid, s) =
           Format.fprintf ppf "@,@[<v 2>cell (%d, %d)%s@,%a@]" cell.row cell.col
             (if cell.rows = 1 && cell.cols = 1 then ""
              else Format.asprintf ", spanning %d × %d" cell.rows cell.cols)
-            (pp_shaped facets) (cell.cid, cell.s))
+            (pp_shaped cells) (cell.cid, cell.s))
         a.cells;
       Format.fprintf ppf "@]"
 
@@ -1122,7 +1124,7 @@ let pp_scale ppf (F f) =
     f.guide
 
 let pp ppf r =
-  Format.fprintf ppf "@[<v>@[<v 2>figure@,%a@]" (pp_shaped r.facets)
+  Format.fprintf ppf "@[<v>@[<v 2>figure@,%a@]" (pp_shaped r.cells)
     (Nx.Ptree.Path.root, r.shaped);
   Format.fprintf ppf "@,@[<v 2>scales";
   List.iter (Format.fprintf ppf "@,%a" pp_scale) r.scales;

@@ -67,118 +67,10 @@ let faded cx a =
   let ink = ink cx in
   Color.with_alpha (Color.alpha ink *. a) ink
 
-(* [scale_of cx occ pid pnid] is the index of the scale each binding of [occ]
-   reads in the panel [pnid] of the cell [pid]. *)
-let scale_of cx occ pid pnid =
-  let scales = cx.ctx.scales in
-  let found = Array.make (List.length occ.mark.bindings) None in
-  Array.iteri
-    (fun i (F f) ->
-      let here =
-        match f.key with
-        | Panel (_, p) -> Nx.Ptree.Path.equal p pnid
-        | _ -> true
-      in
-      if here then
-        List.iter
-          (fun m ->
-            if
-              Nx.Ptree.Path.equal m.m_occ.mid occ.mid
-              && Nx.Ptree.Path.equal m.m_pid pid
-              && Option.is_none found.(m.m_index)
-            then found.(m.m_index) <- Some i)
-          f.members)
-    scales;
-  fun index -> found.(index)
-
 (* [reading mid f] is [f ()], which reads the tensors of the mark [mid], with
    the errors of reading them naming the mark. *)
 let reading mid f =
   try f () with Invalid_argument msg -> err "draw" "%a: %s" pp_id mid msg
-
-(* Membership *)
-
-let facet_const m role : string option =
-  match find_binding role m.bindings with
-  | None -> None
-  | Some (B b) -> (
-      match Role.equal_range b.role.range Role.Panels with
-      | Some Type.Equal -> (constant b.ch : string option)
-      | None -> None)
-
-(* [members rd m fps] is the rows of [m] in each facet panel of [fps], [None]
-   where it has none. Rows are put in panels by the identities of their facet
-   categories, each category's name read once. *)
-let members rd m fps =
-  let gate p =
-    let ok role cat =
-      match facet_const m role with
-      | None -> true
-      | Some v -> Option.equal String.equal (Some v) cat
-    in
-    ok Role.fx p.pfx && ok Role.fy p.pfy
-  in
-  match (Read.facet rd Role.fx, Read.facet rd Role.fy) with
-  | None, None -> List.map (fun p -> if gate p then Some Read.All else None) fps
-  | fx, fy ->
-      let n = Array.fold_left ( * ) 1 m.shape in
-      (* [slots f] numbers the categories of the facet [f] in order of first
-         row, and is the slot of each row, [-1] where it is missing. *)
-      let slots = function
-        | None -> (Array.make n 0, [| None |])
-        | Some (ids, name) ->
-            let names = ref [] and count = ref 0 in
-            let number id =
-              names := Some (name id) :: !names;
-              incr count;
-              !count - 1
-            in
-            let miss = Array.map (fun id -> id = min_int) ids in
-            let slot = Read.memo miss ids number in
-            let s =
-              Array.mapi (fun j id -> if miss.(j) then -1 else slot id) ids
-            in
-            (s, Array.of_list (List.rev !names))
-      in
-      let sx, nx = slots fx and sy, ny = slots fy in
-      let width = Array.length nx in
-      let count = Array.make (width * Array.length ny) 0 in
-      let slot i =
-        if sx.(i) < 0 || sy.(i) < 0 then -1 else (sy.(i) * width) + sx.(i)
-      in
-      for i = 0 to n - 1 do
-        let k = slot i in
-        if k >= 0 then count.(k) <- count.(k) + 1
-      done;
-      let rows = Array.map (fun c -> Array.make c 0) count in
-      let fill = Array.make (Array.length count) 0 in
-      for i = 0 to n - 1 do
-        let k = slot i in
-        if k >= 0 then begin
-          rows.(k).(fill.(k)) <- i;
-          fill.(k) <- fill.(k) + 1
-        end
-      done;
-      (* A facet the mark leaves unbound matches every panel. *)
-      let find names f cat =
-        match f with
-        | None -> Some 0
-        | Some _ ->
-            let rec go k =
-              if k >= Array.length names then None
-              else if Option.equal String.equal names.(k) cat then Some k
-              else go (k + 1)
-            in
-            go 0
-      in
-      List.map
-        (fun p ->
-          match (find nx fx p.pfx, find ny fy p.pfy) with
-          | Some x, Some y
-            when gate p && Array.length rows.((y * width) + x) > 0 ->
-              Some (Read.Rows rows.((y * width) + x))
-          | _ -> None)
-        fps
 
 (* Tagging *)
 
@@ -221,10 +113,10 @@ let rasterised cx p =
         in
         Picture.image window px
 
-(* [band_cells cx scale_of index] is the number of categories of the band scale
+(* [band_cells cx reads index] is the number of categories of the band scale
    that the binding [index] reads, if it has no padding. *)
-let band_cells cx scale_of index =
-  match scale_of index with
+let band_cells cx reads index =
+  match reads.(index) with
   | None -> None
   | Some i -> (
       let (F f) = cx.ctx.scales.(i) in
@@ -282,16 +174,16 @@ let image h w at =
   done;
   Nx.create Nx.uint8 [| h; w; 4 |] a
 
-(* [cells cx m panel scale_of ~rows ~full ~few sel] is the image whose pixels
-   are the cells of the rows [sel], if they draw as one: [x] and [y] read band
+(* [cells cx m panel reads ~rows ~full ~few sel] is the image whose pixels are
+   the cells of the rows [sel], if they draw as one: [x] and [y] read band
    scales without padding, the mark binds no [x2], [y2] or [stroke], and no two
    rows share a cell. Past 4 × 4 cells per device pixel, only the rows of the
    cells that raster output samples are read. *)
-let cells cx m (panel : Layout.panel) scale_of ~rows ~full ~few sel =
+let cells cx m (panel : Layout.panel) reads ~rows ~full ~few sel =
   match (binding_index m Role.x, binding_index m Role.y) with
   | Some xi, Some yi
     when not (binds m Role.x2 || binds m Role.y2 || binds m Role.stroke) -> (
-      match (band_cells cx scale_of xi, band_cells cx scale_of yi) with
+      match (band_cells cx reads xi, band_cells cx reads yi) with
       | Some nx, Some ny -> (
           let pos = rows (Some [ Role.x.name; Role.y.name ]) full sel in
           let paint = Some [ Role.fill.name; Role.opacity.name ] in
@@ -381,14 +273,14 @@ let quantities m index =
   | Some { lift = Index k; _ } -> Some (`Index k)
   | _ -> None
 
-(* [m4 cx m panel scale_of] is the rows of [m] that M4 keeps in [panel], if it
+(* [m4 cx m panel reads] is the rows of [m] that M4 keeps in [panel], if it
    applies: of each series, each device-pixel column's first, last, lowest and
    highest rows, when the series have more than [m4_rows] rows per column, their
    [x] is monotone and their other channels constant along them, and no value of
    [x] or [y] is missing. Columns are found where the data lives, as the bins
    that the values of [x] at the columns' edges make, with one more bin on each
    side for the rows outside the panel. *)
-let m4 cx m (panel : Layout.panel) scale_of =
+let m4 cx m (panel : Layout.panel) reads =
   let shape = m.shape in
   let rank = Array.length shape in
   let w = Float.to_int (Float.ceil (Box2.w panel.box *. cx.ctx.density)) in
@@ -405,7 +297,7 @@ let m4 cx m (panel : Layout.panel) scale_of =
             | _ -> true))
   in
   let float_scale index : float Scale.t option =
-    Option.bind (scale_of index) (fun i : float Scale.t option ->
+    Option.bind reads.(index) (fun i : float Scale.t option ->
         let (F f) = cx.ctx.scales.(i) in
         match f.kind with Quantities -> Some f.scale | Categories -> None)
   in
@@ -508,28 +400,36 @@ let m4 cx m (panel : Layout.panel) scale_of =
 (* A panel being drawn: its facet panel, layout and the pictures and warnings of
    its marks so far, latest first. *)
 type target = {
-  fp : facet_panel;
+  fp : Resolved.panel;
   panel : Layout.panel;
   mutable pictures : Picture.t list;
   mutable notes : warning list;
 }
 
-(* [draw_occ cx pid occ targets] draws [occ], a mark of the cell [pid], in each
-   panel of [targets] it has rows in. *)
-let draw_occ cx pid occ targets =
+(* [selection m part p] is the rows of [m], whose rows go among the panels of
+   its cell by [part], in the panel [p], [None] where it has none. *)
+let selection m part p =
+  match Resolved.mask part p with
+  | `None -> None
+  | `All -> Some Read.All
+  | `Mask k -> (
+      let k = Nx.flatten (Nx.broadcast_to m.shape k) in
+      match Nx.to_array (Nx.nonzero k).(0) with
+      | [||] -> None
+      | rows -> Some (Read.Rows (Array.map Int64.to_int rows)))
+
+(* [draw_occ cx occ part targets] draws [occ], whose rows go among the panels of
+   its cell by [part], in each panel of [targets] it has rows in. *)
+let draw_occ cx occ part targets =
   let m = occ.mark in
   let full = Read.reader ~whole:true m and few = Read.reader ~whole:false m in
-  let sels =
-    reading occ.mid (fun () ->
-        members full m (List.map (fun t -> t.fp) targets))
-  in
   let draw t sel =
     let warn msg = t.notes <- (occ.mid, msg) :: t.notes in
-    let scale_of = scale_of cx occ pid t.fp.pnid in
+    let reads = Option.get (find_path occ.mid t.fp.reads) in
     let box = t.panel.box and proj = t.panel.projection in
     let rows only rd sel =
       reading occ.mid (fun () ->
-          Read.rows ?only cx.ctx rd ~id:occ.mid proj ~warn scale_of sel)
+          Read.rows ?only cx.ctx rd ~id:occ.mid proj ~warn reads sel)
     in
     let drawn rd sel =
       let r = rows None rd sel in
@@ -542,7 +442,7 @@ let draw_occ cx pid occ targets =
     in
     match m.reduce with
     | Some Cells -> (
-        match cells cx m t.panel scale_of ~rows ~full ~few sel with
+        match cells cx m t.panel reads ~rows ~full ~few sel with
         | Some p -> p
         | None -> drawn full sel)
     | Some Raster when n > raster_rows || float n > device_pixels cx box ->
@@ -552,17 +452,17 @@ let draw_occ cx pid occ targets =
         match sel with
         | Read.Rows _ -> drawn full sel
         | Read.All -> (
-            match reading occ.mid (fun () -> m4 cx m t.panel scale_of) with
+            match reading occ.mid (fun () -> m4 cx m t.panel reads) with
             | Some kept -> drawn few kept
             | None -> drawn full sel))
     | Some Raster | None -> drawn full sel
   in
-  List.iter2
-    (fun t sel ->
-      match sel with
+  List.iter
+    (fun t ->
+      match reading occ.mid (fun () -> selection m part t.fp) with
       | None -> ()
       | Some sel -> t.pictures <- draw t sel :: t.pictures)
-    targets sels
+    targets
 
 (* Panels *)
 
@@ -573,24 +473,26 @@ let panels cx =
   let laid = Layout.panels cx.layout in
   let targets =
     List.concat_map
-      (fun (pid, content) ->
-        let fps = Option.value ~default:[] (find_path pid r.facets) in
+      (fun (_, (c : Resolved.cell)) ->
         let targets =
           List.filter_map
-            (fun fp ->
+            (fun (fp : Resolved.panel) ->
               List.find_opt
                 (fun (p : Layout.panel) -> Nx.Ptree.Path.equal p.id fp.pnid)
                 laid
               |> Option.map (fun panel ->
                   { fp; panel; pictures = []; notes = [] }))
-            fps
+            c.panels
         in
         (match targets with
         | [] -> ()
         | _ :: _ ->
-            List.iter (fun occ -> draw_occ cx pid occ targets) content.occs);
+            List.iter
+              (fun occ ->
+                draw_occ cx occ (Option.get (find_path occ.mid c.parts)) targets)
+              c.content.occs);
         targets)
-      (Arrange.panels r.shaped)
+      r.cells
   in
   let drawn t =
     let tag = { Picture.id = t.panel.id; rows = Picture.Rows [||] } in

@@ -695,6 +695,29 @@ let drawings =
             (slist (array int) compare)
             [ [| 0; 1; 2 |]; [| 3; 4; 5 |] ]
             !seen);
+      test "a facet a mark leaves unbound puts its rows in every panel"
+        (fun () ->
+          let m, seen =
+            probe [ Mark.bind Role.fx (strings [| "a"; "b"; "a" |]) ] Mark.index
+          in
+          let rows = dot ~x:(const 0.5) ~y:(const 0.5) in
+          ignore (drawn (layer [ rows ~fy:(strings [| "p"; "q" |]) (); m ]));
+          equal
+            (slist (array int) compare)
+            [ [| 0; 2 |]; [| 0; 2 |]; [| 1 |]; [| 1 |] ]
+            !seen);
+      test "a row whose facet value is missing is in no panel" (fun () ->
+          let valid = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
+          let m, seen =
+            probe
+              [
+                Mark.bind Role.y (num (Nx.zeros Nx.float64 [| 3 |]));
+                Mark.bind Role.fx (dim ~valid 0);
+              ]
+              Mark.index
+          in
+          ignore (drawn m);
+          equal (slist (array int) compare) [ [| 0 |]; [| 2 |] ] !seen);
       test "a facet constant draws in its panel only" (fun () ->
           let m, seen = probe [ Mark.bind Role.fx (const "b") ] Mark.index in
           ignore

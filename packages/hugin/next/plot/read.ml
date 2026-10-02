@@ -22,8 +22,6 @@ type ctx = {
   frozen : Ticks.t array;
 }
 
-type scale_of = int -> int option
-
 (* Theme ranges, in em *)
 
 let size_em = 1.5 (* The diameter of the circle of the largest size. *)
@@ -58,24 +56,25 @@ let source_of shape s =
       done;
       !o
 
-(* [along shape a] is the index along axis [a] of a flat index of [shape]. *)
-let along shape a =
-  let stride = ref 1 in
-  for b = a + 1 to Array.length shape - 1 do
-    stride := !stride * shape.(b)
-  done;
-  let stride = !stride and d = shape.(a) in
-  fun i -> i / stride mod d
+(* What a binding reads of its data, where the data lives: each row's quantity,
+   NaN where missing; on a band scale, each row's index in its domain, [-1]
+   where missing; or, on no scale, each row's category code and the missing
+   rows. *)
+type source =
+  | Values of Nx.float64_t
+  | Positions of Nx.int64_t
+  | Codes of Nx.int64_t * Nx.bool_t option
 
 type reader = {
   mark : mark;
   whole : bool;
+  sources : ((int * int option) * source) list ref;
   floats : (Nx.packed * float array) list ref;
   ints : (Nx.packed * int64 array) list ref;
 }
 
-let reader ~whole mark = { mark; whole; floats = ref []; ints = ref [] }
-let mark rd = rd.mark
+let reader ~whole mark =
+  { mark; whole; sources = ref []; floats = ref []; ints = ref [] }
 
 let cached cache x read =
   match List.find_opt (fun (Nx.P y, _) -> equal_tensor x y) !cache with
@@ -113,159 +112,42 @@ let gather : type a b c d.
 let floats rd x sel =
   gather Nx.float64 rd.floats ~whole:rd.whole rd.mark.shape x sel
 
-let ints rd x sel = gather Nx.int64 rd.ints ~whole:rd.whole rd.mark.shape x sel
+let ints rd x sel =
+  Array.map Int64.to_int
+    (gather Nx.int64 rd.ints ~whole:rd.whole rd.mark.shape x sel)
 
-(* Host values *)
+let evaluate : type d.
+    int array -> role:string -> d lift -> fitted option -> source =
+ fun shape ~role lift scale ->
+  match (kind lift, scale) with
+  | Quantities, Some (F { kind = Quantities; spec; _ }) ->
+      Values (Lift.values (Lift.eval shape ~role lift spec))
+  | Quantities, _ ->
+      Values (Lift.values (Lift.eval shape ~role lift (Scale.linear ())))
+  | Categories, Some (F { kind = Categories; scale; _ }) ->
+      Positions (Lift.positions scale (Lift.eval shape ~role lift scale))
+  | Categories, _ ->
+      let (Lift.Categories c) = Lift.eval shape ~role lift (Scale.band ()) in
+      Codes (c.codes, c.miss.rows)
 
-(* Identities below [dense] are memoised in arrays. *)
-let dense = 65_536
-
-type host =
-  | Q of { v : float array; ok : bool array option; dec : float -> int }
-  | C of {
-      ids : int array; (* An identity per category. *)
-      miss : bool array;
-      name : int -> string;
-      text : int -> Text.t;
-    }
-
-let valid rd v sel =
-  Option.map (fun v -> Array.map (fun f -> f <> 0.) (floats rd v sel)) v
-
-let is_ok ok i = match ok with None -> true | Some ok -> ok.(i)
-
-let host : type d. reader -> d lift -> sel -> host =
- fun rd lift sel ->
-  let shape = rd.mark.shape in
-  let m = count shape sel and row = row_of sel in
-  let axis k = Option.get (axis_of shape k) in
-  let indexed ok ids labels =
-    let text =
-      match labels with
-      | Some l -> fun i -> Text.v l.(i)
-      | None -> fun i -> Text.v (string_of_int i)
-    in
-    C
-      {
-        ids;
-        miss = Array.init m (fun i -> not (is_ok ok i));
-        name = string_of_int;
-        text;
-      }
+(* [source rd (B b) index scale] is what the binding [index] reads of its data
+   on the scale [scale], if any, evaluated once per reader. Quantities do not
+   depend on which of a name's per-panel scales reads them. *)
+let source rd (B b) index scale =
+  let key =
+    match scale with
+    | Some (i, F { kind = Categories; _ }) -> (index, Some i)
+    | Some (_, F { kind = Quantities; _ }) | None -> (index, None)
   in
-  match lift with
-  | Num { x; valid = v } ->
-      Q
-        {
-          v = floats rd x sel;
-          ok = valid rd v sel;
-          dec = Number.decimals (Nx.dtype x);
-        }
-  | Index k ->
-      let at = along shape (axis k) in
-      Q
-        {
-          v = Array.init m (fun j -> float (at (row j)));
-          ok = None;
-          dec = (fun _ -> 0);
-        }
-  | Scalar x ->
-      Q { v = Array.make m x; ok = None; dec = Number.decimals Nx.float64 }
-  | Cat { codes; valid = v; labels } ->
-      let cs = ints rd codes sel and ok = valid rd v sel in
-      let lo, hi =
-        match labels with
-        | Some l -> (0L, Int64.of_int (Array.length l - 1))
-        | None -> (Int64.of_int min_int, Int64.of_int max_int)
+  match List.assoc_opt key !(rd.sources) with
+  | Some s -> s
+  | None ->
+      let d = Option.get (data b.ch) in
+      let s =
+        evaluate rd.mark.shape ~role:b.role.name d.lift (Option.map snd scale)
       in
-      let miss =
-        Array.mapi (fun i c -> (not (is_ok ok i)) || c < lo || c > hi) cs
-      in
-      let ids =
-        Array.mapi (fun i c -> if miss.(i) then -1 else Int64.to_int c) cs
-      in
-      let name =
-        match labels with Some l -> fun i -> l.(i) | None -> string_of_int
-      in
-      C { ids; miss; name; text = (fun i -> Text.v (name i)) }
-  | Strings a ->
-      let src = source_of shape [| Array.length a |] in
-      let table = Hashtbl.create 16 and names = ref [] in
-      let id s =
-        match Hashtbl.find_opt table s with
-        | Some i -> i
-        | None ->
-            let i = Hashtbl.length table in
-            Hashtbl.add table s i;
-            names := s :: !names;
-            i
-      in
-      let ids = Array.init m (fun j -> id a.(src (row j))) in
-      let names = Array.of_list (List.rev !names) in
-      C
-        {
-          ids;
-          miss = Array.make m false;
-          name = (fun i -> names.(i));
-          text = (fun i -> Text.v names.(i));
-        }
-  | Dim { axis = k; valid = v; labels } ->
-      let at = along shape (axis k) in
-      indexed (valid rd v sel) (Array.init m (fun j -> at (row j))) labels
-
-(* [memo miss ids f] is [f] applied once per identity of [ids] that [miss] does
-   not mark: through an array when the identities are small naturals, as indices
-   along an axis are, and a hash table otherwise. *)
-let memo miss ids f =
-  let lo = ref 0 and hi = ref (-1) in
-  Array.iteri
-    (fun j id ->
-      if not miss.(j) then begin
-        lo := Int.min !lo id;
-        hi := Int.max !hi id
-      end)
-    ids;
-  if !lo >= 0 && !hi < dense then begin
-    let values = Array.make (!hi + 1) None in
-    fun id ->
-      match values.(id) with
-      | Some v -> v
-      | None ->
-          let v = f id in
-          values.(id) <- Some v;
-          v
-  end
-  else
-    let t = Hashtbl.create 16 in
-    fun id ->
-      match Hashtbl.find_opt t id with
-      | Some v -> v
-      | None ->
-          let v = f id in
-          Hashtbl.add t id v;
-          v
-
-let ids = function Q q -> Array.make (Array.length q.v) 0 | C c -> c.ids
-
-let missing = function
-  | Q q ->
-      Array.mapi
-        (fun i v -> (not (Float.is_finite v)) || not (is_ok q.ok i))
-        q.v
-  | C c -> Array.copy c.miss
-
-(* A reading's scale has the reading's kind, so [h] has the kind of [f]. *)
-let normalize (F f) h =
-  match (f.kind, h) with
-  | Quantities, Q q ->
-      let nz = Scale.normalize f.scale in
-      Array.mapi (fun i v -> if is_ok q.ok i then nz v else Float.nan) q.v
-  | Categories, C c ->
-      let nz = Scale.normalize f.scale in
-      let at = memo c.miss c.ids (fun i -> nz (c.name i)) in
-      Array.mapi (fun j i -> if c.miss.(j) then Float.nan else at i) c.ids
-  | Categories, Q { v; _ } -> Array.make (Array.length v) Float.nan
-  | Quantities, C { ids; _ } -> Array.make (Array.length ids) Float.nan
+      rd.sources := (key, s) :: !(rd.sources);
+      s
 
 (* Ranges *)
 
@@ -273,43 +155,30 @@ let stroked m =
   Option.is_some (find_binding Role.stroke m.bindings)
   && Option.is_none (find_binding Role.fill m.bindings)
 
-(* [categories s] maps the name of each category of [s] to its index. *)
-let categories s =
-  let names = category_names s in
-  let t = Hashtbl.create (List.length names) in
-  List.iteri (fun i c -> Hashtbl.replace t c i) names;
-  (List.length names, t)
-
-(* [band s at] reads the category whose step holds a normalised value, each
-   value once: a band scale gives its rows a handful of values. *)
-let band : string Scale.t -> (int -> 'r) -> float -> 'r option =
- fun s at ->
-  let _, t = categories s and memo = Hashtbl.create 16 in
-  fun u ->
-    match Hashtbl.find_opt memo u with
-    | Some v -> v
-    | None ->
-        let v =
-          Option.bind (Scale.invert s u) (fun c ->
-              Option.map at (Hashtbl.find_opt t c))
-        in
-        Hashtbl.add memo u v;
-        v
-
 let lerp (a, b) u = a +. (u *. (b -. a))
 
-(* [base ctx ~stroked use range s] is the value a role of [use] gives a
-   normalised value on [s], [None] where it is missing, and the value of a
-   missing one. *)
+(* How a role's range maps the values of a scale: by the normalised value, or on
+   a band scale by the category's index in its domain. *)
+type 'r range = By_value of (float -> 'r option) | By_index of 'r array
+
+(* [base ctx ~stroked use range s] is how a role of [use] maps the values of
+   [s], [None] where they are missing, and the value of a missing one. *)
 let base : type r.
     ctx ->
     stroked:bool ->
     Role.use ->
     r Role.range ->
     fitted ->
-    ((float -> r option) * r) option =
+    (r range * r) option =
  fun ctx ~stroked use range (F f) ->
-  let finite g u = if Float.is_nan u then None else Some (g u) in
+  let finite g =
+    By_value (fun u -> if Float.is_nan u then None else Some (g u))
+  in
+  let n () =
+    match f.kind with
+    | Categories -> List.length (category_names f.scale)
+    | Quantities -> 0
+  in
   match range with
   | Role.Colors -> (
       let unknown =
@@ -317,13 +186,11 @@ let base : type r.
       in
       match f.kind with
       | Categories ->
-          let n, _ = categories f.scale in
           let scheme =
             Option.value (Scale.scheme f.scale)
               ~default:(Theme.palette ctx.theme)
           in
-          let colors = Scheme.colors n scheme in
-          Some (band f.scale (fun i -> colors.(i)), unknown)
+          Some (By_index (Scheme.colors (n ()) scheme), unknown)
       | Quantities ->
           let scheme =
             Option.value (Scale.scheme f.scale)
@@ -359,156 +226,174 @@ let base : type r.
                   (if stroked then Symbol.stroked else Symbol.filled)
           in
           let k = Array.length symbols in
-          Some (band f.scale (fun i -> symbols.(i mod k)), symbols.(0))
+          Some
+            ( By_index (Array.init (n ()) (fun i -> symbols.(i mod k))),
+              symbols.(0) )
       | Quantities -> None)
   | Role.Panels -> (
       match f.kind with
       | Categories ->
-          let names = Array.of_list (category_names f.scale) in
-          Some (band f.scale (fun i -> names.(i)), "")
+          Some (By_index (Array.of_list (category_names f.scale)), "")
       | Quantities -> None)
   | Role.Texts | Role.Curves | Role.Pixels -> None
 
+(* [index_at s] is the index of the category of the band scale [s] whose step
+   holds a normalised value, if any. *)
+let index_at s =
+  let index = Hashtbl.create 16 in
+  List.iteri (fun k c -> Hashtbl.replace index c k) (category_names s);
+  fun u -> Option.bind (Scale.invert s u) (Hashtbl.find_opt index)
+
+(* [at s range] is the value [range] gives a normalised value on [s]. *)
+let at (F f) = function
+  | By_value at -> at
+  | By_index t -> (
+      match f.kind with
+      | Categories ->
+          let index_at = index_at f.scale in
+          fun u -> Option.map (Array.get t) (index_at u)
+      | Quantities -> fun _ -> None)
+
 let colors ctx s =
   match base ctx ~stroked:false Role.fill.use Role.Colors s with
-  | Some (at, missing) -> fun u -> Option.value (at u) ~default:missing
+  | Some (range, missing) ->
+      let at = at s range in
+      fun u -> Option.value (at u) ~default:missing
   | None -> fun _ -> Color.transparent
 
 (* Columns *)
 
-let constant : type d r. (d, r) Role.t -> int -> r -> Rows.col =
- fun role n v ->
-  Rows.Col
-    {
-      role;
-      values = Array.make n v;
-      norm = None;
-      fn = None;
-      ticks = None;
-      cats = None;
-      band = None;
-      zero = None;
-    }
+let column ?norm ?fn ?ticks ?cats ?band ?zero role values =
+  Rows.Col { role; values; norm; fn; ticks; cats; band; zero }
 
 (* [zero s] is the normalised value of [0.] clamped into the domain of [s]. *)
 let zero (s : float Scale.t) =
   let (Scale.Floats (a, b)) = Scale.domain s in
   Scale.normalize s (Float.max (Float.min a b) (Float.min (Float.max a b) 0.))
 
-(* [scaled ctx ~stroked (B b) norm ids i] is the column of [b] normalised to
-   [norm] on the scale [i], [ids] identifying the categories of its rows on a
-   band scale. *)
-let scaled ctx ~stroked (B b) norm ids i =
+(* [fn s range missing g] is the value of a channel that [g] maps, on [s] in
+   [range], at a normalised value. *)
+let fn s range missing g =
+  let at = at s range in
+  fun u -> match at u with None -> missing | Some v -> g v
+
+let ticks ctx i =
+  Array.of_list
+    (List.map (fun (t : Ticks.tick) -> t.position) ctx.frozen.(i).major)
+
+(* [scaled ctx ~stroked rd (B b as bd) index sel i] is, if the role of [b] maps
+   the scale [i], the column of [b] at the rows [sel] on it, and the rows it
+   misses. *)
+let scaled ctx ~stroked rd (B b as bd) index sel i =
   let (F f as s) = ctx.scales.(i) in
   match base ctx ~stroked b.role.use b.role.range s with
   | None -> None
-  | Some (at, missing) ->
-      let g = mapping b.ch in
-      let fn u = match at u with None -> missing | Some v -> g v in
-      let band, zero_at, cats =
-        match f.kind with
-        | Categories ->
-            let cat j id = if Float.is_nan norm.(j) then min_int else id in
-            (Some (Scale.bandwidth f.scale), None, Some (Array.mapi cat ids))
-        | Quantities -> (None, Some (zero f.scale), None)
-      in
-      let ticks =
-        List.map (fun (t : Ticks.tick) -> t.position) ctx.frozen.(i).major
-      in
-      Some
-        (Rows.Col
-           {
-             role = b.role;
-             values = Array.map fn norm;
-             norm = Some norm;
-             fn = Some fn;
-             ticks = Some (Array.of_list ticks);
-             cats;
-             band;
-             zero = zero_at;
-           })
+  | Some (range, missing) -> (
+      let g = mapping b.ch and ticks = ticks ctx i in
+      let fn = fn s range missing g in
+      match (f.kind, source rd bd index (Some (i, s))) with
+      | Quantities, Values v ->
+          let norm = Array.map (Scale.normalize f.scale) (floats rd v sel) in
+          let zero = zero f.scale in
+          let col = column b.role (Array.map fn norm) ~norm ~fn ~ticks ~zero in
+          Some (col, Array.map Float.is_nan norm)
+      | Categories, Positions p ->
+          let ks = ints rd p sel in
+          let norm = Array.map (Scale.normalize_index f.scale) ks in
+          let values =
+            match range with
+            | By_index t ->
+                Array.map (fun k -> if k < 0 then missing else g t.(k)) ks
+            | By_value _ -> Array.map fn norm
+          in
+          let band = Scale.bandwidth f.scale in
+          let col = column b.role values ~norm ~fn ~ticks ~cats:ks ~band in
+          Some (col, Array.map (fun k -> k < 0) ks)
+      | (Quantities | Categories), _ ->
+          assert false (* A reading's scale has the reading's kind. *))
 
-(* [format ctx h] writes the values of [h] as the text role writes them. *)
-let format ctx h =
+(* [decimals l] is the decimals that write a quantity of [l]. *)
+let decimals : type d. d lift -> float -> int = function
+  | Num { x; _ } -> Number.decimals (Nx.dtype x)
+  | Scalar _ -> Number.decimals Nx.float64
+  | Index _ | Cat _ | Strings _ | Dim _ -> fun _ -> 0
+
+(* [label l] is the text that shows the category of a code of [l]. *)
+let label : type d. d lift -> int -> string =
+ fun l ->
+  match kind l with Categories -> Lift.label l | Quantities -> string_of_int
+
+(* [unscaled ctx rd (B b as bd) index sel] is the column of a binding that reads
+   no scale, and the rows it misses. *)
+let unscaled ctx rd (B b as bd) index sel =
+  let g = mapping b.ch and lift = (Option.get (data b.ch)).lift in
   let blank = Text.v "" in
-  match h with
-  | C c -> Array.mapi (fun j i -> if c.miss.(j) then blank else c.text i) c.ids
-  | Q q ->
-      let miss = missing h in
-      let d = ref 0 in
-      Array.iteri
-        (fun i v -> if not miss.(i) then d := Int.max !d (q.dec v))
-        q.v;
-      let fmt = Number.v Number.Plain (Number.Decimals !d) in
-      let locale = Theme.locale ctx.theme in
-      Array.mapi
-        (fun i v ->
-          if miss.(i) then blank else Text.v (Number.to_string ~locale fmt v))
-        q.v
-
-(* [unscaled ctx (B b) h] is the column of a channel that reads no scale. *)
-let unscaled : type d r.
-    ctx -> (d, r) Role.t -> (d, r) Channel.t -> host -> Rows.col =
- fun ctx role ch h ->
-  let col values =
-    Rows.Col
-      {
-        role;
-        values;
-        norm = None;
-        fn = None;
-        ticks = None;
-        cats = None;
-        band = None;
-        zero = None;
-      }
+  let nums, texts, miss =
+    match source rd bd index None with
+    | Values v ->
+        let v = floats rd v sel in
+        let miss = Array.map Float.is_nan v in
+        let texts =
+          lazy
+            (let d = ref 0 and dec = decimals lift in
+             Array.iteri
+               (fun i v -> if not miss.(i) then d := Int.max !d (dec v))
+               v;
+             let fmt = Number.v Number.Plain (Number.Decimals !d) in
+             let locale = Theme.locale ctx.theme in
+             Array.map
+               (fun v ->
+                 if Float.is_nan v then blank
+                 else Text.v (Number.to_string ~locale fmt v))
+               v)
+        in
+        (v, texts, miss)
+    | Codes (c, m) ->
+        let codes = ints rd c sel in
+        let miss =
+          match m with
+          | None -> Array.make (Array.length codes) false
+          | Some m -> Array.map (fun f -> f <> 0.) (floats rd m sel)
+        in
+        let texts =
+          lazy
+            (let label = label lift in
+             Array.mapi
+               (fun j k -> if miss.(j) then blank else Text.v (label k))
+               codes)
+        in
+        (Array.make (Array.length codes) Float.nan, texts, miss)
+    | Positions _ -> assert false (* Positions are read on a scale. *)
   in
-  let g = mapping ch in
-  let miss = missing h in
-  match role.range with
+  match b.role.range with
   | Role.Floats ->
-      let vs =
-        match h with
-        | Q q -> Array.mapi (fun i v -> if miss.(i) then Float.nan else g v) q.v
-        | C c -> Array.make (Array.length c.ids) Float.nan
-      in
-      col vs
+      let g i v = if miss.(i) then Float.nan else g v in
+      (column b.role (Array.mapi g nums), miss)
   | Role.Texts ->
-      col (Array.mapi (fun i t -> if miss.(i) then t else g t) (format ctx h))
+      let g i t = if miss.(i) then t else g t in
+      (column b.role (Array.mapi g (Lazy.force texts)), miss)
   | Role.Colors | Role.Symbols | Role.Panels | Role.Curves | Role.Pixels ->
-      err "draw" "the role %s reads no scale" role.name
+      err "draw" "the role %s reads no scale" b.role.name
 
-let rows ?only ctx rd ~id projection ~warn scale_of sel =
+let rows ?only ctx rd ~id projection ~warn reads sel =
   let m = rd.mark and stroked = stroked rd.mark in
   let n = count m.shape sel in
   let dropped = Array.make n false in
-  let drop (B b) miss =
-    match b.role.range with
-    | Role.Colors -> ()
-    | _ -> Array.iteri (fun i x -> if x then dropped.(i) <- true) miss
-  in
   let col index (B b as bd) =
     match Channel.constant b.ch with
-    | Some v -> constant b.role n v
-    | None -> (
-        let d = Option.get (data b.ch) in
-        let h = host rd d.lift sel in
-        let scaled =
-          match scale_of index with
-          | Some i ->
-              let norm = normalize ctx.scales.(i) h in
-              Option.map
-                (fun c -> (c, Array.map Float.is_nan norm))
-                (scaled ctx ~stroked bd norm (ids h) i)
-          | _ -> None
+    | Some v -> column b.role (Array.make n v)
+    | None ->
+        let col, miss =
+          match
+            Option.bind reads.(index) (scaled ctx ~stroked rd bd index sel)
+          with
+          | Some col -> col
+          | None -> unscaled ctx rd bd index sel
         in
-        match scaled with
-        | Some (c, miss) ->
-            drop bd miss;
-            c
-        | None ->
-            drop bd (missing h);
-            unscaled ctx b.role b.ch h)
+        (match b.role.range with
+        | Role.Colors -> ()
+        | _ -> Array.iteri (fun i x -> if x then dropped.(i) <- true) miss);
+        col
   in
   let wanted (B b) =
     match only with None -> true | Some l -> List.mem b.role.name l
@@ -532,31 +417,30 @@ let rows ?only ctx rd ~id projection ~warn scale_of sel =
     warn;
   }
 
-let facet rd role =
-  match find_binding role rd.mark.bindings with
-  | None -> None
-  | Some (B b) -> (
-      match data b.ch with
-      | None -> None
-      | Some d -> (
-          match host rd d.lift All with
-          | C c ->
-              let ids =
-                Array.mapi
-                  (fun j id -> if c.miss.(j) then min_int else id)
-                  c.ids
-              in
-              Some (ids, c.name)
-          | Q _ -> None))
-
 let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
   let stroked = stroked m in
-  let col index (B b as bd) =
+  let col index (B b) =
     match Channel.constant b.ch with
-    | Some v -> Some (constant b.role 1 v)
-    | None ->
-        if reads index then scaled ctx ~stroked bd [| u |] [| 0 |] scale
-        else None
+    | Some v -> Some (column b.role [| v |])
+    | None when reads index -> (
+        let (F f as s) = ctx.scales.(scale) in
+        match base ctx ~stroked b.role.use b.role.range s with
+        | None -> None
+        | Some (range, missing) ->
+            let fn = fn s range missing (mapping b.ch) in
+            let ticks = ticks ctx scale in
+            let cats, band, zero =
+              match f.kind with
+              | Categories ->
+                  let k = Option.value ~default:(-1) (index_at f.scale u) in
+                  (Some [| k |], Some (Scale.bandwidth f.scale), None)
+              | Quantities -> (None, None, Some (zero f.scale))
+            in
+            Some
+              (column b.role
+                 [| fn u |]
+                 ~norm:[| u |] ~fn ~ticks ?cats ?band ?zero))
+    | None -> None
   in
   {
     Rows.id;

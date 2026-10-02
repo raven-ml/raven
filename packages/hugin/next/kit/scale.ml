@@ -363,6 +363,15 @@ let band_index c =
   Array.iteri (fun i x -> Hashtbl.replace index x i) names;
   index
 
+let normalize_index s =
+  let finish = finish s in
+  let (Categories c) = domain_of s in
+  let k = size c in
+  let n = Float.of_int k and p = padding s in
+  fun i ->
+    if i < 0 || i >= k then Float.nan
+    else finish ((Float.of_int i +. ((1. +. p) /. 2.)) /. (n +. p))
+
 let normalize : type d. d t -> d -> float =
  fun s ->
   let finish = finish s in
@@ -393,12 +402,9 @@ let normalize : type d. d t -> d -> float =
         let w = Steps.ns_diff b a in
         fun x -> finish (Steps.ns_diff x a /. w)
   | Categories c -> (
-      let index = band_index c in
-      let n = Float.of_int (size c) and p = padding s in
+      let index = band_index c and at = normalize_index s in
       fun x ->
-        match Hashtbl.find_opt index x with
-        | None -> Float.nan
-        | Some i -> finish ((Float.of_int i +. ((1. +. p) /. 2.)) /. (n +. p)))
+        match Hashtbl.find_opt index x with None -> Float.nan | Some i -> at i)
 
 let invert : type d. d t -> float -> d option =
  fun s u ->

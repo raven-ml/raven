@@ -20,7 +20,7 @@ type axis_spec = {
   a_side : side;
   a_guide : guide; (* Explicit, or else the default. *)
   a_labelled : bool; (* False where the next panel on its side labels it. *)
-  a_category : string option; (* The panel's category, for a header. *)
+  a_category : int option; (* The panel's category, for a header. *)
 }
 
 type leaf = {
@@ -91,47 +91,25 @@ let guide_title (F f) note =
   in
   match titles @ note with [] -> None | parts -> Some (Text.concat parts)
 
-let category_text (F f) name =
-  match Scale.domain f.scale with
-  | Scale.Categories (Scale.Indices ix) -> (
-      match Array.find_opt (fun (i, _) -> string_of_int i = name) ix with
-      | Some (_, s) -> Text.v s
-      | None -> Text.v name)
-  | _ -> Text.v name
+let category_text (F f) k =
+  match (f.kind, Scale.domain f.scale) with
+  | Channel.Categories, Scale.Categories (Scale.Labels l) -> Text.v l.(k)
+  | Channel.Categories, Scale.Categories (Scale.Indices ix) ->
+      Text.v (snd ix.(k))
+  | Channel.Quantities, _ -> Text.v (string_of_int k)
 
 (* Building items *)
 
-let names_of (F f) =
+let count (F f) =
   match f.kind with
-  | Channel.Categories -> category_names f.scale
-  | Channel.Quantities -> []
+  | Channel.Categories -> List.length (category_names f.scale)
+  | Channel.Quantities -> 0
 
 (* [units s] is the length of the domain of [s] in units of its transform, or
    one if it spans none. *)
 let units (F f) =
   let u = Scale.length f.scale in
   if Float.is_finite u && u > 0. then u else 1.
-
-(* [scale_index r pid pnid on] is the scale that the guide [on] shows in the
-   facet panel [pnid] of the cell [pid]. *)
-let scale_index (r : Resolved.t) pid pnid on =
-  let rec go i = function
-    | [] -> None
-    | F f :: rest ->
-        let reads =
-          List.exists
-            (fun m ->
-              Nx.Ptree.Path.equal m.m_pid pid && Role.shown_on m.m_use = Some on)
-            f.members
-        in
-        let here =
-          match f.key with
-          | Panel (_, p) -> Nx.Ptree.Path.equal p pnid
-          | _ -> true
-        in
-        if reads && here then Some i else go (i + 1) rest
-  in
-  go 0 r.scales
 
 (* [guide kind (F f) ~show explicit] is the explicit guide of [f], or else the
    guide of [kind] that its marks imply or else shows by [show]. *)
@@ -157,7 +135,7 @@ let default_side : [ `Axis of Role.axis | `Header of Role.axis ] -> side =
   | `Header Role.X -> `Top
   | `Header Role.Y -> `Right
 
-let axis_spec r scales c pid p on =
+let axis_spec scales c p on =
   Option.map
     (fun i ->
       let (F f as s) = scales.(i) in
@@ -175,12 +153,11 @@ let axis_spec r scales c pid p on =
           | `Header Role.Y -> p.pfy
           | `Axis _ -> None);
       })
-    (scale_index r pid p.pnid (on :> Role.shown))
+    (shown c p.reads (on :> Role.shown))
 
-let leaf r scales pid c p =
+let leaf scales c p =
   let axes =
-    List.filter_map
-      (axis_spec r scales c pid p)
+    List.filter_map (axis_spec scales c p)
       [ `Axis Role.X; `Axis Role.Y; `Header Role.X; `Header Role.Y ]
   in
   let coord =
@@ -227,7 +204,7 @@ let labelled cells =
               (fun a' ->
                 a'.a_guide.show && a'.a_scale = a.a_scale
                 && equal_side a'.a_side a.a_side
-                && Option.equal String.equal a'.a_category a.a_category)
+                && Option.equal Int.equal a'.a_category a.a_category)
               l'.l_axes
         | _ -> false)
       cells
@@ -287,8 +264,8 @@ let blocks r =
     match s.body with
     | Single _ ->
         let ps =
-          match find_path id r.facets with
-          | Some ps -> List.map (fun p -> p.pnid) ps
+          match find_path id r.cells with
+          | Some c -> List.map (fun p -> p.pnid) c.panels
           | None -> [ id ]
         in
         (id, ps)
@@ -425,29 +402,18 @@ let build r scales uses =
     | _ -> []
   in
   let content pid c =
-    let one p = Leaf (leaf r scales pid c p) in
-    match find_path pid r.facets with
-    | None -> one { pnid = pid; pfy = None; pfx = None }
-    | Some [ p ] when Nx.Ptree.Path.equal p.pnid pid -> one p
-    | Some ps ->
+    let one p = Leaf (leaf scales c p) in
+    let cell = Option.get (find_path pid r.cells) in
+    match cell.panels with
+    | [ p ] when Nx.Ptree.Path.equal p.pnid pid -> one p
+    | ps ->
         (* A facet panel is a block of its own, beside which the legends of its
            own scales go. *)
         let one p = wrap p.pnid (legends_at p.pnid) (one p) in
-        let fx = scale_index r pid pid (`Header Role.X)
-        and fy = scale_index r pid pid (`Header Role.Y) in
-        let names = Option.fold ~none:[] ~some:(fun i -> names_of scales.(i)) in
-        let xs = names fx and ys = names fy in
-        let pos l = function
-          | None -> 0
-          | Some c ->
-              let rec find k = function
-                | [] -> 0
-                | c' :: rest ->
-                    if String.equal c c' then k else find (k + 1) rest
-              in
-              find 0 l
-        in
-        let nx = max 1 (List.length xs) and ny = max 1 (List.length ys) in
+        let fx = cell.fx and fy = cell.fy in
+        let count = Option.fold ~none:0 ~some:(fun i -> count scales.(i)) in
+        let pos = Option.value ~default:0 in
+        let nx = max 1 (count fx) and ny = max 1 (count fy) in
         let wrap_at =
           Option.bind fx (fun i ->
               let (F f) = scales.(i) in
@@ -459,10 +425,8 @@ let build r scales uses =
           match wrap_at with
           | Some w ->
               let w = min w nx in
-              ( w,
-                (nx + w - 1) / w,
-                fun p -> (pos xs p.pfx / w, pos xs p.pfx mod w) )
-          | None -> (nx, ny, fun p -> (pos ys p.pfy, pos xs p.pfx))
+              (w, (nx + w - 1) / w, fun p -> (pos p.pfx / w, pos p.pfx mod w))
+          | None -> (nx, ny, fun p -> (pos p.pfy, pos p.pfx))
         in
         let cell p =
           let r0, c0 = at p in
@@ -490,7 +454,7 @@ let build r scales uses =
       match s.body with
       | Single c -> content id c
       | Arr a ->
-          let cell (c : cell) =
+          let cell (c : Arrange.cell) =
             {
               r0 = c.row;
               c0 = c.col;

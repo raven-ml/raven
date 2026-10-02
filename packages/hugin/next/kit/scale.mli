@@ -346,6 +346,11 @@ val normalize : 'd t -> 'd -> float
     scale can have a missing end. [normalize s] may be applied once and reused:
     the partial application computes what depends on [s] alone. *)
 
+val normalize_index : string t -> int -> float
+(** [normalize_index s k] is [normalize s c] for the category [c] at the index
+    [k] of the domain of [s], and [nan] if [k] is not an index of the domain.
+    Like [normalize s], [normalize_index s] may be applied once and reused. *)
+
 val invert : 'd t -> float -> 'd option
 (** [invert s u] is the value that [s] normalises to [u]:
     - on a continuous scale, [Some x] for the [x] with [normalize s x = u] up to

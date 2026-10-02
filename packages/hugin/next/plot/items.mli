@@ -18,7 +18,7 @@ type axis_spec = {
   a_side : Figure.side;
   a_guide : Figure.guide;  (** Explicit, or else the default. *)
   a_labelled : bool;  (** False where the next panel on its side labels it. *)
-  a_category : string option;  (** The panel's category, for a header. *)
+  a_category : int option;  (** The panel's category, for a header. *)
 }
 
 type leaf = {
@@ -80,8 +80,9 @@ val guide_title : Resolved.fitted -> string option -> Text.t option
 (** [guide_title s note] is the distinct titles of the channels reading [s] in
     the order of the figure, separated by commas, then [note]. *)
 
-val category_text : Resolved.fitted -> string -> Text.t
-(** [category_text s name] is the text that shows the category [name] of [s]. *)
+val category_text : Resolved.fitted -> int -> Text.t
+(** [category_text s k] is the text that shows the category of index [k] in the
+    domain of the band scale [s]. *)
 
 (** {1:building Building items} *)
 

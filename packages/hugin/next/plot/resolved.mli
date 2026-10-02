@@ -45,11 +45,43 @@ val category_names : string Scale.t -> string list
 
 (** {1:facets Facets} *)
 
-type facet_panel = {
-  pnid : Common.id;
-  pfy : string option;
-  pfx : string option;
+(** Where the rows of a mark go along one facet of its cell. *)
+type facet =
+  | Every  (** It binds no data to the facet: every category. *)
+  | One of int option  (** A constant: the index of its category, if any. *)
+  | Each of Nx.int64_t
+      (** Each row's category index, [-1] for none, where the data lives. *)
+
+type part = { px : facet; py : facet }
+(** Where the rows of a mark go among the panels of its cell. *)
+
+type panel = {
+  pnid : Common.id;  (** The cell's, or its facet panel's. *)
+  pfx : int option;  (** Its category in the cell's fx scale. *)
+  pfy : int option;
+  reads : (Common.id * int option array) list;
+      (** Per mark, the index in the scales of the scale each binding reads. *)
 }
+
+type cell = {
+  content : Arrange.content;
+  fx : int option;  (** The index in the scales of its fx scale. *)
+  fy : int option;
+  panels : panel list;  (** By fy category, then fx category. *)
+  parts : (Common.id * part) list;  (** Per mark. *)
+}
+
+val mask : part -> panel -> [ `All | `None | `Mask of Nx.bool_t ]
+(** [mask part p] is the rows of a mark of [part] in [p]: all, none, or those of
+    a mask that broadcasts to the mark's shape. *)
+
+val shown :
+  Arrange.content ->
+  (Common.id * int option array) list ->
+  Role.shown ->
+  int option
+(** [shown c reads on] is the index in the scales of the scale that the guide
+    [on] shows where the marks of [c] read the scales [reads], as a panel's. *)
 
 (** {1:resolved Resolved figures} *)
 
@@ -57,7 +89,7 @@ type t = {
   figure : Figure.t;
   view : View.t;
   shaped : Arrange.shaped;
-  facets : (Common.id * facet_panel list) list;
+  cells : (Common.id * cell) list;
   scales : fitted list;  (** In the order of their first readers. *)
   nodes : (Common.id * (Common.id * Arrange.shares) list) list;
       (** Each node with the cells it lies in and the scopes it reads there. *)

@@ -22,7 +22,7 @@ type col =
       fn : (float -> 'r) option;  (** The range, if it reads a scale. *)
       ticks : float array option;  (** The frozen ticks of its scale. *)
       cats : int array option;
-          (** On a band scale, an identity per category, [min_int] where
+          (** On a band scale, each row's index in its domain, [-1] where
               missing. *)
       band : float option;  (** On a band scale, its bandwidth. *)
       zero : float option;
