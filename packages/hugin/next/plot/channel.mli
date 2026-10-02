@@ -70,6 +70,14 @@ val constant : ('d, 'r) t -> 'r option
 val mapping : ('d, 'r) t -> 'r -> 'r
 (** [mapping c] is the composition of the {!map_range} functions of [c]. *)
 
+val scale_kind : ('d, 'r) t -> 'd Scale.kind option
+(** [scale_kind c] is the kind of scale that reads the data of [c], [None] if
+    [c] is a constant. *)
+
+val varies : int array -> ('d, 'r) t -> int -> bool
+(** [varies shape c a] is [true] iff the values of [c] in a mark of shape
+    [shape] can differ along its axis [a], counted from the last if negative. *)
+
 (** {1:making Making channels} *)
 
 val num :

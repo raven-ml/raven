@@ -34,6 +34,7 @@ type nonrec reducer = reducer
 let m4 = M4
 let cells = Cells
 let raster = Raster
+let broadcast ?shape bindings = mark_shape "Mark.broadcast" ?shape bindings
 
 let v ~name ?reduce ?coord ?shape ?swatch bindings draw =
   Mark (make_mark "Mark.v" ~name ?reduce ?coord ?shape ?swatch bindings draw)

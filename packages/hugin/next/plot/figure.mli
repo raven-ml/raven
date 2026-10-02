@@ -36,6 +36,12 @@ type mark = {
 val equal_mark : mark -> mark -> bool
 val find_binding : ('d, 'r) Role.t -> binding list -> binding option
 
+val mark_shape : string -> ?shape:int array -> binding list -> int array
+(** [mark_shape fn ~shape bindings] is the shape of a mark of [bindings]: that
+    of [shape] and the channels broadcast together. Raises [Invalid_argument],
+    naming [fn], if they do not, if [shape] has a negative dimension, or if a
+    [dim] or an [index] does not fit it. *)
+
 val make_mark :
   string ->
   name:string ->

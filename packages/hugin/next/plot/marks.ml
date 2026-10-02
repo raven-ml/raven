@@ -3,21 +3,23 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module P2 = Hugin_next_gg.P2
-module Box2 = Hugin_next_gg.Box2
-module Path = Hugin_next_gg.Path
-module Stroke = Hugin_next_gg.Stroke
-module Color = Hugin_next_gg.Color
+(* The built-in marks name nothing of the library but [Api], the public names
+   they use, so that a user can write each of them. The test suite compiles a
+   copy of this file against the public interface. *)
+
+open Api
 module Field2 = Hugin_next_gg_kit.Field2
 module Pgon2 = Hugin_next_gg_kit.Pgon2
-module Text = Hugin_next_text.Text
-module Picture = Hugin_next_vg.Picture
-module Scale = Hugin_next_kit.Scale
-module Symbol = Hugin_next_kit.Symbol
-module Curve = Hugin_next_kit.Curve
-open Common
-open Channel
-open Figure
+
+let err fn fmt =
+  Format.kasprintf (fun s -> invalid_arg ("Hugin_next." ^ fn ^ ": " ^ s)) fmt
+
+let pp_shape ppf s =
+  Format.fprintf ppf "[%a]"
+    (Format.pp_print_seq
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+       Format.pp_print_int)
+    (Array.to_seq s)
 
 let on = Mark.bind
 let opt role = Option.map (on role)
@@ -92,33 +94,29 @@ let bar_band = Scale.band ~padding:bar_padding ()
    [role]. Quantities are a length, which implies [zero] on their scale, and
    categories a band, which implies [band] if given. *)
 let length : type d r.
-    ?band:string Scale.t -> (d, r) Role.t -> (d, r) Channel.t -> binding =
+    ?band:string Scale.t -> (d, r) Role.t -> (d, r) channel -> Mark.binding =
  fun ?band role ch ->
-  match data ch with
-  | Some { lift; _ } -> (
-      match kind lift with
-      | Quantities -> on ~imply:(Scale.linear ~zero:true ()) role ch
-      | Categories -> on ?imply:band role ch)
-  | None -> on role ch
+  match kind ch with
+  | Some Scale.Quantitative -> on ~imply:(Scale.linear ~zero:true ()) role ch
+  | Some Scale.Categorical -> on ?imply:band role ch
+  | Some Scale.Temporal | None -> on role ch
 
 let position ?band role ~alone = function
   | None -> None
   | Some ch -> Some (if alone then length ?band role ch else on role ch)
 
 (* [continuous ch] is [true] iff [ch] holds data read by a continuous scale. *)
-let continuous : type d r. (d, r) Channel.t option -> bool = function
+let continuous : type d r. (d, r) channel option -> bool = function
   | None -> false
   | Some ch -> (
-      match data ch with
-      | Some { lift; _ } -> (
-          match kind lift with Quantities -> true | Categories -> false)
-      | None -> false)
+      match kind ch with
+      | Some (Scale.Quantitative | Scale.Temporal) -> true
+      | Some Scale.Categorical | None -> false)
 
 let facets fx fy = [ opt Role.fx fx; opt Role.fy fy ]
 
-let make fn ?reduce ?coord ?shape ?swatch l draw =
-  make_mark fn ~name:fn ?reduce ?coord ?shape ?swatch (List.filter_map Fun.id l)
-    draw
+let make name ?reduce ?coord ?shape ?swatch l draw =
+  Mark.v ~name ?reduce ?coord ?shape ?swatch (List.filter_map Fun.id l) draw
 
 (* Dots *)
 
@@ -170,26 +168,26 @@ let draw_dot rows =
            !groups)
 
 let dot ?fill ?stroke ?opacity ?size ?symbol ?fx ?fy ~x ~y () =
-  Mark
-    (make "dot" ~reduce:Raster
-       ([
-          Some (on Role.x x);
-          Some (on Role.y y);
-          opt Role.fill fill;
-          opt Role.stroke stroke;
-          opt Role.opacity opacity;
-          opt Role.size size;
-          opt Role.symbol symbol;
-        ]
-       @ facets fx fy)
-       draw_dot)
+  make "dot" ~reduce:Mark.raster
+    ([
+       Some (on Role.x x);
+       Some (on Role.y y);
+       opt Role.fill fill;
+       opt Role.stroke stroke;
+       opt Role.opacity opacity;
+       opt Role.size size;
+       opt Role.symbol symbol;
+     ]
+    @ facets fx fy)
+    draw_dot
 
 (* Lines *)
 
-(* [style rows xs role ~default equal] is the value of [role] of the first row
-   of the series [rows] that is not dropped, a row at [xs.(i)] being dropped
-   where that is [nan], with a warning if it varies along the series. *)
-let style rows xs role ~default equal =
+(* [style rows xs (name, role) ~default equal] is the value of [role] of the
+   first row of the series [rows] that is not dropped, a row at [xs.(i)] being
+   dropped where that is [nan], with a warning naming [name] if it varies along
+   the series. *)
+let style rows xs (name, role) ~default equal =
   match Mark.get rows role with
   | None -> default
   | Some vs ->
@@ -202,8 +200,7 @@ let style rows xs role ~default equal =
         vs;
       if !varies then
         Mark.warn rows
-          (Printf.sprintf "the %s of a line varies along a series"
-             role.Role.name);
+          (Printf.sprintf "the %s of a line varies along a series" name);
       if !first < 0 then default else vs.(!first)
 
 (* [closed p] is [p] with every subpath closed. *)
@@ -224,18 +221,21 @@ let closed path =
    [path] within it. *)
 let draw_series rows xs path =
   let th = Mark.theme rows in
-  let o = style rows xs Role.opacity ~default:1. Float.equal in
-  let width = style rows xs Role.width ~default:(em rows line_em) Float.equal in
+  let o = style rows xs ("opacity", Role.opacity) ~default:1. Float.equal in
+  let width =
+    style rows xs ("width", Role.width) ~default:(em rows line_em) Float.equal
+  in
   let stroke =
     Option.map
       (fun _ ->
-        style rows xs Role.stroke ~default:Color.transparent Color.equal)
+        style rows xs ("stroke", Role.stroke) ~default:Color.transparent
+          Color.equal)
       (Mark.get rows Role.stroke)
   in
   match Mark.get rows Role.fill with
   | Some _ ->
       let fill =
-        style rows xs Role.fill ~default:Color.transparent Color.equal
+        style rows xs ("fill", Role.fill) ~default:Color.transparent Color.equal
       in
       Picture.group
         [
@@ -277,19 +277,18 @@ let line ?x ?stroke ?fill ?width ?opacity ?(curve = Curve.linear) ?fx ?fy ~y ()
   let x =
     match x with Some x -> on Role.x x | None -> on Role.x (index (-1))
   in
-  Mark
-    (make "line" ~reduce:M4 ~swatch:swatch_line
-       ([
-          Some x;
-          Some (on Role.y y);
-          opt Role.stroke stroke;
-          opt Role.fill fill;
-          opt Role.width width;
-          opt Role.opacity opacity;
-          Some (on curve_param (const curve));
-        ]
-       @ facets fx fy)
-       draw_line)
+  make "line" ~reduce:Mark.m4 ~swatch:swatch_line
+    ([
+       Some x;
+       Some (on Role.y y);
+       opt Role.stroke stroke;
+       opt Role.fill fill;
+       opt Role.width width;
+       opt Role.opacity opacity;
+       Some (on curve_param (const curve));
+     ]
+    @ facets fx fy)
+    draw_line
 
 (* Rects *)
 
@@ -318,19 +317,18 @@ let draw_rect rows =
 let rect ?x ?x2 ?y ?y2 ?fill ?stroke ?opacity ?fx ?fy () =
   (* A band position across a continuous one is a bar. *)
   let bars other = if continuous other then Some bar_band else None in
-  Mark
-    (make "rect" ~reduce:Cells
-       ([
-          position Role.x ?band:(bars y) ~alone:(Option.is_none x2) x;
-          opt Role.x2 x2;
-          position Role.y ?band:(bars x) ~alone:(Option.is_none y2) y;
-          opt Role.y2 y2;
-          opt Role.fill fill;
-          opt Role.stroke stroke;
-          opt Role.opacity opacity;
-        ]
-       @ facets fx fy)
-       draw_rect)
+  make "rect" ~reduce:Mark.cells
+    ([
+       position Role.x ?band:(bars y) ~alone:(Option.is_none x2) x;
+       opt Role.x2 x2;
+       position Role.y ?band:(bars x) ~alone:(Option.is_none y2) y;
+       opt Role.y2 y2;
+       opt Role.fill fill;
+       opt Role.stroke stroke;
+       opt Role.opacity opacity;
+     ]
+    @ facets fx fy)
+    draw_rect
 
 (* Rules *)
 
@@ -393,16 +391,11 @@ let rule ?x ?x2 ?y ?y2 ?stroke ?width ?opacity ?fx ?fy () =
         "the channels match no case: give x without x2, y without y2, or x, \
          x2, y and y2"
   in
-  Mark
-    (make "rule"
-       (positions
-       @ [
-           opt Role.stroke stroke;
-           opt Role.width width;
-           opt Role.opacity opacity;
-         ]
-       @ facets fx fy)
-       draw_rule)
+  make "rule"
+    (positions
+    @ [ opt Role.stroke stroke; opt Role.width width; opt Role.opacity opacity ]
+    @ facets fx fy)
+    draw_rule
 
 (* Texts *)
 
@@ -426,19 +419,18 @@ let draw_text rows = draw_texts rows (or_const rows Role.text (Text.v ""))
 let swatch_text rows = draw_texts rows [| Text.v "a" |]
 
 let text ?fill ?opacity ?(dx = 0.) ?(dy = 0.) ?fx ?fy ~x ~y ~text () =
-  Mark
-    (make "text" ~swatch:swatch_text
-       ([
-          Some (on Role.x x);
-          Some (on Role.y y);
-          Some (on Role.text text);
-          opt Role.fill fill;
-          opt Role.opacity opacity;
-          Some (on dx_param (const dx));
-          Some (on dy_param (const dy));
-        ]
-       @ facets fx fy)
-       draw_text)
+  make "text" ~swatch:swatch_text
+    ([
+       Some (on Role.x x);
+       Some (on Role.y y);
+       Some (on Role.text text);
+       opt Role.fill fill;
+       opt Role.opacity opacity;
+       Some (on dx_param (const dx));
+       Some (on dy_param (const dy));
+     ]
+    @ facets fx fy)
+    draw_text
 
 (* Images *)
 
@@ -542,40 +534,21 @@ let image ?fx ?fy px =
   in
   let fixed = Scale.linear ~nice:false () in
   let at v = floats [| v |] in
-  Mark
-    (make "image"
-       ~coord:(Coord.cartesian ~aspect:1. ())
-       ~shape:lead
-       ([
-          Some (on ~imply:fixed ~guide:false Role.x (at 0.));
-          Some (on Role.x2 (at (float w)));
-          Some
-            (on
-               ~imply:(Scale.linear ~nice:false ~reverse:true ())
-               ~guide:false Role.y (at 0.));
-          Some (on Role.y2 (at (float h)));
-          Some (on pixels_param (const (Nx.P px)));
-        ]
-       @ facets fx fy)
-       draw_image)
-
-(* [varies shape b a] is [true] iff the channel of [b] can vary along axis [a]
-   of [shape]. *)
-let varies shape (B b) a =
-  let rank = Array.length shape in
-  let along s =
-    let off = rank - Array.length s in
-    a >= off && s.(a - off) > 1
-  in
-  match data b.ch with
-  | None -> false
-  | Some d -> (
-      match d.lift with
-      | Num { x; _ } -> along (Nx.shape x)
-      | Cat { codes; _ } -> along (Nx.shape codes)
-      | Strings s -> along [| Array.length s |]
-      | Floats s -> along [| Array.length s |]
-      | Index k | Dim { axis = k; _ } -> axis_of shape k = Some a)
+  make "image"
+    ~coord:(Coord.cartesian ~aspect:1. ())
+    ~shape:lead
+    ([
+       Some (on ~imply:fixed ~guide:false Role.x (at 0.));
+       Some (on Role.x2 (at (float w)));
+       Some
+         (on
+            ~imply:(Scale.linear ~nice:false ~reverse:true ())
+            ~guide:false Role.y (at 0.));
+       Some (on Role.y2 (at (float h)));
+       Some (on pixels_param (const (Nx.P px)));
+     ]
+    @ facets fx fy)
+    draw_image
 
 (* Contours *)
 
@@ -627,50 +600,44 @@ let draw_contour rows =
   Picture.group (List.init (Mark.length rows / (n * m)) field)
 
 (* [grid role ch] binds [ch], a position of a sampled field, to [role]: the
-   field's extent is its grid, so it implies [nice] off. *)
-let grid : type d r. (d, r) Role.t -> (d, r) Channel.t -> binding =
+   field's extent is its grid, so it implies [nice] off on quantities. *)
+let grid : type d r. (d, r) Role.t -> (d, r) channel -> Mark.binding =
  fun role ch ->
-  match data ch with
-  | Some { lift; _ } -> (
-      match kind lift with
-      | Quantities -> on ~imply:(Scale.linear ~nice:false ()) role ch
-      | Categories -> on role ch)
-  | None -> on role ch
+  match kind ch with
+  | Some Scale.Quantitative -> on ~imply:(Scale.linear ~nice:false ()) role ch
+  | Some (Scale.Categorical | Scale.Temporal) | None -> on role ch
 
 let contour ?x ?y ?opacity ?fx ?fy ~fill () =
-  let x =
+  if Option.is_none (kind fill) then err "contour" "fill is a constant";
+  let on_x =
     match x with Some x -> grid Role.x x | None -> grid Role.x (index (-1))
-  in
-  let y =
+  and on_y =
     match y with Some y -> grid Role.y y | None -> grid Role.y (index (-2))
   in
-  if Option.is_none (data fill) then err "contour" "fill is a constant";
-  let fx = opt Role.fx fx and fy = opt Role.fy fy in
-  let m =
-    make "contour"
+  let bindings =
+    List.filter_map Fun.id
       [
-        Some x;
-        Some y;
+        Some on_x;
+        Some on_y;
         Some (on Role.fill fill);
         opt Role.opacity opacity;
-        fx;
-        fy;
+        opt Role.fx fx;
+        opt Role.fy fy;
       ]
-      draw_contour
   in
-  let shape = m.shape in
+  let shape = Mark.broadcast bindings in
   let rank = Array.length shape in
   if rank < 2 then
     err "contour" "the shape %a has fewer than two axes" pp_shape shape;
-  if varies shape x (rank - 2) then
-    err "contour" "x can vary along the rows of the grid";
-  if varies shape y (rank - 1) then
+  (* The defaults, [index (-1)] and [index (-2)], vary along their own axes. *)
+  let can_vary c a =
+    match c with Some c -> varies shape c a | None -> false
+  in
+  if can_vary x (-2) then err "contour" "x can vary along the rows of the grid";
+  if can_vary y (-1) then
     err "contour" "y can vary along the columns of the grid";
-  List.iter
-    (function
-      | Some (B f as b)
-        when varies shape b (rank - 2) || varies shape b (rank - 1) ->
-          err "contour" "%s can vary along the grid" f.role.name
-      | _ -> ())
-    [ fx; fy ];
-  Mark m
+  if can_vary fx (-2) || can_vary fx (-1) then
+    err "contour" "fx can vary along the grid";
+  if can_vary fy (-2) || can_vary fy (-1) then
+    err "contour" "fy can vary along the grid";
+  Mark.v ~name:"contour" bindings draw_contour

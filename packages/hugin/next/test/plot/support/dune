@@ -1,3 +1,15 @@
 (library
  (name hugin_next_test_figures)
+ (modules figures)
  (libraries hugin.next nx))
+
+; The built-in marks, compiled against the public interface alone: a mark
+; that names a private module of the library fails this build.
+
+(copy_files#
+ (files ../../../plot/marks.{ml,mli}))
+
+(library
+ (name hugin_next_test_marks)
+ (modules api marks)
+ (libraries hugin.next hugin.next.gg.kit nx nx.dtype))

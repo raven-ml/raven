@@ -64,6 +64,8 @@ val raster : reducer
 
 (** {1:making Making marks} *)
 
+val broadcast : ?shape:int array -> binding list -> int array
+
 val v :
   name:string ->
   ?reduce:reducer ->

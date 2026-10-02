@@ -3,44 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module P2 = Hugin_next_gg.P2
-module Box2 = Hugin_next_gg.Box2
-module Affine = Hugin_next_gg.Affine
-module Path = Hugin_next_gg.Path
-module Stroke = Hugin_next_gg.Stroke
-module Color = Hugin_next_gg.Color
-module Font = Hugin_next_font.Font
-module Text = Hugin_next_text.Text
-module Picture = Hugin_next_vg.Picture
-module Renderable = Hugin_next_vg.Renderable
-module Locale = Hugin_next_kit.Locale
-module Scale = Hugin_next_kit.Scale
-module Scheme = Hugin_next_kit.Scheme
-module Symbol = Hugin_next_kit.Symbol
-module Curve = Hugin_next_kit.Curve
-module Stats = Hugin_next_kit.Stats
+include Api
 
 (* Figures *)
 
-type t = Figure.t
 type id = Common.id
 type warning = Common.warning
 
 let pp_warning = Common.pp_warning
 let equal = Figure.equal
-
-(* Channels *)
-
-type ('d, 'r) channel = ('d, 'r) Channel.t
-
-let num = Channel.num
-let cat = Channel.cat
-let strings = Channel.strings
-let floats = Channel.floats
-let dim = Channel.dim
-let index = Channel.index
-let const = Channel.const
-let map_range = Channel.map_range
 
 (* Marks *)
 
@@ -52,9 +23,8 @@ let text = Marks.text
 let image = Marks.image
 let contour = Marks.contour
 
-(* Coordinate systems and views *)
+(* Views *)
 
-module Coord = Coord
 module View = View
 
 (* Composing *)
@@ -73,12 +43,9 @@ let bind = Figure.bind
 let axis = Figure.axis
 let legend = Figure.legend
 
-(* Sizes, themes and extending *)
+(* Sizes *)
 
 module Size = Size
-module Theme = Theme
-module Role = Role
-module Mark = Mark
 
 (* Stages *)
 

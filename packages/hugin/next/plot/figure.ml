@@ -224,20 +224,9 @@ let check_binding fn shape (B b) =
           | _ -> ())
       | Num _ | Floats _ | Cat _ | Strings _ -> ())
 
-let make_mark fn ~name ?reduce ?coord ?(shape = [||]) ?swatch bindings draw =
+let mark_shape fn ?(shape = [||]) bindings =
   if Array.exists (fun d -> d < 0) shape then
     err fn "the shape %a has a negative dimension" pp_shape shape;
-  let rec distinct = function
-    | [] -> ()
-    | b :: rest ->
-        if
-          List.exists (fun b' -> String.equal (role_name b') (role_name b)) rest
-        then err fn "the role %s is bound twice" (role_name b);
-        distinct rest
-  in
-  distinct bindings;
-  check_ends fn bindings Role.x Role.x2;
-  check_ends fn bindings Role.y Role.y2;
   let shape =
     List.fold_left
       (fun shape (B b) ->
@@ -254,6 +243,21 @@ let make_mark fn ~name ?reduce ?coord ?(shape = [||]) ?swatch bindings draw =
       (Array.copy shape) bindings
   in
   List.iter (check_binding fn shape) bindings;
+  shape
+
+let make_mark fn ~name ?reduce ?coord ?shape ?swatch bindings draw =
+  let rec distinct = function
+    | [] -> ()
+    | b :: rest ->
+        if
+          List.exists (fun b' -> String.equal (role_name b') (role_name b)) rest
+        then err fn "the role %s is bound twice" (role_name b);
+        distinct rest
+  in
+  distinct bindings;
+  check_ends fn bindings Role.x Role.x2;
+  check_ends fn bindings Role.y Role.y2;
+  let shape = mark_shape fn ?shape bindings in
   { kind = name; reduce; coord; swatch; bindings; draw; shape }
 
 (* Composing *)

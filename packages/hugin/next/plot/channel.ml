@@ -113,6 +113,15 @@ let rec mapping : type d r. (d, r) t -> r -> r = function
       fun v -> f (g v)
   | Const _ | Data _ -> Fun.id
 
+let scale_kind : type d r. (d, r) t -> d Scale.kind option =
+ fun c ->
+  match data c with
+  | None -> None
+  | Some d -> (
+      match kind d.lift with
+      | Quantities -> Some Scale.Quantitative
+      | Categories -> Some Scale.Categorical)
+
 (* Lifts *)
 
 let is_real : type a b. (a, b) Nx.dtype -> bool = function
@@ -193,3 +202,21 @@ let lift_shape : type d. d lift -> int array option = function
   | Floats a -> Some [| Array.length a |]
   | Dim { valid = Some v; _ } -> Some (Nx.shape v)
   | Dim { valid = None; _ } | Index _ -> None
+
+let varies : type d r. int array -> (d, r) t -> int -> bool =
+ fun shape c a ->
+  match (axis_of shape a, data c) with
+  | None, _ | _, None -> false
+  | Some a, Some d -> (
+      let rank = Array.length shape in
+      let along s =
+        let off = rank - Array.length s in
+        a >= off && s.(a - off) > 1
+      in
+      match d.lift with
+      | Num { x; _ } -> along (Nx.shape x)
+      | Cat { codes; _ } -> along (Nx.shape codes)
+      | Strings s -> along [| Array.length s |]
+      | Floats s -> along [| Array.length s |]
+      | Index k | Dim { axis = k; _ } ->
+          axis_of shape k = Some a && shape.(a) > 1)

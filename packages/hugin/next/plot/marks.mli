@@ -5,88 +5,85 @@
 
 (** The built-in marks. *)
 
-module Text := Hugin_next_text.Text
-module Symbol := Hugin_next_kit.Symbol
-module Curve := Hugin_next_kit.Curve
-module Color := Hugin_next_gg.Color
+open Api
 
 val dot :
-  ?fill:('f, Color.t) Channel.t ->
-  ?stroke:('s, Color.t) Channel.t ->
-  ?opacity:('o, float) Channel.t ->
-  ?size:(float, float) Channel.t ->
-  ?symbol:(string, Symbol.t) Channel.t ->
-  ?fx:(string, string) Channel.t ->
-  ?fy:(string, string) Channel.t ->
-  x:('x, float) Channel.t ->
-  y:('y, float) Channel.t ->
+  ?fill:('f, Color.t) channel ->
+  ?stroke:('s, Color.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?size:(float, float) channel ->
+  ?symbol:(string, Symbol.t) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  x:('x, float) channel ->
+  y:('y, float) channel ->
   unit ->
-  Figure.t
+  t
 
 val line :
-  ?x:('x, float) Channel.t ->
-  ?stroke:('s, Color.t) Channel.t ->
-  ?fill:('f, Color.t) Channel.t ->
-  ?width:('w, float) Channel.t ->
-  ?opacity:('o, float) Channel.t ->
+  ?x:('x, float) channel ->
+  ?stroke:('s, Color.t) channel ->
+  ?fill:('f, Color.t) channel ->
+  ?width:('w, float) channel ->
+  ?opacity:('o, float) channel ->
   ?curve:Curve.t ->
-  ?fx:(string, string) Channel.t ->
-  ?fy:(string, string) Channel.t ->
-  y:('y, float) Channel.t ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  y:('y, float) channel ->
   unit ->
-  Figure.t
+  t
 
 val rect :
-  ?x:('x, float) Channel.t ->
-  ?x2:('x, float) Channel.t ->
-  ?y:('y, float) Channel.t ->
-  ?y2:('y, float) Channel.t ->
-  ?fill:('f, Color.t) Channel.t ->
-  ?stroke:('s, Color.t) Channel.t ->
-  ?opacity:('o, float) Channel.t ->
-  ?fx:(string, string) Channel.t ->
-  ?fy:(string, string) Channel.t ->
+  ?x:('x, float) channel ->
+  ?x2:('x, float) channel ->
+  ?y:('y, float) channel ->
+  ?y2:('y, float) channel ->
+  ?fill:('f, Color.t) channel ->
+  ?stroke:('s, Color.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
   unit ->
-  Figure.t
+  t
 
 val rule :
-  ?x:('x, float) Channel.t ->
-  ?x2:('x, float) Channel.t ->
-  ?y:('y, float) Channel.t ->
-  ?y2:('y, float) Channel.t ->
-  ?stroke:('s, Color.t) Channel.t ->
-  ?width:('w, float) Channel.t ->
-  ?opacity:('o, float) Channel.t ->
-  ?fx:(string, string) Channel.t ->
-  ?fy:(string, string) Channel.t ->
+  ?x:('x, float) channel ->
+  ?x2:('x, float) channel ->
+  ?y:('y, float) channel ->
+  ?y2:('y, float) channel ->
+  ?stroke:('s, Color.t) channel ->
+  ?width:('w, float) channel ->
+  ?opacity:('o, float) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
   unit ->
-  Figure.t
+  t
 
 val text :
-  ?fill:('f, Color.t) Channel.t ->
-  ?opacity:('o, float) Channel.t ->
+  ?fill:('f, Color.t) channel ->
+  ?opacity:('o, float) channel ->
   ?dx:float ->
   ?dy:float ->
-  ?fx:(string, string) Channel.t ->
-  ?fy:(string, string) Channel.t ->
-  x:('x, float) Channel.t ->
-  y:('y, float) Channel.t ->
-  text:('t, Text.t) Channel.t ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  x:('x, float) channel ->
+  y:('y, float) channel ->
+  text:('t, Text.t) channel ->
   unit ->
-  Figure.t
+  t
 
 val image :
-  ?fx:(string, string) Channel.t ->
-  ?fy:(string, string) Channel.t ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
   ('a, 'b) Nx.t ->
-  Figure.t
+  t
 
 val contour :
-  ?x:('x, float) Channel.t ->
-  ?y:('y, float) Channel.t ->
-  ?opacity:('o, float) Channel.t ->
-  ?fx:(string, string) Channel.t ->
-  ?fy:(string, string) Channel.t ->
-  fill:(float, Color.t) Channel.t ->
+  ?x:('x, float) channel ->
+  ?y:('y, float) channel ->
+  ?opacity:('o, float) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  fill:(float, Color.t) channel ->
   unit ->
-  Figure.t
+  t

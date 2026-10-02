@@ -24,10 +24,10 @@ let drawn ?view ?theme ?(density = 1.) ?(size = Size.panels 100. 100.) f =
 (* [probe ~reduce bindings read] is a mark whose draw function records [read
    rows] for each panel it draws, and the records, latest first. Its legend
    swatches draw nothing. *)
-let probe ?reduce bindings read =
+let probe ?reduce ?shape bindings read =
   let seen = ref [] in
   let m =
-    Mark.v ~name:"probe" ?reduce
+    Mark.v ~name:"probe" ?reduce ?shape
       ~swatch:(fun _ -> Picture.empty)
       bindings
       (fun rows ->
@@ -41,8 +41,8 @@ let only seen =
 
 (* [rows_of bindings read] is [read] of the one panel of a mark of
    [bindings]. *)
-let rows_of ?(size = Size.panels 100. 100.) bindings read =
-  let m, seen = probe bindings read in
+let rows_of ?(size = Size.panels 100. 100.) ?shape bindings read =
+  let m, seen = probe ?shape bindings read in
   ignore (drawn ~size m);
   only seen
 
@@ -459,6 +459,132 @@ let rows =
                  ())
           in
           equal int 1 (List.length (Drawing.warnings d)));
+    ]
+
+(* Channels on a mark's axes *)
+
+(* A channel of distinct values, described for printing. *)
+type spec =
+  | Tensor of int array
+  | Codes of int array
+  | Strings_of of int
+  | Floats_of of int
+  | Index_of of int
+  | Dim_of of int
+  | Constant
+
+let pp_shape ppf s =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+
+let pp_spec ppf = function
+  | Tensor s -> Format.fprintf ppf "num %a" pp_shape s
+  | Codes s -> Format.fprintf ppf "cat %a" pp_shape s
+  | Strings_of n -> Format.fprintf ppf "strings %d" n
+  | Floats_of n -> Format.fprintf ppf "floats %d" n
+  | Index_of k -> Format.fprintf ppf "index %d" k
+  | Dim_of k -> Format.fprintf ppf "dim %d" k
+  | Constant -> Format.fprintf ppf "const"
+
+let numel s = Array.fold_left ( * ) 1 s
+
+let distinct s =
+  Nx.reshape s (Nx.arange_f Nx.float64 0. (Float.of_int (numel s)) 1.)
+
+let codes s = Nx.reshape s (Nx.arange Nx.int32 0 (numel s) 1)
+let labels n = Array.init n (Printf.sprintf "s%d")
+let values n = Array.init n Float.of_int
+
+(* [bound spec] binds the channel [spec] describes to the text role, whose
+   values tell distinct data apart. *)
+let bound = function
+  | Tensor s -> Mark.bind Role.text (num (distinct s))
+  | Codes s -> Mark.bind Role.text (cat (codes s))
+  | Strings_of n -> Mark.bind Role.text (strings (labels n))
+  | Floats_of n -> Mark.bind Role.text (Hugin_next.floats (values n))
+  | Index_of k -> Mark.bind Role.text (index k)
+  | Dim_of k -> Mark.bind Role.text (dim k)
+  | Constant -> Mark.bind Role.text (const (Text.v "c"))
+
+(* [varies_of shape spec a] is [varies] of the channel [spec] describes. *)
+let varies_of shape spec a =
+  match spec with
+  | Tensor s -> varies shape (num (distinct s)) a
+  | Codes s -> varies shape (cat (codes s)) a
+  | Strings_of n -> varies shape (strings (labels n)) a
+  | Floats_of n -> varies shape (Hugin_next.floats (values n)) a
+  | Index_of k -> varies shape (index k) a
+  | Dim_of k -> varies shape (dim k) a
+  | Constant -> varies shape (const (Text.v "c")) a
+
+(* A mark's shape and a channel that broadcasts to it without growing it. *)
+let gen_channel =
+  let open Gen in
+  let pp ppf (shape, spec) =
+    Format.fprintf ppf "shape %a, %a" pp_shape shape pp_spec spec
+  in
+  with_pp pp
+    (let* shape = array ~size:(int_range 1 3) (int_range 1 3) in
+     let rank = Array.length shape in
+     let last = shape.(rank - 1) in
+     let suffix =
+       let* k = int_range 0 rank in
+       let+ ones = array ~size:(constant k) bool in
+       Array.mapi (fun i one -> if one then 1 else shape.(rank - k + i)) ones
+     in
+     let+ spec =
+       one_of
+         [
+           map (fun s -> Tensor s) suffix;
+           map (fun s -> Codes s) suffix;
+           map
+             (fun n -> Strings_of n)
+             (of_list ~pp:Format.pp_print_int [ 1; last ]);
+           map
+             (fun n -> Floats_of n)
+             (of_list ~pp:Format.pp_print_int [ 1; last ]);
+           map (fun k -> Index_of k) (int_range (-rank) (rank - 1));
+           map (fun k -> Dim_of k) (int_range (-rank) (rank - 1));
+           constant Constant;
+         ]
+     in
+     (shape, spec))
+
+(* The law: [varies] holds of an axis iff two rows a step apart along it hold
+   different values, and [Mark.broadcast] is the shape of the mark drawn. *)
+let varies_law (shape, spec) =
+  let b = bound spec in
+  let drawn_shape, texts =
+    rows_of ~shape [ b ] (fun r ->
+        (Mark.shape r, Option.get (Mark.get r Role.text)))
+  in
+  equal (array int) drawn_shape (Mark.broadcast ~shape [ b ]);
+  let rank = Array.length shape in
+  let stride a = numel (Array.sub shape (a + 1) (rank - a - 1)) in
+  for a = 0 to rank - 1 do
+    let s = stride a in
+    let differs = ref false in
+    Array.iteri
+      (fun k t ->
+        if k / s mod shape.(a) > 0 && not (Text.equal t texts.(k - s)) then
+          differs := true)
+      texts;
+    cover "an axis it varies along" !differs;
+    cover "an axis it does not vary along" (not !differs);
+    equal
+      ~msg:(Printf.sprintf "axis %d" a)
+      bool !differs (varies_of shape spec a);
+    equal
+      ~msg:(Printf.sprintf "axis %d" (a - rank))
+      bool !differs
+      (varies_of shape spec (a - rank))
+  done;
+  equal ~msg:"an axis past the shape" bool false (varies_of shape spec rank)
+
+let channels =
+  group "Channels"
+    [
+      prop "varies is whether rows differ along an axis" gen_channel varies_law;
     ]
 
 (* The domain: positions are clipped to it, ink is not *)
@@ -1249,4 +1375,6 @@ let goldens =
         (Nx_io.load_image (golden (name ^ ".png")))
         (Raster.render ~density:Figures.density r))
 
-let () = exit (run "Draw" [ rows; domain; drawings; output; reducers; goldens ])
+let () =
+  exit
+    (run "Draw" [ rows; channels; domain; drawings; output; reducers; goldens ])

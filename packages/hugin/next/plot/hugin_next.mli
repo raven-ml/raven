@@ -364,14 +364,29 @@ val map_range : ('r -> 'r) -> ('d, 'r) channel -> ('d, 'r) channel
     paint their scale's unknown colour. [c] still contributes to its scale's
     domain, and a scale read only through [map_range] yields no legend. *)
 
+val kind : ('d, 'r) channel -> 'd Scale.kind option
+(** [kind c] is the kind of the scale that reads the data of [c], or [None] if
+    [c] is a constant. A mark chooses with it what it implies on that scale
+    ({!Mark.bind}): {!rect} implies [zero] on the scale of a quantitative length
+    and padding on the band scale of a bar. *)
+
+val varies : int array -> ('d, 'r) channel -> int -> bool
+(** [varies shape c a] is [true] iff the values of [c] can differ along the axis
+    [a] of a mark of shape [shape] ({!Mark.broadcast}), [a] counting from the
+    last axis if negative: a tensor or an array whose dimension aligned with [a]
+    exceeds [1], or an {!index} or a {!dim} of the axis [a] if its length
+    exceeds [1]. It is [false] for a constant and if [shape] has no axis [a]. A
+    mark checks with it, when it is made, how its data lie on its axes:
+    {!contour} raises if its [x] can vary along the rows of its grid. *)
+
 (** {1:marks Marks}
 
     A mark is a figure that draws its rows in each panel its facet channels
     select ({!section-facets}). The built-in marks below are made as {!Mark.v}
     makes marks, from bindings and a draw function, and take their channels as
-    labelled arguments named after their roles ({!section-roles}). {!dot},
-    {!rect}, {!rule} and {!contour} use only what {!Mark} offers. {!line},
-    {!text} and {!image} keep their curve, text offsets and pixels in parameters
+    labelled arguments named after their roles ({!section-roles}). They use only
+    this interface, so a user can write each of them: {!line}, {!text} and
+    {!image} keep their curve, text offsets and pixels in parameters
     ({!Role.param}). Every mark takes the facet channels [fx] and [fy], and
     every mark but {!image} takes [opacity], [1.] by default.
 
@@ -587,8 +602,8 @@ val contour :
 
     Raises [Invalid_argument] if the mark's shape has fewer than two axes, if
     [fill] is a constant, if [x] or [y] can vary along the axis it must not vary
-    along, or if [fx] or [fy] can vary along either axis of the grid, which
-    would put one field in several panels. *)
+    along ({!varies}), or if [fx] or [fy] can vary along either axis of the
+    grid, which would put one field in several panels. *)
 
 (** {1:scales Scales}
 
@@ -1472,6 +1487,16 @@ module Mark : sig
       again, it is within one level of the picture drawn there directly. *)
 
   (** {1:making Making marks} *)
+
+  val broadcast : ?shape:int array -> binding list -> int array
+  (** [broadcast ~shape bindings] is the shape of the mark that
+      [v ~shape bindings] makes: [shape], by default [[||]], and the shapes of
+      the channels broadcast together ({!Hugin_next.section-data}). A mark
+      checks its data with it, and with {!Hugin_next.varies}, before it is made.
+
+      Raises [Invalid_argument] if [shape] has a negative dimension, if the
+      channels and [shape] do not broadcast, or if a {!Hugin_next.dim} or a
+      {!Hugin_next.index} does not fit their shape. *)
 
   val v :
     name:string ->
