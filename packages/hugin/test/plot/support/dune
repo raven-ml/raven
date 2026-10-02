@@ -8,7 +8,7 @@
 ; test_draw links.
 
 (copy_files#
- (files ../../../plot/marks.{ml,mli}))
+ (files ../../../lib/marks.{ml,mli}))
 
 (library
  (name hugin_test_marks)

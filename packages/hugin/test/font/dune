@@ -4,8 +4,8 @@
  (package hugin)
  (libraries hugin.gg hugin.font windtrap)
  (deps
-  ../../font/fonts/Inter-Regular.ttf
-  ../../font/fonts/Inter-Bold.ttf
+  ../../lib/font/fonts/Inter-Regular.ttf
+  ../../lib/font/fonts/Inter-Bold.ttf
   cmap.expected
   kerning.expected)
  (action

@@ -12,7 +12,7 @@ has one advance and numbers align in columns.
 Usage, from the repository root, with Inter 4.1's release unpacked
 (https://github.com/rsms/inter/releases/tag/v4.1):
 
-    uv run packages/hugin/font/fonts/tabular.py <release>/extras/ttf
+    uv run packages/hugin/lib/font/fonts/tabular.py <release>/extras/ttf
 
 It rewrites the faces in place and refuses a face whose digits already share
 one advance.

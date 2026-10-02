@@ -9,8 +9,8 @@ open Hugin_font
 open Build
 
 let read path = In_channel.with_open_bin path In_channel.input_all
-let regular_ttf = read "../../font/fonts/Inter-Regular.ttf"
-let bold_ttf = read "../../font/fonts/Inter-Bold.ttf"
+let regular_ttf = read "../../lib/font/fonts/Inter-Regular.ttf"
+let bold_ttf = read "../../lib/font/fonts/Inter-Bold.ttf"
 let em units = Float.of_int units /. 2048.
 let font_t = Testable.make ~pp:Font.pp ~equal:Font.equal
 let path_t = Testable.make ~pp:Path.pp ~equal:Path.equal
