@@ -1486,17 +1486,25 @@ module Mark : sig
   (** The type for reducers. *)
 
   val m4 : reducer
-  (** [m4] keeps, of each series ({!series}) with more than four rows per
-      device-pixel column of the panel, each column's first, last, lowest and
-      highest rows, when the series' [x] is monotone and its other channels
-      constant, and the projection is affine. Columns are the device pixels at
-      the density {!draw} is given.
+  (** [m4] keeps, of the series ({!series}) whose channels other than their
+      positions and facets are constant along them, when they have more than
+      four rows per device-pixel column of the panel and per run, the first,
+      last, lowest and highest rows of each run of consecutive rows whose [x]
+      lies in one column, and the first row of each run of dropped rows. Columns
+      are the device pixels at the density {!draw} is given, cut at the ends of
+      the x domain, where the path is cut; the rows beyond the panel's pixels
+      make one column on each side. The domain's ends lie in it, and a row on
+      another edge of a column lies in the column after. Only the rows in the
+      panel make runs: the rows of a series that its facets put in other panels
+      neither join nor split them. It applies when [x] and [y] read continuous
+      scales and the projection is affine.
 
-      A mark naming it draws each series as a path through its points. The
-      reduced path keeps, in each column, its end points and its vertical
-      extent, so it inks the pixels the whole path inks, within one pixel. The
-      coverage inside that extent may differ for a line thinner than a column: a
-      dense scribble covers more of each pixel than the four rows kept. *)
+      A mark naming it draws each series as a path through its points that
+      breaks at dropped rows. The reduced path keeps every break and, in each
+      column, its end points and its vertical extent, so it inks the pixels the
+      whole path inks, within one pixel. The coverage inside that extent may
+      differ for a line thinner than a column: a dense scribble covers more of
+      each pixel than the four rows kept. *)
 
   val cells : reducer
   (** [cells] draws a panel's rows as one image whose pixels are their cells,

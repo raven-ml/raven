@@ -264,136 +264,226 @@ let cells cx m (panel : Layout.panel) reads ~rows ~full ~few sel =
       | _ -> None)
   | _ -> None
 
-(* [quantities m index] is the quantities the binding [index] reads, as a tensor
-   or an axis index, if no element of them is masked. *)
-let quantities m index =
-  let (B b) = List.nth m.bindings index in
-  match data b.ch with
-  | Some { lift = Num { x; valid = None }; _ } ->
-      Some (`Num (Nx.cast Nx.float64 x))
-  | Some { lift = Index k; _ } -> Some (`Index k)
+(* [quantities shape ~role l s] is the quantities of the lift [l] in a mark of
+   shape [shape], where they live, its missing rows, if any, and the fitted
+   scale that reads them, if [s] reads quantities. *)
+let quantities : type d.
+    int array ->
+    role:string ->
+    d lift ->
+    fitted ->
+    (Nx.float64_t * Nx.bool_t option * float Scale.t) option =
+ fun shape ~role l (F f) ->
+  match (kind l, f.kind) with
+  | Quantities, Quantities ->
+      let (Lift.Quantities q) = Lift.eval shape ~role l f.spec in
+      Some (q.values, q.miss.rows, f.scale)
   | _ -> None
 
-(* [m4 cx m panel reads] is the rows of [m] that M4 keeps in [panel], if it
-   applies: of each series, each device-pixel column's first, last, lowest and
-   highest rows, when the series have more than [m4_rows] rows per column, their
-   [x] is monotone and their other channels constant along them, and no value of
-   [x] or [y] is missing. Columns are found where the data lives, as the bins
-   that the values of [x] at the device-pixel edges make, with one more bin on
-   each side for the rows beyond them. *)
-let m4 cx m (panel : Layout.panel) reads =
+(* [runs edges ~inside ~dropped x y] is the increasing positions of the rows M4
+   keeps among those of the series, the rows of the [[|s; n|]] tensors [x] and
+   [y], that [inside] puts in the panel, all by default, if they have more than
+   [m4_rows] rows per run: of each run of consecutive rows in one column, its
+   first, last, lowest and highest rows, and of each run of rows that [dropped]
+   drops, none by default, its first. A row's column is the bin the [edges] put
+   its [x] in, found where the data lives. Runs are numbered by a running count
+   of their starts, so that [s * n] rows cost [O (s * n)] whatever their gaps.
+   With fewer rows per run, as where [x] is in no order, keeping four of each
+   would keep most rows. *)
+let runs edges ~inside ~dropped xt yt =
+  let s = (Nx.shape xt).(0) and last = (Nx.shape xt).(1) in
+  let n = s * last in
+  let p = Nx.arange Nx.int64 0 n 1 in
+  let none = Nx.full Nx.int64 [| n |] (-1L) in
+  let only k = match inside with None -> k | Some i -> Nx.logical_and k i in
+  let valid =
+    match dropped with
+    | None -> inside
+    | Some d -> Some (only (Nx.logical_not d))
+  in
+  (* A dropped row's column is [-1], so that a run of them is one bin. *)
+  let col = Nx.flatten (Nx.searchsorted ~side:`Right edges xt) in
+  let col = match dropped with None -> col | Some d -> Nx.where d none col in
+  (* Each row's predecessor's column, [-2] for the first row of its series in
+     the panel. *)
+  let shifted t =
+    Nx.flatten
+      (Nx.concatenate ~axis:1
+         [
+           Nx.full Nx.int64 [| s; 1 |] (-2L);
+           Nx.slice [ A; R (0, last - 1) ] (Nx.reshape [| s; last |] t);
+         ])
+  in
+  let prev =
+    match inside with
+    | None -> shifted col
+    | Some inside ->
+        let before =
+          shifted
+            (Nx.cummax ~axis:1
+               (Nx.reshape [| s; last |] (Nx.where inside p none)))
+        in
+        Nx.where (Nx.less_s before 0L)
+          (Nx.full Nx.int64 [| n |] (-2L))
+          (Nx.take ~indices:(Nx.maximum_s before 0L) col)
+  in
+  let starts = only (Nx.not_equal col prev) in
+  let run = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 starts)) 1L in
+  let bins = Int64.to_int (Nx.item [ n - 1 ] run) + 1 in
+  let rows =
+    match inside with
+    | None -> n
+    | Some i -> Int64.to_int (Nx.item [] (Nx.sum (Nx.cast Nx.int64 i)))
+  in
+  if rows <= m4_rows * bins then None
+  else
+    let within = function None -> run | Some m -> Nx.where m run none in
+    let any_bin = within inside and valid_bin = within valid in
+    let scatter mode bin values init =
+      Nx.scatter ~mode ~axis:0 ~indices:bin ~values init
+    in
+    let unset = Nx.full Nx.int64 [| bins |] Int64.max_int in
+    let yv = Nx.flatten yt in
+    let extreme mode init =
+      let e = scatter mode valid_bin yv (Nx.full Nx.float64 [| bins |] init) in
+      let hit = Nx.equal yv (Nx.take ~indices:valid_bin e) in
+      let hit =
+        match valid with None -> hit | Some v -> Nx.logical_and v hit
+      in
+      scatter `Min valid_bin
+        (Nx.where hit p (Nx.full_like p Int64.max_int))
+        unset
+    in
+    (* The kept rows are marked where the data lives, the unset ends of bins
+       ([-1] and [max_int]) falling outside and being dropped, and read once, in
+       order. *)
+    let kept =
+      List.fold_left
+        (fun marks rows ->
+          Nx.scatter ~axis:0 ~indices:rows
+            ~values:(Nx.full Nx.bool [| bins |] true)
+            marks)
+        (Nx.full Nx.bool [| n |] false)
+        [
+          scatter `Min any_bin p unset;
+          scatter `Max valid_bin p (Nx.full Nx.int64 [| bins |] (-1L));
+          extreme `Max Float.neg_infinity;
+          extreme `Min Float.infinity;
+        ]
+    in
+    Some (Array.map Int64.to_int (Nx.to_array (Nx.nonzero kept).(0)))
+
+(* [m4 cx m panel reads mask] is the rows of [m] that M4 keeps of those that
+   [mask] puts in [panel], as [runs] finds them, if it applies: the series have
+   more than [m4_rows] rows per device-pixel column, and their channels other
+   than positions and facets are constant along them. A column is cut at the
+   domain's ends, and the rows beyond the outer edges make one more bin on each
+   side. When the facets are constant along the series, only the panel's series
+   are read; otherwise the rows of other panels are skipped, so that they
+   neither join nor split a run, as they are absent from the panel's drawing. *)
+let m4 cx m (panel : Layout.panel) reads mask =
   let shape = m.shape in
   let rank = Array.length shape in
+  let last = if rank = 0 then 0 else shape.(rank - 1) in
   let d = cx.ctx.density and box = panel.box in
   let p0 = Float.floor (Box2.minx box *. d) in
   let w = Float.to_int (Float.ceil (Box2.maxx box *. d) -. p0) in
-  let last = if rank = 0 then 0 else shape.(rank - 1) in
-  let constant_along (B b) =
+  let constant (B b) =
     match b.role.use with
-    | Position { far = false; _ } -> true
+    | Position { far = false; _ } | Facet _ -> true
     | _ -> not (Channel.varies shape b.ch (-1))
   in
-  let float_scale index : float Scale.t option =
-    Option.bind reads.(index) (fun i : float Scale.t option ->
-        let (F f) = cx.ctx.scales.(i) in
-        match f.kind with Quantities -> Some f.scale | Categories -> None)
+  let facet_varies (B b) =
+    match b.role.use with
+    | Facet _ -> Channel.varies shape b.ch (-1)
+    | _ -> false
   in
-  let series = if last = 0 then 0 else Array.fold_left ( * ) 1 shape / last in
-  let flat t = Nx.reshape [| series; last |] (Nx.broadcast_to shape t) in
-  let missing s t = Nx.item [] (Nx.any (Scale.missing s t)) in
-  let monotone t =
-    let d =
-      Nx.sub (Nx.slice [ A; R (1, last) ] t) (Nx.slice [ A; R (0, last - 1) ] t)
+  let read role =
+    match binding_index m role with
+    | None -> None
+    | Some index -> (
+        match (List.nth m.bindings index, reads.(index)) with
+        | B b, Some i ->
+            Option.bind (data b.ch) (fun dt ->
+                quantities shape ~role:b.role.name dt.lift cx.ctx.scales.(i))
+        | B _, None -> None)
+  in
+  (* The values of [x] at the device-pixel edges and at the domain's ends, where
+     [Mark.project] cuts the path, so that no column holds rows on both sides of
+     a cut. *)
+  let edges sx =
+    let device c =
+      let x = (p0 +. float c) /. d in
+      Option.bind
+        (Coord.invert panel.projection (P2.v x (Box2.miny box)))
+        (fun (u, _) -> Scale.invert sx u)
     in
-    let all p = Nx.all ~axes:[ 1 ] p in
-    Nx.item []
-      (Nx.all
-         (Nx.logical_or
-            (all (Nx.greater_equal_s d 0.))
-            (all (Nx.less_equal_s d 0.))))
+    (* A row on an edge lies in the bin after it, so the upper end is moved up
+       by an ulp, for the domain's ends to lie in it. *)
+    let ends =
+      match (Scale.invert sx 0., Scale.invert sx 1.) with
+      | Some a, Some b ->
+          [ Some (Float.min a b); Some (Float.succ (Float.max a b)) ]
+      | _ -> [ None ]
+    in
+    let all = ends @ List.init (w + 1) device in
+    if List.exists Option.is_none all then None
+    else
+      let all = List.sort Float.compare (List.map Option.get all) in
+      Some (Nx.create Nx.float64 [| w + 3 |] (Array.of_list all))
   in
   let applies =
-    rank > 0 && w > 0
-    && last > m4_rows * w
-    && List.for_all constant_along m.bindings
+    rank > 0 && w > 0 && last > m4_rows * w && List.for_all constant m.bindings
   in
-  let xi = binding_index m Role.x and yi = binding_index m Role.y in
-  match (applies, xi, yi) with
-  | true, Some xi, Some yi -> (
-      match
-        (float_scale xi, float_scale yi, quantities m xi, quantities m yi)
-      with
-      | Some sx, Some sy, Some qx, Some (`Num y) -> (
-          let yt = flat y in
-          let xt =
-            match qx with
-            | `Index k when axis_of shape k = Some (rank - 1) ->
-                Some (flat (Nx.cast Nx.float64 (Nx.arange Nx.int32 0 last 1)))
-            | `Index _ -> None
-            | `Num x ->
-                let xt = flat x in
-                if missing sx xt || not (monotone xt) then None else Some xt
+  match (applies, read Role.x, read Role.y) with
+  | true, Some (x, mx, sx), Some (y, my, _) -> (
+      match edges sx with
+      | None -> None
+      | Some edges -> (
+          let series = Array.fold_left ( * ) 1 shape / last in
+          let grid t =
+            Nx.reshape [| series; last |] (Nx.broadcast_to shape t)
           in
-          let edge c =
-            let x = (p0 +. float c) /. d in
-            Option.bind
-              (Coord.invert panel.projection (P2.v x (Box2.miny box)))
-              (fun (u, _) -> Scale.invert sx u)
+          (* The rows missing [x] or [y], none if no row is. *)
+          let missing =
+            match (mx, my) with
+            | None, m | m, None -> m
+            | Some a, Some b -> Some (Nx.logical_or a b)
           in
-          let edges = List.init (w + 1) edge in
-          match xt with
-          | Some xt
-            when (not (missing sy yt)) && List.for_all Option.is_some edges ->
-              let edges =
-                Array.of_list
-                  (List.sort Float.compare (List.map Option.get edges))
-              in
-              let bins = w + 2 in
-              let col =
-                Nx.searchsorted ~side:`Right
-                  (Nx.create Nx.float64 [| w + 1 |] edges)
-                  xt
-              in
-              let base =
-                Nx.mul_s
-                  (Nx.reshape [| series; 1 |] (Nx.arange Nx.int64 0 series 1))
-                  (Int64.of_int bins)
-              in
-              let key = Nx.flatten (Nx.add col base) in
-              let j =
-                Nx.flatten
-                  (Nx.broadcast_to [| series; last |]
-                     (Nx.reshape [| 1; last |] (Nx.arange Nx.int64 0 last 1)))
-              in
-              let yv = Nx.flatten yt and k = series * bins in
-              let scatter mode values init =
-                Nx.scatter ~mode ~axis:0 ~indices:key ~values init
-              in
-              let none = Nx.full Nx.int64 [| k |] Int64.max_int in
-              let first = scatter `Min j none
-              and final = scatter `Max j (Nx.full Nx.int64 [| k |] (-1L)) in
-              let at extreme init =
-                let e = scatter extreme yv (Nx.full Nx.float64 [| k |] init) in
-                let hit = Nx.equal yv (Nx.take ~indices:key e) in
-                scatter `Min
-                  (Nx.where hit j (Nx.full_like j Int64.max_int))
-                  none
-              in
-              let high = at `Max Float.neg_infinity
-              and low = at `Min Float.infinity in
-              let kept = ref [] in
-              List.iter
-                (fun t ->
-                  Array.iteri
-                    (fun s v ->
-                      if v >= 0L && v < Int64.max_int then
-                        kept := ((s / bins * last) + Int64.to_int v) :: !kept)
-                    (Nx.to_array t))
-                [ first; final; high; low ];
-              Some
-                (Read.Rows (Array.of_list (List.sort_uniq Int.compare !kept)))
-          | _ -> None)
-      | _ -> None)
+          let missing =
+            Option.bind missing (fun d ->
+                if Nx.item [] (Nx.any d) then Some d else None)
+          in
+          let rows = Option.map (fun r -> Read.Rows r) in
+          let dropped pick =
+            Option.map (fun d -> Nx.flatten (pick d)) missing
+          in
+          match mask with
+          | `All ->
+              rows
+                (runs edges ~inside:None ~dropped:(dropped grid) (grid x)
+                   (grid y))
+          | `Mask k when List.exists facet_varies m.bindings ->
+              let inside = Some (Nx.flatten (grid k)) in
+              rows
+                (runs edges ~inside ~dropped:(dropped grid) (grid x) (grid y))
+          | `Mask k ->
+              let ends = Array.copy shape in
+              ends.(rank - 1) <- 1;
+              let ks = Nx.reshape [| series |] (Nx.broadcast_to ends k) in
+              let ids = (Nx.nonzero ks).(0) in
+              if Nx.numel ids = 0 then Some (Read.Rows [||])
+              else
+                let pick t = Nx.take ~axis:0 ~indices:ids (grid t) in
+                let kept =
+                  runs edges ~inside:None ~dropped:(dropped pick) (pick x)
+                    (pick y)
+                in
+                let ids = Nx.to_array ids in
+                let row q =
+                  (Int64.to_int ids.(q / last) * last) + (q mod last)
+                in
+                rows (Option.map (Array.map row) kept)))
   | _ -> None
 
 (* Marks *)
@@ -407,11 +497,9 @@ type target = {
   mutable notes : warning list;
 }
 
-(* [selection m part p] is the rows of [m], whose rows go among the panels of
-   its cell by [part], in the panel [p], [None] where it has none. *)
-let selection m part p =
-  match Resolved.mask part p with
-  | `None -> None
+(* [selection m mask] is the rows of [m] that [mask] selects, [None] where it
+   selects none. *)
+let selection m = function
   | `All -> Some Read.All
   | `Mask k -> (
       let k = Nx.flatten (Nx.broadcast_to m.shape k) in
@@ -424,7 +512,7 @@ let selection m part p =
 let draw_occ cx occ part targets =
   let m = occ.mark in
   let full = Read.reader ~whole:true m and few = Read.reader ~whole:false m in
-  let draw t sel =
+  let draw t mask =
     let warn msg = t.notes <- (occ.mid, msg) :: t.notes in
     let reads = Option.get (find_path occ.mid t.fp.reads) in
     let box = t.panel.box and proj = t.panel.projection in
@@ -437,33 +525,39 @@ let draw_occ cx occ part targets =
       tagged occ.mid r.index
         (Pixels.gathered ~density:cx.ctx.density (m.draw r))
     in
-    let n =
-      match sel with
-      | Read.All -> Array.fold_left ( * ) 1 m.shape
-      | Read.Rows r -> Array.length r
+    let selected f =
+      Option.map f (reading occ.mid (fun () -> selection m mask))
     in
     match m.reduce with
-    | Some Cells -> (
-        match cells cx m t.panel reads ~rows ~full ~few sel with
-        | Some p -> p
-        | None -> drawn full sel)
-    | Some Raster when n > raster_rows || float n > device_pixels cx box ->
-        let r = rows None full sel in
-        tagged occ.mid r.index (rasterised cx (m.draw r))
     | Some M4 -> (
-        match sel with
-        | Read.Rows _ -> drawn full sel
-        | Read.All -> (
-            match reading occ.mid (fun () -> m4 cx m t.panel reads) with
-            | Some kept -> drawn few kept
-            | None -> drawn full sel))
-    | Some Raster | None -> drawn full sel
+        match reading occ.mid (fun () -> m4 cx m t.panel reads mask) with
+        | Some (Read.Rows [||]) -> None
+        | Some kept -> Some (drawn few kept)
+        | None -> selected (drawn full))
+    | Some Cells ->
+        selected (fun sel ->
+            match cells cx m t.panel reads ~rows ~full ~few sel with
+            | Some p -> p
+            | None -> drawn full sel)
+    | Some Raster ->
+        selected (fun sel ->
+            let n =
+              match sel with
+              | Read.All -> Array.fold_left ( * ) 1 m.shape
+              | Read.Rows r -> Array.length r
+            in
+            if n > raster_rows || float n > device_pixels cx box then
+              let r = rows None full sel in
+              tagged occ.mid r.index (rasterised cx (m.draw r))
+            else drawn full sel)
+    | None -> selected (drawn full)
   in
   List.iter
     (fun t ->
-      match reading occ.mid (fun () -> selection m part t.fp) with
-      | None -> ()
-      | Some sel -> t.pictures <- draw t sel :: t.pictures)
+      match reading occ.mid (fun () -> Resolved.mask part t.fp) with
+      | `None -> ()
+      | (`All | `Mask _) as mask ->
+          Option.iter (fun p -> t.pictures <- p :: t.pictures) (draw t mask))
     targets
 
 (* Panels *)

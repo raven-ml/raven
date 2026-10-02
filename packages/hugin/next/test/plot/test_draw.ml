@@ -1040,11 +1040,19 @@ let m4_reference column ys rows =
   flush ();
   Array.of_list (List.sort_uniq Int.compare !kept)
 
-(* [columns ~density box domain] maps a quantity of [domain], on a linear x
-   scale, to its device-pixel column in a panel of [box]. *)
+(* [columns ~density box domain] maps a quantity on a linear x scale of [domain]
+   to its column in a panel of [box]: the device pixel it lies in, all those
+   beyond the panel's device pixels on one side being one, cut at the domain's
+   ends. The domain's ends lie in it, and a quantity on another edge lies after
+   it. *)
 let columns ~density box (a, b) v =
   let x = Box2.minx box +. ((v -. a) /. (b -. a) *. Box2.w box) in
-  Float.to_int (Float.floor (x *. density))
+  let first = Float.floor (Box2.minx box *. density)
+  and last = Float.ceil (Box2.maxx box *. density) in
+  let pixel = Float.floor (x *. density) in
+  let pixel = Float.min last (Float.max (first -. 1.) pixel) in
+  let side = if v < a then 0 else if v <= b then 1 else 2 in
+  (3 * Float.to_int pixel) + side
 
 let panel_boxes size f =
   List.map
@@ -1285,6 +1293,94 @@ let m4_columns () =
        (Nx.to_array y) (List.init n Fun.id))
     kept
 
+(* A series over [-300, 1300] on the domain [0, 1000], as in a zoom. *)
+let m4_zoom () =
+  let n = 2001 in
+  let x = Nx.linspace Nx.float64 (-300.) 1300. n and y = ys n in
+  let box, kept = one_panel (m4_kept x y) in
+  let x = Nx.to_array x in
+  equal (array int)
+    (m4_reference
+       (fun i -> columns ~density:1. box (0., 1000.) x.(i))
+       (Nx.to_array y) (List.init n Fun.id))
+    kept
+
+let m4_gaps () =
+  let n = 1001 in
+  let x = xs n and y = with_gaps (ys n) in
+  let box, kept = one_panel (m4_kept x y) in
+  let x = Nx.to_array x in
+  less int ~than:(n / 2) (Array.length kept);
+  equal (array int)
+    (m4_reference
+       (fun i -> columns ~density:1. box (0., 1000.) x.(i))
+       (Nx.to_array y) (List.init n Fun.id))
+    kept
+
+let m4_turns () =
+  let n = 1001 in
+  let x =
+    Nx.init Nx.float64 [| n |] (fun i ->
+        Float.of_int (Int.min i.(0) (n - 1 - i.(0))) *. 2.)
+  in
+  let y = ys n in
+  let box, kept = one_panel (m4_kept x y) in
+  let x = Nx.to_array x in
+  equal (array int)
+    (m4_reference
+       (fun i -> columns ~density:1. box (0., 1000.) x.(i))
+       (Nx.to_array y) (List.init n Fun.id))
+    kept
+
+(* Two facet panels of three series each, on the middle axis, so that a panel's
+   series are not consecutive. *)
+let m4_facets () =
+  let n = 1001 and per = 3 in
+  let x = Nx.broadcast_to [| per; 2; n |] (xs n) in
+  let y = Nx.reshape [| per; 2; n |] (ys (2 * per * n)) in
+  let boxes, kept = m4_kept x y ~facets:[ Mark.bind Role.fx (dim 1) ] in
+  let x = Nx.to_array (xs n) and y = Nx.to_array y in
+  let expected =
+    List.mapi
+      (fun p box ->
+        Array.concat
+          (List.init per (fun j ->
+               let s = (j * 2) + p in
+               m4_reference
+                 (fun i -> columns ~density:1. box (0., 1000.) x.(i mod n))
+                 y
+                 (List.init n (fun i -> (s * n) + i)))))
+      boxes
+  in
+  equal int 2 (List.length boxes);
+  equal (list (array int)) expected kept
+
+(* One series whose rows alternate between two facet panels by blocks of 100,
+   with a dropped run in each panel. *)
+let m4_split_facets () =
+  let n = 2000 and block = 100 in
+  let panel i = i / block mod 2 in
+  let x = xs n and y = Nx.to_array (ys n) in
+  List.iter (fun i -> y.(i) <- nan) [ 150; 151; 260 ];
+  let side =
+    Nx.create Nx.int32 [| n |] (Array.init n (fun i -> Int32.of_int (panel i)))
+  in
+  let boxes, kept =
+    m4_kept x (f64 y) ~facets:[ Mark.bind Role.fx (cat side) ]
+  in
+  let x = Nx.to_array x in
+  let expected =
+    List.mapi
+      (fun k box ->
+        m4_reference
+          (fun i -> columns ~density:1. box (0., 1000.) x.(i))
+          y
+          (List.filter (fun i -> panel i = k) (List.init n Fun.id)))
+      boxes
+  in
+  equal int 2 (List.length boxes);
+  equal (list (array int)) expected kept
+
 let reducers =
   group "Reducers"
     [
@@ -1295,22 +1391,19 @@ let reducers =
         "m4 keeps each device-pixel column's first, last, lowest and highest \
          rows"
         m4_columns;
-      test "m4 keeps every row of a series with a missing value" (fun () ->
-          let y = Nx.concatenate ~axis:0 [ ys 1000; f64 [| nan |] ] in
-          let _, kept = m4_kept (xs 1001) y in
-          equal (list int) [ 1001 ] (List.map Array.length kept));
-      test "m4 keeps every row of a series whose x is not monotone" (fun () ->
-          let x =
-            Nx.concatenate ~axis:0
-              [ Nx.linspace Nx.float64 0. 1. 1000; f64 [| 0. |] ]
-          in
-          let m, seen =
-            probe ~reduce:Mark.m4
-              [ Mark.bind Role.x (num x); Mark.bind Role.y (num (ys 1001)) ]
-              Mark.length
-          in
-          ignore (drawn ~size:(Size.panels 50. 50.) m);
-          equal int 1001 (only seen));
+      test "m4 cuts the columns at the domain's ends" m4_zoom;
+      test "m4 keeps the first row of each run of dropped rows" m4_gaps;
+      test "m4 keeps each run of a column when x turns back" m4_turns;
+      test "m4 keeps every row when x is in no order" (fun () ->
+          let n = 1001 in
+          let x = Nx.Rng.uniform (Nx.Rng.key 7) Nx.float64 [| n |] in
+          (* A few columns, so that some runs have three rows or more. *)
+          let size = Size.panels 5. 50. in
+          let _, kept = m4_kept ~size (Nx.mul_s x 1000.) (ys n) in
+          equal (list int) [ n ] (List.map Array.length kept));
+      test "m4 reduces the series of each facet panel" m4_facets;
+      test "m4 joins a series' rows across the rows of other facet panels"
+        m4_split_facets;
       m4_inks_alike;
       raster_as_drawn;
       cases
