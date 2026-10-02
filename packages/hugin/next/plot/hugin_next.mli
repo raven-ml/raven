@@ -1568,8 +1568,9 @@ val layout :
     protrusions gives, and freezes the second choice; wraps the entries of
     legends above or below their panels into rows at the lengths a solve with
     the frozen ticks gives; builds axes, legends, headers and titles; solves the
-    grid a last time; and builds each panel's projection. An axis too short for
-    its labels drops alternate ones, which never widens a protrusion.
+    grid a last time; and builds each panel's projection. An axis or colour bar
+    too short for its labels drops alternate ones, which never widens a
+    protrusion.
 
     The grid sizes fixed and aspect tracks first, makes each gap the largest
     protrusions that meet it from either side plus the theme's gap

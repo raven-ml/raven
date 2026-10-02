@@ -4134,7 +4134,10 @@ let place_legend cx acc ls cell span =
               {
                 bar = Box2.v x0 y0 sw h;
                 labels =
-                  List.map (fun tk -> label ~valign:`Middle tk (at tk)) t.major;
+                  thin cx `Right
+                    (List.map
+                       (fun tk -> label ~valign:`Middle tk (at tk))
+                       t.major);
               }
           else
             let w = Box2.w span in
@@ -4145,9 +4148,10 @@ let place_legend cx acc ls cell span =
               {
                 bar = Box2.v x0 y0 w sw;
                 labels =
-                  List.map
-                    (fun tk -> label ~halign:`Center ~valign:`Top tk (at tk))
-                    t.major;
+                  thin cx `Bottom
+                    (List.map
+                       (fun tk -> label ~halign:`Center ~valign:`Top tk (at tk))
+                       t.major);
               }
         else
           let labels = entry_labels cx t in
