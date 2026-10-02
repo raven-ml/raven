@@ -1,0 +1,11 @@
+# thumper baseline v1
+# suite: gpt_oss
+
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+GptOss/decode-step-cache-1024	alloc_words	batch=1	n=20	3.079e+05	3.076e+05 3.076e+05 3.076e+05 3.076e+05 3.076e+05 3.076e+05 3.077e+05 3.077e+05 3.077e+05 3.079e+05 3.079e+05 3.079e+05 3.079e+05 3.080e+05 3.080e+05 3.080e+05 3.090e+05 3.091e+05 3.093e+05 3.163e+05
+GptOss/decode-step-cache-1024	wall_time	batch=1	n=20	9.504e-03	9.490e-03 9.491e-03 9.492e-03 9.494e-03 9.498e-03 9.498e-03 9.499e-03 9.500e-03 9.500e-03 9.502e-03 9.506e-03 9.512e-03 9.514e-03 9.517e-03 9.520e-03 9.520e-03 9.525e-03 9.527e-03 9.537e-03 9.549e-03
+GptOss/prefill-512	alloc_words	exact	308470
+GptOss/prefill-512	wall_time	batch=1	n=20	2.218e-01	2.211e-01 2.213e-01 2.215e-01 2.215e-01 2.216e-01 2.216e-01 2.216e-01 2.217e-01 2.217e-01 2.217e-01 2.218e-01 2.218e-01 2.219e-01 2.219e-01 2.219e-01 2.219e-01 2.219e-01 2.220e-01 2.221e-01 2.221e-01

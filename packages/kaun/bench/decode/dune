@@ -1,23 +1,15 @@
-; gpt-oss's model is examples/06-gpt-oss's: kaun ships no model.
-
-(copy_files#
- (files ../../examples/06-gpt-oss/{moe,gpt_oss,layer_loop}.{ml,mli}))
-
 (executable
  (name bench_decode)
- (modules bench_decode moe gpt_oss layer_loop metal)
+ (modules bench_decode metal)
  (libraries
   nx
   nx.cuda
   nx.amd
   nx.metal
   nx.device
-  nx.io
   nx.quant
   rune
   kaun
-  kaun.hf
-  jsont
   thumper
   unix
   (select
@@ -26,7 +18,9 @@
    (nx.metal.device -> metal.macos.ml)
    (-> metal.other.ml))))
 
-; Not attached to runtest on purpose: run with `dune build @bench`.
+; Not attached to runtest on purpose: run with `dune build @bench`. [--warm]
+; compiles every case into tolk's disk cache first, in a process of its own, so
+; the measurement compiles nothing.
 
 (rule
  (alias bench)
@@ -34,4 +28,6 @@
  (deps
   (glob_files *.thumper))
  (action
-  (run %{exe:bench_decode.exe})))
+  (progn
+   (run %{exe:bench_decode.exe} --warm)
+   (run %{exe:bench_decode.exe}))))

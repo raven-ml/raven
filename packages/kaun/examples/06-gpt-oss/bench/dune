@@ -1,0 +1,34 @@
+; gpt-oss-20b's decode step and prefill, for focused work on the model's
+; performance; the regular suites guard its kernels (kaun's bench/decode).
+
+(copy_files# ../{moe,gpt_oss,layer_loop}.{ml,mli})
+
+(executable
+ (name bench_gpt_oss)
+ (modules bench_gpt_oss moe gpt_oss layer_loop)
+ (libraries
+  nx
+  nx.cuda
+  nx.amd
+  nx.device
+  nx.io
+  nx.quant
+  rune
+  kaun
+  kaun.hf
+  jsont
+  thumper
+  unix))
+
+; [--warm] compiles the kernels into tolk's disk cache first, in a process of
+; its own, so the measurement compiles nothing.
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (progn
+   (run %{exe:bench_gpt_oss.exe} --warm)
+   (run %{exe:bench_gpt_oss.exe}))))
