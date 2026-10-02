@@ -267,9 +267,9 @@ Q
 
 endstream
 10 0 obj
-<< /Type /Font /Subtype /Type0 /BaseFont /Inter-Regular /Encoding /Identity-H /DescendantFonts [16 0 R] /ToUnicode 17 0 R >>
+<< /Type /Font /Subtype /Type0 /BaseFont /OIZLTU+Inter-Regular /Encoding /Identity-H /DescendantFonts [16 0 R] /ToUnicode 17 0 R >>
 11 0 obj
-<< /Type /Font /Subtype /Type0 /BaseFont /Inter-Bold /Encoding /Identity-H /DescendantFonts [20 0 R] /ToUnicode 21 0 R >>
+<< /Type /Font /Subtype /Type0 /BaseFont /FEOQPM+Inter-Bold /Encoding /Identity-H /DescendantFonts [20 0 R] /ToUnicode 21 0 R >>
 12 0 obj
 << /Length 16 /Filter /FlateDecode /Type /XObject /Subtype /Image /Width 4 /Height 3 /ColorSpace /DeviceGray /BitsPerComponent 8 /Interpolate false >>
 stream
@@ -282,12 +282,12 @@ stream
 40365472
 endstream
 14 0 obj
-<< /Length 39965 /Filter /FlateDecode /Length1 77208 >>
-stream <77208 bytes>
+<< /Length 2244 /Filter /FlateDecode /Length1 7060 >>
+stream <7060 bytes>
 15 0 obj
-<< /Type /FontDescriptor /FontName /Inter-Regular /Flags 4 /FontBBox [-738.77 -322.266 2583.008 1107.91] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 96 /FontFile2 14 0 R >>
+<< /Type /FontDescriptor /FontName /OIZLTU+Inter-Regular /Flags 4 /FontBBox [-738.77 -322.266 2583.008 1107.91] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 96 /FontFile2 14 0 R >>
 16 0 obj
-<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Inter-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 15 0 R /DW 1000 /W [2 [689.941] 46 [743.164] 130 [689.941] 131 [985.352] 147 [561.523] 167 [612.305] 184 [613.281] 192 [242.188] 216 [590.82] 237 [376.465] 241 [527.832] 251 [591.309] 265 [818.359] 420 [288.086] 421 [288.086] 424 [288.086] 560 [281.25] 720 [648.438] 722 [648.438] 725 [648.438]] /CIDToGIDMap /Identity >>
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /OIZLTU+Inter-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 15 0 R /DW 1000 /W [2 [689.941] 46 [743.164] 130 [689.941] 131 [985.352] 147 [561.523] 167 [612.305] 184 [613.281] 192 [242.188] 216 [590.82] 237 [376.465] 241 [527.832] 251 [591.309] 265 [818.359] 420 [288.086] 421 [288.086] 424 [288.086] 560 [281.25] 720 [648.438] 722 [648.438] 725 [648.438]] /CIDToGIDMap /Identity >>
 17 0 obj
 << /Length 326 /Filter /FlateDecode >>
 stream
@@ -328,12 +328,12 @@ end
 end
 endstream
 18 0 obj
-<< /Length 40882 /Filter /FlateDecode /Length1 78176 >>
-stream <78176 bytes>
+<< /Length 887 /Filter /FlateDecode /Length1 2544 >>
+stream <2544 bytes>
 19 0 obj
-<< /Type /FontDescriptor /FontName /Inter-Bold /Flags 4 /FontBBox [-787.598 -334.473 2583.008 1112.793] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 169 /FontFile2 18 0 R >>
+<< /Type /FontDescriptor /FontName /FEOQPM+Inter-Bold /Flags 4 /FontBBox [-787.598 -334.473 2583.008 1112.793] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 169 /FontFile2 18 0 R >>
 20 0 obj
-<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Inter-Bold /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 19 0 R /DW 1000 /W [16 [661.621] 167 [630.371] 209 [270.996] 222 [613.281]] /CIDToGIDMap /Identity >>
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /FEOQPM+Inter-Bold /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 19 0 R /DW 1000 /W [16 [661.621] 167 [630.371] 209 [270.996] 222 [613.281]] /CIDToGIDMap /Identity >>
 21 0 obj
 << /Length 241 /Filter /FlateDecode >>
 stream

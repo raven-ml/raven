@@ -20,10 +20,12 @@
       for strokes.
     - A glyph run is text shown in the run's font at the run's size, each glyph
       by its glyph id at its position in the run. Each font is embedded once, as
-      a [CIDFontType2] font with the [Identity-H] encoding. A [ToUnicode] map
-      gives each glyph the text it renders, and a run whose text that map cannot
-      reproduce, such as one where a glyph renders several characters or two
-      characters share a glyph, carries its text in an [ActualText] span, so
+      a [CIDFontType2] font with the [Identity-H] encoding whose program is the
+      {{!Hugin_next_font.Font.subset}subset} of the glyphs the page shows, named
+      by a tag of six capital letters that depends on the subset. A [ToUnicode]
+      map gives each glyph the text it renders, and a run whose text that map
+      cannot reproduce, such as one where a glyph renders several characters or
+      two characters share a glyph, carries its text in an [ActualText] span, so
       that copying text from the page gives each run's text.
     - An image is an image XObject painted over its box, its samples deflated
       losslessly and marked to be shown without interpolation. An RGBA image has

@@ -597,10 +597,19 @@ let pdf_name s =
     s;
   if Buffer.length b = 0 then "Font" else Buffer.contents b
 
+(* [tag bytes] is the six capital letters that name a font subset, drawn from a
+   digest of its [bytes] so that different subsets get different names. *)
+let tag bytes =
+  let d = Digest.string bytes in
+  String.init 6 (fun i -> Char.chr (Char.code 'A' + (Char.code d.[i] mod 26)))
+
 let add_font doc u =
   let f = u.font in
-  let base = pdf_name (Font.postscript_name f) in
-  let bytes = Font.bytes f in
+  let glyphs =
+    Hashtbl.fold (fun g () acc -> g :: acc) u.used [] |> List.sort Int.compare
+  in
+  let bytes = Font.subset f glyphs in
+  let base = tag bytes ^ "+" ^ pdf_name (Font.postscript_name f) in
   let file =
     add doc
       (stream ~dict:(Printf.sprintf " /Length1 %d" (String.length bytes)) bytes)
@@ -632,9 +641,6 @@ let add_font doc u =
          (em (Font.cap_height f))
          (num (Float.round stem))
          file)
-  in
-  let glyphs =
-    Hashtbl.fold (fun g () acc -> g :: acc) u.used [] |> List.sort Int.compare
   in
   let widths = Buffer.create 256 in
   List.iteri

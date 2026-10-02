@@ -368,13 +368,21 @@ let leaves =
       test "a run is text in an embedded CID font" (fun () ->
           let doc = pdf (typeset_at 50. "AV" 10.) in
           let d = dicts doc and c = content doc in
-          is_true ~msg:"Type0"
-            (contains d
-               "/Subtype /Type0 /BaseFont /Inter-Regular /Encoding /Identity-H");
+          let base = "/Subtype /Type0 /BaseFont /" in
+          let name = Option.get (find_from d 0 base) + String.length base in
+          equal ~msg:"the subset's name" string
+            "+Inter-Regular /Encoding /Identity-H"
+            (String.sub d (name + 6) 36);
+          is_true ~msg:"a tag of six capitals"
+            (String.for_all
+               (function 'A' .. 'Z' -> true | _ -> false)
+               (String.sub d name 6));
           is_true ~msg:"CIDFontType2" (contains d "/Subtype /CIDFontType2");
           is_true ~msg:"size" (contains c "/F1 10 Tf");
           is_true ~msg:"upright at the origin" (contains c "1 0 0 -1 5 50 Tm");
-          equal string (Font.bytes Font.regular) (stream_of doc "/Length1"));
+          equal string
+            (Font.subset Font.regular [ glyph 'A'; glyph 'V' ])
+            (stream_of doc "/Length1"));
       test "a run off one baseline places each line of glyphs on its own"
         (fun () ->
           let r =
@@ -1296,7 +1304,7 @@ let determinism =
                     ]))
           in
           let at s = Option.get (find_from d 0 s) in
-          is_true (at "/BaseFont /Inter-Bold" < at "/BaseFont /Inter-Regular"));
+          is_true (at "+Inter-Bold" < at "+Inter-Regular"));
     ]
 
 (* Goldens *)

@@ -127,6 +127,39 @@ val pp : Format.formatter -> t -> unit
 (** [pp ppf f] formats the family, weight and slant of [f] for debugging, the
     family as {!Run.pp} formats text. *)
 
+(** {1:subsetting Subsetting} *)
+
+val subset : t -> glyph list -> string
+(** [subset f gs] is an OpenType file holding the face of [f] cut down to the
+    glyphs it keeps: glyph [0], the glyphs [gs], and the components of every
+    composite glyph it keeps. PDF output embeds it in place of {!bytes}, so that
+    a document carries only the glyphs it shows.
+
+    Glyphs keep their ids, so a run of glyphs of [gs] draws the same from the
+    subset as from [f]. Decoded by {!of_string}, the subset is a font [f'] such
+    that:
+    - [glyph_count f'] is one more than the largest glyph it keeps.
+    - [outline f' g] is [outline f g] and [advance f' g] is [advance f g] for a
+      glyph [g] it keeps. Any other glyph has an empty outline and a zero
+      advance.
+    - [glyph f' u] is [glyph f u] if that glyph is kept, and [0] otherwise.
+    - Its {!family}, {!postscript_name}, {!weight}, {!slant}, {!ascent},
+      {!descent}, {!line_gap}, {!italic_angle} and {!bounds} are those of [f],
+      and so are its {!cap_height} and {!x_height} where the [OS/2] table of [f]
+      records them. Face-wide maxima of the [head], [hhea] and [maxp] tables are
+      those of [f], which bound the glyphs it keeps.
+    - It has no kerning: runs place its glyphs, so it holds no [GPOS], [kern] or
+      other layout table.
+
+    The subset holds the tables [head], [hhea], [maxp], [hmtx], [cmap], [loca],
+    [glyf] and [post], without glyph names, and the [OS/2] and [name] tables of
+    [f] and its hinting tables [cvt ], [fpgm], [prep] and [gasp] when it has
+    them. It depends only on [f] and the set of glyphs [gs]: their order and
+    repetitions do not change a byte.
+
+    Raises [Invalid_argument] if a glyph of [gs] is not in
+    \[[0];[glyph_count f - 1]\]. *)
+
 (** {1:metrics Metrics} *)
 
 val ascent : t -> float

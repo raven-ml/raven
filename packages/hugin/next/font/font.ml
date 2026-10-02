@@ -966,3 +966,285 @@ let cap_height f = f.cap_height
 let x_height f = f.x_height
 let italic_angle f = f.italic_angle
 let bounds f = f.bounds
+
+(* Subsetting
+
+   A subset keeps glyph ids: glyphs it drops stay in its tables up to the last
+   glyph it keeps, without data or advance. It rewrites the tables that list
+   glyphs, copies [OS/2], [name] and the hinting tables, and leaves out the
+   rest, layout tables included. *)
+
+(* [closure f gs] flags glyph [0], the glyphs [gs] and their components. *)
+let closure f gs =
+  let keep = Array.make f.glyph_count false in
+  let rec add g =
+    if not keep.(g) then begin
+      keep.(g) <- true;
+      match shape f.glyphs g with
+      | Composite cs -> List.iter (fun (c, _) -> add c) cs
+      | Empty | Simple _ -> ()
+    end
+  in
+  add 0;
+  List.iter
+    (fun g ->
+      check_glyph "subset" f g;
+      add g)
+    gs;
+  keep
+
+(* The characters [f] maps to glyphs other than [0] that [keep] flags, with
+   their glyphs, in increasing order of characters. A character two format 4
+   segments hold belongs to the first, as {!lookup} reads it. *)
+let mappings f keep =
+  let n = Array.length keep and acc = ref [] in
+  let add c g = if g > 0 && g < n && keep.(g) then acc := (c, g) :: !acc in
+  (match f.cmap with
+  | Segments { starts; ends; _ } ->
+      for i = Array.length ends - 1 downto 0 do
+        let first = if i = 0 then starts.(i) else ends.(i - 1) + 1 in
+        if starts.(i) <> 0xFFFF then
+          for c = ends.(i) downto Int.max first starts.(i) do
+            add c (lookup f.cmap c)
+          done
+      done
+  | Groups { starts; ends; glyphs } ->
+      (* Groups can span far more characters than glyphs: walk the glyphs. *)
+      for i = Array.length ends - 1 downto 0 do
+        let start = starts.(i) and g0 = glyphs.(i) in
+        let last = g0 + (Int.min ends.(i) 0x10FFFF - start) in
+        for g = Int.min last (n - 1) downto g0 do
+          add (start + g - g0) g
+        done
+      done);
+  !acc
+
+(* [runs ms] splits mappings [ms] into maximal runs of consecutive characters
+   mapped to consecutive glyphs: (first character, last character, first
+   glyph). *)
+let runs ms =
+  let rec extend c g last = function
+    | (c', g') :: ms when c' = last + 1 && g' - g = c' - c -> extend c g c' ms
+    | ms -> (last, ms)
+  in
+  let rec loop acc = function
+    | [] -> List.rev acc
+    | (c, g) :: ms ->
+        let last, ms = extend c g c ms in
+        loop ((c, last, g) :: acc) ms
+  in
+  loop [] ms
+
+let add_u16 b v = Buffer.add_uint16_be b (v land 0xFFFF)
+let add_u32 b v = Buffer.add_int32_be b (Int32.of_int v)
+
+(* [binary n] is the largest power of two [p <= n] and its logarithm, which
+   binary search headers record. *)
+let binary n =
+  let p = ref 1 and k = ref 0 in
+  while 2 * !p <= n do
+    p := 2 * !p;
+    incr k
+  done;
+  (!p, !k)
+
+(* A format 4 subtable of [runs], one segment each, then the final U+FFFF
+   segment. *)
+let format_4 runs =
+  let n = List.length runs + 1 in
+  let p, k = binary n in
+  let b = Buffer.create (16 + (8 * n)) in
+  List.iter (add_u16 b) [ 4; 16 + (8 * n); 0; 2 * n; 2 * p; k; 2 * (n - p) ];
+  List.iter (fun (_, last, _) -> add_u16 b last) runs;
+  add_u16 b 0xFFFF;
+  add_u16 b 0;
+  List.iter (fun (first, _, _) -> add_u16 b first) runs;
+  add_u16 b 0xFFFF;
+  List.iter (fun (first, _, g) -> add_u16 b (g - first)) runs;
+  add_u16 b 1;
+  for _ = 1 to n do
+    add_u16 b 0
+  done;
+  Buffer.contents b
+
+let format_12 runs =
+  let n = List.length runs in
+  let b = Buffer.create (16 + (12 * n)) in
+  List.iter (add_u16 b) [ 12; 0 ];
+  List.iter (add_u32 b) [ 16 + (12 * n); 0; n ];
+  List.iter
+    (fun (first, last, g) -> List.iter (add_u32 b) [ first; last; g ])
+    runs;
+  Buffer.contents b
+
+(* A Windows format 4 subtable of the characters below U+FFFF, which format 4
+   cannot map, if it fits its 16-bit length, and a format 12 subtable of all
+   characters if format 4 leaves some out. *)
+let cmap_table ms =
+  let bmp = List.filter (fun (c, _) -> c < 0xFFFF) ms in
+  let runs_4 = runs bmp in
+  let fits = 16 + (8 * (List.length runs_4 + 1)) <= 0xFFFF in
+  let subtables =
+    (if fits then [ (1, format_4 runs_4) ] else [])
+    @
+    if fits && List.compare_lengths bmp ms = 0 then []
+    else [ (10, format_12 (runs ms)) ]
+  in
+  let b = Buffer.create 1024 in
+  add_u16 b 0;
+  add_u16 b (List.length subtables);
+  ignore
+    (List.fold_left
+       (fun off (encoding, s) ->
+         add_u16 b 3;
+         add_u16 b encoding;
+         add_u32 b off;
+         off + String.length s)
+       (4 + (8 * List.length subtables))
+       subtables);
+  List.iter (fun (_, s) -> Buffer.add_string b s) subtables;
+  Buffer.contents b
+
+(* The [glyf] and [loca] tables of the first [count] glyphs, those [keep] does
+   not flag left empty, and whether [loca] is long. Glyphs start at even
+   offsets, as short offsets count words. *)
+let glyf_loca f keep count =
+  let { glyf; loca } = f.glyphs in
+  let b = Buffer.create 4096 and offsets = Array.make (count + 1) 0 in
+  for g = 0 to count - 1 do
+    if keep.(g) then begin
+      Buffer.add_substring b glyf.s
+        (glyf.off + loca.(g))
+        (loca.(g + 1) - loca.(g));
+      if Buffer.length b land 1 = 1 then Buffer.add_char b '\000'
+    end;
+    offsets.(g + 1) <- Buffer.length b
+  done;
+  let long = Buffer.length b > 0x1FFFE in
+  let l = Buffer.create (4 * (count + 1)) in
+  Array.iter (fun o -> if long then add_u32 l o else add_u16 l (o / 2)) offsets;
+  (Buffer.contents b, Buffer.contents l, long)
+
+(* The [hmtx] table of the first [count] glyphs, those [keep] does not flag
+   without advance, and its number of long metrics: glyphs past them repeat the
+   last advance. A left side bearing is its glyph's [xMin], which every glyph
+   with data has in its first ten bytes, as {!shape} checked. *)
+let hmtx_table f keep count ~hmtx ~metrics =
+  let { glyf; loca } = f.glyphs in
+  let advance g =
+    if keep.(g) then u16 hmtx (4 * Int.min g (metrics - 1)) else 0
+  in
+  let lsb g =
+    if keep.(g) && loca.(g + 1) > loca.(g) then
+      String.get_int16_be glyf.s (glyf.off + loca.(g) + 2)
+    else 0
+  in
+  let advances = Array.init count advance in
+  let long = ref count in
+  while !long > 1 && advances.(!long - 2) = advances.(!long - 1) do
+    decr long
+  done;
+  let b = Buffer.create ((4 * !long) + (2 * (count - !long))) in
+  for g = 0 to count - 1 do
+    if g < !long then add_u16 b advances.(g);
+    add_u16 b (lsb g)
+  done;
+  (Buffer.contents b, !long)
+
+let checksum s =
+  let n = String.length s and sum = ref 0 in
+  let byte i = if i < n then Char.code (String.unsafe_get s i) else 0 in
+  for w = 0 to ((n + 3) / 4) - 1 do
+    let i = 4 * w in
+    let v =
+      (byte i lsl 24)
+      lor (byte (i + 1) lsl 16)
+      lor (byte (i + 2) lsl 8)
+      lor byte (i + 3)
+    in
+    sum := (!sum + v) land 0xFFFF_FFFF
+  done;
+  !sum
+
+(* An OpenType file of [tables], tag and data, in increasing order of tags, each
+   padded to four bytes. [head]'s checksum adjustment, zero in [tables], makes
+   the file's checksum [0xB1B0AFBA]. *)
+let font_file tables =
+  let n = List.length tables in
+  let p, k = binary n in
+  let b = Buffer.create 65536 in
+  add_u32 b 0x00010000;
+  List.iter (add_u16 b) [ n; 16 * p; k; (16 * n) - (16 * p) ];
+  let head = ref 0 in
+  ignore
+    (List.fold_left
+       (fun off (tag, data) ->
+         if String.equal tag "head" then head := off;
+         Buffer.add_string b tag;
+         add_u32 b (checksum data);
+         add_u32 b off;
+         add_u32 b (String.length data);
+         off + ((String.length data + 3) land lnot 3))
+       (12 + (16 * n))
+       tables);
+  List.iter
+    (fun (_, data) ->
+      Buffer.add_string b data;
+      Buffer.add_string b
+        (String.make ((4 - (String.length data land 3)) land 3) '\000'))
+    tables;
+  let file = Buffer.to_bytes b in
+  Bytes.set_int32_be file (!head + 8)
+    (Int32.of_int
+       ((0xB1B0AFBA - checksum (Bytes.unsafe_to_string file)) land 0xFFFF_FFFF));
+  Bytes.unsafe_to_string file
+
+let subset f gs =
+  let keep = closure f gs in
+  let count =
+    let g = ref (f.glyph_count - 1) in
+    while not keep.(!g) do
+      decr g
+    done;
+    !g + 1
+  in
+  let tables = directory f.data in
+  let find tag = Hashtbl.find_opt tables tag in
+  let copy t = String.sub t.s t.off t.len in
+  (* The tables [decode] required, with the fields it read. *)
+  let need tag = Bytes.of_string (copy (Hashtbl.find tables tag)) in
+  let head = need "head" and hhea = need "hhea" and maxp = need "maxp" in
+  let glyf, loca, long = glyf_loca f keep count in
+  let hmtx, metrics =
+    hmtx_table f keep count
+      ~hmtx:(Hashtbl.find tables "hmtx")
+      ~metrics:(Bytes.get_uint16_be hhea 34)
+  in
+  Bytes.set_int32_be head 8 0l;
+  Bytes.set_uint16_be head 50 (Bool.to_int long);
+  Bytes.set_uint16_be hhea 34 metrics;
+  Bytes.set_uint16_be maxp 4 count;
+  let post = Bytes.make 32 '\000' in
+  Option.iter
+    (fun t -> Bytes.blit_string t.s t.off post 0 (Int.min 32 t.len))
+    (find "post");
+  Bytes.set_int32_be post 0 0x00030000l;
+  let copied =
+    List.filter_map
+      (fun tag -> Option.map (fun t -> (tag, copy t)) (find tag))
+      [ "OS/2"; "cvt "; "fpgm"; "gasp"; "name"; "prep" ]
+  in
+  let tables =
+    [
+      ("cmap", cmap_table (mappings f keep));
+      ("glyf", glyf);
+      ("head", Bytes.to_string head);
+      ("hhea", Bytes.to_string hhea);
+      ("hmtx", hmtx);
+      ("loca", loca);
+      ("maxp", Bytes.to_string maxp);
+      ("post", Bytes.to_string post);
+    ]
+  in
+  font_file
+    (List.sort (fun (a, _) (b, _) -> String.compare a b) (copied @ tables))
