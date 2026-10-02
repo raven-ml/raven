@@ -21,24 +21,20 @@
     ]}
 
     A figure renders in three pure stages, each able to reuse its previous
-    output: {!resolve} fits the scales to the data, {!layout} measures text,
-    chooses ticks and places panels on a grid that keeps data areas aligned, and
-    {!draw} reduces large marks where their data lives and paints a tagged
-    picture. {!render} runs the three, {!save} writes PNG, SVG or PDF, and {!pp}
-    displays a figure in a Quill notebook. {!Mark.v} defines marks as the
-    built-in ones are defined.
+    output: {!resolve} fits the scales, {!layout} places text, ticks and panels,
+    and {!draw} paints a tagged picture. {!render} runs the three, {!save}
+    writes PNG, SVG or PDF, and {!pp} displays a figure in a Quill notebook.
+    {!Mark.v} makes marks as the built-in ones are made.
 
     {1:model The figure model}
 
     A figure denotes a pair: the values it contributes to its scales, and a
-    function from the fitted scales to what a page shows. A mark contributes the
-    rows of its channels and draws them in the panels its facet channels select.
-    {!layer} is the union of its children over their arrangements, {!grid} and
-    {!span} arrange, and the wrappers {!title}, {!coord}, {!name} and {!share}
-    each change one aspect of the figure they wrap. A combinator's meaning is a
-    function of its arguments' meanings: there is no precedence between
-    settings, no child is dropped, and two settings that cannot both hold raise
-    in {!resolve}.
+    function from the fitted scales to what a page shows. {!layer} is the union
+    of its children over their arrangements, {!grid} and {!span} arrange, and
+    the wrappers {!title}, {!coord}, {!name} and {!share} each change one aspect
+    of the figure they wrap. A combinator's meaning is a function of its
+    arguments' meanings: there is no precedence between settings, no child is
+    dropped, and two settings that cannot both hold raise in {!resolve}.
 
     {1:conventions Conventions}
 
@@ -64,8 +60,7 @@
     - {b Printing.} The [pp] functions of stage outputs format them for
       debugging and baselines; their output may change between releases. {!pp}
       on figures displays them.
-    - {b Purity.} There is no global state: a stage reads its arguments and
-      nothing else, no clock, no current figure, no hash table order, and equal
+    - {b Purity.} A stage reads its arguments and nothing else, and equal
       arguments give equal outputs, byte for byte once rendered. Functions given
       to a figure ({!map_range}, {!bind}, the draw and swatch functions of
       {!Mark.v}) must not read mutable state; results are unspecified otherwise.
@@ -103,13 +98,11 @@
     colour ({!Scale.unknown}), by default no paint, and leaves its row drawn and
     fitted. Lines break where rows are dropped.
 
-    Positions are clipped to their domains, and ink is not. A position outside
-    its scale's domain is drawn and cut at the domain's edge: a line or a
-    segment ends there, an extent stops there, and a symbol or a text whose
-    point lies outside is not drawn. What a row inside the domain draws, its
-    symbol, the half of its line's width beyond the edge, its text, is drawn
-    whole, over the panel's edges. Domains do not grow to make room for ink, so
-    axes keep their ends.
+    Positions are clipped to their domains, and ink is not. A line, a segment or
+    an extent is cut at the domain's edge, and a symbol or a text whose point
+    lies outside is not drawn. What a row inside the domain draws, its symbol,
+    its line's width, its text, is drawn whole, over the panel's edges. Domains
+    do not grow to make room for ink.
 
     {1:ids Ids}
 
@@ -124,14 +117,13 @@
     its [fy] category, then for that of its [fx] category, those it has; a
     generated axis adds [Field "axis"], then [Field] of the name of its scale; a
     generated legend adds [Field "legend"], then [Field] of the name of its
-    scale, then [Field] of its kind, ["num"] or ["cat"], since a scale is
-    identified by its name and kind. Wrappers, {!span} and {!bind} add nothing.
-    {!name} takes none of ["axis"], ["legend"], ["panel"] and ["cell"], so a
-    generated node never has the id of a written one. Since ids depend only on
-    the structure of the figure, a figure rebuilt by the same code has the same
-    ids, and {!name} pins a subtree whose position varies. Errors, warnings,
-    {!View.zoom}, {!Resolved.scale} and the tags of drawn pictures
-    ({!Picture.tag}) name nodes by id. *)
+    scale, then [Field] of its kind, ["num"] or ["cat"]. Wrappers, {!span} and
+    {!bind} add nothing. {!name} takes none of ["axis"], ["legend"], ["panel"]
+    and ["cell"], so a generated node never has the id of a written one. Ids
+    depend only on the structure of the figure, so a figure rebuilt by the same
+    code has the same ids, and {!name} pins a subtree whose position varies.
+    Errors, warnings, {!View.zoom}, {!Resolved.scale} and the tags of drawn
+    pictures ({!Picture.tag}) name nodes by id. *)
 
 (** {1:lower Lower libraries}
 
@@ -213,10 +205,9 @@ val equal : t -> t -> bool
     float arrays element by element, the constant of a parameter by the equality
     of its role ({!Role.param}), and the values of the lower libraries by their
     [equal]. A figure rebuilt from the same tensors by the same code is equal to
-    the first unless it holds a new function, as a {!map_range} or {!bind} of a
-    fresh closure does, so a built-in mark is equal to itself rebuilt.
-    [layer [ layer [ a; b ]; c ]] draws what [layer [ a; b; c ]] draws and is
-    not equal to it. *)
+    the first unless it holds a fresh closure, as a {!map_range} or {!bind} may;
+    a built-in mark is equal to itself rebuilt. [layer [ layer [ a; b ]; c ]]
+    draws what [layer [ a; b; c ]] draws and is not equal to it. *)
 
 (** {1:channels Channels} *)
 
@@ -257,11 +248,10 @@ type ('d, 'r) channel
     The [text] role reads no scale, so a channel given to it has neither a
     [scale] nor a [title] ({!Mark.v}). A category is written as its label, or as
     the text its scale shows it by. A quantity is written in plain notation in
-    the theme's locale, each value of the mark with the decimals that the value
+    the theme's locale, every value of the mark with the decimals that the value
     needing the most needs to reproduce itself in its source dtype
-    ({!Hugin_kit.Number.decimals}): a float32 [0.9234] reads [0.9234], a column
-    of numbers shares its decimals, and an integer count reads without a decimal
-    separator. *)
+    ({!Hugin_kit.Number.decimals}): a float32 [0.9234] reads [0.9234], and an
+    integer count reads without a decimal separator. *)
 
 val num :
   ?scale:float Scale.t ->
@@ -280,8 +270,8 @@ val num :
       none.
 
     Elements are read as floats, so an integer beyond 2{^ 53} is rounded.
-    Nothing is read when the channel is made: [x] stays where it lives until
-    {!resolve} summarises it and {!draw} reduces and reads it.
+    Nothing is read when the channel is made: {!resolve} and {!draw} read [x]
+    where it lives.
 
     Raises [Invalid_argument] if [x] has a complex or boolean dtype, or if
     [valid] does not broadcast to the shape of [x] without growing it. *)
@@ -379,28 +369,23 @@ val map_range : ('r -> 'r) -> ('d, 'r) channel -> ('d, 'r) channel
 val kind : ('d, 'r) channel -> 'd Scale.kind option
 (** [kind c] is the kind of the scale that reads the data of [c], or [None] if
     [c] is a constant. A mark chooses with it what it implies on that scale
-    ({!Mark.bind}): {!rect} implies [zero] on the scale of a quantitative length
-    and padding on the band scale of a bar. *)
+    ({!Mark.bind}). *)
 
 val varies : int array -> ('d, 'r) channel -> int -> bool
 (** [varies shape c a] is [true] iff the values of [c] can differ along the axis
     [a] of a mark of shape [shape] ({!Mark.broadcast}), [a] counting from the
     last axis if negative: a tensor or an array whose dimension aligned with [a]
     exceeds [1], or an {!index} or a {!dim} of the axis [a] if its length
-    exceeds [1]. It is [false] for a constant and if [shape] has no axis [a]. A
-    mark checks with it, when it is made, how its data lie on its axes:
-    {!contour} raises if its [x] can vary along the rows of its grid. *)
+    exceeds [1]. It is [false] for a constant and if [shape] has no axis [a]. *)
 
 (** {1:marks Marks}
 
     A mark is a figure that draws its rows in each panel its facet channels
-    select ({!section-facets}). The built-in marks below are made as {!Mark.v}
-    makes marks, from bindings and a draw function, and take their channels as
-    labelled arguments named after their roles ({!section-roles}). They use only
-    this interface, so a user can write each of them: {!line}, {!area}, {!text}
-    and {!image} keep their curves, text offsets and pixels in parameters
-    ({!Role.param}). Every mark takes the facet channels [fx] and [fy], and
-    every mark but {!image} takes [opacity], [1.] by default.
+    select ({!section-facets}). The built-in marks below are made with {!Mark.v}
+    and this interface alone, and take their channels as labelled arguments
+    named after their roles ({!section-roles}). Every mark takes the facet
+    channels [fx] and [fy], and every mark but {!image} takes [opacity], [1.] by
+    default.
 
     A mark without a colour channel paints with the theme's accent
     ({!Theme.accent}), except {!rule} and {!text}, which paint with its ink
@@ -430,9 +415,7 @@ val dot :
     those of {!Symbol.filled} if the dot is filled and of {!Symbol.stroked} if
     it is outlined only.
 
-    A dot mark with more than 20,000 rows in a panel, or more rows than the
-    panel has device pixels, is drawn there as one image of its rows painted in
-    row order ({!Mark.raster}). *)
+    Dots are reduced by {!Mark.raster}. *)
 
 val line :
   ?x:('x, float) channel ->
@@ -462,16 +445,13 @@ val line :
       outlined only if [stroke] is given.
 
     A series takes its colours, width, dash pattern and opacity from its first
-    row that is not dropped, with a warning if one of them varies along it. So
-    [line ~y ~dash:(const Dash.dashed) ()] dashes every series, and with
+    row that is not dropped, with a warning if one of them varies along it. With
     [let run = Scale.band ~name:"run" ()],
     [line ~y ~stroke:(dim ~scale:run 0) ~dash:(dim ~scale:run 0) ()] tells the
     series of axis [0] apart by colour and pattern in one legend.
 
-    A line without [fill] drawn with {!Curve.linear} or a step, whose piece
-    between two points depends on those two points alone and stays within their
-    bounding box, is reduced when it has more than four rows per device-pixel
-    column, unless it is dashed ({!Mark.m4}). *)
+    A line without [fill], drawn with {!Curve.linear} or a step, is reduced by
+    {!Mark.m4}. *)
 
 val area :
   ?x:('x, float) channel ->
@@ -497,9 +477,8 @@ val area :
 
     A dropped row splits the region, and a series takes its fill and opacity
     from its first row that is not dropped, with a warning if one of them varies
-    along it. A legend entry is its box filled. So [area ~y ()] fills under a
-    curve, [area ~y:hi ~y2:lo ()] a band between two curves, and
-    [area ~y:(num ~valid y) ()] only where [valid] holds. *)
+    along it. A legend entry is its box filled. [area ~y:hi ~y2:lo ()] fills a
+    band between two curves. *)
 
 val rect :
   ?x:('x, float) channel ->
@@ -527,16 +506,11 @@ val rect :
       ({!section-merging});
     - without [x], the whole panel.
 
-    Likewise along y. So [rect] draws bars, cells, heatmaps, spans and, with
-    [stroke] and no [fill], frames. It is filled with [fill], or with the accent
-    unless [stroke] alone is given, and outlined with [stroke] at the theme's
-    outline width. A rectangle is cut at the domain's edges ({!Mark.project}),
-    so the outline of one that reaches beyond the domain runs along its edge.
-
-    A rect whose [x] and [y] read band scales without padding, with neither
-    [x2], [y2] nor [stroke], and no two of whose rows in a panel share a cell,
-    is drawn under an affine projection as one image per panel whose pixels are
-    its cells ({!Mark.cells}). Otherwise each row is drawn as a rectangle.
+    Likewise along y. It is filled with [fill], or with the accent unless
+    [stroke] alone is given, and outlined with [stroke] at the theme's outline
+    width. A rectangle is cut at the domain's edges ({!Mark.project}), so the
+    outline of one that reaches beyond the domain runs along its edge. Rects are
+    reduced by {!Mark.cells}.
 
     Raises [Invalid_argument] if [x2] is given without [x] or [y2] without [y].
 *)
@@ -550,10 +524,8 @@ val frame :
   t
 (** [frame ()] outlines the domain of each panel with [stroke], the ink by
     default, at the theme's outline width: under theme [th] it draws what
-    [rect ~stroke:(const (Theme.ink th)) ()] draws. A frame is a mark, so it
-    lies under the axes, which are drawn over the marks, and its four edges look
-    the same whichever axes the panel has: [layer [ f; frame () ]] boxes the
-    panels of [f]. *)
+    [rect ~stroke:(const (Theme.ink th)) ()] draws. Like every mark it lies
+    under the axes: [layer [ f; frame () ]] boxes the panels of [f]. *)
 
 val rule :
   ?x:('x, float) channel ->
@@ -605,13 +577,10 @@ val abline :
     same line: a straight segment if the panel's x and y scales are both linear,
     and otherwise a curve through points one point of the page apart along x.
     [slope] and [intercept] are values ({!Role.value}): they read no scale and
-    contribute to no domain, so an abline never widens the domain it is drawn
-    across. The line is stroked as {!rule} strokes, with [stroke], the ink by
-    default, at [width], the theme's line width by default, broken by [dash].
-    [abline ~slope:(const 1.) ~intercept:(const 0.) ()] is the diagonal of a
-    calibration plot, and
-    [abline ~slope:(num s) ~intercept:(num b) ~stroke:(dim 0) ()] one fitted
-    line per seed.
+    contribute to no domain. The line is stroked as {!rule} strokes, with
+    [stroke], the ink by default, at [width], the theme's line width by default,
+    broken by [dash]: [abline ~slope:(const 1.) ~intercept:(const 0.) ()] is the
+    diagonal of a calibration plot.
 
     A panel whose x or y is not quantitative, or that has no x or y, draws no
     abline, with a warning. *)
@@ -677,23 +646,20 @@ val contour :
     have size [1] there, or their {!dim} or {!index} names another axis.
     [~x:(num alphas)] with [alphas] of shape [[|m|]] and [~y:(num betas)] with
     [betas] of shape [[|n; 1|]] place a field of shape [[|n; m|]]. [x] defaults
-    to [index (-1)] and [y] to [index (-2)] ({!index}). A field's extent is its
-    grid, as an image's is its pixels: [contour] implies [nice] off on the
-    continuous scales of [x] and [y] ({!Mark.bind}), so the field fills its
-    panel, and marks layered over it fit its domain unless they reach outside
-    it.
+    to [index (-1)] and [y] to [index (-2)] ({!index}). [contour] implies [nice]
+    off on the continuous scales of [x] and [y] ({!Mark.bind}), so the field
+    fills its panel.
 
     The levels are [0.] and [1.], the normalised ends of the fill scale's
     domain, and the normalised ticks {!layout} froze for it, its explicit ticks
     if it sets some ({!Mark.ticks}), in increasing order without repeats.
     [contour] implies [stepped] on its fill scale ({!Scale.linear}), so every
-    reader of that scale paints the same steps and its colour bar steps at the
-    levels. Between two consecutive levels [lo] and [hi], the isoband
-    ({!Hugin_gg_kit.Field2.isoband}) of the field's normalised values is filled
-    with [f ((lo +. hi) /. 2.)], where [Mark.range rows Role.fill] is [Some f]
-    ({!Mark.range}). Missing samples cut holes. A field whose columns' x or
-    rows' y are not strictly monotone once normalised draws nothing, with a
-    warning.
+    reader of that scale steps at the levels. Between two consecutive levels
+    [lo] and [hi], the isoband ({!Hugin_gg_kit.Field2.isoband}) of the field's
+    normalised values is filled with [f ((lo +. hi) /. 2.)], where
+    [Mark.range rows Role.fill] is [Some f] ({!Mark.range}). Missing samples cut
+    holes. A field whose columns' x or rows' y are not strictly monotone once
+    normalised draws nothing, with a warning.
 
     Raises [Invalid_argument] if the mark's shape has fewer than two axes, if
     [fill] is a constant, if [x] or [y] can vary along the axis it must not vary
@@ -710,9 +676,8 @@ val contour :
     roles are reserved: [num ~scale:(Scale.log ()) loss] given to [~y] makes
     every channel on ["y"] in its scope logarithmic, and
     [Scale.linear ~name:"y" ()] is that scale. A name a user gives denotes one
-    scale, whose kind ({!Scale.type-kind}) its readers fix, so a sweep can
-    colour loss curves in one panel and place final accuracies in another by the
-    same rates. The default scale of a role other than a position or a facet is
+    scale, whose kind ({!Scale.type-kind}) its readers fix, whatever roles read
+    it. The default scale of a role other than a position or a facet is
     identified by its name and its kind, so categorical and quantitative
     ["color"] channels read two scales, each with its legend. In a panel, the
     channels on [x] read one scale, and likewise [y], [fx] and [fy]: {!resolve}
@@ -747,18 +712,16 @@ val contour :
     A property of a scale's specification ({!Scale.type-property}) is
     {e explicit} if a lift's [scale] sets it, {e implied} if a mark implies it
     ({!Mark.bind}), and {e defaulted} otherwise; explicit beats implied, which
-    beats defaulted. A length implies [zero] ({!rect}, {!rule}), the band
-    position of a bar implies padding ({!rect}, {!Theme.section-ranges}), and a
-    band scale read by [y] implies [reverse], so that its first category is at
-    the top. Whether a scale has a guide is a property of the same levels: an
-    explicit {!axis} or {!legend} beats what marks imply ({!Mark.bind}), which
-    beats the defaults of {!section-guides}. Once every {!share} is known,
-    {!resolve} merges the explicit specifications of each scale's channels, then
-    their implied ones ({!Scale.merge}, {!Scale.imply}), and raises
-    [Invalid_argument], naming the scale and both marks, on two values of one
-    property at the same level, readers of two kinds under a user's, position or
-    facet name, labelled and indexed categories on one scale, or two texts for
-    one indexed category.
+    beats defaulted. A band scale read by [y] implies [reverse], so that its
+    first category is at the top. Whether a scale has a guide is a property of
+    the same levels: an explicit {!axis} or {!legend} beats what marks imply
+    ({!Mark.bind}), which beats the defaults of {!section-guides}. Once every
+    {!share} is known, {!resolve} merges the explicit specifications of each
+    scale's channels, then their implied ones ({!Scale.merge}, {!Scale.imply}),
+    and raises [Invalid_argument], naming the scale and both marks, on two
+    values of one property at the same level, readers of two kinds under a
+    user's, position or facet name, labelled and indexed categories on one
+    scale, or two texts for one indexed category.
 
     {2:fitting Fitting}
 
@@ -798,9 +761,7 @@ val contour :
     ({!axis}, one per panel it serves) or legend ({!legend}) set, or if they set
     none, by those of the channels that read its scale, in the order the figure
     is written, separated by commas, and is untitled if there are none. These
-    rules are defaults: marks can imply that a scale has a guide or none
-    ({!Mark.bind}), and an explicit {!axis} or {!legend} decides over both
-    ({!section-merging}).
+    rules are defaults ({!section-merging}).
 
     A guide serving several panels stands beside the smallest panel or grid
     holding them. An axis shared by the panels of a column, for x, or of a row,
@@ -822,10 +783,8 @@ val contour :
     name; otherwise, those of a facet scale and of a categorical scale with a
     legend are its categories, and the others are chosen so that their labels
     overlap on none of its guides ({!layout}). Facet headers name every panel,
-    whatever the ticks. Their labels are in the scale's notation if it sets one:
-    [num ~scale:(Scale.linear ~notation:Percent ()) acc] labels its ticks as
-    percentages, and the guides of [Scale.log ~ticks:[| 1.; 10.; 100. |] ()]
-    show those of the three values that its domain holds.
+    whatever the ticks. Labels are in the scale's notation if it sets one
+    ({!Scale.linear}).
 
     {1:facets Facets}
 
@@ -840,7 +799,7 @@ val contour :
     its channels read. [Scale.band ~wrap] on the ["fx"] scale wraps its panels
     into rows of that many panels; a [wrap] with an ["fy"] scale in the same
     scope raises [Invalid_argument] in {!resolve}. Facet panels share every
-    scale of their scope, so 144 attention panels have one colour bar. *)
+    scale of their scope. *)
 
 (** {1:coordinates Coordinate systems} *)
 
@@ -848,9 +807,7 @@ val contour :
 
     A coordinate system projects the normalised positions of a panel into its
     box, inverts that projection where it can, and generates the panel's axes.
-    Marks never see the form of the projection: they give normalised geometry to
-    {!Mark.points}, {!Mark.project} and {!Coord.point}. {!coord} gives a
-    figure's panels a coordinate system. *)
+    {!coord} gives a figure's panels a coordinate system. *)
 module Coord : sig
   (** {1:systems Coordinate systems} *)
 
@@ -904,10 +861,9 @@ end
 
     A view holds the values a viewer sets on a figure: the values of keys the
     figure reads through {!bind}, and the zooms of its continuous scales. Views
-    live outside figures, so a figure rebuilt when a notebook cell runs again
-    reads the values the viewer set on the previous one. A key is identified by
-    its name and its sort, never by the value that holds it: code that runs
-    again builds equal keys. *)
+    live outside figures, so a rebuilt figure reads the values set on the
+    previous one. A key is identified by its name and its sort, so code that
+    runs again builds equal keys. *)
 module View : sig
   (** {1:keys Keys} *)
 
@@ -994,9 +950,7 @@ val layer : t list -> t
       [layer [ title x (title y a); title x b ]] is
       [title x (title y (layer [ a; b ]))]. Two different wrappers of one kind
       that would lift at once raise in {!resolve}.
-    - {b Ids.} A nested [layer] stays one child with one index, so
-      [layer [ layer [ a; b ]; c ]] draws what [layer [ a; b; c ]] draws and
-      gives [a] another id.
+    - {b Ids.} A nested [layer] stays one child with one index ({!equal}).
 
     {!resolve} raises [Invalid_argument] if the children's arrangements do not
     broadcast, or broadcast to no cells while a child has some, since that child
@@ -1152,9 +1106,7 @@ val legend :
     takes no tier and protrudes nowhere ({!layout}): that panel must be as large
     as the legend and its pads, so under {!Size.panels} its tracks grow to hold
     it, and a {!Size.figure} too small for it raises in {!layout}. It is drawn
-    under the marks, with the grid lines, so the data stays visible over it; no
-    corner is chosen for being empty, so pick the corner the data leaves empty,
-    or widen the domain ({!Scale.linear}):
+    under the marks, with the grid lines. No corner is chosen for being empty:
     [layer [ f; legend ~side:(`Inside `Top_right) "color" ]].
 
     {!resolve} raises [Invalid_argument] if [name] names no scale with a legend
@@ -1261,12 +1213,9 @@ module Theme : sig
 
   val dark : t
   (** [dark] is [v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ~scheme ()]:
-      light ink on dark paper. Labels, axes and grid lines take parts of the ink
-      ({!section-lengths}), so they lighten with it. [scheme] is
-      {!Scheme.viridis} from its normalised value [0.4] up, the ramp
-      ({!Scheme.ramp}) of its colours at [0.4], [0.45], …, [1.]: the darker
-      colours below fade into the paper, and these contrast with it at [3:1] or
-      more, so the lowest cells of a heatmap stay visible. *)
+      light ink on dark paper. [scheme] is the ramp ({!Scheme.ramp}) of the
+      colours of {!Scheme.viridis} at [0.4], [0.45], …, [1.], which contrast
+      with the paper at [3:1] or more. *)
 
   val talk : t
   (** [talk] is [v ~size:16. ()], for slides: text and every length derived from
@@ -1431,13 +1380,12 @@ module Role : sig
       value of any type: its domain [unit] holds no data, so only {!const} binds
       it, and {!Mark.get} gives the constant once per row. It reads no scale,
       contributes to no domain and yields no guide. Figure equality ({!equal})
-      compares its constants with [equal], so a mark keeps a curve or a tensor
-      this way and is equal to itself rebuilt, where a parameter captured by its
-      draw function would make every rebuilt mark another.
+      compares its constants with [equal], so a mark that keeps a curve or a
+      tensor this way is equal to itself rebuilt.
 
       Each call makes another role, which {!Mark.get} does not confuse with one
-      of the same name: a mark makes its parameters once, at the top level, and
-      a role made per call costs only reuse ({!section-stages}).
+      of the same name, and which makes a mark unequal to one made with another:
+      a mark makes its parameters once, at the top level.
 
       Raises [Invalid_argument] if [name] is empty or is the name of a role
       above. *)
@@ -1478,22 +1426,18 @@ module Mark : sig
 
       The rows of a mark in one panel are those its facet channels put there, in
       the order of their data. A {e dropped} row ({!Hugin.section-missing})
-      keeps its place. {!positions}, {!points} and {!extent} put it at [nan], so
-      that a draw function skips it or breaks a line there, as {!Picture.stamp},
-      {!Curve.path} and the gaps of {!Path} do with non-finite coordinates.
+      keeps its place: {!positions}, {!points} and {!extent} put it at [nan],
+      which {!Picture.stamp}, {!Curve.path} and {!Path} skip or break at, while
+      {!index} gives its datum and {!get} and {!normalized} its own values,
+      missing only where they are missing.
 
       The domain of a panel is the unit square of normalised positions, its
       edges included. A draw function clips positions to it and leaves ink whole
       ({!Hugin.section-missing}): it joins {!positions} into paths and gives
       them to {!project}, which cuts them at the domain's edges, and places
-      symbols and texts at {!points}, which are [nan] outside it. {!positions}
-      and {!extent} are not clipped: the domain applies where a value enters the
-      page. Ink is clipped only where it has no geometry to cut: {!image} clips
-      an image that reaches beyond the domain to it. {!index} gives its datum,
-      and {!get} and {!normalized} its own values, missing only where they are
-      missing, so that a contour knows the x of a column one of whose samples is
-      dropped. Rows are valid only during the call of the function given them.
-  *)
+      symbols and texts at {!points}, which are [nan] outside it. Ink is clipped
+      only where it has no geometry to cut, as {!image} clips an image to the
+      domain. Rows are valid only during the call of the function given them. *)
 
   type rows
   (** The type for the rows of a mark in one panel. *)
@@ -1536,15 +1480,13 @@ module Mark : sig
       value of the category whose step holds [u] ({!Scale.invert}). For [nan],
       and on a band scale for a [u] that no step holds, it is the value {!get}
       gives a missing value. With [range rows r = Some f], [get rows r] is
-      [Option.map (Array.map f) (normalized rows r)], and a contour fills the
-      band between two levels with [f] at their midpoint. *)
+      [Option.map (Array.map f) (normalized rows r)]. *)
 
   val scale : rows -> [ `X | `Y ] -> 'd Scale.kind -> 'd Scale.t option
   (** [scale rows `X k] is [Some s], the fitted scale ({!Resolved.scale}) that
       the channels on x of the panel read, if it has kind [k], whether or not
       the mark binds [x], and [None] if they read none or one of another kind,
-      as in a swatch. So a mark draws across a panel's domain from values alone:
-      {!abline} reads the domain of [s]. [scale rows `Y k] is likewise on y. *)
+      as in a swatch. [scale rows `Y k] is likewise on y. *)
 
   val ticks : rows -> ('d, 'r) Role.t -> float array option
   (** [ticks rows r] is [Some us], the normalised positions of the major ticks
@@ -1578,9 +1520,7 @@ module Mark : sig
       - for a constant [x], from [x] to [x];
       - if the mark binds no [x], from [0.] to [1.].
 
-      Ends outside the domain are kept, as {!positions} keeps positions: a box
-      given to {!project} is cut there, so the stroke of a box the domain cuts
-      runs along the domain's edge. A dropped row covers [(nan, nan)].
+      Ends outside the domain are kept. A dropped row covers [(nan, nan)].
       [extent rows `Y] is likewise along y, with [y] and [y2]. The arrays are
       fresh. *)
 
@@ -1602,9 +1542,8 @@ module Mark : sig
       iff they have the same index along every axis of the mark's shape but the
       last and the same category in every channel that reads a band scale and is
       bound to a role other than [x], [x2], [y] and [y2]. A missing category
-      counts as one category of its own. So a categorical [stroke] splits a
-      line's rows and a categorical [x] does not. Series are in the order of
-      their first rows and keep their rows in order. *)
+      counts as one category of its own. Series are in the order of their first
+      rows and keep their rows in order. *)
 
   val theme : rows -> Theme.t
   (** [theme rows] is the theme of the layout being drawn. *)
@@ -1633,16 +1572,14 @@ module Mark : sig
       A reducer draws a mark's rows in its stead when they are many for the
       density {!draw} is given. {!m4} and {!cells} choose rows where the data
       lives, before they are read; {!raster} reads the rows and paints them
-      once. It applies only to the marks that name it, which so state that they
-      draw what it draws, and every reduction draws what the mark would draw
-      from every row, as each states.
+      once. A reducer applies only to the marks that name it ({!v}), and draws
+      what the mark draws from every row, within what each states.
 
       Every mark's picture is then {e gathered}: an image outside a transform or
       a stamp ({!Picture.image}) with more than 4 cells per device pixel along
       an axis is replaced by the cells that raster output samples at the
       density, gathered where they live, painted over the device pixels its box
-      reaches. It draws what the image draws, so it needs no reducer, and it is
-      how {!image} draws large images. *)
+      reaches. It draws what the image draws. *)
 
   type reducer
   (** The type for reducers. *)
@@ -1660,28 +1597,23 @@ module Mark : sig
       panel make runs: the rows of a series that its facets put in other panels
       neither join nor split them. It applies when [x] and [y] read continuous
       scales, the projection is affine and the mark binds no [dash] other than
-      [const Dash.solid]: a dash pattern runs along the length of the path,
-      which reducing changes.
+      [const Dash.solid].
 
       A mark naming it strokes each series as a path through its points, whose
       piece between two consecutive points depends on those two points alone and
       stays within their bounding box, and that breaks at dropped rows. The
-      reduced path keeps every break and, in each column, its end points and its
-      vertical extent, so it inks the pixels the whole path inks, within one
-      pixel. The coverage inside that extent may differ for a line thinner than
-      a column: a dense scribble covers more of each pixel than the four rows
-      kept. *)
+      reduced path then inks the pixels the whole path inks, within one pixel;
+      the coverage of a pixel may differ for a line thinner than a column. *)
 
   val cells : reducer
   (** [cells] draws a panel's rows as one image whose pixels are their cells,
       when the projection is affine, [x] and [y] read band scales without
       padding, the mark binds no [x2], [y2] or [stroke], and no two rows share a
-      cell; a cell no row covers paints nothing. A padded band scale leaves gaps
-      between cells, which one image of steps cannot show. Past 4 cells per
-      device pixel along either axis, only the cells that raster output samples
-      are gathered and read. A mark naming it fills the rectangle of each row's
-      extents ({!extent}) with its [fill] at its [opacity] and draws nothing
-      else, so the image is exactly its drawing. *)
+      cell; a cell no row covers paints nothing. Past 4 cells per device pixel
+      along either axis, only the cells that raster output samples are gathered
+      and read. A mark naming it fills the rectangle of each row's extents
+      ({!extent}) with its [fill] at its [opacity] and draws nothing else, so
+      the image is exactly its drawing. *)
 
   val raster : reducer
   (** [raster] draws a panel's picture of the mark as one image painted by the
@@ -1697,8 +1629,7 @@ module Mark : sig
   val broadcast : ?shape:int array -> binding list -> int array
   (** [broadcast ~shape bindings] is the shape of the mark that
       [v ~shape bindings] makes: [shape], by default [[||]], and the shapes of
-      the channels broadcast together ({!Hugin.section-data}). A mark checks its
-      data with it, and with {!Hugin.varies}, before it is made.
+      the channels broadcast together ({!Hugin.section-data}).
 
       Raises [Invalid_argument] if [shape] has a negative dimension, if the
       channels and [shape] do not broadcast, or if a {!Hugin.dim} or a
@@ -1740,8 +1671,6 @@ module Mark : sig
         the entry [k] of a legend of [n] entries, the rows have the shape
         [[|n|]], the index [[|k|]] and the legend's id ({!Hugin.section-ids}),
         with which {!draw} tags the swatch. Unset, it is [draw].
-
-      [draw] and [swatch] must not read mutable state.
 
       Raises [Invalid_argument] if:
       - two bindings bind one role or roles of one name;
@@ -1794,9 +1723,7 @@ module Resolved : sig
   (** [equal r r'] is [true] iff [r] and [r'] resolve {!Hugin.equal} figures
       under {!View.equal} views to the same scopes, {!Scale.equal} fitted scales
       and equal warnings. The figures that {!bind} returns are not compared:
-      they are functions of the figure and the view, and comparing a figure that
-      a {!bind} builds afresh on each call would make a resolved figure unequal
-      to itself resolved again. *)
+      they are functions of the figure and the view. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf r] formats the scopes of [r], their fitted scales and the
@@ -1888,18 +1815,15 @@ val resolve : ?prev:Resolved.t -> ?view:View.t -> t -> Resolved.t
 val layout :
   ?prev:Layout.t -> ?theme:Theme.t -> Size.t -> Resolved.t -> Layout.t
 (** [layout ~prev ~theme size r] lays [r] out at [size] in [theme],
-    {!Theme.default} by default. It measures text in the theme's faces; chooses
-    the ticks of each guide by their measured labels ({!Hugin_kit.Ticks.choose})
-    at the lengths a solve without guides gives, then again at those that a
-    solve with the first choice's guides gives, and freezes the second choice;
-    solves with each guide apart from the others and each legend above or below
-    its panels one entry a row, which gives the shortest lengths the figure can
-    take, and there wraps legend entries into rows and decides which guides
-    share a band; solves a last time; and lays each guide out at the final
-    lengths, which leave it the room it needs, and builds each panel's
-    projection. An axis or colour bar too short for its labels keeps, in order,
-    each label that clears the last one it kept, and drops the others, which
-    never widens a protrusion.
+    {!Theme.default} by default: it measures text in the theme's faces, chooses
+    and freezes the ticks of each guide, solves the grid, places the guides and
+    builds each panel's projection.
+
+    Ticks are chosen by their measured labels ({!Hugin_kit.Ticks.choose}) at the
+    lengths a solve with the guides of a first choice gives, that choice being
+    made at the lengths a solve without guides gives. An axis or colour bar too
+    short for its frozen labels keeps, in order, each label that clears the last
+    one it kept, and drops the others.
 
     Panels and grids are nodes, and only their data areas take tracks. Axes,
     headers, legends and titles are guides on a side of a node
@@ -1907,13 +1831,15 @@ val layout :
     headers, the titles of axes and headers, legends, and the titles of figures.
     A tier is one band as deep as its deepest guide, which guides share when
     they lie apart along the side; one that overlaps an earlier one moves out to
-    a band of its own. A tier reaching past an end of the side clears what the
-    tiers below it on the adjacent side reach there. A node protrudes beyond its
-    data areas by its boundary cells' protrusions, then by its bands, or by what
-    its guides reach past the ends of the adjacent sides if that is more.
-    Titles, headers and legends need their side to be as long as they are.
-    Inside legends are no tier: the panel in their corner needs their width and
-    height, each with a pad on both sides, as its least width and height.
+    a band of its own. Bands, and the rows that legend entries above or below
+    their panels wrap into, are decided at the shortest lengths the figure can
+    take. A tier reaching past an end of the side clears what the tiers below it
+    on the adjacent side reach there. A node protrudes beyond its data areas by
+    its boundary cells' protrusions, then by its bands, or by what its guides
+    reach past the ends of the adjacent sides if that is more. Titles, headers
+    and legends need their side to be as long as they are. Inside legends are no
+    tier: the panel in their corner needs their width and height, each with a
+    pad on both sides, as its least width and height.
 
     Each grid makes each gap the largest protrusions that meet it from either
     side plus the theme's gap ({!Theme.section-lengths}), and shares the length
