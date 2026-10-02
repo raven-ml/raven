@@ -252,8 +252,7 @@ let empty (type a b) (x : (a, b) t) =
         s 0
   | Host _ | Placed _ | Traced _ -> Nx_device.Buffer.create Nx_device.host s 0
 
-(* A value on the disk, which computes nothing, is copied to the host, as is one
-   in memory of its own, which has no runtime buffer. *)
+(* A value on the disk, which computes nothing, is copied to the host. *)
 let to_buffer (type a b) (x : (a, b) t) =
   match x with
   | Traced _ -> invalid_arg "Nx.to_buffer: a traced value has no buffer"

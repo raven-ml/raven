@@ -1558,9 +1558,8 @@ val to_buffer : ('a, 'b) t -> Nx_device.Buffer.t
 (** [to_buffer x] is a buffer of exactly [x]'s elements in C order, on [x]'s
     device. It is [x]'s own storage when that holds the elements as one run in C
     order, and a copy otherwise: on the same device, or on the host for a value
-    on the disk, which computes nothing, or on a device that holds values in
-    memory of its own. The buffer is read-only by contract: [x] and its views
-    read the same memory.
+    on the disk, which computes nothing. The buffer is read-only by contract:
+    [x] and its views read the same memory.
 
     Raises [Invalid_argument] if [x] is traced, if it is on several devices (use
     {!shards}), or as a read of a consumed value raises. *)
@@ -4340,8 +4339,8 @@ val shards : ('a, 'b) t -> Nx_device.Buffer.t list * Nx_array.View.t
     handles: the values over one storage give physically equal ones, and nothing
     is copied.
 
-    Raises [Invalid_argument] if [x] is traced, if its devices hold it in memory
-    of their own, or as a read of a consumed value raises. *)
+    Raises [Invalid_argument] if [x] is traced, or as a read of a consumed value
+    raises. *)
 
 val of_shards :
   Placement.t ->
