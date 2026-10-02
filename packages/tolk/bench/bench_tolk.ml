@@ -110,8 +110,17 @@ let program name =
 
 (* Decode products *)
 
-(* [sink] compiled for [d], named [name], and a run of it on scratch buffers
-   that waits for the device. *)
+(* An element of a buffer a timed kernel reads: a small float, a small
+   integer, and 127 in a byte, which is 1 as an E8M0 scale and +-6 as two FP4
+   codes. Uninitialised memory would time NaN and subnormal arithmetic. *)
+let element dt i : Dtype.value =
+  if Dtype.is_float dt then `Float (Float.of_int ((i mod 7) - 3) *. 0.25)
+  else if Dtype.is_bool dt then `Bool (i mod 2 = 0)
+  else if Dtype.equal dt Uint8 then `Int (Bigint.of_int 127)
+  else `Int (Bigint.of_int (i mod 7))
+
+(* [sink] compiled for [d], named [name], and a run of it on buffers of small
+   values ({!element}) that waits for the device. *)
 let compiled name d sink =
   let devices = Tolk_engine.device [ (name, d) ] in
   let prg = Codegen.to_program sink (Tolk_engine.renderer d) in
@@ -121,8 +130,8 @@ let compiled name d sink =
     List.filteri (fun i _ -> i < List.length info.globals) elf.signature
   in
   let scratch (p : Device.Tiny_elf.param) =
-    Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8
-      (max 1 (List.fold_left ( * ) (Dtype.itemsize p.dtype) p.shape))
+    let n = List.fold_left ( * ) 1 p.shape in
+    Run.buffer d p.dtype (Array.init n (element p.dtype))
   in
   match (devices name).compiler.queues with
   | None ->

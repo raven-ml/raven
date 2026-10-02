@@ -10,8 +10,8 @@
   tolk
   tolk.engine
   tolk_test
+  tolk_run
   nx.device
-  nx.dtype
   nx.cuda.device
   thumper))
 
