@@ -1393,7 +1393,7 @@ let goldens =
          test (name ^ " writes its golden document") (fun () ->
              expect_file
                (masked (Hugin_vg_svg.render r))
-               ("packages/hugin/test/vg/golden/" ^ name ^ ".svg")))
+               ("packages/hugin/test/golden/" ^ name ^ ".svg")))
        Vg_corpus.pages)
 
 let () =

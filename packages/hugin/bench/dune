@@ -1,0 +1,34 @@
+(executable
+ (name bench_vg)
+ (modules bench_vg)
+ (libraries
+  hugin.gg
+  hugin.vg
+  hugin.vg.raster
+  hugin.vg.svg
+  hugin.vg.pdf
+  thumper))
+
+(executable
+ (name bench_plot)
+ (modules bench_plot)
+ (libraries hugin hugin.vg.raster nx thumper))
+
+; Not attached to runtest on purpose: run with
+; `dune build --profile release @packages/hugin/bench/bench`.
+
+(rule
+ (alias bench)
+ (locks %{project_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (run %{exe:bench_vg.exe})))
+
+(rule
+ (alias bench)
+ (locks %{project_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (run %{exe:bench_plot.exe})))

@@ -1,4 +1,0 @@
-(tests
- (names test_geometry test_path test_stroke test_color)
- (package hugin)
- (libraries hugin.gg hugin.vg hugin.vg.raster nx windtrap))

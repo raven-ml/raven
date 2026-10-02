@@ -1,0 +1,44 @@
+(library
+ (name hugin_test_build)
+ (wrapped false)
+ (modules build)
+ (libraries windtrap))
+
+(library
+ (name text_support)
+ (wrapped false)
+ (modules text_support)
+ (libraries
+  hugin.gg
+  hugin.font
+  hugin.text
+  hugin_test_build
+  windtrap))
+
+(library
+ (name hugin_test_winding)
+ (wrapped false)
+ (modules winding)
+ (libraries hugin.gg hugin.gg.kit))
+
+(library
+ (name vg_corpus)
+ (modules vg_corpus)
+ (libraries hugin.gg hugin.font hugin.vg nx nx.io windtrap))
+
+(library
+ (name hugin_test_figures)
+ (modules figures)
+ (libraries hugin nx))
+
+; The built-in marks, compiled against the public interface alone: a mark
+; that names a private module of the library fails this build, which
+; test_draw links.
+
+(copy_files#
+ (files ../../lib/marks.{ml,mli}))
+
+(library
+ (name hugin_test_marks)
+ (modules api marks)
+ (libraries hugin hugin.gg.kit nx nx.dtype))

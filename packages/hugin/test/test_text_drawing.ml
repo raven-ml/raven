@@ -97,7 +97,7 @@ let goldens =
          test (name ^ " writes its golden document") (fun () ->
              expect_file
                (masked (Hugin_vg_svg.render (page l)))
-               ("packages/hugin/test/text/golden/" ^ name ^ ".svg")))
+               ("packages/hugin/test/golden/" ^ name ^ ".svg")))
        layouts)
 
 let () = exit (run "hugin.text: drawing" [ drawing; goldens ])
