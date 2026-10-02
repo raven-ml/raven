@@ -210,6 +210,49 @@ let select_zero =
           fun g -> g x);
     ]
 
+(* Reverse mode of a two-layer perceptron's loss over a batch of 32 rows of 64
+   inputs, 128 hidden units and 10 outputs: the gradient of the compiled loss, a
+   forward program that returns the values its backward program reads, then that
+   program; and the compiled gradient, one program. *)
+let reverse =
+  let batch = 32 and inputs = 64 and hidden = 128 and outputs = 10 in
+  let params = Nx.Ptree.(pair (pair tensor tensor) (pair tensor tensor)) in
+  let loss ((w1, b1), (w2, b2)) x =
+    let h = Nx.tanh (Nx.add (Nx.matmul x w1) b1) in
+    let y = Nx.add (Nx.matmul h w2) b2 in
+    Nx.mean (Nx.mul y y)
+  in
+  let init () =
+    ( ( Nx.mul_s (uniform [| inputs; hidden |]) 0.1,
+        Nx.zeros Nx.float32 [| hidden |] ),
+      ( Nx.mul_s (uniform [| hidden; outputs |]) 0.1,
+        Nx.zeros Nx.float32 [| outputs |] ) )
+  in
+  let x () = uniform [| batch; inputs |] in
+  let timed id step =
+    Thumper.bench_with_setup ~id
+      ~setup:(fun () ->
+        let p = init () and x = x () in
+        ignore (Sys.opaque_identity (step p x));
+        (p, x))
+      id
+      (fun (p, x) ->
+        ignore (Sys.opaque_identity (step p x));
+        Nx_device.synchronize Nx_device.host)
+  in
+  Thumper.group ~id:"reverse" "reverse"
+    [
+      timed "grad-of-jit-mlp-float32-host"
+        (let l =
+           Rune.jit Nx.Ptree.(params @-> tensor @-> returns tensor) loss
+         in
+         fun p x -> Rune.grad params (fun p -> l p x) p);
+      timed "jit-of-grad-mlp-float32-host"
+        (Rune.jit
+           Nx.Ptree.(params @-> tensor @-> returns params)
+           (fun p x -> Rune.grad params (fun p -> loss p x) p));
+    ]
+
 (* Launches
 
    Compiled functions of many small kernels, whose time is mostly the cost of
@@ -308,7 +351,7 @@ let () =
                searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000
                  ~m:1_000_000;
              ]
-        :: split :: indexed :: rope :: select_zero
+        :: split :: indexed :: rope :: select_zero :: reverse
         :: Thumper.group ~id:"launch" "launch"
              (launches ~place:Fun.id
                 ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
