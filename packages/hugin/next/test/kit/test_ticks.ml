@@ -658,6 +658,30 @@ let choice =
             Ticks.choose ~length:100. ~measure (Scale.time ~domain:(t0, t0) ())
           in
           equal int 1 (List.length t.major));
+      test "a band labels every category whose labels have room" (fun () ->
+          (* Six tokens, each label at most 22 long: a sixth of 150 holds one, a
+             sixth of 75 does not, and a third of 75 does. *)
+          let tokens = [| "the"; "cat"; "sat"; "on"; "the"; "mat" |] in
+          let s =
+            Scale.band
+              ~domain:(Indices (Array.mapi (fun i t -> (i, t)) tokens))
+              ()
+          in
+          equal (list string)
+            [ "the"; "cat"; "sat"; "on"; "the"; "mat" ]
+            (labels (Ticks.choose ~length:150. ~measure s));
+          equal (list string) [ "the"; "sat"; "the" ]
+            (labels (Ticks.choose ~length:75. ~measure s)));
+      cases
+        ~name:(fun (n, k) -> Printf.sprintf "%d categories, a stride of %d" n k)
+        "a band shows at most a hundred ticks on any axis"
+        [ (100, 1); (101, 2); (400, 5); (1001, 20) ]
+        (fun (n, k) ->
+          let names = Array.init n (fun i -> "c" ^ string_of_int i) in
+          let s = Scale.band ~domain:(Labels names) () in
+          equal (list string)
+            (List.init ((n + k - 1) / k) (fun i -> names.(i * k)))
+            (labels (Ticks.choose ~length:1e7 ~measure s)));
       test "a band without categories has no tick" (fun () ->
           equal (list string) []
             (labels (Ticks.choose ~length:100. ~measure (Scale.band ()))));
@@ -1181,17 +1205,28 @@ let calendar_candidates ~length ?tz_offset_s (a, b) =
 let stride r =
   [| 1; 2; 5 |].(r mod 3) * int_of_float (10. ** Float.of_int (r / 3))
 
-let strides_candidates names =
+(* [least_stride ~length s names] is the ticks at every [k]th of [names] for the
+   least [k] in 1, 2, 5, 10, … that gives at most a hundred ticks and whose
+   labels do not overlap. *)
+let least_stride ~length s names =
   let n = Array.length names in
-  List.init 12 (fun r ->
-      let k = stride r in
-      let values = Array.init ((n + k - 1) / k) (fun i -> names.(i * k)) in
-      {
-        s_term = 1. -. Float.of_int (r + 1);
-        key = [ 4; r + 1; 0; 0; 0 ];
-        values;
-        minor = (fun () -> [||]);
-      })
+  let extent = extent_of measure in
+  let rec go r =
+    let k = stride r in
+    let values = Array.init ((n + k - 1) / k) (fun i -> names.(i * k)) in
+    let t = of_values s values in
+    let rec overlaps = function
+      | (a : Ticks.tick) :: (b :: _ as rest) ->
+          (b.position -. a.position) *. length < (extent a +. extent b) /. 2.
+          || overlaps rest
+      | _ -> false
+    in
+    if k < n && (Array.length values > 100 || overlaps t.major) then go (r + 1)
+    else
+      let c = { s_term = 0.; key = []; values; minor = (fun () -> [||]) } in
+      { score = 0.; n = Array.length values; c; ticks = t }
+  in
+  go 0
 
 (* Skips beyond [max_skip] score at most this. *)
 let skip_bound = (0.25 *. (2. -. Float.of_int (max_skip + 1))) +. 0.7
@@ -1263,13 +1298,20 @@ let agreement =
           assume
             (best.score > (0.25 *. (1. -. Float.of_int (max_skip + 1))) +. 0.7);
           agrees ~minor:false s best (Ticks.choose ~length ~measure s));
-      prop "a band choice is the best stride"
-        (Gen.pair (Gen.int_range 1 400) (Gen.float_range 20. 1000.))
-        (fun (n, length) ->
+      prop
+        "a band choice is the least stride of at most a hundred ticks whose \
+         labels do not overlap"
+        (Gen.triple (Gen.int_range 1 400)
+           (Gen.frequency
+              [ (3, Gen.float_range 20. 1000.); (1, Gen.float_range 1e4 1e6) ])
+           Gen.bool)
+        (fun (n, length, reverse) ->
+          cover "more categories than ticks on a long axis"
+            (n > 100 && length > 1e4);
           let names = Array.init n (fun i -> "c" ^ string_of_int i) in
-          let s = Scale.band ~domain:(Labels names) () in
+          let s = Scale.band ~reverse ~domain:(Labels names) () in
           agrees ~minor:true s
-            (reference ~length s (strides_candidates names))
+            (least_stride ~length s names)
             (Ticks.choose ~length ~measure s));
     ]
 
@@ -1308,7 +1350,7 @@ let reference_cases =
     let names = Array.init n (fun i -> "c" ^ string_of_int i) in
     let s = Scale.band ~domain:(Labels names) () in
     agrees ~minor:true s
-      (reference ~length s (strides_candidates names))
+      (least_stride ~length s names)
       (Ticks.choose ~length ~measure s)
   in
   let row name f = (name, f) in

@@ -95,8 +95,8 @@ val of_values :
 (** {2:candidates Candidates and score}
 
     A candidate is a set of guide values inside the domain, drawn from one of
-    the families below. Each family has a preference list [Q]; a candidate has a
-    rank [i] in [Q], from [1], and a skip [j]:
+    the families below. Each scored family has a preference list [Q]; a
+    candidate has a rank [i] in [Q], from [1], and a skip [j]:
     - {b Decimal steps}, on linear, pow, custom, symlog and log scales: for [q]
       in [Q = [1; 5; 2; 2.5; 4; 3]], an integer [z], a skip [j >= 1] and an
       offset [r] in \[[0];[j - 1]\], the multiples of [q × 10^z] inside the
@@ -125,8 +125,10 @@ val of_values :
       its unit (such as [[1; 5; 15; 30]] for seconds, and [[1; 2; 5]] for the
       decimal steps of nanoseconds and of years).
     - {b Strides}, on band scales: every [k]th category from the first, for [k]
-      in [1], [2], [5], [10], [20], [50], …; [Q = [1]], and [j] is the rank of
-      [k] in that sequence, from [1].
+      in [1], [2], [5], [10], [20], [50], …. Strides are not scored: a reader
+      cannot place a category between two labels, so the candidate is the one of
+      the least [k] that gives at most a hundred ticks and whose labels do not
+      overlap (below).
 
     With [n] ticks at positions [p_1 < … < p_n], and
     [m = min (length / (2 ē)) 100], where [ē] is the mean extent of the labels
@@ -141,7 +143,7 @@ val of_values :
     after Talbot, Lin and Hanrahan, with:
     - the simplicity [S = 1 - (i - 1) / (|Q| - 1) - j + v], the middle term
       being [0] when [|Q| = 1], where [v] is [1] if [0.] is a tick ([1.] on a
-      log scale) and [0] otherwise, and always [0] on temporal and band scales;
+      log scale) and [0] otherwise, and always [0] on temporal scales;
     - the coverage [C = 1 - 50 ((1 - p_n)² + p_1²)];
     - the density [D = 2 - max (ρ / ρt) (ρt / ρ)], where
       [ρ = (n - 1) / (p_n - p_1)], or [1] if [n = 1], and [ρt = max 1 (m - 1)].
@@ -159,7 +161,8 @@ val of_values :
     search, so a candidate with [n - 1 > ρt] has a density of at most
     [2 - (n - 1) / ρt]; with the bound [2 - j] on the simplicity, this ends the
     search on every domain, as in the paper, and, since [ρt < 100], bounds the
-    ticks of the candidates it makes by a constant whatever [length]. *)
+    ticks of the candidates it makes by a constant whatever [length], as the
+    hundred does for strides. *)
 
 (** {1:labels Labels}
 

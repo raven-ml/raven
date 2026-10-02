@@ -412,19 +412,23 @@ let overlaps st positions labels =
 
 let sq x = x *. x
 
+(* [increasing st vs] is the values [vs], increasing or decreasing, and their
+   positions, both in increasing order of the positions. *)
+let increasing st vs =
+  let n = Array.length vs in
+  let positions = Array.map st.norm vs in
+  if n > 0 && positions.(0) > positions.(n - 1) then
+    let rev a = Array.init n (fun i -> a.(n - 1 - i)) in
+    (rev vs, rev positions)
+  else (vs, positions)
+
 (* [consider st ~s_term ~key ~minor vs] scores the candidate of the distinct
    values [vs], increasing, and keeps it if it is the best so far. Labels are
    made and measured only for a candidate that would be. *)
 let consider st ~s_term ~key ~minor vs =
   let n = Array.length vs in
   if n > 0 then begin
-    let positions = Array.map st.norm vs in
-    let vs, positions =
-      if positions.(0) > positions.(n - 1) then
-        let rev a = Array.init n (fun i -> a.(n - 1 - i)) in
-        (rev vs, rev positions)
-      else (vs, positions)
-    in
+    let vs, positions = increasing st vs in
     let p1 = positions.(0) and pn = positions.(n - 1) in
     let c = 1. -. (50. *. (sq (1. -. pn) +. sq p1)) in
     let rho = if n = 1 then 1. else Float.of_int (n - 1) /. (pn -. p1) in
@@ -684,27 +688,39 @@ let calendar_family st tz ((a : Time.t), (b : Time.t)) =
   seed (count - 1);
   skips 1
 
-let strides_family st names =
-  let n = Array.length names in
-  let rec skips j =
-    let k = Steps.stride (j - 1) in
-    if can_beat st ((0.25 *. (1. -. Float.of_int j)) +. 0.7) then begin
-      let vs = Array.init ((n + k - 1) / k) (fun i -> names.(i * k)) in
-      consider st
-        ~s_term:(1. -. Float.of_int j)
-        ~key:[ 4; j; 0; 0; 0 ]
-        ~minor:(fun () -> [||])
-        vs;
-      if k < n then skips (j + 1)
-    end
-  in
-  skips 1
-
-(* The most ticks [choose] aims for, however long the axis. A reader takes in no
-   more on one axis, and the density bounds the search by the target: without
-   the cap, an axis of billions of points would make candidates of billions of
-   ticks. *)
+(* The most ticks [choose] aims for, however long the axis, and the most a band
+   axis shows. A reader takes in no more on one axis, and the cap bounds the
+   search: the density bounds it by the target, and strides start from the least
+   that gives no more ticks. Without the cap, an axis of billions of points
+   would make candidates of billions of ticks. *)
 let most_ticks = 100.
+
+(* [strides st names] chooses the least stride of at most [most_ticks] ticks
+   whose labels do not overlap. A reader cannot place a category between two
+   labels, so a band axis labels as many categories as have room. *)
+let strides st names =
+  let n = Array.length names in
+  let count k = (n + k - 1) / k in
+  let rec go j =
+    let k = Steps.stride (j - 1) in
+    let vs, positions =
+      increasing st (Array.init (count k) (fun i -> names.(i * k)))
+    in
+    let labels, note =
+      label ~shortest:st.shortest st.locale st.notation st.s vs
+    in
+    if k < n && overlaps st positions labels then go (j + 1)
+    else
+      let minor () = [||] in
+      let n = Array.length vs in
+      st.best <-
+        Some { score = 0.; n; key = []; positions; labels; note; minor }
+  in
+  let rec least j =
+    let k = Steps.stride (j - 1) in
+    if Float.of_int (count k) > most_ticks then least (j + 1) else j
+  in
+  go (least 1)
 
 let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
     (s : d Scale.t) : t =
@@ -787,9 +803,9 @@ let choose (type d) ?(locale = Locale.default) ?notation ~length ~measure
         | Symlog c -> signed_family st ~v c (a, b));
         search ()
     | Instants (a, b) -> calendar_family st (Scale.Private.tz_offset_s s) (a, b)
-    | Categories (Labels names) -> strides_family st names
+    | Categories (Labels names) -> strides st names
     | Categories (Indices ix) ->
-        strides_family st (Array.map (fun (i, _) -> string_of_int i) ix));
+        strides st (Array.map (fun (i, _) -> string_of_int i) ix));
     match st.best with
     | None -> assert false
     | Some best ->
