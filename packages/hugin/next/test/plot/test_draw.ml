@@ -1336,6 +1336,36 @@ let reducers =
                 (Picture.image (Option.get !box) px)
                 (Picture.image window gathered)
           | l -> failf "%d images" (List.length l));
+      cases ~name:fst
+        "an image under a clip, an opacity or a tag is gathered, under a \
+         transform or a stamp left whole"
+        [
+          ("clip", (true, fun box p -> Picture.clip (Path.rect box) p));
+          ("opacity", (true, fun _ p -> Picture.opacity 0.5 p));
+          ( "tag",
+            ( true,
+              fun _ p ->
+                Picture.tag
+                  { Picture.id = Nx.Ptree.Path.root; rows = Picture.Rows [||] }
+                  p ) );
+          ( "transform",
+            (false, fun _ p -> Picture.transform (Affine.translate 0.5 0.5) p)
+          );
+          ("stamp", (false, fun _ p -> Picture.stamp [| 0.5 |] [| 0.5 |] p));
+        ]
+        (fun (_, (gather, wrap)) ->
+          let px = Nx.zeros Nx.uint8 [| 200; 300; 4 |] in
+          let f =
+            Mark.v ~name:"picture" [] (fun r ->
+                let at = Coord.point (Mark.projection r) in
+                let box = Box2.of_pts (at 0. 1.) (at 1. 0.) in
+                wrap box (Picture.image box px))
+          in
+          match images (drawn ~size:(Size.panels 20. 20.) f) with
+          | [ (_, got) ] ->
+              let s = Nx.shape got in
+              equal bool gather (s.(0) * s.(1) < 200 * 300)
+          | l -> failf "%d images" (List.length l));
       test "image clamps floats and leaves a pixel with a NaN transparent"
         (fun () ->
           let px =
@@ -1409,7 +1439,9 @@ module Copy = Hugin_next_test_marks.Marks
 
 let builtins =
   let v = f64 [| 1.; 3.; 2. |]
-  and z = Nx.init Nx.float64 [| 3; 4 |] (fun i -> Float.of_int (i.(0) * i.(1))) in
+  and z =
+    Nx.init Nx.float64 [| 3; 4 |] (fun i -> Float.of_int (i.(0) * i.(1)))
+  in
   let px =
     Nx.init Nx.float32 [| 2; 3; 3 |] (fun i ->
         Float.of_int (i.(0) + i.(1) + i.(2)) /. 6.)
