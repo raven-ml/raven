@@ -11,15 +11,6 @@ let v rs = rs
 let rings p = p
 let area p = List.fold_left (fun a r -> a +. Ring2.area r) 0. p
 
-let mem pt p =
-  let px = P2.x pt and py = P2.y pt in
-  Float.is_finite px && Float.is_finite py
-  && List.fold_left
-       (fun w r ->
-         w + Winding.number (Ring2.length r) (Ring2.x r) (Ring2.y r) px py)
-       0 p
-     <> 0
-
 let bounds p =
   List.fold_left
     (fun acc r ->

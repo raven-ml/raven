@@ -168,7 +168,12 @@ let area =
           equal number (Ring2.area r) (Ring2.area (rotate k r)));
     ]
 
-(* Membership *)
+(* The winding oracle
+
+   The isoband laws are checked against [Winding], in test support: it must
+   decide points on rings as it states, and exactly. *)
+
+let mem p r = Winding.mem p (Pgon2.v [ r ])
 
 let unit_square_points =
   [
@@ -190,15 +195,14 @@ let unit_square_points =
 
 let mem_unit_square (_, (x, y), expected) =
   let p = P2.v x y in
-  equal ~msg:"positive" bool expected (Ring2.mem p (square 0. 0. 1.));
-  equal ~msg:"negative" bool expected
-    (Ring2.mem p (Ring2.reverse (square 0. 0. 1.)))
+  equal ~msg:"positive" bool expected (mem p (square 0. 0. 1.));
+  equal ~msg:"negative" bool expected (mem p (Ring2.reverse (square 0. 0. 1.)))
 
 let mem_degenerate () =
   List.iter
     (fun r ->
       List.iter
-        (fun (x, y) -> is_false ~msg:"no enclosure" (Ring2.mem (P2.v x y) r))
+        (fun (x, y) -> is_false ~msg:"no enclosure" (mem (P2.v x y) r))
         [ (0., 0.); (1., 1.); (0.5, 0.5); (-1., 0.) ])
     [ Ring2.v [||] [||]; of_list [ (0., 0.) ]; of_list [ (0., 0.); (1., 1.) ] ]
 
@@ -216,7 +220,7 @@ let mem_winding_two () =
         (0., 2.);
       ]
   in
-  is_true (Ring2.mem (P2.v 1. 1.) twice)
+  is_true (mem (P2.v 1. 1.) twice)
 
 (* Nine unit squares tile [\[0;3)] by [\[0;3)]: every point of it is in exactly
    one of them and every other point in none. *)
@@ -242,7 +246,7 @@ let tiling_partitions p =
   let x = P2.x p and y = P2.y p in
   let inside = 0. <= x && x < 3. && 0. <= y && y < 3. in
   cover "on a shared edge" (Float.is_integer x && 0. < x && x < 3.);
-  let n = List.length (List.filter (Ring2.mem p) tiles) in
+  let n = List.length (List.filter (mem p) tiles) in
   equal int (if inside then 1 else 0) n
 
 (* Triangles around a common centre share their edges: a point on an edge they
@@ -259,13 +263,13 @@ let fan_shares_edges (k, t) =
   in
   let x1, y1 = px k in
   let p = P2.v (0.1 +. (t *. (x1 -. 0.1))) (0.2 +. (t *. (y1 -. 0.2))) in
-  let n_in = List.length (List.filter (Ring2.mem p) (List.init n tri)) in
+  let n_in = List.length (List.filter (mem p) (List.init n tri)) in
   at_most int ~than:1 n_in
 
 let mem_ignores_orientation_and_start (r, p, k) =
-  let m = Ring2.mem p r in
-  equal ~msg:"reversed" bool m (Ring2.mem p (Ring2.reverse r));
-  equal ~msg:"rotated" bool m (Ring2.mem p (rotate k r))
+  let m = mem p r in
+  equal ~msg:"reversed" bool m (mem p (Ring2.reverse r));
+  equal ~msg:"rotated" bool m (mem p (rotate k r))
 
 (* A point within rounding error of a slanted edge, on its left: the rounded
    cross product is zero, the exact orientation positive. *)
@@ -273,8 +277,8 @@ let slanted_edge_decided_exactly () =
   let p = P2.v 0.49056068382391227 0.9160279203438393 in
   let left = of_list [ (0.1, 0.2); (0.7, 1.3); (-1., 1.3) ] in
   let right = of_list [ (0.7, 1.3); (0.1, 0.2); (1.5, 0.2) ] in
-  is_true ~msg:"in the triangle on the left" (Ring2.mem p left);
-  is_false ~msg:"not in the triangle on the right" (Ring2.mem p right)
+  is_true ~msg:"in the triangle on the left" (mem p left);
+  is_false ~msg:"not in the triangle on the right" (mem p right)
 
 (* Two triangles share the edge from [l] to [u], and [p] lies within rounding
    error of it, on the side [on_right] says by the exact orientation. The
@@ -283,9 +287,8 @@ let near_shared_edge (_, l, u, (px, py), on_right) =
   let left = of_list [ l; u; (-40., snd u) ] in
   let right = of_list [ u; l; (40., snd l) ] in
   let p = P2.v px py in
-  equal ~msg:"in the triangle on the right" bool on_right (Ring2.mem p right);
-  equal ~msg:"in the triangle on the left" bool (not on_right)
-    (Ring2.mem p left)
+  equal ~msg:"in the triangle on the right" bool on_right (mem p right);
+  equal ~msg:"in the triangle on the left" bool (not on_right) (mem p left)
 
 let near_shared_edges =
   [
@@ -301,8 +304,13 @@ let near_shared_edges =
       false );
   ]
 
-let membership =
-  group "membership"
+let windings_add (r, pt) =
+  is_false ~msg:"a ring and its reverse cancel"
+    (Winding.mem pt (Pgon2.v [ r; Ring2.reverse r ]));
+  equal ~msg:"a ring twice" bool (mem pt r) (Winding.mem pt (Pgon2.v [ r; r ]))
+
+let oracle =
+  group "the winding oracle"
     [
       cases
         ~name:(fun (n, _, _) -> n)
@@ -323,6 +331,8 @@ let membership =
       prop "membership ignores the orientation and the first point"
         (Gen.triple gen_ring gen_pt Gen.nat)
         mem_ignores_orientation_and_start;
+      prop "winding numbers of rings add up" (Gen.pair gen_ring gen_pt)
+        windings_add;
     ]
 
 (* Bounds, reversing and paths *)
@@ -410,4 +420,4 @@ let comparing =
 let () =
   exit
     (run "Ring2"
-       [ constructing; accessors; area; membership; transforming; comparing ])
+       [ constructing; accessors; area; oracle; transforming; comparing ])

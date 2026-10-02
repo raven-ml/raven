@@ -209,9 +209,9 @@ let add_pen b d (pen : Vector.pen) ~offset =
   end
 
 let stroke ctx b s color path =
-  let lin = Vector.linear ctx.m in
+  let lin = Affine.linear ctx.m in
   let pen = Vector.pen ctx.m ctx.pen s in
-  let reach = Vector.reach pen s in
+  let reach = Stroke.reach s *. (ctx.pen *. Affine.stretch ctx.m) in
   let cut = Vector.grown ctx.cut reach in
   (* A pen the frame stretches unevenly is written under the frame's linear
      part, scaled to stretch nothing more than the page does. *)
@@ -302,8 +302,8 @@ let glyphs doc ctx b color at run =
     match text_of run with
     | Some text ->
         let n = Run.length run in
-        let lin = Vector.linear m in
-        let s = Vector.stretch lin in
+        let lin = Affine.linear m in
+        let s = Affine.stretch lin in
         (* Glyph positions in the frame the text is written in, the frame's own
            if it only scales evenly, else one turned with the run. *)
         let frame =
@@ -385,7 +385,7 @@ let image ctx b box pixels =
         if c0 = 0 && r0 = 0 && c1 = w && r1 = h then pixels
         else Nx.slice [ R (r0, r1); R (c0, c1); A ] pixels
       in
-      let lin = Vector.linear ctx.m in
+      let lin = Affine.linear ctx.m in
       Buffer.add_string b "<image";
       if Vector.is_axial lin then begin
         let p = P2.transform ctx.m (P2.v x y)
@@ -401,7 +401,7 @@ let image ctx b box pixels =
         add_attr_num b "height" ctx.d (round (P2.y q) -. round (P2.y p))
       end
       else begin
-        let s = Vector.stretch lin in
+        let s = Affine.stretch lin in
         let o = P2.transform ctx.m (P2.v x y) in
         add_matrix b (Vector.unit lin) (P2.x o) (P2.y o) ctx.d;
         (* Lengths under a matrix add their errors to its origin's. *)
@@ -539,7 +539,7 @@ let rec picture doc ctx b (p : Picture.t) =
       stamp doc ctx b ~rows:None p xs ys scales fills strokes
 
 and stamp doc ctx b ~rows p xs ys scales fills strokes =
-  let lin = Vector.linear ctx.m in
+  let lin = Affine.linear ctx.m in
   let scale i = match scales with None -> 1. | Some a -> a.(i) in
   let pick a i outer = match a with Some a -> Fixed a.(i) | None -> outer in
   let open_row i =

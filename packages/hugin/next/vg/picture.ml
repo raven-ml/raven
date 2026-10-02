@@ -143,33 +143,6 @@ let tag t picture =
 
 (* Bounds *)
 
-(* The reach of a pen beyond its path, in the stroke's coordinates. *)
-let reach s =
-  let k =
-    match (Stroke.join s, Stroke.cap s) with
-    | `Miter, `Square -> Float.max (Stroke.miter_limit s) (Float.sqrt 2.)
-    | `Miter, _ -> Stroke.miter_limit s
-    | _, `Square -> Float.sqrt 2.
-    | _ -> 1.
-  in
-  0.5 *. Stroke.width s *. k
-
-let grow r b =
-  Box2.v
-    (Box2.minx b -. r)
-    (Box2.miny b -. r)
-    (Box2.w b +. (2. *. r))
-    (Box2.h b +. (2. *. r))
-
-let meet a b =
-  let minx = Float.max (Box2.minx a) (Box2.minx b) in
-  let miny = Float.max (Box2.miny a) (Box2.miny b) in
-  let maxx = Float.min (Box2.maxx a) (Box2.maxx b) in
-  let maxy = Float.min (Box2.maxy a) (Box2.maxy b) in
-  if minx <= maxx && miny <= maxy then
-    Some (Box2.of_pts (P2.v minx miny) (P2.v maxx maxy))
-  else None
-
 (* [acc] is [minx; miny; maxx; maxy], empty while [minx > maxx]. *)
 let union acc b =
   acc.(0) <- Float.min acc.(0) (Box2.minx b);
@@ -184,8 +157,6 @@ let to_box acc =
     Some (Box2.of_pts (P2.v acc.(0) acc.(1)) (P2.v acc.(2) acc.(3)))
   else None
 
-let linear (m : Affine.t) = { m with x0 = 0.; y0 = 0. }
-
 let shift b dx dy =
   Box2.of_pts
     (P2.v (Box2.minx b +. dx) (Box2.miny b +. dy))
@@ -198,7 +169,7 @@ type cut = Uncut | Cut of Box2.t | Cut_later
 let cut add clip b =
   match clip with
   | Uncut | Cut_later -> add b
-  | Cut c -> Option.iter add (meet b c)
+  | Cut c -> Option.iter add (Box2.inter b c)
 
 (* [bounds_into add m clip pen p] gives to [add] the boxes of the leaves of [p]
    under [m], cut by [clip], with the reach of pens multiplied by [pen]. *)
@@ -207,7 +178,7 @@ let rec bounds_into add m clip pen = function
   | Fill { path; _ } -> leaf add m clip (Path.bounds path)
   | Stroke { stroke; path; _ } ->
       leaf add m clip
-        (Option.map (grow (pen *. reach stroke)) (Path.bounds path))
+        (Option.map (Box2.grow (pen *. Stroke.reach stroke)) (Path.bounds path))
   | Glyphs { at; run; _ } ->
       let at = Affine.translate (P2.x at) (P2.y at) in
       leaf add Affine.(m * at) clip (Run.bounds run)
@@ -221,7 +192,7 @@ let rec bounds_into add m clip pen = function
           match clip with
           | Uncut | Cut_later -> bounds_into add m (Cut b) pen picture
           | Cut c -> (
-              match meet b c with
+              match Box2.inter b c with
               | None -> ()
               | Some c -> bounds_into add m (Cut c) pen picture)))
   | Transform { m = m'; picture } ->
@@ -244,7 +215,7 @@ let rec bounds_into add m clip pen = function
       match clip with
       | Uncut -> (
           let t = fresh () in
-          bounds_into (union t) (linear m) Uncut pen picture;
+          bounds_into (union t) (Affine.linear m) Uncut pen picture;
           match to_box t with
           | None -> ()
           | Some b -> each_instance (fun dx dy -> add (shift b dx dy)))
@@ -252,7 +223,7 @@ let rec bounds_into add m clip pen = function
           let boxes = ref [] in
           bounds_into
             (fun b -> boxes := b :: !boxes)
-            (linear m) Cut_later pen picture;
+            (Affine.linear m) Cut_later pen picture;
           each_instance (fun dx dy ->
               List.iter (fun b -> cut add clip (shift b dx dy)) !boxes))
   | Stamp { picture; xs; ys; scales = Some scales; _ } ->
@@ -275,19 +246,6 @@ let bounds p =
 
 (* Comparing *)
 
-let array_equal eq a b =
-  let n = Array.length a in
-  n = Array.length b
-  &&
-  let rec loop i = i >= n || (eq a.(i) b.(i) && loop (i + 1)) in
-  loop 0
-
-let option_equal eq a b =
-  match (a, b) with
-  | None, None -> true
-  | Some a, Some b -> eq a b
-  | (None | Some _), _ -> false
-
 let rule_equal (r : rule) (r' : rule) =
   match (r, r') with
   | `Nonzero, `Nonzero | `Even_odd, `Even_odd -> true
@@ -295,7 +253,7 @@ let rule_equal (r : rule) (r' : rule) =
 
 let rows_equal r r' =
   match (r, r') with
-  | Rows a, Rows a' -> array_equal Int.equal a a'
+  | Rows a, Rows a' -> Array.equal Int.equal a a'
   | Cells c, Cells c' ->
       Box2.equal c.box c'.box && c.width = c'.width && c.height = c'.height
   | (Rows _ | Cells _), _ -> false
@@ -318,7 +276,11 @@ let rec equal p p' =
   | Glyphs g, Glyphs g' ->
       Color.equal g.color g'.color
       && P2.equal g.at g'.at && Run.equal g.run g'.run
-  | Image i, Image i' -> Box2.equal i.box i'.box && i.pixels == i'.pixels
+  | Image i, Image i' ->
+      Box2.equal i.box i'.box
+      && (i.pixels == i'.pixels
+         || Array.equal Int.equal (Nx.shape i.pixels) (Nx.shape i'.pixels)
+            && Nx.item [] (Nx.array_equal i.pixels i'.pixels))
   | Group ps, Group ps' -> List.equal equal ps ps'
   | Clip c, Clip c' ->
       rule_equal c.rule c'.rule && Path.equal c.path c'.path
@@ -328,11 +290,11 @@ let rec equal p p' =
   | Opacity o, Opacity o' ->
       Float.equal o.opacity o'.opacity && equal o.picture o'.picture
   | Stamp s, Stamp s' ->
-      array_equal Float.equal s.xs s'.xs
-      && array_equal Float.equal s.ys s'.ys
-      && option_equal (array_equal Float.equal) s.scales s'.scales
-      && option_equal (array_equal Color.equal) s.fills s'.fills
-      && option_equal (array_equal Color.equal) s.strokes s'.strokes
+      Array.equal Float.equal s.xs s'.xs
+      && Array.equal Float.equal s.ys s'.ys
+      && Option.equal (Array.equal Float.equal) s.scales s'.scales
+      && Option.equal (Array.equal Color.equal) s.fills s'.fills
+      && Option.equal (Array.equal Color.equal) s.strokes s'.strokes
       && equal s.picture s'.picture
   | Tag t, Tag t' -> tag_equal t.tag t'.tag && equal t.picture t'.picture
   | ( ( Empty | Fill _ | Stroke _ | Glyphs _ | Image _ | Group _ | Clip _

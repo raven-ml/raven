@@ -40,18 +40,9 @@ val add_exact : Buffer.t -> float -> unit
 
 (** {1:maps Maps} *)
 
-val linear : Affine.t -> Affine.t
-(** [linear m] is [m] without its translation. *)
-
-val stretch : Affine.t -> float
-(** [stretch m] is the largest factor by which [m] scales a length, the largest
-    singular value of its linear part, computed so that it neither overflows nor
-    underflows where floats hold it: [stretch (Affine.scale 1e-200 1e-200)] is
-    [1e-200]. The linear part of [m] is finite and not zero. *)
-
 val unit : Affine.t -> Affine.t
-(** [unit m] is the linear part of [m] divided by [stretch m], which scales no
-    length by more than [1.]. *)
+(** [unit m] is the linear part of [m] divided by [Affine.stretch m], which
+    scales no length by more than [1.]. *)
 
 val is_similar : Affine.t -> bool
 (** [is_similar m] is [true] iff the linear part of [m] scales lengths evenly,
@@ -147,7 +138,8 @@ type pen = { width : float; dash : float list; offset : float }
 
 val pen : Affine.t -> float -> Stroke.t -> pen
 (** [pen m k s] is the pen of [s], its lengths multiplied by [k], as written
-    under [m]: multiplied by [stretch m] too, and taken at [1e15] beyond it. *)
+    under [m]: multiplied by [Affine.stretch m] too, and taken at [1e15] beyond
+    it. *)
 
 val pens : Affine.t -> float -> Picture.t -> pen list
 (** [pens m k p] is the distinct pens of the strokes of [p], as {!pen} writes
@@ -156,8 +148,3 @@ val pens : Affine.t -> float -> Picture.t -> pen list
 val scales_within : Picture.t -> bool
 (** [scales_within p] is [true] iff [p] holds a stamp that scales its instances.
 *)
-
-val reach : pen -> Stroke.t -> float
-(** [reach pen s] is how far the pen [pen] of the style [s] reaches beyond its
-    path: half its width, multiplied by the miter limit if [s] miters its joins,
-    or by [sqrt 2.] if its caps are square and that is larger. *)

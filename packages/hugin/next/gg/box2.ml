@@ -50,6 +50,20 @@ let union a b =
     maxy = Float.max a.maxy b.maxy;
   }
 
+let inter a b =
+  let minx = Float.max a.minx b.minx and miny = Float.max a.miny b.miny in
+  let maxx = Float.min a.maxx b.maxx and maxy = Float.min a.maxy b.maxy in
+  if minx <= maxx && miny <= maxy then Some { minx; miny; maxx; maxy } else None
+
+let grow d b =
+  let minx = b.minx -. d and miny = b.miny -. d in
+  let maxx = b.maxx +. d and maxy = b.maxy +. d in
+  if not (finite4 minx miny maxx maxy) then
+    invalid_arg (Printf.sprintf "Box2.grow: corner not finite growing by %g" d);
+  if minx > maxx || miny > maxy then
+    invalid_arg (Printf.sprintf "Box2.grow: %g shrinks past a side" d);
+  { minx; miny; maxx; maxy }
+
 let transform m b =
   let p = P2.transform m (P2.v b.minx b.miny) in
   let q = P2.transform m (P2.v b.maxx b.miny) in

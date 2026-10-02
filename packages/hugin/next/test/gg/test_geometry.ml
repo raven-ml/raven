@@ -147,6 +147,37 @@ let lexicographic_order () =
   in
   equal (list affine) ordered (List.sort Affine.compare (List.rev ordered))
 
+(* The largest length of the image of a unit vector over a fine sweep of
+   directions: the stretch's definition, computed the slow way. *)
+let swept_stretch (m : Affine.t) =
+  let best = ref 0. in
+  for i = 0 to 3599 do
+    let a = Float.pi *. Float.of_int i /. 3600. in
+    let c = Float.cos a and s = Float.sin a in
+    best :=
+      Float.max !best
+        (Float.hypot ((m.xx *. c) +. (m.xy *. s)) ((m.yx *. c) +. (m.yy *. s)))
+  done;
+  !best
+
+(* The sweep misses the largest image by a relative 1e-7 at most. *)
+let stretch_is_largest_image m =
+  let s = Affine.stretch m and swept = swept_stretch m in
+  at_least float_exact ~than:(swept *. (1. -. 1e-12)) s;
+  at_most float_exact ~than:(swept *. (1. +. 1e-6)) s
+
+let stretch_cases =
+  [
+    ("scale 2 -3", Affine.scale 2. (-3.), 3.);
+    ("a rotation", Affine.rotate 1., 1.);
+    ("a translation", Affine.translate 5. 7., 1.);
+    ("a shear", { Affine.id with xy = 1. }, (1. +. Float.sqrt 5.) /. 2.);
+    ("scale 1e-200", Affine.scale 1e-200 1e-200, 1e-200);
+    ( "scale 1e200 under a rotation",
+      Affine.(rotate 1. * scale 1e200 1e200),
+      1e200 );
+  ]
+
 let affine_tests =
   group "Affine"
     [
@@ -185,6 +216,27 @@ let affine_tests =
           is_none ~pp:pp_affine (Affine.invert m));
       test "invert neither overflows nor underflows on extreme scales"
         invert_extreme_scales;
+      prop "linear drops the translation of a composition"
+        (Gen.pair gen_affine gen_affine)
+        (Law.homomorphic affine affine Affine.linear Affine.( * ) Affine.( * ));
+      test "linear keeps the linear coefficients" (fun () ->
+          let m =
+            { Affine.xx = 2.; yx = 3.; xy = 5.; yy = 7.; x0 = 1.; y0 = 1. }
+          in
+          equal affine { m with x0 = 0.; y0 = 0. } (Affine.linear m));
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "stretch of" stretch_cases
+        (fun (_, m, s) ->
+          equal (float_rel ~rel:1e-15 ~abs:0.) s (Affine.stretch m));
+      cases ~name:fst "stretch is NaN for"
+        [
+          ("the zero map", Affine.scale 0. 0.);
+          ("an infinite coefficient", Affine.scale infinity 1.);
+        ]
+        (fun (_, m) -> equal float_exact Float.nan (Affine.stretch m));
+      prop "stretch is the largest image of a unit vector" gen_affine
+        stretch_is_largest_image;
       test "equal follows Float.equal" equality_of_floats;
       prop "equal is an equivalence"
         (Gen.pair (gen_affine_of special) (gen_affine_of special))
@@ -281,6 +333,47 @@ let rotation_enlarges () =
   equal (float 1e-12) (2. *. Float.sqrt 2.) (Box2.w b);
   equal (float 1e-12) (2. *. Float.sqrt 2.) (Box2.h b)
 
+(* Boxes on a small grid of integers: they often touch, nest and miss each
+   other, and their corners are exact. *)
+let gen_grid_box =
+  let c = Gen.map Float.of_int (Gen.int_range (-3) 3) in
+  Gen.with_pp pp_box
+    (Gen.map
+       (fun (p, q) -> Box2.of_pts p q)
+       (Gen.pair
+          (Gen.map (fun (x, y) -> P2.v x y) (Gen.pair c c))
+          (Gen.map (fun (x, y) -> P2.v x y) (Gen.pair c c))))
+
+let gen_half_pt =
+  let c = Gen.map (fun k -> Float.of_int k /. 2.) (Gen.int_range (-7) 7) in
+  Gen.with_pp pp_p2 (Gen.map (fun (x, y) -> P2.v x y) (Gen.pair c c))
+
+let holds b p =
+  Box2.minx b <= P2.x p
+  && P2.x p <= Box2.maxx b
+  && Box2.miny b <= P2.y p
+  && P2.y p <= Box2.maxy b
+
+(* A point is in [inter a b] iff it is in [a] and in [b]. *)
+let inter_holds_common_points (a, b, p) =
+  let both = holds a p && holds b p in
+  cover "a common point" both;
+  cover "touching boxes"
+    (Option.is_some (Box2.inter a b) && Box2.maxx a = Box2.minx b);
+  match Box2.inter a b with
+  | None -> is_false ~msg:"no common point" both
+  | Some i -> equal bool both (holds i p)
+
+let invalid_grows =
+  [
+    ("shrinking a side past the other", -0.75, Box2.v 0. 0. 1. 2.);
+    ("a NaN distance", Float.nan, Box2.v 0. 0. 1. 1.);
+    ("an infinite distance", infinity, Box2.v 0. 0. 1. 1.);
+    ( "a corner beyond max_float",
+      Float.max_float,
+      Box2.v Float.max_float 0. 0. 0. );
+  ]
+
 let box_tests =
   group "Box2"
     [
@@ -308,6 +401,31 @@ let box_tests =
           let u = Box2.union a b in
           equal box2 u (Box2.union u a);
           equal box2 u (Box2.union u b));
+      prop "inter holds the points common to both boxes"
+        (Gen.triple gen_grid_box gen_grid_box gen_half_pt)
+        inter_holds_common_points;
+      prop "inter is commutative" (Gen.pair gen_grid_box gen_grid_box)
+        (fun (a, b) -> equal (option box2) (Box2.inter a b) (Box2.inter b a));
+      test "inter of boxes touching at a corner is that point" (fun () ->
+          equal (option box2)
+            (Some (Box2.v 1. 1. 0. 0.))
+            (Box2.inter (Box2.v 0. 0. 1. 1.) (Box2.v 1. 1. 1. 1.)));
+      prop "grow moves each side by the distance"
+        (Gen.pair (Gen.map Float.of_int (Gen.int_range (-1) 3)) gen_grid_box)
+        (fun (d, b) ->
+          assume (2. *. d >= -.Box2.w b && 2. *. d >= -.Box2.h b);
+          equal box2
+            (Box2.of_pts
+               (P2.v (Box2.minx b -. d) (Box2.miny b -. d))
+               (P2.v (Box2.maxx b +. d) (Box2.maxy b +. d)))
+            (Box2.grow d b));
+      test "grow down to a zero size is allowed" (fun () ->
+          equal box2 (Box2.v 1. 1. 0. 2.) (Box2.grow (-1.) (Box2.v 0. 0. 2. 4.)));
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "grow raises on" invalid_grows
+        (fun (_, d, b) ->
+          raises_match Exn.invalid_arg (fun () -> Box2.grow d b));
       prop "transform is the bounding box of the corners' images"
         (Gen.pair gen_affine gen_box)
         transform_is_corner_hull;

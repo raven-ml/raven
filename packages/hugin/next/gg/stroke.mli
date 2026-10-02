@@ -81,6 +81,12 @@ val dash_offset : t -> float
 (** [dash_offset s] is the dash offset of [s], reduced into \[[0];[l]\[ for the
     length [l] of the even pattern, and [0.] if solid. *)
 
+val reach : t -> float
+(** [reach s] is how far from its path a stroke with [s] paints: half the width
+    of [s], multiplied by the miter limit if [s] miters its joins, or by
+    [sqrt 2.] if its caps are square and that is larger. Every point the stroke
+    paints lies within [reach s] of a point of its path. *)
+
 (** {1:comparing Comparing and formatting} *)
 
 val equal : t -> t -> bool

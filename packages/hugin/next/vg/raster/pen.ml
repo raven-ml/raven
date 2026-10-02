@@ -34,37 +34,10 @@ type t = {
   cur : float array;  (** The outline's first and last device points. *)
 }
 
-(* The largest factor by which [m] scales a length, its largest singular value.
-   The coefficients are divided by the largest of their magnitudes [k] first, so
-   that their squares neither overflow nor underflow. *)
-let stretch (m : Affine.t) =
-  let k =
-    Float.max
-      (Float.max (Float.abs m.xx) (Float.abs m.yx))
-      (Float.max (Float.abs m.xy) (Float.abs m.yy))
-  in
-  let xx = m.xx /. k and yx = m.yx /. k and xy = m.xy /. k and yy = m.yy /. k in
-  let a = (xx *. xx) +. (yx *. yx) and b = (xy *. xy) +. (yy *. yy) in
-  let c = (xx *. xy) +. (yx *. yy) in
-  k
-  *. Float.sqrt
-       ((0.5 *. (a +. b))
-       +. Float.sqrt ((0.25 *. (a -. b) *. (a -. b)) +. (c *. c)))
-
-(* [reach s] bounds the distance from its path that a stroke with [s] covers:
-   half its width times the miter limit or the half diagonal of a square cap. *)
-let reach s =
-  let k =
-    match Stroke.join s with
-    | `Miter -> Float.max (Stroke.miter_limit s) (Float.sqrt 2.)
-    | `Round | `Bevel -> Float.sqrt 2.
-  in
-  0.5 *. Stroke.width s *. k
-
 let create cover (clip : Surface.clip) m s =
   let hw = 0.5 *. Stroke.width s in
-  let scale = stretch m in
-  let reach = (reach s *. scale) +. 1. in
+  let scale = Affine.stretch m in
+  let reach = (Stroke.reach s *. scale) +. 1. in
   let r = hw *. scale in
   {
     cover;

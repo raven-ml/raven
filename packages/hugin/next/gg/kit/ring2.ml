@@ -52,13 +52,6 @@ let area r =
     done;
     0.5 *. !s
 
-let mem pt r =
-  let px = P2.x pt and py = P2.y pt in
-  Float.is_finite px && Float.is_finite py
-  && Winding.number (Array.length r.xs) (Array.unsafe_get r.xs)
-       (Array.unsafe_get r.ys) px py
-     <> 0
-
 let bounds r =
   let n = Array.length r.xs in
   if n = 0 then None

@@ -59,6 +59,18 @@ val mid : t -> P2.t
 val union : t -> t -> t
 (** [union a b] is the smallest box containing [a] and [b]. *)
 
+val inter : t -> t -> t option
+(** [inter a b] is the box of the points in both [a] and [b], or [None] if they
+    have none. Boxes that touch along an edge or at a corner meet in a box of
+    zero width or height. *)
+
+val grow : float -> t -> t
+(** [grow d b] is [b] with each side moved outwards by [d], inwards if [d] is
+    negative.
+
+    Raises [Invalid_argument] if a corner of the result is not finite or if [d]
+    shrinks a side past the opposite one. *)
+
 val transform : Affine.t -> t -> t
 (** [transform m b] is the smallest box containing the images of [b]'s four
     corners under [m]. Under a rotation it is larger than the rotated box.

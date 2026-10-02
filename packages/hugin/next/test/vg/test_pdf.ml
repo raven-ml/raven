@@ -800,9 +800,9 @@ let accuracy =
               (Picture.image (Box2.v 0. 0. 20. 20.) px)
           in
           equal int 1 (count (content (pdf p)) "Do"));
-      test "an image is written once per tensor and crop" (fun () ->
+      test "an image is written once per pixels and crop" (fun () ->
           let px = Nx.zeros Nx.uint8 [| 1; 1000; 3 |]
-          and other = Nx.zeros Nx.uint8 [| 1; 1000; 3 |] in
+          and other = Nx.ones Nx.uint8 [| 1; 1000; 3 |] in
           let whole = Box2.v 0. 0. 100. 10.
           and far = Box2.v (-1e6) 0. 2e6 10. in
           let images p = count (dicts (pdf p)) "/Subtype /Image" in
@@ -813,7 +813,11 @@ let accuracy =
           equal int ~msg:"one tensor, two crops" 2
             (images
                (Picture.group [ Picture.image whole px; Picture.image far px ]));
-          equal int ~msg:"two tensors, one crop" 2
+          equal int ~msg:"equal tensors, one crop" 1
+            (images
+               (Picture.group
+                  [ Picture.image whole px; Picture.image whole (Nx.copy px) ]));
+          equal int ~msg:"other pixels, one crop" 2
             (images
                (Picture.group
                   [ Picture.image whole px; Picture.image whole other ])));

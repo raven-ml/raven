@@ -50,6 +50,24 @@ let invert m =
   then Some { xx; yx; xy; yy; x0; y0 }
   else None
 
+let linear m = { m with x0 = 0.; y0 = 0. }
+
+(* The coefficients are divided by the largest of their magnitudes [k] first, so
+   that their squares neither overflow nor underflow. *)
+let stretch m =
+  let k =
+    Float.max
+      (Float.max (Float.abs m.xx) (Float.abs m.yx))
+      (Float.max (Float.abs m.xy) (Float.abs m.yy))
+  in
+  let xx = m.xx /. k and yx = m.yx /. k and xy = m.xy /. k and yy = m.yy /. k in
+  let a = (xx *. xx) +. (yx *. yx) and b = (xy *. xy) +. (yy *. yy) in
+  let c = (xx *. xy) +. (yx *. yy) in
+  k
+  *. Float.sqrt
+       ((0.5 *. (a +. b))
+       +. Float.sqrt ((0.25 *. (a -. b) *. (a -. b)) +. (c *. c)))
+
 let equal m n =
   Float.equal m.xx n.xx && Float.equal m.yx n.yx && Float.equal m.xy n.xy
   && Float.equal m.yy n.yy && Float.equal m.x0 n.x0 && Float.equal m.y0 n.y0

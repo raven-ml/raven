@@ -400,7 +400,7 @@ let gen_extreme =
        (Gen.pair (Gen.pair k k) (Gen.pair (Gen.option k) gen_picture)))
 
 (* [respell p] is a picture equal to [p] built anew: arrays and paths rebuilt,
-   fonts reloaded from their bytes, and zeros given the other sign. *)
+   images and fonts copied, and zeros given the other sign. *)
 let respell p =
   let flip v = if v = 0. then -.v else v in
   let path q =
@@ -434,7 +434,7 @@ let respell p =
     | Stroke { stroke; color; path = q } -> Picture.stroke stroke color (path q)
     | Glyphs { color; at; run = r } ->
         Picture.glyphs color (P2.v (flip (P2.x at)) (flip (P2.y at))) (run r)
-    | Image { box; pixels } -> Picture.image box pixels
+    | Image { box; pixels } -> Picture.image box (Nx.copy pixels)
     | Group ps -> Picture.group (List.map go ps)
     | Clip { rule; path = q; picture } ->
         Picture.clip ~rule (path q) (go picture)

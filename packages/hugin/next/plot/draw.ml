@@ -914,58 +914,9 @@ let draw ?prev ~density l =
 let renderable d = d.renderable
 let warnings d = d.warnings
 
-let equal_rows (r : Picture.rows) (r' : Picture.rows) =
-  match (r, r') with
-  | Rows a, Rows a' -> Array.equal Int.equal a a'
-  | Cells c, Cells c' ->
-      Box2.equal c.box c'.box && c.width = c'.width && c.height = c'.height
-  | Rows _, Cells _ | Cells _, Rows _ -> false
-
-let equal_rule (r : Picture.rule) (r' : Picture.rule) =
-  match (r, r') with
-  | `Nonzero, `Nonzero | `Even_odd, `Even_odd -> true
-  | `Nonzero, `Even_odd | `Even_odd, `Nonzero -> false
-
-let floats = Array.equal Float.equal
-
-(* Pictures compare as [Picture.equal] compares them, except image tensors, by
-   shape and elements. *)
-let rec equal_picture (p : Picture.t) (q : Picture.t) =
-  match (p, q) with
-  | Image a, Image b ->
-      Box2.equal a.box b.box
-      && Nx.shape a.pixels = Nx.shape b.pixels
-      && Array.equal Int.equal (Nx.to_array a.pixels) (Nx.to_array b.pixels)
-  | Group ps, Group qs -> List.equal equal_picture ps qs
-  | Clip a, Clip b ->
-      equal_rule a.rule b.rule && Path.equal a.path b.path
-      && equal_picture a.picture b.picture
-  | Transform a, Transform b ->
-      Affine.equal a.m b.m && equal_picture a.picture b.picture
-  | Opacity a, Opacity b ->
-      Float.equal a.opacity b.opacity && equal_picture a.picture b.picture
-  | Stamp a, Stamp b ->
-      floats a.xs b.xs && floats a.ys b.ys
-      && Option.equal floats a.scales b.scales
-      && Option.equal (Array.equal Color.equal) a.fills b.fills
-      && Option.equal (Array.equal Color.equal) a.strokes b.strokes
-      && equal_picture a.picture b.picture
-  | Tag a, Tag b ->
-      Nx.Ptree.Path.equal a.tag.id b.tag.id
-      && equal_rows a.tag.rows b.tag.rows
-      && equal_picture a.picture b.picture
-  | (Empty | Fill _ | Stroke _ | Glyphs _), _ -> Picture.equal p q
-  | (Image _ | Group _ | Clip _ | Transform _ | Opacity _ | Stamp _ | Tag _), _
-    ->
-      false
-
 let equal d d' =
   List.equal equal_warning d.warnings d'.warnings
-  && Float.equal (Renderable.w d.renderable) (Renderable.w d'.renderable)
-  && Float.equal (Renderable.h d.renderable) (Renderable.h d'.renderable)
-  && equal_picture
-       (Renderable.picture d.renderable)
-       (Renderable.picture d'.renderable)
+  && Renderable.equal d.renderable d'.renderable
 
 let pp ppf d =
   Format.fprintf ppf "@[<v>%a" Renderable.pp d.renderable;

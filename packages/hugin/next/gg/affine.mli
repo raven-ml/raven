@@ -54,6 +54,20 @@ val invert : t -> t option
     magnitudes, so it neither overflows nor underflows: [scale 1e-200 1e-200]
     inverts to [scale 1e200 1e200]. *)
 
+(** {1:measures Measures} *)
+
+val linear : t -> t
+(** [linear m] is [m] without its translation: the map of vectors that [m]
+    gives, [m] with [x0] and [y0] zero. *)
+
+val stretch : t -> float
+(** [stretch m] is the largest factor by which [m] scales a length, the largest
+    singular value of [linear m]: a vector of length [l] maps to one of length
+    at most [stretch m *. l]. It is computed so that it neither overflows nor
+    underflows where its value is a finite float:
+    [stretch (scale 1e-200 1e-200)] is [1e-200]. It is NaN if [linear m] is zero
+    or a coefficient of it is not finite. *)
+
 (** {1:comparing Comparing and formatting} *)
 
 val equal : t -> t -> bool

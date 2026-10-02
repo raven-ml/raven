@@ -902,6 +902,38 @@ let crop_keeps_lines subs =
 
 let unit_box = Box2.v 0. 0. 1. 1.
 
+(* Shapes on a grid of fives around [crop_box], whose edges lie on it: they
+   leave and enter the box at its edges and corners, and run along them. *)
+let gen_grid_shapes =
+  let coord = Gen.map (fun k -> 5. *. Float.of_int k) (Gen.int_range (-7) 8) in
+  let pts = Gen.list ~size:(Gen.int_range 2 6) (Gen.pair coord coord) in
+  Gen.with_pp
+    (Format.pp_print_list (fun ppf (closed, pts) ->
+         pp_cmd ppf (Poly (closed, pts))))
+    (Gen.list ~size:(Gen.int_range 1 3) (Gen.pair Gen.bool pts))
+
+(* [degenerate segs] is the segments of [segs] that draw nothing: lines to the
+   point they start from, and lines back to the start just before a close. *)
+let degenerate segs =
+  let rec go start cur acc = function
+    | [] -> List.rev acc
+    | M (x, y) :: rest -> go (x, y) (x, y) acc rest
+    | (L (x, y) as s) :: Z :: rest when (x, y) = start ->
+        go start (x, y) (s :: acc) (Z :: rest)
+    | (L (x, y) as s) :: rest when (x, y) = cur -> go start cur (s :: acc) rest
+    | L (x, y) :: rest -> go start (x, y) acc rest
+    | C (_, _, _, _, x, y) :: rest -> go start (x, y) acc rest
+    | Z :: rest -> go start start acc rest
+  in
+  go (0., 0.) (0., 0.) [] segs
+
+let crop_adds_nothing_degenerate shapes =
+  let p = build (List.map (fun (closed, pts) -> Poly (closed, pts)) shapes) in
+  assume (degenerate (segs p) = []);
+  let cropped = segs (Path.crop crop_box p) in
+  cover "a shape cut" (cropped <> segs p);
+  equal (list (Testable.make ~pp:pp_seg ~equal:( = ))) [] (degenerate cropped)
+
 let cropping =
   group "crop"
     [
@@ -914,6 +946,19 @@ let cropping =
         crop_keeps_windings;
       prop "crop keeps the points of polylines within the box"
         (gen_shapes ~closed:false) crop_keeps_lines;
+      prop "crop adds no segment that draws nothing" gen_grid_shapes
+        crop_adds_nothing_degenerate;
+      test "crop of a closed subpath of no area within the box drops it"
+        (fun () ->
+          equal segs_exact []
+            (segs
+               (Path.crop unit_box
+                  (Path.polygon [| -1.; 0.5; -1. |] [| 0.5; 0.5; 0.5 |]))));
+      test "crop of a closed subpath along an edge drops it" (fun () ->
+          equal segs_exact []
+            (segs
+               (Path.crop unit_box
+                  (Path.polygon [| 1.; 2.; 2.; 1. |] [| 0.; 0.; 1.; 1. |]))));
       prop "crop draws within the box, finite points only" gen_gappy_program
         (fun prog ->
           List.iter

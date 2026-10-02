@@ -84,14 +84,17 @@ val crop : Box2.t -> t -> t
       curve into the cubic of its part within [b].
     - A closed subpath becomes a closed subpath whose region under either fill
       rule is its own region within [b]: its pieces outside [b] are replaced by
-      segments along the edges of [b], where a stroke of the result runs.
+      segments along the edges of [b], where a stroke of the result runs. It
+      ends with its close, with no line back to its start, and it is dropped if
+      what remains of it has no area, its points on one line.
 
-    So cropping before filling draws what filling then clipping to [b] draws,
-    and cropping an open path before stroking keeps the pen's ink whole where
-    the path lies within [b]. A point that a cut puts on an edge of [b] has that
-    edge's coordinate exactly. {{!section-gaps}Gaps} are applied first, so every
-    point of [crop b p] is finite; if everything {!fold} visits in [p] is within
-    [b], [crop b p] is [p]. *)
+    A cut adds no segment of zero length. So cropping before filling draws what
+    filling then clipping to [b] draws, and cropping an open path before
+    stroking keeps the pen's ink whole where the path lies within [b]. A point
+    that a cut puts on an edge of [b] has that edge's coordinate exactly.
+    {{!section-gaps}Gaps} are applied first, so every point of [crop b p] is
+    finite; if everything {!fold} visits in [p] is within [b], [crop b p] is
+    [p]. *)
 
 (** {1:shapes Shapes} *)
 

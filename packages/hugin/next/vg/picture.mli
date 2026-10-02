@@ -302,13 +302,13 @@ val bounds : t -> Box2.t option
     The box of a leaf is the box of its path ({!Hugin_next_gg.Path.bounds}) for
     a fill, the box of its path grown on every side by the reach of its pen for
     a stroke, the box of its ink for a glyph run, and its box for an image. The
-    reach of a pen is half its width, multiplied by the miter limit if its joins
-    are mitered, or by [sqrt 2.] if its caps are square and that is larger. The
-    box of [p] is the union of the boxes of its leaves, in every instance of its
-    stamps, each mapped with {!Hugin_next_gg.Box2.transform} through the
-    composition of the transforms above it, which enlarges it under rotations,
-    and cut by the boxes of the paths of the clips above it, mapped likewise. A
-    clip whose box does not meet that of its picture has no extent.
+    reach of a pen is {!Hugin_next_gg.Stroke.reach}, divided by the scales of
+    the stamps above it. The box of [p] is the union of the boxes of its leaves,
+    in every instance of its stamps, each mapped with
+    {!Hugin_next_gg.Box2.transform} through the composition of the transforms
+    above it, which enlarges it under rotations, and cut by the boxes of the
+    paths of the clips above it, mapped likewise. A clip whose box does not meet
+    that of its picture has no extent.
 
     Raises [Invalid_argument] if a corner of the box is not finite, which takes
     coordinates near [max_float]. *)
@@ -320,10 +320,11 @@ val equal : t -> t -> bool
     cases, with fields compared by the [equal] function of their type
     ({!Hugin_next_gg.Path.equal}, {!Hugin_next_font.Run.equal}, which compares
     fonts by their bytes, {!Hugin_next_gg.Color.equal}, [Nx.Ptree.Path.equal]
-    for tag ids and so on), numbers by [Float.equal], and image tensors
-    physically, by [( == )]. Equal pictures render to the same bytes in every
-    renderer. One drawing has many structures: [group [ group [ a; b ]; c ]]
-    paints what [group [ a; b; c ]] paints and is not equal to it. *)
+    for tag ids and so on), numbers by [Float.equal], and image tensors by shape
+    and elements, which reads them, so that [equal] raises what reading a tensor
+    raises. Equal pictures render to the same bytes in every renderer. One
+    drawing has many structures: [group [ group [ a; b ]; c ]] paints what
+    [group [ a; b; c ]] paints and is not equal to it. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf p] formats [p] for debugging and tests as nested s-expressions, one

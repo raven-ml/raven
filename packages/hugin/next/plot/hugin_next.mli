@@ -55,8 +55,7 @@
       [f |> title t |> coord c] chains.
     - {b Equality.} [equal] functions compare structure, floats by
       [Float.equal]. The leaves of figures, tensors and functions, compare
-      physically ({!equal}), and the images of drawings by their elements
-      ({!Drawing.equal}).
+      physically ({!equal}), and images by their elements ({!Picture.equal}).
     - {b Printing.} The [pp] functions of stage outputs format them for
       debugging and baselines; their output may change between releases. {!pp}
       on figures displays them.
@@ -1572,9 +1571,8 @@ module Drawing : sig
 
   val equal : t -> t -> bool
   (** [equal d d'] is [true] iff [d] and [d'] have equal warnings and
-      renderables that are {!Renderable.equal} except that image tensors compare
-      by shape and elements, which reads them: every image {!draw} makes is a
-      fresh tensor, so a drawing drawn again is equal to the first. *)
+      {!Renderable.equal} renderables. A drawing drawn again is equal to the
+      first. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf d] formats [d] for debugging. *)

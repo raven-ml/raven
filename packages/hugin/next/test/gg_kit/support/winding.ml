@@ -3,6 +3,21 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Exact winding numbers: the oracle of the isoband laws.
+
+   [ring pt r] is the winding number of [r] around [pt], and [mem pt p] is
+   [true] iff the rings of [p] wind around [pt] a number of times that is not
+   [0] and [pt] is finite. A point on a ring is decided as the point moved from
+   it by an infinitely small distance towards positive x, and then by an
+   infinitely smaller one towards positive y: a box-shaped surface holds the
+   points of its left and top edges and not those of its right and bottom edges,
+   as a pixel does. The decision is exact unless products of coordinate
+   differences overflow or underflow, so a point is in at most one of two
+   polygons whose surfaces do not overlap, such as two adjacent isobands. *)
+
+open Hugin_next_gg
+open Hugin_next_gg_kit
+
 (* Orientation
 
    The sign of [(ux - lx)(py - ly) - (px - lx)(uy - ly)]. The rounded value
@@ -75,14 +90,21 @@ let orientation lx ly ux uy px py =
    iff its y exceeds [py], and a segment that straddles the horizontal through
    it counts iff it passes on its right: the orientation of the point from the
    segment's lower to its upper endpoint is positive. *)
-let number n x y px py =
+let ring pt r =
+  let px = P2.x pt and py = P2.y pt and n = Ring2.length r in
   let w = ref 0 in
   for i = 0 to n - 1 do
     let j = if i = n - 1 then 0 else i + 1 in
-    let ax = x i and ay = y i and bx = x j and by = y j in
+    let ax = Ring2.x r i and ay = Ring2.y r i in
+    let bx = Ring2.x r j and by = Ring2.y r j in
     let a_above = ay > py and b_above = by > py in
     if b_above && (not a_above) && orientation ax ay bx by px py > 0 then incr w
     else if a_above && (not b_above) && orientation bx by ax ay px py > 0 then
       decr w
   done;
   !w
+
+let mem pt p =
+  Float.is_finite (P2.x pt)
+  && Float.is_finite (P2.y pt)
+  && List.fold_left (fun w r -> w + ring pt r) 0 (Pgon2.rings p) <> 0

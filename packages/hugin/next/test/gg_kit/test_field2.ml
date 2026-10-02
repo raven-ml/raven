@@ -873,9 +873,9 @@ let bands_tile (s, levels) =
   List.iter
     (fun (x, y) ->
       let p = P2.v x y in
-      let n = List.length (List.filter (Pgon2.mem p) bands) in
+      let n = List.length (List.filter (Winding.mem p) bands) in
       if not (List.exists (near_segment (x, y)) diagonals) then begin
-        let expected = if Pgon2.mem p d then 1 else 0 in
+        let expected = if Winding.mem p d then 1 else 0 in
         if n <> expected then
           failf "(%.17g, %.17g) is in %d bands, %d expected" x y n expected
       end
@@ -1007,9 +1007,9 @@ let isolines_separate (s, levels) =
             ((coord s.ys i +. coord s.ys (i + 1)) /. 2.)
         in
         if List.for_all (fun v -> v >= l) vs then
-          is_true ~msg:"a cell above is in R l" (Pgon2.mem c r);
+          is_true ~msg:"a cell above is in R l" (Winding.mem c r);
         if List.for_all (fun v -> v < l) vs then
-          is_false ~msg:"a cell below is not in R l" (Pgon2.mem c r)
+          is_false ~msg:"a cell below is not in R l" (Winding.mem c r)
       end
     done
   done
@@ -1138,7 +1138,7 @@ let overlap_near_diagonal () =
 let near_levels_apart () =
   let n =
     List.length
-      (List.filter (Pgon2.mem near_levels_pt)
+      (List.filter (Winding.mem near_levels_pt)
          (bands near_levels
             (field ~xs:near_levels_xs ~ys:near_levels_ys near_levels_rows)))
   in
@@ -1169,7 +1169,7 @@ let step_cases =
 
 let step_keeps_bands_apart (xs, ys, top, bottom, levels) =
   let bs = bands levels (field ~xs ~ys [ top; bottom ]) in
-  let count x y = List.length (List.filter (Pgon2.mem (P2.v x y)) bs) in
+  let count x y = List.length (List.filter (Winding.mem (P2.v x y)) bs) in
   List.iter
     (fun b ->
       List.iter

@@ -5,6 +5,8 @@
 
 open Windtrap
 open Hugin_next_gg
+open Hugin_next_vg
+module Raster = Hugin_next_vg_raster
 
 let stroke =
   Testable.with_compare Stroke.compare
@@ -125,6 +127,54 @@ let gen_pattern =
   Gen.with_pp pp_pattern
     (Gen.list ~size:(Gen.int_range 1 5) (Gen.float_range 0.5 20.))
 
+(* (cap, join, miter limit, reach of a stroke of width 2) *)
+let reaches =
+  [
+    (`Butt, `Round, 4., 1.);
+    (`Round, `Bevel, 4., 1.);
+    (`Square, `Round, 4., Float.sqrt 2.);
+    (`Butt, `Miter, 4., 4.);
+    (`Square, `Miter, 4., 4.);
+    (`Square, `Miter, 1., Float.sqrt 2.);
+  ]
+
+(* Strokes of polylines of three points, whose corner exercises the joins,
+   rendered at one pixel per point. *)
+let gen_ink =
+  let open Gen in
+  let pt = pair (float_range 20. 44.) (float_range 20. 44.) in
+  let+ a, b, c = triple pt pt pt
+  and+ width = float_range 0.5 8.
+  and+ cap = of_list [ `Butt; `Round; `Square ]
+  and+ join = of_list [ `Miter; `Round; `Bevel ]
+  and+ miter_limit = float_range 1. 10.
+  and+ dash = of_list [ []; [ 3.; 2. ]; [ 0.; 4. ] ] in
+  ( Stroke.v ~cap ~join ~miter_limit ~dash width,
+    Path.polyline [| fst a; fst b; fst c |] [| snd a; snd b; snd c |] )
+
+let gen_ink =
+  Gen.with_pp
+    (fun ppf (s, p) -> Format.fprintf ppf "%a %a" Stroke.pp s Path.pp p)
+    gen_ink
+
+(* Every pixel with ink meets the path's box grown by the reach. *)
+let reach_bounds_ink (s, path) =
+  let picture = Picture.stroke s Color.black path in
+  let px =
+    Nx.to_array (Raster.render ~density:1. (Renderable.v 64. 64. picture))
+  in
+  let grown = Box2.grow (Stroke.reach s) (Option.get (Path.bounds path)) in
+  cover "a miter beyond the square cap"
+    (Stroke.join s = `Miter && Stroke.miter_limit s > 2.);
+  for y = 0 to 63 do
+    for x = 0 to 63 do
+      if px.((((y * 64) + x) * 4) + 3) > 0 then
+        is_some
+          ~msg:(Printf.sprintf "pixel (%d, %d) has ink" x y)
+          (Box2.inter (Box2.v (Float.of_int x) (Float.of_int y) 1. 1.) grown)
+    done
+  done
+
 let stroke_tests =
   group "Stroke"
     [
@@ -143,6 +193,15 @@ let stroke_tests =
           raises_match Exn.invalid_arg f);
       prop "offsets one period apart give equal strokes" gen_stroke (fun s ->
           equal stroke s (respell s));
+      cases
+        ~name:(fun (c, j, l, _) ->
+          Format.asprintf "%a caps, %a joins, miter limit %g" (Testable.pp cap)
+            c (Testable.pp join) j l)
+        "reach is" reaches
+        (fun (cap, join, miter_limit, r) ->
+          equal (float 1e-15) r
+            (Stroke.reach (Stroke.v ~cap ~join ~miter_limit 2.)));
+      prop "reach bounds the rasterised ink" ~count:200 gen_ink reach_bounds_ink;
       prop "equal is an equivalence"
         (Gen.pair gen_stroke gen_stroke)
         (Law.equivalence stroke);

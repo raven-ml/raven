@@ -243,7 +243,7 @@ let clip_by ctx ~w ~h (clip : Surface.clip) m rule path : Surface.clip =
 let rec widest m (p : Picture.t) =
   match p with
   | Empty | Fill _ | Glyphs _ | Image _ -> 0.
-  | Stroke { stroke; _ } -> Pen.reach stroke *. Pen.stretch m
+  | Stroke { stroke; _ } -> Stroke.reach stroke *. Affine.stretch m
   | Group ps -> List.fold_left (fun r p -> Float.max r (widest m p)) 0. ps
   | Transform { m = m'; picture } -> widest Affine.(m * m') picture
   | Clip { picture; _ }
@@ -424,8 +424,6 @@ let rec composite (t : Surface.t) (clip : Surface.clip) ox oy ~tw ~th planes
 
 (* Drawing *)
 
-let linear (m : Affine.t) = { m with x0 = 0.; y0 = 0. }
-
 (* Tiles larger than this are not worth drawing in sixteen phases. *)
 let max_tile = 1 lsl 16
 
@@ -512,7 +510,7 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
           int_of_float (Float.round (dy *. 4.)) )
     else None
   in
-  let lin = linear m in
+  let lin = Affine.linear m in
   let in_full () =
     for i = 0 to Array.length xs - 1 do
       let s = match scales with None -> 1. | Some a -> a.(i) in

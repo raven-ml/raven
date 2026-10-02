@@ -52,6 +52,17 @@ let join s = s.join
 let miter_limit s = s.miter_limit
 let dash s = s.dash
 let dash_offset s = s.dash_offset
+
+let reach s =
+  let k =
+    match (s.join, s.cap) with
+    | `Miter, `Square -> Float.max s.miter_limit (Float.sqrt 2.)
+    | `Miter, _ -> s.miter_limit
+    | _, `Square -> Float.sqrt 2.
+    | _ -> 1.
+  in
+  0.5 *. s.width *. k
+
 let cap_rank = function `Butt -> 0 | `Round -> 1 | `Square -> 2
 let join_rank = function `Miter -> 0 | `Round -> 1 | `Bevel -> 2
 

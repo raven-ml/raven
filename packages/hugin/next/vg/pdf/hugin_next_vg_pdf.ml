@@ -196,7 +196,7 @@ let add_pen b d (pen : Vector.pen) =
   if is_dashed d pen then add_dash b d pen ~offset:0.
 
 let stroke doc ctx b s color path =
-  let lin = Vector.linear ctx.m in
+  let lin = Affine.linear ctx.m in
   let pen = Vector.pen ctx.m ctx.pen s in
   (* A pen the frame stretches unevenly is stroked under [u], the frame's linear
      part scaled to stretch nothing more than the page does, as written, and its
@@ -223,7 +223,7 @@ let stroke doc ctx b s color path =
   | _ when thin -> ()
   | _ ->
       let out = Option.join out in
-      let reach = Vector.reach pen s in
+      let reach = Stroke.reach s *. (ctx.pen *. Affine.stretch ctx.m) in
       let cut = Vector.grown ctx.cut reach in
       let dashed = is_dashed ctx.d pen in
       (* The dashes are set before the first piece, and again before each piece
@@ -349,8 +349,8 @@ let add_utf16 b s =
 
 let glyphs doc ctx b color at run =
   let m = Affine.(ctx.m * translate (P2.x at) (P2.y at)) in
-  let lin = Vector.linear m in
-  let s = Vector.stretch lin in
+  let lin = Affine.linear m in
+  let s = Affine.stretch lin in
   let f = Run.font run and n = Run.length run in
   (* How far, in ems, the outline of a glyph reaches from its origin in each
      direction. *)
@@ -488,6 +488,13 @@ let image_object doc pixels =
         (Printf.sprintf " /SMask %d 0 R" mask)
         (plane ~first:0 ~count:3)
 
+(* Equal pictures write equal bytes, so an image is written once for tensors
+   that are equal as [Picture.equal] compares them. *)
+let same_pixels a b =
+  a == b
+  || Array.equal Int.equal (Nx.shape a) (Nx.shape b)
+     && Nx.item [] (Nx.array_equal a b)
+
 let image doc ctx b box pixels =
   let shape = Nx.shape pixels in
   let h = shape.(0) and w = shape.(1) in
@@ -510,7 +517,7 @@ let image doc ctx b box pixels =
         let name =
           match
             List.find_opt
-              (fun (px, win, _) -> px == pixels && win = window)
+              (fun (px, win, _) -> win = window && same_pixels px pixels)
               doc.images
           with
           | Some (_, _, name) -> name
@@ -545,7 +552,7 @@ let reach m k p =
   let rec walk m (p : Picture.t) =
     match p with
     | Stroke { stroke; _ } ->
-        r := Float.max !r (Vector.reach (Vector.pen m k stroke) stroke)
+        r := Float.max !r (Stroke.reach stroke *. (k *. Affine.stretch m))
     | Empty | Fill _ | Glyphs _ | Image _ -> ()
     | Group ps -> List.iter (walk m) ps
     | Transform { m = m'; picture } -> walk Affine.(m * m') picture
@@ -555,20 +562,8 @@ let reach m k p =
     | Stamp { picture; _ } ->
         walk m picture
   in
-  walk (Vector.linear m) p;
+  walk (Affine.linear m) p;
   !r
-
-(* [meet a b] is the intersection of [a] and [b], if they overlap. Boxes that
-   touch meet on a line, where nothing paints, so the comparisons may be strict
-   or not. *)
-let meet a b =
-  let minx = Float.max (Box2.minx a) (Box2.minx b)
-  and miny = Float.max (Box2.miny a) (Box2.miny b) in
-  let maxx = Float.min (Box2.maxx a) (Box2.maxx b)
-  and maxy = Float.min (Box2.maxy a) (Box2.maxy b) in
-  if minx <= maxx && miny <= maxy then
-    Some (Box2.of_pts (P2.v minx miny) (P2.v maxx maxy))
-  else None
 
 (* [bbox ctx p ~pen] is a box of the frame holding what [p] paints there with
    the lengths of its pens multiplied by [pen], within the cut, or [None] if it
@@ -576,7 +571,7 @@ let meet a b =
 let bbox ctx p ~pen =
   match Picture.bounds (Picture.transform ctx.m p) with
   | None -> None
-  | Some bx -> meet (Vector.grown bx (reach ctx.m pen p +. 1.)) ctx.cut
+  | Some bx -> Box2.inter (Vector.grown bx (reach ctx.m pen p +. 1.)) ctx.cut
   | exception Invalid_argument _ -> Some ctx.cut
 
 (* [form doc ~group bbox content] is the name of a form XObject of [content]
@@ -669,7 +664,7 @@ let rec picture doc ctx b (p : Picture.t) =
 
 and stamp doc ctx b p xs ys scales fills strokes =
   let n = Array.length xs in
-  let lin = Vector.linear ctx.m in
+  let lin = Affine.linear ctx.m in
   let scale i = match scales with None -> 1. | Some a -> a.(i) in
   let shown i =
     Float.is_finite xs.(i)

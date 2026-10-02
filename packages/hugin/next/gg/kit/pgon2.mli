@@ -38,12 +38,6 @@ val area : t -> float
     the rings of [p] wind [0] or [1] times around every point off them, as those
     of {!Field2.isoband} do. *)
 
-val mem : P2.t -> t -> bool
-(** [mem pt p] is [true] iff [pt] is in the surface of [p]: the winding numbers
-    of the rings of [p] around [pt] do not sum to [0], a point on a ring being
-    decided as the {{!Hugin_next_gg_kit.section-conventions}conventions} state.
-    It is [false] if a coordinate of [pt] is not finite. *)
-
 val bounds : t -> Box2.t option
 (** [bounds p] is the smallest box containing the points of the rings of [p], or
     [None] if they have no point. *)

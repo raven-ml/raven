@@ -447,34 +447,88 @@ let contained h s =
          | S_cubic (a, b, c, d, x, y) -> ok a b && ok c d && ok x y)
        s.segs
 
+(* [degenerate x y seg] is [true] iff [seg] from [(x, y)] draws nothing: all its
+   points are [(x, y)]. *)
+let degenerate x y = function
+  | S_line (x', y') -> x' = x && y' = y
+  | S_cubic (a, b, c, d, x', y') ->
+      a = x && b = y && c = x && d = y && x' = x && y' = y
+
+(* [flat s] is [true] iff every point of [s] lies on one line through its start,
+   as computed: as a region, [s] has no area. Points on an edge of the box are
+   found so exactly. *)
+let flat s =
+  let pts =
+    List.concat_map
+      (function
+        | S_line (x, y) -> [ (x, y) ]
+        | S_cubic (a, b, c, d, x, y) -> [ (a, b); (c, d); (x, y) ])
+      s.segs
+  in
+  match List.find_opt (fun (x, y) -> x <> s.sx || y <> s.sy) pts with
+  | None -> true
+  | Some (dx, dy) ->
+      let ux = dx -. s.sx and uy = dy -. s.sy in
+      List.for_all
+        (fun (x, y) -> ((x -. s.sx) *. uy) -. ((y -. s.sy) *. ux) = 0.)
+        pts
+
 (* [cut h ~region s acc] adds to [acc] the subpaths of [s] within [h], latest
    first: [s]'s region within [h] as one closed subpath if [region], and its
-   pieces within [h] otherwise. *)
+   pieces within [h] otherwise. A cut adds no segment of zero length, a region
+   ends with its close and no line back to its start, and a region with no area
+   within [h] is dropped. *)
 let cut h ~region s acc =
   if contained h s then s :: acc
   else
     let out = ref acc and start = ref None and segs = ref [] in
+    (* The point the subpath being built has reached. *)
+    let cx = ref 0. and cy = ref 0. in
     let finish ~closed =
       (match (!start, !segs) with
-      | Some (sx, sy), _ :: _ ->
-          out := { sx; sy; segs = List.rev !segs; closed } :: !out
+      | Some (sx, sy), _ :: _ -> (
+          let segs =
+            match !segs with
+            | S_line (x, y) :: rest when closed && x = sx && y = sy -> rest
+            | segs -> segs
+          in
+          let sub = { sx; sy; segs = List.rev segs; closed } in
+          match segs with
+          | [] -> ()
+          | _ :: _ when closed && flat sub -> ()
+          | _ :: _ -> out := sub :: !out)
       | _ -> ());
       start := None;
       segs := []
     in
+    let add seg =
+      segs := seg :: !segs;
+      match seg with
+      | S_line (x, y) | S_cubic (_, _, _, _, x, y) ->
+          cx := x;
+          cy := y
+    in
     (* The subpath enters [h] at [(x, y)], on its edge. *)
     let enter x y =
       match !start with
-      | None -> start := Some (x, y)
-      | Some _ -> segs := S_line (x, y) :: !segs
+      | None ->
+          start := Some (x, y);
+          cx := x;
+          cy := y
+      | Some _ -> if x <> !cx || y <> !cy then add (S_line (x, y))
     in
     let leave () = if not region then finish ~closed:false in
     let inside = ref (within h (along h s.sx s.sy)) in
-    if !inside then start := Some (s.sx, s.sy);
-    (* [piece seg ~enters ~ends] adds [seg], the part of a segment within [h],
-       which starts at [enters], entering [h] there if the subpath was outside,
-       and whose end is put on the edge if [ends]. *)
-    let piece seg ~enters ~ends =
+    if !inside then begin
+      start := Some (s.sx, s.sy);
+      cx := s.sx;
+      cy := s.sy
+    end;
+    (* [piece seg ~enters ~ends ~whole] adds [seg], the part of a segment within
+       [h], which starts at [enters], entering [h] there if the subpath was
+       outside, and whose end is put on the edge if [ends]. A part that draws
+       nothing is dropped, unless it is the [whole] segment. *)
+    let piece seg ~enters ~ends ~whole =
       let snap x y = if ends then on_edge h x y else (x, y) in
       let seg =
         match seg with
@@ -489,7 +543,7 @@ let cut h ~region s acc =
         let x, y = enters in
         enter x y
       end;
-      segs := seg :: !segs;
+      if whole || not (degenerate !cx !cy seg) then add seg;
       inside := true
     in
     let outside () =
@@ -506,19 +560,20 @@ let cut h ~region s acc =
             on_edge h (x0 +. (t *. (x -. x0))) (y0 +. (t *. (y -. y0)))
           in
           (match (within h a, within h b) with
-          | true, true -> piece seg ~enters:(x0, y0) ~ends:false
+          | true, true -> piece seg ~enters:(x0, y0) ~ends:false ~whole:true
           | false, false -> outside ()
           | true, false ->
               let ex, ey = cross () in
-              piece (S_line (ex, ey)) ~enters:(x0, y0) ~ends:false;
+              piece (S_line (ex, ey)) ~enters:(x0, y0) ~ends:false ~whole:false;
               outside ()
-          | false, true -> piece seg ~enters:(cross ()) ~ends:false);
+          | false, true -> piece seg ~enters:(cross ()) ~ends:false ~whole:false);
           go x y rest
       | (S_cubic (c1x, c1y, c2x, c2y, x, y) as seg) :: rest ->
           let a = along h x0 y0 and b = along h c1x c1y in
           let c = along h c2x c2y and d = along h x y in
           let all p = p a && p b && p c && p d in
-          (if all (within h) then piece seg ~enters:(x0, y0) ~ends:false
+          (if all (within h) then
+             piece seg ~enters:(x0, y0) ~ends:false ~whole:true
            else if all (fun v -> not (within h v)) then outside ()
            else
              let ts = (0. :: crossings h a b c d) @ [ 1. ] in
@@ -539,7 +594,7 @@ let cut h ~region s acc =
                       in
                       piece
                         (S_cubic (px1, py1, px2, py2, px3, py3))
-                        ~enters ~ends:(t1 < 1.));
+                        ~enters ~ends:(t1 < 1.) ~whole:false);
                    pieces rest
                | [ _ ] | [] -> ()
              in

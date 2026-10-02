@@ -82,26 +82,8 @@ let add_exact b v =
 
 (* Maps *)
 
-let linear (m : Affine.t) = { m with x0 = 0.; y0 = 0. }
-
-(* The coefficients are divided by the largest of their magnitudes [k] first, so
-   that their squares neither overflow nor underflow. *)
-let stretch (m : Affine.t) =
-  let k =
-    Float.max
-      (Float.max (Float.abs m.xx) (Float.abs m.yx))
-      (Float.max (Float.abs m.xy) (Float.abs m.yy))
-  in
-  let xx = m.xx /. k and yx = m.yx /. k and xy = m.xy /. k and yy = m.yy /. k in
-  let a = (xx *. xx) +. (yx *. yx) and b = (xy *. xy) +. (yy *. yy) in
-  let c = (xx *. xy) +. (yx *. yy) in
-  k
-  *. Float.sqrt
-       ((0.5 *. (a +. b))
-       +. Float.sqrt ((0.25 *. (a -. b) *. (a -. b)) +. (c *. c)))
-
 let unit (m : Affine.t) =
-  let s = stretch m in
+  let s = Affine.stretch m in
   {
     Affine.xx = m.xx /. s;
     yx = m.yx /. s;
@@ -114,15 +96,16 @@ let unit (m : Affine.t) =
 let near eps a b = Float.abs (a -. b) <= eps
 
 let is_similar (m : Affine.t) =
-  let eps = 1e-9 *. stretch m in
+  let eps = 1e-9 *. Affine.stretch m in
   (near eps m.xx m.yy && near eps m.yx (-.m.xy))
   || (near eps m.xx (-.m.yy) && near eps m.yx m.xy)
 
 let is_axial (m : Affine.t) =
-  let eps = 1e-9 *. stretch m in
+  let eps = 1e-9 *. Affine.stretch m in
   m.xx > 0. && m.yy > 0. && near eps m.yx 0. && near eps m.xy 0.
 
-let is_even (m : Affine.t) = is_axial m && near (1e-9 *. stretch m) m.xx m.yy
+let is_even (m : Affine.t) =
+  is_axial m && near (1e-9 *. Affine.stretch m) m.xx m.yy
 
 (* Paths *)
 
@@ -550,12 +533,7 @@ let outline ?out m r ~points ~dashed q ~piece sink =
 (* Leaves *)
 
 let all = Box2.v (-1e15) (-1e15) 2e15 2e15
-
-let grown r k =
-  let k = if k <= 1e15 then k else 1e15 in
-  Box2.of_pts
-    (P2.v (Box2.minx r -. k) (Box2.miny r -. k))
-    (P2.v (Box2.maxx r +. k) (Box2.maxy r +. k))
+let grown r k = Box2.grow (if k <= 1e15 then k else 1e15) r
 
 let overlaps r minx miny maxx maxy =
   minx <= Box2.maxx r
@@ -613,7 +591,7 @@ let crop r m box w h =
 type pen = { width : float; dash : float list; offset : float }
 
 let pen m k s =
-  let f = k *. stretch m in
+  let f = k *. Affine.stretch m in
   {
     width = limit (Stroke.width s *. f);
     dash = List.map (fun d -> limit (d *. f)) (Stroke.dash s);
@@ -641,7 +619,7 @@ let pens m k p =
     | Stamp { picture; _ } ->
         walk m picture
   in
-  walk (linear m) p;
+  walk (Affine.linear m) p;
   List.rev !found
 
 let rec scales_within (p : Picture.t) =
@@ -655,13 +633,3 @@ let rec scales_within (p : Picture.t) =
   | Tag { picture; _ }
   | Stamp { picture; _ } ->
       scales_within picture
-
-let reach pen s =
-  let k =
-    match (Stroke.join s, Stroke.cap s) with
-    | `Miter, `Square -> Float.max (Stroke.miter_limit s) (Float.sqrt 2.)
-    | `Miter, _ -> Stroke.miter_limit s
-    | _, `Square -> Float.sqrt 2.
-    | _ -> 1.
-  in
-  0.5 *. pen.width *. k

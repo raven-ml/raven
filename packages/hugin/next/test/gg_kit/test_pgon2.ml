@@ -55,30 +55,20 @@ let gen_ring =
 let gen_rings = Gen.list ~size:(Gen.int_range 0 3) gen_ring
 let gen_pgon = Gen.with_pp pp_pgon (Gen.map Pgon2.v gen_rings)
 
-let gen_pt =
-  Gen.with_pp P2.pp (Gen.map (fun (x, y) -> P2.v x y) (Gen.pair coord coord))
-
 (* Tests *)
 
 let donut_cases () =
   equal float_exact 12. (Pgon2.area donut);
-  is_true ~msg:"on the ring" (Pgon2.mem (P2.v 0.5 0.5) donut);
-  is_false ~msg:"in the hole" (Pgon2.mem (P2.v 2. 2.) donut);
-  is_false ~msg:"outside" (Pgon2.mem (P2.v 5. 5.) donut);
-  is_false ~msg:"not finite" (Pgon2.mem (P2.v neg_infinity 1.) donut);
   equal (option box2) (Some (Box2.v 0. 0. 4. 4.)) (Pgon2.bounds donut)
 
-(* An inner ring wound like the outer one is no hole: the rings wind twice
-   around its points, which the nonzero rule keeps in the surface. *)
+(* An inner ring wound like the outer one is no hole: its area counts twice. *)
 let same_orientation_is_no_hole () =
   let p = Pgon2.v [ square 0. 0. 4.; square 1. 1. 2. ] in
-  is_true (Pgon2.mem (P2.v 2. 2.) p);
   equal float_exact 20. (Pgon2.area p)
 
 let empty_polygon () =
   let p = Pgon2.v [] in
   equal float_exact 0. (Pgon2.area p);
-  is_false (Pgon2.mem (P2.v 0. 0.) p);
   is_none (Pgon2.bounds p);
   is_none (Pgon2.bounds (Pgon2.v [ Ring2.v [||] [||] ]));
   equal path Path.empty (Pgon2.to_path p)
@@ -93,15 +83,6 @@ let area_is_sum rs =
   equal float_exact
     (List.fold_left (fun a r -> a +. Ring2.area r) 0. rs)
     (Pgon2.area (Pgon2.v rs))
-
-let one_ring_agrees (r, pt) =
-  equal bool (Ring2.mem pt r) (Pgon2.mem pt (Pgon2.v [ r ]))
-
-let windings_add (r, pt) =
-  is_false ~msg:"a ring and its reverse cancel"
-    (Pgon2.mem pt (Pgon2.v [ r; Ring2.reverse r ]));
-  equal ~msg:"a ring twice" bool (Ring2.mem pt r)
-    (Pgon2.mem pt (Pgon2.v [ r; r ]))
 
 let to_path_in_order () =
   let a = square 0. 0. 1. and b = of_list [ (5., 5.); (6., 5.); (6., 7.) ] in
@@ -126,10 +107,6 @@ let tests =
         test "the polygon of no ring" empty_polygon;
         test "bounds skip rings of no point" bounds_skip_empty_rings;
         prop "area is the sum of the rings' areas" gen_rings area_is_sum;
-        prop "a polygon of one ring holds what the ring holds"
-          (Gen.pair gen_ring gen_pt) one_ring_agrees;
-        prop "winding numbers of the rings add up" (Gen.pair gen_ring gen_pt)
-          windings_add;
       ];
     group "converting"
       [ test "to_path appends the rings' paths in order" to_path_in_order ];

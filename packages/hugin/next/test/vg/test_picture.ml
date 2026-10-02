@@ -433,8 +433,7 @@ let stamp_is_its_instances (m, (xs, p)) =
     Array.to_list
       (Array.mapi
          (fun i x ->
-           Picture.bounds
-             (Picture.transform Affine.(m * translate x ys.(i)) p))
+           Picture.bounds (Picture.transform Affine.(m * translate x ys.(i)) p))
          xs)
   in
   equal (option box2)
@@ -593,13 +592,16 @@ let comparing =
       prop "equal is an equivalence"
         (Gen.pair gen_picture gen_picture)
         (Law.equivalence ~respell:Vg_corpus.respell picture);
-      test "images compare tensors physically" (fun () ->
+      test "images compare tensors by shape and elements" (fun () ->
           let b = Box2.v 0. 0. 1. 1. in
-          let a = Nx.zeros Nx.uint8 [| 1; 1; 3 |] in
-          equal picture (Picture.image b a) (Picture.image b a);
-          is_false
-            (Picture.equal (Picture.image b a)
-               (Picture.image b (Nx.zeros Nx.uint8 [| 1; 1; 3 |]))));
+          let px v = Nx.full Nx.uint8 [| 1; 2; 3 |] v in
+          equal picture (Picture.image b (px 7)) (Picture.image b (px 7));
+          not_equal ~msg:"other elements" picture
+            (Picture.image b (px 7))
+            (Picture.image b (px 8));
+          not_equal ~msg:"other shape" picture
+            (Picture.image b (px 7))
+            (Picture.image b (Nx.full Nx.uint8 [| 2; 1; 3 |] 7)));
       test "glyph runs compare fonts by their bytes" (fun () ->
           let glyphs = [| Font.glyph Font.regular (Uchar.of_char 'a') |] in
           let r f = Run.v ~font:f ~size:9. ~text:"a" ~glyphs ~xs:[| 0. |] () in

@@ -51,12 +51,6 @@ val area : t -> float
     rounding error of zero, and [0.] if [r] has fewer than three points. It
     overflows to an infinity or NaN if [r] spans more than about 10{^ 154}. *)
 
-val mem : P2.t -> t -> bool
-(** [mem pt r] is [true] iff the winding number of [r] around [pt] is not [0], a
-    point on [r] being decided as the
-    {{!Hugin_next_gg_kit.section-conventions}conventions} state. It is [false]
-    if a coordinate of [pt] is not finite. *)
-
 val bounds : t -> Box2.t option
 (** [bounds r] is the smallest box containing the points of [r], or [None] if
     [r] has no point. *)

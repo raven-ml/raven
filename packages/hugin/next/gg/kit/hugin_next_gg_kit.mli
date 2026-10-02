@@ -31,14 +31,6 @@
       renderers. Outer boundaries are positively oriented and holes negatively,
       so a hole's winding cancels its outer boundary's. A polygon's path filled
       with the nonzero rule paints its surface.
-    - {b Points on rings.} Containment is decided for points on rings too: a
-      point on a ring is decided as the point moved from it by an infinitely
-      small distance towards positive x, and then by an infinitely smaller one
-      towards positive y. A box-shaped surface thus holds the points of its left
-      and top edges and not those of its right and bottom edges, as a pixel
-      does. The decision is exact unless products of coordinate differences
-      overflow or underflow, so a point is in at most one of two polygons whose
-      surfaces do not overlap, such as two adjacent isobands.
     - {b Argument order, equality and printing} follow
       {{!Hugin_next_gg.section-conventions}[hugin.next.gg]}: the value a
       function reads or transforms comes last, except that indexed reads take

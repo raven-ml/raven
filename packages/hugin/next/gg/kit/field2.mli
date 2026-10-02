@@ -126,8 +126,7 @@ val isoband : lo:float -> hi:float -> t -> Pgon2.t
     the opposite direction.
 
     For levels [l0 < l1 < … < ln], the bands between consecutive levels do not
-    overlap. With [l0 = neg_infinity] and [ln = infinity] they tile the domain,
-    and {!Pgon2.mem} finds a point in at most one of them.
+    overlap. With [l0 = neg_infinity] and [ln = infinity] they tile the domain.
 
     These laws hold exactly except within the crossings' displacement of the
     diagonal of a triangle. There the bands bend at their crossings while the
@@ -135,8 +134,6 @@ val isoband : lo:float -> hi:float -> t -> Pgon2.t
     uncovered a sliver of it that narrow; and where the crossings of two levels
     on a side of the triangle lie within rounding error of each other, rings may
     cross and bands overlap. The laws also assume that products of coordinate
-    differences neither overflow nor underflow, as the
-    {{!Hugin_next_gg_kit.section-conventions}conventions} state for
-    {!Pgon2.mem}.
+    differences neither overflow nor underflow.
 
     Raises [Invalid_argument] if [lo] or [hi] is NaN or [lo > hi]. *)
