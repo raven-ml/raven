@@ -9,16 +9,17 @@
     parts of a value with a {!Walk.cursor}: the positions of its type parameter,
     the tensors of a fixed type, and the data a compiled program depends on (a
     window, a list's length, a variant's case). Every other operation is derived
-    from that function and walks in its order: maps and folds, casts, checkpoint
-    names, the lists of tensors that transformations trace, and the keys under
-    which compiled programs are cached.
+    from that function and walks in its order: maps and folds, casts, the names
+    of saved tensors, the lists of tensors that transformations trace, and the
+    keys under which compiled programs are cached.
 
     The intended path:
     + Write a structure: a module of type {!module-type:S} whose [walk] uses the
       {!Walk} functions, one per kind of part.
     + Make a structure at one type, a {!type-t}, with {!instantiate}, {!nest}
-      and the combinators {!tensor}, {!unit}, {!pair}, {!option}, {!list} and
-      {!iso}. Transformations, optimisers and checkpoints take a {!type-t}.
+      and the combinators {!tensor}, {!unit}, {!pair}, {!option}, {!list},
+      {!iso} and {!field}. Transformations, optimisers and saving take a
+      {!type-t}.
     + Map, zip and fold its tensors with {!map}, {!map2} and {!fold}, and test
       its walk with {!visits}.
     + Change the payload's type with {!cast} and {!Payload}, which take the
@@ -85,8 +86,8 @@ module Path : sig
 
   val to_string : t -> string
   (** [to_string p] is [p]'s segments joined with ["."], such as
-      ["blocks.3.fc.b"]. It is the name a checkpoint gives the part at [p]. The
-      root is [""]. *)
+      ["blocks.3.fc.b"]. It names the part at [p] in a saved value. The root is
+      [""]. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf p] formats [p] as {!to_string} does. *)
@@ -96,8 +97,8 @@ end
 
 type 's t
 (** The type for structures of values of type ['s]. Transformations, optimisers
-    and checkpoints take one; {!section-structures} builds one, and
-    {!Walk.structure} walks one inside a [walk]. *)
+    and saving take one; {!section-structures} builds one, and {!Walk.structure}
+    walks one inside a [walk]. *)
 
 (** The functions a structure's [walk] is written with.
 
@@ -292,6 +293,18 @@ val iso : ('a -> 'b) -> ('b -> 'a) -> 'a t -> 'b t
           (fun o -> (o.loss, o.params))
           (pair tensor mlp))
     ]} *)
+
+val field : string -> 's t -> 's t
+(** [field name s] walks as [s] with every path under [Field name]. A saved
+    value's sections are fields: [field "model" s] names the tensor that [s]
+    walks at [l1.w] ["model.l1.w"]. *)
+
+val prefix : 's t -> Path.t
+(** [prefix s] is the path that every part of [s] is walked under, as its
+    combinators state it: [prefix (field n s)] is [prefix s] under [Field n],
+    {!iso} and {!option} keep their argument's prefix, and every other
+    structure's is {!Path.root}. A reader of saved values owns the names under
+    it. *)
 
 (** {1:derived Maps and folds}
 

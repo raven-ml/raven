@@ -751,4 +751,53 @@ let errors =
     ]
     (fun (m, f) -> raises (Invalid_argument m) f)
 
-let () = exit (run "nx ptree" [ laws; chosen; constructed; errors ])
+(* Fields *)
+
+let fields =
+  let under names p =
+    P.Path.v (List.map (fun n -> P.Path.Field n) names @ P.Path.segments p)
+  in
+  let v names = P.Path.v (List.map (fun n -> P.Path.Field n) names) in
+  let f = P.field in
+  group "fields"
+    [
+      prop "field walks as its structure with every path under the field" trees
+        (fun x ->
+          let s = f "model" (f "enc" tree) in
+          cover "a leaf" (walked tree x <> []);
+          equal (list path)
+            (List.map (under [ "model"; "enc" ]) (walked tree x))
+            (walked s x);
+          equal (list string)
+            (List.map
+               (fun v -> Format.asprintf "%a" P.pp_visit v)
+               (List.map
+                  (function
+                    | P.Leaf p -> P.Leaf (under [ "model"; "enc" ] p)
+                    | P.Report (p, r) -> P.Report (under [ "model"; "enc" ] p, r))
+                  (P.visits tree x)))
+            (visit_lines s x);
+          equal value x (P.map s (fun _ t -> t) x));
+      cases ~name:fst "prefix is the path field states"
+        [
+          ("tensor", (P.prefix P.tensor, P.Path.root));
+          ("mlp", (P.prefix mlp, P.Path.root));
+          ("field", (P.prefix (f "a" P.tensor), v [ "a" ]));
+          ("nested fields", (P.prefix (f "a" (f "b" P.tensor)), v [ "a"; "b" ]));
+          ( "a field of a list",
+            (P.prefix (f "a" (P.list (f "b" P.tensor))), v [ "a" ]) );
+          ( "iso keeps it",
+            (P.prefix (P.iso Fun.id Fun.id (f "a" P.tensor)), v [ "a" ]) );
+          ("option keeps it", (P.prefix (P.option (f "a" P.tensor)), v [ "a" ]));
+          ( "a list's is the root",
+            (P.prefix (P.list (f "a" P.tensor)), P.Path.root) );
+          ( "a pair's is the root",
+            (P.prefix (P.pair (f "a" P.tensor) (f "a" P.tensor)), P.Path.root)
+          );
+          ( "a nest's is the root",
+            (P.prefix (P.nest (module Tree) (f "a" P.tensor)), P.Path.root) );
+        ]
+        (fun (_, (actual, expected)) -> equal path expected actual);
+    ]
+
+let () = exit (run "nx ptree" [ laws; chosen; constructed; fields; errors ])

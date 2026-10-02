@@ -32,6 +32,12 @@ module Path = struct
     | At (p, i), At (q, j) -> Int.equal i j && equal p q
     | _ -> false
 
+  (* [under name p] is [p] below [Field name]. *)
+  let rec under name = function
+    | Root -> Dot (Root, name)
+    | Dot (p, n) -> Dot (under name p, n)
+    | At (p, i) -> At (under name p, i)
+
   let seg_to_string = function Field name -> name | Index i -> Int.to_string i
   let to_string p = String.concat "." (List.map seg_to_string (segments p))
   let pp ppf p = Format.pp_print_string ppf (to_string p)
@@ -60,7 +66,11 @@ let absent = Present false
 let ignore_report _ _ = ()
 let keep = { tensor = (fun _ x -> x); report = ignore_report }
 
-type 's t = { walk : ops -> Path.t -> 's -> 's } [@@unboxed]
+(* [prefix] is the path every part is walked under, below the path the walk
+   starts at: [field] extends it, [iso] and [option] keep it. *)
+type 's t = { walk : ops -> Path.t -> 's -> 's; prefix : Path.t }
+
+let make walk = { walk; prefix = Path.Root }
 
 module Walk = struct
   type nonrec ('a, 'b) cursor = ('a, 'b) cursor
@@ -104,48 +114,52 @@ module type S = sig
 end
 
 let nest (module U : S) (s : 's t) : 's U.t t =
-  { walk = (fun ops path x -> U.walk { env = { ops; leaf = s.walk }; path } x) }
+  make (fun ops path x -> U.walk { env = { ops; leaf = s.walk }; path } x)
 
-let tensor = { walk = (fun ops path x -> ops.tensor path x) }
+let tensor =
+  { walk = (fun ops path x -> ops.tensor path x); prefix = Path.Root }
+
 let instantiate (module U : S) : ('a, 'b) tensor U.t t = nest (module U) tensor
-let unit = { walk = (fun _ _ () -> ()) }
+let unit = make (fun _ _ () -> ())
 
 let pair a b =
-  {
-    walk =
-      (fun ops path (x, y) ->
-        let x = a.walk ops (Path.At (path, 0)) x in
-        let y = b.walk ops (Path.At (path, 1)) y in
-        (x, y));
-  }
+  make (fun ops path (x, y) ->
+      let x = a.walk ops (Path.At (path, 0)) x in
+      let y = b.walk ops (Path.At (path, 1)) y in
+      (x, y))
 
 let option a =
-  {
-    walk =
-      (fun ops path -> function
-        | None ->
-            ops.report path absent;
-            None
-        | Some x ->
-            ops.report path present;
-            Some (a.walk ops path x));
-  }
+  let walk ops path = function
+    | None ->
+        ops.report path absent;
+        None
+    | Some x ->
+        ops.report path present;
+        Some (a.walk ops path x)
+  in
+  { walk; prefix = a.prefix }
 
 let list a =
+  make (fun ops path l ->
+      ops.report path (Length (List.length l));
+      let rec go i = function
+        | [] -> []
+        | x :: rest ->
+            let y = a.walk ops (Path.At (path, i)) x in
+            y :: go (i + 1) rest
+      in
+      go 0 l)
+
+let iso f g a =
+  { walk = (fun ops path x -> f (a.walk ops path (g x))); prefix = a.prefix }
+
+let field name s =
   {
-    walk =
-      (fun ops path l ->
-        ops.report path (Length (List.length l));
-        let rec go i = function
-          | [] -> []
-          | x :: rest ->
-              let y = a.walk ops (Path.At (path, i)) x in
-              y :: go (i + 1) rest
-        in
-        go 0 l);
+    walk = (fun ops path x -> s.walk ops (Path.Dot (path, name)) x);
+    prefix = Path.under name s.prefix;
   }
 
-let iso f g a = { walk = (fun ops path x -> f (a.walk ops path (g x))) }
+let prefix s = s.prefix
 
 (* Signatures *)
 

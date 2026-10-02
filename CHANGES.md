@@ -3046,6 +3046,8 @@ thread.
 
 ### Nx
 
+- Add `Nx.Ptree.field`, which puts a structure under a name, and
+  `Nx.Ptree.prefix`, the path a structure's fields put it under.
 - `Nx_quant.apply ~ids` with at least twice as many positions as experts sorts
   them by expert and multiplies each expert once per pair of its positions,
   where it read every expert's weights once per position. A prompt's compiled
