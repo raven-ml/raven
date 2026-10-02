@@ -302,6 +302,15 @@ let upcast_masked k =
     (fun axis -> ignore (split k axis 0 Opt.Upcast))
     (List.rev to_upcast)
 
+(* On the host, an upcast of [amount] that would take the kernel past
+   [host_lanes] lanes: each lane holds a value across the loops, and past the
+   registers they spill. *)
+let host_lanes = 32
+
+let beyond_host_lanes k amount =
+  (K.ren k).target.device = "CPU"
+  && not (holds Sint.(K.upcast_size k * Int amount <= Int host_lanes))
+
 (* potentially do more upcasts of non reduce axes based on a heuristic *)
 let upcast_more k =
   let rec loop upcasted_axis =
@@ -320,6 +329,7 @@ let upcast_more k =
         if
           List.mem axis upcasted_axis
           || (not (divisible (shape_at k axis) upcast_amount))
+          || beyond_host_lanes k upcast_amount
           || not
                (List.exists
                   (fun b ->

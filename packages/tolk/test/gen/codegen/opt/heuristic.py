@@ -120,6 +120,8 @@ KERNELS = {
     "sum_5_by_3": lambda: last(empty(512, 5, 7, 3).sum((1, 3))),
     "cumsum": lambda: last(empty(256).cumsum()),
     "softmax": lambda: last(empty(32, 256).softmax(-1)),
+    # each pair of axes indexes a buffer that the third does not: on a GPU three axes upcast by 4, 64 lanes
+    "paired_products": lambda: last((empty(32, 32, 1, 16) * empty(1, 32, 32, 16) + empty(32, 1, 32, 16) * empty(32, 32, 1, 16)).sum(3)),
     "variable": lambda: with_vars(empty(1024)[:UOp.variable("n", 1, 1024).bind(512)].contiguous() + 1),
 }
 

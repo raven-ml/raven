@@ -2745,3 +2745,22 @@ stores through a pad.
   schedule from two domains each compute their own`; the Ops suite
   (`test/uop/ops`): `sym_compile › computes what sym_infer does, variables
   within 50` and `› within 2147483648`.
+
+## D91. The host's upcast lanes stay within 32
+
+- **tinygrad:** `codegen/opt/heuristic.py:115-120` (`hand_coded_optimizations`:
+  more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
+  can take a kernel to 64 lanes or more).
+- **tolk:** `lib/codegen/opt/heuristic.ml:308-312` (`host_lanes`,
+  `beyond_host_lanes`), `:332` (`upcast_more`).
+- **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
+  take an upcast that would make the kernel's upcast and unrolled lanes more
+  than 32. Other devices upcast as tinygrad does.
+- **Reason:** (b), measured. Each lane holds a value across the kernel's
+  loops, and past 32 they spill out of the host's registers. lorenz_simple's
+  (sofo-raven) tangent kernel `r_32_256_400_4_2_4_2` takes 2.12 ms as
+  tinygrad's heuristic optimises it (64 lanes) and 1.51 ms within 32 (six
+  P-cores of an Intel Core Ultra 5 235, the tolk bench's `lorenz` cases).
+- **Pinned by:** `Tolk.Heuristic`'s `paired_products` cases (on `cpu` two
+  upcasts by 4, on `metal`, `cuda` and `amd` three); the goldens, from tinygrad
+  with D91 applied by its generator.

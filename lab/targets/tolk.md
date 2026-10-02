@@ -21,8 +21,9 @@ most of its time in these stages.
   the session refreshes it at setup and ratchets on keeps.
 - **BENCH:** the built executable, run **directly**, never through `dune exec`:
   `<WT>/_build/default/packages/tolk/bench/bench_tolk.exe`.
-  The suite is `tolk`; the lab subset is `--tag lab`, every case. Example gate
-  run:
+  The suite is `tolk`; the lab subset is `--tag lab`, every compiler stage
+  (the `kernels` cases, which time compiled kernels, are outside it). Example
+  gate run:
 
   ```
   rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected

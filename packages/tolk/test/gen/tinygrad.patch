@@ -465,6 +465,15 @@ index 712a2b7..aa90243 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
+@@ -118,6 +149,8 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+     for axis, upcast_amount in itertools.product(k.upcastable_dims, ([128] if not len(upcasted_axis) else []) if is_dsp else [3,4]):
+       # if we haven't upcasted it, it mods, and buffer has stride 0 on axis while having no stride 0 in the upcasted axis already
+       if axis in upcasted_axis or k.full_shape[axis]%upcast_amount != 0: continue
++      # on the host the upcast lanes stay within 32: each holds a value across the loops, and more spill
++      if k.ren.target.device == "CPU" and not resolve(k.upcast_size()*upcast_amount <= 32): continue
+       rng = k.rngs[axis]
+       if any(rng not in b.src[1].get_idx().backward_slice and all(r2 in b.src[1].get_idx().backward_slice
+           for r2 in k.ranges_of(AxisType.UPCAST, AxisType.UNROLL)) for b in k.bufs):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
 index f80c800..ded7eb9 100644
 --- a/tinygrad/codegen/opt/postrange.py

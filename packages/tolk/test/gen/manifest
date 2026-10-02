@@ -1191,6 +1191,11 @@ codegen/opt/heuristic/pad_amd.golden
 codegen/opt/heuristic/pad_cpu.golden
 codegen/opt/heuristic/pad_cuda.golden
 codegen/opt/heuristic/pad_metal.golden
+codegen/opt/heuristic/paired_products.golden
+codegen/opt/heuristic/paired_products_amd.golden
+codegen/opt/heuristic/paired_products_cpu.golden
+codegen/opt/heuristic/paired_products_cuda.golden
+codegen/opt/heuristic/paired_products_metal.golden
 codegen/opt/heuristic/renderers.golden
 codegen/opt/heuristic/softmax.golden
 codegen/opt/heuristic/softmax_amd.golden

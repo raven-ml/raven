@@ -5,7 +5,7 @@
 
 (executable
  (name bench_tolk)
- (modules bench_tolk programs kernels)
+ (modules bench_tolk programs kernels lorenz)
  (libraries
   tolk
   tolk.engine
@@ -56,6 +56,19 @@
   (with-stdout-to
    %{target}
    (run %{exe:embed.exe} %{goldens}))))
+
+; The lorenz kernels are kernel graphs of lorenz_simple's step (sofo-raven), each
+; with the optimisations a beam search of width 2 chose for it on the host, and
+; the name it then gets.
+
+(rule
+ (target lorenz.ml)
+ (deps
+  (:graphs r_128_64_3_4_3_3_100_200_2_4.graph r_32_256_400_4_2_4_2.graph))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:embed.exe} %{graphs}))))
 
 ; Benchmarks serialize across the workspace, since concurrent suites contend for
 ; cores and distort what they measure.

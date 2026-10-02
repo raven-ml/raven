@@ -939,6 +939,9 @@ thread.
 
 ### Tolk (new)
 
+- On the host, the hand-coded optimisations stop upcasting at 32 lanes, past
+  which a kernel's values spill out of registers: a lorenz_simple tangent
+  kernel without a beam search takes 1.51 ms instead of 2.12 ms.
 - A sum unrolled beside upcast axes adds its products as multiply-adds, as
   other sums of products do. The unrolled products reached the reduce through
   a permuted view, which the fusion rule did not look through.

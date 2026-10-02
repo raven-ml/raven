@@ -18,7 +18,11 @@
    four experts' MXFP4 products, [down] summing them. The CUDA device is opened
    in the measuring worker, which is forked without an exec, and CUDA's driver
    must not be initialized before the fork: a fresh process of this executable
-   ([--cuda]) says whether a CUDA device opens. *)
+   ([--cuda]) says whether a CUDA device opens.
+
+   [lorenz] runs lorenz_simple's two costliest kernels on the host (sofo-raven's
+   tangent step), each compiled with the optimisations a beam search chose for
+   it ([searched]) and with the hand-coded ones ([heuristic]). *)
 
 open Tolk
 
@@ -174,6 +178,30 @@ let decode name open_device =
            (fun run -> run ()))
        Kernels.all)
 
+(* The kernel graph [text] with the optimisations it asks for, or with the
+   hand-coded ones when [heuristic]. *)
+let lorenz_kernel ~heuristic text =
+  let k = Graph.of_string text in
+  match Ops.arg k with
+  | Ops.Kernel info when heuristic ->
+      Ops.replace k ~arg:(Kernel { info with opts_to_apply = None })
+  | _ -> k
+
+let lorenz =
+  let case text heuristic name =
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        compiled "CPU" Nx_device.host (lorenz_kernel ~heuristic text))
+      name
+      (fun run -> run ())
+  in
+  Thumper.group "lorenz"
+    (List.map
+       (fun (kernel, text) ->
+         Thumper.group kernel
+           [ case text false "searched"; case text true "heuristic" ])
+       Lorenz.all)
+
 let run_self flag =
   Sys.command (Filename.quote_command Sys.executable_name [ flag ])
 
@@ -193,4 +221,4 @@ let () =
         Thumper.Budget.no_more_alloc_than 0.01;
       ]
     (List.map (fun (name, _) -> program name) Programs.all
-    @ (decode "cpu" (fun () -> Nx_device.host) :: cuda ()))
+    @ (decode "cpu" (fun () -> Nx_device.host) :: lorenz :: cuda ()))
