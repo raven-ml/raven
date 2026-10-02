@@ -5944,6 +5944,8 @@ thread.
 
 ### Talon
 
+- `Talon.pp_display` opens Quill's display tag around the text table, so
+  outside a notebook it prints the table, no longer a base64 data URI.
 - `Col.of_tensor` and `of_nx` read a value placed on a device to the host once,
   so a dataframe's columns are host values. A placed column was read one
   element at a time, and eager operations on it ran through the device.

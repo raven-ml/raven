@@ -976,12 +976,13 @@ val to_html : ?max_rows:int -> ?max_cols:int -> t -> string
     [max_rows] defaults to [20]. [max_cols] defaults to [10]. *)
 
 val pp_display : Format.formatter -> t -> unit
-(** [pp_display ppf df] formats [df] as a data URI containing an HTML table.
-
-    This printer is intended for notebook environments (Quill) where the data
-    URI pattern is detected and rendered as rich HTML output. Uses fixed
-    defaults (max_rows=20, max_cols=10). For custom limits, use {!to_html}
-    directly. *)
+(** [pp_display ppf df] displays [df] in a Quill notebook: it prints on [ppf]
+    the table {!pp} prints inside a [Format.String_tag]. The tag's string is the
+    line [quill.display], the line [text/html], an empty display id line, then
+    {!to_html}[ df]: a display tag of the display protocol documented in Quill's
+    [Quill.Cell] module. Formatters ignore the tag by default and print the
+    table alone. Both tables show at most 20 rows and 10 columns; for other
+    limits, use {!to_html} directly. *)
 
 val pp_info : Format.formatter -> t -> unit
 (** [pp_info ppf df] formats detailed information about [df] on [ppf]: shape,

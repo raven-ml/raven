@@ -629,9 +629,8 @@ let base64_decode s =
   Bytes.sub_string out 0 !j
 
 (** Scan [s] for markdown data-URI patterns [![...](data:MIME;base64,DATA)] and
-    emit each as a Display output. Surrounding text is emitted as Stdout. This
-    allows pretty-printers (e.g. hugin, talon) to render rich content in quill
-    without depending on quill.
+    emit each as a Display output. Surrounding text is emitted as Stdout. Only
+    the old [Hugin.pp] still prints such URIs; this goes with it.
 
     For text MIME types, the base64 data is decoded so that Display.data
     contains raw text. For binary types (image), data remains base64-encoded. *)

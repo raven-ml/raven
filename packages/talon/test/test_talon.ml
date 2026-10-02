@@ -1407,6 +1407,41 @@ let ergonomic_tests =
     test "Agg.dot" test_rowagg_dot;
   ]
 
+(* Display *)
+
+(* [tags pp v] is the string tags [pp] opens printing [v], and the text it
+   prints around them. *)
+let tags pp v =
+  let b = Buffer.create 256 in
+  let ppf = Format.formatter_of_buffer b in
+  let opened = ref [] in
+  Format.pp_set_mark_tags ppf true;
+  Format.pp_set_formatter_stag_functions ppf
+    {
+      (Format.pp_get_formatter_stag_functions ppf ()) with
+      mark_open_stag =
+        (function
+        | Format.String_tag s ->
+            opened := s :: !opened;
+            ""
+        | _ -> "");
+      mark_close_stag = (fun _ -> "");
+    };
+  Format.fprintf ppf "%a@?" pp v;
+  (List.rev !opened, Buffer.contents b)
+
+let display_tests =
+  [
+    test "pp_display opens a display tag of the HTML table around the table"
+      (fun () ->
+        let df = create [ ("x", Col.int32 (Array.init 25 Int32.of_int)) ] in
+        equal
+          (pair (list text) text)
+          ( [ "quill.display\ntext/html\n\n" ^ to_html df ],
+            to_string ~max_rows:20 ~max_cols:10 df )
+          (tags pp_display df));
+  ]
+
 let () =
   exit
     (run "Talon"
@@ -1426,4 +1461,5 @@ let () =
          group "Wide operations" wide_tests;
          group "Ergonomic APIs" ergonomic_tests;
          group "Join & Reshape" join_reshape_tests;
+         group "Display" display_tests;
        ])
