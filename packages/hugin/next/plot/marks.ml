@@ -422,7 +422,14 @@ let draw_image lead rows =
         if not (finite x0.(i) && finite y0.(i)) then Picture.empty
         else
           let box = Box2.of_pts (at x0.(i) y0.(i)) (at x1.(i) y1.(i)) in
-          Picture.image box (Pixels.rgba (datum px lead index.(i)))
+          let px = Pixels.rgba (datum px lead index.(i)) in
+          let shape = Nx.shape px in
+          match
+            Pixels.plan ~density:rows.Rows.density box ~rows:shape.(0)
+              ~cols:shape.(1)
+          with
+          | None -> Picture.image box px
+          | Some plan -> Picture.image plan.window (Pixels.gather plan px)
       in
       Picture.group (List.init (Mark.length rows) image)
 

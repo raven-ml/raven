@@ -494,7 +494,7 @@ let unscaled : type d r.
   | Role.Colors | Role.Symbols | Role.Panels | Role.Curves | Role.Pixels ->
       err "draw" "the role %s reads no scale" role.name
 
-let rows ctx rd ~id projection ~warn scale_of sel =
+let rows ?only ctx rd ~id projection ~warn scale_of sel =
   let m = rd.mark and stroked = stroked rd.mark in
   let n = count m.shape sel in
   let dropped = Array.make n false in
@@ -527,7 +527,13 @@ let rows ctx rd ~id projection ~warn scale_of sel =
             drop bd (missing h);
             unscaled ctx b.role b.ch h)
   in
-  let cols = List.mapi col m.bindings in
+  let wanted (B b) =
+    match only with None -> true | Some l -> List.mem b.role.name l
+  in
+  let cols =
+    List.concat
+      (List.mapi (fun i b -> if wanted b then [ col i b ] else []) m.bindings)
+  in
   let index =
     match sel with All -> Array.init n Fun.id | Rows r -> Array.copy r
   in

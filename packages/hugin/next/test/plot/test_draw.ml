@@ -5,6 +5,7 @@
 
 open Hugin_next
 open Windtrap
+module Raster = Hugin_next_vg_raster
 
 (* Data *)
 
@@ -75,12 +76,24 @@ let tags id d =
       | _ -> None)
     d
 
+let images d =
+  collect (function Picture.Image i -> Some (i.box, i.pixels) | _ -> None) d
+
+let stamps d = collect (function Picture.Stamp s -> Some s.xs | _ -> None) d
 let color = Testable.make ~pp:Color.pp ~equal:Color.equal
 let text_t = Testable.make ~pp:Text.pp ~equal:Text.equal
 let drawing = Testable.make ~pp:Drawing.pp ~equal:Drawing.equal
 let is_nan = Float.is_nan
 let floats = array float_exact
 let close = float 1e-9
+
+(* The colour a pixel of raster output holds for [c]. *)
+let byte v = Float.to_int (Float.round (255. *. v))
+
+let rgba c =
+  [|
+    byte (Color.r c); byte (Color.g c); byte (Color.b c); byte (Color.alpha c);
+  |]
 
 (* Rows *)
 
@@ -590,4 +603,268 @@ let output =
           | l -> failf "%d tags" (List.length l));
     ]
 
-let () = exit (run "Draw" [ rows; drawings; output ])
+(* Reducers *)
+
+(* [m4_reference w us ys] is what M4 keeps of one series: in each of the [w]
+   columns, and in the bins beyond each side, the first and last rows and the
+   first rows of the lowest and highest values. *)
+let m4_reference column ys =
+  let n = Array.length ys in
+  let bins = Hashtbl.create 64 in
+  for i = 0 to n - 1 do
+    let c = column i in
+    let first, last, lo, hi =
+      match Hashtbl.find_opt bins c with
+      | None -> (i, i, i, i)
+      | Some (f, _, lo, hi) ->
+          ( f,
+            i,
+            (if ys.(i) < ys.(lo) then i else lo),
+            if ys.(i) > ys.(hi) then i else hi )
+    in
+    Hashtbl.replace bins c (first, last, lo, hi)
+  done;
+  Hashtbl.fold (fun _ (a, b, c, d) acc -> a :: b :: c :: d :: acc) bins []
+  |> List.sort_uniq Int.compare |> Array.of_list
+
+(* A series on x in [0, 1000] in a panel 50 device pixels wide: column [i / 20]
+   holds row [i]. *)
+let m4_series n ys =
+  let x = index ~scale:(Scale.linear ~domain:(0., 1000.) ()) (-1) in
+  let m, seen =
+    probe ~reduce:Mark.m4
+      [ Mark.bind Role.x x; Mark.bind Role.y (num ys) ]
+      Mark.index
+  in
+  ignore (n, drawn ~size:(Size.panels 50. 50.) m);
+  only seen
+
+let ys n = Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| n |]
+
+(* [plain_and_reduced reduce n] draws the same picture of [n] dots with and
+   without the reducer [reduce]. *)
+let dots_with reduce n =
+  let e = Nx.Rng.uniform (Nx.Rng.key 4) Nx.float64 [| n; 2 |] in
+  let disc = Picture.fill Color.black (Path.circle (P2.v 0. 0.) 1.5) in
+  Mark.v ~name:"dots" ?reduce
+    [
+      Mark.bind Role.x (num Nx.(slice [ A; I 0 ] e));
+      Mark.bind Role.y (num Nx.(slice [ A; I 1 ] e));
+    ]
+    (fun r ->
+      let xs, ys = Mark.points r in
+      Picture.stamp
+        ~fills:(Array.make (Mark.length r) (Color.v ~alpha:0.3 0.1 0.3 0.8))
+        xs ys disc)
+
+(* Heatmaps *)
+
+let viridis_of r v =
+  let s = Resolved.scale r (Scale.linear ~name:"color" ()) in
+  Scheme.color Scheme.viridis (Scale.normalize s v)
+
+(* [cells_image h w at] is the image whose pixel [(i, j)] is [rgba (at i j)]. *)
+let cells_image h w at =
+  let a = Array.make (h * w * 4) 0 in
+  for i = 0 to h - 1 do
+    for j = 0 to w - 1 do
+      Array.blit (rgba (at i j)) 0 a (((i * w) + j) * 4) 4
+    done
+  done;
+  Nx.create Nx.uint8 [| h; w; 4 |] a
+
+let heatmap z = layer [ rect ~x:(dim 1) ~y:(dim 0) ~fill:(num z) () ]
+
+(* [cells d] is the box and pixels of each cells image of the mark [0] of
+   [d]. *)
+let cells d =
+  List.filter_map
+    (function
+      | Picture.Cells _, Picture.Image i -> Some (i.box, i.pixels) | _ -> None)
+    (tags (path [ Index 0 ]) d)
+
+(* [same_raster page a b] states that the pictures [a] and [b] draw the same
+   pixels on [page]. *)
+let same_raster (w, h) a b =
+  let r p = Raster.render ~density:1. (Renderable.v w h p) in
+  equal (array int) (Nx.to_array (r a)) (Nx.to_array (r b))
+
+let reducers =
+  group "Reducers"
+    [
+      test "m4 keeps every row at four rows per column" (fun () ->
+          equal int 200 (Array.length (m4_series 200 (ys 200))));
+      test "m4 keeps each column's first, last, lowest and highest rows"
+        (fun () ->
+          let n = 1001 in
+          let y = ys n in
+          equal (array int)
+            (m4_reference (fun i -> i / 20) (Nx.to_array y))
+            (m4_series n y));
+      test "m4 keeps every row of a series with a missing value" (fun () ->
+          let y = Nx.concatenate ~axis:0 [ ys 1000; f64 [| nan |] ] in
+          equal int 1001 (Array.length (m4_series 1001 y)));
+      test "m4 keeps every row of a series whose x is not monotone" (fun () ->
+          let x =
+            Nx.concatenate ~axis:0
+              [ Nx.linspace Nx.float64 0. 1. 1000; f64 [| 0. |] ]
+          in
+          let m, seen =
+            probe ~reduce:Mark.m4
+              [ Mark.bind Role.x (num x); Mark.bind Role.y (num (ys 1001)) ]
+              Mark.length
+          in
+          ignore (drawn ~size:(Size.panels 50. 50.) m);
+          equal int 1001 (only seen));
+      cases
+        ~name:(fun (n, _, _) -> Printf.sprintf "%d dots in %s" n "a panel")
+        "raster draws dots as one image past its thresholds"
+        [
+          (20_000, Size.panels 400. 400., false);
+          (20_001, Size.panels 400. 400., true);
+          (100, Size.panels 10. 10., false);
+          (101, Size.panels 10. 10., true);
+        ]
+        (fun (n, size, image) ->
+          let d = drawn ~size (dots_with (Some Mark.raster) n) in
+          equal bool image (images d <> []);
+          equal bool (not image) (stamps d <> []));
+      test
+        "raster paints the panel's picture at the density, aligned with the \
+         device pixels" (fun () ->
+          let density = 2. and size = Size.panels 60.3 40.7 in
+          let pictures = ref [] in
+          let f =
+            layer
+              [
+                Mark.v ~name:"dots" ~reduce:Mark.raster
+                  [
+                    Mark.bind Role.x
+                      (num
+                         (Nx.Rng.uniform (Nx.Rng.key 5) Nx.float64 [| 25_000 |]));
+                    Mark.bind Role.y
+                      (num
+                         (Nx.Rng.uniform (Nx.Rng.key 6) Nx.float64 [| 25_000 |]));
+                  ]
+                  (fun r ->
+                    let xs, ys = Mark.points r in
+                    let p =
+                      Picture.stamp
+                        ~fills:
+                          (Array.make (Mark.length r)
+                             (Color.v ~alpha:0.3 0.1 0.3 0.8))
+                        xs ys
+                        (Picture.fill Color.black
+                           (Path.circle (P2.v 0. 0.) 1.5))
+                    in
+                    pictures := p :: !pictures;
+                    p);
+              ]
+          in
+          let d = drawn ~density ~size f in
+          let box = (List.hd (Layout.panels (layout size (resolve f)))).box in
+          let snap g v = g (v *. density) /. density in
+          let x0 = snap Float.floor (Box2.minx box)
+          and y0 = snap Float.floor (Box2.miny box) in
+          let window =
+            Box2.v x0 y0
+              (snap Float.ceil (Box2.maxx box) -. x0)
+              (snap Float.ceil (Box2.maxy box) -. y0)
+          in
+          match (images d, !pictures) with
+          | [ (b, px) ], [ p ] ->
+              equal (Testable.make ~pp:Box2.pp ~equal:Box2.equal) window b;
+              let painted =
+                Raster.render ~density
+                  (Renderable.v (Box2.w window) (Box2.h window)
+                     (Picture.transform
+                        (Affine.translate (-.x0) (-.y0))
+                        (Picture.clip (Path.rect box) p)))
+              in
+              equal (array int) (Nx.to_array painted) (Nx.to_array px)
+          | is, ps ->
+              failf "%d images, %d pictures" (List.length is) (List.length ps));
+      test "cells paints each cell with its row's fill" (fun () ->
+          let z =
+            Nx.create Nx.float64 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]
+          in
+          let f = heatmap z in
+          let r = resolve f in
+          match cells (drawn f) with
+          | [ (_, px) ] ->
+              let at i j = viridis_of r (Float.of_int ((i * 3) + j)) in
+              equal (array int)
+                (Nx.to_array (cells_image 2 3 at))
+                (Nx.to_array px)
+          | l -> failf "%d images" (List.length l));
+      test "a cell no row covers paints nothing" (fun () ->
+          let f =
+            layer
+              [
+                rect
+                  ~x:(strings [| "a"; "b"; "a" |])
+                  ~y:(strings [| "p"; "p"; "q" |])
+                  ();
+              ]
+          in
+          match cells (drawn f) with
+          | [ (_, px) ] -> equal int 0 (Nx.item [ 1; 1; 3 ] px)
+          | l -> failf "%d images" (List.length l));
+      test "rows that share a cell draw as rectangles" (fun () ->
+          let f =
+            layer
+              [
+                rect ~x:(strings [| "a"; "a" |]) ~y:(strings [| "p"; "p" |]) ();
+              ]
+          in
+          equal int 0 (List.length (cells (drawn f))));
+      test "a gathered heatmap draws what the whole image draws" (fun () ->
+          let h = 300 and w = 400 in
+          let z =
+            Nx.init Nx.float64 [| h; w |] (fun i ->
+                Float.of_int ((i.(0) * 7) + (i.(1) * 13 mod 101)))
+          in
+          let f = heatmap z in
+          let d = drawn ~size:(Size.panels 40. 30.) f in
+          let r = resolve f in
+          match cells d with
+          | [ (window, px) ] ->
+              less int ~than:(h * w) (Nx.numel px / 4);
+              let l = layout (Size.panels 40. 30.) r in
+              let box = (List.hd (Layout.panels l)).box in
+              let whole =
+                cells_image h w (fun i j -> viridis_of r (Nx.item [ i; j ] z))
+              in
+              same_raster (Layout.size l) (Picture.image box whole)
+                (Picture.image window px)
+          | l -> failf "%d images" (List.length l));
+      test "a gathered image draws what the whole image draws" (fun () ->
+          let px =
+            Nx.init Nx.uint8 [| 256; 256; 3 |] (fun i ->
+                ((i.(0) * 3) + (i.(1) * 5) + (i.(2) * 70)) mod 256)
+          in
+          let f = image px in
+          let size = Size.panels 20. 20. in
+          let d = drawn ~size f in
+          let l = layout size (resolve f) in
+          let box = (List.hd (Layout.panels l)).box in
+          match images d with
+          | [ (window, gathered) ] ->
+              less int ~than:(256 * 256) (Nx.numel gathered / 4);
+              same_raster (Layout.size l) (Picture.image box px)
+                (Picture.image window gathered)
+          | l -> failf "%d images" (List.length l));
+      test "image clamps floats and leaves a pixel with a NaN transparent"
+        (fun () ->
+          let px =
+            Nx.create Nx.float32 [| 1; 2; 3 |] [| nan; 0.; 0.; 2.; 0.5; -1. |]
+          in
+          match images (drawn (image px)) with
+          | [ (_, got) ] ->
+              equal (array int)
+                [| 0; 0; 0; 0; 255; 128; 0; 255 |]
+                (Nx.to_array got)
+          | l -> failf "%d images" (List.length l));
+    ]
+
+let () = exit (run "Draw" [ rows; drawings; output; reducers ])

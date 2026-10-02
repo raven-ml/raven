@@ -41,4 +41,4 @@
  (name test_draw)
  (modules test_draw)
  (package hugin)
- (libraries hugin.next nx windtrap))
+ (libraries hugin.next hugin.next.vg.raster nx windtrap))

@@ -8,7 +8,8 @@
    [draw] paints a laid-out figure: the paper, then each panel's marks over its
    grid lines, clipped to its data area, then the axes, headers, legends and
    titles. A mark is drawn one cell at a time: its facet channels put each of
-   its rows in a panel, and its draw function draws each panel's rows. *)
+   its rows in a panel, and in each panel its reducer may draw the rows in its
+   stead, reading only what it draws; its draw function draws the others. *)
 
 module P2 = Hugin_next_gg.P2
 module Box2 = Hugin_next_gg.Box2
@@ -19,6 +20,7 @@ module Color = Hugin_next_gg.Color
 module Text = Hugin_next_text.Text
 module Picture = Hugin_next_vg.Picture
 module Renderable = Hugin_next_vg.Renderable
+module Raster = Hugin_next_vg_raster
 module Scale = Hugin_next_kit.Scale
 module Ticks = Hugin_next_kit.Ticks
 open Common
@@ -32,6 +34,11 @@ open Resolved
 let rule_em = 0.08 (* Axis lines and ticks. *)
 let grid_em = 0.06
 let grid_alpha = 0.2
+
+(* Reducer thresholds *)
+
+let raster_rows = 20_000
+let m4_rows = 4 (* Rows per device-pixel column. *)
 
 (* Panels *)
 
@@ -213,7 +220,78 @@ let tagged id index box p =
       clip_to box (Picture.tag tag p)
   | _ -> Picture.tag tag (clip_to box p)
 
-(* Images *)
+(* Reducers *)
+
+let device_pixels cx box =
+  let d = cx.ctx.density in
+  Box2.w box *. d *. Box2.h box *. d
+
+(* [aligned cx box] is the smallest box of whole device pixels holding [box]. *)
+let aligned cx box =
+  let d = cx.ctx.density in
+  let lo v = Float.floor (v *. d) /. d and hi v = Float.ceil (v *. d) /. d in
+  let x0 = lo (Box2.minx box) and y0 = lo (Box2.miny box) in
+  Box2.v x0 y0 (hi (Box2.maxx box) -. x0) (hi (Box2.maxy box) -. y0)
+
+(* [rasterised cx box p] is [p], drawn within [box], as one image painted by the
+   raster renderer at the density and aligned with the device pixels. *)
+let rasterised cx box p =
+  let window = aligned cx box in
+  let w = Box2.w window and h = Box2.h window in
+  if w <= 0. || h <= 0. then Picture.empty
+  else
+    let moved =
+      Picture.transform
+        (Affine.translate (-.Box2.minx window) (-.Box2.miny window))
+        p
+    in
+    let px = Raster.render ~density:cx.ctx.density (Renderable.v w h moved) in
+    Picture.image window px
+
+(* [band_cells cx scale_of index] is the number of categories of the band scale
+   that the binding [index] reads, if it has no padding. *)
+let band_cells cx scale_of index =
+  match scale_of index with
+  | None -> None
+  | Some i -> (
+      let (F f) = cx.ctx.scales.(i) in
+      match f.kind with
+      | Scale.Categorical ->
+          let n = List.length (category_names f.scale) in
+          if n > 0 && Float.equal (Scale.bandwidth f.scale) (1. /. float n) then
+            Some n
+          else None
+      | Scale.Quantitative | Scale.Temporal -> None)
+
+let binding_index m role =
+  let rec go i = function
+    | [] -> None
+    | B b :: rest ->
+        if String.equal b.role.name role then Some i else go (i + 1) rest
+  in
+  go 0 m.bindings
+
+let binds m role = Option.is_some (find_binding role m.bindings)
+let row_of = function Read.All -> Fun.id | Read.Rows r -> fun k -> r.(k)
+
+(* [colours cx rows] is the colour each of [rows] paints its cell with:
+   transparent where it is dropped. *)
+let colours cx (rows : Rows.t) =
+  let n = Rows.length rows in
+  let fills =
+    match Rows.get rows Role.fill with
+    | Some cs -> cs
+    | None -> Array.make n (Theme.accent cx.ctx.theme)
+  in
+  let os = Rows.get rows Role.opacity in
+  Array.mapi
+    (fun i c ->
+      if rows.Rows.dropped.(i) then Color.transparent
+      else
+        match os with
+        | None -> c
+        | Some os -> Color.with_alpha (Color.alpha c *. os.(i)) c)
+    fills
 
 let byte v = Float.to_int (Float.round (255. *. Float.min 1. (Float.max 0. v)))
 
@@ -231,6 +309,229 @@ let image h w at =
   done;
   Nx.create Nx.uint8 [| h; w; 4 |] a
 
+(* [cells cx m panel scale_of ~rows ~full ~few sel] is the image whose pixels
+   are the cells of the rows [sel], if they draw as one: [x] and [y] read band
+   scales without padding, the mark binds no [x2], [y2] or [stroke], and no two
+   rows share a cell. Past 4 × 4 cells per device pixel, only the rows of the
+   cells that raster output samples are read. *)
+let cells cx m (panel : Layout.panel) scale_of ~rows ~full ~few sel =
+  match (binding_index m "x", binding_index m "y") with
+  | Some xi, Some yi when not (binds m "x2" || binds m "y2" || binds m "stroke")
+    -> (
+      match (band_cells cx scale_of xi, band_cells cx scale_of yi) with
+      | Some nx, Some ny -> (
+          let pos = rows (Some [ "x"; "y" ]) full sel in
+          let paint = Some [ "fill"; "opacity" ] in
+          let us = Option.get (Rows.normalized pos Role.x)
+          and vs = Option.get (Rows.normalized pos Role.y) in
+          let cell = Array.make (nx * ny) (-1) and shared = ref false in
+          let clamp n v = Int.max 0 (Int.min (n - 1) v) in
+          Array.iteri
+            (fun k u ->
+              let v = vs.(k) in
+              if
+                (not pos.Rows.dropped.(k))
+                && Float.is_finite u && Float.is_finite v
+              then begin
+                let j = clamp nx (Float.to_int (Float.floor (u *. float nx)))
+                and i =
+                  clamp ny (Float.to_int (Float.floor ((1. -. v) *. float ny)))
+                in
+                let c = (i * nx) + j in
+                if cell.(c) >= 0 then shared := true else cell.(c) <- k
+              end)
+            us;
+          if !shared then None
+          else
+            let proj = panel.projection in
+            let box =
+              Box2.of_pts (Coord.point proj 0. 1.) (Coord.point proj 1. 0.)
+            in
+            let tag =
+              {
+                Picture.id = pos.Rows.id;
+                rows = Picture.Cells { box; width = nx; height = ny };
+              }
+            in
+            let at_cell cs i j =
+              let k = cell.((i * nx) + j) in
+              if k < 0 then Color.transparent else cs k
+            in
+            match Pixels.plan ~density:cx.ctx.density box ~rows:ny ~cols:nx with
+            | None ->
+                let cs = colours cx (rows paint full sel) in
+                let px = image ny nx (at_cell (fun k -> cs.(k))) in
+                Some (Picture.tag tag (Picture.image box px))
+            | Some plan ->
+                (* The rows of the sampled cells, read where they live. *)
+                let wanted = Hashtbl.create 1024 in
+                Array.iter
+                  (fun i ->
+                    if i >= 0 then
+                      Array.iter
+                        (fun j ->
+                          if j >= 0 then
+                            let k = cell.((i * nx) + j) in
+                            if k >= 0 then Hashtbl.replace wanted k ())
+                        plan.cols)
+                  plan.rows;
+                let ks =
+                  Array.of_list
+                    (List.sort Int.compare
+                       (Hashtbl.fold (fun k () acc -> k :: acc) wanted []))
+                in
+                let row = row_of sel in
+                let cs =
+                  colours cx (rows paint few (Read.Rows (Array.map row ks)))
+                in
+                let at = Hashtbl.create (Array.length ks) in
+                Array.iteri (fun p k -> Hashtbl.replace at k cs.(p)) ks;
+                let colour i j =
+                  let i = plan.rows.(i) and j = plan.cols.(j) in
+                  if i < 0 || j < 0 then Color.transparent
+                  else at_cell (Hashtbl.find at) i j
+                in
+                let px =
+                  image (Array.length plan.rows) (Array.length plan.cols) colour
+                in
+                Some (Picture.tag tag (Picture.image plan.window px)))
+      | _ -> None)
+  | _ -> None
+
+(* [quantities m index] is the quantities the binding [index] reads, as a tensor
+   or an axis index, if no element of them is masked. *)
+let quantities m index =
+  let (B b) = List.nth m.bindings index in
+  match data b.ch with
+  | Some { lift = Num { x; valid = None }; _ } ->
+      Some (`Num (Nx.cast Nx.float64 x))
+  | Some { lift = Index k; _ } -> Some (`Index k)
+  | _ -> None
+
+(* [m4 cx m panel scale_of] is the rows of [m] that M4 keeps in [panel], if it
+   applies: of each series, each device-pixel column's first, last, lowest and
+   highest rows, when the series have more than [m4_rows] rows per column, their
+   [x] is monotone and their other channels constant along them, and no value of
+   [x] or [y] is missing. Columns are found where the data lives, as the bins
+   that the values of [x] at the columns' edges make, with one more bin on each
+   side for the rows outside the panel. *)
+let m4 cx m (panel : Layout.panel) scale_of =
+  let shape = m.shape in
+  let rank = Array.length shape in
+  let w = Float.to_int (Float.ceil (Box2.w panel.box *. cx.ctx.density)) in
+  let last = if rank = 0 then 0 else shape.(rank - 1) in
+  let constant_along (B b) =
+    match (b.role.name, data b.ch) with
+    | ("x" | "y"), _ | _, None -> true
+    | _, Some d -> (
+        match d.lift with
+        | Index k | Dim { axis = k; _ } -> axis_of shape k <> Some (rank - 1)
+        | Num _ | Cat _ | Strings _ | Scalar _ -> (
+            match lift_shape d.lift with
+            | Some s when Array.length s > 0 -> s.(Array.length s - 1) = 1
+            | _ -> true))
+  in
+  let float_scale index : float Scale.t option =
+    Option.bind (scale_of index) (fun i : float Scale.t option ->
+        let (F f) = cx.ctx.scales.(i) in
+        match f.kind with
+        | Scale.Quantitative -> Some f.scale
+        | Scale.Categorical | Scale.Temporal -> None)
+  in
+  let series = if last = 0 then 0 else Array.fold_left ( * ) 1 shape / last in
+  let flat t = Nx.reshape [| series; last |] (Nx.broadcast_to shape t) in
+  let missing s t = Nx.item [] (Nx.any (Scale.missing s t)) in
+  let monotone t =
+    let d =
+      Nx.sub (Nx.slice [ A; R (1, last) ] t) (Nx.slice [ A; R (0, last - 1) ] t)
+    in
+    let all p = Nx.all ~axes:[ 1 ] p in
+    Nx.item []
+      (Nx.all
+         (Nx.logical_or
+            (all (Nx.greater_equal_s d 0.))
+            (all (Nx.less_equal_s d 0.))))
+  in
+  let applies =
+    rank > 0 && w > 0
+    && last > m4_rows * w
+    && List.for_all constant_along m.bindings
+  in
+  let xi = binding_index m "x" and yi = binding_index m "y" in
+  match (applies, xi, yi) with
+  | true, Some xi, Some yi -> (
+      match
+        (float_scale xi, float_scale yi, quantities m xi, quantities m yi)
+      with
+      | Some sx, Some sy, Some qx, Some (`Num y) -> (
+          let yt = flat y in
+          let xt =
+            match qx with
+            | `Index k when axis_of shape k = Some (rank - 1) ->
+                Some (flat (Nx.cast Nx.float64 (Nx.arange Nx.int32 0 last 1)))
+            | `Index _ -> None
+            | `Num x ->
+                let xt = flat x in
+                if missing sx xt || not (monotone xt) then None else Some xt
+          in
+          let edges =
+            List.init (w + 1) (fun c -> Scale.invert sx (float c /. float w))
+          in
+          match xt with
+          | Some xt
+            when (not (missing sy yt)) && List.for_all Option.is_some edges ->
+              let edges =
+                Array.of_list
+                  (List.sort Float.compare (List.map Option.get edges))
+              in
+              let bins = w + 2 in
+              let col =
+                Nx.searchsorted ~side:`Right
+                  (Nx.create Nx.float64 [| w + 1 |] edges)
+                  xt
+              in
+              let base =
+                Nx.mul_s
+                  (Nx.reshape [| series; 1 |] (Nx.arange Nx.int64 0 series 1))
+                  (Int64.of_int bins)
+              in
+              let key = Nx.flatten (Nx.add col base) in
+              let j =
+                Nx.flatten
+                  (Nx.broadcast_to [| series; last |]
+                     (Nx.reshape [| 1; last |] (Nx.arange Nx.int64 0 last 1)))
+              in
+              let yv = Nx.flatten yt and k = series * bins in
+              let scatter mode values init =
+                Nx.scatter ~mode ~axis:0 ~indices:key ~values init
+              in
+              let none = Nx.full Nx.int64 [| k |] Int64.max_int in
+              let first = scatter `Min j none
+              and final = scatter `Max j (Nx.full Nx.int64 [| k |] (-1L)) in
+              let at extreme init =
+                let e = scatter extreme yv (Nx.full Nx.float64 [| k |] init) in
+                let hit = Nx.equal yv (Nx.take ~indices:key e) in
+                scatter `Min
+                  (Nx.where hit j (Nx.full_like j Int64.max_int))
+                  none
+              in
+              let high = at `Max Float.neg_infinity
+              and low = at `Min Float.infinity in
+              let kept = ref [] in
+              List.iter
+                (fun t ->
+                  Array.iteri
+                    (fun s v ->
+                      if v >= 0L && v < Int64.max_int then
+                        kept := ((s / bins * last) + Int64.to_int v) :: !kept)
+                    (Nx.to_array t))
+                [ first; final; high; low ];
+              Some
+                (Read.Rows (Array.of_list (List.sort_uniq Int.compare !kept)))
+          | _ -> None)
+      | _ -> None)
+  | _ -> None
+
 (* Marks *)
 
 (* A panel being drawn: its facet panel, layout and the pictures and warnings of
@@ -246,18 +547,45 @@ type target = {
    panel of [targets] it has rows in. *)
 let draw_occ cx pid occ targets =
   let m = occ.mark in
-  let rd = Read.reader ~whole:true m in
+  let full = Read.reader ~whole:true m and few = Read.reader ~whole:false m in
   let sels =
-    reading occ.mid (fun () -> members rd m (List.map (fun t -> t.fp) targets))
+    reading occ.mid (fun () ->
+        members full m (List.map (fun t -> t.fp) targets))
   in
   let draw t sel =
     let warn msg = t.notes <- (occ.mid, msg) :: t.notes in
     let scale_of = scale_of cx occ pid t.fp.pnid in
-    let r =
+    let box = t.panel.box and proj = t.panel.projection in
+    let rows only rd sel =
       reading occ.mid (fun () ->
-          Read.rows cx.ctx rd ~id:occ.mid t.panel.projection ~warn scale_of sel)
+          Read.rows ?only cx.ctx rd ~id:occ.mid proj ~warn scale_of sel)
     in
-    tagged occ.mid r.index t.panel.box (m.draw r)
+    let drawn rd sel =
+      let r = rows None rd sel in
+      tagged occ.mid r.index box (m.draw r)
+    in
+    let n =
+      match sel with
+      | Read.All -> Array.fold_left ( * ) 1 m.shape
+      | Read.Rows r -> Array.length r
+    in
+    match m.reduce with
+    | Some Cells -> (
+        match cells cx m t.panel scale_of ~rows ~full ~few sel with
+        | Some p -> clip_to box p
+        | None -> drawn full sel)
+    | Some Raster when n > raster_rows || float n > device_pixels cx box ->
+        let r = rows None full sel in
+        let p = rasterised cx box (clip_to box (m.draw r)) in
+        Picture.tag { Picture.id = occ.mid; rows = Picture.Rows r.index } p
+    | Some M4 -> (
+        match sel with
+        | Read.Rows _ -> drawn full sel
+        | Read.All -> (
+            match reading occ.mid (fun () -> m4 cx m t.panel scale_of) with
+            | Some kept -> drawn few kept
+            | None -> drawn full sel))
+    | Some Raster | None -> drawn full sel
   in
   List.iter2
     (fun t sel ->

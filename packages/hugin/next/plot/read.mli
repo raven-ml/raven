@@ -36,6 +36,7 @@ val facet : reader -> string -> (int array * (int -> string)) option
     category of an identity. *)
 
 val rows :
+  ?only:string list ->
   ctx ->
   reader ->
   id:Common.id ->
@@ -44,8 +45,8 @@ val rows :
   scale_of ->
   sel ->
   Rows.t
-(** [rows ctx rd ~id proj ~warn scale_of sel] is the rows [sel] of the mark of
-    [rd]. *)
+(** [rows ~only ctx rd ~id proj ~warn scale_of sel] is the rows [sel] of the
+    mark of [rd], with the bindings of the roles [only], all by default. *)
 
 val mark : reader -> Figure.mark
 
