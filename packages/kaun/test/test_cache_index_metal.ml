@@ -10,7 +10,7 @@ open Kaun
 
 let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
-let metal = Nx.Placement.on [ Nx.Device.metal () ]
+let metal = Nx.Placement.on (Nx.Device.v Metal)
 
 (* A toy compressed stream, as in test_attention.ml: each token stores its value
    at its position, the token that closes a block of 4 stores the sum of its
@@ -124,11 +124,7 @@ let test_one_slot_on_metal () =
                 ())
              values pool)
       in
-      let step =
-        Rune.jit
-          Nx.Ptree.(tensor @-> returns tensor)
-          f
-      in
+      let step = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
       equal ~msg (array float_exact) (Array.make 8 expected)
         (flat (step (Nx.place metal (int64s [| 1; 2 |] pos)))))
     [

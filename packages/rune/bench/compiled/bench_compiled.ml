@@ -274,8 +274,9 @@ let launches ?(prefix = "") ~place ~sync () =
 let gpu_launches open_device =
   let device = lazy (open_device ()) in
   launches ~prefix:"jit-"
-    ~place:(fun x -> Nx.place (Nx.Placement.on [ Lazy.force device ]) x)
-    ~sync:(fun () -> Nx_device.synchronize (Lazy.force device))
+    ~place:(fun x -> Nx.place (Nx.Placement.on (Lazy.force device)) x)
+    ~sync:(fun () ->
+      Nx_device.synchronize (Nx.Device.memory (Lazy.force device)))
     ()
 
 let run_self flag =
@@ -286,13 +287,13 @@ let cuda () =
   else
     [
       Thumper.group ~id:"cuda" "cuda"
-        (gpu_launches (fun () -> Nx.Device.cuda 0));
+        (gpu_launches (fun () -> Nx.Device.v (Cuda 0)));
     ]
 
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Nx.Device.get (Nx.Device.Cuda 0)) then 0 else 1)
+      exit (if Result.is_ok (Nx.Device.get (Cuda 0)) then 0 else 1)
   | _ ->
       Thumper.run "compiled"
         ~budgets:

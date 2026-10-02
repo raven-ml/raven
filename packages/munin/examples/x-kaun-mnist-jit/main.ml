@@ -92,7 +92,7 @@ let () =
      keeps them there. *)
   let on_device =
     match Nx.Device.of_string !device with
-    | Ok ws -> Nx.Placement.on (Nx.Device.all ws)
+    | Ok ws -> Nx.Placement.on (Nx.Device.first ws)
     | Error e -> failwith e
   in
   params := Nx.Ptree.map cnn (fun _ t -> Nx.place on_device t) !params;
@@ -160,9 +160,7 @@ let () =
       Data.batches2 ~batch_size:500 (x_test, y_test)
       |> Seq.fold_left
            (fun (correct, total) (x, y) ->
-             (* The logits are read back: eager metrics compute on the host. *)
-             let logits = Nx.place Nx.Placement.host (forward params x) in
-             let acc = Metric.accuracy logits y in
+             let acc = Metric.accuracy (forward params x) y in
              let n = (Nx.shape x).(0) in
              (correct +. (acc *. float_of_int n), total + n))
            (0., 0)

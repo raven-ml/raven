@@ -136,7 +136,7 @@ let compiled devices f x =
   | None -> f x
   | Some ds ->
       Nx.place Nx.Placement.host
-        (Rune.jit' f (Nx.place (Nx.Placement.on ds) x))
+        (Rune.jit' f (Nx.place (Nx.Placement.replicated ds) x))
 
 let number j =
   match j with
@@ -228,7 +228,7 @@ let dequant ~devices fx =
       let expected = floats (mem "values" case) in
       let flushed i =
         List.exists
-          (fun d -> Nx_device.name d = "METAL")
+          (fun d -> Nx.Device.name d = "METAL")
           (Option.value devices ~default:[])
         && (scale_bytes.(i / 32) = 0 || Float.abs expected.(i) < min_normal)
       in
@@ -552,11 +552,12 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
   in
   close ~tol
     (name "cached, in chunks of 1, 7 and the rest, every position")
-    (flat logits) (flat (chunked cached));
+    (flat logits)
+    (flat (chunked cached));
   Option.iter
     (fun devices ->
       let whole = compiled_cached cfg p
-      and placement = Nx.Placement.on devices in
+      and placement = Nx.Placement.replicated devices in
       close ~tol:1e-6
         (name "one program per layer kind is the whole-model program")
         (flat (chunked whole))
@@ -644,10 +645,7 @@ let () =
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "validate.exe [--fixtures DIR] [--float-weights FILE] [--mxfp4-weights \
      FILE] [--devices LIST] [--dtype DT]";
-  let devices =
-    if !devices = "" then None
-    else Some (devices_of !devices)
-  in
+  let devices = if !devices = "" then None else Some (devices_of !devices) in
   let weights fx given =
     let repo = string (mem "repo" fx) in
     Printf.printf "%s, reference recorded from sha256 %s\n%!" repo

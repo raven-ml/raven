@@ -1616,6 +1616,14 @@ let test_cached_step_jits_once () =
   Nx.Rng.with_key (Nx.Rng.key 24) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
+  (* The pools start as storage, as the steps return them: a constant pool is
+     one element expanded, which a compiled call keys apart. *)
+  let stored =
+    Nx.Ptree.map
+      (Nx.Ptree.instantiate (module Attention.Cache))
+      (fun _ t -> Nx.copy t)
+      (cache 4)
+  in
   let decode step_fn =
     let ys, _, _ =
       List.fold_left
@@ -1623,7 +1631,7 @@ let test_cached_step_jits_once () =
           let xi = Nx.slice [ A; R (i, i + 1) ] x in
           let { x = y; index; c } = step_fn { x = xi; index; c } in
           (y :: ys, index, c))
-        ([], index_at ~pos:[| [| 0 |] |] ~slots:[| [| 3; 0; 2; 1 |] |], cache 4)
+        ([], index_at ~pos:[| [| 0 |] |] ~slots:[| [| 3; 0; 2; 1 |] |], stored)
         [ 0; 1; 2; 3 ]
     in
     Nx.concatenate ~axis:1 (List.rev ys)
@@ -1695,7 +1703,7 @@ let test_one_storage_behind_two_caches_raises () =
   let c =
     Nx.Ptree.map
       (Nx.Ptree.instantiate (module Attention.Cache))
-      (fun _ t -> Nx.place (Nx.Placement.on [ Nx.Device.cpu 1 ]) t)
+      (fun _ t -> Nx.place (Nx.Placement.on (Nx.Device.v (Cpu 1))) t)
       (cache 4)
   in
   raises_match

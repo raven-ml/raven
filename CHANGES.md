@@ -183,7 +183,6 @@ All notable changes to this project will be documented in this file.
   function, kept in the compiled function. Before, `jit` ran its function as
   plain code under a transformation. A compiled function that reads a tracked
   value through its closure raises; pass it as an argument.
-- **Breaking:** remove `Rune.compiled`. On a GPU, compile with `Rune.jit`.
 - `jit` writes `Nx.scatter` into a consumed value in place with one indexed
   store, in every mode, unless it has more repeated updates than rows: a
   key-value cache's rows from a page table take one kernel, with no kernel
@@ -221,11 +220,9 @@ All notable changes to this project will be documented in this file.
   - `value_and_grad_aux p a f` takes the structure `a` of the auxiliary value.
   - `jit` takes no `~devices`: a call runs where its arguments and captures
     are placed. `device`, `devices`, `default_device`, `jit_stats` and
-    `reset_jit_stats` go. A device is an `Nx_device.t`
-    (`Nx_metal_device.v 0`), and `Nx_device.stats` counts its transfers and
-    allocations.
-  - `Rune.compiled` is a backend: a placement with `~backend:Rune.compiled`
-    computes eager operations on a GPU value as compiled programs.
+    `reset_jit_stats` go. A device is an `Nx.Device.t`
+    (`Nx.Device.v Metal`), and `Nx_device.stats` of its memory counts its
+    transfers and allocations.
   - Gradients and tangents are fresh, contiguous values.
 - `Rune.jit` refuses `Nx.scatter ~mode:`Max` and `` `Min `` (and so
   `Nx.reduce_segments` by them), and `Rune.grad` and `Rune.jvp` refuse to
@@ -386,10 +383,10 @@ All notable changes to this project will be documented in this file.
   lane index on, so `Nx.Rng.fold_in_axis` inside it addresses the anonymous
   map around it.
 
-- `Rune.jit` compiles over arguments placed with any backend
-  (`Nx.Placement.device ~backend`): they bind as they are, a program serves
-  every backend over the same devices and layout, and the results are placed
-  with the arguments' backend. Arguments with two backends raise.
+- `Rune.jit` compiles for the memories of its arguments and captures,
+  whatever backends their devices carry, and places its results on the
+  arguments' devices. Arguments on two devices over one memory raise, naming
+  `Nx.place`.
 
 - `Rune.jvp` and `Rune.vmap` of a gradient through a `Rune.scan`, and
   `Rune.grad` of one, compile as loops under `Rune.jit`, where they unrolled
@@ -736,7 +733,7 @@ All notable changes to this project will be documented in this file.
 - Compiled `Nx.cummax` and `Nx.cummin` are NaN from the first NaN on, as
   eager ones are. They kept the running maximum or minimum past a NaN.
 - **Breaking:** Remove `Rune.to_device`. Place values with
-  `Nx.place (Nx.Placement.device (Nx_metal_device.v 0)) x`; on the host,
+  `Nx.place (Nx.Placement.on (Nx.Device.v Metal)) x`; on the host,
   `Nx.place` returns its argument where `to_device` made it contiguous.
 - A placed leaf or capture that views part of its storage (a slice, a
   transpose, a flip, a broadcast) is read in place by a compiled function on its
@@ -763,7 +760,7 @@ All notable changes to this project will be documented in this file.
   host first.
 - `RUNE_JIT_RESIDENT_BUDGET` counts every device allocation since the last
   major collection, eager results and uploads included, and a device that
-  still cannot allocate after a collection raises `Nx.Device.Out_of_memory`.
+  still cannot allocate after a collection raises `Nx_device.Out_of_memory`.
 - A compiled function whose output has no elements returns an empty tensor of
   that output's dtype and shape instead of raising "an output of the traced
   function was not scheduled to a buffer".
@@ -3037,22 +3034,48 @@ thread.
 
 ### Nx
 
-- **Breaking:** a placement holds devices only. `Nx.Placement.on ds` replaces
-  `Placement.device` and `replicated`; `Nx_backend.t` and its `make`,
-  `kernels`, `name`, `runs_on` and `equal`, `Nx_cpu.backend`,
-  `Placement.backend` and every `?backend` are gone.
-- **Breaking:** an eager operation on a GPU value raises `Invalid_argument`
-  before any work, naming `Rune.jit`, a backend's run and `Nx.place` to the
-  host. nx.cpu computes on the host and on test devices. Constants, views,
-  reads and `Nx.place` work on every device.
-- Add `Nx.Device`: `host`, `cpu`, `metal`, `cuda`, `nv`, `amd` and `gpu ()`,
-  the first GPU that opens, and the plain data `want` with `get`, `first`,
-  `all` and `of_string` (`"CUDA:0,CUDA:1"`). nx links the vendor device
-  runtimes.
+- `Nx_device.Driver.device` raises `Invalid_argument` on a name already made
+  on its machine, so two callers cannot make two memories that print alike,
+  such as a second `"CPU:1"`.
+- `Nx_cuda_device` numbers GPUs in PCI bus order, read with
+  `cuDeviceGetPCIBusId`, whatever `CUDA_DEVICE_ORDER` says, so `CUDA:i` is
+  the GPU `nvidia-smi` numbers `i` when the driver sees every GPU.
+- NVIDIA and AMD GPUs taken from their kernel driver (`interface:Pci`) are
+  named `NV-PCI:i` and `AMD-PCI:i`, so a name says which interface reaches
+  the GPU.
+- **Breaking:** a device (`Nx.Device.t`) is a memory and the backend that
+  computes on it eagerly, if any. `Nx.Device.host` and the test devices
+  `Nx.Device.v (Cpu k)` compute with nx.cpu; a GPU computes eagerly with
+  nothing until `Nx.Device.with_backend k d` pairs it with a backend `k`.
+  Placing a value between devices over one memory is a view, so it changes
+  only who computes. `Nx.Device.of_memory` and `memory` cross to the
+  `Nx_device.t` nx.device opens.
+- Add `Nx.Device` wants, plain data that names a device: `Host`, `Cpu k`,
+  `Gpu`, `Metal`, `Cuda i`, `Nv i`, `Amd i`, `Nv_pci i` and `Amd_pci i`.
+  `Nx.Device.v`, `get`, `first` and `all` open them now, `of_string` reads
+  them from a command line (`"gpu,cpu"`) and `pp_want` prints them back.
+  `Gpu` and `Nx.Device.gpu ()` are the Metal GPU of a Mac, and elsewhere the
+  first GPU a kernel driver opens, CUDA's before nx's own; only `Nv_pci` and
+  `Amd_pci` take a GPU from its kernel driver. Opening a device twice gives
+  the same value. nx links the vendor device runtimes.
+- **Breaking:** who computes an eager operation is read off its operands: the
+  backend of their devices computes, in every domain and under every
+  transformation, and a host operand joins the placed ones for the call. A
+  device without a backend raises `Invalid_argument` before any work, naming
+  `Rune.jit`, `Nx.Device.with_backend` and `Nx.Placement.host`, and a kernel
+  a backend refuses raises `Invalid_argument` naming the backend, the device,
+  the operation and the reason; nothing falls through to another backend.
+  Operands on two devices over one memory raise, naming `Nx.place`.
+- **Breaking:** `Nx.Placement.on d` is one device, `Nx.Placement.replicated
+  ds` a full copy on each, and a placement names each memory once.
+- **Breaking:** a constant (`Nx.full`, `zeros`, `ones`, `scalar` and their
+  `_like` forms) is one element on each device of where it is made, the
+  host's included, expanded to its shape as a view: it needs no kernel on any
+  device, and a compiled call folds it. `Nx.copy` gives it storage of its
+  own, which a compiled call can then lend to a result.
+- Operations and `Nx.place` raise `Nx_device.Out_of_memory` when a device
+  cannot allocate their result.
 - Add `Nx.Ptree.place`, which places every tensor of a structure.
-- Add `Nx.Op.kernels`, which runs an `Nx_backend.S` backend for the eager
-  operations on the devices it covers; a backend library's `run` wraps a
-  program in it.
 - The host's thread pool, which runs the blocks of `Nx_device.Program.call`
   and nx.cpu's parallel kernels, keeps a thread spinning for up to 100 us after
   the last job it took part in, instead of parking it after each. A compiled
@@ -3216,11 +3239,6 @@ thread.
   and `Program.load` collects unreachable programs and tries again, as
   `Buffer.create` does. AMD and NV refuse code larger than the memory the host
   can map at once, with an `Error` that names Resizable BAR.
-- **Breaking:** a placed value computes on its devices. `Nx_cpu.backend` runs
-  where the host does the work (`Nx_device.runs_on_host`): a value on a GPU
-  computes with `Rune.compiled`. Placements accept a backend that does not
-  run on their devices, and the first operation there raises
-  `Nx_backend.Refused`.
 - A complete `Nx.qr` of an m x 0 matrix and an `Nx.svd` with
   `~full_matrices:true` of a matrix with an empty dimension return the identity
   as their square orthogonal factors (Q, and U or Vt). They returned all zeros,
@@ -3359,7 +3377,7 @@ thread.
   it had stored.
 - `Nx_device.runs_on_host` says whether a device's work is the host's: the
   host, or a device over host memory that loads no programs, such as a test
-  device. `Nx_cpu.backend` runs on exactly those, so no longer on Metal.
+  device. nx.cpu computes on exactly those, so no longer on Metal.
 - `Nx_io.encode_png` takes `?dpi`, written as a `pHYs` chunk so that viewers
   and printers show the image at its physical size, and `?srgb`, an `sRGB`
   chunk stating that the samples are sRGB. Without them the file is the same
@@ -3444,20 +3462,6 @@ thread.
   paths, which code outside nx could only receive from a walk. A path can now
   be written literally and compared with the one a walk gives, as in
   `Path.equal p (Path.v [ Field "out"; Field "w" ])`.
-- **Breaking:** a device is an `Nx_device.t`, the runtime's own, and the
-  `Nx.Device` module is gone. Placements take and give `Nx_device.t`. Each
-  removed value and its replacement:
-  - `Nx.Device.t`, `host`, `name`, `equal` are `Nx_device.t`, `host`, `name`,
-    `equal`; `Nx.Device.compare` and `pp` are the new `Nx_device.compare` and
-    `Nx_device.pp`.
-  - `Nx.Device.of_runtime d` and `Nx.Device.runtime d` are `d`, and
-    `Nx.Device.of_runtime Nx_device.disk` is `Nx_device.disk`.
-  - `Nx.Device.Out_of_memory` is `Nx_device.Out_of_memory`, which operations
-    and `Nx.place` now raise as the runtime does.
-  - `Nx.Placement.replicated` and `sharded` no longer refuse devices "whose
-    memories differ": every device's values are runtime buffers.
-
-  Code that names a device now depends on the `nx.device` library.
 - **Breaking:** `Nx.correlate` and `Nx.convolve` change which values of the
   full correlation `` `Same `` and `` `Valid `` keep, as their documentation now
   states. With an even kernel of size `k`, `` `Same `` correlates each element
@@ -3642,17 +3646,14 @@ thread.
   is built from: a few lines describe test devices over the host's memory.
 - **Breaking:** a backend is kernels over arrays: `Nx_backend.S` has one
   function per operation, which writes a destination array that nx
-  allocated, and `Nx_backend.make` packs it. `Nx_cpu.backend` is nx.cpu's and
-  every placement's default; `Nx.Backend`, `Nx_array.Backend_intf` and a
-  backend's `place` and `to_host` are gone, and nx places values itself.
+  allocated. `Nx.Backend`, `Nx_array.Backend_intf` and a backend's `place`
+  and `to_host` are gone, and nx places values itself.
   `Nx.Linalg_error` is `Nx_backend.Linalg_error`, `Nx.Backend.Refused` is
   `Nx_backend.Refused`, which `Nx.place` no longer raises, and nx.cpu's
   allocating functions (`Nx_cpu.add`, `full`, `from_host`, `to_host`, ...)
-  are kernels that write `~dst`. A placement's backend must run on the host,
-  where nx computes on every placement's values.
-- `Nx.zeros`, `Nx.ones`, `Nx.full` and `Nx.empty` on the host fill one
-  buffer, and `Nx_array.Elements.fill` writes the element's bytes without a
-  bigarray view: `Nx.zeros` of one element takes 250 ns instead of 335.
+  are kernels that write `~dst`.
+- `Nx_array.Elements.fill` writes the element's bytes without a bigarray
+  view.
 - **Breaking (effect handlers):** `E_view` and `E_placement` are gone: a
   value's shape and placement are its own, read with no interpreter involved,
   and `Nx_effect.traced` takes the placement of the value it makes.
@@ -3723,13 +3724,13 @@ thread.
 - `Nx_io.save_safetensors` writes each tensor into the file from its own
   storage, wherever it lives: a device writes its memory to the file, and a
   value on the disk is copied from its file.
-- A value on the disk (`Nx.Device.of_runtime Nx_device.disk`) takes part in
+- A value on the disk (`Nx.Device.of_memory Nx_device.disk`) takes part in
   an operation as a host value: the operation reads it through a mapping of
   its file, or a copy when its bytes are not aligned to its elements, and
   computes on the host. A constant made beside it is the host's, and a
   movement of it stays on the disk and reads nothing. A placement onto the
   disk raises.
-- `Nx.place` onto an `Nx.Device.of_runtime` device borrows a value on the disk
+- `Nx.place` onto a device borrows a value on the disk
   when the device's memory is the host's, and otherwise copies each device's
   window straight from the value's buffer on another such device when the
   window is a contiguous run of it. It read the whole value to the host first.
@@ -3897,17 +3898,8 @@ thread.
   placements, and `Nx.place` asks the target placement's backend. A placed
   value is read by the backend that made its storage, so a backend can hold
   values in storage of its own and copy them in and out.
-- `Nx.Backend`: a placement carries the backend that computes on its values,
-  a value `(module Nx.Backend.S)`. `Nx.Backend.host` is nx's kernels, the
-  default everywhere; `Nx.Backend.Host` is its module, to include in a backend
-  that changes some operations; a backend refuses an operation by raising
-  `Nx.Backend.Refused`. `Nx.Placement.device`, `replicated` and `sharded` take
-  `?backend` and raise when it does not run on a device, and
-  `Nx.Placement.backend` returns it. Operands whose placements have different
-  backends raise, naming both, and `Nx.place` between two placements that
-  differ only in backend makes a view.
-- A placement may mix `Nx.Device.host` with `Nx.Device.of_runtime` devices,
-  such as `Nx.Placement.replicated [ Nx.Device.host; d ]`: the host keeps its
+- A placement may mix `Nx.Device.host` with other devices, such as
+  `Nx.Placement.replicated [ Nx.Device.host; d ]`: the host keeps its
   placed values in the same runtime buffers. It raised `Invalid_argument`.
 - **Breaking (backends):** `Nx_core.Backend_intf.S` no longer declares `view`,
   `dtype` and `context`. They describe a value, which carries them, so a
@@ -3991,10 +3983,10 @@ thread.
 - `Nx_io.save_safetensors` no longer holds a copy of the whole file in memory:
   it writes each tensor's storage to the file as it is.
 - Values on devices keep a float's bits. A one-element result on a device, and
-  a view of a value on a runtime device (`Nx.Device.of_runtime`) read back
+  a view of a value on a runtime device read back
   through a transpose, flip or other strided layout, passed their elements
   through OCaml floats, which quiet a signalling NaN.
-- New `nx.cuda.device` library: `Nx_cuda_device.v 0` opens an NVIDIA GPU as
+- New `nx.cuda.device` library: `Nx_cuda_device.get 0` opens an NVIDIA GPU as
   an `Nx_device.t` named `CUDA` (`CUDA:1`, ... for the others) on its primary
   context, which it makes current only during its own driver calls, so other
   CUDA libraries keep theirs. Its buffers are GPU memory, copied on the
@@ -4042,16 +4034,11 @@ thread.
   that takes it, and every copy or bigarray view of memory it can reach,
   raises its first error at once, while other devices stop waiting for its
   work.
-- New `nx.metal.device` library (macOS): `Nx_metal_device.v 0` opens the
+- New `nx.metal.device` library (macOS): `Nx_metal_device.get 0` opens the
   Apple GPU as an `Nx_device.t`. Its buffers are memory the GPU shares with
   the host, kept resident through a residency set where Metal has one. It
   borrows host memory, loads metallib functions, and waits on its shared
   event.
-- `Nx.Device.of_runtime` makes an `Nx_device.t` a placement target:
-  `Nx.place (Nx.Placement.device (Nx.Device.of_runtime (Nx_metal_device.v 0))) x`
-  holds `x` in Metal memory. Operations on such values compute on the host
-  and place their results back. A device that cannot allocate raises
-  `Nx.Device.Out_of_memory`.
 - `Nx.sigmoid` of a large negative number is the subnormal its exact value
   rounds to. It computed `1 / (1 + exp(-x))`, whose `exp` overflows below
   about -88.7 at float32 and -709.8 at float64, and returned 0 there.
@@ -4315,9 +4302,6 @@ thread.
 - `Nx.repeat` along an axis copies once instead of concatenating a slice per
   index: 1024x256 twice along axis 0 allocates 840 words, where it allocated
   313,496.
-- `Nx.zeros`, `ones`, `full` and their `_like` forms, made outside a compiled
-  function on a device, return a value with storage of its own. They were a
-  broadcast of one held scalar, which a compiled call cannot consume.
 - Add `Nx.Ptree`, structures of tensors. A structure is a type `'a t` with one
   function, `walk`, that visits its parts with a `Walk` cursor: `leaf` for the
   parameter's positions, `tensor` for tensors of a fixed type, `int` and `case`

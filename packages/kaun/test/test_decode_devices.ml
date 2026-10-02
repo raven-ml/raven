@@ -99,7 +99,8 @@ let parallel m =
   in
   {
     m with
-    tok = { Embedding.table = Nx.place (Nx.Placement.on cpus) m.tok.table };
+    tok =
+      { Embedding.table = Nx.place (Nx.Placement.replicated cpus) m.tok.table };
     blocks = List.map block m.blocks;
   }
 

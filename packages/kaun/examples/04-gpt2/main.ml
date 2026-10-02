@@ -52,8 +52,7 @@ let load_tokenizer () =
   | Error e -> failwith ("tokenizer: " ^ e)
 
 (* The placement that holds every leaf and cache pool whole on [device]. *)
-let whole_on device =
-  Option.map (fun d _ ~axis:_ -> Nx.Placement.on [ d ]) device
+let whole_on device = Option.map (fun d _ ~axis:_ -> Nx.Placement.on d) device
 
 (* Greedy decoding with a key-value cache. One step function serves the whole
    generation: it reads the tokens its index places, consumes the caches, fills
@@ -127,34 +126,47 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
   tokens
 
 (* The decode contract's law on this model and these weights: the prompt fed
-   through the caches in chunks gives the logits it gives whole. *)
-let check cfg params dt ids =
+   through the caches in chunks gives the logits it gives whole. With [device],
+   the law is compiled for it, where the weights are. *)
+let check ?device cfg params dt ids =
   let n = Array.length ids in
-  let tokens = Nx.create Nx.int64 [| 1; n |] ids in
-  let whole = Gpt2.logits cfg params (Gpt2.hidden cfg params tokens) in
-  let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
-  let _, hs, _ =
-    List.fold_left
-      (fun (at, hs, caches) len ->
-        let len = min len (n - at) in
-        if len = 0 then (at, hs, caches)
-        else
-          let pos =
-            Nx.create Nx.int64 [| 1; len |]
-              (Array.init len (fun i -> Int64.of_int (at + i)))
-          in
-          let h, caches =
-            Gpt2.cached cfg params caches
-              (Kaun.Cache_index.make ~pos ~table:slots ())
-              (Nx.slice [ A; R (at, at + len) ] tokens)
-          in
-          (at + len, h :: hs, caches))
-      (0, [], Gpt2.cache cfg ~slots:n dt)
-      [ 1; 7; n ]
+  (* The largest magnitude of the whole prompt's logits, and the largest
+     difference of the chunked prompt's from them. *)
+  let errors tokens =
+    let whole = Gpt2.logits cfg params (Gpt2.hidden cfg params tokens) in
+    let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
+    let _, hs, _ =
+      List.fold_left
+        (fun (at, hs, caches) len ->
+          let len = min len (n - at) in
+          if len = 0 then (at, hs, caches)
+          else
+            let pos =
+              Nx.create Nx.int64 [| 1; len |]
+                (Array.init len (fun i -> Int64.of_int (at + i)))
+            in
+            let h, caches =
+              Gpt2.cached cfg params caches
+                (Kaun.Cache_index.make ~pos ~table:slots ())
+                (Nx.slice [ A; R (at, at + len) ] tokens)
+            in
+            (at + len, h :: hs, caches))
+        (0, [], Gpt2.cache cfg ~slots:n dt)
+        [ 1; 7; n ]
+    in
+    let chunked =
+      Gpt2.logits cfg params (Nx.concatenate ~axis:1 (List.rev hs))
+    in
+    (Nx.max (Nx.abs whole), Nx.max (Nx.abs (Nx.sub whole chunked)))
   in
-  let chunked = Gpt2.logits cfg params (Nx.concatenate ~axis:1 (List.rev hs)) in
-  let scale = Nx.item [] (Nx.max (Nx.abs whole)) in
-  let worst = Nx.item [] (Nx.max (Nx.abs (Nx.sub whole chunked))) /. scale in
+  let errors =
+    match device with
+    | None -> errors
+    | Some _ ->
+        Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) errors
+  in
+  let scale, diff = errors (Nx.create Nx.int64 [| 1; n |] ids) in
+  let worst = Nx.item [] diff /. Nx.item [] scale in
   Printf.printf
     "hidden against cached in chunks of 1, 7 and the rest: worst relative \
      error %.1e\n\
@@ -162,9 +174,9 @@ let check cfg params dt ids =
     worst;
   if not (worst < 1e-4) then exit 1
 
-(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
-let devices_of s =
-  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+(* The first device [s] names that opens, as in ["CUDA:0,METAL"]. *)
+let device_of s =
+  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string s)
 
 let () =
   let prompt = ref default_prompt in
@@ -198,12 +210,12 @@ let () =
   let (Gpt2.Dtype dt) =
     if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
   in
-  let device = if !jit = "" then None else Some (List.hd (devices_of !jit)) in
+  let device = if !jit = "" then None else Some (device_of !jit) in
   let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
   if !check_only then begin
-    check cfg params dt ids;
+    check ?device cfg params dt ids;
     exit 0
   end;
   let bytes =

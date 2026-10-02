@@ -261,8 +261,7 @@ let gpt_oss_params placement =
    runs the [prompt] tokens at positions 0 onwards. Each call takes the caches
    of the one before and reads its token back on the host. *)
 let gpt_oss_step kind =
-  let device = Nx_cuda_device.v 0 in
-  let placement = Nx.Placement.device device in
+  let placement = Nx.Placement.on (Nx.Device.v (Cuda 0)) in
   let step = Layer_loop.greedy ~placement gpt_oss (gpt_oss_params placement) in
   let caches =
     ref
@@ -327,7 +326,7 @@ let () =
   | [ _; "--warm-gpt-oss" ] ->
       List.iter (fun kind -> (gpt_oss_step kind) ()) gpt_oss_kinds
   | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
+      exit (if Result.is_ok (Nx.Device.get (Cuda 0)) then 0 else 1)
   | argv ->
       let measures =
         match argv with

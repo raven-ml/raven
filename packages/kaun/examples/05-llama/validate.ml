@@ -102,9 +102,12 @@ let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
 let validate (type b) ~device ~tol ~exact fx cfg
     (p : (float, b) Nx.t Llama.params) (dt : (float, b) Nx.dtype) =
-  (* With [device], the parameters are placed there, so the compiled
-     functions run there too. *)
-  let compiled f x = if device = None then f x else Rune.jit' f x in
+  (* With [device], the parameters are placed there, so the compiled functions
+     run there too, and their results are read back to the host, where the
+     checks compute. *)
+  let compiled f x =
+    if device = None then f x else Nx.place Nx.Placement.host (Rune.jit' f x)
+  in
   let to32 t = Nx.cast Nx.float32 t in
   let tokens = ints (mem "ids" fx) in
   let n = Array.length tokens in
@@ -174,35 +177,32 @@ let validate (type b) ~device ~tol ~exact fx cfg
     blocks;
   if not !ok then Printf.printf "first disagreement: block %d\n%!" !worst_block;
   (* The decode contract on real weights: chunks through the caches. *)
-  let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
-  let _, hs, _ =
-    List.fold_left
-      (fun (at, hs, caches) len ->
-        let len = min len (n - at) in
-        if len = 0 then (at, hs, caches)
-        else
-          let pos =
-            Nx.create Nx.int64 [| 1; len |]
-              (Array.init len (fun i -> Int64.of_int (at + i)))
-          in
-          let h, caches =
-            Llama.cached cfg p caches
-              (Cache_index.make ~pos ~table:slots ())
-              (Nx.slice [ A; R (at, at + len) ] ids)
-          in
-          (at + len, h :: hs, caches))
-      (0, [], Llama.cache cfg ~slots:n dt)
-      [ 1; 7; n ]
-  in
-  let chunked =
+  let chunked ids =
+    let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
+    let _, hs, _ =
+      List.fold_left
+        (fun (at, hs, caches) len ->
+          let len = min len (n - at) in
+          if len = 0 then (at, hs, caches)
+          else
+            let pos =
+              Nx.create Nx.int64 [| 1; len |]
+                (Array.init len (fun i -> Int64.of_int (at + i)))
+            in
+            let h, caches =
+              Llama.cached cfg p caches
+                (Cache_index.make ~pos ~table:slots ())
+                (Nx.slice [ A; R (at, at + len) ] ids)
+            in
+            (at + len, h :: hs, caches))
+        (0, [], Llama.cache cfg ~slots:n dt)
+        [ 1; 7; n ]
+    in
     to32 (Llama.logits cfg p (Nx.concatenate ~axis:1 (List.rev hs)))
   in
-  let eager_logits =
-    if device = None then logits
-    else to32 (Llama.logits cfg p (Llama.hidden cfg p ids))
-  in
   close ~tol "cached, in chunks of 1, 7 and the rest, every position"
-    (flat eager_logits) (flat chunked);
+    (flat logits)
+    (flat (compiled chunked ids));
   (* Two prompts of different lengths in one left-padded batch. *)
   let short = ints (mem "short_ids" fx) in
   let m = Array.length short in
@@ -226,9 +226,9 @@ let validate (type b) ~device ~tol ~exact fx cfg
     (floats (mem "short_top_values" fx))
     (row 1 "short_top_ids")
 
-(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
-let devices_of s =
-  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+(* The first device [s] names that opens, as in ["CUDA:0,METAL"]. *)
+let device_of s =
+  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string s)
 
 let () =
   let weights = ref "" and config = ref "" in
@@ -251,10 +251,8 @@ let () =
   let repo = string (mem "repo" fx) in
   Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
     (string (mem "weights_sha256" fx));
-  let device = if !jit = "" then None else Some (List.hd (devices_of !jit)) in
-  let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.on [ d ]) device
-  in
+  let device = if !jit = "" then None else Some (device_of !jit) in
+  let placement = Option.map (fun d _ ~axis:_ -> Nx.Placement.on d) device in
   let (Llama.Dtype dt) = Llama.dtype_of_string !dtype in
   let cfg, p =
     if !weights = "" then Llama.from_pretrained ?placement ~repo_id:repo dt

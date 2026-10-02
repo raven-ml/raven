@@ -351,6 +351,10 @@ let emit_metrics buf ~device ~steps ~n_params ~initial_loss records =
     records;
   Buffer.add_string buf "\n ]\n}\n"
 
+(* The first device [s] names that opens, as in ["CUDA:0,METAL"]. *)
+let device_of s =
+  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string s)
+
 (* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
 let devices_of s =
   Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
@@ -447,7 +451,7 @@ let () =
       (* The batch, the same every step, is placed on the device once, so the
          step runs there; the parameters start on the host and stay on the
          device after the first step. *)
-      let on_device = Nx.Placement.on (devices_of !device) in
+      let on_device = Nx.Placement.on (device_of !device) in
       let inputs = Nx.place on_device inputs
       and targets = Nx.place on_device targets in
       if !compute_dtype = "float16" then begin
@@ -477,7 +481,7 @@ let () =
       if !compute_dtype = "float16" then
         failwith "--compute-dtype float16 does not support --devices";
       let devs = devices_of !devices in
-      device := String.concat "," (List.map Nx_device.name devs);
+      device := String.concat "," (List.map Nx.Device.name devs);
       (* The batch, the same every step, is split on axis 0 once; the key and
          the parameters start on the host and enter as a copy on each device. *)
       let split = Nx.Placement.sharded ~axis:0 devs in

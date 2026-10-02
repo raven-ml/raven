@@ -233,13 +233,13 @@ let auc_tests =
 (* Metrics compute on the host: a placed input is read once, and nothing is
    placed on its device. *)
 let placed_tests =
-  let on_device x = Nx.place (Nx.Placement.on [ Nx.Device.cpu 1 ]) x in
+  let device = Nx.Device.v (Cpu 1) in
+  let on_device x = Nx.place (Nx.Placement.on device) x in
+  let stats () = Nx_device.stats (Nx.Device.memory device) in
   let uploads f =
-    let before = Nx_device.stats (Nx.Device.cpu 1) in
+    let before = stats () in
     let r = f () in
-    ( r,
-      Nx_device.Stats.(
-        bytes_in (diff before (Nx_device.stats (Nx.Device.cpu 1)))) )
+    (r, Nx_device.Stats.(bytes_in (diff before (stats ()))))
   in
   let preds = predicting 3 [| 0; 2; 1; 2 |]
   and ls = labels [| 0L; 2L; 2L; 2L |] in

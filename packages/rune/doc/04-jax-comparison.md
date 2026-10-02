@@ -335,7 +335,7 @@ let () =
 | JAX feature | Status in rune |
 | --- | --- |
 | `jax.jit` | `jit s f` compiles to fused kernels for the signature `s`, cached per key: each tensor's path, dtype and shape, and the data the structures report (a window, a list's length). It compiles `scan` as a loop and rejects a branch on a traced value. |
-| GPU/TPU, `jax.device_put` | `Nx.place (Nx.Placement.on [ Nx.Device.gpu () ])` holds a tensor's bytes on a device, and a compiled function over it runs there; a captured placed value is read with no upload. An eager operation on a GPU value raises, naming `Rune.jit`. |
+| GPU/TPU, `jax.device_put` | `Nx.place (Nx.Placement.on (Nx.Device.gpu ()))` holds a tensor's bytes on a device, and a compiled function over it runs there; a captured placed value is read with no upload. An eager operation on a GPU value raises, naming `Rune.jit`. |
 | `jax.pmap` / distributed | `jit` over values placed on several devices, as `jax.jit` over sharded inputs: the function sees whole values and a reduction over a split axis is an allreduce. A per-device computation is `vmap` over an axis split one slice per device; there is no `shard_map`. |
 | Full op coverage under AD | Every operation has a forward rule and a batching rule. The tangents of a complete SVD of a non-square matrix and of a complete QR factorisation of a tall one raise; `detach` inputs where derivatives should not flow. |
 | `jax.random` keys | Implicit scoped RNG instead; see §11. |

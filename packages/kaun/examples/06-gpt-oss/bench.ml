@@ -45,9 +45,9 @@ let seconds f =
   let v = f () in
   (v, Unix.gettimeofday () -. t0)
 
-(* The devices [s] names, as in ["CUDA:0,CUDA:1"], opened. *)
-let devices_of s =
-  Result.fold ~ok:Nx.Device.all ~error:failwith (Nx.Device.of_string s)
+(* The first device [s] names that opens, as in ["CUDA:0,METAL"]. *)
+let device_of s =
+  Result.fold ~ok:Nx.Device.first ~error:failwith (Nx.Device.of_string s)
 
 let () =
   let jit = ref "METAL" in
@@ -78,14 +78,14 @@ let () =
         })
   in
   Printf.printf "random weights built in %.1f s\n%!" building;
-  let device = List.hd (devices_of !jit) in
+  let device = device_of !jit in
   let f =
     Rune.jit' (fun x ->
         Moe.apply ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)
   in
   let run () =
     let x =
-      Nx.place (Nx.Placement.on [ device ])
+      Nx.place (Nx.Placement.on device)
         (random_floats ~scale:1.0 [| !tokens; width |])
     in
     let y, t = seconds (fun () -> Nx.to_array (f x)) in
@@ -94,10 +94,11 @@ let () =
   in
   Printf.printf "first call (trace, compile, upload, run): %.2f s\n%!" (run ());
   Printf.printf "second call: %.1f ms\n%!" (1e3 *. run ());
-  let before = Nx_device.stats device in
+  let memory = Nx.Device.memory device in
+  let before = Nx_device.stats memory in
   let times = Array.init !steps (fun _ -> run ()) in
   Array.sort compare times;
-  let stats = Nx_device.Stats.diff before (Nx_device.stats device) in
+  let stats = Nx_device.Stats.diff before (Nx_device.stats memory) in
   Printf.printf
     "%s, %d tokens per call, %d calls: min %.1f ms, median %.1f ms, max %.1f ms\n"
     !jit !tokens !steps

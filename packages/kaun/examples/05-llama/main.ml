@@ -19,7 +19,7 @@ open Kaun
    whole there. *)
 let parallel ds role ~axis =
   match role with
-  | Llama.Whole -> Nx.Placement.on ds
+  | Llama.Whole -> Nx.Placement.replicated ds
   | Column | Row | Kv_heads -> Nx.Placement.sharded ~axis ds
 
 (* The sampling parameters are tensors, so a compiled step reads them as
@@ -159,10 +159,7 @@ let () =
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
-  let devices =
-    if !devices = "" then None
-    else Some (devices_of !devices)
-  in
+  let devices = if !devices = "" then None else Some (devices_of !devices) in
   (* At the checkpoint's own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =
     if !dtype = "" then Llama.stored_dtype ckpt

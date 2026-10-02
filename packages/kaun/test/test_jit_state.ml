@@ -21,7 +21,8 @@
 open Windtrap
 open Kaun
 
-let rows = Nx.Placement.sharded ~axis:0 [ Nx.Device.cpu 1; Nx.Device.cpu 2 ]
+let rows =
+  Nx.Placement.sharded ~axis:0 [ Nx.Device.v (Cpu 1); Nx.Device.v (Cpu 2) ]
 
 let batch = 8
 let inputs = 8
@@ -140,9 +141,7 @@ let check_trajectory ~msg eps (a : (float * model) array)
 let test_jit_matches_eager () =
   let eager = run_traj ~step0:train_step steps (init ()) in
   let compiled =
-    run_traj
-      ~step0:(Rune.jit step_signature train_step)
-      steps (init ())
+    run_traj ~step0:(Rune.jit step_signature train_step) steps (init ())
   in
   check_trajectory ~msg:"jit adam" 1e-6 eager compiled
 
@@ -171,9 +170,7 @@ let test_state_advances_across_compiled_calls () =
 
 let test_split_batch_matches_jit () =
   let jit =
-    run_traj
-      ~step0:(Rune.jit step_signature train_step)
-      steps (init ())
+    run_traj ~step0:(Rune.jit step_signature train_step) steps (init ())
   in
   (* The state enters from the host as a copy on each device, the batch split on
      axis 0. *)
@@ -219,9 +216,7 @@ let run_lbfgs ~step0 n s0 =
 let test_lbfgs_jit_matches_eager () =
   let eager, _ = run_lbfgs ~step0:lbfgs_step steps (lbfgs_init ()) in
   let compiled, st =
-    run_lbfgs
-      ~step0:(Rune.jit lbfgs_signature lbfgs_step)
-      steps (lbfgs_init ())
+    run_lbfgs ~step0:(Rune.jit lbfgs_signature lbfgs_step) steps (lbfgs_init ())
   in
   check_trajectory ~msg:"jit lbfgs" 1e-5 eager compiled;
   is_true ~msg:"the loss decreases" (fst eager.(steps - 1) < fst eager.(0));

@@ -48,7 +48,7 @@ type role = Whole | Column | Row | Experts | Kv_heads
 let expert_parallel ds role ~axis =
   match role with
   | Experts -> Nx.Placement.sharded ~axis ds
-  | Whole | Column | Row | Kv_heads -> Nx.Placement.on ds
+  | Whole | Column | Row | Kv_heads -> Nx.Placement.replicated ds
 
 (* Structures *)
 

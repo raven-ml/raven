@@ -30,8 +30,8 @@
    compiled, so the profile shows what that costs.
 
    Usage: main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--count N]
-   [--profile FILE] [--prompt TEXT [--system TEXT]
-   [--reasoning low|medium|high] [--show-analysis]]. *)
+   [--profile FILE] [--prompt TEXT [--system TEXT] [--reasoning low|medium|high]
+   [--show-analysis]]. *)
 
 open Kaun
 
@@ -51,8 +51,8 @@ let fixed_prompt =
     2359L;
   |]
 
-(* [profiled file f] is [f ()]. Under [Some file], it writes the profile of
-   [f ()] to [file]. *)
+(* [profiled file f] is [f ()]. Under [Some file], it writes the profile of [f
+   ()] to [file]. *)
 let profiled file f =
   match file with
   | None -> f ()
@@ -68,7 +68,7 @@ let profiled file f =
    With [devices], the step compiles for them and the caches are placed there as
    the parameters are. Under [profile], the prompt's call is profiled. *)
 let generate ?devices ?profile cfg params dt ~log ~count ~on_token prompt =
-  let placement = Option.map Nx.Placement.on devices in
+  let placement = Option.map Nx.Placement.replicated devices in
   let step = Layer_loop.greedy ?placement cfg params in
   let timed caches index ids =
     let t0 = Unix.gettimeofday () in
@@ -191,9 +191,7 @@ let () =
     if !dtype = "" then Gpt_oss.stored_dtype ckpt
     else Gpt_oss.dtype_of_string !dtype
   in
-  let devices =
-    if !devices = "" then None else Some (devices_of !devices)
-  in
+  let devices = if !devices = "" then None else Some (devices_of !devices) in
   let count default = if !count > 0 then !count else default in
   let profile = if !profile = "" then None else Some !profile in
   let log = if !prompt = "" then stdout else stderr in
@@ -224,8 +222,7 @@ let () =
     in
     let on_token = printer harmony ~show_analysis:!show_analysis in
     let out =
-      generate ?devices ?profile cfg params dt ~log ~count:(count 256)
-        ~on_token
+      generate ?devices ?profile cfg params dt ~log ~count:(count 256) ~on_token
         (Array.map Int64.of_int ids)
     in
     print_newline ();

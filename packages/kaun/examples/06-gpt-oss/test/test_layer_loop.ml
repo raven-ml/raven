@@ -5,7 +5,8 @@
 
 (* The layer loop at gpt-oss's depth, on small random weights placed on CPU:1, a
    device with storage of its own: each block program reads its layer's weights
-   and the cache index and writes the layer's cache in the cache's own storage. *)
+   and the cache index and writes the layer's cache in the cache's own
+   storage. *)
 
 open Windtrap
 open Kaun
@@ -32,13 +33,8 @@ let cfg =
     tied = false;
   }
 
-(* A test device over the host's memory, which the host addresses as it is. *)
-let cpu1_device =
-  Nx_device.Driver.device ~name:"CPU:1" ~arch:"test" ~budget:max_int
-    (Host_visible
-       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
-
-let cpu1 = Nx.Placement.on [ cpu1_device ]
+let cpu1_device = Nx.Device.v (Cpu 1)
+let cpu1 = Nx.Placement.on cpu1_device
 
 let params () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
@@ -121,9 +117,9 @@ let test_blocks_read_weights_and_reuse_caches () =
       Nx.Ptree.fold Cache_index.ptree (fun _ t n -> n + Nx.nbytes t) !index 0
     in
     let before = addresses !caches in
-    let s0 = Nx_device.stats cpu1_device in
+    let s0 = Nx_device.stats (Nx.Device.memory cpu1_device) in
     let x', caches' = cached !caches !index token in
-    let s1 = Nx_device.stats cpu1_device in
+    let s1 = Nx_device.stats (Nx.Device.memory cpu1_device) in
     equal
       ~msg:(msg ^ ": every pool is written in its own storage")
       (list nativeint) before (addresses caches');
