@@ -7,7 +7,9 @@
    token out, through key-value caches, with the state consumed and the sampled
    token read back on the host as a generate loop does. The stack is built here
    from kaun layers with zero weights: the step's cost does not depend on their
-   values, and kaun ships no model to depend on.
+   values, and kaun ships no model to depend on. Each weight, and the position
+   the step reads, is copied to storage of its own, as a loaded model's are: a
+   constant is one element seen at every index, which a compiled call folds.
 
    The cache lengths show how the step scales with the cache it carries, not
    only with the single position it writes.
@@ -46,16 +48,22 @@ type model = {
 }
 
 let model () =
-  let zeros = Init.zeros in
+  let zeros ~fan_in ~fan_out dtype shape =
+    Nx.copy (Init.zeros ~fan_in ~fan_out dtype shape)
+  in
+  let norm () =
+    let { Layer_norm.gamma; beta } = Layer_norm.init ~dim:embd in
+    { Layer_norm.gamma = Nx.copy gamma; beta = Nx.copy beta }
+  in
   let linear ~inputs ~outputs =
     Linear.make ~w_init:zeros ~bias_init:zeros ~inputs ~outputs Nx.float32
   in
   let block () =
     {
-      ln1 = Layer_norm.init ~dim:embd;
+      ln1 = norm ();
       attn =
         Attention.make ~w_init:zeros ~bias_init:zeros ~embed_dim:embd Nx.float32;
-      ln2 = Layer_norm.init ~dim:embd;
+      ln2 = norm ();
       fc = linear ~inputs:embd ~outputs:inner;
       proj = linear ~inputs:inner ~outputs:embd;
     }
@@ -64,7 +72,7 @@ let model () =
     wte = Embedding.make ~init:zeros ~vocab ~dim:embd Nx.float32;
     wpe = Embedding.make ~init:zeros ~vocab:positions ~dim:embd Nx.float32;
     blocks = List.init layers (fun _ -> block ());
-    ln_f = Layer_norm.init ~dim:embd;
+    ln_f = norm ();
   }
 
 let cached m caches index ids =
@@ -123,7 +131,7 @@ let decoder params ~len =
          (Cache_index.rows ~context:len [| 8 |])
          (cache ~slots:len))
   in
-  let at = Nx.full Nx.int64 [| 1; 1 |] (Int64.of_int (len / 2)) in
+  let at = Nx.create Nx.int64 [| 1; 1 |] [| Int64.of_int (len / 2) |] in
   let middle =
     Cache_index.make ~pos:at
       ~table:(Nx.reshape [| 1; len |] (Nx.arange Nx.int64 0 len 1))
