@@ -3,8 +3,8 @@
 
 Run from the repository root:
 
-  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/device/amd/gen/gen.py
-  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/device/amd/gen/gen.py --check
+  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/amd/device/gen/gen.py
+  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/amd/device/gen/gen.py --check
 
 Every input is pinned in pins.json by URL and SHA-256: the source archives and
 files below, and the firmware files of the linux-firmware commit below. Every
@@ -32,7 +32,7 @@ import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent
-sys.path.insert(0, str(HERE.parents[1] / "gen"))
+sys.path.insert(0, str(HERE.parents[2] / "device" / "gen"))
 from devgen import Unit, fetch, key, layout, main, ml_field, ml_int, ml_name, ml_version, stub_dir, struct_module  # noqa: E402
 
 KERNEL = ("https://github.com/ROCm/ROCK-Kernel-Driver/archive/"

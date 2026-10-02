@@ -4,8 +4,8 @@ reads.
 
 Run from the repository root:
 
-  uv run --with libclang==18.1.1 packages/nx/lib/device/rdma/gen/gen.py
-  uv run --with libclang==18.1.1 packages/nx/lib/device/rdma/gen/gen.py --check
+  uv run --with libclang==18.1.1 packages/nx/lib/rdma/device/gen/gen.py
+  uv run --with libclang==18.1.1 packages/nx/lib/rdma/device/gen/gen.py --check
 
 The inputs are five headers of Linux v6.18, pinned by URL and SHA-256 in
 pins.json: the firmware interface (hsi.h), the RoCE engine's interface
@@ -22,7 +22,7 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent
-sys.path.insert(0, str(HERE.parents[1] / "gen"))
+sys.path.insert(0, str(HERE.parents[2] / "device" / "gen"))
 from devgen import Unit, fetch, key, layout, main, ml_int, stub_dir  # noqa: E402
 
 LINUX = "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/"
