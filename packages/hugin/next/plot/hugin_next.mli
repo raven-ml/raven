@@ -718,18 +718,28 @@ val contour :
 
     The coordinate system of a panel draws an axis for each of its position
     scales, unless the scope holds an explicit {!axis} for it, and the axes of
-    the facet scales are the panels' headers, titled beside them once in each
-    cell. An axis shared by the panels of a column, for x, or of a row, for y,
-    is labelled on the outer panel only. Every scale that a role other than a
-    position or a facet reads, other than only through {!map_range}, yields one
-    legend at its scope unless the scope holds an explicit {!legend} for it: a
-    colour bar for a continuous colour scale, and otherwise one entry per guide
-    value, drawn by the swatch ({!Mark.v}) of every mark that reads the scale. A
-    guide is titled by the distinct titles of the channels that read its scale,
-    in the order the figure is written, separated by commas, and is untitled if
-    they have none. These rules are defaults: marks can imply that a scale has a
-    guide or none ({!Mark.bind}), and an explicit {!axis} or {!legend} decides
-    over both ({!section-merging}).
+    the facet scales are the panels' headers. Every scale that a role other than
+    a position or a facet reads, other than only through {!map_range}, yields
+    one legend at its scope unless the scope holds an explicit {!legend} for it:
+    a colour bar for a continuous colour scale, and otherwise one entry per
+    guide value, drawn by the swatch ({!Mark.v}) of every mark that reads the
+    scale. A guide is titled by the distinct titles of the channels that read
+    its scale, in the order the figure is written, separated by commas, and is
+    untitled if they have none. These rules are defaults: marks can imply that a
+    scale has a guide or none ({!Mark.bind}), and an explicit {!axis} or
+    {!legend} decides over both ({!section-merging}).
+
+    A guide serving several panels stands beside the smallest panel or grid
+    holding them. An axis shared by the panels of a column, for x, or of a row,
+    for y, is labelled on the outer panels and titled once. An x title is
+    centred below the panels it titles. A y title is horizontal, set above its
+    axis and left-aligned with its tick labels. Facet headers are upright on
+    every side: an [fx] header is centred above its column, and an [fy] header
+    reads beside its row. The [fx] scale's title is centred above its headers,
+    and the [fy] scale's is set like a y title, above the column of headers. A
+    legend stands beside the smallest panel or grid holding every panel that a
+    channel reading its scale lies in, and a colour bar is as long as that panel
+    or grid. No text is turned.
 
     A scale read by several roles has a guide for each: a scale named by a user
     and read by [x] in one panel and by [fill] in another has an axis there and
@@ -925,10 +935,9 @@ val grid : ?widths:float list -> ?heights:float list -> t list list -> t
     labels protrude ({!layout}). The position and facet scales of each cell are
     its own unless a {!share} says otherwise.
 
-    [widths] and [heights] weigh the flexible columns and rows, which share the
-    room that fixed tracks, such as a legend's, and the tracks of panels with an
-    aspect ({!Coord.cartesian}) leave, in proportion to their weights; every
-    weight defaults to [1.]. [grid []] draws nothing.
+    [widths] and [heights] weigh the columns and rows, which share the room that
+    the rows of panels with an aspect ({!Coord.cartesian}) leave, in proportion
+    to their weights; every weight defaults to [1.]. [grid []] draws nothing.
 
     Raises [Invalid_argument] if a weight is not finite and positive. {!resolve}
     raises [Invalid_argument] if the rows cover different numbers of columns, if
@@ -1033,9 +1042,9 @@ val axis : ?side:side -> ?grid:bool -> ?show:bool -> string -> t
 val legend : ?side:side -> ?show:bool -> string -> t
 (** [legend ~side ~show name] is the legend of the scales named [name] in the
     scope of the figures it is layered with, in place of the one generated for
-    each ({!section-guides}), placed on [side] of the scope's figure, [`Right]
-    by default, and drawn iff [show], [true] by default. It draws nothing
-    itself.
+    each ({!section-guides}), placed on [side] of the panels that read the
+    scales, [`Right] by default, and drawn iff [show], [true] by default. It
+    draws nothing itself.
 
     {!resolve} raises [Invalid_argument] if [name] names no scale with a legend
     in that scope, or if the scope holds two different legends for one scale. *)
@@ -1052,18 +1061,18 @@ module Size : sig
   (** The type for sizes. *)
 
   val figure : float -> float -> t
-  (** [figure w h] is a figure [w] points wide and [h] points high. The flexible
-      tracks of its grid share what fixed and aspect tracks, gaps and
-      protrusions leave, and {!layout} raises if that is negative.
+  (** [figure w h] is a figure [w] points wide and [h] points high. The tracks
+      of its grid share what aspect tracks, gaps, protrusions and the margin
+      leave, and {!layout} raises if that is less than they need.
 
       Raises [Invalid_argument] if [w] or [h] is not finite and positive. *)
 
   val panels : float -> float -> t
-  (** [panels w h] gives each flexible column of weight [k] ({!grid}) a data
-      area [k *. w] points wide and each flexible row of weight [k] one [k *. h]
-      points high, the figure being as large as its tracks, gaps and protrusions
-      need. A track grows past that to hold a title, header or legend longer
-      than it ({!layout}).
+  (** [panels w h] gives each column of weight [k] ({!grid}) a data area
+      [k *. w] points wide and each row of weight [k] one [k *. h] points high,
+      unless a panel with an aspect sets its height, the figure being as large
+      as its tracks, gaps, protrusions and margin need. A track grows past that
+      to hold a title, header or legend longer than it ({!layout}).
 
       Raises [Invalid_argument] if [w] or [h] is not finite and positive. *)
 
@@ -1165,15 +1174,18 @@ module Theme : sig
       theme of size [8.] sets a figure for a paper column: tick labels, legend
       entries and facet headers at [0.9] em, the titles of channels at [1] em,
       and the titles of figures at [1.2] em in bold; ticks [0.35] em long and
-      [0.25] em from their labels, the labels of one axis or legend at least
-      [0.5] em apart, and titles [0.25] em from what they title; ticks aiming to
-      lie [5] em apart on x axes and colour bars and [3.5] em apart on y axes,
-      fewer if their labels would fill more than half the axis
-      ({!Hugin_next_kit.Ticks.choose}); legend swatches [1] em square and [0.25]
-      em from their labels, and colour bars [1] em wide; axis lines, ticks and
-      the outlines of marks [0.08] em wide, and grid lines [0.06] em wide; lines
-      and rules [0.15] em wide; dots of the area of a circle [0.6] em across;
-      and [1] em added to the protrusions that meet a gap between grid cells.
+      [0.25] em from their labels, facet headers [0.25] em from their panels,
+      the labels of one axis or legend at least [0.5] em apart, and titles [0.5]
+      em from what they title; ticks aiming to lie [5] em apart on x axes and
+      colour bars and [3.5] em apart on y axes, fewer if their labels would fill
+      more than half the axis ({!Hugin_next_kit.Ticks.choose}); legend swatches
+      [0.8] em square, or [1.5] em long for a legend of [stroke] colours, [0.25]
+      em from their labels, in rows [0.4] em apart, and colour bars [1] em wide;
+      axis lines, ticks and the outlines of marks [0.08] em wide, and grid lines
+      [0.06] em wide; lines and rules [0.15] em wide; dots of the area of a
+      circle [0.6] em across; [1] em between a legend and what it stands beside,
+      and added to the protrusions that meet a gap between grid cells; and a
+      margin of [0.5] em around the page.
 
       Text and axes are in the ink, their lesser parts at a fraction of its
       opacity: tick and legend labels at [0.75], axis lines and ticks at [0.6],
@@ -1727,39 +1739,46 @@ val layout :
 (** [layout ~prev ~theme size r] lays [r] out at [size] in [theme],
     {!Theme.default} by default. It measures text in the theme's faces; chooses
     the ticks of each guide by their measured labels
-    ({!Hugin_next_kit.Ticks.choose}) at the lengths a solve with empty
-    protrusions gives, then again at those that a solve with the first choice's
-    protrusions gives, and freezes the second choice; wraps the entries of
-    legends above or below their panels into rows at the lengths a solve with
-    the frozen ticks gives; builds axes, legends, headers and titles; solves the
-    grid a last time; and builds each panel's projection. An axis or colour bar
-    too short for its labels drops alternate ones, which never widens a
-    protrusion.
+    ({!Hugin_next_kit.Ticks.choose}) at the lengths a solve without guides
+    gives, then again at those that a solve with the first choice's guides
+    gives, and freezes the second choice; solves with each guide apart from the
+    others and each legend above or below its panels one entry a row, which
+    gives the shortest lengths the figure can take, and there wraps legend
+    entries into rows and decides which guides share a band; solves a last time;
+    and lays each guide out at the final lengths, which leave it the room it
+    needs, and builds each panel's projection. An axis or colour bar too short
+    for its labels drops alternate ones, which never widens a protrusion.
 
-    The grid sizes fixed and aspect tracks first, makes each gap the largest
-    protrusions that meet it from either side plus the theme's gap
-    ({!Theme.section-lengths}), and shares what remains among flexible tracks by
-    weight: each takes its weight's share, or what it needs if that is more, the
-    others sharing the rest. A panel protrudes by its guides, and by half its
-    longest tick label past the ends of each labelled axis, where a label
-    centred on an end tick reaches; the titles and headers of its axes need its
-    data area to be as long as they are, which for a panel with an aspect sizes
-    both its column and its row. A legend stands beside the panels of its scope,
-    as long as their data areas, and a title above the figure it titles, each a
-    gap beyond the protrusions of those panels wherever they lie in their cells.
-    A panel with an aspect that its cell cannot hold is drawn in the largest box
-    of its aspect, centred in its cell.
+    Panels and grids are nodes, and only their data areas take tracks. Axes,
+    headers, legends and titles are guides on a side of a node
+    ({!section-guides}), stacked outward from the side in tiers: axes, then
+    headers, the titles of axes and headers, legends, and the titles of figures.
+    A tier is one band as deep as its deepest guide, which guides share when
+    they lie apart along the side; one that overlaps an earlier one moves out to
+    a band of its own. A tier reaching past an end of the side clears what the
+    tiers below it on the adjacent side reach there. A node protrudes beyond its
+    data areas by its boundary cells' protrusions, then by its bands, or by what
+    its guides reach past the ends of the adjacent sides if that is more.
+    Titles, headers and legends need their side to be as long as they are.
+
+    Each grid makes each gap the largest protrusions that meet it from either
+    side plus the theme's gap ({!Theme.section-lengths}), and shares the length
+    left among its tracks by weight: each takes its weight's share, or what it
+    needs if that is more, the others sharing the rest; a row holding a panel
+    with an aspect takes its height from its column's width, and what no track
+    takes is split evenly about the tracks. A panel with an aspect that its cell
+    cannot hold is drawn in the largest box of its aspect, centred in its cell.
 
     With [prev], the measurements of labels of equal text in an equal theme are
     reused and the grid is solved again: the result is {!Layout.equal} to
     [layout ~theme size r].
 
-    Raises [Invalid_argument] if fixed and aspect tracks with their gaps and
-    protrusions exceed a {!Size.figure}, naming the size the figure needs, or if
-    a title, a channel's title or a tick label of a continuous scale holds a
-    character that no face of the theme has, naming it. Category labels with
-    such characters are data: they are drawn with [.notdef] glyphs, with a
-    warning. *)
+    Raises [Invalid_argument] if the least lengths of tracks with their gaps,
+    protrusions and margin exceed a {!Size.figure}, naming a size at which the
+    figure lays out, or if a title, a channel's title or a tick label of a
+    continuous scale holds a character that no face of the theme has, naming it.
+    Category labels with such characters are data: they are drawn with [.notdef]
+    glyphs, with a warning. *)
 
 val draw : ?prev:Drawing.t -> density:float -> Layout.t -> Drawing.t
 (** [draw ~prev ~density l] paints [l] at [density] device pixels per point. It

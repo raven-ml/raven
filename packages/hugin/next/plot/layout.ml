@@ -3,21 +3,39 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+[@@@ocamlformat "wrap-comments=false"]
+
 (* Laying out
 
-   [layout] turns a resolved figure into a tree of items: a leaf per panel, a
-   grid per grid and per arrangement of facet panels, and around a block with
-   legends of its scope or titles, a grid holding the block in its middle track
-   and each legend and title in a track of its own. An item protrudes past its
-   box by its guides and needs some lengths at least. A grid makes each gap the
-   protrusions that meet it plus the theme's gap, gives each track the length
-   its cells need, and shares the rest among its flexible tracks by weight, so
-   the data areas of a column share their edges and those of a row their tops
-   and bottoms.
+   [layout] turns a resolved figure into a tree of nodes: a panel per data area,
+   a grid per grid and per arrangement of facet panels. Only data areas take
+   tracks. Axes, headers, legends and titles are guides on a node's side, laid
+   out along it and stacked outward in tiers:
 
-   Ticks are chosen against the lengths of a solve without guides, then of a
-   solve with the first ticks' guides, and the second choice is frozen for the
-   final solve. *)
+   {v
+   figure titles  ─┐
+   legends         │ bands beyond the node's side, each as deep as its
+   scale titles    │ deepest guide; guides of one tier share a band
+   headers         │ where they lie apart along the side
+   axis proper    ─┘
+   ──────────────── the side of the hull of the node's data areas
+   content          the protrusions of a grid's boundary cells
+   v}
+
+   A guide serving several panels is on the smallest node holding them. A grid
+   makes each gap the protrusions that meet it plus a gap, gives each track what
+   its cells and guides need at least, and shares the rest among its tracks by
+   weight, so the data areas of a column share their edges and those of a row
+   their tops and bottoms.
+
+   Once its ticks and rows are frozen, a guide's depth, least length and reach
+   past the ends of its side do not depend on the side's length, and which
+   guides share a band is decided once. So the layout is four solves: without
+   guides; with the guides of the first choice of ticks; with those of the
+   frozen choice, each in a band of its own and each horizontal legend one entry
+   a row, which gives the shortest sides the figure can take, at whose lengths
+   rows wrap and bands are shared; and a last one, whose sides are no shorter,
+   so guides laid out at them fit what it reserved. *)
 
 module P2 = Hugin_next_gg.P2
 module Box2 = Hugin_next_gg.Box2
@@ -26,478 +44,555 @@ module Scale = Hugin_next_kit.Scale
 module Ticks = Hugin_next_kit.Ticks
 open Common
 open Figure
+open Arrange
 open Resolved
-open Items
 
-(* Derived lengths, in em *)
-
-let label_em = 0.9 (* Tick labels, legend entries and facet headers. *)
-let tick_em = 0.35
-let pad_em = 0.25 (* Between ticks, labels and titles, swatches and labels. *)
-let clear_em = 0.5 (* Between the labels of one axis or legend. *)
-let gap_em = 1.
-let swatch_em = 1. (* Swatches and the width of colour bars. *)
-let title_em = 1.2 (* Figure titles, in bold. *)
-let x_spacing_em = 5. (* The spacing ticks aim for on x axes and colour bars. *)
-let y_spacing_em = 3.5 (* On y axes. *)
-
-(* Text measurements, by size, alignment and text. *)
-module Measures = Map.Make (struct
-  type t = float * Text.Layout.halign * Text.Layout.valign * Text.t
-
-  let rank_h : Text.Layout.halign -> int = function
-    | `Left -> 0
-    | `Center -> 1
-    | `Right -> 2
-
-  let rank_v : Text.Layout.valign -> int = function
-    | `Top -> 0
-    | `Cap -> 1
-    | `Middle -> 2
-    | `Baseline -> 3
-    | `Bottom -> 4
-
-  let compare (s, h, v, t) (s', h', v', t') =
-    let c = Float.compare s s' in
-    if c <> 0 then c
-    else
-      let c = Int.compare (rank_h h) (rank_h h') in
-      if c <> 0 then c
-      else
-        let c = Int.compare (rank_v v) (rank_v v') in
-        if c <> 0 then c else Text.compare t t'
-end)
-
-(* A text set at a point of the page, upright or turned a quarter turn
-   counterclockwise. [data] tells category labels, drawn whatever glyphs they
-   lack, from figure text, which must have every glyph. *)
-type placed = {
-  text : Text.t;
-  set : Text.Layout.t;
-  at : P2.t;
-  turned : bool;
-  data : bool;
-}
-
-let placed_box p =
-  let b = Text.Layout.box p.set and x = P2.x p.at and y = P2.y p.at in
-  if not p.turned then
-    Box2.v (x +. Box2.minx b) (y +. Box2.miny b) (Box2.w b) (Box2.h b)
-  else
-    (* The quarter turn takes (u, v) to (v, -u). *)
-    Box2.v (x +. Box2.miny b) (y -. Box2.maxx b) (Box2.h b) (Box2.w b)
-
-let equal_placed p p' =
-  Text.equal p.text p'.text
-  && Text.Layout.equal p.set p'.set
-  && P2.equal p.at p'.at
-  && Bool.equal p.turned p'.turned
-  && Bool.equal p.data p'.data
-
-(* Laid-out guides *)
-
-type panel = { id : id; box : Box2.t; projection : Coord.projection }
-
-type axis_out = {
-  ax_id : id;
-  ax_panel : id;
-  ax_scale : int; (* Its index in the resolved figure's scales. *)
-  ax_side : side;
-  ax_offset : float; (* Its distance from its panel's side. *)
-  ax_grid : bool;
-  ax_labels : placed list; (* Those drawn. *)
-  ax_title : placed option;
-}
-
-type header_out = { hd_id : id; hd_panel : id; hd_label : placed }
-type legend_entry = { u : float; swatch : Box2.t; label : placed }
-
-type legend_body =
-  | Bar of { bar : Box2.t; labels : placed list }
-  | Entries of legend_entry list
-
-type legend_out = {
-  lg_id : id;
-  lg_scale : int;
-  lg_side : side;
-  lg_title : placed option;
-  lg_body : legend_body;
-}
-
-(* Measuring text *)
-
-type cx = {
-  theme : Theme.t;
-  measures : Text.Layout.t Measures.t ref; (* Those this layout set. *)
-  reused : Text.Layout.t Measures.t; (* Those of the previous layout. *)
-  scales : fitted array;
-  uses : use list array; (* Per scale. *)
-  ticks : Ticks.t option array; (* None before the first choice. *)
-  lengths : float list array; (* Per use, those of the previous pass. *)
-  final : bool;
-  notes : warning list ref; (* The category labels that lack glyphs. *)
-}
-
-let em cx k = k *. Theme.size cx.theme
-
-let set cx ?(halign = `Left) ?(valign = `Baseline) k text =
-  let size = em cx k in
-  let key = (size, halign, valign, text) in
-  match Measures.find_opt key !(cx.measures) with
-  | Some l -> l
-  | None ->
-      (* A layout keeps the measurements it uses, so a chain of layouts each
-         given the previous one holds no more than one does. *)
-      let l =
-        match Measures.find_opt key cx.reused with
-        | Some l -> l
-        | None ->
-            Text.Layout.v ~halign ~valign ~fonts:(Theme.fonts cx.theme) ~size
-              text
-      in
-      cx.measures := Measures.add key l !(cx.measures);
-      l
-
-let width l = Box2.w (Text.Layout.box l)
-let height l = Box2.h (Text.Layout.box l)
+let margin_em = 0.5 (* Around the page. *)
+let horizontal = Guide.horizontal
 let longest f l = List.fold_left (fun m x -> Float.max m (f x)) 0. l
 
-let horizontal (side : side) =
-  match side with `Top | `Bottom -> true | `Left | `Right -> false
+(* Nodes *)
 
-(* [across side ~turned l] is the extent of [l] away from a panel's [side]. *)
-let across side ~turned l =
-  if horizontal side <> turned then height l else width l
+(* A node holds guides of type ['g]: their specifications, then the guides each
+   pass lays out. *)
+type 'g node =
+  | Panel of {
+      id : id;
+      coord : Coord.t;
+      ratio : float option; (* The height of its data area over its width. *)
+      guides : 'g list;
+    }
+  | Grid of 'g grid
 
-(* The alignment of tick labels, and of the headers and titles beyond them. *)
-let label_align : side -> Text.Layout.halign * Text.Layout.valign = function
-  | `Bottom -> (`Center, `Top)
-  | `Top -> (`Center, `Bottom)
-  | `Left -> (`Right, `Middle)
-  | `Right -> (`Left, `Middle)
+and 'g grid = {
+  id : id;
+  widths : float array; (* The weights of its tracks. *)
+  heights : float array;
+  cells : 'g cell list;
+  guides : 'g list;
+}
 
-let outer_align : side -> Text.Layout.halign * Text.Layout.valign * bool =
-  function
-  | `Bottom -> (`Center, `Top, false)
-  | `Top -> (`Center, `Bottom, false)
-  | `Left -> (`Center, `Bottom, true)
-  | `Right -> (`Center, `Top, true)
+and 'g cell = { r0 : int; c0 : int; nr : int; nc : int; node : 'g node }
 
-(* [check cx owner p] raises if the figure text [p] lacks a glyph, and warns
-   about a category label that does, in the final pass. *)
-let check cx owner p =
-  if cx.final then
-    match Text.Layout.missing p.set with
-    | [] -> ()
-    | us ->
-        let chars =
-          String.concat ", "
-            (List.map (fun u -> Printf.sprintf "U+%04X" (Uchar.to_int u)) us)
+(* A laid-out guide, in the band of its side and tier counted outward. *)
+type laid = { guide : Guide.t; band : int }
+
+let guides_of = function Panel p -> p.guides | Grid g -> g.guides
+let path id segs = Nx.Ptree.Path.(v (segments id @ segs))
+
+let rec holds node pid =
+  match node with
+  | Panel p -> Nx.Ptree.Path.equal p.id pid
+  | Grid g -> List.exists (fun c -> holds c.node pid) g.cells
+
+(* [attach pids spec node] is [node] with the guide [spec id] on the smallest
+   node [id] of it that holds the panels [pids]. *)
+let rec attach pids spec node =
+  match node with
+  | Panel p -> Panel { p with guides = p.guides @ [ spec p.id ] }
+  | Grid g -> (
+      match
+        List.find_opt (fun c -> List.for_all (holds c.node) pids) g.cells
+      with
+      | None -> Grid { g with guides = g.guides @ [ spec g.id ] }
+      | Some c ->
+          let cell c' =
+            if c' == c then { c with node = attach pids spec c.node } else c'
+          in
+          Grid { g with cells = List.map cell g.cells })
+
+(* [fold f acc node geo] folds [f] over the nodes of [node] with their data
+   hulls in [geo], the cells of a grid before it. *)
+type geo = { hull : Box2.t; kids : geo list }
+
+let rec fold f acc node geo =
+  let acc =
+    match node with
+    | Panel _ -> acc
+    | Grid g ->
+        List.fold_left2
+          (fun acc c k -> fold f acc c.node k)
+          acc g.cells geo.kids
+  in
+  f acc node geo.hull
+
+(* Building nodes *)
+
+(* [units s] is the length of the domain of [s] in units of its transform, or
+   one if it spans none. *)
+let units (F f) =
+  let u = Scale.length f.scale in
+  if Float.is_finite u && u > 0. then u else 1.
+
+let default_side : Role.shown -> side = function
+  | `Axis Role.X -> `Bottom
+  | `Axis Role.Y -> `Left
+  | `Header Role.X -> `Top
+  | `Header Role.Y | `Legend -> `Right
+
+(* [panel scales c p] is the facet panel [p] of a cell holding [c], with its
+   axes and headers: explicit, or else the default. *)
+let panel scales (c : content) p =
+  let axis (on : Role.shown) =
+    Option.bind (shown c p.reads on) (fun i ->
+        let (F f) = scales.(i) in
+        let explicit (_, g, _) =
+          if is_axis g && String.equal g.scale f.name then Some g else None
         in
-        if p.data then
-          cx.notes :=
-            ( owner,
-              Format.asprintf
-                "the label %a has %s, which no face of the theme has" Text.pp
-                p.text chars )
-            :: !(cx.notes)
-        else
-          err "layout" "%a: %a holds %s, which no face of the theme has" pp_id
-            owner Text.pp p.text chars
-
-let place_text cx owner ?halign ?valign ~turned ~data k text at =
-  let p = { text; set = set cx ?halign ?valign k text; at; turned; data } in
-  check cx owner p;
-  p
-
-(* Protrusions *)
-
-type sides = { left : float; right : float; top : float; bottom : float }
-
-let no_sides = { left = 0.; right = 0.; top = 0.; bottom = 0. }
-
-let add_side (side : side) d p =
-  match side with
-  | `Left -> { p with left = p.left +. d }
-  | `Right -> { p with right = p.right +. d }
-  | `Top -> { p with top = p.top +. d }
-  | `Bottom -> { p with bottom = p.bottom +. d }
-
-let axis_labels cx a (t : Ticks.t) =
-  let halign, valign = label_align a.a_side in
-  List.map (fun tk -> set cx ~halign ~valign label_em (tick_text tk)) t.major
-
-let axis_title cx a (t : Ticks.t) =
-  let halign, valign, _ = outer_align a.a_side in
-  Option.map
-    (set cx ~halign ~valign 1.)
-    (guide_title cx.scales.(a.a_scale) t.note)
-
-(* [heading_text kind head] is the size, in em, and the text of a heading. *)
-let heading_text kind head =
-  match kind with
-  | Figure_title -> (title_em, Text.bold head)
-  | Facet_title -> (1., head)
-
-let header cx a cat =
-  let halign, valign, _ = outer_align a.a_side in
-  set cx ~halign ~valign label_em (category_text cx.scales.(a.a_scale) cat)
-
-(* [depth cx a] is how far the guide [a] reaches from its panel's side. *)
-let depth cx a =
-  match (a.a_guide.show, cx.ticks.(a.a_scale)) with
-  | false, _ | _, None -> 0.
-  | true, Some t -> (
-      let _, _, turned = outer_align a.a_side in
-      match a.a_on with
-      | `Header _ -> (
-          match a.a_category with
-          | Some c when a.a_labelled ->
-              em cx pad_em +. across a.a_side ~turned (header cx a c)
-          | _ -> 0.)
-      | `Axis _ ->
-          let tick = em cx tick_em in
-          if not a.a_labelled then tick
-          else
-            let labels =
-              longest (across a.a_side ~turned:false) (axis_labels cx a t)
-            in
-            let title =
-              match axis_title cx a t with
-              | None -> 0.
-              | Some l -> em cx pad_em +. across a.a_side ~turned l
-            in
-            tick +. em cx pad_em +. labels +. title)
-
-let vertical (side : side) = not (horizontal side)
-
-(* The extents of a legend: across its track, along it at least, and above its
-   start, where the title of a vertical legend goes. *)
-type dims = { thick : float; least : float; above : float }
-
-let legend_title cx ls (t : Ticks.t) =
-  Option.map
-    (set cx ~valign:`Bottom 1.)
-    (guide_title cx.scales.(ls.ls_scale) t.note)
-
-let entry_labels cx (t : Ticks.t) =
-  List.map (fun tk -> set cx ~valign:`Middle label_em (tick_text tk)) t.major
-
-(* [per_row cx ls labels] is how many entries of a horizontal legend share a
-   row, as many as fit along its length in [cx], each as wide as the widest. *)
-let per_row cx ls labels =
-  let n = List.length labels in
-  let cell =
-    em cx swatch_em +. em cx pad_em +. longest width labels +. em cx clear_em
+        let guide =
+          match List.find_map explicit c.guides with
+          | Some g -> g
+          | None ->
+              let show = Option.value f.guide ~default:true in
+              {
+                kind = Axis { grid = false };
+                scale = f.name;
+                side = None;
+                show;
+              }
+        in
+        let part =
+          match on with
+          | `Axis _ -> Some (Guide.Ticks { labelled = true })
+          | `Header Role.X -> Option.map (fun k -> Guide.Header k) p.pfx
+          | `Header Role.Y -> Option.map (fun k -> Guide.Header k) p.pfy
+          | `Legend -> None
+        in
+        Option.map
+          (fun part ->
+            {
+              Guide.id = path p.pnid [ Field "axis"; Field f.name ];
+              side = Option.value guide.side ~default:(default_side on);
+              kind = Axis { guide; scale = i; part };
+            })
+          part)
   in
-  let length =
-    List.fold_left2
-      (fun l u l' -> match u with Legend_of _ -> l' | _ -> l)
-      Float.nan cx.uses.(ls.ls_scale) cx.lengths.(ls.ls_scale)
+  let coord =
+    match c.coords with
+    | (_, k) :: _ -> k
+    | [] -> (
+        match List.find_map (fun o -> o.mark.coord) c.occs with
+        | Some k -> k
+        | None -> Coord.cartesian ())
   in
-  if not (Float.is_finite length) then max 1 n
-  else max 1 (min n (Float.to_int ((length +. em cx clear_em) /. cell)))
+  let units on =
+    Option.fold ~none:1. ~some:(fun i -> units scales.(i)) (shown c p.reads on)
+  in
+  let (Coord.Cartesian { aspect }) = coord in
+  let ratio =
+    Option.map
+      (fun k -> k *. units (`Axis Role.Y) /. units (`Axis Role.X))
+      aspect
+  in
+  let guides =
+    List.filter_map axis
+      [ `Axis Role.X; `Axis Role.Y; `Header Role.X; `Header Role.Y ]
+  in
+  Panel { id = p.pnid; coord; ratio; guides }
 
-let dims cx ls =
-  match cx.ticks.(ls.ls_scale) with
-  | None -> { thick = 0.; least = 0.; above = 0. }
-  | Some t ->
-      let sw = em cx swatch_em and pad = em cx pad_em in
-      let title = legend_title cx ls t in
-      let title_w = Option.fold ~none:0. ~some:width title in
-      let title_h =
-        Option.fold ~none:0. ~some:(fun l -> height l +. pad) title
+(* [content r scales pid c] is the panel of the cell [pid], or the grid of its
+   facet panels: one column per category of its fx scale and one row per
+   category of its fy scale, or rows of [wrap] panels. *)
+let content (r : Resolved.t) scales pid c =
+  let cell = Option.get (find_path pid r.cells) in
+  match cell.panels with
+  | [ p ] when Nx.Ptree.Path.equal p.pnid pid -> panel scales c p
+  | ps ->
+      let scale i = Option.map (fun i -> scales.(i)) i in
+      let count i =
+        match scale i with
+        | Some (F { kind = Channel.Categories; scale; _ }) ->
+            List.length (category_names scale)
+        | Some (F { kind = Channel.Quantities; _ }) | None -> 0
       in
-      let labels = entry_labels cx t in
-      let most f = longest f labels in
-      let vert = vertical ls.ls_side in
-      if ls.ls_bar then
-        let ext = if vert then most width else most height in
-        let thick = sw +. em cx tick_em +. pad +. ext in
-        (* The labels at the ends of a vertical bar reach half their height past
-           it, and its title goes above them. *)
-        if vert then
-          {
-            thick = Float.max title_w thick;
-            least = 0.;
-            above = title_h +. (most height /. 2.);
-          }
-        else { thick = title_h +. thick; least = title_w; above = 0. }
-      else
-        let row = Float.max sw (most height) in
-        let entry l = sw +. pad +. width l in
-        if vert then
-          {
-            thick = Float.max title_w (most entry);
-            least = float (List.length labels) *. row;
-            above = title_h;
-          }
-        else
-          let n = List.length labels and per = per_row cx ls labels in
-          let rows = (n + per - 1) / per in
-          {
-            thick = title_h +. (float rows *. row);
-            least = Float.max title_w (most entry);
-            above = 0.;
-          }
-
-(* [ends side m] is the reach of a guide on [side] whose labels are at most [m]
-   long along it: half of [m] past each end, where a label centred on a tick at
-   an end reaches. *)
-let ends (side : side) m =
-  let m = m /. 2. in
-  if horizontal side then { no_sides with left = m; right = m }
-  else { no_sides with bottom = m; top = m }
-
-let widest p q =
-  {
-    left = Float.max p.left q.left;
-    right = Float.max p.right q.right;
-    top = Float.max p.top q.top;
-    bottom = Float.max p.bottom q.bottom;
-  }
-
-(* [reach cx a] is how far the tick labels of [a] reach past the ends of its
-   panel's side. *)
-let reach cx a =
-  match (a.a_guide.show, a.a_labelled, a.a_on, cx.ticks.(a.a_scale)) with
-  | true, true, `Axis _, Some t ->
-      let along = if horizontal a.a_side then width else height in
-      ends a.a_side (longest along (axis_labels cx a t))
-  | _ -> no_sides
-
-(* [spans cx a] is the length along its side that the title or header of [a]
-   needs, which its panel's track gives it. *)
-let spans cx a =
-  match (a.a_guide.show, a.a_labelled, cx.ticks.(a.a_scale)) with
-  | true, true, Some t -> (
-      let _, _, turned = outer_align a.a_side in
-      let along l =
-        if horizontal a.a_side <> turned then width l else height l
+      let nx = max 1 (count cell.fx) and ny = max 1 (count cell.fy) in
+      let pos = Option.value ~default:0 in
+      let ncols, nrows, at =
+        match scale cell.fx with
+        | Some (F { kind = Channel.Categories; scale; _ })
+          when Option.is_some (Scale.wrap scale) ->
+            let w = min (Option.get (Scale.wrap scale)) nx in
+            (w, (nx + w - 1) / w, fun p -> (pos p.pfx / w, pos p.pfx mod w))
+        | _ -> (nx, ny, fun p -> (pos p.pfy, pos p.pfx))
       in
-      match (a.a_on, a.a_category) with
-      | `Header _, Some c -> along (header cx a c)
-      | `Header _, None -> 0.
-      | `Axis _, _ -> Option.fold ~none:0. ~some:along (axis_title cx a t))
-  | _ -> 0.
-
-let legend_prot cx ls =
-  let above = { no_sides with top = (dims cx ls).above } in
-  match cx.ticks.(ls.ls_scale) with
-  | Some t when ls.ls_bar ->
-      let vert = vertical ls.ls_side in
-      let m = longest (if vert then height else width) (entry_labels cx t) in
-      (* A vertical bar runs along the panels' side, a horizontal one across
-         their bottom or top. *)
-      widest above (ends (if vert then `Left else `Top) m)
-  | Some _ | None -> above
-
-let rec prot cx = function
-  | Leaf l ->
-      let deep =
-        List.fold_left
-          (fun p a -> add_side a.a_side (depth cx a) p)
-          no_sides l.l_axes
+      let cell p =
+        let r0, c0 = at p in
+        { r0; c0; nr = 1; nc = 1; node = panel scales c p }
       in
-      List.fold_left (fun p a -> widest p (reach cx a)) deep l.l_axes
-  | Grid g -> grid_prot cx g
-  | Heading _ -> no_sides
-  | Legend ls -> legend_prot cx ls
+      let widths = Array.make ncols 1. and heights = Array.make nrows 1. in
+      Grid { id = pid; widths; heights; cells = List.map cell ps; guides = [] }
 
-and grid_prot cx g =
-  let nc = Array.length g.gcols and nr = Array.length g.grows in
-  List.fold_left
-    (fun p c ->
-      let q = prot cx c.it in
-      {
-        left = (if c.c0 = 0 then Float.max p.left q.left else p.left);
-        right =
-          (if c.c0 + c.nc = nc then Float.max p.right q.right else p.right);
-        top = (if c.r0 = 0 then Float.max p.top q.top else p.top);
-        bottom =
-          (if c.r0 + c.nr = nr then Float.max p.bottom q.bottom else p.bottom);
-      })
-    no_sides g.gcells
+let weights n = function None -> Array.make n 1. | Some ws -> Array.of_list ws
+
+(* [of_shaped r scales id s] is the node of [s], titled by its figure titles,
+   the innermost first. *)
+let rec of_shaped r scales id s =
+  let titles =
+    List.rev_map
+      (fun (align, text) ->
+        { Guide.id; side = `Top; kind = Title { align; text } })
+      s.titles
+  in
+  match s.body with
+  | Single c -> (
+      match content r scales id c with
+      | Panel p -> Panel { p with guides = p.guides @ titles }
+      | Grid g -> Grid { g with guides = titles })
+  | Arr a ->
+      let cell (c : Arrange.cell) =
+        let node = of_shaped r scales c.cid c.s in
+        { r0 = c.row; c0 = c.col; nr = c.rows; nc = c.cols; node }
+      in
+      let widths = weights a.ncols a.widths in
+      let heights = weights a.nrows a.heights in
+      Grid
+        { id; widths; heights; cells = List.map cell a.cells; guides = titles }
+
+(* [shows g] is the scale, side and category of [g] if it is a shown axis or
+   header. *)
+let shows (g : Guide.spec) =
+  match g.kind with
+  | Axis { guide = { show = true; _ }; scale; part = Ticks _ } ->
+      Some (scale, g.side, None)
+  | Axis { guide = { show = true; _ }; scale; part = Header c } ->
+      Some (scale, g.side, Some c)
+  | Axis _ | Legend _ | Title _ -> None
+
+(* [labelled node] is [node] with each axis of a panel unlabelled, and each
+   header dropped, where the next cell on its side holds a panel showing it. *)
+let rec labelled = function
+  | Panel _ as n -> n
+  | Grid g ->
+      let cells =
+        List.map (fun c -> { c with node = labelled c.node }) g.cells
+      in
+      let next c c' (side : side) =
+        match side with
+        | `Bottom -> c'.c0 = c.c0 && c'.nc = c.nc && c'.r0 = c.r0 + c.nr
+        | `Top -> c'.c0 = c.c0 && c'.nc = c.nc && c'.r0 + c'.nr = c.r0
+        | `Left -> c'.r0 = c.r0 && c'.nr = c.nr && c'.c0 + c'.nc = c.c0
+        | `Right -> c'.r0 = c.r0 && c'.nr = c.nr && c'.c0 = c.c0 + c.nc
+      in
+      let beside c (g : Guide.spec) =
+        let same g' = Option.is_some (shows g) && shows g' = shows g in
+        List.exists
+          (fun c' ->
+            next c c' g.side
+            &&
+            match c'.node with
+            | Panel p -> List.exists same p.guides
+            | Grid _ -> false)
+          cells
+      in
+      let relabel c (g : Guide.spec) =
+        match g.kind with
+        | Axis ({ part = Ticks _; _ } as a) when beside c g ->
+            Some
+              {
+                g with
+                kind = Axis { a with part = Ticks { labelled = false } };
+              }
+        | Axis { part = Header _; _ } when beside c g -> None
+        | Axis _ | Legend _ | Title _ -> Some g
+      in
+      let cell c =
+        match c.node with
+        | Panel p ->
+            {
+              c with
+              node =
+                Panel { p with guides = List.filter_map (relabel c) p.guides };
+            }
+        | Grid _ -> c
+      in
+      Grid { g with cells = List.map cell cells }
+
+(* [showing node] is each scale and side of a shown axis or header of [node],
+   with its guide and the panels showing it, headers first. *)
+let showing node =
+  let rec go acc = function
+    | Grid g -> List.fold_left (fun acc c -> go acc c.node) acc g.cells
+    | Panel p ->
+        let add acc (g : Guide.spec) =
+          match (shows g, g.kind) with
+          | Some (scale, side, cat), Axis { guide; _ } ->
+              (Option.is_none cat, (scale, side), guide, p.id) :: acc
+          | _ -> acc
+        in
+        List.fold_left add acc p.guides
+  in
+  let group groups (_, k, g, pid) =
+    match List.assoc_opt k groups with
+    | None -> groups @ [ (k, (g, [ pid ])) ]
+    | Some (g, pids) ->
+        List.map
+          (fun (k', v) -> if k' = k then (k, (g, pids @ [ pid ])) else (k', v))
+          groups
+  in
+  let headers (a, _, _, _) (b, _, _, _) = Bool.compare a b in
+  List.fold_left group [] (List.stable_sort headers (List.rev (go [] node)))
+
+(* [build r scales] is the node of [r]: the title of an axis or of headers is on
+   the smallest node holding the panels showing them, and a legend on the
+   smallest node holding the panels its readers lie in. *)
+let build (r : Resolved.t) scales =
+  let tree = of_shaped r scales Nx.Ptree.Path.root r.shaped in
+  let titled tree ((scale, side), (guide, pids)) =
+    let (F f) = scales.(scale) in
+    attach pids
+      (fun id ->
+        {
+          Guide.id = path id [ Field "axis"; Field f.name ];
+          side = (if horizontal side then side else `Top);
+          kind = Axis { guide; scale; part = Scale_title side };
+        })
+      tree
+  in
+  let tree = List.fold_left titled (labelled tree) (showing tree) in
+  let explicit = Arrange.legends r.shaped in
+  let panels pid =
+    match find_path pid r.cells with
+    | Some c -> List.map (fun p -> p.pnid) c.panels
+    | None -> [ pid ]
+  in
+  let legend (tree, i) (F f) =
+    let readers =
+      List.filter (fun m -> Role.shown_on m.m_use = Some `Legend) f.members
+    in
+    if readers = [] then (tree, i + 1)
+    else
+      let guide =
+        let mine (_, (g : guide), key) =
+          if String.equal g.scale f.name && equal_key key f.key then Some g
+          else None
+        in
+        match List.find_map mine explicit with
+        | Some g -> g
+        | None ->
+            let show = Option.value f.guide ~default:f.legend in
+            { kind = Legend; scale = f.name; side = None; show }
+      in
+      let pids =
+        match panel_of f.key with
+        | Some p -> [ p ]
+        | None -> List.concat_map (fun m -> panels m.m_pid) readers
+      in
+      let kind =
+        match f.kind with
+        | Channel.Quantities -> "num"
+        | Channel.Categories -> "cat"
+      in
+      let spec id =
+        {
+          Guide.id = path id [ Field "legend"; Field f.name; Field kind ];
+          side = Option.value guide.side ~default:`Right;
+          kind = Legend { guide; scale = i };
+        }
+      in
+      (attach pids spec tree, i + 1)
+  in
+  fst (List.fold_left legend (tree, 0) r.scales)
+
+(* Bands *)
+
+let on (p : Guide.sides) : side -> float = function
+  | `Left -> p.left
+  | `Right -> p.right
+  | `Top -> p.top
+  | `Bottom -> p.bottom
+
+let rank : Guide.tier -> int = function
+  | Proper -> 0
+  | Headers -> 1
+  | Scale_titles -> 2
+  | Legends -> 3
+  | Figure_titles -> 4
+
+let tier (l : laid) = rank (Guide.tier l.guide.spec.kind)
+
+(* [along g] is the interval along its side that [g] covers. *)
+let along (g : Guide.t) =
+  let b = Option.get g.bounds in
+  if horizontal g.spec.side then (Box2.minx b, Box2.maxx b)
+  else (Box2.miny b, Box2.maxy b)
+
+(* [bands em node] is the offset of each laid guide of [node] beyond its side of
+   the hull of the node's data areas, and the protrusions of [node]. On a side
+   the node protrudes by its content, then by each tier of guides, innermost
+   first, in its bands, each as deep as its deepest guide.
+
+   A guide within its side cannot meet the guides of the adjacent sides, which
+   lie beyond the hull; one reaching past an end can. Lower tiers own the
+   corner: past the axis proper, a tier with a guide reaching past an end starts
+   beyond the reach there of the lower tiers' guides on the adjacent side. The
+   node protrudes by its bands, or by every such reach if larger. *)
+let rec bands em node =
+  let gs =
+    List.filter (fun l -> Option.is_some l.guide.bounds) (guides_of node)
+  in
+  let on_side s (l : laid) = equal_side l.guide.spec.side s in
+  let reach s adjacent below =
+    longest
+      (fun l ->
+        if on_side adjacent l && tier l < below then
+          on (Guide.protrusion l.guide) s
+        else 0.)
+      gs
+  in
+  let depth (l : laid) = on (Guide.protrusion l.guide) l.guide.spec.side in
+  let side s =
+    let first, last =
+      if horizontal s then (`Left, `Right) else (`Top, `Bottom)
+    in
+    let tier_bands (off, acc) k =
+      match List.filter (fun l -> on_side s l && tier l = k) gs with
+      | [] -> (off, acc)
+      | here ->
+          let clear adjacent past =
+            if k > 0 && List.exists past here then reach s adjacent k else 0.
+          in
+          let past_start l = fst (along l.guide) < 0. in
+          let past_end l = snd (along l.guide) > l.guide.length in
+          let start =
+            Float.max off
+              (Float.max (clear first past_start) (clear last past_end))
+          in
+          let n = 1 + List.fold_left (fun m l -> max m l.band) 0 here in
+          let offs = Array.make (n + 1) start in
+          for b = 0 to n - 1 do
+            let d =
+              longest (fun l -> if l.band = b then depth l else 0.) here
+            in
+            offs.(b + 1) <- offs.(b) +. d
+          done;
+          (offs.(n), List.map (fun l -> (l, offs.(l.band))) here @ acc)
+    in
+    let off, acc =
+      List.fold_left tier_bands (on (content em node) s, []) [ 0; 1; 2; 3; 4 ]
+    in
+    (Float.max off (Float.max (reach s first 5) (reach s last 5)), acc)
+  in
+  let l, gl = side `Left and r, gr = side `Right in
+  let t, gt = side `Top and b, gb = side `Bottom in
+  let offs = gl @ gr @ gt @ gb in
+  ( List.filter_map
+      (fun g -> Option.map (fun o -> (g.guide, o)) (List.assq_opt g offs))
+      gs,
+    { Guide.left = l; right = r; top = t; bottom = b } )
+
+(* [content em node] is the protrusion of the boundary cells of [node]. *)
+and content em = function
+  | Panel _ -> Guide.no_sides
+  | Grid g ->
+      let nc = Array.length g.widths and nr = Array.length g.heights in
+      List.fold_left
+        (fun (p : Guide.sides) c ->
+          let (q : Guide.sides) = prot em c.node in
+          let most edge a b = if edge then Float.max a b else a in
+          {
+            left = most (c.c0 = 0) p.left q.left;
+            right = most (c.c0 + c.nc = nc) p.right q.right;
+            top = most (c.r0 = 0) p.top q.top;
+            bottom = most (c.r0 + c.nr = nr) p.bottom q.bottom;
+          })
+        Guide.no_sides g.cells
+
+and prot em node = snd (bands em node)
+
+(* [part em node] is [node] with each guide in the first band of its side and
+   tier whose guides it lies a gap apart from. Titles are anchored at the start,
+   the middle or the end of their side, so guides apart along a side stay apart
+   along a longer one: parted at the shortest lengths a figure can take, its
+   guides stay parted at the final ones. *)
+let rec part em node =
+  let gap = em *. Guide.gap_em in
+  let apart (a : laid) (b : laid) =
+    let a0, a1 = along a.guide and b0, b1 = along b.guide in
+    a1 +. gap <= b0 || b1 +. gap <= a0
+  in
+  let put placed (l : laid) =
+    let mate b (m : laid) =
+      m.band = b
+      && Option.is_some m.guide.bounds
+      && equal_side m.guide.spec.side l.guide.spec.side
+      && tier m = tier l
+    in
+    let rec first b =
+      if List.for_all (apart l) (List.filter (mate b) placed) then b
+      else first (b + 1)
+    in
+    let band = if Option.is_some l.guide.bounds then first 0 else 0 in
+    placed @ [ { l with band } ]
+  in
+  let guides = List.fold_left put [] (guides_of node) in
+  match node with
+  | Panel p -> Panel { p with guides }
+  | Grid g ->
+      let cells =
+        List.map (fun c -> { c with node = part em c.node }) g.cells
+      in
+      Grid { g with cells; guides }
 
 (* Solving grids *)
 
 let sum a = Array.fold_left ( +. ) 0. a
 
-(* [least tracks unit cells gaps] is the least length of each track: its weight
-   times [unit.(i)] if it is flexible and at least what each cell it alone holds
-   needs, with each cell spanning tracks given what it needs beyond them, by
-   weight among its flexible tracks or else evenly. [cells] are the start, the
-   number of tracks and the need of each cell. *)
-let least tracks unit cells gaps =
-  let m =
-    Array.mapi
-      (fun i t -> match t with Flex k -> k *. unit.(i) | Fixed -> 0.)
-      tracks
-  in
+(* [least weights unit cells gaps] is the least length of each track: its weight
+   times [unit.(i)], and at least what each cell it alone holds needs, with each
+   cell spanning tracks given what it needs beyond them, by weight. [cells] are
+   the start, the number of tracks and the need of each cell. *)
+let least weights unit cells gaps =
+  let m = Array.mapi (fun i k -> k *. unit.(i)) weights in
   List.iter (fun (s, n, l) -> if n = 1 then m.(s) <- Float.max m.(s) l) cells;
   List.iter
     (fun (s, n, l) ->
       if n > 1 then begin
-        let have = ref 0. in
+        let have = ref 0. and weight = ref 0. in
         for i = s to s + n - 1 do
-          have := !have +. m.(i)
+          have := !have +. m.(i);
+          weight := !weight +. weights.(i)
         done;
         for i = s to s + n - 2 do
           have := !have +. gaps.(i)
         done;
         let excess = l -. !have in
-        if excess > 0. then begin
-          let weight = ref 0. in
-          for i = s to s + n - 1 do
-            match tracks.(i) with
-            | Flex k -> weight := !weight +. k
-            | Fixed -> ()
-          done;
+        if excess > 0. then
           for i = s to s + n - 1 do
             let share =
-              if !weight > 0. then
-                match tracks.(i) with
-                | Flex k -> excess *. k /. !weight
-                | Fixed -> 0.
+              if !weight > 0. then excess *. weights.(i) /. !weight
               else excess /. float n
             in
             m.(i) <- m.(i) +. share
           done
-        end
       end)
     cells;
   m
 
-(* [spread tracks pinned m avail] is the lengths of [tracks] in [avail], and the
-   excess that no track takes. A flexible track that is not [pinned] has the
-   greater of its least length in [m] and its weight's share of what the other
-   tracks leave; every other track has its least length. The share is found by
+(* [spread weights pinned m avail] is the lengths of tracks of [weights] in
+   [avail], and the excess that no track takes. A track that is not [pinned] has
+   the greater of its least length in [m] and its weight's share of what the
+   other tracks leave; a pinned one has its least length. The share is found by
    water-filling: a track whose least length is above its share keeps it, and
    the others share again what it leaves, until none is left below its least
    length. *)
-let spread tracks pinned m avail =
-  let n = Array.length tracks in
-  let free =
-    Array.init n (fun i ->
-        match tracks.(i) with Flex _ -> not pinned.(i) | Fixed -> false)
-  in
-  let weight i = match tracks.(i) with Flex k -> k | Fixed -> 0. in
+let spread weights pinned m avail =
+  let n = Array.length weights in
   (* [share free] is the length per weight that the [free] tracks share. *)
   let share free =
-    let rest = ref avail and weights = ref 0. in
+    let rest = ref avail and total = ref 0. in
     for i = 0 to n - 1 do
-      if free.(i) then weights := !weights +. weight i
+      if free.(i) then total := !total +. weights.(i)
       else rest := !rest -. m.(i)
     done;
-    if !weights > 0. then !rest /. !weights else 0.
+    if !total > 0. then !rest /. !total else 0.
   in
   let rec fill free =
     let u = share free in
-    let next = Array.mapi (fun i f -> f && weight i *. u >= m.(i)) free in
+    let next = Array.mapi (fun i f -> f && weights.(i) *. u >= m.(i)) free in
     if Array.for_all2 Bool.equal next free then (free, u) else fill next
   in
-  let free, u = fill free in
-  let l = Array.mapi (fun i b -> if free.(i) then weight i *. u else b) m in
+  let free, u = fill (Array.map not pinned) in
+  let l = Array.mapi (fun i b -> if free.(i) then weights.(i) *. u else b) m in
   if Array.exists Fun.id free then (l, 0.)
   else (l, Float.max 0. (avail -. sum l))
 
@@ -531,8 +626,7 @@ type measured = {
   rgaps : float array;
   cols_least : float array;
   rows_least : float array; (* Before aspects. *)
-  aspects : (gcell * float) list; (* Single cells holding panels with one. *)
-  nrows : int;
+  aspects : (laid cell * float) list; (* Single cells holding panels with one. *)
 }
 
 type tracks = {
@@ -544,38 +638,32 @@ type tracks = {
   y_off : float;
 }
 
-(* [natural cx unit item] is the least width and height of [item], [unit] being
-   the data area a flexible track of weight [1.] has at least. *)
-let rec natural cx unit = function
-  | Leaf l -> (
-      let w, h =
-        List.fold_left
-          (fun (w, h) a ->
-            let n = spans cx a in
-            if horizontal a.a_side then (Float.max w n, h)
-            else (w, Float.max h n))
-          (0., 0.) l.l_axes
-      in
+(* [needs guides] is the width and the height that [guides] need. *)
+let needs guides =
+  List.fold_left
+    (fun (w, h) { guide = g; _ } ->
+      if horizontal g.spec.side then (Float.max w g.least, h)
+      else (w, Float.max h g.least))
+    (0., 0.) guides
+
+(* [natural em unit node] is the least width and height of [node], [unit] being
+   the data area a track of weight [1.] has at least. *)
+let rec natural em unit = function
+  | Panel p -> (
+      let w, h = needs p.guides in
       (* A panel with an aspect fits its box in its cell, so the box holds what
          the cell must hold only if both lengths ask for it. *)
-      match l.l_ratio with
+      match p.ratio with
       | None -> (w, h)
       | Some r -> (Float.max w (h /. r), Float.max h (r *. w)))
   | Grid g ->
-      let m = measure_grid cx unit g in
+      let m = measure em unit g in
       let rows = aspect_rows m m.cols_least in
       (sum m.cols_least +. sum m.cgaps, sum rows +. sum m.rgaps)
-  | Heading { kind; head; hside; _ } ->
-      let k, head = heading_text kind head in
-      let l = set cx k head in
-      if vertical hside then (height l, width l) else (width l, height l)
-  | Legend ls ->
-      let d = dims cx ls in
-      if vertical ls.ls_side then (d.thick, d.least) else (d.least, d.thick)
 
-and measure_grid cx (uw, uh) g =
+and measure em (uw, uh) g =
   let cells =
-    List.map (fun c -> (c, prot cx c.it, natural cx (uw, uh) c.it)) g.gcells
+    List.map (fun c -> (c, prot em c.node, natural em (uw, uh) c.node)) g.cells
   in
   let gaps n first last before after =
     Array.init
@@ -586,61 +674,49 @@ and measure_grid cx (uw, uh) g =
             (fun d (c, p, _) -> if sel c then Float.max d (f p) else d)
             0. cells
         in
-        (* A title sits a pad from what it titles, other cells a gap apart. *)
-        let meets c = last c = j || first c = j + 1 in
-        let titles (c, _, _) =
-          meets c && match c.it with Heading _ -> true | _ -> false
-        in
-        let sep = if List.exists titles cells then pad_em else gap_em in
         most before (fun c -> last c = j)
         +. most after (fun c -> first c = j + 1)
-        +. em cx sep)
+        +. (em *. Guide.gap_em))
   in
+  let nc = Array.length g.widths and nr = Array.length g.heights in
   let cgaps =
-    gaps (Array.length g.gcols)
+    gaps nc
       (fun c -> c.c0)
       (fun c -> c.c0 + c.nc - 1)
-      (fun p -> p.right)
+      (fun (p : Guide.sides) -> p.right)
       (fun p -> p.left)
   in
   let rgaps =
-    gaps (Array.length g.grows)
+    gaps nr
       (fun c -> c.r0)
       (fun c -> c.r0 + c.nr - 1)
-      (fun p -> p.bottom)
+      (fun (p : Guide.sides) -> p.bottom)
       (fun p -> p.top)
   in
   let aspects =
     List.filter_map
       (fun (c, _, _) ->
-        match c.it with
-        | Leaf { l_ratio = Some r; _ } when c.nr = 1 && c.nc = 1 -> Some (c, r)
+        match c.node with
+        | Panel { ratio = Some r; _ } when c.nr = 1 && c.nc = 1 -> Some (c, r)
         | _ -> None)
       cells
   in
+  (* The node's own guides need lengths that span all its tracks. *)
+  let w, h = needs g.guides in
   let cols_least =
-    least g.gcols
-      (Array.make (Array.length g.gcols) uw)
-      (List.map (fun (c, _, (w, _)) -> (c.c0, c.nc, w)) cells)
+    least g.widths (Array.make nc uw)
+      ((0, nc, w) :: List.map (fun (c, _, (w, _)) -> (c.c0, c.nc, w)) cells)
       cgaps
   in
-  (* A row holding a panel with an aspect is not flexible: its height follows
-     its columns. *)
+  (* A row holding a panel with an aspect takes its height from its column. *)
   let rows_least =
-    let unit = Array.make (Array.length g.grows) uh in
+    let unit = Array.make nr uh in
     List.iter (fun (c, _) -> unit.(c.r0) <- 0.) aspects;
-    least g.grows unit
-      (List.map (fun (c, _, (_, h)) -> (c.r0, c.nr, h)) cells)
+    least g.heights unit
+      ((0, nr, h) :: List.map (fun (c, _, (_, h)) -> (c.r0, c.nr, h)) cells)
       rgaps
   in
-  {
-    cgaps;
-    rgaps;
-    cols_least;
-    rows_least;
-    aspects;
-    nrows = Array.length g.grows;
-  }
+  { cgaps; rgaps; cols_least; rows_least; aspects }
 
 (* [aspect_rows m cols] is the least length of each row, a row holding a panel
    with an aspect needing that panel's height at the width of its column. *)
@@ -649,24 +725,24 @@ and aspect_rows m cols =
   Array.mapi (fun i b -> Float.max b need.(i)) m.rows_least
 
 and aspect_need m cols =
-  let need = Array.make m.nrows 0. in
+  let need = Array.make (Array.length m.rows_least) 0. in
   List.iter
     (fun (c, r) -> need.(c.r0) <- Float.max need.(c.r0) (r *. cols.(c.c0)))
     m.aspects;
   need
 
-and solve_grid cx unit g w h =
-  let m = measure_grid cx unit g in
+let solve_grid em unit g w h =
+  let m = measure em unit g in
   let avail_w = w -. sum m.cgaps and avail_h = h -. sum m.rgaps in
-  let nc = Array.length g.gcols in
+  let nc = Array.length g.widths in
   let cols, slack_x =
-    spread g.gcols (Array.make nc false) m.cols_least avail_w
+    spread g.widths (Array.make nc false) m.cols_least avail_w
   in
-  let is_aspect = Array.make m.nrows false in
+  let is_aspect = Array.make (Array.length g.heights) false in
   List.iter (fun (c, _) -> is_aspect.(c.r0) <- true) m.aspects;
   let rows = aspect_rows m cols in
   let done_ cols slack_x rows =
-    let rows, slack_y = spread g.grows is_aspect rows avail_h in
+    let rows, slack_y = spread g.heights is_aspect rows avail_h in
     {
       col_len = cols;
       row_len = rows;
@@ -691,580 +767,337 @@ and solve_grid cx unit g w h =
         pinned.(c.c0) <- true;
         least.(c.c0) <- Float.max least.(c.c0) (s *. cols.(c.c0)))
       m.aspects;
-    let cols, slack_x = spread g.gcols pinned least avail_w in
+    let cols, slack_x = spread g.widths pinned least avail_w in
     done_ cols slack_x rows
   end
 
 (* Placing *)
 
-type acc = {
-  mutable panels : (panel * Coord.t) list;
-  mutable axes : axis_out list;
-  mutable headers : header_out list;
-  mutable legends : legend_out list;
-  mutable titles : placed list;
-  mutable spans : (id * Box2.t) list; (* The hull of each block's panels. *)
-  mutable along : (int * Role.axis * float) list;
-      (* Each axis's scale, role and length. *)
-}
-
+(* [fit_aspect r box] is the largest box of ratio [r] centred in [box]. A cell's
+   height is exact only to the rounding of its place on the page, so a height
+   within it of [r] times the width fits that width: else a flat panel would
+   shrink by its rounding over a tiny [r]. *)
 let fit_aspect r box =
   let w = Box2.w box and h = Box2.h box in
-  let w', h' = if h >= r *. w then (w, r *. w) else (h /. r, h) in
+  let ulp = 4. *. Float.epsilon *. Float.abs (Box2.maxy box) in
+  let w', h' = if h +. ulp >= r *. w then (w, r *. w) else (h /. r, h) in
   Box2.v
     (Box2.minx box +. ((w -. w') /. 2.))
     (Box2.miny box +. ((h -. h') /. 2.))
     w' h'
 
-(* [anchor box side c d] is the point [d] beyond the [side] of [box], at [c]
-   along it. *)
-let anchor box (side : side) c d =
+(* [geometry em unit node box] is the data hulls of [node] placed in [box]. *)
+let rec geometry em unit node box =
+  match node with
+  | Panel { ratio = None; _ } -> { hull = box; kids = [] }
+  | Panel { ratio = Some r; _ } -> { hull = fit_aspect r box; kids = [] }
+  | Grid g ->
+      let t = solve_grid em unit g (Box2.w box) (Box2.h box) in
+      let starts len gap o =
+        let a = Array.make (Array.length len) o in
+        for i = 1 to Array.length len - 1 do
+          a.(i) <- a.(i - 1) +. len.(i - 1) +. gap.(i - 1)
+        done;
+        a
+      in
+      let xs = starts t.col_len t.col_gap (Box2.minx box +. t.x_off) in
+      let ys = starts t.row_len t.row_gap (Box2.miny box +. t.y_off) in
+      let extent len gap s n =
+        let e = ref 0. in
+        for i = s to s + n - 1 do
+          e := !e +. len.(i)
+        done;
+        for i = s to s + n - 2 do
+          e := !e +. gap.(i)
+        done;
+        !e
+      in
+      let cell c =
+        Box2.v xs.(c.c0) ys.(c.r0)
+          (extent t.col_len t.col_gap c.c0 c.nc)
+          (extent t.row_len t.row_gap c.r0 c.nr)
+      in
+      let kids = List.map (fun c -> geometry em unit c.node (cell c)) g.cells in
+      let hull =
+        match kids with
+        | [] -> box
+        | k :: ks -> List.fold_left (fun h k -> Box2.union h k.hull) k.hull ks
+      in
+      { hull; kids }
+
+(* [origin hull side o] is the origin of the frame of [side] of [hull], [o]
+   beyond it. *)
+let origin hull (side : side) o =
   match side with
-  | `Bottom -> P2.v c (Box2.maxy box +. d)
-  | `Top -> P2.v c (Box2.miny box -. d)
-  | `Left -> P2.v (Box2.minx box -. d) c
-  | `Right -> P2.v (Box2.maxx box +. d) c
+  | `Top -> P2.v (Box2.minx hull) (Box2.miny hull -. o)
+  | `Bottom -> P2.v (Box2.minx hull) (Box2.maxy hull +. o)
+  | `Left -> P2.v (Box2.minx hull -. o) (Box2.miny hull)
+  | `Right -> P2.v (Box2.maxx hull +. o) (Box2.miny hull)
 
-let middle box side =
-  if horizontal side then P2.x (Box2.mid box) else P2.y (Box2.mid box)
+(* [placed em node geo] is each laid guide of [node] with the origin of its
+   frame on the page, those of its cells first. *)
+let placed em node geo =
+  let add hull acc ((g : Guide.t), o) = (g, origin hull g.spec.side o) :: acc in
+  List.rev
+    (fold
+       (fun acc n hull -> List.fold_left (add hull) acc (fst (bands em n)))
+       [] node geo)
 
-(* [thin cx side labels] drops alternate labels until no two adjacent ones
-   overlap with their clearance. *)
-let thin cx side labels =
-  let centre p = if horizontal side then P2.x p.at else P2.y p.at in
-  let extent p =
-    (if horizontal side then width p.set else height p.set) +. em cx clear_em
-  in
-  let rec overlap = function
-    | a :: (b :: _ as rest) ->
-        Float.abs (centre b -. centre a) < (extent a +. extent b) /. 2.
-        || overlap rest
-    | _ -> false
-  in
-  let rec alternate = function
-    | a :: _ :: rest -> a :: alternate rest
-    | l -> l
-  in
-  let rec go l = if overlap l then go (alternate l) else l in
-  go labels
+let side_length hull side = if horizontal side then Box2.w hull else Box2.h hull
+let across hull side = if horizontal side then Box2.h hull else Box2.w hull
 
-let place_axis cx acc l proj box a offset =
-  match (a.a_guide.show, cx.ticks.(a.a_scale)) with
-  | false, _ | _, None -> ()
-  | true, Some t -> (
-      let pad = em cx pad_em and s = cx.scales.(a.a_scale) in
-      let halign, valign, turned = outer_align a.a_side in
-      match a.a_on with
-      | `Header _ -> (
-          match a.a_category with
-          | Some c when a.a_labelled ->
-              let at =
-                anchor box a.a_side (middle box a.a_side) (offset +. pad)
-              in
-              let label =
-                place_text cx a.a_id ~halign ~valign ~turned ~data:true label_em
-                  (category_text s c) at
-              in
-              acc.headers <-
-                { hd_id = a.a_id; hd_panel = l.l_id; hd_label = label }
-                :: acc.headers
-          | _ -> ())
-      | `Axis axis ->
-          let along u =
-            match axis with
-            | Role.X -> P2.x (Coord.point proj u 0.)
-            | Role.Y -> P2.y (Coord.point proj 0. u)
-          in
-          let labels, title =
-            if not a.a_labelled then ([], None)
-            else
-              let d = offset +. em cx tick_em +. pad in
-              let lh, lv = label_align a.a_side in
-              let label (tk : Ticks.tick) =
-                place_text cx a.a_id ~halign:lh ~valign:lv ~turned:false
-                  ~data:(categorical s) label_em (tick_text tk)
-                  (anchor box a.a_side (along tk.position) d)
-              in
-              let labels = List.map label t.major in
-              let deep =
-                longest (fun p -> across a.a_side ~turned:false p.set) labels
-              in
-              let title text =
-                place_text cx a.a_id ~halign ~valign ~turned ~data:false 1. text
-                  (anchor box a.a_side (middle box a.a_side) (d +. deep +. pad))
-              in
-              (thin cx a.a_side labels, Option.map title (guide_title s t.note))
-          in
-          acc.axes <-
-            {
-              ax_id = a.a_id;
-              ax_panel = l.l_id;
-              ax_scale = a.a_scale;
-              ax_side = a.a_side;
-              ax_offset = offset;
-              ax_grid =
-                (match a.a_guide.kind with Axis a -> a.grid | Legend -> false);
-              ax_labels = labels;
-              ax_title = title;
-            }
-            :: acc.axes)
+(* Laying out guides *)
 
-let place_leaf cx acc l box =
-  let box = match l.l_ratio with None -> box | Some r -> fit_aspect r box in
-  let proj = Coord.project l.l_coord box in
-  acc.panels <-
-    ({ id = l.l_id; box; projection = proj }, l.l_coord) :: acc.panels;
-  acc.spans <- (l.l_id, box) :: acc.spans;
-  let reached = ref no_sides in
-  List.iter
-    (fun a ->
-      (match a.a_on with
-      | `Axis Role.X ->
-          acc.along <- (a.a_scale, Role.X, Box2.w box) :: acc.along
-      | `Axis Role.Y ->
-          acc.along <- (a.a_scale, Role.Y, Box2.h box) :: acc.along
-      | `Header _ -> ());
-      let offset =
-        match a.a_side with
-        | `Left -> !reached.left
-        | `Right -> !reached.right
-        | `Top -> !reached.top
-        | `Bottom -> !reached.bottom
+(* [span shown hull g length] is the interval along its side that [g] aligns to:
+   for the title of axes or headers, the hull of the panels it titles, or, on a
+   vertical side, starting at the left edge of their texts, of the labelled axes
+   and headers [shown]. *)
+let span shown hull (g : Guide.spec) length =
+  match g.kind with
+  | Axis { scale; part = Scale_title side; _ } -> (
+      let serves ((g' : Guide.t), _) =
+        equal_side g'.spec.side side
+        &&
+        match g'.spec.kind with
+        | Axis { scale = i; part = Ticks { labelled = true } | Header _; _ } ->
+            i = scale
+        | Axis _ | Legend _ | Title _ -> false
       in
-      place_axis cx acc l proj box a offset;
-      reached := add_side a.a_side (depth cx a) !reached)
-    l.l_axes;
-  box
-
-let place_legend cx acc ls cell span =
-  match cx.ticks.(ls.ls_scale) with
-  | None -> ()
-  | Some t ->
-      let sw = em cx swatch_em and pad = em cx pad_em in
-      let s = cx.scales.(ls.ls_scale) and vert = vertical ls.ls_side in
-      let span = Option.value span ~default:cell in
-      (* Entries start where the panels do, but no later than leaves them their
-         least length in the cell: panels with an aspect may sit inside their
-         track, which is only as long as the entries need. A bar runs along the
-         panels. *)
-      let start lo cell_lo cell_hi =
-        if ls.ls_bar then lo
-        else Float.max cell_lo (Float.min lo (cell_hi -. (dims cx ls).least))
-      in
-      let x0 =
-        if vert then Box2.minx cell
-        else start (Box2.minx span) (Box2.minx cell) (Box2.maxx cell)
-      in
-      let y0 =
-        if vert then start (Box2.miny span) (Box2.miny cell) (Box2.maxy cell)
-        else Box2.miny cell
-      in
-      let title text =
-        let reach =
-          if ls.ls_bar then longest height (entry_labels cx t) /. 2. else 0.
-        in
-        let at, valign =
-          if vert then (P2.v x0 (y0 -. pad -. reach), `Bottom)
-          else (P2.v x0 y0, `Top)
-        in
-        place_text cx ls.ls_id ~valign ~turned:false ~data:false 1. text at
-      in
-      let title = Option.map title (guide_title s t.note) in
-      let y0 =
-        match title with
-        | Some p when not vert -> y0 +. height p.set +. pad
-        | _ -> y0
-      in
-      let label ?halign ~valign (tk : Ticks.tick) at =
-        place_text cx ls.ls_id ?halign ~valign ~turned:false
-          ~data:(categorical s) label_em (tick_text tk) at
-      in
-      let body =
-        if ls.ls_bar then
-          let off = sw +. em cx tick_em +. pad in
-          if vert then
-            let h = Box2.h span in
-            let at (tk : Ticks.tick) =
-              P2.v (x0 +. off) (Box2.maxy span -. (tk.position *. h))
-            in
-            Bar
-              {
-                bar = Box2.v x0 y0 sw h;
-                labels =
-                  thin cx `Right
-                    (List.map
-                       (fun tk -> label ~valign:`Middle tk (at tk))
-                       t.major);
-              }
-          else
-            let w = Box2.w span in
-            let at (tk : Ticks.tick) =
-              P2.v (x0 +. (tk.position *. w)) (y0 +. off)
-            in
-            Bar
-              {
-                bar = Box2.v x0 y0 w sw;
-                labels =
-                  thin cx `Bottom
-                    (List.map
-                       (fun tk -> label ~halign:`Center ~valign:`Top tk (at tk))
-                       t.major);
-              }
+      let extent ((g' : Guide.t), o) =
+        if horizontal side then [ (P2.x o, P2.x o +. g'.length) ]
         else
-          let labels = entry_labels cx t in
-          let row = Float.max sw (longest height labels) in
-          (* A vertical legend stacks its entries; a horizontal one sets them in
-             rows of columns as wide as the widest entry. *)
-          let per = if vert then 1 else per_row cx ls labels in
-          let col = sw +. pad +. longest width labels +. em cx clear_em in
-          let entry k (tk : Ticks.tick) =
-            let x = x0 +. (float (k mod per) *. col) in
-            let y = y0 +. (float (k / per) *. row) in
-            let swatch = Box2.v x (y +. ((row -. sw) /. 2.)) sw sw in
-            let label =
-              label ~valign:`Middle tk
-                (P2.v (x +. sw +. pad) (y +. (row /. 2.)))
-            in
-            { u = tk.position; swatch; label }
-          in
-          Entries (List.mapi entry t.major)
+          List.filter_map
+            (function
+              | Guide.Text p | Label p ->
+                  let b = Guide.text_box p in
+                  Some (P2.x o +. Box2.minx b, P2.x o +. Box2.maxx b)
+              | Rules _ | Grid_lines _ | Bar _ | Swatch _ -> None)
+            g'.elements
       in
-      acc.legends <-
-        {
-          lg_id = ls.ls_id;
-          lg_scale = ls.ls_scale;
-          lg_side = ls.ls_side;
-          lg_title = title;
-          lg_body = body;
-        }
-        :: acc.legends
+      match List.concat_map extent (List.filter serves shown) with
+      | [] -> (0., length)
+      | e :: es ->
+          let lo, hi =
+            List.fold_left
+              (fun (lo, hi) (a, b) -> (Float.min lo a, Float.max hi b))
+              e es
+          in
+          (lo -. Box2.minx hull, hi -. Box2.minx hull))
+  | Axis _ | Legend _ | Title _ -> (0., length)
 
-let place_heading cx ~owner ~kind ~align ~head ~side cell span outer =
-  let span = Option.value span ~default:cell in
-  let _, valign, turned = outer_align side in
-  let k, head = heading_text kind head in
-  if turned then
-    let x = match side with `Left -> Box2.maxx cell | _ -> Box2.minx cell in
-    place_text cx owner ~halign:`Center ~valign ~turned ~data:false k head
-      (P2.v x (P2.y (Box2.mid span)))
-  else
-    let x =
-      match align with
-      | `Center ->
-          (* Centred on the data areas, but within the figure it titles, which
-             its track makes at least as wide as itself. *)
-          let half = width (set cx ~halign:align ~valign k head) /. 2. in
-          let lo = Box2.minx outer +. half and hi = Box2.maxx outer -. half in
-          Float.max lo (Float.min hi (P2.x (Box2.mid span)))
-      | `Left -> Box2.minx outer
-      | `Right -> Box2.maxx outer
+(* [lay em cx slot node geo] is [node] with its guides laid out at the lengths
+   of [geo]: those of its cells first, then its axes and headers, then the
+   titles that align to their labels. [slot x] is the specification of the guide
+   [x], the length its rows wrap at if frozen, and its band if parted; a guide
+   not parted takes a band of its own, numbered by its place. *)
+let rec lay em cx slot node geo =
+  let hull = geo.hull in
+  let one span k x =
+    let spec, wrap, band = slot x in
+    let length = side_length hull spec.Guide.side in
+    let wrap = Option.value wrap ~default:length in
+    let across = across hull spec.side in
+    let guide =
+      Guide.lay cx spec ~length ~across ~wrap ~span:(span spec length)
     in
-    let y = match side with `Bottom -> Box2.miny cell | _ -> Box2.maxy cell in
-    place_text cx owner ~halign:align ~valign ~turned ~data:false k head
-      (P2.v x y)
-
-let union h h' =
-  match (h, h') with
-  | None, h | h, None -> h
-  | Some b, Some b' -> Some (Box2.union b b')
-
-(* [place cx acc unit item box ~span ~outer] places [item] in [box] and is the
-   hull of its panels and the part of [box] it fills, [span] being the hull of
-   the panels a heading or legend stands beside, and [outer] the box with
-   protrusions of their grid. *)
-let rec place cx acc unit item box ~span ~outer =
-  match item with
-  | Leaf l ->
-      let b = place_leaf cx acc l box in
-      (Some b, b)
-  | Grid g -> place_grid cx acc unit g box
-  | Heading { owner; kind; align; head; hside } ->
-      acc.titles <-
-        place_heading cx ~owner ~kind ~align ~head ~side:hside box span outer
-        :: acc.titles;
-      (None, box)
-  | Legend ls ->
-      place_legend cx acc ls box span;
-      (None, box)
-
-and place_grid cx acc unit g box =
-  let t = solve_grid cx unit g (Box2.w box) (Box2.h box) in
-  let starts len gap o =
-    let a = Array.make (Array.length len) o in
-    for i = 1 to Array.length len - 1 do
-      a.(i) <- a.(i - 1) +. len.(i - 1) +. gap.(i - 1)
-    done;
-    a
+    { guide; band = Option.value band ~default:k }
   in
-  let xs = starts t.col_len t.col_gap (Box2.minx box +. t.x_off) in
-  let ys = starts t.row_len t.row_gap (Box2.miny box +. t.y_off) in
-  let extent len gap s n =
-    let e = ref 0. in
-    for i = s to s + n - 1 do
-      e := !e +. len.(i)
-    done;
-    for i = s to s + n - 2 do
-      e := !e +. gap.(i)
-    done;
-    !e
-  in
-  let cell_box c =
-    Box2.v xs.(c.c0) ys.(c.r0)
-      (extent t.col_len t.col_gap c.c0 c.nc)
-      (extent t.row_len t.row_gap c.r0 c.nr)
-  in
-  let p = grid_prot cx g in
-  let outer =
-    Box2.v
-      (Box2.minx box -. p.left)
-      (Box2.miny box -. p.top)
-      (Box2.w box +. p.left +. p.right)
-      (Box2.h box +. p.top +. p.bottom)
-  in
-  let is_body k = Option.equal Int.equal (Some k) g.gbody in
-  let body_cell = Option.map (List.nth g.gcells) g.gbody in
-  let body =
-    Option.map
-      (fun c -> place cx acc unit c.it (cell_box c) ~span:None ~outer)
-      body_cell
-  in
-  let span = Option.bind body fst in
-  (* The body may leave part of its cell empty, such as the room around panels
-     with an aspect. A title or legend beside the body moves across that part,
-     so that the gap between them stays what the grid made it. *)
-  let beside c =
-    let box = cell_box c in
-    match (body_cell, body) with
-    | Some b, Some (_, used) ->
-        let cell = cell_box b in
-        let dx =
-          if c.c0 + c.nc <= b.c0 then Box2.minx used -. Box2.minx cell
-          else if c.c0 >= b.c0 + b.nc then Box2.maxx used -. Box2.maxx cell
-          else 0.
-        in
-        let dy =
-          if c.r0 + c.nr <= b.r0 then Box2.miny used -. Box2.miny cell
-          else if c.r0 >= b.r0 + b.nr then Box2.maxy used -. Box2.maxy cell
-          else 0.
-        in
-        Box2.v
-          (Box2.minx box +. dx)
-          (Box2.miny box +. dy)
-          (Box2.w box) (Box2.h box)
-    | _ -> box
-  in
-  let _, hull, used =
-    List.fold_left
-      (fun (k, h, u) c ->
-        if is_body k then (k + 1, h, u)
-        else
-          let h', u' = place cx acc unit c.it (beside c) ~span ~outer in
-          (k + 1, union h h', union u (Some u')))
-      (0, span, Option.map snd body)
-      g.gcells
-  in
-  Option.iter (fun h -> acc.spans <- (g.gid, h) :: acc.spans) hull;
-  (hull, Option.value used ~default:box)
-
-(* Choosing ticks *)
-
-let all_ticks locale (F f) =
-  match f.kind with
-  | Channel.Categories ->
-      Ticks.of_values ~locale f.scale (Array.of_list (category_names f.scale))
-  | Channel.Quantities -> Ticks.of_values ~locale f.scale [||]
-
-(* [lengths cx acc] is, for each scale, the length in [acc] of each guide that
-   shows it: the shortest of its axes along one direction, or the span of the
-   panels its legend stands beside. *)
-let lengths cx acc =
-  Array.mapi
-    (fun i us ->
-      List.map
-        (fun u ->
-          match u with
-          | Header_of -> Float.nan
-          | Axis_of role ->
-              List.fold_left
-                (fun m (j, r, l) ->
-                  if j = i && r = role then Float.min m l else m)
-                Float.infinity acc.along
-          | Legend_of { side; block; _ } -> (
-              match find_path block acc.spans with
-              | None -> 0.
-              | Some b -> if vertical side then Box2.h b else Box2.w b))
-        us)
-    cx.uses
-
-(* [choose cx lengths] is the ticks of each scale. A facet scale and a
-   categorical one with a legend show every category. Otherwise the ticks are
-   chosen once against every guide that shows them, at its length: a label's
-   extent, and the spacing of ticks, are the greatest fractions of a guide's
-   length they take, so that no two labels overlap on any of them. *)
-let choose cx lengths =
-  let locale = Theme.locale cx.theme in
-  let label t = set cx label_em (Text.v t) in
-  let clear = em cx clear_em and sw = em cx swatch_em in
-  let measure u t =
-    let l = label t in
-    match u with
-    | Axis_of X -> width l +. clear
-    | Axis_of Y -> height l +. clear
-    | Legend_of { bar; side; _ } -> (
-        match (bar, vertical side) with
-        | true, true -> height l +. clear
-        | true, false -> width l +. clear
-        | false, true -> Float.max sw (height l)
-        | false, false -> sw +. em cx pad_em +. width l +. clear)
-    | Header_of -> 0.
-  in
-  let spacing = function
-    | Axis_of X | Legend_of { bar = true; _ } -> em cx x_spacing_em
-    | Axis_of Y -> em cx y_spacing_em
-    | Legend_of { bar = false; _ } | Header_of -> 0.
-  in
-  Array.mapi
-    (fun i (F f as s) ->
-      let us = cx.uses.(i) in
-      let every =
-        List.exists
-          (function
-            | Header_of -> true
-            | Legend_of _ -> categorical s
-            | Axis_of _ -> false)
-          us
+  match node with
+  | Panel { id; coord; ratio; guides } ->
+      let first k x =
+        let spec, _, _ = slot x in
+        if rank (Guide.tier spec.kind) > 1 then (k, x, None)
+        else (k, x, Some (one (fun _ l -> (0., l)) k x))
       in
-      let guides =
-        List.filter
-          (fun (_, l) -> Float.is_finite l && l > 0.)
-          (List.combine us lengths.(i))
+      let guides = List.mapi first guides in
+      let axes = List.filter_map (fun (_, _, l) -> l) guides in
+      let shown = placed em (Panel { id; coord; ratio; guides = axes }) geo in
+      let title (k, x, l) =
+        match l with Some l -> l | None -> one (span shown hull) k x
       in
-      if every then all_ticks locale s
-      else
-        match guides with
-        | [] -> Ticks.of_values ~locale f.scale [||]
-        | guides ->
-            let measure t = longest (fun (u, l) -> measure u t /. l) guides in
-            let spacing = longest (fun (u, l) -> spacing u /. l) guides in
-            Ticks.choose ~locale ~spacing ~length:1. ~measure f.scale)
-    cx.scales
+      Panel { id; coord; ratio; guides = List.map title guides }
+  | Grid { id; widths; heights; cells; guides } ->
+      let cell c k =
+        let node = lay em cx slot c.node k in
+        { r0 = c.r0; c0 = c.c0; nr = c.nr; nc = c.nc; node }
+      in
+      let cells = List.map2 cell cells geo.kids in
+      let shown =
+        placed em (Grid { id; widths; heights; cells; guides = [] }) geo
+      in
+      Grid
+        {
+          id;
+          widths;
+          heights;
+          cells;
+          guides = List.mapi (one (span shown hull)) guides;
+        }
+
+let rec strip = function
+  | Panel { id; coord; ratio; _ } -> Panel { id; coord; ratio; guides = [] }
+  | Grid { id; widths; heights; cells; _ } ->
+      let cell c =
+        { r0 = c.r0; c0 = c.c0; nr = c.nr; nc = c.nc; node = strip c.node }
+      in
+      Grid { id; widths; heights; cells = List.map cell cells; guides = [] }
 
 (* Laid-out figures *)
+
+type panel = { id : id; box : Box2.t; projection : Coord.projection }
 
 type t = {
   resolved : Resolved.t;
   theme : Theme.t;
+  cx : Guide.cx; (* Its measurements. *)
   page : float * float;
   lpanels : (panel * Coord.t) list;
   frozen : Ticks.t array; (* Per scale of the resolved figure. *)
-  axes : axis_out list;
-  headers : header_out list;
-  legends : legend_out list;
-  titles : placed list;
+  guides : Guide.t list; (* On the page, in drawing order. *)
   lwarnings : warning list;
-  measures : Text.Layout.t Measures.t;
 }
 
-(* [pass cx unit size root] places [root] at [size] and is what it placed and
-   the page's size. *)
-let pass cx unit size root =
-  let acc =
-    {
-      panels = [];
-      axes = [];
-      headers = [];
-      legends = [];
-      titles = [];
-      spans = [];
-      along = [];
-    }
-  in
-  let p = prot cx root in
-  let nw, nh = natural cx unit root in
+exception Needs of float * float
+
+(* [solve em unit size ~final root] is the data hulls of [root] at [size] and
+   the page's size. In the [final] solve, a figure too small for [root] raises
+   [Needs] with a larger size. *)
+let solve em unit size ~final root =
+  let p = prot em root and nw, nh = natural em unit root in
+  let m = em *. margin_em in
+  let ow = m +. p.left +. p.right +. m and oh = m +. p.top +. p.bottom +. m in
   let page, cw, ch =
     match size with
-    | Size.Panels _ ->
-        ((p.left +. nw +. p.right, p.top +. nh +. p.bottom), nw, nh)
+    | Size.Panels _ -> ((ow +. nw, oh +. nh), nw, nh)
     | Size.Figure (w, h) ->
-        let cw = w -. p.left -. p.right and ch = h -. p.top -. p.bottom in
-        if cx.final && (cw < nw || ch < nh) then begin
+        let cw = w -. ow and ch = h -. oh in
+        if final && (w < ow +. nw || h < oh +. nh) then begin
           let up x = Float.ceil (x *. 100.) /. 100. in
-          err "layout" "the figure needs %g × %g pt, more than %a"
-            (up (p.left +. nw +. p.right))
-            (up (p.top +. nh +. p.bottom))
-            Size.pp size
+          raise
+            (Needs (Float.max w (up (ow +. nw)), Float.max h (up (oh +. nh))))
         end;
         ((w, h), Float.max cw nw, Float.max ch nh)
   in
-  let box = Box2.v p.left p.top cw ch in
-  ignore (place cx acc unit root box ~span:None ~outer:box);
-  (acc, page)
+  (geometry em unit root (Box2.v (m +. p.left) (m +. p.top) cw ch), page)
 
-let layout ?prev ?(theme = Theme.default) size (r : Resolved.t) =
+(* [check guides] raises if figure text of [guides] lacks a glyph, and is the
+   warnings of category labels that do. *)
+let check guides =
+  let note (g : Guide.t) acc = function
+    | Guide.Text p | Label p -> (
+        match Text.Layout.missing p.set with
+        | [] -> acc
+        | us ->
+            let chars =
+              String.concat ", "
+                (List.map
+                   (fun u -> Printf.sprintf "U+%04X" (Uchar.to_int u))
+                   us)
+            in
+            if not p.data then
+              err "layout" "%a: %a holds %s, which no face of the theme has"
+                pp_id g.spec.id Text.pp p.text chars;
+            ( g.spec.id,
+              Format.asprintf
+                "the label %a has %s, which no face of the theme has" Text.pp
+                p.text chars )
+            :: acc)
+    | Rules _ | Grid_lines _ | Bar _ | Swatch _ -> acc
+  in
+  let notes =
+    List.fold_left
+      (fun acc (g : Guide.t) -> List.fold_left (note g) acc g.elements)
+      [] guides
+  in
+  dedupe (List.rev notes)
+
+let attempt ?prev theme size (r : Resolved.t) =
   let scales = Array.of_list r.scales in
-  let uses = uses_of r (blocks r) in
-  (* The root sits in a grid of one flexible cell, which gives a panel at the
-     root the data area of [Size.panels]. *)
+  (* The root sits in a grid of one cell, which gives a panel at the root the
+     data area of [Size.panels]. *)
   let root =
+    let cell = { r0 = 0; c0 = 0; nr = 1; nc = 1; node = build r scales } in
+    let one = [| 1. |] in
     Grid
       {
-        gid = Nx.Ptree.Path.root;
-        gcols = [| Flex 1. |];
-        grows = [| Flex 1. |];
-        gcells =
-          [ { r0 = 0; c0 = 0; nr = 1; nc = 1; it = build r scales uses } ];
-        gbody = None;
+        id = Nx.Ptree.Path.root;
+        widths = one;
+        heights = one;
+        cells = [ cell ];
+        guides = [];
       }
   in
-  let reused =
-    match prev with
-    | Some l when Theme.equal l.theme theme -> l.measures
-    | _ -> Measures.empty
-  in
+  let cx = Guide.cx ?reused:(Option.map (fun l -> l.cx) prev) theme scales in
+  let em = Theme.size theme in
   let unit =
     match size with Size.Panels (w, h) -> (w, h) | Size.Figure _ -> (0., 0.)
   in
-  let cx =
-    {
-      theme;
-      measures = ref Measures.empty;
-      reused;
-      scales;
-      uses;
-      ticks = Array.make (Array.length scales) None;
-      lengths = Array.map (List.map (fun _ -> Float.nan)) uses;
-      final = false;
-      notes = ref [];
-    }
+  let solve ~final node = solve em unit size ~final node in
+  let lengths spec node geo =
+    let add hull acc x =
+      let (g : Guide.spec) = spec x in
+      (g, side_length hull g.side) :: acc
+    in
+    fold
+      (fun acc n hull -> List.fold_left (add hull) acc (guides_of n))
+      [] node geo
   in
-  (* Without guides, then with the first choice's; the second is frozen. *)
-  let next cx acc =
-    let lengths = lengths cx acc in
-    { cx with ticks = Array.map Option.some (choose cx lengths); lengths }
+  let spec (l : laid) = l.guide.spec in
+  let geo, _ = solve ~final:false (strip root) in
+  let cx = Guide.with_ticks (Guide.choose cx (lengths Fun.id root geo)) cx in
+  let laid = lay em cx (fun g -> (g, None, None)) root geo in
+  let geo, _ = solve ~final:false laid in
+  let frozen = Guide.choose cx (lengths spec laid geo) in
+  let cx = Guide.with_ticks frozen cx in
+  (* With the frozen ticks, every guide in a band of its own and every
+     horizontal legend one entry a row, a solve gives the shortest sides the
+     figure can take: rows wrapped and bands shared at those lengths only
+     lengthen them in the final solve, where they stay wrapped and shared. *)
+  let laid = lay em cx (fun l -> (spec l, Some 0., None)) laid geo in
+  let geo, _ = solve ~final:false laid in
+  let laid = part em (lay em cx (fun l -> (spec l, None, None)) laid geo) in
+  let geo, page = solve ~final:true laid in
+  let laid =
+    lay em cx (fun l -> (spec l, Some l.guide.wrap, Some l.band)) laid geo
   in
-  let acc, _ = pass cx unit size root in
-  let cx = next cx acc in
-  let acc, _ = pass cx unit size root in
-  let cx = next cx acc in
-  (* Horizontal legends wrap at the lengths of a solve with the frozen ticks,
-     which their rows do not change. *)
-  let acc, _ = pass cx unit size root in
-  let cx = { cx with lengths = lengths cx acc; final = true } in
-  let frozen = Array.map Option.get cx.ticks in
-  let acc, page = pass cx unit size root in
+  let by_tier (g : Guide.t) (g' : Guide.t) =
+    Int.compare (rank (Guide.tier g.spec.kind)) (rank (Guide.tier g'.spec.kind))
+  in
+  let guides =
+    List.stable_sort by_tier
+      (List.map (fun (g, o) -> Guide.move o g) (placed em laid geo))
+  in
+  let panel acc n box =
+    match n with
+    | Panel { id; coord; _ } ->
+        ({ id; box; projection = Coord.project coord box }, coord) :: acc
+    | Grid _ -> acc
+  in
+  let notes = check guides in
   {
     resolved = r;
     theme;
+    cx;
     page;
-    lpanels = List.rev acc.panels;
+    lpanels = List.rev (fold panel [] laid geo);
     frozen;
-    axes = List.rev acc.axes;
-    headers = List.rev acc.headers;
-    legends = List.rev acc.legends;
-    titles = List.rev acc.titles;
-    lwarnings = r.warnings @ dedupe (List.rev !(cx.notes));
-    measures = !(cx.measures);
+    guides;
+    lwarnings = r.warnings @ notes;
   }
+
+let layout ?prev ?(theme = Theme.default) size r =
+  match attempt ?prev theme size r with
+  | l -> l
+  | exception Needs (w, h) ->
+      (* The size a figure too small names is one that lays it out. *)
+      let rec fits w h =
+        match attempt theme (Size.figure w h) r with
+        | _ -> (w, h)
+        | exception Needs (w, h) -> fits w h
+      in
+      let w, h = fits w h in
+      err "layout" "the figure needs %.2f × %.2f pt, more than %a" w h Size.pp
+        size
 
 (* Observing and comparing *)
 
@@ -1275,47 +1108,10 @@ let resolved l = l.resolved
 let theme l = l.theme
 let coords l = l.lpanels
 let frozen l = l.frozen
-let axes l = l.axes
-let headers l = l.headers
-let legends l = l.legends
-let titles l = l.titles
+let guides l = l.guides
 
 let equal_panel (p, c) (p', c') =
   Nx.Ptree.Path.equal p.id p'.id && Box2.equal p.box p'.box && Coord.equal c c'
-
-let equal_axis a a' =
-  Nx.Ptree.Path.equal a.ax_id a'.ax_id
-  && Nx.Ptree.Path.equal a.ax_panel a'.ax_panel
-  && Int.equal a.ax_scale a'.ax_scale
-  && equal_side a.ax_side a'.ax_side
-  && Float.equal a.ax_offset a'.ax_offset
-  && Bool.equal a.ax_grid a'.ax_grid
-  && List.equal equal_placed a.ax_labels a'.ax_labels
-  && Option.equal equal_placed a.ax_title a'.ax_title
-
-let equal_header h h' =
-  Nx.Ptree.Path.equal h.hd_id h'.hd_id
-  && Nx.Ptree.Path.equal h.hd_panel h'.hd_panel
-  && equal_placed h.hd_label h'.hd_label
-
-let equal_entry e e' =
-  Float.equal e.u e'.u
-  && Box2.equal e.swatch e'.swatch
-  && equal_placed e.label e'.label
-
-let equal_body b b' =
-  match (b, b') with
-  | Bar b, Bar b' ->
-      Box2.equal b.bar b'.bar && List.equal equal_placed b.labels b'.labels
-  | Entries es, Entries es' -> List.equal equal_entry es es'
-  | Bar _, Entries _ | Entries _, Bar _ -> false
-
-let equal_legend g g' =
-  Nx.Ptree.Path.equal g.lg_id g'.lg_id
-  && Int.equal g.lg_scale g'.lg_scale
-  && equal_side g.lg_side g'.lg_side
-  && Option.equal equal_placed g.lg_title g'.lg_title
-  && equal_body g.lg_body g'.lg_body
 
 let equal l l' =
   Resolved.equal l.resolved l'.resolved
@@ -1325,10 +1121,7 @@ let equal l l' =
   && List.equal equal_panel l.lpanels l'.lpanels
   && Array.length l.frozen = Array.length l'.frozen
   && Array.for_all2 Ticks.equal l.frozen l'.frozen
-  && List.equal equal_axis l.axes l'.axes
-  && List.equal equal_header l.headers l'.headers
-  && List.equal equal_legend l.legends l'.legends
-  && List.equal equal_placed l.titles l'.titles
+  && List.equal Guide.equal l.guides l'.guides
   && List.equal Resolved.equal_warning l.lwarnings l'.lwarnings
 
 (* Formatting *)
@@ -1336,37 +1129,6 @@ let equal l l' =
 let pp_box ppf b =
   Format.fprintf ppf "[(%g, %g) (%g, %g)]" (Box2.minx b) (Box2.miny b)
     (Box2.maxx b) (Box2.maxy b)
-
-(* A text and its box are on one line, whatever its length. *)
-let pp_placed ppf p =
-  let b = Buffer.create 64 in
-  let line = Format.formatter_of_buffer b in
-  Format.pp_set_geometry line ~max_indent:999_999 ~margin:1_000_000;
-  Format.fprintf line "%a@?" Text.pp p.text;
-  Format.fprintf ppf "%s %a%s" (Buffer.contents b) pp_box (placed_box p)
-    (if p.turned then " turned" else "")
-
-let pp_axis ppf a =
-  Format.fprintf ppf "@[<v 2>axis %a %a%s" pp_id a.ax_id pp_side a.ax_side
-    (if a.ax_grid then " grid" else "");
-  List.iter (Format.fprintf ppf "@,label %a" pp_placed) a.ax_labels;
-  Option.iter (Format.fprintf ppf "@,title %a" pp_placed) a.ax_title;
-  Format.fprintf ppf "@]"
-
-let pp_legend ppf g =
-  Format.fprintf ppf "@[<v 2>legend %a %a" pp_id g.lg_id pp_side g.lg_side;
-  Option.iter (Format.fprintf ppf "@,title %a" pp_placed) g.lg_title;
-  (match g.lg_body with
-  | Bar { bar; labels } ->
-      Format.fprintf ppf "@,bar %a" pp_box bar;
-      List.iter (Format.fprintf ppf "@,label %a" pp_placed) labels
-  | Entries es ->
-      List.iter
-        (fun e ->
-          Format.fprintf ppf "@,entry %g %a %a" e.u pp_box e.swatch pp_placed
-            e.label)
-        es);
-  Format.fprintf ppf "@]"
 
 let pp_ticks ppf (F f, t) =
   Format.fprintf ppf "@[<hov 2>%S %a%a@ %a@]" f.name Channel.pp_kind f.kind
@@ -1378,23 +1140,9 @@ let pp ppf l =
   Format.fprintf ppf "@[<v>layout %g × %g" w h;
   List.iter
     (fun (p, c) ->
-      Format.fprintf ppf "@,@[<v 2>panel %a %a %a" pp_id p.id pp_box p.box
-        Coord.pp c;
-      List.iter
-        (fun a ->
-          if Nx.Ptree.Path.equal a.ax_panel p.id then
-            Format.fprintf ppf "@,%a" pp_axis a)
-        l.axes;
-      List.iter
-        (fun hd ->
-          if Nx.Ptree.Path.equal hd.hd_panel p.id then
-            Format.fprintf ppf "@,header %a %a" pp_id hd.hd_id pp_placed
-              hd.hd_label)
-        l.headers;
-      Format.fprintf ppf "@]")
+      Format.fprintf ppf "@,panel %a %a %a" pp_id p.id pp_box p.box Coord.pp c)
     l.lpanels;
-  List.iter (Format.fprintf ppf "@,%a" pp_legend) l.legends;
-  List.iter (Format.fprintf ppf "@,title %a" pp_placed) l.titles;
+  List.iter (Format.fprintf ppf "@,%a" Guide.pp) l.guides;
   Format.fprintf ppf "@,@[<v 2>ticks";
   List.iteri
     (fun i s -> Format.fprintf ppf "@,%a" pp_ticks (s, l.frozen.(i)))

@@ -19,12 +19,10 @@ module Affine = Hugin_next_gg.Affine
 module Path = Hugin_next_gg.Path
 module Stroke = Hugin_next_gg.Stroke
 module Color = Hugin_next_gg.Color
-module Text = Hugin_next_text.Text
 module Picture = Hugin_next_vg.Picture
 module Renderable = Hugin_next_vg.Renderable
 module Raster = Hugin_next_vg_raster
 module Scale = Hugin_next_kit.Scale
-module Ticks = Hugin_next_kit.Ticks
 open Common
 open Channel
 open Figure
@@ -623,99 +621,14 @@ let panels cx =
       |> Option.map drawn)
     laid
 
-(* Texts *)
-
-(* A quarter turn counterclockwise on the page: (u, v) to (v, -u). *)
-let quarter = { Affine.xx = 0.; yx = -1.; xy = 1.; yy = 0.; x0 = 0.; y0 = 0. }
-
-(* [placed c p] draws [p], in [c] where its text sets no colour. *)
-let placed c (p : Layout.placed) =
-  if not p.turned then Rows.glyphs c p.at p.set
-  else
-    Picture.transform
-      Affine.(translate (P2.x p.at) (P2.y p.at) * quarter)
-      (Rows.glyphs c (P2.v 0. 0.) p.set)
+(* Guides *)
 
 let tag_node id p = Picture.tag { Picture.id; rows = Picture.Rows [||] } p
 
-(* Axes *)
-
-let ticks_of cx s =
-  List.map
-    (fun (t : Ticks.tick) -> t.position)
-    (Layout.frozen cx.layout).(s).major
-
-let panel_of cx id =
-  List.find
-    (fun ((p : Layout.panel), _) -> Nx.Ptree.Path.equal p.id id)
-    (Layout.coords cx.layout)
-  |> fst
-
 let segments pairs =
   List.fold_left
-    (fun p ((x0, y0), (x1, y1)) ->
-      Path.line_to (P2.v x1 y1) (Path.move_to (P2.v x0 y0) p))
+    (fun p (a, b) -> Path.line_to b (Path.move_to a p))
     Path.empty pairs
-
-let draw_axis cx (a : Layout.axis_out) =
-  let panel = panel_of cx a.ax_panel in
-  let b = panel.box and proj = panel.projection in
-  let tick = em cx Layout.tick_em and o = a.ax_offset in
-  let along u =
-    match a.ax_side with
-    | `Top | `Bottom -> P2.x (Coord.point proj u 0.)
-    | `Left | `Right -> P2.y (Coord.point proj 0. u)
-  in
-  let lines =
-    let us = ticks_of cx a.ax_scale in
-    match a.ax_side with
-    | `Bottom ->
-        let y = Box2.maxy b +. o in
-        ((Box2.minx b, y), (Box2.maxx b, y))
-        :: List.map (fun u -> ((along u, y), (along u, y +. tick))) us
-    | `Top ->
-        let y = Box2.miny b -. o in
-        ((Box2.minx b, y), (Box2.maxx b, y))
-        :: List.map (fun u -> ((along u, y), (along u, y -. tick))) us
-    | `Left ->
-        let x = Box2.minx b -. o in
-        ((x, Box2.miny b), (x, Box2.maxy b))
-        :: List.map (fun u -> ((x, along u), (x -. tick, along u))) us
-    | `Right ->
-        let x = Box2.maxx b +. o in
-        ((x, Box2.miny b), (x, Box2.maxy b))
-        :: List.map (fun u -> ((x, along u), (x +. tick, along u))) us
-  in
-  let pen = Stroke.v ~cap:`Butt (em cx rule_em) in
-  tag_node a.ax_id
-    (Picture.group
-       (Picture.stroke pen (faded cx rule_alpha) (segments lines)
-        :: List.map (placed (faded cx label_alpha)) a.ax_labels
-       @ Option.to_list (Option.map (placed (ink cx)) a.ax_title)))
-
-let draw_grid cx (a : Layout.axis_out) =
-  if not a.ax_grid then Picture.empty
-  else
-    let panel = panel_of cx a.ax_panel in
-    let b = panel.box and proj = panel.projection in
-    let lines =
-      List.map
-        (fun u ->
-          match a.ax_side with
-          | `Top | `Bottom ->
-              let x = P2.x (Coord.point proj u 0.) in
-              ((x, Box2.miny b), (x, Box2.maxy b))
-          | `Left | `Right ->
-              let y = P2.y (Coord.point proj 0. u) in
-              ((Box2.minx b, y), (Box2.maxx b, y)))
-        (ticks_of cx a.ax_scale)
-    in
-    tag_node a.ax_id
-      (Picture.stroke
-         (Stroke.v ~cap:`Butt (em cx grid_em))
-         (faded cx grid_alpha) (segments lines))
-
-(* Legends *)
 
 let bar_steps = 256
 
@@ -735,69 +648,55 @@ let readers cx s =
   in
   List.rev (List.fold_left add [] (by_order f.members))
 
-let draw_legend cx notes (g : Layout.legend_out) =
-  let warn msg = notes := (g.lg_id, msg) :: !notes in
-  let body =
-    match g.lg_body with
-    | Bar { bar; labels } ->
-        let colour = Read.colors cx.ctx cx.ctx.scales.(g.lg_scale) in
+(* [paint cx notes g] is the picture of the guide [g] but its grid lines, tagged
+   with its id unless it is a figure title. *)
+let paint cx notes (g : Guide.t) =
+  let id = g.spec.id in
+  let warn msg = notes := (id, msg) :: !notes in
+  let element : Guide.element -> Picture.t = function
+    | Text p -> Rows.glyphs (ink cx) p.at p.set
+    | Label p -> Rows.glyphs (faded cx label_alpha) p.at p.set
+    | Rules l ->
+        Picture.stroke
+          (Stroke.v ~cap:`Butt (em cx rule_em))
+          (faded cx rule_alpha) (segments l)
+    | Grid_lines _ -> Picture.empty
+    | Bar { box; scale; vertical } ->
+        let colour = Read.colors cx.ctx cx.ctx.scales.(scale) in
         let at k = colour ((float k +. 0.5) /. float bar_steps) in
-        let vertical =
-          match g.lg_side with
-          | `Left | `Right -> true
-          | `Top | `Bottom -> false
-        in
         let px =
           if vertical then image bar_steps 1 (fun i _ -> at (bar_steps - 1 - i))
           else image 1 bar_steps (fun _ j -> at j)
         in
-        let tick = em cx Layout.tick_em in
-        let lines =
-          List.map
-            (fun u ->
-              if vertical then
-                let y = Box2.maxy bar -. (u *. Box2.h bar) in
-                ((Box2.maxx bar, y), (Box2.maxx bar +. tick, y))
-              else
-                let x = Box2.minx bar +. (u *. Box2.w bar) in
-                ((x, Box2.maxy bar), (x, Box2.maxy bar +. tick)))
-            (ticks_of cx g.lg_scale)
+        Picture.image box px
+    | Swatch { box; scale; entry; entries; u } ->
+        let proj = Coord.project (Coord.cartesian ()) box in
+        let swatch (occ, is) =
+          let rows =
+            Read.swatch cx.ctx occ.mark ~id proj ~warn ~scale
+              ~reads:(fun i -> List.mem i is)
+              ~n:entries ~k:entry u
+          in
+          Option.value occ.mark.swatch ~default:occ.mark.draw rows
         in
-        Picture.image bar px
-        :: Picture.stroke
-             (Stroke.v ~cap:`Butt (em cx rule_em))
-             (faded cx rule_alpha) (segments lines)
-        :: List.map (placed (faded cx label_alpha)) labels
-    | Entries es ->
-        let n = List.length es in
-        let marks = readers cx g.lg_scale in
-        List.concat
-          (List.mapi
-             (fun k (e : Layout.legend_entry) ->
-               let proj = Coord.project (Coord.cartesian ()) e.swatch in
-               let swatch (occ, is) =
-                 let rows =
-                   Read.swatch cx.ctx occ.mark ~id:g.lg_id proj ~warn
-                     ~scale:g.lg_scale
-                     ~reads:(fun i -> List.mem i is)
-                     ~n ~k e.u
-                 in
-                 let draw =
-                   Option.value occ.mark.swatch ~default:occ.mark.draw
-                 in
-                 draw rows
-               in
-               [
-                 Picture.tag
-                   { Picture.id = g.lg_id; rows = Picture.Rows [| k |] }
-                   (Picture.group (List.map swatch marks));
-                 placed (faded cx label_alpha) e.label;
-               ])
-             es)
+        Picture.tag
+          { Picture.id; rows = Picture.Rows [| entry |] }
+          (Picture.group (List.map swatch (readers cx scale)))
   in
-  tag_node g.lg_id
-    (Picture.group
-       (Option.to_list (Option.map (placed (ink cx)) g.lg_title) @ body))
+  let p = Picture.group (List.map element g.elements) in
+  match g.spec.kind with Title _ -> p | Axis _ | Legend _ -> tag_node id p
+
+(* [lines cx g] is the grid lines of the guide [g], drawn under the marks. *)
+let lines cx (g : Guide.t) =
+  let pen = Stroke.v ~cap:`Butt (em cx grid_em) in
+  let line : Guide.element -> Picture.t option = function
+    | Grid_lines l ->
+        Some (Picture.stroke pen (faded cx grid_alpha) (segments l))
+    | Text _ | Label _ | Rules _ | Bar _ | Swatch _ -> None
+  in
+  match List.filter_map line g.elements with
+  | [] -> Picture.empty
+  | ps -> tag_node g.spec.id (Picture.group ps)
 
 (* Drawing *)
 
@@ -816,26 +715,17 @@ let afresh ~density l =
   let cx = { ctx; layout = l; resolved = r } in
   let drawn = panels cx in
   let notes = ref [] in
-  let legends = List.map (draw_legend cx notes) (Layout.legends l) in
+  let guides = Layout.guides l in
+  let painted = List.map (paint cx notes) guides in
   let w, h = Layout.size l in
   let paper = Theme.paper ctx.theme in
   let paper =
     if Color.alpha paper = 0. then Picture.empty
     else Picture.fill paper (Path.rect (Box2.v 0. 0. w h))
   in
-  let axes = Layout.axes l in
   let picture =
     Picture.group
-      ([ paper ]
-      @ List.map (draw_grid cx) axes
-      @ List.map fst drawn
-      @ List.map (draw_axis cx) axes
-      @ List.map
-          (fun (hd : Layout.header_out) ->
-            tag_node hd.hd_id (placed (ink cx) hd.hd_label))
-          (Layout.headers l)
-      @ legends
-      @ List.map (placed (ink cx)) (Layout.titles l))
+      ((paper :: List.map (lines cx) guides) @ List.map fst drawn @ painted)
   in
   let warnings =
     dedupe (Layout.warnings l @ List.concat_map snd drawn @ List.rev !notes)
