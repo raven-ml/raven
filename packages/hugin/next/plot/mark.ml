@@ -11,22 +11,22 @@ let bind ?imply ?guide role ch = B { role; ch; imply; guide }
 
 type nonrec rows = rows
 
-let id (r : rows) = match r with _ -> .
-let length (r : rows) = match r with _ -> .
-let shape (r : rows) = match r with _ -> .
-let index (r : rows) = match r with _ -> .
-let get (r : rows) _ = match r with _ -> .
-let normalized (r : rows) _ = match r with _ -> .
-let range (r : rows) _ = match r with _ -> .
-let ticks (r : rows) _ = match r with _ -> .
-let points (r : rows) = match r with _ -> .
-let extent (r : rows) _ = match r with _ -> .
-let projection (r : rows) = match r with _ -> .
-let project (r : rows) _ = match r with _ -> .
-let series (r : rows) = match r with _ -> .
-let theme (r : rows) = match r with _ -> .
-let text ?halign:_ ?valign:_ (r : rows) _ _ _ = match r with _ -> .
-let warn (r : rows) _ = match r with _ -> .
+let id (r : rows) = r.Rows.id
+let length = Rows.length
+let shape (r : rows) = Array.copy r.Rows.shape
+let index (r : rows) = Array.copy r.Rows.index
+let get = Rows.get
+let normalized = Rows.normalized
+let range = Rows.range
+let ticks = Rows.ticks
+let points = Rows.points
+let extent = Rows.extent
+let projection (r : rows) = r.Rows.projection
+let project = Rows.project
+let series = Rows.series
+let theme (r : rows) = r.Rows.theme
+let text = Rows.text
+let warn (r : rows) msg = r.Rows.warn msg
 
 type nonrec reducer = reducer
 

@@ -100,6 +100,7 @@ type axis_out = {
   ax_panel : id;
   ax_scale : int; (* Its index in the resolved figure's scales. *)
   ax_side : side;
+  ax_offset : float; (* Its distance from its panel's side. *)
   ax_grid : bool;
   ax_labels : placed list; (* Those drawn. *)
   ax_title : placed option;
@@ -782,6 +783,7 @@ let place_axis cx acc l proj box a offset =
               ax_panel = l.l_id;
               ax_scale = a.a_scale;
               ax_side = a.a_side;
+              ax_offset = offset;
               ax_grid = a.a_grid;
               ax_labels = labels;
               ax_title = title;
@@ -1199,6 +1201,14 @@ let layout ?prev ?(theme = Theme.default) size (r : Resolved.t) =
 let size l = l.page
 let panels l = List.map fst l.lpanels
 let warnings l = l.lwarnings
+let resolved l = l.resolved
+let theme l = l.theme
+let coords l = l.lpanels
+let frozen l = l.frozen
+let axes l = l.axes
+let headers l = l.headers
+let legends l = l.legends
+let titles l = l.titles
 
 let equal_panel (p, c) (p', c') =
   Nx.Ptree.Path.equal p.id p'.id && Box2.equal p.box p'.box && Coord.equal c c'
@@ -1208,6 +1218,7 @@ let equal_axis a a' =
   && Nx.Ptree.Path.equal a.ax_panel a'.ax_panel
   && Int.equal a.ax_scale a'.ax_scale
   && equal_side a.ax_side a'.ax_side
+  && Float.equal a.ax_offset a'.ax_offset
   && Bool.equal a.ax_grid a'.ax_grid
   && List.equal equal_placed a.ax_labels a'.ax_labels
   && Option.equal equal_placed a.ax_title a'.ax_title

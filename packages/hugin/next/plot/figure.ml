@@ -11,7 +11,7 @@ open Channel
 
 (* Marks and figures *)
 
-type rows = |
+type rows = Rows.t
 type reducer = M4 | Cells | Raster
 
 type binding =

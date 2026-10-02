@@ -7,6 +7,7 @@
 
 module P2 := Hugin_next_gg.P2
 module Box2 := Hugin_next_gg.Box2
+module Affine := Hugin_next_gg.Affine
 
 type t = Cartesian of { aspect : float option }
 
@@ -23,3 +24,6 @@ val project : t -> Box2.t -> projection
 
 val point : projection -> float -> float -> P2.t
 val invert : projection -> P2.t -> (float * float) option
+
+val affine : projection -> Affine.t
+(** [affine p] is the affine map that [p] is. *)

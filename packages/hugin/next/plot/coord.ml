@@ -5,6 +5,7 @@
 
 module P2 = Hugin_next_gg.P2
 module Box2 = Hugin_next_gg.Box2
+module Affine = Hugin_next_gg.Affine
 open Common
 
 type t = Cartesian of { aspect : float option }
@@ -36,3 +37,13 @@ let invert (Box b) pt =
   let w = Box2.w b and h = Box2.h b in
   if w = 0. || h = 0. then None
   else Some ((P2.x pt -. Box2.minx b) /. w, (Box2.maxy b -. P2.y pt) /. h)
+
+let affine (Box b) =
+  {
+    Affine.xx = Box2.w b;
+    yx = 0.;
+    xy = 0.;
+    yy = -.Box2.h b;
+    x0 = Box2.minx b;
+    y0 = Box2.maxy b;
+  }

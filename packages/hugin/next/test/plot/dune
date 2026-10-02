@@ -36,3 +36,9 @@
   (progn
    (run %{test} --corrected)
    (diff? test_layout.ml test_layout.ml.corrected))))
+
+(test
+ (name test_draw)
+ (modules test_draw)
+ (package hugin)
+ (libraries hugin.next nx windtrap))

@@ -19,9 +19,6 @@ module Scheme = Hugin_next_kit.Scheme
 module Symbol = Hugin_next_kit.Symbol
 module Curve = Hugin_next_kit.Curve
 
-(* The stages after [layout] come with the drawing of figures. *)
-let unimplemented fn = failwith ("Hugin_next." ^ fn ^ ": not implemented")
-
 (* Figures *)
 
 type t = Figure.t
@@ -85,22 +82,59 @@ module Mark = Mark
 
 module Resolved = Resolved
 module Layout = Layout
-
-module Drawing = struct
-  type t = |
-
-  let renderable (d : t) = match d with _ -> .
-  let warnings (d : t) = match d with _ -> .
-  let equal (d : t) _ = match d with _ -> .
-  let pp _ (d : t) = match d with _ -> .
-end
+module Drawing = Draw
 
 let resolve = Resolved.resolve
 let layout = Layout.layout
-let draw ?prev:_ ~density:_ _ = unimplemented "draw"
+let draw = Draw.draw
 
 let render ?view ?theme ?(density = 2.) size f =
   draw ~density (layout ?theme size (resolve ?view f))
 
-let save ?warn:_ ?view:_ ?theme:_ ?size:_ ?density:_ _ _ = unimplemented "save"
-let pp _ _ = unimplemented "pp"
+(* Output *)
+
+let default_size = Size.figure 360. 240.
+let default_density = 2.
+
+let save ?(warn = Format.eprintf "%a@." pp_warning) ?view ?theme
+    ?(size = default_size) ?(density = default_density) file f =
+  let write =
+    match String.lowercase_ascii (Filename.extension file) with
+    | ".png" -> Hugin_next_vg_raster.png ~density
+    | ".svg" -> Hugin_next_vg_svg.render
+    | ".pdf" -> Hugin_next_vg_pdf.render
+    | ext ->
+        Common.err "save" "%S: the extension %S is not .png, .svg or .pdf" file
+          ext
+  in
+  let d = render ?view ?theme ~density size f in
+  List.iter warn (Drawing.warnings d);
+  let data = write (Drawing.renderable d) in
+  Out_channel.with_open_bin file (fun oc -> Out_channel.output_string oc data)
+
+(* Quill's display protocol: the prefix, the MIME type, the display id (none),
+   the size hint in points and the document, one per line. *)
+let display_prefix = "quill.display"
+
+let pp ppf f =
+  let d = render default_size f in
+  let r = Drawing.renderable d in
+  let doc =
+    String.concat "\n"
+      [
+        display_prefix;
+        "image/svg+xml";
+        "";
+        Printf.sprintf "%g %g" (Renderable.w r) (Renderable.h r);
+        Hugin_next_vg_svg.render r;
+      ]
+  in
+  let summary =
+    match List.length (Drawing.warnings d) with
+    | 0 -> "hugin figure"
+    | 1 -> "hugin figure (1 warning)"
+    | n -> Printf.sprintf "hugin figure (%d warnings)" n
+  in
+  Format.pp_open_stag ppf (Format.String_tag doc);
+  Format.pp_print_string ppf summary;
+  Format.pp_close_stag ppf ()

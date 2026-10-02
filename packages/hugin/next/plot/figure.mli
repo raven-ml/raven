@@ -11,10 +11,7 @@ module Scale := Hugin_next_kit.Scale
 
 (** {1:marks Marks} *)
 
-(** Rows are inhabited once figures are drawn: until then no draw function is
-    called. *)
-type rows = |
-
+type rows = Rows.t
 type reducer = M4 | Cells | Raster
 
 type binding =
