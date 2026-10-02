@@ -49,7 +49,7 @@ let devices batch =
   | Call { aux = Some info; _ } -> info.device
   | _ -> invalid_arg "a batch holds its queues' devices"
 
-let run ?(finished = []) ?order batch =
+let run ?(finished = []) ?order ?capacity batch =
   let devices = devices batch in
   let queues = queues batch in
   let calls = calls batch in
@@ -81,7 +81,21 @@ let run ?(finished = []) ?order batch =
     | Param when named (Ops.expr u) Hcq2.value -> submitted + 1
     | _ -> List.fold_left (fun acc s -> acc + value s) 0 (Ops.src u)
   in
-  let pending = List.map (fun (q, cmds) -> (q, ref cmds)) queues in
+  (* The commands each queue holds, and those the host has yet to hand it. *)
+  let pending =
+    List.map
+      (fun (q, cmds) -> (q, ref (if capacity = None then cmds else [])))
+      queues
+  in
+  let host =
+    ref
+      (match capacity with
+      | None -> []
+      | Some _ ->
+          List.concat_map
+            (fun (q, cmds) -> List.map (fun c -> (q, c)) cmds)
+            queues)
+  in
   let order = Option.value order ~default:(List.map fst queues) in
   let events = ref [] in
   let index c =
@@ -114,6 +128,18 @@ let run ?(finished = []) ?order batch =
     | "timestamp" | "barrier" -> true
     | i -> invalid_arg ("no instruction " ^ i)
   in
+  let hand () =
+    match (!host, capacity) with
+    | (q, c) :: rest, Some n ->
+        let cmds = List.assoc q pending in
+        List.length !cmds < n
+        && begin
+          cmds := !cmds @ [ c ];
+          host := rest;
+          true
+        end
+    | _ -> false
+  in
   let step () =
     List.exists
       (fun q ->
@@ -124,13 +150,19 @@ let run ?(finished = []) ?order batch =
             true
         | _ -> false)
       order
+    || hand ()
   in
   while step () do
     ()
   done;
   {
     events = List.rev !events;
-    left = List.map (fun (q, cmds) -> (q, List.length !cmds)) pending;
+    left =
+      List.map
+        (fun (q, cmds) ->
+          let unhanded = List.filter (fun (q', _) -> q' = q) !host in
+          (q, List.length !cmds + List.length unhanded))
+        pending;
     signal_words =
       List.map (fun d -> (d, get (word (Hcq2.signal_word d)))) devices;
   }

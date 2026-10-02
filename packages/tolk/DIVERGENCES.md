@@ -3067,3 +3067,34 @@ stores through a pad.
   (the second choice of a matmul makes its `in1` the core's A); rune's
   `Rune.quant › gpus › CUDA › on CUDA, a prompt's routes in blocks are
   eager's`, blocks of 16 and of 8 (slow, on the GPU).
+
+## D107. A batch submits a streamed queue after the queues it waits for
+
+- **tinygrad:** `runtime/support/hcq2.py:285-293` (`_finalize_batch`, which
+  submits the queues in their first use) and `runtime/ops_cuda.py:28-69`
+  (`CUDAQueue`, whose commands are calls of CUDA's driver).
+- **tolk:** `lib/runtime/support/hcq2.ml:427` (the type `submission`), `:1051`
+  (`streamed`), `:1066` (`streamed_order`) and `:1093` (`finalize_batch`);
+  `lib/runtime/ops_cuda.ml:173`.
+- **Differs:** a vendor's queues say how its host program hands them their
+  commands: all at once at their submission (`Buffered`: Metal, AMD, NV), or
+  each as the host program makes it, the host waiting while a queue is full
+  (`Streamed`: CUDA, whose stream calls enqueue at once). A batch on streamed
+  queues submits each queue after the queues its calls wait for, the first in
+  use first among those that can come next; a batch whose streamed queues
+  wait for each other runs as two, as a batch its queue cannot hold does. A
+  device's closing waits, a few commands at the end of a queue, may still name
+  a queue submitted after it. Batches on buffered queues are unchanged.
+- **Reason:** (b): symo's tutorial (`tutorial/rnn.ml`) on CUDA. Its compiled
+  optimizer step's batch runs about 35 kernels on the compute stream, waits
+  for a copy into the GPU, then runs 300 more; tinygrad's order submits the
+  compute stream first, which stops at the wait, fills, and blocks the host in
+  `cuLaunchKernel` before it submits the copy: the step hung. A copy queued
+  first runs the step.
+- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `streamed queues
+  › a queue is submitted after the queue it waits for, which it follows in the
+  batch`, `› a copy of a kernel's output runs after it`, `› queues that wait
+  for each other run as several batches` and `› a range whose queues wait for
+  each other runs to the end`, on a model of streamed queues that hold two
+  commands (`Batches.run ~capacity`); `Tolk.Ops_cuda`'s `execution › kernels
+  after a copy into the GPU that they read all run` on a GPU.

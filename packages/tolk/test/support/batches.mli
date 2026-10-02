@@ -41,12 +41,19 @@ type outcome = {
 val run :
   ?finished:(string * int) list ->
   ?order:(string * string) list ->
+  ?capacity:int ->
   Ops.t ->
   outcome
-(** [run ~finished ~order batch] runs [batch] until no queue can go on. A device
-    has signaled the value [finished] gives it, and {!submitted} otherwise. Each
-    step runs one command: the first that can run of the queues taken in [order]
-    (default the batch's order).
+(** [run ~finished ~order ~capacity batch] runs [batch] until no queue can go
+    on. A device has signaled the value [finished] gives it, and {!submitted}
+    otherwise. Each step runs one command: the first that can run of the queues
+    taken in [order] (default the batch's order).
+
+    Without [capacity], the queues hold all their commands from the start. With
+    it, the queues are streamed ({!Hcq2.Streamed}): the host hands them their
+    commands one at a time, queue after queue in the batch's order, when no
+    command can run, and waits while the queue it hands one to holds [capacity]
+    commands.
 
     Raises [Invalid_argument] if a command is none of these. *)
 

@@ -160,6 +160,27 @@ let execution =
           ignore (run_calls ~bound calls);
           equal floats [| 6.; 7.; 8.; 9. |]
             (floats_of (List.hd (List.assq b2 bound))));
+      slow "kernels after a copy into the GPU that they read all run" (fun () ->
+          (* The compute queue waits for the copy queue after its first kernel,
+             then takes more kernels than a stream holds. *)
+          let x = storage "CUDA" and h = storage "CPU" in
+          let b = chain 2000 in
+          let bound =
+            List.map
+              (fun u ->
+                let name =
+                  match Ops.device u with Some (Single n) -> n | _ -> "CUDA"
+                in
+                (u, [ new_floats name [| 1.; 2.; 3.; 4. |] ]))
+              (x :: h :: b)
+          in
+          let calls =
+            adds (storage "CUDA") x :: Ops.store_call (List.hd b) h :: chained b
+          in
+          ignore (run_calls ~bound calls);
+          equal floats
+            [| 2001.; 2002.; 2003.; 2004. |]
+            (floats_of (List.hd (List.assq (List.nth b 2000) bound))));
       slow "copies out, in and out again leave the host the bytes copied in"
         (fun () ->
           let vram = storage ~n:1024 "CUDA" in

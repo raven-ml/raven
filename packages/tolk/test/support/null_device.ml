@@ -230,7 +230,13 @@ let devices ?(copy_queue = true) ?(reaches = fun _ -> true) ?ring () =
   | name ->
       let d = device name in
       let queues =
-        { Hcq2.commands = commands ?ring; copy_queue; host = "CPU"; reaches }
+        {
+          Hcq2.commands = commands ?ring;
+          copy_queue;
+          submission = Buffered;
+          host = "CPU";
+          reaches;
+        }
       in
       {
         Tolk_engine.device = d;

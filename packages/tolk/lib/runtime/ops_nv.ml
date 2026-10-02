@@ -653,7 +653,13 @@ let queue props q : Hcq2.commands =
   }
 
 let queues ~host ~reaches props =
-  { Hcq2.commands = queue props; copy_queue = true; host; reaches }
+  {
+    Hcq2.commands = queue props;
+    copy_queue = true;
+    submission = Buffered;
+    host;
+    reaches;
+  }
 
 (* Linking *)
 

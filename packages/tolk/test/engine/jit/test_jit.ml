@@ -202,6 +202,7 @@ let recorded_devices () =
         {
           Hcq2.commands = Null_queue.commands events;
           copy_queue = true;
+          submission = Buffered;
           host = "CPU";
           reaches = (fun _ -> true);
         }

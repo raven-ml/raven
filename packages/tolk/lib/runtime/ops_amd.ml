@@ -1270,7 +1270,13 @@ let queues ~host ~reaches gpu =
       compute_queue ~host gpu q
     else copy_queue ~host gpu q
   in
-  { Hcq2.commands; copy_queue = gpu.copy_rings <> []; host; reaches }
+  {
+    Hcq2.commands;
+    copy_queue = gpu.copy_rings <> [];
+    submission = Buffered;
+    host;
+    reaches;
+  }
 
 (* What the engine links *)
 

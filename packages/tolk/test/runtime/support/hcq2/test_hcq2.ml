@@ -107,7 +107,7 @@ let kind name =
   | None -> name
 
 (* The host "CPU", and any "KIND:i" as a device of that kind with queues. *)
-let kinds ?(copy_queue = true) () =
+let kinds ?(copy_queue = true) ?(submission = Hcq2.Buffered) () =
   let events = Null_queue.events () in
   fun name ->
     if name = "CPU" then { Hcq2.target = recorded_target; queues = None }
@@ -116,6 +116,7 @@ let kinds ?(copy_queue = true) () =
         {
           Hcq2.commands = Null_queue.commands events;
           copy_queue;
+          submission;
           host = "CPU";
           reaches = (fun _ -> true);
         }
@@ -125,8 +126,10 @@ let kinds ?(copy_queue = true) () =
         queues = Some queues;
       }
 
-let sched ?(profile = false) ?copy_queue calls =
-  Hcq2.sched_batches ~devices:(kinds ?copy_queue ()) ~profile (linear calls)
+let sched ?(profile = false) ?copy_queue ?submission calls =
+  Hcq2.sched_batches
+    ~devices:(kinds ?copy_queue ?submission ())
+    ~profile (linear calls)
 
 (* Recorded cases *)
 
@@ -141,6 +144,7 @@ let recorded_devices ?(copy_queue = true) () =
         {
           Hcq2.commands = Null_queue.commands events;
           copy_queue;
+          submission = Buffered;
           host = "CPU";
           reaches = (fun _ -> true);
         }
@@ -1169,6 +1173,7 @@ let compiling =
                   {
                     Hcq2.commands = Null_queue.commands events;
                     copy_queue = true;
+                    submission = Buffered;
                     host = "CPU";
                     reaches = (fun d -> d <> "CPU:2");
                   }
@@ -2528,6 +2533,80 @@ let ranges =
           raises_match Exn.invalid_arg (fun () -> sched [ e ]));
     ]
 
+(* Streamed queues *)
+
+(* A batch's calls on the streamed device "CPU:1" and the host "CPU": the
+   kernels on its compute queue, the copies on its copy queue. *)
+let streamed calls = batches (sched ~submission:Streamed calls)
+
+(* The queues of [batch] run to the end when the host hands each its commands as
+   it submits them and a queue holds two. *)
+let runs_streamed batch =
+  well_formed batch;
+  List.iter
+    (fun ((d, q), n) ->
+      equal int ~msg:(Printf.sprintf "commands left on %s %s" d q) 0 n)
+    (Batches.run ~capacity:2 batch).left
+
+let streamed_queues =
+  group "streamed queues"
+    [
+      test
+        "a queue is submitted after the queue it waits for, which it follows \
+         in the batch" (fun () ->
+          let x = storage "CPU:1" and d = storage "CPU:1" in
+          let calls =
+            [
+              adds x (storage "CPU:1");
+              Ops.store_call d (storage "CPU");
+              adds (storage "CPU:1") d;
+              adds (storage "CPU:1") x;
+            ]
+          in
+          match streamed calls with
+          | [ b ] ->
+              runs_streamed b;
+              equal
+                (list (pair string string))
+                [ ("CPU:1", "COPY:0"); ("CPU:1", "COMPUTE:0") ]
+                (List.map fst (Batches.queues b))
+          | bs -> failf "one batch, not %d" (List.length bs));
+      test "a copy of a kernel's output runs after it" (fun () ->
+          let x = storage "CPU:1" in
+          let calls =
+            [ adds x (storage "CPU:1"); Ops.store_call (storage "CPU") x ]
+          in
+          List.iter runs_streamed (streamed calls));
+      test "queues that wait for each other run as several batches" (fun () ->
+          let x = storage "CPU:1" and d = storage "CPU:1" in
+          let calls =
+            [
+              adds x (storage "CPU:1");
+              Ops.store_call (storage "CPU") x;
+              Ops.store_call d (storage "CPU");
+              adds (storage "CPU:1") d;
+            ]
+          in
+          let bs = streamed calls in
+          greater ~msg:"batches" int ~than:1 (List.length bs);
+          List.iter runs_streamed bs);
+      test "a range whose queues wait for each other runs to the end" (fun () ->
+          let r = Ops.range (Int 3) [ 9 ] in
+          let x = storage "CPU:1" and d = storage "CPU:1" in
+          let e =
+            Ops.end_
+              (linear
+                 [
+                   adds x (storage "CPU:1");
+                   Ops.store_call (storage "CPU") x;
+                   Ops.store_call d (storage "CPU");
+                   adds (storage "CPU:1") d;
+                 ])
+              [ r ]
+          in
+          List.iter runs_streamed (streamed [ e ]));
+    ]
+
 let () =
   exit
     (run "Hcq2"
@@ -2550,4 +2629,5 @@ let () =
          word_tests;
          loops;
          ranges;
+         streamed_queues;
        ])

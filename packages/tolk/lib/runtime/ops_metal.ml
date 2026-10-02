@@ -340,6 +340,7 @@ let queues ~host ~arch ~residency_set =
   {
     Hcq2.commands = queue ~host ~arch ~residency_set;
     copy_queue = false;
+    submission = Buffered;
     host;
     reaches = (fun _ -> false);
   }

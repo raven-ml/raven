@@ -424,9 +424,12 @@ let cstruct ~host s fields =
 
 (* Devices *)
 
+type submission = Buffered | Streamed
+
 type queues = {
   commands : Queue.t -> commands;
   copy_queue : bool;
+  submission : submission;
   host : string;
   reaches : string -> bool;
 }
@@ -1043,8 +1046,53 @@ let build_queues ctx =
     (Ordered.keys ctx.queues);
   queues.items
 
+(* Streamed queues *)
+
+let streamed ctx =
+  List.exists
+    (fun d -> (queues ctx.devices d).submission = Streamed)
+    (Ordered.keys ctx.queues)
+
+(* The queues of a batch in the order a host program submits them to streamed
+   queues. A streamed queue takes each command as the host program encodes it,
+   and the host waits while the queue is full: a queue that waits for a queue
+   submitted after it can fill while it waits, and stop the host before the
+   commands it waits for reach their queue. So each queue comes after the queues
+   its calls wait for, the first in use first among those that can come next,
+   and a batch whose queues wait for each other raises [Over_capacity], to run
+   as two. A device's closing waits, at the end of one of its queues, may name a
+   queue submitted after it: the queue has run the commands before them when it
+   takes them, and holds those few. *)
+let streamed_order ctx queues =
+  let key (devs, q) = (List.hd devs, q) in
+  let waits_for k =
+    List.concat
+      (List.mapi
+         (fun tag e ->
+           if key (e.devs, e.queue) <> k then []
+           else
+             List.filter_map
+               (fun (k', _) -> if k' <> k then Some k' else None)
+               ctx.waits.(tag))
+         (Array.to_list ctx.batch))
+  in
+  let rec order placed = function
+    | [] -> List.rev placed
+    | left -> (
+        let submitted k' = List.exists (fun (q, _) -> key q = k') placed in
+        let ready (q, _) = List.for_all submitted (waits_for (key q)) in
+        match List.find_opt ready left with
+        | Some q -> order (q :: placed) (List.filter (fun q' -> q' != q) left)
+        | None ->
+            raise
+              (Over_capacity
+                 "the streamed queues of a batch wait for each other"))
+  in
+  order [] queues
+
 let finalize_batch ctx =
   let queues = build_queues ctx in
+  let queues = if streamed ctx then streamed_order ctx queues else queues in
   (* Re-arm the batch's signals before submitting the queues in first use. *)
   let signals =
     List.concat_map

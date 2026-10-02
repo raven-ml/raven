@@ -167,4 +167,10 @@ let queue ~host q : Hcq2.commands =
   }
 
 let queues ~host ~reaches =
-  { Hcq2.commands = queue ~host; copy_queue = true; host; reaches }
+  {
+    Hcq2.commands = queue ~host;
+    copy_queue = true;
+    submission = Streamed;
+    host;
+    reaches;
+  }

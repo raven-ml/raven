@@ -950,6 +950,10 @@ thread.
 
 ### Tolk (new)
 
+- A compiled program on CUDA no longer hangs when a kernel waits for a copy
+  queued after it in the program: CUDA's streams take commands as the host
+  issues them, so `Hcq2.sched_batches` now submits each streamed queue after
+  the queues it waits for (`Hcq2.submission`), splitting the batch otherwise.
 - A value that kernels read widened to a type holding each of its values, as
   `bfloat16` to `float32`, is stored at its own type and widened as it is
   read: half the bytes, and a `float32` product of such values runs on the

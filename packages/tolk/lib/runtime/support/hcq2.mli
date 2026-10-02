@@ -136,12 +136,25 @@ val bufferize_cmdbuf : ?device:Ops.device -> Queue.t -> string -> Ops.t
 
 (** {1:devices Devices} *)
 
+(** The type for how a host program hands a device's queues their commands. *)
+type submission =
+  | Buffered
+      (** A queue takes its commands at once, when the host program submits
+          them. *)
+  | Streamed
+      (** A queue takes each command as the host program encodes it, and the
+          host waits while the queue is full, as CUDA's streams do. *)
+
 type queues = {
   commands : Queue.t -> commands;
       (** [commands q] encodes the queue [q] of the vendor's devices. *)
   copy_queue : bool;
       (** Whether the device copies on queues of its own. Without them, a copy
           on the device is a kernel on its compute queue. *)
+  submission : submission;
+      (** How the host program hands the device's queues their commands. A batch
+          on [Streamed] queues submits each queue after those its calls wait for
+          ({!sched_batches}). *)
   host : string;
       (** The device that runs the host programs submitting to the device's
           queues, and whose memory holds the staging of copies. *)
@@ -360,16 +373,24 @@ val sched_batches :
     On NV, a compute queue that waits for another queue also waits for its own
     previous call. The fence re-arms every queue signal (stores [0]).
 
+    The queues are submitted in the order of their first use, and on {!Streamed}
+    queues each after the queues its calls wait for: a streamed queue that waits
+    for a queue submitted after it could fill and stop the host before the
+    commands it waits for reach their queue. A device's closing waits may name a
+    queue submitted after theirs, since a queue holds them once its earlier
+    commands have run.
+
     The slots of a device are a volatile placeholder tagged ["slots"] of 16-byte
     slots, each a signal then a timestamp: one per queue of the device, then,
     with [profile], two per run of a call of the batch, its start and end
     timestamps.
 
-    Each batch is [lower batch] (default the batch). Where [lower] raises
-    {!Over_capacity}, the batch runs as two, one after the other: its calls
-    halved, or, for a range alone, the first half of its trips and the rest,
-    each a range of its own, and a range of one trip as its calls. A range's
-    trips then take one submission for each share of the queue that holds them.
+    Each batch is [lower batch] (default the batch). Where its streamed queues
+    wait for each other, or [lower] raises {!Over_capacity}, the batch runs as
+    two, one after the other: its calls halved, or, for a range alone, the first
+    half of its trips and the rest, each a range of its own, and a range of one
+    trip as its calls. A range's trips then take one submission for each share
+    of the queue that holds them.
 
     Raises [Invalid_argument] if a range runs calls on devices with queues and
     on others, or on devices of two kinds, or with {!Over_capacity}'s reason if
