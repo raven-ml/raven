@@ -1450,8 +1450,7 @@ let child_env (env : env) ~cell id =
   let shares = List.map (fun n -> (n, key n)) env.pending @ env.shares in
   { shares; pending = []; cell = (if cell then id else env.cell) }
 
-let equal_titles =
-  List.equal (fun (a, t) (a', t') -> equal_halign a a' && Text.equal t t')
+let equal_title (a, t) (a', t') = equal_halign a a' && Text.equal t t'
 
 let concat cs =
   List.fold_right
@@ -1467,19 +1466,15 @@ let concat cs =
 (* [layer_shaped lid shares children] is the layer [lid] of [children], [shares]
    the scopes of the layer. *)
 let rec layer_shaped lid shares (children : shaped list) =
-  let titles =
-    List.fold_left
-      (fun acc s ->
-        match (s.titles, acc) with
-        | [], _ -> acc
-        | t, None -> Some t
-        | t, Some t' ->
-            if equal_titles t t' then acc
-            else
-              err "resolve" "the children of %a have different titles" pp_id lid)
-      None children
+  (* Titles lift one at a time, outermost first: equal ones lift as one. *)
+  let rec merge ts ts' =
+    match (ts, ts') with
+    | [], ts | ts, [] -> ts
+    | t :: ts, t' :: ts' ->
+        if equal_title t t' then t :: merge ts ts'
+        else err "resolve" "the children of %a have different titles" pp_id lid
   in
-  let titles = Option.value ~default:[] titles in
+  let titles = List.fold_left (fun acc s -> merge acc s.titles) [] children in
   let children = List.map (fun s -> { s with titles = [] }) children in
   let arrs =
     List.filter_map

@@ -811,8 +811,11 @@ val layer : t list -> t
       grid and with a grid of the same cells.
     - {b Wrappers.} [layer] lifts its children's wrappers: [layer [ w a; b ]] is
       [w (layer [ a; b ])] for a {!title} or a {!coord} [w], so
-      [layer [ a |> title x ] |> title y] draws [y] above [x], and two different
-      wrappers of one kind among the children raise in {!resolve}.
+      [layer [ a |> title x ] |> title y] draws [y] above [x]. Wrappers lift one
+      at a time, outermost first, equal ones as one:
+      [layer [ title x (title y a); title x b ]] is
+      [title x (title y (layer [ a; b ]))]. Two different wrappers of one kind
+      that would lift at once raise in {!resolve}.
     - {b Ids.} A nested [layer] stays one child with one index, so
       [layer [ layer [ a; b ]; c ]] draws what [layer [ a; b; c ]] draws and
       gives [a] another id.

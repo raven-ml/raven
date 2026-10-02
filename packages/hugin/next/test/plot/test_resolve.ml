@@ -386,6 +386,16 @@ let composition =
           let w = title (Text.v "w") in
           pp_equal (layer [ w a; b ]) (w (layer [ a; b ]));
           pp_equal (layer [ a; w b ]) (w (layer [ a; b ])));
+      prop "layer lifts titles one at a time" (Gen.pair gen_mark gen_mark)
+        (fun (a, b) ->
+          let t s = title (Text.v s) in
+          pp_equal
+            (layer [ t "w" (t "v" a); t "w" b ])
+            (t "w" (t "v" (layer [ a; b ])));
+          pp_equal
+            (layer [ t "w" a; t "w" (t "v" b) ])
+            (t "w" (t "v" (layer [ a; b ])));
+          invalid (fun () -> resolve (layer [ t "w" (t "v" a); t "v" b ])));
       prop "layer lifts a coordinate system" (Gen.pair gen_mark gen_mark)
         (fun (a, b) ->
           let w = coord (Coord.cartesian ~aspect:2. ()) in
