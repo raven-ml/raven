@@ -960,20 +960,17 @@ let inference =
    an [int] and on those whose products do not fit one, which it computes
    exactly. *)
 
-(* A symbolic integer over the variables [a] and [b], of depth at most
-   [depth]. *)
-let rec expression a b depth =
+let small_constants = Gen.such_that (( <> ) 0) (Gen.int_range (-20) 20)
+
+(* A symbolic integer over the variables [a] and [b] and [constants], of depth
+   at most [depth]. *)
+let rec expression ?(constants = small_constants) a b depth =
   let leaf =
-    Gen.one_of
-      [
-        Gen.constant a;
-        Gen.constant b;
-        Gen.map Ops.O.int (Gen.such_that (( <> ) 0) (Gen.int_range (-20) 20));
-      ]
+    Gen.one_of [ Gen.constant a; Gen.constant b; Gen.map Ops.O.int constants ]
   in
   if depth = 0 then leaf
   else
-    let sub = expression a b (depth - 1) in
+    let sub = expression ~constants a b (depth - 1) in
     let node =
       let open Gen in
       let+ op = int_range 0 8 and+ x = sub and+ y = sub in
@@ -992,34 +989,120 @@ let rec expression a b depth =
 
 let outcome f = match f () with v -> Ok v | exception e -> Error e
 
-let compiles_as_inferred ~bound =
-  let a = weak_var "a" (-bound) bound and b = weak_var "b" (-bound) bound in
-  let value = Gen.int_range (-bound) bound in
+let exn =
+  Testable.make
+    ~pp:(fun ppf e -> Format.pp_print_string ppf (Printexc.to_string e))
+    ~equal:(fun e e' -> Printexc.to_string e = Printexc.to_string e')
+
+(* [e] at [a] = [va] and [b] = [vb], by sym_compile and by sym_infer. *)
+let both e va vb =
+  let env = [ ("a", va); ("b", vb) ] in
+  let var u = List.assoc (Ops.expr u) in
+  ( outcome (fun () -> Ops.sym_infer (Sym e) env),
+    outcome (fun () -> Ops.sym_compile (Sym e) var env) )
+
+let agrees ?constants ~name a b value =
   let draw =
-    Gen.triple
-      (Gen.with_pp Ops.pp (expression a b 3))
-      value value
+    Gen.triple (Gen.with_pp Ops.pp (expression ?constants a b 3)) value value
   in
-  prop
-    (Printf.sprintf "computes what sym_infer does, variables within %d" bound)
-    draw
-    (fun (e, va, vb) ->
-      let env = [ ("a", va); ("b", vb) ] in
-      let var u = List.assoc (Ops.expr u) in
-      let inferred = outcome (fun () -> Ops.sym_infer (Sym e) env)
-      and compiled = outcome (fun () -> Ops.sym_compile (Sym e) var env) in
-      let exn =
-        Testable.make
-          ~pp:(fun ppf e -> Format.pp_print_string ppf (Printexc.to_string e))
-          ~equal:(fun e e' -> Printexc.to_string e = Printexc.to_string e')
-      in
+  prop name draw (fun (e, va, vb) ->
+      let inferred, compiled = both e va vb in
       equal (result int exn) inferred compiled)
+
+let compiles_as_inferred ~bound =
+  agrees
+    ~name:
+      (Printf.sprintf "computes what sym_infer does, variables within %d" bound)
+    (weak_var "a" (-bound) bound)
+    (weak_var "b" (-bound) bound)
+    (Gen.int_range (-bound) bound)
+
+(* The edges of [int] arithmetic: 2^30 and 2^31, around which the product of two
+   values leaves [int]s; 2^61, whose sums cross [max_int]; and [min_int], whose
+   negation and quotient by -1 do not fit. *)
+let extremes =
+  let edges =
+    List.concat_map
+      (fun x -> [ x - 1; x; x + 1; -x + 1; -x; -x - 1 ])
+      [ 1 lsl 30; 1 lsl 31; 1 lsl 61 ]
+  in
+  [ 0; 1; -1; 2; -2; 3; max_int; max_int - 1; min_int; min_int + 1 ] @ edges
+
+let compiles_at_the_extremes =
+  let some = Gen.of_list ~pp:Format.pp_print_int extremes in
+  agrees ~name:"computes what sym_infer does, at the int extremes"
+    ~constants:(Gen.such_that (( <> ) 0) some)
+    (weak_var "a" min_int max_int)
+    (weak_var "b" min_int max_int)
+    some
+
+(* Values whose [int] arithmetic overflows on the way, and their exact values,
+   computed by hand. *)
+let exactly =
+  let a = weak_var "a" min_int max_int and b = weak_var "b" min_int max_int in
+  (* ((2^30 - 1)^2 + 2^62 - 2) // 4 = 2^60 + 2^58 - 2^29 - 1: the sum crosses
+     max_int, the quotient does not. *)
+  let below = (1 lsl 30) - 1 and below_max = max_int - 1 in
+  let quarter = (1 lsl 60) + (1 lsl 58) - (1 lsl 29) - 1 in
+  let floor_third_of_min_int = (min_int / 3) - 1 in
+  let p31 = 1 lsl 31 and p60 = 1 lsl 60 and p61 = 1 lsl 61 in
+  let open Ops.O in
+  [
+    ( "a sum of a product past max_int",
+      ((a * a) + b) // int 4,
+      below,
+      below_max,
+      quarter );
+    ("a product past max_int", (a * b) // int 4, p31, p31, p60);
+    ("the negation of min_int", -a // int 2, min_int, 0, p61);
+    ("min_int subtracted", b - a - int 1, min_int, 0, max_int);
+    ("min_int divided, floored", a // b, min_int, 3, floor_third_of_min_int);
+    ( "min_int divided toward zero",
+      Ops.alu a Op.Cdiv [ b ],
+      min_int,
+      3,
+      Int.div min_int 3 );
+    ("min_int's remainder by -1", a % b, min_int, -1, 0);
+  ]
+
+let computes_exactly (_, e, va, vb, expected) =
+  let inferred, compiled = both e va vb in
+  equal ~msg:"sym_infer" (result int exn) (Ok expected) inferred;
+  equal ~msg:"sym_compile" (result int exn) (Ok expected) compiled
+
+(* Values that fit no [int], 2^62 each: sym_compile raises as sym_infer does,
+   where [int] arithmetic gives min_int. *)
+let unfit =
+  let a = weak_var "a" min_int max_int and b = weak_var "b" min_int max_int in
+  let p31 = 1 lsl 31 in
+  let open Ops.O in
+  [
+    ("min_int // -1", a // b, min_int, -1);
+    ("2^31 * 2^31", a * b, p31, p31);
+    ("Neg min_int", Ops.alu a Op.Neg [], min_int, 0);
+    ("0 Sub min_int", Ops.alu b Op.Sub [ a ], min_int, 0);
+  ]
+
+let raises_as_inferred (_, e, va, vb) =
+  let inferred, compiled = both e va vb in
+  ignore
+    (require_error ~msg:"sym_infer raises" ~pp:Format.pp_print_int inferred);
+  equal (result int exn) inferred compiled
 
 let compilation =
   group "sym_compile"
     [
       compiles_as_inferred ~bound:50;
       compiles_as_inferred ~bound:(1 lsl 31);
+      compiles_at_the_extremes;
+      cases
+        ~name:(fun (name, _, _, _, _) -> name)
+        "computes exactly where int arithmetic overflows" exactly
+        computes_exactly;
+      cases
+        ~name:(fun (name, _, _, _) -> name)
+        "raises as sym_infer does where a value fits no int" unfit
+        raises_as_inferred;
       test "an integer is itself" (fun () ->
           equal int 5 (Ops.sym_compile (Int 5) (fun _ () -> 0) ()));
       test "a variable is what var reads" (fun () ->

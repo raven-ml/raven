@@ -1625,10 +1625,11 @@ let borrows_outlive_the_link ~as_input () =
   Null_device.synchronize ();
   equal values data (Run.values Float32 xb)
 
-(* A slow copy from CPU:1 into storage of the host that the link allocates,
-   enqueued on CPU:1's queue with the storage's address folded in at link, then
-   a host kernel that adds one to it. The run records the copy as pending on the
-   host, so the host kernel runs once it landed. *)
+(* A host kernel on storage of the host that the link allocates, a slow copy
+   from CPU:1 into that storage, enqueued on CPU:1's queue with the storage's
+   address folded in at link, then a host kernel that adds one to it. The first
+   kernel synchronized the host already, and the copy's batch queues work
+   again, so the second kernel runs once the copy landed. *)
 let leaves_its_work_pending_on_the_host () =
   let x = Ops.new_buffer (Single "CPU:1") 4 Float32
   and t = Ops.new_buffer (Single "CPU") 4 Float32
@@ -1641,7 +1642,11 @@ let leaves_its_work_pending_on_the_host () =
           (x, [ Run.buffer (Null_device.device "CPU:1") Float32 a ]);
           (out, [ result ]);
         ]
-      [ Ops.store_call t x; Ops.call add_one [ out; t ] ]
+      [
+        Ops.call add_one [ t; t ];
+        Ops.store_call t x;
+        Ops.call add_one [ out; t ];
+      ]
   in
   Null_device.with_latency 0.02 (fun () -> Engine.run s [||]);
   equal values (floats [| 2.; 3.; 4.; 5. |]) (Run.values Float32 result)
@@ -2119,7 +2124,9 @@ let batches =
         (waits_for_a_device_without_queues ~as_input:true);
       test "a run waits for a device without queues of storage"
         (waits_for_a_device_without_queues ~as_input:false);
-      test "a host kernel runs once the copy that feeds it landed"
+      test
+        "a host kernel runs once the copy that feeds it landed, after another \
+         synchronized the host"
         leaves_its_work_pending_on_the_host;
       cases ~name:string_of_int
         "a host buffer the device cannot borrow is staged, as storage"

@@ -2743,10 +2743,13 @@ stores through a pad.
 - **Pinned by:** the Tolk_engine suite (`test/engine/tolk_engine`): `link and
   run › a linked scan carries its storage across runs on each run's
   parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
-  schedule runs with each binding of its variables` and `runs › runs of one
-  schedule from two domains each compute their own`; the Ops suite
-  (`test/uop/ops`): `sym_compile › computes what sym_infer does, variables
-  within 50` and `› within 2147483648`.
+  schedule runs with each binding of its variables`, `runs › runs of one
+  schedule from two domains each compute their own` and `batches › a host
+  kernel runs once the copy that feeds it landed, after another synchronized
+  the host`; the Ops suite (`test/uop/ops`): `sym_compile › computes what
+  sym_infer does, variables within 50`, `› within 2147483648`, `› at the int
+  extremes`, `› computes exactly where int arithmetic overflows` and `› raises
+  as sym_infer does where a value fits no int`.
 
 ## D91. The host's upcast lanes stay within 32
 
