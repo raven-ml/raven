@@ -5,4 +5,4 @@
 (tests
  (names test_layer_loop test_structures)
  (package kaun)
- (libraries kaun kaun.hf jsont rune nx nx.device nx.quant windtrap))
+ (libraries kaun kaun.hf jsont rune nx nx.device nx.io nx.quant windtrap))

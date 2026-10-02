@@ -226,7 +226,7 @@ let () =
   let checkpoint_path =
     Filename.concat (Munin.Session.dir session) "model.safetensors"
   in
-  Checkpoint.save checkpoint_path (Checkpoint.of_value cnn !params);
+  Nx_io.save_safetensors checkpoint_path (Nx_io.Archive.of_value cnn !params);
   ignore
     (Munin.Session.log_artifact session ~name:"mnist-cnn-jit" ~kind:`Checkpoint
        ~path:checkpoint_path

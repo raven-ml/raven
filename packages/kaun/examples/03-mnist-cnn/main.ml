@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A small CNN on MNIST: Conv + Pool + Dropout in the forward pass, and
-   Checkpoint to save and restore the model and AdamW optimizer state.
+(* A small CNN on MNIST: Conv + Pool + Dropout in the forward pass, and the
+   model and AdamW optimizer state saved to a SafeTensors file and restored.
 
    Trains on a subset of MNIST to keep the run short: expect ~93% test accuracy
    after three epochs, in well under a minute on CPU. *)
@@ -52,23 +52,28 @@ let cnn = Nx.Ptree.instantiate (module Cnn)
 let accuracy params (x, y) =
   Metric.accuracy (Cnn.apply params ~training:false x) y
 
-let save_training_state path (params, ostate) =
-  Checkpoint.save path
-    (Checkpoint.concat
-       [
-         Checkpoint.of_value ~prefix:"model" cnn params;
-         Checkpoint.of_value ~prefix:"optim" (Vega.adam_ptree cnn) ostate;
-       ])
+(* The training state: the model's tensors under [model] and AdamW's under
+   [optim]. *)
+module State = struct
+  type _ t = Nx.float32_t Cnn.t * Nx.float32_t Cnn.t Vega.adam_state
 
+  let walk c (params, ostate) =
+    let open Nx.Ptree.Walk in
+    let params = field c "model" (structure cnn) params in
+    let ostate = field c "optim" (structure (Vega.adam_ptree cnn)) ostate in
+    (params, ostate)
+end
+
+let state = Nx.Ptree.instantiate (module State)
+
+let save_training_state path s =
+  Nx_io.save_safetensors path (Nx_io.Archive.of_value state s)
+
+(* A fresh state gives the shapes and dtypes the file is read into. *)
 let load_training_state path =
-  let ckpt = Checkpoint.load path in
-  let like = Cnn.init () in
-  let params = Checkpoint.to_value ~prefix:"model" cnn ~like ckpt in
-  let ostate =
-    Checkpoint.to_value ~prefix:"optim" (Vega.adam_ptree cnn)
-      ~like:(Vega.adamw_init cnn like) ckpt
-  in
-  (params, ostate)
+  let params = Cnn.init () in
+  let like = (params, Vega.adamw_init cnn params) in
+  Nx_io.Archive.to_value state ~like (Nx_io.load_safetensors path)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -116,11 +121,11 @@ let () =
       let params, ostate = !state in
       Printf.printf "test accuracy: %.2f%%\n\n" (100. *. accuracy params test);
 
-      (* The optimizer moments and step counter belong in the same checkpoint:
+      (* The optimizer moments and step counter belong in the same file:
          restoring parameters alone would restart AdamW's history. *)
       let path = Filename.temp_file "mnist-cnn" ".safetensors" in
       save_training_state path (params, ostate);
-      Printf.printf "saved checkpoint to %s\n" path;
+      Printf.printf "saved the training state to %s\n" path;
       let restored_params, restored_ostate = load_training_state path in
       Printf.printf "restored accuracy: %.2f%% (optimizer step %d)\n"
         (100. *. accuracy restored_params test)

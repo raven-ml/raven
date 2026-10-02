@@ -5107,6 +5107,13 @@ thread.
 
 ### Kaun
 
+- **Breaking:** `Kaun.Checkpoint` is removed. A model's structure saves and
+  reads it back through `Nx_io.Archive.of_value` and `to_value`, sections are
+  `Nx.Ptree.field`s joined with `Archive.union`, and an importer reads entries
+  with `Archive.float` and `tensor`. Reading back now refuses an entry under
+  the structure's fields that the value does not name.
+- **Breaking:** `Kaun_hf.load_checkpoint` is `Kaun_hf.load_safetensors`, which
+  returns an `Nx_io.Archive.t`; `kaun.hf` no longer depends on `kaun`.
 - The `kaun` library depends on nx alone, no longer on rune: add rune to your
   project to differentiate. `Batch_norm.apply` no longer detaches the running
   statistics; `Rune.value_and_grad_aux` returns them undifferentiated.

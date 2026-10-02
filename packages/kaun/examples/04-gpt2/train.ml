@@ -273,8 +273,8 @@ let bias name = function
   | Some b -> b
   | None -> failwith (name ^ ": expected a bias")
 
-let checkpoint_of_params original (p : Gpt2.t) =
-  let tensor = Checkpoint.of_tensor in
+let weights_of_params original (p : Gpt2.t) =
+  let tensor name t = (name, Nx.P t) in
   let block i (b : Nx.float32_t Gpt2.block) =
     let key leaf = Printf.sprintf "h.%d.%s" i leaf in
     let linear leaf (l : Nx.float32_t Linear.t) =
@@ -295,7 +295,7 @@ let checkpoint_of_params original (p : Gpt2.t) =
              bias (key "attn.k") b.attn.k.b;
              bias (key "attn.v") b.attn.v.b;
            ]);
-      (match Checkpoint.find (key "attn.bias") original with
+      (match Nx_io.Archive.find (key "attn.bias") original with
       | Some (Nx.P mask) -> tensor (key "attn.bias") mask
       | None -> failwith (key "attn.bias" ^ ": missing from the input file"));
       tensor (key "ln_2.weight") b.ln2.gamma;
@@ -304,7 +304,7 @@ let checkpoint_of_params original (p : Gpt2.t) =
     @ linear "attn.c_proj" b.attn.out
     @ linear "mlp.c_fc" b.fc @ linear "mlp.c_proj" b.proj
   in
-  Checkpoint.concat
+  Nx_io.Archive.of_list
     ([
        tensor "wte.weight" p.wte.table;
        tensor "wpe.weight" p.wpe.table;
@@ -410,7 +410,7 @@ let () =
      [--tokens F] [--model F] [--metrics-out F] [--save-weights F]";
 
   let inputs, targets = batch_of_ids (load_ids !tokens) in
-  let original = Checkpoint.load !model in
+  let original = Nx_io.load_safetensors !model in
   let params = ref (Gpt2.of_hf gpt2_124m Nx.float32 original) in
   let n_params = Nx.Ptree.fold gpt2_tree (fun _ _ n -> n + 1) !params 0 in
 
@@ -527,6 +527,6 @@ let () =
     let params =
       Nx.Ptree.map gpt2_tree (fun _ t -> Nx.place Nx.Placement.host t) !params
     in
-    Checkpoint.save !save_weights (checkpoint_of_params original params);
+    Nx_io.save_safetensors !save_weights (weights_of_params original params);
     Printf.printf "wrote %s\n%!" !save_weights
   end

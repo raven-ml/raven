@@ -164,7 +164,7 @@ let () =
          device (METAL) or a comma-separated list (CPU:1,CPU:2,CPU:3,CPU:4)" );
       ( "--dtype",
         Arg.Set_string dtype,
-        "float32 or bfloat16 (default: the checkpoint's own)" );
+        "float32 or bfloat16 (default: the weights' own)" );
       ( "--count",
         Arg.Set_int count,
         "Most tokens to generate (default: 16, or 256 for a prompt)" );
@@ -185,10 +185,10 @@ let () =
      [--show-analysis]]";
   let effort = effort_of_string !reasoning in
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config !repo) in
-  let ckpt = Kaun_hf.load_checkpoint !repo in
-  (* At the checkpoint's own dtype the import casts nothing. *)
+  let weights = Kaun_hf.load_safetensors !repo in
+  (* At the weights' own dtype the import casts nothing. *)
   let (Gpt_oss.Dtype dt) =
-    if !dtype = "" then Gpt_oss.stored_dtype ckpt
+    if !dtype = "" then Gpt_oss.stored_dtype weights
     else Gpt_oss.dtype_of_string !dtype
   in
   let devices = if !devices = "" then None else Some (devices_of !devices) in
@@ -199,7 +199,7 @@ let () =
   let params =
     Gpt_oss.of_hf
       ?placement:(Option.map Gpt_oss.expert_parallel devices)
-      cfg dt ckpt
+      cfg dt weights
   in
   Printf.fprintf log "weights imported in %.1f s\n%!"
     (Unix.gettimeofday () -. t0);

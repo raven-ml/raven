@@ -30,7 +30,7 @@ Note the layering: kaun's library depends only on nx. Differentiation comes from
 
 ## A Model Is a Record
 
-A kaun layer is a plain record with a payload hole and an `apply` function; `'a Linear.t` holds a weight matrix and an optional bias. A model is a record of layers with one function, `walk`, that visits each field with the field's own `walk` and names it. `Nx.Ptree.instantiate` turns the module into a structure at its tensor type, which every Raven transformation, optimizer and checkpoint takes:
+A kaun layer is a plain record with a payload hole and an `apply` function; `'a Linear.t` holds a weight matrix and an optional bias. A model is a record of layers with one function, `walk`, that visits each field with the field's own `walk` and names it. `Nx.Ptree.instantiate` turns the module into a structure at its tensor type, which every Raven transformation, optimizer and saved file takes:
 
 ```ocaml
 open Kaun
@@ -50,7 +50,7 @@ end
 let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
-`apply` is just a function — no base class, no forward method, no parameter registry. `walk` is what lets `Rune` differentiate your parameter values, `Vega` step them, and `Checkpoint` save them under the names it gives (`l1.w`, `l1.b`, `l2.w`, `l2.b`). [Writing structures](../../nx/doc/06-structures.md) covers `walk` in full.
+`apply` is just a function — no base class, no forward method, no parameter registry. `walk` is what lets `Rune` differentiate your parameter values, `Vega` step them, and `Nx_io.Archive` save them under the names it gives (`l1.w`, `l1.b`, `l2.w`, `l2.b`). [Writing structures](../../nx/doc/06-structures.md) covers `walk` in full.
 
 ## Initialize Parameters
 
@@ -106,9 +106,9 @@ let () =
 
 This is the complete program — it is [`examples/01-xor`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/01-xor) nearly verbatim. Three things to notice:
 
-- **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `Nx.float32_t Mlp.t` values you can print, inspect, checkpoint, or swap.
+- **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `Nx.float32_t Mlp.t` values you can print, inspect, save, or swap.
 - **The step is yours.** Want gradient clipping? Insert `Vega.clip_by_global_norm mlp ~max_norm:1.0 grads` before the update. A learning-rate schedule? Evaluate one at your step counter. Nothing is hidden behind a trainer.
-- **`Nx.Ptree.instantiate (module Mlp)` is the only plumbing.** Bind the structure once; it drives differentiation, optimization and checkpoints.
+- **`Nx.Ptree.instantiate (module Mlp)` is the only plumbing.** Bind the structure once; it drives differentiation, optimization and saving.
 
 ## Scaling Up: Minibatches
 
@@ -146,4 +146,4 @@ let step (params, ostate) (x, y) =
 
 - [Layers and Models](02-layers-and-models.md) — the full layer catalog, nesting records, stateful layers
 - [Training](03-training.md) — losses, data, metrics, clipping, schedules
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — saving, resuming, loading GPT-2 from the Hub
+- [Saving and Pretrained Weights](04-saving-and-pretrained.md) — saving, resuming, loading GPT-2 from the Hub

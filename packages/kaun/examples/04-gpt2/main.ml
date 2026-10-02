@@ -5,9 +5,9 @@
 
 (* Text generation with pretrained GPT-2.
 
-   Loads the 124M-parameter GPT-2 checkpoint — from a local safetensors file
-   when one is cached, downloading from the HuggingFace Hub otherwise (~548MB,
-   cached afterwards) — and greedily generates continuations of a prompt. [--jit
+   Loads the 124M-parameter GPT-2 weights — from a local safetensors file when
+   one is cached, downloading from the HuggingFace Hub otherwise (~548MB, cached
+   afterwards) — and greedily generates continuations of a prompt. [--jit
    DEVICE] compiles the decode step with [Rune.jit]. *)
 
 let default_prompt = "What is the answer to life, the universe, and everything?"
@@ -34,12 +34,12 @@ let gpt2_124m : Gpt2.config =
     layer_norm_eps = 1e-5;
   }
 
-let load_checkpoint () =
+let load_weights () =
   match local_file "model.safetensors" with
-  | Some path -> (gpt2_124m, Kaun.Checkpoint.load path)
+  | Some path -> (gpt2_124m, Nx_io.load_safetensors path)
   | None ->
       ( Gpt2.config_of_json (Kaun_hf.load_config "gpt2"),
-        Kaun_hf.load_checkpoint "gpt2" )
+        Kaun_hf.load_safetensors "gpt2" )
 
 let load_tokenizer () =
   let path =
@@ -198,20 +198,21 @@ let () =
          eager when omitted" );
       ( "--dtype",
         Arg.Set_string dtype,
-        "Model dtype: float32, float16 or bfloat16 (default: the checkpoint's \
-         own, which casts nothing). Weights, activations and caches run at \
-         this dtype" );
+        "Model dtype: float32, float16 or bfloat16 (default: the weights' own, \
+         which casts nothing). Weights, activations and caches run at this \
+         dtype" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "gpt2 [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
   let tokenizer = load_tokenizer () in
   let t0 = Unix.gettimeofday () in
-  let cfg, ckpt = load_checkpoint () in
+  let cfg, weights = load_weights () in
   let (Gpt2.Dtype dt) =
-    if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
+    if !dtype = "" then Gpt2.stored_dtype weights
+    else Gpt2.dtype_of_string !dtype
   in
   let device = if !jit = "" then None else Some (device_of !jit) in
-  let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt ckpt in
+  let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt weights in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
   if !check_only then begin

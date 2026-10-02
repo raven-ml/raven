@@ -2,6 +2,7 @@
  (name main)
  (libraries
   nx
+  nx.io
   rune
   vega
   kaun

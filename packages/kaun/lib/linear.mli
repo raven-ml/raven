@@ -29,7 +29,7 @@
     ]}
 
     The paths [walk] gives each leaf, here [l1.w], [l1.b], [l2.w] and [l2.b],
-    are the leaf's checkpoint names. *)
+    name the leaves in a saved file. *)
 
 (** {1:types Types} *)
 

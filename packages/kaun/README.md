@@ -3,8 +3,8 @@
 Neural networks for OCaml, trained with [rune](../rune/) autodiff.
 
 Kaun provides the building blocks for training neural networks —
-layers, activations, initializers, losses, data batching, metrics,
-checkpoints — as plain records and pure functions. There is no layer
+layers, activations, initializers, losses, data batching, metrics —
+as plain records and pure functions. There is no layer
 object and no trainer: a model is a typed record you write, and a
 training step is a few lines you own end to end.
 
@@ -20,7 +20,7 @@ A model is a record of layer records with a payload hole and one
 function, `walk`, that visits each field with the field's own `walk`;
 `Nx.Ptree.instantiate` makes it a structure at its tensor type. The
 same structure serves differentiation (`Rune`), optimization (`Vega`),
-and checkpointing (`Checkpoint`):
+and saving (`Nx_io.Archive`):
 
 ```ocaml
 open Kaun
@@ -69,7 +69,7 @@ Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y)
 
 Every piece of training state — parameters, gradients, optimizer
 moments — is a value of your record type that you can print, inspect,
-checkpoint, or swap.
+save, or swap.
 
 ## Features
 
@@ -91,16 +91,17 @@ checkpoint, or swap.
   reproducible under `Nx.Rng.with_key`
 - **Metrics** — `Metric`: accuracy, top-k accuracy, confusion matrix,
   precision/recall/F1 (macro/micro), AUC-ROC
-- **Checkpoints** — `Checkpoint` saves named parameter structures as
-  [safetensors](https://huggingface.co/docs/safetensors/); one file can
-  hold model, optimizer state, and counters side by side
+- **Saving** — a model's structure names its tensors, so
+  `Nx_io.Archive.of_value` and `to_value`, from nx's `nx.io`, save and
+  restore it as [safetensors](https://huggingface.co/docs/safetensors/);
+  one file holds the model and its optimizer state side by side
 - **Optimizers** — from the independent [vega](../vega/) package:
   `adam`, `adamw`, `sgd` steps over the same record structures
   (`Vega.adam_step model ...`); depend on it from your own
   project
 - **Pretrained models** — `kaun.hf` downloads HuggingFace Hub
-  checkpoints and adapts them (`rename`, `transpose`, `split`) onto your
-  own records
+  weights, and an importer you write reads them by name onto your own
+  records, rearranging them with nx (`Nx.matrix_transpose`, `Nx.split`)
 - **Datasets** — `kaun.datasets`: MNIST, Fashion-MNIST, CIFAR-10
   loaders returning plain tensors
 
@@ -142,16 +143,16 @@ dune exec packages/kaun/examples/01-xor/main.exe
 
 ## Pretrained Models: the GPT-2 Story
 
-Hub checkpoints name and lay out tensors by the exporting framework's
-conventions. `kaun.hf` loads them as `Checkpoint.t` values, and a
+Hub weights name and lay out tensors by the exporting framework's
+conventions. `kaun.hf` loads them as an `Nx_io.Archive.t`, and a
 model's importer is an ordinary function that builds the parameter
 record, reading each entry by the file's name with
-`Checkpoint.to_float`. The file is mapped: at its own dtype the
-parameters are views of it and nothing is copied.
+`Nx_io.Archive.float`. The file is mapped: at its own dtype the
+parameters are its entries and nothing is copied.
 
 ```ocaml
 let cfg = Gpt2.config_of_json (Kaun_hf.load_config "gpt2") in
-let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_checkpoint "gpt2")
+let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_safetensors "gpt2")
 ```
 
 [`examples/04-gpt2`](examples/04-gpt2) runs this end to end: it defines
@@ -162,8 +163,8 @@ weights, and generates text through a key-value cache.
 
 | Library | opam package | Description |
 |---------|--------------|-------------|
-| `kaun` | `kaun` | Layers, losses, data, metrics, checkpoints |
-| `kaun_hf` | `kaun.hf` | HuggingFace Hub download and checkpoint adaptation |
+| `kaun` | `kaun` | Layers, losses, data, metrics |
+| `kaun_hf` | `kaun.hf` | HuggingFace Hub download and weight loading |
 | `kaun_datasets` | `kaun.datasets` | MNIST, Fashion-MNIST, CIFAR-10 loaders |
 
 ## Examples
@@ -173,8 +174,8 @@ weights, and generates text through a key-value cache.
 - [`02-mnist`](examples/02-mnist) — MLP on MNIST with `Data.batches2`
   minibatches, AdamW, and `Metric.accuracy` evaluation
 - [`03-mnist-cnn`](examples/03-mnist-cnn) — CNN with `Conv`, `Pool` and
-  `Dropout`, plus saving and reloading the trained parameters with
-  `Checkpoint`
+  `Dropout`, plus saving and reloading the parameters and optimizer
+  state with `Nx_io.Archive`
 - [`04-gpt2`](examples/04-gpt2) — text generation with pretrained GPT-2
   loaded from the HuggingFace Hub
 - [`05-llama`](examples/05-llama) — Llama 3.2 1B: grouped-query attention,

@@ -32,8 +32,8 @@
    Each block runs compiled, once per attention kind: the experts' products then
    decode their packed weights inside the products, where an eager
    [Nx_quant.apply] would hold every token's experts decoded at float32. A whole
-   run on the host of an M1 Max peaks at 16.6 GB resident, the 13.8 GB of
-   mapped weights included, and takes 9 minutes.
+   run on the host of an M1 Max peaks at 16.6 GB resident, the 13.8 GB of mapped
+   weights included, and takes 9 minutes.
 
    Usage: validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT]
    [--tol X]. With [--blocks] only the first [N] blocks run and the head is
@@ -99,9 +99,7 @@ let signs ~rows ~dim =
       state := ((!state * 1103515245) + 12345) land 0x7FFFFFFF;
       if (!state lsr 16) land 1 = 1 then 1.0 else -1.0)
 
-let host t =
-  Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float32 t))
-
+let host t = Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float32 t))
 let worst_of a = Array.fold_left (fun m d -> if d <= m then m else d) 0.0 a
 
 (* The error of row [t] of the stream [x], [tokens * dim] values, against a
@@ -190,9 +188,9 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
         (string sha))
     (members (mem "files_sha256" fx));
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config repo) in
-  let ckpt = Kaun_hf.load_checkpoint repo in
-  let (Gpt_oss.Dtype stored) = Gpt_oss.stored_dtype ckpt in
-  let p = Gpt_oss.of_hf cfg stored ckpt in
+  let weights = Kaun_hf.load_safetensors repo in
+  let (Gpt_oss.Dtype stored) = Gpt_oss.stored_dtype weights in
+  let p = Gpt_oss.of_hf cfg stored weights in
   let dim = cfg.dim and k = cfg.experts_per_token in
   let layers = List.length cfg.layers in
   let depth = match blocks with None -> layers | Some n -> min n layers in

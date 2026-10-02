@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* What GPT-2's walk visits: its leaf paths and reports, which are the names of
-   its checkpoint entries. *)
+(* What GPT-2's walk visits: its leaf paths and reports, which name its tensors
+   in a saved file. *)
 
 open Windtrap
 
@@ -59,10 +59,9 @@ let test_params () =
         | Report _ -> None)
       (Nx.Ptree.visits params p)
   in
-  equal ~msg:"checkpoint names are the leaf paths" (list string)
+  equal ~msg:"saved names are the leaf paths" (list string)
     (List.sort compare leaves)
-    (List.sort compare
-       (Kaun.Checkpoint.names (Kaun.Checkpoint.of_value params p)));
+    (Nx_io.Archive.names (Nx_io.Archive.of_value params p));
   let same = ref true in
   let q = Nx.Ptree.map params (fun _ x -> x) p in
   ignore

@@ -93,7 +93,7 @@ Nx.Ptree.visits (Vega.adam_ptree model) st
 (* mu.w, mu.b, nu.w, nu.b, step *)
 ```
 
-Those names are the ones a checkpoint stores, and the structure is what a
+Those names are the ones a saved file stores, and the structure is what a
 compiled step takes. With the state an argument the step consumes, a whole
 training step is one program that replays on every call:
 

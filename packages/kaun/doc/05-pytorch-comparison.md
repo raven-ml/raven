@@ -25,8 +25,8 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Train/eval mode | `model.train()` / `model.eval()` | explicit `~training` arguments |
 | Buffers (running stats) | hidden module state | explicit `Stats.t` you thread through the loop |
 | Data loading | `DataLoader` | `Data.batches2` returning a `Seq.t` |
-| Checkpointing | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Checkpoint` |
-| Pretrained models | `from_pretrained` per architecture | `kaun.hf` + an importer you write with `Checkpoint.to_float` |
+| Saving | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Nx_io.Archive` |
+| Pretrained models | `from_pretrained` per architecture | `kaun.hf` + an importer you write with `Nx_io.Archive.float` |
 | RNG | global `torch.manual_seed` | scoped `Nx.Rng.with_key` |
 | Device | `model.to("cuda")` | `Nx.Ptree.place` of the weights; GPU via `Rune.jit` |
 
@@ -175,7 +175,7 @@ Iterating the sequence again reshuffles — one sequence value serves every epoc
 
 ---
 
-## 6. Checkpointing
+## 6. Saving
 
 **PyTorch**
 
@@ -187,23 +187,26 @@ ckpt = torch.load(path)
 model.load_state_dict(ckpt["model"])
 ```
 
-**kaun** — `state_dict()` becomes `Checkpoint.of_value` over your model's structure, which names each tensor by its path, and files are safetensors:
+**kaun** — `state_dict()` becomes `Nx_io.Archive.of_value` over your model's structure, which names each tensor by its path, and files are safetensors:
 
 <!-- $MDX skip -->
 ```ocaml
-Checkpoint.save path
-  (Checkpoint.concat
-     [
-       Checkpoint.of_value ~prefix:"model" mlp params;
-       Checkpoint.of_value ~prefix:"optim" (Vega.adam_ptree mlp) ostate;
-     ]);
+let model = Nx.Ptree.field "model" mlp
+let optim = Nx.Ptree.field "optim" (Vega.adam_ptree mlp)
+
+let () =
+  Nx_io.save_safetensors path
+    (Nx_io.Archive.union
+       [
+         Nx_io.Archive.of_value model params;
+         Nx_io.Archive.of_value optim ostate;
+       ])
 
 let params =
-  Checkpoint.load path
-  |> Checkpoint.to_value ~prefix:"model" mlp ~like:template
+  Nx_io.load_safetensors path |> Nx_io.Archive.to_value model ~like:template
 ```
 
-`load_state_dict`'s in-place mutation becomes template-based extraction: `~like` supplies structure, names, dtypes, and shapes, and a fresh value comes back. Nothing is converted on the way: a dtype mismatch raises. The optimizer state's structure, `Vega.adam_ptree mlp`, nests the model's, so its entries are named after the model's paths. See [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md).
+`load_state_dict`'s in-place mutation becomes reading into a value of the same shape: `~like` supplies structure, dtypes, and shapes, and a fresh value comes back. Nothing is converted on the way, and a file that differs from the value under `model` fails, naming the entry: a missing or extra entry, or another dtype or shape. The optimizer state's structure, `Vega.adam_ptree mlp`, nests the model's, so its entries are named after the model's paths. See [Saving and Pretrained Weights](04-saving-and-pretrained.md).
 
 ---
 
@@ -215,15 +218,15 @@ let params =
 model = AutoModel.from_pretrained("gpt2")
 ```
 
-**kaun**: there is no per-architecture loader. `kaun.hf` downloads the checkpoint, and an importer you write builds your record from its entries, each read by the file's name with the shape and dtype it must have:
+**kaun**: there is no per-architecture loader. `kaun.hf` downloads the weights, and an importer you write builds your record from its entries, each read by the file's name with the shape and dtype it must have:
 
 <!-- $MDX skip -->
 ```ocaml
 let cfg = Gpt2.config_of_json (Kaun_hf.load_config "gpt2") in
-let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_checkpoint "gpt2")
+let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_safetensors "gpt2")
 ```
 
-Inside the importer a rename is the file's name at the field it fills, `Nx.matrix_transpose` fixes `nn.Linear`'s `outputs × inputs` orientation, and `Nx.split` cuts fused projections like GPT-2's `c_attn`; both are views. The file is mapped, so at its own dtype the parameters are views of it and nothing is copied. The GPT-2 importer is about fifty lines of user code; [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) generates text with the result.
+Inside the importer a rename is the file's name at the field it fills, `Nx.matrix_transpose` fixes `nn.Linear`'s `outputs × inputs` orientation, and `Nx.split` cuts fused projections like GPT-2's `c_attn`; both are views. The file is mapped, so at its own dtype the parameters are its entries and nothing is copied. The GPT-2 importer is about fifty lines of user code; [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) generates text with the result.
 
 ---
 
@@ -255,8 +258,8 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 | Train mode | `model.train()` | `~training:true` arguments |
 | Running stats | hidden buffers | explicit `Stats.t` + `value_and_grad_aux` |
 | Batches | `DataLoader` | `Data.batches2` |
-| Save | `torch.save(model.state_dict())` | `Checkpoint.save` + `of_value` |
-| Load | `load_state_dict` | `Checkpoint.to_value ~like` |
-| Pretrained | `from_pretrained("gpt2")` | `Kaun_hf.load_checkpoint` + `Checkpoint.to_float` per entry |
+| Save | `torch.save(model.state_dict())` | `Nx_io.save_safetensors` + `Archive.of_value` |
+| Load | `load_state_dict` | `Nx_io.Archive.to_value ~like` |
+| Pretrained | `from_pretrained("gpt2")` | `Kaun_hf.load_safetensors` + `Nx_io.Archive.float` per entry |
 | Seed | `torch.manual_seed(42)` | `Nx.Rng.with_key (Nx.Rng.key 42)` |
 | Per-sample grads | `torch.func.vmap(grad(...))` | `Rune.vmap` of `Rune.grad` |

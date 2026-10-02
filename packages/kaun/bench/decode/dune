@@ -9,6 +9,7 @@
  (libraries
   nx
   nx.device
+  nx.io
   nx.quant
   rune
   kaun

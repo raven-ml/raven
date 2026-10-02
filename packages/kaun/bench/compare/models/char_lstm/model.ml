@@ -140,80 +140,44 @@ let train_step spec inputs targets (params, opt) =
 
    The file is a PyTorch state dict, so its weights are in PyTorch's layout:
    [outputs; inputs] for every affine map, against Kaun's [inputs; outputs].
-   Loading is therefore two moves — read the entries under their PyTorch names
-   into a structure with the file's shapes, then transpose into the model. The
-   weights are all float32, so they come out of the checkpoint as one structure;
-   the token grid is int32 and comes out as the entry it is, widened once to
+   Each entry is read under its PyTorch name at the shape the spec gives it and
+   transposed into the model. The token grid is int32 and is widened once to
    int64, the type of indices. *)
 
-module Weights = struct
-  type 'a t = {
-    emb_weight : 'a;  (** [vocab; embed] *)
-    head_bias : 'a;  (** [vocab] *)
-    head_weight : 'a;  (** [vocab; hidden] *)
-    bias_hh : 'a;  (** [4 * hidden] *)
-    bias_ih : 'a;  (** [4 * hidden] *)
-    weight_hh : 'a;  (** [4 * hidden; hidden] *)
-    weight_ih : 'a;  (** [4 * hidden; embed] *)
-  }
-
-  (* Leaf paths are the state dict's own names. *)
-  let walk c x =
-    let open Nx.Ptree.Walk in
-    let emb_weight = field c "emb.weight" leaf x.emb_weight in
-    let head_bias = field c "head.bias" leaf x.head_bias in
-    let head_weight = field c "head.weight" leaf x.head_weight in
-    let bias_hh = field c "lstm.bias_hh_l0" leaf x.bias_hh in
-    let bias_ih = field c "lstm.bias_ih_l0" leaf x.bias_ih in
-    let weight_hh = field c "lstm.weight_hh_l0" leaf x.weight_hh in
-    let weight_ih = field c "lstm.weight_ih_l0" leaf x.weight_ih in
-    {
-      emb_weight;
-      head_bias;
-      head_weight;
-      bias_hh;
-      bias_ih;
-      weight_hh;
-      weight_ih;
-    }
-end
-
 let load_fixture spec path =
+  let a = Nx_io.load_safetensors path in
   let h4 = 4 * spec.hidden in
-  let template =
-    {
-      Weights.emb_weight = Nx.zeros Nx.float32 [| spec.vocab; spec.embed |];
-      head_bias = Nx.zeros Nx.float32 [| spec.vocab |];
-      head_weight = Nx.zeros Nx.float32 [| spec.vocab; spec.hidden |];
-      bias_hh = Nx.zeros Nx.float32 [| h4 |];
-      bias_ih = Nx.zeros Nx.float32 [| h4 |];
-      weight_hh = Nx.zeros Nx.float32 [| h4; spec.hidden |];
-      weight_ih = Nx.zeros Nx.float32 [| h4; spec.embed |];
-    }
-  in
-  let ckpt = Kaun.Checkpoint.load path in
-  let f =
-    Kaun.Checkpoint.to_value
-      (Nx.Ptree.instantiate (module Weights))
-      ~like:template ckpt
-  in
-  let tokens =
-    Nx.cast Nx.int64 (Nx.unpack Nx.int32 (Kaun.Checkpoint.get "tokens" ckpt))
-  in
-  if Nx.shape tokens <> [| spec.batches; spec.batch; spec.seq_len + 1 |] then
-    failwith (path ^ ": the token grid does not have the spec's shape");
-  let linear w b =
+  let weight ~shape name = Nx_io.Archive.tensor ~shape Nx.float32 name a in
+  (* An affine map stored [outputs; inputs], transposed into Kaun's layout. *)
+  let linear ~inputs ~outputs ~w ~b =
+    let w = weight ~shape:[| outputs; inputs |] w in
+    let b = weight ~shape:[| outputs |] b in
     { Kaun.Linear.w = Nx.contiguous (Nx.transpose w); b = Some b }
   in
   let params =
     {
-      Lstm.emb = { Kaun.Embedding.table = f.emb_weight };
-      ih = linear f.weight_ih f.bias_ih;
-      hh = linear f.weight_hh f.bias_hh;
-      head = linear f.head_weight f.head_bias;
+      Lstm.emb =
+        {
+          Kaun.Embedding.table =
+            weight ~shape:[| spec.vocab; spec.embed |] "emb.weight";
+        };
+      ih =
+        linear ~inputs:spec.embed ~outputs:h4 ~w:"lstm.weight_ih_l0"
+          ~b:"lstm.bias_ih_l0";
+      hh =
+        linear ~inputs:spec.hidden ~outputs:h4 ~w:"lstm.weight_hh_l0"
+          ~b:"lstm.bias_hh_l0";
+      head =
+        linear ~inputs:spec.hidden ~outputs:spec.vocab ~w:"head.weight"
+          ~b:"head.bias";
     }
   in
-  (params, tokens)
+  let tokens =
+    Nx_io.Archive.tensor
+      ~shape:[| spec.batches; spec.batch; spec.seq_len + 1 |]
+      Nx.int32 "tokens" a
+  in
+  (params, Nx.cast Nx.int64 tokens)
 
 (* Runner *)
 

@@ -188,11 +188,11 @@ val of_hf :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
-  Kaun.Checkpoint.t ->
+  Nx_io.Archive.t ->
   (float, 'b) Nx.t params
-(** [of_hf cfg dt ckpt] is the model of the HuggingFace gpt-oss checkpoint
-    [ckpt], with its float leaves at [dt]. Each entry is read by its name in the
-    file with the shape [cfg] gives it. Projections are transposed to
+(** [of_hf cfg dt weights] is the model of the HuggingFace gpt-oss [weights],
+    with its float leaves at [dt]. Each entry is read by its name in the file
+    with the shape [cfg] gives it. Projections are transposed to
     [inputs × outputs], a view. Experts stored as [_blocks] and [_scales] are an
     {!Nx_quant.mxfp4} weight over the file's bytes, whatever [dt]. At the file's
     own dtype nothing is copied; at another one each float leaf is cast.
@@ -203,8 +203,8 @@ val of_hf :
     function compiled where the model is that captures it uploads nothing and
     the host holds one leaf at a time.
 
-    Raises [Invalid_argument], naming the entry, if one is missing, has another
-    shape than [cfg] says, or has a dtype the leaf cannot take. *)
+    Raises [Failure], naming the entry, if one is missing, has another shape
+    than [cfg] says, or has a dtype the leaf cannot take. *)
 
 val from_file :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
@@ -222,9 +222,12 @@ val dtype_of_string : string -> dtype
 (** [dtype_of_string s] is the dtype named ["float32"] or ["bfloat16"]. Raises
     [Failure] on another name. *)
 
-val stored_dtype : Kaun.Checkpoint.t -> dtype
-(** [stored_dtype ckpt] is the dtype [ckpt] stores its embedding table at, the
-    dtype at which {!of_hf} casts nothing. *)
+val stored_dtype : Nx_io.Archive.t -> dtype
+(** [stored_dtype weights] is the dtype [weights] stores its embedding table at,
+    the dtype at which {!of_hf} casts nothing.
+
+    Raises [Failure] if the table is missing or is not a bfloat16 or float32
+    entry. *)
 
 val from_pretrained :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
@@ -232,5 +235,5 @@ val from_pretrained :
   (float, 'b) Nx.dtype ->
   config * (float, 'b) Nx.t params
 (** [from_pretrained repo_id dt] downloads the repository's configuration and
-    checkpoint, single-file or sharded (cached afterwards), and is the model at
+    weights, single-file or sharded (cached afterwards), and is the model at
     [dt]. *)

@@ -122,25 +122,27 @@ let test_bn_grads_flow_to_params () =
        (fun g -> Float.abs g > 1e-3)
        (Nx.to_array grads.Batch_norm.beta))
 
-let test_bn_stats_checkpoint () =
+let test_bn_stats_saved () =
   let params, _ = Batch_norm.init ~features:2 in
   let stats =
     { Batch_norm.Stats.mean = vec [| 1.0; 2.0 |]; var = vec [| 3.0; 4.0 |] }
   in
-  let bn = Nx.Ptree.instantiate (module Batch_norm) in
-  let bn_stats = Nx.Ptree.instantiate (module Batch_norm.Stats) in
-  let ckpt =
-    Checkpoint.concat
+  let bn = Nx.Ptree.(field "bn" (instantiate (module Batch_norm))) in
+  let bn_stats =
+    Nx.Ptree.(
+      field "bn" (field "stats" (instantiate (module Batch_norm.Stats))))
+  in
+  let archive =
+    Nx_io.Archive.union
       [
-        Checkpoint.of_value ~prefix:"bn" bn params;
-        Checkpoint.of_value ~prefix:"bn.stats" bn_stats stats;
+        Nx_io.Archive.of_value bn params; Nx_io.Archive.of_value bn_stats stats;
       ]
   in
   equal ~msg:"dot-joined names" (list string)
     [ "bn.beta"; "bn.gamma"; "bn.stats.mean"; "bn.stats.var" ]
-    (Checkpoint.names ckpt);
+    (Nx_io.Archive.names archive);
   let _, like = Batch_norm.init ~features:2 in
-  let stats' = Checkpoint.to_value ~prefix:"bn.stats" bn_stats ~like ckpt in
+  let stats' = Nx_io.Archive.to_value bn_stats ~like archive in
   check_arr ~msg:"mean round trips" [| 1.0; 2.0 |] stats'.Batch_norm.Stats.mean;
   check_arr ~msg:"var round trips" [| 3.0; 4.0 |] stats'.Batch_norm.Stats.var
 
@@ -568,7 +570,8 @@ let tests =
         test "eval mode normalizes with the running stats"
           test_bn_eval_uses_running_stats;
         test "gradients flow to gamma and beta" test_bn_grads_flow_to_params;
-        test "stats checkpoint under their own prefix" test_bn_stats_checkpoint;
+        test "stats are saved and read back under their own field"
+          test_bn_stats_saved;
         test "init rejects non-positive features" test_bn_init_validates;
         test "train step threads stats through value_and_grad_aux"
           test_bn_train_step_roundtrip;

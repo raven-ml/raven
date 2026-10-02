@@ -1,4 +1,4 @@
 (test
  (name test_hf)
  (package kaun)
- (libraries kaun kaun.hf nx unix jsont windtrap))
+ (libraries kaun kaun.hf nx nx.io unix jsont windtrap))

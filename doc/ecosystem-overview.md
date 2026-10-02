@@ -34,7 +34,7 @@ through tensors.
 `vmap`. Your Nx code becomes differentiable without changes.
 
 **Kaun** builds on Rune to provide layers, losses, initializers, data
-batching, metrics, checkpoints, and HuggingFace Hub integration. Models
+batching, metrics, and HuggingFace Hub integration. Models
 are typed records you define; optimizers come from **Vega**.
 
 **Talon**, **Brot**, **Hugin**, and **Quill** each use Nx directly for
@@ -95,8 +95,8 @@ let f'' = grad' f'
 ## Kaun: Neural Networks
 
 Building blocks for neural networks: layers as plain records with pure
-apply functions, losses, initializers, data batching, metrics,
-checkpoints, and HuggingFace Hub integration. A model is a typed record
+apply functions, losses, initializers, data batching, metrics, and
+HuggingFace Hub integration. A model is a typed record
 you define — there is no layer object and no trainer. Training steps
 compose `Rune.value_and_grad` with a Vega optimizer update.
 

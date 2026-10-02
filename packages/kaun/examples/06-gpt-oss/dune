@@ -10,6 +10,7 @@
   brot
   nx
   nx.device
+  nx.io
   nx.quant
   rune
   unix))

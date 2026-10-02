@@ -64,7 +64,7 @@ end
 let params_ptree = Nx.Ptree.instantiate (module Params)
 ```
 
-Every transformation takes the structure and preserves the type: the gradient of a function of `params` *is* a `params`. `Nx.Ptree.map`, `map2` and `fold` are `tree_map` and its kin, and they pass each tensor its path (`w`, `b`), which is also its checkpoint name.
+Every transformation takes the structure and preserves the type: the gradient of a function of `params` *is* a `params`. `Nx.Ptree.map`, `map2` and `fold` are `tree_map` and its kin, and they pass each tensor its path (`w`, `b`), which is also its name in a saved file (`Nx_io.Archive.of_value`).
 
 Where JAX distinguishes leaves by position in a flattened list, rune tensors keep their record field names, dtypes, and shapes in the type. Mixed dtypes work: a single backward pass produces a gradient for every leaf, each with its leaf's dtype.
 

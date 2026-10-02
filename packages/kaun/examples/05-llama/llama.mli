@@ -9,7 +9,7 @@
     positions, a SwiGLU feed-forward. The model is a plain record of {!Kaun}
     layers written on the decode contract: {!hidden}, {!cached} and {!logits}
     are its forward passes and {!Params} its structure. {!of_hf} adapts the
-    HuggingFace checkpoint — [torch.nn.Linear] orientation and naming — onto
+    HuggingFace weights — [torch.nn.Linear] orientation and naming — onto
     {!Params}' names, and {!from_pretrained} runs the whole pipeline. *)
 
 type config = {
@@ -48,16 +48,15 @@ type t = Nx.float32_t params
 
 module Params : Nx.Ptree.S with type 'a t = 'a params
 (** The parameters' structure: [Nx.Ptree.instantiate (module Params)] is what
-    the transformations, the optimisers and {!Kaun.Checkpoint.of_value} take.
+    the transformations, the optimisers and {!Nx_io.Archive.of_value} take.
     Leaves are at [tok.table], [blocks.0.attn.q.w], [norm.gamma], [head.w], ...,
-    the names a checkpoint gives them. [Nx.Ptree.cast (module Params) dt p]
-    converts precision; the layers keep their float32 islands whatever [dt]. *)
+    their names in a saved file. [Nx.Ptree.cast (module Params) dt p] converts
+    precision; the layers keep their float32 islands whatever [dt]. *)
 
 val make : config -> t
 (** [make cfg] is a zero-initialized float32 model: the starting point of
-    training from scratch, and the [~like] template that
-    {!Kaun.Checkpoint.to_value} needs to read back a checkpoint this library
-    saved. *)
+    training from scratch, and the [~like] value that {!Nx_io.Archive.to_value}
+    needs to read back parameters this library saved. *)
 
 (** {1:placement Placement}
 
@@ -130,20 +129,20 @@ val of_hf :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
-  Kaun.Checkpoint.t ->
+  Nx_io.Archive.t ->
   (float, 'b) Nx.t params
-(** [of_hf cfg dt ckpt] is the model of the HuggingFace Llama checkpoint [ckpt],
-    at [dt]. Each entry is read by its name in the file with the shape [cfg]
-    gives it, and every projection is transposed to [inputs × outputs], a view.
-    At the file's own dtype nothing is copied; at another one each leaf is cast.
+(** [of_hf cfg dt weights] is the model of the HuggingFace Llama [weights], at
+    [dt]. Each entry is read by its name in the file with the shape [cfg] gives
+    it, and every projection is transposed to [inputs × outputs], a view. At the
+    file's own dtype nothing is copied; at another one each leaf is cast.
 
     With [placement], each leaf is placed with [Nx.place (placement role ~axis)]
     as it is built (see {!role}), before the next is read, so at most one leaf's
     cast is alive on the host and a function compiled where the model is that
     captures it uploads nothing.
 
-    Raises [Invalid_argument], naming the entry, if one is missing, has another
-    shape than [cfg] says, or is not a floating-point entry. *)
+    Raises [Failure], naming the entry, if one is missing, has another shape
+    than [cfg] says, or is not a float16, bfloat16, float32 or float64 entry. *)
 
 val from_file :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
@@ -161,9 +160,12 @@ val dtype_of_string : string -> dtype
 (** [dtype_of_string s] is the dtype named ["float32"], ["float16"] or
     ["bfloat16"]. Raises [Failure] on another name. *)
 
-val stored_dtype : Kaun.Checkpoint.t -> dtype
-(** [stored_dtype ckpt] is the dtype [ckpt] stores its embedding table at, the
-    dtype at which {!of_hf} casts nothing. *)
+val stored_dtype : Nx_io.Archive.t -> dtype
+(** [stored_dtype weights] is the dtype [weights] stores its embedding table at,
+    the dtype at which {!of_hf} casts nothing.
+
+    Raises [Failure] if the table is missing or is not a float16, bfloat16 or
+    float32 entry. *)
 
 val default_repo : string
 (** An ungated HuggingFace repository of Llama 3.2 1B whose weight file is

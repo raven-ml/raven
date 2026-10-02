@@ -7,18 +7,21 @@
    cache and offline paths against a seeded temporary cache directory. *)
 
 open Windtrap
-module Checkpoint = Kaun.Checkpoint
+module Archive = Nx_io.Archive
 module Hf = Kaun_hf
 
 let f32 = Nx.float32
 let vec xs = Nx.create f32 [| Array.length xs |] xs
 let to_arr t = Nx.to_array (Nx.reshape [| -1 |] t)
 
-let entry name ckpt =
-  match Checkpoint.get name ckpt with Nx.P x -> Nx.cast f32 x
+let check_entry ~msg expected name a =
+  let shape = [| Array.length expected |] in
+  equal ~msg (array float_exact) expected
+    (to_arr (Archive.tensor ~shape f32 name a))
 
-let check_entry ~msg expected name ckpt =
-  equal ~msg (array float_exact) expected (to_arr (entry name ckpt))
+let save path entries =
+  Nx_io.save_safetensors path
+    (Archive.of_list (List.map (fun (name, t) -> (name, Nx.P t)) entries))
 
 (* Filesystem helpers *)
 
@@ -37,8 +40,8 @@ let rec rm_rf path =
   else Sys.remove path
 
 (* Runs [f] with a fresh cache directory, removed afterwards even on failure. A
-   loaded checkpoint stays mapped until its tensors are collected, and Windows
-   may refuse to delete a mapped file. *)
+   loaded file stays mapped until its tensors are collected, and Windows may
+   refuse to delete a mapped file. *)
 let with_cache_dir f =
   let dir = Filename.temp_dir "kaun_hf" "" in
   Fun.protect
@@ -206,17 +209,12 @@ let test_load_single_file () =
   with_cache_dir @@ fun cache_dir ->
   let _ =
     seed ~cache_dir ~repo_id:"acme/tiny" ~file:"model.safetensors" (fun path ->
-        Checkpoint.save path
-          (Checkpoint.concat
-             [
-               Checkpoint.of_tensor "w" (vec [| 1.0; 2.0 |]);
-               Checkpoint.of_tensor "b" (vec [| 3.0 |]);
-             ]))
+        save path [ ("w", vec [| 1.0; 2.0 |]); ("b", vec [| 3.0 |]) ])
   in
-  let ckpt = Hf.load_checkpoint ~cache_dir ~offline:true "acme/tiny" in
-  equal ~msg:"names" (list string) [ "b"; "w" ] (Checkpoint.names ckpt);
-  check_entry ~msg:"w" [| 1.0; 2.0 |] "w" ckpt;
-  check_entry ~msg:"b" [| 3.0 |] "b" ckpt
+  let weights = Hf.load_safetensors ~cache_dir ~offline:true "acme/tiny" in
+  equal ~msg:"names" (list string) [ "b"; "w" ] (Archive.names weights);
+  check_entry ~msg:"w" [| 1.0; 2.0 |] "w" weights;
+  check_entry ~msg:"b" [| 3.0 |] "b" weights
 
 (* A repository cached as one file is loaded without asking the Hub whether it
    has a shard index. *)
@@ -225,12 +223,12 @@ let test_load_single_file_stays_local () =
   with_cache_dir @@ fun cache_dir ->
   let _ =
     seed ~cache_dir ~repo_id:"acme/tiny" ~file:"model.safetensors" (fun path ->
-        Checkpoint.save path (Checkpoint.of_tensor "w" (vec [| 1.0; 2.0 |])))
+        save path [ ("w", vec [| 1.0; 2.0 |]) ])
   in
   let log = Filename.concat cache_dir "curl-dest" in
   with_curl_stand_in ~log @@ fun () ->
-  let ckpt = Hf.load_checkpoint ~cache_dir "acme/tiny" in
-  check_entry ~msg:"w" [| 1.0; 2.0 |] "w" ckpt;
+  let weights = Hf.load_safetensors ~cache_dir "acme/tiny" in
+  check_entry ~msg:"w" [| 1.0; 2.0 |] "w" weights;
   is_true ~msg:"curl never ran" (not (Sys.file_exists log))
 
 let test_load_sharded () =
@@ -243,29 +241,41 @@ let test_load_sharded () =
   in
   let _ =
     seed ~cache_dir ~repo_id ~file:"model-00001.safetensors" (fun path ->
-        Checkpoint.save path
-          (Checkpoint.concat
-             [
-               Checkpoint.of_tensor "a" (vec [| 1.0 |]);
-               Checkpoint.of_tensor "c" (vec [| 3.0 |]);
-             ]))
+        save path [ ("a", vec [| 1.0 |]); ("c", vec [| 3.0 |]) ])
   in
   let _ =
     seed ~cache_dir ~repo_id ~file:"model-00002.safetensors" (fun path ->
-        Checkpoint.save path (Checkpoint.of_tensor "b" (vec [| 2.0 |])))
+        save path [ ("b", vec [| 2.0 |]) ])
   in
-  let ckpt = Hf.load_checkpoint ~cache_dir ~offline:true repo_id in
-  equal ~msg:"names" (list string) [ "a"; "b"; "c" ] (Checkpoint.names ckpt);
-  check_entry ~msg:"a" [| 1.0 |] "a" ckpt;
-  check_entry ~msg:"b" [| 2.0 |] "b" ckpt;
-  check_entry ~msg:"c" [| 3.0 |] "c" ckpt
+  let weights = Hf.load_safetensors ~cache_dir ~offline:true repo_id in
+  equal ~msg:"names" (list string) [ "a"; "b"; "c" ] (Archive.names weights);
+  check_entry ~msg:"a" [| 1.0 |] "a" weights;
+  check_entry ~msg:"b" [| 2.0 |] "b" weights;
+  check_entry ~msg:"c" [| 3.0 |] "c" weights
+
+let test_load_sharded_missing () =
+  with_cache_dir @@ fun cache_dir ->
+  let repo_id = "acme/sharded" in
+  let _ =
+    seed ~cache_dir ~repo_id ~file:"model.safetensors.index.json" (fun path ->
+        write_string path
+          {|{"metadata": {}, "weight_map": {"a": "model-00001.safetensors", "b": "model-00001.safetensors"}}|})
+  in
+  let _ =
+    seed ~cache_dir ~repo_id ~file:"model-00001.safetensors" (fun path ->
+        save path [ ("a", vec [| 1.0 |]) ])
+  in
+  raises
+    (Failure
+       "acme/sharded: tensor \"b\" missing in shard model-00001.safetensors")
+    (fun () -> Hf.load_safetensors ~cache_dir ~offline:true repo_id)
 
 let test_load_missing_raises () =
   with_cache_dir @@ fun cache_dir ->
   raises (Failure "No safetensors found for acme/empty") (fun () ->
-      Hf.load_checkpoint ~cache_dir ~offline:true "acme/empty")
+      Hf.load_safetensors ~cache_dir ~offline:true "acme/empty")
 
-(* Importing a foreign checkpoint *)
+(* Importing foreign weights *)
 
 (* A GPT-2-style attention block built directly from the file's entries: the
    fused query, key and value projection is stored [d; 3d], and the output
@@ -273,21 +283,23 @@ let test_load_missing_raises () =
 let test_import_attention () =
   let module Attention = Kaun.Attention in
   let d = 2 in
-  let ckpt =
-    Checkpoint.concat
+  let weights =
+    Archive.of_list
       [
-        Checkpoint.of_tensor "attn.c_attn.weight"
-          (Nx.create f32
-             [| d; 3 * d |]
-             [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0; 10.0; 11.0; 12.0 |]);
-        Checkpoint.of_tensor "attn.c_attn.bias"
-          (vec [| 0.5; 0.25; 0.125; 1.5; 2.5; 3.5 |]);
-        Checkpoint.of_tensor "attn.c_proj.weight"
-          (Nx.create f32 [| d; d |] [| 1.0; 2.0; 3.0; 4.0 |]);
-        Checkpoint.of_tensor "attn.c_proj.bias" (vec [| 0.75; 1.25 |]);
+        ( "attn.c_attn.weight",
+          Nx.P
+            (Nx.create f32
+               [| d; 3 * d |]
+               [|
+                 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0; 10.0; 11.0; 12.0;
+               |]) );
+        ("attn.c_attn.bias", Nx.P (vec [| 0.5; 0.25; 0.125; 1.5; 2.5; 3.5 |]));
+        ( "attn.c_proj.weight",
+          Nx.P (Nx.create f32 [| d; d |] [| 1.0; 2.0; 3.0; 4.0 |]) );
+        ("attn.c_proj.bias", Nx.P (vec [| 0.75; 1.25 |]));
       ]
   in
-  let float ~shape name = Checkpoint.to_float ~shape f32 name ckpt in
+  let float ~shape name = Archive.float ~shape f32 name weights in
   let fused =
     List.combine
       (Nx.split ~axis:1 3 (float ~shape:[| d; 3 * d |] "attn.c_attn.weight"))
@@ -311,9 +323,9 @@ let test_import_attention () =
   equal ~msg:"out.w transposed" (array float_exact) [| 1.0; 3.0; 2.0; 4.0 |]
     (to_arr p.out.w);
   raises
-    (Invalid_argument
-       "Checkpoint.to_float: shape mismatch for \"attn.c_proj.bias\": expected \
-        [3], got [2]") (fun () -> float ~shape:[| 3 |] "attn.c_proj.bias")
+    (Failure
+       "Nx_io.Archive.float: attn.c_proj.bias: shape [2] in the archive, [3] \
+        asked for") (fun () -> float ~shape:[| 3 |] "attn.c_proj.bias")
 
 let () =
   exit
@@ -337,10 +349,13 @@ let () =
          group "loading"
            [
              test "load_config parses a cached config.json" test_load_config;
-             test "single-file checkpoints load" test_load_single_file;
+             test "single-file weights load" test_load_single_file;
              test "a cached single file loads without the network"
                test_load_single_file_stays_local;
-             test "sharded checkpoints merge their shards" test_load_sharded;
+             test "sharded weights hold each indexed tensor from its shard"
+               test_load_sharded;
+             test "a tensor missing from its shard raises, naming it"
+               test_load_sharded_missing;
              test "repositories without safetensors raise"
                test_load_missing_raises;
            ];

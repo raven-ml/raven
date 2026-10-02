@@ -1,6 +1,6 @@
 # kaun
 
-Kaun is a neural network library for OCaml, trained with [rune](../../rune/doc/index.md) autodiff. It provides the building blocks for training networks — layers, activations, initializers, losses, data batching, metrics, checkpoints — as plain records and pure functions. There is no layer object and no trainer: a model is a typed record you write, and a training step is a few lines you own end to end.
+Kaun is a neural network library for OCaml, trained with [rune](../../rune/doc/index.md) autodiff. It provides the building blocks for training networks — layers, activations, initializers, losses, data batching, metrics — as plain records and pure functions. There is no layer object and no trainer: a model is a typed record you write, and a training step is a few lines you own end to end.
 
 The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md): [rune](../../rune/doc/index.md) (transformations) and [vega](../../vega/doc/index.md) (optimizers) each sit on nx independently, kaun's library depends only on nx, and the three compose in your code through the one record type you define.
 
@@ -12,8 +12,8 @@ The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md)
 - **Losses** — `Loss`: MSE, MAE, Huber, `sigmoid_bce`, `softmax_cross_entropy` (dense or sparse labels), all evaluated in log space
 - **Data** — `Data.batches`/`batches2` cut in-memory tensors into a standard `Seq.t` of minibatches, with reproducible per-epoch shuffling
 - **Metrics** — `Metric`: accuracy, top-k accuracy, confusion matrix, precision/recall/F1, AUC-ROC
-- **Checkpoints** — `Checkpoint` saves named parameter structures as [safetensors](https://huggingface.co/docs/safetensors/)
-- **Pretrained models** — `kaun.hf` downloads HuggingFace Hub checkpoints, and `Checkpoint.to_float` and `to_tensor` read their entries by name into your own records
+- **Saving** — a model's structure names its tensors, so `Nx_io.Archive.of_value` and `to_value` save and restore it as [safetensors](https://huggingface.co/docs/safetensors/)
+- **Pretrained models** — `kaun.hf` downloads HuggingFace Hub weights, and `Nx_io.Archive.float` and `tensor` read their entries by name into your own records
 - **Datasets** — `kaun.datasets`: MNIST, Fashion-MNIST, CIFAR-10 loaders returning plain tensors
 
 ## Quick Start
@@ -73,8 +73,8 @@ let () =
 
 | Library | opam package | Description |
 |---------|--------------|-------------|
-| `Kaun` | `kaun` | Layers, losses, data, metrics, checkpoints |
-| `Kaun_hf` | `kaun.hf` | HuggingFace Hub download and checkpoint loading |
+| `Kaun` | `kaun` | Layers, losses, data, metrics |
+| `Kaun_hf` | `kaun.hf` | HuggingFace Hub download and weight loading |
 | `Kaun_datasets` | `kaun.datasets` | MNIST, Fashion-MNIST, CIFAR-10 loaders |
 
 ## Next Steps
@@ -82,5 +82,5 @@ let () =
 - [Getting Started](01-getting-started.md) — installation and the model/step/loop pattern
 - [Layers and Models](02-layers-and-models.md) — the layer catalog and models as records
 - [Training](03-training.md) — the composable training step, data, and metrics
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — safetensors, the HuggingFace Hub, GPT-2
+- [Saving and Pretrained Weights](04-saving-and-pretrained.md) — safetensors, the HuggingFace Hub, GPT-2
 - [PyTorch Comparison](05-pytorch-comparison.md) — mapping `nn.Module` vocabulary to kaun

@@ -143,7 +143,7 @@ let logits cfg p h =
   | Some l -> Linear.apply l h
   | None -> Nx.matmul h (Nx.transpose p.tok.Embedding.table)
 
-(* Importing a HuggingFace checkpoint.
+(* Importing HuggingFace weights.
 
    The file names its tensors model.layers.{i}.self_attn.q_proj.weight, ... and
    stores every projection as [outputs; inputs], the transpose of [Linear]'s
@@ -151,12 +151,12 @@ let logits cfg p h =
    i with i + head_dim / 2, which is [Rope]'s. A tied model has no lm_head
    entry. *)
 
-let of_hf ?placement cfg dt ckpt =
+let of_hf ?placement cfg dt weights =
   let place role ~axis x =
     match placement with None -> x | Some p -> Nx.place (p role ~axis) x
   in
   let weight ~shape name =
-    Checkpoint.to_float ~shape dt (name ^ ".weight") ckpt
+    Nx_io.Archive.float ~shape dt (name ^ ".weight") weights
   in
   let norm name =
     { Rms_norm.gamma = place Whole ~axis:0 (weight ~shape:[| cfg.dim |] name) }
@@ -209,16 +209,16 @@ let dtype_of_string = function
   | "bfloat16" -> Dtype Nx.bfloat16
   | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
 
-let stored_dtype ckpt =
-  let (Nx.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
-  match Nx.dtype table with
-  | Nx.Float16 -> Dtype Nx.float16
-  | Nx.BFloat16 -> Dtype Nx.bfloat16
-  | Nx.Float32 -> Dtype Nx.float32
-  | _ ->
-      failwith
-        "the checkpoint's embedding table is not a float16, bfloat16 or \
-         float32 entry"
+let stored_dtype weights =
+  let name = "model.embed_tokens.weight" in
+  match Nx_io.Archive.find name weights with
+  | None -> failwith (name ^ ": no entry in the archive")
+  | Some (Nx.P table) -> (
+      match Nx.dtype table with
+      | Nx.Float16 -> Dtype Nx.float16
+      | Nx.BFloat16 -> Dtype Nx.bfloat16
+      | Nx.Float32 -> Dtype Nx.float32
+      | _ -> failwith (name ^ " is not a float16, bfloat16 or float32 entry"))
 
 (* Configuration from HuggingFace's config.json *)
 
@@ -290,11 +290,11 @@ let config_of_json json =
 (* Pretrained loading *)
 
 let from_file ?placement cfg dt path =
-  of_hf ?placement cfg dt (Checkpoint.load path)
+  of_hf ?placement cfg dt (Nx_io.load_safetensors path)
 
 (* An ungated mirror whose weight files are byte-identical to Meta's. *)
 let default_repo = "NousResearch/Llama-3.2-1B"
 
 let from_pretrained ?placement ?(repo_id = default_repo) dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?placement cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?placement cfg dt (Hf.load_safetensors repo_id))

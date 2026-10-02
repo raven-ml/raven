@@ -89,7 +89,7 @@
       {!lbfgs_ptree} are a state's structure over [p]. A state's leaf paths are
       its field name followed by the parameter's path ([mu.blocks.0.w]), and
       [step] for the counter, so a state is named in a compiled step's signature
-      and saved with its paths as checkpoint names.
+      and saved with its paths as the names of its tensors.
     - {b Precision.} A step computes each leaf at float32, or at float64 for a
       float64 leaf, and returns the parameters and the state at their own
       dtypes, so a float16 or bfloat16 leaf is rounded once, when stored.

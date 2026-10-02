@@ -36,7 +36,7 @@ let step (params, ostate) (x, y) =
   ((params, ostate), Nx.item [] l)
 ```
 
-The state is a pair `(params, ostate)` of ordinary values — parameters of type `Nx.float32_t Mlp.t`, optimizer state a record of like-shaped moments. Nothing is hidden: print a gradient leaf, swap the optimizer, or checkpoint everything mid-run.
+The state is a pair `(params, ostate)` of ordinary values — parameters of type `Nx.float32_t Mlp.t`, optimizer state a record of like-shaped moments. Nothing is hidden: print a gradient leaf, swap the optimizer, or save everything mid-run.
 
 Because the step is yours, extensions are insertions, not configuration. Gradient clipping goes between the backward pass and the update:
 
@@ -197,9 +197,9 @@ A model forward that takes `~training` serves both phases; evaluation is the sam
 
 Because the step is an ordinary function of ordinary values, rune's other transformations apply directly: per-sample gradients are `Rune.vmap` of `Rune.grad` over the batch (see the [rune transformations guide](../../rune/doc/02-transformations.md)), and `Rune.value_and_grad_aux` returns any auxiliary output of the objective (predictions for logging, updated statistics), given its structure.
 
-For complete programs, see [`examples/02-mnist`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/02-mnist) (MLP, AdamW, accuracy evaluation) and [`examples/03-mnist-cnn`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/03-mnist-cnn) (CNN, dropout, checkpointing).
+For complete programs, see [`examples/02-mnist`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/02-mnist) (MLP, AdamW, accuracy evaluation) and [`examples/03-mnist-cnn`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/03-mnist-cnn) (CNN, dropout, saving the training state).
 
 ## Next Steps
 
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — persisting parameters, optimizer state, and counters
+- [Saving and Pretrained Weights](04-saving-and-pretrained.md) — persisting parameters and optimizer state
 - [PyTorch Comparison](05-pytorch-comparison.md) — the same concepts in PyTorch vocabulary

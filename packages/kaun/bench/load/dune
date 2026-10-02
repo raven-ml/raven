@@ -11,5 +11,6 @@
   jsont.bytesrw
   nx
   nx.device
+  nx.io
   rune
   unix))

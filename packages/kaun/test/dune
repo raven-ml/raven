@@ -5,7 +5,6 @@
   test_fn
   test_loss
   test_metric
-  test_checkpoint
   test_layers
   test_conv
   test_stateful
@@ -20,7 +19,7 @@
  (modules
   (:standard \ test_cache_index_metal test_decode_devices))
  (package kaun)
- (libraries kaun rune vega nx nx.dtype nx.device windtrap unix))
+ (libraries kaun rune vega nx nx.dtype nx.device nx.io windtrap unix))
 
 (tests
  (names test_cache_index_metal)

@@ -146,34 +146,39 @@ let number j =
 let uint8 shape values = Nx.create Nx.uint8 shape values
 let float32 shape values = Nx.create Nx.float32 shape values
 
-(* Checkpoint tensors *)
+(* Tensors of the weight files *)
 
-let tensor ckpt name =
-  match Checkpoint.get name ckpt with Nx.P t -> Nx.cast Nx.float32 t
+let entry archive name =
+  match Nx_io.Archive.find name archive with
+  | Some x -> x
+  | None -> failwith (name ^ ": no entry in the weights")
 
-let bytes ckpt name =
-  try Nx.unpack Nx.uint8 (Checkpoint.get name ckpt)
+let tensor archive name =
+  match entry archive name with Nx.P t -> Nx.cast Nx.float32 t
+
+let bytes archive name =
+  try Nx.unpack Nx.uint8 (entry archive name)
   with Invalid_argument msg -> invalid_arg (name ^ ": " ^ msg)
 
-let moe_params ckpt ~layer ~weight =
+let moe_params archive ~layer ~weight =
   let name leaf = Printf.sprintf "model.layers.%d.mlp.%s" layer leaf in
   let router =
     {
-      Linear.w = Nx.transpose (tensor ckpt (name "router.weight"));
-      b = Some (tensor ckpt (name "router.bias"));
+      Linear.w = Nx.transpose (tensor archive (name "router.weight"));
+      b = Some (tensor archive (name "router.bias"));
     }
   in
   let experts =
     {
       Moe.gate_up = weight (name "experts.gate_up_proj");
-      gate_up_bias = tensor ckpt (name "experts.gate_up_proj_bias");
+      gate_up_bias = tensor archive (name "experts.gate_up_proj_bias");
       down = weight (name "experts.down_proj");
-      down_bias = tensor ckpt (name "experts.down_proj_bias");
+      down_bias = tensor archive (name "experts.down_proj_bias");
     }
   in
   (router, experts)
 
-let float_weight ckpt name = Moe.Float (tensor ckpt name)
+let float_weight archive name = Moe.Float (tensor archive name)
 
 let place_experts devices (p : _ Moe.t) =
   match devices with
@@ -201,12 +206,12 @@ let mxfp4 ~scales blocks =
        (Array.append (Array.sub s 0 (r - 2)) [| s.(r - 2) * 16 |])
        blocks)
 
-let packed_weight ckpt ~offset name =
-  let scales = bytes ckpt (name ^ "_scales") in
+let packed_weight archive ~offset name =
+  let scales = bytes archive (name ^ "_scales") in
   Moe.Quant
     (mxfp4
        ~scales:(Nx.add scales (Nx.scalar Nx.uint8 offset))
-       (bytes ckpt (name ^ "_blocks")))
+       (bytes archive (name ^ "_blocks")))
 
 (* Checks *)
 
@@ -324,15 +329,15 @@ let block ~devices ~tol ~k ~limit label (router, p) case =
     (flat (Nx.slice [ I last ] whole))
     (flat (apply (Nx.slice [ R (last, last + 1) ] tokens)))
 
-let blocks ~devices ~tol fx ~label ~weight ckpt =
+let blocks ~devices ~tol fx ~label ~weight archive =
   let config = mem "config" fx in
   let k = int_of_float (number (mem "num_experts_per_tok" config)) in
   let limit = number (mem "swiglu_limit" config) in
   let layer = int_of_float (number (mem "layer" fx)) in
   List.iter
     (fun (offset, cases) ->
-      let weight = weight ckpt ~offset:(int_of_string offset) in
-      let router, experts = moe_params ckpt ~layer ~weight in
+      let weight = weight archive ~offset:(int_of_string offset) in
+      let router, experts = moe_params archive ~layer ~weight in
       let p = (router, place_experts devices experts) in
       List.iter
         (fun (case_name, case) ->
@@ -661,15 +666,15 @@ let () =
        accumulation over the experts. *)
     let tol = 1e-5 in
     let fx = fixture "gpt-oss-bf16" in
-    let ckpt = Checkpoint.load (weights fx !float_weights) in
+    let archive = Nx_io.load_safetensors (weights fx !float_weights) in
     blocks ~devices ~tol fx ~label:"float"
-      ~weight:(fun ckpt ~offset:_ name -> float_weight ckpt name)
-      ckpt;
+      ~weight:(fun archive ~offset:_ name -> float_weight archive name)
+      archive;
     ties ~devices fx;
     let fx = fixture "gpt-oss-mxfp4" in
-    let ckpt = Checkpoint.load (weights fx !mxfp4_weights) in
+    let archive = Nx_io.load_safetensors (weights fx !mxfp4_weights) in
     dequant ~devices fx;
-    blocks ~devices ~tol fx ~label:"mxfp4" ~weight:packed_weight ckpt
+    blocks ~devices ~tol fx ~label:"mxfp4" ~weight:packed_weight archive
   end;
   let fx = fixture "gpt-oss-bf16-model" in
   models ~devices ~dtype:!dtype ~label:"float model" fx

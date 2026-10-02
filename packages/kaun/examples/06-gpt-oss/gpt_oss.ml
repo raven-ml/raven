@@ -215,7 +215,7 @@ let config_of_json json =
       | _ -> false);
   }
 
-(* Importing a HuggingFace checkpoint.
+(* Importing HuggingFace weights.
 
    The file names its tensors model.layers.{i}.self_attn.q_proj.weight, ... and
    stores every projection as [outputs; inputs], the transpose of [Linear]'s
@@ -223,14 +223,14 @@ let config_of_json json =
    i with i + head_dim / 2, which is [Rope]'s. Expert weights are either float,
    [experts; inputs; outputs] as [Moe] takes them, or packed as uint8 codes and
    exponents under the [_blocks] and [_scales] suffixes, which stay uint8:
-   [Checkpoint.to_float] refuses them. A tied model has no lm_head entry. *)
+   [Nx_io.Archive.float] refuses them. A tied model has no lm_head entry. *)
 
-let of_hf ?placement cfg dt ckpt =
+let of_hf ?placement cfg dt weights =
   let place role ~axis x =
     match placement with None -> x | Some p -> Nx.place (p role ~axis) x
   in
   let whole x = place Whole ~axis:0 x in
-  let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
+  let float ~shape name = Nx_io.Archive.float ~shape dt name weights in
   let norm name =
     { Rms_norm.gamma = whole (float ~shape:[| cfg.dim |] name) }
   in
@@ -253,7 +253,7 @@ let of_hf ?placement cfg dt ckpt =
   in
   let column = linear Column ~axis:1 and row = linear Row ~axis:0 in
   let experts ~inputs ~outputs name =
-    match Checkpoint.find (name ^ "_blocks") ckpt with
+    match Nx_io.Archive.find (name ^ "_blocks") weights with
     | None ->
         Moe.Float
           (place Experts ~axis:0
@@ -261,7 +261,7 @@ let of_hf ?placement cfg dt ckpt =
     | Some _ ->
         let groups = inputs / 32 in
         let bytes ~shape name =
-          Checkpoint.to_tensor ~shape Nx.uint8 name ckpt
+          Nx_io.Archive.tensor ~shape Nx.uint8 name weights
         in
         let codes =
           bytes ~shape:[| cfg.experts; outputs; groups; 16 |] (name ^ "_blocks")
@@ -361,18 +361,19 @@ let dtype_of_string = function
   | "bfloat16" -> Dtype Nx.bfloat16
   | d -> failwith ("--dtype must be float32 or bfloat16, got " ^ d)
 
-let stored_dtype ckpt =
-  let (Nx.P table) = Checkpoint.get "model.embed_tokens.weight" ckpt in
-  match Nx.dtype table with
-  | Nx.BFloat16 -> Dtype Nx.bfloat16
-  | Nx.Float32 -> Dtype Nx.float32
-  | _ ->
-      failwith
-        "the checkpoint's embedding table is not a bfloat16 or float32 entry"
+let stored_dtype weights =
+  let name = "model.embed_tokens.weight" in
+  match Nx_io.Archive.find name weights with
+  | None -> failwith (name ^ ": no entry in the archive")
+  | Some (Nx.P table) -> (
+      match Nx.dtype table with
+      | Nx.BFloat16 -> Dtype Nx.bfloat16
+      | Nx.Float32 -> Dtype Nx.float32
+      | _ -> failwith (name ^ " is not a bfloat16 or float32 entry"))
 
 let from_file ?placement cfg dt path =
-  of_hf ?placement cfg dt (Checkpoint.load path)
+  of_hf ?placement cfg dt (Nx_io.load_safetensors path)
 
 let from_pretrained ?placement repo_id dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?placement cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?placement cfg dt (Hf.load_safetensors repo_id))

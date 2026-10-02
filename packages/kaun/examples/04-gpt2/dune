@@ -11,5 +11,6 @@
   nx
   nx.dtype
   nx.device
+  nx.io
   rune
   unix))

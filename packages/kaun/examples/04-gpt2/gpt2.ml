@@ -160,19 +160,19 @@ let logits cfg p h =
     (Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f h)
     (Nx.transpose p.wte.table)
 
-(* Importing a HuggingFace checkpoint.
+(* Importing HuggingFace weights.
 
    The file names its tensors h.{i}.attn.c_attn.weight, h.{i}.mlp.c_fc.bias, ...
    and fuses the q, k and v projections into c_attn, [n_embd; 3 * n_embd]. Its
    weights are already [inputs; outputs], so only the fused projection is cut,
    with [Nx.split], into three views. *)
 
-let of_hf ?placement cfg dt ckpt =
+let of_hf ?placement cfg dt weights =
   let place role ~axis x =
     match placement with None -> x | Some p -> Nx.place (p role ~axis) x
   in
   let whole x = place Whole ~axis:0 x in
-  let float ~shape name = Checkpoint.to_float ~shape dt name ckpt in
+  let float ~shape name = Nx_io.Archive.float ~shape dt name weights in
   let d = cfg.n_embd in
   let layer_norm name =
     {
@@ -242,16 +242,16 @@ let dtype_of_string = function
   | "bfloat16" -> Dtype Nx.bfloat16
   | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
 
-let stored_dtype ckpt =
-  let (Nx.P table) = Checkpoint.get "wte.weight" ckpt in
-  match Nx.dtype table with
-  | Nx.Float16 -> Dtype Nx.float16
-  | Nx.BFloat16 -> Dtype Nx.bfloat16
-  | Nx.Float32 -> Dtype Nx.float32
-  | _ ->
-      failwith
-        "the checkpoint's embedding table is not a float16, bfloat16 or \
-         float32 entry"
+let stored_dtype weights =
+  let not_float = "wte.weight is not a float16, bfloat16 or float32 entry" in
+  match Nx_io.Archive.find "wte.weight" weights with
+  | None -> failwith "wte.weight: no entry in the archive"
+  | Some (Nx.P table) -> (
+      match Nx.dtype table with
+      | Nx.Float16 -> Dtype Nx.float16
+      | Nx.BFloat16 -> Dtype Nx.bfloat16
+      | Nx.Float32 -> Dtype Nx.float32
+      | _ -> failwith not_float)
 
 (* Pretrained loading *)
 
@@ -288,8 +288,8 @@ let config_of_json json =
   }
 
 let from_file ?placement cfg dt path =
-  of_hf ?placement cfg dt (Checkpoint.load path)
+  of_hf ?placement cfg dt (Nx_io.load_safetensors path)
 
 let from_pretrained ?placement ?(repo_id = "gpt2") dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?placement cfg dt (Hf.load_checkpoint repo_id))
+  (cfg, of_hf ?placement cfg dt (Hf.load_safetensors repo_id))

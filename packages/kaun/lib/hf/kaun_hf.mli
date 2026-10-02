@@ -6,16 +6,17 @@
 (** HuggingFace Hub integration.
 
     Fetches files from {{:https://huggingface.co}HuggingFace Hub} repositories
-    into a local cache and loads safetensors checkpoints, single-file or
-    sharded, as {!Kaun.Checkpoint.t} values. A Hub checkpoint names and lays out
-    its tensors by the conventions of the framework that exported it, so a
-    model's importer asks for each entry by that name and reshapes it with nx
-    (see {!Kaun.Checkpoint.to_float}):
+    into a local cache and loads a model's SafeTensors weights, single-file or
+    sharded, as an {!Nx_io.Archive.t}. A Hub model names and lays out its
+    tensors by the conventions of the framework that exported it, so a model's
+    importer asks for each entry by that name and reshapes it with nx (see
+    {!Nx_io.Archive.float}):
 
     {[
-    let ckpt = Kaun_hf.load_checkpoint "gpt2" in
+    let weights = Kaun_hf.load_safetensors "gpt2" in
     let table =
-      Checkpoint.to_float ~shape:[| 50257; 768 |] Nx.float32 "wte.weight" ckpt
+      Nx_io.Archive.float ~shape:[| 50257; 768 |] Nx.float32 "wte.weight"
+        weights
     ]}
 
     Downloading requires [curl] on the [PATH]. Fetched files are cached under
@@ -66,24 +67,25 @@ val load_config :
 
     Raises [Failure] on download or JSON parse errors. *)
 
-val load_checkpoint :
+val load_safetensors :
   ?token:string ->
   ?cache_dir:string ->
   ?offline:bool ->
   ?revision:string ->
   string ->
-  Kaun.Checkpoint.t
-(** [load_checkpoint repo_id] is [repo_id]'s safetensors checkpoint. When the
-    repository has a [model.safetensors.index.json] index, all shards it
-    references are fetched and their entries merged; otherwise the single
-    [model.safetensors] file is fetched. Entry names are the raw safetensors
-    keys (e.g. ["h.0.attn.c_attn.weight"]). Loading reads headers only; the
-    entries are views of the cached files (see {!Kaun.Checkpoint.load}).
-    Optional arguments are those of {!download_file}.
+  Nx_io.Archive.t
+(** [load_safetensors repo_id] is the tensors of [repo_id]'s SafeTensors
+    weights. When the repository has a [model.safetensors.index.json] index, the
+    shards it references are fetched and the result holds each tensor the index
+    names, from its shard; otherwise the single [model.safetensors] file is
+    fetched. Entry names are the SafeTensors keys (e.g.
+    ["h.0.attn.c_attn.weight"]). Loading reads headers only; the entries stay in
+    the cached files (see {!Nx_io.load_safetensors}). Optional arguments are
+    those of {!download_file}.
 
     Raises [Failure] if the repository has neither an index nor a
-    [model.safetensors] file, if an indexed tensor is missing from its shard, or
-    on download or parse errors. *)
+    [model.safetensors] file, if the index names a tensor twice or a tensor its
+    shard lacks, or on download or parse errors. *)
 
 (** {1:cache The cache} *)
 

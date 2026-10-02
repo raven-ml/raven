@@ -5,11 +5,11 @@
 
 (* Text generation with pretrained Llama 3.2 1B.
 
-   Downloads the checkpoint and tokenizer from an ungated HuggingFace mirror
-   (about 2.5 GB, cached afterwards) and samples a continuation of a prompt
-   through key-value caches. [--devices LIST] compiles the decode step with
-   [Rune.jit] for a device, tensor-parallel over several; [--temperature 0]
-   decodes greedily. *)
+   Downloads the weights and tokenizer from an ungated HuggingFace mirror (about
+   2.5 GB, cached afterwards) and samples a continuation of a prompt through
+   key-value caches. [--devices LIST] compiles the decode step with [Rune.jit]
+   for a device, tensor-parallel over several; [--temperature 0] decodes
+   greedily. *)
 
 open Kaun
 
@@ -145,7 +145,7 @@ let () =
          (CPU:1,CPU:2,CPU:3,CPU:4)" );
       ( "--dtype",
         Arg.Set_string dtype,
-        "float32, float16 or bfloat16 (default: the checkpoint's own)" );
+        "float32, float16 or bfloat16 (default: the weights' own)" );
       ("--temperature", Arg.Set_float temperature, "0 decodes greedily");
       ("--top-k", Arg.Set_int top_k, "Keep the k most likely tokens");
       ("--top-p", Arg.Set_float top_p, "Keep the smallest set reaching mass p");
@@ -154,20 +154,20 @@ let () =
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "llama [--prompt P] [--count N] [--devices LIST] [--dtype DT]";
   let cfg = Llama.config_of_json (Kaun_hf.load_config Llama.default_repo) in
-  let ckpt = Kaun_hf.load_checkpoint Llama.default_repo in
+  let weights = Kaun_hf.load_safetensors Llama.default_repo in
   let tokenizer = load_tokenizer () in
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
   let devices = if !devices = "" then None else Some (devices_of !devices) in
-  (* At the checkpoint's own dtype the import casts nothing. *)
+  (* At the weights' own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =
-    if !dtype = "" then Llama.stored_dtype ckpt
+    if !dtype = "" then Llama.stored_dtype weights
     else Llama.dtype_of_string !dtype
   in
   let toks =
     generate ?devices cfg
-      (Llama.of_hf ?placement:(Option.map parallel devices) cfg dt ckpt)
+      (Llama.of_hf ?placement:(Option.map parallel devices) cfg dt weights)
       dt ~temperature:!temperature ~top_k:!top_k ~top_p:!top_p ~seed:!seed
       ~max_tokens:!count ids
   in

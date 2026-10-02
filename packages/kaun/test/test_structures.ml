@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* What each layer's and each index's walk visits: its leaf paths and its
-   reports, and the checkpoint names they give. *)
+   reports, and the names they give its tensors in a saved file. *)
 
 open Windtrap
 open Kaun
@@ -14,10 +14,10 @@ let f32 = Nx.float32
 let visits s x =
   List.map (Format.asprintf "%a" Nx.Ptree.pp_visit) (Nx.Ptree.visits s x)
 
-let names s x = Checkpoint.names (Checkpoint.of_value s x)
+let names s x = Nx_io.Archive.names (Nx_io.Archive.of_value s x)
 
-(* Each layer's checkpoint names are the ones its traversals gave before
-   structures had a walk, sorted. *)
+(* Each layer's saved names are the ones its traversals gave before structures
+   had a walk, sorted. *)
 let check_layer ~msg s x ~visits:expected ~names:old =
   equal ~msg:(msg ^ " visits") (list string) expected (visits s x);
   equal ~msg:(msg ^ " names") (list string) (List.sort compare old) (names s x)

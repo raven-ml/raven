@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Checkpoint = Kaun.Checkpoint
-
 (* Error messages *)
 
 let err_no_curl = "curl not found on PATH"
@@ -170,9 +168,10 @@ let load_config ?token ?cache_dir ?offline ?revision repo_id =
     (download_file ?token ?cache_dir ?offline ?revision ~file:"config.json"
        repo_id)
 
-(* Loading checkpoints *)
+(* Loading weights *)
 
-let load_sharded ~download index_path =
+(* The entries the index [index_path] names, each from its shard. *)
+let load_sharded ~download repo_id index_path =
   let json = read_json_file index_path in
   let weight_map =
     match json with
@@ -192,20 +191,23 @@ let load_sharded ~download index_path =
   let shards = Hashtbl.create 8 in
   let shard file =
     match Hashtbl.find_opt shards file with
-    | Some ckpt -> ckpt
+    | Some archive -> archive
     | None ->
-        let ckpt = Checkpoint.load (download file) in
-        Hashtbl.add shards file ckpt;
-        ckpt
+        let archive = Nx_io.load_safetensors (download file) in
+        Hashtbl.add shards file archive;
+        archive
   in
-  List.fold_left
-    (fun acc (name, file) ->
-      match Checkpoint.find name (shard file) with
-      | Some (Nx.P x) -> Checkpoint.concat [ acc; Checkpoint.of_tensor name x ]
-      | None -> failwith (err_missing_tensor "" name file))
-    Checkpoint.empty weight_map
+  let names = Hashtbl.create (List.length weight_map) in
+  let entry (name, file) =
+    if Hashtbl.mem names name then failwith (err_bad_weight_map index_path);
+    Hashtbl.add names name ();
+    match Nx_io.Archive.find name (shard file) with
+    | Some x -> (name, x)
+    | None -> failwith (err_missing_tensor repo_id name file)
+  in
+  Nx_io.Archive.of_list (List.map entry weight_map)
 
-let load_checkpoint ?token ?cache_dir ?offline ?revision repo_id =
+let load_safetensors ?token ?cache_dir ?offline ?revision repo_id =
   let download file =
     download_file ?token ?cache_dir ?offline ?revision ~file repo_id
   in
@@ -222,8 +224,8 @@ let load_checkpoint ?token ?cache_dir ?offline ?revision repo_id =
     if cached single && not (cached index) then None else try_download index
   in
   match index_path with
-  | Some index_path -> load_sharded ~download index_path
+  | Some index_path -> load_sharded ~download repo_id index_path
   | None -> (
       match try_download single with
-      | Some path -> Checkpoint.load path
+      | Some path -> Nx_io.load_safetensors path
       | None -> failwith (err_no_safetensors repo_id))

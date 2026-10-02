@@ -67,7 +67,7 @@ end
 let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
-`mlp` is what `Rune.grad`, `Vega.adam_step`, `Checkpoint.of_value` and friends take; its leaves are at `l1.w`, `l1.b`, `l2.w` and `l2.b`, which are also their checkpoint names. This scales without new concepts: a transformer block is a record of five layers, and a transformer is a record with a `block list` field, walked with `Nx.Ptree.Walk.list`. [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) defines all of GPT-2 this way in ~150 lines.
+`mlp` is what `Rune.grad`, `Vega.adam_step`, `Nx_io.Archive.of_value` and friends take; its leaves are at `l1.w`, `l1.b`, `l2.w` and `l2.b`, which are also their names in a saved file. This scales without new concepts: a transformer block is a record of five layers, and a transformer is a record with a `block list` field, walked with `Nx.Ptree.Walk.list`. [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) defines all of GPT-2 this way in ~150 lines.
 
 A CNN mixes parameterized and stateless pieces freely, since a forward pass is just function composition:
 
@@ -210,7 +210,7 @@ let () =
   Format.printf "eval predictions: %a@." Nx.pp_shape (Nx.shape pred)
 ```
 
-The loss never depends on `stats'`: training mode normalizes with the batch's statistics, so the running statistics are a side output, and `Rune.value_and_grad_aux` returns them as plain values. Statistics have their own `walk` (`Batch_norm.Stats` satisfies `Nx.Ptree.S` itself), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained.md).
+The loss never depends on `stats'`: training mode normalizes with the batch's statistics, so the running statistics are a side output, and `Rune.value_and_grad_aux` returns them as plain values. Statistics have their own `walk` (`Batch_norm.Stats` satisfies `Nx.Ptree.S` itself), so they are saved like parameters under their own field; see [Saving](04-saving-and-pretrained.md).
 
 `Batch_norm.init` builds float32 parameters (cast with `Nx.Ptree.cast (module Batch_norm) dt` for other precisions); `apply` is generic over float dtypes, like the other layers' `make`, computing half- and quarter-precision statistics in a float32 island.
 
@@ -234,4 +234,4 @@ The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.var
 ## Next Steps
 
 - [Training](03-training.md) — the composable training step, data, and metrics
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — names, safetensors, the Hub
+- [Saving and Pretrained Weights](04-saving-and-pretrained.md) — names, safetensors, the Hub

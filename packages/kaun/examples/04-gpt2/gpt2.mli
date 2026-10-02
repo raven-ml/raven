@@ -7,9 +7,9 @@
 
     The model is a plain record of {!Kaun} layers; {!hidden}, {!cached} and
     {!logits} are its forward passes and {!Params} its structure. {!of_hf}
-    builds the parameters from the entries of the HuggingFace checkpoint, whose
+    builds the parameters from the entries of the HuggingFace weights, whose
     [h.{i}.attn.c_attn] fuses the query, key and value projections, and
-    {!from_pretrained} downloads the checkpoint first. *)
+    {!from_pretrained} downloads the weights first. *)
 
 type config = {
   vocab_size : int;
@@ -40,23 +40,24 @@ type 'a params = {
 (** The type for GPT-2 parameters over payload ['a]. *)
 
 type t = Nx.float32_t params
-(** The type for single-precision GPT-2 parameters, the checkpoint dtype. *)
+(** The type for single-precision GPT-2 parameters, the dtype of the published
+    weights. *)
 
 module Params : Nx.Ptree.S with type 'a t = 'a params
 (** The parameters' structure: [Nx.Ptree.instantiate (module Params)] is what
-    the transformations, the optimisers and {!Kaun.Checkpoint.of_value} take.
+    the transformations, the optimisers and {!Nx_io.Archive.of_value} take.
     Leaves are at [wte.table], [wpe.table], [blocks.0.ln1.gamma],
-    [blocks.0.attn.q.w], ..., [ln_f.beta], the names a checkpoint gives them.
+    [blocks.0.attn.q.w], ..., [ln_f.beta], their names in a saved file.
 
     [Nx.Ptree.cast (module Params) dt p] converts precision: for half precision
-    inference, cast a float32 checkpoint once; for mixed-precision training,
-    cast inside the loss function so the float32 parameters receive float32
+    inference, cast float32 parameters once; for mixed-precision training, cast
+    inside the loss function so the float32 parameters receive float32
     gradients. The kaun layers keep their attention-score and layer-norm
     statistics in float32 islands whatever [dt]. *)
 
 val make : config -> t
 (** [make cfg] is a zero-initialized model, the [~like] template for
-    {!Kaun.Checkpoint.to_value}. *)
+    {!Nx_io.Archive.to_value}. *)
 
 (** {1:placement Placement}
 
@@ -155,22 +156,22 @@ val of_hf :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
-  Kaun.Checkpoint.t ->
+  Nx_io.Archive.t ->
   (float, 'b) Nx.t params
-(** [of_hf cfg dt ckpt] is the model of the HuggingFace GPT-2 checkpoint [ckpt],
-    at [dt]. Each entry is read by its name in the file with the shape [cfg]
-    gives it. The file's weights are already [inputs × outputs]; each block's
-    fused [c_attn] weight and bias are cut into the [q], [k] and [v] projections
-    with [Nx.split], which copies nothing. At the file's own dtype the leaves
-    are the file's entries; at another one each leaf is cast. Entries the model
-    does not use (attention mask buffers) are never read.
+(** [of_hf cfg dt weights] is the model of the HuggingFace GPT-2 [weights], at
+    [dt]. Each entry is read by its name in the file with the shape [cfg] gives
+    it. The file's weights are already [inputs × outputs]; each block's fused
+    [c_attn] weight and bias are cut into the [q], [k] and [v] projections with
+    [Nx.split], which copies nothing. At the file's own dtype the leaves are the
+    file's entries; at another one each leaf is cast. Entries the model does not
+    use (attention mask buffers) are never read.
 
     With [placement], each leaf is placed with [Nx.place (placement role ~axis)]
     as it is built (see {!role}), so a function compiled where the model is that
     captures it uploads nothing.
 
-    Raises [Invalid_argument], naming the entry, if one is missing, has another
-    shape than [cfg] says, or is not a floating-point entry. *)
+    Raises [Failure], naming the entry, if one is missing, has another shape
+    than [cfg] says, or is not a float16, bfloat16, float32 or float64 entry. *)
 
 val from_file :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->
@@ -178,10 +179,10 @@ val from_file :
   (float, 'b) Nx.dtype ->
   string ->
   (float, 'b) Nx.t params
-(** [from_file cfg dt path] is [of_hf cfg dt (Checkpoint.load path)]: the
+(** [from_file cfg dt path] is [of_hf cfg dt (Nx_io.load_safetensors path)]: the
     parameters of a local HuggingFace-layout safetensors file.
 
-    Raises [Failure] on I/O or format errors, [Invalid_argument] as {!of_hf}. *)
+    Raises [Failure] on I/O or format errors, and as {!of_hf}. *)
 
 type dtype =
   | Dtype : (float, 'b) Nx.dtype -> dtype
@@ -191,9 +192,12 @@ val dtype_of_string : string -> dtype
 (** [dtype_of_string s] is the dtype named ["float32"], ["float16"] or
     ["bfloat16"]. Raises [Failure] on another name. *)
 
-val stored_dtype : Kaun.Checkpoint.t -> dtype
-(** [stored_dtype ckpt] is the dtype [ckpt] stores its token table at, the dtype
-    at which {!of_hf} casts nothing. *)
+val stored_dtype : Nx_io.Archive.t -> dtype
+(** [stored_dtype weights] is the dtype [weights] stores its token table at, the
+    dtype at which {!of_hf} casts nothing.
+
+    Raises [Failure] if the table is missing or is not a float16, bfloat16 or
+    float32 entry. *)
 
 val from_pretrained :
   ?placement:(role -> axis:int -> Nx.Placement.t) ->

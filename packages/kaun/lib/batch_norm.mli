@@ -37,15 +37,15 @@
     ]}
 
     Evaluation reuses the same forward with [~training:false] and discards the
-    returned statistics. Statistics checkpoint like parameters, under their own
-    prefix:
+    returned statistics. Statistics are saved like parameters, under their own
+    field:
 
     {[
-    Checkpoint.concat
+    Nx_io.Archive.union
       [
-        Checkpoint.of_value ~prefix:"model" model params;
-        Checkpoint.of_value ~prefix:"stats"
-          (Nx.Ptree.instantiate (module Model.Stats))
+        Nx_io.Archive.of_value (Nx.Ptree.field "model" model) params;
+        Nx_io.Archive.of_value
+          (Nx.Ptree.field "stats" (Nx.Ptree.instantiate (module Model.Stats)))
           stats;
       ]
     ]} *)

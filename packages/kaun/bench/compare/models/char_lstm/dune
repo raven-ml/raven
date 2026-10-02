@@ -5,6 +5,7 @@
   vega
   nx
   nx.device
+  nx.io
   rune
   jsont
   jsont.bytesrw

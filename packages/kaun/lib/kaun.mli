@@ -35,7 +35,8 @@
 
     Parameterized building blocks. Each module pairs a parameter record with
     constructors ({!Linear.init}, {!Linear.make}), an [apply] function, and the
-    [walk] that makes it compose into differentiable, checkpointable models. *)
+    [walk] that makes it compose into models that can be differentiated and
+    saved. *)
 
 module Linear = Linear
 (** Dense (fully connected) layers, and the model-as-record pattern. *)
@@ -92,8 +93,3 @@ module Data = Data
 
 module Metric = Metric
 (** Evaluation metrics: accuracy, precision/recall/F1, AUC-ROC. *)
-
-(** {1:persistence Persistence} *)
-
-module Checkpoint = Checkpoint
-(** Save and load parameter structures as safetensors checkpoints. *)

@@ -9,5 +9,6 @@
   brot
   nx
   nx.device
+  nx.io
   rune
   unix))

@@ -31,15 +31,15 @@ let () =
   let t0 = Unix.gettimeofday () in
   let since () = Unix.gettimeofday () -. t0 in
   let cfg = Llama.config_of_json (Kaun_hf.load_config !repo) in
-  let ckpt = Kaun_hf.load_checkpoint !repo in
+  let weights = Kaun_hf.load_safetensors !repo in
   let loaded = since () in
   let (Llama.Dtype dt) =
-    if !dtype = "" then Llama.stored_dtype ckpt
+    if !dtype = "" then Llama.stored_dtype weights
     else Llama.dtype_of_string !dtype
   in
   let device = if !device = "" then None else Some (device_of !device) in
   let placement = Option.map (fun d _ ~axis:_ -> Nx.Placement.on d) device in
-  let params = Llama.of_hf ?placement cfg dt ckpt in
+  let params = Llama.of_hf ?placement cfg dt weights in
   let imported = since () in
   Printf.printf "load %.3f s, import %.3f s" loaded imported;
   Option.iter

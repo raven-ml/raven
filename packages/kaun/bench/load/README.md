@@ -9,8 +9,8 @@ packages/kaun/bench/load/run.sh            # Llama 3.2 1B from the cache
 packages/kaun/bench/load/run.sh --repo R   # another Llama checkpoint
 ```
 
-Each configuration loads the checkpoint with `Kaun_hf.load_checkpoint` and
-imports it with the Llama example's `of_hf` at a dtype. With a device, the
+Each configuration loads the weights with `Kaun_hf.load_safetensors` and
+imports them with the Llama example's `of_hf` at a dtype. With a device, the
 importer places each leaf on it with `Nx.place` as it builds it, and one
 compiled forward pass over eight tokens then runs, which binds the placed
 buffers. `bench_load.exe` prints the wall time from process start to the end of

@@ -19,4 +19,3 @@ module Metric = Metric
 module Pool = Pool
 module Conv = Conv
 module Attention = Attention
-module Checkpoint = Checkpoint
