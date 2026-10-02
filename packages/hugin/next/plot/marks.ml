@@ -408,6 +408,23 @@ let rect ?x ?x2 ?y ?y2 ?fill ?stroke ?opacity ?fx ?fy () =
     @ facets fx fy)
     draw_rect
 
+(* Frames *)
+
+let unit_square = Box2.v 0. 0. 1. 1.
+
+let draw_frame rows =
+  let ink = Theme.ink (Mark.theme rows) in
+  let colours = faded rows (or_const rows Role.stroke ink) in
+  let pen = Stroke.v (em rows outline_em) in
+  let path = Mark.project rows (Path.rect unit_square) in
+  let edge i = Picture.stroke pen colours.(i) path in
+  Picture.group (List.init (Mark.length rows) edge)
+
+let frame ?stroke ?opacity ?fx ?fy () =
+  make "frame"
+    ([ opt Role.stroke stroke; opt Role.opacity opacity ] @ facets fx fy)
+    draw_frame
+
 (* Rules *)
 
 (* [segments rows] is each row's segment, in normalised positions, [nan] where
@@ -642,8 +659,6 @@ let datum px lead k =
     r := !r / lead.(a)
   done;
   Nx.slice (Array.to_list (Array.map (fun i -> Nx.I i) index)) px
-
-let unit_square = Box2.v 0. 0. 1. 1.
 
 (* [inside (a, b) i] is [true] iff the extent of row [i] lies in the domain. *)
 let inside (a, b) i = Float.min a.(i) b.(i) >= 0. && Float.max a.(i) b.(i) <= 1.

@@ -59,6 +59,14 @@ val rect :
   unit ->
   t
 
+val frame :
+  ?stroke:('s, Color.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  unit ->
+  t
+
 val rule :
   ?x:('x, float) channel ->
   ?x2:('x, float) channel ->

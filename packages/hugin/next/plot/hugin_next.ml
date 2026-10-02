@@ -19,6 +19,7 @@ let dot = Marks.dot
 let line = Marks.line
 let area = Marks.area
 let rect = Marks.rect
+let frame = Marks.frame
 let rule = Marks.rule
 let abline = Marks.abline
 let text = Marks.text

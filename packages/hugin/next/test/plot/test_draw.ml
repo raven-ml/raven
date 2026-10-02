@@ -2243,6 +2243,58 @@ let ablines =
             qy);
     ]
 
+(* Frames *)
+
+let framed_dots = dot ~x:(num (f64 [| 1.; 4. |])) ~y:(num (f64 [| 2.; 3. |])) ()
+
+let frames =
+  group "Frames"
+    [
+      cases "a frame draws what a rect stroked in the ink draws" ~name:fst
+        [ ("default", Theme.default); ("dark", Theme.dark) ]
+        (fun (_, theme) ->
+          equal drawing
+            (drawn ~theme
+               (layer
+                  [ framed_dots; rect ~stroke:(const (Theme.ink theme)) () ]))
+            (drawn ~theme (layer [ framed_dots; frame () ])));
+      test "a frame reaches half its outline beyond the data area" (fun () ->
+          let size = Size.panels 100. 80. in
+          let f = layer [ framed_dots; frame () ] in
+          let box = (List.hd (Layout.panels (layout size (resolve f)))).box in
+          let half = 0.08 *. Theme.size Theme.default /. 2. in
+          match tags line_id (drawn ~size f) with
+          | [ (_, p) ] ->
+              let b = Option.get (Picture.bounds p) in
+              equal (list close)
+                [
+                  Box2.minx box -. half;
+                  Box2.miny box -. half;
+                  Box2.maxx box +. half;
+                  Box2.maxy box +. half;
+                ]
+                [ Box2.minx b; Box2.miny b; Box2.maxx b; Box2.maxy b ]
+          | l -> failf "%d frames" (List.length l));
+      test "a frame takes its stroke and opacity" (fun () ->
+          let d =
+            drawn
+              (layer
+                 [
+                   framed_dots;
+                   frame ~stroke:(const Color.red) ~opacity:(const 0.5) ();
+                 ])
+          in
+          equal (list color)
+            [ Color.with_alpha 0.5 Color.red ]
+            (List.concat_map
+               (fun (_, p) ->
+                 fold
+                   (fun acc -> function
+                     | Picture.Stroke s -> s.color :: acc | _ -> acc)
+                   [] p)
+               (tags line_id d)));
+    ]
+
 (* Explicit ticks *)
 
 let gen_ticks =
@@ -2406,6 +2458,7 @@ let () =
          explicit_ticks;
          dashes;
          ablines;
+         frames;
          legend_swatches;
          public_marks;
          goldens;

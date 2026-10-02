@@ -536,6 +536,20 @@ val rect :
     Raises [Invalid_argument] if [x2] is given without [x] or [y2] without [y].
 *)
 
+val frame :
+  ?stroke:('s, Color.t) channel ->
+  ?opacity:('o, float) channel ->
+  ?fx:(string, string) channel ->
+  ?fy:(string, string) channel ->
+  unit ->
+  t
+(** [frame ()] outlines the domain of each panel with [stroke], the ink by
+    default, at the theme's outline width: under theme [th] it draws what
+    [rect ~stroke:(const (Theme.ink th)) ()] draws. A frame is a mark, so it
+    lies under the axes, which are drawn over the marks, and its four edges look
+    the same whichever axes the panel has: [layer [ f; frame () ]] boxes the
+    panels of [f]. *)
+
 val rule :
   ?x:('x, float) channel ->
   ?x2:('x, float) channel ->
