@@ -45,6 +45,17 @@ let dispatch =
           equal int 2 (words (fun () -> Nx.shape row)));
     ]
 
+(* A view of a value broadcast from one element has zero strides, which no
+   C-contiguous shortcut covers: its reshape reads the strides axis by axis. *)
+let broadcast = Nx.broadcast_to [| 4; 8 |] a
+
+let views =
+  group "views"
+    [
+      test "reshape of a broadcast element" (fun () ->
+          equal int 34 (words (fun () -> Nx.reshape [| 2; 16 |] broadcast)));
+    ]
+
 let per_element =
   group "allocation per element"
     [
@@ -84,4 +95,4 @@ let host_path =
           equal int (words kernel + 2) (words (fun () -> Nx.add a b)));
     ]
 
-let () = exit (run "nx allocation" [ dispatch; per_element; host_path ])
+let () = exit (run "nx allocation" [ dispatch; views; per_element; host_path ])

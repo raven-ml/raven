@@ -158,4 +158,48 @@ let bounds =
           equal bool ok (V.within v n));
     ]
 
-let () = exit (run "Nx_array.View" [ layout; bounds ])
+(* The positions of [v]'s elements, in C order. *)
+let positions v =
+  let shape = V.shape v and strides = V.strides v in
+  List.init (V.numel v) (fun k ->
+      let idx = Nx_test.unravel shape k in
+      let p = ref (V.offset v) in
+      Array.iteri (fun a i -> p := !p + (i * strides.(a))) idx;
+      !p)
+
+(* A moved view and a shape of as many elements: the candidates that divide what
+   remains of the count, in order, then the rest, with axes of one element among
+   them. *)
+let reshaped =
+  let open Gen in
+  let* shape, path = moved in
+  let+ candidates = list ~size:(int_range 0 4) (int_range 1 4) in
+  let v = List.fold_left (fun v s -> s.apply v) (V.create shape) path in
+  let n = V.numel v in
+  let rest = ref n and dims = ref [] in
+  List.iter
+    (fun d ->
+      if n > 0 && !rest mod d = 0 then begin
+        dims := d :: !dims;
+        rest := !rest / d
+      end)
+    candidates;
+  (v, Array.of_list (List.rev (!rest :: !dims)))
+
+let pp_reshaped ppf (v, shape) =
+  Format.fprintf ppf "%a as %a" Nx_test.pp_shape (V.shape v) Nx_test.pp_shape
+    shape
+
+let reshape =
+  group "reshape"
+    [
+      prop "a reshape it can view keeps each element's position in C order"
+        (Gen.with_pp pp_reshaped reshaped) (fun (v, shape) ->
+          let viewable = V.can_reshape v shape in
+          cover "viewed through strides" (viewable && not (V.is_c_contiguous v));
+          cover "refused" (not viewable);
+          if viewable then
+            equal (list int) (positions v) (positions (V.reshape v shape)));
+    ]
+
+let () = exit (run "Nx_array.View" [ layout; bounds; reshape ])

@@ -179,52 +179,51 @@ let permute view axes =
    both shapes group into runs of equal size; the old axes of a run must merge
    into one stride, which its new axes split. Axes of size 1 take no part, and
    get stride 0. *)
+let rec skip_units shape i =
+  if i < Array.length shape && shape.(i) = 1 then skip_units shape (i + 1)
+  else i
+
 let viewing_strides view new_shape =
-  let old_dims =
-    List.filter
-      (fun (d, _) -> d <> 1)
-      (List.combine (Array.to_list view.shape) (Array.to_list view.strides))
-    |> Array.of_list
-  in
-  let new_dims =
-    Array.of_list (List.filter (( <> ) 1) (Array.to_list new_shape))
-  in
-  let strides = Array.make (Array.length new_dims) 0 in
-  let rec runs oi ni =
-    if oi = Array.length old_dims then true
-    else
-      let rec grow oj nj op np =
-        if op = np then (oj, nj)
-        else if op < np then grow (oj + 1) nj (op * fst old_dims.(oj)) np
-        else grow oj (nj + 1) op (np * new_dims.(nj))
-      in
-      let oj, nj = grow (oi + 1) (ni + 1) (fst old_dims.(oi)) new_dims.(ni) in
-      let merges = ref true in
-      for k = oi to oj - 2 do
-        let d, s = old_dims.(k + 1) in
-        if snd old_dims.(k) <> d * s then merges := false
-      done;
-      !merges
-      && begin
-        strides.(nj - 1) <- snd old_dims.(oj - 1);
-        for k = nj - 1 downto ni + 1 do
-          strides.(k - 1) <- strides.(k) * new_dims.(k)
-        done;
-        runs oj nj
+  let shape = view.shape and strides = view.strides in
+  let n_old = Array.length shape in
+  let result = Array.make (Array.length new_shape) 0 in
+  let oi = ref (skip_units shape 0) and ni = ref (skip_units new_shape 0) in
+  let merges = ref true in
+  while !merges && !oi < n_old do
+    (* The run from old axis [o0] and new axis [n0] to [olast] and [nlast]: the
+       fewest axes whose sizes have equal products. *)
+    let o0 = !oi and n0 = !ni in
+    let olast = ref o0 and nlast = ref n0 in
+    let po = ref shape.(o0) and pn = ref new_shape.(n0) in
+    while !po <> !pn do
+      if !po < !pn then begin
+        olast := skip_units shape (!olast + 1);
+        po := !po * shape.(!olast)
       end
-  in
-  if not (runs 0 0) then None
-  else
-    let k = ref 0 in
-    Some
-      (Array.map
-         (fun d ->
-           if d = 1 then 0
-           else
-             let s = strides.(!k) in
-             incr k;
-             s)
-         new_shape)
+      else begin
+        nlast := skip_units new_shape (!nlast + 1);
+        pn := !pn * new_shape.(!nlast)
+      end
+    done;
+    let k = ref o0 in
+    while !merges && !k < !olast do
+      let next = skip_units shape (!k + 1) in
+      if strides.(!k) <> shape.(next) * strides.(next) then merges := false;
+      k := next
+    done;
+    if !merges then begin
+      let s = ref strides.(!olast) in
+      for j = !nlast downto n0 do
+        if new_shape.(j) <> 1 then begin
+          result.(j) <- !s;
+          s := !s * new_shape.(j)
+        end
+      done;
+      oi := skip_units shape (!olast + 1);
+      ni := skip_units new_shape (!nlast + 1)
+    end
+  done;
+  if !merges then Some result else None
 
 let can_reshape view new_shape =
   prod view.shape = prod new_shape
