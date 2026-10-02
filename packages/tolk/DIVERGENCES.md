@@ -2704,3 +2704,37 @@ stores through a pad.
   experts_down_metal` (a group inside another reduce); the Postrange suite's
   cases `double_sum_group` and `double_sum_group_twice`; the tolk bench's
   `cpu/` and `cuda/` rows.
+
+## D90. A linked schedule resolves its host programs' launches at link
+
+- **tinygrad:** `engine/realize.py:132` (`resolve_params`) and `:160`
+  (`exec_kernel`), which find a call's buffers, launch dimensions and variable
+  values on every run, and `uop/ops.py:1177` (`UOp.sym_infer`), which
+  substitutes a symbolic integer's variables and simplifies it on each
+  evaluation.
+- **tolk:** `engine/tolk_engine.ml:283` (`env`, the run's variable cells),
+  `:481` (`operand`), `:507` (`lane_operand`), `:528` (`launch`), `:1170`
+  (`settle`), `:1179` (`run_launch`) and `:1232` (`run_call`'s `Range`);
+  `lib/uop/ops.ml:3964` (`sym_compile`).
+- **Differs:** linking a schedule turns each call of a host program into a
+  launch per lane: a view of linked storage at a constant offset is made
+  once, the offset of a view that moves with a range or a variable is an
+  integer function of the run's variables (`Ops.sym_compile`, which simplifies
+  once and computes on `int`s, exactly where a value does not fit), and each
+  variable, of the run or of a range, has a cell that the run and the range's
+  trips write. The devices of a host program's buffers, which nx.device's
+  ordering has the run synchronize (c), are synchronized once until the run
+  queues work again, with a batch or a copy. Results are those of a
+  resolution on each run.
+- **Reason:** (b): symo's tutorial step on the CPU runs 2,273 host launches,
+  mostly inside the ranges of its staged scans, and sofo's steps do likewise.
+  Resolving a launch on each run cost about 5 us on an M1 Max, for kernels
+  of 0.3 to 40 us: a jitted scan of 256 small steps (1,024 launches) took
+  5.13 ms and takes 0.27 ms.
+- **Pinned by:** the Tolk_engine suite (`test/engine/tolk_engine`): `link and
+  run › a linked scan carries its storage across runs on each run's
+  parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
+  schedule runs with each binding of its variables` and `runs › runs of one
+  schedule from two domains each compute their own`; the Ops suite
+  (`test/uop/ops`): `sym_compile › computes what sym_infer does, variables
+  within 50` and `› within 2147483648`.

@@ -813,6 +813,17 @@ val sym_infer : sint -> (string * int) list -> int
 
     Raises [Invalid_argument] if [s] reads a variable [vars] lacks. *)
 
+val sym_compile : sint -> (t -> 'env -> int) -> 'env -> int
+(** [sym_compile s var] is the function computing [s] in an environment, each
+    variable [v] of [s] read by [var v]: [sym_compile s var env] is
+    [sym_infer s vars] for [vars] binding each variable [v] to [var v env]. [s]
+    is simplified once, and integer arithmetic that fits an [int] is computed on
+    [int]s, so that a call costs a few operations: a value that a schedule
+    computes on each run, such as the offset of a view that moves with a
+    range.
+
+    The function raises as {!sym_infer} does, and as [var] does. *)
+
 (** {1:syntax Construction} *)
 
 val const : ?dtype:Dtype.t -> Dtype.const -> t

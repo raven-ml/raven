@@ -802,6 +802,97 @@ let scans_with_a_carry () =
   equal values ~msg:"the carry" (floats carry) (Run.values Float32 c_buffer);
   equal values ~msg:"the rows" (floats y) (Run.values Float32 ys_buffer)
 
+(* A scan of three trips, linked once and run on rows of [xs] and [ys], which
+   each run binds to its parameters, and of [zs], linked with the carry [c].
+   Each trip stores [c * 2] into its row of [ys] and adds its row of [xs] to
+   [c]; a second range then stores each row of [ys] plus one into its row of
+   [zs]. Each run starts from the carry the previous one left. *)
+let replays_a_scan =
+  let k = 4 and n = 3 in
+  let cpu = Ops.Single "CPU" in
+  let p slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let step =
+    Ops.sink
+      [
+        Ops.store (p 0) Ops.O.(p 0 + p 1);
+        Ops.store (p 2) Ops.O.(p 0 * float 2.);
+      ]
+  and plus_one = Ops.sink [ Ops.store (p 0) Ops.O.(p 1 + float 1.) ] in
+  let c = Ops.new_buffer cpu k Float32
+  and xs = Ops.new_buffer cpu (n * k) Float32
+  and ys = Ops.new_buffer cpu (n * k) Float32
+  and zs = Ops.new_buffer cpu (n * k) Float32 in
+  let row r b =
+    Ops.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ]
+  and r' = Ops.range ~axis_type:Loop (Int n) [ 101 ] in
+  let scan =
+    Ops.end_ (Ops.call ~precompile:true step [ c; row r xs; row r ys ]) [ r ]
+  in
+  let rows =
+    Ops.end_
+      (Ops.call ~precompile:true plus_one
+         [ row r' zs; row r' (Ops.after ys [ scan ]) ])
+      [ r' ]
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars
+      (Ops.sink
+         [ Ops.after c [ scan ]; Ops.after ys [ scan ]; Ops.after zs [ rows ] ])
+  in
+  let slot u =
+    match Ops.arg u with Ops.Param p -> p.slot | _ -> assert false
+  in
+  let parameters =
+    [ (xs, Ops.replace ~op:Param xs); (ys, Ops.replace ~op:Param ys) ]
+  in
+  let compiled =
+    Hcq2.compile_linear
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.substitute linear parameters)
+  in
+  let runs =
+    Gen.list ~size:(Gen.int_range 1 4)
+      (Gen.array ~size:(Gen.constant (n * k))
+         (Gen.map Float.of_int (Gen.int_range (-8) 8)))
+  in
+  prop "a linked scan carries its storage across runs on each run's parameters"
+    runs (fun runs ->
+      let c0 = [| 1.; 2.; 3.; 4. |] and zeros = Array.make (n * k) 0. in
+      let c_buffer = Run.buffer host Float32 (floats c0)
+      and zs_buffer = Run.buffer host Float32 (floats zeros) in
+      let s =
+        Engine.link ~devices
+          ~bound:[ (c, [ c_buffer ]); (zs, [ zs_buffer ]) ]
+          compiled
+      in
+      let carry = Array.copy c0 in
+      List.iteri
+        (fun i x ->
+          let ys_buffer = Run.buffer host Float32 (floats zeros) in
+          let slots = Array.make (1 + max (slot xs) (slot ys)) [] in
+          slots.(slot xs) <- [ Run.buffer host Float32 (floats x) ];
+          slots.(slot ys) <- [ ys_buffer ];
+          Engine.run s slots;
+          let y = Array.make (n * k) 0. in
+          for t = 0 to n - 1 do
+            for j = 0 to k - 1 do
+              y.((t * k) + j) <- carry.(j) *. 2.;
+              carry.(j) <- carry.(j) +. x.((t * k) + j)
+            done
+          done;
+          let msg what = Printf.sprintf "run %d: %s" i what in
+          equal values ~msg:(msg "the rows of ys") (floats y)
+            (Run.values Float32 ys_buffer);
+          equal values ~msg:(msg "the rows of zs")
+            (floats (Array.map (fun y -> y +. 1.) y))
+            (Run.values Float32 zs_buffer);
+          equal values ~msg:(msg "the carry") (floats carry)
+            (Run.values Float32 c_buffer))
+        runs)
+
 (* A memory-planned schedule: z = a + 1; in a range, y = b + 1, into [y] or into
    a view of its first half; then z + 1 and y + 1 into outputs, each kernel on
    the first four elements of its buffers. The range writes y before the call
@@ -987,6 +1078,7 @@ let schedules =
       test "a range around a call runs it once per trip" runs_once_per_trip;
       test "a scan runs its body once per trip, carrying in place"
         scans_with_a_carry;
+      replays_a_scan;
       test "a planned buffer a range writes is not placed over one it leaves"
         (plans_the_buffers_of_a_range ~through_a_view:false);
       test "a buffer a range writes through a view is not placed over another"

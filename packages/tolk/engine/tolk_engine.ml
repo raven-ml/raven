@@ -213,6 +213,13 @@ module Program = struct
     Array.of_list
       (List.mapi (fun i v -> if bounds_block p i then 0 else value v) vals)
 
+  (* The blocks of a launch of [extent] iterations and [ops] operations that
+     splits [s]. *)
+  let blocks_of s ~extent ~ops =
+    let most = blocks_per_worker * Nx_device.Program.workers () in
+    let blocks = max 1 (min (min extent most) (ops / block_ops)) in
+    { Nx_device.Program.extent; blocks; lo = s.lo; hi = s.hi }
+
   (* [s] with each of its variables read by [value]. The loop a launch splits
      may end at a variable its program no longer reads, as it reads the block's
      bounds instead. *)
@@ -231,10 +238,8 @@ module Program = struct
     match p.split with
     | None -> None
     | Some s ->
-        let extent = eval value s.extent and ops = eval value s.ops in
-        let most = blocks_per_worker * Nx_device.Program.workers () in
-        let blocks = max 1 (min (min extent most) (ops / block_ops)) in
-        Some { Nx_device.Program.extent; blocks; lo = s.lo; hi = s.hi }
+        Some
+          (blocks_of s ~extent:(eval value s.extent) ~ops:(eval value s.ops))
 
   let call p value buffers values =
     Nx_device.Program.call ?split:(split p value) p.program buffers values
@@ -270,6 +275,49 @@ let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt
 
 module B = Nx_device.Buffer
 
+(* Variables *)
+
+(* A run's variables, a cell each: those the run binds, those of the ranges
+   running a trip, and the others unset. Linking gives each name a cell, so
+   that a call reads a value without looking up its name. *)
+type env = { values : int array; set : bool array }
+
+let cell cells name =
+  match Hashtbl.find_opt cells name with
+  | Some i -> i
+  | None ->
+      let i = Hashtbl.length cells in
+      Hashtbl.add cells name i;
+      i
+
+(* How a value of a view's offset or a range's trips reads the variable [u], as
+   [Ops.sym_infer] does: a variable the run leaves unset has no value. *)
+let strict cells u =
+  let name = Ops.expr u in
+  let i = cell cells name in
+  fun env ->
+    if env.set.(i) then env.values.(i)
+    else
+      invalid_arg (strf "Tolk_engine.run: the variable %s has no value" name)
+
+(* How a call reads the variable [u] it passes a program: a variable the run
+   leaves unset takes its bound value. *)
+let binding cells u =
+  let name = Ops.expr u in
+  let i = cell cells name in
+  let unset =
+    match Ops.arg u with
+    | Ops.Param { bound = Some b; _ } ->
+        let b = Dtype.Value.to_int b in
+        fun () -> b
+    | _ ->
+        fun () ->
+          invalid_arg (strf "Tolk_engine.run: variable %s is unbound" name)
+  in
+  fun env -> if env.set.(i) then env.values.(i) else unset ()
+
+let offset cells (s : Ops.sint) = Ops.sym_compile s (strict cells)
+
 (* An input of a batch's address table, resolved at link: the parameter's slot
    whose buffers it is, its shard, its byte offset, the device whose address the
    table holds, and whether the batch may write it. Only a parameter's address
@@ -288,7 +336,7 @@ type binder =
   | Fixed of int
   | Submitted of Nx_device.t
   | Signals of Nx_device.t
-  | Var of Ops.t
+  | Var of (env -> int)
 
 (* A batch, as linked: its host program, the devices whose queues it submits,
    its arguments, and the values its previous run signals on each device. What
@@ -317,21 +365,40 @@ type batch = {
   last : int array;
 }
 
-(* A call of a schedule, as linked: a host program with a program loaded for
-   each device of its first argument, a copy, a batch, or calls run once for
-   each value of ranges. *)
+(* The buffers a run gives a view of storage, one per device, from the
+   buffers bound to the parameters and the run's variables. *)
+type operand = B.t list array -> env -> B.t list
+
+(* A launch of a host program on the device of a lane of its call: how a run
+   finds the buffers and values it passes the program, and the arrays it
+   passes them in, which each run fills anew. *)
+type launch = {
+  program : Program.t;
+  args : (B.t list array -> env -> B.t) array; (* in the order of the globals *)
+  vals : (env -> int) array; (* by variable, a block's bounds 0 *)
+  split : (Program.split * (env -> int) * (env -> int)) option;
+      (* the split, its iterations and its operations *)
+}
+
+(* A call of a schedule, as linked: a host program launched on each device of
+   its first argument, a copy, a batch, or calls run once for each value of
+   ranges, each range a cell of its variable and its number of trips. *)
 type call =
-  | Kernel of { call : Ops.t; lanes : Program.t list }
-  | Copy of { call : Ops.t; dst : Ops.t; src : Ops.t }
+  | Kernel of { call : Ops.t; launches : launch array }
+  | Copy of { call : Ops.t; dst : operand; src : operand }
   | Batch of batch
-  | Range of { ranges : Ops.t list; body : call list }
+  | Range of { ranges : (int * (env -> int)) list; body : call list }
 
 type t = {
   lock : Mutex.t; (* runs share the storage: one at a time *)
   calls : call list;
   params : (int * Nx_device.t list * int) list;
       (* the parameters the runs bind: slot, devices and bytes *)
-  storage : B.t list Ops.Tbl.t; (* by node, a buffer per device *)
+  cells : (string, int) Hashtbl.t; (* the variables' cells, by name *)
+  env : env; (* the variables of the run being made *)
+  mutable synced : Nx_device.t list;
+      (* the devices the run's host programs synchronized since it last queued
+         work *)
 }
 
 let names u =
@@ -354,26 +421,6 @@ let at b off n =
     [@mutate off "a view of a whole buffer is the buffer"]
   then b
   else B.view b ~offset:off Nx_dtype.Scalar.UInt8 n
-
-(* The storage each device holds of [base]: a parameter [slots] binds, storage
-   or a placeholder linked, or the stack of one view per device. *)
-let rec holds storage slots vars base =
-  match (Ops.op base, Ops.arg base) with
-  | Op.Param, Ops.Param p when Option.is_none (Ops.tag base) -> slots.(p.slot)
-  | (Op.Param | Op.Buffer), _ -> Ops.Tbl.find storage base
-  | Op.Mstack, _ -> List.concat_map (view storage slots vars) (Ops.src base)
-  | _ -> invalid_arg (Format.asprintf "%a is not storage" Ops.pp base)
-
-(* The buffers of the view [u], one per device, or one shared by them all, with
-   its offset's variables bound by [vars]. *)
-and view storage slots vars u =
-  let base, shard, off = Hcq2.lane_offset u in
-  let buffers = holds storage slots vars base in
-  let buffers =
-    match shard with Some i -> [ List.nth buffers i ] | None -> buffers
-  in
-  let off = Ops.sym_infer off vars in
-  List.map (fun b -> at b off (bytes u)) buffers
 
 let sint u =
   match Ops.arg u with
@@ -412,18 +459,106 @@ let int_of_const u =
   | Ops.Const (`Bool b) -> Bool.to_int b
   | _ -> invalid_arg (Format.asprintf "%a is no integer" Ops.pp u)
 
-let value vars lane u =
-  if Ops.op u = Op.Const then int_of_const u
+(* How a run reads the value [u] that a call passes a program on the device of
+   lane [lane]: a constant, the lane's number, or a variable. *)
+let reader cells lane u =
+  if Ops.op u = Op.Const then
+    let c = int_of_const u in
+    fun _ -> c
   else
     match (Ops.expr u, Ops.arg u) with
-    | "_device_num", _ -> lane
-    | name, Ops.Param p -> (
-        match (List.assoc_opt name vars, p.bound) with
-        | Some x, _ -> x
-        | None, Some b -> Dtype.Value.to_int b
-        | None, None ->
-            invalid_arg (strf "Tolk_engine.run: variable %s is unbound" name))
+    | "_device_num", _ -> fun _ -> lane
+    | _, Ops.Param _ -> binding cells u
     | _ -> assert false
+
+let not_storage base =
+  invalid_arg (Format.asprintf "%a is not storage" Ops.pp base)
+
+(* The buffers of the view [u], one per device, or one shared by them all: of a
+   parameter the run binds, of linked storage or placeholders, or of a stack of
+   one view per device. A view of linked storage at a constant offset is made
+   once. *)
+let rec operand storage cells u : operand =
+  let base, shard, off = Hcq2.lane_offset u in
+  let n = bytes u in
+  let select bs = match shard with Some i -> [ List.nth bs i ] | None -> bs in
+  let views bs o = List.map (fun b -> at b o n) (select bs) in
+  let moving = offset cells off in
+  match (Ops.op base, Ops.arg base, off) with
+  | Op.Param, Ops.Param p, _ when Option.is_none (Ops.tag base) ->
+      fun slots env -> views slots.(p.slot) (moving env)
+  | (Op.Param | Op.Buffer), _, Int o -> (
+      match Ops.Tbl.find_opt storage base with
+      | Some bs ->
+          let vs = views bs o in
+          fun _ _ -> vs
+      | None -> fun _ _ -> views (Ops.Tbl.find storage base) o)
+  | (Op.Param | Op.Buffer), _, Sym _ ->
+      fun _ env -> views (Ops.Tbl.find storage base) (moving env)
+  | Op.Mstack, _, _ ->
+      let stack = List.map (operand storage cells) (Ops.src base) in
+      fun slots env ->
+        views (List.concat_map (fun v -> v slots env) stack) (moving env)
+  | _ -> not_storage base
+
+(* The buffer of the view [u] that the launch of lane [i] passes: a lane or
+   shard of a parameter or of linked storage, at an offset that may move with a
+   range. A view of linked storage at a constant offset is made once. *)
+let lane_operand storage cells u i =
+  let base, shard, off = Hcq2.lane_offset u in
+  let n = bytes u in
+  let pick bs = match shard with Some j -> List.nth bs j | None -> lane bs i in
+  let moving = offset cells off in
+  let linked = Ops.Tbl.find_opt storage base in
+  match (Ops.op base, Ops.arg base, off, linked) with
+  | Op.Param, Ops.Param p, _, _ when Option.is_none (Ops.tag base) ->
+      fun slots env -> at (pick slots.(p.slot)) (moving env) n
+  | (Op.Param | Op.Buffer), _, Int o, Some bs ->
+      let b = at (pick bs) o n in
+      fun _ _ -> b
+  | (Op.Param | Op.Buffer), _, Sym _, Some bs ->
+      let b = pick bs in
+      fun _ env -> at b (moving env) n
+  | _ ->
+      let v = operand storage cells u in
+      fun slots env -> lane (v slots env) i
+
+(* The launch of the host program [prg] that [call] makes on [d], the device of
+   its lane [i]. *)
+let launch storage cells call prg d i =
+  let p = Program.load d prg in
+  let info = match Ops.arg prg with Ops.Program i -> i | _ -> assert false in
+  let args = Realize.get_call_arg_uops call in
+  let value k v =
+    if Program.bounds_block p k then fun _ -> 0 else reader cells i v
+  in
+  let count (s : Ops.sint) = Ops.sym_compile s (reader cells i) in
+  {
+    program = p;
+    args =
+      Array.of_list
+        (List.map
+           (fun g -> lane_operand storage cells (List.nth args g) i)
+           info.globals);
+    vals = Array.of_list (List.mapi value (Realize.get_call_var_uops call prg));
+    split =
+      Option.map
+        (fun (s : Program.split) -> (s, count s.extent, count s.ops))
+        p.split;
+  }
+
+(* The storage each device holds of [base], linked: storage, a placeholder, or
+   the stack of one view per device. *)
+let holds storage base =
+  match Ops.op base with
+  | Op.Param | Op.Buffer -> Ops.Tbl.find storage base
+  | Op.Mstack ->
+      let cells = Hashtbl.create 1 in
+      let stack = List.map (operand storage cells) (Ops.src base) in
+      let unset = Hashtbl.length cells in
+      let env = { values = Array.make unset 0; set = Array.make unset false } in
+      List.concat_map (fun v -> v [||] env) stack
+  | _ -> not_storage base
 
 (* Link patches *)
 
@@ -476,7 +611,7 @@ let write b off s =
    byte offset in it. *)
 let linked_at storage u =
   let base, shard, off = Hcq2.unwrap_lane u in
-  (List.nth (holds storage [||] [] base) (Option.value shard ~default:0), off)
+  (List.nth (holds storage base) (Option.value shard ~default:0), off)
 
 (* Writes the link patch [p], a store of bytes or of words at constant element
    indices, into the linked storage its view is of. *)
@@ -569,7 +704,7 @@ let placeholder device queues u =
 let hcq_info call =
   match Ops.arg call with Ops.Call { aux; _ } -> aux | _ -> None
 
-let link_batch ~device ~storage call patches =
+let link_batch ~device ~storage ~cells call patches =
   let info = Option.get (hcq_info call) in
   let args = Realize.get_call_arg_uops call in
   let is_placeholder u = Ops.op u = Op.Param && Option.is_some (Ops.tag u) in
@@ -666,7 +801,7 @@ let link_batch ~device ~storage call patches =
       match (is Hcq2.submitted, is Hcq2.value) with
       | Some n, _ -> Submitted (named n)
       | None, Some n -> Signals (named n)
-      | None, None -> Var u
+      | None, None -> Var (reader cells 0 u)
   in
   let input (base, off, dev) =
     let base, shard, inner = Hcq2.unwrap_lane base in
@@ -729,7 +864,7 @@ let rec any_written b k j =
   j < Array.length b.inputs
   && ((b.inputs.(j).written && same_input b j k) || any_written b k (j + 1))
 
-let run_batch ~vars slots b =
+let run_batch ~env slots b =
   let n = Array.length b.inputs in
   for k = 0 to n - 1 do
     let i = b.inputs.(k) in
@@ -773,7 +908,7 @@ let run_batch ~vars slots b =
           | Fixed v -> v
           | Submitted d -> Nx_device.submitted d
           | Signals d -> Nx_device.Submission.value s d
-          | Var u -> value vars 0 u)
+          | Var v -> v env)
       done;
       List.iter (fun f -> f ()) b.submitting;
       Nx_device.Program.call b.host_program.program b.buffers b.values;
@@ -864,13 +999,18 @@ let link ~devices ?(bound = []) linear =
          nodes)
     |> List.map (fun (slot, u) -> (slot, List.map nx (names u), bytes u))
   in
+  let cells = Hashtbl.create 16 in
+  let trips r =
+    ( cell cells (Ops.expr (Hcq2.range_value r)),
+      offset cells (sint (Ops.nth r 0)) )
+  in
   let rec linked entry =
     match Ops.op entry with
     | Op.End ->
         let body = Ops.nth entry 0 in
         Range
           {
-            ranges = List.tl (Ops.src entry);
+            ranges = List.map trips (List.tl (Ops.src entry));
             body =
               List.map linked
                 (if Ops.op body = Op.Linear then Ops.src body else [ body ]);
@@ -882,24 +1022,42 @@ let link ~devices ?(bound = []) linear =
     match (Ops.op body, hcq_info call) with
     | Op.Store, _ -> (
         match Realize.get_call_arg_uops call with
-        | [ dst; src ] -> Copy { call; dst; src }
+        | [ dst; src ] ->
+            Copy
+              {
+                call;
+                dst = operand storage cells dst;
+                src = operand storage cells src;
+              }
         | _ -> fail fn "a copy of other than two buffers")
     | Op.Program, Some _ ->
         let patches =
           if Ops.op entry = Op.After then List.tl (Ops.src entry) else []
         in
-        Batch (link_batch ~device ~storage call patches)
+        Batch (link_batch ~device ~storage ~cells call patches)
     | Op.Program, None ->
         let first = List.hd (Realize.get_call_arg_uops call) in
         Kernel
           {
             call;
-            lanes = List.map (fun n -> Program.load (nx n) body) (names first);
+            launches =
+              Array.of_list
+                (List.mapi
+                   (fun i n -> launch storage cells call body (nx n) i)
+                   (names first));
           }
     | o, _ -> fail fn "%s is no call to run" (Format.asprintf "%a" Op.pp o)
   in
   let calls = List.map linked entries in
-  { lock = Mutex.create (); calls; params; storage }
+  let n = Hashtbl.length cells in
+  {
+    lock = Mutex.create ();
+    calls;
+    params;
+    cells;
+    env = { values = Array.make n 0; set = Array.make n false };
+    synced = [];
+  }
 
 let check_slots t slots =
   let fn = "Tolk_engine.run" in
@@ -955,13 +1113,13 @@ let seconds f =
    its own, the batch reports each kernel's span once its devices synchronized.
    While a profile is taken elsewhere, the spans are that profile's, and the
    batch reports no time. *)
-let run_reported ~vars slots b =
+let run_reported ~env ~vars slots b =
   let own =
     if Nx_device.Profile.enabled () then None
     else try Some (Nx_device.Profile.start ()) with Invalid_argument _ -> None
   in
   let events =
-    match run_batch ~vars slots b with
+    match run_batch ~env slots b with
     | () -> (
         match own with
         | Some p -> Nx_device.Profile.stop p
@@ -998,14 +1156,60 @@ let run_reported ~vars slots b =
         k.devices)
     b.info.kernels
 
-let rec run_call ~vars t slots = function
+(* The variables the run binds and the trips its ranges run, by name, for the
+   reports. *)
+let bindings t =
+  Hashtbl.fold
+    (fun name i vars ->
+      if t.env.set.(i) then (name, t.env.values.(i)) :: vars else vars)
+    t.cells []
+
+(* A host program is outside the devices' ordering: the work that touched its
+   buffers, such as a batch's before it, completes first. A device is
+   synchronized once until the run queues work again. *)
+let settle t buffers =
+  for k = 0 to Array.length buffers - 1 do
+    let d = B.device buffers.(k) in
+    if not (List.memq d t.synced) then begin
+      Nx_device.synchronize d;
+      t.synced <- d :: t.synced
+    end
+  done
+
+let run_launch t call slots l =
+  let env = t.env in
+  let buffers = Array.map (fun a -> a slots env) l.args in
+  settle t buffers;
+  let values = Array.map (fun v -> v env) l.vals in
+  let split =
+    match l.split with
+    | None -> None
+    | Some (s, extent, ops) ->
+        Some (Program.blocks_of s ~extent:(extent env) ~ops:(ops env))
+  in
+  let launch () =
+    Nx_device.Program.call ?split l.program.program buffers values
+  in
+  if reporting () then
+    let vars = bindings t in
+    report
+      ~device:(Nx_device.name (B.device buffers.(0)))
+      ~name:
+        (Realize.get_call_name ~var_vals:vars call
+           (Realize.get_call_arg_uops call))
+      ~args:(Array.length buffers) ~vars
+      (Realize.estimate_uop call)
+      (Some (seconds launch))
+  else launch ()
+
+let rec run_call t slots = function
   | Copy { call; dst; src } ->
-      let dsts = view t.storage slots vars dst
-      and srcs = view t.storage slots vars src in
+      let dsts = dst slots t.env and srcs = src slots t.env in
       List.iteri
         (fun i dst ->
           let copy () = B.copy ~src:(lane srcs i) ~dst in
           if reporting () then
+            let vars = bindings t in
             report
               ~device:(Nx_device.name (B.device dst))
               ~name:
@@ -1015,69 +1219,52 @@ let rec run_call ~vars t slots = function
               (Realize.estimate_uop call)
               (Some (seconds copy))
           else copy ())
-        dsts
-  | Kernel { call; lanes } ->
-      let prg = Ops.body call in
-      let args =
-        List.map (view t.storage slots vars) (Realize.get_call_arg_uops call)
-      in
-      let info =
-        match Ops.arg prg with Ops.Program i -> i | _ -> assert false
-      in
-      let vals = Realize.get_call_var_uops call prg in
-      List.iteri
-        (fun i (p : Program.t) ->
-          let buffers =
-            List.map (fun g -> lane (List.nth args g) i) info.globals
-          in
-          (* A host program is outside the devices' ordering: the work that
-             touched its buffers, such as a batch's before it, completes
-             first. *)
-          List.iter Nx_device.synchronize
-            (List.fold_left
-               (fun ds b ->
-                 let d = B.device b in
-                 if
-                   List.memq d ds
-                   [@mutate
-                     off "a second synchronization finds nothing to wait for"]
-                 then ds
-                 else d :: ds)
-               [] buffers);
-          let call_program () =
-            Program.call p (value vars i) (Array.of_list buffers)
-              (Program.values p vals (value vars i))
-          in
-          if reporting () then
-            report
-              ~device:(Nx_device.name (B.device (List.hd buffers)))
-              ~name:
-                (Realize.get_call_name ~var_vals:vars call
-                   (Realize.get_call_arg_uops call))
-              ~args:(List.length buffers) ~vars
-              (Realize.estimate_uop call)
-              (Some (seconds call_program))
-          else call_program ())
-        lanes
-  | Batch b when reporting () -> run_reported ~vars slots b
-  | Batch b -> run_batch ~vars slots b
+        dsts;
+      t.synced <- []
+  | Kernel { call; launches } ->
+      for i = 0 to Array.length launches - 1 do
+        run_launch t call slots launches.(i)
+      done
+  | Batch b ->
+      if reporting () then run_reported ~env:t.env ~vars:(bindings t) slots b
+      else run_batch ~env:t.env slots b;
+      t.synced <- []
   | Range { ranges; body } ->
-      let rec trips vars = function
-        | [] -> List.iter (run_call ~vars t slots) body
-        | r :: rest ->
-            let name = Ops.expr (Hcq2.range_value r) in
-            for i = 0 to Ops.sym_infer (sint (Ops.nth r 0)) vars - 1 do
-              trips ((name, i) :: vars) rest
-            done
+      let env = t.env in
+      let rec trips = function
+        | [] -> List.iter (run_call t slots) body
+        | (c, count) :: rest ->
+            let n = count env in
+            let value = env.values.(c) and set = env.set.(c) in
+            env.set.(c) <- true;
+            for i = 0 to n - 1 do
+              env.values.(c) <- i;
+              trips rest
+            done;
+            env.values.(c) <- value;
+            env.set.(c) <- set
       in
-      trips vars ranges
+      trips ranges
 
 let run ?(vars = []) t slots =
   check_slots t slots;
   let n = List.length t.calls in
   if Helpers.Context_var.value Helpers.debug >= 1 && n >= 10 then
     Printf.printf "jit execs %d calls\n%!" n;
-  Mutex.protect t.lock (fun () -> List.iter (run_call ~vars t slots) t.calls)
+  Mutex.protect t.lock (fun () ->
+      let env = t.env in
+      Array.fill env.set 0 (Array.length env.set) false;
+      (* The first binding of a name binds it. *)
+      List.iter
+        (fun (name, v) ->
+          match Hashtbl.find_opt t.cells name with
+          | Some i when not env.set.(i) ->
+              env.values.(i) <- v;
+              env.set.(i) <- true
+          | Some _ | None -> ())
+        vars;
+      t.synced <- [];
+      List.iter (run_call t slots) t.calls)
 
 (* Measuring *)
 

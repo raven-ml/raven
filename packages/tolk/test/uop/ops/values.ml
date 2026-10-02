@@ -956,6 +956,87 @@ let inference =
           rejects (fun () -> Ops.sym_infer (Sym (weak_var "n" 0 4)) []));
     ]
 
+(* sym_compile computes what sym_infer does, on expressions whose values fit
+   an [int] and on those whose products do not fit one, which it computes
+   exactly. *)
+
+(* A symbolic integer over the variables [a] and [b], of depth at most
+   [depth]. *)
+let rec expression a b depth =
+  let leaf =
+    Gen.one_of
+      [
+        Gen.constant a;
+        Gen.constant b;
+        Gen.map Ops.O.int (Gen.such_that (( <> ) 0) (Gen.int_range (-20) 20));
+      ]
+  in
+  if depth = 0 then leaf
+  else
+    let sub = expression a b (depth - 1) in
+    let node =
+      let open Gen in
+      let+ op = int_range 0 8 and+ x = sub and+ y = sub in
+      match op with
+      | 0 -> Ops.O.(x + y)
+      | 1 -> Ops.O.(x - y)
+      | 2 -> Ops.O.(x * y)
+      | 3 -> Ops.O.(x // y)
+      | 4 -> Ops.O.(x % y)
+      | 5 -> Ops.alu x Op.Cdiv [ y ]
+      | 6 -> Ops.alu x Op.Cmod [ y ]
+      | 7 -> Ops.alu x Op.Max [ y ]
+      | _ -> Ops.O.(-x)
+    in
+    Gen.frequency [ (1, leaf); (3, node) ]
+
+let outcome f = match f () with v -> Ok v | exception e -> Error e
+
+let compiles_as_inferred ~bound =
+  let a = weak_var "a" (-bound) bound and b = weak_var "b" (-bound) bound in
+  let value = Gen.int_range (-bound) bound in
+  let draw =
+    Gen.triple
+      (Gen.with_pp Ops.pp (expression a b 3))
+      value value
+  in
+  prop
+    (Printf.sprintf "computes what sym_infer does, variables within %d" bound)
+    draw
+    (fun (e, va, vb) ->
+      let env = [ ("a", va); ("b", vb) ] in
+      let var u = List.assoc (Ops.expr u) in
+      let inferred = outcome (fun () -> Ops.sym_infer (Sym e) env)
+      and compiled = outcome (fun () -> Ops.sym_compile (Sym e) var env) in
+      let exn =
+        Testable.make
+          ~pp:(fun ppf e -> Format.pp_print_string ppf (Printexc.to_string e))
+          ~equal:(fun e e' -> Printexc.to_string e = Printexc.to_string e')
+      in
+      equal (result int exn) inferred compiled)
+
+let compilation =
+  group "sym_compile"
+    [
+      compiles_as_inferred ~bound:50;
+      compiles_as_inferred ~bound:(1 lsl 31);
+      test "an integer is itself" (fun () ->
+          equal int 5 (Ops.sym_compile (Int 5) (fun _ () -> 0) ()));
+      test "a variable is what var reads" (fun () ->
+          let n = weak_var "n" 0 100 in
+          equal int 7
+            (Ops.sym_compile
+               (Sym Ops.O.((n * int 2) + int 1))
+               (fun _ x -> x)
+               3));
+      test "a variable var refuses raises" (fun () ->
+          rejects (fun () ->
+              Ops.sym_compile
+                (Sym Ops.O.(weak_var "n" 0 4 + int 1))
+                (fun _ () -> invalid_arg "no n")
+                ()));
+    ]
+
 let programs =
   group "programs"
     [
@@ -1124,5 +1205,6 @@ let groups =
     sint_module;
     divisibility;
     inference;
+    compilation;
     programs;
   ]

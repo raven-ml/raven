@@ -939,6 +939,12 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.link` resolves each host program's launch once: the buffers,
+  offsets and variables a run passes it, including those that move with the
+  trips of a range, are not looked up and simplified again on each run. A
+  jitted scan of 256 small steps on the host went from 5.1 ms to 0.27 ms on an
+  M1 Max. `Ops.sym_compile` computes a symbolic integer as `Ops.sym_infer` does,
+  simplified once.
 - GPU matrix-vector products take their layout from the matrix's and split
   the reduce, also one inside another reduce, until the GPU is busy: gpt-oss-20b
   decodes in 11.1 ms on an RTX 5000 Ada, from 45.5 ms. `MV_BLOCKSIZE`,

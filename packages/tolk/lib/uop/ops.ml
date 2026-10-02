@@ -3887,6 +3887,17 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
         in
         truncate v
 
+(* A cast in a symbolic integer converts without truncating. *)
+let sym_cast dt x : Dtype.value =
+  if Dtype.is_float dt then `Float (Value.to_float x)
+  else if Dtype.equal dt Dtype.Bool then `Bool (Value.to_bool x)
+  else `Int (Value.to_z x)
+
+let sym_alu op dt xs =
+  as_value
+    (exec_alu ~truncate_output:false op dt
+       (List.map (fun x -> (x :> Dtype.const)) xs))
+
 let sym_infer (s : sint) vars =
   match s with
   | Int n -> n
@@ -3902,21 +3913,122 @@ let sym_infer (s : sint) vars =
             match List.assoc_opt name vars with
             | Some x -> `Int (Bigint.of_int x)
             | None -> invalid_argf "the variable %s has no value" name)
-        | Op.Cast ->
-            let x = get (first n.op n.src) in
-            if Dtype.is_float n.dtype then `Float (Value.to_float x)
-            else if Dtype.equal n.dtype Dtype.Bool then `Bool (Value.to_bool x)
-            else `Int (Value.to_z x)
+        | Op.Cast -> sym_cast n.dtype (get (first n.op n.src))
         | Op.Bitcast ->
             Dtype.bitcast (first n.op n.src).dtype n.dtype
               (get (first n.op n.src))
         | op when Op.Set.mem op Op.Set.alu ->
-            as_value
-              (exec_alu ~truncate_output:false op n.dtype
-                 (List.map (fun s -> (get s :> Dtype.const)) n.src))
+            sym_alu op n.dtype (List.map get n.src)
         | op -> invalid_argf "%s cannot be evaluated" (Op.name op)
       in
       Value.to_int (topovisit s eval cache)
+
+(* The integer operations [sym_compile] computes on [int]s. Each raises
+   [Inexact] where the result may not be an [int], and the operation is then
+   computed exactly. *)
+
+exception Inexact
+
+(* Whether [x] times a value of the same bound fits an [int]. *)
+let small x = x > -0x4000_0000 && x < 0x4000_0000
+
+let int_add x y =
+  let s = x + y in
+  if x >= 0 = (y >= 0) && s >= 0 <> (x >= 0) then raise Inexact else s
+
+let int_mul x y = if small x && small y then x * y else raise Inexact
+
+(* A division by zero is zero, and its remainder the dividend. *)
+let int_quotient ~toward_zero x y =
+  if y = 0 then 0
+  else if x = min_int then raise Inexact
+  else
+    let q = x / y in
+    if toward_zero || x mod y = 0 || x < 0 = (y < 0) then q else q - 1
+
+let int_remainder ~toward_zero x y =
+  int_add x (-int_mul (int_quotient ~toward_zero x y) y)
+
+let int_binary = function
+  | Op.Add -> Some int_add
+  | Op.Sub ->
+      Some (fun x y -> int_add x (if y = min_int then raise Inexact else -y))
+  | Op.Mul -> Some int_mul
+  | Op.Max -> Some Int.max
+  | Op.Cdiv -> Some (int_quotient ~toward_zero:true)
+  | Op.Cmod -> Some (int_remainder ~toward_zero:true)
+  | Op.Floordiv -> Some (int_quotient ~toward_zero:false)
+  | Op.Floormod -> Some (int_remainder ~toward_zero:false)
+  | _ -> None
+
+let sym_compile (s : sint) var =
+  match s with
+  | Int n -> fun _ -> n
+  | Sym u ->
+      let s = simplify u in
+      let memo tbl f n =
+        match Tbl.find_opt tbl n with
+        | Some g -> g
+        | None ->
+            let g = f n in
+            Tbl.replace tbl n g;
+            g
+      in
+      (* Each node's value, as [sym_infer] computes it. *)
+      let values = Tbl.create 16 in
+      let rec compute n = memo values exact n
+      and exact n =
+        match n.op with
+        | Op.Const ->
+            let v = as_value (value n) in
+            fun _ -> v
+        | Op.Param when addrspace n = Some Dtype.Alu || is_variable n ->
+            let read = var n in
+            fun env -> `Int (Bigint.of_int (read env))
+        | Op.Cast ->
+            let x = compute (first n.op n.src) in
+            fun env -> sym_cast n.dtype (x env)
+        | Op.Bitcast ->
+            let src = first n.op n.src in
+            let x = compute src in
+            fun env -> Dtype.bitcast src.dtype n.dtype (x env)
+        | op when Op.Set.mem op Op.Set.alu ->
+            let xs = List.map compute n.src in
+            fun env -> sym_alu op n.dtype (List.map (fun x -> x env) xs)
+        | op -> fun _ -> invalid_argf "%s cannot be evaluated" (Op.name op)
+      in
+      (* An integer node of integer sources, computed on [int]s. *)
+      let ints = Tbl.create 16 in
+      let rec int n = memo ints native n
+      and native n =
+        if not (Dtype.is_int n.dtype) then None
+        else
+          match (n.op, n.src) with
+          | Op.Const, _ -> (
+              match as_value (value n) with
+              | `Int z when Bigint.fits_int z ->
+                  let c = Bigint.to_int z in
+                  Some (fun _ -> c)
+              | _ -> None)
+          | Op.Param, _ when addrspace n = Some Dtype.Alu || is_variable n ->
+              Some (var n)
+          | Op.Neg, [ x ] ->
+              Option.map
+                (fun x env ->
+                  let v = x env in
+                  if v = min_int then raise Inexact else -v)
+                (int x)
+          | o, [ x; y ] -> (
+              match (int_binary o, int x, int y) with
+              | Some f, Some x, Some y -> Some (fun env -> f (x env) (y env))
+              | _ -> None)
+          | _ -> None
+      in
+      let exact = compute s in
+      let to_int env = Value.to_int (exact env) in
+      match int s with
+      | None -> to_int
+      | Some f -> fun env -> ( try f env with Inexact -> to_int env)
 
 (* Patterns *)
 
