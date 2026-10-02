@@ -448,6 +448,39 @@ let is_pixel : type a b. (a, b) Nx.dtype -> bool = function
       true
   | _ -> false
 
+(* [rgba px] is the image [px], of shape [[|h; w|]] or [[|h; w; c|]], as
+   [Picture.image] takes it: [uint8] values as they are, and floating-point
+   values clamped into [0;1] and scaled to [0;255], a pixel with a NaN component
+   transparent. *)
+let rgba : type a b. (a, b) Nx.t -> Nx.uint8_t =
+ fun px ->
+  let px =
+    match Nx.shape px with [| h; w |] -> Nx.reshape [| h; w; 1 |] px | _ -> px
+  in
+  match Nx.dtype px with
+  | Nx.UInt8 -> px
+  | _ ->
+      let f = Nx.cast Nx.float32 px in
+      let c = (Nx.shape f).(2) in
+      let hole = Nx.any ~axes:[ 2 ] ~keepdims:true (Nx.isnan f) in
+      let v = Nx.round (Nx.mul_s (Nx.clamp ~min:0. ~max:1. f) 255.) in
+      let v =
+        Nx.where (Nx.broadcast_to (Nx.shape v) hole) (Nx.zeros_like v) v
+      in
+      let channel k = Nx.slice [ A; A; R (k, k + 1) ] v in
+      let rgb, alpha =
+        match c with
+        | 1 ->
+            ([ v; v; v ], Nx.where hole (Nx.zeros_like v) (Nx.full_like v 255.))
+        | 3 ->
+            ( [ v ],
+              Nx.where hole
+                (Nx.zeros_like (channel 0))
+                (Nx.full_like (channel 0) 255.) )
+        | _ -> ([ Nx.slice [ A; A; R (0, 3) ] v ], channel 3)
+      in
+      Nx.cast Nx.uint8 (Nx.concatenate ~axis:2 (rgb @ [ alpha ]))
+
 (* [lead px] is the leading axes of the image tensor [px], its datum axes. *)
 let lead px =
   let shape = Nx.shape px in
@@ -484,16 +517,7 @@ let draw_image rows =
         if not (finite x0.(i) && finite y0.(i)) then Picture.empty
         else
           let box = Box2.of_pts (at x0.(i) y0.(i)) (at x1.(i) y1.(i)) in
-          let px = Pixels.rgba (datum px lead index.(i)) in
-          let shape = Nx.shape px in
-          let picture =
-            match
-              Pixels.plan ~density:rows.Rows.density box ~rows:shape.(0)
-                ~cols:shape.(1)
-            with
-            | None -> Picture.image box px
-            | Some plan -> Picture.image plan.window (Pixels.gather plan px)
-          in
+          let picture = Picture.image box (rgba (datum px lead index.(i))) in
           if inside xe i && inside ye i then picture
           else Picture.clip (Mark.project rows (Path.rect unit_square)) picture
       in

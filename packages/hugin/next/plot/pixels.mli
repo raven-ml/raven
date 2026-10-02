@@ -3,17 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Images of cells: converting pixels, and gathering the cells that raster
-    output samples. *)
+(** Gathering the cells of images that raster output samples. *)
 
 module Box2 := Hugin_next_gg.Box2
 module Picture := Hugin_next_vg.Picture
-
-val rgba : ('a, 'b) Nx.t -> Nx.uint8_t
-(** [rgba px] is the image [px], of shape [[|h; w|]] or [[|h; w; c|]], as
-    {!Picture.image} takes it, on the device of [px]: [uint8] values as they
-    are, and floating-point values clamped into \[[0];[1]\] and scaled to
-    \[[0];[255]\], a pixel with a NaN component transparent. *)
 
 (** {1:gathering Gathering} *)
 
@@ -32,5 +25,10 @@ val plan : density:float -> Box2.t -> rows:int -> cols:int -> plan option
     an axis, and [None] otherwise. *)
 
 val gather : plan -> Nx.uint8_t -> Nx.uint8_t
-(** [gather p px] is the gathered image of the [[|h; w; 4|]] image [px], on its
-    device. *)
+(** [gather p px] is the gathered image of the [[|h; w; c|]] image [px], on its
+    device, as RGBA: the samples outside the source box are transparent. *)
+
+val gathered : density:float -> Picture.t -> Picture.t
+(** [gathered ~density p] is [p] with each image outside a transform or a stamp
+    that has more than 4 cells per device pixel along an axis replaced by its
+    gather ({!plan}). It draws at the density what [p] draws. *)

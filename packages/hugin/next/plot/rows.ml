@@ -33,7 +33,6 @@ type t = {
   index : int array;
   theme : Theme.t;
   projection : Coord.projection;
-  density : float;
   cols : col list;
   dropped : bool array;
   warn : string -> unit;

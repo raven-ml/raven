@@ -372,9 +372,8 @@ val map_range : ('r -> 'r) -> ('d, 'r) channel -> ('d, 'r) channel
     labelled arguments named after their roles ({!section-roles}). {!dot},
     {!rect}, {!rule} and {!contour} use only what {!Mark} offers. {!line},
     {!text} and {!image} keep their curve, text offsets and pixels in parameters
-    ({!Role.param}), and {!image} gathers its pixels at the density {!draw} is
-    given. Every mark takes the facet channels [fx] and [fy], and every mark but
-    {!image} takes [opacity], [1.] by default.
+    ({!Role.param}). Every mark takes the facet channels [fx] and [fy], and
+    every mark but {!image} takes [opacity], [1.] by default.
 
     A mark without a colour channel paints with the theme's accent
     ({!Theme.accent}), except {!rule} and {!text}, which paint with its ink
@@ -1431,7 +1430,14 @@ module Mark : sig
       lives, before they are read; {!raster} reads the rows and paints them
       once. It applies only to the marks that name it, which so state that they
       draw what it draws, and every reduction draws what the mark would draw
-      from every row, as each states. *)
+      from every row, as each states.
+
+      Every mark's picture is then {e gathered}: an image outside a transform or
+      a stamp ({!Picture.image}) with more than 4 cells per device pixel along
+      an axis is replaced by the cells that raster output samples at the
+      density, gathered where they live, painted over the device pixels its box
+      reaches. It draws what the image draws, so it needs no reducer, and it is
+      how {!image} draws large images. *)
 
   type reducer
   (** The type for reducers. *)
@@ -1480,10 +1486,11 @@ module Mark : sig
       of the channels [bindings], where [draw rows] is its picture in a panel
       for that panel's rows, in points on the page. [draw] applies every role it
       binds, [opacity] included, and clips positions to the domain
-      ({!section-rows}). {!draw} only selects each panel's rows and tags the
-      picture with the mark's id and rows ({!Picture.tag}), instance by instance
-      if it is a stamp of one instance per row: it clips nothing, so ink drawn
-      from a row inside the domain shows whole. Other arguments are:
+      ({!section-rows}). {!draw} only selects each panel's rows, gathers the
+      picture's large images ({!section-reducers}) and tags the picture with the
+      mark's id and rows ({!Picture.tag}), instance by instance if it is a stamp
+      of one instance per row: it clips nothing, so ink drawn from a row inside
+      the domain shows whole. Other arguments are:
       - [name], the kind of mark in messages and printed forms, such as ["dot"]
         or ["fehu.cart"].
       - [reduce], the reducer that may draw the mark's rows. Unset, rows are

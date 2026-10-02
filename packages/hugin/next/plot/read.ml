@@ -411,7 +411,6 @@ let rows ?only ctx rd ~id projection ~warn reads sel =
     index;
     theme = ctx.theme;
     projection;
-    density = ctx.density;
     cols;
     dropped;
     warn;
@@ -448,7 +447,6 @@ let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
     index = [| k |];
     theme = ctx.theme;
     projection;
-    density = ctx.density;
     cols = List.filter_map Fun.id (List.mapi col m.bindings);
     dropped = [| false |];
     warn;

@@ -10,7 +10,8 @@
    positions to the panel's domain, not their ink, so the stage clips nothing. A
    mark is drawn one cell at a time: its facet channels put each of its rows in
    a panel, and in each panel its reducer may draw the rows in its stead,
-   reading only what it draws; its draw function draws the others. *)
+   reading only what it draws; its draw function draws the others, and the large
+   images of what it draws are gathered. *)
 
 module P2 = Hugin_next_gg.P2
 module Box2 = Hugin_next_gg.Box2
@@ -433,7 +434,8 @@ let draw_occ cx occ part targets =
     in
     let drawn rd sel =
       let r = rows None rd sel in
-      tagged occ.mid r.index (m.draw r)
+      tagged occ.mid r.index
+        (Pixels.gathered ~density:cx.ctx.density (m.draw r))
     in
     let n =
       match sel with

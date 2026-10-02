@@ -1180,6 +1180,36 @@ let reducers =
               same_raster (Layout.size l) (Picture.image box px)
                 (Picture.image window gathered)
           | l -> failf "%d images" (List.length l));
+      cases ~name:fst
+        "the large image of any mark is gathered, drawing what it draws"
+        [ ("grey", 1); ("RGB", 3); ("RGBA", 4) ]
+        (fun (_, c) ->
+          let px =
+            Nx.init Nx.uint8 [| 200; 300; c |] (fun i ->
+                ((i.(0) * 3) + (i.(1) * 5) + (i.(2) * 70)) mod 256)
+          in
+          (* A box off the device pixels, so the gather has samples outside. *)
+          let placed r =
+            let at = Coord.point (Mark.projection r) in
+            Box2.of_pts (at 0.13 0.87) (at 0.71 0.21)
+          in
+          let box = ref None in
+          let f =
+            Mark.v ~name:"picture" [] (fun r ->
+                box := Some (placed r);
+                Picture.image (placed r) px)
+          in
+          let size = Size.panels 20. 20. in
+          let d = drawn ~size f in
+          let l = layout size (resolve f) in
+          match images d with
+          | [ (window, gathered) ] ->
+              let s = Nx.shape gathered in
+              less int ~than:(200 * 300) (s.(0) * s.(1));
+              same_raster (Layout.size l)
+                (Picture.image (Option.get !box) px)
+                (Picture.image window gathered)
+          | l -> failf "%d images" (List.length l));
       test "image clamps floats and leaves a pixel with a NaN transparent"
         (fun () ->
           let px =

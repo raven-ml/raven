@@ -4,35 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 module Box2 = Hugin_next_gg.Box2
-
-let rgba : type a b. (a, b) Nx.t -> Nx.uint8_t =
- fun px ->
-  let px =
-    match Nx.shape px with [| h; w |] -> Nx.reshape [| h; w; 1 |] px | _ -> px
-  in
-  match Nx.dtype px with
-  | Nx.UInt8 -> px
-  | _ ->
-      let f = Nx.cast Nx.float32 px in
-      let c = (Nx.shape f).(2) in
-      let hole = Nx.any ~axes:[ 2 ] ~keepdims:true (Nx.isnan f) in
-      let v = Nx.round (Nx.mul_s (Nx.clamp ~min:0. ~max:1. f) 255.) in
-      let v =
-        Nx.where (Nx.broadcast_to (Nx.shape v) hole) (Nx.zeros_like v) v
-      in
-      let channel k = Nx.slice [ A; A; R (k, k + 1) ] v in
-      let rgb, alpha =
-        match c with
-        | 1 ->
-            ([ v; v; v ], Nx.where hole (Nx.zeros_like v) (Nx.full_like v 255.))
-        | 3 ->
-            ( [ v ],
-              Nx.where hole
-                (Nx.zeros_like (channel 0))
-                (Nx.full_like (channel 0) 255.) )
-        | _ -> ([ Nx.slice [ A; A; R (0, 3) ] v ], channel 3)
-      in
-      Nx.cast Nx.uint8 (Nx.concatenate ~axis:2 (rgb @ [ alpha ]))
+module Picture = Hugin_next_vg.Picture
 
 (* Gathering *)
 
@@ -75,7 +47,18 @@ let plan ~density box ~rows ~cols =
     let window = Box2.v (px x0) (px y0) (px (x1 - x0)) (px (y1 - y0)) in
     Some { window; rows = rs; cols = cs }
 
+(* [rgba px] is the [[|h; w; c|]] image [px], [c] being 1, 3 or 4, as RGBA. *)
+let rgba px =
+  let s = Nx.shape px in
+  match s.(2) with
+  | 4 -> px
+  | c ->
+      let opaque = Nx.full Nx.uint8 [| s.(0); s.(1); 1 |] 255 in
+      let rgb = if c = 1 then [ px; px; px ] else [ px ] in
+      Nx.concatenate ~axis:2 (rgb @ [ opaque ])
+
 let gather p px =
+  let px = rgba px in
   let h = (Nx.shape px).(0) and w = (Nx.shape px).(1) in
   (* A last transparent row and column stand for the samples outside. *)
   let padded = Nx.pad [| (0, 1); (0, 1); (0, 0) |] 0 px in
@@ -87,3 +70,20 @@ let gather p px =
   padded
   |> Nx.take ~axis:0 ~indices:(indices h p.rows)
   |> Nx.take ~axis:1 ~indices:(indices w p.cols)
+
+(* Images under a transform or a stamp are not on the page's device pixels, and
+   are left as they are. *)
+let rec gathered ~density (p : Picture.t) =
+  match p with
+  | Image { box; pixels } -> (
+      let shape = Nx.shape pixels in
+      match plan ~density box ~rows:shape.(0) ~cols:shape.(1) with
+      | None -> p
+      | Some plan -> Picture.image plan.window (gather plan pixels))
+  | Group ps -> Picture.group (List.map (gathered ~density) ps)
+  | Clip { rule; path; picture } ->
+      Picture.clip ~rule path (gathered ~density picture)
+  | Opacity { opacity; picture } ->
+      Picture.opacity opacity (gathered ~density picture)
+  | Tag { tag; picture } -> Picture.tag tag (gathered ~density picture)
+  | Empty | Fill _ | Stroke _ | Glyphs _ | Transform _ | Stamp _ -> p
