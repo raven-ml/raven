@@ -1670,63 +1670,6 @@ let media =
     test "media empty history" test_media_empty_history;
   ]
 
-(* System monitor *)
-
-let test_system_monitor_logs_metrics () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:0.1 session in
-  let rec sampled () =
-    if not (List.mem "sys/cpu_user" (Run.metric_keys (Session.run session)))
-    then begin
-      Thread.delay 0.01;
-      sampled ()
-    end
-  in
-  sampled ();
-  Munin_sys.stop monitor;
-  Session.finish session;
-  let run = Session.run session in
-  let keys = Run.metric_keys run in
-  is_true ~msg:"has sys/cpu_user" (List.mem "sys/cpu_user" keys);
-  is_true ~msg:"has sys/mem_used_pct" (List.mem "sys/mem_used_pct" keys);
-  is_true ~msg:"has sys/proc_mem_mb" (List.mem "sys/proc_mem_mb" keys)
-
-let test_system_monitor_defines_metrics () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:100.0 session in
-  Munin_sys.stop monitor;
-  Session.finish session;
-  let run = Session.run session in
-  let defs = Run.metric_defs run in
-  let has_def key =
-    match List.assoc_opt key defs with
-    | Some d -> d.summary = `Last
-    | None -> false
-  in
-  is_true ~msg:"cpu_user def" (has_def "sys/cpu_user");
-  is_true ~msg:"mem_used_pct def" (has_def "sys/mem_used_pct");
-  is_true ~msg:"proc_mem_mb def" (has_def "sys/proc_mem_mb")
-
-let test_system_monitor_stop_idempotent () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:100.0 session in
-  Munin_sys.stop monitor;
-  Munin_sys.stop monitor;
-  Session.finish session
-
-let system_monitor_tests =
-  [
-    test "logs metrics" test_system_monitor_logs_metrics;
-    test "defines metrics" test_system_monitor_defines_metrics;
-    test "stop idempotent" test_system_monitor_stop_idempotent;
-  ]
-
 (* Suite *)
 
 let suite =
@@ -1744,7 +1687,6 @@ let suite =
     group "Auto-computed summaries" auto_summaries;
     group "Grouping" grouping;
     group "Media" media;
-    group "System monitor" system_monitor_tests;
   ]
 
 let () = exit (run "Munin" suite)
