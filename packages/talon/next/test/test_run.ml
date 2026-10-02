@@ -699,11 +699,11 @@ let starved p =
               (Gen.of_list Join.[ Inner; Left; Full ]))
            (Gen.of_list Join.[ One; At_least_one ]))
 
-(* [converting] parses texts that no integer writes, or casts integers to
-   [int8], which holds few of them, under up to two random steps. Random plans
-   parse a text or cast out of range too rarely to fail there in every run, so
-   the plans draw these directly. *)
-let converting =
+(* [failing_select] parses texts that no integer writes, casts integers to
+   [int8], which holds few of them, or applies a function that raises at a drawn
+   row, under up to two random steps. Random plans fail in these ways too rarely
+   to meet each in every run, so the plans draw them directly. *)
+let failing_select =
   let rows = Gen.int_range 1 12 in
   let column n ty o gen =
     Gen.map (fun vs -> (n, Column.v ty vs, o)) (Gen.array ~size:rows gen)
@@ -718,6 +718,19 @@ let converting =
       (R.Out ("c", R.Cast (Type.int8, R.Col (Type.int64, "i"))))
       (Gen.int_range (-1000) 1000)
   in
+  let raising =
+    Gen.bind
+      (Gen.array ~size:rows (Gen.int_range (-50) 50))
+      (fun xs ->
+        map2
+          (fun row label ->
+            let f x = if x = xs.(row) then raise (Boom (label, x)) else 0 in
+            ( "r",
+              Column.v Type.int64 xs,
+              R.Out ("m", R.Map (Type.int8, f, R.Col (Type.int64, "r"))) ))
+          (Gen.int_range 0 (Array.length xs - 1))
+          (Gen.int_range 0 99))
+  in
   let base (n, c, o) = R.Select ([ R.Keep [ n ]; o ], R.Table (v [ (n, c) ])) in
   let rec above level p =
     if level > 2 then Gen.constant p
@@ -726,11 +739,12 @@ let converting =
           if more then Gen.bind (step level p) (above (level + 1))
           else Gen.constant p)
   in
-  Gen.bind (Gen.one_of [ parse; cast ]) (fun x -> above 1 (base x))
+  Gen.bind (Gen.one_of [ parse; cast; raising ]) (fun x -> above 1 (base x))
 
 let plans =
   let drawn = Gen.bind (Gen.int_range 0 3) plan in
-  Gen.frequency [ (18, drawn); (2, Gen.bind drawn starved); (1, converting) ]
+  Gen.frequency
+    [ (18, drawn); (2, Gen.bind drawn starved); (2, failing_select) ]
 
 let split_plans =
   Gen.with_pp pp_plan
