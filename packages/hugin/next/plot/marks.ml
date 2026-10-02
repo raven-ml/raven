@@ -71,20 +71,38 @@ let box_path rows (x0, x1) (y0, y1) i =
   let b = Box2.of_pts (P2.v x0.(i) y0.(i)) (P2.v x1.(i) y1.(i)) in
   Mark.project rows (Path.rect b)
 
-(* [length ch] implies [zero] on the scale of [ch] when it holds quantities: a
-   position without its other end is a length. *)
-let length : type d r. (d, r) Role.t -> (d, r) Channel.t -> binding =
- fun role ch ->
+(* A bar's band position stands apart from its neighbours. *)
+let bar_padding = 0.2 (* The fraction of a step between bars. *)
+let bar_band = Scale.band ~padding:bar_padding ()
+
+(* [length ~band role ch] binds [ch], a position without its other end, to
+   [role]. Quantities are a length, which implies [zero] on their scale, and
+   categories a band, which implies [band] if given. *)
+let length : type d r.
+    ?band:string Scale.t -> (d, r) Role.t -> (d, r) Channel.t -> binding =
+ fun ?band role ch ->
   match data ch with
   | Some { lift; _ } -> (
       match lift_kind lift with
       | Scale.Quantitative -> on ~imply:(Scale.linear ~zero:true ()) role ch
-      | Scale.Temporal | Scale.Categorical -> on role ch)
+      | Scale.Categorical -> on ?imply:band role ch
+      | Scale.Temporal -> on role ch)
   | None -> on role ch
 
-let position role ~alone = function
+let position ?band role ~alone = function
   | None -> None
-  | Some ch -> Some (if alone then length role ch else on role ch)
+  | Some ch -> Some (if alone then length ?band role ch else on role ch)
+
+(* [continuous ch] is [true] iff [ch] holds data read by a continuous scale. *)
+let continuous : type d r. (d, r) Channel.t option -> bool = function
+  | None -> false
+  | Some ch -> (
+      match data ch with
+      | Some { lift; _ } -> (
+          match lift_kind lift with
+          | Scale.Quantitative | Scale.Temporal -> true
+          | Scale.Categorical -> false)
+      | None -> false)
 
 let facets fx fy = [ opt Role.fx fx; opt Role.fy fy ]
 
@@ -288,12 +306,14 @@ let draw_rect rows =
   Picture.group (List.init n cell)
 
 let rect ?x ?x2 ?y ?y2 ?fill ?stroke ?opacity ?fx ?fy () =
+  (* A band position across a continuous one is a bar. *)
+  let bars other = if continuous other then Some bar_band else None in
   Mark
     (make "rect" ~reduce:Cells
        ([
-          position Role.x ~alone:(Option.is_none x2) x;
+          position Role.x ?band:(bars y) ~alone:(Option.is_none x2) x;
           opt Role.x2 x2;
-          position Role.y ~alone:(Option.is_none y2) y;
+          position Role.y ?band:(bars x) ~alone:(Option.is_none y2) y;
           opt Role.y2 y2;
           opt Role.fill fill;
           opt Role.stroke stroke;

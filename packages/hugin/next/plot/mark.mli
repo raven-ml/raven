@@ -17,7 +17,7 @@ module Scale := Hugin_next_kit.Scale
 type binding = Figure.binding
 
 val bind :
-  ?imply:float Scale.t ->
+  ?imply:'d Scale.t ->
   ?guide:bool ->
   ('d, 'r) Role.t ->
   ('d, 'r) Channel.t ->

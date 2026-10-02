@@ -24,8 +24,8 @@
 </g>
 <g data-id="[2]">
 <g data-id="[2]" data-rows="0 1">
-<path d="M31.846 286.62L116.019 286.62L116.019 193.084L31.846 193.084Z" fill="#4e79a7"/>
-<path d="M116.019 286.62L200.191 286.62L200.191 205.632L116.019 205.632Z" fill="#4e79a7"/>
+<path d="M47.151 286.62L108.367 286.62L108.367 193.084L47.151 193.084Z" fill="#4e79a7"/>
+<path d="M123.671 286.62L184.887 286.62L184.887 205.632L123.671 205.632Z" fill="#4e79a7"/>
 </g>
 </g>
 <g data-id="[3]">
@@ -70,9 +70,9 @@
 <text transform="matrix(0 -1 1 0 224.201 92.646)" x="0 4.6641 7.8008 10.6797 15.4766" y="0" font-family="hf0252a7cf48244b9e" font-size="8" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">error</text>
 </g>
 <g data-id="[2,&quot;axis&quot;,&quot;x&quot;]">
-<path d="M31.846 286.62L200.191 286.62M73.933 286.62L73.933 289.42M158.105 286.62L158.105 289.42" fill="none" stroke="#1a1a1a" stroke-width="0.64" stroke-linejoin="round"/>
-<text x="66.39 70.707 74.965 77.675" y="298.395" font-family="hf0252a7cf48244b9e" font-size="7.2" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">ours</text>
-<text x="149.845 154.324 158.367 162.167" y="298.395" font-family="hf0252a7cf48244b9e" font-size="7.2" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">base</text>
+<path d="M31.846 286.62L200.191 286.62M77.759 286.62L77.759 289.42M154.279 286.62L154.279 289.42" fill="none" stroke="#1a1a1a" stroke-width="0.64" stroke-linejoin="round"/>
+<text x="70.216 74.533 78.791 81.501" y="298.395" font-family="hf0252a7cf48244b9e" font-size="7.2" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">ours</text>
+<text x="146.019 150.498 154.541 158.341" y="298.395" font-family="hf0252a7cf48244b9e" font-size="7.2" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">base</text>
 <text x="101.661 108.669 113.333 115.951 120.681 125.478" y="309.881" font-family="hf0252a7cf48244b9e" font-size="8" fill="#1a1a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">method</text>
 </g>
 <g data-id="[2,&quot;axis&quot;,&quot;y&quot;]">

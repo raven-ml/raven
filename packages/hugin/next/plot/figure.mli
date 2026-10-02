@@ -18,7 +18,7 @@ type binding =
   | B : {
       role : ('d, 'r) Role.t;
       ch : ('d, 'r) Channel.t;
-      imply : float Scale.t option;
+      imply : 'd Scale.t option;
       guide : bool option;
     }
       -> binding

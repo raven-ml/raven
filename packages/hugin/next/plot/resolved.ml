@@ -60,7 +60,7 @@ type 'd member = {
   m_index : int;
   m_role : string;
   m_d : 'd data;
-  m_imply : float Scale.t option;
+  m_imply : 'd Scale.t option;
   m_guide : bool option;
 }
 
@@ -317,26 +317,20 @@ let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
   let explicit =
     List.filter_map (fun m -> Option.map (fun s -> (m, s)) m.m_d.spec) ms
   in
+  (* What a role implies, beyond what its mark does. *)
+  let role m : d Scale.t option =
+    match (kind, m.m_role) with
+    | Scale.Quantitative, "size" -> Some (Scale.linear ~zero:true ())
+    | Scale.Categorical, ("y" | "y2") -> Some (Scale.band ~reverse:true ())
+    | _ -> None
+  in
   let implied : (d member * d Scale.t) list =
-    match kind with
-    | Scale.Quantitative ->
-        List.concat_map
-          (fun m ->
-            let own =
-              match m.m_imply with Some i -> [ (m, i) ] | None -> []
-            in
-            if String.equal m.m_role "size" then
-              own @ [ (m, Scale.linear ~zero:true ()) ]
-            else own)
-          ms
-    | Scale.Categorical ->
-        List.filter_map
-          (fun m ->
-            match m.m_role with
-            | "y" | "y2" -> Some (m, Scale.band ~reverse:true ())
-            | _ -> None)
-          ms
-    | Scale.Temporal -> []
+    List.concat_map
+      (fun m ->
+        List.map
+          (fun i -> (m, i))
+          (Option.to_list m.m_imply @ Option.to_list (role m)))
+      ms
   in
   (* [imply] keeps the name and transform of the explicit specification, so an
      implied one gives only its other properties, and only those can

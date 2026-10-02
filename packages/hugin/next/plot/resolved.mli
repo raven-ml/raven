@@ -24,7 +24,7 @@ type 'd member = {
   m_index : int;
   m_role : string;
   m_d : 'd Channel.data;
-  m_imply : float Scale.t option;
+  m_imply : 'd Scale.t option;
   m_guide : bool option;
 }
 (** A channel that reads a scale, in one cell. *)

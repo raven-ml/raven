@@ -794,6 +794,33 @@ let merging =
               (Scale.linear ~nice:false ~clamp:true ())
           in
           equal bool true (Scale.equal expected (quant r "color")));
+      test "a mark implies properties of a band scale" (fun () ->
+          let m =
+            Mark.v ~name:"m"
+              [
+                Mark.bind
+                  ~imply:(Scale.band ~padding:0.5 ())
+                  Role.x
+                  (strings [| "a"; "b" |]);
+              ]
+              draw_nothing
+          in
+          equal (float 1e-12) (0.5 /. 2.5)
+            (Scale.bandwidth (categ (resolve m) "x")));
+      test "a bar implies padding on its band position" (fun () ->
+          let r = resolve (rect ~x:(strings [| "a"; "b" |]) ~y:(num x) ()) in
+          equal (float 1e-12) (0.8 /. 2.2) (Scale.bandwidth (categ r "x")));
+      test "a heatmap implies no padding" (fun () ->
+          let z = Nx.zeros Nx.float64 [| 2; 3 |] in
+          let r = resolve (rect ~x:(dim 1) ~y:(dim 0) ~fill:(num z) ()) in
+          equal (float 1e-12) (1. /. 3.) (Scale.bandwidth (categ r "x"));
+          equal (float 1e-12) 0.5 (Scale.bandwidth (categ r "y")));
+      test "an explicit padding beats a bar's" (fun () ->
+          let bars =
+            strings ~scale:(Scale.band ~padding:0. ()) [| "a"; "b" |]
+          in
+          let r = resolve (rect ~x:bars ~y:(num x) ()) in
+          equal (float 1e-12) 0.5 (Scale.bandwidth (categ r "x")));
       test "colour scales of two kinds are two scales" (fun () ->
           let r =
             resolve
@@ -1406,7 +1433,7 @@ let baselines =
           "color" categorical, read by 0.0:fill
             (band (domain (labels "a" "b")))
           "x" categorical, read by 1.0:x
-            (band (domain (indices (0 "0") (1 "1") (2 "2"))))
+            (band (domain (indices (0 "0") (1 "1") (2 "2"))) (padding 0.2))
           "y" quantitative, read by 1.0:y
             (linear (domain -6 4))
           "fx" categorical, read by 1.0:fx

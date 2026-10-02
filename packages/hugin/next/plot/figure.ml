@@ -18,7 +18,7 @@ type binding =
   | B : {
       role : ('d, 'r) Role.t;
       ch : ('d, 'r) Channel.t;
-      imply : float Scale.t option;
+      imply : 'd Scale.t option;
       guide : bool option;
     }
       -> binding
@@ -53,6 +53,17 @@ type t =
   | Axis of { side : side option; grid : bool; show : bool; scale : string }
   | Legend of { side : side option; show : bool; scale : string }
 
+(* Two bindings of one role may read scales of two kinds. *)
+let equal_imply : type d e. d Scale.t option -> e Scale.t option -> bool =
+ fun i i' ->
+  match (i, i') with
+  | None, None -> true
+  | Some s, Some s' -> (
+      match Scale.equal_kind (Scale.kind s) (Scale.kind s') with
+      | Some Type.Equal -> Scale.equal s s'
+      | None -> false)
+  | None, Some _ | Some _, None -> false
+
 let equal_binding (B b) (B b') =
   String.equal b.role.name b'.role.name
   &&
@@ -60,7 +71,7 @@ let equal_binding (B b) (B b') =
   | None -> false
   | Some Type.Equal ->
       Channel.equal b.role.range b.ch b'.ch
-      && Option.equal Scale.equal b.imply b'.imply
+      && equal_imply b.imply b'.imply
       && Option.equal Bool.equal b.guide b'.guide
 
 let equal_mark m m' =

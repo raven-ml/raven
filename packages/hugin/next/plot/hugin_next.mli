@@ -439,7 +439,10 @@ val rect :
     span ({!Mark.extent}). Its extent along x is:
     - with [x] and [x2], the hull of the two, an end on a band scale standing
       for its band;
-    - with [x] alone on a band scale, its band;
+    - with [x] alone on a band scale, its band; if [y] reads a continuous scale,
+      the rect is a {e bar}, and [rect] implies padding [0.2] on the band scale
+      ({!Theme.section-ranges}), so that bars stand apart, while a cell of a
+      heatmap, whose [y] reads a band scale too, implies none;
     - with [x] alone on a continuous scale, a {e length}: from zero to [x], zero
       being clamped into the domain, so that on a log scale a length starts at
       the domain's lower end. [rect] implies [zero] on the scale of a length
@@ -611,9 +614,10 @@ val contour :
     A property of a scale's specification ({!Scale.type-property}) is
     {e explicit} if a lift's [scale] sets it, {e implied} if a mark implies it
     ({!Mark.bind}), and {e defaulted} otherwise; explicit beats implied, which
-    beats defaulted. A length implies [zero] ({!rect}, {!rule}), and a band
-    scale read by [y] implies [reverse], so that its first category is at the
-    top. Whether a scale has a guide is a property of the same levels: an
+    beats defaulted. A length implies [zero] ({!rect}, {!rule}), the band
+    position of a bar implies padding ({!rect}, {!Theme.section-ranges}), and a
+    band scale read by [y] implies [reverse], so that its first category is at
+    the top. Whether a scale has a guide is a property of the same levels: an
     explicit {!axis} or {!legend} beats what marks imply ({!Mark.bind}), which
     beats the defaults of {!section-guides}. Once every {!share} is known,
     {!resolve} merges the explicit specifications of each scale's channels, then
@@ -1108,7 +1112,9 @@ module Theme : sig
       [0.] to the area of a circle [1.5] em across, the [size] role implying
       [zero] on its scale since an area is a magnitude; widths from [0.05] to
       [0.5] em; opacities from [0.] to [1.], the normalised value clamped into
-      \[[0];[1]\]; positions by the coordinate system. *)
+      \[[0];[1]\]; positions by the coordinate system, a bar's band position
+      implying padding [0.2] of a step on its band scale ({!rect}), so that bars
+      stand apart. *)
 
   (** {1:comparing Comparing and formatting} *)
 
@@ -1205,16 +1211,18 @@ module Mark : sig
   (** The type for channels bound to roles. *)
 
   val bind :
-    ?imply:float Scale.t ->
+    ?imply:'d Scale.t ->
     ?guide:bool ->
     ('d, 'r) Role.t ->
     ('d, 'r) channel ->
     binding
   (** [bind ~imply ~guide r c] binds the channel [c] to the role [r], where:
-      - [imply], if [c] holds quantities, is the specification whose properties
-        the mark implies on the scale [c] reads ({!Hugin_next.section-merging});
-        its name is ignored, and so is [imply] if [c] holds categories. {!rect}
-        and {!rule} bind a length with [~imply:(Scale.linear ~zero:true ())].
+      - [imply] is the specification whose properties the mark implies on the
+        scale [c] reads ({!Hugin_next.section-merging}), of the kind of [c]'s
+        data; its name and transform are ignored, and so is [imply] if [c] is a
+        constant. {!rect} and {!rule} bind a length with
+        [~imply:(Scale.linear ~zero:true ())], and {!rect} the band position of
+        a bar with [~imply:(Scale.band ~padding:0.2 ())].
       - [guide] implies whether the scale [c] reads has a guide, an axis or a
         legend: [true] that it has one, [false] that it has none. It merges as
         the scale's properties do ({!Hugin_next.section-merging}): two marks
