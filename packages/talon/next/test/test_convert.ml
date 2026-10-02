@@ -466,17 +466,54 @@ let fields_agree =
       equal (array int) (Array.map (fun (_, _, d) -> d) civil) (field `Day);
       equal (array int) (Array.map2 yearday dates civil) (field `Yearday))
 
+(* Datetimes of every unit, with and without a zone, drawn at the edges of their
+   int64 ticks and of {!Time.Date}'s days as well as anywhere. *)
+let extreme_ticks =
+  let per : Type.unit_ -> int64 = function
+    | S -> 1L
+    | Ms -> 1_000L
+    | Us -> 1_000_000L
+    | Ns -> 1_000_000_000L
+  in
+  let open Gen in
+  let* u = of_list Type.[ S; Ms; Us; Ns ] in
+  let* zoned = bool in
+  let scaled secs =
+    let t = Int64.mul secs (per u) in
+    if Int64.div t (per u) = secs then [ t ] else []
+  in
+  let edges =
+    [ Int64.min_int; Int64.succ Int64.min_int; -1L; 0L; 1L ]
+    @ [ Int64.pred Int64.max_int; Int64.max_int ]
+    @ List.concat_map scaled
+        [
+          185542587187199L;
+          185542587187200L;
+          -185542587187200L;
+          -185542587187201L;
+        ]
+  in
+  let+ xs =
+    array ~size:(int_range 0 20) (frequency [ (1, of_list edges); (1, int64) ])
+  in
+  (u, zoned, xs)
+
 let formats_round_trip =
-  let ns = Gen.array ~size:(Gen.int_range 0 20) Gen.int64 in
-  prop "parse reads back what format writes" ns (fun ns ->
-      let ty = Type.datetime Ns and fmt = "%Y-%m-%d %H:%M:%S.%f" in
-      let ts = Array.map Time.of_ns ns in
-      let t = one "t" (Column.v ty ts) in
+  prop "parse reads back what format writes, at every tick" extreme_ticks
+    (fun (u, zoned, xs) ->
+      let ty, fmt =
+        if zoned then (Type.datetime ~zone:"UTC" u, "%Y-%m-%d %H:%M:%S.%f%z")
+        else (Type.datetime u, "%Y-%m-%d %H:%M:%S.%f")
+      in
+      let values = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
+      let c =
+        match Column.of_layout (Any ty) (Fixed { validity = None; values }) with
+        | Ok c -> c
+        | Error (row, why) -> failf "row %d: %s" row why
+      in
       let text = Expr.Temporal.format fmt (Col.instant "t") in
-      equal (array int64) ns
-        (Array.map Time.to_ns
-           (Column.values Kind.instant
-              (result (Expr.Temporal.parse fmt ty text) t))))
+      let back = result (Expr.Temporal.parse fmt ty text) (one "t" c) in
+      equal (array int64) xs (Nx.to_array (Column.to_tensor Nx.int64 back)))
 
 let () =
   exit

@@ -541,11 +541,12 @@ let directed fmt (Type.Any ty) b pos len (a : int64s) k =
     invalid "not a day of the calendar";
   if !h > 23 || !mi > 59 || !s > 59 then invalid "not a time of day";
   let days = days_from_civil !y !mo !d in
-  if Option.is_none (Time.Date.of_days days) then invalid "out of range";
   let tod = (3600 * !h) + (60 * !mi) + !s in
   A1.unsafe_set a k
     (match ty with
-    | Date -> Int64.of_int days
+    | Date ->
+        if Option.is_none (Time.Date.of_days days) then invalid "out of range";
+        Int64.of_int days
     | Clock u -> ticks u (Int64.of_int tod) !ns
     | Datetime { unit_; _ } -> ticks unit_ (seconds days (tod - !off)) !ns
     | _ -> assert false (* Binding checked [ty]. *))
