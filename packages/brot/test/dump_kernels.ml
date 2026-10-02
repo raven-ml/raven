@@ -5,8 +5,10 @@
 
 (* Native-vs-bytecode differential for the C kernels. The native binary encodes
    through them, the byte_complete one through the OCaml reference that
-   [Sys.backend_type] selects; both print this deterministic dump and the build
-   diffs the two. Inputs cover every kernel exit: unclassified code points,
+   [Sys.backend_type] selects; both build this deterministic dump. Run with
+   [--compare], a binary reads the other's dump on stdin and fails, naming the
+   first differing line, unless the two are byte-identical; without it, it
+   prints its dump. Inputs cover every kernel exit: unclassified code points,
    malformed UTF-8 of every shape, pretokens at and past the 15-byte key limit,
    huge spans, more pretokens than a span chunk, every exit at the staged
    chunk's seams, bytes without an id, [ignore_merges], caching off, and a merge
@@ -16,10 +18,12 @@
    the one-character prefix of a word, combining marks, and the sequences a
    strict decoder refuses.
 
-   An optional corpus path argument appends [encode_batch_ids] digests over that
-   file split on <|endoftext|>, for dev-time runs over a large corpus. *)
+   An optional corpus path argument, after [--compare] when given, appends
+   [encode_batch_ids] digests over that file split on <|endoftext|>, for
+   dev-time runs over a large corpus. *)
 
-let pf = Printf.printf
+let dump = Buffer.create 65536
+let pf fmt = Printf.bprintf dump fmt
 
 (* Deterministic PRNG (splitmix64), identical in both binaries. *)
 let rng_state = ref 0x9E3779B97F4A7C15L
@@ -487,9 +491,27 @@ let synth_sp_disagree () =
     ~vocab:(List.mapi (fun i piece -> (piece, i)) (pieces @ derived))
     ~merges ~byte_fallback:true ()
 
+(* Prints to stderr the first line where [ours] and [theirs] differ. *)
+let report_difference ~ours ~theirs =
+  let ours = String.split_on_char '\n' ours in
+  let theirs = String.split_on_char '\n' theirs in
+  let rec first n = function
+    | o :: os, t :: ts when String.equal o t -> first (n + 1) (os, ts)
+    | o :: _, t :: _ -> (n, o, t)
+    | o :: _, [] -> (n, o, "<end of dump>")
+    | [], t :: _ -> (n, "<end of dump>", t)
+    | [], [] -> (n, "", "")
+  in
+  let n, o, t = first 1 (ours, theirs) in
+  Printf.eprintf
+    "dumps differ at line %d:\n  this binary: %s\n  stdin:       %s\n%!" n o t
+
 let () =
-  let corpus_arg =
-    if Array.length Sys.argv > 1 then Some Sys.argv.(1) else None
+  let against_stdin, corpus_arg =
+    match Array.to_list Sys.argv with
+    | _ :: "--compare" :: rest -> (true, List.nth_opt rest 0)
+    | _ :: rest -> (false, List.nth_opt rest 0)
+    | [] -> (false, None)
   in
   let fixture name = read_opt (Filename.concat "fixtures/parity" name) in
   let data name = read_opt (Filename.concat "../bench/data" name) in
@@ -565,4 +587,12 @@ let () =
   run "synth_sp_nocache" (synth_sp ~cache_capacity:0 ());
   run "synth_sp_unk" (synth_sp_unk ());
   run "synth_sp_fallback" (synth_sp_fallback ());
-  run "synth_sp_disagree" (synth_sp_disagree ())
+  run "synth_sp_disagree" (synth_sp_disagree ());
+  let ours = Buffer.contents dump in
+  if not against_stdin then print_string ours
+  else
+    let theirs = In_channel.input_all stdin in
+    if not (String.equal ours theirs) then begin
+      report_difference ~ours ~theirs;
+      exit 1
+    end
