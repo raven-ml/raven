@@ -401,7 +401,7 @@ index 712a2b7..a78ae66 100644
  from tinygrad.codegen.late.coalesce import image_valid_dims
  from tinygrad.codegen.opt.postrange import Scheduler
  
-@@ -58,25 +59,75 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -58,25 +59,78 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
            if (axis:=unit_stride_axes_mul_4[0]) in (upd:=k.upcastable_dims)+k.unrollable_dims:
              k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST if axis in upd else AxisType.UNROLL)))
  
@@ -467,12 +467,15 @@ index 712a2b7..a78ae66 100644
 +      return len(accesses(v)) > 0 and len(accesses(w)) > 0 and all(r in w.ranges for r in v.ranges) and len(w.ranges) > len(v.ranges) and \
 +        any(any(t is first or (t.op is Ops.MUL and t.src[0] is first and t.src[1].op is Ops.CONST) for t in a.src[1].get_idx().split_uop(Ops.ADD))
 +            for a in accesses(v))
-+    if (w:=next((w for v,w in [mulop.src, mulop.src[::-1]] if is_vector(v, w)), None)) is None: return None
++    if (vw:=next(((v, w) for v,w in [mulop.src, mulop.src[::-1]] if is_vector(v, w)), None)) is None: return None
++    v, w = vw
 +    # the ranges of unit stride of the accesses that read along the reduce: the matrix is laid out along them
 +    units = [t for a in accesses(w) if first in a.src[1].get_idx().ranges for t in a.src[1].get_idx().split_uop(Ops.ADD) if t.op is Ops.RANGE]
 +    if any(t is first for t in units):
 +      threads = pow2_dividing(first, LANES)
-+      if threads <= 1 or (g:=next((g for g in k.ranges_of(AxisType.GLOBAL) if divisible(g, ROWS)), None)) is None: return None
++      # a workgroup's rows are the matrix's own, which the vector does not read, so its SIMD groups share the vector's loads
++      if threads <= 1 or (g:=next((g for g in sorted(k.ranges_of(AxisType.GLOBAL), key=lambda g: g in v.ranges) if divisible(g, ROWS)), None)) is None:
++        return None
 +      try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
 +      except KernelOptError: return None
 +      k.apply_opt(Opt(OptOps.SPLIT, axis(g), (ROWS, AxisType.LOCAL)))
@@ -496,7 +499,7 @@ index 712a2b7..a78ae66 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -118,6 +149,8 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -118,6 +152,8 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      for axis, upcast_amount in itertools.product(k.upcastable_dims, ([128] if not len(upcasted_axis) else []) if is_dsp else [3,4]):
        # if we haven't upcasted it, it mods, and buffer has stride 0 on axis while having no stride 0 in the upcasted axis already
        if axis in upcasted_axis or k.full_shape[axis]%upcast_amount != 0: continue

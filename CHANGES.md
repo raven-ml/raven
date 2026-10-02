@@ -946,6 +946,12 @@ thread.
 
 ### Tolk (new)
 
+- A matrix-vector product's workgroup takes rows of its matrix, which share
+  the vector's loads, before rows that each read a vector of their own.
+  `Nx_quant.apply ~ids` on a prompt laid its workgroups over blocks of
+  positions: gpt-oss-20b's 512-token gate and up product takes 162 ms on an
+  M1 Max's Metal, from 224 ms, and 21.9 ms on an RTX 5000 Ada, from 56.6 ms,
+  in blocks of 4.
 - A decoded operand of a summed product that an output axis reads only
   through its quotient by a block is decoded once per block. `Nx_quant.apply
   ~ids` on a prompt decodes each expert's matrix once per block of 2

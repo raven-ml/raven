@@ -2493,8 +2493,8 @@ stores through a pad.
   operands are loads (`mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
   Ops.INDEX`) and the vector's index has the first reduce range as a term of
   its sum.
-- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`term_of`) and `:175`
-  (`matrix_of`), which D89 widens; `test/gen/tinygrad.patch`, which gives
+- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`term_of`) and `:176`
+  (`operands`), which D89 widens; `test/gen/tinygrad.patch`, which gives
   tinygrad the same before the goldens are recorded.
 - **Differs:** the vector is a load read through dtype conversions (`CAST`,
   `BITCAST`), and the matrix any computation of loads with no reduce, whose
@@ -2677,8 +2677,8 @@ stores through a pad.
   (`apply_opt`, which refuses a local split of a reduce axis inside another
   reduce).
 - **tolk:** `lib/codegen/opt/heuristic.ml:138-151` (`lanes`, `rows`,
-  `columns`, `busy`, `in_flight`), `:175` (`matrix_of`), `:190` (`units`) and
-  `:198` (`matvec`); `lib/codegen/opt/postrange.ml:307-316`;
+  `columns`, `busy`, `in_flight`), `:176` (`operands`), `:191` (`units`) and
+  `:199` (`matvec`); `lib/codegen/opt/postrange.ml:307-316`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
 - **Differs:** the vector is any computation of accesses with no reduce,
@@ -2758,8 +2758,8 @@ stores through a pad.
 - **tinygrad:** `codegen/opt/heuristic.py:115-120` (`hand_coded_optimizations`:
   more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
   can take a kernel to 64 lanes or more).
-- **tolk:** `lib/codegen/opt/heuristic.ml:394-398` (`host_lanes`,
-  `beyond_host_lanes`), `:418` (`upcast_more`).
+- **tolk:** `lib/codegen/opt/heuristic.ml:400-404` (`host_lanes`,
+  `beyond_host_lanes`), `:424` (`upcast_more`).
 - **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
   take an upcast that would make the kernel's upcast and unrolled lanes more
   than 32. Other devices upcast as tinygrad does.
@@ -2778,8 +2778,8 @@ stores through a pad.
   upcasts of output axes, which find reuse only on an axis that some access
   does not read, take 3 or 4 values of it, and come after the matrix-vector
   layout of `:61-79` has returned).
-- **tolk:** `lib/codegen/opt/heuristic.ml:276` (`run_cap`), `:280` (`run`),
-  `:299` (`decoded`), `:314` (`upcast_shared`) and `:554` (its place, before
+- **tolk:** `lib/codegen/opt/heuristic.ml:282` (`run_cap`), `:286` (`run`),
+  `:305` (`decoded`), `:320` (`upcast_shared`) and `:560` (its place, before
   `matvec`); `test/gen/tinygrad.patch`, which gives tinygrad the same before
   the goldens are recorded.
 - **Differs:** before the matrix-vector layout, an output axis that an operand
@@ -2877,3 +2877,29 @@ stores through a pad.
   `Tolk.Device › renderer › picks a device's renderer as tinygrad does`
   (each row renders for the target tinygrad's `DEV` gives the device) and
   `renders for the target it is given`.
+
+## D96. A matrix-vector workgroup's rows are the matrix's own
+
+- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
+  matrix-vector case, which splits `MV_BLOCKSIZE` local threads from the
+  first global axis that divides, whichever operand reads it).
+- **tolk:** `lib/codegen/opt/heuristic.ml:176` (`operands`) and `:211`
+  (`rows_layout`); `test/gen/tinygrad.patch`, which gives tinygrad the same
+  before the goldens are recorded.
+- **Differs:** D89's rows layout splits its 4 SIMD groups from the first
+  global axis that 4 divides among those the vector does not read, and from
+  one the vector reads only when none of the others divides.
+- **Reason:** (b): `Nx_quant.apply ~ids` on a prompt, whose blocks of rows
+  each multiply their expert's matrix. The vector, a block's rows, reads the
+  block axis, so the 4 groups of a workgroup took 4 blocks, each reading its
+  own rows for every output. In blocks of 4, D92's upcast, a workgroup reads
+  16 rows of 2880 floats, 184 KB, more than an SM's L1 holds on an RTX 5000
+  Ada; in blocks of 2, half that. On the matrix's rows the 4 groups read one
+  block's rows. gpt-oss-20b's 512-token gate and up product on that GPU, in
+  blocks of 4, from 56.6 ms to 21.9 ms, and in blocks of 2 from 26.0 ms to
+  25.3 ms, with the same registers (63 and 61, no spills); on an M1 Max's
+  Metal from 224 ms to 162 ms and from 225 ms to 167 ms.
+- **Pinned by:** the Heuristic suite: `the optimisations chosen are
+  tinygrad's › applied_opts`, cases `routed_blocks_metal`,
+  `routed_blocks_cuda` and `routed_blocks_amd` (the local split on the
+  matrix's row axis), recorded from the equally patched tinygrad.

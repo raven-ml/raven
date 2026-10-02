@@ -167,12 +167,13 @@ let pow2_above n =
   let rec go p = if p >= n then p else go (2 * p) in
   go 1
 
-(* The matrix of a product [m] summed over [first], if it is one of a matrix
-   and a vector. Both are computations of accesses with no reduce, such as
-   values decoded from codes by a table or a vector normalised by a scale. The
-   vector runs in some of the matrix's ranges, the matrix in more, and one of
-   the vector's accesses reads along [first], alone or at a constant stride. *)
-let matrix_of first m =
+(* The vector and the matrix of a product [m] summed over [first], if it is one
+   of a matrix and a vector. Both are computations of accesses with no reduce,
+   such as values decoded from codes by a table or a vector normalised by a
+   scale. The vector runs in some of the matrix's ranges, the matrix in more,
+   and one of the vector's accesses reads along [first], alone or at a constant
+   stride. *)
+let operands first m =
   let is_vector (v, w) =
     let v_accesses = accesses v and w_ranges = ranges w in
     v_accesses <> []
@@ -182,7 +183,7 @@ let matrix_of first m =
     && Nodes.cardinal w_ranges > Nodes.cardinal (ranges v)
   in
   List.find_map
-    (fun (v, w) -> if is_vector (v, w) then Some w else None)
+    (fun (v, w) -> if is_vector (v, w) then Some (v, w) else None)
     [ (nth m 0, nth m 1); (nth m 1, nth m 0) ]
 
 (* The ranges of unit stride of the accesses of [w] that read along [first]:
@@ -207,9 +208,14 @@ let matvec k =
     go 0 (K.rngs k)
   in
   let divisible_at r n = divisible (shape_at k (axis r)) n in
-  let rows_layout first globals =
+  let rows_layout first v globals =
     let threads = pow2_dividing first lanes in
-    match List.find_opt (fun g -> divisible_at g rows) globals with
+    (* A workgroup's rows are the matrix's own, which the vector does not read,
+       so its SIMD groups share the vector's loads. *)
+    let own, shared =
+      List.partition (fun g -> not (Nodes.mem g (ranges v))) globals
+    in
+    match List.find_opt (fun g -> divisible_at g rows) (own @ shared) with
     | Some g when threads > 1 && try_split k (axis first) threads Opt.Local ->
         ignore (split k (axis g) rows Opt.Local);
         (* what the lanes leave of the row, if anything *)
@@ -243,11 +249,11 @@ let matvec k =
     when ren.has_local && ren.has_shared && mv <> 0
          && (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
          && op (nth r 0) = Op.Mul -> (
-      match matrix_of first (nth r 0) with
+      match operands first (nth r 0) with
       | None -> None
-      | Some w ->
+      | Some (v, w) ->
           let units = units first w and globals = K.ranges_of k [ Global ] in
-          if List.memq first units then rows_layout first globals
+          if List.memq first units then rows_layout first v globals
           else
             Option.bind
               (List.find_opt (fun g -> List.memq g units) globals)
