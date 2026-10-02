@@ -304,6 +304,71 @@ let path c xs ys =
           Path.move_to (P2.v xs.(i) ys.(i)) p |> segments c xs ys i len)
     Path.empty
 
+(* [around top base] is [top] followed by [base] reversed. *)
+let around top base =
+  let m = Array.length top in
+  Array.init (2 * m) (fun k ->
+      if k < m then top.(k) else base.((2 * m) - 1 - k))
+
+(* The segments of a subpath, the last first: a line or a cubic, each with its
+   end point. *)
+type seg =
+  | L of float * float
+  | C of float * float * float * float * float * float
+
+let seg_end = function L (x, y) | C (_, _, _, _, x, y) -> (x, y)
+
+let segs_of q =
+  Path.fold
+    ~move:(fun acc _ _ -> acc)
+    ~line:(fun acc x y -> L (x, y) :: acc)
+    ~cubic:(fun acc a b c d x y -> C (a, b, c, d, x, y) :: acc)
+    ~close:Fun.id [] q
+
+(* [backward start segs p] is [p] with the segments [segs], the last first,
+   drawn backwards from their end to [start]. *)
+let rec backward start segs p =
+  match segs with
+  | [] -> p
+  | seg :: rest ->
+      let x, y = match rest with [] -> start | prev :: _ -> seg_end prev in
+      let p =
+        match seg with
+        | L _ -> Path.line_to (P2.v x y) p
+        | C (c1x, c1y, c2x, c2y, _, _) ->
+            Path.cubic_to (P2.v c2x c2y) (P2.v c1x c1y) (P2.v x y) p
+      in
+      backward start rest p
+
+let area c ~x0 ~y0 xs ys =
+  let n = Array.length xs in
+  if Array.length x0 <> n || Array.length y0 <> n || Array.length ys <> n then
+    invalid_arg
+      (Printf.sprintf "Curve.area: %d x0, %d y0, %d xs and %d ys"
+         (Array.length x0) (Array.length y0) n (Array.length ys));
+  let missing i =
+    not (finite x0.(i) && finite y0.(i) && finite xs.(i) && finite ys.(i))
+  in
+  fold_runs missing n
+    (fun i len p ->
+      match c with
+      | Lines c ->
+          let tx, ty = vertices c xs ys i len in
+          let bx, by = vertices c x0 y0 i len in
+          Path.append (Path.polygon (around tx bx) (around ty by)) p
+      | Smooth c ->
+          let last = i + len - 1 in
+          let base =
+            Path.move_to (P2.v x0.(i) y0.(i)) Path.empty
+            |> segments c x0 y0 i len
+          in
+          Path.move_to (P2.v xs.(i) ys.(i)) p
+          |> segments c xs ys i len
+          |> Path.line_to (P2.v x0.(last) y0.(last))
+          |> backward (x0.(i), y0.(i)) (segs_of base)
+          |> Path.close)
+    Path.empty
+
 (* Comparing and formatting *)
 
 let equal (c : t) c' = c = c'

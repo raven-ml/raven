@@ -7,7 +7,8 @@
 
     A curve says how a line passes through a sequence of points: straight from
     one to the next, in steps, or smoothly. {!path} draws a curve through
-    points, as a line mark does. Points are given as arrays of x and y
+    points, as a line mark does, and {!area} draws the region between two
+    curves, as an area mark does. Points are given as arrays of x and y
     coordinates in the plane the path is drawn in, which for a line mark is that
     of the panel's normalised positions. Paths are made of lines and cubic
     Béziers, so every renderer draws a curve the same way.
@@ -128,6 +129,19 @@ val path : t -> float array -> float array -> Path.t
     {!Path.empty} if there is none.
 
     Raises [Invalid_argument] if [xs] and [ys] differ in length. *)
+
+val area :
+  t -> x0:float array -> y0:float array -> float array -> float array -> Path.t
+(** [area c ~x0 ~y0 xs ys] is the region between curve [c] through the points
+    [(xs.(i), ys.(i))] and curve [c] through the {e baseline} points
+    [(x0.(i), y0.(i))], each drawn forwards as {!path} draws it. Point [i] is
+    missing if any of its four coordinates is not finite. Each run of at least
+    two points ({!section-runs}) gives one closed subpath, in order: the curve
+    through the run's points, a straight segment to the run's last baseline
+    point, the baseline's curve over the run traversed backwards, and the
+    segment that closes it. It is {!Path.empty} if no run has two points.
+
+    Raises [Invalid_argument] if [x0], [y0], [xs] and [ys] differ in length. *)
 
 (** {1:comparing Comparing and formatting} *)
 

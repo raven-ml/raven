@@ -532,4 +532,209 @@ let comparing =
                {| linear step_after step_before step_mid monotone_x monotone_y natural catmull_rom basis |});
     ]
 
-let () = exit (run "Curve" [ runs_group; monotone; others; affine; comparing ])
+(* Areas *)
+
+(* [reversed start segs] is the segments [segs], drawn from [start], drawn
+   backwards. *)
+let reversed start segs =
+  let rec go from acc = function
+    | [] -> acc
+    | L (x, y) :: rest -> go (x, y) (L (fst from, snd from) :: acc) rest
+    | C (a, b, c, d, x, y) :: rest ->
+        go (x, y) (C (c, d, a, b, fst from, snd from) :: acc) rest
+    | (M _ | Z) :: _ -> fail "not a segment"
+  in
+  go start [] segs
+
+(* An area is the curve through its points, a line to its last baseline point,
+   the baseline's curve backwards and a closing segment. *)
+let area_law (c, (xs, ys), (x0, y0)) =
+  let n = Int.min (Array.length xs) (Array.length x0) in
+  let xs = Array.sub xs 0 n and ys = Array.sub ys 0 n in
+  let x0 = Array.sub x0 0 n and y0 = Array.sub y0 0 n in
+  let top = segs (Curve.path c xs ys) and base = segs (Curve.path c x0 y0) in
+  let expected =
+    top
+    @ (L (x0.(n - 1), y0.(n - 1)) :: reversed (x0.(0), y0.(0)) (List.tl base))
+    @ [ Z ]
+  in
+  equal segs_exact expected (segs (Curve.area c ~x0 ~y0 xs ys))
+
+let step_area () =
+  let xs = [| 0.; 1.; 2. |] and ys = [| 1.; 2.; 3. |] in
+  let x0 = [| 0.; 1.; 2. |] and y0 = [| 0.; -1.; -2. |] in
+  equal segs_exact
+    [
+      M (0., 1.);
+      L (1., 1.);
+      L (1., 2.);
+      L (2., 2.);
+      L (2., 3.);
+      L (2., -2.);
+      L (2., -1.);
+      L (1., -1.);
+      L (1., 0.);
+      L (0., 0.);
+      Z;
+    ]
+    (segs (Curve.area Curve.step_after ~x0 ~y0 xs ys))
+
+let area_missing () =
+  let xs = [| 0.; 1.; 2.; 3.; 4. |] and ys = [| 1.; 1.; 1.; 1.; 1. |] in
+  let x0 = [| 0.; 1.; 2.; 3.; 4. |] and y0 = [| 0.; 0.; nan; 0.; 0. |] in
+  let first =
+    Curve.area Curve.linear ~x0:[| 0.; 1. |] ~y0:[| 0.; 0. |] [| 0.; 1. |]
+      [| 1.; 1. |]
+  in
+  let second =
+    Curve.area Curve.linear ~x0:[| 3.; 4. |] ~y0:[| 0.; 0. |] [| 3.; 4. |]
+      [| 1.; 1. |]
+  in
+  equal path (Path.append second first) (Curve.area Curve.linear ~x0 ~y0 xs ys)
+
+(* Each array shorter, then longer, than the three others. *)
+let area_lengths c =
+  let a = [| 0.; 1. |] and b = [| 0. |] in
+  invalid (fun () -> Curve.area c ~x0:b ~y0:a a a);
+  invalid (fun () -> Curve.area c ~x0:a ~y0:b a a);
+  invalid (fun () -> Curve.area c ~x0:a ~y0:a b a);
+  invalid (fun () -> Curve.area c ~x0:a ~y0:a a b);
+  invalid (fun () -> Curve.area c ~x0:a ~y0:b b b);
+  invalid (fun () -> Curve.area c ~x0:b ~y0:a b b);
+  invalid (fun () -> Curve.area c ~x0:b ~y0:b a b);
+  invalid (fun () -> Curve.area c ~x0:b ~y0:b b a)
+
+(* Areas over points of which some are missing, each by one non-finite
+   coordinate among its four, as [(x0, y0, xs, ys)]. *)
+let gen_gappy_area =
+  let missing = Gen.of_list [ nan; infinity; neg_infinity ] in
+  let quad = Gen.pair (Gen.pair coord coord) (Gen.pair coord coord) in
+  let point =
+    Gen.frequency
+      [
+        (4, quad);
+        ( 1,
+          Gen.map
+            (fun ((k, v), ((a, b), (c, d))) ->
+              match k with
+              | 0 -> ((v, b), (c, d))
+              | 1 -> ((a, v), (c, d))
+              | 2 -> ((a, b), (v, d))
+              | _ -> ((a, b), (c, v)))
+            (Gen.pair (Gen.pair (Gen.int_range 0 3) missing) quad) );
+      ]
+  in
+  let pp ppf (x0, y0, xs, ys) =
+    Format.fprintf ppf "baseline %a,@ top %a" pp_points (x0, y0) pp_points
+      (xs, ys)
+  in
+  Gen.with_pp pp
+    (Gen.map
+       (fun pts ->
+         ( Array.map (fun ((x0, _), _) -> x0) pts,
+           Array.map (fun ((_, y0), _) -> y0) pts,
+           Array.map (fun (_, (x, _)) -> x) pts,
+           Array.map (fun (_, (_, y)) -> y) pts ))
+       (Gen.array ~size:(Gen.int_range 0 15) point))
+
+let area_runs_alone (c, (x0, y0, xs, ys)) =
+  let n = Array.length xs in
+  let held i =
+    Float.is_finite x0.(i)
+    && Float.is_finite y0.(i)
+    && Float.is_finite xs.(i)
+    && Float.is_finite ys.(i)
+  in
+  let rec go i first p =
+    if i = n || not (held i) then
+      let p =
+        if i > first then
+          let sub a = Array.sub a first (i - first) in
+          Path.append
+            (Curve.area c ~x0:(sub x0) ~y0:(sub y0) (sub xs) (sub ys))
+            p
+        else p
+      in
+      if i = n then p else go (i + 1) (i + 1) p
+    else go (i + 1) first p
+  in
+  let breaks a = Array.exists (fun v -> not (Float.is_finite v)) a in
+  cover "x0 breaks" (breaks x0);
+  cover "y0 breaks" (breaks y0);
+  cover "xs breaks" (breaks xs);
+  cover "ys breaks" (breaks ys);
+  equal path (go 0 0 Path.empty) (Curve.area c ~x0 ~y0 xs ys)
+
+(* [shoelace segs] is the area that the polygon of the points of [segs]
+   encloses, by the shoelace formula. *)
+let shoelace segs =
+  let pts =
+    List.filter_map
+      (function M (x, y) | L (x, y) -> Some (x, y) | _ -> None)
+      segs
+  in
+  match pts with
+  | [] -> 0.
+  | first :: _ ->
+      let rec go acc = function
+        | (x, y) :: ((x', y') :: _ as rest) ->
+            go (acc +. ((x *. y') -. (x' *. y))) rest
+        | [ (x, y) ] -> acc +. ((x *. snd first) -. (fst first *. y))
+        | [] -> acc
+      in
+      Float.abs (go 0. pts) /. 2.
+
+(* Columns of a linear area over a shared x, its top at or above its baseline:
+   increasing [xs], each baseline height, and each height above it. *)
+let gen_columns =
+  let column =
+    Gen.triple (Gen.int_range 1 3) (Gen.int_range (-3) 3) (Gen.int_range 0 4)
+  in
+  let pp ppf cols =
+    Format.pp_print_list
+      (fun ppf (w, b, h) -> Format.fprintf ppf "(%d, %d, %d)" w b h)
+      ppf cols
+  in
+  Gen.with_pp pp (Gen.list ~size:(Gen.int_range 2 8) column)
+
+let shoelace_law cols =
+  let n = List.length cols in
+  let xs = Array.make n 0. and y0 = Array.make n 0. and ys = Array.make n 0. in
+  List.iteri
+    (fun i (w, b, h) ->
+      xs.(i) <- (if i = 0 then 0. else xs.(i - 1)) +. Float.of_int w;
+      y0.(i) <- Float.of_int b;
+      ys.(i) <- Float.of_int (b + h))
+    cols;
+  let trapezoids = ref 0. in
+  for i = 0 to n - 2 do
+    let h i = ys.(i) -. y0.(i) in
+    trapezoids :=
+      !trapezoids +. ((xs.(i + 1) -. xs.(i)) *. (h i +. h (i + 1)) /. 2.)
+  done;
+  equal (float 1e-9) !trapezoids
+    (shoelace (segs (Curve.area Curve.linear ~x0:xs ~y0 xs ys)))
+
+let areas =
+  group "areas"
+    [
+      prop
+        "a linear area over a shared x encloses the integral between its curves"
+        gen_columns shoelace_law;
+      prop "an area is its top, a line, its baseline backwards and a close"
+        (Gen.triple gen_curve gen_finite gen_finite)
+        area_law;
+      test "a step area traverses its baseline's steps backwards" step_area;
+      test "a point missing any coordinate breaks an area" area_missing;
+      prop "each run of an area is drawn alone"
+        (Gen.pair gen_curve gen_gappy_area)
+        area_runs_alone;
+      cases "a run of one point draws nothing" ~name curves (fun c ->
+          equal path Path.empty
+            (Curve.area c ~x0:[| 0.; 1. |] ~y0:[| 0.; nan |] [| 0.; 1. |]
+               [| 1.; 1. |]));
+      cases "area raises on lengths that differ" ~name curves area_lengths;
+    ]
+
+let () =
+  exit (run "Curve" [ runs_group; monotone; others; areas; affine; comparing ])
