@@ -53,9 +53,6 @@ type facet_panel = {
 
 (** {1:resolved Resolved figures} *)
 
-type entry
-(** A summary that a later resolve may reuse. *)
-
 type t = {
   figure : Figure.t;
   view : View.t;
@@ -65,7 +62,6 @@ type t = {
   nodes : (Common.id * (Common.id * Arrange.shares) list) list;
       (** Each node with the cells it lies in and the scopes it reads there. *)
   warnings : Common.warning list;
-  cache : entry list;
 }
 
 val resolve : ?prev:t -> ?view:View.t -> Figure.t -> t

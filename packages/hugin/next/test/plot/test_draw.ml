@@ -568,6 +568,10 @@ let reuse =
     draw ~prev ~density (layout ~theme size (resolve f))
   in
   [
+    ( "with nothing changed",
+      fun () ->
+        let f = pair_figure (other ()) in
+        (again ~prev:(fresh f) f, fresh f) );
     ( "after a tensor changes",
       fun () ->
         let prev = fresh (pair_figure (other ())) in

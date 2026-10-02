@@ -569,13 +569,6 @@ let facet_panels fitted pid =
 
 type spec = Sp : 'd kind * 'd Scale.t -> spec
 
-type entry = {
-  e_mark : mark;
-  e_inputs : input list;
-  e_filter : (string option * string option) option;
-  e_summary : summary;
-}
-
 type t = {
   figure : Figure.t;
   view : View.t;
@@ -585,21 +578,7 @@ type t = {
   nodes : (id * (id * shares) list) list;
       (* Each node with the cells it lies in and the scopes it reads there. *)
   warnings : warning list;
-  cache : entry list;
 }
-
-let equal_input (In i) (In i') =
-  Int.equal i.index i'.index
-  && Bool.equal i.fitted i'.fitted
-  && Bool.equal i.colour i'.colour
-  &&
-  match Scale.equal_kind (Scale.kind i.spec) (Scale.kind i'.spec) with
-  | Some Type.Equal -> Scale.equal i.spec i'.spec
-  | None -> false
-
-let equal_filter =
-  Option.equal (fun (a, b) (a', b') ->
-      Option.equal String.equal a a' && Option.equal String.equal b b')
 
 let inputs_of specs occ pid =
   List.concat
@@ -827,7 +806,7 @@ let in_order order ws =
   let key (id, _) = rank (List.rev (Nx.Ptree.Path.segments id)) in
   List.stable_sort (fun w w' -> Int.compare (key w) (key w')) ws
 
-let resolve ?prev ?(view = View.empty) figure =
+let afresh view figure =
   let ({ shaped; order; reads } : Arrange.t) = arrange view figure in
   let cells = panels shaped in
   check_coords cells;
@@ -863,36 +842,9 @@ let resolve ?prev ?(view = View.empty) figure =
           f.members)
       unfitted
   in
-  (* Summaries, reused from [prev] where their inputs are the same. *)
-  let old = match prev with None -> [] | Some r -> r.cache in
-  let fresh = ref [] in
-  let summary occ pid filter =
+  let summary occ pid mask =
     let inputs = inputs_of specs occ pid in
-    let fkey = Option.map fst filter in
-    let hit e =
-      equal_mark e.e_mark occ.mark
-      && List.equal equal_input e.e_inputs inputs
-      && equal_filter e.e_filter fkey
-    in
-    match List.find_opt hit !fresh with
-    | Some e -> e.e_summary
-    | None ->
-        let e =
-          match List.find_opt hit old with
-          | Some e -> e
-          | None ->
-              let mask = Option.bind filter snd in
-              {
-                e_mark = occ.mark;
-                e_inputs = inputs;
-                e_filter = fkey;
-                e_summary =
-                  reading occ.mid (fun () ->
-                      summarise occ.mark.shape inputs mask);
-              }
-        in
-        fresh := e :: !fresh;
-        e.e_summary
+    reading occ.mid (fun () -> summarise occ.mark.shape inputs mask)
   in
   let base =
     List.map (fun (pid, o) -> ((o.mid, pid), summary o pid None)) occs
@@ -975,9 +927,8 @@ let resolve ?prev ?(view = View.empty) figure =
                   | Rows r -> Some r
                   | Everywhere | Nowhere -> None
                 in
-                let summary_of _ _ =
-                  summary occ pid (Some ((p.pfy, p.pfx), mask))
-                in
+                let s = lazy (summary occ pid mask) in
+                let summary_of _ _ = Lazy.force s in
                 Some (fit summary_of (F { f with key = Panel (mid, p.pnid) })))
           (Option.value ~default:[] (find_path pid facets))
     | _ -> [ s ]
@@ -1035,16 +986,14 @@ let resolve ?prev ?(view = View.empty) figure =
   let warnings =
     dedupe (in_order order (notes @ constants @ zooms) @ unread view reads)
   in
-  {
-    figure;
-    view;
-    shaped;
-    facets;
-    scales;
-    nodes;
-    warnings;
-    cache = List.rev !fresh;
-  }
+  { figure; view; shaped; facets; scales; nodes; warnings }
+
+(* A figure equal to the one [prev] resolved, under an equal view, resolves to
+   [prev]. *)
+let resolve ?prev ?(view = View.empty) figure =
+  match prev with
+  | Some r when Figure.equal r.figure figure && View.equal r.view view -> r
+  | _ -> afresh view figure
 
 (* Observing and comparing *)
 

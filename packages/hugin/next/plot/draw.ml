@@ -43,42 +43,11 @@ let m4_rows = 4 (* Rows per device-pixel column. *)
 
 (* Panels *)
 
-type key = {
-  kid : id;
-  kbox : Box2.t;
-  kcoord : Coord.t;
-  kmarks : (id * mark) list;
-  kscales : (fitted * Ticks.t) list;
-  ktheme : Theme.t;
-  kdensity : float;
-}
-
-let equal_fitted (F f) (F f') =
-  String.equal f.name f'.name
-  &&
-  match equal_kind f.kind f'.kind with
-  | Some Type.Equal -> Scale.equal f.scale f'.scale
-  | None -> false
-
-let equal_key k k' =
-  Nx.Ptree.Path.equal k.kid k'.kid
-  && Box2.equal k.kbox k'.kbox
-  && Coord.equal k.kcoord k'.kcoord
-  && List.equal
-       (fun (id, m) (id', m') -> Nx.Ptree.Path.equal id id' && equal_mark m m')
-       k.kmarks k'.kmarks
-  && List.equal
-       (fun (s, t) (s', t') -> equal_fitted s s' && Ticks.equal t t')
-       k.kscales k'.kscales
-  && Theme.equal k.ktheme k'.ktheme
-  && Float.equal k.kdensity k'.kdensity
-
-type drawn = { key : key; picture : Picture.t; notes : warning list }
-
 type t = {
   renderable : Renderable.t;
   warnings : warning list;
-  drawn : drawn list;
+  layout : Layout.t;
+  density : float;
 }
 
 (* Context *)
@@ -587,94 +556,41 @@ let draw_occ cx pid occ targets =
 
 (* Panels *)
 
-(* [key cx pid content fp panel coord] is the reuse key of a panel. *)
-let key cx pid content fp (panel : Layout.panel) coord =
-  let frozen = Layout.frozen cx.layout in
-  let scales =
-    List.concat_map
-      (fun occ ->
-        let at = scale_of cx occ pid fp.pnid in
-        List.filter_map
-          (fun i ->
-            Option.map (fun s -> (cx.ctx.scales.(s), frozen.(s))) (at i))
-          (List.init (List.length occ.mark.bindings) Fun.id))
-      content.occs
-  in
-  {
-    kid = panel.id;
-    kbox = panel.box;
-    kcoord = coord;
-    kmarks = List.map (fun o -> (o.mid, o.mark)) content.occs;
-    kscales = scales;
-    ktheme = cx.ctx.theme;
-    kdensity = cx.ctx.density;
-  }
-
-(* [panels cx prev] is the drawing of each panel of the layout, in its order,
-   reused from [prev] where the key is equal. *)
-let panels cx prev =
+(* [panels cx] is the picture of each panel of the layout, in its order, with
+   the warnings its marks gave. *)
+let panels cx =
   let r = cx.resolved in
-  let coords = Layout.coords cx.layout in
-  let laid id =
-    List.find_opt
-      (fun ((p : Layout.panel), _) -> Nx.Ptree.Path.equal p.id id)
-      coords
-  in
-  let reused = match prev with None -> [] | Some d -> d.drawn in
-  let drawn =
+  let laid = Layout.panels cx.layout in
+  let targets =
     List.concat_map
       (fun (pid, content) ->
         let fps = Option.value ~default:[] (find_path pid r.facets) in
-        let found =
-          List.filter_map
-            (fun fp ->
-              Option.map
-                (fun (panel, coord) ->
-                  (fp, panel, coord, key cx pid content fp panel coord))
-                (laid fp.pnid))
-            fps
-        in
-        let old =
-          List.map
-            (fun (_, _, _, k) ->
-              List.find_opt (fun d -> equal_key d.key k) reused)
-            found
-        in
         let targets =
           List.filter_map
-            (fun ((fp, panel, _, _), o) ->
-              match o with
-              | Some _ -> None
-              | None -> Some { fp; panel; pictures = []; notes = [] })
-            (List.combine found old)
+            (fun fp ->
+              List.find_opt
+                (fun (p : Layout.panel) -> Nx.Ptree.Path.equal p.id fp.pnid)
+                laid
+              |> Option.map (fun panel ->
+                  { fp; panel; pictures = []; notes = [] }))
+            fps
         in
         (match targets with
         | [] -> ()
         | _ :: _ ->
             List.iter (fun occ -> draw_occ cx pid occ targets) content.occs);
-        List.map2
-          (fun (fp, (panel : Layout.panel), _, k) o ->
-            match o with
-            | Some d -> d
-            | None ->
-                let t =
-                  List.find
-                    (fun t -> Nx.Ptree.Path.equal t.fp.pnid fp.pnid)
-                    targets
-                in
-                let picture =
-                  Picture.tag
-                    { Picture.id = panel.id; rows = Picture.Rows [||] }
-                    (Picture.group (List.rev t.pictures))
-                in
-                { key = k; picture; notes = List.rev t.notes })
-          found old)
+        targets)
       (Arrange.panels r.shaped)
   in
+  let drawn t =
+    let tag = { Picture.id = t.panel.id; rows = Picture.Rows [||] } in
+    (Picture.tag tag (Picture.group (List.rev t.pictures)), List.rev t.notes)
+  in
   List.filter_map
-    (fun ((p : Layout.panel), _) ->
-      List.find_opt (fun d -> Nx.Ptree.Path.equal d.key.kid p.id) drawn)
-    coords
+    (fun (p : Layout.panel) ->
+      List.find_opt (fun t -> Nx.Ptree.Path.equal t.panel.id p.id) targets
+      |> Option.map drawn)
+    laid
 
 (* Texts *)
 
@@ -858,7 +774,7 @@ let draw_legend cx notes (g : Layout.legend_out) =
 
 (* Drawing *)
 
-let draw ?prev ~density l =
+let afresh ~density l =
   if not (is_pos density) then
     err "draw" "density %g is not finite and positive" density;
   let r = Layout.resolved l in
@@ -871,7 +787,7 @@ let draw ?prev ~density l =
     }
   in
   let cx = { ctx; layout = l; resolved = r } in
-  let drawn = panels cx prev in
+  let drawn = panels cx in
   let notes = ref [] in
   let legends = List.map (draw_legend cx notes) (Layout.legends l) in
   let w, h = Layout.size l in
@@ -885,7 +801,7 @@ let draw ?prev ~density l =
     Picture.group
       ([ paper ]
       @ List.map (draw_grid cx) axes
-      @ List.map (fun d -> d.picture) drawn
+      @ List.map fst drawn
       @ List.map (draw_axis cx) axes
       @ List.map
           (fun (hd : Layout.header_out) ->
@@ -895,12 +811,16 @@ let draw ?prev ~density l =
       @ List.map (placed cx) (Layout.titles l))
   in
   let warnings =
-    dedupe
-      (Layout.warnings l
-      @ List.concat_map (fun (d : drawn) -> d.notes) drawn
-      @ List.rev !notes)
+    dedupe (Layout.warnings l @ List.concat_map snd drawn @ List.rev !notes)
   in
-  { renderable = Renderable.v w h picture; warnings; drawn }
+  { renderable = Renderable.v w h picture; warnings; layout = l; density }
+
+(* A layout equal to the one [prev] drew, at an equal density, draws to
+   [prev]. *)
+let draw ?prev ~density l =
+  match prev with
+  | Some d when Float.equal d.density density && Layout.equal d.layout l -> d
+  | _ -> afresh ~density l
 
 (* Comparing and formatting *)
 

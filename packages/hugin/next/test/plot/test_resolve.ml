@@ -1375,7 +1375,7 @@ let reuse =
       prop "resolving again is equal" (Gen.pair gen_mark gen_mark)
         (fun (a, b) ->
           let f = layer [ a; grid [ [ b; a ] ] ] in
-          same (resolve f) f);
+          same (resolve ~prev:(resolve f) f) f);
       prop "a reused resolution equals a fresh one after a tensor changes"
         Gen.(pair (gen_values 3) (gen_values 3))
         (fun (xs, xs') ->
@@ -1406,7 +1406,8 @@ let reuse =
           let k = View.number "k" ~init:1. in
           let f = bind k (fun v -> dot1 [| v |] [| v |]) in
           same (resolve f) f);
-      test "a reused summary names the mark's new id" (fun () ->
+      test "a reused resolution equals a fresh one after an id changes"
+        (fun () ->
           let a =
             dot ~x:(num ~scale:exact_log (f64 [| 0.; 1. |])) ~y:(const 0.5) ()
           in

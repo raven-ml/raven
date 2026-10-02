@@ -1588,15 +1588,10 @@ val resolve : ?prev:Resolved.t -> ?view:View.t -> t -> Resolved.t
     summaries of its marks' data computed where their tensors live, categorical
     scales first. It reads neither size, theme nor density.
 
-    With [prev], a mark's summary is reused if its tensors and functions are
-    physically, and its specifications and the transforms and explicit
-    categorical domains that merging gives the scales it reads are structurally,
-    those of a mark of [prev]; every scope is fitted again. The result is
-    {!Resolved.equal} to [resolve ~view f]. A summary is a mark's, and depends
-    on those scales, because a row is dropped by all its channels together and a
-    value is missing where its scale cannot place it ({!section-missing}): a
-    mark layered with a channel that makes ["y"] logarithmic loses its rows with
-    non-positive [y] from every hull.
+    With [prev], the result is [prev] if [f] is {!equal} to the figure [prev]
+    resolved and [view] to its view, and [f] resolved again otherwise: it is
+    {!Resolved.equal} to [resolve ~view f]. Figures compare tensors physically,
+    so a tensor changed in place between two resolves is not seen.
 
     Raises [Invalid_argument], naming the nodes at fault, on the composition
     errors and conflicts that {!layer}, {!grid}, {!span}, {!share}, {!coord},
@@ -1651,14 +1646,11 @@ val draw : ?prev:Drawing.t -> density:float -> Layout.t -> Drawing.t
     on each panel's rows and paints the paper, the panels and the guides. Vector
     output of the drawing is reduced at [density] too.
 
-    With [prev], the picture of each panel whose id, box, coordinate system,
-    scales with their frozen ticks, marks with their ids, theme and density
-    equal those of a panel of [prev] is reused, with the warnings its draw
-    functions gave: the result is {!Drawing.equal} to [draw ~density l]. Draw
-    functions read the theme and the ticks ({!Mark.theme}, {!Mark.ticks}), so a
-    change of either draws the panel again. Marks compare as {!equal} compares
-    them, tensors physically, so a tensor changed in place between two draws is
-    not seen, and the panel is reused with its old picture.
+    With [prev], the result is [prev] if [l] is {!Layout.equal} to the layout
+    [prev] drew and [density] to its density, and [l] drawn again otherwise: it
+    is {!Drawing.equal} to [draw ~density l]. Layouts compare their figures as
+    {!equal} does, tensors physically, so a tensor changed in place between two
+    draws is not seen.
 
     Raises [Invalid_argument] if [density] is not finite and positive, what draw
     functions raise, and as reading a tensor raises ({!section-conventions}). *)
