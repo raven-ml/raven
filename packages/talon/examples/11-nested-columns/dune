@@ -1,0 +1,13 @@
+(executable
+ (name main)
+ (libraries talon nx nx.ragged))
+
+(rule
+ (with-stdout-to
+  main.output
+  (run ./main.exe)))
+
+(rule
+ (alias runtest)
+ (action
+  (diff main.expected main.output)))

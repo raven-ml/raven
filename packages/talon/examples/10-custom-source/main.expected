@@ -1,0 +1,6 @@
+query → i int64, square int64
+derive ["square" := i * i]
+└ filter (i mod 7 = 0)
+  └ counter (1 column, 10000 rows) ~filters:[i >= 2500]
+
+1071 rows, squares sum to 46865618751

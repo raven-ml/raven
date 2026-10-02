@@ -218,4 +218,6 @@ A reader's `next` returns an `Error` for a failure in the data, and talon
 calls `close` once it needs no more of the part.
 
 The example [05-formats](../examples/05-formats/README.md) reads and writes
-this page's CSV and reads a Parquet file.
+this page's CSV and reads a Parquet file, and
+[10-custom-source](../examples/10-custom-source/README.md) writes a source that
+applies filters itself.

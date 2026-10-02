@@ -1,0 +1,22 @@
+lengths [3, 0, 2]
+values int32 [5] 
+[5, 17, ..., 9, 9]
+
+id int8, tokens list[int32], image tensor[float32, 2×2], point record[x float64, y float64], length ext[example.metres, float64]
+
+table 3 rows × 5 columns
+ id    tokens       image                 point                         length
+ int8  list[int32]  tensor[float32, 2×2]  record[x float64, y float64]  ext[example.metres, float64]
+    1  [5; 17; 2]   <tensor>              <record>                      1.500000
+    2  []           <tensor>              <record>                      0.200000
+    3  [9; 9]       <tensor>              <record>                      12.000000
+
+id 1: 1.5 m
+id 3: 12 m
+
+image 2: float32 [2,2] 
+[[4, 5],
+ [6, 7]]
+[5; 17; 2]
+[]
+[9; 9]

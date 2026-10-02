@@ -1,0 +1,52 @@
+table 6 rows × 3 columns
+ site    ph            temp
+ string  float64       float64
+ north   -3.21288e-01  -0.875304
+ north              ∅  -0.708579
+ north   -1.52612e+00  -1.125391
+ south    8.83541e-01   0.958666
+ south    8.03219e-02   0.791942
+ south    8.83541e-01   0.958666
+
+table 1 row × 4 columns
+ site   ph     temp   grade
+ int64  int64  int64  int64
+     0      1      0      0
+
+table 2 rows × 10 columns
+ column  count  nulls  mean      std       min       q25       median    q75       max
+ string  int64  int64  float64   float64   float64   float64   float64   float64   float64
+ ph          5      1   7.18000  0.248998   6.80000   7.10000   7.20000   7.40000   7.40000
+ temp        6      0  15.12500  2.998958  11.75000  12.62500  15.25000  17.87500  18.00000
+
+table 2 rows × 2 columns
+ site    count
+ string  int64
+ north       3
+ south       3
+
+table 5 rows × 3 columns
+ site    temp     grade
+ string  float32  string
+ north   12.5000  a
+ north   13.0000  b
+ north   11.7500  a
+ south   18.0000  a
+ south   17.5000  b
+
+table 2 rows × 4 columns
+ site    ph       celsius  grade
+ string  float64  float32  string
+ south   7.40000  18.0000  a
+ south   7.40000  18.0000  a
+
+table 6 rows × 5 columns
+ site    ph       temp     grade_a  grade_b
+ string  float64  float32  bool     bool
+ north   7.10000  12.5000  true     false
+ north         ∅  13.0000  false    true
+ north   6.80000  11.7500  true     false
+ south   7.40000  18.0000  true     false
+ south   7.20000  17.5000  false    true
+ south   7.40000  18.0000  true     false
+

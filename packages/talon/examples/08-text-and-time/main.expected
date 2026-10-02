@@ -1,0 +1,21 @@
+table 3 rows × 4 columns
+ subject  parts                 first  length
+ string   list[string]          bool   int64
+ sub-01   ["sub-01"; "ses-01"]  true       17
+ sub-01   ["sub-01"; "ses-02"]  true       17
+ sub-02   ["sub-02"; "ses-01"]  false      17
+
+table 3 rows × 4 columns
+ weekday  day                   end                   since
+ int64    datetime[ms, UTC]     datetime[ms, UTC]     duration[ms]
+       5  2024-03-15T00:00:00Z  2024-03-15T11:00:00Z  0s
+       6  2024-03-16T00:00:00Z  2024-03-16T11:02:03Z  24h2m3s
+       4  2024-03-21T00:00:00Z  2024-03-21T10:03:20Z  143h3m20s
+
+table 3 rows × 2 columns
+ logged      label
+ date        string
+ 2024-03-15  2024-03-15 09:30
+ 2024-03-16  2024-03-16 09:32
+ 2024-03-21  2024-03-21 08:33
+

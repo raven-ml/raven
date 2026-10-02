@@ -18,3 +18,7 @@ dune exec ./main.exe
 | [`05-formats`](./05-formats/) | Reading and writing CSV, reading Parquet | `Talon_csv.sniff`, `Talon_csv.encode`, `Talon_parquet.sniff` |
 | [`06-mistakes`](./06-mistakes/) | Plan problems and failures in data | `Invalid_argument`, `Error.pp` |
 | [`07-features`](./07-features/) | From a file to a feature matrix | `Talon.take`, `Talon.to_tensor`, `Column.to_tensor` |
+| [`08-text-and-time`](./08-text-and-time/) | Text and temporal expressions | `Expr.Str`, `Expr.Temporal` |
+| [`09-many-columns`](./09-many-columns/) | Selectors and `Kit` compositions | `Sel`, `Expr.across`, `Kit.describe`, `Kit.one_hot` |
+| [`10-custom-source`](./10-custom-source/) | A source of your own, folded over | `Source.v`, `~pushdown`, `Query.fold` |
+| [`11-nested-columns`](./11-nested-columns/) | Lists, tensors, records, extension types | `Column.ragged`, `Record.add`, `Ext.v` |

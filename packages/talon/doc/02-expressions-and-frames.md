@@ -380,5 +380,9 @@ the same query over the same data gives the same rows and the same error.
 `Query.fold` runs a query batch by batch, for results that need not fit in
 memory at once, and `Query.run` folds the batches into one table.
 
-The examples [03-expressions](../examples/03-expressions/README.md) and
-[07-features](../examples/07-features/README.md) run expressions like these.
+The examples [03-expressions](../examples/03-expressions/README.md),
+[07-features](../examples/07-features/README.md),
+[08-text-and-time](../examples/08-text-and-time/README.md) and
+[09-many-columns](../examples/09-many-columns/README.md) run expressions like
+these, and [11-nested-columns](../examples/11-nested-columns/README.md) builds
+list, tensor, record and extension columns.
