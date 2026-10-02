@@ -364,6 +364,8 @@ let with_scale_offset offset (p : _ Gpt_oss.params) =
     | Moe.Float w -> Moe.Float w
     | Moe.Quant (Nx_quant.Mxfp4 { codes; scales }) ->
         Moe.Quant (Nx_quant.mxfp4 ~scales:(add scales) codes)
+    | Moe.Quant (Q8_0 _ | Q4_K _ | Q6_K _) ->
+        invalid_arg "with_scale_offset: gpt-oss's experts are MXFP4"
   in
   let block (b : _ Gpt_oss.block) =
     let moe =

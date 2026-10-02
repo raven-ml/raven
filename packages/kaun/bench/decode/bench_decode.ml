@@ -200,20 +200,57 @@ let product ~run ~device ~tokens suffix =
       call ();
       synchronize (device ()))
 
+(* Dense quantised products, one per format, at a decode step's shape: one token
+   by a [[| 4096; 4096 |]] projection, compiled. Zero bytes, copied to storage
+   of their own, as the routed product's are. *)
+
+let dense = 4096
+
+let formats =
+  let zeros last place = place (Nx.zeros Nx.uint8 [| dense; last |]) in
+  [
+    ( "mxfp4",
+      fun place ->
+        Nx_quant.mxfp4
+          ~scales:(zeros (dense / 32) place)
+          (zeros (dense / 2) place) );
+    ("q8_0", fun place -> Nx_quant.q8_0 (zeros (dense / 32 * 34) place));
+    ("q4_k", fun place -> Nx_quant.q4_k (zeros (dense / 256 * 144) place));
+    ("q6_k", fun place -> Nx_quant.q6_k (zeros (dense / 256 * 210) place));
+  ]
+
+let linear make device =
+  let place t = Nx.place (Nx.Placement.on device) (Nx.copy t) in
+  let w = make place in
+  let f = Rune.jit' (Nx_quant.apply w) in
+  let x = place (Nx.full Nx.float32 [| 1; dense |] 0.5) in
+  ignore (f x);
+  fun () -> ignore (f x)
+
+let format_product ~device (name, make) =
+  Thumper.bench_with_setup
+    ~setup:(fun () -> linear make (device ()))
+    (Printf.sprintf "%s product, 1 token" name)
+    (fun call ->
+      call ();
+      synchronize (device ()))
+
 let quant name ~device ~prompt =
   Thumper.group name
     (List.map
        (fun tokens -> product ~run:compiled ~device ~tokens "")
-       [ 1; prompt ])
+       [ 1; prompt ]
+    @ List.map (format_product ~device) formats)
 
 let host () =
   let device () = Nx.Device.host in
   Thumper.group "host"
-    [
-      product ~run:compiled ~device ~tokens:1 "";
-      product ~run:compiled ~device ~tokens:64 "";
-      product ~run:eager ~device ~tokens:1 ", eager";
-    ]
+    ([
+       product ~run:compiled ~device ~tokens:1 "";
+       product ~run:compiled ~device ~tokens:64 "";
+       product ~run:eager ~device ~tokens:1 ", eager";
+     ]
+    @ List.map (format_product ~device) formats)
 
 let cuda_quant () =
   quant "cuda" ~device:(fun () -> Nx.Device.v (Cuda 0)) ~prompt:512
@@ -234,7 +271,12 @@ let warm_metal () =
         (fun tokens ->
           (routed ~run:compiled ~tokens (device ())) ();
           synchronize (device ()))
-        [ 1; metal_prompt ]
+        [ 1; metal_prompt ];
+      List.iter
+        (fun (_, make) ->
+          (linear make (device ())) ();
+          synchronize (device ()))
+        formats
 
 (* gpt-oss-20b *)
 

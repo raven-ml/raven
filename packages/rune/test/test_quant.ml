@@ -14,27 +14,97 @@ open Nx_test
 
 let rng = Random.State.make [| 7 |]
 
-(* Scale bytes of finite values, with 0 and 1 (subnormal values) and 255 (NaN
-   groups) among them. *)
-let any_scale _ =
-  match Random.State.int rng 16 with
-  | 0 -> 255
-  | 1 -> 0
-  | 2 -> 1
-  | _ -> 100 + Random.State.int rng 51
+(* The formats, the values and bytes of their blocks, and the offsets of a GGUF
+   block's float16 scales. *)
+type format = Mxfp4 | Q8_0 | Q4_K | Q6_K
 
-(* Scale bytes of normal float32 values, for Metal, which flushes subnormals,
-   and for derivatives. *)
-let moderate _ = 120 + Random.State.int rng 15
+let formats = [ Mxfp4; Q8_0; Q4_K; Q6_K ]
 
-(* A weight of logical shape [shape] with random codes. *)
-let weight ?(scale = any_scale) shape =
+let format_name = function
+  | Mxfp4 -> "mxfp4"
+  | Q8_0 -> "q8_0"
+  | Q4_K -> "q4_k"
+  | Q6_K -> "q6_k"
+
+let block_values = function Mxfp4 | Q8_0 -> 32 | Q4_K | Q6_K -> 256
+
+let block_bytes = function
+  | Mxfp4 -> 16
+  | Q8_0 -> 34
+  | Q4_K -> 144
+  | Q6_K -> 210
+
+let halves = function
+  | Mxfp4 -> []
+  | Q8_0 -> [ 0 ]
+  | Q4_K -> [ 0; 2 ]
+  | Q6_K -> [ 208 ]
+
+(* A block's scale by its index: an MXFP4 scale byte, or a GGUF block's float16
+   scales' bits. *)
+type scale = { e8m0 : int array -> int; f16 : int array -> int }
+
+let f16 x = Nx.item [] (Nx.bitcast Nx.uint16 (Nx.scalar Nx.float16 x))
+let signed m = if Random.State.bool rng then m else -.m
+
+(* Scales of finite values, with subnormal values and NaN blocks among them:
+   MXFP4's bytes 0 and 1 and 255, and GGUF's zero, least subnormal and NaN. *)
+let any_scale =
+  {
+    e8m0 =
+      (fun _ ->
+        match Random.State.int rng 16 with
+        | 0 -> 255
+        | 1 -> 0
+        | 2 -> 1
+        | _ -> 100 + Random.State.int rng 51);
+    f16 =
+      (fun _ ->
+        match Random.State.int rng 16 with
+        | 0 -> 0x7E00
+        | 1 -> 0
+        | 2 -> 1
+        | _ -> f16 (signed (Float.ldexp (Random.State.float rng 1.) (-6))));
+  }
+
+(* Scales of normal float32 values, for Metal, which flushes subnormals, and for
+   derivatives. *)
+let moderate =
+  {
+    e8m0 = (fun _ -> 120 + Random.State.int rng 15);
+    f16 = (fun _ -> f16 (signed (0.01 +. Random.State.float rng 0.03)));
+  }
+
+(* A weight of [format] and logical shape [shape] with random quants. *)
+let weight ?(format = Mxfp4) ?(scale = any_scale) shape =
   let r = Array.length shape in
   let part last = Array.append (Array.sub shape 0 (r - 1)) [| last |] in
   let k = shape.(r - 1) in
-  Nx_quant.mxfp4
-    ~scales:(Nx.init Nx.uint8 (part (k / 32)) scale)
-    (Nx.init Nx.uint8 (part (k / 2)) (fun _ -> Random.State.int rng 256))
+  let byte _ = Random.State.int rng 256 in
+  let gguf make =
+    let bytes = block_bytes format and fields = Array.of_list (halves format) in
+    let per = Array.length fields in
+    let scales =
+      Nx.to_array
+        (Nx.init Nx.uint16 (part (k / block_values format * per)) scale.f16)
+    in
+    let b = Array.init (Array.length scales / per * bytes) byte in
+    Array.iteri
+      (fun i h ->
+        let at = (i / per * bytes) + fields.(i mod per) in
+        b.(at) <- h land 255;
+        b.(at + 1) <- h lsr 8)
+      scales;
+    make (Nx.create Nx.uint8 (part (k / block_values format * bytes)) b)
+  in
+  match format with
+  | Mxfp4 ->
+      Nx_quant.mxfp4
+        ~scales:(Nx.init Nx.uint8 (part (k / 32)) scale.e8m0)
+        (Nx.init Nx.uint8 (part (k / 2)) byte)
+  | Q8_0 -> gguf Nx_quant.q8_0
+  | Q4_K -> gguf Nx_quant.q4_k
+  | Q6_K -> gguf Nx_quant.q6_k
 
 let floats shape =
   Nx.init Nx.float32 shape (fun _ -> Random.State.float rng 2. -. 1.)
@@ -60,12 +130,6 @@ let poison ~at x =
 
 (* Agreement *)
 
-(* [magnitudes w] is [w] with every code's sign cleared: the absolute values of
-   [w]'s values. *)
-let magnitudes (Nx_quant.Mxfp4 { codes; scales }) =
-  Nx_quant.mxfp4 ~scales
-    (Nx.bitwise_and codes (Nx.full Nx.uint8 (Nx.shape codes) 0x77))
-
 type case = {
   name : string;
   w : Nx_quant.t;
@@ -78,6 +142,41 @@ let case ?ids name w x = { name; w; ids; x }
 (* [product c w x] is [c]'s product of [w] and [x]. *)
 let product c w x = Nx_quant.apply ?ids:c.ids w x
 
+(* [gathered a ~lanes ids] is the matrices of [a] [[| l...; e; n; k |]], with
+   [lanes] leading axes, that [ids] select in their lanes, an id clamped among
+   the [e] experts: [[| b...; s...; n; k |]]. *)
+let gathered a ~lanes ids =
+  let s = Nx.shape a and is = Nx.shape ids in
+  let e = s.(lanes) and matrix = Array.sub s (lanes + 1) 2 in
+  let lane = Array.init lanes (fun i -> if s.(i) = 1 then is.(i) else s.(i)) in
+  let tokens = Array.sub is lanes (Array.length is - lanes) in
+  let count = Array.fold_left ( * ) 1 tokens in
+  let ids =
+    Nx.clamp ~min:0L
+      ~max:(Int64.of_int (e - 1))
+      (Nx.broadcast_to (Array.append lane tokens) ids)
+  in
+  let indices =
+    Nx.broadcast_to
+      (Array.concat [ lane; [| count |]; matrix ])
+      (Nx.reshape (Array.concat [ lane; [| count; 1; 1 |] ]) ids)
+  in
+  Nx.reshape
+    (Array.concat [ lane; tokens; matrix ])
+    (Nx.take_along_axis ~axis:lanes ~indices
+       (Nx.broadcast_to (Array.concat [ lane; [| e |]; matrix ]) a))
+
+(* [bound c] is the product of [c]'s magnitudes: [|x|] by the matrices of
+   [|dequant w|] it meets. *)
+let bound c =
+  let a = Nx.abs (Nx_quant.dequant Nx.float32 c.w) in
+  let w' =
+    match c.ids with
+    | None -> a
+    | Some ids -> gathered a ~lanes:(Nx.ndim a - 3) ids
+  in
+  Nx.matmul (Nx.abs (Nx.cast Nx.float32 c.x)) (Nx.matrix_transpose w')
+
 (* [agrees c expected actual] checks [actual] against eager's [expected] within
    the error of a float32 sum of [c]'s terms, each rounded once to [x]'s dtype:
    at a value whose terms' magnitudes sum to [b], within [2 k u b] plus [k]
@@ -88,9 +187,7 @@ let agrees (type b) c (expected : (float, b) Nx.t) (actual : (float, b) Nx.t) =
   equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape actual);
   let s = Nx.shape c.x in
   let k = float_of_int s.(Array.length s - 1) in
-  let bound =
-    Nx.to_array (product c (magnitudes c.w) (Nx.abs (Nx.cast Nx.float32 c.x)))
-  in
+  let bound = Nx.to_array (bound c) in
   let unit =
     match Nx.dtype expected with
     | Nx.Float16 -> Float.ldexp 1. (-11)
@@ -117,52 +214,65 @@ let agrees (type b) c (expected : (float, b) Nx.t) (actual : (float, b) Nx.t) =
 
 (* The products, from the old suite's Law 2 *)
 
-let products ~scale =
-  let w68 = weight ~scale [| 6; 8; 64 |]
-  and w38 = weight ~scale [| 3; 8; 64 |] in
-  let w48 = weight ~scale [| 4; 8; 64 |] in
+let products ?(format = Mxfp4) ~scale () =
+  let k = max 64 (block_values format) in
+  let weight shape = weight ~format ~scale (Array.append shape [| k |]) in
+  let floats shape = floats (Array.append shape [| k |]) in
+  let w68 = weight [| 6; 8 |] and w38 = weight [| 3; 8 |] in
+  let w48 = weight [| 4; 8 |] in
+  let case ?ids name w x =
+    case ?ids (Printf.sprintf "%s, %s" (format_name format) name) w x
+  in
   [
-    case "without ids, matrices"
-      (weight ~scale [| 5; 64 |])
-      (floats [| 3; 4; 64 |]);
+    case "without ids, matrices" (weight [| 5 |]) (floats [| 3; 4 |]);
     case "without ids, batch axes broadcast"
-      (weight ~scale [| 2; 5; 64 |])
-      (floats [| 4; 1; 3; 64 |]);
-    case "without ids, a vector"
-      (weight ~scale [| 2; 5; 64 |])
-      (floats [| 64 |]);
+      (weight [| 2; 5 |])
+      (floats [| 4; 1; 3 |]);
+    case "without ids, a vector" (weight [| 2; 5 |]) (floats [||]);
     case "fewer positions than experts"
       ~ids:(ints [| 2; 2 |] [| 3; -1; 6; 3 |])
       w68
-      (poison ~at:[ [ 0; 1 ]; [ 1; 0 ] ] (floats [| 2; 2; 1; 64 |]));
+      (poison ~at:[ [ 0; 1 ]; [ 1; 0 ] ] (floats [| 2; 2; 1 |]));
     case "ids outside the experts, over a vector"
       ~ids:(ints [| 3 |] [| 5; -5; 0 |])
-      w68 (floats [| 64 |]);
+      w68 (floats [||]);
     case "ids 2^32 from an expert"
       ~ids:(ints [| 6; 1 |] [| 0; (1 lsl 32) + 2; 1; 3; 5 - (1 lsl 32); 4 |])
       w68
-      (floats [| 6; 1; 2; 64 |]);
+      (floats [| 6; 1; 2 |]);
     case "a lane of experts per batch row"
       ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
-      (weight ~scale [| 2; 3; 8; 64 |])
-      (floats [| 2; 2; 1; 64 |]);
+      (weight [| 2; 3; 8 |])
+      (floats [| 2; 2; 1 |]);
     case "as many positions as experts or more"
       ~ids:(ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |])
       w38
-      (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 3; 64 |]));
+      (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 3 |]));
     case "many routes of one row"
       ~ids:
         (ints [| 8; 2 |] [| 0; 3; -1; 2; 4; 3; 1; 1; 3; -5; 0; 2; 2; 2; 1; 0 |])
       w48
-      (floats [| 8; 1; 1; 64 |]);
+      (floats [| 8; 1; 1 |]);
   ]
 
-(* The largest scales: codes of magnitude 4 or more at scale byte 253, and of 2
-   or more at 254, are infinite. *)
+let every_format ~scale =
+  List.concat_map (fun format -> products ~format ~scale ()) formats
+
+(* The largest scales: MXFP4 codes of magnitude 4 or more at scale byte 253, and
+   of 2 or more at 254, are infinite; a GGUF block's largest float16 scale gives
+   its largest values. *)
 let largest =
-  case "the largest scales"
-    (weight ~scale:(fun i -> 253 + (i.(0) mod 2)) [| 4; 64 |])
-    (floats [| 2; 64 |])
+  let scale =
+    { e8m0 = (fun i -> 253 + (i.(0) mod 2)); f16 = (fun _ -> 0x7BFF) }
+  in
+  List.map
+    (fun format ->
+      let k = max 64 (block_values format) in
+      case
+        (format_name format ^ ", the largest scales")
+        (weight ~format ~scale [| 4; k |])
+        (floats [| 2; k |]))
+    formats
 
 (* [compiled c] is [c]'s product compiled, its routes and rows arguments. *)
 let compiled c =
@@ -180,7 +290,7 @@ let values =
       cases
         ~name:(fun c -> c.name)
         "compiled, a product is eager's"
-        (largest :: products ~scale:any_scale)
+        (largest @ every_format ~scale:any_scale)
         (fun c -> agrees c (product c c.w c.x) (compiled c));
       test "compiled, a product of a float16 x is eager's" (fun () ->
           let c =
@@ -204,9 +314,12 @@ let values =
             fun w -> Nx.cast Nx.float32 (Nx_quant.dequant Nx.bfloat16 w) );
         ]
         (fun (_, f) ->
-          let w = weight [| 3; 8; 64 |] in
-          equal (tensor float_exact) (f w)
-            (Rune.jit Nx.Ptree.(Nx_quant.ptree @-> returns tensor) f w));
+          List.iter
+            (fun format ->
+              let w = weight ~format [| 3; 8; 256 |] in
+              equal ~msg:(format_name format) (tensor float_exact) (f w)
+                (Rune.jit Nx.Ptree.(Nx_quant.ptree @-> returns tensor) f w))
+            formats);
       test "compiled, one token's four experts among 32 are its product"
         (fun () ->
           let c =
@@ -446,7 +559,11 @@ let transformations =
              are infinite. Its 3 rows pad its block of 2 with a slot. *)
           let w =
             weight
-              ~scale:(fun i -> if i.(0) = 0 then 254 else moderate i)
+              ~scale:
+                {
+                  moderate with
+                  e8m0 = (fun i -> if i.(0) = 0 then 254 else moderate.e8m0 i);
+                }
               [| 4; 8; 64 |]
           in
           let ids = ints [| 6; 2 |] [| 0; 1; 0; 2; 0; 3; 1; 2; 3; 1; 2; 3 |] in
@@ -562,7 +679,8 @@ let metal =
       let p = Nx.Placement.on m in
       cases
         ~name:(fun c -> c.name)
-        "on Metal, a product is eager's" (products ~scale:moderate)
+        "on Metal, a product is eager's"
+        (every_format ~scale:moderate)
         (fun c ->
           let r =
             match c.ids with

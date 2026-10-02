@@ -3052,6 +3052,10 @@ thread.
 
 ### Nx
 
+- Add GGUF's Q8_0, Q4_K and Q6_K block formats to `Nx_quant`: `Nx_quant.q8_0`,
+  `q4_k` and `q6_k` take a tensor's bytes as `Nx_io.load_gguf` loads them.
+  `dequant` gives ggml's values bit for bit, and `apply`, `~ids` included,
+  multiplies by them, eagerly and under `Rune.jit`.
 - `Nx.bitcast` on a device of a view at an offset, such as a slice, read the
   storage from its start: the result now keeps the view, as on the host.
 - `Nx_ragged.ids` builds each round's words in the elements' memory order,

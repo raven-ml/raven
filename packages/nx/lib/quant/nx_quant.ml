@@ -8,11 +8,50 @@ type t =
       codes : (int, Nx.uint8_elt) Nx.t;
       scales : (int, Nx.uint8_elt) Nx.t;
     }
+  | Q8_0 of { blocks : (int, Nx.uint8_elt) Nx.t }
+  | Q4_K of { blocks : (int, Nx.uint8_elt) Nx.t }
+  | Q6_K of { blocks : (int, Nx.uint8_elt) Nx.t }
 
 let strf = Printf.sprintf
 
 let pp_shape s =
   "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
+
+(* Block layouts. MXFP4 stores a group of 32 values as 16 bytes of codes and a
+   scale byte apart. The GGUF formats store a block's scales with its quants, as
+   ggml-common.h's block structs lay them out. *)
+
+let mxfp4_group = 32
+
+(* QK8_0, QK_K and K_SCALE_SIZE, and sizeof (ggml_half). *)
+let qk8_0 = 32
+let qk_k = 256
+let k_scale_size = 12
+let half_bytes = 2
+
+(* block_q8_0: d, qs[QK8_0]. *)
+let q8_0_bytes = half_bytes + qk8_0
+
+(* block_q4_K: d, dmin, scales[K_SCALE_SIZE], qs[QK_K / 2]. *)
+let q4_k_bytes = (2 * half_bytes) + k_scale_size + (qk_k / 2)
+
+(* block_q6_K: ql[QK_K / 2], qh[QK_K / 4], scales[QK_K / 16], d. *)
+let q6_k_bytes = (qk_k / 2) + (qk_k / 4) + (qk_k / 16) + half_bytes
+
+(* [layout w] is the part of [w] that holds its quants, the bytes of one block
+   of it along its last axis, and the values of that block. *)
+let layout = function
+  | Mxfp4 { codes; _ } -> (codes, mxfp4_group / 2, mxfp4_group)
+  | Q8_0 { blocks } -> (blocks, q8_0_bytes, qk8_0)
+  | Q4_K { blocks } -> (blocks, q4_k_bytes, qk_k)
+  | Q6_K { blocks } -> (blocks, q6_k_bytes, qk_k)
+
+(* [map f w] is [w] with [f] applied to each of its parts. *)
+let map f = function
+  | Mxfp4 { codes; scales } -> Mxfp4 { codes = f codes; scales = f scales }
+  | Q8_0 { blocks } -> Q8_0 { blocks = f blocks }
+  | Q4_K { blocks } -> Q4_K { blocks = f blocks }
+  | Q6_K { blocks } -> Q6_K { blocks = f blocks }
 
 (* Construction. Checks read shapes only, never bytes. *)
 
@@ -33,43 +72,81 @@ let check_mxfp4 fn codes scales =
          (pp_shape expected)
          (pp_shape (Nx.shape scales)))
 
+(* [check_blocks fn format bytes blocks] checks that [blocks] is rows of whole
+   blocks of [bytes] bytes. *)
+let check_blocks fn format bytes blocks =
+  let s = Nx.shape blocks in
+  let r = Array.length s in
+  if r < 2 || s.(r - 1) mod bytes <> 0 then
+    invalid_arg
+      (strf
+         "%s: blocks must have shape [...; n; b * %d], rows of whole %s blocks \
+          of %d bytes, got %s"
+         fn bytes format bytes (pp_shape s))
+
 let mxfp4 ~scales codes =
   check_mxfp4 "Nx_quant.mxfp4" codes scales;
   Mxfp4 { codes; scales }
 
-let place p (Mxfp4 { codes; scales }) =
-  (* A group is 16 bytes of codes: every window must start and stop at one. *)
-  let c = Nx.shape codes in
+let q8_0 blocks =
+  check_blocks "Nx_quant.q8_0" "Q8_0" q8_0_bytes blocks;
+  Q8_0 { blocks }
+
+let q4_k blocks =
+  check_blocks "Nx_quant.q4_k" "Q4_K" q4_k_bytes blocks;
+  Q4_K { blocks }
+
+let q6_k blocks =
+  check_blocks "Nx_quant.q6_k" "Q6_K" q6_k_bytes blocks;
+  Q6_K { blocks }
+
+let place p w =
+  (* Every window must start and stop at a block of the quants. *)
+  let part, bytes, values = layout w in
+  let c = Nx.shape part in
   let r = Array.length c in
   List.iter
     (fun d ->
       let lo, hi = (Nx.Placement.window p c d).(r - 1) in
-      if lo mod 16 <> 0 || hi mod 16 <> 0 then
+      if lo mod bytes <> 0 || hi mod bytes <> 0 then
         invalid_arg
           (strf
-             "Nx_quant.place: splitting codes and scales along axis %d in %d \
-              cuts a 32-value group (%d groups)"
+             "Nx_quant.place: splitting the weight along axis %d in %d cuts a \
+              block of %d values (%d blocks)"
              (r - 1)
              (c.(r - 1) / (hi - lo))
-             (Nx.shape scales).(r - 1)))
+             values
+             (c.(r - 1) / bytes)))
     (Nx.Placement.devices p);
-  Mxfp4 { codes = Nx.place p codes; scales = Nx.place p scales }
+  map (Nx.place p) w
 
-let shape (Mxfp4 { codes; _ }) =
-  let s = Array.copy (Nx.shape codes) in
+let shape w =
+  let part, bytes, values = layout w in
+  let s = Array.copy (Nx.shape part) in
   let r = Array.length s in
-  s.(r - 1) <- 2 * s.(r - 1);
+  s.(r - 1) <- s.(r - 1) / bytes * values;
   s
 
 (* Structure *)
 
-let walk c (Mxfp4 { codes; scales }) =
+let walk c w =
   let open Nx.Ptree.Walk in
-  case c "mxfp4";
-  let codes = field c "codes" tensor codes in
-  let scales = field c "scales" tensor scales in
-  check_mxfp4 "Nx_quant.walk" codes scales;
-  Mxfp4 { codes; scales }
+  let blocks format bytes v =
+    case c format;
+    let blocks = field c "blocks" tensor v in
+    check_blocks "Nx_quant.walk" (String.uppercase_ascii format) bytes blocks;
+    blocks
+  in
+  match w with
+  | Mxfp4 { codes; scales } ->
+      case c "mxfp4";
+      let codes = field c "codes" tensor codes in
+      let scales = field c "scales" tensor scales in
+      check_mxfp4 "Nx_quant.walk" codes scales;
+      Mxfp4 { codes; scales }
+  | Q8_0 { blocks = b } -> Q8_0 { blocks = blocks "q8_0" q8_0_bytes b }
+  | Q4_K { blocks = b } -> Q4_K { blocks = blocks "q4_k" q4_k_bytes b }
+  | Q6_K { blocks = b } -> Q6_K { blocks = blocks "q6_k" q6_k_bytes b }
 
 type weight = t
 
@@ -126,9 +203,9 @@ let scale_bits s =
   Nx.where (Nx.equal_s s 0l) (k 0x00400000l)
     (Nx.where (Nx.equal_s s 255l) (k 0x7FC00000l) (Nx.lshift s 23))
 
-(* [values codes scales] is the weight of contiguous [codes] and [scales] at
-   float32, from their bits. *)
-let values codes scales =
+(* [mxfp4_values codes scales] is the weight of contiguous [codes] and [scales]
+   at float32, from their bits. *)
+let mxfp4_values codes scales =
   let bytes = Nx.cast Nx.uint32 codes in
   let nibbles =
     Nx.stack ~axis:(-1)
@@ -137,6 +214,155 @@ let values codes scales =
   scaled codes
     (Nx.bitcast Nx.float32 (code_bits nibbles))
     (Nx.bitcast Nx.float32 (scale_bits (Nx.cast Nx.uint32 scales)))
+
+(* The GGUF formats, decoded as ggml's dequantize_row_q8_0, _q4_K and _q6_K
+   decode them: the scales at float32, each product left to right. Each block's
+   fields are views of its bytes, so a compiled product reads the bytes
+   themselves. *)
+
+(* [split ~bytes t] is the contiguous rows [t] [[| ...; n; b * bytes |]] as
+   their blocks, [[| ...; n; b; bytes |]]. *)
+let split ~bytes t =
+  let s = Nx.shape t in
+  let r = Array.length s in
+  Nx.reshape
+    (Array.append (Array.sub s 0 (r - 1)) [| s.(r - 1) / bytes; bytes |])
+    t
+
+(* [bytes b lo hi] is the bytes \[[lo];[hi]) of each block of [b]. *)
+let bytes b lo hi =
+  let r = Nx.ndim b in
+  Nx.shrink
+    (Array.mapi
+       (fun i d -> if i = r - 1 then (lo, hi) else (0, d))
+       (Nx.shape b))
+    b
+
+(* [half b at] is the little-endian float16 at byte [at] of each block of [b] at
+   float32, [[| ...; b; 1 |]]. *)
+let half b at =
+  let byte i = Nx.cast Nx.uint16 (bytes b i (i + 1)) in
+  Nx.cast Nx.float32
+    (Nx.bitcast Nx.float16
+       (Nx.bitwise_or (byte at) (Nx.lshift (byte (at + 1)) 8)))
+
+(* [unpack ~bits ~axis n t] is the [n] fields of [bits] bits of each byte of
+   [t], lowest first, along a new axis at [axis] from the end. Each element
+   picks its field by its index along that axis, so a compiled product unpacks
+   each byte where it reads it. *)
+let unpack ~bits ~axis n t =
+  let s = Nx.shape t in
+  let at = Array.length s + 1 + axis in
+  let around mid =
+    Array.concat [ Array.sub s 0 at; mid; Array.sub s at (-axis - 1) ]
+  in
+  let t = Nx.broadcast_to (around [| n |]) (Nx.reshape (around [| 1 |]) t) in
+  let index =
+    Nx.reshape
+      (Array.init (-axis) (fun i -> if i = 0 then n else 1))
+      (Nx.arange Nx.int32 0 n 1)
+  in
+  let mask = Nx.scalar_like t ((1 lsl bits) - 1) in
+  let field i = Nx.bitwise_and (Nx.rshift t (bits * i)) mask in
+  let rec pick i acc =
+    if i = n then acc
+    else
+      pick (i + 1) (Nx.where (Nx.equal_s index (Int32.of_int i)) (field i) acc)
+  in
+  pick 1 (field 0)
+
+(* [int8 t] is the bytes [t] read as int8, at float32. *)
+let int8 t = Nx.cast Nx.float32 (Nx.bitcast Nx.int8 t)
+
+(* [rows ~bytes ~values blocks v] is the values [v] of the blocks of [blocks],
+   of [bytes] bytes and [values] values each, as rows: [[| ...; n; b; ... |]]
+   becomes [[| ...; n; b * values |]]. *)
+let rows ~bytes ~values blocks v =
+  let s = Array.copy (Nx.shape blocks) in
+  let r = Array.length s in
+  s.(r - 1) <- s.(r - 1) / bytes * values;
+  Nx.reshape s v
+
+(* Q8_0: a float16 scale [d] and 32 int8 quants [q], each value [d * q]. *)
+let q8_0_values blocks =
+  let b = split ~bytes:q8_0_bytes blocks in
+  rows ~bytes:q8_0_bytes ~values:qk8_0 blocks
+    (Nx.mul (int8 (bytes b half_bytes q8_0_bytes)) (half b 0))
+
+(* Q4_K: float16 [d] and [dmin], then 8 sub-blocks of 32 values, each with a
+   6-bit scale [sc] and min [m] packed in 12 bytes, of 4-bit quants [q]: a value
+   is [d * sc * q - dmin * m]. Sub-blocks 0 to 3 take the low 6 bits of bytes 0
+   to 3 and 4 to 7; sub-blocks 4 to 7 the nibbles of bytes 8 to 11 under the top
+   2 bits of bytes 0 to 3 and 4 to 7. Each 32 bytes of quants hold two
+   sub-blocks, the low nibbles first. *)
+let q4_k_values blocks =
+  let b = split ~bytes:q4_k_bytes blocks in
+  let s = Nx.shape b in
+  let lead = Array.sub s 0 (Array.length s - 1) in
+  let quants = (2 * half_bytes) + k_scale_size in
+  let k = Nx.scalar_like b in
+  let low6 t = Nx.bitwise_and t (k 63) in
+  let top2 t = Nx.lshift (Nx.rshift t 6) 4 in
+  let at i =
+    bytes b ((2 * half_bytes) + (4 * i)) ((2 * half_bytes) + (4 * i) + 4)
+  in
+  let s0 = at 0 and s1 = at 1 and s2 = at 2 in
+  let join first last =
+    Nx.cast Nx.float32 (Nx.concatenate ~axis:(-1) [ first; last ])
+  in
+  let sc =
+    join (low6 s0) (Nx.bitwise_or (Nx.bitwise_and s2 (k 15)) (top2 s0))
+  in
+  let m = join (low6 s1) (Nx.bitwise_or (Nx.rshift s2 4) (top2 s1)) in
+  let per t = Nx.reshape (Array.append lead [| 8; 1 |]) t in
+  let qs =
+    Nx.reshape (Array.append lead [| 4; 32 |]) (bytes b quants q4_k_bytes)
+  in
+  let q =
+    Nx.reshape (Array.append lead [| 8; 32 |]) (unpack ~bits:4 ~axis:(-2) 2 qs)
+  in
+  rows ~bytes:q4_k_bytes ~values:qk_k blocks
+    (Nx.sub
+       (Nx.mul (per (Nx.mul (half b 0) sc)) (Nx.cast Nx.float32 q))
+       (per (Nx.mul (half b half_bytes) m)))
+
+(* Q6_K: 16 sub-blocks of 16 values, each with an int8 scale [sc], of 6-bit
+   quants [q] offset by 32, and a float16 [d]: a value is [d * sc * (q - 32)].
+   Each half of a block, 128 values, takes 64 bytes of low nibbles and 32 bytes
+   of high bit pairs. Its quarters 0 and 1 take the low nibbles of the first and
+   last 32 of the 64 bytes, quarters 2 and 3 their high nibbles, and quarter [j]
+   the bit pair [j] of each of the 32 bytes. *)
+let q6_k_values blocks =
+  let b = split ~bytes:q6_k_bytes blocks in
+  let s = Nx.shape b in
+  let lead = Array.sub s 0 (Array.length s - 1) in
+  let ql_end = qk_k / 2 in
+  let qh_end = ql_end + (qk_k / 4) in
+  let sc_end = qh_end + (qk_k / 16) in
+  let ql = Nx.reshape (Array.append lead [| 2; 2; 32 |]) (bytes b 0 ql_end) in
+  let qh = Nx.reshape (Array.append lead [| 2; 32 |]) (bytes b ql_end qh_end) in
+  let low = unpack ~bits:4 ~axis:(-3) 2 ql in
+  let high = unpack ~bits:2 ~axis:(-2) 4 qh in
+  let q =
+    Nx.sub_s
+      (Nx.cast Nx.float32
+         (Nx.bitwise_or
+            (Nx.reshape (Array.append lead [| 2; 4; 32 |]) low)
+            (Nx.lshift high 4)))
+      32.
+  in
+  let d = Nx.mul (half b sc_end) (int8 (bytes b qh_end sc_end)) in
+  rows ~bytes:q6_k_bytes ~values:qk_k blocks
+    (Nx.mul
+       (Nx.reshape (Array.append lead [| 16; 1 |]) d)
+       (Nx.reshape (Array.append lead [| 16; 16 |]) q))
+
+(* [values w] is the weight [w] of contiguous parts at float32. *)
+let values = function
+  | Mxfp4 { codes; scales } -> mxfp4_values codes scales
+  | Q8_0 { blocks } -> q8_0_values blocks
+  | Q4_K { blocks } -> q4_k_values blocks
+  | Q6_K { blocks } -> q6_k_values blocks
 
 (* Batch axes, aligned on the right and broadcast as Nx.matmul's. *)
 
@@ -159,7 +385,7 @@ let broadcast fn a b =
 let batch ?ids ws xs =
   let fn = "Nx_quant.apply" in
   let wr = Array.length ws in
-  let k = 2 * ws.(wr - 1) in
+  let k = ws.(wr - 1) in
   let xr = Array.length xs in
   if xr = 0 then invalid_arg (strf "%s: x must have at least one axis" fn);
   if xs.(xr - 1) <> k then
@@ -176,7 +402,7 @@ let batch ?ids ws xs =
         if p < 0 then
           invalid_arg
             (strf "%s: ids need a weight with an expert axis, got shape %s" fn
-               (pp_shape (Array.append (Array.sub ws 0 (wr - 1)) [| k |])));
+               (pp_shape ws));
         if Array.length is < p then
           invalid_arg
             (strf "%s: ids of shape %s lack the weight's %d leading axes" fn
@@ -218,10 +444,9 @@ let matrices t g =
   let r = Array.length s in
   Nx.reshape [| g; s.(r - 2); s.(r - 1) |] (Nx.contiguous t)
 
-(* [product x codes scales] is [x] times each matrix of the weight of [codes]
-   and [scales], transposed, at float32. *)
-let product x codes scales =
-  Nx.matmul x (Nx.matrix_transpose (values codes scales))
+(* [product x w] is [x] times each matrix of the weight [w] of contiguous parts,
+   transposed, at float32. *)
+let product x w = Nx.matmul x (Nx.matrix_transpose (values w))
 
 (* Grouped products. When a product's instances outnumber the matrices they
    meet, each matrix is multiplied once by the rows of many of its instances,
@@ -248,11 +473,11 @@ let shards t =
           (fun d -> (Nx.Placement.window p s d).(0))
           (Nx.Placement.devices p)))
 
-(* [grouped ~g ~r at named x codes scales] is the products of the [x] rows [[|
-   i; m; k |]] of [i] instances over [r] devices' shards, the instance [j] with
-   the matrix [at.(j)] among [g] if [named.(j)], [[| i; m; n |]]. The product of
-   an instance that names no matrix is left to the caller's mask. *)
-let grouped ~g ~r at named x codes scales =
+(* [grouped ~g ~r at named x w] is the products of the [x] rows [[| i; m; k |]]
+   of [i] instances over [r] devices' shards, the instance [j] with the matrix
+   [at.(j)] among [g] if [named.(j)], [[| i; m; n |]]. The product of an
+   instance that names no matrix is left to the caller's mask. *)
+let grouped ~g ~r at named x w =
   let i = Nx.dim 0 x and m = Nx.dim 1 x and k = Nx.dim 2 x in
   let j = i / r in
   let int64 = Int64.of_int in
@@ -323,7 +548,7 @@ let grouped ~g ~r at named x codes scales =
     in
     Nx.reshape (Array.append [| r; blocks |] (Array.sub (Nx.shape w) 1 2)) w
   in
-  let y = product rows (weights codes) (weights scales) in
+  let y = product rows (map weights w) in
   let n = Nx.dim (-1) y in
   (* Each instance's slot: its run's first slot and its rank in the run. *)
   let rank =
@@ -339,24 +564,20 @@ let grouped ~g ~r at named x codes scales =
 
 (* Products *)
 
-let dequant dt (Mxfp4 { codes; scales }) =
-  Nx.cast dt (values (Nx.contiguous codes) (Nx.contiguous scales))
+let dequant dt w = Nx.cast dt (values (map Nx.contiguous w))
 
-let apply (type b) ?ids (Mxfp4 { codes; scales }) (x : (float, b) Nx.t) :
-    (float, b) Nx.t =
-  let ws = Nx.shape codes in
+let apply (type b) ?ids w (x : (float, b) Nx.t) : (float, b) Nx.t =
+  let ws = shape w in
   let wb, rb = batch ?ids:(Option.map Nx.shape ids) ws (Nx.shape x) in
   let x32 = Nx.cast Nx.float32 x in
   match ids with
-  | None ->
-      Nx.cast (Nx.dtype x)
-        (product x32 (Nx.contiguous codes) (Nx.contiguous scales))
+  | None -> Nx.cast (Nx.dtype x) (product x32 (map Nx.contiguous w))
   | Some ids ->
       let wr = Array.length ws in
       let lanes = Array.sub ws 0 (wr - 3) and e = ws.(wr - 3) in
       let g = Array.fold_left ( * ) 1 lanes * e in
       let at, named = routes ~wb ~lanes ~e ids in
-      let n = ws.(wr - 2) and k = 2 * ws.(wr - 1) in
+      let n = ws.(wr - 2) and k = ws.(wr - 1) in
       let vector = Nx.ndim x = 1 in
       let m = if vector then 1 else Nx.dim (-2) x in
       let i = Array.fold_left ( * ) 1 rb in
@@ -376,14 +597,14 @@ let apply (type b) ?ids (Mxfp4 { codes; scales }) (x : (float, b) Nx.t) :
         if i / r >= block * g && m * n * k > 0 then
           Nx.reshape
             (Array.append rb (if vector then [| n |] else [| m; n |]))
-            (grouped ~g ~r (flat at) (flat named) rows codes scales)
+            (grouped ~g ~r (flat at) (flat named) rows w)
         else
           let take t =
             let matrix = Array.sub (Nx.shape t) (wr - 2) 2 in
             Nx.reshape (Array.append wb matrix)
               (Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] at) (matrices t g))
           in
-          product x32 (take codes) (take scales)
+          product x32 (map take w)
       in
       Nx.cast (Nx.dtype x)
         (Nx.where
