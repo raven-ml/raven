@@ -783,25 +783,27 @@ let counters a names =
 
 let values (p : props) c = p.xccs * c.instances * c.engines * c.arrays * c.wgps
 
-(* Under the amdgpu driver, counts and traces are only stable in the GPU's
-   stable power state, which a GFX9 GPU does not need. *)
-let check_power a =
+(* Under the amdgpu driver, counts and traces are only valid in the GPU's stable
+   power state, which a GFX9 GPU does not need: the RLC keeps the shader engines
+   powered and the clocks fixed, so that no gating loses trace data or varies
+   counts mid-run. The process takes it for its life. *)
+let hold_stable_power a =
   match a.gpu with
-  | Kfd_gpu k when match a.props.target with 9, _, _ -> false | _ -> true ->
-      let level =
-        try
-          String.trim
-            (In_channel.with_open_text
-               (k.sysfs ^ "/power_dpm_force_performance_level")
-               In_channel.input_all)
-        with Sys_error _ -> "unknown"
-      in
-      if level <> "profile_standard" then
-        failwith
-          (Printf.sprintf
-             "%s: profiling needs the GPU's stable power state, not %s: run \
-              `amd-smi set -l stable_std`"
-             (gpu_name a) level)
+  | Kfd_gpu k when match a.props.target with 9, _, _ -> false | _ -> true -> (
+      match Kfd.hold_stable_power k with
+      | () -> ()
+      | exception Unix.Unix_error (Unix.EBUSY, _, _) ->
+          failwith
+            (Printf.sprintf
+               "%s: profiling needs the GPU's stable power state, which \
+                another process holds"
+               (gpu_name a))
+      | exception Unix.Unix_error (e, _, _) ->
+          failwith
+            (Printf.sprintf
+               "%s: profiling needs the GPU's stable power state, which the \
+                amdgpu driver refused: %s"
+               (gpu_name a) (Unix.error_message e)))
   | Kfd_gpu _ | Am_gpu _ -> ()
 
 let wgp_active a =
@@ -863,7 +865,7 @@ let profiling a =
           | Some p -> Some p.profiling
           | None ->
               let counters = counters a names in
-              check_power a;
+              hold_stable_power a;
               let d = Option.get a.dev in
               let log, log_words =
                 host_words d Pinned UInt64 Bigarray.int64

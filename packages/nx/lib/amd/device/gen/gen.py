@@ -179,6 +179,9 @@ CONSTANTS = [
     "KFD_IOC_EVENT_SIGNAL", "KFD_IOC_EVENT_MEMORY", "KFD_IOC_EVENT_HW_EXCEPTION",
     # the amdgpu driver's device information
     "DRM_COMMAND_BASE", "DRM_AMDGPU_INFO", "AMDGPU_INFO_DEV_INFO",
+    # the amdgpu driver's contexts, which hold the GPU's stable power state
+    "DRM_AMDGPU_CTX", "AMDGPU_CTX_OP_ALLOC_CTX", "AMDGPU_CTX_OP_FREE_CTX", "AMDGPU_CTX_OP_SET_STABLE_PSTATE",
+    "AMDGPU_CTX_STABLE_PSTATE_STANDARD",
     # AQL queues and kernels
     "AMD_QUEUE_PROPERTIES_IS_PTR64", "AMD_QUEUE_PROPERTIES_ENABLE_PROFILING",
     "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
@@ -254,6 +257,7 @@ STRUCTS = {
     "kernel_descriptor_t": ("Kernel_descriptor", None),
     "drm_amdgpu_info": ("Drm_amdgpu_info", ["return_pointer", "return_size", "query"]),
     "drm_amdgpu_info_device": ("Drm_amdgpu_info_device", ["cu_bitmap"]),
+    "drm_amdgpu_ctx": ("Drm_amdgpu_ctx", ["in__op", "in__flags", "in__ctx_id", "out__alloc__ctx_id"]),
 }
 
 SQ_BUF_RSRC = {  # by GC major: the unions of words 1 and 3

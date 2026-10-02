@@ -504,9 +504,23 @@ let test_mapped () =
     check ~msg:(at "the GPU's writes, read by the host") (40 + round) host_view
   done
 
+(* The power levels of the GPUs the amdgpu driver holds. *)
+let power_levels () =
+  Sys.readdir "/sys/class/drm"
+  |> Array.to_list |> List.sort compare
+  |> List.filter_map (fun n ->
+      let f =
+        Printf.sprintf
+          "/sys/class/drm/%s/device/power_dpm_force_performance_level" n
+      in
+      if String.starts_with ~prefix:"renderD" n && Sys.file_exists f then
+        Some (String.trim (In_channel.with_open_text f In_channel.input_all))
+      else None)
+
 (* A profile that counts or traces gives the device its profiling, the same for
    the same request in any later profile, laid out as the counters' blocks count
-   them; a GPU without a counter refuses it by name. *)
+   them; a GPU without a counter refuses it by name. Under the kernel driver, a
+   GPU past GFX9 is then in its stable power state. *)
 let test_profiling () =
   let a = low (device ()) in
   let props = Nx_amd_device.props a in
@@ -518,11 +532,15 @@ let test_profiling () =
       (fun () ->
         match Nx_amd_device.profiling a with
         | exception Failure why
-          when String.ends_with ~suffix:"set -l stable_std`" why ->
+          when String.ends_with ~suffix:"which another process holds" why ->
             skip ~reason:why ()
         | p -> Option.get p)
   in
   let p = profiling ~counters:[ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ] () in
+  (match (pci_first (), props.target, power_levels ()) with
+  | None, (major, _, _), [ level ] when major > 9 ->
+      equal string ~msg:"the stable power state" "profile_standard" level
+  | _ -> ());
   let c = Option.get p.counting in
   equal int ~msg:"the log" (8 * (1 + (3 * p.slots))) (B.nbytes p.log);
   equal int ~msg:"the samples" (p.slots * c.size) (B.nbytes c.samples);

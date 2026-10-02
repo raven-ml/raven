@@ -53,6 +53,8 @@ external wait_events : int -> int array -> int -> int -> string
 external drm_info : int -> int -> int -> int -> int -> string
   = "caml_nx_amd_drm_info"
 
+external drm_ioctl : int -> int -> bytes -> unit = "caml_nx_amd_drm_ioctl"
+
 let topology = "/sys/devices/virtual/kfd/kfd/topology/nodes"
 
 let read file =
@@ -117,6 +119,7 @@ type t = {
   hdp : Mmio.t option;
       (* the driver's page of registers whose first word flushes the HDP, if it
          remaps one *)
+  mutable stable : bool; (* whether the process holds the stable power state *)
 }
 
 let prop t k =
@@ -219,6 +222,7 @@ let open_new node =
     events = [||];
     doorbells = None;
     hdp = remap_hdp fd gpu_id;
+    stable = false;
   }
 
 let open_gpu bus =
@@ -439,6 +443,36 @@ let cu_bitmap t =
       Array.init 4 (fun j ->
           Int32.to_int (String.get_int32_le info (at + (row * i) + (4 * j)))
           land 0xffff_ffff))
+
+(* A context of the amdgpu driver on the render node holds the GPU in its stable
+   power state, with no root: the driver lets one context at a time hold it, and
+   puts the GPU back in the state it found when the context is freed, here when
+   the process closes the node. Raises [Unix.Unix_error] with EBUSY if another
+   process's context holds it. *)
+let hold_stable_power t =
+  if not t.stable then begin
+    let module C = D.Drm_amdgpu_ctx in
+    let nr = D.drm_command_base + D.drm_amdgpu_ctx in
+    let request op ?(flags = 0) id =
+      let b = Bytes.make C.sizeof '\000' in
+      let set (at, _) v = Bytes.set_int32_le b at (Int32.of_int v) in
+      set C.in__op op;
+      set C.in__flags flags;
+      set C.in__ctx_id id;
+      drm_ioctl t.drm nr b;
+      Int32.to_int (Bytes.get_int32_le b (fst C.out__alloc__ctx_id))
+      land 0xffff_ffff
+    in
+    let id = request D.amdgpu_ctx_op_alloc_ctx 0 in
+    (try
+       ignore
+         (request D.amdgpu_ctx_op_set_stable_pstate
+            ~flags:D.amdgpu_ctx_stable_pstate_standard id)
+     with e ->
+       ignore (request D.amdgpu_ctx_op_free_ctx id);
+       raise e);
+    t.stable <- true
+  end
 
 let sleep t ms =
   if t.events <> [||] then

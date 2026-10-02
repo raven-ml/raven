@@ -1750,6 +1750,11 @@ let kfd_ioc_event_hw_exception = 3
 let drm_command_base = 0x40
 let drm_amdgpu_info = 5
 let amdgpu_info_dev_info = 0x16
+let drm_amdgpu_ctx = 2
+let amdgpu_ctx_op_alloc_ctx = 1
+let amdgpu_ctx_op_free_ctx = 2
+let amdgpu_ctx_op_set_stable_pstate = 6
+let amdgpu_ctx_stable_pstate_standard = 1
 let amd_queue_properties_is_ptr64 = 2
 let amd_queue_properties_enable_profiling = 8
 let amd_kernel_code_properties_enable_sgpr_dispatch_ptr = 2
@@ -2181,6 +2186,14 @@ end
 module Drm_amdgpu_info_device = struct
   let sizeof = 448
   let cu_bitmap = (56, 16)
+end
+
+module Drm_amdgpu_ctx = struct
+  let sizeof = 16
+  let in__op = (0, 4)
+  let in__flags = (4, 4)
+  let in__ctx_id = (8, 4)
+  let out__alloc__ctx_id = (0, 4)
 end
 
 module type MQD = sig

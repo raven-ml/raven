@@ -413,10 +413,15 @@ val profiling : t -> profiling option
     request it was asked for, for its life: work encoded for a request writes
     that request's buffers whenever it runs, and the device reads them all.
 
+    Under {!Kernel}, a GPU other than a GFX9 one counts and traces validly only
+    in its stable power state, with its shader engines powered and its clocks
+    fixed: the first profiling puts the GPU in it, and the process holds it
+    until it exits, when the GPU returns to the state it was in.
+
     Raises [Invalid_argument] if the GPU does not count a counter, naming it and
-    the counters it has, and [Failure] if, under {!Kernel}, a GPU other than a
-    GFX9 one is not in its stable power state, which counts and traces need: the
-    message says to run [amd-smi set -l stable_std]. *)
+    the counters it has, and [Failure] if, under {!Kernel}, the GPU cannot be
+    put in its stable power state: the message says whether another process
+    holds it. *)
 
 (** {2:traces Thread traces}
 

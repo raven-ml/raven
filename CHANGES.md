@@ -3094,6 +3094,11 @@ thread.
 
 ### Nx
 
+- `Nx_amd_device.profiling` puts a GPU under the kernel driver in its stable
+  power state itself, through a context of the amdgpu driver on the render
+  node the device holds, and the process keeps it until it exits: counting or
+  tracing no longer needs root to run `amd-smi set -l stable_std` first. It
+  fails only when another process holds the state.
 - A lost device (`Nx_device.Lost`) can be opened again: `Nx_cuda.get`,
   `Nx_metal.get`, `Nx_amd.get`, `Nx_nv.get`, `Nx.Device.cpu` and
   `Nx_remote_device.connect` give a fresh, unequal device, and the PCI

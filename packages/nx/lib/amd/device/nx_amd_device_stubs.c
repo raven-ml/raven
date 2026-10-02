@@ -20,6 +20,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+#include <caml/unixsupport.h>
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -419,6 +420,26 @@ value caml_nx_amd_drm_info(value fd, value nr, value request, value query,
   no_linux();
 #endif
   CAMLreturn(r);
+}
+
+/* Runs the amdgpu driver's request [nr], which reads and writes the bytes [b]
+   in place. Raises [Unix.Unix_error] with the driver's error. */
+value caml_nx_amd_drm_ioctl(value fd, value nr, value b) {
+  CAMLparam3(fd, nr, b);
+#ifdef __linux__
+  unsigned long rq =
+      _IOC(_IOC_READ | _IOC_WRITE, 'd', Int_val(nr), caml_string_length(b));
+  int r;
+  do r = ioctl(Int_val(fd), rq, Bytes_val(b));
+  while (r == -1 && (errno == EINTR || errno == EAGAIN));
+  if (r == -1) caml_uerror("ioctl", Nothing);
+#else
+  (void)fd;
+  (void)nr;
+  (void)b;
+  no_linux();
+#endif
+  CAMLreturn(Val_unit);
 }
 
 value caml_nx_amd_linux(value unit) {
