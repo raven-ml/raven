@@ -74,7 +74,7 @@ value test_host_running_threads(value unit) {
   struct dirent *e;
   while ((e = readdir(dir)) != NULL) {
     if (e->d_name[0] == '.' || atol(e->d_name) == self) continue;
-    char path[64], line[512];
+    char path[sizeof "/proc/self/task//stat" + sizeof e->d_name], line[512];
     snprintf(path, sizeof path, "/proc/self/task/%s/stat", e->d_name);
     FILE *f = fopen(path, "r");
     if (f == NULL) continue; /* the thread exited */
