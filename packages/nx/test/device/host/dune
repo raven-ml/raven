@@ -4,4 +4,4 @@
  (foreign_stubs
   (language c)
   (names test_host_stubs))
- (libraries nx.device nx.dtype windtrap))
+ (libraries nx nx.device nx.dtype unix windtrap))

@@ -460,29 +460,175 @@ let test_split_domains () =
   equal ~msg:"the holding call" (list int64) ones (int64s_of runs);
   equal ~msg:"the second call" (list int64) ones second
 
-(* Split calls in a burst from two domains, of as many blocks as the host has
-   threads or fewer, so that the threads each call takes vary from one call to
-   the next: each runs every iteration once. *)
-let test_split_bursts =
-  let call = Gen.pair (Gen.int_range 0 300) (Gen.int_range 1 16) in
-  prop "split calls in a burst from two domains each run every iteration once"
-    (Gen.list ~size:(Gen.int_range 1 40) call)
-    (fun calls ->
-      let burst () =
-        List.map
-          (fun (extent, blocks) -> (extent, snd (split_run ~extent ~blocks)))
-          calls
-      in
-      let other = Domain.spawn burst in
-      let here = burst () in
-      let there = Domain.join other in
-      let once (extent, runs) =
-        equal ~msg:(Printf.sprintf "%d iterations" extent) (list int64)
-          (List.init extent (fun _ -> 1L))
-          runs
-      in
-      List.iter once here;
-      List.iter once there)
+(* The host's threads, shared *)
+
+(* Split calls, and nx.cpu's kernels, which run on the same threads: [sqrt] of
+   the host's compute-bound class over more than 2^17 floats runs on two threads
+   or more, in chunks fewer than its elements, unlike a split call's one chunk
+   per block. The squares of 0 to [max_root - 1] are exact, and so are their
+   square roots. *)
+let min_root = 1 lsl 17
+let max_root = min_root + (1 lsl 15)
+
+let squares =
+  let r = Nx.arange_f Nx.float64 0. (Float.of_int max_root) 1. in
+  Nx.mul r r
+
+(* The first indices, at most four, whose square root is not the index. *)
+let sqrt_misses n =
+  let roots =
+    Bigarray.array1_of_genarray
+      (Nx.to_bigarray (Nx.sqrt (Nx.shrink [| (0, n) |] squares)))
+  in
+  let misses = ref [] in
+  for i = n - 1 downto 0 do
+    if Bigarray.Array1.unsafe_get roots i <> Float.of_int i then
+      misses := i :: !misses
+  done;
+  List.filteri (fun i _ -> i < 4) !misses
+
+let shared_commands =
+  let split_gen =
+    Gen.with_pp
+      (fun ppf (extent, blocks) -> Format.fprintf ppf "(%d, %d)" extent blocks)
+      (Gen.pair (Gen.int_range 0 300) (Gen.int_range 1 16))
+  in
+  [
+    command "split"
+      (split_gen @-> returns (list int64))
+      (fun (extent, _) -> List.init extent (fun _ -> 1L))
+      (fun (extent, blocks) -> snd (split_run ~extent ~blocks));
+    command "sqrt"
+      (Gen.int_range min_root max_root @-> returns (list int))
+      (fun _ -> [])
+      sqrt_misses;
+  ]
+
+(* Parking *)
+
+external running_threads : unit -> int = "test_host_running_threads"
+
+let needs_thread_states () =
+  if running_threads () < 0 then
+    skip ~reason:"the system does not report its threads' states" ()
+
+(* Polls until at most [n] threads other than this one run, for at most [within]
+   seconds, and is the last count. *)
+let settle_to n ~within =
+  let deadline = Unix.gettimeofday () +. within in
+  let rec poll () =
+    let k = running_threads () in
+    if k <= n || Unix.gettimeofday () > deadline then k
+    else (
+      Unix.sleepf 0.001;
+      poll ())
+  in
+  poll ()
+
+(* Polls [ready] for at most [within] seconds, and fails with [why] if it never
+   holds: a thread that waits for a wakeup that never comes fails the test
+   instead of hanging it. *)
+let within seconds why ready =
+  let deadline = Unix.gettimeofday () +. seconds in
+  while not (ready ()) do
+    if Unix.gettimeofday () > deadline then failf "after %gs, %s" seconds why;
+    Unix.sleepf 0.001
+  done
+
+(* [hold] is a split call of two blocks, each given its own copy of the values,
+   the caller's at the lowest address. Each block waits for the other to start,
+   so a worker must run one. Then the block with the higher copy, a worker's,
+   waits for [state.(1)] to be set while the caller finishes. *)
+let hold =
+  lazy
+    (compile
+       {|ABI void hold(void **b, const long long *v) {
+  unsigned long long *state = b[0];
+  long long *runs = b[1];
+  unsigned long long n = __atomic_fetch_add(&state[0], 1, __ATOMIC_SEQ_CST);
+  unsigned long long me = (unsigned long long)v, other;
+  __atomic_store_n(&state[2 + n], me, __ATOMIC_SEQ_CST);
+  while ((other = __atomic_load_n(&state[3 - n], __ATOMIC_SEQ_CST)) == 0) {}
+  if (me > other)
+    while (__atomic_load_n(&state[1], __ATOMIC_SEQ_CST) == 0) {}
+  for (long long i = v[1]; i < v[2]; i++) runs[i] += 1;
+}|})
+
+(* An idle pool's threads park. A job then wakes a parked worker, and a caller
+   whose job a worker holds parks until the worker counts down. *)
+let test_parks () =
+  needs_thread_states ();
+  if P.workers () < 2 then skip ~reason:"the host splits on one thread" ();
+  let p = load ~binary:(Lazy.force hold) ~name:"hold" in
+  ignore (split_run ~extent:64 ~blocks:8);
+  equal ~msg:"no thread runs once the pool is idle" int 0
+    (settle_to 0 ~within:5.);
+  let state = B.create host S.Int64 4 and runs = B.create host S.Int64 2 in
+  List.iter
+    (fun b -> Bigarray.Array1.fill (B.bigarray Bigarray.int64 b) 0L)
+    [ state; runs ];
+  let s = B.bigarray Bigarray.int64 state in
+  let finished = Atomic.make false in
+  let caller =
+    Domain.spawn (fun () ->
+        Fun.protect
+          ~finally:(fun () -> Atomic.set finished true)
+          (fun () ->
+            P.call
+              ~split:{ extent = 2; blocks = 2; lo = 1; hi = 2 }
+              p [| state; runs |] [| 0; -1; -1 |]))
+  in
+  within 10. "a parked worker was not woken for the job" (fun () ->
+      Bigarray.Array1.get s 0 = 2L);
+  equal ~msg:"only the holding worker runs: the caller parked" int 1
+    (settle_to 1 ~within:5.);
+  Bigarray.Array1.set s 1 1L;
+  within 10. "the parked caller was not woken at the job's end" (fun () ->
+      Atomic.get finished);
+  Domain.join caller;
+  equal ~msg:"each iteration ran once" (list int64) [ 1L; 1L ] (int64s_of runs)
+
+(* A burst of split calls of two blocks takes the caller and one worker. The
+   other workers, which the call before the burst kept spinning and which take
+   part in none of its calls, park while it runs: once at most two threads run
+   beside this one, the count read every millisecond stays there. A worker that
+   a broadcast wakes runs for a moment, so the median is what counts. *)
+let test_narrow_burst () =
+  needs_thread_states ();
+  if P.workers () < 3 then skip ~reason:"every worker takes part" ();
+  let p = load ~binary:(Lazy.force block) ~name:"block" in
+  let buffers =
+    Array.init 2 (fun _ -> B.create host S.Int64 (Int.max 2 (P.workers ())))
+  in
+  let split = { P.extent = 2; blocks = 2; lo = 1; hi = 2 }
+  and values = [| 0; -1; -1 |] in
+  let wide = { split with extent = P.workers (); blocks = P.workers () } in
+  let stop = Atomic.make false in
+  let burst =
+    Domain.spawn (fun () ->
+        P.call ~split:wide p buffers values;
+        while not (Atomic.get stop) do
+          P.call ~split p buffers values
+        done)
+  in
+  let samples =
+    Fun.protect
+      ~finally:(fun () ->
+        Atomic.set stop true;
+        Domain.join burst)
+      (fun () ->
+        ignore (settle_to 2 ~within:5.);
+        List.init 51 (fun _ ->
+            Unix.sleepf 0.001;
+            running_threads ()))
+  in
+  let median = List.nth (List.sort Int.compare samples) 25 in
+  at_most
+    ~msg:
+      (Printf.sprintf
+         "threads running beside the burst's caller and its worker, of %s"
+         (String.concat " " (List.map string_of_int samples)))
+    int ~than:2 median
 
 let () =
   exit
@@ -517,5 +663,14 @@ let () =
          test "a split call refuses a split it cannot run" test_split_refusals;
          test "a split call runs while another domain's holds the threads"
            test_split_domains;
-         test_split_bursts;
+         stateful "split calls and nx.cpu kernels each run every iteration once"
+           shared_commands;
+         stateful ~domains:2 ~count:20
+           "split calls and nx.cpu kernels from two domains each run every \
+            iteration once"
+           shared_commands;
+         test "the host's threads park when idle, and a job wakes them"
+           test_parks;
+         test "a worker that a burst of narrow calls leaves out parks"
+           test_narrow_burst;
        ])
