@@ -639,18 +639,18 @@ val contour :
 
     The coordinate system of a panel draws an axis for each of its position
     scales, unless the scope holds an explicit {!axis} for it, and the axes of
-    the facet scales are the panels' headers. An axis shared by the panels of a
-    column, for x, or of a row, for y, is labelled on the outer panel only.
-    Every scale that a role other than a position or a facet reads, other than
-    only through {!map_range}, yields one legend at its scope unless the scope
-    holds an explicit {!legend} for it: a colour bar for a continuous colour
-    scale, and otherwise one entry per guide value, drawn by the swatch
-    ({!Mark.v}) of every mark that reads the scale. A guide is titled by the
-    distinct titles of the channels that read its scale, in the order the figure
-    is written, separated by commas, and is untitled if they have none. These
-    rules are defaults: marks can imply that a scale has a guide or none
-    ({!Mark.bind}), and an explicit {!axis} or {!legend} decides over both
-    ({!section-merging}).
+    the facet scales are the panels' headers, titled beside them once in each
+    cell. An axis shared by the panels of a column, for x, or of a row, for y,
+    is labelled on the outer panel only. Every scale that a role other than a
+    position or a facet reads, other than only through {!map_range}, yields one
+    legend at its scope unless the scope holds an explicit {!legend} for it: a
+    colour bar for a continuous colour scale, and otherwise one entry per guide
+    value, drawn by the swatch ({!Mark.v}) of every mark that reads the scale. A
+    guide is titled by the distinct titles of the channels that read its scale,
+    in the order the figure is written, separated by commas, and is untitled if
+    they have none. These rules are defaults: marks can imply that a scale has a
+    guide or none ({!Mark.bind}), and an explicit {!axis} or {!legend} decides
+    over both ({!section-merging}).
 
     A scale read by several roles has a guide for each: a scale named by a user
     and read by [x] in one panel and by [fill] in another has an axis there and
@@ -697,10 +697,11 @@ module Coord : sig
       unit of y is [aspect] times as long on the page as one unit of x, a unit
       being one of the transform of a continuous scale
       ({!Scale.section-continuous}), such as a power of the base on a log scale,
-      and one step of a band scale; a scale whose domain spans no unit counts as
-      spanning one. So [1.] gives equal data units on both axes, and square
-      cells to two band scales of equal paddings. The aspect sizes the panel's
-      grid track, so the spines of its neighbours stay aligned.
+      and one step of a band scale ({!Scale.length}); a scale whose domain spans
+      no unit, or more than the floats hold, counts as spanning one. So [1.]
+      gives equal data units on both axes, and square cells to two band scales
+      of equal paddings. The aspect sizes the panel's grid track, so the spines
+      of its neighbours stay aligned.
 
       Raises [Invalid_argument] if [aspect] is not finite and positive. *)
 
@@ -1589,11 +1590,11 @@ val layout :
     [layout ~theme size r].
 
     Raises [Invalid_argument] if fixed and aspect tracks with their gaps and
-    protrusions exceed a {!Size.figure} or a nested grid's cell, naming the size
-    the figure needs, or if a title, a channel's title or a tick label of a
-    continuous scale holds a character that no face of the theme has, naming it.
-    Category labels with such characters are data: they are drawn with [.notdef]
-    glyphs, with a warning. *)
+    protrusions exceed a {!Size.figure}, naming the size the figure needs, or if
+    a title, a channel's title or a tick label of a continuous scale holds a
+    character that no face of the theme has, naming it. Category labels with
+    such characters are data: they are drawn with [.notdef] glyphs, with a
+    warning. *)
 
 val draw : ?prev:Drawing.t -> density:float -> Layout.t -> Drawing.t
 (** [draw ~prev ~density l] paints [l] at [density] device pixels per point. It
