@@ -939,6 +939,12 @@ thread.
 
 ### Tolk (new)
 
+- Compiling a long chain of operations no longer takes time growing with the
+  square of its length: a jitted chain of 100 `Nx.sin` compiles from a cold
+  cache in 21 s on an M1 Max, from 698 s. The node table's shards grew to 22
+  buckets and stopped, the where-closure rule built each node's set of
+  booleans, and `Ops.op_in_backward_slice_with_self` each node's slice.
+  `Ops.reaches` replaces `Ops.bool_slice`.
 - On the host, the hand-coded optimisations stop upcasting at 32 lanes, past
   which a kernel's values spill out of registers: a lorenz_simple tangent
   kernel without a beam search takes 1.51 ms instead of 2.12 ms.

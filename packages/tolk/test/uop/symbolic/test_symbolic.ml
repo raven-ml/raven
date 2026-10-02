@@ -1637,6 +1637,40 @@ let laws =
             (node s0, node s1));
     ]
 
+(* Cost *)
+
+(* [selections name n] is [n] selections in sequence over a value read from
+   memory. Each condition is in its true branch, so the where-closure rule looks
+   at every selection, and keeps it, since the value reaches an INDEX. *)
+let selections name n =
+  let rec link x k =
+    if k = n then x
+    else
+      let c = Ops.O.(x < Ops.float ~dtype:Float32 (float_of_int k)) in
+      let t = Ops.O.(x + Ops.cast c Dtype.Float32) in
+      link (Ops.where c t Ops.O.(x * Ops.float ~dtype:Float32 2.)) (k + 1)
+  in
+  link (Ops.load (Ops.index buf [ var name 0 15 ]) []) 0
+
+(* [words f] is the words [f ()] allocates. *)
+let words f =
+  let before = Gc.minor_words () in
+  ignore (Sys.opaque_identity (f ()));
+  Gc.minor_words () -. before
+
+let cost =
+  group "cost"
+    [
+      test "sym's work on a chain of selections is linear in its length"
+        (fun () ->
+          let work n =
+            let e = selections ("chain" ^ string_of_int n) n in
+            words (fun () -> sym e)
+          in
+          let short = work 250 and long = work 500 in
+          less float_exact ~than:(2.5 *. short) long);
+    ]
+
 let () =
   exit
     (run "Tolk.Symbolic"
@@ -1654,5 +1688,6 @@ let () =
          installation;
          other_tests;
          laws;
+         cost;
          group "tinygrad" [ Recorded.tests; Recorded.random_expressions ];
        ])

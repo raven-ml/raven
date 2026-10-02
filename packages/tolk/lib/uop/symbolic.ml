@@ -680,8 +680,8 @@ let commutative =
 let fold_where_closure cond t f =
   (* INDEX gates are owned by the valid/store-coalescing machinery, leave them
      alone *)
-  if not (Nodes.mem cond (bool_slice t) || Nodes.mem cond (bool_slice f)) then
-    None
+  let boolean = Dtype.equal (dtype cond) Dtype.Bool in
+  if not (boolean && (reaches t cond || reaches f cond)) then None
   else if
     (* a constant condition, broadcast or not, assumes nothing: the same node
        is every other use of that constant *)

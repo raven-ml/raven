@@ -2769,3 +2769,52 @@ stores through a pad.
 - **Pinned by:** `Tolk.Heuristic`'s `paired_products` cases (on `cpu` two
   upcasts by 4, on `metal`, `cuda` and `amd` three); the goldens, from tinygrad
   with D91 applied by its generator.
+
+## D93. The where-closure rule searches for its condition
+
+- **tinygrad:** `uop/symbolic.py:228-230` (`fold_where_closure`, which asks
+  whether the condition is in `t.bool_slice` or `f.bool_slice`) and
+  `uop/ops.py:289-293` (`_bool_slice`, a `recursive_property`: each node
+  keeps the set of the boolean nodes it reaches).
+- **tolk:** `lib/uop/symbolic.ml:680` (`fold_where_closure`) and
+  `lib/uop/ops.ml:1082` (`reaches`).
+- **Differs:** the rule asks whether `t` or `f` reaches the condition, a
+  scalar boolean, with `Ops.reaches`: a walk from the branch that enters no
+  node built before the condition, since a node is built after its sources.
+  `Ops.bool_slice` is gone. The rule folds the same selections.
+- **Reason:** (b): rune lowers `Nx.sin` to a reduction full of comparisons
+  and selections before tolk sees it, so in a jitted chain of `Nx.sin` each
+  node's boolean set holds every comparison of the links before it, and the
+  sets grow with the square of the chain. Compiling a chain of 80 `Nx.sin`
+  cold on an M1 Max took 63.0 s and a heap of 618M words with the property,
+  and takes 16.6 s and 76M words with the search, whose walks stay inside
+  the link that built the condition.
+- **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `cost › sym's work
+  on a chain of selections is linear in its length` and tinygrad's
+  `test_where_closure_folding*` goldens; the Ops suite (`test/uop/ops`):
+  `graphs › reaches is membership in the node's toposort` and `› reaches
+  enters call bodies`; the rune bench's `Jit/jit-run-chain`.
+
+## D94. A node keeps the operations it reaches
+
+- **tinygrad:** `uop/ops.py:277-287` (`backward_slice`, a `cached_property`
+  holding the whole slice of each node asked, and
+  `op_in_backward_slice_with_self`, which walks it).
+- **tolk:** `lib/uop/ops.ml:1065` (`ops_reached`) and `:1076`
+  (`op_in_backward_slice_with_self`).
+- **Differs:** each node keeps, as a property filled from its sources, the
+  set of the operations of itself and of the nodes it reaches outside call
+  bodies; a node whose set is a source's shares it.
+  `op_in_backward_slice_with_self` reads that set and no longer builds the
+  node's `backward_slice`. Answers are the same.
+- **Reason:** (b): the where-closure rule asks whether the condition and both
+  branches reach an `Index`, which builds and keeps the slice of every node it
+  asks about. In a jitted chain of `Nx.sin` every link's selections are
+  asked, each slice holds the whole chain below, and the work and memory grow
+  with the square of the chain. Compiling a chain of 80 `Nx.sin` cold on an M1
+  Max took 28.0 s and a heap of 218M words, and takes 16.4 s and 73M words.
+- **Pinned by:** the Symbolic suite: `cost › sym's work on a chain of
+  selections is linear in its length`; the Ops suite: `graphs ›
+  op_in_backward_slice_with_self is an operation of the slice` and `›
+  op_in_backward_slice_with_self does not enter call bodies`; the rune bench's
+  `Jit/jit-run-chain`.

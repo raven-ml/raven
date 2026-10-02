@@ -839,6 +839,30 @@ let graphs =
           equal int
             (List.length (reach [] root))
             (List.length (Ops.toposort root)));
+      prop "reaches is membership in the node's toposort" gen_dag (fun edges ->
+          let nodes = Ops.toposort (dag edges) in
+          List.iter
+            (fun u ->
+              let reached = Ops.toposort u in
+              List.iter
+                (fun x -> equal bool (List.memq x reached) (Ops.reaches u x))
+                nodes)
+            nodes);
+      prop "op_in_backward_slice_with_self is an operation of the slice"
+        gen_dag (fun edges ->
+          let nodes = Ops.toposort (dag edges) in
+          let slice u = Ops.Nodes.to_list (Ops.backward_slice_with_self u) in
+          let reference u ops =
+            List.exists (fun n -> List.mem (Ops.op n) ops) (slice u)
+          in
+          List.iter
+            (fun u ->
+              List.iter
+                (fun ops ->
+                  equal bool (reference u ops)
+                    (Ops.op_in_backward_slice_with_self u ops))
+                [ [ Op.Add ]; [ Op.Param ]; [ Op.Sink ]; [ Op.Mul; Op.Add ] ])
+            nodes);
       test "toposort finishes sources left to right, then the node" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
           let c = Ops.int 2 in
@@ -893,14 +917,18 @@ let graphs =
           is_true (Ops.op_in_backward_slice_with_self e [ Op.Add ]);
           is_true (Ops.op_in_backward_slice_with_self e [ Op.Param; Op.Mul ]);
           is_false (Ops.op_in_backward_slice_with_self e [ Op.Mul ]));
-      test "bool_slice is the boolean nodes reached" (fun () ->
-          let a = var "a" 0 4 in
-          let c = Ops.O.(a < Ops.int 2) in
-          let d = Ops.O.(c land flag "p") in
-          equal (slist uop Ops.compare)
-            [ c; flag "p"; d ]
-            (Ops.Nodes.to_list (Ops.bool_slice (Ops.where d a (Ops.int 0))));
-          equal int 0 (Ops.Nodes.cardinal (Ops.bool_slice a)));
+      test "op_in_backward_slice_with_self does not enter call bodies"
+        (fun () ->
+          let body = Ops.sink [ Ops.O.(var "inside" 0 1 * Ops.int 2) ] in
+          let c = Ops.call body [ Ops.O.(var "arg" 0 1 + Ops.int 1) ] in
+          is_true (Ops.op_in_backward_slice_with_self c [ Op.Add ]);
+          is_false (Ops.op_in_backward_slice_with_self c [ Op.Mul ]));
+      test "reaches enters call bodies" (fun () ->
+          let inside = var "inside" 0 1 in
+          let c = Ops.call (Ops.sink [ inside ]) [] in
+          is_true (Ops.reaches c inside);
+          is_true (Ops.reaches c c);
+          is_false (Ops.reaches inside c));
       test "split_uop is the operands of a tree of one operation" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 and c = var "c" 0 4 in
           equal uops [ a; b; c ] (Ops.split_uop Ops.O.(a + b + c) Op.Add);

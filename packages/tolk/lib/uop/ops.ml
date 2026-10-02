@@ -314,6 +314,7 @@ and Node : sig
     mutable device_memo : device option option; [@atomic]
     mutable addrspace_memo : Dtype.addr_space option option; [@atomic]
     mutable backward_slice_memo : nodes option; [@atomic]
+    mutable ops_reached_memo : Op.Set.t option; [@atomic]
     mutable axis_memo : int option option; [@atomic]
     mutable marg_memo : movement option; [@atomic]
     mutable key_memo : string option; [@atomic]
@@ -556,7 +557,14 @@ module Table = Stdlib.Weak.Make (Interned)
 (* The table is split in shards, each behind its own lock, so that domains
    building nodes rarely wait for each other. Each shard starts at the least
    size and grows with its nodes, so that a program that builds none keeps no
-   table in the heap every major collection marks. *)
+   table in the heap every major collection marks.
+
+   A shard picks its buckets by the node's hash modulo their number, so the
+   shard is picked by a mix of the hash. Picked by the hash's low bits, a
+   shard's nodes would share those bits and fill only the buckets they select:
+   at an even number of buckets that is at most half of them, and a weak table
+   grows only when more than half of its buckets overflow, so the shard would
+   stop growing and every lookup would scan a bucket of thousands of nodes. *)
 let shards = Array.init 64 (fun _ -> (Table.create 0, Mutex.create ()))
 let next_id = Atomic.make 0
 
@@ -575,6 +583,7 @@ let node op src arg tag dtype id =
     device_memo = None;
     addrspace_memo = None;
     backward_slice_memo = None;
+    ops_reached_memo = None;
     axis_memo = None;
     marg_memo = None;
     key_memo = None;
@@ -671,7 +680,7 @@ let dtype_of op src arg =
 let v ?(src = []) ?(arg = No_arg) ?tag op =
   let probe = node op src arg tag Dtype.Void (-1) in
   let created = ref false in
-  let table, lock = shards.(Interned.hash probe land 63) in
+  let table, lock = shards.(Hashtbl.hash (Interned.hash probe) land 63) in
   let u =
     Mutex.protect lock (fun () ->
         match Table.find_opt table probe with
@@ -1029,13 +1038,13 @@ let topovisit root f cache =
 
 (* A recursive property is filled bottom-up over the nodes that lack it, so a
    deep graph never recurses deeply. *)
-let memoized ~get ~set ~compute u =
+let memoized ?enter_calls ~get ~set ~compute u =
   match get u with
   | Some x -> x
   | None ->
       List.iter
         (fun n -> set n (compute n))
-        (toposort ~gate:(fun n -> Option.is_none (get n)) u);
+        (toposort ?enter_calls ~gate:(fun n -> Option.is_none (get n)) u);
       Option.get (get u)
 
 let backward_slice u =
@@ -1050,13 +1059,29 @@ let backward_slice u =
 let backward_slice_with_self u =
   Nodes.of_list (u :: Nodes.to_list (backward_slice u))
 
-let op_in_backward_slice_with_self u ops =
-  let has n = List.exists (Op.equal n.op) ops in
-  has u || List.exists has (Nodes.to_list (backward_slice u))
+(* The operations of [u] and of the nodes it reaches outside call bodies, as a
+   property of each node, so that asking costs no walk of the slice. A node
+   whose set is one of its sources' shares that source's set. *)
+let ops_reached u =
+  memoized ~enter_calls:false
+    ~get:(fun n -> n.ops_reached_memo)
+    ~set:(fun n s -> n.ops_reached_memo <- Some s)
+    ~compute:(fun n ->
+      let srcs = if n.op = Op.Call then drop 1 n.src else n.src in
+      let sets = List.map (fun s -> Option.get s.ops_reached_memo) srcs in
+      let all = List.fold_left Op.Set.union (Op.Set.of_list [ n.op ]) sets in
+      Option.value ~default:all (List.find_opt (Op.Set.equal all) sets))
+    u
 
-let bool_slice u =
-  Nodes.of_list
-    (List.filter (fun n -> Dtype.equal n.dtype Dtype.Bool) (toposort u))
+let op_in_backward_slice_with_self u ops =
+  let reached = ops_reached u in
+  List.exists (fun o -> Op.Set.mem o reached) ops
+
+(* A node is built after its sources, so ids grow along every edge: the search
+   for [x] never enters a node built before it. *)
+let reaches u x =
+  u == x
+  || (x.id < u.id && List.memq x (toposort ~gate:(fun n -> n.id >= x.id) u))
 
 let rec split_uop u sep =
   if Op.equal u.op sep then List.concat_map (fun s -> split_uop s sep) u.src
