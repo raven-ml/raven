@@ -5,22 +5,24 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-Gpt2/decode-step-cache-1024	alloc_words	exact	421639
-Gpt2/decode-step-cache-1024	wall_time	batch=1	n=20	5.123e-02	4.271e-02 4.517e-02 4.807e-02 4.831e-02 4.834e-02 4.856e-02 4.899e-02 4.937e-02 4.953e-02 5.117e-02 5.129e-02 5.130e-02 5.136e-02 5.155e-02 5.170e-02 5.175e-02 5.203e-02 5.220e-02 5.238e-02 5.353e-02
-Gpt2/decode-step-cache-256	alloc_words	exact	421639
-Gpt2/decode-step-cache-256	wall_time	batch=1	n=20	4.448e-02	4.219e-02 4.261e-02 4.316e-02 4.332e-02 4.339e-02 4.368e-02 4.385e-02 4.399e-02 4.406e-02 4.410e-02 4.486e-02 4.488e-02 4.502e-02 4.509e-02 4.514e-02 4.544e-02 4.559e-02 4.560e-02 4.663e-02 4.699e-02
-GptOss/decode-step-cache-1024	alloc_words	batch=1	n=20	3.149e+05	3.146e+05 3.146e+05 3.146e+05 3.146e+05 3.146e+05 3.146e+05 3.146e+05 3.149e+05 3.149e+05 3.149e+05 3.149e+05 3.149e+05 3.149e+05 3.150e+05 3.150e+05 3.159e+05 3.160e+05 3.163e+05 3.163e+05 3.225e+05
-GptOss/decode-step-cache-1024	wall_time	batch=1	n=20	1.198e-02	1.196e-02 1.197e-02 1.197e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.199e-02 1.199e-02 1.199e-02 1.199e-02 1.200e-02 1.200e-02 1.206e-02 1.240e-02 1.243e-02
-GptOss/prefill-512	alloc_words	exact	320586
-GptOss/prefill-512	wall_time	batch=1	n=20	1.115e+00	1.106e+00 1.109e+00 1.109e+00 1.111e+00 1.111e+00 1.112e+00 1.113e+00 1.114e+00 1.115e+00 1.115e+00 1.116e+00 1.118e+00 1.118e+00 1.119e+00 1.119e+00 1.119e+00 1.119e+00 1.120e+00 1.120e+00 1.123e+00
-Quant/cuda/routed-product-1-tokens	alloc_words	exact	1778
-Quant/cuda/routed-product-1-tokens	wall_time	batch=128	n=20	7.122e-05	6.707e-05 6.715e-05 6.740e-05 6.740e-05 6.751e-05 6.751e-05 6.758e-05 6.872e-05 7.100e-05 7.120e-05 7.124e-05 7.158e-05 7.174e-05 7.187e-05 7.202e-05 7.222e-05 7.244e-05 7.247e-05 7.275e-05 7.486e-05
-Quant/cuda/routed-product-512-tokens	alloc_words	exact	2028
-Quant/cuda/routed-product-512-tokens	wall_time	batch=1	n=20	2.878e-02	2.826e-02 2.860e-02 2.860e-02 2.860e-02 2.864e-02 2.865e-02 2.866e-02 2.867e-02 2.869e-02 2.874e-02 2.882e-02 2.882e-02 2.882e-02 2.882e-02 2.883e-02 2.883e-02 2.884e-02 2.894e-02 2.894e-02 2.894e-02
-Quant/host/routed-product-1-tokens	alloc_words	exact	1559
-Quant/host/routed-product-1-tokens	wall_time	batch=1	n=20	6.056e-03	5.929e-03 5.932e-03 5.939e-03 5.955e-03 5.967e-03 5.978e-03 6.024e-03 6.043e-03 6.052e-03 6.055e-03 6.058e-03 6.064e-03 6.071e-03 6.083e-03 6.087e-03 6.090e-03 6.093e-03 6.097e-03 6.104e-03 6.132e-03
-Quant/host/routed-product-64-tokens	alloc_words	exact	39713
-Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	2.814e-01	2.805e-01 2.806e-01 2.809e-01 2.809e-01 2.809e-01 2.809e-01 2.810e-01 2.812e-01 2.812e-01 2.814e-01 2.814e-01 2.815e-01 2.819e-01 2.820e-01 2.821e-01 2.822e-01 2.825e-01 2.825e-01 2.836e-01 2.843e-01
+Gpt2/decode-step-cache-1024	alloc_words	exact	340301
+Gpt2/decode-step-cache-1024	wall_time	batch=1	n=20	3.121e-02	3.106e-02 3.108e-02 3.110e-02 3.111e-02 3.112e-02 3.114e-02 3.115e-02 3.115e-02 3.115e-02 3.120e-02 3.121e-02 3.121e-02 3.121e-02 3.121e-02 3.122e-02 3.126e-02 3.127e-02 3.133e-02 3.168e-02 3.178e-02
+Gpt2/decode-step-cache-256	alloc_words	exact	340301
+Gpt2/decode-step-cache-256	wall_time	batch=1	n=20	2.855e-02	2.790e-02 2.806e-02 2.811e-02 2.818e-02 2.821e-02 2.825e-02 2.828e-02 2.831e-02 2.846e-02 2.852e-02 2.858e-02 2.859e-02 2.860e-02 2.865e-02 2.874e-02 2.893e-02 2.904e-02 2.904e-02 2.912e-02 2.965e-02
+GptOss/decode-step-cache-1024	alloc_words	batch=1	n=20	3.154e+05	3.151e+05 3.152e+05 3.152e+05 3.152e+05 3.152e+05 3.152e+05 3.152e+05 3.153e+05 3.154e+05 3.154e+05 3.155e+05 3.155e+05 3.155e+05 3.155e+05 3.155e+05 3.164e+05 3.166e+05 3.168e+05 3.168e+05 3.228e+05
+GptOss/decode-step-cache-1024	wall_time	batch=1	n=20	1.194e-02	1.192e-02 1.193e-02 1.193e-02 1.193e-02 1.193e-02 1.193e-02 1.194e-02 1.194e-02 1.194e-02 1.194e-02 1.194e-02 1.194e-02 1.194e-02 1.194e-02 1.194e-02 1.194e-02 1.195e-02 1.195e-02 1.195e-02 1.198e-02
+GptOss/prefill-512	alloc_words	exact	321100
+GptOss/prefill-512	wall_time	batch=1	n=20	7.102e-01	7.038e-01 7.051e-01 7.058e-01 7.072e-01 7.075e-01 7.079e-01 7.088e-01 7.088e-01 7.092e-01 7.100e-01 7.103e-01 7.106e-01 7.110e-01 7.115e-01 7.118e-01 7.118e-01 7.119e-01 7.124e-01 7.124e-01 7.134e-01
+Quant/cuda/routed-product-1-tokens	alloc_words	exact	1802
+Quant/cuda/routed-product-1-tokens	wall_time	batch=128	n=20	5.796e-05	5.608e-05 5.641e-05 5.646e-05 5.650e-05 5.679e-05 5.759e-05 5.791e-05 5.794e-05 5.795e-05 5.796e-05 5.796e-05 5.804e-05 5.840e-05 5.902e-05 5.944e-05 6.124e-05 6.143e-05 6.195e-05 6.232e-05 6.234e-05
+Quant/cuda/routed-product-512-tokens	alloc_words	exact	2052
+Quant/cuda/routed-product-512-tokens	wall_time	batch=1	n=20	2.302e-02	2.245e-02 2.297e-02 2.298e-02 2.298e-02 2.298e-02 2.300e-02 2.301e-02 2.301e-02 2.302e-02 2.302e-02 2.302e-02 2.302e-02 2.302e-02 2.303e-02 2.308e-02 2.308e-02 2.308e-02 2.311e-02 2.313e-02 2.315e-02
+Quant/host/routed-product-1-tokens	alloc_words	exact	1225
+Quant/host/routed-product-1-tokens	wall_time	batch=1	n=20	7.568e-03	7.546e-03 7.551e-03 7.552e-03 7.554e-03 7.554e-03 7.555e-03 7.558e-03 7.560e-03 7.563e-03 7.566e-03 7.570e-03 7.573e-03 7.579e-03 7.600e-03 7.632e-03 7.648e-03 7.651e-03 7.662e-03 7.678e-03 7.712e-03
+Quant/host/routed-product-1-tokens-eager	alloc_words	exact	7958
+Quant/host/routed-product-1-tokens-eager	wall_time	batch=1	n=20	6.181e-01	6.111e-01 6.162e-01 6.165e-01 6.169e-01 6.174e-01 6.174e-01 6.175e-01 6.176e-01 6.177e-01 6.181e-01 6.181e-01 6.182e-01 6.182e-01 6.183e-01 6.188e-01 6.189e-01 6.192e-01 6.195e-01 6.196e-01 6.198e-01
+Quant/host/routed-product-64-tokens	alloc_words	exact	6791
+Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	2.203e-01	2.198e-01 2.200e-01 2.200e-01 2.201e-01 2.201e-01 2.201e-01 2.201e-01 2.202e-01 2.202e-01 2.202e-01 2.203e-01 2.203e-01 2.204e-01 2.204e-01 2.204e-01 2.206e-01 2.206e-01 2.206e-01 2.213e-01 2.566e-01
 
 # machine: 73bfb753d0739958
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
