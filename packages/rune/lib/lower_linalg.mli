@@ -56,6 +56,18 @@ val svd : full_matrices:bool -> Ops.t -> Ops.t * Ops.t * Ops.t
     logarithm of [min m n], and has [qr]'s range of accuracy. The signs of the
     vectors are unspecified. *)
 
+val eigh : vectors:bool -> Ops.t -> Ops.t * Ops.t option
+(** [eigh ~vectors a] is [(w, v)] with [a v = v diag(w)], reading only the lower
+    triangle of [a]: the [float64] eigenvalues [w] in ascending order and, under
+    [vectors], the orthonormal eigenvectors [v] as columns, by two-sided Jacobi
+    rotations. For [n] rows it rotates for [⌈p ⌈log2 n⌉ / 10⌉] sweeps of the
+    pairs of rows, [p] the precision in bits at which it computes, enough for
+    the slowest spectra, of repeated eigenvalues, to reach [n] units of roundoff
+    of [a]'s norm. Every element of [v diag(w) vᵀ] and [vᵀ v] is then within
+    some ten [n] units of roundoff of [a]'s and the identity's. The signs of the
+    vectors, and the basis of the space of a repeated eigenvalue, are
+    unspecified. *)
+
 val solve_triangular :
   upper:bool -> transpose:bool -> unit_diag:bool -> Ops.t -> Ops.t -> Ops.t
 (** [solve_triangular ~upper ~transpose ~unit_diag a b] is the [x] with

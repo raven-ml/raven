@@ -210,6 +210,30 @@ let select_zero =
           fun g -> g x);
     ]
 
+(* Symmetric eigendecompositions of 64 float32 matrices of 8 x 8, eagerly and
+   compiled for the host. Compiled, it is 56 rounds of Jacobi rotations, each
+   one pass over the matrices and one over their vectors. Its first call
+   compiles for some 40 s without the disk cache. *)
+let eigh =
+  let batch = 64 and n = 8 in
+  let a () =
+    let x = uniform [| batch; n; n |] in
+    Nx.add x (Nx.matrix_transpose x)
+  in
+  let id = Printf.sprintf "float32-%dx%dx%d" batch n n in
+  Thumper.group ~id:"eigh" "eigh"
+    [
+      Thumper.bench_with_setup ~setup:a (id ^ "-eager") (fun a ->
+          ignore (Sys.opaque_identity (Nx.eigh a));
+          Nx_device.synchronize Nx_device.host);
+      compiled_call (id ^ "-host")
+        Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+        (fun a -> Nx.eigh a)
+        (fun () ->
+          let a = a () in
+          fun g -> g a);
+    ]
+
 (* Reverse mode of a two-layer perceptron's loss over a batch of 32 rows of 64
    inputs, 128 hidden units and 10 outputs: the gradient of the compiled loss, a
    forward program that returns the values its backward program reads, then that
@@ -416,6 +440,7 @@ let () =
           exit 0)
   | _ ->
       Thumper.run "compiled"
+        ~config:Thumper.Config.(default |> deadline 120.)
         ~budgets:
           [
             Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
@@ -428,7 +453,7 @@ let () =
                searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000
                  ~m:1_000_000;
              ]
-        :: split :: indexed :: rope :: select_zero :: reverse
+        :: split :: indexed :: rope :: select_zero :: eigh :: reverse
         :: Thumper.group ~id:"finite" "finite"
              [
                finite_checks ~place:Fun.id

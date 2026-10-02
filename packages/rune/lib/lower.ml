@@ -884,8 +884,10 @@ let op : type r. scope -> r Nx.Op.t -> r =
       like b
         (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag (factored a)
            (factored b))
-  | Fft _ | Rfft _ | Irfft _ | Eig _ | Eigh _ ->
-      jit_error "cannot compile %s" what
+  | Eigh { vectors; x } ->
+      let w, v = Lower_linalg.eigh ~vectors (factored x) in
+      (ret Nx_dtype.float64 w, Option.map (like x) v)
+  | Fft _ | Rfft _ | Irfft _ | Eig _ -> jit_error "cannot compile %s" what
   | Contiguous x -> like x (Ops.contiguous (n x))
   | Move (x, m) -> like x (move (node s what (home x) x) m)
   | Place (q, x) -> (

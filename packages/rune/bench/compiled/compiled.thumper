@@ -44,6 +44,10 @@ topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.620e-04	7.475e-04 7.509e-04
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 
+eigh/float32-64x8x8-eager	alloc_words	exact	254
+eigh/float32-64x8x8-eager	wall_time	batch=256	n=20	3.544e-05	2.592e-05 3.165e-05 3.167e-05 3.222e-05 3.248e-05 3.273e-05 3.334e-05 3.396e-05 3.438e-05 3.498e-05 3.589e-05 3.787e-05 3.813e-05 4.029e-05 4.316e-05 4.547e-05 4.690e-05 4.844e-05 5.042e-05 5.549e-05
+eigh/float32-64x8x8-host	alloc_words	exact	15492
+eigh/float32-64x8x8-host	wall_time	batch=16	n=20	5.483e-04	5.372e-04 5.383e-04 5.405e-04 5.417e-04 5.434e-04 5.438e-04 5.445e-04 5.453e-04 5.457e-04 5.469e-04 5.497e-04 5.503e-04 5.513e-04 5.529e-04 5.556e-04 5.570e-04 5.572e-04 5.598e-04 5.630e-04 5.646e-04
 finite/checks-128-leaves-host	alloc_words	exact	109962
 finite/checks-128-leaves-host	wall_time	batch=1	n=20	1.470e-02	1.136e-02 1.136e-02 1.224e-02 1.287e-02 1.289e-02 1.355e-02 1.367e-02 1.367e-02 1.381e-02 1.450e-02 1.491e-02 1.505e-02 1.536e-02 1.552e-02 1.557e-02 1.577e-02 1.590e-02 1.702e-02 1.751e-02 3.392e-02
 indexed/scatter-16-rows-into-4096x1024-cache-host	alloc_words	exact	1537

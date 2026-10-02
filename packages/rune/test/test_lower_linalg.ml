@@ -696,6 +696,163 @@ let svd =
             (fun () -> trace ~renderer:(fun _ -> metal) (fun () -> Nx.svd a)));
     ]
 
+(* Symmetric eigendecomposition
+
+   Eager and compiled eigenvalues are each within some [n u] of [a]'s norm of
+   the exact ones, the largest of whose magnitudes eager's are: up to [14 n u]
+   measured, and the bound is [32 n u] of it, as for the vectors. The vectors of
+   eigenvalues at least [delta] apart are unique up to sign, each within [n u
+   |a| / delta] of the exact one. Every decomposition is checked whole:
+   orthonormal vectors that rebuild [a]. *)
+
+(* Symmetric matrices [Q diag(w) Qᵀ], [Q] orthogonal and the spectrum [w] of
+   each of [n] rows drawn by [spectrum n], with NaN above the diagonal, which
+   eigh never reads. *)
+let with_spectrum dt spectrum =
+  let open Gen in
+  with_pp Nx.pp
+    (let* b = batch in
+     let* n = size in
+     let matrices = Array.fold_left ( * ) 1 b in
+     let* w = list ~size:(constant matrices) (spectrum n) in
+     let+ g =
+       array ~size:(constant (matrices * n * n)) (float_range (-1.) 1.)
+     in
+     let q = fst (Nx.qr (Nx.create Nx.float64 (Array.append b [| n; n |]) g)) in
+     let w = Nx.create Nx.float64 (Array.append b [| n |]) (Array.concat w) in
+     let a =
+       Nx.matmul
+         (Nx.mul q (Nx.unsqueeze ~axes:[ -2 ] w))
+         (Nx.matrix_transpose q)
+     in
+     lower_only (Nx.cast dt a))
+
+let signed magnitude =
+  Gen.(
+    let+ m = magnitude and+ negative = bool in
+    if negative then -.m else m)
+
+let each g n = Gen.array ~size:(Gen.constant n) g
+
+(* Magnitudes [0.3 k] with a little noise, [k] a shuffle of [1] to [n], and
+   their negations: eigenvalues at least [0.25] apart. *)
+let separated n =
+  let open Gen in
+  let* order = permutation (List.init n (fun k -> k + 1)) in
+  let+ noise = each (float_range 0. 0.05) n and+ negative = each bool n in
+  Array.of_list
+    (List.mapi
+       (fun i k ->
+         let m = (0.3 *. float_of_int k) +. noise.(i) in
+         if negative.(i) then -.m else m)
+       order)
+
+let symmetric a = Nx.add (Nx.tril a) (Nx.matrix_transpose (Nx.tril ~k:(-1) a))
+
+(* [decomposes ~bound a (w, v)] asserts that [v] is orthonormal and that [v
+   diag(w) vᵀ] is [a]'s lower triangle mirrored. *)
+let decomposes ~bound a (w, v) =
+  orthonormal ~bound v;
+  let v = f64 v in
+  near ~bound
+    (symmetric (f64 a))
+    (Nx.matmul
+       (Nx.mul v (Nx.unsqueeze ~axes:[ Nx.ndim w - 1 ] w))
+       (Nx.matrix_transpose v))
+
+let eigh_agrees ?separation ~bound a =
+  let w, v = Nx.eigh a in
+  let w', v' = traced2 (fun () -> Nx.eigh a) in
+  near ~bound w w';
+  exact w' (traced (fun () -> Nx.eigvalsh a));
+  decomposes ~bound a (w', v');
+  match separation with
+  | None -> ()
+  | Some delta ->
+      (* [vᵀ v'] is the identity, up to the signs of its columns. *)
+      let n = Nx.dim (-1) a in
+      let along = Nx.abs (Nx.matmul (Nx.matrix_transpose (f64 v)) (f64 v')) in
+      near
+        ~bound:(bound *. largest w /. delta)
+        (Nx.broadcast_to (Nx.shape along) (Nx.eye Nx.float64 n))
+        along
+
+let eigh_bound u a = 32. *. float_of_int (Int.max 1 (Nx.dim (-1) a)) *. u
+
+let eigh =
+  group "eigh"
+    [
+      per_float factor_dtypes "spectra"
+        {
+          on_float =
+            (fun dt u ->
+              let law name ?separation spectrum =
+                prop ~count:50 name (with_spectrum dt spectrum) (fun a ->
+                    eigh_agrees ?separation ~bound:(eigh_bound u a) a)
+              in
+              [
+                law "separated eigenvalues" ~separation:0.25 separated;
+                law "repeated eigenvalues"
+                  (each (Gen.of_list ~pp:pp_float [ -1.; 1.; 2. ]));
+                law "ill-conditioned"
+                  (each
+                     (signed
+                        (Gen.map
+                           (fun e -> Float.ldexp 1. (-e))
+                           (Gen.int_range 0 40))));
+                prop ~count:50 "any symmetric matrix" (square_matrix dt)
+                  (fun a ->
+                    let a = lower_only a in
+                    eigh_agrees ~bound:(eigh_bound u a) a);
+              ]);
+        };
+      slow "a 32 x 32 matrix of two repeated eigenvalues reaches its roundoff"
+        (fun () ->
+          List.iter
+            (fun (F (_, dt, u)) ->
+              let n = 32 in
+              let st = Random.State.make [| n |] in
+              let g =
+                Nx.create Nx.float64 [| n; n |]
+                  (Array.init (n * n) (fun _ -> Random.State.float st 2. -. 1.))
+              in
+              let q = fst (Nx.qr g) in
+              let w =
+                Nx.create Nx.float64 [| n |]
+                  (Array.init n (fun i -> if i mod 2 = 0 then -1. else 1.))
+              in
+              let a =
+                Nx.cast dt
+                  (Nx.matmul
+                     (Nx.mul q (Nx.unsqueeze ~axes:[ 0 ] w))
+                     (Nx.matrix_transpose q))
+              in
+              eigh_agrees ~bound:(eigh_bound u a) a)
+            (List.filter
+               (fun (F (_, dt, _)) -> Nx_dtype.itemsize dt >= 4)
+               factor_dtypes));
+      test "NaN gives NaN values" (fun () ->
+          let a = Nx.create Nx.float32 [| 2; 2 |] [| Float.nan; 0.; 1.; 3. |] in
+          exact
+            (Nx.full Nx.float64 [| 2 |] Float.nan)
+            (traced (fun () -> Nx.eigvalsh a)));
+      test "one element" (fun () ->
+          let a = Nx.create Nx.float32 [| 1; 1 |] [| -3. |] in
+          let w, v = traced2 (fun () -> Nx.eigh a) in
+          exact (Nx.create Nx.float64 [| 1 |] [| -3. |]) w;
+          exact (Nx.ones Nx.float32 [| 1; 1 |]) v);
+      test "no element" (fun () ->
+          let w, v =
+            traced2 (fun () -> Nx.eigh (Nx.zeros Nx.float32 [| 2; 0; 0 |]))
+          in
+          exact (Nx.zeros Nx.float64 [| 2; 0 |]) w;
+          exact (Nx.zeros Nx.float32 [| 2; 0; 0 |]) v);
+      test "the upper triangle is read under uplo U" (fun () ->
+          let a = Nx.create Nx.float64 [| 2; 2 |] [| 2.; 1.; Float.nan; 2. |] in
+          let w, _ = traced2 (fun () -> Nx.eigh ~uplo:`U a) in
+          near ~bound:0x1p-50 (Nx.create Nx.float64 [| 2 |] [| 1.; 3. |]) w);
+    ]
+
 (* Compiled for the host
 
    What a kernel computes where the interpreter cannot tell: the sign of a zero
@@ -771,6 +928,7 @@ let integers =
           both "lu" (fun () -> Nx.Op.eval (Lu a));
           both "svd" (fun () ->
               Nx.Op.eval (Svd { full_matrices = false; x = a }));
+          both "eigh" (fun () -> Nx.Op.eval (Eigh { vectors = true; x = a }));
           both "solve_triangular" (fun () ->
               Nx.Op.eval
                 (Solve_triangular
@@ -794,6 +952,7 @@ let () =
          lu;
          qr;
          svd;
+         eigh;
          integers;
          on_the_host;
          parity;

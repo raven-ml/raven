@@ -178,6 +178,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `jit` compiles `Nx.eigh` and `Nx.eigvalsh` of real matrices, by two-sided
+  Jacobi rotations for a sweep count fixed by the size and dtype, so a step
+  that solves with a symmetric eigendecomposition runs as one program. Before,
+  `jit` refused them. Their eigenvalues are `float64`, which Metal refuses.
 - `jit` reads a host scalar operand of a value on a device, such as `add_s`'s,
   as a constant where it lies. It used to copy it to the device and back, and
   each copy waited for the work queued there, so a trace stalled behind the

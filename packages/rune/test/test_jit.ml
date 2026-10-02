@@ -3740,6 +3740,99 @@ let gathers ~at d =
       ]
     else [])
 
+(* Symmetric eigendecompositions
+
+   A compiled eigh runs the lowering that test_lower_linalg checks against
+   eager. Compiled, its eigenvalues are eager's within [32 n u] of the largest
+   magnitude, its vectors are orthonormal and rebuild the matrix within as much,
+   and a gradient through it, of a loss its vectors' signs do not change, is
+   eager's gradient. Its eigenvalues are float64, which Metal refuses. *)
+
+let largest t =
+  Array.fold_left
+    (fun m x -> Float.max m (Float.abs x))
+    0.
+    (Nx.to_array (Nx.cast Nx.float64 t))
+
+let within ~bound expected actual =
+  equal
+    (Oracle.tensor ~rel:0. ~abs:(bound *. largest expected) ())
+    expected actual
+
+(* [Q diag(w) Qᵀ] for the [n] eigenvalues [w], of [shape]'s batch axes, [Q] the
+   orthogonal factor of a fixed matrix. *)
+let spectral dt shape w =
+  let r = Array.length shape and n = Array.length w in
+  let g =
+    Nx.init Nx.float64 shape (fun i ->
+        Float.sin (float_of_int ((7 * i.(r - 2)) + (3 * i.(r - 1)) + 1)))
+  in
+  let q = fst (Nx.qr g) in
+  let w = Nx.create Nx.float64 [| n |] w in
+  Nx.cast dt
+    (Nx.matmul (Nx.mul q (Nx.unsqueeze ~axes:[ 0 ] w)) (Nx.matrix_transpose q))
+
+let compiled_eigh (type b) name (dt : (float, b) Nx.dtype) u =
+  let agrees shape w () =
+    let a = spectral dt shape w in
+    let n = Float.of_int (Int.max 1 (Array.length w)) in
+    let bound = 32. *. n *. u in
+    let w, _ = Nx.eigh a in
+    let w', v' =
+      Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) Nx.eigh a
+    in
+    within ~bound w (host w');
+    let v = Nx.cast Nx.float64 (host v') in
+    let k = Array.length (Nx.shape v) in
+    let eye =
+      Nx.broadcast_to (Nx.shape v) (Nx.eye Nx.float64 (Nx.dim (-1) v))
+    in
+    within ~bound eye (Nx.matmul (Nx.matrix_transpose v) v);
+    within ~bound (Nx.cast Nx.float64 a)
+      (Nx.matmul
+         (Nx.mul v (Nx.unsqueeze ~axes:[ k - 2 ] (host w')))
+         (Nx.matrix_transpose v))
+  in
+  group name
+    [
+      test "separated eigenvalues" (agrees [| 4; 4 |] [| -1.2; 0.3; 0.7; 1.5 |]);
+      test "repeated eigenvalues" (agrees [| 4; 4 |] [| -1.; 1.; 1.; -1. |]);
+      test "ill-conditioned" (agrees [| 3; 3 |] [| 1e-12; -1e-6; 1. |]);
+      test "batch axes" (agrees [| 2; 3; 3 |] [| 0.5; -2.; 1. |]);
+      test "one element" (agrees [| 1; 1 |] [| -3. |]);
+      test "no element" (agrees [| 0; 0 |] [||]);
+    ]
+
+(* The eigenvalues weighed by [k] and the matrix rebuilt with them, weighed by
+   [m]: both unchanged by the signs of the vectors. *)
+let eigen_loss a =
+  let w, v = Nx.eigh a in
+  let k = Nx.create Nx.float64 [| 3 |] [| 1.; -2.; 3. |] in
+  let m =
+    Nx.init Nx.float64 [| 3; 3 |] (fun i -> float_of_int (i.(0) - i.(1)))
+  in
+  let rebuilt =
+    Nx.matmul (Nx.mul v (Nx.unsqueeze ~axes:[ 0 ] k)) (Nx.matrix_transpose v)
+  in
+  Nx.add (Nx.sum (Nx.mul w k)) (Nx.sum (Nx.mul rebuilt m))
+
+let eigh_gradient () =
+  let a = spectral Nx.float64 [| 3; 3 |] [| -1.; 0.5; 2. |] in
+  let g = Rune.grad' eigen_loss a in
+  let tolerance = Oracle.tensor ~rel:0. ~abs:(1e-12 *. largest g) () in
+  equal ~msg:"grad (jit f)" tolerance g
+    (host (Rune.grad' (Rune.jit' eigen_loss) a));
+  equal ~msg:"jit (grad f)" tolerance g
+    (host (Rune.jit' (Rune.grad' eigen_loss) a))
+
+let eighs =
+  group "symmetric eigendecompositions"
+    [
+      compiled_eigh "float32" Nx.float32 0x1p-24;
+      compiled_eigh "float64" Nx.float64 0x1p-53;
+      test "a gradient through a compiled eigh is eager's" eigh_gradient;
+    ]
+
 (* One device *)
 
 (* The calls whose bytes and memory a device counts, on [d]: the test devices by
@@ -4050,6 +4143,7 @@ let () =
          placement;
          scans;
          gathers ~at:Nx.Placement.host Nx.Device.host;
+         eighs;
          scatters;
          device_lists;
          split_gathers;
