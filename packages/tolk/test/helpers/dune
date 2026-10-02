@@ -12,4 +12,4 @@
   (setenv
    CACHEDB
    cache
-   (run %{test} --exclude-tag slow))))
+   (run %{test}))))

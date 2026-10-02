@@ -1,6 +1,3 @@
-; CACHEDB is a directory of the sandbox, as Clang's compiler is made with its
-; cache.
-
 (test
  (name test_jit)
  (modules test_jit)
@@ -13,25 +10,7 @@
   tolk_run
   nx.device)
  (deps
-  (sandbox always)
-  (glob_files *.golden))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{test} --exclude-tag slow))))
-
-(rule
- (alias slow)
- (package tolk)
- (deps
-  (sandbox always)
-  (glob_files *.golden))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{exe:test_jit.exe} --tag slow))))
+  (glob_files *.golden)))
 
 ; JITBEAM is read once per process, so each of its settings is a run of its
 ; own.
@@ -41,19 +20,14 @@
  (modules test_jitbeam)
  (package tolk)
  (libraries windtrap tolk tolk.engine tolk_run)
- (deps
-  (sandbox always))
  (action
-  (setenv
-   CACHEDB
-   cache
-   (progn
-    (run %{test} -f "JITBEAM unset")
-    (setenv
-     JITBEAM
-     3
-     (run %{test} -f "JITBEAM=3"))
-    (setenv
-     JITBEAM
-     0
-     (run %{test} -f "JITBEAM=0"))))))
+  (progn
+   (run %{test} -f "JITBEAM unset")
+   (setenv
+    JITBEAM
+    3
+    (run %{test} -f "JITBEAM=3"))
+   (setenv
+    JITBEAM
+    0
+    (run %{test} -f "JITBEAM=0")))))

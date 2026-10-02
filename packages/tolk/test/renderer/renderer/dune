@@ -17,7 +17,7 @@
     (setenv
      ASSERT_COMPILE
      0
-     (run %{test} --exclude-tag slow --exclude-tag assert-compile))
+     (run %{test} --exclude-tag assert-compile))
     (setenv
      ASSERT_COMPILE
      1

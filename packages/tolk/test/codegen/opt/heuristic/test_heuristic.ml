@@ -31,9 +31,9 @@ type case = {
   renderer : string;
   settings : Helpers.binding list;
   environment : string;
-      (** The switch of the matrix-vector layouts, [MV], which is read once
-          from the environment: a case under it runs in a process of its own
-          (see dune), tagged by {!process}. *)
+      (** The switch of the matrix-vector layouts, [MV], which is read once from
+          the environment: a case under it runs in a process of its own (see
+          dune), tagged by {!process}. *)
   opts : Opt.t list;  (** The optimisations tinygrad chose. *)
 }
 
@@ -53,9 +53,7 @@ let case_of_row cell =
   }
 
 let recorded_cases = List.map case_of_row (Golden.rows "cases.golden")
-
-let processes =
-[ ("", ""); ("MV=0", "mv_0") ]
+let processes = [ ("", ""); ("MV=0", "mv_0") ]
 
 (* The cases of the process that runs with [environment], in a group tagged
    after it, which first checks that the process has it. *)
@@ -88,11 +86,6 @@ let optimize c =
       Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
         (kernel c.kernel) (renderer c.renderer))
 
-let applied ast =
-  match Ops.arg ast with
-  | Kernel k -> k.applied_opts
-  | _ -> failf "%a is not a kernel" Ops.pp ast
-
 let size r =
   match Ops.vmax r with
   | `Int n -> Bigint.succ n
@@ -100,13 +93,11 @@ let size r =
 
 (* Choosing *)
 
+(* A golden's kernel information holds the optimisations applied, so the
+   optimised kernel states them too. *)
 let chosen =
   let tests cases =
     [
-      Windtrap.cases
-        ~name:(fun c -> c.name)
-        "applied_opts" cases
-        (fun c -> equal (list Kernel_opts.opt) c.opts (applied (optimize c)));
       group "the optimised kernel"
         (List.map
            (fun c -> Golden.graph (c.name ^ ".golden") (fun () -> optimize c))

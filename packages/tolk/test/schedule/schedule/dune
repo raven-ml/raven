@@ -1,6 +1,5 @@
-; Settings are read when the program starts, so CACHEDB is set here, to a
-; directory of the sandbox: schedules kept on disk by one run are not read back
-; by the next.
+; The tests of schedules on disk make their caches under the working
+; directory, which the sandbox makes fresh.
 
 (test
  (name test_schedule)
@@ -8,9 +7,4 @@
  (libraries windtrap tolk tolk_test str unix)
  (deps
   (sandbox always)
-  (glob_files *.golden))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{test} --exclude-tag slow))))
+  (glob_files *.golden)))

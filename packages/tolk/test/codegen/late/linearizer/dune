@@ -9,7 +9,7 @@
   (glob_files *.golden))
  (action
   (progn
-   (run %{test} --exclude-tag slow --exclude-tag debug_linearize)
+   (run %{test} --exclude-tag debug_linearize)
    (setenv
     DEBUG_LINEARIZE
     1

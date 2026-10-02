@@ -12,8 +12,6 @@
    (run
     %{test}
     --exclude-tag
-    slow
-    --exclude-tag
     allow_half8
     --exclude-tag
     dmc)

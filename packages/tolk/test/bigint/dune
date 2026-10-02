@@ -1,6 +1,4 @@
 (test
  (name test_bigint)
  (package tolk)
- (libraries windtrap tolk)
- (action
-  (run %{test} --exclude-tag slow)))
+ (libraries windtrap tolk))

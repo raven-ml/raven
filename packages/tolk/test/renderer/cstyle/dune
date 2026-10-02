@@ -24,8 +24,6 @@
    (run
     %{test}
     --exclude-tag
-    slow
-    --exclude-tag
     expand-ssa
     --exclude-tag
     unaligned)
@@ -37,11 +35,3 @@
     ALIGNED
     0
     (run %{test} --tag unaligned)))))
-
-(rule
- (alias slow)
- (package tolk)
- (deps
-  (glob_files *.golden))
- (action
-  (run %{exe:test_cstyle.exe} --tag slow)))

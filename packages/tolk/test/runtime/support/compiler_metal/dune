@@ -15,7 +15,7 @@
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag slow --exclude-tag no-library)
+    (run %{test} --exclude-tag no-library)
     (setenv
      MTLCOMPILER_PATH
      ./not_a_library

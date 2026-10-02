@@ -4,9 +4,7 @@
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden))
- (action
-  (run %{test} --exclude-tag slow)))
+  (glob_files *.golden)))
 
 (executable
  (name sum_acc)

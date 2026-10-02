@@ -9,16 +9,8 @@
   (glob_files *.golden))
  (action
   (progn
-   (run %{test} --exclude-tag slow --exclude-tag mv_0)
+   (run %{test} --exclude-tag mv_0)
    (setenv
     MV
     0
     (run %{test} --tag mv_0)))))
-
-(rule
- (alias slow)
- (package tolk)
- (deps
-  (glob_files *.golden))
- (action
-  (run %{exe:test_heuristic.exe} --tag slow)))

@@ -1,21 +1,12 @@
-; CACHEDB is a directory of the sandbox, as Clang's compiler is made with its
-; cache.
-
 (test
  (name test_ops_cuda)
  (modules test_ops_cuda)
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (sandbox always)
-  (glob_files *.golden))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{test} --exclude-tag slow))))
+  (glob_files *.golden)))
 
-; Running batches on an NVIDIA GPU is slow, and skips without one.
+; Running batches needs an NVIDIA GPU, and skips without one.
 
 (executable
  (name test_ops_cuda_exec)
@@ -29,12 +20,7 @@
   nx.cuda.device))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package tolk)
- (deps
-  (sandbox always))
  (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{exe:test_ops_cuda_exec.exe} --tag slow))))
+  (run %{exe:test_ops_cuda_exec.exe})))

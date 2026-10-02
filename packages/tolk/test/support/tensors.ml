@@ -102,13 +102,15 @@ let index u t idxs =
       | Some _ -> fail "a gather reads outside its source")
 
 let broadcast shape t =
-  let lead = List.length shape - List.length t.shape in
-  gather shape t (fun idx ->
-      Some
-        (List.map2
-           (fun n i -> if n = 1 then 0 else i)
-           t.shape
-           (List.filteri (fun a _ -> a >= lead) idx)))
+  if shape = t.shape then t
+  else
+    let lead = List.length shape - List.length t.shape in
+    gather shape t (fun idx ->
+        Some
+          (List.map2
+             (fun n i -> if n = 1 then 0 else i)
+             t.shape
+             (List.filteri (fun a _ -> a >= lead) idx)))
 
 let movement ~device u t =
   let int = int ~device in
@@ -153,12 +155,16 @@ let held dt : Dtype.const -> Dtype.const = function
       | `Invalid -> `Invalid)
   | `Invalid -> `Invalid
 
+let is_invalid : Dtype.const -> bool = function
+  | `Invalid -> true
+  | #Dtype.value -> false
+
 let element u (values : Dtype.const list) : Dtype.const =
   let dt = Ops.dtype u in
   match (Ops.op u, values) with
   | Where, `Invalid :: _ -> `Invalid
   | Where, [ `Bool c; a; b ] -> if c then a else b
-  | _, values when List.mem `Invalid values -> `Invalid
+  | _, values when List.exists is_invalid values -> `Invalid
   | Cast, [ v ] -> held dt v
   | Bitcast, [ (#Dtype.value as v) ] ->
       (Dtype.bitcast (Ops.dtype (Ops.nth u 0)) dt v :> Dtype.const)
@@ -308,9 +314,19 @@ let unshard u axes shards =
 
 (* Memory *)
 
+(* What stores wrote, by place: scratch or not, slot and index. *)
+module Written = Hashtbl.Make (struct
+  type t = bool * int * int
+
+  let equal (s0, l0, i0) (s1, l1, i1) =
+    Bool.equal s0 s1 && Int.equal l0 l1 && Int.equal i0 i1
+
+  let hash (s, l, i) = (((i * 65599) + l) * 2) + Bool.to_int s
+end)
+
 type memory = {
   buffers : (int * Dtype.value array) list;
-  written : (bool * int * int, Dtype.const) Hashtbl.t;
+  written : Dtype.const Written.t;
 }
 
 let initial m at : Dtype.const =
@@ -323,7 +339,7 @@ let initial m at : Dtype.const =
 let key at = (at.scratch, at.slot, at.index)
 
 let current m at =
-  match Hashtbl.find_opt m.written (key at) with
+  match Written.find_opt m.written (key at) with
   | Some v -> v
   | None -> initial m at
 
@@ -354,7 +370,7 @@ let store m dst value =
         (fun k c ->
           match (c.at, c.value) with
           | Some at, _ ->
-              Hashtbl.replace m.written (key at) (source at).cells.(k).value
+              Written.replace m.written (key at) (source at).cells.(k).value
           | None, `Invalid -> ()
           | None, _ -> fail "a store's destination is not storage")
         d.cells)
@@ -491,12 +507,12 @@ let rec run m params u =
 let elements v = List.map (fun t -> Array.map (fun c -> c.value) t.cells) v
 
 let eval ?(buffers = []) u =
-  elements (run { buffers; written = Hashtbl.create 64 } [] u)
+  elements (run { buffers; written = Written.create 64 } [] u)
 
 let writes ?(buffers = []) u =
-  let m = { buffers; written = Hashtbl.create 64 } in
+  let m = { buffers; written = Written.create 64 } in
   ignore (run m [] u);
-  Hashtbl.fold
+  Written.fold
     (fun (scratch, s, i) v acc ->
       match v with
       | #Dtype.value as v when not scratch -> (s, i, v) :: acc

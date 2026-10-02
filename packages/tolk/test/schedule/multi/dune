@@ -4,9 +4,7 @@
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden))
- (action
-  (run %{test} --exclude-tag slow)))
+  (glob_files *.golden)))
 
 ; LATE_ALLREDUCE is read when the library is initialised, so the rules it
 ; enables run in a process of their own.
@@ -22,4 +20,4 @@
   (setenv
    LATE_ALLREDUCE
    0
-   (run %{test} --exclude-tag slow))))
+   (run %{test}))))

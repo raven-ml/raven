@@ -1,7 +1,6 @@
 (* Tests of Tolk.Decomp_dtype: the pass rewrites kernels as tinygrad's does, its
    conversions of the narrow floats are IEEE conversions that give the codes
-   Dtype folds, and its 64-bit integers compute what 64-bit
-   integers compute. *)
+   Dtype folds, and its 64-bit integers compute what 64-bit integers compute. *)
 
 open Windtrap
 open Tolk
@@ -188,17 +187,17 @@ let widening dt =
 let narrowing ?sat dt =
   Decomp_dtype.f2f ?sat (Ops.param 0 Dtype.Uint32) Float32 dt
 
-let widens_exactly ~all dt () =
+let widens_exactly dt () =
   let u = widening dt in
   List.filter_map
     (fun c ->
       let want = decode dt c and got = f32 (as_int (at_code u c)) in
       if bits want = bits got then None
       else Some (Printf.sprintf "0x%x: want %h, got %h" c want got))
-    (codes ~all dt)
+    (codes ~all:true dt)
   |> no_misses "codes"
 
-let narrows_as_dtype_folds ~all dt () =
+let narrows_as_dtype_folds dt () =
   let u = narrowing dt in
   List.filter_map
     (fun b ->
@@ -208,30 +207,19 @@ let narrows_as_dtype_folds ~all dt () =
         Some
           (Printf.sprintf "%h (0x%08x): want 0x%x (%h), got 0x%x (%h)" (f32 b) b
              want (decode dt want) got (decode dt got)))
-    (narrowing_inputs ~all dt)
+    (narrowing_inputs ~all:true dt)
   |> no_misses "float32s"
 
-(* [exhaustive name law] is the slow tests of [law ~all:true] for each narrow
-   float, named [name] of its name. *)
+(* [exhaustive name law] is the slow tests of [law] for each narrow float, named
+   [name] of its name. *)
 let exhaustive name law =
-  List.map (fun dt -> slow (name (alias dt)) (law ~all:true dt)) narrows
+  List.map (fun dt -> slow (name (alias dt)) (law dt)) narrows
 
 let f2f =
   group "f2f"
-    (List.concat_map
-       (fun dt ->
-         [
-           test
-             ("widening a " ^ alias dt ^ " to a float32 is exact")
-             (widens_exactly ~all:false dt);
-           test
-             ("narrowing a float32 to a " ^ alias dt ^ " rounds as Dtype folds")
-             (narrows_as_dtype_folds ~all:false dt);
-         ])
-       narrows
-    @ exhaustive
-        (Printf.sprintf "widening every %s code is exact")
-        widens_exactly
+    (exhaustive
+       (Printf.sprintf "widening every %s code is exact")
+       widens_exactly
     @ exhaustive
         (Printf.sprintf
            "narrowing to every %s code and its neighbours rounds as Dtype folds")
@@ -365,8 +353,8 @@ let converts ?(on = on_narrows) ~from ~to_ inputs want =
              (Testable.pp value) x want (decode to_ want) got (decode to_ got)))
   |> no_misses "casts"
 
-let copies_every_code ~all dt () =
-  let cs = codes ~all dt in
+let copies_every_code dt () =
+  let cs = codes ~all:true dt in
   let k = kernel [ dt ] dt (List.length cs) List.hd in
   List.combine cs (written ~on:on_narrows k [ List.map code cs ])
   |> List.filter_map (fun (c, got) ->
@@ -374,13 +362,13 @@ let copies_every_code ~all dt () =
       else Some (Printf.sprintf "0x%x: got 0x%x" c (as_int got)))
   |> no_misses "codes"
 
-let casts_float32s ~all dt () =
+let casts_float32s dt () =
   converts ~from:Float32 ~to_:dt
-    (List.map (fun b -> `Float (f32 b)) (narrowing_inputs ~all dt))
+    (List.map (fun b -> `Float (f32 b)) (narrowing_inputs ~all:true dt))
     (encode dt)
 
-let widens_to_float32 ~all dt () =
-  let cs = codes ~all dt in
+let widens_to_float32 dt () =
+  let cs = codes ~all:true dt in
   let k = kernel [ dt ] Float32 (List.length cs) (cast_to Float32) in
   List.combine cs (written ~on:on_narrows k [ List.map code cs ])
   |> List.filter_map (fun (c, got) ->
@@ -416,21 +404,21 @@ let near_integer_ties ~all dt (lo, hi) =
   |> List.sort_uniq Bigint.compare
   |> List.map (fun z -> `Int z)
 
-let casts_doubles ~all dt () =
-  converts ~from:Float64 ~to_:dt (near_ties ~all dt) (encode dt)
+let casts_doubles dt () =
+  converts ~from:Float64 ~to_:dt (near_ties ~all:true dt) (encode dt)
 
 (* The integer types more precise than a float32. *)
 let wide_integers = Dtype.[ Int32; Uint32; Int64; Uint64 ]
 
-let casts_integers ~all dt () =
+let casts_integers dt () =
   List.iter
     (fun from ->
       converts ~from ~to_:dt
-        (near_integer_ties ~all dt (int_bounds from))
+        (near_integer_ties ~all:true dt (int_bounds from))
         (encode dt))
     wide_integers
 
-let casts_narrow_integers ~all dt () =
+let casts_narrow_integers dt () =
   List.iter
     (fun from ->
       let lo, hi = int_bounds from in
@@ -439,7 +427,7 @@ let casts_narrow_integers ~all dt () =
           List.init
             (Bigint.to_int Bigint.(hi - lo) + 1)
             (fun k -> `Int Bigint.(lo + of_int k))
-        else near_integer_ties ~all dt (lo, hi)
+        else near_integer_ties ~all:true dt (lo, hi)
       in
       converts ~from ~to_:dt values (encode dt))
     Dtype.[ Int8; Uint8; Int16; Uint16 ]
@@ -485,11 +473,11 @@ let casts_integers_in_range dt () =
            (undefined_casts ~on:on_narrows k [ values ])))
     wide_integers
 
-(* [casts_between ~all fr to_] checks that an emulated cast between two emulated
+(* [casts_between fr to_] checks that an emulated cast between two emulated
    narrow floats rounds each code of [fr] once to [to_]. *)
-let casts_between ~all fr to_ () =
+let casts_between fr to_ () =
   converts ~from:fr ~to_
-    (List.map code (codes ~all fr))
+    (List.map code (codes ~all:true fr))
     (fun c -> encode to_ (`Float (decode fr (as_int c))))
 
 let pairs =
@@ -578,18 +566,15 @@ let selects_codes cs dt () =
           ]))
 
 (* A bit reinterpretation of a narrow float reads or writes its storage. *)
-let reinterprets ~all dt () =
+let reinterprets dt () =
   let st = storage dt in
-  let cs =
-    if all || size dt = 256 then List.init (size dt) Fun.id
-    else codes ~all dt @ nan_codes dt |> List.filteri (fun i _ -> i < 4096)
-  in
+  let cs = List.init (size dt) Fun.id in
   let read =
     kernel [ dt ] st (List.length cs) (fun xs -> Ops.bitcast (List.hd xs) st)
   in
   equal ~msg:"read" (list hex) cs
     (List.map as_int (written ~on:on_narrows read [ List.map code cs ]));
-  let finite = codes ~all dt in
+  let finite = codes ~all:true dt in
   let write =
     kernel [ st ] dt (List.length finite) (fun xs ->
         Ops.bitcast (List.hd xs) dt)
@@ -616,27 +601,6 @@ let emulated_floats =
          let name = alias dt in
          [
            test
-             ("an emulated copy of " ^ name ^ "s keeps every code")
-             (copies_every_code ~all:false dt);
-           test
-             ("an emulated cast of float32s to " ^ name
-            ^ " rounds as Dtype folds")
-             (casts_float32s ~all:false dt);
-           test
-             ("an emulated cast of a " ^ name ^ " to a float32 is exact")
-             (widens_to_float32 ~all:false dt);
-           test
-             ("an emulated cast of doubles to " ^ name ^ " rounds once")
-             (casts_doubles ~all:false dt);
-           test
-             ("an emulated cast of integers more precise than a float32 to "
-            ^ name ^ " rounds once")
-             (casts_integers ~all:false dt);
-           test
-             ("an emulated cast of 8 and 16-bit integers to " ^ name
-            ^ " rounds as Dtype folds")
-             (casts_narrow_integers ~all:false dt);
-           test
              ("an emulated cast of an integer to " ^ name
             ^ " converts no float to an integer that cannot hold it")
              (casts_integers_in_range dt);
@@ -648,27 +612,11 @@ let emulated_floats =
              ("an emulated selection of " ^ name ^ "s keeps their codes")
              (selects_codes (codes ~all:false dt) dt);
            test
-             ("a bit reinterpretation of a " ^ name
-            ^ " reads and writes its storage")
-             (reinterprets ~all:false dt);
-           test
              ("a " ^ name
             ^ " computed, then reinterpreted, is the code of the result")
              (computed_then_reinterpreted dt);
          ])
        narrows
-    @ [
-        cases ~name:pair_name
-          "an emulated cast between two emulated narrow floats rounds once"
-          Dtype.
-            [
-              (Float16, Fp8e4m3);
-              (Bfloat16, Float16);
-              (Float16, Bfloat16);
-              (Fp8e5m2, Fp8e4m3fnuz);
-            ]
-          (fun (fr, to_) -> casts_between ~all:false fr to_ ());
-      ]
     @ exhaustive
         (Printf.sprintf "an emulated copy of every %s code keeps it")
         copies_every_code
@@ -700,7 +648,7 @@ let emulated_floats =
         (fun p ->
           slow
             ("an emulated cast of every " ^ pair_name p ^ " rounds once")
-            (casts_between ~all:true (fst p) (snd p)))
+            (casts_between (fst p) (snd p)))
         pairs)
 
 (* NaNs *)
@@ -990,8 +938,6 @@ let long_laws dt =
     binary dt "or" Or Bigint.logor;
     binary dt "xor" Xor Bigint.logxor;
     binary dt "max" Max Bigint.max;
-    binary ~count:20 dt ~b:(nonzero dt) "truncating division" Cdiv Bigint.div;
-    binary ~count:20 dt ~b:(nonzero dt) "truncating remainder" Cmod Bigint.rem;
     binary ~tags:[ "slow" ] ~count:2000 dt ~b:(nonzero dt)
       "truncating division, over 2000 cases" Cdiv Bigint.div;
     binary ~tags:[ "slow" ] ~count:2000 dt ~b:(nonzero dt)

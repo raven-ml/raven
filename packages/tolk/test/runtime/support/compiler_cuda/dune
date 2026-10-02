@@ -15,22 +15,11 @@
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag slow --exclude-tag no-library)
+    (run %{test} --exclude-tag no-library)
     (setenv
      NVRTC_PATH
      ./not_a_library
      (run %{test} --tag no-library))))))
-
-(rule
- (alias slow)
- (package tolk)
- (deps
-  (sandbox always))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{exe:test_compiler_cuda.exe} --tag slow))))
 
 (rule
  (target not_a_library)

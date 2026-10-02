@@ -3,14 +3,4 @@
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden))
- (action
-  (run %{test} --exclude-tag slow)))
-
-(rule
- (alias slow)
- (package tolk)
- (deps
-  (glob_files *.golden))
- (action
-  (run %{exe:test_postrange.exe} --tag slow)))
+  (glob_files *.golden)))

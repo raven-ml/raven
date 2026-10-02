@@ -24,6 +24,4 @@
  (libraries windtrap tolk tolk_test)
  (deps
   (glob_files *.golden)
-  ../schedule/schedule/chained_functions.golden)
- (action
-  (run %{test} --exclude-tag slow)))
+  ../schedule/schedule/chained_functions.golden))

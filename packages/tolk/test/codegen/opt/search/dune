@@ -1,6 +1,7 @@
 ; The search's environment variables are read once per process, so what they
 ; change is checked in a process of its own, with the variables set. CACHEDB is
-; a directory of the sandbox, which the cache's tests fill.
+; a directory of the sandbox, which the cache's tests fill with the results of
+; made-up measurements.
 
 (test
  (name test_search)
@@ -15,7 +16,7 @@
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag slow --exclude-tag environment)
+    (run %{test} --exclude-tag environment)
     (setenv
      BEAM_PADTO
      1
@@ -40,7 +41,7 @@
            (run %{test} --tag environment))))))))))))
 
 ; The searches of kernels on the host compile each candidate with its C
-; compiler and time it through the engine, so only the slow alias runs them.
+; compiler and time it through the engine.
 
 (executable
  (name test_search_exec)
@@ -48,15 +49,9 @@
  (libraries windtrap tolk tolk_test tolk_run tolk.engine nx.device))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package tolk)
  (deps
-  (sandbox always)
   (glob_files *.golden))
  (action
-  (setenv
-   CACHEDB
-   cache
-   (progn
-    (run %{exe:test_search.exe} --tag slow --exclude-tag environment)
-    (run %{exe:test_search_exec.exe} --tag slow)))))
+  (run %{exe:test_search_exec.exe})))

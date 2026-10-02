@@ -1,16 +1,38 @@
-(test
+; The exhaustive conversions take most of the suite's time, so it runs as four
+; shards, which dune runs in parallel.
+
+(executable
  (name test_decomp_dtype)
- (package tolk)
- (libraries windtrap tolk tolk_test)
- (deps
-  (glob_files *.golden))
- (action
-  (run %{test} --exclude-tag slow)))
+ (libraries windtrap tolk tolk_test))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package tolk)
  (deps
   (glob_files *.golden))
  (action
-  (run %{exe:test_decomp_dtype.exe} --tag slow)))
+  (run %{exe:test_decomp_dtype.exe} --shard 1/4)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{exe:test_decomp_dtype.exe} --shard 2/4)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{exe:test_decomp_dtype.exe} --shard 3/4)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{exe:test_decomp_dtype.exe} --shard 4/4)))

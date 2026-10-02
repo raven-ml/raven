@@ -3,9 +3,7 @@
  (package tolk)
  (libraries windtrap tolk tolk_test unix)
  (deps
-  (glob_files *.golden))
- (action
-  (run %{test} --exclude-tag slow)))
+  (glob_files *.golden)))
 
 ; The system the suite runs on, whose library search it checks.
 

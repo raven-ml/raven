@@ -14,7 +14,7 @@
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag slow --exclude-tag no-clang)
+    (run %{test} --exclude-tag no-clang)
     (setenv
      CC
      /nonexistent/clang

@@ -4,12 +4,9 @@
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden))
- (action
-  (run %{test} --exclude-tag slow)))
+  (glob_files *.golden)))
 
-; Running batches on the GPU needs an NVIDIA GPU, and is slow: without one, each
-; test skips.
+; Running batches on the GPU needs an NVIDIA GPU: without one, each test skips.
 
 (executable
  (name test_ops_nv_exec)
@@ -17,12 +14,7 @@
  (libraries windtrap tolk tolk.engine nx.device nx.nv.device))
 
 (rule
- (alias slow)
+ (alias runtest)
  (package tolk)
- (deps
-  (sandbox always))
  (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{exe:test_ops_nv_exec.exe} --tag slow))))
+  (run %{exe:test_ops_nv_exec.exe})))

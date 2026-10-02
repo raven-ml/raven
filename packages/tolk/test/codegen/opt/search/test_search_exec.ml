@@ -30,9 +30,11 @@ let searched name =
       (with_info (fun i -> { i with opts_to_apply = Some [] }) k)
       host
   in
+  (* A search measures anew: a result kept by an earlier run would hide what
+     this one finds. *)
   let prg =
     Helpers.context
-      [ B (Helpers.cachelevel, 0) ]
+      [ B (Helpers.ignore_beam_cache, true) ]
       (fun () ->
         Codegen.to_program
           ~beam:(Search.beam_search ~measure)
