@@ -2275,7 +2275,12 @@ module Query : sig
 
       A function of [q]'s expressions may be called on rows past a limit. Every
       reader [fold] opens is closed when it returns, also when [f], a function
-      of [q]'s expressions or a source raises; the exception then propagates. *)
+      of [q]'s expressions or a source raises; the exception then propagates.
+
+      Running under a transformation of nx, such as compilation or
+      vectorization, is not specified yet: talon runs on the caller's fiber, and
+      a step that reads values on the host, such as a filter, a sort, a group, a
+      join or text, raises whatever nx raises when those values are traced. *)
 
   val run : t -> (table, Error.t) result
   (** [run q] is [q]'s rows as one batch: [fold] into a table, then one copy
