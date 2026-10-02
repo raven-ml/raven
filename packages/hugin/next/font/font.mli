@@ -44,7 +44,8 @@ type slant = [ `Normal | `Italic | `Oblique ]
 
     Inter is distributed under the SIL Open Font License 1.1. The bundled faces
     are subsets covering Latin and Greek letters, digits, punctuation, arrows
-    and common mathematical symbols, without Cyrillic or CJK. *)
+    and common mathematical symbols, without Cyrillic or CJK. Their digits are
+    tabular: the ten share one advance, so numbers set in a column align. *)
 
 val regular : t
 (** [regular] is Inter Regular, weight 400. *)

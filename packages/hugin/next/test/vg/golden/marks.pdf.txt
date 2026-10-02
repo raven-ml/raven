@@ -5,7 +5,7 @@
 3 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 160 100] /Resources 5 0 R /Contents 4 0 R >>
 4 0 obj
-<< /Length 664 /Filter /FlateDecode >>
+<< /Length 660 /Filter /FlateDecode >>
 stream
 1 0 0 -1 0 100 cm
 q
@@ -167,7 +167,7 @@ q
 BT
 /F1 11 Tf
 1 0 0 -1 10 55 Tm
-[<002E><00FB><00B8><00C0> 0.001 <00D8> -0.001 <0230><00A7> 0.001 <00ED><0093> -0.001 <0109><00F1><0230><0002> 68.359 <0082> 96.191 <01A4><0230><0083> 50.782 <0093> -0.001 <01A8><0230><0162> 25.391 <01A5><0164> -0.001 <0167>] TJ
+[<002E><00FB><00B8><00C0> 0.001 <00D8> -0.001 <0230><00A7> 0.001 <00ED><0093> -0.001 <0109><00F1><0230><0002> 68.359 <0082> 96.191 <01A4><0230><0083> 50.782 <0093> -0.001 <01A8><0230><02D0> 0.001 <01A5><02D2><02D5>] TJ
 ET
 Q
 q
@@ -282,14 +282,14 @@ stream
 40365472
 endstream
 14 0 obj
-<< /Length 39751 /Filter /FlateDecode /Length1 76884 >>
-stream <76884 bytes>
+<< /Length 39965 /Filter /FlateDecode /Length1 77208 >>
+stream <77208 bytes>
 15 0 obj
 << /Type /FontDescriptor /FontName /Inter-Regular /Flags 4 /FontBBox [-738.77 -322.266 2583.008 1107.91] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 96 /FontFile2 14 0 R >>
 16 0 obj
-<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Inter-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 15 0 R /DW 1000 /W [2 [689.941] 46 [743.164] 130 [689.941] 131 [985.352] 147 [561.523] 167 [612.305] 184 [613.281] 192 [242.188] 216 [590.82] 237 [376.465] 241 [527.832] 251 [591.309] 265 [818.359] 354 [630.859] 356 [609.863] 359 [593.262] 420 [288.086] 421 [288.086] 424 [288.086] 560 [281.25]] /CIDToGIDMap /Identity >>
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Inter-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 15 0 R /DW 1000 /W [2 [689.941] 46 [743.164] 130 [689.941] 131 [985.352] 147 [561.523] 167 [612.305] 184 [613.281] 192 [242.188] 216 [590.82] 237 [376.465] 241 [527.832] 251 [591.309] 265 [818.359] 420 [288.086] 421 [288.086] 424 [288.086] 560 [281.25] 720 [648.438] 722 [648.438] 725 [648.438]] /CIDToGIDMap /Identity >>
 17 0 obj
-<< /Length 324 /Filter /FlateDecode >>
+<< /Length 326 /Filter /FlateDecode >>
 stream
 /CIDInit /ProcSet findresource begin
 12 dict begin
@@ -314,13 +314,13 @@ endcodespacerange
 <00F1> <0073>
 <00FB> <0075>
 <0109> <0077>
-<0162> <0030>
-<0164> <0032>
-<0167> <0035>
 <01A4> <002C>
 <01A5> <002E>
 <01A8> <003A>
 <0230> <0020>
+<02D0> <0030>
+<02D2> <0032>
+<02D5> <0035>
 endbfchar
 endcmap
 CMapName currentdict /CMap defineresource pop
@@ -328,8 +328,8 @@ end
 end
 endstream
 18 0 obj
-<< /Length 40637 /Filter /FlateDecode /Length1 77864 >>
-stream <77864 bytes>
+<< /Length 40882 /Filter /FlateDecode /Length1 78176 >>
+stream <78176 bytes>
 19 0 obj
 << /Type /FontDescriptor /FontName /Inter-Bold /Flags 4 /FontBBox [-787.598 -334.473 2583.008 1112.793] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 169 /FontFile2 18 0 R >>
 20 0 obj

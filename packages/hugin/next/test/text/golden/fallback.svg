@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="80.884765625pt" height="16.099609375pt" viewBox="0 0 80.884765625 16.099609375">
 <defs>
-<style>@font-face{font-family:hf0252a7cf48244b9e;src:url(data:font/ttf;base64,<102512 bytes>)}</style>
+<style>@font-face{font-family:hf25c18f3c8b676307;src:url(data:font/ttf;base64,<102944 bytes>)}</style>
 <style>@font-face{font-family:hf7ac0289791002d90;src:url(data:font/ttf;base64,<552 bytes>)}</style>
-<style>@font-face{font-family:hfbb904779c8b951e8;src:url(data:font/ttf;base64,<103820 bytes>)}</style>
+<style>@font-face{font-family:hf287b385a6182ab5f;src:url(data:font/ttf;base64,<104236 bytes>)}</style>
 </defs>
-<text x="2 4.422 10.418 15.696 20.975" y="11.688" font-family="hf0252a7cf48244b9e" font-size="10" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">loss </text>
+<text x="2 4.422 10.418 15.696 20.975" y="11.688" font-family="hf25c18f3c8b676307" font-size="10" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">loss </text>
 <text x="23.787" y="11.688" font-family="hf7ac0289791002d90" font-size="10" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">中</text>
-<text x="28.787" y="11.688" font-family="hfbb904779c8b951e8" font-size="10" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">x</text>
-<text x="34.588 37.4 43.523 45.945 51.37 57.2 60.799 66.932 72.762" y="11.688" font-family="hf0252a7cf48244b9e" font-size="10" fill="#ff0000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve"> diverged</text>
+<text x="28.787" y="11.688" font-family="hf287b385a6182ab5f" font-size="10" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">x</text>
+<text x="34.588 37.4 43.523 45.945 51.37 57.2 60.799 66.932 72.762" y="11.688" font-family="hf25c18f3c8b676307" font-size="10" fill="#ff0000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve"> diverged</text>
 </svg>

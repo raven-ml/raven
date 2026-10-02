@@ -14,8 +14,8 @@
 <path d="M2.5 0C2.5 1.3807 1.3807 2.5 0 2.5C-1.3807 2.5 -2.5 1.3807 -2.5 0C-2.5 -1.3807 -1.3807 -2.5 0 -2.5C1.3807 -2.5 2.5 -1.3807 2.5 0Z" fill="none" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g>
-<style>@font-face{font-family:hf0252a7cf48244b9e;src:url(data:font/ttf;base64,<102512 bytes>)}</style>
-<style>@font-face{font-family:hfbb904779c8b951e8;src:url(data:font/ttf;base64,<103820 bytes>)}</style>
+<style>@font-face{font-family:hf25c18f3c8b676307;src:url(data:font/ttf;base64,<102944 bytes>)}</style>
+<style>@font-face{font-family:hf287b385a6182ab5f;src:url(data:font/ttf;base64,<104236 bytes>)}</style>
 </defs>
 <path d="M0 0L160 0L160 100L0 100Z" fill="#ffffff"/>
 <g data-id="[0,&quot;dots&quot;]">
@@ -49,8 +49,8 @@
 <use href="#hs1d05b488387bb7e9" transform="translate(80 75) scale(8)" stroke-width="0.125"/>
 <use href="#hsbf08e09f40df59ca" x="120" y="75" stroke="#ff0000"/>
 <use href="#hsbf08e09f40df59ca" x="140" y="75" stroke="#0000ff"/>
-<text x="10 18.175 24.679 31.425 34.089 40.588 43.682 50.417 54.559 60.735 69.737 75.543 78.637 85.475 92.006 95.175 98.269 108.549 114.726 117.895 120.988 127.648 130.817 137.526" y="55" font-family="hf0252a7cf48244b9e" font-size="11" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">Hugin draws AV, Wa: 0.25</text>
-<text x="100 105.955 111.474 113.913" y="95" font-family="hfbb904779c8b951e8" font-size="9" fill="#991a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">Bold</text>
+<text x="10 18.175 24.679 31.425 34.089 40.588 43.682 50.417 54.559 60.735 69.737 75.543 78.637 85.475 92.006 95.175 98.269 108.549 114.726 117.895 120.988 128.121 131.29 138.423" y="55" font-family="hf25c18f3c8b676307" font-size="11" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">Hugin draws AV, Wa: 0.25</text>
+<text x="100 105.955 111.474 113.913" y="95" font-family="hf287b385a6182ab5f" font-size="9" fill="#991a1a" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">Bold</text>
 <g data-id="[0,&quot;dots&quot;]" data-cells="120 5 32 24 4 3">
 <image x="120" y="5" width="32" height="24" preserveAspectRatio="none" style="image-rendering:pixelated" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAIUlEQVR4nGNkkLP5b2RkxADDLAEBATeQBRgX7LuzHlkAACDKC1c1K6yNAAAAAElFTkSuQmCC"/>
 </g>

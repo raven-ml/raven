@@ -113,8 +113,8 @@ let rejected =
       "segments not in increasing order" );
     ( "a component past the last glyph",
       `Malformed,
-      set_u16 regular_ttf (eacute + 12) 720,
-      "component 720 does not exist" );
+      set_u16 regular_ttf (eacute + 12) 730,
+      "component 730 does not exist" );
     ( "15 units per em",
       `Malformed,
       set_u16 regular_ttf (head_pos regular_ttf + 18) 15,
@@ -125,7 +125,7 @@ let rejected =
       "units per em" );
     ( "glyph data past the 'glyf' table",
       `Malformed,
-      set_u16 regular_ttf (loca + 1440) 30000,
+      set_u16 regular_ttf (loca + 1460) 30000,
       "glyph data past the 'glyf' table" );
     ( "no glyphs",
       `Malformed,
@@ -403,8 +403,8 @@ let glyphs =
   group "glyphs"
     [
       test "glyph_count is maxp's" (fun () ->
-          equal int 720 (Font.glyph_count (regular ()));
-          equal int 720 (Font.glyph_count (bold ())));
+          equal int 730 (Font.glyph_count (regular ()));
+          equal int 730 (Font.glyph_count (bold ())));
       cases
         ~name:(fun (u, _) -> Printf.sprintf "U+%04X" (Uchar.to_int u))
         "glyph maps" mapped
@@ -421,6 +421,16 @@ let glyphs =
           expect_file
             (kerning_listing (regular ()))
             "packages/hugin/next/test/font/kerning.expected");
+      test "the bundled digits share one advance" (fun () ->
+          List.iter
+            (fun f ->
+              let advance c = Font.advance f (Font.glyph f (Uchar.of_char c)) in
+              String.iter
+                (fun c ->
+                  equal ~msg:(String.make 1 c) float_exact (advance '0')
+                    (advance c))
+                "123456789")
+            [ regular (); bold () ]);
       test "advance is hmtx's" (fun () ->
           equal float_exact (em 1522) (Font.advance (regular ()) 46);
           equal float_exact (em 1530) (Font.advance (bold ()) 46);
@@ -454,13 +464,13 @@ let glyphs =
         ~name:(fun (n, _, _) -> n)
         "raises on a glyph out of range in" glyph_range
         (fun (_, fn, f) ->
-          let msg g = Printf.sprintf "%s: glyph %d not in [0, 719]" fn g in
+          let msg g = Printf.sprintf "%s: glyph %d not in [0, 729]" fn g in
           raises_match
             (Exn.invalid_arg ~substring:(msg (-1)))
             (fun () -> f (regular ()) (-1));
           raises_match
-            (Exn.invalid_arg ~substring:(msg 720))
-            (fun () -> f (regular ()) 720));
+            (Exn.invalid_arg ~substring:(msg 730))
+            (fun () -> f (regular ()) 730));
     ]
 
 let tiny ?tables ?cmap ?upem glyphs =

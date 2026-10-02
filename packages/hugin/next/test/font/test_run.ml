@@ -82,10 +82,10 @@ let rejected =
     ( "clusters of another length",
       v ~clusters:[| 0 |] "ab",
       "2 glyphs but 1 clusters" );
-    ("a negative glyph", v ~glyphs:[| -1; 1 |] "ab", "glyph -1 not in [0, 719]");
+    ("a negative glyph", v ~glyphs:[| -1; 1 |] "ab", "glyph -1 not in [0, 729]");
     ( "a glyph past the font",
-      v ~glyphs:[| 1; 720 |] "ab",
-      "glyph 720 not in [0, 719]" );
+      v ~glyphs:[| 1; 730 |] "ab",
+      "glyph 730 not in [0, 729]" );
     ("a negative size", v ~size:(-1.) "ab", "invalid size");
     ("a NaN size", v ~size:Float.nan "ab", "invalid size");
     ("an infinite size", v ~size:infinity "ab", "invalid size");

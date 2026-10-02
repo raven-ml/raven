@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="59.265625pt" height="17.3759765625pt" viewBox="0 0 59.265625 17.3759765625">
+<svg xmlns="http://www.w3.org/2000/svg" width="59.388671875pt" height="17.3759765625pt" viewBox="0 0 59.388671875 17.3759765625">
 <defs>
-<style>@font-face{font-family:hf0252a7cf48244b9e;src:url(data:font/ttf;base64,<102512 bytes>)}</style>
+<style>@font-face{font-family:hf25c18f3c8b676307;src:url(data:font/ttf;base64,<102944 bytes>)}</style>
 </defs>
-<text x="2 7.278 10.452 16.282 22.405 25.218 30.496 32.918 38.294 44.124 46.937" y="11.688" font-family="hf0252a7cf48244b9e" font-size="10" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">step size η</text>
-<text x="52.85" y="13.688" font-family="hf0252a7cf48244b9e" font-size="7" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
+<text x="2 7.278 10.452 16.282 22.405 25.218 30.496 32.918 38.294 44.124 46.937" y="11.688" font-family="hf25c18f3c8b676307" font-size="10" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">step size η</text>
+<text x="52.85" y="13.688" font-family="hf25c18f3c8b676307" font-size="7" fill="#000000" style="font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' 0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0" xml:space="preserve">0</text>
 </svg>
