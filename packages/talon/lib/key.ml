@@ -67,6 +67,27 @@ let identity = function
   | [] -> invalid_arg "Key.identity: no column"
   | cs -> Nx.stack ~axis:1 (List.concat_map (words Identity) cs)
 
+(* [of_ids ids] is the groups that [ids], numbered in order of first appearance
+   from 0, give their rows. A scatter keeps the last update in index order, so
+   over the rows reversed it keeps each group's first row. *)
+let of_ids ids : Nx.groups =
+  let n = Nx.dim 0 ids in
+  let k = if n = 0 then 0 else Int64.to_int (Nx.item [] (Nx.max ids)) + 1 in
+  let first =
+    Nx.scatter ~axis:0 ~indices:(Nx.flip ids)
+      ~values:(Nx.flip (Nx.arange Nx.int64 0 n 1))
+      (Nx.zeros Nx.int64 [| k |])
+  and counts = Nx.reduce_segments `Add ~segments:k ids (Nx.ones_like ids) in
+  { ids; first; counts }
+
+let groups cs =
+  match cs with
+  | [ c ] when Option.is_none (Column.valid c) -> (
+      match Column.data c with
+      | Fixed (P x) when Nx.ndim x = 1 -> Nx.unique (identity cs)
+      | _ -> of_ids (Nx.bitcast Nx.int64 (value Identity c)))
+  | _ -> Nx.unique (identity cs)
+
 let order = function
   | [] -> invalid_arg "Key.order: no key"
   | ks ->

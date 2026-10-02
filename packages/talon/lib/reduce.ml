@@ -28,7 +28,7 @@ let one n =
 let of_groups (g : Nx.groups) order =
   { ids = g.ids; count = Nx.dim 0 g.first; first = g.first; order }
 
-let group cs = of_groups (Nx.unique (Key.identity cs)) None
+let group cs = of_groups (Key.groups cs) None
 let count s = s.count
 let first s = s.first
 

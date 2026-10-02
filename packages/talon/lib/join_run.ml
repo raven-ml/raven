@@ -81,9 +81,9 @@ let named t ns = List.map (fun n -> (n, Table.column t n)) ns
 
 (* Equality joins
 
-   The keys of both sides are coded at once: [unique] of their identity words
-   numbers the groups of equal keys, and the right rows of each group, in order,
-   are one row of [runs]. A left row's matches are its group's row. *)
+   The keys of both sides are coded at once: {!Key.groups} numbers the groups of
+   equal keys, and the right rows of each group, in order, are one row of
+   [runs]. A left row's matches are its group's row. *)
 
 (* [left_pairs counts matched] pairs each left row with its matches, or with
    [-1] if it has none. *)
@@ -115,7 +115,7 @@ let equality q kind (each_left, each_right) left right eqs =
           (ln, Column.concat [ wl (Table.column l ln); wr (Table.column r rn) ]))
         atoms
     in
-    let g = Nx.unique (Key.identity (List.map snd keys)) in
+    let g = Key.groups (List.map snd keys) in
     let ids lo hi = Nx.shrink [| (lo, hi) |] g.ids in
     let runs =
       Nx_ragged.of_ids ~segments:(Nx.dim 0 g.first) (ids n (n + m)) (arange m)
