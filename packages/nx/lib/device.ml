@@ -3,7 +3,84 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type t = Nx_effect.device
+(* A device is a memory, which nx.device opens, and the backend that computes
+   eagerly on it, if any. Several devices may share one memory: their values
+   share storage, and only who computes on them differs. *)
+type t = {
+  memory : Nx_device.t;
+  backend : (module Nx_backend.S) option;
+  name : string; (* the memory's, then the backend's when not its default *)
+}
+
+(* Pairing
+
+   There is one device per memory and backend, so devices compare physically:
+   [of_memory] and [with_backend] find a pair in [paired] before they make it. A
+   memory's default backend is a fixed match over its kind: nx.cpu on the
+   memories the host computes on (the host and test memories), none on the
+   others. A backend is known by its name, which a device's name carries: a
+   module of a name already paired with a memory is that pair's backend. *)
+
+module Memories = Map.Make (struct
+  type t = Nx_device.t
+
+  let compare = Nx_device.compare
+end)
+
+let default_backend m : (module Nx_backend.S) option =
+  if Nx_device.runs_on_host m then Some (module Nx_cpu) else None
+
+let backend_name (module K : Nx_backend.S) = K.name
+
+(* The devices over each memory, the default one first. *)
+let paired : t list Memories.t Atomic.t = Atomic.make Memories.empty
+let paired_lock = Mutex.create ()
+
+(* [over m] is the devices over [m], made with the default one if there are
+   none. Called with [paired_lock] held. *)
+let over m =
+  match Memories.find_opt m (Atomic.get paired) with
+  | Some ds -> ds
+  | None ->
+      let d =
+        { memory = m; backend = default_backend m; name = Nx_device.name m }
+      in
+      Atomic.set paired (Memories.add m [ d ] (Atomic.get paired));
+      [ d ]
+
+let of_memory m =
+  match Memories.find_opt m (Atomic.get paired) with
+  | Some (d :: _) -> d
+  | Some [] | None -> List.hd (Mutex.protect paired_lock (fun () -> over m))
+
+let with_backend k d =
+  let m = d.memory and name = backend_name k in
+  let (module K) = k in
+  if not (K.runs_on m) then
+    invalid_arg
+      (Printf.sprintf "Nx.Device.with_backend: %s does not compute on %s" name
+         (Nx_device.name m));
+  Mutex.protect paired_lock @@ fun () ->
+  let ds = over m in
+  let named d' =
+    match d'.backend with Some k' -> backend_name k' = name | None -> false
+  in
+  match List.find_opt named ds with
+  | Some d' -> d'
+  | None ->
+      let d' =
+        { memory = m; backend = Some k; name = Nx_device.name m ^ "/" ^ name }
+      in
+      Atomic.set paired (Memories.add m (ds @ [ d' ]) (Atomic.get paired));
+      d'
+
+let host = of_memory Nx_device.host
+let memory d = d.memory
+let name d = d.name
+let equal (d : t) d' = d == d'
+let pp ppf d = Format.pp_print_string ppf d.name
+
+(* Wants *)
 
 type want =
   | Host
@@ -15,14 +92,6 @@ type want =
   | Amd of int
   | Nv_pci of int
   | Amd_pci of int
-
-let host = Nx_effect.host_device
-let of_memory = Nx_effect.of_memory
-let with_backend = Nx_effect.with_backend
-let memory (d : t) = d.memory
-let name (d : t) = d.d_name
-let equal (d : t) d' = d == d'
-let pp = Nx_effect.pp_device
 
 (* Test memories: ["CPU:k"] holds its values in the host's memory, which it maps
    as it is, and loads no programs, so the host computes on it. Each [k] is one

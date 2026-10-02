@@ -3,7 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('a, 'b) tensor = ('a, 'b) Nx_effect.t
+type ('a, 'b) tensor = ('a, 'b) Value.t
+type placement = Placement.t
+type packed = Value.packed
 
 module Path = struct
   type seg = Field of string | Index of int
@@ -272,11 +274,11 @@ let walked_two_ways fn =
 
 (* Walks at the structure's one type *)
 
-let flatten (type s) (s : s t) (x : s) : Nx_effect.packed list * Skeleton.t =
+let flatten (type s) (s : s t) (x : s) : Value.packed list * Skeleton.t =
   let leaves = ref [] and visits = ref [] in
   let tensor : type a b. Path.t -> (a, b) tensor -> (a, b) tensor =
    fun path x ->
-    leaves := Nx_effect.P x :: !leaves;
+    leaves := Value.P x :: !leaves;
     visits := Leaf path :: !visits;
     x
   in
@@ -289,8 +291,7 @@ let visits s x = Skeleton.visits (skeleton s x)
 
 exception Mismatch
 
-let rebuild (type s) (s : s t) ~(like : s) (leaves : Nx_effect.packed list) : s
-    =
+let rebuild (type s) (s : s t) ~(like : s) (leaves : Value.packed list) : s =
   let rest = ref leaves and taken = ref 0 in
   let tensor : type a b. Path.t -> (a, b) tensor -> (a, b) tensor =
    fun path x ->
@@ -301,20 +302,18 @@ let rebuild (type s) (s : s t) ~(like : s) (leaves : Nx_effect.packed list) : s
              "Nx.Ptree.rebuild: %s: a leaf in the template, none left of the \
               %d given"
              (Path.describe path) !taken)
-    | Nx_effect.P y :: tail -> (
+    | Value.P y :: tail -> (
         rest := tail;
         incr taken;
-        match
-          Nx_dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
-        with
+        match Nx_dtype.equal_witness (Value.dtype x) (Value.dtype y) with
         | Some Type.Equal -> y
         | None ->
             invalid_arg
               (Printf.sprintf
                  "Nx.Ptree.rebuild: %s: %s in the template, %s given"
                  (Path.describe path)
-                 (Nx_dtype.to_string (Nx_effect.dtype x))
-                 (Nx_dtype.to_string (Nx_effect.dtype y))))
+                 (Nx_dtype.to_string (Value.dtype x))
+                 (Nx_dtype.to_string (Value.dtype y))))
   in
   let v = s.walk { tensor; report = ignore_report } Path.Root like in
   match !rest with
@@ -329,9 +328,9 @@ let map (type s) (s : s t)
     (f : 'a 'b. Path.t -> ('a, 'b) tensor -> ('a, 'b) tensor) (x : s) : s =
   s.walk { tensor = f; report = ignore_report } Path.Root x
 
-let place s p x = map s (fun _ t -> Nx_effect.place p t) x
+let place s p x = map s (fun _ t -> Entry.place p t) x
 
-type recorded = Recorded_leaf of Path.t * Nx_effect.packed | Recorded of visit
+type recorded = Recorded_leaf of Path.t * Value.packed | Recorded of visit
 
 let map2 (type s) (s : s t)
     (f : 'a 'b. Path.t -> ('a, 'b) tensor -> ('a, 'b) tensor -> ('a, 'b) tensor)
@@ -340,7 +339,7 @@ let map2 (type s) (s : s t)
   let recorded = ref [] in
   let record : type a b. Path.t -> (a, b) tensor -> (a, b) tensor =
    fun path y ->
-    recorded := Recorded_leaf (path, Nx_effect.P y) :: !recorded;
+    recorded := Recorded_leaf (path, Value.P y) :: !recorded;
     y
   in
   let record_report path r =
@@ -351,18 +350,16 @@ let map2 (type s) (s : s t)
   let tensor : type a b. Path.t -> (a, b) tensor -> (a, b) tensor =
    fun path x ->
     match !expected with
-    | Recorded_leaf (p, Nx_effect.P y) :: rest when Path.equal p path -> (
+    | Recorded_leaf (p, Value.P y) :: rest when Path.equal p path -> (
         expected := rest;
-        match
-          Nx_dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
-        with
+        match Nx_dtype.equal_witness (Value.dtype x) (Value.dtype y) with
         | Some Type.Equal -> f path x y
         | None ->
             invalid_arg
               (Printf.sprintf "%s: %s: %s in the first value, %s in the second"
                  fn (Path.describe path)
-                 (Nx_dtype.to_string (Nx_effect.dtype x))
-                 (Nx_dtype.to_string (Nx_effect.dtype y))))
+                 (Nx_dtype.to_string (Value.dtype x))
+                 (Nx_dtype.to_string (Value.dtype y))))
     | _ -> raise_notrace Mismatch
   in
   let report path r =
@@ -397,9 +394,9 @@ let fold (type s) (s : s t)
 
 let cast_tensor (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) tensor) :
     (c, d) tensor =
-  match Nx_dtype.equal_witness (Nx_effect.dtype x) dt with
+  match Nx_dtype.equal_witness (Value.dtype x) dt with
   | Some Type.Equal -> x
-  | None -> Nx_effect.cast dt x
+  | None -> Entry.cast dt x
 
 module Payload = struct
   let map (module U : S) (f : Path.t -> 'a -> 'b) (x : 'a U.t) : 'b U.t =

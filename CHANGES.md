@@ -791,8 +791,8 @@ All notable changes to this project will be documented in this file.
   traced value. Each placeholder was an uninitialised tensor of the result's
   full size; the pages were never touched, but OCaml counted the bytes and ran
   major collections throughout the trace. The first call of a gpt-oss-20b step
-  goes from 47 s to 11 s. Placeholders are now `Nx_effect.Symbolic` tensors:
-  dtype and shape, no bytes.
+  goes from 47 s to 11 s. Placeholders are now traced values
+  (`Nx.Repr.Traced`): dtype and shape, no bytes.
 - A compiled function plans the memory of its intermediates: buffers whose
   lifetimes do not overlap share one arena per device instead of each owning an
   allocation for the life of the function. A single-token step of gpt-oss-20b
@@ -3052,6 +3052,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.t` is abstract, where it was `Nx_effect.t`, and the
+  `nx.effect` library is gone: transformations match on `Nx.Op` and read and
+  build representations with `Nx.Repr`.
 - `Nx.take` along one axis of elements of 1 to 8 bytes moves them in a loop
   typed by their width, where it called a function per element, so
   `Nx_ragged.take` and the gathers of indices and bytes it is made of run
@@ -3726,12 +3729,12 @@ thread.
   view.
 - **Breaking (effect handlers):** `E_view` and `E_placement` are gone: a
   value's shape and placement are its own, read with no interpreter involved,
-  and `Nx_effect.traced` takes the placement of the value it makes.
+  and `Nx.Repr.Traced.v` takes the placement of the value it makes.
 - **Breaking (effect handlers):** a transformation installs its interpreter
-  with `Nx_effect.intercept { run } f`, which hands `run` each operation `f`
-  performs, and `Nx_effect.intercepted ()` tells whether one is installed
-  around the caller; `E_op` is nx's own. While no interpreter is installed on
-  any domain, nx performs no effect and builds no operation: a one-element
+  with `Nx.Op.intercept { run; claims } f`, which hands `run` each operation
+  of `f` that `claims` takes, and `Nx.Op.intercepted ()` tells whether one is
+  installed around the caller. While no interpreter is installed on any
+  domain, nx performs no effect and builds no operation: a one-element
   host `Nx.add` allocates 69 words instead of 241.
 - Writing a `float` into a `float16` tensor and `Nx.cast` to `float16` from
   `float64` or a 64-bit integer round once to the nearest `float16`. They
@@ -3750,10 +3753,9 @@ thread.
 - `Nx.shape` returns an array of its own. It returned the value's, so a
   caller that changed it changed the value's shape.
 - **Breaking (effect handlers):** nx's operations are the constructors of one
-  type, `Nx_effect.Op.t`, which one effect, `E_op`, carries; the per-operation
-  effects (`E_add`, `E_reduce_sum`, ...) are gone. The entry functions are one
-  per constructor (`Nx_effect.binary Add a b`), and `Nx_effect.to_host` is
-  `Nx_effect.read`. New library `nx.backend` names the operations' kinds.
+  type, `Nx.Op.t`; the per-operation effects (`E_add`, `E_reduce_sum`, ...)
+  are gone. `Nx.Op.eval (Binary (Add, a, b))` performs one, and `Read` reads
+  a value to the host. New library `nx.backend` names the operations' kinds.
 - `Nx.copy` always gives storage of its own, and `Nx.contiguous` returns a
   value whose bytes are already C-contiguous from its first element unchanged,
   a placed view included; it copied a placed view that did not cover its
@@ -3936,7 +3938,7 @@ thread.
   and `Pci.alloc_sysmem`, `free_sysmem`, `reserve`, `pin` and `unpin` give the
   system memory of a function's machine, which `Pci_memory` now uses.
   `Sysmem.alloc` without `~va` maps locked memory where the system chooses.
-- **Breaking (effect handlers):** the `E_psum` effect and `Nx_effect.op_psum`
+- **Breaking (effect handlers):** the `E_psum` effect and its entry function
   are removed. It had no caller, no batching rule and no backend operation,
   and it raised outside a map; `Nx.sum ~axes:[0] (Rune.lanes a x)` is the same
   sum over the lanes of the map named `a`.
@@ -4873,11 +4875,6 @@ thread.
   to `nan`, and flushed subnormals to zero. Conversion is now IEEE
   round-to-nearest-even with subnormal support, matching numpy. Casting a
   signaling NaN to `bfloat16` no longer returns `inf`.
-- Add deferred host tensors to `nx.effect`: `Nx_effect.deferred` creates a
-  tensor whose bytes arrive on first data access. Metadata reads (`shape`,
-  `dtype`) answer without transfer; the first read runs a fill thunk once
-  and memoizes the result. Rune uses them to keep jit outputs
-  device-resident.
 - Add `scatter`, the pure counterpart of `put_along_axis`: returns a new
   tensor with `values` placed along `axis`, with `` `Set``/`` `Add`` modes
   and a `unique_indices` hint. Works under `Rune.jit` and differentiates

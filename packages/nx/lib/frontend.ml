@@ -4,15 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 open Nx_array
-module B = Nx_effect
+module B = Entry
 
 let err op fmt =
   Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
 (* ───── Core Types ───── *)
 
-type ('a, 'b) t = ('a, 'b) B.t
-type context = B.context
+type ('a, 'b) t = ('a, 'b) Value.t
+type context = Value.context
 type float16_elt = Nx_dtype.float16_elt
 type float32_elt = Nx_dtype.float32_elt
 type float64_elt = Nx_dtype.float64_elt
@@ -101,23 +101,23 @@ type index =
 
 (* ───── Tensor Properties ───── *)
 
-let shape x = View.shape (B.view x)
-let dtype x = B.dtype x
-let itemsize x = Nx_dtype.itemsize (B.dtype x)
+let shape x = View.shape (Value.view x)
+let dtype x = Value.dtype x
+let itemsize x = Nx_dtype.itemsize (Value.dtype x)
 
 let dim i x =
-  let shape = View.shape (B.view x) in
+  let shape = View.shape (Value.view x) in
   let ndim = Array.length shape in
   let i = if i < 0 then i + ndim else i in
   if i < 0 || i >= ndim then
     err "dim" "axis %d out of bounds for %dD tensor" i ndim
   else shape.(i)
 
-let ndim x = View.ndim (B.view x)
-let size x = View.numel (B.view x)
+let ndim x = View.ndim (Value.view x)
+let size x = View.numel (Value.view x)
 let numel x = size x
 let nbytes x = numel x * itemsize x
-let is_c_contiguous x = View.is_c_contiguous (B.view x)
+let is_c_contiguous x = View.is_c_contiguous (Value.view x)
 
 (* ───── Internal Utilities ───── *)
 
@@ -362,7 +362,7 @@ let copy x = B.copy x
 let reading ~by x f =
   let buf = B.read ~by x in
   Nx_device.Buffer.Claim.read buf;
-  match f (Elements.get (B.dtype x) buf) with
+  match f (Elements.get (Value.dtype x) buf) with
   | v ->
       Nx_device.Buffer.Claim.release buf;
       v
@@ -400,7 +400,8 @@ let init ctx dtype shape f =
   create ctx dtype shape arr
 
 let scalar ctx dt value = B.full ctx dt [||] value
-let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
+let scalar_like x_ref value =
+  scalar (Value.context x_ref) (Value.dtype x_ref) value
 
 let empty ctx dtype shape_arr =
   check_shape "empty" shape_arr;
@@ -414,22 +415,22 @@ let zeros ctx dtype shape_arr = full ctx dtype shape_arr (Nx_dtype.zero dtype)
 let ones ctx dtype shape_arr = full ctx dtype shape_arr (Nx_dtype.one dtype)
 
 let create_like x_ref fill_fn =
-  fill_fn (B.context x_ref) (B.dtype x_ref) (shape x_ref)
+  fill_fn (Value.context x_ref) (Value.dtype x_ref) (shape x_ref)
 
 let empty_like x_ref = create_like x_ref empty
 
 let full_like x_ref fill_value =
   create_like x_ref (fun ctx dt sh -> full ctx dt sh fill_value)
 
-let zeros_like x = full_like x (Nx_dtype.zero (B.dtype x))
+let zeros_like x = full_like x (Nx_dtype.zero (Value.dtype x))
 let fill value x = full_like x value
-let ones_like x = full_like x (Nx_dtype.one (B.dtype x))
+let ones_like x = full_like x (Nx_dtype.one (Value.dtype x))
 
 let to_bigarray x =
-  match Nx_dtype.to_bigarray_kind (B.dtype x) with
+  match Nx_dtype.to_bigarray_kind (Value.dtype x) with
   | None ->
       err "to_bigarray" "Bigarray has no %s kind"
-        (Nx_dtype.to_string (B.dtype x))
+        (Nx_dtype.to_string (Value.dtype x))
   | Some k ->
       let ba =
         Nx_device.Buffer.bigarray k (B.read ~by:"Nx.to_bigarray" (copy x))
@@ -478,7 +479,7 @@ let mul a b = binop Mul a b
 let mul_s t s = mul t (scalar_like t s)
 
 let div a b =
-  let dt = B.dtype a in
+  let dt = Value.dtype a in
   if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then binop Idiv a b
   else binop Fdiv a b
 
@@ -544,7 +545,7 @@ let bitwise_not x =
   let dt = dtype x in
   binop Xor x
     (broadcast_to (shape x)
-       (B.full (B.context x) dt [||] (Nx_dtype.minus_one dt)))
+       (B.full (Value.context x) dt [||] (Nx_dtype.minus_one dt)))
 
 let sin x = B.unary Sin x
 let cos x = B.unary Cos x
@@ -571,7 +572,7 @@ let log2 x =
         (fun x ->
           mul (log x)
             (broadcast_to (shape x)
-               (scalar (B.context x) (dtype x)
+               (scalar (Value.context x) (dtype x)
                   (Nx_dtype.of_float (dtype x) (1.0 /. Stdlib.log 2.0)))));
     }
     x
@@ -611,28 +612,28 @@ let round x = B.unary Round x
 
 let isinf x =
   if not (Nx_dtype.is_float (dtype x)) then
-    zeros (B.context x) Nx_dtype.bool (shape x)
+    zeros (Value.context x) Nx_dtype.bool (shape x)
   else
     let dt = dtype x in
     let pos_inf =
       broadcast_to (shape x)
-        (B.full (B.context x) dt [||] (Nx_dtype.of_float dt Float.infinity))
+        (B.full (Value.context x) dt [||] (Nx_dtype.of_float dt Float.infinity))
     in
     let neg_inf =
       broadcast_to (shape x)
-        (B.full (B.context x) dt [||]
+        (B.full (Value.context x) dt [||]
            (Nx_dtype.of_float dt Float.neg_infinity))
     in
     logical_or (cmpeq x pos_inf) (cmpeq x neg_inf)
 
 let isnan x =
   if not (Nx_dtype.is_float (dtype x)) then
-    zeros (B.context x) Nx_dtype.bool (shape x)
+    zeros (Value.context x) Nx_dtype.bool (shape x)
   else cmpne x x
 
 let isfinite x =
   if not (Nx_dtype.is_float (dtype x)) then
-    ones (B.context x) Nx_dtype.bool (shape x)
+    ones (Value.context x) Nx_dtype.bool (shape x)
   else logical_not (logical_or (isinf x) (isnan x))
 
 let lerp start_tensor end_tensor weight =
@@ -647,7 +648,7 @@ let shift_op ~op ~apply x shift_val =
   else
     apply x
       (broadcast_to (shape x)
-         (B.full (B.context x) dt [||] (power_of_two dt shift_val)))
+         (B.full (Value.context x) dt [||] (power_of_two dt shift_val)))
 
 let lshift x shift_val = shift_op ~op:"lshift" ~apply:mul x shift_val
 
@@ -922,7 +923,7 @@ let cummax ?axis x = cumulative_scan ?axis Nx_backend.Max x
 let cummin ?axis x = cumulative_scan ?axis Nx_backend.Min x
 
 let mean ?axes ?(keepdims = false) x =
-  let dt = B.dtype x in
+  let dt = Value.dtype x in
   let s = sum ?axes ~keepdims x in
   let n = reduction_element_count (shape x) ?axes () in
   (* The mean of nothing is 0 / 0: NaN, which an integer does not hold. *)
@@ -931,12 +932,12 @@ let mean ?axes ?(keepdims = false) x =
       (Nx_dtype.to_string dt);
   let divisor =
     broadcast_to (shape s)
-      (scalar (B.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
+      (scalar (Value.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
   in
   div s divisor
 
 let var ?axes ?(keepdims = false) ?(ddof = 0) x =
-  let dt = B.dtype x in
+  let dt = Value.dtype x in
   let mean_x = mean ?axes ~keepdims:true x in
   let sum_sq = sum ?axes ~keepdims (square (sub x mean_x)) in
   let n = reduction_element_count (shape x) ?axes () in
@@ -944,7 +945,7 @@ let var ?axes ?(keepdims = false) ?(ddof = 0) x =
   let n_corr = float_of_int (n - ddof) in
   let divisor =
     broadcast_to (shape sum_sq)
-      (scalar (B.context x) dt (Nx_dtype.of_float dt n_corr))
+      (scalar (Value.context x) dt (Nx_dtype.of_float dt n_corr))
   in
   div sum_sq divisor
 
@@ -963,7 +964,7 @@ let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
     |> Array.of_list
   in
   if Array.exists (fun axis -> input_shape.(axis) = 0) axes_to_reduce then
-    full (B.context x) Nx_dtype.bool
+    full (Value.context x) Nx_dtype.bool
       (Shape.reduce_output_shape input_shape axes_to_reduce keepdims)
       identity
   else
@@ -989,7 +990,7 @@ let array_equal x y =
       true
     with _ -> false
   in
-  if not can_broadcast then zeros (B.context x) Nx_dtype.bool [||]
+  if not can_broadcast then zeros (Value.context x) Nx_dtype.bool [||]
   else all (equal x y)
 
 (* ───── Shape Manipulation ───── *)
@@ -1268,7 +1269,7 @@ let tile reps x =
   if Array.for_all (( = ) 1) reps then B.copy x_promoted
   else if Array.exists (( = ) 0) reps || Array.exists (( = ) 0) promoted_shape
   then
-    empty (B.context x) (dtype x)
+    empty (Value.context x) (dtype x)
       (Array.mapi (fun i s -> s * reps.(i)) promoted_shape)
   else
     let rec tile_axis curr axis =
@@ -1298,7 +1299,7 @@ let repeat ?axis count x =
   if count = 0 then begin
     let s = Array.copy t_shape in
     if t_ndim > 0 then s.(ax_idx) <- 0;
-    empty (B.context x) (dtype x) (if axis = None then [| 0 |] else s)
+    empty (Value.context x) (dtype x) (if axis = None then [| 0 |] else s)
   end
   else if count = 1 then B.copy x
   else if t_ndim = 0 then
@@ -1570,10 +1571,14 @@ let triangular_mask ~op ~cmp ?k x =
   if nd < 2 then err op "input requires at least 2D tensor";
   let rows = sh.(nd - 2) in
   let cols = sh.(nd - 1) in
-  let row_idx = reshape [| rows; 1 |] (arange (B.context x) int64 0 rows 1) in
-  let col_idx = reshape [| 1; cols |] (arange (B.context x) int64 0 cols 1) in
+  let row_idx =
+    reshape [| rows; 1 |] (arange (Value.context x) int64 0 rows 1)
+  in
+  let col_idx =
+    reshape [| 1; cols |] (arange (Value.context x) int64 0 cols 1)
+  in
   let k_offset =
-    sub col_idx (scalar (B.context x) int64 (Int64.of_int k_val))
+    sub col_idx (scalar (Value.context x) int64 (Int64.of_int k_val))
   in
   let mask = cmp row_idx k_offset in
   where mask x (scalar_like x (Nx_dtype.zero (dtype x)))
@@ -1693,7 +1698,7 @@ let normalize_slice_spec ~by ~axis dim_size = function
           dim_size;
       (* clamp the corner so the window always fits; a tensor operation, so a
          traced start stays traced *)
-      let ctx = B.context start in
+      let ctx = Value.context start in
       let start = reshape [||] start in
       let start =
         minimum
@@ -1730,7 +1735,7 @@ let slice specs x =
   let ops = parse_specs ~by:"Nx.slice" specs (shape x) in
   let gather_axis axis indices t =
     let idx_t =
-      create (B.context t) Nx_dtype.int64
+      create (Value.context t) Nx_dtype.int64
         [| Array.length indices |]
         (Array.map Int64.of_int indices)
     in
@@ -1757,7 +1762,7 @@ let slice specs x =
           if len = 0 then shrink_axis axis 0 0 current
           else
             let idx =
-              add (arange (B.context current) Nx_dtype.int64 0 len 1) start
+              add (arange (Value.context current) Nx_dtype.int64 0 len 1) start
             in
             take ~axis ~indices:idx current
         in
@@ -1848,7 +1853,7 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
 let set specs v x =
   let x_shape = shape x in
   let nd = Array.length x_shape in
-  let ctx = B.context x in
+  let ctx = Value.context x in
   let specs_full =
     let consumed = List.length (List.filter (fun s -> s <> N) specs) in
     if consumed > nd then invalid_arg "set: too many indices";
@@ -2039,7 +2044,7 @@ let positions' (type a b) ~by (c : (a, b) t) : int64_t =
   | _ ->
       err "positions" "counts of dtype %s, not boolean or integer"
         (Nx_dtype.to_string dt));
-  let ctx = B.context c and n = dim 0 c in
+  let ctx = Value.context c and n = dim 0 c in
   if n = 0 then empty ctx Int64 [| 0 |]
   else
     let counts = cast Int64 c in
@@ -2127,7 +2132,7 @@ let nonzero t =
 let argwhere t =
   let by = "Nx.argwhere" in
   if ndim t = 0 then
-    empty (B.context t) Int64 [| dim 0 (flat_nonzero ~by t); 0 |]
+    empty (Value.context t) Int64 [| dim 0 (flat_nonzero ~by t); 0 |]
   else
     stack ~axis:1 (Array.to_list (coordinates (shape t) (flat_nonzero ~by t)))
 
@@ -2143,7 +2148,7 @@ let array_split ~axis sections x =
     else
       let s = Array.copy (shape x) in
       s.(axis) <- 0;
-      empty (B.context x) (dtype x) s
+      empty (Value.context x) (dtype x) s
   in
   match sections with
   | `Indices indices ->
@@ -2199,7 +2204,7 @@ let sort_axis op x axis =
 (* The sort kernels take no packed dtype: [int4] and [uint4] sort as the 8-bit
    integers they widen to exactly. *)
 let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
-  if ndim x = 0 then (x, scalar (B.context x) Nx_dtype.int64 0L)
+  if ndim x = 0 then (x, scalar (Value.context x) Nx_dtype.int64 0L)
   else
     let axis = sort_axis "sort" x axis in
     let sorted (type c d) (w : (c, d) t) =
@@ -2215,7 +2220,7 @@ let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
     | _ -> sorted x
 
 let argsort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
-  if ndim x = 0 then scalar (B.context x) Nx_dtype.int64 0L
+  if ndim x = 0 then scalar (Value.context x) Nx_dtype.int64 0L
   else
     let axis = sort_axis "argsort" x axis in
     match dtype x with
@@ -2256,7 +2261,7 @@ let quantile ?axis qs x =
   in
   let n = dim axis x in
   if n = 0 then err "quantile" "axis %d is empty: it has no quantile" axis;
-  let ctx = B.context x and k = Array.length qs in
+  let ctx = Value.context x and k = Array.length qs in
   let sorted = B.sort ~descending:false ~axis x in
   let at = Array.map (fun q -> q *. float_of_int (n - 1)) qs in
   let lo = Array.map (fun h -> Int64.of_float (Float.floor h)) at in
@@ -2333,7 +2338,7 @@ let reduce_segments op ~segments ids x =
     ~axis:0
     ~indices:(broadcast_to (shape x) (reshape along ids))
     ~values:x
-    (full (B.context x) dt into identity)
+    (full (Value.context x) dt into identity)
 
 (* Scans of structures
 
@@ -2483,7 +2488,9 @@ let reduce_ranges op ~lo ~hi x =
   let rows = Array.sub (shape x) 1 (ndim x - 1) in
   let ranges x =
     let id = identity_of "reduce_ranges" op (dtype x) in
-    let none = full (B.context x) (dtype x) (Array.append [| m |] rows) id in
+    let none =
+      full (Value.context x) (dtype x) (Array.append [| m |] rows) id
+    in
     let longest = if m = 0 then 0 else n in
     if longest <= 0 then none
     else
@@ -2614,7 +2621,7 @@ let key_of_int64 (type c d) (dt : (c, d) Nx_dtype.t) (v : int64) : c =
    at most [k * (n + 1)]. *)
 let radix_select_in (type c d p q) (cd : (p, q) Nx_dtype.t) ~k (keys : (c, d) t)
     =
-  let ctx = B.context keys in
+  let ctx = Value.context keys in
   let kd = dtype keys in
   let b = dim 0 keys and n = dim 1 keys in
   let width = 8 * Nx_dtype.itemsize kd in
@@ -2719,7 +2726,7 @@ let radix_select_in (type c d p q) (cd : (p, q) Nx_dtype.t) ~k (keys : (c, d) t)
    ones and equal ones at earlier positions, and slot [r] holds the position
    whose place is [r]: [n * n] comparisons per row, none waiting on another. *)
 let select_by_counting ~k keys =
-  let ctx = B.context keys in
+  let ctx = Value.context keys in
   let b = dim 0 keys and n = dim 1 keys in
   let position = arange ctx Nx_dtype.int32 0 n 1 in
   let mine = reshape [| b; 1; n |] keys in
@@ -2786,7 +2793,9 @@ let select_by_passes (type c d) ~k ~axis (keys : (c, d) t) =
   let n = dim axis keys in
   let along = Array.make (ndim keys) 1 in
   along.(axis) <- n;
-  let position = reshape along (arange (B.context keys) Nx_dtype.int64 0 n 1) in
+  let position =
+    reshape along (arange (Value.context keys) Nx_dtype.int64 0 n 1)
+  in
   let low = full_like keys (Nx_dtype.min_value (dtype keys)) in
   (* One round picks the first free entry that a descending sort would place
      next. Comparing against the greatest key, under the free mask, keeps an
@@ -2804,7 +2813,7 @@ let select_by_passes (type c d) ~k ~axis (keys : (c, d) t) =
         (logical_and free (not_equal position index))
         (index :: acc)
   in
-  rounds 0 (ones (B.context keys) Nx_dtype.bool (shape keys)) []
+  rounds 0 (ones (Value.context keys) Nx_dtype.bool (shape keys)) []
 
 let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
   let r = ndim x in
@@ -2826,7 +2835,7 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
       let batch = Array.sub (shape last) 0 (r - 1) in
       let b = Array.fold_left ( * ) 1 batch in
       let chosen =
-        if b = 0 then zeros (B.context x) Nx_dtype.int64 [| 0; k |]
+        if b = 0 then zeros (Value.context x) Nx_dtype.int64 [| 0; k |]
         else
           select ~k (reshape [| b; n |] last)
       in
@@ -2928,7 +2937,7 @@ let lexsort keys =
         sorted (j - 1)
           (take ~indices:(argsort (take ~indices:perm (column j))) perm)
     in
-    if w = 0 then arange (B.context keys) Int64 0 n 1
+    if w = 0 then arange (Value.context keys) Int64 0 n 1
     else sorted (w - 2) (argsort (column (w - 1)))
 
 (* [numeric_key x] is [order_key UInt64 x] with [-0.]'s key moved to [0.]'s, so
@@ -2949,7 +2958,8 @@ let lexicographic ~strict a b =
     if j = w - 1 then if strict then less a b else less_equal a b
     else logical_or (less a b) (logical_and (equal a b) (from (j + 1)))
   in
-  if w = 0 then full (B.context a) Bool [| dim 0 a |] (not strict) else from 0
+  if w = 0 then full (Value.context a) Bool [| dim 0 a |] (not strict)
+  else from 0
 
 let bit_length n =
   let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
@@ -2962,7 +2972,7 @@ let searchsorted (type a b) ~side (s : (a, b) t) (v : (a, b) t) =
     err "searchsorted" "keys of shape %s among rows of shape %s"
       (Shape.to_string (shape v))
       (Shape.to_string (shape s));
-  let ctx = B.context v and m = dim 0 s in
+  let ctx = Value.context v and m = dim 0 s in
   let n = if rows then dim 0 v else numel v in
   let result = if rows then [| n |] else shape v in
   if m = 0 || n = 0 then zeros ctx Int64 result
@@ -3003,7 +3013,7 @@ type groups = { ids : int64_t; first : int64_t; counts : int64_t }
 
 let unique keys =
   check_keys ~op:"unique" keys;
-  let ctx = B.context keys and n = dim 0 keys in
+  let ctx = Value.context keys and n = dim 0 keys in
   if n = 0 then
     let none = empty ctx Int64 [| 0 |] in
     { ids = none; first = none; counts = none }
@@ -3034,7 +3044,7 @@ let histogram (type b) ?weights (dims : ((float, b) t * (float, b) t) list) :
   let points, dt, ctx =
     match dims with
     | [] -> err "histogram" "no dimension"
-    | (_, x) :: _ -> (shape x, dtype x, B.context x)
+    | (_, x) :: _ -> (shape x, dtype x, Value.context x)
   in
   let n = Shape.numel points in
   List.iteri
@@ -3297,7 +3307,7 @@ module Rng = struct
   let blocks name k n =
     check_key name k;
     let kb = broadcast_to [| n; 2 |] (reshape [| 1; 2 |] k) in
-    B.threefry kb (counters (B.context k) n)
+    B.threefry kb (counters (Value.context k) n)
 
   let split ?(n = 2) k =
     if n < 1 then invalid_arg "Nx.Rng.split: n must be at least 1";
@@ -3312,7 +3322,7 @@ module Rng = struct
 
   let fold_in k data =
     check_key "fold_in" k;
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let ctr =
       create ctx Nx_dtype.int32 [| 2 |]
         [| Int32.of_int (data asr 32); Int32.of_int data |]
@@ -3326,7 +3336,7 @@ module Rng = struct
      batched, per-lane key, and a traced one a traced key. *)
   let fold_in_tensor k idx =
     check_key "fold_in_tensor" k;
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let word v = create ctx Nx_dtype.int32 [| 2 |] v in
     let sign =
       neg (cast Nx_dtype.int32 (cmplt idx (scalar ctx Nx_dtype.int32 0l)))
@@ -3377,7 +3387,7 @@ module Rng = struct
   let bits k shape =
     check_shape "bits" shape;
     let n = array_prod shape in
-    if n = 0 then zeros (B.context k) Nx_dtype.int32 shape
+    if n = 0 then zeros (Value.context k) Nx_dtype.int32 shape
     else
       reshape shape
         (shrink [| (0, n) |] (flatten (blocks "bits" k ((n + 1) / 2))))
@@ -3386,7 +3396,7 @@ module Rng = struct
      generator's bits that makes it: a compiled program fuses it into what
      reads it, and knows its range from the mask and the scale. *)
   let unit (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let n = array_prod shape in
     if n = 0 then zeros ctx dtype shape
     else
@@ -3457,7 +3467,7 @@ module Rng = struct
      the angle has no bound, and the long one runs as well. *)
   let normal (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
     check_shape "normal" shape;
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let n = array_prod shape in
     if n = 0 then zeros ctx dtype shape
     else
@@ -3487,7 +3497,7 @@ module Rng = struct
      draw that would land on the other pole and leaves every other alone. *)
   let gumbel (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
     check_shape "gumbel" shape;
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let u = uniform k compute shape in
       let smallest =
@@ -3504,7 +3514,7 @@ module Rng = struct
   let exponential (type b) k (dtype : (float, b) Nx_dtype.t) shape :
       (float, b) t =
     check_shape "exponential" shape;
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let u = uniform k compute shape in
       cast dtype (neg (log (sub (scalar ctx compute 1.0) u)))
@@ -3533,7 +3543,7 @@ module Rng = struct
      draws exactly zero. *)
   let marsaglia_tsang (type c) (compute : (float, c) Nx_dtype.t) k
       concentration =
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let lit v = scalar ctx compute v in
     let tiny = lit (Float.ldexp 1.0 (-significand_bits compute)) in
     let shape = shape concentration in
@@ -3606,7 +3616,7 @@ module Rng = struct
     let ks = split k in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let d = sub (log_gamma compute ks.(1) b) (log_gamma compute ks.(0) a) in
-      at (dtype a) (recip (add (scalar (B.context k) compute 1.0) (exp d)))
+      at (dtype a) (recip (add (scalar (Value.context k) compute 1.0) (exp d)))
     in
     match dtype a with
     | Nx_dtype.Float64 -> draw Nx_dtype.float64
@@ -3726,7 +3736,7 @@ module Rng = struct
   let poisson_rejection_rounds = 16
 
   let poisson (type b) k (rate : (float, b) t) =
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let shape = shape rate in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let rate = at compute rate in
@@ -3837,7 +3847,7 @@ module Rng = struct
 
   let randint k ?(low = 0) ~high shape =
     check_range "Rng.randint" ~low ~high;
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let u = uniform k Nx_dtype.float32 shape in
     (* [u * (high - low)] is non-negative, so the cast's truncation is a
        floor; shifting by [low] afterwards keeps it one, where folding [low]
@@ -3867,7 +3877,7 @@ module Rng = struct
   let truncated_normal (type b) k (lower : (float, b) t)
       (upper : (float, b) t) : (float, b) t =
     let lower, upper = pair lower upper in
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let target = dtype lower in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let lit v = scalar ctx compute v in
@@ -3905,7 +3915,7 @@ module Rng = struct
      the ordering uniform, so the arithmetic below is free to wrap. *)
   let permutation k n =
     if n <= 0 then invalid_arg "Nx.Rng.permutation: n must be positive";
-    let ctx = B.context k in
+    let ctx = Value.context k in
     let words = blocks "permutation" k n in
     let word col =
       cast Nx_dtype.int64
@@ -4112,7 +4122,7 @@ let diagonal ?(offset = 0) ?axis1 ?axis2 x =
     else Stdlib.max 0 (Stdlib.min (d1 + offset) d2)
   in
   if diag_len = 0 then
-    empty (B.context x) (dtype x)
+    empty (Value.context x) (dtype x)
       (Array.append (Array.sub (shape x_trans) 0 (nd - 2)) [| 0 |])
   else
     let prefix = Array.sub (shape x_trans) 0 (nd - 2) in
@@ -4120,7 +4130,7 @@ let diagonal ?(offset = 0) ?axis1 ?axis2 x =
     (* Diagonal indices: start + i*(d2+1) for i in 0..diag_len-1 *)
     let start = if offset >= 0 then offset else -offset * d2 in
     let step = d2 + 1 in
-    let ctx = B.context x in
+    let ctx = Value.context x in
     let idx =
       add
         (mul
@@ -4139,7 +4149,7 @@ let diagonal ?(offset = 0) ?axis1 ?axis2 x =
 let diag_construct k v =
   let n = (shape v).(0) in
   let s = n + Int.abs k in
-  let ctx = B.context v in
+  let ctx = Value.context v in
   let dt = dtype v in
   if n = 0 then zeros ctx dt [| s; s |]
   else
@@ -5013,7 +5023,7 @@ let lu a =
   let m = sh.(nd - 2) and n = sh.(nd - 1) in
   let k = Int.min m n in
   let packed, _, perm = B.lu a in
-  let ctx = B.context a and dt = dtype a in
+  let ctx = Value.context a and dt = dtype a in
   let batch = List.init (nd - 2) (fun _ -> A) in
   let l =
     add
@@ -5087,18 +5097,20 @@ let norm (type a b) ?ord ?axes ?keepdims (x : (a, b) t) =
         max (sum (abs x) ~axes:[ ndim x - 2 ] ~keepdims) ~keepdims
       else
         let p_t =
-          full (B.context x) (dtype x) [||] (Nx_dtype.of_float (dtype x) p)
+          full (Value.context x) (dtype x) [||] (Nx_dtype.of_float (dtype x) p)
         in
         let inv_p =
-          div (full (B.context x) (dtype x) [||] (Nx_dtype.one (dtype x))) p_t
+          div
+            (full (Value.context x) (dtype x) [||] (Nx_dtype.one (dtype x)))
+            p_t
         in
         pow (sum (pow (abs x) p_t) ?axes ~keepdims) inv_p
   | _ -> invalid_arg "norm: this combination of ord and axis not implemented"
 
 (* +1 for a pivot that kept its row, -1 for one that exchanged it. *)
 let pivot_signs dt pivots =
-  let one = ones (B.context pivots) dt (shape pivots) in
-  let steps = arange (B.context pivots) int64 0 (dim (-1) pivots) 1 in
+  let one = ones (Value.context pivots) dt (shape pivots) in
+  let steps = arange (Value.context pivots) int64 0 (dim (-1) pivots) 1 in
   where (not_equal pivots steps) (neg one) one
 
 let det a =
@@ -5167,7 +5179,7 @@ let matrix_rank' ~by ?tol ?rtol ?hermitian a =
     | None, Some r -> r *. max_s
     | None, None -> float_of_int (Stdlib.max m n) *. eps *. max_s
   in
-  let mask = greater s (scalar (B.context a) (dtype s) tol) in
+  let mask = greater s (scalar (Value.context a) (dtype s) tol) in
   int_of_float (Float.round (sum (cast (dtype s) mask) |> read_item ~by))
 
 let matrix_rank ?tol ?rtol ?hermitian a =
@@ -5263,7 +5275,7 @@ let solve a b =
       if Nx_dtype.equal (dtype a) Nx_dtype.float32 then 1e-6 else 1e-12
     in
     let tol_t =
-      full (B.context pivots) Nx_dtype.float64 (shape pivots)
+      full (Value.context pivots) Nx_dtype.float64 (shape pivots)
         (eps *. float_of_int m)
     in
     where (expand_dims [ -1 ] (less pivots tol_t)) (zeros_like packed) packed
@@ -5307,8 +5319,8 @@ let pinv' (type a b) ~by ?rtol ?hermitian (a : (a, b) t) =
   let pinv_from_factors u s vh =
     let max_s = max s |> read_item ~by in
     let cutoff = cutoff ~max_s in
-    let ones_s = ones (B.context s) (dtype s) (shape s) in
-    let threshold = scalar (B.context s) (dtype s) cutoff in
+    let ones_s = ones (Value.context s) (dtype s) (shape s) in
+    let threshold = scalar (Value.context s) (dtype s) cutoff in
     let mask = greater s threshold in
     let s_inv =
       mul (div ones_s (where mask s ones_s)) (cast (dtype s) mask)
@@ -5335,8 +5347,8 @@ let pinv' (type a b) ~by ?rtol ?hermitian (a : (a, b) t) =
       let vals, vecs = B.eigh a in
       let abs_vals = abs vals in
       let sign_vals = sign vals in
-      let o = ones (B.context vals) (dtype vals) (shape vals) in
-      let z = zeros (B.context vals) (dtype vals) (shape vals) in
+      let o = ones (Value.context vals) (dtype vals) (shape vals) in
+      let z = zeros (Value.context vals) (dtype vals) (shape vals) in
       let sign_fixed = where (cmpeq sign_vals z) o sign_vals in
       let vecs_h =
         if Nx_dtype.is_complex dtype_a then matrix_transpose (conjugate vecs)
@@ -5389,7 +5401,7 @@ let lstsq ?rcond a b =
     if m > n then
       let res = sub b (matmul a x) in
       sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
-    else zeros (B.context a) (dtype b) [||]
+    else zeros (Value.context a) (dtype b) [||]
   in
   (x, residuals, matrix_rank' ~by a, svdvals a)
 
@@ -5402,7 +5414,7 @@ let inv a =
   let i =
     broadcast_to
       (Array.append batch [| n; n |])
-      (eye (B.context a) (dtype a) n)
+      (eye (Value.context a) (dtype a) n)
   in
   try solve a i with
   | Invalid_argument msg when String.sub msg 0 5 = "solve" ->
@@ -5424,7 +5436,7 @@ let matrix_power a n =
     else if exp mod 2 = 0 then power acc (matmul base base) (exp / 2)
     else power (matmul acc base) (matmul base base) (exp / 2)
   in
-  if n = 0 then eye (B.context a) (dtype a) sh.(rank - 1)
+  if n = 0 then eye (Value.context a) (dtype a) sh.(rank - 1)
   else if n > 0 then power a a (n - 1)
   else
     try
@@ -5447,7 +5459,7 @@ let cond ?p x =
         else if Nx_dtype.equal ds Nx_dtype.float64 then 2.2e-16
         else 1e-15
       in
-      let tol_t = scalar (B.context x) ds (eps *. max_v) in
+      let tol_t = scalar (Value.context x) ds (eps *. max_v) in
       let safe_s = where (greater s tol_t) s tol_t in
       let mn =
         if ndim safe_s > 1 then min safe_s ~axes:[ -1 ] ~keepdims:false
@@ -5607,10 +5619,10 @@ let apply_fft_scale (type a) scale (result : (Complex.t, a) t) :
     (Complex.t, a) t =
   if scale <> 1.0 then
     let sv =
-      match B.dtype result with
+      match Value.dtype result with
       | Complex64 | Complex128 -> Complex.{ re = scale; im = 0.0 }
     in
-    mul result (scalar (B.context result) (B.dtype result) sv)
+    mul result (scalar (Value.context result) (Value.dtype result) sv)
   else result
 
 let fftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
@@ -5668,7 +5680,7 @@ let rfftn dtype ?axes ?s ?(norm = `Backward) x =
    narrower float widens to float32 exactly on the way in, and the inverse
    works at float32 and rounds once on the way out. *)
 let rfftn (type a) dtype ?axes ?s ?norm (x : (float, a) t) =
-  match B.dtype x with
+  match Value.dtype x with
   | Float32 | Float64 -> rfftn dtype ?axes ?s ?norm x
   | _ -> rfftn dtype ?axes ?s ?norm (cast Nx_dtype.float32 x)
 
@@ -5724,7 +5736,7 @@ let irfftn dtype ?axes ?s ?(norm = `Backward) x =
   in
   let r = B.irfft ?s:s_param dtype ~axes:(Array.of_list axes_list) x in
   if norm_scale <> 1.0 then
-    mul r (scalar (B.context r) (B.dtype r) norm_scale)
+    mul r (scalar (Value.context r) (Value.dtype r) norm_scale)
   else r
 
 let irfftn (type b) (dtype : (float, b) Nx_dtype.t) ?axes ?s ?norm x :
@@ -5920,7 +5932,7 @@ let stft (cdt : (Complex.t, 'c) Nx_dtype.t) ~window ?step ?win x :
   let n = (shape x).(r - 1) in
   if window > n then
     err "stft" "window %d exceeds the %d samples on the last axis" window n;
-  let w = taper "stft" (B.context x) (B.dtype x) ~window win in
+  let w = taper "stft" (Value.context x) (Value.dtype x) ~window win in
   let frames = B.sliding_window x ~axis:(r - 1) ~window ~step in
   rfft cdt (mul frames w) ~axis:(-1)
 
@@ -5941,7 +5953,7 @@ let istft (dt : (float, 'a) Nx_dtype.t) ~window ?step ?win ?length z :
       bins window;
   let frames = z_shape.(r - 2) in
   let out_len = ((frames - 1) * step) + window in
-  let ctx = B.context z in
+  let ctx = Value.context z in
   let w = taper "istft" ctx dt ~window win in
   let taper_sq = mul w w in
   (* [fold] sums the taps landing on each output position, which is exactly
@@ -6031,7 +6043,7 @@ let real_transform_phase (type a b) (float_dtype : (float, a) Nx_dtype.t)
 
 let dct_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)
     (complex_dtype : (Complex.t, b) Nx_dtype.t) (x : (float, a) t) =
-  let ctx = B.context x in
+  let ctx = Value.context x in
   let n = dim (-1) x in
   let dct_2 x =
     let n = dim (-1) x in
@@ -6081,7 +6093,7 @@ let dct_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)
 
 let dst_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)
     (complex_dtype : (Complex.t, b) Nx_dtype.t) (x : (float, a) t) =
-  let ctx = B.context x in
+  let ctx = Value.context x in
   let n = dim (-1) x in
   let signs = real_transform_alternating_signs float_dtype ctx n in
   match type_ with
@@ -6418,7 +6430,7 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding x =
   let patch = Array.fold_left ( * ) 1 kernel_size
   and windows =
     Array.fold_left ( * ) 1
-      (B.window_counts kernel_size stride dilation padding output_size)
+      (Op.window_counts kernel_size stride dilation padding output_size)
   in
   if dim (-2) x <> patch || dim (-1) x <> windows then
     err op "patches of shape (%d, %d), where the geometry gives (%d, %d)"
@@ -6526,7 +6538,8 @@ let one_hot ~num_classes index_tensor =
   let s = Array.make nd_exp 1 in
   s.(nd_exp - 1) <- num_classes;
   let arange_b =
-    reshape s (arange (B.context index_tensor) Nx_dtype.int64 0 num_classes 1)
+    reshape s
+      (arange (Value.context index_tensor) Nx_dtype.int64 0 num_classes 1)
   in
   cast Nx_dtype.uint8 (cmpeq idx_exp arange_b)
 
@@ -6628,7 +6641,7 @@ let map_item f x =
   for i = 0 to sz - 1 do
     set i (f (src i))
   done;
-  reshape (shape x) (B.from_host (B.context x) (dtype x) dst)
+  reshape (shape x) (B.from_host (Value.context x) (dtype x) dst)
 
 let iter_item f x =
   reading ~by:"Nx.iter_item" x @@ fun src ->

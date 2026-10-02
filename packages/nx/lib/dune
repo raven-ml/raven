@@ -5,13 +5,30 @@
  (name nx)
  (public_name nx)
  (modules :standard \ prelude)
+ (modules_without_implementation ptree_intf)
+ (private_modules
+  grid
+  device
+  placement
+  value
+  move
+  op
+  route
+  place
+  kernels
+  dispatch
+  intercept
+  entry
+  frontend
+  ptree
+  ptree_intf
+  device_metal)
  (libraries
   nx_dtype
   nx_array
   nx_backend
   nx_cpu
   nx_device
-  nx_effect
   nx.cuda.device
   nx.nv.device
   nx.amd.device

@@ -559,8 +559,10 @@ let transpose_op : type a b.
         add b (unbroadcast (Nx.matmul (Nx.matrix_transpose a) ct) (Nx.shape b))
   | Place (_, x) -> add x (Nx.place (Nx.placement x) ct)
   | Compare _ | Sort _ | Threefry _ | Cholesky _ | Arg_reduce _ | Argsort _
-  | Group _ | Read _ ->
+  | Group _ ->
       assert false (* Never recorded. *)
+  | Read _ | Check _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ ->
+      assert false (* Their results are not one value. *)
 
 let transpose_call cts i inputs like pullback =
   let received = ref false in

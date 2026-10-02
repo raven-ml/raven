@@ -1,0 +1,364 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Nx_array
+
+(* The value
+
+   GADT constructors (the operations of [Op.t]) require that type variables in
+   the payload be deducible from the return type. A transparent alias of
+   [Nx_array.t] would not be injective, so the value is a GADT of its own, whose
+   parameters the return type determines.
+
+   A value is one of three things. [Host] is an nx.cpu array, the value of the
+   host placement, with no cell, so that the default path pays nothing for what
+   compiled calls need of a storage. [Placed] is a value at any other placement,
+   held in runtime buffers, one per device of its placement: nx knows its
+   placement, dtype and view, and the buffers are its storage. [Traced] is a
+   node of a trace: it has no bytes and never will, and the tracer that made it
+   keeps its payload in [t_node].
+
+   The views of one placed storage share one cell, which holds what belongs to
+   the storage rather than to a view: whether it is live or was consumed by a
+   compiled call, and how many reachable programs bind it. *)
+
+type ('a, 'b) t =
+  | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
+  | Placed : ('a, 'b) resident -> ('a, 'b) t
+  | Traced : ('a, 'b) traced -> ('a, 'b) t
+
+and ('a, 'b) resident = {
+  r_id : int; (* fresh per value; identity tables key by it *)
+  r_placement : Placement.t; (* never the host placement *)
+  r_dtype : ('a, 'b) Nx_dtype.t;
+  r_view : View.t; (* per shard, the same on every shard *)
+  r_cell : cell; (* one per storage, shared by all its views *)
+}
+
+and cell = {
+  placement : Placement.t; (* where the storage lives, whichever views it *)
+  length : int; (* elements of the storage, per shard *)
+  mutable state : state;
+  bound : int Atomic.t; (* reachable program bindings to the storage *)
+  lock : Mutex.t;
+  mutable readers : int;
+  mutable exclusive : bool;
+}
+
+and state =
+  | Live of Nx_device.Buffer.t list
+    (* one buffer per device of the cell's placement, in its order *)
+  | Consumed of consumption
+
+(* Where a compiled call consumed a storage: the consumed leaf's path in the
+   call's arguments, whose first segment is the argument's position from 0. *)
+and consumption = { path : string }
+
+and ('a, 'b) traced = {
+  t_id : int; (* fresh; identity tables key by it *)
+  t_placement : Placement.t; (* where the value lives *)
+  t_context : Placement.t; (* where the trace creates its values *)
+  t_dtype : ('a, 'b) Nx_dtype.t;
+  t_view : View.t; (* the layout of the value it stands for *)
+  t_node : ('a, 'b) node; (* the tracer's payload *)
+}
+
+and ('a, 'b) node = ..
+
+(* Where a creation makes its value. *)
+type context = Placement.t
+
+(* A host array of [dtype] and [shape], C-contiguous from its first element. *)
+let alloc (type a b) (dtype : (a, b) Nx_dtype.t) shape : (a, b) Nx_array.t =
+  let n = Array.fold_left ( * ) 1 shape in
+  { dtype; view = View.create shape; buffer = Elements.create dtype n }
+
+(* A host array of [dtype] and [shape] whose elements are [v]. *)
+let filled dtype shape v =
+  let a = alloc dtype shape in
+  Elements.fill dtype a.buffer v;
+  a
+
+let id_counter = Atomic.make 0
+let fresh_id () = Atomic.fetch_and_add id_counter 1 + 1
+
+let outside_trace () =
+  invalid_arg
+    "a traced tensor has no bytes; it was used outside the trace that made it"
+
+(* Why a value consumed at [path] is dead: the message of every later use. *)
+let why_consumed { path } =
+  Printf.sprintf
+    "this value was consumed at %s in a compiled call's arguments; use the \
+     value the call returned"
+    path
+
+let consumed k = invalid_arg (why_consumed k)
+
+(* The lock only protects the cell's bookkeeping. Readers and consumers keep
+   their claim while executing outside it; overlapping consumption never
+   waits. *)
+module Cell = struct
+  let busy () =
+    invalid_arg "Nx: storage is in use by another reader or consuming call"
+
+  let state c =
+    Mutex.lock c.lock;
+    let state = c.state in
+    Mutex.unlock c.lock;
+    state
+
+  let borrow c =
+    Mutex.lock c.lock;
+    let blocked = c.exclusive in
+    if not blocked then c.readers <- c.readers + 1;
+    Mutex.unlock c.lock;
+    if blocked then busy ()
+
+  let release c =
+    Mutex.lock c.lock;
+    let valid = (not c.exclusive) && c.readers > 0 in
+    if valid then c.readers <- c.readers - 1;
+    Mutex.unlock c.lock;
+    if not valid then invalid_arg "Nx: unbalanced storage borrow"
+
+  let with_borrow c f =
+    borrow c;
+    Fun.protect
+      ~finally:(fun () -> release c)
+      (fun () -> match c.state with Live _ -> f () | Consumed k -> consumed k)
+
+  let upgrade c =
+    Mutex.lock c.lock;
+    let available = (not c.exclusive) && c.readers = 1 in
+    if available then begin
+      c.readers <- 0;
+      c.exclusive <- true
+    end;
+    Mutex.unlock c.lock;
+    if not available then busy ()
+
+  let consume c why =
+    let state = Consumed why in
+    Mutex.lock c.lock;
+    let valid = c.exclusive in
+    if valid then c.state <- state;
+    Mutex.unlock c.lock;
+    if not valid then invalid_arg "Nx: consumption requires exclusive storage"
+
+  let finish c =
+    Mutex.lock c.lock;
+    let retire =
+      match c.state with
+      | Consumed _ -> Atomic.get c.bound = 0
+      | Live _ -> false
+    in
+    c.exclusive <- false;
+    c.readers <- 1;
+    Mutex.unlock c.lock;
+    retire
+
+  let pin c =
+    Mutex.lock c.lock;
+    ignore (Atomic.fetch_and_add c.bound 1);
+    Mutex.unlock c.lock
+
+  let unpin c =
+    Mutex.lock c.lock;
+    let previous = Atomic.fetch_and_add c.bound (-1) in
+    let retire =
+      previous = 1 && (not c.exclusive)
+      && match c.state with Consumed _ -> true | Live _ -> false
+    in
+    Mutex.unlock c.lock;
+    retire
+end
+
+(* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
+let global p shape =
+  match Placement.cuts p with
+  | [] -> shape
+  | cuts ->
+      let shape = Array.copy shape in
+      List.iter (fun (a, n) -> shape.(a) <- shape.(a) * n) cuts;
+      shape
+
+(* A split value's view is each shard's, and its shape the whole's. *)
+let whole_view r =
+  match Placement.cuts r.r_placement with
+  | [] -> r.r_view
+  | _ ->
+      let v = r.r_view in
+      View.create ~offset:(View.offset v) ~strides:(View.strides v)
+        (global r.r_placement (View.shape v))
+
+(* Placed constructors *)
+
+(* A cell over [storage], one runtime buffer of [length] elements per device of
+   [placement], which the runtime releases with the buffers. *)
+let cell ~placement ~length storage =
+  {
+    placement;
+    length;
+    state = Live storage;
+    bound = Atomic.make 0;
+    lock = Mutex.create ();
+    readers = 0;
+    exclusive = false;
+  }
+
+(* [placed what p dtype view cell] is the value at [p] of [cell] under [view].
+   Raises [Invalid_argument] naming [what] if [p] is the host's, or if [cell]'s
+   devices do not hold [p]'s memories. *)
+let placed what placement dtype view cell =
+  if Placement.is_host placement then
+    invalid_arg (what ^ ": a placed value is never on the host");
+  let held = List.map Device.memory (Placement.devices cell.placement) in
+  if
+    not
+      (List.for_all
+         (fun d -> List.memq (Device.memory d) held)
+         (Placement.devices placement))
+  then
+    invalid_arg
+      (Format.asprintf "%s: a value on %a views a storage on %a" what
+         Placement.pp placement Placement.pp cell.placement);
+  Placed
+    {
+      r_id = fresh_id ();
+      r_placement = placement;
+      r_dtype = dtype;
+      r_view = view;
+      r_cell = cell;
+    }
+
+(* Raises unless [buffer] is a host buffer of [dtype]'s format, as nx.cpu reads
+   it: through its host address, [dtype]'s elements at a time. *)
+let check_host fn dtype buffer =
+  if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
+    invalid_arg
+      (Printf.sprintf "%s: the buffer is on %s, not CPU" fn
+         (Nx_device.name (Nx_device.Buffer.device buffer)));
+  if
+    not
+      (Nx_dtype.Scalar.equal
+         (Nx_device.Buffer.dtype buffer)
+         (Nx_dtype.Scalar.of_dtype dtype))
+  then
+    invalid_arg
+      (Printf.sprintf "%s: a %s buffer read as %s" fn
+         (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
+         (Nx_dtype.to_string dtype))
+
+(* Traced constructor *)
+
+let traced (type a b) ?view (ctx : context) (p : Placement.t)
+    (dtype : (a, b) Nx_dtype.t) (shape : int array) (node : (a, b) node) :
+    (a, b) t =
+  let t_view =
+    match view with
+    | None -> View.create shape
+    | Some v when Shape.equal (View.shape v) shape -> v
+    | Some v ->
+        invalid_arg
+          (Printf.sprintf "Nx.Repr.Traced.v: a view of shape %s for shape %s"
+             (Shape.to_string (View.shape v))
+             (Shape.to_string shape))
+  in
+  Traced
+    {
+      t_id = fresh_id ();
+      t_placement = p;
+      t_context = ctx;
+      t_dtype = dtype;
+      t_view;
+      t_node = node;
+    }
+
+type packed = P : ('a, 'b) t -> packed
+
+(* Lenses. Metadata is the value's own: reading it runs no interpreter. *)
+
+let view (type a b) (x : (a, b) t) : View.t =
+  match x with
+  | Host t -> t.view
+  | Placed r -> whole_view r
+  | Traced t -> t.t_view
+
+let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
+  | Host t -> t.dtype
+  | Placed r -> r.r_dtype
+  | Traced t -> t.t_dtype
+
+(* A value made beside a placed one is a full copy on each of its devices. The
+   frontend asks for a context each time it builds a constant beside an operand,
+   so the host's is one value. *)
+let context : type a b. (a, b) t -> context = function
+  | Host _ -> Placement.host
+  | Placed r when Placement.on_disk r.r_placement -> Placement.host
+  | Placed r -> Placement.replicated (Placement.devices r.r_placement)
+  | Traced t -> t.t_context
+
+(* Whether a creation at [p] makes a host tensor. The frontend's contexts on the
+   host are [Placement.host] itself, so the first test decides the common
+   case. *)
+let on_host (p : context) = p == Placement.host || Placement.is_host p
+
+let placement (type a b) (x : (a, b) t) : Placement.t =
+  match x with
+  | Host _ -> Placement.host
+  | Placed r -> r.r_placement
+  | Traced t -> t.t_placement
+
+(* Values over runtime buffers *)
+
+(* Whether the view [v] reaches only elements [0] to [n - 1]. *)
+let fits v n =
+  View.numel v = 0
+  ||
+  let lo, hi = View.extent v in
+  lo >= 0 && hi <= n
+
+(* [shard_storage what p buffers] is the storage of [buffers], one per device of
+   [p], in order, of one length, each in the memory of its device. *)
+let shard_storage what p buffers =
+  let ds = Placement.devices p in
+  if List.compare_lengths ds buffers <> 0 then
+    invalid_arg
+      (Printf.sprintf "%s: %d buffers for %d devices" what (List.length buffers)
+         (List.length ds));
+  let length = Nx_device.Buffer.length (List.hd buffers) in
+  List.iter2
+    (fun d b ->
+      if Nx_device.Buffer.length b <> length then
+        invalid_arg (what ^ ": buffers of different lengths");
+      if Nx_device.Buffer.device b != Device.memory d then
+        invalid_arg
+          (Printf.sprintf "%s: a buffer for %s is on %s" what (Device.name d)
+             (Nx_device.name (Nx_device.Buffer.device b))))
+    ds buffers;
+  cell ~placement:p ~length buffers
+
+(* [host_value what dtype view b] is the host value of [b] under [view]. *)
+let host_value what dtype view b =
+  check_host what dtype b;
+  if not (fits view (Nx_device.Buffer.length b)) then
+    invalid_arg (what ^ ": the view reaches outside the buffer");
+  Host { dtype; view; buffer = b }
+
+let check_format what dtype b =
+  let s = Nx_device.Buffer.dtype b in
+  if not (Nx_dtype.Scalar.equal s (Nx_dtype.Scalar.of_dtype dtype)) then
+    invalid_arg
+      (Printf.sprintf "%s: a %s buffer read as %s" what
+         (Nx_dtype.Scalar.to_string s)
+         (Nx_dtype.to_string dtype))
+
+(* [placed_value what p dtype view c] is the value at [p] of [c] under
+   [view]. *)
+let placed_value what p dtype view c =
+  if not (fits view c.length) then
+    invalid_arg (what ^ ": the view reaches outside the storage");
+  placed what p dtype view c

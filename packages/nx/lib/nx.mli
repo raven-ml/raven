@@ -25,9 +25,9 @@
 
 (** {1:types Types} *)
 
-type ('a, 'b) t = ('a, 'b) Nx_effect.t
+type (!'a, !'b) t
 (** The type for tensors with OCaml element type ['a] and buffer element kind
-    ['b]. *)
+    ['b]. It is abstract; {!Repr} reads and builds its representation. *)
 
 (** {2:elt_kinds Element kinds}
 
@@ -160,8 +160,7 @@ type index =
 (** The type for tensors of any dtype, such as a file's named tensors, a
     checkpoint's entries or the tensors of {!Ptree.flatten}. Match on [P] for
     the tensor; {!unpack} also fixes its dtype. *)
-type packed = Nx_effect.packed =
-  | P : ('a, 'b) t -> packed  (** A tensor whose dtype is hidden. *)
+type packed = P : ('a, 'b) t -> packed  (** A tensor whose dtype is hidden. *)
 
 val unpack : ('a, 'b) dtype -> packed -> ('a, 'b) t
 (** [unpack dtype p] is the tensor in [p] if its dtype is [dtype].
@@ -415,7 +414,7 @@ end
 
 (** Placements. *)
 module Placement : sig
-  type t = Nx_effect.placement
+  type t
   (** The type for placements: where each device's window of a value lies. Only
       the functions below build one, and a placement is in normal form: a list
       of one device is that device, and a placement names each memory once. *)
@@ -749,9 +748,13 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
                                             [0, 0, 0, 1]]
     ]} *)
 
-module Ptree = Ptree
 (** Structures of tensors: types with one [walk] that walks their parts, which
-    Rune's transformations, Vega's optimisers and checkpoints take. *)
+    Rune's transformations, Vega's optimisers and saving take. *)
+module Ptree :
+  Ptree_intf.Ptree
+    with type ('a, 'b) tensor := ('a, 'b) t
+     and type placement := Placement.t
+     and type packed := packed
 
 (** {1:rng Random number generation}
 
@@ -4362,7 +4365,9 @@ val of_shards :
     answers itself. A transformation is an interpreter of these values,
     installed with {!intercept}. *)
 module Op : sig
-  type move = Nx_effect.move =
+  type ('a, 'b) value := ('a, 'b) t
+
+  type move =
     | Reshape of int array
     | Expand of int array
     | Permute of int array
@@ -4371,7 +4376,7 @@ module Op : sig
     | Window of { axis : int; size : int; step : int }
         (** The type for movements: views of a value's storage. *)
 
-  type conversion = Nx_effect.conversion =
+  type conversion =
     | Cast
     | Bitcast
         (** The type for dtype conversions: [Cast] converts each element's
@@ -4379,48 +4384,42 @@ module Op : sig
             elements of the other dtype, consuming or adding a last axis when
             the widths differ, as {!bitcast} does. *)
 
-  type 'r t = 'r Nx_effect.Op.t =
-    | Unary : Nx_backend.unary * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
+  type 'r t =
+    | Unary : Nx_backend.unary * ('a, 'b) value -> ('a, 'b) value t
     | Binary :
-        Nx_backend.binary * ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
+        Nx_backend.binary * ('a, 'b) value * ('a, 'b) value
+        -> ('a, 'b) value t
     | Compare :
-        Nx_backend.compare * ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
-        -> (bool, Nx_dtype.bool_elt) Nx_effect.t t
+        Nx_backend.compare * ('a, 'b) value * ('a, 'b) value
+        -> (bool, Nx_dtype.bool_elt) value t
     | Where :
-        (bool, Nx_dtype.bool_elt) Nx_effect.t
-        * ('a, 'b) Nx_effect.t
-        * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
-    | Fma :
-        ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
+        (bool, Nx_dtype.bool_elt) value * ('a, 'b) value * ('a, 'b) value
+        -> ('a, 'b) value t
+    | Fma : ('a, 'b) value * ('a, 'b) value * ('a, 'b) value -> ('a, 'b) value t
     | Reduce :
-        Nx_backend.reduce * int array * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
-    | Scan :
-        Nx_backend.reduce * int * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
+        Nx_backend.reduce * int array * ('a, 'b) value
+        -> ('a, 'b) value t
+    | Scan : Nx_backend.reduce * int * ('a, 'b) value -> ('a, 'b) value t
     | Arg_reduce :
-        Nx_backend.arg_reduce * int * ('a, 'b) Nx_effect.t
-        -> (int64, Nx_dtype.int64_elt) Nx_effect.t t
+        Nx_backend.arg_reduce * int * ('a, 'b) value
+        -> (int64, Nx_dtype.int64_elt) value t
     | Sort : {
         descending : bool;
         axis : int;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> ('a, 'b) Nx_effect.t t
+        -> ('a, 'b) value t
     | Argsort : {
         descending : bool;
         axis : int;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> (int64, Nx_dtype.int64_elt) Nx_effect.t t
+        -> (int64, Nx_dtype.int64_elt) value t
     | Group : {
         by : string;
-        x : (int64, Nx_dtype.uint64_elt) Nx_effect.t;
+        x : (int64, Nx_dtype.uint64_elt) value;
       }
-        -> (int64, Nx_dtype.int64_elt) Nx_effect.t t
+        -> (int64, Nx_dtype.int64_elt) value t
         (** [Group { by; x }] numbers the rows of the matrix [x] in order of
             first appearance: element [i] of its result, of shape [[|dim 0 x|]],
             is the number of distinct rows whose first occurrence comes before
@@ -4428,123 +4427,110 @@ module Op : sig
             that groups, such as ["Nx.unique"]; every such function reads the
             number of groups, so an interpreter that cannot compute [Group]
             raises a message that starts with [by]. *)
-    | Pad :
-        (int * int) array * 'a * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
-    | Cat : int * ('a, 'b) Nx_effect.t list -> ('a, 'b) Nx_effect.t t
+    | Pad : (int * int) array * 'a * ('a, 'b) value -> ('a, 'b) value t
+    | Cat : int * ('a, 'b) value list -> ('a, 'b) value t
     | Convert :
-        conversion * ('c, 'd) Nx_dtype.t * ('a, 'b) Nx_effect.t
-        -> ('c, 'd) Nx_effect.t t
+        conversion * ('c, 'd) Nx_dtype.t * ('a, 'b) value
+        -> ('c, 'd) value t
     | Threefry :
-        (int32, Nx_dtype.int32_elt) Nx_effect.t
-        * (int32, Nx_dtype.int32_elt) Nx_effect.t
-        -> (int32, Nx_dtype.int32_elt) Nx_effect.t t
+        (int32, Nx_dtype.int32_elt) value * (int32, Nx_dtype.int32_elt) value
+        -> (int32, Nx_dtype.int32_elt) value t
     | Gather :
-        int * (int64, Nx_dtype.int64_elt) Nx_effect.t * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
+        int * (int64, Nx_dtype.int64_elt) value * ('a, 'b) value
+        -> ('a, 'b) value t
     | Scatter : {
         mode : Nx_backend.scatter;
         unique : bool;
         axis : int;
-        indices : (int64, Nx_dtype.int64_elt) Nx_effect.t;
-        updates : ('a, 'b) Nx_effect.t;
-        into : ('a, 'b) Nx_effect.t;
+        indices : (int64, Nx_dtype.int64_elt) value;
+        updates : ('a, 'b) value;
+        into : ('a, 'b) value;
       }
-        -> ('a, 'b) Nx_effect.t t
+        -> ('a, 'b) value t
     | Update :
-        ('a, 'b) Nx_effect.t
-        * (int64, Nx_dtype.int64_elt) Nx_effect.t
-        * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
+        ('a, 'b) value * (int64, Nx_dtype.int64_elt) value * ('a, 'b) value
+        -> ('a, 'b) value t
     | Unfold : {
         kernel_size : int array;
         stride : int array;
         dilation : int array;
         padding : (int * int) array;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> ('a, 'b) Nx_effect.t t
+        -> ('a, 'b) value t
     | Fold : {
         output_size : int array;
         kernel_size : int array;
         stride : int array;
         dilation : int array;
         padding : (int * int) array;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> ('a, 'b) Nx_effect.t t
-    | Matmul :
-        ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
-        -> ('a, 'b) Nx_effect.t t
+        -> ('a, 'b) value t
+    | Matmul : ('a, 'b) value * ('a, 'b) value -> ('a, 'b) value t
     | Fft : {
         inverse : bool;
         axes : int array;
-        x : (Complex.t, 'b) Nx_effect.t;
+        x : (Complex.t, 'b) value;
       }
-        -> (Complex.t, 'b) Nx_effect.t t
+        -> (Complex.t, 'b) value t
     | Rfft : {
         dtype : (Complex.t, 'c) Nx_dtype.t;
         axes : int array;
-        x : (float, 'b) Nx_effect.t;
+        x : (float, 'b) value;
       }
-        -> (Complex.t, 'c) Nx_effect.t t
+        -> (Complex.t, 'c) value t
     | Irfft : {
         dtype : (float, 'c) Nx_dtype.t;
         axes : int array;
         s : int array option;
-        x : (Complex.t, 'b) Nx_effect.t;
+        x : (Complex.t, 'b) value;
       }
-        -> (float, 'c) Nx_effect.t t
-    | Contiguous : ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
-    | Cholesky : {
-        upper : bool;
-        x : ('a, 'b) Nx_effect.t;
-      }
-        -> ('a, 'b) Nx_effect.t t
+        -> (float, 'c) value t
+    | Contiguous : ('a, 'b) value -> ('a, 'b) value t
+    | Cholesky : { upper : bool; x : ('a, 'b) value } -> ('a, 'b) value t
     | Qr : {
         reduced : bool;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> (('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t) t
+        -> (('a, 'b) value * ('a, 'b) value) t
     | Lu :
-        ('a, 'b) Nx_effect.t
-        -> (('a, 'b) Nx_effect.t
-           * (int64, Nx_dtype.int64_elt) Nx_effect.t
-           * (int64, Nx_dtype.int64_elt) Nx_effect.t)
+        ('a, 'b) value
+        -> (('a, 'b) value
+           * (int64, Nx_dtype.int64_elt) value
+           * (int64, Nx_dtype.int64_elt) value)
            t
     | Svd : {
         full_matrices : bool;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> (('a, 'b) Nx_effect.t
-           * (float, Nx_dtype.float64_elt) Nx_effect.t
-           * ('a, 'b) Nx_effect.t)
+        -> (('a, 'b) value
+           * (float, Nx_dtype.float64_elt) value
+           * ('a, 'b) value)
            t
     | Eig : {
         vectors : bool;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> ((Complex.t, Nx_dtype.complex64_elt) Nx_effect.t
-           * (Complex.t, Nx_dtype.complex64_elt) Nx_effect.t option)
+        -> ((Complex.t, Nx_dtype.complex64_elt) value
+           * (Complex.t, Nx_dtype.complex64_elt) value option)
            t
     | Eigh : {
         vectors : bool;
-        x : ('a, 'b) Nx_effect.t;
+        x : ('a, 'b) value;
       }
-        -> ((float, Nx_dtype.float64_elt) Nx_effect.t
-           * ('a, 'b) Nx_effect.t option)
-           t
+        -> ((float, Nx_dtype.float64_elt) value * ('a, 'b) value option) t
     | Solve_triangular : {
         upper : bool;
         transpose : bool;
         unit_diag : bool;
-        a : ('a, 'b) Nx_effect.t;
-        b : ('a, 'b) Nx_effect.t;
+        a : ('a, 'b) value;
+        b : ('a, 'b) value;
       }
-        -> ('a, 'b) Nx_effect.t t
-    | Move : ('a, 'b) Nx_effect.t * move -> ('a, 'b) Nx_effect.t t
-    | Place : Placement.t * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
-    | Read : { by : string; x : ('a, 'b) Nx_effect.t } -> Nx_device.Buffer.t t
+        -> ('a, 'b) value t
+    | Move : ('a, 'b) value * move -> ('a, 'b) value t
+    | Place : Placement.t * ('a, 'b) value -> ('a, 'b) value t
+    | Read : { by : string; x : ('a, 'b) value } -> Nx_device.Buffer.t t
         (** [Read { by; x }] is a host buffer of exactly [x]'s elements in C
             order: [x]'s own storage, read-only by contract, when they are one
             run of it on the host, and a copy otherwise. [by] is the qualified
@@ -4553,7 +4539,7 @@ module Op : sig
             through another. An interpreter that cannot read [x] raises a
             message that starts with [by]. *)
     | Check : {
-        ok : (bool, Nx_dtype.bool_elt) Nx_effect.t;
+        ok : (bool, Nx_dtype.bool_elt) value;
         msg : int array -> string;
       }
         -> unit t
@@ -4579,13 +4565,13 @@ module Op : sig
       operation along a split axis, or a movement that would move elements
       between devices. *)
 
-  val shape : ('a, 'b) Nx_effect.t t -> int array
+  val shape : ('a, 'b) value t -> int array
   (** [shape op] is the shape of [op]'s result, without computing it, for an
       [op] that {!eval} accepts. nx allocates every result at this shape.
 
       Raises [Invalid_argument] for a concatenation of no value. *)
 
-  val dtype : ('a, 'b) Nx_effect.t t -> ('a, 'b) Nx_dtype.t
+  val dtype : ('a, 'b) value t -> ('a, 'b) Nx_dtype.t
   (** [dtype op] is the dtype of [op]'s result, without computing it, for an
       [op] that {!eval} accepts.
 
@@ -4594,9 +4580,7 @@ module Op : sig
   val operands : 'r t -> packed list
   (** [operands op] is [op]'s value operands, in order. *)
 
-  type mapper = Nx_effect.Op.mapper = {
-    f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t;
-  }
+  type mapper = { f : 'a 'b. ('a, 'b) value -> ('a, 'b) value }
   (** The type for maps of values that keep their dtype. *)
 
   val map_operands : mapper -> 'r t -> 'r t
@@ -4611,7 +4595,7 @@ module Op : sig
   (** [pp] formats an operation with its operands' dtypes and shapes, as in
       [mul float32[3] float32[3]]. *)
 
-  type interpreter = Nx_effect.interpreter = {
+  type interpreter = {
     run : 'r. 'r t -> 'r;  (** [run op] is [op]'s result. *)
     claims : 'r. 'r t -> bool;
         (** [claims op] is [true] iff the interpreter takes [op], typically when
@@ -4636,15 +4620,21 @@ end
 (** The representation of values.
 
     A value is an array on the host, a placed value over the storage of its
-    devices, or a traced value that an interpreter made, which has no bytes. *)
+    devices, or a traced value that an interpreter made, which has no bytes.
+    {!type-t} is abstract: {!Repr.v} reads a value's representation, and
+    {!Repr.host}, {!Repr.Placed.v} and {!Repr.Traced.v} are the only ways to
+    build a value from one. They check that the kernels reading the value reach
+    no memory outside its buffers. *)
 module Repr : sig
-  type ('a, 'b) node = ('a, 'b) Nx_effect.node = ..
+  type ('a, 'b) value := ('a, 'b) t
+
+  type ('a, 'b) node = ..
   (** The type for the payload of traced values, which the interpreter that
       makes them extends. *)
 
   (** Storage: one runtime buffer per device of a placement. *)
   module Storage : sig
-    type t = Nx_effect.cell
+    type t
     (** The type for storage. *)
 
     val v : Placement.t -> Nx_device.Buffer.t list -> t
@@ -4654,7 +4644,8 @@ module Repr : sig
         Raises [Invalid_argument] otherwise. *)
 
     val buffers : t -> Nx_device.Buffer.t list
-    (** [buffers s] is [s]'s buffers, one per device.
+    (** [buffers s] is [s]'s buffers, one per device. They are read-only by
+        contract: every value over [s] reads the same memory.
 
         Raises [Invalid_argument] if [s] was consumed. *)
 
@@ -4714,7 +4705,7 @@ module Repr : sig
 
   (** Placed values. *)
   module Placed : sig
-    type ('a, 'b) t = ('a, 'b) Nx_effect.resident
+    type ('a, 'b) t
     (** The type for placed values. *)
 
     val v :
@@ -4722,7 +4713,7 @@ module Repr : sig
       ('a, 'b) dtype ->
       Nx_array.View.t ->
       Storage.t ->
-      ('a, 'b) Nx_effect.t
+      ('a, 'b) value
     (** [v p dtype view s] is the value of [dtype] at [p] whose elements, on
         each device, are those [view] reaches in its storage [s].
 
@@ -4742,7 +4733,7 @@ module Repr : sig
 
   (** Traced values. *)
   module Traced : sig
-    type ('a, 'b) t = ('a, 'b) Nx_effect.traced
+    type ('a, 'b) t
     (** The type for traced values. *)
 
     val v :
@@ -4752,7 +4743,7 @@ module Repr : sig
       ('a, 'b) dtype ->
       int array ->
       ('a, 'b) node ->
-      ('a, 'b) Nx_effect.t
+      ('a, 'b) value
     (** [v ~context ?view p dtype shape node] is a traced value of [dtype] and
         [shape] at [p], whose payload is [node]. A value made beside it is made
         at [context]. [view] is the layout of the value it stands for, which
@@ -4769,27 +4760,28 @@ module Repr : sig
     (** [node x] is [x]'s payload. *)
   end
 
-  type ('a, 'b) t = ('a, 'b) Nx_effect.t =
+  type ('a, 'b) t =
     | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
     | Placed : ('a, 'b) Placed.t -> ('a, 'b) t
     | Traced : ('a, 'b) Traced.t -> ('a, 'b) t
         (** The type for the representation of values. *)
 
-  val v : ('a, 'b) Nx_effect.t -> ('a, 'b) t
-  (** [v x] is [x]'s representation. *)
+  val v : ('a, 'b) value -> ('a, 'b) t
+  (** [v x] is [x]'s representation. A host array's buffer is [x]'s own
+      memory, read-only by contract: [x] and its views read it. *)
 
-  val host : ('a, 'b) Nx_array.t -> ('a, 'b) Nx_effect.t
+  val host : ('a, 'b) Nx_array.t -> ('a, 'b) value
   (** [host a] is the value at {!Placement.host} of array [a].
 
       Raises [Invalid_argument] if [a]'s buffer is not on the host or not of
       [a]'s dtype, or if [a]'s view reaches an element outside it. *)
 
-  val context : ('a, 'b) Nx_effect.t -> Placement.t
+  val context : ('a, 'b) value -> Placement.t
   (** [context x] is where a value made beside [x] is made: the host for a host
       value or one on the disk, a copy on each of [x]'s devices for a placed
       one, and a traced value's context. *)
 
-  val view : ('a, 'b) Nx_effect.t -> Nx_array.View.t
+  val view : ('a, 'b) value -> Nx_array.View.t
   (** [view x] is the layout through which nx's functions see [x]'s elements: a
       host value's view, a placed value's view of its whole shape, and a traced
       value's view. *)

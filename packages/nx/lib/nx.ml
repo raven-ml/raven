@@ -10,21 +10,21 @@ let shape x = Array.copy (shape x)
 
 exception Linalg_error = Nx_backend.Linalg_error
 
-let context = Nx_effect.Placement.host
+let context = Placement.host
 
 module Device = Device
-module Placement = Nx_effect.Placement
+module Placement = Placement
 
-let place = Nx_effect.place
-let placement = Nx_effect.placement
-let of_buffer = Nx_effect.of_buffer
-let to_buffer = Nx_effect.to_buffer
-let shards = Nx_effect.shards
-let of_shards = Nx_effect.of_shards
+let place = Entry.place
+let placement = Value.placement
+let of_buffer = Entry.of_buffer
+let to_buffer = Entry.to_buffer
+let shards = Entry.shards
+let of_shards = Entry.of_shards
 
 module Ptree = Ptree
 
-type packed = Nx_effect.packed = P : ('a, 'b) t -> packed
+type packed = Value.packed = P : ('a, 'b) t -> packed
 
 let unpack (type a b) (dt : (a, b) dtype) (P x) : (a, b) t =
   match Nx_dtype.equal_witness (dtype x) dt with
@@ -76,11 +76,10 @@ let eye ?m ?k dtype n = Frontend.eye context ?m ?k dtype n
    it is. *)
 let full_like x v =
   match x with
-  | (Nx_effect.Placed _ | Nx_effect.Traced _)
-    when not (Nx_effect.on_disk (Nx_effect.placement x)) ->
-      Nx_effect.full (Nx_effect.placement x) (dtype x) (shape x) v
-  | Nx_effect.Host _ | Nx_effect.Placed _ | Nx_effect.Traced _ ->
-      Frontend.full_like x v
+  | (Value.Placed _ | Value.Traced _)
+    when not (Placement.on_disk (Value.placement x)) ->
+      Entry.full (Value.placement x) (dtype x) (shape x) v
+  | Value.Host _ | Value.Placed _ | Value.Traced _ -> Frontend.full_like x v
 
 let zeros_like x = full_like x (Nx_dtype.zero (dtype x))
 let ones_like x = full_like x (Nx_dtype.one (dtype x))
@@ -119,57 +118,53 @@ let hann dt n = Frontend.hann context dt n
 (* For transformations and file formats *)
 
 module Op = struct
-  include Nx_effect.Op
+  include Op
 
-  type conversion = Nx_effect.conversion = Cast | Bitcast
+  let eval = Intercept.eval
+  let placement = Route.placement
 
-  let eval = Nx_effect.eval
-  let placement = Nx_effect.result_placement
-  let shape = Nx_effect.result_shape
-  let dtype = Nx_effect.result_dtype
-
-  type interpreter = Nx_effect.interpreter = {
+  type interpreter = Intercept.interpreter = {
     run : 'r. 'r t -> 'r;
     claims : 'r. 'r t -> bool;
   }
 
-  let intercept = Nx_effect.intercept
-  let intercepted = Nx_effect.intercepted
+  let intercept = Intercept.intercept
+  let intercepted = Intercept.intercepted
 end
 
 module Repr = struct
-  type ('a, 'b) node = ('a, 'b) Nx_effect.node = ..
+  type ('a, 'b) node = ('a, 'b) Value.node = ..
 
   module Storage = struct
-    type t = Nx_effect.cell
+    type t = Value.cell
 
-    let v p buffers = Nx_effect.shard_storage "Nx.Repr.Storage.v" p buffers
+    let v p buffers = Value.shard_storage "Nx.Repr.Storage.v" p buffers
 
     let buffers (s : t) =
-      match Nx_effect.Cell.state s with
-      | Nx_effect.Live bs -> bs
-      | Consumed k -> invalid_arg (Nx_effect.why_consumed k)
+      match Value.Cell.state s with
+      | Live bs -> bs
+      | Consumed k -> invalid_arg (Value.why_consumed k)
 
     let placement (s : t) = s.placement
-    let borrow = Nx_effect.Cell.borrow
-    let release = Nx_effect.Cell.release
-    let upgrade = Nx_effect.Cell.upgrade
-    let consume s ~path = Nx_effect.Cell.consume s { path }
-    let finish = Nx_effect.Cell.finish
-    let pin = Nx_effect.Cell.pin
-    let unpin = Nx_effect.Cell.unpin
+    let borrow = Value.Cell.borrow
+    let release = Value.Cell.release
+    let upgrade = Value.Cell.upgrade
+    let consume s ~path = Value.Cell.consume s { path }
+    let finish = Value.Cell.finish
+    let pin = Value.Cell.pin
+    let unpin = Value.Cell.unpin
 
     let live s =
-      match Nx_effect.Cell.state s with Live _ -> true | Consumed _ -> false
+      match Value.Cell.state s with Live _ -> true | Consumed _ -> false
 
     let pins (s : t) = Atomic.get s.bound
   end
 
   module Placed = struct
-    type ('a, 'b) t = ('a, 'b) Nx_effect.resident
+    type ('a, 'b) t = ('a, 'b) Value.resident
 
     let v p dtype view (s : Storage.t) =
-      Nx_effect.placed_value "Nx.Repr.Placed.v" p dtype view s
+      Value.placed_value "Nx.Repr.Placed.v" p dtype view s
 
     let id (x : ('a, 'b) t) = x.r_id
     let view (x : ('a, 'b) t) = x.r_view
@@ -177,16 +172,16 @@ module Repr = struct
   end
 
   module Traced = struct
-    type ('a, 'b) t = ('a, 'b) Nx_effect.traced
+    type ('a, 'b) t = ('a, 'b) Value.traced
 
     let v ~context ?view p dtype shape node =
-      Nx_effect.traced ?view context p dtype shape node
+      Value.traced ?view context p dtype shape node
 
     let id (x : ('a, 'b) t) = x.t_id
     let node (x : ('a, 'b) t) = x.t_node
   end
 
-  type ('a, 'b) t = ('a, 'b) Nx_effect.t =
+  type ('a, 'b) t = ('a, 'b) Value.t =
     | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
     | Placed : ('a, 'b) Placed.t -> ('a, 'b) t
     | Traced : ('a, 'b) Traced.t -> ('a, 'b) t
@@ -194,8 +189,8 @@ module Repr = struct
   let v x = x
 
   let host (a : ('a, 'b) Nx_array.t) =
-    Nx_effect.host_value "Nx.Repr.host" a.dtype a.view a.buffer
+    Value.host_value "Nx.Repr.host" a.dtype a.view a.buffer
 
-  let context = Nx_effect.context
-  let view = Nx_effect.view
+  let context = Value.context
+  let view = Value.view
 end
