@@ -669,7 +669,7 @@ let panels cx prev =
                 in
                 { key = k; picture; notes = List.rev t.notes })
           found old)
-      (Arrange.panels Nx.Ptree.Path.root r.shaped)
+      (Arrange.panels r.shaped)
   in
   List.filter_map
     (fun ((p : Layout.panel), _) ->

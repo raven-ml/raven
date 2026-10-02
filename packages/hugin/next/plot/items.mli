@@ -16,8 +16,7 @@ type axis_spec = {
   a_scale : int;  (** Its index in the resolved figure's scales. *)
   a_use : Role.use;  (** A position or a facet. *)
   a_side : Figure.side;
-  a_grid : bool;
-  a_show : bool;
+  a_guide : Figure.guide;  (** Explicit, or else the default. *)
   a_labelled : bool;  (** False where the next panel on its side labels it. *)
   a_category : string option;  (** The panel's category, for a header. *)
 }

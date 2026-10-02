@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Arranging expanded figures: shares give scopes, layers broadcast over grids,
-    and every panel's content becomes a list of occurrences. *)
+(** Arranging figures: binds are evaluated and ids assigned, shares give scopes,
+    layers broadcast over grids, and every panel's content becomes a list of
+    occurrences. *)
 
 module Text := Hugin_next_text.Text
 
@@ -43,30 +44,10 @@ type occ = {
 }
 (** An occurrence: a mark in one cell. *)
 
-type axis_item = {
-  gid : Common.id;
-  side : Figure.side option;
-  grid : bool;
-  show : bool;
-  scale : string;
-}
-
-type legend_item = {
-  lid : Common.id;
-  lside : Figure.side option;
-  lshow : bool;
-  lscale : string;
-  lkey : key;  (** The scope of the scales it stands for. *)
-}
-
-type guide_item = G_axis of axis_item | G_legend of legend_item
-
-val equal_axis : axis_item -> axis_item -> bool
-val equal_legend : legend_item -> legend_item -> bool
-
 type content = {
   occs : occ list;
-  guides : guide_item list;
+  guides : (Common.id * Figure.guide * key) list;
+      (** With the scope of the scale it names. *)
   coords : (Common.id * Coord.t) list;
   held : (Common.id * shares) list;
       (** The nodes that lie in the content, each with the scopes a channel
@@ -96,10 +77,17 @@ and cell = {
 
 (** {1:arranging Arranging} *)
 
-val arrange : Common.id list ref -> env -> in_cell:bool -> Expand.node -> shaped
-(** [arrange nodes env ~in_cell n] is [n] arranged, with the id of each core
-    node added to [nodes]. *)
+type read = Read : View.ident * 'a View.sort -> read  (** A key read. *)
 
-val panels : Common.id -> shaped -> (Common.id * content) list
-(** [panels root s] is the cells of [s] that hold content, with their ids, in
-    reading order. *)
+type t = { shaped : shaped; order : Common.id list; reads : read list }
+(** [order] is every node in figure order, [reads] the keys the binds read. *)
+
+val arrange : View.t -> Figure.t -> t
+(** [arrange view f] is [f] arranged, its binds reading [view]. *)
+
+val legends : shaped -> (Common.id * Figure.guide * key) list
+(** [legends s] is the legends of the contents of [s], in reading order. *)
+
+val panels : shaped -> (Common.id * content) list
+(** [panels s] is the cells of [s] that hold content, with their ids, in reading
+    order. *)

@@ -236,7 +236,7 @@ let header cx a cat =
 
 (* [depth cx a] is how far the guide [a] reaches from its panel's side. *)
 let depth cx a =
-  match (a.a_show, cx.ticks.(a.a_scale)) with
+  match (a.a_guide.show, cx.ticks.(a.a_scale)) with
   | false, _ | _, None -> 0.
   | true, Some t -> (
       let _, _, turned = outer_align a.a_side in
@@ -351,7 +351,7 @@ let widest p q =
 (* [reach cx a] is how far the tick labels of [a] reach past the ends of its
    panel's side. *)
 let reach cx a =
-  match (a.a_show, a.a_labelled, a.a_use, cx.ticks.(a.a_scale)) with
+  match (a.a_guide.show, a.a_labelled, a.a_use, cx.ticks.(a.a_scale)) with
   | true, true, Position _, Some t ->
       let along = if horizontal a.a_side then width else height in
       ends a.a_side (longest along (axis_labels cx a t))
@@ -360,7 +360,7 @@ let reach cx a =
 (* [spans cx a] is the length along its side that the title or header of [a]
    needs, which its panel's track gives it. *)
 let spans cx a =
-  match (a.a_show, a.a_labelled, cx.ticks.(a.a_scale)) with
+  match (a.a_guide.show, a.a_labelled, cx.ticks.(a.a_scale)) with
   | true, true, Some t -> (
       let _, _, turned = outer_align a.a_side in
       let along l =
@@ -740,7 +740,7 @@ let thin cx side labels =
   go labels
 
 let place_axis cx acc l proj box a offset =
-  match (a.a_show, cx.ticks.(a.a_scale)) with
+  match (a.a_guide.show, cx.ticks.(a.a_scale)) with
   | false, _ | _, None -> ()
   | true, Some t -> (
       let pad = em cx pad_em and s = cx.scales.(a.a_scale) in
@@ -793,7 +793,8 @@ let place_axis cx acc l proj box a offset =
               ax_scale = a.a_scale;
               ax_side = a.a_side;
               ax_offset = offset;
-              ax_grid = a.a_grid;
+              ax_grid =
+                (match a.a_guide.kind with Axis a -> a.grid | Legend -> false);
               ax_labels = labels;
               ax_title = title;
             }

@@ -35,6 +35,14 @@ type mark = {
 
 type sharing = [ `Shared | `Independent ]
 type side = [ `Left | `Right | `Top | `Bottom ]
+type guide_kind = Axis of { grid : bool } | Legend
+
+type guide = {
+  kind : guide_kind;
+  scale : string;
+  side : side option;
+  show : bool;
+}
 
 type t =
   | Mark of mark
@@ -50,8 +58,7 @@ type t =
   | Coord_sys of Coord.t * t
   | Name of string * t
   | Bind : 'a View.key * ('a -> t) -> t
-  | Axis of { side : side option; grid : bool; show : bool; scale : string }
-  | Legend of { side : side option; show : bool; scale : string }
+  | Guide of guide
 
 (* Two bindings of one role may read scales of two kinds. *)
 let equal_imply : type d e. d Scale.t option -> e Scale.t option -> bool =
@@ -74,7 +81,7 @@ let equal_binding (B b) (B b') =
       && equal_imply b.imply b'.imply
       && Option.equal Bool.equal b.guide b'.guide
 
-let equal_mark m m' =
+let equal_mark (m : mark) (m' : mark) =
   String.equal m.kind m'.kind
   && Option.equal ( = ) m.reduce m'.reduce
   && Option.equal Coord.equal m.coord m'.coord
@@ -99,6 +106,26 @@ let pp_side ppf (side : side) =
     | `Right -> "right"
     | `Top -> "top"
     | `Bottom -> "bottom")
+
+let equal_guide g g' =
+  (match (g.kind, g'.kind) with
+    | Axis a, Axis a' -> Bool.equal a.grid a'.grid
+    | Legend, Legend -> true
+    | Axis _, Legend | Legend, Axis _ -> false)
+  && String.equal g.scale g'.scale
+  && Option.equal equal_side g.side g'.side
+  && Bool.equal g.show g'.show
+
+let is_axis g = match g.kind with Axis _ -> true | Legend -> false
+
+let pp_guide ppf g =
+  Format.fprintf ppf "%s %S%a%s%s"
+    (match g.kind with Axis _ -> "axis" | Legend -> "legend")
+    g.scale
+    (Format.pp_print_option (fun ppf s -> Format.fprintf ppf " %a" pp_side s))
+    g.side
+    (match g.kind with Axis { grid = true } -> " grid" | _ -> "")
+    (if g.show then "" else " hidden")
 
 let equal_halign (a : Text.Layout.halign) (a' : Text.Layout.halign) =
   match (a, a') with
@@ -127,16 +154,9 @@ let rec equal f g =
       match View.equal_key k k' with
       | Some Type.Equal -> fn == fn'
       | None -> false)
-  | Axis a, Axis b ->
-      Option.equal equal_side a.side b.side
-      && Bool.equal a.grid b.grid && Bool.equal a.show b.show
-      && String.equal a.scale b.scale
-  | Legend a, Legend b ->
-      Option.equal equal_side a.side b.side
-      && Bool.equal a.show b.show
-      && String.equal a.scale b.scale
+  | Guide g, Guide g' -> equal_guide g g'
   | ( ( Mark _ | Layer _ | Grid _ | Span _ | Share _ | Title _ | Coord_sys _
-      | Name _ | Bind _ | Axis _ | Legend _ ),
+      | Name _ | Bind _ | Guide _ ),
       _ ) ->
       false
 
@@ -278,6 +298,7 @@ let name s f =
 let bind k fn = Bind (k, fn)
 
 let axis ?side ?(grid = false) ?(show = true) scale =
-  Axis { side; grid; show; scale }
+  Guide { kind = Axis { grid }; scale; side; show }
 
-let legend ?side ?(show = true) scale = Legend { side; show; scale }
+let legend ?side ?(show = true) scale =
+  Guide { kind = Legend; scale; side; show }

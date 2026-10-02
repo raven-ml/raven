@@ -5,9 +5,9 @@
 
 (* Resolving
 
-   [resolve] expands the figure, evaluating binds and assigning ids; arranges
-   it, forming scopes and broadcasting layers over grids; reads the channels of
-   each occurrence and merges the specifications of each scale; summarises each
+   [resolve] arranges the figure, evaluating binds, assigning ids, forming
+   scopes and broadcasting layers over grids; reads the channels of each
+   occurrence and merges the specifications of each scale; summarises each
    occurrence's data where it lives; and fits the scales, categorical ones first
    since facets make panels. An occurrence is a mark in one cell: a mark that a
    layer broadcasts over a grid occurs once per cell, and reads the scales of
@@ -18,7 +18,6 @@ module Text = Hugin_next_text.Text
 open Common
 open Channel
 open Figure
-open Expand
 open Arrange
 open Summary
 
@@ -212,16 +211,12 @@ let check_coords cells =
 let check_axes cells readings =
   List.iter
     (fun (pid, c) ->
-      let axes =
-        List.filter_map
-          (function G_axis a -> Some a | G_legend _ -> None)
-          c.guides
-      in
+      let axes = List.filter (fun (_, g, _) -> is_axis g) c.guides in
       List.iter
-        (fun a ->
+        (fun (gid, (a : guide), _) ->
           List.iter
-            (fun a' ->
-              if String.equal a.scale a'.scale && not (equal_axis a a') then
+            (fun (_, (a' : guide), _) ->
+              if String.equal a.scale a'.scale && not (equal_guide a a') then
                 err "resolve" "the panel %a holds two different axes for %S"
                   pp_id pid a.scale)
             axes;
@@ -244,14 +239,14 @@ let check_axes cells readings =
           if uses = [] then
             err "resolve"
               "the axis %a names %S, no position or facet scale of its panel"
-              pp_id a.gid a.scale;
+              pp_id gid a.scale;
           (* An axis runs along the direction of its scale's position. *)
           match a.side with
           | Some ((`Left | `Right) as side) when along Role.X ->
-              err "resolve" "the axis %a of %S is on the %a side" pp_id a.gid
+              err "resolve" "the axis %a of %S is on the %a side" pp_id gid
                 a.scale pp_side side
           | Some ((`Top | `Bottom) as side) when along Role.Y ->
-              err "resolve" "the axis %a of %S is on the %a side" pp_id a.gid
+              err "resolve" "the axis %a of %S is on the %a side" pp_id gid
                 a.scale pp_side side
           | _ -> ())
         axes)
@@ -780,33 +775,26 @@ let unread view reads =
       | View.Zoom_of _ -> None)
     view
 
-let check_legends cells scales =
-  let legends =
-    List.concat_map
-      (fun (_, c) ->
-        List.filter_map
-          (function G_legend l -> Some l | G_axis _ -> None)
-          c.guides)
-      cells
-  in
+let check_legends shaped scales =
+  let legends = legends shaped in
   List.iter
-    (fun l ->
+    (fun (id, (l : guide), key) ->
       let stands (F f) =
-        String.equal f.name l.lscale && equal_key f.key l.lkey && f.legend
+        String.equal f.name l.scale && equal_key f.key key && f.legend
       in
       if not (List.exists stands scales) then
         err "resolve"
-          "the legend %a names %S, no scale with a legend in its scope" pp_id
-          l.lid l.lscale;
+          "the legend %a names %S, no scale with a legend in its scope" pp_id id
+          l.scale;
       List.iter
-        (fun l' ->
+        (fun (id', (l' : guide), key') ->
           if
-            String.equal l.lscale l'.lscale
-            && equal_key l.lkey l'.lkey
-            && not (equal_legend l l')
+            String.equal l.scale l'.scale
+            && equal_key key key'
+            && not (equal_guide l l')
           then
-            err "resolve" "%a and %a are two different legends for %S" pp_id
-              l.lid pp_id l'.lid l.lscale)
+            err "resolve" "%a and %a are two different legends for %S" pp_id id
+              pp_id id' l.scale)
         legends)
     legends
 
@@ -847,19 +835,8 @@ let in_order order ws =
   List.stable_sort (fun w w' -> Int.compare (key w) (key w')) ws
 
 let resolve ?prev ?(view = View.empty) figure =
-  let st = { view; reads = []; marks = 0 } in
-  let f = force st figure in
-  (match names f with
-  | _ :: _ :: _ -> err "resolve" "the root has two names"
-  | _ -> ());
-  let root = Nx.Ptree.Path.root in
-  let tree = expand st root f in
-  let nodes = ref [] in
-  let shaped =
-    arrange nodes { shares = []; pending = []; cell = root } ~in_cell:false tree
-  in
-  let order = List.rev !nodes in
-  let cells = panels root shaped in
+  let ({ shaped; order; reads } : Arrange.t) = arrange view figure in
+  let cells = panels shaped in
   check_coords cells;
   let occs =
     List.concat_map (fun (pid, c) -> List.map (fun o -> (pid, o)) c.occs) cells
@@ -1049,7 +1026,7 @@ let resolve ?prev ?(view = View.empty) figure =
         (fun acc id ->
           if List.exists (Nx.Ptree.Path.equal id) acc then acc else id :: acc)
         []
-        (List.map fst places @ List.rev !nodes)
+        (List.map fst places @ order)
     in
     List.rev_map
       (fun id ->
@@ -1061,9 +1038,9 @@ let resolve ?prev ?(view = View.empty) figure =
       ids
   in
   let scales, zooms = zoom view nodes fitted in
-  check_legends cells scales;
+  check_legends shaped scales;
   let warnings =
-    dedupe (in_order order (notes @ constants @ zooms) @ unread view st.reads)
+    dedupe (in_order order (notes @ constants @ zooms) @ unread view reads)
   in
   {
     figure;
@@ -1134,21 +1111,6 @@ let equal r r' =
 
 (* Formatting *)
 
-let pp_guide ppf = function
-  | G_axis a ->
-      Format.fprintf ppf "axis %S%a%s%s" a.scale
-        (Format.pp_print_option (fun ppf s ->
-             Format.fprintf ppf " %a" pp_side s))
-        a.side
-        (if a.grid then " grid" else "")
-        (if a.show then "" else " hidden")
-  | G_legend l ->
-      Format.fprintf ppf "legend %S%a%s" l.lscale
-        (Format.pp_print_option (fun ppf s ->
-             Format.fprintf ppf " %a" pp_side s))
-        l.lside
-        (if l.lshow then "" else " hidden")
-
 let pp_title ppf ((align : Text.Layout.halign), t) =
   Format.fprintf ppf "title %a%s" Text.pp t
     (match align with `Center -> "" | `Left -> " left" | `Right -> " right")
@@ -1176,7 +1138,7 @@ let rec pp_shaped facets ppf (pid, s) =
       List.iter
         (fun o -> Format.fprintf ppf "@,%s %a" o.mark.kind pp_id o.mid)
         c.occs;
-      List.iter (Format.fprintf ppf "@,%a" pp_guide) c.guides;
+      List.iter (fun (_, g, _) -> Format.fprintf ppf "@,%a" pp_guide g) c.guides;
       (match find_path pid facets with
       | Some [ p ] when Nx.Ptree.Path.equal p.pnid pid -> ()
       | Some ps ->

@@ -8,7 +8,6 @@ module Text = Hugin_next_text.Text
 open Common
 open Channel
 open Figure
-open Expand
 
 (* Scopes *)
 
@@ -50,37 +49,9 @@ type occ = {
   per_panel : string list;
 }
 
-type axis_item = {
-  gid : id;
-  side : side option;
-  grid : bool;
-  show : bool;
-  scale : string;
-}
-
-type legend_item = {
-  lid : id;
-  lside : side option;
-  lshow : bool;
-  lscale : string;
-  lkey : key; (* The scope of the scales it stands for. *)
-}
-
-type guide_item = G_axis of axis_item | G_legend of legend_item
-
-let equal_axis a a' =
-  Option.equal equal_side a.side a'.side
-  && Bool.equal a.grid a'.grid && Bool.equal a.show a'.show
-  && String.equal a.scale a'.scale
-
-let equal_legend l l' =
-  Option.equal equal_side l.lside l'.lside
-  && Bool.equal l.lshow l'.lshow
-  && String.equal l.lscale l'.lscale
-
 type content = {
   occs : occ list;
-  guides : guide_item list;
+  guides : (id * guide * key) list; (* With the scope of the scale it names. *)
   coords : (id * Coord.t) list;
   held : (id * shares) list;
       (* The nodes that lie in the content, each with the scopes a channel there
@@ -133,32 +104,94 @@ let rename old cid =
     | k -> k
   in
   let shares = List.map (fun (n, k) -> (n, key k)) in
-  let guide = function
-    | G_legend l -> G_legend { l with lkey = key l.lkey }
-    | G_axis _ as g -> g
-  in
   map_contents (fun c ->
       {
         c with
         occs =
           List.map (fun (o : occ) -> { o with shares = shares o.shares }) c.occs;
-        guides = List.map guide c.guides;
+        guides = List.map (fun (id, g, k) -> (id, g, key k)) c.guides;
         held = List.map (fun (id, s) -> (id, shares s)) c.held;
       })
 
 (* Arranging *)
 
-let rec core n =
-  match n.n with
-  | E_title (_, _, f) | E_coord (_, f) | E_share (_, f) | E_span { f; _ } ->
-      core f
-  | E_mark _ | E_layer _ | E_grid _ | E_axis _ | E_legend _ -> n
+type read = Read : View.ident * 'a View.sort -> read
 
-let rec span_of n =
-  match n.n with
-  | E_span s -> (s.rows, s.cols)
-  | E_title (_, _, f) | E_coord (_, f) | E_share (_, f) -> span_of f
-  | E_mark _ | E_layer _ | E_grid _ | E_axis _ | E_legend _ -> (1, 1)
+(* The state of a walk: the view binds read, the keys they read, the marks met
+   and every node met, latest first. *)
+type st = {
+  view : View.t;
+  mutable reads : read list;
+  mutable marks : int;
+  mutable nodes : id list;
+}
+
+let read_key st (k : _ View.key) =
+  match
+    List.find_opt (fun (Read (i, _)) -> View.equal_ident i k.ident) st.reads
+  with
+  | None -> st.reads <- Read (k.ident, k.sort) :: st.reads
+  | Some (Read (_, s)) -> (
+      match View.equal_sort s k.sort with
+      | Some _ -> ()
+      | None ->
+          err "resolve" "the figure reads two keys %a of different sorts"
+            View.pp_ident k.ident)
+
+(* [force st f] is [f] with the binds at its head evaluated, through
+   wrappers. *)
+let rec force st = function
+  | Bind (k, fn) ->
+      read_key st k;
+      force st (fn (View.get k st.view))
+  | Title t -> Title { t with f = force st t.f }
+  | Coord_sys (c, f) -> Coord_sys (c, force st f)
+  | Share (p, f) -> Share (p, force st f)
+  | Span s -> Span { s with f = force st s.f }
+  | Name (s, f) -> Name (s, force st f)
+  | (Mark _ | Layer _ | Grid _ | Guide _) as f -> f
+
+(* [names f] is the names the wrappers at the head of the forced [f] give. *)
+let rec names = function
+  | Name (s, f) -> s :: names f
+  | Title { f; _ } | Coord_sys (_, f) | Share (_, f) | Span { f; _ } -> names f
+  | Mark _ | Layer _ | Grid _ | Bind _ | Guide _ -> []
+
+(* [children st parent fs] is [fs] forced, each with its id. *)
+let children st parent fs =
+  let named =
+    List.mapi
+      (fun i f ->
+        let f = force st f in
+        match names f with
+        | [] -> (Nx.Ptree.Path.add (Index i) parent, f)
+        | [ s ] -> (Nx.Ptree.Path.add (Field s) parent, f)
+        | _ -> err "resolve" "the child %d of %a has two names" i pp_id parent)
+      fs
+  in
+  let rec distinct = function
+    | [] -> ()
+    | (id, _) :: rest ->
+        if List.exists (fun (id', _) -> Nx.Ptree.Path.equal id id') rest then
+          err "resolve" "two children of %a are named %a" pp_id parent pp_id id;
+        distinct rest
+  in
+  distinct named;
+  named
+
+let rec span_of = function
+  | Span s -> (s.rows, s.cols)
+  | Title { f; _ } | Coord_sys (_, f) | Share (_, f) | Name (_, f) -> span_of f
+  | Mark _ | Layer _ | Grid _ | Bind _ | Guide _ -> (1, 1)
+
+let rec core = function
+  | Title { f; _ }
+  | Coord_sys (_, f)
+  | Share (_, f)
+  | Span { f; _ }
+  | Name (_, f) ->
+      core f
+  | (Mark _ | Layer _ | Grid _ | Bind _ | Guide _) as f -> f
 
 (* [scale_name b] is the name of the scale the channel of [b] reads, if any. *)
 let scale_name (B b) =
@@ -167,50 +200,64 @@ let scale_name (B b) =
       Some (Option.value ~default (Option.bind d.spec Scale.name))
   | _ -> None
 
-(* [reads n] is the scales the marks under [n] read, each with whether a
-   position or facet role reads it. *)
-let rec reads n =
-  match n.n with
-  | E_mark { mark; _ } ->
-      let placing (B b) =
-        match b.role.use with
-        | Position _ | Facet _ -> true
-        | Encoding _ | Value -> false
-      in
-      List.filter_map
-        (fun bd -> Option.map (fun s -> (s, placing bd)) (scale_name bd))
-        mark.bindings
-  | E_layer cs -> List.concat_map reads cs
-  | E_grid g -> List.concat_map (List.concat_map reads) g.rows
-  | E_span { f; _ } | E_share (_, f) | E_title (_, _, f) | E_coord (_, f) ->
-      reads f
-  | E_axis _ | E_legend _ -> []
+let panels s =
+  let rec go acc pid s =
+    match s.body with
+    | Single c -> (pid, c) :: acc
+    | Arr a ->
+        List.fold_left (fun acc cell -> go acc cell.cid cell.s) acc a.cells
+  in
+  List.rev (go [] Nx.Ptree.Path.root s)
 
-let check_share node pairs f =
-  let reads = reads f in
+let legends s =
+  List.concat_map
+    (fun (_, c) -> List.filter (fun (_, g, _) -> not (is_axis g)) c.guides)
+    (panels s)
+
+(* [reads s] is the scales the marks of [s] read, each with whether a position
+   or facet role reads it. *)
+let reads s =
+  let read (B b as bd) =
+    let placing =
+      match b.role.use with
+      | Position _ | Facet _ -> true
+      | Encoding _ | Value -> false
+    in
+    Option.map (fun s -> (s, placing)) (scale_name bd)
+  in
+  List.concat_map
+    (fun (_, c) ->
+      List.concat_map (fun o -> List.filter_map read o.mark.bindings) c.occs)
+    (panels s)
+
+(* [check_share id pairs f s] checks the shares [pairs] of the node [id] over
+   [f], arranged as [s]. *)
+let check_share id pairs f s =
+  let reads = reads s in
   List.iter
-    (fun (name, (s : sharing)) ->
+    (fun (name, (sh : sharing)) ->
       if not (List.mem_assoc name reads) then
         err "resolve" "%a shares the scale %S, which nothing under it reads"
-          pp_id node.id name;
-      match (s, (core f).n) with
-      | `Independent, E_layer _
-        when List.exists (fun (n, p) -> String.equal n name && p) reads ->
+          pp_id id name;
+      match sh with
+      | `Independent
+        when (match core f with Layer _ -> true | _ -> false)
+             && List.exists (fun (n, p) -> String.equal n name && p) reads ->
           err "resolve"
             "%a makes the scale %S independent per layer child, but a position \
              or facet reads it"
-            pp_id node.id name
+            pp_id id name
       | _ -> ())
     pairs
 
-let share_env (env : env) node pairs =
+let share_env (env : env) id pairs =
   List.fold_left
     (fun (env : env) (name, (s : sharing)) ->
       match s with
       | `Shared ->
           {
             env with
-            shares = (name, Node node.id) :: env.shares;
+            shares = (name, Node id) :: env.shares;
             pending =
               List.filter (fun n -> not (String.equal n name)) env.pending;
           }
@@ -341,95 +388,100 @@ and broadcast lid shares children arrs first =
     heights = (if same then template.heights else None);
   }
 
-let rec arrange nodes (env : env) ~in_cell n =
-  let record () = nodes := n.id :: !nodes in
-  let here = [ (n.id, env.shares) ] in
-  match n.n with
-  | E_mark { mark; order } ->
+(* [walk st env ~in_cell id f] is the forced [f] of id [id] arranged in [env];
+   wrappers have their child's id. *)
+let rec walk st (env : env) ~in_cell id f =
+  let record () = st.nodes <- id :: st.nodes in
+  let here = [ (id, env.shares) ] in
+  match f with
+  | Mark mark ->
       record ();
+      st.marks <- st.marks + 1;
       let occ =
         {
-          mid = n.id;
+          mid = id;
           mark;
-          order;
+          order = st.marks;
           shares = env.shares;
           per_panel = env.pending;
         }
       in
       single { no_content with occs = [ occ ]; held = here }
-  | E_axis { side; grid; show; scale } ->
+  | Guide g ->
       record ();
-      let a = { gid = n.id; side; grid; show; scale } in
-      single { no_content with guides = [ G_axis a ]; held = here }
-  | E_legend { side; show; scale } ->
-      record ();
-      let l =
-        {
-          lid = n.id;
-          lside = side;
-          lshow = show;
-          lscale = scale;
-          lkey = key_of env scale;
-        }
-      in
-      single { no_content with guides = [ G_legend l ]; held = here }
-  | E_title (align, t, f) ->
-      let s = arrange nodes env ~in_cell f in
-      { s with titles = (align, t) :: s.titles }
-  | E_coord (c, f) -> add_coord (n.id, c) (arrange nodes env ~in_cell f)
-  | E_share (pairs, f) ->
-      check_share n pairs f;
-      arrange nodes (share_env env n pairs) ~in_cell f
-  | E_span { f; _ } ->
-      if not in_cell then
-        err "resolve" "%a spans cells outside a grid" pp_id n.id;
-      arrange nodes env ~in_cell f
-  | E_layer [] ->
+      let guides = [ (id, g, key_of env g.scale) ] in
+      single { no_content with guides; held = here }
+  | Title t ->
+      let s = walk st env ~in_cell id t.f in
+      { s with titles = (t.align, t.text) :: s.titles }
+  | Coord_sys (c, f) -> add_coord (id, c) (walk st env ~in_cell id f)
+  | Share (pairs, f) ->
+      let s = walk st (share_env env id pairs) ~in_cell id f in
+      check_share id pairs f s;
+      s
+  | Span { f; _ } ->
+      if not in_cell then err "resolve" "%a spans cells outside a grid" pp_id id;
+      walk st env ~in_cell id f
+  | Name (_, f) -> walk st env ~in_cell id f
+  | Bind _ -> walk st env ~in_cell id (force st f)
+  | Layer [] ->
       record ();
       single { no_content with held = here }
-  | E_layer cs ->
+  | Layer fs ->
       record ();
       (* A layer lies where its children lie, reading the scopes a channel of
          each child reads there. *)
-      layer_shaped n.id env.shares
+      layer_shaped id env.shares
         (List.map
-           (fun c ->
-             let env = child_env env ~cell:false c.id in
-             arrange nodes env ~in_cell:false c |> hold (n.id, env.shares))
-           cs)
-  | E_grid g ->
+           (fun (cid, f) ->
+             let env = child_env env ~cell:false cid in
+             walk st env ~in_cell:false cid f |> hold (id, env.shares))
+           (children st id fs))
+  | Grid g ->
       record ();
-      arrange_grid nodes env n g.rows g.widths g.heights
+      walk_grid st env id g.rows g.widths g.heights
 
-and arrange_grid nodes (env : env) n rows widths heights =
+and walk_grid st (env : env) id rows widths heights =
   let nrows = List.length rows in
   let covered = Hashtbl.create 16 in
   let cells = ref [] in
+  let rec split n l =
+    match l with
+    | x :: l when n > 0 ->
+        let a, b = split (n - 1) l in
+        (x :: a, b)
+    | _ -> ([], l)
+  in
+  let rec regroup rows cs =
+    match rows with
+    | [] -> []
+    | row :: rows ->
+        let row, cs = split (List.length row) cs in
+        row :: regroup rows cs
+  in
+  let rows = regroup rows (children st id (List.concat rows)) in
   List.iteri
     (fun r row ->
       let col = ref 0 in
       List.iter
-        (fun c ->
+        (fun (cid, c) ->
           while Hashtbl.mem covered (r, !col) do
             incr col
           done;
           let rs, cs = span_of c in
           if r + rs > nrows then
-            err "resolve" "the span %a reaches past the last row" pp_id c.id;
+            err "resolve" "the span %a reaches past the last row" pp_id cid;
           for i = r to r + rs - 1 do
             for j = !col to !col + cs - 1 do
               if Hashtbl.mem covered (i, j) then
-                err "resolve" "the span %a covers another cell" pp_id c.id;
+                err "resolve" "the span %a covers another cell" pp_id cid;
               Hashtbl.add covered (i, j) ()
             done
           done;
-          let env = child_env env ~cell:true c.id in
-          let s =
-            arrange nodes env ~in_cell:true c |> hold (n.id, env.shares)
-          in
+          let env = child_env env ~cell:true cid in
+          let s = walk st env ~in_cell:true cid c |> hold (id, env.shares) in
           cells :=
-            { row = r; col = !col; rows = rs; cols = cs; cid = c.id; s }
-            :: !cells;
+            { row = r; col = !col; rows = rs; cols = cs; cid; s } :: !cells;
           col := !col + cs)
         row)
     rows;
@@ -440,15 +492,14 @@ and arrange_grid nodes (env : env) n rows widths heights =
   let ncols = if nrows = 0 then 0 else width 0 in
   for r = 0 to nrows - 1 do
     if width r <> ncols then
-      err "resolve" "the rows of %a cover different numbers of columns" pp_id
-        n.id
+      err "resolve" "the rows of %a cover different numbers of columns" pp_id id
   done;
   if Hashtbl.length covered <> nrows * ncols then
-    err "resolve" "the rows of %a cover different numbers of columns" pp_id n.id;
+    err "resolve" "the rows of %a cover different numbers of columns" pp_id id;
   let check what ws k =
     match ws with
     | Some ws when List.length ws <> k ->
-        err "resolve" "%a has %d %s for %d tracks" pp_id n.id (List.length ws)
+        err "resolve" "%a has %d %s for %d tracks" pp_id id (List.length ws)
           what k
     | _ -> ()
   in
@@ -457,14 +508,19 @@ and arrange_grid nodes (env : env) n rows widths heights =
   {
     titles = [];
     body =
-      Arr { aid = n.id; nrows; ncols; cells = List.rev !cells; widths; heights };
+      Arr { aid = id; nrows; ncols; cells = List.rev !cells; widths; heights };
   }
 
-let panels root s =
-  let rec go acc pid s =
-    match s.body with
-    | Single c -> (pid, c) :: acc
-    | Arr a ->
-        List.fold_left (fun acc cell -> go acc cell.cid cell.s) acc a.cells
+type t = { shaped : shaped; order : id list; reads : read list }
+
+let arrange view figure =
+  let st = { view; reads = []; marks = 0; nodes = [] } in
+  let f = force st figure in
+  (match names f with
+  | _ :: _ :: _ -> err "resolve" "the root has two names"
+  | _ -> ());
+  let root = Nx.Ptree.Path.root in
+  let shaped =
+    walk st { shares = []; pending = []; cell = root } ~in_cell:false root f
   in
-  List.rev (go [] root s)
+  { shaped; order = List.rev st.nodes; reads = st.reads }

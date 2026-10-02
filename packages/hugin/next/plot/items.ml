@@ -18,8 +18,7 @@ type axis_spec = {
   a_scale : int;
   a_use : Role.use; (* A position or a facet. *)
   a_side : side;
-  a_grid : bool;
-  a_show : bool;
+  a_guide : guide; (* Explicit, or else the default. *)
   a_labelled : bool; (* False where the next panel on its side labels it. *)
   a_category : string option; (* The panel's category, for a header. *)
 }
@@ -132,10 +131,22 @@ let scale_index (r : Resolved.t) pid pnid use =
   in
   go 0 r.scales
 
-let explicit_axis c name =
-  List.find_map
-    (function G_axis a when String.equal a.scale name -> Some a | _ -> None)
-    c.guides
+(* [guide kind (F f) ~show explicit] is the explicit guide of [f], or else the
+   guide of [kind] that its marks imply or else shows by [show]. *)
+let guide kind (F f) ~show = function
+  | Some g -> g
+  | None ->
+      let show = Option.value f.guide ~default:show in
+      { kind; scale = f.name; side = None; show }
+
+let axis_guide c (F f as s) =
+  guide
+    (Axis { grid = false })
+    s ~show:true
+    (List.find_map
+       (fun (_, g, _) ->
+         if is_axis g && String.equal g.scale f.name then Some g else None)
+       c.guides)
 
 let default_side : Role.use -> side = function
   | Position { axis = X; _ } -> `Bottom
@@ -147,24 +158,14 @@ let default_side : Role.use -> side = function
 let axis_spec r scales c pid p use =
   Option.map
     (fun i ->
-      let (F f) = scales.(i) in
-      let sname = f.name in
-      let explicit = explicit_axis c sname in
-      let side =
-        match explicit with
-        | Some { side = Some s; _ } -> s
-        | _ -> default_side use
-      in
+      let (F f as s) = scales.(i) in
+      let g = axis_guide c s in
       {
-        a_id = Nx.Ptree.Path.(add (Field sname) (add (Field "axis") p.pnid));
+        a_id = Nx.Ptree.Path.(add (Field f.name) (add (Field "axis") p.pnid));
         a_scale = i;
         a_use = use;
-        a_side = side;
-        a_grid = (match explicit with Some a -> a.grid | None -> false);
-        a_show =
-          (match explicit with
-          | Some a -> a.show
-          | None -> Option.value f.guide ~default:true);
+        a_side = Option.value g.side ~default:(default_side use);
+        a_guide = g;
         a_labelled = true;
         a_category =
           (match use with
@@ -219,7 +220,7 @@ let labelled cells =
         | Leaf l' when next c c' a.a_side ->
             List.exists
               (fun a' ->
-                a'.a_show && a'.a_scale = a.a_scale
+                a'.a_guide.show && a'.a_scale = a.a_scale
                 && equal_side a'.a_side a.a_side
                 && Option.equal String.equal a'.a_category a.a_category)
               l'.l_axes
@@ -331,30 +332,18 @@ let block_of r blocks key =
       Option.fold ~none:root ~some:fst best
 
 let uses_of (r : Resolved.t) blocks =
-  let legends =
-    List.concat_map
-      (fun (_, c) ->
-        List.filter_map
-          (function G_legend l -> Some l | G_axis _ -> None)
-          c.guides)
-      (panels Nx.Ptree.Path.root r.shaped)
-  in
+  let legends = legends r.shaped in
   let uses (F f as s) =
     let uses = List.map (fun m -> m.m_use) f.members in
     let is p = List.exists p uses in
     let legend () =
-      let explicit =
-        List.find_opt
-          (fun l -> String.equal l.lscale f.name && equal_key l.lkey f.key)
-          legends
-      in
-      let show =
-        match explicit with
-        | Some l -> l.lshow
-        | None -> Option.value f.guide ~default:f.legend
-      in
-      let side =
-        match explicit with Some { lside = Some s; _ } -> s | _ -> `Right
+      let g =
+        guide Legend s ~show:f.legend
+          (List.find_map
+             (fun (_, (g : guide), key) ->
+               if String.equal g.scale f.name && equal_key key f.key then Some g
+               else None)
+             legends)
       in
       let colour =
         is (function Encoding { map = Color; _ } -> true | _ -> false)
@@ -362,9 +351,9 @@ let uses_of (r : Resolved.t) blocks =
       Legend_of
         {
           bar = colour && not (categorical s);
-          side;
+          side = Option.value g.side ~default:`Right;
           block = block_of r blocks f.key;
-          show;
+          show = g.show;
         }
     in
     let when_ b u = if b then [ u () ] else [] in
@@ -422,19 +411,10 @@ let build r scales uses =
   (* The title of a facet scale goes beside its headers. *)
   let facet_title pid c (i, use) =
     let (F f as s) = scales.(i) in
-    let explicit = explicit_axis c f.name in
-    let show =
-      match explicit with
-      | Some a -> a.show
-      | None -> Option.value f.guide ~default:true
-    in
-    let side =
-      match explicit with
-      | Some { side = Some s; _ } -> s
-      | _ -> default_side use
-    in
+    let g = axis_guide c s in
+    let side = Option.value g.side ~default:(default_side use) in
     match guide_title s None with
-    | Some t when show ->
+    | Some t when g.show ->
         let owner =
           Nx.Ptree.Path.(add (Field f.name) (add (Field "axis") pid))
         in

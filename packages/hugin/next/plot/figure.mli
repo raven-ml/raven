@@ -55,6 +55,14 @@ val make_mark :
 
 type sharing = [ `Shared | `Independent ]
 type side = [ `Left | `Right | `Top | `Bottom ]
+type guide_kind = Axis of { grid : bool } | Legend
+
+type guide = {
+  kind : guide_kind;
+  scale : string;
+  side : side option;
+  show : bool;
+}
 
 type t =
   | Mark of mark
@@ -70,12 +78,14 @@ type t =
   | Coord_sys of Coord.t * t
   | Name of string * t
   | Bind : 'a View.key * ('a -> t) -> t
-  | Axis of { side : side option; grid : bool; show : bool; scale : string }
-  | Legend of { side : side option; show : bool; scale : string }
+  | Guide of guide
 
 val equal : t -> t -> bool
 val equal_side : side -> side -> bool
 val pp_side : Format.formatter -> side -> unit
+val equal_guide : guide -> guide -> bool
+val pp_guide : Format.formatter -> guide -> unit
+val is_axis : guide -> bool
 val equal_halign : Text.Layout.halign -> Text.Layout.halign -> bool
 
 (** {1:composing Composing} *)
