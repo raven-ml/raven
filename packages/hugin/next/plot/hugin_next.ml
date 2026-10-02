@@ -3687,12 +3687,16 @@ and grid_prot cx g =
 let sum a = Array.fold_left ( +. ) 0. a
 
 (* [least tracks unit cells gaps] is the least length of each track: its weight
-   times [unit] if it is flexible and at least what each cell it alone holds
+   times [unit.(i)] if it is flexible and at least what each cell it alone holds
    needs, with each cell spanning tracks given what it needs beyond them, by
    weight among its flexible tracks or else evenly. [cells] are the start, the
    number of tracks and the need of each cell. *)
 let least tracks unit cells gaps =
-  let m = Array.map (function Flex k -> k *. unit | Fixed -> 0.) tracks in
+  let m =
+    Array.mapi
+      (fun i t -> match t with Flex k -> k *. unit.(i) | Fixed -> 0.)
+      tracks
+  in
   List.iter (fun (s, n, l) -> if n = 1 then m.(s) <- Float.max m.(s) l) cells;
   List.iter
     (fun (s, n, l) ->
@@ -3854,16 +3858,6 @@ and measure_grid cx (uw, uh) g =
       (fun p -> p.bottom)
       (fun p -> p.top)
   in
-  let cols_least =
-    least g.gcols uw
-      (List.map (fun (c, _, (w, _)) -> (c.c0, c.nc, w)) cells)
-      cgaps
-  in
-  let rows_least =
-    least g.grows uh
-      (List.map (fun (c, _, (_, h)) -> (c.r0, c.nr, h)) cells)
-      rgaps
-  in
   let aspects =
     List.filter_map
       (fun (c, _, _) ->
@@ -3871,6 +3865,21 @@ and measure_grid cx (uw, uh) g =
         | Leaf { l_ratio = Some r; _ } when c.nr = 1 && c.nc = 1 -> Some (c, r)
         | _ -> None)
       cells
+  in
+  let cols_least =
+    least g.gcols
+      (Array.make (Array.length g.gcols) uw)
+      (List.map (fun (c, _, (w, _)) -> (c.c0, c.nc, w)) cells)
+      cgaps
+  in
+  (* A row holding a panel with an aspect is not flexible: its height follows
+     its columns. *)
+  let rows_least =
+    let unit = Array.make (Array.length g.grows) uh in
+    List.iter (fun (c, _) -> unit.(c.r0) <- 0.) aspects;
+    least g.grows unit
+      (List.map (fun (c, _, (_, h)) -> (c.r0, c.nr, h)) cells)
+      rgaps
   in
   {
     cgaps;

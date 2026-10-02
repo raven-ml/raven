@@ -434,6 +434,20 @@ let aspects =
           let _, y0, _, y1 = text_box l (Printf.sprintf "(text %S)" cat) in
           at_least float_exact ~than:(Box2.miny b -. 1e-3) y0;
           at_most float_exact ~than:(Box2.maxy b +. 1e-3) y1);
+      test "an aspect row takes its height from its aspect alone" (fun () ->
+          let l = lay (Size.panels 100. 400.) square in
+          equal (pair close close) (100., 100.) (Layout.size l));
+      test "an aspect panel is centred in a cell it cannot fill" (fun () ->
+          let tall =
+            layer [ plain ramp; axis ~show:false "x"; axis ~show:false "y" ]
+          in
+          let l = lay (Size.figure 300. 100.) (grid [ [ square ]; [ tall ] ]) in
+          (match boxes l with
+          | [ a; _ ] -> equal close 150. (P2.x (Box2.mid a))
+          | _ -> fail "two panels");
+          let b = List.hd (boxes (lay (Size.figure 300. 100.) square)) in
+          equal (pair close close) (150., 50.)
+            (P2.x (Box2.mid b), P2.y (Box2.mid b)));
       test "images have square pixels" (fun () ->
           let px = Nx.zeros Nx.uint8 [| 3; 6 |] in
           let l = lay (Size.figure 300. 300.) (image px) in
