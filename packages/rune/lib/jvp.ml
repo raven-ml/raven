@@ -63,16 +63,30 @@ let capture i x primal =
           s)
   | _ -> assert false (* Only a rerun's installation adopts. *)
 
-let own (type a b) i (x : (a, b) Nx.t) : ((a, b) Nx.t * (a, b) Nx.t) option =
+(* [tangent i x] is the tangent of [x] if [i] owns it: its own, or the slot that
+   captures it for a dual of an ancestor that [i] adopts. *)
+let tangent (type a b) i (x : (a, b) Nx.t) : (a, b) Nx.t option =
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
       | Dual { owner; primal; tangent } ->
-          if owner.id == i.id then Some (primal, tangent)
-          else if adopts i owner then Some (primal, capture i x primal)
+          if owner.id == i.id then Some tangent
+          else if adopts i owner then Some (capture i x primal)
           else None
       | _ -> None)
   | Host _ | Placed _ -> None
+
+(* [dual_primal x] is the primal of [x], a dual. *)
+let dual_primal (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
+  match Repr.v x with
+  | Traced tr -> (
+      match Repr.Traced.node tr with
+      | Dual { primal; _ } -> primal
+      | _ -> assert false)
+  | Host _ | Placed _ -> assert false
+
+let own i x =
+  match tangent i x with Some dx -> Some (dual_primal x, dx) | None -> None
 
 let owns i x =
   match Repr.v x with
@@ -83,15 +97,17 @@ let owns i x =
   | Host _ | Placed _ -> false
 
 let split i x =
-  match own i x with Some (p, dx) -> (p, Some dx) | None -> (x, None)
+  match tangent i x with
+  | Some _ as dx -> (dual_primal x, dx)
+  | None -> (x, None)
 
-let primal i x = match own i x with Some (p, _) -> p | None -> x
+let primal i x = match tangent i x with Some _ -> dual_primal x | None -> x
 
 (* [unwrap i x] is the primal and tangent of [x], an operand through which [i]
    claims the operation. *)
 let unwrap i x =
-  match own i x with
-  | Some d -> d
+  match tangent i x with
+  | Some dx -> (dual_primal x, dx)
   | None -> assert false (* [i] claims the operation through [x]. *)
 
 (* Coefficients *)
@@ -822,7 +838,8 @@ let guarded i ~entry ~loops f =
      ^ ": the rule uses a value its own differentiation tracks; pass it as an \
         argument")
   in
-  let claims op = List.exists (fun (Nx.P x) -> owns i x) (operands op) in
+  let owner = { Construct.owns = (fun x -> owns i x) } in
+  let claims op = Construct.claims owner op in
   let call : type r. r Construct.t -> (unit -> r) option = function
     | Scan _ when not loops -> Some (fun () -> raise Scan.Not_staged)
     | Scan _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _
@@ -1186,8 +1203,14 @@ and compiled_values : type p q.
    anything, so an argument that is a residual is still readable when the
    transpose runs. *)
 and compiled_slots : type p q.
-    t -> Linear.tape -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p ->
-    (p, q) Construct.compiler -> q =
+    t ->
+    Linear.tape ->
+    p Nx.Ptree.t ->
+    q Nx.Ptree.t ->
+    (p -> q) ->
+    p ->
+    (p, q) Construct.compiler ->
+    q =
  fun i tape p q f args compiler ->
   let leaves, _ = Nx.Ptree.flatten p args in
   let tracked = owned i leaves in
@@ -1231,7 +1254,11 @@ and compiled_slots : type p q.
    real or complex results to those of the tracked leaves, zeros for a leaf that
    receives none. *)
 and linearized : type p q.
-    string -> p Nx.Ptree.t -> q Nx.Ptree.t -> bool list -> (p -> q) ->
+    string ->
+    p Nx.Ptree.t ->
+    q Nx.Ptree.t ->
+    bool list ->
+    (p -> q) ->
     (p, q) Construct.vjp =
  fun entry p q tracked f a ->
   let tape = Linear.create entry in

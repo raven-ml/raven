@@ -99,12 +99,15 @@ let record t op x =
   slot t ~context:(Repr.context x) (placement op) (Nx.Op.dtype op)
     (Nx.Op.shape op) (Recorded op)
 
-(* [record_any t op] is [record t op x] for the first slot operand [x]. A slot's
-   context reaches only the constants the frontend makes beside it, which a
-   trace inlines, so which slot operand gives it does not show. *)
-let record_any t op =
-  let (Nx.P x) = List.find (fun (Nx.P x) -> owns t x) (operands op) in
-  record t op x
+(* [record2 t op a b] is [record t op x] for [x] the first of [a] and [b] that
+   is a slot. A slot's context reaches only the constants the frontend makes
+   beside it, which a trace inlines, so which slot operand gives it does not
+   show. *)
+let record2 t op a b = if owns t a then record t op a else record t op b
+
+let rec first_slot t = function
+  | x :: xs -> if owns t x then x else first_slot t xs
+  | [] -> assert false (* [t] runs only operations with a slot operand. *)
 
 let sum t op (k : Nx_backend.reduce) x =
   match[@warning "@4@8"] k with
@@ -133,8 +136,8 @@ let run : type r. tape -> r Nx.Op.t -> r =
         | Fdiv -> not sb
         | Idiv | Mod | Pow | Atan2 | Maximum | Minimum | And | Or | Xor -> false
       in
-      if linear then record_any t op else nonlinear t op
-  | Where _ -> record_any t op
+      if linear then record2 t op a b else nonlinear t op
+  | Where (_, a, b) -> record2 t op a b
   | Fma (a, b, c) ->
       if owns t c && owns t a <> owns t b then record t op c else nonlinear t op
   | Reduce (k, _, x) -> sum t op k x
@@ -151,20 +154,21 @@ let run : type r. tape -> r Nx.Op.t -> r =
   | Solve_triangular { a; b; _ } ->
       if owns t a then nonlinear t op else record t op b
   | Matmul (a, b) ->
-      if owns t a && owns t b then nonlinear t op else record_any t op
-  | Cat _ -> record_any t op
-  | Gather _ -> record_any t op
-  | Scatter { mode = `Set | `Add; _ } -> record_any t op
+      if owns t a && owns t b then nonlinear t op else record2 t op a b
+  | Cat (_, xs) -> record t op (first_slot t xs)
+  | Gather (_, _, x) -> record t op x
+  | Scatter { mode = `Set | `Add; into; updates; _ } ->
+      record2 t op into updates
   | Scatter { mode = `Max | `Min; _ } -> nonlinear t op
-  | Update _ -> record_any t op
-  | Unfold _ -> record_any t op
-  | Fold _ -> record_any t op
-  | Fft _ -> record_any t op
-  | Rfft _ -> record_any t op
-  | Irfft _ -> record_any t op
-  | Contiguous _ -> record_any t op
-  | Move _ -> record_any t op
-  | Place _ -> record_any t op
+  | Update (x, _, v) -> record2 t op x v
+  | Unfold { x; _ } -> record t op x
+  | Fold { x; _ } -> record t op x
+  | Fft { x; _ } -> record t op x
+  | Rfft { x; _ } -> record t op x
+  | Irfft { x; _ } -> record t op x
+  | Contiguous x -> record t op x
+  | Move (x, _) -> record t op x
+  | Place (_, x) -> record t op x
   | Read { by; _ } ->
       invalid_arg
         (Printf.sprintf
@@ -349,39 +353,41 @@ let window ~starts v ct =
 let transpose_op : type a b.
     cotangents -> (a, b) Nx.t Nx.Op.t -> (a, b) Nx.t -> unit =
  fun cts op ct ->
-  let owns x = owns cts.tape x and add x v = add cts x v in
   match[@warning "@4@8"] op with
-  | Unary (_, x) -> add x (Nx.neg ct)
+  | Unary (_, x) -> add cts x (Nx.neg ct)
   | Binary (k, a, b) -> (
       match[@warning "@4@8"] (k : Nx_backend.binary) with
       | Add ->
-          add a ct;
-          add b ct
+          add cts a ct;
+          add cts b ct
       | Sub ->
-          add a ct;
-          add b (Nx.neg ct)
-      | Mul -> if owns a then add a (Nx.mul ct b) else add b (Nx.mul a ct)
-      | Fdiv -> add a (Nx.div ct b)
+          add cts a ct;
+          add cts b (Nx.neg ct)
+      | Mul ->
+          if owns cts.tape a then add cts a (Nx.mul ct b)
+          else add cts b (Nx.mul a ct)
+      | Fdiv -> add cts a (Nx.div ct b)
       | Idiv | Mod | Pow | Atan2 | Maximum | Minimum | And | Or | Xor ->
           assert false (* Never recorded. *))
   | Where (c, a, b) ->
       let zeros = Nx.zeros_like ct in
-      add a (Nx.where c ct zeros);
-      add b (Nx.where c zeros ct)
+      add cts a (Nx.where c ct zeros);
+      add cts b (Nx.where c zeros ct)
   | Fma (a, b, c) ->
-      if owns a then add a (Nx.mul ct b) else add b (Nx.mul a ct);
-      add c ct
+      if owns cts.tape a then add cts a (Nx.mul ct b)
+      else add cts b (Nx.mul a ct);
+      add cts c ct
   | Reduce (_, axes, x) ->
       let shape = Nx.shape x in
       let kept =
         Array.mapi (fun i d -> if Array.mem i axes then 1 else d) shape
       in
-      add x (Nx.broadcast_to shape (Nx.reshape kept ct))
+      add cts x (Nx.broadcast_to shape (Nx.reshape kept ct))
   | Scan (_, axis, x) ->
-      add x
+      add cts x
         (Nx.flip ~axes:[ axis ] (Nx.cumsum ~axis (Nx.flip ~axes:[ axis ] ct)))
   | Pad (padding, _, x) ->
-      add x
+      add cts x
         (Nx.shrink
            (Array.mapi (fun i (lo, _) -> (lo, lo + (Nx.shape x).(i))) padding)
            ct)
@@ -390,10 +396,10 @@ let transpose_op : type a b.
         (List.fold_left
            (fun lo x ->
              let hi = lo + (Nx.shape x).(axis) in
-             add x (shrink_axis ~axis (lo, hi) ct);
+             add cts x (shrink_axis ~axis (lo, hi) ct);
              hi)
            0 xs)
-  | Convert (Cast, _, x) -> add x (Nx.cast (Nx.dtype x) ct)
+  | Convert (Cast, _, x) -> add cts x (Nx.cast (Nx.dtype x) ct)
   | Convert (Bitcast, _, x) ->
       (* The tape holds a complex cotangent conjugated, [dL/dre - i dL/dim], and
          a pair of float components holds [dL/dre] and [dL/dim], so a bitcast
@@ -401,10 +407,10 @@ let transpose_op : type a b.
          real side as it is. *)
       let back ct = Nx.bitcast (Nx.dtype x) ct in
       if Nx_dtype.is_complex (Nx.dtype x) = Nx_dtype.is_complex (Nx.dtype ct)
-      then add x (back ct)
-      else add x (Nx.conjugate (back (Nx.conjugate ct)))
+      then add cts x (back ct)
+      else add cts x (Nx.conjugate (back (Nx.conjugate ct)))
   | Gather (axis, indices, x) ->
-      add x
+      add cts x
         (eval
            (Scatter
               {
@@ -417,8 +423,8 @@ let transpose_op : type a b.
               }))
   | Scatter
       { mode = (`Set | `Add) as mode; unique; axis; indices; updates; into } ->
-      add updates (scattered ~mode ~unique ~axis ~indices ~into ct);
-      add into
+      add cts updates (scattered ~mode ~unique ~axis ~indices ~into ct);
+      add cts into
         (match mode with
         | `Add -> ct
         | `Set ->
@@ -435,17 +441,18 @@ let transpose_op : type a b.
                     })))
   | Scatter { mode = `Max | `Min; _ } -> assert false (* Never recorded. *)
   | Update (x, starts, v) ->
-      add x (eval (Update (ct, starts, Nx.zeros_like v)));
-      add v (window ~starts v ct)
+      add cts x (eval (Update (ct, starts, Nx.zeros_like v)));
+      add cts v (window ~starts v ct)
   | Unfold { kernel_size; stride; dilation; padding; x } ->
       let shape = Nx.shape x and k = Array.length kernel_size in
       let output_size = Array.sub shape (Array.length shape - k) k in
-      add x
+      add cts x
         (eval
            (Fold { output_size; kernel_size; stride; dilation; padding; x = ct }))
   | Fold { kernel_size; stride; dilation; padding; x; _ } ->
-      add x (eval (Unfold { kernel_size; stride; dilation; padding; x = ct }))
-  | Fft { inverse; axes; x } -> add x (eval (Fft { inverse; axes; x = ct }))
+      add cts x
+        (eval (Unfold { kernel_size; stride; dilation; padding; x = ct }))
+  | Fft { inverse; axes; x } -> add cts x (eval (Fft { inverse; axes; x = ct }))
   | Rfft { axes; x; _ } ->
       (* rfft is a real embedding, an fft and a slice to the first n/2 + 1 bins
          of the last axis: each transposes to its adjoint, a zero pad, the fft
@@ -457,7 +464,7 @@ let transpose_op : type a b.
           pad_axis ~axis:last (0, n - m) ct
         else ct
       in
-      add x
+      add cts x
         (Nx.real (Nx.dtype x) (eval (Fft { inverse = false; axes; x = ct })))
   | Irfft { axes; x; _ } ->
       (* irfft resizes the spectrum along the last axis to the n / 2 + 1 bins
@@ -487,7 +494,7 @@ let transpose_op : type a b.
                  (shrink_axis ~axis:last (1, n - m + 1) head))
           else head
         in
-        add x
+        add cts x
           (if
              (m > bins)
              [@mutate off "a shrink to every bin leaves the spectrum"]
@@ -496,11 +503,11 @@ let transpose_op : type a b.
            then pad_axis ~axis:last (0, bins - m) folded
            else folded)
       end
-  | Contiguous x -> add x ct
+  | Contiguous x -> add cts x ct
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       (* The solve with op(A) transposes to the solve with op(A)ᵀ, the conjugate
          of the other solve applied to the conjugate cotangent. *)
-      add b
+      add cts b
         (Nx.conjugate
            (eval
               (Solve_triangular
@@ -515,15 +522,15 @@ let transpose_op : type a b.
       match[@warning "@4@8"] m with
       | Reshape _ ->
           let ct = if Nx.is_c_contiguous ct then ct else Nx.contiguous ct in
-          add x (Nx.reshape (Nx.shape x) ct)
-      | Expand _ -> add x (unbroadcast ct (Nx.shape x))
+          add cts x (Nx.reshape (Nx.shape x) ct)
+      | Expand _ -> add cts x (unbroadcast ct (Nx.shape x))
       | Permute p ->
           let inverse = Array.make (Array.length p) 0 in
           Array.iteri (fun i j -> inverse.(j) <- i) p;
-          add x (Nx.transpose ~axes:(Array.to_list inverse) ct)
+          add cts x (Nx.transpose ~axes:(Array.to_list inverse) ct)
       | Shrink limits ->
           let shape = Nx.shape x in
-          add x
+          add cts x
             (Nx.pad
                (Array.mapi (fun i (lo, hi) -> (lo, shape.(i) - hi)) limits)
                (Nx_dtype.zero (Nx.dtype x))
@@ -534,7 +541,7 @@ let transpose_op : type a b.
               (fun i -> dims.(i))
               (List.init (Array.length dims) Fun.id)
           in
-          add x (Nx.flip ~axes ct)
+          add cts x (Nx.flip ~axes ct)
       | Window { axis; size; step } ->
           (* Overlap-add: input position [w * step + j] receives the cotangent
              of window [w] at offset [j], which is what fold sums. *)
@@ -551,13 +558,15 @@ let transpose_op : type a b.
                    x = Nx.moveaxis axis r ct;
                  })
           in
-          add x (Nx.moveaxis (r - 1) axis folded))
+          add cts x (Nx.moveaxis (r - 1) axis folded))
   | Matmul (a, b) ->
-      if owns a then
-        add a (unbroadcast (Nx.matmul ct (Nx.matrix_transpose b)) (Nx.shape a))
+      if owns cts.tape a then
+        add cts a
+          (unbroadcast (Nx.matmul ct (Nx.matrix_transpose b)) (Nx.shape a))
       else
-        add b (unbroadcast (Nx.matmul (Nx.matrix_transpose a) ct) (Nx.shape b))
-  | Place (_, x) -> add x (Nx.place (Nx.placement x) ct)
+        add cts b
+          (unbroadcast (Nx.matmul (Nx.matrix_transpose a) ct) (Nx.shape b))
+  | Place (_, x) -> add cts x (Nx.place (Nx.placement x) ct)
   | Compare _ | Sort _ | Threefry _ | Cholesky _ | Arg_reduce _ | Argsort _
   | Group _ ->
       assert false (* Never recorded. *)
@@ -585,10 +594,10 @@ let transpose cts =
   let t = cts.tape in
   for i = t.length - 1 downto 0 do
     match t.entries.(i) with
-    | Recorded op ->
-        Option.iter
-          (fun ct -> transpose_op cts op (Nx.unpack (Nx.Op.dtype op) ct))
-          cts.cts.(i)
+    | Recorded op -> (
+        match cts.cts.(i) with
+        | Some ct -> transpose_op cts op (Nx.unpack (Nx.Op.dtype op) ct)
+        | None -> ())
     | Call { inputs; like; pullback } ->
         transpose_call cts i inputs like pullback
     | Input | Part -> ()

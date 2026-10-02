@@ -9,7 +9,8 @@
   test_composition
   test_constructs
   test_custom
-  test_total)
+  test_total
+  test_allocation)
  (modules
   test_derivatives
   test_laws
@@ -18,7 +19,8 @@
   test_composition
   test_constructs
   test_custom
-  test_total)
+  test_total
+  test_allocation)
  (package rune)
  (libraries windtrap rune rune_test nx nx.dtype nx.ragged)
  (action

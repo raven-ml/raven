@@ -136,15 +136,41 @@ let claims : type r. owner -> r Nx.Op.t -> bool =
   match[@warning "@4@8"] op with
   | Unary (_, x) -> owns x
   | Binary (_, a, b) -> owns a || owns b
+  | Compare (_, a, b) -> owns a || owns b
+  | Where (c, a, b) -> owns c || owns a || owns b
+  | Fma (a, b, c) -> owns a || owns b || owns c
   | Reduce (_, _, x) -> owns x
-  | Move (x, _) -> owns x
+  | Scan (_, _, x) -> owns x
+  | Arg_reduce (_, _, x) -> owns x
+  | Sort { x; _ } -> owns x
+  | Argsort { x; _ } -> owns x
+  | Group { x; _ } -> owns x
+  | Pad (_, _, x) -> owns x
+  | Cat (_, xs) -> List.exists owns xs
+  | Convert (_, _, x) -> owns x
+  | Threefry (key, ctr) -> owns key || owns ctr
+  | Gather (_, indices, x) -> owns x || owns indices
+  | Scatter { indices; updates; into; _ } ->
+      owns into || owns indices || owns updates
+  | Update (x, starts, v) -> owns x || owns starts || owns v
+  | Unfold { x; _ } -> owns x
+  | Fold { x; _ } -> owns x
   | Matmul (a, b) -> owns a || owns b
-  | Compare _ | Where _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Group _
-  | Pad _ | Cat _ | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _
-  | Unfold _ | Fold _ | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _
-  | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Solve_triangular _ | Place _ | Read _
-  | Fma _ | Check _ ->
-      List.exists (fun (Nx.P x) -> owns x) (Nx.Op.operands op)
+  | Fft { x; _ } -> owns x
+  | Rfft { x; _ } -> owns x
+  | Irfft { x; _ } -> owns x
+  | Contiguous x -> owns x
+  | Cholesky { x; _ } -> owns x
+  | Qr { x; _ } -> owns x
+  | Lu x -> owns x
+  | Svd { x; _ } -> owns x
+  | Eig { x; _ } -> owns x
+  | Eigh { x; _ } -> owns x
+  | Solve_triangular { a; b; _ } -> owns a || owns b
+  | Move (x, _) -> owns x
+  | Place (_, x) -> owns x
+  | Read { x; _ } -> owns x
+  | Check { ok; _ } -> owns ok
 
 type _ Effect.t += Construct : 'r t -> 'r Effect.t
 
