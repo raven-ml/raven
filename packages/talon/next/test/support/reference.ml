@@ -816,7 +816,16 @@ let key_text : type a. a Type.t -> (a option -> string) option =
     | None -> "∅"
     | Some v -> Format.asprintf "%a" Expr.pp (lit v)
   in
-  match ty with Datetime _ -> None | _ -> Option.map text (literal ty)
+  let canonical = function
+    | None -> "∅"
+    | Some v ->
+        Option.get
+          (Column.options Kind.string (Column.print (Column.v ty [| v |]))).(0)
+  in
+  match ty with
+  | Datetime _ -> None
+  | Float16 | Float32 | Float64 -> Some canonical
+  | _ -> Option.map text (literal ty)
 
 (* [same_key a b] is [true] iff the cells [a] and [b] are one key. *)
 let same_key (Cell (ty, _) as a) (Cell (ty', _) as b) =
