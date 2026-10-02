@@ -22,6 +22,12 @@ let table data tag =
   in
   find 0
 
+(* The offset and length of each table of [data]. *)
+let extents data =
+  List.init (get_u16 data 4) (fun i ->
+      let r = 12 + (16 * i) in
+      (get_u32 data (r + 8), get_u32 data (r + 12)))
+
 let patch data pos f =
   let b = Bytes.of_string data in
   f b pos;
@@ -427,3 +433,117 @@ let gpos_table features lookups =
   | [ scripts; features; lookups ] ->
       cat [ be16 1; be16 0; be16 scripts; be16 features; be16 lookups; body ]
   | _ -> assert false
+
+(* What the OpenType specification asks of a file and [Font.of_string] does not
+   check *)
+
+let checksum s off len =
+  let byte i = if i < off + len then Char.code s.[i] else 0 in
+  let sum = ref 0 in
+  for w = 0 to ((len + 3) / 4) - 1 do
+    let i = off + (4 * w) in
+    let v =
+      (byte i lsl 24)
+      lor (byte (i + 1) lsl 16)
+      lor (byte (i + 2) lsl 8)
+      lor byte (i + 3)
+    in
+    sum := (!sum + v) land 0xFFFF_FFFF
+  done;
+  !sum
+
+(* [check_sfnt data] fails unless [data] has a table directory with its binary
+   search fields, tables in increasing order of tags at aligned offsets inside
+   the file, every checksum and [head]'s checksum adjustment right, [loca] and
+   [hmtx] the length [maxp] and [hhea] give them, left side bearings at each
+   glyph's [xMin], character map subtables of their stated length, and a [post]
+   table of its version's length. *)
+let check_sfnt data =
+  let fail fmt = Windtrap.failf ("not an OpenType file: " ^^ fmt) in
+  let n = get_u16 data 4 in
+  (* Binary search fields at [pos] for [n] entries of [size] bytes. *)
+  let search pos n size =
+    let p = ref 1 and k = ref 0 in
+    while 2 * !p <= n do
+      p := 2 * !p;
+      incr k
+    done;
+    if
+      (get_u16 data pos, get_u16 data (pos + 2), get_u16 data (pos + 4))
+      <> (size * !p, !k, size * (n - !p))
+    then fail "binary search fields at %d" pos
+  in
+  search 6 n 16;
+  let records =
+    List.init n (fun i ->
+        let r = 12 + (16 * i) in
+        ( String.sub data r 4,
+          get_u32 data (r + 4),
+          get_u32 data (r + 8),
+          get_u32 data (r + 12) ))
+  in
+  ignore
+    (List.fold_left
+       (fun prev (tag, sum, off, len) ->
+         if String.compare tag prev <= 0 then fail "tag %S after %S" tag prev;
+         if off mod 4 <> 0 || off + len > String.length data then
+           fail "%S at %d of %d bytes" tag off len;
+         let adjustment = if tag = "head" then get_u32 data (off + 8) else 0 in
+         if (checksum data off len - adjustment) land 0xFFFF_FFFF <> sum then
+           fail "%S checksum" tag;
+         tag)
+       "" records);
+  if checksum data 0 (String.length data) <> 0xB1B0AFBA then
+    fail "checksum adjustment";
+  let find tag =
+    match List.find_opt (fun (t, _, _, _) -> t = tag) records with
+    | Some (_, _, off, len) -> (off, len)
+    | None -> fail "no %S table" tag
+  in
+  let head, _ = find "head" and maxp, _ = find "maxp" in
+  let hhea, _ = find "hhea" and hmtx, hmtx_len = find "hmtx" in
+  let loca, loca_len = find "loca" and glyf, glyf_len = find "glyf" in
+  let glyphs = get_u16 data (maxp + 4) in
+  let long = get_u16 data (head + 50) = 1 in
+  if loca_len <> (glyphs + 1) * if long then 4 else 2 then fail "'loca' length";
+  let offset g =
+    if long then get_u32 data (loca + (4 * g))
+    else 2 * get_u16 data (loca + (2 * g))
+  in
+  if offset glyphs <> glyf_len then fail "'loca' ends at %d" (offset glyphs);
+  let metrics = get_u16 data (hhea + 34) in
+  if
+    metrics < 1 || metrics > glyphs
+    || hmtx_len <> (4 * metrics) + (2 * (glyphs - metrics))
+  then fail "'hmtx' length";
+  for g = 0 to glyphs - 1 do
+    let lsb =
+      if g < metrics then String.get_int16_be data (hmtx + (4 * g) + 2)
+      else String.get_int16_be data (hmtx + (4 * metrics) + (2 * (g - metrics)))
+    in
+    if
+      offset g + 1 < offset (g + 1)
+      && lsb <> String.get_int16_be data (glyf + offset g + 2)
+    then fail "glyph %d: left side bearing %d" g lsb
+  done;
+  let cmap, cmap_len = find "cmap" in
+  for i = 0 to get_u16 data (cmap + 2) - 1 do
+    let off = get_u32 data (cmap + 8 + (8 * i)) in
+    let sub = cmap + off in
+    let len, need =
+      match get_u16 data sub with
+      | 4 ->
+          let segments = get_u16 data (sub + 6) / 2 in
+          search (sub + 8) segments 2;
+          (get_u16 data (sub + 2), 16 + (8 * segments))
+      | 12 -> (get_u32 data (sub + 4), 16 + (12 * get_u32 data (sub + 12)))
+      | f -> fail "character map format %d" f
+    in
+    if len < need || off + len > cmap_len then
+      fail "character map length %d" len
+  done;
+  let post, post_len = find "post" in
+  match get_u32 data post with
+  | 0x00030000 when post_len = 32 -> ()
+  | 0x00020000 when post_len >= 34 + (2 * glyphs) -> ()
+  | v -> fail "'post' version %x of %d bytes" v post_len
