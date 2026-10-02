@@ -870,6 +870,21 @@ let drawings =
             (slist (array int) compare)
             [ [| 0; 1; 2 |]; [| 3; 4; 5 |] ]
             !seen);
+      test "a facet on a middle axis puts each block of rows in its panel"
+        (fun () ->
+          let m, seen =
+            probe
+              [
+                Mark.bind Role.y (num (Nx.zeros Nx.float64 [| 2; 3; 2 |]));
+                Mark.bind Role.fx (dim 1);
+              ]
+              Mark.index
+          in
+          ignore (drawn m);
+          equal
+            (slist (array int) compare)
+            [ [| 0; 1; 6; 7 |]; [| 2; 3; 8; 9 |]; [| 4; 5; 10; 11 |] ]
+            !seen);
       test "a facet a mark leaves unbound puts its rows in every panel"
         (fun () ->
           let m, seen =
