@@ -395,6 +395,27 @@ let rows =
             (list (triple (array int) (array int) id))
             (List.init 3 (fun k -> ([| 3 |], [| k |], legend)))
             (List.rev !swatches));
+      cases ~name:fst "a mark's shape broadcasts the shape given"
+        [
+          ("constants", ([| 2; 3 |], [], [| 2; 3 |]));
+          ( "with a channel",
+            ( [| 2; 1 |],
+              [ Mark.bind Role.x (num (f64 [| 0.; 1.; 2. |])) ],
+              [| 2; 3 |] ) );
+          ("none given", ([||], [ Mark.bind Role.x (const 0.5) ], [||]));
+        ]
+        (fun (_, (shape, bindings, expected)) ->
+          let seen = ref [] in
+          let m =
+            Mark.v ~name:"probe" ~shape bindings (fun r ->
+                seen := (Mark.shape r, Mark.length r) :: !seen;
+                Picture.empty)
+          in
+          ignore (drawn m);
+          equal
+            (pair (array int) int)
+            (expected, Array.fold_left ( * ) 1 expected)
+            (only seen));
       test "get gives a parameter's constant per row, under its role only"
         (fun () ->
           let k = Role.param ~name:"k" ~equal:Int.equal in

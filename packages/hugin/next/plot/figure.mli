@@ -41,13 +41,13 @@ val make_mark :
   name:string ->
   ?reduce:reducer ->
   ?coord:Coord.t ->
+  ?shape:int array ->
   ?swatch:(rows -> Picture.t) ->
-  ?base:int array ->
   binding list ->
   (rows -> Picture.t) ->
   mark
-(** [make_mark fn ~name ~reduce ~coord ~swatch ~base bindings draw] is the mark
-    [name] of [bindings], whose shape is that of [base] and the channels
+(** [make_mark fn ~name ~reduce ~coord ~shape ~swatch bindings draw] is the mark
+    [name] of [bindings], whose shape is that of [shape] and the channels
     broadcast together. Raises [Invalid_argument], naming [fn], as [Mark.v]
     does. *)
 

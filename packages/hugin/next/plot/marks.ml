@@ -116,8 +116,8 @@ let continuous : type d r. (d, r) Channel.t option -> bool = function
 
 let facets fx fy = [ opt Role.fx fx; opt Role.fy fy ]
 
-let make fn ?reduce ?coord ?base ?swatch l draw =
-  make_mark fn ~name:fn ?reduce ?coord ?swatch ?base (List.filter_map Fun.id l)
+let make fn ?reduce ?coord ?shape ?swatch l draw =
+  make_mark fn ~name:fn ?reduce ?coord ?shape ?swatch (List.filter_map Fun.id l)
     draw
 
 (* Dots *)
@@ -519,7 +519,7 @@ let image ?fx ?fy px =
   Mark
     (make "image"
        ~coord:(Coord.cartesian ~aspect:1. ())
-       ~base:lead
+       ~shape:lead
        ([
           Some (on ~imply:fixed ~guide:false Role.x (at 0.));
           Some (on Role.x2 (at (float w)));

@@ -216,6 +216,13 @@ let mark_v =
                   Mark.bind (Role.param ~name:"a" ~equal:Int.equal) (const 0);
                 ]
                 draw_nothing );
+          ( "a shape with a negative dimension",
+            fun () -> Mark.v ~name:"m" ~shape:[| 2; -1 |] [] draw_nothing );
+          ( "a shape that does not broadcast with the channels",
+            fun () ->
+              Mark.v ~name:"m" ~shape:[| 2 |]
+                [ Mark.bind Role.x (num v) ]
+                draw_nothing );
           ( "x2 without x",
             fun () ->
               Mark.v ~name:"m" [ Mark.bind Role.x2 (num v) ] draw_nothing );
@@ -662,6 +669,10 @@ let equality =
           in
           equal bool true (Hugin_next.equal (mark 1) (mark 3));
           equal bool false (Hugin_next.equal (mark 1) (mark 2)));
+      test "marks of other shapes are other figures" (fun () ->
+          let mark shape = Mark.v ~name:"m" ~shape [] draw_nothing in
+          equal bool true (Hugin_next.equal (mark [| 2 |]) (mark [| 2 |]));
+          equal bool false (Hugin_next.equal (mark [| 2 |]) (mark [| 3 |])));
       test "a parameter made by another call is another role" (fun () ->
           let mark () =
             Mark.v ~name:"m"

@@ -83,8 +83,9 @@
     mark draws as one {e row}: one tensor of five loss curves of [T] steps each
     is 5 × [T] rows of one line mark. A constant, an {!index} and a {!dim}
     without a mask take no part in broadcasting, and a mark whose channels are
-    all constants has the shape [[||]] and one row. The facet channels of a mark
-    ({!section-facets}) put each row in one panel.
+    all constants has the shape {!Mark.v} gives it, by default [[||]] with one
+    row. The facet channels of a mark ({!section-facets}) put each row in one
+    panel.
 
     {2:missing Missing values}
 
@@ -1465,24 +1466,28 @@ module Mark : sig
     name:string ->
     ?reduce:reducer ->
     ?coord:Coord.t ->
+    ?shape:int array ->
     ?swatch:(rows -> Picture.t) ->
     binding list ->
     (rows -> Picture.t) ->
     t
-  (** [v ~name ~reduce ~coord ~swatch bindings draw] is the mark [name] of the
-      channels [bindings], where [draw rows] is its picture in a panel for that
-      panel's rows, in points on the page. [draw] applies every role it binds,
-      [opacity] included, and clips positions to the domain ({!section-rows}).
-      {!draw} only selects each panel's rows and tags the picture with the
-      mark's id and rows ({!Picture.tag}), instance by instance if it is a stamp
-      of one instance per row: it clips nothing, so ink drawn from a row inside
-      the domain shows whole. Other arguments are:
+  (** [v ~name ~reduce ~coord ~shape ~swatch bindings draw] is the mark [name]
+      of the channels [bindings], where [draw rows] is its picture in a panel
+      for that panel's rows, in points on the page. [draw] applies every role it
+      binds, [opacity] included, and clips positions to the domain
+      ({!section-rows}). {!draw} only selects each panel's rows and tags the
+      picture with the mark's id and rows ({!Picture.tag}), instance by instance
+      if it is a stamp of one instance per row: it clips nothing, so ink drawn
+      from a row inside the domain shows whole. Other arguments are:
       - [name], the kind of mark in messages and printed forms, such as ["dot"]
         or ["fehu.cart"].
       - [reduce], the reducer that may draw the mark's rows. Unset, rows are
         never reduced.
       - [coord], the coordinate system the mark implies for the panels it is
         drawn in, which a {!val-coord} above it overrides.
+      - [shape], the shape of the mark's data where its channels do not state
+        it, such as the datum axes of {!image}. It broadcasts with the shapes of
+        the channels ({!Hugin_next.section-data}). Defaults to [[||]].
       - [swatch], the picture of a legend entry. It is called with one row in a
         box one em square, onto which the projection maps the unit square, and
         in which the roles that read the legend's scale take the entry's value,
@@ -1502,7 +1507,8 @@ module Mark : sig
         and one of categories;
       - a channel with a [scale] or a [title] is bound to a role that reads no
         scale, [text] or a {!Role.value};
-      - the channels do not broadcast, or a {!Hugin_next.dim} or a
+      - [shape] has a negative dimension;
+      - the channels and [shape] do not broadcast, or a {!Hugin_next.dim} or a
         {!Hugin_next.index} does not fit their shape
         ({!Hugin_next.section-data}). *)
 end

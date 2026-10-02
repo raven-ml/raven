@@ -85,6 +85,7 @@ let equal_mark (m : mark) (m' : mark) =
   String.equal m.kind m'.kind
   && Option.equal ( = ) m.reduce m'.reduce
   && Option.equal Coord.equal m.coord m'.coord
+  && Array.equal Int.equal m.shape m'.shape
   && Option.equal ( == ) m.swatch m'.swatch
   && m.draw == m'.draw
   && List.equal equal_binding m.bindings m'.bindings
@@ -223,7 +224,9 @@ let check_binding fn shape (B b) =
           | _ -> ())
       | Num _ | Floats _ | Cat _ | Strings _ -> ())
 
-let make_mark fn ~name ?reduce ?coord ?swatch ?(base = [||]) bindings draw =
+let make_mark fn ~name ?reduce ?coord ?(shape = [||]) ?swatch bindings draw =
+  if Array.exists (fun d -> d < 0) shape then
+    err fn "the shape %a has a negative dimension" pp_shape shape;
   let rec distinct = function
     | [] -> ()
     | b :: rest ->
@@ -248,7 +251,7 @@ let make_mark fn ~name ?reduce ?coord ?swatch ?(base = [||]) bindings draw =
                   "the channel of %s, of shape %a, does not broadcast with the \
                    shape %a"
                   b.role.name pp_shape s pp_shape shape))
-      base bindings
+      (Array.copy shape) bindings
   in
   List.iter (check_binding fn shape) bindings;
   { kind = name; reduce; coord; swatch; bindings; draw; shape }

@@ -68,6 +68,7 @@ val v :
   name:string ->
   ?reduce:reducer ->
   ?coord:Coord.t ->
+  ?shape:int array ->
   ?swatch:(rows -> Picture.t) ->
   binding list ->
   (rows -> Picture.t) ->
