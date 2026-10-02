@@ -1054,6 +1054,18 @@ let stamps =
           in
           (* A square of side 0.01 stroked 2 wide with mitred corners. *)
           equal (float 0.1) (2.01 *. 2.01) (coverage img));
+      test "a shrunk instance whose pen alone reaches the page is drawn"
+        (fun () ->
+          let ring =
+            Picture.stroke (Stroke.v 1.) red (Path.circle (P2.v 0. 0.) 2.5)
+          in
+          (* A ring of radius 0.25 half a pixel left of the page, whose pen
+             reaches 0.25 into it. *)
+          let img =
+            render 20. 20.
+              (Picture.stamp ~scales:[| 0.1 |] [| -0.5 |] [| 10. |] ring)
+          in
+          greater (float 1e-9) ~than:0. (coverage img));
       test "an instance whose map has no inverse paints nothing" (fun () ->
           let ring =
             Picture.stroke (Stroke.v 4.) red (Path.circle (P2.v 0. 0.) 5.)

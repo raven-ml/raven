@@ -464,6 +464,47 @@ let to_polyline pts (x, y) =
   in
   loop infinity pts
 
+(* [drawn d] is the curves of the path data [d], each the control points of a
+   cubic, its lines as cubics. *)
+let drawn d =
+  let curves = ref [] and cur = ref (0., 0.) and start = ref (0., 0.) in
+  let line p =
+    curves := (!cur, !cur, p, p) :: !curves;
+    cur := p
+  in
+  let command c args =
+    match (c, args) with
+    | 'M', [ x; y ] ->
+        cur := (x, y);
+        start := (x, y)
+    | 'L', [ x; y ] -> line (x, y)
+    | 'C', [ x1; y1; x2; y2; x; y ] ->
+        curves := (!cur, (x1, y1), (x2, y2), (x, y)) :: !curves;
+        cur := (x, y)
+    | 'Z', [] -> line !start
+    | _ -> failf "path data %c with %d numbers" c (List.length args)
+  in
+  let n = String.length d in
+  let rec loop i =
+    if i < n then begin
+      let j = ref (i + 1) in
+      while !j < n && not (String.contains "MLCZ" d.[!j]) do
+        incr j
+      done;
+      command d.[i] (numbers (String.sub d (i + 1) (!j - i - 1)));
+      loop !j
+    end
+  in
+  loop 0;
+  List.rev !curves
+
+(* [boundary d] is the polyline through the curves of [d] sampled finely. *)
+let boundary d =
+  List.concat_map
+    (fun (p0, p1, p2, p3) ->
+      List.init 257 (fun i -> bezier p0 p1 p2 p3 (Float.of_int i /. 256.)))
+    (drawn d)
+
 (* [far_line] runs from (-123456789, -123456700) to (123456789, 123456900): it
    crosses x = 0 at y = 100. *)
 let far_line =
@@ -512,18 +553,19 @@ let accuracy =
           ( "on the right",
             ( [| 50.; 1e5; 1e5; 50. |],
               [| 50.; 50.; 60.; 60. |],
-              "M202 60L50 60L50 50L202 50" ) );
+              "M50 50L202 50L202 60L50 60Z" ) );
           ( "below",
             ( [| 50.; 50.; 60.; 60. |],
               [| 50.; 1e5; 1e5; 50. |],
-              "M60 202L60 50L50 50L50 202" ) );
+              "M50 50L50 202L60 202L60 50Z" ) );
         ]
         (fun (_, (xs, ys, d)) ->
           let q = Path.polygon xs ys in
           let s =
             svg (Picture.stroke (Stroke.v ~cap:`Butt ~join:`Miter 1.) red q)
           in
-          (* Cut where the margin and the miter's reach of 2 end. *)
+          (* Cut where the margin and the miter's reach of 2 end, the part
+             beyond running along that edge, whose ink lies off the page. *)
           equal string d (attr "d" s));
       prop "paths within the margin are written as they are"
         (Gen.list ~size:(Gen.int_range 2 40)
@@ -546,7 +588,7 @@ let accuracy =
               at_most ~msg:"y" float_exact ~than:0.00051 (Float.abs (y -. y')))
             pts got);
       cases ~name:fst
-        "a curve crossing the margin is flattened to within the accuracy"
+        "a stroked curve crossing the margin keeps its part within"
         [
           ("bending once", ((-300., 50.), (10., -60.), (90., 170.), (400., 40.)));
           (* Curves whose second differences, [p0 - 2 p1 + p2] and [p1 - 2 p2 +
@@ -571,22 +613,21 @@ let accuracy =
                  (P2.v (fst p3) (snd p3))
           in
           let d = attr "d" (svg (Picture.stroke (Stroke.v 0.1) red q)) in
-          equal int 0 (count d "C");
-          let got = points d in
-          (* Chords end on the curve and cross the margin within 0.0005 of it,
-             and numbers are rounded by up to 0.0005 along each axis. *)
+          let got = boundary d in
+          (* The pieces lie on the curve, their numbers rounded by up to 0.0005
+             along each axis. *)
           List.iter
             (fun v ->
-              at_most ~msg:"vertex to curve" float_exact ~than:0.0013
+              at_most ~msg:"piece to curve" float_exact ~than:0.0013
                 (to_curve curve v))
             got;
           for i = 0 to 2000 do
             let ((x, y) as c) = curve (Float.of_int i /. 2000.) in
-            if x > -100. && x < 200. && y > -100. && y < 200. then
-              at_most ~msg:"curve to chords" float_exact ~than:0.0013
+            if x > -99. && x < 199. && y > -99. && y < 199. then
+              at_most ~msg:"curve to pieces" float_exact ~than:0.0013
                 (to_polyline got c)
           done);
-      test "an area bounded by a curve crossing the margin keeps its chords"
+      test "an area bounded by a curve crossing the margin keeps its part"
         (fun () ->
           let p0 = (-300., 50.)
           and p1 = (10., -60.)
@@ -600,15 +641,19 @@ let accuracy =
             |> Path.line_to (P2.v (-300.) 1e5)
             |> Path.close
           in
-          let got = points (attr "d" (svg (Picture.fill red q))) in
-          at_least ~msg:"vertices" int ~than:16 (List.length got);
-          (* Every vertex is a chord's end or lies on the margin. *)
+          let d = attr "d" (svg (Picture.fill red q)) in
+          at_least ~msg:"curves" int ~than:1 (count d "C");
+          (* The curves written lie on the curve, their numbers rounded by up to
+             0.0005 along each axis. *)
           List.iter
-            (fun ((x, y) as v) ->
-              if not (x = -100. || x = 200. || y = 200.) then
-                at_most float_exact ~than:0.0013
-                  (to_curve (bezier p0 p1 p2 p3) v))
-            got);
+            (fun (q0, q1, q2, q3) ->
+              if not (q0 = q1 && q2 = q3) then
+                for i = 0 to 64 do
+                  let v = bezier q0 q1 q2 q3 (Float.of_int i /. 64.) in
+                  at_most float_exact ~than:0.0013
+                    (to_curve (bezier p0 p1 p2 p3) v)
+                done)
+            (drawn d));
       test "a clipped subpath's numbers lie within the margin" (fun () ->
           (* The curve's second control point lies beyond the margin, below it
              or to its right. *)
@@ -639,8 +684,7 @@ let accuracy =
             |> Path.line_to (P2.v 50. 90.)
             |> Path.close
           in
-          let got = points (attr "d" (svg (Picture.fill red q))) in
-          let boundary = got @ [ List.hd got ] in
+          let boundary = boundary (attr "d" (svg (Picture.fill red q))) in
           for i = 0 to 2000 do
             let ((x, _) as c) = bezier p0 p1 p2 p3 (Float.of_int i /. 2000.) in
             if x < 200. then
@@ -676,10 +720,8 @@ let accuracy =
             |> Path.cubic_to (P2.v 50. 210.) (P2.v 150. 210.) (P2.v 150. 150.)
             |> Path.close
           in
-          let d = attr "d" (svg (Picture.stroke (Stroke.v 1.) red q)) in
-          equal int 0 (count d "C");
-          equal string "M50 150" (String.sub d 0 7);
-          equal string "L50 150Z" (String.sub d (String.length d - 8) 8));
+          equal string "M50 150C50 210 150 210 150 150Z"
+            (attr "d" (svg (Picture.stroke (Stroke.v 1.) red q))));
       test "a slanted edge clipped at the margin crosses it where it should"
         (fun () ->
           let q =
@@ -759,7 +801,7 @@ let accuracy =
           equal string "matrix(0.25 0 0 1 0 0)" (attr "transform" s);
           equal string "M-408 50L808 50" (attr "d" s);
           equal string "6" (attr "stroke-dashoffset" s));
-      test "a closed subpath that starts beyond the margin is not closed"
+      test "a closed subpath that starts beyond the margin closes along it"
         (fun () ->
           let q =
             Path.polygon [| 50.; 50.; 60.; 60. |] [| 1e5; 50.; 50.; 1e5 |]
@@ -767,7 +809,7 @@ let accuracy =
           let s =
             svg (Picture.stroke (Stroke.v ~cap:`Butt ~join:`Miter 1.) red q)
           in
-          equal string "M50 202L50 50L60 50L60 202" (attr "d" s));
+          equal string "M50 202L50 50L60 50L60 202Z" (attr "d" s));
       test "a dashed line sheared at the margin keeps its phase" (fun () ->
           let a = 0.001 in
           let lin = Affine.(scale 1. 4. * rotate a) in
@@ -799,11 +841,9 @@ let accuracy =
             svg (Picture.stroke (Stroke.v ~cap:`Butt ~join:`Miter 1.) red q)
           in
           equal string "M50 50L202 50M202 60L50 60L50 50" (attr "d" s));
-      test "a curve crossing the margin is flattened, one within it kept"
-        (fun () ->
+      test "an area's curve crossing the margin is cut at it" (fun () ->
           let big = Path.circle (P2.v 50. 1e6) (1e6 -. 50.) in
           let s = svg (Picture.fill red big) in
-          equal int 0 (count (attr "d" s) "C");
           List.iter
             (fun (x, y) ->
               at_most ~msg:"magnitude" float_exact ~than:1000.

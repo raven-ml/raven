@@ -57,10 +57,11 @@
       double precision, and written in points with three decimals, so that the
       numbers of the document are of the order of the page's size.
     - Geometry is cut at a margin around the page that keeps all that reaches
-      it: a path is clipped there, its curves that cross the margin first
-      flattened to within 0.0005 point, an image is cropped to the pixels that
-      meet it, and a glyph run or a stamp instance that does not meet it is left
-      out.
+      it: a path is cropped there, keeping the exact part of its curves within,
+      except that a dashed stroke is cut there with its curves that cross the
+      margin first flattened to within 0.0005 point; an image is cropped to the
+      pixels that meet it; and a glyph run or a stamp instance that does not
+      meet it is left out.
     - A matrix is written only for a stroke whose pen the transforms above it
       stretch unevenly, for a glyph run they do more than scale evenly, and for
       an image they do more than scale along the axes. The numbers under a

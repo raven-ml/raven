@@ -237,40 +237,24 @@ let clip_by ctx ~w ~h (clip : Surface.clip) m rule path : Surface.clip =
         { x0; y0; x1; y1; mask = Some mask }
       end
 
-(* [widest m p] bounds the device distance from their paths that the strokes of
-   [p] under [m] cover. An instance of a scaled stamp divides its pens by the
-   scale that multiplies its map, so its pens reach as far as unscaled ones. *)
-let rec widest m (p : Picture.t) =
-  match p with
-  | Empty | Fill _ | Glyphs _ | Image _ -> 0.
-  | Stroke { stroke; _ } -> Stroke.reach stroke *. Affine.stretch m
-  | Group ps -> List.fold_left (fun r p -> Float.max r (widest m p)) 0. ps
-  | Transform { m = m'; picture } -> widest Affine.(m * m') picture
-  | Clip { picture; _ }
-  | Opacity { picture; _ }
-  | Tag { picture; _ }
-  | Stamp { picture; _ } ->
-      widest m picture
-
 (* [extent clip m ~pen p] is the device box of [p] under [m] within [clip], with
    a pixel of margin, its pens' widths multiplied by [pen]. *)
 let extent (clip : Surface.clip) m ~pen p =
-  match Picture.bounds (Picture.transform m p) with
+  match Instances.bounds (Picture.transform m p) with
   | None -> None
   | Some b ->
       let within lo hi v =
         int_of_float (Float.min (float hi) (Float.max (float lo) v))
       in
       (* [bounds] counts each pen once: grow by what [pen] adds to it. *)
-      let g = 1. +. if pen > 1. then (pen -. 1.) *. widest m p else 0. in
+      let g =
+        1. +. if pen > 1. then (pen -. 1.) *. Instances.reach m 1. p else 0.
+      in
       let x0 = within clip.x0 clip.x1 (Float.floor (Box2.minx b -. g)) in
       let x1 = within clip.x0 clip.x1 (Float.ceil (Box2.maxx b +. g)) in
       let y0 = within clip.y0 clip.y1 (Float.floor (Box2.miny b -. g)) in
       let y1 = within clip.y0 clip.y1 (Float.ceil (Box2.maxy b +. g)) in
       if x1 <= x0 || y1 <= y0 then None else Some (x0, y0, x1, y1)
-  | exception Invalid_argument _ ->
-      (* Bounds near [max_float] do not fit a box: the whole window then. *)
-      Some (clip.x0, clip.y0, clip.x1, clip.y1)
 
 (* Planes
 
@@ -490,104 +474,125 @@ and paint ctx t clip rule color =
   Cover.paint ctx.cover t clip rule sr sg sb sa
 
 and stamp ctx t clip m style picture xs ys scales fills strokes =
-  let instance i s =
-    let pick a outer = match a with Some a -> Some a.(i) | None -> outer in
-    {
-      fills = pick fills style.fills;
-      strokes = pick strokes style.strokes;
-      pen = style.pen /. s;
-    }
-  in
-  (* An instance's device position, rounded to a quarter of a pixel, in
-     quarters, or [None] if it is not finite or far beyond the window. *)
-  let quarters i =
-    let x = xs.(i) and y = ys.(i) in
-    let dx = (m.xx *. x) +. (m.xy *. y) +. m.x0 in
-    let dy = (m.yx *. x) +. (m.yy *. y) +. m.y0 in
-    if Float.abs dx < 1e15 && Float.abs dy < 1e15 then
-      Some
-        ( int_of_float (Float.round (dx *. 4.)),
-          int_of_float (Float.round (dy *. 4.)) )
-    else None
-  in
   let lin = Affine.linear m in
-  let in_full () =
-    for i = 0 to Array.length xs - 1 do
-      let s = match scales with None -> 1. | Some a -> a.(i) in
-      match quarters i with
-      | None -> ()
-      | Some (qx, qy) -> (
-          let at = Affine.translate (float qx /. 4.) (float qy /. 4.) in
-          let m = Affine.(at * lin * scale s s) in
-          (* As [Picture.transform], a map with no inverse paints nothing: that
-             of a scale that is not finite or is 0 among them. *)
-          match Affine.invert m with
-          | None -> ()
-          | Some _ -> draw ctx t clip m (instance i s) picture)
-    done
-  in
-  (* A tile is bounded by the picture's pens, which those of an instance shrunk
-     by an enclosing stamp's scale outgrow. *)
-  let tile =
-    match scales with
-    | Some _ -> None
-    | None when style.pen > 1. || not (planar picture) -> None
-    | None -> (
-        match Picture.bounds (Picture.transform lin picture) with
-        | None -> None
-        | Some b ->
-            let bx0 = int_of_float (Float.floor (Box2.minx b)) - 1 in
-            let by0 = int_of_float (Float.floor (Box2.miny b)) - 1 in
-            let tw = int_of_float (Float.ceil (Box2.maxx b)) + 2 - bx0 in
-            let th = int_of_float (Float.ceil (Box2.maxy b)) + 2 - by0 in
-            if tw * th <= max_tile then Some (bx0, by0, tw, th) else None
-        | exception Invalid_argument _ -> None)
-  in
-  match tile with
-  | None -> in_full ()
-  | Some (bx0, by0, tw, th) ->
-      let phases = Array.make 16 None in
-      let phase fx fy =
-        let k = (fy * 4) + fx in
-        match phases.(k) with
-        | Some planes -> planes
+  match Instances.bounds (Picture.transform lin picture) with
+  | None -> ()
+  | Some extent -> (
+      let instance i s =
+        {
+          fills = Instances.color fills i ~own:Option.some style.fills;
+          strokes = Instances.color strokes i ~own:Option.some style.strokes;
+          pen = style.pen /. s;
+        }
+      in
+      (* An instance's device position, rounded to a quarter of a pixel, in
+         quarters, or [None] if it is not finite or far beyond the window. *)
+      let quarters i =
+        let x = xs.(i) and y = ys.(i) in
+        let dx = (m.xx *. x) +. (m.xy *. y) +. m.x0 in
+        let dy = (m.yx *. x) +. (m.yy *. y) +. m.y0 in
+        if Float.abs dx < 1e15 && Float.abs dy < 1e15 then
+          Some
+            ( int_of_float (Float.round (dx *. 4.)),
+              int_of_float (Float.round (dy *. 4.)) )
+        else None
+      in
+      let window =
+        Box2.v (float clip.x0) (float clip.y0)
+          (float (clip.x1 - clip.x0))
+          (float (clip.y1 - clip.y0))
+      in
+      (* Instances keep the pens of the picture, which reach this far around
+         them. *)
+      let kept = Instances.reach lin style.pen picture in
+      let at qx qy = P2.v (float qx /. 4.) (float qy /. 4.) in
+      let in_full () =
+        for i = 0 to Array.length xs - 1 do
+          let s = match scales with None -> 1. | Some a -> a.(i) in
+          match quarters i with
+          | Some (qx, qy)
+            when Instances.shows window ~reach:kept (at qx qy) s extent -> (
+              let at = Affine.translate (float qx /. 4.) (float qy /. 4.) in
+              let m = Affine.(at * lin * scale s s) in
+              (* As [Picture.transform], a map with no inverse paints nothing:
+                 that of a scale that is not finite or is 0 among them. *)
+              match Affine.invert m with
+              | None -> ()
+              | Some _ -> draw ctx t clip m (instance i s) picture)
+          | _ -> ()
+        done
+      in
+      (* A tile is bounded by the picture's pens, which those of an instance
+         shrunk by an enclosing stamp's scale outgrow. It is at least three
+         pixels wider and higher than the extent, which is tested in floats
+         first, since the extent's size may overflow an [int]. *)
+      let tile =
+        match scales with
+        | Some _ -> None
+        | None when style.pen > 1. || not (planar picture) -> None
+        | None
+          when (Box2.w extent +. 3.) *. (Box2.h extent +. 3.) > float max_tile
+          ->
+            None
         | None ->
-            let tile =
-              { Surface.x0 = 0; y0 = 0; x1 = tw; y1 = th; mask = None }
-            in
-            let m =
-              Affine.(
-                translate
-                  ((float fx /. 4.) -. float bx0)
-                  ((float fy /. 4.) -. float by0)
-                * lin)
-            in
-            let planes =
-              List.rev
-                (planes ctx ~w:tw ~h:th tile m ~fills:(fills <> None)
-                   ~strokes:(strokes <> None) style picture [])
-            in
-            phases.(k) <- Some planes;
-            planes
+            let bx0 = int_of_float (Float.floor (Box2.minx extent)) - 1 in
+            let by0 = int_of_float (Float.floor (Box2.miny extent)) - 1 in
+            let tw = int_of_float (Float.ceil (Box2.maxx extent)) + 2 - bx0 in
+            let th = int_of_float (Float.ceil (Box2.maxy extent)) + 2 - by0 in
+            if tw * th <= max_tile then Some (bx0, by0, tw, th) else None
       in
-      let rgba a i =
-        match a with Some a -> premultiplied a.(i) | None -> (0., 0., 0., 0.)
-      in
-      for i = 0 to Array.length xs - 1 do
-        match quarters i with
-        | None -> ()
-        | Some (qx, qy) ->
-            let ox = (qx asr 2) + bx0 and oy = (qy asr 2) + by0 in
-            if
-              ox < clip.x1
-              && ox + tw > clip.x0
-              && oy < clip.y1
-              && oy + th > clip.y0
-            then
-              composite t clip ox oy ~tw ~th
-                (phase (qx land 3) (qy land 3))
-                (rgba fills i) (rgba strokes i)
-      done
+      match tile with
+      | None -> in_full ()
+      | Some (bx0, by0, tw, th) ->
+          let phases = Array.make 16 None in
+          let phase fx fy =
+            let k = (fy * 4) + fx in
+            match phases.(k) with
+            | Some planes -> planes
+            | None ->
+                let tile =
+                  { Surface.x0 = 0; y0 = 0; x1 = tw; y1 = th; mask = None }
+                in
+                let m =
+                  Affine.(
+                    translate
+                      ((float fx /. 4.) -. float bx0)
+                      ((float fy /. 4.) -. float by0)
+                    * lin)
+                in
+                let planes =
+                  List.rev
+                    (planes ctx ~w:tw ~h:th tile m ~fills:(fills <> None)
+                       ~strokes:(strokes <> None) style picture [])
+                in
+                phases.(k) <- Some planes;
+                planes
+          in
+          let rgba a i =
+            Instances.color a i ~own:premultiplied (0., 0., 0., 0.)
+          in
+          (* Positions beyond floats show everywhere: the window clips them. *)
+          let ps =
+            Option.value ~default:Instances.everywhere
+              (Instances.positions window ~reach:kept extent)
+          in
+          let px0 = Box2.minx ps and px1 = Box2.maxx ps in
+          let py0 = Box2.miny ps and py1 = Box2.maxy ps in
+          let shows qx qy =
+            let x = float qx /. 4. and y = float qy /. 4. in
+            x >= px0 && x <= px1 && y >= py0 && y <= py1
+          in
+          for i = 0 to Array.length xs - 1 do
+            match quarters i with
+            | Some (qx, qy) when shows qx qy ->
+                composite t clip
+                  ((qx asr 2) + bx0)
+                  ((qy asr 2) + by0)
+                  ~tw ~th
+                  (phase (qx land 3) (qy land 3))
+                  (rgba fills i) (rgba strokes i)
+            | _ -> ()
+          done)
 
 (* Rendering *)
 

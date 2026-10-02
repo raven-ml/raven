@@ -68,6 +68,7 @@
   hugin.next.font
   hugin.next.vg
   hugin.next.vg.pdf
+  hugin.next.vg.svg
   vg_corpus
   nx
   compress.deflate

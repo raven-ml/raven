@@ -90,23 +90,6 @@ let family doc font =
 
 (* Writing in a frame *)
 
-(* What paints a leaf of a kind: its own colour, the one an enclosing [use]
-   sets, which it then inherits, or a colour a stamp written in full gives. *)
-type paint = Own | Inherit | Fixed of Color.t
-
-type ctx = {
-  m : Affine.t;  (** From the picture's coordinates to the frame's. *)
-  cut : Box2.t;  (** Where geometry is cut, as {!Vector} says. *)
-  mag : float;  (** How much the page magnifies the frame's numbers. *)
-  d : int;  (** Decimals of the frame's numbers. *)
-  fills : paint;
-  strokes : paint;
-  fill_set : bool;  (** An enclosing [use] sets [fill] and [fill-opacity]. *)
-  stroke_set : bool;
-  pen : float;  (** What the lengths of pens are multiplied by. *)
-  pen_set : bool;  (** An enclosing [use] sets the pen's lengths. *)
-}
-
 let add_num b d v = Vector.add_fixed b d v
 
 let add_attr_num b name d v =
@@ -123,7 +106,7 @@ let add_color b name ~set c =
   if Color.alpha c < 1. || set then
     add_attr_num b (name ^ "-opacity") 3 (Color.alpha c)
 
-let add_paint b name ~set paint own =
+let add_paint b name ~set (paint : Vector.paint) own =
   match paint with
   | Own -> add_color b name ~set own
   | Fixed c -> add_color b name ~set c
@@ -168,14 +151,14 @@ let data b d =
     close = (fun () -> Buffer.add_char b 'Z');
   }
 
-let area_data ctx m path =
+let area_data (ctx : Vector.ctx) m path =
   let b = Buffer.create 64 in
   Vector.area m ctx.cut path (data b ctx.d);
   Buffer.contents b
 
 (* Leaves *)
 
-let fill ctx b rule color path =
+let fill b (ctx : Vector.ctx) rule color path =
   let d = area_data ctx ctx.m path in
   if d <> "" then begin
     Printf.bprintf b "<path d=\"%s\"" d;
@@ -186,13 +169,11 @@ let fill ctx b rule color path =
   end
 
 (* [add_pen b d pen ~offset] adds the attributes of [pen] in a frame of [d]
-   decimals, its dashes starting [offset] further. Dash lengths and offsets get
-   three decimals more, since the errors of the lengths add up along a subpath,
-   so that a thousand of them stay within the accuracy. *)
+   decimals, its dashes starting [offset] further. *)
 let add_pen b d (pen : Vector.pen) ~offset =
   add_attr_num b "stroke-width" d pen.width;
-  if pen.dash <> [] then begin
-    let dd = Vector.finer 3 d in
+  if Vector.is_dashed d pen then begin
+    let dd = Vector.dash_decimals d in
     Buffer.add_string b " stroke-dasharray=\"";
     List.iteri
       (fun i v ->
@@ -200,24 +181,11 @@ let add_pen b d (pen : Vector.pen) ~offset =
         add_num b dd v)
       pen.dash;
     Buffer.add_char b '"';
-    let period = List.fold_left ( +. ) 0. pen.dash in
-    let period =
-      if List.length pen.dash mod 2 = 1 then 2. *. period else period
-    in
-    let offset = Float.rem (pen.offset +. offset) period in
+    let offset = Vector.phase pen offset in
     if offset <> 0. then add_attr_num b "stroke-dashoffset" dd offset
   end
 
-let stroke ctx b s color path =
-  let lin = Affine.linear ctx.m in
-  let pen = Vector.pen ctx.m ctx.pen s in
-  let reach = Stroke.reach s *. (ctx.pen *. Affine.stretch ctx.m) in
-  let cut = Vector.grown ctx.cut reach in
-  (* A pen the frame stretches unevenly is written under the frame's linear
-     part, scaled to stretch nothing more than the page does. *)
-  let frame = if Vector.is_similar lin then None else Some (Vector.unit lin) in
-  let out = Option.map (fun u -> Option.get (Affine.invert u)) frame in
-  let dashed = Stroke.dash s <> [] in
+let stroke b (ctx : Vector.ctx) (st : Vector.stroke) color outline =
   let pieces = ref [] and current = Buffer.create 64 and offset = ref 0. in
   let flush () =
     if Buffer.length current > 0 then begin
@@ -225,9 +193,7 @@ let stroke ctx b s color path =
       Buffer.clear current
     end
   in
-  Vector.outline ?out ctx.m cut
-    ~points:(Stroke.cap s <> `Square)
-    ~dashed path
+  outline
     ~piece:(fun d ->
       if d <> !offset then begin
         flush ();
@@ -237,10 +203,11 @@ let stroke ctx b s color path =
   flush ();
   let element (offset, d) =
     Buffer.add_string b "<path";
-    Option.iter (fun u -> add_matrix b u 0. 0. ctx.d) frame;
+    Option.iter (fun u -> add_matrix b u 0. 0. ctx.d) st.frame;
     Printf.bprintf b " d=\"%s\" fill=\"none\"" d;
     add_paint b "stroke" ~set:ctx.stroke_set ctx.strokes color;
-    if not ctx.pen_set then add_pen b ctx.d pen ~offset;
+    if not ctx.pen_set then add_pen b ctx.d st.pen ~offset;
+    let s = st.style in
     (match Stroke.cap s with
     | `Butt -> ()
     | `Round -> Buffer.add_string b " stroke-linecap=\"round\""
@@ -296,7 +263,7 @@ let unshaped =
   "font-variant-ligatures:none;font-kerning:none;font-feature-settings:'liga' \
    0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0"
 
-let glyphs doc ctx b color at run =
+let glyphs doc b (ctx : Vector.ctx) color at run =
   let m = Affine.(ctx.m * translate (P2.x at) (P2.y at)) in
   if Vector.run_meets ctx.cut m run then
     match text_of run with
@@ -340,14 +307,8 @@ let glyphs doc ctx b color at run =
         Printf.bprintf b "\" font-family=\"%s\"" (family doc (Run.font run));
         (* The size gets the decimals that keep outlines, which reach [e] ems
            from their origin, within a tenth of the accuracy. *)
-        let e =
-          let bx = Font.bounds (Run.font run) in
-          Float.max
-            (Float.max (Float.abs (Box2.minx bx)) (Float.abs (Box2.maxx bx)))
-            (Float.max (Float.abs (Box2.miny bx)) (Float.abs (Box2.maxy bx)))
-        in
         add_attr_num b "font-size"
-          (Vector.finer 1 (Vector.decimals (ctx.mag *. e)))
+          (Vector.scale_decimals ctx (Vector.ems (Run.font run)))
           (Run.size run *. s);
         add_paint b "fill" ~set:ctx.fill_set ctx.fills color;
         if ctx.stroke_set then Buffer.add_string b " stroke=\"none\"";
@@ -371,48 +332,39 @@ let glyphs doc ctx b color at run =
         done;
         Buffer.add_string b "</g>\n"
 
-let image ctx b box pixels =
-  let shape = Nx.shape pixels in
-  let h = shape.(0) and w = shape.(1) in
-  match Vector.crop ctx.cut ctx.m box w h with
-  | None -> ()
-  | Some (c0, r0, c1, r1) ->
-      let cw = Box2.w box /. float w and ch = Box2.h box /. float h in
-      let x = Box2.minx box +. (float c0 *. cw)
-      and y = Box2.miny box +. (float r0 *. ch) in
-      let bw = float (c1 - c0) *. cw and bh = float (r1 - r0) *. ch in
-      let pixels =
-        if c0 = 0 && r0 = 0 && c1 = w && r1 = h then pixels
-        else Nx.slice [ R (r0, r1); R (c0, c1); A ] pixels
-      in
-      let lin = Affine.linear ctx.m in
-      Buffer.add_string b "<image";
-      if Vector.is_axial lin then begin
-        let p = P2.transform ctx.m (P2.v x y)
-        and q = P2.transform ctx.m (P2.v (x +. bw) (y +. bh)) in
-        (* The corners rounded, so that each edge is within the accuracy. *)
-        let round v =
-          let k = 10. ** float ctx.d in
-          Float.round (v *. k) /. k
-        in
-        add_attr_num b "x" ctx.d (P2.x p);
-        add_attr_num b "y" ctx.d (P2.y p);
-        add_attr_num b "width" ctx.d (round (P2.x q) -. round (P2.x p));
-        add_attr_num b "height" ctx.d (round (P2.y q) -. round (P2.y p))
-      end
-      else begin
-        let s = Affine.stretch lin in
-        let o = P2.transform ctx.m (P2.v x y) in
-        add_matrix b (Vector.unit lin) (P2.x o) (P2.y o) ctx.d;
-        (* Lengths under a matrix add their errors to its origin's. *)
-        add_attr_num b "width" (Vector.finer 1 ctx.d) (s *. bw);
-        add_attr_num b "height" (Vector.finer 1 ctx.d) (s *. bh)
-      end;
-      Buffer.add_string b
-        " preserveAspectRatio=\"none\" style=\"image-rendering:pixelated\" \
-         href=\"data:image/png;base64,";
-      add_base64 b (Nx_io.encode_png pixels);
-      Buffer.add_string b "\"/>\n"
+let image b (ctx : Vector.ctx) (im : Vector.image) =
+  let c0, r0, c1, r1 = im.window in
+  let shape = Nx.shape im.pixels in
+  let pixels =
+    if c0 = 0 && r0 = 0 && c1 = shape.(1) && r1 = shape.(0) then im.pixels
+    else Nx.slice [ R (r0, r1); R (c0, c1); A ] im.pixels
+  in
+  let x = im.x and y = im.y and bw = im.w and bh = im.h in
+  let lin = Affine.linear ctx.m in
+  Buffer.add_string b "<image";
+  if Vector.is_axial lin then begin
+    let p = P2.transform ctx.m (P2.v x y)
+    and q = P2.transform ctx.m (P2.v (x +. bw) (y +. bh)) in
+    (* The corners rounded, so that each edge is within the accuracy. *)
+    let round = Vector.rounded ctx.d in
+    add_attr_num b "x" ctx.d (P2.x p);
+    add_attr_num b "y" ctx.d (P2.y p);
+    add_attr_num b "width" ctx.d (round (P2.x q) -. round (P2.x p));
+    add_attr_num b "height" ctx.d (round (P2.y q) -. round (P2.y p))
+  end
+  else begin
+    let s = Affine.stretch lin in
+    let o = P2.transform ctx.m (P2.v x y) in
+    add_matrix b (Vector.unit lin) (P2.x o) (P2.y o) ctx.d;
+    (* Lengths under a matrix add their errors to its origin's. *)
+    add_attr_num b "width" (Vector.finer 1 ctx.d) (s *. bw);
+    add_attr_num b "height" (Vector.finer 1 ctx.d) (s *. bh)
+  end;
+  Buffer.add_string b
+    " preserveAspectRatio=\"none\" style=\"image-rendering:pixelated\" \
+     href=\"data:image/png;base64,";
+  add_base64 b (Nx_io.encode_png pixels);
+  Buffer.add_string b "\"/>\n"
 
 (* Tags *)
 
@@ -474,238 +426,129 @@ let add_exacts b name vs =
     vs;
   Buffer.add_char b '"'
 
-(* Pictures *)
+(* Nodes *)
 
-let rec picture doc ctx b (p : Picture.t) =
-  match p with
-  | Empty -> ()
-  | Fill { rule; color; path } -> fill ctx b rule color path
-  | Stroke { stroke = s; color; path } -> stroke ctx b s color path
-  | Glyphs { color; at; run } -> glyphs doc ctx b color at run
-  | Image { box; pixels } -> image ctx b box pixels
-  | Group ps -> List.iter (picture doc ctx b) ps
-  | Clip { rule; path; picture = p } ->
-      let clip = Buffer.create 64 in
-      Printf.bprintf clip "<path d=\"%s\"%s/>" (area_data ctx ctx.m path)
-        (if rule = `Even_odd then " clip-rule=\"evenodd\"" else "");
-      let content = Buffer.contents clip in
-      let id = id "c" content in
-      define doc id
-        (Printf.sprintf "<clipPath id=\"%s\">%s</clipPath>\n" id content);
-      Printf.bprintf b "<g clip-path=\"url(#%s)\">\n" id;
-      picture doc ctx b p;
-      Buffer.add_string b "</g>\n"
-  | Transform { m; picture = p } ->
-      (* Transforms that compose beyond the range of floats, or to a map with no
-         inverse, leave nothing to write. *)
-      let m = Affine.(ctx.m * m) in
-      if Affine.invert m <> None then picture doc { ctx with m } b p
-  | Opacity { opacity; picture = p } ->
-      Buffer.add_string b "<g";
-      add_attr_num b "opacity" 3 opacity;
-      Buffer.add_string b ">\n";
-      picture doc ctx b p;
-      Buffer.add_string b "</g>\n"
-  | Tag { tag = { id; rows }; picture = p } -> (
-      Buffer.add_string b "<g";
-      add_tag_id b id;
-      match (rows, p) with
-      | Rows a, Stamp { picture = p; xs; ys; scales; fills; strokes } ->
-          Buffer.add_string b ">\n";
-          stamp doc ctx b ~rows:(Some a) p xs ys scales fills strokes;
-          Buffer.add_string b "</g>\n"
-      | Rows a, _ ->
-          add_rows b a;
-          Buffer.add_string b ">\n";
-          picture doc ctx b p;
-          Buffer.add_string b "</g>\n"
-      | Cells { box; width; height }, _ ->
-          add_exacts b "data-cells"
-            [
-              Box2.minx box;
-              Box2.miny box;
-              Box2.w box;
-              Box2.h box;
-              float width;
-              float height;
-            ];
-          if not (Affine.equal ctx.m Affine.id) then
-            add_exacts b "data-matrix"
-              [ ctx.m.xx; ctx.m.yx; ctx.m.xy; ctx.m.yy; ctx.m.x0; ctx.m.y0 ];
-          Buffer.add_string b ">\n";
-          picture doc ctx b p;
-          Buffer.add_string b "</g>\n")
-  | Stamp { picture = p; xs; ys; scales; fills; strokes } ->
-      stamp doc ctx b ~rows:None p xs ys scales fills strokes
+let clip doc b (ctx : Vector.ctx) rule path k =
+  let clip = Buffer.create 64 in
+  Printf.bprintf clip "<path d=\"%s\"%s/>" (area_data ctx ctx.m path)
+    (if rule = `Even_odd then " clip-rule=\"evenodd\"" else "");
+  let content = Buffer.contents clip in
+  let id = id "c" content in
+  define doc id
+    (Printf.sprintf "<clipPath id=\"%s\">%s</clipPath>\n" id content);
+  Printf.bprintf b "<g clip-path=\"url(#%s)\">\n" id;
+  k b;
+  Buffer.add_string b "</g>\n"
 
-and stamp doc ctx b ~rows p xs ys scales fills strokes =
-  let lin = Affine.linear ctx.m in
-  let scale i = match scales with None -> 1. | Some a -> a.(i) in
-  let pick a i outer = match a with Some a -> Fixed a.(i) | None -> outer in
-  let open_row i =
-    match rows with
-    | None -> ()
-    | Some a -> Printf.bprintf b " data-row=\"%d\"" a.(i)
-  in
-  let pens = if scales = None then [] else Vector.pens lin ctx.pen p in
-  let finite i =
-    Float.is_finite xs.(i)
-    && Float.is_finite ys.(i)
-    && Float.is_finite (scale i)
-    && scale i > 0.
-  in
-  if scales <> None && (Vector.scales_within p || List.length pens > 1) then
-    (* In full: each instance's picture, its colours and pens its own. *)
-    for i = 0 to Array.length xs - 1 do
-      let s = scale i in
-      let m = Affine.(ctx.m * translate xs.(i) ys.(i) * scale s s) in
-      (* An instance at a position or scale that is not finite, or of scale 0,
-         has no inverse. *)
-      if Affine.invert m <> None then
-        let shows =
-          match Picture.bounds (Picture.transform m p) with
-          | Some bx -> Vector.meets ctx.cut bx
-          | None -> true
-          | exception Invalid_argument _ -> true
-        in
-        if shows then begin
-          let ictx =
-            {
-              ctx with
-              m;
-              fills = pick fills i ctx.fills;
-              strokes = pick strokes i ctx.strokes;
-              pen = ctx.pen /. s;
-            }
-          in
-          if rows = None then picture doc ictx b p
-          else begin
-            Buffer.add_string b "<g";
-            open_row i;
-            Buffer.add_string b ">\n";
-            picture doc ictx b p;
-            Buffer.add_string b "</g>\n"
-          end
-        end
-    done
-  else begin
-    let largest = ref 1. in
-    Option.iter
-      (Array.iteri (fun i s -> if finite i then largest := Float.max !largest s))
-      scales;
-    let mag = ctx.mag *. !largest in
-    let dctx =
-      {
-        m = lin;
-        cut = Vector.all;
-        mag;
-        (* An instance places the definition's points by its translation,
-           written to the accuracy: the definition's numbers and the pen an
-           instance sets get the decimals that keep each within a tenth of
-           it. *)
-        d = Vector.finer 1 (Vector.decimals mag);
-        fills = (if fills = None then ctx.fills else Inherit);
-        strokes = (if strokes = None then ctx.strokes else Inherit);
-        fill_set = ctx.fill_set || fills <> None;
-        stroke_set = ctx.stroke_set || strokes <> None;
-        pen = ctx.pen;
-        pen_set = ctx.pen_set || scales <> None;
-      }
-    in
-    let body = Buffer.create 256 in
-    picture doc dctx body p;
-    let content = Buffer.contents body in
-    let def = id "s" content in
-    define doc def (Printf.sprintf "<g id=\"%s\">\n%s</g>\n" def content);
-    let extent =
-      match Picture.bounds (Picture.transform lin p) with
-      | bx -> bx
-      | exception Invalid_argument _ -> None
-    in
-    for i = 0 to Array.length xs - 1 do
-      if finite i then begin
-        let s = scale i in
-        let at = P2.transform ctx.m (P2.v xs.(i) ys.(i)) in
-        let x = P2.x at and y = P2.y at in
-        (* Pens kept while the instance shrinks reach beyond its box scaled. *)
-        let shows =
-          match extent with
-          | None -> true
-          | Some e ->
-              let g =
-                Float.max 0. (1. -. s) *. 0.5 *. Float.max (Box2.w e) (Box2.h e)
-              in
-              Vector.overlaps ctx.cut
-                (x +. (s *. Box2.minx e) -. g)
-                (y +. (s *. Box2.miny e) -. g)
-                (x +. (s *. Box2.maxx e) +. g)
-                (y +. (s *. Box2.maxy e) +. g)
-        in
-        if shows then begin
-          Printf.bprintf b "<use href=\"#%s\"" def;
-          if scales = None then begin
-            add_attr_num b "x" ctx.d x;
-            add_attr_num b "y" ctx.d y
-          end
-          else begin
-            Buffer.add_string b " transform=\"translate(";
-            add_num b ctx.d x;
-            Buffer.add_char b ' ';
-            add_num b ctx.d y;
-            Buffer.add_string b ") scale(";
-            Vector.add_exact b s;
-            Buffer.add_string b ")\"";
-            match pens with
-            | [ pen ] ->
-                let k = 1. /. s in
-                add_pen b
-                  (Vector.finer 1 (Vector.decimals (ctx.mag *. s)))
-                  {
-                    width = pen.width *. k;
-                    dash = List.map (fun d -> d *. k) pen.dash;
-                    offset = pen.offset *. k;
-                  }
-                  ~offset:0.
-            | _ -> ()
-          end;
-          Option.iter
-            (fun a -> add_color b "fill" ~set:ctx.fill_set a.(i))
-            fills;
-          Option.iter
-            (fun a -> add_color b "stroke" ~set:ctx.stroke_set a.(i))
-            strokes;
-          open_row i;
-          Buffer.add_string b "/>\n"
-        end
-      end
-    done
+let opacity b _ opacity _ k =
+  Buffer.add_string b "<g";
+  add_attr_num b "opacity" 3 opacity;
+  Buffer.add_string b ">\n";
+  k b;
+  Buffer.add_string b "</g>\n"
+
+let tag b (ctx : Vector.ctx) ({ id; rows } : Picture.tag) k =
+  Buffer.add_string b "<g";
+  add_tag_id b id;
+  (match rows with
+  | Rows a -> add_rows b a
+  | Cells { box; width; height } ->
+      add_exacts b "data-cells"
+        [
+          Box2.minx box;
+          Box2.miny box;
+          Box2.w box;
+          Box2.h box;
+          float width;
+          float height;
+        ];
+      if not (Affine.equal ctx.m Affine.id) then
+        add_exacts b "data-matrix"
+          [ ctx.m.xx; ctx.m.yx; ctx.m.xy; ctx.m.yy; ctx.m.x0; ctx.m.y0 ]);
+  Buffer.add_string b ">\n";
+  k b;
+  Buffer.add_string b "</g>\n"
+
+(* Stamps: a definition in [<defs>] that each instance [<use>]s, its pen,
+   colours and row set on the [<use>]. *)
+
+let define doc _ _ k =
+  let body = Buffer.create 256 in
+  k body;
+  let content = Buffer.contents body in
+  let def = id "s" content in
+  define doc def (Printf.sprintf "<g id=\"%s\">\n%s</g>\n" def content);
+  def
+
+let add_row b (st : Vector.stamp) i =
+  match st.rows with
+  | None -> ()
+  | Some a -> Printf.bprintf b " data-row=\"%d\"" a.(i)
+
+let use b (ctx : Vector.ctx) (st : Vector.stamp) def i at s =
+  let x = P2.x at and y = P2.y at in
+  Printf.bprintf b "<use href=\"#%s\"" def;
+  if not st.scaled then begin
+    add_attr_num b "x" ctx.d x;
+    add_attr_num b "y" ctx.d y
   end
+  else begin
+    Buffer.add_string b " transform=\"translate(";
+    add_num b ctx.d x;
+    Buffer.add_char b ' ';
+    add_num b ctx.d y;
+    Buffer.add_string b ") scale(";
+    Vector.add_exact b s;
+    Buffer.add_string b ")\"";
+    match st.pens with
+    | [ pen ] ->
+        add_pen b
+          (Vector.scale_decimals ctx s)
+          (Vector.scale_pen (1. /. s) pen)
+          ~offset:0.
+    | _ -> ()
+  end;
+  Option.iter (fun a -> add_color b "fill" ~set:ctx.fill_set a.(i)) st.fills;
+  Option.iter
+    (fun a -> add_color b "stroke" ~set:ctx.stroke_set a.(i))
+    st.strokes;
+  add_row b st i;
+  Buffer.add_string b "/>\n"
+
+let instance b (st : Vector.stamp) i k =
+  match st.rows with
+  | None -> k b
+  | Some _ ->
+      Buffer.add_string b "<g";
+      add_row b st i;
+      Buffer.add_string b ">\n";
+      k b;
+      Buffer.add_string b "</g>\n"
+
+let target doc =
+  {
+    Vector.fill;
+    stroke;
+    glyphs = glyphs doc;
+    image;
+    clip = clip doc;
+    opacity;
+    tag;
+    carry = (fun _ _ s -> s);
+    define = define doc;
+    use;
+    instance;
+  }
 
 (* Documents *)
 
 let render r =
   let w = Renderable.w r and h = Renderable.h r in
-  let margin = Float.max w h in
   let doc =
     { defs = Buffer.create 1024; defined = Hashtbl.create 16; families = [] }
   in
-  let ctx =
-    {
-      m = Affine.id;
-      cut =
-        Box2.v (-.margin) (-.margin) (w +. (2. *. margin)) (h +. (2. *. margin));
-      mag = 1.;
-      d = Vector.decimals 1.;
-      fills = Own;
-      strokes = Own;
-      fill_set = false;
-      stroke_set = false;
-      pen = 1.;
-      pen_set = false;
-    }
-  in
   let body = Buffer.create 4096 in
-  picture doc ctx body (Renderable.picture r);
+  Vector.walk (target doc) (Vector.page r) body (Renderable.picture r);
   let out = Buffer.create (Buffer.length body + Buffer.length doc.defs + 256) in
   Buffer.add_string out
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\

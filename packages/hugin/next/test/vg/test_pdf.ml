@@ -717,18 +717,16 @@ let accuracy =
                     (Stroke.v ~cap:`Butt ~join:`Miter ~miter_limit:4. 1.)
                     red q))
           in
-          (* Cut where the margin and the miter's reach of 2 end. *)
-          is_true (contains s "202 60 m\n50 60 l\n50 50 l\n202 50 l\nS\n"));
-      test "a curve crossing the margin is flattened, one within it kept"
-        (fun () ->
+          (* Cut where the margin and the miter's reach of 2 end, the part
+             beyond running along that edge, whose ink lies off the page. *)
+          is_true (contains s "50 50 m\n202 50 l\n202 60 l\n50 60 l\nh\nS\n"));
+      test "an area's curve crossing the margin is cut at it" (fun () ->
           let big = Path.circle (P2.v 50. 1e6) (1e6 -. 50.) in
           let s = content (pdf (Picture.fill red big)) in
-          equal int 0 (count s " c\n");
           List.iter
-            (fun (x, y) ->
-              at_most ~msg:"magnitude" float_exact ~than:1000.
-                (Float.max (Float.abs x) (Float.abs y)))
-            (points s);
+            (fun v ->
+              at_most ~msg:"magnitude" float_exact ~than:1000. (Float.abs v))
+            (List.concat (operands "m" s @ operands "l" s @ operands "c" s));
           let small = pdf (Picture.fill red (Path.circle (P2.v 50. 50.) 10.)) in
           equal int 4 (count (content small) " c\n"));
       test "an image is cropped to the pixels that meet the margin" (fun () ->
@@ -904,9 +902,79 @@ let accuracy =
 
 (* Stamps *)
 
+(* Stamps of a stroked marker at positions around the margin, 100 points beyond
+   the page, some within it and some just beyond, at scales that both renderers
+   carry in one definition. *)
+let gen_margin_stamp =
+  let open Gen in
+  let coord =
+    frequency
+      [
+        (1, float_range (-130.) 230.);
+        (2, map (fun d -> -100. -. d) (float_range (-6.) 6.));
+        (2, map (fun d -> 200. +. d) (float_range (-6.) 6.));
+      ]
+  in
+  let+ pts = list ~size:(int_range 1 12) (pair coord coord)
+  and+ scaled = bool
+  and+ width = float_range 0.5 6. in
+  let xs = Array.of_list (List.map fst pts)
+  and ys = Array.of_list (List.map snd pts) in
+  let scales =
+    if scaled then
+      Some (Array.mapi (fun i _ -> 0.5 +. (Float.of_int (i mod 4) /. 2.)) xs)
+    else None
+  in
+  Picture.stamp ?scales xs ys
+    (Picture.group
+       [
+         Picture.fill red disc;
+         Picture.stroke (Stroke.v ~join:`Miter width) Color.black disc;
+       ])
+
+let gen_margin_stamp = Gen.with_pp Picture.pp gen_margin_stamp
+
+(* Both renderers cull instances by the one rule of their shared walk: they draw
+   the same instances. *)
+let same_instances p =
+  let n = match p with Picture.Stamp { xs; _ } -> Array.length xs | _ -> 0 in
+  let svg = Hugin_next_vg_svg.render (Renderable.v 100. 100. p) in
+  let drawn = count (content (pdf p)) " Do\n" in
+  cover "an instance left out" (drawn < n);
+  cover "an instance drawn" (drawn > 0);
+  equal int (count svg "<use ") drawn
+
+(* The margin, 100 points around the page. *)
+let margin = Box2.v (-100.) (-100.) 300. 300.
+
+(* An instance whose own bounds meet the margin is drawn: the rule may draw
+   more, never fewer. *)
+let bounded_instances_drawn (p : Picture.t) =
+  match p with
+  | Stamp { xs; ys; scales; picture; _ } ->
+      let meets i =
+        let scales = Option.map (fun a -> [| a.(i) |]) scales in
+        match
+          Picture.bounds
+            (Picture.stamp ?scales [| xs.(i) |] [| ys.(i) |] picture)
+        with
+        | Some b -> Option.is_some (Box2.inter b margin)
+        | None -> false
+      in
+      let expected =
+        List.length (List.filter meets (List.init (Array.length xs) Fun.id))
+      in
+      cover "an instance beyond the margin" (expected < Array.length xs);
+      at_least int ~than:expected (count (content (pdf p)) " Do\n")
+  | _ -> fail "not a stamp"
+
 let stamps =
   group "stamps"
     [
+      prop "the SVG and PDF renderers draw the same instances" gen_margin_stamp
+        same_instances;
+      prop "an instance whose bounds meet the margin is drawn" gen_margin_stamp
+        bounded_instances_drawn;
       test "a stamp writes its picture once and paints it per instance"
         (fun () ->
           let doc =

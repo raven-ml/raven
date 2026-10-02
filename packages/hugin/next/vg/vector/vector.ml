@@ -80,6 +80,8 @@ let add_exact b v =
     in
     Buffer.add_string b s
 
+let rounded d v = Float.round (v *. pow10.(d)) /. pow10.(d)
+
 (* Maps *)
 
 let unit (m : Affine.t) =
@@ -232,8 +234,36 @@ let emit_whole sink s ~close =
   done;
   if close then sink.close ()
 
+(* [cropped r s ~close sink] gives [sink] the subpath [s], closed if [close], as
+   [Path.crop r] cuts it. *)
+let cropped r s ~close sink =
+  let path = ref Path.empty in
+  emit_whole
+    {
+      move = (fun x y -> path := Path.move_to (P2.v x y) !path);
+      line = (fun x y -> path := Path.line_to (P2.v x y) !path);
+      cubic =
+        (fun x1 y1 x2 y2 x y ->
+          path := Path.cubic_to (P2.v x1 y1) (P2.v x2 y2) (P2.v x y) !path);
+      close = (fun () -> path := Path.close !path);
+    }
+    s ~close;
+  Path.fold
+    ~move:(fun () -> sink.move)
+    ~line:(fun () -> sink.line)
+    ~cubic:(fun () -> sink.cubic)
+    ~close:sink.close () (Path.crop r !path)
+
+let area m r q sink =
+  iter_subs m q (fun s ->
+      if all_inside r s then emit_whole sink s ~close:true
+      else cropped r s ~close:true sink)
+
+(* Dashed outlines cut to a box: the pieces of a polyline within it, each a run
+   of commands with the length along the subpath before it. *)
+
 (* Polygons: vertices, each with the edge that arrives at it from the previous
-   one, cyclically: a line, or a cubic through two control points. *)
+   one: a line, or a cubic through two control points. *)
 type poly = {
   mutable px : float array;
   mutable py : float array;
@@ -327,82 +357,6 @@ let polygon r s p =
     end
   done
 
-(* [clip_half src dst ~y ~ge v] clips the polygon [src] into [dst] to the
-   half-plane where the y coordinate if [y], else the x one, is at least [v] if
-   [ge], else at most [v]. Its cubics lie within the box being clipped to, so on
-   the kept side. *)
-let clip_half src dst ~y ~ge v =
-  dst.n <- 0;
-  let coord i = if y then src.py.(i) else src.px.(i) in
-  let keep i = if ge then coord i >= v else coord i <= v in
-  let cross a b =
-    let t = (v -. coord a) /. (coord b -. coord a) in
-    if y then vertex dst (src.px.(a) +. (t *. (src.px.(b) -. src.px.(a)))) v
-    else vertex dst v (src.py.(a) +. (t *. (src.py.(b) -. src.py.(a))))
-  in
-  for i = 0 to src.n - 1 do
-    let prev = if i = 0 then src.n - 1 else i - 1 in
-    if keep i then begin
-      if not (keep prev) then cross prev i;
-      if src.cubic.(i) then
-        vertex dst ~c:(Array.sub src.c (4 * i) 4) src.px.(i) src.py.(i)
-      else vertex dst src.px.(i) src.py.(i)
-    end
-    else if keep prev then cross prev i
-  done
-
-let emit_poly sink p =
-  (* Lines of zero length are dropped; a polygon left with fewer than three
-     vertices and no curve has no area. *)
-  let q = poly () in
-  for i = 0 to p.n - 1 do
-    if
-      p.cubic.(i) || q.n = 0
-      || p.px.(i) <> q.px.(q.n - 1)
-      || p.py.(i) <> q.py.(q.n - 1)
-    then
-      if p.cubic.(i) then
-        vertex q ~c:(Array.sub p.c (4 * i) 4) p.px.(i) p.py.(i)
-      else vertex q p.px.(i) p.py.(i)
-  done;
-  if q.n >= 3 || Array.exists Fun.id (Array.sub q.cubic 0 q.n) then begin
-    sink.move q.px.(0) q.py.(0);
-    for i = 1 to q.n - 1 do
-      if q.cubic.(i) then
-        sink.cubic
-          q.c.(4 * i)
-          q.c.((4 * i) + 1)
-          q.c.((4 * i) + 2)
-          q.c.((4 * i) + 3)
-          q.px.(i) q.py.(i)
-      else sink.line q.px.(i) q.py.(i)
-    done;
-    sink.close ()
-  end
-
-let area ?out m r q sink =
-  let sink = mapped out sink in
-  let a = poly () and b = poly () in
-  iter_subs m q (fun s ->
-      if all_inside r s then emit_whole sink s ~close:true
-      else begin
-        polygon r s a;
-        clip_half a b ~y:false ~ge:true (Box2.minx r);
-        clip_half b a ~y:false ~ge:false (Box2.maxx r);
-        clip_half a b ~y:true ~ge:true (Box2.miny r);
-        clip_half b a ~y:true ~ge:false (Box2.maxy r);
-        emit_poly sink a
-      end)
-
-(* Outlines cut to a box: the pieces of a polyline within it, each a run of
-   commands. *)
-
-type cmd =
-  | Move of float * float
-  | Line of float * float
-  | Cubic of float array
-  | Close
-
 let length out x0 y0 x1 y1 =
   match out with
   | None -> Float.hypot (x1 -. x0) (y1 -. y0)
@@ -410,39 +364,38 @@ let length out x0 y0 x1 y1 =
       let dx = x1 -. x0 and dy = y1 -. y0 in
       Float.hypot ((o.xx *. dx) +. (o.xy *. dy)) ((o.yx *. dx) +. (o.yy *. dy))
 
-let cubic_length out x0 y0 c =
-  let len = ref 0. and px = ref x0 and py = ref y0 in
-  chords x0 y0 c.(0) c.(1) c.(2) c.(3) c.(4) c.(5) (fun x y ->
-      len := !len +. length out !px !py x y;
-      px := x;
-      py := y);
-  !len
-
-(* [cut_outline out r ~dashed s] is the pieces of [s] within [r], each with the
-   length before it, in order. *)
-let cut_outline out r ~dashed s =
+(* [dashes out r s ~piece sink] gives [sink] the pieces of [s] within [r], each
+   preceded by [piece] of the length before it, measured in [out]'s
+   coordinates. *)
+let dashes out r s ~piece sink =
   let p = poly () in
   polygon r s p;
   if s.closed then vertex p p.px.(0) p.py.(0);
-  let pieces = ref [] and current = ref [] and start = ref 0. in
-  let dist = ref 0. in
-  let close_piece () =
-    if !current <> [] then begin
-      pieces := (!start, List.rev !current) :: !pieces;
-      current := []
+  let dist = ref 0. and open_ = ref false in
+  let start d x y =
+    if not !open_ then begin
+      piece d;
+      sink.move x y;
+      open_ := true
     end
   in
   for i = 1 to p.n - 1 do
     let ax = p.px.(i - 1) and ay = p.py.(i - 1) in
     let bx = p.px.(i) and by = p.py.(i) in
     if p.cubic.(i) then begin
-      let c = Array.append (Array.sub p.c (4 * i) 4) [| bx; by |] in
-      if !current = [] then begin
-        start := !dist;
-        current := [ Move (ax, ay) ]
-      end;
-      current := Cubic c :: !current;
-      if dashed then dist := !dist +. cubic_length out ax ay c
+      let c = p.c and k = 4 * i in
+      start !dist ax ay;
+      sink.cubic c.(k) c.(k + 1) c.(k + 2) c.(k + 3) bx by;
+      let px = ref ax and py = ref ay in
+      chords ax ay c.(k)
+        c.(k + 1)
+        c.(k + 2)
+        c.(k + 3)
+        bx by
+        (fun x y ->
+          dist := !dist +. length out !px !py x y;
+          px := x;
+          py := y)
     end
     else begin
       let ex = bx -. ax and ey = by -. ay in
@@ -459,44 +412,22 @@ let cut_outline out r ~dashed s =
       edge ex (Box2.maxx r -. ax);
       edge (-.ey) (ay -. Box2.miny r);
       edge ey (Box2.maxy r -. ay);
-      let len = if dashed then length out ax ay bx by else 0. in
-      if !t0 > !t1 then close_piece ()
+      let len = length out ax ay bx by in
+      if !t0 > !t1 then open_ := false
       else begin
-        if !t0 > 0. || !current = [] then begin
-          close_piece ();
-          start := !dist +. (!t0 *. len);
-          current := [ Move (ax +. (!t0 *. ex), ay +. (!t0 *. ey)) ]
-        end;
+        if !t0 > 0. then open_ := false;
+        start (!dist +. (!t0 *. len)) (ax +. (!t0 *. ex)) (ay +. (!t0 *. ey));
         (* The end exactly, where it is kept, so that a closed subpath returns
            to its start. *)
-        let x, y =
-          if !t1 = 1. then (bx, by) else (ax +. (!t1 *. ex), ay +. (!t1 *. ey))
-        in
-        current := Line (x, y) :: !current;
-        if !t1 < 1. then close_piece ()
+        if !t1 = 1. then sink.line bx by
+        else begin
+          sink.line (ax +. (!t1 *. ex)) (ay +. (!t1 *. ey));
+          open_ := false
+        end
       end;
       dist := !dist +. len
     end
-  done;
-  close_piece ();
-  let pieces = List.rev !pieces in
-  (* A closed solid subpath whose start lies within [r] joins there, its last
-     piece ending at its start: that piece runs on into the first, or closes if
-     it is the first. *)
-  let starts (_, cmds) =
-    match cmds with
-    | Move (x, y) :: _ -> x = p.px.(0) && y = p.py.(0)
-    | _ -> false
-  in
-  if dashed || not s.closed then pieces
-  else
-    match pieces with
-    | [ ((d, cmds) as only) ] when starts only -> [ (d, cmds @ [ Close ]) ]
-    | first :: (_ :: _ as rest) when starts first ->
-        let rev = List.rev rest in
-        let d, cmds = List.hd rev in
-        List.rev (List.tl rev) @ [ (d, cmds @ List.tl (snd first)) ]
-    | _ -> pieces
+  done
 
 let outline ?out m r ~points ~dashed q ~piece sink =
   let sink = mapped out sink in
@@ -517,22 +448,14 @@ let outline ?out m r ~points ~dashed q ~piece sink =
         piece 0.;
         emit_whole sink s ~close:s.closed
       end
-      else
-        List.iter
-          (fun (d, cmds) ->
-            piece (if dashed then d else 0.);
-            List.iter
-              (function
-                | Move (x, y) -> sink.move x y
-                | Line (x, y) -> sink.line x y
-                | Cubic c -> sink.cubic c.(0) c.(1) c.(2) c.(3) c.(4) c.(5)
-                | Close -> sink.close ())
-              cmds)
-          (cut_outline out r ~dashed s))
+      else if dashed then dashes out r s ~piece sink
+      else begin
+        piece 0.;
+        cropped r s ~close:s.closed sink
+      end)
 
 (* Leaves *)
 
-let all = Box2.v (-1e15) (-1e15) 2e15 2e15
 let grown r k = Box2.grow (if k <= 1e15 then k else 1e15) r
 
 let overlaps r minx miny maxx maxy =
@@ -541,19 +464,49 @@ let overlaps r minx miny maxx maxy =
   && miny <= Box2.maxy r
   && maxy >= Box2.miny r
 
-let meets r b =
-  overlaps r (Box2.minx b) (Box2.miny b) (Box2.maxx b) (Box2.maxy b)
-
 let run_meets r m run =
   match Run.bounds run with
   | None ->
       let o = P2.transform m (P2.v 0. 0.) in
       inside r (P2.x o) (P2.y o)
   | Some b -> (
-      try meets r (Box2.transform m b) with Invalid_argument _ -> false)
-  | exception Invalid_argument _ -> false
+      match Box2.transform m b with
+      | b -> overlaps r (Box2.minx b) (Box2.miny b) (Box2.maxx b) (Box2.maxy b)
+      | exception Invalid_argument _ -> false)
 
-let crop r m box w h =
+let ems font =
+  let b = Font.bounds font in
+  Float.max
+    (Float.max (Float.abs (Box2.minx b)) (Float.abs (Box2.maxx b)))
+    (Float.max (Float.abs (Box2.miny b)) (Float.abs (Box2.maxy b)))
+
+type pen = { width : float; dash : float list; offset : float }
+
+let pen m k s =
+  let f = k *. Affine.stretch m in
+  {
+    width = limit (Stroke.width s *. f);
+    dash = List.map (fun d -> limit (d *. f)) (Stroke.dash s);
+    offset = limit (Stroke.dash_offset s *. f);
+  }
+
+let dash_decimals d = finer 3 d
+
+let is_dashed d pen =
+  let d = dash_decimals d in
+  List.exists (fun v -> rounded d v <> 0.) pen.dash
+
+let phase pen offset =
+  let period = List.fold_left ( +. ) 0. pen.dash in
+  let period =
+    if List.length pen.dash mod 2 = 1 then 2. *. period else period
+  in
+  Float.rem (pen.offset +. offset) period
+
+(* [window cut m box w h] is the columns from [c0] to [c1] and rows from [r0] to
+   [r1], exclusive, of an image of [w] by [h] pixels over [box] whose cells,
+   mapped through [m], may meet [cut], if any does. *)
+let window r m box w h =
   let pixel =
     Affine.(
       m
@@ -586,50 +539,312 @@ let crop r m box w h =
       and r1 = within h (Float.ceil (hi P2.y)) in
       if c0 < c1 && r0 < r1 then Some (c0, r0, c1, r1) else None
 
-(* Stamps *)
+(* The walk *)
 
-type pen = { width : float; dash : float list; offset : float }
+type paint = Own | Inherit | Fixed of Color.t
 
-let pen m k s =
-  let f = k *. Affine.stretch m in
+type ctx = {
+  m : Affine.t;
+  cut : Box2.t;
+  mag : float;
+  d : int;
+  fills : paint;
+  strokes : paint;
+  fill_set : bool;
+  stroke_set : bool;
+  pen : float;
+  pen_set : bool;
+}
+
+let page r =
+  let w = Renderable.w r and h = Renderable.h r in
+  let margin = Float.max w h in
   {
-    width = limit (Stroke.width s *. f);
-    dash = List.map (fun d -> limit (d *. f)) (Stroke.dash s);
-    offset = limit (Stroke.dash_offset s *. f);
+    m = Affine.id;
+    cut =
+      Box2.v (-.margin) (-.margin) (w +. (2. *. margin)) (h +. (2. *. margin));
+    mag = 1.;
+    d = decimals 1.;
+    fills = Own;
+    strokes = Own;
+    fill_set = false;
+    stroke_set = false;
+    pen = 1.;
+    pen_set = false;
   }
+
+let box ctx p =
+  match Instances.bounds (Picture.transform ctx.m p) with
+  | None -> None
+  | Some b ->
+      Box2.inter (grown b (Instances.reach ctx.m ctx.pen p +. 1.)) ctx.cut
+
+type stroke = {
+  style : Stroke.t;
+  pen : pen;
+  frame : Affine.t option;
+  dashed : bool;
+}
+
+type image = {
+  pixels : Nx.uint8_t;
+  window : int * int * int * int;
+  x : float;
+  y : float;
+  w : float;
+  h : float;
+}
+
+type stamp = {
+  picture : Picture.t;
+  extent : Box2.t;
+  pens : pen list;
+  decimals : int;
+  translucent : bool;
+  scaled : bool;
+  fills : Color.t array option;
+  strokes : Color.t array option;
+  rows : int array option;
+}
+
+let scale_decimals ctx s = finer 1 (decimals (ctx.mag *. s))
+
+let scale_pen k pen =
+  {
+    width = pen.width *. k;
+    dash = List.map (fun d -> d *. k) pen.dash;
+    offset = pen.offset *. k;
+  }
+
+type ('b, 'd) target = {
+  fill : 'b -> ctx -> Picture.rule -> Color.t -> Path.t -> unit;
+  stroke :
+    'b ->
+    ctx ->
+    stroke ->
+    Color.t ->
+    (piece:(float -> unit) -> sink -> unit) ->
+    unit;
+  glyphs : 'b -> ctx -> Color.t -> P2.t -> Run.t -> unit;
+  image : 'b -> ctx -> image -> unit;
+  clip : 'b -> ctx -> Picture.rule -> Path.t -> ('b -> unit) -> unit;
+  opacity : 'b -> ctx -> float -> Picture.t -> ('b -> unit) -> unit;
+  tag : 'b -> ctx -> Picture.tag -> ('b -> unit) -> unit;
+  carry : ctx -> stamp -> float -> float;
+  define : ctx -> Box2.t -> ('b -> unit) -> 'd;
+  use : 'b -> ctx -> stamp -> 'd -> int -> P2.t -> float -> unit;
+  instance : 'b -> stamp -> int -> ('b -> unit) -> unit;
+}
 
 let pen_equal a b =
   Float.equal a.width b.width
   && List.equal Float.equal a.dash b.dash
   && Float.equal a.offset b.offset
 
+(* [pens m k p] is the distinct pens of the strokes of [p], as [pen] writes them
+   under [m] and the transforms within [p]. *)
 let pens m k p =
-  let found = ref [] in
-  let rec walk m (p : Picture.t) =
-    match p with
-    | Stroke { stroke; _ } ->
-        let q = pen m k stroke in
-        if not (List.exists (pen_equal q) !found) then found := q :: !found
-    | Empty | Fill _ | Glyphs _ | Image _ -> ()
-    | Group ps -> List.iter (walk m) ps
-    | Transform { m = m'; picture } -> walk Affine.(m * m') picture
-    | Clip { picture; _ }
-    | Opacity { picture; _ }
-    | Tag { picture; _ }
-    | Stamp { picture; _ } ->
-        walk m picture
-  in
-  walk (Affine.linear m) p;
-  List.rev !found
+  List.rev
+    (Instances.fold_strokes
+       (fun m s found ->
+         let q = pen m k s in
+         if List.exists (pen_equal q) found then found else q :: found)
+       (Affine.linear m) p [])
 
-let rec scales_within (p : Picture.t) =
+let scales_within =
+  Instances.exists (function
+    | Stamp { scales = Some _; _ } -> true
+    | _ -> false)
+
+let stroke t b ctx s color path =
+  let lin = Affine.linear ctx.m in
+  let pen = pen ctx.m ctx.pen s in
+  (* A pen the frame stretches unevenly is written under [u], the frame's linear
+     part scaled to stretch nothing more than the page does, rounded as written,
+     and its points under the inverse of [u]. *)
+  let frame =
+    if is_similar lin then None
+    else
+      let u = unit lin in
+      Some
+        {
+          u with
+          xx = rounded 15 u.xx;
+          yx = rounded 15 u.yx;
+          xy = rounded 15 u.xy;
+          yy = rounded 15 u.yy;
+        }
+  in
+  match Option.map Affine.invert frame with
+  | Some None -> ()
+  | out ->
+      let out = Option.join out in
+      let dashed = is_dashed ctx.d pen in
+      let reach = Stroke.reach s *. (ctx.pen *. Affine.stretch ctx.m) in
+      let cut = grown ctx.cut reach in
+      t.stroke b ctx { style = s; pen; frame; dashed } color (fun ~piece sink ->
+          outline ?out ctx.m cut
+            ~points:(Stroke.cap s <> `Square)
+            ~dashed path ~piece sink)
+
+let image t b ctx box pixels =
+  let shape = Nx.shape pixels in
+  let h = shape.(0) and w = shape.(1) in
+  match window ctx.cut ctx.m box w h with
+  | None -> ()
+  | Some ((c0, r0, c1, r1) as window) ->
+      let cw = Box2.w box /. float w and ch = Box2.h box /. float h in
+      let x = Box2.minx box +. (float c0 *. cw)
+      and y = Box2.miny box +. (float r0 *. ch) in
+      let w = float (c1 - c0) *. cw and h = float (r1 - r0) *. ch in
+      t.image b ctx { pixels; window; x; y; w; h }
+
+let fixed c = Fixed c
+
+let rec walk t ctx b (p : Picture.t) =
   match p with
-  | Stamp { scales = Some _; _ } -> true
-  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> false
-  | Group ps -> List.exists scales_within ps
-  | Transform { picture; _ }
-  | Clip { picture; _ }
-  | Opacity { picture; _ }
-  | Tag { picture; _ }
-  | Stamp { picture; _ } ->
-      scales_within picture
+  | Empty -> ()
+  | Fill { rule; color; path } -> t.fill b ctx rule color path
+  | Stroke { stroke = s; color; path } -> stroke t b ctx s color path
+  | Glyphs { color; at; run } -> t.glyphs b ctx color at run
+  | Image { box; pixels } -> image t b ctx box pixels
+  | Group ps -> List.iter (walk t ctx b) ps
+  | Clip { rule; path; picture } ->
+      t.clip b ctx rule path (fun b -> walk t ctx b picture)
+  | Transform { m; picture } ->
+      (* Transforms that compose beyond the range of floats, or to a map with no
+         inverse, leave nothing to write. *)
+      let m = Affine.(ctx.m * m) in
+      if Affine.invert m <> None then walk t { ctx with m } b picture
+  | Opacity { opacity; picture } ->
+      t.opacity b ctx opacity picture (fun b -> walk t ctx b picture)
+  | Tag { tag = { rows = Rows a; _ } as tag; picture = Stamp s } ->
+      t.tag b ctx { tag with rows = Rows [||] } (fun b ->
+          stamp t ctx b ~rows:(Some a) s.picture s.xs s.ys s.scales s.fills
+            s.strokes)
+  | Tag { tag; picture } -> t.tag b ctx tag (fun b -> walk t ctx b picture)
+  | Stamp s ->
+      stamp t ctx b ~rows:None s.picture s.xs s.ys s.scales s.fills s.strokes
+
+and stamp t ctx b ~rows p xs ys scales fills strokes =
+  let lin = Affine.linear ctx.m in
+  match Instances.bounds (Picture.transform lin p) with
+  | None -> ()
+  | Some extent ->
+      let n = Array.length xs in
+      let scale i = match scales with None -> 1. | Some a -> a.(i) in
+      let shown i =
+        let s = scale i in
+        Float.is_finite xs.(i)
+        && Float.is_finite ys.(i)
+        && Float.is_finite s && s > 0.
+      in
+      let scaled = Option.is_some scales in
+      let pens = if scaled then pens lin ctx.pen p else [] in
+      (* Instances keep the pens of [p], which reach this far around them. *)
+      let kept = Instances.reach ctx.m ctx.pen p in
+      let far =
+        Float.max
+          (Float.max
+             (Float.abs (Box2.minx extent))
+             (Float.abs (Box2.maxx extent)))
+          (Float.max
+             (Float.abs (Box2.miny extent))
+             (Float.abs (Box2.maxy extent)))
+      in
+      let translucent =
+        List.exists
+          (Array.exists (fun c -> Color.alpha c < 1.))
+          (List.filter_map Fun.id [ fills; strokes ])
+      in
+      let st =
+        {
+          picture = p;
+          extent;
+          pens;
+          decimals = finer 1 (decimals (ctx.mag *. far));
+          translucent;
+          scaled;
+          fills;
+          strokes;
+          rows;
+        }
+      in
+      (* Instance [i] in full: its picture mapped to the frame, with its own
+         colours and pens. *)
+      let whole i =
+        let s = scale i in
+        let m = Affine.(ctx.m * translate xs.(i) ys.(i) * scale s s) in
+        let at = P2.transform ctx.m (P2.v xs.(i) ys.(i)) in
+        if
+          Instances.shows ctx.cut ~reach:kept at s extent
+          && Affine.invert m <> None
+        then
+          let ictx =
+            {
+              ctx with
+              m;
+              fills = Instances.color fills i ~own:fixed ctx.fills;
+              strokes = Instances.color strokes i ~own:fixed ctx.strokes;
+              pen = ctx.pen /. s;
+            }
+          in
+          t.instance b st i (fun b -> walk t ictx b p)
+      in
+      (* NaN where the definition cannot carry an instance's scale. Instances of
+         a stamp that does not scale them all carry the same. *)
+      let carried = Array.make n Float.nan in
+      if not (scaled && (scales_within p || List.length pens > 1)) then begin
+        let carry = t.carry ctx st in
+        let one = if scaled then Float.nan else carry 1. in
+        for i = 0 to n - 1 do
+          if shown i then
+            carried.(i) <- (if scaled then carry (scale i) else one)
+        done
+      end;
+      let largest = ref 1. and smallest = ref 1. in
+      Array.iter
+        (fun s ->
+          if not (Float.is_nan s) then begin
+            largest := Float.max !largest s;
+            smallest := Float.min !smallest s
+          end)
+        carried;
+      let mag = ctx.mag *. !largest in
+      let dctx =
+        {
+          m = lin;
+          cut = Instances.everywhere;
+          mag;
+          d = finer 1 (decimals mag);
+          fills = (if fills = None then ctx.fills else Inherit);
+          strokes = (if strokes = None then ctx.strokes else Inherit);
+          fill_set = ctx.fill_set || fills <> None;
+          stroke_set = ctx.stroke_set || strokes <> None;
+          (* The widest pen an instance sets: pens kept while instances shrink
+             reach beyond the picture's box, and the boxes of the definition and
+             of the groups within it hold them. *)
+          pen = ctx.pen /. !smallest;
+          pen_set = ctx.pen_set || scaled;
+        }
+      in
+      let def =
+        if Array.for_all Float.is_nan carried then None
+        else
+          Option.map
+            (fun bx -> t.define dctx bx (fun b -> walk t dctx b p))
+            (box dctx p)
+      in
+      for i = 0 to n - 1 do
+        if shown i then
+          (* Boxed once for the two calls that take it. *)
+          let sw = Sys.opaque_identity carried.(i) in
+          if Float.is_nan sw then whole i
+          else
+            match def with
+            | None -> ()
+            | Some def ->
+                let at = P2.transform ctx.m (P2.v xs.(i) ys.(i)) in
+                if Instances.shows ctx.cut ~reach:kept at sw extent then
+                  t.use b ctx st def i at sw
+      done

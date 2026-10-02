@@ -10,11 +10,7 @@ open Hugin_next_vg
 (* Numbers *)
 
 let add_num b d v = Vector.add_fixed b d v
-
-(* [rounded d v] is [v] as written with [d] decimals. *)
-let rounded d v =
-  let p = 10. ** float d in
-  Float.round (v *. p) /. p
+let rounded = Vector.rounded
 
 (* [is_zero d v] is [true] iff [v] is written [0] with [d] decimals. *)
 let is_zero d v = rounded d v = 0.
@@ -83,24 +79,6 @@ let add_alpha doc b op a =
 
 (* Writing in a frame *)
 
-(* What paints a leaf of a kind: its own colour, the one an enclosing instance
-   sets, which it then inherits, or a colour an instance written in full
-   gives. *)
-type paint = Own | Inherit | Fixed of Color.t
-
-type ctx = {
-  m : Affine.t;  (** From the picture's coordinates to the frame's. *)
-  cut : Box2.t;  (** Where geometry is cut, as {!Vector} says. *)
-  mag : float;  (** How much the page magnifies the frame's numbers. *)
-  d : int;  (** Decimals of the frame's numbers. *)
-  fills : paint;
-  strokes : paint;
-  fill_set : bool;  (** An enclosing instance sets the fill colour and [ca]. *)
-  stroke_set : bool;
-  pen : float;  (** What the lengths of pens are multiplied by. *)
-  pen_set : bool;  (** An enclosing instance sets the width and dashes. *)
-}
-
 (* [add_color doc b ~stroking ~set c] sets the colour and alpha of fills, or of
    strokes if [stroking]. An alpha of [1.] is set only if an enclosing instance
    may have set another. *)
@@ -114,7 +92,7 @@ let add_color doc b ~stroking ~set c =
   if Color.alpha c < 1. || set then
     add_alpha doc b (if stroking then "CA" else "ca") (Color.alpha c)
 
-let add_paint doc b ~stroking ~set paint own =
+let add_paint doc b ~stroking ~set (paint : Vector.paint) own =
   match paint with
   | Own -> add_color doc b ~stroking ~set own
   | Fixed c -> add_color doc b ~stroking ~set c
@@ -146,14 +124,14 @@ let ops b d =
     close = (fun () -> Buffer.add_string b "h\n");
   }
 
-let area_ops ctx path =
+let area_ops (ctx : Vector.ctx) path =
   let b = Buffer.create 64 in
   Vector.area ctx.m ctx.cut path (ops b ctx.d);
   Buffer.contents b
 
 (* Leaves *)
 
-let fill doc ctx b rule color path =
+let fill doc b (ctx : Vector.ctx) rule color path =
   let p = area_ops ctx path in
   if p <> "" then begin
     Buffer.add_string b "q\n";
@@ -162,20 +140,8 @@ let fill doc ctx b rule color path =
     Buffer.add_string b (if rule = `Even_odd then "f*\nQ\n" else "f\nQ\n")
   end
 
-(* [dash_decimals d] is the decimals of dash lengths and phases in a frame of
-   [d] decimals: three more, since the errors of the lengths add up along a
-   subpath, so that a thousand of them stay within the accuracy. *)
-let dash_decimals d = Vector.finer 3 d
-
-(* [is_dashed d pen] is [true] iff a length of the dashes of [pen] is written
-   non-zero in a frame of [d] decimals: a pattern that is not is written
-   solid. *)
-let is_dashed d (pen : Vector.pen) =
-  let d = dash_decimals d in
-  List.exists (fun v -> not (is_zero d v)) pen.dash
-
 let add_dash b d (pen : Vector.pen) ~offset =
-  let d = dash_decimals d in
+  let d = Vector.dash_decimals d in
   Buffer.add_char b '[';
   List.iteri
     (fun i v ->
@@ -183,96 +149,64 @@ let add_dash b d (pen : Vector.pen) ~offset =
       add_num b d v)
     pen.dash;
   Buffer.add_string b "] ";
-  let period = List.fold_left ( +. ) 0. pen.dash in
-  let period =
-    if List.length pen.dash mod 2 = 1 then 2. *. period else period
-  in
-  add_num b d (Float.rem (pen.offset +. offset) period);
+  add_num b d (Vector.phase pen offset);
   Buffer.add_string b " d\n"
 
 let add_pen b d (pen : Vector.pen) =
   add_num b d pen.width;
   Buffer.add_string b " w\n";
-  if is_dashed d pen then add_dash b d pen ~offset:0.
+  if Vector.is_dashed d pen then add_dash b d pen ~offset:0.
 
-let stroke doc ctx b s color path =
-  let lin = Affine.linear ctx.m in
-  let pen = Vector.pen ctx.m ctx.pen s in
-  (* A pen the frame stretches unevenly is stroked under [u], the frame's linear
-     part scaled to stretch nothing more than the page does, as written, and its
-     points under the inverse of [u]. *)
-  let u =
-    if Vector.is_similar lin then None
-    else
-      let u = Vector.unit lin in
-      Some
-        {
-          u with
-          xx = rounded 15 u.xx;
-          yx = rounded 15 u.yx;
-          xy = rounded 15 u.xy;
-          yy = rounded 15 u.yy;
-        }
-  in
-  let out = Option.map Affine.invert u in
-  (* A width written as zero would be a viewer's thinnest line, and a [u]
-     singular as written cannot carry the pen. *)
-  let thin = (not ctx.pen_set) && is_zero ctx.d pen.width in
-  match out with
-  | Some None -> ()
-  | _ when thin -> ()
-  | _ ->
-      let out = Option.join out in
-      let reach = Stroke.reach s *. (ctx.pen *. Affine.stretch ctx.m) in
-      let cut = Vector.grown ctx.cut reach in
-      let dashed = is_dashed ctx.d pen in
-      (* The dashes are set before the first piece, and again before each piece
-         that starts at another offset, which is cut from within a subpath and
-         stroked on its own. *)
-      let body = Buffer.create 64 and offset = ref Float.nan in
-      let started = ref false in
-      Vector.outline ?out ctx.m cut
-        ~points:(Stroke.cap s <> `Square)
-        ~dashed path
-        ~piece:(fun d ->
-          if dashed && (not ctx.pen_set) && not (Float.equal d !offset) then begin
-            if !started then Buffer.add_string body "S\n";
-            add_dash body ctx.d pen ~offset:d;
-            offset := d
-          end;
-          started := true)
-        (ops body ctx.d);
-      if !started then begin
-        Buffer.add_string b "q\n";
-        add_paint doc b ~stroking:true ~set:ctx.stroke_set ctx.strokes color;
-        if not ctx.pen_set then begin
-          add_num b ctx.d pen.width;
-          Buffer.add_string b " w\n"
+(* A width written as zero would be a viewer's thinnest line. *)
+let stroke doc b (ctx : Vector.ctx) (st : Vector.stroke) color outline =
+  if ctx.pen_set || not (is_zero ctx.d st.pen.width) then begin
+    (* The dashes are set before the first piece, and again before each piece
+       that starts at another offset, which is cut from within a subpath and
+       stroked on its own. *)
+    let body = Buffer.create 64 and offset = ref Float.nan in
+    let started = ref false in
+    outline
+      ~piece:(fun d ->
+        if st.dashed && (not ctx.pen_set) && not (Float.equal d !offset) then begin
+          if !started then Buffer.add_string body "S\n";
+          add_dash body ctx.d st.pen ~offset:d;
+          offset := d
         end;
-        (match Stroke.cap s with
-        | `Butt -> ()
-        | `Round -> Buffer.add_string b "1 J\n"
-        | `Square -> Buffer.add_string b "2 J\n");
-        (match Stroke.join s with
-        | `Miter ->
-            if Stroke.miter_limit s <> 10. then begin
-              add_num b 3 (Stroke.miter_limit s);
-              Buffer.add_string b " M\n"
-            end
-        | `Round -> Buffer.add_string b "1 j\n"
-        | `Bevel -> Buffer.add_string b "2 j\n");
-        Option.iter
-          (fun (u : Affine.t) ->
-            List.iter
-              (fun v ->
-                add_num b 15 v;
-                Buffer.add_char b ' ')
-              [ u.xx; u.yx; u.xy; u.yy ];
-            Buffer.add_string b "0 0 cm\n")
-          u;
-        Buffer.add_buffer b body;
-        Buffer.add_string b "S\nQ\n"
-      end
+        started := true)
+      (ops body ctx.d);
+    if !started then begin
+      let s = st.style in
+      Buffer.add_string b "q\n";
+      add_paint doc b ~stroking:true ~set:ctx.stroke_set ctx.strokes color;
+      if not ctx.pen_set then begin
+        add_num b ctx.d st.pen.width;
+        Buffer.add_string b " w\n"
+      end;
+      (match Stroke.cap s with
+      | `Butt -> ()
+      | `Round -> Buffer.add_string b "1 J\n"
+      | `Square -> Buffer.add_string b "2 J\n");
+      (match Stroke.join s with
+      | `Miter ->
+          if Stroke.miter_limit s <> 10. then begin
+            add_num b 3 (Stroke.miter_limit s);
+            Buffer.add_string b " M\n"
+          end
+      | `Round -> Buffer.add_string b "1 j\n"
+      | `Bevel -> Buffer.add_string b "2 j\n");
+      Option.iter
+        (fun (u : Affine.t) ->
+          List.iter
+            (fun v ->
+              add_num b 15 v;
+              Buffer.add_char b ' ')
+            [ u.xx; u.yx; u.xy; u.yy ];
+          Buffer.add_string b "0 0 cm\n")
+        st.frame;
+      Buffer.add_buffer b body;
+      Buffer.add_string b "S\nQ\n"
+    end
+  end
 
 (* Text *)
 
@@ -347,22 +281,15 @@ let add_utf16 b s =
   in
   loop 0
 
-let glyphs doc ctx b color at run =
+let glyphs doc b (ctx : Vector.ctx) color at run =
   let m = Affine.(ctx.m * translate (P2.x at) (P2.y at)) in
   let lin = Affine.linear m in
   let s = Affine.stretch lin in
   let f = Run.font run and n = Run.length run in
-  (* How far, in ems, the outline of a glyph reaches from its origin in each
-     direction. *)
-  let e =
-    let bx = Font.bounds f in
-    Float.max
-      (Float.max (Float.abs (Box2.minx bx)) (Float.abs (Box2.maxx bx)))
-      (Float.max (Float.abs (Box2.miny bx)) (Float.abs (Box2.maxy bx)))
-  in
+  let e = Vector.ems f in
   (* The size is written with the decimals that keep outlines within a tenth of
      the accuracy, and glyphs are placed by the size as written. *)
-  let ds = Vector.finer 1 (Vector.decimals (ctx.mag *. e)) in
+  let ds = Vector.scale_decimals ctx e in
   let size = rounded ds (Run.size run *. s) in
   let origin i = P2.transform m (P2.v (Run.x run i) (Run.y run i)) in
   (* A glyph is shown if the font's box around its origin meets the cut. *)
@@ -495,84 +422,47 @@ let same_pixels a b =
   || Array.equal Int.equal (Nx.shape a) (Nx.shape b)
      && Nx.item [] (Nx.array_equal a b)
 
-let image doc ctx b box pixels =
-  let shape = Nx.shape pixels in
-  let h = shape.(0) and w = shape.(1) in
-  match Vector.crop ctx.cut ctx.m box w h with
-  | None -> ()
-  | Some ((c0, r0, c1, r1) as window) ->
-      let cw = Box2.w box /. float w and ch = Box2.h box /. float h in
-      let x = Box2.minx box +. (float c0 *. cw)
-      and y = Box2.miny box +. (float r0 *. ch) in
-      let bw = float (c1 - c0) *. cw and bh = float (r1 - r0) *. ch in
-      (* The unit square, its first row at the top, onto the box: corners within
-         a tenth of the accuracy. *)
-      let m = Affine.(ctx.m * translate x (y +. bh) * scale bw (-.bh)) in
-      let d = ctx.d + 1 in
-      let xx = rounded d m.xx and yx = rounded d m.yx in
-      let xy = rounded d m.xy and yy = rounded d m.yy in
-      let det = (xx *. yy) -. (xy *. yx) in
-      (* A matrix that flattens the image as written paints nothing. *)
-      if Float.is_finite det && det <> 0. then begin
-        let name =
-          match
-            List.find_opt
-              (fun (px, win, _) -> win = window && same_pixels px pixels)
-              doc.images
-          with
-          | Some (_, _, name) -> name
-          | None ->
-              let px = Nx.slice [ R (r0, r1); R (c0, c1); A ] pixels in
-              let name = xobject doc (image_object doc px) in
-              doc.images <- (pixels, window, name) :: doc.images;
-              name
-        in
-        Buffer.add_string b "q\n";
-        (* Images are painted with the alpha of fills, which an enclosing
-           instance may have set. *)
-        if ctx.fill_set then add_alpha doc b "ca" 1.;
-        List.iter
-          (fun v ->
-            add_num b d v;
-            Buffer.add_char b ' ')
-          [ xx; yx; xy; yy ];
-        add_num b ctx.d m.x0;
-        Buffer.add_char b ' ';
-        add_num b ctx.d m.y0;
-        Printf.bprintf b " cm\n/%s Do\nQ\n" name
-      end
+let image doc b (ctx : Vector.ctx) (im : Vector.image) =
+  let c0, r0, c1, r1 = im.window and x = im.x and y = im.y in
+  let bw = im.w and bh = im.h in
+  (* The unit square, its first row at the top, onto the box: corners within a
+     tenth of the accuracy. *)
+  let m = Affine.(ctx.m * translate x (y +. bh) * scale bw (-.bh)) in
+  let d = ctx.d + 1 in
+  let xx = rounded d m.xx and yx = rounded d m.yx in
+  let xy = rounded d m.xy and yy = rounded d m.yy in
+  let det = (xx *. yy) -. (xy *. yx) in
+  (* A matrix that flattens the image as written paints nothing. *)
+  if Float.is_finite det && det <> 0. then begin
+    let name =
+      match
+        List.find_opt
+          (fun (px, win, _) -> win = im.window && same_pixels px im.pixels)
+          doc.images
+      with
+      | Some (_, _, name) -> name
+      | None ->
+          let px = Nx.slice [ R (r0, r1); R (c0, c1); A ] im.pixels in
+          let name = xobject doc (image_object doc px) in
+          doc.images <- (im.pixels, im.window, name) :: doc.images;
+          name
+    in
+    Buffer.add_string b "q\n";
+    (* Images are painted with the alpha of fills, which an enclosing instance
+       may have set. *)
+    if ctx.fill_set then add_alpha doc b "ca" 1.;
+    List.iter
+      (fun v ->
+        add_num b d v;
+        Buffer.add_char b ' ')
+      [ xx; yx; xy; yy ];
+    add_num b ctx.d m.x0;
+    Buffer.add_char b ' ';
+    add_num b ctx.d m.y0;
+    Printf.bprintf b " cm\n/%s Do\nQ\n" name
+  end
 
 (* Forms *)
-
-(* [reach m k p] is how far the pens of the strokes of [p] reach beyond their
-   paths under [m], their lengths multiplied by [k]. Stamps keep pens, so their
-   instances do not change it. *)
-let reach m k p =
-  let r = ref 0. in
-  let rec walk m (p : Picture.t) =
-    match p with
-    | Stroke { stroke; _ } ->
-        r := Float.max !r (Stroke.reach stroke *. (k *. Affine.stretch m))
-    | Empty | Fill _ | Glyphs _ | Image _ -> ()
-    | Group ps -> List.iter (walk m) ps
-    | Transform { m = m'; picture } -> walk Affine.(m * m') picture
-    | Clip { picture; _ }
-    | Opacity { picture; _ }
-    | Tag { picture; _ }
-    | Stamp { picture; _ } ->
-        walk m picture
-  in
-  walk (Affine.linear m) p;
-  !r
-
-(* [bbox ctx p ~pen] is a box of the frame holding what [p] paints there with
-   the lengths of its pens multiplied by [pen], within the cut, or [None] if it
-   paints nothing there. *)
-let bbox ctx p ~pen =
-  match Picture.bounds (Picture.transform ctx.m p) with
-  | None -> None
-  | Some bx -> Box2.inter (Vector.grown bx (reach ctx.m pen p +. 1.)) ctx.cut
-  | exception Invalid_argument _ -> Some ctx.cut
 
 (* [form doc ~group bbox content] is the name of a form XObject of [content]
    over [bbox], a transparency group if [group]. Equal forms are written
@@ -596,256 +486,106 @@ let form doc ~group bbox content =
       Hashtbl.add doc.forms key name;
       name
 
-let rec holds_stroke (p : Picture.t) =
-  match p with
-  | Stroke _ -> true
-  | Empty | Fill _ | Glyphs _ | Image _ -> false
-  | Group ps -> List.exists holds_stroke ps
-  | Transform { picture; _ }
-  | Clip { picture; _ }
-  | Opacity { picture; _ }
-  | Tag { picture; _ }
-  | Stamp { picture; _ } ->
-      holds_stroke picture
+let holds_stroke = Instances.exists (function Stroke _ -> true | _ -> false)
 
 (* [holds_opacity ~over p] is [true] iff [p] holds an opacity whose picture
    satisfies [over], which defaults to any. *)
-let rec holds_opacity ?(over = fun _ -> true) (p : Picture.t) =
-  match p with
-  | Opacity { picture; _ } -> over picture
-  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> false
-  | Group ps -> List.exists (holds_opacity ~over) ps
-  | Transform { picture; _ }
-  | Clip { picture; _ }
-  | Tag { picture; _ }
-  | Stamp { picture; _ } ->
-      holds_opacity ~over picture
+let holds_opacity ?(over = fun _ -> true) =
+  Instances.exists (function
+    | Opacity { picture; _ } -> over picture
+    | _ -> false)
 
-(* Pictures *)
+(* Nodes *)
 
-let rec picture doc ctx b (p : Picture.t) =
-  match p with
-  | Empty -> ()
-  | Fill { rule; color; path } -> fill doc ctx b rule color path
-  | Stroke { stroke = s; color; path } -> stroke doc ctx b s color path
-  | Glyphs { color; at; run } -> glyphs doc ctx b color at run
-  | Image { box; pixels } -> image doc ctx b box pixels
-  | Group ps -> List.iter (picture doc ctx b) ps
-  | Clip { rule; path; picture = p } ->
-      (* A clip of no area within the cut shows nothing of its picture. *)
-      let q = area_ops ctx path in
-      if q <> "" then begin
-        Buffer.add_string b "q\n";
-        Buffer.add_string b q;
-        Buffer.add_string b (if rule = `Even_odd then "W* n\n" else "W n\n");
-        picture doc ctx b p;
-        Buffer.add_string b "Q\n"
-      end
-  | Transform { m; picture = p } ->
-      (* Transforms that compose beyond the range of floats, or to a map with no
-         inverse, leave nothing to write. *)
-      let m = Affine.(ctx.m * m) in
-      if Affine.invert m <> None then picture doc { ctx with m } b p
-  | Opacity { opacity; picture = p } -> (
-      match bbox ctx p ~pen:ctx.pen with
-      | Some bx when opacity > 0. ->
-          let content = Buffer.create 256 in
-          picture doc ctx content p;
-          let name = form doc ~group:true bx (Buffer.contents content) in
-          let a = alpha_key opacity in
-          Printf.bprintf b "q\n/%s gs\n/%s Do\nQ\n"
-            (state doc ("a" ^ a)
-               (Printf.sprintf "<< /Type /ExtGState /ca %s /CA %s >>" a a))
-            name
-      | _ -> ())
-  | Tag { picture = p; _ } -> picture doc ctx b p
-  | Stamp { picture = p; xs; ys; scales; fills; strokes } ->
-      stamp doc ctx b p xs ys scales fills strokes
-
-and stamp doc ctx b p xs ys scales fills strokes =
-  let n = Array.length xs in
-  let lin = Affine.linear ctx.m in
-  let scale i = match scales with None -> 1. | Some a -> a.(i) in
-  let shown i =
-    Float.is_finite xs.(i)
-    && Float.is_finite ys.(i)
-    && Float.is_finite (scale i)
-  in
-  let pick a i outer = match a with Some a -> Fixed a.(i) | None -> outer in
-  (* Instances keep the pens of [p], which reach this far around them. *)
-  let kept = reach ctx.m ctx.pen p in
-  (* [whole i] paints instance [i] in full: its picture mapped to the frame,
-     with its own colours and pens. *)
-  let whole i =
-    let s = scale i in
-    let m = Affine.(ctx.m * translate xs.(i) ys.(i) * scale s s) in
-    let meets =
-      match
-        Option.map
-          (fun bx -> Vector.grown bx kept)
-          (Picture.bounds (Picture.transform m p))
-      with
-      | Some bx -> Vector.meets ctx.cut bx
-      | None -> false
-      | exception Invalid_argument _ -> true
-    in
-    if meets then
-      picture doc
-        {
-          ctx with
-          m;
-          fills = pick fills i ctx.fills;
-          strokes = pick strokes i ctx.strokes;
-          pen = ctx.pen /. s;
-        }
-        b p
-  in
-  let pens = if scales = None then [] else Vector.pens lin ctx.pen p in
-  let translucent =
-    List.exists
-      (Array.exists (fun c -> Color.alpha c < 1.))
-      (List.filter_map Fun.id [ fills; strokes ])
-  in
-  (* A transparency group resets alphas, and the pen an instance sets reaches
-     the strokes of the group by the specification but not in Poppler, which
-     resets it there too. *)
-  if
-    scales <> None
-    && (Vector.scales_within p
-       || List.length pens > 1
-       || holds_opacity ~over:holds_stroke p)
-    || (translucent && holds_opacity p)
-  then
-    for i = 0 to n - 1 do
-      if shown i then whole i
-    done
-  else begin
-    let extent =
-      match Picture.bounds (Picture.transform lin p) with
-      | bx -> bx
-      | exception Invalid_argument _ -> None
-    in
-    (* An instance places the form's points by its translation, written to the
-       accuracy, and by its scale; the form's numbers, its scale and the pen it
-       sets get the decimals that keep each within a tenth of it. Scales written
-       with [ds] decimals move the points of the picture, which lie within
-       [extent] of an instance's position, by that much. *)
-    let ds =
-      match extent with
-      | None -> 17
-      | Some e ->
-          let far =
-            Float.max
-              (Float.max (Float.abs (Box2.minx e)) (Float.abs (Box2.maxx e)))
-              (Float.max (Float.abs (Box2.miny e)) (Float.abs (Box2.maxy e)))
-          in
-          Vector.finer 1 (Vector.decimals (ctx.mag *. far))
-    in
-    let pen_decimals sw = Vector.finer 1 (Vector.decimals (ctx.mag *. sw)) in
-    (* The scale each instance writes, or [0.] for one the form cannot carry:
-       one written as zero, one that magnifies the form beyond the decimals of
-       numbers, or one whose pen is written as zero. Pens are divided by the
-       scale written, so that viewers stroke them at their width. *)
-    let written =
-      Array.init n (fun i ->
-          if not (shown i) then 0.
-          else
-            let s = scale i in
-            let sw = rounded ds s in
-            if ctx.mag *. s >= 1e14 then 0.
-            else
-              match pens with
-              | [ pen ] when is_zero (pen_decimals sw) (pen.width /. sw) -> 0.
-              | _ -> sw)
-    in
-    let largest = ref 1. and smallest = ref 1. in
-    Array.iter
-      (fun s ->
-        if s > 0. then begin
-          largest := Float.max !largest s;
-          smallest := Float.min !smallest s
-        end)
-      written;
-    let mag = ctx.mag *. !largest in
-    let dctx =
-      {
-        m = lin;
-        cut = Vector.all;
-        mag;
-        d = Vector.finer 1 (Vector.decimals mag);
-        fills = (if fills = None then ctx.fills else Inherit);
-        strokes = (if strokes = None then ctx.strokes else Inherit);
-        fill_set = ctx.fill_set || fills <> None;
-        stroke_set = ctx.stroke_set || strokes <> None;
-        (* The widest pen an instance sets: pens kept while instances shrink
-           reach beyond the picture's box, and the boxes of the form and of the
-           groups within it hold them. *)
-        pen = ctx.pen /. !smallest;
-        pen_set = ctx.pen_set || scales <> None;
-      }
-    in
-    let form =
-      if not (Array.exists (fun s -> s > 0.) written) then None
-      else
-        match bbox dctx p ~pen:dctx.pen with
-        | None -> None
-        | Some bx ->
-            let content = Buffer.create 256 in
-            picture doc dctx content p;
-            Some (form doc ~group:false bx (Buffer.contents content))
-    in
-    for i = 0 to n - 1 do
-      let sw = written.(i) in
-      if sw = 0. then (if shown i then whole i)
-      else
-        match form with
-        | None -> ()
-        | Some name ->
-            let at = P2.transform ctx.m (P2.v xs.(i) ys.(i)) in
-            let x = P2.x at and y = P2.y at in
-            let shows =
-              match extent with
-              | None -> true
-              | Some e ->
-                  Vector.overlaps ctx.cut
-                    (x +. (sw *. Box2.minx e) -. kept)
-                    (y +. (sw *. Box2.miny e) -. kept)
-                    (x +. (sw *. Box2.maxx e) +. kept)
-                    (y +. (sw *. Box2.maxy e) +. kept)
-            in
-            if shows then begin
-              Buffer.add_string b "q\n";
-              Option.iter
-                (fun a ->
-                  add_color doc b ~stroking:false ~set:ctx.fill_set a.(i))
-                fills;
-              Option.iter
-                (fun a ->
-                  add_color doc b ~stroking:true ~set:ctx.stroke_set a.(i))
-                strokes;
-              (match (scales, pens) with
-              | Some _, [ pen ] ->
-                  let k = 1. /. sw in
-                  add_pen b (pen_decimals sw)
-                    {
-                      width = pen.width *. k;
-                      dash = List.map (fun d -> d *. k) pen.dash;
-                      offset = pen.offset *. k;
-                    }
-              | _ -> ());
-              add_num b ds sw;
-              Buffer.add_string b " 0 0 ";
-              add_num b ds sw;
-              Buffer.add_char b ' ';
-              add_num b ctx.d x;
-              Buffer.add_char b ' ';
-              add_num b ctx.d y;
-              Buffer.add_string b " cm\n/";
-              Buffer.add_string b name;
-              Buffer.add_string b " Do\nQ\n"
-            end
-    done
+let clip b (ctx : Vector.ctx) rule path k =
+  (* A clip of no area within the cut shows nothing of its picture. *)
+  let q = area_ops ctx path in
+  if q <> "" then begin
+    Buffer.add_string b "q\n";
+    Buffer.add_string b q;
+    Buffer.add_string b (if rule = `Even_odd then "W* n\n" else "W n\n");
+    k b;
+    Buffer.add_string b "Q\n"
   end
+
+let opacity doc b ctx opacity p k =
+  match Vector.box ctx p with
+  | Some bx when opacity > 0. ->
+      let content = Buffer.create 256 in
+      k content;
+      let name = form doc ~group:true bx (Buffer.contents content) in
+      let a = alpha_key opacity in
+      Printf.bprintf b "q\n/%s gs\n/%s Do\nQ\n"
+        (state doc ("a" ^ a)
+           (Printf.sprintf "<< /Type /ExtGState /ca %s /CA %s >>" a a))
+        name
+  | _ -> ()
+
+(* Stamps: a form that each instance paints under its own matrix, its colours
+   and pen set before. *)
+
+let pen_decimals = Vector.scale_decimals
+
+(* A form cannot carry a scale written as zero, one that magnifies it beyond the
+   decimals of numbers, or one whose pen is written as zero. It carries none
+   where a transparency group resets alphas, and where the pen an instance sets
+   reaches the strokes of a group: it does by the specification but not in
+   Poppler, which resets it there too. *)
+let carry (ctx : Vector.ctx) (st : Vector.stamp) =
+  let full =
+    (st.pens <> [] && holds_opacity ~over:holds_stroke st.picture)
+    || (st.translucent && holds_opacity st.picture)
+  in
+  fun s ->
+    let sw = rounded st.decimals s in
+    if full || sw = 0. || ctx.mag *. s >= 1e14 then Float.nan
+    else
+      match st.pens with
+      | [ pen ] when is_zero (pen_decimals ctx sw) (pen.width /. sw) ->
+          Float.nan
+      | _ -> sw
+
+let define doc _ bbox k =
+  let content = Buffer.create 256 in
+  k content;
+  form doc ~group:false bbox (Buffer.contents content)
+
+let use doc b (ctx : Vector.ctx) (st : Vector.stamp) name i at sw =
+  Buffer.add_string b "q\n";
+  Option.iter
+    (fun a -> add_color doc b ~stroking:false ~set:ctx.fill_set a.(i))
+    st.fills;
+  Option.iter
+    (fun a -> add_color doc b ~stroking:true ~set:ctx.stroke_set a.(i))
+    st.strokes;
+  (match st.pens with
+  | [ pen ] -> add_pen b (pen_decimals ctx sw) (Vector.scale_pen (1. /. sw) pen)
+  | _ -> ());
+  add_num b st.decimals sw;
+  Buffer.add_string b " 0 0 ";
+  add_num b st.decimals sw;
+  Buffer.add_char b ' ';
+  add_num b ctx.d (P2.x at);
+  Buffer.add_char b ' ';
+  add_num b ctx.d (P2.y at);
+  Buffer.add_string b " cm\n/";
+  Buffer.add_string b name;
+  Buffer.add_string b " Do\nQ\n"
+
+let target doc =
+  {
+    Vector.fill = fill doc;
+    stroke = stroke doc;
+    glyphs = glyphs doc;
+    image = image doc;
+    clip;
+    opacity = opacity doc;
+    tag = (fun b _ _ k -> k b);
+    carry;
+    define = define doc;
+    use = use doc;
+    instance = (fun b _ _ k -> k b);
+  }
 
 (* Fonts *)
 
@@ -983,26 +723,10 @@ let render r =
     add_num b 9 v;
     Buffer.contents b
   in
-  let margin = Float.max w h in
-  let ctx =
-    {
-      m = Affine.id;
-      cut =
-        Box2.v (-.margin) (-.margin) (w +. (2. *. margin)) (h +. (2. *. margin));
-      mag = 1.;
-      d = Vector.decimals 1.;
-      fills = Own;
-      strokes = Own;
-      fill_set = false;
-      stroke_set = false;
-      pen = 1.;
-      pen_set = false;
-    }
-  in
   let body = Buffer.create 4096 in
   (* The page's y-down coordinates. *)
   Printf.bprintf body "1 0 0 -1 0 %s cm\n" (size h);
-  picture doc ctx body (Renderable.picture r);
+  Vector.walk (target doc) (Vector.page r) body (Renderable.picture r);
   List.iter (add_font doc) (List.rev doc.fonts);
   let resources = Buffer.create 256 in
   let category name entries =
