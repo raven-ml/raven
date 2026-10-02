@@ -1091,9 +1091,9 @@ let arithmetic =
                small));
     ]
 
-(* Text equality against one row compares bytes; the rows are drawn to share
-   prefixes, lengths and scalar values written two ways. *)
-let text_equality =
+(* Text against one row compares bytes, unsigned, a prefix first; the rows are
+   drawn to share prefixes, lengths and scalar values written two ways. *)
+let text_against_one =
   let words =
     [|
       Some "";
@@ -1112,7 +1112,7 @@ let text_equality =
   let compares name e expected =
     test name (fun () -> rows_are Type.bool expected (bools e table))
   in
-  group "Text equality"
+  group "Text against one row"
     [
       compares "= a literal holds for the same bytes alone"
         Expr.(s = string "ab")
@@ -1133,6 +1133,37 @@ let text_equality =
         Expr.(string "\xc3\xa9t\xc3\xa9" <> s)
         [| t; t; t; t; t; None; t; t; f |];
       compares "= null is null" Expr.(s = null) (Array.make 9 None);
+      compares "< a literal holds for its prefixes and smaller bytes"
+        Expr.(s < string "ab")
+        [| t; f; f; t; f; None; f; f; f |];
+      compares "<= a literal holds for it too"
+        Expr.(s <= string "ab")
+        [| t; t; f; t; f; None; f; f; f |];
+      compares "> a literal holds for its extensions and greater bytes"
+        Expr.(s > string "ab")
+        [| f; f; t; f; t; None; t; t; t |];
+      compares ">= a literal holds for it too"
+        Expr.(s >= string "ab")
+        [| f; t; t; f; t; None; t; t; t |];
+      compares "a literal < is > the literal"
+        Expr.(string "ab" < s)
+        [| f; f; t; f; t; None; t; t; t |];
+      compares "a literal >= is <= the literal"
+        Expr.(string "abc" >= s)
+        [| t; t; t; t; f; None; f; f; f |];
+      compares "nothing is < the empty text"
+        Expr.(s < string "")
+        [| f; f; f; f; f; None; f; f; f |];
+      compares "everything is >= the empty text"
+        Expr.(s >= string "")
+        [| t; t; t; t; t; None; t; t; t |];
+      compares "a byte past 0x7f is greater than every ASCII byte"
+        Expr.(s > string "z")
+        [| f; f; f; f; f; None; t; f; t |];
+      compares "a multibyte prefix orders first"
+        Expr.(s < string "\xc3\xa9t\xc3\xa9")
+        [| t; t; t; t; t; None; t; t; f |];
+      compares "< null is null" Expr.(s < null) (Array.make 9 None);
       test "two columns of one row compare by bytes" (fun () ->
           let one =
             v
@@ -1141,10 +1172,15 @@ let text_equality =
                 ("b", Column.v Type.string [| "abc" |]);
               ]
           in
-          rows_are Type.bool [| f; t |]
-            (Array.append
-               (bools Expr.(Col.string "a" = Col.string "b") one)
-               (bools Expr.(Col.string "a" <> Col.string "b") one)));
+          let a = Col.string "a" and b = Col.string "b" in
+          rows_are Type.bool [| f; t; t; f |]
+            (Array.concat
+               [
+                 bools Expr.(a = b) one;
+                 bools Expr.(a <> b) one;
+                 bools Expr.(a < b) one;
+                 bools Expr.(a >= b) one;
+               ]));
     ]
 
 let widening =
@@ -2348,7 +2384,7 @@ let () =
          kleene;
          arithmetic;
          widening;
-         text_equality;
+         text_against_one;
          float_order;
          failures;
          ocaml;

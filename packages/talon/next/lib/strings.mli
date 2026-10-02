@@ -9,7 +9,7 @@
     slicing and matching scalar values. Each kernel reads its operand's bytes on
     the host, once, as a read named by its caller's function [by], and loops
     over them row by row. Comparisons and grouping of text compare codes
-    elsewhere; {!equal}, equality with one text, needs none.
+    elsewhere; {!compare}, against one text, needs none.
 
     Rows are those of an [Nx_ragged.t]; a row outside [mask], where one is
     given, is not read. *)
@@ -58,6 +58,7 @@ val matches : by:string -> ?mask:Nx.bool_t -> pattern -> bytes -> Nx.bool_t
 (** [matches ~by p b] is [true] where [p] matches the row of [b], and [false]
     outside [mask]. *)
 
-val equal : by:string -> bytes -> bytes -> Nx.bool_t
-(** [equal ~by b one] is [true] where the row of [b] is the bytes of [one]'s
-    row, [one] of one row. *)
+val compare : by:string -> bytes -> bytes -> Nx.int8_t
+(** [compare ~by b one] is [-1], [0] or [1] where the row of [b] orders before,
+    as or after [one]'s row, [one] of one row: bytes compare as unsigned
+    numbers, and a row orders before every row it is a prefix of. *)

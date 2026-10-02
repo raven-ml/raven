@@ -196,7 +196,7 @@ let matches ~by ?mask p r =
       if matches v first stop then A.unsafe_set hits i 1);
   Nx.cast Nx.bool (tensor hits)
 
-let equal ~by r one =
+let compare ~by r one =
   let s = ref "" in
   rows ~by one (fun _ v first stop ->
       s :=
@@ -204,10 +204,21 @@ let equal ~by r one =
             Char.unsafe_chr (A.unsafe_get v (first + k))));
   let s = !s in
   let n = String.length s in
-  let hits =
-    A.create Bigarray.int8_unsigned Bigarray.c_layout (Nx_ragged.length r)
+  let signs =
+    A.create Bigarray.int8_signed Bigarray.c_layout (Nx_ragged.length r)
   in
-  A.fill hits 0;
   rows ~by r (fun i v first stop ->
-      if stop - first = n && at v first s then A.unsafe_set hits i 1);
-  Nx.cast Nx.bool (tensor hits)
+      let m = Int.min (stop - first) n and k = ref 0 in
+      while
+        !k < m
+        && A.unsafe_get v (first + !k) = Char.code (String.unsafe_get s !k)
+      do
+        incr k
+      done;
+      let c =
+        if !k < m then
+          A.unsafe_get v (first + !k) - Char.code (String.unsafe_get s !k)
+        else stop - first - n
+      in
+      A.unsafe_set signs i (Int.compare c 0));
+  tensor signs

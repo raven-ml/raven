@@ -196,22 +196,26 @@ let ordered (type a b) (op : Expr.compare) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
     | `Gt -> Nx.logical_or r (only nan_x nan_y)
     | `Ge -> Nx.logical_or r nan_x
 
-(* [text_equal op r one] compares the rows of bytes [r] with the one row of
-   [one] by their bytes, without the codes of both. *)
-let text_equal op r one =
-  match op with
-  | `Eq -> Strings.equal ~by:"Expr.( = )" r one
-  | `Ne -> Nx.logical_not (Strings.equal ~by:"Expr.( <> )" r one)
+(* [text_name op] names the function whose text comparison reads bytes. *)
+let text_name : Expr.compare -> string = function
+  | `Eq -> "Expr.( = )"
+  | `Ne -> "Expr.( <> )"
+  | `Lt -> "Expr.( < )"
+  | `Le -> "Expr.( <= )"
+  | `Gt -> "Expr.( > )"
+  | `Ge -> "Expr.( >= )"
 
 let compare op a b =
   let r =
-    match (op, Column.data a, Column.data b) with
-    | _, Fixed (P x), Fixed q when Nx.ndim x = 1 ->
+    match (Column.data a, Column.data b) with
+    | Fixed (P x), Fixed q when Nx.ndim x = 1 ->
         ordered op x (Nx.unpack (Nx.dtype x) q)
-    | ((`Eq | `Ne) as op), Bytes r, Bytes one when Column.length b = 1 ->
-        text_equal op r one
-    | ((`Eq | `Ne) as op), Bytes one, Bytes r when Column.length a = 1 ->
-        text_equal op r one
+    | Bytes r, Bytes one when Column.length b = 1 ->
+        let s = Strings.compare ~by:(text_name op) r one in
+        ordered op s (Nx.zeros_like s)
+    | Bytes one, Bytes r when Column.length a = 1 ->
+        let s = Strings.compare ~by:(text_name op) r one in
+        ordered op (Nx.zeros_like s) s
     | _ ->
         let x, y = words a b in
         ordered op x y
