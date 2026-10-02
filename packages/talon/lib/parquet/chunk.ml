@@ -59,6 +59,11 @@ external plain_byte_array :
   = "talon_parquet_plain_byte_array_byte" "talon_parquet_plain_byte_array"
 [@@noalloc]
 
+external gather_byte_arrays :
+  int64s -> bigbytes -> int64s -> int64s -> bigbytes -> int
+  = "talon_parquet_gather_byte_arrays"
+[@@noalloc]
+
 let bytes n = A1.create Bigarray.int8_unsigned Bigarray.c_layout n
 let int64s n = A1.create Bigarray.int64 Bigarray.c_layout n
 let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
@@ -389,13 +394,9 @@ let gather s (idx : int64s) =
         out.{i + 1} <- Int64.add out.{i} (Int64.sub offsets.{j + 1} offsets.{j})
       done;
       let d = bytes (Int64.to_int out.{m}) in
-      for i = 0 to m - 1 do
-        let src = Int64.to_int offsets.{Int64.to_int idx.{i}} in
-        let dst = Int64.to_int out.{i} in
-        for k = 0 to Int64.to_int out.{i + 1} - dst - 1 do
-          A1.unsafe_set d (dst + k) (A1.unsafe_get data (src + k))
-        done
-      done;
+      (* The indices were checked against the dictionary as they decoded. *)
+      let r = gather_byte_arrays offsets data idx out d in
+      assert (r = 0);
       Strings { offsets = out; data = d }
 
 (* [spread s ~valid ~rows ~present] puts the [present] values of [s] at the rows

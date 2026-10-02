@@ -19,11 +19,11 @@
     Pages decompress with the [compress] libraries' [decompress], straight from
     the mapped file into a buffer reused across the chunk's pages, and a page
     with a CRC is checked against it first. The RLE and bit-packing hybrid, the
-    delta encodings and [PLAIN] byte arrays decode in C
-    ([talon_parquet_stubs.c]). Fixed-width gathers, the spread and dtype changes
-    are nx operations; [BYTE_STREAM_SPLIT], [PLAIN] booleans, the conversions of
-    [int96] and of decimals, categorical lookups and the gather of
-    dictionary-encoded byte strings are OCaml loops.
+    delta encodings, [PLAIN] byte arrays and the gather of dictionary-encoded
+    byte strings run in C ([talon_parquet_stubs.c]). Fixed-width gathers, the
+    spread and dtype changes are nx operations; [BYTE_STREAM_SPLIT], [PLAIN]
+    booleans, the conversions of [int96] and of decimals and categorical lookups
+    are OCaml loops.
 
     Encodings read: [PLAIN], [PLAIN_DICTIONARY] and [RLE_DICTIONARY], [RLE] for
     booleans, [DELTA_BINARY_PACKED], [DELTA_LENGTH_BYTE_ARRAY],

@@ -4,12 +4,14 @@
   ---------------------------------------------------------------------------*/
 
 /* Parquet's sequential decoders: the RLE and bit-packing hybrid, delta binary
-   packing, the assembly of delta-encoded byte arrays, and PLAIN byte arrays.
+   packing, the assembly of delta-encoded byte arrays, and PLAIN byte arrays;
+   and the gather of dictionary-encoded byte arrays.
 
-   Each kernel reads the span [src + pos, src + pos + len), checks every read
+   Each decoder reads the span [src + pos, src + pos + len), checks every read
    and write against the span and the arrays it is given, whatever its integer
    arguments, and returns the bytes of the span it consumed, or a negative
-   error code. None allocates or raises, so all are [@@noalloc]. Parquet is
+   error code. The gather checks its reads and writes alike and returns 0 or
+   an error code. None allocates or raises, so all are [@@noalloc]. Parquet is
    little-endian, as the hosts nx runs on are. */
 
 #include <stdint.h>
@@ -301,4 +303,31 @@ CAMLprim value talon_parquet_plain_byte_array_byte(value *argv, int argc)
   (void)argc;
   return talon_parquet_plain_byte_array(argv[0], argv[1], argv[2], argv[3],
                                         argv[4], argv[5], argv[6]);
+}
+
+/* [gather_byte_arrays offsets data idx ends out] copies the byte arrays
+   [idx.{0}] to [idx.{m - 1}] of [data], whose ends are [offsets] from index
+   1, to [out], where their ends are [ends] from index 1, [m] being [idx]'s
+   length. */
+CAMLprim value talon_parquet_gather_byte_arrays(value offsets, value data,
+                                                value idx, value ends,
+                                                value out)
+{
+  const int64_t *off = (const int64_t *)Caml_ba_data_val(offsets);
+  const int64_t *ix = (const int64_t *)Caml_ba_data_val(idx);
+  const int64_t *e = (const int64_t *)Caml_ba_data_val(ends);
+  const uint8_t *d = BYTES(data);
+  uint8_t *o = BYTES(out);
+  int64_t m = DIM(idx), n = DIM(offsets) - 1;
+  if (DIM(ends) != m + 1 || e[0] != 0) return Val_long(ERR_CAPACITY);
+  for (int64_t i = 0; i < m; i++) {
+    int64_t j = ix[i];
+    if (j < 0 || j >= n) return Val_long(ERR_BOUND);
+    int64_t lo = off[j], l = off[j + 1] - lo;
+    if (l < 0 || !span(data, lo, l)) return Val_long(ERR_DATA);
+    if (e[i + 1] - e[i] != l || !span(out, e[i], l))
+      return Val_long(ERR_CAPACITY);
+    memcpy(o + e[i], d + lo, (size_t)l);
+  }
+  return Val_long(0);
 }
