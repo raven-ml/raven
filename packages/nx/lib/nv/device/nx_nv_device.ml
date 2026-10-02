@@ -521,15 +521,11 @@ let sleep n ~timeline ms =
 
 (* Opening *)
 
-(* GPU [i]'s name through [iface] on the machine of [machine]: ["NV:i"], and
-   ["NV-PCI:i"] for this machine's GPUs taken from their kernel driver, so that
-   the name says which interface reaches the GPU. *)
-let name ~machine iface i =
-  let kind =
-    match iface with
-    | Pci when machine == Nx_device.host -> "NV-PCI"
-    | Kernel | Pci -> "NV"
-  in
+(* GPU [i]'s name through [iface]: ["NV:i"], and ["NV-PCI:i"] for GPUs taken
+   from their kernel driver, here or on another machine, so that the name says
+   which interface reaches the GPU. *)
+let name iface i =
+  let kind = match iface with Kernel -> "NV" | Pci -> "NV-PCI" in
   if i = 0 then kind else Printf.sprintf "%s:%d" kind i
 
 let arch v =
@@ -882,9 +878,8 @@ let mapped_allocator n =
 let make_device n ?finalize () =
   let iface = match n.gpu with Kernel_gpu _ -> Kernel | Pci_gpu _ -> Pci in
   let dev =
-    Driver.device
-      ~name:(name ~machine:n.machine iface n.index)
-      ~arch:(arch n.props.sm_version) ~host:n.machine ~budget:(budget n)
+    Driver.device ~name:(name iface n.index) ~arch:(arch n.props.sm_version)
+      ~host:n.machine ~budget:(budget n)
       ~completion:(Sleep (sleep n))
       ~load:(load n) ~peer:(peer n) ~dma:(dma n) ~room:(room n) ?finalize
       (Device_local
@@ -1091,7 +1086,7 @@ let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
 (* Why GPU [i] of the machine of [machine] cannot be opened. *)
 let refuse ~machine iface i why =
   check_reach machine;
-  Error (Driver.name ~host:machine (name ~machine iface i) ^ ": " ^ why)
+  Error (Driver.name ~host:machine (name iface i) ^ ": " ^ why)
 
 (* Opens [i] through [iface] on the machine of [machine], once. *)
 let open_gpu ~machine ~iface ?firmware i =

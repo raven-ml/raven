@@ -508,20 +508,16 @@ let scratch a n =
 
 (* Opening *)
 
-(* GPU [i]'s name through [iface] on the machine of [machine]: ["AMD:i"], and
-   ["AMD-PCI:i"] for this machine's GPUs taken from their kernel driver, so that
-   the name says which interface reaches the GPU. *)
-let name ~machine iface i =
-  let kind =
-    match iface with
-    | Pci when machine == Nx_device.host -> "AMD-PCI"
-    | Kernel | Pci -> "AMD"
-  in
+(* GPU [i]'s name through [iface]: ["AMD:i"], and ["AMD-PCI:i"] for GPUs taken
+   from their kernel driver, here or on another machine, so that the name says
+   which interface reaches the GPU. *)
+let name iface i =
+  let kind = match iface with Kernel -> "AMD" | Pci -> "AMD-PCI" in
   if i = 0 then kind else Printf.sprintf "%s:%d" kind i
 
 let gpu_name a =
   let iface = match a.gpu with Kfd_gpu _ -> Kernel | Am_gpu _ -> Pci in
-  name ~machine:a.machine iface a.index
+  name iface a.index
 
 let target_of v =
   let v = if v = 90403 then 90402 else v in
@@ -1219,7 +1215,7 @@ let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
 (* Why GPU [i] of the machine of [machine] cannot be opened. *)
 let refuse ~machine iface i why =
   check_reach machine;
-  Error (Driver.name ~host:machine (name ~machine iface i) ^ ": " ^ why)
+  Error (Driver.name ~host:machine (name iface i) ^ ": " ^ why)
 
 (* Opens [i] through [iface] on the machine of [machine], once. *)
 let open_gpu ~machine ~iface ?firmware i =

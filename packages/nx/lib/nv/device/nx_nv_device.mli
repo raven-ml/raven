@@ -22,11 +22,11 @@
 
     {b Other machines.} Given the host of another machine ([nx.remote.device]),
     {!count} and {!get} reach that machine's GPUs, over {!Pci} through the
-    machine's server: they are named ["NV@HOST:PORT"], ["NV:1@HOST:PORT"], ...,
-    their host memory is that machine's memory, every register access and
-    pushbuffer write crosses the network, and they have no interrupts. Such a
-    GPU copies directly only to GPUs of its machine. The machine needs what
-    {!Pci} needs here, and the process none of it.
+    machine's server: they are named ["NV-PCI@HOST:PORT"],
+    ["NV-PCI:1@HOST:PORT"], ..., their host memory is that machine's memory,
+    every register access and pushbuffer write crosses the network, and they
+    have no interrupts. Such a GPU copies directly only to GPUs of its machine.
+    The machine needs what {!Pci} needs here, and the process none of it.
 
     {b NV and CUDA devices.} [nx.cuda.device] opens GPUs through NVIDIA's CUDA
     driver library as ["CUDA"], ["CUDA:1"], ...; this library opens them without

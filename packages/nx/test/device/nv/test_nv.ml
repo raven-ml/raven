@@ -32,7 +32,7 @@ let test_other_machine () =
   | Ok host ->
       if Nx_nv_device.count ~host () > 0 then
         skip ~reason:"the machine has a GPU" ();
-      let named = Printf.sprintf "NV@127.0.0.1:%d: " port in
+      let named = Printf.sprintf "NV-PCI@127.0.0.1:%d: " port in
       (match Nx_nv_device.get ~host 0 with
       | Ok _ -> fail "a GPU opened"
       | Error msg ->

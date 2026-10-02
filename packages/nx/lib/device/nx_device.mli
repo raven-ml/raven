@@ -142,11 +142,13 @@ val name : t -> string
 (** [name d] is [d]'s name, [LOCAL] for the devices of this machine and
     [LOCAL@ADDRESS] for those of the machine at [ADDRESS]: ["CPU"] for the host,
     ["DISK"] for the disk, ["METAL"] for the Metal GPU, ["CUDA"], ["CUDA:1"],
-    ... for CUDA GPUs, ["AMD"], ["AMD:1"], ... for AMD GPUs, ["NV"], ["NV:1"],
-    ... for NVIDIA GPUs opened without CUDA, and ["RDMA"], ["RDMA:1"], ... for
-    RDMA network adapters; ["CPU@10.0.0.2:6667"] and ["AMD:1@10.0.0.2:6667"] on
-    another machine. The runtime composes it from the device's description
-    ({!Driver}); it is for people, and nothing parses it. *)
+    ... for CUDA GPUs, ["AMD"], ["AMD:1"], ... for AMD GPUs through their kernel
+    driver and ["AMD-PCI"], ["AMD-PCI:1"], ... over PCI, ["NV"], ["NV:1"], ...
+    and ["NV-PCI"], ["NV-PCI:1"], ... likewise for NVIDIA GPUs opened without
+    CUDA, and ["RDMA"], ["RDMA:1"], ... for RDMA network adapters;
+    ["CPU@10.0.0.2:6667"] and ["AMD-PCI:1@10.0.0.2:6667"] on another machine.
+    The runtime composes it from the device's description ({!Driver}); it is for
+    people, and nothing parses it. *)
 
 val host_of : t -> t
 (** [host_of d] is the host of the machine [d] is attached to: {!host} for the

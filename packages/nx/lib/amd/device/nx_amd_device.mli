@@ -20,11 +20,11 @@
 
     {b Other machines.} Given the host of another machine ([nx.remote.device]),
     {!count} and {!get} reach that machine's GPUs, over {!Pci} through the
-    machine's server: they are named ["AMD@HOST:PORT"], ["AMD:1@HOST:PORT"],
-    ..., their host memory is that machine's memory, every register access and
-    ring write crosses the network, and they have no interrupts. Such a GPU
-    copies directly only to GPUs of its machine. The machine needs what {!Pci}
-    needs here, and the process none of it.
+    machine's server: they are named ["AMD-PCI@HOST:PORT"],
+    ["AMD-PCI:1@HOST:PORT"], ..., their host memory is that machine's memory,
+    every register access and ring write crosses the network, and they have no
+    interrupts. Such a GPU copies directly only to GPUs of its machine. The
+    machine needs what {!Pci} needs here, and the process none of it.
 
     {b Memory.} Buffers are GPU memory, which the host does not address, but for
     mapped memory. {!Nx_device.Buffer.copy} moves their bytes on the GPU's copy
