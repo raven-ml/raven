@@ -23,7 +23,7 @@
     of the machine is then lost ({!Nx_device.Lost}) with that error at its next
     operation that reaches the machine; this machine's devices go on. The server
     stops the DMA of the functions this process took and frees its memory once
-    the connection is gone. *)
+    the connection is gone. {!connect} then connects anew, to a fresh host. *)
 
 val default_port : int
 (** [default_port] is [6667], the port [nx-remote] listens on by default. *)
@@ -36,10 +36,11 @@ val connect :
   (Nx_device.t, string) result
 (** [connect ~key host] is the host of the machine whose server listens at
     [host] and [port] (defaults to {!default_port}), proving [key] to it. The
-    same host and port give the same device, lost or not: a machine is connected
-    to once in the life of the process. [timeout_ms] (defaults to
-    {!Nx_device.Driver.default_timeout}) bounds the connection and every answer
-    of the server, and is the device's {!Nx_device.timeout}, which
+    same host and port give the same device while its connection holds. Once the
+    connection failed, [connect] connects anew: the host is a fresh device,
+    unequal to the lost one, whose devices and memory stay lost. [timeout_ms]
+    (defaults to {!Nx_device.Driver.default_timeout}) bounds the connection and
+    every answer of the server, and is the device's {!Nx_device.timeout}, which
     {!Nx_device.set_timeout} changes later.
 
     [Error why] if the server cannot be reached, is busy with another client,

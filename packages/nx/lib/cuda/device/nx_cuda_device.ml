@@ -295,6 +295,9 @@ let version () =
   let v = driver_version () in
   Printf.sprintf "%d.%d" (v / 1000) (v mod 1000 / 10)
 
+(* GPU [i] is opened once until it is lost. A lost one opens again with streams
+   of its own in the primary context, retained again: a context that holds a
+   sticky error, such as an illegal address, refuses them with its reason. *)
 let get i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_cuda_device.get: %d < 0" i);
   let refuse fmt =
@@ -302,8 +305,8 @@ let get i =
   in
   Mutex.protect lock @@ fun () ->
   match List.assoc_opt i (Atomic.get opened) with
-  | Some c -> Ok c.dev
-  | None -> (
+  | Some c when Nx_device.lost c.dev = None -> Ok c.dev
+  | Some _ | None -> (
       match loaded () with
       | Error why -> refuse "%s" why
       | Ok () -> (

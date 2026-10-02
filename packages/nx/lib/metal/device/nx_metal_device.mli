@@ -18,7 +18,8 @@
 
     A fault on the GPU surfaces as a hang: the runtime reads no command buffer's
     status, so work that faults is found when its signal does not arrive in
-    time.
+    time, which loses the device ({!Nx_device.Lost}). {!get} then opens the GPU
+    anew, with a queue and an event of its own.
 
     This library exists on macOS only. *)
 
@@ -28,8 +29,10 @@ val count : unit -> int
 
 val get : int -> (Nx_device.t, string) result
 (** [get i] is Metal device [i], opened by the first call that succeeds; every
-    later call returns the same value. [Error msg] says why it cannot be opened,
-    for example that [i >= count ()], after the device's name, such as
+    later call returns the same value until the device is lost
+    ({!Nx_device.Lost}), and then opens it anew: a fresh device, unequal to the
+    lost one. [Error msg] says why it cannot be opened, for example that
+    [i >= count ()], after the device's name, such as
     ["METAL:1: no such device; there is one Metal device"].
 
     Raises [Invalid_argument] if [i < 0]. *)

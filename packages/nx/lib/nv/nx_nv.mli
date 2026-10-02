@@ -27,7 +27,9 @@
 val get : int -> (Nx.Device.t, string) result
 (** [get i] is NVIDIA GPU [i] of the kernel driver, opened now, or [Error msg]
     with the reason, such as that [/dev/nvidiactl] is absent. It never touches
-    PCI. Every [get i] that succeeds gives an equal device.
+    PCI. Every [get i] that succeeds gives an equal device until the device is
+    lost ({!Nx_device.Lost}); a [get i] then opens the GPU anew, an unequal
+    device.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -41,7 +43,8 @@ val get_pci : int -> (Nx.Device.t, string) result
 (** [get_pci i] is NVIDIA GPU [i] opened over PCI by nx's own driver, or
     [Error msg] with the reason, such as a missing privilege, or a GPU not
     detached, not reset or without its firmware, naming {!detach}, {!reset} or
-    {!fetch_firmware}. See {!Nx_nv_device} for the privileges, the GPUs
+    {!fetch_firmware}, or lost ({!Nx_device.Lost}), which only a {!reset} in
+    another process recovers. See {!Nx_nv_device} for the privileges, the GPUs
     supported and the firmware it boots them with.
 
     Raises [Invalid_argument] if [i < 0]. *)

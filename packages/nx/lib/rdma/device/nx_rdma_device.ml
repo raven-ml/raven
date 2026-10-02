@@ -288,7 +288,17 @@ let get ?(host = Nx_device.host) i =
   in
   Mutex.protect lock (fun () ->
       match List.assoc_opt (host, i) (Atomic.get opened) with
-      | Some n -> Ok (Option.get n.dev)
+      | Some n -> (
+          let d = Option.get n.dev in
+          match Nx_device.lost d with
+          | None -> Ok d
+          | Some why ->
+              (* The adapter is the process's PCI function: only a reset
+                 recovers it, which the process does not do. *)
+              refuse
+                (Printf.sprintf
+                   "lost (%s); the process does not open a lost adapter again"
+                   why))
       | None -> (
           match open_nic ~machine:host ~remote i with
           | n ->

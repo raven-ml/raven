@@ -3229,19 +3229,20 @@ stores through a pad.
   `on_device_hang`) and `:856` (`can_recover`, true under AM off a virtual
   function); `runtime/support/am/amdev.py:283-290` (`recover`).
 - **tolk:** none: nx.amd.device owns the GPU, and
-  `packages/nx/lib/device/nx_device.ml:1042` loses it on a hang
+  `packages/nx/lib/device/nx_device.ml:1047` loses it on a hang
   (`Nx_device.Lost`, "hang detected") under both interfaces.
 - **Differs:** a hang or fault loses the device under AM as under KFD. Every
-  later operation on it raises `Lost`, and the process does not reset the
-  GPU; the next process that opens it resets it.
+  later operation on memory it can reach raises `Lost`, and the process does
+  not reset the GPU. An open of the GPU then gives a fresh device under KFD,
+  with new queues, and refuses it under AM; the next process that opens it
+  resets it.
 - **Reason:** (c): after a reset nothing the device held can be trusted. Work
   in flight is dropped, its queues restart, and its buffers and programs hold
   whatever the hung work left. nx's values are immutable, so a value must fail
-  loudly rather than silently outlive its storage. Recovery belongs behind
+  loudly rather than silently outlive its storage. Recovery sits behind
   device-lost semantics: after a fault every operation on the device's values
   raises, naming the device and the fault, and reopening gives a fresh device
-  with a new identity. An in-process reset is then only how such a reopen is
-  done.
+  with a new identity. An in-process reset would only be how AM reopens.
 - **Pinned by:** nx.amd.device's hardware suite
   (`packages/nx/test/device/amd/test_amd_hw.ml`): `failures › work that
   never signals loses the device`, on a GPU.

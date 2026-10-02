@@ -373,6 +373,9 @@ let unmap_peer t m = unmap_handle t m.handle
    every GPU maps. *)
 let event_page : (t * mem) option ref = ref None
 
+let event_kinds =
+  D.[| kfd_ioc_event_signal; kfd_ioc_event_memory; kfd_ioc_event_hw_exception |]
+
 let events t =
   if t.events = [||] then begin
     (match !event_page with
@@ -383,16 +386,15 @@ let events t =
             ignore (create_event t.fd D.kfd_ioc_event_signal m.handle);
             event_page := Some (t, m)
         | None -> failwith "no memory for the KFD event page"));
-    t.events <-
-      Array.map
-        (fun kind -> create_event t.fd kind 0L)
-        D.
-          [|
-            kfd_ioc_event_signal;
-            kfd_ioc_event_memory;
-            kfd_ioc_event_hw_exception;
-          |]
+    t.events <- Array.map (fun kind -> create_event t.fd kind 0L) event_kinds
   end
+
+(* New events for the queues of a GPU opened again after a fault. Its waits do
+   not reset the exception events, so the old ones stay signaled with the
+   fault. *)
+let renew_events t =
+  if t.events <> [||] then
+    t.events <- Array.map (fun kind -> create_event t.fd kind 0L) event_kinds
 
 (* Creates a queue; the address of its doorbell. *)
 let create_queue t args =

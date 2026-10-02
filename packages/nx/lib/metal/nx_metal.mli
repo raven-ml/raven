@@ -16,7 +16,8 @@
 val get : int -> (Nx.Device.t, string) result
 (** [get i] is Metal GPU [i], opened now, or [Error msg] with the reason, such
     as that a Mac has one GPU or that Metal exists on macOS only. Every [get i]
-    that succeeds gives an equal device.
+    that succeeds gives an equal device until the device is lost
+    ({!Nx_device.Lost}); a [get i] then opens the GPU anew, an unequal device.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

@@ -1101,8 +1101,10 @@ let refuse ~machine iface i why =
   check_reach machine;
   Error (Driver.name ~host:machine (name iface i) ^ ": " ^ why)
 
-(* Opens [i] through [iface] on the machine of [machine], once: an open is keyed
-   by the GPU's bus address. *)
+(* Opens [i] through [iface] on the machine of [machine], once until it is lost:
+   an open is keyed by the GPU's bus address. Through the kernel driver, a lost
+   GPU opens again with objects of its own; over PCI, only a reset recovers it,
+   which the process does not do. *)
 let open_gpu ~machine ~iface ?firmware i =
   let gpus = gpus_of machine in
   match List.nth_opt gpus i with
@@ -1111,9 +1113,18 @@ let open_gpu ~machine ~iface ?firmware i =
         (Printf.sprintf "no GPU %d; there are %d NVIDIA GPUs" i
            (List.length gpus))
   | Some bus -> (
-      match List.assoc_opt (machine, bus) (Atomic.get opened) with
-      | Some n -> Ok (Option.get n.dev)
-      | None -> (
+      let last = List.assoc_opt (machine, bus) (Atomic.get opened) in
+      let lost n = Nx_device.lost (Option.get n.dev) in
+      match last with
+      | Some n when lost n = None -> Ok (Option.get n.dev)
+      | Some ({ gpu = Pci_gpu _; _ } as n) ->
+          refuse ~machine iface i
+            (Printf.sprintf
+               "lost (%s); over PCI only a reset recovers it, which the next \
+                process does with Nx_nv_device.reset %d"
+               (Option.get (lost n))
+               i)
+      | Some { gpu = Kernel_gpu _; _ } | None -> (
           match
             match iface with
             | Kernel -> open_kernel ~index:i bus

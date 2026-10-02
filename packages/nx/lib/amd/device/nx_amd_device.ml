@@ -1110,6 +1110,7 @@ let finish a dev (compute, aql, sdma) =
 
 let open_kfd ~index bus =
   let k = Kfd.open_gpu bus in
+  Kfd.renew_events k;
   let pr = Kfd.prop k in
   let target = target_of (pr "gfx_target_version") in
   supported target;
@@ -1249,8 +1250,10 @@ let refuse ~machine iface i why =
   check_reach machine;
   Error (Driver.name ~host:machine (name iface i) ^ ": " ^ why)
 
-(* Opens [i] through [iface] on the machine of [machine], once: an open is keyed
-   by the GPU's bus address. *)
+(* Opens [i] through [iface] on the machine of [machine], once until it is lost:
+   an open is keyed by the GPU's bus address. Through the kernel driver, a lost
+   GPU opens again with new queues in the address space the process acquired;
+   over PCI, only a reset recovers it, which the process does not do. *)
 let open_gpu ~machine ~iface ?firmware i =
   let gpus = gpus_of machine in
   match List.nth_opt gpus i with
@@ -1258,9 +1261,18 @@ let open_gpu ~machine ~iface ?firmware i =
       refuse ~machine iface i
         (Printf.sprintf "no GPU %d; there are %d AMD GPUs" i (List.length gpus))
   | Some bus -> (
-      match List.assoc_opt (machine, bus) (Atomic.get opened) with
-      | Some a -> Ok (Option.get a.dev)
-      | None -> (
+      let last = List.assoc_opt (machine, bus) (Atomic.get opened) in
+      let lost a = Nx_device.lost (Option.get a.dev) in
+      match last with
+      | Some a when lost a = None -> Ok (Option.get a.dev)
+      | Some ({ gpu = Am_gpu _; _ } as a) ->
+          refuse ~machine iface i
+            (Printf.sprintf
+               "lost (%s); over PCI only a reset recovers it, which the next \
+                process does with Nx_amd_device.reset %d"
+               (Option.get (lost a))
+               i)
+      | Some { gpu = Kfd_gpu _; _ } | None -> (
           match
             match iface with
             | Kernel -> open_kfd ~index:i bus

@@ -170,7 +170,20 @@ let test_gone () =
     | Some r -> Nx_device_support.Remote.failed r <> None
     | None -> false);
   B.copy ~src:(of_string (String.make 16 'x')) ~dst:here;
-  equal ~msg:"this machine goes on" string (String.make 16 'x') (read here)
+  equal ~msg:"this machine goes on" string (String.make 16 'x') (read here);
+  (* The machine comes back at the same address, and is served until exit. *)
+  let back =
+    Nx_remote_device.listen ~key
+      (Unix.ADDR_INET (Unix.inet_addr_loopback, port s))
+  in
+  let d' = connect back in
+  is_false ~msg:"connecting again makes a fresh host" (d' == d);
+  equal ~msg:"of the same name" string (Nx_device.name d) (Nx_device.name d');
+  let b' = B.create d' S.UInt8 16 in
+  B.copy ~src:here ~dst:b';
+  equal ~msg:"the fresh host" string (String.make 16 'x') (read b');
+  is_true ~msg:"one device while it holds" (connect back == d');
+  raises_match lost (fun () -> ignore (read b))
 
 let () =
   exit
@@ -181,6 +194,7 @@ let () =
              test "connecting" test_connect;
              test "copies" test_copies;
              test "programs" test_programs;
-             test "the machine goes away" test_gone;
+             test "the machine goes away, and connecting again is a fresh host"
+               test_gone;
            ];
        ])

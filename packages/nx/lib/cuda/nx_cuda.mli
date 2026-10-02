@@ -17,9 +17,11 @@
 val get : int -> (Nx.Device.t, string) result
 (** [get i] is CUDA GPU [i], opened now, or [Error msg] with the driver's
     reason, such as that the driver library cannot be loaded or that there is no
-    GPU [i]. Every [get i] that succeeds gives an equal device. A failed open is
-    not remembered, so a later [get] tries again, except where the driver
-    library failed to load.
+    GPU [i]. Every [get i] that succeeds gives an equal device until the device
+    is lost ({!Nx_device.Lost}); a [get i] then opens the GPU anew, an unequal
+    device, unless a sticky error of the driver refuses it. A failed open is not
+    remembered, so a later [get] tries again, except where the driver library
+    failed to load.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

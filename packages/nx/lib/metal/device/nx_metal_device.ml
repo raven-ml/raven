@@ -55,13 +55,15 @@ type t = {
       (* the buffers to declare resident, without a residency set *)
 }
 
-let opened = Atomic.make None
+(* The opens of the GPU, the live one first: an open of a lost one is a new
+   device, over the same [MTLDevice], with a queue and an event of its own. *)
+let opened = Atomic.make []
 let lock = Mutex.create ()
 
 let count () =
   match Atomic.get opened with
-  | Some _ -> 1
-  | None ->
+  | _ :: _ -> 1
+  | [] ->
       let d = create_device () in
       if d = 0n then 0
       else begin
@@ -142,11 +144,19 @@ let open_metal mtl =
 let get i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_metal_device.get: %d < 0" i);
   let refuse why = Error (name i ^ ": " ^ why) in
+  let reopen m =
+    match open_metal m.mtl with
+    | m' ->
+        Atomic.set opened (m' :: Atomic.get opened);
+        Ok m'.dev
+    | exception Failure why -> refuse why
+  in
   Mutex.protect lock @@ fun () ->
   match Atomic.get opened with
-  | Some m when i = 0 -> Ok m.dev
-  | Some _ -> refuse "no such device; there is one Metal device"
-  | None -> (
+  | _ :: _ when i > 0 -> refuse "no such device; there is one Metal device"
+  | m :: _ when Nx_device.lost m.dev = None -> Ok m.dev
+  | m :: _ -> reopen m
+  | [] -> (
       match create_device () with
       | 0n -> refuse "no GPU of this machine supports Metal"
       | mtl when i > 0 ->
@@ -158,16 +168,14 @@ let get i =
       | mtl -> (
           match open_metal mtl with
           | m ->
-              Atomic.set opened (Some m);
+              Atomic.set opened [ m ];
               Ok m.dev
           | exception Failure why ->
               release mtl;
               refuse why))
 
 let of_device d =
-  match Atomic.get opened with
-  | Some m when Nx_device.equal m.dev d -> Some m
-  | _ -> None
+  List.find_opt (fun m -> Nx_device.equal m.dev d) (Atomic.get opened)
 
 let queue m = m.queue
 let event m = m.event

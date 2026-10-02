@@ -55,9 +55,10 @@ val get : ?host:Nx_device.t -> int -> (Nx_device.t, string) result
 
     [Error msg] says why the adapter cannot be opened, for example that
     [i >= count ()], that the adapter is not detached, naming {!detach}, that a
-    privilege is missing, or that its firmware refused a request, after the
-    adapter's name, such as ["RDMA:2: no adapter 2; there are 2"]. A failed open
-    gives the function back, its bus mastering off.
+    privilege is missing, that it is lost ({!Nx_device.Lost}), which only a
+    reset in another process recovers, or that its firmware refused a request,
+    after the adapter's name, such as ["RDMA:2: no adapter 2; there are 2"]. A
+    failed open gives the function back, its bus mastering off.
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
     {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)

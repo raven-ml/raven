@@ -77,10 +77,11 @@
     the device ({!Nx_device.Lost}) with the driver's report when a wait finds
     it. Work that does not signal within the device's {!Nx_device.timeout}, 30
     seconds unless {!Nx_device.set_timeout} sets another, loses it too. Nothing
-    recovers a lost device in the process. Under {!Pci}, the process stops the
-    engines of a lost GPU at exit and takes its bus mastering away, so that it
-    cannot reach the memory the process releases; an open then refuses the GPU,
-    which was not closed cleanly, until {!reset} resets it.
+    recovers a lost device in the process: under {!Kernel}, {!get} opens the GPU
+    anew as a fresh device, and under {!Pci} it refuses it. Under {!Pci}, the
+    process stops the engines of a lost GPU at exit and takes its bus mastering
+    away, so that it cannot reach the memory the process releases; an open then
+    refuses the GPU, which was not closed cleanly, until {!reset} resets it.
 
     {b Under {!Pci}}, opening a GPU changes nothing outside the process. The GPU
     must be detached from its kernel driver ({!detach}), reset if its kernel
@@ -123,8 +124,10 @@ val get :
   int ->
   (Nx_device.t, string) result
 (** [get ~interface i] is AMD GPU [i] through [interface], opened by the first
-    call that succeeds; every later call returns the same value. The first
-    successful open fixes the process's interface. Given another machine's
+    call that succeeds; every later call returns the same value until the device
+    is lost ({!Nx_device.Lost}). Under {!Kernel}, a call then opens the GPU
+    anew, with queues of its own: a fresh device, unequal to the lost one. The
+    first successful open fixes the process's interface. Given another machine's
     [host] (defaults to {!Nx_device.host}), it is that machine's GPU [i], which
     only {!Pci} reaches.
 
@@ -141,11 +144,13 @@ val get :
     [i >= count ()], that the process's interface is the other one, that another
     machine's GPU was asked for under {!Kernel}, that the [amdgpu] driver does
     not hold the GPU, that {!Pci} does not support the GPU's family, that a
-    privilege is missing, or that a firmware image differs, naming the file. A
-    precondition of {!Pci} that does not hold names the call that establishes
-    it: a GPU not detached names {!detach}, one booted by another {!reset}, a
-    missing firmware image {!fetch_firmware}. [msg] starts with the GPU's name
-    under [interface], such as ["AMD:2: no GPU 2; there are 2 AMD GPUs"].
+    privilege is missing, that a firmware image differs, naming the file, or
+    that the GPU was lost under {!Pci}, which only a {!reset} in another process
+    recovers. A precondition of {!Pci} that does not hold names the call that
+    establishes it: a GPU not detached names {!detach}, one booted by another
+    {!reset}, a missing firmware image {!fetch_firmware}. [msg] starts with the
+    GPU's name under [interface], such as
+    ["AMD:2: no GPU 2; there are 2 AMD GPUs"].
 
     Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
     {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)

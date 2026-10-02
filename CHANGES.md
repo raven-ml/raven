@@ -3110,6 +3110,12 @@ thread.
 
 ### Nx
 
+- A lost device (`Nx_device.Lost`) can be opened again: `Nx_cuda.get`,
+  `Nx_metal.get`, `Nx_amd.get`, `Nx_nv.get`, `Nx.Device.cpu` and
+  `Nx_remote_device.connect` give a fresh, unequal device, and the PCI
+  interfaces refuse. Every eager operation, read and `Nx.place` of a value a
+  lost device can reach raises `Lost`, empty values and host memory it mapped
+  included. New `Nx_device.lost`; `Lost` prints as `NAME lost: why`.
 - A GPU over PCI (`Nx_nv`, `Nx_amd` and their runtimes under `Pci`) opens
   without root once an administrator binds it to `vfio-pci` on a machine whose
   IOMMU is on and grants its `/dev/vfio/N`: `Nx_device_support.Pci` takes it

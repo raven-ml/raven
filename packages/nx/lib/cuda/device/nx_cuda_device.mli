@@ -49,7 +49,10 @@
     copy, since the context may then be unusable. Work that does not signal
     within the device's {!Nx_device.timeout}, 30 seconds unless
     {!Nx_device.set_timeout} sets another, loses the device too: raise the
-    timeout before submitting kernels that run longer.
+    timeout before submitting kernels that run longer. {!get} then opens the GPU
+    anew, a fresh device with streams of its own in the primary context, unless
+    the context holds a sticky error, such as an illegal address, which lasts
+    for the process: {!get} then says so.
 
     {b Other CUDA libraries.} Devices use the GPU's primary context, which the
     CUDA runtime API and the libraries over it share. The runtime makes it
@@ -69,12 +72,13 @@ val count : unit -> int
 
 val get : int -> (Nx_device.t, string) result
 (** [get i] is CUDA device [i], opened by the first call that succeeds; every
-    later call returns the same value. [Error msg] says why it cannot be opened,
-    after the device's name, for example that the driver cannot be loaded, that
-    [i >= count ()], or that the GPU cannot write 64-bit values from its
-    streams. Opening requires the driver's 64-bit stream memory operations and
-    unified addressing on every platform, Windows included; there is no fallback
-    without them.
+    later call returns the same value until the device is lost
+    ({!Nx_device.Lost}), and then opens it anew: a fresh device, unequal to the
+    lost one. [Error msg] says why it cannot be opened, after the device's name,
+    for example that the driver cannot be loaded, that [i >= count ()], or that
+    the GPU cannot write 64-bit values from its streams. Opening requires the
+    driver's 64-bit stream memory operations and unified addressing on every
+    platform, Windows included; there is no fallback without them.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
