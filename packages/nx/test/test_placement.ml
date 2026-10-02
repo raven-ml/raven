@@ -15,7 +15,7 @@ open Devices
 
 let four = [ d1; d2; d3; d4 ]
 let values = array float_exact
-let on1 = Nx.Placement.on [ d1 ]
+let on1 = Nx.Placement.on d1
 
 let iota shape =
   Nx.create Nx.float32 shape
@@ -25,19 +25,20 @@ let refuses = List.iter raises_invalid_arg
 
 (* Where a value lives, as nx.mli states it. *)
 type where =
-  | One of Nx_device.t
-  | Copies of Nx_device.t list
-  | Split of int * Nx_device.t list
+  | One of Nx.Device.t
+  | Copies of Nx.Device.t list
+  | Split of int * Nx.Device.t list
 
 let to_placement = function
-  | One d -> Nx.Placement.on [ d ]
-  | Copies ds -> Nx.Placement.on ds
+  | One d -> Nx.Placement.on d
+  | Copies ds -> Nx.Placement.replicated ds
   | Split (axis, ds) -> Nx.Placement.sharded ~axis ds
 
 let pp_where ppf w = Nx.Placement.pp ppf (to_placement w)
 let devices_of = function One d -> [ d ] | Copies ds | Split (_, ds) -> ds
-let sorted ds = List.sort Nx_device.compare ds
-let same_set ds es = List.equal Nx_device.equal (sorted ds) (sorted es)
+let by_name d d' = String.compare (Nx.Device.name d) (Nx.Device.name d')
+let sorted ds = List.sort by_name ds
+let same_set ds es = List.equal Nx.Device.equal (sorted ds) (sorted es)
 
 (* Placements *)
 
@@ -57,12 +58,12 @@ let window_of shape (ds, axis) d =
 
 let make (ds, axis) =
   match axis with
-  | None -> Nx.Placement.on ds
+  | None -> Nx.Placement.replicated ds
   | Some axis -> Nx.Placement.sharded ~axis ds
 
 let placement_args =
   let open Gen in
-  let+ ds = permutation ~pp:Nx_device.pp four
+  let+ ds = permutation ~pp:Nx.Device.pp four
   and+ n = int_range 1 4
   and+ axis = option (int_range 0 2) in
   (List.filteri (fun i _ -> i < n) ds, axis)
@@ -74,10 +75,11 @@ let placements =
           List.iter
             (fun (a, b) -> equal placement a b)
             [
-              (on1, Nx.Placement.on [ d1 ]);
+              (on1, Nx.Placement.replicated [ d1 ]);
               (on1, Nx.Placement.sharded ~axis:3 [ d1 ]);
-              (Nx.Placement.host, Nx.Placement.on [ Nx_device.host ]);
-              (Nx.Placement.on [ d1; d2 ], Nx.Placement.on [ d2; d1 ]);
+              (Nx.Placement.host, Nx.Placement.on Nx.Device.host);
+              ( Nx.Placement.replicated [ d1; d2 ],
+                Nx.Placement.replicated [ d2; d1 ] );
             ];
           not_equal placement
             (Nx.Placement.sharded ~axis:0 [ d1; d2 ])
@@ -88,7 +90,7 @@ let placements =
          let+ b =
            frequency
              [
-               (1, map (fun ds -> (ds, axis)) (permutation ~pp:Nx_device.pp ds));
+               (1, map (fun ds -> (ds, axis)) (permutation ~pp:Nx.Device.pp ds));
                (2, placement_args);
              ]
          in
@@ -109,13 +111,17 @@ let placements =
           cover "equal placements" same;
           equal bool same (Nx.Placement.equal p (make b)));
       test
-        "refuse no devices, a repeated device, a negative axis, and windows of \
-         a device they lack or an axis that does not divide" (fun () ->
+        "refuse no devices, a repeated device, two devices over one memory, a \
+         negative axis, and windows of a device they lack or an axis that does \
+         not divide" (fun () ->
           let s = Nx.Placement.sharded ~axis:1 [ d1; d2; d3 ] in
+          let d1' = Nx.Device.with_backend (module Renamed) d1 in
           refuses
             [
-              (fun () -> ignore (Nx.Placement.on []));
-              (fun () -> ignore (Nx.Placement.on [ d1; d1 ]));
+              (fun () -> ignore (Nx.Placement.replicated []));
+              (fun () -> ignore (Nx.Placement.replicated [ d1; d1 ]));
+              (fun () -> ignore (Nx.Placement.replicated [ d1; d1' ]));
+              (fun () -> ignore (Nx.Placement.sharded ~axis:0 [ d1'; d2; d1 ]));
               (fun () -> ignore (Nx.Placement.sharded ~axis:(-1) [ d1; d2 ]));
               (fun () -> ignore (Nx.Placement.window s [| 2; 6 |] d4));
               (fun () -> ignore (Nx.Placement.window s [| 2; 5 |] d1));
@@ -125,19 +131,33 @@ let placements =
 
 (* Devices *)
 
-let pp_want ppf (w : Nx.Device.want) =
-  match w with
-  | Host -> Format.pp_print_string ppf "Host"
-  | Cpu k -> Format.fprintf ppf "Cpu %d" k
-  | Metal -> Format.pp_print_string ppf "Metal"
-  | Cuda i -> Format.fprintf ppf "Cuda %d" i
-  | Nv i -> Format.fprintf ppf "Nv %d" i
-  | Amd i -> Format.fprintf ppf "Amd %d" i
-
-let pp_want_list = Format.pp_print_list pp_want
-let want = Testable.make ~pp:pp_want ~equal:( = )
-let device = Testable.make ~pp:Nx_device.pp ~equal:Nx_device.equal
+let want = Testable.make ~pp:Nx.Device.pp_want ~equal:( = )
+let pp_want_list = Format.pp_print_list Nx.Device.pp_want
 let failure = function Failure _ -> true | _ -> false
+
+(* Every want, its indices across their edges. *)
+let wants =
+  let index =
+    Gen.frequency [ (4, Gen.int_range 0 3); (1, Gen.int_range 0 max_int) ]
+  in
+  let open Nx.Device in
+  Gen.with_pp Nx.Device.pp_want
+    (Gen.one_of
+       [
+         Gen.of_list ~pp:Nx.Device.pp_want [ Host; Gpu; Metal ];
+         Gen.map
+           (fun k -> Cpu k)
+           (Gen.frequency
+              [ (4, Gen.int_range 1 4); (1, Gen.int_range 1 max_int) ]);
+         Gen.map (fun i -> Cuda i) index;
+         Gen.map (fun i -> Nv i) index;
+         Gen.map (fun i -> Amd i) index;
+         Gen.map (fun i -> Nv_pci i) index;
+         Gen.map (fun i -> Amd_pci i) index;
+       ])
+
+(* The wants that open on any machine: the host and test memories. *)
+let opening = Nx.Device.[ Host; Cpu 1; Cpu 2; Cpu 7 ]
 
 let devices =
   group "devices"
@@ -145,50 +165,140 @@ let devices =
       cases ~name:fst "of_string reads"
         [
           ("CPU", [ Nx.Device.Host ]);
+          ("gpu", [ Gpu ]);
           ("cpu:2, CUDA:1", [ Cpu 2; Cuda 1 ]);
           ("METAL,NV:3,AMD", [ Metal; Nv 3; Amd 0 ]);
           ("CUDA,NV", [ Cuda 0; Nv 0 ]);
+          (" nv-pci:1 ,Amd-Pci", [ Nv_pci 1; Amd_pci 0 ]);
         ]
         (fun (s, ws) ->
           equal (result (list want) string) (Ok ws) (Nx.Device.of_string s));
       cases ~name:(Printf.sprintf "%S") "of_string refuses"
-        [ ""; "GPU"; "CUDA:-1"; "CPU:x"; "CPU,"; "METAL:0:1" ] (fun s ->
+        [
+          "";
+          "GPU:0";
+          "CUDA:-1";
+          "CPU:x";
+          "CPU:0";
+          "CPU,";
+          "METAL:0:1";
+          "NV-PCI:";
+          "TPU";
+        ] (fun s ->
           ignore (require_error ~pp:pp_want_list (Nx.Device.of_string s)));
-      test "a test device is one device per index, on which the host computes"
+      prop "of_string reads back what pp_want prints" wants (fun w ->
+          Law.round_trip want string
+            (Format.asprintf "%a" Nx.Device.pp_want)
+            (fun s ->
+              match
+                require_ok ~pp:Format.pp_print_string (Nx.Device.of_string s)
+              with
+              | [ w ] -> w
+              | ws -> failf "%d wants" (List.length ws))
+            w);
+      prop "an unpaired device's name reads back as the want that opened it"
+        (Gen.of_list ~pp:Nx.Device.pp_want (Nx.Device.Gpu :: opening))
+        (fun w ->
+          match Nx.Device.get w with
+          | Error e -> skip ~reason:e ()
+          | Ok d -> (
+              match Nx.Device.of_string (Nx.Device.name d) with
+              | Ok [ w' ] -> equal device d (Nx.Device.v w')
+              | _ -> fail ("unreadable name " ^ Nx.Device.name d)));
+      test "a test device is one device per index, computed by nx.cpu"
         (fun () ->
-          let d = Nx.Device.cpu 3 in
-          equal device d (Nx.Device.cpu 3);
+          let d = Nx.Device.v (Cpu 3) in
           equal device d (Result.get_ok (Nx.Device.get (Cpu 3)));
           equal string "CPU:3" (Nx.Device.name d);
-          equal bool true (Nx_device.runs_on_host d);
-          not_equal device d (Nx.Device.cpu 4));
-      test "Host and Cpu 0 are the host" (fun () ->
-          equal device Nx_device.host Nx.Device.host;
-          equal device Nx.Device.host (Nx.Device.cpu 0);
-          equal device Nx.Device.host (Nx.Device.first [ Host ]));
+          equal bool true (Nx_device.runs_on_host (Nx.Device.memory d));
+          not_equal device d (Nx.Device.v (Cpu 4)));
+      test "opening is one value per memory, and of_memory finds it" (fun () ->
+          List.iter
+            (fun w ->
+              let d = Nx.Device.v w in
+              equal device d (Nx.Device.v w);
+              equal device d (Nx.Device.of_memory (Nx.Device.memory d)))
+            opening;
+          equal device Nx.Device.host (Nx.Device.of_memory Nx_device.host));
+      test "a memory nx opened is not made again by its vendor interface"
+        (fun () ->
+          ignore (Nx.Device.v (Cpu 5));
+          raises_match (Exn.invalid_arg ~substring:"CPU:5") (fun () ->
+              Nx_device.Driver.device ~name:"CPU:5" ~arch:"test" ~budget:max_int
+                (Host_visible
+                   { memory = Nx_device.Driver.host_memory; mapping = None })));
+      test "pairing is one value per memory and backend, defaults included"
+        (fun () ->
+          let d = Nx.Device.v (Cpu 1) in
+          let r = Nx.Device.with_backend (module Renamed) d in
+          equal device r (Nx.Device.with_backend (module Renamed) d);
+          equal device r (Nx.Device.with_backend (module Renamed) r);
+          equal device d (Nx.Device.with_backend (module Nx_cpu) r);
+          equal device Nx.Device.host
+            (Nx.Device.with_backend (module Nx_cpu) Nx.Device.host);
+          not_equal device d r;
+          equal device d (Nx.Device.of_memory (Nx.Device.memory r));
+          equal string "CPU:1/nx.cpu renamed" (Nx.Device.name r));
+      test
+        "pairing refuses a backend that does not run on the memory, and knows \
+         a backend by its name" (fun () ->
+          let module Impostor = struct
+            include (Nx_cpu : Nx_backend.S)
+
+            let name = "nx.cpu renamed"
+            let unary _ _ ~dst:_ = ()
+          end in
+          let module Elsewhere = struct
+            include (Nx_cpu : Nx_backend.S)
+
+            let name = "elsewhere"
+            let runs_on _ = false
+          end in
+          let d = Nx.Device.v (Cpu 2) in
+          let r = Nx.Device.with_backend (module Renamed) d in
+          equal device r (Nx.Device.with_backend (module Impostor) d);
+          raises_invalid_arg (fun () ->
+              ignore (Nx.Device.with_backend (module Elsewhere) d)));
+      test "Gpu never takes a GPU from its kernel driver" (fun () ->
+          match Nx.Device.get Gpu with
+          | Error e -> starts_with ~affix:"no GPU opens: " e
+          | Ok d ->
+              let kind =
+                List.hd (String.split_on_char ':' (Nx.Device.name d))
+              in
+              is_false ~msg:(Nx.Device.name d)
+                (String.ends_with ~suffix:"-PCI" kind));
+      test
+        "Nv and Amd fail without touching PCI where their kernel interface is \
+         absent" (fun () ->
+          let absent path = not (Sys.file_exists path) in
+          if absent "/dev/nvidiactl" then is_error (Nx.Device.get (Nv 0));
+          if absent "/dev/kfd" then is_error (Nx.Device.get (Amd 0)));
       test "first opens the first device that opens" (fun () ->
-          equal device (Nx.Device.cpu 1)
+          equal device (Nx.Device.v (Cpu 1))
             (Nx.Device.first [ Cuda 99; Cpu 1; Cpu 2 ]));
       test "first raises Failure when none opens, and on no device" (fun () ->
           raises_match failure (fun () -> ignore (Nx.Device.first [ Cuda 99 ]));
           raises_invalid_arg (fun () -> ignore (Nx.Device.first [])));
-      test "all opens every device, and raises Failure when one does not open"
-        (fun () ->
+      test
+        "all opens every device, and raises Failure when one does not open, \
+         and on a repeated want" (fun () ->
           equal (list device)
-            [ Nx.Device.cpu 1; Nx.Device.cpu 2 ]
+            [ Nx.Device.v (Cpu 1); Nx.Device.v (Cpu 2) ]
             (Nx.Device.all [ Cpu 1; Cpu 2 ]);
           raises_match failure (fun () ->
-              ignore (Nx.Device.all [ Cpu 1; Cuda 99 ])));
-      test "a constructor raises Failure for a device that does not open"
-        (fun () ->
-          raises_match failure (fun () -> ignore (Nx.Device.cuda 99));
-          raises_match failure (fun () -> ignore (Nx.Device.nv 99));
-          raises_match failure (fun () -> ignore (Nx.Device.amd 99)));
-      test "indices are not negative" (fun () ->
+              ignore (Nx.Device.all [ Cpu 1; Cuda 99 ]));
+          raises_invalid_arg (fun () -> ignore (Nx.Device.all [ Cpu 1; Cpu 1 ])));
+      test "v raises Failure with get's reason" (fun () ->
+          let why = Result.get_error (Nx.Device.get (Cuda 99)) in
+          raises (Failure why) (fun () -> ignore (Nx.Device.v (Cuda 99))));
+      test "indices are not negative, and test memories start at 1" (fun () ->
           refuses
             [
-              (fun () -> ignore (Nx.Device.cpu (-1)));
-              (fun () -> ignore (Nx.Device.cuda (-1)));
+              (fun () -> ignore (Nx.Device.get (Cpu 0)));
+              (fun () -> ignore (Nx.Device.get (Cpu (-1))));
+              (fun () -> ignore (Nx.Device.get (Cuda (-1))));
+              (fun () -> ignore (Nx.Device.get (Nv_pci (-1))));
             ]);
       test "Ptree.place places every tensor of a structure" (fun () ->
           let s = Nx.Ptree.(pair tensor (list tensor)) in
@@ -453,12 +563,10 @@ let movements =
               let view = Nx.Repr.Placed.view r
               and storage = Nx.Repr.Placed.storage r in
               raises_invalid_arg (fun () ->
-                  Nx.Repr.Placed.v
-                    (Nx.Placement.on [ other ])
-                    Nx.float32 view storage);
+                  Nx.Repr.Placed.v (Nx.Placement.on other) Nx.float32 view
+                    storage);
               ignore
-                (Nx.Repr.Placed.v (Nx.Placement.on [ d2 ]) Nx.float32 view
-                   storage)
+                (Nx.Repr.Placed.v (Nx.Placement.on d2) Nx.float32 view storage)
           | Host _ | Traced _ -> fail "expected a placed value");
     ]
 
@@ -535,7 +643,7 @@ let results =
   let ds = [ d1; d2 ] in
   let rows = Nx.Placement.sharded ~axis:0 ds
   and cols = Nx.Placement.sharded ~axis:1 ds
-  and copies = Nx.Placement.on ds in
+  and copies = Nx.Placement.replicated ds in
   let x = iota [| 8; 6 |] and w = iota [| 6; 4 |] in
   let s () = Nx.place rows x
   and t () = Nx.place cols x
@@ -697,7 +805,7 @@ let results =
             copies,
             fun () -> (Nx.roll ~axis:0 4 x, Nx.roll ~axis:0 4 (s ())) );
           ( "a sum of two whole shards of four",
-            Nx.Placement.on four,
+            Nx.Placement.replicated four,
             fun () ->
               let s4 = Nx.place (Nx.Placement.sharded ~axis:0 four) x in
               ( Nx.add (Nx.slice [ R (0, 2) ] x) (Nx.slice [ R (2, 4) ] x),
@@ -727,7 +835,7 @@ let results =
                    ignore
                      (Nx.add
                         (Nx.slice [ R (0, 4) ] s)
-                        (Nx.place (Nx.Placement.on [ d2 ])
+                        (Nx.place (Nx.Placement.on d2)
                            (Nx.slice [ R (4, 8) ] x))));
                ]));
       prop
@@ -763,9 +871,9 @@ let results =
           raises_invalid_arg (fun () ->
               Nx.Op.placement (Binary (Add, traced cols, at_rows))));
       test
-        "the devices receive a constant made there as one element, compute \
-         their results themselves, and a filled value split like its model"
-        (fun () ->
+        "the devices receive a constant made there as one element, expanded to \
+         its shape and split like its model, and compute their results \
+         themselves" (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |])
           and split = Nx.place (Nx.Placement.sharded ~axis:0 four) x in
           let sp = Nx.sum p and ss = Nx.sum split in
@@ -789,21 +897,21 @@ let results =
               (4, on1);
               (4, on1);
               (4, on1);
-              (4 * 4, Nx.Placement.on four);
-              ((4 * 4) + 192, Nx.Placement.sharded ~axis:1 four);
+              (4 * 4, Nx.Placement.replicated four);
+              (4 * 4, Nx.Placement.sharded ~axis:1 four);
             ]
             (List.map (fun (n, y) -> (n, Nx.placement y)) made);
           let z = snd (List.nth made 1) and filled = snd (List.nth made 4) in
-          is_true ~msg:"a filled value's view covers its storage"
+          equal ~msg:"a constant is one element, read with stride 0"
+            (pair (list int) (array int))
+            ([ 1 ], [| 0; 0 |])
             (match Nx.Repr.v z with
             | Placed r ->
-                Nx_array.View.is_c_contiguous (Nx.Repr.Placed.view r)
-                && Nx_array.View.numel (Nx.Repr.Placed.view r)
-                   = Nx_device.Buffer.length
-                       (List.hd
-                          (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage r)))
-            | Host _ | Traced _ -> false);
-          equal ~msg:"a slice on each device" (list int) [ 12; 12; 12; 12 ]
+                ( List.map Nx_device.Buffer.length
+                    (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage r)),
+                  Nx_array.View.strides (Nx.Repr.Placed.view r) )
+            | Host _ | Traced _ -> fail "a placed constant");
+          equal ~msg:"one element on each device" (list int) [ 1; 1; 1; 1 ]
             (List.map Nx_device.Buffer.length
                (Nx.Repr.Storage.buffers (storage_of filled)));
           equal (tensor float_exact)

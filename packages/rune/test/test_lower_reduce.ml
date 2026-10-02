@@ -486,7 +486,7 @@ let sorts =
       test "top_k of a short row takes two kernels for its positions" (fun () ->
           List.iter
             (fun (k, n) ->
-              let x = Nx.zeros Nx.float32 [| 16; n |] in
+              let x = Nx.copy (Nx.zeros Nx.float32 [| 16; n |]) in
               let _, y = trace (fun () -> snd (Nx.top_k ~k x)) in
               equal
                 ~msg:(Printf.sprintf "%d of %d" k n)
@@ -552,9 +552,10 @@ let on_the_host =
 (* Graph parity: the kernels tinygrad schedules for the same program. *)
 
 let parity =
-  let x () = Nx.zeros Nx.float32 [| 4; 4 |] in
-  let i () = Nx.zeros Nx.int32 [| 4; 4 |] in
-  let u ?(shape = [| 4; 4 |]) () = Nx.zeros Nx.uint32 shape in
+  (* Captures with storage of their own: a constant would fold. *)
+  let x () = Nx.copy (Nx.zeros Nx.float32 [| 4; 4 |]) in
+  let i () = Nx.copy (Nx.zeros Nx.int32 [| 4; 4 |]) in
+  let u ?(shape = [| 4; 4 |]) () = Nx.copy (Nx.zeros Nx.uint32 shape) in
   let case file f =
     Golden.graph
       ("golden/lower_reduce/" ^ file ^ ".golden")

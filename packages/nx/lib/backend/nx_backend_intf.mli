@@ -115,7 +115,8 @@ type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
 module type S = sig
   val name : string
   (** [name] is the backend's name, as its errors name it, such as ["nx.cpu"].
-  *)
+      Names identify backends: nx pairs a memory with one backend per name, so
+      two backends must not share one. *)
 
   val runs_on : Nx_device.t -> bool
   (** [runs_on d] is [true] iff the kernels compute on arrays in [d]'s memory.

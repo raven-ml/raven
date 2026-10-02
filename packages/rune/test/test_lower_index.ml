@@ -472,9 +472,12 @@ let windows =
 (* Graph parity: the kernels tinygrad schedules for the same program. *)
 
 let parity =
-  let x shape = Nx.zeros Nx.float32 shape in
+  (* Captures with storage of their own: a constant would fold. *)
+  let x shape = Nx.copy (Nx.zeros Nx.float32 shape) in
   let case file f =
-    Golden.graph ("golden/lower_index/" ^ file ^ ".golden") (fun () ->
+    Golden.graph
+      ("golden/lower_index/" ^ file ^ ".golden")
+      (fun () ->
         let args = f () in
         Programs.kernels (snd (trace (fun () -> args ()))))
   in

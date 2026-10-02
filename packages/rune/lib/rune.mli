@@ -655,10 +655,10 @@ val jit :
     decide otherwise. The width is part of a call's key, so functions searched
     at different widths never share a program.
 
-    {b Placement.} A call runs on the devices of its placed arguments and
-    captures, and on the host when there are none, whatever backends run around
-    it ({!Nx.Op.kernels}). Every value the function computes lives where nx
-    would place it, decided as it traces: a misplaced operand raises
+    {b Placement.} A call compiles for the memories of its placed arguments and
+    captures, and for the host's when there are none: the backends their devices
+    carry take no part. Every value the function computes lives where nx would
+    place it, decided as it traces: a misplaced operand raises
     [Invalid_argument] with nx's message, and nothing moves between devices
     unless the function places it with {!Nx.place}. A host argument is uploaded
     on each call, as an eager operation would move it. A view is read in place,

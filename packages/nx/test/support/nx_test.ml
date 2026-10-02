@@ -895,14 +895,23 @@ let int_value ~bits ~signed =
 let int_compare ~signed a b =
   if signed then Int64.compare a b else Int64.unsigned_compare a b
 
-(* Test devices: runtimes over host memory, whose statistics count the bytes
-   they receive and send. *)
+(* nx.cpu's kernels under another name: a backend of its own, which a test pairs
+   with a device whose default backend is nx.cpu. *)
+module Renamed = struct
+  include (Nx_cpu : Nx_backend.S)
+
+  let name = "nx.cpu renamed"
+end
+
+(* Test devices: nx.cpu over memories of the host's, whose statistics count the
+   bytes they receive and send. *)
 module Devices = struct
-  let runtime name =
+  let memory name =
     Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
       (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
-  let runtimes = List.map runtime [ "TEST:1"; "TEST:2"; "TEST:3"; "TEST:4" ]
+  let memories = List.map memory [ "TEST:1"; "TEST:2"; "TEST:3"; "TEST:4" ]
+  let runtimes = List.map Nx.Device.of_memory memories
 
   let d1, d2, d3, d4 =
     match runtimes with
@@ -910,15 +919,16 @@ module Devices = struct
     | _ -> assert false
 
   (* A device beside the four. *)
-  let other = runtime "OTHER"
+  let other = Nx.Device.of_memory (memory "OTHER")
 
   let total count =
-    List.fold_left (fun n r -> n + count (Nx_device.stats r)) 0 runtimes
+    List.fold_left (fun n r -> n + count (Nx_device.stats r)) 0 memories
 
   (* The bytes the four devices have received, and sent. *)
   let bytes_in () = total Nx_device.Stats.bytes_in
   let bytes_out () = total Nx_device.Stats.bytes_out
   let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+  let device = Testable.make ~pp:Nx.Device.pp ~equal:Nx.Device.equal
 
   (* The storage of the placed value [x]. *)
   let storage_of x =
@@ -1103,8 +1113,8 @@ module Runtimes = struct
         (List.init (Array.length shape) Fun.id)
     in
     Gen.of_list ~pp:Nx.Placement.pp
-      (List.map (fun d -> Nx.Placement.on [ d ]) ds
-      @ (if n > 1 then [ Nx.Placement.on ds ] else [])
+      (List.map Nx.Placement.on ds
+      @ (if n > 1 then [ Nx.Placement.replicated ds ] else [])
       @ List.map (fun axis -> Nx.Placement.sharded ~axis ds) splits)
 
   let placed ds tensors =
@@ -1116,7 +1126,7 @@ module Runtimes = struct
 
   (* The bytes of the elements of [x] that [d] holds at [p], as stored. *)
   let window_bytes p x d =
-    if List.exists (Nx_device.equal d) (Nx.Placement.devices p) then
+    if List.exists (Nx.Device.equal d) (Nx.Placement.devices p) then
       let window = Nx.Placement.window p (Nx.shape x) d in
       let n = Array.fold_left (fun n (lo, hi) -> n * (hi - lo)) 1 window in
       let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x))) in
@@ -1153,23 +1163,24 @@ module Runtimes = struct
     Nx_device.set_budget r (Nx_device.Stats.allocated (Nx_device.stats r) + 16);
     f ()
 
-  (* [laws ds] checks the runtimes [ds]: operations on them compute where nx.cpu
-     runs on them, and are refused otherwise. *)
+  (* [laws ms] checks the runtimes [ms], each a memory: operations on its device
+     compute where nx.cpu computes on it, and are refused otherwise. *)
   let laws = function
     | [] -> [ test "on no runtime" (fun () -> skip ~reason:"no device" ()) ]
-    | ds ->
+    | ms ->
+        let ds = List.map Nx.Device.of_memory ms in
         let received f =
-          let before = List.map Nx_device.stats ds in
+          let before = List.map Nx_device.stats ms in
           let y = f () in
           let bytes_in r s =
             Nx_device.Stats.(bytes_in (diff s (Nx_device.stats r)))
           in
-          (y, List.map2 bytes_in ds before)
+          (y, List.map2 bytes_in ms before)
         in
         (* A value on the disk is borrowed from its file's pages by devices
            whose memory the host addresses, which receive no byte, unless a
            window of 4-bit elements starts inside a byte. *)
-        let borrows = List.for_all Nx_device.shares_host_memory ds in
+        let borrows = List.for_all Nx_device.shares_host_memory ms in
         let round_trip ~disk (Case c) =
           prop
             (c.name ^ " values"
@@ -1195,17 +1206,17 @@ module Runtimes = struct
               | _ -> equal packed (Nx.P x) (Nx.P (host y)))
         in
         let ops =
-          List.map (fun d -> Nx.Placement.on [ d ]) ds
-          @ if List.length ds > 1 then [ Nx.Placement.on ds ] else []
+          List.map Nx.Placement.on ds
+          @ if List.length ds > 1 then [ Nx.Placement.replicated ds ] else []
         in
-        let d = List.hd ds in
-        let on_d = Nx.Placement.on [ d ] in
+        let m = List.hd ms in
+        let on_d = Nx.Placement.on (List.hd ds) in
         let out_of_memory n = function
-          | Nx_device.Out_of_memory (d', m) -> Nx_device.equal d d' && m = n
+          | Nx_device.Out_of_memory (m', k) -> Nx_device.equal m m' && k = n
           | _ -> false
         in
         let computing =
-          match List.for_all Nx_cpu.runs_on ds with
+          match List.for_all Nx_cpu.runs_on ms with
           | true ->
               [
                 prop
@@ -1225,7 +1236,7 @@ module Runtimes = struct
                 test
                   "an operation's result the runtime cannot allocate raises \
                    Out_of_memory with the device and its bytes" (fun () ->
-                    tight d @@ fun () ->
+                    tight m @@ fun () ->
                     let x = Nx.place on_d (Nx.zeros Nx.float32 [| 4 |]) in
                     raises_match (out_of_memory 16) (fun () -> Nx.add x x);
                     (* Held through the addition: the refused allocation
@@ -1243,9 +1254,13 @@ module Runtimes = struct
                       (function
                         | Invalid_argument why ->
                             String.starts_with
-                              ~prefix:"Nx.add: an operand is on" why
+                              ~prefix:
+                                ("Nx.add: " ^ Nx_device.name m
+                               ^ " has no eager kernels")
+                              why
                             && String.ends_with
-                                 ~suffix:"or Nx.place it on Nx.Placement.host"
+                                 ~suffix:
+                                   "or place the operands on Nx.Placement.host."
                                  why
                         | _ -> false)
                       (fun () -> Nx.add x x));
@@ -1258,7 +1273,7 @@ module Runtimes = struct
           test
             "a placement the runtime cannot allocate raises Out_of_memory with \
              the device and its bytes" (fun () ->
-              tight d @@ fun () ->
+              tight m @@ fun () ->
               raises_match (out_of_memory 400) (fun () ->
                   Nx.place on_d (Nx.zeros Nx.float32 [| 100 |])));
         ]

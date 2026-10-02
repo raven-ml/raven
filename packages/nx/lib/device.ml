@@ -3,16 +3,30 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type t = Nx_device.t
-type want = Host | Cpu of int | Metal | Cuda of int | Nv of int | Amd of int
+type t = Nx_effect.device
 
-let host = Nx_device.host
-let name = Nx_device.name
-let pp = Nx_device.pp
+type want =
+  | Host
+  | Cpu of int
+  | Gpu
+  | Metal
+  | Cuda of int
+  | Nv of int
+  | Amd of int
+  | Nv_pci of int
+  | Amd_pci of int
 
-(* Test devices: ["CPU:k"] holds its values in the host's memory, which it maps
+let host = Nx_effect.host_device
+let of_memory = Nx_effect.of_memory
+let with_backend = Nx_effect.with_backend
+let memory (d : t) = d.memory
+let name (d : t) = d.d_name
+let equal (d : t) d' = d == d'
+let pp = Nx_effect.pp_device
+
+(* Test memories: ["CPU:k"] holds its values in the host's memory, which it maps
    as it is, and loads no programs, so the host computes on it. Each [k] is one
-   device, made by its first use. *)
+   memory, made by its first use. *)
 
 let tests = Hashtbl.create 4
 let tests_lock = Mutex.create ()
@@ -20,49 +34,108 @@ let tests_lock = Mutex.create ()
 let test k =
   Mutex.protect tests_lock @@ fun () ->
   match Hashtbl.find_opt tests k with
-  | Some d -> d
+  | Some m -> m
   | None ->
-      let d =
+      let m =
         Nx_device.Driver.device
           ~name:(Printf.sprintf "CPU:%d" k)
           ~arch:"test" ~budget:max_int
           (Host_visible
              { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
       in
-      Hashtbl.add tests k d;
-      d
+      Hashtbl.add tests k m;
+      m
 
-let get = function
-  | Host | Cpu 0 -> Ok host
-  | Cpu k when k < 0 -> invalid_arg (Printf.sprintf "Nx.Device.get: CPU:%d" k)
-  | Cpu k -> Ok (test k)
+(* [Gpu] is the Mac's Metal GPU, and elsewhere the first GPU that opens through
+   a kernel driver, the vendor's runtime before nx's own. Selection never takes
+   a GPU over PCI, which detaches its kernel driver. *)
+let gpu_memory () =
+  let wants =
+    if Device_metal.on_mac then [ Device_metal.get ]
+    else
+      [
+        (fun () -> Nx_cuda_device.get 0);
+        (fun () -> Nx_nv_device.get ~interface:Kernel 0);
+        (fun () -> Nx_amd_device.get ~interface:Kernel 0);
+      ]
+  in
+  let rec go reasons = function
+    | [] -> Error ("no GPU opens: " ^ String.concat "; " (List.rev reasons))
+    | open_ :: rest -> (
+        match open_ () with Ok m -> Ok m | Error e -> go (e :: reasons) rest)
+  in
+  go [] wants
+
+let index what i =
+  if i < 0 then invalid_arg (Printf.sprintf "Nx.Device.get: %s %d < 0" what i)
+
+let memory_of = function
+  | Host -> Ok Nx_device.host
+  | Cpu k ->
+      if k < 1 then
+        invalid_arg (Printf.sprintf "Nx.Device.get: CPU:%d needs k >= 1" k);
+      Ok (test k)
+  | Gpu -> gpu_memory ()
   | Metal -> Device_metal.get ()
-  | Cuda i -> Nx_cuda_device.get i
-  | Nv i -> Nx_nv_device.get i
-  | Amd i -> Nx_amd_device.get i
+  | Cuda i ->
+      index "CUDA" i;
+      Nx_cuda_device.get i
+  | Nv i ->
+      index "NV" i;
+      Nx_nv_device.get ~interface:Kernel i
+  | Nv_pci i ->
+      index "NV-PCI" i;
+      Nx_nv_device.get ~interface:Pci i
+  | Amd i ->
+      index "AMD" i;
+      Nx_amd_device.get ~interface:Kernel i
+  | Amd_pci i ->
+      index "AMD-PCI" i;
+      Nx_amd_device.get ~interface:Pci i
 
-let open_ w = match get w with Ok d -> d | Error e -> failwith e
-let cpu k = open_ (Cpu k)
-let metal () = open_ Metal
-let cuda i = open_ (Cuda i)
-let nv i = open_ (Nv i)
-let amd i = open_ (Amd i)
+let get w = Result.map of_memory (memory_of w)
+let v w = match get w with Ok d -> d | Error e -> failwith e
 
-(* [first_of what ws] is the first device of [ws] that opens. *)
-let first_of what ws =
-  if ws = [] then invalid_arg (what ^ ": no device");
-  let rec go errors = function
+let gpu () =
+  match get Gpu with Ok d -> d | Error e -> failwith ("Nx.Device.gpu: " ^ e)
+
+let first ws =
+  if ws = [] then invalid_arg "Nx.Device.first: no device";
+  let rec go reasons = function
     | [] ->
-        failwith (what ^ ": none opens: " ^ String.concat "; " (List.rev errors))
+        failwith
+          ("Nx.Device.first: none opens: "
+          ^ String.concat "; " (List.rev reasons))
     | w :: ws -> (
-        match get w with Ok d -> d | Error e -> go (e :: errors) ws)
+        match get w with Ok d -> d | Error e -> go (e :: reasons) ws)
   in
   go [] ws
 
-let first ws = first_of "Nx.Device.first" ws
-let gpu () = first_of "Nx.Device.gpu" [ Metal; Cuda 0; Nv 0; Amd 0 ]
+(* Names *)
+
+let pp_want ppf w =
+  let s = Format.pp_print_string ppf and n = Format.fprintf ppf "%s:%d" in
+  match w with
+  | Host -> s "CPU"
+  | Cpu k -> n "CPU" k
+  | Gpu -> s "GPU"
+  | Metal -> s "METAL"
+  | Cuda i -> n "CUDA" i
+  | Nv i -> n "NV" i
+  | Amd i -> n "AMD" i
+  | Nv_pci i -> n "NV-PCI" i
+  | Amd_pci i -> n "AMD-PCI" i
 
 let all ws =
+  let rec repeated = function
+    | [] -> ()
+    | w :: rest ->
+        if List.mem w rest then
+          invalid_arg
+            (Format.asprintf "Nx.Device.all: %a is wanted twice" pp_want w);
+        repeated rest
+  in
+  repeated ws;
   let opened = List.map get ws in
   match
     List.filter_map (function Error e -> Some e | Ok _ -> None) opened
@@ -70,22 +143,30 @@ let all ws =
   | [] -> List.map Result.get_ok opened
   | errors -> failwith ("Nx.Device.all: " ^ String.concat "; " errors)
 
-(* Names *)
-
+(* A name and an index, "kind" or "kind:i", in any case, around blanks: an index
+   left out is 0. *)
 let want_of_name s =
   let index i =
-    match int_of_string_opt i with Some i when i >= 0 -> Some i | _ -> None
+    if i <> "" && String.for_all (fun c -> c >= '0' && c <= '9') i then
+      int_of_string_opt i
+    else None
+  in
+  let kind k i =
+    match k with
+    | "CPU" -> if i >= 1 then Some (Cpu i) else None
+    | "CUDA" -> Some (Cuda i)
+    | "NV" -> Some (Nv i)
+    | "AMD" -> Some (Amd i)
+    | "NV-PCI" -> Some (Nv_pci i)
+    | "AMD-PCI" -> Some (Amd_pci i)
+    | _ -> None
   in
   match String.split_on_char ':' (String.uppercase_ascii (String.trim s)) with
   | [ "CPU" ] -> Some Host
-  | [ "CPU"; k ] -> Option.map (fun k -> Cpu k) (index k)
+  | [ "GPU" ] -> Some Gpu
   | [ "METAL" ] -> Some Metal
-  | [ "CUDA" ] -> Some (Cuda 0)
-  | [ "CUDA"; i ] -> Option.map (fun i -> Cuda i) (index i)
-  | [ "NV" ] -> Some (Nv 0)
-  | [ "NV"; i ] -> Option.map (fun i -> Nv i) (index i)
-  | [ "AMD" ] -> Some (Amd 0)
-  | [ "AMD"; i ] -> Option.map (fun i -> Amd i) (index i)
+  | [ (("CUDA" | "NV" | "AMD" | "NV-PCI" | "AMD-PCI") as k) ] -> kind k 0
+  | [ k; i ] -> Option.bind (index i) (kind k)
   | _ -> None
 
 let of_string s =
@@ -97,8 +178,8 @@ let of_string s =
         | None ->
             Error
               (Printf.sprintf
-                 "%S is not a device; devices are CPU, CPU:k, METAL, CUDA:i, \
-                  NV:i and AMD:i"
+                 "%S is not a device; devices are GPU, CPU, CPU:k (k >= 1), \
+                  METAL, CUDA:i, NV:i, AMD:i, NV-PCI:i and AMD-PCI:i"
                  (String.trim n)))
   in
   go [] (String.split_on_char ',' s)

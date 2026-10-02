@@ -14,9 +14,9 @@ module B = Nx_device.Buffer
 
 let d1 = Devices.d1
 let d2 = Devices.d2
-let r1 = d1
+let r1 = Nx.Device.memory d1
 let placement = Devices.placement
-let disk = Nx.Placement.on [ Nx_device.disk ]
+let disk = Nx.Placement.on (Nx.Device.of_memory Nx_device.disk)
 
 let device =
   Testable.make
@@ -31,10 +31,7 @@ let wheres =
     ~pp:(fun ppf w -> Format.pp_print_string ppf w.name)
     [
       { name = "on the host"; at = Fun.id };
-      {
-        name = "on a device";
-        at = (fun x -> Nx.place (Nx.Placement.on [ d1 ]) x);
-      };
+      { name = "on a device"; at = (fun x -> Nx.place (Nx.Placement.on d1) x) };
     ]
 
 (* Whether [x]'s elements are one run of its storage in C order that starts on a
@@ -48,7 +45,7 @@ let one_run x =
 
 let runtime_of x =
   match Nx.Placement.devices (Nx.placement x) with
-  | [ d ] -> d
+  | [ d ] -> Nx.Device.memory d
   | _ -> fail "expected a value on one device"
 
 let traced () =
@@ -108,7 +105,7 @@ let to_buffer =
               (Nx.to_array (Nx.of_buffer Nx.int32 [| 3; 2 |] b)));
         test "a value on a device in no run is copied on that device" (fun () ->
             let t = Nx.reshape [| 2; 3 |] (Nx.arange Nx.int32 0 6 1) in
-            let x = Nx.transpose (Nx.place (Nx.Placement.on [ d1 ]) t) in
+            let x = Nx.transpose (Nx.place (Nx.Placement.on d1) t) in
             let b = Nx.to_buffer x in
             equal device r1 (B.device b);
             is_false (share_memory b (storage x));
@@ -117,14 +114,16 @@ let to_buffer =
               (Nx.to_array (Nx.of_buffer Nx.int32 [| 3; 2 |] b)));
         test "an empty value gives an empty buffer on its device" (fun () ->
             let x =
-              Nx.place (Nx.Placement.on [ d1 ]) (Nx.zeros Nx.int8 [| 0; 3 |])
+              Nx.place (Nx.Placement.on d1) (Nx.zeros Nx.int8 [| 0; 3 |])
             in
             let b = Nx.to_buffer x in
             equal int 0 (B.length b);
             equal device r1 (B.device b));
         test "refuses a value copied on several devices" (fun () ->
             let x =
-              Nx.place (Nx.Placement.on [ d1; d2 ]) (Nx.ones Nx.int8 [| 4 |])
+              Nx.place
+                (Nx.Placement.replicated [ d1; d2 ])
+                (Nx.ones Nx.int8 [| 4 |])
             in
             raises_invalid_arg (fun () -> Nx.to_buffer x));
         test "refuses a value split over several devices" (fun () ->
@@ -139,9 +138,7 @@ let to_buffer =
               (Invalid_argument "Nx.to_buffer: a traced value has no buffer")
               (fun () -> Nx.to_buffer (traced ())));
         test "refuses a consumed value, naming where it was consumed" (fun () ->
-            let x =
-              Nx.place (Nx.Placement.on [ d1 ]) (Nx.ones Nx.int8 [| 4 |])
-            in
+            let x = Nx.place (Nx.Placement.on d1) (Nx.ones Nx.int8 [| 4 |]) in
             Devices.consume (Devices.storage_of x) ~path:"0.weights";
             raises_match (Exn.invalid_arg ~substring:"0.weights") (fun () ->
                 Nx.to_buffer x));
@@ -208,7 +205,7 @@ let of_buffer =
           let b = B.create r1 Nx_dtype.Scalar.Int32 6 in
           B.copy ~src:(Nx.to_buffer (Nx.arange Nx.int32 0 6 1)) ~dst:b;
           let x = Nx.of_buffer Nx.int32 [| 3; 2 |] b in
-          equal placement (Nx.Placement.on [ d1 ]) (Nx.placement x);
+          equal placement (Nx.Placement.on d1) (Nx.placement x);
           is_true (share_memory b (storage x));
           equal (array int32) [| 0l; 1l; 2l; 3l; 4l; 5l |] (Nx.to_array x));
       test "reads a file's bytes as a value on the disk" (fun () ->
@@ -251,7 +248,9 @@ let one_per_device (Stored.Case c) =
     (c.name ^ ": shards is one buffer per device, each in its device's memory")
     (placed c.tensors) (fun (t, p) ->
       let buffers, _ = Nx.shards (Nx.place p t) in
-      equal (list device) (Nx.Placement.devices p) (List.map B.device buffers))
+      equal (list device)
+        (List.map Nx.Device.memory (Nx.Placement.devices p))
+        (List.map B.device buffers))
 
 let same_handles x y =
   List.for_all2 ( == ) (fst (Nx.shards x)) (fst (Nx.shards y))
@@ -273,7 +272,9 @@ let shards =
             let x = x () in
             is_true (same_handles x (Nx.flip ~axes:[ 1 ] x)));
         test "a host value is its one buffer and view" (fun () ->
-            let t = Nx.transpose (Nx.ones Nx.int8 [| 2; 3 |]) in
+            let t =
+              Nx.transpose (Nx.create Nx.int8 [| 2; 3 |] [| 1; 2; 3; 4; 5; 6 |])
+            in
             let buffers, v = Nx.shards t in
             equal int 1 (List.length buffers);
             equal (array int) [| 1; 3 |] (Nx_array.View.strides v));
@@ -281,7 +282,7 @@ let shards =
           (fun () ->
             let x = x () in
             let row = Nx.slice [ R (3, 4) ] x in
-            equal placement (Nx.Placement.on [ d2 ]) (Nx.placement row);
+            equal placement (Nx.Placement.on d2) (Nx.placement row);
             is_true
               (List.for_all2 ( == )
                  (fst (Nx.shards row))
@@ -294,10 +295,10 @@ let shards =
       ])
 
 let of_shards =
-  let p = Nx.Placement.on [ d1; d2 ] in
+  let p = Nx.Placement.replicated [ d1; d2 ] in
   let view = Nx_array.View.create [| 4 |] in
   let on r ?(scalar = Nx_dtype.Scalar.Int32) n = B.create r scalar n in
-  let r2 = d2 in
+  let r2 = Nx.Device.memory d2 in
   let refuses what buffers =
     test what (fun () ->
         raises_invalid_arg (fun () -> Nx.of_shards p Nx.int32 view buffers))

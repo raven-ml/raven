@@ -133,7 +133,6 @@ module Op = struct
     claims : 'r. 'r t -> bool;
   }
 
-  let kernels = Nx_effect.kernels
   let intercept = Nx_effect.intercept
   let intercepted = Nx_effect.intercepted
 end

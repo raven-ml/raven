@@ -231,7 +231,10 @@ let stage trace s (r : Scan.request) =
             (fun l -> Nx.Placement.(equal (at l) p || equal (at l) host))
             leaves)
   then raise Scan.Not_staged;
-  let device = Ops.Single (Nx_device.name (List.hd (Nx.Placement.devices p))) in
+  let device =
+    Ops.Single
+      (Nx_device.name (Nx.Device.memory (List.hd (Nx.Placement.devices p))))
+  in
   (* The node of [x] on the loop's device: placed there, and a constant held
      there, since a call reads storage. *)
   let node (Nx.P x) =

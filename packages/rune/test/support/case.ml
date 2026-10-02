@@ -1306,13 +1306,13 @@ let move_case m =
     (fun (D d) -> move_instance m (tensor d (range (-3.) 3.)))
 
 (* Test devices over host memory, so that a value can be placed off the host. *)
-let d1 = Nx.Device.cpu 1
-let d2 = Nx.Device.cpu 2
+let d1 = Nx.Device.v (Cpu 1)
+let d2 = Nx.Device.v (Cpu 2)
 
 let placements =
   [
-    ("on one device", fun _ -> Some (Nx.Placement.on [ d1 ]));
-    ("replicated on two", fun _ -> Some (Nx.Placement.on [ d1; d2 ]));
+    ("on one device", fun _ -> Some (Nx.Placement.on d1));
+    ("replicated on two", fun _ -> Some (Nx.Placement.replicated [ d1; d2 ]));
     ( "split by rows over two",
       fun s ->
         if Array.length s > 0 && s.(0) mod 2 = 0 then
@@ -1327,7 +1327,7 @@ let place_case =
       of_list ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n) placements
     in
     let+ x = g s in
-    let p = Option.value (p s) ~default:(Nx.Placement.on [ d1 ]) in
+    let p = Option.value (p s) ~default:(Nx.Placement.on d1) in
     let f x = [ Op.eval (Place (p, one x)) ] in
     instance ~linear:f ("place " ^ name) f [ x ]
   in

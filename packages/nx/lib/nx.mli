@@ -13,9 +13,9 @@
     buffer described by a shape, strides, and an offset. Operations that only
     rearrange metadata ({!transpose}, {!val-slice}, …) return views in O(1)
     without copying data; {!reshape} returns one where the layout allows it, and
-    a copy otherwise. Use {!is_c_contiguous} to test whether
-    elements are laid out contiguously in row-major order, and {!contiguous} to
-    obtain a contiguous copy when needed.
+    a copy otherwise. Use {!is_c_contiguous} to test whether elements are laid
+    out contiguously in row-major order, and {!contiguous} to obtain a
+    contiguous copy when needed.
 
     {b Broadcasting.} Binary operations automatically broadcast operands whose
     shapes differ: dimensions are aligned from the right and each pair must be
@@ -82,10 +82,9 @@ type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
           [int4] and [uint4] are storage formats: their values move, cast and
           are read and written, and every computation on them raises
           [Invalid_argument]; cast them to a wider integer to compute. [bool]
-          values compare, combine logically and bitwise, select ({!where}),
-          sort and reduce by {!max} and {!min}; arithmetic on them (sums,
-          products, negation, cumulative sums, {!matmul}) raises
-          [Invalid_argument]. *)
+          values compare, combine logically and bitwise, select ({!where}), sort
+          and reduce by {!max} and {!min}; arithmetic on them (sums, products,
+          negation, cumulative sums, {!matmul}) raises [Invalid_argument]. *)
 
 (** {2:tensor_aliases Tensor aliases} *)
 
@@ -208,8 +207,8 @@ val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
 
     Raises [Invalid_argument] if [t]'s dtype has no {!Bigarray.kind}: bfloat16,
     the float8 dtypes, uint32, uint64, int4, uint4 and bool. {!bitcast} the
-    first five to the integers of their width first, which have one, and
-    {!cast} the last three to [uint8].
+    first five to the integers of their width first, which have one, and {!cast}
+    the last three to [uint8].
 
     See also {!of_bigarray}. *)
 
@@ -227,36 +226,44 @@ val to_array : ('a, 'b) t -> 'a array
 
 (** {1:placement Devices, placement and backends}
 
-    Where a value lives is a value too. A device ({!Device.t}) holds memory:
-    the host, test devices over the host's memory, and GPUs. A placement
-    ({!Placement.t}) is one device, a list of devices each holding a full copy,
-    or a list of devices each holding an equal slice along one axis. Values
-    start on the host; {!place} moves them.
+    Where a value lives is a value too. A {e memory} is storage nx.device opens
+    ({!Nx_device.t}): the host, test memories inside the host's, a GPU through
+    one interface, the disk. A {e backend} ({!Nx_backend.S}) is eager kernels
+    for some memories. A device ({!Device.t}) is a memory and the backend that
+    computes on it eagerly, if any: {!Device.host} and test devices compute with
+    nx.cpu, and a GPU computes eagerly with nothing until {!Device.with_backend}
+    pairs it with a backend. A placement ({!Placement.t}) is one device, a full
+    copy on each of a list of devices, or an equal slice on each along one axis.
+    Values start on the host; {!place} moves them, and is the only thing that
+    moves them between devices.
 
-    Who computes an eager operation follows from its operands' devices:
-    + Its placed operands share their devices, and host operands join them, or
-      it raises [Invalid_argument].
-    + The innermost backend run around the call ({!Op.kernels}) that covers
-      those devices computes it. A backend that lacks the operation raises
-      {!Nx_backend.Refused} naming itself and the operation; the operation never
-      reaches another backend.
-    + With no such backend, nx.cpu computes on the host and on test devices,
-      and an operation on any other device, such as a GPU, raises
-      [Invalid_argument] before any work, naming the remedies: compile it with
-      [Rune.jit], run it under a backend that covers the device, or {!place}
-      the value on {!Placement.host}.
+    Who computes an eager operation is read off its operands alone:
+    + A value on {!Placement.host} or on the disk joins the placement of the
+      placed operands it meets, for that call only, as {!place} would put it
+      there. Placed operands on unequal devices raise [Invalid_argument] naming
+      both, even over one memory.
+    + Each device of that placement computes its window with its backend, in
+      whichever domain or fiber the call runs.
+    + A device without a backend raises [Invalid_argument] before any work,
+      naming the remedies: compile the function with [Rune.jit], pair the device
+      with a backend, or {!place} the operands on {!Placement.host}.
+    + A backend that lacks a kernel raises {!Nx_backend.Refused} to nx, which
+      raises [Invalid_argument] naming the backend, the device, the operation
+      and the reason. The operation never reaches another backend.
     + Inside a compiled function nothing is eager: the compiler computes, for
-      the devices of the function's arguments.
+      the memories of the function's arguments.
 
-    Constants, movements, reads and {!place} work on every placement. A
-    constant made beside a value on a GPU, such as {!zeros_like}, is one
-    element on the device, expanded as a view.
+    Constants, movements, reads and {!place} work on every device, with or
+    without a backend. A constant ({!full}, {!zeros}, {!ones}, {!scalar} and
+    their [_like] forms) is one element on each device of where it is made, the
+    host's included, expanded as a view to its shape: no kernel computes it, and
+    {!copy} gives it storage of its own.
 
     Over split operands, an elementwise result keeps their split, which must be
     the same for all of them (copies take it); a reduction over the split axis,
     and a {!take} along it, give a full copy on each device; and an operation
-    along the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along
-    it, linear algebra on its last two axes, {!fft} over it) raises. A read
+    along the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along it,
+    linear algebra on its last two axes, {!fft} over it) raises. A read
     ({!item}, {!to_array}, {!to_bigarray}, {!pp}, a save) copies the elements it
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
@@ -265,14 +272,14 @@ val to_array : ('a, 'b) t -> 'a array
     [Nx_io.load_safetensors] loads, and computes nothing: a value on it takes
     part in an operation as a host value, which the host reads in the file's
     pages, and a movement of it stays on the disk. {!place} onto the host or a
-    device whose memory is the host's borrows the file's pages, and onto
-    another device reads the bytes into it; a placement onto the disk raises.
+    device whose memory is the host's borrows the file's pages, and onto another
+    device reads the bytes into it; a placement onto the disk raises.
 
     Reads and placements keep their source storage in use until they return. If
     a compiled call consumes that storage concurrently, the conflicting
     operation raises [Invalid_argument] instead of waiting. This applies to
-    every view of the storage. A consumed value cannot be read or placed again;
-    its shape and dtype remain available.
+    every view of the storage, on every device over its memory. A consumed value
+    cannot be read or placed again; its shape and dtype remain available.
 
     A movement ({!reshape}, {!transpose}, {!slice} by indices and unit-step
     ranges, {!flip}, {!broadcast_to}, {!sliding_window}) of a placed value is a
@@ -288,69 +295,63 @@ val to_array : ('a, 'b) t -> 'a array
     row of a value split by rows, {!item}) is a view of that shard on its device
     alone, so {!item} reads one element. *)
 
-(** Devices. *)
+(** Devices: a memory and the backend that computes on it eagerly. *)
 module Device : sig
-  type t = Nx_device.t
-  (** The type for devices. There is one value per device: opening a device
-      twice gives the same value. *)
+  type t
+  (** The type for devices. There is one value per memory and backend: opening a
+      memory twice, or pairing it twice with one backend, gives the same value.
+  *)
 
   (** The type for devices wanted, as plain data. *)
   type want =
-    | Host  (** The host. *)
+    | Host  (** The host, ["CPU"]. *)
     | Cpu of int
-        (** [Cpu k], [k >= 1], is the test device ["CPU:k"]: memory of the
-            host's that the host computes on, so a program runs multi-device
-            work on one machine. [Cpu 0] is [Host]. *)
+        (** [Cpu k], [k >= 1], is the test memory ["CPU:k"]: memory of the
+            host's that nx.cpu computes on, so a program runs multi-device work
+            on one machine. *)
+    | Gpu
+        (** The default GPU: the Metal GPU of a Mac, and elsewhere the first GPU
+            that opens through a kernel driver, through the vendor's runtime
+            before nx's own: [Cuda 0], then [Nv 0], then [Amd 0]. It never takes
+            a GPU from its kernel driver. *)
     | Metal  (** The Metal GPU of a Mac. *)
-    | Cuda of int  (** CUDA GPU [i], through NVIDIA's driver. *)
-    | Nv of int  (** NVIDIA GPU [i], driven by nx itself. *)
-    | Amd of int  (** AMD GPU [i]. *)
+    | Cuda of int
+        (** CUDA GPU [i], through NVIDIA's CUDA driver library. GPUs are
+            numbered in PCI bus order. *)
+    | Nv of int  (** NVIDIA GPU [i], through NVIDIA's kernel driver. *)
+    | Amd of int  (** AMD GPU [i], through the [amdgpu] kernel driver. *)
+    | Nv_pci of int
+        (** NVIDIA GPU [i], through nx's own driver, which detaches the GPU's
+            kernel driver and keeps the GPU for the process. *)
+    | Amd_pci of int  (** AMD GPU [i], through nx's own driver, as {!Nv_pci}. *)
 
   val host : t
-  (** [host] is the host, ["CPU"]. *)
-
-  val cpu : int -> t
-  (** [cpu k] is the test device ["CPU:k"] ({!Cpu}).
-
-      Raises [Invalid_argument] if [k < 0]. *)
-
-  val metal : unit -> t
-  (** [metal ()] is the Metal GPU.
-
-      Raises [Failure] with the reason it does not open, such as on a machine
-      other than a Mac. *)
-
-  val cuda : int -> t
-  (** [cuda i] is CUDA GPU [i].
-
-      Raises [Failure] with the driver's reason if it does not open, and
-      [Invalid_argument] if [i < 0]. *)
-
-  val nv : int -> t
-  (** [nv i] is NVIDIA GPU [i], driven by nx.
-
-      Raises as {!cuda}. *)
-
-  val amd : int -> t
-  (** [amd i] is AMD GPU [i].
-
-      Raises as {!cuda}. *)
-
-  val gpu : unit -> t
-  (** [gpu ()] is the default GPU: the first that opens of {!Metal},
-      [Cuda 0], [Nv 0] and [Amd 0].
-
-      Raises [Failure] with each one's reason if none opens. *)
+  (** [host] is the host's memory, computed by nx.cpu. *)
 
   val get : want -> (t, string) result
-  (** [get w] is the device [w] names, opened now, or [Error msg] with the
-      reason it does not open.
+  (** [get w] is the device [w] names, opened now, with its memory's default
+      backend, or [Error msg] with the reason it does not open. A failed open is
+      not remembered, so a later [get] tries again, except where a vendor's
+      driver library failed to load. A vendor's first open fixes its interface
+      for the process: a want of the other interface, {!Gpu} included, then
+      fails with that reason. [CUDA:0] and [NV:0] over one GPU are two memories.
 
-      Raises [Invalid_argument] for a negative index. *)
+      Raises [Invalid_argument] for a negative index or a [Cpu k] with [k < 1].
+  *)
+
+  val v : want -> t
+  (** [v w] is {!get}[ w].
+
+      Raises [Failure] with {!get}'s reason if it does not open, and as {!get}
+      does. *)
+
+  val gpu : unit -> t
+  (** [gpu ()] is [v Gpu].
+
+      Raises [Failure] listing each GPU's reason if none opens. *)
 
   val first : want list -> t
-  (** [first ws] is the first device of [ws] that opens; it opens none after
-      it.
+  (** [first ws] is the first device of [ws] that opens; it opens none after it.
 
       Raises [Failure] with each one's reason if none opens, and
       [Invalid_argument] if [ws] is empty. *)
@@ -358,19 +359,58 @@ module Device : sig
   val all : want list -> t list
   (** [all ws] is each device of [ws], opened.
 
-      Raises [Failure] naming each one that does not open, with its reason. *)
+      Raises [Failure] naming each one that does not open, with its reason, and
+      [Invalid_argument] if [ws] repeats a want. *)
 
   val of_string : string -> (want list, string) result
-  (** [of_string s] is the devices the comma-separated names of [s] want:
-      [CPU], [CPU:k], [METAL], [CUDA:i], [NV:i] and [AMD:i], in any case, with
-      [CUDA], [NV] and [AMD] for index [0]. As in [of_string "CUDA:0,CUDA:1"].
-      [Error msg] names the first that is no device. *)
+  (** [of_string s] is the wants of the comma-separated names of [s], in any
+      case, around blanks: [GPU], [CPU] ({!Host}), [CPU:k], [METAL], [CUDA[:i]],
+      [NV[:i]], [AMD[:i]], [NV-PCI[:i]] and [AMD-PCI[:i]], an index left out
+      being [0]. As in [of_string "cuda:0,cuda:1"]. [Error msg] names the first
+      that is no device. The caller decides whether the list is a preference
+      ({!first}) or a set ({!all}). *)
+
+  val pp_want : Format.formatter -> want -> unit
+  (** [pp_want] formats a want as {!of_string} reads it, in full and upper case,
+      as {!name} names its device: [of_string (Format.asprintf "%a" pp_want w)]
+      is [Ok [ w ]] for every [w] {!get} accepts. *)
+
+  (** {1:pairing Memories and backends} *)
+
+  val of_memory : Nx_device.t -> t
+  (** [of_memory m] is the device over [m] with [m]'s default backend: nx.cpu on
+      the host and test memories, none on others. It is the value {!get} returns
+      for the want that opens [m], and [of_memory (memory d) == d] for every [d]
+      no {!with_backend} made. Memories no want names, such as another machine's
+      GPU or the disk, reach placements through it. *)
+
+  val with_backend : (module Nx_backend.S) -> t -> t
+  (** [with_backend k d] is [d]'s memory computed eagerly by [k]. Values on it
+      and on [d] share their storage: {!place} between them is a view. A backend
+      is identified by its name ([K.name]): pairs are one value per memory and
+      name, [with_backend k (with_backend k' d) == with_backend k d] and
+      [with_backend (module Nx_cpu) host == host], and a module of a name
+      already paired with [d]'s memory gives that pair, computed by the module
+      first paired.
+
+      Raises [Invalid_argument] unless [k] runs on [d]'s memory. *)
+
+  val memory : t -> Nx_device.t
+  (** [memory d] is [d]'s memory. *)
 
   val name : t -> string
-  (** [name d] is [d]'s name, as in ["CUDA:1"]. *)
+  (** [name d] is [d]'s memory's name ([CPU], [CPU:k], [METAL], [CUDA:i],
+      [NV:i], [NV-PCI:i], [AMD:i], [AMD-PCI:i]), then [/] and the backend's name
+      when [d]'s backend is not its memory's default, as in ["CPU/nx-oxcaml"]. A
+      device's name without a backend's parses back to its want with
+      {!of_string}. *)
+
+  val equal : t -> t -> bool
+  (** [equal d d'] is [true] iff [d] and [d'] are one device: one memory and one
+      backend. *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp] formats a device's name. *)
+  (** [pp] formats a device's {!name}. *)
 end
 
 (** Placements. *)
@@ -378,21 +418,26 @@ module Placement : sig
   type t = Nx_effect.placement
   (** The type for placements: where each device's window of a value lies. Only
       the functions below build one, and a placement is in normal form: a list
-      of one device is that device, and a list never repeats a device. *)
+      of one device is that device, and a placement names each memory once. *)
 
   val host : t
-  (** [host] is [on [Device.host]], whose values are arrays in host memory. *)
+  (** [host] is [on Device.host], whose values are arrays in host memory. *)
 
-  val on : Device.t list -> t
-  (** [on ds] is a full copy on each device of [ds]; [on [d]] is [d] alone.
+  val on : Device.t -> t
+  (** [on d] is [d] alone. *)
 
-      Raises [Invalid_argument] if [ds] is empty or repeats a device. *)
+  val replicated : Device.t list -> t
+  (** [replicated ds] is a full copy on each device of [ds]; [replicated [d]] is
+      [on d].
+
+      Raises [Invalid_argument] if [ds] is empty, repeats a device, or holds two
+      devices over one memory. *)
 
   val sharded : axis:int -> Device.t list -> t
   (** [sharded ~axis ds] is equal slices of [axis] on the devices of [ds], in
       order.
 
-      Raises [Invalid_argument] if [axis] is negative, or as {!on}. *)
+      Raises [Invalid_argument] if [axis] is negative, or as {!replicated}. *)
 
   val devices : t -> Device.t list
   (** [devices p] is the devices of [p], in the order that decides which window
@@ -408,19 +453,19 @@ module Placement : sig
 
   val with_leading_axis : t -> t
   (** [with_leading_axis p] is the placement of a value of one more axis in
-      front, split as [p] splits the others. It is for transformations that
-      map over a leading axis. *)
+      front, split as [p] splits the others. It is for transformations that map
+      over a leading axis. *)
 
   val without_leading_axis : t -> t
   (** [without_leading_axis p] is the placement of a value without its first
       axis: a device axis that split it then holds copies, and the other axes
-      shift down by one. It is for transformations that map over a leading
-      axis. *)
+      shift down by one. It is for transformations that map over a leading axis.
+  *)
 
   val equal : t -> t -> bool
-  (** [equal p p'] is [true] iff every device holds the same window of any
-      value at [p] and at [p']. A list of full copies is equal to the same
-      devices in another order. *)
+  (** [equal p p'] is [true] iff every device holds the same window of any value
+      at [p] and at [p']. A list of full copies is equal to the same devices in
+      another order. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a placement: its devices and layout. *)
@@ -429,7 +474,10 @@ end
 val place : Placement.t -> ('a, 'b) t -> ('a, 'b) t
 (** [place p x] is [x] held at [p]. It equals [x] in shape, dtype and elements,
     and [x] is unchanged and stays where it was. It is [x] itself when [x] is
-    already at [p]. {!Ptree.place} places every tensor of a structure.
+    already at [p]. Between devices over one memory it is a view of [x]'s
+    storage, which changes only who computes on it; between memories it is a
+    copy, each device reading only its window. {!Ptree.place} places every
+    tensor of a structure.
 
     Raises [Invalid_argument] if [p] splits an axis [x] does not have or does
     not divide evenly, or if [p]'s devices cannot hold [x]'s dtype. *)
@@ -551,8 +599,8 @@ val arange : ('a, 'b) dtype -> int -> int -> int -> ('a, 'b) t
     Raises [Invalid_argument] if [step = 0], if a value does not fit [dtype], or
     if the range holds more than [max_int] values. An integer dtype fits the
     values of its range, [bool] fits [0] and [1], and a float or complex dtype
-    fits the values whose magnitude is at most its largest finite value, such
-    as [65504] for [float16] and [448] for [float8_e4m3].
+    fits the values whose magnitude is at most its largest finite value, such as
+    [65504] for [float16] and [448] for [float8_e4m3].
 
     {@ocaml[
       # arange int32 0 10 2
@@ -674,8 +722,8 @@ val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
     [int16_unsigned] elements, and an int4, uint4 or bool one from [uint8]
     elements with {!cast}.
 
-    Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint],
-    or if its first element does not lie at a multiple of its size (of one
+    Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint], or
+    if its first element does not lie at a multiple of its size (of one
     component for complex kinds), as a bigarray that [Unix.map_file] maps from
     an unaligned [pos] may not.
 
@@ -2232,9 +2280,8 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [maximum a b] is the element-wise maximum of [a] and [b]. On floats it is
     the IEEE 754 maximum: NaN propagates, and [-0.] is less than [0.], so the
-    maximum of [-0.] and [0.] is [0.] in either order. Under a compiled
-    function NaN propagates as here, and the sign of a zero result is the
-    target's. *)
+    maximum of [-0.] and [0.] is [0.] in either order. Under a compiled function
+    NaN propagates as here, and the sign of a zero result is the target's. *)
 
 val maximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [maximum_s t s] is the element-wise maximum of [t] and scalar [s]. *)
@@ -2565,9 +2612,8 @@ val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
     {!maximum} orders elements: NaN propagates and [-0.] is less than [0.],
     except that under a compiled function the sign of a zero result is the
     target's. On the host, from the first NaN on every running maximum is that
-    NaN. When
-    [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
-    shape.
+    NaN. When [axis] is omitted, it accumulates the flattened tensor and keeps
+    [t]'s shape.
 
     See also {!cummin}. *)
 
@@ -2576,9 +2622,8 @@ val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
     {!minimum} orders elements: NaN propagates and [-0.] is less than [0.],
     except that under a compiled function the sign of a zero result is the
     target's. On the host, from the first NaN on every running minimum is that
-    NaN. When
-    [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
-    shape.
+    NaN. When [axis] is omitted, it accumulates the flattened tensor and keeps
+    [t]'s shape.
 
     See also {!cummax}. *)
 
@@ -2752,9 +2797,9 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 
 val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 (** [argmin ?axis ?keepdims t] is the index of the minimum along [axis]: the
-    first NaN, else the first element least in {!minimum}'s order, so the
-    argmin of [[0.; -0.]] is [1], compiled or not. When [axis] is omitted,
-    operates on the flattened tensor. [keepdims] defaults to [false].
+    first NaN, else the first element least in {!minimum}'s order, so the argmin
+    of [[0.; -0.]] is [1], compiled or not. When [axis] is omitted, operates on
+    the flattened tensor. [keepdims] defaults to [false].
 
     Raises [Invalid_argument] as {!argmax} does.
 
@@ -2952,20 +2997,19 @@ val top_k : k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
     [take_along_axis ~axis ~indices t], so it differentiates with respect to
     [t].
 
-    An [axis] of at most 32 entries is ranked in one pass: each entry's place
-    is the number of entries before it, [n * n] comparisons for [n] entries
-    (while all rows hold at most [2{^24}] of them). Past it, up to [k = 8] the
-    cost is [k] passes over [axis], each after the one before it, which suits a
-    router choosing a few of many. A greater [k] sorts [axis] when it has at
-    most 2048 entries. A longer [axis] is not sorted: the [k]th
-    greatest entry is found by radix select, one pass over [axis] for every four
-    bits of the dtype (eight for [float32]; every two bits past [2{^20}] entries
-    over all rows), and only the [k] entries kept are put in order, by [k * k]
-    comparisons, or by a sort of them once those number more than [2{^24}] over
-    all rows. Eagerly a call holds about 30 bytes per entry at once, mostly the
-    running counts that place the kept entries: 64 rows of 131072 [float32] hold
-    about 250 MB, where a sort of them holds about 100 MB, its values and their
-    [int64] positions.
+    An [axis] of at most 32 entries is ranked in one pass: each entry's place is
+    the number of entries before it, [n * n] comparisons for [n] entries (while
+    all rows hold at most [2{^24}] of them). Past it, up to [k = 8] the cost is
+    [k] passes over [axis], each after the one before it, which suits a router
+    choosing a few of many. A greater [k] sorts [axis] when it has at most 2048
+    entries. A longer [axis] is not sorted: the [k]th greatest entry is found by
+    radix select, one pass over [axis] for every four bits of the dtype (eight
+    for [float32]; every two bits past [2{^20}] entries over all rows), and only
+    the [k] entries kept are put in order, by [k * k] comparisons, or by a sort
+    of them once those number more than [2{^24}] over all rows. Eagerly a call
+    holds about 30 bytes per entry at once, mostly the running counts that place
+    the kept entries: 64 rows of 131072 [float32] hold about 250 MB, where a
+    sort of them holds about 100 MB, its values and their [int64] positions.
 
     Raises [Invalid_argument] if [t] has no dimension, [axis] is out of bounds,
     [k] is outside \[[1], extent of [axis]\], or [t] is complex.
@@ -3306,10 +3350,10 @@ val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
     real symmetric or complex Hermitian. When [upper] is [true], returns the
     upper-triangular factor [U] such that [a = Uᴴ U]; otherwise (default)
     returns the lower-triangular factor [L] such that [a = L Lᴴ], where [ᴴ] is
-    the conjugate transpose, the transpose on real matrices. Whichever factor
-    is returned, only the lower triangle of [a] and the real part of its
-    diagonal are read; the strictly upper triangle and the diagonal's imaginary
-    parts may hold anything.
+    the conjugate transpose, the transpose on real matrices. Whichever factor is
+    returned, only the lower triangle of [a] and the real part of its diagonal
+    are read; the strictly upper triangle and the diagonal's imaginary parts may
+    hold anything.
 
     Raises {!Linalg_error} with kind [`Not_positive_definite] if [a] is not
     positive-definite. Raises [Invalid_argument] if [a] is not square or the
@@ -4158,10 +4202,10 @@ val extract_patches :
       - : int array = [|1; 1; 4; 9|]
     ]}
 
-    Raises [Invalid_argument] if [kernel_size] is empty, if [stride],
-    [dilation] and [padding] do not have one entry per kernel axis, if a size,
-    stride or dilation is not positive or a padding negative, or if [t] has
-    fewer axes than [kernel_size].
+    Raises [Invalid_argument] if [kernel_size] is empty, if [stride], [dilation]
+    and [padding] do not have one entry per kernel axis, if a size, stride or
+    dilation is not positive or a padding negative, or if [t] has fewer axes
+    than [kernel_size].
 
     See also {!combine_patches}. *)
 
@@ -4176,8 +4220,8 @@ val combine_patches :
 (** [combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding t] is
     the inverse of {!extract_patches}: [t], of shape
     [[leading…; prod(kernel_size); L]], is placed back into a tensor of shape
-    [[leading…; output_size…]]. Overlapping values are summed, and an element
-    no window covers is zero.
+    [[leading…; output_size…]]. Overlapping values are summed, and an element no
+    window covers is zero.
 
     Raises [Invalid_argument] as {!extract_patches} does on the geometry, if
     [output_size] does not have one non-negative entry per kernel axis, or if
@@ -4198,8 +4242,8 @@ val correlate :
     correlation has [n + k - 1] values, and [padding] keeps some of them. With
     [m = min n k]:
     - [`Full] keeps them all;
-    - [`Valid] keeps the [max n k - m + 1] where the shorter of [x] and
-      [kernel] lies within the longer, from index [m - 1];
+    - [`Valid] keeps the [max n k - m + 1] where the shorter of [x] and [kernel]
+      lies within the longer, from index [m - 1];
     - [`Same] keeps [max n k], from index [(m - 1) / 2] if [k <= n] and from
       index [m / 2] if [k > n]. With [k <= n], value [i] correlates [kernel]
       with the elements of [x] from [i - k / 2] to [i + (k - 1) / 2], those
@@ -4215,8 +4259,8 @@ val convolve :
   ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [convolve ?padding x kernel] is the N-D convolution: {!correlate} with the
     kernel flipped along all spatial axes, [padding] keeping the values of the
-    full convolution from the same indices, except that [`Same] keeps them
-    from index [(m - 1) / 2] whether [k] is shorter or longer than [n]. The
+    full convolution from the same indices, except that [`Same] keeps them from
+    index [(m - 1) / 2] whether [k] is shorter or longer than [n]. The
     convolution of two arrays without batch dimensions is commutative.
 
     See also {!correlate}. *)
@@ -4315,7 +4359,7 @@ val of_shards :
     Every operation nx computes or answers is a constructor of {!t}: those a
     backend computes, and {!Move}, {!Place}, {!Read} and {!Check}, which nx
     answers itself. A transformation is an interpreter of these values,
-    installed with {!intercept}, and so is a backend run ({!kernels}). *)
+    installed with {!intercept}. *)
 module Op : sig
   type move = Nx_effect.move =
     | Reshape of int array
@@ -4518,9 +4562,9 @@ module Op : sig
       {!Read} is on the host.
 
       Raises [Invalid_argument] as {!eval} does when the operands cannot meet:
-      placed operands on different device sets, operands split
-      differently, an operation along a split axis, or a movement that would
-      move elements between devices. *)
+      placed operands on different device sets, operands split differently, an
+      operation along a split axis, or a movement that would move elements
+      between devices. *)
 
   val shape : ('a, 'b) Nx_effect.t t -> int array
   (** [shape op] is the shape of [op]'s result, without computing it, for an
@@ -4553,36 +4597,13 @@ module Op : sig
   (** The type for interpreters of operations. *)
 
   val intercept : interpreter -> (unit -> 'a) -> 'a
-  (** [intercept i f] is [f ()] with every operation [f]'s fiber performs
-      within its extent and [i] claims delivered to [i.run]. [i.run] runs
-      above every handler [f] installs: an operation it issues reaches the
-      interpretation around [intercept], and an effect it performs the handlers
-      around [intercept]. An operation [i] does not claim reaches the
-      interpretation around [intercept] as if [i] were not installed, without
-      being performed again. Fibers, threads and domains [f] starts are outside
-      the extent. *)
-
-  val kernels : (module Nx_backend.S) -> interpreter
-  (** [kernels k] runs the backend [k]. It claims an operation that computes
-      ({!Move}, {!Place}, {!Read} and {!Check} excepted) over values whose
-      placed operands are all on devices [k] runs on, or over host values alone
-      when [k] runs on the host, and computes it with [k]'s kernels as nx
-      computes with nx.cpu. A kernel [k] lacks raises {!Nx_backend.Refused}
-      naming [k] and the operation; the operation never reaches the
-      interpretation around. Other operations, such as those on devices [k]
-      does not cover, pass through. A compiled function inside it compiles.
-
-      A backend library's [run f] is [intercept (kernels (module K)) f], meant
-      to wrap the whole program:
-
-      {v
-let () = Nx_oxcaml.run main
-let () = Nx_oxcaml.run @@ fun () -> Nx_metal.run main
-      v}
-
-      It covers what it wraps, transformations included, so it goes outermost.
-      A domain does not inherit it: work in a domain [f] spawns runs with
-      nx.cpu unless its body is wrapped in [run] too. *)
+  (** [intercept i f] is [f ()] with every operation [f]'s fiber performs within
+      its extent and [i] claims delivered to [i.run]. [i.run] runs above every
+      handler [f] installs: an operation it issues reaches the interpretation
+      around [intercept], and an effect it performs the handlers around
+      [intercept]. An operation [i] does not claim reaches the interpretation
+      around [intercept] as if [i] were not installed, without being performed
+      again. Fibers, threads and domains [f] starts are outside the extent. *)
 
   val intercepted : unit -> bool
   (** [intercepted ()] is [true] iff the calling fiber is inside the extent of

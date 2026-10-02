@@ -264,7 +264,8 @@ let products =
    multiplies on its tensor cores. *)
 
 let multiplies_on_tensor_cores ren dt =
-  let a = Nx.zeros dt [| 64; 64 |] and b = Nx.zeros dt [| 64; 64 |] in
+  let a = Nx.copy (Nx.zeros dt [| 64; 64 |])
+  and b = Nx.copy (Nx.zeros dt [| 64; 64 |]) in
   let _, y = trace ~renderer:(fun _ -> ren) (fun () -> Nx.matmul a b) in
   List.iter
     (fun k ->
@@ -724,7 +725,8 @@ let on_the_host =
 (* Graph parity: the kernels tinygrad schedules for the same program. *)
 
 let parity =
-  let x shape = Nx.zeros Nx.float32 shape in
+  (* Captures with storage of their own: a constant would fold. *)
+  let x shape = Nx.copy (Nx.zeros Nx.float32 shape) in
   let case file f =
     Golden.graph
       ("golden/lower_linalg/" ^ file ^ ".golden")

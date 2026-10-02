@@ -13,16 +13,20 @@ open Nx_array
    own, whose parameters the return type determines.
 
    A tensor is one of three things. [Host] is an nx.cpu tensor, the value of the
-   host placement, with no cell, so that the default path pays nothing for
-   what compiled calls need of a storage. [Placed] is a value at any other
-   placement, held in runtime buffers, one per device of its placement: nx
-   knows its placement, dtype and view, and the buffers are its storage.
-   [Traced] is a node of a trace: it has no bytes and never will, and the
-   tracer that made it keeps its payload in [t_node].
+   host placement, with no cell, so that the default path pays nothing for what
+   compiled calls need of a storage. [Placed] is a value at any other placement,
+   held in runtime buffers, one per device of its placement: nx knows its
+   placement, dtype and view, and the buffers are its storage. [Traced] is a
+   node of a trace: it has no bytes and never will, and the tracer that made it
+   keeps its payload in [t_node].
 
    The views of one placed storage share one cell, which holds what belongs to
    the storage rather than to a view: whether it is live or was consumed by a
-   compiled call, and how many reachable programs bind it. *)
+   compiled call, and how many reachable programs bind it.
+
+   A device is a memory, which nx.device opens, and the backend that computes
+   eagerly on it, if any. Several devices may share one memory: their values
+   share storage, and only who computes on them differs. *)
 
 (* Placements over a grid
 
@@ -280,7 +284,7 @@ module Types = struct
 
   and state =
     | Live of Nx_device.Buffer.t list
-        (* one buffer per device of the cell's placement, in its order *)
+      (* one buffer per device of the cell's placement, in its order *)
     | Consumed of consumption
 
   (* Where a compiled call consumed a storage: the consumed leaf's path in the
@@ -296,13 +300,83 @@ module Types = struct
     t_node : ('a, 'b) node; (* the tracer's payload *)
   }
 
-  (* Devices and a layout. *)
-  and placement = Nx_device.t Grid.t
+  and device = {
+    memory : Nx_device.t;
+    backend : (module Nx_backend.S) option;
+    d_name : string; (* the memory's, then the backend's when not its default *)
+  }
 
+  (* Devices and a layout. *)
+  and placement = device Grid.t
   and ('a, 'b) node = ..
 end
 
 include Types
+
+(* Devices
+
+   There is one device per memory and backend, so devices compare physically:
+   [of_memory] and [with_backend] find a pair in [paired] before they make it. A
+   memory's default backend is a fixed match over its kind: nx.cpu on the
+   memories the host computes on (the host and test memories), none on the
+   others. A backend is known by its name, which a device's name carries: a
+   module of a name already paired with a memory is that pair's backend. *)
+
+module Memories = Map.Make (struct
+  type t = Nx_device.t
+
+  let compare = Nx_device.compare
+end)
+
+let default_backend m : (module Nx_backend.S) option =
+  if Nx_device.runs_on_host m then Some (module Nx_cpu) else None
+
+let backend_name (module K : Nx_backend.S) = K.name
+
+(* The devices over each memory, the default one first. *)
+let paired : device list Memories.t Atomic.t = Atomic.make Memories.empty
+let paired_lock = Mutex.create ()
+
+(* [over m] is the devices over [m], made with the default one if there are
+   none. Called with [paired_lock] held. *)
+let over m =
+  match Memories.find_opt m (Atomic.get paired) with
+  | Some ds -> ds
+  | None ->
+      let d =
+        { memory = m; backend = default_backend m; d_name = Nx_device.name m }
+      in
+      Atomic.set paired (Memories.add m [ d ] (Atomic.get paired));
+      [ d ]
+
+let of_memory m =
+  match Memories.find_opt m (Atomic.get paired) with
+  | Some (d :: _) -> d
+  | Some [] | None -> List.hd (Mutex.protect paired_lock (fun () -> over m))
+
+let with_backend k d =
+  let m = d.memory and name = backend_name k in
+  let (module K) = k in
+  if not (K.runs_on m) then
+    invalid_arg
+      (Printf.sprintf "Nx.Device.with_backend: %s does not compute on %s" name
+         (Nx_device.name m));
+  Mutex.protect paired_lock @@ fun () ->
+  let ds = over m in
+  let named d' =
+    match d'.backend with Some k' -> backend_name k' = name | None -> false
+  in
+  match List.find_opt named ds with
+  | Some d' -> d'
+  | None ->
+      let d' =
+        { memory = m; backend = Some k; d_name = Nx_device.name m ^ "/" ^ name }
+      in
+      Atomic.set paired (Memories.add m (ds @ [ d' ]) (Atomic.get paired));
+      d'
+
+let host_device = of_memory Nx_device.host
+let pp_device ppf d = Format.pp_print_string ppf d.d_name
 
 (* Where a creation makes its value. *)
 type context = placement
@@ -339,9 +413,11 @@ let why_consumed { path } =
 let consumed k = invalid_arg (why_consumed k)
 
 (* The lock only protects the cell's bookkeeping. Readers and consumers keep
-   their claim while executing outside it; overlapping consumption never waits. *)
+   their claim while executing outside it; overlapping consumption never
+   waits. *)
 module Cell = struct
-  let busy () = invalid_arg "Nx: storage is in use by another reader or consuming call"
+  let busy () =
+    invalid_arg "Nx: storage is in use by another reader or consuming call"
 
   let state c =
     Mutex.lock c.lock;
@@ -358,20 +434,24 @@ module Cell = struct
 
   let release c =
     Mutex.lock c.lock;
-    let valid = not c.exclusive && c.readers > 0 in
+    let valid = (not c.exclusive) && c.readers > 0 in
     if valid then c.readers <- c.readers - 1;
     Mutex.unlock c.lock;
     if not valid then invalid_arg "Nx: unbalanced storage borrow"
 
   let with_borrow c f =
     borrow c;
-    Fun.protect ~finally:(fun () -> release c) (fun () ->
-        match c.state with Live _ -> f () | Consumed k -> consumed k)
+    Fun.protect
+      ~finally:(fun () -> release c)
+      (fun () -> match c.state with Live _ -> f () | Consumed k -> consumed k)
 
   let upgrade c =
     Mutex.lock c.lock;
-    let available = not c.exclusive && c.readers = 1 in
-    if available then begin c.readers <- 0; c.exclusive <- true end;
+    let available = (not c.exclusive) && c.readers = 1 in
+    if available then begin
+      c.readers <- 0;
+      c.exclusive <- true
+    end;
     Mutex.unlock c.lock;
     if not available then busy ()
 
@@ -386,7 +466,9 @@ module Cell = struct
   let finish c =
     Mutex.lock c.lock;
     let retire =
-      match c.state with Consumed _ -> Atomic.get c.bound = 0 | Live _ -> false
+      match c.state with
+      | Consumed _ -> Atomic.get c.bound = 0
+      | Live _ -> false
     in
     c.exclusive <- false;
     c.readers <- 1;
@@ -401,8 +483,10 @@ module Cell = struct
   let unpin c =
     Mutex.lock c.lock;
     let previous = Atomic.fetch_and_add c.bound (-1) in
-    let retire = previous = 1 && not c.exclusive
-      && match c.state with Consumed _ -> true | Live _ -> false in
+    let retire =
+      previous = 1 && (not c.exclusive)
+      && match c.state with Consumed _ -> true | Live _ -> false
+    in
     Mutex.unlock c.lock;
     retire
 end
@@ -430,13 +514,13 @@ let whole_view r =
    The [Placement] module is defined after the routing; the functions here are
    what the code in between needs. *)
 
-let is_host_device d = Nx_device.equal d Nx_device.host
+let is_host_device d = d == host_device
+
 let is_host_placement p =
   match Grid.devices p with [ d ] -> is_host_device d | _ -> false
 
-let pp_grid ppf g = Grid.pp Nx_device.pp ppf g
+let pp_grid ppf g = Grid.pp pp_device ppf g
 let pp_placement = pp_grid
-
 let devices_of p = Grid.devices p
 
 (* Raises unless every cut of [p] divides its axis of [shape] evenly. *)
@@ -458,8 +542,7 @@ let window_of p shape d =
   match List.find_index (( == ) d) (devices_of p) with
   | None ->
       invalid_arg
-        (Printf.sprintf "Nx.Placement.window: %s holds no window"
-           (Nx_device.name d))
+        (Printf.sprintf "Nx.Placement.window: %s holds no window" d.d_name)
   | Some k ->
       check_shape "Nx.Placement.window" p shape;
       let w = Array.map (fun n -> (0, n)) shape in
@@ -475,15 +558,22 @@ let window_of p shape d =
 (* A cell over [storage], one runtime buffer of [length] elements per device of
    [placement], which the runtime releases with the buffers. *)
 let cell ~placement ~length storage =
-  { placement; length; state = Live storage; bound = Atomic.make 0;
-    lock = Mutex.create (); readers = 0; exclusive = false }
+  {
+    placement;
+    length;
+    state = Live storage;
+    bound = Atomic.make 0;
+    lock = Mutex.create ();
+    readers = 0;
+    exclusive = false;
+  }
 
 let placed placement dtype view cell =
   if is_host_placement placement then
     invalid_arg "Nx_effect.placed: a placed value is never on the host";
-  let held = devices_of cell.placement in
+  let held = List.map (fun d -> d.memory) (devices_of cell.placement) in
   if
-    not (List.for_all (fun d -> List.memq d held) (devices_of placement))
+    not (List.for_all (fun d -> List.memq d.memory held) (devices_of placement))
   then
     invalid_arg
       (Format.asprintf "Nx_effect.placed: a value on %a views a storage on %a"
@@ -590,7 +680,7 @@ let extents w = Array.map (fun (lo, hi) -> hi - lo) w
    that holds it, and only where it meets the window. Memories read placed
    values, and gather the pieces of a move, this way. *)
 let assemble (type a b) (r : (a, b) resident) window
-    (read : Nx_device.t -> View.t -> Nx_device.Buffer.t) : Nx_device.Buffer.t =
+    (read : device -> View.t -> Nx_device.Buffer.t) : Nx_device.Buffer.t =
   let p = r.r_placement in
   let shape = global p (View.shape r.r_view) in
   let pieces =
@@ -662,9 +752,9 @@ let run_in b v =
 (* [file_windows v ds windows b] is the view each device of [ds] has of its
    window of the view [v] of the file bytes [b], and each device's storage: the
    bytes the window reaches, borrowed from the file's pages. It is [None] unless
-   every device shares the host's memory, every window has an element and
-   starts on a byte, the windows are one view of their storages, and every
-   device borrows them. *)
+   every device shares the host's memory, every window has an element and starts
+   on a byte, the windows are one view of their storages, and every device
+   borrows them. *)
 let file_windows v ds windows b =
   let s = Nx_device.Buffer.dtype b in
   let bits = Nx_dtype.Scalar.bitsize s in
@@ -681,7 +771,7 @@ let file_windows v ds windows b =
   in
   let spans = List.map span windows in
   if
-    List.for_all Nx_device.shares_host_memory ds
+    List.for_all (fun d -> Nx_device.shares_host_memory d.memory) ds
     && List.for_all Option.is_some spans
   then
     let spans = List.map Option.get spans in
@@ -689,7 +779,7 @@ let file_windows v ds windows b =
     if List.for_all (fun (v', _) -> v' = view) spans then
       let borrows =
         List.map2
-          (fun d (_, run) -> Nx_device.Buffer.borrow d run)
+          (fun d (_, run) -> Nx_device.Buffer.borrow d.memory run)
           ds spans
       in
       if List.for_all Result.is_ok borrows then
@@ -700,21 +790,26 @@ let file_windows v ds windows b =
 
 (* Reading placed values *)
 
+(* The buffer, of [bufs], one per device of [c]'s placement, that holds [c]'s
+   storage in [d]'s memory. A value's devices hold their memories' buffers of
+   its storage, whichever device over that memory made it. *)
+let buffer_on (c : cell) bufs d =
+  match
+    List.find_index (fun h -> h.memory == d.memory) (devices_of c.placement)
+  with
+  | Some i -> List.nth bufs i
+  | None -> invalid_arg ("Nx_effect: no storage on " ^ d.d_name)
+
 (* The elements of a placed value's view. *)
 let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
   Cell.with_borrow r.r_cell (fun () ->
       match r.r_cell.state with
       | Consumed k -> consumed k
       | Live bufs ->
-          let holders = devices_of r.r_cell.placement in
-          let buffer_on d =
-            List.nth bufs
-              (Option.get (List.find_index (Nx_device.equal d) holders))
-          in
           let shape = global r.r_placement (View.shape r.r_view) in
           assemble r
             (Array.map (fun n -> (0, n)) shape)
-            (fun d v -> read_view r.r_dtype (buffer_on d) v))
+            (fun d v -> read_view r.r_dtype (buffer_on r.r_cell bufs d) v))
 
 (* Raises unless [buffer] is a host buffer of [dtype]'s format, as nx.cpu reads
    it: through its host address, [dtype]'s elements at a time. *)
@@ -739,8 +834,8 @@ let check_host fn dtype buffer =
    place. *)
 let file_run (type a b) (r : (a, b) resident) =
   match Cell.state r.r_cell with
-  | Live [ b ]
-    when Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk ->
+  | Live [ b ] when Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk
+    ->
       let size =
         Int.max 1 (Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype b) / 8)
       in
@@ -748,8 +843,8 @@ let file_run (type a b) (r : (a, b) resident) =
       else None
   | _ -> None
 
-(* A placed value is read once and checked: a buffer of another device or
-   format would otherwise reach nx.cpu's kernels. *)
+(* A placed value is read once and checked: a buffer of another device or format
+   would otherwise reach nx.cpu's kernels. *)
 let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
   let buffer = read_elements r in
   check_host "Nx_effect.read" r.r_dtype buffer;
@@ -777,14 +872,14 @@ let host_of : type a b. (a, b) t -> (a, b) Nx_array.t = function
 
 let on_disk p =
   match Grid.devices p with
-  | [ d ] -> Nx_device.equal d Nx_device.disk
+  | [ d ] -> Nx_device.equal d.memory Nx_device.disk
   | _ -> false
 
 (* A value on the disk is placed on devices that share the host's memory by
-   borrowing its file's pages, and keeps its view ([file_windows]). Otherwise
-   a window that is a contiguous run of a value's one runtime buffer is copied
-   from it, device to device: a value on the disk is read into the device.
-   Other windows are copied from the value read to the host. *)
+   borrowing its file's pages, and keeps its view ([file_windows]). Otherwise a
+   window that is a contiguous run of a value's one runtime buffer is copied
+   from it, device to device: a value on the disk is read into the device. Other
+   windows are copied from the value read to the host. *)
 let place_at : type a b. placement -> (a, b) t -> (a, b) t =
  fun p x ->
   if on_disk p then
@@ -829,13 +924,67 @@ let place_at : type a b. placement -> (a, b) t -> (a, b) t =
       let bufs =
         List.map2
           (fun d w ->
-            let b = Nx_device.Buffer.create d s n in
+            let b = Nx_device.Buffer.create d.memory s n in
             if n > 0 then Nx_device.Buffer.copy ~src:(piece w) ~dst:b;
             b)
           ds windows
       in
-      placed p dt (View.create local)
-        (cell ~placement:p ~length:n bufs)
+      placed p dt (View.create local) (cell ~placement:p ~length:n bufs)
+
+(* Placing over one memory
+
+   Devices over one memory share its storage, so placing a value between them is
+   a view: of a host value from the device over the host's memory, of a placed
+   value from devices over the memories that hold the same windows, and of a
+   value whole on each of its memories from devices that each hold a window of
+   it, when every window is one view of the storage, as for a broadcast
+   constant. A placed value seen from the host's own device is a host value over
+   its buffer. *)
+
+let same_view v v' =
+  View.offset v = View.offset v'
+  && View.strides v = View.strides v'
+  && View.shape v = View.shape v'
+
+let view_at (type a b) p (x : (a, b) t) : (a, b) t option =
+  match x with
+  | Host t -> (
+      match devices_of p with
+      | [ d ] when Nx_device.equal d.memory Nx_device.host ->
+          let length = Nx_device.Buffer.length t.buffer in
+          Some
+            (placed p t.dtype t.view (cell ~placement:p ~length [ t.buffer ]))
+      | _ -> None)
+  | Placed r when on_disk r.r_placement -> None
+  | Placed r ->
+      let held = List.map (fun d -> d.memory) (devices_of r.r_placement) in
+      let views () =
+        let shape = View.shape r.r_view in
+        List.map
+          (fun d -> View.shrink r.r_view (window_of p shape d))
+          (devices_of p)
+      in
+      if Grid.equal (fun d d' -> d.memory == d'.memory) p r.r_placement then
+        Some (Placed { r with r_id = fresh_id (); r_placement = p })
+      else if
+        Grid.cuts r.r_placement = []
+        && List.for_all (fun d -> List.memq d.memory held) (devices_of p)
+      then
+        match views () with
+        | v :: rest when List.for_all (same_view v) rest ->
+            Some
+              (Placed { r with r_id = fresh_id (); r_placement = p; r_view = v })
+        | _ -> None
+      else None
+  | Traced _ -> outside_trace ()
+
+(* [r]'s value from the host's device, as a host value over its buffer, when it
+   lies whole in the host's memory. *)
+let host_view (type a b) (r : (a, b) resident) : (a, b) Nx_array.t option =
+  match (devices_of r.r_placement, Cell.state r.r_cell) with
+  | [ d ], Live [ buffer ] when Nx_device.equal d.memory Nx_device.host ->
+      Some { dtype = r.r_dtype; view = r.r_view; buffer }
+  | _ -> None
 
 (* Traced constructor *)
 
@@ -886,8 +1035,8 @@ let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
 (* Operations
 
    Every operation nx performs is a constructor of [Op.t]: the computing ones,
-   which nx.cpu's kernels answer, and the movements, placing, reading
-   and checking, which nx answers itself. A kind names the function among the
+   which a backend's kernels answer, and the movements, placing, reading and
+   checking, which nx answers itself. A kind names the function among the
    operations of one constructor. *)
 
 (* The two dtype conversions: [Cast] converts values, and [Bitcast] reads the
@@ -1108,7 +1257,8 @@ module Op = struct
     | Argsort _ -> "argsort"
     | Pad _ -> "pad"
     | Cat _ -> "concatenate"
-    | Convert (k, _, _) -> ( match k with Cast -> "cast" | Bitcast -> "bitcast")
+    | Convert (k, _, _) -> (
+        match k with Cast -> "cast" | Bitcast -> "bitcast")
     | Threefry _ -> "threefry"
     | Gather _ -> "take_along_axis"
     | Scatter _ -> "scatter"
@@ -1180,7 +1330,8 @@ module Op = struct
 
   let pp ppf op =
     let operand ppf (P x) =
-      Format.fprintf ppf "%s%s" (Nx_dtype.to_string (dtype x))
+      Format.fprintf ppf "%s%s"
+        (Nx_dtype.to_string (dtype x))
         (Shape.to_string (View.shape (view x)))
     in
     let space ppf () = Format.pp_print_char ppf ' ' in
@@ -1201,9 +1352,9 @@ type move = Op.move =
 
    Every fallback runs where its operands live. Operands all on the host run on
    nx.cpu. Placed operands must share their devices, and host operands join
-   them: nx.cpu runs on each device the host computes on (see Computing). The
-   route is decided before anything is read, so operands on two device lists
-   raise before any work.
+   them: each device's backend computes there (see Computing). The route is
+   decided before anything is read, so operands on two device lists raise before
+   any work.
 
    The result takes the placement tolk's multi-device rewrite gives the same
    operation in a compiled program (schedule/multi.ml), so eager and compiled
@@ -1364,19 +1515,25 @@ let whole_shards xs =
             (fun n s -> n > 1 && s = 0)
             (View.shape v) (View.strides v))
   in
+  (* Each view is on one of the storage's own devices: a view seen from another
+     device over the same memory is a value of that device, which meets the
+     others only through [Nx.place]. *)
+  let own c p =
+    match devices_of p with
+    | [ d ] -> List.memq d (devices_of c.placement)
+    | _ -> false
+  in
   match views with
   | (cell, _, _) :: _
-    when List.for_all
-           (fun (c, v, p) ->
-             c == cell && whole c v
-             && List.compare_length_with (devices_of p) 1 = 0)
-           views ->
+    when List.for_all (fun (c, v, p) -> c == cell && whole c v && own c p) views
+    ->
       Some (devices_of cell.placement)
   | _ -> None
 
 let mixed op p q =
   invalid_arg
-    (Format.asprintf "Nx.%s: operands on %a and %a; place one of them" op
+    (Format.asprintf
+       "Nx.%s: operands on %a and %a; Nx.place one beside the other" op
        pp_placement p pp_placement q)
 
 (* [route where op rule xs] is where [op] runs over [xs], [where] giving each
@@ -1387,9 +1544,7 @@ let route where op rule xs =
   | [] -> On_host
   | p :: rest -> (
       match List.find_opt (fun q -> not (same_devices p q)) rest with
-      | None ->
-          At
-            (result op rule (List.map (fun o -> (where o, rank o)) xs))
+      | None -> At (result op rule (List.map (fun o -> (where o, rank o)) xs))
       | Some q -> (
           match whole_shards xs with
           | Some ds -> At (Grid.v ds [ List.length ds ] [])
@@ -1615,12 +1770,14 @@ let moved (type a b) (x : (a, b) t) m : (a, b) t =
 module Placement = struct
   type t = placement
 
-  let host = Grid.device Nx_device.host
+  let host = Grid.device host_device
   let devices = devices_of
   let cuts = Grid.cuts
   let uncut = Grid.uncut
   let map_axes = Grid.map_axes
 
+  (* A placement names each memory once: it lowers to the memories a compiler
+     addresses, and a memory holds one window of a value. *)
   let check what ds =
     let fail fmt =
       Printf.ksprintf invalid_arg ("Nx.Placement.%s: " ^^ fmt) what
@@ -1628,14 +1785,18 @@ module Placement = struct
     let rec distinct = function
       | [] -> ()
       | d :: rest ->
-          if List.memq d rest then
-            fail "%s appears twice" (Nx_device.name d);
+          if List.memq d rest then fail "%s appears twice" d.d_name;
+          (match List.find_opt (fun d' -> d'.memory == d.memory) rest with
+          | Some d' -> fail "%s and %s share one memory" d.d_name d'.d_name
+          | None -> ());
           distinct rest
     in
     match ds with [] -> fail "no device" | _ -> distinct ds
 
-  let on ds =
-    check "on" ds;
+  let on d = Grid.device d
+
+  let replicated ds =
+    check "replicated" ds;
     Grid.v ds [ List.length ds ] []
 
   let sharded ~axis ds =
@@ -1654,19 +1815,21 @@ module Placement = struct
     match cuts p with [] -> p | _ -> map_axes pred (uncut p ~axis:0)
 
   let equal p q = Grid.equal ( == ) p q
-
   let pp = pp_placement
 end
 
 (* Lenses, continued *)
 
 (* A value made beside a placed one is a full copy on each of its devices. The
-   frontend asks for a context each time it builds a constant
-   beside an operand, so the host's is one value. *)
+   frontend asks for a context each time it builds a constant beside an operand,
+   so the host's is one value. *)
 let context : type a b. (a, b) t -> context = function
   | Host _ -> Placement.host
   | Placed r when on_disk r.r_placement -> Placement.host
-  | Placed r -> Placement.on (devices_of r.r_placement)
+  | Placed r ->
+      Grid.v (devices_of r.r_placement)
+        [ List.length (devices_of r.r_placement) ]
+        []
   | Traced t -> t.t_context
 
 (* Whether a creation at [p] makes a host tensor. The frontend's contexts on the
@@ -1854,20 +2017,21 @@ let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
 (* Dispatch
 
    With no interpretation, operands all on the host run nx.cpu directly, and any
-   other operands run nx.cpu on each device of the placement their route gives,
-   the one their placed operands share, when the host computes there. nx
-   answers movements, placing and reading itself. *)
+   other operands run on each device of the placement their route gives, the one
+   their placed operands share, by that device's backend. nx answers movements,
+   placing and reading itself. *)
 
 (* [x] at [p]: [x] itself when it is there, and placed there anew otherwise. *)
 let move_to (type a b) p (x : (a, b) t) : (a, b) t =
   let move () =
     match x with
     | Traced _ -> outside_trace ()
-    | Placed r when is_host_placement p -> Host (read_host r)
+    | Placed r when is_host_placement p -> (
+        match host_view r with Some a -> Host a | None -> Host (read_host r))
     | Placed r when Grid.equal ( == ) r.r_placement p -> x
-    | Host _ | Placed _ ->
+    | Host _ | Placed _ -> (
         check_shape "Nx.place" p (View.shape (view x));
-        place_at p x
+        match view_at p x with Some y -> y | None -> place_at p x)
   in
   match x with
   | Placed r -> Cell.with_borrow r.r_cell move
@@ -1875,22 +2039,24 @@ let move_to (type a b) p (x : (a, b) t) : (a, b) t =
 
 (* Computing
 
-   nx allocates each result, C-contiguous from its first element, and nx.cpu's
-   kernel writes it. Operands all on the host run on their own arrays.
-   Operands at any other placement run once per device, on that device's
-   arrays, after nx copies there the operands that are not: host values,
-   values on the disk, and values that the device needs whole where they are
-   split. *)
+   nx allocates each result, C-contiguous from its first element, and a
+   backend's kernel writes it. Operands all on the host run on their own arrays.
+   Operands at any other placement run once per device, on that device's arrays,
+   after nx copies there the operands that are not: host values, values on the
+   disk, and values that the device needs whole where they are split. *)
 
-(* Where kernels run: how a result is allocated there, and each operand's
-   array there. *)
+(* Where kernels run: how a result is allocated there, and each operand's array
+   there. *)
 type env = {
+  device : device;
   kernels : (module Nx_backend.S);
   alloc : 'a 'b. ('a, 'b) Nx_dtype.t -> int array -> ('a, 'b) Nx_array.t;
   arr : 'a 'b. ('a, 'b) t -> ('a, 'b) Nx_array.t;
 }
 
-let host_env = { kernels = (module Nx_cpu); alloc; arr = host_of }
+let host_env =
+  { device = host_device; kernels = (module Nx_cpu); alloc; arr = host_of }
+
 let shape_of (a : ('a, 'b) Nx_array.t) = View.shape a.view
 
 (* Kernels read their operands' memory under read claims, so that no compiled
@@ -2166,8 +2332,7 @@ let k_unfold (e : env) kernel_size stride dilation padding a =
       Printexc.raise_with_backtrace e bt);
   dst
 
-let k_fold (e : env) output_size kernel_size stride dilation
-    padding a =
+let k_fold (e : env) output_size kernel_size stride dilation padding a =
   let (module K) = e.kernels in
   let dst = e.alloc a.dtype (fold_shape output_size (shape_of a)) in
   claim a;
@@ -2404,14 +2569,34 @@ let host_settle =
   {
     settle =
       (function
-      | [ a ] -> Host a | _ -> invalid_arg "Nx_effect: one host result");
+      | [ a ] -> Host a
+      | _ -> invalid_arg "Nx_effect: one host result");
   }
 
 (* [compute envs s op] is [op] computed where each of [envs] says, its results
    made by [s]. *)
+(* A kernel that refuses its operands raises [Refused] to nx, which names the
+   backend, the device, the operation and the remedies: nothing falls through
+   to another backend. *)
+let refused op e reason =
+  let (module K) = e.kernels in
+  invalid_arg
+    (Printf.sprintf
+       "Nx.%s: %s on %s has no kernel: %s. Compile it with Rune.jit, or place \
+        the operands elsewhere."
+       op K.name
+       (Nx_device.name e.device.memory)
+       reason)
+
 let compute : type r. env list -> settle -> r Op.t -> r =
  fun envs s op ->
-  let each f = s.settle (List.map f envs) in
+  let on e f =
+    match f e with
+    | v -> v
+    | exception Nx_backend.Refused reason -> refused (Op.name op) e reason
+  in
+  let envs_map f = List.map (fun e -> on e f) envs in
+  let each f = s.settle (envs_map f) in
   match[@warning "@4@8"] op with
   | Unary (k, x) -> each (fun e -> k_unary e k (e.arr x))
   | Binary (k, a, b) -> each (fun e -> k_binary e k (e.arr a) (e.arr b))
@@ -2452,26 +2637,26 @@ let compute : type r. env list -> settle -> r Op.t -> r =
   | Contiguous x -> each (fun e -> k_contiguous e (e.arr x))
   | Cholesky { upper; x } -> each (fun e -> k_cholesky e upper (e.arr x))
   | Qr { reduced; x } ->
-      let rs = List.map (fun e -> k_qr e reduced (e.arr x)) envs in
+      let rs = envs_map (fun e -> k_qr e reduced (e.arr x)) in
       (s.settle (List.map fst rs), s.settle (List.map snd rs))
   | Lu x ->
-      let rs = List.map (fun e -> k_lu e (e.arr x)) envs in
+      let rs = envs_map (fun e -> k_lu e (e.arr x)) in
       ( s.settle (List.map (fun (a, _, _) -> a) rs),
         s.settle (List.map (fun (_, a, _) -> a) rs),
         s.settle (List.map (fun (_, _, a) -> a) rs) )
   | Svd { full_matrices; x } ->
-      let rs = List.map (fun e -> k_svd e full_matrices (e.arr x)) envs in
+      let rs = envs_map (fun e -> k_svd e full_matrices (e.arr x)) in
       ( s.settle (List.map (fun (a, _, _) -> a) rs),
         s.settle (List.map (fun (_, a, _) -> a) rs),
         s.settle (List.map (fun (_, _, a) -> a) rs) )
   | Eig { vectors; x } ->
-      let rs = List.map (fun e -> k_eig e vectors (e.arr x)) envs in
+      let rs = envs_map (fun e -> k_eig e vectors (e.arr x)) in
       ( s.settle (List.map fst rs),
         if vectors then
           Some (s.settle (List.map (fun (_, v) -> Option.get v) rs))
         else None )
   | Eigh { vectors; x } ->
-      let rs = List.map (fun e -> k_eigh e vectors (e.arr x)) envs in
+      let rs = envs_map (fun e -> k_eigh e vectors (e.arr x)) in
       ( s.settle (List.map fst rs),
         if vectors then
           Some (s.settle (List.map (fun (_, v) -> Option.get v) rs))
@@ -2533,13 +2718,11 @@ let local (type a b) d (x : (a, b) t) : (a, b) Nx_array.t =
   | Placed r -> (
       match Cell.state r.r_cell with
       | Live bufs ->
-          let holders = devices_of r.r_cell.placement in
-          let i =
-            match List.find_index (Nx_device.equal d) holders with
-            | Some i -> i
-            | None -> assert false (* moved to the target's devices *)
-          in
-          { dtype = r.r_dtype; view = r.r_view; buffer = List.nth bufs i }
+          {
+            dtype = r.r_dtype;
+            view = r.r_view;
+            buffer = buffer_on r.r_cell bufs d;
+          }
       | Consumed k -> consumed k)
   | Host _ -> invalid_arg "Nx_effect.local: a host value has no device array"
   | Traced _ -> outside_trace ()
@@ -2549,9 +2732,13 @@ let env_on kernels d =
   let alloc (type a b) (dtype : (a, b) Nx_dtype.t) shape : (a, b) Nx_array.t =
     let n = Array.fold_left ( * ) 1 shape in
     let s = Nx_dtype.Scalar.of_dtype dtype in
-    { dtype; view = View.create shape; buffer = Nx_device.Buffer.create d s n }
+    {
+      dtype;
+      view = View.create shape;
+      buffer = Nx_device.Buffer.create d.memory s n;
+    }
   in
-  { kernels; alloc; arr = (fun x -> local d x) }
+  { device = d; kernels; alloc; arr = (fun x -> local d x) }
 
 (* The results of every device at [q], each the whole result, or, when
    [windowed], each device's window of the whole result copied out on it. *)
@@ -2567,8 +2754,9 @@ let settle_on q ~windowed envs =
       (fun arrays ->
         let arrays =
           if windowed then
-            List.map2 (fun (e, d) a -> window e d a) (List.combine envs ds)
-              arrays
+            List.map2
+              (fun (e, d) a -> window e d a)
+              (List.combine envs ds) arrays
           else arrays
         in
         let a = List.hd arrays in
@@ -2587,16 +2775,16 @@ let per_tile q = function
   | Gather axis -> not (List.mem_assoc axis (Grid.cuts q))
   | Contract | Into -> false
 
-(* An eager operation on a device no backend covers, a GPU outside any [run],
-   raises: a compiled function, a backend's [run] or the host computes it. *)
-let refuse op d =
-  let d = Nx_device.name d in
+(* An eager operation on a device without a backend raises before any work: a
+   compiled function, a backend paired with the device, or the host computes
+   it. *)
+let no_kernels op d =
   invalid_arg
     (Printf.sprintf
-       "Nx.%s: an operand is on %s, where nx.cpu does not compute; apply it \
-        under Rune.jit, run it under a backend's run that covers %s, or \
-        Nx.place it on Nx.Placement.host"
-       op d d)
+       "Nx.%s: %s has no eager kernels. Compile it with Rune.jit, pair the \
+        device with a backend (Nx.Device.with_backend), or place the operands \
+        on Nx.Placement.host."
+       op d.d_name)
 
 let rec with_cells cells f =
   match cells with
@@ -2611,26 +2799,30 @@ let cells_of op =
       | _ -> cells)
     [] (Op.operands op)
 
-(* [on_devices_with k op] is [op] computed by the kernels [k] where it runs:
-   over host operands, and at a placement [q] once per device of [q], each one
-   [k] runs on. Each device holds its tiles of the operands when the result is
-   split and the operation keeps tiles apart, and whole copies of them otherwise, which nx copies there first; a
-   split result is then each device's window of the whole it computed. A
-   contraction split along an outer axis of its left operand is computed whole
+(* [on_devices op] is [op] computed where it runs: over host operands by nx.cpu,
+   and at a placement [q] once per device of [q], by its backend. Each device
+   holds its tiles of the operands when the result is split and the operation
+   keeps tiles apart, and whole copies of them otherwise, which nx copies there
+   first; a split result is then each device's window of the whole it computed.
+   A contraction split along an outer axis of its left operand is computed whole
    on each device too, N times the work of a tile each: one rule serves every
    split contraction and scatter until a consumer needs the tiles. *)
-let on_devices_with : type r. (module Nx_backend.S) -> r Op.t -> r =
- fun kernels op ->
-  let (module K) = kernels in
+let on_devices : type r. r Op.t -> r =
+ fun op ->
   match routing op with
   | Computes (rule, xs) -> (
       match route (fun (P x) -> placement_of x) (Op.name op) rule xs with
-      | On_host -> compute [ { host_env with kernels } ] host_settle op
+      | On_host -> compute [ host_env ] host_settle op
       | At q ->
           let ds = devices_of q in
-          List.iter
-            (fun d -> if not (K.runs_on d) then refuse (Op.name op) d)
-            ds;
+          let kernels =
+            List.map
+              (fun d ->
+                match d.backend with
+                | Some k -> k
+                | None -> no_kernels (Op.name op) d)
+              ds
+          in
           let split =
             List.find_map
               (fun (P x) ->
@@ -2652,13 +2844,11 @@ let on_devices_with : type r. (module Nx_backend.S) -> r Op.t -> r =
                 (whole, cut)
           in
           let op = with_operands { f = (fun x -> move_to target x) } op in
-          let envs = List.map (env_on kernels) ds in
+          let envs = List.map2 env_on kernels ds in
           with_cells (cells_of op) (fun () ->
               compute envs (settle_on q ~windowed envs) op))
   | Moves _ | Places _ | Reads _ ->
       invalid_arg "Nx_effect.on_devices: the operation computes nothing"
-
-let on_devices op = on_devices_with (module Nx_cpu) op
 
 (* Each operation with no interpretation: nx.cpu on host operands, with no
    closure and no operation built, and [on_devices] otherwise. *)
@@ -2739,8 +2929,8 @@ let direct_cat axis xs =
   if all_host xs then Host (k_cat host_env axis (List.map host_of xs))
   else on_devices (Cat (axis, xs))
 
-let direct_convert (type a b c d) (c : conversion)
-    (dtype : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t =
+let direct_convert (type a b c d) (c : conversion) (dtype : (c, d) Nx_dtype.t)
+    (x : (a, b) t) : (c, d) t =
   match (c, x) with
   | Cast, Host a -> Host (k_cast host_env dtype a)
   | Bitcast, Host a -> Host (bitcast_array host_env dtype a)
@@ -2878,7 +3068,6 @@ let direct : type r. r Op.t -> r =
   | Read { x; _ } -> read_elements_of x
   | Check { ok; msg } -> check_elements ok msg
 
-
 (* Interception
 
    [intercept i f] runs [f] with every operation its fiber performs and [i]
@@ -2914,31 +3103,6 @@ let intercept i f =
   in
   Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
 
-(* [kernels k] claims an operation that computes over values, not traced ones,
-   whose placed operands are all on devices [k] runs on, or, with none, when [k]
-   runs on the host: host operands join placed ones, as nx routes them. It
-   computes the operation with [k] as nx computes with nx.cpu. A kernel [k]
-   lacks raises [Nx_backend.Refused] in the handler, never reaching an
-   interpretation around it. *)
-let kernels (k : (module Nx_backend.S)) =
-  let (module K) = k in
-  let value (P x) =
-    match x with Traced _ -> false | Host _ | Placed _ -> true
-  in
-  let covered p = List.for_all K.runs_on (devices_of p) in
-  let claims : type r. r Op.t -> bool =
-   fun op ->
-    match routing op with
-    | Computes (_, xs) -> (
-        List.for_all value xs
-        &&
-        match List.filter_map (fun (P x) -> placement_of x) xs with
-        | [] -> K.runs_on Nx_device.host
-        | ps -> List.for_all covered ps)
-    | Moves _ | Places _ | Reads _ -> false
-  in
-  { run = (fun op -> on_devices_with k op); claims }
-
 (* Whether the calling fiber is inside an interception, outside its [run]. *)
 let intercepted () =
   intercepting ()
@@ -2948,9 +3112,9 @@ let intercepted () =
   | b -> b
   | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> false
 
-(* [perform op] delivers [op] to the interception around the caller, and
-   answers it directly when there is none: only an unhandled perform of this
-   very effect falls back. *)
+(* [perform op] delivers [op] to the interception around the caller, and answers
+   it directly when there is none: only an unhandled perform of this very effect
+   falls back. *)
 let perform : type r. r Op.t -> r =
  fun op ->
   let e = E_op op in
@@ -3079,6 +3243,7 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
 
 let move x m =
   if intercepting () then perform (Move (x, m)) else direct_move x m
+
 let reshape x shape = move x (Reshape shape)
 let expand x shape = move x (Expand shape)
 let permute x axes = move x (Permute axes)
@@ -3116,14 +3281,13 @@ let contiguous x =
   let v = view x in
   if View.is_c_contiguous v && View.offset v = 0 then x else copy x
 
-(* Creation. A constant is not an operation. Uninterpreted on the host, a
-   filled value is nx.cpu's fill of storage of its own. Otherwise it is one
-   element on the host, placed where it is made and expanded, so that an
-   interpretation sees a constant (a compiled call folds it into its kernels);
-   one of more than one element is then copied into storage of its own where
-   it can be, so that its view covers its storage and a compiled call can lend
-   it to a result. On a device the host does not compute on, a GPU, it stays
-   the expanded element. *)
+(* Creation. A constant is one element on each device of its context, the host's
+   included, expanded as a view to its shape: placing the element and moving it
+   are views and copies, so a constant needs no kernel on any device, an
+   interpretation sees a constant (a compiled call folds it into its kernels),
+   and a kernel reads it with stride 0. A split context sees each device's
+   window of the element expanded, a view of the same storage. [Nx.copy] gives a
+   constant storage of its own. *)
 
 let broadcast scalar shape_arr =
   if Array.length shape_arr = 0 then scalar
@@ -3133,36 +3297,27 @@ let broadcast scalar shape_arr =
     if Shape.equal ones shape_arr then x else expand x shape_arr
 
 let full (ctx : context) dtype shape_arr value =
-  if on_host ctx && not (intercepting ()) then
-    Host (filled dtype shape_arr value)
+  if on_host ctx && not (intercepting ()) then (
+    (* The same expanded element, made without performing its movements: with no
+       interpretation to see them, they are view arithmetic. *)
+    let buffer = Elements.create dtype 1 in
+    Elements.fill dtype buffer value;
+    let strides = Array.make (Array.length shape_arr) 0 in
+    Host { dtype; view = View.create ~strides shape_arr; buffer })
   else
-    let e = Host (filled dtype [||] value) in
-    let n = Array.fold_left ( * ) 1 shape_arr in
-    if on_host ctx then
-      let x = broadcast e shape_arr in
-      if n <= 1 then x else copy x
-    else
-      let copies =
-        List.fold_left
-          (fun p (axis, _) -> Placement.uncut p ~axis)
-          ctx (Placement.cuts ctx)
-      in
-      let x = broadcast (place copies e) shape_arr in
-      let computes = List.for_all Nx_device.runs_on_host (devices_of ctx) in
-      if n <= 1 then x
-      else if copies != ctx then place ctx x
-      else if intercepting () || computes then copy x
-      else x
+    let copies =
+      List.fold_left
+        (fun p (axis, _) -> Placement.uncut p ~axis)
+        ctx (Placement.cuts ctx)
+    in
+    let e = place copies (Host (filled dtype [||] value)) in
+    place ctx (broadcast e shape_arr)
 
 let from_host (ctx : context) dtype buffer =
   check_host "Nx_effect.from_host" dtype buffer;
   let x =
     Host
-      {
-        dtype;
-        view = View.create [| Nx_device.Buffer.length buffer |];
-        buffer;
-      }
+      { dtype; view = View.create [| Nx_device.Buffer.length buffer |]; buffer }
   in
   if on_host ctx then x else place ctx x
 
@@ -3200,9 +3355,9 @@ let shard_storage what p buffers =
     (fun d b ->
       if Nx_device.Buffer.length b <> length then
         invalid_arg (what ^ ": buffers of different lengths");
-      if Nx_device.Buffer.device b != d then
+      if Nx_device.Buffer.device b != d.memory then
         invalid_arg
-          (Printf.sprintf "%s: a buffer for %s is on %s" what (Nx_device.name d)
+          (Printf.sprintf "%s: a buffer for %s is on %s" what d.d_name
              (Nx_device.name (Nx_device.Buffer.device b))))
     ds buffers;
   cell ~placement:p ~length buffers
@@ -3249,16 +3404,12 @@ let shards (type a b) (x : (a, b) t) =
   | Placed r -> (
       match Cell.state r.r_cell with
       | Live buffers ->
-          let holders = devices_of r.r_cell.placement in
-          let on d =
-            List.nth buffers (Option.get (List.find_index (( == ) d) holders))
-          in
-          (List.map on (devices_of r.r_placement), r.r_view)
+          ( List.map (buffer_on r.r_cell buffers) (devices_of r.r_placement),
+            r.r_view )
       | Consumed k -> consumed k)
   | Traced _ -> outside_trace ()
 
-let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t)
-    shape b : (a, b) t =
+let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
   let what = "Nx.of_buffer" in
   let n = Nx_device.Buffer.length b in
   if Array.fold_left ( * ) 1 shape <> n then
@@ -3266,9 +3417,7 @@ let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t)
       (Printf.sprintf "%s: shape %s for %d elements" what
          (Shape.to_string shape) n);
   check_format what dtype b;
-  let p =
-    Placement.on [ Nx_device.Buffer.device b ]
-  in
+  let p = Placement.on (of_memory (Nx_device.Buffer.device b)) in
   of_shards p dtype (View.create shape) [ b ]
 
 (* An empty buffer of [x]'s dtype on its device. *)
@@ -3276,7 +3425,7 @@ let empty (type a b) (x : (a, b) t) =
   let s = Nx_dtype.Scalar.of_dtype (dtype x) in
   match x with
   | Placed r when not (on_disk r.r_placement) ->
-      Nx_device.Buffer.create (List.hd (devices_of r.r_placement)) s 0
+      Nx_device.Buffer.create (List.hd (devices_of r.r_placement)).memory s 0
   | Host _ | Placed _ | Traced _ -> Nx_device.Buffer.create Nx_device.host s 0
 
 (* A value on the disk, which computes nothing, is copied to the host, as is one

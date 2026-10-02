@@ -12,14 +12,16 @@ let step =
     (fun (keys, values) -> (Nx.add_s keys 1., Nx.mul_s values 2.))
 
 let () =
-  let pair n = (Nx.zeros Nx.float32 [| n |], Nx.ones Nx.float32 [| n |]) in
+  let pair n =
+    (Nx.copy (Nx.zeros Nx.float32 [| n |]), Nx.copy (Nx.ones Nx.float32 [| n |]))
+  in
   ignore (step (pair 4));
   ignore (step (pair 8));
   let ba = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 8 in
   ignore
     (step
        ( Nx.of_bigarray (Bigarray.genarray_of_array1 ba),
-         Nx.ones Nx.float32 [| 8 |] ))
+         Nx.copy (Nx.ones Nx.float32 [| 8 |]) ))
 
 (* Retraces for a view's strides and for where its run starts within 16 bytes of
    memory. *)

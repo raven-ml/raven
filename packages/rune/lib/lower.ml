@@ -249,7 +249,11 @@ let checking s f =
       let v = f () in
       (v, List.rev s.checks))
 
-(* The name that [s]'s nodes give [d]. *)
+(* The memories of [p]'s devices, which the compiler addresses: who computes on
+   a memory eagerly takes no part in compiling for it. *)
+let memories p = List.map Nx.Device.memory (Placement.devices p)
+
+(* The name that [s]'s nodes give the memory [d]. *)
 let name s d =
   let n = Nx_device.name d in
   (match List.assoc_opt n s.names with
@@ -288,7 +292,7 @@ let check : type a b.
       List.iter
         (fun d ->
           if not (supports s d tdt) then refuse (" on " ^ Nx_device.name d))
-        (Placement.devices p);
+        (memories p);
       tdt
 
 (* Layouts
@@ -325,26 +329,22 @@ let layout what p shape =
           (Format.asprintf "%a" Placement.pp p)
 
 let device_of s p =
-  match Placement.devices p with
+  match memories p with
   | [ d ] -> Ops.Single (name s d)
   | ds -> Ops.Multi (List.map (name s) ds)
 
-(* Whether values of [shape] at [p] and [q] lie alike on the same devices,
+(* Whether values of [shape] at [p] and [q] lie alike in the same memories,
    whatever computes on them. *)
 let same_layout p q shape =
-  let dp = Placement.devices p in
-  List.equal Nx_device.equal dp (Placement.devices q)
-  && List.for_all
-       (fun d -> Placement.window p shape d = Placement.window q shape d)
-       dp
+  List.equal Nx_device.equal (memories p) (memories q)
+  && List.for_all2
+       (fun d e -> Placement.window p shape d = Placement.window q shape e)
+       (Placement.devices p) (Placement.devices q)
 
-let same_devices p q =
-  List.equal Nx_device.equal (Placement.devices p) (Placement.devices q)
+let same_devices p q = List.equal Nx_device.equal (memories p) (memories q)
 
 let disk p =
-  match Placement.devices p with
-  | [ d ] -> Nx_device.equal d Nx_device.disk
-  | _ -> false
+  match memories p with [ d ] -> Nx_device.equal d Nx_device.disk | _ -> false
 
 let on_disk x = disk (Nx.placement x)
 
@@ -357,7 +357,7 @@ let home x = if on_disk x then Placement.host else Nx.placement x
 (* A value made beside one at [p] is a full copy on each of its devices. *)
 let context p =
   if Placement.equal p Placement.host then Placement.host
-  else Placement.on (Placement.devices p)
+  else Placement.replicated (Placement.devices p)
 
 (* [settled s what p u] is [u], a value computed at [p]'s devices, laid out as
    nx places a result at [p]. Where they differ, a value split over the devices
@@ -375,7 +375,7 @@ let settled s what p u =
         | Some _ -> Ops.copy_to_device u (device_of s p)
         | None -> u
       in
-      Ops.shard ~axis:a whole (List.map (name s) (Placement.devices p))
+      Ops.shard ~axis:a whole (List.map (name s) (memories p))
 
 let traced p dt u =
   Repr.Traced.v ~context:(context p) p dt
@@ -585,7 +585,7 @@ let follow s q u =
   let computes v =
     let dt = Ops.dtype v in
     (not (List.exists (Dtype.equal dt) Dtype.all))
-    || List.for_all (fun d -> supports s d dt) (Placement.devices q)
+    || List.for_all (fun d -> supports s d dt) (memories q)
   in
   let seen = Ops.Tbl.create 16 and read = ref [] in
   let rec visit v =
@@ -632,7 +632,7 @@ let follow s q u =
                   in
                   Nx_device.Buffer.copy ~src ~dst;
                   dst)
-                (Placement.devices q)
+                (memories q)
             in
             let node = Ops.substitute c.node [ (c.buffer, buffer) ] in
             s.captures <- { c with at = q; node; buffer; buffers } :: s.captures;

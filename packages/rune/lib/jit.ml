@@ -52,7 +52,8 @@ let disk = Nx_device.disk
 let leaf (Nx.P t) =
   let t =
     match Nx.Placement.devices (Nx.placement t) with
-    | [ d ] when Nx_device.equal d disk -> Nx.place Nx.Placement.host t
+    | [ d ] when Nx_device.equal (Nx.Device.memory d) disk ->
+        Nx.place Nx.Placement.host t
     | _ -> t
   in
   let x = Nx.P t in
@@ -694,7 +695,7 @@ let check entry consumed paths leaves =
 let fresh at dt shape =
   let n = numel (local at shape) in
   List.map
-    (fun d -> B.create d (Nx_dtype.Scalar.of_dtype dt) n)
+    (fun d -> B.create (Nx.Device.memory d) (Nx_dtype.Scalar.of_dtype dt) n)
     (Placement.devices at)
 
 let value r bufs =

@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Quantised products under rune. Compiled, Nx_quant.apply and dequant
-   compute eager's values, which nx's suite checks against the format: on the
-   host, on test devices over the host's memory with the weight, its routes and
-   its rows placed, and on Metal (slow). The derivatives of apply in its rows,
-   and its maps, are those of the product with the dequantised weight. *)
+(* Quantised products under rune. Compiled, Nx_quant.apply and dequant compute
+   eager's values, which nx's suite checks against the format: on the host, on
+   test devices over the host's memory with the weight, its routes and its rows
+   placed, and on Metal (slow). The derivatives of apply in its rows, and its
+   maps, are those of the product with the dequantised weight. *)
 
 open Windtrap
 open Nx_test
@@ -228,7 +228,6 @@ let values =
 (* Placements *)
 
 let devices = Nx.Device.all [ Cpu 1; Cpu 2; Cpu 3; Cpu 4 ]
-
 let pair = [ List.nth devices 0; List.nth devices 1 ]
 let split ?(axis = 0) ds = Nx.Placement.sharded ~axis ds
 let host t = Nx.place Nx.Placement.host t
@@ -302,18 +301,12 @@ let placements =
                     Nx_quant.ptree @-> tensor @-> tensor @-> returns tensor)
                   routed
                   (Nx_quant.place (split devices) w)
-                  (Nx.place
-                     (Nx.Placement.on devices)
-                     ids)
-                  (Nx.place
-                     (Nx.Placement.on devices)
-                     x))));
+                  (Nx.place (Nx.Placement.replicated devices) ids)
+                  (Nx.place (Nx.Placement.replicated devices) x))));
       test "dequant of a weight placed on a device is eager's bit for bit"
         (fun () ->
           let w = weight [| 2; 4; 128 |] in
-          let p =
-            Nx.Placement.on [ List.hd devices ]
-          in
+          let p = Nx.Placement.on (List.hd devices) in
           equal (tensor float_exact)
             (Nx_quant.dequant Nx.float32 w)
             (host
@@ -327,7 +320,8 @@ let placements =
 
 (* [peak d f] is [f ()] and the most bytes [d] held while it ran beyond those it
    held before. *)
-let peak d f =
+let peak device f =
+  let d = Nx.Device.memory device in
   Gc.full_major ();
   Nx_device.synchronize d;
   let before = Nx_device.Stats.allocated (Nx_device.stats d) in
@@ -340,8 +334,7 @@ let peak d f =
             | Nx_device.Profile.Allocation a when Nx_device.equal a.device d ->
                 max most a.allocated
             | _ -> most)
-          before
-          (Nx_device.Profile.stop p)
+          before (Nx_device.Profile.stop p)
       in
       (y, most - before)
   | exception e ->
@@ -353,8 +346,8 @@ let peak d f =
    ids. An index broadcast to the gathered codes, [16; 2; 64; 128] here, would
    take 2 MiB. *)
 let memory =
-  let d = Nx.Device.cpu 5 in
-  let p = Nx.Placement.on [ d ] in
+  let d = Nx.Device.v (Cpu 5) in
+  let p = Nx.Placement.on d in
   group "memory"
     [
       test "compiled, a routed product holds its result and its ids' size"
@@ -364,8 +357,8 @@ let memory =
             Nx.place p (ints [| 16; 2 |] (Array.init 32 (fun i -> i * 3 mod 9)))
           and x = Nx.place p (floats [| 16; 2; 1; 256 |]) in
           let f = routed_compiled w in
-          (* The first call loads the program, whose code counts while [f]
-             holds it. *)
+          (* The first call loads the program, whose code counts while [f] holds
+             it. *)
           ignore (f ids x);
           let y, held = peak d (fun () -> f ids x) in
           at_least ~msg:"the result" ~than:(Nx.nbytes y) int held;
@@ -534,9 +527,7 @@ let metal =
   match Result.to_option (Nx.Device.get Metal) with
   | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
   | Some m ->
-      let p =
-        Nx.Placement.on [ m ]
-      in
+      let p = Nx.Placement.on m in
       cases
         ~name:(fun c -> c.name)
         "on Metal, a product is eager's" (products ~scale:moderate)

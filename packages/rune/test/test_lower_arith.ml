@@ -860,8 +860,9 @@ let on_the_host =
 (* Graph parity: the kernels tinygrad schedules for the same program. *)
 
 let parity =
-  let x () = Nx.zeros Nx.float32 [| 4; 4 |] in
-  let i () = Nx.zeros Nx.int32 [| 4; 4 |] in
+  (* Captures with storage of their own: a constant would fold. *)
+  let x () = Nx.copy (Nx.zeros Nx.float32 [| 4; 4 |]) in
+  let i () = Nx.copy (Nx.zeros Nx.int32 [| 4; 4 |]) in
   let case file f =
     Golden.graph
       ("golden/lower_arith/" ^ file ^ ".golden")

@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx's operations on a test device, computed by each backend: each computing
-   operation, on operands placed on a test device that holds its own memory,
-   gives the host's result bit for bit, placed on that device. *)
+(* nx's operations on a device, computed by each backend: each computing
+   operation, on operands placed on a device of the backend, gives the host's
+   result bit for bit, placed on that device, for every dtype and layout. *)
 
 open Windtrap
 open Nx_test
@@ -13,9 +13,7 @@ open Nx_test
 (* How a case receives its operands: as they are, or placed. *)
 type at = { at : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 
-let p = Nx.Placement.on [ Devices.d1 ]
 let host = { at = Fun.id }
-let placed = { at = (fun x -> Nx.place p x) }
 let f64 shape xs = Nx.create Nx.float64 shape xs
 let unit_interval = f64 [| 2; 3 |] [| 0.1; 0.25; 0.4; 0.55; 0.7; 0.85 |]
 let signed = f64 [| 2; 3 |] [| -1.5; 0.5; 2.5; -0.25; 3.; -2. |]
@@ -242,30 +240,61 @@ let cases : (string * (at -> Nx.packed list)) list =
         ] );
   ]
 
-let placed_result (Nx.P y) =
-  is_true ~msg:"placed on the device" (Nx.Placement.equal (Nx.placement y) p);
-  Nx.P (Nx.place Nx.Placement.host y)
-
-(* Each backend runs the cases: nx.cpu as nx calls it, and each backend under
-   its run ([Nx.Op.kernels]). A backend added to raven joins this list. *)
-let backends : (string * ((unit -> Nx.packed list) -> Nx.packed list)) list =
+(* Operations of every dtype, through the kernels that read their operands'
+   layout: a copy, a comparison, a selection and a concatenation. *)
+let generic : (string * (Nx.packed -> Nx.packed)) list =
   [
-    ("nx.cpu", fun f -> f ());
-    ( "nx.cpu run as a backend",
-      fun f -> Nx.Op.intercept (Nx.Op.kernels (module Nx_cpu)) f );
+    ("copy", fun (Nx.P x) -> Nx.P (Nx.copy x));
+    ("equal", fun (Nx.P x) -> Nx.P (Nx.equal x x));
+    ("where", fun (Nx.P x) -> Nx.P (Nx.where (Nx.equal x x) x x));
+    ( "concatenate",
+      fun (Nx.P x) ->
+        let flat = Nx.reshape [| -1 |] x in
+        Nx.P (Nx.concatenate ~axis:0 [ flat; flat ]) );
   ]
 
-let conformance (backend, run_with) =
-  group
-    (backend ^ " at a placement on a device of its own memory")
-    (List.map
-       (fun (name, f) ->
-         test name (fun () ->
-             List.iter2
-               (fun expected got ->
-                 equal Stored.packed expected (placed_result got))
-               (f host)
-               (run_with (fun () -> f placed))))
-       cases)
+(* Each backend computes the cases on a device it computes on: nx.cpu on a test
+   memory, and a backend paired with the host's memory, whose values are views
+   of host values. A backend added to raven joins this list. *)
+let backends =
+  [
+    ("nx.cpu on a test memory", Devices.d1);
+    ( "a backend paired with the host's memory",
+      Nx.Device.with_backend (module Renamed) Nx.Device.host );
+  ]
+
+let conformance (backend, d) =
+  let p = Nx.Placement.on d in
+  let placed = { at = (fun x -> Nx.place p x) } in
+  let placed_result (Nx.P y) =
+    equal ~msg:"placed on the device" Devices.placement p (Nx.placement y);
+    Nx.P (Nx.place Nx.Placement.host y)
+  in
+  let every_dtype (Stored.Case c) =
+    prop
+      (c.name ^ " values of every layout, each operation's host result")
+      (Gen.pair c.tensors
+         (Gen.of_list
+            ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n)
+            generic))
+      (fun (x, (_, f)) ->
+        cover "zero-size" (Nx.numel x = 0);
+        cover "strided" (not (Nx.is_c_contiguous x));
+        equal Stored.packed (f (Nx.P x))
+          (placed_result (f (Nx.P (Nx.place p x)))))
+  in
+  group backend
+    [
+      group "cases"
+        (List.map
+           (fun (name, f) ->
+             test name (fun () ->
+                 List.iter2
+                   (fun expected got ->
+                     equal Stored.packed expected (placed_result got))
+                   (f host) (f placed)))
+           cases);
+      group "every dtype" (List.map every_dtype Stored.every);
+    ]
 
 let () = exit (run "nx conformance" (List.map conformance backends))

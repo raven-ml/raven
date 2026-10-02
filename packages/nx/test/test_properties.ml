@@ -82,7 +82,9 @@ let properties =
         ]
         (fun (_, (expected, view)) ->
           equal bool expected
-            (Nx.is_c_contiguous (view (Nx.zeros Nx.int32 [| 2; 3 |]))));
+            (Nx.is_c_contiguous
+               (view
+                  (Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 2l; 3l; 4l; 5l |]))));
       prop ~examples:[ transposed_row ]
         "is_c_contiguous holds exactly when the elements follow each other in \
          the buffer"
@@ -110,7 +112,7 @@ let conversions =
           equal same t c;
           is_true (Nx.is_c_contiguous c));
       test "contiguous of a contiguous tensor shares its storage" (fun () ->
-          let t = Nx.zeros Nx.int32 [| 2; 3 |] in
+          let t = Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 2l; 3l; 4l; 5l |] in
           is_true (storage (Nx.contiguous t) == storage t));
       prop ~examples:[ without_first ]
         "contiguous shares the storage of a C-contiguous tensor at offset 0, \
