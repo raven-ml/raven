@@ -462,7 +462,7 @@ let () =
         ~config:Thumper.Config.(default |> deadline 120.)
         ~budgets:
           [
-            Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
+            Thumper.Budget.no_slower_than 0.05;
             Thumper.Budget.no_more_alloc_than 0.01;
           ]
         (topk ~k:4 ~n:32 ~rows:512
@@ -485,3 +485,4 @@ let () =
                   ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
                   ())
           :: (cuda () @ metal ()))
+      |> exit

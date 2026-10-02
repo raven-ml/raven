@@ -114,7 +114,7 @@ unary/relu-1M	wall_time	batch=4	n=20	3.396e-04	3.040e-04 3.131e-04 3.163e-04 3.1
 unary/sqrt-1M	alloc_words	exact	64
 unary/sqrt-1M	wall_time	batch=8	n=20	1.313e-04	1.240e-04 1.242e-04 1.247e-04 1.247e-04 1.248e-04 1.252e-04 1.254e-04 1.269e-04 1.288e-04 1.309e-04 1.317e-04 1.319e-04 1.346e-04 1.347e-04 1.353e-04 1.355e-04 1.358e-04 1.366e-04 1.366e-04 1.394e-04
 
-# machine: 73bfb753d0739958
+# machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
 

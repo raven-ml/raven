@@ -66,4 +66,5 @@ let () =
           Thumper.group "NUTS" (nuts_benches ());
           Thumper.group "ESS" (ess_benches ());
           Thumper.group "Rhat" (rhat_benches ());
-        ])
+        ]
+      |> exit)

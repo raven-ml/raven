@@ -29,7 +29,7 @@ let () =
   Thumper.run "nx_fft"
     ~budgets:
       [
-        Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
+        Thumper.Budget.no_slower_than 0.05;
         Thumper.Budget.no_more_alloc_than 0.01;
       ]
     [
@@ -55,3 +55,4 @@ let () =
           icase_batched "c128 23x1025 stack" 23 2048;
         ];
     ]
+  |> exit

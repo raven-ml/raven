@@ -26,7 +26,7 @@ extract_patches-2D-64x64-k3-s2-f32-Nx	wall_time	batch=2048	n=20	3.044e-06	3.016e
 extract_patches-2D-8x3x64x64-k3-s1-f32-Nx	alloc_words	exact	126
 extract_patches-2D-8x3x64x64-k3-s1-f32-Nx	wall_time	batch=64	n=20	1.400e-04	1.377e-04 1.380e-04 1.383e-04 1.387e-04 1.388e-04 1.388e-04 1.395e-04 1.397e-04 1.398e-04 1.399e-04 1.401e-04 1.409e-04 1.418e-04 1.431e-04 1.469e-04 1.470e-04 1.471e-04 1.483e-04 1.492e-04 1.502e-04
 
-# machine: 73bfb753d0739958
+# machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
 

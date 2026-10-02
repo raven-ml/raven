@@ -32,7 +32,7 @@ let run suite ~sizes families =
       prerr_endline
         "TALON_BENCH_DATA is unset: set it to the directory the data scripts \
          wrote";
-      exit 2
+      2
   | Some data ->
       let family (name, workload) =
         Thumper.group name (List.filter_map (size ~data workload) sizes)

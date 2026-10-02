@@ -57,6 +57,6 @@ let corpus name =
 
 let () =
   Thumper.run "compress"
-    ~budgets:
-      [ Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.10 ]
+    ~budgets:[ Thumper.Budget.no_slower_than 0.10 ]
     (List.map corpus [ "text"; "columns"; "random" ])
+  |> exit

@@ -48,7 +48,7 @@ topk/4-of-32-512-rows-compiled	wall_time	batch=256	n=20	3.391e-05	3.365e-05 3.36
 topk/4-of-32-512-rows-eager	alloc_words	exact	3050
 topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.620e-04	7.475e-04 7.509e-04 7.520e-04 7.549e-04 7.551e-04 7.572e-04 7.594e-04 7.594e-04 7.604e-04 7.613e-04 7.627e-04 7.635e-04 7.660e-04 7.661e-04 7.668e-04 7.713e-04 7.716e-04 7.721e-04 7.748e-04 7.802e-04
 
-# machine: ca352e279bc47cb1
+# machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 

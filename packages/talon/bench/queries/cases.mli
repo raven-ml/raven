@@ -16,10 +16,11 @@ val run :
   string ->
   sizes:string list ->
   (string * (data:string -> string -> Workload.t)) list ->
-  unit
+  int
 (** [run suite ~sizes families] is thumper's command line ({!Thumper.run}) over
     the suite [suite] of the workloads [workload ~data size] of each
-    [(name, workload)] of [families] and each size of [sizes] whose data exists.
-    A workload whose data is missing is skipped, saying so on stderr.
+    [(name, workload)] of [families] and each size of [sizes] whose data exists,
+    and is its exit code. A workload whose data is missing is skipped, saying so
+    on stderr.
 
-    Exits with an error if [$TALON_BENCH_DATA] is unset. *)
+    It is [2], saying so on stderr, if [$TALON_BENCH_DATA] is unset. *)

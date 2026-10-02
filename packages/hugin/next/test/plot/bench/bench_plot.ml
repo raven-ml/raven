@@ -116,3 +116,4 @@ let config = Thumper.Config.(default |> deadline 60.)
 let () =
   Thumper.run ~config "hugin_next_plot"
     [ Thumper.group "stages" [ live ]; budgets ]
+  |> exit

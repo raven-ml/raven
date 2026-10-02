@@ -223,8 +223,9 @@ let () =
   Thumper.run "tolk"
     ~budgets:
       [
-        Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
+        Thumper.Budget.no_slower_than 0.05;
         Thumper.Budget.no_more_alloc_than 0.01;
       ]
     (List.map (fun (name, _) -> program name) Programs.all
     @ (decode "cpu" (fun () -> Nx_device.host) :: lorenz :: cuda ()))
+  |> exit

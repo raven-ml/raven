@@ -480,9 +480,7 @@ let () =
         warm "--warm";
         if gpu then warm "--warm-gpt-oss"
       end;
-      let budgets =
-        [ Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05 ]
-      in
+      let budgets = [ Thumper.Budget.no_slower_than 0.05 ] in
       (* A gpt-oss case builds its weights in its setup, and a prompt's routed
          product takes seconds a call on the host. *)
       Thumper.run "kaun_decode"
@@ -496,3 +494,4 @@ let () =
         (if gpu then
            [ Thumper.group "GptOss" (List.map gpt_oss_case gpt_oss_kinds) ]
          else []))
+      |> exit

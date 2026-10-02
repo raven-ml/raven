@@ -16,10 +16,9 @@ compile a computation graph.
 - **BENCH:** the built executable, run **directly**, never through `dune exec`:
   `<WT>/_build/default/packages/rune/bench/bench_rune.exe`
   Suite name is `rune`; lab subset is `--tag lab`. Running the exe directly is
-  simplest and what this program assumes: the corrected-file contract is
-  identical everywhere (a check or bless only ever writes `PATH.corrected`;
-  acceptance is the `mv`), and `dune exec` would need a `--` separator
-  before thumper's flags while adding nothing.
+  simplest and what this program assumes: `bless` is the one command that
+  writes the baseline, and `dune exec` would need a `--` separator before
+  thumper's flags while adding nothing.
   On kimchi (x86 Linux, 6 performance and 8 efficiency cores) the
   committed section was recorded pinned to the performance cores:
   run every gate there as `DEV=CPU taskset -c 0-5 <BENCH> ...`. `DEV=CPU`

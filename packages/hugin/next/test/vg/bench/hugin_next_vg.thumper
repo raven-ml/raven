@@ -24,7 +24,7 @@ svg/100k-stamps	wall_time	batch=1	n=20	1.484e-02	1.444e-02 1.452e-02 1.458e-02 1
 svg/1M-point-polyline	alloc_words	exact	50598897
 svg/1M-point-polyline	wall_time	batch=1	n=20	9.064e-02	8.413e-02 8.483e-02 8.575e-02 8.624e-02 8.751e-02 8.877e-02 8.912e-02 8.927e-02 8.968e-02 8.995e-02 9.133e-02 9.133e-02 9.134e-02 9.190e-02 9.415e-02 9.461e-02 9.463e-02 9.469e-02 9.680e-02 9.782e-02
 
-# machine: ca352e279bc47cb1
+# machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 

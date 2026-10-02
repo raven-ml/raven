@@ -65,7 +65,7 @@ let () =
   Thumper.run "nx_c_owned_gemm"
     ~budgets:
       [
-        Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
+        Thumper.Budget.no_slower_than 0.05;
         Thumper.Budget.no_more_alloc_than 0.01;
       ]
     [
@@ -79,3 +79,4 @@ let () =
             [| 64; 32; 32 |];
         ];
     ]
+  |> exit

@@ -104,4 +104,4 @@ let pdf =
 (* Twenty batches of the PDF polyline, half a second each, exceed thumper's
    default deadline of ten seconds per case. *)
 let config = Thumper.Config.(default |> deadline 60.)
-let () = Thumper.run ~config "hugin_next_vg" [ raster; svg; pdf ]
+let () = Thumper.run ~config "hugin_next_vg" [ raster; svg; pdf ] |> exit

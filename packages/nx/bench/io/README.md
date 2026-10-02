@@ -13,10 +13,10 @@ Run the checked suite with:
 dune build @packages/nx/bench/io/bench
 ```
 
-The checked alias uses Thumper's low-noise CI preset and can take several
-minutes. It compares wall time and allocation estimates against the committed
-machine baseline with ten-percent wall-time and five-percent allocation
-regression budgets.
+The alias can take several minutes. It compares wall time and allocation
+against this machine's section of the committed baseline with ten-percent
+wall-time and five-percent allocation regression budgets.
 
-Use Thumper's `--explore` mode for investigation and `--bless --ci` only when
-deliberately recording a reviewed baseline for the current benchmark machine.
+Run the built executable with `-f <case>` and `--quick` to investigate one
+case, and with `bless` only when deliberately recording a reviewed baseline for
+the current machine.

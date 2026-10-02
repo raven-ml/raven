@@ -112,4 +112,4 @@ let all_benchmarks =
   in
   [ pre_tokenizer_suite; gpt2; bert; llama; llama3 ]
 
-let () = Thumper.run "brot" all_benchmarks
+let () = Thumper.run "brot" all_benchmarks |> exit

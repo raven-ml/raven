@@ -8,3 +8,4 @@
 let () =
   Cases.run "h2o" ~sizes:[ "1e6"; "1e7"; "1e8" ]
     [ ("groupby", H2o.groupby); ("join", H2o.join) ]
+  |> exit

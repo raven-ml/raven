@@ -7,3 +7,4 @@
 
 let () =
   Cases.run "tpch" ~sizes:[ "sf0.1"; "sf1"; "sf10" ] [ ("tpch", Tpch.workload) ]
+  |> exit

@@ -58,4 +58,4 @@ let all_benchmarks =
   ]
   |> fun benches -> [ Thumper.group "Sowilo" benches ]
 
-let () = Thumper.run "sowilo" all_benchmarks
+let () = Thumper.run "sowilo" all_benchmarks |> exit

@@ -124,4 +124,4 @@ let build_benchmarks () =
 
 let () =
   let benchmarks = build_benchmarks () in
-  Thumper.run "fehu" benchmarks
+  Thumper.run "fehu" benchmarks |> exit

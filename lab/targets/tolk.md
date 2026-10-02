@@ -26,7 +26,7 @@ most of its time in these stages.
   gate run:
 
   ```
-  rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected
+  rm -f <RESULTS>/verdict.json
   <BENCH> --tag lab \
     --baseline <WT>/<BASELINE> \
     --json <RESULTS>/verdict.json

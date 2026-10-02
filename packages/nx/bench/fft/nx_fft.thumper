@@ -30,7 +30,7 @@ rfft/f64-65535-odd-control	wall_time	batch=1	n=20	2.543e-03	2.538e-03 2.539e-03 
 rfft/f64-65536-power-of-two	alloc_words	exact	87
 rfft/f64-65536-power-of-two	wall_time	batch=16	n=20	2.539e-04	2.513e-04 2.520e-04 2.520e-04 2.523e-04 2.523e-04 2.526e-04 2.535e-04 2.536e-04 2.536e-04 2.538e-04 2.539e-04 2.545e-04 2.553e-04 2.553e-04 2.554e-04 2.556e-04 2.560e-04 2.570e-04 2.581e-04 2.838e-04
 
-# machine: 73bfb753d0739958
+# machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
 

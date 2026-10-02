@@ -45,22 +45,19 @@ exist — this is a fresh run. Then:
    Run the perf gate once (step 6's exact command). If the cases resolve
    against an existing section, that section IS your session reference —
    move on. If they report `proposed` (no section for this machine yet, or a
-   stale one after a compiler change), the run wrote the proposal to
-   `<BASELINE>.corrected`; accept and commit it on its own:
+   stale one after a compiler change), record the section with the `bless`
+   command the report's `accept:` line names, and commit it on its own:
 
    ```
-   mv <WT>/<BASELINE>.corrected <WT>/<BASELINE>
+   <BENCH> bless --tag lab --baseline <WT>/<BASELINE>
    git -C <WT> add <BASELINE>
    git -C <WT> commit -m "bench(<target>): Record <target> baseline for <machine> (lab session <tag>)"
    ```
 
-   There is no separate bless step: a check with no section proposes exactly
-   the selected cases' evidence, and this is the only wholesale accept in
-   the session. The baseline advances later by promoting corrected files the
-   gate writes — and every advance is committed together with the change
-   that earned it. (`bless` still exists for mid-session emergencies — a
-   `baseline_unstable` or `batch_drifted` case — but it re-records the whole
-   section and refuses on a busy host; do not reach for it casually.)
+   `check` never writes the baseline; only `bless` does, and it refuses a
+   loaded host. This is the only wholesale record in the session. The
+   baseline advances later by blessing the cases a keep improved — and every
+   advance is committed together with the change that earned it.
 
 5. Initialize `<RESULTS>/results.tsv` with the header row:
 
@@ -92,8 +89,8 @@ package's `lib/**`.
 - **The benches and the tests.** They are the ruler. Optimizing the ruler is
   cheating and any such change is void. `bench/**` sources and `test/**` are
   read-only.
-- **Baseline `.thumper` files advance only through thumper's own outputs** —
-  the one setup bless and promoted `.corrected` files the perf gate wrote.
+- **Baseline `.thumper` files advance only through thumper's own `bless`** —
+  the one setup bless and the `accept:` blesses of kept improvements.
   Hand-editing a baseline is optimizing the ruler and voids the run.
 - **Backend operation interfaces.** For nx, never add or change a backend op in
   `packages/nx/lib/core/backend.mli`. Hard project rule.
@@ -166,11 +163,11 @@ code is the best kind. A small win that adds ugly complexity is not worth it.
    fine here — conventional subject plus the hypothesis; the full report is
    written when the change is kept (see "Commit messages").
 6. **Perf gate.** Confirm against the ratcheting baseline, using the **default**
-   preset (no `--ci`, no `--quick`). Remove the previous run's outputs first so a
+   preset (no `--quick`, no `--precise`). Remove the previous run's outputs first so a
    failed or interrupted run can never leave you reading a stale verdict:
 
    ```
-   rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected
+   rm -f <RESULTS>/verdict.json
    <BENCH> --tag lab \
      --baseline <WT>/<BASELINE> \
      --json <RESULTS>/verdict.json > <RESULTS>/report.txt
@@ -201,18 +198,17 @@ code is the best kind. A small win that adds ugly complexity is not worth it.
    so two false verdicts are correlated, not independent — the pair rule and
    the deterministic `alloc_words` signal are the real guards; spacing the runs
    out weakens the correlation.
-8. On KEEP: promote the corrected file the confirming run wrote into the
-   baseline, stage it, and fold it into the kept commit together with the full
-   report message (`git commit --amend` — safe on this unpublished branch; see
-   "Commit messages"). The corrected file advances only the cases that actually
-   improved and preserves every other case's blessed value — a fresh re-bless
-   would overwrite all cases with one noisy draw, so never re-bless:
+8. On KEEP: run the `accept:` line the confirming run printed, stage the
+   baseline, and fold it into the kept commit together with the full report
+   message (`git commit --amend` — safe on this unpublished branch; see
+   "Commit messages"). The `accept:` line blesses only the improved (and
+   proposed) cases with `-f`, and `bless -f` keeps every other row of the
+   section — a whole-section re-bless would overwrite all cases with one noisy
+   draw, so never bless without `-f`:
 
    ```
-   if [ -f <WT>/<BASELINE>.corrected ]; then
-     mv <WT>/<BASELINE>.corrected <WT>/<BASELINE>
-     git -C <WT> add <BASELINE>
-   fi
+   <the accept: line, as printed>
+   git -C <WT> add <BASELINE>
    git -C <WT> commit --amend
    ```
 
@@ -220,13 +216,13 @@ code is the best kind. A small win that adds ugly complexity is not worth it.
    The baseline diff (old → new estimates for the improved cases) is the
    committed measurement — performance evidence travels with the change the
    way a test travels with a bugfix. A run that exited 1 on a spurious
-   single-run regression still writes the corrected file when any case
-   improved, and promoting it is safe: corrected files never advance regressed
-   cases. A measured win always writes a corrected file; a simplification keep
-   (no measured gain) writes none — it advances the commit only, and the
-   baseline rightly stays put.
-   On DISCARD: `git reset --hard C`; `rm -f <WT>/<BASELINE>.corrected` (the
-   corrected file is untracked; a check run never modifies the tracked
+   single-run regression still prints an `accept:` line when any case
+   improved, and running it is safe: it never names a regressed case. A
+   measured win always prints an `accept:` line; a simplification keep (no
+   measured gain) prints none — it advances the commit only, and the baseline
+   rightly stays put. `bless` measures its cases again, so the recorded rows
+   are a third draw, not the confirming run's samples.
+   On DISCARD: `git reset --hard C` (a check run never modifies the tracked
    baseline).
 9. Log one row to `<RESULTS>/results.tsv` (see below).
 10. Go to 1. Never stop to ask whether to continue.
@@ -235,7 +231,7 @@ To develop an idea before the confirm, iterate fast on the single case you
 are changing with `<BENCH> --quick -f <case> --baseline <WT>/<BASELINE>` —
 a narrowed check against the session baseline (there is no baseline-free
 mode in the CLI). `--quick` is for the inner loop only — never for a keep
-decision, and delete any `.corrected` it proposes.
+decision, and never run the `accept:` line it prints.
 
 ## Commit messages
 

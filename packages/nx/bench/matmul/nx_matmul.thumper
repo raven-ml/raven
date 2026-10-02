@@ -26,7 +26,7 @@ layout-and-batch/MatMul-Batched-64x32x32-f32-Nx	wall_time	batch=512	n=20	1.761e-
 layout-and-batch/MatMul-Transposed-512x512-f32-Nx	alloc_words	exact	90
 layout-and-batch/MatMul-Transposed-512x512-f32-Nx	wall_time	batch=16	n=20	5.308e-04	4.949e-04 4.965e-04 4.969e-04 4.992e-04 5.018e-04 5.070e-04 5.171e-04 5.179e-04 5.263e-04 5.294e-04 5.322e-04 5.332e-04 5.443e-04 5.463e-04 5.494e-04 5.578e-04 5.623e-04 5.637e-04 5.647e-04 5.649e-04
 
-# machine: 73bfb753d0739958
+# machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
 

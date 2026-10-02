@@ -61,4 +61,4 @@ let build_benchmarks () =
 
 let () =
   let benchmarks = build_benchmarks () in
-  Thumper.run "vega" benchmarks
+  Thumper.run "vega" benchmarks |> exit

@@ -117,3 +117,4 @@ let () =
           Thumper.bench "Sort/amount_desc" (fun () -> first_amount (sorted ()));
         ];
     ]
+  |> exit

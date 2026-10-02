@@ -14,7 +14,7 @@
 (rule
  (alias bench)
  (locks %{project_root}/bench)
+ (deps
+  (glob_files *.thumper))
  (action
-  (progn
-   (run %{exe:bench_vg.exe})
-   (diff? hugin_next_vg.thumper hugin_next_vg.thumper.corrected))))
+  (run %{exe:bench_vg.exe})))

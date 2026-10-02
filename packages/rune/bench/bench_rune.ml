@@ -540,7 +540,7 @@ let () =
         ~config:Thumper.Config.(default |> deadline 120.)
         ~budgets:
           [
-            Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
+            Thumper.Budget.no_slower_than 0.05;
             Thumper.Budget.no_more_alloc_than 0.01;
           ]
         [
@@ -555,3 +555,4 @@ let () =
             (jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20);
           Thumper.group "WarmStart" (warm_start_benchmarks ());
         ]
+      |> exit
