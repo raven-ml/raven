@@ -71,9 +71,7 @@ let tick_text (t : Ticks.tick) =
   | Some c -> Text.v (t.label ^ "\n" ^ c)
 
 let categorical (F f) =
-  match f.kind with
-  | Scale.Categorical -> true
-  | Scale.Quantitative | Scale.Temporal -> false
+  match f.kind with Channel.Categories -> true | Channel.Quantities -> false
 
 let guide_title (F f) note =
   let add acc m =
@@ -106,8 +104,8 @@ let category_text (F f) name =
 
 let names_of (F f) =
   match f.kind with
-  | Scale.Categorical -> category_names f.scale
-  | Scale.Quantitative | Scale.Temporal -> []
+  | Channel.Categories -> category_names f.scale
+  | Channel.Quantities -> []
 
 (* [units s] is the length of the domain of [s] in units of its transform, or
    one if it spans none. *)
@@ -155,7 +153,7 @@ let axis_spec r scales c pid p role =
   Option.map
     (fun i ->
       let (F f) = scales.(i) in
-      let sname = f.sid.sname in
+      let sname = f.name in
       let explicit = explicit_axis c sname in
       let side =
         match explicit with
@@ -347,7 +345,7 @@ let uses_of (r : Resolved.t) blocks =
     let legend () =
       let explicit =
         List.find_opt
-          (fun l -> String.equal l.lscale f.sid.sname && equal_key l.lkey f.key)
+          (fun l -> String.equal l.lscale f.name && equal_key l.lkey f.key)
           legends
       in
       let show =
@@ -389,15 +387,12 @@ let build r scales uses =
         let (F f) = scales.(i) in
         let kind =
           match f.kind with
-          | Scale.Quantitative -> "num"
-          | Scale.Categorical -> "cat"
-          | Scale.Temporal -> "time"
+          | Channel.Quantities -> "num"
+          | Channel.Categories -> "cat"
         in
         let ls_id =
           Nx.Ptree.Path.(
-            v
-              (segments block
-              @ [ Field "legend"; Field f.sid.sname; Field kind ]))
+            v (segments block @ [ Field "legend"; Field f.name; Field kind ]))
         in
         Some
           ( block,
@@ -422,7 +417,7 @@ let build r scales uses =
   (* The title of a facet scale goes beside its headers. *)
   let facet_title pid c (i, role) =
     let (F f as s) = scales.(i) in
-    let explicit = explicit_axis c f.sid.sname in
+    let explicit = explicit_axis c f.name in
     let show =
       match explicit with
       | Some a -> a.show
@@ -436,7 +431,7 @@ let build r scales uses =
     match guide_title s None with
     | Some t when show ->
         let owner =
-          Nx.Ptree.Path.(add (Field f.sid.sname) (add (Field "axis") pid))
+          Nx.Ptree.Path.(add (Field f.name) (add (Field "axis") pid))
         in
         [ heading owner side (`Center, t) ]
     | _ -> []
@@ -469,8 +464,8 @@ let build r scales uses =
           Option.bind fx (fun i ->
               let (F f) = scales.(i) in
               match f.kind with
-              | Scale.Categorical -> Scale.wrap f.scale
-              | Scale.Quantitative | Scale.Temporal -> None)
+              | Channel.Categories -> Scale.wrap f.scale
+              | Channel.Quantities -> None)
         in
         let ncols, nrows, at =
           match wrap_at with

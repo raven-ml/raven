@@ -254,21 +254,18 @@ let missing = function
         q.v
   | C c -> Array.copy c.miss
 
-let normalize : type d. d Scale.t -> host -> float array =
- fun s h ->
-  match (Scale.kind s, h) with
-  | Scale.Quantitative, Q q ->
-      let nz = Scale.normalize s in
+(* A reading's scale has the reading's kind, so [h] has the kind of [f]. *)
+let normalize (F f) h =
+  match (f.kind, h) with
+  | Quantities, Q q ->
+      let nz = Scale.normalize f.scale in
       Array.mapi (fun i v -> if is_ok q.ok i then nz v else Float.nan) q.v
-  | Scale.Categorical, C c ->
-      let nz = Scale.normalize s in
+  | Categories, C c ->
+      let nz = Scale.normalize f.scale in
       let at = memo c.miss c.ids (fun i -> nz (c.name i)) in
       Array.mapi (fun j i -> if c.miss.(j) then Float.nan else at i) c.ids
-  | _, Q { v; _ } -> Array.make (Array.length v) Float.nan
-  | _, C { ids; _ } ->
-      (* A reading's scale has the reading's kind, and temporal channels do not
-         exist yet. *)
-      Array.make (Array.length ids) Float.nan
+  | Categories, Q { v; _ } -> Array.make (Array.length v) Float.nan
+  | Quantities, C { ids; _ } -> Array.make (Array.length ids) Float.nan
 
 (* Ranges *)
 
@@ -319,7 +316,7 @@ let base : type r.
         Option.value (Scale.unknown f.scale) ~default:Color.transparent
       in
       match f.kind with
-      | Scale.Categorical ->
+      | Categories ->
           let n, _ = categories f.scale in
           let scheme =
             Option.value (Scale.scheme f.scale)
@@ -327,7 +324,7 @@ let base : type r.
           in
           let colors = Scheme.colors n scheme in
           Some (band f.scale (fun i -> colors.(i)), unknown)
-      | Scale.Quantitative | Scale.Temporal ->
+      | Quantities ->
           let scheme =
             Option.value (Scale.scheme f.scale)
               ~default:(Theme.scheme ctx.theme)
@@ -337,9 +334,8 @@ let base : type r.
       let areas : float * float =
         let circle = Float.pi *. Float.pow (em ctx size_em /. 2.) 2. in
         match f.kind with
-        | Scale.Quantitative ->
-            Option.value (Scale.areas f.scale) ~default:(0., circle)
-        | Scale.Categorical | Scale.Temporal -> (0., circle)
+        | Quantities -> Option.value (Scale.areas f.scale) ~default:(0., circle)
+        | Categories -> (0., circle)
       in
       let g =
         match name with
@@ -351,7 +347,7 @@ let base : type r.
       Some (finite g, Float.nan)
   | Role.Symbols -> (
       match f.kind with
-      | Scale.Categorical ->
+      | Categories ->
           let symbols =
             match Scale.symbols f.scale with
             | Some s -> s
@@ -361,13 +357,13 @@ let base : type r.
           in
           let k = Array.length symbols in
           Some (band f.scale (fun i -> symbols.(i mod k)), symbols.(0))
-      | Scale.Quantitative | Scale.Temporal -> None)
+      | Quantities -> None)
   | Role.Panels -> (
       match f.kind with
-      | Scale.Categorical ->
+      | Categories ->
           let names = Array.of_list (category_names f.scale) in
           Some (band f.scale (fun i -> names.(i)), "")
-      | Scale.Quantitative | Scale.Temporal -> None)
+      | Quantities -> None)
   | Role.Texts | Role.Curves | Role.Pixels -> None
 
 let colors ctx s =
@@ -376,17 +372,6 @@ let colors ctx s =
   | None -> fun _ -> Color.transparent
 
 (* Columns *)
-
-let rec maps : type d r. (d, r) Channel.t -> r -> r = function
-  | Map (f, c) ->
-      let g = maps c in
-      fun v -> f (g v)
-  | Const _ | Data _ -> Fun.id
-
-let rec const_value : type d r. (d, r) Channel.t -> r option = function
-  | Const v -> Some v
-  | Map (f, c) -> Option.map f (const_value c)
-  | Data _ -> None
 
 let constant : type d r. (d, r) Role.t -> int -> r -> Rows.col =
  fun role n v ->
@@ -416,15 +401,14 @@ let scaled ctx ~stroked (B b) norm ids i =
   match base ctx ~stroked b.role.name b.role.range s with
   | None -> None
   | Some (at, missing) ->
-      let g = maps b.ch in
+      let g = mapping b.ch in
       let fn u = match at u with None -> missing | Some v -> g v in
       let band, zero_at, cats =
         match f.kind with
-        | Scale.Categorical ->
+        | Categories ->
             let cat j id = if Float.is_nan norm.(j) then min_int else id in
             (Some (Scale.bandwidth f.scale), None, Some (Array.mapi cat ids))
-        | Scale.Quantitative -> (None, Some (zero f.scale), None)
-        | Scale.Temporal -> (None, None, None)
+        | Quantities -> (None, Some (zero f.scale), None)
       in
       let ticks =
         List.map (fun (t : Ticks.tick) -> t.position) ctx.frozen.(i).major
@@ -479,7 +463,7 @@ let unscaled : type d r.
         zero = None;
       }
   in
-  let g = maps ch in
+  let g = mapping ch in
   let miss = missing h in
   match role.range with
   | Role.Floats ->
@@ -504,7 +488,7 @@ let rows ?only ctx rd ~id projection ~warn scale_of sel =
     | _ -> Array.iteri (fun i x -> if x then dropped.(i) <- true) miss
   in
   let col index (B b as bd) =
-    match const_value b.ch with
+    match Channel.constant b.ch with
     | Some v -> constant b.role n v
     | None -> (
         let d = Option.get (data b.ch) in
@@ -512,8 +496,7 @@ let rows ?only ctx rd ~id projection ~warn scale_of sel =
         let scaled =
           match (b.role.scale, scale_of index) with
           | Some _, Some i ->
-              let (F f) = ctx.scales.(i) in
-              let norm = normalize f.scale h in
+              let norm = normalize ctx.scales.(i) h in
               Option.map
                 (fun c -> (c, Array.map Float.is_nan norm))
                 (scaled ctx ~stroked bd norm (ids h) i)
@@ -569,7 +552,7 @@ let facet rd role =
 let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
   let stroked = stroked m in
   let col index (B b as bd) =
-    match const_value b.ch with
+    match Channel.constant b.ch with
     | Some v -> Some (constant b.role 1 v)
     | None ->
         if reads index then scaled ctx ~stroked bd [| u |] [| 0 |] scale

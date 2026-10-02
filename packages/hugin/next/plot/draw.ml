@@ -54,9 +54,9 @@ type key = {
 }
 
 let equal_fitted (F f) (F f') =
-  String.equal f.sid.sname f'.sid.sname
+  String.equal f.name f'.name
   &&
-  match Scale.equal_kind f.kind f'.kind with
+  match equal_kind f.kind f'.kind with
   | Some Type.Equal -> Scale.equal f.scale f'.scale
   | None -> false
 
@@ -119,17 +119,12 @@ let reading mid f =
 
 (* Membership *)
 
-let rec const_value : type d r. (d, r) Channel.t -> r option = function
-  | Const v -> Some v
-  | Map (f, c) -> Option.map f (const_value c)
-  | Data _ -> None
-
 let facet_const m role : string option =
   match find_binding role m.bindings with
   | None -> None
   | Some (B b) -> (
       match Role.equal_range b.role.range Role.Panels with
-      | Some Type.Equal -> (const_value b.ch : string option)
+      | Some Type.Equal -> (constant b.ch : string option)
       | None -> None)
 
 (* [members rd m fps] is the rows of [m] in each facet panel of [fps], [None]
@@ -255,12 +250,12 @@ let band_cells cx scale_of index =
   | Some i -> (
       let (F f) = cx.ctx.scales.(i) in
       match f.kind with
-      | Scale.Categorical ->
+      | Categories ->
           let n = List.length (category_names f.scale) in
           if n > 0 && Float.equal (Scale.bandwidth f.scale) (1. /. float n) then
             Some n
           else None
-      | Scale.Quantitative | Scale.Temporal -> None)
+      | Quantities -> None)
 
 let binding_index m role =
   let rec go i = function
@@ -433,9 +428,7 @@ let m4 cx m (panel : Layout.panel) scale_of =
   let float_scale index : float Scale.t option =
     Option.bind (scale_of index) (fun i : float Scale.t option ->
         let (F f) = cx.ctx.scales.(i) in
-        match f.kind with
-        | Scale.Quantitative -> Some f.scale
-        | Scale.Categorical | Scale.Temporal -> None)
+        match f.kind with Quantities -> Some f.scale | Categories -> None)
   in
   let series = if last = 0 then 0 else Array.fold_left ( * ) 1 shape / last in
   let flat t = Nx.reshape [| series; last |] (Nx.broadcast_to shape t) in

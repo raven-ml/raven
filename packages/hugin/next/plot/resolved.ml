@@ -30,27 +30,6 @@ let kind_scoped = function
   | "color" | "opacity" | "size" | "width" | "symbol" -> true
   | _ -> false
 
-type kind_tag = Q | T | C
-
-let tag : type d. d Scale.kind -> kind_tag = function
-  | Scale.Quantitative -> Q
-  | Scale.Temporal -> T
-  | Scale.Categorical -> C
-
-let pp_tag ppf t =
-  Format.pp_print_string ppf
-    (match t with Q -> "quantitative" | T -> "temporal" | C -> "categorical")
-
-(* A scale's identity within a scope: its name, and its kind for the default
-   scales [kind_scoped] names. *)
-type sid = { sname : string; skind : kind_tag option }
-
-let sid name t =
-  { sname = name; skind = (if kind_scoped name then Some t else None) }
-
-let equal_sid s s' =
-  String.equal s.sname s'.sname && Option.equal ( = ) s.skind s'.skind
-
 (* Readings: the channels that read scales, each with its scale's identity and
    scope. *)
 
@@ -67,9 +46,9 @@ type 'd member = {
 type reading =
   | R : {
       m : 'd member;
-      kind : 'd Scale.kind;
+      kind : 'd kind;
       mapped : bool;
-      sid : sid;
+      name : string;
       key : key;
     }
       -> reading
@@ -86,7 +65,6 @@ let readings_of pid occ =
          match (data b.ch, b.role.scale) with
          | Some d, Some default ->
              let name = Option.value ~default (Option.bind d.spec Scale.name) in
-             let kind = lift_kind d.lift in
              let key =
                if not (List.mem name occ.per_panel) then key_of env name
                else if b.role.name = "fx" || b.role.name = "fy" then
@@ -108,9 +86,9 @@ let readings_of pid occ =
                        m_imply = b.imply;
                        m_guide = b.guide;
                      };
-                   kind;
+                   kind = kind d.lift;
                    mapped = is_map b.ch;
-                   sid = sid name (tag kind);
+                   name;
                    key;
                  };
              ]
@@ -119,9 +97,9 @@ let readings_of pid occ =
 
 type group =
   | G : {
-      sid : sid;
+      name : string;
       key : key;
-      kind : 'd Scale.kind;
+      kind : 'd kind;
       members : 'd member list; (* In figure order. *)
       legend : bool;
           (* A role other than a position or facet reads it without
@@ -139,7 +117,7 @@ let group readings =
           [
             G
               {
-                sid = r.sid;
+                name = r.name;
                 key = r.key;
                 kind = r.kind;
                 members = [ r.m ];
@@ -147,10 +125,10 @@ let group readings =
               };
           ]
       | (G g as gr) :: rest -> (
-          if not (equal_sid g.sid r.sid && equal_key g.key r.key) then
+          if not (String.equal g.name r.name && equal_key g.key r.key) then
             gr :: go rest
           else
-            match Scale.equal_kind g.kind r.kind with
+            match equal_kind g.kind r.kind with
             | Some Type.Equal ->
                 G
                   {
@@ -159,17 +137,24 @@ let group readings =
                     legend = g.legend || legend;
                   }
                 :: rest
+            | None when kind_scoped r.name -> gr :: go rest
             | None ->
                 let m = List.hd g.members in
                 err "resolve" "the scale %S is read as %a by %a and as %a by %a"
-                  r.sid.sname pp_tag (tag g.kind) pp_id m.m_occ.mid pp_tag
-                  (tag r.kind) pp_id r.m.m_occ.mid)
+                  r.name pp_kind g.kind pp_id m.m_occ.mid pp_kind r.kind pp_id
+                  r.m.m_occ.mid)
     in
     go groups
   in
   List.fold_left add [] readings
   |> List.rev_map (fun (G g) -> G { g with members = List.rev g.members })
   |> List.rev
+
+(* [same rd rd'] is [true] iff [rd] and [rd'] read one scale. *)
+let same (R r) (R r') =
+  String.equal r.name r'.name
+  && equal_key r.key r'.key
+  && ((not (kind_scoped r.name)) || Option.is_some (equal_kind r.kind r'.kind))
 
 (* In a panel, the channels on x read one scale, and likewise y, fx and fy. *)
 let check_panel_scales readings =
@@ -185,10 +170,9 @@ let check_panel_scales readings =
                  && String.equal (axis_role r'.m.m_role) axis)
                seen
            with
-           | Some (R r')
-             when not (equal_sid r'.sid r.sid && equal_key r'.key r.key) ->
+           | Some (R o as other) when not (same other rd) ->
                err "resolve" "%a and %a read two %s scales in the panel %a"
-                 pp_id r'.m.m_occ.mid pp_id r.m.m_occ.mid axis pp_id r.m.m_pid
+                 pp_id o.m.m_occ.mid pp_id r.m.m_occ.mid axis pp_id r.m.m_pid
            | _ -> ());
         go (rd :: seen) rest
   in
@@ -247,7 +231,7 @@ let check_axes cells readings =
                 if
                   Nx.Ptree.Path.equal r.m.m_pid pid
                   && positional role
-                  && String.equal r.sid.sname a.scale
+                  && String.equal r.name a.scale
                 then Some role
                 else None)
               readings
@@ -275,7 +259,7 @@ let labelled : type d. d lift -> bool = function
   | Cat { labels = None; _ } | Dim _ -> false
   | Num _ | Index _ | Scalar _ -> false
 
-let merge_level sid level specs =
+let merge_level name level specs =
   let rec go acc prior = function
     | [] -> acc
     | (m, s) :: rest ->
@@ -297,22 +281,21 @@ let merge_level sid level specs =
                   in
                   err "resolve"
                     "%a and %a give the scale %S two %s values of %a" pp_id
-                    m0.m_occ.mid pp_id m.m_occ.mid sid.sname level
-                    Scale.pp_property p)
+                    m0.m_occ.mid pp_id m.m_occ.mid name level Scale.pp_property
+                    p)
         in
         go acc ((m, s) :: prior) rest
   in
   go None [] specs
 
-let default_spec : type d. d Scale.kind -> d Scale.t = function
-  | Scale.Quantitative -> Scale.linear ()
-  | Scale.Temporal -> Scale.time ()
-  | Scale.Categorical -> Scale.band ()
+let default_spec : type d. d kind -> d Scale.t = function
+  | Quantities -> Scale.linear ()
+  | Categories -> Scale.band ()
 
-(* [merged kind sid ms] is the specification of the scale [ms] read: their
+(* [merged kind name ms] is the specification of the scale [ms] read: their
    explicit specifications merged, then implied ones under them. *)
-let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
- fun kind sid ms ->
+let merged : type d. d kind -> string -> d member list -> d Scale.t =
+ fun kind name ms ->
   let base = default_spec kind in
   let explicit =
     List.filter_map (fun m -> Option.map (fun s -> (m, s)) m.m_d.spec) ms
@@ -320,8 +303,8 @@ let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
   (* What a role implies, beyond what its mark does. *)
   let role m : d Scale.t option =
     match (kind, m.m_role) with
-    | Scale.Quantitative, "size" -> Some (Scale.linear ~zero:true ())
-    | Scale.Categorical, ("y" | "y2") -> Some (Scale.band ~reverse:true ())
+    | Quantities, "size" -> Some (Scale.linear ~zero:true ())
+    | Categories, ("y" | "y2") -> Some (Scale.band ~reverse:true ())
     | _ -> None
   in
   let implied : (d member * d Scale.t) list =
@@ -337,16 +320,16 @@ let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
      conflict. *)
   let implied = List.map (fun (m, i) -> (m, Scale.imply i base)) implied in
   let explicit =
-    Option.value ~default:base (merge_level sid "explicit" explicit)
+    Option.value ~default:base (merge_level name "explicit" explicit)
   in
   let spec =
-    match merge_level sid "implied" implied with
+    match merge_level name "implied" implied with
     | None -> explicit
     | Some i -> Scale.imply i explicit
   in
   (* Labelled and indexed categories identify categories differently. *)
   (match kind with
-  | Scale.Categorical -> (
+  | Categories -> (
       let sort m = labelled m.m_d.lift in
       (match ms with
       | m :: rest -> (
@@ -354,7 +337,7 @@ let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
           | Some m' ->
               err "resolve"
                 "%a and %a read labelled and indexed categories on the scale %S"
-                pp_id m.m_occ.mid pp_id m'.m_occ.mid sid.sname
+                pp_id m.m_occ.mid pp_id m'.m_occ.mid name
           | None -> ())
       | [] -> ());
       match (explicit_domain spec, ms) with
@@ -366,12 +349,12 @@ let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
             err "resolve"
               "the domain of the scale %S and %a identify categories \
                differently"
-              sid.sname pp_id m.m_occ.mid
+              name pp_id m.m_occ.mid
       | _ -> ())
-  | Scale.Quantitative | Scale.Temporal -> ());
+  | Quantities -> ());
   spec
 
-let merged_guide sid ms =
+let merged_guide name ms =
   let rec go acc = function
     | [] -> Option.map snd acc
     | m :: rest -> (
@@ -382,7 +365,7 @@ let merged_guide sid ms =
             if Bool.equal g g0 then go acc rest
             else
               err "resolve" "%a and %a imply different guides for the scale %S"
-                pp_id m0.m_occ.mid pp_id m.m_occ.mid sid.sname)
+                pp_id m0.m_occ.mid pp_id m.m_occ.mid name)
   in
   go None ms
 
@@ -395,7 +378,7 @@ let by_order ms =
       if c <> 0 then c else Int.compare m.m_index m'.m_index)
     ms
 
-let categories sid (ms : string member list) summary_of =
+let categories name (ms : string member list) summary_of =
   match ms with
   | m :: _ when labelled m.m_d.lift ->
       let seen = Hashtbl.create 16 and labels = ref [] in
@@ -419,7 +402,7 @@ let categories sid (ms : string member list) summary_of =
             err "resolve"
               "%a and %a give the category %d of the scale %S two texts, %S \
                and %S"
-              pp_id m0.m_occ.mid pp_id m.m_occ.mid i sid.sname s0 s
+              pp_id m0.m_occ.mid pp_id m.m_occ.mid i name s0 s
         | Some _ -> ()
         | None -> Hashtbl.add texts i (s, m)
       in
@@ -450,15 +433,15 @@ let categories sid (ms : string member list) summary_of =
       Scale.Indices (Array.of_list (List.map (fun i -> (i, shown i)) ints))
 
 let fit_scale : type d.
-    d Scale.kind ->
-    sid ->
+    d kind ->
+    string ->
     d member list ->
     d Scale.t ->
     (occ -> id -> summary) ->
     d Scale.t =
- fun kind sid ms spec summary_of ->
+ fun kind name ms spec summary_of ->
   match kind with
-  | Scale.Quantitative ->
+  | Quantities ->
       let hull acc m =
         match
           (List.assoc_opt m.m_index (summary_of m.m_occ m.m_pid).hulls, acc)
@@ -471,15 +454,14 @@ let fit_scale : type d.
       Scale.fit
         (Option.map (fun (lo, hi) -> Scale.Floats (lo, hi)) observed)
         spec
-  | Scale.Categorical ->
-      Scale.fit (Some (Scale.Categories (categories sid ms summary_of))) spec
-  | Scale.Temporal -> Scale.fit None spec
+  | Categories ->
+      Scale.fit (Some (Scale.Categories (categories name ms summary_of))) spec
 
 type fitted =
   | F : {
-      sid : sid;
+      name : string;
       key : key;
-      kind : 'd Scale.kind;
+      kind : 'd kind;
       members : 'd member list;
       legend : bool;
       guide : bool option;
@@ -499,11 +481,6 @@ let category_names (s : string Scale.t) =
 type facet_panel = { pnid : id; pfy : string option; pfx : string option }
 type presence = Everywhere | Nowhere | Rows of Nx.bool_t
 
-let rec const_value : type d r. (d, r) Channel.t -> r option = function
-  | Const v -> Some v
-  | Map (f, c) -> Option.map f (const_value c)
-  | Data _ -> None
-
 (* [presence shape mark role cat] is where the rows of [mark] are in the panels
    of the category [cat] of the facet [role]. *)
 let presence shape mark role cat =
@@ -513,7 +490,7 @@ let presence shape mark role cat =
       match Role.equal_range b.role.range Role.Panels with
       | None -> Everywhere
       | Some Type.Equal -> (
-          match (const_value b.ch, data b.ch) with
+          match (constant b.ch, data b.ch) with
           | Some v, _ -> if String.equal v cat then Everywhere else Nowhere
           | None, None -> Everywhere
           | None, Some d -> (
@@ -557,7 +534,7 @@ let both p p' =
 let facet_scale fitted pid role : string Scale.t option =
   List.find_map
     (fun (F f) : string Scale.t option ->
-      match Scale.equal_kind f.kind Scale.Categorical with
+      match equal_kind f.kind Categories with
       | Some Type.Equal ->
           if
             List.exists
@@ -601,7 +578,7 @@ let facet_panels fitted pid =
 
 (* Resolved figures *)
 
-type spec = Sp : 'd Scale.t -> spec
+type spec = Sp : 'd kind * 'd Scale.t -> spec
 
 type entry = {
   e_mark : mark;
@@ -645,7 +622,7 @@ let inputs_of specs occ pid =
              let colour =
                match b.role.range with Role.Colors -> true | _ -> false
              in
-             let kind = lift_kind d.lift in
+             let kind = kind d.lift in
              let found =
                List.find_map
                  (fun ((mid, pid', i), sp) ->
@@ -660,8 +637,8 @@ let inputs_of specs occ pid =
              let spec, fitted =
                match found with
                | None -> (default_spec kind, false)
-               | Some (Sp s) -> (
-                   match Scale.equal_kind (Scale.kind s) kind with
+               | Some (Sp (k, s)) -> (
+                   match equal_kind k kind with
                    | Some Type.Equal -> (s, true)
                    | None ->
                        assert
@@ -698,14 +675,16 @@ let scope_of places name =
   | k :: ks when List.for_all (equal_key k) ks -> Some k
   | _ -> None
 
-(* [find_scale scales nodes ~at name t] is the scale [name] of the kind [t] in
-   the scope holding [at]. A scale that a mark makes independent per panel is
-   held by the mark, and by the facet panel it is in: [Panel (mid, p)] is in a
-   facet panel iff [p] is not the cell its readers are in. *)
-let find_scale scales nodes ~at name t =
-  let sid = sid name t in
-  let held (F f) =
-    equal_sid f.sid sid
+(* [find_scale scales nodes ~at name kind] is the scale [name] of [kind] in the
+   scope holding [at]. A scale that a mark makes independent per panel is held
+   by the mark, and by the facet panel it is in: [Panel (mid, p)] is in a facet
+   panel iff [p] is not the cell its readers are in. *)
+let find_scale scales nodes ~at name kind =
+  let is (F f) =
+    String.equal f.name name && Option.is_some (equal_kind f.kind kind)
+  in
+  let held (F f as s) =
+    is s
     &&
     match f.key with
     | Panel (mid, p) ->
@@ -727,27 +706,10 @@ let find_scale scales nodes ~at name t =
           | Some key ->
               Found
                 (List.find_opt
-                   (fun (F f) -> equal_sid f.sid sid && equal_key f.key key)
+                   (fun (F f as s) -> is s && equal_key f.key key)
                    scales)))
 
-let zoom_domain : type d. d Scale.kind -> d * d -> d Scale.domain =
- fun kind (a, b) ->
-  match kind with
-  | Scale.Quantitative -> Scale.Floats (a, b)
-  | Scale.Temporal -> Scale.Instants (a, b)
-  | Scale.Categorical ->
-      assert false (* View.zoom refuses categorical scales. *)
-
-type zoom =
-  | Z : {
-      at : id;
-      name : string;
-      sid : sid;
-      key : key;
-      kind : 'd Scale.kind;
-      domain : 'd Scale.domain;
-    }
-      -> zoom
+type zoom = { at : id; name : string; key : key; ends : float * float }
 
 (* [zoom view nodes scales] is [scales] with the zooms of [view] applied, and
    the warnings of the zooms it ignores. *)
@@ -757,45 +719,40 @@ let zoom view nodes scales =
     Format.kasprintf (fun s -> warnings := (at, s) :: !warnings) fmt
   in
   let target (ident, View.V (sort, v)) =
-    match (ident, sort) with
-    | View.Zoom_of { scale = name; at }, View.Zoom kind -> (
-        match v with
-        | None -> None
-        | Some ends -> (
-            match find_scale scales nodes ~at name (tag kind) with
-            | Found (Some (F f))
-              when Option.is_some (Scale.equal_kind f.kind kind) ->
-                let domain = zoom_domain kind ends in
-                Some (Z { at; name; sid = f.sid; key = f.key; kind; domain })
+    match (ident, sort, v) with
+    | View.Zoom_of { scale = name; at }, View.Zoom kind, Some ends -> (
+        let none () =
+          warn at "the zoom of the scale %S applies to no scale" name;
+          None
+        in
+        (* No channel reads a time scale, and View.zoom refuses categories. *)
+        match of_scale_kind kind with
+        | Some Categories | None -> none ()
+        | Some Quantities -> (
+            match find_scale scales nodes ~at name Quantities with
+            | Found (Some (F f)) -> Some { at; name; key = f.key; ends }
             | No_scope ->
                 warn at "no scope of the scale %S holds the zoom's node" name;
                 None
-            | No_node | Found _ ->
-                warn at "the zoom of the scale %S applies to no scale" name;
-                None))
+            | No_node | Found None -> none ()))
     | _ -> None
   in
   let zooms = List.filter_map target view in
   let apply (F f) =
-    match
-      List.filter
-        (fun (Z z) -> equal_sid z.sid f.sid && equal_key z.key f.key)
-        zooms
-    with
-    | [] -> F f
-    | [ Z z ] -> (
-        match Scale.equal_kind z.kind f.kind with
-        | None -> F f
-        | Some Type.Equal -> (
-            match Scale.with_domain z.domain f.scale with
-            | scale -> F { f with scale }
-            | exception Invalid_argument _ ->
-                warn z.at
-                  "the zoom of the scale %S sets a domain it cannot take" z.name;
-                F f))
-    | zs ->
+    let of_f z = String.equal z.name f.name && equal_key z.key f.key in
+    match (f.kind, List.filter of_f zooms) with
+    | Categories, _ | Quantities, [] -> F f
+    | Quantities, [ z ] -> (
+        let lo, hi = z.ends in
+        match Scale.with_domain (Scale.Floats (lo, hi)) f.scale with
+        | scale -> F { f with scale }
+        | exception Invalid_argument _ ->
+            warn z.at "the zoom of the scale %S sets a domain it cannot take"
+              z.name;
+            F f)
+    | Quantities, zs ->
         List.iter
-          (fun (Z z) ->
+          (fun z ->
             warn z.at
               "the scale %S is zoomed several times; its zooms are ignored"
               z.name)
@@ -834,7 +791,7 @@ let check_legends cells scales =
   List.iter
     (fun l ->
       let stands (F f) =
-        String.equal f.sid.sname l.lscale && equal_key f.key l.lkey && f.legend
+        String.equal f.name l.lscale && equal_key f.key l.lkey && f.legend
       in
       if not (List.exists stands scales) then
         err "resolve"
@@ -912,11 +869,11 @@ let resolve ?prev ?(view = View.empty) figure =
   let unfitted =
     List.map
       (fun (G g) ->
-        let spec = merged g.kind g.sid g.members in
-        let guide = merged_guide g.sid g.members in
+        let spec = merged g.kind g.name g.members in
+        let guide = merged_guide g.name g.members in
         F
           {
-            sid = g.sid;
+            name = g.name;
             key = g.key;
             kind = g.kind;
             members = g.members;
@@ -931,7 +888,7 @@ let resolve ?prev ?(view = View.empty) figure =
     List.concat_map
       (fun (F f) ->
         List.map
-          (fun m -> ((m.m_occ.mid, m.m_pid, m.m_index), Sp f.spec))
+          (fun m -> ((m.m_occ.mid, m.m_pid, m.m_index), Sp (f.kind, f.spec)))
           f.members)
       unfitted
   in
@@ -982,7 +939,7 @@ let resolve ?prev ?(view = View.empty) figure =
       base
   in
   let fit summary_of (F f) =
-    F { f with scale = fit_scale f.kind f.sid f.members f.spec summary_of }
+    F { f with scale = fit_scale f.kind f.name f.members f.spec summary_of }
   in
   let per_panel (F f) = match f.key with Panels_of _ -> true | _ -> false in
   (* Categorical scales first, since facets make panels. *)
@@ -990,7 +947,7 @@ let resolve ?prev ?(view = View.empty) figure =
     List.map
       (fun (F f as s) ->
         match f.kind with
-        | Scale.Categorical when not (per_panel s) -> fit summary_of s
+        | Categories when not (per_panel s) -> fit summary_of s
         | _ -> s)
       unfitted
   in
@@ -1007,7 +964,7 @@ let resolve ?prev ?(view = View.empty) figure =
               match Role.equal_range b.role.range Role.Panels with
               | None -> None
               | Some Type.Equal -> (
-                  match const_value b.ch with
+                  match constant b.ch with
                   | None -> None
                   | Some v ->
                       let cats =
@@ -1059,7 +1016,7 @@ let resolve ?prev ?(view = View.empty) figure =
     List.map
       (fun (F f as s) ->
         match (f.kind, f.key) with
-        | Scale.Categorical, _ | _, Panel _ -> s
+        | Categories, _ | _, Panel _ -> s
         | _ -> fit summary_of s)
       fitted
   in
@@ -1127,20 +1084,24 @@ let scale : type d. ?at:id -> t -> d Scale.t -> d Scale.t =
     | Some n -> n
     | None -> err "Resolved.scale" "the scale is unnamed"
   in
-  let kind = Scale.kind s in
-  let absent () =
-    err "Resolved.scale" "the scope of %a has no %a scale %S" pp_id at pp_tag
-      (tag kind) name
-  in
-  match find_scale r.scales r.nodes ~at name (tag kind) with
-  | No_node -> err "Resolved.scale" "no node has the id %a" pp_id at
-  | No_scope ->
-      err "Resolved.scale" "no scope of the scale %S holds %a" name pp_id at
-  | Found None -> absent ()
-  | Found (Some (F f)) -> (
-      match Scale.equal_kind f.kind kind with
-      | Some Type.Equal -> f.scale
-      | None -> absent ())
+  match of_scale_kind (Scale.kind s) with
+  | None ->
+      err "Resolved.scale" "the scope of %a has no temporal scale %S" pp_id at
+        name
+  | Some kind -> (
+      let absent () =
+        err "Resolved.scale" "the scope of %a has no %a scale %S" pp_id at
+          pp_kind kind name
+      in
+      match find_scale r.scales r.nodes ~at name kind with
+      | No_node -> err "Resolved.scale" "no node has the id %a" pp_id at
+      | No_scope ->
+          err "Resolved.scale" "no scope of the scale %S holds %a" name pp_id at
+      | Found None -> absent ()
+      | Found (Some (F f)) -> (
+          match equal_kind f.kind kind with
+          | Some Type.Equal -> f.scale
+          | None -> absent ()))
 
 let warnings r = r.warnings
 let panel_of = function Panel (_, p) -> Some p | _ -> None
@@ -1151,11 +1112,11 @@ let equal_member m m' =
   && Nx.Ptree.Path.equal m.m_pid m'.m_pid
 
 let equal_scale (F f) (F f') =
-  equal_sid f.sid f'.sid
+  String.equal f.name f'.name
   && Option.equal Nx.Ptree.Path.equal (panel_of f.key) (panel_of f'.key)
   && Option.equal Bool.equal f.guide f'.guide
   &&
-  match Scale.equal_kind f.kind f'.kind with
+  match equal_kind f.kind f'.kind with
   | Some Type.Equal ->
       List.equal equal_member f.members f'.members
       && Scale.equal f.scale f'.scale
@@ -1244,8 +1205,8 @@ let pp_scale ppf (F f) =
       [] f.members
     |> List.rev
   in
-  Format.fprintf ppf "@[<v 2>%S %a%a, read by @[<hov>%a@]@,%a%a@]" f.sid.sname
-    pp_tag (tag f.kind)
+  Format.fprintf ppf "@[<v 2>%S %a%a, read by @[<hov>%a@]@,%a%a@]" f.name
+    pp_kind f.kind
     (Format.pp_print_option (fun ppf p -> Format.fprintf ppf " in %a" pp_id p))
     (panel_of f.key)
     (Format.pp_print_list

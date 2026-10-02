@@ -400,6 +400,9 @@ let resolved_scale =
           fails_naming [ "lr" ] (fun () -> quant r "lr"));
       test "refuses a scale of another kind" (fun () ->
           fails_naming [ "x" ] (fun () -> categ r "x"));
+      test "refuses a time scale, which no channel reads" (fun () ->
+          fails_naming [ "x" ] (fun () ->
+              Resolved.scale r (Scale.time ~name:"x" ())));
       test "finds a scale through a named node" (fun () ->
           equal floats (1., 1.) (hull ~at:(path [ field "a" ]) r "x"));
     ]
@@ -1136,6 +1139,20 @@ let views =
           let z = View.zoom (Scale.linear ~name:"gone" ()) in
           let r = resolve ~view:(View.set z (Some (5., 6.)) View.empty) fig in
           equal int 1 (List.length (warnings r)));
+      test "a zoom of a time scale, which no channel reads, is ignored"
+        (fun () ->
+          let z = View.zoom (Scale.time ~name:"lr" ()) in
+          let view =
+            View.set z (Some Hugin_next_kit.Time.(epoch, epoch)) View.empty
+          in
+          let r = resolve ~view fig in
+          equal floats (1., 2.) (hull r "lr");
+          equal (list warning)
+            [
+              ( Nx.Ptree.Path.root,
+                "the zoom of the scale \"lr\" applies to no scale" );
+            ]
+            (warnings r));
       test "zooms of one scale at two nodes are ignored with warnings"
         (fun () ->
           let f = layer [ fig |> name "a" ] in

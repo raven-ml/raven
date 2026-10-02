@@ -83,10 +83,9 @@ let length : type d r.
  fun ?band role ch ->
   match data ch with
   | Some { lift; _ } -> (
-      match lift_kind lift with
-      | Scale.Quantitative -> on ~imply:(Scale.linear ~zero:true ()) role ch
-      | Scale.Categorical -> on ?imply:band role ch
-      | Scale.Temporal -> on role ch)
+      match kind lift with
+      | Quantities -> on ~imply:(Scale.linear ~zero:true ()) role ch
+      | Categories -> on ?imply:band role ch)
   | None -> on role ch
 
 let position ?band role ~alone = function
@@ -99,9 +98,7 @@ let continuous : type d r. (d, r) Channel.t option -> bool = function
   | Some ch -> (
       match data ch with
       | Some { lift; _ } -> (
-          match lift_kind lift with
-          | Scale.Quantitative | Scale.Temporal -> true
-          | Scale.Categorical -> false)
+          match kind lift with Quantities -> true | Categories -> false)
       | None -> false)
 
 let facets fx fy = [ opt Role.fx fx; opt Role.fy fy ]
@@ -499,10 +496,10 @@ let image ?fx ?fy px =
       | c -> err "image" "the last axis has %d channels, not 1, 3 or 4" c
   in
   let fixed = Scale.linear ~nice:false () in
-  let x = Data { lift = Scalar 0.; scale = None; title = None } in
-  let x2 = Data { lift = Scalar (float w); scale = None; title = None } in
-  let y = Data { lift = Scalar 0.; scale = None; title = None } in
-  let y2 = Data { lift = Scalar (float h); scale = None; title = None } in
+  let x = Data { lift = Scalar 0.; spec = None; title = None } in
+  let x2 = Data { lift = Scalar (float w); spec = None; title = None } in
+  let y = Data { lift = Scalar 0.; spec = None; title = None } in
+  let y2 = Data { lift = Scalar (float h); spec = None; title = None } in
   Mark
     (make "image"
        ~coord:(Coord.cartesian ~aspect:1. ())
@@ -593,10 +590,9 @@ let grid : type d r. (d, r) Role.t -> (d, r) Channel.t -> binding =
  fun role ch ->
   match data ch with
   | Some { lift; _ } -> (
-      match lift_kind lift with
-      | Scale.Quantitative -> on ~imply:(Scale.linear ~nice:false ()) role ch
-      | Scale.Temporal -> on ~imply:(Scale.time ~nice:false ()) role ch
-      | Scale.Categorical -> on role ch)
+      match kind lift with
+      | Quantities -> on ~imply:(Scale.linear ~nice:false ()) role ch
+      | Categories -> on role ch)
   | None -> on role ch
 
 let contour ?x ?y ?opacity ?fx ?fy ~fill () =

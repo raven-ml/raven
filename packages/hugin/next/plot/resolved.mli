@@ -9,15 +9,6 @@ module Scale := Hugin_next_kit.Scale
 
 (** {1:scales Scales} *)
 
-type kind_tag = Q | T | C
-
-val tag : 'd Scale.kind -> kind_tag
-val pp_tag : Format.formatter -> kind_tag -> unit
-
-type sid = { sname : string; skind : kind_tag option }
-(** A scale's identity within a scope: its name, and its kind for the default
-    scales of roles other than positions and facets. *)
-
 type 'd member = {
   m_occ : Arrange.occ;
   m_pid : Common.id;
@@ -38,9 +29,9 @@ val by_order : 'd member list -> 'd member list
 (** A scale of a scope, with the channels that read it. *)
 type fitted =
   | F : {
-      sid : sid;
+      name : string;
       key : Arrange.key;
-      kind : 'd Scale.kind;
+      kind : 'd Channel.kind;
       members : 'd member list;
       legend : bool;
           (** A role other than a position or facet reads it without

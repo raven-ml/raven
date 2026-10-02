@@ -1056,9 +1056,9 @@ and place_grid cx acc unit g box =
 
 let all_ticks locale (F f) =
   match f.kind with
-  | Scale.Categorical ->
+  | Channel.Categories ->
       Ticks.of_values ~locale f.scale (Array.of_list (category_names f.scale))
-  | Scale.Quantitative | Scale.Temporal -> Ticks.of_values ~locale f.scale [||]
+  | Channel.Quantities -> Ticks.of_values ~locale f.scale [||]
 
 (* [lengths cx acc] is, for each scale, the length in [acc] of each guide that
    shows it: the shortest of its axes along one direction, or the span of the
@@ -1349,7 +1349,7 @@ let pp_legend ppf g =
   Format.fprintf ppf "@]"
 
 let pp_ticks ppf (F f, t) =
-  Format.fprintf ppf "@[<hov 2>%S %a%a@ %a@]" f.sid.sname pp_tag (tag f.kind)
+  Format.fprintf ppf "@[<hov 2>%S %a%a@ %a@]" f.name Channel.pp_kind f.kind
     (Format.pp_print_option (fun ppf p -> Format.fprintf ppf " in %a" pp_id p))
     (Resolved.panel_of f.key) Ticks.pp t
 

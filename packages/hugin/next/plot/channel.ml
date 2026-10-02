@@ -7,6 +7,25 @@ module Scale = Hugin_next_kit.Scale
 module Text = Hugin_next_text.Text
 open Common
 
+type _ kind = Quantities : float kind | Categories : string kind
+
+let equal_kind : type a b. a kind -> b kind -> (a, b) Type.eq option =
+ fun k k' ->
+  match (k, k') with
+  | Quantities, Quantities -> Some Type.Equal
+  | Categories, Categories -> Some Type.Equal
+  | Quantities, Categories | Categories, Quantities -> None
+
+let pp_kind : type d. Format.formatter -> d kind -> unit =
+ fun ppf k ->
+  Format.pp_print_string ppf
+    (match k with Quantities -> "quantitative" | Categories -> "categorical")
+
+let of_scale_kind : type d. d Scale.kind -> d kind option = function
+  | Scale.Quantitative -> Some Quantities
+  | Scale.Categorical -> Some Categories
+  | Scale.Temporal -> None
+
 type _ lift =
   | Num : { x : ('a, 'b) Nx.t; valid : Nx.bool_t option } -> float lift
   | Index : int -> float lift
@@ -25,23 +44,24 @@ type _ lift =
     }
       -> string lift
 
+type 'd data = {
+  lift : 'd lift;
+  spec : 'd Scale.t option;
+  title : Text.t option;
+}
+
 type ('d, 'r) t =
   | Const : 'r -> ('d, 'r) t
-  | Data : {
-      lift : 'd lift;
-      scale : 'd Scale.t option;
-      title : Text.t option;
-    }
-      -> ('d, 'r) t
+  | Data : 'd data -> ('d, 'r) t
   | Map : ('r -> 'r) * ('d, 'r) t -> ('d, 'r) t
 
-let lift_kind : type d. d lift -> d Scale.kind = function
-  | Num _ -> Scale.Quantitative
-  | Index _ -> Scale.Quantitative
-  | Scalar _ -> Scale.Quantitative
-  | Cat _ -> Scale.Categorical
-  | Strings _ -> Scale.Categorical
-  | Dim _ -> Scale.Categorical
+let kind : type d. d lift -> d kind = function
+  | Num _ -> Quantities
+  | Index _ -> Quantities
+  | Scalar _ -> Quantities
+  | Cat _ -> Categories
+  | Strings _ -> Categories
+  | Dim _ -> Categories
 
 let equal_lift : type d e. d lift -> e lift -> (d, e) Type.eq option =
  fun l l' ->
@@ -71,22 +91,27 @@ let rec equal : type d e r. r Role.range -> (d, r) t -> (e, r) t -> bool =
   | Data a, Data b -> (
       match equal_lift a.lift b.lift with
       | Some Type.Equal ->
-          Option.equal Scale.equal a.scale b.scale
+          Option.equal Scale.equal a.spec b.spec
           && Option.equal Text.equal a.title b.title
       | None -> false)
   | Map (f, c), Map (f', c') -> f == f' && equal r c c'
   | _ -> false
 
-type 'd data = {
-  lift : 'd lift;
-  spec : 'd Scale.t option;
-  title : Text.t option;
-}
-
 let rec data : type d r. (d, r) t -> d data option = function
   | Const _ -> None
-  | Data { lift; scale; title } -> Some { lift; spec = scale; title }
+  | Data d -> Some d
   | Map (_, c) -> data c
+
+let rec constant : type d r. (d, r) t -> r option = function
+  | Const v -> Some v
+  | Map (f, c) -> Option.map f (constant c)
+  | Data _ -> None
+
+let rec mapping : type d r. (d, r) t -> r -> r = function
+  | Map (f, c) ->
+      let g = mapping c in
+      fun v -> f (g v)
+  | Const _ | Data _ -> Fun.id
 
 (* Lifts *)
 
@@ -131,7 +156,7 @@ let num ?scale ?valid ?title x =
   if not (is_real (Nx.dtype x)) then
     err "num" "the dtype %s is not real" (Nx_dtype.to_string (Nx.dtype x));
   check_valid "num" (Nx.shape x) valid;
-  Data { lift = Num { x; valid }; scale; title }
+  Data { lift = Num { x; valid }; spec = scale; title }
 
 let cat ?scale ?valid ?title ?labels codes =
   if not (is_integer (Nx.dtype codes)) then
@@ -140,16 +165,16 @@ let cat ?scale ?valid ?title ?labels codes =
   check_valid "cat" (Nx.shape codes) valid;
   Option.iter (check_distinct "cat") labels;
   let labels = Option.map Array.copy labels in
-  Data { lift = Cat { codes; valid; labels }; scale; title }
+  Data { lift = Cat { codes; valid; labels }; spec = scale; title }
 
 let strings ?scale ?title a =
-  Data { lift = Strings (Array.copy a); scale; title }
+  Data { lift = Strings (Array.copy a); spec = scale; title }
 
 let dim ?scale ?valid ?title ?labels axis =
   let labels = Option.map Array.copy labels in
-  Data { lift = Dim { axis; valid; labels }; scale; title }
+  Data { lift = Dim { axis; valid; labels }; spec = scale; title }
 
-let index ?scale ?title axis = Data { lift = Index axis; scale; title }
+let index ?scale ?title axis = Data { lift = Index axis; spec = scale; title }
 let const v = Const v
 let map_range f c = Map (f, c)
 

@@ -163,20 +163,13 @@ let binds name bindings = List.exists (fun b -> role_name b = name) bindings
 let find_binding name bindings =
   List.find_opt (fun b -> String.equal (role_name b) name) bindings
 
-let binding_kind (B b) : [ `Quantities | `Categories ] option =
-  match data b.ch with
-  | None -> None
-  | Some d -> (
-      match lift_kind d.lift with
-      | Scale.Quantitative | Scale.Temporal -> Some `Quantities
-      | Scale.Categorical -> Some `Categories)
-
 let check_ends fn bindings a b =
   match (find_binding a bindings, find_binding b bindings) with
   | None, Some _ -> err fn "%s is bound without %s" b a
-  | Some ba, Some bb -> (
-      match (binding_kind ba, binding_kind bb) with
-      | Some k, Some k' when k <> k' ->
+  | Some (B ba), Some (B bb) -> (
+      match (data ba.ch, data bb.ch) with
+      | Some d, Some d'
+        when Option.is_none (equal_kind (kind d.lift) (kind d'.lift)) ->
           err fn
             "%s and %s hold one channel of quantities and one of categories" a b
       | _ -> ())
