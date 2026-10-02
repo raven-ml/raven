@@ -1,0 +1,22 @@
+(executable
+ (name main)
+ (libraries hugin nx))
+
+; The image is committed. dune build @assets renders it under render/ in
+; _build and fails where it differs from the committed one, which dune
+; promote then replaces. The render is no rule's target, so a plain build
+; never runs the example, and no-infer keeps cmp from asking for it as a
+; dependency.
+
+(subdir
+ render
+ (rule
+  (alias assets)
+  (deps ../main.exe ../line.png ../line-dark.png)
+  (action
+   (progn
+    (run ../main.exe)
+    (no-infer
+     (progn
+      (cmp ../line.png line.png)
+      (cmp ../line-dark.png line-dark.png)))))))

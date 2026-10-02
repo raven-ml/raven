@@ -1,4 +1,0 @@
-(library
- (name hugin_next_test_winding)
- (wrapped false)
- (libraries hugin.next.gg hugin.next.gg.kit))

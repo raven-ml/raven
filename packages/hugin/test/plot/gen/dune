@@ -1,0 +1,10 @@
+; Writes the golden drawings of the benchmark figures:
+; dune exec packages/hugin/test/plot/gen/gen.exe -- packages/hugin/test/plot/golden
+
+(executable
+ (name gen)
+ (libraries
+  hugin
+  hugin.vg.raster
+  hugin.vg.svg
+  hugin_test_figures))

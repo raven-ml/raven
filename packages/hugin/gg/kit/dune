@@ -1,0 +1,8 @@
+(library
+ (name hugin_gg_kit)
+ (public_name hugin.gg.kit)
+ (libraries hugin.gg nx)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

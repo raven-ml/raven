@@ -1,4 +1,13 @@
 (library
  (name hugin_vg_pdf)
  (public_name hugin.vg.pdf)
- (libraries hugin.vg nx nx.io compress.deflate))
+ (libraries hugin.vg hugin.gg hugin.font nx compress.deflate)
+ (private_modules vector instances)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))
+
+(copy_files# ../vector/vector.{ml,mli})
+
+(copy_files# ../instances/instances.{ml,mli})

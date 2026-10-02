@@ -55,8 +55,8 @@ let setup () =
       "threads.posix";
     ];
   (* Load raven packages individually, and install the printers of each one that
-     loads. We skip the .top packages (nx.top, hugin.top): they only install
-     printers during module init, which fails inside dir_load. *)
+     loads. We skip nx.top: it only installs printers during module init, which
+     fails inside dir_load. *)
   List.iter
     (fun (pkg, printers) ->
       if load_optional pkg then List.iter install_printer printers)

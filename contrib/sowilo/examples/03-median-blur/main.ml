@@ -3,17 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin
+
 let image_path = "sowilo/examples/lena.png"
+let panel s px = image px |> title (Text.v s)
 
 let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
   let median = Sowilo.median_blur ~ksize:5 gray in
-  Hugin.hstack
-    [
-      Hugin.imshow ~data:gray ~cmap:Hugin.Cmap.gray ()
-      |> Hugin.title "Grayscale";
-      Hugin.imshow ~data:median ~cmap:Hugin.Cmap.gray ()
-      |> Hugin.title "Median Blur (k=5)";
-    ]
-  |> Hugin.render_png "median_blur.png"
+  grid [ [ panel "Grayscale" gray; panel "Median Blur (k=5)" median ] ]
+  |> save ~size:(Size.panels 240. 240.) "median_blur.png"

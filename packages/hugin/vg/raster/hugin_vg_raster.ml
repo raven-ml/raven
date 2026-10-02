@@ -3,434 +3,622 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_gg
+open Hugin_font
 open Hugin_vg
-open Bigarray
 
-(* Pixels are premultiplied RGBA8 in row-major order. *)
-type pixels = (int, int8_unsigned_elt, c_layout) Array1.t
-type canvas = { w : int; h : int; px : pixels }
-
-(* A clip is a pixel rectangle, [x1] and [y1] exclusive, and an optional
-   per-pixel coverage over that rectangle. *)
-type clip = {
-  x0 : int;
-  y0 : int;
-  x1 : int;
-  y1 : int;
-  mask : float array option;
+type ctx = {
+  cover : Cover.t;
+  mutable outlines : (Font.t * (int, Path.t) Hashtbl.t) list;
 }
 
-let clip_is_empty c = c.x1 <= c.x0 || c.y1 <= c.y0
+(* What a stamp replaces in the leaves below it: their fill and stroke colours,
+   if given, and their pens, multiplied by [pen]. *)
+type style = { fills : Color.t option; strokes : Color.t option; pen : float }
 
-let mask_at c x y =
-  match c.mask with
-  | None -> 1.
-  | Some m -> Array.unsafe_get m (((y - c.y0) * (c.x1 - c.x0)) + (x - c.x0))
+let plain = { fills = None; strokes = None; pen = 1. }
 
-(* Compositing *)
+let premultiplied c =
+  let a = Color.alpha c in
+  ( Color.r c *. a *. 255.,
+    Color.g c *. a *. 255.,
+    Color.b c *. a *. 255.,
+    a *. 255. )
 
-(* [blend px i sr sg sb sa k] composites the premultiplied source [(sr, sg, sb,
-   sa)], in 0..255, scaled by coverage [k] over pixel [i]. *)
-let blend (px : pixels) i sr sg sb sa k =
-  let inv = 1. -. (sa /. 255. *. k) in
-  let mix s d = truncate ((s *. k) +. (float d *. inv) +. 0.5) in
-  Array1.unsafe_set px i (mix sr (Array1.unsafe_get px i));
-  Array1.unsafe_set px (i + 1) (mix sg (Array1.unsafe_get px (i + 1)));
-  Array1.unsafe_set px (i + 2) (mix sb (Array1.unsafe_get px (i + 2)));
-  Array1.unsafe_set px (i + 3) (mix sa (Array1.unsafe_get px (i + 3)))
+let outline ctx font g =
+  let table =
+    match List.assq_opt font ctx.outlines with
+    | Some t -> t
+    | None ->
+        let t = Hashtbl.create 64 in
+        ctx.outlines <- (font, t) :: ctx.outlines;
+        t
+  in
+  match Hashtbl.find_opt table g with
+  | Some p -> p
+  | None ->
+      let p = Font.outline font g in
+      Hashtbl.add table g p;
+      p
 
-let premultiplied (c : Color.t) =
-  let a = Float.min 1. (Float.max 0. c.a) in
-  let ch v = Float.min 1. (Float.max 0. v) *. a *. 255. in
-  (ch c.r, ch c.g, ch c.b, a *. 255.)
+(* Coverage of leaves *)
 
-(* Coverage *)
+(* [area cover m path] deposits the area of [path] mapped through [m], its
+   subpaths closed. *)
+let area cover m path =
+  (* [start x; start y; current x; current y] *)
+  let pt = Array.make 4 0. and open_ = ref false in
+  let close () =
+    if !open_ then Cover.line cover pt.(2) pt.(3) pt.(0) pt.(1);
+    open_ := false
+  in
+  Path.flatten m
+    ~move:(fun () x y ->
+      close ();
+      pt.(0) <- x;
+      pt.(1) <- y;
+      pt.(2) <- x;
+      pt.(3) <- y;
+      open_ := true)
+    ~line:(fun () x y ->
+      Cover.line cover pt.(2) pt.(3) x y;
+      pt.(2) <- x;
+      pt.(3) <- y)
+    ~close () path;
+  close ()
 
-(* Signed-area accumulation: each edge deposits the area it sweeps into an
-   accumulator whose running sum along a row is the winding number, with
-   fractional values at the edge's pixels. *)
-let draw_line acc aw h x0 y0 x1 y1 =
-  if y0 <> y1 then begin
-    let dir, x0, y0, x1, y1 =
-      if y0 < y1 then (1., x0, y0, x1, y1) else (-1., x1, y1, x0, y0)
-    in
-    let dxdy = (x1 -. x0) /. (y1 -. y0) in
-    let x = ref x0 in
-    let ystart = if y0 < 0. then 0 else int_of_float y0 in
-    if y0 < 0. then x := !x -. (y0 *. dxdy);
-    let ystop = Int.min h (int_of_float (Float.ceil y1)) in
-    for y = ystart to ystop - 1 do
-      let row = y * aw in
-      let dy = Float.min (float (y + 1)) y1 -. Float.max (float y) y0 in
-      let xnext = !x +. (dxdy *. dy) in
-      let d = dy *. dir in
-      let xa, xb = if !x < xnext then (!x, xnext) else (xnext, !x) in
-      let xa_floor = Float.floor xa in
-      let xa_i = int_of_float xa_floor in
-      let xb_ceil = Float.ceil xb in
-      let xb_i = int_of_float xb_ceil in
-      if xb_i <= xa_i + 1 then begin
-        let xmf = (0.5 *. (!x +. xnext)) -. xa_floor in
-        let i = row + xa_i in
-        Array.unsafe_set acc i (Array.unsafe_get acc i +. d -. (d *. xmf));
-        Array.unsafe_set acc (i + 1) (Array.unsafe_get acc (i + 1) +. (d *. xmf))
-      end
-      else begin
-        let s = 1. /. (xb -. xa) in
-        let xaf = xa -. xa_floor in
-        let a0 = 0.5 *. s *. (1. -. xaf) *. (1. -. xaf) in
-        let xbf = xb -. xb_ceil +. 1. in
-        let am = 0.5 *. s *. xbf *. xbf in
-        let i = row + xa_i in
-        Array.unsafe_set acc i (Array.unsafe_get acc i +. (d *. a0));
-        if xb_i = xa_i + 2 then
-          Array.unsafe_set acc (i + 1)
-            (Array.unsafe_get acc (i + 1) +. (d *. (1. -. a0 -. am)))
-        else begin
-          let a1 = s *. (1.5 -. xaf) in
-          Array.unsafe_set acc (i + 1)
-            (Array.unsafe_get acc (i + 1) +. (d *. (a1 -. a0)));
-          for xi = xa_i + 2 to xb_i - 2 do
-            Array.unsafe_set acc (row + xi)
-              (Array.unsafe_get acc (row + xi) +. (d *. s))
-          done;
-          let a2 = a1 +. (float (xb_i - xa_i - 3) *. s) in
-          let j = row + xb_i - 1 in
-          Array.unsafe_set acc j
-            (Array.unsafe_get acc j +. (d *. (1. -. a2 -. am)))
-        end;
-        let j = row + xb_i in
-        Array.unsafe_set acc j (Array.unsafe_get acc j +. (d *. am))
-      end;
-      x := xnext
-    done
-  end
-
-(* [coverage rule ~x0 ~y0 ~w ~h polys] is the per-pixel coverage of the closed
-   polygons [polys] over the pixel rectangle, row-major. *)
-let coverage rule ~x0 ~y0 ~w ~h (polys : Polyline.t list) =
-  let aw = w + 2 in
-  let acc = Array.make (aw * h) 0. in
-  let fw = float w in
-  let clampx x = if x < 0. then 0. else if x > fw then fw else x in
-  List.iter
-    (fun (p : Polyline.t) ->
-      let n = Array.length p.xs in
-      if n >= 2 then
-        for i = 0 to n - 1 do
-          let j = if i = n - 1 then 0 else i + 1 in
-          draw_line acc aw h
-            (clampx (p.xs.(i) -. float x0))
-            (p.ys.(i) -. float y0)
-            (clampx (p.xs.(j) -. float x0))
-            (p.ys.(j) -. float y0)
-        done)
-    polys;
-  let cov = Array.make (w * h) 0. in
-  for y = 0 to h - 1 do
-    let sum = ref 0. in
-    let row = y * aw and out = y * w in
-    for x = 0 to w - 1 do
-      sum := !sum +. Array.unsafe_get acc (row + x);
-      let c = Float.abs !sum in
-      let c =
-        match rule with
-        | `Nonzero -> if c > 1. then 1. else c
-        | `Evenodd ->
-            let c = Float.rem c 2. in
-            if c > 1. then 2. -. c else c
-      in
-      Array.unsafe_set cov (out + x) c
-    done
-  done;
-  cov
-
-(* [pixel_bounds clip polys] is the pixel rectangle of [polys] within [clip], or
-   [None] when nothing is visible. *)
-let pixel_bounds clip polys =
-  match Polyline.bounds polys with
-  | None -> None
-  | Some b ->
-      let x0 = Int.max clip.x0 (int_of_float (Float.floor b.x0)) in
-      let y0 = Int.max clip.y0 (int_of_float (Float.floor b.y0)) in
-      let x1 = Int.min clip.x1 (int_of_float (Float.ceil b.x1)) in
-      let y1 = Int.min clip.y1 (int_of_float (Float.ceil b.y1)) in
-      if x1 <= x0 || y1 <= y0 then None else Some (x0, y0, x1, y1)
-
-let fill_polys canvas clip color rule polys =
-  match pixel_bounds clip polys with
-  | None -> ()
-  | Some (x0, y0, x1, y1) ->
-      let w = x1 - x0 and h = y1 - y0 in
-      let cov = coverage rule ~x0 ~y0 ~w ~h polys in
-      let sr, sg, sb, sa = premultiplied color in
-      for y = 0 to h - 1 do
-        for x = 0 to w - 1 do
-          let c = Array.unsafe_get cov ((y * w) + x) in
-          if c > 0.0005 then begin
-            let px = x0 + x and py = y0 + y in
-            let k = c *. mask_at clip px py in
-            if k > 0. then
-              blend canvas.px (((py * canvas.w) + px) * 4) sr sg sb sa k
-          end
-        done
-      done
-
-(* Clipping *)
-
-(* [as_pixel_rect polys] is the pixel rectangle [polys] draws when it is a
-   single axis-aligned rectangle on pixel boundaries. *)
-let as_pixel_rect (polys : Polyline.t list) =
-  match polys with
-  | [ { xs; ys; _ } ] when Array.length xs = 4 || Array.length xs = 5 ->
-      let n = Array.length xs in
-      let integral v = Float.abs (v -. Float.round v) < 1e-6 in
-      let aligned = ref true in
-      for i = 0 to n - 1 do
-        let j = (i + 1) mod n in
-        if not (integral xs.(i) && integral ys.(i)) then aligned := false;
-        if xs.(i) <> xs.(j) && ys.(i) <> ys.(j) then aligned := false
-      done;
-      if n = 5 && (xs.(0) <> xs.(4) || ys.(0) <> ys.(4)) then aligned := false;
-      if !aligned then
-        let x0 = Array.fold_left Float.min infinity xs
-        and x1 = Array.fold_left Float.max neg_infinity xs in
-        let y0 = Array.fold_left Float.min infinity ys
-        and y1 = Array.fold_left Float.max neg_infinity ys in
-        Some
-          ( int_of_float (Float.round x0),
-            int_of_float (Float.round y0),
-            int_of_float (Float.round x1),
-            int_of_float (Float.round y1) )
-      else None
-  | _ -> None
-
-let intersect_clip clip polys =
-  match as_pixel_rect polys with
-  | Some (x0, y0, x1, y1) ->
-      let nx0 = Int.max clip.x0 x0 and ny0 = Int.max clip.y0 y0 in
-      let nx1 = Int.min clip.x1 x1 and ny1 = Int.min clip.y1 y1 in
-      if nx1 <= nx0 || ny1 <= ny0 then
-        { x0 = 0; y0 = 0; x1 = 0; y1 = 0; mask = None }
-      else begin
-        let mask =
-          match clip.mask with
-          | None -> None
-          | Some _ ->
-              let w = nx1 - nx0 in
-              Some
-                (Array.init
-                   (w * (ny1 - ny0))
-                   (fun i -> mask_at clip (nx0 + (i mod w)) (ny0 + (i / w))))
-        in
-        { x0 = nx0; y0 = ny0; x1 = nx1; y1 = ny1; mask }
-      end
-  | None -> (
-      match pixel_bounds clip polys with
-      | None -> { x0 = 0; y0 = 0; x1 = 0; y1 = 0; mask = None }
-      | Some (x0, y0, x1, y1) ->
-          let w = x1 - x0 and h = y1 - y0 in
-          let cov = coverage `Nonzero ~x0 ~y0 ~w ~h polys in
-          (match clip.mask with
-          | None -> ()
-          | Some _ ->
-              for i = 0 to (w * h) - 1 do
-                cov.(i) <-
-                  cov.(i) *. mask_at clip (x0 + (i mod w)) (y0 + (i / w))
-              done);
-          { x0; y0; x1; y1; mask = Some cov })
+let glyph_map m at run i =
+  let s = Run.size run in
+  Affine.(
+    m * translate (P2.x at +. Run.x run i) (P2.y at +. Run.y run i) * scale s s)
 
 (* Images *)
 
-let draw_image canvas clip m ~x ~y ~w ~h data =
-  let shape = Nx.shape data in
-  let rows = shape.(0) and cols = shape.(1) in
-  let channels = if Array.length shape = 3 then shape.(2) else 1 in
-  let pixels =
-    Bigarray.reshape_1 (Nx.to_bigarray data) (rows * cols * channels)
-  in
+let image_samples = 4
+
+(* [samples clip m box pixels] is the window [(x0, y0, w, h)] of the device
+   pixels within [clip] that the image [pixels] over [box], mapped through [m],
+   reaches, and the premultiplied colour of each, four floats in \[0;255\] per
+   pixel, row by row. A pixel takes the image pixel under its centre, or, where
+   the image is shown smaller than its pixels, the average of up to
+   [image_samples] by [image_samples] samples. *)
+let samples (clip : Surface.clip) m box pixels =
+  let shape = Nx.shape pixels in
+  let rows = shape.(0) and cols = shape.(1) and chans = shape.(2) in
   let corners =
-    Polyline.of_path m
-      (Path.polygon [| x; x +. w; x +. w; x |] [| y; y; y +. h; y +. h |])
+    List.map
+      (fun (x, y) -> P2.transform m (P2.v x y))
+      [
+        (Box2.minx box, Box2.miny box);
+        (Box2.maxx box, Box2.miny box);
+        (Box2.maxx box, Box2.maxy box);
+        (Box2.minx box, Box2.maxy box);
+      ]
   in
-  match
-    (pixel_bounds clip corners, w > 0. && h > 0. && rows > 0 && cols > 0)
-  with
-  | None, _ | _, false -> ()
-  | Some (px0, py0, px1, py1), true -> (
-      match Affine.invert m with
-      | exception Invalid_argument _ -> ()
-      | inv ->
-          (* Supersample when the image is shown smaller than its pixels. *)
-          let dw = Float.hypot (m.xx *. w) (m.yx *. w)
-          and dh = Float.hypot (m.xy *. h) (m.yy *. h) in
-          let ratio =
-            Float.max
-              (float cols /. Float.max 1. dw)
-              (float rows /. Float.max 1. dh)
-          in
-          let s = Int.max 1 (Int.min 4 (int_of_float (Float.ceil ratio))) in
-          let samples = float (s * s) in
-          let sample col row c =
-            Bigarray.Array1.unsafe_get pixels
-              ((((row * cols) + col) * channels) + c)
-          in
-          for py = py0 to py1 - 1 do
-            for px = px0 to px1 - 1 do
-              let sr = ref 0. and sg = ref 0. and sb = ref 0. and sa = ref 0. in
-              for j = 0 to s - 1 do
-                for i = 0 to s - 1 do
-                  let dx = float px +. ((float i +. 0.5) /. float s)
-                  and dy = float py +. ((float j +. 0.5) /. float s) in
-                  let ux, uy = Affine.apply inv dx dy in
-                  let u = (ux -. x) /. w and v = (uy -. y) /. h in
-                  if u >= 0. && u < 1. && v >= 0. && v < 1. then begin
-                    let col = int_of_float (u *. float cols)
-                    and row = int_of_float (v *. float rows) in
-                    let r, g, b, a =
-                      match channels with
-                      | 1 ->
-                          let v = sample col row 0 in
-                          (v, v, v, 255)
-                      | 3 ->
-                          ( sample col row 0,
-                            sample col row 1,
-                            sample col row 2,
-                            255 )
-                      | _ ->
-                          ( sample col row 0,
-                            sample col row 1,
-                            sample col row 2,
-                            sample col row 3 )
-                    in
-                    let fa = float a /. 255. in
-                    sr := !sr +. (float r *. fa);
-                    sg := !sg +. (float g *. fa);
-                    sb := !sb +. (float b *. fa);
-                    sa := !sa +. float a
-                  end
-                done
-              done;
-              if !sa > 0. then begin
-                let k = mask_at clip px py in
-                if k > 0. then
-                  blend canvas.px
-                    (((py * canvas.w) + px) * 4)
-                    (!sr /. samples) (!sg /. samples) (!sb /. samples)
-                    (!sa /. samples) k
+  let fold f init = List.fold_left (fun acc p -> f acc p) init corners in
+  let minx = fold (fun a p -> Float.min a (P2.x p)) infinity in
+  let maxx = fold (fun a p -> Float.max a (P2.x p)) neg_infinity in
+  let miny = fold (fun a p -> Float.min a (P2.y p)) infinity in
+  let maxy = fold (fun a p -> Float.max a (P2.y p)) neg_infinity in
+  (* A corner mapped beyond [max_float] is infinite or NaN, which clamps to
+     [lo], and the window is then empty or whole. *)
+  let clamp lo hi v =
+    if not (v >= float lo) then lo
+    else if v > float hi then hi
+    else int_of_float v
+  in
+  let x0 = clamp clip.x0 clip.x1 (Float.floor minx)
+  and x1 = clamp clip.x0 clip.x1 (Float.ceil maxx) in
+  let y0 = clamp clip.y0 clip.y1 (Float.floor miny)
+  and y1 = clamp clip.y0 clip.y1 (Float.ceil maxy) in
+  let w = x1 - x0 and h = y1 - y0 in
+  match Affine.invert m with
+  | None -> (x0, y0, 0, 0, [||])
+  | Some inv ->
+      let data =
+        Bigarray.reshape_1 (Nx.to_bigarray pixels) (rows * cols * chans)
+      in
+      let bw = Box2.w box and bh = Box2.h box in
+      let shown_w = Float.hypot (m.xx *. bw) (m.yx *. bw) in
+      let shown_h = Float.hypot (m.xy *. bh) (m.yy *. bh) in
+      let ratio =
+        Float.max
+          (float cols /. Float.max 1. shown_w)
+          (float rows /. Float.max 1. shown_h)
+      in
+      let k =
+        Int.max 1 (Int.min image_samples (int_of_float (Float.ceil ratio)))
+      in
+      let n = float (k * k) in
+      let buf = Array.make (w * h * 4) 0. in
+      let get i = float (Bigarray.Array1.unsafe_get data i) in
+      for py = y0 to y1 - 1 do
+        for px = x0 to x1 - 1 do
+          let r = ref 0. and g = ref 0. and b = ref 0. and a = ref 0. in
+          for j = 0 to k - 1 do
+            for i = 0 to k - 1 do
+              let dx = float px +. ((float i +. 0.5) /. float k) in
+              let dy = float py +. ((float j +. 0.5) /. float k) in
+              let ux = (inv.xx *. dx) +. (inv.xy *. dy) +. inv.x0 in
+              let uy = (inv.yx *. dx) +. (inv.yy *. dy) +. inv.y0 in
+              let u = (ux -. Box2.minx box) /. bw
+              and v = (uy -. Box2.miny box) /. bh in
+              if u >= 0. && u <= 1. && v >= 0. && v <= 1. then begin
+                let col = Int.min (cols - 1) (int_of_float (u *. float cols)) in
+                let row = Int.min (rows - 1) (int_of_float (v *. float rows)) in
+                let at = ((row * cols) + col) * chans in
+                match chans with
+                | 1 ->
+                    let l = get at in
+                    r := !r +. l;
+                    g := !g +. l;
+                    b := !b +. l;
+                    a := !a +. 255.
+                | 3 ->
+                    r := !r +. get at;
+                    g := !g +. get (at + 1);
+                    b := !b +. get (at + 2);
+                    a := !a +. 255.
+                | _ ->
+                    let al = get (at + 3) in
+                    let f = al /. 255. in
+                    r := !r +. (get at *. f);
+                    g := !g +. (get (at + 1) *. f);
+                    b := !b +. (get (at + 2) *. f);
+                    a := !a +. al
               end
             done
-          done)
+          done;
+          let o = (((py - y0) * w) + (px - x0)) * 4 in
+          buf.(o) <- !r /. n;
+          buf.(o + 1) <- !g /. n;
+          buf.(o + 2) <- !b /. n;
+          buf.(o + 3) <- !a /. n
+        done
+      done;
+      (x0, y0, w, h, buf)
 
-let linear_scale (m : Affine.t) =
-  Float.sqrt (Float.abs ((m.xx *. m.yy) -. (m.xy *. m.yx)))
+(* Clips *)
+
+(* [pixel_rect m path] is the pixel rectangle of [path] mapped through [m] if it
+   is one closed subpath around a rectangle on pixel boundaries. *)
+let pixel_rect m path =
+  let pts = ref [] and moves = ref 0 and closes = ref 0 in
+  Path.flatten m
+    ~move:(fun () x y ->
+      incr moves;
+      pts := (x, y) :: !pts)
+    ~line:(fun () x y -> pts := (x, y) :: !pts)
+    ~close:(fun () -> incr closes)
+    () path;
+  match (!moves, !closes, !pts) with
+  | 1, 1, [ (x0, y0); (x1, y1); (x2, y2); (x3, y3) ] ->
+      (* Each side is horizontal or vertical, and opposite sides of one kind:
+         the two kinds alternate around a rectangle, or all sides are of one
+         kind and the rectangle is flat. The corners are integers that an [int]
+         holds. *)
+      let along ax ay bx by = ax = bx <> (ay = by) in
+      let integral v = Float.is_integer v && Float.abs v <= 1e15 in
+      if
+        List.for_all integral [ x0; y0; x1; y1; x2; y2; x3; y3 ]
+        && along x0 y0 x1 y1 && along x1 y1 x2 y2 && along x2 y2 x3 y3
+        && along x3 y3 x0 y0
+        && x0 = x1 = (x2 = x3)
+      then
+        let lo a b = int_of_float (Float.min a b)
+        and hi a b = int_of_float (Float.max a b) in
+        Some (lo x0 x2, lo y0 y2, hi x0 x2, hi y0 y2)
+      else None
+  | _ -> None
+
+let clip_by ctx ~w ~h (clip : Surface.clip) m rule path : Surface.clip =
+  match pixel_rect m path with
+  | Some (rx0, ry0, rx1, ry1) ->
+      let x0 = Int.max clip.x0 rx0 and y0 = Int.max clip.y0 ry0 in
+      let x1 = Int.min clip.x1 rx1 and y1 = Int.min clip.y1 ry1 in
+      if x1 <= x0 || y1 <= y0 then Surface.shut
+      else
+        let mask =
+          Option.map
+            (fun _ ->
+              let cw = x1 - x0 and ch = y1 - y0 in
+              Array.init (cw * ch) (fun i ->
+                  Surface.mask_at clip (x0 + (i mod cw)) (y0 + (i / cw))))
+            clip.mask
+        in
+        { x0; y0; x1; y1; mask }
+  | None ->
+      Cover.start ctx.cover ~w ~h clip;
+      area ctx.cover m path;
+      let x0, y0, x1, y1 = Cover.touched ctx.cover in
+      if x1 <= x0 || y1 <= y0 then begin
+        Cover.clear ctx.cover;
+        Surface.shut
+      end
+      else begin
+        let mask = Array.make ((x1 - x0) * (y1 - y0)) 0. in
+        Cover.take ctx.cover clip rule mask ~ox:x0 ~oy:y0 ~dw:(x1 - x0);
+        { x0; y0; x1; y1; mask = Some mask }
+      end
+
+(* [extent clip m ~pen p] is the device box of [p] under [m] within [clip], with
+   a pixel of margin, its pens' widths multiplied by [pen]. *)
+let extent (clip : Surface.clip) m ~pen p =
+  match Instances.bounds (Picture.transform m p) with
+  | None -> None
+  | Some b ->
+      let within lo hi v =
+        int_of_float (Float.min (float hi) (Float.max (float lo) v))
+      in
+      (* [bounds] counts each pen once: grow by what [pen] adds to it. *)
+      let g =
+        1. +. if pen > 1. then (pen -. 1.) *. Instances.reach m 1. p else 0.
+      in
+      let x0 = within clip.x0 clip.x1 (Float.floor (Box2.minx b -. g)) in
+      let x1 = within clip.x0 clip.x1 (Float.ceil (Box2.maxx b +. g)) in
+      let y0 = within clip.y0 clip.y1 (Float.floor (Box2.miny b -. g)) in
+      let y1 = within clip.y0 clip.y1 (Float.ceil (Box2.maxy b +. g)) in
+      if x1 <= x0 || y1 <= y0 then None else Some (x0, y0, x1, y1)
+
+(* Planes
+
+   A stamp draws its picture once per quarter-pixel phase, as planes: the
+   coverage of each leaf, or the pixels of each image, in order, on a tile. Each
+   instance then composites the planes at its position, with its own colours, as
+   drawing the picture there would. *)
+
+type paint = Fills | Strokes | Fixed of (float * float * float * float)
+
+type plane =
+  | Coverage of { paint : paint; cov : float array }
+  | Pixels of float array  (** Premultiplied, four floats per pixel. *)
+  | Layer of { alpha : float; planes : plane list; scratch : Surface.t }
+
+(* [planar p] is [true] iff [p] holds no stamp, which planes cannot hold. *)
+let rec planar (p : Picture.t) =
+  match p with
+  | Stamp _ -> false
+  | Group ps -> List.for_all planar ps
+  | Clip { picture; _ }
+  | Transform { picture; _ }
+  | Opacity { picture; _ }
+  | Tag { picture; _ } ->
+      planar picture
+  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> true
+
+(* [planes ctx ~w ~h clip m ~fills ~strokes style p acc] adds to [acc], in
+   reverse order, the planes of [p] on a tile of [w] by [h] pixels. Fills and
+   strokes take the instance's colours if [fills] and [strokes]. *)
+let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
+  let coverage paint rule acc deposit =
+    Cover.start ctx.cover ~w ~h clip;
+    deposit ();
+    let cov = Array.make (w * h) 0. in
+    Cover.take ctx.cover clip rule cov ~ox:0 ~oy:0 ~dw:w;
+    Coverage { paint; cov } :: acc
+  in
+  let fill_paint color =
+    if fills then Fills
+    else Fixed (premultiplied (Option.value style.fills ~default:color))
+  in
+  if Surface.is_shut clip then acc
+  else
+    match (p : Picture.t) with
+    | Empty -> acc
+    | Fill { rule; color; path } ->
+        coverage (fill_paint color) rule acc (fun () -> area ctx.cover m path)
+    | Stroke { stroke; color; path } ->
+        let paint =
+          if strokes then Strokes
+          else Fixed (premultiplied (Option.value style.strokes ~default:color))
+        in
+        coverage paint `Nonzero acc (fun () ->
+            Pen.stroke ctx.cover clip m ~pen:style.pen stroke path)
+    | Glyphs { color; at; run } ->
+        let paint = fill_paint color in
+        let acc = ref acc in
+        for i = 0 to Run.length run - 1 do
+          let path = outline ctx (Run.font run) (Run.glyph run i) in
+          acc :=
+            coverage paint `Nonzero !acc (fun () ->
+                area ctx.cover (glyph_map m at run i) path)
+        done;
+        !acc
+    | Image { box; pixels } ->
+        let x0, y0, iw, ih, buf = samples clip m box pixels in
+        let px = Array.make (w * h * 4) 0. in
+        for y = 0 to ih - 1 do
+          for x = 0 to iw - 1 do
+            let k = Surface.mask_at clip (x0 + x) (y0 + y) in
+            let s = ((y * iw) + x) * 4 and d = (((y0 + y) * w) + x0 + x) * 4 in
+            for c = 0 to 3 do
+              px.(d + c) <- buf.(s + c) *. k
+            done
+          done
+        done;
+        Pixels px :: acc
+    | Group ps ->
+        List.fold_left
+          (fun acc p -> planes ctx ~w ~h clip m ~fills ~strokes style p acc)
+          acc ps
+    | Clip { rule; path; picture } ->
+        let clip = clip_by ctx ~w ~h clip m rule path in
+        planes ctx ~w ~h clip m ~fills ~strokes style picture acc
+    | Transform { m = m'; picture } -> (
+        (* As [Picture.transform], a map with no inverse paints nothing, and so
+           does one that overflows the range of floats. *)
+        let m = Affine.(m * m') in
+        match Affine.invert m with
+        | None -> acc
+        | Some _ -> planes ctx ~w ~h clip m ~fills ~strokes style picture acc)
+    | Opacity { opacity = 0.; _ } -> acc
+    | Opacity { opacity; picture } ->
+        let inner = planes ctx ~w ~h clip m ~fills ~strokes style picture [] in
+        Layer
+          {
+            alpha = opacity;
+            planes = List.rev inner;
+            scratch = Surface.create w h;
+          }
+        :: acc
+    | Tag { picture; _ } ->
+        planes ctx ~w ~h clip m ~fills ~strokes style picture acc
+    | Stamp _ -> assert false
+
+(* [composite t clip ox oy ~tw ~th planes fill stroke] composites [planes], a
+   tile of [tw] by [th] pixels with its top left at [(ox, oy)] of [t], with the
+   premultiplied colours [fill] and [stroke] for the leaves that take them. *)
+let rec composite (t : Surface.t) (clip : Surface.clip) ox oy ~tw ~th planes
+    fill stroke =
+  let x0 = Int.max clip.x0 ox and y0 = Int.max clip.y0 oy in
+  let x1 = Int.min clip.x1 (ox + tw) and y1 = Int.min clip.y1 (oy + th) in
+  let plane = function
+    | Coverage { paint; cov } ->
+        let sr, sg, sb, sa =
+          match paint with Fills -> fill | Strokes -> stroke | Fixed c -> c
+        in
+        for y = y0 to y1 - 1 do
+          let row = (y - oy) * tw in
+          for x = x0 to x1 - 1 do
+            let k = Array.unsafe_get cov (row + x - ox) in
+            if k > 0.0005 then
+              let k = k *. Surface.mask_at clip x y in
+              if k > 0. then
+                Surface.blend t.px (((y * t.w) + x) * 4) sr sg sb sa k
+          done
+        done
+    | Pixels px ->
+        for y = y0 to y1 - 1 do
+          for x = x0 to x1 - 1 do
+            let i = (((y - oy) * tw) + x - ox) * 4 in
+            let sa = Array.unsafe_get px (i + 3) in
+            if sa > 0. then
+              let k = Surface.mask_at clip x y in
+              if k > 0. then
+                Surface.blend t.px
+                  (((y * t.w) + x) * 4)
+                  (Array.unsafe_get px i)
+                  (Array.unsafe_get px (i + 1))
+                  (Array.unsafe_get px (i + 2))
+                  sa k
+          done
+        done
+    | Layer { alpha; planes; scratch } ->
+        Surface.clear scratch;
+        composite scratch (Surface.whole scratch) 0 0 ~tw ~th planes fill stroke;
+        Surface.composite t clip scratch ox oy alpha
+  in
+  if x0 < x1 && y0 < y1 then List.iter plane planes
 
 (* Drawing *)
 
-let draw_text canvas clip m ~font ~size ~color ~x ~y text =
-  List.iter
-    (fun (g : Font.glyph) ->
-      let path = Font.glyph_path font ~size g.id in
-      let polys = Polyline.of_path Affine.(m * translate (x +. g.x) y) path in
-      fill_polys canvas clip color `Nonzero polys)
-    (Font.glyphs font ~size text)
+(* Tiles larger than this are not worth drawing in sixteen phases. *)
+let max_tile = 1 lsl 16
 
-(* [blit canvas clip tile ox oy] composites [tile] with its corner at [(ox,
-   oy)]. *)
-let blit canvas clip (tile : canvas) ox oy =
-  let x0 = Int.max clip.x0 ox and y0 = Int.max clip.y0 oy in
-  let x1 = Int.min clip.x1 (ox + tile.w)
-  and y1 = Int.min clip.y1 (oy + tile.h) in
-  for py = y0 to y1 - 1 do
-    for px = x0 to x1 - 1 do
-      let ti = (((py - oy) * tile.w) + (px - ox)) * 4 in
-      let sa = Array1.unsafe_get tile.px (ti + 3) in
-      if sa > 0 then begin
-        let k = mask_at clip px py in
-        if k > 0. then
-          blend canvas.px
-            (((py * canvas.w) + px) * 4)
-            (float (Array1.unsafe_get tile.px ti))
-            (float (Array1.unsafe_get tile.px (ti + 1)))
-            (float (Array1.unsafe_get tile.px (ti + 2)))
-            (float sa) k
-      end
-    done
-  done
-
-let create w h =
-  let px = Array1.create int8_unsigned c_layout (w * h * 4) in
-  Array1.fill px 0;
-  { w; h; px }
-
-let rec draw canvas clip m (p : Picture.t) =
-  if not (clip_is_empty clip) then
+let rec draw ctx (t : Surface.t) clip m style (p : Picture.t) =
+  if not (Surface.is_shut clip) then
     match p with
     | Empty -> ()
     | Fill { rule; color; path } ->
-        fill_polys canvas clip color rule (Polyline.of_path m path)
+        Cover.start ctx.cover ~w:t.w ~h:t.h clip;
+        area ctx.cover m path;
+        paint ctx t clip rule (Option.value style.fills ~default:color)
     | Stroke { stroke; color; path } ->
-        let polys =
-          Stroker.outline stroke ~scale:(linear_scale m)
-            (Polyline.of_path m path)
-        in
-        fill_polys canvas clip color `Nonzero polys
-    | Text { font; size; color; x; y; text } ->
-        draw_text canvas clip m ~font ~size ~color ~x ~y text
-    | Image { x; y; w; h; data } -> draw_image canvas clip m ~x ~y ~w ~h data
-    | Group ps -> List.iter (draw canvas clip m) ps
-    | Clip { path; picture } ->
-        draw canvas (intersect_clip clip (Polyline.of_path m path)) m picture
-    | Transform { m = m'; picture } -> draw canvas clip Affine.(m * m') picture
-    | Stamp { picture; xs; ys } -> (
-        (* Draw the stamp once at the origin under the linear part of [m], then
-           blit it at every position rounded to the pixel grid. *)
-        let lin = { m with x0 = 0.; y0 = 0. } in
-        match Picture.bounds (Picture.transform lin picture) with
+        Cover.start ctx.cover ~w:t.w ~h:t.h clip;
+        Pen.stroke ctx.cover clip m ~pen:style.pen stroke path;
+        paint ctx t clip `Nonzero (Option.value style.strokes ~default:color)
+    | Glyphs { color; at; run } ->
+        let color = Option.value style.fills ~default:color in
+        for i = 0 to Run.length run - 1 do
+          let path = outline ctx (Run.font run) (Run.glyph run i) in
+          Cover.start ctx.cover ~w:t.w ~h:t.h clip;
+          area ctx.cover (glyph_map m at run i) path;
+          paint ctx t clip `Nonzero color
+        done
+    | Image { box; pixels } ->
+        let x0, y0, iw, ih, buf = samples clip m box pixels in
+        for y = 0 to ih - 1 do
+          for x = 0 to iw - 1 do
+            let i = ((y * iw) + x) * 4 in
+            let sa = buf.(i + 3) in
+            if sa > 0. then
+              let k = Surface.mask_at clip (x0 + x) (y0 + y) in
+              if k > 0. then
+                Surface.blend t.px
+                  ((((y0 + y) * t.w) + x0 + x) * 4)
+                  buf.(i)
+                  buf.(i + 1)
+                  buf.(i + 2)
+                  sa k
+          done
+        done
+    | Group ps -> List.iter (draw ctx t clip m style) ps
+    | Clip { rule; path; picture } ->
+        draw ctx t (clip_by ctx ~w:t.w ~h:t.h clip m rule path) m style picture
+    | Transform { m = m'; picture } -> (
+        let m = Affine.(m * m') in
+        match Affine.invert m with
         | None -> ()
-        | Some b ->
-            let tx0 = int_of_float (Float.floor b.x0) - 1
-            and ty0 = int_of_float (Float.floor b.y0) - 1 in
-            let tw = int_of_float (Float.ceil b.x1) + 1 - tx0
-            and th = int_of_float (Float.ceil b.y1) + 1 - ty0 in
-            let tile = create tw th in
-            let tile_clip = { x0 = 0; y0 = 0; x1 = tw; y1 = th; mask = None } in
-            draw tile tile_clip
-              Affine.(translate (float (-tx0)) (float (-ty0)) * lin)
-              picture;
-            Array.iteri
-              (fun i x ->
-                let dx, dy = Affine.apply m x ys.(i) in
-                if Float.is_finite dx && Float.is_finite dy then
-                  blit canvas clip tile
-                    (int_of_float (Float.round dx) + tx0)
-                    (int_of_float (Float.round dy) + ty0))
-              xs)
+        | Some _ -> draw ctx t clip m style picture)
+    | Opacity { opacity = 0.; _ } -> ()
+    | Opacity { opacity; picture } -> (
+        match extent clip m ~pen:style.pen picture with
+        | None -> ()
+        | Some (x0, y0, x1, y1) ->
+            let layer = Surface.create (x1 - x0) (y1 - y0) in
+            let m = Affine.(translate (float (-x0)) (float (-y0)) * m) in
+            draw ctx layer (Surface.whole layer) m style picture;
+            Surface.composite t clip layer x0 y0 opacity)
+    | Stamp { picture; xs; ys; scales; fills; strokes } ->
+        stamp ctx t clip m style picture xs ys scales fills strokes
+    | Tag { picture; _ } -> draw ctx t clip m style picture
 
-let render ?(background = Color.transparent) ~width ~height picture =
-  if width <= 0 || height <= 0 then
-    invalid_arg "Hugin_vg_raster.render: width and height must be positive";
-  let canvas = create width height in
-  let br, bg, bb, ba = premultiplied background in
-  if ba > 0. then
-    for i = 0 to (width * height) - 1 do
-      Array1.unsafe_set canvas.px (4 * i) (truncate (br +. 0.5));
-      Array1.unsafe_set canvas.px ((4 * i) + 1) (truncate (bg +. 0.5));
-      Array1.unsafe_set canvas.px ((4 * i) + 2) (truncate (bb +. 0.5));
-      Array1.unsafe_set canvas.px ((4 * i) + 3) (truncate (ba +. 0.5))
-    done;
-  draw canvas
-    { x0 = 0; y0 = 0; x1 = width; y1 = height; mask = None }
-    Affine.id picture;
-  (* Back to straight alpha. *)
-  for i = 0 to (width * height) - 1 do
-    let a = Array1.unsafe_get canvas.px ((4 * i) + 3) in
-    if a > 0 && a < 255 then
-      for c = 0 to 2 do
-        let v = Array1.unsafe_get canvas.px ((4 * i) + c) in
-        Array1.unsafe_set canvas.px
-          ((4 * i) + c)
-          (Int.min 255 (((v * 255) + (a / 2)) / a))
-      done
-  done;
-  Nx.of_bigarray (reshape (genarray_of_array1 canvas.px) [| height; width; 4 |])
+and paint ctx t clip rule color =
+  let sr, sg, sb, sa = premultiplied color in
+  Cover.paint ctx.cover t clip rule sr sg sb sa
+
+and stamp ctx t clip m style picture xs ys scales fills strokes =
+  let lin = Affine.linear m in
+  match Instances.bounds (Picture.transform lin picture) with
+  | None -> ()
+  | Some extent -> (
+      let instance i s =
+        {
+          fills = Instances.color fills i ~own:Option.some style.fills;
+          strokes = Instances.color strokes i ~own:Option.some style.strokes;
+          pen = style.pen /. s;
+        }
+      in
+      (* An instance's device position, rounded to a quarter of a pixel, in
+         quarters, or [None] if it is not finite or far beyond the window. *)
+      let quarters i =
+        let x = xs.(i) and y = ys.(i) in
+        let dx = (m.xx *. x) +. (m.xy *. y) +. m.x0 in
+        let dy = (m.yx *. x) +. (m.yy *. y) +. m.y0 in
+        if Float.abs dx < 1e15 && Float.abs dy < 1e15 then
+          Some
+            ( int_of_float (Float.round (dx *. 4.)),
+              int_of_float (Float.round (dy *. 4.)) )
+        else None
+      in
+      let window =
+        Box2.v (float clip.x0) (float clip.y0)
+          (float (clip.x1 - clip.x0))
+          (float (clip.y1 - clip.y0))
+      in
+      (* Instances keep the pens of the picture, which reach this far around
+         them. *)
+      let kept = Instances.reach lin style.pen picture in
+      let at qx qy = P2.v (float qx /. 4.) (float qy /. 4.) in
+      let in_full () =
+        for i = 0 to Array.length xs - 1 do
+          let s = match scales with None -> 1. | Some a -> a.(i) in
+          match quarters i with
+          | Some (qx, qy)
+            when Instances.shows window ~reach:kept (at qx qy) s extent -> (
+              let at = Affine.translate (float qx /. 4.) (float qy /. 4.) in
+              let m = Affine.(at * lin * scale s s) in
+              (* As [Picture.transform], a map with no inverse paints nothing:
+                 that of a scale that is not finite or is 0 among them. *)
+              match Affine.invert m with
+              | None -> ()
+              | Some _ -> draw ctx t clip m (instance i s) picture)
+          | _ -> ()
+        done
+      in
+      (* A tile is bounded by the picture's pens, which those of an instance
+         shrunk by an enclosing stamp's scale outgrow. It is at least three
+         pixels wider and higher than the extent, which is tested in floats
+         first, since the extent's size may overflow an [int]. *)
+      let tile =
+        match scales with
+        | Some _ -> None
+        | None when style.pen > 1. || not (planar picture) -> None
+        | None
+          when (Box2.w extent +. 3.) *. (Box2.h extent +. 3.) > float max_tile
+          ->
+            None
+        | None ->
+            let bx0 = int_of_float (Float.floor (Box2.minx extent)) - 1 in
+            let by0 = int_of_float (Float.floor (Box2.miny extent)) - 1 in
+            let tw = int_of_float (Float.ceil (Box2.maxx extent)) + 2 - bx0 in
+            let th = int_of_float (Float.ceil (Box2.maxy extent)) + 2 - by0 in
+            if tw * th <= max_tile then Some (bx0, by0, tw, th) else None
+      in
+      match tile with
+      | None -> in_full ()
+      | Some (bx0, by0, tw, th) ->
+          let phases = Array.make 16 None in
+          let phase fx fy =
+            let k = (fy * 4) + fx in
+            match phases.(k) with
+            | Some planes -> planes
+            | None ->
+                let tile =
+                  { Surface.x0 = 0; y0 = 0; x1 = tw; y1 = th; mask = None }
+                in
+                let m =
+                  Affine.(
+                    translate
+                      ((float fx /. 4.) -. float bx0)
+                      ((float fy /. 4.) -. float by0)
+                    * lin)
+                in
+                let planes =
+                  List.rev
+                    (planes ctx ~w:tw ~h:th tile m ~fills:(fills <> None)
+                       ~strokes:(strokes <> None) style picture [])
+                in
+                phases.(k) <- Some planes;
+                planes
+          in
+          let rgba a i =
+            Instances.color a i ~own:premultiplied (0., 0., 0., 0.)
+          in
+          (* Positions beyond floats show everywhere: the window clips them. *)
+          let ps =
+            Option.value ~default:Instances.everywhere
+              (Instances.positions window ~reach:kept extent)
+          in
+          let px0 = Box2.minx ps and px1 = Box2.maxx ps in
+          let py0 = Box2.miny ps and py1 = Box2.maxy ps in
+          let shows qx qy =
+            let x = float qx /. 4. and y = float qy /. 4. in
+            x >= px0 && x <= px1 && y >= py0 && y <= py1
+          in
+          for i = 0 to Array.length xs - 1 do
+            match quarters i with
+            | Some (qx, qy) when shows qx qy ->
+                composite t clip
+                  ((qx asr 2) + bx0)
+                  ((qy asr 2) + by0)
+                  ~tw ~th
+                  (phase (qx land 3) (qy land 3))
+                  (rgba fills i) (rgba strokes i)
+            | _ -> ()
+          done)
+
+(* Rendering *)
+
+let err fmt = Printf.ksprintf invalid_arg ("Hugin_vg_raster." ^^ fmt)
+let max_pixels = 2147483647.
+
+let render ~density r =
+  if not (density > 0. && Float.is_finite density) then
+    err "render: invalid density %g" density;
+  let w = Float.round (Renderable.w r *. density) in
+  let h = Float.round (Renderable.h r *. density) in
+  if not (w >= 1. && w <= max_pixels && h >= 1. && h <= max_pixels) then
+    err "render: a page of %g by %g pixels" w h;
+  let s = Surface.create (int_of_float w) (int_of_float h) in
+  let ctx = { cover = Cover.create (); outlines = [] } in
+  draw ctx s (Surface.whole s)
+    (Affine.scale density density)
+    plain (Renderable.picture r);
+  Surface.to_straight s
+
+let png ~density r =
+  let ppm = Float.round (density *. 72. /. 0.0254) in
+  if ppm > max_pixels || ppm < 1. then
+    err "png: density %g is beyond a PNG's resolution" density;
+  Nx_io.encode_png ~dpi:(density *. 72.) ~srgb:true (render ~density r)

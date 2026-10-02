@@ -1,65 +1,38 @@
-# Hugin Examples
+# hugin examples
 
-Learn Hugin through progressively complex examples. Start with `01-line-plot`
-and work through the numbered examples in order.
+Each example is a directory holding `main.ml` and the image it renders. The
+images are committed, and a build compiles the examples without running them.
+To render them again into `_build` and replace the committed images that
+differ from their renders, run
 
-## Examples
-
-| Example | Concept | Key Functions |
-|---------|---------|---------------|
-| [`01-line-plot`](./01-line-plot/) | Your first plot | `line`, `render_png` |
-| [`02-styling`](./02-styling/) | Colors, line styles, markers | `~color`, `~line_style`, `~marker`, `~alpha` |
-| [`03-scatter`](./03-scatter/) | Scatter plots and color mapping | `point`, `~color_by` |
-| [`04-bar-chart`](./04-bar-chart/) | Bar charts with categorical axes | `bar`, `xlabel`, `ylabel`, `xticks` |
-| [`05-histogram`](./05-histogram/) | Histograms and density | `hist`, `~bins`, `~density` |
-| [`06-layers`](./06-layers/) | Overlaying marks and legends | `layers`, `fill_between`, `hline`, `legend` |
-| [`07-decorations`](./07-decorations/) | Axis control and grid lines | `xscale`, `xlim`, `ylim`, `xtick_format`, `grid_lines` |
-| [`08-grid-layout`](./08-grid-layout/) | Multi-panel layouts | `Layout.grid` |
-| [`09-themes`](./09-themes/) | Themes and context scaling | `Theme.default`, `Theme.dark`, `Theme.talk` |
-| [`10-showcase`](./10-showcase/) | Full showcase with multiple outputs | All mark types, `heatmap`, `render_svg` |
-| [`11-errorbar`](./11-errorbar/) | Measurement uncertainty | `errorbar`, `~yerr`, `~cap_size` |
-
-## Running Examples
-
-All examples can be run with:
-
-```bash
-dune exec dev/hugin/examples/<name>/main.exe
+```sh
+dune build @packages/hugin/examples/assets
+dune promote
 ```
 
-For example:
+or run one example from its directory:
 
-```bash
-dune exec dev/hugin/examples/01-line-plot/main.exe
+```sh
+dune exec packages/hugin/examples/01-line/main.exe
 ```
 
-## Quick Reference
-
-### Single Plot
-
-```ocaml
-open Hugin
-
-let x = Nx.linspace Nx.float32 0. 6.28 100 in
-let y = Nx.sin x in
-line ~x ~y () |> title "Sine" |> render_png "plot.png"
-```
-
-### Multiple Marks on Shared Axes
-
-```ocaml
-layers
-  [
-    line ~x ~y:(Nx.sin x) ~label:"sin" ();
-    line ~x ~y:(Nx.cos x) ~label:"cos" ~line_style:`Dashed ();
-  ]
-|> legend |> render_png "plot.png"
-```
-
-### Grid Layout
-
-```ocaml
-let p1 = line ~x ~y:(Nx.sin x) () |> title "sin" in
-let p2 = line ~x ~y:(Nx.cos x) () |> title "cos" in
-Layout.grid [ [ p1; p2 ] ] |> render_png "grid.png"
-```
+| Example | Shows | Image |
+|---|---|---|
+| [`01-line`](01-line/main.ml) | Lines over a step axis, one per seed, coloured by a `dim` | ![](01-line/line.png) |
+| [`01-line`](01-line/main.ml) | The same lines in `Theme.dark` | ![](01-line/line-dark.png) |
+| [`02-scatter`](02-scatter/main.ml) | Dots coloured by category and sized by a quantity, with two legends | ![](02-scatter/scatter.png) |
+| [`03-bars`](03-bars/main.ml) | Bars: a `rect` over a band scale, its length from zero | ![](03-bars/bars.png) |
+| [`04-heatmap`](04-heatmap/main.ml) | A matrix as cells, its rows and columns read with `dim`, and a colour bar | ![](04-heatmap/heatmap.png) |
+| [`05-facets`](05-facets/main.ml) | Small multiples: one panel per category of `fx`, sharing every scale | ![](05-facets/facets.png) |
+| [`06-confusion-matrix`](06-confusion-matrix/main.ml) | Cells coloured by recall, their counts in a contrasting colour (`map_range`) | ![](06-confusion-matrix/confusion.png) |
+| [`07-attention`](07-attention/main.ml) | Attention maps faceted by layer and head, with one colour bar | ![](07-attention/attention.png) |
+| [`08-embedding`](08-embedding/main.ml) | An embedding of 3,000 dots, and of 100,000 drawn as one image | ![](08-embedding/embedding.png) |
+| [`09-image-grid`](09-image-grid/main.ml) | Images in wrapped panels, captioned, with the mistakes framed | ![](09-image-grid/images.png) |
+| [`10-loss-landscape`](10-loss-landscape/main.ml) | Filled contours on a log scale and an optimiser's path | ![](10-loss-landscape/landscape.png) |
+| [`11-dashboard`](11-dashboard/main.ml) | A training dashboard: loss on a log scale over epochs, and validation accuracy, sharing x | ![](11-dashboard/dashboard.png) |
+| [`12-paper-figure`](12-paper-figure/main.ml) | A two-column paper figure at 8 points, panels labelled (a) to (d) | ![](12-paper-figure/paper.png) |
+| [`13-histogram`](13-histogram/main.ml) | Two histograms over shared bins from `Stats.histogram`, drawn as rects from their edges | ![](13-histogram/histogram.png) |
+| [`14-area`](14-area/main.ml) | A band between the lowest and highest of eight seeds (`area` with `y2`), under their mean | ![](14-area/area.png) |
+| [`15-errorbars`](15-errorbars/main.ml) | Error bars as a composition: a `rule` from `y` to `y2` under each `dot` | ![](15-errorbars/errorbars.png) |
+| [`16-styles`](16-styles/main.ml) | Series told apart by colour and dash from one scale, a dotted `rule`, a `frame` and a legend inside the panel | ![](16-styles/styles.png) |
+| [`17-calibration`](17-calibration/main.ml) | A calibration plot over the dashed diagonal `abline` y = x, its axes in percent | ![](17-calibration/calibration.png) |

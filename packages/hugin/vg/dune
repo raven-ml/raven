@@ -1,18 +1,8 @@
 (library
  (name hugin_vg)
  (public_name hugin.vg)
- (private_modules truetype font_data)
- (libraries nx))
-
-(rule
- (target font_data.ml)
- (deps fonts/Inter-Regular.ttf fonts/Inter-Bold.ttf)
- (action
-  (with-stdout-to
-   %{target}
-   (run
-    %{exe:embed/embed.exe}
-    inter_regular
-    fonts/Inter-Regular.ttf
-    inter_bold
-    fonts/Inter-Bold.ttf))))
+ (libraries hugin.gg hugin.font nx)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

@@ -1,0 +1,22 @@
+(test
+ (name test_font)
+ (modules test_font build)
+ (package hugin)
+ (libraries hugin.gg hugin.font windtrap)
+ (deps
+  ../../font/fonts/Inter-Regular.ttf
+  ../../font/fonts/Inter-Bold.ttf
+  cmap.expected
+  kerning.expected)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_font.ml test_font.ml.corrected)
+   (diff? cmap.expected cmap.expected.corrected)
+   (diff? kerning.expected kerning.expected.corrected))))
+
+(test
+ (name test_run)
+ (modules test_run)
+ (package hugin)
+ (libraries hugin.gg hugin.font windtrap))

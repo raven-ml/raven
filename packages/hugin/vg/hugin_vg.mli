@@ -3,27 +3,27 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** 2D vector pictures.
+(** Pictures and renderables.
 
-    A {!Picture.t} is an immutable description of a drawing: paths filled or
-    stroked with a color, text, images, and groups of those clipped, transformed
-    or stamped at many points. Coordinates are in a y-down plane whose unit is
-    one pixel or one point, depending on the renderer.
+    {!Picture} describes drawings and {!Renderable} puts one on a page of a
+    physical size. Three libraries render renderables, each with a [render]
+    function:
+    - [hugin.vg.raster] draws them as RGBA tensors, and as PNG files, at a
+      density in device pixels per point;
+    - [hugin.vg.svg] writes them as SVG documents;
+    - [hugin.vg.pdf] writes them as PDF documents.
 
-    Build geometry with {!Path}, describe how it is drawn with {!Color} and
-    {!Stroke}, lay out text with {!Font}, and assemble the drawing with
-    {!Picture}. {!Affine} and {!Box} are the transforms and boxes the others
-    speak in.
+    The renderers are separate libraries so that a program links only those it
+    uses; they depend on [nx.io] for PNG encoding and compression.
 
-    Rendering lives in separate libraries so that a program links only what it
-    uses: [hugin.vg.raster] draws pictures into pixel tensors, [hugin.vg.svg]
-    and [hugin.vg.pdf] write them as documents. Every renderer is a single
-    [render] function over a picture. *)
+    Points, boxes, affine maps, paths, stroke styles and colours come from
+    {!Hugin_gg}, whose {{!Hugin_gg.section-conventions}conventions}
+    apply here, and glyph runs from {!Hugin_font}. The meaning of a picture
+    is stated once, in {!Picture.section-semantics}. Every renderer writes every
+    picture to that meaning, within the accuracy it documents, and no renderer
+    drops or replaces part of a picture. Raster output is the meaning itself;
+    SVG and PDF output show it in viewers that have the features each renderer
+    lists. *)
 
-module Color = Color
-module Affine = Affine
-module Box = Box
-module Path = Path
-module Stroke = Stroke
-module Font = Font
 module Picture = Picture
+module Renderable = Renderable

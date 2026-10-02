@@ -1,0 +1,4 @@
+(library
+ (name hugin_test_winding)
+ (wrapped false)
+ (libraries hugin.gg hugin.gg.kit))

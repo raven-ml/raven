@@ -3,17 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin
+
 let image_path = "sowilo/examples/lena.png"
+let panel s px = image px |> title (Text.v s)
 
 let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
   let blurred = Sowilo.gaussian_blur ~sigma:1.5 ~ksize:5 gray in
-  Hugin.hstack
+  grid
     [
-      Hugin.imshow ~data:gray ~cmap:Hugin.Cmap.gray ()
-      |> Hugin.title "Grayscale";
-      Hugin.imshow ~data:blurred ~cmap:Hugin.Cmap.gray ()
-      |> Hugin.title "Gaussian Blur (5x5, sigma=1.5)";
+      [ panel "Grayscale" gray; panel "Gaussian Blur (5x5, sigma=1.5)" blurred ];
     ]
-  |> Hugin.render_png "gaussian_blur.png"
+  |> save ~size:(Size.panels 240. 240.) "gaussian_blur.png"

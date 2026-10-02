@@ -1,0 +1,243 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+module P2 = Hugin_gg.P2
+module Box2 = Hugin_gg.Box2
+module Path = Hugin_gg.Path
+module Color = Hugin_gg.Color
+module Text = Hugin_text.Text
+module Picture = Hugin_vg.Picture
+module Scale = Hugin_kit.Scale
+
+(* Columns *)
+
+type col =
+  | Col : {
+      role : ('d, 'r) Role.t;
+      values : 'r array;
+      norm : float array option;
+      fn : (float -> 'r) option;
+      ticks : float array option;
+      cats : int array option;
+      band : float option;
+      zero : float option;
+    }
+      -> col
+
+(* Rows *)
+
+type fitted = Fitted : 'd Scale.t -> fitted
+
+type t = {
+  id : Common.id;
+  shape : int array;
+  index : int array;
+  theme : Theme.t;
+  projection : Coord.projection;
+  axes : fitted option * fitted option;
+  cols : col list;
+  dropped : bool array;
+  warn : string -> unit;
+}
+
+let pick a ks = Array.map (fun k -> a.(k)) ks
+
+let select_col ks (Col c) =
+  Col
+    {
+      c with
+      values = pick c.values ks;
+      norm = Option.map (fun a -> pick a ks) c.norm;
+      cats = Option.map (fun a -> pick a ks) c.cats;
+    }
+
+let select r ks =
+  {
+    r with
+    index = pick r.index ks;
+    cols = List.map (select_col ks) r.cols;
+    dropped = pick r.dropped ks;
+  }
+
+(* Observing *)
+
+let length r = Array.length r.index
+
+let find r (role : _ Role.t) =
+  List.find_opt (fun (Col c) -> String.equal c.role.name role.name) r.cols
+
+let get : type d v. t -> (d, v) Role.t -> v array option =
+ fun r role ->
+  match find r role with
+  | None -> None
+  | Some (Col c) -> (
+      match Role.equal_range c.role.range role.range with
+      | Some Type.Equal -> Some (Array.copy c.values)
+      | None -> None)
+
+let normalized r (role : _ Role.t) =
+  Option.bind (find r role) (fun (Col c) -> Option.map Array.copy c.norm)
+
+let range : type d v. t -> (d, v) Role.t -> (float -> v) option =
+ fun r role ->
+  match find r role with
+  | None -> None
+  | Some (Col c) -> (
+      match Role.equal_range c.role.range role.range with
+      | Some Type.Equal -> c.fn
+      | None -> None)
+
+let ticks r (role : _ Role.t) =
+  Option.bind (find r role) (fun (Col c) -> Option.map Array.copy c.ticks)
+
+let scale : type d. t -> [ `X | `Y ] -> d Scale.kind -> d Scale.t option =
+ fun r axis kind ->
+  match match axis with `X -> fst r.axes | `Y -> snd r.axes with
+  | None -> None
+  | Some (Fitted s) -> (
+      match Scale.equal_kind (Scale.kind s) kind with
+      | Some Type.Equal -> Some s
+      | None -> None)
+
+(* A position: the normalised value of each row, the bandwidth of its band scale
+   or the normalised zero of its continuous one, and whether it reads a
+   scale. *)
+type position = {
+  us : float array;
+  band : float option;
+  zero : float option;
+  scaled : bool;
+}
+
+let position r role : position option =
+  match find r role with
+  | None -> None
+  | Some (Col c) -> (
+      match Role.equal_range c.role.range Role.Floats with
+      | Some Type.Equal ->
+          Some
+            {
+              us = c.values;
+              band = c.band;
+              zero = c.zero;
+              scaled = Option.is_some c.norm;
+            }
+      | None -> None)
+
+let positions r =
+  let n = length r in
+  let at role =
+    match position r role with Some p -> p.us | None -> Array.make n 0.5
+  in
+  let us = at Role.x and vs = at Role.y in
+  let xs = Array.make n Float.nan and ys = Array.make n Float.nan in
+  for i = 0 to n - 1 do
+    if not r.dropped.(i) then begin
+      xs.(i) <- us.(i);
+      ys.(i) <- vs.(i)
+    end
+  done;
+  (xs, ys)
+
+(* The domain is the unit square, its edges included. *)
+let in_domain u = 0. <= u && u <= 1.
+
+let points r =
+  let us, vs = positions r in
+  let n = length r in
+  let xs = Array.make n Float.nan and ys = Array.make n Float.nan in
+  for i = 0 to n - 1 do
+    if in_domain us.(i) && in_domain vs.(i) then begin
+      let p = Coord.point r.projection us.(i) vs.(i) in
+      xs.(i) <- P2.x p;
+      ys.(i) <- P2.y p
+    end
+  done;
+  (xs, ys)
+
+(* [ends p i] is the interval a position covers in its own right: its band on a
+   band scale, and its value otherwise. *)
+let ends p i =
+  let u = p.us.(i) in
+  match p.band with Some w -> (u -. (w /. 2.), u +. (w /. 2.)) | None -> (u, u)
+
+let extent r axis =
+  let n = length r in
+  let near, far =
+    match axis with `X -> (Role.x, Role.x2) | `Y -> (Role.y, Role.y2)
+  in
+  let lo = Array.make n Float.nan and hi = Array.make n Float.nan in
+  let cover i =
+    match (position r near, position r far) with
+    | None, _ -> (0., 1.)
+    | Some p, Some p2 ->
+        let a, b = ends p i and a', b' = ends p2 i in
+        (Float.min a a', Float.max b b')
+    | Some p, None -> (
+        match (p.band, p.zero) with
+        | Some _, _ -> ends p i
+        | None, Some z when p.scaled -> (z, p.us.(i))
+        | _ -> ends p i)
+  in
+  for i = 0 to n - 1 do
+    if not r.dropped.(i) then begin
+      let a, b = cover i in
+      lo.(i) <- a;
+      hi.(i) <- b
+    end
+  done;
+  (lo, hi)
+
+let unit_square = Box2.v 0. 0. 1. 1.
+
+let project r p =
+  Path.transform (Coord.affine r.projection) (Path.crop unit_square p)
+
+(* Two rows are in one series iff they share their index along every axis but
+   the last and their category in every band channel that is not a position. *)
+let series r =
+  let last =
+    match Array.length r.shape with 0 -> 1 | k -> max 1 r.shape.(k - 1)
+  in
+  let cats =
+    List.filter_map
+      (fun (Col c) -> match c.role.use with Position _ -> None | _ -> c.cats)
+      r.cols
+  in
+  let groups = Hashtbl.create 16 and order = ref [] in
+  Array.iteri
+    (fun i datum ->
+      let key = (datum / last, List.map (fun a -> a.(i)) cats) in
+      match Hashtbl.find_opt groups key with
+      | Some l -> l := i :: !l
+      | None ->
+          let l = ref [ i ] in
+          Hashtbl.add groups key l;
+          order := l :: !order)
+    r.index;
+  List.rev_map (fun l -> select r (Array.of_list (List.rev !l))) !order
+
+let glyphs c at l =
+  let run acc colour o run =
+    let colour = Option.value colour ~default:c in
+    Picture.glyphs colour (P2.v (P2.x at +. P2.x o) (P2.y at +. P2.y o)) run
+    :: acc
+  in
+  Picture.group (List.rev (Text.Layout.fold run [] l))
+
+let text ?(halign = `Center) ?(valign = `Middle) r c at s =
+  let l =
+    Text.Layout.v ~halign ~valign ~fonts:(Theme.fonts r.theme)
+      ~size:(Theme.size r.theme) s
+  in
+  (match Text.Layout.missing l with
+  | [] -> ()
+  | us ->
+      r.warn
+        (Format.asprintf "the text %a has %s, which no face of the theme has"
+           Text.pp s
+           (String.concat ", "
+              (List.map (fun u -> Printf.sprintf "U+%04X" (Uchar.to_int u)) us))));
+  glyphs c at l

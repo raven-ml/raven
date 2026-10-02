@@ -1,0 +1,41 @@
+(library
+ (name hugin)
+ (public_name hugin)
+ (libraries
+  hugin.gg
+  hugin.gg.kit
+  hugin.font
+  hugin.text
+  hugin.vg
+  hugin.vg.raster
+  hugin.vg.svg
+  hugin.vg.pdf
+  hugin.kit
+  nx
+  nx.dtype)
+ (private_modules
+  common
+  rows
+  pixels
+  coord
+  view
+  size
+  theme
+  role
+  channel
+  api
+  lift
+  figure
+  mark
+  marks
+  arrange
+  summary
+  resolved
+  guide
+  layout
+  read
+  draw)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

@@ -3,7 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin
+
 let image_path = "sowilo/examples/lena.png"
+let panel s px = image px |> title (Text.v s)
 
 let normalize_gradient img =
   let abs_img = Nx.abs img in
@@ -20,13 +23,12 @@ let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
   let gx, gy = Sowilo.sobel gray in
-  Hugin.hstack
+  grid
     [
-      Hugin.imshow ~data:gray ~cmap:Hugin.Cmap.gray ()
-      |> Hugin.title "Grayscale";
-      Hugin.imshow ~data:(normalize_gradient gx) ~cmap:Hugin.Cmap.gray ()
-      |> Hugin.title "Sobel X";
-      Hugin.imshow ~data:(normalize_gradient gy) ~cmap:Hugin.Cmap.gray ()
-      |> Hugin.title "Sobel Y";
+      [
+        panel "Grayscale" gray;
+        panel "Sobel X" (normalize_gradient gx);
+        panel "Sobel Y" (normalize_gradient gy);
+      ];
     ]
-  |> Hugin.render_png "sobel.png"
+  |> save ~size:(Size.panels 240. 240.) "sobel.png"
