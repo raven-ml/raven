@@ -6048,15 +6048,6 @@ thread.
 
 ### Talon
 
-- Text compares faster: `Expr.( = )` and `( <> )` between text columns and
-  `Expr.is_in` over text hash the rows where they sorted them, and comparisons
-  with a text literal scan in C. TPC-H queries 12 and 19 run 1.4–1.6× faster.
-- `Expr.min`, `max`, `first`, `last`, `arg_min` and `arg_max` find each
-  group's row without sorting the rows. H2O's group-by question 7 (`max v1 -
-  min v2` over 10⁷ rows) runs 2.1× faster.
-- Text reads faster: UTF-8 validation of Parquet and parsed text, and the
-  literal search of `Expr.Str.matches`, `split` and `replace`, scan bytes in C.
-  TPC-H at scale factor 1 runs 1.25× faster, query 13 2.9×.
 - **Breaking:** talon is rewritten, and the previous API (`Col`, `Row`, `Agg`,
   `pp_display`, `to_html` and the old `Talon_csv`) is removed. A `Talon.t` holds
   typed columns in Arrow layouts over nx buffers, with nulls as validity, never
