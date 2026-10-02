@@ -65,6 +65,27 @@ let pad = 0.25 *. em
 let close = float 1e-9
 let ratio b = Box2.h b /. Box2.w b
 
+(* [on_page l] states that every data area of [l] lies on its page. *)
+let on_page l =
+  let w, h = Layout.size l and tol = 1e-9 in
+  List.iter
+    (fun b ->
+      at_least float_exact ~msg:"left" ~than:(-.tol) (Box2.minx b);
+      at_least float_exact ~msg:"top" ~than:(-.tol) (Box2.miny b);
+      at_most float_exact ~msg:"right" ~than:(w +. tol) (Box2.maxx b);
+      at_most float_exact ~msg:"bottom" ~than:(h +. tol) (Box2.maxy b))
+    (boxes l)
+
+(* A panel with an aspect of one and no axes. *)
+let square =
+  layer
+    [
+      rect ~x:(strings [| "a" |]) ~y:(strings [| "p" |]) ();
+      axis ~show:false "x";
+      axis ~show:false "y";
+    ]
+  |> coord (Coord.cartesian ~aspect:1. ())
+
 (* Random figures: grids of dots over data of varied magnitudes, so that labels
    vary in length, with colour legends, facets, shared axes and titles or
    without. *)
@@ -337,6 +358,15 @@ let aspects =
               equal close (Box2.miny a) (Box2.miny b);
               equal close (Box2.maxy a) (Box2.maxy b)
           | _ -> fail "two panels");
+      test "a nested aspect panel under a wider title stays on its page"
+        (fun () ->
+          let f =
+            grid [ [ square ] ]
+            |> title ~align:`Left (Text.v "A rather wide title")
+          in
+          List.iter
+            (fun h -> on_page (lay (Size.panels 40. h) f))
+            [ 45.; 50.; 60.; 61. ]);
       test "images have square pixels" (fun () ->
           let px = Nx.zeros Nx.uint8 [| 3; 6 |] in
           let l = lay (Size.figure 300. 300.) (image px) in

@@ -3746,7 +3746,13 @@ let shrink base need target =
       else Float.min 1. (Float.max 0. ((target -. !fixed) /. !needs))
     in
     let next = Array.mapi (fun i a -> a && s *. need.(i) > base.(i)) active in
-    if k = 0 || Array.for_all2 Bool.equal next active then s else go next (k - 1)
+    (* With no row left above its base, [s] is the scale that fits. *)
+    if
+      k = 0
+      || Array.for_all2 Bool.equal next active
+      || not (Array.exists Fun.id next)
+    then s
+    else go next (k - 1)
   in
   go (Array.mapi (fun i b -> need.(i) > b) base) n
 
