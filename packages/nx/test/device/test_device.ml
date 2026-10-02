@@ -3580,7 +3580,7 @@ let test_hang () =
   (match Nx_device.synchronize d with
   | () -> fail "synchronized a hung device"
   | exception e ->
-      equal ~msg:"printed" string "HUNG: hang detected"
+      equal ~msg:"printed" string "HUNG lost: hang detected"
         (masked (Printexc.to_string e)));
   let hung = lost d "hang detected" in
   List.iter (raises_match hung)
@@ -3594,6 +3594,8 @@ let test_hang () =
       (fun () -> Nx_device.free_cache d);
     ];
   equal ~msg:"waits" int 1 !waits;
+  equal ~msg:"why it is lost" (option string) (Some "hang detected")
+    (Nx_device.lost d);
   equal ~msg:"name and arch" (pair string string) ("HUNG", "test")
     (masked (Nx_device.name d), Nx_device.arch d);
   equal ~msg:"budget, submitted, signaled" (triple int int int) (max_int, 1, 0)
@@ -3628,7 +3630,18 @@ let test_scope () =
           ~dst:(B.view a ~offset:0 S.UInt8 4));
       (fun () -> ignore (B.bigarray Bigarray.char shared));
       (fun () -> ignore (read mapped));
+      (fun () -> B.Claim.read shared);
+      (fun () -> B.Claim.export (B.view shared ~offset:4 S.UInt8 4));
+      (fun () -> B.Claim.with_ ~read:[ a ] ~donate:[ [ mapped ] ] ignore);
     ];
+  B.Claim.with_ ~read:[ a; other ] ~donate:[] ignore;
+  equal ~msg:"claims of memory out of its reach, all released" bool true
+    (B.Claim.try_exclusive
+       (B.Claim.read a;
+        a));
+  B.Claim.finish a;
+  B.Claim.release a;
+  equal ~msg:"a healthy device" (option string) None (Nx_device.lost near.dev);
   equal ~msg:"a view of it" int 4 (B.length (B.view shared ~offset:0 S.UInt8 4));
   equal ~msg:"waits" int 1 !waits
 
@@ -3874,6 +3887,43 @@ let test_fault_midway () =
   equal ~msg:"retained, and held by the driver" (pair int int) (16, 2)
     (Nx_device.Stats.retained (stats d), Hashtbl.length keep)
 
+(* A device of a fixed name over host memory, whose driver reports the fault
+   [reset] at a synchronization once [faulted] is set: each call is an open of
+   the same hardware. *)
+let reopen_test () =
+  let name = unique "REOPENED" and faulted = ref false in
+  let open_ () =
+    Driver.device ~name ~arch:"test" ~budget:max_int
+      ~synchronized:(fun () -> if !faulted then failwith "reset")
+      (Host_visible { memory = Driver.host_memory; mapping = Some Identity })
+  in
+  let d = open_ () in
+  raises_match (Exn.invalid_arg ~substring:"exists on its machine") (fun () ->
+      ignore (open_ ()));
+  let b = B.create d S.UInt8 8 in
+  write b "12345678";
+  faulted := true;
+  let reset = lost d "reset" in
+  raises_match reset (fun () -> Nx_device.synchronize d);
+  faulted := false;
+  let d' = open_ () in
+  equal ~msg:"a new device" bool false (Nx_device.equal d d');
+  equal ~msg:"ordered after the lost one" int (-1) (Nx_device.compare d d');
+  equal ~msg:"of the same name" string (Nx_device.name d) (Nx_device.name d');
+  equal ~msg:"not lost" (option string) None (Nx_device.lost d');
+  let b' = B.create d' S.UInt8 8 in
+  write b' "abcdefgh";
+  equal ~msg:"the fresh device's memory" string "abcdefgh" (read b');
+  List.iter (raises_match reset)
+    [
+      (fun () -> ignore (read b));
+      (fun () -> B.Claim.read b);
+      (fun () -> ignore (B.create d S.UInt8 1));
+      (fun () -> ignore (B.create d S.UInt8 0));
+    ];
+  raises_match (Exn.invalid_arg ~substring:"exists on its machine") (fun () ->
+      ignore (open_ ()))
+
 let failures =
   group "failures"
     [
@@ -3898,6 +3948,10 @@ let failures =
           raises_match refused (fun () -> B.create f.dev S.UInt8 1));
       test "a loss reaches the memory the lost device can reach, and no other"
         test_scope;
+      test
+        "a lost device's name makes a fresh device, unequal and after it, \
+         while its memory stays lost"
+        reopen_test;
       test "a borrow unmapped before a loss is out of its reach" test_unmapped;
       test "a borrow whose unmapping a loss cut short stays in its reach"
         test_cut_short;

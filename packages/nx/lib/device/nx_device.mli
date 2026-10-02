@@ -84,7 +84,8 @@
 
     {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
     the devices involved. A device that hangs or faults is lost for good
-    ({!Lost}).
+    ({!Lost}): every later operation that reads or computes on memory it can
+    reach raises. Opening the device again gives a fresh device.
 
     {b Audiences.} Programs use the sections up to {!section-submitting}. The
     libraries that submit work to a device use {!section-submitting} and the
@@ -94,8 +95,9 @@
 (** {1:devices Devices} *)
 
 type t
-(** The type for devices. There is one value per device: every open of a device
-    returns the value its first open made. *)
+(** The type for devices. There is one value per device while it is not lost:
+    every open of a device returns the value its first open made. An open of a
+    lost device ({!Lost}) makes a new value, unequal to the lost one. *)
 
 val host : t
 (** [host] is the host, named ["CPU"], with a budget of [max_int]. Its buffers
@@ -187,7 +189,7 @@ exception Lost of t * string
     it: [d] did not signal within its {!timeout} ([why] is ["hang detected"]),
     its driver reported a fault or erred while work was enqueued on its queue
     ([why] is the driver's message), or the connection to its machine failed. It
-    prints as ["NAME: why"], where [NAME] is [d]'s {!name}.
+    prints as ["NAME lost: why"], where [NAME] is [d]'s {!name}.
 
     [d] is then lost for good, and its loss is scoped to the memory it can
     reach: its own buffers, the host memory it borrowed, and memory another
@@ -195,16 +197,25 @@ exception Lost of t * string
     ({!submit}), and that [d] had not finished with when it was lost.
     - The operation that finds the loss raises [Lost (d, why)], and so does,
       with the same [why], every later operation that takes [d], and every
-      {!Buffer.copy}, {!Buffer.bigarray} and {!Program.call} that reaches memory
-      [d] can reach. {!Buffer.view} does not. {!stats} answers, as do the
-      functions that do not take [d]: {!name}, {!arch}, {!budget}, {!submitted},
-      {!signaled} and {!signal_word}.
+      {!Buffer.copy}, {!Buffer.bigarray}, {!Program.call}, {!submit} and claim
+      ({!Buffer.Claim}) that reaches memory [d] can reach. {!Buffer.view} does
+      not. {!stats} and {!lost} answer, as do the functions that do not take
+      [d]: {!name}, {!arch}, {!budget}, {!submitted}, {!signaled} and
+      {!signal_word}.
     - Other devices do not wait for [d]'s work, and their other operations are
       unaffected.
     - [d] never reclaims memory again: its buffers, and the host memory it
       borrowed, stay allocated for the life of the process, including borrows it
       was unmapping when it was lost. Memory of another device that its copy was
-      writing is never reused either. *)
+      writing is never reused either.
+    - An open of [d]'s hardware through its library, such as the one that made
+      [d], makes a fresh device of the same {!name}, unequal to [d] and after it
+      in {!compare}, where the library can open the hardware again
+      ({!Driver.device}). [d]'s memory stays lost. *)
+
+val lost : t -> string option
+(** [lost d] is [Some why] if [d] is lost, [why] being what its {!Lost} carries,
+    and [None] otherwise. It raises nothing and waits for nothing. *)
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes:
@@ -318,8 +329,9 @@ module Buffer : sig
       larger) start on a page, so that devices can {!borrow} them.
 
       Raises [Invalid_argument] if [d] is {!disk}, whose buffers are files, if
-      [n < 0] or if [n] elements of [s] take more than [max_int] bytes, and
-      {!Out_of_memory} if [d] cannot allocate its bytes. *)
+      [n < 0] or if [n] elements of [s] take more than [max_int] bytes,
+      {!Out_of_memory} if [d] cannot allocate its bytes, and {!Lost} if [d] is
+      lost, even for no bytes. *)
 
   val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
   (** [of_bigarray ba] is a borrowed buffer on {!host} over [ba]'s elements,
@@ -532,7 +544,7 @@ module Buffer : sig
     (** [read b] claims [b]'s memory for reading, beside other readers.
 
         Raises [Invalid_argument] if [b] is dead, or if the memory is held
-        exclusive. *)
+        exclusive, and {!Lost} if a lost device can reach the memory. *)
 
     val release : buffer -> unit
     (** [release b] ends a {!read} of [b]'s memory. It accepts a dead [b].
@@ -558,7 +570,7 @@ module Buffer : sig
         makes starts with one, for whoever holds the bigarray, and so does one
         {!of_file} or {!create_file} makes, for the file.
 
-        Raises [Invalid_argument] as {!read} does. *)
+        Raises as {!read} does. *)
 
     type t
     (** The type for the claims of a {!with_}. *)
@@ -572,7 +584,8 @@ module Buffer : sig
 
         Raises [Invalid_argument] before [f], releasing what it claimed, if a
         buffer is dead, if a memory is held exclusive, or if a buffer of
-        [donate] overlaps another of [read] or [donate]. *)
+        [donate] overlaps another of [read] or [donate], and {!Lost} likewise if
+        a lost device can reach a buffer's memory. *)
 
     val exclusive : t -> buffer -> bool
     (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive: the
@@ -1534,14 +1547,17 @@ module Driver : sig
         to doing nothing.
 
       A name identifies a device of its machine: nothing makes a second device
-      of one name on one machine, not even after the first is unreachable.
+      of one name on one machine, not even after the first is unreachable,
+      unless the first is lost ({!Lost}). The new device then stands for the
+      same hardware, opened anew: an open of it by its library returns the new
+      device from then on.
 
       Raises [Invalid_argument] if [budget < 0], if [host] is no host, if a
-      device named [name] was made on the device's machine, if the queue's clock
-      is a [Device_clock] of no more than [0] Hz, or if [host_memory] gives
-      memory the host does not address, and [Failure] if the device's machine
-      has no memory for its timeline. A device that fails to be made leaves its
-      name free. *)
+      device named [name] that is not lost was made on the device's machine, if
+      the queue's clock is a [Device_clock] of no more than [0] Hz, or if
+      [host_memory] gives memory the host does not address, and [Failure] if the
+      device's machine has no memory for its timeline. A device that fails to be
+      made leaves its name free. *)
 
   val host :
     address:string ->

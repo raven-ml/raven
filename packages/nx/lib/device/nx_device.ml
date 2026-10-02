@@ -365,7 +365,7 @@ exception Out_of_memory of t * int
 
 let () =
   Printexc.register_printer (function
-    | Lost (d, why) -> Some (d.name ^ ": " ^ why)
+    | Lost (d, why) -> Some (d.name ^ " lost: " ^ why)
     | Out_of_memory (d, n) ->
         Some (Printf.sprintf "Nx_device.Out_of_memory(%s, %d bytes)" d.name n)
     | _ -> None)
@@ -967,9 +967,14 @@ let signaled d =
 
 let commit d v = Atomic.set d.last v
 
+(* The devices lost so far in the process. While it is [0], checking whether a
+   lost device reaches some memory is this one read. *)
+let losses = Atomic.make 0
+
 (* A device that hung or faulted is in an unknown state: its first error loses
    it for good, and every later operation raises that error at once. *)
-let lose d why = ignore (Atomic.compare_and_set d.failed None (Some why))
+let lose d why =
+  if Atomic.compare_and_set d.failed None (Some why) then Atomic.incr losses
 
 let check d =
   match Atomic.get d.failed with
@@ -1043,6 +1048,7 @@ let wait_signal d v =
     | exception Failure why -> fail d why
 
 let failed d = Atomic.get d.failed
+let lost = failed
 
 (* Waits until each of [d]'s queues has room for a submission, for at most its
    timeout. *)
@@ -1132,13 +1138,15 @@ let first_generation = { why = "" }
 (* Raises [Lost] for a lost device that can reach [base]'s memory: its own
    device, a device it is mapped on or whose transfer into it could not be
    waited for, or those of the memory it maps. *)
-let rec check_reach base =
+let rec reach_lost base =
   let { maps; stamps; _ } = Atomic.get base.links in
   List.iter check (base.owner :: List.map (fun m -> m.on) maps);
   List.iter
     (fun s -> if s.upto > Atomic.get s.by.settled then check s.by)
     stamps;
-  Option.iter (fun (src, _) -> check_reach src) base.source
+  Option.iter (fun (src, _) -> reach_lost src) base.source
+
+let check_reach base = if Atomic.get losses > 0 then reach_lost base
 
 let rec update_links base f =
   let l = Atomic.get base.links in
@@ -1914,7 +1922,9 @@ module Buffer = struct
   let allocated ?stage ~memory d s n =
     if d == disk then not_files "Buffer.create";
     match checked_nbytes "Buffer.create" s n with
-    | 0 -> empty ~borrowed:false d s n
+    | 0 ->
+        check d;
+        empty ~borrowed:false d s n
     | bytes when d == host ->
         check host;
         if bytes > budget host then raise (Out_of_memory (host, bytes));
@@ -2348,7 +2358,7 @@ module Buffer = struct
         invalid_arg "Nx_device.Buffer.Claim.finish: the memory is not exclusive"
 
     let read b =
-      live b;
+      reachable b;
       read_claim b.base.claim
 
     let release b = release_claim b.base.claim
@@ -3917,22 +3927,28 @@ module Driver = struct
 
   let name = compose
 
-  (* The names minted on each machine, by its host's id, so that no two devices
-     of one machine share a name: a name identifies a device of its machine. A
-     name is reserved before its device is made, and given back if making it
-     fails. *)
+  (* The device of each name minted on each machine, by its host's id, so that
+     no two live devices of one machine share a name: a name identifies a device
+     of its machine. A name is reserved, as [None], before its device is made,
+     and given back if making it fails. A lost device's name is minted again,
+     for a fresh device of the same hardware. *)
   let minted = Hashtbl.create 16
   let minted_lock = Mutex.create ()
 
   let () =
-    Hashtbl.replace minted (host.id, host.name) ();
-    Hashtbl.replace minted (host.id, disk.name) ()
+    Hashtbl.replace minted (host.id, host.name) (Some host);
+    Hashtbl.replace minted (host.id, disk.name) (Some disk)
 
   let reserve key name =
     Mutex.protect minted_lock (fun () ->
-        if Hashtbl.mem minted key then
-          refuse "device" "a device named %s exists on its machine" name;
-        Hashtbl.replace minted key ())
+        match Hashtbl.find_opt minted key with
+        | Some (Some d) when failed d <> None -> Hashtbl.replace minted key None
+        | Some _ ->
+            refuse "device" "a device named %s exists on its machine" name
+        | None -> Hashtbl.replace minted key None)
+
+  let minted_as key d =
+    Mutex.protect minted_lock (fun () -> Hashtbl.replace minted key (Some d))
 
   let give_back key =
     Mutex.protect minted_lock (fun () -> Hashtbl.remove minted key)
@@ -3983,7 +3999,9 @@ module Driver = struct
       }
     in
     match create description (Driver_memory memory) with
-    | d -> d
+    | d ->
+        minted_as key d;
+        d
     | exception e ->
         let bt = Printexc.get_raw_backtrace () in
         give_back key;
