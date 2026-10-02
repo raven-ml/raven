@@ -333,6 +333,16 @@ let errors =
                  legend ~show:false "color";
                ])),
         [ "1 and 2 are two different legends for \"color\"" ] );
+      ( "two inside legends of one scale in different corners",
+        (fun () ->
+          resolve
+            (layer
+               [
+                 dot ~fill:(num x) ~x:(num x) ~y:(num x) ();
+                 legend ~side:(`Inside `Top_left) "color";
+                 legend ~side:(`Inside `Top_right) "color";
+               ])),
+        [ "1 and 2 are two different legends for \"color\"" ] );
       ( "a wrapping fx with an fy",
         (fun () ->
           resolve
