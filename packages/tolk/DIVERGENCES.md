@@ -2720,8 +2720,8 @@ stores through a pad.
   substitutes a symbolic integer's variables and simplifies it on each
   evaluation.
 - **tolk:** `engine/tolk_engine.ml:283` (`env`, the run's variable cells),
-  `:481` (`operand`), `:507` (`lane_operand`), `:528` (`launch`), `:1170`
-  (`settle`), `:1179` (`run_launch`) and `:1232` (`run_call`'s `Range`);
+  `:481` (`operand`), `:507` (`lane_operand`), `:528` (`launch`), `:1171`
+  (`settle`), `:1180` (`run_launch`) and `:1232` (`run_call`'s `Range`);
   `lib/uop/ops.ml:3964` (`sym_compile`).
 - **Differs:** linking a schedule turns each call of a host program into a
   launch per lane: a view of linked storage at a constant offset is made
@@ -2731,8 +2731,10 @@ stores through a pad.
   variable, of the run or of a range, has a cell that the run and the range's
   trips write. The devices of a host program's buffers, which nx.device's
   ordering has the run synchronize (c), are synchronized once until the run
-  queues work again, with a batch or a copy. Results are those of a
-  resolution on each run.
+  queues work again, with a batch: a copy returns once its bytes have landed.
+  Results are those of a resolution on each run. A `DEBUG` report of a call
+  lists the run's variables that the schedule reads, where it listed every
+  variable of the run.
 - **Reason:** (b): symo's tutorial step on the CPU runs 2,273 host launches,
   mostly inside the ranges of its staged scans, and sofo's steps do likewise.
   Resolving a launch on each run cost about 5 us on an M1 Max, for kernels

@@ -1166,7 +1166,8 @@ let bindings t =
 
 (* A host program is outside the devices' ordering: the work that touched its
    buffers, such as a batch's before it, completes first. A device is
-   synchronized once until the run queues work again. *)
+   synchronized once until the run queues work again, which only a batch does:
+   a copy returns once its bytes have landed. *)
 let settle t buffers =
   for k = 0 to Array.length buffers - 1 do
     let d = B.device buffers.(k) in
@@ -1219,8 +1220,7 @@ let rec run_call t slots = function
               (Realize.estimate_uop call)
               (Some (seconds copy))
           else copy ())
-        dsts;
-      t.synced <- []
+        dsts
   | Kernel { call; launches } ->
       for i = 0 to Array.length launches - 1 do
         run_launch t call slots launches.(i)
