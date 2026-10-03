@@ -1426,6 +1426,29 @@ let measures =
                   (Nx_device.Profile.stop p))
           in
           equal int 1 (List.length spans));
+      test "a prepared program runs once per sample" (fun () ->
+          let p = Nx_device.Profile.start () in
+          let spans =
+            Fun.protect
+              ~finally:(fun () ->
+                if Nx_device.Profile.enabled () then
+                  ignore (Nx_device.Profile.stop p))
+              (fun () ->
+                let sample =
+                  Engine.prepare
+                    ~vars:[ ("n", 3) ]
+                    ~devices "CPU" (Lazy.force long_axpy)
+                in
+                ignore (sample ());
+                ignore (sample ());
+                List.filter
+                  (function
+                    | Nx_device.Profile.Span sp ->
+                        String.starts_with ~prefix:"long_axpy" sp.name
+                    | _ -> false)
+                  (Nx_device.Profile.stop p))
+          in
+          equal int 2 (List.length spans));
       test "a four-element kernel takes a positive time, below a clock tick"
         (fun () ->
           for _ = 1 to 20 do

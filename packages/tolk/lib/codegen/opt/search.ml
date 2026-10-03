@@ -61,9 +61,9 @@ let get_test_global_size global_size max_global_size vars =
   let size = shrink input in
   (size, Bigint.to_float (zprod input) /. Bigint.to_float (zprod size))
 
-(* Measured up to [cnt] times, stopping once slower than [early_stop]: the least
-   time. *)
-let time_program ~measure ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
+(* Prepared once and sampled up to [cnt] times, stopping once slower than
+   [early_stop]: the least time. *)
+let time_program ~prepare ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
   let prg, factor =
     match arg prg with
     | Program info when allow_test_size ->
@@ -74,8 +74,9 @@ let time_program ~measure ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
         (replace prg ~arg:(Program { info with global_size }), factor)
     | _ -> (prg, 1.)
   in
+  let sample = prepare ~cold:true ~vars prg in
   let rec go least cnt =
-    let least = Float.min least (measure ~cold:true ~vars prg *. factor) in
+    let least = Float.min least (sample () *. factor) in
     if cnt = 1 || early_stop < least then least else go least (cnt - 1)
   in
   go infinity cnt
@@ -238,7 +239,7 @@ let midpoint v =
   | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
   | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
 
-let beam_search ~measure ?allow_test_size amt s =
+let beam_search ~prepare ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
@@ -284,6 +285,14 @@ let beam_search ~measure ?allow_test_size amt s =
       if debug () >= 2 then
         Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
           (K.colored_shape s);
+      (* The candidates whose kernels are already compiled, by their kernel's
+         identity: applying actions in different orders converges to identical
+         programs, and compiling one is the expensive part. Compilation is
+         reusable; the compute filter and the binaries already timed are decided
+         anew each round. *)
+      let compiled_kernels : (Ops.t * float) option Ops.Tbl.t =
+        Ops.Tbl.create 256
+      in
       let rec search beam =
         let best = snd (List.hd beam) in
         let candidates =
@@ -313,7 +322,7 @@ let beam_search ~measure ?allow_test_size amt s =
               else (
                 Hashtbl.add seen_libs (binary prg) ();
                 match
-                  time_program ~measure ~vars ~early_stop:(best *. 3.)
+                  time_program ~prepare ~vars ~early_stop:(best *. 3.)
                     ~allow_test_size prg
                 with
                 | tm ->
@@ -343,8 +352,30 @@ let beam_search ~measure ?allow_test_size amt s =
                     | e -> Printexc.raise_with_backtrace e bt))
           | _ -> ()
         in
-        List.iteri consider
-          (List.combine candidates (Worker.map try_compile candidates));
+        (* A kernel a previous round, or an earlier candidate of this one,
+           already compiled is not compiled again. *)
+        let pending = Ops.Tbl.create (List.length candidates) in
+        let uncompiled =
+          List.filter
+            (fun cand ->
+              let ast = K.ast cand in
+              if Ops.Tbl.mem compiled_kernels ast || Ops.Tbl.mem pending ast
+              then false
+              else begin
+                Ops.Tbl.replace pending ast ();
+                true
+              end)
+            candidates
+        in
+        List.iter2
+          (fun cand compiled ->
+            Ops.Tbl.replace compiled_kernels (K.ast cand) compiled)
+          uncompiled
+          (Worker.map try_compile uncompiled);
+        List.iteri
+          (fun i cand ->
+            consider i (cand, Ops.Tbl.find compiled_kernels (K.ast cand)))
+          candidates;
         let opts =
           List.stable_sort
             (fun (_, t0) (_, t1) -> Float.compare t0 t1)

@@ -939,6 +939,17 @@ thread.
 
 ### Tolk (new)
 
+- `Search.beam_search` takes its measurement as `~prepare`: a function that
+  prepares a candidate's program once (`Tolk_engine.prepare`) and returns the
+  sampler the search times it with, up to three times. Each candidate's
+  compilation, link and buffers are then paid once per round instead of once
+  per sample. `Tolk_engine.measure` is the first sample of a prepared
+  program.
+- A beam search compiles a candidate kernel once: a kernel a round already
+  compiled is reused when a later round's action path makes it anew, while the
+  compute filter and the binaries already timed are decided anew each round.
+  The search suite's `add_3d` case compiles 58 programs for 50 distinct
+  kernels where compiling each round's candidates anew takes 87.
 - A compiled call run back to back on a GFX12 AMD GPU no longer hangs it,
   which made the driver reset the GPU for every process on it: a batch's
   memory barrier only invalidates the GPU's caches, and the host flushes the
