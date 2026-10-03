@@ -68,24 +68,28 @@ val get_kernel_actions :
 (** {1:search Searching} *)
 
 val beam_search :
-  measure:(cold:bool -> vars:(string * int) list -> Ops.t -> float) ->
+  prepare:(cold:bool -> vars:(string * int) list -> Ops.t -> unit -> float) ->
   ?allow_test_size:bool ->
   int ->
   Postrange.Scheduler.t ->
   Postrange.Scheduler.t
-(** [beam_search ~measure ~allow_test_size amt k] is [k], or a copy of it, with
+(** [beam_search ~prepare ~allow_test_size amt k] is [k], or a copy of it, with
     the optimisations that a beam search of width [amt] finds fastest. [k]'s
     kernel is the sink that {!Postrange.apply_opts} optimises.
 
-    [measure ~cold ~vars prg] is the time in seconds of one run of the compiled
-    program [prg] ({!Op.Program}) on a device of the target of [k]'s renderer,
-    with each variable bound to its value in [vars], and with the device's
-    caches invalidated first if [cold] and the device can. The search asks for
-    cold runs, with each variable of [k]'s kernel ({!Ops.variables}) bound to
-    the middle of its bounds, [(vmin + vmax) / 2] rounded down. A measurement
-    that raises [Failure] drops its candidate; any other exception is raised by
-    the search. The search limits neither a compilation nor a run: a candidate
-    whose compilation or run hangs hangs the search, one more reason to run it
+    [prepare ~cold ~vars prg] is the compiled program [prg] ({!Op.Program})
+    prepared to be measured on a device of the target of [k]'s renderer, with
+    each variable bound to its value in [vars], and with the device's caches
+    invalidated before each run if [cold] and the device can: preparing compiles
+    and links it, and each call of the result is the time in seconds of a
+    measurement of it. The search prepares each candidate once and samples it up
+    to three times, so the samples of one candidate share its compilation, its
+    launch and its buffers. It asks for cold runs, with each variable of [k]'s
+    kernel ({!Ops.variables}) bound to the middle of its bounds,
+    [(vmin + vmax) / 2] rounded down. A preparation or a sample that raises
+    [Failure] drops its candidate; any other exception is raised by the search.
+    The search limits neither a compilation nor a run: a candidate whose
+    compilation or run hangs hangs the search, one more reason to run it
     offline.
 
     The beam holds up to [amt] kernels, and starts as [k], of an infinite time.
@@ -95,17 +99,19 @@ val beam_search :
     + Each candidate's kernel is compiled for [k]'s renderer
       ({!Codegen.to_program}), named ["test"] and with its storage placed on the
       renderer's device, on the domains {!Worker.map} spreads them over. A
-      candidate whose compilation raises [Failure] is dropped, and so is one
-      whose compilation raises another exception, unless the environment
+      kernel a previous round already compiled is not compiled again: applying
+      actions in different orders converges to identical kernels, which are one
+      node. A candidate whose compilation raises [Failure] is dropped, and so is
+      one whose compilation raises another exception, unless the environment
       variable [BEAM_STRICT_MODE] holds a nonzero integer and the exception is
       raised. A candidate is also dropped if its program has [BEAM_UOPS_MAX]
       (default [3000]) instructions or more, unless that is [0] or less.
     + In order, a candidate is dropped if its binary was timed before in this
       search, or if its program's estimated operations ({!Ops.estimates}, [0] if
       unknown) are more than [1000] times the fewest of this round's programs so
-      far. Each other one is measured up to three times, stopping once its least
-      time exceeds three times the time of the beam's first kernel; its time is
-      the least measured.
+      far. Each other one is prepared once and sampled up to three times,
+      stopping once its least time exceeds three times the time of the beam's
+      first kernel; its time is the least sample.
     + The search ends if no candidate was timed, if the fastest took less than
       [BEAM_MIN_PROGRESS] microseconds (default [0.01]), or if it is faster than
       the beam's first kernel by less than that. It then keeps the fastest

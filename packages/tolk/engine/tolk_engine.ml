@@ -1311,7 +1311,9 @@ let mean_ns run =
   in
   go 1 (run ())
 
-let measure ?(cold = false) ?(vars = []) ~devices name prg =
+(* A program prepared to be sampled: its compiled launch and its buffers,
+   prepared once and run as often as the result is called. *)
+let prepare ?(cold = false) ?(vars = []) ~devices name prg =
   let dev = devices name in
   let d = dev.device in
   let elf = Device.Tiny_elf.of_program prg in
@@ -1352,7 +1354,11 @@ let measure ?(cold = false) ?(vars = []) ~devices name prg =
         let slots = Array.init nslots (fun slot -> [ scratch (buffer slot) ]) in
         fun () -> timed d elf.name (fun () -> run ~vars s slots)
   in
-  mean_ns (fun () ->
-      if cold then invalidate_caches d;
-      run ())
-  *. 1e-9
+  fun () ->
+    mean_ns (fun () ->
+        if cold then invalidate_caches d;
+        run ())
+    *. 1e-9
+
+let measure ?cold ?vars ~devices name prg =
+  prepare ?cold ?vars ~devices name prg ()

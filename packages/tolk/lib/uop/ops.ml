@@ -315,6 +315,7 @@ and Node : sig
     mutable addrspace_memo : Dtype.addr_space option option; [@atomic]
     mutable backward_slice_memo : nodes option; [@atomic]
     mutable ops_reached_memo : Op.Set.t option; [@atomic]
+    mutable reads_buffer_memo : bool option; [@atomic]
     mutable axis_memo : int option option; [@atomic]
     mutable marg_memo : movement option; [@atomic]
     mutable key_memo : string option; [@atomic]
@@ -584,6 +585,7 @@ let node op src arg tag dtype id =
     addrspace_memo = None;
     backward_slice_memo = None;
     ops_reached_memo = None;
+    reads_buffer_memo = None;
     axis_memo = None;
     marg_memo = None;
     key_memo = None;
@@ -1076,6 +1078,17 @@ let ops_reached u =
 let op_in_backward_slice_with_self u ops =
   let reached = ops_reached u in
   List.exists (fun o -> Op.Set.mem o reached) ops
+
+(* The buffers a slice reads, as a property of each node, so that asking costs
+   no walk of the slice. A node whose sources read none reads none. *)
+let slice_reads_buffer u =
+  memoized
+    ~get:(fun n -> n.reads_buffer_memo)
+    ~set:(fun n b -> n.reads_buffer_memo <- Some b)
+    ~compute:(fun n ->
+      List.mem n.op Op.[ Param; Stage; After ]
+      || List.exists (fun s -> Option.get s.reads_buffer_memo) n.src)
+    u
 
 (* A node is built after its sources, so ids grow along every edge: the search
    for [x] never enters a node built before it. *)

@@ -576,6 +576,10 @@ val op_in_backward_slice_with_self : t -> Op.t list -> bool
 (** [op_in_backward_slice_with_self u ops] is [true] iff [u] or a node of
     [backward_slice u] has an operation in [ops]. *)
 
+val slice_reads_buffer : t -> bool
+(** [slice_reads_buffer u] is [true] iff [u] or a node [u] reaches, entering
+    call bodies, is a [Param], [Stage] or [After]: a buffer the slice reads. *)
+
 val reaches : t -> t -> bool
 (** [reaches u x] is [true] iff [x] is [u] or a node [u] reaches, entering
     call bodies. *)

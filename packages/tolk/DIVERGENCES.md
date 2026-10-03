@@ -154,7 +154,8 @@ the Exclusions of `README.md`.
   - `device.py`'s `Compiler` and `CompileError` are `Renderer.Compiler`,
     since a renderer holds its compiler and `Device` follows `Renderer`;
   - `apply_opts` takes the optimiser as an argument, and `Search` follows
-    `Postrange` and takes the timing of a kernel as its `measure` argument;
+    `Postrange` and takes the preparation of a kernel's timing as its
+    `prepare` argument;
     `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;

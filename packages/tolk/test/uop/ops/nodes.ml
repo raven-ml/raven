@@ -929,6 +929,16 @@ let graphs =
           is_true (Ops.reaches c inside);
           is_true (Ops.reaches c c);
           is_false (Ops.reaches inside c));
+      test "slice_reads_buffer is a buffer in the slice" (fun () ->
+          let e = Ops.O.(Ops.int 1 + Ops.int 2) in
+          is_false (Ops.slice_reads_buffer e);
+          let e = Ops.O.(e * var "p" 0 4) in
+          is_true (Ops.slice_reads_buffer e);
+          is_true (Ops.slice_reads_buffer e));
+      test "slice_reads_buffer enters call bodies" (fun () ->
+          let inside = var "inside" 0 1 in
+          let c = Ops.call (Ops.sink [ inside ]) [] in
+          is_true (Ops.slice_reads_buffer c));
       test "split_uop is the operands of a tree of one operation" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 and c = var "c" 0 4 in
           equal uops [ a; b; c ] (Ops.split_uop Ops.O.(a + b + c) Op.Add);
