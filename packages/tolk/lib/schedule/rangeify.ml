@@ -128,22 +128,19 @@ let remove_bufferize src buf idx =
       && Tbl.length accessed > 1
     in
     if Tbl.length accessed > 3 || recomputes || read_by_every_output then None
+    else if
+      List.exists (fun r -> Ops.slice_reads_buffer (nth r 0)) reduces
+    then None
     else
-      let reads_buffer x = List.mem (op x) Op.[ Param; Stage; After ] in
-      if
-        List.exists reads_buffer
-          (toposort (sink (List.map (fun r -> nth r 0) reduces)))
-      then None
-      else
-        (* A constant range is not replaced, nor is a range read by a dead
-           load. *)
-        let replaced =
-          List.filter
-            (fun (k, v) ->
-              op k <> Op.Const && not (op v = Op.Const && is_invalid v))
-            (zip (List.tl (Ops.src buf)) (List.tl (Ops.src idx)))
-        in
-        Some (substitute ~extra_pm:pm_gate_substitute src replaced)
+      (* A constant range is not replaced, nor is a range read by a dead
+         load. *)
+      let replaced =
+        List.filter
+          (fun (k, v) ->
+            op k <> Op.Const && not (op v = Op.Const && is_invalid v))
+          (zip (List.tl (Ops.src buf)) (List.tl (Ops.src idx)))
+      in
+      Some (substitute ~extra_pm:pm_gate_substitute src replaced)
 
 let remove_noop_bufferize idx b2 =
   if not (List.equal ( == ) (List.tl (src idx)) (List.tl (src b2))) then None

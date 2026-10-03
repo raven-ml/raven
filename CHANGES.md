@@ -939,6 +939,16 @@ thread.
 
 ### Tolk (new)
 
+- `remove_bufferize` asks whether a reduction's slice reads a buffer through a
+  per-node property, shared with a source that reads one, instead of walking
+  the slice for every stage it considers. A pendulum iLQR solve of 10 steps
+  unrolled six times compiled in 40 s where it took 76 s, its implicit
+  gradient in 29 s where it took 79 s.
+- The where-closure rule checks its INDEX gate before asking whether the
+  condition is in a branch: the gate is a per-node operation set and the
+  search walks the branch, which dominated compilation of graphs full of
+  index arithmetic (a differentiable iLQR solve of 20 steps unrolled six
+  times: 56 s to 15 s, and its implicit gradient 52 s to 8 s).
 - `Search.beam_search` takes its measurement as `~prepare`: a function that
   prepares a candidate's program once (`Tolk_engine.prepare`) and returns the
   sampler the search times it with, up to three times. Each candidate's
