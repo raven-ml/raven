@@ -1652,6 +1652,22 @@ let selections name n =
   in
   link (Ops.load (Ops.index buf [ var name 0 15 ]) []) 0
 
+(* [far_conditions name n] is [n] selections in sequence over a value read from
+   memory, all sharing one early condition that is in neither branch. The
+   branches reach an INDEX, so the where-closure rule stops at its INDEX gate
+   before asking whether the condition is in a branch; asking it would walk the
+   chain below each branch. *)
+let far_conditions name n =
+  let x = Ops.load (Ops.index buf [ var name 0 15 ]) [] in
+  let c = Ops.O.(x < Ops.float ~dtype:Float32 3.) in
+  let rec link x acc k =
+    if k = n then acc
+    else
+      let x = Ops.O.(x + Ops.float ~dtype:Float32 1.) in
+      link x (Ops.where c x acc) (k + 1)
+  in
+  link x x 0
+
 (* [words f] is the words [f ()] allocates. *)
 let words f =
   let before = Gc.minor_words () in
@@ -1665,6 +1681,14 @@ let cost =
         (fun () ->
           let work n =
             let e = selections ("chain" ^ string_of_int n) n in
+            words (fun () -> sym e)
+          in
+          let short = work 250 and long = work 500 in
+          less float_exact ~than:(2.5 *. short) long);
+      test "sym's work on conditions absent from their branches is linear"
+        (fun () ->
+          let work n =
+            let e = far_conditions ("far" ^ string_of_int n) n in
             words (fun () -> sym e)
           in
           let short = work 250 and long = work 500 in

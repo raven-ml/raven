@@ -681,7 +681,7 @@ let fold_where_closure cond t f =
   (* INDEX gates are owned by the valid/store-coalescing machinery, leave them
      alone *)
   let boolean = Dtype.equal (dtype cond) Dtype.Bool in
-  if not (boolean && (reaches t cond || reaches f cond)) then None
+  if not boolean then None
   else if
     (* a constant condition, broadcast or not, assumes nothing: the same node
        is every other use of that constant *)
@@ -692,6 +692,7 @@ let fold_where_closure cond t f =
       (fun u -> op_in_backward_slice_with_self u [ Op.Index ])
       [ cond; t; f ]
   then None
+  else if not (reaches t cond || reaches f cond) then None
   else
     let assume b u = substitute u [ (cond, const_like cond (`Bool b)) ] in
     Some (where cond (assume true t) (assume false f))

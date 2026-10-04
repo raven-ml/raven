@@ -61,9 +61,9 @@ let get_test_global_size global_size max_global_size vars =
   let size = shrink input in
   (size, Bigint.to_float (zprod input) /. Bigint.to_float (zprod size))
 
-(* Measured up to [cnt] times, stopping once slower than [early_stop]: the least
-   time. *)
-let time_program ~measure ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
+(* Prepared once and sampled up to [cnt] times, stopping once slower than
+   [early_stop]: the least time. *)
+let time_program ~prepare ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
   let prg, factor =
     match arg prg with
     | Program info when allow_test_size ->
@@ -74,8 +74,9 @@ let time_program ~measure ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
         (replace prg ~arg:(Program { info with global_size }), factor)
     | _ -> (prg, 1.)
   in
+  let sample = prepare ~cold:true ~vars prg in
   let rec go least cnt =
-    let least = Float.min least (measure ~cold:true ~vars prg *. factor) in
+    let least = Float.min least (sample () *. factor) in
     if cnt = 1 || early_stop < least then least else go least (cnt - 1)
   in
   go infinity cnt
@@ -93,14 +94,18 @@ let try_compile k =
   in
   match
     let ast = K.get_optimized_ast ~name_override:"test" (K.copy k) in
+    let uops_max = Helpers.getenv "BEAM_UOPS_MAX" 3000 in
+    let cap = if uops_max > 0 then Some uops_max else None in
     let prg =
-      Codegen.to_program
-        (substitute ast (List.concat_map on_device (toposort ast)))
-        ren
+      Codegen.with_uops_cap cap (fun () ->
+          Codegen.to_program
+            (substitute ast (List.concat_map on_device (toposort ast)))
+            ren)
     in
     let uops = List.length (src (nth prg 1)) in
-    let uops_max = Helpers.getenv "BEAM_UOPS_MAX" 3000 in
     if uops_max > 0 && uops >= uops_max then (
+      (* The cap in [to_program] makes this unreachable; the check stays for a
+         cap unset there to mean what it always meant. *)
       if log_surpass_max () then
         Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
           uops_max;
@@ -109,6 +114,10 @@ let try_compile k =
   with
   | compiled -> compiled
   | exception (Sys.Break as e) -> raise e
+  | exception Codegen.Too_many_uops (uops, cap) ->
+      if log_surpass_max () then
+        Printf.printf "too many uops. len(uops)>=%d, uops_max=%d\n%!" uops cap;
+      None
   | exception (Failure _ as e) ->
       if debug () >= 4 then print_endline (Printexc.to_string e);
       None
@@ -238,7 +247,34 @@ let midpoint v =
   | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
   | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
 
-let beam_search ~measure ?allow_test_size amt s =
+(* The key of [u] with its parameters' slots renamed by first appearance: two
+   kernels that differ only in which buffers they name are the same kernel,
+   and the optimisations a search found for one are its answer for the other.
+   A graph's variables and shapes stay as they are: a kernel of other sizes is
+   another kernel. *)
+let canonical_key u =
+  let seen = Hashtbl.create 16 and next = ref 0 in
+  let renames =
+    List.filter_map
+      (fun n ->
+        match arg n with
+        | Param p -> (
+            match Hashtbl.find_opt seen p.slot with
+            | Some slot ->
+                if slot = p.slot then None
+                else Some (n, replace n ~arg:(Param { p with slot }))
+            | None ->
+                let slot = !next in
+                incr next;
+                Hashtbl.replace seen p.slot slot;
+                if slot = p.slot then None
+                else Some (n, replace n ~arg:(Param { p with slot })))
+        | _ -> None)
+      (toposort u)
+  in
+  key (if renames = [] then u else substitute u renames)
+
+let beam_search ~prepare ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
@@ -252,7 +288,7 @@ let beam_search ~measure ?allow_test_size amt s =
   let key =
     String.concat "\x00"
       [
-        key (K.ast s);
+        canonical_key (K.ast s);
         string_of_int amt;
         string_of_bool allow_test_size;
         ren.target.device;
@@ -277,6 +313,14 @@ let beam_search ~measure ?allow_test_size amt s =
         List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
       let min_progress = Helpers.getenv_float "BEAM_MIN_PROGRESS" 0.01 /. 1e6 in
+      (* A search that improves the best candidate by less than this fraction
+         of its time stops: past that the difference is the timing's noise, and
+         a round of candidates costs far more than it can save. *)
+      let min_progress_rel = Helpers.getenv_float "BEAM_MIN_PROGRESS_REL" 0. in
+      (* A kernel already this fast is searched for one round only: its share
+         of the graph's time is smaller than the search's own cost. Zero
+         searches every kernel. *)
+      let skip_under = Helpers.getenv_float "BEAM_SKIP_UNDER_US" 0. *. 1e-6 in
       let seen_libs = Hashtbl.create 256 in
       let st = Unix.gettimeofday () in
       let elapsed () = Unix.gettimeofday () -. st in
@@ -284,11 +328,24 @@ let beam_search ~measure ?allow_test_size amt s =
       if debug () >= 2 then
         Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
           (K.colored_shape s);
-      let rec search beam =
+      (* The candidates whose kernels are already compiled, by their kernel's
+         identity: applying actions in different orders converges to identical
+         programs, and compiling one is the expensive part. Compilation is
+         reusable; the compute filter and the binaries already timed are decided
+         anew each round. *)
+      let compiled_kernels : (Ops.t * float) option Ops.Tbl.t =
+        Ops.Tbl.create 256
+      in
+      let rec search first beam =
         let best = snd (List.hd beam) in
+        (* When a kernel fast enough ends the search, the first round times the
+           kernel itself too: leaving it as it is becomes a candidate the
+           search can answer with, and its time decides. *)
         let candidates =
           List.concat_map
-            (fun (k, _) -> List.map snd (get_kernel_actions ~include_0:false k))
+            (fun (k, _) ->
+              List.map snd
+                (get_kernel_actions ~include_0:(first && skip_under > 0.) k))
             beam
         in
         let n = List.length candidates in
@@ -313,7 +370,7 @@ let beam_search ~measure ?allow_test_size amt s =
               else (
                 Hashtbl.add seen_libs (binary prg) ();
                 match
-                  time_program ~measure ~vars ~early_stop:(best *. 3.)
+                  time_program ~prepare ~vars ~early_stop:(best *. 3.)
                     ~allow_test_size prg
                 with
                 | tm ->
@@ -343,17 +400,55 @@ let beam_search ~measure ?allow_test_size amt s =
                     | e -> Printexc.raise_with_backtrace e bt))
           | _ -> ()
         in
-        List.iteri consider
-          (List.combine candidates (Worker.map try_compile candidates));
+        (* A kernel a previous round, or an earlier candidate of this one,
+           already compiled is not compiled again. *)
+        let pending = Ops.Tbl.create (List.length candidates) in
+        let uncompiled =
+          List.filter
+            (fun cand ->
+              let ast = K.ast cand in
+              if Ops.Tbl.mem compiled_kernels ast || Ops.Tbl.mem pending ast
+              then false
+              else begin
+                Ops.Tbl.replace pending ast ();
+                true
+              end)
+            candidates
+        in
+        List.iter2
+          (fun cand compiled ->
+            Ops.Tbl.replace compiled_kernels (K.ast cand) compiled)
+          uncompiled
+          (Worker.map try_compile uncompiled);
+        List.iteri
+          (fun i cand ->
+            consider i (cand, Ops.Tbl.find compiled_kernels (K.ast cand)))
+          candidates;
         let opts =
           List.stable_sort
             (fun (_, t0) (_, t1) -> Float.compare t0 t1)
             (List.rev !timed)
         in
+        (* The kernel itself, if it was timed: a first round's answer that is
+           already fast enough ends the search, the fastest candidate of that
+           round standing. *)
+        let base_tm =
+          List.find_map
+            (fun (c, tm) -> if c == s then Some tm else None)
+            opts
+        in
         let exiting =
           match opts with
           | [] -> true
-          | (_, tm) :: _ -> tm < min_progress || best -. tm < min_progress
+          | (_, tm) :: _ ->
+              let floor = Float.max min_progress (min_progress_rel *. tm) in
+              let fast =
+                first
+                && Option.fold ~none:false
+                     ~some:(fun b -> b < skip_under)
+                     base_tm
+              in
+              fast || tm < floor || best -. tm < floor
         in
         let beam =
           match opts with
@@ -368,9 +463,9 @@ let beam_search ~measure ?allow_test_size amt s =
              (if exiting then Helpers.colored Green tm else tm)
              n (List.length opts)
              (K.colored_shape (fst (List.hd beam))));
-        if exiting then beam else search beam
+        if exiting then beam else search false beam
       in
-      let beam = search [ (s, infinity) ] in
+      let beam = search true [ (s, infinity) ] in
       let k, tm = List.hd beam in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));

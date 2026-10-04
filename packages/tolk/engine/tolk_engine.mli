@@ -246,6 +246,32 @@ val run :
 
 (** {1:measuring Measuring} *)
 
+val prepare :
+  ?cold:bool ->
+  ?vars:(string * int) list ->
+  devices:(string -> device) ->
+  string ->
+  Ops.t ->
+  unit ->
+  float
+(** [prepare ~cold ~vars ~devices name prg] is the compiled program [prg]
+    prepared to be measured on the device [devices] maps [name] to, on scratch
+    buffers of its parameters' sizes: compiling and linking it, and allocating
+    its buffers, once. Each call of the result is the time in seconds of a
+    measurement of it. Each run is timed by a profile of it
+    ({!Nx_device.Profile}): the span of its kernel, which a device with queues
+    stamps and the host records around its call otherwise. While a profile is
+    taken already, it is the run and the device's synchronization on the host
+    clock. The time is the mean of as many runs as take at least 10 microseconds
+    in all, up to 1000 runs, so that a kernel shorter than a tick of its clock
+    is not measured as taking no time. With [cold] (default [false]), the
+    device's caches are invalidated before each run where its vendor can
+    ([Nx_nv_device.invalidate_caches]). It is how the compiler's search of
+    kernel optimisations times its candidates: preparing compiles and links a
+    candidate once, and sampling it many times then costs only its runs.
+
+    Raises as {!link} and {!run} do. *)
+
 val measure :
   ?cold:bool ->
   ?vars:(string * int) list ->
@@ -253,17 +279,7 @@ val measure :
   string ->
   Ops.t ->
   float
-(** [measure ~cold ~vars ~devices name prg] is the time in seconds of one run of
-    the compiled program [prg] on the device [devices] maps [name] to, on
-    scratch buffers of its parameters' sizes. Each run is timed by a profile of
-    it ({!Nx_device.Profile}): the span of its kernel, which a device with
-    queues stamps and the host records around its call otherwise. While a
-    profile is taken already, it is the run and the device's synchronization on
-    the host clock. The time is the mean of as many runs as take at least 10
-    microseconds in all, up to 1000 runs, so that a kernel shorter than a tick
-    of its clock is not measured as taking no time. With [cold] (default
-    [false]), the device's caches are invalidated before each run where its
-    vendor can ([Nx_nv_device.invalidate_caches]). It is the measurement the
-    compiler's search of kernel optimisations times its candidates with.
+(** [measure ~cold ~vars ~devices name prg] is one measurement of [prg]: the
+    first sample of {!prepare ~cold ~vars ~devices name prg}, in seconds.
 
-    Raises as {!link} and {!run} do. *)
+    Raises as {!prepare} does. *)

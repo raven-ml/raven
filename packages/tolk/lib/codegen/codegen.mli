@@ -70,6 +70,17 @@ val pm_linearize_cleanups : (unit, Ops.t * Ops.t list) Ops.Pattern_matcher.t
 
 (** {1:programs Programs} *)
 
+exception Too_many_uops of int * int
+(** [Too_many_uops (uops, cap)] is raised by {!to_program}, within
+    {!with_uops_cap}, when linearizing reaches [cap] instructions: the program
+    is then not rendered, nor compiled. A beam search caps its candidates,
+    which are too big to be worth keeping past the cap. *)
+
+val with_uops_cap : int option -> (unit -> 'a) -> 'a
+(** [with_uops_cap cap f] runs [f] with the cap on a program's linearized
+    instructions set to [cap], or unset with [None]. The cap is domain-local,
+    and restored when [f] returns. *)
+
 val to_program :
   ?beam:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
   Ops.t ->

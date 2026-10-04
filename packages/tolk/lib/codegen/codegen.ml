@@ -26,6 +26,18 @@ let reduce_arg u =
   | Reduce { op; num_axes } -> (op, num_axes)
   | _ -> assert false
 
+(* A cap on a program's linearized instructions, set by a beam search making its
+   candidates: a kernel past the cap is too big to be worth rendering and
+   compiling. Domain-local, as candidates compile on worker domains. *)
+let uops_cap : int option Domain.DLS.key = Domain.DLS.new_key (fun () -> None)
+
+exception Too_many_uops of int * int
+
+let with_uops_cap cap f =
+  let old = Domain.DLS.get uops_cap in
+  Domain.DLS.set uops_cap cap;
+  Fun.protect ~finally:(fun () -> Domain.DLS.set uops_cap old) f
+
 let others dims n = List.filter (fun i -> not (List.mem i dims)) (upto n)
 
 (* The tuples of [List.map upto sizes], the last position varying fastest. *)
@@ -1021,6 +1033,12 @@ let do_linearize prg sink =
       (pm_linearize_cleanups ++ pm_alloc_to_buf)
       ()
   in
+  (* A candidate past its cap on instructions stops here: rendering and
+     compiling it would only find it too big to keep. *)
+  (match Domain.DLS.get uops_cap with
+  | Some cap when List.length lst >= cap ->
+      raise (Too_many_uops (List.length lst, cap))
+  | _ -> ());
   replace prg ~src:[ last lst; v Op.Linear ~src:lst ]
 
 (* A split kernel's estimates count all its blocks: its loop's variables span

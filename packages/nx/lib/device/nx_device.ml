@@ -3601,6 +3601,31 @@ module Profile = struct
         fun t ->
           mid + Float.to_int (Float.round (Float.of_int (t - tick) *. ns)))
 
+  (* A device clock's calibration, kept a little while: calibrating takes five
+     stamped round trips of the device, which a stop per measurement (a beam
+     search timing each candidate it compiles) would pay each time. A span's
+     length needs the clock's rate, not its offset, which a stale calibration
+     does not skew. *)
+  let calibration_ttl_ns = 2_000_000_000 (* 2 s *)
+  let calibrations_lock = Mutex.create ()
+  let calibrations : (int, int * (int -> int)) Hashtbl.t = Hashtbl.create 4
+
+  let calibrated d hz =
+    let now = now_ns () in
+    let fresh =
+      Mutex.protect calibrations_lock (fun () ->
+          Hashtbl.find_opt calibrations d.id)
+    in
+    match fresh with
+    | Some (t, f) when t < now && now - t < calibration_ttl_ns -> Some f
+    | _ -> (
+        match try Some (calibrate d hz) with Lost _ -> None with
+        | None -> None
+        | Some f ->
+            Mutex.protect calibrations_lock (fun () ->
+                Hashtbl.replace calibrations d.id (now, f));
+            Some f)
+
   let time = function
     | Span s -> s.start
     | Allocation m -> m.time
@@ -3638,15 +3663,6 @@ module Profile = struct
                     read_reports c d)
               with Lost _ -> ())
           (Atomic.get opened);
-        let clocks = Hashtbl.create 4 in
-        let calibrated d hz =
-          match Hashtbl.find_opt clocks d.id with
-          | Some f -> f
-          | None ->
-              let f = try Some (calibrate d hz) with Lost _ -> None in
-              Hashtbl.add clocks d.id f;
-              f
-        in
         List.rev (Atomic.get c.events)
         |> List.filter_map (function
           | Span ({ device = { clock = Device_clock { hz }; _ } as d; _ } as s)

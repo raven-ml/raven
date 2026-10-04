@@ -6,7 +6,7 @@ open Tolk
 
 let host = Cstyle.clang (Tolk_engine.target Nx_device.host)
 let devices = Tolk_engine.device [ ("CPU", Nx_device.host) ]
-let measure ~cold ~vars prg = Tolk_engine.measure ~cold ~vars ~devices "CPU" prg
+let prepare ~cold ~vars prg = Tolk_engine.prepare ~cold ~vars ~devices "CPU" prg
 
 let with_info f k =
   match Ops.arg k with
@@ -35,7 +35,7 @@ let searched name =
       [ B (Helpers.cachelevel, 0) ]
       (fun () ->
         Codegen.to_program
-          ~beam:(Search.beam_search ~measure)
+          ~beam:(Search.beam_search ~prepare)
           (with_info (fun i -> { i with beam = 2 }) k)
           host)
   in
