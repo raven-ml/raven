@@ -94,14 +94,18 @@ let try_compile k =
   in
   match
     let ast = K.get_optimized_ast ~name_override:"test" (K.copy k) in
+    let uops_max = Helpers.getenv "BEAM_UOPS_MAX" 3000 in
+    let cap = if uops_max > 0 then Some uops_max else None in
     let prg =
-      Codegen.to_program
-        (substitute ast (List.concat_map on_device (toposort ast)))
-        ren
+      Codegen.with_uops_cap cap (fun () ->
+          Codegen.to_program
+            (substitute ast (List.concat_map on_device (toposort ast)))
+            ren)
     in
     let uops = List.length (src (nth prg 1)) in
-    let uops_max = Helpers.getenv "BEAM_UOPS_MAX" 3000 in
     if uops_max > 0 && uops >= uops_max then (
+      (* The cap in [to_program] makes this unreachable; the check stays for a
+         cap unset there to mean what it always meant. *)
       if log_surpass_max () then
         Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
           uops_max;
@@ -110,6 +114,10 @@ let try_compile k =
   with
   | compiled -> compiled
   | exception (Sys.Break as e) -> raise e
+  | exception Codegen.Too_many_uops (uops, cap) ->
+      if log_surpass_max () then
+        Printf.printf "too many uops. len(uops)>=%d, uops_max=%d\n%!" uops cap;
+      None
   | exception (Failure _ as e) ->
       if debug () >= 4 then print_endline (Printexc.to_string e);
       None
