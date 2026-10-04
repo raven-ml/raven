@@ -313,6 +313,14 @@ let beam_search ~prepare ?allow_test_size amt s =
         List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
       let min_progress = Helpers.getenv_float "BEAM_MIN_PROGRESS" 0.01 /. 1e6 in
+      (* A search that improves the best candidate by less than this fraction
+         of its time stops: past that the difference is the timing's noise, and
+         a round of candidates costs far more than it can save. *)
+      let min_progress_rel = Helpers.getenv_float "BEAM_MIN_PROGRESS_REL" 0. in
+      (* A kernel already this fast is searched for one round only: its share
+         of the graph's time is smaller than the search's own cost. Zero
+         searches every kernel. *)
+      let skip_under = Helpers.getenv_float "BEAM_SKIP_UNDER_US" 0. *. 1e-6 in
       let seen_libs = Hashtbl.create 256 in
       let st = Unix.gettimeofday () in
       let elapsed () = Unix.gettimeofday () -. st in
@@ -328,11 +336,16 @@ let beam_search ~prepare ?allow_test_size amt s =
       let compiled_kernels : (Ops.t * float) option Ops.Tbl.t =
         Ops.Tbl.create 256
       in
-      let rec search beam =
+      let rec search first beam =
         let best = snd (List.hd beam) in
+        (* When a kernel fast enough ends the search, the first round times the
+           kernel itself too: leaving it as it is becomes a candidate the
+           search can answer with, and its time decides. *)
         let candidates =
           List.concat_map
-            (fun (k, _) -> List.map snd (get_kernel_actions ~include_0:false k))
+            (fun (k, _) ->
+              List.map snd
+                (get_kernel_actions ~include_0:(first && skip_under > 0.) k))
             beam
         in
         let n = List.length candidates in
@@ -416,10 +429,26 @@ let beam_search ~prepare ?allow_test_size amt s =
             (fun (_, t0) (_, t1) -> Float.compare t0 t1)
             (List.rev !timed)
         in
+        (* The kernel itself, if it was timed: a first round's answer that is
+           already fast enough ends the search, the fastest candidate of that
+           round standing. *)
+        let base_tm =
+          List.find_map
+            (fun (c, tm) -> if c == s then Some tm else None)
+            opts
+        in
         let exiting =
           match opts with
           | [] -> true
-          | (_, tm) :: _ -> tm < min_progress || best -. tm < min_progress
+          | (_, tm) :: _ ->
+              let floor = Float.max min_progress (min_progress_rel *. tm) in
+              let fast =
+                first
+                && Option.fold ~none:false
+                     ~some:(fun b -> b < skip_under)
+                     base_tm
+              in
+              fast || tm < floor || best -. tm < floor
         in
         let beam =
           match opts with
@@ -434,9 +463,9 @@ let beam_search ~prepare ?allow_test_size amt s =
              (if exiting then Helpers.colored Green tm else tm)
              n (List.length opts)
              (K.colored_shape (fst (List.hd beam))));
-        if exiting then beam else search beam
+        if exiting then beam else search false beam
       in
-      let beam = search [ (s, infinity) ] in
+      let beam = search true [ (s, infinity) ] in
       let k, tm = List.hd beam in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));
