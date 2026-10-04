@@ -1298,18 +1298,10 @@ let timed d name f =
     | Some ns -> ns
     | None -> invalid_arg ("Tolk_engine.measure: no span of " ^ name)
 
-(* A run shorter than a tick of its clock measures 0: the mean of runs that take
-   [enough_ns] in all is off by at most a tick in [enough_ns]. *)
-let enough_ns = 10_000
-let most_runs = 1000
-
-let mean_ns run =
-  let rec go runs total =
-    if total >= enough_ns || runs >= most_runs then
-      Float.of_int total /. Float.of_int runs
-    else go (runs + 1) (total + run ())
-  in
-  go 1 (run ())
+(* A run's span is stamped by the device on its own, so one run measures as well
+   as the mean of many, and a profile session a run — its stamps, a
+   synchronization and a clock calibration — is paid once: the caller samples
+   and keeps the least. *)
 
 (* A program prepared to be sampled: its compiled launch and its buffers,
    prepared once and run as often as the result is called. *)
@@ -1355,10 +1347,8 @@ let prepare ?(cold = false) ?(vars = []) ~devices name prg =
         fun () -> timed d elf.name (fun () -> run ~vars s slots)
   in
   fun () ->
-    mean_ns (fun () ->
-        if cold then invalidate_caches d;
-        run ())
-    *. 1e-9
+    if cold then invalidate_caches d;
+    Float.of_int (run ()) *. 1e-9
 
 let measure ?cold ?vars ~devices name prg =
   prepare ?cold ?vars ~devices name prg ()
