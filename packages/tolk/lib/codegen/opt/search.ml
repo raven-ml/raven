@@ -247,6 +247,33 @@ let midpoint v =
   | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
   | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
 
+(* The key of [u] with its parameters' slots renamed by first appearance: two
+   kernels that differ only in which buffers they name are the same kernel,
+   and the optimisations a search found for one are its answer for the other.
+   A graph's variables and shapes stay as they are: a kernel of other sizes is
+   another kernel. *)
+let canonical_key u =
+  let seen = Hashtbl.create 16 and next = ref 0 in
+  let renames =
+    List.filter_map
+      (fun n ->
+        match arg n with
+        | Param p -> (
+            match Hashtbl.find_opt seen p.slot with
+            | Some slot ->
+                if slot = p.slot then None
+                else Some (n, replace n ~arg:(Param { p with slot }))
+            | None ->
+                let slot = !next in
+                incr next;
+                Hashtbl.replace seen p.slot slot;
+                if slot = p.slot then None
+                else Some (n, replace n ~arg:(Param { p with slot })))
+        | _ -> None)
+      (toposort u)
+  in
+  key (if renames = [] then u else substitute u renames)
+
 let beam_search ~prepare ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
@@ -261,7 +288,7 @@ let beam_search ~prepare ?allow_test_size amt s =
   let key =
     String.concat "\x00"
       [
-        key (K.ast s);
+        canonical_key (K.ast s);
         string_of_int amt;
         string_of_bool allow_test_size;
         ren.target.device;
