@@ -356,22 +356,27 @@ let rounds =
     [
       test
         "a candidate is measured three times unless slower than three times \
-         the best" (fun () ->
-          let _, calls = searched [ 0.; 0.25; 0.75 ] in
+         the incumbent" (fun () ->
+          let _, calls = searched [ 1.; 0.25; 0.75 ] in
           is_true ~msg:"measured" (measured_times 2 calls <> []);
           List.iter (equal int 3) (measured_times 2 calls);
-          let _, calls = searched [ 0.; 0.25; 0.875 ] in
+          let _, calls = searched [ 1.; 0.25; 0.875 ] in
           List.iter (equal int 1) (measured_times 2 calls));
-      test "a search goes on while it gains BEAM_MIN_PROGRESS or more"
+      test "a search goes on while it gains more than BEAM_MIN_PROGRESS"
         (fun () ->
           let _, calls =
-            searched [ 0.; 2. *. min_progress; min_progress; 1. ]
+            searched [ 1.; 3. *. min_progress; min_progress; 1. ]
           in
           is_true ~msg:"a third round"
             (List.exists (fun c -> depth c = 3) calls));
-      test "a search that gains nothing keeps its best kernel" (fun () ->
-          let k, _ = searched [ 0.; 1e-3; 1e-3 ] in
+      test "a search that gains BEAM_MIN_PROGRESS exactly stops" (fun () ->
+          let k, calls = searched [ 1.; 2. *. min_progress; min_progress ] in
+          is_true ~msg:"a second round"
+            (List.exists (fun c -> depth c = 2) calls);
           equal int 1 (List.length (K.applied_opts k)));
+      test "a search that gains nothing answers its kernel" (fun () ->
+          let k, _ = searched [ 1e-3; 1e-3 ] in
+          equal opts [] (K.applied_opts k));
     ]
 
 let chooses_the_fastest =
@@ -448,11 +453,14 @@ let applies_the_kernel_once =
       ignore (search ~time amt k);
       equal (list Uops.uop) [ K.ast k ] (record ()).kernels)
 
-(* Samples drawn from [seed], from a microsecond to two milliseconds, which a
-   program's other samples and other programs' overlap. *)
+(* Samples drawn from [seed]: a program's base time, from a microsecond to two
+   milliseconds, times up to one and a half, so that the samples of programs of
+   near base times overlap. *)
 let spread seed ~vars:_ prg i =
   let positions = List.map position (kernel_info prg).applied_opts in
-  1e-6 *. Float.of_int (1 + (Hashtbl.seeded_hash seed (positions, i) mod 2000))
+  let base = 1 + (Hashtbl.seeded_hash seed positions mod 2000) in
+  let noise = 100 + (Hashtbl.seeded_hash seed (positions, i) mod 51) in
+  1e-8 *. Float.of_int (base * noise)
 
 let least = List.fold_left Float.min infinity
 
@@ -557,6 +565,105 @@ let exceptions =
           equal Uops.uop (K.ast k) (K.ast chosen);
           equal opts [] (K.applied_opts chosen));
     ]
+
+(* The incumbent *)
+
+let incumbent_first =
+  test "the kernel is sampled three times before any candidate" (fun () ->
+      let time, record =
+        sampling (fun ~vars prg _ -> by_depth [ 1e-6; 1e-3 ] ~vars prg)
+      in
+      let k = scheduled "sum_rows" "clang" in
+      let chosen = search ~time 2 k in
+      let depths = List.map depth (record ()).calls in
+      equal (list int) [ 0; 0; 0 ] (List.filteri (fun i _ -> i < 3) depths);
+      equal ~msg:"its samples" int 3
+        (List.length (List.filter (Int.equal 0) depths));
+      equal opts [] (K.applied_opts chosen))
+
+(* A Clang renderer whose compiler rejects its first source, the kernel's in a
+   search, for the architecture [arch] of its own. *)
+let rejecting_first arch =
+  let first = Atomic.make true in
+  let compile src =
+    if Atomic.exchange first false then
+      raise (Renderer.Compiler.Compile_error "rejected")
+    else src
+  in
+  let t =
+    {
+      Helpers.Target.device = "CPU";
+      renderer = "CLANG";
+      arch;
+      interface = "";
+      indices = "";
+    }
+  in
+  Renderer.with_compiler (Renderer.Compiler.v compile) (Cstyle.clang t)
+
+let uncompiled_kernel =
+  test "a search whose kernel does not compile progresses on any candidate"
+    (fun () ->
+      let time, record = sampling (fun ~vars:_ _ _ -> 1.) in
+      let k = K.v (kernel "sum_rows") (rejecting_first "x86_64,znver4") in
+      K.convert_loop_to_global k;
+      let chosen = search ~time 1 k in
+      let r = record () in
+      equal ~msg:"the kernel's samples" int 0
+        (List.length (List.filter (fun c -> depth c = 0) r.calls));
+      equal int 1 (List.length (K.applied_opts chosen)))
+
+(* The fastest program of [depth] optimisations and its samples, the first of
+   ties, if any. *)
+let fastest r depth =
+  List.fold_left
+    (fun best (p, ts) ->
+      if List.length (kernel_info p).applied_opts <> depth then best
+      else
+        match best with
+        | Some (_, bs) when least bs <= least ts -> best
+        | _ -> Some (p, ts))
+    None (samples_of r)
+
+let most = List.fold_left Float.max neg_infinity
+
+let progress_law =
+  let min_progress = 0.01 /. 1e6 in
+  let pp ppf (kernel, amt, seed) =
+    Format.fprintf ppf "%s, width %d, seed %d" kernel amt seed
+  in
+  prop ~count:30
+    "a round goes on iff each sample of its fastest beats each of the \
+     incumbent's by more than BEAM_MIN_PROGRESS"
+    Gen.(
+      with_pp pp
+        (triple
+           (of_list [ "add_small"; "sum_rows"; "variable_rows" ])
+           (int_range 1 3) nat))
+    (fun (kernel, amt, seed) ->
+      let time, record = sampling (spread seed) in
+      let chosen =
+        search ~allow_test_size:false ~time amt (scheduled kernel "clang")
+      in
+      let r = record () in
+      let rounds = List.length (K.applied_opts chosen) in
+      let progresses d =
+        match fastest r d with
+        | None -> false
+        | Some (_, ts) -> most ts +. min_progress < incumbent r (d - 1)
+      in
+      for d = 1 to rounds do
+        is_true ~msg:(Printf.sprintf "round %d progressed" d) (progresses d)
+      done;
+      is_true
+        ~msg:(Printf.sprintf "round %d stopped" (rounds + 1))
+        (not (progresses (rounds + 1)));
+      (match fastest r rounds with
+      | Some (p, _) ->
+          equal opts (kernel_info p).applied_opts (K.applied_opts chosen)
+      | None -> equal int 0 rounds);
+      cover "a round that progressed" (rounds > 0);
+      cover "a timed round that stopped" (fastest r (rounds + 1) <> None))
 
 let storage_placed =
   test "a candidate's storage is placed on its renderer's device" (fun () ->
@@ -704,9 +811,9 @@ let counting arch =
     fun () -> Hashtbl.fold (fun src n l -> (src, n) :: l) compiled [] )
 
 (* A search of width 2 whose beam after its first round is an upcast and a swap,
-   and whose second round gains nothing. Its second round reaches kernels by
-   both orders of the two, as [[upcast; swap]] and [[swap; upcast']], which are
-   equal kernels. *)
+   and whose second round gains nothing, compiles its kernel and the candidates
+   of two rounds. Its second round reaches kernels by both orders of the two, as
+   [[upcast; swap]] and [[swap; upcast']], which are equal kernels. *)
 let compiles_once =
   let upcast = Opt.Split { axis = 1; amount = 2; target = Upcast; top = false }
   and swap = Opt.Swap { axis = 0; with_axis = 1 } in
@@ -738,7 +845,7 @@ let compiles_once =
       let distinct = Ops.Tbl.create 64 in
       List.iter
         (fun k -> Ops.Tbl.replace distinct (K.ast k) ())
-        (actions k @ actions (acted upcast) @ actions (acted swap));
+        ((k :: actions k) @ actions (acted upcast) @ actions (acted swap));
       equal int (Ops.Tbl.length distinct)
         (List.fold_left (fun n (_, c) -> n + c) 0 (compiled ())))
 
@@ -1080,4 +1187,7 @@ let () =
          failure_printed;
          storage_placed;
          rounds;
+         incumbent_first;
+         uncompiled_kernel;
+         progress_law;
        ])

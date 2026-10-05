@@ -6,17 +6,26 @@ open Tolk
 
 let host = Cstyle.clang (Tolk_engine.target Nx_device.host)
 let devices = Tolk_engine.device [ ("CPU", Nx_device.host) ]
-let time = Tolk_engine.timer ~devices "CPU"
-
-let with_info f k =
-  match Ops.arg k with
-  | Kernel info -> Ops.replace k ~arg:(Kernel (f info))
-  | _ -> failf "%a is no kernel" Ops.pp k
 
 let applied_opts prg =
   match Ops.arg (Ops.nth prg 0) with
   | Kernel info -> info.applied_opts
   | _ -> failf "the program %a has no kernel" Ops.pp prg
+
+(* The engine's timing, with the samples of an optimised program scaled down a
+   thousandfold, so that a search progresses past its kernel whatever the host's
+   noise: when a search stops is the Search suite's. *)
+let time ~vars kernel =
+  let stage = Tolk_engine.timer ~devices "CPU" ~vars kernel in
+  fun prg ->
+    let sample = stage prg in
+    let scale = if applied_opts prg = [] then 1. else 1e-3 in
+    fun () -> sample () *. scale
+
+let with_info f k =
+  match Ops.arg k with
+  | Kernel info -> Ops.replace k ~arg:(Kernel (f info))
+  | _ -> failf "%a is no kernel" Ops.pp k
 
 let run k prg =
   Run.on_host ~vars:(Kernel_opts.variables k) prg (Kernel_opts.inputs k)

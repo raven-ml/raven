@@ -3440,3 +3440,37 @@ stores through a pad.
   speed rule is the maintainer's call, as for D115.
 - **Pinned by:** `Tolk.Search › a search compiles each kernel once`
   (`matmul_small`, whose upcast and swap commute).
+
+## D117. A search starts from its kernel's samples and progresses beyond their spread
+
+- **tinygrad:** `codegen/opt/search.py:113` (the beam starts as
+  `[(s, inf)]`, and `s` is never timed) and `:160-163` (a round ends the
+  search if nothing was timed, if the fastest took less than
+  `BEAM_MIN_PROGRESS`, or if it beat the beam's first by less than that;
+  the search then keeps the fastest alone if it beat the beam's first).
+- **tolk:** `lib/codegen/opt/search.ml:348` (`progresses`) and `:422`
+  (`start`); the golden generator, `test/gen/codegen/opt/search.py`
+  (`beam_search`).
+- **Differs:** the search compiles and times its kernel before its first
+  round, with no early stop, and the beam starts as the kernel with its
+  samples. A round progresses only when the greatest sample of its fastest
+  candidate plus `BEAM_MIN_PROGRESS` is less than the least sample of the
+  beam's first kernel. Otherwise the search answers the beam's first kernel:
+  the exit on a fastest time under `BEAM_MIN_PROGRESS` and the fastest kept
+  alone are gone. One comparison decides each round. The first round's early
+  stop is three times the kernel's least sample, where tinygrad's is
+  infinite.
+- **Reason:** a search must never answer a kernel slower than the one it
+  started from. tinygrad's rule compares the least of each program's noisy
+  timings, and the least over hundreds of candidates is biased low: a round
+  continues, and a candidate is kept alone, on a gain within the noise of
+  the samples. PR #235 measured searches on GNODE and lorenz_simple on AMD
+  whose trailing rounds ran on gains of 2 to 4% (25.96 to 25.42 us), and
+  first rounds that searched kernels already at their floor, with nothing
+  to compare against. The maintainer admitted this departure.
+- **Pinned by:** `Tolk.Search › a round goes on iff each sample of its
+  fastest beats each of the incumbent's by more than BEAM_MIN_PROGRESS`
+  (law); `› the kernel is sampled three times before any candidate`; `› a
+  search whose kernel does not compile progresses on any candidate`; `›
+  rounds` (4 tests); `searches.golden` and `searches_environment.golden`,
+  whose measurements count the kernel's three samples.

@@ -13,7 +13,11 @@ axes converted, and `max_up` if set.
 
 `searches` lists what `beam_search` chooses, of width `amt`, with the
 measurement `time` below in place of running programs: its optimisations, and
-how many times it measured. No program is compiled: the binary of a program is
+how many times it measured. The search is tinygrad's as tolk departs from it
+(D117): it times the kernel itself before its first round and starts the beam
+from it, and a round progresses only when every sample of its fastest
+candidate is faster than every sample of the beam's first kernel by
+`BEAM_MIN_PROGRESS`, else the search answers the beam's first kernel. No program is compiled: the binary of a program is
 its source's bytes. The measurement is a function of what the program's kernel
 and launch record, so that tolk's suite can compute it too.
 `searches_environment` lists the same under ENVIRONMENT: there a transposing
@@ -24,6 +28,7 @@ operations.
 
 import contextlib
 import importlib
+import math
 import os
 
 import tinygrad.runtime.support.compiler_amd as compiler_amd
@@ -45,7 +50,7 @@ from tinygrad.codegen.opt import search
 from tinygrad.codegen.opt.postrange import Scheduler, args_from_ast
 from tinygrad.helpers import Context, Target, getenv, prod
 from tinygrad.renderer.cstyle import ClangRenderer, CUDARenderer, HIPRenderer, MetalRenderer
-from tinygrad.uop.ops import AxisType, KernelInfo, Ops
+from tinygrad.uop.ops import AxisType, KernelInfo, Ops, sym_infer
 
 TARGETS = {
     "clang": (ClangRenderer, Target("CPU", "CLANG", "x86_64,x86-64")),
@@ -213,6 +218,45 @@ class Measured:
             yield tm
 
 
+def beam_search(s, rawbufs, var_vals, amt, allow_test_size=True):
+    """tinygrad's `beam_search` with tolk's D117, uncached and on one
+    process."""
+    min_progress = getenv("BEAM_MIN_PROGRESS", 0.01) / 1e6
+    dev = search.Device[s.ren.target.device]
+    seen_libs = set()
+
+    def timed(prg, early_stop):
+        try:
+            return search._time_program(prg, var_vals, rawbufs, early_stop=early_stop, allow_test_size=allow_test_size,
+                                        clear_l2=hasattr(dev, "invalidate_caches"), dev_timeout=getenv("BEAM_DEV_TIMEOUT", 1))
+        except RuntimeError:
+            return None
+
+    # The kernel itself, timed with no early stop, starts the beam.
+    _, proc = search._try_compile((0, s))
+    start = []
+    if proc is not None:
+        seen_libs.add(proc[0].src[3].arg)
+        start = timed(proc[0], None) or []
+    beam = [(s, start)]
+    while True:
+        candidates = [c for si, _ in beam for c in search.get_kernel_actions(si, include_0=False).values()]
+        incumbent = min(beam[0][1], default=math.inf)
+        opts, least_compute_ops = [], math.inf
+        for i, proc in map(search._try_compile, enumerate(candidates)):
+            if proc is None: continue
+            prg, _ = proc
+            if (lib := prg.src[3].arg) in seen_libs: continue
+            estimates = prg.src[0].arg.estimates
+            least_compute_ops = min(this_compute_ops := sym_infer(estimates.ops if estimates is not None else 0, var_vals), least_compute_ops)
+            if least_compute_ops * 1000 < this_compute_ops: continue
+            seen_libs.add(lib)
+            if (tms := timed(prg, incumbent * 3)) is not None: opts.append((candidates[i], tms))
+        opts.sort(key=lambda x: min(x[1]))
+        if not opts or not max(opts[0][1]) + min_progress < incumbent: return beam[0][0]
+        beam = opts[:amt]
+
+
 def searched(kernel, target, amt, failing=False, allow_test_size=True):
     ast = kernel_input(kernel)
     measured = Measured(failing)
@@ -220,7 +264,7 @@ def searched(kernel, target, amt, failing=False, allow_test_size=True):
     search.Device = {TARGETS[target][1].device: object()}
     rawbufs, var_vals = args_from_ast(ast, TARGETS[target][1].device)
     with Context(CACHELEVEL=0, IGNORE_BEAM_CACHE=1, PARALLEL=0):
-        k = search.beam_search(scheduled(kernel, target), rawbufs, var_vals, amt, allow_test_size)
+        k = beam_search(scheduled(kernel, target), rawbufs, var_vals, amt, allow_test_size)
     return tuple(k.applied_opts), measured.count
 
 

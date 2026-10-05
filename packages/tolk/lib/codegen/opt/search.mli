@@ -103,26 +103,28 @@ val beam_search :
     takes that kernel's result.
 
     A program is timed up to three times, stopping once its least time exceeds
-    an early stop. Its samples are the times measured, and its time the least.
+    an early stop. Its samples are the times measured.
 
-    The beam holds up to [amt] kernels, and starts as [k], of an infinite time.
-    Each round:
+    The search compiles and times [k] itself, with no early stop. The beam holds
+    up to [amt] kernels and starts as [k] with its samples, or with none if [k]
+    was dropped. Each round:
     + The candidates are the kernels {!get_kernel_actions} makes of the beam's
       kernels ([~include_0:false]), in order, compiled on the domains
       {!Worker.map} spreads them over.
     + In order, a candidate is dropped if its binary was timed before in this
       search, or if its program's estimated operations ({!Ops.estimates}, [0] if
       unknown) are more than [1000] times the fewest of this round's programs so
-      far. Each other one is timed with an early stop of three times the time of
-      the beam's first kernel.
-    + The search ends if no candidate was timed, if the fastest took less than
-      [BEAM_MIN_PROGRESS] microseconds (default [0.01]), or if it is faster than
-      the beam's first kernel by less than that. It then keeps the fastest
-      candidate alone if it is faster than the beam's first kernel. Otherwise
-      the beam becomes the [amt] fastest candidates, ties in order, and a new
-      round starts.
+      far. Each other one is timed with an early stop of three times the least
+      sample of the beam's first kernel.
+    + The fastest candidate is the one of least sample, the first of ties. The
+      round progresses if each of its samples is less than each sample of the
+      beam's first kernel by more than [BEAM_MIN_PROGRESS] microseconds (default
+      [0.01]). A kernel with no samples is slower than any. If the round
+      progresses, the beam becomes the [amt] candidates of least sample, ties in
+      order, and a new round starts. Otherwise the search ends.
 
-    The result is the beam's first kernel.
+    The result is the beam's first kernel. It is [k] unless a candidate
+    progressed on it.
 
     With [allow_test_size] (default: whether the environment variable
     [BEAM_ESTIMATE] holds a nonzero integer, default [1]), a program launching

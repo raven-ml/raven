@@ -75,6 +75,7 @@ let get_test_global_size global_size max_global_size vars =
   (size, Bigint.to_float (zprod input) /. Bigint.to_float (zprod size))
 
 let least = List.fold_left Float.min infinity
+let most = List.fold_left Float.max neg_infinity
 
 (* Timed up to [cnt] times, stopping once its least exceeds [early_stop]: the
    samples. *)
@@ -321,12 +322,30 @@ let beam_search ~time ?allow_test_size amt s =
           (Worker.map try_compile fresh);
         List.map (fun k -> (k, Ops.Tbl.find compiled (K.ast k))) ks
       in
+      (* [k]'s program timed with an early stop, or [None] if its timing
+         failed. *)
+      let sampled k prg ~early_stop =
+        match time_program ~time ~vars ~early_stop ~allow_test_size prg with
+        | samples -> Some samples
+        | exception e -> (
+            let bt = Printexc.get_raw_backtrace () in
+            if beam_debug > 0 then
+              Format.printf "BEAM failed for opts: [%a]@.%s@." pp_opts
+                (K.applied_opts k) (Printexc.to_string e);
+            match e with
+            | Failure _ -> None
+            | e -> Printexc.raise_with_backtrace e bt)
+      in
       let st = Unix.gettimeofday () in
       let elapsed () = Unix.gettimeofday () -. st in
       if beam_debug > 0 then Format.printf "BEAM_SEARCH:@.%a@." pp (K.ast s);
       if debug () >= 2 then
         Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
           (K.colored_shape s);
+      (* A round progresses when each sample of its fastest beats each of the
+         beam's first by more than [min_progress]: the least of noisy times is
+         biased low, and a search never answers a kernel slower than [s]. *)
+      let progresses (_, c) (_, b) = most c +. min_progress < least b in
       let rec search beam =
         let best = least (snd (List.hd beam)) in
         let candidates =
@@ -355,11 +374,9 @@ let beam_search ~time ?allow_test_size amt s =
                     this_compute_ops !least_compute_ops)
               else (
                 Hashtbl.add seen_libs (binary prg) ();
-                match
-                  time_program ~time ~vars ~early_stop:(best *. 3.)
-                    ~allow_test_size prg
-                with
-                | samples ->
+                match sampled cand prg ~early_stop:(best *. 3.) with
+                | None -> ()
+                | Some samples ->
                     timed := (cand, samples) :: !timed;
                     let tm = Helpers.time_to_str ~w:12 (least samples) in
                     let progress = List.length !timed in
@@ -375,15 +392,7 @@ let beam_search ~time ?allow_test_size amt s =
                     else if debug () >= 2 then
                       Printf.printf
                         "\r%7.2fs: %s       %4d/%4d         %s\027[K%!"
-                        (elapsed ()) tm progress n (K.colored_shape cand)
-                | exception e -> (
-                    let bt = Printexc.get_raw_backtrace () in
-                    if beam_debug > 0 then
-                      Format.printf "BEAM failed for opts: [%a]@.%s@." pp_opts
-                        (K.applied_opts cand) (Printexc.to_string e);
-                    match e with
-                    | Failure _ -> ()
-                    | e -> Printexc.raise_with_backtrace e bt))
+                        (elapsed ()) tm progress n (K.colored_shape cand))
           | _ -> ()
         in
         List.iteri consider (compile candidates);
@@ -394,16 +403,11 @@ let beam_search ~time ?allow_test_size amt s =
         in
         let exiting =
           match opts with
+          | fastest :: _ -> not (progresses fastest (List.hd beam))
           | [] -> true
-          | (_, c) :: _ ->
-              let tm = least c in
-              tm < min_progress || best -. tm < min_progress
         in
         let beam =
-          match opts with
-          | _ when not exiting -> List.filteri (fun i _ -> i < amt) opts
-          | ((_, c) as fastest) :: _ when least c < best -> [ fastest ]
-          | _ -> beam
+          if exiting then beam else List.filteri (fun i _ -> i < amt) opts
         in
         (if debug () >= 2 then
            let tm = Helpers.time_to_str ~w:12 (least (snd (List.hd beam))) in
@@ -414,8 +418,15 @@ let beam_search ~time ?allow_test_size amt s =
              (K.colored_shape (fst (List.hd beam))));
         if exiting then beam else search beam
       in
-      let beam = search [ (s, []) ] in
-      let k, samples = List.hd beam in
+      (* [s] itself, timed with no early stop, starts the beam. *)
+      let start =
+        match compile [ s ] with
+        | [ (_, Some (prg, _)) ] ->
+            Hashtbl.add seen_libs (binary prg) ();
+            Option.value ~default:[] (sampled s prg ~early_stop:infinity)
+        | _ -> []
+      in
+      let k, samples = List.hd (search [ (s, start) ]) in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));
       if beam_debug > 0 then

@@ -952,6 +952,12 @@ thread.
 
 ### Tolk (new)
 
+- `Search.beam_search` times its kernel before its first round and starts
+  from it, and a round progresses only when every sample of its fastest
+  candidate beats every sample of the beam's first kernel by
+  `BEAM_MIN_PROGRESS`, so a search never answers a kernel slower than the one
+  it was given. The least of noisy timings is biased low, and searches ran
+  rounds on gains within the noise, as PR #235 found.
 - **Breaking:** `Tolk_engine.measure` is replaced by `Tolk_engine.timer`, and
   `Search.beam_search` takes `~time`. A search allocates its buffers once, and
   not at all when its result is cached, links each candidate once, runs each
