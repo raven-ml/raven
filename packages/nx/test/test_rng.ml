@@ -109,7 +109,9 @@ let bound =
   Gen.frequency
     [
       (4, Gen.float_range (-3.) 3.);
-      (2, chosen [ neg_infinity; infinity; -9.; -6.; -0.; 5.5; 7.; 9. ]);
+      ( 2,
+        chosen
+          [ Float.nan; neg_infinity; infinity; -9.; -6.; -0.; 5.5; 7.; 9. ] );
     ]
 
 (* Positive over many orders of magnitude, where most float32 gammas underflow,
