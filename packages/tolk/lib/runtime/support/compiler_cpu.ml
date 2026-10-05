@@ -7,7 +7,10 @@
 
 (* Clang reads the source from a file and writes its output and its diagnostics
    to others, so that it never waits for this process to read. [run prog args
-   src] is the exit code, the output and the diagnostics. *)
+   src] is the exit status, the output and the diagnostics, or why [prog] does
+   not start. Clang runs as a process of this one, waited for with the runtime
+   released: [Sys.command] goes through the C library's [system], which macOS
+   runs one at a time, so compiling domains would wait for each other. *)
 let run prog args src =
   let temp_file contents =
     let path = Filename.temp_file "tolk" "" in
@@ -18,16 +21,36 @@ let run prog args src =
   Fun.protect ~finally:(fun () -> List.iter Sys.remove [ src_file; out; err ])
   @@ fun () ->
   let read path = In_channel.with_open_bin path In_channel.input_all in
-  let code =
-    Sys.command
-      (Filename.quote_command prog args ~stdin:src_file ~stdout:out ~stderr:err)
+  let started =
+    let stdin = Unix.openfile src_file [ O_RDONLY; O_CLOEXEC ] 0
+    and stdout = Unix.openfile out [ O_WRONLY; O_CLOEXEC ] 0
+    and stderr = Unix.openfile err [ O_WRONLY; O_CLOEXEC ] 0 in
+    Fun.protect ~finally:(fun () ->
+        List.iter Unix.close [ stdin; stdout; stderr ])
+    @@ fun () ->
+    try
+      Ok
+        (Unix.create_process prog
+           (Array.of_list (prog :: args))
+           stdin stdout stderr)
+    with Unix.Unix_error (e, _, _) ->
+      Error (prog ^ ": " ^ Unix.error_message e)
   in
-  (code, read out, read err)
+  let rec wait pid =
+    match Unix.waitpid [] pid with
+    | _, status -> status
+    | exception Unix.Unix_error (EINTR, _, _) -> wait pid
+  in
+  Result.map
+    (fun pid ->
+      let status = wait pid in
+      (status, read out, read err))
+    started
 
 let compile prog args src =
   match run prog args src with
-  | 0, obj, _ -> obj
-  | _, _, err -> raise (Renderer.Compiler.Compile_error err)
+  | Ok (WEXITED 0, obj, _) -> obj
+  | Ok (_, _, err) | Error err -> raise (Renderer.Compiler.Compile_error err)
 
 (* What Clang states it runs for [args] ([-###]), without running it: its
    version and installation, then the command of its compiler proper, which
@@ -42,8 +65,14 @@ let statement =
     match Hashtbl.find_opt stated (prog, args) with
     | Some s -> s
     | None ->
-        let code, out, err = run prog ("-###" :: args) "" in
-        let s = Printf.sprintf "%d\n%s%s" code out err in
+        let s =
+          match run prog ("-###" :: args) "" with
+          | Ok (WEXITED code, out, err) ->
+              Printf.sprintf "%d\n%s%s" code out err
+          | Ok ((WSIGNALED n | WSTOPPED n), out, err) ->
+              Printf.sprintf "signal %d\n%s%s" n out err
+          | Error why -> why
+        in
         Hashtbl.replace stated (prog, args) s;
         s
 

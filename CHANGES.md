@@ -978,6 +978,10 @@ thread.
 
 ### Tolk (new)
 
+- `Compiler_cpu.clang` runs Clang as a process of its own, waited for with
+  the runtime released, instead of through the C library's `system`, which
+  macOS runs one at a time: 16 compiles on 8 domains take 0.11 s, from
+  0.66 s.
 - Lowering a kernel allocates 22% less again: a graph walk pushes its work
   without allocating, and looking a node up builds a smaller probe. 8 domains
   lowering lorenz_simple's candidates collect 25% less often.
