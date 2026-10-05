@@ -3,7 +3,7 @@
  (public_name nx.amd.device)
  (libraries
   nx.device
-  nx.device.elf
+  nx.amd.code_object
   nx.device.support
   nx.remote.device
   nx.dtype

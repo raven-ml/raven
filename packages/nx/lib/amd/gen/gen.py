@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Generates amd_defs.ml and kfd_ioctl.h, the AMD definitions nx.amd.device reads.
+"""Generates the AMD definitions nx's AMD libraries read: device/amd_defs.ml
+and device/kfd_ioctl.h for nx.amd.device, and code_object/code_object_defs.ml
+for nx.amd.code_object. Each definition is generated once, into the library
+that owns it.
 
 Run from the repository root:
 
-  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/amd/device/gen/gen.py
-  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/amd/device/gen/gen.py --check
+  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/amd/gen/gen.py
+  uv run --with libclang==18.1.1 --with pyyaml==6.0.2 packages/nx/lib/amd/gen/gen.py --check
 
 Every input is pinned in pins.json by URL and SHA-256: the source archives and
 files below, and the firmware files of the linux-firmware commit below. Every
@@ -32,7 +35,7 @@ import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent
-sys.path.insert(0, str(HERE.parents[2] / "device" / "gen"))
+sys.path.insert(0, str(HERE.parents[1] / "device" / "gen"))
 from devgen import Unit, fetch, key, layout, main, ml_field, ml_int, ml_name, ml_version, stub_dir, struct_module  # noqa: E402
 
 KERNEL = ("https://github.com/ROCm/ROCK-Kernel-Driver/archive/"
@@ -182,13 +185,16 @@ CONSTANTS = [
     # the amdgpu driver's contexts, which hold the GPU's stable power state
     "DRM_AMDGPU_CTX", "AMDGPU_CTX_OP_ALLOC_CTX", "AMDGPU_CTX_OP_FREE_CTX", "AMDGPU_CTX_OP_SET_STABLE_PSTATE",
     "AMDGPU_CTX_STABLE_PSTATE_STANDARD",
-    # AQL queues and kernels
+    # AQL queues
     "AMD_QUEUE_PROPERTIES_IS_PTR64", "AMD_QUEUE_PROPERTIES_ENABLE_PROFILING",
-    "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
-    "AMD_KERNEL_CODE_PROPERTIES_ENABLE_WAVEFRONT_SIZE32",
     "SQ_SEL_X", "SQ_SEL_Y", "SQ_SEL_Z", "SQ_SEL_W", "SQ_RSRC_BUF", "BUF_FORMAT_32_UINT", "BUF_NUM_FORMAT_UINT",
     "BUF_DATA_FORMAT_32",
 ]
+# The kernel descriptor's fields and code properties, for nx.amd.code_object.
+KD_FIELDS = ["group_segment_fixed_size", "private_segment_fixed_size", "kernarg_size", "kernel_code_entry_byte_offset",
+             "compute_pgm_rsrc3", "compute_pgm_rsrc1", "compute_pgm_rsrc2", "kernel_code_properties"]
+KD_CONSTANTS = ["AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
+                "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_WAVEFRONT_SIZE32"]
 # 64-bit page-table flags.
 PTE_CONSTANTS = ["AMDGPU_PTE_VALID", "AMDGPU_PTE_SYSTEM", "AMDGPU_PTE_SNOOPED", "AMDGPU_PTE_EXECUTABLE",
                  "AMDGPU_PTE_READABLE", "AMDGPU_PTE_WRITEABLE", "AMDGPU_PTE_TF", "AMDGPU_PDE_PTE",
@@ -254,7 +260,6 @@ STRUCTS = {
                                   "max_wave_id", "read_dispatch_id", "write_dispatch_id", "compute_tmpring_size",
                                   "scratch_resource_descriptor", "scratch_backing_memory_location",
                                   "scratch_wave64_lane_byte_size"]),
-    "kernel_descriptor_t": ("Kernel_descriptor", None),
     "drm_amdgpu_info": ("Drm_amdgpu_info", ["return_pointer", "return_size", "query"]),
     "drm_amdgpu_info_device": ("Drm_amdgpu_info_device", ["cu_bitmap"]),
     "drm_amdgpu_ctx": ("Drm_amdgpu_ctx", ["in__op", "in__flags", "in__ctx_id", "out__alloc__ctx_id"]),
@@ -449,8 +454,8 @@ def generate(cache, pins, pin, outdir):
     lu = Unit(ci, [llvm / LLVM_FILES[0]], [], stub, cpp=True, defines=DEFINES)
     values = {**ku.enums(), **ru.enums()}
     values.update(ku.macros([c for c in CONSTANTS + PTE_CONSTANTS if c not in values]))
-    values.update(ru.macros([c for c in CONSTANTS if c not in values]))
-    missing = [c for c in CONSTANTS + PTE_CONSTANTS if c not in values]
+    values.update(ru.macros([c for c in CONSTANTS + KD_CONSTANTS if c not in values]))
+    missing = [c for c in CONSTANTS + PTE_CONSTANTS + KD_CONSTANTS if c not in values]
     if missing:
         sys.exit(f"undefined constants: {missing}")
     out.append("(* Constants *)")
@@ -653,11 +658,20 @@ def generate(cache, pins, pin, outdir):
         out.append(f"  ({json.dumps(n)}, {json.dumps(d)});")
     out.append("]")
 
-    (outdir / "amd_defs.ml").write_text("\n".join(out) + "\n")
+    # The kernel descriptor, for nx.amd.code_object
+    co = [*out[:3], "(* The kernel descriptor: each field is (byte offset, bytes). *)"]
+    size, fields = layout(ci, lu.struct("kernel_descriptor_t"))
+    struct_module(co, "Kernel_descriptor", size, fields, KD_FIELDS)
+    co.append("(* Its code properties. *)")
+    co += [f"let {ml_name(c)} = {ml_int(values[c])}" for c in KD_CONSTANTS]
+
+    for name, lines in (("device/amd_defs.ml", out), ("code_object/code_object_defs.ml", co)):
+        (outdir / name).parent.mkdir(parents=True, exist_ok=True)
+        (outdir / name).write_text("\n".join(lines) + "\n")
     header = (kernel / "include/uapi/linux/kfd_ioctl.h").read_text()
     if "#include <drm/drm.h>" not in header:
         sys.exit("kfd_ioctl.h no longer includes drm/drm.h")
-    (outdir / "kfd_ioctl.h").write_text(
+    (outdir / "device/kfd_ioctl.h").write_text(
         "/* Copied by gen.py from the Linux kernel's include/uapi/linux/kfd_ioctl.h\n"
         "   (ROCK-Kernel-Driver 33970e1351f5); do not edit. It includes\n"
         "   linux/types.h in place of drm/drm.h, which it needs only for those\n"
@@ -666,4 +680,5 @@ def generate(cache, pins, pin, outdir):
 
 
 if __name__ == "__main__":
-    main(__doc__, generate, ["amd_defs.ml", "kfd_ioctl.h"], HERE, OUT, "amd-gen")
+    main(__doc__, generate, ["device/amd_defs.ml", "device/kfd_ioctl.h", "code_object/code_object_defs.ml"], HERE, OUT,
+         "amd-gen")

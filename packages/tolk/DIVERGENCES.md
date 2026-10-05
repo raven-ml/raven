@@ -3539,3 +3539,18 @@ stores through a pad.
   kernel covers its run`; the Ops_amd suite: `recorded cases › profile`,
   `counters` and `traces`, from the generator patched as
   `test/gen/runtime/ops_amd.py` says.
+
+## D120. An AMD program's descriptor is its code object's one kernel
+
+- **tinygrad:** `runtime/ops_amd.py:545-555` (`amd_build_program`: the
+  descriptor at the start of `.rodata`, relocated by its own loop).
+- **tolk:** `lib/runtime/ops_amd.ml:134` (`program_data`).
+- **Differs:** tolk reads the code object through `nx.amd.code_object`,
+  which nx's AMD loader reads too: the descriptor is the symbol `name.kd` of
+  the code object's one kernel, and a code object of several kernels is
+  refused. A code object comgr links for one kernel places that kernel's
+  descriptor at the start of `.rodata`, so both read the same bytes.
+- **Reason:** (b), `nx.amd.device`'s loader, whose kernel descriptor parsing
+  is the same layout, read once.
+- **Pinned by:** the `recorded cases` of `Tolk.Ops_amd`, whose fixtures hold
+  one kernel each; `nx.amd.code_object`'s suite for the layout.

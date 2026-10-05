@@ -1757,9 +1757,6 @@ let amdgpu_ctx_op_set_stable_pstate = 6
 let amdgpu_ctx_stable_pstate_standard = 1
 let amd_queue_properties_is_ptr64 = 2
 let amd_queue_properties_enable_profiling = 8
-let amd_kernel_code_properties_enable_sgpr_dispatch_ptr = 2
-let amd_kernel_code_properties_enable_sgpr_private_segment_buffer = 1
-let amd_kernel_code_properties_enable_wavefront_size32 = 0x400
 let sq_sel_x = 4
 let sq_sel_y = 5
 let sq_sel_z = 6
@@ -2158,22 +2155,6 @@ module Amd_queue = struct
   let scratch_resource_descriptor = (144, 4)
   let scratch_backing_memory_location = (160, 8)
   let scratch_wave64_lane_byte_size = (176, 4)
-end
-
-module Kernel_descriptor = struct
-  let sizeof = 64
-  let compute_pgm_rsrc1 = (48, 4)
-  let compute_pgm_rsrc2 = (52, 4)
-  let compute_pgm_rsrc3 = (44, 4)
-  let group_segment_fixed_size = (0, 4)
-  let kernarg_preload = (58, 2)
-  let kernarg_size = (8, 4)
-  let kernel_code_entry_byte_offset = (16, 8)
-  let kernel_code_properties = (56, 2)
-  let private_segment_fixed_size = (4, 4)
-  let reserved0 = (12, 1)
-  let reserved1 = (24, 1)
-  let reserved3 = (60, 1)
 end
 
 module Drm_amdgpu_info = struct

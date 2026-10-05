@@ -1,0 +1,4 @@
+(test
+ (name test_code_object)
+ (package nx)
+ (libraries nx.amd.code_object windtrap))

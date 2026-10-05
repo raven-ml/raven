@@ -129,59 +129,40 @@ type program = {
   libhash : int64; (* the first 8 bytes of the code object's MD5 *)
 }
 
-let r_amdgpu_rel64 = 5
-
-(* The kernel descriptor at the start of the code object's .rodata, with its
-   relocations applied, as the device's loader applies them. *)
+(* The kernel of the code object [lib], which holds one: its descriptor, as the
+   device's loader relocates it, and the resource words a dispatch writes. *)
 let program_data gpu lib =
-  let o = Nx_device_elf.load lib in
-  let image = Bytes.of_string o.image in
-  List.iter
-    (fun (r : Nx_device_elf.relocation) ->
-      match (r.kind, r.target) with
-      | k, Offset sym when k = r_amdgpu_rel64 ->
-          Bytes.set_int64_le image r.at (Int64.of_int (sym - r.at + r.addend))
-      | k, _ -> invalid_arg (Printf.sprintf "an unknown AMD relocation %d" k))
-    o.relocations;
-  let rodata =
+  let module C = Nx_amd_code_object in
+  let kernel co =
+    match C.kernels co with
+    | [ name ] -> C.kernel co name
+    | names ->
+        Error
+          (Printf.sprintf "an AMD code object of %d kernels" (List.length names))
+  in
+  let co, k =
     match
-      List.find_opt
-        (fun (s : Nx_device_elf.section) -> s.name = ".rodata")
-        o.sections
+      Result.bind (C.of_string lib) (fun co ->
+          Result.map (fun k -> (co, k)) (kernel co))
     with
-    | Some s -> s.offset
-    | None -> invalid_arg "an AMD code object without .rodata"
+    | Ok r -> r
+    | Error e -> invalid_arg e
   in
-  let u32 off =
-    Int32.to_int (Bytes.get_int32_le image (rodata + off)) land 0xffff_ffff
-  in
-  let props =
-    Bytes.get_uint16_le image (rodata + G.kd_kernel_code_properties)
-  in
-  let group = u32 G.kd_group_segment_fixed_size in
-  let lds = (group + 511) / 512 land 0x1ff in
+  let lds = (k.group_segment + 511) / 512 land 0x1ff in
   {
-    desc_offset = rodata;
-    entry_point_offset =
-      rodata
-      + Int64.to_int
-          (Bytes.get_int64_le image
-             (rodata + G.kd_kernel_code_entry_byte_offset));
+    desc_offset = k.descriptor;
+    entry_point_offset = k.entry;
     (* gfx11 runs kernels privileged, for their context save and restore. *)
-    rsrc1 =
-      (u32 G.kd_compute_pgm_rsrc1 lor if major gpu = 11 then 1 lsl 20 else 0);
-    rsrc2 = u32 G.kd_compute_pgm_rsrc2 lor (lds lsl 15);
-    rsrc3 = u32 G.kd_compute_pgm_rsrc3;
-    wave32 = props land 0x400 <> 0;
-    private_segment_size = u32 G.kd_private_segment_fixed_size;
-    group_segment_size = group;
-    kernargs_segment_size = u32 G.kd_kernarg_size;
-    enable_dispatch_ptr =
-      props land G.amd_kernel_code_properties_enable_sgpr_dispatch_ptr <> 0;
-    enable_private_segment_sgpr =
-      props land G.amd_kernel_code_properties_enable_sgpr_private_segment_buffer
-      <> 0;
-    image_size = Helpers.round_up (Bytes.length image) 4;
+    rsrc1 = (k.rsrc1 lor if major gpu = 11 then 1 lsl 20 else 0);
+    rsrc2 = k.rsrc2 lor (lds lsl 15);
+    rsrc3 = k.rsrc3;
+    wave32 = k.wave32;
+    private_segment_size = k.private_segment;
+    group_segment_size = k.group_segment;
+    kernargs_segment_size = k.kernarg_size;
+    enable_dispatch_ptr = k.dispatch_ptr;
+    enable_private_segment_sgpr = k.private_segment_buffer;
+    image_size = String.length (C.image co);
     libhash = String.get_int64_le (Digest.string lib) 0;
   }
 

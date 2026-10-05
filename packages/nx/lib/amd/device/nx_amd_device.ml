@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 module D = Amd_defs
+module Code_object = Nx_amd_code_object
 module Mmio = Nx_device_support.Mmio
 module Pci = Nx_device_support.Pci
 module Pci_memory = Nx_device_support.Pci_memory
@@ -444,13 +445,19 @@ let upload a ~sleep ~staging dst img =
     failwith "hang detected: the copy engine did not upload the code";
   free_mem a staging
 
+(* Whether the GPU's workgroups have the LDS [k] takes, in the 512-byte granules
+   of its descriptor's [COMPUTE_PGM_RSRC2.LDS_SIZE]. *)
+let fits_lds a (k : Code_object.kernel) =
+  (k.group_segment + 511) / 512 land 0x1FF <= a.props.lds_bytes / 512
+
 (* The code object [binary], relocated and uploaded to the device's memory,
    which it frees once unloaded. A code object the device cannot run is refused,
    and the device stays usable. *)
 let load a ~sleep ~binary =
-  match Code_object.image binary with
-  | exception Failure why -> Error why
-  | obj, img -> (
+  match Code_object.of_string binary with
+  | Error _ as e -> e
+  | Ok obj -> (
+      let img = Code_object.image obj in
       let bytes = String.length img in
       match (alloc_mem a Vram bytes, alloc_mem a Host (fence_at bytes + 8)) with
       | (None, _ | _, None) as got ->
@@ -462,12 +469,14 @@ let load a ~sleep ~binary =
           upload a ~sleep ~staging mem img;
           let image = ref () and found = ref [] in
           let entry name =
-            match
-              Code_object.kernel obj img ~name
-                ~lds_kib:(a.props.lds_bytes / 1024)
-            with
-            | exception Failure why -> Error why
-            | k ->
+            match Code_object.kernel obj name with
+            | Error _ as e -> e
+            | Ok k when not (fits_lds a k) ->
+                Error
+                  (Printf.sprintf
+                     "kernel %s needs %d bytes of LDS; the GPU has %d KiB" name
+                     k.group_segment (a.props.lds_bytes / 1024))
+            | Ok k ->
                 let descriptor = Nativeint.of_int (va mem + k.descriptor) in
                 with_hw a (fun () ->
                     Hashtbl.replace a.kernels descriptor

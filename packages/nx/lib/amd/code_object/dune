@@ -1,0 +1,5 @@
+(library
+ (name nx_amd_code_object)
+ (public_name nx.amd.code_object)
+ (private_modules code_object_defs)
+ (libraries nx.device.elf))

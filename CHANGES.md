@@ -3166,6 +3166,10 @@ thread.
 
 ### Nx
 
+- Add `nx.amd.code_object`: AMD GPU code objects relocated as a loader
+  relocates them (`Nx_amd_code_object.of_string`, `image`), and each kernel's
+  descriptor (`kernels`, `kernel`). `nx.amd.device` and tolk read descriptors
+  through it.
 - Add `nx.nv.packet`, which encodes NVIDIA GPUs' commands once for the
   runtime and for tolk: methods, ring entries and launch descriptors
   (`Nx_nv_packet.Methods`, `Gpfifo`, `Qmd`), as data around values of any

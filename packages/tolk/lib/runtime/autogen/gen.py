@@ -91,12 +91,9 @@ TRACE_CONSTANTS = ["SQ_TT_RT_FREQ_4096_CLK", "SQ_TT_WTYPE_INCLUDE_CS_BIT", "SQ_T
 
 HSA_CONSTANTS = ["HSA_PACKET_HEADER_TYPE", "HSA_PACKET_HEADER_BARRIER", "HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE",
                  "HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE", "HSA_FENCE_SCOPE_SYSTEM", "HSA_PACKET_TYPE_VENDOR_SPECIFIC",
-                 "HSA_PACKET_TYPE_KERNEL_DISPATCH", "HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS",
-                 "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR"]
+                 "HSA_PACKET_TYPE_KERNEL_DISPATCH", "HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS"]
 DISPATCH_FIELDS = ["header", "setup", "workgroup_size_x", "grid_size_x", "private_segment_size", "group_segment_size",
                    "kernel_object"]
-KD_FIELDS = ["group_segment_fixed_size", "private_segment_fixed_size", "kernarg_size", "kernel_code_entry_byte_offset",
-             "compute_pgm_rsrc3", "compute_pgm_rsrc1", "compute_pgm_rsrc2", "kernel_code_properties"]
 TMPRING_UNIONS = {"gfx9": "", "gfx11": "_GFX11", "gfx12": "_GFX12"}
 
 
@@ -110,7 +107,7 @@ def shift(f): return (f(1)).bit_length() - 1
 
 def amd():
     import ctypes, importlib
-    from tinygrad.runtime.autogen import hsa, amdgpu_kd
+    from tinygrad.runtime.autogen import hsa
     from tinygrad.runtime.autogen.am import regs
     am = lambda n: importlib.import_module(f"tinygrad.runtime.autogen.am.{n}")
     soc15, nv_pm4 = am("pm4_soc15"), am("pm4_nv")
@@ -171,14 +168,12 @@ def amd():
         lo, hi = same(f, [getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2][f] for fam in GC_FAMILIES
                           if f in getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2]])
         lines += [f"let compute_dispatch_initiator_{f} = {ml_value((hi, lo))}"]
-    lines += ["", "(* HSA and the kernel descriptor *)", ""]
+    lines += ["", "(* HSA *)", ""]
     lines += [f"let {n.lower()} = {ml_value(getattr(hsa, n))}" for n in HSA_CONSTANTS]
     offsets = lambda t: {f[0]: f[2] for f in t._real_fields_}
     dispatch = offsets(hsa.hsa_kernel_dispatch_packet_t)
     lines += [f"let dispatch_{f} = {dispatch[f]}" for f in DISPATCH_FIELDS]
     lines += [f"let dispatch_size = {ctypes.sizeof(hsa.hsa_kernel_dispatch_packet_t)}"]
-    kd = offsets(amdgpu_kd.llvm_amdhsa_kernel_descriptor_t)
-    lines += [f"let kd_{f} = {kd[f]}" for f in KD_FIELDS]
     for g, u in TMPRING_UNIONS.items():
         fields = {f[0]: f for f in getattr(hsa, f"union_COMPUTE_TMPRING_SIZE{u}_bitfields")._real_fields_}
         for name in ("WAVES", "WAVESIZE"):

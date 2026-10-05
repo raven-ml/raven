@@ -302,9 +302,8 @@ val flush_hdp : t -> unit
 
 type kernel = {
   code : Nx_device.Buffer.t;
-      (** The uploaded code object: its image, as the ELF object lays it out
-          ({!Nx_device_elf.load}), relocated, in memory of the device the host
-          writes, which keeps the code object loaded while it is reachable
+      (** The uploaded code object: its image ({!Nx_amd_code_object.image}),
+          in memory of the device the host writes, which keeps the code object loaded while it is reachable
           ({!Nx_device.Program.code}). *)
   descriptor : nativeint;  (** The address of the kernel descriptor. *)
   private_segment : int;

@@ -543,7 +543,7 @@ let compute_dispatch_initiator_compute_shader_en = (0, 0)
 let compute_dispatch_initiator_force_start_at_000 = (2, 2)
 let compute_dispatch_initiator_cs_w32_en = (15, 15)
 
-(* HSA and the kernel descriptor *)
+(* HSA *)
 
 let hsa_packet_header_type = 0
 let hsa_packet_header_barrier = 8
@@ -553,8 +553,6 @@ let hsa_fence_scope_system = 2
 let hsa_packet_type_vendor_specific = 0
 let hsa_packet_type_kernel_dispatch = 2
 let hsa_kernel_dispatch_packet_setup_dimensions = 0
-let amd_kernel_code_properties_enable_sgpr_private_segment_buffer = 1
-let amd_kernel_code_properties_enable_sgpr_dispatch_ptr = 2
 let dispatch_header = 0
 let dispatch_setup = 2
 let dispatch_workgroup_size_x = 4
@@ -563,14 +561,6 @@ let dispatch_private_segment_size = 24
 let dispatch_group_segment_size = 28
 let dispatch_kernel_object = 32
 let dispatch_size = 64
-let kd_group_segment_fixed_size = 0
-let kd_private_segment_fixed_size = 4
-let kd_kernarg_size = 8
-let kd_kernel_code_entry_byte_offset = 16
-let kd_compute_pgm_rsrc3 = 44
-let kd_compute_pgm_rsrc1 = 48
-let kd_compute_pgm_rsrc2 = 52
-let kd_kernel_code_properties = 56
 let compute_tmpring_size_waves_gfx9 = (11, 0)
 let compute_tmpring_size_wavesize_gfx9 = (24, 12)
 let compute_tmpring_size_waves_gfx11 = (11, 0)
