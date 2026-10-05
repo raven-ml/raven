@@ -14,8 +14,8 @@
     - {!val-vmap}, {!remat} and {!val-jit} take the signature
       ({!Nx.Ptree.type-fn}) of the function they transform and return a function
       of the same type.
-    - {!scan} takes the structures of its carry, rows and outputs, and
-      {!iterate} that of its carry.
+    - {!scan} takes the structures of its carry, rows and outputs, {!iterate}
+      that of its carry, and {!root} that of its solution.
     - A function of one tensor has its own form of the transformations that take
       one structure or signature: {!grad'}, {!vjp'}, {!jvp'}, {!vmap'},
       {!scan'}, {!iterate'}, {!jit'}, ...
@@ -433,7 +433,10 @@ val lanes : axis -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     [lanes a x] is [lanes a dx], and under reverse mode inside the map named [a]
     the cotangent of [x] is the calling lane's row of the sum over the lanes of
     their cotangents, so a lane's gradient collects every lane's use of its [x].
-    [Nx.sum ~axes:[0] (lanes a x)] is the sum of [x] over the lanes of [a]. *)
+    [Nx.sum ~axes:[0] (lanes a x)] is the sum of [x] over the lanes of [a].
+
+    Raises [Invalid_argument] inside the step of an {!iterate} whose lanes stop
+    apart. *)
 
 val lane_index : ?axis:axis -> unit -> (int32, Nx.int32_elt) Nx.t
 (** [lane_index ?axis ()] is the calling lane's index in the map named [axis],
@@ -442,7 +445,8 @@ val lane_index : ?axis:axis -> unit -> (int32, Nx.int32_elt) Nx.t
     call there is one lane, and it is [0].
 
     [Nx.Rng.fold_in_tensor k (lane_index ())] gives each lane its own key from a
-    key [k] the map captures. *)
+    key [k] the map captures. Inside the step of an {!iterate} whose lanes stop
+    apart, a stopped lane answers its donor's index. *)
 
 (** {1:totals Totals} *)
 
@@ -539,7 +543,8 @@ end
     {!jvp}, which differentiate the path taken. A predicate that depends on a
     map's lanes raises, one that depends on a compiled function's arguments
     raises {!Jit_error}, and {!Nx.where} selects everywhere. A loop whose length
-    depends on a value is {!iterate}, which also runs under {!val-vmap}. *)
+    depends on a value is {!iterate}, which runs under differentiation and
+    {!val-vmap}, not yet under {!val-jit}. *)
 
 val scan :
   'c Nx.Ptree.t ->
@@ -599,13 +604,25 @@ val iterate :
   f:('c -> 'c) ->
   'c ->
   'c
-(** [iterate c ~max ~until ~f init] applies [f] to the carry, starting from
-    [init], until [until carry] holds, and returns that carry. [until] is tested
-    before each step: if it holds of [init], the result is [init]. The loop
-    takes at most [max] steps. If [until] is still false after [max] steps, it
-    raises through {!Nx.check}:
-    ["Rune.iterate: until is still false after max = 50 steps"]. A method with a
-    budget puts it in [until], so the loop ends there and the method reports:
+(** [iterate c ~max ~until ~f init] applies the step [f] to a carry of structure
+    [c], starting from [init], until [until carry] holds, and returns that
+    carry. [until] returns one boolean and is tested before each step, so an
+    [init] that satisfies it is returned unchanged. [f] returns a carry with the
+    visits, dtypes, shapes and placements of the one it received.
+
+    {[
+    let newton ~g ~dg x0 =
+      Rune.iterate' ~max:50
+        ~until:(fun x -> Nx.less_s (Nx.abs (g x)) 1e-12)
+        ~f:(fun x -> Nx.sub x (Nx.div (g x) (dg x)))
+        x0
+    ]}
+
+    The loop takes at most [max] steps. If [until] is still false after [max]
+    steps, it raises [Invalid_argument]
+    (["Rune.iterate: until is still false after max = 50 steps"]), so a
+    truncated iteration never passes for a converged one. A method that reports
+    running out of steps counts them in the carry and stops on the count:
 
     {[
     let minimize ~budget ~converged ~step x0 =
@@ -622,33 +639,32 @@ val iterate :
       (x, converged x)
     ]}
 
-    Under {!val-vmap} each lane stops on its own condition, and the loop runs
-    until every lane has stopped. A stopped lane keeps its carry; inside the
-    step it computes a running lane's trip, its {e donor}'s, at the donor's
-    carry and with the donor's rows of the lanes the step reads from outside, so
-    the step only runs at a point some lane reached. Its {!lane_index} there is
-    its donor's, its additions to a {!Total} are dropped, and {!lanes} of the
-    map raises. The error names the first lane still running:
-    ["Rune.iterate: until is still false after max = 50 steps, in lane 3"]. A
-    stop that every lane shares holds no lane and admits {!lanes}, and its error
-    names no lane.
+    Under {!val-vmap} each lane stops on its own [until], and the loop runs
+    until the last lane stops. A stopped lane keeps its carry bit for bit. While
+    other lanes run, it computes the step of a running lane, its {e donor}, on
+    the donor's carry and the donor's row of every batched value the step
+    captures, so the step never runs at a point no lane reached. Inside the step
+    a stopped lane's {!lane_index} is its donor's, its additions to a {!Total}
+    are dropped, and {!lanes} raises, since the lanes are not at the same step.
+    When [until] does not depend on the lanes, they stop together: none is held,
+    {!lanes} works in the step, and the error names no lane. Otherwise the error
+    names the first lane still running, the outermost map's first:
+    ["Rune.iterate: until is still false after max = 50 steps, in lane 3"].
 
-    Under {!grad}, {!vjp} and {!jvp} the derivative covers the steps each lane
-    took: a stopped lane contributes exact zeros. [until] has no derivative. A
-    loop none of whose carry depends on a value the differentiation tracks is
-    not differentiated. An iterate in another's step follows these rules at each
-    level: an outer lane that stopped holds its carry through the inner loop's
-    trips, and a derivative covers the trips each loop took. Under {!val-jit} a
-    loop that stops on a condition raises {!Jit_error}.
+    Under differentiation the derivative covers the steps each lane took: a
+    stopped lane contributes exact zeros, and [until] has no derivative. A loop
+    whose carry depends on no value the differentiation tracks is not
+    differentiated. An iterate inside another's step follows these rules at each
+    level: a lane the outer loop stopped is held through the inner loop's trips.
+    Under {!val-jit}, [iterate] raises {!Jit_error}.
 
     Raises [Invalid_argument] if [max < 0]
-    (["Rune.iterate: max = -1 is negative"]), if [until] does not return one
-    boolean (["Rune.iterate: until must return one boolean, got bool [3]"]), and
-    at the step if [f] returns a carry whose visits, dtypes, shapes or
-    placements differ from the carry it received, naming the first path where
-    they differ, as in
-    ["Rune.iterate: the root: shape [3] in the carry the step returned, [2] in
-     the carry it received"]. *)
+    (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one
+    element (["Rune.iterate: until must return one boolean, got shape [3]"]),
+    and at the step if [f]'s carry differs from the one it received, naming the
+    first path where they differ, as in
+    ["Rune.iterate: 0: shape [3] in the carry the step returned, [2] in the
+     carry it received"]. *)
 
 val root :
   ?linear_solve:(('x -> 'x) -> 'x -> 'x) ->
