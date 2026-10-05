@@ -672,6 +672,47 @@ let values_and_products =
             (Nx.to_array (Nx.slice [ I 2 ] got)));
     ]
 
+(* Routing and bfloat16 *)
+
+(* [routed w ids x] routes each row of [x] [[| p; k |]] through the expert of
+   [w] [[| e; n; k |]] its id names. *)
+let routed w ids x =
+  let e = (Nx_quant.shape w).(0) in
+  Nx.map_segments ~segments:e ids
+    (fun owners rows ->
+      Nx_quant.apply (Nx_quant.take ~axis:0 ~indices:owners w) rows)
+    x
+
+let routing =
+  group "routing and bfloat16"
+    [
+      cases ~name:format_name
+        "experts split over two devices give one device's routed product, eager"
+        formats (fun format ->
+          let w = random_weight ~format [| 4; 3; 256 |] in
+          let ids =
+            Nx.create Nx.int64 [| 12 |]
+              (Array.init 12 (fun i -> Int64.of_int ((i * 5 mod 6) - 1)))
+          in
+          let x = random_floats [| 12; 256 |] in
+          let split = Nx.Placement.sharded ~axis:0 [ Devices.d1; Devices.d2 ] in
+          let placed = Nx.Ptree.place Nx_quant.ptree split w in
+          equal (array float_exact)
+            (Nx.to_array (routed w ids x))
+            (Nx.to_array (Nx.place Nx.Placement.host (routed placed ids x))));
+      cases ~name:string_of_int
+        "at bfloat16, an MXFP4 product is the bfloat16 product of its bfloat16 \
+         values, bit for bit"
+        [ 32; 256; 2048 ] (fun k ->
+          let w = random_weight [| 16; k |] in
+          let x = Nx.cast Nx.bfloat16 (random_floats [| 8; k |]) in
+          equal (array int64)
+            (bits
+               (Nx.matmul x
+                  (Nx.matrix_transpose (Nx_quant.dequant Nx.bfloat16 w))))
+            (bits (Nx_quant.apply w x)));
+    ]
+
 (* Construction and placement *)
 
 open Devices
@@ -894,4 +935,4 @@ let others =
 let () =
   exit
     (run "nx quant"
-       [ known; ggml; values_and_products; errors; placements; others ])
+       [ known; ggml; values_and_products; routing; errors; placements; others ])
