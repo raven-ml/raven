@@ -40,8 +40,8 @@ let loop f init xs =
   done;
   (!c, Nx.stack (List.rev !ys))
 
-(* A body from two programs: the next carry is [p (c + x)], the output [q c]. *)
-let body p q c x = (Expr.eval p (Nx.add c x), Expr.eval q c)
+(* A step from two programs: the next carry is [p (c + x)], the output [q c]. *)
+let step p q c x = (Expr.eval p (Nx.add c x), Expr.eval q c)
 
 (* The fold *)
 
@@ -52,8 +52,8 @@ let fold_tests =
         let* n = int_range 1 5 in
         triple (pair Expr.gen Expr.gen) Expr.point (Expr.points n))
       (fun ((p, q), init, xs) ->
-        let c, ys = Rune.scan' ~f:(body p q) ~init xs in
-        let c', ys' = loop (body p q) init xs in
+        let c, ys = Rune.scan' ~f:(step p q) ~init xs in
+        let c', ys' = loop (step p q) init xs in
         equal ~msg:"carry" (exact ()) c' c;
         equal ~msg:"outputs" (exact ()) ys' ys);
     test "a running sum is a cumulative sum" (fun () ->
@@ -122,7 +122,7 @@ let fold_tests =
         equal (exact ()) (v4 ()) c);
   ]
 
-(* Each transformation runs the body once per row *)
+(* Each transformation runs the step once per row *)
 
 let counting () =
   let runs = ref 0 in
@@ -139,7 +139,7 @@ let counting () =
 let runs_tests =
   let under name transform =
     test
-      ("under " ^ name ^ " the body runs once per row")
+      ("under " ^ name ^ " the step runs once per row")
       (fun () ->
         let runs, f = counting () in
         transform f;
@@ -156,7 +156,7 @@ let runs_tests =
 (* Refusals *)
 
 let changed_length =
-  "Rune.scan: the root: length 2 in the carry the body returned, length 1 in \
+  "Rune.scan: the root: length 2 in the carry the step returned, length 1 in \
    the carry it received"
 
 let grow c x = (c @ [ x ], ())
@@ -183,7 +183,7 @@ let refusal_cases =
       changed_length,
       fun () -> ignore (scan_growing (v4 ())) );
     ( "a carry of another dtype",
-      "Rune.scan: the root: float32 in the carry the body returned, float64 in \
+      "Rune.scan: the root: float32 in the carry the step returned, float64 in \
        the carry it received",
       fun () ->
         ignore
@@ -194,7 +194,7 @@ let refusal_cases =
              ~init:(Nx.P (scalar 0.))
              (v4 ())) );
     ( "a carry that loses its option",
-      "Rune.scan: the root: None in the carry the body returned, Some in the \
+      "Rune.scan: the root: None in the carry the step returned, Some in the \
        carry it received",
       fun () ->
         ignore
@@ -255,7 +255,7 @@ let refusal_tests =
               (v4 (), vec [| 1.; 2. |])));
   ]
 
-(* The body's exceptions and effects *)
+(* The step's exceptions and effects *)
 
 exception Boom
 
@@ -273,9 +273,9 @@ let guarded finalised x =
   | y -> y
   | exception Boom -> Nx.mul_s x 3.
 
-let body_tests =
+let step_tests =
   let caught name transform expected =
-    test ("an exception of the body reaches the scan under " ^ name) (fun () ->
+    test ("an exception of the step reaches the scan under " ^ name) (fun () ->
         let finalised = ref 0 in
         equal (close ()) expected (transform (guarded finalised));
         equal ~msg:"finaliser" int 1 !finalised)
@@ -290,7 +290,7 @@ let body_tests =
     caught "vmap"
       (fun g -> Rune.vmap' g (Nx.reshape [| 1; 4 |] x))
       (Nx.reshape [| 1; 4 |] (Nx.mul_s x 3.));
-    test "an effect the body leaves unhandled is the body's" (fun () ->
+    test "an effect the step leaves unhandled is the step's" (fun () ->
         let runs = ref 0 in
         let f x =
           fst
@@ -309,7 +309,7 @@ let body_tests =
           (vec [| 3.; 3.; 3.; 3. |])
           (Rune.grad' (fun x -> Nx.sum (g x)) (v4 ()));
         equal ~msg:"runs" int 1 !runs);
-    test "a handler between grad and the scan answers the body's effects"
+    test "a handler between grad and the scan answers the step's effects"
       (fun () ->
         let answered f =
           Effect.Deep.match_with f ()
@@ -472,7 +472,7 @@ let compiled_tests =
         equal (close ())
           (Rune.grad' by_scan (v4 ()))
           (Rune.jit' (Rune.grad' by_scan) (v4 ())));
-    test "a scan under jit whose body reduces twice over one length is eager"
+    test "a scan under jit whose step reduces twice over one length is eager"
       (fun () ->
         let f xs =
           let c = Nx.eye f64 4 in
@@ -534,7 +534,7 @@ let compiled_tests =
 
 (* Memory *)
 
-(* A forward-mode fold of [n] steps whose body keeps a weak pointer to each
+(* A forward-mode fold of [n] trips whose step keeps a weak pointer to each
    carry it returns: at the last step, the number of those carries, other than
    the two most recent, that a full collection leaves alive. *)
 let carries_alive_in_fold n =
@@ -575,7 +575,7 @@ let () =
          group "fold" fold_tests;
          group "runs" runs_tests;
          group "refusals" refusal_tests;
-         group "body" body_tests;
+         group "step" step_tests;
          group "placement" placement_tests;
          group "transformed" transformed_tests;
          group "compiled" compiled_tests;

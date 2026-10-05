@@ -307,7 +307,7 @@ let scan_of fn cs xs_s ys_s ~f ~init xs =
   let req_step c_leaves x_leaves =
     let c = Ptree.rebuild cs ~like:init c_leaves in
     let c', y = f c (Ptree.rebuild xs_s ~like:xs x_leaves) in
-    Structure.check fn cs ~this:"the carry the body returned" c'
+    Structure.check fn cs ~this:"the carry the step returned" c'
       ~that:"the carry it received" c;
     (match !first with
     | None -> first := Some y
@@ -325,7 +325,7 @@ let scan_of fn cs xs_s ys_s ~f ~init xs =
   match !first with
   | Some y0 ->
       (Ptree.rebuild cs ~like:init r.r_carry, Ptree.rebuild ys_s ~like:y0 r.r_ys)
-  | None -> assert false (* Every answer runs the body at least once. *)
+  | None -> assert false (* Every answer runs the step at least once. *)
 
 let scan cs xs_s ys_s ~f ~init xs = scan_of "Rune.scan" cs xs_s ys_s ~f ~init xs
 

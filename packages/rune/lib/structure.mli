@@ -18,9 +18,9 @@ val check :
 
     Raises [Invalid_argument] otherwise, naming the first visit where they
     differ and what each holds there, as in
-    ["Rune.scan: 1: length 3 in the carry the body returned, length 2 in the
+    ["Rune.scan: 1: length 3 in the carry the step returned, length 2 in the
      carry it received"], or the path and both dtypes, as in
-    ["Rune.scan: 0: float32 in the carry the body returned, float64 in the carry
+    ["Rune.scan: 0: float32 in the carry the step returned, float64 in the carry
      it received"]. *)
 
 val map2 :

@@ -270,7 +270,7 @@ let () =
   Printf.printf "%s\n" (Nx.to_string g_remat) (* identical *)
 ```
 
-Wrap the memory-heavy sub-computation (a transformer block, say), not the whole objective. The block may close over its weights: every transformation sees `remat s f` as it sees `f`, so gradients and tangents reach the tensors it captures. Under `jit`, the recomputation runs in the backward pass, once the block's output cotangent exists, so the compiled program holds one block's intermediates at a time. A compiled `scan` already recomputes each step in its backward loop, so a `scan` body gains nothing from `remat`. Forward mode keeps no intermediates: under `jvp`, `remat s f` computes what `f` does.
+Wrap the memory-heavy sub-computation (a transformer block, say), not the whole objective. The block may close over its weights: every transformation sees `remat s f` as it sees `f`, so gradients and tangents reach the tensors it captures. Under `jit`, the recomputation runs in the backward pass, once the block's output cotangent exists, so the compiled program holds one block's intermediates at a time. A compiled `scan` already recomputes each step in its backward loop, so a `scan` step gains nothing from `remat`. Forward mode keeps no intermediates: under `jvp`, `remat s f` computes what `f` does.
 
 ## Custom Differentiation Rules
 
@@ -414,11 +414,11 @@ let () =
     (Nx.to_string squares)
 ```
 
-The carry the body returns must have the visits of the one it received, and each step's outputs those of the first step's: a list keeps its length and an option its presence. `scan` raises otherwise, naming the first path where they differ.
+The carry the step returns must have the visits of the one it received, and each step's outputs those of the first step's: a list keeps its length and an option its presence. `scan` raises otherwise, naming the first path where they differ.
 
 Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop that runs each step again at its carry, so the compiled program's size does not depend on the number of steps. `jvp`, `vmap` and `grad` of a scan compile as one loop too. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
 
-A compiled function writes the loop out step by step instead when the carry changes its shapes across steps, when the body runs on the host or on devices of two kinds, and inside a `custom_jvp` tangent map under reverse mode. Everywhere outside `jit` the scan is its loop, run where it is written, inside every transformation, `Rune.Total.collect` and `Nx.Rng.with_key` around it.
+A compiled function writes the loop out step by step instead when the carry changes its shapes across steps, when the step runs on the host or on devices of two kinds, and inside a `custom_jvp` tangent map under reverse mode. Everywhere outside `jit` the scan is its loop, run where it is written, inside every transformation, `Rune.Total.collect` and `Nx.Rng.with_key` around it.
 
 ### Branches and loops on values
 

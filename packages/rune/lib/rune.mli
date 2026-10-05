@@ -364,7 +364,7 @@ val remat : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     Under {!val-jit}, the backward pass reads the arguments again only once the
     cotangents of [f]'s result exist, so [f]'s intermediates are live for one
     run at a time. A remat whose arguments are all arguments or constants of the
-    compiled function reads them directly, and so does one inside the body of a
+    compiled function reads them directly, and so does one inside the step of a
     compiled {!scan}, whose backward loop recomputes each step already.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
@@ -549,19 +549,19 @@ val scan :
   init:'c ->
   'x ->
   'c * 'y
-(** [scan c x y ~f ~init xs] folds [f] over the rows of [xs], a value of
-    structure [x]: every tensor of [xs] has the same leading length [n], and
+(** [scan c x y ~f ~init xs] folds the step [f] over the rows of [xs], a value
+    of structure [x]: every tensor of [xs] has the same leading length [n], and
     step [i] passes [f] row [i] of every tensor. [f carry row] returns the next
     carry, of structure [c], and the step's outputs, of structure [y]; the
     result is the final carry and the outputs, every tensor stacked along a new
     axis 0. A fold with nothing to emit passes {!Nx.Ptree.unit} for [y] and
     returns [()].
 
-    Every carry the body returns has the visits ({!Nx.Ptree.visits}) of the one
+    Every carry the step returns has the visits ({!Nx.Ptree.visits}) of the one
     it received, and every step's outputs have the first step's: a list keeps
     its length, an option its presence, a case and an integer their value.
 
-    Under {!val-jit} the body compiles once and runs as a loop in the compiled
+    Under {!val-jit} the step compiles once and runs as a loop in the compiled
     program, and differentiating compiles a reversed loop that runs each step
     again at its carry. {!jvp}, {!val-vmap} and {!grad} of a scan compile as one
     loop too, whose carry gains a tangent or a lane only for the carry tensors
@@ -572,8 +572,8 @@ val scan :
     updates with {!Nx.set}, or reads only at the index it writes, is updated in
     place. A compiled function writes the loop out instead, step by step, each
     step's carry stored before the next step reads it, when the carry changes
-    its shapes across steps, when the body runs on a device with command queues
-    and on the host, or on devices of two kinds, inside the body of a loop it
+    its shapes across steps, when the step runs on a device with command queues
+    and on the host, or on devices of two kinds, inside the step of a loop it
     compiles (an inner scan runs step by step within each step of the outer
     loop), and inside a {!custom_jvp} tangent map under reverse mode.
 
@@ -585,11 +585,11 @@ val scan :
     (["Rune.scan: an xs leaf is a scalar"]), tensors of different leading
     lengths (["Rune.scan: the xs leaves differ in their leading length"]), or if
     [n] is [0] (["Rune.scan: xs is empty along the scan axis"]); and, at the
-    step, if the body returns a carry whose visits or dtypes differ from the
+    step, if the step returns a carry whose visits or dtypes differ from the
     carry it received, or outputs whose visits, dtypes or shapes differ from the
     first step's, naming the first path where they differ and what each holds
     there, as in
-    ["Rune.scan: 1: length 3 in the carry the body returned, length 2 in the
+    ["Rune.scan: 1: length 3 in the carry the step returned, length 2 in the
      carry it received"]. *)
 
 val iterate :
