@@ -51,6 +51,7 @@ topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.620e-04	7.475e-04 7.509e-04
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
+# forced: blessed transcendental/exp-float32-1Mi-host transcendental/log-float32-1Mi-host transcendental/sin-float32-1Mi-host transcendental/sin-far-float32-1Mi-host transcendental/exp-float64-1Mi-host transcendental/log-float64-1Mi-host transcendental/sin-float64-1Mi-host transcendental/sin-far-float64-1Mi-host under load 11.6 on 10 cores
 
 eigh/float32-64x8x8-eager	alloc_words	exact	254
 eigh/float32-64x8x8-eager	wall_time	batch=256	n=20	3.544e-05	2.592e-05 3.165e-05 3.167e-05 3.222e-05 3.248e-05 3.273e-05 3.334e-05 3.396e-05 3.438e-05 3.498e-05 3.589e-05 3.787e-05 3.813e-05 4.029e-05 4.316e-05 4.547e-05 4.690e-05 4.844e-05 5.042e-05 5.549e-05
@@ -94,3 +95,19 @@ topk/4-of-32-512-rows-compiled	alloc_words	exact	1293
 topk/4-of-32-512-rows-compiled	wall_time	batch=128	n=20	5.880e-05	4.013e-05 4.031e-05 5.158e-05 5.404e-05 5.504e-05 5.645e-05 5.700e-05 5.774e-05 5.856e-05 5.869e-05 5.890e-05 6.201e-05 6.297e-05 6.367e-05 6.398e-05 6.572e-05 6.709e-05 6.742e-05 6.873e-05 6.876e-05
 topk/4-of-32-512-rows-eager	alloc_words	exact	3050
 topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	9.535e-04	9.384e-04 9.396e-04 9.398e-04 9.405e-04 9.417e-04 9.435e-04 9.444e-04 9.454e-04 9.455e-04 9.524e-04 9.546e-04 9.551e-04 9.579e-04 9.584e-04 9.615e-04 9.656e-04 9.672e-04 9.775e-04 9.841e-04 9.846e-04
+transcendental/exp-float32-1Mi-host	alloc_words	exact	873
+transcendental/exp-float32-1Mi-host	wall_time	batch=4	n=20	2.024e-03	1.812e-03 1.936e-03 1.953e-03 1.956e-03 1.964e-03 1.972e-03 1.999e-03 2.015e-03 2.020e-03 2.021e-03 2.027e-03 2.033e-03 2.055e-03 2.077e-03 2.153e-03 2.154e-03 2.160e-03 2.263e-03 2.358e-03 2.448e-03
+transcendental/exp-float64-1Mi-host	alloc_words	exact	873
+transcendental/exp-float64-1Mi-host	wall_time	batch=4	n=20	2.301e-03	2.088e-03 2.142e-03 2.169e-03 2.202e-03 2.246e-03 2.247e-03 2.249e-03 2.255e-03 2.269e-03 2.300e-03 2.301e-03 2.302e-03 2.367e-03 2.375e-03 2.380e-03 2.393e-03 2.393e-03 2.440e-03 2.458e-03 2.474e-03
+transcendental/log-float32-1Mi-host	alloc_words	exact	873
+transcendental/log-float32-1Mi-host	wall_time	batch=4	n=20	1.339e-03	1.275e-03 1.277e-03 1.285e-03 1.288e-03 1.296e-03 1.301e-03 1.317e-03 1.319e-03 1.326e-03 1.336e-03 1.343e-03 1.359e-03 1.386e-03 1.426e-03 1.445e-03 1.447e-03 1.459e-03 1.510e-03 1.538e-03 1.651e-03
+transcendental/log-float64-1Mi-host	alloc_words	exact	873
+transcendental/log-float64-1Mi-host	wall_time	batch=8	n=20	1.110e-03	1.029e-03 1.049e-03 1.061e-03 1.062e-03 1.068e-03 1.078e-03 1.094e-03 1.101e-03 1.105e-03 1.109e-03 1.110e-03 1.111e-03 1.112e-03 1.116e-03 1.122e-03 1.126e-03 1.130e-03 1.163e-03 1.163e-03 1.176e-03
+transcendental/sin-far-float32-1Mi-host	alloc_words	exact	873
+transcendental/sin-far-float32-1Mi-host	wall_time	batch=1	n=20	7.243e-03	6.563e-03 6.856e-03 7.068e-03 7.109e-03 7.117e-03 7.131e-03 7.138e-03 7.208e-03 7.216e-03 7.224e-03 7.263e-03 7.303e-03 7.307e-03 7.334e-03 7.355e-03 7.368e-03 7.496e-03 7.519e-03 7.548e-03 8.742e-03
+transcendental/sin-far-float64-1Mi-host	alloc_words	exact	873
+transcendental/sin-far-float64-1Mi-host	wall_time	batch=1	n=20	1.333e-02	1.176e-02 1.181e-02 1.196e-02 1.200e-02 1.255e-02 1.264e-02 1.293e-02 1.312e-02 1.318e-02 1.330e-02 1.337e-02 1.338e-02 1.360e-02 1.368e-02 1.381e-02 1.395e-02 1.403e-02 1.417e-02 1.773e-02 1.973e-02
+transcendental/sin-float32-1Mi-host	alloc_words	exact	873
+transcendental/sin-float32-1Mi-host	wall_time	batch=1	n=20	6.059e-03	5.131e-03 5.162e-03 5.662e-03 5.798e-03 5.872e-03 5.904e-03 5.979e-03 6.012e-03 6.024e-03 6.051e-03 6.068e-03 6.073e-03 6.078e-03 6.131e-03 6.171e-03 6.212e-03 6.235e-03 6.305e-03 6.904e-03 6.912e-03
+transcendental/sin-float64-1Mi-host	alloc_words	exact	873
+transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	1.247e-02	1.178e-02 1.179e-02 1.180e-02 1.180e-02 1.182e-02 1.184e-02 1.206e-02 1.227e-02 1.231e-02 1.235e-02 1.259e-02 1.319e-02 1.323e-02 1.349e-02 1.368e-02 1.383e-02 1.415e-02 1.460e-02 1.511e-02 1.514e-02

@@ -210,6 +210,36 @@ let select_zero =
           fun g -> g x);
     ]
 
+(* Transcendental functions of 1Mi elements on the host, which computes [exp2]
+   and [sin] as polynomials: [exp] of [[-80, 80]], [log] of [[1e-30, 1e30]], and
+   [sin] of [[-30, 30]] and of [[-1e6, 1e6]], whose larger angles take the long
+   reduction. *)
+let transcendental =
+  let n = 1 lsl 20 in
+  let row (type b) (dtype : (float, b) Nx.dtype) name f lo hi =
+    let id = Printf.sprintf "%s-%s-1Mi-host" name (Nx_dtype.to_string dtype) in
+    compiled_call id
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+      (fun () ->
+        let st = Random.State.make [| 17 |] in
+        let x =
+          Nx.init dtype [| n |] (fun _ ->
+              lo +. Random.State.float st (hi -. lo))
+        in
+        fun g -> g x)
+  in
+  let rows dtype =
+    [
+      row dtype "exp" Nx.exp (-80.) 80.;
+      row dtype "log" Nx.log 1e-30 1e30;
+      row dtype "sin" Nx.sin (-30.) 30.;
+      row dtype "sin-far" Nx.sin (-1e6) 1e6;
+    ]
+  in
+  Thumper.group ~id:"transcendental" "transcendental"
+    (rows Nx.float32 @ rows Nx.float64)
+
 (* Symmetric eigendecompositions and singular value decompositions of 64 float32
    matrices of 8 x 8, eagerly and compiled for the host. Compiled, an eigh is 56
    rounds of Jacobi rotations and an svd 42, each round a kernel that computes
@@ -454,7 +484,7 @@ let suite () =
          searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
          searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000 ~m:1_000_000;
        ]
-  :: split :: indexed :: rope :: select_zero :: factorizations
+  :: split :: indexed :: rope :: select_zero :: transcendental :: factorizations
   @ reverse
     :: Thumper.group ~id:"finite" "finite"
          [
