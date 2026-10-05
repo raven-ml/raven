@@ -1958,7 +1958,8 @@ val rdiv_s : 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rdiv_s s t] is [s / t] element-wise. *)
 
 val pow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [pow base exp] is [base] raised to [exp] element-wise. *)
+(** [pow base exp] is [base] raised to [exp] element-wise: within 4 ulps at
+    [float32] and 2 at [float64] ({{!section:accuracy}accuracy}). *)
 
 val pow_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [pow_s t s] raises each element to scalar power [s]. *)
@@ -2089,6 +2090,36 @@ val conjugate : ('a, 'b) t -> ('a, 'b) t
 
 (** {1:math Mathematical functions} *)
 
+(** {2:accuracy Floating-point accuracy}
+
+    The error of a float result is its distance to the exact result rounded to
+    nearest in the dtype, in units in the last place (ulps): how many steps
+    apart the two values are on the line of the dtype's values in increasing
+    order, where [-0] and [+0] are one step apart.
+
+    Each function below whose result is not exact states its bound at [float32]
+    and [float64]. At [float16], [bfloat16] and the float8 dtypes, which compute
+    at [float32] and round once, every one is within 1 ulp, but that
+    [float8_e4m3], which has no infinity, is NaN where the [float32] result is
+    infinite, as [exp] of [96] is. A function's bound at a dtype is the largest
+    that the C libraries and GPU math libraries of nx's backends document for
+    it, and every backend is tested against it.
+
+    Whatever the bound, these are exact:
+    - the special values of C99's Annex F, such as [exp] of [-inf], which is
+      [+0], [log] of [±0], which is [-inf], and [sin] of an infinity, which is
+      NaN;
+    - NaN for a NaN operand, but where Annex F gives a number, such as [pow] of
+      a quiet NaN to the power [0], which is [1]. For a signaling NaN, such a
+      result is that number or NaN;
+    - the sign of a zero, which {!sin}, {!tan}, {!asin}, {!atan}, {!sinh},
+      {!tanh}, {!erf}, {!expm1} and {!log1p} keep: [sin (-0.)] is [-0.].
+
+    No function flushes a subnormal operand or result to zero. A NaN result's
+    sign and payload are unspecified, except as {!section-arithmetic} states on
+    the host. Functions built from others, such as {!log2} and {!asinh}, state
+    no bound of their own. *)
+
 (** {2:math_basic Basic} *)
 
 val abs : ('a, 'b) t -> ('a, 'b) t
@@ -2119,26 +2150,30 @@ val recip : ('a, 'b) t -> ('a, 'b) t
 (** {2:math_exp Exponential and logarithmic} *)
 
 val log : ('a, 'b) t -> ('a, 'b) t
-(** [log t] is the element-wise natural logarithm. *)
+(** [log t] is the element-wise natural logarithm: within 1 ulp at [float32] and
+    2 at [float64] ({{!section:accuracy}accuracy}). *)
 
 val log2 : ('a, 'b) t -> ('a, 'b) t
 (** [log2 t] is the element-wise base-2 logarithm. *)
 
 val exp : ('a, 'b) t -> ('a, 'b) t
-(** [exp t] is the element-wise exponential. *)
+(** [exp t] is the element-wise exponential: within 2 ulps at [float32] and
+    [float64] ({{!section:accuracy}accuracy}). *)
 
 val log1p : ('a, 'b) t -> ('a, 'b) t
 (** [log1p t] is [log (1 + t)] element-wise, accurate where [t] is near zero and
     [1 + t] would round away its digits: [log1p] of a subnormal is that
     subnormal. On the host it is the C library's [log1p]; [float16], [bfloat16]
     and the [float8] dtypes compute at [float32] and round once. It is [-inf] at
-    [-1] and NaN below.
+    [-1] and NaN below. It is within 1 ulp at [float32] and 2 at [float64]
+    ({{!section:accuracy}accuracy}).
 
     Raises [Invalid_argument] on dtypes other than floats. *)
 
 val expm1 : ('a, 'b) t -> ('a, 'b) t
 (** [expm1 t] is [exp t - 1] element-wise, accurate where [t] is near zero, as
-    {!log1p}. It is [-1] at [-inf].
+    {!log1p}. It is [-1] at [-inf]. It is within 1 ulp at [float32] and 2 at
+    [float64] ({{!section:accuracy}accuracy}).
 
     Raises [Invalid_argument] on dtypes other than floats. *)
 
@@ -2148,37 +2183,47 @@ val exp2 : ('a, 'b) t -> ('a, 'b) t
 (** {2:math_trig Trigonometric} *)
 
 val sin : ('a, 'b) t -> ('a, 'b) t
-(** [sin t] is the element-wise sine. *)
+(** [sin t] is the element-wise sine: within 2 ulps at [float32] and [float64]
+    ({{!section:accuracy}accuracy}). *)
 
 val cos : ('a, 'b) t -> ('a, 'b) t
-(** [cos t] is the element-wise cosine. *)
+(** [cos t] is the element-wise cosine: within 2 ulps at [float32] and [float64]
+    ({{!section:accuracy}accuracy}). *)
 
 val tan : ('a, 'b) t -> ('a, 'b) t
-(** [tan t] is the element-wise tangent. *)
+(** [tan t] is the element-wise tangent: within 4 ulps at [float32] and 2 at
+    [float64] ({{!section:accuracy}accuracy}). *)
 
 val asin : ('a, 'b) t -> ('a, 'b) t
-(** [asin t] is the element-wise arcsine. *)
+(** [asin t] is the element-wise arcsine: within 2 ulps at [float32] and
+    [float64] ({{!section:accuracy}accuracy}). *)
 
 val acos : ('a, 'b) t -> ('a, 'b) t
-(** [acos t] is the element-wise arccosine. *)
+(** [acos t] is the element-wise arccosine: within 2 ulps at [float32] and
+    [float64] ({{!section:accuracy}accuracy}). *)
 
 val atan : ('a, 'b) t -> ('a, 'b) t
-(** [atan t] is the element-wise arctangent. *)
+(** [atan t] is the element-wise arctangent: within 2 ulps at [float32] and
+    [float64] ({{!section:accuracy}accuracy}). *)
 
 val atan2 : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [atan2 y x] is the element-wise two-argument arctangent, returning angles in
-    \[[-π], [π]\]. *)
+    \[[-π], [π]\]: within 3 ulps at [float32] and 2 at [float64]
+    ({{!section:accuracy}accuracy}). *)
 
 (** {2:math_hyp Hyperbolic} *)
 
 val sinh : ('a, 'b) t -> ('a, 'b) t
-(** [sinh t] is the element-wise hyperbolic sine. *)
+(** [sinh t] is the element-wise hyperbolic sine: within 3 ulps at [float32] and
+    2 at [float64] ({{!section:accuracy}accuracy}). *)
 
 val cosh : ('a, 'b) t -> ('a, 'b) t
-(** [cosh t] is the element-wise hyperbolic cosine. *)
+(** [cosh t] is the element-wise hyperbolic cosine: within 2 ulps at [float32]
+    and [float64] ({{!section:accuracy}accuracy}). *)
 
 val tanh : ('a, 'b) t -> ('a, 'b) t
-(** [tanh t] is the element-wise hyperbolic tangent. *)
+(** [tanh t] is the element-wise hyperbolic tangent: within 2 ulps at [float32]
+    and [float64] ({{!section:accuracy}accuracy}). *)
 
 val asinh : ('a, 'b) t -> ('a, 'b) t
 (** [asinh t] is the element-wise inverse hyperbolic sine. *)
@@ -4223,7 +4268,8 @@ val standardize :
     [1e-5]. *)
 
 val erf : ('a, 'b) t -> ('a, 'b) t
-(** [erf t] is the error function [erf(x) = (2/√π) ∫₀ˣ e^{-u²} du].
+(** [erf t] is the error function [erf(x) = (2/√π) ∫₀ˣ e^{-u²} du]: within 2
+    ulps at [float32] and [float64] ({{!section:accuracy}accuracy}).
 
     {@ocaml[
       # erf (scalar float32 0.) |> item []

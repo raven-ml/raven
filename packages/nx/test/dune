@@ -27,7 +27,7 @@
   test_bit
   test_segments)
  (package nx)
- (modules :standard \ test_linalg test_format links_no_metal)
+ (modules :standard \ test_linalg test_format test_accuracy links_no_metal)
  (libraries
   nx.dtype
   nx
@@ -38,6 +38,23 @@
   unix
   windtrap
   nx_test)
+ (forbidden_libraries
+  nx.cuda.device
+  nx.nv.device
+  nx.amd.device
+  nx.remote.device
+  nx.rdma.device))
+
+; The accuracy suite's float64 oracle is the C library's long double functions.
+
+(test
+ (name test_accuracy)
+ (modules test_accuracy)
+ (package nx)
+ (foreign_stubs
+  (language c)
+  (names accuracy_stubs))
+ (libraries nx windtrap)
  (forbidden_libraries
   nx.cuda.device
   nx.nv.device

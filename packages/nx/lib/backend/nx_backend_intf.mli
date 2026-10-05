@@ -9,7 +9,10 @@
 
 (** {1:kinds Kinds} *)
 
-(** The type for elementwise functions of one operand, of its dtype. *)
+(** The type for elementwise functions of one operand, of its dtype. A kind
+    whose float results are not exact, such as [Exp], computes within the bound,
+    the exact special values and the signed zeros that [Nx]'s section on
+    floating-point accuracy states, as do [Pow] and [Atan2]. *)
 type unary =
   | Neg
   | Recip

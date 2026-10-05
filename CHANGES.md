@@ -3226,6 +3226,11 @@ thread.
 
 ### Nx
 
+- `nx.mli` states the accuracy of the transcendental functions: each of
+  `exp`, `log`, `log1p`, `expm1`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
+  `sinh`, `cosh`, `tanh`, `erf`, `pow` and `atan2` gives its ulp bound at
+  `float32` and `float64`, 1 ulp at the narrower floats, and Annex F's special
+  values and signed zeros exactly, on every backend.
 - An AMD device refuses a code object compiled for another GPU
   (`Nx_device.Program.load` is `Error "AMD: a code object for gfx1100; the GPU
   is gfx1201"`) instead of loading it to fault or compute garbage. It loads
