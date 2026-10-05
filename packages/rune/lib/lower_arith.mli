@@ -31,8 +31,8 @@ val unary : Nx_backend.unary -> Ops.t -> Ops.t
 (** [unary k x] is [k] of each element of [x]. *)
 
 val binary : Nx_backend.binary -> Ops.t -> Ops.t -> Ops.t
-(** [binary k x y] is [k] of the elements of [x] and [y]. An integer quotient or
-    remainder by 0 is 0, and so is a remainder by -1. *)
+(** [binary k x y] is [k] of the elements of [x] and [y]. An integer quotient by
+    0 is 0, a remainder by 0 is [x], and a remainder by -1 is 0. *)
 
 val fma : Ops.t -> Ops.t -> Ops.t -> Ops.t
 (** [fma a b c] is [a * b + c] of the elements of [a], [b] and [c]: rounded once

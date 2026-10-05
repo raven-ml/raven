@@ -933,7 +933,7 @@ let int_ops =
 
 (* Integers of every width wrap there, and unsigned ones order, divide and shift
    as unsigned: each operation agrees with int64 arithmetic wrapped to the
-   width. Division and remainder by zero give zero. *)
+   width. Division by zero gives zero and the remainder the dividend. *)
 
 (* Integer power: a negative exponent gives zero, but for bases one and minus
    one. *)
@@ -983,7 +983,9 @@ let integer_dtypes =
                (both (fun x y -> Int64.add (Int64.mul x y) x))
                (Nx.fma a b a);
              check "div" (both (by_zero div)) (Nx.div a b);
-             check "mod_" (both (by_zero rem)) (Nx.mod_ a b);
+             check "mod_"
+               (both (fun x y -> if y = 0L then x else rem x y))
+               (Nx.mod_ a b);
              check "maximum"
                (both (fun x y -> if cmp x y >= 0 then x else y))
                (Nx.maximum a b);
@@ -1021,16 +1023,192 @@ let integer_dtypes =
                (Nx.to_array (Nx.less a b));
              equal ~msg:"equal" (array bool) (both ( = ))
                (Nx.to_array (Nx.equal a b))))
-       int_dtypes)
+       (int4_dtypes @ int_dtypes))
+
+(* Four bits are a width: a function of 4-bit operands is the function of their
+   values widened to a byte, its result of their dtype cast back. *)
+
+type unary_int = { f : 'b. (int, 'b) Nx.t -> (int, 'b) Nx.t }
+type binary_int = { g : 'b. (int, 'b) Nx.t -> (int, 'b) Nx.t -> (int, 'b) Nx.t }
+
+let unary_ints =
+  let whole f x = if Nx.numel x = 0 then x else f x in
+  let first f x = if Nx.ndim x = 0 then x else f x in
+  [
+    ("neg", { f = Nx.neg });
+    ("abs", { f = Nx.abs });
+    ("sign", { f = Nx.sign });
+    ("square", { f = Nx.square });
+    ("recip", { f = Nx.recip });
+    ("bitwise_not", { f = Nx.bitwise_not });
+    ("lshift 1", { f = (fun x -> Nx.lshift x 1) });
+    ("lshift 3", { f = (fun x -> Nx.lshift x 3) });
+    ("rshift 1", { f = (fun x -> Nx.rshift x 1) });
+    ("rshift 3", { f = (fun x -> Nx.rshift x 3) });
+    ("contiguous", { f = Nx.contiguous });
+    ( "pad",
+      { f = (fun x -> Nx.pad (Array.map (fun _ -> (1, 2)) (Nx.shape x)) 5 x) }
+    );
+    ( "concatenate",
+      { f = (fun x -> Nx.concatenate ~axis:0 [ Nx.flatten x; Nx.flatten x ]) }
+    );
+    ("sum", { f = (fun x -> Nx.sum x) });
+    ("prod", { f = (fun x -> Nx.prod x) });
+    ("sum over the first axis", { f = (fun x -> first (Nx.sum ~axes:[ 0 ]) x) });
+    ("max", { f = (fun x -> whole (fun x -> Nx.max x) x) });
+    ("min", { f = (fun x -> whole (fun x -> Nx.min x) x) });
+    ("cumsum", { f = (fun x -> Nx.cumsum x) });
+    ("cumprod", { f = (fun x -> Nx.cumprod x) });
+    ("sort", { f = (fun x -> fst (Nx.sort x)) });
+  ]
+
+let binary_ints =
+  [
+    ("add", { g = Nx.add });
+    ("sub", { g = Nx.sub });
+    ("mul", { g = Nx.mul });
+    ("div", { g = Nx.div });
+    ("mod_", { g = Nx.mod_ });
+    ("pow", { g = Nx.pow });
+    ("maximum", { g = Nx.maximum });
+    ("minimum", { g = Nx.minimum });
+    ("bitwise_and", { g = Nx.bitwise_and });
+    ("bitwise_or", { g = Nx.bitwise_or });
+    ("bitwise_xor", { g = Nx.bitwise_xor });
+    ("where", { g = (fun x y -> Nx.where (Nx.less x y) x y) });
+    ( "matmul",
+      {
+        g =
+          (fun x y ->
+            if Nx.ndim x < 2 then Nx.mul x y
+            else Nx.matmul x (Nx.swapaxes (-1) (-2) y));
+      } );
+  ]
+
+let four_bits (type b c) (name, q) (twin, (w : (int, c) Nx.dtype)) lo hi =
+  let q : (int, b) Nx.dtype = q in
+  let value =
+    Gen.frequency
+      [
+        (4, Gen.int_range lo hi);
+        (1, Gen.of_list ~pp:Format.pp_print_int [ lo; hi; lo + 1; hi - 1; 0 ]);
+      ]
+  in
+  let wide x = Nx.cast w x in
+  prop
+    (name ^ " functions are their " ^ twin
+   ^ " twins on the widened values, cast back")
+    (viewed ~pp:Format.pp_print_int q value)
+    (fun x ->
+      (* A second operand of the same shape, read in another order. *)
+      let y = Nx.flip x in
+      List.iter
+        (fun (msg, { f }) ->
+          equal ~msg (tensor int) (Nx.cast q (f (wide x))) (f x))
+        unary_ints;
+      List.iter
+        (fun (msg, { g }) ->
+          equal ~msg (tensor int) (Nx.cast q (g (wide x) (wide y))) (g x y))
+        binary_ints;
+      equal ~msg:"less" (tensor bool) (Nx.less (wide x) (wide y)) (Nx.less x y);
+      equal ~msg:"equal" (tensor bool)
+        (Nx.equal (wide x) (wide y))
+        (Nx.equal x y);
+      equal ~msg:"cast to float32" (tensor float_exact)
+        (Nx.cast Nx.float32 (wide x))
+        (Nx.cast Nx.float32 x);
+      if Nx.numel x > 0 then begin
+        equal ~msg:"argmax" (tensor int64) (Nx.argmax (wide x)) (Nx.argmax x);
+        equal ~msg:"argmin" (tensor int64) (Nx.argmin (wide x)) (Nx.argmin x)
+      end)
+
+let four_bit_ints =
+  group "4-bit integers"
+    [
+      four_bits ("int4", Nx.int4) ("int8", Nx.int8) (-8) 7;
+      four_bits ("uint4", Nx.uint4) ("uint8", Nx.uint8) 0 15;
+    ]
+
+(* The rules that complete integer arithmetic at every width. *)
+
+let integer_rules =
+  let widths = int4_dtypes @ int_dtypes in
+  let name (Int_dtype d) = d.name in
+  (* The width's ends, a neighbour, and small values. *)
+  let values ~bits ~signed =
+    let lo, hi = int_range ~bits ~signed in
+    [ lo; hi; Int64.succ lo; 0L; 1L; 5L ]
+  in
+  group "integer rules"
+    [
+      cases "mod_ by zero is the dividend, and div by zero zero" ~name widths
+        (fun (Int_dtype d) ->
+          let vs = values ~bits:d.bits ~signed:d.signed in
+          let a =
+            Nx.create d.dtype [| 6 |] (Array.of_list (List.map d.of_i64 vs))
+          in
+          let zero = Nx.zeros d.dtype [| 6 |] in
+          equal (tensor d.exact) a (Nx.mod_ a zero);
+          equal (tensor d.exact) zero (Nx.div a zero);
+          equal ~msg:"a = b * div a b + mod_ a b" (tensor d.exact) a
+            (Nx.add (Nx.mul zero (Nx.div a zero)) (Nx.mod_ a zero)));
+      cases "the least value divided by -1 is itself, with no remainder" ~name
+        (List.filter (fun (Int_dtype d) -> d.signed) widths)
+        (fun (Int_dtype d) ->
+          let lo, _ = int_range ~bits:d.bits ~signed:true in
+          let least = Nx.full d.dtype [| 1 |] (d.of_i64 lo) in
+          let minus_one = Nx.full d.dtype [| 1 |] (d.of_i64 (-1L)) in
+          equal (tensor d.exact) least (Nx.div least minus_one);
+          equal (tensor d.exact) (Nx.zeros d.dtype [| 1 |])
+            (Nx.mod_ least minus_one));
+      cases "a shift by the width or past it gives 0, or -1 below zero" ~name
+        widths (fun (Int_dtype d) ->
+          let vs = values ~bits:d.bits ~signed:d.signed in
+          let t vs =
+            Nx.create d.dtype [| 6 |] (Array.of_list (List.map d.of_i64 vs))
+          in
+          let a = t vs in
+          let negative v = d.signed && Int64.compare v 0L < 0 in
+          let filled =
+            t (List.map (fun v -> if negative v then -1L else 0L) vs)
+          in
+          List.iter
+            (fun n ->
+              let msg = Printf.sprintf "by %d" n in
+              equal ~msg (tensor d.exact) (Nx.zeros_like a) (Nx.lshift a n);
+              equal ~msg (tensor d.exact) filled (Nx.rshift a n))
+            [ d.bits; d.bits + 1; 64; 65 ]);
+      cases "a negative shift count raises" ~name widths (fun (Int_dtype d) ->
+          let a = Nx.ones d.dtype [| 2 |] in
+          raises_invalid_arg (fun () -> Nx.lshift a (-1));
+          raises_invalid_arg (fun () -> Nx.rshift a (-1)));
+      test "an integer literal is stored modulo the width" (fun () ->
+          equal (tensor int) (Nx.scalar Nx.int4 (-7)) (Nx.scalar Nx.int4 9);
+          equal (tensor int) (Nx.scalar Nx.uint4 1) (Nx.scalar Nx.uint4 17);
+          equal (tensor int) (Nx.scalar Nx.int8 (-56)) (Nx.scalar Nx.int8 200));
+      test
+        "a float becomes a 4-bit integer truncated, held at the range's ends, \
+         NaN as 0" (fun () ->
+          let floats =
+            Nx.create Nx.float32 [| 6 |]
+              [| 9.; -9.; Float.nan; 7.9; -8.5; -1.5 |]
+          in
+          equal (tensor int)
+            (Nx.create Nx.int4 [| 6 |] [| 7; -8; 0; 7; -8; -1 |])
+            (Nx.cast Nx.int4 floats);
+          equal (tensor int)
+            (Nx.create Nx.uint4 [| 6 |] [| 9; 0; 0; 7; 0; 0 |])
+            (Nx.cast Nx.uint4 floats);
+          equal (tensor int)
+            (Nx.create Nx.uint4 [| 2 |] [| 15; 15 |])
+            (Nx.cast Nx.uint4 (Nx.create Nx.float64 [| 2 |] [| 15.5; 1e30 |])));
+    ]
 
 let packed_ints =
-  let q = Nx.zeros Nx.int4 [| 2 |] and b = Nx.ones Nx.bool [| 2 |] in
-  cases "int4 computes nothing, and bool no arithmetic"
+  let b = Nx.ones Nx.bool [| 2 |] in
+  cases "bool has no arithmetic"
     ~name:(fun (n, _) -> n)
     [
-      ("int4 add", fun () -> ignore (Nx.add q q));
-      ("int4 maximum", fun () -> ignore (Nx.maximum q q));
-      ("int4 equal", fun () -> ignore (Nx.equal q q));
       ("bool add", fun () -> ignore (Nx.add b b));
       ("bool neg", fun () -> ignore (Nx.neg b));
       ("bool sum", fun () -> ignore (Nx.sum b));
@@ -1503,6 +1681,8 @@ let () =
          int_laws;
          int_ops;
          integer_dtypes;
+         four_bit_ints;
+         integer_rules;
          packed_ints;
          complex_numbers;
          booleans;

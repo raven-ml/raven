@@ -1048,25 +1048,8 @@ let label e =
          && Array.exists (subnormal l.dt) (value l.dt (create l)).elements)
        (leaves e))
 
-(* Whether [e] divides a signed integer type's least value by [-1], which nx
-   leaves unspecified. *)
-let overflowing_division =
-  exists (function
-    | Bin (Div, a, b) when dtype_of a = I32 -> (
-        match (eager a, eager b) with
-        | x, y ->
-            let x = Nx.unpack Nx.int32 x and y = Nx.unpack Nx.int32 y in
-            Nx.item []
-              (Nx.any
-                 (Nx.logical_and
-                    (Nx.equal_s x Int32.min_int)
-                    (Nx.equal_s y (-1l))))
-        | exception Invalid_argument _ -> false)
-    | _ -> false)
-
 let compiled_is_eager e =
   label e;
-  if overflowing_division e then reject ();
   let dt = dtype_of e in
   let zeros = signs_zeros e in
   let expected = outcome dt (fun () -> eager e) in

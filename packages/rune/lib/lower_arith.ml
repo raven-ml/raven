@@ -808,9 +808,10 @@ let fmod x y =
 
 (* Integer division
 
-   An integer quotient or remainder by 0 is 0, and so is a remainder by -1; the
-   quotient by -1 wraps. A kernel computes both sides of a selection, so the
-   divisor is made safe before it divides. *)
+   An integer quotient by 0 is 0 and a remainder by 0 the dividend, so that x =
+   y * idiv x y + rem x y for every y. A remainder by -1 is 0, and the quotient
+   by -1 wraps. A kernel computes both sides of a selection, so the divisor is
+   made safe before it divides. *)
 
 let division y =
   let zero = Ops.eq y (int y 0) in
@@ -830,7 +831,7 @@ let rem x y =
   if is_float x then float2 fmod x y
   else
     let zero, minus_one, safe = division y in
-    where (Ops.bitwise_or zero minus_one) (int x 0) (Ops.fmod x safe)
+    where zero x (where minus_one (int x 0) (Ops.fmod x safe))
 
 (* Extremes
 

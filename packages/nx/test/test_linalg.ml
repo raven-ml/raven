@@ -2344,7 +2344,7 @@ let mm_dtypes =
     Mc { name = "complex128"; dtype = Nx.complex128; unit = ldexp 1. (-53) };
     Mc { name = "complex64"; dtype = Nx.complex64; unit = u32 };
   ]
-  @ List.map (fun d -> Mi d) int_dtypes
+  @ List.map (fun d -> Mi d) (int4_dtypes @ int_dtypes)
 
 let mm_name = function
   | Mf d -> d.name
@@ -2582,16 +2582,11 @@ let routes =
              (1300, 260, 130);
            ])
         run;
-      test "matmul refuses bool and 4-bit operands, as arithmetic does"
-        (fun () ->
+      test "matmul refuses bool operands, as arithmetic does" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.matmul
                 (Nx.ones Nx.bool [| 2; 2 |])
-                (Nx.ones Nx.bool [| 2; 2 |]));
-          raises_invalid_arg (fun () ->
-              Nx.matmul
-                (Nx.zeros Nx.int4 [| 2; 2 |])
-                (Nx.zeros Nx.int4 [| 2; 2 |])));
+                (Nx.ones Nx.bool [| 2; 2 |])));
       test "matmul gives the same bits on every call" (fun () ->
           let a =
             Nx.init Nx.float32 [| 3; 200003 |] (fun i ->

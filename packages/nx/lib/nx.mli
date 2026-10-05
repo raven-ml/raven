@@ -81,9 +81,13 @@ type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
       (** The type for data type descriptors. A [('a, 'b) dtype] links the OCaml
           element type ['a] to its buffer representation ['b].
 
-          [int4] and [uint4] are storage formats: their values move, cast and
-          are read and written, and every computation on them raises
-          [Invalid_argument]; cast them to a wider integer to compute. [bool]
+          An integer dtype of [n] bits holds the integers modulo [2^n], read as
+          \[[-2^(n-1)], [2^(n-1)]) when signed and \[[0], [2^n]) when
+          unsigned, at every width: [int4] and [uint4] hold two to a byte.
+          Addition, subtraction, multiplication, negation, {!lshift}, the
+          bitwise functions, casts between integers and integer literals are
+          exact modulo [2^n]; every other function computes on the
+          representatives and reduces its result. [bool]
           values compare, combine logically and bitwise, select ({!where}), sort
           and reduce by {!max} and {!min}; arithmetic on them (sums, products,
           negation, cumulative sums, {!matmul}) raises [Invalid_argument].
@@ -1477,8 +1481,9 @@ val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     when [t] already has that dtype: a tensor is a value, so only a change of
     dtype allocates. Use {!copy} for fresh storage.
 
-    A float becomes an integer by truncation toward zero, held at the ends of
-    the integer's range, and NaN becomes [0]. A real value becomes a complex one
+    An integer becomes another integer modulo [2^bits]. A float becomes an
+    integer by truncation toward zero, held at the ends of the integer's range,
+    and NaN becomes [0]. A real value becomes a complex one
     with no imaginary part, and a complex value a real one by dropping its
     imaginary part.
 
@@ -1938,7 +1943,7 @@ val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     Float dtypes use true division. Integer dtypes truncate toward zero, and an
     integer divided by zero is zero. A signed integer type's least value divided
-    by [-1] is unspecified.
+    by [-1] is that value.
 
     {@ocaml[
       # let x = create int32 [| 2 |] [| -7l; 8l |] in
@@ -1964,7 +1969,7 @@ val rpow_s : 'a -> ('a, 'b) t -> ('a, 'b) t
 
 val mod_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [mod_ a b] is the element-wise remainder of [a / b], of the sign of [a]. An
-    integer remainder by zero is zero. *)
+    integer remainder by zero is [a], so [a = b * div a b + mod_ a b]. *)
 
 val mod_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [mod_s t s] is the remainder of each element divided by scalar [s]. *)
@@ -2390,7 +2395,8 @@ val bitwise_not : ('a, 'b) t -> ('a, 'b) t
 (** [bitwise_not t] is the element-wise bitwise NOT. *)
 
 val lshift : ('a, 'b) t -> int -> ('a, 'b) t
-(** [lshift t n] left-shifts each element by [n] bits.
+(** [lshift t n] left-shifts each element by [n] bits: [t * 2{^n}] modulo
+    [2^bits], so [0] once [n] reaches the width.
 
     Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
     type.
@@ -2405,7 +2411,8 @@ val lshift : ('a, 'b) t -> int -> ('a, 'b) t
 
 val rshift : ('a, 'b) t -> int -> ('a, 'b) t
 (** [rshift t n] right-shifts each element by [n] bits, keeping the sign of a
-    signed integer: [t / 2{^n}] rounded toward negative infinity.
+    signed integer: [t / 2{^n}] rounded toward negative infinity, so [0], or
+    [-1] below zero, once [n] reaches the width.
 
     Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
     type.
@@ -2561,6 +2568,8 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     [float32] and the sum is rounded once to the dtype. On the host, a NaN sum
     is its first NaN term in index order along [axes], whatever the layout: bit
     for bit at [float32] and [float64], and its sign at the narrower floats.
+    Integer results keep the dtype and wrap; cast to a wider integer first to
+    avoid it.
 
     {@ocaml[
       # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
@@ -3263,7 +3272,8 @@ val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     {!sum} describes: an output whose products sum to exactly zero is [0.], and
     an empty contraction gives [0.]. On macOS, a [float32], [float64],
     [complex64] or [complex128] product may be computed by Accelerate, whose
-    bits may depend on the number of threads.
+    bits may depend on the number of threads. Integer results keep the dtype
+    and wrap; cast to a wider integer first to avoid it.
 
     Raises [Invalid_argument] if inputs are 0-D or inner dimensions mismatch.
 

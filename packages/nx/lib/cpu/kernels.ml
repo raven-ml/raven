@@ -126,7 +126,33 @@ external caml_where :
 
 external caml_cast : ('c, 'd) t -> ('a, 'b) t -> unit = "caml_nx_c_cast"
 
-let unary (k : Nx_backend.unary) x ~dst =
+(* 4-bit integers compute at the byte width: each operand is widened to int8 or
+   uint8 by the cast, which sign-extends int4, the byte kernel runs, and a
+   result of the operands' dtype is cast back, which keeps its low 4 bits: the
+   result modulo 16. An axis an operand broadcasts stays broadcast. *)
+
+type _ wide = Wide : (int, 'c) Nx_dtype.t -> int wide
+
+let wide (type a b) (dt : (a, b) Nx_dtype.t) : a wide option =
+  match dt with
+  | Int4 -> Some (Wide Int8)
+  | UInt4 -> Some (Wide UInt8)
+  | _ -> None
+
+let fresh dtype shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  { dtype; view = View.create shape; buffer = Elements.create dtype n }
+
+let widen w (x : (int, 'b) t) =
+  let s = shape x in
+  let held i n = if View.stride i x.view = 0 then min n 1 else n in
+  let distinct = Array.mapi held s in
+  let y = fresh w distinct in
+  caml_cast y
+    (of_view x (View.shrink x.view (Array.map (fun n -> (0, n)) distinct)));
+  of_view y (View.expand y.view s)
+
+let unary_at (k : Nx_backend.unary) x ~dst =
   match k with
   | Neg -> caml_neg dst x
   | Recip -> caml_recip dst x
@@ -152,7 +178,15 @@ let unary (k : Nx_backend.unary) x ~dst =
   | Round -> caml_round dst x
   | Erf -> caml_erf dst x
 
-let binary (k : Nx_backend.binary) x y ~dst =
+let unary (type a b) k (x : (a, b) t) ~(dst : (a, b) t) =
+  match wide x.dtype with
+  | None -> unary_at k x ~dst
+  | Some (Wide w) ->
+      let y = fresh w (shape dst) in
+      unary_at k (widen w x) ~dst:y;
+      caml_cast dst y
+
+let binary_at (k : Nx_backend.binary) x y ~dst =
   match k with
   | Add -> caml_add dst x y
   | Sub -> caml_sub dst x y
@@ -168,15 +202,42 @@ let binary (k : Nx_backend.binary) x y ~dst =
   | Or -> caml_or dst x y
   | Xor -> caml_xor dst x y
 
-let compare (k : Nx_backend.compare) x y ~dst =
+let binary (type a b) k (x : (a, b) t) y ~(dst : (a, b) t) =
+  match wide x.dtype with
+  | None -> binary_at k x y ~dst
+  | Some (Wide w) ->
+      let z = fresh w (shape dst) in
+      binary_at k (widen w x) (widen w y) ~dst:z;
+      caml_cast dst z
+
+let compare_at (k : Nx_backend.compare) x y ~dst =
   match k with
   | Equal -> caml_cmpeq dst x y
   | Not_equal -> caml_cmpne dst x y
   | Less -> caml_cmplt dst x y
   | Less_equal -> caml_cmple dst x y
 
-let fma a b c ~dst = caml_fma dst a b c
-let where c x y ~dst = caml_where dst c x y
+let compare (type a b) k (x : (a, b) t) y ~dst =
+  match wide x.dtype with
+  | None -> compare_at k x y ~dst
+  | Some (Wide w) -> compare_at k (widen w x) (widen w y) ~dst
+
+let fma (type a b) (a : (a, b) t) b c ~(dst : (a, b) t) =
+  match wide a.dtype with
+  | None -> caml_fma dst a b c
+  | Some (Wide w) ->
+      let z = fresh w (shape dst) in
+      caml_fma z (widen w a) (widen w b) (widen w c);
+      caml_cast dst z
+
+let where (type a b) c (x : (a, b) t) y ~(dst : (a, b) t) =
+  match wide x.dtype with
+  | None -> caml_where dst c x y
+  | Some (Wide w) ->
+      let z = fresh w (shape dst) in
+      caml_where z c (widen w x) (widen w y);
+      caml_cast dst z
+
 let cast x ~dst = caml_cast dst x
 
 (* Fold family (nx_c_fold.c). The engine takes sorted axes. The kernels of the
@@ -217,26 +278,48 @@ external caml_cummax : ('a, 'b) t -> ('a, 'b) t -> int -> int -> unit
 external caml_cummin : ('a, 'b) t -> ('a, 'b) t -> int -> int -> unit
   = "caml_nx_c_cummin"
 
-let reduce (k : Nx_backend.reduce) ~axes x ~dst =
-  let axes = Array.copy axes in
-  Array.sort Stdlib.compare axes;
+let reduce_at (k : Nx_backend.reduce) axes x ~dst =
   match k with
   | Sum -> caml_reduce_sum dst x axes policy
   | Prod -> caml_reduce_prod dst x axes policy
   | Max -> caml_reduce_max dst x axes policy
   | Min -> caml_reduce_min dst x axes policy
 
-let arg_reduce (k : Nx_backend.arg_reduce) ~axis x ~dst =
+(* A 4-bit reduction accumulates at the byte width and narrows once. *)
+let reduce (type a b) k ~axes (x : (a, b) t) ~(dst : (a, b) t) =
+  let axes = Array.copy axes in
+  Array.sort Stdlib.compare axes;
+  match wide x.dtype with
+  | None -> reduce_at k axes x ~dst
+  | Some (Wide w) ->
+      let z = fresh w (shape dst) in
+      reduce_at k axes (widen w x) ~dst:z;
+      caml_cast dst z
+
+let arg_reduce_at (k : Nx_backend.arg_reduce) axis x ~dst =
   match k with
   | Argmax -> caml_argmax dst x axis policy
   | Argmin -> caml_argmin dst x axis policy
 
-let scan (k : Nx_backend.reduce) ~axis x ~dst =
+let arg_reduce (type a b) k ~axis (x : (a, b) t) ~dst =
+  match wide x.dtype with
+  | None -> arg_reduce_at k axis x ~dst
+  | Some (Wide w) -> arg_reduce_at k axis (widen w x) ~dst
+
+let scan_at (k : Nx_backend.reduce) axis x ~dst =
   match k with
   | Sum -> caml_cumsum dst x axis policy
   | Prod -> caml_cumprod dst x axis policy
   | Max -> caml_cummax dst x axis policy
   | Min -> caml_cummin dst x axis policy
+
+let scan (type a b) k ~axis (x : (a, b) t) ~(dst : (a, b) t) =
+  match wide x.dtype with
+  | None -> scan_at k axis x ~dst
+  | Some (Wide w) ->
+      let z = fresh w (shape dst) in
+      scan_at k axis (widen w x) ~dst:z;
+      caml_cast dst z
 
 (* Sort family (nx_c_sort.c) *)
 
@@ -301,11 +384,22 @@ let gather ~axis indices x ~dst = caml_gather dst x indices axis
 
 (* The scatter walk writes into a copy of [x]. The last argument packs the mode
    in its two low bits and [unique] in the third. *)
-let scatter ~mode ~unique ~axis ~indices ~updates x ~dst =
+let scatter_at ~mode ~unique ~axis ~indices ~updates x ~dst =
   caml_copy dst x;
   caml_scatter dst indices updates axis
     ((match mode with `Set -> 0 | `Add -> 1 | `Max -> 2 | `Min -> 3)
     lor if unique then 4 else 0)
+
+(* A 4-bit [`Set] moves elements; the other modes combine them. *)
+let scatter (type a b) ~mode ~unique ~axis ~indices ~(updates : (a, b) t)
+    (x : (a, b) t) ~(dst : (a, b) t) =
+  match (mode, wide x.dtype) with
+  | `Set, _ | _, None -> scatter_at ~mode ~unique ~axis ~indices ~updates x ~dst
+  | (`Add | `Max | `Min), Some (Wide w) ->
+      let z = fresh w (shape dst) in
+      scatter_at ~mode ~unique ~axis ~indices ~updates:(widen w updates)
+        (widen w x) ~dst:z;
+      caml_cast dst z
 
 (* The window write is the strided copy: [x] copied, then [v] written through a
    shrunk view of the copy. The packed copy writes a window nibble by nibble,
@@ -350,9 +444,18 @@ external caml_fold_window :
 let unfold ~kernel_size ~stride ~dilation ~padding x ~dst =
   caml_unfold dst x kernel_size stride dilation (flatten_pairs padding)
 
-let fold ~output_size ~kernel_size ~stride ~dilation ~padding x ~dst =
-  caml_fold_window dst x output_size kernel_size stride dilation
-    (flatten_pairs padding)
+(* fold sums the windows that overlap. *)
+let fold (type a b) ~output_size ~kernel_size ~stride ~dilation ~padding
+    (x : (a, b) t) ~(dst : (a, b) t) =
+  let padding = flatten_pairs padding in
+  match wide x.dtype with
+  | None ->
+      caml_fold_window dst x output_size kernel_size stride dilation padding
+  | Some (Wide w) ->
+      let z = fresh w (shape dst) in
+      caml_fold_window z (widen w x) output_size kernel_size stride dilation
+        padding;
+      caml_cast dst z
 
 (* Random family (nx_c_random.c) *)
 
@@ -370,8 +473,14 @@ let threefry key counter ~dst = caml_threefry dst key counter
 external caml_matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_matmul"
 
-let matmul x y ~dst =
-  if not (Array.exists (( = ) 0) (shape dst)) then caml_matmul dst x y
+let matmul (type a b) (x : (a, b) t) y ~(dst : (a, b) t) =
+  if not (Array.exists (( = ) 0) (shape dst)) then
+    match wide x.dtype with
+    | None -> caml_matmul dst x y
+    | Some (Wide w) ->
+        let z = fresh w (shape dst) in
+        caml_matmul z (widen w x) (widen w y);
+        caml_cast dst z
 
 (* FFT (nx_c_fft.c): unnormalized transforms. C reads the output size of the
    last transformed axis from [s] when there is one. *)

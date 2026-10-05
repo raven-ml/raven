@@ -966,6 +966,22 @@ let int_dtypes =
       };
   ]
 
+(* The 4-bit integer dtypes, which compute as the others. *)
+let int4_dtypes =
+  let nibble name dtype signed =
+    Int_dtype
+      {
+        name;
+        dtype;
+        bits = 4;
+        signed;
+        to_i64 = Int64.of_int;
+        of_i64 = Int64.to_int;
+        exact = int;
+      }
+  in
+  [ nibble "int4" Nx.int4 true; nibble "uint4" Nx.uint4 false ]
+
 (* The least and greatest values of a width, as int64. *)
 let int_range ~bits ~signed =
   if signed then

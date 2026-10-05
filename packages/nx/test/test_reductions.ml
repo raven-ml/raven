@@ -889,7 +889,7 @@ let integer_dtypes =
              equal ~msg:"argmax" int64
                (Int64.of_int (fst (extreme (fun c -> c > 0))))
                (Nx.item [] (Nx.argmax t))))
-       int_dtypes
+       (int4_dtypes @ int_dtypes)
     @ [
         slow "a float32 sum of 2^25 ones is exact" (fun () ->
             equal float_exact 0x1p25

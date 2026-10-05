@@ -15,8 +15,8 @@
    designated initializers whose absent slots are NULL — the engine turns NULL
    into a clean NX_C_ERR_UNSUPPORTED_DTYPE / NX_C_ERR_PACKED status. Cast is the one
    pair-indexed op: a src×dst matrix of specialized converters (src LOAD ->
-   intermediate -> dst STORE), with int4/uint4 handled on a separate contiguous
-   serial nibble path (they are storage-only; a strided int4 cast is rejected).
+   intermediate -> dst STORE), and the sub-byte dtypes (bit, int4, uint4) cast
+   through their byte dtypes.
 
    Only the family stubs (bottom) reach the OCaml runtime, via the engine funnel
    or the sanctioned nx_c_raise / nx_c_raise_status raisers — never a kernel. */
@@ -207,21 +207,6 @@ static uint64_t nx_c_ipow_u(uint64_t b, uint64_t e) {
     if (e) b *= b;
   }
   return r;
-}
-
-/* Saturating double -> signed/unsigned 4-bit (NaN -> 0), the int4/uint4 analogue
-   of nx_c.h's nx_c_f2i for the storage-only packed cast. */
-static inline int nx_c_f2i4_s(double v) {
-  if (isnan(v)) return 0;
-  if (v <= -8.0) return -8;
-  if (v >= 7.0) return 7;
-  return (int)v;
-}
-static inline int nx_c_f2i4_u(double v) {
-  if (isnan(v)) return 0;
-  if (v <= 0.0) return 0;
-  if (v >= 15.0) return 15;
-  return (int)v;
 }
 
 /* ── Cast conversion policy (normative precision rules) ─────────────────────
@@ -812,14 +797,15 @@ static const nx_c_map_table nx_c_fdiv_table = {
     .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_FC)}};
 #undef NX_C_CUROP
 
-/* mod: integer remainder (by-zero -> 0, sign follows dividend), fmod on floats.
-   No complex remainder. */
+/* mod: integer remainder of the sign of the dividend, by-zero -> the dividend
+   so that a = b * idiv a b + mod a b holds for every b, and by -1 -> 0 guarded
+   against INT_MIN overflow; fmod on floats. No complex remainder. */
 #define NX_C_MOD_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                    \
   NX_C_BK(mod, sfx, storage, compute, ld, st,                                   \
-         ((vb) == 0 ? (compute)0 : (vb) == -1 ? (compute)0 : (va) % (vb)))
+         ((vb) == 0 ? (va) : (vb) == -1 ? (compute)0 : (va) % (vb)))
 #define NX_C_MOD_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
   NX_C_BK(mod, sfx, storage, compute, ld, st,                                   \
-         ((vb) == 0 ? (compute)0 : (va) % (vb)))
+         ((vb) == 0 ? (va) : (va) % (vb)))
 #define NX_C_MOD_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
   NX_C_BK(mod, sfx, storage, compute, ld, st, NX_C_MFN(fmod, compute)(va, vb))
 #define NX_C_MOD_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
@@ -1238,7 +1224,7 @@ static const nx_c_map_table nx_c_fma_table = {
 #undef NX_C_CUROP
 
 /* ══════════════════════════════════════════════════════════════════════════
-   cast — the pair matrix (compute src × compute dst) plus a packed nibble path
+   cast — the pair matrix (compute src × compute dst) and the sub-byte casts
    ═════════════════════════════════════════════════════════════════════════ */
 
 /* Local float->f16/bf16 converters for the contiguous cast fast path.
@@ -1443,169 +1429,15 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CAST_KGEN_SRC)
 static const nx_c_map_table nx_c_cast_tables[NX_C_DTYPE_COUNT] = {
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CAST_SRCTBL)};
 
-/* Packed (int4/uint4) nibble path — serial. Storage element k of a packed
-   operand is nibble k: byte k>>1, low nibble on even, high on odd. A signed
-   int4 nibble sign-extends; both wrap the low nibble on store. */
-
-/* compute src -> packed dst (i4/u4). The nibble value wraps for int/bool sources
-   and saturates for float/complex (F2I4). */
-#define NX_C_NIB_NX_C_CAT_SINT(F2I4, v) ((int)(v))
-#define NX_C_NIB_NX_C_CAT_UINT(F2I4, v) ((int)(v))
-#define NX_C_NIB_NX_C_CAT_BOOL(F2I4, v) ((int)(v))
-#define NX_C_NIB_NX_C_CAT_FLOAT(F2I4, v) F2I4((double)(v))
-#define NX_C_NIB_NX_C_CAT_COMPLEX(F2I4, v) F2I4((double)creal(v))
-
-typedef void nx_c_castp_to(uint8_t *dbytes, int64_t doff, const char *sbase,
-                          int64_t n);
-typedef void nx_c_castp_from(char *dbase, const uint8_t *sbytes, int64_t soff,
-                            int64_t n);
-
-#define NX_C_CASTP_TO_KERN(PK, F2I4, sfx, storage, compute, ld, cat)            \
-  static void nx_c_castp_##sfx##_to_##PK(uint8_t *db, int64_t doff,             \
-                                        const char *sbase, int64_t n) {        \
-    const storage *pA = (const storage *)sbase;                               \
-    for (int64_t i = 0; i < n; i++) {                                          \
-      uint8_t nib = (uint8_t)NX_C_NIB_##cat(F2I4, (compute)ld(pA[i])) & 0x0F;   \
-      int64_t di = doff + i;                                                   \
-      uint8_t *bp = &db[di >> 1];                                             \
-      *bp = (di & 1) ? (uint8_t)((*bp & 0x0F) | (nib << 4))                    \
-                     : (uint8_t)((*bp & 0xF0) | nib);                          \
-    }                                                                          \
-  }
-#define NX_C_CASTP_TO_ROW(sfx, storage, compute, ld, st, cat)                   \
-  NX_C_CASTP_TO_KERN(i4, nx_c_f2i4_s, sfx, storage, compute, ld, cat)            \
-  NX_C_CASTP_TO_KERN(u4, nx_c_f2i4_u, sfx, storage, compute, ld, cat)
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_TO_ROW)
-
-/* packed src (i4/u4) -> compute dst, reusing the cast precision policy with the
-   nibble value as a small signed (i4) / unsigned (u4) integer. */
-#define NX_C_CASTP_FROM_I4(sfx, storage, compute, st, dcat)                     \
-  static void nx_c_castp_i4_to_##sfx(char *dbase, const uint8_t *sb,            \
-                                    int64_t soff, int64_t n) {                 \
-    storage *pO = (storage *)dbase;                                           \
-    for (int64_t i = 0; i < n; i++) {                                          \
-      int64_t si = soff + i;                                                   \
-      uint8_t by = sb[si >> 1];                                               \
-      int v = (si & 1) ? ((int8_t)by >> 4) : ((int8_t)((by & 0x0F) << 4) >> 4);\
-      pO[i] = (storage)st(NX_C_CASTVAL_##dcat(compute, sfx, NX_C_CAT_SINT, v));  \
-    }                                                                          \
-  }
-#define NX_C_CASTP_FROM_U4(sfx, storage, compute, st, dcat)                     \
-  static void nx_c_castp_u4_to_##sfx(char *dbase, const uint8_t *sb,            \
-                                    int64_t soff, int64_t n) {                 \
-    storage *pO = (storage *)dbase;                                           \
-    for (int64_t i = 0; i < n; i++) {                                          \
-      int64_t si = soff + i;                                                   \
-      uint8_t by = sb[si >> 1];                                               \
-      int v = (si & 1) ? (by >> 4) : (by & 0x0F);                             \
-      pO[i] = (storage)st(NX_C_CASTVAL_##dcat(compute, sfx, NX_C_CAT_UINT, v));  \
-    }                                                                          \
-  }
-#define NX_C_CASTP_FROM_ROW(sfx, storage, compute, ld, st, cat)                 \
-  NX_C_CASTP_FROM_I4(sfx, storage, compute, st, cat)                            \
-  NX_C_CASTP_FROM_U4(sfx, storage, compute, st, cat)
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_FROM_ROW)
-
-#define NX_C_CASTP_TO_I4_TE(sfx, storage, compute, ld, st, cat)                 \
-  [NX_C_DTYPE_##sfx] = nx_c_castp_##sfx##_to_i4,
-#define NX_C_CASTP_TO_U4_TE(sfx, storage, compute, ld, st, cat)                 \
-  [NX_C_DTYPE_##sfx] = nx_c_castp_##sfx##_to_u4,
-#define NX_C_CASTP_FROM_I4_TE(sfx, storage, compute, ld, st, cat)               \
-  [NX_C_DTYPE_##sfx] = nx_c_castp_i4_to_##sfx,
-#define NX_C_CASTP_FROM_U4_TE(sfx, storage, compute, ld, st, cat)               \
-  [NX_C_DTYPE_##sfx] = nx_c_castp_u4_to_##sfx,
-static nx_c_castp_to *const nx_c_castp_to_i4[NX_C_DTYPE_COUNT] = {
-    NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_TO_I4_TE)};
-static nx_c_castp_to *const nx_c_castp_to_u4[NX_C_DTYPE_COUNT] = {
-    NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_TO_U4_TE)};
-static nx_c_castp_from *const nx_c_castp_from_i4[NX_C_DTYPE_COUNT] = {
-    NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_FROM_I4_TE)};
-static nx_c_castp_from *const nx_c_castp_from_u4[NX_C_DTYPE_COUNT] = {
-    NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_FROM_U4_TE)};
-
-/* Contiguous (ignoring size-1 dims): logical element i maps to storage element
-   offset + i, so the whole operand converts in one run. */
-static bool nx_c_cast_dense(const nx_c_ndarray *a) {
-  int64_t expect = 1;
-  for (int i = a->ndim - 1; i >= 0; i--) {
-    if (a->shape[i] == 1) continue;
-    if (a->strides[i] != expect) return false;
-    expect *= a->shape[i];
-  }
-  return true;
-}
-static int64_t nx_c_cast_count(const nx_c_ndarray *a) {
-  int64_t t = 1;
-  for (int i = 0; i < a->ndim; i++) t *= a->shape[i];
-  return t;
-}
-
-/* The storage offset of a's element at C-order index idx. */
-static int64_t nx_c_cast_offset(const nx_c_ndarray *a, int64_t idx) {
-  int64_t off = a->offset;
-  for (int d = a->ndim - 1; d >= 0; d--) {
-    int64_t n = a->shape[d];
-    off += (idx % n) * a->strides[d];
-    idx /= n;
-  }
-  return off;
-}
-
-/* Converts n elements: the run from storage element doff of o and soff of in. */
-static void nx_c_cast_packed_run(nx_c_dtype src, nx_c_dtype dst,
-                                 const nx_c_ndarray *o, int64_t doff,
-                                 const nx_c_ndarray *in, int64_t soff,
-                                 int64_t n) {
-  bool sp = nx_c_dtype_is_packed(src), dp = nx_c_dtype_is_packed(dst);
-  if (sp && dp) { /* packed -> packed is a nibble copy (low 4 bits carry over) */
-    const uint8_t *S = (const uint8_t *)in->data;
-    uint8_t *D = (uint8_t *)o->data;
-    for (int64_t i = 0; i < n; i++) {
-      int64_t si = soff + i, di = doff + i;
-      uint8_t nib = (uint8_t)((S[si >> 1] >> ((si & 1) * 4)) & 0x0F);
-      uint8_t *bp = &D[di >> 1];
-      *bp = (di & 1) ? (uint8_t)((*bp & 0x0F) | (nib << 4))
-                     : (uint8_t)((*bp & 0xF0) | nib);
-    }
-  } else if (dp) {
-    nx_c_castp_to *fn =
-        (dst == NX_C_DTYPE_u4) ? nx_c_castp_to_u4[src] : nx_c_castp_to_i4[src];
-    fn((uint8_t *)o->data, doff,
-       (const char *)in->data + soff * nx_c_elem_size(src), n);
-  } else {
-    nx_c_castp_from *fn = (src == NX_C_DTYPE_u4) ? nx_c_castp_from_u4[dst]
-                                                 : nx_c_castp_from_i4[dst];
-    fn((char *)o->data + doff * nx_c_elem_size(dst),
-       (const uint8_t *)in->data, soff, n);
-  }
-}
-
-/* A dense pair converts in one run; any other layout one element at a time. */
-static nx_c_status nx_c_cast_packed(nx_c_dtype src, nx_c_dtype dst,
-                                  const nx_c_ndarray *o, const nx_c_ndarray *in) {
-  bool sp = nx_c_dtype_is_packed(src), dp = nx_c_dtype_is_packed(dst);
-  if (!sp && (dst == NX_C_DTYPE_u4 ? nx_c_castp_to_u4[src]
-                                   : nx_c_castp_to_i4[src]) == NULL)
-    return NX_C_ERR_UNSUPPORTED_DTYPE;
-  if (!dp && (src == NX_C_DTYPE_u4 ? nx_c_castp_from_u4[dst]
-                                   : nx_c_castp_from_i4[dst]) == NULL)
-    return NX_C_ERR_UNSUPPORTED_DTYPE;
-  int64_t n = nx_c_cast_count(o);
-  if (n == 0) return NX_C_OK; /* an empty view's strides need not be dense */
-  if (nx_c_cast_dense(o) && nx_c_cast_dense(in))
-    nx_c_cast_packed_run(src, dst, o, o->offset, in, in->offset, n);
-  else
-    for (int64_t i = 0; i < n; i++)
-      nx_c_cast_packed_run(src, dst, o, nx_c_cast_offset(o, i), in,
-                           nx_c_cast_offset(in, i), 1);
-  return NX_C_OK;
-}
-
-/* bit, through bool. A compute element becomes a bit as the cast to bool
-   converts it, and a bit becomes a compute element as its bool does, so a cast
-   through bit is a cast through bool. Blocks of 64 elements in C order go
-   through 64 bytes of bool on the stack: the cast table's kernels convert
-   them, and the pack and unpack of nx_c_packed.c move them to and from bits. */
+/* Sub-byte casts. An element of bit, int4 or uint4 is a value of its byte
+   dtype (nx_c_packed_via), so a cast from one is the cast from that dtype,
+   and a cast to one is the cast to that dtype followed by the narrowing that
+   keeps the byte's low bits, or for bit whether it is non-zero. A float cast
+   to int4 or uint4 is then held at the ends of the 4-bit range: 9. becomes 7,
+   as the float cast to int8 holds 300. at 127. Blocks of 64 elements in C
+   order go through 64 bytes on the stack: the cast table's kernels convert
+   them, and the family's widening and narrowing move them to and from their
+   elements. */
 
 /* A compute operand read or written by its elements in C order, as
    nx_c_packed_src reads a packed one: its view with size-1 axes dropped and
@@ -1644,6 +1476,10 @@ static void nx_c_cast_side_init(nx_c_cast_side *c, const nx_c_ndarray *a,
   c->ndim = nd;
 }
 
+static bool nx_c_cast_side_dense(const nx_c_cast_side *c) {
+  return c->ndim == 1 && c->strides[0] == 1;
+}
+
 /* Calls f on the runs of elements [e, e + k) of c in C order: the first
    element's address, the byte step and the run's length, and the run's place
    among the k. */
@@ -1668,9 +1504,38 @@ static void nx_c_cast_runs(const nx_c_cast_side *c, int64_t e, int64_t k,
   }
 }
 
+/* Elements [e, e + k) of the packed s, of dtype dt, as bytes of its byte
+   dtype. */
+static void nx_c_cast_widen(const nx_c_packed_src *s, nx_c_dtype dt,
+                            int64_t e, int k, uint8_t *bytes) {
+  int per = 64 / s->bits;
+  for (int j = 0; j < k; j += per) {
+    int n = k - j < per ? k - j : per;
+    nx_c_packed_widen(bytes + j, nx_c_packed_read(s, e + j, n), n, dt);
+  }
+}
+
+/* A byte block converted by kernel f, or copied when f is NULL. */
+static void nx_c_cast_block(nx_c_map_loop *f, char *dst, int64_t dstep,
+                            const char *src, int64_t sstep, int64_t n) {
+  if (f) {
+    char *ptrs[2] = {dst, (char *)src};
+    int64_t steps[2] = {dstep, sstep};
+    f(ptrs, steps, n, NULL);
+    return;
+  }
+  for (int64_t i = 0; i < n; i++) dst[i * dstep] = src[i * sstep];
+}
+
+/* To a sub-byte dtype. */
+
 typedef struct {
-  nx_c_cast_side in;
-  nx_c_map_loop *to_bool; /* NULL when in is bool */
+  nx_c_dtype src, dst;
+  bool packed;           /* src is sub-byte: read through pin */
+  nx_c_cast_side in;     /* src otherwise */
+  nx_c_packed_src pin;
+  nx_c_map_loop *to_via; /* src, or its byte dtype, to dst's; NULL if equal */
+  int clamp_lo, clamp_hi; /* a float source's range, else 0 and -1 */
 } nx_c_cast_pack_ctx;
 
 typedef struct {
@@ -1681,62 +1546,69 @@ typedef struct {
 static void nx_c_cast_pack_piece(const void *vctx, char *p, int64_t step,
                                  int64_t n, int64_t j) {
   const nx_c_cast_pack_piece_ctx *pc = vctx;
-  char *ptrs[2] = {(char *)pc->bytes + j, p};
-  int64_t steps[2] = {1, step};
-  if (pc->c->to_bool) {
-    pc->c->to_bool(ptrs, steps, n, NULL);
-    return;
-  }
-  for (int64_t i = 0; i < n; i++) pc->bytes[j + i] = p[i * step] != 0;
+  nx_c_cast_block(pc->c->to_via, (char *)pc->bytes + j, 1, p, step, n);
 }
 
 static uint64_t nx_c_cast_pack_fill(const void *vctx, int64_t e, int k) {
   const nx_c_cast_pack_ctx *c = vctx;
   const nx_c_cast_side *in = &c->in;
-  if (!c->to_bool && in->ndim == 1 && in->strides[0] == 1)
-    return nx_c_bit_pack((const uint8_t *)in->base + in->offset + e, k);
+  bool clamp = c->clamp_lo <= c->clamp_hi;
+  if (!c->packed && !c->to_via && !clamp && nx_c_cast_side_dense(in))
+    return nx_c_packed_narrow((const uint8_t *)in->base + in->offset + e, k,
+                              c->dst);
   uint8_t bytes[64];
-  nx_c_cast_pack_piece_ctx pc = {c, bytes};
-  nx_c_cast_runs(in, e, k, nx_c_cast_pack_piece, &pc);
-  return nx_c_bit_pack(bytes, k);
+  if (c->packed) {
+    uint8_t wide[64];
+    nx_c_cast_widen(&c->pin, c->src, e, k, c->to_via ? wide : bytes);
+    if (c->to_via)
+      nx_c_cast_block(c->to_via, (char *)bytes, 1, (const char *)wide, 1, k);
+  } else {
+    nx_c_cast_pack_piece_ctx pc = {c, bytes};
+    nx_c_cast_runs(in, e, k, nx_c_cast_pack_piece, &pc);
+  }
+  if (clamp)
+    for (int j = 0; j < k; j++) {
+      int v = c->dst == NX_C_DTYPE_i4 ? (int8_t)bytes[j] : bytes[j];
+      v = v < c->clamp_lo ? c->clamp_lo : v > c->clamp_hi ? c->clamp_hi : v;
+      bytes[j] = (uint8_t)v;
+    }
+  return nx_c_packed_narrow(bytes, k, c->dst);
 }
 
-/* Whole words packed from a bool operand that is one run, 64 bytes a word. */
 static void nx_c_cast_pack_words(const void *vctx, int64_t e, int64_t n,
                                  uint8_t *dst) {
   const nx_c_cast_pack_ctx *c = vctx;
   const nx_c_cast_side *in = &c->in;
-  if (c->to_bool || in->ndim != 1 || in->strides[0] != 1) {
-    for (int64_t j = 0; j < n; j++)
-      nx_c_st64(dst + 8 * j, nx_c_cast_pack_fill(c, e + 64 * j, 64));
+  if (!c->packed && !c->to_via && c->clamp_lo > c->clamp_hi &&
+      nx_c_cast_side_dense(in)) {
+    nx_c_packed_narrow_words(dst, (const uint8_t *)in->base + in->offset + e,
+                             n, c->dst);
     return;
   }
-  const uint8_t *src = (const uint8_t *)in->base + in->offset + e;
+  int per = 64 / nx_c_packed_bits(c->dst);
   for (int64_t j = 0; j < n; j++)
-    nx_c_st64(dst + 8 * j, nx_c_bit_pack(src + 64 * j, 64));
+    nx_c_st64(dst + 8 * j, nx_c_cast_pack_fill(c, e + per * j, per));
 }
 
+/* From a sub-byte dtype to a compute one. */
+
 typedef struct {
+  nx_c_dtype src;
   nx_c_packed_src in;
   nx_c_cast_side out;
-  nx_c_map_loop *from_bool; /* NULL when out is bool */
+  nx_c_map_loop *from_via; /* src's byte dtype to dst; NULL if equal */
 } nx_c_cast_unpack_ctx;
 
 typedef struct {
   const nx_c_cast_unpack_ctx *c;
-  uint8_t *bytes;
+  const uint8_t *bytes;
 } nx_c_cast_unpack_piece_ctx;
 
 static void nx_c_cast_unpack_piece(const void *vctx, char *p, int64_t step,
                                    int64_t n, int64_t j) {
   const nx_c_cast_unpack_piece_ctx *pc = vctx;
-  char *ptrs[2] = {p, (char *)pc->bytes + j};
-  int64_t steps[2] = {step, 1};
-  if (pc->c->from_bool) {
-    pc->c->from_bool(ptrs, steps, n, NULL);
-    return;
-  }
-  for (int64_t i = 0; i < n; i++) p[i * step] = (char)pc->bytes[j + i];
+  nx_c_cast_block(pc->c->from_via, p, step, (const char *)pc->bytes + j, 1,
+                  n);
 }
 
 /* Blocks [lo, hi) of 64 elements of the destination. */
@@ -1747,33 +1619,35 @@ static void nx_c_cast_unpack_body(int64_t lo, int64_t hi, int worker,
   const nx_c_cast_side *out = &c->out;
   int64_t total = 1;
   for (int d = 0; d < out->ndim; d++) total *= out->shape[d];
-  bool dense = out->ndim == 1 && out->strides[0] == 1;
-  /* A run of bits to a run of bools, a word to 64 bytes. */
-  if (dense && !c->from_bool && nx_c_packed_dense(&c->in)) {
-    uint8_t *dst = (uint8_t *)out->base + out->offset;
-    int64_t full = hi * 64 <= total ? hi : total / 64;
-    for (int64_t blk = lo; blk < full; blk++)
-      nx_c_bit_unpack(dst + 64 * blk,
-                      nx_c_bits_load(c->in.base, c->in.offset + 64 * blk, 64),
-                      64);
-    lo = full > lo ? full : lo;
+  int64_t end = hi * 64 < total ? hi * 64 : total;
+  if (!c->from_via && nx_c_cast_side_dense(out) && nx_c_packed_dense(&c->in)) {
+    nx_c_packed_widen_run((uint8_t *)out->base + out->offset + lo * 64,
+                          c->in.base, c->in.offset + lo * 64, end - lo * 64,
+                          c->src);
+    return;
   }
+  bool direct = !c->from_via && nx_c_cast_side_dense(out);
   uint8_t bytes[64];
   for (int64_t blk = lo; blk < hi; blk++) {
     int64_t e = blk * 64;
     int k = total - e < 64 ? (int)(total - e) : 64;
-    uint64_t v = nx_c_packed_read(&c->in, e, k);
-    if (dense && !c->from_bool) {
-      nx_c_bit_unpack((uint8_t *)out->base + out->offset + e, v, k);
+    if (direct) {
+      nx_c_cast_widen(&c->in, c->src, e, k,
+                      (uint8_t *)out->base + out->offset + e);
       continue;
     }
-    nx_c_bit_unpack(bytes, v, k);
+    nx_c_cast_widen(&c->in, c->src, e, k, bytes);
     nx_c_cast_unpack_piece_ctx pc = {c, bytes};
     nx_c_cast_runs(out, e, k, nx_c_cast_unpack_piece, &pc);
   }
 }
 
-static nx_c_status nx_c_cast_bit(nx_c_dtype src, nx_c_dtype dst,
+/* The cast kernel from a to b, NULL when they are one dtype. */
+static nx_c_map_loop *nx_c_cast_kernel(nx_c_dtype a, nx_c_dtype b) {
+  return a == b ? NULL : nx_c_cast_tables[a].fn[b];
+}
+
+static nx_c_status nx_c_cast_sub(nx_c_dtype src, nx_c_dtype dst,
                                  const nx_c_ndarray *o,
                                  const nx_c_ndarray *in) {
   if (o->ndim != in->ndim) return NX_C_ERR_RANK_MISMATCH;
@@ -1782,29 +1656,38 @@ static nx_c_status nx_c_cast_bit(nx_c_dtype src, nx_c_dtype dst,
     if (o->shape[d] != in->shape[d]) return NX_C_ERR_SHAPE;
     total *= o->shape[d];
   }
-  if (dst == NX_C_DTYPE_bit) {
-    if (nx_c_dtype_is_packed(src)) return NX_C_ERR_PACKED;
+  bool sp = nx_c_dtype_is_packed(src);
+  nx_c_dtype from = sp ? nx_c_packed_via(src) : src;
+  if (nx_c_dtype_is_packed(dst)) {
     nx_c_cast_pack_ctx c;
-    nx_c_cast_side_init(&c.in, in, nx_c_elem_size(src));
-    c.to_bool = src == NX_C_DTYPE_bool_
-                    ? NULL
-                    : nx_c_cast_tables[src].fn[NX_C_DTYPE_bool_];
-    int64_t bytes = total * nx_c_elem_size(src) + (total + 7) / 8;
+    c.src = src;
+    c.dst = dst;
+    c.packed = sp;
+    if (sp)
+      nx_c_packed_src_init(&c.pin, in, nx_c_packed_bits(src));
+    else
+      nx_c_cast_side_init(&c.in, in, nx_c_elem_size(src));
+    c.to_via = nx_c_cast_kernel(from, nx_c_packed_via(dst));
+    c.clamp_lo = 0;
+    c.clamp_hi = -1;
+    if (nx_c_dtype_is_float(src) || nx_c_dtype_is_complex(src)) {
+      if (dst == NX_C_DTYPE_i4) c.clamp_lo = -8, c.clamp_hi = 7;
+      if (dst == NX_C_DTYPE_u4) c.clamp_hi = 15;
+    }
+    int64_t bytes = nx_c_dtype_bytes(src, total) + nx_c_dtype_bytes(dst, total);
     nx_c_packed_filler f = {nx_c_cast_pack_fill, nx_c_cast_pack_words, &c};
-    return nx_c_packed_write(o, 1, &f, bytes);
+    return nx_c_packed_write(o, nx_c_packed_bits(dst), &f, bytes);
   }
-  if (nx_c_dtype_is_packed(dst)) return NX_C_ERR_PACKED;
   if (total == 0) return NX_C_OK;
   for (int d = 0; d < o->ndim; d++)
     if (o->strides[d] == 0 && o->shape[d] > 1) return NX_C_ERR_OUT_ALIASED;
   nx_c_cast_unpack_ctx c;
-  nx_c_packed_src_init(&c.in, in, 1);
+  c.src = src;
+  nx_c_packed_src_init(&c.in, in, nx_c_packed_bits(src));
   nx_c_cast_side_init(&c.out, o, nx_c_elem_size(dst));
-  c.from_bool = dst == NX_C_DTYPE_bool_
-                    ? NULL
-                    : nx_c_cast_tables[NX_C_DTYPE_bool_].fn[dst];
+  c.from_via = nx_c_cast_kernel(from, dst);
   int64_t blocks = (total + 63) / 64;
-  int64_t bytes = total * nx_c_elem_size(dst) + (total + 7) / 8;
+  int64_t bytes = nx_c_dtype_bytes(src, total) + nx_c_dtype_bytes(dst, total);
   int nth = nx_c_threads_for(NX_C_COST_BANDWIDTH, total, 1, bytes);
   if (nth > blocks) nth = (int)blocks;
   nx_c_parallel_for(nth, blocks, bytes, nx_c_cast_unpack_body, &c, NULL);
@@ -1917,8 +1800,8 @@ NX_C_CMP_STUB(cmplt, "cmplt", nx_c_cmplt_table)
 NX_C_CMP_STUB(cmple, "cmple", nx_c_cmple_table)
 
 /* cast keys on the (src, dst) pair. Compute pairs run the pair matrix through
-   the map driver (dispatched on the dst dtype); a pair with bit goes through
-   bool, and anything else touching int4/uint4 takes the serial nibble path. */
+   the map driver (dispatched on the dst dtype); a pair with a sub-byte dtype
+   goes through its byte dtype. */
 CAMLprim value caml_nx_c_cast(value vout, value va) {
   CAMLparam2(vout, va);
   nx_c_ndarray ops[2];
@@ -1927,10 +1810,8 @@ CAMLprim value caml_nx_c_cast(value vout, value va) {
   if ((s = nx_c_ndarray_of_value(va, &ops[1])) != NX_C_OK) nx_c_raise("cast", s);
   nx_c_dtype dst = nx_c_dtype_of_value(vout);
   nx_c_dtype src = nx_c_dtype_of_value(va);
-  if (src == NX_C_DTYPE_bit || dst == NX_C_DTYPE_bit) {
-    s = nx_c_cast_bit(src, dst, &ops[0], &ops[1]);
-  } else if (nx_c_dtype_is_packed(src) || nx_c_dtype_is_packed(dst)) {
-    s = nx_c_cast_packed(src, dst, &ops[0], &ops[1]);
+  if (nx_c_dtype_is_packed(src) || nx_c_dtype_is_packed(dst)) {
+    s = nx_c_cast_sub(src, dst, &ops[0], &ops[1]);
   } else {
     int64_t elem[2] = {nx_c_elem_size(dst), nx_c_elem_size(src)};
     s = nx_c_map_run(&nx_c_cast_tables[src], dst, 1, ops, elem, NX_C_COST_BANDWIDTH,

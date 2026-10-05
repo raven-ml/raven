@@ -165,6 +165,7 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled integer remainder by zero is its dividend, as `Nx.mod_`'s.
 - `Rune.jit` refuses `bit` values, as it refuses `int4`.
 - `RUNE_JIT_DEBUG` is a tolk setting: it holds an integer, nonzero to report,
   and any other value raises when the program starts.
@@ -3147,6 +3148,13 @@ thread.
 
 ### Nx
 
+- `int4` and `uint4` compute as integers modulo 16, as every integer dtype
+  computes modulo its width, where every function but casts and moves raised.
+- `Nx.mod_` by zero is its dividend at every integer width, where it was 0, so
+  `a = b * div a b + mod_ a b` holds for every `b`. `Nx.div` of a signed
+  type's least value by -1 is that value.
+- `Nx.lshift` and `Nx.rshift` by the width or more give 0, or -1 below zero
+  for `rshift`: `lshift` of an `int64` by 64 returned its operand.
 - Add the `bit` dtype (`Nx.bit`, `Nx.bit_t`): booleans eight to a byte, for
   keeping large masks. Every function that takes `bool` outside a condition
   takes `bit`; a condition stays `bool`, as `Nx.cast Nx.bool m`. `Nx.count`

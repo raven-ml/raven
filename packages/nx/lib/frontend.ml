@@ -139,6 +139,8 @@ let power_of_two : type a b. (a, b) Nx_dtype.t -> int -> a =
   if shift_val < 0 then
     err "power_of_two" "shift_val must be >= 0, got %d" shift_val;
   match dtype with
+  | Int4 -> 1 lsl shift_val
+  | UInt4 -> (1 lsl shift_val) land 0xF
   | Int8 -> 1 lsl shift_val
   | UInt8 -> (1 lsl shift_val) land 0xFF
   | Int16 -> 1 lsl shift_val
@@ -656,7 +658,11 @@ let shift_op ~op ~apply x shift_val =
       (broadcast_to (shape x)
          (B.full (Value.context x) dt [||] (power_of_two dt shift_val)))
 
-let lshift x shift_val = shift_op ~op:"lshift" ~apply:mul x shift_val
+(* [x * 2^n] modulo the width, so 0 once [n] reaches it. *)
+let lshift x n =
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype (dtype x))) in
+  if n >= bits && Nx_dtype.is_int (dtype x) then zeros_like x
+  else shift_op ~op:"lshift" ~apply:mul x n
 
 let clamp ?min ?max x =
   let x = match min with None -> x | Some min_v -> maximum_s x min_v in

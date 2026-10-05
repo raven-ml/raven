@@ -269,4 +269,128 @@ static inline void nx_c_bit_unpack(uint8_t *bytes, uint64_t bits, int n) {
   for (; i < n; i++) bytes[i] = (uint8_t)((bits >> i) & 1);
 }
 
+/* Nibbles to bytes and back, n <= 16: the low 4 bits of the n bytes at
+   `bytes` as the low 4n bits of a word, element j in bits [4j, 4j + 4); and
+   the low 4n bits of `nibs` as n bytes, sign-extended when `sign`. */
+static inline uint64_t nx_c_nib_pack(const uint8_t *bytes, int n) {
+  uint64_t w = 0;
+  int i = 0;
+#if defined(__ARM_NEON)
+  if (n == 16) {
+    /* Even elements are the low nibbles, odd ones the high. */
+    uint8x8x2_t x = vld2_u8(bytes);
+    uint8x8_t lo = vand_u8(x.val[0], vdup_n_u8(0x0f));
+    uint8x8_t r = vorr_u8(lo, vshl_n_u8(x.val[1], 4));
+    return vget_lane_u64(vreinterpret_u64_u8(r), 0);
+  }
+#endif
+  /* Eight bytes to eight nibbles: each round halves the gaps between them. */
+  for (; i + 8 <= n; i += 8) {
+    uint64_t x = nx_c_ld64(bytes + i) & 0x0f0f0f0f0f0f0f0fu;
+    x = (x | (x >> 4)) & 0x00ff00ff00ff00ffu;
+    x = (x | (x >> 8)) & 0x0000ffff0000ffffu;
+    x = (x | (x >> 16)) & 0xffffffffu;
+    w |= x << (4 * i);
+  }
+  for (; i < n; i++) w |= (uint64_t)(bytes[i] & 0x0f) << (4 * i);
+  return w;
+}
+
+static inline void nx_c_nib_unpack(uint8_t *bytes, uint64_t nibs, int n,
+                                   bool sign) {
+  int i = 0;
+#if defined(__ARM_NEON)
+  if (n == 16) {
+    uint8x8_t b = vcreate_u8(nibs);
+    uint8x8x2_t z = vzip_u8(vand_u8(b, vdup_n_u8(0x0f)), vshr_n_u8(b, 4));
+    uint8x16_t x = vcombine_u8(z.val[0], z.val[1]);
+    if (sign)
+      x = vreinterpretq_u8_s8(
+          vshrq_n_s8(vshlq_n_s8(vreinterpretq_s8_u8(x), 4), 4));
+    vst1q_u8(bytes, x);
+    return;
+  }
+#endif
+  /* Eight nibbles to eight bytes: each round doubles the gaps between them,
+     and a set bit 3 fills the byte's high nibble. */
+  for (; i + 8 <= n; i += 8) {
+    uint64_t t = (nibs >> (4 * i)) & 0xffffffffu;
+    t = (t | (t << 16)) & 0x0000ffff0000ffffu;
+    t = (t | (t << 8)) & 0x00ff00ff00ff00ffu;
+    t = (t | (t << 4)) & 0x0f0f0f0f0f0f0f0fu;
+    if (sign) t |= ((t >> 3) & 0x0101010101010101u) * 0xf0;
+    nx_c_st64(bytes + i, t);
+  }
+  for (; i < n; i++) {
+    uint8_t v = (uint8_t)((nibs >> (4 * i)) & 0x0f);
+    bytes[i] = sign && (v & 8) ? (uint8_t)(v | 0xf0) : v;
+  }
+}
+
+/* A sub-byte dtype's elements as bytes: bit as bool, int4 as int8 and uint4
+   as uint8. Its values are the byte dtype's, and a byte becomes an element
+   by its low bits, a bool's by whether it is non-zero. */
+static inline nx_c_dtype nx_c_packed_via(nx_c_dtype dt) {
+  switch (dt) {
+  case NX_C_DTYPE_bit:
+    return NX_C_DTYPE_bool_;
+  case NX_C_DTYPE_i4:
+    return NX_C_DTYPE_i8;
+  default:
+    return NX_C_DTYPE_u8;
+  }
+}
+
+/* The n elements of `bits`-wide dtype dt in v as its bytes, and back. */
+static inline void nx_c_packed_widen(uint8_t *bytes, uint64_t v, int n,
+                                     nx_c_dtype dt) {
+  if (dt == NX_C_DTYPE_bit)
+    nx_c_bit_unpack(bytes, v, n);
+  else
+    nx_c_nib_unpack(bytes, v, n, dt == NX_C_DTYPE_i4);
+}
+
+static inline uint64_t nx_c_packed_narrow(const uint8_t *bytes, int n,
+                                          nx_c_dtype dt) {
+  return dt == NX_C_DTYPE_bit ? nx_c_bit_pack(bytes, n)
+                              : nx_c_nib_pack(bytes, n);
+}
+
+/* Runs of whole words. The n elements of dt from element `first` of the
+   storage at base, as bytes; and n words of storage packed from the bytes
+   of 64 / bits elements each. The choice of width stays out of the loops. */
+static inline void nx_c_packed_widen_run(uint8_t *bytes, const uint8_t *base,
+                                         int64_t first, int64_t n,
+                                         nx_c_dtype dt) {
+  int bits = nx_c_packed_bits(dt), per = 64 / bits;
+  int64_t j = 0;
+  if (dt == NX_C_DTYPE_bit)
+    for (; j + per <= n; j += per)
+      nx_c_bit_unpack(bytes + j, nx_c_bits_load(base, first + j, 64), 64);
+  else if (dt == NX_C_DTYPE_i4)
+    for (; j + per <= n; j += per)
+      nx_c_nib_unpack(bytes + j, nx_c_bits_load(base, (first + j) * 4, 64),
+                      16, true);
+  else
+    for (; j + per <= n; j += per)
+      nx_c_nib_unpack(bytes + j, nx_c_bits_load(base, (first + j) * 4, 64),
+                      16, false);
+  if (j < n)
+    nx_c_packed_widen(bytes + j,
+                      nx_c_bits_load(base, (first + j) * bits,
+                                     (int)(n - j) * bits),
+                      (int)(n - j), dt);
+}
+
+static inline void nx_c_packed_narrow_words(uint8_t *dst,
+                                            const uint8_t *bytes, int64_t n,
+                                            nx_c_dtype dt) {
+  if (dt == NX_C_DTYPE_bit)
+    for (int64_t j = 0; j < n; j++)
+      nx_c_st64(dst + 8 * j, nx_c_bit_pack(bytes + 64 * j, 64));
+  else
+    for (int64_t j = 0; j < n; j++)
+      nx_c_st64(dst + 8 * j, nx_c_nib_pack(bytes + 16 * j, 16));
+}
+
 #endif /* NX_C_PACKED_H */
