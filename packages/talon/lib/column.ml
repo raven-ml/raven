@@ -61,8 +61,8 @@ let mask bits = unread bits
 
 let restrict m c =
   if Nx.shape m.bits <> [| c.length |] then
-    err "Column.restrict: a mask of %d rows for %d rows" (Nx.numel m.bits)
-      c.length;
+    err "Column.restrict: a mask of shape %a for %d rows" Nx.pp_shape
+      (Nx.shape m.bits) c.length;
   match c.validity with Some _ -> c | None -> { c with validity = Some m }
 
 (* A value its type does not hold raises [Refused] with the reason while a

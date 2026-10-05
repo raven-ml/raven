@@ -43,5 +43,5 @@ val concat : t -> t
 val canonical : t -> t
 (** [canonical t] is the one-batch table [t] with canonical columns
     ({!Column.canonical}): [t] itself when its columns are, one copy of each
-    other column otherwise. [run]'s result and [column]'s column are made so,
-    which keeps their layouts independent of batching. *)
+    other column otherwise. [run]'s result is made so, which keeps its layouts
+    independent of batching. *)

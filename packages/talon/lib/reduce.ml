@@ -89,12 +89,15 @@ let at s =
   | None -> positions n
   | Some p -> Nx.scatter ~axis:0 ~indices:p ~values:(positions n) (none n)
 
-(* [pick s op hit] is, in each segment, the row where [hit] holds that comes
-   first ([`Min]) or last ([`Max]) in the segment's order, [-1] where no row
-   does: the row of least or greatest {!at}. *)
+(* [pick s op hit] is, in each segment, the row where [hit] holds, or any row
+   when it is [None], that comes first ([`Min]) or last ([`Max]) in the
+   segment's order, [-1] where no row does: the row of least or greatest
+   {!at}. *)
 let pick s op hit =
   let n = Nx.dim 0 s.ids in
-  let ids = Nx.where hit s.ids (none n) in
+  let ids =
+    match hit with Some h -> Nx.where h s.ids (none n) | None -> s.ids
+  in
   let j = Nx.reduce_segments op ~segments:s.count ids (at s) in
   let found =
     Nx.logical_and (Nx.greater_equal_s j 0L) (Nx.less_s j (Int64.of_int n))
@@ -147,7 +150,6 @@ let reduce : type a b.
     match held with Some v -> Nx.where v s.ids (none n) | None -> s.ids
   in
   let valid m = match held with Some v -> Nx.logical_and v m | None -> m in
-  let held_rows = Option.value held ~default:(Nx.ones Nx.bool [| n |]) in
   let count = segment_sum s ids (Nx.ones Nx.int64 [| n |]) in
   let at_least k = Nx.greater_equal_s count (Int64.of_int k) in
   let sum dt = segment_sum s ids (tensor dt c) in
@@ -168,7 +170,7 @@ let reduce : type a b.
   in
   let first_at e =
     let hit = Nx.equal (Lazy.force words) (Nx.take ~indices:s.ids e) in
-    pick s `Min (valid hit)
+    pick s `Min (Some (valid hit))
   in
   let place row =
     let p = place s row in
@@ -193,8 +195,8 @@ let reduce : type a b.
   | Max -> ok (value (first_at (extreme `Max)))
   | Arg_min -> ok (place (first_at (extreme `Min)))
   | Arg_max -> ok (place (first_at (extreme `Max)))
-  | First -> ok (value (pick s `Min held_rows))
-  | Last -> ok (value (pick s `Max held_rows))
+  | First -> ok (value (pick s `Min held))
+  | Last -> ok (value (pick s `Max held))
   | Only ->
       let lo = extreme `Min in
       let several =

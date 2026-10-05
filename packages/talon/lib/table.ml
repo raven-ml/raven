@@ -83,8 +83,7 @@ let canonical t =
   let cs = Array.map Column.canonical b in
   if Array.for_all2 ( == ) b cs then t else batch t.schema ~rows:t.rows cs
 
-let column t name =
-  Column.canonical (Column.concat (parts t (index "column" t name)))
+let column t name = Column.concat (parts t (index "column" t name))
 
 let take indices t =
   if Nx.ndim indices <> 1 then

@@ -18,25 +18,32 @@ let ints n k = Nx.full Nx.int64 [| n |] (Int64.of_int k)
 (* [exclusive c] is the sum of the entries of [c] before each one. *)
 let exclusive c = Nx.sub (Nx.cumsum c) c
 
-(* [assemble q l li r ri keys] is [q]'s rows: each column is the one [keys] give
-   it, or else [l]'s taken at [li], or else [r]'s taken at [ri], null where an
-   index is outside the side's rows, as [-1] is. The rows a side pads are found
-   once for all its columns. *)
-let assemble q l li r ri keys =
-  let found idx t =
-    lazy
-      (let inside =
-         Nx.logical_and
-           (Nx.greater_equal_s idx 0L)
-           (Nx.less_s idx (Int64.of_int (Table.rows t)))
-       in
-       Column.mask (Nx.cast Nx.bit inside))
+(* [assemble q kind l li r ri keys] is [q]'s rows: each column is the one [keys]
+   give it, or else [l]'s taken at [li], or else [r]'s taken at [ri]. The side a
+   [kind] of join pads, the left of a full join and the right of a left or full
+   one, is null where an index is outside its rows, as [-1] is, and those rows
+   are found once for all its columns. *)
+let assemble q (kind : Join.kind) l li r ri keys =
+  let found pads idx t =
+    if not pads then None
+    else
+      Some
+        (lazy
+          (let inside =
+             Nx.logical_and
+               (Nx.greater_equal_s idx 0L)
+               (Nx.less_s idx (Int64.of_int (Table.rows t)))
+           in
+           Column.mask (Nx.cast Nx.bit inside)))
   in
-  let found_l = found li l and found_r = found ri r in
+  let found_l = found (kind = Full) li l
+  and found_r = found (kind = Left || kind = Full) ri r in
   let side found idx c =
     let g = Column.gather idx c in
-    if Option.is_some (Column.validity g) then g
-    else Column.restrict (Lazy.force found) g
+    match found with
+    | Some found when Option.is_none (Column.validity g) ->
+        Column.restrict (Lazy.force found) g
+    | _ -> g
   in
   let column n =
     match List.assoc_opt n keys with
@@ -146,7 +153,7 @@ let equality q kind (each_left, each_right) left right eqs =
       check "left" each_left (named l (List.map fst eqs)) (lazy counts)
     in
     let* () = check "right" each_right (named r (List.map snd eqs)) rcounts in
-    let pairs li ri = Ok (assemble q l li r ri []) in
+    let pairs li ri = Ok (assemble q kind l li r ri []) in
     match (kind : Join.kind) with
     | Inner -> pairs (Nx.positions counts) matched
     | Semi -> pairs (Nx.positions (Nx.greater_s counts 0L)) (arange 0)
@@ -164,7 +171,7 @@ let equality q kind (each_left, each_right) left right eqs =
         in
         let li = Nx.concatenate ~axis:0 [ li; none (Nx.dim 0 u) ]
         and ri = Nx.concatenate ~axis:0 [ ri; u ] in
-        Ok (assemble q l li r ri coalesced)
+        Ok (assemble q kind l li r ri coalesced)
 
 (* Position and all joins *)
 
@@ -180,7 +187,7 @@ let position q kind (each_left, each_right) l r =
     | Full -> arange (Int.max n m)
     | Anti -> Nx.arange Nx.int64 (Int.min n m) n 1
   in
-  Ok (assemble q l idx r idx [])
+  Ok (assemble q kind l idx r idx [])
 
 let cross q kind (each_left, each_right) =
   let batch r b =
@@ -197,13 +204,13 @@ let cross q kind (each_left, each_right) =
       | Semi -> (kept (m > 0), arange 0)
       | Anti -> (kept (m = 0), arange 0)
     in
-    Ok (assemble q b li r ri [])
+    Ok (assemble q kind b li r ri [])
   in
   let last r e n =
     let m = Table.rows r in
     let* () = check "right" each_right [] (lazy (ints m n)) in
-    if kind = Full && n = 0 then Ok (assemble q e (none m) r (arange m) [])
-    else Ok (assemble q e (arange 0) r (arange 0) [])
+    if kind = Full && n = 0 then Ok (assemble q kind e (none m) r (arange m) [])
+    else Ok (assemble q kind e (arange 0) r (arange 0) [])
   in
   Streaming { batch; last }
 

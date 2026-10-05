@@ -513,8 +513,8 @@ module Column : sig
   (** Columns: one typed array of values, some of them null.
 
       A column is an Arrow array over nx buffers. Its {e validity} is an
-      {!Nx.bit_t} with the element of each row that holds a value set; its
-      absence means no row is null. Its values are laid out by its type:
+      {!Nx.bit_t}, true at each row that holds a value; its absence means no row
+      is null. Its values are laid out by its type:
       - one element per row of a primitive nx array: [bool] (one byte per
         value), the integer and float types, [int32] positions in the dictionary
         for categoricals, [int32] days for dates and [int64] ticks for clocks,
@@ -526,7 +526,12 @@ module Column : sig
       An extension column is laid out as its storage. The values under a null
       are unspecified and deterministic: a reader that needs defined values
       masks them with the validity, as Arrow requires. Columns are immutable,
-      and share their buffers with the tensors and layouts that read them. *)
+      and share their buffers with the tensors and layouts that read them.
+
+      A column is {e canonical} when its buffers hold exactly its rows: offsets
+      from [0], values exactly the rows', and a validity only when a row is
+      null, at bit offset [0] with every bit past its length clear. Two
+      canonical columns whose rows hold the same bytes have the same layout. *)
 
   type t
   (** The type for columns. *)
@@ -596,8 +601,8 @@ module Column : sig
       has a null. *)
 
   val validity : t -> Nx.bit_t option
-  (** [validity c] has element [i] set iff row [i] of [c] holds a value. [None]
-      means no row is null. [Some v] may have no cleared element. *)
+  (** [validity c] is true at row [i] iff row [i] of [c] holds a value. [None]
+      means no row is null. [Some v] may be true everywhere. *)
 
   val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
   (** [ragged dt c] is [c]'s rows as a ragged array without a copy, one row per
@@ -613,11 +618,10 @@ module Column : sig
 
   val of_ragged : ?validity:Nx.bit_t -> ('a, 'b) Nx_ragged.t -> t
   (** [of_ragged ?validity r] is the list column whose rows are [r]'s rows, null
-      where [validity] has no bit set, without a copy: a [list] of the element
-      type {!of_tensor} gives [r]'s values, such as [list[int32]] for
-      {!Nx.int32} values, and of a tensor type for values of more than one axis.
-      [validity] defaults to every row valid. [ragged dt (of_ragged r)] has
-      [r]'s rows.
+      where [validity] is false, without a copy: a [list] of the element type
+      {!of_tensor} gives [r]'s values, such as [list[int32]] for {!Nx.int32}
+      values, and of a tensor type for values of more than one axis. [validity]
+      defaults to every row valid. [ragged dt (of_ragged r)] has [r]'s rows.
 
       Raises [Invalid_argument] if [validity]'s shape is not [r]'s number of
       rows, or if [r]'s dtype has no talon type, as {!of_tensor} does. *)
@@ -654,10 +658,11 @@ module Column : sig
       own values, so only [l]'s own values are checked.
 
       Raises [Invalid_argument] if [l] does not lay out [ty]: values of another
-      dtype or cell shape than [ty]'s storage, a validity of another length,
-      offsets that are not 1-D, start below [0], decrease or reach past the
-      child, a child of another type (for text, a [uint8] column with a null),
-      or fields of other names, types or lengths than [ty]'s. *)
+      dtype or cell shape than [ty]'s storage, a validity of a shape other than
+      [[|n|]] for [n] rows, offsets that are not 1-D, start below [0], decrease
+      or reach past the child, a child of another type (for text, a [uint8]
+      column with a null), or fields of other names, types or lengths than
+      [ty]'s. *)
 
   val parse : Type.any -> t -> (t, int * string) result
   (** [parse ty c] is the column of type [ty] whose rows are the values that the
@@ -734,9 +739,8 @@ val rows : t -> int
 (** [rows t] is the number of rows of [t]. *)
 
 val column : t -> string -> Column.t
-(** [column t name] is the column [name] of [t]: its own when [t] is one batch
-    of a column whose buffers hold exactly its rows, else one copy that holds
-    exactly them.
+(** [column t name] is the column [name] of [t], canonical ({!Column}): [t]'s
+    own when it already is.
 
     Raises [Invalid_argument] if [t] has no column [name]. *)
 
@@ -2064,9 +2068,8 @@ module Query : sig
 
   val run : t -> (table, Error.t) result
   (** [run q] is [q]'s rows as one batch: [fold] into a table, then one copy
-      into a single batch. Its columns are canonical: offsets from [0], values
-      that are exactly the rows', validities at bit offset [0], so their
-      {!Column.layout}s do not depend on batches either. *)
+      into a single batch. Its columns are canonical ({!Column}), so their
+      {!Column.layout}s do not depend on batches. *)
 
   val values : ('a, Expr.row) Expr.t -> t -> ('a array, Error.t) result
   (** [values e q] is [e] on each row of [q], decoded to OCaml:

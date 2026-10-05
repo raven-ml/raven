@@ -202,6 +202,7 @@ let text_name : Expr.compare -> string = function
   | `Ge -> "Expr.( >= )"
 
 let compare op a b =
+  let valid = valid [ a; b ] in
   let r =
     match (Column.data a, Column.data b) with
     | Fixed (P x), Fixed q when Nx.ndim x = 1 ->
@@ -216,10 +217,16 @@ let compare op a b =
         let use : Key.use =
           match op with `Eq | `Ne -> Identity | `Lt | `Le | `Gt | `Ge -> Order
         in
+        (* A compound value's word is relative to the rows computed with it, so
+           the comparison is masked under the nulls: there it would depend on
+           the batch. *)
         let x, y = words use a b in
-        ordered op x y
+        let r = ordered op x y in
+        Option.fold ~none:r
+          ~some:(fun v -> Nx.logical_and r (Nx.cast Nx.bool v))
+          valid
   in
-  boolean ?valid:(valid [ a; b ]) r
+  boolean ?valid r
 
 (* [held c] is where [c] holds a value, as a condition. *)
 let held c = Option.map (Nx.cast Nx.bool) (Column.validity c)
