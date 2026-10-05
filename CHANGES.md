@@ -965,6 +965,8 @@ thread.
 
 ### Tolk (new)
 
+- `BEAM_DEBUG`'s compile time of a candidate counts its rendering and its
+  compiler, which it left out.
 - On arm64 the host hides a float zero from clang only where a comparison
   reads it, which is all its select-to-`fminnm` lowering needs, so a select of
   a zero by another condition compiles to a mask again. A routed MXFP4 product

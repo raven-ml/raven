@@ -114,7 +114,11 @@ let try_compile k =
         Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
           uops_max;
       None)
-    else Some (Codegen.to_program lin ren, Unix.gettimeofday () -. st)
+    else
+      (* Bound before the clock is read: a tuple's components are evaluated
+         right to left. *)
+      let prg = Codegen.to_program lin ren in
+      Some (prg, Unix.gettimeofday () -. st)
   with
   | compiled -> compiled
   | exception (Sys.Break as e) -> raise e
