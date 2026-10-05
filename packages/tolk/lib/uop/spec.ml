@@ -220,6 +220,24 @@ let shared : t =
         (fun x ->
           let cond = nth x 2 in
           no_arg x && shape cond = [] && not (is_invalid (base cond)));
+      (* Around calls, a loop's range bounds its trips, a range of one trip
+         being its value [0], and its condition is storage of one element. *)
+      check
+        (pat [ Op.Backedge ] ~dtype:[ Dtype.Void ] ~name:"x"
+           ~src:
+             [
+               pat [ Op.Call; Op.Linear ];
+               pat [ Op.Range; Op.Const ];
+               Upat.v ~dtype:[ Dtype.Bool ] ();
+             ])
+        "x"
+        (fun x ->
+          let r = nth x 1 in
+          no_arg x
+          && Dtype.is_int (dtype r)
+          && (if op r = Op.Const then arg r = Const (`Int Bigint.zero)
+              else Axis_type.equal (axis_type r) Axis_type.Loop)
+          && max_numel (buf_uop (nth x 2)) = 1);
       accept (pat [ Op.Param ] ~src:[]);
       check (pat [ Op.Buffer ] ~src:[] ~name:"x") "x" (fun x ->
           List.mem (addrspace x) [ Some Dtype.Reg; Some Dtype.Local ]);
@@ -553,6 +571,13 @@ let kernel_graph : t =
       check (pat [ Op.End ] ~name:"e") "e" (fun e ->
           op (nth e 0) = Op.Call
           && List.for_all (fun r -> op r = Op.Range && loop r) (List.tl (src e)));
+      check
+        (pat [ Op.Backedge ] ~name:"e"
+           ~src:[ pat [ Op.Call ]; Upat.wild; Upat.wild ])
+        "e"
+        (fun e ->
+          let r = nth e 1 in
+          (op r = Op.Range && loop r) || op r = Op.Const);
       (* A call in a loop reads a view of storage that moves with the loop's
          ranges, its bounds weak integer arithmetic on them. *)
       check (pat [ Op.Shrink ] ~allow_any_len:true ~name:"v") "v" (fun v ->

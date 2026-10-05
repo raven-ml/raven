@@ -978,6 +978,10 @@ thread.
 
 ### Tolk (new)
 
+- A schedule runs a loop of calls while a flag holds: `Ops.backedge` around a
+  call, with a range bounding its trips and one boolean of storage the calls
+  write. The engine reads the flag before each trip; on devices with command
+  queues each trip is one batch. `Rune.iterate` compiles to it.
 - On a device that stamps its own runs, `Search.beam_search` times a round's
   candidates in order while later ones compile (new `Worker.iter`); on the
   host's clock, which compiles would slow, its rounds still compile first. It

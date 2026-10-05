@@ -23,12 +23,21 @@ let rec viewed u =
   | Op.Mselect | Op.Mstack -> List.concat_map viewed (src u)
   | _ -> []
 
-(* The calls an entry of a schedule runs: itself, or those a range runs. *)
-let rec calls si =
-  if op si <> Op.End then [ si ]
-  else
-    let body = nth si 0 in
-    if op body = Op.Linear then List.concat_map calls (src body) else calls body
+(* What an entry of a schedule takes: the arguments of each call it runs, a
+   copy's apart, and the flag of each loop that stops on one, which the loop
+   reads between its calls. *)
+let rec uses si =
+  match op si with
+  | Op.End | Op.Backedge ->
+      let body = nth si 0 in
+      let calls = if op body = Op.Linear then src body else [ body ] in
+      let flag =
+        if op si = Op.Backedge then [ (`Kernel, [ nth si 2 ]) ] else []
+      in
+      flag @ List.concat_map uses calls
+  | _ ->
+      let kind = if op (nth si 0) = Op.Store then `Copy else `Kernel in
+      [ (kind, List.tl (src si)) ]
 
 let can_plan held b =
   (not (Tbl.mem held b))
@@ -51,8 +60,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
     List.iteri
       (fun i si ->
         List.iter
-          (fun call ->
-            let args = List.tl (src call) in
+          (fun (kind, args) ->
             List.iter
               (fun b -> Tbl.replace through_views b ())
               (List.concat_map viewed args);
@@ -67,9 +75,9 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
                 end;
                 Tbl.replace last b i)
               call_bufs;
-            if op (nth call 0) = Op.Store then
+            if kind = `Copy then
               List.iter (fun b -> Tbl.replace copy_bufs b ()) call_bufs)
-          (calls si))
+          (uses si))
       (src linear);
     let bufs =
       List.filter (fun b -> not (Tbl.mem through_views b)) (List.rev !order)

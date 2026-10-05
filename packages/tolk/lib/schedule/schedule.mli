@@ -24,11 +24,12 @@ val create_schedule : Ops.t -> Ops.t
     the graph reaches them. Each call's arguments are the storage of its reads
     and writes, or the views of it that move with the loops the call runs in. A
     loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
-    stays such an end around the call; the end of a call over device ranges is
-    the call, its ranges bound at launch.
+    stays such an end around the call, and a back edge of a call
+    ({!Ops.backedge}) stays a back edge, its condition the storage it reads; the
+    end of a call over device ranges is the call, its ranges bound at launch.
 
     Raises [Invalid_argument] if the kernels' dependencies form a cycle, or if
-    an effect is not a call, an end of a call, a store or an {!Op.After}. *)
+    an effect is not a call, a loop of a call, a store or an {!Op.After}. *)
 
 val pm_flatten_linear : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_flatten_linear] inlines each {!Op.Linear} among the sources of an

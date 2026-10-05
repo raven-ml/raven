@@ -56,17 +56,20 @@ let empty_argument k s =
   op (unwrap_src s) = Op.Const
   && match arg k with Call c -> c.precompile | _ -> false
 
+(* A loop around a call: a range's end, or a back edge. *)
+let is_loop k = op k = Op.End || op k = Op.Backedge
+
 let split_after after =
   let effects = List.tl (src after) in
   let kernels, rest =
-    List.partition (fun s -> op s = Op.Call || op s = Op.End) effects
+    List.partition (fun s -> op s = Op.Call || is_loop s) effects
   in
   let deps, rest = List.partition (fun s -> op s = Op.After) rest in
   (match List.find_opt (fun s -> op s <> Op.Store) rest with
   | Some s ->
       invalid_arg
         (Format.asprintf
-           "an after orders a call, an end, a store or an after, not %a" Op.pp
+           "an after orders a call, a loop, a store or an after, not %a" Op.pp
            (op s))
   | None -> ());
   (kernels, deps)
@@ -102,9 +105,9 @@ let create_schedule sched_sink =
             if Ordered.find_opt in_degree k = None then
               Ordered.replace in_degree k 0;
             let call =
-              if op k = Op.End then begin
+              if is_loop k then begin
                 if op (nth k 0) <> Op.Call then
-                  invalid_arg "an end of a kernel ends a call";
+                  invalid_arg "a loop of a kernel loops over a call";
                 nth k 0
               end
               else k
@@ -161,7 +164,7 @@ let create_schedule sched_sink =
   in
   while not (Queue.is_empty queue) do
     let rk = Queue.pop queue in
-    let k = if op rk = Op.End then nth rk 0 else rk in
+    let k = if is_loop rk then nth rk 0 else rk in
     if op k <> Op.Call then invalid_arg "a scheduled kernel is a call";
     let args =
       List.filter_map
@@ -172,11 +175,15 @@ let create_schedule sched_sink =
         (List.tl (src k))
     in
     let call = replace k ~src:(body k :: args) in
-    (* A loop around a call stays. *)
+    (* A loop around a call stays, a back edge's condition read from the storage
+       it names. *)
     let entry =
-      if op rk = Op.End && List.exists loops (List.tl (src rk)) then
-        replace rk ~src:(call :: List.tl (src rk))
-      else call
+      match op rk with
+      | Op.End when List.exists loops (List.tl (src rk)) ->
+          replace rk ~src:(call :: List.tl (src rk))
+      | Op.Backedge ->
+          replace rk ~src:[ call; nth rk 1; buf_uop (unwrap_src (nth rk 2)) ]
+      | _ -> call
     in
     linearized := entry :: !linearized;
     List.iter

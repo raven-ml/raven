@@ -920,8 +920,14 @@ val end_ : t -> t list -> t
     is empty. *)
 
 val backedge : t -> loop:t -> cond:t -> t
-(** [backedge u ~loop ~cond] runs [u], then repeats [loop] while [cond] holds.
-*)
+(** In a kernel, [backedge u ~loop ~cond] runs [u], then repeats [loop] while
+    [cond] holds.
+
+    Around a call of a schedule, or an {!Op.Linear} of calls, it tests [cond]
+    before each trip: [loop] is a {!Axis_type.Loop} range, or the [0] that a
+    range of one trip simplifies to, [cond] is storage of one boolean, and the
+    calls run in order once per trip of [loop] while [cond] holds, so they may
+    run no trip. *)
 
 val after : ?tag:Tag.t -> t -> t list -> t
 (** [after u deps] is [u] ordered after [deps], or [u] if [deps] is empty. *)

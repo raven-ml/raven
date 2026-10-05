@@ -379,13 +379,23 @@ type launch = {
 }
 
 (* A call of a schedule, as linked: a host program launched on each device of
-   its first argument, a copy, a batch, or calls run once for each value of
-   ranges, each range a cell of its variable and its number of trips. *)
+   its first argument, a copy, a batch, calls run once for each value of ranges,
+   each range a cell of its variable and its number of trips, or calls run once
+   per trip of a range while a flag holds. A loop reads its flag before each
+   trip into a byte of the host. *)
 type call =
   | Kernel of { call : Ops.t; launches : launch array }
   | Copy of { call : Ops.t; dst : operand; src : operand }
   | Batch of batch
   | Range of { ranges : (int * (env -> int)) list; body : call list }
+  | Loop of {
+      range : int option * (env -> int);
+      flag : B.t list array -> env -> B.t;
+      byte :
+        (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t;
+      read : B.t; (* [byte], as the host's buffer *)
+      body : call list;
+    }
 
 type t = {
   lock : Mutex.t; (* runs share the storage: one at a time *)
@@ -937,12 +947,21 @@ let run_batch ~env slots b =
         b.last.(i) <- Nx_device.Submission.value s b.queues.(i)
       done)
 
-(* The calls of a schedule's entry: itself, or those a range is around. *)
+(* The calls of a schedule's entry: itself, or those a loop is around. *)
 let rec calls_of entry =
   match Ops.op entry with
-  | Op.End -> calls_of (Ops.nth entry 0)
+  | Op.End | Op.Backedge -> calls_of (Ops.nth entry 0)
   | Op.Linear -> List.concat_map calls_of (Ops.src entry)
   | _ -> [ entry ]
+
+(* The flags of the loops of a schedule's entry, which name storage too. *)
+let rec flags entry =
+  match Ops.op entry with
+  | Op.Backedge ->
+      Ops.toposort ~calls:Enter (Ops.nth entry 2) @ flags (Ops.nth entry 0)
+  | Op.End -> flags (Ops.nth entry 0)
+  | Op.Linear -> List.concat_map flags (Ops.src entry)
+  | _ -> []
 
 let link ~devices ?(bound = []) linear =
   let fn = "Tolk_engine.link" in
@@ -979,6 +998,7 @@ let link ~devices ?(bound = []) linear =
           (Ops.toposort ~calls:Enter)
           (Realize.get_call_arg_uops c @ patches @ inputs))
       (List.concat_map calls_of entries)
+    @ List.concat_map flags entries
   in
   List.iter
     (fun u ->
@@ -1003,16 +1023,33 @@ let link ~devices ?(bound = []) linear =
     ( cell cells (Ops.expr (Hcq2.range_value r)),
       offset cells (sint (Ops.nth r 0)) )
   in
+  let body e =
+    let b = Ops.nth e 0 in
+    if Ops.op b = Op.Linear then Ops.src b else [ b ]
+  in
   let rec linked entry =
     match Ops.op entry with
     | Op.End ->
-        let body = Ops.nth entry 0 in
         Range
           {
             ranges = List.map trips (List.tl (Ops.src entry));
-            body =
-              List.map linked
-                (if Ops.op body = Op.Linear then Ops.src body else [ body ]);
+            body = List.map linked (body entry);
+          }
+    | Op.Backedge ->
+        (* A range of one trip is its value, [0]. *)
+        let r = Ops.nth entry 1 in
+        let byte = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 1 in
+        Loop
+          {
+            range =
+              (if Ops.op r = Op.Range then
+                 let c, n = trips r in
+                 (Some c, n)
+               else (None, fun _ -> 1));
+            flag = lane_operand storage cells (Ops.nth entry 2) 0;
+            byte;
+            read = B.of_bigarray byte;
+            body = List.map linked (body entry);
           }
     | _ -> linked_call entry
   and linked_call entry =
@@ -1252,6 +1289,37 @@ let rec run_call t reports slots = function
             env.set.(c) <- set
       in
       trips ranges
+  | Loop { range = cell, count; flag; byte; read; body } ->
+      let env = t.env in
+      let n = count env in
+      let holds () =
+        B.copy ~src:(flag slots env) ~dst:read;
+        Bigarray.Array1.unsafe_get byte 0 <> '\000'
+      in
+      let restore =
+        match cell with
+        | None -> Fun.id
+        | Some c ->
+            let value = env.values.(c) and set = env.set.(c) in
+            env.set.(c) <- true;
+            fun () ->
+              env.values.(c) <- value;
+              env.set.(c) <- set
+      in
+      let i = ref 0 in
+      (match cell with
+      | None ->
+          while !i < n && holds () do
+            run_calls t reports slots body;
+            incr i
+          done
+      | Some c ->
+          while !i < n && holds () do
+            env.values.(c) <- !i;
+            run_calls t reports slots body;
+            incr i
+          done);
+      restore ()
 
 and run_calls t reports slots = function
   | [] -> ()
@@ -1311,7 +1379,8 @@ let rec kernels calls =
               (fun ks dn -> add ks (b.named dn, k.name))
               ks k.devices)
           ks b.info.kernels
-    | Range { body; _ } -> List.fold_left add ks (kernels body)
+    | Range { body; _ } | Loop { body; _ } ->
+        List.fold_left add ks (kernels body)
     | Copy _ -> ks
   in
   List.rev (List.fold_left of_call [] calls)
@@ -1365,12 +1434,13 @@ let time ?(vars = []) t slots =
   Float.of_int ns *. 1e-9
 
 (* A host program's call is timed on the host's clock; a batch's kernels are
-   stamped by their devices, unless a profile is taken already. *)
+   stamped by their devices, unless a profile is taken already. A loop's read
+   of its flag is a copy, which runs no kernel. *)
 let clock t =
   let rec stamped = function
     | Kernel _ -> false
     | Copy _ | Batch _ -> true
-    | Range { body; _ } -> List.for_all stamped body
+    | Range { body; _ } | Loop { body; _ } -> List.for_all stamped body
   in
   if Nx_device.Profile.enabled () || not (List.for_all stamped t.calls) then
     Search.Host

@@ -344,7 +344,10 @@ val sched_batches :
     ({!Op.End} of an {!Op.Linear}) around its commands of one trip, which it
     repeats for each value of the range. A range whose calls none is enqueued
     stays a range, with each of its ranges [r] replaced in its calls by
-    [range_value r], and the engine runs it once per trip.
+    [range_value r], and the engine runs it once per trip. So does a back edge
+    of calls ({!Ops.backedge}), whose flag the engine reads between trips, and a
+    range around one: their calls are batched trip by trip, and a back edge's
+    own calls are one submission per trip.
 
     A call's position counts each run of the calls before it in the batch, a
     range's calls once per trip. A queue's commands and each command's arguments
@@ -407,10 +410,11 @@ val stages : devices:(string -> device) -> Ops.t -> bool
 (** [stages ~devices e] is [true] iff the range around calls [e] ({!Op.End})
     runs as a loop inside one batch ({!sched_batches}), each run of it one
     submission whatever its trips. Its calls, compiled or not, must all be
-    enqueued, on devices of one kind. It is [false] when a call is a host
-    program (its buffers' devices have no queues), a copy the host makes (on
-    Metal, whose memory the host copies), or when its calls run on devices of
-    two kinds; the range then runs its trips one by one, or unrolled.
+    enqueued, on devices of one kind, and hold no back edge. It is [false] when
+    a call is a host program (its buffers' devices have no queues), a copy the
+    host makes (on Metal, whose memory the host copies), when its calls run on
+    devices of two kinds, or around a back edge; the range then runs its trips
+    one by one, or unrolled.
 
     A staged range takes memory for each trip, made at link: [n] trips of [k]
     calls take [n·k] commands and [n·k] copies of their arguments, about 160
@@ -419,10 +423,11 @@ val stages : devices:(string -> device) -> Ops.t -> bool
     trip, which grows with [n] as well, and more. *)
 
 val runs : devices:(string -> device) -> Ops.t -> bool
-(** [runs ~devices e] is [true] iff a range around calls [e] ({!Op.End}) runs at
-    all: as one batch ({!stages}), or trip by trip with its calls all on the
-    host. A range whose calls run on devices with queues and on the host, or on
-    devices of two kinds, does not. *)
+(** [runs ~devices e] is [true] iff a loop around calls [e] ({!Op.End} or
+    {!Op.Backedge}) runs at all: as one batch ({!stages}), or trip by trip with
+    its calls all on the host, or all enqueued on devices of one kind. A loop
+    whose calls run on devices with queues and on the host, or on devices of two
+    kinds, does not. *)
 
 val lower_call : devices:(string -> device) -> Ops.t -> Ops.t
 (** [lower_call ~devices batch] is the batch [batch] as a call of its host
@@ -497,8 +502,13 @@ val compile_linear :
     - {b a range around calls}, an {!Op.End} of ranges around one of the above,
       or around an {!Op.Linear} of them. The engine runs them once for each
       combination of the ranges' values, the last range varying fastest, with
-      [range_value r]'s variable bound to [r]'s value. A range never holds a
-      batch: a batch holds the ranges of its calls as loops.
+      [range_value r]'s variable bound to [r]'s value. A range holds a batch
+      only around a back edge: a batch holds the ranges of its calls as loops.
+    - {b a loop around calls}, an {!Op.Backedge} of a range [r] and a flag
+      around one of the above, or around an {!Op.Linear} of them. The engine
+      reads the flag's one boolean before each trip, once the work before has
+      completed, and runs the calls with [range_value r]'s variable bound to the
+      trip while it holds, at most [r]'s trips.
 
     {b Linking a batch}, once:
     + Each argument is a placeholder, which the engine allocates on its device:

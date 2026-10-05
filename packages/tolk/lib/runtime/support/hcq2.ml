@@ -1219,8 +1219,10 @@ let finalize_batch ctx =
    host, or where one batch cannot run them. *)
 type placement = Enqueued of string list | Host | Mixed of string
 
+let is_loop e = op e = Op.End || op e = Op.Backedge
+
 let rec range_placement devices e =
-  if op e <> Op.End then
+  if not (is_loop e) then
     match get_enqueue_devs devices e with
     | Some ds -> Enqueued ds
     | None -> Host
@@ -1241,18 +1243,24 @@ let rec range_placement devices e =
         | [ _ ] -> Enqueued devs
         | _ -> Mixed "a range runs its calls on devices of one kind")
 
+(* Whether a loop is or holds a back edge, whose flag the engine reads between
+   trips: no batch holds it, nor a range around it. *)
+let rec stops e =
+  op e = Op.Backedge || (op e = Op.End && List.exists stops (range_body e))
+
 let range_devs devices e =
   match range_placement devices e with
-  | Enqueued ds -> Some ds
-  | Host -> None
+  | Enqueued ds when not (stops e) -> Some ds
+  | Enqueued _ | Host -> None
   | Mixed why -> invalid_arg why
 
 let stages ~devices e =
   op e = Op.End
+  && (not (stops e))
   && match range_placement devices e with Enqueued _ -> true | _ -> false
 
 let runs ~devices e =
-  op e = Op.End
+  is_loop e
   && match range_placement devices e with Mixed _ -> false | _ -> true
 
 (* [body] with the range [r] read as [v]. *)
@@ -1346,10 +1354,13 @@ let chunked lowered = function
       :: left
 
 let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
-  (* The calls in a range that no device with queues runs are the engine's, once
-     per trip: they read the range as a variable. *)
+  (* The calls in a loop that no batch runs are the engine's, once per trip:
+     they read its ranges as variables, and are batched trip by trip. *)
   let on_host e =
-    let rs = List.tl (src e) in
+    let rs =
+      if op e = Op.End then List.tl (src e)
+      else List.filter (fun r -> op r = Op.Range) [ nth e 1 ]
+    in
     let vars = List.map (fun r -> (r, range_value r)) rs in
     let inner =
       sched_batches ~lower ~devices ~profile
@@ -1359,17 +1370,19 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
                 (fun c -> substitute ~calls:Skip ~pass:Fixed_point c vars)
                 (range_body e)))
     in
-    end_ (match src inner with [ c ] -> c | _ -> inner) rs
+    let inner = match src inner with [ c ] -> c | _ -> inner in
+    if op e = Op.End then end_ inner rs
+    else replace e ~src:(inner :: List.tl (src e))
   in
   let entries = src l in
   let devs = List.map (range_devs devices) entries in
   let entries =
     List.map2
-      (fun e d -> if op e = Op.End && d = None then on_host e else e)
+      (fun e d -> if is_loop e && d = None then on_host e else e)
       entries devs
   in
   let rec calls_of e =
-    if op e = Op.End then List.concat_map calls_of (range_body e) else [ e ]
+    if is_loop e then List.concat_map calls_of (range_body e) else [ e ]
   in
   let is_copy c = op c = Op.Call && op (body c) = Op.Store in
   let peers =
@@ -2031,7 +2044,7 @@ let pm_encode devices =
 let rec is_batch c =
   let c = without_after c in
   match (op c, arg c) with
-  | Op.End, _ -> is_batch (nth c 0)
+  | (Op.End | Op.Backedge), _ -> is_batch (nth c 0)
   | Op.Linear, _ -> List.exists is_batch (src c)
   | _, Call { aux = Some _; _ } -> true
   | _ -> false

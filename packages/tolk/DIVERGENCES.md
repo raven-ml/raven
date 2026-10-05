@@ -3699,6 +3699,35 @@ stores through a pad.
   `matmul_chain`, whose stored activations after a ReLU carry
   `(0.0, inf)`, recorded from the equally patched tinygrad.
 
+## D123. The engine runs a loop of calls while a flag holds
+
+- **tinygrad:** `uop/spec.py:88` (a `BACKEDGE` closes a bound-less range,
+  inside a kernel), `engine/realize.py:281-286` (`run_linear` runs every
+  call of a schedule once, in order).
+- **tolk:** `lib/uop/spec.ml:223` and `:575` (a `Backedge` around calls, in
+  the tensor and kernel-graph specs), `lib/schedule/schedule.ml:60` and
+  `:184` (`create_schedule` keeps a back edge of a call),
+  `lib/schedule/memory.ml:29` (`uses`, the plan counts its calls and flag),
+  `lib/runtime/support/hcq2.ml:1222` (`range_placement`), `:1246` (`stops`)
+  and `:1356` (`on_host` in `sched_batches`), and `engine/tolk_engine.ml:1036`
+  (`Loop` in `link`) and `:1290` (in `run_call`).
+- **Differs:** an `Op.Backedge` stands around a call of a schedule, or a
+  linear of calls, with a loop range of at most as many trips and a flag, one
+  boolean of storage the calls write. The schedule keeps it as an entry; hcq2
+  batches its calls alone, trip by trip, with the range read as a variable,
+  and runs a range around one from the engine; the engine reads the flag
+  before each trip and runs the calls while it holds. tinygrad's schedules run
+  each call once, and stop on no value.
+- **Reason:** (b). rune's `Rune.iterate` under `Rune.jit` stages a loop that
+  stops on a condition of its carry as one body compiled once, which no
+  schedule tinygrad makes can run.
+- **Pinned by:** the Engine suite: `link and run › a loop runs its call while
+  its flag holds, at most its trips`, `› a loop's flag that views wider
+  storage is refused`, `› a planned buffer a loop writes is not placed over
+  one it leaves`, `› a loop's planned flag is not placed under a buffer before
+  it` and `Metal › a loop runs its batch while its flag holds, at most its
+  trips`; rune's `Jit` and `Iterate` suites.
+
 ## D124. A search times no compilation
 
 - **tinygrad:** `codegen/opt/search.py:50-60,77` (`timeout_handler`, and the

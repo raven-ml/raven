@@ -861,6 +861,87 @@ let scans_with_an_empty_carry () =
     (floats (Array.map (fun x -> x *. 2.) x))
     (Run.values Float32 ys_buffer)
 
+(* A loop of at most [max] trips on the device [d] around a call that adds one
+   to a carry [c], from zero, stores the carry it read into its row of [ys], 16
+   bytes apart, and stores into the flag [f] whether the new carry is below
+   [limit]. The flag starts as [0 < limit]. *)
+let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
+  let at = Ops.Single d in
+  let p slot dt = Ops.param ~shape:[ Int 1 ] ~device:at slot dt in
+  let next = Ops.O.(p 0 Float32 + float 1.) in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p 0 Float32) next;
+        Ops.store (p 1 Bool) Ops.O.(next < float (Float.of_int limit));
+        Ops.store (p 2 Float32) (p 0 Float32);
+      ]
+  in
+  let c = Ops.new_buffer at 1 Float32
+  and f = Ops.new_buffer at 1 Bool
+  and ys = Ops.new_buffer at (4 * max) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int max) [ 100 ] in
+  let row =
+    Ops.shrink ys
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 1)) ]
+  in
+  let e =
+    Ops.backedge (Ops.call ~precompile:true body [ c; f; row ]) ~loop:r ~cond:f
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars
+      (Ops.sink [ Ops.after c [ e ]; Ops.after f [ e ]; Ops.after ys [ e ] ])
+  in
+  let compiled =
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear
+  in
+  let on = (devices d).device in
+  let c_buffer = Run.buffer on Float32 [| `Float 0. |]
+  and f_buffer = Run.buffer on Bool [| `Bool (0 < limit) |]
+  and ys_buffer = Run.buffer on Float32 (floats (Array.make (4 * max) (-1.))) in
+  let s =
+    Engine.link ~devices
+      ~bound:[ (c, [ c_buffer ]); (f, [ f_buffer ]); (ys, [ ys_buffer ]) ]
+      compiled
+  in
+  Engine.run s [||];
+  let trips = Int.min max (Int.max limit 0) in
+  equal values ~msg:"the carry"
+    (floats [| Float.of_int trips |])
+    (Run.values Float32 c_buffer);
+  equal values ~msg:"the rows"
+    (floats
+       (Array.init (4 * max) (fun i ->
+            if i mod 4 = 0 && i / 4 < trips then Float.of_int (i / 4) else -1.)))
+    (Run.values Float32 ys_buffer)
+
+(* A loop's flag is storage of one boolean: a view of one element of wider
+   storage is refused, since the engine reads the storage it names. *)
+let refuses_a_view_as_flag () =
+  let at = Ops.Single "CPU" in
+  let p = Ops.param ~shape:[ Int 1 ] ~device:at 0 Float32 in
+  let body = Ops.sink [ Ops.store p Ops.O.(p + float 1.) ] in
+  let c = Ops.new_buffer at 1 Float32 and f = Ops.new_buffer at 2 Bool in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let flag = Ops.shrink f [ Some (Int 1, Int 2) ] in
+  let e = Ops.backedge (Ops.call ~precompile:true body [ c ]) ~loop:r ~cond:flag in
+  raises_match
+    (function
+      | Invalid_argument m ->
+          String.starts_with ~prefix:"UOp verification failed" m
+          && List.exists
+               (String.equal "Ops.BACKEDGE")
+               (String.split_on_char ' ' m)
+      | _ -> false)
+    (fun () -> Schedule.create_linear_with_vars (Ops.sink [ Ops.after c [ e ] ]))
+
+let loops_on_the_host =
+  prop "a loop runs its call while its flag holds, at most its trips"
+    Gen.(pair (int_range (-1) 6) (int_range 1 5))
+    (fun bounds -> loops_while_a_flag_holds "CPU" bounds)
+
 (* A scan of three trips, linked once and run on rows of [xs] and [ys], which
    each run binds to its parameters, and of [zs], linked with the carry [c].
    Each trip stores [c * 2] into its row of [ys] and adds its row of [xs] to
@@ -956,31 +1037,37 @@ let replays_a_scan =
    a view of its first half; then z + 1 and y + 1 into outputs, each kernel on
    the first four elements of its buffers. The range writes y before the call
    that reads it, so the plan does not place y over z, which the range leaves
-   for the call after it. *)
-let plans_the_buffers_of_a_range ~through_a_view () =
+   for the call after it. The range is an end, or a back edge whose flag holds
+   on every trip. *)
+let plans_the_buffers_of_a_range ~through_a_view ~loop () =
   let buf n = Ops.new_buffer (Single "CPU") n Float32 in
   let a = buf 4 and b = buf 4 and z = buf 8 and y = buf 8 in
   let out_z = buf 4 and out_y = buf 4 in
-  let r = Ops.range (Int 2) [ 7 ] in
+  let flag = Ops.new_buffer (Single "CPU") 1 Bool in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 7 ] in
+  let around c =
+    match loop with
+    | `End -> Ops.end_ c [ r ]
+    | `Backedge -> Ops.backedge c ~loop:r ~cond:flag
+  in
   let linear =
     Ops.v Op.Linear
       ~src:
         [
           Ops.call add_one [ z; a ];
-          Ops.end_
+          around
             (Ops.call add_one
                [
                  (if through_a_view then Ops.shrink y [ Some (Int 0, Int 4) ]
                   else y);
                  b;
-               ])
-            [ r ];
+               ]);
           Ops.call add_one [ out_z; z ];
           Ops.call add_one [ out_y; y ];
         ]
   in
   let planned =
-    Memory.memory_plan_rewrite ~held_bufs:[ a; b; out_z; out_y ] linear
+    Memory.memory_plan_rewrite ~held_bufs:[ a; b; out_z; out_y; flag ] linear
   in
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
@@ -995,11 +1082,54 @@ let plans_the_buffers_of_a_range ~through_a_view () =
       (b, [ Run.buffer host Float32 (floats [| 10.; 20.; 30.; 40. |]) ]);
       (out_z, [ result_z ]);
       (out_y, [ result_y ]);
+      (flag, [ Run.buffer host Bool [| `Bool true |] ]);
     ]
   in
   Engine.run (Engine.link ~devices ~bound compiled) [||];
   equal values (floats [| 3.; 4.; 5.; 6. |]) (Run.values Float32 result_z);
   equal values (floats [| 12.; 22.; 32.; 42. |]) (Run.values Float32 result_y)
+
+(* A kernel that stores false into its parameter 0, one boolean. *)
+let set_false =
+  let i = Ops.range (Int 1) [ 0 ] in
+  let flag = Ops.index (Ops.placeholder ~slot:0 [ 1 ] Bool) [ i ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"set_false" ())
+    [ Ops.end_ (Ops.store flag (Ops.O.bool false)) [ i ] ]
+
+(* A planned flag set to false, then z = a + 1, then a loop on the flag: the
+   loop reads the flag after the last call that takes it, so the plan does not
+   place z over it, and the loop runs no trip. *)
+let plans_a_loop_flag () =
+  let buf n = Ops.new_buffer (Single "CPU") n Float32 in
+  let a = buf 4 and b = buf 4 and z = buf 4 and out = buf 4 in
+  let flag = Ops.new_buffer (Single "CPU") 1 Bool in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 7 ] in
+  let linear =
+    Ops.v Op.Linear
+      ~src:
+        [
+          Ops.call set_false [ flag ];
+          Ops.call add_one [ z; a ];
+          Ops.backedge (Ops.call add_one [ out; b ]) ~loop:r ~cond:flag;
+        ]
+  in
+  let planned = Memory.memory_plan_rewrite ~held_bufs:[ a; b; out ] linear in
+  let compiled =
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      planned
+  in
+  let result = Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |]) in
+  let bound =
+    [
+      (a, [ Run.buffer host Float32 (floats [| 0.1; 0.2; 0.3; 0.4 |]) ]);
+      (b, [ Run.buffer host Float32 (floats [| 10.; 20.; 30.; 40. |]) ]);
+      (out, [ result ]);
+    ]
+  in
+  Engine.run (Engine.link ~devices ~bound compiled) [||];
+  equal values (floats [| 0.; 0.; 0.; 0. |]) (Run.values Float32 result)
 
 (* A copy out of a device, a copy into it, and the copy out again: the last copy
    reads what the second wrote. *)
@@ -1144,10 +1274,17 @@ let schedules =
       test "a scan whose carry has no element runs on its rows"
         scans_with_an_empty_carry;
       replays_a_scan;
+      loops_on_the_host;
+      test "a loop's flag that views wider storage is refused"
+        refuses_a_view_as_flag;
       test "a planned buffer a range writes is not placed over one it leaves"
-        (plans_the_buffers_of_a_range ~through_a_view:false);
+        (plans_the_buffers_of_a_range ~through_a_view:false ~loop:`End);
       test "a buffer a range writes through a view is not placed over another"
-        (plans_the_buffers_of_a_range ~through_a_view:true);
+        (plans_the_buffers_of_a_range ~through_a_view:true ~loop:`End);
+      test "a planned buffer a loop writes is not placed over one it leaves"
+        (plans_the_buffers_of_a_range ~through_a_view:false ~loop:`Backedge);
+      test "a loop's planned flag is not placed under a buffer before it"
+        plans_a_loop_flag;
       test "copies run in the order of their schedule" copies_in_order;
     ]
 
@@ -2495,6 +2632,11 @@ let metal =
         "a store through a gather writes each row at its loaded index and \
          drops an invalid one"
         (stores_through_a_gather ~devices:on_metal "CPU:1" [| 6; -1; 8; 2 |]);
+      prop ~tags:[ "slow" ]
+        "a loop runs its batch while its flag holds, at most its trips"
+        Gen.(pair (int_range (-1) 6) (int_range 1 5))
+        (fun bounds ->
+          loops_while_a_flag_holds ~devices:on_metal "CPU:1" bounds);
     ]
 
 let () =

@@ -208,7 +208,13 @@ val run :
     - a range around calls runs them once for each combination of the ranges'
       values, the last range varying fastest, with each range's variable
       ({!Tolk.Hcq2.range_value}) bound to its value: host programs and copies,
-      since a batch holds the ranges of its calls as loops;
+      and batches around a back edge, since a batch holds the ranges of its
+      calls as loops;
+    - a back edge of calls ({!Tolk.Ops.backedge}) runs them once per trip of its
+      range, with the range's variable bound to the trip, while its flag holds:
+      before each trip it reads the flag's boolean with
+      {!Nx_device.Buffer.copy}, which first synchronizes the flag's device, and
+      stops once the flag is false or the trips are done;
     - a batch is one {!Nx_device.submit} over its devices that touches every
       buffer it reaches. It first waits for the work of its previous run on each
       of its devices ({!Nx_device.Submission.wait}), since the runs share its
