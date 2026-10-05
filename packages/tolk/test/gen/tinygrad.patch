@@ -633,6 +633,39 @@ index 62c3191..d0be7d4 100644
  
  def xpow(base:UOp, exponent:UOp) -> UOp:
    # start with b ** e = exp2(e * log2(b))
+diff --git a/tinygrad/codegen/late/gater.py b/tinygrad/codegen/late/gater.py
+index 319a60c..612ddfa 100644
+--- a/tinygrad/codegen/late/gater.py
++++ b/tinygrad/codegen/late/gater.py
+@@ -1,10 +1,25 @@
+ # this is a temporary intermediate step while we remove this index style
+ from tinygrad.uop.ops import PatternMatcher, UPat, Ops
+-from tinygrad.dtype import Invalid, dtypes
++import math, struct
++from tinygrad.dtype import Invalid, dtypes, truncate
++
++def _holds(dt, w, v) -> bool:
++  """the constant v of type w converts to dt and back unchanged, its sign and bits included"""
++  def conv(t, x): return truncate.get(t, lambda y: y)(t.const(x))
++  def same(x, y): return struct.pack("d", x) == struct.pack("d", y) if isinstance(x, float) and isinstance(y, float) else x == y
++  return same(conv(w, conv(dt, v)), conv(w, v))
+ 
+ def move_where_load(gate, l, a, w):
+-  return l.replace(src=(l.src[0], l.vconst_like(0) if a.is_invalid else l.const_like(a.val) if a.op is Ops.CONST else
+-    a.src[0] if a.op is Ops.CAST and a.src[0].dtype == l.dtype else a.cast(l.dtype), l.src[2])).cast(w.dtype)
++  # the load reads the selection's other value as a value of its own type, which the conversion after it converts:
++  # only a value that conversion gives back unchanged moves
++  same = l.dtype == w.dtype
++  if a.is_invalid: alt = l.vconst_like(0)
++  elif a.op is Ops.CONST: alt = l.const_like(a.arg) if same or _holds(l.dtype, w.dtype, a.arg) else None
++  elif a.op is Ops.CAST and a.src[0].dtype == l.dtype: alt = a.src[0]
++  elif same: alt = a
++  elif a.op is Ops.CAST and a.src[0].op is Ops.CONST and _holds(l.dtype, w.dtype, a.src[0].arg): alt = a.cast(l.dtype)
++  else: return None
++  return l.replace(src=(l.src[0], alt, l.src[2])).cast(w.dtype)
+ 
+ pm_move_gates_from_index = PatternMatcher([
+   # for image idx (must be first)
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
 index 712a2b7..0466789 100644
 --- a/tinygrad/codegen/opt/heuristic.py

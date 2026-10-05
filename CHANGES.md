@@ -165,6 +165,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled selection between a widened load and another value, as a pad of
+  a converted tensor read through a slice, keeps that value: a float32 pad of
+  `0x1p-149` around `Nx.cast Nx.float32` of a float16 tensor read 0, since the
+  pad was read at float16. A value the load's type cannot hold, a fraction or
+  `-0.` through an integer load, or past float16's range, no longer moves into
+  the load.
 - Compiled `Nx.log` is within one unit in the last place of the correctly
   rounded result, from up to four in float32 on the host. It is computed from
   its argument's bits and a polynomial instead of a target's `log2` times

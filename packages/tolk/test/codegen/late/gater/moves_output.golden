@@ -50,25 +50,26 @@
 48 Ops.CAST dtypes.float [47] dtypes.float
 49 Ops.LOAD dtypes.float [21, 48, 6]
 50 Ops.CAST dtypes.double [49] dtypes.double
-51 Ops.CONST dtypes.weakfloat [] -0.5
-52 Ops.CAST dtypes.double [51] dtypes.double
-53 Ops.CAST dtypes.float [52] dtypes.float
-54 Ops.LOAD dtypes.float [21, 53, 6]
-55 Ops.CAST dtypes.double [54] dtypes.double
-56 Ops.CAST dtypes.float [51] dtypes.float
-57 Ops.LOAD dtypes.float [21, 56, 6]
-58 Ops.CAST dtypes.double [57] dtypes.double
-59 Ops.CAST dtypes.half [23] dtypes.half
-60 Ops.LOAD dtypes.half [34, 59, 6]
-61 Ops.CAST dtypes.float [60] dtypes.float
-62 Ops.CONST dtypes.bool [] True
-63 Ops.CMPNE dtypes.bool [6, 62]
-64 Ops.LOAD dtypes.float [21, 23, 63]
-65 Ops.LOAD dtypes.float [21, 5, 63]
-66 Ops.WHERE dtypes.float [11, 22, 23]
-67 Ops.WHERE dtypes.float [6, 39, 23]
-68 Ops.CMPNE dtypes.bool [11, 62]
-69 Ops.LOAD dtypes.float [21, 5, 68]
-70 Ops.WHERE dtypes.float [6, 23, 69]
-71 Ops.SINK dtypes.void [7, 10, 15, 18, 20, 22, 24, 28, 29, 32, 36, 38, 39, 41, 22, 44, 44, 45, 46, 49, 50, 50, 55, 58, 61, 64, 65, 66, 67, 70, 45, 64]
+51 Ops.CAST dtypes.double [22] dtypes.double
+52 Ops.WHERE dtypes.double [6, 51, 47]
+53 Ops.CONST dtypes.weakfloat [] -0.5
+54 Ops.CAST dtypes.double [53] dtypes.double
+55 Ops.CAST dtypes.float [54] dtypes.float
+56 Ops.LOAD dtypes.float [21, 55, 6]
+57 Ops.CAST dtypes.double [56] dtypes.double
+58 Ops.CAST dtypes.float [53] dtypes.float
+59 Ops.LOAD dtypes.float [21, 58, 6]
+60 Ops.CAST dtypes.double [59] dtypes.double
+61 Ops.CAST dtypes.float [36] dtypes.float
+62 Ops.WHERE dtypes.float [6, 61, 23]
+63 Ops.CONST dtypes.bool [] True
+64 Ops.CMPNE dtypes.bool [6, 63]
+65 Ops.LOAD dtypes.float [21, 23, 64]
+66 Ops.LOAD dtypes.float [21, 5, 64]
+67 Ops.WHERE dtypes.float [11, 22, 23]
+68 Ops.WHERE dtypes.float [6, 39, 23]
+69 Ops.CMPNE dtypes.bool [11, 63]
+70 Ops.LOAD dtypes.float [21, 5, 69]
+71 Ops.WHERE dtypes.float [6, 23, 70]
+72 Ops.SINK dtypes.void [7, 10, 15, 18, 20, 22, 24, 28, 29, 32, 36, 38, 39, 41, 22, 44, 44, 45, 46, 49, 50, 52, 57, 60, 62, 65, 66, 67, 68, 71, 45, 65]
 

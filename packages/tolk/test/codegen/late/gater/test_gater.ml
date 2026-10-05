@@ -91,12 +91,54 @@ let laws =
         (Law.idempotent Uops.uop move);
     ]
 
+(* A selection of a gated load converted to another type, [where g (cast l) a],
+   read where the gate fails and holds: the moved load computes the selection,
+   for an alternative [a] that the load's own type holds and for one it does
+   not, a subnormal, a fraction, a zero's sign and a magnitude it rounds. *)
+let converted =
+  let narrow = Ops.param ~shape:[ Int 64 ] 1 Float16 in
+  let bytes = Ops.param ~shape:[ Int 64 ] 2 Int8 in
+  let selection (buf, a) =
+    let l = Ops.load (Ops.index buf [ Ops.where g (idx 0) Ops.invalid ]) [] in
+    Ops.where g (Ops.cast l Float32) (Ops.const ~dtype:Float32 (`Float a))
+  in
+  let buffers =
+    [
+      (1, Array.make 64 (`Float 3.)); (2, Array.make 64 (`Int (Bigint.of_int 3)));
+    ]
+  in
+  let eval gate u =
+    Interpreter.eval
+      ~vars:[ ("g", `Bool gate); ("i0", `Int Bigint.zero) ]
+      ~buffers u
+  in
+  cases
+    ~name:(fun (buf, a) -> Format.asprintf "%a %h" Dtype.pp (Ops.dtype buf) a)
+    "a selection of a converted gated load keeps its value"
+    [
+      (narrow, 2.);
+      (narrow, 0x1p-149);
+      (narrow, 0x1.0001p0);
+      (narrow, -0.);
+      (narrow, 1e10);
+      (bytes, 2.);
+      (bytes, 0.5);
+      (bytes, -0.);
+    ]
+    (fun c ->
+      let u = selection c in
+      List.iter
+        (fun gate ->
+          equal ~msg:(string_of_bool gate) Dtypes.const (eval gate u)
+            (eval gate (move u)))
+        [ false; true ])
+
 let pm_move_gates_from_index =
   group "pm_move_gates_from_index"
     (Golden.cases "moves.golden" (fun cell ->
          equal Uops.uop
            (case "moves_output.golden" cell)
            (move (case "moves_input.golden" cell)))
-    :: List.map kernel kernels)
+    :: converted :: List.map kernel kernels)
 
 let () = exit (run "Tolk.Gater" [ pm_move_gates_from_index; laws ])

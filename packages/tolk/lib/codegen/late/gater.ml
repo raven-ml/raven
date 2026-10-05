@@ -9,16 +9,36 @@ open Ops
 
 let zero = `Int Bigint.zero
 
-let move_where_load m =
-  let l = m "l" and a = m "a" in
-  let alt =
-    if is_invalid a then vconst_like l zero
-    else if op a = Op.Const then const_like l (value a)
-    else if op a = Op.Cast && Dtype.equal (dtype (nth a 0)) (dtype l) then
-      nth a 0
-    else cast a (dtype l)
+(* [holds dt w c] is [true] iff the constant [c] of type [w] converts to [dt]
+   and back unchanged, its sign and bits included. *)
+let holds dt w c =
+  let there =
+    match Dtype.const dt c with
+    | #Dtype.value as v -> (Dtype.truncate dt v :> Dtype.const)
+    | `Invalid -> `Invalid
   in
-  Some (cast (replace ~src:[ nth l 0; alt; nth l 2 ] l) (dtype (m "w")))
+  Dtype.equal_const (Dtype.const w there) (Dtype.const w c)
+
+(* The load reads the selection's other value where its gate fails, as a value
+   of its own type, which the conversion after it then converts: only a value
+   that conversion gives back unchanged moves. *)
+let move_where_load m =
+  let l = m "l" and a = m "a" and w = dtype (m "w") in
+  let same = Dtype.equal (dtype l) w in
+  let alt =
+    if is_invalid a then Some (vconst_like l zero)
+    else if op a = Op.Const then
+      if same || holds (dtype l) w (value a) then Some (const_like l (value a))
+      else None
+    else if op a = Op.Cast && Dtype.equal (dtype (nth a 0)) (dtype l) then
+      Some (nth a 0)
+    else if same then Some a
+    else if
+      op a = Op.Cast && op (nth a 0) = Op.Const && holds (dtype l) w (value a)
+    then Some (cast a (dtype l))
+    else None
+  in
+  Option.map (fun alt -> cast (replace ~src:[ nth l 0; alt; nth l 2 ] l) w) alt
 
 let gated idx = Upat.(where (var "gate") (var idx) (const `Invalid))
 

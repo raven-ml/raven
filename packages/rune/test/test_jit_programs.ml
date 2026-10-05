@@ -1412,6 +1412,17 @@ let found =
         leaf ~capture:true F32 [||] [| 0. |] );
     (* A reshape eager nx refused for its operand's layout. *)
     unviewable_reshape;
+    (* A widened float16 padded with a subnormal, read through a slice: the
+       float16 load took the pad as its own value, which rounds to 0. *)
+    Slice
+      ( [ Range (1, 2, 1); Range (0, 2, 1); Range (1, 4, 2) ],
+        Pad
+          ( [| (1, 0); (0, 0); (0, 2) |],
+            0x1p-149,
+            Cast
+              ( F32,
+                leaf F16 [| 1; 2; 3 |] [| 0.; 0x1p-24; 0x1p-24; 0.; 0.; 0. |] )
+          ) );
   ]
 
 (* [where (x < 0) x 0], which selects the zero at [x = -0.], the zero a captured
