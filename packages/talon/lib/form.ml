@@ -522,8 +522,8 @@ let by = "Column.parse"
 let err fmt = Format.kasprintf invalid_arg fmt
 
 (* [rows r valid read] calls [read b pos len i] on the bytes of each row [i] of
-   [r] that [valid] holds, in order, and is the first row where [read] raises
-   [Invalid] with the reason. *)
+   [r] that the validity [valid] holds, in order, and is the first row where
+   [read] raises [Invalid] with the reason. *)
 let rows r valid read =
   let n = Nx_ragged.length r in
   let scan (o : int64s) b is_null =
@@ -548,7 +548,7 @@ let rows r valid read =
   | Some m ->
       Strings.reading ~by m @@ fun m ->
       let m = B.bigarray Bigarray.int8_unsigned m in
-      scan o b (fun i -> A1.unsafe_get m i = 0)
+      scan o b (fun i -> (A1.unsafe_get m (i lsr 3) lsr (i land 7)) land 1 = 0)
 
 (* [fixed kind zero r valid read] is the array that [read] fills at each row
    [rows] reads, [zero] under a null. *)
@@ -566,8 +566,8 @@ let text_rows c =
 
 let parse (Type.Any ty as any) c =
   let r = text_rows c in
-  let valid = Column.valid c in
-  let column d = Column.make any ?valid ~length:(Column.length c) d in
+  let valid = Column.validity c in
+  let column d = Column.with_data any d c in
   let cast dt x = column (Fixed (P (Nx.cast dt x))) in
   let keep x = column (Fixed (P x)) in
   let ints read = fixed Bigarray.int64 0L r valid read in
@@ -615,10 +615,10 @@ let parse (Type.Any ty as any) c =
       err "Column.parse: %a has no text form" Type.pp ty
 
 let parse_with fmt (Type.Any ty as any) c =
-  let valid = Column.valid c in
+  let valid = Column.validity c in
   let column x =
     let x = match ty with Date -> Nx.P (Nx.cast Nx.int32 x) | _ -> Nx.P x in
-    Column.make any ?valid ~length:(Column.length c) (Fixed x)
+    Column.with_data any (Fixed x) c
   in
   Result.map column
     (fixed Bigarray.int64 0L (text_rows c) valid (directed fmt any))
@@ -633,7 +633,7 @@ let format_with fmt c =
     | Fixed (P x) -> Nx.to_array (Nx.cast Nx.int64 x)
     | _ -> assert false
   in
-  let valid = Option.map Nx.to_array (Column.valid c) in
+  let valid = Option.map Nx.to_array (Column.validity c) in
   (* [fields v] is the days, the second of the day and the nanosecond of the
      second of the value [v]. *)
   let fields v =
@@ -685,8 +685,7 @@ let format_with fmt c =
     Nx.init Nx.uint8 [| String.length text |] (fun i -> Char.code text.[i.(0)])
   in
   let offsets = Nx.create Nx.int64 [| n + 1 |] offsets in
-  Column.make (Any Type.string) ?valid:(Column.valid c) ~length:n
-    (Bytes (Nx_ragged.v ~offsets bytes))
+  Column.with_data (Any Type.string) (Bytes (Nx_ragged.v ~offsets bytes)) c
 
 (* Printing *)
 
@@ -806,7 +805,7 @@ let print c =
   | (String | Binary), _ -> c
   | _, Fixed (P x) ->
       let write = fixed_writer ty x and n = Column.length c in
-      let valid = Option.map Nx.to_array (Column.valid c) in
+      let valid = Option.map Nx.to_array (Column.validity c) in
       let b = Buffer.create (8 * n) and offsets = Array.make (n + 1) 0L in
       for i = 0 to n - 1 do
         (match valid with Some v when not v.(i) -> () | _ -> write b i);
@@ -829,10 +828,7 @@ let print c =
 (* Cells *)
 
 let is_null c i =
-  match Column.validity c with
-  | None -> false
-  | Some v ->
-      not (Nx.item [ 0 ] (Nx_bits.to_bool (Nx_bits.sub v ~offset:i ~length:1)))
+  match Column.validity c with None -> false | Some v -> not (Nx.item [ i ] v)
 
 let row_int64 x i = Nx.item [] (Nx.cast Nx.int64 (Nx.get [ i ] x))
 let row_float x i = Nx.item [] (Nx.cast Nx.float64 (Nx.get [ i ] x))

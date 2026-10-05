@@ -123,7 +123,7 @@ let ints k high = Nx.cast Nx.int64 (Nx.Rng.randint keys.(k) ~high [| n |])
 let bools k = Nx.Rng.bernoulli keys.(k) (Nx.full Nx.float64 [| n |] 0.5)
 
 let nullable ?valid x =
-  Column.of_tensor ?validity:(Option.map Nx_bits.of_bool valid) x
+  Column.of_tensor ?validity:(Option.map (Nx.cast Nx.bit) valid) x
 
 let key_values = ints 0 1000
 let key_valid = valid 1 0.01
@@ -166,10 +166,10 @@ let take_random =
 (* Three parts of odd lengths, the second and third starting inside a byte of
    the validity. *)
 let concat_3 =
-  let bits = Nx_bits.of_bool key_valid in
+  let bits = Nx.cast Nx.bit key_valid in
   let part offset length =
     let values = Nx.shrink [| (offset, offset + length) |] key_values in
-    let validity = Nx_bits.sub bits ~offset ~length in
+    let validity = Nx.shrink [| (offset, offset + length) |] bits in
     Talon.v [ ("key", Column.of_tensor ~validity values) ]
   in
   let third = n / 3 in

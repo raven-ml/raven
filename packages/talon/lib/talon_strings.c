@@ -77,14 +77,15 @@ value talon_utf_8_invalid_byte(value b, value i, value stop)
 
 /* [talon_utf_8_row(b, o, mask, n)] is the first of the [n] rows of [b], row
    [r] being the bytes [o[r], o[r + 1]), that is not valid UTF-8, or -1. A
-   row whose byte in [mask], [Some m], is zero is not read. */
+   row whose bit in [mask], [Some m], is clear is not read: bit [r mod 8] of
+   byte [r / 8]. */
 intnat talon_utf_8_row(value b, value o, value mask, intnat n)
 {
   const uint8_t *v = Bytes_ba(b);
   const int64_t *off = Offsets_ba(o);
   const uint8_t *m = Is_block(mask) ? Bytes_ba(Field(mask, 0)) : NULL;
   for (intnat r = 0; r < n; r++) {
-    if (m != NULL && m[r] == 0) continue;
+    if (m != NULL && ((m[r >> 3] >> (r & 7)) & 1) == 0) continue;
     if (invalid(v + off[r], v + off[r + 1]) != NULL) return r;
   }
   return -1;

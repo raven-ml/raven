@@ -61,7 +61,7 @@ let is_number : type a. a Type.t -> bool =
 let cells width c =
   let n = Column.length c in
   let valid =
-    match Column.valid c with
+    match Column.validity c with
     | None -> Fun.const true
     | Some m -> Array.get (Nx.to_array m)
   in

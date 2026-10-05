@@ -13,8 +13,11 @@ let tensor dt c =
 let int64s c = tensor Nx.int64 c
 let both a = function None -> a | Some b -> Nx.logical_and a b
 
+(* [holding c] is where [c] holds a value, as a condition. *)
+let holding c = Option.map (Nx.cast Nx.bool) (Column.validity c)
+
 (* [valid cs] is where each of the columns [cs], of one row or of the rows they
-   broadcast to, holds a value, [None] where none has a null. *)
+   broadcast to, holds a value, [None] where none has a validity. *)
 let valid cs =
   let n =
     List.fold_left
@@ -22,33 +25,34 @@ let valid cs =
       1 cs
   in
   let add v c =
-    match Column.valid c with
+    match Column.validity c with
     | None -> v
     | Some m -> Some (both (Nx.broadcast_to [| n |] m) v)
   in
   List.fold_left add None cs
 
 (* [make ty valid x] is the column of [ty] stored as [x], null where [valid] is
-   [false], with zeros under its nulls. *)
+   clear. *)
 let make ty valid x =
   let length = Nx.dim 0 x in
-  let valid = Option.map (Nx.broadcast_to [| length |]) valid in
-  let x =
-    match valid with Some v -> Nx.where v x (Nx.zeros_like x) | None -> x
-  in
-  Column.make ty ?valid ~length (Fixed (P x))
+  let validity = Option.map (Nx.broadcast_to [| length |]) valid in
+  Column.make ty ?validity ~length (Fixed (P x))
 
 (* [checked ty cs ~ok x why] is [make ty] of [x], computed over the columns
    [cs], and the failure [why row] at the first row where [ok] does not hold,
-   which is null; rows outside [live] do not fail. *)
+   which is null; rows outside [live] and null rows do not fail. *)
 let checked ty cs ?(live = Nx.scalar Nx.bool true) ~ok x why =
   let valid = valid cs in
-  let bad = both (Nx.logical_and live (Nx.logical_not ok)) valid in
+  let bad =
+    both
+      (Nx.logical_and live (Nx.logical_not ok))
+      (Option.map (Nx.cast Nx.bool) valid)
+  in
   let bad = Nx.broadcast_to [| Nx.dim 0 x |] bad in
   let first () = Int64.to_int (Nx.item [] (Nx.argmax (Nx.cast Nx.uint8 bad))) in
   match if Nx.dim 0 x = 0 then None else Some (first ()) with
   | Some i when Nx.item [ i ] bad ->
-      (make ty (Some (both ok valid)) x, Some (i, why i))
+      (make ty (Some (both (Nx.cast Nx.bit ok) valid)) x, Some (i, why i))
   | _ -> (make ty valid x, None)
 
 (* [cell c row] writes [c]'s value at the frame's row [row]. *)
@@ -63,8 +67,11 @@ let parsed c p why =
   | Error (row, reason) ->
       let rows = Nx.arange Nx.int64 0 (Column.length c) 1 in
       let null = Nx.full_like rows (-1L) in
-      let before = Nx.where (Nx.less_s rows (Int64.of_int row)) rows null in
-      (Result.get_ok (p (Column.take before c)), Some (row, why row reason))
+      let kept = Nx.less_s rows (Int64.of_int row) in
+      let before = Nx.where kept rows null in
+      let found = Column.mask (Nx.cast Nx.bit kept) in
+      ( Result.get_ok (p (Column.restrict found (Column.gather before c))),
+        Some (row, why row reason) )
 
 let read_text c p =
   let why row reason =
@@ -141,15 +148,11 @@ let is_prefix d0 d1 =
 let to_text c =
   match Column.type_ c with
   | Any (Categorical dict) ->
+      (* A code under a null is any: the gather reads an empty row outside the
+         dictionary, and the column keeps [c]'s nulls. *)
       let words = Column.v Type.string (Iarray.to_array dict) in
-      let codes = int64s c in
-      let null = Nx.full_like codes (-1L) in
-      let codes =
-        Option.fold ~none:codes
-          ~some:(fun v -> Nx.where v codes null)
-          (Column.valid c)
-      in
-      Column.take codes words
+      let text = Column.gather (int64s c) words in
+      Column.with_data (Any Type.string) (Column.data text) c
   | _ -> c
 
 (* [rows_of offsets m] is the row of each of the [m] elements of a list column
@@ -202,7 +205,7 @@ let rec convert (Type.Any from) (Type.Any into as t) :
         in
         let rows, inside = rows_of offsets (Column.length child) in
         let held = Nx.broadcast_to [| Column.length c |] live in
-        let held = both held (Column.valid c) in
+        let held = both held (holding c) in
         let live = Nx.logical_and inside (Nx.take ~indices:rows held) in
         let child, f = element ~live child in
         let row (j, e) = (Int64.to_int (Nx.item [ j ] rows), e) in
@@ -214,7 +217,7 @@ let rec convert (Type.Any from) (Type.Any into as t) :
           match Column.data c with Fields cs -> cs | _ -> assert false
         in
         let live = Nx.broadcast_to [| Column.length c |] live in
-        let live = both live (Column.valid c) in
+        let live = both live (holding c) in
         let cs = List.map2 (fun f c -> f ~live c) fields cs in
         let f = List.fold_left (fun f (_, g) -> earliest f g) None cs in
         (Column.with_data t (Fields (List.map fst cs)) c, f)
@@ -247,30 +250,27 @@ let cast from into =
 
 let text : type a. a Expr.text_op -> Column.t -> checked =
  fun op ->
-  let kept ty c data =
-    let length = Column.length c in
-    (Column.make ty ?valid:(Column.valid c) ~length data, None)
-  in
+  let kept ty c data = (Column.with_data ty data c, None) in
   let bytes c = match Column.data c with Bytes r -> r | _ -> assert false in
   match op with
   | Length ->
       fun c ->
         let by = "Str.length" in
-        let n = Strings.length ~by ?mask:(Column.valid c) (bytes c) in
+        let n = Strings.length ~by ?mask:(Column.validity c) (bytes c) in
         kept (Any Type.int64) c (Fixed (P n))
   | Slice { offset; length } ->
       fun c ->
-        let by = "Str.slice" and mask = Column.valid c in
+        let by = "Str.slice" and mask = Column.validity c in
         let r = Strings.slice ~by ?mask ~offset ~length (bytes c) in
         kept (Any Type.string) c (Bytes r)
   | Matches p ->
       fun c ->
         let by = "Str.matches" in
-        let m = Strings.matches ~by ?mask:(Column.valid c) p (bytes c) in
+        let m = Strings.matches ~by ?mask:(Column.validity c) p (bytes c) in
         kept (Any Type.bool) c (Fixed (P m))
   | Split sep ->
       fun c ->
-        let by = "Str.split" and mask = Column.valid c in
+        let by = "Str.split" and mask = Column.validity c in
         let offsets, pieces = Strings.split ~by ?mask sep (bytes c) in
         let child =
           Column.make (Any Type.string) ~length:(Nx_ragged.length pieces)
@@ -279,7 +279,7 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
         kept (Any (Type.list Type.string)) c (List { offsets; child })
   | Replace { sub; by = into } ->
       fun c ->
-        let by = "Str.replace" and mask = Column.valid c in
+        let by = "Str.replace" and mask = Column.validity c in
         let r = Strings.replace ~by ?mask ~sub ~into (bytes c) in
         kept (Any Type.string) c (Bytes r)
   | Parse ty -> fun c -> read_text c (Form.parse (Any ty))

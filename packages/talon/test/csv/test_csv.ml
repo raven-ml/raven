@@ -35,7 +35,7 @@ let valid c =
   match Column.validity c with
   | None -> Fun.const true
   | Some v ->
-      let v = Nx.to_array (Nx_bits.to_bool v) in
+      let v = Nx.to_array v in
       fun i -> v.(i)
 
 (* [byte_rows c] is the byte strings of the rows of the varsize column [c],
@@ -694,6 +694,21 @@ let nulls =
                 (Array.to_list (Nx.to_array (Nx.cast Nx.int64 x)))
           | Varsize _ | Children _ -> fail "not a fixed column");
           equal (list string) [ "a"; "" ] (byte_rows (column t "c2")));
+      test "a validity leaves the bits past its rows clear" (fun () ->
+          let text =
+            String.concat ""
+              (List.init 13 (fun i -> if i = 4 then "NA\n" else "x\n"))
+          in
+          let t =
+            Error.get_ok
+              (read (columns ~nulls:[ "NA" ] [ any Type.string ]) text)
+          in
+          let v = Option.get (Column.validity (column t "c1")) in
+          equal (array bool) (Array.init 13 (fun i -> i <> 4)) (Nx.to_array v);
+          let raw =
+            Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer v)
+          in
+          equal int 0 (raw.{1} lsr 5));
       test "every row valid has no validity" (fun () ->
           let t = Error.get_ok (read (columns [ any Type.int64 ]) "1\n2\n") in
           match Column.validity (column t "c1") with

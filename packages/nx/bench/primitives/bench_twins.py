@@ -182,11 +182,11 @@ def packed(n):
     return np.packbits(bools(n), bitorder="little")
 
 
-twin("bits/of_bool-1e7", "numpy", lambda: bools(L),
+twin("bit/pack-1e7", "numpy", lambda: bools(L),
      lambda m: np.packbits(m, bitorder="little"))
-twin("bits/to_bool-1e7", "numpy", lambda: packed(L),
+twin("bit/unpack-1e7", "numpy", lambda: packed(L),
      lambda p: np.unpackbits(p, count=L, bitorder="little").view(bool))
-twin("bits/count-1e7", "numpy", lambda: packed(L),
+twin("bit/count-1e7", "numpy", lambda: packed(L),
      lambda p: np.bitwise_count(p).sum())
 
 

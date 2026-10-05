@@ -56,10 +56,7 @@ let observations (G.Sample (ty, vs)) =
   equal int (nulls vs) (Column.null_count c);
   match Column.validity c with
   | None -> equal int 0 (nulls vs)
-  | Some b ->
-      equal (array bool)
-        (Array.map Option.is_some vs)
-        (Nx.to_array (Nx_bits.to_bool b))
+  | Some b -> equal (array bool) (Array.map Option.is_some vs) (Nx.to_array b)
 
 let without_nulls (G.Sample (ty, vs)) =
   let xs = Array.of_list (List.filter_map Fun.id (Array.to_list vs)) in
@@ -250,7 +247,7 @@ let storage =
           equal (array int) [| 0xffff_ffff; 7 |] (Column.values Kind.int c));
       test "of_tensor's validity makes nulls" (fun () ->
           let validity =
-            Nx_bits.of_bool (Nx.create Nx.bool [| 3 |] [| true; false; true |])
+            Nx.cast Nx.bit (Nx.create Nx.bool [| 3 |] [| true; false; true |])
           in
           let c =
             Column.of_tensor ~validity (Nx.create Nx.int8 [| 3 |] [| 1; 2; 3 |])
@@ -260,20 +257,22 @@ let storage =
             (array (option int))
             [| Some 1; None; Some 3 |]
             (Column.options Kind.int c));
-      test "of_tensor drops a validity with every row set" (fun () ->
+      test "of_tensor keeps a validity with every row set, which has no null"
+        (fun () ->
           let validity =
-            Nx_bits.of_bool (Nx.create Nx.bool [| 1 |] [| true |])
+            Nx.cast Nx.bit (Nx.create Nx.bool [| 1 |] [| true |])
           in
           let c =
             Column.of_tensor ~validity (Nx.create Nx.int8 [| 1 |] [| 1 |])
           in
-          is_none (Column.validity c));
+          is_some (Column.validity c);
+          equal int 0 (Column.null_count c));
     ]
 
 (* Offsets and validities *)
 
 let n x = Nx.create Nx.int64 [| Array.length x |] x
-let bits b = Nx_bits.of_bool (Nx.create Nx.bool [| Array.length b |] b)
+let bits b = Nx.cast Nx.bit (Nx.create Nx.bool [| Array.length b |] b)
 
 (* Records *)
 
@@ -330,7 +329,7 @@ let refusals =
     @@ __POS_OF__ {| Column.v: row 1: int8 does not hold 300 |};
     refuse "the first value outside int that is not null" (fun () ->
         let validity =
-          Nx_bits.of_bool (Nx.create Nx.bool [| 3 |] [| false; true; true |])
+          Nx.cast Nx.bit (Nx.create Nx.bool [| 3 |] [| false; true; true |])
         in
         let x = Nx.create Nx.uint64 [| 3 |] [| -1L; 5L; -1L |] in
         Column.options Kind.int (Column.of_tensor ~validity x))
@@ -395,9 +394,9 @@ let refusals =
     @@ __POS_OF__
          {| Column.of_tensor: no scalar type stores bfloat16; make it 2-D |};
     refuse "of_tensor with a validity of another length" (fun () ->
-        let validity = Nx_bits.of_bool (Nx.create Nx.bool [| 1 |] [| true |]) in
+        let validity = Nx.cast Nx.bit (Nx.create Nx.bool [| 1 |] [| true |]) in
         Column.of_tensor ~validity (Nx.zeros Nx.int8 [| 2 |]))
-    @@ __POS_OF__ {| Column.of_tensor: a validity of length 1 for 2 rows |};
+    @@ __POS_OF__ {| Column.of_tensor: a validity of shape [1] for 2 rows |};
     refuse "to_tensor at another dtype" (fun () ->
         Column.to_tensor Nx.int64 (Column.v date [| day 0 |]))
     @@ __POS_OF__ {| Column.to_tensor: date is stored as int32, not int64 |};
@@ -438,7 +437,7 @@ let refusals =
           (Nx_ragged.v
              ~offsets:(n [| 0L; 1L; 1L |])
              (Nx.create Nx.int32 [| 1 |] [| 7l |])))
-    @@ __POS_OF__ {| Column.of_ragged: a validity of length 1 for 2 rows |};
+    @@ __POS_OF__ {| Column.of_ragged: a validity of shape [1] for 2 rows |};
     refuse "of_ragged of bfloat16 elements" (fun () ->
         Column.of_ragged
           (Nx_ragged.v ~offsets:(n [| 0L; 1L |]) (Nx.zeros Nx.bfloat16 [| 1 |])))
@@ -458,7 +457,7 @@ let pp_ty ppf (Type.Any t) = Type.pp ppf t
 
 let pp_validity ppf = function
   | None -> Format.pp_print_string ppf "no null"
-  | Some b -> Nx.pp ppf (Nx_bits.to_bool b)
+  | Some b -> Nx.pp ppf b
 
 let rec pp_layout ppf c =
   let ty = Column.type_ c and v = Column.validity c in
@@ -484,7 +483,7 @@ let same_values (Nx.P x) (Nx.P y) =
 (* Columns are the same when their types, validities and buffers' values are, at
    every depth. *)
 let rec same a b =
-  let bits c = Option.map (fun b -> Nx.to_array (Nx_bits.to_bool b)) c in
+  let bits c = Option.map Nx.to_array c in
   let same_type (Type.Any a) (Type.Any b) = Type.equal a b in
   same_type (Column.type_ a) (Column.type_ b)
   && bits (Column.validity a) = bits (Column.validity b)
@@ -728,7 +727,7 @@ let layout_refusals =
          {| Column.of_layout: int8 values of shape [] do not lay out int8 |};
     refuse "a validity of another length"
       (of_layout int8 (fixed ~validity:(bits [| true |]) Nx.int8 [| 1; 2 |]))
-    @@ __POS_OF__ {| Column.of_layout: a validity of length 1 for 2 rows |};
+    @@ __POS_OF__ {| Column.of_layout: a validity of shape [1] for 2 rows |};
     refuse "offsets that are 2-D"
       (of_layout (list int8)
          (Varsize
@@ -951,6 +950,118 @@ let ragged =
             equal (array int64) [| 1L; 2L |] (Nx.to_array (Nx_ragged.offsets r)));
       ])
 
+(* Nulls
+
+   A validity's count is read at the first null_count and kept. The model is a
+   column's validity as booleans; columns made from others count their own
+   nulls, and two domains that count at once agree with some order of the
+   counts. *)
+
+let valid_bits m = Nx.cast Nx.bit (Nx.create Nx.bool [| Array.length m |] m)
+let int64s n = Nx.init Nx.int64 [| n |] (fun i -> Int64.of_int i.(0))
+
+let column_of m =
+  Column.of_tensor ~validity:(valid_bits m) (int64s (Array.length m))
+
+let count_model m = Array.fold_left (fun n v -> if v then n else n + 1) 0 m
+let rows_of c = Column.length c
+let column_w = abstract "c"
+
+let masks =
+  Gen.with_pp
+    (fun ppf m ->
+      Array.iter (fun v -> Format.pp_print_char ppf (if v then '1' else '0')) m)
+    (Gen.array ~size:(Gen.int_range 0 40) Gen.bool)
+
+(* Indices, outside the rows too: such a row is null. *)
+let picks =
+  Gen.with_pp
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_int)
+    (Gen.list ~size:(Gen.int_range 0 12) (Gen.int_range (-2) 45))
+
+let take_model is m =
+  Array.of_list (List.map (fun i -> i >= 0 && i < Array.length m && m.(i)) is)
+
+let take_column is c =
+  let idx =
+    Nx.create Nx.int64
+      [| List.length is |]
+      (Array.of_list (List.map Int64.of_int is))
+  in
+  let inside = List.for_all (fun i -> i >= 0 && i < rows_of c) is in
+  if inside then column (take idx (v [ ("x", c) ])) "x"
+  else
+    (* Talon.take refuses an index outside the rows: a left join pads. *)
+    let l = v [ ("k", Column.of_tensor idx) ] in
+    let r = v [ ("k", Column.of_tensor (int64s (rows_of c))); ("x", c) ] in
+    let joined =
+      Error.get_ok
+        Query.(
+          run
+            (of_table l
+            |> join ~kind:Left ~each_left:At_most_one ~on:(Join.keys [ "k" ])
+                 (of_table r)))
+    in
+    column joined "x"
+
+let counts =
+  [
+    command "of_tensor" (masks @-> makes column_w) Fun.id column_of;
+    command "null_count"
+      (column_w ^-> returns int)
+      count_model Column.null_count;
+    command "take"
+      (picks @-> column_w ^-> makes column_w)
+      take_model take_column;
+    command "concat"
+      (column_w ^-> column_w ^-> makes column_w)
+      (fun a b -> Array.append a b)
+      (fun a b ->
+        let t c = v [ ("x", c) ] in
+        column (of_batches [ t a; t b ]) "x");
+    command "validity"
+      (column_w ^-> returns (option (array bool)))
+      (fun m -> if count_model m = 0 then None else Some m)
+      (fun c ->
+        match Column.validity c with
+        | Some v when Column.null_count c > 0 -> Some (Nx.to_array v)
+        | _ -> None);
+  ]
+
+let nulls_cases =
+  group "nulls"
+    [
+      stateful "null_count is the number of null rows, read once" counts;
+      stateful ~domains:2
+        "null_count from two domains at once is the number of null rows" counts;
+      test "a validity with every row set has no null" (fun () ->
+          let c = column_of [| true; true; true |] in
+          is_some (Column.validity c);
+          equal int 0 (Column.null_count c));
+      test "a validity whose bits past its rows are set counts its rows only"
+        (fun () ->
+          (* Two bytes of ones, the second's bits past row 13 set too, and row 2
+             cleared. *)
+          let bytes = Nx.create Nx.uint8 [| 2 |] [| 0xfb; 0xff |] in
+          let validity =
+            Nx.shrink
+              [| (0, 13) |]
+              (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit bytes))
+          in
+          let c = Column.of_tensor ~validity (int64s 13) in
+          equal int 1 (Column.null_count c);
+          let t = Error.get_ok Query.(run (of_table (v [ ("x", c) ]))) in
+          let b = Option.get (Column.validity (column t "x")) in
+          let raw =
+            Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer b)
+          in
+          equal int 0 (raw.{1} lsr 5));
+      test "run drops a validity with no null" (fun () ->
+          let c = column_of [| true; true |] in
+          let t = Error.get_ok Query.(run (of_table (v [ ("x", c) ]))) in
+          is_none (Column.validity (column t "x")));
+    ]
+
 let () =
   exit
     (run "Column"
@@ -964,4 +1075,5 @@ let () =
          refusal_cases;
          layouts;
          layout_refusal_cases;
+         nulls_cases;
        ])

@@ -182,10 +182,16 @@ let is_null nulls s r j =
 
 let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
 
-(* A binary column has no value to check, so [of_layout] cannot fail. *)
+(* A binary column has no value to check, so [of_layout] cannot fail. Its
+   validity is the bits of [length] rows in the bytes [validity]. *)
 let binary ?validity offsets data =
   let length = A1.dim offsets - 1 in
-  let validity = Option.map (fun v -> Nx_bits.v ~length (tensor v)) validity in
+  let bits v =
+    Nx.shrink
+      [| (0, length) |]
+      (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor v)))
+  in
+  let validity = Option.map bits validity in
   Result.get_ok
     (Column.of_layout (Type.Any Type.binary)
        (Varsize
@@ -244,6 +250,12 @@ let texts ~quote ~nulls s j ~first ~rows =
     end;
     A1.unsafe_set offsets (i + 1) (Int64.of_int !o)
   done;
+  (* The bits past the last row, which the fill set, are cleared. *)
+  (match !validity with
+  | Some v when rows mod 8 <> 0 ->
+      let last = rows / 8 in
+      A1.unsafe_set v last (A1.unsafe_get v last land ((1 lsl (rows mod 8)) - 1))
+  | _ -> ());
   binary ?validity:!validity offsets (A1.sub data 0 !o)
 
 (* Sniffing
@@ -317,7 +329,7 @@ let masked c mask =
   match Column.layout c with
   | Varsize { offsets; child; _ } ->
       let validity =
-        Some (Nx_bits.of_bool (Nx.create Nx.bool [| Array.length mask |] mask))
+        Some (Nx.cast Nx.bit (Nx.create Nx.bool [| Array.length mask |] mask))
       in
       Result.get_ok
         (Column.of_layout (Type.Any Type.binary)
@@ -690,7 +702,7 @@ let cells c =
   match Column.layout c with
   | Fixed _ | Children _ -> assert false (* [Column.print] makes text. *)
   | Varsize { validity; offsets; child } ->
-      let valid = Option.map (fun v -> Nx.to_array (Nx_bits.to_bool v)) validity
+      let valid = Option.map Nx.to_array validity
       and o = Nx.to_array offsets
       and a =
         Bigarray.array1_of_genarray

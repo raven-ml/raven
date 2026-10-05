@@ -71,13 +71,20 @@ let index fn t name =
   find 0 (Schema.columns t.schema)
 
 let concat t =
-  let k = List.length (Schema.columns t.schema) in
-  let cs = Array.init k (fun i -> Column.concat (parts t i)) in
   match t.batches with
-  | [ b ] when Array.for_all2 ( == ) b.columns cs -> t
-  | _ -> batch t.schema ~rows:t.rows cs
+  | [ _ ] -> t
+  | _ ->
+      let k = List.length (Schema.columns t.schema) in
+      batch t.schema ~rows:t.rows
+        (Array.init k (fun i -> Column.concat (parts t i)))
 
-let column t name = Column.concat (parts t (index "column" t name))
+let canonical t =
+  let b = columns t in
+  let cs = Array.map Column.canonical b in
+  if Array.for_all2 ( == ) b cs then t else batch t.schema ~rows:t.rows cs
+
+let column t name =
+  Column.canonical (Column.concat (parts t (index "column" t name)))
 
 let take indices t =
   if Nx.ndim indices <> 1 then
@@ -87,13 +94,14 @@ let take indices t =
     Nx.logical_or (Nx.less_s indices 0L)
       (Nx.greater_equal_s indices (Int64.of_int t.rows))
   in
-  let outside = Nx.positions outside in
-  if Nx.numel outside > 0 then begin
-    let i = Nx.item [ Int64.to_int (Nx.item [ 0 ] outside) ] indices in
+  (* The first index outside is looked for only when there is one. *)
+  if Nx.item [] (Nx.any outside) then begin
+    let first = Nx.item [] (Nx.argmax outside) in
+    let i = Nx.item [ Int64.to_int first ] indices in
     err "Talon.take: index %Ld of a table of %d rows" i t.rows
   end;
   let rows = Nx.dim 0 indices in
-  batch t.schema ~rows (Array.map (Column.take indices) (columns (concat t)))
+  batch t.schema ~rows (Array.map (Column.gather indices) (columns (concat t)))
 
 let numeric : type a. a Type.t -> bool = function
   | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64

@@ -13,10 +13,10 @@
 type t
 
 type layout =
-  | Fixed of { validity : Nx_bits.t option; values : Nx.packed }
-  | Varsize of { validity : Nx_bits.t option; offsets : Nx.int64_t; child : t }
+  | Fixed of { validity : Nx.bit_t option; values : Nx.packed }
+  | Varsize of { validity : Nx.bit_t option; offsets : Nx.int64_t; child : t }
   | Children of {
-      validity : Nx_bits.t option;
+      validity : Nx.bit_t option;
       length : int;
       fields : (string * t) list;
     }
@@ -28,11 +28,11 @@ val v : 'a Type.t -> 'a array -> t
 val of_options : 'a Type.t -> 'a option array -> t
 val values : 'a Kind.t -> t -> 'a array
 val options : 'a Kind.t -> t -> 'a option array
-val of_tensor : ?validity:Nx_bits.t -> ('a, 'b) Nx.t -> t
+val of_tensor : ?validity:Nx.bit_t -> ('a, 'b) Nx.t -> t
 val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
-val validity : t -> Nx_bits.t option
+val validity : t -> Nx.bit_t option
 val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
-val of_ragged : ?validity:Nx_bits.t -> ('a, 'b) Nx_ragged.t -> t
+val of_ragged : ?validity:Nx.bit_t -> ('a, 'b) Nx_ragged.t -> t
 val layout : t -> layout
 val of_layout : Type.any -> layout -> (t, int * string) result
 
@@ -56,31 +56,56 @@ type data =
   | Fields of t list
 
 val data : t -> data
-(** [data c] is [c]'s values. Under a null they are unspecified; talon's
-    operations make zeros and empty rows. *)
+(** [data c] is [c]'s values. Under a null they are unspecified and
+    deterministic: a function of the operation that made them and of its inputs.
+    A reader that needs defined values masks them with {!validity}. *)
 
-val make : Type.any -> ?valid:Nx.bool_t -> length:int -> data -> t
-(** [make ty ?valid ~length d] is the column of type [ty] with values [d] and a
-    null wherever [valid] is [false]. It packs [valid] and counts its nulls (one
-    read), and drops it when no row is null. It checks that [d] is [ty]'s
-    storage and that every part has [length] rows, and nothing about values: the
-    caller's data is held by [ty]. Every internal operation makes columns with
-    it.
+(** {2:nulls Nulls}
+
+    A column's validity, when it has one, is its bits and the number of rows
+    they leave null, read at the first {!null_count} and kept: a column that
+    keeps a validity keeps its count, columns that share one count it once, and
+    a column with new bits has a count not yet read. No operation that makes a
+    column from other columns reads a count. *)
+
+val known_zero : t -> bool
+(** [known_zero c] is [true] iff [c] has no validity or its count was read as
+    [0]. It reads nothing: fast paths consult it, and the absence of a validity
+    implies no null, not the reverse. *)
+
+val make : Type.any -> ?validity:Nx.bit_t -> length:int -> data -> t
+(** [make ty ?validity ~length d] is the column of type [ty] with values [d] and
+    a null wherever [validity] is clear, its count not yet read. It checks that
+    [d] is [ty]'s storage and that every part has [length] rows, and nothing
+    about values: the caller's data is held by [ty]. Every internal operation
+    makes columns with it.
 
     Raises [Invalid_argument] if [d] is not [ty]'s storage, or if a part's
-    length or [valid]'s is not [length]. *)
+    length or [validity]'s is not [length]. *)
 
 val with_data : Type.any -> data -> t -> t
 (** [with_data ty d c] is the column of type [ty] with values [d] and [c]'s
-    nulls, which it does not count again: [c]'s values cast to [ty], or read as
-    another type of the same storage. As {!make}, it checks that [d] is [ty]'s
-    storage for [c]'s rows, and nothing about values.
+    validity, which it shares, count included: [c]'s values cast to [ty], or
+    read as another type of the same storage. As {!make}, it checks that [d] is
+    [ty]'s storage for [c]'s rows, and nothing about values.
 
     Raises [Invalid_argument] if [d] is not [ty]'s storage for [length c] rows.
 *)
 
-val valid : t -> Nx.bool_t option
-(** [valid c] is [c]'s validity as a byte mask, [None] iff [c] has no null. *)
+type mask
+(** The type for validities that columns share: bits, and their count read once
+    for all of them. *)
+
+val mask : Nx.bit_t -> mask
+(** [mask b] is the validity [b], its count not yet read. *)
+
+val restrict : mask -> t -> t
+(** [restrict m c] is [c] where it has a validity, and otherwise [c] null where
+    [m] is clear, sharing [m]'s count. A gather ({!gather}) clears the validity
+    at the rows it pads, so [restrict found (gather indices c)] is null at each
+    padded row of every column.
+
+    Raises [Invalid_argument] if [m]'s length is not [c]'s. *)
 
 (** {1:codec Codec}
 
@@ -114,18 +139,20 @@ val sub : t -> offset:int -> length:int -> t
 
     Raises [Invalid_argument] if the rows are not rows of [c]. *)
 
-val take : Nx.int64_t -> t -> t
-(** [take indices c] is the rows of [c] at the 1-D [indices], in order. An index
-    outside \[[0];[length c - 1]\] gives a null row of zeros or an empty row, so
-    that joins pad with [-1]. *)
+val gather : Nx.int64_t -> t -> t
+(** [gather indices c] is the rows of [c] at the 1-D [indices], in order, with
+    no range check: an index outside \[[0];[length c - 1]\] reads zero values, a
+    clear validity bit, and an empty row of variable size. Its count is not yet
+    read. *)
 
 val permute : Nx.int64_t -> t -> t
-(** [permute p c] is [take p c] for a permutation [p] of [c]'s rows. Its null
-    count is [c]'s, so a fixed-width column is permuted without a read. *)
+(** [permute p c] is [gather p c] for a permutation [p] of [c]'s rows. Its null
+    count is [c]'s, read or not. *)
 
 val concat : t list -> t
-(** [concat cs] is the rows of [cs], one column after the other, canonical (see
-    {!canonical}). The columns have one type.
+(** [concat cs] is the rows of [cs], one column after the other: one column is
+    itself, and several are contiguous from row [0], with the sum of their
+    counts when every one is known. The columns have one type.
 
     Raises [Invalid_argument] if [cs] is empty. *)
 
@@ -133,5 +160,6 @@ val canonical : t -> t
 (** [canonical c] is [c] with buffers that hold exactly its rows: offsets from
     [0], values exactly the rows', a validity at bit offset [0] with no bit set
     past its length, at every depth. It is [c] itself when [c] is canonical, and
-    one copy otherwise. Two canonical columns whose rows hold the same bytes,
-    under their nulls included, have the same layout, byte for byte. *)
+    one copy otherwise. It reads its null count, and drops a validity with no
+    null. Two canonical columns whose rows hold the same bytes, under their
+    nulls included, have the same layout, byte for byte. *)

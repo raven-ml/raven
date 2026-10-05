@@ -55,20 +55,23 @@ let refine s ~by ~order =
       in
       { s with order = Some order }
 
-let broadcast s c = Column.take s.ids c
+let broadcast s c = Column.gather s.ids c
 
 (* [view s] is the rows of each segment in its order. *)
 let view s =
   let p = Option.value s.order ~default:(positions (Nx.dim 0 s.ids)) in
   Nx_ragged.of_ids ~segments:s.count (Nx.take ~indices:p s.ids) p
 
-(* [fixed ty ?valid x] is the column of [ty] stored as [x], with zeros under its
-   nulls. *)
+(* [fixed ty ?valid x] is the column of [ty] stored as [x], null where [valid]
+   is [false]. *)
 let fixed ty ?valid x =
-  let x =
-    match valid with Some v -> Nx.where v x (Nx.zeros_like x) | None -> x
-  in
-  Column.make ty ?valid ~length:(Nx.dim 0 x) (Fixed (P x))
+  let validity = Option.map (Nx.cast Nx.bit) valid in
+  Column.make ty ?validity ~length:(Nx.dim 0 x) (Fixed (P x))
+
+(* [rows_at rows c] is [c]'s rows at [rows], null where a row is [-1]. *)
+let rows_at rows c =
+  let found = Column.mask (Nx.cast Nx.bit (Nx.greater_equal_s rows 0L)) in
+  Column.restrict found (Column.gather rows c)
 
 let tensor dt c =
   match Column.data c with Fixed (P x) -> Nx.cast dt x | _ -> assert false
@@ -139,14 +142,12 @@ let reduce : type a b.
     Column.t * (int * string) option =
  fun r (Any rty as ty) s c ->
   let n = Column.length c in
+  let held = Option.map (Nx.cast Nx.bool) (Column.validity c) in
   let ids =
-    match Column.valid c with
-    | Some v -> Nx.where v s.ids (none n)
-    | None -> s.ids
+    match held with Some v -> Nx.where v s.ids (none n) | None -> s.ids
   in
-  let valid =
-    Option.value (Column.valid c) ~default:(Nx.ones Nx.bool [| n |])
-  in
+  let valid m = match held with Some v -> Nx.logical_and v m | None -> m in
+  let held_rows = Option.value held ~default:(Nx.ones Nx.bool [| n |]) in
   let count = segment_sum s ids (Nx.ones Nx.int64 [| n |]) in
   let at_least k = Nx.greater_equal_s count (Int64.of_int k) in
   let sum dt = segment_sum s ids (tensor dt c) in
@@ -167,13 +168,13 @@ let reduce : type a b.
   in
   let first_at e =
     let hit = Nx.equal (Lazy.force words) (Nx.take ~indices:s.ids e) in
-    pick s `Min (Nx.logical_and valid hit)
+    pick s `Min (valid hit)
   in
   let place row =
     let p = place s row in
     fixed int64 ~valid:(Nx.greater_equal_s p 0L) p
   in
-  let value row = Column.take row c in
+  let value row = rows_at row c in
   let ok c = (c, None) in
   match r with
   | Count -> ok (fixed int64 count)
@@ -192,8 +193,8 @@ let reduce : type a b.
   | Max -> ok (value (first_at (extreme `Max)))
   | Arg_min -> ok (place (first_at (extreme `Min)))
   | Arg_max -> ok (place (first_at (extreme `Max)))
-  | First -> ok (value (pick s `Min valid))
-  | Last -> ok (value (pick s `Max valid))
+  | First -> ok (value (pick s `Min held_rows))
+  | Last -> ok (value (pick s `Max held_rows))
   | Only ->
       let lo = extreme `Min in
       let several =
@@ -214,7 +215,7 @@ let shift s k c =
   let j = Nx.sub_s (positions n) (Int64.of_int k) in
   let inside = Nx.logical_and (Nx.greater_equal j start) (Nx.less j stop) in
   let from = Nx.where inside (Nx.take ~indices:j v) (none n) in
-  Column.take (Nx.scatter ~axis:0 ~indices:v ~values:from (none n)) c
+  rows_at (Nx.scatter ~axis:0 ~indices:v ~values:from (none n)) c
 
 (* A row's rank is its place in its segment's rows sorted by value, at the start
    of its run of equal values: [1] plus the number of rows before the run, which
@@ -242,5 +243,7 @@ let rank s c =
         (Nx.reshape [| n - 1 |] (Nx.shrink [| (0, n - 1); (0, 1) |] differs))
     in
     let r = Nx.add_s (Nx.sub run segment) 1L in
-    fixed int64 ?valid:(Column.valid c)
-      (Nx.scatter ~axis:0 ~indices:p ~values:r (Nx.zeros Nx.int64 [| n |]))
+    let ranks =
+      Nx.scatter ~axis:0 ~indices:p ~values:r (Nx.zeros Nx.int64 [| n |])
+    in
+    Column.with_data int64 (Fixed (P ranks)) c

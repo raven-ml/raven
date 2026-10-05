@@ -53,24 +53,21 @@ let tensor dt c =
   match Column.data c with Fixed (P x) -> Nx.cast dt x | _ -> assert false
 
 (* [valid cs] is where every column of [cs] holds a value, [None] where none has
-   a null. *)
+   a validity: the operands' bits, and-ed word by word. *)
 let valid cs =
   let both v c =
-    match (v, Column.valid c) with
+    match (v, Column.validity c) with
     | v, None | None, v -> v
     | Some a, Some b -> Some (Nx.logical_and a b)
   in
   List.fold_left both None cs
 
 (* [fixed ty ?valid x] is the column of [ty] stored as [x], null where [valid]
-   is [false], with zeros under its nulls. *)
+   is clear. The values under its nulls are [x]'s. *)
 let fixed ty ?valid x =
   let length = Nx.dim 0 x in
-  let valid = Option.map (Nx.broadcast_to [| length |]) valid in
-  let x =
-    match valid with Some v -> Nx.where v x (Nx.zeros_like x) | None -> x
-  in
-  Column.make ty ?valid ~length (Fixed (P x))
+  let validity = Option.map (Nx.broadcast_to [| length |]) valid in
+  Column.make ty ?validity ~length (Fixed (P x))
 
 let boolean ?valid x = fixed (Type.Any Type.bool) ?valid x
 
@@ -165,7 +162,7 @@ let arithmetic : type a.
   let valid =
     match op with
     | (Div | Mod) when integer ->
-        let nonzero = Nx.not_equal y (Nx.zeros_like y) in
+        let nonzero = Nx.cast Nx.bit (Nx.not_equal y (Nx.zeros_like y)) in
         Some (Option.fold ~none:nonzero ~some:(Nx.logical_and nonzero) valid)
     | _ -> valid
   in
@@ -224,36 +221,48 @@ let compare op a b =
   in
   boolean ?valid:(valid [ a; b ]) r
 
+(* [held c] is where [c] holds a value, as a condition. *)
+let held c = Option.map (Nx.cast Nx.bool) (Column.validity c)
+
 (* [truth c] is where the boolean column [c] is [true], and [falsity c] where it
    is [false]: neither holds under a null. *)
 let truth c =
   let x = tensor Nx.bool c in
-  Option.fold ~none:x ~some:(Nx.logical_and x) (Column.valid c)
+  Option.fold ~none:x ~some:(Nx.logical_and x) (held c)
 
 let falsity c =
   let x = Nx.logical_not (tensor Nx.bool c) in
-  Option.fold ~none:x ~some:(Nx.logical_and x) (Column.valid c)
+  Option.fold ~none:x ~some:(Nx.logical_and x) (held c)
 
-(* Kleene: a conjunction is valid where it is [true] or an operand is [false], a
-   disjunction where it is [true] or both operands are [false]. *)
+(* Kleene: a conjunction is valid where both operands are [true] or either is
+   [false], and a disjunction where either is [true] or both are [false]. A
+   valid row has both operands valid or one that decides it, so the operands'
+   values combined as they are, those under nulls included, are its Kleene
+   value: [a && true] and [a || false] are [a], under its nulls too. *)
 let logic (op : Expr.logic) a b =
-  let combine = match op with And -> Nx.logical_and | Or -> Nx.logical_or in
-  let r = combine (truth a) (truth b) in
+  let x = tensor Nx.bool a and y = tensor Nx.bool b in
+  let r = match op with And -> Nx.logical_and x y | Or -> Nx.logical_or x y in
   let valid =
-    match (Column.valid a, Column.valid b) with
+    match (Column.validity a, Column.validity b) with
     | None, None -> None
     | _ ->
         let decided =
           match op with
-          | And -> Nx.logical_or (falsity a) (falsity b)
-          | Or -> Nx.logical_and (falsity a) (falsity b)
+          | And ->
+              Nx.logical_or
+                (Nx.logical_and (truth a) (truth b))
+                (Nx.logical_or (falsity a) (falsity b))
+          | Or ->
+              Nx.logical_or
+                (Nx.logical_or (truth a) (truth b))
+                (Nx.logical_and (falsity a) (falsity b))
         in
-        Some (Nx.logical_or r decided)
+        Some (Nx.cast Nx.bit decided)
   in
   boolean ?valid r
 
 let is_null c =
-  match Column.valid c with
+  match held c with
   | Some v -> boolean (Nx.logical_not v)
   | None -> boolean (Nx.zeros Nx.bool [| Column.length c |])
 
@@ -264,10 +273,10 @@ let choose m a b =
   | Fixed (P x), Fixed p when Nx.ndim x = 1 ->
       let y = Nx.unpack (Nx.dtype x) p in
       let valid =
-        match (Column.valid a, Column.valid b) with
+        match (Column.validity a, Column.validity b) with
         | None, None -> None
         | va, vb ->
-            let all c = Nx.ones Nx.bool [| Column.length c |] in
+            let all c = Nx.ones Nx.bit [| Column.length c |] in
             let va = Option.value va ~default:(all a) in
             Some (Nx.where m va (Option.value vb ~default:(all b)))
       in
@@ -281,13 +290,14 @@ let choose m a b =
         else Nx.zeros Nx.int64 [| length |]
       in
       let from_b = Nx.add_s (rows b) (Int64.of_int (Column.length a)) in
-      Column.take (Nx.where m (rows a) from_b) (Column.concat [ a; b ])
+      Column.gather (Nx.where m (rows a) from_b) (Column.concat [ a; b ])
 
 let rec coalesce = function
   | [] -> assert false (* Binding gives a coalesce an operand. *)
   | [ c ] -> c
   | c :: cs -> (
-      match Column.valid c with None -> c | Some v -> choose v c (coalesce cs))
+      if Column.known_zero c then c
+      else match held c with Some v -> choose v c (coalesce cs) | None -> c)
 
 (* [is_in vs] finds the words of a column's rows among the sorted words of the
    values [vs]: words of fixed-width values sorted once, and codes of compound
@@ -299,7 +309,7 @@ let is_in vs =
     let hit =
       Nx.equal (Nx.take ~indices:(Nx.minimum_s i (Int64.of_int (m - 1))) s) x
     in
-    boolean (Option.fold ~none:hit ~some:(Nx.logical_and hit) (Column.valid a))
+    boolean (Option.fold ~none:hit ~some:(Nx.logical_and hit) (held a))
   in
   match Column.data vs with
   | _ when m = 0 -> fun a -> boolean (Nx.zeros Nx.bool [| Column.length a |])
@@ -395,7 +405,7 @@ let checked env (c, f) =
    times. *)
 let fill env c =
   let n = env.extent in
-  if Column.length c = n then c else Column.take (Nx.zeros Nx.int64 [| n |]) c
+  if Column.length c = n then c else Column.gather (Nx.zeros Nx.int64 [| n |]) c
 
 (* [each env f] is [f i] on each value [i] before the earliest failure, and
    [None] from it on. An exception that [f] raises fails at its row, which ends
@@ -529,7 +539,10 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       and wb = widen (type_of (Expr.typing b)) t in
       binary a b (fun a b -> compare op (wa a) (wb b))
   | Logic (op, a, b), _ -> binary a b (logic op)
-  | Not a, _ -> unary a (fun a -> boolean ?valid:(Column.valid a) (falsity a))
+  | Not a, _ ->
+      unary a (fun a ->
+          let x = Nx.logical_not (tensor Nx.bool a) in
+          Column.with_data (Any Type.bool) (Fixed (P x)) a)
   | If (c, a, b), _ ->
       let t = type_of typing in
       let wa = widen (type_of (Expr.typing a)) t

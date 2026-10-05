@@ -204,7 +204,8 @@ let rec usable f (p : Source.Pred.t) =
 (* Sources *)
 
 let decode bytes m g i leaf name ty =
-  let validity = Option.map Nx_bits.of_bool in
+  (* The decoded levels are packed once, into the validity. *)
+  let validity = Option.map (Nx.cast Nx.bit) in
   let layout : Column.layout =
     match Chunk.read bytes m ~row_group:g i leaf ty with
     | Fixed { valid; values } -> Fixed { validity = validity valid; values }

@@ -67,7 +67,7 @@
  (name test_column)
  (modules test_column)
  (package talon)
- (libraries windtrap talon talon_gen nx nx.dtype nx.bits nx.ragged)
+ (libraries windtrap talon talon_gen nx nx.dtype nx.device nx.ragged)
  (action
   (progn
    (run %{test} --corrected)
@@ -83,7 +83,7 @@
  (name test_table)
  (modules test_table)
  (package talon)
- (libraries windtrap talon talon_gen nx nx.dtype nx.bits)
+ (libraries windtrap talon talon_gen nx nx.dtype)
  (action
   (progn
    (run %{test} --corrected)
@@ -103,7 +103,7 @@
  (name test_run)
  (modules test_run)
  (package talon)
- (libraries windtrap talon talon_gen talon_reference nx nx.bits)
+ (libraries windtrap talon talon_gen talon_reference nx)
  (action
   (progn
    (run %{test} --corrected)

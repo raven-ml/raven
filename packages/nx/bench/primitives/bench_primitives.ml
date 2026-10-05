@@ -206,19 +206,6 @@ let ranges =
     row "max-float64-4e4-w1e3" s (windows s) (reduce `Max);
   ]
 
-let bits =
-  let mask () =
-    let st = state () in
-    Nx.cast Nx.bool
-      (tensor Bigarray.int8_unsigned l (fun _ -> Random.State.int st 2))
-  in
-  let bitmap () = Nx_bits.of_bool (mask ()) in
-  [
-    row "of_bool-1e7" l mask (fun m -> fst (Nx_bits.bytes (Nx_bits.of_bool m)));
-    row "to_bool-1e7" l bitmap Nx_bits.to_bool;
-    row "count-1e7" l bitmap Nx_bits.count;
-  ]
-
 (* Masks of 1e7 booleans, one byte each. A sorted take reads the positions of
    half the elements, as a filter does. *)
 let bool =
@@ -377,7 +364,6 @@ let groups =
     ("ranges", ranges);
     ("bool", bool);
     ("bit", bit);
-    ("bits", bits);
     ("ragged-take", ragged_take);
     ("ragged", ragged_rows);
   ]

@@ -145,11 +145,15 @@ let hex (type a b) (x : (a, b) Nx.t) =
 
 (* The bytes of every buffer of [c]'s layout. *)
 let rec buffers c =
+  (* A canonical validity's bytes are its bits from bit 0, the bits past them
+     clear. *)
   let bits = function
     | None -> "no validity"
     | Some b ->
-        let bytes, offset = Nx_bits.bytes b in
-        Printf.sprintf "bit %d of %s" offset (hex bytes)
+        String.concat ""
+          (List.map
+             (fun v -> if v then "1" else "0")
+             (Array.to_list (Nx.to_array b)))
   in
   match Column.layout c with
   | Fixed { validity; values = P x } -> [ bits validity; hex x ]
@@ -161,9 +165,9 @@ let rec buffers c =
 
 let shifted_bits =
   Option.map (fun b ->
-      let pad = Nx.ones Nx.bool [| 3 |] in
-      let m = Nx.concatenate ~axis:0 [ pad; Nx_bits.to_bool b; pad ] in
-      Nx_bits.sub (Nx_bits.of_bool m) ~offset:3 ~length:(Nx_bits.length b))
+      let pad = Nx.ones Nx.bit [| 3 |] in
+      let m = Nx.concatenate ~axis:0 [ pad; b; pad ] in
+      Nx.shrink [| (3, 3 + Nx.numel b) |] m)
 
 (* [c] with one more row in front. *)
 let prepend c =

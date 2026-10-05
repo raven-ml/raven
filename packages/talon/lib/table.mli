@@ -36,8 +36,12 @@ val columns : t -> Column.t array
     Raises [Invalid_argument] if [b] has more than one batch. *)
 
 val concat : t -> t
-(** [concat t] is [t]'s rows as one batch of canonical columns
-    ({!Column.canonical}): [t] itself when it is one batch of canonical columns,
-    one copy of each column otherwise. A table without rows gives one batch
-    without rows. [run]'s result and [column]'s column are made so, which keeps
-    their layouts independent of batching. *)
+(** [concat t] is [t]'s rows as one batch: [t] itself when it is one batch, and
+    otherwise each column's parts one after the other ({!Column.concat}). A
+    table without rows gives one batch without rows. *)
+
+val canonical : t -> t
+(** [canonical t] is the one-batch table [t] with canonical columns
+    ({!Column.canonical}): [t] itself when its columns are, one copy of each
+    other column otherwise. [run]'s result and [column]'s column are made so,
+    which keeps their layouts independent of batching. *)

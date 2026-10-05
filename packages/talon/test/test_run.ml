@@ -839,11 +839,15 @@ let hex (type a b) (x : (a, b) Nx.t) =
     (List.map (Printf.sprintf "%02x") (Array.to_list (Nx.to_array bytes)))
 
 let rec buffers c =
+  (* A canonical validity's bytes are its bits from bit 0, the bits past them
+     clear. *)
   let bits = function
     | None -> "no validity"
     | Some b ->
-        let bytes, offset = Nx_bits.bytes b in
-        Printf.sprintf "bit %d of %s" offset (hex bytes)
+        String.concat ""
+          (List.map
+             (fun v -> if v then "1" else "0")
+             (Array.to_list (Nx.to_array b)))
   in
   match Column.layout c with
   | Fixed { validity; values = P x } -> [ bits validity; hex x ]
@@ -877,9 +881,30 @@ let same_outcome q0 q1 =
 
 let same_layouts (p0, p1) = same_outcome (R.query p0) (R.query p1)
 
+(* The rewrites change no value and no null of a result, in the batches
+   [Query.fold] hands out, which need not be canonical: the bytes under their
+   nulls may differ. *)
 let optimized p =
   let q = R.query p in
-  same_outcome (Query.optimize q) q
+  let folded q () =
+    Query.fold q ~init:[] (fun bs b -> b :: bs)
+    |> Result.map (function
+      | [] -> None
+      | bs -> Some (Talon.of_batches (List.rev bs)))
+  in
+  let tables =
+    Testable.make
+      ~pp:
+        (Format.pp_print_option
+           ~none:(fun ppf () -> Format.pp_print_string ppf "no row")
+           Talon.pp)
+      ~equal:(Option.equal Talon.equal)
+  in
+  match (attempt (folded (Query.optimize q)), attempt (folded q)) with
+  | Ok (Ok t0), Ok (Ok t1) -> equal tables t1 t0
+  | Ok (Error e0), Ok (Error e1) -> equal string (error e0) (error e1)
+  | Error b0, Error b1 -> equal (Windtrap.pair int int) b0 b1
+  | _ -> fail "the two runs end differently"
 
 (* Values *)
 
@@ -1006,7 +1031,8 @@ let laws =
         same_layouts;
       prop "values gives the reference's values, or fails where it does"
         values_cases values_agree;
-      prop "run (optimize q) is run q" split_plans optimized;
+      prop "fold (optimize q) gives fold q's values and nulls" split_plans
+        optimized;
     ]
 
 (* Cases from the specification *)
@@ -1019,6 +1045,36 @@ let truths =
       ("a", Column.of_options Type.bool [| t; t; t; f; f; f; None; None; None |]);
       ("b", Column.of_options Type.bool [| t; f; None; t; f; None; t; f; None |]);
     ]
+
+(* [truths] with drawn values under its nulls: three for [a]'s and three for
+   [b]'s. *)
+let under_nulls =
+  let column values valid =
+    Column.of_tensor
+      ~validity:(Nx.cast Nx.bit (Nx.create Nx.bool [| 9 |] valid))
+      (Nx.create Nx.bool [| 9 |] values)
+  in
+  let table (xs, ys) =
+    let flag o d = Option.value o ~default:d in
+    let a = [| t; t; t; f; f; f; None; None; None |]
+    and b = [| t; f; None; t; f; None; t; f; None |] in
+    let values col under =
+      Array.mapi (fun i o -> flag o (List.nth under (i mod 3))) col
+    in
+    let valid col = Array.map Option.is_some col in
+    v
+      [
+        ("a", column (values a xs) (valid a));
+        ("b", column (values b ys) (valid b));
+      ]
+  in
+  let bits = Gen.list ~size:(Gen.int_range 3 3) Gen.bool in
+  let pp ppf (xs, ys) =
+    let row ppf v = Format.pp_print_char ppf (if v then '1' else '0') in
+    let rows = Format.pp_print_list ~pp_sep:(fun _ () -> ()) row in
+    Format.fprintf ppf "under a's nulls %a, under b's %a" rows xs rows ys
+  in
+  Gen.map table (Gen.with_pp pp (Gen.pair bits bits))
 
 (* [result e t] is the column of [e] over [t]'s rows. *)
 let result e t =
@@ -1048,6 +1104,29 @@ let kleene =
           rows_are Type.bool
             [| f; f; f; t; t; t; None; None; None |]
             (bools (Expr.not a) truths));
+      prop "the tables hold whatever values lie under the nulls" under_nulls
+        (fun tbl ->
+          rows_are Type.bool
+            [| t; f; None; f; f; f; None; f; None |]
+            (bools Expr.(a && b) tbl);
+          rows_are Type.bool
+            [| t; t; t; t; f; None; t; None; None |]
+            (bools Expr.(a || b) tbl);
+          rows_are Type.bool
+            [| f; f; f; t; t; t; None; None; None |]
+            (bools (Expr.not a) tbl));
+      prop "a && true and a || false are a, the bytes under its nulls too"
+        under_nulls (fun tbl ->
+          let raw e =
+            match Column.layout (result e tbl) with
+            | Fixed { validity; values } ->
+                ( Option.map Nx.to_array validity,
+                  Nx.to_array (Nx.unpack Nx.bool values) )
+            | _ -> assert false
+          in
+          let w = Windtrap.pair (option (array bool)) (array bool) in
+          equal w (raw a) (raw Expr.(a && bool true));
+          equal w (raw a) (raw Expr.(a || bool false)));
     ]
 
 let int64s xs = Column.of_tensor (Nx.create Nx.int64 [| Array.length xs |] xs)
@@ -1251,7 +1330,7 @@ let degrees cs =
     Nx.create Nx.bool [| Array.length cs |] (Array.map Option.is_some cs)
   in
   let c =
-    Column.of_tensor ~validity:(Nx_bits.of_bool valid)
+    Column.of_tensor ~validity:(Nx.cast Nx.bit valid)
       (Nx.create Nx.float64
          [| Array.length cs |]
          (Array.map (Option.value ~default:0.) cs))
@@ -1477,20 +1556,13 @@ let lift_cases =
             Gen.map (fun vs -> G.Sample (ty, vs)) (G.options ty)))
        (Gen.of_list unary_lifts))
 
-(* [nx f x] is [f] on [x]'s stored values with nx, null where [x] is, with zeros
-   under its nulls. *)
+(* [nx f x] is [f] on [x]'s stored values with nx, null where [x] is: under its
+   nulls, [f] of [x]'s. *)
 let lifts_agree (G.Sample (ty, vs), (_, (fn : Expr.fn))) =
   let c = Column.of_options ty vs in
   let expected =
     match Column.layout c with
-    | Fixed { validity; values = P x } ->
-        let y = fn.f x in
-        let y =
-          match validity with
-          | None -> y
-          | Some b -> Nx.where (Nx_bits.to_bool b) y (Nx.zeros_like y)
-        in
-        Column.of_tensor ?validity y
+    | Fixed { validity; values = P x } -> Column.of_tensor ?validity (fn.f x)
     | _ -> assert false
   in
   let t = v [ ("x", c) ] in

@@ -53,13 +53,15 @@ let rec value use c =
     | Fields [] -> Nx.zeros Nx.uint64 [| Column.length c |]
     | Fields cs -> rows use (Nx.stack ~axis:1 (List.concat_map (words use) cs))
   in
-  match Column.valid c with
+  (* The values under a null are any: its word is 0. *)
+  match Column.validity c with
   | None -> word
-  | Some v -> Nx.where v word (Nx.zeros_like word)
+  | Some v -> Nx.where (Nx.cast Nx.bool v) word (Nx.zeros_like word)
 
-(* [words use c] is [c]'s null flag, if it has a null, and its value word. *)
+(* [words use c] is [c]'s null flag, if it has a validity, and its value
+   word. *)
 and words use c =
-  match Column.valid c with
+  match Column.validity c with
   | None -> [ value use c ]
   | Some v -> [ Nx.cast Nx.uint64 (Nx.logical_not v); value use c ]
 
@@ -82,7 +84,7 @@ let of_ids ids : Nx.groups =
 
 let groups cs =
   match cs with
-  | [ c ] when Option.is_none (Column.valid c) -> (
+  | [ c ] when Column.known_zero c -> (
       match Column.data c with
       | Fixed (P x) when Nx.ndim x = 1 -> Nx.unique (identity cs)
       | _ -> of_ids (Nx.bitcast Nx.int64 (value Identity c)))
@@ -94,7 +96,7 @@ let order = function
       let key (c, (o : Order.t)) =
         let w = value Order c in
         let w = if o.desc then Nx.bitwise_not w else w in
-        match Column.valid c with
+        match Column.validity c with
         | None -> [ w ]
         | Some v ->
             let null = if o.nulls_first then v else Nx.logical_not v in

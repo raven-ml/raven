@@ -3484,9 +3484,6 @@ thread.
   work makes on CUDA, NV and AMD queues, which they missed: a compiled call
   reading a host value reported no upload. Submitters count such copies with
   `Nx_device.Submission.copied`.
-- Add `Nx.Bits`, packed bitmaps in Arrow's validity layout over a `uint8`
-  tensor at a bit offset, with `of_bool`, `to_bool`, `count`, `logand`, `logor`,
-  `lognot`, an O(1) `sub`, `take` and `concat`.
 - Add `Nx.Ragged`, ragged arrays as int64 offsets over a tensor of values
   (Arrow's large lists and strings): `v` and `of_lengths` check their offsets,
   `of_ids` groups rows by id and compiles, `sub`, `take`, `concat` and `map`
@@ -3506,9 +3503,6 @@ thread.
   without a copy when its data is aligned; loading a PNG is about 2x faster.
   `Nx_io.gunzip` decompresses as it reads, in constant memory, where it
   mapped its whole input.
-- Add the `nx.bits` library: `Nx_bits`, packed bitmaps in Arrow's validity
-  layout over a `uint8` tensor at a bit offset, with `of_bool`, `to_bool`,
-  `count`, `logand`, `logor`, `lognot`, an O(1) `sub`, `take` and `concat`.
 - Add the `nx.ragged` library: `Nx_ragged`, ragged arrays as int64 offsets over
   a tensor of values (Arrow's large lists and strings): `v` and `of_lengths`
   check their offsets, `of_ids` groups rows by id and compiles, `sub`, `take`,
@@ -6154,6 +6148,12 @@ thread.
 
 ### Talon
 
+- A column's validity is an `Nx.bit_t` (`Column.validity`, `of_tensor`,
+  `of_ragged`, `layout`), and its null count is read at the first
+  `Column.null_count`, then kept: derived columns, filters, takes and joins
+  read no count, and a filter gathers each validity once. A validity may have
+  no null. The values under a null are unspecified, so a reader of
+  `Column.layout` masks them; `Query.optimize` changes no value and no null.
 - **Breaking:** talon is rewritten, and the previous API (`Col`, `Row`, `Agg`,
   `pp_display`, `to_html` and the old `Talon_csv`) is removed. A `Talon.t` holds
   typed columns in Arrow layouts over nx buffers, with nulls as validity, never

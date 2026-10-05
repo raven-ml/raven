@@ -3,11 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* A validity: bits set where a row holds a value, and the number of rows they
+   leave null, [-1] until it is read. The count is a fact about the bits, so it
+   lives with them: a column that keeps a validity keeps its count, columns that
+   share one count it once, and a column with new bits has a new count. Two
+   domains that read the count at once store the same number. *)
+type validity = { bits : Nx.bit_t; nulls : int Atomic.t }
+
 type t = {
   type_ : Type.any;
   length : int;
-  nulls : int;
-  validity : Nx_bits.t option;
+  validity : validity option;
   data : data;
 }
 
@@ -20,11 +26,44 @@ and data =
 let err fmt = Format.kasprintf invalid_arg fmt
 let type_ c = c.type_
 let length c = c.length
-let null_count c = c.nulls
-let validity c = c.validity
+let unread bits = { bits; nulls = Atomic.make (-1) }
+let counted bits n = { bits; nulls = Atomic.make n }
+
+(* [count length v] is the nulls of [v], a validity of [length] rows: read once,
+   then kept. *)
+let count length v =
+  match Atomic.get v.nulls with
+  | -1 ->
+      let n = length - Int64.to_int (Nx.item [] (Nx.count v.bits)) in
+      Atomic.set v.nulls n;
+      n
+  | n -> n
+
+let null_count c =
+  match c.validity with None -> 0 | Some v -> count c.length v
+
+let known_zero c =
+  match c.validity with None -> true | Some v -> Atomic.get v.nulls = 0
+
+(* [known c] is [c]'s null count if it was read, without reading it. *)
+let known c =
+  match c.validity with
+  | None -> Some 0
+  | Some v -> ( match Atomic.get v.nulls with -1 -> None | n -> Some n)
+
+let validity c = Option.map (fun v -> v.bits) c.validity
 let data c = c.data
-let valid c = Option.map Nx_bits.to_bool c.validity
 let has_type ty c = match c.type_ with Any t -> Type.equal t ty
+
+type mask = validity
+
+let mask bits = unread bits
+
+let restrict m c =
+  if Nx.shape m.bits <> [| c.length |] then
+    err "Column.restrict: a mask of %d rows for %d rows" (Nx.numel m.bits)
+      c.length;
+  match c.validity with Some _ -> c | None -> { c with validity = Some m }
 
 (* A value its type does not hold raises [Refused] with the reason while a
    column is encoded. *)
@@ -142,24 +181,21 @@ let rec stores : type a. a Type.t -> int -> data -> bool =
       | None -> false)
   | _ -> false
 
-(* [with_validity] keeps a validity only when a row is null. *)
-let with_validity type_ validity ~length data =
-  let nulls =
-    match validity with
-    | None -> 0
-    | Some v -> length - Int64.to_int (Nx.item [] (Nx_bits.count v))
-  in
-  let validity = if nulls = 0 then None else validity in
-  { type_; length; nulls; validity; data }
+(* [with_bits fn ty bits ~length data] is the column of [ty] whose validity is
+   [bits], its count not yet read. *)
+let with_bits fn type_ bits ~length data =
+  (match bits with
+  | Some b when Nx.shape b <> [| length |] ->
+      err "Column.%s: a validity of shape %a for %d rows" fn Nx.pp_shape
+        (Nx.shape b) length
+  | _ -> ());
+  { type_; length; validity = Option.map unread bits; data }
 
-let make (Type.Any ty as type_) ?valid ~length data =
+let make (Type.Any ty as type_) ?validity ~length data =
   if not (stores ty length data) then
     err "Column.make: the data is not %a's storage for %d rows" Type.pp ty
       length;
-  match valid with
-  | Some m when Nx.shape m <> [| length |] ->
-      err "Column.make: a validity of length %d for %d rows" (Nx.numel m) length
-  | _ -> with_validity type_ (Option.map Nx_bits.of_bool valid) ~length data
+  with_bits "make" type_ validity ~length data
 
 let with_data (Type.Any ty as type_) data c =
   if not (stores ty c.length data) then
@@ -229,11 +265,13 @@ let rows ty ~null ~add ~data =
   in
   let finish () =
     let length = valid.len in
-    let valid =
-      if !nulls = 0 then None
-      else Some (Nx.create Nx.bool [| length |] (contents valid))
-    in
-    make (Any ty) ?valid ~length (data ())
+    let c = make (Any ty) ~length (data ()) in
+    if !nulls = 0 then c
+    else
+      let bits =
+        Nx.cast Nx.bit (Nx.create Nx.bool [| length |] (contents valid))
+      in
+      { c with validity = Some (counted bits !nulls) }
   in
   { add; finish }
 
@@ -389,7 +427,7 @@ let encode ty n f =
 
 type 'a reader = { get : int -> 'a; bad : (int -> string option) option }
 
-let flags c = Option.map Nx.to_array (valid c)
+let flags c = Option.map Nx.to_array (validity c)
 let is_valid flags i = match flags with None -> true | Some f -> f.(i)
 let int_offsets o = Array.map Int64.to_int (Nx.to_array o)
 
@@ -460,7 +498,8 @@ and list_reader : type a. a Type.t -> int array -> t -> a array reader =
       | Some bad -> Option.map (Printf.sprintf "element %d: %s" k) (bad j)
   in
   let bad i = first (o.(i + 1) - o.(i)) (element i) in
-  { get; bad = (if child.nulls = 0 && r.bad = None then None else Some bad) }
+  let nulls = null_count child in
+  { get; bad = (if nulls = 0 && r.bad = None then None else Some bad) }
 
 and field_reader (name, Type.Any ft) c =
   let (Any st) = Type.storage ft in
@@ -565,12 +604,7 @@ let of_tensor ?validity x =
   if shape = [||] then err "Column.of_tensor: a scalar has no rows";
   let length = shape.(0) in
   let type_ = cells "of_tensor" x in
-  (match validity with
-  | Some v when Nx_bits.length v <> length ->
-      err "Column.of_tensor: a validity of length %d for %d rows"
-        (Nx_bits.length v) length
-  | _ -> ());
-  with_validity type_ validity ~length (Fixed (P x))
+  with_bits "of_tensor" type_ validity ~length (Fixed (P x))
 
 let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
   let (Any ty) = c.type_ in
@@ -578,7 +612,7 @@ let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
   | Fixed (P x) when not (Nx_dtype.equal dt (Nx.dtype x)) ->
       err "Column.to_tensor: %a is stored as %a, not %a" Type.pp ty Nx_dtype.pp
         (Nx.dtype x) Nx_dtype.pp dt
-  | Fixed _ when c.nulls > 0 ->
+  | Fixed _ when null_count c > 0 ->
       err "Column.to_tensor: row %d is null" (first_null c)
   | Fixed p -> Nx.unpack dt p
   | _ -> err "Column.to_tensor: %a is not stored one element per row" Type.pp ty
@@ -592,7 +626,15 @@ let rows_of_tensor x ~offset ~length =
 let rec sub c ~offset ~length =
   if offset < 0 || length < 0 || offset + length > c.length then
     err "Column.sub: rows %d to %d of %d rows" offset (offset + length) c.length;
-  let validity = Option.map (Nx_bits.sub ~offset ~length) c.validity in
+  (* A count of 0 or of every row holds for any rows. *)
+  let validity =
+    match (c.validity, known c) with
+    | None, _ | _, Some 0 -> None
+    | Some v, Some n when n = c.length ->
+        Some (counted (Nx.shrink [| (offset, offset + length) |] v.bits) length)
+    | Some v, _ ->
+        Some (unread (Nx.shrink [| (offset, offset + length) |] v.bits))
+  in
   let data =
     match c.data with
     | Fixed (P x) -> Fixed (P (rows_of_tensor x ~offset ~length))
@@ -602,7 +644,7 @@ let rec sub c ~offset ~length =
         List { offsets; child }
     | Fields cs -> Fields (List.map (sub ~offset ~length) cs)
   in
-  with_validity c.type_ validity ~length data
+  { type_ = c.type_; length; validity; data }
 
 (* Ragged arrays *)
 
@@ -612,7 +654,7 @@ let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx_ragged.t =
     err "Column.ragged: %a is stored as %a, not %a" Type.pp ty Nx_dtype.pp
       stored Nx_dtype.pp dt
   in
-  if c.nulls > 0 then err "Column.ragged: row %d is null" (first_null c);
+  if null_count c > 0 then err "Column.ragged: row %d is null" (first_null c);
   match c.data with
   | Bytes r -> (
       match Nx_dtype.equal_witness Nx.uint8 dt with
@@ -623,11 +665,11 @@ let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx_ragged.t =
       let r = Nx_ragged.v ~offsets (Nx.unpack dt (P x)) in
       (* Only the elements of the rows count: values outside the offsets are not
          the column's. *)
-      (if child.nulls > 0 then
+      (if null_count child > 0 then
          let first = Int64.to_int (Nx.item [ 0 ] offsets) in
          let last = Int64.to_int (Nx.item [ c.length ] offsets) in
          let elements = sub child ~offset:first ~length:(last - first) in
-         if elements.nulls > 0 then
+         if null_count elements > 0 then
            let j = Int64.of_int (first + first_null elements) in
            let ends = Nx.shrink [| (1, c.length + 1) |] offsets in
            let row =
@@ -643,22 +685,22 @@ let of_ragged ?validity r =
   let values = Nx_ragged.values r in
   let (Type.Any e as cell) = cells "of_ragged" values in
   let child =
-    with_validity cell None ~length:(Nx.dim 0 values) (Fixed (P values))
+    {
+      type_ = cell;
+      length = Nx.dim 0 values;
+      validity = None;
+      data = Fixed (P values);
+    }
   in
   let length = Nx_ragged.length r in
-  (match validity with
-  | Some v when Nx_bits.length v <> length ->
-      err "Column.of_ragged: a validity of length %d for %d rows"
-        (Nx_bits.length v) length
-  | _ -> ());
-  with_validity
+  with_bits "of_ragged"
     (Any (Type.list e))
     validity ~length
     (List { offsets = Nx_ragged.offsets r; child })
 
-(* [gather indices c] is the data of [c]'s rows at [indices], zeros and empty
-   rows outside [c]'s rows. *)
-let rec gather indices c =
+(* [gather_data indices c] is the data of [c]'s rows at [indices], zeros and
+   empty rows outside [c]'s rows. *)
+let rec gather_data indices c =
   match c.data with
   | Fixed (P x) -> Fixed (P (Nx.take ~axis:0 ~indices x))
   | Bytes r -> Bytes (Nx_ragged.take ~indices r)
@@ -668,26 +710,29 @@ let rec gather indices c =
       List
         {
           offsets = Nx_ragged.offsets at;
-          child = take (Nx_ragged.values at) child;
+          child = gather (Nx_ragged.values at) child;
         }
-  | Fields cs -> Fields (List.map (take indices) cs)
+  | Fields cs -> Fields (List.map (gather indices) cs)
 
-and take indices c =
+and gather indices c =
   let validity =
-    match c.validity with
-    | Some v -> Nx_bits.take ~indices v
-    | None ->
-        Nx_bits.of_bool
-          (Nx.logical_and
-             (Nx.greater_equal_s indices 0L)
-             (Nx.less_s indices (Int64.of_int c.length)))
+    Option.map (fun v -> unread (Nx.take ~indices v.bits)) c.validity
   in
-  with_validity c.type_ (Some validity) ~length:(Nx.dim 0 indices)
-    (gather indices c)
+  {
+    type_ = c.type_;
+    length = Nx.dim 0 indices;
+    validity;
+    data = gather_data indices c;
+  }
 
+(* A permutation moves the nulls but keeps their number. *)
 let permute p c =
-  let validity = Option.map (Nx_bits.take ~indices:p) c.validity in
-  { c with validity; data = gather p c }
+  let validity =
+    Option.map
+      (fun v -> counted (Nx.take ~indices:p v.bits) (Atomic.get v.nulls))
+      c.validity
+  in
+  { c with validity; data = gather_data p c }
 
 (* [bounds offsets] is the first and last of [offsets]. *)
 let bounds offsets =
@@ -709,23 +754,23 @@ let exact offsets child =
   in
   (rebase offsets first, child)
 
-(* A canonical bitmap starts its bytes at bit [0] and leaves the bits past its
-   length unset, so that equal bits have equal bytes. *)
+(* Canonical bits start at bit [0] of their storage and leave the bits past
+   their length unset, so that equal bits have equal bytes. The check reads one
+   byte. *)
 let canonical_bits b =
-  let bytes, offset = Nx_bits.bytes b and n = Nx_bits.length b in
-  if
-    offset = 0
-    && Nx.contiguous bytes == bytes
-    && (n land 7 = 0 || Nx.item [ n / 8 ] bytes lsr (n land 7) = 0)
-  then b
-  else Nx_bits.of_bool (Nx_bits.to_bool b)
+  let n = Nx.numel b in
+  Nx.contiguous b == b
+  && (n land 7 = 0
+     || Strings.reading ~by:"Column.canonical" b (fun bytes ->
+         let bytes = Nx_device.Buffer.bigarray Bigarray.int8_unsigned bytes in
+         Bigarray.Array1.get bytes (n / 8) lsr (n land 7) = 0))
 
 let rec canonical c =
   let validity =
     match c.validity with
-    | Some b as v ->
-        let b' = canonical_bits b in
-        if b' == b then v else Some b'
+    | Some v when count c.length v = 0 -> None
+    | Some v as kept when canonical_bits v.bits -> kept
+    | Some v -> Some (counted (Nx.copy v.bits) (count c.length v))
     | None -> None
   in
   let data =
@@ -755,24 +800,32 @@ let rec canonical c =
   if validity == c.validity && data == c.data then c
   else { c with validity; data }
 
+(* The rows of [cs] one after the other. Their validity is the parts' bits, ones
+   for a part without, with the sum of their counts when every one is known. *)
 let rec concat = function
   | [] -> invalid_arg "Column.concat: no column"
-  | [ c ] -> canonical c
+  | [ c ] -> c
   | c :: _ as cs ->
-      let sum f = List.fold_left (fun n c -> n + f c) 0 cs in
-      let nulls = sum null_count in
-      let validity =
-        if nulls = 0 then None
-        else
-          let valid c =
-            match valid c with
-            | Some m -> m
-            | None -> Nx.ones Nx.bool [| c.length |]
-          in
-          Some (Nx_bits.of_bool (Nx.concatenate ~axis:0 (List.map valid cs)))
+      let length = List.fold_left (fun n c -> n + c.length) 0 cs in
+      let nulls =
+        List.fold_left
+          (fun n c ->
+            match (n, known c) with Some n, Some k -> Some (n + k) | _ -> None)
+          (Some 0) cs
       in
-      let length = sum length in
-      { type_ = c.type_; length; nulls; validity; data = join cs c.data }
+      let validity =
+        if nulls = Some 0 then None
+        else
+          let bits c =
+            match c.validity with
+            | Some v -> v.bits
+            | None -> Nx.ones Nx.bit [| c.length |]
+          in
+          let bits = Nx.concatenate ~axis:0 (List.map bits cs) in
+          Some
+            (match nulls with Some n -> counted bits n | None -> unread bits)
+      in
+      { type_ = c.type_; length; validity; data = join cs c.data }
 
 and join cs = function
   | Fixed (P x) ->
@@ -810,10 +863,10 @@ and join cs = function
 (* Layouts *)
 
 type layout =
-  | Fixed of { validity : Nx_bits.t option; values : Nx.packed }
-  | Varsize of { validity : Nx_bits.t option; offsets : Nx.int64_t; child : t }
+  | Fixed of { validity : Nx.bit_t option; values : Nx.packed }
+  | Varsize of { validity : Nx.bit_t option; offsets : Nx.int64_t; child : t }
   | Children of {
-      validity : Nx_bits.t option;
+      validity : Nx.bit_t option;
       length : int;
       fields : (string * t) list;
     }
@@ -825,7 +878,7 @@ let fields_of ty =
   match Type.storage ty with Any (Record fs) -> fs | _ -> assert false
 
 let layout c =
-  let validity = c.validity in
+  let validity = validity c in
   match c.data with
   | Fixed values -> Fixed { validity; values }
   | Bytes r ->
@@ -834,7 +887,6 @@ let layout c =
         {
           type_ = Any Type.uint8;
           length = Nx.dim 0 values;
-          nulls = 0;
           validity = None;
           data = Fixed (P values);
         }
@@ -848,9 +900,12 @@ let layout c =
 
 let check_validity validity n =
   match validity with
-  | Some v when Nx_bits.length v <> n ->
-      refuse "a validity of length %d for %d rows" (Nx_bits.length v) n
+  | Some v when Nx.shape v <> [| n |] ->
+      refuse "a validity of shape %a for %d rows" Nx.pp_shape (Nx.shape v) n
   | _ -> ()
+
+let of_bits type_ validity ~length data =
+  { type_; length; validity = Option.map unread validity; data }
 
 (* [rows_of offsets child] is the number of rows that [offsets] cut from the
    rows of [child]. *)
@@ -907,7 +962,9 @@ let unheld : type a. a Type.t -> t -> (int * string) option =
     let x = match c.data with Fixed p -> Nx.unpack dt p | _ -> assert false in
     let bad = Nx.logical_or (Nx.less_s x lo) (Nx.greater_equal_s x hi) in
     let bad =
-      match valid c with Some v -> Nx.logical_and v bad | None -> bad
+      match validity c with
+      | Some v -> Nx.logical_and (Nx.cast Nx.bool v) bad
+      | None -> bad
     in
     let rows = Nx.positions bad in
     if Nx.numel rows = 0 then None
@@ -933,23 +990,22 @@ let rec of_layout : type a. a Type.t -> layout -> (t, int * string) result =
   | (String | Binary), Varsize { validity; offsets; child } -> (
       if not (has_type Type.uint8 child) then
         refuse "a child of %a does not lay out %a" pp_any child.type_ Type.pp ty;
-      if child.nulls > 0 then
+      if null_count child > 0 then
         refuse "a child with a null does not lay out %a" Type.pp ty;
       let length = rows_of offsets child in
       check_validity validity length;
       let values = match child.data with Fixed p -> p | _ -> assert false in
       let r = Nx_ragged.v ~offsets (Nx.unpack Nx.uint8 values) in
-      let c = with_validity (Any ty) validity ~length (Bytes r) in
+      let c = of_bits (Any ty) validity ~length (Bytes r) in
       match ty with
-      | String ->
-          held c (Strings.utf_8 ~by:"Column.of_layout" ?mask:(valid c) r)
+      | String -> held c (Strings.utf_8 ~by:"Column.of_layout" ?mask:validity r)
       | _ -> Ok c)
   | List e, Varsize { validity; offsets; child } ->
       if not (has_type e child) then
         refuse "a child of %a does not lay out %a" pp_any child.type_ Type.pp ty;
       let length = rows_of offsets child in
       check_validity validity length;
-      Ok (with_validity (Any ty) validity ~length (List { offsets; child }))
+      Ok (of_bits (Any ty) validity ~length (List { offsets; child }))
   | Record fields, Children { validity; length; fields = cs } ->
       if not (List.equal String.equal (List.map fst fields) (List.map fst cs))
       then
@@ -966,11 +1022,11 @@ let rec of_layout : type a. a Type.t -> layout -> (t, int * string) result =
       in
       List.iter2 field fields cs;
       check_validity validity length;
-      Ok (with_validity (Any ty) validity ~length (Fields (List.map snd cs)))
+      Ok (of_bits (Any ty) validity ~length (Fields (List.map snd cs)))
   | _, Fixed { validity; values } ->
       let length = rows_of_values ty values in
       check_validity validity length;
-      let c = with_validity (Any ty) validity ~length (Fixed values) in
+      let c = of_bits (Any ty) validity ~length (Fixed values) in
       held c (unheld ty c)
   | _, Varsize _ -> refuse "offsets and a child do not lay out %a" Type.pp ty
   | _, Children _ -> refuse "fields do not lay out %a" Type.pp ty

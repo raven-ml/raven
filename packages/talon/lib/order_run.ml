@@ -13,7 +13,7 @@ let words ks column =
 
 let rows idx b =
   Table.batch (Table.schema b) ~rows:(Nx.dim 0 idx)
-    (Array.map (Column.take idx) (Table.columns b))
+    (Array.map (Column.gather idx) (Table.columns b))
 
 let sub b ~offset ~length =
   Table.batch (Table.schema b) ~rows:length

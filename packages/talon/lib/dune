@@ -1,7 +1,7 @@
 (library
  (name talon)
  (public_name talon)
- (libraries nx nx.dtype nx.backend nx.device nx.bits nx.ragged)
+ (libraries nx nx.dtype nx.backend nx.device nx.ragged)
  (private_modules
   kind
   record

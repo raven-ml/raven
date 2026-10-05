@@ -2,7 +2,7 @@
  (name test_parquet)
  (modules test_parquet)
  (package talon)
- (libraries windtrap talon talon.parquet nx nx.device nx.bits)
+ (libraries windtrap talon talon.parquet nx nx.device)
  (deps
   (source_tree golden)
   (source_tree support))

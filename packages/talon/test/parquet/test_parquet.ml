@@ -74,7 +74,7 @@ let render ty c =
     match validity with
     | None -> cells
     | Some v ->
-        let valid = Nx.to_array (Nx_bits.to_bool v) in
+        let valid = Nx.to_array v in
         Array.map2 (fun ok s -> if ok then s else "null") valid cells
   in
   match Column.layout c with

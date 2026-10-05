@@ -191,7 +191,7 @@ let filter q predicate input =
       if rows = n then b
       else
         Table.batch (Query.schema q) ~rows
-          (Array.map (Column.take idx) (Table.columns b))
+          (Array.map (Column.gather idx) (Table.columns b))
     in
     (out, f)
 
@@ -211,7 +211,7 @@ let aggregate q by outputs input =
       match keys with [] -> Reduce.one (Table.rows b) | ks -> Reduce.group ks
     in
     let outs, f = eval (Eval.groups b s) in
-    let keys = List.map (Column.take (Reduce.first s)) keys in
+    let keys = List.map (Column.gather (Reduce.first s)) keys in
     ( Table.batch (Query.schema q) ~rows:(Reduce.count s)
         (Array.of_list (keys @ outs)),
       f )
@@ -494,7 +494,7 @@ let run q =
     (fun bs ->
       match List.rev bs with
       | [] -> empty (Query.schema q)
-      | bs -> Table.concat (Table.of_batches bs))
+      | bs -> Table.canonical (Table.concat (Table.of_batches bs)))
     batches
 
 let values e q =

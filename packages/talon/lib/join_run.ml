@@ -19,15 +19,32 @@ let ints n k = Nx.full Nx.int64 [| n |] (Int64.of_int k)
 let exclusive c = Nx.sub (Nx.cumsum c) c
 
 (* [assemble q l li r ri keys] is [q]'s rows: each column is the one [keys] give
-   it, or else [l]'s taken at [li], or else [r]'s taken at [ri]. *)
+   it, or else [l]'s taken at [li], or else [r]'s taken at [ri], null where an
+   index is outside the side's rows, as [-1] is. The rows a side pads are found
+   once for all its columns. *)
 let assemble q l li r ri keys =
+  let found idx t =
+    lazy
+      (let inside =
+         Nx.logical_and
+           (Nx.greater_equal_s idx 0L)
+           (Nx.less_s idx (Int64.of_int (Table.rows t)))
+       in
+       Column.mask (Nx.cast Nx.bit inside))
+  in
+  let found_l = found li l and found_r = found ri r in
+  let side found idx c =
+    let g = Column.gather idx c in
+    if Option.is_some (Column.validity g) then g
+    else Column.restrict (Lazy.force found) g
+  in
   let column n =
     match List.assoc_opt n keys with
     | Some c -> c
     | None -> (
         match Schema.find (Table.schema l) n with
-        | Some _ -> Column.take li (Table.column l n)
-        | None -> Column.take ri (Table.column r n))
+        | Some _ -> side found_l li (Table.column l n)
+        | None -> side found_r ri (Table.column r n))
   in
   let s = Query.schema q in
   Table.batch s ~rows:(Nx.dim 0 li)
@@ -142,7 +159,9 @@ let equality q kind (each_left, each_right) left right eqs =
         let li, ri = left_pairs counts matched in
         let u = Nx.positions (Nx.equal_s (Lazy.force rcounts) 0L) in
         let at = Nx.concatenate ~axis:0 [ li; Nx.add_s u (Int64.of_int n) ] in
-        let coalesced = List.map (fun (ln, k) -> (ln, Column.take at k)) keys in
+        let coalesced =
+          List.map (fun (ln, k) -> (ln, Column.gather at k)) keys
+        in
         let li = Nx.concatenate ~axis:0 [ li; none (Nx.dim 0 u) ]
         and ri = Nx.concatenate ~axis:0 [ ri; u ] in
         Ok (assemble q l li r ri coalesced)

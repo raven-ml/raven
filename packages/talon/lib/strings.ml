@@ -24,7 +24,8 @@ let reading ~by x f =
 (* Host bytes *)
 
 (* [host ~by ?mask r f] is [f o v m] for [o] the offsets of [r], [v] its bytes
-   and [m] the bytes of [mask], read on the host. *)
+   and [m] the bytes of the bit mask [mask], read on the host from its first
+   element: row [i]'s bit is bit [i mod 8] of byte [i / 8]. *)
 let host ~by ?mask r f =
   let read x f = reading ~by x f in
   read (Nx_ragged.offsets r) @@ fun o ->
@@ -52,7 +53,7 @@ let rows ~by ?mask r f =
       done
   | Some (m : buf) ->
       for i = 0 to Nx_ragged.length r - 1 do
-        if A.unsafe_get m i <> 0 then row i
+        if (A.unsafe_get m (i lsr 3) lsr (i land 7)) land 1 <> 0 then row i
       done
 
 (* UTF-8, in C ([talon_strings.c]): validation runs over every byte of a column,
@@ -66,7 +67,7 @@ external utf_8_invalid :
 [@@noalloc]
 
 (* [utf_8_row v o m n] is the first of the [n] rows of [v], cut by [o], that is
-   not valid UTF-8, or [-1]. A row whose byte in [m] is zero is not read. *)
+   not valid UTF-8, or [-1]. A row whose bit in [m] is clear is not read. *)
 external utf_8_row :
   buf -> int64s -> buf option -> (int[@untagged]) -> (int[@untagged])
   = "talon_utf_8_row_byte" "talon_utf_8_row"

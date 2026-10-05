@@ -317,9 +317,6 @@ first. `Nx.unique` numbers groups in order of first appearance, where
 let hits = Nx.positions mask
 let kept = Nx.compress ~condition:mask x
 
-(* A mask packed eight to a byte, least significant bit first (nx.bits) *)
-let packed, _offset = Nx_bits.bytes (Nx_bits.of_bool mask)
-
 (* Sort by a, then by b descending *)
 let perm =
   Nx.lexsort
@@ -343,9 +340,6 @@ let counts =
 # Positions where a mask holds, and the elements there
 hits = np.flatnonzero(mask)
 kept = x[mask]
-
-# A mask packed eight to a byte, least significant bit first
-packed = np.packbits(mask, bitorder="little")
 
 # Sort by a, then by b descending
 perm = np.lexsort((-b, a))

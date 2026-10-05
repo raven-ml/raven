@@ -1,4 +1,0 @@
-(test
- (name test_bits)
- (package nx)
- (libraries nx nx.bits nx_test windtrap))

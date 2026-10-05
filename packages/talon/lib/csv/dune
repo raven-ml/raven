@@ -1,7 +1,7 @@
 (library
  (name talon_csv)
  (public_name talon.csv)
- (libraries talon nx nx.bits bytesrw)
+ (libraries talon nx bytesrw)
  (private_modules scan)
  (instrumentation
   (backend ppx_windtrap.coverage)))

@@ -512,9 +512,9 @@ end
 module Column : sig
   (** Columns: one typed array of values, some of them null.
 
-      A column is an Arrow array over nx buffers. Its {e validity} is a bitmap
-      ({!Nx_bits.t}) with the bit of each row that holds a value set; it is
-      absent when no row is null. Its values are laid out by its type:
+      A column is an Arrow array over nx buffers. Its {e validity} is an
+      {!Nx.bit_t} with the element of each row that holds a value set; its
+      absence means no row is null. Its values are laid out by its type:
       - one element per row of a primitive nx array: [bool] (one byte per
         value), the integer and float types, [int32] positions in the dictionary
         for categoricals, [int32] days for dates and [int64] ticks for clocks,
@@ -524,9 +524,9 @@ module Column : sig
       - one child per field for records.
 
       An extension column is laid out as its storage. The values under a null
-      are unspecified; talon writes zeros, and empty rows, under the nulls it
-      makes. Columns are immutable, and share their buffers with the tensors and
-      layouts that read them. *)
+      are unspecified and deterministic: a reader that needs defined values
+      masks them with the validity, as Arrow requires. Columns are immutable,
+      and share their buffers with the tensors and layouts that read them. *)
 
   type t
   (** The type for columns. *)
@@ -538,7 +538,8 @@ module Column : sig
   (** [length c] is the number of rows of [c]. *)
 
   val null_count : t -> int
-  (** [null_count c] is the number of null rows of [c]. It costs O(1). *)
+  (** [null_count c] is the number of null rows of [c]. The first call may read
+      [c]'s validity once; later calls cost O(1). *)
 
   (** {1:ocaml OCaml values} *)
 
@@ -570,7 +571,7 @@ module Column : sig
 
   (** {1:tensors Tensors and ragged arrays} *)
 
-  val of_tensor : ?validity:Nx_bits.t -> ('a, 'b) Nx.t -> t
+  val of_tensor : ?validity:Nx.bit_t -> ('a, 'b) Nx.t -> t
   (** [of_tensor ?validity x] is the column of [x]'s rows, without a copy:
       - for a 1-D [x], of the type of [x]'s dtype: [bool], [int8] to [uint64],
         [float16] to [float64];
@@ -581,20 +582,22 @@ module Column : sig
 
       Raises [Invalid_argument] if [x] is a scalar, if [x] is 1-D of a dtype
       that no scalar type stores ([bfloat16], the float8 and int4 dtypes, [bit],
-      complex), or if [validity]'s length is not [x]'s rows. *)
+      complex), or if [validity]'s shape is not [x]'s rows. *)
 
   val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
-  (** [to_tensor dt c] is [c]'s values as stored, in O(1): numbers and booleans,
-      the days or ticks of temporal values, the codes of a categorical (its
-      dictionary is in its type), and [(rows, …shape)] for a tensor column. It
-      shares [c]'s buffer, which must not be written.
+  (** [to_tensor dt c] is [c]'s values as stored, in O(1) after one read of the
+      null count the first time: numbers and booleans, the days or ticks of
+      temporal values, the codes of a categorical (its dictionary is in its
+      type), and [(rows, …shape)] for a tensor column. It shares [c]'s buffer,
+      which must not be written.
 
       Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
       converts the result), if [c] is not stored one element per row, or if [c]
       has a null. *)
 
-  val validity : t -> Nx_bits.t option
-  (** [validity c] is [c]'s validity, [None] iff [c] has no null. *)
+  val validity : t -> Nx.bit_t option
+  (** [validity c] has element [i] set iff row [i] of [c] holds a value. [None]
+      means no row is null. [Some v] may have no cleared element. *)
 
   val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
   (** [ragged dt c] is [c]'s rows as a ragged array without a copy, one row per
@@ -608,7 +611,7 @@ module Column : sig
       stored as [dt] nor text or bytes with [dt] {!Nx.uint8}, or if a row of [c]
       or an element of a row is null. *)
 
-  val of_ragged : ?validity:Nx_bits.t -> ('a, 'b) Nx_ragged.t -> t
+  val of_ragged : ?validity:Nx.bit_t -> ('a, 'b) Nx_ragged.t -> t
   (** [of_ragged ?validity r] is the list column whose rows are [r]'s rows, null
       where [validity] has no bit set, without a copy: a [list] of the element
       type {!of_tensor} gives [r]'s values, such as [list[int32]] for
@@ -616,7 +619,7 @@ module Column : sig
       [validity] defaults to every row valid. [ragged dt (of_ragged r)] has
       [r]'s rows.
 
-      Raises [Invalid_argument] if [validity]'s length is not [r]'s number of
+      Raises [Invalid_argument] if [validity]'s shape is not [r]'s number of
       rows, or if [r]'s dtype has no talon type, as {!of_tensor} does. *)
 
   (** {1:layout Layouts}
@@ -625,18 +628,14 @@ module Column : sig
 
   (** The type for layouts. *)
   type layout =
-    | Fixed of { validity : Nx_bits.t option; values : Nx.packed }
+    | Fixed of { validity : Nx.bit_t option; values : Nx.packed }
         (** One element per row, or one cell for a tensor column. *)
-    | Varsize of {
-        validity : Nx_bits.t option;
-        offsets : Nx.int64_t;
-        child : t;
-      }
+    | Varsize of { validity : Nx.bit_t option; offsets : Nx.int64_t; child : t }
         (** Row [r] is the child's rows [offsets.{r}] to [offsets.{r + 1} - 1]:
             the elements of a list, or, for [string] and [binary], the bytes, a
             [uint8] child without nulls. *)
     | Children of {
-        validity : Nx_bits.t option;
+        validity : Nx.bit_t option;
         length : int;
         fields : (string * t) list;
       }
@@ -2091,13 +2090,12 @@ module Query : sig
       to compare plans. It reads no data, it calls the sources' [pushdown], and
       [optimize (optimize q)] is [optimize q].
 
-      {b Results.} The rewrites change no byte of a result, including those
-      under its nulls, and add no failure: an operation that can fail meets only
-      rows that [q] shows it. They may remove failures: a value that no row and
-      no column of the result reads is not computed, so a failure, or an
-      exception from a user function, that only such a value meets does not
-      happen. Of the failures that remain, a run reports the one at the earliest
-      row of the optimized plan.
+      {b Results.} The rewrites change no value and no null of a result, and add
+      no failure: an operation that can fail meets only rows that [q] shows it.
+      They may remove failures: a value that no row and no column of the result
+      reads is not computed, so a failure, or an exception from a user function,
+      that only such a value meets does not happen. Of the failures that remain,
+      a run reports the one at the earliest row of the optimized plan.
 
       {b Constants.} Arithmetic, comparisons and [not] of literals are evaluated
       as a run evaluates them, and become the literal they compute. One whose

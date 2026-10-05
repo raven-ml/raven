@@ -491,20 +491,13 @@ let values =
           let g = Nx.quantile [| 0.25; 0.75 |] in
           let b = Nx.cast Nx.float64 a in
           equal (tensor float_exact) (g b) (Rune.jit' g b));
-      test "a bitmap packed and read inside a compiled call is eager's"
-        (fun () ->
+      test "a compiled call refuses a bit value, as an int4 one" (fun () ->
           let m =
             Nx.init Nx.bool [| 21 |] (fun i -> i.(0) mod 3 = 0 || i.(0) = 7)
           in
-          let packed m = fst (Nx_bits.bytes (Nx_bits.of_bool m)) in
-          equal (tensor int) (packed m) (Rune.jit' packed m);
-          let b = Nx_bits.sub (Nx_bits.of_bool m) ~offset:3 ~length:15 in
-          let bytes, offset = Nx_bits.bytes b in
-          let read f bytes = f (Nx_bits.v ~offset ~length:15 bytes) in
-          equal (tensor bool) (Nx_bits.to_bool b)
-            (Rune.jit' (read Nx_bits.to_bool) bytes);
-          equal (tensor int64) (Nx_bits.count b)
-            (Rune.jit' (read Nx_bits.count) bytes));
+          raises_jit_error (fun () -> Rune.jit' (Nx.cast Nx.bit) m);
+          raises_jit_error (fun () ->
+              Rune.jit' Nx.logical_not (Nx.cast Nx.bit m)));
       test "a ragged array grouped by ids inside a compiled call is eager's"
         (fun () ->
           let ids = Nx.create Nx.int64 [| 6 |] [| 2L; 0L; -1L; 2L; 3L; 0L |] in

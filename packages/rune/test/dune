@@ -164,7 +164,6 @@
   nx.array
   nx.backend
   nx.cpu
-  nx.bits
   nx.device
   nx.dtype
   nx.ragged

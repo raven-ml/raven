@@ -1,8 +1,0 @@
-(library
- (name nx_bits)
- (public_name nx.bits)
- (libraries nx)
- (instrumentation
-  (backend ppx_windtrap.coverage))
- (instrumentation
-  (backend ppx_windtrap.mutate)))
