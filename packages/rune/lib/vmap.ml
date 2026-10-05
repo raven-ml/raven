@@ -24,10 +24,7 @@ and held = {
   parent : t;
   donors : Nx.int64_t;  (** Each lane's donor, itself if it runs. *)
   running : Nx.bool_t;  (** Which lanes run. *)
-  mutable gathered : gathered list;  (** The adopted lanes' rows, by lane. *)
 }
-
-and gathered = Gathered : ('a, 'b) Nx.t * ('a, 'b) Nx.t -> gathered
 
 let create ?axis entry size =
   { entry; axis; size; id = Construct.fresh_map (); held = None }
@@ -57,16 +54,6 @@ let owns m x =
       | _ -> false)
   | Host _ | Placed _ -> false
 
-let rec gathered : type a b. gathered list -> (a, b) Nx.t -> (a, b) Nx.t option
-    =
- fun l x ->
-  match l with
-  | Gathered (y, g) :: rest -> (
-      match Nx_dtype.equal_witness (Nx.dtype y) (Nx.dtype x) with
-      | Some Type.Equal when y == x -> Some g
-      | _ -> gathered rest x)
-  | [] -> None
-
 (* [physical m x] is the batched tensor of [x] if it is a lane of [m], its
    donors' rows if it is a lane [m] adopts, and [x] otherwise. *)
 let rec physical : type a b. t -> (a, b) Nx.t -> (a, b) Nx.t =
@@ -79,17 +66,14 @@ let rec physical : type a b. t -> (a, b) Nx.t -> (a, b) Nx.t =
       | _ -> x)
   | Host _ | Placed _ -> x
 
+(* A lane is gathered at each read: a gather belongs to the installations around
+   the read, such as a region a derivative opens for a nested loop's step, and a
+   later read may lie outside them. *)
 and adopted : type a b. t -> (a, b) Nx.t -> (a, b) Nx.t =
  fun m x ->
   match m.held with
   | None -> assert false (* Only a held map adopts. *)
-  | Some h -> (
-      match gathered h.gathered x with
-      | Some g -> g
-      | None ->
-          let g = Nx.take ~axis:0 ~indices:h.donors (physical h.parent x) in
-          h.gathered <- Gathered (x, g) :: h.gathered;
-          g)
+  | Some h -> Nx.take ~axis:0 ~indices:h.donors (physical h.parent x)
 
 (* [batched m x] is [x] with the map's axis in front: a lane's batched tensor,
    or a value every lane shares broadcast along a new leading axis. *)
@@ -642,7 +626,7 @@ and masked m r ~until ~max ~failure u =
     let running = Nx.logical_not stopped in
     let first = Nx.argmax ~axis:0 (Nx.cast Nx.int32 running) in
     let donors = Nx.where stopped (Nx.broadcast_to [| m.size |] first) own in
-    let held = { parent = m; donors; running; gathered = [] } in
+    let held = { parent = m; donors; running } in
     let m' = { m with id = Construct.fresh_map (); held = Some held } in
     let from_donor (Nx.P x) = Nx.P (Nx.take ~axis:0 ~indices:donors x) in
     let c', y =
