@@ -3,11 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Exact physical units.
+(** Exact physical units and quantities.
 
     {!Unit} is a unit as an exact value: a product of primes, π and named
     symbols with rational exponents, with one canonical text. A conversion
-    between two units is one correctly rounded multiply, or it raises. *)
+    between two units is one correctly rounded multiply, or it raises.
+    {!Quantity} is a value in a unit, a structure that rune's transformations
+    carry with no rule of their own. *)
 
 (** Units as exact values. *)
 module Unit : sig
@@ -477,4 +479,165 @@ module Unit : sig
 
   val stefan_boltzmann : t
   (** [stefan_boltzmann] is σ, 2π{^ 5}k{^ 4}/(15h{^ 3}c{^ 2}). *)
+end
+
+(** Values in a unit. *)
+module Quantity : sig
+  (** A {e quantity} is a value, its {e payload}, in a {!Unit.t}. Its operations
+      are a quantity's algebra. Within one dimension quantities form a vector
+      space: {!add} and {!sub} convert the second argument to the first's unit,
+      and scaling is {!map}. Across dimensions they form a group: {!mul},
+      {!div}, {!pow} and {!root} compute the unit. {!times} and {!per} change
+      the unit and keep the payload. These six raise [Invalid_argument] as the
+      unit algebra does ({!Unit.section-algebra}). A number leaves a quantity
+      through a named unit, with {!value}:
+
+      {[
+      let v = Quantity.v Unit.(kilo metre / second) speeds
+      let v_si = Quantity.value Unit.(metre / second) v (* times 1000 *)
+
+      let below =
+        Nx.less (Quantity.value Unit.metre a) (Quantity.value Unit.metre b)
+      ]}
+
+      [Quantity] is an {!Nx.Ptree.S}: a quantity reports its unit as one
+      [Walk.case] holding the unit's canonical text, then walks its payload,
+      both at the quantity's path. [jit], [vmap], [scan] and [jvp] carry units
+      with no rule of their own, and a compiled function compiles once per unit.
+      A [scan] carry keeps the initial carry's unit: a step that computes in
+      another unit returns [convert (unit init) q]. [grad] and [vjp] take and
+      return bare tensors, with the parameters' units kept as a value of the
+      same structure: a gradient is the loss per parameter unit, so a quantity
+      given to them would come back labelled with the parameter's unit, and
+      {!value} would then convert it by the wrong factor without a word. A
+      record of quantities walks each field with {!walk}; {!Nx.Ptree.cast} and
+      {!Nx.Ptree.Payload} then act on the payloads and keep the units.
+
+      {b Dtypes.} A float payload converts by one rounded factor. A complex
+      payload scales its real and imaginary parts by the real factor, so an
+      infinite part never meets a zero imaginary factor. An integer payload
+      converts only by an integer factor, and raises rather than wrap, int4 and
+      uint4 included. A bool or bit tensor has no unit: {!v} and {!map} refuse
+      one, and {!value} raises on one that {!Nx.Ptree.cast} or
+      {!Nx.Ptree.Payload} built.
+
+      Arithmetic on payloads ({!mul}, {!div}, {!pow}, {!add}, {!sub}, {!map})
+      follows nx: integers wrap and truncate, and float elements overflow and
+      underflow as their dtype does. *)
+
+  type 'p t
+  (** The type for values ['p] in a unit. *)
+
+  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  (** [walk c q] reports [q]'s unit with one [Walk.case] holding its canonical
+      text, then walks its payload with [Walk.leaf], both at [c]'s path. A
+      quantity's structure is [Nx.Ptree.instantiate (module Quantity)]. *)
+
+  (** {1:constructors Constructors} *)
+
+  val v : Unit.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
+  (** [v u x] is [x] in [u]. Raises [Invalid_argument]
+      ["Quantity.v: a bool tensor has no unit"] if [x] is a bool tensor, and
+      with [a bit tensor] for a bit one. *)
+
+  (** {1:queries Queries} *)
+
+  val unit : 'p t -> Unit.t
+  (** [unit q] is [q]'s unit. *)
+
+  val value : Unit.t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t
+  (** [value u q] is [q]'s payload in [u]: the payload itself when [unit q] is
+      [u], otherwise the payload times [Unit.ratio d (unit q) u], with [d] the
+      payload's dtype. The result is within 1.5 ulps of the exact product, and
+      eager and compiled calls agree bit for bit on one device.
+
+      Raises [Invalid_argument] as {!Unit.ratio} does, its message naming
+      [Quantity.value], as in
+      ["Quantity.value: the factor from 1e-35 kg s^-2 to kg s^-2 is 1e-35, which
+       is 0 in float16"]. An integer payload raises when an element times the
+      factor leaves the dtype, at once on a concrete payload and when the
+      compiled call returns on a traced one, as in
+      ["Quantity.value: element [41] of an int32 payload overflows converting
+       1e3 m to m (factor 1000)"], or ["an int32 payload overflows"] for a
+      scalar. The index is the first such element's in C order. *)
+
+  (** {1:conversions Changing the unit} *)
+
+  val convert : Unit.t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  (** [convert u q] is [v u (value u q)]. It raises as {!value} does, its
+      message naming [Quantity.convert]. *)
+
+  val times : Unit.t -> 'p t -> 'p t
+  (** [times u q] is [q]'s payload in [Unit.(unit q * u)]. *)
+
+  val per : Unit.t -> 'p t -> 'p t
+  (** [per u q] is [q]'s payload in [Unit.(unit q / u)]. *)
+
+  (** {1:maps Maps} *)
+
+  val map :
+    (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t t -> ('c, 'd) Nx.t t
+  (** [map f q] is [f] of [q]'s payload, in [q]'s unit. It is correct when
+      [f (c·x) = c·f x] for every positive scalar [c], such as a scaling, a sum
+      or a mean; nothing checks [f]. Raises [Invalid_argument]
+      ["Quantity.map: the function returns a bool tensor"] if [f] does, and with
+      [a bit tensor] for a bit one. *)
+
+  val map2 :
+    (('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) ->
+    ('a, 'b) Nx.t t ->
+    ('a, 'b) Nx.t t ->
+    ('a, 'b) Nx.t t
+  (** [map2 f a b] is [f] of [a]'s payload and [value (unit a) b], in [a]'s
+      unit. It is correct when [f (c·x) (c·y) = c·f x y]. For an integer
+      payload, [b] converts only when [unit b / unit a] is an integer: convert
+      to the finer unit first. Raises as {!value} does, its message naming
+      [Quantity.map2]. *)
+
+  (** {1:algebra Algebra} *)
+
+  val add : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  (** [add a b] is [map2 Nx.add a b]. Its messages name [Quantity.add], as in
+      ["Quantity.add: pix{b} does not convert to pix{a}: their quotient keeps
+       pix{a}^-1 pix{b}"] for [a] in [pix{a}] and [b] in [pix{b}]. *)
+
+  val sub : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  (** [sub a b] is [map2 Nx.sub a b]. Its messages name [Quantity.sub]. *)
+
+  val mul : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  (** [mul a b] is the product of the payloads in [Unit.(unit a * unit b)]. *)
+
+  val div : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  (** [div a b] is the quotient of the payloads, as {!Nx.div} computes it, in
+      [Unit.(unit a / unit b)]. *)
+
+  val pow : int -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  (** [pow n q] is [q]'s payload to the power [n] in [Unit.(unit q ** n)],
+      computed by repeated products: integers wrap, and the exponent is exact
+      whatever the payload's dtype, so [pow 17] of [-1.] is [-1.] in float8. A
+      negative [n] is the reciprocal of the power [-n], and [pow 0] is one, NaN
+      included. Each product rounds, so a float result is within about [n - 1]
+      half-ulps of the exact power: [pow 1000] in float32 can be hundreds of
+      ulps off. Raises [Invalid_argument]
+      ["Quantity.pow: -1 is negative and the payload is int32"] for a negative
+      [n] on an integer payload. *)
+
+  val root : int -> (float, 'b) Nx.t t -> (float, 'b) Nx.t t
+  (** [root n q] is the real [n]-th root of [q]'s payload in
+      [Unit.root n (unit q)], by [Nx.pow] at the exponent [1/n], then, for
+      [n >= 3], one Newton step that corrects the rounding of [1/n]. A payload
+      narrower than float32 is rooted in float32 and cast back, so the exponent
+      is not rounded to its dtype. For odd [n] the root of an element below zero
+      is the negative real root; for even [n] such an element raises
+      [Invalid_argument], at once on a concrete payload and when the compiled
+      call returns on a traced one, as in
+      ["Quantity.root: element [3] of a float32 payload is below 0, whose root
+       of order 2 is not real"]. NaN and [-0.] give what [Nx.pow] gives them.
+      Raises [Invalid_argument] ["Quantity.root: 0 is below 1"] if [n < 1]. *)
+
+  (** {1:fmt Formatting} *)
+
+  val pp : Format.formatter -> ('a, 'b) Nx.t t -> unit
+  (** [pp ppf q] formats [q]'s payload as {!Nx.pp} does, then its unit's
+      canonical text. *)
 end

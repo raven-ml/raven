@@ -107,3 +107,9 @@ val luminous_efficacy : t
 val gas_constant : t
 val faraday : t
 val stefan_boltzmann : t
+
+(** {1:library Shared with the library's modules} *)
+
+val ratio_named : string -> ('a, 'b) Nx.dtype -> t -> t -> 'a
+(** [ratio_named fn d u w] is [ratio d u w], its error messages naming [fn] in
+    place of [Unit.ratio]. *)

@@ -384,10 +384,12 @@ let exact_factor ts =
       | Symbol _, _, _ -> None)
     ts
 
-let ratio_error (type a b) (d : (a, b) Nx.dtype) u w q (e : Exact.error) =
+(* [ratio_error fn d u w q e] is the message of [fn] when the conversion from
+   [u] to [w], of exact quotient [q], has no value in [d] for the reason [e]. *)
+let ratio_error (type a b) fn (d : (a, b) Nx.dtype) u w q (e : Exact.error) =
   let dt = Nx_dtype.to_string d in
   let factor which =
-    strf "Unit.ratio: the factor from %s to %s is %s, %s" u.text w.text
+    strf "%s: the factor from %s to %s is %s, %s" fn u.text w.text
       (unchecked_text q) which
   in
   match e with
@@ -399,19 +401,21 @@ let ratio_error (type a b) (d : (a, b) Nx.dtype) u w q (e : Exact.error) =
   | Too_wide ->
       factor
         (strf "whose evaluation needs a natural wider than %d bits" Exact.budget)
-  | Boolean -> strf "Unit.ratio: %s holds no factor" dt
+  | Boolean -> strf "%s: %s holds no factor" fn dt
 
-let ratio (type a b) (d : (a, b) Nx.dtype) u w : a =
-  let quotient ts ts' = guard "Unit.ratio" (merge ts) (inverse ts') in
+let ratio_named (type a b) fn (d : (a, b) Nx.dtype) u w : a =
+  let quotient ts ts' = guard fn (merge ts) (inverse ts') in
   if not (convertible u w) then
     invalid_arg
-      (strf "Unit.ratio: %s does not convert to %s: their quotient keeps %s"
-         u.text w.text
+      (strf "%s: %s does not convert to %s: their quotient keeps %s" fn u.text
+         w.text
          (unchecked_text (quotient (symbols u.terms) (symbols w.terms))));
   let q = quotient u.terms w.terms in
   match Exact.round d (exact_factor q) with
   | Ok v -> v
-  | Error e -> invalid_arg (ratio_error d u w q e)
+  | Error e -> invalid_arg (ratio_error fn d u w q e)
+
+let ratio d u w = ratio_named "Unit.ratio" d u w
 
 (* Terms and text *)
 

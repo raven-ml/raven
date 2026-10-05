@@ -5,7 +5,8 @@ Exact physical units for OCaml, built on [Nx](../../packages/nx/).
 `ymir.units` gives a unit as an exact value: a product of primes, π and named
 symbols with rational exponents, kept in one canonical form whose text is its
 identity. `km` and `1e3 m` are one unit, and a conversion is one correctly
-rounded multiply, or it raises.
+rounded multiply, or it raises. A quantity is a tensor in a unit, a structure
+that `jit`, `vmap`, `scan` and `jvp` carry with no rule of their own.
 
 ## Quick start
 
@@ -20,6 +21,10 @@ let f = Unit.ratio Nx.float32 speed Unit.(metre / second)   (* 1000. *)
 
 (* Exact SI constants are units: h/k_B stays exact until it is rounded. *)
 let h_over_k = Unit.(planck / boltzmann)
+
+(* A tensor in km/s, read in m/s: one multiply by 1000. *)
+let v = Quantity.v speed (Nx.create Nx.float32 [| 2 |] [| 1.; 2.5 |])
+let v_si = Quantity.value Unit.(metre / second) v
 ```
 
 ## Features
@@ -33,3 +38,7 @@ let h_over_k = Unit.(planck / boltzmann)
   subnormal, overflow or lose integers
 - **The SI**: base and derived units, prefixes from `quecto` to `quetta`, and
   the exact defining constants, with the radian as a dimension
+- **Quantities**: `Quantity.v`, `value` and `convert`, the algebra `add`,
+  `sub`, `mul`, `div`, `pow`, `root`, `times` and `per`, and payloads of every
+  float, complex and integer dtype; an integer conversion raises rather than
+  wrap
