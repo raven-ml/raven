@@ -123,11 +123,12 @@ unique/int64-4e4-1e4	wall_time	batch=32	n=20	3.026e-04	3.016e-04 3.016e-04 3.018
 # forced: blessed arange/int64-4e4 arange/int64-1e7 arange/int32-1e7 scatter/add-float64-4e4-into-1e2 scatter/add-float64-1e7-into-1e2 scatter/add-float64-1e7-into-1e6 scatter/set-float64-4e4-into-4e4 scatter/set-float64-1e7-into-1e6 scatter/max-float64-4e4-into-1e2 scatter/max-float64-1e7-into-1e2 scatter/max-float64-1e7-into-1e6 scatter/add-float16-1e7-into-1e6 gather/float32-4e4-monotone gather/float32-1e7-monotone gather/float64-1e7-random gather/float32-rows-4e4x8 gather/float32-rows-1.25e6x8 unique/int64-1e6-1e2 ragged-take/strings6-4e4-permuted ragged-take/strings6-4e4-permuted-runcopy ragged/v-strings12-1e7 under load 7.5 on 10 cores
 # forced: blessed gather/float32-axis1-8x1024x256 under load 8.4 on 10 cores
 # forced: blessed gather/float32-along-axis1-2000x2000 under load 6.3 on 10 cores
+# forced: blessed arange/int64-1e7 argsort/uint64-1e6 gather/float32-1e7-monotone positions/mask50-4e4 under load 13.6 on 10 cores
 
 arange/int32-1e7	alloc_words	exact	1627
 arange/int32-1e7	wall_time	batch=1	n=20	2.933e-03	2.871e-03 2.884e-03 2.895e-03 2.897e-03 2.904e-03 2.905e-03 2.914e-03 2.916e-03 2.923e-03 2.926e-03 2.940e-03 2.941e-03 2.943e-03 2.943e-03 2.944e-03 2.945e-03 2.948e-03 2.950e-03 2.980e-03 3.112e-03
 arange/int64-1e7	alloc_words	exact	1563
-arange/int64-1e7	wall_time	batch=1	n=20	1.400e-03	1.361e-03 1.362e-03 1.364e-03 1.372e-03 1.375e-03 1.378e-03 1.380e-03 1.384e-03 1.389e-03 1.400e-03 1.400e-03 1.420e-03 1.425e-03 1.446e-03 1.447e-03 1.463e-03 1.477e-03 1.488e-03 1.492e-03 1.521e-03
+arange/int64-1e7	wall_time	batch=1	n=20	1.329e-03	1.290e-03 1.293e-03 1.302e-03 1.303e-03 1.304e-03 1.311e-03 1.314e-03 1.326e-03 1.328e-03 1.328e-03 1.329e-03 1.329e-03 1.330e-03 1.335e-03 1.348e-03 1.349e-03 1.358e-03 1.381e-03 1.396e-03 1.398e-03
 arange/int64-4e4	alloc_words	exact	964
 arange/int64-4e4	wall_time	batch=256	n=20	2.060e-05	2.020e-05 2.023e-05 2.025e-05 2.028e-05 2.031e-05 2.034e-05 2.039e-05 2.045e-05 2.046e-05 2.058e-05 2.061e-05 2.064e-05 2.091e-05 2.095e-05 2.107e-05 2.114e-05 2.128e-05 2.228e-05 2.459e-05 2.586e-05
 argsort/float64-1e6	alloc_words	exact	64
@@ -135,7 +136,7 @@ argsort/float64-1e6	wall_time	batch=1	n=20	1.318e-02	1.280e-02 1.284e-02 1.291e-
 argsort/float64-4e4	alloc_words	exact	64
 argsort/float64-4e4	wall_time	batch=16	n=20	3.494e-04	3.363e-04 3.367e-04 3.375e-04 3.395e-04 3.417e-04 3.429e-04 3.471e-04 3.484e-04 3.489e-04 3.489e-04 3.498e-04 3.511e-04 3.531e-04 3.536e-04 3.540e-04 3.553e-04 3.553e-04 3.560e-04 3.561e-04 3.600e-04
 argsort/uint64-1e6	alloc_words	exact	64
-argsort/uint64-1e6	wall_time	batch=1	n=20	1.179e-02	1.141e-02 1.143e-02 1.144e-02 1.146e-02 1.147e-02 1.151e-02 1.155e-02 1.170e-02 1.171e-02 1.178e-02 1.180e-02 1.180e-02 1.189e-02 1.195e-02 1.201e-02 1.202e-02 1.203e-02 1.209e-02 1.211e-02 1.227e-02
+argsort/uint64-1e6	wall_time	batch=1	n=20	1.180e-02	1.141e-02 1.147e-02 1.153e-02 1.160e-02 1.165e-02 1.170e-02 1.171e-02 1.174e-02 1.176e-02 1.180e-02 1.180e-02 1.182e-02 1.183e-02 1.184e-02 1.185e-02 1.191e-02 1.194e-02 1.194e-02 1.198e-02 1.199e-02
 argsort/uint64-4e4	alloc_words	exact	64
 argsort/uint64-4e4	wall_time	batch=16	n=20	3.457e-04	3.407e-04 3.409e-04 3.432e-04 3.434e-04 3.438e-04 3.439e-04 3.440e-04 3.440e-04 3.450e-04 3.454e-04 3.460e-04 3.462e-04 3.481e-04 3.483e-04 3.505e-04 3.530e-04 3.537e-04 3.537e-04 3.586e-04 3.651e-04
 bit/and-1e7	alloc_words	exact	64
@@ -169,7 +170,7 @@ cumsum/float64-4e4	wall_time	batch=128	n=20	5.898e-05	5.688e-05 5.725e-05 5.727e
 cumsum/int64-1e7	alloc_words	exact	91
 cumsum/int64-1e7	wall_time	batch=1	n=20	4.150e-03	4.047e-03 4.061e-03 4.088e-03 4.090e-03 4.115e-03 4.117e-03 4.128e-03 4.128e-03 4.133e-03 4.142e-03 4.157e-03 4.172e-03 4.185e-03 4.234e-03 4.285e-03 4.326e-03 4.343e-03 4.416e-03 4.456e-03 1.002e-02
 gather/float32-1e7-monotone	alloc_words	exact	89
-gather/float32-1e7-monotone	wall_time	batch=1	n=20	5.482e-03	5.105e-03 5.159e-03 5.176e-03 5.179e-03 5.308e-03 5.321e-03 5.327e-03 5.384e-03 5.417e-03 5.429e-03 5.535e-03 5.551e-03 5.552e-03 5.569e-03 5.606e-03 5.615e-03 5.658e-03 5.672e-03 5.861e-03 3.886e-02
+gather/float32-1e7-monotone	wall_time	batch=1	n=20	5.399e-03	5.186e-03 5.256e-03 5.263e-03 5.274e-03 5.280e-03 5.321e-03 5.322e-03 5.354e-03 5.370e-03 5.393e-03 5.404e-03 5.405e-03 5.422e-03 5.442e-03 5.476e-03 5.498e-03 5.539e-03 5.557e-03 5.565e-03 8.165e-03
 gather/float32-4e4-monotone	alloc_words	exact	89
 gather/float32-4e4-monotone	wall_time	batch=256	n=20	2.854e-05	2.830e-05 2.835e-05 2.837e-05 2.837e-05 2.839e-05 2.840e-05 2.842e-05 2.849e-05 2.849e-05 2.851e-05 2.856e-05 2.859e-05 2.863e-05 2.871e-05 2.882e-05 2.896e-05 2.897e-05 2.914e-05 2.937e-05 2.950e-05
 gather/float32-along-axis1-2000x2000	alloc_words	exact	71
@@ -191,7 +192,7 @@ positions/counts-1e7	wall_time	batch=1	n=20	3.835e-02	3.636e-02 3.653e-02 3.668e
 positions/mask50-1e7	alloc_words	exact	2196
 positions/mask50-1e7	wall_time	batch=1	n=20	2.543e-02	2.453e-02 2.460e-02 2.461e-02 2.465e-02 2.467e-02 2.478e-02 2.490e-02 2.505e-02 2.506e-02 2.537e-02 2.550e-02 2.550e-02 2.568e-02 2.603e-02 2.616e-02 2.624e-02 2.636e-02 2.642e-02 2.645e-02 2.724e-02
 positions/mask50-4e4	alloc_words	exact	1597
-positions/mask50-4e4	wall_time	batch=32	n=20	2.109e-04	2.022e-04 2.051e-04 2.061e-04 2.061e-04 2.066e-04 2.071e-04 2.092e-04 2.097e-04 2.103e-04 2.105e-04 2.112e-04 2.112e-04 2.117e-04 2.118e-04 2.118e-04 2.120e-04 2.124e-04 2.150e-04 2.173e-04 2.227e-04
+positions/mask50-4e4	wall_time	batch=32	n=20	1.980e-04	1.898e-04 1.921e-04 1.922e-04 1.955e-04 1.960e-04 1.965e-04 1.971e-04 1.978e-04 1.979e-04 1.980e-04 1.980e-04 1.980e-04 1.984e-04 1.986e-04 1.991e-04 1.994e-04 1.998e-04 2.002e-04 2.010e-04 2.045e-04
 quantile/float64-1e6	alloc_words	exact	1272
 quantile/float64-1e6	wall_time	batch=1	n=20	1.486e-02	1.386e-02 1.406e-02 1.415e-02 1.421e-02 1.432e-02 1.438e-02 1.462e-02 1.465e-02 1.465e-02 1.475e-02 1.496e-02 1.497e-02 1.499e-02 1.504e-02 1.507e-02 1.514e-02 1.523e-02 1.549e-02 1.562e-02 1.605e-02
 quantile/float64-4e4	alloc_words	exact	1272
