@@ -20,6 +20,7 @@ Talon/Sort/amount_desc	wall_time	batch=1	n=20	2.062e-02	1.990e-02 2.017e-02 2.03
 # forced: blessed under load 21.9 on 10 cores
 # forced: blessed Talon/Group/category_region Talon/Nulls/filter-1pct Talon/Nulls/filter-50pct Talon/Nulls/concat-3 Talon/Nulls/group-sum under load 22.1 on 10 cores
 # forced: blessed Talon/Nulls/group-sum Talon/Nulls/join-left under load 23.7 on 10 cores
+# forced: blessed Talon_parquet/read-nullable under load 9.7 on 10 cores
 
 Talon/Filter/high_value	alloc_words	exact	12096
 Talon/Filter/high_value	wall_time	batch=32	n=40	2.652e-04	2.403e-04 2.417e-04 2.461e-04 2.465e-04 2.477e-04 2.492e-04 2.507e-04 2.510e-04 2.512e-04 2.517e-04 2.524e-04 2.534e-04 2.536e-04 2.540e-04 2.542e-04 2.557e-04 2.574e-04 2.615e-04 2.633e-04 2.636e-04 2.667e-04 2.726e-04 2.794e-04 2.797e-04 2.826e-04 2.827e-04 2.853e-04 2.886e-04 3.205e-04 3.267e-04 3.339e-04 3.440e-04 3.531e-04 3.631e-04 3.945e-04 3.998e-04 4.543e-04 4.553e-04 4.709e-04 2.780e-03
@@ -49,5 +50,5 @@ Talon/Nulls/take-random	alloc_words	exact	1050
 Talon/Nulls/take-random	wall_time	batch=1	n=40	3.806e-03	3.400e-03 3.502e-03 3.506e-03 3.575e-03 3.580e-03 3.588e-03 3.635e-03 3.659e-03 3.690e-03 3.698e-03 3.704e-03 3.718e-03 3.725e-03 3.736e-03 3.750e-03 3.772e-03 3.798e-03 3.800e-03 3.801e-03 3.806e-03 3.806e-03 3.836e-03 3.873e-03 3.877e-03 3.886e-03 3.905e-03 3.923e-03 3.924e-03 3.962e-03 3.972e-03 3.976e-03 3.977e-03 4.016e-03 4.039e-03 4.051e-03 4.086e-03 4.114e-03 4.133e-03 4.251e-03 6.294e-03
 Talon/Sort/amount_desc	alloc_words	exact	325425
 Talon/Sort/amount_desc	wall_time	batch=1	n=40	2.560e-03	2.162e-03 2.290e-03 2.306e-03 2.321e-03 2.326e-03 2.332e-03 2.339e-03 2.371e-03 2.383e-03 2.384e-03 2.414e-03 2.434e-03 2.438e-03 2.452e-03 2.452e-03 2.471e-03 2.505e-03 2.544e-03 2.545e-03 2.558e-03 2.561e-03 2.564e-03 2.579e-03 2.590e-03 2.599e-03 2.612e-03 2.641e-03 2.643e-03 2.647e-03 2.699e-03 2.720e-03 2.740e-03 2.763e-03 2.878e-03 2.961e-03 3.305e-03 3.404e-03 3.554e-03 3.693e-03 3.892e-03
-Talon_parquet/read-nullable	alloc_words	exact	50242
-Talon_parquet/read-nullable	wall_time	batch=1	n=40	1.809e-02	1.619e-02 1.628e-02 1.634e-02 1.636e-02 1.643e-02 1.644e-02 1.650e-02 1.653e-02 1.656e-02 1.665e-02 1.676e-02 1.681e-02 1.690e-02 1.699e-02 1.709e-02 1.748e-02 1.758e-02 1.769e-02 1.778e-02 1.792e-02 1.827e-02 1.859e-02 1.862e-02 1.866e-02 1.872e-02 1.893e-02 1.948e-02 1.950e-02 1.973e-02 1.988e-02 2.026e-02 2.085e-02 2.221e-02 2.294e-02 2.381e-02 2.479e-02 2.572e-02 2.618e-02 2.810e-02 2.957e-02
+Talon_parquet/read-nullable	alloc_words	exact	47098
+Talon_parquet/read-nullable	wall_time	batch=1	n=40	9.698e-03	9.493e-03 9.524e-03 9.534e-03 9.565e-03 9.573e-03 9.586e-03 9.587e-03 9.588e-03 9.593e-03 9.606e-03 9.621e-03 9.631e-03 9.637e-03 9.638e-03 9.641e-03 9.650e-03 9.654e-03 9.665e-03 9.677e-03 9.692e-03 9.705e-03 9.711e-03 9.715e-03 9.723e-03 9.727e-03 9.732e-03 9.791e-03 9.863e-03 9.876e-03 9.911e-03 9.947e-03 9.969e-03 9.985e-03 1.001e-02 1.014e-02 1.036e-02 1.041e-02 1.042e-02 1.050e-02 1.076e-02
