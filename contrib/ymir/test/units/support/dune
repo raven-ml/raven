@@ -1,0 +1,3 @@
+(library
+ (name ymir_units_test)
+ (libraries ymir.units windtrap))
