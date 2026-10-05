@@ -201,3 +201,6 @@ let near_pairs =
   | 0 -> (u, rebuild u)
   | 1 -> (u, Unit.(rebuild u * one))
   | _ -> (u, w)
+
+(* The reference rule for [Vocabulary.spell]. *)
+module Spell_reference = Spell_reference

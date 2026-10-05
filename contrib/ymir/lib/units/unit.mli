@@ -121,3 +121,16 @@ val decimal_named : string -> string -> t
 val round : ('a, 'b) Nx.dtype -> t -> ('a, Exact.error) result
 (** [round d u] is the number of the dimensionless [u] rounded once to [d], as
     [ratio d u one] rounds it, or the reason [d] holds no such value. *)
+
+val exponent_sum : int * int -> int * int -> (int * int) option
+(** [exponent_sum a b] is the sum of the exponents [a] and [b], each a reduced
+    fraction [(num, den)] with [den >= 1], reduced as the algebra reduces it, or
+    [None] when the reduced sum leaves [int]. *)
+
+val exponent_product : int * int -> int * int -> (int * int) option
+(** [exponent_product a b] is the product of [a] and [b], as {!exponent_sum}. *)
+
+val power : string -> t -> int -> int -> t
+(** [power fn u num den] is [u] to the power [num/den], for a reduced [num/den]
+    with [den >= 1]. Raises [Invalid_argument], naming [fn], only when an
+    exponent of the result leaves [int] or its coefficient leaves its bound. *)

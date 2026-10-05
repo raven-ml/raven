@@ -7,3 +7,4 @@ module Unit = Unit
 module Quantity = Quantity
 module Constant = Constant
 module Codata = Codata
+module Vocabulary = Vocabulary

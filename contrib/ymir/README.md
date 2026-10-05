@@ -45,3 +45,6 @@ let v_si = Quantity.value Unit.(metre / second) v
 - **Measured constants**: `Constant.v` reads the published notation
   `6.67430(15)e-11`, and `Codata.v2018` and `Codata.v2022` hold the CODATA
   releases; a constant rounds once to the dtype a program asks for
+- **Names**: `Vocabulary.lookup` reads a symbol with an SI prefix (`MJy`),
+  `Vocabulary.spell` and `pp` write a unit with a vocabulary's symbols, and
+  `Vocabulary.si` holds the SI's

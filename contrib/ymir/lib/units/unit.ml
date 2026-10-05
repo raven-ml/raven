@@ -218,6 +218,20 @@ let q_add t (a, b) (c, d) =
   in
   (num, mul_exn t b' (d / g'))
 
+(* [q_mul t (a, b) (n, d)] is (a/b) (n/d) reduced crosswise, so it leaves int
+   only when the reduced product does. *)
+let q_mul t (a, b) (n, d) =
+  let g = gcd (abs a) d and g' = gcd (abs n) b in
+  (mul_exn t (a / g) (n / g'), mul_exn t (b / g') (d / g))
+
+(* [raise_to q ts] raises each of [ts] to the power [q]. *)
+let raise_to q ts =
+  List.map
+    (fun (t, a, b) ->
+      let n, d = q_mul t (a, b) q in
+      (t, n, d))
+    ts
+
 let rec merge xs ys =
   match (xs, ys) with
   | [], r | r, [] -> r
@@ -292,21 +306,27 @@ let inverse ts = List.map (fun (t, n, d) -> (t, -n, d)) ts
 let div u w =
   guard "Unit.( / )" (fun w -> make (merge u.terms (inverse w.terms))) w
 
-let pow u n =
-  let scale (t, a, b) =
-    let g = gcd (abs n) b in
-    (t, mul_exn t a (n / g), b / g)
-  in
-  if n = 0 then one
-  else guard "Unit.( ** )" (fun u -> make (List.map scale u.terms)) u
+let exponent_sum a b =
+  match q_add Pi a b with
+  | q -> Some q
+  | exception Exponent_leaves_int _ -> None
+
+let exponent_product a b =
+  if fst a = 0 || fst b = 0 then Some (0, 1)
+  else
+    match q_mul Pi a b with
+    | q -> Some q
+    | exception Exponent_leaves_int _ -> None
+
+let power fn u num den =
+  if num = 0 then one
+  else guard fn (fun u -> make (raise_to (num, den) u.terms)) u
+
+let pow u n = power "Unit.( ** )" u n 1
 
 let root n u =
   if n < 1 then invalid_arg (strf "Unit.root: %d is below 1" n);
-  let scale (t, a, b) =
-    let g = gcd (abs a) n in
-    (t, a / g, mul_exn t b (n / g))
-  in
-  guard "Unit.root" (fun u -> make (List.map scale u.terms)) u
+  power "Unit.root" u 1 n
 
 let decimal_named fn s =
   let decimal_error () =
@@ -507,15 +527,6 @@ let parse s =
       if d = 0 then fail "a zero denominator";
       let g = gcd n d in
       ((if neg then -n / g else n / g), d / g)
-  in
-  (* (a/b) (n/d) reduced crosswise, so a product leaves int only when the
-     reduced exponent does. *)
-  let raise_to (n, d) ts =
-    List.map
-      (fun (t, a, b) ->
-        let g = gcd (abs a) d and g' = gcd (abs n) b in
-        (t, mul_exn t (a / g) (n / g'), mul_exn t (b / g') (d / g)))
-      ts
   in
   let item () =
     if !i >= len then fail "expected an item";

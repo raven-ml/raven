@@ -14,3 +14,6 @@ All notable changes to Ymir are documented in this file.
 - `Ymir_units.Constant` is a measured constant, a published decimal with its
   uncertainty, rounded once to a payload's dtype. `Ymir_units.Codata` holds
   the CODATA 2018 and 2022 releases, transcribed from NIST's tables.
+- `Ymir_units.Vocabulary` names units: `lookup` reads a symbol with an SI
+  prefix, `spell` and `pp` write a unit with a vocabulary's symbols, and
+  `Vocabulary.si` holds the SI's.

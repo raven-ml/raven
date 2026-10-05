@@ -13,7 +13,8 @@
 
     The SI fixes some constants exactly, so they are units ({!Unit.planck}). A
     measured constant is a {!Constant} of a {!Codata} release the program names.
-*)
+    A unit has no name: {!Vocabulary} spells it with the symbols a caller
+    chooses. *)
 
 (** Units as exact values. *)
 module Unit : sig
@@ -859,4 +860,116 @@ module Codata : sig
 
   val electron_g_factor : t -> Constant.t
   (** [electron_g_factor r] is g{_ e}, negative, dimensionless. *)
+end
+
+(** Names for units. *)
+module Vocabulary : sig
+  (** A {e vocabulary} is a set of unit symbols with their meaning. A unit has
+      no name of its own; a vocabulary reads a symbol as a unit with {!lookup},
+      and writes a unit with symbols with {!spell}. Each unit syntax is a
+      grammar over a vocabulary.
+
+      {[
+      let jansky = Unit.(decimal "1e-26" * watt / (metre ** 2) / hertz)
+
+      let voc =
+        Vocabulary.(
+          v [ ("Jy", Prefixable, jansky); ("sr", Bare, Unit.steradian) ])
+
+      let mjy_sr = Unit.(mega jansky / steradian)
+      let text = Format.asprintf "%a" (Vocabulary.pp voc) mjy_sr
+      (* "MJy sr^-1" *)
+      ]}
+
+      Names never change a unit: when [spell voc u] is [Some s], the product of
+      [s]'s words looked up in [voc], times 10{^ decade}, is [u]. *)
+
+  type t
+  (** The type for vocabularies. *)
+
+  (** The type for whether a symbol takes an SI prefix. *)
+  type prefixing =
+    | Prefixable  (** The symbol takes an SI prefix: [km] for [m]. *)
+    | Bare  (** The symbol takes none: [min], [°]. *)
+
+  val v : (string * prefixing * Unit.t) list -> t
+  (** [v entries] is the vocabulary of [entries], each a symbol, whether it
+      takes a prefix, and its unit, in the order {!spell} prefers them.
+
+      Raises [Invalid_argument] on an empty symbol, a symbol given twice, as in
+      [{|Vocabulary.v: "m" is given twice|}], or a string that reads as two
+      different prefixes on prefixable symbols and is not itself a symbol, as in
+      [{|Vocabulary.v: "dam" reads as "da" on "m" and as "d" on "am"|}]. *)
+
+  val si : t
+  (** [si] is the SI's vocabulary: the symbols of the base units,
+      [kg A m s K mol cd rad], then [sr] and [Hz], then the derived units, then
+      [g], [t], [L] and [l], then the units accepted for use with the SI, as the
+      SI Brochure writes them ([Ω], [°], [′], [″] in UTF-8). [kg], [min], [h],
+      [d], [ha], [au] and the angles take no prefix; prefixed masses use [g]. It
+      omits [Bq], [Gy], [Sv] and [kat]: their units are also those of frequency,
+      squared speed and molar rate, which [spell] would misname. *)
+
+  val union : t -> t -> t
+  (** [union a b] is [a]'s entries then [b]'s. Raises [Invalid_argument] as {!v}
+      does, its message naming [Vocabulary.union]. *)
+
+  val lookup : t -> string -> Unit.t option
+  (** [lookup voc s] is the unit [s] names in [voc]: the unit of the symbol [s],
+      otherwise an SI prefix followed by a prefixable symbol, the prefix's power
+      of ten times the symbol's unit. Micro reads as [u], [µ] (U+00B5) or [μ]
+      (U+03BC). It is [None] when [s] reads as neither. *)
+
+  (** {1:spelling Spelling} *)
+
+  type word = { prefix : int; symbol : string; num : int; den : int }
+  (** The type for words. A word is [symbol] with the SI prefix of the power of
+      ten [prefix], 0 for none, raised to the reduced exponent [num/den], with
+      [den >= 1]. *)
+
+  type spelling = { decade : int; words : word list }
+  (** The type for spellings. A spelling is the product of its words times
+      10{^ decade}. *)
+
+  val spell : t -> Unit.t -> spelling option
+  (** [spell voc u] spells [u] in as few words as it can:
+      - If a symbol's unit is [u], the first such symbol.
+      - Otherwise, if one word is [u], the best one: without a prefix, then of
+        an entry whose unit has no number, then with its prefix on a positive
+        exponent, then with the least exponent, then the earliest ([m^3],
+        [km^3], [GHz], [mg]).
+      - Otherwise the cheapest product of: the fewest entries, at most two,
+        whose numbers are not powers of ten, giving [u]'s number up to a power
+        of ten ([au d^-1]); at most one entry over two or more symbols, with an
+        exponent cancelling one of its symbols; one word per remaining symbol,
+        from the entry whose unit is a power of ten times a power of that
+        symbol, preferring no number, an integer exponent, the least exponent,
+        then the earliest ([sr^-1] for [rad^-2]); and the power of ten left.
+
+      A word's exponent is an integer when all of [u]'s exponents are.
+
+      The power of ten becomes the prefix of the first word, in the order below,
+      that takes it; a word of one symbol takes it through any entry of that
+      symbol ([kg] becomes [mg]). No prefix is written where it and its symbol
+      read as another symbol of [voc]. [decade] holds what no prefix takes.
+
+      The cheapest product has the fewest items, a decade counting as one; then
+      no entry over two or more symbols; then the least sum of exponent
+      magnitudes, a decade counting one; then no decade; then the earliest
+      entries. So a name is written only where it shortens the spelling:
+      [kJ mol^-1] and [Ω m], but [m s^-2] and [kg s^-3].
+
+      Words with positive exponents come first, then negative ones; within each,
+      words of entries over several symbols or with numbers, then words of one
+      symbol, in entry order. [spell] is [None] when no such product is [u], or
+      when an exponent or a rest leaves the unit algebra's bounds. It runs in
+      time linear in the vocabulary, and quadratic in its entries with numbers
+      that are not powers of ten when [u]'s number is not a power of ten. *)
+
+  val pp : t -> Format.formatter -> Unit.t -> unit
+  (** [pp voc] formats a unit as [spell voc] writes it, as in [MJy sr^-1]:
+      [1e<decade>] when [decade] is not 0, then each word, its prefix written
+      with the SI's symbol ([μ] for micro) and its exponent as in canonical text
+      ({!Unit.section-text}); [1] for no item. When [spell] finds no spelling,
+      it formats the unit's canonical text. *)
 end
