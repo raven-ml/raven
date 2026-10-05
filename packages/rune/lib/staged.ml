@@ -411,8 +411,8 @@ let rec trace : 'a. body:bool -> Lower.scope -> (unit -> 'a) -> 'a =
             trace ~body s (fun () -> f args))
     | Barrier { values; after = deps } when not body ->
         Some (fun () -> after s values deps)
-    | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _
-    | Add _ ->
+    | Remat _ | Barrier _ | Custom _ | Root _ | At_map _ | Lanes _
+    | Lane_index _ | Lane_count _ | Add _ ->
         None
   in
   (* A body runs outside the key scopes the function opened, and once for every

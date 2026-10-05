@@ -37,6 +37,12 @@
  (libraries windtrap rune rune_test nx nx.dtype))
 
 (test
+ (name test_root)
+ (modules test_root)
+ (package rune)
+ (libraries windtrap rune rune_test nx nx.dtype))
+
+(test
  (name test_staging)
  (modules test_staging)
  (package rune)

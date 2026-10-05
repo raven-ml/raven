@@ -355,6 +355,69 @@ let iterate c ~max ~until ~f init =
   let req_trips = Trips.Until { until; max; failure } in
   carry (Construct.loop { req_carry; req_trips; req_step }).r_carry
 
+(* Roots *)
+
+(* [dense_in fn x dt op b] is the [v] with [op v = b]: [op]'s matrix over the
+   leaves of [x], of dtype [dt], flattened into one vector, one product per
+   column under one map, solved with Nx.solve. *)
+let dense_in : type a c x.
+    string -> x Ptree.t -> (a, c) Nx.dtype -> (x -> x) -> x -> x =
+ fun fn x dt op b ->
+  let leaves, _ = Ptree.flatten x b in
+  let flat v : (a, c) Nx.t =
+    Nx.concatenate ~axis:0
+      (List.map
+         (fun (Nx.P l) ->
+           if not (Nx_dtype.equal dt (Nx.dtype l)) then
+             invalid_arg
+               (Format.asprintf
+                  "%s: the default linear solve takes leaves of one dtype, got \
+                   %a and %a; pass ~linear_solve"
+                  fn Nx.pp_dtype dt Nx.pp_dtype (Nx.dtype l));
+           let l = Nx.unpack dt (Nx.P l) in
+           Nx.reshape [| Nx.numel l |] l)
+         (fst (Ptree.flatten x v)))
+  in
+  let unflat v =
+    let at = ref 0 in
+    let leaf (Nx.P l) =
+      let n = Nx.numel l in
+      let part = Nx.reshape (Nx.shape l) (Nx.slice [ Nx.R (!at, !at + n) ] v) in
+      at := !at + n;
+      Nx.P (Nx.unpack (Nx.dtype l) (Nx.P part))
+    in
+    Ptree.rebuild x ~like:b (List.map leaf leaves)
+  in
+  let fb = flat b in
+  let n = Nx.numel fb in
+  let columns =
+    vmap_of fn
+      Ptree.(tensor @-> returns tensor)
+      (fun e -> flat (op (unflat e)))
+      (Nx.eye dt n)
+  in
+  let v = Nx.solve (Nx.matrix_transpose columns) (Nx.reshape [| n; 1 |] fb) in
+  unflat (Nx.reshape [| n |] v)
+
+let dense fn x op b =
+  let leaves, _ = Ptree.flatten x b in
+  match leaves with [] -> b | Nx.P l :: _ -> dense_in fn x (Nx.dtype l) op b
+
+let root ?linear_solve x ~residual solve =
+  let fn = "Rune.root" in
+  let residual v =
+    let r = residual v in
+    ignore
+      (Structure.map2 fn x ~this:"the residual's result" ~that:"the solution"
+         (fun _ r _ -> r)
+         r v);
+    r
+  in
+  let linear_solve =
+    match linear_solve with Some f -> f | None -> dense fn x
+  in
+  Construct.perform (Root { x; residual; solve; linear_solve })
+
 (* Compilation *)
 
 exception Jit_error = Lower.Jit_error

@@ -47,6 +47,11 @@ val install : tape -> (unit -> 'a) -> 'a
     solve for a slot. In a selection, a concatenation, a scatter and an update,
     an operand that is no slot stands for zero, as a tangent's zero fill does.
 
+    A root ({!Construct.Root}) passes outward with [t]'s slots read as zeros.
+    When its residual at the result reads a slot, the result is the slot of a
+    linear call from the slots the residual reads, whose transpose is the root
+    of the residual's derivative transposed, recorded at the call.
+
     Raises [Invalid_argument], at the operation, naming [t]'s entry point, if
     the operation is not linear in its slots, as in
     ["Rune.grad: a custom_jvp tangent map applies exp to a tangent; a tangent

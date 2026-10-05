@@ -826,14 +826,15 @@ let holds_tensor q y = Nx.Ptree.fold q (fun _ _ _ -> true) y false
 let holds_own i p args =
   Nx.Ptree.fold p (fun _ x any -> any || owns i x) args false
 
+let operator_tracked =
+  "Rune.root: linear_solve's operator cannot be differentiated inside \
+   linear_solve"
+
 (* [primals i f] is [f ()] with each of [i]'s duals it reads replaced by its
    primal: code with no derivative, such as a loop's stop. *)
 let primals i f =
   let owner = { Construct.owns = (fun x -> owns i x) } in
-  let primal (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
-    if owns i x then dual_primal x else x
-  in
-  Construct.substituting owner { f = primal } f
+  Construct.substituting owner { f = dual_primal } f
 
 (* [guarded i ~entry ~loops f] is [f ()], raising at an operation on one of
    [i]'s duals: a rule receives its arguments' primals, and a value [i] tracks
@@ -851,8 +852,8 @@ let guarded i ~entry ~loops f =
   let claims op = Construct.claims owner op in
   let call : type r. r Construct.t -> (unit -> r) option = function
     | Loop _ when not loops -> Some (fun () -> raise Trips.Not_staged)
-    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _
-    | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
+    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
+    | Lanes _ | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         None
   in
   Construct.install { op = Some { run; claims }; call } f
@@ -1055,6 +1056,11 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
   | Barrier { values; after } ->
       if List.exists (fun (Nx.P x) -> owns i x) (values @ after) then
         Some (fun () -> barrier i values after)
+      else None
+  | Root { x; residual; solve; linear_solve } ->
+      Some (fun () -> root i x residual solve linear_solve)
+  | At_map { p; x; _ } ->
+      if holds_own i p x then Some (fun () -> invalid_arg operator_tracked)
       else None
   | Lane_index _ | Lane_count _ -> None
 
@@ -1467,6 +1473,59 @@ and remat : type p q.
     in
     let slots = Linear.call tape inputs transpose (pick dependent ys) in
     Nx.Ptree.rebuild q ~like:y (duals i dependent ys slots)
+
+(* A root passes on as the root of its functions with [i]'s values read as
+   primals, so [solve] is never differentiated. Its tangent is the [u] with [J u
+   + r = 0], [J] the derivative of [residual] at the result and [r] its tangent
+   there under [i]: the root of that linear residual, passed on, which
+   [linear_solve] solves. A result whose residual [i] does not track has no
+   tangent. *)
+and root : type x.
+    t -> x Nx.Ptree.t -> (x -> x) -> (unit -> x) -> ((x -> x) -> x -> x) -> x =
+ fun i x residual solve linear_solve ->
+  let read f = primals i f in
+  let y =
+    Construct.perform
+      (Root
+         {
+           x;
+           residual = (fun v -> read (fun () -> residual v));
+           solve = (fun () -> read solve);
+           linear_solve = (fun op b -> read (fun () -> linear_solve op b));
+         })
+  in
+  (* A solve may return one of [i]'s values as it is, which no substitution
+     reads. *)
+  let y = Nx.Ptree.map x (fun _ v -> primal i v) y in
+  let r = Total.discarding (fun () -> install i (fun () -> residual y)) in
+  if not (Nx.Ptree.fold x (fun _ v any -> any || owns i v) r false) then y
+  else
+    let r = Nx.Ptree.map x (fun _ v -> tangent i v) r in
+    let j u = Total.discarding (fun () -> derivative i x residual y u) in
+    let residual u =
+      Total.discarding (fun () ->
+          Nx.Ptree.map2 x (fun _ ju r -> Nx.add ju r) (j u) r)
+    in
+    let solve () =
+      Total.discarding (fun () ->
+          read (fun () ->
+              linear_solve j (Nx.Ptree.map x (fun _ r -> Nx.neg r) r)))
+    in
+    let dy = Construct.perform (Root { x; residual; solve; linear_solve }) in
+    Nx.Ptree.map2 x
+      (fun _ y dy -> if Linear.differentiable y then dual i y dy else y)
+      y dy
+
+(* [derivative i x residual y u] is the derivative of [residual] at [y] along
+   [u], [i]'s values read as primals. *)
+and derivative : type x. t -> x Nx.Ptree.t -> (x -> x) -> x -> x -> x =
+ fun i x residual y u ->
+  let j = create i.entry in
+  let ys, _ = Nx.Ptree.flatten x y and us, _ = Nx.Ptree.flatten x u in
+  let flags = List.map (fun (Nx.P y) -> Linear.differentiable y) ys in
+  let at = Nx.Ptree.rebuild x ~like:y (duals j flags ys (pick flags us)) in
+  let r = install j (fun () -> primals i (fun () -> residual at)) in
+  Nx.Ptree.map x (fun _ v -> tangent j v) r
 
 and install : type a. t -> (unit -> a) -> a =
  fun i f ->

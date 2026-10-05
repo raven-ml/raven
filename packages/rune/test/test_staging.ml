@@ -49,8 +49,8 @@ let staged f =
     | Barrier { values; after } ->
         if traced values || traced after then incr late;
         Some (fun () -> values)
-    | Compiled _ | Remat _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _
-    | Add _ | Detach _ ->
+    | Compiled _ | Remat _ | Custom _ | Root _ | At_map _ | Lanes _
+    | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         None
   in
   Construct.install { op = None; call } f

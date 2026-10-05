@@ -6,10 +6,11 @@
 (** rune's constructs, and the one frame that installs their interpreters.
 
     A {e construct} is an operation rune adds to nx's: a loop, a compiled call,
-    a remat, a custom rule, a collective of a map, an addition to a total, a
-    detach. Its performer asks the installations around it with {!perform}; an
-    installation ({!install}) is one application of a transformation, an
-    interpreter of nx's operations and of these constructs.
+    a remat, a custom rule, a root, a collective of a map, a call at a map's
+    level, an addition to a total, a detach. Its performer asks the
+    installations around it with {!perform}; an installation ({!install}) is one
+    application of a transformation, an interpreter of nx's operations and of
+    these constructs.
 
     Every interpreter matches {!type-t} exhaustively, with no wildcard, written
     [match[@warning "@4@8"] c with], so a construct added here is a compile
@@ -20,6 +21,13 @@
 type axis = unit Type.Id.t
 (** The type for names of maps. Each {!Type.Id.make} is a name distinct from
     every other; two are the same name iff their {!Type.Id.uid}s are equal. *)
+
+type map
+(** The type for the identities of map installations: each {!fresh_map} is
+    distinct from every other, whatever the map's name. *)
+
+val fresh_map : unit -> map
+(** [fresh_map ()] is a map identity distinct from every other. *)
 
 type ('a, 'b) total = ('a, 'b) Nx.t Type.Id.t
 (** The type for totals of [('a, 'b) Nx.t] values. Each {!Type.Id.make} is a
@@ -173,6 +181,28 @@ type _ t =
   | Custom : 'q rule -> 'q t
       (** A call of a function with a custom rule. Default: the rule's [value]
           when it has one, and the first component of [rule args] otherwise. *)
+  | Root : {
+      x : 'x Nx.Ptree.t;  (** The structure of the solution. *)
+      residual : 'x -> 'x;
+          (** [residual x] has [x]'s structure, and vanishes at the solution. *)
+      solve : unit -> 'x;  (** [solve ()] is the solution. *)
+      linear_solve : ('x -> 'x) -> 'x -> 'x;
+          (** [linear_solve op b] is a [v] with [op v = b] for a linear [op]. *)
+    }
+      -> 'x t
+      (** A value stated to be a zero of [residual]. Default: [solve ()]. *)
+  | At_map : {
+      map : map;
+      p : 'p Nx.Ptree.t;
+      q : 'q Nx.Ptree.t;
+      f : 'p -> 'q;
+      x : 'p;
+    }
+      -> 'q t
+      (** Each lane's row of [f] applied to [x]'s values batched over [map]:
+          every lane's value of each leaf stacked on a leading axis. [f] is code
+          of the level around [map]; it runs where [map] answers, outside its
+          extent. Default: raises [Invalid_argument]. *)
   | Lanes : axis * ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
       (** Every lane's value of the map named [axis], stacked on a new leading
           axis. Default: [Nx.unsqueeze ~axes:[0] x]. *)

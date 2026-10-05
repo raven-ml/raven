@@ -165,6 +165,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Add `Rune.root`, a value stated to solve an equation. Its derivative is the
+  implicit function theorem's at the value, under every transformation, and
+  the solve that found it is never differentiated, so it may iterate and stop
+  early. `?linear_solve` replaces the default dense solve.
 - Add `Rune.iterate` and `Rune.iterate'`, a loop that applies a step until a
   condition holds and raises after `max` steps. Under `vmap` each lane stops on
   its own; derivatives cover the steps each lane took. It does not compile yet.

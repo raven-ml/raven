@@ -79,6 +79,19 @@ and collect : type a b r.
             in
             receive s;
             y)
+    | Root ({ solve; _ } as r) ->
+        (* Only derivatives run the other functions, under [discarding]. *)
+        let sums = ref [] in
+        let solve () =
+          let x, s = collect t ~zero:(Nx.zeros_like zero) solve in
+          sums := s :: !sums;
+          x
+        in
+        Some
+          (fun () ->
+            let x = Construct.perform (Root { r with solve }) in
+            List.iter receive !sums;
+            x)
     | Remat { p; q; f; args; recomputed } ->
         let f args = collect t ~zero:(Nx.zeros_like zero) (fun () -> f args) in
         let q = Nx.Ptree.pair q Nx.Ptree.tensor in
@@ -89,7 +102,8 @@ and collect : type a b r.
             in
             receive s;
             y)
-    | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
+    | Barrier _ | Custom _ | At_map _ | Lanes _ | Lane_index _ | Lane_count _
+    | Detach _ ->
         None
   in
   let r = Construct.install { op = None; call = answer } f in
@@ -117,11 +131,19 @@ let rec discarding : type r. (unit -> r) -> r =
     | Remat ({ f; _ } as r) ->
         let f args = discarding (fun () -> f args) in
         Some (fun () -> Construct.perform (Remat { r with f }))
+    | Root r ->
+        let residual x = discarding (fun () -> r.residual x)
+        and solve () = discarding r.solve
+        and linear_solve op b = discarding (fun () -> r.linear_solve op b) in
+        Some
+          (fun () ->
+            Construct.perform (Root { r with residual; solve; linear_solve }))
     | Compiled ({ f; compiler; _ } as c) ->
         let f args = discarding (fun () -> f args) in
         let compiler = compiler.derive Discarding in
         Some (fun () -> Construct.perform (Compiled { c with f; compiler }))
-    | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
+    | Barrier _ | Custom _ | At_map _ | Lanes _ | Lane_index _ | Lane_count _
+    | Detach _ ->
         None
   in
   Construct.install { op = None; call = answer } f

@@ -179,72 +179,6 @@ let run : type r. tape -> r Nx.Op.t -> r =
   | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Check _ ->
       nonlinear t op
 
-(* Gathering across the lanes of the map named [axis] is linear: its transpose
-   is the calling lane's row of the sum of every lane's cotangent, a
-   reduce-scatter. *)
-let lanes t axis x =
-  let n = Construct.perform (Lane_count axis) in
-  let shape = Nx.shape x in
-  let like =
-    Nx.broadcast_to
-      (Array.append [| n |] shape)
-      (Nx.unsqueeze ~axes:[ 0 ] (Nx.zeros_like x))
-  in
-  let pullback = function
-    | [ Nx.P ct ] ->
-        let ct = Nx.unpack (Nx.dtype x) (Nx.P ct) in
-        let summed =
-          Nx.sum ~axes:[ 0 ] (Construct.perform (Lanes (axis, ct)))
-        in
-        let index = Construct.perform (Lane_index (Some axis)) in
-        [
-          Nx.P
-            (Nx.reshape shape
-               (Nx.take ~axis:0
-                  ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 index))
-                  summed));
-        ]
-    | _ -> assert false (* One output. *)
-  in
-  match call t [ Nx.P x ] pullback [ Nx.P like ] with
-  | [ y ] -> Nx.unpack (Nx.dtype x) y
-  | _ -> assert false (* One output. *)
-
-let rec answer : type r. tape -> r Construct.t -> (unit -> r) option =
- fun t c ->
-  match[@warning "@4@8"] c with
-  | Detach x -> if owns t x then Some (fun () -> x) else None
-  | Add (_, v) ->
-      if owns t v then
-        Some
-          (fun () ->
-            invalid_arg
-              "Rune.Total.add: a custom_jvp tangent map adds a tangent under \
-               reverse mode; a total takes values")
-      else None
-  | Lanes (axis, x) ->
-      if owns t x then Some (fun () -> lanes t axis x) else None
-  | Compiled { p; f; args; _ } ->
-      (* A tangent reaches a compiled call only through a custom_jvp tangent
-         map, whose contract makes it linear in its tangents: the call runs
-         under the tape, which records its operations. *)
-      if Nx.Ptree.fold p (fun _ x any -> any || owns t x) args false then
-        Some (fun () -> install t (fun () -> f args))
-      else None
-  | Loop _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
-      None
-
-and install : type a. tape -> (unit -> a) -> a =
- fun t f ->
-  let owner = { Construct.owns = (fun x -> owns t x) } in
-  let claims op = Construct.claims owner op in
-  Construct.install
-    {
-      op = Some { run = (fun op -> run t op); claims };
-      call = (fun c -> answer t c);
-    }
-    f
-
 (* Transposing *)
 
 type cotangents = { tape : tape; cts : Nx.packed option array }
@@ -602,3 +536,184 @@ let transpose cts =
         transpose_call cts i inputs like pullback
     | Input | Part -> ()
   done
+
+(* A slot a root's residual reads, and the input of the root's own tape that
+   stands for it. *)
+type read = Read : ('a, 'b) Nx.t * ('a, 'b) Nx.t -> read
+
+let rec substitute : type a b. read list -> (a, b) Nx.t -> (a, b) Nx.t option =
+ fun l v ->
+  match l with
+  | Read (s, w) :: rest -> (
+      match Nx_dtype.equal_witness (Nx.dtype s) (Nx.dtype v) with
+      | Some Type.Equal when s == v -> Some w
+      | _ -> substitute rest v)
+  | [] -> None
+
+(* Gathering across the lanes of the map named [axis] is linear: its transpose
+   is the calling lane's row of the sum of every lane's cotangent, a
+   reduce-scatter. *)
+let lanes t axis x =
+  let n = Construct.perform (Lane_count axis) in
+  let shape = Nx.shape x in
+  let like =
+    Nx.broadcast_to
+      (Array.append [| n |] shape)
+      (Nx.unsqueeze ~axes:[ 0 ] (Nx.zeros_like x))
+  in
+  let pullback = function
+    | [ Nx.P ct ] ->
+        let ct = Nx.unpack (Nx.dtype x) (Nx.P ct) in
+        let summed =
+          Nx.sum ~axes:[ 0 ] (Construct.perform (Lanes (axis, ct)))
+        in
+        let index = Construct.perform (Lane_index (Some axis)) in
+        [
+          Nx.P
+            (Nx.reshape shape
+               (Nx.take ~axis:0
+                  ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 index))
+                  summed));
+        ]
+    | _ -> assert false (* One output. *)
+  in
+  match call t [ Nx.P x ] pullback [ Nx.P like ] with
+  | [ y ] -> Nx.unpack (Nx.dtype x) y
+  | _ -> assert false (* One output. *)
+
+let rec answer : type r. tape -> r Construct.t -> (unit -> r) option =
+ fun t c ->
+  match[@warning "@4@8"] c with
+  | Detach x -> if owns t x then Some (fun () -> x) else None
+  | Add (_, v) ->
+      if owns t v then
+        Some
+          (fun () ->
+            invalid_arg
+              "Rune.Total.add: a custom_jvp tangent map adds a tangent under \
+               reverse mode; a total takes values")
+      else None
+  | Lanes (axis, x) ->
+      if owns t x then Some (fun () -> lanes t axis x) else None
+  | Compiled { p; f; args; _ } ->
+      (* A tangent reaches a compiled call only through a custom_jvp tangent
+         map, whose contract makes it linear in its tangents: the call runs
+         under the tape, which records its operations. *)
+      if Nx.Ptree.fold p (fun _ x any -> any || owns t x) args false then
+        Some (fun () -> install t (fun () -> f args))
+      else None
+  | Root { x; residual; solve; linear_solve } ->
+      Some (fun () -> root t x residual solve linear_solve)
+  | At_map { p; x; _ } ->
+      if Nx.Ptree.fold p (fun _ v any -> any || owns t v) x false then
+        Some
+          (fun () ->
+            invalid_arg
+              "Rune.root: linear_solve's operator cannot be differentiated \
+               inside linear_solve")
+      else None
+  | Loop _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
+      None
+
+(* A root whose functions read slots of [t] is linear in them: its solve runs
+   with the slots read as zeros, which gives the solution's metadata, and when
+   its residual reads a slot there, the result is the slot of a linear call from
+   the slots the residual reads. The residual's derivative in the solution and
+   in those slots is recorded at the call on a tape of its own, each slot read
+   through an input of that tape. The transpose solves the root of the
+   derivative's transpose in the solution for the result's cotangents, and gives
+   each slot minus that root carried back through the residual. *)
+and root : type x.
+    tape -> x Nx.Ptree.t -> (x -> x) -> (unit -> x) -> ((x -> x) -> x -> x) -> x
+    =
+ fun t x residual solve linear_solve ->
+  let owner = { Construct.owns = (fun v -> owns t v) } in
+  let reading s g = Construct.substituting owner s g in
+  let zeros f = reading { f = (fun v -> Nx.zeros_like v) } f in
+  let u0 =
+    Construct.perform
+      (Root
+         {
+           x;
+           residual = (fun u -> zeros (fun () -> residual u));
+           solve = (fun () -> zeros solve);
+           linear_solve = (fun op b -> zeros (fun () -> linear_solve op b));
+         })
+  in
+  (* A solve may return one of [t]'s slots as it is, which no substitution
+     reads. *)
+  let u0 =
+    Nx.Ptree.map x (fun _ v -> if owns t v then Nx.zeros_like v else v) u0
+  in
+  let reads = ref false in
+  let read (type a b) (v : (a, b) Nx.t) : (a, b) Nx.t =
+    reads := true;
+    Nx.zeros_like v
+  in
+  Total.discarding (fun () ->
+      ignore (reading { f = read } (fun () -> residual u0)));
+  if not !reads then u0
+  else
+    let leaves, _ = Nx.Ptree.flatten x u0 in
+    let rebuild l = Nx.Ptree.rebuild x ~like:u0 l in
+    let flatten v = fst (Nx.Ptree.flatten x v) in
+    let own = create t.entry in
+    let us = List.map (fun (Nx.P u) -> Nx.P (input own u)) leaves in
+    let read = ref [] in
+    let input_for (type a b) (v : (a, b) Nx.t) : (a, b) Nx.t =
+      match substitute !read v with
+      | Some w -> w
+      | None ->
+          let w = input own v in
+          read := Read (v, w) :: !read;
+          w
+    in
+    let ju =
+      Total.discarding (fun () ->
+          flatten
+            (install own (fun () ->
+                 reading { f = input_for } (fun () -> residual (rebuild us)))))
+    in
+    let read = List.rev !read in
+    (* [transposed w] is the cotangent of each input of [own] once [w] reaches
+       the residual's result. *)
+    let transposed w =
+      let cts = cotangents own in
+      List.iter2
+        (fun (Nx.P y) (Nx.P c) -> add cts y (Nx.unpack (Nx.dtype y) (Nx.P c)))
+        ju (flatten w);
+      transpose cts;
+      fun (Nx.P u) ->
+        match cotangent cts u with
+        | Some g -> Nx.P g
+        | None -> Nx.P (Nx.zeros_like u)
+    in
+    let jt w = rebuild (List.map (transposed w) us) in
+    let pullback cts =
+      let ct = rebuild cts in
+      let residual w =
+        Total.discarding (fun () ->
+            Nx.Ptree.map2 x (fun _ a b -> Nx.sub a b) (jt w) ct)
+      in
+      let solve () = Total.discarding (fun () -> linear_solve jt ct) in
+      let w = Construct.perform (Root { x; residual; solve; linear_solve }) in
+      let cotangent = transposed w in
+      List.map
+        (fun (Read (_, s)) ->
+          let (Nx.P g) = cotangent (Nx.P s) in
+          Nx.P (Nx.neg g))
+        read
+    in
+    let slots = List.map (fun (Read (v, _)) -> Nx.P v) read in
+    rebuild (call t slots pullback leaves)
+
+and install : type a. tape -> (unit -> a) -> a =
+ fun t f ->
+  let owner = { Construct.owns = (fun x -> owns t x) } in
+  let claims op = Construct.claims owner op in
+  Construct.install
+    {
+      op = Some { run = (fun op -> run t op); claims };
+      call = (fun c -> answer t c);
+    }
+    f

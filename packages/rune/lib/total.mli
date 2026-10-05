@@ -9,7 +9,8 @@
     away from where it is written, a staged loop's step, runs under a nested
     scope whose sum leaves as one more carry leaf, which the scope adds once the
     loop returns; a loop that nothing stages folds where it is written, inside
-    the scope. *)
+    the scope. A root's solve, which a transformation may run away from where it
+    is written, runs under a nested scope too. *)
 
 val collect :
   ('a, 'b) Construct.total ->

@@ -42,6 +42,11 @@ val install : t -> (unit -> 'a) -> 'a
     it captures are [m]'s again; the gradient of a custom call's argument the
     lanes share is the sum over the lanes. A loop until a stop the lanes do not
     share runs masked: a stopped lane holds its carry, runs the step at a
-    running lane's point, and its additions are dropped.
+    running lane's point, and its additions are dropped. A root passes on as the
+    root of its functions mapped; its linear solve applies the operator it
+    receives at the map's level, and its residual may not gather [m]'s lanes. A
+    call at a map's level ([At_map]) is answered by that map, or a held map
+    inside it, and by a map between for its own lanes, mapping the function over
+    its axis.
 
     Raises [Invalid_argument], at the operation, for a read of a lane. *)

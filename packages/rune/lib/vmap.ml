@@ -10,7 +10,7 @@ type t = {
   entry : string;
   axis : Construct.axis option;
   size : int;
-  id : unit ref;  (** The installation's identity, which its lanes name. *)
+  id : Construct.map;  (** The installation's identity, which its lanes name. *)
   held : held option;
       (** For the step of a loop whose lanes stop apart, how its stopped lanes
           run. *)
@@ -29,7 +29,8 @@ and held = {
 
 and gathered = Gathered : ('a, 'b) Nx.t * ('a, 'b) Nx.t -> gathered
 
-let create ?axis entry size = { entry; axis; size; id = ref (); held = None }
+let create ?axis entry size =
+  { entry; axis; size; id = Construct.fresh_map (); held = None }
 
 type (_, _) Repr.node +=
   | Lane : { map : t; batched : ('a, 'b) Nx.t } -> ('a, 'b) Repr.node
@@ -42,17 +43,17 @@ let lane m x =
     (Array.sub s 1 (Array.length s - 1))
     (Lane { map = m; batched = x })
 
-(* [adopts m map] is [true] iff [m] runs a held step inside [map]. *)
-let rec adopts m map =
+(* [adopts m id] is [true] iff [m] runs a held step inside the map [id]. *)
+let rec adopts m id =
   match m.held with
-  | Some h -> h.parent.id == map.id || adopts h.parent map
+  | Some h -> h.parent.id == id || adopts h.parent id
   | None -> false
 
 let owns m x =
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
-      | Lane { map; _ } -> map.id == m.id || adopts m map
+      | Lane { map; _ } -> map.id == m.id || adopts m map.id
       | _ -> false)
   | Host _ | Placed _ -> false
 
@@ -74,7 +75,7 @@ let rec physical : type a b. t -> (a, b) Nx.t -> (a, b) Nx.t =
   | Traced tr -> (
       match Repr.Traced.node tr with
       | Lane { map; batched } when map.id == m.id -> batched
-      | Lane { map; _ } when adopts m map -> adopted m x
+      | Lane { map; _ } when adopts m map.id -> adopted m x
       | _ -> x)
   | Host _ | Placed _ -> x
 
@@ -352,13 +353,36 @@ let deferring_additions f =
         Some
           (fun () ->
             pending := (fun () -> Construct.perform (Add (t, v))) :: !pending)
-    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _
-    | Lane_index _ | Lane_count _ | Detach _ ->
+    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
+    | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
         None
   in
   let y = Construct.install { op = None; call } f in
   List.iter (fun add -> add ()) (List.rev !pending);
   y
+
+let all_leaves s x = List.map (fun _ -> true) (fst (Nx.Ptree.flatten s x))
+
+(* [swapped s x] is [x] with the first two axes of each tensor swapped. *)
+let swapped s x = Nx.Ptree.map s (fun _ x -> Nx.swapaxes 0 1 x) x
+
+(* [separate m f] is [f ()] with a gathering across [m]'s lanes refused: a
+   root's residual states one system per lane. *)
+let separate m f =
+  let call : type r. r Construct.t -> (unit -> r) option =
+   fun c ->
+    match[@warning "@4@8"] c with
+    | Lanes (axis, _) when named m axis ->
+        Some
+          (fun () ->
+            invalid_arg
+              "Rune.root: the residual reads other lanes of the map, so the \
+               lanes' systems are not separate")
+    | Lanes _ | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _
+    | At_map _ | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
+        None
+  in
+  Construct.install { op = None; call } f
 
 (* [folded r] is the loop [r] performed outward, or folded here, its additions
    deferred, when no stager stages it. *)
@@ -452,6 +476,45 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
           in
           let outs = List.map (fun _ -> true) (fst (Nx.Ptree.flatten q y)) in
           relanes m q outs y)
+  | Root { x; residual; solve; linear_solve } ->
+      (* Each lane solves its own system: the root of the mapped functions,
+         every leaf batched. [linear_solve] runs at lane level, and applies the
+         operator it receives at the map's level ([At_map]). *)
+      Some
+        (fun () ->
+          let lanes v = relanes m x (all_leaves x v) v in
+          let mapped f = all_batched m x (install m f) in
+          let residual v =
+            mapped (fun () -> separate m (fun () -> residual (lanes v)))
+          in
+          let solve () = mapped solve in
+          let linear_solve op b =
+            let op v =
+              Construct.perform
+                (At_map { map = m.id; p = x; q = x; f = op; x = v })
+            in
+            mapped (fun () -> linear_solve op (lanes b))
+          in
+          lanes (Construct.perform (Root { x; residual; solve; linear_solve })))
+  | At_map ({ map; p; q; f; x } as a) ->
+      if m.id == map || adopts m map then
+        (* The map's own level: [f] runs on every lane's values at once, here,
+           outside the map's extent. *)
+        Some
+          (fun () ->
+            let y = f (all_batched m p x) in
+            relanes m q (all_leaves q y) y)
+      else if List.mem true (lanes_of m p x) then
+        (* A map between: its lanes become an axis behind the outer map's, which
+           [f] is mapped over. *)
+        Some
+          (fun () ->
+            let f b = swapped q (mapped_over m.size p q f (swapped p b)) in
+            let y =
+              Construct.perform (At_map { a with f; x = all_batched m p x })
+            in
+            relanes m q (all_leaves q y) y)
+      else None
   | Loop ({ req_trips = Rows { xs; reverse }; _ } as r) ->
       Some (fun () -> scan m r xs reverse)
   | Loop ({ req_trips = Until { until; max; failure }; _ } as r) ->
@@ -580,7 +643,7 @@ and masked m r ~until ~max ~failure u =
     let first = Nx.argmax ~axis:0 (Nx.cast Nx.int32 running) in
     let donors = Nx.where stopped (Nx.broadcast_to [| m.size |] first) own in
     let held = { parent = m; donors; running; gathered = [] } in
-    let m' = { m with id = ref (); held = Some held } in
+    let m' = { m with id = Construct.fresh_map (); held = Some held } in
     let from_donor (Nx.P x) = Nx.P (Nx.take ~axis:0 ~indices:donors x) in
     let c', y =
       install m' (fun () ->
@@ -657,6 +720,14 @@ and custom : type q. t -> q Construct.rule -> q =
           (Custom (Vjp_rule { p; q; rule; args = physicals m p args }))
       in
       Nx.Ptree.map q (fun _ y -> lane m y) y
+
+(* [mapped_over n p q f b] is [f] mapped over the leading axis, of length [n],
+   of [b]'s tensors, under a fresh anonymous map. *)
+and mapped_over : type p q.
+    int -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p -> q =
+ fun n p q f b ->
+  let m = create "Rune.root" n in
+  all_batched m q (install m (fun () -> f (relanes m p (all_leaves p b) b)))
 
 and install : type a. t -> (unit -> a) -> a =
  fun m f ->

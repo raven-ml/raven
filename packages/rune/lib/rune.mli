@@ -650,6 +650,54 @@ val iterate :
     ["Rune.iterate: the root: shape [3] in the carry the step returned, [2] in
      the carry it received"]. *)
 
+val root :
+  ?linear_solve:(('x -> 'x) -> 'x -> 'x) ->
+  'x Nx.Ptree.t ->
+  residual:('x -> 'x) ->
+  (unit -> 'x) ->
+  'x
+(** [root x ~residual solve] is [solve ()], stated to be a zero of [residual]: a
+    value of structure [x] where [residual] vanishes. The system is square:
+    [residual]'s result has [x]'s structure, dtypes and shapes.
+
+    {[
+    (* x such that a x = b, found by conjugate gradients *)
+    let solve_spd a b =
+      Rune.root Nx.Ptree.tensor ~linear_solve:cg
+        ~residual:(fun x -> Nx.sub (Nx.matmul a x) b)
+        (fun () -> cg (Nx.matmul a) b)
+    ]}
+
+    Under differentiation the result's tangent is the [u] with [J u + r = 0],
+    [J] the derivative of [residual] at the result and [r] the tangent of
+    [residual] at the result held fixed. Every value a differentiation tracks
+    that [residual] reads, through its argument or its closure, contributes to
+    [r]. The derivative is taken at the returned point whether or not [residual]
+    vanishes there. [solve] is never differentiated: inside it each
+    differentiation reads the values it tracks as their primals, so [solve] may
+    iterate, stop early and branch.
+
+    [linear_solve op b] returns a [v] with [op v = b] for a linear [op]. A
+    derivative calls it with [J], or in reverse mode with [J]'s transpose.
+    Without it, a derivative builds [J]'s matrix, one product per column, and
+    solves it with {!Nx.solve}, which suits small systems.
+
+    {!val-vmap} maps [solve], [residual] and [linear_solve], the default
+    included, so each lane solves its own system: the operator [linear_solve]
+    receives gives each lane its own product, whatever maps [linear_solve]
+    opens. Additions to a {!Total} that [solve] makes count once; those of
+    [residual] and [linear_solve], which only derivatives run, are dropped.
+
+    Raises [Invalid_argument], when a derivative runs [residual], if its result
+    differs from the solution, naming the first path where they differ, as in
+    ["Rune.root: 0: shape [3] in the residual's result, [4] in the solution"];
+    from the default linear solve, if [x]'s leaves differ in dtype; under
+    {!val-vmap}, if [residual] reads {!lanes} of the root's map, which joins the
+    lanes' systems, or if [linear_solve] applies its operator after it returned
+    or inside a {!val-jit} it calls, or differentiates it. Under a derivative
+    with the default linear solve, a singular [J] at the result raises
+    {!Nx.Linalg_error} with kind [`Singular]. *)
+
 (** {1:jit Compilation} *)
 
 exception Jit_error of string

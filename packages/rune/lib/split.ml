@@ -72,6 +72,8 @@ let made : type r. r Construct.t -> r -> Nx.packed list =
   | Barrier _ -> r
   | Custom (Jvp_rule { q; _ }) -> fst (Ptree.flatten q r)
   | Custom (Vjp_rule { q; _ }) -> fst (Ptree.flatten q r)
+  | Root { x; _ } -> fst (Ptree.flatten x r)
+  | At_map { q; _ } -> fst (Ptree.flatten q r)
   | Lanes _ -> one r
   | Lane_index _ -> one r
   | Detach _ -> one r
@@ -130,8 +132,8 @@ let numbering f =
         let r : r =
           match[@warning "@4@8"] c with
           | Loop q -> Construct.loop q
-          | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _
-          | Lane_count _ | Add _ | Detach _ ->
+          | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
+          | Lanes _ | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
               Construct.perform c
         in
         note (made c r);
@@ -182,6 +184,8 @@ let rec traced :
     | Remat _ -> default ()
     | Barrier _ -> default ()
     | Custom _ -> default ()
+    | Root _ -> default ()
+    | At_map _ -> None
     | Detach _ -> default ()
   in
   Construct.install { op = None; call } (fun () -> Staged.install s f)

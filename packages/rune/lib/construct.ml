@@ -4,6 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 type axis = unit Type.Id.t
+type map = unit ref
+
+let fresh_map () = ref ()
+
 type ('a, 'b) total = ('a, 'b) Nx.t Type.Id.t
 
 type 'q rule =
@@ -118,6 +122,21 @@ type _ t =
     }
       -> Nx.packed list t
   | Custom : 'q rule -> 'q t
+  | Root : {
+      x : 'x Nx.Ptree.t;
+      residual : 'x -> 'x;
+      solve : unit -> 'x;
+      linear_solve : ('x -> 'x) -> 'x -> 'x;
+    }
+      -> 'x t
+  | At_map : {
+      map : map;
+      p : 'p Nx.Ptree.t;
+      q : 'q Nx.Ptree.t;
+      f : 'p -> 'q;
+      x : 'p;
+    }
+      -> 'q t
   | Lanes : axis * ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
   | Lane_index : axis option -> (int32, Nx.int32_elt) Nx.t t
   | Lane_count : axis -> int t
@@ -182,6 +201,11 @@ let default : type r. r t -> r = function
   | Custom (Jvp_rule { value = Some y; _ }) -> y
   | Custom (Jvp_rule { rule; args; value = None; _ }) -> fst (rule args)
   | Custom (Vjp_rule { rule; args; _ }) -> fst (rule args)
+  | Root { solve; _ } -> solve ()
+  | At_map _ ->
+      invalid_arg
+        "Rune.root: linear_solve's operator was applied after linear_solve \
+         returned, or inside a Rune.jit it called"
   | Lanes (_, x) -> Nx.unsqueeze ~axes:[ 0 ] x
   | Lane_index _ -> Nx.scalar Nx.int32 0l
   | Lane_count _ -> 1
@@ -236,6 +260,7 @@ let install i f =
   Effect.Deep.match_with f () { retc = Fun.id; exnc; effc }
 
 let substituting owner (s : Nx.Op.mapper) f =
+  let s : Nx.Op.mapper = { f = (fun x -> if owner.owns x then s.f x else x) } in
   let leaf (Nx.P x) = Nx.P (s.f x) in
   let leaves = List.map leaf in
   let rec reinstall : 'a. (unit -> 'a) -> 'a =
@@ -304,6 +329,19 @@ let substituting owner (s : Nx.Op.mapper) f =
           (y, fun ct -> reinstall (fun () -> pullback ct))
         in
         again (Custom (Vjp_rule { k with args = args k.p k.args; rule }))
+    | Root k ->
+        let residual x = reinstall (fun () -> k.residual x)
+        and solve () = reinstall k.solve
+        and linear_solve op b = reinstall (fun () -> k.linear_solve op b) in
+        again (Root { k with residual; solve; linear_solve })
+    | At_map k ->
+        again
+          (At_map
+             {
+               k with
+               x = args k.p k.x;
+               f = (fun a -> reinstall (fun () -> k.f a));
+             })
     | Lanes (axis, x) -> again (Lanes (axis, s.f x))
     | Detach x -> again (Detach (s.f x))
     | Add (t, v) -> again (Add (t, s.f v))
