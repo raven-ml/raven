@@ -90,7 +90,7 @@ type number =
   | Floating : ('a, 'b) Nx.dtype -> number
 
 let number : type a. a Type.t -> number option = function
-  | Bool -> Some (Integer (Nx.bool, 0., 2.))
+  | Bool -> Some (Integer (Nx.bit, 0., 2.))
   | Int8 -> Some (Integer (Nx.int8, -0x1p7, 0x1p7))
   | Int16 -> Some (Integer (Nx.int16, -0x1p15, 0x1p15))
   | Int32 -> Some (Integer (Nx.int32, -0x1p31, 0x1p31))

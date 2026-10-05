@@ -166,9 +166,8 @@ external find :
 [@@noalloc]
 
 let matches ~by ?mask p r =
-  let hits =
-    A.create Bigarray.int8_unsigned Bigarray.c_layout (Nx_ragged.length r)
-  in
+  let n = Nx_ragged.length r in
+  let hits = A.create Bigarray.int8_unsigned Bigarray.c_layout ((n + 7) / 8) in
   A.fill hits 0;
   let rec pieces v i stop = function
     | [] -> true
@@ -185,9 +184,12 @@ let matches ~by ?mask p r =
         j >= first && at v j s
     | Pieces ss -> pieces v first stop ss
   in
-  rows ~by ?mask r (fun i v first stop ->
-      if matches v first stop then A.unsafe_set hits i 1);
-  Nx.cast Nx.bool (tensor hits)
+  let hit i =
+    A.unsafe_set hits (i lsr 3)
+      (A.unsafe_get hits (i lsr 3) lor (1 lsl (i land 7)))
+  in
+  rows ~by ?mask r (fun i v first stop -> if matches v first stop then hit i);
+  Nx.shrink [| (0, n) |] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor hits)))
 
 (* Literals
 

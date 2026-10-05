@@ -54,7 +54,7 @@ type pattern =
   | Suffix of string  (** At its end. *)
   | Pieces of string list  (** Anywhere, in order, without overlap. *)
 
-val matches : by:string -> ?mask:Nx.bit_t -> pattern -> bytes -> Nx.bool_t
+val matches : by:string -> ?mask:Nx.bit_t -> pattern -> bytes -> Nx.bit_t
 (** [matches ~by p b] is [true] where [p] matches the row of [b], and [false]
     outside [mask]. *)
 

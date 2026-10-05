@@ -65,7 +65,7 @@ let cells c =
       let dtype = Format.asprintf "%a" Nx.pp_dtype (Nx.dtype x) in
       let row =
         match dtype with
-        | "bool" ->
+        | "bool" | "bit" ->
             let a = Nx.to_array (Nx.cast Nx.uint8 x) in
             fun i -> if a.(i) = 1 then "true" else "false"
         | "uint64" ->
@@ -599,7 +599,7 @@ let values =
         (Format.asprintf "%a" (fun ppf (Type.Any t) -> Type.pp ppf t) ty))
     "values"
     [
-      (any Type.bool, "true\nfalse\n", "bool [true; false]");
+      (any Type.bool, "true\nfalse\n", "bit [true; false]");
       (any Type.int8, "-128\n127\n+5\n-0\n", "int8 [-128; 127; 5; 0]");
       (any Type.int16, "-32768\n32767\n", "int16 [-32768; 32767]");
       ( any Type.int32,

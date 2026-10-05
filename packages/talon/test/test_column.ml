@@ -206,7 +206,32 @@ let storage =
           equal (array int32) [| 1l; 0l |]
             (tensor Nx.int32 (Type.categorical [| "x"; "y" |]) [| "y"; "x" |]);
           equal (array bool) [| true; false |]
-            (tensor Nx.bool Type.bool [| true; false |]));
+            (tensor Nx.bit Type.bool [| true; false |]));
+      test "to_tensor refuses to read a bool column as bool, its storage is bit"
+        (fun () ->
+          raises
+            (Invalid_argument
+               "Column.to_tensor: bool is stored as bit, not bool") (fun () ->
+              ignore (Column.to_tensor Nx.bool (Column.v Type.bool [| true |]))));
+      test "of_tensor of a 1-D bit tensor is a bool column over it" (fun () ->
+          let x = Nx.create Nx.bit [| 3 |] [| true; false; true |] in
+          let c = Column.of_tensor x in
+          equal any_w (Any Type.bool) (Column.type_ c);
+          satisfies ~claim:"the same tensor" pass
+            (fun y -> y == x)
+            (Column.to_tensor Nx.bit c));
+      prop "of_tensor of a 1-D bool tensor is the bool column of its values"
+        (Gen.pair (Gen.array Gen.bool) (Gen.int_range 0 9))
+        (fun (bs, k) ->
+          let n = Array.length bs in
+          let k = Int.min k n in
+          cover "a view inside a byte" (k mod 8 <> 0 && k < n);
+          let x = Nx.shrink [| (k, n) |] (Nx.create Nx.bool [| n |] bs) in
+          let c = Column.of_tensor x in
+          equal any_w (Any Type.bool) (Column.type_ c);
+          equal (array bool)
+            (Array.sub bs k (n - k))
+            (Nx.to_array (Column.to_tensor Nx.bit c)));
       test "to_tensor of a tensor column has the cells as rows" (fun () ->
           let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let c = Column.of_tensor x in
@@ -801,7 +826,7 @@ let bits_equal a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
 let dtypes =
   let int lo hi = Gen.int_range lo hi in
   [
-    Dtype ("bool", Nx.bool, Bool.equal, Gen.bool);
+    Dtype ("bit", Nx.bit, Bool.equal, Gen.bool);
     Dtype ("int8", Nx.int8, Int.equal, int (-128) 127);
     Dtype ("int16", Nx.int16, Int.equal, int (-32768) 32767);
     Dtype ("int32", Nx.int32, Int32.equal, Gen.int32);
@@ -879,6 +904,18 @@ let ragged =
                (Column.ragged dt) r))
        dtypes
     @ [
+        prop
+          "ragged bit of of_ragged of bool values is the ragged array, packed"
+          (Gen.with_pp
+             (fun ppf r -> Format.fprintf ppf "%d rows" (Nx_ragged.length r))
+             (ragged_gen Nx.bool Gen.bool))
+          (fun r ->
+            let packed =
+              Nx_ragged.v ~offsets:(Nx_ragged.offsets r)
+                (Nx.cast Nx.bit (Nx_ragged.values r))
+            in
+            equal (ragged_w Bool.equal) packed
+              (Column.ragged Nx.bit (Column.of_ragged r)));
         test "of_ragged is a list of the dtype's type, sharing the buffers"
           (fun () ->
             let r =

@@ -366,8 +366,7 @@ let convert (type a) ~row_group (l : Leaf.t) (ty : a Type.t) t =
   match (l.physical, l.annotation, ty) with
   | _, Some (Decimal { scale; _ }), Float64 -> floats ~row_group l scale t
   | (Byte_array | Fixed_len_byte_array), _, Int64 -> unscaled ~row_group t
-  | Boolean, _, _ ->
-      Values (P (Nx.cast Nx.bool (tensor (A1.sub t.bytes 0 t.n))))
+  | Boolean, _, _ -> Values (P (tensor (A1.sub t.bytes 0 t.n)))
   | Int32, _, Uint32 -> values Nx.uint32
   | Int32, _, (Clock _ | Int64) ->
       Values (P (Nx.cast Nx.int64 (fixed t Nx.int32)))
@@ -435,8 +434,9 @@ let spread s ~valid ~rows ~present =
             data = tensor data;
           }
 
-(* [narrow ~row_group ty c] is [c], whose values are int32s, in the storage of
-   [ty] when [ty] is an integer type narrower than int32. *)
+(* [narrow ~row_group ty c] is [c] in the storage of [ty]: int32s narrowed to an
+   integer type narrower than int32, and the bytes of booleans packed into
+   bits. *)
 let narrow (type a) ~row_group (ty : a Type.t) c =
   let into dt lo hi =
     match c with
@@ -457,6 +457,11 @@ let narrow (type a) ~row_group (ty : a Type.t) c =
   | Int16 -> into Nx.int16 (-32768l) 32767l
   | Uint8 -> into Nx.uint8 0l 255l
   | Uint16 -> into Nx.uint16 0l 65535l
+  | Bool -> (
+      match c with
+      | Varsize _ -> assert false
+      | Fixed { valid; values = P v } ->
+          Fixed { valid; values = P (Nx.cast Nx.bit v) })
   | _ -> c
 
 (* Reading *)

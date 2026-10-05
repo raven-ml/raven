@@ -31,7 +31,7 @@ let main () =
   let x =
     Talon.to_tensor Nx.float32 [ "distance"; "carrier_delay"; "month" ] t
   in
-  let y = Column.to_tensor Nx.bool (Talon.column t "late") in
+  let y = Column.to_tensor Nx.bit (Talon.column t "late") in
   Format.printf "x: %a@.y: %a@." Nx.pp_shape (Nx.shape x) Nx.pp_shape
     (Nx.shape y);
   Ok ()

@@ -133,15 +133,21 @@ let equality =
 
 (* Canonical columns *)
 
+(* Elements narrower than a byte are read from their storage, the bits past
+   their last element included. *)
 let hex (type a b) (x : (a, b) Nx.t) =
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x))) in
   let bytes =
     match Nx.dtype x with
-    | Bool -> Nx.cast Nx.uint8 x
-    | _ -> Nx.flatten (Nx.bitcast Nx.uint8 x)
+    | Bool -> Nx.to_array (Nx.flatten (Nx.cast Nx.uint8 x))
+    | _ when bits < 8 ->
+        let raw =
+          Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer x)
+        in
+        Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i})
+    | _ -> Nx.to_array (Nx.flatten (Nx.bitcast Nx.uint8 x))
   in
-  String.concat ""
-    (List.map (Printf.sprintf "%02x")
-       (Array.to_list (Nx.to_array (Nx.flatten bytes))))
+  String.concat "" (List.map (Printf.sprintf "%02x") (Array.to_list bytes))
 
 (* The bytes of every buffer of [c]'s layout. *)
 let rec buffers c =
@@ -188,7 +194,7 @@ let rec view c =
     | Fixed { validity; values = P x } ->
         let ends i _ = if i = 0 then (1, 1) else (0, 0) in
         let padded =
-          Nx.pad (Array.mapi ends (Nx.shape x)) (Nx_dtype.zero (Nx.dtype x)) x
+          Nx.pad (Array.mapi ends (Nx.shape x)) (Nx_dtype.one (Nx.dtype x)) x
         in
         let inner i d = if i = 0 then (1, d - 1) else (0, d) in
         let values =
@@ -219,9 +225,39 @@ let canonical (G.Sample (ty, vs), t) =
   equal (list string) (buffers c) (buffers (column t "a"));
   equal table_w (one c) (one (view c))
 
+(* Rows cut from the front of a larger tensor of elements narrower than a byte
+   share their last byte with the rows after them. *)
+let front_cuts =
+  let first n x =
+    Nx.shrink
+      (Array.mapi (fun i d -> (0, if i = 0 then n else d)) (Nx.shape x))
+      x
+  in
+  (* [x] is copied into storage of its own: a filled tensor is a broadcast
+     view. *)
+  let cut name x n =
+    let rows = first n (Nx.copy x) in
+    (name, Column.of_tensor rows, Column.of_tensor (Nx.copy rows))
+  in
+  [
+    cut "bool values" (Nx.ones Nx.bit [| 8 |]) 3;
+    cut "bit cells" (Nx.ones Nx.bit [| 4; 3 |]) 1;
+    cut "int4 cells" (Nx.full Nx.int4 [| 3; 1 |] 5) 1;
+    cut "uint4 cells" (Nx.full Nx.uint4 [| 3; 1 |] 9) 1;
+  ]
+
 let canonical_columns =
   group "Canonical columns"
     [
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "column's layout of rows cut from the front of packed storage is their \
+         own bytes"
+        front_cuts
+        (fun (_, cut, own) ->
+          equal (list string)
+            (buffers (column (one own) "a"))
+            (buffers (column (one cut) "a")));
       prop "column's layout is the same bytes whatever the buffers and batches"
         split canonical;
       test "column of one batch of a canonical column is that column" (fun () ->

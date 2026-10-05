@@ -167,7 +167,7 @@ module Type : sig
 
   (** The type for column types whose cells read as ['a]. *)
   type 'a t = private
-    | Bool : bool t  (** Booleans. *)
+    | Bool : bool t  (** Booleans, stored as {!Nx.bit}, eight to a byte. *)
     | Int8 : int t  (** Signed 8-bit integers. *)
     | Int16 : int t  (** Signed 16-bit integers. *)
     | Int32 : int t  (** Signed 32-bit integers. *)
@@ -515,10 +515,11 @@ module Column : sig
       A column is an Arrow array over nx buffers. Its {e validity} is an
       {!Nx.bit_t}, true at each row that holds a value; its absence means no row
       is null. Its values are laid out by its type:
-      - one element per row of a primitive nx array: [bool] (one byte per
-        value), the integer and float types, [int32] positions in the dictionary
-        for categoricals, [int32] days for dates and [int64] ticks for clocks,
-        durations and datetimes. A tensor column is one [(rows, …shape)] array;
+      - one element per row of a primitive nx array: {!Nx.bit} for [bool], the
+        integer and float types, [int32] positions in the dictionary for
+        categoricals, [int32] days for dates and [int64] ticks for clocks,
+        durations and datetimes. A tensor column is one [(rows, …shape)] array
+        of its dtype;
       - offsets into a child for byte strings, text and lists: text is a list of
         bytes;
       - one child per field for records.
@@ -529,9 +530,11 @@ module Column : sig
       and share their buffers with the tensors and layouts that read them.
 
       A column is {e canonical} when its buffers hold exactly its rows: offsets
-      from [0], values exactly the rows', and a validity only when a row is
-      null, at bit offset [0] with every bit past its length clear. Two
-      canonical columns whose rows hold the same bytes have the same layout. *)
+      from [0], values exactly the rows', a validity only when a row is null,
+      and every buffer of elements narrower than a byte ({!Nx.bit}, the int4
+      dtypes) from the first bit of its storage with every bit past its last
+      element clear. Two canonical columns whose rows hold the same values,
+      those under their nulls included, have the same layout, byte for byte. *)
 
   type t
   (** The type for columns. *)
@@ -577,24 +580,27 @@ module Column : sig
   (** {1:tensors Tensors and ragged arrays} *)
 
   val of_tensor : ?validity:Nx.bit_t -> ('a, 'b) Nx.t -> t
-  (** [of_tensor ?validity x] is the column of [x]'s rows, without a copy:
-      - for a 1-D [x], of the type of [x]'s dtype: [bool], [int8] to [uint64],
-        [float16] to [float64];
+  (** [of_tensor ?validity x] is the column of [x]'s rows:
+      - for a 1-D [x], of the type of [x]'s dtype: [bool] for [bit] and [bool],
+        [int8] to [uint64], [float16] to [float64];
       - for [x] of shape [(n, …shape)], a tensor column of [x]'s dtype and cell
         shape [shape].
+
+      It shares [x] when [x]'s dtype is the storage of its type; a 1-D [bool]
+      [x] is packed into {!Nx.bit} once.
 
       [validity] marks the rows that hold a value; it defaults to every row.
 
       Raises [Invalid_argument] if [x] is a scalar, if [x] is 1-D of a dtype
-      that no scalar type stores ([bfloat16], the float8 and int4 dtypes, [bit],
+      that no scalar type stores ([bfloat16], the float8 and int4 dtypes,
       complex), or if [validity]'s shape is not [x]'s rows. *)
 
   val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
   (** [to_tensor dt c] is [c]'s values as stored, in O(1) after one read of the
-      null count the first time: numbers and booleans, the days or ticks of
-      temporal values, the codes of a categorical (its dictionary is in its
-      type), and [(rows, …shape)] for a tensor column. It shares [c]'s buffer,
-      which must not be written.
+      null count the first time: numbers, booleans as {!Nx.bit}, the days or
+      ticks of temporal values, the codes of a categorical (its dictionary is in
+      its type), and [(rows, …shape)] for a tensor column. It shares [c]'s
+      buffer, which must not be written.
 
       Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
       converts the result), if [c] is not stored one element per row, or if [c]
@@ -618,10 +624,12 @@ module Column : sig
 
   val of_ragged : ?validity:Nx.bit_t -> ('a, 'b) Nx_ragged.t -> t
   (** [of_ragged ?validity r] is the list column whose rows are [r]'s rows, null
-      where [validity] is false, without a copy: a [list] of the element type
-      {!of_tensor} gives [r]'s values, such as [list[int32]] for {!Nx.int32}
-      values, and of a tensor type for values of more than one axis. [validity]
-      defaults to every row valid. [ragged dt (of_ragged r)] has [r]'s rows.
+      where [validity] is false: a [list] of the element type {!of_tensor} gives
+      [r]'s values, such as [list[int32]] for {!Nx.int32} values, and of a
+      tensor type for values of more than one axis. It shares [r]'s buffers,
+      packing [bool] values as {!of_tensor} does. [validity] defaults to every
+      row valid. [ragged dt (of_ragged r)] has [r]'s rows, [dt] being the dtype
+      the column stores [r]'s values in.
 
       Raises [Invalid_argument] if [validity]'s shape is not [r]'s number of
       rows, or if [r]'s dtype has no talon type, as {!of_tensor} does. *)
@@ -1209,10 +1217,11 @@ module Expr : sig
   val nx : fn -> ('a, 's) t -> ('a, 's) t
   (** [nx { f } a] applies [f] to [a]'s values with nx's semantics, IEEE's for
       floats: [nx { f = Nx.exp } x]. [a] has an nx dtype: an integer, float or
-      [bool] type. When the verb is applied, talon calls [f] once on a traced
-      value of that dtype and records the operations [f] performs; an [f] that
-      moves, reduces or reshapes its argument is a problem, and so is one that
-      ignores it, which would lose its nulls. *)
+      [bool] type, [bool] computing as {!Nx.bool}. When the verb is applied,
+      talon calls [f] once on a traced value of that dtype and records the
+      operations [f] performs; an [f] that moves, reduces or reshapes its
+      argument is a problem, and so is one that ignores it, which would lose its
+      nulls. *)
 
   type fn2 = { f2 : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
   (** The type for elementwise nx functions of two arguments of one dtype that

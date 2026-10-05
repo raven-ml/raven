@@ -7,7 +7,8 @@ dune exec ./main.exe
 ```
 
 - `Column.v` and `Column.of_options` make columns of a type from OCaml values,
-  `None` being null. `Column.of_tensor` takes a 1-D nx tensor without a copy.
+  `None` being null. `Column.of_tensor` takes a 1-D nx tensor, sharing it, and
+  packs a `bool` one into bits.
 - `Talon.v` puts named columns of equal length into a table.
 - `Column.options Kind.float` reads a column back, nulls as `None`.
 - `Query.(of_table t |> filter … |> derive …)` describes a table, and

@@ -579,8 +579,10 @@ let parse (Type.Any ty as any) c =
   let small dt ~min ~max = Result.map (cast dt) (of_int (int ~min ~max)) in
   match ty with
   | Bool ->
-      let read b pos len = Bool.to_int (bool b pos len) in
-      Result.map (cast Nx.bool) (of_int read)
+      let read b pos len a i =
+        A1.unsafe_set a i (Bool.to_int (bool b pos len))
+      in
+      Result.map (cast Nx.bit) (fixed Bigarray.int8_unsigned 0 r valid read)
   | Int8 -> small Nx.int8 ~min:(-0x80) ~max:0x7F
   | Int16 -> small Nx.int16 ~min:(-0x8000) ~max:0x7FFF
   | Int32 -> small Nx.int32 ~min:(-0x8000_0000) ~max:0x7FFF_FFFF

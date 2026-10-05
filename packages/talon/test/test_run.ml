@@ -869,14 +869,21 @@ let agrees p =
 
 (* Law 7: canonical layouts, byte for byte *)
 
+(* Elements narrower than a byte are read from their storage, the bits past
+   their last element included. *)
 let hex (type a b) (x : (a, b) Nx.t) =
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x))) in
   let bytes =
     match Nx.dtype x with
-    | Bool -> Nx.cast Nx.uint8 x
-    | _ -> Nx.flatten (Nx.bitcast Nx.uint8 x)
+    | Bool -> Nx.to_array (Nx.cast Nx.uint8 x)
+    | _ when bits < 8 ->
+        let raw =
+          Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer x)
+        in
+        Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i})
+    | _ -> Nx.to_array (Nx.flatten (Nx.bitcast Nx.uint8 x))
   in
-  String.concat ""
-    (List.map (Printf.sprintf "%02x") (Array.to_list (Nx.to_array bytes)))
+  String.concat "" (List.map (Printf.sprintf "%02x") (Array.to_list bytes))
 
 let rec buffers c =
   (* A canonical validity's bytes are its bits from bit 0, the bits past them
@@ -1127,6 +1134,79 @@ let ints e t = Column.options Kind.int (result e t)
 let a = Col.bool "a"
 and b = Col.bool "b"
 
+(* A bool column of [n] rows drawn over bit views: values and validity start at
+   their own bit offsets in larger buffers, and the bits outside the rows are
+   drawn too. *)
+type bits = { values : bool array; valid : bool array option; at : int * int }
+
+let pp_bits ppf c =
+  let row v = if v then '1' else '0' in
+  let str a = String.init (Array.length a) (fun i -> row a.(i)) in
+  Format.fprintf ppf "values %s at %d, %s" (str c.values) (fst c.at)
+    (match c.valid with
+    | None -> "no validity"
+    | Some v -> Printf.sprintf "validity %s at %d" (str v) (snd c.at))
+
+let bits_column n =
+  let open Gen in
+  let* values = array ~size:(constant n) bool in
+  let* valid = option (array ~size:(constant n) bool) in
+  let+ at = pair (int_range 0 63) (int_range 0 63) in
+  { values; valid; at }
+
+(* [view k xs] is [xs] as bits at offset [k] of a buffer whose other bits are
+   set. *)
+let view k xs =
+  let n = Array.length xs in
+  let all =
+    Array.init (k + n + 9) (fun i -> i < k || i >= k + n || xs.(i - k))
+  in
+  Nx.shrink [| (k, k + n) |] (Nx.create Nx.bit [| k + n + 9 |] all)
+
+let of_bits c =
+  let validity = Option.map (view (snd c.at)) c.valid in
+  Column.of_tensor ?validity (view (fst c.at) c.values)
+
+(* Lengths at the edges of bytes and words, and others. *)
+let lengths =
+  Gen.frequency
+    [
+      (2, Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 7; 8; 9; 63; 64; 65; 129 ]);
+      (1, Gen.int_range 0 200);
+    ]
+
+let bits_pair =
+  Gen.with_pp
+    (fun ppf (x, y) -> Format.fprintf ppf "a: %a@ b: %a" pp_bits x pp_bits y)
+    (Gen.bind lengths (fun n -> Gen.pair (bits_column n) (bits_column n)))
+
+(* Kleene's rules over one byte per value: a row of [a && b] is [false] where an
+   operand is a valid [false], else null where an operand is null. *)
+let kleene_rows op x y =
+  let at c i =
+    match c.valid with Some v when not v.(i) -> None | _ -> Some c.values.(i)
+  in
+  Array.init (Array.length x.values) (fun i ->
+      match (op, at x i, at y i) with
+      | `And, Some false, _ | `And, _, Some false -> Some false
+      | `Or, Some true, _ | `Or, _, Some true -> Some true
+      | `And, Some p, Some q -> Some (p && q)
+      | `Or, Some p, Some q -> Some (p || q)
+      | _ -> None)
+
+let kleene_bits (x, y) =
+  cover "an operand inside a byte" (fst x.at mod 8 <> 0);
+  cover "a validity inside a byte"
+    (Option.is_some x.valid && snd x.at mod 8 <> 0);
+  cover "past one word" (Array.length x.values > 64);
+  cover "both validities" (Option.is_some x.valid && Option.is_some y.valid);
+  let t = v [ ("a", of_bits x); ("b", of_bits y) ] in
+  rows_are Type.bool (kleene_rows `And x y) (bools Expr.(a && b) t);
+  rows_are Type.bool (kleene_rows `Or x y) (bools Expr.(a || b) t);
+  rows_are Type.bool
+    (Array.map (Option.map not) (kleene_rows `And x x))
+    (bools (Expr.not a) t)
+
 let kleene =
   group "Kleene logic"
     [
@@ -1155,13 +1235,17 @@ let kleene =
           rows_are Type.bool
             [| f; f; f; t; t; t; None; None; None |]
             (bools (Expr.not a) tbl));
+      prop
+        "a && b, a || b and not a are Kleene's, over bits at any offset and \
+         length"
+        bits_pair kleene_bits;
       prop "a && true and a || false are a, the bytes under its nulls too"
         under_nulls (fun tbl ->
           let raw e =
             match Column.layout (result e tbl) with
             | Fixed { validity; values } ->
                 ( Option.map Nx.to_array validity,
-                  Nx.to_array (Nx.unpack Nx.bool values) )
+                  Nx.to_array (Nx.unpack Nx.bit values) )
             | _ -> assert false
           in
           let w = Windtrap.pair (option (array bool)) (array bool) in
@@ -1587,14 +1671,26 @@ let unary_lifts =
         { f = (fun x -> Nx.cast (Nx.dtype x) (Nx.cast Nx.float64 x)) } );
     ]
 
-let lift_cases =
+(* Lifts that take booleans, which nx computes through bytes. *)
+let boolean_lifts =
+  Expr.
+    [
+      ("maximum with itself", { f = (fun x -> Nx.maximum x x) });
+      ("where", { f = (fun x -> Nx.where (Nx.equal x x) x x) });
+      ( "through float64",
+        { f = (fun x -> Nx.cast (Nx.dtype x) (Nx.cast Nx.float64 x)) } );
+    ]
+
+let lift_cases_over types lifts =
   Gen.with_pp
     (fun ppf (G.Sample (ty, vs), (name, _)) ->
       Format.fprintf ppf "%s over %a, %d rows" name Type.pp ty (Array.length vs))
     (Gen.pair
-       (Gen.bind (Gen.of_list numeric) (fun (Type.Any ty) ->
+       (Gen.bind (Gen.of_list types) (fun (Type.Any ty) ->
             Gen.map (fun vs -> G.Sample (ty, vs)) (G.options ty)))
-       (Gen.of_list unary_lifts))
+       (Gen.of_list lifts))
+
+let lift_cases = lift_cases_over numeric unary_lifts
 
 (* [nx f x] is [f] on [x]'s stored values with nx, null where [x] is: under its
    nulls, [f] of [x]'s. *)
@@ -1622,6 +1718,9 @@ let lifts =
   group "Lifts"
     [
       prop "nx f x is f on x's values, null where x is" lift_cases lifts_agree;
+      prop "nx f x over bool is f on x's bits, null where x is"
+        (lift_cases_over [ Any Type.bool ] boolean_lifts)
+        lifts_agree;
       test "nx2 f x y is null where either is" (fun () ->
           rows_are Type.int16 [| Some 7; None; None |]
             (ints Expr.(nx2 maximum x y) t));

@@ -56,6 +56,7 @@ let storage ty =
   let starts p = String.starts_with ~prefix:p ty in
   if starts "clock" || starts "datetime" then "int64"
   else if ty = "date" then "int32"
+  else if ty = "bool" then "bit"
   else ty
 
 let cells ty (Nx.P x) =

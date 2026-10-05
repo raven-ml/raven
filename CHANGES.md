@@ -6220,6 +6220,10 @@ thread.
 
 ### Talon
 
+- **Breaking:** a `bool` column stores its values as `Nx.bit`:
+  `Column.to_tensor Nx.bit` and `Column.ragged Nx.bit` read them, and
+  `Nx.cast Nx.bool` gives bytes. `Column.of_tensor` shares a 1-D `bit`
+  tensor and packs a `bool` one.
 - A column's validity is an `Nx.bit_t` (`Column.validity`, `of_tensor`,
   `of_ragged`, `layout`), and its null count is read at the first
   `Column.null_count`, then kept: derived columns, filters, takes and joins

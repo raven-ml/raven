@@ -39,7 +39,7 @@ val of_layout : Type.any -> layout -> (t, int * string) result
 (** {1:repr Representation} *)
 
 (** The type for a column's values, by its type's storage:
-    - [Fixed x] for [bool] ([Nx.bool], one byte per value), the integer and
+    - [Fixed x] for [bool] ([Nx.bit], eight values to a byte), the integer and
       float types, categoricals ([int32] codes), dates ([int32] days), clocks,
       durations and datetimes ([int64] ticks), and tensors ([x] of shape
       [(length, …shape)]);
@@ -158,8 +158,9 @@ val concat : t list -> t
 
 val canonical : t -> t
 (** [canonical c] is [c] with buffers that hold exactly its rows: offsets from
-    [0], values exactly the rows', a validity at bit offset [0] with no bit set
-    past its length, at every depth. It is [c] itself when [c] is canonical, and
-    one copy otherwise. It reads its null count, and drops a validity with no
-    null. Two canonical columns whose rows hold the same bytes, under their
-    nulls included, have the same layout, byte for byte. *)
+    [0], values exactly the rows', and every buffer of elements narrower than a
+    byte from the first bit of its storage with every bit past its last element
+    clear, at every depth. It is [c] itself when [c] is canonical, and one copy
+    otherwise. It reads its null count, and drops a validity with no null. Two
+    canonical columns whose rows hold the same bytes, under their nulls
+    included, have the same layout, byte for byte. *)

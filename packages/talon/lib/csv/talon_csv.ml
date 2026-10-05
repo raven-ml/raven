@@ -328,9 +328,7 @@ let sampled ~nulls s ~first =
 let masked c mask =
   match Column.layout c with
   | Varsize { offsets; child; _ } ->
-      let validity =
-        Some (Nx.cast Nx.bit (Nx.create Nx.bool [| Array.length mask |] mask))
-      in
+      let validity = Some (Nx.create Nx.bit [| Array.length mask |] mask) in
       Result.get_ok
         (Column.of_layout (Type.Any Type.binary)
            (Varsize { validity; offsets; child }))

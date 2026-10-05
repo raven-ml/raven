@@ -83,7 +83,7 @@
  (name test_table)
  (modules test_table)
  (package talon)
- (libraries windtrap talon talon_gen nx nx.dtype)
+ (libraries windtrap talon talon_gen nx nx.dtype nx.device)
  (action
   (progn
    (run %{test} --corrected)
@@ -103,7 +103,7 @@
  (name test_run)
  (modules test_run)
  (package talon)
- (libraries windtrap talon talon_gen talon_reference nx nx.device)
+ (libraries windtrap talon talon_gen talon_reference nx nx.dtype nx.device)
  (action
   (progn
    (run %{test} --corrected)

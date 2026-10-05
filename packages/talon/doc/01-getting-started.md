@@ -55,8 +55,8 @@ table 5 rows × 4 columns
  pune     2024-03-01  31.50000  true
 ```
 
-`Column.of_tensor` makes a column of a 1-D nx tensor without copying it. In
-quill, tables print the same way.
+`Column.of_tensor` makes a column of a 1-D nx tensor, sharing it; a `bool`
+tensor is packed into bits once. In quill, tables print the same way.
 
 ## Types and Kinds
 
@@ -142,11 +142,13 @@ column they meet, so `temp_f` is `float32`.
 
 For numerical work, `Talon.to_tensor` copies numeric columns into an nx
 matrix, one column per name, and `Column.to_tensor` returns a column's own
-buffer without a copy:
+buffer without a copy. A `bool` column keeps its values as `Nx.bit`, eight
+to a byte; `Nx.cast Nx.bool` gives one byte per value, which `Nx.where` takes
+as a condition:
 
 ```ocaml
 let m = Talon.to_tensor Nx.float32 [ "temp"; "temp_f" ] warm_table
-let rain = Column.to_tensor Nx.bool (Talon.column warm_table "rain")
+let rain = Column.to_tensor Nx.bit (Talon.column warm_table "rain")
 ```
 
 ## Reading Files

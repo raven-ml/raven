@@ -116,7 +116,7 @@ let instant_ticks ty : Type.unit_ -> Time.instant scalar option = function
   | Ns -> cell Nx.int64 Time.to_ns Time.of_ns
 
 let scalar : type a. a Type.t -> a scalar option = function
-  | Bool -> cell Nx.bool Fun.id Fun.id
+  | Bool -> cell Nx.bit Fun.id Fun.id
   | Int8 -> cell Nx.int8 Fun.id Fun.id
   | Int16 -> cell Nx.int16 Fun.id Fun.id
   | Int32 -> cell Nx.int32 Int32.of_int Int32.to_int
@@ -268,9 +268,7 @@ let rows ty ~null ~add ~data =
     let c = make (Any ty) ~length (data ()) in
     if !nulls = 0 then c
     else
-      let bits =
-        Nx.cast Nx.bit (Nx.create Nx.bool [| length |] (contents valid))
-      in
+      let bits = Nx.create Nx.bit [| length |] (contents valid) in
       { c with validity = Some (counted bits !nulls) }
   in
   { add; finish }
@@ -574,37 +572,39 @@ let first_null c =
   let flags = Option.get (flags c) in
   Option.get (first c.length (fun i -> if flags.(i) then None else Some i))
 
-(* [cells fn x] is the type of the rows of [x]: its dtype's scalar type for a
-   1-D [x], and a tensor type of its cells otherwise. *)
-let cells : type a b. string -> (a, b) Nx.t -> Type.any =
+(* [cells fn x] is the type of the rows of [x] and their storage: its dtype's
+   scalar type for a 1-D [x], whose [bool] values are packed into bits, and a
+   tensor type of its cells otherwise. *)
+let cells : type a b. string -> (a, b) Nx.t -> Type.any * Nx.packed =
  fun fn x ->
   let shape = Nx.shape x and dt = Nx.dtype x in
+  let shared ty = (Type.Any ty, Nx.P x) in
   if Array.length shape > 1 then
-    Any (Type.tensor dt (Array.sub shape 1 (Array.length shape - 1)))
+    shared (Type.tensor dt (Array.sub shape 1 (Array.length shape - 1)))
   else
     match dt with
-    | Bool -> Any Type.bool
-    | Int8 -> Any Type.int8
-    | Int16 -> Any Type.int16
-    | Int32 -> Any Type.int32
-    | Int64 -> Any Type.int64
-    | UInt8 -> Any Type.uint8
-    | UInt16 -> Any Type.uint16
-    | UInt32 -> Any Type.uint32
-    | UInt64 -> Any Type.uint64
-    | Float16 -> Any Type.float16
-    | Float32 -> Any Type.float32
-    | Float64 -> Any Type.float64
-    | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Bit | Complex64
+    | Bool -> (Any Type.bool, P (Nx.cast Nx.bit x))
+    | Bit -> shared Type.bool
+    | Int8 -> shared Type.int8
+    | Int16 -> shared Type.int16
+    | Int32 -> shared Type.int32
+    | Int64 -> shared Type.int64
+    | UInt8 -> shared Type.uint8
+    | UInt16 -> shared Type.uint16
+    | UInt32 -> shared Type.uint32
+    | UInt64 -> shared Type.uint64
+    | Float16 -> shared Type.float16
+    | Float32 -> shared Type.float32
+    | Float64 -> shared Type.float64
+    | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Complex64
     | Complex128 ->
         err "Column.%s: no scalar type stores %a; make it 2-D" fn Nx_dtype.pp dt
 
 let of_tensor ?validity x =
   let shape = Nx.shape x in
   if shape = [||] then err "Column.of_tensor: a scalar has no rows";
-  let length = shape.(0) in
-  let type_ = cells "of_tensor" x in
-  with_bits "of_tensor" type_ validity ~length (Fixed (P x))
+  let type_, values = cells "of_tensor" x in
+  with_bits "of_tensor" type_ validity ~length:shape.(0) (Fixed values)
 
 let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
   let (Any ty) = c.type_ in
@@ -683,13 +683,13 @@ let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx_ragged.t =
 
 let of_ragged ?validity r =
   let values = Nx_ragged.values r in
-  let (Type.Any e as cell) = cells "of_ragged" values in
+  let (Type.Any e as cell), stored = cells "of_ragged" values in
   let child =
     {
       type_ = cell;
       length = Nx.dim 0 values;
       validity = None;
-      data = Fixed (P values);
+      data = Fixed stored;
     }
   in
   let length = Nx_ragged.length r in
@@ -754,27 +754,32 @@ let exact offsets child =
   in
   (rebase offsets first, child)
 
-(* Canonical bits start at bit [0] of their storage and leave the bits past
-   their length unset, so that equal bits have equal bytes. The check reads one
-   byte. *)
-let canonical_bits b =
-  let n = Nx.numel b in
-  Nx.contiguous b == b
-  && (n land 7 = 0
-     || Strings.reading ~by:"Column.canonical" b (fun bytes ->
+(* [bitsize x] is the size in bits of an element of [x]. *)
+let bitsize x = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x)))
+
+(* Canonical packed storage, a validity's, [bool] values' or int4 cells', starts
+   at element [0] and leaves the bits past its last element clear, so that equal
+   elements have equal bytes. The check reads one byte. *)
+let canonical_packed x =
+  let used = Nx.numel x * bitsize x in
+  Nx.contiguous x == x
+  && (used land 7 = 0
+     || Strings.reading ~by:"Column.canonical" x (fun bytes ->
          let bytes = Nx_device.Buffer.bigarray Bigarray.int8_unsigned bytes in
-         Bigarray.Array1.get bytes (n / 8) lsr (n land 7) = 0))
+         Bigarray.Array1.get bytes (used / 8) lsr (used land 7) = 0))
 
 let rec canonical c =
   let validity =
     match c.validity with
     | Some v when count c.length v = 0 -> None
-    | Some v as kept when canonical_bits v.bits -> kept
+    | Some v as kept when canonical_packed v.bits -> kept
     | Some v -> Some (counted (Nx.copy v.bits) (count c.length v))
     | None -> None
   in
   let data =
     match c.data with
+    | Fixed (P x) as d when bitsize x < 8 ->
+        if canonical_packed x then d else Fixed (P (Nx.copy x))
     | Fixed (P x) as d ->
         let y = Nx.contiguous x in
         if y == x then d else Fixed (P y)
