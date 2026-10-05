@@ -157,7 +157,9 @@ the Exclusions of `README.md`.
     `Postrange` and takes how to link and time a program as its `link`
     and `time` arguments, where `beam_search` takes `rawbufs` and
     `var_vals`: its caller makes the buffers `args_from_ast` describes
-    (`Tolk_engine.slots`), since `tolk` cannot name nx.device's buffers;
+    (`Tolk_engine.slots`), since `tolk` cannot name nx.device's buffers,
+    and `get_kernel_actions` returns each candidate with its action, without
+    tinygrad's `include_0` and its positions in the action table;
     `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;

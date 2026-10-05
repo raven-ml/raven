@@ -982,6 +982,9 @@ thread.
   `~pass:(Fixed_point | Once)` in place of `?bottom_up`, `?bpm` and `?walk`,
   so a rewrite before the sources with a second matcher, which raised, cannot
   be written. `Ops.substitute` takes `~pass` in place of `?walk`.
+- **Breaking:** `Search.get_kernel_actions` takes no `?include_0` and returns
+  each candidate with the action that made it, `(Opt.t * Scheduler.t)`, in
+  place of positions in the action table.
 - `Symbolic.sym` folds the constants of nested integer maxima at the
   maximum's width: on uint8, `max(max(w, 1), -3)` became `max(w, 1)`, where
   the machine computes `max(w, 253)`.

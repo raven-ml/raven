@@ -255,7 +255,7 @@ let candidates text =
     s
   in
   ignore (Codegen.full_rewrite_to_sink ~beam:search k cuda_renderer);
-  Search.get_kernel_actions ~include_0:false (Option.get !handed)
+  Search.get_kernel_actions (Option.get !handed)
   |> List.filteri (fun i _ -> i < linearized)
   |> List.map (fun (_, c) ->
       Postrange.Scheduler.get_optimized_ast ~name_override:"test" c)

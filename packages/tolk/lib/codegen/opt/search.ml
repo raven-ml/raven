@@ -183,19 +183,18 @@ let redundant actions k = function
       && List.exists (Opt.equal (Opt.Split { s with amount = 0 })) actions
   | _ -> false
 
-let get_kernel_actions ?(include_0 = true) ?max_up k =
+let get_kernel_actions ?max_up k =
   let max_up = Option.value max_up ~default:(setting Setting.beam_upcast_max) in
   let max_lcl = setting Setting.beam_local_max and actions = actions () in
-  let act i a =
+  let act a =
     if redundant actions k a then None
     else
       let k' = K.copy k in
       match K.apply_opt k' a with
-      | Ok _ when not (too_many ~max_up ~max_lcl k') -> Some (i + 1, k')
+      | Ok _ when not (too_many ~max_up ~max_lcl k') -> Some (a, k')
       | _ -> None
   in
-  (if include_0 then [ (0, k) ] else [])
-  @ List.filter_map Fun.id (List.mapi act actions)
+  List.filter_map act actions
 
 (* The cache keeps each optimisation as five integers: its kind, axis and
    arguments. *)
@@ -348,7 +347,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
         let best = least (snd (List.hd beam)) in
         let candidates =
           List.concat_map
-            (fun (k, _) -> List.map snd (get_kernel_actions ~include_0:false k))
+            (fun (k, _) -> List.map snd (get_kernel_actions k))
             beam
         in
         let n = List.length candidates in

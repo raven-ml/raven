@@ -155,7 +155,10 @@ let actions =
   test "the actions are tinygrad's, in order" (fun () ->
       equal opts (recorded_actions "actions.golden") (Search.actions ()))
 
-(* Candidates *)
+(* Candidates
+
+   tinygrad numbers a candidate by its action's position from 1, after the
+   kernel itself at 0. *)
 
 let candidates =
   Golden.cases ~key:[ "kernel"; "target"; "max_up" ] "candidates.golden"
@@ -165,7 +168,7 @@ let candidates =
       let acted = quietly (fun () -> Search.get_kernel_actions ?max_up k) in
       equal (list int)
         (List.map int_of_string (String.split_on_char ' ' (cell "actions")))
-        (List.map fst acted))
+        (0 :: List.map (fun (a, _) -> position a + 1) acted))
 
 (* Searches *)
 
@@ -226,27 +229,22 @@ let candidate_laws =
       cases ~name:name_of "makes each candidate by applying its action" small
         (fun (kernel, target) ->
           let k = scheduled kernel target in
-          let applied (i, k') =
-            if i = 0 then equal ~msg:"0" Uops.uop (K.ast k) (K.ast k')
-            else
-              equal ~msg:(string_of_int i) opts
-                [ List.nth (Search.actions ()) (i - 1) ]
-                (K.applied_opts k')
+          let applied (a, k') =
+            equal
+              ~msg:(Format.asprintf "%a" Opt.pp a)
+              opts [ a ] (K.applied_opts k')
           in
           List.iter applied (Search.get_kernel_actions k));
-      cases ~name:name_of "leaves out the scheduler itself without include_0"
-        small (fun (kernel, target) ->
-          let k = scheduled kernel target in
-          equal (list int)
-            (List.tl (List.map fst (Search.get_kernel_actions k)))
-            (List.map fst (Search.get_kernel_actions ~include_0:false k)));
       cases ~name:name_of "leaves out more candidates under a smaller max_up"
         small (fun (kernel, target) ->
           let k = scheduled kernel target in
           let fewer = List.map fst (Search.get_kernel_actions ~max_up:2 k) in
           let all = List.map fst (Search.get_kernel_actions k) in
           List.iter
-            (fun i -> is_true ~msg:(string_of_int i) (List.mem i all))
+            (fun a ->
+              is_true
+                ~msg:(Format.asprintf "%a" Opt.pp a)
+                (List.exists (Opt.equal a) all))
             fewer);
     ]
 
@@ -263,9 +261,7 @@ let evaluable (_, k) =
 let rec picked k = function
   | [] -> k
   | pick :: picks -> (
-      match
-        List.filter evaluable (Search.get_kernel_actions ~include_0:false k)
-      with
+      match List.filter evaluable (Search.get_kernel_actions k) with
       | [] -> k
       | acted ->
           picked (snd (List.nth acted (pick mod List.length acted))) picks)
@@ -298,9 +294,7 @@ let keeps_writes_exhaustively =
       (fun kernel -> [ (kernel, "clang"); (kernel, "metal") ])
       [ "add_small"; "sum_rows"; "symbolic"; "pad_7x7" ]
   in
-  let candidates k =
-    List.filter evaluable (Search.get_kernel_actions ~include_0:false k)
-  in
+  let candidates k = List.filter evaluable (Search.get_kernel_actions k) in
   cases ~tags:[ "slow" ] ~name:name_of
     "every kernel two actions make writes what its kernel writes" pairs
     (fun (kernel_name, target) ->
@@ -835,8 +829,7 @@ let compiles_once =
         k'
       in
       let actions k =
-        List.map snd
-          (quietly (fun () -> Search.get_kernel_actions ~include_0:false k))
+        List.map snd (quietly (fun () -> Search.get_kernel_actions k))
       in
       let distinct = Ops.Tbl.create 64 in
       List.iter

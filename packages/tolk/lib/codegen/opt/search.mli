@@ -43,15 +43,11 @@ val actions : unit -> Opt.t list
     - swaps of each two of the axes [0] to [4]. *)
 
 val get_kernel_actions :
-  ?include_0:bool ->
-  ?max_up:int ->
-  Postrange.Scheduler.t ->
-  (int * Postrange.Scheduler.t) list
-(** [get_kernel_actions ~include_0 ~max_up k] is the kernels that one action
-    makes of [k]: [(i + 1, k')] for the action [i] of [actions ()] and [k'] a
-    copy of [k] it was applied to, in the order of {!actions}, after [(0, k)] if
-    [include_0] (default [true]). [k] is left as it is. An action is left out
-    when:
+  ?max_up:int -> Postrange.Scheduler.t -> (Opt.t * Postrange.Scheduler.t) list
+(** [get_kernel_actions ~max_up k] is the kernels that one action makes of [k]:
+    [(a, k')] for an action [a] of [actions ()] and [k'] a copy of [k] it was
+    applied to, in the order of {!actions}. [k] is left as it is. An action is
+    left out when:
     - it does not apply ({!Postrange.Scheduler.apply_opt});
     - it is no tensor core and its axis is not one of [k]'s, or it splits a
       whole axis by its size while [actions ()] splits it by [0] alike;
@@ -107,8 +103,8 @@ val beam_search :
     up to [amt] kernels and starts as [k] with its samples, or with none if [k]
     was dropped. Each round:
     + The candidates are the kernels {!get_kernel_actions} makes of the beam's
-      kernels ([~include_0:false]), in order, compiled on the domains
-      {!Worker.map} spreads them over.
+      kernels, in order, compiled on the domains {!Worker.map} spreads them
+      over.
     + In order, a candidate is dropped if its binary was timed before in this
       search, or if its program's estimated operations ({!Ops.estimates}, [0] if
       unknown) are more than [1000] times the fewest of this round's programs so
