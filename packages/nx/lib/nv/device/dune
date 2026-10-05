@@ -4,6 +4,7 @@
  (libraries
   nx.device
   nx.device.elf
+  nx.nv.cubin
   nx.device.support
   nx.remote.device
   nx.dtype

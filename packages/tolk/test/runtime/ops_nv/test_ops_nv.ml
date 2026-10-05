@@ -521,6 +521,17 @@ let refusals =
                       @ [ Ops.v Binary ~arg:(Bytes "\x7fELG not a cubin") ])
                     prg);
             ]);
+      test "a program whose cubin lacks its kernel is refused" (fun () ->
+          let crafted = launch_of ~crafted:true Fun.id in
+          let cubin = Ops.nth (Ops.nth crafted 0) 3 in
+          refused ~why:"no kernel simple_add, only k" "COMPUTE:0"
+            [
+              launch_of (fun prg ->
+                  Ops.replace
+                    ~src:
+                      (List.filteri (fun i _ -> i < 3) (Ops.src prg) @ [ cubin ])
+                    prg);
+            ]);
       test
         "a command buffer of 2^21 words is over capacity, one word fewer is not"
         (fun () ->

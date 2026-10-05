@@ -43,6 +43,10 @@ type t = {
   sections : section list;  (** Every section, in order. *)
   symbols : (string * int) list;
       (** The defined symbols and their image offsets. *)
+  symtab : (string * int) array;
+      (** Every entry of the symbol table, by index: its name, [""] for a
+          nameless one, and the index in [sections] of the section it is defined
+          in, [0] for one undefined, absolute or common. *)
   relocations : relocation list;  (** In section order. *)
 }
 (** The type for loaded objects. *)

@@ -3474,3 +3474,30 @@ stores through a pad.
   search whose kernel does not compile progresses on any candidate`; `›
   rounds` (4 tests); `searches.golden` and `searches_environment.golden`,
   whose measurements count the kernel's three samples.
+
+## D118. A program's launch reads its own kernel of its cubin
+
+- **tinygrad:** `runtime/ops_nv.py:249-258` (`NVProgramData` takes the
+  registers and stack of the last `EIATTR_REGCOUNT` and
+  `EIATTR_MIN_STACK_SIZE` of `.nv.info` whatever function they name, every
+  `.nv.constantN*` section as a bank, and the whole image as code from
+  offset 0 when the cubin has no `.text.<name>`) and `:315`
+  (`nv_build_program` caches a program by its binary alone).
+- **tolk:** `lib/runtime/ops_nv.ml:39` (`program_data`) and `:117`
+  (`build_program`), through `Nx_nv_cubin.kernel`.
+- **Differs:** a launch reads the attributes of its kernel's function, by the
+  symbol each names, and the banks `.nv.constantN` and
+  `.nv.constantN.<name>` only. A program whose cubin has kernels but not its
+  own is refused (`Invalid_argument`, naming the cubin's kernels). Programs
+  are cached by binary and kernel name.
+- **Reason:** (c). nx.nv.device loads a program's function by name and
+  refuses a cubin without it, and its loader and tolk read cubins through one
+  library, `nx.nv.cubin`. tinygrad's reading launches the wrong code from
+  offset 0 when a name is missing, and gives every kernel of a module of
+  several the same registers.
+- **Pinned by:** the Ops_nv suite: `refusals › a program whose cubin lacks
+  its kernel is refused`, and every `recorded cases` golden, whose generator
+  (`gen/runtime/ops_nv.py`) names each program's kernel in its cubin and
+  points the crafted cubin's attributes at its kernel's symbol; nx's
+  `nx.nv.cubin › kernels › each kernel reads its own registers, stack and
+  banks`.

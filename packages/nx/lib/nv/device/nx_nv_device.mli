@@ -292,17 +292,14 @@ val props : t -> props
 
 type kernel = {
   image : Nx_device.Buffer.t;
-      (** The uploaded cubin: its image, as the ELF object lays it out with
-          sections aligned to 128 bytes ({!Nx_device_elf.load}), relocated, then
-          zeros up to the next multiple of 4 KiB and 4 KiB more, which the GPU's
-          instruction prefetch may read past the code. It is memory of the
-          device the host writes, which keeps the cubin loaded while it is
-          reachable ({!Nx_device.Program.code}). *)
+      (** The uploaded cubin: its image ({!Nx_nv_cubin.image}), relocated. It is
+          memory of the device the host writes, which keeps the cubin loaded
+          while it is reachable ({!Nx_device.Program.code}). *)
   entry : nativeint;  (** The address of the function's first instruction. *)
 }
 (** The type for kernels: a function of an uploaded cubin. A launch reads the
     rest of what it needs, such as registers and constant banks, from the cubin
-    itself. *)
+    itself ({!Nx_nv_cubin.kernel}). *)
 
 val kernel : Nx_device.Program.t -> kernel option
 (** [kernel p] is the kernel of [p], if [p] is loaded on an NV device. Its

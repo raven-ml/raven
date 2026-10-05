@@ -21,6 +21,7 @@ type t = {
   image : string;
   sections : section list;
   symbols : (string * int) list;
+  symtab : (string * int) array;
   relocations : relocation list;
 }
 
@@ -224,6 +225,13 @@ let load ?(align = 1) obj =
     image = Bytes.to_string image;
     sections;
     symbols;
+    symtab =
+      Array.map
+        (fun s ->
+          ( s.s_name,
+            if s.s_shndx >= shnum || s.s_shndx >= 0xff00 then 0 else s.s_shndx
+          ))
+        table;
     relocations;
   }
 

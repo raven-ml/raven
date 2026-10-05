@@ -433,10 +433,10 @@ let code_window n =
    larger than that memory could ever hold, is refused, and the device stays
    usable. *)
 let load n ~binary =
-  match Cubin.load binary with
-  | exception Failure why -> Error why
-  | c -> (
-      let bytes = String.length c.image in
+  match Nx_nv_cubin.of_string binary with
+  | Error _ as e -> e
+  | Ok c -> (
+      let bytes = String.length (Nx_nv_cubin.image c) in
       match alloc_mem n Visible bytes with
       | None when bytes > code_window n ->
           Error
@@ -450,12 +450,13 @@ let load n ~binary =
           Mmio.write
             (Option.get (host_view mem))
             0
-            (Cubin.relocate c ~base:(va mem));
+            (Nx_nv_cubin.relocate c ~base:(va mem));
           Mmio.barrier ();
           let entry name =
-            match List.assoc_opt name c.entries with
-            | Some off -> Ok (Nativeint.of_int (va mem + off))
-            | None -> Error ("the cubin has no function " ^ name)
+            match Nx_nv_cubin.kernel c name with
+            | Some k when List.mem name (Nx_nv_cubin.kernels c) ->
+                Ok (Nativeint.of_int (va mem + k.code))
+            | _ -> Error ("the cubin has no function " ^ name)
           in
           Ok
             {

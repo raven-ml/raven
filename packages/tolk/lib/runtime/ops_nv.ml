@@ -165,68 +165,43 @@ type program = {
   max_threads : int;
 }
 
-(* The attributes of an .nv.info section: (type, parameter, data or size). *)
-let elf_info (sh : Nx_device_elf.section) =
-  let rec go off =
-    if off >= sh.size then []
-    else
-      let typ = Char.code sh.contents.[off]
-      and param = Char.code sh.contents.[off + 1]
-      and sz = String.get_uint16_le sh.contents (off + 2) in
-      let data = if typ = 4 then String.sub sh.contents (off + 4) sz else "" in
-      (typ, param, data) :: go (off + (if typ = 4 then sz else 0) + 4)
-  in
-  go 0
-
-let u32_at s off = Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
-
 let program_data props (obj : Device.Tiny_elf.t) =
-  let { Nx_device_elf.image; sections; _ } =
-    try Nx_device_elf.load ~align:128 obj.lib
-    with Failure why -> invalid_arg ("an NV program is no cubin: " ^ why)
+  let cubin =
+    match Nx_nv_cubin.of_string obj.lib with
+    | Ok c -> c
+    | Error why -> invalid_arg ("an NV program is no cubin: " ^ why)
   in
   let name = obj.name in
-  let constbufs = ref [ (0, (0, 0x160)) ] and prog_off = ref 0 in
-  let prog_sz = ref (String.length image) in
-  let regs = ref 0 and shmem = ref 0x400 and lcmem = ref 0x240 in
-  let cbuf0_size = ref 0 in
-  let set_bank i b =
-    constbufs :=
-      if List.mem_assoc i !constbufs then
-        List.map (fun (j, c) -> if j = i then (j, b) else (j, c)) !constbufs
-      else !constbufs @ [ (i, b) ]
+  let kernel =
+    match Nx_nv_cubin.kernel cubin name with
+    | Some k -> k
+    | None ->
+        invalid_arg
+          (Printf.sprintf "an NV program's cubin has no kernel %s, only %s"
+             name
+             (String.concat ", " (Nx_nv_cubin.kernels cubin)))
   in
-  List.iter
-    (fun (sh : Nx_device_elf.section) ->
-      if sh.name = ".nv.shared." ^ name then
-        shmem := Helpers.round_up (0x400 + sh.size) 128;
-      if sh.name = ".text." ^ name then (
-        prog_off := sh.offset;
-        prog_sz := sh.size)
-      else if String.starts_with ~prefix:".nv.constant" sh.name then (
-        let rest = String.sub sh.name 12 (String.length sh.name - 12) in
-        let digits =
-          String.to_seq rest
-          |> Seq.take_while (fun c -> c >= '0' && c <= '9')
-          |> String.of_seq
-        in
-        if digits <> "" then set_bank (int_of_string digits) (sh.offset, sh.size))
-      else if String.starts_with ~prefix:".nv.info" sh.name then
-        List.iter
-          (fun (_, param, data) ->
-            if sh.name = ".nv.info." ^ name && param = 0xa then
-              cbuf0_size := String.get_uint16_le data 4 (* EIATTR_PARAM_CBANK *)
-            else if sh.name = ".nv.info" && param = 0x12 then
-              lcmem := u32_at data 4 + 0x240 (* EIATTR_MIN_STACK_SIZE *)
-            else if sh.name = ".nv.info" && param = 0x2f then
-              regs := u32_at data 4 (* EIATTR_REGCOUNT *))
-          (elf_info sh))
-    sections;
+  let constbufs =
+    List.fold_left
+      (fun acc (b : Nx_nv_cubin.bank) ->
+        if List.mem_assoc b.index acc then
+          List.map
+            (fun (j, c) ->
+              if j = b.index then (j, (b.offset, b.bytes)) else (j, c))
+            acc
+        else acc @ [ (b.index, (b.offset, b.bytes)) ])
+      [ (0, (0, 0x160)) ]
+      kernel.banks
+  in
+  let regs = kernel.registers and lcmem = kernel.stack_bytes + 0x240 in
+  let shmem = Helpers.round_up (0x400 + kernel.shared_bytes) 128 in
   let blackwell = props.compute_class >= G.blackwell_compute_a in
   (* Minimum cbuf_0 size for driver params: Blackwell needs index 223 (224
      entries), older GPUs need index 11 (12 entries) *)
   let cbuf_0 =
-    Array.make (max (!cbuf0_size / 4) (if blackwell then 224 else 12)) 0
+    Array.make
+      (max (kernel.params_offset / 4) (if blackwell then 224 else 12))
+      0
   in
   let sig_ = obj.signature in
   let nbufs =
@@ -240,7 +215,7 @@ let program_data props (obj : Device.Tiny_elf.t) =
   let kernargs_size =
     Helpers.round_up
       (max
-         (snd (List.assoc 0 !constbufs))
+         (snd (List.assoc 0 constbufs))
          ((Array.length cbuf_0 * 4) + (List.length sig_ * 8)))
       256
   in
@@ -258,8 +233,8 @@ let program_data props (obj : Device.Tiny_elf.t) =
       [
         ("qmd_major_version", 5);
         ("qmd_type", G.nvcec0_qmdv05_00_qmd_type_grid_cta);
-        ("register_count", !regs);
-        ("shared_memory_size_shifted7", !shmem lsr 7);
+        ("register_count", regs);
+        ("shared_memory_size_shifted7", shmem lsr 7);
       ])
   else (
     fill 6
@@ -269,15 +244,15 @@ let program_data props (obj : Device.Tiny_elf.t) =
       [
         ("qmd_major_version", 3);
         ("sm_global_caching_enable", 1);
-        ("shared_memory_size", !shmem);
-        ("register_count_v", !regs);
+        ("shared_memory_size", shmem);
+        ("register_count_v", regs);
       ]);
   let smem_cfg =
-    match List.find_opt (fun c -> c * 1024 >= !shmem) [ 32; 64; 100 ] with
+    match List.find_opt (fun c -> c * 1024 >= shmem) [ 32; 64; 100 ] with
     | Some c -> (c * 1024 / 4096) + 1
     | None ->
         invalid_arg
-          (Printf.sprintf "%s needs %d bytes of shared memory" name !shmem)
+          (Printf.sprintf "%s needs %d bytes of shared memory" name shmem)
   in
   List.iter
     (fun (k, v) -> Qmd.write qmd k v)
@@ -295,7 +270,7 @@ let program_data props (obj : Device.Tiny_elf.t) =
       ("min_sm_config_shared_mem_size", smem_cfg);
       ("target_sm_config_shared_mem_size", smem_cfg);
       ("max_sm_config_shared_mem_size", 0x1a);
-      ("program_prefetch_size", min (!prog_sz lsr 8) 0x1ff);
+      ("program_prefetch_size", min (kernel.code_bytes lsr 8) 0x1ff);
       ("sass_version", props.sass_version);
     ];
   List.iter
@@ -304,20 +279,20 @@ let program_data props (obj : Device.Tiny_elf.t) =
         (Printf.sprintf "constant_buffer_size_shifted4_%d" i)
         ((sz + 15) lsr 4);
       Qmd.write qmd (Printf.sprintf "constant_buffer_valid_%d" i) 1)
-    !constbufs;
+    constbufs;
   (* Registers allocation granularity per warp is 256, warp allocation
      granularity is 4. Register file size is 65536. *)
   let max_threads =
-    65536 / Helpers.round_up (max 1 !regs * 32) 256 / 4 * 4 * 32
+    65536 / Helpers.round_up (max 1 regs * 32) 256 / 4 * 4 * 32
   in
-  ( Helpers.round_up (String.length image) 0x1000 + 0x1000,
+  ( String.length (Nx_nv_cubin.image cubin),
     {
-      constbufs = !constbufs;
-      prog_off = !prog_off;
+      constbufs;
+      prog_off = kernel.code;
       cbuf_0;
       vars;
       kernargs_size;
-      local_bytes = !lcmem;
+      local_bytes = lcmem;
       qmd;
       max_threads;
     } )
@@ -344,17 +319,17 @@ let local_word devs bytes =
   in
   load (index word [ int 0 ]) []
 
-(* Each program's launch template is built once for its devices. Its cubin is
-   the engine's to load, relocated by the device that runs it:
-   the placeholder names the cubin and its kernel, and is as long as the image
-   the device lays out, with room for the GPU's prefetch after it. *)
+(* Each program's launch template is built once for its kernel of its cubin and
+   its devices. Its cubin is the engine's to load, relocated by the device that
+   runs it: the placeholder names the cubin and its kernel, and is as long as
+   the image the device lays out, with room for the GPU's prefetch after it. *)
 let programs = Hashtbl.create 16
 let programs_lock = Mutex.create ()
 
 let build_program props devs prg =
   let obj = Device.Tiny_elf.of_program prg in
   Mutex.protect programs_lock @@ fun () ->
-  match Hashtbl.find_opt programs (obj.lib, devs, props) with
+  match Hashtbl.find_opt programs (obj.lib, obj.name, devs, props) with
   | Some p -> p
   | None ->
       let image_size, data = program_data props obj in
@@ -370,7 +345,7 @@ let build_program props devs prg =
               (Tag.Tuple [ String "program"; Bytes obj.lib; String obj.name ])
             [ image_size ] Dtype.Uint8 )
       in
-      Hashtbl.replace programs (obj.lib, devs, props) p;
+      Hashtbl.replace programs (obj.lib, obj.name, devs, props) p;
       p
 
 (* Queues *)

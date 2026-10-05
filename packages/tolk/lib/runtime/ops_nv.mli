@@ -103,10 +103,9 @@ val queues : host:string -> reaches:(string -> bool) -> props -> Hcq2.queues
 type storage =
   | Program of { binary : string; name : string }
       (** The cubin [binary], loaded on the device, of which the commands launch
-          the kernel [name]: its image as the device lays it out
-          ({!Nx_device_elf.load}, sections aligned to 128 bytes), relocated.
+          the kernel [name]: its image ({!Nx_nv_cubin.image}), relocated.
           Launches address its code and constant banks at the offsets of that
-          layout. *)
+          image. *)
   | Ring of string  (** The ring of entries of the queue's channel. *)
   | Gp_put of string
       (** The 32-bit index after the last entry written in the ring, which the

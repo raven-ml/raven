@@ -6,8 +6,8 @@ for the cases whose name ends in `_blackwell`, a Blackwell one, whose launch
 descriptors are of version 5. It reaches the host's memory and no other GPU's.
 The host is the CPU, which compiles for Clang on x86_64. Every program's binary
 is the cubin runtime/ops_nv/simple_add_sm89.cubin, NVRTC 12.8's sm_89 code of
-simple_add.cu, followed by the program's source: the encoder reads a
-program's layout from its cubin. The `crafted` cases run a cubin built here
+simple_add.cu, with its kernel named as the program's, followed by the
+program's source: the encoder reads a program's layout from its cubin. The `crafted` cases run a cubin built here
 (CRAFTED) with what simple_add's lacks. For each
 case:
 - `<case>_prepared.golden` is the schedule `sched_batches` receives, its
@@ -40,6 +40,7 @@ tinygrad is changed as tolk differs from it:
 """
 
 import itertools
+import re
 import struct
 from pathlib import Path
 from types import SimpleNamespace
@@ -61,11 +62,54 @@ import tinygrad.runtime.support.hcq2 as hcq2
 nv_gpu = ops_nv.nv_gpu
 CUBIN = (Path(__file__).resolve().parents[2] / "runtime" / "ops_nv" / "simple_add_sm89.cubin").read_bytes()
 
+
+
+def renamed(cubin, old, new):
+    """`cubin` with its kernel `old` named `new`: every section and symbol named
+    `old` or ending in `.old`. The string tables are written anew after the rest
+    of the object, and the names point into them."""
+    shoff, = struct.unpack_from("<Q", cubin, 0x28)
+    shnum, = struct.unpack_from("<H", cubin, 0x3c)
+    shstrndx, = struct.unpack_from("<H", cubin, 0x3e)
+    secs = [struct.unpack_from("<IIQQQQIIQQ", cubin, shoff + 64 * i) for i in range(shnum)]
+
+    def name_at(table, off):
+        start = secs[table][4] + off
+        return cubin[start:cubin.index(b"\0", start)]
+
+    def rename(n):
+        return new.encode() if n == old.encode() else n[:-len(old)] + new.encode() if n.endswith(b"." + old.encode()) else n
+    # (table, offset of a name, where the offset is stored), for each name
+    refs = [(shstrndx, sec[0], shoff + 64 * i) for i, sec in enumerate(secs)]
+    for sec in secs:
+        if sec[1] == 2:  # SHT_SYMTAB
+            refs += [(sec[6], struct.unpack_from("<I", cubin, sec[4] + e)[0], sec[4] + e) for e in range(0, sec[5], 24)]
+    out = bytearray(cubin)
+    tables = {}
+    for table in sorted({t for t, _, _ in refs}):
+        data, at = b"\0", {b"": 0}
+        for t, off, where in refs:
+            if t != table: continue
+            n = rename(name_at(table, off))
+            if n not in at:
+                at[n] = len(data)
+                data += n + b"\0"
+            struct.pack_into("<I", out, where, at[n])
+        tables[table] = data
+    for table, data in tables.items():
+        out += bytes(-len(out) % 8)
+        struct.pack_into("<QQ", out, shoff + 64 * table + 24, len(out), len(data))
+        out += data
+    return bytes(out)
+
+
 DEV.value = "CPU::x86_64,x86-64"
 Compiler.compile_cached = lambda self, src: src.encode()
-# A program's binary is the cubin, then its source's bytes, which the cubin's
-# ELF ignores: each program has a binary of its own, as a compiler's are.
-compiler_cuda.NVRTCCompiler.compile_cached = lambda self, src: CUBIN + src.encode()
+# A program's binary is the cubin with its kernel named as the program's, then
+# its source's bytes, which the cubin's ELF ignores: each program has a binary
+# of its own, as a compiler's are.
+KERNEL = re.compile(r"__global__ void (?:__launch_bounds__\(\d+\) )?(\w+)\(")
+compiler_cuda.NVRTCCompiler.compile_cached = lambda self, src: renamed(CUBIN, "simple_add", KERNEL.search(src).group(1)) + src.encode()
 # Workers compile in processes of their own, with tinygrad's compilers.
 realize.get_worker_pool = lambda: None
 # Making the renderer makes NVRTC's compiler, which loads NVRTC.
@@ -304,8 +348,8 @@ def simple_add(n=32, global_size=(1, 1, 1), local_size=(32, 1, 1), binary=CUBIN,
 
 # A cubin built here for the kernel k, to reach what simple_add's does not: 128
 # registers, shared memory, a stack, a parameter bank of its own size, constant
-# bank 3, attributes of each format, and the three relocations of the program's
-# own address.
+# bank 3, attributes of each format, which name k's symbol, and the three
+# relocations of the program's own address.
 
 PROGBITS, SYMTAB, STRTAB, RELA, NOBITS = 1, 2, 3, 4, 8
 
@@ -313,15 +357,16 @@ PROGBITS, SYMTAB, STRTAB, RELA, NOBITS = 1, 2, 3, 4, 8
 def elf64(sections, symbols):
     """An ELF object whose sections are (name, type, align, content, link,
     info) after the null section, then .symtab of `symbols` ((section index,
-    value)), then .shstrtab."""
-    # the symbols are nameless: their names are .shstrtab's empty string
-    secs = [*sections, (".symtab", SYMTAB, 8, bytes(24) + b"".join(struct.pack("<IBBHQQ", 0, 0, 0, i, v, 0) for i, v in symbols),
-                        len(sections) + 2, 0)]
+    value, name)), then .shstrtab, which holds the symbols' names too."""
     names, offsets = b"\0", []
-    for sec in [*secs, (".shstrtab",)]:
+    for name in [*(sec[0] for sec in sections), ".symtab", ".shstrtab"]:
         offsets.append(len(names))
-        names += sec[0].encode() + b"\0"
-    secs.append((".shstrtab", STRTAB, 1, names, 0, 0))
+        names += name.encode() + b"\0"
+    entries = bytes(24)
+    for i, v, name in symbols:
+        entries += struct.pack("<IBBHQQ", len(names) if name else 0, 0, 0, i, v, 0)
+        if name: names += name.encode() + b"\0"
+    secs = [*sections, (".symtab", SYMTAB, 8, entries, len(sections) + 2, 0), (".shstrtab", STRTAB, 1, names, 0, 0)]
     data, placed = b"", []
     for sec in secs:
         placed.append(64 + len(data))
@@ -345,12 +390,12 @@ CRAFTED = elf64([
     (".nv.constant0.k", PROGBITS, 4, bytes(0x180), 0, 0),
     (".nv.constant3", PROGBITS, 4, bytes(range(16)), 0, 0),
     (".nv.shared.k", NOBITS, 16, bytes(0x800), 0, 0),
-    (".nv.info", PROGBITS, 4, attr(4, 0x2f, struct.pack("<II", 0, 128)) + attr(3, 0x1b, 0x0102) + attr(4, 0x12, struct.pack("<II", 0, 0x100))
+    (".nv.info", PROGBITS, 4, attr(4, 0x2f, struct.pack("<II", 3, 128)) + attr(3, 0x1b, 0x0102) + attr(4, 0x12, struct.pack("<II", 3, 0x100))
      + attr(1, 0x05, 0), 0, 0),
     (".nv.info.k", PROGBITS, 4, attr(4, 0x0a, struct.pack("<IHH", 0, 0x1f0, 0x20)), 0, 0),
     (".rela.text.k", RELA, 8, b"".join(struct.pack("<QQq", off, (sym << 32) | typ, addend)
                                          for off, sym, typ, addend in [(0x10, 1, 2, 0), (0x20, 2, 0x38, 8), (0x30, 2, 0x39, 8)]), 8, 1),
-], [(3, 0), (1, 0x40)])
+], [(3, 0, ""), (1, 0x40, ""), (1, 0, "k")])
 
 
 class Linear:

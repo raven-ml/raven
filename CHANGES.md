@@ -3148,6 +3148,11 @@ thread.
 
 ### Nx
 
+- Add `nx.nv.cubin`, which reads cubins: their image laid out and relocated
+  (`Nx_nv_cubin.image`, `relocate`) and what a launch of a kernel needs, its
+  code, registers, stack, shared memory and constant banks
+  (`Nx_nv_cubin.kernel`). nx.nv.device and tolk read cubins through it.
+
 - `Nx.take` and `Nx.take_along_axis` on the CPU walk their output without
   recomputing each element's position, and `Nx.take ~axis` copies the
   contiguous elements after `axis` at one index read: a take along axis 1 of
