@@ -15,6 +15,7 @@ and compares their answers with the committed DuckDB answers.
 | File | Role |
 |---|---|
 | `h2o_data.py`, `tpch_data.py` | Generate the data |
+| `nulls_data.py` | Write `../data/nulls.parquet`, the nullable Parquet file of `bench_talon.ml` |
 | `baseline.py` | Time DuckDB and Polars into a thumper file |
 | `answers.py` | Check both engines against the committed answers, or record them |
 | `h2o.py`, `tpch.py` | The questions, in DuckDB SQL and as Polars queries |

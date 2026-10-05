@@ -20,6 +20,17 @@ Regenerate fixtures after modifying the generator or schema:
 uv run python packages/talon/bench/scripts/generate_fixtures.py
 ```
 
+`data/nulls.parquet` holds 2^20 rows of a nullable float64 and a nullable bool
+column, 10% nulls each, for the `Talon_parquet/read-nullable` row. talon has no
+Parquet writer, so pyarrow writes it:
+
+```bash
+uv run packages/talon/bench/queries/nulls_data.py packages/talon/bench/data/nulls.parquet
+```
+
+The `Talon/Nulls/*` rows run over a table of 2^20 rows that the bench draws
+from a seeded key, with nulls in five of its seven columns.
+
 ## Running the benchmarks
 
 ### Talon (OCaml)
