@@ -42,3 +42,6 @@ let v_si = Quantity.value Unit.(metre / second) v
   `sub`, `mul`, `div`, `pow`, `root`, `times` and `per`, and payloads of every
   float, complex and integer dtype; an integer conversion raises rather than
   wrap
+- **Measured constants**: `Constant.v` reads the published notation
+  `6.67430(15)e-11`, and `Codata.v2018` and `Codata.v2022` hold the CODATA
+  releases; a constant rounds once to the dtype a program asks for

@@ -113,3 +113,11 @@ val stefan_boltzmann : t
 val ratio_named : string -> ('a, 'b) Nx.dtype -> t -> t -> 'a
 (** [ratio_named fn d u w] is [ratio d u w], its error messages naming [fn] in
     place of [Unit.ratio]. *)
+
+val decimal_named : string -> string -> t
+(** [decimal_named fn s] is [decimal s], its error messages naming [fn] in place
+    of [Unit.decimal]. *)
+
+val round : ('a, 'b) Nx.dtype -> t -> ('a, Exact.error) result
+(** [round d u] is the number of the dimensionless [u] rounded once to [d], as
+    [ratio d u one] rounds it, or the reason [d] holds no such value. *)

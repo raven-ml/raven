@@ -308,10 +308,10 @@ let root n u =
   in
   guard "Unit.root" (fun u -> make (List.map scale u.terms)) u
 
-let decimal_error s =
-  invalid_arg (strf "Unit.decimal: %S is not a positive decimal" s)
-
-let decimal s =
+let decimal_named fn s =
+  let decimal_error () =
+    invalid_arg (strf "%s: %S is not a positive decimal" fn s)
+  in
   let len = String.length s in
   let i = ref 0 in
   let peek c = !i < len && s.[!i] = c in
@@ -325,11 +325,11 @@ let decimal s =
       acc := (!acc * 10) + d;
       incr i
     done;
-    if !i = start then decimal_error s;
+    if !i = start then decimal_error ();
     !acc
   in
   let mantissa_past () =
-    invalid_arg (strf "Unit.decimal: %S has a mantissa of 2^62 or more" s)
+    invalid_arg (strf "%s: %S has a mantissa of 2^62 or more" fn s)
   in
   let whole = digits 0 mantissa_past in
   let m, frac =
@@ -357,13 +357,15 @@ let decimal s =
       | exception Exponent_leaves_int _ -> past ()
     end
   in
-  let shift = guard "Unit.decimal" exponent () in
-  if !i <> len || m = 0 then decimal_error s;
+  let shift = guard fn exponent () in
+  if !i <> len || m = 0 then decimal_error ();
   let ten =
     if shift = 0 then [] else [ (Prime 2, shift, 1); (Prime 5, shift, 1) ]
   in
   let factors = of_factors (Prime.factor m) in
-  guard "Unit.decimal" (fun ten -> make (merge factors ten)) ten
+  guard fn (fun ten -> make (merge factors ten)) ten
+
+let decimal s = decimal_named "Unit.decimal" s
 
 (* Conversion *)
 
@@ -415,6 +417,7 @@ let ratio_named (type a b) fn (d : (a, b) Nx.dtype) u w : a =
   | Ok v -> v
   | Error e -> invalid_arg (ratio_error fn d u w q e)
 
+let round d u = Exact.round d (exact_factor u.terms)
 let ratio d u w = ratio_named "Unit.ratio" d u w
 
 (* Terms and text *)

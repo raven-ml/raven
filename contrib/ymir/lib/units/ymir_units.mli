@@ -9,7 +9,11 @@
     symbols with rational exponents, with one canonical text. A conversion
     between two units is one correctly rounded multiply, or it raises.
     {!Quantity} is a value in a unit, a structure that rune's transformations
-    carry with no rule of their own. *)
+    carry with no rule of their own.
+
+    The SI fixes some constants exactly, so they are units ({!Unit.planck}). A
+    measured constant is a {!Constant} of a {!Codata} release the program names.
+*)
 
 (** Units as exact values. *)
 module Unit : sig
@@ -128,7 +132,9 @@ module Unit : sig
       - [whose evaluation needs a natural wider than 65536 bits] when [v]'s
         exact evaluation does;
       - ["Unit.ratio: bool holds no factor"] for [Nx.bool], and with [bit] for
-        [Nx.bit]. *)
+        [Nx.bit].
+
+      Each message names [d] as {!Nx_dtype.to_string} writes it. *)
 
   (** {1:terms Terms} *)
 
@@ -640,4 +646,217 @@ module Quantity : sig
   val pp : Format.formatter -> ('a, 'b) Nx.t t -> unit
   (** [pp ppf q] formats [q]'s payload as {!Nx.pp} does, then its unit's
       canonical text. *)
+end
+
+(** Measured constants. *)
+module Constant : sig
+  (** A {e constant} is a measured value: a published decimal, its standard
+      uncertainty, a unit and a name. Its value and uncertainty are kept exact,
+      so a constant rounds once, from the published decimal, to the dtype a
+      program asks for: a float32 program gets G with no detour through float64.
+
+      {[
+      let g = Codata.newtonian_gravitation Codata.v2022
+      let gm = Quantity.mul (Constant.quantity Nx.float64 g) mass
+      ]} *)
+
+  type t
+  (** The type for measured constants. *)
+
+  val v : name:string -> string -> Unit.t -> t
+  (** [v ~name text u] is the constant [text] in [u], named [name]. [text] is
+
+      {v ["-"] digits ["." digits] ["(" digits ")"] ["e" ["-"] digits] v}
+
+      the parenthesised digits counting units of the mantissa's last digit:
+      ["6.67430(15)e-11"] is (6.67430 ± 0.00015)·10{^ -11}. Text without
+      parentheses is exact.
+
+      Raises [Invalid_argument] if [text] is outside this grammar, as in
+      [{|Constant.v: "6.67430(15" is not a constant's value|}]; if its value is
+      zero or its mantissa, its digits read as one integer, is 2{^ 62} or more;
+      if its uncertainty is zero, since an exact value has no parentheses, or
+      its digits are 2{^ 62} or more; or as {!Unit.decimal} does when the value
+      or the uncertainty is past the coefficient's bound, as in
+      ["Constant.v: the coefficient's numerator is past 4096 bits"]. When [text]
+      breaks several of these, the first in this order is raised: the grammar,
+      the value, the uncertainty, the coefficient's bound. *)
+
+  val name : t -> string
+  (** [name k] is [k]'s name. *)
+
+  val unit : t -> Unit.t
+  (** [unit k] is [k]'s unit. *)
+
+  val quantity : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t Quantity.t
+  (** [quantity d k] is [k]'s value as a scalar of [d] in [unit k]: its
+      magnitude rounded once to [d] as {!Unit.ratio} rounds, then its sign. A
+      complex dtype has a zero imaginary part. An integer dtype holds [k] only
+      if it holds [k]'s magnitude, so [-128] is refused in int8, and an unsigned
+      dtype holds no negative constant.
+
+      Raises [Invalid_argument] when [d] holds no rounding of [k]'s magnitude,
+      for the reasons {!Unit.ratio} gives, its message naming
+      [Constant.quantity], [k] and [k]'s text, as in
+      ["Constant.quantity: Newtonian constant of gravitation: 6.67430(15)e-11 is
+       0 in float8_e4m3"] and
+      ["Constant.quantity: k: -128 has a magnitude int8 does not hold"]; or, for
+      a negative [k] and an unsigned dtype, before any rounding, as in
+      ["Constant.quantity: electron g factor: -2.00231930436092(36) is negative,
+       which uint8 does not hold"]. *)
+
+  val uncertainty : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t Quantity.t
+  (** [uncertainty d k] is [k]'s standard uncertainty, which is never negative,
+      as a scalar of [d] in [unit k]: zero for an exact constant, otherwise
+      rounded once as {!quantity} rounds. Raises [Invalid_argument] as
+      {!quantity} does, its message naming [Constant.uncertainty], [k] and the
+      uncertainty of [k]'s text, as in
+      ["Constant.uncertainty: k: the uncertainty of 42.0(5) is not an integer"].
+  *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf k] formats [k]'s name, its text and its unit's canonical text, as
+      in [Newtonian constant of gravitation = 6.67430(15)e-11 kg^-1 m^3 s^-2].
+      The unit is left out when it is {!Unit.one}, as in
+      [fine-structure constant = 7.2973525643(11)e-3]. *)
+end
+
+(** CODATA releases of the measured constants. *)
+module Codata : sig
+  (** A {e release} is one CODATA adjustment of the measured constants, as NIST
+      publishes it. A release is a value, and a function that needs measured
+      constants takes one, so a program states which adjustment it computes
+      with:
+
+      {[
+      let bohr codata = Constant.quantity Nx.float64 (Codata.bohr_radius codata)
+      let a0 = bohr Codata.v2022
+      ]}
+
+      A release holds every measured quantity of NIST's table for its
+      adjustment, named as the table names it, with the value and uncertainty
+      the table gives. The table's exact rows are left out: the SI fixes those
+      constants, so they are units ({!Unit.section-constants}). So are the rows
+      that restate another row in other units: the energy equivalents and
+      relationships, and the values given again in MeV, eV, u, Hz, K or m{^ -1}.
+      Ratios and dimensionless quantities are kept.
+
+      A quantity has the table's unit, with one change: the table writes the
+      radian as 1, and a unit here carries it where the quantity is, by its
+      definition, an angle per something or something per angle. A gyromagnetic
+      ratio is an angular frequency per tesla, rad s{^ -1} T{^ -1}, and a
+      reduced Compton wavelength is a wavelength per radian, m rad{^ -1}. Every
+      other quantity, the atomic, natural and Planck units included, has the
+      table's unit.
+
+      The releases start at 2018, the first adjustment under the 2019 SI's exact
+      constants. The accessors below name the quantities the formulas of physics
+      and astronomy most often take as inputs; every other quantity of a release
+      is in {!constants}. Both releases hold every accessor's constant. An
+      accessor for a constant a release lacks raises [Invalid_argument] naming
+      the accessor, the release's year and NIST's name for the constant, as in
+      ["Codata.tau_mass: CODATA 2030 has no tau mass"]; accessors let a later
+      release add constants without breaking a program. *)
+
+  type t
+  (** The type for CODATA releases. *)
+
+  val v2018 : t
+  (** [v2018] is the 2018 adjustment. *)
+
+  val v2022 : t
+  (** [v2022] is the 2022 adjustment. *)
+
+  val year : t -> int
+  (** [year r] is the year of [r]'s adjustment. *)
+
+  val constants : t -> Constant.t list
+  (** [constants r] is every constant of [r], in the order of NIST's table. *)
+
+  (** {1:gravitation Gravitation and electromagnetism} *)
+
+  val newtonian_gravitation : t -> Constant.t
+  (** [newtonian_gravitation r] is G, the Newtonian constant of gravitation, in
+      m{^ 3} kg{^ -1} s{^ -2}. *)
+
+  val fine_structure : t -> Constant.t
+  (** [fine_structure r] is α, the fine-structure constant, dimensionless. *)
+
+  val vacuum_permeability : t -> Constant.t
+  (** [vacuum_permeability r] is μ{_ 0}, the vacuum magnetic permeability, in N
+      A{^ -2}. *)
+
+  val vacuum_permittivity : t -> Constant.t
+  (** [vacuum_permittivity r] is ε{_ 0}, the vacuum electric permittivity, in F
+      m{^ -1}. *)
+
+  (** {1:masses Masses} *)
+
+  val dalton : t -> Constant.t
+  (** [dalton r] is m{_ u}, the atomic mass constant, which is the dalton, in
+      kg. *)
+
+  val electron_mass : t -> Constant.t
+  (** [electron_mass r] is m{_ e} in kg. *)
+
+  val muon_mass : t -> Constant.t
+  (** [muon_mass r] is m{_ μ} in kg. *)
+
+  val tau_mass : t -> Constant.t
+  (** [tau_mass r] is m{_ τ} in kg. *)
+
+  val proton_mass : t -> Constant.t
+  (** [proton_mass r] is m{_ p} in kg. *)
+
+  val neutron_mass : t -> Constant.t
+  (** [neutron_mass r] is m{_ n} in kg. *)
+
+  val deuteron_mass : t -> Constant.t
+  (** [deuteron_mass r] is m{_ d} in kg. *)
+
+  val triton_mass : t -> Constant.t
+  (** [triton_mass r] is m{_ t} in kg. *)
+
+  val helion_mass : t -> Constant.t
+  (** [helion_mass r] is m{_ h}, the mass of the helium-3 nucleus, in kg. *)
+
+  val alpha_particle_mass : t -> Constant.t
+  (** [alpha_particle_mass r] is m{_ α}, the mass of the helium-4 nucleus, in
+      kg. *)
+
+  (** {1:atomic Atomic physics} *)
+
+  val rydberg : t -> Constant.t
+  (** [rydberg r] is R{_ ∞}, the Rydberg constant, in m{^ -1}. *)
+
+  val bohr_radius : t -> Constant.t
+  (** [bohr_radius r] is a{_ 0} in m. *)
+
+  val classical_electron_radius : t -> Constant.t
+  (** [classical_electron_radius r] is r{_ e} in m. *)
+
+  val compton_wavelength : t -> Constant.t
+  (** [compton_wavelength r] is λ{_ C}, the electron's Compton wavelength, in m.
+  *)
+
+  val thomson_cross_section : t -> Constant.t
+  (** [thomson_cross_section r] is σ{_ e} in m{^ 2}. *)
+
+  val hartree_energy : t -> Constant.t
+  (** [hartree_energy r] is E{_ h} in J. *)
+
+  val bohr_magneton : t -> Constant.t
+  (** [bohr_magneton r] is μ{_ B} in J T{^ -1}. *)
+
+  val nuclear_magneton : t -> Constant.t
+  (** [nuclear_magneton r] is μ{_ N} in J T{^ -1}. *)
+
+  val electron_magnetic_moment : t -> Constant.t
+  (** [electron_magnetic_moment r] is μ{_ e}, negative, in J T{^ -1}. *)
+
+  val proton_magnetic_moment : t -> Constant.t
+  (** [proton_magnetic_moment r] is μ{_ p} in J T{^ -1}. *)
+
+  val electron_g_factor : t -> Constant.t
+  (** [electron_g_factor r] is g{_ e}, negative, dimensionless. *)
 end
