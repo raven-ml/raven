@@ -2553,6 +2553,355 @@ let staged_iterates at =
           equal near (f x) (compiled f x));
     ]
 
+(* Loops that stop on a count, compiled *)
+
+let count_of n = Nx.scalar Nx.int32 (Int32.of_int n)
+let by_count = Nx.Ptree.(pair tensor tensor)
+
+(* [to_count s ~max ~f n c] steps the carry [c], of structure [s], by [f] until
+   its trips reach [n], a tensor, so one compiled function takes a different
+   number of trips at each call. *)
+let to_count s ~max ~f n c =
+  fst
+    (Rune.iterate
+       Nx.Ptree.(pair s tensor)
+       ~max
+       ~until:(fun (_, k) -> Nx.greater_equal k n)
+       ~f:(fun (c, k) -> (f c, Nx.add_s k 1l))
+       (c, Nx.place (Nx.placement n) (count_of 0)))
+
+let rec repeat k f x = if k = 0 then x else repeat (k - 1) f (f x)
+
+(* [counted_loops at] checks loops compiled with their arguments at [at] whose
+   trips a count argument fixes: the carries the program keeps from trip to
+   trip, a program run again at other counts, nesting at each level's shortest
+   lengths, and totals in the step. *)
+let counted_loops at =
+  let exact () = Oracle.tensor () in
+  let ints n = Nx.place at (Nx.arange Nx.int32 0 n 1) in
+  let n_and = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+  let count_of n = Nx.place at (count_of n) in
+  group "loops to a count"
+    [
+      test "two carries the step swaps hold each other's values" (fun () ->
+          let swap (a, b) = (b, a) in
+          let g =
+            Rune.jit
+              Nx.Ptree.(by_count @-> tensor @-> returns by_count)
+              (fun c n -> to_count by_count ~max:5 ~f:swap n c)
+          in
+          let a = ints 4
+          and b = Nx.place at (Nx.mul_s (Nx.arange Nx.int32 0 4 1) 10l) in
+          List.iter
+            (fun n ->
+              let msg = Printf.sprintf "%d trips" n in
+              let a', b' = g (a, b) (count_of n) in
+              let ea, eb = repeat n swap (a, b) in
+              equal ~msg (exact ()) (host ea) (host a');
+              equal ~msg (exact ()) (host eb) (host b'))
+            [ 0; 1; 2; 3; 4; 5 ]);
+      test
+        "twelve carries, each the sum of two the trip before read, are eager's"
+        (fun () ->
+          (* Each new carry reads two old ones, one of them its neighbour's, so
+             a plan that writes one carry over another read later in the trip
+             shows in every element. *)
+          let k = 12 in
+          let s = Nx.Ptree.(list tensor) in
+          let step cs =
+            List.mapi
+              (fun i c -> Nx.add c (Nx.mul_s (List.nth cs ((i + 1) mod k)) 2l))
+              cs
+          in
+          let init =
+            List.init k (fun i ->
+                Nx.place at
+                  (Nx.add_s (Nx.arange Nx.int32 0 3 1) (Int32.of_int (i * 3))))
+          in
+          let g =
+            Rune.jit
+              Nx.Ptree.(s @-> tensor @-> returns s)
+              (fun cs n -> to_count s ~max:6 ~f:step n cs)
+          in
+          List.iter
+            (fun n ->
+              let msg = Printf.sprintf "%d trips" n in
+              List.iter2
+                (fun e c -> equal ~msg (exact ()) (host e) (host c))
+                (repeat n step (List.map host init))
+                (g init (count_of n)))
+            [ 6; 1; 0; 4 ]);
+      test "a carry the step returns at two leaves holds both" (fun () ->
+          let dup (a, _) = (Nx.add_s a 1l, Nx.add_s a 1l) in
+          let a = Nx.arange Nx.int32 0 4 1 in
+          let a', b' =
+            Rune.jit
+              Nx.Ptree.(by_count @-> tensor @-> returns by_count)
+              (fun c n -> to_count by_count ~max:5 ~f:dup n c)
+              (Nx.place at a, Nx.place at (Nx.mul_s a 3l))
+              (count_of 3)
+          in
+          equal ~msg:"first" (exact ()) (Nx.add_s a 3l) (host a');
+          equal ~msg:"second" (exact ()) (Nx.add_s a 3l) (host b'));
+      test
+        "one compiled loop called again runs each call's trips, and raises \
+         past its bound" (fun () ->
+          let g =
+            Rune.jit n_and (fun x n ->
+                to_count Nx.Ptree.tensor ~max:4 ~f:halve n x)
+          in
+          let x = Nx.place at (Nx.create Nx.float32 [| 2 |] [| 16.; -8. |]) in
+          List.iter
+            (fun n ->
+              let msg = Printf.sprintf "%d trips" n in
+              if n > 4 then
+                raises ~msg
+                  (Invalid_argument
+                     "Rune.iterate: until is still false after max = 4 steps")
+                  (fun () -> g x (count_of n))
+              else
+                equal ~msg (exact ())
+                  (repeat n halve (host x))
+                  (host (g x (count_of n))))
+            [ 2; 0; 4; 5; 1; 3 ]);
+      cases
+        ~name:(fun (n, m) -> Printf.sprintf "%d outer, %d inner trips" n m)
+        "an iterate in an iterate's step at its shortest lengths is eager's"
+        [ (0, 0); (0, 1); (1, 0); (1, 1); (1, 2); (2, 1); (2, 2) ]
+        (fun (n, m) ->
+          let f x n m =
+            to_count Nx.Ptree.tensor ~max:3
+              ~f:(fun x ->
+                Nx.add_s (to_count Nx.Ptree.tensor ~max:3 ~f:halve m x) 1.)
+              n x
+          in
+          let x = Nx.create Nx.float32 [| 2 |] [| 16.; -8. |] in
+          let g =
+            Rune.jit
+              Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+              f
+          in
+          equal (exact ())
+            (repeat n (fun x -> Nx.add_s (repeat m halve x) 1.) x)
+            (host (g (Nx.place at x) (count_of n) (count_of m))));
+      cases
+        ~name:(fun (n, m) -> Printf.sprintf "%d trips, %d rows" n m)
+        "a scan in an iterate's step at its shortest lengths is the scan \
+         written out, bit for bit"
+        [ (0, 1); (1, 1); (1, 2); (2, 1); (2, 2); (3, 3) ]
+        (fun (n, m) ->
+          let ran = ref 0 in
+          let inner c d r =
+            let d = Nx.add (Nx.mul_s d 0.9) (Nx.mul r c) in
+            (d, Nx.sin d)
+          in
+          let rs = Nx.place at (Nx.mul_s (Nx.sin (grid m 2)) 0.5) in
+          let nested c =
+            fst
+              (Rune.scan'
+                 ~f:(fun d r ->
+                   incr ran;
+                   inner c d r)
+                 ~init:c rs)
+          in
+          let written c =
+            let d = ref c in
+            for i = 0 to m - 1 do
+              d := Nx.copy (fst (inner c !d (Nx.slice [ I i ] rs)))
+            done;
+            !d
+          in
+          let compiled step =
+            Rune.jit n_and
+              (fun x n -> to_count Nx.Ptree.tensor ~max:3 ~f:step n x)
+              (Nx.place at (Nx.create Nx.float32 [| 2 |] [| 0.75; -0.5 |]))
+              (count_of n)
+          in
+          let got = host (compiled nested) in
+          equal ~msg:"inner steps traced" int 1 !ran;
+          equal floats (host (compiled written)) got);
+      test "an iterate in a scan's step of one and two rows is eager's"
+        (fun () ->
+          List.iter
+            (fun (k, m) ->
+              let f xs =
+                Rune.scan'
+                  ~f:(fun c x ->
+                    let c =
+                      to_count Nx.Ptree.tensor ~max:3 ~f:halve
+                        (Nx.place (Nx.placement x) (count_of m))
+                        (Nx.add c x)
+                    in
+                    (c, c))
+                  ~init:
+                    (Nx.place (Nx.placement xs) (Nx.ones Nx.float32 [| 2 |]))
+                  xs
+              in
+              let xs = Nx.place at (Nx.mul_s (grid k 2) 0.25) in
+              let msg = Printf.sprintf "%d rows, %d trips" k m in
+              let c, ys = f (host xs) in
+              let c', ys' =
+                Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f xs
+              in
+              equal ~msg (exact ()) c (host c');
+              equal ~msg (exact ()) ys (host ys'))
+            [ (1, 0); (1, 1); (1, 2); (2, 0); (2, 1); (2, 2) ]);
+      test "lanes that stop apart at both levels of nested iterates" (fun () ->
+          let f x n m =
+            to_count Nx.Ptree.tensor ~max:3
+              ~f:(fun x ->
+                Nx.add_s (to_count Nx.Ptree.tensor ~max:3 ~f:halve m x) 1.)
+              n x
+          in
+          let three =
+            Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+          in
+          let pairs = [ (0, 2); (2, 0); (1, 1); (2, 2); (1, 0); (0, 0) ] in
+          let ns =
+            Nx.create Nx.int32 [| 6 |]
+              (Array.of_list (List.map (fun (n, _) -> Int32.of_int n) pairs))
+          and ms =
+            Nx.create Nx.int32 [| 6 |]
+              (Array.of_list (List.map (fun (_, m) -> Int32.of_int m) pairs))
+          in
+          let xs = Nx.mul_s (grid 6 2) 4. in
+          let expected =
+            Nx.stack
+              (List.mapi
+                 (fun i (n, m) ->
+                   repeat n
+                     (fun x -> Nx.add_s (repeat m halve x) 1.)
+                     (Nx.slice [ I i ] xs))
+                 pairs)
+          in
+          equal ~msg:"jit of vmap" (exact ()) expected
+            (host
+               (Rune.jit three (Rune.vmap three f) (Nx.place at xs)
+                  (Nx.place at ns) (Nx.place at ms)));
+          equal ~msg:"vmap of jit" (exact ()) expected
+            (host
+               (Rune.vmap three (Rune.jit three f) (Nx.place at xs)
+                  (Nx.place at ns) (Nx.place at ms))));
+      test "an iterate whose step scans more rows than a batch holds" (fun () ->
+          let n = Tolk.Hcq2.chunk_calls + 77 in
+          let g =
+            Rune.jit n_and (fun x k ->
+                to_count Nx.Ptree.tensor ~max:3
+                  ~f:(fun c ->
+                    fst
+                      (Rune.scan'
+                         ~f:(fun c r -> (Nx.add c r, c))
+                         ~init:c
+                         (Nx.place (Nx.placement c)
+                            (Nx.ones Nx.float32 [| n; 2 |]))))
+                  k x)
+          in
+          let x = Nx.create Nx.float32 [| 2 |] [| 0.5; -3. |] in
+          List.iter
+            (fun k ->
+              equal
+                ~msg:(Printf.sprintf "%d trips" k)
+                floats
+                (Nx.add_s x (Float.of_int (k * n)))
+                (host (g (Nx.place at x) (count_of k))))
+            [ 2; 0; 1 ]);
+      test "a scan of more rows than a batch holds whose step iterates"
+        (fun () ->
+          (* Row [i] holds [i mod 3], and the step's loop adds one to the carry
+             that many times, so each row adds twice its value. *)
+          let n = Tolk.Hcq2.chunk_calls + 77 in
+          let f xs =
+            Rune.scan'
+              ~f:(fun c r ->
+                let c =
+                  to_count Nx.Ptree.tensor ~max:2
+                    ~f:(fun c -> Nx.add_s c 1.)
+                    (Nx.cast Nx.int32 (Nx.slice [ I 0 ] r))
+                    (Nx.add c r)
+                in
+                (c, c))
+              ~init:(Nx.place (Nx.placement xs) (Nx.zeros Nx.float32 [| 2 |]))
+              xs
+          in
+          let xs =
+            Nx.broadcast_to [| n; 2 |]
+              (Nx.reshape [| n; 1 |]
+                 (Nx.create Nx.float32 [| n |]
+                    (Array.init n (fun i -> Float.of_int (i mod 3)))))
+          in
+          let c, ys = f xs in
+          let c', ys' =
+            Rune.jit
+              Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+              f
+              (Nx.place at (Nx.copy xs))
+          in
+          equal ~msg:"carry" floats c (host c');
+          equal ~msg:"outputs" floats ys (host ys'));
+      (* A total collected around a compiled function adds its result eagerly,
+         which a device without eager kernels refuses, loop or none. *)
+      (if Nx.Placement.equal at Nx.Placement.host then Fun.id
+       else
+         xfail
+           ~reason:
+             "Rune.Total.collect adds a compiled function's total eagerly on \
+              its device")
+      @@ test "a scope around a compiled loop counts each call's trips"
+           (fun () ->
+             let total : (float, Nx.float32_elt) Rune.Total.t =
+               Rune.Total.make ()
+             in
+             let g =
+               Rune.jit n_and (fun x n ->
+                   to_count Nx.Ptree.tensor ~max:5
+                     ~f:(fun x ->
+                       Rune.Total.add total (Nx.scalar Nx.float32 1.);
+                       halve x)
+                     n x)
+             in
+             let x = Nx.place at (Nx.ones Nx.float32 [| 2 |]) in
+             List.iter
+               (fun n ->
+                 let _, t =
+                   Rune.Total.collect total ~zero:(Nx.scalar Nx.float32 0.)
+                     (fun () -> g x (count_of n))
+                 in
+                 equal
+                   ~msg:(Printf.sprintf "%d trips" n)
+                   (exact ())
+                   (Nx.scalar Nx.float32 (Float.of_int n))
+                   (host t))
+               [ 3; 0; 5; 1 ]);
+      test "a scope inside a compiled function counts its loop's trips"
+        (fun () ->
+          let total : (float, Nx.float32_elt) Rune.Total.t =
+            Rune.Total.make ()
+          in
+          let g =
+            Rune.jit
+              Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+              (fun x n ->
+                Rune.Total.collect total
+                  ~zero:(Nx.place (Nx.placement x) (Nx.scalar Nx.float32 0.))
+                  (fun () ->
+                    to_count Nx.Ptree.tensor ~max:5
+                      ~f:(fun x ->
+                        Rune.Total.add total
+                          (Nx.place (Nx.placement x) (Nx.scalar Nx.float32 1.));
+                        halve x)
+                      n x))
+          in
+          let x = Nx.place at (Nx.ones Nx.float32 [| 2 |]) in
+          List.iter
+            (fun n ->
+              equal
+                ~msg:(Printf.sprintf "%d trips" n)
+                (exact ())
+                (Nx.scalar Nx.float32 (Float.of_int n))
+                (host (snd (g x (count_of n)))))
+            [ 3; 0; 5; 1 ]);
+    ]
+
 let product c x =
   let w = Nx.mul_s (grid 3 3) 0.1 in
   let c =
@@ -2867,6 +3216,58 @@ let staged_scans d =
         ~init:(zeros 4) nested (rows 6 16);
       nested_scans at;
       staged_iterates at;
+      counted_loops at;
+      test
+        "refuse an iterate whose carry holds a tensor placed on the host \
+         beside a device tensor" (fun () ->
+          raises
+            (Rune.Jit_error
+               "Rune.jit: Rune.iterate cannot be compiled: its step runs on a \
+                device with command queues and on the host, or on devices of \
+                two kinds") (fun () ->
+              Rune.jit
+                Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+                (fun x ->
+                  Rune.iterate
+                    Nx.Ptree.(pair tensor tensor)
+                    ~max:10
+                    ~until:(fun (x, _) -> below 0.01 x)
+                    ~f:(fun (x, h) -> (halve x, halve h))
+                    (x, Nx.place Nx.Placement.host x))
+                (Nx.place at (ones 4))));
+      test
+        "a staged scan whose carry holds a tensor placed on the host returns \
+         it there" (fun () ->
+          let x, h =
+            Rune.jit
+              Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+              (fun x ->
+                fst
+                  (Rune.scan
+                     Nx.Ptree.(pair tensor tensor)
+                     Nx.Ptree.tensor Nx.Ptree.unit
+                     ~f:(fun (x, h) _ -> ((halve x, Nx.add_s (halve h) 1.), ()))
+                     ~init:(x, Nx.place Nx.Placement.host x)
+                     (Nx.place at (Nx.zeros Nx.float32 [| 3; 1 |]))))
+              (Nx.place at (ones 4))
+          in
+          equal ~msg:"device leaf" Nx_test.Devices.placement at (Nx.placement x);
+          equal ~msg:"host leaf" Nx_test.Devices.placement Nx.Placement.host
+            (Nx.placement h);
+          equal ~msg:"values" floats (Nx.full Nx.float32 [| 4 |] 1.875) (host h));
+      test
+        "refuse an iterate whose until computes on the host from a device \
+         carry, as a step that does" (fun () ->
+          raises
+            (Rune.Jit_error
+               "Rune.jit: Rune.iterate cannot be compiled: its step runs on a \
+                device with command queues and on the host, or on devices of \
+                two kinds") (fun () ->
+              Rune.jit'
+                (Rune.iterate' ~max:10
+                   ~until:(fun x -> below 0.01 (Nx.place Nx.Placement.host x))
+                   ~f:halve)
+                (Nx.place at (ones 4))));
       test
         "refuse an iterate whose step computes on the host between device steps"
         (fun () ->
@@ -3307,6 +3708,7 @@ let scans =
         ~init:(zeros 4) decay (rows 400 4);
       nested_scans Nx.Placement.host;
       staged_iterates Nx.Placement.host;
+      counted_loops Nx.Placement.host;
       test "a scan over rows computed from constants alone equals eager"
         (fun () ->
           List.iter

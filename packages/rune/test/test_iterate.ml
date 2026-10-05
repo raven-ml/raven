@@ -1596,6 +1596,635 @@ let compiled_tests =
       compiled_nested_law;
     ]
 
+(* Compiled loops at their edges *)
+
+(* The loops below stop on a count passed as a tensor, so one compiled function
+   takes a different number of trips at each call. *)
+
+let i32 = Nx.int32
+let count_of n = Nx.scalar i32 (Int32.of_int n)
+let affine x = Nx.add_s (Nx.mul_s x 0.5) 1.
+
+(* [to_count ~max ~f n x] steps [x] by [f] until its trips reach [n]. *)
+let to_count ~max ~f n x =
+  fst
+    (Rune.iterate
+       Nx.Ptree.(pair tensor tensor)
+       ~max
+       ~until:(fun (_, k) -> Nx.greater_equal k n)
+       ~f:(fun (x, k) -> (f x, Nx.add_s k 1l))
+       (x, count_of 0))
+
+let x_and_n = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+let at_count ~max f = Rune.jit x_and_n (fun x n -> to_count ~max ~f n x)
+
+(* [expected ~max n x] is [affine] applied [n] times when [n <= max]. *)
+let expected ~max n x =
+  if n > max then invalid_arg (failure max) else written n affine x
+
+let compiled_edge_tests =
+  [
+    cases
+      ~name:(fun (max, n) -> Printf.sprintf "max = %d, %d trips needed" max n)
+      "compiled, a loop of its bound or less is eager's, one beyond raises"
+      [ (0, 0); (0, 1); (1, 0); (1, 1); (1, 2); (2, 1); (2, 2); (2, 3) ]
+      (fun (max, n) ->
+        let x = vec [| 1.5; -3. |] in
+        let got () = at_count ~max affine x (count_of n) in
+        match expected ~max n x with
+        | v -> equal (close ()) v (got ())
+        | exception Invalid_argument m -> raises (Invalid_argument m) got);
+    cases
+      ~name:(fun max -> Printf.sprintf "max = %d" max)
+      "compiled, a start that satisfies until is returned bit for bit"
+      [ 0; 1; 5 ]
+      (fun max ->
+        let x = vec Float.[| -0.; nan; infinity; 5e-324; -.max_float |] in
+        equal (exact ()) x (at_count ~max affine x (count_of 0)));
+    test "compiled, an until that is constant true takes no step" (fun () ->
+        let x = vec [| -0.; 2. |] in
+        equal (exact ()) x
+          (Rune.jit'
+             (Rune.iterate' ~max:4
+                ~until:(fun _ -> Nx.scalar Nx.bool true)
+                ~f:(fun x -> Nx.mul x x))
+             x));
+    test "compiled, an until that is constant false raises at the bound"
+      (fun () ->
+        raises
+          (Invalid_argument (failure 3))
+          (fun () ->
+            Rune.jit'
+              (Rune.iterate' ~max:3
+                 ~until:(fun _ -> Nx.scalar Nx.bool false)
+                 ~f:affine)
+              (scalar 1.)));
+    test "compiled, a NaN carry never meets a tolerance and raises" (fun () ->
+        let f = Rune.iterate' ~max:10 ~until:(small tol) ~f:(contract w0) in
+        raises (Invalid_argument (failure 10)) (fun () -> f (scalar Float.nan));
+        raises
+          (Invalid_argument (failure 10))
+          (fun () -> Rune.jit' f (scalar Float.nan)));
+    test "compiled, an until that holds on a non-finite carry stops on it"
+      (fun () ->
+        let f =
+          Rune.iterate' ~max:10
+            ~until:(fun x -> Nx.logical_not (Nx.isfinite (Nx.max x)))
+            ~f:(fun x -> Nx.mul_s x 1e100)
+        in
+        let x = vec [| 3.; -2. |] in
+        equal (exact ()) (f x) (Rune.jit' f x));
+    test "compiled, a carry the step passes through keeps its bits" (fun () ->
+        let held = vec Float.[| nan; -0.; neg_infinity; 5e-324 |] in
+        let f (x, h) =
+          Rune.iterate
+            Nx.Ptree.(pair tensor tensor)
+            ~max:80
+            ~until:(fun (x, _) -> small tol x)
+            ~f:(fun (x, h) -> (contract w0 x, h))
+            (x, h)
+        in
+        let _, h =
+          Rune.jit
+            Nx.Ptree.(pair tensor tensor @-> returns (pair tensor tensor))
+            f
+            (scalar 1.9, held)
+        in
+        equal (exact ()) held h);
+  ]
+
+(* Every dtype a compiled function takes as an argument, as a carry: [flips]
+   moves each element of a row that is not a palindrome at each trip. A compiled
+   function refuses int4, uint4, bit and complex arguments. *)
+let compiled_dtype name x =
+  test (name ^ ", compiled, carries hold each lane's bits") (fun () ->
+      let t = Nx.create i32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
+      let flipped i r = if i mod 2 = 1 then Nx.flip r else r in
+      let sig_ = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+      equal ~msg:"one lane" (exact ())
+        (Nx.flip (lane 0 x))
+        (Rune.jit sig_ flips (lane 0 x) (Nx.scalar i32 1l));
+      equal ~msg:"lanes" (exact ())
+        (stack 4 (fun i -> flipped i (lane i x)))
+        (Rune.jit sig_ (Rune.vmap sig_ flips) x t))
+
+let compiled_dtype_tests =
+  [
+    compiled_dtype "float64" (rows Nx.float64 floats);
+    compiled_dtype "float32" (rows Nx.float32 floats);
+    compiled_dtype "float16" (rows Nx.float16 floats);
+    compiled_dtype "bfloat16" (rows Nx.bfloat16 floats);
+    compiled_dtype "float8_e4m3" (rows Nx.float8_e4m3 floats);
+    compiled_dtype "float8_e5m2" (rows Nx.float8_e5m2 floats);
+    compiled_dtype "int8" (rows Nx.int8 (ints (-128) 127));
+    compiled_dtype "uint8" (rows Nx.uint8 (uints 255));
+    compiled_dtype "int16" (rows Nx.int16 (ints (-32768) 32767));
+    compiled_dtype "uint16" (rows Nx.uint16 (uints 65535));
+    compiled_dtype "int32"
+      (rows Nx.int32
+         Int32.
+           [|
+             min_int; -1l; 0l; 1l; 2l; max_int; 3l; 0l; min_int; max_int; 1l; 2l;
+           |]);
+    compiled_dtype "uint32"
+      (rows Nx.uint32 (Array.map Int32.of_int (uints (-1))));
+    compiled_dtype "int64"
+      (rows Nx.int64
+         Int64.
+           [|
+             min_int; -1L; 0L; 1L; 2L; max_int; 3L; 0L; min_int; max_int; 1L; 2L;
+           |]);
+    compiled_dtype "uint64"
+      (rows Nx.uint64 (Array.map Int64.of_int (uints (-1))));
+    compiled_dtype "bool" (rows Nx.bool bools);
+  ]
+
+(* Structures and sizes, compiled *)
+
+let compiled_structure_tests =
+  let s = Nx.Ptree.(pair (list tensor) (option tensor)) in
+  let run iterate o x =
+    let l, o =
+      iterate s ~max:80
+        ~until:(fun (l, _) -> small tol (List.hd l))
+        ~f:(fun (l, o) ->
+          (List.map (contract w0) l, Option.map (fun y -> Nx.mul_s y 0.5) o))
+        ([ x; Nx.mul_s x 0.5 ], Option.map (fun f -> f x) o)
+    in
+    Nx.stack (l @ Option.to_list o)
+  in
+  let some = Some (fun x -> Nx.add_s x 1.) in
+  let pair = Nx.Ptree.(pair tensor tensor) in
+  let with_empty (x, e) =
+    Rune.iterate pair ~max:80
+      ~until:(fun (x, _) -> small tol x)
+      ~f:(fun (x, e) -> (contract w0 x, Nx.mul_s e 2.))
+      (x, e)
+  in
+  [
+    test "a carry of a list and an option, compiled, is eager's" (fun () ->
+        List.iter
+          (fun (msg, o) ->
+            equal ~msg (close ())
+              (run plain_iterate o (scalar 1.9))
+              (Rune.jit' (run Rune.iterate o) (scalar 1.9));
+            equal ~msg:(msg ^ ", lanes") (close ())
+              (per_lane (run plain_iterate o) (xs ()))
+              (Rune.jit' (Rune.vmap' (run Rune.iterate o)) (xs ())))
+          [ ("Some", some); ("None", None) ]);
+    test "grad of a structured carry, compiled, covers the trips taken"
+      (fun () ->
+        let loss iterate x = Nx.sum (Nx.sin (run iterate some x)) in
+        equal (close ())
+          (per_lane (Rune.grad' (loss plain_iterate)) (xs ()))
+          (Rune.jit'
+             (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' (loss Rune.iterate) xs)))
+             (xs ())));
+    test "a zero-size carry tensor, compiled" (fun () ->
+        let e = Nx.zeros f64 [| 0 |] in
+        let sig_ =
+          Nx.Ptree.(pair tensor tensor @-> returns (pair tensor tensor))
+        in
+        let x, e' = Rune.jit sig_ with_empty (scalar 1.9, e) in
+        equal ~msg:"x" (close ()) (iterated w0 (scalar 1.9)) x;
+        equal ~msg:"e" (exact ()) e e';
+        let loss xe =
+          let x, e = with_empty xe in
+          Nx.add (Nx.sum (Nx.sin x)) (Nx.sum e)
+        in
+        let gx, ge = Rune.jit sig_ (Rune.grad pair loss) (scalar 1.9, e) in
+        equal ~msg:"grad x" (close ())
+          (Rune.grad' (fun x -> Nx.sum (Nx.sin (iterated w0 x))) (scalar 1.9))
+          gx;
+        equal ~msg:"grad e" (exact ()) e ge);
+    test "a carry of only a zero-size tensor and a count, compiled" (fun () ->
+        let e = Nx.zeros f64 [| 2; 0 |] in
+        equal (exact ()) e
+          (at_count ~max:5 (fun e -> Nx.mul_s e 2.) e (count_of 3)));
+    test "a map of no lanes, compiled" (fun () ->
+        let none = Nx.zeros f64 [| 0 |] in
+        equal ~msg:"value" (exact ()) none
+          (Rune.jit' (Rune.vmap' (iterated w0)) none);
+        equal ~msg:"grad" (exact ()) none
+          (Rune.jit'
+             (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' (iterated w0) xs)))
+             none));
+  ]
+
+(* One compiled function, called again: its program must run each call's own
+   trips. *)
+let compiled_cache_tests =
+  let lanes_of ns =
+    Nx.create i32
+      [| List.length ns |]
+      (Array.of_list (List.map Int32.of_int ns))
+  in
+  let x () = vec [| 1.5; -3. |] in
+  [
+    test "a compiled loop called again runs each call's own trips" (fun () ->
+        let g = at_count ~max:6 affine in
+        List.iter
+          (fun n ->
+            let msg = Printf.sprintf "%d trips" n in
+            match expected ~max:6 n (x ()) with
+            | v -> equal ~msg (close ()) v (g (x ()) (count_of n))
+            | exception Invalid_argument m ->
+                raises ~msg (Invalid_argument m) (fun () ->
+                    g (x ()) (count_of n)))
+          [ 3; 0; 6; 1; 7; 2; 0 ]);
+    test "a compiled map called again stops each lane at its own count"
+      (fun () ->
+        let g =
+          Rune.jit x_and_n
+            (Rune.vmap x_and_n (fun x n -> to_count ~max:6 ~f:affine n x))
+        in
+        let xs = Nx.create f64 [| 2; 2 |] [| 1.5; -3.; 0.25; 8. |] in
+        List.iter
+          (fun ns ->
+            let msg = String.concat ", " (List.map string_of_int ns) in
+            let one i n = expected ~max:6 n (lane i xs) in
+            match List.find_index (fun n -> n > 6) ns with
+            | Some i ->
+                raises ~msg
+                  (Invalid_argument (lane_failure 6 i))
+                  (fun () -> g xs (lanes_of ns))
+            | None ->
+                equal ~msg (close ())
+                  (stack 2 (fun i -> one i (List.nth ns i)))
+                  (g xs (lanes_of ns)))
+          [ [ 3; 0 ]; [ 0; 3 ]; [ 6; 6 ]; [ 1; 7 ]; [ 2; 2 ]; [ 0; 0 ] ]);
+    test "jit of grad called again covers each call's own trips" (fun () ->
+        let loss n x = Nx.sum (Nx.sin (to_count ~max:6 ~f:affine n x)) in
+        let g = Rune.jit x_and_n (fun x n -> Rune.grad' (loss n) x) in
+        List.iter
+          (fun n ->
+            equal
+              ~msg:(Printf.sprintf "%d trips" n)
+              (close ())
+              (Rune.grad'
+                 (fun x -> Nx.sum (Nx.sin (written n affine x)))
+                 (x ()))
+              (g (x ()) (count_of n)))
+          [ 3; 0; 5; 1; 6 ]);
+    test "grad of a compiled loop called again covers each call's own trips"
+      (fun () ->
+        let g = at_count ~max:6 affine in
+        List.iter
+          (fun n ->
+            equal
+              ~msg:(Printf.sprintf "%d trips" n)
+              (close ())
+              (Rune.grad'
+                 (fun x -> Nx.sum (Nx.sin (written n affine x)))
+                 (x ()))
+              (Rune.grad' (fun x -> Nx.sum (Nx.sin (g x (count_of n)))) (x ())))
+          [ 3; 0; 5; 1; 6 ]);
+    test "a compiled call after one that raised is eager's" (fun () ->
+        let g =
+          Rune.jit' (Rune.iterate' ~max:10 ~until:(small tol) ~f:(contract w0))
+        in
+        raises (Invalid_argument (failure 10)) (fun () -> g (scalar Float.nan));
+        equal (close ()) (iterated w0 (scalar 1.9)) (g (scalar 1.9)));
+  ]
+
+(* Transformations of a compiled loop, against the same transformations inside
+   it and the loop written out. *)
+let compiled_composition_tests =
+  let starts = [ 1.9; 0.01; 0.3; -1.4 ] in
+  [
+    test "grad of jit is jit of grad and covers the trips taken" (fun () ->
+        let outside = Rune.grad' (Rune.jit' (loss w0))
+        and inside = Rune.jit' (Rune.grad' (loss w0)) in
+        List.iter
+          (fun x ->
+            let msg = Printf.sprintf "from %g" x and x = scalar x in
+            let g = Rune.grad' (written_loss w0) x in
+            equal ~msg (close ()) g (outside x);
+            equal ~msg (close ()) g (inside x))
+          starts);
+    test "jvp of jit covers the trips taken" (fun () ->
+        let f = Rune.jit' (loss w0) in
+        List.iter
+          (fun x ->
+            let msg = Printf.sprintf "from %g" x and x = scalar x in
+            equal ~msg (close ())
+              (snd (Rune.jvp' (written_loss w0) x (scalar 0.3)))
+              (snd (Rune.jvp' f x (scalar 0.3))))
+          starts);
+    test "vmap of jit is jit of vmap, each lane its own trips" (fun () ->
+        let xs = xs () in
+        let expected = per_lane (iterated w0) xs in
+        equal ~msg:"vmap of jit" (close ()) expected
+          (Rune.vmap' (Rune.jit' (iterated w0)) xs);
+        equal ~msg:"jit of vmap" (close ()) expected
+          (Rune.jit' (Rune.vmap' (iterated w0)) xs));
+    test "vmap of jit of grad covers each lane's trips" (fun () ->
+        let xs = xs () in
+        equal (close ())
+          (per_lane (Rune.grad' (written_loss w0)) xs)
+          (Rune.vmap' (Rune.jit' (Rune.grad' (loss w0))) xs));
+    test "grad of vmap of jit covers each lane's trips" (fun () ->
+        let xs = xs () in
+        let f = Rune.jit' (loss w0) in
+        equal (close ())
+          (per_lane (Rune.grad' (written_loss w0)) xs)
+          (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' f xs)) xs));
+    test "vmap of jit stops the lanes apart and names the lane still running"
+      (fun () ->
+        raises
+          (Invalid_argument (failure 5 ^ ", in lane 1"))
+          (fun () ->
+            Rune.vmap'
+              (Rune.jit' (Rune.iterate' ~max:5 ~until:(small 0.5) ~f:Fun.id))
+              (vec [| 0.1; 2.; 3. |])));
+    test "compiled, lanes of the map raises in a step whose lanes stop apart"
+      (fun () ->
+        let a = Rune.axis () in
+        raises
+          (Invalid_argument
+             "Rune.lanes: a lane of Rune.iterate that stopped takes no more \
+              trips, so a step cannot gather every lane; give every lane the \
+              same stop") (fun () ->
+            Rune.jit'
+              (Rune.vmap' ~axis:a (fun x ->
+                   Rune.iterate' ~max:80 ~until:(small tol)
+                     ~f:(fun x ->
+                       Nx.add (contract w0 x)
+                         (Nx.mul_s (Nx.sum (Rune.lanes a x)) 0.))
+                     x))
+              (xs ())));
+    test "compiled, a stop every lane shares admits lanes" (fun () ->
+        let a = Rune.axis () in
+        let run x =
+          fst
+            (Rune.iterate
+               Nx.Ptree.(pair tensor tensor)
+               ~max:5
+               ~until:(fun (_, k) -> Nx.greater_equal_s k 3l)
+               ~f:(fun (x, k) ->
+                 (Nx.add x (Nx.sum (Rune.lanes a x)), Nx.add_s k 1l))
+               (x, count_of 0))
+        in
+        equal (exact ())
+          (vec [| 40.; 41. |])
+          (Rune.jit' (Rune.vmap' ~axis:a run) (vec [| 1.; 2. |])));
+    test "a compiled loop in a compiled loop's step is eager's" (fun () ->
+        let inner = Rune.jit' (iterated w0) in
+        let outer x =
+          Rune.iterate' ~max:80 ~until:(small outer_tol)
+            ~f:(fun x -> Nx.mul_s (Nx.add x (inner (Nx.mul_s x 1.5))) 0.5)
+            x
+        in
+        let eager x =
+          Rune.iterate' ~max:80 ~until:(small outer_tol)
+            ~f:(fun x -> Nx.mul_s (Nx.add x (iterated w0 (Nx.mul_s x 1.5))) 0.5)
+            x
+        in
+        let x = scalar 1.9 in
+        equal ~msg:"eager outer" (close ()) (eager x) (outer x);
+        equal ~msg:"compiled outer" (close ()) (eager x) (Rune.jit' outer x);
+        equal ~msg:"grad" (close ())
+          (Rune.grad' (fun x -> Nx.sum (Nx.sin (eager x))) x)
+          (Rune.jit' (Rune.grad' (fun x -> Nx.sum (Nx.sin (outer x)))) x));
+  ]
+
+(* Nested loops at their shortest lengths, compiled, against the loops written
+   out: [n] outer and [m] inner trips, or rows. *)
+
+let nest_lengths = [ (0, 0); (0, 1); (1, 0); (1, 1); (1, 2); (2, 1); (2, 2) ]
+let three = Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+
+let rows_of k =
+  Nx.mul_s
+    (Nx.reshape [| k; 2 |] (Nx.arange_f f64 1. (Float.of_int (2 * k) +. 1.) 1.))
+    0.1
+
+(* [nests] are, for each nesting, its outer and inner lengths, the nesting at
+   lengths [n] and [m], its counts passed as tensors, and the nesting written
+   out. A scan takes one row or more. *)
+let nests =
+  let ii n m x =
+    to_count ~max:3 ~f:(fun x -> Nx.sin (to_count ~max:3 ~f:affine m x)) n x
+  and ii_written n m x = written n (fun x -> Nx.sin (written m affine x)) x in
+  let si m n x =
+    to_count ~max:3
+      ~f:(fun x ->
+        fst
+          (Rune.scan'
+             ~f:(fun c r -> (Nx.sin (Nx.add c r), c))
+             ~init:x (rows_of m)))
+      n x
+  and si_written m n x =
+    written n
+      (fun x ->
+        let rs = rows_of m in
+        let rec go i c =
+          if i = m then c else go (i + 1) (Nx.sin (Nx.add c (lane i rs)))
+        in
+        go 0 x)
+      x
+  in
+  let is n m x =
+    fst
+      (Rune.scan'
+         ~f:(fun c r ->
+           let c = to_count ~max:3 ~f:affine m (Nx.sin (Nx.add c r)) in
+           (c, c))
+         ~init:x (rows_of n))
+  and is_written n m x =
+    let rs = rows_of n in
+    let rec go i c =
+      if i = n then c
+      else go (i + 1) (written m affine (Nx.sin (Nx.add c (lane i rs))))
+    in
+    go 0 x
+  in
+  let scans = List.filter (fun (_, m) -> m > 0) nest_lengths in
+  [
+    ( "an iterate in an iterate's step",
+      nest_lengths,
+      (fun n m -> ii (count_of n) (count_of m)),
+      ii_written );
+    ( "a scan in an iterate's step",
+      scans,
+      (fun n m -> si m (count_of n)),
+      fun n m -> si_written m n );
+    ( "an iterate in a scan's step",
+      List.map (fun (n, m) -> (m, n)) scans,
+      (fun n m -> is n (count_of m)),
+      is_written );
+  ]
+
+let compiled_nest_tests =
+  let x () = vec [| 0.7; -1.2 |] in
+  let l f x = Nx.sum (Nx.sin (f x)) in
+  List.map
+    (fun (name, lengths, staged, plain) ->
+      cases
+        ~name:(fun (n, m) -> Printf.sprintf "%s, %d and %d" name n m)
+        ("compiled, " ^ name
+       ^ " at its shortest lengths is the loops written out")
+        lengths
+        (fun (n, m) ->
+          equal ~msg:"value" (close ())
+            (plain n m (x ()))
+            (Rune.jit' (staged n m) (x ()));
+          equal ~msg:"grad" (close ())
+            (Rune.grad' (l (plain n m)) (x ()))
+            (Rune.jit' (Rune.grad' (l (staged n m))) (x ()))))
+    nests
+  @ [
+      test "compiled, nested iterates whose lanes stop apart at both levels"
+        (fun () ->
+          let f x n m =
+            to_count ~max:3
+              ~f:(fun x -> Nx.sin (to_count ~max:3 ~f:affine m x))
+              n x
+          in
+          let ints l =
+            Nx.create i32
+              [| List.length l |]
+              (Array.of_list (List.map Int32.of_int l))
+          in
+          let ns = ints (List.map fst nest_lengths)
+          and ms = ints (List.map snd nest_lengths) in
+          let k = List.length nest_lengths in
+          let xs =
+            Nx.mul_s
+              (Nx.reshape [| k; 2 |]
+                 (Nx.arange_f f64 0. (Float.of_int (2 * k)) 1.))
+              0.3
+          in
+          let one i (n, m) =
+            written n (fun x -> Nx.sin (written m affine x)) (lane i xs)
+          in
+          let expected = Nx.stack (List.mapi one nest_lengths) in
+          equal ~msg:"jit of vmap" (close ()) expected
+            (Rune.jit three (Rune.vmap three f) xs ns ms);
+          equal ~msg:"vmap of jit" (close ()) expected
+            (Rune.vmap three (Rune.jit three f) xs ns ms);
+          let grads =
+            Nx.stack
+              (List.mapi
+                 (fun i (n, m) ->
+                   Rune.grad'
+                     (fun x ->
+                       Nx.sum
+                         (Nx.sin
+                            (written n (fun x -> Nx.sin (written m affine x)) x)))
+                     (lane i xs))
+                 nest_lengths)
+          in
+          equal ~msg:"jit of grad of vmap" (close ()) grads
+            (Rune.jit three
+               (fun xs ns ms ->
+                 Rune.grad'
+                   (fun xs -> Nx.sum (Nx.sin (Rune.vmap three f xs ns ms)))
+                   xs)
+               xs ns ms));
+      test "grad of a compiled loop of eight carries is eager's" (fun () ->
+          (* Each new carry mixes its neighbour's, so a plan that lets a carry
+             or a kept row take another's storage shows in the gradient. *)
+          let k = 8 in
+          let s = Nx.Ptree.(list tensor) in
+          let step cs =
+            List.mapi
+              (fun i c ->
+                Nx.add (Nx.mul_s c 0.5) (Nx.sin (List.nth cs ((i + 1) mod k))))
+              cs
+          in
+          let run iterate x =
+            fst
+              (iterate
+                 Nx.Ptree.(pair s tensor)
+                 ~max:6
+                 ~until:(fun (_, n) -> Nx.greater_equal_s n 4l)
+                 ~f:(fun (cs, n) -> (step cs, Nx.add_s n 1l))
+                 ( List.init k (fun i -> Nx.mul_s x (Float.of_int (i + 1))),
+                   count_of 0 ))
+          in
+          let loss iterate x =
+            Nx.sum
+              (Nx.stack (List.map (fun c -> Nx.sum (Nx.cos c)) (run iterate x)))
+          in
+          let x = vec [| 0.9; -0.4 |] in
+          equal ~msg:"value" (close ())
+            (Nx.stack (run plain_iterate x))
+            (Rune.jit' (fun x -> Nx.stack (run Rune.iterate x)) x);
+          equal ~msg:"grad" (close ())
+            (Rune.grad' (loss plain_iterate) x)
+            (Rune.jit' (Rune.grad' (loss Rune.iterate)) x));
+    ]
+
+(* Totals inside compiled loops *)
+
+let compiled_total_tests =
+  let collected f x =
+    Rune.Total.collect count ~zero:(scalar 0.) (fun () -> f x)
+  in
+  let trips x =
+    Float.of_int (trips ~max:80 ~until:(small tol) ~f:(contract w0) x)
+  in
+  [
+    test "a scope around a compiled loop counts each call's trips" (fun () ->
+        let g = Rune.jit' counted in
+        List.iter
+          (fun x ->
+            let msg = Printf.sprintf "from %g" x and x = scalar x in
+            let y, n = collected g x in
+            equal ~msg (close ()) (iterated w0 x) y;
+            equal ~msg (exact ()) (scalar (trips x)) n)
+          [ 1.9; 0.01; 0.3 ]);
+    test "a scope inside a compiled function counts its loop's trips" (fun () ->
+        let g =
+          Rune.jit
+            Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+            (collected counted)
+        in
+        List.iter
+          (fun x ->
+            let msg = Printf.sprintf "from %g" x and x = scalar x in
+            equal ~msg (exact ()) (scalar (trips x)) (snd (g x)))
+          [ 1.9; 0.01; 0.3 ]);
+    test "a scope around grad of a compiled loop counts its trips once"
+      (fun () ->
+        let x = scalar 1.9 in
+        let _, n =
+          Rune.Total.collect count ~zero:(scalar 0.) (fun () ->
+              Rune.jit' (Rune.grad' (fun x -> Nx.sum (Nx.sin (counted x)))) x)
+        in
+        equal (exact ()) (scalar (trips x)) n);
+    test "a scope in a compiled loop's step counts its inner loop's trips"
+      (fun () ->
+        (* The carry accumulates, per outer trip, the trips of the inner loop
+           that trip runs. *)
+        let run x =
+          Rune.iterate
+            Nx.Ptree.(pair tensor tensor)
+            ~max:80
+            ~until:(fun (x, _) -> small outer_tol x)
+            ~f:(fun (x, acc) ->
+              let y, n = collected counted (Nx.mul_s x 1.5) in
+              (Nx.mul_s (Nx.add x y) 0.5, Nx.add acc n))
+            (x, scalar 0.)
+        in
+        let rec inner_trips x acc =
+          if holds (small outer_tol x) then acc
+          else
+            let y = Nx.mul_s x 1.5 in
+            inner_trips
+              (Nx.mul_s (Nx.add x (iterated w0 y)) 0.5)
+              (acc +. trips y)
+        in
+        let x = scalar 1.9 in
+        let expected = snd (run x) in
+        equal ~msg:"eager" (exact ()) (scalar (inner_trips x 0.)) expected;
+        let _, acc =
+          Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) run x
+        in
+        equal (exact ()) expected acc);
+  ]
+
 let () =
   exit
     (run "Rune.iterate"
@@ -1619,4 +2248,11 @@ let () =
          group "scans" [ scan_law ];
          group "until" until_tests;
          group "compiled" compiled_tests;
+         group "compiled edges" compiled_edge_tests;
+         group "compiled dtypes" compiled_dtype_tests;
+         group "compiled structures" compiled_structure_tests;
+         group "compiled calls again" compiled_cache_tests;
+         group "compiled compositions" compiled_composition_tests;
+         group "compiled totals" compiled_total_tests;
+         group "compiled nests" compiled_nest_tests;
        ])
