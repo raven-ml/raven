@@ -1,0 +1,24 @@
+; The code objects of nx.amd's kernels, which gen/gen.py compiles ahead of time
+; on a machine with the pinned toolchain, packed into the archive nx.amd
+; embeds. Their digests are checked here on every machine.
+
+(rule
+ (target kernels.bin)
+ (deps
+  (:co
+   (glob_files gfx12-generic/*.co)))
+ (action
+  (run %{exe:tools/pack.exe} %{target} %{co})))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (deps
+  (:pins gen/pins.json)
+  gen/gen.py
+  ../../dtype/nx_dtype.h
+  (glob_files src/*)
+  (glob_files src/libc/*)
+  (glob_files gfx12-generic/*.co))
+ (action
+  (run %{exe:tools/pins.exe} %{pins} %{deps})))

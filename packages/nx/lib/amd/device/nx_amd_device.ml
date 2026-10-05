@@ -54,10 +54,16 @@ type kernel = {
   private_segment : int;
 }
 
-(* A kernel of a loaded code object, by its descriptor's address: its name and
-   scratch bytes per lane, and the load it belongs to, whose unload removes it
-   and nothing a later load put at the same address. *)
-type entry = { name : string; scratch : int; image : unit ref }
+(* A kernel of a loaded code object, by its descriptor's address: its name, its
+   descriptor's fields, the address its code object is loaded at, and the load
+   it belongs to, whose unload removes it and nothing a later load put at the
+   same address. *)
+type entry = {
+  name : string;
+  kernel : Code_object.kernel;
+  base : int;
+  image : unit ref;
+}
 
 type counter = {
   name : string;
@@ -135,7 +141,7 @@ type t = {
   kernels : (nativeint, entry) Hashtbl.t; (* by descriptor address, under hw *)
   props : props;
   cu_per_array : int; (* the compute units of a shader array *)
-  scratch_lock : Mutex.t;
+  scratch_lock : Mutex.t; (* scratch memory and the arguments' ring *)
   mutable scratch : (Nx_device.Buffer.t * int) option;
   profile_lock : Mutex.t;
   profiles : (string list * bool, profile) Hashtbl.t;
@@ -143,6 +149,7 @@ type t = {
          there *)
   mutable traces : traces option; (* made by the first profile that traces *)
   mutable aql_desc : Mmio.t option; (* the AQL queue's descriptor *)
+  mutable args : Compute.args option; (* where launches' arguments are *)
   mutable queues : (queue * bool * queue list) option;
       (* the compute queue, whether it takes AQL packets, the SDMA queues *)
   mutable dev : Nx_device.t option;
@@ -269,7 +276,7 @@ let range a x n =
       | None -> Mmio.v x n)
   | Kfd_gpu _ -> Mmio.v x n
 
-let sdma_queue a (q : queue) =
+let mmio_queue a (q : queue) =
   let word b = range a (Nx_device.Buffer.address b) 8 in
   {
     Sdma.ring =
@@ -346,7 +353,7 @@ let timeout a =
 let enqueue a words =
   let q =
     match a.queues with
-    | Some (_, _, sdma) -> sdma_queue a (List.hd sdma)
+    | Some (_, _, sdma) -> mmio_queue a (List.hd sdma)
     | None -> failwith "the SDMA queue is not set up"
   in
   (* The copy engine reads what the host wrote to mapped memory. *)
@@ -476,7 +483,7 @@ let load a ~sleep ~binary =
                 let descriptor = Nativeint.of_int (va mem + k.descriptor) in
                 with_hw a (fun () ->
                     Hashtbl.replace a.kernels descriptor
-                      { name; scratch = k.private_segment; image });
+                      { name; kernel = k; base = va mem; image });
                 found := descriptor :: !found;
                 Ok descriptor
           in
@@ -1082,6 +1089,7 @@ let record ~machine ~index ~gpu ~props ~cu_per_array =
     profiles = Hashtbl.create 2;
     traces = None;
     aql_desc = None;
+    args = None;
     queues = None;
     dev = None;
   }
@@ -1430,7 +1438,189 @@ let kernel p =
       Option.map
         (fun code ->
           let e = with_hw a (fun () -> Hashtbl.find a.kernels descriptor) in
-          { code; descriptor; private_segment = e.scratch })
+          { code; descriptor; private_segment = e.kernel.private_segment })
         (Nx_device.Program.code p)
+
+(* Launches *)
+
+type dispatch = {
+  program : Nx_device.Program.t;
+  groups : int * int * int;
+  threads : int * int * int;
+  args : string;
+}
+
+(* The most work-items of a workgroup, and workgroups along an axis. *)
+let max_threads = 1024
+let max_groups = 0xffff_ffff
+
+(* The bytes of host memory launches' arguments go through. *)
+let args_bytes = 1 lsl 20
+
+let launch_error fmt =
+  Printf.ksprintf (fun m -> invalid_arg ("Nx_amd_device.launch: " ^ m)) fmt
+
+(* [d]'s kernel, checked against the device's limits. *)
+let checked a d =
+  let e =
+    match
+      with_hw a (fun () ->
+          Hashtbl.find_opt a.kernels (Nx_device.Program.handle d.program))
+    with
+    | Some e -> e
+    | None ->
+        launch_error "%s is not a kernel of the device"
+          (Nx_device.Program.name d.program)
+  in
+  let x, y, z = d.threads and gx, gy, gz = d.groups in
+  if List.exists (fun n -> n < 1) [ x; y; z ] || x * y * z > max_threads then
+    launch_error "%s: workgroups of %dx%dx%d threads; the GPU runs 1 to %d"
+      e.name x y z max_threads;
+  if List.exists (fun n -> n < 1 || n > max_groups) [ gx; gy; gz ] then
+    launch_error "%s: a grid of %dx%dx%d workgroups" e.name gx gy gz;
+  if String.length d.args > e.kernel.kernarg_size then
+    launch_error "%s: %d bytes of arguments; the kernel takes %d" e.name
+      (String.length d.args) e.kernel.kernarg_size;
+  e
+
+(* The AQL packet a kernel that reads its dispatch packet finds, for [d] whose
+   descriptor is at [descriptor] and arguments at [args]. *)
+let dispatch_packet (e : entry) d ~descriptor ~args =
+  let tx, ty, tz = d.threads and gx, gy, gz = d.groups in
+  let b = Bytes.create 64 in
+  List.iteri
+    (fun i w -> Bytes.set_int32_le b (4 * i) (Int32.of_int w))
+    (Nx_amd_packet.dwords
+       (Nx_amd_packet.Aql.dispatch ~threads:d.threads
+          ~grid:(gx * tx, gy * ty, gz * tz)
+          ~private_segment:e.kernel.private_segment
+          ~group_segment:e.kernel.group_segment ~descriptor ~args));
+  Bytes.to_string b
+
+(* The arguments of the kernels [ds] for the segment at [base]: each kernel's
+   bytes padded to its argument segment, then its dispatch packet when it reads
+   one, each aligned; and the address of each kernel's arguments and packet. *)
+let args_block ~base ds es =
+  let b = Buffer.create 4096 in
+  let pad () =
+    Buffer.add_string b
+      (String.make (Compute.align (Buffer.length b) - Buffer.length b) '\000')
+  in
+  let at =
+    List.map2
+      (fun d (e : entry) ->
+        pad ();
+        let args = base + Buffer.length b in
+        Buffer.add_string b d.args;
+        Buffer.add_string b
+          (String.make (e.kernel.kernarg_size - String.length d.args) '\000');
+        pad ();
+        let packet = base + Buffer.length b in
+        if e.kernel.dispatch_ptr then
+          Buffer.add_string b
+            (dispatch_packet e d
+               ~descriptor:
+                 (Nativeint.to_int (Nx_device.Program.handle d.program))
+               ~args);
+        (args, packet))
+      ds es
+  in
+  (Buffer.contents b, at)
+
+(* The bytes of the block of [args_block] of the kernels [es]. *)
+let block_bytes es =
+  List.fold_left
+    (fun n (e : entry) ->
+      let n = Compute.align n + e.kernel.kernarg_size in
+      if e.kernel.dispatch_ptr then Compute.align n + 64 else n)
+    0 es
+
+let args_ring a =
+  Mutex.protect a.scratch_lock (fun () ->
+      match a.args with
+      | Some r -> r
+      | None ->
+          let mem = need "launch arguments" (alloc_mem a Host args_bytes) in
+          let r = Compute.args (Option.get (host_view mem)) ~gpu:(va mem) in
+          a.args <- Some r;
+          r)
+
+let address b = Nativeint.to_int (Nx_device.Buffer.address b)
+
+let launch ~touches = function
+  | [] -> launch_error "no dispatch"
+  | d0 :: _ as ds ->
+      let dev = Nx_device.Program.device d0.program in
+      let a =
+        match amd_of dev with
+        | Some a -> a
+        | None -> launch_error "%s is not an AMD device" (Nx_device.name dev)
+      in
+      let elsewhere d =
+        not (Nx_device.equal (Nx_device.Program.device d.program) dev)
+      in
+      if List.exists elsewhere ds then launch_error "kernels of several devices";
+      if aql a then
+        launch_error
+          "%s takes AQL packets, on its several dies, which launches do not \
+           encode"
+          (Nx_device.name dev);
+      let es = List.map (checked a) ds in
+      let scratch_bytes =
+        List.fold_left
+          (fun m (e : entry) -> Int.max m e.kernel.private_segment)
+          0 es
+      in
+      let scratch =
+        if scratch_bytes > 0 then Some (scratch a scratch_bytes) else None
+      in
+      let ring = args_ring a in
+      let code =
+        List.filter_map (fun d -> Nx_device.Program.code d.program) ds
+      in
+      let compute = mmio_queue a (compute a) in
+      let p = a.props in
+      let tmpring =
+        Nx_amd_packet.Gc.tmpring_size ~gc:p.gc ~compute_units:p.compute_units
+          ~slots:p.scratch_slots_per_cu ~shader_engines:p.shader_engines
+          ~xccs:p.xccs
+      in
+      let signal = address (Nx_device.signal_word dev) in
+      let touches = touches @ code @ Option.to_list scratch in
+      Nx_device.submit [ dev ] ~touches (fun s ->
+          let v = Nx_device.Submission.value s dev in
+          (* Work of other devices is waited for on the host: no device of
+             another submission is waited for on the queue. *)
+          List.iter
+            (fun (d', v') ->
+              if not (Nx_device.equal d' dev) then
+                Nx_device.Submission.wait s d' v')
+            (Nx_device.Submission.waits s);
+          let base =
+            Compute.segment ring
+              ~wait:(Nx_device.Submission.wait s dev)
+              v (block_bytes es)
+          in
+          let block, at = args_block ~base ds es in
+          Compute.write ring ~at:base block;
+          let runs =
+            List.map2
+              (fun (d, (e : entry)) (args, packet) ->
+                {
+                  Compute.kernel = e.kernel;
+                  entry = e.base + e.kernel.entry;
+                  args;
+                  packet;
+                  scratch = Option.fold ~none:0 ~some:address scratch;
+                  groups = d.groups;
+                  threads = d.threads;
+                })
+              (List.combine ds es) at
+          in
+          (* The arguments, and the host's writes through the BAR, reach the GPU
+             before the queue runs the work. *)
+          Mmio.barrier ();
+          flush_hdp a;
+          Compute.submit compute (Compute.work ~gc:p.gc ~tmpring ~signal v runs))
 
 module Thread_trace = Thread_trace

@@ -67,12 +67,14 @@ let q_of = Hcq2.Queue.q
 (* Packets *)
 
 (* A term as tinygrad's call sites compute it: an offset added as a [uint64]
-   constant, a right shift by a weak literal. *)
+   constant, a right shift by a weak literal, a bit set by an or of a
+   constant. *)
 let rec term = function
   | P.Value v -> v
   | Add (t, n) ->
       O.(term t + const ~dtype:Dtype.Uint64 (`Int (Bigint.of_int64_unsigned n)))
   | Shift (t, n) -> O.(term t lsr int n)
+  | Or (t, n) -> O.(term t lor const (`Int (Bigint.of_int64_unsigned n)))
 
 (* A packet's words as nodes: a constant word as a [uint32] constant, and a term
    as its node, which the caller made of the width its word takes. *)
@@ -140,24 +142,14 @@ let rgp_sqtt_marker_identifier_bind_pipeline = 12
 (* Program data *)
 
 type program = {
-  desc_offset : int;
-  entry_point_offset : int;
-  rsrc1 : int;
-  rsrc2 : int;
-  rsrc3 : int;
-  wave : P.Pm4.wave;
-  private_segment_size : int;
-  group_segment_size : int;
-  kernargs_segment_size : int;
-  enable_dispatch_ptr : bool;
-  enable_private_segment_sgpr : bool;
+  kernel : Nx_amd_code_object.kernel;
   image_size : int;
   libhash : int64; (* the first 8 bytes of the code object's MD5 *)
 }
 
 (* The kernel of the code object [lib], which holds one: its descriptor, as the
-   device's loader relocates it, and the resource words a dispatch writes. *)
-let program_data gpu lib =
+   device's loader relocates it, and the resource words it sets. *)
+let program_data lib =
   let module C = Nx_amd_code_object in
   let kernel co =
     match C.kernels co with
@@ -174,28 +166,16 @@ let program_data gpu lib =
     | Ok r -> r
     | Error e -> invalid_arg e
   in
-  let lds = (k.group_segment + 511) / 512 land 0x1ff in
   {
-    desc_offset = k.descriptor;
-    entry_point_offset = k.entry;
-    (* gfx11 runs kernels privileged, for their context save and restore. *)
-    rsrc1 = (k.rsrc1 lor if major gpu = 11 then 1 lsl 20 else 0);
-    rsrc2 = k.rsrc2 lor (lds lsl 15);
-    rsrc3 = k.rsrc3;
-    wave = (if k.wave32 then Wave32 else Wave64);
-    private_segment_size = k.private_segment;
-    group_segment_size = k.group_segment;
-    kernargs_segment_size = k.kernarg_size;
-    enable_dispatch_ptr = k.dispatch_ptr;
-    enable_private_segment_sgpr = k.private_segment_buffer;
+    kernel = k;
     image_size = String.length (C.image co);
     libhash = String.get_int64_le (Digest.string lib) 0;
   }
 
 (* The program's code object, which the engine loads on the devices. *)
-let amd_build_program gpu prg devs =
+let amd_build_program prg devs =
   let obj = Device.Tiny_elf.of_program prg in
-  let data = program_data gpu obj.lib in
+  let data = program_data obj.lib in
   ( data,
     placeholder ~slot:0 ~device:(Multi devs)
       ~tag:(Tag.Tuple [ String "program"; Bytes obj.lib; String obj.name ])
@@ -221,8 +201,8 @@ let dispatch_packet data (info : program_info) ?(kernel_object = u64 0)
   | [ lx; ly; lz ], [ gx; gy; gz ] ->
       blob
         (P.Aql.dispatch ~threads:(lx, ly, lz) ~grid:(gx, gy, gz)
-           ~private_segment:data.private_segment_size
-           ~group_segment:data.group_segment_size ~descriptor:kernel_object
+           ~private_segment:data.kernel.private_segment
+           ~group_segment:data.kernel.group_segment ~descriptor:kernel_object
            ~args:kernarg_address)
   | _ -> invalid_arg "an AMD dispatch of other than three dimensions"
 
@@ -648,7 +628,10 @@ let compute_queue ~host gpu q : Hcq2.commands =
         let at = O.(int 1 + (int entry * cast slot Dtype.Int32)) in
         runs :=
           !runs
-          @ [ store (index log [ at ]) O.(getaddr lib + u64 data.desc_offset) ];
+          @ [
+              store (index log [ at ])
+                O.(getaddr lib + u64 data.kernel.descriptor);
+            ];
         clock_into (word slot 1);
         Option.iter
           (fun t ->
@@ -696,10 +679,10 @@ let compute_queue ~host gpu q : Hcq2.commands =
           (Realize.get_call_var_uops call prg)
     in
     let words =
-      Hcq2.pack_args (Hcq2.layout_args args) data.kernargs_segment_size
+      Hcq2.pack_args (Hcq2.layout_args args) data.kernel.kernarg_size
     in
     let packet =
-      if data.enable_dispatch_ptr then dispatch_packet data info () else []
+      if data.kernel.dispatch_ptr then dispatch_packet data info () else []
     in
     (* The arguments start on 128 bytes, as every buffer a queue's commands
        address does; a kernel's argument segment needs 16. *)
@@ -751,7 +734,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
       O.(nxt - int doorbell_lag)
   in
   let program call prg =
-    let data, lib = amd_build_program gpu prg devs in
+    let data, lib = amd_build_program prg devs in
     let info, ka = kernargs call prg data in
     (data, lib, info, ka)
   in
@@ -767,28 +750,15 @@ let compute_queue ~host gpu q : Hcq2.commands =
   if not gpu.aql then
     let exec call prg =
       let data, lib, info, ka = program call prg in
-      let prog_addr = O.(getaddr lib + int data.entry_point_offset) in
+      let prog_addr = O.(getaddr lib + int data.kernel.entry) in
       let scratch_addr =
         getaddr
           (rtag ~tag:(Tag.String "scratch")
              (placeholder ~slot:0 ~device:(Multi devs)
-                [ data.private_segment_size ]
+                [ data.kernel.private_segment ]
                 Dtype.Uint8))
       in
       let args_addr = getaddr ka in
-      let user_regs =
-        (if data.enable_private_segment_sgpr then
-           [
-             O.(scratch_addr lor const (`Int (Bigint.shift_left Bigint.one 63)));
-             u32 0xffff_ffff;
-             u32 0x20c14000;
-           ]
-         else [])
-        @ (if data.enable_dispatch_ptr then
-             [ O.(args_addr + int data.kernargs_segment_size) ]
-           else [])
-        @ [ args_addr ]
-      in
       let groups =
         match
           List.map (function Int g -> u32 g | Sym g -> g) info.global_size
@@ -796,27 +766,25 @@ let compute_queue ~host gpu q : Hcq2.commands =
         | [ x; y; z ] -> (x, y, z)
         | _ -> invalid_arg "an AMD dispatch of other than three dimensions"
       in
-      let set name = wreg (address ("COMPUTE_" ^ name)) in
+      let threads =
+        match
+          List.map (function Int l -> u32 l | Sym l -> l) info.local_size
+        with
+        | [ x; y; z ] -> (x, y, z)
+        | _ -> invalid_arg "an AMD dispatch of other than three dimensions"
+      in
       acquire_mem Data_caches;
       let run = start_run lib data info in
-      emit (P.Pm4.set_program ~gc:gpu.gc prog_addr);
-      set "PGM_RSRC1" [ u32 data.rsrc1; u32 data.rsrc2 ];
-      set "PGM_RSRC3" [ u32 data.rsrc3 ];
-      set "TMPRING_SIZE" [ u32 (tmpring_size gpu data.private_segment_size) ];
-      (* Architected flat scratch: each die gets its part. *)
-      for xcc = 0 to gpu.xccs - 1 do
-        let part = data.private_segment_size / gpu.xccs * xcc in
-        pred_exec (1 lsl xcc) (fun () ->
-            emit (P.Pm4.set_scratch ~gc:gpu.gc O.(scratch_addr + int part)))
-      done;
-      set "RESTART_X" [ u32 0; u32 0; u32 0 ];
-      set "USER_DATA_0" user_regs;
-      set "RESOURCE_LIMITS" [ u32 (Setting.value Setting.waves_per_sh) ];
-      set "START_X"
-        ([ u32 0; u32 0; u32 0 ]
-        @ List.map (function Int l -> u32 l | Sym l -> l) info.local_size
-        @ [ u32 0; u32 0 ]);
-      emit (P.Pm4.dispatch_direct ~gc:gpu.gc data.wave groups);
+      (* A PM4 queue runs on one die, whose part of the scratch is at offset 0,
+         which tinygrad adds. *)
+      emit
+        (P.Pm4.dispatch ~gc:gpu.gc data.kernel ~program:prog_addr
+           ~scratch:O.(scratch_addr + int 0)
+           ~packet:O.(args_addr + int data.kernel.kernarg_size)
+           ~args:args_addr
+           ~tmpring:(tmpring_size gpu data.kernel.private_segment)
+           ~limits:(Setting.value Setting.waves_per_sh)
+           ~threads ~groups);
       if traced then event_write Thread_trace_marker;
       event_write Cs_partial_flush;
       stop_run run
@@ -878,7 +846,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
       close_run (Hcq2.Queue.size q);
       add
         (dispatch_packet data info
-           ~kernel_object:O.(getaddr lib + int data.desc_offset)
+           ~kernel_object:O.(getaddr lib + int data.kernel.descriptor)
            ~kernarg_address:(getaddr ka) ());
       run_start := Hcq2.Queue.size q;
       stop_run run

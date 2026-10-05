@@ -330,6 +330,38 @@ val scratch : t -> int -> Nx_device.Buffer.t
 
     Raises {!Nx_device.Out_of_memory} if the device cannot allocate it. *)
 
+(** {2:launches Launches} *)
+
+type dispatch = {
+  program : Nx_device.Program.t;  (** A kernel loaded on the device. *)
+  groups : int * int * int;  (** The grid's workgroups along x, y and z. *)
+  threads : int * int * int;  (** A workgroup's threads along x, y and z. *)
+  args : string;
+      (** The kernel's parameters, as the platform's C ABI lays out its
+          parameter list. *)
+}
+(** The type for a run of a kernel. *)
+
+val launch : touches:Nx_device.Buffer.t list -> dispatch list -> unit
+(** [launch ~touches ds] runs the kernels of [ds] in order, each once the writes
+    of the one before are visible, as one {!Nx_device.submit} of their device
+    whose work touches [touches], the kernels' code and their arguments. The
+    work follows the timeline rule above: it waits for the device's previous
+    value on its compute queue and for other devices' work on the host. It
+    returns once the work is queued.
+
+    A kernel's arguments are padded with zeros to its argument segment
+    ({!Nx_amd_code_object.kernel}). A kernel that reads its dispatch packet
+    finds one, and a kernel that takes scratch memory gets the device's
+    ({!scratch}).
+
+    Raises [Invalid_argument] if [ds] is empty, if its kernels are not all
+    loaded on one AMD device, if that device's compute queue takes AQL packets
+    (a GPU of several dies), or if a dispatch exceeds the device's limits: a
+    workgroup of more than 1024 threads or of none, a grid of no workgroup or of
+    more than [2^32 - 1] along an axis, or arguments longer than the kernel's
+    argument segment; and what {!Nx_device.submit} raises. *)
+
 (** {2:profiling Profiling}
 
     A profile that asks for counters or traces ({!Nx_device.Profile.start}) has

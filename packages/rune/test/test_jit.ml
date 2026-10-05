@@ -2230,6 +2230,7 @@ let transformations =
             include Cpu
 
             let name = "counting adds"
+            let owns _ = false
 
             let binary k a b ~dst =
               if k = Nx_backend.Add then Atomic.incr adds;

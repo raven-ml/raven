@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* The layout a view reports is that of its shape, strides and offset, whatever
-   movements made it. *)
+   movements made it; reshapes and coalesced operands keep each element's
+   position. *)
 
 open Windtrap
 module V = Nx_array.View
@@ -202,4 +203,70 @@ let reshape =
             equal (list int) (positions v) (positions (V.reshape v shape)));
     ]
 
-let () = exit (run "Nx_array.View" [ layout; bounds; reshape ])
+(* Operands of one shape: each a C-contiguous view of it, or moved by
+   transposing, flipping or broadcasting, or of strides of its own. *)
+let operands =
+  let open Gen in
+  let* shape = array ~size:(int_range 0 4) (int_range 0 3) in
+  let rank = Array.length shape in
+  let operand =
+    one_of
+      [
+        constant (V.create shape);
+        map
+          (fun flips -> V.flip (V.create shape) flips)
+          (array ~size:(constant rank) bool);
+        map
+          (fun keep ->
+            V.expand
+              (V.create
+                 (Array.mapi (fun a n -> if keep.(a) then n else 1) shape))
+              shape)
+          (array ~size:(constant rank) bool);
+        map
+          (fun (offset, strides) -> V.create ~offset ~strides shape)
+          (pair (int_range 0 8)
+             (array ~size:(constant rank) (int_range (-4) 4)));
+      ]
+  in
+  list ~size:(int_range 1 3) operand
+
+let pp_operands ppf vs =
+  Format.pp_print_list
+    ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+    (fun ppf v ->
+      Format.fprintf ppf "%a strides %a offset %d" Nx_test.pp_shape (V.shape v)
+        Nx_test.pp_shape (V.strides v) (V.offset v))
+    ppf vs
+
+let coalesce =
+  group "coalesce"
+    [
+      prop "each result reaches its view's elements in C order"
+        (Gen.with_pp pp_operands operands) (fun vs ->
+          let cs = V.coalesce vs in
+          let shape = V.shape (List.hd vs) in
+          cover "fewer axes" (V.ndim (List.hd cs) < Array.length shape);
+          cover "axes kept apart" (V.ndim (List.hd cs) > 1);
+          cover "no element" (V.numel (List.hd vs) = 0);
+          List.iter
+            (fun c -> equal (array int) (V.shape (List.hd cs)) (V.shape c))
+            cs;
+          List.iter2
+            (fun v c -> equal (list int) (positions v) (positions c))
+            vs cs);
+      prop "C-contiguous views coalesce to one axis at most"
+        (Gen.with_pp Nx_test.pp_shape
+           Gen.(array ~size:(int_range 0 4) (int_range 1 3)))
+        (fun shape ->
+          let cs = V.coalesce [ V.create shape; V.create ~offset:5 shape ] in
+          at_most int ~than:1 (V.ndim (List.hd cs)));
+      test "axes every view broadcasts merge" (fun () ->
+          let v = V.expand (V.create [| 1; 1; 4 |]) [| 2; 3; 4 |] in
+          equal (array int) [| 6; 4 |] (V.shape (List.hd (V.coalesce [ v ]))));
+      test "views of different shapes are refused" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              ignore (V.coalesce [ V.create [| 2 |]; V.create [| 3 |] ])));
+    ]
+
+let () = exit (run "Nx_array.View" [ layout; bounds; reshape; coalesce ])

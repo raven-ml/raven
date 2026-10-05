@@ -1,4 +1,20 @@
+; The code objects come from kernels/, packed into one archive the assembler
+; includes, so that a program linking nx.amd carries them.
+
 (library
  (name nx_amd)
  (public_name nx.amd)
- (libraries nx nx.device nx.amd.device))
+ (private_modules archive backend)
+ (libraries
+  nx
+  nx.array
+  nx.backend
+  nx.device
+  nx.dtype
+  nx.amd.code_object
+  nx.amd.device)
+ (foreign_stubs
+  (language c)
+  (names nx_amd_stubs)
+  (extra_deps kernels/kernels.bin)
+  (flags :standard -std=c11 -Wall -DNX_AMD_KERNELS=kernels/kernels.bin)))

@@ -339,6 +339,78 @@ let test_targets () =
             why);
       ignore (program d ~binary ~name:"fill")
 
+(* A launch of the kernel that stores [value] at each work-item's index: the
+   whole workgroup's elements written once the launch's work is done, and the
+   launches past the device's limits refused before any work. *)
+let test_launch () =
+  let d = device () in
+  match compile ~value:7 (Nx_device.arch d) with
+  | None -> skip ~reason:"no compiler for the GPU's target" ()
+  | Some binary ->
+      let program = program d ~binary ~name:"fill" in
+      let b = B.create d S.Int32 64 in
+      let args = Bytes.create 8 in
+      Bytes.set_int64_le args 0 (Int64.of_nativeint (B.address b));
+      let dispatch ?(threads = (64, 1, 1)) ?(args = Bytes.to_string args) () =
+        { Nx_amd_device.program; groups = (1, 1, 1); threads; args }
+      in
+      let before = Nx_device.submitted d in
+      Nx_amd_device.launch ~touches:[ b ] [ dispatch () ];
+      equal ~msg:"one timeline value" int (before + 1) (Nx_device.submitted d);
+      let h = B.create Nx_device.host S.Int32 64 in
+      B.copy ~src:b ~dst:h;
+      let h = B.bigarray Bigarray.int32 h in
+      equal (array int32) (Array.make 64 7l) (Array.init 64 (fun i -> h.{i}));
+      let read = Nx_device.submitted d in
+      let refused f = raises_match Exn.invalid_arg (fun () -> f ()) in
+      refused (fun () -> Nx_amd_device.launch ~touches:[ b ] []);
+      refused (fun () ->
+          Nx_amd_device.launch ~touches:[ b ]
+            [ dispatch ~threads:(1025, 1, 1) () ]);
+      refused (fun () ->
+          Nx_amd_device.launch ~touches:[ b ]
+            [ dispatch ~args:(String.make 65536 '\000') () ]);
+      equal ~msg:"no work for a refusal" int read (Nx_device.submitted d)
+
+(* What a launch allocates once its arguments' ring has wrapped many times:
+   bounded, whatever the launches before it. A launch's own bookkeeping takes
+   about 2,500 words; one that scanned every segment the ring holds took
+   14,000. *)
+let launch_words = 5000
+
+let test_launch_allocation () =
+  let d = device () in
+  match compile (Nx_device.arch d) with
+  | None -> skip ~reason:"no compiler for the GPU's target" ()
+  | Some binary ->
+      let program = program d ~binary ~name:"fill" in
+      let b = B.create d S.Int32 64 in
+      let args = Bytes.create 8 in
+      Bytes.set_int64_le args 0 (Int64.of_nativeint (B.address b));
+      let ds =
+        [
+          {
+            Nx_amd_device.program;
+            groups = (1, 1, 1);
+            threads = (64, 1, 1);
+            args = Bytes.to_string args;
+          };
+        ]
+      in
+      (* Far more launches than the ring of arguments holds segments. *)
+      for _ = 1 to 3 * 4096 do
+        Nx_amd_device.launch ~touches:[ b ] ds
+      done;
+      let launches = 100 in
+      let before = Gc.minor_words () in
+      for _ = 1 to launches do
+        Nx_amd_device.launch ~touches:[ b ] ds
+      done;
+      let per_launch = (Gc.minor_words () -. before) /. float_of_int launches in
+      less ~msg:"words a launch allocates" float_exact
+        ~than:(float_of_int launch_words)
+        per_launch
+
 (* A load waits for the copy of its code, which takes microseconds: the median
    of fresh loads stays under [load_ms], which a wait that sleeps on the
    kernel's timer, for a tick or more, exceeds. *)
@@ -664,6 +736,8 @@ let () =
            [
              test "code objects" test_programs;
              test "code objects for another GPU" test_targets;
+             test "launches" test_launch;
+             test "what a launch allocates stays bounded" test_launch_allocation;
              test "loads wait for their copy alone" test_load_time;
              test "scratch" test_scratch;
            ];

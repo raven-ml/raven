@@ -295,7 +295,7 @@ let devices =
                    { memory = Nx_device.Driver.host_memory; mapping = None })));
       cases
         ~name:(fun (d, _) -> Format.asprintf "%a" pp_description d)
-        "a name shows a backend other than its memory's default"
+        "a name shows a backend that does not own its memory"
         [
           ((Cpu 1, Default), "CPU:1");
           ((Cpu 1, Cpu_backend), "CPU:1");

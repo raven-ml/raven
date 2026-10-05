@@ -22,6 +22,7 @@ external set_pool : nativeint -> unit = "caml_nx_c_set_pool"
 let () = set_pool (device_pool ())
 let name = "nx.cpu"
 let runs_on = Nx_device.runs_on_host
+let owns = runs_on
 let shape (t : ('a, 'b) t) = View.shape t.view
 let of_view (t : ('a, 'b) t) view = { t with view }
 

@@ -4,4 +4,4 @@
 (test
  (name test_nx_amd)
  (package nx)
- (libraries nx nx.amd nx.amd.device nx.device windtrap))
+ (libraries nx nx.amd nx.amd.device nx.device nx.dtype nx_test windtrap))

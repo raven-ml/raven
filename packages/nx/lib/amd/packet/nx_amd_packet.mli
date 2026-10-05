@@ -29,6 +29,7 @@ type 'v term =
   | Value of 'v  (** The value. *)
   | Add of 'v term * int64  (** [Add (t, n)] is [t + n], modulo [2{^64}]. *)
   | Shift of 'v term * int  (** [Shift (t, n)] is [t] shifted right by [n]. *)
+  | Or of 'v term * int64  (** [Or (t, n)] is the bitwise or of [t] and [n]. *)
 
 val eval : int term -> int64
 (** [eval t] is the 64-bit unsigned integer [t] computes, its values taken as
@@ -147,6 +148,32 @@ module Pm4 : sig
   (** [dispatch_direct ~gc wave (x, y, z)] dispatches the kernel the [COMPUTE_*]
       registers describe on a grid of [x * y * z] workgroups, in waves of
       [wave]'s lanes. *)
+
+  val dispatch :
+    gc:version ->
+    Nx_amd_code_object.kernel ->
+    program:'v ->
+    scratch:'v ->
+    packet:'v ->
+    args:'v ->
+    tmpring:int ->
+    limits:int ->
+    threads:'v * 'v * 'v ->
+    groups:'v * 'v * 'v ->
+    'v word list
+  (** [dispatch ~gc k ~program ~scratch ~packet ~args ~tmpring ~limits ~threads
+       ~groups] runs the kernel [k], whose first instruction is at [program], on
+      a single die. It sets the [COMPUTE_*] registers from [k]'s descriptor: its
+      resource words, with the privilege GFX11 runs kernels with and the LDS its
+      workgroups take, and the user SGPRs it enables, in their order: a buffer
+      descriptor of the scratch memory at [scratch], the address [packet] of its
+      dispatch packet, and the address [args] of its arguments. It also sets the
+      scratch ring's word [tmpring] ({!Gc.tmpring_size}) and its memory at
+      [scratch] ({!set_scratch}), at most [limits] waves on each shader array,
+      [0] for no limit, and workgroups of [threads] work-items, then dispatches
+      a grid of [groups] workgroups in waves of [k]'s lanes
+      ({!dispatch_direct}). [packet] is read only when [k] reads its dispatch
+      packet. *)
 end
 
 (** {1:aql AQL} *)

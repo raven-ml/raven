@@ -6,7 +6,8 @@
 (* Who computes: an eager operation is computed by the backend of its operands'
    devices, in any domain, or raises before any work; a backend that lacks a
    kernel raises naming itself and nothing falls through; constants, views,
-   reads and place need no kernel on any device. *)
+   reads and place need no kernel on any device; a device's name shows its
+   backend unless the backend owns its memory. *)
 
 open Windtrap
 open Nx_test
@@ -42,6 +43,7 @@ let counting on =
         include Cpu
 
         let name = label
+        let owns _ = false
 
         let binary k a b ~dst =
           if k = Nx_backend.Add then Atomic.incr adds;
@@ -56,6 +58,7 @@ let counting on =
 module Refusing = struct
   let name = "refusing"
   let runs_on _ = true
+  let owns _ = false
   let no _ = raise (Nx_backend.Refused "no kernel at all")
   let unary _ _ ~dst:_ = no ()
   let binary _ _ _ ~dst:_ = no ()
@@ -312,4 +315,39 @@ let movement =
               (fun () -> ignore (Nx.exp x)));
       ])
 
-let () = exit (run "nx backends" [ who_computes; movement ])
+(* Names *)
+
+(* A fresh memory the host does not compute on, and a backend that computes on
+   it and owns it, as a vendor's library's backend owns its memories. *)
+let own_memory name =
+  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+    ~load:(fun ~binary:_ -> Error "no programs")
+    (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
+
+let owning m =
+  Nx_backend.v
+    (module struct
+      include Refusing
+
+      let name = "owning"
+      let runs_on m' = Nx_device.equal m m'
+      let owns = runs_on
+    end)
+
+let names =
+  group "names"
+    [
+      test "a device of a memory's own backend is named after the memory"
+        (fun () ->
+          let m = own_memory "OWN" in
+          equal string "OWN"
+            (Nx.Device.name (Nx.Device.make ~backend:(owning m) m)));
+      test "a backend that does not own its memory is named after it" (fun () ->
+          equal string "CPU:1/refusing"
+            (Nx.Device.name (Nx.Device.with_backend refusing (Nx.Device.cpu 1))));
+      test "a memory without a backend is named alone" (fun () ->
+          equal string "OWN:2"
+            (Nx.Device.name (Nx.Device.make (own_memory "OWN:2"))));
+    ]
+
+let () = exit (run "nx backends" [ who_computes; movement; names ])

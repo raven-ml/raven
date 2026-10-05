@@ -40,16 +40,15 @@ let equal d d' =
   Nx_device.equal d.memory d'.memory
   && Option.equal Nx_backend.equal d.backend d'.backend
 
-(* A device's name is its memory's, then its backend's when it is not the
-   memory's default, as in ["CPU:1/nx-oxcaml"]. *)
+(* A device's name is its memory's, then its backend's when the backend is not
+   the memory's own, as in ["CPU:1/nx-oxcaml"]. *)
 let name d =
   let m = Nx_device.name d.memory in
-  let default =
-    Option.equal Nx_backend.equal d.backend (default_backend d.memory)
-  in
   match d.backend with
-  | Some b when not default -> m ^ "/" ^ Nx_backend.name b
-  | Some _ | None -> m
+  | Some b ->
+      let (module K) = Nx_backend.kernels b in
+      if K.owns d.memory then m else m ^ "/" ^ K.name
+  | None -> m
 
 let pp ppf d = Format.pp_print_string ppf (name d)
 

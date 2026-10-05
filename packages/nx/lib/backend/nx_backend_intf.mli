@@ -103,13 +103,13 @@ type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
 
 (** The type for backends.
 
-    Every function but [name] and [runs_on] is a kernel. Its operands and its
-    destinations are arrays in the memory of one device the kernels compute on;
-    it writes each destination whole, or raises {!Nx_backend.Refused} before it
-    writes anything. Operands may be strided, broadcast (zero strides) or
-    offset; destinations are C-contiguous from their first element and share no
-    memory with the operands. A kernel may submit its work and return: the
-    device's timeline orders it.
+    Every function but [name], [runs_on] and [owns] is a kernel. Its operands
+    and its destinations are arrays in the memory of one device the kernels
+    compute on; it writes each destination whole, or raises
+    {!Nx_backend.Refused} before it writes anything. Operands may be strided,
+    broadcast (zero strides) or offset; destinations are C-contiguous from their
+    first element and share no memory with the operands. A kernel may submit its
+    work and return: the device's timeline orders it.
 
     nx guarantees, for every kernel: operands have the shapes and dtypes the
     operation's [Nx] function gives them (the two operands of an elementwise
@@ -132,6 +132,13 @@ module type S = sig
   val runs_on : Nx_device.t -> bool
   (** [runs_on d] is [true] iff the kernels compute on arrays in [d]'s memory.
   *)
+
+  val owns : Nx_device.t -> bool
+  (** [owns d] is [true] iff the kernels are [d]'s memory's own: those the
+      library that opens the memory computes its devices with, so that a device
+      over [d] computed by them is named after [d] alone ([Nx.Device.name]). It
+      implies [runs_on d]. nx.cpu owns the host and test memories; a backend
+      paired with a memory that has its own owns none. *)
 
   (** {1:elementwise Elementwise} *)
 

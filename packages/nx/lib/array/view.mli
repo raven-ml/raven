@@ -131,3 +131,17 @@ val sliding_window : t -> axis:int -> window:int -> step:int -> t
 
     Raises [Invalid_argument] if [axis] is out of bounds, [window < 1],
     [step < 1], or [window] exceeds the size of [axis]. *)
+
+(** {1:operands Operands} *)
+
+val coalesce : t list -> t list
+(** [coalesce vs] is the views [vs], which have one shape, with the fewest axes
+    that reach the same elements: the [k]th element in C order of each result
+    lies at the storage position of the [k]th element of its view, for every
+    [k]. Axes of extent 1 are dropped, and axis [i] merges into axis [i + 1]
+    when, in every view, its stride is the stride of [i + 1] times the extent of
+    [i + 1], as for consecutive axes of a C-contiguous view or two axes that
+    every view broadcasts. The results have one shape, of rank [1] when [vs] has
+    no element; a kernel over them walks the same elements with fewer indices.
+
+    Raises [Invalid_argument] if the views' shapes differ. *)

@@ -17,9 +17,15 @@
     Both number the machine's AMD GPUs in bus order, so [AMD:i] and [AMD-PCI:i]
     are the same GPU.
 
-    A device computes eagerly with no backend: [Rune.jit] compiles for it, and
-    an eager operation on its values raises [Invalid_argument] naming the
-    remedies. Constants, views, reads and [Nx.place] work on it. *)
+    A device computes eagerly through nx.amd's backend, AMD memory's own
+    ([Nx_backend.S.owns]), from code objects the library carries, compiled for
+    [gfx12-generic]: GPUs of the gfx12 generation (gfx1200, gfx1201) copy values
+    ({!Nx.copy}, {!Nx.contiguous}) and cast them ({!Nx.cast}), bit for bit as
+    the host does, of every dtype but the complex ones, [int4], [uint4] and
+    [bit]. Any other eager operation, dtype or GPU raises [Invalid_argument]
+    naming the remedies: [Rune.jit] compiles for every AMD device, and
+    [Nx.place] moves values to the host. Constants, views and reads work on
+    every AMD device. *)
 
 val get : int -> (Nx.Device.t, string) result
 (** [get i] is AMD GPU [i] of the kernel driver, opened now, or [Error msg] with

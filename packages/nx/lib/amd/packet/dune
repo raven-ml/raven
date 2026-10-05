@@ -1,4 +1,5 @@
 (library
  (name nx_amd_packet)
  (public_name nx.amd.packet)
- (private_modules packet_defs))
+ (private_modules packet_defs)
+ (libraries nx.amd.code_object))

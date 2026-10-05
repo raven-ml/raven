@@ -3622,17 +3622,23 @@ stores through a pad.
   addresses, the scratch ring's `COMPUTE_TMPRING_SIZE`, and the constants they
   read come from `nx.amd.packet`, which nx's AMD runtime encodes its copies
   and its KIQ's packets with. Its packets are polymorphic in the values they
-  place, and a layout's arithmetic on a value is a term of additions and right
-  shifts, with no step of 0: the pieces of an SDMA copy at their offsets, and
-  the program's and the scratch's addresses from their bit 8. tolk lowers
-  them to the nodes tinygrad's call sites build: a constant word is a
-  `uint32` constant, an addition adds a `uint64` constant, and a shift is by
-  a weak literal. Arithmetic tinygrad spells otherwise
-  stays at tolk's call site: the program's address (`+` of a weak literal),
-  each die's scratch (`+` of a weak literal, kept at 0), the AQL dispatch's
-  grid (a product) and kernel object, the AQL indirect buffers' addresses, the
-  user SGPRs (an `or` of bit 63), the timestamp slots, the SDMA signal's high
-  word (`lsr` of a `uint64` constant), and the profiling copies' addresses.
+  place, and a layout's arithmetic on a value is a term of additions, right
+  shifts and ors, with no step of 0: the pieces of an SDMA copy at their
+  offsets, the program's and the scratch's addresses from their bit 8, and
+  the scratch descriptor's bit 63. tolk lowers them to the nodes tinygrad's
+  call sites build: a constant word is a `uint32` constant, an addition adds
+  a `uint64` constant, a shift is by a weak literal, and an or is of a
+  constant. A PM4 dispatch's register writes and user SGPRs are one packet
+  (`Pm4.dispatch`), built from the code object's kernel, which nx's launches
+  build too; its scratch descriptor's base is the scratch address the die's
+  part adds 0 to, where tinygrad's is the address itself, a node no golden
+  holds since no recorded kernel reads a scratch descriptor. Arithmetic
+  tinygrad spells otherwise stays at tolk's call site: the program's address
+  (`+` of a weak literal), the die's scratch (`+` of a weak literal, kept at
+  0), the dispatch packet's address (`+` of a weak literal), the AQL
+  dispatch's grid (a product) and kernel object, the AQL indirect buffers'
+  addresses, the timestamp slots, the SDMA signal's high word (`lsr` of a
+  `uint64` constant), and the profiling copies' addresses.
   GFX9's wait on a UCONFIG register addresses it from UCONFIG's start in the
   packet, where tinygrad subtracts at the call. An SDMA fence takes a memory
   type on SDMA from version 5, where tinygrad asks whether the graphics

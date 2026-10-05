@@ -4,7 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 let open_ interface i =
-  Result.map Nx.Device.make (Nx_amd_device.get ~interface i)
+  Result.map
+    (Nx.Device.make ~backend:Backend.backend)
+    (Nx_amd_device.get ~interface i)
 
 let ok = function Ok d -> d | Error e -> failwith e
 let get i = open_ Kernel i

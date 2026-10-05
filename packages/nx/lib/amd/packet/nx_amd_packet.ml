@@ -7,12 +7,17 @@ module D = Packet_defs
 
 (* Words *)
 
-type 'v term = Value of 'v | Add of 'v term * int64 | Shift of 'v term * int
+type 'v term =
+  | Value of 'v
+  | Add of 'v term * int64
+  | Shift of 'v term * int
+  | Or of 'v term * int64
 
 let rec eval = function
   | Value v -> Int64.of_int v
   | Add (t, n) -> Int64.add (eval t) n
   | Shift (t, n) -> Int64.shift_right_logical (eval t) n
+  | Or (t, n) -> Int64.logor (eval t) n
 
 type 'v word = Dword of int | W32 of 'v term | W64 of 'v term
 
@@ -369,6 +374,51 @@ module Pm4 = struct
         (lanes @ [ ("force_start_at_000", 1); ("compute_shader_en", 1) ])
     in
     packet D.packet3_dispatch_direct [ w32 x; w32 y; w32 z; Dword init ]
+
+  (* GFX11 runs kernels privileged, for their context save and restore:
+     COMPUTE_PGM_RSRC1.PRIV. *)
+  let priv = 1 lsl 20
+
+  (* COMPUTE_PGM_RSRC2.LDS_SIZE: its first bit, its width, and its granule. *)
+  let lds_shift = 15
+  let lds_mask = 0x1ff
+  let lds_granule = 512
+
+  (* The buffer descriptor of a kernel's scratch, as HSA's runtime makes it: the
+     base address with SWIZZLE_ENABLE, bit 63, the most records, and the word of
+     its format and lane stride. *)
+  let swizzle_enable = Int64.min_int
+  let num_records = 0xffff_ffff
+  let scratch_format = 0x20c14000
+
+  let dispatch ~gc (k : Nx_amd_code_object.kernel) ~program ~scratch ~packet
+      ~args ~tmpring ~limits ~threads:(tx, ty, tz) ~groups =
+    let set name ws = set_reg (register gc ("regCOMPUTE_" ^ name)) ws in
+    let rsrc1 = if major gc = 11 then k.rsrc1 lor priv else k.rsrc1 in
+    let lds = (k.group_segment + lds_granule - 1) / lds_granule land lds_mask in
+    let zeros n = List.init n (fun _ -> Dword 0) in
+    (* The user SGPRs the descriptor enables, in their fixed order. *)
+    let user =
+      (if k.private_segment_buffer then
+         [
+           W64 (Or (Value scratch, swizzle_enable));
+           Dword num_records;
+           Dword scratch_format;
+         ]
+       else [])
+      @ (if k.dispatch_ptr then [ w64 packet ] else [])
+      @ [ w64 args ]
+    in
+    set_program ~gc program
+    @ set "PGM_RSRC1" [ Dword rsrc1; Dword (k.rsrc2 lor (lds lsl lds_shift)) ]
+    @ set "PGM_RSRC3" [ Dword k.rsrc3 ]
+    @ set "TMPRING_SIZE" [ Dword tmpring ]
+    @ set_scratch ~gc scratch
+    @ set "RESTART_X" (zeros 3)
+    @ set "USER_DATA_0" user
+    @ set "RESOURCE_LIMITS" [ Dword limits ]
+    @ set "START_X" (zeros 3 @ [ w32 tx; w32 ty; w32 tz ] @ zeros 2)
+    @ dispatch_direct ~gc (if k.wave32 then Wave32 else Wave64) groups
 end
 
 (* AQL *)

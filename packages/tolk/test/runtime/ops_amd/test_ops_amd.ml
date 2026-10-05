@@ -1058,6 +1058,46 @@ let commands =
       build = (fun i v -> P.Pm4.set_program ~gc:(pick gcs i.(0)) v.(0));
     };
     {
+      name = "Pm4.dispatch";
+      widths =
+        [
+          Word64;
+          Word64;
+          Word32;
+          Word32;
+          Word32;
+          Word32;
+          Word32;
+          Word32;
+          Word64;
+          Word64;
+        ];
+      build =
+        (fun i v ->
+          let kernel =
+            {
+              Nx_amd_code_object.descriptor = 0;
+              entry = 0;
+              group_segment = i.(3) land 0xffff;
+              private_segment = i.(3) lsr 16;
+              kernarg_size = 0;
+              rsrc1 = i.(1);
+              rsrc2 = i.(2);
+              rsrc3 = i.(1) lxor i.(2);
+              wave32 = flag i.(4);
+              dispatch_ptr = flag (i.(4) lsr 1);
+              private_segment_buffer = flag (i.(4) lsr 2);
+            }
+          in
+          P.Pm4.dispatch
+            ~gc:(pick gcs i.(0))
+            kernel ~program:v.(0) ~scratch:v.(1) ~packet:v.(8) ~args:v.(9)
+            ~tmpring:i.(4)
+            ~limits:(i.(4) land 0x3ff)
+            ~threads:(v.(2), v.(3), v.(4))
+            ~groups:(v.(5), v.(6), v.(7)));
+    };
+    {
       name = "Pm4.set_scratch";
       widths = [ Word64 ];
       build = (fun i v -> P.Pm4.set_scratch ~gc:(pick gcs i.(0)) v.(0));

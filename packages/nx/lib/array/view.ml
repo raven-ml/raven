@@ -308,3 +308,36 @@ let sliding_window view ~axis ~window ~step =
   new_shape.(axis) <- ((size - window) / step) + 1;
   new_strides.(axis) <- view.strides.(axis) * step;
   create ~offset:view.offset ~strides:new_strides new_shape
+
+(* Operands *)
+
+let coalesce = function
+  | [] -> []
+  | v :: _ as vs ->
+      if List.exists (fun v' -> v'.shape <> v.shape) vs then
+        err "coalesce" "views of different shapes";
+      if has_zero v.shape then List.map (fun _ -> create [| 0 |]) vs
+      else
+        let views = Array.of_list vs in
+        (* From the last axis to the first: the merged axes, innermost first,
+           each its extent and its stride in every view. *)
+        let merged = ref [] in
+        for i = Array.length v.shape - 1 downto 0 do
+          let e = v.shape.(i) in
+          let strides = Array.map (fun v -> v.strides.(i)) views in
+          if e > 1 then
+            match !merged with
+            | (e', s') :: rest
+              when Array.for_all2 (fun s s' -> s = s' * e') strides s' ->
+                merged := (e * e', s') :: rest
+            | _ -> merged := (e, strides) :: !merged
+        done;
+        let shape = Array.of_list (List.map fst !merged) in
+        Array.to_list
+          (Array.mapi
+             (fun k v ->
+               create ~offset:v.offset
+                 ~strides:
+                   (Array.of_list (List.map (fun (_, s) -> s.(k)) !merged))
+                 shape)
+             views)

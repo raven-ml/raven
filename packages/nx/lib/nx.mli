@@ -352,10 +352,11 @@ module Device : sig
 
   val make : ?backend:Nx_backend.t -> Nx_device.t -> t
   (** [make ~backend m] is the device over the memory [m] computed eagerly by
-      [backend]. [backend] defaults to [m]'s own: nx.cpu on the host and test
-      memories, none on others. A vendor's library makes its devices with it, as
-      [Nx_cuda.device] does, and so does a program for a memory no library
-      names, such as the disk ({!Nx_device.disk}) or another machine's GPU.
+      [backend]. [backend] defaults to nx.cpu on the host and test memories, and
+      to none on others. A vendor's library makes its devices with it, as
+      [Nx_amd.device] does with its own backend, and so does a program for a
+      memory no library names, such as the disk ({!Nx_device.disk}) or another
+      machine's GPU.
 
       Raises [Invalid_argument] unless [backend] computes on [m]. *)
 
@@ -367,8 +368,8 @@ module Device : sig
   val name : t -> string
   (** [name d] is [d]'s memory's name ([CPU], [CPU:k], [METAL], [CUDA:i],
       [NV:i], [NV-PCI:i], [AMD:i], [AMD-PCI:i]), then [/] and the backend's name
-      when [d]'s backend is not its memory's default, as in ["CPU/nx-oxcaml"].
-  *)
+      when [d]'s backend is not its memory's own ([Nx_backend.S.owns]), as in
+      ["CPU/nx-oxcaml"]. *)
 
   val equal : t -> t -> bool
   (** [equal d d'] is [true] iff [d] and [d'] have one memory
@@ -1574,9 +1575,12 @@ val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
 
 val of_buffer : ('a, 'b) dtype -> int array -> Nx_device.Buffer.t -> ('a, 'b) t
 (** [of_buffer dtype shape b] is the value of [shape] whose elements, in C
-    order, are [b]'s, without a copy, at [Placement.on [d]] for [b]'s device
-    [d]: a buffer of the host gives a value at {!Placement.host}. [b] is shared
-    with its other holders, which must not write it while the value lives.
+    order, are [b]'s, without a copy, at [Placement.on [Device.make m]] for
+    [b]'s device [m]: a buffer of the host gives a value at {!Placement.host}. A
+    GPU memory's device made so has no backend, so an eager operation on the
+    value raises: {!place} it onto the vendor's device over the same memory,
+    such as [Nx_amd.device i], a view, to compute on it. [b] is shared with its
+    other holders, which must not write it while the value lives.
 
     Raises [Invalid_argument] if [shape] does not have [b]'s number of elements,
     or if [b]'s format is not [dtype]'s. *)

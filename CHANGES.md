@@ -3226,6 +3226,25 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation (gfx1200, gfx1201) copy and cast eagerly:
+  `Nx.copy`, `Nx.contiguous` and `Nx.cast` on `Nx_amd` devices run on the GPU,
+  bit for bit as on the host, for every dtype but the complex ones, `int4`,
+  `uint4` and `bit`. The kernels are compiled ahead of time for
+  `gfx12-generic` and carried by `nx.amd`; every other operation, dtype or GPU
+  still raises naming `Rune.jit`.
+- **Breaking:** a backend states the memories it owns (`Nx_backend.S.owns`),
+  those its library computes its devices with, and `Nx.Device.name` shows a
+  backend only on a memory it does not own: `Nx_amd` devices are `AMD:0`, and a
+  backend that includes nx.cpu's kernels says `let owns _ = false` to keep its
+  name.
+- Add `Nx_amd_device.launch` and its `dispatch` record: kernels in order on an
+  AMD device's compute queue, as one submission.
+- Add `Nx_amd_packet.Pm4.dispatch`, the register writes, user SGPRs and
+  dispatch of a code object's kernel (`Nx_amd_code_object.kernel`) on a PM4
+  queue, which `Nx_amd_device.launch` and tolk's AMD queues share, and the
+  term `Or`.
+- Add `Nx_array.View.coalesce`, which merges the axes that a set of operands of
+  one shape lets a kernel walk as one.
 - `nx.mli` states the accuracy of the transcendental functions: each of
   `exp`, `log`, `log1p`, `expm1`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
   `sinh`, `cosh`, `tanh`, `erf`, `pow` and `atan2` gives its ulp bound at

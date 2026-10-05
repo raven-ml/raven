@@ -1008,11 +1008,12 @@ let int_compare ~signed a b =
   if signed then Int64.compare a b else Int64.unsigned_compare a b
 
 (* nx.cpu's kernels under another name: a backend of its own, which a test pairs
-   with a device whose default backend is nx.cpu. *)
+   with a device whose default backend is nx.cpu, and which owns no memory. *)
 module Renamed = struct
   include (val Nx_backend.kernels Nx_cpu.backend)
 
   let name = "nx.cpu renamed"
+  let owns _ = false
 end
 
 let renamed = Nx_backend.v (module Renamed)
