@@ -206,7 +206,9 @@ val save_npy : ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
 
     @raise Failure
       if [path] cannot be written, already exists when [overwrite] is [false],
-      or [t]'s dtype has no standard NPY representation. *)
+      or [t]'s dtype has no standard NPY representation (bfloat16, the 8-bit
+      floats, int4, uint4 and bit, whose message names [Nx.cast Nx.bool] and its
+      packed bytes). *)
 
 val load_npz : string -> Archive.t
 (** [load_npz path] loads all tensors from an [.npz] archive.
@@ -235,7 +237,8 @@ val save_npz : ?overwrite:bool -> string -> Archive.t -> unit
 
     @raise Failure
       if a name is invalid, a tensor's dtype has no standard NPY representation
-      (bfloat16, the 8-bit floats, int4 and uint4), naming the entry, or [path]
+      (bfloat16, the 8-bit floats, int4, uint4 and bit, whose message names
+      [Nx.cast Nx.bool] and its packed bytes), naming the entry, or [path]
       cannot be written. *)
 
 val gunzip : src:string -> dst:string -> unit
@@ -305,9 +308,10 @@ val save_safetensors : ?overwrite:bool -> string -> Archive.t -> unit
 
     @raise Failure
       if [path] cannot be written, or if a tensor's dtype has no SafeTensors
-      equivalent (the complex dtypes, int4 and uint4), naming the entry. If the
-      rename is refused twice, the message names the temporary file, which is
-      kept and holds [a]'s tensors. *)
+      equivalent (the complex dtypes, int4, uint4 and bit, whose message names
+      [Nx.cast Nx.bool] and its packed bytes), naming the entry. If the rename
+      is refused twice, the message names the temporary file, which is kept and
+      holds [a]'s tensors. *)
 
 (** {1:gguf GGUF} *)
 
@@ -480,8 +484,8 @@ val save_txt :
     written in [%.18e] notation, 19 significant digits rounded from their exact
     value, so a float reads back as itself, NaN aside: every NaN is written
     [nan], and the infinities [inf] and [-inf]. Integers are written in decimal,
-    unsigned ones as unsigned, and booleans as [1] and [0]. Text holds bool, the
-    integer dtypes but int4 and uint4, and the float dtypes but float8.
+    unsigned ones as unsigned, and booleans as [1] and [0]. Text holds bool and
+    bit, the integer dtypes but int4 and uint4, and the float dtypes but float8.
 
     [sep] defaults to [" "]. [append] defaults to [false]. [newline] defaults to
     ["\n"]. [comments] defaults to ["# "].

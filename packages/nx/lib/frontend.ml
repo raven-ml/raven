@@ -107,7 +107,6 @@ type index =
 
 let shape x = View.shape (Value.view x)
 let dtype x = Value.dtype x
-let itemsize x = Nx_dtype.itemsize (Value.dtype x)
 
 let dim i x =
   let shape = View.shape (Value.view x) in

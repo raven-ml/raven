@@ -3184,6 +3184,9 @@ thread.
   keeping large masks. Every function that takes `bool` outside a condition
   takes `bit`; a condition stays `bool`, as `Nx.cast Nx.bool m`. `Nx.count`
   counts the `true` elements of a `bool` or `bit` mask.
+- **Breaking:** remove `Nx.itemsize`, whose bytes per element miscount every
+  sub-byte dtype; `Nx.nbytes` gives sizes and `Nx_dtype.Scalar.bitsize`
+  widths.
 - `Nx.bitcast` counts widths in bits, so `bit`, `int4` and `uint4` read as
   their packed bytes, where it refused the 4-bit dtypes. `Nx.nbytes` counts
   bits too: an `int4` tensor reported twice its bytes.

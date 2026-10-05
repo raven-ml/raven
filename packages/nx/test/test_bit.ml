@@ -430,13 +430,6 @@ let storage =
           equal int 0 (Nx.nbytes (Nx.zeros Nx.bit [| 0 |]));
           equal int 2 (Nx.nbytes (Nx.zeros Nx.int4 [| 3 |]));
           equal int 13 (Nx.nbytes (Nx.zeros Nx.bool [| 13 |])));
-      test "itemsize is 1 for bit, int4 and uint4" (fun () ->
-          equal (list int) [ 1; 1; 1 ]
-            [
-              Nx.itemsize (Nx.zeros Nx.bit [| 1 |]);
-              Nx.itemsize (Nx.zeros Nx.int4 [| 1 |]);
-              Nx.itemsize (Nx.zeros Nx.uint4 [| 1 |]);
-            ]);
     ]
 
 (* Refusals *)

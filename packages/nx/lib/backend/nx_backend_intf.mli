@@ -49,10 +49,12 @@ type binary =
   | Fdiv
       (** The IEEE 754 quotient, of float and complex operands. nx picks [Fdiv]
           or [Idiv] by dtype; a kernel never inspects it here. *)
-  | Idiv  (** The integer quotient truncated toward zero, of integers. *)
+  | Idiv
+      (** The integer quotient truncated toward zero, of integers: [0] by zero,
+          and a signed type's least value by [-1] is that value. *)
   | Mod
       (** The remainder of the division, whose sign follows the dividend: C's
-          [%] on integers, [fmod] on floats. *)
+          [%] on integers, the dividend by zero, and [fmod] on floats. *)
   | Pow  (** [a] to the power [b]. *)
   | Atan2  (** The angle of [(b, a)] in radians, in \]-π, π\]. *)
   | Maximum
@@ -111,7 +113,14 @@ type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
     kernel have one shape, after broadcasting, and one dtype, after promotion);
     axes are in range, non-negative and, where there are several, distinct; the
     reduced axes of [Max], [Min], [Argmax] and [Argmin] are not empty; and each
-    destination has the result's shape and dtype. *)
+    destination has the result's shape and dtype.
+
+    [bit] reaches only [cast], the [And], [Or], [Xor], [Maximum] and [Minimum]
+    of [binary], and the moves ([pad], [cat], [contiguous], [gather], [scatter]
+    with [`Set] and [update]); nx reads the [bit] operands of every
+    other operation as [bool]. The bits of a [bit], [int4] or [uint4] buffer
+    after its last element belong to no value: a kernel whose destination ends
+    its buffer writes them as 0. *)
 module type S = sig
   val name : string
   (** [name] is the backend's name, as errors and device names show it, such as
@@ -168,8 +177,10 @@ module type S = sig
 
   val cast : ('a, 'b) Nx_array.t -> dst:('c, 'd) Nx_array.t -> unit
   (** [cast x ~dst] writes [x]'s elements converted to [dst]'s dtype into [dst].
-      A float becomes an integer truncated toward zero; an integer becomes a
-      float rounded, which may lose precision. A complex becomes a real by its
+      An integer becomes another integer modulo [2^bits]. A float becomes an
+      integer truncated toward zero, held at the ends of the integer's range,
+      and NaN becomes [0]; an integer becomes a float rounded, which may lose
+      precision. A complex becomes a real by its
       real component, and a real becomes a complex with a zero imaginary one:
       nx's complex accessors rely on both, so a cast through the modulus would
       change their results. *)

@@ -17,7 +17,8 @@
 
 val create : ('a, 'b) Nx_dtype.t -> int -> Nx_device.Buffer.t
 (** [create dt n] is a new buffer on {!Nx_device.host} of [n] elements of [dt],
-    their contents unspecified.
+    their contents unspecified. The bits of its last byte past its last element,
+    for a dtype of fewer than 8 bits, are [0].
 
     Raises as {!Nx_device.Buffer.create} does. *)
 

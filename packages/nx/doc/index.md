@@ -4,7 +4,7 @@ Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safe
 
 ## Features
 
-- **19 data types** — float16 through float64, int4 through int64, complex64/128, bool
+- **20 data types** — float16 through float64, int4 through int64, complex64/128, bool and bit
 - **Broadcasting** — automatic shape matching for binary operations
 - **Views** — reshape, transpose, and slice without copying data
 - **Linear algebra** — matmul, solve, cholesky, QR, SVD, eigendecomposition

@@ -402,8 +402,8 @@ let scatter (type a b) ~mode ~unique ~axis ~indices ~(updates : (a, b) t)
       caml_cast dst z
 
 (* The window write is the strided copy: [x] copied, then [v] written through a
-   shrunk view of the copy. The packed copy writes a window nibble by nibble,
-   keeping the elements around it. *)
+   shrunk view of the copy. The packed copy writes a window's whole words and
+   merges its partial ones, keeping the elements around it. *)
 let update (x : ('a, 'b) t) ~(starts : Nx_backend.index_array) v ~dst =
   caml_copy dst x;
   let positions =

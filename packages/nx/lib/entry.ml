@@ -19,14 +19,14 @@ open Value
    their dtype as [bit], so it answers as it does on [bool], raising where it
    raises. *)
 
-let cast_op dtype x =
+let cast dtype x =
   if Intercept.intercepting () then Intercept.perform (Convert (Cast, dtype, x))
   else Dispatch.convert Cast dtype x
 
-let bool x = cast_op Nx_dtype.Bool x
+let bool x = cast Nx_dtype.Bool x
 
 (* [through_bool f x] is [f] of [x] read as [bool], its result kept as [bit]. *)
-let through_bool f x = cast_op Nx_dtype.Bit (f (bool x))
+let through_bool f x = cast Nx_dtype.Bit (f (bool x))
 
 let unary_op k x =
   if Intercept.intercepting () then Intercept.perform (Unary (k, x))
@@ -46,6 +46,7 @@ let binary (type a b) (k : Nx_backend.binary) (x : (a, b) t) (y : (a, b) t) :
   match (dtype x, k) with
   | Nx_dtype.Bit, (Add | Sub | Mul | Fdiv | Idiv | Mod | Pow | Atan2) ->
       through_bool (fun x -> binary_op k x (bool y)) x
+  | Nx_dtype.Bit, (And | Or | Xor | Maximum | Minimum) -> binary_op k x y
   | _ -> binary_op k x y
 
 let cmp_op k x y =
@@ -123,14 +124,6 @@ let pad padding v x =
 let cat ~axis xs =
   if Intercept.intercepting () then Intercept.perform (Cat (axis, xs))
   else Dispatch.cat axis xs
-
-(* A cast between [bit] and a 4-bit dtype goes through [bool]. *)
-let cast (type a b c d) (dtype : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t =
-  match (Value.dtype x, dtype) with
-  | Nx_dtype.Bit, (Nx_dtype.Int4 | Nx_dtype.UInt4)
-  | (Nx_dtype.Int4 | Nx_dtype.UInt4), Nx_dtype.Bit ->
-      cast_op dtype (bool x)
-  | _ -> cast_op dtype x
 
 let bitcast dtype x =
   if Intercept.intercepting () then

@@ -43,13 +43,9 @@ let properties =
           equal int (Array.length s) (Nx.ndim t);
           equal int (Ref.numel s) (Nx.numel t);
           Array.iteri (fun i d -> equal int d (Nx.dim i t)) s);
-      cases
-        "itemsize is the width of the dtype, and nbytes counts every element"
+      cases "nbytes counts every element at the width of the dtype"
         ~name:(fun (name, _, _) -> name)
-        (let sizes dtype () =
-           let t = Nx.zeros dtype [| 3 |] in
-           (Nx.itemsize t, Nx.nbytes t)
-         in
+        (let sizes dtype () = Nx.nbytes (Nx.zeros dtype [| 3 |]) in
          [
            ("float16", 2, sizes Nx.float16);
            ("bfloat16", 2, sizes Nx.bfloat16);
@@ -64,8 +60,7 @@ let properties =
            ("complex128", 16, sizes Nx.complex128);
            ("bool", 1, sizes Nx.bool);
          ])
-        (fun (_, width, sizes) ->
-          equal (pair int int) (width, 3 * width) (sizes ()));
+        (fun (_, width, sizes) -> equal int (3 * width) (sizes ()));
       test "dim refuses an axis out of bounds" (fun () ->
           raises_invalid_arg (fun () -> Nx.dim 2 (Nx.zeros Nx.int32 [| 2; 2 |]));
           raises_invalid_arg (fun () ->

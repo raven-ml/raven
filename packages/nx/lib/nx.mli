@@ -57,6 +57,27 @@ type bit_elt = Nx_dtype.bit_elt
 
 (** {2:dtype Data types} *)
 
+(** The type for data type descriptors. A [('a, 'b) dtype] links the OCaml
+    element type ['a] to its buffer representation ['b].
+
+    An integer dtype of [n] bits holds the integers modulo [2^n], read as
+    \[[-2^(n-1)], [2^(n-1)]) when signed and \[[0], [2^n]) when unsigned, at
+    every width: [int4] and [uint4] hold two to a byte. Addition, subtraction,
+    multiplication, negation, {!lshift}, the bitwise functions, casts between
+    integers and integer literals are exact modulo [2^n]; every other function
+    computes on the representatives and reduces its result.
+
+    [bool] values compare, combine logically and bitwise, select ({!where}),
+    sort and reduce by {!max} and {!min}; arithmetic on them (sums, products,
+    negation, cumulative sums, {!matmul}) raises [Invalid_argument].
+
+    [bit] holds booleans eight to a byte, for keeping large masks. Every
+    function that takes [bool] outside a condition takes [bit], and one that
+    returns its operands' dtype returns [bit]. A condition ({!where},
+    {!compress}, {!extract}, a mask index [M], {!check}) is a [bool]: compute
+    with [cast bool m] and keep with [cast bit m]. A function that returns a
+    new [bit], [int4] or [uint4] tensor writes the bits of its last byte past
+    its last element as [0]. *)
 type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Float16 : (float, float16_elt) dtype
   | Float32 : (float, float32_elt) dtype
@@ -77,26 +98,8 @@ type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Complex64 : (Complex.t, complex32_elt) dtype
   | Complex128 : (Complex.t, complex64_elt) dtype
   | Bool : (bool, bool_elt) dtype
-  | Bit : (bool, bit_elt) dtype
-      (** The type for data type descriptors. A [('a, 'b) dtype] links the OCaml
-          element type ['a] to its buffer representation ['b].
+  | Bit : (bool, bit_elt) dtype  (** Booleans, eight to a byte. *)
 
-          An integer dtype of [n] bits holds the integers modulo [2^n], read as
-          \[[-2^(n-1)], [2^(n-1)]) when signed and \[[0], [2^n]) when
-          unsigned, at every width: [int4] and [uint4] hold two to a byte.
-          Addition, subtraction, multiplication, negation, {!lshift}, the
-          bitwise functions, casts between integers and integer literals are
-          exact modulo [2^n]; every other function computes on the
-          representatives and reduces its result. [bool]
-          values compare, combine logically and bitwise, select ({!where}), sort
-          and reduce by {!max} and {!min}; arithmetic on them (sums, products,
-          negation, cumulative sums, {!matmul}) raises [Invalid_argument].
-
-          [bit] holds booleans eight to a byte, for keeping large masks. Every
-          function that takes [bool] outside a condition takes [bit], and one
-          that returns its operands' dtype returns [bit]. A condition
-          ({!where}, {!compress}, {!extract}, a mask index [M], {!check}) is a
-          [bool]: compute with [cast bool m] and keep with [cast bit m]. *)
 
 (** {2:tensor_aliases Tensor aliases} *)
 
@@ -198,17 +201,12 @@ val dim : int -> ('a, 'b) t -> int
 val ndim : ('a, 'b) t -> int
 (** [ndim t] is the number of dimensions of [t]. *)
 
-val itemsize : ('a, 'b) t -> int
-(** [itemsize t] is the bytes per element, rounded up to a whole byte: 1 for
-    [bit], [int4] and [uint4]. *)
-
 val numel : ('a, 'b) t -> int
 (** [numel t] is the total number of elements in [t]. *)
 
 val nbytes : ('a, 'b) t -> int
 (** [nbytes t] is the bytes of [t]'s elements, [(numel t * bits + 7) / 8] for
-    elements of [bits] bits: [numel t * itemsize t] for every dtype of a whole
-    number of bytes. *)
+    elements of [bits] bits ({!Nx_dtype.Scalar.bitsize}). *)
 
 val is_c_contiguous : ('a, 'b) t -> bool
 (** [is_c_contiguous t] is [true] iff [t]'s elements are laid out contiguously
@@ -222,9 +220,10 @@ val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
     for element access that allocates nothing per element.
 
     Raises [Invalid_argument] if [t]'s dtype has no {!Bigarray.kind}: bfloat16,
-    the float8 dtypes, uint32, uint64, int4, uint4 and bool. {!bitcast} the
-    first five to the integers of their width first, which have one, and {!cast}
-    the last three to [uint8].
+    the float8 dtypes, uint32, uint64, int4, uint4, bool and bit. {!bitcast}
+    the first five to the integers of their width first, which have one, and
+    {!cast} the next three to [uint8]. A [bit] tensor becomes [uint8] by
+    {!cast}, one byte per value, or by {!bitcast}, as its packed bytes.
 
     See also {!of_bigarray}. *)
 
@@ -686,8 +685,9 @@ val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
     tensor element by element. A tensor of a dtype with no {!Bigarray.kind} is
     built from another: a bfloat16, float8, uint32 or uint64 one from the
     integers of its width with {!bitcast}, such as a bfloat16 one from
-    [int16_unsigned] elements, and an int4, uint4 or bool one from [uint8]
-    elements with {!cast}.
+    [int16_unsigned] elements, an int4, uint4 or bool one from [uint8]
+    elements with {!cast}, and a bit one from [uint8] elements with {!cast},
+    one byte per value, or from its packed bytes with {!bitcast}.
 
     Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint], or
     if its first element does not lie at a multiple of its size (of one
@@ -1481,7 +1481,8 @@ val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     when [t] already has that dtype: a tensor is a value, so only a change of
     dtype allocates. Use {!copy} for fresh storage.
 
-    An integer becomes another integer modulo [2^bits]. A float becomes an
+    An integer becomes another integer modulo [2^w] for a dtype of [w] bits. A
+    float becomes an
     integer by truncation toward zero, held at the ends of the integer's range,
     and NaN becomes [0]. A real value becomes a complex one
     with no imaginary part, and a complex value a real one by dropping its
@@ -1521,10 +1522,7 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     [dtype]'s width: it is then read from a C-contiguous copy of [t].
 
     Raises [Invalid_argument] if either dtype is [bool], whose only bytes are 0
-    and 1, or if [dtype] is wider and [t] has no last axis of [k] elements. A
-    compiled function (under [Rune.jit]) refuses a bitcast to or from
-    [float8_e4m3] or [float8_e5m2]: the compiler emulates those formats through
-    a wider float, which would change subnormal and infinite bits.
+    and 1, or if [dtype] is wider and [t] has no last axis of [k] elements.
 
     Reading a float's bits as an integer of its width gives a key that sorts as
     the float does once negative keys have their other bits flipped:
@@ -1908,7 +1906,8 @@ val argwhere : ('a, 'b) t -> int64_t
     float8 dtypes, every element-wise operation, the mathematical functions
     below included, computes at [float32] and rounds once. Integer addition,
     subtraction, multiplication, negation and absolute value wrap modulo
-    [2^bits], so [abs] of an integer type's least value is that value. A NaN
+    [2^w] for a dtype of [w] bits, so [abs] of an integer type's least value is
+    that value. A NaN
     result's sign and payload are unspecified, except on the host, where {!add},
     {!sub}, {!mul}, {!div} and {!fma} give the first NaN operand: bit for bit at
     [float32] and [float64], and its sign at the narrower floats. A NaN part of
@@ -2395,8 +2394,8 @@ val bitwise_not : ('a, 'b) t -> ('a, 'b) t
 (** [bitwise_not t] is the element-wise bitwise NOT. *)
 
 val lshift : ('a, 'b) t -> int -> ('a, 'b) t
-(** [lshift t n] left-shifts each element by [n] bits: [t * 2{^n}] modulo
-    [2^bits], so [0] once [n] reaches the width.
+(** [lshift t n] left-shifts each element by [n] bits: [t * 2^n] modulo [2^w]
+    for a dtype of [w] bits, so [0] once [n] reaches [w].
 
     Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
     type.
@@ -2411,8 +2410,8 @@ val lshift : ('a, 'b) t -> int -> ('a, 'b) t
 
 val rshift : ('a, 'b) t -> int -> ('a, 'b) t
 (** [rshift t n] right-shifts each element by [n] bits, keeping the sign of a
-    signed integer: [t / 2{^n}] rounded toward negative infinity, so [0], or
-    [-1] below zero, once [n] reaches the width.
+    signed integer: [t / 2^n] rounded toward negative infinity, so [0], or [-1]
+    below zero, once [n] reaches the width [w] of its dtype.
 
     Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
     type.
@@ -2819,6 +2818,9 @@ val count : ?axes:int list -> ?keepdims:bool -> (bool, 'b) t -> int64_t
 
     {@ocaml[
       # create bool [| 4 |] [| true; false; true; true |] |> count |> item []
+      - : int64 = 3L
+      # create bool [| 4 |] [| true; false; true; true |]
+        |> cast bit |> count |> item []
       - : int64 = 3L
     ]}
 

@@ -123,17 +123,11 @@ let tensor_data (type a b) name (t : (a, b) Nx.t) =
     | BFloat16 -> BF16
     | Float32 -> F32
     | Float64 -> F64
-    | Bit ->
-        fail_msg
-          "%s: SafeTensors has no 1-bit dtype; save Nx.cast Nx.bool m, one \
-           byte per value, or its packed bytes after padding it to a multiple \
-           of 8 elements; numpy reads them with unpackbits(..., \
-           bitorder=\"little\")"
-          name
+    | Bit -> fail_msg "%s: %s" name (no_bit "SafeTensors")
     | dtype ->
         fail_msg "%s: SafeTensors has no %s" name (Nx_dtype.to_string dtype)
   in
-  let size = Nx.itemsize t in
+  let size = Nx_dtype.itemsize (Nx.dtype t) in
   if Sys.big_endian && size > 1 then begin
     Storage.reading ~by:"Nx_io.save_safetensors" t @@ fun elements ->
     let swapped =

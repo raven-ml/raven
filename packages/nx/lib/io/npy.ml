@@ -351,9 +351,8 @@ let read_copy path =
 (* What saving a [bit] tensor refuses with: npy's booleans are bytes, and a
    writer that unpacked would load back as [bool]. *)
 let no_bit =
-  "npy has no 1-bit dtype; save Nx.cast Nx.bool m, one byte per value, or its \
-   packed bytes after padding it to a multiple of 8 elements; numpy reads them \
-   with unpackbits(..., bitorder=\"little\")"
+  Error.no_bit "npy"
+  ^ "; numpy reads the packed bytes with unpackbits(..., bitorder=\"little\")"
 
 let code_of_kind : type a b. (a, b) Nx_dtype.t -> string = function
   | Float16 -> "f2"

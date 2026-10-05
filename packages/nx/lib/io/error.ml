@@ -20,3 +20,11 @@ let to_string = function
   | Other msg -> msg
 
 let fail_msg fmt = Printf.ksprintf failwith fmt
+
+(* The refusal of a [bit] tensor by a format with no 1-bit dtype, naming the two
+   ways to save one. *)
+let no_bit format =
+  format
+  ^ " has no 1-bit dtype; save Nx.cast Nx.bool m, one byte per value, or its \
+     packed bytes, Nx.bitcast Nx.uint8 of m padded to a multiple of 8 \
+     elements, element i at bit i mod 8 of byte i / 8"

@@ -211,7 +211,7 @@ let rows op r =
   let n = length r in
   let values, offsets = elements r in
   let (P keys) = keys op values in
-  let w = itemsize keys in
+  let w = Nx_dtype.itemsize (dtype keys) in
   (* Every window of up to 64 bytes from an element of a row lies in
      [keys]. *)
   let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero (dtype keys)) keys in

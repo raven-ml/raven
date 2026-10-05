@@ -44,7 +44,14 @@ let in_bounds fn n i =
 
 (* Creation *)
 
-let create dt n = B.create Nx_device.host (S.of_dtype dt) n
+(* The bits of a fresh buffer past its last element, which belong to no element,
+   are 0: what fills the buffer then decides its every byte. *)
+let create dt n =
+  let s = S.of_dtype dt in
+  let b = B.create Nx_device.host s n in
+  let bits = S.bitsize s in
+  if bits < 8 && n * bits land 7 <> 0 then A.set (bytes b) (n * bits / 8) 0;
+  b
 
 (* Access *)
 
@@ -189,8 +196,10 @@ let set (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a -> unit =
         in_bounds "set" n i;
         set_sub ba 1 i (Bool.to_int v)
 
-(* Elements of fewer than 8 bits fill whole bytes, then one at a time the last
-   ones, whose byte holds bits past [b] that belong to the memory after it. *)
+(* Elements of fewer than 8 bits fill whole bytes, then the last ones one at a
+   time: the bits after them in their byte keep what they hold, which is 0 in a
+   fresh buffer ({!create}) and another value's elements in a view of a larger
+   buffer. *)
 let fill_sub b bits v =
   let ba = bytes b and n = B.length b in
   let per = 8 / bits in

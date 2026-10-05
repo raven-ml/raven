@@ -1642,9 +1642,11 @@ static void nx_c_cast_unpack_body(int64_t lo, int64_t hi, int worker,
   }
 }
 
-/* The cast kernel from a to b, NULL when they are one dtype. */
-static nx_c_map_loop *nx_c_cast_kernel(nx_c_dtype a, nx_c_dtype b) {
-  return a == b ? NULL : nx_c_cast_tables[a].fn[b];
+/* The cast kernel from a to b in *k, NULL when they are one dtype. */
+static nx_c_status nx_c_cast_kernel(nx_c_dtype a, nx_c_dtype b,
+                                    nx_c_map_loop **k) {
+  *k = a == b ? NULL : nx_c_cast_tables[a].fn[b];
+  return a == b || *k ? NX_C_OK : NX_C_ERR_UNSUPPORTED_DTYPE;
 }
 
 static nx_c_status nx_c_cast_sub(nx_c_dtype src, nx_c_dtype dst,
@@ -1667,7 +1669,8 @@ static nx_c_status nx_c_cast_sub(nx_c_dtype src, nx_c_dtype dst,
       nx_c_packed_src_init(&c.pin, in, nx_c_packed_bits(src));
     else
       nx_c_cast_side_init(&c.in, in, nx_c_elem_size(src));
-    c.to_via = nx_c_cast_kernel(from, nx_c_packed_via(dst));
+    nx_c_status s = nx_c_cast_kernel(from, nx_c_packed_via(dst), &c.to_via);
+    if (s != NX_C_OK) return s;
     c.clamp_lo = 0;
     c.clamp_hi = -1;
     if (nx_c_dtype_is_float(src) || nx_c_dtype_is_complex(src)) {
@@ -1685,7 +1688,8 @@ static nx_c_status nx_c_cast_sub(nx_c_dtype src, nx_c_dtype dst,
   c.src = src;
   nx_c_packed_src_init(&c.in, in, nx_c_packed_bits(src));
   nx_c_cast_side_init(&c.out, o, nx_c_elem_size(dst));
-  c.from_via = nx_c_cast_kernel(from, dst);
+  nx_c_status s = nx_c_cast_kernel(from, dst, &c.from_via);
+  if (s != NX_C_OK) return s;
   int64_t blocks = (total + 63) / 64;
   int64_t bytes = nx_c_dtype_bytes(src, total) + nx_c_dtype_bytes(dst, total);
   int nth = nx_c_threads_for(NX_C_COST_BANDWIDTH, total, 1, bytes);

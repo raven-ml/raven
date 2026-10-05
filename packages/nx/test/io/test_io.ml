@@ -1317,14 +1317,17 @@ let bits =
   let m = Nx.cast Nx.bit (Nx.create Nx.bool [| 3 |] [| true; false; true |]) in
   let ways =
     "has no 1-bit dtype; save Nx.cast Nx.bool m, one byte per value, or its \
-     packed bytes after padding it to a multiple of 8 elements; numpy reads \
-     them with unpackbits(..., bitorder=\"little\")"
+     packed bytes, Nx.bitcast Nx.uint8 of m padded to a multiple of 8 \
+     elements, element i at bit i mod 8 of byte i / 8"
   in
   group "bit"
     [
       test "npy refuses it, naming both ways to save it" (fun () ->
           raises
-            (Failure ("Nx_io.save_npy: npy " ^ ways))
+            (Failure
+               ("Nx_io.save_npy: npy " ^ ways
+              ^ "; numpy reads the packed bytes with unpackbits(..., \
+                 bitorder=\"little\")"))
             (fun () -> Nx_io.save_npy (temp_file ()) m));
       test "safetensors refuses it, naming the entry and both ways" (fun () ->
           raises

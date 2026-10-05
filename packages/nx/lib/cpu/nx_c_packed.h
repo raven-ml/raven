@@ -21,9 +21,11 @@
    counted from the buffer's first byte (nx_c_packed_write). One worker owns
    each word and computes it from the destination elements it covers, so no
    two workers write one byte. A word the destination covers in part is read,
-   merged under a mask and written back by its owner, byte by byte, so a store
-   touches only bytes that hold destination elements. A destination whose
-   elements are its buffer's last ones writes the bits past them as 0. A
+   merged under a mask and written back by its owner, and the store touches
+   only bytes that hold destination elements. A destination whose elements
+   are its buffer's last ones writes the bits past them as 0, which belong to
+   no value (nx_backend_intf.mli): the destinations nx.cpu writes are fresh
+   buffers or windows of them, never another value's storage. A
    destination that is not one run of its storage is written by one worker,
    one row at a time. */
 

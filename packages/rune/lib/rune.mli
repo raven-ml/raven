@@ -729,7 +729,9 @@ exception Jit_error of string
     the arguments (from a captured {!Nx.Rng.t}, or {!Nx.Rng.with_key} on a
     constant key, at counters that do not either: the draw would be one constant
     replayed on every call), or uses an operation or dtype the target of its
-    devices cannot compute. Nothing is consumed. *)
+    devices cannot compute: a bitcast to or from [float8_e4m3] or [float8_e5m2]
+    is one, since the compiler emulates those formats through a wider float,
+    which would change subnormal and infinite bits. Nothing is consumed. *)
 
 val jit :
   ?beam:int -> ?parallel:int -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
