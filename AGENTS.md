@@ -9,7 +9,7 @@ and notebooks, each a small library that does one thing well.
 These protect the maintainer's work and other sessions on the same machine.
 Breaking one causes real damage.
 
-- NEVER stage or commit unless asked. Never push.
+- NEVER push.
 - NEVER pass `--force` to git or dune. Never run `dune clean`, never pass
   `--build-dir` or `DUNE_CACHE=disabled`, never delete or relock `dune.lock`
   without being asked.
