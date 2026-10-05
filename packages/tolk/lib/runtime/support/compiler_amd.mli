@@ -11,7 +11,7 @@
     process. The library, [libamd_comgr], is loaded at the first compile, once
     per process, from where {!C.findlib} finds it: the file [COMGR_PATH] names,
     then [lib/libamd_comgr.so] in the directory [ROCM_PATH] names ([/opt/rocm]
-    by default, read once, {!Helpers.getenv_string}), then the system's library
+    by default, read when the program starts), then the system's library
     directories. Its major version picks its numbering of languages and actions,
     which version 3 changed. *)
 

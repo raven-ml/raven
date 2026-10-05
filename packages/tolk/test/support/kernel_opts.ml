@@ -79,7 +79,7 @@ let settings_of_cell s =
   let setting pair =
     match String.split_on_char '=' pair with
     | [ "TC"; v ] -> Helpers.B (Helpers.use_tc, int_of_string v)
-    | [ "TC_OPT"; v ] -> B (Helpers.tc_opt, int_of_string v)
+    | [ "TC_OPT"; v ] -> B (Helpers.tc_opt, Some (int_of_string v))
     | [ "TC_SELECT"; v ] -> B (Helpers.tc_select, int_of_string v)
     | [ "TC_MIN_GLOBALS"; v ] -> B (Helpers.tc_min_globals, int_of_string v)
     | [ "ALLOW_TF32"; v ] -> B (Helpers.allow_tf32, int_of_string v <> 0)

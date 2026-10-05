@@ -45,51 +45,43 @@ let gen_text =
 
 let ascii_letter = Gen.char_range 'a' 'z'
 
-(* Fresh variable names: a setting is declared once per process, and a read is
-   remembered per variable and default. *)
+(* Fresh variable names: a setting is declared once per process. *)
 let fresh =
   let n = ref 0 in
   fun () ->
     incr n;
     Printf.sprintf "TOLK_TEST_VARIABLE_%d" !n
 
-(* Environment *)
-
-(* A fresh variable holding [value]. *)
-let variable value =
+(* The initial value of a setting made by [make] from a fresh variable holding
+   [value]. *)
+let declared_with value make =
   let key = fresh () in
   setenv key value;
-  key
+  Context_var.value (make key)
 
-let parses_like_tinygrad parse w of_cell column cell =
-  let key = variable (Some (literal (cell "input"))) in
+let int_setting key = Context_var.int ~reach:Process key 0
+let float_setting key = Context_var.float ~reach:Process key 0.
+
+(* The environment *)
+
+let parses_like_tinygrad make w of_cell column cell =
+  let value = Some (literal (cell "input")) in
   let expected = cell column in
-  if raised expected then refuses (fun () -> parse key)
-  else equal w (of_cell expected) (parse key)
-
-let first_reads_agree () =
-  let key = variable (Some "42") in
-  let reads =
-    List.init 4 (fun _ ->
-        Domain.spawn (fun () -> List.init 100 (fun _ -> getenv key 0)))
-  in
-  let reads = List.concat_map Domain.join reads in
-  setenv key (Some "7");
-  equal (list int) (List.init 401 (fun _ -> 42)) (getenv key 0 :: reads)
+  if raised expected then refuses (fun () -> declared_with value make)
+  else equal w (of_cell expected) (declared_with value make)
 
 let environment =
   group "Environment"
     [
-      as_tinygrad "getenv reads an integer as tinygrad does" "env.golden"
-        (parses_like_tinygrad (fun key -> getenv key 0) int int_of_string "int");
-      as_tinygrad "getenv_float reads a float as tinygrad does" "env.golden"
-        (parses_like_tinygrad
-           (fun key -> getenv_float key 0.)
-           float_exact float_of_string "float");
+      as_tinygrad "an int setting reads an integer as tinygrad does"
+        "env.golden"
+        (parses_like_tinygrad int_setting int int_of_string "int");
+      as_tinygrad "a float setting reads a number as tinygrad does" "env.golden"
+        (parses_like_tinygrad float_setting float_exact float_of_string "float");
       (* Python accepts these, but tolk does not port CPython's Unicode leniency
          in int() and float() (README, Exclusions). *)
       cases ~name:(Printf.sprintf "%S")
-        "getenv and getenv_float refuse non-ASCII digits and white space"
+        "int and float settings refuse non-ASCII digits and white space"
         [
           "\u{0665}";
           "1\u{0665}";
@@ -98,84 +90,27 @@ let environment =
           "5\u{3000}";
           "\u{2028}1.5";
         ] (fun value ->
-          let key = variable (Some value) in
-          refuses (fun () -> getenv key 0);
-          refuses (fun () -> getenv_float key 0.));
-      test "getenv refuses an integer beyond int's range" (fun () ->
-          refuses (fun () -> getenv (variable (Some "9223372036854775807")) 0));
-      test "getenv is the default when the variable is unset" (fun () ->
-          let key = variable None in
-          equal int 7 (getenv key 7);
-          equal float_exact 0.5 (getenv_float key 0.5));
-      test "getenv_string is the value as written" (fun () ->
-          equal string " a b "
-            (getenv_string (variable (Some " a b ")) "default"));
-      test "getenv_string is empty for a variable set to the empty string"
-        (fun () ->
-          equal string "" (getenv_string (variable (Some "")) "default"));
-      test "getenv_string is the default when the variable is unset" (fun () ->
-          equal string "default" (getenv_string (variable None) "default"));
-      test "a variable is read once per default, whatever it holds later"
-        (fun () ->
-          let key = variable (Some "1") in
-          let first =
-            (getenv key 0, getenv_float key 0., getenv_string key "")
-          in
-          setenv key (Some "2");
-          equal
-            (triple int float_exact string)
-            first
-            (getenv key 0, getenv_float key 0., getenv_string key ""));
-      test "a variable is read again under another default" (fun () ->
-          let key = variable (Some "1") in
-          ignore (getenv key 0, getenv_float key 0., getenv_string key "");
-          setenv key (Some "2");
-          equal
-            (triple int float_exact string)
-            (2, 2., "2")
-            (getenv key 5, getenv_float key 5., getenv_string key "d"));
-      test "a read that failed is not remembered" (fun () ->
-          let key = variable (Some "x") in
-          refuses (fun () -> getenv key 0);
-          refuses (fun () -> getenv_float key 0.);
-          setenv key (Some "3");
-          equal (pair int float_exact) (3, 3.)
-            (getenv key 0, getenv_float key 0.));
-      test "first reads from several domains agree" first_reads_agree;
-    ]
-
-(* Settings *)
-
-let declared_with value make =
-  let key = fresh () in
-  setenv key value;
-  Context_var.value (make key)
-
-let declaration =
-  group "Context_var"
-    [
+          refuses (fun () -> declared_with (Some value) int_setting);
+          refuses (fun () -> declared_with (Some value) float_setting));
+      test "an int setting refuses an integer beyond int's range" (fun () ->
+          refuses (fun () ->
+              declared_with (Some "9223372036854775807") int_setting));
       test "an int setting starts from its default when its variable is unset"
         (fun () ->
-          equal int 5 (declared_with None (fun key -> Context_var.int key 5)));
+          equal int 5
+            (declared_with None (fun key ->
+                 Context_var.int ~reach:Process key 5)));
       test "an int setting starts from its variable when set" (fun () ->
           equal int 12
-            (declared_with (Some " 12 ") (fun key -> Context_var.int key 5)));
+            (declared_with (Some " 12 ") (fun key ->
+                 Context_var.int ~reach:Process key 5)));
       test "an int setting refuses a variable that is no integer" (fun () ->
-          refuses (fun () ->
-              declared_with (Some "abc") (fun key -> Context_var.int key 5)));
-      test "a setting reads its variable once, when declared" (fun () ->
-          let key = fresh () in
-          setenv key (Some "1");
-          let v = Context_var.int key 0 in
-          setenv key (Some "2");
-          equal int 1 (Context_var.value v));
-      test "getenv returns what a declaration read, after the variable changes"
+          refuses (fun () -> declared_with (Some "abc") int_setting));
+      test "a float setting starts from its default when its variable is unset"
         (fun () ->
-          let key = fresh () in
-          setenv key (Some "1");
-          ignore (Context_var.int key 0);
-          setenv key (Some "2");
-          equal int 1 (getenv key 0));
+          equal float_exact 0.5
+            (declared_with None (fun key ->
+                 Context_var.float ~reach:Process key 0.5)));
       cases
         ~name:(fun (value, _) -> Printf.sprintf "%S" value)
         "a switch is on iff its variable holds a nonzero integer"
@@ -190,46 +125,73 @@ let declaration =
         (fun (value, on) ->
           equal bool on
             (declared_with (Some value) (fun key ->
-                 Context_var.bool key (not on))));
+                 Context_var.bool ~reach:Process key (not on))));
       test "a switch starts from its default when its variable is unset"
         (fun () ->
-          equal bool true
-            (declared_with None (fun key -> Context_var.bool key true));
-          equal bool false
-            (declared_with None (fun key -> Context_var.bool key false)));
+          let switch default key =
+            Context_var.bool ~reach:Process key default
+          in
+          equal bool true (declared_with None (switch true));
+          equal bool false (declared_with None (switch false)));
       test "a switch refuses a variable that is no integer" (fun () ->
           refuses (fun () ->
               declared_with (Some "true") (fun key ->
-                  Context_var.bool key false)));
+                  Context_var.bool ~reach:Process key false)));
       test "a string setting starts from its variable as written" (fun () ->
-          equal string " x "
-            (declared_with (Some " x ") (fun key -> Context_var.string key "d"));
-          equal string ""
-            (declared_with (Some "") (fun key -> Context_var.string key "d"));
-          equal string "d"
-            (declared_with None (fun key -> Context_var.string key "d")));
+          let word key = Context_var.string ~reach:Process key "d" in
+          equal string " x " (declared_with (Some " x ") word);
+          equal string "" (declared_with (Some "") word);
+          equal string "d" (declared_with None word));
+      test "an optional setting holds its variable's integer, if set" (fun () ->
+          let opt key = Context_var.int_option ~reach:Process key in
+          equal (option int) (Some (-3)) (declared_with (Some " -3 ") opt);
+          equal (option int) None (declared_with None opt);
+          refuses (fun () -> declared_with (Some "") opt));
+    ]
+
+(* Declarations *)
+
+let declaration =
+  group "Context_var"
+    [
+      test "a setting reads its variable once, when declared" (fun () ->
+          let key = fresh () in
+          setenv key (Some "1");
+          let v = int_setting key in
+          setenv key (Some "2");
+          equal int 1 (Context_var.value v));
+      test "a setting whose variable is refused is not declared" (fun () ->
+          let key = fresh () in
+          setenv key (Some "abc");
+          refuses (fun () -> int_setting key);
+          setenv key (Some "4");
+          equal int 4 (Context_var.value (int_setting key)));
       test "key is the name of the setting's variable" (fun () ->
           let key = fresh () in
-          equal string key (Context_var.key (Context_var.bool key false)));
-      test "a name is declared once, whatever the setting's type" (fun () ->
+          equal string key
+            (Context_var.key (Context_var.bool ~reach:Process key false)));
+      test "a name is declared once, whatever the setting's type and reach"
+        (fun () ->
           let key = fresh () in
-          ignore (Context_var.int key 0);
-          refuses (fun () -> Context_var.int key 0);
-          refuses (fun () -> Context_var.bool key false);
-          refuses (fun () -> Context_var.string key ""));
+          ignore (Context_var.int ~reach:Output key 0);
+          refuses (fun () -> Context_var.int ~reach:Output key 0);
+          refuses (fun () -> Context_var.bool ~reach:Process key false);
+          refuses (fun () -> Context_var.float ~reach:Output key 0.);
+          refuses (fun () -> Context_var.string ~reach:Process key "");
+          refuses (fun () -> Context_var.int_option ~reach:Output key));
       test "a library setting's name cannot be declared again" (fun () ->
-          refuses (fun () -> Context_var.int "DEBUG" 0));
+          refuses (fun () -> Context_var.int ~reach:Process "DEBUG" 0));
       test "a setting declared inside a context stays declared after it"
         (fun () ->
           let key = fresh () in
-          context [ B (debug, 1) ] (fun () -> ignore (Context_var.int key 0));
-          refuses (fun () -> Context_var.int key 0));
+          context [ B (debug, 1) ] (fun () -> ignore (int_setting key));
+          refuses (fun () -> int_setting key));
     ]
 
 (* Contexts *)
 
-let level = Context_var.int "TOLK_TEST_LEVEL" 0
-let label = Context_var.string "TOLK_TEST_LABEL" "default"
+let level = Context_var.int ~reach:Output "TOLK_TEST_LEVEL" 0
+let label = Context_var.string ~reach:Output "TOLK_TEST_LABEL" "default"
 let value = Context_var.value
 
 type scope = { bound : int; raises : bool; inner : scope list }
@@ -374,6 +336,7 @@ let shown (S (v, show)) = show (value v)
 let number v = S (v, string_of_int)
 let switch v = S (v, fun on -> if on then "1" else "0")
 let word v = S (v, Fun.id)
+let optional v = S (v, Option.fold ~none:"" ~some:string_of_int)
 
 let settings =
   [
@@ -383,7 +346,7 @@ let settings =
     switch no_color;
     number use_tc;
     number tc_select;
-    number tc_opt;
+    optional tc_opt;
     number tc_min_globals;
     number transcendental;
     switch split_reduceop;
@@ -447,8 +410,9 @@ let unless_set key =
   if Option.is_some (Sys.getenv_opt key) then
     skip ~reason:(key ^ " is set in the environment") ()
 
-(* Defaults that are not tinygrad's: schedules are kept on disk. *)
-let diverging = [ ("SCACHE", "2") ]
+(* Defaults that are not tinygrad's: schedules are kept on disk, and TC_OPT
+   leaves its default to its readers, the search's being 2. *)
+let diverging = [ ("SCACHE", "2"); ("TC_OPT", "") ]
 
 let holds_tinygrad_default s =
   unless_set (key s);
@@ -463,40 +427,75 @@ let holds_tinygrad_default s =
 (* What the caches key on *)
 
 let keyed key = List.assoc_opt key (shaping ())
+let entries = list (pair string string)
+
+(* The fewest words one of ten calls of [f] allocates on the minor heap. *)
+let words f =
+  let fewest = ref max_int in
+  for _ = 1 to 10 do
+    let before = Gc.minor_words () in
+    ignore (Sys.opaque_identity (f ()));
+    fewest := min !fewest (int_of_float (Gc.minor_words () -. before))
+  done;
+  !fewest
+
+(* [shaping ()] read again after [f] is the list read before it. *)
+let unchanged_by f =
+  let before = shaping () in
+  f ();
+  satisfies ~claim:"the list read before" entries
+    (fun l -> l == before)
+    (shaping ())
+
+let shown_as value make =
+  let key = fresh () in
+  setenv key value;
+  ignore (make key);
+  keyed key
 
 let cache_keys =
   group "shaping"
     [
       test "holds a setting's current value on the calling domain" (fun () ->
           let key = fresh () in
-          let v = Context_var.int key 1 in
+          let v = Context_var.int ~reach:Output key 1 in
           equal (option string) ~msg:"declared" (Some "1") (keyed key);
           equal (option string) ~msg:"in a context" (Some "4")
             (context [ B (v, 4) ] (fun () -> keyed key)));
       test "holds a setting's value again once a context ends" (fun () ->
           let key = fresh () in
-          let v = Context_var.int key 1 in
+          let v = Context_var.int ~reach:Output key 1 in
           ignore (keyed key);
           context [ B (v, 4) ] (fun () -> ignore (keyed key));
           equal (option string) (Some "1") (keyed key));
-      test "holds a variable's value as read" (fun () ->
-          let key = variable (Some " 6 ") in
-          equal int 6 (Tolk.Helpers.variable key 2);
-          equal (option string) (Some "6") (keyed key));
-      test "holds a number variable's value as read" (fun () ->
-          let key = variable (Some " 2.5 ") in
-          equal float_exact 2.5 (Tolk.Helpers.variable_float key 0.01);
-          equal (option string) (Some "0x1.4p+1") (keyed key));
-      test "tells apart number variables one ulp apart" (fun () ->
-          let a = variable (Some "0.1")
-          and b = variable (Some "0.10000000000000002") in
-          ignore (Tolk.Helpers.variable_float a 0.);
-          ignore (Tolk.Helpers.variable_float b 0.);
-          not_equal (option string) (keyed a) (keyed b));
+      test "holds a setting declared after it was read" (fun () ->
+          ignore (shaping ());
+          let key = fresh () in
+          ignore (Context_var.bool ~reach:Output key true);
+          equal (option string) (Some "true") (keyed key));
+      test "shows each type's value as text" (fun () ->
+          let shown value make = shown_as (Some value) make in
+          equal (option string) ~msg:"int" (Some "6")
+            (shown " 6 " (fun key -> Context_var.int ~reach:Output key 2));
+          equal (option string) ~msg:"switch" (Some "false")
+            (shown "0" (fun key -> Context_var.bool ~reach:Output key true));
+          equal (option string) ~msg:"float" (Some "0x1.4p+1")
+            (shown " 2.5 " (fun key -> Context_var.float ~reach:Output key 0.));
+          equal (option string) ~msg:"string" (Some " a,b ")
+            (shown " a,b " (fun key -> Context_var.string ~reach:Output key ""));
+          equal (option string) ~msg:"optional" (Some "3")
+            (shown "3" (fun key -> Context_var.int_option ~reach:Output key));
+          equal (option string) ~msg:"unset optional" (Some "")
+            (shown_as None (fun key -> Context_var.int_option ~reach:Output key)));
+      test "tells apart floats one ulp apart" (fun () ->
+          let float key = Context_var.float ~reach:Output key 0. in
+          not_equal (option string)
+            (shown_as (Some "0.1") float)
+            (shown_as (Some "0.10000000000000002") float));
       test "a domain spawned in a context holds the values it spawned with"
         (fun () ->
           let key = fresh () in
-          let v = Context_var.int key 1 in
+          let v = Context_var.int ~reach:Output key 1 in
           ignore (keyed key);
           let inside =
             context
@@ -511,21 +510,38 @@ let cache_keys =
           equal (option string) ~msg:"spawned after it" (Some "1")
             (Domain.join after));
       test "leaves out a setting that reaches only the process" (fun () ->
-          let key = fresh () in
-          ignore (Context_var.bool ~reach:Process key false);
-          equal (option string) None (keyed key));
+          equal (option string) None
+            (shown_as (Some "1") (fun key ->
+                 Context_var.bool ~reach:Process key false)));
       test "leaves out the library's settings of the process" (fun () ->
           List.iter
             (fun key -> equal (option string) ~msg:key None (keyed key))
-            [ "DEBUG"; "BEAM"; "CACHELEVEL"; "SCACHE"; "CCACHE"; "PARALLEL" ]);
-      test "a variable's name is declared once, as a setting's" (fun () ->
-          let key = fresh () in
-          ignore (Tolk.Helpers.variable key 0);
-          refuses (fun () -> Tolk.Helpers.variable key 0);
-          refuses (fun () -> Context_var.int key 0));
+            [
+              "DEBUG";
+              "BEAM";
+              "JITBEAM";
+              "CACHELEVEL";
+              "SCACHE";
+              "CCACHE";
+              "PARALLEL";
+            ]);
       test "is sorted by name" (fun () ->
           let names = List.map fst (shaping ()) in
           equal (list string) (List.sort compare names) names);
+      test "is the same list while no setting that reaches output changes"
+        (fun () ->
+          let v = Context_var.int ~reach:Output (fresh ()) 1 in
+          unchanged_by (fun () -> ignore (shaping ()));
+          unchanged_by (fun () -> context [ B (debug, 3) ] ignore);
+          unchanged_by (fun () ->
+              ignore (Context_var.int ~reach:Process (fresh ()) 0));
+          unchanged_by (fun () ->
+              ignore
+                (Domain.join
+                   (Domain.spawn (fun () -> context [ B (v, 2) ] shaping)))));
+      test "is read without allocating while nothing changes" (fun () ->
+          ignore (shaping ());
+          equal int (words (fun () -> [])) (words shaping));
     ]
 
 let library_settings =
@@ -547,7 +563,8 @@ let library_settings =
                (fun s -> if ported s then None else Some (key s))
                settings));
       cases ~name:key
-        "hold tinygrad's default when their variable is unset, but SCACHE"
+        "hold tinygrad's default when their variable is unset, but SCACHE and \
+         TC_OPT"
         (List.filter ported settings)
         holds_tinygrad_default;
       test "no_color is off when NO_COLOR is unset" (fun () ->

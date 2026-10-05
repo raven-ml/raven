@@ -659,7 +659,11 @@ let separates_settings () =
   equal (list Kernel_opts.opt) ~msg:"under NOOPT" [] (applied unoptimised)
 
 (* Every setting a program depends on keeps a program made under another value
-   from being returned: the program is made, and compiled, again. *)
+   from being returned: the program is made, and compiled, again. Among them, a
+   setting its caller declares to reach output, of which codegen knows
+   nothing. *)
+let declared = Helpers.Context_var.int ~reach:Output "TOLK_TEST_CODEGEN" 0
+
 let separates setting () =
   let compiled, r = counting () in
   let k = fresh_kernel () in
@@ -709,7 +713,7 @@ let caching =
                ("NOOPT", B (noopt, true));
                ("TC", B (use_tc, 0));
                ("TC_SELECT", B (tc_select, 0));
-               ("TC_OPT", B (tc_opt, 1));
+               ("TC_OPT", B (tc_opt, Some 1));
                ("TC_MIN_GLOBALS", B (tc_min_globals, 1));
                ("TRANSCENDENTAL", B (transcendental, 2));
                ("DISABLE_FAST_IDIV", B (disable_fast_idiv, false));
@@ -718,6 +722,7 @@ let caching =
                ("DEFAULT_INT", B (default_int, "long"));
                ("EMULATED_DTYPES", B (emulated_dtypes, [ "long" ]));
                ("TUPLE_ORDER", B (tuple_order, false));
+               ("a setting its caller declares", B (declared, 1));
              ]);
       test "a program for one target is not returned for another"
         separates_targets;
@@ -834,10 +839,12 @@ let other_values () =
   let strings =
     [
       ("CC", "cc");
+      ("CUDA_PATH", "/opt/cuda");
       ("DEFAULT_INT", "long");
       ("EMULATED_DTYPES", "long");
       ("HCQ_NUM_SDMA", "2");
       ("SUM_DTYPE", "half");
+      ("TC_OPT", "1");
     ]
   in
   List.map
@@ -2299,15 +2306,27 @@ let prints_the_optimisations opts =
   let name = Ops.function_name (kernel_info (Ops.nth p 0)) in
   contains ~sub:(Printf.sprintf "%-25s opts: %s" name tuple) (output ())
 
-let prints_a_breaking_graph () =
-  setenv "DBGTV" (Some "1");
+(* A child lowers the breaking graph, which must fail its check. DBGTV is read
+   when the program starts, so the child runs with it set. *)
+let lowers_a_breaking_graph () =
   Helpers.context
     [ B (Helpers.spec, 1) ]
     (fun () ->
-      rejects (fun () ->
-          Codegen.full_rewrite_to_sink ~optimize:false
-            (Lazy.force marker_kernel) breaking));
-  contains ~sub:"Ops.SOURCE" (output ())
+      match
+        Codegen.full_rewrite_to_sink ~optimize:false (Lazy.force marker_kernel)
+          breaking
+      with
+      | exception Invalid_argument _ -> ()
+      | _ -> failwith "the breaking graph passed its check")
+
+let prints_a_breaking_graph () =
+  match
+    Disk_cache.child
+      ~env:[ ("DBGTV", "1") ]
+      ~cachedb:(Disk_cache.fresh ()) "breaking graph"
+  with
+  | Ok out -> contains ~sub:"Ops.SOURCE" out
+  | Error err -> failf "the child failed: %s" err
 
 let prints_the_source () =
   let p = at_debug 4 (fun () -> Codegen.to_program (fresh_kernel ()) clang) in
@@ -2600,7 +2619,7 @@ let blocks =
     ]
 
 let () =
-  Disk_cache.play parts;
+  Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
     (run "Tolk.Codegen"
        [

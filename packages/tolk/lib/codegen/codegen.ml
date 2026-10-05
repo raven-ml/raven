@@ -676,9 +676,7 @@ let apply_opts ?beam sink ren =
   Postrange.apply_opts ?beam ~hand_coded:Heuristic.hand_coded_optimizations sink
     ren
 
-(* Read at each failure, unlike the settings, which are read once. *)
-let dbgtv () =
-  match Sys.getenv_opt "DBGTV" with Some v -> v <> "" | None -> false
+let dbgtv = Helpers.Context_var.string ~reach:Process "DBGTV" ""
 
 (* Host programs in blocks *)
 
@@ -947,7 +945,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   in
   if setting Helpers.spec <> 0 then (
     try Spec.type_verify Spec.program sink
-    with Invalid_argument _ as e when dbgtv () ->
+    with Invalid_argument _ as e when Helpers.Context_var.value dbgtv <> "" ->
       Format.printf "%a@." Render.pp_uops (toposort sink);
       raise e);
   sink

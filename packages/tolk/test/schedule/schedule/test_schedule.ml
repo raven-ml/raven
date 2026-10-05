@@ -8,6 +8,11 @@ open Tolk
 let uop = Uops.uop
 let program name = Golden.sink (name ^ ".golden")
 
+(* A setting the suite declares to reach output, of which scheduling knows
+   nothing: the caches key on it all the same. It is declared before a child
+   runs, so that the child keys on it too. *)
+let declared = Helpers.Context_var.int ~reach:Output "TOLK_TEST_SCHEDULE" 0
+
 (* A child of the schedules-on-disk tests schedules matmul, before the suite's
    own schedules run. *)
 let () =
@@ -598,7 +603,7 @@ let bodies_at_once () =
     (List.combine bigs (in_domains bigs))
 
 (* A setting that shapes a schedule keeps a body scheduled under another value
-   from being returned. *)
+   from being returned, the suite's declared setting among them. *)
 let separates setting () =
   let big = unique "assign" in
   with_settings ~debug:3 ~scache:1 (fun () ->
@@ -625,6 +630,7 @@ let cache =
                ("ALLREDUCE_NODE_NDEVS", B (allreduce_node_ndevs, 2));
                ("DEFAULT_FLOAT", B (default_float, "half"));
                ("DEFAULT_INT", B (default_int, "long"));
+               ("a setting its caller declares", B (declared, 1));
              ]);
       test "a body scheduled again is a hit under the key it missed on"
         miss_then_hit;
@@ -1300,11 +1306,13 @@ let other_values () =
   let strings =
     [
       ("CC", "cc");
+      ("CUDA_PATH", "/opt/cuda");
       ("DEFAULT_FLOAT", "half");
       ("DEFAULT_INT", "long");
       ("EMULATED_DTYPES", "long");
       ("HCQ_NUM_SDMA", "2");
       ("SUM_DTYPE", "half");
+      ("TC_OPT", "1");
     ]
   in
   List.map

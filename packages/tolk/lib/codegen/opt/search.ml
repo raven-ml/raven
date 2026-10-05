@@ -7,44 +7,47 @@
 
 open Ops
 module K = Postrange.Scheduler
+module C = Helpers.Context_var
 
-let debug () = Helpers.Context_var.value Helpers.debug
-let log_surpass_max () = Helpers.getenv "BEAM_LOG_SURPASS_MAX" 0 <> 0
+let setting = C.value
+let debug () = setting Helpers.debug
 
-(* The variables that pick a search's candidates and when it stops, which shape
-   what it finds. A strict search raises where another drops a candidate, and
-   finds what the other finds when it does not raise. *)
-let padto = Helpers.variable "BEAM_PADTO" 0 <> 0
-let uops_max = Helpers.variable "BEAM_UOPS_MAX" 3000
-let upcast_max = Helpers.variable "BEAM_UPCAST_MAX" 256
-let local_max = Helpers.variable "BEAM_LOCAL_MAX" 1024
-let min_progress = Helpers.variable_float "BEAM_MIN_PROGRESS" 0.01
-let strict_mode () = Helpers.getenv "BEAM_STRICT_MODE" 0 <> 0
+(* The settings that pick a search's candidates and how it measures and stops,
+   which shape what it finds. A strict search raises where another drops a
+   candidate, and finds what the other finds when it does not raise. *)
+let padto = C.bool ~reach:Output "BEAM_PADTO" false
+let uops_max = C.int ~reach:Output "BEAM_UOPS_MAX" 3000
+let upcast_max = C.int ~reach:Output "BEAM_UPCAST_MAX" 256
+let local_max = C.int ~reach:Output "BEAM_LOCAL_MAX" 1024
+let min_progress = C.float ~reach:Output "BEAM_MIN_PROGRESS" 0.01
+let estimate = C.bool ~reach:Output "BEAM_ESTIMATE" true
+let strict_mode = C.bool ~reach:Process "BEAM_STRICT_MODE" false
+let log_surpass_max = C.bool ~reach:Process "BEAM_LOG_SURPASS_MAX" false
+let beam_debug = C.int ~reach:Process "BEAM_DEBUG" 0
 let upto n = List.init n Fun.id
 
-let actions =
+let actions () =
   let split ?(top = false) target amounts axes =
     List.concat_map
       (fun amount ->
         List.map (fun axis -> Opt.Split { axis; amount; target; top }) axes)
       amounts
   in
-  let tc tc_opt axis =
-    Opt.Tc { axis; tc_select = -1; tc_opt; use_tc = Helpers.getenv "TC" 1 }
-  in
+  let use_tc = setting Helpers.use_tc in
+  let tc tc_opt axis = Opt.Tc { axis; tc_select = -1; tc_opt; use_tc } in
   List.concat
     [
       split Upcast [ 0; 2; 3; 4; 5; 7 ] (upto 10);
       split Unroll [ 0; 2; 3; 4; 5; 7 ] (upto 10);
       split Local [ 0; 2; 3; 4; 8; 13; 16; 29 ] (upto 8);
       split ~top:true Local [ 13; 16; 28; 29; 32; 49; 64; 256 ] (upto 8);
-      (if padto then
+      (if setting padto then
          List.map (fun axis -> Opt.Padto { axis; amount = 32 }) (upto 7)
        else []);
       split Local [ 32 ] [ 0 ];
       [ tc 0 0 ];
       (* covers resnet kernels (3 global * 3 reduce) *)
-      List.map (tc (Helpers.getenv "TC_OPT" 2)) (upto 9);
+      List.map (tc (Option.value (setting Helpers.tc_opt) ~default:2)) (upto 9);
       List.concat_map
         (fun axis ->
           List.map
@@ -109,8 +112,9 @@ let try_compile k =
         ren
     in
     let uops = List.length (src (nth prg 1)) in
+    let uops_max = setting uops_max in
     if uops_max > 0 && uops >= uops_max then (
-      if log_surpass_max () then
+      if setting log_surpass_max then
         Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
           uops_max;
       None)
@@ -121,7 +125,7 @@ let try_compile k =
   | exception (Failure _ as e) ->
       if debug () >= 4 then print_endline (Printexc.to_string e);
       None
-  | exception e when strict_mode () -> raise e
+  | exception e when setting strict_mode -> raise e
   | exception _ -> None
 
 (* The least and greatest product of [sizes] over their variables' values. *)
@@ -161,7 +165,7 @@ let too_many ~max_up ~max_lcl k =
     Bigint.(fdiv lo (of_int tc_up), fdiv hi (of_int tc_up))
   and lcl = size [ Warp; Local ] in
   let too_many = exceeds up max_up || exceeds lcl max_lcl in
-  if too_many && log_surpass_max () then
+  if too_many && setting log_surpass_max then
     Printf.printf
       "too many upcast/local. up//tc_up=%s, max_up=%d, lcl=%s, max_lcl=%d\n%!"
       (Bigint.to_string (snd up))
@@ -170,7 +174,7 @@ let too_many ~max_up ~max_lcl k =
       max_lcl;
   too_many
 
-let redundant k = function
+let redundant actions k = function
   | Opt.Tc _ -> false
   | a when Opt.axis a >= K.shape_len k -> true
   | Opt.Split s ->
@@ -179,10 +183,10 @@ let redundant k = function
   | _ -> false
 
 let get_kernel_actions ?(include_0 = true) ?max_up k =
-  let max_up = match max_up with Some max_up -> max_up | None -> upcast_max in
-  let max_lcl = local_max in
+  let max_up = Option.value max_up ~default:(setting upcast_max) in
+  let max_lcl = setting local_max and actions = actions () in
   let act i a =
-    if redundant k a then None
+    if redundant actions k a then None
     else
       let k' = K.copy k in
       match K.apply_opt k' a with
@@ -248,17 +252,14 @@ let beam_search ~measure ?allow_test_size amt s =
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
   let allow_test_size =
-    match allow_test_size with
-    | Some allow -> allow
-    | None -> Helpers.getenv "BEAM_ESTIMATE" 1 <> 0
+    match allow_test_size with Some allow -> allow | None -> setting estimate
   in
-  let beam_debug = Helpers.getenv "BEAM_DEBUG" 0 in
+  let beam_debug = setting beam_debug in
   let ren = K.ren s in
   (* What a search's result is a function of, but the times it measures: the
-     kernel, the search, its candidates, the renderer, its compiler, what shapes
-     compilation, and this library's sources. The candidates stand for the
-     variables TC and TC_OPT they read, whose defaults differ from those of the
-     settings of the same names. *)
+     kernel, the search, the renderer, its compiler, what shapes compilation,
+     among which the settings that pick the candidates, and this library's
+     sources. *)
   let key =
     String.concat "\x00"
       ([
@@ -269,7 +270,6 @@ let beam_search ~measure ?allow_test_size amt s =
          ren.name;
          Format.asprintf "%a" Helpers.Target.pp ren.target;
          Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
-         encode_opts actions;
        ]
       @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
   in
@@ -290,7 +290,7 @@ let beam_search ~measure ?allow_test_size amt s =
       let vars =
         List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
-      let min_progress = min_progress /. 1e6 in
+      let min_progress = setting min_progress /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
       let st = Unix.gettimeofday () in
       let elapsed () = Unix.gettimeofday () -. st in
@@ -321,7 +321,7 @@ let beam_search ~measure ?allow_test_size amt s =
               (* filter out kernels that use 1000x more compute than the
                  smallest *)
               if !least_compute_ops *. 1000. < this_compute_ops then (
-                if log_surpass_max () then
+                if setting log_surpass_max then
                   Printf.printf "too much compute. %g when least is %g\n%!"
                     this_compute_ops !least_compute_ops)
               else (

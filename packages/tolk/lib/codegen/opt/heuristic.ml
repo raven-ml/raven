@@ -97,7 +97,8 @@ let decoded_product k =
 
 (* first try the tensor cores *)
 let tensor_cores k =
-  let use_tc = setting Helpers.use_tc and tc_opt = setting Helpers.tc_opt in
+  let use_tc = setting Helpers.use_tc in
+  let tc_opt = Option.value (setting Helpers.tc_opt) ~default:0 in
   let tc_select = setting Helpers.tc_select in
   let min_globals = setting Helpers.tc_min_globals in
   if
@@ -160,7 +161,7 @@ let tensor_cores k =
      unrolled by up to [in_flight]        few outputs a workgroup takes as
                                           few as [sector_lanes] across *)
 
-let mv = Helpers.variable "MV" 1
+let mv = Helpers.Context_var.bool ~reach:Output "MV" true
 
 (* The threads of a SIMD group: a CUDA warp, an AMD wave32, a Metal
    simdgroup. *)
@@ -286,7 +287,8 @@ let matvec k =
   let ren = K.ren k in
   match (K.reduceop k, K.ranges_of k [ Reduce ]) with
   | Some r, first :: _
-    when ren.has_local && ren.has_shared && mv <> 0
+    when ren.has_local && ren.has_shared
+         && Helpers.Context_var.value mv
          && (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
          && op (nth r 0) = Op.Mul -> (
       match operands first (nth r 0) with

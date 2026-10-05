@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The words reverse mode allocates on the minor heap over one-element values,
-   whose kernels have almost nothing to do: the cost of recording and
-   transposing each operation, exactly. Counts are deterministic, so each is
-   pinned: a change that lowers one updates it here, in the same commit. *)
+(* The words reverse mode and a compiled call's replay allocate on the minor
+   heap over one-element values, whose kernels have almost nothing to do: the
+   cost of recording and transposing each operation, and of keying and running a
+   program, exactly. Counts are deterministic, so each is pinned: a change that
+   lowers one updates it here, in the same commit. *)
 
 open Windtrap
 
@@ -40,4 +41,15 @@ let reverse =
             (words (fun () -> Rune.grad' (fun w -> Nx.sum (Nx.matmul row w)) w)));
     ]
 
-let () = exit (run "rune allocation" [ reverse ])
+(* A compiled call that replays its program: the cost of keying, binding and
+   running it, with the settings it keys on read as they are. *)
+let neg = Rune.jit' Nx.neg
+
+let replay =
+  group "jit replay"
+    [
+      test "neg of one element" (fun () ->
+          equal int 828 (words (fun () -> neg x)));
+    ]
+
+let () = exit (run "rune allocation" [ reverse; replay ])

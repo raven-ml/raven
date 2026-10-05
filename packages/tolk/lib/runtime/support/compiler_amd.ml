@@ -16,8 +16,11 @@ external comgr_compile :
   (string, string) result = "caml_tolk_comgr_compile"
 
 (* comgr's library. *)
+let rocm_path =
+  Helpers.Context_var.string ~reach:Process "ROCM_PATH" "/opt/rocm"
+
 let library () =
-  let rocm = Helpers.getenv_string "ROCM_PATH" "/opt/rocm" in
+  let rocm = Helpers.Context_var.value rocm_path in
   C.findlib "comgr" [ rocm ^ "/lib/libamd_comgr.so"; "amd_comgr" ]
 
 (* The library is loaded once, by whichever domain first compiles. *)

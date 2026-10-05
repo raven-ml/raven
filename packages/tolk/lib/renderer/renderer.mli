@@ -117,8 +117,8 @@ module Compiler : sig
 
       Raises {!Compile_error} as {!compile}, what {!cachekey} raises, and
       [Invalid_argument] naming [src] if it must be compiled while the
-      environment variable [ASSERT_COMPILE] holds a nonzero integer
-      ({!Helpers.getenv}, which reads it once). *)
+      environment variable [ASSERT_COMPILE] holds a nonzero integer when the
+      program starts. *)
 
   val disassemble : t -> string -> unit
   (** [disassemble c lib] prints the binary [lib] as instructions on standard

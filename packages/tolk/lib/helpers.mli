@@ -11,112 +11,70 @@
     from an environment variable when the program starts and can be overridden
     for the extent of a function call with {!context}. *)
 
-(** {1:env Environment}
+(** {1:settings Settings}
 
-    These functions read each variable once: the first call with a given key and
-    default reads the environment, and later calls with the same key and default
-    return its result, whatever the environment holds by then. A call that
-    raises is not remembered. *)
+    A setting is declared once, with the environment variable it is read from
+    and what its value reaches. Besides settings, tolk reads only where it finds
+    files: [CACHEDB] ({!cachedb}), the system's [PATH], [LD_LIBRARY_PATH],
+    [HOME] and [XDG_CACHE_HOME], and the variable that names a library's file
+    ([C.findlib]). A library that compiles with tolk declares its settings here
+    too, so that the caches key on those that reach its output. *)
 
-val getenv : string -> int -> int
-(** [getenv key default] is the integer held by the environment variable [key],
-    or [default] if [key] is unset. The value is an optional [+] or [-] followed
-    by decimal digits, where a single underscore may separate two digits,
-    surrounded by any number of spaces, tabs, newlines, vertical tabs, form
-    feeds and carriage returns.
-
-    Raises [Invalid_argument] if [key] holds anything else, non-ASCII digits and
-    white space included, or an integer out of [int]'s range. *)
-
-val getenv_float : string -> float -> float
-(** [getenv_float key default] is the number held by the environment variable
-    [key], or [default] if [key] is unset. The value is an optional [+] or [-]
-    followed by [inf], [infinity] or [nan] in any case, or by a decimal number:
-    digits with an optional fraction ([1.5], [1.] or [.5]) and an optional
-    exponent ([e] or [E], an optional sign, and digits). Digits and white space
-    are as for {!getenv}.
-
-    Raises [Invalid_argument] if [key] holds anything else. *)
-
-val getenv_string : string -> string -> string
-(** [getenv_string key default] is the value of the environment variable [key],
-    or [default] if [key] is unset. A variable set to the empty string is [""].
-*)
-
-(** {1:declarations Declarations} *)
-
-(** What a setting or a variable changes. *)
+(** What a setting changes. *)
 type reach =
-  | Results
-      (** What compilation makes: programs and schedules, whose caches key on
-          its value ({!shaping}). *)
+  | Output
+      (** What compilation makes: programs, schedules and the optimisations a
+          search finds, whose caches key on its value ({!shaping}). *)
   | Process
-      (** Only how the process runs: what it prints, keeps or checks, or how
-          many domains compile. *)
-
-val variable : string -> int -> int
-(** [variable key default] is [getenv key default], for an environment variable
-    that changes what compilation makes and is not a setting: it is recorded in
-    {!shaping}. Declare it at a module's top level, so that it is recorded
-    before anything is compiled.
-
-    Raises [Invalid_argument] if a setting or variable named [key] is already
-    declared. *)
-
-val variable_float : string -> float -> float
-(** [variable_float key default] is {!variable} for [getenv_float key default].
-    It is recorded in hexadecimal, each number with a text of its own. *)
-
-val variable_opt : string -> int option
-(** [variable_opt key] is {!variable} for a variable whose default the caller
-    computes: [Some n] if [key] holds the integer [n], as {!getenv} reads it,
-    and [None] if it is unset, recorded as [""].
-
-    Raises [Invalid_argument] as {!variable} does, or if [key] holds anything
-    but an integer. *)
-
-val variable_string : string -> string -> string
-(** [variable_string key default] is {!variable} for
-    [getenv_string key default]. *)
-
-val shaping : unit -> (string * string) list
-(** [shaping ()] is the name and the current value, as text, of each setting and
-    variable whose reach is [Results], sorted by name: what the caches of
-    programs and schedules key on. A setting's value is the calling domain's. *)
-
-(** {1:settings Settings} *)
+      (** Only how the process runs: what it prints, keeps or checks, where it
+          finds its tools, or how many domains compile. *)
 
 (** Settings.
 
     A setting has an initial value, read from its environment variable when it
     is declared, and a current value on each domain: the innermost {!context}
     override made on the domain, or else the value it had on the domain that
-    spawned it, when it spawned it, or else the initial value. *)
+    spawned it, when it spawned it, or else the initial value.
+
+    Integers are an optional [+] or [-] followed by decimal digits, where a
+    single underscore may separate two digits, surrounded by any number of
+    spaces, tabs, newlines, vertical tabs, form feeds and carriage returns.
+    Numbers are an optional [+] or [-] followed by [inf], [infinity] or [nan] in
+    any case, or by a decimal number: digits with an optional fraction ([1.5],
+    [1.] or [.5]) and an optional exponent ([e] or [E], an optional sign, and
+    digits), with digits and white space as for integers.
+
+    Declare a setting at a module's top level, so that it is declared before
+    anything is compiled. Every constructor raises [Invalid_argument] if a
+    setting named [key] is already declared, or if the variable [key] holds
+    something its type does not read, non-ASCII digits and white space included,
+    or an integer out of [int]'s range. *)
 module Context_var : sig
   type 'a t
   (** The type for settings of type ['a]. *)
 
-  val int : ?reach:reach -> string -> int -> int t
-  (** [int ~reach key default] is a setting whose initial value is
-      [getenv key default]. [reach] defaults to [Results].
+  val int : reach:reach -> string -> int -> int t
+  (** [int ~reach key default] is a setting whose initial value is the integer
+      the variable [key] holds, or [default] if [key] is unset. *)
 
-      Raises [Invalid_argument] if a setting or variable named [key] exists
-      already, or if the variable [key] does not hold an integer. *)
-
-  val bool : ?reach:reach -> string -> bool -> bool t
+  val bool : reach:reach -> string -> bool -> bool t
   (** [bool ~reach key default] is a setting whose initial value is [true] iff
       the variable [key] holds a nonzero integer, and [default] if [key] is
-      unset. [reach] defaults to [Results].
+      unset. *)
 
-      Raises [Invalid_argument] if a setting or variable named [key] exists
-      already, or if the variable [key] does not hold an integer. *)
+  val float : reach:reach -> string -> float -> float t
+  (** [float ~reach key default] is a setting whose initial value is the number
+      the variable [key] holds, or [default] if [key] is unset. *)
 
-  val string : ?reach:reach -> string -> string -> string t
-  (** [string ~reach key default] is a setting whose initial value is
-      [getenv_string key default]. [reach] defaults to [Results].
+  val string : reach:reach -> string -> string -> string t
+  (** [string ~reach key default] is a setting whose initial value is the
+      variable [key] as written, or [default] if [key] is unset. A variable set
+      to the empty string is [""]. *)
 
-      Raises [Invalid_argument] if a setting or variable named [key] exists
-      already. *)
+  val int_option : reach:reach -> string -> int option t
+  (** [int_option ~reach key] is a setting whose initial value is [Some n] if
+      the variable [key] holds the integer [n], and [None] if [key] is unset:
+      its readers state what [None] stands for. *)
 
   val key : 'a t -> string
   (** [key v] is the name of [v]'s environment variable. *)
@@ -124,6 +82,14 @@ module Context_var : sig
   val value : 'a t -> 'a
   (** [value v] is [v]'s current value on the calling domain. *)
 end
+
+val shaping : unit -> (string * string) list
+(** [shaping ()] is the name and the current value on the calling domain, as
+    text, of each setting whose reach is {!Output}, sorted by name: what the
+    caches of programs, schedules and searches key on. Two values have the same
+    text only if they are equal: a number is written in hexadecimal and [None]
+    as [""]. While no such setting changes on the calling domain, the result is
+    the same list, and reading it allocates nothing. *)
 
 (** The type for settings bound to values. *)
 type binding =
@@ -181,6 +147,11 @@ val beam : int Context_var.t
 (** [beam] is the width of the beam search that picks kernel optimizations, from
     [BEAM]. [0] applies hand-coded optimizations instead. Defaults to [0]. *)
 
+val jitbeam : int option Context_var.t
+(** [jitbeam] is the width of the beam search for the kernels of a captured
+    program ([Jit]), from [JITBEAM]. [None], the default, stands for {!beam}'s
+    current value. *)
+
 val noopt : bool Context_var.t
 (** [noopt] disables kernel optimizations, from [NOOPT]. Defaults to [false]. *)
 
@@ -198,11 +169,13 @@ val tc_select : int Context_var.t
     [-1] tries the target's tensor cores in order and uses the first that fits,
     [n] uses only the [n]-th. Defaults to [-1]. *)
 
-val tc_opt : int Context_var.t
+val tc_opt : int option Context_var.t
 (** [tc_opt] is which kernels may use tensor cores, from [TC_OPT]. [0] admits
     kernels with a single reduce axis multiplying loaded values, [1] also
     kernels with several reduce axes and casted operands, [2] also kernels whose
-    axes must be padded to the tensor core's dimensions. Defaults to [0]. *)
+    axes must be padded to the tensor core's dimensions. [None], the default,
+    stands for [0] in hand-coded optimizations ([Heuristic]) and for [2] in a
+    beam search ([Search]), which measures what it admits. *)
 
 val tc_min_globals : int Context_var.t
 (** [tc_min_globals] is the number of global axes below which tensor core

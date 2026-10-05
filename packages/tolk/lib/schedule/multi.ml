@@ -161,17 +161,22 @@ let replace_allreduce =
                     (src a))));
     ])
 
+let late_allreduce =
+  Helpers.Context_var.bool ~reach:Output "LATE_ALLREDUCE" true
+
+(* Without LATE_ALLREDUCE, an allreduce becomes its copies here, before the
+   rules above see it. *)
 let replace_allreduce =
-  if Helpers.variable "LATE_ALLREDUCE" 1 <> 0 then replace_allreduce
-  else
-    Pattern_matcher.append
-      (Pattern_matcher.v
-         (fun () -> [
+  Pattern_matcher.append
+    (Pattern_matcher.v (fun () ->
+         [
            rule
              (Upat.op Op.Allreduce ~name:"red" ~src:[ Upat.var "buf" ])
-             (fun m -> Allreduce.handle_allreduce (m "red"));
+             (fun m ->
+               if Helpers.Context_var.value late_allreduce then None
+               else Allreduce.handle_allreduce (m "red"));
          ]))
-      replace_allreduce
+    replace_allreduce
 
 (* Sharded operations *)
 

@@ -68,7 +68,7 @@ let bool_of_cell = function
   | c -> failf "no boolean %s" c
 
 let position o =
-  match List.find_index (Opt.equal o) Search.actions with
+  match List.find_index (Opt.equal o) (Search.actions ()) with
   | Some i -> i
   | None -> failf "%a is no action" Opt.pp o
 
@@ -131,7 +131,7 @@ let recorded_actions file =
 
 let actions =
   test "the actions are tinygrad's, in order" (fun () ->
-      equal opts (recorded_actions "actions.golden") Search.actions)
+      equal opts (recorded_actions "actions.golden") (Search.actions ()))
 
 (* Candidates *)
 
@@ -208,7 +208,7 @@ let candidate_laws =
             if i = 0 then equal ~msg:"0" Uops.uop (K.ast k) (K.ast k')
             else
               equal ~msg:(string_of_int i) opts
-                [ List.nth Search.actions (i - 1) ]
+                [ List.nth (Search.actions ()) (i - 1) ]
                 (K.applied_opts k')
           in
           List.iter applied (Search.get_kernel_actions k));
@@ -607,16 +607,37 @@ let cache_settings =
       cached ~settings:[ B (Helpers.transcendental, 2) ] measure;
       greater int ~than:0 (List.length (calls ())))
 
-(* The variables that pick candidates and when a search stops are keyed with the
-   settings that shape compilation, at their defaults here. *)
+(* A setting that its caller declares to reach output: the search knows nothing
+   of it, yet keys on it. *)
+let declared = Helpers.Context_var.int ~reach:Output "TOLK_TEST_SEARCH" 0
+
+let cache_declared =
+  test
+    "a search kept under one value of a setting declared by its caller \
+     measures again under another" (fun () ->
+      let cached ?(settings = []) measure =
+        ignore
+          (search
+             ~settings:(B (Helpers.cachelevel, 1) :: settings)
+             ~measure 2
+             (scheduled "sum_rows" "metal"))
+      in
+      cached (fst (recording (golden_time ~failing:false)));
+      let measure, calls = recording (golden_time ~failing:false) in
+      cached ~settings:[ B (declared, 1) ] measure;
+      greater int ~than:0 (List.length (calls ())))
+
+(* The settings that pick candidates and how a search measures and stops shape
+   compilation, at their defaults here. *)
 let cache_variables =
-  cases ~name:fst "the search's variables shape compilation"
+  cases ~name:fst "the search's settings shape compilation"
     [
-      ("BEAM_PADTO", "0");
+      ("BEAM_PADTO", "false");
       ("BEAM_UOPS_MAX", "3000");
       ("BEAM_UPCAST_MAX", "256");
       ("BEAM_LOCAL_MAX", "1024");
       ("BEAM_MIN_PROGRESS", "0x1.47ae147ae147bp-7");
+      ("BEAM_ESTIMATE", "true");
     ]
     (fun (name, value) ->
       equal (option string) (Some value)
@@ -712,7 +733,9 @@ let under_environment =
               equal ~msg:name (option string) (Some value) (Sys.getenv_opt name))
             environment);
       test "the actions are tinygrad's, pads included" (fun () ->
-          equal opts (recorded_actions "actions_padto.golden") Search.actions);
+          equal opts
+            (recorded_actions "actions_padto.golden")
+            (Search.actions ()));
       test "a candidate of BEAM_UOPS_MAX instructions or more is dropped"
         (fun () ->
           ignore (output ());
@@ -790,35 +813,36 @@ let under_environment =
           contains ~sub:"too many upcast/local" (output ()));
     ]
 
-(* TC_OPT=0 picks other candidates than an unset TC_OPT, whose default is 2,
-   though the setting TC_OPT is 0 under both. The suite runs this group in a
-   process of its own, after the default environment's process kept its searches
-   in the cache (see dune). *)
-let under_tc_opt =
-  group ~tags:[ "tc_opt" ] "TC_OPT=0"
+(* The tensor cores' actions *)
+
+let tc_levels () =
+  List.filter_map
+    (function Opt.Tc t -> Some (t.tc_opt, t.use_tc) | _ -> None)
+    (Search.actions ())
+
+let tc_actions =
+  group "the tensor cores' actions"
     [
-      test "the tensor cores' actions ask for TC_OPT 0" (fun () ->
-          let tc_opts =
-            List.filter_map
-              (function Opt.Tc t -> Some t.tc_opt | _ -> None)
-              Search.actions
+      test "ask for TC_OPT's level on every axis but the first, 2 if unset"
+        (fun () ->
+          let levels o =
+            Helpers.context
+              [ B (Helpers.tc_opt, o) ]
+              (fun () -> List.map fst (tc_levels ()))
           in
-          equal (list int) (List.init 10 (Fun.const 0)) tc_opts);
-      test "a search kept without TC_OPT measures again" (fun () ->
-          let kept () =
-            List.length
-              (Disk_cache.entries ~table:"beam_search" Helpers.cachedb)
+          equal (list int) ~msg:"unset"
+            (0 :: List.init 9 (Fun.const 2))
+            (levels None);
+          equal (list int) ~msg:"TC_OPT=1"
+            (0 :: List.init 9 (Fun.const 1))
+            (levels (Some 1)));
+      test "ask for TC's level" (fun () ->
+          let uses =
+            Helpers.context
+              [ B (Helpers.use_tc, 2) ]
+              (fun () -> List.map snd (tc_levels ()))
           in
-          let before = kept () in
-          greater int ~msg:"searches the first process kept" ~than:0 before;
-          let measure, calls = recording (golden_time ~failing:false) in
-          ignore
-            (search
-               ~settings:[ B (Helpers.cachelevel, 1) ]
-               ~measure 2
-               (scheduled "sum_rows" "metal"));
-          greater int ~msg:"measurements" ~than:0 (List.length (calls ()));
-          equal int ~msg:"kept under a key of its own" (before + 1) (kept ()));
+          equal (list int) (List.init 10 (Fun.const 2)) uses);
     ]
 
 let () =
@@ -827,7 +851,7 @@ let () =
        [
          actions;
          under_environment;
-         under_tc_opt;
+         tc_actions;
          candidates;
          searches;
          candidate_laws;
@@ -841,6 +865,7 @@ let () =
          width;
          cache;
          cache_settings;
+         cache_declared;
          cache_variables;
          cache_kinds;
          uncompilable;

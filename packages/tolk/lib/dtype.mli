@@ -392,9 +392,9 @@ val sum_acc : t -> t
 (** [sum_acc dt] is the data type that sums of [dt] values accumulate in: at
     least {!Uint32} for the unsigned integers, at least {!Int32} for {!Bool} and
     the other integers, and for floats at least the data type named by the
-    environment variable [SUM_DTYPE], read when the program starts
-    ({!Helpers.variable_string}), or {!Float32} if it is unset. rune's lowering
-    takes the accumulator of a sum reduction from it.
+    environment variable [SUM_DTYPE], read when the program starts, or
+    {!Float32} if it is unset. rune's lowering takes the accumulator of a sum
+    reduction from it.
 
     Raises [Invalid_argument] if [dt] is {!Void}, or if [SUM_DTYPE] does not
     name a data type. *)

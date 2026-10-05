@@ -210,8 +210,11 @@ let pp_shape ppf s =
     s
     (if List.length s = 1 then "," else "")
 
-let reduceop_split_threshold = Helpers.variable "REDUCEOP_SPLIT_THRESHOLD" 32768
-let reduceop_split_size = Helpers.variable "REDUCEOP_SPLIT_SIZE" 22
+let reduceop_split_threshold =
+  Helpers.Context_var.int ~reach:Output "REDUCEOP_SPLIT_THRESHOLD" 32768
+
+let reduceop_split_size =
+  Helpers.Context_var.int ~reach:Output "REDUCEOP_SPLIT_SIZE" 22
 
 (* A large reduction over few outputs is split into two kernels, to turn some of
    the reduction into outputs. The split axis moves last, so the second
@@ -232,7 +235,8 @@ let split_reduceop reduce x =
       if
         out = 0
         || (not (Helpers.Context_var.value Helpers.split_reduceop))
-        || Helpers.prod xs / out < reduceop_split_threshold
+        || Helpers.prod xs / out
+           < Helpers.Context_var.value reduceop_split_threshold
       then None
       else
         (* The axes the input is broadcast along index no range once indexed. *)
@@ -258,7 +262,8 @@ let split_reduceop reduce x =
                      indexed
                      [ (base x, v Op.Noop) ])))
         in
-        let limit = min 256 ((1 lsl reduceop_split_size) / out) in
+        let size = Helpers.Context_var.value reduceop_split_size in
+        let limit = min 256 ((1 lsl size) / out) in
         let divisors = List.init (max 0 (limit - 7)) (fun k -> limit - k) in
         let candidates =
           List.concat_map

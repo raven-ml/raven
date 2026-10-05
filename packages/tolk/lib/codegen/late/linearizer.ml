@@ -10,6 +10,9 @@ module Ready = Set.Make (Int)
 
 (* Linearizing *)
 
+let debug_linearize =
+  Helpers.Context_var.bool ~reach:Process "DEBUG_LINEARIZE" false
+
 let priority u =
   (* Nodes with higher run counts are placed later. *)
   let run_count =
@@ -71,7 +74,7 @@ let linearize sink =
           (u :: placed)
   in
   let lst = place (Ready.singleton (Tbl.find nkey sink)) [] in
-  if Helpers.getenv "DEBUG_LINEARIZE" 0 <> 0 then
+  if Helpers.Context_var.value debug_linearize then
     List.iteri
       (fun i u ->
         Format.printf "%4d %-20s %s %a@." i

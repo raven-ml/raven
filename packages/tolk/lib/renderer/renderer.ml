@@ -116,6 +116,9 @@ end
 
 (* Compilers *)
 
+let assert_compile =
+  Helpers.Context_var.bool ~reach:Process "ASSERT_COMPILE" false
+
 module Compiler = struct
   exception Compile_error of string
 
@@ -159,7 +162,7 @@ module Compiler = struct
     match Option.bind table kept with
     | Some lib -> lib
     | None ->
-        if Helpers.getenv "ASSERT_COMPILE" 0 <> 0 then
+        if Helpers.Context_var.value assert_compile then
           invalid_arg ("tried to compile with ASSERT_COMPILE set\n" ^ src);
         let lib = c.compile src in
         Option.iter (fun table -> Helpers.Diskcache.put ~table src lib) table;

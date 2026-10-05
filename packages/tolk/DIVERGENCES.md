@@ -203,7 +203,7 @@ the Exclusions of `README.md`.
   `codegen/__init__.py:495-505` (`to_program_context`, the settings a worker
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
-  `lib/helpers.ml:106` (`Context_var`) and `:133` (`context`);
+  `lib/helpers.ml:127` (`Context_var`) and `:169` (`context`);
   `lib/codegen/codegen.ml:1008` (`to_program`'s cache);
   `lib/runtime/support/compiler_metal.ml:38` (`build`).
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
@@ -1864,8 +1864,8 @@ the Exclusions of `README.md`.
   (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:309`
   (`schedule_key`) and `:314` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
-  name); `lib/helpers.ml:325` (`scache`, `2` by default) and `:132`
-  (`shaping`); `lib/runtime/support/compiler_cpu.ml:30` (`cc`); and
+  name); `lib/helpers.ml:289` (`scache`, `2` by default) and `:121`
+  (`shaping`); `lib/runtime/support/compiler_cpu.ml:53` (`cc`); and
   `lib/dune`'s rule for `source_digest.ml`, written by
   `tools/source_digest.ml`.
 - **Differs:** the program `to_program` makes of a kernel, and by default
@@ -1879,16 +1879,17 @@ the Exclusions of `README.md`.
   the renderer and its target, the value of every setting and environment
   variable that shapes what compilation makes, and the digest of the
   library's sources, which dune computes when it builds the library: an
-  entry is a function of the code that made it. Settings and the variables
-  tinygrad reads with `getenv` where it compiles (`ALIGNED`, `ALLOW_HALF8`,
+  entry is a function of the code that made it. Every variable is a setting
+  declared with its reach (D114), among them those tinygrad reads with
+  `getenv` where it compiles (`ALIGNED`, `ALLOW_HALF8`, `BEAM_ESTIMATE`,
   `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
-  `BEAM_UPCAST_MAX`, `CC`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`,
-  `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT` variables,
-  `RING_ALLREDUCE_THRESHOLD`, `SUM_DTYPE` and `WAVES_PER_SH`) are declared
-  with their reach, and
-  the keys take every one that reaches results (`Helpers.shaping`), so one
-  declared later is keyed without being listed; a setting of the process
-  alone, such as `DEBUG`, `BEAM` or `PARALLEL`, is not. One key serves memory
+  `BEAM_UPCAST_MAX`, `CC`, `CUDA_PATH`, `DMC`, `EXPAND_SSA`,
+  `HCQ_NUM_SDMA`, `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT`
+  variables, `RING_ALLREDUCE_THRESHOLD`, `SUM_DTYPE` and `WAVES_PER_SH`),
+  and the keys take every one that reaches output (`Helpers.shaping`), so
+  one declared later, by tolk or by its caller, is keyed without being
+  listed; a setting of the process alone, such as `DEBUG`, `BEAM` or
+  `PARALLEL`, is not. One key serves memory
   and disk, so a setting changed within the process by `context` makes the
   result again, where tinygrad's in-memory keys leave out `TUPLE_ORDER` and,
   for schedules, every setting. The compile cache's table names the compiler
@@ -1914,7 +1915,8 @@ the Exclusions of `README.md`.
   library is not read back`, and `› processes making one program at once all
   get it`; and the `Schedule` suite (`test/schedule/schedule`):
   `create_linear_with_vars › cache › a body scheduled under one setting
-  misses under another ›` each setting, `create_linear_with_vars ›
+  misses under another ›` each setting, a setting its caller declares
+  among them, `create_linear_with_vars ›
   schedules are kept on disk ›` the same as programs' for schedules, and `›
   with SCACHE at 1, nothing is kept on disk`, and `create_linear_with_vars ›
   loops of calls › a loop whose range has another number is the same body`;
@@ -3316,7 +3318,7 @@ stores through a pad.
   and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
   (`C.identity`); `lib/codegen/codegen.ml:1175-1191` (`program_key`, `kept`);
-  `lib/codegen/opt/search.ml:17-21` (the variables declared) and `:262`
+  `lib/codegen/opt/search.ml:19-27` (the settings declared) and `:266`
   (the beam search's key).
 - **Differs:** a table also names everything besides the source that
   determines a binary: for Clang, the digest of what `clang -###` states it
@@ -3326,15 +3328,12 @@ stores through a pad.
   or the library's file, size and modification time, and the options, PTX or
   cubin included. A program is kept on disk under its compiler's table, and
   only if that compiler caches its binaries. The beam search's key adds the
-  library's sources, the renderer, its compiler's table, the candidate
-  actions, and the settings and variables that shape compilation
-  (`Helpers.shaping`), among which the search declares `BEAM_PADTO`,
-  `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX` and
-  `BEAM_MIN_PROGRESS`. The actions stand for the variables `TC` and `TC_OPT`
-  they read, whose defaults differ from those of the settings of the same
-  names (`TC_OPT=0` and an unset `TC_OPT` give the setting one value and
-  the actions two). `BEAM_STRICT_MODE` is not keyed: a strict search that
-  completes finds what another finds.
+  library's sources, the renderer, its compiler's table, and the settings
+  that shape compilation (`Helpers.shaping`), among which those that pick
+  the candidates (`TC`, `TC_OPT` and `BEAM_PADTO`, D114) and those the search
+  declares, `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX`,
+  `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`. `BEAM_STRICT_MODE` is not keyed:
+  a strict search that completes finds what another finds.
 - **Reason:** (b): raven's test suites and rune share the default cache, so a
   hit must answer the compilation it stands for. tinygrad's key answers a
   changed flag in `compiler_cpu.py`, an upgraded toolchain, a program of
@@ -3346,5 +3345,54 @@ stores through a pad.
   needed`, `Tolk.C › identity`, `Tolk.Codegen › programs are kept on disk
   › a program is not read back for a compiler of another table`, and
   `Tolk.Search › a search kept under one setting measures again under
-  another`, `› the search's variables shape compilation` and `› TC_OPT=0 ›
-  a search kept without TC_OPT measures again`.
+  another`, `› a search kept under one value of a setting declared by its
+  caller measures again under another` and `› the search's settings shape
+  compilation`.
+
+## D114. Every environment variable is one declared setting
+
+- **tinygrad:** `helpers.py:157-162` (`getenv`, read where it is called,
+  with that call's default) and `:179` (`ContextVar`); `:241` (`TC`, default
+  `1`, and `TC_OPT`, default `0`); `codegen/opt/search.py:18-22` (the
+  actions, reading `getenv("TC", 1)` and `getenv("TC_OPT", 2)`);
+  `codegen/opt/heuristic.py:21` (`TC_OPT`'s default, `2` during a search and
+  `0` otherwise); `engine/jit.py:36` (`getenv("JITBEAM", BEAM.value)`);
+  `codegen/__init__.py:386` (`os.environ.get("DBGTV")`, read on each
+  failure).
+- **tolk:** `lib/helpers.ml:88` (`reach`), `:121` (`shaping`), `:127`
+  (`Context_var`), `:235` (`jitbeam`) and `:240` (`tc_opt`);
+  `lib/codegen/opt/search.ml:30` (`actions`);
+  `lib/codegen/opt/heuristic.ml:101`; `lib/codegen/codegen.ml:679`
+  (`dbgtv`).
+- **Differs:** tolk reads no variable outside a setting: `Helpers` exports no
+  `getenv`. Each variable is declared once, as a setting with its type,
+  default and reach: `Output` if its value changes what compilation makes,
+  and `Process` otherwise. The caches key on every `Output` setting
+  (`Helpers.shaping`, D63). tinygrad reads a variable with `getenv` at any
+  call site, so one variable can have two readers with two defaults:
+  `TC_OPT` is a `ContextVar` of default `0` and a `getenv` of default `2`
+  in the search. In tolk `TC_OPT` is one setting whose value is an option;
+  unset, it stands for `0` in hand-coded optimizations and `2` in the
+  search, the defaults tinygrad documents. `TC`, `TC_OPT` and `BEAM_PADTO`
+  are read when the search makes its candidates (`actions` is a function),
+  so a `context` binding of `TC` or `TC_OPT` reaches the search, where
+  tinygrad's search sees the environment alone. `JITBEAM` is a setting
+  whose `None` stands for `BEAM`'s current value. A variable tinygrad reads
+  on each use, such as `DBGTV`, is read when the program starts. A library
+  that compiles with tolk declares its own variables the same way, so rune's
+  jit keys on its `Output` settings too.
+- **Reason:** (b): rune's jit memo and tolk's program, schedule and search
+  caches key on `Helpers.shaping`. A variable read outside a declaration on
+  a compile path is missing from every key, and a cache returns what was
+  made under another value: the search's `TC_OPT`, read raw with its own
+  default, kept a search made with `TC_OPT` unset for a process with
+  `TC_OPT=0`.
+- **Pinned by:** `Tolk.Helpers › Context_var` and `› shaping` (every test);
+  `Tolk.Search › the tensor cores' actions ›` both tests and `› a search
+  kept under one value of a setting declared by its caller measures again
+  under another`; `Tolk.Codegen › programs are kept › a program is made
+  again under another value of › a setting its caller declares`;
+  `Tolk.Schedule › create_linear_with_vars › cache › a body scheduled
+  under one setting misses under another › a setting its caller declares`;
+  `Rune.jit › keys › a setting that shapes compilation › a change of
+  RUNE_TEST_JIT_SETTING around a call retraces once`.

@@ -17,7 +17,10 @@ let jit_lower ?beam ?search ~devices ~held_bufs ~inputs linear =
   let beam =
     match beam with
     | Some beam -> beam
-    | None -> Helpers.getenv "JITBEAM" (Helpers.Context_var.value Helpers.beam)
+    | None -> (
+        match Helpers.Context_var.value Helpers.jitbeam with
+        | Some beam -> beam
+        | None -> Helpers.Context_var.value Helpers.beam)
   in
   Helpers.context
     [ B (Helpers.beam, beam) ]

@@ -792,7 +792,7 @@ let compilers =
 (* ASSERT_COMPILE *)
 
 let under_assert_compile f () =
-  if Helpers.getenv "ASSERT_COMPILE" 0 = 0 then
+  if Sys.getenv_opt "ASSERT_COMPILE" <> Some "1" then
     skip ~reason:"runs with ASSERT_COMPILE set" ()
   else f ()
 

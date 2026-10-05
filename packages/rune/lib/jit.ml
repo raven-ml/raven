@@ -13,13 +13,11 @@ module View = Nx_array.View
 module B = Nx_device.Buffer
 module Claim = Nx_device.Buffer.Claim
 
-let debug =
-  match Sys.getenv_opt "RUNE_JIT_DEBUG" with
-  | None | Some ("" | "0") -> false
-  | Some _ -> true
+let debug = Tolk.Helpers.Context_var.bool ~reach:Process "RUNE_JIT_DEBUG" false
+let debugging () = Tolk.Helpers.Context_var.value debug
 
 let report fmt =
-  if debug then Printf.eprintf ("rune.jit: " ^^ fmt ^^ "\n%!")
+  if debugging () then Printf.eprintf ("rune.jit: " ^^ fmt ^^ "\n%!")
   else Printf.ifprintf stderr fmt
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -121,7 +119,10 @@ let settings ?beam () =
     beam =
       (match beam with
       | Some beam -> beam
-      | None -> H.getenv "JITBEAM" (H.Context_var.value H.beam));
+      | None -> (
+          match H.Context_var.value H.jitbeam with
+          | Some beam -> beam
+          | None -> H.Context_var.value H.beam));
     profiled = H.Context_var.value H.debug >= 2;
     counters = Nx_device.Profile.counters ();
     traced = Nx_device.Profile.traced ();
@@ -816,7 +817,7 @@ let run entry p leaves =
   Array.iteri
     (fun i _ -> if consumable.(i) && not lends.(i) then ignore (consume i))
     leaves;
-  if debug then
+  if debugging () then
     Array.iteri
       (fun i _ ->
         if p.consumed.(i) then

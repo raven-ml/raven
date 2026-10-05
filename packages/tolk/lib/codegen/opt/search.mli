@@ -9,9 +9,9 @@
 
     A beam search picks a kernel's optimisations ({!Opt.t}) by timing the
     programs they make. Starting from the kernel as it is scheduled, each round
-    applies every optimisation of a fixed table ({!actions}) to each of the
-    fastest kernels found so far, compiles the results, times them, and keeps
-    the fastest, until a round no longer gains.
+    applies every optimisation of a table ({!actions}) to each of the fastest
+    kernels found so far, compiles the results, times them, and keeps the
+    fastest, until a round no longer gains.
 
     The search is a diagnostic: it compiles and times hundreds of programs per
     kernel, so it is run offline, on a few kernels extracted from a program, and
@@ -25,22 +25,21 @@
 
 (** {1:actions Actions} *)
 
-val actions : Opt.t list
-(** [actions] is the optimisations the search tries, in order:
+val actions : unit -> Opt.t list
+(** [actions ()] is the optimisations the search tries under the current
+    settings, in order:
     - splits of the axes [0] to [9] into {!Opt.Upcast}, then {!Opt.Unroll},
       lanes by [0], [2], [3], [4], [5] and [7];
     - splits of the axes [0] to [7] into {!Opt.Local} threads by [0], [2], [3],
       [4], [8], [13], [16] and [29], then from the top by [13], [16], [28],
       [29], [32], [49], [64] and [256];
-    - if the environment variable [BEAM_PADTO] holds a nonzero integer, pads of
-      the axes [0] to [6] to a multiple of [32];
+    - if the environment variable [BEAM_PADTO] holds a nonzero integer when the
+      program starts, pads of the axes [0] to [6] to a multiple of [32];
     - a split of the axis [0] into [32] local threads;
     - tensor cores on the axis [0] with the level [tc_opt] [0], then on the axes
-      [0] to [8] with the level of [TC_OPT] (default [2]), each with the first
-      core that fits and the level [use_tc] of [TC] (default [1]);
-    - swaps of each two of the axes [0] to [4].
-
-    The environment is read when the program starts ({!Helpers.getenv}). *)
+      [0] to [8] with the level of {!Helpers.tc_opt}, [2] if it is [None], each
+      with the first core that fits and the level [use_tc] of {!Helpers.use_tc};
+    - swaps of each two of the axes [0] to [4]. *)
 
 val get_kernel_actions :
   ?include_0:bool ->
@@ -48,18 +47,19 @@ val get_kernel_actions :
   Postrange.Scheduler.t ->
   (int * Postrange.Scheduler.t) list
 (** [get_kernel_actions ~include_0 ~max_up k] is the kernels that one action
-    makes of [k]: [(i + 1, k')] for the action [i] of {!actions} and [k'] a copy
-    of [k] it was applied to, in the order of {!actions}, after [(0, k)] if
+    makes of [k]: [(i + 1, k')] for the action [i] of [actions ()] and [k'] a
+    copy of [k] it was applied to, in the order of {!actions}, after [(0, k)] if
     [include_0] (default [true]). [k] is left as it is. An action is left out
     when:
     - it does not apply ({!Postrange.Scheduler.apply_opt});
     - it is no tensor core and its axis is not one of [k]'s, or it splits a
-      whole axis by its size while {!actions} splits it by [0] alike;
+      whole axis by its size while [actions ()] splits it by [0] alike;
     - [k'] has more upcast and unrolled lanes than [max_up] (default the
       environment variable [BEAM_UPCAST_MAX], or [256]), not counting a tensor
       core's product for each of its threads, or more warp and local threads
       than [BEAM_LOCAL_MAX] (default [1024]). When [BEAM_LOG_SURPASS_MAX] holds
-      a nonzero integer, these are reported on standard output.
+      a nonzero integer, these are reported on standard output. Variables are
+      read when the program starts.
 
     Raises [Invalid_argument] as {!Postrange.Scheduler.apply_opt} does, and if
     whether a kernel has too many lanes or threads depends on the value of a
@@ -126,10 +126,11 @@ val beam_search :
     keyed by what the search is a function of but the times it measures: [k]'s
     kernel ({!Ops.key}), [amt], [allow_test_size], the name and target of [k]'s
     renderer and the table of its compiler's binaries
-    ({!Renderer.Compiler.cachekey}), the candidate {!actions}, the settings and
-    variables that shape compilation ({!Helpers.shaping}), among them the
-    environment variables [BEAM_PADTO], [BEAM_UOPS_MAX], [BEAM_UPCAST_MAX],
-    [BEAM_LOCAL_MAX] and [BEAM_MIN_PROGRESS], and the sources of this library.
+    ({!Renderer.Compiler.cachekey}), the settings that shape compilation
+    ({!Helpers.shaping}), among them those that pick the candidates
+    ({!Helpers.use_tc}, {!Helpers.tc_opt} and [BEAM_PADTO]) and the environment
+    variables [BEAM_UOPS_MAX], [BEAM_UPCAST_MAX], [BEAM_LOCAL_MAX],
+    [BEAM_MIN_PROGRESS] and [BEAM_ESTIMATE], and the sources of this library.
     Unless {!Helpers.ignore_beam_cache} holds, a search whose key is kept
     measures nothing, and applies the optimisations kept beyond as many as [k]
     has to a copy of [k]. A kept result is what an earlier search measured
@@ -139,6 +140,8 @@ val beam_search :
     is printed on standard output. When the environment variable [BEAM_DEBUG]
     holds a positive integer, so are the kernel searched, the candidates whose
     measurement failed and the result; from [2], every candidate timed.
+
+    The environment variables are read when the program starts.
 
     Raises [Invalid_argument] if [amt] is not positive or as
     {!get_kernel_actions} does, and [Failure] if the kept optimisations are

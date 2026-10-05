@@ -559,6 +559,11 @@ let grid r c = Nx.reshape [| r; c |] (arange (r * c))
 let every_other t =
   Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~axis:0 ~window:1 ~step:2 t)
 
+(* A setting its caller declares to reach output, of which rune knows nothing:
+   its key holds it all the same. *)
+let declared =
+  Tolk.Helpers.Context_var.int ~reach:Output "RUNE_TEST_JIT_SETTING" 0
+
 let keys =
   let g () = Rune.jit' poly in
   group "keys"
@@ -659,10 +664,11 @@ let keys =
             B (ring, 0);
             B (all2all, 1);
             B (allreduce_cast, false);
-            B (tc_opt, 2);
+            B (tc_opt, Some 2);
             B (disable_fast_idiv, false);
             B (allow_tf32, true);
             B (no_memory_planner, true);
+            B (declared, 1);
           ]
         (fun b ->
           let g = g () in

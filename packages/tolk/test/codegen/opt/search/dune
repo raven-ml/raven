@@ -1,8 +1,7 @@
 ; The search's environment variables are read once per process, so what they
 ; change is checked in a process of its own, with the variables set. CACHEDB is
 ; a directory of the sandbox, which the cache's tests fill with the results of
-; made-up measurements; the process under TC_OPT alone reads back the searches
-; the first one kept.
+; made-up measurements.
 
 (test
  (name test_search)
@@ -17,11 +16,7 @@
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag environment --exclude-tag tc_opt)
-    (setenv
-     TC_OPT
-     0
-     (run %{test} --tag tc_opt))
+    (run %{test} --exclude-tag environment)
     (setenv
      BEAM_PADTO
      1
