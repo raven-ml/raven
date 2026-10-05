@@ -427,7 +427,13 @@ let upload a ~sleep ~staging dst img =
        ~dst:(va dst) ~src:(va staging) n 1);
   (* A GPU that does not copy is lost, and may still read [staging], which is
      then never freed. *)
-  let word = Nativeint.add (Mmio.address host) (Nativeint.of_int fence) in
+  let at = Nativeint.of_int fence in
+  let word =
+    Region.v
+      ~host:(Nativeint.add (Mmio.address host) at)
+      (Nativeint.add (Nativeint.of_int (va staging)) at)
+      8
+  in
   if not (Driver.wait ~sleep ~timeout_ms:(timeout a) word 1) then
     failwith "hang detected: the copy engine did not upload the code";
   free_mem a staging

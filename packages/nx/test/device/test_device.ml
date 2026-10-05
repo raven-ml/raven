@@ -4107,6 +4107,57 @@ let test_finalize () =
     ~sub:"HANGING synchronization failed" (masked err);
   contains ~msg:"a raising finalize is reported" ~sub:"boom" err
 
+(* [with_host_word f] is [f word a] for [word] a region of the host's heap
+   whose first word holds 0, and [a] its host address. *)
+let with_host_word f =
+  match Driver.host_memory.alloc 8 with
+  | None -> fail "no host memory"
+  | Some r ->
+      let a = Option.get (Region.host_address r) in
+      store_signal a 0;
+      Fun.protect
+        ~finally:(fun () -> Driver.host_memory.free r)
+        (fun () -> f r a)
+
+let sleep_for ms = Unix.sleepf (Float.of_int ms /. 1000.)
+
+let driver_wait =
+  group "Driver.wait"
+    [
+      test "is true once the word reaches the value, unsigned" (fun () ->
+          with_host_word (fun word a ->
+              let late =
+                Domain.spawn (fun () ->
+                    Unix.sleepf 0.05;
+                    store_signal a (-1))
+              in
+              let reached =
+                Driver.wait ~sleep:sleep_for ~timeout_ms:5_000 word 3
+              in
+              Domain.join late;
+              equal bool true reached));
+      test
+        "is false once the word stayed still for the timeout, after sleeps of \
+         at most 200 ms and a last one of 1 ms" (fun () ->
+          with_host_word (fun word _ ->
+              let sleeps = ref [] in
+              let sleep ms =
+                sleeps := ms :: !sleeps;
+                sleep_for ms
+              in
+              equal bool false (Driver.wait ~sleep ~timeout_ms:500 word 1);
+              equal ~msg:"the last sleep" int 1 (List.hd !sleeps);
+              List.iter (fun ms -> at_most int ~than:200 ms) !sleeps));
+      test "refuses a word the host does not address" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              Driver.wait ~sleep:sleep_for ~timeout_ms:10 (Region.v 0x1000n 8) 1));
+      test "refuses a word of fewer than 8 bytes" (fun () ->
+          with_host_word (fun _ a ->
+              raises_match Exn.invalid_arg (fun () ->
+                  Driver.wait ~sleep:sleep_for ~timeout_ms:10
+                    (Region.v ~host:a a 4) 1)));
+    ]
+
 let hooks =
   group "sleep and finalize"
     [
@@ -5810,6 +5861,7 @@ let () =
          submissions;
          failures;
          hooks;
+         driver_wait;
          profiles;
          machines;
          staging;

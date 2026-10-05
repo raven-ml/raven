@@ -3901,9 +3901,6 @@ module Driver = struct
 
   let default_timeout = default_timeout
 
-  let wait ~sleep ~timeout_ms word v =
-    poll_word ~io:None ~sleep ~timeout_ms:(fun () -> timeout_ms) word v
-
   (* The host's heap: its regions keep their bigarrays until they are freed. *)
   let host_memory =
     let held = Hashtbl.create 16 and lock = Mutex.create () in
@@ -3926,6 +3923,12 @@ module Driver = struct
     Printf.ksprintf
       (fun m -> invalid_arg (Printf.sprintf "Nx_device.Driver.%s: %s" fn m))
       fmt
+
+  let wait ~sleep ~timeout_ms (word : region) v =
+    if word.nbytes < 8 then refuse "wait" "a word of %d bytes" word.nbytes;
+    match word.host with
+    | None -> refuse "wait" "the host does not address the word"
+    | Some a -> poll_word ~io:None ~sleep ~timeout_ms:(fun () -> timeout_ms) a v
 
   let compose ?(host = host) local =
     match host.kind with
