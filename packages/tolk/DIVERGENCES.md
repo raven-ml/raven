@@ -208,7 +208,9 @@ the Exclusions of `README.md`.
 - **tolk:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
   `lib/helpers.ml:127` (`Context_var`) and `:169` (`context`);
   `lib/codegen/codegen.ml:1008` (`to_program`'s cache);
-  `lib/runtime/support/compiler_metal.ml:38` (`build`).
+  `lib/runtime/support/compiler_metal.ml:38` (`build`);
+  `lib/runtime/support/compiler_amd.ml` (`run`) and
+  `compiler_amd_worker.c`.
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
   spawns its domains for the call and joins them before it returns, where
   tinygrad keeps a pool: an idle domain still takes part in every minor
@@ -230,14 +232,22 @@ the Exclusions of `README.md`.
   parent compiles each key once. MTLCompiler, which a tinygrad worker loads
   in its own process, is loaded once for every domain, and it re-parses its
   options into LLVM's global option registry on every build, which is not
-  thread-safe: its builds run one at a time.
+  thread-safe: its builds run one at a time. comgr serialises the compiles
+  of a process on a mutex of its own, so each comgr compile runs in a
+  process of its own, spawned by the compiling domain, where a tinygrad
+  worker process loads comgr once and compiles in it: a small C program that
+  tolk carries, which runs from memory on Linux and from a file in
+  `Helpers.cache_dir` elsewhere. It reads its request and writes its reply
+  through files, and a compile whose process ends without a reply raises
+  `Compile_error`, where it would end tinygrad's worker.
 - **Reason:** (a).
 - **Pinned by:** `Tolk.Helpers › context › is not seen by the other
   domains` and `Tolk.Helpers › context › binds for the domains spawned
   while it runs`; `Tolk.Worker` (every test); `Tolk.Codegen ›
   programs are kept › calls from several domains at once make one program,
   compiled once (D5)`; `Tolk.Compiler_metal › MTLCompiler › compiles
-  from several domains at once`.
+  from several domains at once`; `Tolk.Compiler_amd › a compile in a process
+  of its own` (every test) and `› a process that cannot start`.
 
 ## D6. Devices are named, never parsed
 
@@ -475,8 +485,8 @@ the Exclusions of `README.md`.
   `lib/runtime/support/compiler_amd.ml` (`hip`),
   `lib/runtime/support/compiler_metal.ml` (`compiler`).
 - **Differs:** making a compiler loads nothing. The library is loaded at the
-  first compile, once per process, and a compile without it raises
-  `Compile_error` with the reason.
+  first compile, once per process (comgr: by each compile's own process, D5),
+  and a compile without it raises `Compile_error` with the reason.
 - **Reason:** (b): `Cstyle`'s CUDA, HIP and Metal renderers are made, and
   render, on machines without NVRTC, comgr or MTLCompiler: the source goldens
   of the `Cstyle` suite and rune's rendering of a kernel for inspection.

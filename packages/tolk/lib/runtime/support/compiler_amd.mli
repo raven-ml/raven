@@ -7,13 +7,17 @@
 
 (** The compiler of HIP for AMD GPUs.
 
-    comgr, ROCm's code object manager library, compiles the source in the
-    process. The library, [libamd_comgr], is loaded at the first compile, once
-    per process, from where {!C.findlib} finds it: the file [COMGR_PATH] names,
-    then [lib/libamd_comgr.so] in the directory [ROCM_PATH] names ([/opt/rocm]
-    by default, read when the program starts), then the system's library
-    directories. Its major version picks its numbering of languages and actions,
-    which version 3 changed. *)
+    comgr, ROCm's code object manager library, compiles the source. comgr
+    compiles one source at a time in a process, so each compile runs in a
+    process of its own, which tolk starts from a program it carries: compiles
+    from several domains run at once, and a compile that crashes ends its own
+    process only. On Linux the program runs from memory; elsewhere it is written
+    to {!Helpers.cache_dir}, under a name holding its digest. The library,
+    [libamd_comgr], is loaded by that process from where {!C.findlib} finds it:
+    the file [COMGR_PATH] names, then [lib/libamd_comgr.so] in the directory
+    [ROCM_PATH] names ([/opt/rocm] by default, read when the program starts),
+    then the system's library directories. Its major version picks its numbering
+    of languages and actions, which version 3 changed. *)
 
 val hip : string -> Renderer.Compiler.t
 (** [hip arch] is the compiler of HIP source to executable code objects for the
@@ -31,6 +35,7 @@ val hip : string -> Renderer.Compiler.t
     read back only for its source, compiled by the same comgr with the same
     options. {!Renderer.Compiler.compile} raises
     {!Renderer.Compiler.Compile_error} with comgr's status and log if comgr
-    rejects the source, and with the reason if comgr cannot be loaded, and
-    {!Renderer.Compiler.disassemble} prints what [llvm-objdump -d] prints
-    ({!Helpers.amdgpu_disassemble}). *)
+    rejects the source, with the reason if comgr cannot be loaded, and with how
+    the process ended and what it printed if it ends without answering, and
+    [Failure] if the process cannot be started. {!Renderer.Compiler.disassemble}
+    prints what [llvm-objdump -d] prints ({!Helpers.amdgpu_disassemble}). *)

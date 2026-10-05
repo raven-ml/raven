@@ -149,5 +149,73 @@ let smoke =
           contains ~sub:"s_endpgm" (output ()));
     ]
 
+(* A compile in a process of its own *)
+
+(* An intrinsic of CDNA's matrix cores, which code generation for RDNA cannot
+   select: LLVM ends the process that compiles it. *)
+let unselectable =
+  {|extern "C" __attribute__((device)) float mfma(float, float, float)
+  __asm("llvm.amdgcn.mfma.f32.32x32x1f32");
+extern "C" __attribute__((global)) void f(float *a) { a[0] = mfma(a[1], a[2], a[3]); }|}
+
+let compile src = Compiler.compile (Compiler_amd.hip "gfx1100") src
+
+(* [with_signal s behavior f] is [f ()] run with [behavior] for [s]. *)
+let with_signal s behavior f =
+  let previous = Sys.signal s behavior in
+  Fun.protect ~finally:(fun () -> Sys.set_signal s previous) f
+
+let process =
+  group "a compile in a process of its own"
+    [
+      slow "compiles of one kernel are equal, in turn and from several domains"
+        (fun () ->
+          let lib = with_comgr (fun () -> compile kernel) in
+          equal string lib (compile kernel);
+          let domains =
+            List.init 4 (fun _ -> Domain.spawn (fun () -> compile kernel))
+          in
+          List.iter (equal string lib) (List.map Domain.join domains));
+      cases ~tags:[ "slow" ] ~name:(Printf.sprintf "%S")
+        "a source that is no HIP raises Compile_error"
+        [
+          "";
+          "\xff\xfe\x7fELF\000\001";
+          "}{";
+          String.sub kernel 0 40;
+          ".text\n  not_an_instruction v0\n";
+        ]
+        (fun src ->
+          ignore (with_comgr (fun () -> compile kernel));
+          raises_match
+            (function Compiler.Compile_error _ -> true | _ -> false)
+            (fun () -> compile src));
+      slow
+        "a source that ends its process raises Compile_error with LLVM's error"
+        (fun () ->
+          ignore (with_comgr (fun () -> compile kernel));
+          match compile unselectable with
+          | _ -> fail "code generation selected a CDNA intrinsic for RDNA"
+          | exception Compiler.Compile_error msg ->
+              in_order ~subs:[ "without a reply"; "LLVM ERROR" ] msg);
+      slow "a compile with SIGCHLD ignored returns its code object" (fun () ->
+          let lib = with_comgr (fun () -> compile kernel) in
+          equal string lib
+            (with_signal Sys.sigchld Signal_ignore (fun () -> compile kernel)));
+    ]
+
+(* A process that cannot start: these tests run in a process of their own, where
+   COMGR_PATH names a file and no process can be spawned. *)
+
+let no_spawn =
+  group ~tags:[ "no-spawn" ] "a process that cannot start"
+    [
+      test "a compile raises Failure naming the worker" (fun () ->
+          raises_match (Exn.failure ~substring:"comgr worker") (fun () ->
+              compile kernel));
+    ]
+
 let () =
-  exit (run "Tolk.Compiler_amd" [ cache; without_comgr; not_a_library; smoke ])
+  exit
+    (run "Tolk.Compiler_amd"
+       [ cache; without_comgr; not_a_library; smoke; process; no_spawn ])

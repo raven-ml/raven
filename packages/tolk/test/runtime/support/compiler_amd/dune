@@ -1,7 +1,7 @@
-; Settings are read when the program starts, and comgr is loaded once per
-; process, so CACHEDB is set here, to a directory of the sandbox, and the tests
-; tagged no-library run in a second process, where COMGR_PATH names a file that
-; is no library.
+; Settings are read when the program starts, so CACHEDB is set here, to a
+; directory of the sandbox. The tests tagged no-library run in a second
+; process, where COMGR_PATH names a file that is no library, and those tagged
+; no-spawn in a third, which may start no process.
 
 (test
  (name test_compiler_amd)
@@ -15,11 +15,13 @@
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag no-library)
+    (run %{test} --exclude-tag no-library --exclude-tag no-spawn)
     (setenv
      COMGR_PATH
      ./not_a_library
-     (run %{test} --tag no-library))))))
+     (progn
+      (run %{test} --tag no-library)
+      (run bash -c "ulimit -u 1 && exec \"$0\" --tag no-spawn" %{test})))))))
 
 (rule
  (target not_a_library)

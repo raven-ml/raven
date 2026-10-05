@@ -965,6 +965,11 @@ thread.
 
 ### Tolk (new)
 
+- `Compiler_amd.hip` compiles each source in a process of its own, from a
+  small program the library carries, so compiles from several domains run at
+  once: comgr serialises the compiles of a process. A source that crashes
+  LLVM raises `Compile_error` instead of ending the program. A beam search of GNODE's step on an R9700
+  takes 19 s at `PARALLEL=8`, from 43 s.
 - On AMD, a profile's span of a kernel covers its run, so `Tolk_engine.timer`
   and searches time long kernels right. The compute queue's timestamps waited
   for the pipe to drain, which on GFX12 included the next dispatch: a 0.6 s

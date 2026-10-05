@@ -1,2 +1,2 @@
-(executable
- (name source_digest))
+(executables
+ (names source_digest embed))

@@ -1,0 +1,26 @@
+; The program that runs a comgr compile in a process of its own, compiled by the
+; target's C compiler and embedded in the library as a string.
+
+(rule
+ (target comgr_worker.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:../../../tools/embed.exe} %{dep:compiler_amd_worker.exe}))))
+
+; dlopen is a library of its own on Linux; elsewhere it is part of the C
+; library (macOS) or of kernel32 (Windows).
+
+(rule
+ (target compiler_amd_worker.exe)
+ (enabled_if
+  (= %{system} linux))
+ (action
+  (run %{cc} -Wall -o %{target} %{dep:compiler_amd_worker.c} -ldl)))
+
+(rule
+ (target compiler_amd_worker.exe)
+ (enabled_if
+  (<> %{system} linux))
+ (action
+  (run %{cc} -Wall -o %{target} %{dep:compiler_amd_worker.c})))
