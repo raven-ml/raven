@@ -823,6 +823,44 @@ let states =
            Ops.O.(Ops.index (rows x) [ at ] + Ops.index (rows assigned) [ at ]));
     ]
 
+(* Cost *)
+
+(* [centred n] is [n] centrings in sequence: the row sums of a value are
+   subtracted from it. A value read by its sums and by its difference is staged,
+   and each row sum's stage is weighed for removal by asking whether its
+   reduction reads a buffer, which the stage it reduces answers at once. Chains
+   of other lengths read other inputs, and share no node. *)
+let centred n =
+  let rec link x k =
+    if k = n then x
+    else
+      let sums = Ops.expand (Ops.rop x Add [ 1 ]) (ints [ 4; 4 ]) in
+      link Ops.O.(x - sums) (k + 1)
+  in
+  stores (link (input n) 0)
+
+(* [words f] is the words [f ()] allocates. *)
+let words f =
+  let before = Gc.minor_words () in
+  ignore (Sys.opaque_identity (f ()));
+  Gc.minor_words () -. before
+
+(* Work linear in the length is [a * n + b] with [b >= 0], so twice the length
+   costs at most twice the work. The tenth of slack covers tables that double
+   their capacity at different lengths in the two runs. *)
+let cost =
+  group "get_kernel_graph › cost"
+    [
+      test "the work on a chain of staged values is linear in its length"
+        (fun () ->
+          let work n =
+            let sink = centred n in
+            words (fun () -> schedule sink)
+          in
+          let short = work 100 and long = work 200 in
+          less float_exact ~than:(2.2 *. short) long);
+    ]
+
 let () =
   exit
     (run "Tolk.Rangeify"
@@ -838,4 +876,5 @@ let () =
          rules;
          loops;
          states;
+         cost;
        ])

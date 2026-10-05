@@ -944,6 +944,12 @@ thread.
 
 ### Tolk (new)
 
+- Scheduling a large graph no longer grows with the square of its kernels:
+  weighing whether a stage could be inlined walked every kernel upstream of
+  it, and the where-closure rule searched branches its INDEX gate rejects.
+  An unrolled training step of 2031 kernels schedules in 5.3 s, from 27 s.
+  `Ops.reaches` takes `?enter_calls` and stops at the node it looks for.
+
 - A beam search is read back from the disk cache only for the candidates it
   chose among, so `TC_OPT=0` no longer reads back a search made with `TC_OPT`
   unset. The search's `BEAM_*` variables, `SUM_DTYPE`, `HCQ_NUM_SDMA` and

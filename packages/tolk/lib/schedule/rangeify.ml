@@ -129,11 +129,13 @@ let remove_bufferize src buf idx =
     in
     if Tbl.length accessed > 3 || recomputes || read_by_every_output then None
     else
-      let reads_buffer x = List.mem (op x) Op.[ Param; Stage; After ] in
-      if
-        List.exists reads_buffer
-          (toposort (sink (List.map (fun r -> nth r 0) reduces)))
-      then None
+      (* A call returns no value here: a reduction reaches one only through the
+         [After] it orders, so the operations kept outside call bodies answer as
+         a walk into them does. *)
+      let reads_buffer r =
+        op_in_backward_slice_with_self (nth r 0) Op.[ Param; Stage; After ]
+      in
+      if List.exists reads_buffer reduces then None
       else
         (* A constant range is not replaced, nor is a range read by a dead
            load. *)

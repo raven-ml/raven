@@ -12,7 +12,7 @@ let rule_ctx = Pattern_matcher.rule_ctx
 let ops = Op.Set.of_list
 let equal_shape s0 s1 = List.equal Sint.equal s0 s1
 let ints = List.map (fun n -> Int n)
-let reaches u x = u == x || Nodes.mem x (backward_slice u)
+let reaches = Ops.reaches ~enter_calls:false
 let is_empty_shape u = List.exists (Sint.equal (Int 0)) (shape u)
 let equal_device_of u0 u1 = Option.equal equal_device (device u0) (device u1)
 

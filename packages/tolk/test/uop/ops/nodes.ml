@@ -929,6 +929,11 @@ let graphs =
           is_true (Ops.reaches c inside);
           is_true (Ops.reaches c c);
           is_false (Ops.reaches inside c));
+      test "reaches ~enter_calls:false does not enter call bodies" (fun () ->
+          let inside = var "inside" 0 1 and arg = var "arg" 0 1 in
+          let c = Ops.call (Ops.sink [ inside ]) [ arg ] in
+          equal bool false (Ops.reaches ~enter_calls:false c inside);
+          equal bool true (Ops.reaches ~enter_calls:false c arg));
       test "split_uop is the operands of a tree of one operation" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 and c = var "c" 0 4 in
           equal uops [ a; b; c ] (Ops.split_uop Ops.O.(a + b + c) Op.Add);

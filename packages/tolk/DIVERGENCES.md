@@ -2821,16 +2821,23 @@ stores through a pad.
 - **Differs:** the rule asks whether `t` or `f` reaches the condition, a
   scalar boolean, with `Ops.reaches`: a walk from the branch that enters no
   node built before the condition, since a node is built after its sources.
-  `Ops.bool_slice` is gone. The rule folds the same selections.
+  `Ops.bool_slice` is gone. The search runs last, after the INDEX gate,
+  which reads a property of each node (D94), where tinygrad's lookup runs
+  first: a branch that reaches an INDEX is rejected without a walk. The rule
+  folds the same selections.
 - **Reason:** (b): rune lowers `Nx.sin` to a reduction full of comparisons
   and selections before tolk sees it, so in a jitted chain of `Nx.sin` each
   node's boolean set holds every comparison of the links before it, and the
   sets grow with the square of the chain. Compiling a chain of 80 `Nx.sin`
   cold on an M1 Max took 63.0 s and a heap of 618M words with the property,
   and takes 16.6 s and 76M words with the search, whose walks stay inside
-  the link that built the condition.
+  the link that built the condition. A condition built before a long chain
+  of selections still makes each search walk the chain below it, which the
+  INDEX gate spares when the branches read memory: the jitted training step
+  of a model of 2031 kernels spent 3 s of its 10 s schedule in the search.
 - **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `cost › sym's work
-  on a chain of selections is linear in its length` and tinygrad's
+  on a chain of selections is linear in its length`, `› sym's work on a chain
+  under one far condition is linear in its length` and tinygrad's
   `test_where_closure_folding*` goldens; the Ops suite (`test/uop/ops`):
   `graphs › reaches is membership in the node's toposort` and `› reaches
   enters call bodies`; the rune bench's `Jit/jit-run-chain`.

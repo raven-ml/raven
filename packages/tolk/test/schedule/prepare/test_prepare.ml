@@ -962,6 +962,46 @@ let earliest =
           equal uop (stores (input 1)) (prepare with_noop));
     ]
 
+(* Cost *)
+
+(* [written n] is [n] stores in sequence, each into storage of its own made
+   after the value it stores, which reads the storage the previous store wrote.
+   Each store asks whether its value reads its destination: a value built before
+   its destination cannot. Chains of other lengths store into other slots, and
+   share no node. *)
+let written n =
+  let rec link prev k =
+    if k > n then prev
+    else
+      let value = Ops.exp2 prev in
+      let dest = input (n + k) in
+      link (Ops.after dest [ Ops.store dest value ]) (k + 1)
+  in
+  Ops.sink [ link (input n) 1 ]
+
+(* [words f] is the words [f ()] allocates. *)
+let words f =
+  let before = Gc.minor_words () in
+  ignore (Sys.opaque_identity (f ()));
+  Gc.minor_words () -. before
+
+(* Work linear in the length is [a * n + b] with [b >= 0], so twice the length
+   costs at most twice the work. The tenth of slack covers tables that double
+   their capacity at different lengths in the two runs. *)
+let cost =
+  group "prepare_rangeify › cost"
+    [
+      test
+        "the work on a chain of stores into later storage is linear in its \
+         length" (fun () ->
+          let work n =
+            let sink = written n in
+            words (fun () -> prepare sink)
+          in
+          let short = work 250 and long = work 500 in
+          less float_exact ~than:(2.2 *. short) long);
+    ]
+
 let () =
   exit
     (run "Tolk.Prepare"
@@ -976,4 +1016,5 @@ let () =
          outputs;
          calls_inline;
          earliest;
+         cost;
        ])

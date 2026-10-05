@@ -1078,10 +1078,18 @@ let op_in_backward_slice_with_self u ops =
   List.exists (fun o -> Op.Set.mem o reached) ops
 
 (* A node is built after its sources, so ids grow along every edge: the search
-   for [x] never enters a node built before it. *)
-let reaches u x =
+   for [x] never enters a node built before it, and stops once it meets [x]. *)
+let reaches ?enter_calls u x =
+  let gate n =
+    if n == x then raise_notrace Exit;
+    n.id >= x.id
+  in
   u == x
-  || (x.id < u.id && List.memq x (toposort ~gate:(fun n -> n.id >= x.id) u))
+  || x.id < u.id
+     &&
+     match toposort ?enter_calls ~gate u with
+     | _ -> false
+     | exception Exit -> true
 
 let rec split_uop u sep =
   if Op.equal u.op sep then List.concat_map (fun s -> split_uop s sep) u.src

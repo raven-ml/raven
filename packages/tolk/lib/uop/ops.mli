@@ -576,9 +576,9 @@ val op_in_backward_slice_with_self : t -> Op.t list -> bool
 (** [op_in_backward_slice_with_self u ops] is [true] iff [u] or a node of
     [backward_slice u] has an operation in [ops]. *)
 
-val reaches : t -> t -> bool
-(** [reaches u x] is [true] iff [x] is [u] or a node [u] reaches, entering
-    call bodies. *)
+val reaches : ?enter_calls:bool -> t -> t -> bool
+(** [reaches ~enter_calls u x] is [true] iff [x] is [u] or a node [u] reaches,
+    entering call bodies iff [enter_calls] (default [true]). *)
 
 val split_uop : t -> Op.t -> t list
 (** [split_uop u op] is the operands of the tree of [op] nodes rooted at [u],
