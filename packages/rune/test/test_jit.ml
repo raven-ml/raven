@@ -4268,11 +4268,103 @@ let lost_devices =
           equal ~msg:"on the host" close (poly (x ())) (g (x ())));
     ]
 
+(* Integer rules
+
+   A compiled call computes integers as eager does at every width: a remainder
+   by zero is the dividend, a signed least value divided by -1 is itself, and a
+   shift by the width or past it gives 0, or -1 below zero. A 4-bit or bit value
+   is refused until rune compiles them. *)
+
+let integer_rules =
+  let name (Int_dtype d) = d.name in
+  (* A width's ends, a neighbour, and small values. *)
+  let edges ~bits ~signed =
+    let lo, hi = int_range ~bits ~signed in
+    [ lo; hi; Int64.succ lo; 0L; 1L; -5L ]
+  in
+  group "integer rules"
+    [
+      cases "a remainder by zero is the dividend, and a quotient by zero 0"
+        ~name int_dtypes (fun (Int_dtype d) ->
+          let a =
+            Nx.create d.dtype [| 6 |]
+              (Array.of_list
+                 (List.map d.of_i64 (edges ~bits:d.bits ~signed:d.signed)))
+          in
+          let zero = Nx.zeros d.dtype [| 6 |] in
+          equal ~msg:"mod_" (tensor d.exact) a
+            (Rune.jit' (fun a -> Nx.mod_ a (Nx.zeros_like a)) a);
+          equal ~msg:"div" (tensor d.exact) zero
+            (Rune.jit' (fun a -> Nx.div a (Nx.zeros_like a)) a));
+      cases "the least value divided by -1 is itself, with no remainder" ~name
+        (List.filter (fun (Int_dtype d) -> d.signed) int_dtypes)
+        (fun (Int_dtype d) ->
+          let lo, _ = int_range ~bits:d.bits ~signed:true in
+          let least = Nx.full d.dtype [| 1 |] (d.of_i64 lo) in
+          let by_minus_one f a = f a (Nx.full_like a (d.of_i64 (-1L))) in
+          equal ~msg:"div" (tensor d.exact) least
+            (Rune.jit' (by_minus_one Nx.div) least);
+          equal ~msg:"mod_" (tensor d.exact) (Nx.zeros d.dtype [| 1 |])
+            (Rune.jit' (by_minus_one Nx.mod_) least));
+      cases "a shift by the width or past it gives 0, or -1 below zero" ~name
+        int_dtypes (fun (Int_dtype d) ->
+          let a =
+            Nx.create d.dtype [| 6 |]
+              (Array.of_list
+                 (List.map d.of_i64 (edges ~bits:d.bits ~signed:d.signed)))
+          in
+          let negative v = d.signed && Int64.compare (d.to_i64 v) 0L < 0 in
+          let filled =
+            Nx.create d.dtype [| 6 |]
+              (Array.map
+                 (fun v -> d.of_i64 (if negative v then -1L else 0L))
+                 (Nx.to_array a))
+          in
+          List.iter
+            (fun n ->
+              let msg = Printf.sprintf "by %d" n in
+              equal ~msg (tensor d.exact) (Nx.zeros_like a)
+                (Rune.jit' (fun a -> Nx.lshift a n) a);
+              equal ~msg (tensor d.exact) filled
+                (Rune.jit' (fun a -> Nx.rshift a n) a))
+            [ d.bits; d.bits + 1; 64; 65 ]);
+      cases "a shift below the width is eager's" ~name int_dtypes
+        (fun (Int_dtype d) ->
+          let a =
+            Nx.create d.dtype [| 6 |]
+              (Array.of_list
+                 (List.map d.of_i64 (edges ~bits:d.bits ~signed:d.signed)))
+          in
+          List.iter
+            (fun n ->
+              let msg = Printf.sprintf "by %d" n in
+              equal ~msg (tensor d.exact) (Nx.lshift a n)
+                (Rune.jit' (fun a -> Nx.lshift a n) a);
+              equal ~msg (tensor d.exact) (Nx.rshift a n)
+                (Rune.jit' (fun a -> Nx.rshift a n) a))
+            [ 0; 1; d.bits - 1 ]);
+      test "a compiled call refuses 4-bit integers with a jit error" (fun () ->
+          let q = Nx.create Nx.int4 [| 3 |] [| 7; -8; 1 |] in
+          let u = Nx.create Nx.uint4 [| 3 |] [| 15; 0; 1 |] in
+          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.add x x) q);
+          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.sum x) u);
+          raises_jit_error (fun () ->
+              Rune.jit' (fun x -> Nx.cast Nx.int4 x) (Nx.ones Nx.int8 [| 3 |]));
+          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.cast Nx.int8 x) q));
+      test "a compiled call refuses a bit result and a bit argument" (fun () ->
+          let m = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
+          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.cast Nx.bit x) m);
+          raises_jit_error (fun () ->
+              Rune.jit' (fun x -> Nx.cast Nx.bool x) (Nx.cast Nx.bit m));
+          raises_jit_error (fun () -> Rune.jit' Nx.count (Nx.cast Nx.bit m)));
+    ]
+
 let () =
   exit
     (run "Rune.jit"
        [
          values;
+         integer_rules;
          keys;
          results;
          consumption;
