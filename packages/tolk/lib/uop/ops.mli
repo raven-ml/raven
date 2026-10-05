@@ -781,7 +781,8 @@ val operand_bounds : t -> t -> Dtype.value * Dtype.value
 (** [operand_bounds u s] is the bounds of [u]'s source [s] as [u] reads it: an
     operation on a committed integer commits a weak integer operand to its type,
     which wraps it, so bounds that leave the type are one value wrapped, or the
-    type's. *)
+    type's; an operation on a committed float commits a weak float operand to
+    its type, which rounds it, and its bounds round with it. *)
 
 val overflows : t -> Dtype.t -> bool
 (** [overflows u dt] is [true] iff [u]'s bounds reach outside [dt]'s. *)

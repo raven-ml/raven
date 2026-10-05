@@ -3822,3 +3822,27 @@ stores through a pad.
   `moves_output.golden`, from the patched tinygrad; rune's Rune.jit programs
   suite: `a compiled program › computes eager's bits`, whose examples hold the
   pad.
+
+## D128. A committed float operation reads a weak float operand rounded
+
+- **tinygrad:** `uop/ops.py:1104` (`UOp._min_max`), which bounds a weak float
+  operand of a committed float operation by its value as written, at no
+  width.
+- **tolk:** `lib/uop/ops.ml:1568` (`rounded`) and `:1589`
+  (`operand_bounds`); `test/gen/tinygrad.patch`, which gives tinygrad the
+  same bounds (`rounded`, `UOp._operand`).
+- **Differs:** a committed float operation that reads a weak float operand
+  bounds it rounded to its own type, as the code it compiles to computes it,
+  as a committed integer operation already wraps a weak integer one. Rounding
+  keeps the order of values, so the bounds rounded hold the values rounded; a
+  bound that rounds to NaN, past a type without infinities, leaves the type's
+  bounds. tinygrad bounded `where c x 5e-324` at float32 by `5e-324`, which
+  rounds to 0, so the bounds excluded 0 and `== 0` of the selection folded to
+  false.
+- **Reason:** (b). rune's pad of a float32 tensor by a value that rounds to 0
+  (`Nx.pad ~value:5e-324`) compiled to such a selection, whose comparison with
+  0 folded to false where eager compares 0 with 0.
+- **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › a committed float
+  selection holds a weak constant at its type, where it may round to zero`;
+  rune's Rune.jit programs suite: `a compiled program › computes eager's
+  bits`, whose examples hold the pad.

@@ -1561,6 +1561,20 @@ let at_width dt ((lo, hi) as b : Dtype.value * Dtype.value) =
       else (Dtype.min dt, Dtype.max dt)
   | _ -> b
 
+(* A weak float that a committed float operation reads is rounded to that type,
+   which keeps the order of values: its bounds rounded hold its values rounded,
+   as a constant that rounds to 0 there. A bound that rounds to NaN, past a type
+   without infinities, leaves the type's bounds. *)
+let rounded dt ((lo, hi) as b : Dtype.value * Dtype.value) =
+  match (lo, hi) with
+  | `Float _, `Float _ -> (
+      match (Dtype.truncate dt lo, Dtype.truncate dt hi) with
+      | (`Float l as lo), (`Float h as hi)
+        when not (Float.is_nan l || Float.is_nan h) ->
+          (lo, hi)
+      | _ -> unbounded dt)
+  | _ -> b
+
 (* Bounds read only the sources their rule needs, so they recurse rather than
    fill the whole graph below. A node's bounds, and those of an operand an
    operation commits to its type, are at their width. *)
@@ -1576,7 +1590,9 @@ and operand_bounds u s =
   let operands =
     if Op.Set.mem u.op Op.Set.comparison then promo_dtype u.src else u.dtype
   in
-  at_width operands (min_max s)
+  if Dtype.equal s.dtype Dtype.Weak_float && List.mem operands Dtype.floats then
+    rounded operands (min_max s)
+  else at_width operands (min_max s)
 
 and compute_min_max u : Dtype.value * Dtype.value =
   let dt = u.dtype in

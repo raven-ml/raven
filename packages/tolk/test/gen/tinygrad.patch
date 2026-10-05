@@ -1849,10 +1849,10 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..c196d5a 100644
+index 2842d7e..6de87b7 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
-@@ -92,6 +92,15 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
+@@ -92,6 +92,21 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
    return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
  
  def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
@@ -1865,17 +1865,25 @@ index 2842d7e..c196d5a 100644
 +  return (v:=truncate[dt](lo), v) if lo == hi else (dt.min, dt.max)
 +# the bounds of a value nothing proves more of: finite float bounds state that it is not nan, which every float type holds
 +def unbounded(dt:DType) -> tuple[PyConst, PyConst]: return (-math.inf, math.inf) if dtypes.is_float(dt) else (dt.min, dt.max)
++# a weak float that a committed float operation reads is rounded to that type: its bounds round with it, a nan the type's
++def rounded(dt:DType, b:tuple[PyConst, PyConst]) -> tuple[PyConst, PyConst]:
++  lo, hi = b
++  if not (isinstance(lo, float) and isinstance(hi, float)): return b
++  lo, hi = truncate[dt](lo), truncate[dt](hi)
++  return unbounded(dt) if math.isnan(lo) or math.isnan(hi) else (lo, hi)
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1102,8 +1111,29 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1102,8 +1117,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
 +    # a node's bounds, and those of an operand an operation commits to its type, are at their width
 +    return at_width(self.dtype, self._interval)
 +  def _operand(self, s:UOp) -> tuple[PyConst, PyConst]:
-+    return at_width(promo_dtype(self.src) if self.op in GroupOp.Comparison else self.dtype, s._min_max)
++    dt = promo_dtype(self.src) if self.op in GroupOp.Comparison else self.dtype
++    if s.dtype == dtypes.weakfloat and dt in dtypes.floats: return rounded(dt, s._min_max)
++    return at_width(dt, s._min_max)
 +  @functools.cached_property
 +  def _interval(self) -> tuple[PyConst, PyConst]:
 +    # a float sum, difference or product of finite bounds has the corners, widened past the result's rounding
@@ -1899,7 +1907,7 @@ index 2842d7e..c196d5a 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,28 +1169,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1139,28 +1177,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -1963,7 +1971,7 @@ index 2842d7e..c196d5a 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1333,6 +1390,8 @@ class KernelInfo:
+@@ -1333,6 +1398,8 @@ class KernelInfo:
    opts_to_apply: tuple|None = None
    estimates: Estimates|None = None
    beam: int = 0
@@ -1972,7 +1980,7 @@ index 2842d7e..c196d5a 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1363,6 +1422,7 @@ class ProgramInfo:
+@@ -1363,6 +1430,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -1980,7 +1988,7 @@ index 2842d7e..c196d5a 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1404,12 +1464,18 @@ def safe_pow(x, y):
+@@ -1404,12 +1472,18 @@ def safe_pow(x, y):
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
  
@@ -2001,7 +2009,7 @@ index 2842d7e..c196d5a 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1486,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1420,6 +1494,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)

@@ -469,6 +469,19 @@ let bounds_group =
           let x = variable Float32 (f (-2.5)) (f 3.75) "x" in
           check_bounds (Ops.alu x Op.Trunc []) (f (-2.), f 3.);
           check_bounds (Ops.alu x Op.Neg []) (f (-3.75), f 2.5));
+      test
+        "a committed float selection holds a weak constant at its type, where \
+         it may round to zero" (fun () ->
+          let p = Ops.param 0 Float32 in
+          let inf = Ops.float ~dtype:Float32 Float.infinity in
+          let tiny = Ops.float 0x0.0000000000001p-1022 in
+          let u = Ops.where (Ops.lt p (Ops.float ~dtype:Float32 0.)) inf tiny in
+          match Interpreter.eval ~params:[ (0, f 1.) ] u with
+          | #Dtype.value as v ->
+              equal value (f 0.) v;
+              at_most ordered_value ~than:v (Ops.vmin u);
+              at_least ordered_value ~than:v (Ops.vmax u)
+          | `Invalid -> fail "Invalid in an expression without one");
       prop "vmin is at most vmax" Nodes.gen_recipe (fun r ->
           let u = Nodes.build (Nodes.leaves ()) r in
           at_most ordered_value ~than:(Ops.vmax u) (Ops.vmin u));

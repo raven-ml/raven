@@ -1423,6 +1423,24 @@ let found =
               ( F32,
                 leaf F16 [| 1; 2; 3 |] [| 0.; 0x1p-24; 0x1p-24; 0.; 0.; 0. |] )
           ) );
+    (* A pad by a value that rounds to [0.] in float32 compared with [0.]: its
+       bounds held the value unrounded, which excluded [0.]. *)
+    Broadcast
+      ( [| 2 |],
+        Cmp
+          ( Equal,
+            Pad
+              ( [| (0, 1) |],
+                0x0.0000000000001p-1022,
+                Where
+                  ( leaf Bool [| 1 |] [| 0. |],
+                    leaf ~capture:true F32 [| 1 |] [| 0x1.0000003496cdcp+128 |],
+                    leaf ~capture:true F32 [| 1 |] [| 0x1.000174ec81b52p+128 |]
+                  ) ),
+            Take
+              ( None,
+                leaf I64 [| 1 |] [| 0. |],
+                Cast (F32, leaf F16 [| 1; 0 |] [||]) ) ) );
   ]
 
 (* [where (x < 0) x 0], which selects the zero at [x = -0.], the zero a captured

@@ -165,6 +165,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled comparison of a value padded by a float the tensor's type rounds
+  to 0, as a float32 pad of `5e-324`, compares the rounded value: the compiler
+  bounded it unrounded and folded `Nx.equal` with 0 to false.
 - A compiled selection between a widened load and another value, as a pad of
   a converted tensor read through a slice, keeps that value: a float32 pad of
   `0x1p-149` around `Nx.cast Nx.float32` of a float16 tensor read 0, since the
