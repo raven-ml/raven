@@ -141,6 +141,28 @@ let refusal_tests =
               ~until:(fun l -> small 0.1 (List.hd l))
               ~f:(fun l -> l @ l)
               [ scalar 1. ]));
+    test "under vmap until must return one boolean per lane" (fun () ->
+        raises
+          (Invalid_argument
+             "Rune.iterate: until must return one boolean, got bool [2]")
+          (fun () ->
+            Rune.vmap'
+              (Rune.iterate' ~max:3 ~until:(fun x -> Nx.less_s x 1.) ~f:Fun.id)
+              (Nx.zeros f64 [| 3; 2 |])));
+    test "under grad a step that changes the carry's shape is refused"
+      (fun () ->
+        raises
+          (Invalid_argument
+             "Rune.iterate: the root: shape [3] in the carry the step \
+              returned, [2] in the carry it received") (fun () ->
+            Rune.grad'
+              (fun x ->
+                Nx.sum
+                  (Rune.iterate' ~max:3 ~until:(small 0.1)
+                     ~f:(fun x ->
+                       Nx.concatenate ~axis:0 [ x; Nx.slice [ R (0, 1) ] x ])
+                     x))
+              (vec [| 1.; 2. |])));
   ]
 
 (* Lanes *)
@@ -629,7 +651,697 @@ let hold_tests =
         equal (close ()) (per_lane (Rune.grad' written_rooted) (starts ())) t);
   ]
 
+(* The loop written in OCaml *)
+
+(* [plain ~max ~until ~f x] is the loop iterate states, written in OCaml: grad
+   and jvp differentiate the steps it takes. *)
+let plain ~max ~until ~f x =
+  match loop ~max ~until ~f x with
+  | Ok (x, _) -> x
+  | Error () -> invalid_arg (failure max)
+
+(* [plain_iterate] is [plain] at {!Rune.iterate}'s arguments. *)
+let plain_iterate _ ~max ~until ~f x = plain ~max ~until ~f x
+let lane_failure max i = failure max ^ Printf.sprintf ", in lane %d" i
+
+let starts =
+  Gen.(
+    map
+      (fun l -> vec (Array.of_list l))
+      (list ~size:(int_range 1 4) (float_range (-2.) 2.)))
+
+(* Bounds *)
+
+(* [outcomes ~max xs] is each lane's own loop from [xs]. *)
+let outcomes ~max xs =
+  List.init (lanes xs) (fun i ->
+      loop ~max ~until:(small tol) ~f:(contract w0) (lane i xs))
+
+let at_bound ~max ks =
+  List.exists
+    (function Ok (_, k) -> max > 0 && k = max | Error () -> false)
+    ks
+
+let bound_tests =
+  [
+    prop "under vmap each lane ends within max, or the first running is named"
+      Gen.(pair starts (int_range 0 5))
+      (fun (xs, max) ->
+        let ks = outcomes ~max xs in
+        let got () =
+          Rune.vmap' (Rune.iterate' ~max ~until:(small tol) ~f:(contract w0)) xs
+        in
+        cover "max = 0" (max = 0);
+        cover "max = 1" (max = 1);
+        match List.find_index Result.is_error ks with
+        | Some i ->
+            cover "a lane still runs at max" true;
+            raises (Invalid_argument (lane_failure max i)) got
+        | None ->
+            cover "a lane stops at max" (at_bound ~max ks);
+            equal (exact ())
+              (stack (lanes xs) (fun i -> fst (Result.get_ok (List.nth ks i))))
+              (got ()));
+    prop
+      "under the derivatives each lane ends within max, or the first running \
+       is named"
+      Gen.(pair starts (int_range 0 5))
+      (fun (xs, max) ->
+        let until = small tol and f = contract w0 in
+        let loss x = Nx.sum (Nx.sin (Rune.iterate' ~max ~until ~f x)) in
+        let ks = outcomes ~max xs in
+        let applications =
+          [
+            ("vmap of grad", fun () -> Rune.vmap' (Rune.grad' loss) xs);
+            ( "grad of vmap",
+              fun () -> Rune.grad' (fun xs -> Nx.sum (Rune.vmap' loss xs)) xs );
+            ( "jvp of vmap",
+              fun () -> snd (Rune.jvp' (Rune.vmap' loss) xs (Nx.ones_like xs))
+            );
+          ]
+        in
+        match List.find_index Result.is_error ks with
+        | Some i ->
+            cover "a lane still runs at max" true;
+            List.iter
+              (fun (msg, a) ->
+                raises ~msg (Invalid_argument (lane_failure max i)) a)
+              applications
+        | None ->
+            cover "a lane stops at max" (at_bound ~max ks);
+            let expected =
+              per_lane
+                (Rune.grad' (fun x -> Nx.sum (Nx.sin (plain ~max ~until ~f x))))
+                xs
+            in
+            List.iter
+              (fun (msg, a) -> equal ~msg (close ()) expected (a ()))
+              applications);
+    test "max = 1 takes the one step until needs" (fun () ->
+        equal (exact ()) (scalar 0.5)
+          (Rune.iterate' ~max:1
+             ~until:(fun x -> Nx.less_s x 0.75)
+             ~f:(fun x -> Nx.mul_s x 0.5)
+             (scalar 1.)));
+    test "max = 1 raises when one step is not enough" (fun () ->
+        raises
+          (Invalid_argument (failure 1))
+          (fun () ->
+            Rune.iterate' ~max:1
+              ~until:(fun x -> Nx.less_s x 0.3)
+              ~f:(fun x -> Nx.mul_s x 0.5)
+              (scalar 1.)));
+  ]
+
+(* A start that satisfies until *)
+
+let unstepped =
+  let f _ = failwith "the step ran" in
+  let x = vec [| 0.01; -0.02; -0. |] in
+  let id max x = Rune.iterate' ~max ~until:(small tol) ~f x in
+  let loss max x = Nx.sum (Nx.sin (id max x)) in
+  let xs = Nx.reshape [| 3; 1 |] x in
+  let applications max =
+    [
+      ("the value", fun () -> (x, id max x));
+      ("grad", fun () -> (Nx.cos x, Rune.grad' (loss max) x));
+      ("jvp", fun () -> (Nx.cos x, snd (Rune.jvp' (id max) x (Nx.cos x))));
+      ("vmap", fun () -> (xs, Rune.vmap' (id max) xs));
+      ( "vmap of grad",
+        fun () -> (Nx.cos xs, Rune.vmap' (Rune.grad' (loss max)) xs) );
+      ( "grad of vmap",
+        fun () ->
+          ( Nx.cos xs,
+            Rune.grad' (fun xs -> Nx.sum (Rune.vmap' (loss max) xs)) xs ) );
+    ]
+  in
+  List.concat_map
+    (fun max ->
+      List.map
+        (fun (name, a) ->
+          test
+            (Printf.sprintf
+               "%s of a start that satisfies until, max = %d, takes no step"
+               name max) (fun () ->
+              let expected, got = a () in
+              equal (exact ()) expected got))
+        (applications max))
+    [ 0; 3 ]
+
+(* Non-finite carries *)
+
+(* Lanes that stop at their start on a carry that is not finite, beside lanes
+   that run. *)
+let settled x = Nx.logical_or (Nx.logical_not (Nx.isfinite x)) (small tol x)
+
+let nonfinite () =
+  vec [| Float.nan; 1.9; Float.infinity; -0.; -1.4; Float.neg_infinity |]
+
+let settle w x = Rune.iterate' ~max:80 ~until:settled ~f:(contract w) x
+let plain_settle w x = plain ~max:80 ~until:settled ~f:(contract w) x
+
+(* A loss whose derivative is finite at every carry: the select comes before the
+   sine. *)
+let finite_loss y =
+  Nx.sum (Nx.sin (Nx.where (Nx.isfinite y) y (Nx.zeros_like y)))
+
+let nonfinite_tests =
+  [
+    test "a stopped lane keeps a NaN or infinite carry bit for bit" (fun () ->
+        let xs = nonfinite () in
+        equal (exact ())
+          (per_lane (plain_settle w0) xs)
+          (Rune.vmap' (settle w0) xs));
+    test "vmap of grad gives a lane stopped on NaN a zero" (fun () ->
+        let xs = nonfinite () in
+        equal (close ())
+          (per_lane (Rune.grad' (fun x -> finite_loss (plain_settle w0 x))) xs)
+          (Rune.vmap' (Rune.grad' (fun x -> finite_loss (settle w0 x))) xs));
+    test "a captured parameter's gradient stays finite beside NaN lanes"
+      (fun () ->
+        let xs = nonfinite () in
+        equal (close ())
+          (Rune.grad'
+             (fun w ->
+               Nx.sum
+                 (stack (lanes xs) (fun i ->
+                      finite_loss (plain_settle w (lane i xs)))))
+             w0)
+          (Rune.grad'
+             (fun w ->
+               Nx.sum (Rune.vmap' (fun x -> finite_loss (settle w x)) xs))
+             w0));
+    test "a stopped lane's NaN outside the carry reaches no gradient" (fun () ->
+        (* Each lane's step reads its own [w]; the lanes whose [w] is not finite
+           stop at their start. *)
+        let ws = vec [| Float.nan; 0.7; Float.infinity; 0.5; Float.nan |] in
+        let xs = vec [| 0.01; 1.9; -0.02; -1.4; 0. |] in
+        let pair = Nx.Ptree.(pair tensor tensor) in
+        let loss iterate x w =
+          Nx.sin (iterate ~max:80 ~until:(small tol) ~f:(contract w) x)
+        in
+        let gx, gw =
+          Rune.grad pair
+            (fun (xs, ws) ->
+              Nx.sum
+                (Rune.vmap
+                   Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                   (loss Rune.iterate') xs ws))
+            (xs, ws)
+        in
+        let per_lane_grad i =
+          Rune.grad pair (fun (x, w) -> loss plain x w) (lane i xs, lane i ws)
+        in
+        equal ~msg:"x" (close ()) (stack 5 (fun i -> fst (per_lane_grad i))) gx;
+        equal ~msg:"w" (close ()) (stack 5 (fun i -> snd (per_lane_grad i))) gw);
+    test "jvp of vmap gives a lane stopped on NaN its tangent" (fun () ->
+        let xs = nonfinite () in
+        let vs = vec [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+        equal (close ())
+          (stack (lanes xs) (fun i ->
+               snd (Rune.jvp' (plain_settle w0) (lane i xs) (lane i vs))))
+          (snd (Rune.jvp' (Rune.vmap' (settle w0)) xs vs)));
+  ]
+
+(* Stopped lanes hold, over generated starts *)
+
+let carried : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make ()
+
+(* Each trip checks that the step runs as the lane its carry names, and adds its
+   carry to [carried]. *)
+let checked_step (x, id) =
+  Nx.check
+    (Nx.equal id (Rune.lane_index ()))
+    (fun _ -> "the carry's lane is not the step's lane");
+  Rune.Total.add carried x;
+  (contract w0 x, id)
+
+let checked x id =
+  fst
+    (Rune.iterate
+       Nx.Ptree.(pair tensor tensor)
+       ~max:80
+       ~until:(fun (x, _) -> small tol x)
+       ~f:checked_step (x, id))
+
+(* [carries x] is the sum of the carries each trip of [x]'s own loop starts
+   from. *)
+let carries x =
+  let rec go x acc =
+    if holds (small tol x) then acc else go (contract w0 x) (Nx.add acc x)
+  in
+  go x (scalar 0.)
+
+let hold_law =
+  prop "a stopped lane's lane_index is its donor's and its additions drop"
+    Gen.(
+      map
+        (fun l -> vec (Array.of_list l))
+        (list ~size:(int_range 2 5) (float_range (-2.) 2.)))
+    (fun xs ->
+      let n = lanes xs in
+      let ks =
+        List.init n (fun i ->
+            trips ~max:80 ~until:(small tol) ~f:(contract w0) (lane i xs))
+      in
+      cover "lanes stop apart" (List.length (List.sort_uniq compare ks) > 1);
+      let ids = Nx.arange Nx.int32 0 n 1 in
+      let mapped =
+        Rune.vmap Nx.Ptree.(tensor @-> tensor @-> returns tensor) checked
+      in
+      let expected = Nx.sum (per_lane carries xs) in
+      let ys, total =
+        Rune.Total.collect carried ~zero:(scalar 0.) (fun () -> mapped xs ids)
+      in
+      equal ~msg:"carry" (exact ()) (per_lane (iterated w0) xs) ys;
+      equal ~msg:"total" (close ()) expected total;
+      let g, total =
+        Rune.Total.collect carried ~zero:(scalar 0.) (fun () ->
+            Rune.grad' (fun xs -> Nx.sum (Nx.sin (mapped xs ids))) xs)
+      in
+      equal ~msg:"grad" (close ())
+        (per_lane (Rune.grad' (fun x -> Nx.sum (Nx.sin (iterated w0 x)))) xs)
+        g;
+      equal ~msg:"total under grad" (close ()) expected total)
+
+(* Dtypes *)
+
+(* [flips x t] is [x] flipped [t] times: every trip moves each element of a row
+   that is not a palindrome, so a lane that takes one trip too many or too few
+   shows. *)
+let flips x t =
+  fst
+    (Rune.iterate
+       Nx.Ptree.(pair tensor tensor)
+       ~max:3
+       ~until:(fun (_, k) -> Nx.greater_equal k t)
+       ~f:(fun (x, k) -> (Nx.flip x, Nx.add_s k 1l))
+       (x, Nx.scalar Nx.int32 0l))
+
+let held_dtype name x =
+  test (name ^ " carries hold each lane's bits") (fun () ->
+      let t = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
+      let expected =
+        stack 4 (fun i ->
+            let r = lane i x in
+            if i mod 2 = 1 then Nx.flip r else r)
+      in
+      equal (exact ()) expected
+        (Rune.vmap Nx.Ptree.(tensor @-> tensor @-> returns tensor) flips x t))
+
+let rows dt a = Nx.create dt [| 4; 3 |] a
+
+let floats =
+  Float.
+    [|
+      nan;
+      -0.;
+      infinity;
+      1.5;
+      2.;
+      -3.;
+      neg_infinity;
+      0.;
+      4.;
+      5e-324;
+      max_float;
+      -1.;
+    |]
+
+let ints lo hi = [| lo; -1; 0; 1; 2; hi; 3; 0; lo; hi; 1; 2 |]
+let uints hi = [| 0; 1; hi; hi; 0; 2; 3; 4; 1; 5; 0; hi |]
+
+let bools =
+  [|
+    true; false; false; false; true; true; true; true; false; false; false; true;
+  |]
+
+let complexes =
+  Array.mapi (fun i re -> { Complex.re; im = Float.of_int (i - 5) }) floats
+
+let dtype_tests =
+  [
+    held_dtype "float64" (rows Nx.float64 floats);
+    held_dtype "float32" (rows Nx.float32 floats);
+    held_dtype "float16" (rows Nx.float16 floats);
+    held_dtype "bfloat16" (rows Nx.bfloat16 floats);
+    held_dtype "float8_e4m3" (rows Nx.float8_e4m3 floats);
+    held_dtype "float8_e5m2" (rows Nx.float8_e5m2 floats);
+    held_dtype "int4" (rows Nx.int4 (ints (-8) 7));
+    held_dtype "uint4" (rows Nx.uint4 (uints 15));
+    held_dtype "int8" (rows Nx.int8 (ints (-128) 127));
+    held_dtype "uint8" (rows Nx.uint8 (uints 255));
+    held_dtype "int16" (rows Nx.int16 (ints (-32768) 32767));
+    held_dtype "uint16" (rows Nx.uint16 (uints 65535));
+    held_dtype "int32"
+      (rows Nx.int32
+         Int32.
+           [|
+             min_int; -1l; 0l; 1l; 2l; max_int; 3l; 0l; min_int; max_int; 1l; 2l;
+           |]);
+    held_dtype "uint32" (rows Nx.uint32 (Array.map Int32.of_int (uints (-1))));
+    held_dtype "int64"
+      (rows Nx.int64
+         Int64.
+           [|
+             min_int; -1L; 0L; 1L; 2L; max_int; 3L; 0L; min_int; max_int; 1L; 2L;
+           |]);
+    held_dtype "uint64" (rows Nx.uint64 (Array.map Int64.of_int (uints (-1))));
+    held_dtype "complex64" (rows Nx.complex64 complexes);
+    held_dtype "complex128" (rows Nx.complex128 complexes);
+    held_dtype "bool" (rows Nx.bool bools);
+    held_dtype "bit" (rows Nx.bit bools);
+    test "an integer carry has a zero gradient and a zero tangent" (fun () ->
+        let pair = Nx.Ptree.(pair tensor tensor) in
+        let run iterate (x, k) =
+          iterate pair ~max:80
+            ~until:(fun (x, _) -> small tol x)
+            ~f:(fun (x, k) -> (contract w0 x, Nx.add_s k 1l))
+            (x, k)
+        in
+        let loss iterate xk =
+          let x, k = run iterate xk in
+          Nx.mul (Nx.sum (Nx.sin x)) (Nx.cast f64 k)
+        in
+        let xk = (scalar 1.9, Nx.scalar Nx.int32 5l) in
+        let gx, gk = Rune.grad pair (loss Rune.iterate) xk in
+        let gx', _ = Rune.grad pair (loss plain_iterate) xk in
+        equal ~msg:"float gradient" (close ()) gx' gx;
+        equal ~msg:"integer gradient" (exact ()) (Nx.scalar Nx.int32 0l) gk;
+        let dxk = (scalar 1., Nx.scalar Nx.int32 7l) in
+        let (_, k), (dx, dk) = Rune.jvp pair pair (run Rune.iterate) xk dxk in
+        let (_, k'), (dx', _) = Rune.jvp pair pair (run plain_iterate) xk dxk in
+        equal ~msg:"integer value" (exact ()) k' k;
+        equal ~msg:"float tangent" (close ()) dx' dx;
+        equal ~msg:"integer tangent" (exact ()) (Nx.scalar Nx.int32 0l) dk);
+    test "vmap of grad over an integer carry gives each lane its own trips"
+      (fun () ->
+        let loss iterate x =
+          let x, k =
+            iterate
+              Nx.Ptree.(pair tensor tensor)
+              ~max:80
+              ~until:(fun (x, _) -> small tol x)
+              ~f:(fun (x, k) -> (contract w0 x, Nx.add_s k 1l))
+              (x, Nx.scalar Nx.int32 0l)
+          in
+          Nx.mul (Nx.sum (Nx.sin x)) (Nx.cast f64 k)
+        in
+        equal (close ())
+          (per_lane (Rune.grad' (loss plain_iterate)) (xs ()))
+          (Rune.vmap' (Rune.grad' (loss Rune.iterate)) (xs ())));
+  ]
+
+(* Complex carries *)
+
+let cw = Nx.create Nx.complex128 [||] [| { Complex.re = 0.3; im = -0.8 } |]
+let c0 = Nx.create Nx.complex128 [||] [| { Complex.re = 0.6; im = 0.5 } |]
+let csmall z = Nx.less_s (Nx.max (Nx.real f64 (Nx.mul z (Nx.conjugate z)))) 1e-3
+let crun iterate c z = iterate ~max:80 ~until:csmall ~f:(fun z -> Nx.mul z c) z
+let closs iterate c z = Nx.sum (Nx.real f64 (Nx.mul (crun iterate c z) cw))
+
+let zs () =
+  Nx.create Nx.complex128 [| 4 |]
+    Complex.
+      [|
+        { re = 0.01; im = 0. };
+        { re = 1.; im = -1. };
+        { re = -0.2; im = 0.3 };
+        { re = 2.; im = 0.5 };
+      |]
+
+let complex_tests =
+  [
+    test "vmap of grad over a complex carry covers each lane's trips" (fun () ->
+        equal (close ())
+          (per_lane (Rune.grad' (closs plain c0)) (zs ()))
+          (Rune.vmap' (Rune.grad' (closs Rune.iterate' c0)) (zs ())));
+    test "grad of a captured complex parameter through vmap" (fun () ->
+        let zs = zs () in
+        equal (close ())
+          (Rune.grad'
+             (fun c ->
+               Nx.sum (stack (lanes zs) (fun i -> closs plain c (lane i zs))))
+             c0)
+          (Rune.grad'
+             (fun c -> Nx.sum (Rune.vmap' (closs Rune.iterate' c) zs))
+             c0));
+    test "jvp of vmap over a complex carry" (fun () ->
+        let zs = zs () in
+        let v = Nx.conjugate zs in
+        equal (close ())
+          (stack (lanes zs) (fun i ->
+               snd (Rune.jvp' (crun plain c0) (lane i zs) (lane i v))))
+          (snd (Rune.jvp' (Rune.vmap' (crun Rune.iterate' c0)) zs v)));
+  ]
+
+(* Structures and sizes *)
+
+let structure_tests =
+  let s = Nx.Ptree.(pair (list tensor) (option tensor)) in
+  let run iterate o x =
+    let l, o =
+      iterate s ~max:80
+        ~until:(fun (l, _) -> small tol (List.hd l))
+        ~f:(fun (l, o) ->
+          (List.map (contract w0) l, Option.map (fun y -> Nx.mul_s y 0.5) o))
+        ([ x; Nx.mul_s x 0.5 ], Option.map (fun f -> f x) o)
+    in
+    Nx.stack (l @ Option.to_list o)
+  in
+  let some = Some (fun x -> Nx.add_s x 1.) in
+  [
+    test "a carry of a list and an option holds each lane's" (fun () ->
+        List.iter
+          (fun (msg, o) ->
+            equal ~msg (exact ())
+              (per_lane (run plain_iterate o) (xs ()))
+              (Rune.vmap' (run Rune.iterate o) (xs ())))
+          [ ("Some", some); ("None", None) ]);
+    test "grad of vmap over a structured carry" (fun () ->
+        let loss iterate x = Nx.sum (Nx.sin (run iterate some x)) in
+        equal (close ())
+          (per_lane (Rune.grad' (loss plain_iterate)) (xs ()))
+          (Rune.grad'
+             (fun xs -> Nx.sum (Rune.vmap' (loss Rune.iterate) xs))
+             (xs ())));
+    test "a counter every lane starts from counts each lane's own trips"
+      (fun () ->
+        let run x =
+          Rune.iterate
+            Nx.Ptree.(pair tensor tensor)
+            ~max:80
+            ~until:(fun (x, _) -> small tol x)
+            ~f:(fun (x, k) -> (contract w0 x, Nx.add_s k 1l))
+            (x, Nx.scalar Nx.int32 0l)
+        in
+        let xs = xs () in
+        let _, ks =
+          Rune.vmap Nx.Ptree.(tensor @-> returns (pair tensor tensor)) run xs
+        in
+        equal (exact ())
+          (Nx.create Nx.int32 [| 5 |]
+             (Array.init 5 (fun i ->
+                  Int32.of_int
+                    (trips ~max:80 ~until:(small tol) ~f:(contract w0)
+                       (lane i xs)))))
+          ks);
+    test "a map of no lanes" (fun () ->
+        let none = Nx.zeros f64 [| 0 |] in
+        equal ~msg:"value" (exact ()) none (Rune.vmap' (iterated w0) none);
+        equal ~msg:"grad" (exact ()) none
+          (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' (iterated w0) xs)) none));
+    test "a map of one lane is the loop" (fun () ->
+        let x = vec [| 1.9 |] in
+        let loss x = Nx.sum (Nx.sin (iterated w0 x)) in
+        equal ~msg:"value" (exact ())
+          (stack 1 (fun _ -> iterated w0 (scalar 1.9)))
+          (Rune.vmap' (iterated w0) x);
+        equal ~msg:"grad" (close ())
+          (stack 1 (fun _ -> Rune.grad' loss (scalar 1.9)))
+          (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' loss xs)) x));
+    test "vmap of grad of vmap covers each lane's trips" (fun () ->
+        let xs =
+          Nx.create f64 [| 2; 3 |] [| 1.9; 0.01; -1.4; 0.3; 1.; -0.02 |]
+        in
+        let loss x = Nx.sum (Nx.sin (iterated w0 x)) in
+        equal (close ())
+          (per_lane (per_lane (Rune.grad' loss)) xs)
+          (Rune.vmap' (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' loss xs))) xs));
+    test "a zero-size carry tensor" (fun () ->
+        let pair = Nx.Ptree.(pair tensor tensor) in
+        let run (x, e) =
+          Rune.iterate pair ~max:80
+            ~until:(fun (x, _) -> small tol x)
+            ~f:(fun (x, e) -> (contract w0 x, Nx.mul_s e 2.))
+            (x, e)
+        in
+        let loss xe =
+          let x, e = run xe in
+          Nx.add (Nx.sum (Nx.sin x)) (Nx.sum e)
+        in
+        let e = Nx.zeros f64 [| 0 |] in
+        let gx, ge = Rune.grad pair loss (scalar 1.9, e) in
+        equal ~msg:"x" (close ())
+          (Rune.grad'
+             (fun x ->
+               Nx.sum
+                 (Nx.sin (plain ~max:80 ~until:(small tol) ~f:(contract w0) x)))
+             (scalar 1.9))
+          gx;
+        equal ~msg:"e" (exact ()) e ge;
+        let es = Nx.zeros f64 [| 5; 0 |] in
+        let _, ys =
+          Rune.vmap
+            Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+            (fun x e -> run (x, e))
+            (xs ()) es
+        in
+        equal ~msg:"lanes" (exact ()) es ys);
+  ]
+
+(* iterate' *)
+
+let primed_law =
+  prop "iterate' is iterate at one tensor, eagerly and under grad"
+    Gen.(pair Expr.gen (pair Expr.point (float_range 0.01 2.)))
+    (fun (p, (x0, tol)) ->
+      let until = small tol and f = program_step p in
+      let one () = Rune.iterate Nx.Ptree.tensor ~max:6 ~until ~f x0 in
+      let primed () = Rune.iterate' ~max:6 ~until ~f x0 in
+      match one () with
+      | exception Invalid_argument m ->
+          cover "raises" true;
+          raises (Invalid_argument m) primed
+      | x ->
+          cover "returns" true;
+          equal (exact ()) x (primed ());
+          let loss iterate x = Nx.sum (Nx.sin (iterate x)) in
+          equal (exact ())
+            (Rune.grad'
+               (loss (fun x -> Rune.iterate Nx.Ptree.tensor ~max:6 ~until ~f x))
+               x0)
+            (Rune.grad' (loss (fun x -> Rune.iterate' ~max:6 ~until ~f x)) x0))
+
+(* Loops with scans *)
+
+let scan_rows = vec [| 0.4; -0.9; 1.3; 0.2 |]
+
+(* An iterate in a scan's step, and that scan written out over its rows. *)
+let iterate_in_scan iterate w x =
+  let step c r =
+    let c = iterate ~max:80 ~until:(small tol) ~f:(contract w) (Nx.add c r) in
+    (c, Nx.sin c)
+  in
+  let c, ys = Rune.scan' ~f:step ~init:x scan_rows in
+  Nx.add (Nx.sum c) (Nx.sum ys)
+
+let iterate_in_written_scan w x =
+  let rec go i c acc =
+    if i = Nx.dim 0 scan_rows then Nx.add (Nx.sum c) acc
+    else
+      let c =
+        plain ~max:80 ~until:(small tol) ~f:(contract w)
+          (Nx.add c (lane i scan_rows))
+      in
+      go (i + 1) c (Nx.add acc (Nx.sin c))
+  in
+  go 0 x (scalar 0.)
+
+(* A scan in an iterate's step, and both written out. *)
+let small_rows = vec [| 0.02; -0.01; 0.03 |]
+
+let scan_step w x =
+  fst
+    (Rune.scan'
+       ~f:(fun c r -> (Nx.add (contract w c) (Nx.mul_s r 0.1), c))
+       ~init:x small_rows)
+
+let written_scan_step w x =
+  let rec go i c =
+    if i = Nx.dim 0 small_rows then c
+    else go (i + 1) (Nx.add (contract w c) (Nx.mul_s (lane i small_rows) 0.1))
+  in
+  go 0 x
+
+let scan_in_iterate iterate step w x =
+  Nx.sum (Nx.sin (iterate ~max:80 ~until:(small 0.1) ~f:(step w) x))
+
+let scan_in = scan_in_iterate Rune.iterate' scan_step
+let scan_in_written = scan_in_iterate plain written_scan_step
+
+let scan_law =
+  prop ~count:20
+    "iterates and scans nested either way are the loops written out"
+    Gen.(
+      map
+        (fun l -> vec (Array.of_list l))
+        (list ~size:(int_range 3 3) (float_range (-2.) 2.)))
+    (fun xs ->
+      List.iter
+        (fun (name, loss, written) ->
+          let msg what = name ^ ": " ^ what in
+          let grads = per_lane (Rune.grad' (written w0)) xs in
+          equal ~msg:(msg "value") (close ())
+            (per_lane (written w0) xs)
+            (Rune.vmap' (loss w0) xs);
+          equal ~msg:(msg "grad") (close ())
+            (Rune.grad' (written w0) (lane 0 xs))
+            (Rune.grad' (loss w0) (lane 0 xs));
+          equal ~msg:(msg "vmap of grad") (close ()) grads
+            (Rune.vmap' (Rune.grad' (loss w0)) xs);
+          equal ~msg:(msg "grad of vmap") (close ()) grads
+            (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' (loss w0) xs)) xs);
+          equal ~msg:(msg "jvp of vmap") (close ()) grads
+            (snd (Rune.jvp' (Rune.vmap' (loss w0)) xs (Nx.ones_like xs)));
+          equal
+            ~msg:(msg "grad of a captured parameter")
+            (close ())
+            (Rune.grad'
+               (fun w ->
+                 Nx.sum (stack (lanes xs) (fun i -> written w (lane i xs))))
+               w0)
+            (Rune.grad' (fun w -> Nx.sum (Rune.vmap' (loss w) xs)) w0))
+        [
+          ( "an iterate in a scan's step",
+            iterate_in_scan Rune.iterate',
+            iterate_in_written_scan );
+          ("a scan in an iterate's step", scan_in, scan_in_written);
+        ])
+
+(* What until reads *)
+
+let until_tests =
+  let from_start t =
+    Rune.iterate' ~max:80
+      ~until:(fun x -> Nx.less (Nx.abs x) t)
+      ~f:(contract w0) (scalar 1.9)
+  in
+  [
+    test "an until that reads a tracked value adds no gradient" (fun () ->
+        equal (exact ()) (scalar 0.)
+          (Rune.grad' (fun t -> Nx.sum (from_start t)) (scalar 0.05)));
+    test "an until that reads a tracked value adds no tangent" (fun () ->
+        equal (exact ()) (scalar 0.)
+          (snd (Rune.jvp' from_start (scalar 0.05) (scalar 1.))));
+    test "under vmap each lane stops on its own tracked tolerance" (fun () ->
+        let ts = vec [| 0.5; 0.05; 0.005 |] in
+        equal ~msg:"value" (exact ())
+          (per_lane
+             (fun t ->
+               plain ~max:80
+                 ~until:(fun x -> Nx.less (Nx.abs x) t)
+                 ~f:(contract w0) (scalar 1.9))
+             ts)
+          (Rune.vmap' from_start ts);
+        equal ~msg:"grad" (exact ()) (Nx.zeros_like ts)
+          (Rune.grad' (fun ts -> Nx.sum (Rune.vmap' from_start ts)) ts));
+  ]
+
 (* Compilation *)
+
+let jit_refusal =
+  "Rune.jit: a loop that stops on a condition (Rune.iterate) cannot be compiled"
 
 let compiled_tests =
   [
@@ -640,6 +1352,22 @@ let compiled_tests =
              "Rune.jit: a loop that stops on a condition (Rune.iterate) cannot \
               be compiled") (fun () -> Rune.jit' (iterated w0) (scalar 1.9)));
   ]
+  @ List.map
+      (fun (name, f) ->
+        test (name ^ " raises Jit_error") (fun () ->
+            raises (Rune.Jit_error jit_refusal) (fun () -> f (xs ()))))
+      [
+        ("jit of vmap", Rune.jit' (Rune.vmap' (iterated w0)));
+        ( "jit of grad",
+          Rune.jit' (Rune.grad' (fun x -> Nx.sum (Nx.sin (iterated w0 x)))) );
+        ( "jit of grad of vmap",
+          Rune.jit'
+            (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' (iterated w0) xs))) );
+        ( "jit of an iterate in a scan's step",
+          Rune.jit' (iterate_in_scan Rune.iterate' w0) );
+        ( "jit of an iterate over a captured constant",
+          Rune.jit' (fun x -> Nx.add x (iterated w0 (scalar 1.9))) );
+      ]
 
 let () =
   exit
@@ -653,5 +1381,15 @@ let () =
          group "derivatives" derivative_tests;
          group "holds" hold_tests;
          group "nested" [ nested_law; nested_hold_law ];
+         group "bounds" bound_tests;
+         group "a start that satisfies until" unstepped;
+         group "non-finite carries" nonfinite_tests;
+         group "stopped lanes" [ hold_law ];
+         group "dtypes" dtype_tests;
+         group "complex carries" complex_tests;
+         group "structures and sizes" structure_tests;
+         group "iterate'" [ primed_law ];
+         group "scans" [ scan_law ];
+         group "until" until_tests;
          group "compiled" compiled_tests;
        ])

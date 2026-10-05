@@ -608,6 +608,367 @@ let total_tests =
         in
         equal (exact ()) (scalar 3.) n);
   ]
+  @
+  let counted_solve op b =
+    Rune.Total.add total (scalar 10000.);
+    Nx.div b (op (Nx.ones_like b))
+  in
+  let solved a =
+    Rune.root ~linear_solve:counted_solve one
+      ~residual:(fun x ->
+        Rune.Total.add total (scalar 100.);
+        Nx.sub (Nx.mul x x) a)
+      (fun () ->
+        Rune.Total.add total (scalar 1.);
+        newton a)
+  in
+  let a = vec [| 2.; 3.; 5. |] in
+  let lanes = Nx.reshape [| 3; 1 |] a in
+  List.map
+    (fun (name, n, f) ->
+      test (name ^ ": solve's additions count once, linear_solve's none")
+        (fun () ->
+          let _, got =
+            Rune.Total.collect total ~zero:(scalar 0.) (fun () -> f ())
+          in
+          equal (exact ()) (scalar n) got))
+    [
+      ("grad", 1., fun () -> ignore (Rune.grad' (fun a -> Nx.sum (solved a)) a));
+      ("jvp", 1., fun () -> ignore (Rune.jvp' solved a a));
+      ( "vmap of grad",
+        3.,
+        fun () ->
+          ignore (Rune.vmap' (Rune.grad' (fun a -> Nx.sum (solved a))) lanes) );
+      ( "grad of vmap",
+        3.,
+        fun () ->
+          ignore (Rune.grad' (fun a -> Nx.sum (Rune.vmap' solved a)) lanes) );
+      ( "grad of grad",
+        1.,
+        fun () ->
+          ignore
+            (Rune.grad'
+               (fun a -> Nx.sum (Rune.grad' (fun a -> Nx.sum (solved a)) a))
+               a) );
+    ]
+
+(* Second order, forward over forward and reverse over forward *)
+
+let second_order_tests =
+  [
+    prop "second order: jvp of jvp is the finite difference of jvp" positive
+      (fun a ->
+        let v = direction a in
+        equal (close ())
+          (Oracle.central ~eps:1e-5 (fun a -> snd (Rune.jvp' closed a v)) a v)
+          (snd (Rune.jvp' (fun a -> snd (Rune.jvp' loss a v)) a v)));
+    prop "second order: grad of jvp is the finite difference of the gradient"
+      positive (fun a ->
+        let v = direction a in
+        equal (close ())
+          (Oracle.central ~eps:1e-5 (Rune.grad' closed) a v)
+          (Rune.grad' (fun a -> snd (Rune.jvp' loss a v)) a));
+  ]
+
+(* Where the theorem's derivative is stated *)
+
+(* [a x − b] in [x], at a returned [x̂ = 5] that is not its zero: the tangent [u]
+   has [a u + (da x̂ − db) = 0], so [∂x/∂a = −x̂ / a] and [∂x/∂b = 1 / a]. *)
+let off_root (a, b) =
+  Rune.root one ~residual:(fun x -> Nx.sub (Nx.mul a x) b) (fun () -> scalar 5.)
+
+(* [x² − a] at [a = 0]: [J = 2x̂ = 0], so no tangent [u] has [J u + r = 0]. *)
+let at_zero a =
+  Rune.root one
+    ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+    (fun () -> Nx.zeros_like a)
+
+let singular = function
+  | Nx.Linalg_error { kind = `Singular; _ } -> true
+  | _ -> false
+
+let stated_tests =
+  [
+    test "the derivative is taken at a returned point that is not a zero"
+      (fun () ->
+        let ab = (scalar 2., scalar 3.) in
+        let ga, gb = Rune.grad pair (fun ab -> off_root ab) ab in
+        equal ~msg:"grad a" (close ()) (scalar (-2.5)) ga;
+        equal ~msg:"grad b" (close ()) (scalar 0.5) gb;
+        equal ~msg:"jvp a" (close ()) (scalar (-2.5))
+          (snd (Rune.jvp pair one off_root ab (scalar 1., scalar 0.)));
+        equal ~msg:"jvp b" (close ()) (scalar 0.5)
+          (snd (Rune.jvp pair one off_root ab (scalar 0., scalar 1.))));
+    test "a tracked value only solve reads has no derivative" (fun () ->
+        (* The residual [x² − 2] reads nothing tracked: the result's tangent is
+           zero, whatever solve computed it from. *)
+        let r a =
+          Rune.root one
+            ~residual:(fun x -> Nx.sub_s (Nx.mul x x) 2.)
+            (fun () -> Nx.mul_s (Nx.sqrt (Nx.div_s a 2.)) (Float.sqrt 2.))
+        in
+        let a = vec [| 2.; 2. |] in
+        equal ~msg:"grad" (exact ()) (Nx.zeros_like a)
+          (Rune.grad' (fun a -> Nx.sum (r a)) a);
+        equal ~msg:"jvp" (exact ()) (Nx.zeros_like a)
+          (snd (Rune.jvp' r a (Nx.ones_like a)));
+        equal ~msg:"vmap of grad" (exact ()) (Nx.zeros_like a)
+          (Rune.vmap' (Rune.grad' (fun a -> Nx.sum (r a))) a));
+    test "grad at a singular derivative raises the default solve's error"
+      (fun () ->
+        raises_match singular (fun () ->
+            Rune.grad' (fun a -> Nx.sum (at_zero a)) (scalar 0.)));
+    test "jvp at a singular derivative raises the default solve's error"
+      (fun () ->
+        raises_match singular (fun () ->
+            Rune.jvp' at_zero (scalar 0.) (scalar 1.)));
+    test "a scalar root's gradient" (fun () ->
+        let a = scalar 3. in
+        equal (close ())
+          (Nx.recip (Nx.mul_s (Nx.sqrt a) 2.))
+          (Rune.grad'
+             (fun a ->
+               Rune.root one
+                 ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+                 (fun () -> newton a))
+             a));
+    test "a root with a zero-size leaf" (fun () ->
+        let r (e, u) =
+          Rune.root pair
+            ~residual:(fun (x, y) -> (Nx.sub x e, Nx.sub (Nx.mul y y) u))
+            (fun () -> (e, Nx.sqrt u))
+        in
+        let loss eu =
+          let x, y = r eu in
+          Nx.add (Nx.sum x) (Nx.sum y)
+        in
+        let e = Nx.zeros f64 [| 0 |] and u = vec [| 2.; 3. |] in
+        let ge, gu = Rune.grad pair loss (e, u) in
+        equal ~msg:"empty" (exact ()) e ge;
+        equal ~msg:"rest" (close ()) (Nx.recip (Nx.mul_s (Nx.sqrt u) 2.)) gu);
+    test "a root of no elements" (fun () ->
+        let e = Nx.zeros f64 [| 0 |] in
+        equal (exact ()) e
+          (Rune.grad'
+             (fun a ->
+               Nx.sum
+                 (Rune.root one ~residual:(fun x -> Nx.sub x a) (fun () -> a)))
+             e));
+    test "the default solve refuses leaves of two dtypes" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"Rune.root") (fun () ->
+            Rune.grad'
+              (fun a ->
+                let x, y =
+                  Rune.root
+                    Nx.Ptree.(pair tensor tensor)
+                    ~residual:(fun (x, y) ->
+                      (Nx.sub x (Nx.cast Nx.float32 a), Nx.sub y a))
+                    (fun () -> (Nx.cast Nx.float32 a, a))
+                in
+                Nx.add (Nx.sum (Nx.cast f64 x)) (Nx.sum y))
+              (vec [| 1.; 2. |])));
+  ]
+
+(* Complex residuals *)
+
+let c128 = Nx.complex128
+
+(* [z² − a] in complex [z], at the principal square root: [∂z/∂a = 1 / 2z],
+   holomorphic, so a tangent [v] gives [v / 2z]. *)
+let za () =
+  Nx.create c128 [| 3 |]
+    Complex.
+      [| { re = 2.; im = 1. }; { re = -1.; im = 0.5 }; { re = 0.3; im = -2. } |]
+
+let cw () =
+  Nx.create c128 [| 3 |]
+    Complex.
+      [|
+        { re = 0.5; im = -1. }; { re = 1.; im = 2. }; { re = -0.7; im = 0.1 };
+      |]
+
+(* The default solve, and one for a diagonal [J]: [op] of ones is its
+   diagonal. *)
+let diagonal op b = Nx.div b (op (Nx.ones_like b))
+
+let csqrt ?linear_solve a =
+  Rune.root ?linear_solve one
+    ~residual:(fun z -> Nx.sub (Nx.mul z z) a)
+    (fun () -> Nx.sqrt a)
+
+let closs ?linear_solve a =
+  Nx.sum (Nx.real f64 (Nx.mul (csqrt ?linear_solve a) (cw ())))
+
+let closs_closed a = Nx.sum (Nx.real f64 (Nx.mul (Nx.sqrt a) (cw ())))
+
+(* [cdiff f a v] is the central difference of the real [f] at [a] along [v]. *)
+let cdiff f a v =
+  let eps = 1e-6 in
+  let at s =
+    Nx.item [] (f (Nx.add a (Nx.mul_s v { Complex.re = s; im = 0. })))
+  in
+  (at eps -. at (-.eps)) /. (2. *. eps)
+
+let complex_tests =
+  List.concat_map
+    (fun (name, linear_solve) ->
+      [
+        test ("jvp of a complex root is v / 2z, " ^ name) (fun () ->
+            let a = za () and v = cw () in
+            equal (close ())
+              (Nx.div v (Nx.mul_s (Nx.sqrt a) { Complex.re = 2.; im = 0. }))
+              (snd (Rune.jvp' (csqrt ?linear_solve) a v)));
+        test ("grad of a complex root is the directional derivative's, " ^ name)
+          (fun () ->
+            let a = za () in
+            let g = Rune.grad' (closs ?linear_solve) a in
+            List.iter
+              (fun (msg, v) ->
+                equal ~msg (close ())
+                  (scalar (cdiff closs_closed a v))
+                  (scalar (Oracle.dot g v)))
+              [
+                ("real direction", Nx.ones c128 [| 3 |]);
+                ( "imaginary direction",
+                  Nx.full c128 [| 3 |] { Complex.re = 0.; im = 1. } );
+                ("mixed direction", cw ());
+              ]);
+        test ("vmap of jvp of a complex root, " ^ name) (fun () ->
+            let a = Nx.reshape [| 3; 1 |] (za ())
+            and v = Nx.reshape [| 3; 1 |] (cw ()) in
+            equal (close ())
+              (Nx.div v (Nx.mul_s (Nx.sqrt a) { Complex.re = 2.; im = 0. }))
+              (Rune.vmap
+                 Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                 (fun a v -> snd (Rune.jvp' (csqrt ?linear_solve) a v))
+                 a v));
+      ])
+    [ ("default solve", None); ("given solve", Some diagonal) ]
+
+(* Roots in loops *)
+
+(* An implicit step of [x' = −w x]: the [y] with [y + h w y = x], found by the
+   fixed-point iteration [y ← x − h w y], which contracts by [h w]. *)
+let h = 0.5
+
+let implicit w x =
+  let r y = Nx.sub (Nx.add y (Nx.mul_s (Nx.mul w y) h)) x in
+  Rune.root one ~residual:r (fun () ->
+      Rune.iterate' ~max:200
+        ~until:(fun y -> Nx.less_s (Nx.max (Nx.abs (r y))) 1e-13)
+        ~f:(fun y -> Nx.sub x (Nx.mul_s (Nx.mul w y) h))
+        x)
+
+let explicit w x = Nx.div x (Nx.add_s (Nx.mul_s w h) 1.)
+let settled x = Nx.less_s (Nx.max (Nx.abs x)) 0.05
+
+(* The implicit march until the state is small, and the same march with the
+   step's closed form, written out as an OCaml loop. *)
+let march w x = Rune.iterate' ~max:80 ~until:settled ~f:(implicit w) x
+
+let written_march w x =
+  let rec go k x =
+    if Nx.item [] (settled x) then x
+    else if k = 80 then invalid_arg "written_march: too many steps"
+    else go (k + 1) (explicit w x)
+  in
+  go 0 x
+
+(* A root in a scan's step, whose solve is itself a scan of Newton steps. *)
+let scan_newton a =
+  fst
+    (Rune.scan'
+       ~f:(fun x _ -> (Nx.mul_s (Nx.add x (Nx.div a x)) 0.5, x))
+       ~init:(Nx.add_s a 1.) (Nx.zeros f64 [| 60 |]))
+
+let scan_rows = vec [| 0.5; -1.2; 0.8 |]
+
+let root_in_scan root a =
+  let step c r =
+    let c = root (Nx.add c (Nx.mul r r)) in
+    (c, c)
+  in
+  let c, ys = Rune.scan' ~f:step ~init:a scan_rows in
+  Nx.add (Nx.sum c) (Nx.sum (Nx.sin ys))
+
+let scanned_root a =
+  Rune.root one
+    ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+    (fun () -> scan_newton a)
+
+let loop_tests =
+  let w = scalar 0.7 in
+  let xs = vec [| 1.9; -0.3; 0.02; 1.2; -1.7 |] in
+  let loss march w x = Nx.sum (Nx.sin (march w x)) in
+  [
+    test "an implicit march's lanes stop apart" (fun () ->
+        let trips x =
+          let rec go k x =
+            if Nx.item [] (settled x) then k else go (k + 1) (explicit w x)
+          in
+          go 0 x
+        in
+        let ks = List.init 5 (fun i -> trips (lane i xs)) in
+        equal int 0 (List.fold_left min max_int ks);
+        at_least int ~than:3 (List.length (List.sort_uniq compare ks)));
+    test "vmap of a root in an iterate's step" (fun () ->
+        equal (close ())
+          (per_lane (written_march w) xs)
+          (Rune.vmap' (march w) xs));
+    test "vmap of grad of a root in an iterate's step" (fun () ->
+        equal (close ())
+          (per_lane (Rune.grad' (loss written_march w)) xs)
+          (Rune.vmap' (Rune.grad' (loss march w)) xs));
+    test "grad of a captured parameter of a root in an iterate's step"
+      (fun () ->
+        equal (close ())
+          (Rune.grad'
+             (fun w ->
+               Nx.sum (stack 5 (fun i -> loss written_march w (lane i xs))))
+             w)
+          (Rune.grad' (fun w -> Nx.sum (Rune.vmap' (loss march w) xs)) w));
+    test "jvp of vmap of a root in an iterate's step" (fun () ->
+        let vs = Nx.cos xs in
+        equal (close ())
+          (Nx.mul (per_lane (Rune.grad' (loss written_march w)) xs) vs)
+          (snd (Rune.jvp' (Rune.vmap' (loss march w)) xs vs)));
+    test "grad of a root in a scan's step whose solve is a scan" (fun () ->
+        let a = scalar 1.3 in
+        equal (close ())
+          (Rune.grad' (root_in_scan Nx.sqrt) a)
+          (Rune.grad' (root_in_scan scanned_root) a));
+    test "vmap of grad of a root in a scan's step" (fun () ->
+        let a = vec [| 1.3; 0.4; 2.2 |] in
+        equal (close ())
+          (per_lane (Rune.grad' (root_in_scan Nx.sqrt)) a)
+          (Rune.vmap' (Rune.grad' (root_in_scan scanned_root)) a));
+    test "grad of vmap of a root in a scan's step" (fun () ->
+        let a = vec [| 1.3; 0.4; 2.2 |] in
+        equal (close ())
+          (per_lane (Rune.grad' (root_in_scan Nx.sqrt)) a)
+          (Rune.grad'
+             (fun a -> Nx.sum (Rune.vmap' (root_in_scan scanned_root) a))
+             a));
+    test "a solve that scans two steps is not differentiated" (fun () ->
+        (* Two Newton steps from [a + 1]: the derivative is the theorem's at
+           their result [x̂], [1 / 2x̂]. *)
+        let a = scalar 2. in
+        let two a =
+          fst
+            (Rune.scan'
+               ~f:(fun x _ -> (Nx.mul_s (Nx.add x (Nx.div a x)) 0.5, x))
+               ~init:(Nx.add_s a 1.) (Nx.zeros f64 [| 2 |]))
+        in
+        let r a =
+          Rune.root one
+            ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+            (fun () -> two a)
+        in
+        equal (close ()) (Nx.recip (Nx.mul_s (two a) 2.)) (Rune.grad' r a);
+        equal (close ())
+          (Nx.recip (Nx.mul_s (two a) 2.))
+          (Rune.vmap' (Rune.grad' r) (vec [| 2. |]) |> Nx.reshape [||]));
+  ]
 
 (* Compilation *)
 
@@ -622,13 +983,36 @@ let compiled_tests =
         let f a = Nx.sum (Nx.sin (root a)) in
         let a = vec [| 0.5; 2.; 3. |] in
         equal (close ()) (Rune.grad' f a) (Rune.jit' (Rune.grad' f) a));
+    test "jit of jvp is eager jvp" (fun () ->
+        let root a =
+          Rune.root one
+            ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+            (fun () -> Nx.sqrt a)
+        in
+        let f a = snd (Rune.jvp' root a (Nx.cos a)) in
+        let a = vec [| 0.5; 2.; 3. |] in
+        equal (close ()) (f a) (Rune.jit' f a));
+    test "jit of grad of a mapped linear solve is eager" (fun () ->
+        let ths = vec [| 0.3; -1.1; 0.7 |] in
+        let f ths =
+          Nx.sum (Rune.vmap' (system_loss ~linear_solve:mapped_dense) ths)
+        in
+        equal (close ()) (Rune.grad' f ths) (Rune.jit' (Rune.grad' f) ths));
+    test "jit of a root whose solve iterates raises Jit_error" (fun () ->
+        raises
+          (Rune.Jit_error
+             "Rune.jit: a loop that stops on a condition (Rune.iterate) cannot \
+              be compiled") (fun () -> Rune.jit' sqrt_root (vec [| 2. |])));
   ]
 
 let () =
   exit
     (run "Rune.root"
        [
-         group "derivatives" derivative_tests;
+         group "derivatives" (derivative_tests @ second_order_tests);
+         group "where the derivative is stated" stated_tests;
+         group "complex residuals" complex_tests;
+         group "roots in loops" loop_tests;
          group "reading" reading_tests;
          group "structures" structure_tests;
          group "mapped linear solves"
