@@ -1316,7 +1316,9 @@ let rec kernels calls =
   in
   List.rev (List.fold_left of_call [] calls)
 
-(* The nanoseconds of the spans of the kernel [name] on [d] in [events]. *)
+(* The nanoseconds of the spans of the kernel [name] on [d] in [events]. A
+   profile leaves out the spans of a device lost meanwhile: its loss is the
+   error. *)
 let spans events (d, name) =
   let ns =
     List.filter_map
@@ -1326,7 +1328,10 @@ let spans events (d, name) =
         | _ -> None)
       events
   in
-  if ns = [] then fail "Tolk_engine.time" "no span of %s" name;
+  if ns = [] then begin
+    Option.iter (fun why -> raise (Nx_device.Lost (d, why))) (Nx_device.lost d);
+    fail "Tolk_engine.time" "no span of %s" name
+  end;
   List.fold_left ( + ) 0 ns
 
 let time ?(vars = []) t slots =

@@ -290,6 +290,7 @@ val time :
     synchronization of those devices on the host clock. A time allocates no
     device memory and loads nothing.
 
-    Raises as {!run} does, and [Invalid_argument] if a kernel of [s] records no
-    span in the profile: one of a batch compiled without a profile, or one under
-    a range of no trips. *)
+    Raises as {!run} does, {!Nx_device.Lost} if a device that runs a kernel of
+    [s] is lost during the run, and [Invalid_argument] if a kernel of [s]
+    records no span in the profile: one of a batch compiled without a profile,
+    or one under a range of no trips. *)

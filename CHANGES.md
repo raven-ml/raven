@@ -978,6 +978,10 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.time` raises `Nx_device.Lost` when a device that runs the
+  timed kernels is lost during the run, where it raised `Invalid_argument`
+  "no span": a search on NV that a GPU co-tenant held past the hang timeout
+  died naming a missing span instead of the lost device.
 - `Search.beam_search` compiles each source once: candidates of distinct
   kernels that render one source each ran the compiler, a rejected one again
   for every domain waiting on it. A domain asking for a source another is

@@ -1,5 +1,6 @@
 ; The suite runs the Schedule suite's recorded programs and the Linearizer
-; suite's loops. Metal exists on macOS alone.
+; suite's loops. Metal exists on macOS alone. A test that loses a NULL device
+; for good runs in a process of its own (tag lost-device).
 
 (test
  (name test_tolk_engine)
@@ -19,4 +20,8 @@
    (-> metal.other.ml)))
  (deps
   (glob_files ../../schedule/schedule/*.golden)
-  (glob_files ../../codegen/late/linearizer/*.golden)))
+  (glob_files ../../codegen/late/linearizer/*.golden))
+ (action
+  (progn
+   (run %{test} --exclude-tag lost-device)
+   (run %{test} --tag lost-device))))

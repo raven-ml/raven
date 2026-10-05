@@ -1585,6 +1585,16 @@ let timing =
       test "a time refuses an unbound variable" (fun () ->
           let s, slots = timed "CPU" in
           raises_match Exn.invalid_arg (fun () -> Engine.time s slots));
+      test ~tags:[ "lost-device" ]
+        "a time whose device is lost during the run raises Lost" (fun () ->
+          let s, slots = timed "CPU:1" in
+          Nx_device.set_timeout (Null_device.device "CPU:1") 50;
+          raises_match
+            (function
+              | Nx_device.Lost (_, why) -> why = "hang detected" | _ -> false)
+            (fun () ->
+              Null_device.with_latency 0.5 (fun () ->
+                  Engine.time ~vars:n_bound s slots)));
       test "a time refuses a kernel whose batch records no span" (fun () ->
           let s, slots = unprofiled () in
           raises_match Exn.invalid_arg (fun () ->
