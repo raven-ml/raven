@@ -24,7 +24,7 @@ let image binary =
       match r.target with
       | Offset target ->
           Bytes.set_int64_le b r.at (Int64.of_int (target - r.at + r.addend))
-      | Undefined s ->
+      | External s ->
           failwith
             (Printf.sprintf "the code object refers to an undefined symbol %s" s))
     o.relocations;

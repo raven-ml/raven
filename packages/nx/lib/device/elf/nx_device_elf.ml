@@ -3,6 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+type place = Undefined | Defined of { section : int; offset : int }
+type symbol = { name : string; place : place }
+
 type section = {
   name : string;
   kind : int;
@@ -12,7 +15,7 @@ type section = {
   contents : string;
 }
 
-type target = Offset of int | Undefined of string
+type target = Offset of int | External of string
 type relocation = { at : int; target : target; kind : int; addend : int }
 
 type t = {
@@ -20,8 +23,7 @@ type t = {
   machine : int;
   image : string;
   sections : section list;
-  symbols : (string * int) list;
-  symtab : (string * int) array;
+  symbols : symbol array;
   relocations : relocation list;
 }
 
@@ -45,7 +47,7 @@ type header = {
   h_entsize : int;
 }
 
-type symbol = { s_name : string; s_shndx : int; s_value : int }
+type raw_symbol = { s_name : string; s_shndx : int; s_value : int }
 
 let load ?(align = 1) obj =
   let fail fmt =
@@ -164,12 +166,6 @@ let load ?(align = 1) obj =
     | Some h -> Array.of_list (symbols_of h)
     | None -> [||]
   in
-  let symbols =
-    Array.to_list table
-    |> List.filter_map (fun s ->
-        if s.s_shndx = 0 || s.s_shndx >= 0xff00 || s.s_name = "" then None
-        else Some (s.s_name, resolve s.s_shndx s.s_value))
-  in
   let relocations_of h =
     let rela = h.h_kind = sht_rela in
     let entsize = Int.max (if rela then 24 else 16) h.h_entsize in
@@ -185,7 +181,7 @@ let load ?(align = 1) obj =
         {
           at = resolve h.h_info (Int64.to_int (get 0));
           target =
-            (if s.s_shndx = 0 then Undefined s.s_name
+            (if s.s_shndx = 0 then External s.s_name
              else Offset (resolve s.s_shndx s.s_value));
           kind = Int64.to_int (Int64.logand info 0xffff_ffffL);
           addend = (if rela then Int64.to_int (get 16) else 0);
@@ -224,15 +220,25 @@ let load ?(align = 1) obj =
     machine = u16 18;
     image = Bytes.to_string image;
     sections;
-    symbols;
-    symtab =
+    symbols =
       Array.map
         (fun s ->
-          ( s.s_name,
-            if s.s_shndx >= shnum || s.s_shndx >= 0xff00 then 0 else s.s_shndx
-          ))
+          let place =
+            if s.s_shndx = 0 || s.s_shndx >= shnum || s.s_shndx >= 0xff00 then
+              Undefined
+            else
+              Defined
+                { section = s.s_shndx; offset = resolve s.s_shndx s.s_value }
+          in
+          { name = s.s_name; place })
         table;
     relocations;
   }
 
-let symbol o name = List.assoc_opt name o.symbols
+let symbol o name =
+  Array.find_map
+    (fun s ->
+      match s.place with
+      | Defined { offset; _ } when s.name = name && name <> "" -> Some offset
+      | _ -> None)
+    o.symbols

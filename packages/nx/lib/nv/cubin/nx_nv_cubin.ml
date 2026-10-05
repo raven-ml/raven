@@ -29,7 +29,7 @@ let relocation (r : Elf.relocation) =
   else
     match r.target with
     | Offset target -> Ok (r.at, target + r.addend, r.kind)
-    | Undefined s ->
+    | External s ->
         Error (Printf.sprintf "the cubin refers to an undefined symbol %s" s)
 
 let of_string obj =
@@ -151,13 +151,19 @@ let kernels c =
 (* The function the symbol [i] is: the kernel of the code section it is in, else
    its name. *)
 let function_of c i =
-  if i < 0 || i >= Array.length c.elf.symtab then None
+  if i < 0 || i >= Array.length c.elf.symbols then None
   else
-    let name, section = c.elf.symtab.(i) in
-    match List.nth_opt c.elf.sections section with
-    | Some s when section > 0 && kernel_of_section s.name <> None ->
-        kernel_of_section s.name
-    | _ -> if name = "" then None else Some name
+    let (s : Elf.symbol) = c.elf.symbols.(i) in
+    let in_code =
+      match s.place with
+      | Defined { section; _ } ->
+          Option.bind (List.nth_opt c.elf.sections section) (fun sec ->
+              kernel_of_section sec.Elf.name)
+      | Undefined -> None
+    in
+    match in_code with
+    | Some _ -> in_code
+    | None -> if s.name = "" then None else Some s.name
 
 let kernel c name =
   let info = ".nv.info" and own_info = ".nv.info." ^ name in

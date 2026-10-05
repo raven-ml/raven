@@ -11,6 +11,20 @@
     resolves symbols to image offsets and lists the relocations for the caller
     to apply, since their kinds are the machine's. *)
 
+(** The type for where a symbol is. *)
+type place =
+  | Undefined  (** Nowhere: undefined, absolute or common. *)
+  | Defined of {
+      section : int;  (** The index in [sections] of its section. *)
+      offset : int;  (** Its image offset. *)
+    }  (** In a section of the object. *)
+
+type symbol = {
+  name : string;  (** Its name, [""] for a nameless one. *)
+  place : place;  (** Where it is. *)
+}
+(** The type for the entries of a symbol table. *)
+
 type section = {
   name : string;  (** Its name. *)
   kind : int;  (** Its type, [sh_type]. *)
@@ -26,7 +40,7 @@ type section = {
 (** The type for what a relocation refers to. *)
 type target =
   | Offset of int  (** The image offset of a symbol the object defines. *)
-  | Undefined of string  (** A symbol the object refers to by name alone. *)
+  | External of string  (** A symbol the object refers to by name alone. *)
 
 type relocation = {
   at : int;  (** The image offset to patch. *)
@@ -40,13 +54,9 @@ type t = {
   kind : int;  (** The object's type, [e_type]: [1] for a relocatable one. *)
   machine : int;  (** Its machine, [e_machine]. *)
   image : string;  (** The laid-out image of the [SHT_PROGBITS] sections. *)
-  sections : section list;  (** Every section, in order. *)
-  symbols : (string * int) list;
-      (** The defined symbols and their image offsets. *)
-  symtab : (string * int) array;
-      (** Every entry of the symbol table, by index: its name, [""] for a
-          nameless one, and the index in [sections] of the section it is defined
-          in, [0] for one undefined, absolute or common. *)
+  sections : section list;
+      (** Every section, in order, from the null section at index [0]. *)
+  symbols : symbol array;  (** Every entry of the symbol table, by index. *)
   relocations : relocation list;  (** In section order. *)
 }
 (** The type for loaded objects. *)
@@ -59,4 +69,5 @@ val load : ?align:int -> string -> t
     truncated. *)
 
 val symbol : t -> string -> int option
-(** [symbol o name] is the image offset of the symbol [name] of [o]. *)
+(** [symbol o name] is the image offset of the first symbol [name] of [o]
+    defined in a section. *)

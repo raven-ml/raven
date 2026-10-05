@@ -86,6 +86,16 @@ let rela offset sym kind addend =
   Bytes.set_int64_le b 16 (Int64.of_int addend);
   Bytes.to_string b
 
+let symbol =
+  Testable.make
+    ~pp:(fun ppf (s : Elf.symbol) ->
+      match s.place with
+      | Undefined -> Format.fprintf ppf "{ %S; undefined }" s.name
+      | Defined { section; offset } ->
+          Format.fprintf ppf "{ %S; section %d; offset %d }" s.name section
+            offset)
+    ~equal:( = )
+
 let test_elf () =
   let strtab = "\000start\000obj\000ext\000" in
   let obj =
@@ -111,6 +121,14 @@ let test_elf () =
   equal ~msg:"text, then data at its alignment" string
     ("ABCD" ^ String.make 12 '\000' ^ "01234567")
     o.image;
+  equal ~msg:"the symbol table, by index" (array symbol)
+    [|
+      { name = ""; place = Undefined };
+      { name = "start"; place = Defined { section = 1; offset = 0 } };
+      { name = "obj"; place = Defined { section = 2; offset = 20 } };
+      { name = "ext"; place = Undefined };
+    |]
+    o.symbols;
   equal ~msg:"symbols" (option int) (Some 20) (Elf.symbol o "obj");
   equal ~msg:"a symbol at 0" (option int) (Some 0) (Elf.symbol o "start");
   (match o.relocations with
@@ -119,8 +137,7 @@ let test_elf () =
       is_true ~msg:"target" (r.target = Elf.Offset 20);
       equal ~msg:"kind" int 5 r.kind;
       equal ~msg:"addend" int 3 r.addend;
-      is_true ~msg:"an undefined symbol is named"
-        (e.target = Elf.Undefined "ext");
+      is_true ~msg:"an undefined symbol is named" (e.target = Elf.External "ext");
       equal ~msg:"its addend" int (-4) e.addend
   | _ -> fail "two relocations");
   is_none ~msg:"an undefined symbol has no offset" (Elf.symbol o "ext");

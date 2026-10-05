@@ -94,7 +94,7 @@ let link (o : Elf.t) ~machine ~base ~size ~slots_at externals =
     let s, external_ =
       match r.target with
       | Offset t -> (base + t, false)
-      | Undefined name -> (externals name, true)
+      | External name -> (externals name, true)
     in
     let checked bits d =
       if fits bits d then d else fail "a reference at 0x%x out of range" r.at
@@ -178,7 +178,7 @@ let load_exn machine ~binary ~entry =
       (List.filter
          (fun (r : Elf.relocation) ->
            is_branch r.kind
-           && match r.target with Undefined _ -> true | Offset _ -> false)
+           && match r.target with External _ -> true | Offset _ -> false)
          o.relocations)
   in
   let slots_at = round_up (String.length o.image) slot_bytes in
